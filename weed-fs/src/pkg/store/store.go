@@ -50,11 +50,11 @@ func (s *Store) Join(mserver string) {
 		stats = append(stats, s)
 	}
 	bytes, _ := json.Marshal(stats)
-	values := new(url.Values)
+	values := make(url.Values)
 	values.Add("server", s.Server)
     values.Add("publicServer", s.PublicServer)
 	values.Add("volumes", string(bytes))
-	post("http://"+mserver+"/dir/join", *values)
+	post("http://"+mserver+"/dir/join", values)
 }
 func (s *Store) Close() {
 	for _, v := range s.volumes {

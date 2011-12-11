@@ -31,10 +31,10 @@ func NewMapper(dirname string, filename string) (m *Mapper) {
 	m.fileName = filename
 	log.Println("Loading virtual to physical:", m.dir, "/", m.fileName)
 	dataFile, e := os.OpenFile(m.dir+string(os.PathSeparator)+m.fileName+".map", os.O_RDONLY, 0644)
+	m.Virtual2physical = make(map[uint32][]*Machine)
 	if e != nil {
-		log.Fatalf("Mapping File Read [ERROR] %s\n", e)
+		log.Println("Mapping File Read [ERROR]", e)
 	} else {
-		m.Virtual2physical = make(map[uint32][]*Machine)
 		decoder := gob.NewDecoder(dataFile)
 		decoder.Decode(m.Virtual2physical)
 		dataFile.Close()
@@ -54,13 +54,14 @@ func (m *Mapper) Add(machine *Machine, volumes []store.VolumeStat) {
 		found := false
 		for _, entry := range existing {
 			if machine == entry {
-			    found = true
+				found = true
 				break
 			}
 		}
 		if !found {
-            m.Virtual2physical[uint32(v.Id)] = append(existing, machine)
+			m.Virtual2physical[uint32(v.Id)] = append(existing, machine)
 		}
+        log.Println(v.Id, "=>", machine.Server)
 	}
 }
 func (m *Mapper) Save() {
