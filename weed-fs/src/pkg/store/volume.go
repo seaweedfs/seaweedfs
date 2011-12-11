@@ -2,29 +2,32 @@ package store
 
 import (
 	"os"
+	"path"
+	"strconv"
 	"log"
 )
 
 type Volume struct {
+	Id                  uint64
 	dir                 string
-	fileName            string
 	dataFile, indexFile *os.File
 	nm                  *NeedleMap
 
 	accessChannel chan int
 }
 
-func NewVolume(dirname string, filename string) (v *Volume) {
+func NewVolume(dirname string, id uint64) (v *Volume) {
 	var e os.Error
 	v = new(Volume)
 	v.dir = dirname
-	v.fileName = filename
-	log.Println("file", v.dir, "/", v.fileName)
-	v.dataFile, e = os.OpenFile(v.dir+string(os.PathSeparator)+v.fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
+	v.Id = id
+	fileName := strconv.Uitoa64(v.Id)
+	log.Println("file", v.dir, "/", fileName)
+	v.dataFile, e = os.OpenFile(path.Join(v.dir,fileName+".dat"), os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {
 		log.Fatalf("New Volume [ERROR] %s\n", e)
 	}
-	v.indexFile, e = os.OpenFile(v.dir+string(os.PathSeparator)+v.fileName+".idx", os.O_RDWR|os.O_CREATE, 0644)
+	v.indexFile, e = os.OpenFile(path.Join(v.dir,fileName+".idx"), os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {
 		log.Fatalf("New Volume [ERROR] %s\n", e)
 	}

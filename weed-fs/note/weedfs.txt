@@ -1,0 +1,46 @@
+How to submit a content
+1. Find physical volumes
+1.c Create a hash value
+1.d find a write logic volume id, and return [logic volume id, {physical volume ids}]
+2. submit to physical volumes
+2.c 
+  generate the cookie
+  generate a unique id as key
+  choose the right altKey
+  send bytes to physical volumes
+2.s each
+  save bytes
+  store map[key uint64, altKey uint32]<offset, size>
+    for updated entry, set old entry's offset to zero
+3.c
+  wait for all physical volumes to finish
+  store the /<logic volume id>/<key>_<cookie>_<altKey>.<ext>
+
+How to retrieve a content
+1.c
+  send logic volume id
+1.d
+  find least busy volume's id
+2.c
+  send URI /<physical volume id>/<key>_<cookie>_<altKey>.<ext>
+
+
+How to submit a content
+1. send bytes to weedfs, got <volume id, key uint64, cookie code>
+   store <key uint64, volume id uint32, cookie code uint32, ext>, and other information
+
+To read a content
+2. use logic volume id to lookup a <machine id>
+   render url as /<machine id>/<volume id>/<key>/<cookie>.ext
+
+The directory server
+0.init
+  load and collect <logic volume id, machine ids> mapping
+1.on submit content
+  find a free logic volume id, start sending content to 3 machines
+  if all of them finishes, return <logic volume id, key, cookie code>
+2.on read content
+  based on logic volume id, pick a machine with less load, 
+    return <machine id>
+  
+
