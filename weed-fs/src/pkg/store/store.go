@@ -54,7 +54,7 @@ func (s *Store) Join(mserver string) {
 	values.Add("server", s.Server)
     values.Add("publicServer", s.PublicServer)
 	values.Add("volumes", string(bytes))
-	post("http://"+mserver+"/join", *values)
+	post("http://"+mserver+"/dir/join", *values)
 }
 func (s *Store) Close() {
 	for _, v := range s.volumes {

@@ -5,15 +5,24 @@ import (
 	"os"
 	"rand"
 	"log"
+	"store"
 )
 
 type Machine struct {
-    Server           string //<server name/ip>[:port]
+	Server       string //<server name/ip>[:port]
+	PublicServer string
 }
+
+func NewMachine(server, publicServer string) (m *Machine) {
+	m = new(Machine)
+	m.Server, m.PublicServer = server, publicServer
+	return
+}
+
 type Mapper struct {
 	dir              string
 	fileName         string
-	Virtual2physical map[uint32][]Machine
+	Virtual2physical map[uint32][]*Machine
 }
 
 func NewMapper(dirname string, filename string) (m *Mapper) {
@@ -25,22 +34,34 @@ func NewMapper(dirname string, filename string) (m *Mapper) {
 	if e != nil {
 		log.Fatalf("Mapping File Read [ERROR] %s\n", e)
 	} else {
-		m.Virtual2physical = make(map[uint32][]Machine)
+		m.Virtual2physical = make(map[uint32][]*Machine)
 		decoder := gob.NewDecoder(dataFile)
 		decoder.Decode(m.Virtual2physical)
-        dataFile.Close()
+		dataFile.Close()
 	}
 	return
 }
-func (m *Mapper) PickForWrite() []Machine {
-    vid := uint32(rand.Intn(len(m.Virtual2physical)))
-    return m.Virtual2physical[vid]
-}
-func (m *Mapper) Get(vid uint32) []Machine {
+func (m *Mapper) PickForWrite() []*Machine {
+	vid := uint32(rand.Intn(len(m.Virtual2physical)))
 	return m.Virtual2physical[vid]
 }
-func (m *Mapper) Add(vid uint32, pids ...Machine) {
-	m.Virtual2physical[vid] = append(m.Virtual2physical[vid], pids...)
+func (m *Mapper) Get(vid uint32) []*Machine {
+	return m.Virtual2physical[vid]
+}
+func (m *Mapper) Add(machine *Machine, volumes []store.VolumeStat) {
+	for _, v := range volumes {
+		existing := m.Virtual2physical[uint32(v.Id)]
+		found := false
+		for _, entry := range existing {
+			if machine == entry {
+			    found = true
+				break
+			}
+		}
+		if !found {
+            m.Virtual2physical[uint32(v.Id)] = append(existing, machine)
+		}
+	}
 }
 func (m *Mapper) Save() {
 	log.Println("Saving virtual to physical:", m.dir, "/", m.fileName)
@@ -49,7 +70,7 @@ func (m *Mapper) Save() {
 		log.Fatalf("Mapping File Save [ERROR] %s\n", e)
 	}
 	defer dataFile.Close()
-	m.Virtual2physical = make(map[uint32][]Machine)
+	m.Virtual2physical = make(map[uint32][]*Machine)
 	encoder := gob.NewEncoder(dataFile)
 	encoder.Encode(m.Virtual2physical)
 }

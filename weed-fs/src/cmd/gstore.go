@@ -97,7 +97,11 @@ func dirWriteHandler(w http.ResponseWriter, r *http.Request) {
     }
 }
 func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
-
+    s := r.FormValue("server")
+    publicServer := r.FormValue("publicServer")
+    volumes := make([]store.VolumeStat,0)
+    json.Unmarshal([]byte(r.FormValue("volumes")), volumes)
+    server.directory.Add(directory.NewMachine(s,publicServer),volumes)
 }
 
 var server *Haystack
