@@ -3,6 +3,7 @@ package directory
 import (
 	"gob"
 	"os"
+	"path"
 	"rand"
 	"log"
 	"store"
@@ -21,36 +22,39 @@ func NewMachine(server, publicServer string) (m *Machine) {
 
 type Mapper struct {
 	dir              string
-	fileName         string
-	Virtual2physical map[uint32][]*Machine
+	FileName         string
+	Id2Machine map[uint32][]*Machine
+	LastId uint32
 }
 
 func NewMapper(dirname string, filename string) (m *Mapper) {
 	m = new(Mapper)
 	m.dir = dirname
-	m.fileName = filename
-	log.Println("Loading virtual to physical:", m.dir, "/", m.fileName)
-	dataFile, e := os.OpenFile(m.dir+string(os.PathSeparator)+m.fileName+".map", os.O_RDONLY, 0644)
-	m.Virtual2physical = make(map[uint32][]*Machine)
+	m.FileName = filename
+	log.Println("Loading virtual to physical:", path.Join(m.dir,m.FileName+".map"))
+	dataFile, e := os.OpenFile(path.Join(m.dir,m.FileName+".map"), os.O_RDONLY, 0644)
+	m.Id2Machine = make(map[uint32][]*Machine)
 	if e != nil {
-		log.Println("Mapping File Read [ERROR]", e)
+		log.Println("Mapping File Read", e)
 	} else {
 		decoder := gob.NewDecoder(dataFile)
-		decoder.Decode(m.Virtual2physical)
+        decoder.Decode(m.LastId)
+		decoder.Decode(m.Id2Machine)
 		dataFile.Close()
 	}
 	return
 }
 func (m *Mapper) PickForWrite() []*Machine {
-	vid := uint32(rand.Intn(len(m.Virtual2physical)))
-	return m.Virtual2physical[vid]
+	vid := uint32(rand.Intn(len(m.Id2Machine)))
+	return m.Id2Machine[vid]
 }
 func (m *Mapper) Get(vid uint32) []*Machine {
-	return m.Virtual2physical[vid]
+	return m.Id2Machine[vid]
 }
 func (m *Mapper) Add(machine *Machine, volumes []store.VolumeStat) {
+    log.Println("Adding store node", machine.Server)
 	for _, v := range volumes {
-		existing := m.Virtual2physical[uint32(v.Id)]
+		existing := m.Id2Machine[uint32(v.Id)]
 		found := false
 		for _, entry := range existing {
 			if machine == entry {
@@ -59,19 +63,21 @@ func (m *Mapper) Add(machine *Machine, volumes []store.VolumeStat) {
 			}
 		}
 		if !found {
-			m.Virtual2physical[uint32(v.Id)] = append(existing, machine)
+			m.Id2Machine[uint32(v.Id)] = append(existing, machine)
 		}
         log.Println(v.Id, "=>", machine.Server)
 	}
+	m.Save()
 }
 func (m *Mapper) Save() {
-	log.Println("Saving virtual to physical:", m.dir, "/", m.fileName)
-	dataFile, e := os.OpenFile(m.dir+string(os.PathSeparator)+m.fileName+".map", os.O_WRONLY, 0644)
+	log.Println("Saving virtual to physical:", path.Join(m.dir,m.FileName+".map"))
+	dataFile, e := os.OpenFile(path.Join(m.dir,m.FileName+".map"), os.O_CREATE|os.O_WRONLY, 0644)
 	if e != nil {
 		log.Fatalf("Mapping File Save [ERROR] %s\n", e)
 	}
 	defer dataFile.Close()
-	m.Virtual2physical = make(map[uint32][]*Machine)
+	m.Id2Machine = make(map[uint32][]*Machine)
 	encoder := gob.NewEncoder(dataFile)
-	encoder.Encode(m.Virtual2physical)
+    encoder.Encode(m.LastId)
+	encoder.Encode(m.Id2Machine)
 }

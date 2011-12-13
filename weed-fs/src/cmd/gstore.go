@@ -103,6 +103,11 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal([]byte(r.FormValue("volumes")), volumes)
 	server.directory.Add(directory.NewMachine(s, publicServer), volumes)
 }
+func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "text/plain")
+    bytes, _ := json.Marshal(server.directory)
+    fmt.Fprint(w, bytes)
+}
 
 var server *Haystack
 
@@ -115,7 +120,7 @@ func main() {
 	}
 	server = new(Haystack)
 	if *chunkEnabled || bothEnabled {
-		log.Println("Chunk data stored in", *chunkFolder)
+		log.Println("data stored in", *chunkFolder)
 		server.store = store.NewStore(*chunkServer, *publicServer, *chunkFolder)
 		defer server.store.Close()
 		http.HandleFunc("/", storeHandler)
@@ -126,11 +131,12 @@ func main() {
 		http.HandleFunc("/dir/read", dirReadHandler)
 		http.HandleFunc("/dir/write", dirWriteHandler)
 		http.HandleFunc("/dir/join", dirJoinHandler)
+        http.HandleFunc("/dir/status", dirStatusHandler)
 	}
 	go func() {
 		time.Sleep(3000 * 1000)
 		server.store.Join(*metaServer)
-		log.Println("stored joined at", *metaServer)
+		log.Println("store joined at", *metaServer)
 	}()
 
 	log.Println("Serving at http://127.0.0.1:" + strconv.Itoa(*port))
