@@ -6,25 +6,24 @@ import (
 	"path"
 	"rand"
 	"log"
-	"store"
+	"storage"
 )
 
 type Machine struct {
 	Server       string //<server name/ip>[:port]
 	PublicServer string
 }
+type Mapper struct {
+    dir              string
+    FileName         string
+    Id2Machine map[uint32][]*Machine
+    LastId uint32
+}
 
 func NewMachine(server, publicServer string) (m *Machine) {
 	m = new(Machine)
 	m.Server, m.PublicServer = server, publicServer
 	return
-}
-
-type Mapper struct {
-	dir              string
-	FileName         string
-	Id2Machine map[uint32][]*Machine
-	LastId uint32
 }
 
 func NewMapper(dirname string, filename string) (m *Mapper) {
@@ -51,7 +50,7 @@ func (m *Mapper) PickForWrite() []*Machine {
 func (m *Mapper) Get(vid uint32) []*Machine {
 	return m.Id2Machine[vid]
 }
-func (m *Mapper) Add(machine *Machine, volumes []store.VolumeStat) {
+func (m *Mapper) Add(machine *Machine, volumes []storage.VolumeStat) {
     log.Println("Adding store node", machine.Server)
 	for _, v := range volumes {
 		existing := m.Id2Machine[uint32(v.Id)]
