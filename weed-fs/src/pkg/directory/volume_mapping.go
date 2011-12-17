@@ -39,7 +39,8 @@ func NewMapper(dirname string, filename string, capacity int) (m *Mapper) {
 		log.Println("Mapping File Read", e)
 	} else {
 		decoder := gob.NewDecoder(dataFile)
-		decoder.Decode(m.Machines)
+        defer dataFile.Close()
+		decoder.Decode(&m.Machines)
 		for _, list := range m.Machines {
 			//TODO: what if a list has mixed readers and writers? Now it's treated as readonly
 			allCanWrite := false
@@ -50,7 +51,6 @@ func NewMapper(dirname string, filename string, capacity int) (m *Mapper) {
 				m.writers = append(m.writers, list)
 			}
 		}
-		dataFile.Close()
         log.Println("Loaded mapping size", len(m.Machines))
 	}
 	return
