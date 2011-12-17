@@ -34,17 +34,17 @@ func uint32toBytes(b []byte, v uint32){
   }
 }
 
-func post(url string, values url.Values)string{
+func post(url string, values url.Values)[]byte{
     r, err := http.PostForm(url, values)
     if err != nil {
         log.Println("post:", err)
-        return ""
+        return nil
     }
     defer r.Body.Close()
     b, err := ioutil.ReadAll(r.Body)
     if err != nil {
         log.Println("post:", err)
-        return ""
+        return nil
     }
-    return string(b)
+    return b
 }

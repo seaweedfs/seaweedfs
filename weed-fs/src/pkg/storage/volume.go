@@ -22,7 +22,6 @@ func NewVolume(dirname string, id uint64) (v *Volume) {
 	v.dir = dirname
 	v.Id = id
 	fileName := strconv.Uitoa64(v.Id)
-	log.Println("file", v.dir, "/", fileName)
 	v.dataFile, e = os.OpenFile(path.Join(v.dir,fileName+".dat"), os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {
 		log.Fatalf("New Volume [ERROR] %s\n", e)
@@ -38,6 +37,13 @@ func NewVolume(dirname string, id uint64) (v *Volume) {
 	v.accessChannel <- 0
 
 	return
+}
+func (v *Volume) CanWrite(limit int64) bool {
+    stat, e:=v.dataFile.Stat()
+    if e!=nil{
+       return stat.Size < limit
+    }
+    return false
 }
 func (v *Volume) Close() {
 	close(v.accessChannel)

@@ -57,7 +57,8 @@ func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	flag.Parse()
-	store = storage.NewStore(*port, *publicServer, *chunkFolder)
+	//TODO: now default to 1G, this value should come from server?
+	store = storage.NewStore(*port, *publicServer, *chunkFolder, 1024*1024*1024, *chunkCount)
 	defer store.Close()
 	http.HandleFunc("/", storeHandler)
 
