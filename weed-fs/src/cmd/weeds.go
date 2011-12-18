@@ -20,7 +20,7 @@ var (
 )
 
 func dirReadHandler(w http.ResponseWriter, r *http.Request) {
-	volumeId, _ := strconv.Atoi(r.FormValue("volumeId"))
+	volumeId, _ := strconv.Atoui64(r.FormValue("volumeId"))
 	machine := mapper.Get(volumeId)
 	writeJson(w, r, machine)
 }
@@ -55,7 +55,7 @@ func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
 		fmt.Fprint(w, string(bytes))
 		w.Write([]uint8(")"))
 	}
-	log.Println("JSON Response", string(bytes))
+	//log.Println("JSON Response", string(bytes))
 }
 
 func main() {
