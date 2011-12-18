@@ -8,7 +8,6 @@ import (
 	"http"
 	"json"
 	"log"
-	"rand"
 	"strconv"
 	"strings"
 )
@@ -22,20 +21,8 @@ var (
 
 func dirReadHandler(w http.ResponseWriter, r *http.Request) {
 	volumeId, _ := strconv.Atoi(r.FormValue("volumeId"))
-	machineList := mapper.Get(volumeId)
-	x := rand.Intn(len(machineList))
-	machine := machineList[x]
-	bytes, _ := json.Marshal(machine)
-	callback := r.FormValue("callback")
-	w.Header().Set("Content-Type", "application/javascript")
-	if callback == "" {
-		w.Write(bytes)
-	} else {
-		w.Write([]uint8(callback))
-		w.Write([]uint8("("))
-		w.Write(bytes)
-		w.Write([]uint8(")"))
-	}
+	machine := mapper.Get(volumeId)
+	writeJson(w, r, machine)
 }
 func dirWriteHandler(w http.ResponseWriter, r *http.Request) {
 	machineList := mapper.PickForWrite()
@@ -44,17 +31,17 @@ func dirWriteHandler(w http.ResponseWriter, r *http.Request) {
 func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	s := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")+1] + r.FormValue("port")
 	publicServer := r.FormValue("publicServer")
-	volumes := new([]storage.VolumeStat)
+	volumes := new([]storage.VolumeInfo)
 	json.Unmarshal([]byte(r.FormValue("volumes")), volumes)
 	capacity, _ := strconv.Atoi(r.FormValue("capacity"))
 	log.Println("Recieved joining request from remote address", s, "capacity=", capacity, "volumes", r.FormValue("volumes"))
-	vids := mapper.Add(*directory.NewMachine(s, publicServer), *volumes, capacity)
+	vids := mapper.Add(*directory.NewMachine(s, publicServer, *volumes, capacity))
 	writeJson(w, r, vids)
 }
 func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	bytes, _ := json.Marshal(mapper)
-	fmt.Fprint(w, bytes)
+	fmt.Fprint(w, string(bytes))
 }
 func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
 	w.Header().Set("Content-Type", "application/javascript")
@@ -65,7 +52,7 @@ func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
 	} else {
 		w.Write([]uint8(callback))
 		w.Write([]uint8("("))
-		w.Write(bytes)
+		fmt.Fprint(w, string(bytes))
 		w.Write([]uint8(")"))
 	}
 	log.Println("JSON Response", string(bytes))

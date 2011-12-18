@@ -16,9 +16,9 @@ type Store struct {
 	Port         int
 	PublicServer string
 }
-type VolumeStat struct {
-	Id       uint64 "id"
-	CanWrite bool
+type VolumeInfo struct {
+	Id       uint64
+	Size int64
 }
 
 func NewStore(port int, publicServer, dirname string, chunkSize, capacity int) (s *Store) {
@@ -44,10 +44,10 @@ func NewStore(port int, publicServer, dirname string, chunkSize, capacity int) (
 }
 
 func (s *Store) Join(mserver string) {
-	stats := new([]*VolumeStat)
-	for k, _ := range s.volumes {
-		s := new(VolumeStat)
-		s.Id, s.CanWrite = k, true
+	stats := new([]*VolumeInfo)
+	for k, v := range s.volumes {
+		s := new(VolumeInfo)
+		s.Id, s.Size = k, v.Size()
 		*stats = append(*stats, s)
 	}
 	bytes, _ := json.Marshal(stats)

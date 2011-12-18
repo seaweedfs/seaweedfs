@@ -38,12 +38,12 @@ func NewVolume(dirname string, id uint64) (v *Volume) {
 
 	return
 }
-func (v *Volume) CanWrite(limit int64) bool {
+func (v *Volume) Size() int64 {
     stat, e:=v.dataFile.Stat()
     if e!=nil{
-       return stat.Size < limit
+       return stat.Size
     }
-    return false
+    return -1
 }
 func (v *Volume) Close() {
 	close(v.accessChannel)
