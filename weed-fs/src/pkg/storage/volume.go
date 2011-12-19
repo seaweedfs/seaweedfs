@@ -18,9 +18,7 @@ type Volume struct {
 
 func NewVolume(dirname string, id uint64) (v *Volume) {
 	var e os.Error
-	v = new(Volume)
-	v.dir = dirname
-	v.Id = id
+	v = &Volume{dir:dirname,Id:id, nm:NewNeedleMap()}
 	fileName := strconv.Uitoa64(v.Id)
 	v.dataFile, e = os.OpenFile(path.Join(v.dir,fileName+".dat"), os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {
@@ -30,7 +28,6 @@ func NewVolume(dirname string, id uint64) (v *Volume) {
 	if e != nil {
 		log.Fatalf("New Volume [ERROR] %s\n", e)
 	}
-	v.nm = NewNeedleMap()
 	v.nm.load(v.indexFile)
 
 	v.accessChannel = make(chan int, 1)

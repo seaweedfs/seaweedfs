@@ -17,13 +17,12 @@ type Store struct {
 	PublicServer string
 }
 type VolumeInfo struct {
-	Id       uint64
+	Id   uint64
 	Size int64
 }
 
 func NewStore(port int, publicServer, dirname string, chunkSize, capacity int) (s *Store) {
-	s = new(Store)
-	s.Port, s.PublicServer, s.dir, s.capacity = port, publicServer, dirname, capacity
+	s = &Store{Port: port, PublicServer: publicServer, dir: dirname, capacity: capacity}
 	s.volumes = make(map[uint64]*Volume)
 
 	files, _ := ioutil.ReadDir(dirname)
@@ -60,7 +59,7 @@ func (s *Store) Join(mserver string) {
 	retString := post("http://"+mserver+"/dir/join", values)
 	if retString != nil {
 		newVids := new([]int)
-		log.Println("Instructed to create volume",string(retString))
+		log.Println("Instructed to create volume", string(retString))
 		e := json.Unmarshal(retString, newVids)
 		if e == nil {
 			for _, vid := range *newVids {

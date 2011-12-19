@@ -22,11 +22,15 @@ var (
 func dirReadHandler(w http.ResponseWriter, r *http.Request) {
 	volumeId, _ := strconv.Atoui64(r.FormValue("volumeId"))
 	machine := mapper.Get(volumeId)
-	writeJson(w, r, machine)
+	writeJson(w, r, machine.Server)
 }
 func dirWriteHandler(w http.ResponseWriter, r *http.Request) {
-	machineList := mapper.PickForWrite()
-	writeJson(w, r, machineList)
+	machine := mapper.PickForWrite()
+	writeJson(w, r, machine)
+}
+func dirPickHandler(w http.ResponseWriter, r *http.Request) {
+    machine := mapper.PickForWrite()
+    writeJson(w, r, machine)
 }
 func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	s := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")+1] + r.FormValue("port")
@@ -64,6 +68,7 @@ func main() {
 	defer mapper.Save()
 	http.HandleFunc("/dir/read", dirReadHandler)
 	http.HandleFunc("/dir/write", dirWriteHandler)
+    http.HandleFunc("/dir/pick", dirPickHandler)
 	http.HandleFunc("/dir/join", dirJoinHandler)
 	http.HandleFunc("/dir/status", dirStatusHandler)
 
