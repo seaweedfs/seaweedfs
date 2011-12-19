@@ -8,6 +8,7 @@ import (
 	"http"
 	"json"
 	"log"
+	"rand"
 	"strconv"
 	"strings"
 )
@@ -17,6 +18,7 @@ var (
 	metaFolder = flag.String("mdir", "/tmp", "data directory to store mappings")
 	capacity   = flag.Int("capacity", 100, "maximum number of volumes to hold")
 	mapper     *directory.Mapper
+	
 )
 
 func dirReadHandler(w http.ResponseWriter, r *http.Request) {
@@ -25,12 +27,14 @@ func dirReadHandler(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, r, machine.Server)
 }
 func dirWriteHandler(w http.ResponseWriter, r *http.Request) {
-	machine := mapper.PickForWrite()
+	_, machine := mapper.PickForWrite()
 	writeJson(w, r, machine)
 }
 func dirPickHandler(w http.ResponseWriter, r *http.Request) {
-    machine := mapper.PickForWrite()
-    writeJson(w, r, machine)
+    vid, machine := mapper.PickForWrite()
+    hashcode := rand.Uint32()
+    fid := strconv.Uitoa64(vid) + "," + strconv.Uitoa64(mapper.NextFileId())+","+strconv.Uitoa64(uint64(hashcode))
+    writeJson(w, r, map[string]string{"fid":fid,"url":machine.Url})
 }
 func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	s := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")+1] + r.FormValue("port")
