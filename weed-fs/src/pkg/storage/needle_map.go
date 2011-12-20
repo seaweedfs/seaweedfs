@@ -6,16 +6,12 @@ import (
 
 type NeedleKey struct {
 	Key          uint64 "file id"
-	AlternateKey uint32 "supplemental id"
 }
 
 func (k *NeedleKey) String() string {
 	var tmp [12]byte
 	for i := uint(0); i < 8; i++ {
 		tmp[i] = byte(k.Key >> (8 * i))
-	}
-	for i := uint(0); i < 4; i++ {
-		tmp[i+8] = byte(k.AlternateKey >> (8 * i))
 	}
 	return string(tmp[:])
 }
@@ -26,28 +22,21 @@ type NeedleValue struct {
 }
 
 type NeedleMap struct {
-	m map[string]*NeedleValue //mapping NeedleKey(Key,AlternateKey) to NeedleValue
+	m map[uint64]*NeedleValue //mapping NeedleKey(Key,AlternateKey) to NeedleValue
 }
 
 func NewNeedleMap() *NeedleMap {
-	return &NeedleMap{m: make(map[string]*NeedleValue)}
+	return &NeedleMap{m: make(map[uint64]*NeedleValue)}
 }
 func (nm *NeedleMap) load(file *os.File) {
 }
-func makeKey(key uint64, altKey uint32) string {
-	var tmp [12]byte
-	for i := uint(0); i < 8; i++ {
-		tmp[i] = byte(key >> (8 * i))
-	}
-	for i := uint(0); i < 4; i++ {
-		tmp[i+8] = byte(altKey >> (8 * i))
-	}
-	return string(tmp[:])
+func makeKey(key uint64) uint64 {
+	return key
 }
-func (nm *NeedleMap) put(key uint64, altKey uint32, offset uint32, size uint32) {
-	nm.m[makeKey(key, altKey)] = &NeedleValue{Offset: offset, Size: size}
+func (nm *NeedleMap) put(key uint64, offset uint32, size uint32) {
+	nm.m[makeKey(key)] = &NeedleValue{Offset: offset, Size: size}
 }
-func (nm *NeedleMap) get(key uint64, altKey uint32) (element *NeedleValue, ok bool) {
-	element, ok = nm.m[makeKey(key, altKey)]
+func (nm *NeedleMap) get(key uint64) (element *NeedleValue, ok bool) {
+	element, ok = nm.m[makeKey(key)]
 	return
 }
