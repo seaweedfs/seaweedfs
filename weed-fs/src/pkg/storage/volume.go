@@ -8,7 +8,7 @@ import (
 )
 
 type Volume struct {
-	Id                  uint64
+	Id                  uint32
 	dir                 string
 	dataFile, indexFile *os.File
 	nm                  *NeedleMap
@@ -16,10 +16,10 @@ type Volume struct {
 	accessChannel chan int
 }
 
-func NewVolume(dirname string, id uint64) (v *Volume) {
+func NewVolume(dirname string, id uint32) (v *Volume) {
 	var e os.Error
 	v = &Volume{dir:dirname,Id:id, nm:NewNeedleMap()}
-	fileName := strconv.Uitoa64(v.Id)
+	fileName := strconv.Uitoa64(uint64(v.Id))
 	v.dataFile, e = os.OpenFile(path.Join(v.dir,fileName+".dat"), os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {
 		log.Fatalf("New Volume [ERROR] %s\n", e)

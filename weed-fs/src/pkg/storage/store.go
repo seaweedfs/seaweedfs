@@ -17,7 +17,7 @@ type Store struct {
 	PublicServer string
 }
 type VolumeInfo struct {
-	Id   uint64
+	Id   uint32
 	Size int64
 }
 
@@ -35,7 +35,7 @@ func NewStore(port int, publicServer, dirname string, chunkSize, capacity int) (
 		if err != nil {
 			continue
 		}
-		s.volumes[id] = NewVolume(s.dir, id)
+		s.volumes[id] = NewVolume(s.dir, uint32(id))
 	}
 	log.Println("Store started on dir:", dirname, "with", len(s.volumes), "existing volumes")
 	log.Println("Expected capacity=", s.capacity, "volumes")
@@ -46,7 +46,7 @@ func (s *Store) Join(mserver string) {
 	stats := new([]*VolumeInfo)
 	for k, v := range s.volumes {
 		s := new(VolumeInfo)
-		s.Id, s.Size = k, v.Size()
+		s.Id, s.Size = uint32(k), v.Size()
 		*stats = append(*stats, s)
 	}
 	bytes, _ := json.Marshal(stats)
@@ -63,7 +63,7 @@ func (s *Store) Join(mserver string) {
 		e := json.Unmarshal(retString, newVids)
 		if e == nil {
 			for _, vid := range *newVids {
-				s.volumes[uint64(vid)] = NewVolume(s.dir, uint64(vid))
+				s.volumes[uint64(vid)] = NewVolume(s.dir, uint32(vid))
 				log.Println("Adding volume", vid)
 			}
 		}

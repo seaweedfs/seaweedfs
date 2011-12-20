@@ -8,7 +8,6 @@ import (
 	"http"
 	"json"
 	"log"
-	"rand"
 	"strconv"
 	"strings"
 )
@@ -23,7 +22,7 @@ var (
 
 func dirReadHandler(w http.ResponseWriter, r *http.Request) {
 	volumeId, _ := strconv.Atoui64(r.FormValue("volumeId"))
-	machine := mapper.Get(volumeId)
+	machine := mapper.Get(uint32(volumeId))
 	writeJson(w, r, machine.Server)
 }
 func dirWriteHandler(w http.ResponseWriter, r *http.Request) {
@@ -31,9 +30,7 @@ func dirWriteHandler(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, r, machine)
 }
 func dirPickHandler(w http.ResponseWriter, r *http.Request) {
-    vid, machine := mapper.PickForWrite()
-    hashcode := rand.Uint32()
-    fid := strconv.Uitoa64(vid) + "," + strconv.Uitoa64(mapper.NextFileId())+","+strconv.Uitoa64(uint64(hashcode))
+    fid, machine := mapper.PickForWrite()
     writeJson(w, r, map[string]string{"fid":fid,"url":machine.Url})
 }
 func dirJoinHandler(w http.ResponseWriter, r *http.Request) {

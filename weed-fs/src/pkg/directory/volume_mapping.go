@@ -32,10 +32,10 @@ type Mapper struct {
 
 	lock          sync.Mutex
 	Machines      []*Machine
-	vid2machineId map[uint64]int
+	vid2machineId map[uint32]int
 	Writers       []int // transient array of Writers volume id
 
-	GlobalVolumeSequence uint64
+	GlobalVolumeSequence uint32
 
 	FileIdSequence uint64
 	fileIdCounter  uint64
@@ -49,7 +49,7 @@ func NewMapper(dirname string, filename string, capacity int) (m *Mapper) {
 	m = &Mapper{dir: dirname, fileName: filename, capacity: capacity}
 	log.Println("Loading volume id to maching mapping:", path.Join(m.dir, m.fileName+".map"))
 	dataFile, e := os.OpenFile(path.Join(m.dir, m.fileName+".map"), os.O_RDONLY, 0644)
-	m.vid2machineId = make(map[uint64]int)
+	m.vid2machineId = make(map[uint32]int)
 	m.Writers = *new([]int)
 	if e != nil {
 		log.Println("Mapping File Read", e)
@@ -86,10 +86,10 @@ func NewMapper(dirname string, filename string, capacity int) (m *Mapper) {
 	}
 	return
 }
-func (m *Mapper) PickForWrite() (vid uint64, server MachineInfo) {
+func (m *Mapper) PickForWrite() (string, MachineInfo) {
 	machine := m.Machines[m.Writers[rand.Intn(len(m.Writers))]]
-	vid = machine.Volumes[rand.Intn(len(machine.Volumes))].Id
-	return vid, machine.Server
+	vid := machine.Volumes[rand.Intn(len(machine.Volumes))].Id
+	return NewFileId(vid,m.NextFileId(),rand.Uint32()).String(), machine.Server
 }
 func (m *Mapper) NextFileId() uint64 {
     if m.fileIdCounter <= 0 {
@@ -99,10 +99,10 @@ func (m *Mapper) NextFileId() uint64 {
 	m.fileIdCounter--
 	return m.FileIdSequence - m.fileIdCounter
 }
-func (m *Mapper) Get(vid uint64) *Machine {
+func (m *Mapper) Get(vid uint32) *Machine {
 	return m.Machines[m.vid2machineId[vid]]
 }
-func (m *Mapper) Add(machine Machine) []uint64 {
+func (m *Mapper) Add(machine Machine) []uint32 {
 	log.Println("Adding existing", machine.Server.Url, len(machine.Volumes), "volumes to dir", len(m.Machines))
 	log.Println("Adding      new ", machine.Server.Url, machine.Capacity-len(machine.Volumes), "volumes to dir", len(m.Machines))
 	//check existing machine, linearly
@@ -121,7 +121,7 @@ func (m *Mapper) Add(machine Machine) []uint64 {
 	}
 
 	//generate new volumes
-	vids := new([]uint64)
+	vids := new([]uint32)
 	for vid, i := m.GlobalVolumeSequence, len(machine.Volumes); i < machine.Capacity; i, vid = i+1, vid+1 {
 		newVolume := storage.VolumeInfo{Id: vid, Size: 0}
 		machine.Volumes = append(machine.Volumes, newVolume)
