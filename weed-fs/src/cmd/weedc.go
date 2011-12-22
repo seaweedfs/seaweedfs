@@ -45,6 +45,10 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 	if dotIndex > 0 {
 		fid = path[commaIndex+1 : dotIndex]
 	}
+	if commaIndex <= 0 {
+        log.Println("unknown file id", path[sepIndex+1 : commaIndex])
+        return
+	}
 	volumeId, _ := strconv.Atoui64(path[sepIndex+1 : commaIndex])
 	n.ParsePath(fid)
 
