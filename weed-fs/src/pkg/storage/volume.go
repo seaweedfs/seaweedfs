@@ -8,27 +8,27 @@ import (
 )
 
 type Volume struct {
-	Id                  uint32
-	dir                 string
-	dataFile, indexFile *os.File
-	nm                  *NeedleMap
+	Id       uint32
+	dir      string
+	dataFile *os.File
+	nm       *NeedleMap
 
 	accessChannel chan int
 }
 
 func NewVolume(dirname string, id uint32) (v *Volume) {
 	var e os.Error
-	v = &Volume{dir:dirname,Id:id, nm:NewNeedleMap()}
+	v = &Volume{dir: dirname, Id: id, nm: NewNeedleMap()}
 	fileName := strconv.Uitoa64(uint64(v.Id))
-	v.dataFile, e = os.OpenFile(path.Join(v.dir,fileName+".dat"), os.O_RDWR|os.O_CREATE, 0644)
+	v.dataFile, e = os.OpenFile(path.Join(v.dir, fileName+".dat"), os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {
 		log.Fatalf("New Volume [ERROR] %s\n", e)
 	}
-	v.indexFile, e = os.OpenFile(path.Join(v.dir,fileName+".idx"), os.O_RDWR|os.O_CREATE, 0644)
-	if e != nil {
-		log.Fatalf("New Volume [ERROR] %s\n", e)
+	indexFile, ie := os.OpenFile(path.Join(v.dir, fileName+".idx"), os.O_RDWR|os.O_CREATE, 0644)
+	if ie != nil {
+		log.Fatalf("New Volume [ERROR] %s\n", ie)
 	}
-	v.nm.load(v.indexFile)
+	v.nm = LoadNeedleMap(indexFile)
 
 	v.accessChannel = make(chan int, 1)
 	v.accessChannel <- 0
@@ -36,16 +36,16 @@ func NewVolume(dirname string, id uint32) (v *Volume) {
 	return
 }
 func (v *Volume) Size() int64 {
-    stat, e:=v.dataFile.Stat()
-    if e!=nil{
-       return stat.Size
-    }
-    return -1
+	stat, e := v.dataFile.Stat()
+	if e == nil {
+		return stat.Size
+	}
+	return -1
 }
 func (v *Volume) Close() {
 	close(v.accessChannel)
+	v.nm.Close()
 	v.dataFile.Close()
-	v.indexFile.Close()
 }
 
 func (v *Volume) write(n *Needle) {

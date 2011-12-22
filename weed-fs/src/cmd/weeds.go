@@ -17,11 +17,15 @@ var (
 	metaFolder = flag.String("mdir", "/tmp", "data directory to store mappings")
 	capacity   = flag.Int("capacity", 100, "maximum number of volumes to hold")
 	mapper     *directory.Mapper
-	
 )
 
-func dirReadHandler(w http.ResponseWriter, r *http.Request) {
-	volumeId, _ := strconv.Atoui64(r.FormValue("volumeId"))
+func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
+	vid := r.FormValue("volumeId")
+	commaSep := strings.Index(vid, ",")
+	if commaSep > 0 {
+		vid = vid[0:commaSep]
+	}
+	volumeId, _ := strconv.Atoui64(vid)
 	machine := mapper.Get(uint32(volumeId))
 	writeJson(w, r, machine.Server)
 }
@@ -29,9 +33,9 @@ func dirWriteHandler(w http.ResponseWriter, r *http.Request) {
 	_, machine := mapper.PickForWrite()
 	writeJson(w, r, machine)
 }
-func dirPickHandler(w http.ResponseWriter, r *http.Request) {
-    fid, machine := mapper.PickForWrite()
-    writeJson(w, r, map[string]string{"fid":fid,"url":machine.Url})
+func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
+	fid, machine := mapper.PickForWrite()
+	writeJson(w, r, map[string]string{"fid": fid, "url": machine.Url})
 }
 func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	s := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")+1] + r.FormValue("port")
@@ -44,9 +48,7 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, r, vids)
 }
 func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain")
-	bytes, _ := json.Marshal(mapper)
-	fmt.Fprint(w, string(bytes))
+	writeJson(w, r, mapper)
 }
 func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
 	w.Header().Set("Content-Type", "application/javascript")
@@ -67,9 +69,9 @@ func main() {
 	flag.Parse()
 	mapper = directory.NewMapper(*metaFolder, "directory", *capacity)
 	defer mapper.Save()
-	http.HandleFunc("/dir/read", dirReadHandler)
+	http.HandleFunc("/dir/assign", dirAssignHandler)
+	http.HandleFunc("/dir/lookup", dirLookupHandler)
 	http.HandleFunc("/dir/write", dirWriteHandler)
-    http.HandleFunc("/dir/pick", dirPickHandler)
 	http.HandleFunc("/dir/join", dirJoinHandler)
 	http.HandleFunc("/dir/status", dirStatusHandler)
 

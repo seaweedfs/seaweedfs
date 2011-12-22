@@ -1,6 +1,7 @@
 package storage
 
 import (
+    "encoding/hex"
 	"io"
 	"io/ioutil"
 	"http"
@@ -27,17 +28,24 @@ func NewNeedle(r *http.Request) (n *Needle) {
 	data, _ := ioutil.ReadAll(part)
 	n.Data = data
 
-	n.ParsePath(r.URL.Path[1:strings.LastIndex(r.URL.Path, ".")])
+    commaSep := strings.LastIndex(r.URL.Path, ",")
+	dotSep := strings.LastIndex(r.URL.Path, ".")
+	fid := r.URL.Path[commaSep+1:]
+	if dotSep > 0 {
+		fid = r.URL.Path[commaSep+1:dotSep]
+	}
+
+	n.ParsePath(fid)
 
 	return
 }
-func (n *Needle) ParsePath(path string) {
-	if len(path) != 16 {
+func (n *Needle) ParsePath(fid string) {
+	length := len(fid)
+	if length <= 8 {
+		log.Println("Invalid fid", fid, "length", length)
 		return
 	}
-    bytes := []byte(path)
-	n.Cookie = BytesToUint32(bytes[12:16])
-    n.Key = BytesToUint64(bytes[4:12])
+	n.Key, n.Cookie = ParseKeyHash(fid)
 }
 func (n *Needle) Append(w io.Writer) {
 	header := make([]byte, 16)
@@ -59,4 +67,15 @@ func (n *Needle) Read(r io.Reader, size uint32) {
 	n.Size = BytesToUint32(bytes[12:16])
 	n.Data = bytes[16 : 16+size]
 	n.Checksum = int32(BytesToUint32(bytes[16+size : 16+size+4]))
+}
+func ParseKeyHash(key_hash_string string)(uint64,uint32) {
+    key_hash_bytes, khe := hex.DecodeString(key_hash_string)
+    key_hash_len := len(key_hash_bytes)
+    if khe != nil || key_hash_len <= 4 {
+        log.Println("Invalid key_hash", key_hash_string, "length:", key_hash_len, "error", khe)
+        return 0, 0
+    }
+    key := BytesToUint64(key_hash_bytes[0 : key_hash_len-4])
+    hash := BytesToUint32(key_hash_bytes[key_hash_len-4 : key_hash_len])
+    return key, hash
 }

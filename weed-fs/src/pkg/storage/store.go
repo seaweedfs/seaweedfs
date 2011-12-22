@@ -42,6 +42,15 @@ func NewStore(port int, publicServer, dirname string, chunkSize, capacity int) (
 	return
 }
 
+func (s *Store) Status()(*[]*VolumeInfo){
+    stats := new([]*VolumeInfo)
+    for k, v := range s.volumes {
+        s := new(VolumeInfo)
+        s.Id, s.Size = uint32(k), v.Size()
+        *stats = append(*stats, s)
+    }
+    return stats
+}
 func (s *Store) Join(mserver string) {
 	stats := new([]*VolumeInfo)
 	for k, v := range s.volumes {
