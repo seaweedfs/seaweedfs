@@ -83,8 +83,8 @@ func (s *Store) Close() {
 		v.Close()
 	}
 }
-func (s *Store) Write(i uint64, n *Needle) {
-	s.volumes[i].write(n)
+func (s *Store) Write(i uint64, n *Needle) (uint32){
+	return s.volumes[i].write(n)
 }
 func (s *Store) Read(i uint64, n *Needle) {
 	s.volumes[i].read(n)

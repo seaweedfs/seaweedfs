@@ -18,12 +18,13 @@ var (
 	chunkCount   = flag.Int("chunks", 5, "data chunks to store files")
 	publicServer = flag.String("pserver", "localhost:8080", "public server to serve data read")
 	metaServer   = flag.String("mserver", "localhost:9333", "metadata server to store mappings")
+	IsDebug      = flag.Bool("debug", false, "enable debug mode")
 
 	store *storage.Store
 )
 
 func statusHandler(w http.ResponseWriter, r *http.Request) {
-    writeJson(w, r, store.Status())
+	writeJson(w, r, store.Status())
 }
 func storeHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -46,12 +47,15 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 		fid = path[commaIndex+1 : dotIndex]
 	}
 	if commaIndex <= 0 {
-        log.Println("unknown file id", path[sepIndex+1 : commaIndex])
-        return
+		log.Println("unknown file id", path[sepIndex+1:commaIndex])
+		return
 	}
 	volumeId, _ := strconv.Atoui64(path[sepIndex+1 : commaIndex])
 	n.ParsePath(fid)
 
+	if *IsDebug {
+		log.Println("volume", volumeId, "reading", n)
+	}
 	store.Read(volumeId, n)
 	if dotIndex > 0 {
 		ext := path[dotIndex:]
@@ -67,8 +71,10 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 	if e != nil {
 		writeJson(w, r, e)
 	} else {
-		store.Write(volumeId, storage.NewNeedle(r))
-		writeJson(w, r, make(map[string]string))
+		ret := store.Write(volumeId, storage.NewNeedle(r))
+		m := make(map[string]uint32)
+		m["size"] = ret
+		writeJson(w, r, m)
 	}
 }
 func DeleteHandler(w http.ResponseWriter, r *http.Request) {
@@ -95,7 +101,7 @@ func main() {
 	store = storage.NewStore(*port, *publicServer, *chunkFolder, 1024*1024*1024, *chunkCount)
 	defer store.Close()
 	http.HandleFunc("/", storeHandler)
-    http.HandleFunc("/status", statusHandler)
+	http.HandleFunc("/status", statusHandler)
 
 	store.Join(*metaServer)
 	log.Println("store joined at", *metaServer)

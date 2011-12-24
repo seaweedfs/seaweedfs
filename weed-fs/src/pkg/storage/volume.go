@@ -48,15 +48,16 @@ func (v *Volume) Close() {
 	v.dataFile.Close()
 }
 
-func (v *Volume) write(n *Needle) {
+func (v *Volume) write(n *Needle) uint32{
 	counter := <-v.accessChannel
 	offset, _ := v.dataFile.Seek(0, 2)
-	n.Append(v.dataFile)
+	ret := n.Append(v.dataFile)
 	nv, ok := v.nm.get(n.Key)
 	if !ok || int64(nv.Offset)*8 < offset {
 		v.nm.put(n.Key, uint32(offset/8), n.Size)
 	}
 	v.accessChannel <- counter + 1
+	return ret
 }
 func (v *Volume) read(n *Needle) {
 	counter := <-v.accessChannel

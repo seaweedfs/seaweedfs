@@ -47,7 +47,7 @@ func (n *Needle) ParsePath(fid string) {
 	}
 	n.Key, n.Cookie = ParseKeyHash(fid)
 }
-func (n *Needle) Append(w io.Writer) {
+func (n *Needle) Append(w io.Writer) (uint32){
 	header := make([]byte, 16)
 	Uint32toBytes(header[0:4], n.Cookie)
 	Uint64toBytes(header[4:12], n.Key)
@@ -58,6 +58,7 @@ func (n *Needle) Append(w io.Writer) {
 	rest := 8 - ((n.Size + 16 + 4) % 8)
 	Uint32toBytes(header[0:4], uint32(n.Checksum))
 	w.Write(header[0 : rest+4])
+	return n.Size
 }
 func (n *Needle) Read(r io.Reader, size uint32) {
 	bytes := make([]byte, size+16+4)
