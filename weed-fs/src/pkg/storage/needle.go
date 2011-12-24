@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"http"
 	"log"
+	"os"
 	"strings"
 )
 
@@ -60,14 +61,29 @@ func (n *Needle) Append(w io.Writer) (uint32){
 	w.Write(header[0 : rest+4])
 	return n.Size
 }
-func (n *Needle) Read(r io.Reader, size uint32) {
+func (n *Needle) Read(r io.Reader, size uint32)(int, os.Error) {
 	bytes := make([]byte, size+16+4)
-	r.Read(bytes)
+	ret, e := r.Read(bytes)
 	n.Cookie = BytesToUint32(bytes[0:4])
 	n.Key = BytesToUint64(bytes[4:12])
 	n.Size = BytesToUint32(bytes[12:16])
 	n.Data = bytes[16 : 16+size]
 	n.Checksum = int32(BytesToUint32(bytes[16+size : 16+size+4]))
+	return ret, e
+}
+func ReadNeedle(r *os.File) (*Needle, uint32) {
+    n := new(Needle)
+    bytes := make([]byte, 16)
+    count, e := r.Read(bytes)
+    if count<=0 || e!=nil {
+        return nil, 0
+    }
+    n.Cookie = BytesToUint32(bytes[0:4])
+    n.Key = BytesToUint64(bytes[4:12])
+    n.Size = BytesToUint32(bytes[12:16])
+    rest := 8 - ((n.Size + 16 + 4) % 8)
+    r.Seek(int64(n.Size+4+rest), 1)
+    return n, 16+n.Size+4+rest
 }
 func ParseKeyHash(key_hash_string string)(uint64,uint32) {
     key_hash_bytes, khe := hex.DecodeString(key_hash_string)

@@ -56,7 +56,15 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 	if *IsDebug {
 		log.Println("volume", volumeId, "reading", n)
 	}
-	store.Read(volumeId, n)
+	cookie := n.Cookie
+	count, e := store.Read(volumeId, n)
+	if *IsDebug {
+		log.Println("read bytes", count, "error", e)
+	}
+	if n.Cookie != cookie {
+		log.Println("request with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
+		return
+	}
 	if dotIndex > 0 {
 		ext := path[dotIndex:]
 		w.Header().Set("Content-Type", mime.TypeByExtension(ext))
@@ -78,7 +86,35 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func DeleteHandler(w http.ResponseWriter, r *http.Request) {
+	n := new(storage.Needle)
+    path := r.URL.Path
+    sepIndex := strings.LastIndex(path, "/")
+    commaIndex := strings.LastIndex(path[sepIndex:], ",")
+    dotIndex := strings.LastIndex(path[sepIndex:], ".")
+    fid := path[commaIndex+1:]
+    if dotIndex > 0 {
+        fid = path[commaIndex+1 : dotIndex]
+    }
+    if commaIndex <= 0 {
+        log.Println("unknown file id", path[sepIndex+1:commaIndex])
+        return
+    }
+    volumeId, _ := strconv.Atoui64(path[sepIndex+1 : commaIndex])
+    n.ParsePath(fid)
 
+    cookie := n.Cookie
+    count, _ := store.Read(volumeId, n)
+
+    if n.Cookie != cookie {
+        log.Println("delete with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
+        return
+    }
+    
+    n.Size = 0
+	store.Write(volumeId, n)
+	m := make(map[string]uint32)
+	m["size"] = uint32(count)
+	writeJson(w, r, m)
 }
 func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
 	w.Header().Set("Content-Type", "application/javascript")

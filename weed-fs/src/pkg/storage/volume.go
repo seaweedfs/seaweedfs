@@ -4,7 +4,12 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"sync"
 	"log"
+)
+
+const (
+    SuperBlockSize = 8
 )
 
 type Volume struct {
@@ -13,25 +18,23 @@ type Volume struct {
 	dataFile *os.File
 	nm       *NeedleMap
 
-	accessChannel chan int
+	accessLock sync.Mutex
 }
 
 func NewVolume(dirname string, id uint32) (v *Volume) {
 	var e os.Error
-	v = &Volume{dir: dirname, Id: id, nm: NewNeedleMap()}
+	v = &Volume{dir: dirname, Id: id}
 	fileName := strconv.Uitoa64(uint64(v.Id))
 	v.dataFile, e = os.OpenFile(path.Join(v.dir, fileName+".dat"), os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {
 		log.Fatalf("New Volume [ERROR] %s\n", e)
 	}
+	v.maybeWriteSuperBlock()
 	indexFile, ie := os.OpenFile(path.Join(v.dir, fileName+".idx"), os.O_RDWR|os.O_CREATE, 0644)
 	if ie != nil {
-		log.Fatalf("New Volume [ERROR] %s\n", ie)
+		log.Fatalf("Write Volume Index [ERROR] %s\n", ie)
 	}
 	v.nm = LoadNeedleMap(indexFile)
-
-	v.accessChannel = make(chan int, 1)
-	v.accessChannel <- 0
 
 	return
 }
@@ -43,28 +46,41 @@ func (v *Volume) Size() int64 {
 	return -1
 }
 func (v *Volume) Close() {
-	close(v.accessChannel)
 	v.nm.Close()
 	v.dataFile.Close()
 }
+func (v *Volume) maybeWriteSuperBlock() {
+	stat, _ := v.dataFile.Stat()
+	if stat.Size == 0 {
+		header := make([]byte, SuperBlockSize)
+		header[0] = 1
+		v.dataFile.Write(header)
+	}
+}
 
-func (v *Volume) write(n *Needle) uint32{
-	counter := <-v.accessChannel
+func (v *Volume) write(n *Needle) uint32 {
+	v.accessLock.Lock()
+	defer v.accessLock.Unlock()
 	offset, _ := v.dataFile.Seek(0, 2)
 	ret := n.Append(v.dataFile)
-	nv, ok := v.nm.get(n.Key)
+	nv, ok := v.nm.Get(n.Key)
 	if !ok || int64(nv.Offset)*8 < offset {
-		v.nm.put(n.Key, uint32(offset/8), n.Size)
+		v.nm.Put(n.Key, uint32(offset/8), n.Size)
 	}
-	v.accessChannel <- counter + 1
 	return ret
 }
-func (v *Volume) read(n *Needle) {
-	counter := <-v.accessChannel
-	nv, ok := v.nm.get(n.Key)
+func (v *Volume) read(n *Needle) (int, os.Error) {
+	v.accessLock.Lock()
+	defer v.accessLock.Unlock()
+	nv, ok := v.nm.Get(n.Key)
 	if ok && nv.Offset > 0 {
 		v.dataFile.Seek(int64(nv.Offset)*8, 0)
-		n.Read(v.dataFile, nv.Size)
+		return n.Read(v.dataFile, nv.Size)
 	}
-	v.accessChannel <- counter + 1
+	return -1, os.EOF
+}
+func (v *Volume) delete(n *Needle) {
+    v.accessLock.Lock()
+    defer v.accessLock.Unlock()
+    v.nm.Delete(n.Key)
 }
