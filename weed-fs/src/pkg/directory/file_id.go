@@ -6,6 +6,7 @@ import (
 	"storage"
 	"strconv"
 	"strings"
+	"util"
 )
 
 type FileId struct {
@@ -30,8 +31,8 @@ func ParseFileId(fid string) *FileId {
 }
 func (n *FileId) String() string {
 	bytes := make([]byte, 12)
-	storage.Uint64toBytes(bytes[0:8], n.Key)
-	storage.Uint32toBytes(bytes[8:12], n.Hashcode)
+	util.Uint64toBytes(bytes[0:8], n.Key)
+	util.Uint32toBytes(bytes[8:12], n.Hashcode)
 	nonzero_index := 0
 	for ; bytes[nonzero_index] == 0; nonzero_index++ {
 	}

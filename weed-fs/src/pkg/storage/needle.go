@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"strings"
+    . "util"
 )
 
 type Needle struct {

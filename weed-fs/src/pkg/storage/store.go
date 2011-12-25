@@ -8,6 +8,7 @@ import (
 	"strings"
 	"strconv"
 	"url"
+	"util"
 )
 
 type Store struct {
@@ -66,7 +67,7 @@ func (s *Store) Join(mserver string) {
 	values.Add("volumes", string(bytes))
 	log.Println("Registering exiting volumes", string(bytes))
 	values.Add("capacity", strconv.Itoa(s.capacity))
-	retString := post("http://"+mserver+"/dir/join", values)
+	retString := util.Post("http://"+mserver+"/dir/join", values)
 	if retString != nil {
 		newVids := new([]int)
 		log.Println("Instructed to create volume", string(retString))

@@ -38,19 +38,8 @@ func storeHandler(w http.ResponseWriter, r *http.Request) {
 }
 func GetHandler(w http.ResponseWriter, r *http.Request) {
 	n := new(storage.Needle)
-	path := r.URL.Path
-	sepIndex := strings.LastIndex(path, "/")
-	commaIndex := strings.LastIndex(path[sepIndex:], ",")
-	dotIndex := strings.LastIndex(path[sepIndex:], ".")
-	fid := path[commaIndex+1:]
-	if dotIndex > 0 {
-		fid = path[commaIndex+1 : dotIndex]
-	}
-	if commaIndex <= 0 {
-		log.Println("unknown file id", path[sepIndex+1:commaIndex])
-		return
-	}
-	volumeId, _ := strconv.Atoui64(path[sepIndex+1 : commaIndex])
+    vid, fid, ext := parseURLPath(r.URL.Path)
+    volumeId, _ := strconv.Atoui64(vid)
 	n.ParsePath(fid)
 
 	if *IsDebug {
@@ -65,17 +54,14 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("request with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
 		return
 	}
-	if dotIndex > 0 {
-		ext := path[dotIndex:]
+	if ext!="" {
 		w.Header().Set("Content-Type", mime.TypeByExtension(ext))
 	}
 	w.Write(n.Data)
 }
 func PostHandler(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
-	commaIndex := strings.LastIndex(path, ",")
-	sepIndex := strings.LastIndex(path[:commaIndex], "/")
-	volumeId, e := strconv.Atoui64(path[sepIndex+1 : commaIndex])
+    vid, _, _ := parseURLPath(r.URL.Path)
+    volumeId, e := strconv.Atoui64(vid)
 	if e != nil {
 		writeJson(w, r, e)
 	} else {
@@ -87,19 +73,8 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 }
 func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	n := new(storage.Needle)
-    path := r.URL.Path
-    sepIndex := strings.LastIndex(path, "/")
-    commaIndex := strings.LastIndex(path[sepIndex:], ",")
-    dotIndex := strings.LastIndex(path[sepIndex:], ".")
-    fid := path[commaIndex+1:]
-    if dotIndex > 0 {
-        fid = path[commaIndex+1 : dotIndex]
-    }
-    if commaIndex <= 0 {
-        log.Println("unknown file id", path[sepIndex+1:commaIndex])
-        return
-    }
-    volumeId, _ := strconv.Atoui64(path[sepIndex+1 : commaIndex])
+    vid, fid, _ := parseURLPath(r.URL.Path)
+    volumeId, _ := strconv.Atoui64(vid)
     n.ParsePath(fid)
 
     cookie := n.Cookie
@@ -129,6 +104,23 @@ func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
 		w.Write([]uint8(")"))
 	}
 	//log.Println("JSON Response", string(bytes))
+}
+func parseURLPath(path string)(vid, fid, ext string){
+    sepIndex := strings.LastIndex(path, "/")
+    commaIndex := strings.LastIndex(path[sepIndex:], ",")
+    dotIndex := strings.LastIndex(path[sepIndex:], ".")
+    vid = path[sepIndex+1 : commaIndex]
+    fid = path[commaIndex+1:]
+    ext = ""
+    if dotIndex > 0 {
+        fid = path[commaIndex+1 : dotIndex]
+        ext = path[dotIndex+1:]
+    }
+    if commaIndex <= 0 {
+        log.Println("unknown file id", path[sepIndex+1:commaIndex])
+        return
+    }
+    return
 }
 
 func main() {

@@ -3,6 +3,7 @@ package storage
 import (
 	"log"
 	"os"
+	. "util"
 )
 
 type NeedleValue struct {
@@ -50,11 +51,8 @@ func LoadNeedleMap(file *os.File) *NeedleMap {
 	}
 	return nm
 }
-func (nm *NeedleMap) PutInMap(key uint64, offset uint32, size uint32) {
-    nm.m[key] = &NeedleValue{Offset: offset, Size: size}
-}
 func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) (int, os.Error) {
-	nm.PutInMap(key,offset,size)
+    nm.m[key] = &NeedleValue{Offset: offset, Size: size}
 	Uint64toBytes(nm.bytes[0:8], key)
 	Uint32toBytes(nm.bytes[8:12], offset)
 	Uint32toBytes(nm.bytes[12:16], size)

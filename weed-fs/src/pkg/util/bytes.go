@@ -1,11 +1,4 @@
-package storage
-
-import (
-    "http"
-    "io/ioutil"
-    "url"
-    "log"
-)
+package util
 
 func BytesToUint64(b []byte)(v uint64){
   length := uint(len(b))
@@ -36,17 +29,3 @@ func Uint32toBytes(b []byte, v uint32){
   }
 }
 
-func post(url string, values url.Values)[]byte{
-    r, err := http.PostForm(url, values)
-    if err != nil {
-        log.Println("post:", err)
-        return nil
-    }
-    defer r.Body.Close()
-    b, err := ioutil.ReadAll(r.Body)
-    if err != nil {
-        log.Println("post:", err)
-        return nil
-    }
-    return b
-}
