@@ -10,15 +10,17 @@ import (
 	"mime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
 	port         = flag.Int("port", 8080, "http listen port")
 	chunkFolder  = flag.String("dir", "/tmp", "data directory to store files")
-	chunkCount   = flag.Int("chunks", 5, "data chunks to store files")
+	volumes   = flag.String("volumes", "0,1-3,4", "comma-separated list of volume ids or range of ids")
 	publicServer = flag.String("pserver", "localhost:8080", "public server to serve data read")
 	metaServer   = flag.String("mserver", "localhost:9333", "metadata server to store mappings")
 	IsDebug      = flag.Bool("debug", false, "enable debug mode")
+	pulse        = flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 
 	store *storage.Store
 )
@@ -38,8 +40,8 @@ func storeHandler(w http.ResponseWriter, r *http.Request) {
 }
 func GetHandler(w http.ResponseWriter, r *http.Request) {
 	n := new(storage.Needle)
-    vid, fid, ext := parseURLPath(r.URL.Path)
-    volumeId, _ := strconv.Atoui64(vid)
+	vid, fid, ext := parseURLPath(r.URL.Path)
+	volumeId, _ := strconv.Atoui64(vid)
 	n.ParsePath(fid)
 
 	if *IsDebug {
@@ -54,14 +56,14 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("request with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
 		return
 	}
-	if ext!="" {
+	if ext != "" {
 		w.Header().Set("Content-Type", mime.TypeByExtension(ext))
 	}
 	w.Write(n.Data)
 }
 func PostHandler(w http.ResponseWriter, r *http.Request) {
-    vid, _, _ := parseURLPath(r.URL.Path)
-    volumeId, e := strconv.Atoui64(vid)
+	vid, _, _ := parseURLPath(r.URL.Path)
+	volumeId, e := strconv.Atoui64(vid)
 	if e != nil {
 		writeJson(w, r, e)
 	} else {
@@ -73,19 +75,19 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 }
 func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	n := new(storage.Needle)
-    vid, fid, _ := parseURLPath(r.URL.Path)
-    volumeId, _ := strconv.Atoui64(vid)
-    n.ParsePath(fid)
+	vid, fid, _ := parseURLPath(r.URL.Path)
+	volumeId, _ := strconv.Atoui64(vid)
+	n.ParsePath(fid)
 
-    cookie := n.Cookie
-    count, _ := store.Read(volumeId, n)
+	cookie := n.Cookie
+	count, _ := store.Read(volumeId, n)
 
-    if n.Cookie != cookie {
-        log.Println("delete with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
-        return
-    }
-    
-    n.Size = 0
+	if n.Cookie != cookie {
+		log.Println("delete with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
+		return
+	}
+
+	n.Size = 0
 	store.Write(volumeId, n)
 	m := make(map[string]uint32)
 	m["size"] = uint32(count)
@@ -105,33 +107,38 @@ func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
 	}
 	//log.Println("JSON Response", string(bytes))
 }
-func parseURLPath(path string)(vid, fid, ext string){
-    sepIndex := strings.LastIndex(path, "/")
-    commaIndex := strings.LastIndex(path[sepIndex:], ",")
-    dotIndex := strings.LastIndex(path[sepIndex:], ".")
-    vid = path[sepIndex+1 : commaIndex]
-    fid = path[commaIndex+1:]
-    ext = ""
-    if dotIndex > 0 {
-        fid = path[commaIndex+1 : dotIndex]
-        ext = path[dotIndex+1:]
-    }
-    if commaIndex <= 0 {
-        log.Println("unknown file id", path[sepIndex+1:commaIndex])
-        return
-    }
-    return
+func parseURLPath(path string) (vid, fid, ext string) {
+	sepIndex := strings.LastIndex(path, "/")
+	commaIndex := strings.LastIndex(path[sepIndex:], ",")
+	dotIndex := strings.LastIndex(path[sepIndex:], ".")
+	vid = path[sepIndex+1 : commaIndex]
+	fid = path[commaIndex+1:]
+	ext = ""
+	if dotIndex > 0 {
+		fid = path[commaIndex+1 : dotIndex]
+		ext = path[dotIndex+1:]
+	}
+	if commaIndex <= 0 {
+		log.Println("unknown file id", path[sepIndex+1:commaIndex])
+		return
+	}
+	return
 }
 
 func main() {
 	flag.Parse()
 	//TODO: now default to 1G, this value should come from server?
-	store = storage.NewStore(*port, *publicServer, *chunkFolder, 1024*1024*1024, *chunkCount)
+	store = storage.NewStore(*port, *publicServer, *chunkFolder, *volumes)
 	defer store.Close()
 	http.HandleFunc("/", storeHandler)
 	http.HandleFunc("/status", statusHandler)
 
-	store.Join(*metaServer)
+	go func() {
+		for {
+			store.Join(*metaServer)
+			time.Sleep(int64(*pulse) * 1e9)
+		}
+	}()
 	log.Println("store joined at", *metaServer)
 
 	log.Println("Start storage service at http://127.0.0.1:" + strconv.Itoa(*port))

@@ -17,6 +17,7 @@ var (
 	metaFolder = flag.String("mdir", "/tmp", "data directory to store mappings")
 	capacity   = flag.Int("capacity", 100, "maximum number of volumes to hold")
 	mapper     *directory.Mapper
+    IsDebug   = flag.Bool("debug", false, "verbose debug information")
 )
 
 func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
@@ -42,10 +43,8 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	publicServer := r.FormValue("publicServer")
 	volumes := new([]storage.VolumeInfo)
 	json.Unmarshal([]byte(r.FormValue("volumes")), volumes)
-	capacity, _ := strconv.Atoi(r.FormValue("capacity"))
-	log.Println("Recieved joining request from remote address", s, "capacity=", capacity, "volumes", r.FormValue("volumes"))
-	vids := mapper.Add(*directory.NewMachine(s, publicServer, *volumes, capacity))
-	writeJson(w, r, vids)
+	log.Println("Recieved updates from", s, "volumes", r.FormValue("volumes"))
+	mapper.Add(*directory.NewMachine(s, publicServer, *volumes))
 }
 func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, r, mapper)
@@ -67,8 +66,7 @@ func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
 
 func main() {
 	flag.Parse()
-	mapper = directory.NewMapper(*metaFolder, "directory", *capacity)
-	defer mapper.Save()
+	mapper = directory.NewMapper(*metaFolder, "directory")
 	http.HandleFunc("/dir/assign", dirAssignHandler)
 	http.HandleFunc("/dir/lookup", dirLookupHandler)
 	http.HandleFunc("/dir/write", dirWriteHandler)
