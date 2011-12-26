@@ -91,6 +91,8 @@ func (m *Mapper) Add(machine Machine){
 	if machineId < 0 {
 		machineId = len(m.Machines)
 		m.Machines = append(m.Machines, &machine)
+	}else{
+	    m.Machines[machineId] = &machine
 	}
 	m.lock.Unlock()
 
@@ -98,20 +100,17 @@ func (m *Mapper) Add(machine Machine){
 	for _, v := range machine.Volumes {
 		//log.Println("Setting volume", v.Id, "to", machine.Server.Url)
 		m.vid2machineId[v.Id] = machineId
-		if v.Size < ChunkSizeLimit {
-			m.Writers = append(m.Writers, machineId)
-		}
 	}
 	//setting Writers, copy-on-write because of possible updating
-	var Writers []int
+	var writers []int
 	for machine_index, machine_entry := range m.Machines {
 		for _, v := range machine_entry.Volumes {
 			if v.Size < ChunkSizeLimit {
-				Writers = append(Writers, machine_index)
+				writers = append(writers, machine_index)
 			}
 		}
 	}
-	m.Writers = Writers
+	m.Writers = writers
 }
 func (m *Mapper) saveSequence() {
 	log.Println("Saving file id sequence", m.FileIdSequence, "to", path.Join(m.dir, m.fileName+".seq"))
