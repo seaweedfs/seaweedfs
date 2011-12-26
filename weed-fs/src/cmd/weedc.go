@@ -17,8 +17,8 @@ var (
 	port         = flag.Int("port", 8080, "http listen port")
 	chunkFolder  = flag.String("dir", "/tmp", "data directory to store files")
 	volumes   = flag.String("volumes", "0,1-3,4", "comma-separated list of volume ids or range of ids")
-	publicServer = flag.String("pserver", "localhost:8080", "public server to serve data read")
-	metaServer   = flag.String("mserver", "localhost:9333", "metadata server to store mappings")
+	publicUrl = flag.String("publicUrl", "localhost:8080", "public url to serve data read")
+	metaServer   = flag.String("mserver", "localhost:9333", "master directory server to store mappings")
 	IsDebug      = flag.Bool("debug", false, "enable debug mode")
 	pulse        = flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 
@@ -128,7 +128,7 @@ func parseURLPath(path string) (vid, fid, ext string) {
 func main() {
 	flag.Parse()
 	//TODO: now default to 1G, this value should come from server?
-	store = storage.NewStore(*port, *publicServer, *chunkFolder, *volumes)
+	store = storage.NewStore(*port, *publicUrl, *chunkFolder, *volumes)
 	defer store.Close()
 	http.HandleFunc("/", storeHandler)
 	http.HandleFunc("/status", statusHandler)

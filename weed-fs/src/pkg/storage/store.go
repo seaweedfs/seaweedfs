@@ -14,15 +14,15 @@ type Store struct {
 	volumes      map[uint64]*Volume
 	dir          string
 	Port         int
-	PublicServer string
+	PublicUrl string
 }
 type VolumeInfo struct {
 	Id   uint32
 	Size int64
 }
 
-func NewStore(port int, publicServer, dirname string, volumeListString string) (s *Store) {
-	s = &Store{Port: port, PublicServer: publicServer, dir: dirname}
+func NewStore(port int, publicUrl, dirname string, volumeListString string) (s *Store) {
+	s = &Store{Port: port, PublicUrl: publicUrl, dir: dirname}
 	s.volumes = make(map[uint64]*Volume)
 		
 	for _, range_string := range strings.Split(volumeListString, ",") {
@@ -74,7 +74,7 @@ func (s *Store) Join(mserver string) {
 	bytes, _ := json.Marshal(stats)
 	values := make(url.Values)
 	values.Add("port", strconv.Itoa(s.Port))
-	values.Add("publicServer", s.PublicServer)
+	values.Add("publicUrl", s.PublicUrl)
 	values.Add("volumes", string(bytes))
 	log.Println("Exiting volumes", string(bytes))
 	util.Post("http://"+mserver+"/dir/join", values)

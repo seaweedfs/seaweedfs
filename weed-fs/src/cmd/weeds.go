@@ -40,11 +40,11 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 }
 func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	s := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")+1] + r.FormValue("port")
-	publicServer := r.FormValue("publicServer")
+	publicUrl := r.FormValue("publicUrl")
 	volumes := new([]storage.VolumeInfo)
 	json.Unmarshal([]byte(r.FormValue("volumes")), volumes)
 	log.Println("Recieved updates from", s, "volumes", r.FormValue("volumes"))
-	mapper.Add(*directory.NewMachine(s, publicServer, *volumes))
+	mapper.Add(*directory.NewMachine(s, publicUrl, *volumes))
 }
 func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, r, mapper)

@@ -37,8 +37,8 @@ type Mapper struct {
 	fileIdCounter  uint64
 }
 
-func NewMachine(server, publicServer string, volumes []storage.VolumeInfo) *Machine {
-	return &Machine{Server: MachineInfo{Url: server, PublicUrl: publicServer}, Volumes: volumes}
+func NewMachine(server, publicUrl string, volumes []storage.VolumeInfo) *Machine {
+	return &Machine{Server: MachineInfo{Url: server, PublicUrl: publicUrl}, Volumes: volumes}
 }
 
 func NewMapper(dirname string, filename string) (m *Mapper) {
