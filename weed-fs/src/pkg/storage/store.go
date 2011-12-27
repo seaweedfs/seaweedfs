@@ -51,7 +51,7 @@ func NewStore(port int, publicUrl, dirname string, volumeListString string) (s *
 			}
 		}
 	}
-	log.Println("Store started on dir:", dirname, "with", len(s.volumes), "existing volumes")
+	log.Println("Store started on dir:", dirname, "with", len(s.volumes), "volumes")
 	return
 }
 
@@ -76,7 +76,6 @@ func (s *Store) Join(mserver string) {
 	values.Add("port", strconv.Itoa(s.Port))
 	values.Add("publicUrl", s.PublicUrl)
 	values.Add("volumes", string(bytes))
-	log.Println("Exiting volumes", string(bytes))
 	util.Post("http://"+mserver+"/dir/join", values)
 }
 func (s *Store) Close() {
