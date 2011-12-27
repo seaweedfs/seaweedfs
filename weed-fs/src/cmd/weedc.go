@@ -8,6 +8,7 @@ import (
 	"json"
 	"log"
 	"mime"
+	"rand"
 	"strconv"
 	"strings"
 	"time"
@@ -136,7 +137,8 @@ func main() {
 	go func() {
 		for {
 			store.Join(*metaServer)
-			time.Sleep(int64(*pulse) * 1e9)
+			ns := int64(*pulse) * 1e9
+			time.Sleep(ns + rand.Int63()%ns)
 		}
 	}()
 	log.Println("store joined at", *metaServer)

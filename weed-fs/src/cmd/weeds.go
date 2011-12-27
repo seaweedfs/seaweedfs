@@ -43,7 +43,7 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	publicUrl := r.FormValue("publicUrl")
 	volumes := new([]storage.VolumeInfo)
 	json.Unmarshal([]byte(r.FormValue("volumes")), volumes)
-	log.Println("Recieved updates from", s, "volumes", r.FormValue("volumes"))
+	log.Println(s, "volumes", r.FormValue("volumes"))
 	mapper.Add(*directory.NewMachine(s, publicUrl, *volumes))
 }
 func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
