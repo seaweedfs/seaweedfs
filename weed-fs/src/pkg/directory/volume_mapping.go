@@ -69,6 +69,7 @@ func (m *Mapper) PickForWrite() (string, MachineInfo) {
 func (m *Mapper) NextFileId() uint64 {
 	if m.fileIdCounter <= 0 {
 		m.fileIdCounter = FileIdSaveInterval
+		m.FileIdSequence += FileIdSaveInterval
 		m.saveSequence()
 	}
 	m.fileIdCounter--

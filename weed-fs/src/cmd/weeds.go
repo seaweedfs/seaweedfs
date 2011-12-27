@@ -17,7 +17,7 @@ var (
 	metaFolder = flag.String("mdir", "/tmp", "data directory to store mappings")
 	capacity   = flag.Int("capacity", 100, "maximum number of volumes to hold")
 	mapper     *directory.Mapper
-    IsDebug   = flag.Bool("debug", false, "verbose debug information")
+	IsDebug    = flag.Bool("debug", false, "verbose debug information")
 )
 
 func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
@@ -43,7 +43,9 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	publicUrl := r.FormValue("publicUrl")
 	volumes := new([]storage.VolumeInfo)
 	json.Unmarshal([]byte(r.FormValue("volumes")), volumes)
-	log.Println(s, "volumes", r.FormValue("volumes"))
+	if *IsDebug {
+		log.Println(s, "volumes", r.FormValue("volumes"))
+	}
 	mapper.Add(*directory.NewMachine(s, publicUrl, *volumes))
 }
 func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
