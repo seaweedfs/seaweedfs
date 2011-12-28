@@ -111,6 +111,10 @@ func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
 func parseURLPath(path string) (vid, fid, ext string) {
 	sepIndex := strings.LastIndex(path, "/")
 	commaIndex := strings.LastIndex(path[sepIndex:], ",")
+    if commaIndex <= 0 {
+        log.Println("unknown file id", path[sepIndex+1:])
+        return
+    }
 	dotIndex := strings.LastIndex(path[sepIndex:], ".")
 	vid = path[sepIndex+1 : commaIndex]
 	fid = path[commaIndex+1:]
@@ -118,10 +122,6 @@ func parseURLPath(path string) (vid, fid, ext string) {
 	if dotIndex > 0 {
 		fid = path[commaIndex+1 : dotIndex]
 		ext = path[dotIndex+1:]
-	}
-	if commaIndex <= 0 {
-		log.Println("unknown file id", path[sepIndex+1:commaIndex])
-		return
 	}
 	return
 }
