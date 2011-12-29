@@ -12,7 +12,6 @@ import (
 )
 
 const (
-	ChunkSizeLimit     = 32 * 1024 * 1024 //32G, can not be more than max(uint32)*8
 	FileIdSaveInterval = 10000
 )
 
@@ -36,15 +35,18 @@ type Mapper struct {
 
 	FileIdSequence uint64
 	fileIdCounter  uint64
+	
+	volumeSizeLimit uint32
 }
 
 func NewMachine(server, publicUrl string, volumes []storage.VolumeInfo) *Machine {
 	return &Machine{Server: MachineInfo{Url: server, PublicUrl: publicUrl}, Volumes: volumes}
 }
 
-func NewMapper(dirname string, filename string) (m *Mapper) {
+func NewMapper(dirname string, filename string, volumeSizeLimit uint32) (m *Mapper) {
 	m = &Mapper{dir: dirname, fileName: filename}
 	m.vid2machineId = make(map[uint32]int)
+	m.volumeSizeLimit = volumeSizeLimit
 	m.Writers = *new([]int)
 	m.Machines = *new([]*Machine)
 
@@ -116,7 +118,7 @@ func (m *Mapper) Add(machine Machine){
 	var writers []int
 	for machine_index, machine_entry := range m.Machines {
 		for _, v := range machine_entry.Volumes {
-			if v.Size < ChunkSizeLimit {
+			if v.Size < int64(m.volumeSizeLimit) {
 				writers = append(writers, machine_index)
 			}
 		}

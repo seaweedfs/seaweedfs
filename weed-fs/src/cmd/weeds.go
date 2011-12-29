@@ -18,6 +18,7 @@ var (
 	capacity   = flag.Int("capacity", 100, "maximum number of volumes to hold")
 	mapper     *directory.Mapper
 	IsDebug    = flag.Bool("debug", false, "verbose debug information")
+	volumeSizeLimitMB = flag.Uint("volumeSizeLimitMB", 32*1024, "Default Volume Size in MegaBytes")
 )
 
 func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
@@ -69,12 +70,11 @@ func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
 		fmt.Fprint(w, string(bytes))
 		w.Write([]uint8(")"))
 	}
-	//log.Println("JSON Response", string(bytes))
 }
 
 func main() {
 	flag.Parse()
-	mapper = directory.NewMapper(*metaFolder, "directory")
+	mapper = directory.NewMapper(*metaFolder, "directory", uint32(*volumeSizeLimitMB*1024*1024))
 	http.HandleFunc("/dir/assign", dirAssignHandler)
 	http.HandleFunc("/dir/lookup", dirLookupHandler)
 	http.HandleFunc("/dir/join", dirJoinHandler)
