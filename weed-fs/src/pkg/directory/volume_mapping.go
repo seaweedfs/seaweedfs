@@ -7,11 +7,12 @@ import (
 	"rand"
 	"log"
 	"storage"
+	"strconv"
 	"sync"
 )
 
 const (
-	ChunkSizeLimit     = 1 * 1000 * 1000 * 1000 //1G, can not be more than max(uint32)*8
+	ChunkSizeLimit     = 32 * 1024 * 1024 //32G, can not be more than max(uint32)*8
 	FileIdSaveInterval = 10000
 )
 
@@ -61,10 +62,15 @@ func NewMapper(dirname string, filename string) (m *Mapper) {
 	}
 	return
 }
-func (m *Mapper) PickForWrite() (string, MachineInfo) {
-	machine := m.Machines[m.Writers[rand.Intn(len(m.Writers))]]
+func (m *Mapper) PickForWrite() (string, MachineInfo, os.Error) {
+    len_writers := len(m.Writers)
+    if len_writers<=0 {
+        log.Println("No more writable volumes!")
+        return "",m.Machines[rand.Intn(len(m.Machines))].Server, os.NewError("No more writable volumes!")
+    }
+	machine := m.Machines[m.Writers[rand.Intn(len_writers)]]
 	vid := machine.Volumes[rand.Intn(len(machine.Volumes))].Id
-	return NewFileId(vid, m.NextFileId(), rand.Uint32()).String(), machine.Server
+	return NewFileId(vid, m.NextFileId(), rand.Uint32()).String(), machine.Server,nil
 }
 func (m *Mapper) NextFileId() uint64 {
 	if m.fileIdCounter <= 0 {
@@ -75,8 +81,12 @@ func (m *Mapper) NextFileId() uint64 {
 	m.fileIdCounter--
 	return m.FileIdSequence - m.fileIdCounter
 }
-func (m *Mapper) Get(vid uint32) *Machine {
-	return m.Machines[m.vid2machineId[vid]]
+func (m *Mapper) Get(vid uint32) (*Machine, os.Error) {
+    machineId := m.vid2machineId[vid]
+    if machineId <=0{
+        return nil, os.NewError("invalid volume id " + strconv.Uitob64(uint64(vid),10))
+    }
+	return m.Machines[machineId-1],nil
 }
 func (m *Mapper) Add(machine Machine){
 	//check existing machine, linearly
@@ -100,7 +110,7 @@ func (m *Mapper) Add(machine Machine){
 	//add to vid2machineId map, and Writers array
 	for _, v := range machine.Volumes {
 		//log.Println("Setting volume", v.Id, "to", machine.Server.Url)
-		m.vid2machineId[v.Id] = machineId
+		m.vid2machineId[v.Id] = machineId+1 //use base 1 indexed, to detect not found cases
 	}
 	//setting Writers, copy-on-write because of possible updating
 	var writers []int

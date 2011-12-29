@@ -29,6 +29,10 @@ var (
 func statusHandler(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, r, store.Status())
 }
+func addVolumeHandler(w http.ResponseWriter, r *http.Request) {
+    store.AddVolume(r.FormValue("volume"))
+    writeJson(w, r, store.Status())
+}
 func storeHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
@@ -133,6 +137,7 @@ func main() {
 	defer store.Close()
 	http.HandleFunc("/", storeHandler)
 	http.HandleFunc("/status", statusHandler)
+    http.HandleFunc("/add_volume", addVolumeHandler)
 
 	go func() {
 		for {

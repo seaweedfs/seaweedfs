@@ -24,37 +24,45 @@ type VolumeInfo struct {
 func NewStore(port int, publicUrl, dirname string, volumeListString string) (s *Store) {
 	s = &Store{Port: port, PublicUrl: publicUrl, dir: dirname}
 	s.volumes = make(map[uint64]*Volume)
+	
+	s.AddVolume(volumeListString)
 		
-	for _, range_string := range strings.Split(volumeListString, ",") {
-		if strings.Index(range_string, "-") < 0 {
-		    id_string := range_string
-            id, err := strconv.Atoui64(id_string)
-            if err != nil {
-                log.Println("Volume Id", id_string, "is not a valid unsigned integer! Skipping it...")
-                continue
-            }
-            s.volumes[id] = NewVolume(s.dir, uint32(id))
-		} else {
-			pair := strings.Split(range_string, "-")
-			start, start_err := strconv.Atoui64(pair[0])
-			if start_err != nil {
-				log.Println("Volume Id", pair[0], "is not a valid unsigned integer! Skipping it...")
-				continue
-			}
-            end, end_err := strconv.Atoui64(pair[1])
-            if end_err != nil {
-                log.Println("Volume Id", pair[1], "is not a valid unsigned integer! Skipping it...")
-                continue
-            }
-            for id := start; id<=end; id++ {
-				s.volumes[id] = NewVolume(s.dir, uint32(id))
-			}
-		}
-	}
 	log.Println("Store started on dir:", dirname, "with", len(s.volumes), "volumes")
 	return
 }
-
+func (s *Store) AddVolume(volumeListString string) os.Error{
+    for _, range_string := range strings.Split(volumeListString, ",") {
+        if strings.Index(range_string, "-") < 0 {
+            id_string := range_string
+            id, err := strconv.Atoui64(id_string)
+            if err != nil {
+                return os.NewError("Volume Id " + id_string+ " is not a valid unsigned integer!")
+            }
+            s.addVolume(id)
+        } else {
+            pair := strings.Split(range_string, "-")
+            start, start_err := strconv.Atoui64(pair[0])
+            if start_err != nil {
+                return os.NewError("Volume Start Id" + pair[0] + " is not a valid unsigned integer!")
+            }
+            end, end_err := strconv.Atoui64(pair[1])
+            if end_err != nil {
+                return os.NewError("Volume End Id" + pair[1] + " is not a valid unsigned integer!")
+            }
+            for id := start; id<=end; id++ {
+                s.addVolume(id)
+            }
+        }
+    }
+    return nil
+}
+func (s *Store) addVolume(vid uint64) os.Error{
+    if s.volumes[vid]!=nil {
+        return os.NewError("Volume Id "+strconv.Uitoa64(vid)+" already exists!")
+    }
+    s.volumes[vid] = NewVolume(s.dir, uint32(vid))
+    return nil
+}
 func (s *Store) Status() *[]*VolumeInfo {
 	stats := new([]*VolumeInfo)
 	for k, v := range s.volumes {

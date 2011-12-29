@@ -27,16 +27,22 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 		vid = vid[0:commaSep]
 	}
 	volumeId, _ := strconv.Atoui64(vid)
-	machine := mapper.Get(uint32(volumeId))
-	writeJson(w, r, machine.Server)
-}
-func dirWriteHandler(w http.ResponseWriter, r *http.Request) {
-	_, machine := mapper.PickForWrite()
-	writeJson(w, r, machine)
+	machine, e := mapper.Get(uint32(volumeId))
+	if e == nil {
+		writeJson(w, r, machine.Server)
+	} else {
+		log.Println("Invalid volume id", volumeId)
+		writeJson(w, r, map[string]string{"error": "volume id " + strconv.Uitoa64(volumeId) + " not found"})
+	}
 }
 func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
-	fid, machine := mapper.PickForWrite()
-	writeJson(w, r, map[string]string{"fid": fid, "url": machine.Url})
+	fid, machine, err := mapper.PickForWrite()
+	if err == nil {
+		writeJson(w, r, map[string]string{"fid": fid, "url": machine.Url})
+	} else {
+		log.Println(err)
+		writeJson(w, r, map[string]string{"error": err.String()})
+	}
 }
 func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	s := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")+1] + r.FormValue("port")
@@ -71,7 +77,6 @@ func main() {
 	mapper = directory.NewMapper(*metaFolder, "directory")
 	http.HandleFunc("/dir/assign", dirAssignHandler)
 	http.HandleFunc("/dir/lookup", dirLookupHandler)
-	http.HandleFunc("/dir/write", dirWriteHandler)
 	http.HandleFunc("/dir/join", dirJoinHandler)
 	http.HandleFunc("/dir/status", dirStatusHandler)
 
