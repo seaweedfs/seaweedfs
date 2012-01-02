@@ -11,7 +11,7 @@ import (
 
 var (
 	dir      = flag.String("dir", "/tmp", "data directory to store files")
-	volumeId = flag.Int("volumeId", -1, "volume id")
+	volumeId = flag.Int("volumeId", -1, "a non-negative volume id. The volume should already exist in the dir. The volume index file should not exist.")
 	IsDebug  = flag.Bool("debug", false, "enable debug mode")
 
 	store *storage.Store
