@@ -16,13 +16,14 @@ GBROOT=../../..
 # gb: compile/link against local install
 GCIMPORTS+= -I $(GBROOT)/_obj
 LDIMPORTS+= -L $(GBROOT)/_obj
+
 # gb: compile/link against GOPATH entries
 GOPATHSEP=:
 ifeq ($(GOHOSTOS),windows)
 GOPATHSEP=;
 endif
-GCIMPORTS=-I $(subst $(GOPATHSEP),/pkg/$(GOOS)_$(GOARCH) -I , $(GOPATH))/pkg/$(GOOS)_$(GOARCH)
-LDIMPORTS=-L $(subst $(GOPATHSEP),/pkg/$(GOOS)_$(GOARCH) -L , $(GOPATH))/pkg/$(GOOS)_$(GOARCH)
+GCIMPORTS+=-I $(subst $(GOPATHSEP),/pkg/$(GOOS)_$(GOARCH) -I , $(GOPATH))/pkg/$(GOOS)_$(GOARCH)
+LDIMPORTS+=-L $(subst $(GOPATHSEP),/pkg/$(GOOS)_$(GOARCH) -L , $(GOPATH))/pkg/$(GOOS)_$(GOARCH)
 
 # gb: copy to local install
 $(GBROOT)/_obj/$(TARG).a: _obj/$(TARG).a

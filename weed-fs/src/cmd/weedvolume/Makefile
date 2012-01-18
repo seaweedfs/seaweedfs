@@ -3,10 +3,9 @@
 
 include $(GOROOT)/src/Make.inc
 
-TARG=util
+TARG=weedvolume
 GOFILES=\
-	bytes.go\
-	post.go\
+	weedvolume.go\
 
 # gb: this is the local install
 GBROOT=../../..
@@ -23,10 +22,16 @@ endif
 GCIMPORTS+=-I $(subst $(GOPATHSEP),/pkg/$(GOOS)_$(GOARCH) -I , $(GOPATH))/pkg/$(GOOS)_$(GOARCH)
 LDIMPORTS+=-L $(subst $(GOPATHSEP),/pkg/$(GOOS)_$(GOARCH) -L , $(GOPATH))/pkg/$(GOOS)_$(GOARCH)
 
+# gb: default target is in GBROOT this way
+command:
+
+include $(GOROOT)/src/Make.cmd
+
 # gb: copy to local install
-$(GBROOT)/_obj/$(TARG).a: _obj/$(TARG).a
+$(GBROOT)/bin/$(TARG): $(TARG)
 	mkdir -p $(dir $@); cp -f $< $@
+command: $(GBROOT)/bin/$(TARG)
 
-package: $(GBROOT)/_obj/$(TARG).a
+# gb: local dependencies
+$(TARG): $(GBROOT)/_obj/storage.a
 
-include $(GOROOT)/src/Make.pkg

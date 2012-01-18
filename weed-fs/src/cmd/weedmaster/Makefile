@@ -19,8 +19,8 @@ GOPATHSEP=:
 ifeq ($(GOHOSTOS),windows)
 GOPATHSEP=;
 endif
-GCIMPORTS=-I $(subst $(GOPATHSEP),/pkg/$(GOOS)_$(GOARCH) -I , $(GOPATH))/pkg/$(GOOS)_$(GOARCH)
-LDIMPORTS=-L $(subst $(GOPATHSEP),/pkg/$(GOOS)_$(GOARCH) -L , $(GOPATH))/pkg/$(GOOS)_$(GOARCH)
+GCIMPORTS+=-I $(subst $(GOPATHSEP),/pkg/$(GOOS)_$(GOARCH) -I , $(GOPATH))/pkg/$(GOOS)_$(GOARCH)
+LDIMPORTS+=-L $(subst $(GOPATHSEP),/pkg/$(GOOS)_$(GOARCH) -L , $(GOPATH))/pkg/$(GOOS)_$(GOARCH)
 
 # gb: default target is in GBROOT this way
 command:
@@ -34,6 +34,6 @@ command: $(GBROOT)/bin/$(TARG)
 
 # gb: local dependencies
 $(TARG): $(GBROOT)/_obj/storage.a
-<<<<<<< local
+
 $(TARG): $(GBROOT)/_obj/directory.a
-<<<<<<< local
+
