@@ -74,7 +74,8 @@ func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
 
 func main() {
 	flag.Parse()
-	mapper = directory.NewMapper(*metaFolder, "directory", uint32(*volumeSizeLimitMB*1024*1024))
+    log.Println("Volume Size Limit is", *volumeSizeLimitMB, "MB")
+	mapper = directory.NewMapper(*metaFolder, "directory", uint64(*volumeSizeLimitMB)*1024*1024)
 	http.HandleFunc("/dir/assign", dirAssignHandler)
 	http.HandleFunc("/dir/lookup", dirLookupHandler)
 	http.HandleFunc("/dir/join", dirJoinHandler)

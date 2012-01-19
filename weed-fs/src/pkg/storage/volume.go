@@ -9,7 +9,7 @@ import (
 )
 
 const (
-    SuperBlockSize = 8
+	SuperBlockSize = 8
 )
 
 type Volume struct {
@@ -69,6 +69,19 @@ func (v *Volume) write(n *Needle) uint32 {
 	}
 	return ret
 }
+func (v *Volume) delete(n *Needle) uint32 {
+	v.accessLock.Lock()
+	defer v.accessLock.Unlock()
+	nv, ok := v.nm.Get(n.Key)
+	//log.Println("key", n.Key, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
+	if ok {
+		v.nm.Delete(n.Key)
+		v.dataFile.Seek(int64(nv.Offset*8), 0)
+		n.Append(v.dataFile)
+		return nv.Size
+	}
+	return 0
+}
 func (v *Volume) read(n *Needle) (int, os.Error) {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
@@ -78,9 +91,4 @@ func (v *Volume) read(n *Needle) (int, os.Error) {
 		return n.Read(v.dataFile, nv.Size)
 	}
 	return -1, os.EOF
-}
-func (v *Volume) delete(n *Needle) {
-    v.accessLock.Lock()
-    defer v.accessLock.Unlock()
-    v.nm.Delete(n.Key)
 }

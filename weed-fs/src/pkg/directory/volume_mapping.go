@@ -36,14 +36,14 @@ type Mapper struct {
 	FileIdSequence uint64
 	fileIdCounter  uint64
 
-	volumeSizeLimit uint32
+	volumeSizeLimit uint64
 }
 
 func NewMachine(server, publicUrl string, volumes []storage.VolumeInfo) *Machine {
 	return &Machine{Server: MachineInfo{Url: server, PublicUrl: publicUrl}, Volumes: volumes}
 }
 
-func NewMapper(dirname string, filename string, volumeSizeLimit uint32) (m *Mapper) {
+func NewMapper(dirname string, filename string, volumeSizeLimit uint64) (m *Mapper) {
 	m = &Mapper{dir: dirname, fileName: filename}
 	m.vid2machineId = make(map[uint32]int)
 	m.volumeSizeLimit = volumeSizeLimit
@@ -96,6 +96,7 @@ func (m *Mapper) Get(vid uint32) (*Machine, os.Error) {
 }
 func (m *Mapper) Add(machine Machine) {
 	//check existing machine, linearly
+    log.Println("Adding machine", machine.Server.Url)
 	m.lock.Lock()
 	foundExistingMachineId := -1
 	for index, entry := range m.Machines {
@@ -115,14 +116,13 @@ func (m *Mapper) Add(machine Machine) {
 
 	//add to vid2machineId map, and Writers array
 	for _, v := range machine.Volumes {
-		//log.Println("Setting volume", v.Id, "to", machine.Server.Url)
 		m.vid2machineId[v.Id] = machineId + 1 //use base 1 indexed, to detect not found cases
 	}
-	//setting Writers, copy-on-write because of possible updating
+	//setting Writers, copy-on-write because of possible updating, this needs some future work!
 	var writers []uint32
 	for _, machine_entry := range m.Machines {
 		for _, v := range machine_entry.Volumes {
-			if v.Size < int64(m.volumeSizeLimit) {
+			if uint64(v.Size) < m.volumeSizeLimit {
 				writers = append(writers, v.Id)
 			}
 		}

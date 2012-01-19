@@ -92,7 +92,10 @@ func (s *Store) Close() {
 	}
 }
 func (s *Store) Write(i uint64, n *Needle) uint32 {
-	return s.volumes[i].write(n)
+    return s.volumes[i].write(n)
+}
+func (s *Store) Delete(i uint64, n *Needle) uint32 {
+	return s.volumes[i].delete(n)
 }
 func (s *Store) Read(i uint64, n *Needle) (int, os.Error) {
 	return s.volumes[i].read(n)
