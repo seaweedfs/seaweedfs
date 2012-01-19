@@ -43,9 +43,7 @@ func LoadNeedleMap(file *os.File) *NeedleMap {
 			key := BytesToUint64(bytes[i : i+8])
 			offset := BytesToUint32(bytes[i+8 : i+12])
 			size := BytesToUint32(bytes[i+12 : i+16])
-			if offset > 0 {
-				nm.m[key] = &NeedleValue{Offset: offset, Size: size}
-			}
+			nm.m[key] = &NeedleValue{Offset: offset, Size: size}, offset > 0
 		}
 		count, e = nm.indexFile.Read(bytes)
 	}
