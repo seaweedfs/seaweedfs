@@ -96,7 +96,7 @@ func (m *Mapper) Get(vid uint32) (*Machine, os.Error) {
 }
 func (m *Mapper) Add(machine Machine) {
 	//check existing machine, linearly
-    log.Println("Adding machine", machine.Server.Url)
+    //log.Println("Adding machine", machine.Server.Url)
 	m.lock.Lock()
 	foundExistingMachineId := -1
 	for index, entry := range m.Machines {
