@@ -1,12 +1,13 @@
 package directory
 
 import (
-	"gob"
+	"encoding/gob"
+	"errors"
+	"log"
+	"math/rand"
 	"os"
 	"path"
-	"rand"
-	"log"
-	"storage"
+	"pkg/storage"
 	"strconv"
 	"sync"
 )
@@ -31,7 +32,7 @@ type Mapper struct {
 	lock          sync.Mutex
 	Machines      []*Machine
 	vid2machineId map[uint32]int //machineId is +1 of the index of []*Machine, to detect not found entries
-	Writers       []uint32 // transient array of Writers volume id
+	Writers       []uint32       // transient array of Writers volume id
 
 	FileIdSequence uint64
 	fileIdCounter  uint64
@@ -64,11 +65,11 @@ func NewMapper(dirname string, filename string, volumeSizeLimit uint64) (m *Mapp
 	}
 	return
 }
-func (m *Mapper) PickForWrite() (string, MachineInfo, os.Error) {
+func (m *Mapper) PickForWrite() (string, MachineInfo, error) {
 	len_writers := len(m.Writers)
 	if len_writers <= 0 {
 		log.Println("No more writable volumes!")
-		return "", m.Machines[rand.Intn(len(m.Machines))].Server, os.NewError("No more writable volumes!")
+		return "", m.Machines[rand.Intn(len(m.Machines))].Server, errors.New("No more writable volumes!")
 	}
 	vid := m.Writers[rand.Intn(len_writers)]
 	machine_id := m.vid2machineId[vid]
@@ -76,7 +77,7 @@ func (m *Mapper) PickForWrite() (string, MachineInfo, os.Error) {
 		machine := m.Machines[machine_id-1]
 		return NewFileId(vid, m.NextFileId(), rand.Uint32()).String(), machine.Server, nil
 	}
-	return "", m.Machines[rand.Intn(len(m.Machines))].Server, os.NewError("Strangely vid " + strconv.Uitoa64(uint64(vid)) + " is on no machine!")
+	return "", m.Machines[rand.Intn(len(m.Machines))].Server, errors.New("Strangely vid " + strconv.FormatUint(uint64(vid), 10) + " is on no machine!")
 }
 func (m *Mapper) NextFileId() uint64 {
 	if m.fileIdCounter <= 0 {
@@ -87,16 +88,16 @@ func (m *Mapper) NextFileId() uint64 {
 	m.fileIdCounter--
 	return m.FileIdSequence - m.fileIdCounter
 }
-func (m *Mapper) Get(vid uint32) (*Machine, os.Error) {
+func (m *Mapper) Get(vid uint32) (*Machine, error) {
 	machineId := m.vid2machineId[vid]
 	if machineId <= 0 {
-		return nil, os.NewError("invalid volume id " + strconv.Uitob64(uint64(vid), 10))
+		return nil, errors.New("invalid volume id " + strconv.FormatUint(uint64(vid), 10))
 	}
 	return m.Machines[machineId-1], nil
 }
 func (m *Mapper) Add(machine Machine) {
 	//check existing machine, linearly
-    //log.Println("Adding machine", machine.Server.Url)
+	//log.Println("Adding machine", machine.Server.Url)
 	m.lock.Lock()
 	foundExistingMachineId := -1
 	for index, entry := range m.Machines {

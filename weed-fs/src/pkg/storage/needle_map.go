@@ -3,7 +3,7 @@ package storage
 import (
 	"log"
 	"os"
-	. "util"
+	"pkg/util"
 )
 
 type NeedleValue struct {
@@ -36,24 +36,30 @@ func LoadNeedleMap(file *os.File) *NeedleMap {
 	count, e := nm.indexFile.Read(bytes)
 	if count > 0 {
 		fstat, _ := file.Stat()
-		log.Println("Loading index file", fstat.Name, "size", fstat.Size)
+		log.Println("Loading index file", fstat.Name(), "size", fstat.Size())
 	}
 	for count > 0 && e == nil {
 		for i := 0; i < count; i += 16 {
-			key := BytesToUint64(bytes[i : i+8])
-			offset := BytesToUint32(bytes[i+8 : i+12])
-			size := BytesToUint32(bytes[i+12 : i+16])
-			nm.m[key] = &NeedleValue{Offset: offset, Size: size}, offset > 0
-		}
+			key := util.BytesToUint64(bytes[i : i+8])
+			offset := util.BytesToUint32(bytes[i+8 : i+12])
+			size := util.BytesToUint32(bytes[i+12 : i+16])
+			if offset>0 {
+   			nm.m[key] = &NeedleValue{util.Offset: offset, Size: size}
+   	  }else{
+        delete(nm.m, key)
+   	  }
+		}     
+		
 		count, e = nm.indexFile.Read(bytes)
-	}
+	}	
 	return nm
-}
-func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) (int, os.Error) {
-    nm.m[key] = &NeedleValue{Offset: offset, Size: size}
-	Uint64toBytes(nm.bytes[0:8], key)
-	Uint32toBytes(nm.bytes[8:12], offset)
-	Uint32toBytes(nm.bytes[12:16], size)
+}     
+
+func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) (int, error) {
+	nm.m[key] = &NeedleValue{Offset: offset, Size: size}
+	util.Uint64toBytes(nm.bytes[0:8], key)
+	util.Uint32toBytes(nm.bytes[8:12], offset)
+	util.Uint32toBytes(nm.bytes[12:16], size)
 	return nm.indexFile.Write(nm.bytes)
 }
 func (nm *NeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
@@ -61,10 +67,10 @@ func (nm *NeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
 	return
 }
 func (nm *NeedleMap) Delete(key uint64) {
-	nm.m[key] = nil, false
-	Uint64toBytes(nm.bytes[0:8], key)
-	Uint32toBytes(nm.bytes[8:12], 0)
-	Uint32toBytes(nm.bytes[12:16], 0)
+	delete(nm.m, key)
+	util.Uint64toBytes(nm.bytes[0:8], key)
+	util.Uint32toBytes(nm.bytes[8:12], 0)
+	util.Uint32toBytes(nm.bytes[12:16], 0)
 	nm.indexFile.Write(nm.bytes)
 }
 func (nm *NeedleMap) Close() {
