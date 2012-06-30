@@ -39,7 +39,7 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 	fid, machine, err := mapper.PickForWrite()
 	if err == nil {
-		writeJson(w, r, map[string]string{"fid": fid, "url": machine.Url})
+		writeJson(w, r, map[string]string{"fid": fid, "url": machine.Url, "publicUrl":machine.PublicUrl})
 	} else {
 		log.Println(err)
 		writeJson(w, r, map[string]string{"error": err.Error()})
