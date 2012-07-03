@@ -72,10 +72,15 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 	if e != nil {
 		writeJson(w, r, e)
 	} else {
-		ret := store.Write(volumeId, storage.NewNeedle(r))
-		m := make(map[string]uint32)
-		m["size"] = ret
-		writeJson(w, r, m)
+	  needle, ne := storage.NewNeedle(r)
+	  if ne!=nil{
+	    writeJson(w, r, ne)
+	  }else{
+	    ret := store.Write(volumeId, needle)
+	    m := make(map[string]uint32)
+	    m["size"] = ret
+	    writeJson(w, r, m)
+	  }
 	}
 }
 func DeleteHandler(w http.ResponseWriter, r *http.Request) {

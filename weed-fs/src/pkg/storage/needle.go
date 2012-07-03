@@ -20,12 +20,14 @@ type Needle struct {
 	Padding  []byte "Aligned to 8 bytes"
 }
 
-func NewNeedle(r *http.Request) (n *Needle) {
+func NewNeedle(r *http.Request) (n *Needle, e error) {
 
 	n = new(Needle)
 	form, fe := r.MultipartReader()
 	if fe != nil {
-		log.Fatalf("MultipartReader [ERROR] %s\n", fe)
+		log.Printf("MultipartReader [ERROR] %s\n", fe)
+		e = fe
+		return
 	}
 	part, _ := form.NextPart()
 	data, _ := ioutil.ReadAll(part)
