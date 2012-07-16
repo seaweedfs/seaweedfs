@@ -92,12 +92,12 @@ func (m *Mapper) NextFileId(c string) (uint64,int) {
     }
     count = 1
   }
+  m.sequenceLock.Lock()
+  defer m.sequenceLock.Unlock()
 	if m.fileIdCounter < count {
-	  m.sequenceLock.Lock();
 		m.fileIdCounter = FileIdSaveInterval
 		m.FileIdSequence += FileIdSaveInterval
 		m.saveSequence()
-		m.sequenceLock.Unlock();
 	}
 	m.fileIdCounter = m.fileIdCounter - count
 	return m.FileIdSequence - m.fileIdCounter, int(count)
