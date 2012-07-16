@@ -7,8 +7,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"pkg/util"
 	"strings"
-  "pkg/util"
 )
 
 type Needle struct {
@@ -47,7 +47,9 @@ func NewNeedle(r *http.Request) (n *Needle, e error) {
 func (n *Needle) ParsePath(fid string) {
 	length := len(fid)
 	if length <= 8 {
-		log.Println("Invalid fid", fid, "length", length)
+		if length > 0 {
+			log.Println("Invalid fid", fid, "length", length)
+		}
 		return
 	}
 	n.Key, n.Cookie = ParseKeyHash(fid)

@@ -72,15 +72,15 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 	if e != nil {
 		writeJson(w, r, e)
 	} else {
-	  needle, ne := storage.NewNeedle(r)
-	  if ne!=nil{
-	    writeJson(w, r, ne)
-	  }else{
-	    ret := store.Write(volumeId, needle)
-	    m := make(map[string]uint32)
-	    m["size"] = ret
-	    writeJson(w, r, m)
-	  }
+		needle, ne := storage.NewNeedle(r)
+		if ne != nil {
+			writeJson(w, r, ne)
+		} else {
+			ret := store.Write(volumeId, needle)
+			m := make(map[string]uint32)
+			m["size"] = ret
+			writeJson(w, r, m)
+		}
 	}
 }
 func DeleteHandler(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +132,9 @@ func parseURLPath(path string) (vid, fid, ext string) {
 	sepIndex := strings.LastIndex(path, "/")
 	commaIndex := strings.LastIndex(path[sepIndex:], ",")
 	if commaIndex <= 0 {
-		log.Println("unknown file id", path[sepIndex+1:])
+		if "favicon.ico" != path[sepIndex+1:] {
+			log.Println("unknown file id", path[sepIndex+1:])
+		}
 		return
 	}
 	dotIndex := strings.LastIndex(path[sepIndex:], ".")
@@ -158,7 +160,7 @@ func main() {
 	go func() {
 		for {
 			store.Join(*metaServer)
-			time.Sleep(time.Duration(float32(*pulse * 1e3) *(1 + rand.Float32()))*time.Millisecond)
+			time.Sleep(time.Duration(float32(*pulse*1e3)*(1+rand.Float32())) * time.Millisecond)
 		}
 	}()
 	log.Println("store joined at", *metaServer)
