@@ -37,9 +37,10 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
-	fid, machine, err := mapper.PickForWrite()
+  c:=r.FormValue("count")
+	fid, count, machine, err := mapper.PickForWrite(c)
 	if err == nil {
-		writeJson(w, r, map[string]string{"fid": fid, "url": machine.Url, "publicUrl":machine.PublicUrl})
+		writeJson(w, r, map[string]string{"fid": fid, "url": machine.Url, "publicUrl":machine.PublicUrl, "count":strconv.Itoa(count)})
 	} else {
 		log.Println(err)
 		writeJson(w, r, map[string]string{"error": err.Error()})
