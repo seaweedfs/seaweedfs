@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"pkg/util"
+	"strconv"
 	"strings"
 )
 
@@ -30,6 +31,7 @@ func NewNeedle(r *http.Request) (n *Needle, e error) {
 		return
 	}
 	part, _ := form.NextPart()
+	log.Println("uploading file " + part.FileName())
 	data, _ := ioutil.ReadAll(part)
 	n.Data = data
 
@@ -52,7 +54,18 @@ func (n *Needle) ParsePath(fid string) {
 		}
 		return
 	}
+	delta := ""
+	deltaIndex := strings.LastIndex(fid, "_")
+	if deltaIndex > 0 {
+		fid, delta = fid[0:deltaIndex], fid[deltaIndex+1:]
+	}
 	n.Key, n.Cookie = ParseKeyHash(fid)
+	if delta != "" {
+		d, e := strconv.ParseUint(delta, 10, 64)
+		if e == nil {
+			n.Key += d
+		}
+	}
 }
 func (n *Needle) Append(w io.Writer) uint32 {
 	header := make([]byte, 16)
