@@ -31,7 +31,7 @@ func NewNeedle(r *http.Request) (n *Needle, e error) {
 		return
 	}
 	part, _ := form.NextPart()
-	log.Println("uploading file " + part.FileName())
+	//log.Println("uploading file " + part.FileName())
 	data, _ := ioutil.ReadAll(part)
 	n.Data = data
 
