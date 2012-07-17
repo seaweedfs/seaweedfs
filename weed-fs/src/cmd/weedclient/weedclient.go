@@ -106,6 +106,8 @@ func submit(files []string)([]SubmitResult) {
 func main() {
 	flag.Parse()
 	if len(flag.Args()) == 0 {
+    fmt.Fprintln(os.Stderr, "Submit one file or multiple version of the same file.")
+    fmt.Fprintf(os.Stderr, "Usage: %s -server=<host>:<port> file1 [file2 file3 ...]\n", os.Args[0])
 		flag.Usage()
 		return
 	}
