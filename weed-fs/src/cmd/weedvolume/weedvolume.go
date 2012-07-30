@@ -62,7 +62,11 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ext != "" {
-		w.Header().Set("Content-Type", mime.TypeByExtension(ext))
+    mtype := mime.TypeByExtension(ext)
+		w.Header().Set("Content-Type", mtype)
+    if storage.IsCompressable(ext, mtype){
+      w.Header().Set("Content-Encoding", "gzip")
+    }
 	}
 	w.Write(n.Data)
 }
