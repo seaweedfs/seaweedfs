@@ -5,7 +5,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-  "mime"
+	"mime"
 	"net/http"
 	"os"
 	"pkg/util"
@@ -32,17 +32,17 @@ func NewNeedle(r *http.Request) (n *Needle, e error) {
 		return
 	}
 	part, _ := form.NextPart()
-  fname := part.FileName()
-  data, _ := ioutil.ReadAll(part)
-  //log.Println("uploading file " + part.FileName())
-  dotIndex := strings.LastIndex(fname, ".")
-  if dotIndex > 0 {
-    ext := fname[dotIndex:]
-    mtype := mime.TypeByExtension(ext)
-    if IsCompressable(ext, mtype){
-      data = GzipData(data)
-    }
-  }
+	fname := part.FileName()
+	data, _ := ioutil.ReadAll(part)
+	//log.Println("uploading file " + part.FileName())
+	dotIndex := strings.LastIndex(fname, ".")
+	if dotIndex > 0 {
+		ext := fname[dotIndex:]
+		mtype := mime.TypeByExtension(ext)
+		if IsCompressable(ext, mtype) {
+			data = GzipData(data)
+		}
+	}
 	n.Data = data
 
 	commaSep := strings.LastIndex(r.URL.Path, ",")
