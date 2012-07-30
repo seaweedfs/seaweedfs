@@ -4,6 +4,7 @@ import (
   "bytes"
   "compress/flate"
   "compress/gzip"
+  "io/ioutil"
   "log"
   "strings"
 )
@@ -33,4 +34,14 @@ func GzipData(input []byte) []byte {
     log.Printf("error closing compressed data:%s\n", err)
   }
   return buf.Bytes()
+}
+func UnGzipData(input []byte) []byte {
+  buf := bytes.NewBuffer(input)
+  r, _ := gzip.NewReader(buf)
+  defer r.Close()
+  output, err := ioutil.ReadAll(r)
+  if err!=nil {
+    log.Printf("error uncompressing data:%s\n", err)
+  }
+  return output
 }
