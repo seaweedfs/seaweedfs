@@ -143,7 +143,7 @@ func parseURLPath(path string) (vid, fid, ext string) {
 	ext = ""
 	if dotIndex > 0 {
 		fid = path[commaIndex+1 : dotIndex]
-		ext = path[dotIndex+1:]
+		ext = path[dotIndex:]
 	}
 	return
 }
