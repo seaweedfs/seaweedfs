@@ -10,6 +10,7 @@ import (
 
 func init() {
   cmdFix.Run = runFix // break init cycle
+  IsDebug  = cmdFix.Flag.Bool("debug", false, "enable debug mode")
 }
 
 var cmdFix = &Command{
@@ -23,9 +24,6 @@ var cmdFix = &Command{
 var (
   dir      = cmdFix.Flag.String("dir", "/tmp", "data directory to store files")
   volumeId = cmdFix.Flag.Int("volumeId", -1, "a non-negative volume id. The volume should already exist in the dir. The volume index file should not exist.")
-  IsDebug  = cmdFix.Flag.Bool("debug", false, "enable debug mode")
-
-  store *storage.Store
 )
 
 func runFix(cmd *Command, args []string) bool {

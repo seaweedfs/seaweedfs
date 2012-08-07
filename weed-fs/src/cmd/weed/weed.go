@@ -1,8 +1,10 @@
 package main
 
 import (
+  "encoding/json"
 	"flag"
 	"fmt"
+  "net/http"
 	"io"
 	"log"
 	"os"
@@ -13,9 +15,16 @@ import (
 	"unicode/utf8"
 )
 
+var IsDebug *bool
+var server *string
+var port *int
+
 var commands = []*Command{
 	cmdFix,
+	cmdMaster,
+  cmdUpload,
 	cmdVersion,
+	cmdVolume,
 }
 
 var exitStatus = 0
@@ -162,4 +171,17 @@ func exitIfErrors() {
 	if exitStatus != 0 {
 		exit()
 	}
+}
+func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
+  w.Header().Set("Content-Type", "application/javascript")
+  bytes, _ := json.Marshal(obj)
+  callback := r.FormValue("callback")
+  if callback == "" {
+    w.Write(bytes)
+  } else {
+    w.Write([]uint8(callback))
+    w.Write([]uint8("("))
+    fmt.Fprint(w, string(bytes))
+    w.Write([]uint8(")"))
+  }
 }
