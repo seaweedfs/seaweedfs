@@ -17,6 +17,6 @@ func runVersion(cmd *Command, args []string) bool{
 		cmd.Usage()
 	}
 
-	fmt.Printf("version 0.15 %s %s\n",runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("version 0.16 %s %s\n",runtime.GOOS, runtime.GOARCH)
 	return true
 }
