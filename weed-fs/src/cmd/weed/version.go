@@ -1,7 +1,3 @@
-// Copyright 2011 The Go Authors.  All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
 package main
 
 import (
@@ -16,10 +12,11 @@ var cmdVersion = &Command{
 	Long:      `Version prints the Weed File System version`,
 }
 
-func runVersion(cmd *Command, args []string) {
+func runVersion(cmd *Command, args []string) bool{
 	if len(args) != 0 {
 		cmd.Usage()
 	}
 
 	fmt.Printf("version 0.15 %s %s\n",runtime.GOOS, runtime.GOARCH)
+	return true
 }

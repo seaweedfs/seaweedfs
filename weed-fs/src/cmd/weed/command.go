@@ -10,7 +10,7 @@ import (
 type Command struct {
   // Run runs the command.
   // The args are the arguments after the command name.
-  Run func(cmd *Command, args []string)
+  Run func(cmd *Command, args []string) bool
 
   // UsageLine is the one-line usage message.
   // The first word in the line is taken to be the command name.
@@ -25,9 +25,6 @@ type Command struct {
   // Flag is a set of flags specific to this command.
   Flag flag.FlagSet
 
-  // CustomFlags indicates that the command will do its own
-  // flag parsing.
-  CustomFlags bool
 }
 
 // Name returns the command's name: the first word in the usage line.
@@ -41,8 +38,8 @@ func (c *Command) Name() string {
 }
 
 func (c *Command) Usage() {
-  fmt.Fprintf(os.Stderr, "usage: %s\n\n", c.UsageLine)
-  fmt.Fprintf(os.Stderr, "%s\n", strings.TrimSpace(c.Long))
+  fmt.Fprintf(os.Stderr, "Usage: %s\n", c.UsageLine)
+  fmt.Fprintf(os.Stderr, "  %s\n", strings.TrimSpace(c.Long))
   os.Exit(2)
 }
 

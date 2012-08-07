@@ -14,6 +14,7 @@ import (
 )
 
 var commands = []*Command{
+	cmdFix,
 	cmdVersion,
 }
 
@@ -46,13 +47,14 @@ func main() {
 	for _, cmd := range commands {
 		if cmd.Name() == args[0] && cmd.Run != nil {
 			cmd.Flag.Usage = func() { cmd.Usage() }
-			if cmd.CustomFlags {
-				args = args[1:]
-			} else {
-				cmd.Flag.Parse(args[1:])
-				args = cmd.Flag.Args()
+			cmd.Flag.Parse(args[1:])
+			args = cmd.Flag.Args()
+			if !cmd.Run(cmd, args) {
+				fmt.Fprintf(os.Stderr, "Default Parameters:\n")
+				cmd.Flag.PrintDefaults()
+        fmt.Fprintf(os.Stderr, "\n")
+				cmd.Flag.Usage()
 			}
-			cmd.Run(cmd, args)
 			exit()
 			return
 		}
@@ -63,7 +65,7 @@ func main() {
 	exit()
 }
 
-var usageTemplate = `Go is a tool for managing Go source code.
+var usageTemplate = `WeedFS is a software to store billions of files and serve them fast!
 
 Usage:
 
@@ -83,9 +85,9 @@ Use "weed help [topic]" for more information about that topic.
 
 `
 
-var helpTemplate = `{{if .Runnable}}usage: weed {{.UsageLine}}
-
-{{end}}{{.Long | trim}}
+var helpTemplate = `{{if .Runnable}}Usage: weed {{.UsageLine}}
+{{end}}
+  {{.Long}}
 `
 
 // tmpl executes the given template text on data, writing the result to w.
@@ -154,37 +156,10 @@ func exit() {
 	os.Exit(exitStatus)
 }
 
-func fatalf(format string, args ...interface{}) {
-	errorf(format, args...)
-	exit()
-}
-
-func errorf(format string, args ...interface{}) {
-	log.Printf(format, args...)
-	setExitStatus(1)
-}
-
 var logf = log.Printf
 
 func exitIfErrors() {
 	if exitStatus != 0 {
 		exit()
 	}
-}
-
-// stringList's arguments should be a sequence of string or []string values.
-// stringList flattens them into a single []string.
-func stringList(args ...interface{}) []string {
-	var x []string
-	for _, arg := range args {
-		switch arg := arg.(type) {
-		case []string:
-			x = append(x, arg...)
-		case string:
-			x = append(x, arg)
-		default:
-			panic("stringList: invalid argument")
-		}
-	}
-	return x
 }
