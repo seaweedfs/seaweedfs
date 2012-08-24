@@ -7,7 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"path"
-	"pkg/topology"
+	"pkg/storage"
 	"strconv"
 	"sync"
 )
@@ -22,7 +22,7 @@ type MachineInfo struct {
 }
 type Machine struct {
 	Server  MachineInfo
-	Volumes []topology.VolumeInfo
+	Volumes []storage.VolumeInfo
 }
 
 type Mapper struct {
@@ -32,8 +32,8 @@ type Mapper struct {
 	volumeLock          sync.Mutex
   sequenceLock          sync.Mutex
 	Machines      []*Machine
-	vid2machineId map[topology.VolumeId]int //machineId is +1 of the index of []*Machine, to detect not found entries
-	Writers       []topology.VolumeId       // transient array of Writers volume id
+	vid2machineId map[storage.VolumeId]int //machineId is +1 of the index of []*Machine, to detect not found entries
+	Writers       []storage.VolumeId       // transient array of Writers volume id
 
 	FileIdSequence uint64
 	fileIdCounter  uint64
@@ -41,15 +41,15 @@ type Mapper struct {
 	volumeSizeLimit uint64
 }
 
-func NewMachine(server, publicUrl string, volumes []topology.VolumeInfo) *Machine {
+func NewMachine(server, publicUrl string, volumes []storage.VolumeInfo) *Machine {
 	return &Machine{Server: MachineInfo{Url: server, PublicUrl: publicUrl}, Volumes: volumes}
 }
 
 func NewMapper(dirname string, filename string, volumeSizeLimit uint64) (m *Mapper) {
 	m = &Mapper{dir: dirname, fileName: filename}
-	m.vid2machineId = make(map[topology.VolumeId]int)
+	m.vid2machineId = make(map[storage.VolumeId]int)
 	m.volumeSizeLimit = volumeSizeLimit
-	m.Writers = *new([]topology.VolumeId)
+	m.Writers = *new([]storage.VolumeId)
 	m.Machines = *new([]*Machine)
 
 	seqFile, se := os.OpenFile(path.Join(m.dir, m.fileName+".seq"), os.O_RDONLY, 0644)
@@ -102,7 +102,7 @@ func (m *Mapper) NextFileId(c string) (uint64,int) {
 	m.fileIdCounter = m.fileIdCounter - count
 	return m.FileIdSequence - m.fileIdCounter, int(count)
 }
-func (m *Mapper) Get(vid topology.VolumeId) (*Machine, error) {
+func (m *Mapper) Get(vid storage.VolumeId) (*Machine, error) {
 	machineId := m.vid2machineId[vid]
 	if machineId <= 0 {
 		return nil, errors.New("invalid volume id " + strconv.FormatUint(uint64(vid), 10))
@@ -134,7 +134,7 @@ func (m *Mapper) Add(machine Machine) {
 		m.vid2machineId[v.Id] = machineId + 1 //use base 1 indexed, to detect not found cases
 	}
 	//setting Writers, copy-on-write because of possible updating, this needs some future work!
-	var writers []topology.VolumeId
+	var writers []storage.VolumeId
 	for _, machine_entry := range m.Machines {
 		for _, v := range machine_entry.Volumes {
 			if uint64(v.Size) < m.volumeSizeLimit {

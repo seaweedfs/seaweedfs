@@ -1,15 +1,12 @@
 package topology
 
-import ()
+import (
+  "pkg/storage"
+)
 
 type NodeId uint32
-type VolumeId uint32
-type VolumeInfo struct {
-	Id   VolumeId
-	Size int64
-}
 type Node struct {
-	volumes     map[VolumeId]VolumeInfo
+	volumes     map[storage.VolumeId]storage.VolumeInfo
 	volumeLimit int
 	Ip          string
 	Port        int

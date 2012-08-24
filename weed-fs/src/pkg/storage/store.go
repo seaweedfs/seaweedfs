@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"pkg/topology"
 	"pkg/util"
 )
 
@@ -60,20 +59,20 @@ func (s *Store) addVolume(vid VolumeId) error {
 	s.volumes[vid] = NewVolume(s.dir, vid)
 	return nil
 }
-func (s *Store) Status() *[]*topology.VolumeInfo {
-	stats := new([]*topology.VolumeInfo)
+func (s *Store) Status() *[]*VolumeInfo {
+	stats := new([]*VolumeInfo)
 	for k, v := range s.volumes {
-		s := new(topology.VolumeInfo)
-		s.Id, s.Size = topology.VolumeId(k), v.Size()
+		s := new(VolumeInfo)
+		s.Id, s.Size = VolumeId(k), v.Size()
 		*stats = append(*stats, s)
 	}
 	return stats
 }
 func (s *Store) Join(mserver string) {
-	stats := new([]*topology.VolumeInfo)
+	stats := new([]*VolumeInfo)
 	for k, v := range s.volumes {
-		s := new(topology.VolumeInfo)
-		s.Id, s.Size = topology.VolumeId(k), v.Size()
+		s := new(VolumeInfo)
+		s.Id, s.Size = VolumeId(k), v.Size()
 		*stats = append(*stats, s)
 	}
 	bytes, _ := json.Marshal(stats)

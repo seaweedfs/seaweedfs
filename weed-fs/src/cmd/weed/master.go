@@ -5,7 +5,7 @@ import (
   "encoding/json"
   "log"
   "net/http"
-  "pkg/topology"
+  "pkg/storage"
   "strconv"
   "strings"
 )
@@ -39,7 +39,7 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
     vid = vid[0:commaSep]
   }
   volumeId, _ := strconv.ParseUint(vid, 10, 64)
-  machine, e := mapper.Get(topology.VolumeId(volumeId))
+  machine, e := mapper.Get(storage.VolumeId(volumeId))
   if e == nil {
     writeJson(w, r, machine.Server)
   } else {
@@ -60,7 +60,7 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
   s := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")+1] + r.FormValue("port")
   publicUrl := r.FormValue("publicUrl")
-  volumes := new([]topology.VolumeInfo)
+  volumes := new([]storage.VolumeInfo)
   json.Unmarshal([]byte(r.FormValue("volumes")), volumes)
   if *IsDebug {
     log.Println(s, "volumes", r.FormValue("volumes"))

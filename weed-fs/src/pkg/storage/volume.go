@@ -14,6 +14,10 @@ const (
 )
 
 type VolumeId uint32
+type VolumeInfo struct {
+  Id   VolumeId
+  Size int64
+}
 func NewVolumeId(vid string) (VolumeId,error) {
   volumeId, err := strconv.ParseUint(vid, 10, 64)
   return VolumeId(volumeId), err
