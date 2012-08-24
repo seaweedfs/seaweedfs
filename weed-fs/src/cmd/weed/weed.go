@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -42,7 +41,6 @@ func setExitStatus(n int) {
 func main() {
 	flag.Usage = usage
 	flag.Parse()
-	log.SetFlags(0)
 
 	args := flag.Args()
 	if len(args) < 1 {
@@ -171,8 +169,6 @@ func exit() {
 	}
 	os.Exit(exitStatus)
 }
-
-var logf = log.Printf
 
 func exitIfErrors() {
 	if exitStatus != 0 {

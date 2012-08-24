@@ -5,7 +5,6 @@ import (
   "compress/flate"
   "compress/gzip"
   "io/ioutil"
-  "log"
   "strings"
 )
 
@@ -28,10 +27,10 @@ func GzipData(input []byte) []byte {
   buf := new(bytes.Buffer)
   w, _ := gzip.NewWriterLevel(buf, flate.BestCompression)
   if _, err := w.Write(input); err!=nil {
-    log.Printf("error compressing data:%s\n", err)
+    println("error compressing data:", err)
   }
   if err := w.Close(); err!=nil {
-    log.Printf("error closing compressed data:%s\n", err)
+    println("error closing compressed data:", err)
   }
   return buf.Bytes()
 }
@@ -41,7 +40,7 @@ func UnGzipData(input []byte) []byte {
   defer r.Close()
   output, err := ioutil.ReadAll(r)
   if err!=nil {
-    log.Printf("error uncompressing data:%s\n", err)
+    println("error uncompressing data:", err)
   }
   return output
 }
