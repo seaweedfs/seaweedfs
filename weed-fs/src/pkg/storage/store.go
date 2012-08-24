@@ -64,7 +64,7 @@ func (s *Store) Status() *[]*topology.VolumeInfo {
 	stats := new([]*topology.VolumeInfo)
 	for k, v := range s.volumes {
 		s := new(topology.VolumeInfo)
-		s.Id, s.Size = uint32(k), v.Size()
+		s.Id, s.Size = topology.VolumeId(k), v.Size()
 		*stats = append(*stats, s)
 	}
 	return stats
@@ -73,7 +73,7 @@ func (s *Store) Join(mserver string) {
 	stats := new([]*topology.VolumeInfo)
 	for k, v := range s.volumes {
 		s := new(topology.VolumeInfo)
-		s.Id, s.Size = uint32(k), v.Size()
+		s.Id, s.Size = topology.VolumeId(k), v.Size()
 		*stats = append(*stats, s)
 	}
 	bytes, _ := json.Marshal(stats)

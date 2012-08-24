@@ -39,7 +39,7 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
     vid = vid[0:commaSep]
   }
   volumeId, _ := strconv.ParseUint(vid, 10, 64)
-  machine, e := mapper.Get(uint32(volumeId))
+  machine, e := mapper.Get(topology.VolumeId(volumeId))
   if e == nil {
     writeJson(w, r, machine.Server)
   } else {

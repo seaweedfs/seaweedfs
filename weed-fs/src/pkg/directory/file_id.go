@@ -4,18 +4,19 @@ import (
 	"encoding/hex"
 	"log"
 	"pkg/storage"
+	"pkg/topology"
 	"strconv"
 	"strings"
 	"pkg/util"
 )
 
 type FileId struct {
-	VolumeId uint32
+	VolumeId topology.VolumeId
 	Key      uint64
 	Hashcode uint32
 }
 
-func NewFileId(VolumeId uint32, Key uint64, Hashcode uint32) *FileId {
+func NewFileId(VolumeId topology.VolumeId, Key uint64, Hashcode uint32) *FileId {
 	return &FileId{VolumeId: VolumeId, Key: Key, Hashcode: Hashcode}
 }
 func ParseFileId(fid string) *FileId{
@@ -27,7 +28,7 @@ func ParseFileId(fid string) *FileId{
 	vid_string, key_hash_string := a[0], a[1]
 	vid, _ := strconv.ParseUint(vid_string, 10, 64)
 	key, hash := storage.ParseKeyHash(key_hash_string)
-	return &FileId{VolumeId: uint32(vid), Key: key, Hashcode: hash}
+	return &FileId{VolumeId: topology.VolumeId(vid), Key: key, Hashcode: hash}
 }
 func (n *FileId) String() string {
 	bytes := make([]byte, 12)

@@ -4,13 +4,15 @@ import (
 
 )
 
+type VolumeId uint32
 type VolumeInfo struct {
-  Id   uint32
+  Id   VolumeId
   Size int64
 }
 type Node struct {
-  volumes     map[uint64]VolumeInfo
+  volumes     map[VolumeId]VolumeInfo
   volumeLimit int
+  Ip          string
   Port        int
   PublicUrl   string
 }
