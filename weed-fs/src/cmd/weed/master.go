@@ -5,7 +5,7 @@ import (
   "encoding/json"
   "log"
   "net/http"
-  "pkg/storage"
+  "pkg/topology"
   "strconv"
   "strings"
 )
@@ -60,7 +60,7 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
   s := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")+1] + r.FormValue("port")
   publicUrl := r.FormValue("publicUrl")
-  volumes := new([]storage.VolumeInfo)
+  volumes := new([]topology.VolumeInfo)
   json.Unmarshal([]byte(r.FormValue("volumes")), volumes)
   if *IsDebug {
     log.Println(s, "volumes", r.FormValue("volumes"))

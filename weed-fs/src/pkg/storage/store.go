@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"pkg/topology"
 	"pkg/util"
 )
 
@@ -15,10 +16,6 @@ type Store struct {
 	dir       string
 	Port      int
 	PublicUrl string
-}
-type VolumeInfo struct {
-	Id   uint32
-	Size int64
 }
 
 func NewStore(port int, publicUrl, dirname string, volumeListString string) (s *Store) {
@@ -63,19 +60,19 @@ func (s *Store) addVolume(vid uint64) error {
 	s.volumes[vid] = NewVolume(s.dir, uint32(vid))
 	return nil
 }
-func (s *Store) Status() *[]*VolumeInfo {
-	stats := new([]*VolumeInfo)
+func (s *Store) Status() *[]*topology.VolumeInfo {
+	stats := new([]*topology.VolumeInfo)
 	for k, v := range s.volumes {
-		s := new(VolumeInfo)
+		s := new(topology.VolumeInfo)
 		s.Id, s.Size = uint32(k), v.Size()
 		*stats = append(*stats, s)
 	}
 	return stats
 }
 func (s *Store) Join(mserver string) {
-	stats := new([]*VolumeInfo)
+	stats := new([]*topology.VolumeInfo)
 	for k, v := range s.volumes {
-		s := new(VolumeInfo)
+		s := new(topology.VolumeInfo)
 		s.Id, s.Size = uint32(k), v.Size()
 		*stats = append(*stats, s)
 	}

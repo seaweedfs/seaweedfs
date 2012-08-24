@@ -7,7 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"path"
-	"pkg/storage"
+	"pkg/topology"
 	"strconv"
 	"sync"
 )
@@ -22,7 +22,7 @@ type MachineInfo struct {
 }
 type Machine struct {
 	Server  MachineInfo
-	Volumes []storage.VolumeInfo
+	Volumes []topology.VolumeInfo
 }
 
 type Mapper struct {
@@ -41,7 +41,7 @@ type Mapper struct {
 	volumeSizeLimit uint64
 }
 
-func NewMachine(server, publicUrl string, volumes []storage.VolumeInfo) *Machine {
+func NewMachine(server, publicUrl string, volumes []topology.VolumeInfo) *Machine {
 	return &Machine{Server: MachineInfo{Url: server, PublicUrl: publicUrl}, Volumes: volumes}
 }
 
