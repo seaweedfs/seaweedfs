@@ -2,7 +2,7 @@ package topology
 
 import ()
 
-type DataCenterId uint32
+type DataCenterId string
 type DataCenter struct {
 	Id      DataCenterId
 	racks   map[RackId]*Rack
