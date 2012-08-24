@@ -15,7 +15,7 @@ import (
 
 type Needle struct {
 	Cookie   uint32 "random number to mitigate brute force lookups"
-	Key      uint64 "file id"
+	Id       uint64 "needle id"
 	Size     uint32 "Data size"
 	Data     []byte "The actual file data"
 	Checksum int32  "CRC32 to check integrity"
@@ -69,18 +69,18 @@ func (n *Needle) ParsePath(fid string) {
 	if deltaIndex > 0 {
 		fid, delta = fid[0:deltaIndex], fid[deltaIndex+1:]
 	}
-	n.Key, n.Cookie = ParseKeyHash(fid)
+	n.Id, n.Cookie = ParseKeyHash(fid)
 	if delta != "" {
 		d, e := strconv.ParseUint(delta, 10, 64)
 		if e == nil {
-			n.Key += d
+			n.Id += d
 		}
 	}
 }
 func (n *Needle) Append(w io.Writer) uint32 {
 	header := make([]byte, 16)
 	util.Uint32toBytes(header[0:4], n.Cookie)
-	util.Uint64toBytes(header[4:12], n.Key)
+	util.Uint64toBytes(header[4:12], n.Id)
 	n.Size = uint32(len(n.Data))
 	util.Uint32toBytes(header[12:16], n.Size)
 	w.Write(header)
@@ -94,7 +94,7 @@ func (n *Needle) Read(r io.Reader, size uint32) (int, error) {
 	bytes := make([]byte, size+16+4)
 	ret, e := r.Read(bytes)
 	n.Cookie = util.BytesToUint32(bytes[0:4])
-	n.Key = util.BytesToUint64(bytes[4:12])
+	n.Id = util.BytesToUint64(bytes[4:12])
 	n.Size = util.BytesToUint32(bytes[12:16])
 	n.Data = bytes[16 : 16+size]
 	n.Checksum = int32(util.BytesToUint32(bytes[16+size : 16+size+4]))
@@ -108,7 +108,7 @@ func ReadNeedle(r *os.File) (*Needle, uint32) {
 		return nil, 0
 	}
 	n.Cookie = util.BytesToUint32(bytes[0:4])
-	n.Key = util.BytesToUint64(bytes[4:12])
+	n.Id = util.BytesToUint64(bytes[4:12])
 	n.Size = util.BytesToUint32(bytes[12:16])
 	rest := 8 - ((n.Size + 16 + 4) % 8)
 	r.Seek(int64(n.Size+4+rest), 1)

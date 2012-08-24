@@ -76,19 +76,19 @@ func (v *Volume) write(n *Needle) uint32 {
 	defer v.accessLock.Unlock()
 	offset, _ := v.dataFile.Seek(0, 2)
 	ret := n.Append(v.dataFile)
-	nv, ok := v.nm.Get(n.Key)
+	nv, ok := v.nm.Get(n.Id)
 	if !ok || int64(nv.Offset)*8 < offset {
-		v.nm.Put(n.Key, uint32(offset/8), n.Size)
+		v.nm.Put(n.Id, uint32(offset/8), n.Size)
 	}
 	return ret
 }
 func (v *Volume) delete(n *Needle) uint32 {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
-	nv, ok := v.nm.Get(n.Key)
-	//log.Println("key", n.Key, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
+	nv, ok := v.nm.Get(n.Id)
+	//log.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
 	if ok {
-		v.nm.Delete(n.Key)
+		v.nm.Delete(n.Id)
 		v.dataFile.Seek(int64(nv.Offset*8), 0)
 		n.Append(v.dataFile)
 		return nv.Size
@@ -98,7 +98,7 @@ func (v *Volume) delete(n *Needle) uint32 {
 func (v *Volume) read(n *Needle) (int, error) {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
-	nv, ok := v.nm.Get(n.Key)
+	nv, ok := v.nm.Get(n.Id)
 	if ok && nv.Offset > 0 {
 		v.dataFile.Seek(int64(nv.Offset)*8, 0)
 		return n.Read(v.dataFile, nv.Size)

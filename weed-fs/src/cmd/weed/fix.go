@@ -52,10 +52,10 @@ func runFix(cmd *Command, args []string) bool {
   offset := uint32(storage.SuperBlockSize)
   for n != nil {
     if *IsDebug {
-      log.Println("key", n.Key, "volume offset", offset, "data_size", n.Size, "length", length)
+      log.Println("key", n.Id, "volume offset", offset, "data_size", n.Size, "length", length)
     }
     if n.Size > 0 {
-      count, pe := nm.Put(n.Key, offset/8, n.Size)
+      count, pe := nm.Put(n.Id, offset/8, n.Size)
       if *IsDebug {
         log.Println("saved", count, "with error", pe)
       }
