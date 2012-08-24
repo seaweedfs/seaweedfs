@@ -15,6 +15,7 @@ type Store struct {
 	dir       string
 	Port      int
 	PublicUrl string
+	Limit     StorageLimit
 }
 
 func NewStore(port int, publicUrl, dirname string, volumeListString string) (s *Store) {
