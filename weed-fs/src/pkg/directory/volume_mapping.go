@@ -82,7 +82,7 @@ func (m *Mapper) PickForWrite(c string) (string, int, MachineInfo, error) {
 		}
 		return NewFileId(vid, fileId, rand.Uint32()).String(), count, machine.Server, nil
 	}
-	return "", 0, m.Machines[rand.Intn(len(m.Machines))].Server, errors.New("Strangely vid " + strconv.FormatUint(uint64(vid), 10) + " is on no machine!")
+	return "", 0, m.Machines[rand.Intn(len(m.Machines))].Server, errors.New("Strangely vid " + vid.String() + " is on no machine!")
 }
 func (m *Mapper) NextFileId(c string) (uint64,int) {
   count, parseError := strconv.ParseUint(c,10,64)
@@ -105,7 +105,7 @@ func (m *Mapper) NextFileId(c string) (uint64,int) {
 func (m *Mapper) Get(vid storage.VolumeId) (*Machine, error) {
 	machineId := m.vid2machineId[vid]
 	if machineId <= 0 {
-		return nil, errors.New("invalid volume id " + strconv.FormatUint(uint64(vid), 10))
+		return nil, errors.New("invalid volume id " + vid.String())
 	}
 	return m.Machines[machineId-1], nil
 }

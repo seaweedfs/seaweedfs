@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"log"
 	"pkg/storage"
-	"strconv"
 	"strings"
 	"pkg/util"
 )
@@ -25,9 +24,9 @@ func ParseFileId(fid string) *FileId{
 		return nil
 	}
 	vid_string, key_hash_string := a[0], a[1]
-	vid, _ := strconv.ParseUint(vid_string, 10, 64)
+  volumeId, _ := storage.NewVolumeId(vid_string)
 	key, hash := storage.ParseKeyHash(key_hash_string)
-	return &FileId{VolumeId: storage.VolumeId(vid), Key: key, Hashcode: hash}
+	return &FileId{VolumeId: volumeId, Key: key, Hashcode: hash}
 }
 func (n *FileId) String() string {
 	bytes := make([]byte, 12)
@@ -36,5 +35,5 @@ func (n *FileId) String() string {
 	nonzero_index := 0
 	for ; bytes[nonzero_index] == 0; nonzero_index++ {
 	}
-	return strconv.FormatUint(uint64(n.VolumeId), 10) + "," + hex.EncodeToString(bytes[nonzero_index:])
+	return n.VolumeId.String() + "," + hex.EncodeToString(bytes[nonzero_index:])
 }

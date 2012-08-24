@@ -37,7 +37,7 @@ type Volume struct {
 func NewVolume(dirname string, id VolumeId) (v *Volume) {
 	var e error
 	v = &Volume{dir: dirname, Id: id}
-	fileName := strconv.FormatUint(uint64(v.Id), 10)
+	fileName := id.String()
 	v.dataFile, e = os.OpenFile(path.Join(v.dir, fileName+".dat"), os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {
 		log.Fatalf("New Volume [ERROR] %s\n", e)

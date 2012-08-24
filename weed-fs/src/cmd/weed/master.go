@@ -38,13 +38,13 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
   if commaSep > 0 {
     vid = vid[0:commaSep]
   }
-  volumeId, _ := strconv.ParseUint(vid, 10, 64)
-  machine, e := mapper.Get(storage.VolumeId(volumeId))
+  volumeId, _ := storage.NewVolumeId(vid)
+  machine, e := mapper.Get(volumeId)
   if e == nil {
     writeJson(w, r, machine.Server)
   } else {
     log.Println("Invalid volume id", volumeId)
-    writeJson(w, r, map[string]string{"error": "volume id " + strconv.FormatUint(volumeId, 10) + " not found"})
+    writeJson(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found"})
   }
 }
 func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
