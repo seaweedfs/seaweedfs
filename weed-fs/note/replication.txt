@@ -1,0 +1,59 @@
+1. each file can choose the replication factor
+2. replication granularity is in volume level
+3. if not enough spaces, we can automatically decrease some volume's the replication factor, especially for cold data
+4. support migrating data to cheaper storage
+5. manual volume placement, access-based volume placement, auction based volume placement
+
+When a new volume server is started, it reports 
+  1. how many volumes it can hold
+  2. current list of existing volumes
+Each volume server remembers:
+  1. current volume ids, replica locations
+
+The master assign volume ids based on
+  1. replication factor
+     data center, rack
+  2. concurrent write support
+On master, stores the replication configuration
+{
+  replication:{
+    {factor:1, min_volume_count:3, weight:10},
+    {factor:2, min_volume_count:2, weight:20},
+    {factor:3, min_volume_count:3, weight:30}
+  },
+  port:9333,
+  
+}
+Or manually via command line
+  1. add volume with specified replication factor
+  2. add volume with specified volume id
+
+
+If duplicated volume ids are reported from different volume servers, 
+the master determines the replication factor of the volume,
+if less than the replication factor, the volume is in readonly mode
+if more than the replication factor, the volume will purge the smallest/oldest volume
+if equal, the volume will function as usual
+
+maybe use gossip to send the volumeServer~volumes information
+
+
+Use cases:
+  on volume server
+    1. weed volume -mserver="xx.xx.xx.xx:9333" -publicUrl="good.com:8080" -dir="/tmp" -volumes=50
+  on weed master
+    1. weed master -port=9333
+      generate a default json configuration file if doesn't exist
+      
+Bootstrap
+  1. at the very beginning, the system has no volumes at all.
+  2. if maxReplicationFactor==1, always initialize volumes right away
+  3. if nServersHasFreeSpaces >= maxReplicationFactor, auto initialize
+  4. if maxReplicationFactor>1
+     weed shell
+     > disable_auto_initialize
+     > enable_auto_initialize
+     > assign_free_volume vid "server1:port","server2:port","server3:port"
+     > status
+  5. 
+  

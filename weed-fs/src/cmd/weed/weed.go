@@ -1,12 +1,12 @@
 package main
 
 import (
-  "encoding/json"
+	"encoding/json"
 	"flag"
 	"fmt"
-  "net/http"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -22,7 +22,8 @@ var port *int
 var commands = []*Command{
 	cmdFix,
 	cmdMaster,
-  cmdUpload,
+	cmdUpload,
+	cmdShell,
 	cmdVersion,
 	cmdVolume,
 }
@@ -50,6 +51,12 @@ func main() {
 
 	if args[0] == "help" {
 		help(args[1:])
+		for _, cmd := range commands {
+			if cmd.Name() == args[1] && cmd.Run != nil {
+				fmt.Fprintf(os.Stderr, "Default Parameters:\n")
+				cmd.Flag.PrintDefaults()
+			}
+		}
 		return
 	}
 
@@ -59,10 +66,10 @@ func main() {
 			cmd.Flag.Parse(args[1:])
 			args = cmd.Flag.Args()
 			if !cmd.Run(cmd, args) {
+				fmt.Fprintf(os.Stderr, "\n")
+				cmd.Flag.Usage()
 				fmt.Fprintf(os.Stderr, "Default Parameters:\n")
 				cmd.Flag.PrintDefaults()
-        fmt.Fprintf(os.Stderr, "\n")
-				cmd.Flag.Usage()
 			}
 			exit()
 			return
@@ -173,15 +180,15 @@ func exitIfErrors() {
 	}
 }
 func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
-  w.Header().Set("Content-Type", "application/javascript")
-  bytes, _ := json.Marshal(obj)
-  callback := r.FormValue("callback")
-  if callback == "" {
-    w.Write(bytes)
-  } else {
-    w.Write([]uint8(callback))
-    w.Write([]uint8("("))
-    fmt.Fprint(w, string(bytes))
-    w.Write([]uint8(")"))
-  }
+	w.Header().Set("Content-Type", "application/javascript")
+	bytes, _ := json.Marshal(obj)
+	callback := r.FormValue("callback")
+	if callback == "" {
+		w.Write(bytes)
+	} else {
+		w.Write([]uint8(callback))
+		w.Write([]uint8("("))
+		fmt.Fprint(w, string(bytes))
+		w.Write([]uint8(")"))
+	}
 }
