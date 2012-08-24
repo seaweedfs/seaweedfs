@@ -17,7 +17,7 @@ func init() {
 }
 
 var cmdMaster = &Command{
-  UsageLine: "master -port=8080 -dir=/tmp -volumes=0-99 -publicUrl=server_name:8080 -mserver=localhost:9333",
+  UsageLine: "master -port=9333",
   Short:     "start a master server",
   Long: `start a master server to provide volume=>location mapping service
   and sequence number of file ids
