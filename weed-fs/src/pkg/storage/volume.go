@@ -13,8 +13,16 @@ const (
 	SuperBlockSize = 8
 )
 
+type VolumeId uint32
+func NewVolumeId(vid string) (VolumeId,error) {
+  volumeId, err := strconv.ParseUint(vid, 10, 64)
+  return VolumeId(volumeId), err
+}
+func (vid *VolumeId) String() string{
+  return strconv.FormatUint(uint64(*vid), 10)
+}
 type Volume struct {
-	Id       uint32
+	Id       VolumeId
 	dir      string
 	dataFile *os.File
 	nm       *NeedleMap
@@ -22,7 +30,7 @@ type Volume struct {
 	accessLock sync.Mutex
 }
 
-func NewVolume(dirname string, id uint32) (v *Volume) {
+func NewVolume(dirname string, id VolumeId) (v *Volume) {
 	var e error
 	v = &Volume{dir: dirname, Id: id}
 	fileName := strconv.FormatUint(uint64(v.Id), 10)

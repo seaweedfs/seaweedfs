@@ -12,7 +12,7 @@ import (
 )
 
 type Store struct {
-	volumes   map[uint64]*Volume
+	volumes   map[VolumeId]*Volume
 	dir       string
 	Port      int
 	PublicUrl string
@@ -20,7 +20,7 @@ type Store struct {
 
 func NewStore(port int, publicUrl, dirname string, volumeListString string) (s *Store) {
 	s = &Store{Port: port, PublicUrl: publicUrl, dir: dirname}
-	s.volumes = make(map[uint64]*Volume)
+	s.volumes = make(map[VolumeId]*Volume)
 
 	s.AddVolume(volumeListString)
 
@@ -35,7 +35,7 @@ func (s *Store) AddVolume(volumeListString string) error {
 			if err != nil {
 				return errors.New("Volume Id " + id_string + " is not a valid unsigned integer!")
 			}
-			s.addVolume(id)
+			s.addVolume(VolumeId(id))
 		} else {
 			pair := strings.Split(range_string, "-")
 			start, start_err := strconv.ParseUint(pair[0], 10, 64)
@@ -47,17 +47,17 @@ func (s *Store) AddVolume(volumeListString string) error {
 				return errors.New("Volume End Id" + pair[1] + " is not a valid unsigned integer!")
 			}
 			for id := start; id <= end; id++ {
-				s.addVolume(id)
+				s.addVolume(VolumeId(id))
 			}
 		}
 	}
 	return nil
 }
-func (s *Store) addVolume(vid uint64) error {
+func (s *Store) addVolume(vid VolumeId) error {
 	if s.volumes[vid] != nil {
-		return errors.New("Volume Id " + strconv.FormatUint(vid, 10) + " already exists!")
+		return errors.New("Volume Id " + vid.String() + " already exists!")
 	}
-	s.volumes[vid] = NewVolume(s.dir, uint32(vid))
+	s.volumes[vid] = NewVolume(s.dir, vid)
 	return nil
 }
 func (s *Store) Status() *[]*topology.VolumeInfo {
@@ -88,12 +88,12 @@ func (s *Store) Close() {
 		v.Close()
 	}
 }
-func (s *Store) Write(i uint64, n *Needle) uint32 {
+func (s *Store) Write(i VolumeId, n *Needle) uint32 {
 	return s.volumes[i].write(n)
 }
-func (s *Store) Delete(i uint64, n *Needle) uint32 {
+func (s *Store) Delete(i VolumeId, n *Needle) uint32 {
 	return s.volumes[i].delete(n)
 }
-func (s *Store) Read(i uint64, n *Needle) (int, error) {
+func (s *Store) Read(i VolumeId, n *Needle) (int, error) {
 	return s.volumes[i].read(n)
 }
