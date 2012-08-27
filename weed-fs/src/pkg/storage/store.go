@@ -89,11 +89,23 @@ func (s *Store) Close() {
 	}
 }
 func (s *Store) Write(i VolumeId, n *Needle) uint32 {
-	return s.volumes[i].write(n)
+  v := s.volumes[i]
+  if v!=nil{
+    return v.write(n)
+  }
+  return 0
 }
 func (s *Store) Delete(i VolumeId, n *Needle) uint32 {
-	return s.volumes[i].delete(n)
+  v := s.volumes[i]
+  if v!=nil{
+    return v.delete(n)
+  }
+  return 0
 }
 func (s *Store) Read(i VolumeId, n *Needle) (int, error) {
-	return s.volumes[i].read(n)
+  v := s.volumes[i]
+  if v!=nil{
+    return v.read(n)
+  }
+  return 0, errors.New("Not Found")
 }

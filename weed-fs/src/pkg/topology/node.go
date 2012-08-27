@@ -11,4 +11,19 @@ type Node struct {
 	Ip          string
 	Port        int
 	PublicUrl   string
+	
+	//transient
+	allocation *Allocation
 }
+type Allocation struct {
+  count int
+  limit int
+}
+
+func (n *Node) GetAllocation() *Allocation{
+  if n.allocation == nil {
+    n.allocation = &Allocation{count:len(n.volumes), limit : n.volumeLimit}
+  }
+  return n.allocation
+}
+
