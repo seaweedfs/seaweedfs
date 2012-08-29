@@ -22,7 +22,7 @@ type VolumeGrowth struct {
 func (vg *VolumeGrowth) GrowVolumeCopy(copyLevel int, topo topology.Topology) {
 	if copyLevel == 1 {
 		for i := 0; i <vg.copy1factor; i++ {
-			topo.RandomlyCreateOneVolume()
+			topo.RandomlyReserveOneVolume()
 		}
 	}
 

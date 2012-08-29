@@ -12,7 +12,7 @@ type Node struct {
 	maxVolumeCount      int
 	parent              *Node
 	children            map[NodeId]*Node
-	isLeaf              bool
+	maxVolumeId         storage.VolumeId
 }
 
 func (n *Node) ReserveOneVolume(r int, vid storage.VolumeId) bool {
@@ -33,6 +33,9 @@ func (n *Node) ReserveOneVolume(r int, vid storage.VolumeId) bool {
 }
 
 func (n *Node) AddVolume(v *storage.VolumeInfo) {
+  if n.maxVolumeId < v.Id {
+    n.maxVolumeId = v.Id
+  }
 	n.countVolumeCount++
 	if n.reservedVolumeCount > 0 { //if reserved
 		n.reservedVolumeCount--
@@ -40,6 +43,10 @@ func (n *Node) AddVolume(v *storage.VolumeInfo) {
 	if n.parent != nil {
 		n.parent.AddVolume(v)
 	}
+}
+
+func (n *Node) GetMaxVolumeId() storage.VolumeId {
+  return n.maxVolumeId
 }
 
 func (n *Node) AddNode(node *Node) {

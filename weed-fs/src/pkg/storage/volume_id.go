@@ -12,3 +12,6 @@ func NewVolumeId(vid string) (VolumeId,error) {
 func (vid *VolumeId) String() string{
   return strconv.FormatUint(uint64(*vid), 10)
 }
+func (vid *VolumeId) Next() VolumeId{
+  return VolumeId(uint32(*vid)+1)
+}
