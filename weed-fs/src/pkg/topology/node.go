@@ -1,25 +1,61 @@
 package topology
 
 import (
-  "pkg/storage"
+	"pkg/storage"
 )
 
 type NodeId string
 type Node struct {
-	volumes     map[storage.VolumeId]*storage.VolumeInfo
-	maxVolumeCount int
-	Ip          NodeId
-	Port        int
-	PublicUrl   string
-	
-	//transient
-	rack *Rack
+	id                  NodeId
+	countVolumeCount    int
+	reservedVolumeCount int
+	maxVolumeCount      int
+	parent              *Node
+	children            map[NodeId]*Node
+	isLeaf              bool
 }
-func (n *Node) CreateOneVolume(r int, vid storage.VolumeId) storage.VolumeId {
-  n.AddVolume(&storage.VolumeInfo{Id:vid, Size: 32*1024*1024*1024})
-  return vid
+
+func (n *Node) ReserveOneVolume(r int, vid storage.VolumeId) bool {
+	for _, node := range n.children {
+		freeSpace := node.maxVolumeCount - node.countVolumeCount - node.reservedVolumeCount
+		if r > freeSpace {
+			r -= freeSpace
+		} else {
+			if node.ReserveOneVolume(r, vid) {
+				node.reservedVolumeCount++
+				return true
+			} else {
+				return false
+			}
+		}
+	}
+	return false
 }
-func (n *Node) AddVolume(v *storage.VolumeInfo){
-  n.volumes[v.Id] = v
-  n.rack.AddVolume(n,v)
+
+func (n *Node) AddVolume(v *storage.VolumeInfo) {
+	n.countVolumeCount++
+	if n.reservedVolumeCount > 0 { //if reserved
+		n.reservedVolumeCount--
+	}
+	if n.parent != nil {
+		n.parent.AddVolume(v)
+	}
+}
+
+func (n *Node) AddNode(node *Node) {
+	n.children[node.id] = node
+	n.countVolumeCount += node.countVolumeCount
+	n.maxVolumeCount += node.maxVolumeCount
+	if n.parent != nil {
+		n.parent.AddNode(node)
+	}
+}
+
+func (n *Node) RemoveNode(node *Node) {
+	delete(n.children, node.id)
+	n.countVolumeCount -= node.countVolumeCount
+	n.maxVolumeCount -= node.maxVolumeCount
+	if n.parent != nil {
+		n.parent.RemoveNode(node)
+	}
 }
