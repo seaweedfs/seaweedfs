@@ -8,6 +8,12 @@ import (
 type Topology struct {
   Node
 }
+func NewTopology(id NodeId) *Topology{
+  t := &Topology{}
+  t.Node = *NewNode()
+  t.Node.Id = id
+  return t
+}
 
 func (t *Topology) RandomlyReserveOneVolume() (bool,storage.VolumeId) {
   r := rand.Intn(t.Node.maxVolumeCount-t.Node.countVolumeCount-t.Node.reservedVolumeCount)

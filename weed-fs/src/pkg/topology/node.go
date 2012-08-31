@@ -1,18 +1,25 @@
 package topology
 
 import (
+	"fmt"
 	"pkg/storage"
 )
 
 type NodeId string
 type Node struct {
-	id                  NodeId
+	Id                  NodeId
 	countVolumeCount    int
 	reservedVolumeCount int
 	maxVolumeCount      int
 	parent              *Node
 	children            map[NodeId]*Node
 	maxVolumeId         storage.VolumeId
+}
+
+func NewNode() *Node {
+	n := &Node{}
+	n.children = make(map[NodeId]*Node)
+	return n
 }
 
 func (n *Node) ReserveOneVolume(r int, vid storage.VolumeId) bool {
@@ -33,10 +40,11 @@ func (n *Node) ReserveOneVolume(r int, vid storage.VolumeId) bool {
 }
 
 func (n *Node) AddVolume(v *storage.VolumeInfo) {
-  if n.maxVolumeId < v.Id {
-    n.maxVolumeId = v.Id
-  }
+	if n.maxVolumeId < v.Id {
+		n.maxVolumeId = v.Id
+	}
 	n.countVolumeCount++
+	fmt.Println(n.Id, "adds 1, volumeCount =", n.countVolumeCount)
 	if n.reservedVolumeCount > 0 { //if reserved
 		n.reservedVolumeCount--
 	}
@@ -46,23 +54,23 @@ func (n *Node) AddVolume(v *storage.VolumeInfo) {
 }
 
 func (n *Node) GetMaxVolumeId() storage.VolumeId {
-  return n.maxVolumeId
+	return n.maxVolumeId
 }
 
 func (n *Node) AddNode(node *Node) {
-	n.children[node.id] = node
-	n.countVolumeCount += node.countVolumeCount
-	n.maxVolumeCount += node.maxVolumeCount
-	if n.parent != nil {
-		n.parent.AddNode(node)
+	if n.children[node.Id] == nil {
+		n.children[node.Id] = node
+		n.countVolumeCount += node.countVolumeCount
+		n.maxVolumeCount += node.maxVolumeCount
+		fmt.Println(n.Id, "adds", node.Id, "volumeCount =", n.countVolumeCount)
 	}
 }
 
 func (n *Node) RemoveNode(node *Node) {
-	delete(n.children, node.id)
-	n.countVolumeCount -= node.countVolumeCount
-	n.maxVolumeCount -= node.maxVolumeCount
-	if n.parent != nil {
-		n.parent.RemoveNode(node)
+	if n.children[node.Id] != nil {
+		delete(n.children, node.Id)
+		n.countVolumeCount -= node.countVolumeCount
+		n.maxVolumeCount -= node.maxVolumeCount
+		fmt.Println(n.Id, "removes", node.Id, "volumeCount =", n.countVolumeCount)
 	}
 }
