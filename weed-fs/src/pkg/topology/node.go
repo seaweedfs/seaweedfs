@@ -8,7 +8,7 @@ import (
 type NodeId string
 type Node struct {
 	Id                  NodeId
-	countVolumeCount    int
+	activeVolumeCount   int
 	reservedVolumeCount int
 	maxVolumeCount      int
 	parent              *Node
@@ -21,36 +21,57 @@ func NewNode() *Node {
 	n.children = make(map[NodeId]*Node)
 	return n
 }
+func (n *Node) String() string {
+  if n.parent!=nil {
+    return n.parent.String()+":"+string(n.Id)
+  }
+  return string(n.Id)
+}
 
 func (n *Node) ReserveOneVolume(r int, vid storage.VolumeId) bool {
+  ret := false
+  if n.children == nil {
+    return true
+  }
 	for _, node := range n.children {
-		freeSpace := node.maxVolumeCount - node.countVolumeCount - node.reservedVolumeCount
-		if r > freeSpace {
+		freeSpace := node.maxVolumeCount - node.activeVolumeCount - node.reservedVolumeCount
+    fmt.Println("r =", r, ", node =", node, ", freeSpace =", freeSpace)
+    if freeSpace <= 0 {
+      continue
+    }
+		if r >= freeSpace {
 			r -= freeSpace
 		} else {
-			if node.ReserveOneVolume(r, vid) {
-				node.reservedVolumeCount++
-				return true
-			} else {
-				return false
-			}
+		  ret = node.ReserveOneVolume(r, vid)
+		  if ret {
+		    break
+		  }
 		}
 	}
-	return false
+	if ret {
+	  n.reservedVolumeCount++
+	}
+	return ret
 }
 
 func (n *Node) AddVolume(v *storage.VolumeInfo) {
 	if n.maxVolumeId < v.Id {
 		n.maxVolumeId = v.Id
 	}
-	n.countVolumeCount++
-	fmt.Println(n.Id, "adds 1, volumeCount =", n.countVolumeCount)
+	n.activeVolumeCount++
+	fmt.Println(n.Id, "adds 1, volumeCount =", n.activeVolumeCount)
 	if n.reservedVolumeCount > 0 { //if reserved
 		n.reservedVolumeCount--
 	}
 	if n.parent != nil {
 		n.parent.AddVolume(v)
 	}
+}
+func (n *Node) AddMaxVolumeCount(maxVolumeCount int) {//can be negative
+  n.maxVolumeCount += maxVolumeCount
+  if n.parent != nil {
+    n.parent.AddMaxVolumeCount(maxVolumeCount)
+  }
 }
 
 func (n *Node) GetMaxVolumeId() storage.VolumeId {
@@ -60,17 +81,27 @@ func (n *Node) GetMaxVolumeId() storage.VolumeId {
 func (n *Node) AddNode(node *Node) {
 	if n.children[node.Id] == nil {
 		n.children[node.Id] = node
-		n.countVolumeCount += node.countVolumeCount
+		n.activeVolumeCount += node.activeVolumeCount
+		n.reservedVolumeCount += node.reservedVolumeCount
 		n.maxVolumeCount += node.maxVolumeCount
-		fmt.Println(n.Id, "adds", node.Id, "volumeCount =", n.countVolumeCount)
+		fmt.Println(n.Id, "adds", node.Id, "volumeCount =", n.activeVolumeCount)
 	}
 }
 
-func (n *Node) RemoveNode(node *Node) {
-	if n.children[node.Id] != nil {
+func (n *Node) RemoveNode(nodeId NodeId) {
+	node := n.children[nodeId]
+	if node != nil {
 		delete(n.children, node.Id)
-		n.countVolumeCount -= node.countVolumeCount
+		n.activeVolumeCount -= node.activeVolumeCount
 		n.maxVolumeCount -= node.maxVolumeCount
-		fmt.Println(n.Id, "removes", node.Id, "volumeCount =", n.countVolumeCount)
+		n.reservedVolumeCount -= node.reservedVolumeCount
+		p := n.parent
+		for p != nil {
+			p.activeVolumeCount -= node.activeVolumeCount
+			p.maxVolumeCount -= node.maxVolumeCount
+			p.reservedVolumeCount -= node.reservedVolumeCount
+			p = p.parent
+		}
+		fmt.Println(n.Id, "removes", node.Id, "volumeCount =", n.activeVolumeCount)
 	}
 }

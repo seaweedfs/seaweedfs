@@ -9,7 +9,9 @@ import (
 	"os"
 	"strings"
 	"sync"
+  "math/rand"
 	"text/template"
+  "time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -39,6 +41,7 @@ func setExitStatus(n int) {
 }
 
 func main() {
+  rand.Seed(time.Now().UnixNano())
 	flag.Usage = usage
 	flag.Parse()
 

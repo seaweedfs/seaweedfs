@@ -3,6 +3,7 @@ package topology
 import (
   "math/rand"
 	"pkg/storage"
+	"fmt"
 )
 
 type Topology struct {
@@ -16,7 +17,10 @@ func NewTopology(id NodeId) *Topology{
 }
 
 func (t *Topology) RandomlyReserveOneVolume() (bool,storage.VolumeId) {
-  r := rand.Intn(t.Node.maxVolumeCount-t.Node.countVolumeCount-t.Node.reservedVolumeCount)
+  slots := t.Node.maxVolumeCount-t.Node.activeVolumeCount-t.Node.reservedVolumeCount
+  r := rand.Intn(slots)
+  r = rand.Intn(slots)
+  fmt.Println("slots:", slots, "random :", r)
   vid := t.nextVolumeId()
   return t.Node.ReserveOneVolume(r,vid), vid
 }
