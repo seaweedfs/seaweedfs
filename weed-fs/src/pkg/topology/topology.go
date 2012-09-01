@@ -16,13 +16,14 @@ func NewTopology(id NodeId) *Topology{
   return t
 }
 
-func (t *Topology) RandomlyReserveOneVolume() (bool,storage.VolumeId) {
+func (t *Topology) RandomlyReserveOneVolume() (bool, *Node, storage.VolumeId) {
   slots := t.Node.maxVolumeCount-t.Node.activeVolumeCount-t.Node.reservedVolumeCount
   r := rand.Intn(slots)
   r = rand.Intn(slots)
   fmt.Println("slots:", slots, "random :", r)
   vid := t.nextVolumeId()
-  return t.Node.ReserveOneVolume(r,vid), vid
+  ret, node := t.Node.ReserveOneVolume(r,vid)
+  return ret, node, vid
 }
 
 func (t *Topology) nextVolumeId() storage.VolumeId {

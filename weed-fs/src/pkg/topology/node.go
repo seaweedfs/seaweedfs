@@ -28,11 +28,12 @@ func (n *Node) String() string {
   return string(n.Id)
 }
 
-func (n *Node) ReserveOneVolume(r int, vid storage.VolumeId) bool {
-  ret := false
+func (n *Node) ReserveOneVolume(r int, vid storage.VolumeId) (bool, *Node) {
   if n.children == nil {
-    return true
+    return true, n
   }
+  ret := false
+  var assignedNode *Node
 	for _, node := range n.children {
 		freeSpace := node.maxVolumeCount - node.activeVolumeCount - node.reservedVolumeCount
     fmt.Println("r =", r, ", node =", node, ", freeSpace =", freeSpace)
@@ -42,7 +43,7 @@ func (n *Node) ReserveOneVolume(r int, vid storage.VolumeId) bool {
 		if r >= freeSpace {
 			r -= freeSpace
 		} else {
-		  ret = node.ReserveOneVolume(r, vid)
+		  ret, assignedNode = node.ReserveOneVolume(r, vid)
 		  if ret {
 		    break
 		  }
@@ -51,7 +52,7 @@ func (n *Node) ReserveOneVolume(r int, vid storage.VolumeId) bool {
 	if ret {
 	  n.reservedVolumeCount++
 	}
-	return ret
+	return ret, assignedNode
 }
 
 func (n *Node) AddVolume(v *storage.VolumeInfo) {
