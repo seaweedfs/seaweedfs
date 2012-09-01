@@ -19,7 +19,6 @@ func NewTopology(id NodeId) *Topology{
 func (t *Topology) RandomlyReserveOneVolume() (bool, *Node, storage.VolumeId) {
   slots := t.Node.maxVolumeCount-t.Node.activeVolumeCount
   r := rand.Intn(slots)
-  r = rand.Intn(slots)
   fmt.Println("slots:", slots, "random :", r)
   vid := t.nextVolumeId()
   ret, node := t.Node.ReserveOneVolume(r,vid)
