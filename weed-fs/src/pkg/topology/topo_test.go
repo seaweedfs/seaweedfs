@@ -161,11 +161,9 @@ func TestRemoveDataCenter(t *testing.T) {
 func TestReserveOneVolume(t *testing.T) {
 	topo := setup()
   rand.Seed(time.Now().UnixNano())
-	ret, vid := topo.RandomlyReserveOneVolume()
+	ret, node, vid := topo.RandomlyReserveOneVolume()
 	fmt.Println("topology:", topo.Node)
   fmt.Println("assigned :", ret)
+  fmt.Println("assigned node :", node)
 	fmt.Println("assigned volume id:", vid)
-	if topo.reservedVolumeCount != 1 {
-		t.Fail()
-	}
 }
