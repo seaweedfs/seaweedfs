@@ -1,30 +1,30 @@
 package topology
 
 import (
-  "math/rand"
+	"fmt"
+	"math/rand"
 	"pkg/storage"
-	_ "fmt"
 )
 
 type Topology struct {
-  Node
-}
-func NewTopology(id NodeId) *Topology{
-  t := &Topology{}
-  t.Node = *NewNode()
-  t.Node.Id = id
-  return t
+	NodeImpl
 }
 
-func (t *Topology) RandomlyReserveOneVolume() (bool, *Node, storage.VolumeId) {
-  slots := t.Node.maxVolumeCount-t.Node.activeVolumeCount
-  r := rand.Intn(slots)
-  vid := t.nextVolumeId()
-  ret, node := t.Node.ReserveOneVolume(r,vid)
+func NewTopology(id string) *Topology {
+	t := &Topology{}
+	t.id = NodeId(id)
+	t.nodeType = "Topology"
+	t.children = make(map[NodeId]Node)
+	return t
+}
+func (t *Topology) RandomlyReserveOneVolume() (bool, *Server, storage.VolumeId) {
+	vid := t.nextVolumeId()
+	ret, node := t.ReserveOneVolume(rand.Intn(t.FreeSpace()), vid)
+  fmt.Println("node.IsServer", node.IsServer())
   return ret, node, vid
 }
 
 func (t *Topology) nextVolumeId() storage.VolumeId {
-  vid := t.Node.GetMaxVolumeId()
+	vid := t.GetMaxVolumeId()
 	return vid.Next()
 }

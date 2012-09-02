@@ -4,13 +4,14 @@ import (
 )
 
 type Rack struct {
-	Node
+	NodeImpl
 	ipRange IpRange
 }
 
-func NewRack(id NodeId) *Rack {
+func NewRack(id string) *Rack {
 	r := &Rack{}
-	r.Node = *NewNode()
-  r.Node.Id = id
+  r.id = NodeId(id)
+  r.nodeType = "Rack"
+  r.children = make(map[NodeId]Node)
 	return r
 }
