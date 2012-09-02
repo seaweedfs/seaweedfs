@@ -4,12 +4,13 @@ import (
 )
 
 type DataCenter struct {
-	Node
+	NodeImpl
 	ipRange IpRange
 }
-func NewDataCenter(id NodeId) *DataCenter{
+func NewDataCenter(id string) *DataCenter{
   dc := &DataCenter{}
-  dc.Node = *NewNode()
-  dc.Node.Id = id
+  dc.id = NodeId(id)
+  dc.nodeType = "DataCenter"
+  dc.children = make(map[NodeId]Node)
   return dc
 }
