@@ -1,7 +1,7 @@
 package topology
 
 import (
-	"fmt"
+	_ "fmt"
 	"math/rand"
 	"pkg/storage"
 )
@@ -18,13 +18,22 @@ func NewTopology(id string) *Topology {
 	return t
 }
 func (t *Topology) RandomlyReserveOneVolume() (bool, *Server, storage.VolumeId) {
-	vid := t.nextVolumeId()
+	vid := t.NextVolumeId()
 	ret, node := t.ReserveOneVolume(rand.Intn(t.FreeSpace()), vid)
-  fmt.Println("node.IsServer", node.IsServer())
   return ret, node, vid
 }
 
-func (t *Topology) nextVolumeId() storage.VolumeId {
+func (t *Topology) RandomlyReserveOneVolumeExcept(except []Node) (bool, *Server, storage.VolumeId) {
+  freeSpace := t.FreeSpace()
+  for _, node := range except {
+    freeSpace -= node.FreeSpace()
+  }
+  vid := t.NextVolumeId()
+  ret, node := t.ReserveOneVolume(rand.Intn(freeSpace), vid)
+  return ret, node, vid
+}
+
+func (t *Topology) NextVolumeId() storage.VolumeId {
 	vid := t.GetMaxVolumeId()
 	return vid.Next()
 }

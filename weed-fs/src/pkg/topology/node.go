@@ -20,8 +20,10 @@ type Node interface {
 	setParent(Node)
 	LinkChildNode(node Node)
 	UnlinkChildNode(nodeId NodeId)
-	
+
 	IsServer() bool
+	Children() map[NodeId]Node
+  Parent() Node
 }
 type NodeImpl struct {
 	id                NodeId
@@ -59,22 +61,28 @@ func (n *NodeImpl) FreeSpace() int {
 func (n *NodeImpl) setParent(node Node) {
 	n.parent = node
 }
+func (n *NodeImpl) Children() map[NodeId]Node {
+	return n.children
+}
+func (n *NodeImpl) Parent() Node {
+  return n.parent
+}
 func (n *NodeImpl) ReserveOneVolume(r int, vid storage.VolumeId) (bool, *Server) {
 	ret := false
 	var assignedNode *Server
 	for _, node := range n.children {
 		freeSpace := node.FreeSpace()
-		fmt.Println("r =", r, ", node =", node, ", freeSpace =", freeSpace)
+		//fmt.Println("r =", r, ", node =", node, ", freeSpace =", freeSpace)
 		if freeSpace <= 0 {
 			continue
 		}
 		if r >= freeSpace {
 			r -= freeSpace
 		} else {
-		  if node.IsServer() && node.FreeSpace()>0 {
-		    fmt.Println("vid =", vid, " assigned to node =", node, ", freeSpace =", node.FreeSpace())
-		    return true, node.(*Server)
-		  }
+			if node.IsServer() && node.FreeSpace() > 0 {
+				//fmt.Println("vid =", vid, " assigned to node =", node, ", freeSpace =", node.FreeSpace())
+				return true, node.(*Server)
+			}
 			ret, assignedNode = node.ReserveOneVolume(r, vid)
 			if ret {
 				break

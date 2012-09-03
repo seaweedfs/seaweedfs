@@ -1,10 +1,11 @@
-package topology
+package replication
 
 import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
 	"pkg/storage"
+  "pkg/topology"
 	"testing"
 	"time"
 )
@@ -70,28 +71,27 @@ var topologyLayout = `
 }
 `
 
-func setup(topologyLayout string) *Topology {
+func setup(topologyLayout string) *topology.Topology {
 	var data interface{}
 	err := json.Unmarshal([]byte(topologyLayout), &data)
 	if err != nil {
 		fmt.Println("error:", err)
 	}
-	//fmt.Println("data:", data)
-	//printMap(data)
+	fmt.Println("data:", data)
 
 	//need to connect all nodes first before server adding volumes
-	topo := NewTopology("mynetwork")
+	topo := topology.NewTopology("mynetwork")
 	mTopology := data.(map[string]interface{})
 	for dcKey, dcValue := range mTopology {
-		dc := NewDataCenter(dcKey)
+		dc := topology.NewDataCenter(dcKey)
 		dcMap := dcValue.(map[string]interface{})
 		topo.LinkChildNode(dc)
 		for rackKey, rackValue := range dcMap {
-			rack := NewRack(rackKey)
+			rack := topology.NewRack(rackKey)
 			rackMap := rackValue.(map[string]interface{})
 			dc.LinkChildNode(rack)
 			for serverKey, serverValue := range rackMap {
-				server := NewServer(serverKey)
+				server := topology.NewServer(serverKey)
 				serverMap := serverValue.(map[string]interface{})
 				rack.LinkChildNode(server)
 				for _, v := range serverMap["volumes"].([]interface{}) {
@@ -106,44 +106,16 @@ func setup(topologyLayout string) *Topology {
 
 	fmt.Println("topology:", *topo)
 
-	bytes, err := json.Marshal(topo.children)
-	if err != nil {
-		fmt.Println("json error:", err)
-	}
-	fmt.Println("json topo:", string(bytes))
-
 	return topo
-}
-
-func printMap(mm interface{}) {
-	m := mm.(map[string]interface{})
-	for k, v := range m {
-		switch vv := v.(type) {
-		case string:
-			fmt.Println(k, "\"", vv, "\"")
-		case int, float64:
-			fmt.Println(k, ":", vv)
-		case []interface{}:
-			fmt.Println(k, ":[")
-			for _, u := range vv {
-				fmt.Println(u)
-				fmt.Println(",")
-			}
-			fmt.Println("]")
-		default:
-			fmt.Println(k, ":")
-			printMap(vv)
-		}
-	}
 }
 
 func TestRemoveDataCenter(t *testing.T) {
 	topo := setup(topologyLayout)
-	topo.UnlinkChildNode(NodeId("dc2"))
+	topo.UnlinkChildNode(topology.NodeId("dc2"))
 	if topo.GetActiveVolumeCount() != 15 {
 		t.Fail()
 	}
-	topo.UnlinkChildNode(NodeId("dc3"))
+	topo.UnlinkChildNode(topology.NodeId("dc3"))
 	if topo.GetActiveVolumeCount() != 12 {
 		t.Fail()
 	}
@@ -152,9 +124,6 @@ func TestRemoveDataCenter(t *testing.T) {
 func TestReserveOneVolume(t *testing.T) {
 	topo := setup(topologyLayout)
   rand.Seed(time.Now().UnixNano())
-  rand.Seed(1)
-	ret, node, vid := topo.RandomlyReserveOneVolume()
-	fmt.Println("topology:", topo)
-  fmt.Println("assigned :", ret, ", node :", node,", volume id:", vid)
-
+  vg:=&VolumeGrowth{copy1factor:3,copy2factor:2,copy3factor:1,copyAll:4}
+  vg.GrowVolumeCopy(20,topo)
 }
