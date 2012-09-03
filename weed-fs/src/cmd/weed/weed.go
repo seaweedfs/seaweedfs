@@ -18,7 +18,6 @@ import (
 
 var IsDebug *bool
 var server *string
-var port *int
 
 var commands = []*Command{
 	cmdFix,
@@ -53,7 +52,7 @@ func main() {
 	if args[0] == "help" {
 		help(args[1:])
 		for _, cmd := range commands {
-			if cmd.Name() == args[1] && cmd.Run != nil {
+			if len(args)>2 && cmd.Name() == args[1] && cmd.Run != nil {
 				fmt.Fprintf(os.Stderr, "Default Parameters:\n")
 				cmd.Flag.PrintDefaults()
 			}

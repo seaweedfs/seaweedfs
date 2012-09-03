@@ -1,14 +1,12 @@
 package directory
 
 import (
-	"encoding/gob"
 	"errors"
 	"log"
 	"math/rand"
-	"os"
-	"path"
+	"pkg/sequence"
 	"pkg/storage"
-	"strconv"
+	"pkg/util"
 	"sync"
 )
 
@@ -26,19 +24,14 @@ type Machine struct {
 }
 
 type Mapper struct {
-	dir      string
-	fileName string
-
-	volumeLock          sync.Mutex
-  sequenceLock          sync.Mutex
+	volumeLock    sync.Mutex
 	Machines      []*Machine
 	vid2machineId map[storage.VolumeId]int //machineId is +1 of the index of []*Machine, to detect not found entries
 	Writers       []storage.VolumeId       // transient array of Writers volume id
 
-	FileIdSequence uint64
-	fileIdCounter  uint64
-
 	volumeSizeLimit uint64
+
+	sequence sequence.Sequencer
 }
 
 func NewMachine(server, publicUrl string, volumes []storage.VolumeInfo) *Machine {
@@ -46,61 +39,33 @@ func NewMachine(server, publicUrl string, volumes []storage.VolumeInfo) *Machine
 }
 
 func NewMapper(dirname string, filename string, volumeSizeLimit uint64) (m *Mapper) {
-	m = &Mapper{dir: dirname, fileName: filename}
+	m = &Mapper{}
 	m.vid2machineId = make(map[storage.VolumeId]int)
 	m.volumeSizeLimit = volumeSizeLimit
 	m.Writers = *new([]storage.VolumeId)
 	m.Machines = *new([]*Machine)
 
-	seqFile, se := os.OpenFile(path.Join(m.dir, m.fileName+".seq"), os.O_RDONLY, 0644)
-	if se != nil {
-		m.FileIdSequence = FileIdSaveInterval
-		log.Println("Setting file id sequence", m.FileIdSequence)
-	} else {
-		decoder := gob.NewDecoder(seqFile)
-		defer seqFile.Close()
-		decoder.Decode(&m.FileIdSequence)
-		log.Println("Loading file id sequence", m.FileIdSequence, "=>", m.FileIdSequence+FileIdSaveInterval)
-		//in case the server stops between intervals
-		m.FileIdSequence += FileIdSaveInterval
-	}
+	m.sequence = sequence.NewSequencer(dirname, filename)
+
 	return
 }
-func (m *Mapper) PickForWrite(c string) (string, int, MachineInfo, error) {
+func (m *Mapper) PickForWrite(c string) (string, int, *MachineInfo, error) {
 	len_writers := len(m.Writers)
 	if len_writers <= 0 {
 		log.Println("No more writable volumes!")
-		return "", 0, m.Machines[rand.Intn(len(m.Machines))].Server, errors.New("No more writable volumes!")
+		return "", 0, nil, errors.New("No more writable volumes!")
 	}
 	vid := m.Writers[rand.Intn(len_writers)]
 	machine_id := m.vid2machineId[vid]
 	if machine_id > 0 {
 		machine := m.Machines[machine_id-1]
-		fileId, count := m.NextFileId(c)
-		if count==0 {
-      return "", 0, m.Machines[rand.Intn(len(m.Machines))].Server, errors.New("Strange count:" + c)
+		fileId, count := m.sequence.NextFileId(util.ParseInt(c, 1))
+		if count == 0 {
+			return "", 0, &m.Machines[rand.Intn(len(m.Machines))].Server, errors.New("Strange count:" + c)
 		}
-		return NewFileId(vid, fileId, rand.Uint32()).String(), count, machine.Server, nil
+		return NewFileId(vid, fileId, rand.Uint32()).String(), count, &machine.Server, nil
 	}
-	return "", 0, m.Machines[rand.Intn(len(m.Machines))].Server, errors.New("Strangely vid " + vid.String() + " is on no machine!")
-}
-func (m *Mapper) NextFileId(c string) (uint64,int) {
-  count, parseError := strconv.ParseUint(c,10,64)
-  if parseError!=nil {
-    if len(c)>0{
-      return 0,0
-    }
-    count = 1
-  }
-  m.sequenceLock.Lock()
-  defer m.sequenceLock.Unlock()
-	if m.fileIdCounter < count {
-		m.fileIdCounter = FileIdSaveInterval
-		m.FileIdSequence += FileIdSaveInterval
-		m.saveSequence()
-	}
-	m.fileIdCounter = m.fileIdCounter - count
-	return m.FileIdSequence - m.fileIdCounter, int(count)
+	return "", 0, &m.Machines[rand.Intn(len(m.Machines))].Server, errors.New("Strangely vid " + vid.String() + " is on no machine!")
 }
 func (m *Mapper) Get(vid storage.VolumeId) (*Machine, error) {
 	machineId := m.vid2machineId[vid]
@@ -143,14 +108,4 @@ func (m *Mapper) Add(machine Machine) {
 		}
 	}
 	m.Writers = writers
-}
-func (m *Mapper) saveSequence() {
-	log.Println("Saving file id sequence", m.FileIdSequence, "to", path.Join(m.dir, m.fileName+".seq"))
-	seqFile, e := os.OpenFile(path.Join(m.dir, m.fileName+".seq"), os.O_CREATE|os.O_WRONLY, 0644)
-	if e != nil {
-		log.Fatalf("Sequence File Save [ERROR] %s\n", e)
-	}
-	defer seqFile.Close()
-	encoder := gob.NewEncoder(seqFile)
-	encoder.Encode(m.FileIdSequence)
 }

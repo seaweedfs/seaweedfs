@@ -13,7 +13,6 @@ import (
 func init() {
   cmdMaster.Run = runMaster // break init cycle
   IsDebug     = cmdMaster.Flag.Bool("debug", false, "enable debug mode")
-  port        = cmdMaster.Flag.Int("port", 8080, "http listen port")
 }
 
 var cmdMaster = &Command{
@@ -26,6 +25,7 @@ var cmdMaster = &Command{
 }
 
 var (
+  mport        = cmdMaster.Flag.Int("port", 9333, "http listen port")
   metaFolder        = cmdMaster.Flag.String("mdir", "/tmp", "data directory to store mappings")
   capacity          = cmdMaster.Flag.Int("capacity", 100, "maximum number of volumes to hold")
   mapper            *directory.Mapper
@@ -53,7 +53,6 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
   if err == nil {
     writeJson(w, r, map[string]string{"fid": fid, "url": machine.Url, "publicUrl":machine.PublicUrl, "count":strconv.Itoa(count)})
   } else {
-    log.Println(err)
     writeJson(w, r, map[string]string{"error": err.Error()})
   }
 }
@@ -79,8 +78,8 @@ func runMaster(cmd *Command, args []string) bool {
   http.HandleFunc("/dir/join", dirJoinHandler)
   http.HandleFunc("/dir/status", dirStatusHandler)
 
-  log.Println("Start directory service at http://127.0.0.1:" + strconv.Itoa(*port))
-  e := http.ListenAndServe(":"+strconv.Itoa(*port), nil)
+  log.Println("Start directory service at http://127.0.0.1:" + strconv.Itoa(*mport))
+  e := http.ListenAndServe(":"+strconv.Itoa(*mport), nil)
   if e != nil {
     log.Fatal("Fail to start:", e)
   }

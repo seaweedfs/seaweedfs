@@ -14,7 +14,6 @@ import (
 func init() {
 	cmdVolume.Run = runVolume // break init cycle
 	IsDebug = cmdVolume.Flag.Bool("debug", false, "enable debug mode")
-	port = cmdVolume.Flag.Int("port", 8080, "http listen port")
 }
 
 var cmdVolume = &Command{
@@ -26,6 +25,7 @@ var cmdVolume = &Command{
 }
 
 var (
+  vport = cmdVolume.Flag.Int("port", 8080, "http listen port")
 	chunkFolder = cmdVolume.Flag.String("dir", "/tmp", "data directory to store files")
 	volumes     = cmdVolume.Flag.String("volumes", "0,1-3,4", "comma-separated list of volume ids or range of ids")
 	publicUrl   = cmdVolume.Flag.String("publicUrl", "localhost:8080", "public url to serve data read")
@@ -153,7 +153,7 @@ func parseURLPath(path string) (vid, fid, ext string) {
 
 func runVolume(cmd *Command, args []string) bool {
 	//TODO: now default to 1G, this value should come from server?
-	store = storage.NewStore(*port, *publicUrl, *chunkFolder, *volumes)
+	store = storage.NewStore(*vport, *publicUrl, *chunkFolder, *volumes)
 	defer store.Close()
 	http.HandleFunc("/", storeHandler)
 	http.HandleFunc("/status", statusHandler)
@@ -167,8 +167,8 @@ func runVolume(cmd *Command, args []string) bool {
 	}()
 	log.Println("store joined at", *metaServer)
 
-	log.Println("Start storage service at http://127.0.0.1:"+strconv.Itoa(*port), "public url", *publicUrl)
-	e := http.ListenAndServe(":"+strconv.Itoa(*port), nil)
+	log.Println("Start storage service at http://127.0.0.1:"+strconv.Itoa(*vport), "public url", *publicUrl)
+	e := http.ListenAndServe(":"+strconv.Itoa(*vport), nil)
 	if e != nil {
 		log.Fatalf("Fail to start:", e)
 	}
