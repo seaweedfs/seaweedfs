@@ -76,6 +76,12 @@ func (m *Mapper) Add(machine *Machine) {
 	}
 	m.refreshWritableVolumes()
 }
+func (m *Mapper) remove(machine *Machine) {
+  delete(m.Machines,machine.Url)
+  for _, v := range machine.Volumes {
+    delete(m.vid2machine,v.Id)
+  }
+}
 func (m *Mapper) StartRefreshWritableVolumes() {
 	go func() {
 		for {
@@ -96,6 +102,9 @@ func (m *Mapper) refreshWritableVolumes() {
 					writers = append(writers, v.Id)
 				}
 			}
+		} else {
+			log.Println("Warning! Server", machine_entry.Url, "last seen is", time.Now().Unix()-machine_entry.LastSeen, "seconds ago!")
+			m.remove(machine_entry)
 		}
 	}
 	m.Writers = writers

@@ -55,7 +55,7 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		writeJson(w, r, map[string]interface{}{"fid": fid, "url": machine.Url, "publicUrl": machine.PublicUrl, "count": count})
 	} else {
-		writeJson(w, r, map[string]interface{}{"error": err})
+		writeJson(w, r, map[string]string{"error": err.Error()})
 	}
 }
 func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +79,8 @@ func runMaster(cmd *Command, args []string) bool {
 	http.HandleFunc("/dir/lookup", dirLookupHandler)
 	http.HandleFunc("/dir/join", dirJoinHandler)
 	http.HandleFunc("/dir/status", dirStatusHandler)
+
+  mapper.StartRefreshWritableVolumes()
 
 	log.Println("Start directory service at http://127.0.0.1:" + strconv.Itoa(*mport))
 	e := http.ListenAndServe(":"+strconv.Itoa(*mport), nil)
