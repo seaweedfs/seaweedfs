@@ -38,7 +38,10 @@ func (c *Command) Name() string {
 }
 
 func (c *Command) Usage() {
-  fmt.Fprintf(os.Stderr, "Usage: %s\n", c.UsageLine)
+  fmt.Fprintf(os.Stderr, "Example: weed %s\n", c.UsageLine)
+  fmt.Fprintf(os.Stderr, "Default Usage:\n")
+  c.Flag.PrintDefaults()
+  fmt.Fprintf(os.Stderr, "Description:\n")
   fmt.Fprintf(os.Stderr, "  %s\n", strings.TrimSpace(c.Long))
   os.Exit(2)
 }

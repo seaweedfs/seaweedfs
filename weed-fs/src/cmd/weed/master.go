@@ -8,6 +8,7 @@ import (
 	"pkg/storage"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func init() {
@@ -30,6 +31,7 @@ var (
 	capacity          = cmdMaster.Flag.Int("capacity", 100, "maximum number of volumes to hold")
 	mapper            *directory.Mapper
 	volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", 32*1024, "Default Volume Size in MegaBytes")
+	mpulse            = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 )
 
 func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +66,7 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	if *IsDebug {
 		log.Println(s, "volumes", r.FormValue("volumes"))
 	}
-	mapper.Add(directory.NewMachine(s, publicUrl, *volumes))
+	mapper.Add(directory.NewMachine(s, publicUrl, *volumes, time.Now().Unix()))
 }
 func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, r, mapper)
@@ -72,7 +74,7 @@ func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 
 func runMaster(cmd *Command, args []string) bool {
 	log.Println("Volume Size Limit is", *volumeSizeLimitMB, "MB")
-	mapper = directory.NewMapper(*metaFolder, "directory", uint64(*volumeSizeLimitMB)*1024*1024)
+	mapper = directory.NewMapper(*metaFolder, "directory", uint64(*volumeSizeLimitMB)*1024*1024, *mpulse)
 	http.HandleFunc("/dir/assign", dirAssignHandler)
 	http.HandleFunc("/dir/lookup", dirLookupHandler)
 	http.HandleFunc("/dir/join", dirJoinHandler)

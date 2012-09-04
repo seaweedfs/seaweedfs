@@ -25,12 +25,12 @@ var cmdVolume = &Command{
 }
 
 var (
-  vport = cmdVolume.Flag.Int("port", 8080, "http listen port")
+	vport       = cmdVolume.Flag.Int("port", 8080, "http listen port")
 	chunkFolder = cmdVolume.Flag.String("dir", "/tmp", "data directory to store files")
 	volumes     = cmdVolume.Flag.String("volumes", "0,1-3,4", "comma-separated list of volume ids or range of ids")
 	publicUrl   = cmdVolume.Flag.String("publicUrl", "localhost:8080", "public url to serve data read")
 	metaServer  = cmdVolume.Flag.String("mserver", "localhost:9333", "master directory server to store mappings")
-	pulse       = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
+	vpulse      = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 
 	store *storage.Store
 )
@@ -85,7 +85,7 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 }
 func PostHandler(w http.ResponseWriter, r *http.Request) {
 	vid, _, _ := parseURLPath(r.URL.Path)
-  volumeId, e := storage.NewVolumeId(vid)
+	volumeId, e := storage.NewVolumeId(vid)
 	if e != nil {
 		writeJson(w, r, e)
 	} else {
@@ -103,7 +103,7 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	n := new(storage.Needle)
 	vid, fid, _ := parseURLPath(r.URL.Path)
-  volumeId, _ := storage.NewVolumeId(vid)
+	volumeId, _ := storage.NewVolumeId(vid)
 	n.ParsePath(fid)
 
 	if *IsDebug {
@@ -162,7 +162,7 @@ func runVolume(cmd *Command, args []string) bool {
 	go func() {
 		for {
 			store.Join(*metaServer)
-			time.Sleep(time.Duration(float32(*pulse*1e3)*(1+rand.Float32())) * time.Millisecond)
+			time.Sleep(time.Duration(float32(*vpulse*1e3)*(1+rand.Float32())) * time.Millisecond)
 		}
 	}()
 	log.Println("store joined at", *metaServer)

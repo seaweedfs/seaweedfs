@@ -52,7 +52,7 @@ func main() {
 	if args[0] == "help" {
 		help(args[1:])
 		for _, cmd := range commands {
-			if len(args)>2 && cmd.Name() == args[1] && cmd.Run != nil {
+			if len(args)>=2 && cmd.Name() == args[1] && cmd.Run != nil {
 				fmt.Fprintf(os.Stderr, "Default Parameters:\n")
 				cmd.Flag.PrintDefaults()
 			}
@@ -92,12 +92,6 @@ The commands are:
     {{.Name | printf "%-11s"}} {{.Short}}{{end}}{{end}}
 
 Use "weed help [command]" for more information about a command.
-
-Additional help topics:
-{{range .}}{{if not .Runnable}}
-    {{.Name | printf "%-11s"}} {{.Short}}{{end}}{{end}}
-
-Use "weed help [topic]" for more information about that topic.
 
 `
 
