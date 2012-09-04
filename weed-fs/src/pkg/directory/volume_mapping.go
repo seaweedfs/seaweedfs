@@ -11,16 +11,16 @@ import (
 )
 
 type Machine struct {
-	Volumes []storage.VolumeInfo
-  Url       string //<server name/ip>[:port]
-  PublicUrl string
+	Volumes   []storage.VolumeInfo
+	Url       string //<server name/ip>[:port]
+	PublicUrl string
 }
 
 type Mapper struct {
 	volumeLock    sync.Mutex
-	Machines      []*Machine
-	vid2machineId map[storage.VolumeId]int //machineId is +1 of the index of []*Machine, to detect not found entries
-	Writers       []storage.VolumeId       // transient array of Writers volume id
+	Machines      map[string]*Machine
+	vid2machineId map[storage.VolumeId]*Machine //machineId is +1 of the index of []*Machine, to detect not found entries
+	Writers       []storage.VolumeId            // transient array of Writers volume id
 
 	volumeSizeLimit uint64
 
@@ -33,10 +33,10 @@ func NewMachine(server, publicUrl string, volumes []storage.VolumeInfo) *Machine
 
 func NewMapper(dirname string, filename string, volumeSizeLimit uint64) (m *Mapper) {
 	m = &Mapper{}
-	m.vid2machineId = make(map[storage.VolumeId]int)
+	m.vid2machineId = make(map[storage.VolumeId]*Machine)
 	m.volumeSizeLimit = volumeSizeLimit
 	m.Writers = *new([]storage.VolumeId)
-	m.Machines = *new([]*Machine)
+	m.Machines = make(map[string]*Machine)
 
 	m.sequence = sequence.NewSequencer(dirname, filename)
 
@@ -49,47 +49,33 @@ func (m *Mapper) PickForWrite(c string) (string, int, *Machine, error) {
 		return "", 0, nil, errors.New("No more writable volumes!")
 	}
 	vid := m.Writers[rand.Intn(len_writers)]
-	machine_id := m.vid2machineId[vid]
-	if machine_id > 0 {
-		machine := m.Machines[machine_id-1]
+	machine := m.vid2machineId[vid]
+	if machine != nil {
 		fileId, count := m.sequence.NextFileId(util.ParseInt(c, 1))
 		if count == 0 {
-			return "", 0, m.Machines[rand.Intn(len(m.Machines))], errors.New("Strange count:" + c)
+			return "", 0, nil, errors.New("Strange count:" + c)
 		}
 		return NewFileId(vid, fileId, rand.Uint32()).String(), count, machine, nil
 	}
-	return "", 0, m.Machines[rand.Intn(len(m.Machines))], errors.New("Strangely vid " + vid.String() + " is on no machine!")
+	return "", 0, nil, errors.New("Strangely vid " + vid.String() + " is on no machine!")
 }
 func (m *Mapper) Get(vid storage.VolumeId) (*Machine, error) {
-	machineId := m.vid2machineId[vid]
-	if machineId <= 0 {
+	machine := m.vid2machineId[vid]
+	if machine == nil {
 		return nil, errors.New("invalid volume id " + vid.String())
 	}
-	return m.Machines[machineId-1], nil
+	return machine, nil
 }
-func (m *Mapper) Add(machine Machine) {
+func (m *Mapper) Add(machine *Machine) {
 	//check existing machine, linearly
 	//log.Println("Adding machine", machine.Server.Url)
 	m.volumeLock.Lock()
-	foundExistingMachineId := -1
-	for index, entry := range m.Machines {
-		if machine.Url == entry.Url {
-			foundExistingMachineId = index
-			break
-		}
-	}
-	machineId := foundExistingMachineId
-	if machineId < 0 {
-		machineId = len(m.Machines)
-		m.Machines = append(m.Machines, &machine)
-	} else {
-		m.Machines[machineId] = &machine
-	}
+	m.Machines[machine.Url] = machine
 	m.volumeLock.Unlock()
 
 	//add to vid2machineId map, and Writers array
 	for _, v := range machine.Volumes {
-		m.vid2machineId[v.Id] = machineId + 1 //use base 1 indexed, to detect not found cases
+		m.vid2machineId[v.Id] = machine
 	}
 	//setting Writers, copy-on-write because of possible updating, this needs some future work!
 	var writers []storage.VolumeId

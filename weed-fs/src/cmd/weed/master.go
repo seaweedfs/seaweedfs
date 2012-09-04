@@ -51,9 +51,9 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 	c := r.FormValue("count")
 	fid, count, machine, err := mapper.PickForWrite(c)
 	if err == nil {
-		writeJson(w, r, map[string]string{"fid": fid, "url": machine.Url, "publicUrl": machine.PublicUrl, "count": strconv.Itoa(count)})
+		writeJson(w, r, map[string]interface{}{"fid": fid, "url": machine.Url, "publicUrl": machine.PublicUrl, "count": count})
 	} else {
-		writeJson(w, r, map[string]string{"error": err.Error()})
+		writeJson(w, r, map[string]interface{}{"error": err})
 	}
 }
 func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +64,7 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	if *IsDebug {
 		log.Println(s, "volumes", r.FormValue("volumes"))
 	}
-	mapper.Add(*directory.NewMachine(s, publicUrl, *volumes))
+	mapper.Add(directory.NewMachine(s, publicUrl, *volumes))
 }
 func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, r, mapper)
