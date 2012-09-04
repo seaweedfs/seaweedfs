@@ -41,12 +41,16 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 		vid = vid[0:commaSep]
 	}
 	volumeId, _ := storage.NewVolumeId(vid)
-	machine, e := mapper.Get(volumeId)
+	machines, e := mapper.Get(volumeId)
 	if e == nil {
-		writeJson(w, r, map[string]string{"url": machine.Url, "publicUrl": machine.PublicUrl})
+	  var ret []map[string]string
+	  for _, machine := range machines {
+	    ret = append(ret,map[string]string{"url": machine.Url, "publicUrl": machine.PublicUrl})
+	  }
+		writeJson(w, r, ret)
 	} else {
 		log.Println("Invalid volume id", volumeId)
-		writeJson(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found"})
+		writeJson(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found. " + e.Error()})
 	}
 }
 func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
