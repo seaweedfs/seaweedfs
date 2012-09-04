@@ -10,17 +10,10 @@ import (
 	"sync"
 )
 
-const (
-	FileIdSaveInterval = 10000
-)
-
-type MachineInfo struct {
-	Url       string //<server name/ip>[:port]
-	PublicUrl string
-}
 type Machine struct {
-	Server  MachineInfo
 	Volumes []storage.VolumeInfo
+  Url       string //<server name/ip>[:port]
+  PublicUrl string
 }
 
 type Mapper struct {
@@ -35,7 +28,7 @@ type Mapper struct {
 }
 
 func NewMachine(server, publicUrl string, volumes []storage.VolumeInfo) *Machine {
-	return &Machine{Server: MachineInfo{Url: server, PublicUrl: publicUrl}, Volumes: volumes}
+	return &Machine{Url: server, PublicUrl: publicUrl, Volumes: volumes}
 }
 
 func NewMapper(dirname string, filename string, volumeSizeLimit uint64) (m *Mapper) {
@@ -49,7 +42,7 @@ func NewMapper(dirname string, filename string, volumeSizeLimit uint64) (m *Mapp
 
 	return
 }
-func (m *Mapper) PickForWrite(c string) (string, int, *MachineInfo, error) {
+func (m *Mapper) PickForWrite(c string) (string, int, *Machine, error) {
 	len_writers := len(m.Writers)
 	if len_writers <= 0 {
 		log.Println("No more writable volumes!")
@@ -61,11 +54,11 @@ func (m *Mapper) PickForWrite(c string) (string, int, *MachineInfo, error) {
 		machine := m.Machines[machine_id-1]
 		fileId, count := m.sequence.NextFileId(util.ParseInt(c, 1))
 		if count == 0 {
-			return "", 0, &m.Machines[rand.Intn(len(m.Machines))].Server, errors.New("Strange count:" + c)
+			return "", 0, m.Machines[rand.Intn(len(m.Machines))], errors.New("Strange count:" + c)
 		}
-		return NewFileId(vid, fileId, rand.Uint32()).String(), count, &machine.Server, nil
+		return NewFileId(vid, fileId, rand.Uint32()).String(), count, machine, nil
 	}
-	return "", 0, &m.Machines[rand.Intn(len(m.Machines))].Server, errors.New("Strangely vid " + vid.String() + " is on no machine!")
+	return "", 0, m.Machines[rand.Intn(len(m.Machines))], errors.New("Strangely vid " + vid.String() + " is on no machine!")
 }
 func (m *Mapper) Get(vid storage.VolumeId) (*Machine, error) {
 	machineId := m.vid2machineId[vid]
@@ -80,7 +73,7 @@ func (m *Mapper) Add(machine Machine) {
 	m.volumeLock.Lock()
 	foundExistingMachineId := -1
 	for index, entry := range m.Machines {
-		if machine.Server.Url == entry.Server.Url {
+		if machine.Url == entry.Url {
 			foundExistingMachineId = index
 			break
 		}
