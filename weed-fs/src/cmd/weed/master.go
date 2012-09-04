@@ -43,7 +43,7 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 	volumeId, _ := storage.NewVolumeId(vid)
 	machines, e := mapper.Get(volumeId)
 	if e == nil {
-	  var ret []map[string]string
+	  ret:= []map[string]string{}
 	  for _, machine := range machines {
 	    ret = append(ret,map[string]string{"url": machine.Url, "publicUrl": machine.PublicUrl})
 	  }
