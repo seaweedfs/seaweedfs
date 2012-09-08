@@ -10,7 +10,7 @@ type Node interface {
 	Id() NodeId
 	String() string
 	FreeSpace() int
-	ReserveOneVolume(r int, vid storage.VolumeId) (bool, *Server)
+	ReserveOneVolume(r int, vid storage.VolumeId) (bool, *DataNode)
 	UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int)
 	UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int)
 	UpAdjustMaxVolumeId(vid storage.VolumeId)
@@ -21,7 +21,7 @@ type Node interface {
 	LinkChildNode(node Node)
 	UnlinkChildNode(nodeId NodeId)
 
-	IsServer() bool
+	IsDataNode() bool
 	Children() map[NodeId]Node
   Parent() Node
 }
@@ -37,8 +37,8 @@ type NodeImpl struct {
 	nodeType string
 }
 
-func (n *NodeImpl) IsServer() bool {
-	return n.nodeType == "Server"
+func (n *NodeImpl) IsDataNode() bool {
+	return n.nodeType == "DataNode"
 }
 func (n *NodeImpl) IsRack() bool {
 	return n.nodeType == "Rack"
@@ -67,9 +67,9 @@ func (n *NodeImpl) Children() map[NodeId]Node {
 func (n *NodeImpl) Parent() Node {
   return n.parent
 }
-func (n *NodeImpl) ReserveOneVolume(r int, vid storage.VolumeId) (bool, *Server) {
+func (n *NodeImpl) ReserveOneVolume(r int, vid storage.VolumeId) (bool, *DataNode) {
 	ret := false
-	var assignedNode *Server
+	var assignedNode *DataNode
 	for _, node := range n.children {
 		freeSpace := node.FreeSpace()
 		//fmt.Println("r =", r, ", node =", node, ", freeSpace =", freeSpace)
@@ -79,9 +79,9 @@ func (n *NodeImpl) ReserveOneVolume(r int, vid storage.VolumeId) (bool, *Server)
 		if r >= freeSpace {
 			r -= freeSpace
 		} else {
-			if node.IsServer() && node.FreeSpace() > 0 {
+			if node.IsDataNode() && node.FreeSpace() > 0 {
 				//fmt.Println("vid =", vid, " assigned to node =", node, ", freeSpace =", node.FreeSpace())
-				return true, node.(*Server)
+				return true, node.(*DataNode)
 			}
 			ret, assignedNode = node.ReserveOneVolume(r, vid)
 			if ret {

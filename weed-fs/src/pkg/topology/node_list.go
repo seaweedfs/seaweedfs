@@ -49,15 +49,15 @@ func (nl *NodeList) RandomlyPickN(n int) ([]Node, bool) {
 	return list[len(list)-n:], true
 }
 
-func (nl *NodeList) ReserveOneVolume(randomVolumeIndex int, vid storage.VolumeId) (bool, *Server) {
+func (nl *NodeList) ReserveOneVolume(randomVolumeIndex int, vid storage.VolumeId) (bool, *DataNode) {
 	for _, node := range nl.nodes {
 		freeSpace := node.FreeSpace()
 		if randomVolumeIndex >= freeSpace {
 			randomVolumeIndex -= freeSpace
 		} else {
-			if node.IsServer() && node.FreeSpace() > 0 {
+			if node.IsDataNode() && node.FreeSpace() > 0 {
 				fmt.Println("vid =", vid, " assigned to node =", node, ", freeSpace =", node.FreeSpace())
-				return true, node.(*Server)
+				return true, node.(*DataNode)
 			}
 			children := node.Children()
 			newNodeList := NewNodeList(children, nl.except)

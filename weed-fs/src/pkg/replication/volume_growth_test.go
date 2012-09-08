@@ -91,7 +91,7 @@ func setup(topologyLayout string) *topology.Topology {
 			rackMap := rackValue.(map[string]interface{})
 			dc.LinkChildNode(rack)
 			for serverKey, serverValue := range rackMap {
-				server := topology.NewServer(serverKey)
+				server := topology.NewDataNode(serverKey)
 				serverMap := serverValue.(map[string]interface{})
 				rack.LinkChildNode(server)
 				for _, v := range serverMap["volumes"].([]interface{}) {

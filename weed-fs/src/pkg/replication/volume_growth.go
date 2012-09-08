@@ -37,7 +37,7 @@ func (vg *VolumeGrowth) GrowVolumeCopy(copyLevel int, topo *topology.Topology) {
 			picked, ret := nl.RandomlyPickN(2)
 			vid := topo.NextVolumeId()
 			if ret {
-				var servers []*topology.Server
+				var servers []*topology.DataNode
 				for _, n := range picked {
 					if ok, server := n.ReserveOneVolume(rand.Intn(n.FreeSpace()), vid); ok {
 						servers = append(servers, server)
@@ -54,7 +54,7 @@ func (vg *VolumeGrowth) GrowVolumeCopy(copyLevel int, topo *topology.Topology) {
 			picked, ret := nl.RandomlyPickN(3)
 			vid := topo.NextVolumeId()
 			if ret {
-				var servers []*topology.Server
+				var servers []*topology.DataNode
 				for _, n := range picked {
 					if ok, server := n.ReserveOneVolume(rand.Intn(n.FreeSpace()), vid); ok {
 						servers = append(servers, server)
@@ -86,7 +86,7 @@ func (vg *VolumeGrowth) GrowVolumeCopy(copyLevel int, topo *topology.Topology) {
 	}
 
 }
-func (vg *VolumeGrowth) Grow(vid storage.VolumeId, servers ...*topology.Server) {
+func (vg *VolumeGrowth) Grow(vid storage.VolumeId, servers ...*topology.DataNode) {
 	for _, server := range servers {
 		vi := &storage.VolumeInfo{Id: vid, Size: 0}
 		server.AddVolume(vi)

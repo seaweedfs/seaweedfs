@@ -11,7 +11,7 @@ import (
 )
 
 type Machine struct {
-	Volumes   []storage.VolumeInfo
+	C1Volumes   []storage.VolumeInfo
 	Url       string //<server name/ip>[:port]
 	PublicUrl string
 	LastSeen  int64 // unix time in seconds
@@ -29,7 +29,7 @@ type Mapper struct {
 }
 
 func NewMachine(server, publicUrl string, volumes []storage.VolumeInfo, lastSeen int64) *Machine {
-	return &Machine{Url: server, PublicUrl: publicUrl, Volumes: volumes, LastSeen: lastSeen}
+	return &Machine{Url: server, PublicUrl: publicUrl, C1Volumes: volumes, LastSeen: lastSeen}
 }
 
 func NewMapper(dirname string, filename string, volumeSizeLimit uint64, pulse int) (m *Mapper) {
@@ -72,7 +72,7 @@ func (m *Mapper) Get(vid storage.VolumeId) ([]*Machine, error) {
 func (m *Mapper) Add(machine *Machine) {
 	m.Machines[machine.Url] = machine
 	//add to vid2machine map, and Writers array
-	for _, v := range machine.Volumes {
+	for _, v := range machine.C1Volumes {
 		list := m.vid2machines[v.Id]
 		found := false
 		for index, entry := range list {
@@ -89,7 +89,7 @@ func (m *Mapper) Add(machine *Machine) {
 }
 func (m *Mapper) remove(machine *Machine) {
 	delete(m.Machines, machine.Url)
-	for _, v := range machine.Volumes {
+	for _, v := range machine.C1Volumes {
     list := m.vid2machines[v.Id]
     foundIndex := -1
     for index, entry := range list {
@@ -125,13 +125,13 @@ func (m *Mapper) refreshWritableVolumes() {
 	var writers []storage.VolumeId
 	for _, machine_entry := range m.Machines {
 		if machine_entry.LastSeen > freshThreshHold {
-			for _, v := range machine_entry.Volumes {
+			for _, v := range machine_entry.C1Volumes {
 				if uint64(v.Size) < m.volumeSizeLimit {
 					writers = append(writers, v.Id)
 				}
 			}
 		} else {
-			log.Println("Warning! Server", machine_entry.Url, "last seen is", time.Now().Unix()-machine_entry.LastSeen, "seconds ago!")
+			log.Println("Warning! DataNode", machine_entry.Url, "last seen is", time.Now().Unix()-machine_entry.LastSeen, "seconds ago!")
 			m.remove(machine_entry)
 		}
 	}

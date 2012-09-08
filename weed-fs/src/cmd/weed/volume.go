@@ -29,7 +29,7 @@ var (
 	chunkFolder = cmdVolume.Flag.String("dir", "/tmp", "data directory to store files")
 	volumes     = cmdVolume.Flag.String("volumes", "0,1-3,4", "comma-separated list of volume ids or range of ids")
 	publicUrl   = cmdVolume.Flag.String("publicUrl", "localhost:8080", "public url to serve data read")
-	metaServer  = cmdVolume.Flag.String("mserver", "localhost:9333", "master directory server to store mappings")
+	masterNode  = cmdVolume.Flag.String("mserver", "localhost:9333", "master directory server to store mappings")
 	vpulse      = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 
 	store *storage.Store
@@ -161,11 +161,11 @@ func runVolume(cmd *Command, args []string) bool {
 
 	go func() {
 		for {
-			store.Join(*metaServer)
+			store.Join(*masterNode)
 			time.Sleep(time.Duration(float32(*vpulse*1e3)*(1+rand.Float32())) * time.Millisecond)
 		}
 	}()
-	log.Println("store joined at", *metaServer)
+	log.Println("store joined at", *masterNode)
 
 	log.Println("Start storage service at http://127.0.0.1:"+strconv.Itoa(*vport), "public url", *publicUrl)
 	e := http.ListenAndServe(":"+strconv.Itoa(*vport), nil)

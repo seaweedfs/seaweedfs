@@ -17,13 +17,13 @@ func NewTopology(id string) *Topology {
 	t.children = make(map[NodeId]Node)
 	return t
 }
-func (t *Topology) RandomlyReserveOneVolume() (bool, *Server, storage.VolumeId) {
+func (t *Topology) RandomlyReserveOneVolume() (bool, *DataNode, storage.VolumeId) {
 	vid := t.NextVolumeId()
 	ret, node := t.ReserveOneVolume(rand.Intn(t.FreeSpace()), vid)
   return ret, node, vid
 }
 
-func (t *Topology) RandomlyReserveOneVolumeExcept(except []Node) (bool, *Server, storage.VolumeId) {
+func (t *Topology) RandomlyReserveOneVolumeExcept(except []Node) (bool, *DataNode, storage.VolumeId) {
   freeSpace := t.FreeSpace()
   for _, node := range except {
     freeSpace -= node.FreeSpace()

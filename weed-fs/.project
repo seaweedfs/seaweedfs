@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <projectDescription>
-	<name>weed-fs</name>
-	<comment></comment>
-	<projects>
-	</projects>
-	<buildSpec>
-		<buildCommand>
-			<name>com.googlecode.goclipse.goBuilder</name>
-			<arguments>
-			</arguments>
-		</buildCommand>
-	</buildSpec>
-	<natures>
-		<nature>goclipse.goNature</nature>
-	</natures>
+ <name>weed-fs</name>
+ <comment></comment>
+ <projects>
+ </projects>
+ <buildSpec>
+  <buildCommand>
+   <name>com.googlecode.goclipse.goBuilder</name>
+   <arguments>
+   </arguments>
+  </buildCommand>
+ </buildSpec>
+ <natures>
+  <nature>goclipse.goNature</nature>
+ </natures>
 </projectDescription>
