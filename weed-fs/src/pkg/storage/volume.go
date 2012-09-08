@@ -53,7 +53,7 @@ func (v *Volume) maybeWriteSuperBlock() {
 	stat, _ := v.dataFile.Stat()
 	if stat.Size() == 0 {
 		header := make([]byte, SuperBlockSize)
-		header[0] = 1
+		header[0] = 1 //number of copies
 		v.dataFile.Write(header)
 	}
 }
