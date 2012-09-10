@@ -8,6 +8,10 @@ import (
 type DataNode struct {
 	NodeImpl
 	volumes   map[storage.VolumeId]*storage.VolumeInfo
+	ip        string
+	port      int
+	publicUrl string
+	lastSeen  int64 // unix time in seconds
 }
 
 func NewDataNode(id string) *DataNode {
@@ -17,12 +21,21 @@ func NewDataNode(id string) *DataNode {
 	s.volumes = make(map[storage.VolumeId]*storage.VolumeInfo)
 	return s
 }
-func (s *DataNode) CreateOneVolume(r int, vid storage.VolumeId) storage.VolumeId {
-	s.AddVolume(&storage.VolumeInfo{Id: vid, Size: 32 * 1024 * 1024 * 1024})
+func (dn *DataNode) CreateOneVolume(r int, vid storage.VolumeId) storage.VolumeId {
+	dn.AddVolume(&storage.VolumeInfo{Id: vid, Size: 32 * 1024 * 1024 * 1024})
 	return vid
 }
-func (s *DataNode) AddVolume(v *storage.VolumeInfo) {
-	s.volumes[v.Id] = v
-	s.UpAdjustActiveVolumeCountDelta(1)
-	s.UpAdjustMaxVolumeId(v.Id)
+func (dn *DataNode) AddVolume(v *storage.VolumeInfo) {
+	dn.volumes[v.Id] = v
+	dn.UpAdjustActiveVolumeCountDelta(1)
+	dn.UpAdjustMaxVolumeId(v.Id)
+	dn.GetTopology().RegisterVolume(v,dn)
+}
+func (dn *DataNode) GetTopology() *Topology {
+  p := dn.parent
+  for p.Parent()!=nil{
+    p = p.Parent()
+  }
+  t := p.(*Topology)
+  return t
 }

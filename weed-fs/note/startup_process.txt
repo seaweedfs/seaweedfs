@@ -1,7 +1,0 @@
-1. clients report its own server info, volumes info, 
-2. master collect all volumes, separated into readable volumes, writable volumes, volume2machine mapping
-  machines is an array of machine info
-  writable volumes is an array of vids
-  vid2machineId maps volume id to machineId, which is the index of machines array
-
-

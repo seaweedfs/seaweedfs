@@ -20,10 +20,11 @@ type Node interface {
 	setParent(Node)
 	LinkChildNode(node Node)
 	UnlinkChildNode(nodeId NodeId)
+	CollectWritableVolumes(freshThreshHold int64, volumeSizeLimit uint64) []storage.VolumeId
 
 	IsDataNode() bool
 	Children() map[NodeId]Node
-  Parent() Node
+	Parent() Node
 }
 type NodeImpl struct {
 	id                NodeId
@@ -65,7 +66,7 @@ func (n *NodeImpl) Children() map[NodeId]Node {
 	return n.children
 }
 func (n *NodeImpl) Parent() Node {
-  return n.parent
+	return n.parent
 }
 func (n *NodeImpl) ReserveOneVolume(r int, vid storage.VolumeId) (bool, *DataNode) {
 	ret := false
@@ -145,4 +146,27 @@ func (n *NodeImpl) UnlinkChildNode(nodeId NodeId) {
 		n.UpAdjustMaxVolumeCountDelta(-node.GetMaxVolumeCount())
 		fmt.Println(n, "removes", node, "volumeCount =", n.activeVolumeCount)
 	}
+}
+
+func (n *NodeImpl) CollectWritableVolumes(freshThreshHold int64, volumeSizeLimit uint64) []storage.VolumeId {
+	var ret []storage.VolumeId
+	if n.IsRack() {
+		for _, c := range n.Children() {
+			dn := c.(*DataNode) //can not cast n to DataNode
+			if dn.lastSeen > freshThreshHold {
+			  continue
+			}
+			for _, v := range dn.volumes {
+				if uint64(v.Size) < volumeSizeLimit {
+					ret = append(ret, v.Id)
+				}
+			}
+		}
+	} else {
+		for _, c := range n.Children() {
+			ret = append(ret, c.CollectWritableVolumes(freshThreshHold, volumeSizeLimit)...)
+		}
+	}
+
+	return ret
 }
