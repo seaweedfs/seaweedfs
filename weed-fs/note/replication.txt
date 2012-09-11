@@ -1,14 +1,15 @@
 1. each file can choose the replication factor
 2. replication granularity is in volume level
 3. if not enough spaces, we can automatically decrease some volume's the replication factor, especially for cold data
-4. support migrating data to cheaper storage
-5. manual volume placement, access-based volume placement, auction based volume placement
+4. plan to support migrating data to cheaper storage
+5. plan to manual volume placement, access-based volume placement, auction based volume placement
 
 When a new volume server is started, it reports 
   1. how many volumes it can hold
-  2. current list of existing volumes
+  2. current list of existing volumes and each volume's replication type
 Each volume server remembers:
-  1. current volume ids, replica locations
+  1. current volume ids
+  2. replica locations are read from the master
 
 The master assign volume ids based on
   1. replication factor
@@ -17,12 +18,13 @@ The master assign volume ids based on
 On master, stores the replication configuration
 {
   replication:{
-    {factor:1, min_volume_count:3, weight:10},
-    {factor:2, min_volume_count:2, weight:20},
-    {factor:3, min_volume_count:3, weight:30}
+    {type:"00", min_volume_count:3, weight:10},
+    {type:"01", min_volume_count:2, weight:20},
+    {type:"10", min_volume_count:2, weight:20},
+    {type:"11", min_volume_count:3, weight:30},
+    {type:"20", min_volume_count:2, weight:20}
   },
   port:9333,
-  
 }
 Or manually via command line
   1. add volume with specified replication factor
@@ -35,8 +37,6 @@ if less than the replication factor, the volume is in readonly mode
 if more than the replication factor, the volume will purge the smallest/oldest volume
 if equal, the volume will function as usual
 
-maybe use gossip to send the volumeServer~volumes information
-
 
 Use cases:
   on volume server
@@ -47,13 +47,33 @@ Use cases:
       
 Bootstrap
   1. at the very beginning, the system has no volumes at all.
-  2. if maxReplicationFactor==1, always initialize volumes right away
-  3. if nServersHasFreeSpaces >= maxReplicationFactor, auto initialize
-  4. if maxReplicationFactor>1
-     weed shell
-     > disable_auto_initialize
-     > enable_auto_initialize
-     > assign_free_volume vid "server1:port","server2:port","server3:port"
-     > status
-  5. 
+When data node starts:
+  1. each data node send to master its existing volumes and max volume blocks
+  2. master remembers the topology/data_center/rack/data_node/volumes
+     for each replication level, stores
+       volume id ~ data node
+       writable volume ids
+If any "assign" request comes in
+  1. find a writable volume with the right replicationLevel
+  2. if not found, grow the volumes with the right replication level
+  3. return a writable volume to the user
+
+For the above operations, here are the todo list:
+  for data node:
+    1. onStartUp, and periodically, send existing volumes and maxVolumeCount  store.Join(), DONE
+    2. accept command to grow a volume( id + replication level)  DONE
+       /admin/assign_volume?volume=some_id&replicationType=01
+    3. accept status for a volumeLocationList if replication > 1  DONE
+       /admin/set_volume_locations?volumeLocations=[{Vid:xxx,Locations:[loc1,loc2,loc3]}]
+    4. for each write, pass the write to the next location
+       POST method should accept an index, like ttl, get decremented every hop
+  for master:
+    1. accept data node's report of existing volumes and maxVolumeCount
+    2. periodically refresh for active data nodes, and adjust writable volumes
+    3. send command to grow a volume(id + replication level)
+    4. NOT_IMPLEMENTING: if dead/stale data nodes are found, for the affected volumes, send stale info
+       to other data nodes. BECAUSE the master will stop sending writes to these data nodes
+       
   
+  
+    

@@ -18,12 +18,17 @@ type Volume struct {
 	dataFile *os.File
 	nm       *NeedleMap
 
+  replicaType ReplicationType
+
 	accessLock sync.Mutex
+	
+	//transient
+	locations []string
 }
 
-func NewVolume(dirname string, id VolumeId) (v *Volume) {
+func NewVolume(dirname string, id VolumeId, replicationType ReplicationType) (v *Volume) {
 	var e error
-	v = &Volume{dir: dirname, Id: id}
+	v = &Volume{dir: dirname, Id: id, replicaType:replicationType}
 	fileName := id.String()
 	v.dataFile, e = os.OpenFile(path.Join(v.dir, fileName+".dat"), os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {
@@ -53,7 +58,7 @@ func (v *Volume) maybeWriteSuperBlock() {
 	stat, _ := v.dataFile.Stat()
 	if stat.Size() == 0 {
 		header := make([]byte, SuperBlockSize)
-		header[0] = 1 //number of copies
+		header[0] = byte(v.replicaType)
 		v.dataFile.Write(header)
 	}
 }

@@ -1,7 +1,7 @@
 package topology
 
 import (
-  "errors"
+	"errors"
 	"fmt"
 	"math/rand"
 	"pkg/storage"
@@ -29,20 +29,22 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	}
 	vl.vid2location[v.Id].Add(dn)
 	if len(vl.vid2location[v.Id].list) >= storage.GetCopyCount(v) {
-	  vl.writables = append(vl.writables,v.Id)
+		if uint64(v.Size) < vl.volumeSizeLimit {
+			vl.writables = append(vl.writables, v.Id)
+		}
 	}
 }
 
 func (vl *VolumeLayout) PickForWrite(count int) (int, *DataNodeLocationList, error) {
-  len_writers := len(vl.writables)
-  if len_writers <= 0 {
-    fmt.Println("No more writable volumes!")
-    return 0, nil, errors.New("No more writable volumes!")
-  }
-  vid := vl.writables[rand.Intn(len_writers)]
-  locationList := vl.vid2location[vid]
-  if locationList != nil {
-    return count, locationList, nil
-  }
-  return 0, nil, errors.New("Strangely vid " + vid.String() + " is on no machine!")
+	len_writers := len(vl.writables)
+	if len_writers <= 0 {
+		fmt.Println("No more writable volumes!")
+		return 0, nil, errors.New("No more writable volumes!")
+	}
+	vid := vl.writables[rand.Intn(len_writers)]
+	locationList := vl.vid2location[vid]
+	if locationList != nil {
+		return count, locationList, nil
+	}
+	return 0, nil, errors.New("Strangely vid " + vid.String() + " is on no machine!")
 }
