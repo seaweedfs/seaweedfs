@@ -8,9 +8,9 @@ import (
 type DataNode struct {
 	NodeImpl
 	volumes   map[storage.VolumeId]*storage.VolumeInfo
-	ip        string
-	port      int
-	publicUrl string
+	Ip        string
+	Port      int
+	PublicUrl string
 	lastSeen  int64 // unix time in seconds
 }
 

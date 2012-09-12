@@ -33,6 +33,21 @@ func NewReplicationType(t string) ReplicationType {
   }
   return Copy00
 }
+func (r *ReplicationType) String() string {
+  switch *r {
+  case Copy00:
+    return "00"
+  case Copy01:
+    return "01"
+  case Copy10:
+    return "10"
+  case Copy11:
+    return "11"
+  case Copy20:
+    return "20"
+  }
+  return "00"
+}
 
 func GetReplicationLevelIndex(v *VolumeInfo) int {
 	switch v.RepType {

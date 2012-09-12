@@ -12,7 +12,7 @@ func NewDataNodeLocationList() *DataNodeLocationList {
 
 func (dnll *DataNodeLocationList) Add(loc *DataNode) {
 	for _, dnl := range dnll.list {
-		if loc.ip == dnl.ip && loc.port == dnl.port {
+		if loc.Ip == dnl.Ip && loc.Port == dnl.Port {
 			break
 		}
 	}

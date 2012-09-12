@@ -1,7 +1,7 @@
 package main
 
 import (
-  "encoding/json"
+	"encoding/json"
 	"log"
 	"math/rand"
 	"mime"
@@ -40,6 +40,9 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, r, store.Status())
 }
 func assignVolumeHandler(w http.ResponseWriter, r *http.Request) {
+	if *IsDebug {
+		log.Println("volume =", r.FormValue("volume"), ", replicationType =", r.FormValue("replicationType"))
+	}
 	err := store.AddVolume(r.FormValue("volume"), r.FormValue("replicationType"))
 	if err == nil {
 		writeJson(w, r, map[string]string{"error": ""})
@@ -48,14 +51,19 @@ func assignVolumeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func setVolumeLocationsHandler(w http.ResponseWriter, r *http.Request) {
-  volumeLocationsList := new([]storage.VolumeLocations)
-  json.Unmarshal([]byte(r.FormValue("volumeLocations")), volumeLocationsList)
-	err := store.SetVolumeLocations(*volumeLocationsList)
-  if err == nil {
-    writeJson(w, r, map[string]string{"error": ""})
-  } else {
-    writeJson(w, r, map[string]string{"error": err.Error()})
-  }
+	if *IsDebug {
+		log.Println("volumeLocationsList =", r.FormValue("volumeLocationsList"))
+	}
+	volumeLocationsList := new([]storage.VolumeLocations)
+	err := json.Unmarshal([]byte(r.FormValue("volumeLocationsList")), volumeLocationsList)
+	if err == nil {
+		err = store.SetVolumeLocations(*volumeLocationsList)
+	}
+	if err == nil {
+		writeJson(w, r, map[string]string{"error": ""})
+	} else {
+		writeJson(w, r, map[string]string{"error": err.Error()})
+	}
 }
 func storeHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -173,7 +181,7 @@ func runVolume(cmd *Command, args []string) bool {
 	http.HandleFunc("/", storeHandler)
 	http.HandleFunc("/status", statusHandler)
 	http.HandleFunc("/admin/assign_volume", assignVolumeHandler)
-	http.HandleFunc("/admin/set_volume_locations", setVolumeLocationsHandler)
+	http.HandleFunc("/admin/set_volume_locations_list", setVolumeLocationsHandler)
 
 	go func() {
 		for {

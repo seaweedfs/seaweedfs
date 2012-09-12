@@ -58,22 +58,26 @@ If any "assign" request comes in
   2. if not found, grow the volumes with the right replication level
   3. return a writable volume to the user
 
+  
+Plan:
+  Step 1. implement one copy(no replication), automatically assign volume ids
+  Step 2. add replication
+
 For the above operations, here are the todo list:
   for data node:
     1. onStartUp, and periodically, send existing volumes and maxVolumeCount  store.Join(), DONE
     2. accept command to grow a volume( id + replication level)  DONE
        /admin/assign_volume?volume=some_id&replicationType=01
-    3. accept status for a volumeLocationList if replication > 1  DONE
-       /admin/set_volume_locations?volumeLocations=[{Vid:xxx,Locations:[loc1,loc2,loc3]}]
-    4. for each write, pass the write to the next location
+    3. accept setting volumeLocationList  DONE
+       /admin/set_volume_locations_list?volumeLocationsList=[{Vid:xxx,Locations:[loc1,loc2,loc3]}]
+    4. for each write, pass the write to the next location, (Step 2)
        POST method should accept an index, like ttl, get decremented every hop
   for master:
-    1. accept data node's report of existing volumes and maxVolumeCount
+    1. accept data node's report of existing volumes and maxVolumeCount ALREADY EXISTS /dir/join
     2. periodically refresh for active data nodes, and adjust writable volumes
-    3. send command to grow a volume(id + replication level)
+    3. send command to grow a volume(id + replication level)  DONE
     4. NOT_IMPLEMENTING: if dead/stale data nodes are found, for the affected volumes, send stale info
        to other data nodes. BECAUSE the master will stop sending writes to these data nodes
-       
-  
-  
-    
+    5. accept lookup for volume locations    ALREADY EXISTS /dir/lookup
+
+
