@@ -40,15 +40,15 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, r, store.Status())
 }
 func assignVolumeHandler(w http.ResponseWriter, r *http.Request) {
-	if *IsDebug {
-		log.Println("volume =", r.FormValue("volume"), ", replicationType =", r.FormValue("replicationType"))
-	}
 	err := store.AddVolume(r.FormValue("volume"), r.FormValue("replicationType"))
 	if err == nil {
 		writeJson(w, r, map[string]string{"error": ""})
 	} else {
 		writeJson(w, r, map[string]string{"error": err.Error()})
 	}
+  if *IsDebug {
+    log.Println("volume =", r.FormValue("volume"), ", replicationType =", r.FormValue("replicationType"), ", error =", err)
+  }
 }
 func setVolumeLocationsHandler(w http.ResponseWriter, r *http.Request) {
 	if *IsDebug {

@@ -11,7 +11,7 @@ import (
 )
 
 type AllocateVolumeResult struct {
-  error string
+  Error string
 }
 
 func AllocateVolume(dn *topology.DataNode, vid storage.VolumeId, repType storage.ReplicationType) error{
@@ -24,8 +24,8 @@ func AllocateVolume(dn *topology.DataNode, vid storage.VolumeId, repType storage
   if err != nil {
     return err
   }
-  if ret.error != "" {
-    return errors.New(ret.error)
+  if ret.Error != "" {
+    return errors.New(ret.Error)
   }
   return nil
 }

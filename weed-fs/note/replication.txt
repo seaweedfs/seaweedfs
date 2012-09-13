@@ -65,6 +65,7 @@ Plan:
 
 For the above operations, here are the todo list:
   for data node:
+    0. detect existing volumes
     1. onStartUp, and periodically, send existing volumes and maxVolumeCount  store.Join(), DONE
     2. accept command to grow a volume( id + replication level)  DONE
        /admin/assign_volume?volume=some_id&replicationType=01
