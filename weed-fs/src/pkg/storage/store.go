@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/json"
 	"errors"
+	"io/ioutil"
 	"log"
 	"net/url"
 	"pkg/util"
@@ -22,6 +23,7 @@ func NewStore(port int, publicUrl, dirname string, volumeListString string) (s *
 	s = &Store{Port: port, PublicUrl: publicUrl, dir: dirname}
 	s.volumes = make(map[VolumeId]*Volume)
 
+	s.loadExistingVolumes()
 	s.AddVolume(volumeListString, "00")
 
 	log.Println("Store started on dir:", dirname, "with", len(s.volumes), "volumes", volumeListString)
@@ -48,7 +50,7 @@ func (s *Store) AddVolume(volumeListString string, replicationType string) (e er
 			}
 			for id := start; id <= end; id++ {
 				if err := s.addVolume(VolumeId(id), NewReplicationType(replicationType)); err != nil {
-				  e = err
+					e = err
 				}
 			}
 		}
@@ -59,9 +61,26 @@ func (s *Store) addVolume(vid VolumeId, replicationType ReplicationType) error {
 	if s.volumes[vid] != nil {
 		return errors.New("Volume Id " + vid.String() + " already exists!")
 	}
-  log.Println("In dir", s.dir, "adds volume = ", vid, ", replicationType =", replicationType)
+	log.Println("In dir", s.dir, "adds volume =", vid, ", replicationType =", replicationType)
 	s.volumes[vid] = NewVolume(s.dir, vid, replicationType)
 	return nil
+}
+func (s *Store) loadExistingVolumes() {
+	if dirs, err := ioutil.ReadDir(s.dir); err == nil {
+		for _, dir := range dirs {
+			name := dir.Name()
+			if !dir.IsDir() && strings.HasSuffix(name, ".dat") {
+				base := name[:len(name)-len(".dat")]
+				if vid, err := NewVolumeId(base); err == nil {
+					if s.volumes[vid] == nil {
+						v := NewVolume(s.dir, vid, CopyNil)
+						s.volumes[vid] = v
+						log.Println("In dir", s.dir, "reads volume = ", vid, ", replicationType =", v.replicaType)
+					}
+				}
+			}
+		}
+	}
 }
 func (s *Store) Status() *[]*VolumeInfo {
 	stats := new([]*VolumeInfo)

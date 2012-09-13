@@ -18,23 +18,27 @@ type Volume struct {
 	dataFile *os.File
 	nm       *NeedleMap
 
-  replicaType ReplicationType
+	replicaType ReplicationType
 
 	accessLock sync.Mutex
-	
+
 	//transient
 	locations []string
 }
 
 func NewVolume(dirname string, id VolumeId, replicationType ReplicationType) (v *Volume) {
 	var e error
-	v = &Volume{dir: dirname, Id: id, replicaType:replicationType}
+	v = &Volume{dir: dirname, Id: id, replicaType: replicationType}
 	fileName := id.String()
 	v.dataFile, e = os.OpenFile(path.Join(v.dir, fileName+".dat"), os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {
 		log.Fatalf("New Volume [ERROR] %s\n", e)
 	}
-	v.maybeWriteSuperBlock()
+	if replicationType == CopyNil {
+		v.readSuperBlock()
+	} else {
+		v.maybeWriteSuperBlock()
+	}
 	indexFile, ie := os.OpenFile(path.Join(v.dir, fileName+".idx"), os.O_RDWR|os.O_CREATE, 0644)
 	if ie != nil {
 		log.Fatalf("Write Volume Index [ERROR] %s\n", ie)
@@ -58,8 +62,16 @@ func (v *Volume) maybeWriteSuperBlock() {
 	stat, _ := v.dataFile.Stat()
 	if stat.Size() == 0 {
 		header := make([]byte, SuperBlockSize)
-		header[0] = byte(v.replicaType)
+		header[0] = 1
+		header[1] = byte(v.replicaType)
 		v.dataFile.Write(header)
+	}
+}
+func (v *Volume) readSuperBlock() {
+	v.dataFile.Seek(0, 0)
+	header := make([]byte, SuperBlockSize)
+	if _, error := v.dataFile.Read(header); error == nil {
+		v.replicaType = ReplicationType(header[1])
 	}
 }
 
