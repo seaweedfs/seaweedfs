@@ -80,5 +80,6 @@ For the above operations, here are the todo list:
     4. NOT_IMPLEMENTING: if dead/stale data nodes are found, for the affected volumes, send stale info
        to other data nodes. BECAUSE the master will stop sending writes to these data nodes
     5. accept lookup for volume locations    ALREADY EXISTS /dir/lookup
+    6. read topology/datacenter/rack layout
 
 

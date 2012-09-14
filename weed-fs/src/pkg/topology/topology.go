@@ -52,10 +52,30 @@ func (t *Topology) NextVolumeId() storage.VolumeId {
 	return vid.Next()
 }
 
-func (t *Topology) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
-	replicationTypeIndex := storage.GetReplicationLevelIndex(v)
-	if t.replicaType2VolumeLayout[replicationTypeIndex] == nil {
-		t.replicaType2VolumeLayout[replicationTypeIndex] = NewVolumeLayout(t.volumeSizeLimit, t.pulse)
-	}
-	t.replicaType2VolumeLayout[replicationTypeIndex].RegisterVolume(v, dn)
+func (t *Topology) registerVolumeLayout(v *storage.VolumeInfo, dn *DataNode) {
+  replicationTypeIndex := storage.GetReplicationLevelIndex(v)
+  if t.replicaType2VolumeLayout[replicationTypeIndex] == nil {
+    t.replicaType2VolumeLayout[replicationTypeIndex] = NewVolumeLayout(t.volumeSizeLimit, t.pulse)
+  }
+  t.replicaType2VolumeLayout[replicationTypeIndex].RegisterVolume(v, dn)
+}
+
+func (t *Topology) RegisterVolume(v *storage.VolumeInfo, ip string, port int, publicUrl string) {
+	dc := t.GetOrCreateDataCenter(ip)
+	rack := dc.GetOrCreateRack(ip)
+	dn := rack.GetOrCreateDataNode(ip, port, publicUrl)
+	dn.AddVolume(v)
+  t.registerVolumeLayout(v,dn)
+}
+
+func (t *Topology) GetOrCreateDataCenter(ip string) *DataCenter{
+  for _, c := range t.Children() {
+    dc := c.(*DataCenter)
+    if dc.MatchLocationRange(ip) {
+      return dc
+    }
+  }
+  dc := NewDataCenter("DefaultDataCenter")
+  t.LinkChildNode(dc)
+  return dc
 }

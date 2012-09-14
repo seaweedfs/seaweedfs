@@ -22,14 +22,13 @@ func NewDataNode(id string) *DataNode {
 	return s
 }
 func (dn *DataNode) CreateOneVolume(r int, vid storage.VolumeId) storage.VolumeId {
-	dn.AddVolume(&storage.VolumeInfo{Id: vid, Size: 32 * 1024 * 1024 * 1024})
+	dn.AddVolume(&storage.VolumeInfo{Id: vid})
 	return vid
 }
 func (dn *DataNode) AddVolume(v *storage.VolumeInfo) {
 	dn.volumes[v.Id] = v
 	dn.UpAdjustActiveVolumeCountDelta(1)
 	dn.UpAdjustMaxVolumeId(v.Id)
-	dn.GetTopology().RegisterVolume(v,dn)
 }
 func (dn *DataNode) GetTopology() *Topology {
   p := dn.parent
@@ -38,4 +37,7 @@ func (dn *DataNode) GetTopology() *Topology {
   }
   t := p.(*Topology)
   return t
+}
+func (dn *DataNode) MatchLocation(ip string, port int) bool {
+  return dn.Ip == ip && dn.Port == port
 }
