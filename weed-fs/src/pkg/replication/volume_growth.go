@@ -63,8 +63,10 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 			if ret {
 				var servers []*topology.DataNode
 				for _, n := range picked {
-					if ok, server := n.ReserveOneVolume(rand.Intn(n.FreeSpace()), vid); ok {
-						servers = append(servers, server)
+					if n.FreeSpace() > 0 {
+						if ok, server := n.ReserveOneVolume(rand.Intn(n.FreeSpace()), vid); ok {
+							servers = append(servers, server)
+						}
 					}
 				}
 				if len(servers) == 2 {
@@ -80,8 +82,10 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 			if ret {
 				var servers []*topology.DataNode
 				for _, n := range picked {
-					if ok, server := n.ReserveOneVolume(rand.Intn(n.FreeSpace()), vid); ok {
-						servers = append(servers, server)
+					if n.FreeSpace() > 0 {
+						if ok, server := n.ReserveOneVolume(rand.Intn(n.FreeSpace()), vid); ok {
+							servers = append(servers, server)
+						}
 					}
 				}
 				if len(servers) == 3 {

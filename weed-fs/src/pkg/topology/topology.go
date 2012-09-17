@@ -34,22 +34,25 @@ func NewTopology(id string, dirname string, filename string, volumeSizeLimit uin
 }
 
 func (t *Topology) RandomlyReserveOneVolume() (bool, *DataNode, *storage.VolumeId) {
-  if t.FreeSpace()<=0 {
-    return false, nil, nil
-  }
+	if t.FreeSpace() <= 0 {
+		return false, nil, nil
+	}
 	vid := t.NextVolumeId()
 	ret, node := t.ReserveOneVolume(rand.Intn(t.FreeSpace()), vid)
 	return ret, node, &vid
 }
 
-func (t *Topology) RandomlyReserveOneVolumeExcept(except []Node) (bool, *DataNode, storage.VolumeId) {
+func (t *Topology) RandomlyReserveOneVolumeExcept(except []Node) (bool, *DataNode, *storage.VolumeId) {
 	freeSpace := t.FreeSpace()
 	for _, node := range except {
 		freeSpace -= node.FreeSpace()
 	}
+	if freeSpace <= 0 {
+		return false, nil, nil
+	}
 	vid := t.NextVolumeId()
 	ret, node := t.ReserveOneVolume(rand.Intn(freeSpace), vid)
-	return ret, node, vid
+	return ret, node, &vid
 }
 
 func (t *Topology) NextVolumeId() storage.VolumeId {
