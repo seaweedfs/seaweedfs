@@ -30,7 +30,7 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 		vl.vid2location[v.Id] = NewDataNodeLocationList()
 	}
 	if vl.vid2location[v.Id].Add(dn) {
-		if len(vl.vid2location[v.Id].list) == storage.GetCopyCount(v.RepType) {
+		if len(vl.vid2location[v.Id].list) == v.RepType.GetCopyCount() {
 			if uint64(v.Size) < vl.volumeSizeLimit {
 				vl.writables = append(vl.writables, v.Id)
 			}

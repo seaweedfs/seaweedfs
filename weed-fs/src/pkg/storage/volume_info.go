@@ -1,6 +1,8 @@
 package storage
 
-import ()
+import (
+  "errors"
+)
 
 type VolumeInfo struct {
 	Id      VolumeId
@@ -19,20 +21,20 @@ const (
 	CopyNil              = ReplicationType(255) // nil value
 )
 
-func NewReplicationType(t string) ReplicationType {
+func NewReplicationType(t string) (ReplicationType, error) {
 	switch t {
 	case "00":
-		return Copy00
+		return Copy00, nil
 	case "01":
-		return Copy01
+		return Copy01, nil
 	case "10":
-		return Copy10
+		return Copy10, nil
 	case "11":
-		return Copy11
+		return Copy11, nil
 	case "20":
-		return Copy20
+		return Copy20, nil
 	}
-	return Copy00
+	return Copy00, errors.New("Unknown Replication Type:"+t)
 }
 func (r *ReplicationType) String() string {
 	switch *r {
@@ -50,7 +52,7 @@ func (r *ReplicationType) String() string {
 	return "00"
 }
 
-func GetReplicationLevelIndex(repType ReplicationType) int {
+func (repType ReplicationType)GetReplicationLevelIndex() int {
 	switch repType {
 	case Copy00:
 		return 0
@@ -65,7 +67,7 @@ func GetReplicationLevelIndex(repType ReplicationType) int {
 	}
 	return -1
 }
-func GetCopyCount(repType ReplicationType) int {
+func (repType ReplicationType)GetCopyCount() int {
 	switch repType {
 	case Copy00:
 		return 1

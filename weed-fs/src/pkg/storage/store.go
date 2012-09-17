@@ -30,7 +30,11 @@ func NewStore(port int, publicUrl, dirname string, maxVolumeCount int, volumeLis
 	log.Println("Store started on dir:", dirname, "with", len(s.volumes), "volumes", volumeListString)
 	return
 }
-func (s *Store) AddVolume(volumeListString string, replicationType string) (e error) {
+func (s *Store) AddVolume(volumeListString string, replicationType string) (error) {
+  rt, e := NewReplicationType(replicationType)
+  if e!=nil {
+    return e
+  }
 	for _, range_string := range strings.Split(volumeListString, ",") {
 		if strings.Index(range_string, "-") < 0 {
 			id_string := range_string
@@ -38,7 +42,7 @@ func (s *Store) AddVolume(volumeListString string, replicationType string) (e er
 			if err != nil {
 				return errors.New("Volume Id " + id_string + " is not a valid unsigned integer!")
 			}
-			e = s.addVolume(VolumeId(id), NewReplicationType(replicationType))
+			e = s.addVolume(VolumeId(id), rt)
 		} else {
 			pair := strings.Split(range_string, "-")
 			start, start_err := strconv.ParseUint(pair[0], 10, 64)
@@ -50,7 +54,7 @@ func (s *Store) AddVolume(volumeListString string, replicationType string) (e er
 				return errors.New("Volume End Id" + pair[1] + " is not a valid unsigned integer!")
 			}
 			for id := start; id <= end; id++ {
-				if err := s.addVolume(VolumeId(id), NewReplicationType(replicationType)); err != nil {
+				if err := s.addVolume(VolumeId(id), rt); err != nil {
 					e = err
 				}
 			}

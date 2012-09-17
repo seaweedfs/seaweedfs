@@ -31,28 +31,30 @@ func NewDefaultVolumeGrowth() *VolumeGrowth {
 	return &VolumeGrowth{copy1factor: 7, copy2factor: 6, copy3factor: 3}
 }
 
-func (vg *VolumeGrowth) GrowByType(repType storage.ReplicationType, topo *topology.Topology) {
+func (vg *VolumeGrowth) GrowByType(repType storage.ReplicationType, topo *topology.Topology) (int, error) {
 	switch repType {
 	case storage.Copy00:
-		vg.GrowByCountAndType(vg.copy1factor, repType, topo)
+		return vg.GrowByCountAndType(vg.copy1factor, repType, topo)
 	case storage.Copy10:
-		vg.GrowByCountAndType(vg.copy2factor, repType, topo)
+		return vg.GrowByCountAndType(vg.copy2factor, repType, topo)
 	case storage.Copy20:
-		vg.GrowByCountAndType(vg.copy3factor, repType, topo)
+		return vg.GrowByCountAndType(vg.copy3factor, repType, topo)
 	case storage.Copy01:
-		vg.GrowByCountAndType(vg.copy2factor, repType, topo)
+		return vg.GrowByCountAndType(vg.copy2factor, repType, topo)
 	case storage.Copy11:
-		vg.GrowByCountAndType(vg.copy3factor, repType, topo)
+		return vg.GrowByCountAndType(vg.copy3factor, repType, topo)
 	}
-
+	return 0, nil
 }
-func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.ReplicationType, topo *topology.Topology) {
+func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.ReplicationType, topo *topology.Topology) (counter int, err error) {
+	counter = 0
 	switch repType {
 	case storage.Copy00:
 		for i := 0; i < count; i++ {
-			ret, server, vid := topo.RandomlyReserveOneVolume()
-			if ret {
-				vg.grow(topo, *vid, repType, server)
+			if ok, server, vid := topo.RandomlyReserveOneVolume(); ok {
+				if err = vg.grow(topo, *vid, repType, server); err == nil {
+					counter++
+				}
 			}
 		}
 	case storage.Copy10:
@@ -70,7 +72,9 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 					}
 				}
 				if len(servers) == 2 {
-					vg.grow(topo, vid, repType, servers[0], servers[1])
+					if err = vg.grow(topo, vid, repType, servers[0], servers[1]); err == nil {
+						counter++
+					}
 				}
 			}
 		}
@@ -89,23 +93,25 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 					}
 				}
 				if len(servers) == 3 {
-					vg.grow(topo, vid, repType, servers[0], servers[1], servers[2])
+					if err = vg.grow(topo, vid, repType, servers[0], servers[1], servers[2]); err == nil {
+						counter++
+					}
 				}
 			}
 		}
 	case storage.Copy01:
 		for i := 0; i < count; i++ {
 			//randomly pick one server, and then choose from the same rack
-			ret, server1, vid := topo.RandomlyReserveOneVolume()
-			if ret {
+			if ok, server1, vid := topo.RandomlyReserveOneVolume(); ok {
 				rack := server1.Parent()
 				exclusion := make(map[string]topology.Node)
 				exclusion[server1.String()] = server1
 				newNodeList := topology.NewNodeList(rack.Children(), exclusion)
 				if newNodeList.FreeSpace() > 0 {
-					ret2, server2 := newNodeList.ReserveOneVolume(rand.Intn(newNodeList.FreeSpace()), *vid)
-					if ret2 {
-						vg.grow(topo, *vid, repType, server1, server2)
+					if ok2, server2 := newNodeList.ReserveOneVolume(rand.Intn(newNodeList.FreeSpace()), *vid); ok2 {
+						if err = vg.grow(topo, *vid, repType, server1, server2); err == nil {
+							counter++
+						}
 					}
 				}
 			}
@@ -113,10 +119,11 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 	case storage.Copy11:
 		for i := 0; i < count; i++ {
 		}
+		err = errors.New("Replication Type Not Implemented Yet!")
 	}
-
+	return
 }
-func (vg *VolumeGrowth) grow(topo *topology.Topology, vid storage.VolumeId, repType storage.ReplicationType, servers ...*topology.DataNode) {
+func (vg *VolumeGrowth) grow(topo *topology.Topology, vid storage.VolumeId, repType storage.ReplicationType, servers ...*topology.DataNode) error {
 	for _, server := range servers {
 		if err := AllocateVolume(server, vid, repType); err == nil {
 			vi := &storage.VolumeInfo{Id: vid, Size: 0}
@@ -124,11 +131,12 @@ func (vg *VolumeGrowth) grow(topo *topology.Topology, vid storage.VolumeId, repT
 			topo.RegisterVolumeLayout(vi, server)
 			fmt.Println("added", vid, "to", server)
 		} else {
-			//TODO: need error handling
 			fmt.Println("Failed to assign", vid, "to", servers)
+			return errors.New("Failed to assign " + vid.String())
 		}
 	}
 	fmt.Println("Assigning", vid, "to", servers)
+	return nil
 }
 
 type AllocateVolumeResult struct {

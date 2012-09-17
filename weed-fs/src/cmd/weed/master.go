@@ -69,7 +69,11 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 }
 func dirAssign2Handler(w http.ResponseWriter, r *http.Request) {
 	c, _ := strconv.Atoi(r.FormValue("count"))
-	rt := storage.NewReplicationType(r.FormValue("replication"))
+	rt, err := storage.NewReplicationType(r.FormValue("replication"))
+	if err!=nil {
+    writeJson(w, r, map[string]string{"error": err.Error()})
+    return
+	}
 	if topo.GetVolumeLayout(rt).GetActiveVolumeCount() <= 0 {
 		if topo.FreeSpace() <= 0 {
 			writeJson(w, r, map[string]string{"error": "No free volumes left!"})
@@ -107,12 +111,22 @@ func dirNewStatusHandler(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, r, topo.ToMap())
 }
 func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
-	rt := storage.NewReplicationType(r.FormValue("replication"))
+  rt, err := storage.NewReplicationType(r.FormValue("replication"))
+  if err!=nil {
+    writeJson(w, r, map[string]string{"error": err.Error()})
+    return
+  }
 	count, err := strconv.Atoi(r.FormValue("count"))
+	if topo.FreeSpace() < count * rt.GetCopyCount() {
+		writeJson(w, r, map[string]string{"error": "Only "+strconv.Itoa(topo.FreeSpace())+" volumes left! Not enough for "+strconv.Itoa(count*rt.GetCopyCount())})
+		return
+	}
 	if err != nil {
-		vg.GrowByType(rt, topo)
+		count, err := vg.GrowByType(rt, topo)
+    writeJson(w, r, map[string]interface{}{"count": count, "error": err})
 	} else {
-		vg.GrowByCountAndType(count, rt, topo)
+		count, err := vg.GrowByCountAndType(count, rt, topo)
+    writeJson(w, r, map[string]interface{}{"count": count, "error": err})
 	}
 }
 

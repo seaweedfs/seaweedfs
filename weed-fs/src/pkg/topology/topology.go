@@ -61,7 +61,7 @@ func (t *Topology) NextVolumeId() storage.VolumeId {
 }
 
 func (t *Topology) PickForWrite(repType storage.ReplicationType, count int) (string, int, *DataNode, error) {
-	replicationTypeIndex := storage.GetReplicationLevelIndex(repType)
+	replicationTypeIndex := repType.GetReplicationLevelIndex()
 	if t.replicaType2VolumeLayout[replicationTypeIndex] == nil {
 		t.replicaType2VolumeLayout[replicationTypeIndex] = NewVolumeLayout(repType, t.volumeSizeLimit, t.pulse)
 	}
@@ -74,7 +74,7 @@ func (t *Topology) PickForWrite(repType storage.ReplicationType, count int) (str
 }
 
 func (t *Topology) GetVolumeLayout(repType storage.ReplicationType) *VolumeLayout {
-	replicationTypeIndex := storage.GetReplicationLevelIndex(repType)
+	replicationTypeIndex := repType.GetReplicationLevelIndex()
 	if t.replicaType2VolumeLayout[replicationTypeIndex] == nil {
 		t.replicaType2VolumeLayout[replicationTypeIndex] = NewVolumeLayout(repType, t.volumeSizeLimit, t.pulse)
 	}
