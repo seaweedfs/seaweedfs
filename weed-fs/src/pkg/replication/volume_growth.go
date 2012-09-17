@@ -129,13 +129,12 @@ func (vg *VolumeGrowth) grow(topo *topology.Topology, vid storage.VolumeId, repT
 			vi := &storage.VolumeInfo{Id: vid, Size: 0}
 			server.AddOrUpdateVolume(vi)
 			topo.RegisterVolumeLayout(vi, server)
-			fmt.Println("added", vid, "to", server)
+			fmt.Println("Created Volume", vid, "on", server)
 		} else {
 			fmt.Println("Failed to assign", vid, "to", servers)
 			return errors.New("Failed to assign " + vid.String())
 		}
 	}
-	fmt.Println("Assigning", vid, "to", servers)
 	return nil
 }
 

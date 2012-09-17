@@ -131,7 +131,7 @@ func (n *NodeImpl) LinkChildNode(node Node) {
 		n.UpAdjustMaxVolumeId(node.GetMaxVolumeId())
 		n.UpAdjustActiveVolumeCountDelta(node.GetActiveVolumeCount())
 		node.setParent(n)
-		fmt.Println(n, "adds", node, "volumeCount =", n.activeVolumeCount)
+		fmt.Println(n, "adds child", node)
 	}
 }
 
