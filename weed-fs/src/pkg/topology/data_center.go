@@ -1,6 +1,7 @@
 package topology
 
-import ()
+import (
+)
 
 type DataCenter struct {
 	NodeImpl
@@ -32,4 +33,16 @@ func (dc *DataCenter) GetOrCreateRack(ip string) *Rack {
   rack := NewRack("DefaultRack")
   dc.LinkChildNode(rack)
   return rack
+}
+
+func (dc *DataCenter) ToMap() interface{}{
+  m := make(map[string]interface{})
+  m["Free"] = dc.FreeSpace()
+  var racks []interface{}
+  for _, c := range dc.Children() {
+    rack := c.(*Rack)
+    racks = append(racks, rack.ToMap())
+  }
+  m["Racks"] = racks
+  return m
 }

@@ -39,19 +39,22 @@ type AssignResult struct {
   Error     string "error"
 }
 
-func assign(count int) (AssignResult, error) {
+func assign(count int) (*AssignResult, error) {
   values := make(url.Values)
   values.Add("count", strconv.Itoa(count))
-  jsonBlob := util.Post("http://"+*server+"/dir/assign", values)
-  var ret AssignResult
-  err := json.Unmarshal(jsonBlob, &ret)
+  jsonBlob, err := util.Post("http://"+*server+"/dir/assign", values)
   if err != nil {
-    return ret, err
+    return nil, err
+  }
+  var ret AssignResult
+  err = json.Unmarshal(jsonBlob, &ret)
+  if err != nil {
+    return nil, err
   }
   if ret.Count <= 0 {
-    return ret, errors.New(ret.Error)
+    return nil, errors.New(ret.Error)
   }
-  return ret, nil
+  return &ret, nil
 }
 
 type UploadResult struct {

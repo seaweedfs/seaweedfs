@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"mime"
 	"net/http"
+	"os"
 	"pkg/storage"
 	"strconv"
 	"strings"
@@ -18,7 +19,7 @@ func init() {
 }
 
 var cmdVolume = &Command{
-	UsageLine: "volume -port=8080 -dir=/tmp -volumes=0-99 -publicUrl=server_name:8080 -mserver=localhost:9333",
+	UsageLine: "volume -port=8080 -dir=/tmp -min=3 -max=5 -publicUrl=server_name:8080 -mserver=localhost:9333",
 	Short:     "start a volume server",
 	Long: `start a volume server to provide storage spaces
 
@@ -26,12 +27,13 @@ var cmdVolume = &Command{
 }
 
 var (
-	vport       = cmdVolume.Flag.Int("port", 8080, "http listen port")
-	chunkFolder = cmdVolume.Flag.String("dir", "/tmp", "data directory to store files")
-	volumes     = cmdVolume.Flag.String("volumes", "0,1-3,4", "comma-separated list of volume ids or range of ids")
-	publicUrl   = cmdVolume.Flag.String("publicUrl", "localhost:8080", "public url to serve data read")
-	masterNode  = cmdVolume.Flag.String("mserver", "localhost:9333", "master directory server to store mappings")
-	vpulse      = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
+	vport          = cmdVolume.Flag.Int("port", 8080, "http listen port")
+	volumeFolder    = cmdVolume.Flag.String("dir", "/tmp", "data directory to store files")
+	volumes        = cmdVolume.Flag.String("volumes", "", "comma-separated list, or ranges of volume ids")
+	publicUrl      = cmdVolume.Flag.String("publicUrl", "localhost:8080", "public url to serve data read")
+	masterNode     = cmdVolume.Flag.String("mserver", "localhost:9333", "master directory server to store mappings")
+	vpulse         = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
+	maxVolumeCount = cmdVolume.Flag.Int("maxVolumeCount", 5, "maximum number of volumes")
 
 	store *storage.Store
 )
@@ -46,9 +48,9 @@ func assignVolumeHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		writeJson(w, r, map[string]string{"error": err.Error()})
 	}
-  if *IsDebug {
-    log.Println("volume =", r.FormValue("volume"), ", replicationType =", r.FormValue("replicationType"), ", error =", err)
-  }
+	if *IsDebug {
+		log.Println("volume =", r.FormValue("volume"), ", replicationType =", r.FormValue("replicationType"), ", error =", err)
+	}
 }
 func setVolumeLocationsHandler(w http.ResponseWriter, r *http.Request) {
 	if *IsDebug {
@@ -86,11 +88,15 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	cookie := n.Cookie
 	count, e := store.Read(volumeId, n)
+	if e != nil {
+    w.WriteHeader(404)
+	}
 	if *IsDebug {
 		log.Println("read bytes", count, "error", e)
 	}
 	if n.Cookie != cookie {
 		log.Println("request with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
+    w.WriteHeader(404)
 		return
 	}
 	if ext != "" {
@@ -175,13 +181,24 @@ func parseURLPath(path string) (vid, fid, ext string) {
 }
 
 func runVolume(cmd *Command, args []string) bool {
+  fileInfo, err := os.Stat(*volumeFolder)
 	//TODO: now default to 1G, this value should come from server?
-	store = storage.NewStore(*vport, *publicUrl, *chunkFolder, *volumes)
+	if err!=nil{
+	  log.Fatalf("No Existing Folder:%s", *volumeFolder)
+	}
+	if !fileInfo.IsDir() {
+    log.Fatalf("Volume Folder should not be a file:%s", *volumeFolder)
+	}
+  perm:=fileInfo.Mode().Perm()
+  log.Println("Volume Folder permission:", perm)
+	
+	store = storage.NewStore(*vport, *publicUrl, *volumeFolder, *maxVolumeCount, *volumes)
 	defer store.Close()
 	http.HandleFunc("/", storeHandler)
 	http.HandleFunc("/status", statusHandler)
 	http.HandleFunc("/admin/assign_volume", assignVolumeHandler)
 	http.HandleFunc("/admin/set_volume_locations_list", setVolumeLocationsHandler)
+
 
 	go func() {
 		for {

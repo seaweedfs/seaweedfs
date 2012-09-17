@@ -1,10 +1,15 @@
 package replication
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
+	"net/url"
 	"pkg/storage"
 	"pkg/topology"
+	"pkg/util"
+	"strconv"
 )
 
 /*
@@ -22,17 +27,36 @@ type VolumeGrowth struct {
 	copyAll     int
 }
 
-func (vg *VolumeGrowth) GrowVolumeCopy(copyLevel int, topo *topology.Topology) {
-	switch copyLevel {
-	case 1:
-		for i := 0; i < vg.copy1factor; i++ {
+func NewDefaultVolumeGrowth() *VolumeGrowth {
+	return &VolumeGrowth{copy1factor: 7, copy2factor: 6, copy3factor: 3}
+}
+
+func (vg *VolumeGrowth) GrowByType(repType storage.ReplicationType, topo *topology.Topology) {
+	switch repType {
+	case storage.Copy00:
+		vg.GrowByCountAndType(vg.copy1factor, repType, topo)
+	case storage.Copy10:
+		vg.GrowByCountAndType(vg.copy2factor, repType, topo)
+	case storage.Copy20:
+		vg.GrowByCountAndType(vg.copy3factor, repType, topo)
+	case storage.Copy01:
+		vg.GrowByCountAndType(vg.copy2factor, repType, topo)
+	case storage.Copy11:
+		vg.GrowByCountAndType(vg.copy3factor, repType, topo)
+	}
+
+}
+func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.ReplicationType, topo *topology.Topology) {
+	switch repType {
+	case storage.Copy00:
+		for i := 0; i < count; i++ {
 			ret, server, vid := topo.RandomlyReserveOneVolume()
 			if ret {
-				vg.Grow(vid, server)
+				vg.grow(topo, *vid, repType, server)
 			}
 		}
-	case 20:
-		for i := 0; i < vg.copy2factor; i++ {
+	case storage.Copy10:
+		for i := 0; i < count; i++ {
 			nl := topology.NewNodeList(topo.Children(), nil)
 			picked, ret := nl.RandomlyPickN(2)
 			vid := topo.NextVolumeId()
@@ -44,12 +68,12 @@ func (vg *VolumeGrowth) GrowVolumeCopy(copyLevel int, topo *topology.Topology) {
 					}
 				}
 				if len(servers) == 2 {
-					vg.Grow(vid, servers[0], servers[1])
+					vg.grow(topo, vid, repType, servers[0], servers[1])
 				}
 			}
 		}
-	case 30:
-		for i := 0; i < vg.copy3factor; i++ {
+	case storage.Copy20:
+		for i := 0; i < count; i++ {
 			nl := topology.NewNodeList(topo.Children(), nil)
 			picked, ret := nl.RandomlyPickN(3)
 			vid := topo.NextVolumeId()
@@ -61,12 +85,12 @@ func (vg *VolumeGrowth) GrowVolumeCopy(copyLevel int, topo *topology.Topology) {
 					}
 				}
 				if len(servers) == 3 {
-					vg.Grow(vid, servers[0], servers[1], servers[2])
+					vg.grow(topo, vid, repType, servers[0], servers[1], servers[2])
 				}
 			}
 		}
-	case 02:
-		for i := 0; i < vg.copy2factor; i++ {
+	case storage.Copy01:
+		for i := 0; i < count; i++ {
 			//randomly pick one server, and then choose from the same rack
 			ret, server1, vid := topo.RandomlyReserveOneVolume()
 			if ret {
@@ -74,22 +98,53 @@ func (vg *VolumeGrowth) GrowVolumeCopy(copyLevel int, topo *topology.Topology) {
 				exclusion := make(map[string]topology.Node)
 				exclusion[server1.String()] = server1
 				newNodeList := topology.NewNodeList(rack.Children(), exclusion)
-				ret2, server2 := newNodeList.ReserveOneVolume(rand.Intn(newNodeList.FreeSpace()), vid)
-				if ret2 {
-					vg.Grow(vid, server1, server2)
+				if newNodeList.FreeSpace() > 0 {
+					ret2, server2 := newNodeList.ReserveOneVolume(rand.Intn(newNodeList.FreeSpace()), *vid)
+					if ret2 {
+						vg.grow(topo, *vid, repType, server1, server2)
+					}
 				}
 			}
 		}
-	case 12:
-		for i := 0; i < vg.copy3factor; i++ {
+	case storage.Copy11:
+		for i := 0; i < count; i++ {
 		}
 	}
 
 }
-func (vg *VolumeGrowth) Grow(vid storage.VolumeId, servers ...*topology.DataNode) {
+func (vg *VolumeGrowth) grow(topo *topology.Topology, vid storage.VolumeId, repType storage.ReplicationType, servers ...*topology.DataNode) {
 	for _, server := range servers {
-		vi := &storage.VolumeInfo{Id: vid, Size: 0}
-		server.AddVolume(vi)
+		if err := AllocateVolume(server, vid, repType); err == nil {
+			vi := &storage.VolumeInfo{Id: vid, Size: 0}
+			server.AddOrUpdateVolume(vi)
+			topo.RegisterVolumeLayout(vi, server)
+			fmt.Println("added", vid, "to", server)
+		} else {
+			//TODO: need error handling
+			fmt.Println("Failed to assign", vid, "to", servers)
+		}
 	}
 	fmt.Println("Assigning", vid, "to", servers)
+}
+
+type AllocateVolumeResult struct {
+	Error string
+}
+
+func AllocateVolume(dn *topology.DataNode, vid storage.VolumeId, repType storage.ReplicationType) error {
+	values := make(url.Values)
+	values.Add("volume", vid.String())
+	values.Add("replicationType", repType.String())
+	jsonBlob, err := util.Post("http://"+dn.Ip+":"+strconv.Itoa(dn.Port)+"/admin/assign_volume", values)
+	if err != nil {
+		return err
+	}
+	var ret AllocateVolumeResult
+	if err := json.Unmarshal(jsonBlob, &ret); err != nil {
+		return err
+	}
+	if ret.Error != "" {
+		return errors.New(ret.Error)
+	}
+	return nil
 }

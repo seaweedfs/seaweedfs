@@ -10,13 +10,18 @@ func NewDataNodeLocationList() *DataNodeLocationList {
 	return &DataNodeLocationList{}
 }
 
-func (dnll *DataNodeLocationList) Add(loc *DataNode) {
+func (dnll *DataNodeLocationList) Head() *DataNode {
+	return dnll.list[0]
+}
+
+func (dnll *DataNodeLocationList) Add(loc *DataNode) bool {
 	for _, dnl := range dnll.list {
 		if loc.Ip == dnl.Ip && loc.Port == dnl.Port {
-			break
+			return false
 		}
 	}
 	dnll.list = append(dnll.list, loc)
+	return true
 }
 
 func (dnll *DataNodeLocationList) Refresh(freshThreshHold int64) {

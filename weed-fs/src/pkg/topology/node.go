@@ -127,12 +127,10 @@ func (n *NodeImpl) GetMaxVolumeCount() int {
 func (n *NodeImpl) LinkChildNode(node Node) {
 	if n.children[node.Id()] == nil {
 		n.children[node.Id()] = node
-		n.activeVolumeCount += node.GetActiveVolumeCount()
-		n.maxVolumeCount += node.GetMaxVolumeCount()
+		n.UpAdjustMaxVolumeCountDelta(node.GetMaxVolumeCount())
+		n.UpAdjustMaxVolumeId(node.GetMaxVolumeId())
+		n.UpAdjustActiveVolumeCountDelta(node.GetActiveVolumeCount())
 		node.setParent(n)
-		if n.maxVolumeId < node.GetMaxVolumeId() {
-			n.maxVolumeId = node.GetMaxVolumeId()
-		}
 		fmt.Println(n, "adds", node, "volumeCount =", n.activeVolumeCount)
 	}
 }

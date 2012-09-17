@@ -50,8 +50,8 @@ func (r *ReplicationType) String() string {
 	return "00"
 }
 
-func GetReplicationLevelIndex(v *VolumeInfo) int {
-	switch v.RepType {
+func GetReplicationLevelIndex(repType ReplicationType) int {
+	switch repType {
 	case Copy00:
 		return 0
 	case Copy01:
@@ -65,8 +65,8 @@ func GetReplicationLevelIndex(v *VolumeInfo) int {
 	}
 	return -1
 }
-func GetCopyCount(v *VolumeInfo) int {
-	switch v.RepType {
+func GetCopyCount(repType ReplicationType) int {
+	switch repType {
 	case Copy00:
 		return 1
 	case Copy01:

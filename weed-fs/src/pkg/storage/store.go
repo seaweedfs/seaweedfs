@@ -12,19 +12,20 @@ import (
 )
 
 type Store struct {
-	volumes   map[VolumeId]*Volume
-	dir       string
-	Port      int
-	PublicUrl string
-	Limit     StorageLimit
+	volumes        map[VolumeId]*Volume
+	dir            string
+	Port           int
+	PublicUrl      string
+	MaxVolumeCount int
 }
 
-func NewStore(port int, publicUrl, dirname string, volumeListString string) (s *Store) {
-	s = &Store{Port: port, PublicUrl: publicUrl, dir: dirname}
+func NewStore(port int, publicUrl, dirname string, maxVolumeCount int, volumeListString string) (s *Store) {
+	s = &Store{Port: port, PublicUrl: publicUrl, dir: dirname, MaxVolumeCount: maxVolumeCount}
 	s.volumes = make(map[VolumeId]*Volume)
-
 	s.loadExistingVolumes()
-	s.AddVolume(volumeListString, "00")
+	if volumeListString != "" {
+		s.AddVolume(volumeListString, "00")
+	}
 
 	log.Println("Store started on dir:", dirname, "with", len(s.volumes), "volumes", volumeListString)
 	return
@@ -82,16 +83,16 @@ func (s *Store) loadExistingVolumes() {
 		}
 	}
 }
-func (s *Store) Status() *[]*VolumeInfo {
-	stats := new([]*VolumeInfo)
+func (s *Store) Status() []*VolumeInfo {
+	var stats []*VolumeInfo
 	for k, v := range s.volumes {
 		s := new(VolumeInfo)
 		s.Id, s.Size, s.RepType = VolumeId(k), v.Size(), v.replicaType
-		*stats = append(*stats, s)
+		stats = append(stats, s)
 	}
 	return stats
 }
-func (s *Store) Join(mserver string) {
+func (s *Store) Join(mserver string) error {
 	stats := new([]*VolumeInfo)
 	for k, v := range s.volumes {
 		s := new(VolumeInfo)
@@ -103,7 +104,9 @@ func (s *Store) Join(mserver string) {
 	values.Add("port", strconv.Itoa(s.Port))
 	values.Add("publicUrl", s.PublicUrl)
 	values.Add("volumes", string(bytes))
-	util.Post("http://"+mserver+"/dir/join", values)
+	values.Add("maxVolumeCount", strconv.Itoa(s.MaxVolumeCount))
+	_, err := util.Post("http://"+mserver+"/dir/join", values)
+	return err
 }
 func (s *Store) Close() {
 	for _, v := range s.volumes {
@@ -111,22 +114,19 @@ func (s *Store) Close() {
 	}
 }
 func (s *Store) Write(i VolumeId, n *Needle) uint32 {
-	v := s.volumes[i]
-	if v != nil {
+	if v := s.volumes[i]; v != nil {
 		return v.write(n)
 	}
 	return 0
 }
 func (s *Store) Delete(i VolumeId, n *Needle) uint32 {
-	v := s.volumes[i]
-	if v != nil {
+	if v := s.volumes[i]; v != nil {
 		return v.delete(n)
 	}
 	return 0
 }
 func (s *Store) Read(i VolumeId, n *Needle) (int, error) {
-	v := s.volumes[i]
-	if v != nil {
+	if v := s.volumes[i]; v != nil {
 		return v.read(n)
 	}
 	return 0, errors.New("Not Found")
@@ -140,8 +140,7 @@ type VolumeLocations struct {
 func (s *Store) SetVolumeLocations(volumeLocationList []VolumeLocations) error {
 	for _, volumeLocations := range volumeLocationList {
 		vid := volumeLocations.Vid
-		v := s.volumes[vid]
-		if v != nil {
+		if v := s.volumes[vid]; v != nil {
 			v.locations = volumeLocations.Locations
 		}
 	}

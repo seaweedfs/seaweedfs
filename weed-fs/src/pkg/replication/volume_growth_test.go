@@ -80,7 +80,7 @@ func setup(topologyLayout string) *topology.Topology {
 	fmt.Println("data:", data)
 
 	//need to connect all nodes first before server adding volumes
-	topo := topology.NewTopology("mynetwork")
+	topo := topology.NewTopology("mynetwork","/tmp","testing",32*1024, 5)
 	mTopology := data.(map[string]interface{})
 	for dcKey, dcValue := range mTopology {
 		dc := topology.NewDataCenter(dcKey)
@@ -97,7 +97,7 @@ func setup(topologyLayout string) *topology.Topology {
 				for _, v := range serverMap["volumes"].([]interface{}) {
 					m := v.(map[string]interface{})
 					vi := &storage.VolumeInfo{Id: storage.VolumeId(int64(m["id"].(float64))), Size: int64(m["size"].(float64))}
-					server.AddVolume(vi)
+					server.AddOrUpdateVolume(vi)
 				}
 				server.UpAdjustMaxVolumeCountDelta(int(serverMap["limit"].(float64)))
 			}
@@ -125,5 +125,15 @@ func TestReserveOneVolume(t *testing.T) {
 	topo := setup(topologyLayout)
   rand.Seed(time.Now().UnixNano())
   vg:=&VolumeGrowth{copy1factor:3,copy2factor:2,copy3factor:1,copyAll:4}
-  vg.GrowVolumeCopy(20,topo)
+  vg.GrowByType(storage.Copy20,topo)
+}
+
+
+func TestXYZ(t *testing.T) {
+  dn := topology.NewDataNode("server1")
+  dn.Ip = "localhost"
+  dn.Port = 8080
+  vid, _:= storage.NewVolumeId("600")
+  out := AllocateVolume(dn,vid,storage.Copy00)
+  fmt.Println(out)
 }
