@@ -27,7 +27,7 @@ func (dnll *DataNodeLocationList) Add(loc *DataNode) bool {
 func (dnll *DataNodeLocationList) Refresh(freshThreshHold int64) {
 	var changed bool
 	for _, dnl := range dnll.list {
-		if dnl.lastSeen < freshThreshHold {
+		if dnl.LastSeen < freshThreshHold {
 			changed = true
 			break
 		}
@@ -35,7 +35,7 @@ func (dnll *DataNodeLocationList) Refresh(freshThreshHold int64) {
 	if changed {
 		var l []*DataNode
 		for _, dnl := range dnll.list {
-			if dnl.lastSeen >= freshThreshHold {
+			if dnl.LastSeen >= freshThreshHold {
 				l = append(l, dnl)
 			}
 		}

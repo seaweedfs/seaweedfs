@@ -11,7 +11,7 @@ type DataNode struct {
 	Ip        string
 	Port      int
 	PublicUrl string
-	lastSeen  int64 // unix time in seconds
+	LastSeen  int64 // unix time in seconds
 }
 
 func NewDataNode(id string) *DataNode {

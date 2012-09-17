@@ -151,7 +151,7 @@ func (n *NodeImpl) CollectWritableVolumes(freshThreshHold int64, volumeSizeLimit
 	if n.IsRack() {
 		for _, c := range n.Children() {
 			dn := c.(*DataNode) //can not cast n to DataNode
-			if dn.lastSeen > freshThreshHold {
+			if dn.LastSeen > freshThreshHold {
 			  continue
 			}
 			for _, v := range dn.volumes {

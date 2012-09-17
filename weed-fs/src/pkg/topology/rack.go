@@ -2,6 +2,7 @@ package topology
 
 import (
 	"strconv"
+	"time"
 )
 
 type Rack struct {
@@ -28,7 +29,8 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVol
 	for _, c := range r.Children() {
 		dn := c.(*DataNode)
 		if dn.MatchLocation(ip, port) {
-			dn.NodeImpl.UpAdjustMaxVolumeCountDelta(maxVolumeCount - dn.maxVolumeCount)
+			dn.LastSeen = time.Now().Unix()
+			dn.UpAdjustMaxVolumeCountDelta(maxVolumeCount - dn.maxVolumeCount)
 			return dn
 		}
 	}
@@ -37,6 +39,7 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVol
 	dn.Port = port
 	dn.PublicUrl = publicUrl
 	dn.maxVolumeCount = maxVolumeCount
+	dn.LastSeen = time.Now().Unix()
 	r.LinkChildNode(dn)
 	return dn
 }

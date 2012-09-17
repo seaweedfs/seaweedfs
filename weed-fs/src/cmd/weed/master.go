@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"pkg/directory"
@@ -70,9 +71,9 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 func dirAssign2Handler(w http.ResponseWriter, r *http.Request) {
 	c, _ := strconv.Atoi(r.FormValue("count"))
 	rt, err := storage.NewReplicationType(r.FormValue("replication"))
-	if err!=nil {
-    writeJson(w, r, map[string]string{"error": err.Error()})
-    return
+	if err != nil {
+		writeJson(w, r, map[string]string{"error": err.Error()})
+		return
 	}
 	if topo.GetVolumeLayout(rt).GetActiveVolumeCount() <= 0 {
 		if topo.FreeSpace() <= 0 {
@@ -111,22 +112,21 @@ func dirNewStatusHandler(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, r, topo.ToMap())
 }
 func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
-  rt, err := storage.NewReplicationType(r.FormValue("replication"))
-  if err!=nil {
-    writeJson(w, r, map[string]string{"error": err.Error()})
-    return
-  }
-	count, err := strconv.Atoi(r.FormValue("count"))
-	if topo.FreeSpace() < count * rt.GetCopyCount() {
-		writeJson(w, r, map[string]string{"error": "Only "+strconv.Itoa(topo.FreeSpace())+" volumes left! Not enough for "+strconv.Itoa(count*rt.GetCopyCount())})
-		return
+	count := 0
+	rt, err := storage.NewReplicationType(r.FormValue("replication"))
+	if err == nil {
+		if count, err = strconv.Atoi(r.FormValue("count")); err == nil {
+			if topo.FreeSpace() < count*rt.GetCopyCount() {
+				err = errors.New("Only " + strconv.Itoa(topo.FreeSpace()) + " volumes left! Not enough for " + strconv.Itoa(count*rt.GetCopyCount()))
+			} else {
+				count, err = vg.GrowByCountAndType(count, rt, topo)
+			}
+		}
 	}
 	if err != nil {
-		count, err := vg.GrowByType(rt, topo)
-    writeJson(w, r, map[string]interface{}{"count": count, "error": err})
+		writeJson(w, r, map[string]string{"error": err.Error()})
 	} else {
-		count, err := vg.GrowByCountAndType(count, rt, topo)
-    writeJson(w, r, map[string]interface{}{"count": count, "error": err})
+		writeJson(w, r, map[string]interface{}{"count": count})
 	}
 }
 
@@ -144,6 +144,7 @@ func runMaster(cmd *Command, args []string) bool {
 	http.HandleFunc("/vol/grow", volumeGrowHandler)
 
 	mapper.StartRefreshWritableVolumes()
+	topo.StartRefreshWritableVolumes()
 
 	log.Println("Start directory service at http://127.0.0.1:" + strconv.Itoa(*mport))
 	e := http.ListenAndServe(":"+strconv.Itoa(*mport), nil)

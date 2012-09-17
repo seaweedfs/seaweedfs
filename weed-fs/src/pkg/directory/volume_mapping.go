@@ -120,7 +120,7 @@ func (m *Mapper) StartRefreshWritableVolumes() {
 }
 
 func (m *Mapper) refreshWritableVolumes() {
-	freshThreshHold := time.Now().Unix() - 5*m.pulse //5 times of sleep interval
+	freshThreshHold := time.Now().Unix() - 3*m.pulse //3 times of sleep interval
 	//setting Writers, copy-on-write because of possible updating, this needs some future work!
 	var writers []storage.VolumeId
 	for _, machine_entry := range m.Machines {

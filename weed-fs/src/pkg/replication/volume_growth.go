@@ -44,7 +44,7 @@ func (vg *VolumeGrowth) GrowByType(repType storage.ReplicationType, topo *topolo
 	case storage.Copy11:
 		return vg.GrowByCountAndType(vg.copy3factor, repType, topo)
 	}
-	return 0, nil
+	return 0, errors.New("Unknown Replication Type!")
 }
 func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.ReplicationType, topo *topology.Topology) (counter int, err error) {
 	counter = 0

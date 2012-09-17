@@ -6,6 +6,7 @@ import (
 	"pkg/directory"
 	"pkg/sequence"
 	"pkg/storage"
+	"time"
 )
 
 type Topology struct {
@@ -124,4 +125,20 @@ func (t *Topology) ToMap() interface{} {
 	}
 	m["layouts"] = layouts
 	return m
+}
+
+func (t *Topology) StartRefreshWritableVolumes() {
+  go func() {
+    for {
+      t.refreshWritableVolumes()
+      time.Sleep(time.Duration(float32(t.pulse*1e3)*(1+rand.Float32())) * time.Millisecond)
+    }
+  }()
+}
+
+func (t *Topology) refreshWritableVolumes() {
+  freshThreshHold := time.Now().Unix() - 3*t.pulse //5 times of sleep interval
+  //setting Writers, copy-on-write because of possible updating, this needs some future work!
+  t.CollectWritableVolumes(freshThreshHold, t.volumeSizeLimit)
+  //TODO: collect writable columes for each replication type
 }
