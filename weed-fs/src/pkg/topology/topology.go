@@ -20,6 +20,12 @@ type Topology struct {
 	volumeSizeLimit uint64
 
 	sequence sequence.Sequencer
+
+	chanDeadDataNodes      chan *DataNode
+	chanRecoveredDataNodes chan *DataNode
+	chanFullVolumes        chan *storage.VolumeInfo
+	chanIncomplemteVolumes chan *storage.VolumeInfo
+	chanRecoveredVolumes   chan *storage.VolumeInfo
 }
 
 func NewTopology(id string, dirname string, filename string, volumeSizeLimit uint64, pulse int) *Topology {
@@ -31,6 +37,11 @@ func NewTopology(id string, dirname string, filename string, volumeSizeLimit uin
 	t.pulse = int64(pulse)
 	t.volumeSizeLimit = volumeSizeLimit
 	t.sequence = sequence.NewSequencer(dirname, filename)
+	t.chanDeadDataNodes = make(chan *DataNode)
+	t.chanRecoveredDataNodes = make(chan *DataNode)
+	t.chanFullVolumes = make(chan *storage.VolumeInfo)
+	t.chanIncomplemteVolumes = make(chan *storage.VolumeInfo)
+  t.chanRecoveredVolumes = make(chan *storage.VolumeInfo)
 	return t
 }
 
@@ -95,6 +106,12 @@ func (t *Topology) RegisterVolumes(volumeInfos []storage.VolumeInfo, ip string, 
 		t.RegisterVolumeLayout(&v, dn)
 	}
 }
+func (t *Topology) SetVolumeReadOnly(volumeInfo *storage.VolumeInfo) {
+	//TODO
+}
+func (t *Topology) UnRegisterDataNode(dn *DataNode) {
+	//TODO
+}
 
 func (t *Topology) GetOrCreateDataCenter(ip string) *DataCenter {
 	for _, c := range t.Children() {
@@ -128,17 +145,24 @@ func (t *Topology) ToMap() interface{} {
 }
 
 func (t *Topology) StartRefreshWritableVolumes() {
-  go func() {
-    for {
-      t.refreshWritableVolumes()
-      time.Sleep(time.Duration(float32(t.pulse*1e3)*(1+rand.Float32())) * time.Millisecond)
-    }
-  }()
-}
-
-func (t *Topology) refreshWritableVolumes() {
-  freshThreshHold := time.Now().Unix() - 3*t.pulse //5 times of sleep interval
-  //setting Writers, copy-on-write because of possible updating, this needs some future work!
-  t.CollectWritableVolumes(freshThreshHold, t.volumeSizeLimit)
-  //TODO: collect writable columes for each replication type
+	go func() {
+		for {
+			freshThreshHold := time.Now().Unix() - 3*t.pulse //5 times of sleep interval
+			t.CollectDeadNodeAndFullVolumes(freshThreshHold, t.volumeSizeLimit)
+			time.Sleep(time.Duration(float32(t.pulse*1e3)*(1+rand.Float32())) * time.Millisecond)
+		}
+	}()
+	go func() {
+		for {
+			select {
+			case <-t.chanIncomplemteVolumes:
+      case <-t.chanRecoveredVolumes:
+			case fv := <-t.chanFullVolumes:
+				t.SetVolumeReadOnly(fv)
+			case <-t.chanRecoveredDataNodes:
+			case dn := <-t.chanDeadDataNodes:
+				t.UnRegisterDataNode(dn)
+			}
+		}
+	}()
 }

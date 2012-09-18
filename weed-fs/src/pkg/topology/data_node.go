@@ -12,6 +12,7 @@ type DataNode struct {
 	Port      int
 	PublicUrl string
 	LastSeen  int64 // unix time in seconds
+	Dead    bool
 }
 
 func NewDataNode(id string) *DataNode {
@@ -30,8 +31,8 @@ func (dn *DataNode) AddOrUpdateVolume(v *storage.VolumeInfo) {
 		dn.volumes[v.Id] = v
 		dn.UpAdjustActiveVolumeCountDelta(1)
 		dn.UpAdjustMaxVolumeId(v.Id)
-	}else{
-    dn.volumes[v.Id] = v
+	} else {
+		dn.volumes[v.Id] = v
 	}
 }
 func (dn *DataNode) GetTopology() *Topology {

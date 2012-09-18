@@ -97,17 +97,8 @@ func (m *Mapper) remove(machine *Machine) {
         foundIndex = index
       }
     }
-    m.vid2machines[v.Id] = deleteFromSlice(foundIndex,m.vid2machines[v.Id])
+    m.vid2machines[v.Id] = append(m.vid2machines[v.Id][:foundIndex], m.vid2machines[v.Id][foundIndex+1:]...)
 	}
-}
-func deleteFromSlice(i int, slice []*Machine) []*Machine{
-    switch i {
-        case -1://do nothing
-        case 0: slice = slice[1:]
-        case len(slice)-1: slice = slice[:len(slice)-1]
-        default: slice = append(slice[:i], slice[i+1:]...)
-    }
-    return slice
 }
 
 func (m *Mapper) StartRefreshWritableVolumes() {

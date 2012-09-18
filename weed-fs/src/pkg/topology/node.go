@@ -20,7 +20,7 @@ type Node interface {
 	setParent(Node)
 	LinkChildNode(node Node)
 	UnlinkChildNode(nodeId NodeId)
-	CollectWritableVolumes(freshThreshHold int64, volumeSizeLimit uint64) []storage.VolumeId
+	CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSizeLimit uint64)
 
 	IsDataNode() bool
 	Children() map[NodeId]Node
@@ -146,25 +146,34 @@ func (n *NodeImpl) UnlinkChildNode(nodeId NodeId) {
 	}
 }
 
-func (n *NodeImpl) CollectWritableVolumes(freshThreshHold int64, volumeSizeLimit uint64) []storage.VolumeId {
-	var ret []storage.VolumeId
+func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSizeLimit uint64) {
 	if n.IsRack() {
 		for _, c := range n.Children() {
 			dn := c.(*DataNode) //can not cast n to DataNode
 			if dn.LastSeen > freshThreshHold {
-			  continue
+				if !dn.Dead {
+					dn.Dead = true
+					n.GetTopology().chanDeadDataNodes <- dn
+				}
 			}
 			for _, v := range dn.volumes {
 				if uint64(v.Size) < volumeSizeLimit {
-					ret = append(ret, v.Id)
+          n.GetTopology().chanFullVolumes <- v
 				}
 			}
 		}
 	} else {
 		for _, c := range n.Children() {
-			ret = append(ret, c.CollectWritableVolumes(freshThreshHold, volumeSizeLimit)...)
+			c.CollectDeadNodeAndFullVolumes(freshThreshHold, volumeSizeLimit)
 		}
 	}
+}
 
-	return ret
+func (n *NodeImpl) GetTopology() *Topology{
+  var p Node
+  p = n
+  for p.Parent() != nil {
+    p = p.Parent()
+  }
+  return p.(*Topology)
 }
