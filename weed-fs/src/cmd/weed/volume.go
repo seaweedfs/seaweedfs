@@ -33,7 +33,7 @@ var (
 	publicUrl      = cmdVolume.Flag.String("publicUrl", "localhost:8080", "public url to serve data read")
 	masterNode     = cmdVolume.Flag.String("mserver", "localhost:9333", "master directory server to store mappings")
 	vpulse         = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
-	maxVolumeCount = cmdVolume.Flag.Int("maxVolumeCount", 5, "maximum number of volumes")
+	maxVolumeCount = cmdVolume.Flag.Int("max", 5, "maximum number of volumes")
 
 	store *storage.Store
 )
