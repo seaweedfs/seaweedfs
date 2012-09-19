@@ -2,6 +2,7 @@ package topology
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
 	"pkg/directory"
 	"pkg/sequence"
@@ -32,16 +33,20 @@ func NewTopology(id string, dirname string, filename string, volumeSizeLimit uin
 	t := &Topology{}
 	t.id = NodeId(id)
 	t.nodeType = "Topology"
+	t.NodeImpl.value = t
 	t.children = make(map[NodeId]Node)
 	t.replicaType2VolumeLayout = make([]*VolumeLayout, storage.LengthRelicationType)
 	t.pulse = int64(pulse)
 	t.volumeSizeLimit = volumeSizeLimit
+
 	t.sequence = sequence.NewSequencer(dirname, filename)
+
 	t.chanDeadDataNodes = make(chan *DataNode)
 	t.chanRecoveredDataNodes = make(chan *DataNode)
 	t.chanFullVolumes = make(chan *storage.VolumeInfo)
 	t.chanIncomplemteVolumes = make(chan *storage.VolumeInfo)
-  t.chanRecoveredVolumes = make(chan *storage.VolumeInfo)
+	t.chanRecoveredVolumes = make(chan *storage.VolumeInfo)
+
 	return t
 }
 
@@ -102,15 +107,9 @@ func (t *Topology) RegisterVolumes(volumeInfos []storage.VolumeInfo, ip string, 
 	rack := dc.GetOrCreateRack(ip)
 	dn := rack.GetOrCreateDataNode(ip, port, publicUrl, maxVolumeCount)
 	for _, v := range volumeInfos {
-		dn.AddOrUpdateVolume(&v)
+		dn.AddOrUpdateVolume(v)
 		t.RegisterVolumeLayout(&v, dn)
 	}
-}
-func (t *Topology) SetVolumeReadOnly(volumeInfo *storage.VolumeInfo) {
-	//TODO
-}
-func (t *Topology) UnRegisterDataNode(dn *DataNode) {
-	//TODO
 }
 
 func (t *Topology) GetOrCreateDataCenter(ip string) *DataCenter {
@@ -155,14 +154,41 @@ func (t *Topology) StartRefreshWritableVolumes() {
 	go func() {
 		for {
 			select {
-			case <-t.chanIncomplemteVolumes:
-      case <-t.chanRecoveredVolumes:
-			case fv := <-t.chanFullVolumes:
-				t.SetVolumeReadOnly(fv)
-			case <-t.chanRecoveredDataNodes:
+			case v := <-t.chanIncomplemteVolumes:
+				fmt.Println("Volume", v, "is incomplete!")
+			case v := <-t.chanRecoveredVolumes:
+				fmt.Println("Volume", v, "is recovered!")
+			case v := <-t.chanFullVolumes:
+				t.SetVolumeReadOnly(v)
+				fmt.Println("Volume", v, "is full!")
+			case dn := <-t.chanRecoveredDataNodes:
+				t.RegisterRecoveredDataNode(dn)
+				fmt.Println("DataNode", dn, "is back alive!")
 			case dn := <-t.chanDeadDataNodes:
 				t.UnRegisterDataNode(dn)
+				fmt.Println("DataNode", dn, "is dead!")
 			}
 		}
 	}()
+}
+func (t *Topology) SetVolumeReadOnly(volumeInfo *storage.VolumeInfo) {
+	vl := t.GetVolumeLayout(volumeInfo.RepType)
+	vl.SetVolumeReadOnly(volumeInfo.Id)
+}
+func (t *Topology) SetVolumeWritable(volumeInfo *storage.VolumeInfo) {
+	vl := t.GetVolumeLayout(volumeInfo.RepType)
+	vl.SetVolumeWritable(volumeInfo.Id)
+}
+func (t *Topology) UnRegisterDataNode(dn *DataNode) {
+	for _, v := range dn.volumes {
+		fmt.Println("Removing Volume", v.Id, "from the dead volume server", dn)
+		t.SetVolumeReadOnly(&v)
+	}
+}
+func (t *Topology) RegisterRecoveredDataNode(dn *DataNode) {
+	for _, v := range dn.volumes {
+		if uint64(v.Size) < t.volumeSizeLimit {
+			t.SetVolumeWritable(&v)
+		}
+	}
 }

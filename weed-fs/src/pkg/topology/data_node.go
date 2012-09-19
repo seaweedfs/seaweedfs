@@ -7,7 +7,7 @@ import (
 
 type DataNode struct {
 	NodeImpl
-	volumes   map[storage.VolumeId]*storage.VolumeInfo
+	volumes   map[storage.VolumeId]storage.VolumeInfo
 	Ip        string
 	Port      int
 	PublicUrl string
@@ -19,15 +19,12 @@ func NewDataNode(id string) *DataNode {
 	s := &DataNode{}
 	s.id = NodeId(id)
 	s.nodeType = "DataNode"
-	s.volumes = make(map[storage.VolumeId]*storage.VolumeInfo)
+	s.volumes = make(map[storage.VolumeId]storage.VolumeInfo)
+  s.NodeImpl.value = s
 	return s
 }
-func (dn *DataNode) CreateOneVolume(r int, vid storage.VolumeId) storage.VolumeId {
-	dn.AddOrUpdateVolume(&storage.VolumeInfo{Id: vid})
-	return vid
-}
-func (dn *DataNode) AddOrUpdateVolume(v *storage.VolumeInfo) {
-	if dn.volumes[v.Id] == nil {
+func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) {
+	if _, ok := dn.volumes[v.Id]; !ok {
 		dn.volumes[v.Id] = v
 		dn.UpAdjustActiveVolumeCountDelta(1)
 		dn.UpAdjustMaxVolumeId(v.Id)

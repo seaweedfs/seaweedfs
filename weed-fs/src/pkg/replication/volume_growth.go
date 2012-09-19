@@ -126,9 +126,9 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 func (vg *VolumeGrowth) grow(topo *topology.Topology, vid storage.VolumeId, repType storage.ReplicationType, servers ...*topology.DataNode) error {
 	for _, server := range servers {
 		if err := AllocateVolume(server, vid, repType); err == nil {
-			vi := &storage.VolumeInfo{Id: vid, Size: 0}
+			vi := storage.VolumeInfo{Id: vid, Size: 0}
 			server.AddOrUpdateVolume(vi)
-			topo.RegisterVolumeLayout(vi, server)
+			topo.RegisterVolumeLayout(&vi, server)
 			fmt.Println("Created Volume", vid, "on", server)
 		} else {
 			fmt.Println("Failed to assign", vid, "to", servers)

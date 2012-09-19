@@ -15,6 +15,7 @@ func NewRack(id string) *Rack {
 	r.id = NodeId(id)
 	r.nodeType = "Rack"
 	r.children = make(map[NodeId]Node)
+	r.NodeImpl.value = r
 	return r
 }
 

@@ -56,6 +56,26 @@ func (vl *VolumeLayout) GetActiveVolumeCount() int {
 	return len(vl.writables)
 }
 
+func (vl *VolumeLayout) SetVolumeReadOnly(vid storage.VolumeId) bool {
+  for i, v := range vl.writables{
+    if v == vid {
+      vl.writables = append(vl.writables[:i],vl.writables[i+1:]...)
+      return true
+    }
+  }
+  return false
+}
+
+func (vl *VolumeLayout) SetVolumeWritable(vid storage.VolumeId) bool {
+  for _, v := range vl.writables{
+    if v == vid {
+      return false
+    }
+  }
+  vl.writables = append(vl.writables, vid)
+  return true
+}
+
 func (vl *VolumeLayout) ToMap() interface{} {
 	m := make(map[string]interface{})
 	m["replication"] = vl.repType.String()

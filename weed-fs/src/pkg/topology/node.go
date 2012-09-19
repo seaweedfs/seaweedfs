@@ -17,7 +17,7 @@ type Node interface {
 	GetActiveVolumeCount() int
 	GetMaxVolumeCount() int
 	GetMaxVolumeId() storage.VolumeId
-	setParent(Node)
+	SetParent(Node)
 	LinkChildNode(node Node)
 	UnlinkChildNode(nodeId NodeId)
 	CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSizeLimit uint64)
@@ -25,6 +25,8 @@ type Node interface {
 	IsDataNode() bool
 	Children() map[NodeId]Node
 	Parent() Node
+	
+	GetValue()interface{} //get reference to the topology,dc,rack,datanode
 }
 type NodeImpl struct {
 	id                NodeId
@@ -36,6 +38,7 @@ type NodeImpl struct {
 
 	//for rack, data center, topology
 	nodeType string
+	value interface{}
 }
 
 func (n *NodeImpl) IsDataNode() bool {
@@ -59,7 +62,7 @@ func (n *NodeImpl) Id() NodeId {
 func (n *NodeImpl) FreeSpace() int {
 	return n.maxVolumeCount - n.activeVolumeCount
 }
-func (n *NodeImpl) setParent(node Node) {
+func (n *NodeImpl) SetParent(node Node) {
 	n.parent = node
 }
 func (n *NodeImpl) Children() map[NodeId]Node {
@@ -67,6 +70,9 @@ func (n *NodeImpl) Children() map[NodeId]Node {
 }
 func (n *NodeImpl) Parent() Node {
 	return n.parent
+}
+func (n *NodeImpl) GetValue()interface{}{
+  return n.value
 }
 func (n *NodeImpl) ReserveOneVolume(r int, vid storage.VolumeId) (bool, *DataNode) {
 	ret := false
@@ -130,14 +136,14 @@ func (n *NodeImpl) LinkChildNode(node Node) {
 		n.UpAdjustMaxVolumeCountDelta(node.GetMaxVolumeCount())
 		n.UpAdjustMaxVolumeId(node.GetMaxVolumeId())
 		n.UpAdjustActiveVolumeCountDelta(node.GetActiveVolumeCount())
-		node.setParent(n)
+		node.SetParent(n)
 		fmt.Println(n, "adds child", node)
 	}
 }
 
 func (n *NodeImpl) UnlinkChildNode(nodeId NodeId) {
 	node := n.children[nodeId]
-	node.setParent(nil)
+	node.SetParent(nil)
 	if node != nil {
 		delete(n.children, node.Id())
 		n.UpAdjustActiveVolumeCountDelta(-node.GetActiveVolumeCount())
@@ -150,15 +156,15 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 	if n.IsRack() {
 		for _, c := range n.Children() {
 			dn := c.(*DataNode) //can not cast n to DataNode
-			if dn.LastSeen > freshThreshHold {
+			if dn.LastSeen < freshThreshHold {
 				if !dn.Dead {
 					dn.Dead = true
 					n.GetTopology().chanDeadDataNodes <- dn
 				}
 			}
 			for _, v := range dn.volumes {
-				if uint64(v.Size) < volumeSizeLimit {
-          n.GetTopology().chanFullVolumes <- v
+				if uint64(v.Size) >= volumeSizeLimit {
+          n.GetTopology().chanFullVolumes <- &v
 				}
 			}
 		}
@@ -175,5 +181,5 @@ func (n *NodeImpl) GetTopology() *Topology{
   for p.Parent() != nil {
     p = p.Parent()
   }
-  return p.(*Topology)
+  return p.GetValue().(*Topology)
 }

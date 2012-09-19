@@ -13,6 +13,7 @@ func NewDataCenter(id string) *DataCenter {
 	dc.id = NodeId(id)
 	dc.nodeType = "DataCenter"
 	dc.children = make(map[NodeId]Node)
+  dc.NodeImpl.value = dc
 	return dc
 }
 
