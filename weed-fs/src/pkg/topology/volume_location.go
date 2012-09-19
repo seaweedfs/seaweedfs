@@ -2,19 +2,23 @@ package topology
 
 import ()
 
-type DataNodeLocationList struct {
+type VolumeLocationList struct {
 	list []*DataNode
 }
 
-func NewDataNodeLocationList() *DataNodeLocationList {
-	return &DataNodeLocationList{}
+func NewVolumeLocationList() *VolumeLocationList {
+	return &VolumeLocationList{}
 }
 
-func (dnll *DataNodeLocationList) Head() *DataNode {
+func (dnll *VolumeLocationList) Head() *DataNode {
 	return dnll.list[0]
 }
 
-func (dnll *DataNodeLocationList) Add(loc *DataNode) bool {
+func (dnll *VolumeLocationList) Length() int {
+  return len(dnll.list)
+}
+
+func (dnll *VolumeLocationList) Add(loc *DataNode) bool {
 	for _, dnl := range dnll.list {
 		if loc.Ip == dnl.Ip && loc.Port == dnl.Port {
 			return false
@@ -23,8 +27,17 @@ func (dnll *DataNodeLocationList) Add(loc *DataNode) bool {
 	dnll.list = append(dnll.list, loc)
 	return true
 }
+func (dnll *VolumeLocationList) Remove(loc *DataNode) bool {
+  for i, dnl := range dnll.list {
+    if loc.Ip == dnl.Ip && loc.Port == dnl.Port {
+      dnll.list = append(dnll.list[:i],dnll.list[i+1:]...)
+      return true
+    }
+  }
+  return false
+}
 
-func (dnll *DataNodeLocationList) Refresh(freshThreshHold int64) {
+func (dnll *VolumeLocationList) Refresh(freshThreshHold int64) {
 	var changed bool
 	for _, dnl := range dnll.list {
 		if dnl.LastSeen < freshThreshHold {

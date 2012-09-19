@@ -9,7 +9,7 @@ import (
 
 type VolumeLayout struct {
 	repType         storage.ReplicationType
-	vid2location    map[storage.VolumeId]*DataNodeLocationList
+	vid2location    map[storage.VolumeId]*VolumeLocationList
 	writables       []storage.VolumeId // transient array of writable volume id
 	pulse           int64
 	volumeSizeLimit uint64
@@ -18,7 +18,7 @@ type VolumeLayout struct {
 func NewVolumeLayout(repType storage.ReplicationType, volumeSizeLimit uint64, pulse int64) *VolumeLayout {
 	return &VolumeLayout{
 		repType:         repType,
-		vid2location:    make(map[storage.VolumeId]*DataNodeLocationList),
+		vid2location:    make(map[storage.VolumeId]*VolumeLocationList),
 		writables:       *new([]storage.VolumeId),
 		pulse:           pulse,
 		volumeSizeLimit: volumeSizeLimit,
@@ -27,7 +27,7 @@ func NewVolumeLayout(repType storage.ReplicationType, volumeSizeLimit uint64, pu
 
 func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	if _, ok := vl.vid2location[v.Id]; !ok {
-		vl.vid2location[v.Id] = NewDataNodeLocationList()
+		vl.vid2location[v.Id] = NewVolumeLocationList()
 	}
 	if vl.vid2location[v.Id].Add(dn) {
 		if len(vl.vid2location[v.Id].list) == v.RepType.GetCopyCount() {
@@ -38,7 +38,7 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	}
 }
 
-func (vl *VolumeLayout) PickForWrite(count int) (*storage.VolumeId, int, *DataNodeLocationList, error) {
+func (vl *VolumeLayout) PickForWrite(count int) (*storage.VolumeId, int, *VolumeLocationList, error) {
 	len_writers := len(vl.writables)
 	if len_writers <= 0 {
 		fmt.Println("No more writable volumes!")
@@ -56,24 +56,44 @@ func (vl *VolumeLayout) GetActiveVolumeCount() int {
 	return len(vl.writables)
 }
 
-func (vl *VolumeLayout) SetVolumeReadOnly(vid storage.VolumeId) bool {
-  for i, v := range vl.writables{
-    if v == vid {
-      vl.writables = append(vl.writables[:i],vl.writables[i+1:]...)
-      return true
+func (vl *VolumeLayout) removeFromWritable(vid storage.VolumeId) bool {
+	for i, v := range vl.writables {
+		if v == vid {
+			vl.writables = append(vl.writables[:i], vl.writables[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+func (vl *VolumeLayout) setVolumeWritable(vid storage.VolumeId) bool {
+	for _, v := range vl.writables {
+		if v == vid {
+			return false
+		}
+	}
+	vl.writables = append(vl.writables, vid)
+	return true
+}
+
+func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid storage.VolumeId) bool {
+  if vl.vid2location[vid].Remove(dn) {
+    if vl.vid2location[vid].Length() < vl.repType.GetCopyCount() {
+      return vl.removeFromWritable(vid)
     }
   }
   return false
 }
+func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid storage.VolumeId) bool {
+	if vl.vid2location[vid].Add(dn) {
+		if vl.vid2location[vid].Length() >= vl.repType.GetCopyCount() {
+			return vl.setVolumeWritable(vid)
+		}
+	}
+	return false
+}
 
-func (vl *VolumeLayout) SetVolumeWritable(vid storage.VolumeId) bool {
-  for _, v := range vl.writables{
-    if v == vid {
-      return false
-    }
-  }
-  vl.writables = append(vl.writables, vid)
-  return true
+func (vl *VolumeLayout) SetVolumeCapacityFull(vid storage.VolumeId) bool {
+	return vl.removeFromWritable(vid)
 }
 
 func (vl *VolumeLayout) ToMap() interface{} {
