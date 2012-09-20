@@ -23,8 +23,6 @@ type Topology struct {
 	chanDeadDataNodes      chan *DataNode
 	chanRecoveredDataNodes chan *DataNode
 	chanFullVolumes        chan *storage.VolumeInfo
-	chanIncomplemteVolumes chan *storage.VolumeInfo
-	chanRecoveredVolumes   chan *storage.VolumeInfo
 }
 
 func NewTopology(id string, dirname string, filename string, volumeSizeLimit uint64, pulse int) *Topology {
@@ -42,8 +40,6 @@ func NewTopology(id string, dirname string, filename string, volumeSizeLimit uin
 	t.chanDeadDataNodes = make(chan *DataNode)
 	t.chanRecoveredDataNodes = make(chan *DataNode)
 	t.chanFullVolumes = make(chan *storage.VolumeInfo)
-	t.chanIncomplemteVolumes = make(chan *storage.VolumeInfo)
-	t.chanRecoveredVolumes = make(chan *storage.VolumeInfo)
 
 	return t
 }
@@ -124,6 +120,7 @@ func (t *Topology) GetOrCreateDataCenter(ip string) *DataCenter {
 
 func (t *Topology) ToMap() interface{} {
 	m := make(map[string]interface{})
+  m["Max"] = t.GetMaxVolumeCount()
 	m["Free"] = t.FreeSpace()
 	var dcs []interface{}
 	for _, c := range t.Children() {

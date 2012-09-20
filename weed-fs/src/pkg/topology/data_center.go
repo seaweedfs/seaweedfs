@@ -38,6 +38,7 @@ func (dc *DataCenter) GetOrCreateRack(ip string) *Rack {
 
 func (dc *DataCenter) ToMap() interface{}{
   m := make(map[string]interface{})
+  m["Max"] = dc.GetMaxVolumeCount()
   m["Free"] = dc.FreeSpace()
   var racks []interface{}
   for _, c := range dc.Children() {

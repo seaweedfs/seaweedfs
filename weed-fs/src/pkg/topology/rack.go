@@ -32,10 +32,10 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVol
 		if dn.MatchLocation(ip, port) {
 			dn.LastSeen = time.Now().Unix()
 			if dn.Dead {
-			  dn.Dead = false
-			  r.GetTopology().chanRecoveredDataNodes <- dn
+				dn.Dead = false
+				r.GetTopology().chanRecoveredDataNodes <- dn
+				dn.UpAdjustMaxVolumeCountDelta(maxVolumeCount - dn.maxVolumeCount)
 			}
-			dn.UpAdjustMaxVolumeCountDelta(maxVolumeCount - dn.maxVolumeCount)
 			return dn
 		}
 	}
@@ -51,6 +51,7 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVol
 
 func (rack *Rack) ToMap() interface{} {
 	m := make(map[string]interface{})
+	m["Max"] = rack.GetMaxVolumeCount()
 	m["Free"] = rack.FreeSpace()
 	var dns []interface{}
 	for _, c := range rack.Children() {

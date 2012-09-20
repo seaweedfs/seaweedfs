@@ -49,8 +49,8 @@ func (dn *DataNode) ToMap() interface{} {
 	ret["Ip"] = dn.Ip
 	ret["Port"] = dn.Port
 	ret["Volumes"] = dn.GetActiveVolumeCount()
-	ret["MaxVolumeCount"] = dn.GetMaxVolumeCount()
-	ret["FreeVolumeCount"] = dn.FreeSpace()
+	ret["Max"] = dn.GetMaxVolumeCount()
+	ret["Free"] = dn.FreeSpace()
 	ret["PublicUrl"] = dn.PublicUrl
 	return ret
 }

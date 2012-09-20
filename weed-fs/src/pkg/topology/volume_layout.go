@@ -76,16 +76,18 @@ func (vl *VolumeLayout) setVolumeWritable(vid storage.VolumeId) bool {
 }
 
 func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid storage.VolumeId) bool {
-  if vl.vid2location[vid].Remove(dn) {
-    if vl.vid2location[vid].Length() < vl.repType.GetCopyCount() {
-      return vl.removeFromWritable(vid)
-    }
-  }
-  return false
+	if vl.vid2location[vid].Remove(dn) {
+		if vl.vid2location[vid].Length() < vl.repType.GetCopyCount() {
+			fmt.Println("Volume", vid, "has", vl.vid2location[vid].Length(), "replica, less than required", vl.repType.GetCopyCount())
+			return vl.removeFromWritable(vid)
+		}
+	}
+	return false
 }
 func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid storage.VolumeId) bool {
 	if vl.vid2location[vid].Add(dn) {
 		if vl.vid2location[vid].Length() >= vl.repType.GetCopyCount() {
+			fmt.Println("Volume", vid, "becomes writable")
 			return vl.setVolumeWritable(vid)
 		}
 	}

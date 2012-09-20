@@ -28,7 +28,7 @@ var cmdVolume = &Command{
 
 var (
 	vport          = cmdVolume.Flag.Int("port", 8080, "http listen port")
-	volumeFolder    = cmdVolume.Flag.String("dir", "/tmp", "data directory to store files")
+	volumeFolder   = cmdVolume.Flag.String("dir", "/tmp", "data directory to store files")
 	volumes        = cmdVolume.Flag.String("volumes", "", "comma-separated list, or ranges of volume ids")
 	publicUrl      = cmdVolume.Flag.String("publicUrl", "localhost:8080", "public url to serve data read")
 	masterNode     = cmdVolume.Flag.String("mserver", "localhost:9333", "master directory server to store mappings")
@@ -88,15 +88,16 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	cookie := n.Cookie
 	count, e := store.Read(volumeId, n)
-	if e != nil {
-    w.WriteHeader(404)
-	}
-	if *IsDebug {
-		log.Println("read bytes", count, "error", e)
+  if *IsDebug {
+    log.Println("read bytes", count, "error", e)
+  }
+	if e != nil || count <= 0 {
+		w.WriteHeader(404)
+		return
 	}
 	if n.Cookie != cookie {
 		log.Println("request with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
-    w.WriteHeader(404)
+		w.WriteHeader(404)
 		return
 	}
 	if ext != "" {
@@ -161,6 +162,7 @@ func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, r, m)
 }
 func parseURLPath(path string) (vid, fid, ext string) {
+
 	sepIndex := strings.LastIndex(path, "/")
 	commaIndex := strings.LastIndex(path[sepIndex:], ",")
 	if commaIndex <= 0 {
@@ -181,24 +183,23 @@ func parseURLPath(path string) (vid, fid, ext string) {
 }
 
 func runVolume(cmd *Command, args []string) bool {
-  fileInfo, err := os.Stat(*volumeFolder)
+	fileInfo, err := os.Stat(*volumeFolder)
 	//TODO: now default to 1G, this value should come from server?
-	if err!=nil{
-	  log.Fatalf("No Existing Folder:%s", *volumeFolder)
+	if err != nil {
+		log.Fatalf("No Existing Folder:%s", *volumeFolder)
 	}
 	if !fileInfo.IsDir() {
-    log.Fatalf("Volume Folder should not be a file:%s", *volumeFolder)
+		log.Fatalf("Volume Folder should not be a file:%s", *volumeFolder)
 	}
-  perm:=fileInfo.Mode().Perm()
-  log.Println("Volume Folder permission:", perm)
-	
+	perm := fileInfo.Mode().Perm()
+	log.Println("Volume Folder permission:", perm)
+
 	store = storage.NewStore(*vport, *publicUrl, *volumeFolder, *maxVolumeCount, *volumes)
 	defer store.Close()
 	http.HandleFunc("/", storeHandler)
 	http.HandleFunc("/status", statusHandler)
 	http.HandleFunc("/admin/assign_volume", assignVolumeHandler)
 	http.HandleFunc("/admin/set_volume_locations_list", setVolumeLocationsHandler)
-
 
 	go func() {
 		for {
