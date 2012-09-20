@@ -53,7 +53,7 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 		for _, machine := range machines {
 			ret = append(ret, map[string]string{"url": machine.Url, "publicUrl": machine.PublicUrl})
 		}
-		writeJson(w, r, ret)
+		writeJson(w, r, map[string]interface{}{"locations":ret})
 	} else {
 		log.Println("Invalid volume id", volumeId)
 		writeJson(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found. " + e.Error()})

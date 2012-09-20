@@ -136,6 +136,11 @@ func (s *Store) Read(i VolumeId, n *Needle) (int, error) {
 	return 0, errors.New("Not Found")
 }
 
+func (s *Store) HasVolume(i VolumeId) bool {
+  _, ok := s.volumes[i]
+  return ok
+}
+
 type VolumeLocations struct {
 	Vid       VolumeId
 	Locations []string

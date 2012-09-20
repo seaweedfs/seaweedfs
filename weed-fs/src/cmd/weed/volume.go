@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"pkg/operation"
 	"pkg/storage"
 	"strconv"
 	"strings"
@@ -86,11 +87,23 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 	if *IsDebug {
 		log.Println("volume", volumeId, "reading", n)
 	}
+	if !store.HasVolume(volumeId) {
+		lookupResult, err := operation.Lookup(*server, volumeId)
+		if *IsDebug {
+			log.Println("volume", volumeId, "found on", lookupResult, "error", err)
+		}
+		if err == nil {
+			http.Redirect(w, r, "http://"+lookupResult.Locations[0].PublicUrl+r.URL.Path, http.StatusMovedPermanently)
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+		return
+	}
 	cookie := n.Cookie
 	count, e := store.Read(volumeId, n)
-  if *IsDebug {
-    log.Println("read bytes", count, "error", e)
-  }
+	if *IsDebug {
+		log.Println("read bytes", count, "error", e)
+	}
 	if e != nil || count <= 0 {
 		w.WriteHeader(404)
 		return
