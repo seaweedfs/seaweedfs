@@ -5,7 +5,8 @@ import (
   "net/url"
   "pkg/storage"
   "pkg/util"
-  "fmt"
+  _ "fmt"
+  "errors"
 )
 
 type Location struct {
@@ -17,11 +18,11 @@ type LookupResult struct {
   Error     string "error"
 }
 
+//TODO: Add a caching for vid here
 func Lookup(server string, vid storage.VolumeId) (*LookupResult, error) {
   values := make(url.Values)
   values.Add("volumeId", vid.String())
   jsonBlob, err := util.Post("http://"+server+"/dir/lookup", values)
-  fmt.Println("Lookup Result:", string(jsonBlob))
   if err != nil {
     return nil, err
   }
@@ -29,6 +30,9 @@ func Lookup(server string, vid storage.VolumeId) (*LookupResult, error) {
   err = json.Unmarshal(jsonBlob, &ret)
   if err != nil {
     return nil, err
+  }
+  if ret.Error != ""{
+    return nil, errors.New(ret.Error)
   }
   return &ret, nil
 }
