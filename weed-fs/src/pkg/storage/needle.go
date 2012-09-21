@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/hex"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"mime"
@@ -21,17 +22,17 @@ type Needle struct {
 	Padding  []byte "Aligned to 8 bytes"
 }
 
-func NewNeedle(r *http.Request) (n *Needle, e error) {
+func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
 
 	n = new(Needle)
 	form, fe := r.MultipartReader()
 	if fe != nil {
-		println("MultipartReader [ERROR]", fe)
+		fmt.Println("MultipartReader [ERROR]", fe)
 		e = fe
 		return
 	}
 	part, _ := form.NextPart()
-	fname := part.FileName()
+	fname = part.FileName()
 	data, _ := ioutil.ReadAll(part)
 	//log.Println("uploading file " + part.FileName())
 	dotIndex := strings.LastIndex(fname, ".")

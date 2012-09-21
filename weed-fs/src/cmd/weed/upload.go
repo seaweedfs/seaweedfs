@@ -71,7 +71,7 @@ func upload(filename string, server string, fid string) (int) {
 		}
 		panic(err.Error())
 	}
-	ret, _ := operation.Upload(server, fid, filename, fh)
+	ret, _ := operation.Upload("http://"+server+"/"+fid, filename, fh)
 	return ret.Size
 }
 

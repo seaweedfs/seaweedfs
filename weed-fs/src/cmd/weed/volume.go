@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"log"
 	"math/rand"
@@ -127,31 +128,34 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(n.Data)
 }
 func PostHandler(w http.ResponseWriter, r *http.Request) {
+  r.ParseForm()
 	vid, _, _ := parseURLPath(r.URL.Path)
 	volumeId, e := storage.NewVolumeId(vid)
 	if e != nil {
 		writeJson(w, r, e)
 	} else {
-		needle, ne := storage.NewNeedle(r)
+		needle, filename, ne := storage.NewNeedle(r)
 		if ne != nil {
 			writeJson(w, r, ne)
 		} else {
 			ret := store.Write(volumeId, needle)
-			if ret > 0 { //send to other replica locations
+			if ret > 0 || !store.HasVolume(volumeId){ //send to other replica locations
 				if r.FormValue("type") != "standard" {
 					waitTime, err := strconv.Atoi(r.FormValue("wait"))
 					lookupResult, lookupErr := operation.Lookup(*server, volumeId)
 					if lookupErr == nil {
 						sendFunc := func(background bool) {
-							postContentFunc := func(location operation.Location) bool{
-							
-							  return true
+							postContentFunc := func(location operation.Location) bool {
+								operation.Upload("http://"+location.PublicUrl+r.URL.Path+"?type=standard", filename, bytes.NewReader(needle.Data))
+								return true
 							}
 							for _, location := range lookupResult.Locations {
-								if background {
-								  go postContentFunc(location)
-								}else{
-                  postContentFunc(location)
+								if location.PublicUrl != *publicUrl {
+									if background {
+										go postContentFunc(location)
+									} else {
+										postContentFunc(location)
+									}
 								}
 							}
 						}
