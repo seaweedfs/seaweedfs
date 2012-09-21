@@ -1,15 +1,12 @@
 package replication
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
-	"net/url"
 	"pkg/storage"
 	"pkg/topology"
-	"pkg/util"
-	"strconv"
+	"pkg/operation"
 )
 
 /*
@@ -125,7 +122,7 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 }
 func (vg *VolumeGrowth) grow(topo *topology.Topology, vid storage.VolumeId, repType storage.ReplicationType, servers ...*topology.DataNode) error {
 	for _, server := range servers {
-		if err := AllocateVolume(server, vid, repType); err == nil {
+		if err := operation.AllocateVolume(server, vid, repType); err == nil {
 			vi := storage.VolumeInfo{Id: vid, Size: 0, RepType:repType}
 			server.AddOrUpdateVolume(vi)
 			topo.RegisterVolumeLayout(&vi, server)
@@ -134,28 +131,6 @@ func (vg *VolumeGrowth) grow(topo *topology.Topology, vid storage.VolumeId, repT
 			fmt.Println("Failed to assign", vid, "to", servers)
 			return errors.New("Failed to assign " + vid.String())
 		}
-	}
-	return nil
-}
-
-type AllocateVolumeResult struct {
-	Error string
-}
-
-func AllocateVolume(dn *topology.DataNode, vid storage.VolumeId, repType storage.ReplicationType) error {
-	values := make(url.Values)
-	values.Add("volume", vid.String())
-	values.Add("replicationType", repType.String())
-	jsonBlob, err := util.Post("http://"+dn.Ip+":"+strconv.Itoa(dn.Port)+"/admin/assign_volume", values)
-	if err != nil {
-		return err
-	}
-	var ret AllocateVolumeResult
-	if err := json.Unmarshal(jsonBlob, &ret); err != nil {
-		return err
-	}
-	if ret.Error != "" {
-		return errors.New(ret.Error)
 	}
 	return nil
 }
