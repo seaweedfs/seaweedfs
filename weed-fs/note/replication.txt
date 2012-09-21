@@ -82,4 +82,5 @@ For the above operations, here are the todo list:
     5. accept lookup for volume locations    ALREADY EXISTS /dir/lookup
     6. read topology/datacenter/rack layout
 
-
+TODO:
+  1. replicate content to the other server if the replication type needs replicas

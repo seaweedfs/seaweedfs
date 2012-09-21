@@ -135,6 +135,9 @@ func (s *Store) Read(i VolumeId, n *Needle) (int, error) {
 	}
 	return 0, errors.New("Not Found")
 }
+func (s *Store) GetVolume(i VolumeId) *Volume {
+  return s.volumes[i]
+}
 
 func (s *Store) HasVolume(i VolumeId) bool {
   _, ok := s.volumes[i]

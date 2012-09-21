@@ -1,16 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"io/ioutil"
-	"mime/multipart"
-	"net/http"
 	"net/url"
 	"os"
+  "pkg/operation"
 	"pkg/util"
 	"strconv"
 )
@@ -64,22 +60,9 @@ func assign(count int) (*AssignResult, error) {
 	return &ret, nil
 }
 
-type UploadResult struct {
-	Size int
-}
-
-func upload(filename string, uploadUrl string) (int, string) {
+func upload(filename string, server string, fid string) (int) {
 	if *IsDebug {
 		fmt.Println("Start uploading file:", filename)
-	}
-	body_buf := bytes.NewBufferString("")
-	body_writer := multipart.NewWriter(body_buf)
-	file_writer, err := body_writer.CreateFormFile("file", filename)
-	if err != nil {
-		if *IsDebug {
-			fmt.Println("Failed to create form file:", filename)
-		}
-		panic(err.Error())
 	}
 	fh, err := os.Open(filename)
 	if err != nil {
@@ -88,31 +71,8 @@ func upload(filename string, uploadUrl string) (int, string) {
 		}
 		panic(err.Error())
 	}
-	io.Copy(file_writer, fh)
-	content_type := body_writer.FormDataContentType()
-	body_writer.Close()
-	resp, err := http.Post(uploadUrl, content_type, body_buf)
-	if err != nil {
-		if *IsDebug {
-			fmt.Println("Failed to upload file to", uploadUrl)
-		}
-		panic(err.Error())
-	}
-	defer resp.Body.Close()
-	resp_body, err := ioutil.ReadAll(resp.Body)
-	if *IsDebug {
-		fmt.Println("Upload response:", string(resp_body))
-	}
-	if err != nil {
-		panic(err.Error())
-	}
-	var ret UploadResult
-	err = json.Unmarshal(resp_body, &ret)
-	if err != nil {
-		panic(err.Error())
-	}
-	//fmt.Println("Uploaded " + strconv.Itoa(ret.Size) + " Bytes to " + uploadUrl)
-	return ret.Size, uploadUrl
+	ret, _ := operation.Upload(server, fid, filename, fh)
+	return ret.Size
 }
 
 type SubmitResult struct {
@@ -131,8 +91,7 @@ func submit(files []string) []SubmitResult {
 		if index > 0 {
 			fid = fid + "_" + strconv.Itoa(index)
 		}
-		uploadUrl := "http://" + ret.PublicUrl + "/" + fid
-		results[index].Size, _ = upload(file, uploadUrl)
+		results[index].Size = upload(file, ret.PublicUrl, fid)
 		results[index].Fid = fid
 	}
 	return results

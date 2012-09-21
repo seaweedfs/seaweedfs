@@ -137,6 +137,30 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 			writeJson(w, r, ne)
 		} else {
 			ret := store.Write(volumeId, needle)
+			if ret > 0 { //send to other replica locations
+				if r.FormValue("type") != "standard" {
+					waitTime, err := strconv.Atoi(r.FormValue("wait"))
+					lookupResult, lookupErr := operation.Lookup(*server, volumeId)
+					if lookupErr == nil {
+						sendFunc := func(background bool) {
+							postContentFunc := func(location operation.Location) bool{
+							
+							  return true
+							}
+							for _, location := range lookupResult.Locations {
+								if background {
+								  go postContentFunc(location)
+								}else{
+                  postContentFunc(location)
+								}
+							}
+						}
+						sendFunc(err == nil && waitTime > 0)
+					} else {
+						log.Println("Failed to lookup for", volumeId, lookupErr.Error())
+					}
+				}
+			}
 			m := make(map[string]uint32)
 			m["size"] = ret
 			writeJson(w, r, m)
