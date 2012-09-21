@@ -80,7 +80,7 @@ func setup(topologyLayout string) *Topology {
 	//printMap(data)
 
 	//need to connect all nodes first before server adding volumes
-	topo := NewTopology("mynetwork")
+	topo := NewTopology("mynetwork","/tmp","test",234,5)
 	mTopology := data.(map[string]interface{})
 	for dcKey, dcValue := range mTopology {
 		dc := NewDataCenter(dcKey)
@@ -96,8 +96,8 @@ func setup(topologyLayout string) *Topology {
 				rack.LinkChildNode(server)
 				for _, v := range serverMap["volumes"].([]interface{}) {
 					m := v.(map[string]interface{})
-					vi := &storage.VolumeInfo{Id: storage.VolumeId(int64(m["id"].(float64))), Size: int64(m["size"].(float64))}
-					server.AddVolume(vi)
+					vi := storage.VolumeInfo{Id: storage.VolumeId(int64(m["id"].(float64))), Size: int64(m["size"].(float64))}
+					server.AddOrUpdateVolume(vi)
 				}
 				server.UpAdjustMaxVolumeCountDelta(int(serverMap["limit"].(float64)))
 			}
