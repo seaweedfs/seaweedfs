@@ -76,8 +76,6 @@ func setup(topologyLayout string) *Topology {
 	if err != nil {
 		fmt.Println("error:", err)
 	}
-	//fmt.Println("data:", data)
-	//printMap(data)
 
 	//need to connect all nodes first before server adding volumes
 	topo := NewTopology("mynetwork","/tmp","test",234,5)
@@ -104,37 +102,7 @@ func setup(topologyLayout string) *Topology {
 		}
 	}
 
-	fmt.Println("topology:", *topo)
-
-	bytes, err := json.Marshal(topo.children)
-	if err != nil {
-		fmt.Println("json error:", err)
-	}
-	fmt.Println("json topo:", string(bytes))
-
 	return topo
-}
-
-func printMap(mm interface{}) {
-	m := mm.(map[string]interface{})
-	for k, v := range m {
-		switch vv := v.(type) {
-		case string:
-			fmt.Println(k, "\"", vv, "\"")
-		case int, float64:
-			fmt.Println(k, ":", vv)
-		case []interface{}:
-			fmt.Println(k, ":[")
-			for _, u := range vv {
-				fmt.Println(u)
-				fmt.Println(",")
-			}
-			fmt.Println("]")
-		default:
-			fmt.Println(k, ":")
-			printMap(vv)
-		}
-	}
 }
 
 func TestRemoveDataCenter(t *testing.T) {
@@ -154,7 +122,6 @@ func TestReserveOneVolume(t *testing.T) {
   rand.Seed(time.Now().UnixNano())
   rand.Seed(1)
 	ret, node, vid := topo.RandomlyReserveOneVolume()
-	fmt.Println("topology:", topo)
   fmt.Println("assigned :", ret, ", node :", node,", volume id:", vid)
 
 }
