@@ -6,6 +6,7 @@ import (
 	"pkg/directory"
 	"pkg/sequence"
 	"pkg/storage"
+	"io/ioutil"
 )
 
 type Topology struct {
@@ -23,9 +24,11 @@ type Topology struct {
 	chanDeadDataNodes      chan *DataNode
 	chanRecoveredDataNodes chan *DataNode
 	chanFullVolumes        chan *storage.VolumeInfo
+	
+	configuration *Configuration
 }
 
-func NewTopology(id string, dirname string, filename string, volumeSizeLimit uint64, pulse int) *Topology {
+func NewTopology(id string, confFile string, dirname string, filename string, volumeSizeLimit uint64, pulse int) *Topology {
 	t := &Topology{}
 	t.id = NodeId(id)
 	t.nodeType = "Topology"
@@ -41,7 +44,17 @@ func NewTopology(id string, dirname string, filename string, volumeSizeLimit uin
 	t.chanRecoveredDataNodes = make(chan *DataNode)
 	t.chanFullVolumes = make(chan *storage.VolumeInfo)
 
+  t.loadConfiguration(confFile)
+	
 	return t
+}
+
+func (t *Topology) loadConfiguration(configurationFile string)error{
+  b, e := ioutil.ReadFile(configurationFile);
+  if e ==nil{
+    t.configuration, e = NewConfiguration(b)
+  }
+  return e 
 }
 
 func (t *Topology) RandomlyReserveOneVolume() (bool, *DataNode, *storage.VolumeId) {
@@ -97,8 +110,9 @@ func (t *Topology) RegisterVolumeLayout(v *storage.VolumeInfo, dn *DataNode) {
 }
 
 func (t *Topology) RegisterVolumes(volumeInfos []storage.VolumeInfo, ip string, port int, publicUrl string, maxVolumeCount int) {
-	dc := t.GetOrCreateDataCenter(ip)
-	rack := dc.GetOrCreateRack(ip)
+  dcName, rackName := t.configuration.Locate(ip)
+	dc := t.GetOrCreateDataCenter(dcName)
+	rack := dc.GetOrCreateRack(rackName)
 	dn := rack.GetOrCreateDataNode(ip, port, publicUrl, maxVolumeCount)
 	for _, v := range volumeInfos {
 		dn.AddOrUpdateVolume(v)
@@ -106,14 +120,14 @@ func (t *Topology) RegisterVolumes(volumeInfos []storage.VolumeInfo, ip string, 
 	}
 }
 
-func (t *Topology) GetOrCreateDataCenter(ip string) *DataCenter {
+func (t *Topology) GetOrCreateDataCenter(dcName string) *DataCenter {
 	for _, c := range t.Children() {
 		dc := c.(*DataCenter)
-		if dc.MatchLocationRange(ip) {
+		if string(dc.Id()) == dcName {
 			return dc
 		}
 	}
-	dc := NewDataCenter("DefaultDataCenter")
+	dc := NewDataCenter(dcName)
 	t.LinkChildNode(dc)
 	return dc
 }

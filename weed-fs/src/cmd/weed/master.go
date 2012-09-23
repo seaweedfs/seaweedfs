@@ -34,6 +34,7 @@ var (
 	capacity          = cmdMaster.Flag.Int("capacity", 100, "maximum number of volumes to hold")
 	volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", 32*1024, "Default Volume Size in MegaBytes")
 	mpulse            = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
+	confFile          = cmdMaster.Flag.String("conf", "./weed.xml", "configuration file")
 )
 
 var mapper *directory.Mapper
@@ -53,7 +54,7 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 		for _, machine := range machines {
 			ret = append(ret, map[string]string{"url": machine.Url, "publicUrl": machine.PublicUrl})
 		}
-		writeJson(w, r, map[string]interface{}{"locations":ret})
+		writeJson(w, r, map[string]interface{}{"locations": ret})
 	} else {
 		log.Println("Invalid volume id", volumeId)
 		writeJson(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found. " + e.Error()})
@@ -131,7 +132,7 @@ func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func runMaster(cmd *Command, args []string) bool {
-	topo = topology.NewTopology("topo", *metaFolder, "toposequence", uint64(*volumeSizeLimitMB)*1024*1024, *mpulse)
+	topo = topology.NewTopology("topo", *confFile, *metaFolder, "toposequence", uint64(*volumeSizeLimitMB)*1024*1024, *mpulse)
 	vg = replication.NewDefaultVolumeGrowth()
 	log.Println("Volume Size Limit is", *volumeSizeLimitMB, "MB")
 	mapper = directory.NewMapper(*metaFolder, "directory", uint64(*volumeSizeLimitMB)*1024*1024, *mpulse)

@@ -5,7 +5,6 @@ import (
 
 type DataCenter struct {
 	NodeImpl
-	ipRange *IpRange
 }
 
 func NewDataCenter(id string) *DataCenter {
@@ -17,21 +16,14 @@ func NewDataCenter(id string) *DataCenter {
 	return dc
 }
 
-func (dc *DataCenter) MatchLocationRange(ip string) bool {
-	if dc.ipRange == nil {
-		return true
-	}
-	return dc.ipRange.Match(ip)
-}
-
-func (dc *DataCenter) GetOrCreateRack(ip string) *Rack {
+func (dc *DataCenter) GetOrCreateRack(rackName string) *Rack {
   for _, c := range dc.Children() {
     rack := c.(*Rack)
-    if rack.MatchLocationRange(ip) {
+    if string(rack.Id()) == rackName {
       return rack
     }
   }
-  rack := NewRack("DefaultRack")
+  rack := NewRack(rackName)
   dc.LinkChildNode(rack)
   return rack
 }

@@ -7,7 +7,6 @@ import (
 
 type Rack struct {
 	NodeImpl
-	ipRange *IpRange
 }
 
 func NewRack(id string) *Rack {
@@ -17,13 +16,6 @@ func NewRack(id string) *Rack {
 	r.children = make(map[NodeId]Node)
 	r.NodeImpl.value = r
 	return r
-}
-
-func (r *Rack) MatchLocationRange(ip string) bool {
-	if r.ipRange == nil {
-		return true
-	}
-	return r.ipRange.Match(ip)
 }
 
 func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVolumeCount int) *DataNode {
@@ -39,7 +31,7 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVol
 			return dn
 		}
 	}
-	dn := NewDataNode("DataNode" + ip + ":" + strconv.Itoa(port))
+	dn := NewDataNode(ip + ":" + strconv.Itoa(port))
 	dn.Ip = ip
 	dn.Port = port
 	dn.PublicUrl = publicUrl
