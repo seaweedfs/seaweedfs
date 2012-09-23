@@ -105,12 +105,12 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("read bytes", count, "error", e)
 	}
 	if e != nil || count <= 0 {
-		w.WriteHeader(404)
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	if n.Cookie != cookie {
 		log.Println("request with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
-		w.WriteHeader(404)
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	if ext != "" {
@@ -162,6 +162,7 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 						log.Println("Failed to lookup for", volumeId, lookupErr.Error())
 					}
 				}
+				w.WriteHeader(http.StatusCreated)
 			}
 			m := make(map[string]uint32)
 			m["size"] = ret

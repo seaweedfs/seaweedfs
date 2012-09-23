@@ -57,6 +57,15 @@ func (t *Topology) loadConfiguration(configurationFile string)error{
   return e 
 }
 
+func (t *Topology) Lookup(vid storage.VolumeId) (*[]*DataNode) {
+  for _, vl := range t.replicaType2VolumeLayout {
+    if list := vl.Lookup(vid); list!=nil {
+      return list
+    }
+  }
+  return nil
+}
+
 func (t *Topology) RandomlyReserveOneVolume() (bool, *DataNode, *storage.VolumeId) {
 	if t.FreeSpace() <= 0 {
 		return false, nil, nil

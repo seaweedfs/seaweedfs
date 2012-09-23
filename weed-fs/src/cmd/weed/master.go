@@ -5,13 +5,11 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"pkg/directory"
 	"pkg/replication"
 	"pkg/storage"
 	"pkg/topology"
 	"strconv"
 	"strings"
-	"time"
 )
 
 func init() {
@@ -37,7 +35,6 @@ var (
 	confFile          = cmdMaster.Flag.String("conf", "/etc/weed.conf", "xml configuration file")
 )
 
-var mapper *directory.Mapper
 var topo *topology.Topology
 var vg *replication.VolumeGrowth
 
@@ -48,30 +45,25 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 		vid = vid[0:commaSep]
 	}
 	volumeId, _ := storage.NewVolumeId(vid)
-	machines, e := mapper.Get(volumeId)
-	if e == nil {
+	machines := topo.Lookup(volumeId)
+	if machines == nil {
 		ret := []map[string]string{}
-		for _, machine := range machines {
-			ret = append(ret, map[string]string{"url": machine.Url, "publicUrl": machine.PublicUrl})
+		for _, dn := range *machines {
+			ret = append(ret, map[string]string{"url": dn.Ip + strconv.Itoa(dn.Port), "publicUrl": dn.PublicUrl})
 		}
 		writeJson(w, r, map[string]interface{}{"locations": ret})
 	} else {
 		log.Println("Invalid volume id", volumeId)
-		writeJson(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found. " + e.Error()})
+		writeJson(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found. "})
 	}
 }
 func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
-	c := r.FormValue("count")
-	fid, count, machine, err := mapper.PickForWrite(c)
-	if err == nil {
-		writeJson(w, r, map[string]interface{}{"fid": fid, "url": machine.Url, "publicUrl": machine.PublicUrl, "count": count})
-	} else {
-		writeJson(w, r, map[string]string{"error": err.Error()})
-	}
-}
-func dirAssign2Handler(w http.ResponseWriter, r *http.Request) {
 	c, _ := strconv.Atoi(r.FormValue("count"))
-	rt, err := storage.NewReplicationType(r.FormValue("replication"))
+	repType := r.FormValue("replication")
+	if repType == ""{
+	  repType = "00"
+	}
+	rt, err := storage.NewReplicationType(repType)
 	if err != nil {
 		writeJson(w, r, map[string]string{"error": err.Error()})
 		return
@@ -101,15 +93,11 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	if *IsDebug {
 		log.Println(s, "volumes", r.FormValue("volumes"))
 	}
-	mapper.Add(directory.NewMachine(s, publicUrl, *volumes, time.Now().Unix()))
 
 	//new ways
 	topo.RegisterVolumes(*volumes, ip, port, publicUrl, maxVolumeCount)
 }
-func dirOldStatusHandler(w http.ResponseWriter, r *http.Request) {
-	writeJson(w, r, mapper)
-}
-func dirNewStatusHandler(w http.ResponseWriter, r *http.Request) {
+func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, r, topo.ToMap())
 }
 func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
@@ -135,16 +123,12 @@ func runMaster(cmd *Command, args []string) bool {
 	topo = topology.NewTopology("topo", *confFile, *metaFolder, "toposequence", uint64(*volumeSizeLimitMB)*1024*1024, *mpulse)
 	vg = replication.NewDefaultVolumeGrowth()
 	log.Println("Volume Size Limit is", *volumeSizeLimitMB, "MB")
-	mapper = directory.NewMapper(*metaFolder, "directory", uint64(*volumeSizeLimitMB)*1024*1024, *mpulse)
 	http.HandleFunc("/dir/assign", dirAssignHandler)
-	http.HandleFunc("/dir/assign2", dirAssign2Handler)
 	http.HandleFunc("/dir/lookup", dirLookupHandler)
 	http.HandleFunc("/dir/join", dirJoinHandler)
-	http.HandleFunc("/dir/status", dirOldStatusHandler)
-	http.HandleFunc("/dir/status2", dirNewStatusHandler) //temporary
+	http.HandleFunc("/dir/status", dirStatusHandler)
 	http.HandleFunc("/vol/grow", volumeGrowHandler)
 
-	mapper.StartRefreshWritableVolumes()
 	topo.StartRefreshWritableVolumes()
 
 	log.Println("Start directory service at http://127.0.0.1:" + strconv.Itoa(*mport))
