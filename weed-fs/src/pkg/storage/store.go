@@ -19,15 +19,12 @@ type Store struct {
 	MaxVolumeCount int
 }
 
-func NewStore(port int, publicUrl, dirname string, maxVolumeCount int, volumeListString string) (s *Store) {
+func NewStore(port int, publicUrl, dirname string, maxVolumeCount int) (s *Store) {
 	s = &Store{Port: port, PublicUrl: publicUrl, dir: dirname, MaxVolumeCount: maxVolumeCount}
 	s.volumes = make(map[VolumeId]*Volume)
 	s.loadExistingVolumes()
-	if volumeListString != "" {
-		s.AddVolume(volumeListString, "00")
-	}
 
-	log.Println("Store started on dir:", dirname, "with", len(s.volumes), "volumes", volumeListString)
+	log.Println("Store started on dir:", dirname, "with", len(s.volumes), "volumes")
 	return
 }
 func (s *Store) AddVolume(volumeListString string, replicationType string) (error) {

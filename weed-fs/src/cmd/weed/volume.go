@@ -21,7 +21,7 @@ func init() {
 }
 
 var cmdVolume = &Command{
-	UsageLine: "volume -port=8080 -dir=/tmp -min=3 -max=5 -publicUrl=server_name:8080 -mserver=localhost:9333",
+	UsageLine: "volume -port=8080 -dir=/tmp -max=5 -publicUrl=server_name:8080 -mserver=localhost:9333",
 	Short:     "start a volume server",
 	Long: `start a volume server to provide storage spaces
 
@@ -30,10 +30,9 @@ var cmdVolume = &Command{
 
 var (
 	vport          = cmdVolume.Flag.Int("port", 8080, "http listen port")
-	volumeFolder   = cmdVolume.Flag.String("dir", "/tmp", "data directory to store files")
-	volumes        = cmdVolume.Flag.String("volumes", "", "comma-separated list, or ranges of volume ids")
+	volumeFolder   = cmdVolume.Flag.String("dir", "/tmp", "directory to store data files")
 	publicUrl      = cmdVolume.Flag.String("publicUrl", "localhost:8080", "public url to serve data read")
-	masterNode     = cmdVolume.Flag.String("mserver", "localhost:9333", "master directory server to store mappings")
+	masterNode     = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
 	vpulse         = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	maxVolumeCount = cmdVolume.Flag.Int("max", 5, "maximum number of volumes")
 
@@ -234,7 +233,7 @@ func runVolume(cmd *Command, args []string) bool {
 	perm := fileInfo.Mode().Perm()
 	log.Println("Volume Folder permission:", perm)
 
-	store = storage.NewStore(*vport, *publicUrl, *volumeFolder, *maxVolumeCount, *volumes)
+	store = storage.NewStore(*vport, *publicUrl, *volumeFolder, *maxVolumeCount)
 	defer store.Close()
 	http.HandleFunc("/", storeHandler)
 	http.HandleFunc("/status", statusHandler)
