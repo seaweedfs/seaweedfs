@@ -34,7 +34,7 @@ var (
 	capacity          = cmdMaster.Flag.Int("capacity", 100, "maximum number of volumes to hold")
 	volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", 32*1024, "Default Volume Size in MegaBytes")
 	mpulse            = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
-	confFile          = cmdMaster.Flag.String("conf", "./weed.xml", "configuration file")
+	confFile          = cmdMaster.Flag.String("conf", "/etc/weed.conf", "xml configuration file")
 )
 
 var mapper *directory.Mapper
