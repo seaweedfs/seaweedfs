@@ -7,7 +7,7 @@ import (
 )
 
 func TestXYZ(t *testing.T) {
-	topo := NewTopology("topo","/tmp","test",234,5)
+	topo := NewTopology("topo","/etc/weed.conf", "/tmp","test",234,5)
 	for i := 0; i < 5; i++ {
 		dc := NewDataCenter("dc" + strconv.Itoa(i))
 		dc.activeVolumeCount = i

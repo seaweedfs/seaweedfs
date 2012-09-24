@@ -78,7 +78,7 @@ func setup(topologyLayout string) *Topology {
 	}
 
 	//need to connect all nodes first before server adding volumes
-	topo := NewTopology("mynetwork","/tmp","test",234,5)
+	topo := NewTopology("mynetwork","/etc/weed.conf","/tmp","test",234,5)
 	mTopology := data.(map[string]interface{})
 	for dcKey, dcValue := range mTopology {
 		dc := NewDataCenter(dcKey)
