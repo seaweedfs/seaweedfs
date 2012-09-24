@@ -22,8 +22,6 @@ type Volume struct {
 
 	accessLock sync.Mutex
 
-	//transient
-	locations []string
 }
 
 func NewVolume(dirname string, id VolumeId, replicationType ReplicationType) (v *Volume) {

@@ -33,6 +33,7 @@ var (
 	volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", 32*1024, "Default Volume Size in MegaBytes")
 	mpulse            = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	confFile          = cmdMaster.Flag.String("conf", "/etc/weed.conf", "xml configuration file")
+	defaultRepType    = cmdMaster.Flag.String("defaultReplicationType", "00", "Default replication type if not specified.")
 )
 
 var topo *topology.Topology
@@ -57,11 +58,15 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 		writeJson(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found. "})
 	}
 }
+
 func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
-	c, _ := strconv.Atoi(r.FormValue("count"))
+	c, e := strconv.Atoi(r.FormValue("count"))
+	if e != nil {
+		c = 1
+	}
 	repType := r.FormValue("replication")
-	if repType == ""{
-	  repType = "00"
+	if repType == "" {
+		repType = *defaultRepType
 	}
 	rt, err := storage.NewReplicationType(repType)
 	if err != nil {
@@ -82,6 +87,7 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 		writeJson(w, r, map[string]string{"error": err.Error()})
 	}
 }
+
 func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	ip := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")]
 	port, _ := strconv.Atoi(r.FormValue("port"))
@@ -93,13 +99,13 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	if *IsDebug {
 		log.Println(s, "volumes", r.FormValue("volumes"))
 	}
-
-	//new ways
 	topo.RegisterVolumes(*volumes, ip, port, publicUrl, maxVolumeCount)
 }
+
 func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, r, topo.ToMap())
 }
+
 func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
 	count := 0
 	rt, err := storage.NewReplicationType(r.FormValue("replication"))
@@ -120,7 +126,7 @@ func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func runMaster(cmd *Command, args []string) bool {
-	topo = topology.NewTopology("topo", *confFile, *metaFolder, "toposequence", uint64(*volumeSizeLimitMB)*1024*1024, *mpulse)
+	topo = topology.NewTopology("topo", *confFile, *metaFolder, "weed", uint64(*volumeSizeLimitMB)*1024*1024, *mpulse)
 	vg = replication.NewDefaultVolumeGrowth()
 	log.Println("Volume Size Limit is", *volumeSizeLimitMB, "MB")
 	http.HandleFunc("/dir/assign", dirAssignHandler)
@@ -131,7 +137,7 @@ func runMaster(cmd *Command, args []string) bool {
 
 	topo.StartRefreshWritableVolumes()
 
-	log.Println("Start directory service at http://127.0.0.1:" + strconv.Itoa(*mport))
+	log.Println("Start Weed Master", VERSION, "at port", strconv.Itoa(*mport))
 	e := http.ListenAndServe(":"+strconv.Itoa(*mport), nil)
 	if e != nil {
 		log.Fatal("Fail to start:", e)

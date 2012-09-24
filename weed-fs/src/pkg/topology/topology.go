@@ -2,11 +2,11 @@ package topology
 
 import (
 	"errors"
+	"io/ioutil"
 	"math/rand"
 	"pkg/directory"
 	"pkg/sequence"
 	"pkg/storage"
-	"io/ioutil"
 )
 
 type Topology struct {
@@ -24,11 +24,11 @@ type Topology struct {
 	chanDeadDataNodes      chan *DataNode
 	chanRecoveredDataNodes chan *DataNode
 	chanFullVolumes        chan *storage.VolumeInfo
-	
+
 	configuration *Configuration
 }
 
-func NewTopology(id string, confFile string, dirname string, filename string, volumeSizeLimit uint64, pulse int) *Topology {
+func NewTopology(id string, confFile string, dirname string, sequenceFilename string, volumeSizeLimit uint64, pulse int) *Topology {
 	t := &Topology{}
 	t.id = NodeId(id)
 	t.nodeType = "Topology"
@@ -38,32 +38,34 @@ func NewTopology(id string, confFile string, dirname string, filename string, vo
 	t.pulse = int64(pulse)
 	t.volumeSizeLimit = volumeSizeLimit
 
-	t.sequence = sequence.NewSequencer(dirname, filename)
+	t.sequence = sequence.NewSequencer(dirname, sequenceFilename)
 
 	t.chanDeadDataNodes = make(chan *DataNode)
 	t.chanRecoveredDataNodes = make(chan *DataNode)
 	t.chanFullVolumes = make(chan *storage.VolumeInfo)
 
-  t.loadConfiguration(confFile)
-	
+	t.loadConfiguration(confFile)
+
 	return t
 }
 
-func (t *Topology) loadConfiguration(configurationFile string)error{
-  b, e := ioutil.ReadFile(configurationFile);
-  if e ==nil{
-    t.configuration, e = NewConfiguration(b)
-  }
-  return e 
+func (t *Topology) loadConfiguration(configurationFile string) error {
+	b, e := ioutil.ReadFile(configurationFile)
+	if e == nil {
+		t.configuration, e = NewConfiguration(b)
+	}
+	return e
 }
 
-func (t *Topology) Lookup(vid storage.VolumeId) (*[]*DataNode) {
-  for _, vl := range t.replicaType2VolumeLayout {
-    if list := vl.Lookup(vid); list!=nil {
-      return list
-    }
-  }
-  return nil
+func (t *Topology) Lookup(vid storage.VolumeId) *[]*DataNode {
+	for _, vl := range t.replicaType2VolumeLayout {
+		if vl != nil {
+			if list := vl.Lookup(vid); list != nil {
+				return list
+			}
+		}
+	}
+	return nil
 }
 
 func (t *Topology) RandomlyReserveOneVolume() (bool, *DataNode, *storage.VolumeId) {
@@ -119,7 +121,7 @@ func (t *Topology) RegisterVolumeLayout(v *storage.VolumeInfo, dn *DataNode) {
 }
 
 func (t *Topology) RegisterVolumes(volumeInfos []storage.VolumeInfo, ip string, port int, publicUrl string, maxVolumeCount int) {
-  dcName, rackName := t.configuration.Locate(ip)
+	dcName, rackName := t.configuration.Locate(ip)
 	dc := t.GetOrCreateDataCenter(dcName)
 	rack := dc.GetOrCreateRack(rackName)
 	dn := rack.GetOrCreateDataNode(ip, port, publicUrl, maxVolumeCount)
@@ -143,7 +145,7 @@ func (t *Topology) GetOrCreateDataCenter(dcName string) *DataCenter {
 
 func (t *Topology) ToMap() interface{} {
 	m := make(map[string]interface{})
-  m["Max"] = t.GetMaxVolumeCount()
+	m["Max"] = t.GetMaxVolumeCount()
 	m["Free"] = t.FreeSpace()
 	var dcs []interface{}
 	for _, c := range t.Children() {

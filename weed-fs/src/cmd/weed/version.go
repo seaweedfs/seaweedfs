@@ -5,6 +5,10 @@ import (
 	"runtime"
 )
 
+const (
+	VERSION = "0.18"
+)
+
 var cmdVersion = &Command{
 	Run:       runVersion,
 	UsageLine: "version",
@@ -12,11 +16,11 @@ var cmdVersion = &Command{
 	Long:      `Version prints the Weed File System version`,
 }
 
-func runVersion(cmd *Command, args []string) bool{
+func runVersion(cmd *Command, args []string) bool {
 	if len(args) != 0 {
 		cmd.Usage()
 	}
 
-	fmt.Printf("version 0.18 %s %s\n",runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("version %s %s %s\n", VERSION, runtime.GOOS, runtime.GOARCH)
 	return true
 }

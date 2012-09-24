@@ -140,18 +140,3 @@ func (s *Store) HasVolume(i VolumeId) bool {
   _, ok := s.volumes[i]
   return ok
 }
-
-type VolumeLocations struct {
-	Vid       VolumeId
-	Locations []string
-}
-
-func (s *Store) SetVolumeLocations(volumeLocationList []VolumeLocations) error {
-	for _, volumeLocations := range volumeLocationList {
-		vid := volumeLocations.Vid
-		if v := s.volumes[vid]; v != nil {
-			v.locations = volumeLocations.Locations
-		}
-	}
-	return nil
-}
