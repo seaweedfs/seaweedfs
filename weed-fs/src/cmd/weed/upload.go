@@ -42,7 +42,7 @@ func assign(count int) (*AssignResult, error) {
 	values := make(url.Values)
 	values.Add("count", strconv.Itoa(count))
 	values.Add("replication", *uploadReplication)
-	jsonBlob, err := util.Post("http://"+*server+"/dir/assign2", values)
+	jsonBlob, err := util.Post("http://"+*server+"/dir/assign", values)
 	if *IsDebug {
 		fmt.Println("debug", *IsDebug, "assign result :", string(jsonBlob))
 	}

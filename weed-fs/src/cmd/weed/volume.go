@@ -79,6 +79,7 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			http.Redirect(w, r, "http://"+lookupResult.Locations[0].PublicUrl+r.URL.Path, http.StatusMovedPermanently)
 		} else {
+    log.Println("lookup error:", err)
 			w.WriteHeader(http.StatusNotFound)
 		}
 		return
@@ -89,6 +90,7 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("read bytes", count, "error", e)
 	}
 	if e != nil || count <= 0 {
+    log.Println("read error:", e)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}

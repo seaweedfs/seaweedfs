@@ -47,7 +47,7 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	volumeId, _ := storage.NewVolumeId(vid)
 	machines := topo.Lookup(volumeId)
-	if machines == nil {
+	if machines != nil {
 		ret := []map[string]string{}
 		for _, dn := range *machines {
 			ret = append(ret, map[string]string{"url": dn.Ip + strconv.Itoa(dn.Port), "publicUrl": dn.PublicUrl})

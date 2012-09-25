@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -18,7 +19,7 @@ type Needle struct {
 	Id       uint64 "needle id"
 	Size     uint32 "Data size"
 	Data     []byte "The actual file data"
-	Checksum int32  "CRC32 to check integrity"
+	Checksum CRC  "CRC32 to check integrity"
 	Padding  []byte "Aligned to 8 bytes"
 }
 
@@ -44,6 +45,7 @@ func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
 		}
 	}
 	n.Data = data
+	n.Checksum = NewCRC(data)
 
 	commaSep := strings.LastIndex(r.URL.Path, ",")
 	dotSep := strings.LastIndex(r.URL.Path, ".")
@@ -86,7 +88,8 @@ func (n *Needle) Append(w io.Writer) uint32 {
 	w.Write(header)
 	w.Write(n.Data)
 	rest := 8 - ((n.Size + 16 + 4) % 8)
-	util.Uint32toBytes(header[0:4], uint32(n.Checksum))
+	util.Uint32toBytes(header[0:4], n.Checksum.Value())
+  println("writing checksum", n.Checksum.Value(), "=>", util.BytesToUint32(header[0:4]), "for", n.Id)
 	w.Write(header[0 : rest+4])
 	return n.Size
 }
@@ -97,7 +100,10 @@ func (n *Needle) Read(r io.Reader, size uint32) (int, error) {
 	n.Id = util.BytesToUint64(bytes[4:12])
 	n.Size = util.BytesToUint32(bytes[12:16])
 	n.Data = bytes[16 : 16+size]
-	n.Checksum = int32(util.BytesToUint32(bytes[16+size : 16+size+4]))
+  checksum := util.BytesToUint32(bytes[16+size : 16+size+4])	
+	if checksum != NewCRC(n.Data).Value() {
+	  return 0, errors.New("CRC error! Data On Disk Corrupted!")
+	}
 	return ret, e
 }
 func ReadNeedle(r *os.File) (*Needle, uint32) {
