@@ -45,17 +45,18 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 	if commaSep > 0 {
 		vid = vid[0:commaSep]
 	}
-	volumeId, _ := storage.NewVolumeId(vid)
-	machines := topo.Lookup(volumeId)
-	if machines != nil {
-		ret := []map[string]string{}
-		for _, dn := range *machines {
-			ret = append(ret, map[string]string{"url": dn.Ip + strconv.Itoa(dn.Port), "publicUrl": dn.PublicUrl})
+	volumeId, err := storage.NewVolumeId(vid)
+	if err == nil {
+		machines := topo.Lookup(volumeId)
+		if machines != nil {
+			ret := []map[string]string{}
+			for _, dn := range *machines {
+				ret = append(ret, map[string]string{"url": dn.Ip + strconv.Itoa(dn.Port), "publicUrl": dn.PublicUrl})
+			}
+			writeJson(w, r, map[string]interface{}{"locations": ret})
+		} else {
+			writeJson(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found. "})
 		}
-		writeJson(w, r, map[string]interface{}{"locations": ret})
-	} else {
-		log.Println("Invalid volume id", volumeId)
-		writeJson(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found. "})
 	}
 }
 

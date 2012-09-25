@@ -65,21 +65,29 @@ func storeHandler(w http.ResponseWriter, r *http.Request) {
 func GetHandler(w http.ResponseWriter, r *http.Request) {
 	n := new(storage.Needle)
 	vid, fid, ext := parseURLPath(r.URL.Path)
-	volumeId, _ := storage.NewVolumeId(vid)
+	volumeId, err := storage.NewVolumeId(vid)
+	if err != nil {
+		if *IsDebug {
+			log.Println("parsing error:", err, r.URL.Path)
+		}
+		return
+	}
 	n.ParsePath(fid)
 
 	if *IsDebug {
 		log.Println("volume", volumeId, "reading", n)
 	}
 	if !store.HasVolume(volumeId) {
-		lookupResult, err := operation.Lookup(*server, volumeId)
+		lookupResult, err := operation.Lookup(*masterNode, volumeId)
 		if *IsDebug {
 			log.Println("volume", volumeId, "found on", lookupResult, "error", err)
 		}
 		if err == nil {
 			http.Redirect(w, r, "http://"+lookupResult.Locations[0].PublicUrl+r.URL.Path, http.StatusMovedPermanently)
 		} else {
-    log.Println("lookup error:", err)
+			if *IsDebug {
+				log.Println("lookup error:", err, r.URL.Path)
+			}
 			w.WriteHeader(http.StatusNotFound)
 		}
 		return
@@ -90,7 +98,7 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("read bytes", count, "error", e)
 	}
 	if e != nil || count <= 0 {
-    log.Println("read error:", e)
+		log.Println("read error:", e)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
