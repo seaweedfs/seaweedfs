@@ -135,13 +135,20 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 			ret := store.Write(volumeId, needle)
 			if ret > 0 || !store.HasVolume(volumeId) { //send to other replica locations
 				if r.FormValue("type") != "standard" {
-					waitTime, err := strconv.Atoi(r.FormValue("wait"))
-					distributedOperation(volumeId, func(location operation.Location) bool {
-						operation.Upload("http://"+location.Url+r.URL.Path+"?type=standard", filename, bytes.NewReader(needle.Data))
-						return true
-					}, err == nil && waitTime > 0)
+					if distributedOperation(volumeId, func(location operation.Location) bool {
+						_, err := operation.Upload("http://"+location.Url+r.URL.Path+"?type=standard", filename, bytes.NewReader(needle.Data))
+						return err == nil
+					}) {
+						w.WriteHeader(http.StatusCreated)
+					} else {
+						ret = 0
+						w.WriteHeader(http.StatusInternalServerError)
+					}
+				} else {
+					w.WriteHeader(http.StatusCreated)
 				}
-				w.WriteHeader(http.StatusCreated)
+			} else {
+				w.WriteHeader(http.StatusInternalServerError)
 			}
 			m := make(map[string]uint32)
 			m["size"] = ret
@@ -179,13 +186,19 @@ func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	if ret > 0 || !store.HasVolume(volumeId) { //send to other replica locations
 		if r.FormValue("type") != "standard" {
-			waitTime, err := strconv.Atoi(r.FormValue("wait"))
-			distributedOperation(volumeId, func(location operation.Location) bool {
-				operation.Delete("http://"+location.Url+r.URL.Path+"?type=standard")
-				return true
-			}, err == nil && waitTime > 0)
+			if distributedOperation(volumeId, func(location operation.Location) bool {
+				return nil == operation.Delete("http://"+location.Url+r.URL.Path+"?type=standard")
+			}) {
+				w.WriteHeader(http.StatusCreated)
+			} else {
+				ret = 0
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+		} else {
+			w.WriteHeader(http.StatusCreated)
 		}
-		w.WriteHeader(http.StatusCreated)
+	} else {
+		w.WriteHeader(http.StatusInternalServerError)
 	}
 
 	m := make(map[string]uint32)
@@ -215,23 +228,32 @@ func parseURLPath(path string) (vid, fid, ext string) {
 
 type distributedFunction func(location operation.Location) bool
 
-func distributedOperation(volumeId storage.VolumeId, op distributedFunction, wait bool) {
+func distributedOperation(volumeId storage.VolumeId, op distributedFunction) bool {
 	if lookupResult, lookupErr := operation.Lookup(*masterNode, volumeId); lookupErr == nil {
-		sendFunc := func(background bool) {
-			for _, location := range lookupResult.Locations {
-				if location.Url != (*ip + ":" + strconv.Itoa(*vport)) {
-					if background {
-						go op(location)
-					} else {
-						op(location)
-					}
-				}
+		length := 0
+		sem := make(chan int, len(lookupResult.Locations))
+		selfUrl := (*ip + ":" + strconv.Itoa(*vport))
+		results := make(chan bool)
+		for _, location := range lookupResult.Locations {
+			if location.Url != selfUrl {
+				sem <- 1
+				length++
+				go func(op distributedFunction, location operation.Location, sem chan int, results chan bool) {
+					ret := op(location)
+					<-sem
+					results <- ret
+				}(op, location, sem, results)
 			}
 		}
-		sendFunc(wait)
+		ret := true
+		for i := 0; i < length; i++ {
+			ret = ret && <-results
+		}
+		return ret
 	} else {
 		log.Println("Failed to lookup for", volumeId, lookupErr.Error())
 	}
+	return false
 }
 
 func runVolume(cmd *Command, args []string) bool {

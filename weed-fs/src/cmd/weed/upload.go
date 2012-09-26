@@ -44,7 +44,7 @@ func assign(count int) (*AssignResult, error) {
 	values.Add("replication", *uploadReplication)
 	jsonBlob, err := util.Post("http://"+*server+"/dir/assign", values)
 	if *IsDebug {
-		fmt.Println("debug", *IsDebug, "assign result :", string(jsonBlob))
+		fmt.Println("assign result :", string(jsonBlob))
 	}
 	if err != nil {
 		return nil, err
@@ -83,7 +83,8 @@ type SubmitResult struct {
 func submit(files []string) []SubmitResult {
 	ret, err := assign(len(files))
 	if err != nil {
-		panic(err)
+		fmt.Println(err)
+		return nil
 	}
 	results := make([]SubmitResult, len(files))
 	for index, file := range files {

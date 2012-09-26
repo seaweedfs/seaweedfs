@@ -6,6 +6,7 @@ import (
 	_ "fmt"
 	"io"
 	"io/ioutil"
+  "log"
 	"mime/multipart"
 	"net/http"
 )
@@ -23,7 +24,7 @@ func Upload(uploadUrl string, filename string, reader io.Reader) (*UploadResult,
 	body_writer.Close()
 	resp, err := http.Post(uploadUrl, content_type, body_buf)
 	if err != nil {
-		println("uploading to", uploadUrl)
+    log.Println("failing to upload to", uploadUrl)
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -34,9 +35,8 @@ func Upload(uploadUrl string, filename string, reader io.Reader) (*UploadResult,
 	var ret UploadResult
 	err = json.Unmarshal(resp_body, &ret)
 	if err != nil {
-		println("upload response to", uploadUrl, resp_body)
-		panic(err.Error())
+    log.Println("failing to read upload resonse", uploadUrl, resp_body)
+    return nil, err
 	}
-	//fmt.Println("Uploaded " + strconv.Itoa(ret.Size) + " Bytes to " + uploadUrl)
 	return &ret, nil
 }
