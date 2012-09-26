@@ -89,7 +89,6 @@ func (n *Needle) Append(w io.Writer) uint32 {
 	w.Write(n.Data)
 	rest := 8 - ((n.Size + 16 + 4) % 8)
 	util.Uint32toBytes(header[0:4], n.Checksum.Value())
-  println("writing checksum", n.Checksum.Value(), "=>", util.BytesToUint32(header[0:4]), "for", n.Id)
 	w.Write(header[0 : rest+4])
 	return n.Size
 }

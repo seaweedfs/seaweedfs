@@ -83,7 +83,7 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	fid, count, dn, err := topo.PickForWrite(rt, c)
 	if err == nil {
-		writeJson(w, r, map[string]interface{}{"fid": fid, "url": dn.Url(), "count": count})
+		writeJson(w, r, map[string]interface{}{"fid": fid, "url": dn.Url(), "publicUrl":dn.PublicUrl, "count": count})
 	} else {
 		writeJson(w, r, map[string]string{"error": err.Error()})
 	}

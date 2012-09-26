@@ -30,7 +30,7 @@ var cmdVolume = &Command{
 var (
 	vport          = cmdVolume.Flag.Int("port", 8080, "http listen port")
 	volumeFolder   = cmdVolume.Flag.String("dir", "/tmp", "directory to store data files")
-	ip             = cmdVolume.Flag.String("ip", "", "ip or server name")
+	ip             = cmdVolume.Flag.String("ip", "localhost", "ip or server name")
 	publicUrl      = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible <ip|server_name>:<port>")
 	masterNode     = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
 	vpulse         = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
@@ -228,6 +228,10 @@ func runVolume(cmd *Command, args []string) bool {
 	}
 	perm := fileInfo.Mode().Perm()
 	log.Println("Volume Folder permission:", perm)
+	
+	if *publicUrl == "" {
+	  *publicUrl = *ip + ":" + strconv.Itoa(*vport)
+	}
 
 	store = storage.NewStore(*vport, *ip, *publicUrl, *volumeFolder, *maxVolumeCount)
 	defer store.Close()

@@ -15,6 +15,7 @@ type UploadResult struct {
 }
 
 func Upload(uploadUrl string, filename string, reader io.Reader) (*UploadResult, error) {
+  println("uploading to", uploadUrl)
   body_buf := bytes.NewBufferString("")
   body_writer := multipart.NewWriter(body_buf)
   file_writer, err := body_writer.CreateFormFile("file", filename)
@@ -31,6 +32,7 @@ func Upload(uploadUrl string, filename string, reader io.Reader) (*UploadResult,
     return nil, err
   }
   var ret UploadResult
+  println("upload response to", uploadUrl, resp_body)
   err = json.Unmarshal(resp_body, &ret)
   if err != nil {
     panic(err.Error())
