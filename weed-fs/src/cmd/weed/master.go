@@ -141,7 +141,7 @@ func runMaster(cmd *Command, args []string) bool {
 	log.Println("Start Weed Master", VERSION, "at port", strconv.Itoa(*mport))
 	e := http.ListenAndServe(":"+strconv.Itoa(*mport), nil)
 	if e != nil {
-		log.Fatal("Fail to start:", e)
+		log.Fatalf("Fail to start:%s", e.Error())
 	}
 	return true
 }

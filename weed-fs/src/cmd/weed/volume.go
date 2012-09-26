@@ -245,7 +245,7 @@ func runVolume(cmd *Command, args []string) bool {
 	log.Println("Start storage service at http://127.0.0.1:"+strconv.Itoa(*vport), "public url", *publicUrl)
 	e := http.ListenAndServe(":"+strconv.Itoa(*vport), nil)
 	if e != nil {
-		log.Fatalf("Fail to start:", e)
+		log.Fatalf("Fail to start:%s", e.Error())
 	}
 	return true
 }
