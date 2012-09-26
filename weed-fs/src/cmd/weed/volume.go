@@ -135,7 +135,7 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 			ret := store.Write(volumeId, needle)
 			if ret > 0 || !store.HasVolume(volumeId) { //send to other replica locations
 				if r.FormValue("type") != "standard" {
-					if lookupResult, lookupErr := operation.Lookup(*server, volumeId); lookupErr == nil {
+					if lookupResult, lookupErr := operation.Lookup(*masterNode, volumeId); lookupErr == nil {
 						sendFunc := func(background bool) {
 							postContentFunc := func(location operation.Location) bool {
 								operation.Upload("http://"+location.Url+r.URL.Path+"?type=standard", filename, bytes.NewReader(needle.Data))
