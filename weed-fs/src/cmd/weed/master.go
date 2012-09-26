@@ -77,6 +77,7 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 	if topo.GetVolumeLayout(rt).GetActiveVolumeCount() <= 0 {
 		if topo.FreeSpace() <= 0 {
 			writeJson(w, r, map[string]string{"error": "No free volumes left!"})
+			return
 		} else {
 			vg.GrowByType(rt, topo)
 		}

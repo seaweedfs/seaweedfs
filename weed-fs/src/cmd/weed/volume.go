@@ -133,6 +133,7 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 			writeJson(w, r, ne)
 		} else {
 			ret := store.Write(volumeId, needle)
+			errorStatus := ""
 			if ret > 0 || !store.HasVolume(volumeId) { //send to other replica locations
 				if r.FormValue("type") != "standard" {
 					if distributedOperation(volumeId, func(location operation.Location) bool {
@@ -142,16 +143,19 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 						w.WriteHeader(http.StatusCreated)
 					} else {
 						ret = 0
+						errorStatus = "Failed to write to replicas for volume " + volumeId.String()
 						w.WriteHeader(http.StatusInternalServerError)
 					}
 				} else {
 					w.WriteHeader(http.StatusCreated)
 				}
 			} else {
+				errorStatus = "Failed to write to local disk"
 				w.WriteHeader(http.StatusInternalServerError)
 			}
-			m := make(map[string]uint32)
+			m := make(map[string]interface{})
 			m["size"] = ret
+      m["error"] = errorStatus
 			writeJson(w, r, m)
 		}
 	}

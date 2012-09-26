@@ -9,10 +9,12 @@ import (
   "log"
 	"mime/multipart"
 	"net/http"
+	"errors"
 )
 
 type UploadResult struct {
 	Size int
+  Error string
 }
 
 func Upload(uploadUrl string, filename string, reader io.Reader) (*UploadResult, error) {
@@ -37,6 +39,9 @@ func Upload(uploadUrl string, filename string, reader io.Reader) (*UploadResult,
 	if err != nil {
     log.Println("failing to read upload resonse", uploadUrl, resp_body)
     return nil, err
+	}
+	if ret.Error != ""{
+	  return nil, errors.New(ret.Error)
 	}
 	return &ret, nil
 }

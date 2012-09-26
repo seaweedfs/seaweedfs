@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-  "pkg/operation"
+	"pkg/operation"
 	"pkg/util"
 	"strconv"
 )
@@ -60,7 +60,7 @@ func assign(count int) (*AssignResult, error) {
 	return &ret, nil
 }
 
-func upload(filename string, server string, fid string) (int) {
+func upload(filename string, server string, fid string) (int, error) {
 	if *IsDebug {
 		fmt.Println("Start uploading file:", filename)
 	}
@@ -69,15 +69,19 @@ func upload(filename string, server string, fid string) (int) {
 		if *IsDebug {
 			fmt.Println("Failed to open file:", filename)
 		}
-		panic(err.Error())
+		return 0, err
 	}
-	ret, _ := operation.Upload("http://"+server+"/"+fid, filename, fh)
-	return ret.Size
+	ret, e := operation.Upload("http://"+server+"/"+fid, filename, fh)
+	if e != nil {
+	  return 0, e
+	}
+	return ret.Size, e
 }
 
 type SubmitResult struct {
-	Fid  string "fid"
-	Size int    "size"
+	Fid   string "fid"
+	Size  int    "size"
+	Error string "error"
 }
 
 func submit(files []string) []SubmitResult {
@@ -92,7 +96,11 @@ func submit(files []string) []SubmitResult {
 		if index > 0 {
 			fid = fid + "_" + strconv.Itoa(index)
 		}
-		results[index].Size = upload(file, ret.PublicUrl, fid)
+		results[index].Size, err = upload(file, ret.PublicUrl, fid)
+		if err != nil {
+			fid = ""
+			results[index].Error = err.Error()
+		}
 		results[index].Fid = fid
 	}
 	return results
