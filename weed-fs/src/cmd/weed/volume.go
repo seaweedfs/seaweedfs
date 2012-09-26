@@ -236,7 +236,6 @@ func distributedOperation(volumeId storage.VolumeId, op distributedFunction, wai
 
 func runVolume(cmd *Command, args []string) bool {
 	fileInfo, err := os.Stat(*volumeFolder)
-	//TODO: now default to 1G, this value should come from server?
 	if err != nil {
 		log.Fatalf("No Existing Folder:%s", *volumeFolder)
 	}
