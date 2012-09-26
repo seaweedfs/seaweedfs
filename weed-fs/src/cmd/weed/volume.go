@@ -20,7 +20,7 @@ func init() {
 }
 
 var cmdVolume = &Command{
-	UsageLine: "volume -port=8080 -dir=/tmp -max=5 -publicUrl=server_name:8080 -mserver=localhost:9333",
+	UsageLine: "volume -port=8080 -dir=/tmp -max=5 -ip=server_name -mserver=localhost:9333",
 	Short:     "start a volume server",
 	Long: `start a volume server to provide storage spaces
 
@@ -30,7 +30,8 @@ var cmdVolume = &Command{
 var (
 	vport          = cmdVolume.Flag.Int("port", 8080, "http listen port")
 	volumeFolder   = cmdVolume.Flag.String("dir", "/tmp", "directory to store data files")
-	publicUrl      = cmdVolume.Flag.String("publicUrl", "localhost:8080", "public url to serve data read")
+	ip             = cmdVolume.Flag.String("ip", "", "ip or server name")
+	publicUrl      = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible <ip|server_name>:<port>")
 	masterNode     = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
 	vpulse         = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	maxVolumeCount = cmdVolume.Flag.Int("max", 5, "maximum number of volumes")
@@ -137,11 +138,11 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 					if lookupResult, lookupErr := operation.Lookup(*server, volumeId); lookupErr == nil {
 						sendFunc := func(background bool) {
 							postContentFunc := func(location operation.Location) bool {
-								operation.Upload("http://"+location.PublicUrl+r.URL.Path+"?type=standard", filename, bytes.NewReader(needle.Data))
+								operation.Upload("http://"+location.Url+r.URL.Path+"?type=standard", filename, bytes.NewReader(needle.Data))
 								return true
 							}
 							for _, location := range lookupResult.Locations {
-								if location.PublicUrl != *publicUrl {
+								if location.Url != (*ip+":"+strconv.Itoa(*vport)) {
 									if background {
 										go postContentFunc(location)
 									} else {
@@ -228,7 +229,7 @@ func runVolume(cmd *Command, args []string) bool {
 	perm := fileInfo.Mode().Perm()
 	log.Println("Volume Folder permission:", perm)
 
-	store = storage.NewStore(*vport, *publicUrl, *volumeFolder, *maxVolumeCount)
+	store = storage.NewStore(*vport, *ip, *publicUrl, *volumeFolder, *maxVolumeCount)
 	defer store.Close()
 	http.HandleFunc("/", storeHandler)
 	http.HandleFunc("/status", statusHandler)
@@ -242,7 +243,7 @@ func runVolume(cmd *Command, args []string) bool {
 	}()
 	log.Println("store joined at", *masterNode)
 
-	log.Println("Start storage service at http://127.0.0.1:"+strconv.Itoa(*vport), "public url", *publicUrl)
+	log.Println("Start storage service at http://"+*ip+":"+strconv.Itoa(*vport))
 	e := http.ListenAndServe(":"+strconv.Itoa(*vport), nil)
 	if e != nil {
 		log.Fatalf("Fail to start:%s", e.Error())

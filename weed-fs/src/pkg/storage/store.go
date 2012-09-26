@@ -15,23 +15,24 @@ type Store struct {
 	volumes        map[VolumeId]*Volume
 	dir            string
 	Port           int
+	Ip             string
 	PublicUrl      string
 	MaxVolumeCount int
 }
 
-func NewStore(port int, publicUrl, dirname string, maxVolumeCount int) (s *Store) {
-	s = &Store{Port: port, PublicUrl: publicUrl, dir: dirname, MaxVolumeCount: maxVolumeCount}
+func NewStore(port int, ip, publicUrl, dirname string, maxVolumeCount int) (s *Store) {
+	s = &Store{Port: port, Ip: ip, PublicUrl: publicUrl, dir: dirname, MaxVolumeCount: maxVolumeCount}
 	s.volumes = make(map[VolumeId]*Volume)
 	s.loadExistingVolumes()
 
 	log.Println("Store started on dir:", dirname, "with", len(s.volumes), "volumes")
 	return
 }
-func (s *Store) AddVolume(volumeListString string, replicationType string) (error) {
-  rt, e := NewReplicationType(replicationType)
-  if e!=nil {
-    return e
-  }
+func (s *Store) AddVolume(volumeListString string, replicationType string) error {
+	rt, e := NewReplicationType(replicationType)
+	if e != nil {
+		return e
+	}
 	for _, range_string := range strings.Split(volumeListString, ",") {
 		if strings.Index(range_string, "-") < 0 {
 			id_string := range_string
@@ -103,6 +104,7 @@ func (s *Store) Join(mserver string) error {
 	bytes, _ := json.Marshal(stats)
 	values := make(url.Values)
 	values.Add("port", strconv.Itoa(s.Port))
+	values.Add("ip", s.Ip)
 	values.Add("publicUrl", s.PublicUrl)
 	values.Add("volumes", string(bytes))
 	values.Add("maxVolumeCount", strconv.Itoa(s.MaxVolumeCount))
@@ -133,10 +135,10 @@ func (s *Store) Read(i VolumeId, n *Needle) (int, error) {
 	return 0, errors.New("Not Found")
 }
 func (s *Store) GetVolume(i VolumeId) *Volume {
-  return s.volumes[i]
+	return s.volumes[i]
 }
 
 func (s *Store) HasVolume(i VolumeId) bool {
-  _, ok := s.volumes[i]
-  return ok
+	_, ok := s.volumes[i]
+	return ok
 }

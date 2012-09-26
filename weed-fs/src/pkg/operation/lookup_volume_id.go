@@ -11,7 +11,7 @@ import (
 
 type Location struct {
   Url       string "url"
-  PublicUrl string "publicUrl"
+  PublicUrl       string "publicUrl"
 }
 type LookupResult struct {
   Locations []Location "locations"

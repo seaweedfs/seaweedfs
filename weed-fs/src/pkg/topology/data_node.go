@@ -3,6 +3,7 @@ package topology
 import (
 	_ "fmt"
 	"pkg/storage"
+	"strconv"
 )
 
 type DataNode struct {
@@ -43,11 +44,13 @@ func (dn *DataNode) GetTopology() *Topology {
 func (dn *DataNode) MatchLocation(ip string, port int) bool {
 	return dn.Ip == ip && dn.Port == port
 }
+func (dn *DataNode) Url() string {
+  return dn.Ip + strconv.Itoa(dn.Port)
+}
 
 func (dn *DataNode) ToMap() interface{} {
 	ret := make(map[string]interface{})
-	ret["Ip"] = dn.Ip
-	ret["Port"] = dn.Port
+	ret["Url"] = dn.Url()
 	ret["Volumes"] = dn.GetActiveVolumeCount()
 	ret["Max"] = dn.GetMaxVolumeCount()
 	ret["Free"] = dn.FreeSpace()

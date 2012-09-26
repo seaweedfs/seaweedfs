@@ -7,7 +7,6 @@ import (
   "pkg/storage"
   "pkg/topology"
   "pkg/util"
-  "strconv"
 )
 
 type AllocateVolumeResult struct {
@@ -18,7 +17,7 @@ func AllocateVolume(dn *topology.DataNode, vid storage.VolumeId, repType storage
   values := make(url.Values)
   values.Add("volume", vid.String())
   values.Add("replicationType", repType.String())
-  jsonBlob, err := util.Post("http://"+dn.Ip+":"+strconv.Itoa(dn.Port)+"/admin/assign_volume", values)
+  jsonBlob, err := util.Post("http://"+dn.Url()+"/admin/assign_volume", values)
   if err != nil {
     return err
   }

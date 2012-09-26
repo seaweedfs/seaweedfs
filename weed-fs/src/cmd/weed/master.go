@@ -32,7 +32,7 @@ var (
 	capacity          = cmdMaster.Flag.Int("capacity", 100, "maximum number of volumes to hold")
 	volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", 32*1024, "Default Volume Size in MegaBytes")
 	mpulse            = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
-	confFile          = cmdMaster.Flag.String("conf", "/etc/weed.conf", "xml configuration file")
+	confFile          = cmdMaster.Flag.String("conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
 	defaultRepType    = cmdMaster.Flag.String("defaultReplicationType", "00", "Default replication type if not specified.")
 )
 
@@ -51,7 +51,7 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 		if machines != nil {
 			ret := []map[string]string{}
 			for _, dn := range *machines {
-				ret = append(ret, map[string]string{"url": dn.Ip + strconv.Itoa(dn.Port), "publicUrl": dn.PublicUrl})
+				ret = append(ret, map[string]string{"url": dn.Url(), "publicUrl":dn.PublicUrl})
 			}
 			writeJson(w, r, map[string]interface{}{"locations": ret})
 		} else {
@@ -83,14 +83,17 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	fid, count, dn, err := topo.PickForWrite(rt, c)
 	if err == nil {
-		writeJson(w, r, map[string]interface{}{"fid": fid, "url": dn.Ip + ":" + strconv.Itoa(dn.Port), "publicUrl": dn.PublicUrl, "count": count})
+		writeJson(w, r, map[string]interface{}{"fid": fid, "url": dn.Url(), "count": count})
 	} else {
 		writeJson(w, r, map[string]string{"error": err.Error()})
 	}
 }
 
 func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
-	ip := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")]
+  ip := r.FormValue("ip")
+  if ip == ""{
+    ip = r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")]
+  }
 	port, _ := strconv.Atoi(r.FormValue("port"))
 	maxVolumeCount, _ := strconv.Atoi(r.FormValue("maxVolumeCount"))
 	s := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")+1] + r.FormValue("port")
