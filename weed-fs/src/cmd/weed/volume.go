@@ -136,26 +136,26 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 			errorStatus := ""
 			if ret > 0 || !store.HasVolume(volumeId) { //send to other replica locations
 				if r.FormValue("type") != "standard" {
-					if distributedOperation(volumeId, func(location operation.Location) bool {
+					if !distributedOperation(volumeId, func(location operation.Location) bool {
 						_, err := operation.Upload("http://"+location.Url+r.URL.Path+"?type=standard", filename, bytes.NewReader(needle.Data))
 						return err == nil
 					}) {
-						w.WriteHeader(http.StatusCreated)
-					} else {
 						ret = 0
 						errorStatus = "Failed to write to replicas for volume " + volumeId.String()
 						w.WriteHeader(http.StatusInternalServerError)
 					}
-				} else {
-					w.WriteHeader(http.StatusCreated)
 				}
 			} else {
 				errorStatus = "Failed to write to local disk"
-				w.WriteHeader(http.StatusInternalServerError)
 			}
 			m := make(map[string]interface{})
+			if errorStatus == "" {
+				w.WriteHeader(http.StatusCreated)
+			} else {
+				w.WriteHeader(http.StatusInternalServerError)
+				m["error"] = errorStatus
+			}
 			m["size"] = ret
-      m["error"] = errorStatus
 			writeJson(w, r, m)
 		}
 	}
@@ -190,17 +190,16 @@ func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	if ret > 0 || !store.HasVolume(volumeId) { //send to other replica locations
 		if r.FormValue("type") != "standard" {
-			if distributedOperation(volumeId, func(location operation.Location) bool {
+			if !distributedOperation(volumeId, func(location operation.Location) bool {
 				return nil == operation.Delete("http://"+location.Url+r.URL.Path+"?type=standard")
 			}) {
-				w.WriteHeader(http.StatusCreated)
-			} else {
 				ret = 0
-				w.WriteHeader(http.StatusInternalServerError)
 			}
-		} else {
-			w.WriteHeader(http.StatusCreated)
 		}
+	}
+
+	if ret != 0 {
+		w.WriteHeader(http.StatusAccepted)
 	} else {
 		w.WriteHeader(http.StatusInternalServerError)
 	}

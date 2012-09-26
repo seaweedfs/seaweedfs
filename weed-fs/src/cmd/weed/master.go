@@ -29,7 +29,6 @@ var cmdMaster = &Command{
 var (
 	mport             = cmdMaster.Flag.Int("port", 9333, "http listen port")
 	metaFolder        = cmdMaster.Flag.String("mdir", "/tmp", "data directory to store mappings")
-	capacity          = cmdMaster.Flag.Int("capacity", 100, "maximum number of volumes to hold")
 	volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", 32*1024, "Default Volume Size in MegaBytes")
 	mpulse            = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	confFile          = cmdMaster.Flag.String("conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
