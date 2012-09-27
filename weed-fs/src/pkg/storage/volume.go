@@ -1,11 +1,11 @@
 package storage
 
 import (
-	"io"
 	"log"
 	"os"
 	"path"
 	"sync"
+	"errors"
 )
 
 const (
@@ -105,5 +105,5 @@ func (v *Volume) read(n *Needle) (int, error) {
 		v.dataFile.Seek(int64(nv.Offset)*8, 0)
 		return n.Read(v.dataFile, nv.Size)
 	}
-	return -1, io.EOF
+	return -1, errors.New("Not Found")
 }

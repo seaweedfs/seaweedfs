@@ -99,7 +99,9 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("read bytes", count, "error", e)
 	}
 	if e != nil || count <= 0 {
-		log.Println("read error:", e)
+		if *IsDebug {
+			log.Println("read error:", e, r.URL.Path)
+		}
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -142,7 +144,6 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 					}) {
 						ret = 0
 						errorStatus = "Failed to write to replicas for volume " + volumeId.String()
-						w.WriteHeader(http.StatusInternalServerError)
 					}
 				}
 			} else {
@@ -152,6 +153,10 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 			if errorStatus == "" {
 				w.WriteHeader(http.StatusCreated)
 			} else {
+				store.Delete(volumeId, needle)
+				distributedOperation(volumeId, func(location operation.Location) bool {
+					return nil == operation.Delete("http://"+location.Url+r.URL.Path+"?type=standard")
+				})
 				w.WriteHeader(http.StatusInternalServerError)
 				m["error"] = errorStatus
 			}
