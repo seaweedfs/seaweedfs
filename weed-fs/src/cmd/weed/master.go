@@ -100,9 +100,7 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	publicUrl := r.FormValue("publicUrl")
 	volumes := new([]storage.VolumeInfo)
 	json.Unmarshal([]byte(r.FormValue("volumes")), volumes)
-	if *IsDebug {
-		log.Println(s, "volumes", r.FormValue("volumes"))
-	}
+	debug(s, "volumes", r.FormValue("volumes"))
 	topo.RegisterVolumes(*volumes, ip, port, publicUrl, maxVolumeCount)
 }
 

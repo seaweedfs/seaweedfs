@@ -184,3 +184,9 @@ func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
 		w.Write([]uint8(")"))
 	}
 }
+
+func debug(params ...interface{}){
+  if *IsDebug {
+    fmt.Println(params)
+  }
+}

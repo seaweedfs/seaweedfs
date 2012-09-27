@@ -51,14 +51,10 @@ func runFix(cmd *Command, args []string) bool {
   nm := storage.NewNeedleMap(indexFile)
   offset := uint32(storage.SuperBlockSize)
   for n != nil {
-    if *IsDebug {
-      log.Println("key", n.Id, "volume offset", offset, "data_size", n.Size, "length", length)
-    }
+    debug("key", n.Id, "volume offset", offset, "data_size", n.Size, "length", length)
     if n.Size > 0 {
       count, pe := nm.Put(n.Id, offset/8, n.Size)
-      if *IsDebug {
-        log.Println("saved", count, "with error", pe)
-      }
+      debug("saved", count, "with error", pe)
     }
     offset += length
     n, length = storage.ReadNeedle(dataFile)

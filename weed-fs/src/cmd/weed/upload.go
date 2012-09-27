@@ -43,9 +43,7 @@ func assign(count int) (*AssignResult, error) {
 	values.Add("count", strconv.Itoa(count))
 	values.Add("replication", *uploadReplication)
 	jsonBlob, err := util.Post("http://"+*server+"/dir/assign", values)
-	if *IsDebug {
-		fmt.Println("assign result :", string(jsonBlob))
-	}
+	debug("assign result :", string(jsonBlob))
 	if err != nil {
 		return nil, err
 	}
@@ -61,14 +59,10 @@ func assign(count int) (*AssignResult, error) {
 }
 
 func upload(filename string, server string, fid string) (int, error) {
-	if *IsDebug {
-		fmt.Println("Start uploading file:", filename)
-	}
+	debug("Start uploading file:", filename)
 	fh, err := os.Open(filename)
 	if err != nil {
-		if *IsDebug {
-			fmt.Println("Failed to open file:", filename)
-		}
+		debug("Failed to open file:", filename)
 		return 0, err
 	}
 	ret, e := operation.Upload("http://"+server+"/"+fid, filename, fh)
