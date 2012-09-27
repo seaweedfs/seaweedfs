@@ -293,7 +293,7 @@ func runVolume(cmd *Command, args []string) bool {
 	}()
 	log.Println("store joined at", *masterNode)
 
-	log.Println("Start storage service at http://" + *ip + ":" + strconv.Itoa(*vport))
+  log.Println("Start Weed volume server", VERSION, "at http://" + *ip + ":" + strconv.Itoa(*vport))
 	e := http.ListenAndServe(":"+strconv.Itoa(*vport), nil)
 	if e != nil {
 		log.Fatalf("Fail to start:%s", e.Error())
