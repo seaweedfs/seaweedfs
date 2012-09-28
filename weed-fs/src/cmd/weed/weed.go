@@ -5,13 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
-  "math/rand"
 	"text/template"
-  "time"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -40,7 +40,7 @@ func setExitStatus(n int) {
 }
 
 func main() {
-  rand.Seed(time.Now().UnixNano())
+	rand.Seed(time.Now().UnixNano())
 	flag.Usage = usage
 	flag.Parse()
 
@@ -52,7 +52,7 @@ func main() {
 	if args[0] == "help" {
 		help(args[1:])
 		for _, cmd := range commands {
-			if len(args)>=2 && cmd.Name() == args[1] && cmd.Run != nil {
+			if len(args) >= 2 && cmd.Name() == args[1] && cmd.Run != nil {
 				fmt.Fprintf(os.Stderr, "Default Parameters:\n")
 				cmd.Flag.PrintDefaults()
 			}
@@ -173,7 +173,12 @@ func exitIfErrors() {
 }
 func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
 	w.Header().Set("Content-Type", "application/javascript")
-	bytes, _ := json.Marshal(obj)
+	var bytes []byte
+	if r.FormValue("pretty") != "" {
+    bytes, _ = json.MarshalIndent(obj, "", "  ")
+	} else {
+    bytes, _ = json.Marshal(obj)
+	}
 	callback := r.FormValue("callback")
 	if callback == "" {
 		w.Write(bytes)
@@ -185,8 +190,8 @@ func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
 	}
 }
 
-func debug(params ...interface{}){
-  if *IsDebug {
-    fmt.Println(params)
-  }
+func debug(params ...interface{}) {
+	if *IsDebug {
+		fmt.Println(params)
+	}
 }
