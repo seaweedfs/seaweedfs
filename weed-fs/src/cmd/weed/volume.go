@@ -276,7 +276,7 @@ func runVolume(cmd *Command, args []string) bool {
 	srv := &http.Server{
 	  Addr:":"+strconv.Itoa(*vport),
     Handler: http.DefaultServeMux,
-    ReadTimeout: 30*time.Second,
+    ReadTimeout: 5*time.Second,
   }
 	e := srv.ListenAndServe()
 	if e != nil {
