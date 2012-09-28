@@ -33,8 +33,9 @@ var (
 	ip             = cmdVolume.Flag.String("ip", "localhost", "ip or server name")
 	publicUrl      = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible <ip|server_name>:<port>")
 	masterNode     = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
-	vpulse         = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
+	vpulse         = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than the master's setting")
 	maxVolumeCount = cmdVolume.Flag.Int("max", 5, "maximum number of volumes")
+	vReadTimeout   = cmdVolume.Flag.Int("readTimeout", 5, "connection read timeout in seconds")
 
 	store *storage.Store
 )
@@ -274,10 +275,10 @@ func runVolume(cmd *Command, args []string) bool {
 
 	log.Println("Start Weed volume server", VERSION, "at http://"+*ip+":"+strconv.Itoa(*vport))
 	srv := &http.Server{
-	  Addr:":"+strconv.Itoa(*vport),
-    Handler: http.DefaultServeMux,
-    ReadTimeout: 5*time.Second,
-  }
+		Addr:        ":" + strconv.Itoa(*vport),
+		Handler:     http.DefaultServeMux,
+		ReadTimeout: (time.Duration(*vReadTimeout) * time.Second),
+	}
 	e := srv.ListenAndServe()
 	if e != nil {
 		log.Fatalf("Fail to start:%s", e.Error())

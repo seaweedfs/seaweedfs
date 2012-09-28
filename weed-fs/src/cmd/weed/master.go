@@ -34,6 +34,7 @@ var (
 	mpulse            = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	confFile          = cmdMaster.Flag.String("conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
 	defaultRepType    = cmdMaster.Flag.String("defaultReplicationType", "00", "Default replication type if not specified.")
+	mReadTimeout      = cmdMaster.Flag.Int("readTimeout", 5, "connection read timeout in seconds")
 )
 
 var topo *topology.Topology
@@ -51,7 +52,7 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 		if machines != nil {
 			ret := []map[string]string{}
 			for _, dn := range *machines {
-				ret = append(ret, map[string]string{"url": dn.Url(), "publicUrl":dn.PublicUrl})
+				ret = append(ret, map[string]string{"url": dn.Url(), "publicUrl": dn.PublicUrl})
 			}
 			writeJson(w, r, map[string]interface{}{"locations": ret})
 		} else {
@@ -84,17 +85,17 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	fid, count, dn, err := topo.PickForWrite(rt, c)
 	if err == nil {
-		writeJson(w, r, map[string]interface{}{"fid": fid, "url": dn.Url(), "publicUrl":dn.PublicUrl, "count": count})
+		writeJson(w, r, map[string]interface{}{"fid": fid, "url": dn.Url(), "publicUrl": dn.PublicUrl, "count": count})
 	} else {
 		writeJson(w, r, map[string]string{"error": err.Error()})
 	}
 }
 
 func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
-  ip := r.FormValue("ip")
-  if ip == ""{
-    ip = r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")]
-  }
+	ip := r.FormValue("ip")
+	if ip == "" {
+		ip = r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")]
+	}
 	port, _ := strconv.Atoi(r.FormValue("port"))
 	maxVolumeCount, _ := strconv.Atoi(r.FormValue("maxVolumeCount"))
 	s := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")+1] + r.FormValue("port")
@@ -141,12 +142,12 @@ func runMaster(cmd *Command, args []string) bool {
 	topo.StartRefreshWritableVolumes()
 
 	log.Println("Start Weed Master", VERSION, "at port", strconv.Itoa(*mport))
-  srv := &http.Server{
-    Addr:":"+strconv.Itoa(*mport),
-    Handler: http.DefaultServeMux,
-    ReadTimeout: 5*time.Second,
-  }
-  e := srv.ListenAndServe()
+	srv := &http.Server{
+		Addr:        ":" + strconv.Itoa(*mport),
+		Handler:     http.DefaultServeMux,
+		ReadTimeout: time.Duration(*mReadTimeout) * time.Second,
+	}
+	e := srv.ListenAndServe()
 	if e != nil {
 		log.Fatalf("Fail to start:%s", e.Error())
 	}
