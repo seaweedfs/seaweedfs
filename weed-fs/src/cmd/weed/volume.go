@@ -272,8 +272,13 @@ func runVolume(cmd *Command, args []string) bool {
 	}()
 	log.Println("store joined at", *masterNode)
 
-  log.Println("Start Weed volume server", VERSION, "at http://" + *ip + ":" + strconv.Itoa(*vport))
-	e := http.ListenAndServe(":"+strconv.Itoa(*vport), nil)
+	log.Println("Start Weed volume server", VERSION, "at http://"+*ip+":"+strconv.Itoa(*vport))
+	srv := &http.Server{
+	  Addr:":"+strconv.Itoa(*vport),
+    Handler: http.DefaultServeMux,
+    ReadTimeout: 30*time.Second,
+  }
+	e := srv.ListenAndServe()
 	if e != nil {
 		log.Fatalf("Fail to start:%s", e.Error())
 	}

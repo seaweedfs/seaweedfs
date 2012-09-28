@@ -10,6 +10,7 @@ import (
 	"pkg/topology"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func init() {
@@ -140,7 +141,12 @@ func runMaster(cmd *Command, args []string) bool {
 	topo.StartRefreshWritableVolumes()
 
 	log.Println("Start Weed Master", VERSION, "at port", strconv.Itoa(*mport))
-	e := http.ListenAndServe(":"+strconv.Itoa(*mport), nil)
+  srv := &http.Server{
+    Addr:":"+strconv.Itoa(*mport),
+    Handler: http.DefaultServeMux,
+    ReadTimeout: 30*time.Second,
+  }
+  e := srv.ListenAndServe()
 	if e != nil {
 		log.Fatalf("Fail to start:%s", e.Error())
 	}
