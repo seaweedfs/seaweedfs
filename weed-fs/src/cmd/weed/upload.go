@@ -17,7 +17,7 @@ func init() {
 	cmdUpload.Run = runUpload // break init cycle
 	IsDebug = cmdUpload.Flag.Bool("debug", false, "verbose debug information")
 	server = cmdUpload.Flag.String("server", "localhost:9333", "weedfs master location")
-	uploadReplication = cmdUpload.Flag.String("replication", "00", "replication type(00,01,10,11)")
+	uploadReplication = cmdUpload.Flag.String("replication", "000", "replication type(000,001,010,100,110,200)")
 }
 
 var cmdUpload = &Command{

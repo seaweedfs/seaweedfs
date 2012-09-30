@@ -4,9 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"pkg/operation"
 	"pkg/storage"
 	"pkg/topology"
-	"pkg/operation"
 )
 
 /*
@@ -30,15 +30,17 @@ func NewDefaultVolumeGrowth() *VolumeGrowth {
 
 func (vg *VolumeGrowth) GrowByType(repType storage.ReplicationType, topo *topology.Topology) (int, error) {
 	switch repType {
-	case storage.Copy00:
+	case storage.Copy000:
 		return vg.GrowByCountAndType(vg.copy1factor, repType, topo)
-	case storage.Copy10:
+	case storage.Copy001:
 		return vg.GrowByCountAndType(vg.copy2factor, repType, topo)
-	case storage.Copy20:
+	case storage.Copy010:
+		return vg.GrowByCountAndType(vg.copy2factor, repType, topo)
+	case storage.Copy100:
+		return vg.GrowByCountAndType(vg.copy2factor, repType, topo)
+	case storage.Copy110:
 		return vg.GrowByCountAndType(vg.copy3factor, repType, topo)
-	case storage.Copy01:
-		return vg.GrowByCountAndType(vg.copy2factor, repType, topo)
-	case storage.Copy11:
+	case storage.Copy200:
 		return vg.GrowByCountAndType(vg.copy3factor, repType, topo)
 	}
 	return 0, errors.New("Unknown Replication Type!")
@@ -46,7 +48,7 @@ func (vg *VolumeGrowth) GrowByType(repType storage.ReplicationType, topo *topolo
 func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.ReplicationType, topo *topology.Topology) (counter int, err error) {
 	counter = 0
 	switch repType {
-	case storage.Copy00:
+	case storage.Copy000:
 		for i := 0; i < count; i++ {
 			if ok, server, vid := topo.RandomlyReserveOneVolume(); ok {
 				if err = vg.grow(topo, *vid, repType, server); err == nil {
@@ -54,49 +56,7 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 				}
 			}
 		}
-	case storage.Copy10:
-		for i := 0; i < count; i++ {
-			nl := topology.NewNodeList(topo.Children(), nil)
-			picked, ret := nl.RandomlyPickN(2)
-			vid := topo.NextVolumeId()
-			if ret {
-				var servers []*topology.DataNode
-				for _, n := range picked {
-					if n.FreeSpace() > 0 {
-						if ok, server := n.ReserveOneVolume(rand.Intn(n.FreeSpace()), vid); ok {
-							servers = append(servers, server)
-						}
-					}
-				}
-				if len(servers) == 2 {
-					if err = vg.grow(topo, vid, repType, servers[0], servers[1]); err == nil {
-						counter++
-					}
-				}
-			}
-		}
-	case storage.Copy20:
-		for i := 0; i < count; i++ {
-			nl := topology.NewNodeList(topo.Children(), nil)
-			picked, ret := nl.RandomlyPickN(3)
-			vid := topo.NextVolumeId()
-			if ret {
-				var servers []*topology.DataNode
-				for _, n := range picked {
-					if n.FreeSpace() > 0 {
-						if ok, server := n.ReserveOneVolume(rand.Intn(n.FreeSpace()), vid); ok {
-							servers = append(servers, server)
-						}
-					}
-				}
-				if len(servers) == 3 {
-					if err = vg.grow(topo, vid, repType, servers[0], servers[1], servers[2]); err == nil {
-						counter++
-					}
-				}
-			}
-		}
-	case storage.Copy01:
+	case storage.Copy001:
 		for i := 0; i < count; i++ {
 			//randomly pick one server, and then choose from the same rack
 			if ok, server1, vid := topo.RandomlyReserveOneVolume(); ok {
@@ -113,17 +73,110 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 				}
 			}
 		}
-	case storage.Copy11:
+	case storage.Copy010:
 		for i := 0; i < count; i++ {
+			//randomly pick one server, and then choose from the same rack
+			if ok, server1, vid := topo.RandomlyReserveOneVolume(); ok {
+				rack := server1.Parent()
+				dc := rack.Parent()
+				exclusion := make(map[string]topology.Node)
+				exclusion[rack.String()] = rack
+				newNodeList := topology.NewNodeList(dc.Children(), exclusion)
+				if newNodeList.FreeSpace() > 0 {
+					if ok2, server2 := newNodeList.ReserveOneVolume(rand.Intn(newNodeList.FreeSpace()), *vid); ok2 {
+						if err = vg.grow(topo, *vid, repType, server1, server2); err == nil {
+							counter++
+						}
+					}
+				}
+			}
 		}
-		err = errors.New("Replication Type Not Implemented Yet!")
+	case storage.Copy100:
+		for i := 0; i < count; i++ {
+			nl := topology.NewNodeList(topo.Children(), nil)
+			picked, ret := nl.RandomlyPickN(2, 1)
+			vid := topo.NextVolumeId()
+			if ret {
+				var servers []*topology.DataNode
+				for _, n := range picked {
+					if n.FreeSpace() > 0 {
+						if ok, server := n.ReserveOneVolume(rand.Intn(n.FreeSpace()), vid); ok {
+							servers = append(servers, server)
+						}
+					}
+				}
+				if len(servers) == 2 {
+					if err = vg.grow(topo, vid, repType, servers...); err == nil {
+						counter++
+					}
+				}
+			}
+		}
+	case storage.Copy110:
+		for i := 0; i < count; i++ {
+			nl := topology.NewNodeList(topo.Children(), nil)
+			picked, ret := nl.RandomlyPickN(2, 2)
+			vid := topo.NextVolumeId()
+			if ret {
+				var servers []*topology.DataNode
+				dc1, dc2 := picked[0], picked[1]
+				if dc2.FreeSpace() > dc1.FreeSpace() {
+					dc1, dc2 = dc2, dc1
+				}
+				if dc1.FreeSpace() > 0 {
+					if ok, server1 := dc1.ReserveOneVolume(rand.Intn(dc1.FreeSpace()), vid); ok {
+						servers = append(servers, server1)
+						rack := server1.Parent()
+						exclusion := make(map[string]topology.Node)
+						exclusion[rack.String()] = rack
+						newNodeList := topology.NewNodeList(dc1.Children(), exclusion)
+						if newNodeList.FreeSpace() > 0 {
+							if ok2, server2 := newNodeList.ReserveOneVolume(rand.Intn(newNodeList.FreeSpace()), vid); ok2 {
+								servers = append(servers, server2)
+							}
+						}
+					}
+				}
+				if dc2.FreeSpace() > 0 {
+					if ok, server := dc2.ReserveOneVolume(rand.Intn(dc2.FreeSpace()), vid); ok {
+						servers = append(servers, server)
+					}
+				}
+				if len(servers) == 3 {
+					if err = vg.grow(topo, vid, repType, servers...); err == nil {
+						counter++
+					}
+				}
+			}
+		}
+	case storage.Copy200:
+		for i := 0; i < count; i++ {
+			nl := topology.NewNodeList(topo.Children(), nil)
+			picked, ret := nl.RandomlyPickN(3, 1)
+			vid := topo.NextVolumeId()
+			if ret {
+				var servers []*topology.DataNode
+				for _, n := range picked {
+					if n.FreeSpace() > 0 {
+						if ok, server := n.ReserveOneVolume(rand.Intn(n.FreeSpace()), vid); ok {
+							servers = append(servers, server)
+						}
+					}
+				}
+				if len(servers) == 3 {
+					if err = vg.grow(topo, vid, repType, servers...); err == nil {
+						counter++
+					}
+				}
+			}
+		}
 	}
 	return
 }
 func (vg *VolumeGrowth) grow(topo *topology.Topology, vid storage.VolumeId, repType storage.ReplicationType, servers ...*topology.DataNode) error {
 	for _, server := range servers {
 		if err := operation.AllocateVolume(server, vid, repType); err == nil {
-			vi := storage.VolumeInfo{Id: vid, Size: 0, RepType:repType}
+			vi := storage.VolumeInfo{Id: vid, Size: 0, RepType: repType}
 			server.AddOrUpdateVolume(vi)
 			topo.RegisterVolumeLayout(&vi, server)
 			fmt.Println("Created Volume", vid, "on", server)

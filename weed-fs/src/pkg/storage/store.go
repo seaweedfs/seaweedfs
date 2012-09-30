@@ -29,7 +29,7 @@ func NewStore(port int, ip, publicUrl, dirname string, maxVolumeCount int) (s *S
 	return
 }
 func (s *Store) AddVolume(volumeListString string, replicationType string) error {
-	rt, e := NewReplicationType(replicationType)
+	rt, e := NewReplicationTypeFromString(replicationType)
 	if e != nil {
 		return e
 	}

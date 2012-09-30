@@ -33,7 +33,7 @@ var (
 	volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", 32*1024, "Default Volume Size in MegaBytes")
 	mpulse            = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	confFile          = cmdMaster.Flag.String("conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
-	defaultRepType    = cmdMaster.Flag.String("defaultReplicationType", "00", "Default replication type if not specified.")
+	defaultRepType    = cmdMaster.Flag.String("defaultReplicationType", "000", "Default replication type if not specified.")
 	mReadTimeout      = cmdMaster.Flag.Int("readTimeout", 5, "connection read timeout in seconds")
 )
 
@@ -70,7 +70,7 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 	if repType == "" {
 		repType = *defaultRepType
 	}
-	rt, err := storage.NewReplicationType(repType)
+	rt, err := storage.NewReplicationTypeFromString(repType)
 	if err != nil {
 		writeJson(w, r, map[string]string{"error": err.Error()})
 		return
@@ -107,12 +107,15 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
-	writeJson(w, r, topo.ToMap())
+  m := make(map[string]interface{})
+  m["Version"] = VERSION
+  m["Topology"] = topo.ToMap()
+	writeJson(w, r, m)
 }
 
 func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
 	count := 0
-	rt, err := storage.NewReplicationType(r.FormValue("replication"))
+	rt, err := storage.NewReplicationTypeFromString(r.FormValue("replication"))
 	if err == nil {
 		if count, err = strconv.Atoi(r.FormValue("count")); err == nil {
 			if topo.FreeSpace() < count*rt.GetCopyCount() {

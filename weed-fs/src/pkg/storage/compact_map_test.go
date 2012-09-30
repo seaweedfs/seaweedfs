@@ -44,8 +44,6 @@ func TestXYZ(t *testing.T) {
 		}
 	}
 
-  //println("cm.list =", len(m.list))
-
 	for i := uint32(10 * batch); i < 100*batch; i++ {
     v, ok := m.Get(Key(i))
 		if i%37 == 0 {

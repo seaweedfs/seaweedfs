@@ -41,7 +41,10 @@ var (
 )
 
 func statusHandler(w http.ResponseWriter, r *http.Request) {
-	writeJson(w, r, store.Status())
+  m := make(map[string]interface{})
+  m["Version"] = VERSION
+  m["Volumes"] = store.Status()
+  writeJson(w, r, m)
 }
 func assignVolumeHandler(w http.ResponseWriter, r *http.Request) {
 	err := store.AddVolume(r.FormValue("volume"), r.FormValue("replicationType"))

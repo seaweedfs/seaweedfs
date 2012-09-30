@@ -9,75 +9,119 @@ type VolumeInfo struct {
 	Size    int64
 	RepType ReplicationType
 }
-type ReplicationType byte
+type ReplicationType string
 
 const (
-	Copy00               = ReplicationType(00) // single copy
-	Copy01               = ReplicationType(01) // 2 copies, each on different racks, same data center
-	Copy10               = ReplicationType(10) // 2 copies, each on different data center
-	Copy11               = ReplicationType(11) // 3 copies, 2 on different racks and local data center, 1 on different data center
-	Copy20               = ReplicationType(20) // 3 copies, each on dffereint data center
-	LengthRelicationType = 5
+	Copy000               = ReplicationType("000") // single copy
+	Copy001               = ReplicationType("001") // 2 copies, both on the same racks,  and same data center
+  Copy010               = ReplicationType("010") // 2 copies, both on different racks, but same data center
+	Copy100               = ReplicationType("100") // 2 copies, each on different data center
+	Copy110               = ReplicationType("110") // 3 copies, 2 on different racks and local data center, 1 on different data center
+	Copy200               = ReplicationType("200") // 3 copies, each on dffereint data center
+	LengthRelicationType = 6
 	CopyNil              = ReplicationType(255) // nil value
 )
 
-func NewReplicationType(t string) (ReplicationType, error) {
+func NewReplicationTypeFromString(t string) (ReplicationType, error) {
 	switch t {
-	case "00":
-		return Copy00, nil
-	case "01":
-		return Copy01, nil
-	case "10":
-		return Copy10, nil
-	case "11":
-		return Copy11, nil
-	case "20":
-		return Copy20, nil
+	case "000":
+		return Copy000, nil
+	case "001":
+		return Copy001, nil
+	case "010":
+		return Copy010, nil
+  case "100":
+    return Copy100, nil
+	case "110":
+		return Copy110, nil
+	case "200":
+		return Copy200, nil
 	}
-	return Copy00, errors.New("Unknown Replication Type:"+t)
+	return Copy000, errors.New("Unknown Replication Type:"+t)
 }
+func NewReplicationTypeFromByte(b byte) (ReplicationType, error) {
+  switch b {
+  case byte(000):
+    return Copy000, nil
+  case byte(001):
+    return Copy001, nil
+  case byte(010):
+    return Copy010, nil
+  case byte(100):
+    return Copy100, nil
+  case byte(110):
+    return Copy110, nil
+  case byte(200):
+    return Copy200, nil
+  }
+  return Copy000, errors.New("Unknown Replication Type:"+string(b))
+}
+
 func (r *ReplicationType) String() string {
 	switch *r {
-	case Copy00:
-		return "00"
-	case Copy01:
-		return "01"
-	case Copy10:
-		return "10"
-	case Copy11:
-		return "11"
-	case Copy20:
-		return "20"
+	case Copy000:
+		return "000"
+	case Copy001:
+		return "001"
+  case Copy010:
+    return "010"
+	case Copy100:
+		return "100"
+	case Copy110:
+		return "110"
+	case Copy200:
+		return "200"
 	}
-	return "00"
+	return "000"
+}
+func (r *ReplicationType) Byte() byte {
+  switch *r {
+  case Copy000:
+    return byte(000)
+  case Copy001:
+    return byte(001)
+  case Copy010:
+    return byte(010)
+  case Copy100:
+    return byte(100)
+  case Copy110:
+    return byte(110)
+  case Copy200:
+    return byte(200)
+  }
+  return byte(000)
 }
 
 func (repType ReplicationType)GetReplicationLevelIndex() int {
 	switch repType {
-	case Copy00:
+	case Copy000:
 		return 0
-	case Copy01:
+	case Copy001:
 		return 1
-	case Copy10:
-		return 2
-	case Copy11:
+  case Copy010:
+    return 2
+	case Copy100:
 		return 3
-	case Copy20:
+	case Copy110:
 		return 4
+	case Copy200:
+		return 5
 	}
 	return -1
 }
 func (repType ReplicationType)GetCopyCount() int {
 	switch repType {
-	case Copy00:
+	case Copy000:
 		return 1
-	case Copy01:
+	case Copy001:
 		return 2
-	case Copy10:
+  case Copy010:
+    return 2
+	case Copy100:
 		return 2
-	case Copy11:
+	case Copy110:
 		return 3
-	case Copy20:
+	case Copy200:
 		return 3
 	}
 	return 0

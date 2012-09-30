@@ -61,7 +61,7 @@ func (v *Volume) maybeWriteSuperBlock() {
 	if stat.Size() == 0 {
 		header := make([]byte, SuperBlockSize)
 		header[0] = 1
-		header[1] = byte(v.replicaType)
+		header[1] = v.replicaType.Byte()
 		v.dataFile.Write(header)
 	}
 }
@@ -69,7 +69,7 @@ func (v *Volume) readSuperBlock() {
 	v.dataFile.Seek(0, 0)
 	header := make([]byte, SuperBlockSize)
 	if _, error := v.dataFile.Read(header); error == nil {
-		v.replicaType = ReplicationType(header[1])
+		v.replicaType, _ = NewReplicationTypeFromByte(header[1])
 	}
 }
 

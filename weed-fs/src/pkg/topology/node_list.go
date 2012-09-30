@@ -30,10 +30,10 @@ func (nl *NodeList) FreeSpace() int {
 	return freeSpace
 }
 
-func (nl *NodeList) RandomlyPickN(n int) ([]Node, bool) {
+func (nl *NodeList) RandomlyPickN(n int, min int) ([]Node, bool) {
 	var list []Node
 	for _, n := range nl.nodes {
-		if n.FreeSpace() > 0 {
+		if n.FreeSpace() >= min {
 			list = append(list, n)
 		}
 	}
