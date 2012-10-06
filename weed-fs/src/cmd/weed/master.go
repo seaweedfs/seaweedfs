@@ -8,6 +8,7 @@ import (
 	"pkg/replication"
 	"pkg/storage"
 	"pkg/topology"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +36,7 @@ var (
 	confFile          = cmdMaster.Flag.String("conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
 	defaultRepType    = cmdMaster.Flag.String("defaultReplicationType", "000", "Default replication type if not specified.")
 	mReadTimeout      = cmdMaster.Flag.Int("readTimeout", 5, "connection read timeout in seconds")
+	mMaxCpu           = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 )
 
 var topo *topology.Topology
@@ -107,9 +109,9 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
-  m := make(map[string]interface{})
-  m["Version"] = VERSION
-  m["Topology"] = topo.ToMap()
+	m := make(map[string]interface{})
+	m["Version"] = VERSION
+	m["Topology"] = topo.ToMap()
 	writeJson(w, r, m)
 }
 
@@ -133,6 +135,10 @@ func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func runMaster(cmd *Command, args []string) bool {
+	if *mMaxCpu < 1 {
+		*mMaxCpu = runtime.NumCPU()
+	}
+	runtime.GOMAXPROCS(*mMaxCpu)
 	topo = topology.NewTopology("topo", *confFile, *metaFolder, "weed", uint64(*volumeSizeLimitMB)*1024*1024, *mpulse)
 	vg = replication.NewDefaultVolumeGrowth()
 	log.Println("Volume Size Limit is", *volumeSizeLimitMB, "MB")

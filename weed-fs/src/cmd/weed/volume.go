@@ -9,6 +9,7 @@ import (
 	"os"
 	"pkg/operation"
 	"pkg/storage"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -36,15 +37,16 @@ var (
 	vpulse         = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than the master's setting")
 	maxVolumeCount = cmdVolume.Flag.Int("max", 5, "maximum number of volumes")
 	vReadTimeout   = cmdVolume.Flag.Int("readTimeout", 5, "connection read timeout in seconds")
+	vMaxCpu        = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 
 	store *storage.Store
 )
 
 func statusHandler(w http.ResponseWriter, r *http.Request) {
-  m := make(map[string]interface{})
-  m["Version"] = VERSION
-  m["Volumes"] = store.Status()
-  writeJson(w, r, m)
+	m := make(map[string]interface{})
+	m["Version"] = VERSION
+	m["Volumes"] = store.Status()
+	writeJson(w, r, m)
 }
 func assignVolumeHandler(w http.ResponseWriter, r *http.Request) {
 	err := store.AddVolume(r.FormValue("volume"), r.FormValue("replicationType"))
@@ -248,6 +250,10 @@ func distributedOperation(volumeId storage.VolumeId, op func(location operation.
 }
 
 func runVolume(cmd *Command, args []string) bool {
+  if *vMaxCpu < 1 {
+    *vMaxCpu = runtime.NumCPU()
+  }
+	runtime.GOMAXPROCS(*vMaxCpu)
 	fileInfo, err := os.Stat(*volumeFolder)
 	if err != nil {
 		log.Fatalf("No Existing Folder:%s", *volumeFolder)
