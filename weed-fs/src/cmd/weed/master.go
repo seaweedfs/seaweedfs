@@ -36,7 +36,7 @@ var (
 	confFile          = cmdMaster.Flag.String("conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
 	defaultRepType    = cmdMaster.Flag.String("defaultReplicationType", "000", "Default replication type if not specified.")
 	mReadTimeout      = cmdMaster.Flag.Int("readTimeout", 5, "connection read timeout in seconds")
-	mMaxCpu           = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
+	mMaxCpu           = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 )
 
 var topo *topology.Topology
