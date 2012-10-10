@@ -21,7 +21,7 @@ type Volume struct {
 	replicaType ReplicationType
 
 	accessLock sync.Mutex
-
+	
 }
 
 func NewVolume(dirname string, id VolumeId, replicationType ReplicationType) (v *Volume) {

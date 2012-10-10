@@ -14,6 +14,7 @@ type Node interface {
 	UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int)
 	UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int)
 	UpAdjustMaxVolumeId(vid storage.VolumeId)
+
 	GetActiveVolumeCount() int
 	GetMaxVolumeCount() int
 	GetMaxVolumeId() storage.VolumeId
@@ -25,8 +26,8 @@ type Node interface {
 	IsDataNode() bool
 	Children() map[NodeId]Node
 	Parent() Node
-	
-	GetValue()interface{} //get reference to the topology,dc,rack,datanode
+
+	GetValue() interface{} //get reference to the topology,dc,rack,datanode
 }
 type NodeImpl struct {
 	id                NodeId
@@ -38,7 +39,7 @@ type NodeImpl struct {
 
 	//for rack, data center, topology
 	nodeType string
-	value interface{}
+	value    interface{}
 }
 
 func (n *NodeImpl) IsDataNode() bool {
@@ -71,8 +72,8 @@ func (n *NodeImpl) Children() map[NodeId]Node {
 func (n *NodeImpl) Parent() Node {
 	return n.parent
 }
-func (n *NodeImpl) GetValue()interface{}{
-  return n.value
+func (n *NodeImpl) GetValue() interface{} {
+	return n.value
 }
 func (n *NodeImpl) ReserveOneVolume(r int, vid storage.VolumeId) (bool, *DataNode) {
 	ret := false
@@ -119,7 +120,6 @@ func (n *NodeImpl) UpAdjustMaxVolumeId(vid storage.VolumeId) { //can be negative
 		}
 	}
 }
-
 func (n *NodeImpl) GetMaxVolumeId() storage.VolumeId {
 	return n.maxVolumeId
 }
@@ -164,7 +164,7 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 			}
 			for _, v := range dn.volumes {
 				if uint64(v.Size) >= volumeSizeLimit {
-          n.GetTopology().chanFullVolumes <- &v
+					n.GetTopology().chanFullVolumes <- &v
 				}
 			}
 		}
@@ -175,11 +175,11 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 	}
 }
 
-func (n *NodeImpl) GetTopology() *Topology{
-  var p Node
-  p = n
-  for p.Parent() != nil {
-    p = p.Parent()
-  }
-  return p.GetValue().(*Topology)
+func (n *NodeImpl) GetTopology() *Topology {
+	var p Node
+	p = n
+	for p.Parent() != nil {
+		p = p.Parent()
+	}
+	return p.GetValue().(*Topology)
 }

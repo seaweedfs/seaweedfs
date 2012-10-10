@@ -89,7 +89,7 @@ func (s *Store) Status() []*VolumeInfo {
 	var stats []*VolumeInfo
 	for k, v := range s.volumes {
 		s := new(VolumeInfo)
-		s.Id, s.Size, s.RepType = VolumeId(k), v.Size(), v.replicaType
+		s.Id, s.Size, s.RepType, s.FileCount, s.DeleteCount = VolumeId(k), v.Size(), v.replicaType, v.nm.fileCounter, v.nm.deletionCounter
 		stats = append(stats, s)
 	}
 	return stats
@@ -98,7 +98,7 @@ func (s *Store) Join(mserver string) error {
 	stats := new([]*VolumeInfo)
 	for k, v := range s.volumes {
 		s := new(VolumeInfo)
-		s.Id, s.Size, s.RepType = VolumeId(k), v.Size(), v.replicaType
+		s.Id, s.Size, s.RepType, s.FileCount, s.DeleteCount = VolumeId(k), v.Size(), v.replicaType, v.nm.fileCounter, v.nm.deletionCounter
 		*stats = append(*stats, s)
 	}
 	bytes, _ := json.Marshal(stats)
