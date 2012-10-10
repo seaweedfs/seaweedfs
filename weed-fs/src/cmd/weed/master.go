@@ -138,6 +138,7 @@ func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotAcceptable)
 		writeJson(w, r, map[string]string{"error": err.Error()})
 	} else {
+    w.WriteHeader(http.StatusNotAcceptable)
 		writeJson(w, r, map[string]interface{}{"count": count})
 	}
 }
