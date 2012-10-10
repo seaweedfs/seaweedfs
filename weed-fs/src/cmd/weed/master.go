@@ -58,6 +58,7 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			writeJson(w, r, map[string]interface{}{"locations": ret})
 		} else {
+			w.WriteHeader(http.StatusNotFound)
 			writeJson(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found. "})
 		}
 	}
@@ -74,11 +75,13 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	rt, err := storage.NewReplicationTypeFromString(repType)
 	if err != nil {
+		w.WriteHeader(http.StatusNotAcceptable)
 		writeJson(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 	if topo.GetVolumeLayout(rt).GetActiveVolumeCount() <= 0 {
 		if topo.FreeSpace() <= 0 {
+			w.WriteHeader(http.StatusNotFound)
 			writeJson(w, r, map[string]string{"error": "No free volumes left!"})
 			return
 		} else {
@@ -89,6 +92,7 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		writeJson(w, r, map[string]interface{}{"fid": fid, "url": dn.Url(), "publicUrl": dn.PublicUrl, "count": count})
 	} else {
+		w.WriteHeader(http.StatusNotFound)
 		writeJson(w, r, map[string]string{"error": err.Error()})
 	}
 }
@@ -130,6 +134,7 @@ func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJson(w, r, map[string]string{"error": err.Error()})
 	} else {
+    w.WriteHeader(http.StatusNotAcceptable)
 		writeJson(w, r, map[string]interface{}{"count": count})
 	}
 }
