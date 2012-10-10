@@ -143,6 +143,13 @@ func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func volumeStatusHandler(w http.ResponseWriter, r *http.Request) {
+  m := make(map[string]interface{})
+  m["Version"] = VERSION
+  m["Volumes"] = topo.ToVolumeMap()
+  writeJson(w, r, m)
+}
+
 func runMaster(cmd *Command, args []string) bool {
 	if *mMaxCpu < 1 {
 		*mMaxCpu = runtime.NumCPU()
@@ -156,6 +163,7 @@ func runMaster(cmd *Command, args []string) bool {
 	http.HandleFunc("/dir/join", dirJoinHandler)
 	http.HandleFunc("/dir/status", dirStatusHandler)
 	http.HandleFunc("/vol/grow", volumeGrowHandler)
+  http.HandleFunc("/vol/status", volumeStatusHandler)
 
 	topo.StartRefreshWritableVolumes()
 
