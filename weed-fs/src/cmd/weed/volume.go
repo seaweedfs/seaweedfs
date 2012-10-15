@@ -36,7 +36,7 @@ var (
 	masterNode     = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
 	vpulse         = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than the master's setting")
 	maxVolumeCount = cmdVolume.Flag.Int("max", 5, "maximum number of volumes")
-	vReadTimeout   = cmdVolume.Flag.Int("readTimeout", 5, "connection read timeout in seconds")
+	vReadTimeout   = cmdVolume.Flag.Int("readTimeout", 1, "connection read timeout in seconds")
 	vMaxCpu        = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 
 	store *storage.Store
