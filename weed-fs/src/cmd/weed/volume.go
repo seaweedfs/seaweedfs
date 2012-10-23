@@ -105,7 +105,7 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 	if ext != "" {
 		mtype := mime.TypeByExtension(ext)
 		w.Header().Set("Content-Type", mtype)
-		if storage.IsCompressable(ext, mtype) {
+		if storage.IsGzippable(ext, mtype) {
 			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 				w.Header().Set("Content-Encoding", "gzip")
 			} else {

@@ -8,12 +8,12 @@ import (
   "strings"
 )
 
-func IsCompressable(ext, mtype string) bool {
+func IsGzippable(ext, mtype string) bool {
   if ext == ".zip" {
-    return true
+    return false
   }
   if ext == ".rar" {
-    return true
+    return false
   }
   if strings.Index(mtype,"text/")==0 {
     return true

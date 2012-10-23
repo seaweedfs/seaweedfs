@@ -40,7 +40,7 @@ func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
 	if dotIndex > 0 {
 		ext := fname[dotIndex:]
 		mtype := mime.TypeByExtension(ext)
-		if IsCompressable(ext, mtype) {
+		if IsGzippable(ext, mtype) {
 			data = GzipData(data)
 		}
 	}
