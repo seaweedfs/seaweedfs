@@ -55,7 +55,25 @@ func assignVolumeHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		writeJson(w, r, map[string]string{"error": err.Error()})
 	}
-	debug("volume =", r.FormValue("volume"), ", replicationType =", r.FormValue("replicationType"), ", error =", err)
+	debug("assign volume =", r.FormValue("volume"), ", replicationType =", r.FormValue("replicationType"), ", error =", err)
+}
+func vacuumVolumeCompactHandler(w http.ResponseWriter, r *http.Request) {
+	err := store.CompactVolume(r.FormValue("volume"))
+	if err == nil {
+		writeJson(w, r, map[string]string{"error": ""})
+	} else {
+		writeJson(w, r, map[string]string{"error": err.Error()})
+	}
+	debug("compacted volume =", r.FormValue("volume"), ", error =", err)
+}
+func vacuumVolumeCommitHandler(w http.ResponseWriter, r *http.Request) {
+  count, err := store.CommitCompactVolume(r.FormValue("volume"))
+  if err == nil {
+    writeJson(w, r, map[string]interface{}{"error": "", "size":count})
+  } else {
+    writeJson(w, r, map[string]string{"error": err.Error()})
+  }
+  debug("commit compact volume =", r.FormValue("volume"), ", error =", err)
 }
 func storeHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -250,9 +268,9 @@ func distributedOperation(volumeId storage.VolumeId, op func(location operation.
 }
 
 func runVolume(cmd *Command, args []string) bool {
-  if *vMaxCpu < 1 {
-    *vMaxCpu = runtime.NumCPU()
-  }
+	if *vMaxCpu < 1 {
+		*vMaxCpu = runtime.NumCPU()
+	}
 	runtime.GOMAXPROCS(*vMaxCpu)
 	fileInfo, err := os.Stat(*volumeFolder)
 	if err != nil {
@@ -273,6 +291,8 @@ func runVolume(cmd *Command, args []string) bool {
 	http.HandleFunc("/", storeHandler)
 	http.HandleFunc("/status", statusHandler)
 	http.HandleFunc("/admin/assign_volume", assignVolumeHandler)
+	http.HandleFunc("/admin/vacuum_volume_compact", vacuumVolumeCompactHandler)
+	http.HandleFunc("/admin/vacuum_volume_commit", vacuumVolumeCommitHandler)
 
 	go func() {
 		for {

@@ -116,8 +116,7 @@ func ReadNeedle(r *os.File) (*Needle, uint32) {
 	n.Id = util.BytesToUint64(bytes[4:12])
 	n.Size = util.BytesToUint32(bytes[12:16])
 	rest := 8 - ((n.Size + 16 + 4) % 8)
-	r.Seek(int64(n.Size+4+rest), 1)
-	return n, 16 + n.Size + 4 + rest
+	return n, n.Size + 4 + rest
 }
 func ParseKeyHash(key_hash_string string) (uint64, uint32) {
 	key_hash_bytes, khe := hex.DecodeString(key_hash_string)

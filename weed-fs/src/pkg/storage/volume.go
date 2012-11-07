@@ -1,11 +1,11 @@
 package storage
 
 import (
+	"errors"
 	"log"
 	"os"
 	"path"
 	"sync"
-	"errors"
 )
 
 const (
@@ -21,29 +21,30 @@ type Volume struct {
 	replicaType ReplicationType
 
 	accessLock sync.Mutex
-	
 }
 
 func NewVolume(dirname string, id VolumeId, replicationType ReplicationType) (v *Volume) {
-	var e error
 	v = &Volume{dir: dirname, Id: id, replicaType: replicationType}
-	fileName := id.String()
-	v.dataFile, e = os.OpenFile(path.Join(v.dir, fileName+".dat"), os.O_RDWR|os.O_CREATE, 0644)
+	v.load()
+	return
+}
+func (v *Volume) load() {
+	var e error
+	fileName := path.Join(v.dir, v.Id.String())
+	v.dataFile, e = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {
 		log.Fatalf("New Volume [ERROR] %s\n", e)
 	}
-	if replicationType == CopyNil {
+	if v.replicaType == CopyNil {
 		v.readSuperBlock()
 	} else {
 		v.maybeWriteSuperBlock()
 	}
-	indexFile, ie := os.OpenFile(path.Join(v.dir, fileName+".idx"), os.O_RDWR|os.O_CREATE, 0644)
+	indexFile, ie := os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644)
 	if ie != nil {
 		log.Fatalf("Write Volume Index [ERROR] %s\n", ie)
 	}
 	v.nm = LoadNeedleMap(indexFile)
-
-	return
 }
 func (v *Volume) Size() int64 {
 	stat, e := v.dataFile.Stat()
@@ -106,4 +107,76 @@ func (v *Volume) read(n *Needle) (int, error) {
 		return n.Read(v.dataFile, nv.Size)
 	}
 	return -1, errors.New("Not Found")
+}
+
+func (v *Volume) compact() error {
+	v.accessLock.Lock()
+	defer v.accessLock.Unlock()
+
+	filePath := path.Join(v.dir, v.Id.String())
+	return v.copyDataAndGenerateIndexFile(filePath+".dat", filePath+".cpd", filePath+".cpx")
+}
+func (v *Volume) commitCompact() (int, error) {
+	v.accessLock.Lock()
+	defer v.accessLock.Unlock()
+	v.dataFile.Close()
+	os.Rename(path.Join(v.dir, v.Id.String()+".cpd"), path.Join(v.dir, v.Id.String()+".dat"))
+	os.Rename(path.Join(v.dir, v.Id.String()+".cpx"), path.Join(v.dir, v.Id.String()+".idx"))
+	v.load()
+	return 0, nil
+}
+
+func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) (err error) {
+	src, err := os.OpenFile(srcName, os.O_RDONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	dst, err := os.OpenFile(dstName, os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+
+	idx, err := os.OpenFile(idxName, os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		return err
+	}
+	defer idx.Close()
+
+	src.Seek(0, 0)
+	header := make([]byte, SuperBlockSize)
+	if _, error := src.Read(header); error == nil {
+		dst.Write(header)
+	}
+
+	n, rest := ReadNeedle(src)
+	nm := NewNeedleMap(idx)
+	old_offset := uint32(SuperBlockSize)
+  new_offset := uint32(SuperBlockSize)
+	for n != nil {
+		nv, ok := v.nm.Get(n.Id)
+		//log.Println("file size is", n.Size, "rest", rest)
+		if !ok || nv.Offset*8 != old_offset {
+			log.Println("expected offset should be", nv.Offset*8, "skipping", (rest - 16), "key", n.Id, "volume offset", old_offset, "data_size", n.Size, "rest", rest)
+			src.Seek(int64(rest), 1)
+		} else {
+			if nv.Size > 0 {
+				nm.Put(n.Id, new_offset/8, n.Size)
+				bytes := make([]byte, n.Size+4)
+				src.Read(bytes)
+				n.Data = bytes[:n.Size]
+				n.Checksum = NewCRC(n.Data)
+				n.Append(dst)
+				new_offset += rest+16
+				log.Println("saving key", n.Id, "volume offset", old_offset, "=>", new_offset, "data_size", n.Size, "rest", rest)
+			}
+      src.Seek(int64(rest-n.Size-4), 1)
+		}
+		old_offset += rest+16
+		n, rest = ReadNeedle(src)
+	}
+
+	return nil
 }

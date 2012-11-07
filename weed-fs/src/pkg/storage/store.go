@@ -36,7 +36,7 @@ func (s *Store) AddVolume(volumeListString string, replicationType string) error
 	for _, range_string := range strings.Split(volumeListString, ",") {
 		if strings.Index(range_string, "-") < 0 {
 			id_string := range_string
-			id, err := strconv.ParseUint(id_string, 10, 64)
+			id, err := NewVolumeId(id_string)
 			if err != nil {
 				return errors.New("Volume Id " + id_string + " is not a valid unsigned integer!")
 			}
@@ -67,6 +67,21 @@ func (s *Store) addVolume(vid VolumeId, replicationType ReplicationType) error {
 	log.Println("In dir", s.dir, "adds volume =", vid, ", replicationType =", replicationType)
 	s.volumes[vid] = NewVolume(s.dir, vid, replicationType)
 	return nil
+}
+
+func (s *Store) CompactVolume(volumeIdString string) error {
+	vid, err := NewVolumeId(volumeIdString)
+	if err != nil {
+		return errors.New("Volume Id " + volumeIdString + " is not a valid unsigned integer!")
+	}
+	return s.volumes[vid].compact()
+}
+func (s *Store) CommitCompactVolume(volumeIdString string) (int,error) {
+  vid, err := NewVolumeId(volumeIdString)
+  if err != nil {
+    return 0, errors.New("Volume Id " + volumeIdString + " is not a valid unsigned integer!")
+  }
+  return s.volumes[vid].commitCompact()
 }
 func (s *Store) loadExistingVolumes() {
 	if dirs, err := ioutil.ReadDir(s.dir); err == nil {

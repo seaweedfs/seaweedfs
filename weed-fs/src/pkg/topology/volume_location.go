@@ -27,6 +27,7 @@ func (dnll *VolumeLocationList) Add(loc *DataNode) bool {
 	dnll.list = append(dnll.list, loc)
 	return true
 }
+
 func (dnll *VolumeLocationList) Remove(loc *DataNode) bool {
   for i, dnl := range dnll.list {
     if loc.Ip == dnl.Ip && loc.Port == dnl.Port {

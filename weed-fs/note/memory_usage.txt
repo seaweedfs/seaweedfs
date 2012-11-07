@@ -1,0 +1,279 @@
+64 32G volumes consumes 10G memory
+Each volume has 25M index, so each cost 160MB memory
+
+
+
+Things happened when I use lots of threads ( almost 120 ) keeping read file from Weed-FS.
+But I'm not so familiar with linux so I can't tell you exactly what happened.
+Next I'll show you things I know , if you need more info , contact me
+ 
+My weed-fs version is about 0.12
+ 
+1. top
+ 
+top - 12:07:37 up 1 day,  3:17,  2 users,  load average: 0.00, 0.00, 0.00
+Tasks: 152 total,   1 running, 151 sleeping,   0 stopped,   0 zombie
+Cpu(s):  0.0%us,  0.0%sy,  0.0%ni, 99.8%id,  0.1%wa,  0.0%hi,  0.0%si,  0.0%st
+Mem:  16269880k total, 16192364k used,    77516k free,    58172k buffers
+Swap:  2064376k total,    12324k used,  2052052k free,  2827520k cached
+ 
+  PID USER      PR  NI  VIRT  RES  SHR S %CPU %MEM    TIME+  COMMAND                                                                                                             
+ 1499 root      20   0 11.6g  10g 1424 S  0.0 65.6   7:32.53 weedvolume                                                                                                          
+ 1498 root      20   0 3204m 2.1g 1428 S  0.0 13.5   4:36.59 weedvolume                                                                                                          
+ 1737 root      20   0 98868 4932 2920 S  0.0  0.0   0:00.56 sshd                                                                                                                
+ 1497 root      20   0  151m 4404 1152 S  0.0  0.0   1:21.40 weedmaster                                                                                                          
+ 1335 root      20   0 97816 3044 2896 S  0.0  0.0   0:00.76 sshd   
+ 
+After system became steady ,  weedvolume used 65.6% memory .                                                                                                             
+ 
+2. free -m
+ 
+             total       used       free     shared    buffers     cached
+Mem:         15888      15809         79          0         56       2758
+-/+ buffers/cache:      12994       2894
+Swap:         2015         12       2003
+ 
+3. startup cmd
+ 
+screen -d -m /opt/weed/weedmaster -mdir /data/weeddata/ > /data/logs/weed/master.log &
+screen -d -m /opt/weed/weedvolume -volumes=0-64 -dir /data/weeddata/ -pulseSeconds=20 -publicUrl="x.y.z:9334" -port 9334 > /data/logs/weed/s01.log &
+screen -d -m /opt/weed/weedvolume -volumes=65-107 -dir /data/weeddata/ -pulseSeconds=20 -publicUrl="x.y.z:9335" -port 9335 > /data/logs/weed/s02.log &
+ 
+4. du -sh .
+ 
+32G     0.dat
+26M     0.idx
+8.2G    100.dat
+6.8M    100.idx
+8.2G    101.dat
+6.9M    101.idx
+8.2G    102.dat
+6.8M    102.idx
+8.2G    103.dat
+6.8M    103.idx
+8.2G    104.dat
+6.8M    104.idx
+8.2G    105.dat
+6.9M    105.idx
+8.2G    106.dat
+6.9M    106.idx
+8.2G    107.dat
+6.9M    107.idx
+32G     10.dat
+25M     10.idx
+32G     11.dat
+25M     11.idx
+32G     12.dat
+25M     12.idx
+32G     13.dat
+25M     13.idx
+32G     14.dat
+25M     14.idx
+32G     15.dat
+25M     15.idx
+32G     16.dat
+25M     16.idx
+32G     17.dat
+25M     17.idx
+32G     18.dat
+25M     18.idx
+32G     19.dat
+25M     19.idx
+32G     1.dat
+26M     1.idx
+32G     20.dat
+25M     20.idx
+32G     21.dat
+25M     21.idx
+32G     22.dat
+25M     22.idx
+32G     23.dat
+25M     23.idx
+32G     24.dat
+25M     24.idx
+32G     25.dat
+25M     25.idx
+32G     26.dat
+25M     26.idx
+32G     27.dat
+25M     27.idx
+32G     28.dat
+25M     28.idx
+32G     29.dat
+25M     29.idx
+32G     2.dat
+26M     2.idx
+32G     30.dat
+25M     30.idx
+32G     31.dat
+25M     31.idx
+32G     32.dat
+25M     32.idx
+32G     33.dat
+25M     33.idx
+32G     34.dat
+25M     34.idx
+32G     35.dat
+25M     35.idx
+32G     36.dat
+25M     36.idx
+32G     37.dat
+25M     37.idx
+32G     38.dat
+25M     38.idx
+32G     39.dat
+25M     39.idx
+32G     3.dat
+26M     3.idx
+32G     40.dat
+25M     40.idx
+32G     41.dat
+25M     41.idx
+32G     42.dat
+25M     42.idx
+32G     43.dat
+25M     43.idx
+32G     44.dat
+25M     44.idx
+32G     45.dat
+25M     45.idx
+32G     46.dat
+25M     46.idx
+32G     47.dat
+25M     47.idx
+32G     48.dat
+25M     48.idx
+32G     49.dat
+25M     49.idx
+32G     4.dat
+26M     4.idx
+32G     50.dat
+25M     50.idx
+32G     51.dat
+25M     51.idx
+32G     52.dat
+25M     52.idx
+32G     53.dat
+25M     53.idx
+32G     54.dat
+25M     54.idx
+32G     55.dat
+25M     55.idx
+32G     56.dat
+25M     56.idx
+32G     57.dat
+25M     57.idx
+32G     58.dat
+25M     58.idx
+32G     59.dat
+25M     59.idx
+32G     5.dat
+26M     5.idx
+32G     60.dat
+25M     60.idx
+32G     61.dat
+25M     61.idx
+32G     62.dat
+25M     62.idx
+32G     63.dat
+25M     63.idx
+32G     64.dat
+25M     64.idx
+8.2G    65.dat
+6.9M    65.idx
+8.2G    66.dat
+6.9M    66.idx
+8.2G    67.dat
+6.9M    67.idx
+8.2G    68.dat
+6.8M    68.idx
+8.2G    69.dat
+6.9M    69.idx
+32G     6.dat
+25M     6.idx
+8.2G    70.dat
+6.8M    70.idx
+8.2G    71.dat
+6.9M    71.idx
+8.2G    72.dat
+6.9M    72.idx
+8.2G    73.dat
+6.9M    73.idx
+8.2G    74.dat
+6.9M    74.idx
+8.2G    75.dat
+6.9M    75.idx
+8.1G    76.dat
+6.8M    76.idx
+8.2G    77.dat
+6.8M    77.idx
+8.2G    78.dat
+6.8M    78.idx
+8.1G    79.dat
+6.8M    79.idx
+32G     7.dat
+25M     7.idx
+8.2G    80.dat
+6.8M    80.idx
+8.2G    81.dat
+6.9M    81.idx
+8.2G    82.dat
+6.9M    82.idx
+8.2G    83.dat
+6.9M    83.idx
+8.2G    84.dat
+6.9M    84.idx
+8.2G    85.dat
+6.8M    85.idx
+8.2G    86.dat
+6.9M    86.idx
+8.2G    87.dat
+6.9M    87.idx
+8.2G    88.dat
+6.9M    88.idx
+8.2G    89.dat
+6.8M    89.idx
+32G     8.dat
+25M     8.idx
+8.2G    90.dat
+6.9M    90.idx
+8.1G    91.dat
+6.8M    91.idx
+8.1G    92.dat
+6.8M    92.idx
+8.1G    93.dat
+6.8M    93.idx
+8.2G    94.dat
+6.9M    94.idx
+8.2G    95.dat
+6.9M    95.idx
+8.2G    96.dat
+6.9M    96.idx
+8.2G    97.dat
+6.9M    97.idx
+8.2G    98.dat
+6.9M    98.idx
+8.2G    99.dat
+6.9M    99.idx
+32G     9.dat
+25M     9.idx
+4.0K    directory.seq
+ 
+You can see the volume 1-64 is now full.
+ 
+5. more log
+ 
+see logs.zip
+ 
+In messages you can see these lines: (Line 51095)
+ 
+Sep 26 06:14:31 wedb-01 kernel: auditd: page allocation failure. order:0, mode:0x20
+Sep 26 06:14:31 wedb-01 kernel: Pid: 1009, comm: auditd Not tainted 2.6.32-220.el6.x86_64 #1
+Sep 26 06:14:31 wedb-01 kernel: Call Trace:
+ 
+After those lines , the system deny any new network connect request
+ 
+6. /dir/status
+ 
+{"Machines":[{"Server":{"Url":"127.0.0.1:9335","PublicUrl":"x.y.z:9335"},"Volumes":[{"Id":106,"Size":8728909632},{"Id":66,"Size":8729852744},{"Id":90,"Size":8747834896},{"Id":103,"Size":8718106024},{"Id":87,"Size":8732133512},{"Id":96,"Size":8737251904},{"Id":80,"Size":8704130712},{"Id":77,"Size":8717989496},{"Id":70,"Size":8731474744},{"Id":94,"Size":8758656144},{"Id":107,"Size":8729599232},{"Id":67,"Size":8736848088},{"Id":91,"Size":8665847760},{"Id":100,"Size":8703272552},{"Id":84,"Size":8745121528},{"Id":97,"Size":8713031744},{"Id":81,"Size":8726088872},{"Id":74,"Size":8738588152},{"Id":71,"Size":8729349920},{"Id":95,"Size":8741526896},{"Id":104,"Size":8699374736},{"Id":88,"Size":8740362880},{"Id":101,"Size":8711832992},{"Id":85,"Size":8723479552},{"Id":78,"Size":8700345400},{"Id":75,"Size":8727796912},{"Id":68,"Size":8698607440},{"Id":92,"Size":8682683056},{"Id":105,"Size":8741226152},{"Id":65,"Size":8725365752},{"Id":89,"Size":8703062600},{"Id":98,"Size":8742331560},{"Id":82,"Size":8762554952},{"Id":79,"Size":8696300376},{"Id":72,"Size":8708217304},{"Id":69,"Size":8740268144},{"Id":93,"Size":8685060320},{"Id":102,"Size":8708695352},{"Id":86,"Size":8783247776},{"Id":99,"Size":8753463608},{"Id":83,"Size":8725963952},{"Id":76,"Size":8694693536},{"Id":73,"Size":8733560832}]},{"Server":{"Url":"127.0.0.1:9334","PublicUrl":"x.y.z:9334"},"Volumes":[{"Id":34,"Size":33415706800},{"Id":58,"Size":33569224784},{"Id":18,"Size":33474649968},{"Id":55,"Size":33542422680},{"Id":15,"Size":33517247576},{"Id":48,"Size":33574860328},{"Id":8,"Size":33511257144},{"Id":45,"Size":33463948408},{"Id":5,"Size":34317702920},{"Id":29,"Size":33465695776},{"Id":38,"Size":33553119624},{"Id":62,"Size":33448316736},{"Id":22,"Size":33566586296},{"Id":35,"Size":33493733728},{"Id":59,"Size":33498554904},{"Id":19,"Size":33493313784},{"Id":52,"Size":33552978448},{"Id":12,"Size":33505183752},{"Id":49,"Size":33603029896},{"Id":9,"Size":33515778064},{"Id":42,"Size":33500402248},{"Id":2,"Size":34223232992},{"Id":26,"Size":33526519600},{"Id":39,"Size":33580414336},{"Id":63,"Size":33476332456},{"Id":23,"Size":33543872592},{"Id":32,"Size":33515290168},{"Id":56,"Size":33499171184},{"Id":16,"Size":33556591168},{"Id":64,"Size":33495148616},{"Id":53,"Size":33467738560},{"Id":13,"Size":33596873960},{"Id":46,"Size":33508120448},{"Id":6,"Size":33417470256},{"Id":30,"Size":33532933992},{"Id":43,"Size":33591802008},{"Id":3,"Size":34270682080},{"Id":27,"Size":33525736944},{"Id":36,"Size":33443597824},{"Id":60,"Size":33427931336},{"Id":20,"Size":33499083096},{"Id":33,"Size":33531396280},{"Id":57,"Size":33578015104},{"Id":17,"Size":33510525480},{"Id":50,"Size":33503123704},{"Id":10,"Size":33502391608},{"Id":47,"Size":33521868568},{"Id":7,"Size":33497101664},{"Id":31,"Size":33426905232},{"Id":40,"Size":33472978696},{"Id":0,"Size":34337344304},{"Id":24,"Size":33550157192},{"Id":37,"Size":33477162720},{"Id":61,"Size":33537175080},{"Id":21,"Size":33517192456},{"Id":54,"Size":33480720288},{"Id":14,"Size":33513192896},{"Id":51,"Size":33531336080},{"Id":11,"Size":33562385088},{"Id":44,"Size":33554479104},{"Id":4,"Size":34333127520},{"Id":28,"Size":33510503000},{"Id":41,"Size":33574922928},{"Id":1,"Size":34307181368},{"Id":25,"Size":33542834568}]}],"Writers":[106,66,90,103,87,96,80,77,70,94,107,67,91,100,84,97,81,74,71,95,104,88,101,85,78,75,68,92,105,65,89,98,82,79,72,69,93,102,86,99,83,76,73,34,58,18,55,15,48,8,45,5,29,38,62,22,35,59,19,52,12,49,9,42,2,26,39,63,23,32,56,16,64,53,13,46,6,30,43,3,27,36,60,20,33,57,17,50,10,47,7,31,40,0,24,37,61,21,54,14,51,11,44,4,28,41,1,25],"FileIdSequence":110250000}
+ 
