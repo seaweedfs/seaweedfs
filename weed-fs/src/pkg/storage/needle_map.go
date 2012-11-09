@@ -44,7 +44,7 @@ func LoadNeedleMap(file *os.File) *NeedleMap {
 			size := util.BytesToUint32(bytes[i+12 : i+16])
 			if offset > 0 {
 				nm.m.Set(Key(key), offset, size)
-				log.Println("reading key", key, "offset", offset, "size", size)
+				//log.Println("reading key", key, "offset", offset, "size", size)
 				nm.fileCounter++
 			} else {
 				nm.m.Delete(Key(key))
