@@ -147,6 +147,11 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 			ret := store.Write(volumeId, needle)
 			errorStatus := ""
 			needToReplicate := !store.HasVolume(volumeId)
+			if ret > 0 {
+        needToReplicate = needToReplicate || store.GetVolume(volumeId).NeedToReplicate()
+			}else{
+        errorStatus = "Failed to write to local disk"
+			}
 			if !needToReplicate && ret > 0 {
 				needToReplicate = store.GetVolume(volumeId).NeedToReplicate()
 			}
@@ -160,8 +165,6 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 						errorStatus = "Failed to write to replicas for volume " + volumeId.String()
 					}
 				}
-			} else {
-				errorStatus = "Failed to write to local disk"
 			}
 			m := make(map[string]interface{})
 			if errorStatus == "" {
