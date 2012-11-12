@@ -10,7 +10,7 @@ import (
 func (t *Topology) StartRefreshWritableVolumes() {
 	go func() {
 		for {
-			freshThreshHold := time.Now().Unix() - 3*t.pulse //5 times of sleep interval
+			freshThreshHold := time.Now().Unix() - 3*t.pulse //3 times of sleep interval
 			t.CollectDeadNodeAndFullVolumes(freshThreshHold, t.volumeSizeLimit)
 			time.Sleep(time.Duration(float32(t.pulse*1e3)*(1+rand.Float32())) * time.Millisecond)
 		}
