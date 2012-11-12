@@ -73,6 +73,9 @@ func (v *Volume) readSuperBlock() {
 		v.replicaType, _ = NewReplicationTypeFromByte(header[1])
 	}
 }
+func (v *Volume) NeedToReplicate() bool{
+  return v.replicaType.GetCopyCount()>1
+}
 
 func (v *Volume) write(n *Needle) uint32 {
 	v.accessLock.Lock()

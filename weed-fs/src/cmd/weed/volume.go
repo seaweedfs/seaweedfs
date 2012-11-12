@@ -67,13 +67,13 @@ func vacuumVolumeCompactHandler(w http.ResponseWriter, r *http.Request) {
 	debug("compacted volume =", r.FormValue("volume"), ", error =", err)
 }
 func vacuumVolumeCommitHandler(w http.ResponseWriter, r *http.Request) {
-  count, err := store.CommitCompactVolume(r.FormValue("volume"))
-  if err == nil {
-    writeJson(w, r, map[string]interface{}{"error": "", "size":count})
-  } else {
-    writeJson(w, r, map[string]string{"error": err.Error()})
-  }
-  debug("commit compact volume =", r.FormValue("volume"), ", error =", err)
+	count, err := store.CommitCompactVolume(r.FormValue("volume"))
+	if err == nil {
+		writeJson(w, r, map[string]interface{}{"error": "", "size": count})
+	} else {
+		writeJson(w, r, map[string]string{"error": err.Error()})
+	}
+	debug("commit compact volume =", r.FormValue("volume"), ", error =", err)
 }
 func storeHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -146,7 +146,11 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 		} else {
 			ret := store.Write(volumeId, needle)
 			errorStatus := ""
-			if ret > 0 || !store.HasVolume(volumeId) { //send to other replica locations
+			needToReplicate := !store.HasVolume(volumeId)
+			if !needToReplicate && ret > 0 {
+				needToReplicate = store.GetVolume(volumeId).NeedToReplicate()
+			}
+			if needToReplicate { //send to other replica locations
 				if r.FormValue("type") != "standard" {
 					if !distributedOperation(volumeId, func(location operation.Location) bool {
 						_, err := operation.Upload("http://"+location.Url+r.URL.Path+"?type=standard", filename, bytes.NewReader(needle.Data))
@@ -201,7 +205,11 @@ func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	n.Size = 0
 	ret := store.Delete(volumeId, n)
 
-	if ret > 0 || !store.HasVolume(volumeId) { //send to other replica locations
+	needToReplicate := !store.HasVolume(volumeId)
+	if !needToReplicate && ret > 0 {
+		needToReplicate = store.GetVolume(volumeId).NeedToReplicate()
+	}
+	if needToReplicate { //send to other replica locations
 		if r.FormValue("type") != "standard" {
 			if !distributedOperation(volumeId, func(location operation.Location) bool {
 				return nil == operation.Delete("http://"+location.Url+r.URL.Path+"?type=standard")
