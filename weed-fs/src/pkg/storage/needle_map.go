@@ -48,7 +48,7 @@ func LoadNeedleMap(file *os.File) *NeedleMap {
 				nm.fileCounter++
 			} else {
 				nm.m.Delete(Key(key))
-        log.Println("removing key", key)
+        //log.Println("removing key", key)
 				nm.deletionCounter++
 			}
 		}
