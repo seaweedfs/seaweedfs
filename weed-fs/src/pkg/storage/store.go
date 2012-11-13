@@ -135,6 +135,7 @@ func (s *Store) Write(i VolumeId, n *Needle) uint32 {
 	if v := s.volumes[i]; v != nil {
 		return v.write(n)
 	}
+  log.Println("volume",i, "not found!")
 	return 0
 }
 func (s *Store) Delete(i VolumeId, n *Needle) uint32 {
