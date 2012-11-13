@@ -7,6 +7,7 @@ import (
 	"pkg/operation"
 	"pkg/storage"
 	"pkg/topology"
+  "sync"
 )
 
 /*
@@ -22,6 +23,8 @@ type VolumeGrowth struct {
 	copy2factor int
 	copy3factor int
 	copyAll     int
+
+  accessLock sync.Mutex
 }
 
 func NewDefaultVolumeGrowth() *VolumeGrowth {
@@ -46,6 +49,9 @@ func (vg *VolumeGrowth) GrowByType(repType storage.ReplicationType, topo *topolo
 	return 0, errors.New("Unknown Replication Type!")
 }
 func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.ReplicationType, topo *topology.Topology) (counter int, err error) {
+  vg.accessLock.Lock()
+  defer vg.accessLock.Unlock()
+
 	counter = 0
 	switch repType {
 	case storage.Copy000:
