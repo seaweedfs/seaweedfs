@@ -153,11 +153,13 @@ func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
 			} else {
 				count, err = vg.GrowByCountAndType(count, rt, topo)
 			}
+		}else{
+		  err = errors.New("parameter count is not found")
 		}
 	}
 	if err != nil {
 		w.WriteHeader(http.StatusNotAcceptable)
-		writeJson(w, r, map[string]string{"error": err.Error()})
+		writeJson(w, r, map[string]string{"error": "parameter replication "+err.Error()})
 	} else {
     w.WriteHeader(http.StatusNotAcceptable)
 		writeJson(w, r, map[string]interface{}{"count": count})
