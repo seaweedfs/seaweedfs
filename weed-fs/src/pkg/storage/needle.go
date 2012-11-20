@@ -19,7 +19,7 @@ type Needle struct {
 	Id       uint64 "needle id"
 	Size     uint32 "Data size"
 	Data     []byte "The actual file data"
-	Checksum CRC  "CRC32 to check integrity"
+	Checksum CRC    "CRC32 to check integrity"
 	Padding  []byte "Aligned to 8 bytes"
 }
 
@@ -32,7 +32,12 @@ func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
 		e = fe
 		return
 	}
-	part, _ := form.NextPart()
+	part, fe := form.NextPart()
+	if fe != nil {
+		fmt.Println("Reading Multi part [ERROR]", fe)
+		e = fe
+		return
+	}
 	fname = part.FileName()
 	data, _ := ioutil.ReadAll(part)
 	//log.Println("uploading file " + part.FileName())
@@ -99,9 +104,9 @@ func (n *Needle) Read(r io.Reader, size uint32) (int, error) {
 	n.Id = util.BytesToUint64(bytes[4:12])
 	n.Size = util.BytesToUint32(bytes[12:16])
 	n.Data = bytes[16 : 16+size]
-  checksum := util.BytesToUint32(bytes[16+size : 16+size+4])	
+	checksum := util.BytesToUint32(bytes[16+size : 16+size+4])
 	if checksum != NewCRC(n.Data).Value() {
-	  return 0, errors.New("CRC error! Data On Disk Corrupted!")
+		return 0, errors.New("CRC error! Data On Disk Corrupted!")
 	}
 	return ret, e
 }
