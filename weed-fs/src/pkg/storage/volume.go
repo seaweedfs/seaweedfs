@@ -73,8 +73,8 @@ func (v *Volume) readSuperBlock() {
 		v.replicaType, _ = NewReplicationTypeFromByte(header[1])
 	}
 }
-func (v *Volume) NeedToReplicate() bool{
-  return v.replicaType.GetCopyCount()>1
+func (v *Volume) NeedToReplicate() bool {
+	return v.replicaType.GetCopyCount() > 1
 }
 
 func (v *Volume) write(n *Needle) uint32 {
@@ -157,7 +157,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) 
 	n, rest := ReadNeedle(src)
 	nm := NewNeedleMap(idx)
 	old_offset := uint32(SuperBlockSize)
-  new_offset := uint32(SuperBlockSize)
+	new_offset := uint32(SuperBlockSize)
 	for n != nil {
 		nv, ok := v.nm.Get(n.Id)
 		//log.Println("file size is", n.Size, "rest", rest)
@@ -172,12 +172,12 @@ func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) 
 				n.Data = bytes[:n.Size]
 				n.Checksum = NewCRC(n.Data)
 				n.Append(dst)
-				new_offset += rest+16
+				new_offset += rest + 16
 				log.Println("saving key", n.Id, "volume offset", old_offset, "=>", new_offset, "data_size", n.Size, "rest", rest)
 			}
-      src.Seek(int64(rest-n.Size-4), 1)
+			src.Seek(int64(rest-n.Size-4), 1)
 		}
-		old_offset += rest+16
+		old_offset += rest + 16
 		n, rest = ReadNeedle(src)
 	}
 
