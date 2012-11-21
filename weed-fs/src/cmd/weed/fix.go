@@ -15,8 +15,8 @@ func init() {
 
 var cmdFix = &Command{
   UsageLine: "fix -dir=/tmp -volumeId=234 -debug=1",
-  Short:     "run weed tool fix on data file if corrupted",
-  Long: `Fix runs the WeedFS fix command on the .dat volume file.
+  Short:     "run weed tool fix on index file if corrupted",
+  Long: `Fix runs the WeedFS fix command to re-create the index .idx file.
 
   `,
 }

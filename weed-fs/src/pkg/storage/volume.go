@@ -9,9 +9,11 @@ import (
 	"sync"
 )
 
+type Version uint8
+
 const (
 	SuperBlockSize = 8
-	Version        = 1
+	CurrentVersion = Version(1)
 )
 
 type Volume struct {
@@ -21,8 +23,7 @@ type Volume struct {
 	nm       *NeedleMap
 
 	replicaType ReplicationType
-
-	version uint8
+	version     Version
 
 	accessLock sync.Mutex
 }
@@ -68,7 +69,7 @@ func (v *Volume) maybeWriteSuperBlock() {
 	stat, _ := v.dataFile.Stat()
 	if stat.Size() == 0 {
 		header := make([]byte, SuperBlockSize)
-		header[0] = Version
+		header[0] = byte(CurrentVersion)
 		header[1] = v.replicaType.Byte()
 		v.dataFile.Write(header)
 	}
@@ -79,7 +80,7 @@ func (v *Volume) readSuperBlock() error {
 	if _, e := v.dataFile.Read(header); e != nil {
 		return fmt.Errorf("cannot read superblock: %s", e)
 	}
-	v.version = header[0]
+	v.version = Version(header[0])
 	var err error
 	if v.replicaType, err = NewReplicationTypeFromByte(header[1]); err != nil {
 		return fmt.Errorf("cannot read replica type: %s", err)
@@ -120,7 +121,7 @@ func (v *Volume) read(n *Needle) (int, error) {
 	nv, ok := v.nm.Get(n.Id)
 	if ok && nv.Offset > 0 {
 		v.dataFile.Seek(int64(nv.Offset)*8, 0)
-		return n.Read(v.dataFile, nv.Size)
+		return n.Read(v.dataFile, nv.Size, v.version)
 	}
 	return -1, errors.New("Not Found")
 }

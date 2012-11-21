@@ -15,10 +15,15 @@ import (
 )
 
 type Needle struct {
-	Cookie   uint32 "random number to mitigate brute force lookups"
-	Id       uint64 "needle id"
-	Size     uint32 "Data size"
-	Data     []byte "The actual file data"
+	Cookie uint32 "random number to mitigate brute force lookups"
+	Id     uint64 "needle id"
+	Size   uint32 "sum of DataSize,Data,NameSize,Name,MimeSize,Mime"
+	//	DataSize uint32 "Data size"
+	Data []byte "The actual file data"
+	//	NameSize uint16
+	//	Name     []byte "maximum 256 characters"
+	//	MimeSize uint16
+	//	Mime     []byte "maximum 256 characters"
 	Checksum CRC    "CRC32 to check integrity"
 	Padding  []byte "Aligned to 8 bytes"
 }
@@ -97,7 +102,7 @@ func (n *Needle) Append(w io.Writer) uint32 {
 	w.Write(header[0 : rest+4])
 	return n.Size
 }
-func (n *Needle) Read(r io.Reader, size uint32) (int, error) {
+func (n *Needle) Read(r io.Reader, size uint32, version Version) (int, error) {
 	bytes := make([]byte, size+16+4)
 	ret, e := r.Read(bytes)
 	n.Cookie = util.BytesToUint32(bytes[0:4])
