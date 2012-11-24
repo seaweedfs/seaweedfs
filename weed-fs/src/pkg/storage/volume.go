@@ -203,7 +203,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) 
 				n.Checksum = NewCRC(n.Data)
 				n.Append(dst)
 				new_offset += rest + 16
-				log.Println("saving key", n.Id, "volume offset", old_offset, "=>", new_offset, "data_size", n.Size, "rest", rest)
+				//log.Println("saving key", n.Id, "volume offset", old_offset, "=>", new_offset, "data_size", n.Size, "rest", rest)
 			}
 			src.Seek(int64(rest-n.Size-4), 1)
 		}
