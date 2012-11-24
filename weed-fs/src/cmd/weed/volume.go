@@ -57,6 +57,15 @@ func assignVolumeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	debug("assign volume =", r.FormValue("volume"), ", replicationType =", r.FormValue("replicationType"), ", error =", err)
 }
+func vacuumVolumeCheckHandler(w http.ResponseWriter, r *http.Request) {
+    err, ret := store.CheckCompactVolume(r.FormValue("volume"), r.FormValue("garbageThreshold"))
+    if err == nil {
+        writeJson(w, r, map[string]interface{}{"error": "", "result": ret})
+    } else {
+        writeJson(w, r, map[string]interface{}{"error": err.Error(), "result": false})
+    }
+    debug("checked compacting volume =", r.FormValue("volume"), "garbageThreshold =", r.FormValue("garbageThreshold"), "vacuum =", ret)
+}
 func vacuumVolumeCompactHandler(w http.ResponseWriter, r *http.Request) {
 	err := store.CompactVolume(r.FormValue("volume"))
 	if err == nil {
@@ -67,9 +76,9 @@ func vacuumVolumeCompactHandler(w http.ResponseWriter, r *http.Request) {
 	debug("compacted volume =", r.FormValue("volume"), ", error =", err)
 }
 func vacuumVolumeCommitHandler(w http.ResponseWriter, r *http.Request) {
-	count, err := store.CommitCompactVolume(r.FormValue("volume"))
+	err := store.CommitCompactVolume(r.FormValue("volume"))
 	if err == nil {
-		writeJson(w, r, map[string]interface{}{"error": "", "size": count})
+		writeJson(w, r, map[string]interface{}{"error": ""})
 	} else {
 		writeJson(w, r, map[string]string{"error": err.Error()})
 	}
@@ -302,6 +311,7 @@ func runVolume(cmd *Command, args []string) bool {
 	http.HandleFunc("/", storeHandler)
 	http.HandleFunc("/status", statusHandler)
 	http.HandleFunc("/admin/assign_volume", assignVolumeHandler)
+    http.HandleFunc("/admin/vacuum_volume_check", vacuumVolumeCheckHandler)
 	http.HandleFunc("/admin/vacuum_volume_compact", vacuumVolumeCompactHandler)
 	http.HandleFunc("/admin/vacuum_volume_commit", vacuumVolumeCommitHandler)
 

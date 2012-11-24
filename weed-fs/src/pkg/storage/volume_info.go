@@ -9,4 +9,5 @@ type VolumeInfo struct {
 	RepType ReplicationType
 	FileCount int
 	DeleteCount int
+    DeletedByteCount uint32
 }

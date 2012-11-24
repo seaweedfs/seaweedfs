@@ -55,13 +55,18 @@ func (v *Volume) load() error {
 	return nil
 }
 func (v *Volume) Size() int64 {
+    v.accessLock.Lock()
+    defer v.accessLock.Unlock()
 	stat, e := v.dataFile.Stat()
 	if e == nil {
 		return stat.Size()
 	}
+	fmt.Printf("Failed to read file size %s %s\n", v.dataFile.Name(), e.Error())
 	return -1
 }
 func (v *Volume) Close() {
+    v.accessLock.Lock()
+    defer v.accessLock.Unlock()
 	v.nm.Close()
 	v.dataFile.Close()
 }
@@ -115,6 +120,7 @@ func (v *Volume) delete(n *Needle) uint32 {
 	}
 	return 0
 }
+
 func (v *Volume) read(n *Needle) (int, error) {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
@@ -126,6 +132,10 @@ func (v *Volume) read(n *Needle) (int, error) {
 	return -1, errors.New("Not Found")
 }
 
+func (v *Volume) garbageLevel() float64 {
+    return float64(v.nm.deletionByteCounter)/float64(v.Size())
+}
+
 func (v *Volume) compact() error {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
@@ -133,21 +143,21 @@ func (v *Volume) compact() error {
 	filePath := path.Join(v.dir, v.Id.String())
 	return v.copyDataAndGenerateIndexFile(filePath+".dat", filePath+".cpd", filePath+".cpx")
 }
-func (v *Volume) commitCompact() (int, error) {
+func (v *Volume) commitCompact() (error) {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
 	v.dataFile.Close()
 	var e error
 	if e = os.Rename(path.Join(v.dir, v.Id.String()+".cpd"), path.Join(v.dir, v.Id.String()+".dat")); e != nil {
-		return 0, e
+		return e
 	}
 	if e = os.Rename(path.Join(v.dir, v.Id.String()+".cpx"), path.Join(v.dir, v.Id.String()+".idx")); e != nil {
-		return 0, e
+		return e
 	}
 	if e = v.load(); e != nil {
-		return 0, e
+		return e
 	}
-	return 0, nil
+	return nil
 }
 
 func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) (err error) {
@@ -183,7 +193,6 @@ func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) 
 		nv, ok := v.nm.Get(n.Id)
 		//log.Println("file size is", n.Size, "rest", rest)
 		if !ok || nv.Offset*8 != old_offset {
-			log.Println("expected offset should be", nv.Offset*8, "skipping", (rest - 16), "key", n.Id, "volume offset", old_offset, "data_size", n.Size, "rest", rest)
 			src.Seek(int64(rest), 1)
 		} else {
 			if nv.Size > 0 {

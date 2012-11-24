@@ -69,6 +69,17 @@ func (s *Store) addVolume(vid VolumeId, replicationType ReplicationType) error {
 	return nil
 }
 
+func (s *Store) CheckCompactVolume(volumeIdString string, garbageThresholdString string) (error, bool) {
+    vid, err := NewVolumeId(volumeIdString)
+    if err != nil {
+        return errors.New("Volume Id " + volumeIdString + " is not a valid unsigned integer!"), false
+    }
+    garbageThreshold, e := strconv.ParseFloat(garbageThresholdString, 32)
+    if e != nil {
+        return errors.New("garbageThreshold " + garbageThresholdString + " is not a valid float number!"), false
+    }
+    return nil, garbageThreshold < s.volumes[vid].garbageLevel()
+}
 func (s *Store) CompactVolume(volumeIdString string) error {
 	vid, err := NewVolumeId(volumeIdString)
 	if err != nil {
@@ -76,10 +87,10 @@ func (s *Store) CompactVolume(volumeIdString string) error {
 	}
 	return s.volumes[vid].compact()
 }
-func (s *Store) CommitCompactVolume(volumeIdString string) (int,error) {
+func (s *Store) CommitCompactVolume(volumeIdString string) (error) {
   vid, err := NewVolumeId(volumeIdString)
   if err != nil {
-    return 0, errors.New("Volume Id " + volumeIdString + " is not a valid unsigned integer!")
+    return errors.New("Volume Id " + volumeIdString + " is not a valid unsigned integer!")
   }
   return s.volumes[vid].commitCompact()
 }
@@ -104,7 +115,7 @@ func (s *Store) Status() []*VolumeInfo {
 	var stats []*VolumeInfo
 	for k, v := range s.volumes {
 		s := new(VolumeInfo)
-		s.Id, s.Size, s.RepType, s.FileCount, s.DeleteCount = VolumeId(k), v.Size(), v.replicaType, v.nm.fileCounter, v.nm.deletionCounter
+		s.Id, s.Size, s.RepType, s.FileCount, s.DeleteCount, s.DeletedByteCount = VolumeId(k), v.Size(), v.replicaType, v.nm.fileCounter, v.nm.deletionCounter, v.nm.deletionByteCounter
 		stats = append(stats, s)
 	}
 	return stats
@@ -113,7 +124,7 @@ func (s *Store) Join(mserver string) error {
 	stats := new([]*VolumeInfo)
 	for k, v := range s.volumes {
 		s := new(VolumeInfo)
-		s.Id, s.Size, s.RepType, s.FileCount, s.DeleteCount = VolumeId(k), v.Size(), v.replicaType, v.nm.fileCounter, v.nm.deletionCounter
+		s.Id, s.Size, s.RepType, s.FileCount, s.DeleteCount, s.DeletedByteCount = VolumeId(k), v.Size(), v.replicaType, v.nm.fileCounter, v.nm.deletionCounter, v.nm.deletionByteCounter
 		*stats = append(*stats, s)
 	}
 	bytes, _ := json.Marshal(stats)

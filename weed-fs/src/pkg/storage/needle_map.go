@@ -11,9 +11,11 @@ type NeedleMap struct {
 	m         CompactMap
 
 	//transient
-	bytes           []byte
-	deletionCounter int
-	fileCounter     int
+	bytes []byte
+
+	deletionCounter     int
+	fileCounter         int
+	deletionByteCounter uint32
 }
 
 func NewNeedleMap(file *os.File) *NeedleMap {
@@ -43,13 +45,18 @@ func LoadNeedleMap(file *os.File) *NeedleMap {
 			offset := util.BytesToUint32(bytes[i+8 : i+12])
 			size := util.BytesToUint32(bytes[i+12 : i+16])
 			if offset > 0 {
-				nm.m.Set(Key(key), offset, size)
-				//log.Println("reading key", key, "offset", offset, "size", size)
+				oldSize := nm.m.Set(Key(key), offset, size)
+				//log.Println("reading key", key, "offset", offset, "size", size, "oldSize", oldSize)
 				nm.fileCounter++
+				if oldSize > 0 {
+					nm.deletionCounter++
+					nm.deletionByteCounter = nm.deletionByteCounter + oldSize
+				}
 			} else {
 				nm.m.Delete(Key(key))
-        //log.Println("removing key", key)
+				//log.Println("removing key", key)
 				nm.deletionCounter++
+				nm.deletionByteCounter = nm.deletionByteCounter + size
 			}
 		}
 
@@ -59,11 +66,15 @@ func LoadNeedleMap(file *os.File) *NeedleMap {
 }
 
 func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) (int, error) {
-	nm.m.Set(Key(key), offset, size)
+	oldSize := nm.m.Set(Key(key), offset, size)
 	util.Uint64toBytes(nm.bytes[0:8], key)
 	util.Uint32toBytes(nm.bytes[8:12], offset)
 	util.Uint32toBytes(nm.bytes[12:16], size)
 	nm.fileCounter++
+	if oldSize > 0 {
+		nm.deletionCounter++
+		nm.deletionByteCounter = nm.deletionByteCounter + oldSize
+	}
 	return nm.indexFile.Write(nm.bytes)
 }
 func (nm *NeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
@@ -71,7 +82,7 @@ func (nm *NeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
 	return
 }
 func (nm *NeedleMap) Delete(key uint64) {
-	nm.m.Delete(Key(key))
+	nm.deletionByteCounter = nm.deletionByteCounter + nm.m.Delete(Key(key))
 	util.Uint64toBytes(nm.bytes[0:8], key)
 	util.Uint32toBytes(nm.bytes[8:12], 0)
 	util.Uint32toBytes(nm.bytes[12:16], 0)

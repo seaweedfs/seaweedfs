@@ -16,6 +16,12 @@ func (t *Topology) StartRefreshWritableVolumes() {
 		}
 	}()
 	go func() {
+		c := time.Tick(15 * time.Minute)
+		for _ = range c {
+			t.Vacuum()
+		}
+	}()
+	go func() {
 		for {
 			select {
 			case v := <-t.chanFullVolumes:

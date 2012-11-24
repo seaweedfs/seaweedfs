@@ -29,17 +29,25 @@ func NewCompactSection(start Key) CompactSection {
 		start:    start,
 	}
 }
-func (cs *CompactSection) Set(key Key, offset uint32, size uint32) {
+
+//return old entry size
+func (cs *CompactSection) Set(key Key, offset uint32, size uint32) uint32 {
+	ret := uint32(0)
 	if key > cs.end {
 		cs.end = key
 	}
 	if i := cs.binarySearchValues(key); i >= 0 {
+		ret = cs.values[i].Size
+		//println("key", key, "old size", ret)
 		cs.values[i].Offset, cs.values[i].Size = offset, size
 	} else {
-	  needOverflow := cs.counter >= batch
-	  needOverflow = needOverflow || cs.counter > 0 && cs.values[cs.counter-1].Key > key
+		needOverflow := cs.counter >= batch
+		needOverflow = needOverflow || cs.counter > 0 && cs.values[cs.counter-1].Key > key
 		if needOverflow {
 			//println("start", cs.start, "counter", cs.counter, "key", key)
+			if oldValue := cs.overflow[key]; oldValue != nil {
+				ret = oldValue.Size
+			}
 			cs.overflow[key] = &NeedleValue{Key: key, Offset: offset, Size: size}
 		} else {
 			p := &cs.values[cs.counter]
@@ -48,12 +56,23 @@ func (cs *CompactSection) Set(key Key, offset uint32, size uint32) {
 			cs.counter++
 		}
 	}
+	return ret
 }
-func (cs *CompactSection) Delete(key Key) {
+
+//return old entry size
+func (cs *CompactSection) Delete(key Key) uint32 {
+	ret := uint32(0)
 	if i := cs.binarySearchValues(key); i >= 0 {
-		cs.values[i].Size = 0
+		if cs.values[i].Size > 0 {
+			ret = cs.values[i].Size
+			cs.values[i].Size = 0
+		}
 	}
-	delete(cs.overflow, key)
+	if v := cs.overflow[key]; v != nil {
+		delete(cs.overflow, key)
+		ret = v.Size
+	}
+	return ret
 }
 func (cs *CompactSection) Get(key Key) (*NeedleValue, bool) {
 	if v, ok := cs.overflow[key]; ok {
@@ -94,21 +113,21 @@ func NewCompactMap() CompactMap {
 	return CompactMap{}
 }
 
-func (cm *CompactMap) Set(key Key, offset uint32, size uint32) {
+func (cm *CompactMap) Set(key Key, offset uint32, size uint32) uint32 {
 	x := cm.binarySearchCompactSection(key)
 	if x < 0 {
 		//println(x, "creating", len(cm.list), "section1, starting", key)
 		cm.list = append(cm.list, NewCompactSection(key))
 		x = len(cm.list) - 1
 	}
-	cm.list[x].Set(key, offset, size)
+	return cm.list[x].Set(key, offset, size)
 }
-func (cm *CompactMap) Delete(key Key) {
+func (cm *CompactMap) Delete(key Key) uint32 {
 	x := cm.binarySearchCompactSection(key)
 	if x < 0 {
-		return
+		return uint32(0)
 	}
-	cm.list[x].Delete(key)
+	return cm.list[x].Delete(key)
 }
 func (cm *CompactMap) Get(key Key) (*NeedleValue, bool) {
 	x := cm.binarySearchCompactSection(key)
@@ -123,7 +142,7 @@ func (cm *CompactMap) binarySearchCompactSection(key Key) int {
 		return -5
 	}
 	if cm.list[h].start <= key {
-		if cm.list[h].counter < batch || key <= cm.list[h].end{
+		if cm.list[h].counter < batch || key <= cm.list[h].end {
 			return h
 		} else {
 			return -4
@@ -150,9 +169,9 @@ func (cm *CompactMap) Peek() {
 			println("[", v.Key, v.Offset, v.Size, "]")
 		}
 	}
-  for k, v := range cm.list[0].overflow {
-    if k < 100 {
-      println("o[", v.Key, v.Offset, v.Size, "]")
-    }
-  }
+	for k, v := range cm.list[0].overflow {
+		if k < 100 {
+			println("o[", v.Key, v.Offset, v.Size, "]")
+		}
+	}
 }
