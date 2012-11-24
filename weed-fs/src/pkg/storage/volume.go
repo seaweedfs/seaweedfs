@@ -3,7 +3,6 @@ package storage
 import (
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path"
 	"sync"
