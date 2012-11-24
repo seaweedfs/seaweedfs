@@ -37,6 +37,7 @@ var (
 	defaultRepType    = cmdMaster.Flag.String("defaultReplicationType", "000", "Default replication type if not specified.")
 	mReadTimeout      = cmdMaster.Flag.Int("readTimeout", 1, "connection read timeout in seconds")
 	mMaxCpu           = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
+	garbageThreshold  = cmdMaster.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
 )
 
 var topo *topology.Topology
@@ -123,24 +124,24 @@ func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func volumeVacuumHandler(w http.ResponseWriter, r *http.Request) {
-  count := 0
-  rt, err := storage.NewReplicationTypeFromString(r.FormValue("replication"))
-  if err == nil {
-    if count, err = strconv.Atoi(r.FormValue("count")); err == nil {
-      if topo.FreeSpace() < count*rt.GetCopyCount() {
-        err = errors.New("Only " + strconv.Itoa(topo.FreeSpace()) + " volumes left! Not enough for " + strconv.Itoa(count*rt.GetCopyCount()))
-      } else {
-        count, err = vg.GrowByCountAndType(count, rt, topo)
-      }
-    }
-  }
-  if err != nil {
-    w.WriteHeader(http.StatusNotAcceptable)
-    writeJson(w, r, map[string]string{"error": err.Error()})
-  } else {
-    w.WriteHeader(http.StatusNotAcceptable)
-    writeJson(w, r, map[string]interface{}{"count": count})
-  }
+	count := 0
+	rt, err := storage.NewReplicationTypeFromString(r.FormValue("replication"))
+	if err == nil {
+		if count, err = strconv.Atoi(r.FormValue("count")); err == nil {
+			if topo.FreeSpace() < count*rt.GetCopyCount() {
+				err = errors.New("Only " + strconv.Itoa(topo.FreeSpace()) + " volumes left! Not enough for " + strconv.Itoa(count*rt.GetCopyCount()))
+			} else {
+				count, err = vg.GrowByCountAndType(count, rt, topo)
+			}
+		}
+	}
+	if err != nil {
+		w.WriteHeader(http.StatusNotAcceptable)
+		writeJson(w, r, map[string]string{"error": err.Error()})
+	} else {
+		w.WriteHeader(http.StatusNotAcceptable)
+		writeJson(w, r, map[string]interface{}{"count": count})
+	}
 }
 
 func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
@@ -153,24 +154,24 @@ func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
 			} else {
 				count, err = vg.GrowByCountAndType(count, rt, topo)
 			}
-		}else{
-		  err = errors.New("parameter count is not found")
+		} else {
+			err = errors.New("parameter count is not found")
 		}
 	}
 	if err != nil {
 		w.WriteHeader(http.StatusNotAcceptable)
-		writeJson(w, r, map[string]string{"error": "parameter replication "+err.Error()})
+		writeJson(w, r, map[string]string{"error": "parameter replication " + err.Error()})
 	} else {
-    w.WriteHeader(http.StatusNotAcceptable)
+		w.WriteHeader(http.StatusNotAcceptable)
 		writeJson(w, r, map[string]interface{}{"count": count})
 	}
 }
 
 func volumeStatusHandler(w http.ResponseWriter, r *http.Request) {
-  m := make(map[string]interface{})
-  m["Version"] = VERSION
-  m["Volumes"] = topo.ToVolumeMap()
-  writeJson(w, r, m)
+	m := make(map[string]interface{})
+	m["Version"] = VERSION
+	m["Volumes"] = topo.ToVolumeMap()
+	writeJson(w, r, m)
 }
 
 func runMaster(cmd *Command, args []string) bool {
@@ -186,9 +187,9 @@ func runMaster(cmd *Command, args []string) bool {
 	http.HandleFunc("/dir/join", dirJoinHandler)
 	http.HandleFunc("/dir/status", dirStatusHandler)
 	http.HandleFunc("/vol/grow", volumeGrowHandler)
-  http.HandleFunc("/vol/status", volumeStatusHandler)
+	http.HandleFunc("/vol/status", volumeStatusHandler)
 
-	topo.StartRefreshWritableVolumes()
+	topo.StartRefreshWritableVolumes(*garbageThreshold)
 
 	log.Println("Start Weed Master", VERSION, "at port", strconv.Itoa(*mport))
 	srv := &http.Server{

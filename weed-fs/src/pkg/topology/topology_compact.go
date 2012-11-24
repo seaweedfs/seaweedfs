@@ -10,12 +10,12 @@ import (
 	"time"
 )
 
-func batchVacuumVolumeCheck(vl *VolumeLayout, vid storage.VolumeId, locationlist *VolumeLocationList) bool {
+func batchVacuumVolumeCheck(vl *VolumeLayout, vid storage.VolumeId, locationlist *VolumeLocationList, garbageThreshold string) bool {
 	ch := make(chan bool, locationlist.Length())
 	for index, dn := range locationlist.list {
 		go func(index int, url string, vid storage.VolumeId) {
 			//fmt.Println(index, "Check vacuuming", vid, "on", dn.Url())
-			if e, ret := vacuumVolume_Check(url, vid); e != nil {
+			if e, ret := vacuumVolume_Check(url, vid, garbageThreshold); e != nil {
 				//fmt.Println(index, "Error when checking vacuuming", vid, "on", url, e)
 				ch <- false
 			} else {
@@ -78,11 +78,11 @@ func batchVacuumVolumeCommit(vl *VolumeLayout, vid storage.VolumeId, locationlis
 	}
 	return isCommitSuccess
 }
-func (t *Topology) Vacuum() int {
+func (t *Topology) Vacuum(garbageThreshold string) int {
 	for _, vl := range t.replicaType2VolumeLayout {
 		if vl != nil {
 			for vid, locationlist := range vl.vid2location {
-				if batchVacuumVolumeCheck(vl, vid, locationlist) {
+				if batchVacuumVolumeCheck(vl, vid, locationlist, garbageThreshold) {
 					if batchVacuumVolumeCompact(vl, vid, locationlist) {
 						batchVacuumVolumeCommit(vl, vid, locationlist)
 					}
@@ -98,10 +98,10 @@ type VacuumVolumeResult struct {
 	Error  string
 }
 
-func vacuumVolume_Check(urlLocation string, vid storage.VolumeId) (error, bool) {
+func vacuumVolume_Check(urlLocation string, vid storage.VolumeId, garbageThreshold string) (error, bool) {
 	values := make(url.Values)
 	values.Add("volume", vid.String())
-    values.Add("garbageThreshold", "0.3")
+    values.Add("garbageThreshold", garbageThreshold)
 	jsonBlob, err := util.Post("http://"+urlLocation+"/admin/vacuum_volume_check", values)
 	if err != nil {
 		return err, false
