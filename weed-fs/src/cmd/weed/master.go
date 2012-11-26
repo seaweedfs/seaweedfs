@@ -35,7 +35,7 @@ var (
 	mpulse            = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	confFile          = cmdMaster.Flag.String("conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
 	defaultRepType    = cmdMaster.Flag.String("defaultReplicationType", "000", "Default replication type if not specified.")
-	mReadTimeout      = cmdMaster.Flag.Int("readTimeout", 1, "connection read timeout in seconds")
+	mReadTimeout      = cmdMaster.Flag.Int("readTimeout", 3, "connection read timeout in seconds")
 	mMaxCpu           = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	garbageThreshold  = cmdMaster.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
 )
