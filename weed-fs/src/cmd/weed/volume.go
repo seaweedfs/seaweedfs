@@ -58,13 +58,13 @@ func assignVolumeHandler(w http.ResponseWriter, r *http.Request) {
 	debug("assign volume =", r.FormValue("volume"), ", replicationType =", r.FormValue("replicationType"), ", error =", err)
 }
 func vacuumVolumeCheckHandler(w http.ResponseWriter, r *http.Request) {
-    err, ret := store.CheckCompactVolume(r.FormValue("volume"), r.FormValue("garbageThreshold"))
-    if err == nil {
-        writeJson(w, r, map[string]interface{}{"error": "", "result": ret})
-    } else {
-        writeJson(w, r, map[string]interface{}{"error": err.Error(), "result": false})
-    }
-    debug("checked compacting volume =", r.FormValue("volume"), "garbageThreshold =", r.FormValue("garbageThreshold"), "vacuum =", ret)
+	err, ret := store.CheckCompactVolume(r.FormValue("volume"), r.FormValue("garbageThreshold"))
+	if err == nil {
+		writeJson(w, r, map[string]interface{}{"error": "", "result": ret})
+	} else {
+		writeJson(w, r, map[string]interface{}{"error": err.Error(), "result": false})
+	}
+	debug("checked compacting volume =", r.FormValue("volume"), "garbageThreshold =", r.FormValue("garbageThreshold"), "vacuum =", ret)
 }
 func vacuumVolumeCompactHandler(w http.ResponseWriter, r *http.Request) {
 	err := store.CompactVolume(r.FormValue("volume"))
@@ -157,9 +157,9 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 			errorStatus := ""
 			needToReplicate := !store.HasVolume(volumeId)
 			if ret > 0 {
-        needToReplicate = needToReplicate || store.GetVolume(volumeId).NeedToReplicate()
-			}else{
-        errorStatus = "Failed to write to local disk"
+				needToReplicate = needToReplicate || store.GetVolume(volumeId).NeedToReplicate()
+			} else {
+				errorStatus = "Failed to write to local disk"
 			}
 			if !needToReplicate && ret > 0 {
 				needToReplicate = store.GetVolume(volumeId).NeedToReplicate()
@@ -311,13 +311,24 @@ func runVolume(cmd *Command, args []string) bool {
 	http.HandleFunc("/", storeHandler)
 	http.HandleFunc("/status", statusHandler)
 	http.HandleFunc("/admin/assign_volume", assignVolumeHandler)
-    http.HandleFunc("/admin/vacuum_volume_check", vacuumVolumeCheckHandler)
+	http.HandleFunc("/admin/vacuum_volume_check", vacuumVolumeCheckHandler)
 	http.HandleFunc("/admin/vacuum_volume_compact", vacuumVolumeCompactHandler)
 	http.HandleFunc("/admin/vacuum_volume_commit", vacuumVolumeCommitHandler)
 
 	go func() {
+		connected := true
 		for {
-			store.Join(*masterNode)
+			err := store.Join(*masterNode)
+			if err == nil {
+				if !connected {
+					connected = true
+					log.Println("Reconnected with master")
+				}
+			} else {
+				if connected {
+					connected = false
+				}
+			}
 			time.Sleep(time.Duration(float32(*vpulse*1e3)*(1+rand.Float32())) * time.Millisecond)
 		}
 	}()

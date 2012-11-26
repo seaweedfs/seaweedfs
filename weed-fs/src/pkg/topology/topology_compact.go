@@ -104,6 +104,7 @@ func vacuumVolume_Check(urlLocation string, vid storage.VolumeId, garbageThresho
     values.Add("garbageThreshold", garbageThreshold)
 	jsonBlob, err := util.Post("http://"+urlLocation+"/admin/vacuum_volume_check", values)
 	if err != nil {
+	    fmt.Println("parameters:",values)
 		return err, false
 	}
 	var ret VacuumVolumeResult
