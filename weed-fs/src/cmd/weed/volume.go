@@ -317,8 +317,9 @@ func runVolume(cmd *Command, args []string) bool {
 
 	go func() {
 		connected := true
+		store.SetMaster(*masterNode)
 		for {
-			err := store.Join(*masterNode)
+			err := store.Join()
 			if err == nil {
 				if !connected {
 					connected = true

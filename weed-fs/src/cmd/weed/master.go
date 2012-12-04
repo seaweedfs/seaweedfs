@@ -114,6 +114,9 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal([]byte(r.FormValue("volumes")), volumes)
 	debug(s, "volumes", r.FormValue("volumes"))
 	topo.RegisterVolumes(*volumes, ip, port, publicUrl, maxVolumeCount)
+    m := make(map[string]interface{})
+    m["VolumeSizeLimit"] = uint64(*volumeSizeLimitMB)*1024*1024
+    writeJson(w, r, m)
 }
 
 func dirStatusHandler(w http.ResponseWriter, r *http.Request) {

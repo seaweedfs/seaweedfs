@@ -132,7 +132,7 @@ func (v *Volume) read(n *Needle) (int, error) {
 }
 
 func (v *Volume) garbageLevel() float64 {
-    return float64(v.nm.deletionByteCounter)/float64(v.Size())
+    return float64(v.nm.deletionByteCounter)/float64(v.ContentSize())
 }
 
 func (v *Volume) compact() error {
@@ -211,4 +211,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) 
 	}
 
 	return nil
+}
+func (v *Volume) ContentSize() uint64{
+    return v.nm.fileByteCounter
 }

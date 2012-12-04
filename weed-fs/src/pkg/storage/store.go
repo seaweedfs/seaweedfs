@@ -18,6 +18,10 @@ type Store struct {
 	Ip             string
 	PublicUrl      string
 	MaxVolumeCount int
+
+	//read from the master
+	masterNode      string
+	volumeSizeLimit uint64
 }
 
 func NewStore(port int, ip, publicUrl, dirname string, maxVolumeCount int) (s *Store) {
@@ -70,15 +74,15 @@ func (s *Store) addVolume(vid VolumeId, replicationType ReplicationType) error {
 }
 
 func (s *Store) CheckCompactVolume(volumeIdString string, garbageThresholdString string) (error, bool) {
-    vid, err := NewVolumeId(volumeIdString)
-    if err != nil {
-        return errors.New("Volume Id " + volumeIdString + " is not a valid unsigned integer!"), false
-    }
-    garbageThreshold, e := strconv.ParseFloat(garbageThresholdString, 32)
-    if e != nil {
-        return errors.New("garbageThreshold " + garbageThresholdString + " is not a valid float number!"), false
-    }
-    return nil, garbageThreshold < s.volumes[vid].garbageLevel()
+	vid, err := NewVolumeId(volumeIdString)
+	if err != nil {
+		return errors.New("Volume Id " + volumeIdString + " is not a valid unsigned integer!"), false
+	}
+	garbageThreshold, e := strconv.ParseFloat(garbageThresholdString, 32)
+	if e != nil {
+		return errors.New("garbageThreshold " + garbageThresholdString + " is not a valid float number!"), false
+	}
+	return nil, garbageThreshold < s.volumes[vid].garbageLevel()
 }
 func (s *Store) CompactVolume(volumeIdString string) error {
 	vid, err := NewVolumeId(volumeIdString)
@@ -87,12 +91,12 @@ func (s *Store) CompactVolume(volumeIdString string) error {
 	}
 	return s.volumes[vid].compact()
 }
-func (s *Store) CommitCompactVolume(volumeIdString string) (error) {
-  vid, err := NewVolumeId(volumeIdString)
-  if err != nil {
-    return errors.New("Volume Id " + volumeIdString + " is not a valid unsigned integer!")
-  }
-  return s.volumes[vid].commitCompact()
+func (s *Store) CommitCompactVolume(volumeIdString string) error {
+	vid, err := NewVolumeId(volumeIdString)
+	if err != nil {
+		return errors.New("Volume Id " + volumeIdString + " is not a valid unsigned integer!")
+	}
+	return s.volumes[vid].commitCompact()
 }
 func (s *Store) loadExistingVolumes() {
 	if dirs, err := ioutil.ReadDir(s.dir); err == nil {
@@ -115,16 +119,24 @@ func (s *Store) Status() []*VolumeInfo {
 	var stats []*VolumeInfo
 	for k, v := range s.volumes {
 		s := new(VolumeInfo)
-		s.Id, s.Size, s.RepType, s.FileCount, s.DeleteCount, s.DeletedByteCount = VolumeId(k), v.Size(), v.replicaType, v.nm.fileCounter, v.nm.deletionCounter, v.nm.deletionByteCounter
+		s.Id, s.Size, s.RepType, s.FileCount, s.DeleteCount, s.DeletedByteCount = VolumeId(k), v.ContentSize(), v.replicaType, v.nm.fileCounter, v.nm.deletionCounter, v.nm.deletionByteCounter
 		stats = append(stats, s)
 	}
 	return stats
 }
-func (s *Store) Join(mserver string) error {
+
+type JoinResult struct {
+	VolumeSizeLimit uint64
+}
+
+func (s *Store) SetMaster(mserver string) {
+    s.masterNode = mserver
+}
+func (s *Store) Join() error {
 	stats := new([]*VolumeInfo)
 	for k, v := range s.volumes {
 		s := new(VolumeInfo)
-		s.Id, s.Size, s.RepType, s.FileCount, s.DeleteCount, s.DeletedByteCount = VolumeId(k), v.Size(), v.replicaType, v.nm.fileCounter, v.nm.deletionCounter, v.nm.deletionByteCounter
+		s.Id, s.Size, s.RepType, s.FileCount, s.DeleteCount, s.DeletedByteCount = VolumeId(k), uint64(v.Size()), v.replicaType, v.nm.fileCounter, v.nm.deletionCounter, v.nm.deletionByteCounter
 		*stats = append(*stats, s)
 	}
 	bytes, _ := json.Marshal(stats)
@@ -134,8 +146,16 @@ func (s *Store) Join(mserver string) error {
 	values.Add("publicUrl", s.PublicUrl)
 	values.Add("volumes", string(bytes))
 	values.Add("maxVolumeCount", strconv.Itoa(s.MaxVolumeCount))
-	_, err := util.Post("http://"+mserver+"/dir/join", values)
-	return err
+	jsonBlob, err := util.Post("http://"+s.masterNode+"/dir/join", values)
+	if err != nil {
+		return err
+	}
+	var ret JoinResult
+	if err := json.Unmarshal(jsonBlob, &ret); err != nil {
+		return err
+	}
+	s.volumeSizeLimit = ret.VolumeSizeLimit
+	return nil
 }
 func (s *Store) Close() {
 	for _, v := range s.volumes {
@@ -144,9 +164,13 @@ func (s *Store) Close() {
 }
 func (s *Store) Write(i VolumeId, n *Needle) uint32 {
 	if v := s.volumes[i]; v != nil {
-		return v.write(n)
+		size := v.write(n)
+		if s.volumeSizeLimit < v.ContentSize()+uint64(size) {
+			s.Join()
+		}
+		return size
 	}
-  log.Println("volume",i, "not found!")
+	log.Println("volume", i, "not found!")
 	return 0
 }
 func (s *Store) Delete(i VolumeId, n *Needle) uint32 {

@@ -15,7 +15,8 @@ type NeedleMap struct {
 
 	deletionCounter     int
 	fileCounter         int
-	deletionByteCounter uint32
+	deletionByteCounter uint64
+	fileByteCounter     uint64
 }
 
 func NewNeedleMap(file *os.File) *NeedleMap {
@@ -44,19 +45,20 @@ func LoadNeedleMap(file *os.File) *NeedleMap {
 			key := util.BytesToUint64(bytes[i : i+8])
 			offset := util.BytesToUint32(bytes[i+8 : i+12])
 			size := util.BytesToUint32(bytes[i+12 : i+16])
+			nm.fileCounter++
+			nm.fileByteCounter = nm.fileByteCounter + uint64(size)
 			if offset > 0 {
 				oldSize := nm.m.Set(Key(key), offset, size)
 				//log.Println("reading key", key, "offset", offset, "size", size, "oldSize", oldSize)
-				nm.fileCounter++
 				if oldSize > 0 {
 					nm.deletionCounter++
-					nm.deletionByteCounter = nm.deletionByteCounter + oldSize
+					nm.deletionByteCounter = nm.deletionByteCounter + uint64(oldSize)
 				}
 			} else {
 				nm.m.Delete(Key(key))
 				//log.Println("removing key", key)
 				nm.deletionCounter++
-				nm.deletionByteCounter = nm.deletionByteCounter + size
+				nm.deletionByteCounter = nm.deletionByteCounter + uint64(size)
 			}
 		}
 
@@ -71,9 +73,10 @@ func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) (int, error) {
 	util.Uint32toBytes(nm.bytes[8:12], offset)
 	util.Uint32toBytes(nm.bytes[12:16], size)
 	nm.fileCounter++
+	nm.fileByteCounter = nm.fileByteCounter + uint64(size)
 	if oldSize > 0 {
 		nm.deletionCounter++
-		nm.deletionByteCounter = nm.deletionByteCounter + oldSize
+		nm.deletionByteCounter = nm.deletionByteCounter + uint64(oldSize)
 	}
 	return nm.indexFile.Write(nm.bytes)
 }
@@ -82,7 +85,7 @@ func (nm *NeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
 	return
 }
 func (nm *NeedleMap) Delete(key uint64) {
-	nm.deletionByteCounter = nm.deletionByteCounter + nm.m.Delete(Key(key))
+	nm.deletionByteCounter = nm.deletionByteCounter + uint64(nm.m.Delete(Key(key)))
 	util.Uint64toBytes(nm.bytes[0:8], key)
 	util.Uint32toBytes(nm.bytes[8:12], 0)
 	util.Uint32toBytes(nm.bytes[12:16], 0)
@@ -91,4 +94,7 @@ func (nm *NeedleMap) Delete(key uint64) {
 }
 func (nm *NeedleMap) Close() {
 	nm.indexFile.Close()
+}
+func (nm *NeedleMap) ContentSize() uint64 {
+	return nm.fileByteCounter
 }
