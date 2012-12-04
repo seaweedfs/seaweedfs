@@ -13,7 +13,7 @@ type DataNode struct {
 	Port      int
 	PublicUrl string
 	LastSeen  int64 // unix time in seconds
-	Dead    bool
+	Dead      bool
 }
 
 func NewDataNode(id string) *DataNode {
@@ -21,12 +21,13 @@ func NewDataNode(id string) *DataNode {
 	s.id = NodeId(id)
 	s.nodeType = "DataNode"
 	s.volumes = make(map[storage.VolumeId]storage.VolumeInfo)
-  s.NodeImpl.value = s
+	s.NodeImpl.value = s
 	return s
 }
 func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) {
 	if _, ok := dn.volumes[v.Id]; !ok {
 		dn.volumes[v.Id] = v
+		dn.UpAdjustVolumeCountDelta(1)
 		dn.UpAdjustActiveVolumeCountDelta(1)
 		dn.UpAdjustMaxVolumeId(v.Id)
 	} else {
@@ -45,13 +46,13 @@ func (dn *DataNode) MatchLocation(ip string, port int) bool {
 	return dn.Ip == ip && dn.Port == port
 }
 func (dn *DataNode) Url() string {
-  return dn.Ip + ":" + strconv.Itoa(dn.Port)
+	return dn.Ip + ":" + strconv.Itoa(dn.Port)
 }
 
 func (dn *DataNode) ToMap() interface{} {
 	ret := make(map[string]interface{})
 	ret["Url"] = dn.Url()
-	ret["Volumes"] = dn.GetActiveVolumeCount()
+	ret["Volumes"] = dn.GetVolumeCount()
 	ret["Max"] = dn.GetMaxVolumeCount()
 	ret["Free"] = dn.FreeSpace()
 	ret["PublicUrl"] = dn.PublicUrl

@@ -12,9 +12,11 @@ type Node interface {
 	FreeSpace() int
 	ReserveOneVolume(r int, vid storage.VolumeId) (bool, *DataNode)
 	UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int)
+	UpAdjustVolumeCountDelta(volumeCountDelta int)
 	UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int)
 	UpAdjustMaxVolumeId(vid storage.VolumeId)
 
+	GetVolumeCount() int
 	GetActiveVolumeCount() int
 	GetMaxVolumeCount() int
 	GetMaxVolumeId() storage.VolumeId
@@ -31,6 +33,7 @@ type Node interface {
 }
 type NodeImpl struct {
 	id                NodeId
+	volumeCount       int
 	activeVolumeCount int
 	maxVolumeCount    int
 	parent            Node
@@ -61,7 +64,7 @@ func (n *NodeImpl) Id() NodeId {
 	return n.id
 }
 func (n *NodeImpl) FreeSpace() int {
-	return n.maxVolumeCount - n.activeVolumeCount
+	return n.maxVolumeCount - n.volumeCount
 }
 func (n *NodeImpl) SetParent(node Node) {
 	n.parent = node
@@ -106,6 +109,12 @@ func (n *NodeImpl) UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int) { //can 
 		n.parent.UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta)
 	}
 }
+func (n *NodeImpl) UpAdjustVolumeCountDelta(volumeCountDelta int) { //can be negative
+	n.volumeCount += volumeCountDelta
+	if n.parent != nil {
+		n.parent.UpAdjustVolumeCountDelta(volumeCountDelta)
+	}
+}
 func (n *NodeImpl) UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int) { //can be negative
 	n.activeVolumeCount += activeVolumeCountDelta
 	if n.parent != nil {
@@ -123,6 +132,9 @@ func (n *NodeImpl) UpAdjustMaxVolumeId(vid storage.VolumeId) { //can be negative
 func (n *NodeImpl) GetMaxVolumeId() storage.VolumeId {
 	return n.maxVolumeId
 }
+func (n *NodeImpl) GetVolumeCount() int {
+	return n.volumeCount
+}
 func (n *NodeImpl) GetActiveVolumeCount() int {
 	return n.activeVolumeCount
 }
@@ -135,6 +147,7 @@ func (n *NodeImpl) LinkChildNode(node Node) {
 		n.children[node.Id()] = node
 		n.UpAdjustMaxVolumeCountDelta(node.GetMaxVolumeCount())
 		n.UpAdjustMaxVolumeId(node.GetMaxVolumeId())
+		n.UpAdjustVolumeCountDelta(node.GetVolumeCount())
 		n.UpAdjustActiveVolumeCountDelta(node.GetActiveVolumeCount())
 		node.SetParent(n)
 		fmt.Println(n, "adds child", node.Id())
@@ -146,6 +159,7 @@ func (n *NodeImpl) UnlinkChildNode(nodeId NodeId) {
 	node.SetParent(nil)
 	if node != nil {
 		delete(n.children, node.Id())
+		n.UpAdjustVolumeCountDelta(-node.GetVolumeCount())
 		n.UpAdjustActiveVolumeCountDelta(-node.GetActiveVolumeCount())
 		n.UpAdjustMaxVolumeCountDelta(-node.GetMaxVolumeCount())
 		fmt.Println(n, "removes", node, "volumeCount =", n.activeVolumeCount)
@@ -164,7 +178,7 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 			}
 			for _, v := range dn.volumes {
 				if uint64(v.Size) >= volumeSizeLimit {
-				    //fmt.Println("volume",v.Id,"size",v.Size,">",volumeSizeLimit)
+					//fmt.Println("volume",v.Id,"size",v.Size,">",volumeSizeLimit)
 					n.GetTopology().chanFullVolumes <- v
 				}
 			}
