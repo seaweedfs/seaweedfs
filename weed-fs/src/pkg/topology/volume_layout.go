@@ -38,8 +38,8 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	}
 }
 
-func (vl *VolumeLayout) Lookup(vid storage.VolumeId) (*[]*DataNode) {
-  return &vl.vid2location[vid].list
+func (vl *VolumeLayout) Lookup(vid storage.VolumeId) *[]*DataNode {
+	return &vl.vid2location[vid].list
 }
 
 func (vl *VolumeLayout) PickForWrite(count int) (*storage.VolumeId, int, *VolumeLocationList, error) {
@@ -63,6 +63,7 @@ func (vl *VolumeLayout) GetActiveVolumeCount() int {
 func (vl *VolumeLayout) removeFromWritable(vid storage.VolumeId) bool {
 	for i, v := range vl.writables {
 		if v == vid {
+			fmt.Println("Volume", vid, "becomes unwritable")
 			vl.writables = append(vl.writables[:i], vl.writables[i+1:]...)
 			return true
 		}
@@ -75,6 +76,7 @@ func (vl *VolumeLayout) setVolumeWritable(vid storage.VolumeId) bool {
 			return false
 		}
 	}
+	fmt.Println("Volume", vid, "becomes writable")
 	vl.writables = append(vl.writables, vid)
 	return true
 }
@@ -91,7 +93,6 @@ func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid storage.VolumeId)
 func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid storage.VolumeId) bool {
 	if vl.vid2location[vid].Add(dn) {
 		if vl.vid2location[vid].Length() >= vl.repType.GetCopyCount() {
-			fmt.Println("Volume", vid, "becomes writable")
 			return vl.setVolumeWritable(vid)
 		}
 	}

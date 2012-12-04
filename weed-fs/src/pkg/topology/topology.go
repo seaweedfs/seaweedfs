@@ -23,7 +23,7 @@ type Topology struct {
 
 	chanDeadDataNodes      chan *DataNode
 	chanRecoveredDataNodes chan *DataNode
-	chanFullVolumes        chan *storage.VolumeInfo
+	chanFullVolumes        chan storage.VolumeInfo
 
 	configuration *Configuration
 }
@@ -42,7 +42,7 @@ func NewTopology(id string, confFile string, dirname string, sequenceFilename st
 
 	t.chanDeadDataNodes = make(chan *DataNode)
 	t.chanRecoveredDataNodes = make(chan *DataNode)
-	t.chanFullVolumes = make(chan *storage.VolumeInfo)
+	t.chanFullVolumes = make(chan storage.VolumeInfo)
 
 	t.loadConfiguration(confFile)
 

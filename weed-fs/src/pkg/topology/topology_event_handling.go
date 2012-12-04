@@ -26,7 +26,6 @@ func (t *Topology) StartRefreshWritableVolumes(garbageThreshold string) {
 			select {
 			case v := <-t.chanFullVolumes:
 				t.SetVolumeCapacityFull(v)
-				fmt.Println("Volume", v, "is full!")
 			case dn := <-t.chanRecoveredDataNodes:
 				t.RegisterRecoveredDataNode(dn)
 				fmt.Println("DataNode", dn, "is back alive!")
@@ -37,12 +36,15 @@ func (t *Topology) StartRefreshWritableVolumes(garbageThreshold string) {
 		}
 	}()
 }
-func (t *Topology) SetVolumeCapacityFull(volumeInfo *storage.VolumeInfo) {
+func (t *Topology) SetVolumeCapacityFull(volumeInfo storage.VolumeInfo) bool {
 	vl := t.GetVolumeLayout(volumeInfo.RepType)
-	vl.SetVolumeCapacityFull(volumeInfo.Id)
+	if !vl.SetVolumeCapacityFull(volumeInfo.Id) {
+		return false
+	}
 	for _, dn := range vl.vid2location[volumeInfo.Id].list {
 		dn.UpAdjustActiveVolumeCountDelta(-1)
 	}
+	return true
 }
 func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 	for _, v := range dn.volumes {
