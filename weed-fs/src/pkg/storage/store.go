@@ -130,7 +130,7 @@ type JoinResult struct {
 }
 
 func (s *Store) SetMaster(mserver string) {
-    s.masterNode = mserver
+	s.masterNode = mserver
 }
 func (s *Store) Join() error {
 	stats := new([]*VolumeInfo)
@@ -165,7 +165,8 @@ func (s *Store) Close() {
 func (s *Store) Write(i VolumeId, n *Needle) uint32 {
 	if v := s.volumes[i]; v != nil {
 		size := v.write(n)
-		if s.volumeSizeLimit < v.ContentSize()+uint64(size) {
+		if s.volumeSizeLimit < v.ContentSize()+uint64(size) && s.volumeSizeLimit >= v.ContentSize() {
+			log.Println("volume", i, "size is", v.ContentSize(), "close to", s.volumeSizeLimit)
 			s.Join()
 		}
 		return size
