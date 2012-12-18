@@ -31,11 +31,15 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	}
 	if vl.vid2location[v.Id].Add(dn) {
 		if len(vl.vid2location[v.Id].list) == v.RepType.GetCopyCount() {
-			if uint64(v.Size) < vl.volumeSizeLimit {
+			if vl.isWritable(v) {
 				vl.writables = append(vl.writables, v.Id)
 			}
 		}
 	}
+}
+
+func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool{
+    return uint64(v.Size) < vl.volumeSizeLimit && v.Version == storage.CurrentVersion
 }
 
 func (vl *VolumeLayout) Lookup(vid storage.VolumeId) *[]*DataNode {

@@ -59,8 +59,8 @@ func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 }
 func (t *Topology) RegisterRecoveredDataNode(dn *DataNode) {
 	for _, v := range dn.volumes {
-		if uint64(v.Size) < t.volumeSizeLimit {
-			vl := t.GetVolumeLayout(v.RepType)
+        vl := t.GetVolumeLayout(v.RepType)
+		if vl.isWritable(&v) {
 			vl.SetVolumeAvailable(dn, v.Id)
 		}
 	}
