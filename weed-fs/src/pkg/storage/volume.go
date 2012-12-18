@@ -53,6 +53,9 @@ func (v *Volume) load() error {
 	v.nm = LoadNeedleMap(indexFile)
 	return nil
 }
+func (v *Volume) Version() Version {
+    return CurrentVersion
+}
 func (v *Volume) Size() int64 {
     v.accessLock.Lock()
     defer v.accessLock.Unlock()
@@ -72,8 +75,9 @@ func (v *Volume) Close() {
 func (v *Volume) maybeWriteSuperBlock() {
 	stat, _ := v.dataFile.Stat()
 	if stat.Size() == 0 {
+        v.version = CurrentVersion
 		header := make([]byte, SuperBlockSize)
-		header[0] = byte(CurrentVersion)
+		header[0] = byte(v.version)
 		header[1] = v.replicaType.Byte()
 		v.dataFile.Write(header)
 	}

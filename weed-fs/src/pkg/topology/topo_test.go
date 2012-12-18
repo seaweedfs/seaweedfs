@@ -94,7 +94,7 @@ func setup(topologyLayout string) *Topology {
 				rack.LinkChildNode(server)
 				for _, v := range serverMap["volumes"].([]interface{}) {
 					m := v.(map[string]interface{})
-					vi := storage.VolumeInfo{Id: storage.VolumeId(int64(m["id"].(float64))), Size: int64(m["size"].(float64))}
+					vi := storage.VolumeInfo{Id: storage.VolumeId(int64(m["id"].(float64))), Size: int64(m["size"].(float64)), Version:storage.CurrentVersion}
 					server.AddOrUpdateVolume(vi)
 				}
 				server.UpAdjustMaxVolumeCountDelta(int(serverMap["limit"].(float64)))
