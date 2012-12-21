@@ -18,8 +18,8 @@ type Volume struct {
 	dataFile *os.File
 	nm       *NeedleMap
 
-	replicaType ReplicationType
 	version     Version
+	replicaType ReplicationType
 
 	accessLock sync.Mutex
 }
@@ -51,11 +51,11 @@ func (v *Volume) load() error {
 	return nil
 }
 func (v *Volume) Version() Version {
-    return CurrentVersion
+	return CurrentVersion
 }
 func (v *Volume) Size() int64 {
-    v.accessLock.Lock()
-    defer v.accessLock.Unlock()
+	v.accessLock.Lock()
+	defer v.accessLock.Unlock()
 	stat, e := v.dataFile.Stat()
 	if e == nil {
 		return stat.Size()
@@ -64,15 +64,15 @@ func (v *Volume) Size() int64 {
 	return -1
 }
 func (v *Volume) Close() {
-    v.accessLock.Lock()
-    defer v.accessLock.Unlock()
+	v.accessLock.Lock()
+	defer v.accessLock.Unlock()
 	v.nm.Close()
 	v.dataFile.Close()
 }
 func (v *Volume) maybeWriteSuperBlock() {
 	stat, _ := v.dataFile.Stat()
 	if stat.Size() == 0 {
-        v.version = CurrentVersion
+		v.version = CurrentVersion
 		header := make([]byte, SuperBlockSize)
 		header[0] = byte(v.version)
 		header[1] = v.replicaType.Byte()
@@ -85,12 +85,17 @@ func (v *Volume) readSuperBlock() error {
 	if _, e := v.dataFile.Read(header); e != nil {
 		return fmt.Errorf("cannot read superblock: %s", e)
 	}
-	v.version = Version(header[0])
 	var err error
-	if v.replicaType, err = NewReplicationTypeFromByte(header[1]); err != nil {
-		return fmt.Errorf("cannot read replica type: %s", err)
+	v.version, v.replicaType, err = ParseSuperBlock(header)
+	return err
+}
+func ParseSuperBlock(header []byte) (version Version, replicaType ReplicationType, e error) {
+	version = Version(header[0])
+	var err error
+	if replicaType, err = NewReplicationTypeFromByte(header[1]); err != nil {
+		e = fmt.Errorf("cannot read replica type: %s", err)
 	}
-	return nil
+	return
 }
 func (v *Volume) NeedToReplicate() bool {
 	return v.replicaType.GetCopyCount() > 1
@@ -133,7 +138,7 @@ func (v *Volume) read(n *Needle) (int, error) {
 }
 
 func (v *Volume) garbageLevel() float64 {
-    return float64(v.nm.deletionByteCounter)/float64(v.ContentSize())
+	return float64(v.nm.deletionByteCounter) / float64(v.ContentSize())
 }
 
 func (v *Volume) compact() error {
@@ -143,7 +148,7 @@ func (v *Volume) compact() error {
 	filePath := path.Join(v.dir, v.Id.String())
 	return v.copyDataAndGenerateIndexFile(filePath+".dat", filePath+".cpd", filePath+".cpx")
 }
-func (v *Volume) commitCompact() (error) {
+func (v *Volume) commitCompact() error {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
 	v.dataFile.Close()
@@ -185,7 +190,9 @@ func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) 
 		dst.Write(header)
 	}
 
-	n, rest := ReadNeedle(src)
+	version, _, _ := ParseSuperBlock(header)
+
+	n, rest := ReadNeedle(src, version)
 	nm := NewNeedleMap(idx)
 	old_offset := uint32(SuperBlockSize)
 	new_offset := uint32(SuperBlockSize)
@@ -208,11 +215,11 @@ func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) 
 			src.Seek(int64(rest-n.Size-4), 1)
 		}
 		old_offset += rest + 16
-		n, rest = ReadNeedle(src)
+		n, rest = ReadNeedle(src, version)
 	}
 
 	return nil
 }
-func (v *Volume) ContentSize() uint64{
-    return v.nm.fileByteCounter
+func (v *Volume) ContentSize() uint64 {
+	return v.nm.fileByteCounter
 }
