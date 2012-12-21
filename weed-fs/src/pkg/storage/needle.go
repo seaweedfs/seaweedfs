@@ -20,13 +20,15 @@ type Needle struct {
 	Cookie   uint32 "random number to mitigate brute force lookups"
 	Id       uint64 "needle id"
 	Size     uint32 "sum of DataSize,Data,NameSize,Name,MimeSize,Mime"
-	Flags    byte   "boolean flags" //version2
-	DataSize uint32 "Data size"     //version2
+
+	DataSize uint32 "Data size" //version2
 	Data     []byte "The actual file data"
+	Flags    byte   "boolean flags" //version2
 	NameSize uint8  //version2
 	Name     []byte "maximum 256 characters" //version2
 	MimeSize uint8  //version2
 	Mime     []byte "maximum 256 characters" //version2
+
 	Checksum CRC    "CRC32 to check integrity"
 	Padding  []byte "Aligned to 8 bytes"
 }

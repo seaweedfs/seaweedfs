@@ -51,7 +51,7 @@ func (v *Volume) load() error {
 	return nil
 }
 func (v *Volume) Version() Version {
-	return CurrentVersion
+	return v.version
 }
 func (v *Volume) Size() int64 {
 	v.accessLock.Lock()

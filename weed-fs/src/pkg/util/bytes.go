@@ -28,4 +28,7 @@ func Uint32toBytes(b []byte, v uint32){
     b[3-i] = byte(v>>(i*8))
   }
 }
+func Uint8toBytes(b []byte, v uint8){
+  b[0] = byte(v)
+}
 
