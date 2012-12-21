@@ -8,11 +8,8 @@ import (
 	"sync"
 )
 
-type Version uint8
-
 const (
 	SuperBlockSize = 8
-	CurrentVersion = Version(1)
 )
 
 type Volume struct {
