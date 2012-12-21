@@ -30,7 +30,7 @@ func (n *Needle) Append(w io.Writer, version Version) uint32 {
 			if n.NameSize > 0 {
 				n.Size = n.Size + 1 + uint32(n.NameSize)
 			}
-			if n.NameSize > 0 {
+			if n.MimeSize > 0 {
 				n.Size = n.Size + 1 + uint32(n.MimeSize)
 			}
 		}
