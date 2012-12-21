@@ -105,7 +105,7 @@ func (v *Volume) write(n *Needle) uint32 {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
 	offset, _ := v.dataFile.Seek(0, 2)
-	ret := n.Append(v.dataFile)
+	ret := n.Append(v.dataFile, v.version)
 	nv, ok := v.nm.Get(n.Id)
 	if !ok || int64(nv.Offset)*8 < offset {
 		v.nm.Put(n.Id, uint32(offset/8), n.Size)
@@ -119,8 +119,8 @@ func (v *Volume) delete(n *Needle) uint32 {
 	//log.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
 	if ok {
 		v.nm.Delete(n.Id)
-		v.dataFile.Seek(int64(nv.Offset*8), 0)
-		n.Append(v.dataFile)
+		v.dataFile.Seek(int64(nv.Offset*NeedlePaddingSize), 0)
+		n.Append(v.dataFile, v.version)
 		return nv.Size
 	}
 	return 0
@@ -131,7 +131,7 @@ func (v *Volume) read(n *Needle) (int, error) {
 	defer v.accessLock.Unlock()
 	nv, ok := v.nm.Get(n.Id)
 	if ok && nv.Offset > 0 {
-		v.dataFile.Seek(int64(nv.Offset)*8, 0)
+		v.dataFile.Seek(int64(nv.Offset)*NeedlePaddingSize, 0)
 		return n.Read(v.dataFile, nv.Size, v.version)
 	}
 	return -1, errors.New("Not Found")
@@ -192,30 +192,28 @@ func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) 
 
 	version, _, _ := ParseSuperBlock(header)
 
-	n, rest := ReadNeedle(src, version)
+	n, rest := ReadNeedleHeader(src, version)
 	nm := NewNeedleMap(idx)
 	old_offset := uint32(SuperBlockSize)
 	new_offset := uint32(SuperBlockSize)
 	for n != nil {
 		nv, ok := v.nm.Get(n.Id)
 		//log.Println("file size is", n.Size, "rest", rest)
-		if !ok || nv.Offset*8 != old_offset {
+		if !ok || nv.Offset*NeedlePaddingSize != old_offset {
 			src.Seek(int64(rest), 1)
 		} else {
 			if nv.Size > 0 {
-				nm.Put(n.Id, new_offset/8, n.Size)
-				bytes := make([]byte, n.Size+4)
-				src.Read(bytes)
-				n.Data = bytes[:n.Size]
-				n.Checksum = NewCRC(n.Data)
-				n.Append(dst)
-				new_offset += rest + 16
+				nm.Put(n.Id, new_offset/NeedlePaddingSize, n.Size)
+				n.ReadNeedleBody(src, version, rest)
+				n.Append(dst, v.version)
+				new_offset += rest + NeedleHeaderSize
 				//log.Println("saving key", n.Id, "volume offset", old_offset, "=>", new_offset, "data_size", n.Size, "rest", rest)
+			} else {
+				src.Seek(int64(rest), 1)
 			}
-			src.Seek(int64(rest-n.Size-4), 1)
 		}
-		old_offset += rest + 16
-		n, rest = ReadNeedle(src, version)
+		old_offset += rest + NeedleHeaderSize
+		n, rest = ReadNeedleHeader(src, version)
 	}
 
 	return nil

@@ -11,16 +11,22 @@ import (
 	"strings"
 )
 
+const (
+	NeedleHeaderSize  = 16 //should never change this
+	NeedlePaddingSize = 8
+)
+
 type Needle struct {
-	Cookie uint32 "random number to mitigate brute force lookups"
-	Id     uint64 "needle id"
-	Size   uint32 "sum of DataSize,Data,NameSize,Name,MimeSize,Mime"
-	//	DataSize uint32 "Data size"
-	Data []byte "The actual file data"
-	//	NameSize uint16
-	//	Name     []byte "maximum 256 characters"
-	//	MimeSize uint16
-	//	Mime     []byte "maximum 256 characters"
+	Cookie   uint32 "random number to mitigate brute force lookups"
+	Id       uint64 "needle id"
+	Size     uint32 "sum of DataSize,Data,NameSize,Name,MimeSize,Mime"
+	Flags    byte   "boolean flags" //version2
+	DataSize uint32 "Data size"     //version2
+	Data     []byte "The actual file data"
+	NameSize uint8  //version2
+	Name     []byte "maximum 256 characters" //version2
+	MimeSize uint8  //version2
+	Mime     []byte "maximum 256 characters" //version2
 	Checksum CRC    "CRC32 to check integrity"
 	Padding  []byte "Aligned to 8 bytes"
 }
@@ -87,13 +93,13 @@ func (n *Needle) ParsePath(fid string) {
 	}
 }
 func ParseKeyHash(key_hash_string string) (uint64, uint32) {
-    key_hash_bytes, khe := hex.DecodeString(key_hash_string)
-    key_hash_len := len(key_hash_bytes)
-    if khe != nil || key_hash_len <= 4 {
-        println("Invalid key_hash", key_hash_string, "length:", key_hash_len, "error", khe)
-        return 0, 0
-    }
-    key := util.BytesToUint64(key_hash_bytes[0 : key_hash_len-4])
-    hash := util.BytesToUint32(key_hash_bytes[key_hash_len-4 : key_hash_len])
-    return key, hash
+	key_hash_bytes, khe := hex.DecodeString(key_hash_string)
+	key_hash_len := len(key_hash_bytes)
+	if khe != nil || key_hash_len <= 4 {
+		println("Invalid key_hash", key_hash_string, "length:", key_hash_len, "error", khe)
+		return 0, 0
+	}
+	key := util.BytesToUint64(key_hash_bytes[0 : key_hash_len-4])
+	hash := util.BytesToUint32(key_hash_bytes[key_hash_len-4 : key_hash_len])
+	return key, hash
 }

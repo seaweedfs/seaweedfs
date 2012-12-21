@@ -52,7 +52,7 @@ func runFix(cmd *Command, args []string) bool {
 
 	ver, _, _ := storage.ParseSuperBlock(header)
 
-	n, rest := storage.ReadNeedle(dataFile, ver)
+	n, rest := storage.ReadNeedleHeader(dataFile, ver)
 	dataFile.Seek(int64(rest), 1)
 	nm := storage.NewNeedleMap(indexFile)
 	offset := uint32(storage.SuperBlockSize)
@@ -63,7 +63,7 @@ func runFix(cmd *Command, args []string) bool {
 			debug("saved", count, "with error", pe)
 		}
 		offset += rest + 16
-		n, rest = storage.ReadNeedle(dataFile, ver)
+		n, rest = storage.ReadNeedleHeader(dataFile, ver)
 		dataFile.Seek(int64(rest), 1)
 	}
 	return true
