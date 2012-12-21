@@ -19,7 +19,7 @@ func (n *Needle) Append(w io.Writer, version Version) uint32 {
 		rest := NeedlePaddingSize - ((NeedleHeaderSize + n.Size + 4) % NeedlePaddingSize)
 		util.Uint32toBytes(header[0:4], n.Checksum.Value())
 		w.Write(header[0 : 4+rest])
-        return n.Size
+		return n.Size
 	} else if version == Version2 {
 		header := make([]byte, NeedleHeaderSize)
 		util.Uint32toBytes(header[0:4], n.Cookie)
@@ -56,7 +56,7 @@ func (n *Needle) Append(w io.Writer, version Version) uint32 {
 		rest := NeedlePaddingSize - ((NeedleHeaderSize + n.Size + 4) % NeedlePaddingSize)
 		util.Uint32toBytes(header[0:4], n.Checksum.Value())
 		w.Write(header[0 : 4+rest])
-        return n.DataSize
+		return n.DataSize
 	}
 	return n.Size
 }
@@ -90,20 +90,22 @@ func (n *Needle) readNeedleHeader(bytes []byte) {
 	n.Size = util.BytesToUint32(bytes[12:NeedleHeaderSize])
 }
 func (n *Needle) readNeedleDataVersion2(bytes []byte) {
-	index := 0
-	n.DataSize = util.BytesToUint32(bytes[index : index+4])
-	index = index + 4
-	n.Data = bytes[index : index+int(n.DataSize)]
-	index = index + int(n.DataSize)
-	n.Flags = bytes[index]
-	index = index + 1
-	if index < len(bytes) {
+	index, lenBytes := 0, len(bytes)
+	if index < lenBytes {
+		n.DataSize = util.BytesToUint32(bytes[index : index+4])
+		index = index + 4
+		n.Data = bytes[index : index+int(n.DataSize)]
+		index = index + int(n.DataSize)
+		n.Flags = bytes[index]
+		index = index + 1
+	}
+	if index < lenBytes {
 		n.NameSize = uint8(bytes[index])
 		index = index + 1
 		n.Name = bytes[index : index+int(n.NameSize)]
 		index = index + int(n.NameSize)
 	}
-	if index < len(bytes) {
+	if index < lenBytes {
 		n.MimeSize = uint8(bytes[index])
 		index = index + 1
 		n.Mime = bytes[index : index+int(n.MimeSize)]
