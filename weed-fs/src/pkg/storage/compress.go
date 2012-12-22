@@ -15,6 +15,9 @@ func IsGzippable(ext, mtype string) bool {
   if ext == ".rar" {
     return false
   }
+  if ext == ".gz" {
+    return false
+  }
   if strings.Index(mtype,"text/")==0 {
     return true
   }

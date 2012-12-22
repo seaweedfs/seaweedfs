@@ -129,10 +129,28 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	if n.NameSize > 0 {
+		fname := string(n.Name)
+		dotIndex := strings.LastIndex(fname, ".")
+		if dotIndex > 0 {
+			ext = fname[dotIndex:]
+		}
+	}
+	mtype := ""
 	if ext != "" {
-		mtype := mime.TypeByExtension(ext)
+		mtype = mime.TypeByExtension(ext)
+	}
+	if n.MimeSize > 0 {
+		mtype = string(n.Mime)
+	}
+	if mtype != "" {
 		w.Header().Set("Content-Type", mtype)
-		if storage.IsGzippable(ext, mtype) {
+	}
+	if n.NameSize > 0 {
+		w.Header().Set("Content-Disposition", "filename="+string(n.Name))
+	}
+	if ext != ".gz" {
+		if n.IsGzipped() {
 			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 				w.Header().Set("Content-Encoding", "gzip")
 			} else {
@@ -140,6 +158,7 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(n.Data)))
 	w.Write(n.Data)
 }
 func PostHandler(w http.ResponseWriter, r *http.Request) {

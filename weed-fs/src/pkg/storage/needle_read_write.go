@@ -142,3 +142,10 @@ func (n *Needle) ReadNeedleBody(r *os.File, version Version, bodyLength uint32) 
 	}
 	return
 }
+
+func (n *Needle) IsGzipped() bool{
+    return n.Flags & 0x01 == 0x01
+}
+func (n *Needle) SetGzipped(){
+    n.Flags = n.Flags | 0x01
+}
