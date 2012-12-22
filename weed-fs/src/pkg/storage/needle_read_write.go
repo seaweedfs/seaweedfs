@@ -16,9 +16,9 @@ func (n *Needle) Append(w io.Writer, version Version) uint32 {
 		util.Uint32toBytes(header[12:16], n.Size)
 		w.Write(header)
 		w.Write(n.Data)
-		rest := NeedlePaddingSize - ((NeedleHeaderSize + n.Size + 4) % NeedlePaddingSize)
-		util.Uint32toBytes(header[0:4], n.Checksum.Value())
-		w.Write(header[0 : 4+rest])
+		padding := NeedlePaddingSize - ((NeedleHeaderSize + n.Size + NeedleChecksumSize) % NeedlePaddingSize)
+		util.Uint32toBytes(header[0:NeedleChecksumSize], n.Checksum.Value())
+		w.Write(header[0 : NeedleChecksumSize+padding])
 		return n.Size
 	} else if version == Version2 {
 		header := make([]byte, NeedleHeaderSize)
@@ -27,10 +27,10 @@ func (n *Needle) Append(w io.Writer, version Version) uint32 {
 		n.DataSize, n.NameSize, n.MimeSize = uint32(len(n.Data)), uint8(len(n.Name)), uint8(len(n.Mime))
 		if n.DataSize > 0 {
 			n.Size = 4 + n.DataSize + 1
-			if n.NameSize > 0 {
+			if n.HasName() {
 				n.Size = n.Size + 1 + uint32(n.NameSize)
 			}
-			if n.MimeSize > 0 {
+			if n.HasMime() {
 				n.Size = n.Size + 1 + uint32(n.MimeSize)
 			}
 		}
@@ -43,40 +43,40 @@ func (n *Needle) Append(w io.Writer, version Version) uint32 {
 			util.Uint8toBytes(header[0:1], n.Flags)
 			w.Write(header[0:1])
 		}
-		if n.NameSize > 0 {
+		if n.HasName() {
 			util.Uint8toBytes(header[0:1], n.NameSize)
 			w.Write(header[0:1])
 			w.Write(n.Name)
 		}
-		if n.MimeSize > 0 {
+		if n.HasMime() {
 			util.Uint8toBytes(header[0:1], n.MimeSize)
 			w.Write(header[0:1])
 			w.Write(n.Mime)
 		}
-		rest := NeedlePaddingSize - ((NeedleHeaderSize + n.Size + 4) % NeedlePaddingSize)
-		util.Uint32toBytes(header[0:4], n.Checksum.Value())
-		w.Write(header[0 : 4+rest])
+		padding := NeedlePaddingSize - ((NeedleHeaderSize + n.Size + NeedleChecksumSize) % NeedlePaddingSize)
+		util.Uint32toBytes(header[0:NeedleChecksumSize], n.Checksum.Value())
+		w.Write(header[0 : NeedleChecksumSize+padding])
 		return n.DataSize
 	}
 	return n.Size
 }
 func (n *Needle) Read(r io.Reader, size uint32, version Version) (int, error) {
 	if version == Version1 {
-		bytes := make([]byte, NeedleHeaderSize+size+4)
+		bytes := make([]byte, NeedleHeaderSize+size+NeedleChecksumSize)
 		ret, e := r.Read(bytes)
 		n.readNeedleHeader(bytes)
 		n.Data = bytes[NeedleHeaderSize : NeedleHeaderSize+size]
-		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+size : NeedleHeaderSize+size+4])
+		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+size : NeedleHeaderSize+size+NeedleChecksumSize])
 		if checksum != NewCRC(n.Data).Value() {
 			return 0, errors.New("CRC error! Data On Disk Corrupted!")
 		}
 		return ret, e
 	} else if version == Version2 {
-		bytes := make([]byte, NeedleHeaderSize+size+4)
+		bytes := make([]byte, NeedleHeaderSize+size+NeedleChecksumSize)
 		ret, e := r.Read(bytes)
 		n.readNeedleHeader(bytes)
 		n.readNeedleDataVersion2(bytes[NeedleHeaderSize : NeedleHeaderSize+int(n.Size)])
-		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+n.Size : NeedleHeaderSize+n.Size+4])
+		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+n.Size : NeedleHeaderSize+n.Size+NeedleChecksumSize])
 		if checksum != NewCRC(n.Data).Value() {
 			return 0, errors.New("CRC error! Data On Disk Corrupted!")
 		}
@@ -99,13 +99,13 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) {
 		n.Flags = bytes[index]
 		index = index + 1
 	}
-	if index < lenBytes {
+	if index < lenBytes && n.HasName() {
 		n.NameSize = uint8(bytes[index])
 		index = index + 1
 		n.Name = bytes[index : index+int(n.NameSize)]
 		index = index + int(n.NameSize)
 	}
-	if index < lenBytes {
+	if index < lenBytes && n.HasMime() {
 		n.MimeSize = uint8(bytes[index])
 		index = index + 1
 		n.Mime = bytes[index : index+int(n.MimeSize)]
@@ -120,8 +120,8 @@ func ReadNeedleHeader(r *os.File, version Version) (n *Needle, bodyLength uint32
 			return nil, 0
 		}
 		n.readNeedleHeader(bytes)
-		rest := NeedlePaddingSize - ((n.Size + NeedleHeaderSize + 4) % NeedlePaddingSize)
-		bodyLength = n.Size + 4 + rest
+		padding := NeedlePaddingSize - ((n.Size + NeedleHeaderSize + NeedleChecksumSize) % NeedlePaddingSize)
+		bodyLength = n.Size + NeedleChecksumSize + padding
 	}
 	return
 }
@@ -143,9 +143,21 @@ func (n *Needle) ReadNeedleBody(r *os.File, version Version, bodyLength uint32) 
 	return
 }
 
-func (n *Needle) IsGzipped() bool{
-    return n.Flags & 0x01 == 0x01
+func (n *Needle) IsGzipped() bool {
+	return n.Flags&0x01 == 0x01
 }
-func (n *Needle) SetGzipped(){
-    n.Flags = n.Flags | 0x01
+func (n *Needle) SetGzipped() {
+	n.Flags = n.Flags | 0x01
+}
+func (n *Needle) HasName() bool {
+	return n.Flags&0x02 == 0x02
+}
+func (n *Needle) SetHasName() {
+	n.Flags = n.Flags | 0x02
+}
+func (n *Needle) HasMime() bool {
+	return n.Flags&0x04 == 0x04
+}
+func (n *Needle) SetHasMime() {
+	n.Flags = n.Flags | 0x04
 }

@@ -14,6 +14,7 @@ import (
 const (
 	NeedleHeaderSize  = 16 //should never change this
 	NeedlePaddingSize = 8
+	NeedleChecksumSize = 4
 )
 
 type Needle struct {
@@ -59,6 +60,7 @@ func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
 	contentType := part.Header.Get("Content-Type")
 	if contentType != "" && mtype != contentType && len(contentType) < 256 {
 		n.Mime = []byte(contentType)
+		n.SetHasMime()
 		mtype = contentType
 	}
 	if IsGzippable(ext, mtype) {
@@ -74,6 +76,7 @@ func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
 		} else {
 			n.Name = []byte(fname)
 		}
+		n.SetHasName()
 	}
 
 	n.Data = data
