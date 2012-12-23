@@ -19,9 +19,10 @@ type Store struct {
 	PublicUrl      string
 	MaxVolumeCount int
 
-	//read from the master
 	masterNode      string
-	volumeSizeLimit uint64
+	connected       bool
+	volumeSizeLimit uint64 //read from the master
+
 }
 
 func NewStore(port int, ip, publicUrl, dirname string, maxVolumeCount int) (s *Store) {
@@ -108,7 +109,7 @@ func (s *Store) loadExistingVolumes() {
 					if s.volumes[vid] == nil {
 						v := NewVolume(s.dir, vid, CopyNil)
 						s.volumes[vid] = v
-						log.Println("In dir", s.dir, "read volume =", vid, "replicationType =", v.replicaType, "version =", v.version,"size =", v.Size())
+						log.Println("In dir", s.dir, "read volume =", vid, "replicationType =", v.replicaType, "version =", v.version, "size =", v.Size())
 					}
 				}
 			}
@@ -141,6 +142,9 @@ func (s *Store) Join() error {
 	}
 	bytes, _ := json.Marshal(stats)
 	values := make(url.Values)
+	if !s.connected {
+		values.Add("init", "true")
+	}
 	values.Add("port", strconv.Itoa(s.Port))
 	values.Add("ip", s.Ip)
 	values.Add("publicUrl", s.PublicUrl)
@@ -155,6 +159,7 @@ func (s *Store) Join() error {
 		return err
 	}
 	s.volumeSizeLimit = ret.VolumeSizeLimit
+	s.connected = true
 	return nil
 }
 func (s *Store) Close() {

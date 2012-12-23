@@ -102,6 +102,7 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
+    init := r.FormValue("init")=="true"
 	ip := r.FormValue("ip")
 	if ip == "" {
 		ip = r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")]
@@ -113,7 +114,7 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	volumes := new([]storage.VolumeInfo)
 	json.Unmarshal([]byte(r.FormValue("volumes")), volumes)
 	debug(s, "volumes", r.FormValue("volumes"))
-	topo.RegisterVolumes(*volumes, ip, port, publicUrl, maxVolumeCount)
+	topo.RegisterVolumes(init, *volumes, ip, port, publicUrl, maxVolumeCount)
     m := make(map[string]interface{})
     m["VolumeSizeLimit"] = uint64(*volumeSizeLimitMB)*1024*1024
     writeJson(w, r, m)

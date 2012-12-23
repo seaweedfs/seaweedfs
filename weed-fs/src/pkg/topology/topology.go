@@ -120,11 +120,15 @@ func (t *Topology) RegisterVolumeLayout(v *storage.VolumeInfo, dn *DataNode) {
 	t.GetVolumeLayout(v.RepType).RegisterVolume(v, dn)
 }
 
-func (t *Topology) RegisterVolumes(volumeInfos []storage.VolumeInfo, ip string, port int, publicUrl string, maxVolumeCount int) {
+func (t *Topology) RegisterVolumes(init bool, volumeInfos []storage.VolumeInfo, ip string, port int, publicUrl string, maxVolumeCount int) {
 	dcName, rackName := t.configuration.Locate(ip)
 	dc := t.GetOrCreateDataCenter(dcName)
 	rack := dc.GetOrCreateRack(rackName)
-	dn := rack.GetOrCreateDataNode(ip, port, publicUrl, maxVolumeCount)
+	dn := rack.FindDataNode(ip, port)
+	if init && dn != nil {
+		t.UnRegisterDataNode(dn)
+	}
+	dn = rack.GetOrCreateDataNode(ip, port, publicUrl, maxVolumeCount)
 	for _, v := range volumeInfos {
 		dn.AddOrUpdateVolume(v)
 		t.RegisterVolumeLayout(&v, dn)
@@ -142,4 +146,3 @@ func (t *Topology) GetOrCreateDataCenter(dcName string) *DataCenter {
 	t.LinkChildNode(dc)
 	return dc
 }
-
