@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"pkg/util"
+	"fmt"
 )
 
 func (n *Needle) Append(w io.Writer, version Version) uint32 {
@@ -72,9 +73,21 @@ func (n *Needle) Read(r io.Reader, size uint32, version Version) (int, error) {
 		}
 		return ret, e
 	} else if version == Version2 {
+		if size == 0 {
+			return 0, nil
+		}
 		bytes := make([]byte, NeedleHeaderSize+size+NeedleChecksumSize)
 		ret, e := r.Read(bytes)
+		if e != nil {
+			return 0, e
+		}
+		if ret != int(NeedleHeaderSize+size+NeedleChecksumSize) {
+			return 0, errors.New("File Entry Not Found!")
+		}
 		n.readNeedleHeader(bytes)
+		if n.Size != size {
+			return 0, fmt.Errorf("File Entry Not Found! Needle %d Memory %d", n.Size, size)
+		}
 		n.readNeedleDataVersion2(bytes[NeedleHeaderSize : NeedleHeaderSize+int(n.Size)])
 		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+n.Size : NeedleHeaderSize+n.Size+NeedleChecksumSize])
 		if checksum != NewCRC(n.Data).Value() {

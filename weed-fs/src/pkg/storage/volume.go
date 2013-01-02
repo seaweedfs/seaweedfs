@@ -116,7 +116,7 @@ func (v *Volume) delete(n *Needle) uint32 {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
 	nv, ok := v.nm.Get(n.Id)
-	//log.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
+	//fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
 	if ok {
 		v.nm.Delete(n.Id)
 		v.dataFile.Seek(int64(nv.Offset*NeedlePaddingSize), 0)
