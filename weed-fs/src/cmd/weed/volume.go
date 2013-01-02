@@ -42,6 +42,8 @@ var (
 	store *storage.Store
 )
 
+var fileNameEscaper = strings.NewReplacer("\\","\\\\","\"","\\\"")
+
 func statusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = VERSION
@@ -147,7 +149,7 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", mtype)
 	}
 	if n.NameSize > 0 {
-		w.Header().Set("Content-Disposition", "filename="+string(n.Name))
+		w.Header().Set("Content-Disposition", "filename="+fileNameEscaper.Replace(string(n.Name)))
 	}
 	if ext != ".gz" {
 		if n.IsGzipped() {
