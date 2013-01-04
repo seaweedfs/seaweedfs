@@ -57,7 +57,7 @@ func (t *Topology) loadConfiguration(configurationFile string) error {
 	return e
 }
 
-func (t *Topology) Lookup(vid storage.VolumeId) *[]*DataNode {
+func (t *Topology) Lookup(vid storage.VolumeId) []*DataNode {
 	for _, vl := range t.replicaType2VolumeLayout {
 		if vl != nil {
 			if list := vl.Lookup(vid); list != nil {

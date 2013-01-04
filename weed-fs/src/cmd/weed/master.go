@@ -54,7 +54,7 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 		machines := topo.Lookup(volumeId)
 		if machines != nil {
 			ret := []map[string]string{}
-			for _, dn := range *machines {
+			for _, dn := range machines {
 				ret = append(ret, map[string]string{"url": dn.Url(), "publicUrl": dn.PublicUrl})
 			}
 			writeJson(w, r, map[string]interface{}{"locations": ret})
@@ -102,7 +102,7 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
-    init := r.FormValue("init")=="true"
+	init := r.FormValue("init") == "true"
 	ip := r.FormValue("ip")
 	if ip == "" {
 		ip = r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")]
@@ -115,9 +115,9 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal([]byte(r.FormValue("volumes")), volumes)
 	debug(s, "volumes", r.FormValue("volumes"))
 	topo.RegisterVolumes(init, *volumes, ip, port, publicUrl, maxVolumeCount)
-    m := make(map[string]interface{})
-    m["VolumeSizeLimit"] = uint64(*volumeSizeLimitMB)*1024*1024
-    writeJson(w, r, m)
+	m := make(map[string]interface{})
+	m["VolumeSizeLimit"] = uint64(*volumeSizeLimitMB) * 1024 * 1024
+	writeJson(w, r, m)
 }
 
 func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
@@ -178,6 +178,22 @@ func volumeStatusHandler(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, r, m)
 }
 
+func redirectHandler(w http.ResponseWriter, r *http.Request) {
+	vid, _, _ := parseURLPath(r.URL.Path)
+	volumeId, err := storage.NewVolumeId(vid)
+	if err != nil {
+		debug("parsing error:", err, r.URL.Path)
+		return
+	}
+	machines := topo.Lookup(volumeId)
+	if machines != nil && len(machines) > 0 {
+		http.Redirect(w, r, "http://"+machines[0].PublicUrl+r.URL.Path, http.StatusMovedPermanently)
+	} else {
+		w.WriteHeader(http.StatusNotFound)
+		writeJson(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found. "})
+	}
+}
+
 func runMaster(cmd *Command, args []string) bool {
 	if *mMaxCpu < 1 {
 		*mMaxCpu = runtime.NumCPU()
@@ -192,6 +208,7 @@ func runMaster(cmd *Command, args []string) bool {
 	http.HandleFunc("/dir/status", dirStatusHandler)
 	http.HandleFunc("/vol/grow", volumeGrowHandler)
 	http.HandleFunc("/vol/status", volumeStatusHandler)
+	http.HandleFunc("/", redirectHandler)
 
 	topo.StartRefreshWritableVolumes(*garbageThreshold)
 
