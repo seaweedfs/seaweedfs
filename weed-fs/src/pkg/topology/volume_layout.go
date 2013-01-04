@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"math/rand"
 	"pkg/storage"
+	"sort"
 )
+
+type volumeIdList []storage.VolumeId
 
 type VolumeLayout struct {
 	repType         storage.ReplicationType
 	vid2location    map[storage.VolumeId]*VolumeLocationList
-	writables       []storage.VolumeId // transient array of writable volume id
+	writables       volumeIdList // transient (sorted!) array of writable volume Ids
 	pulse           int64
 	volumeSizeLimit uint64
 }
@@ -19,7 +22,7 @@ func NewVolumeLayout(repType storage.ReplicationType, volumeSizeLimit uint64, pu
 	return &VolumeLayout{
 		repType:         repType,
 		vid2location:    make(map[storage.VolumeId]*VolumeLocationList),
-		writables:       *new([]storage.VolumeId),
+		writables:       make(volumeIdList, 0, 4),
 		pulse:           pulse,
 		volumeSizeLimit: volumeSizeLimit,
 	}
@@ -33,13 +36,16 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 		if len(vl.vid2location[v.Id].list) == v.RepType.GetCopyCount() {
 			if vl.isWritable(v) {
 				vl.writables = append(vl.writables, v.Id)
+				if len(vl.writables) > 1 {
+					vl.writables.Sort()
+				}
 			}
 		}
 	}
 }
 
-func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool{
-    return uint64(v.Size) < vl.volumeSizeLimit && v.Version == storage.CurrentVersion
+func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool {
+	return uint64(v.Size) < vl.volumeSizeLimit && v.Version == storage.CurrentVersion
 }
 
 func (vl *VolumeLayout) Lookup(vid storage.VolumeId) []*DataNode {
@@ -52,7 +58,13 @@ func (vl *VolumeLayout) PickForWrite(count int) (*storage.VolumeId, int, *Volume
 		fmt.Println("No more writable volumes!")
 		return nil, 0, nil, errors.New("No more writable volumes!")
 	}
-	vid := vl.writables[rand.Intn(len_writers)]
+	var vid storage.VolumeId
+	if len_writers == 1 {
+		vid = vl.writables[0]
+	} else {
+		// skew for lesser indices
+		vid = vl.writables[rand.Intn(len_writers+1)%len_writers]
+	}
 	locationList := vl.vid2location[vid]
 	if locationList != nil {
 		return &vid, count, locationList, nil
@@ -82,6 +94,9 @@ func (vl *VolumeLayout) setVolumeWritable(vid storage.VolumeId) bool {
 	}
 	fmt.Println("Volume", vid, "becomes writable")
 	vl.writables = append(vl.writables, vid)
+	if len(vl.writables) > 1 {
+		vl.writables.Sort()
+	}
 	return true
 }
 
@@ -113,4 +128,19 @@ func (vl *VolumeLayout) ToMap() interface{} {
 	m["writables"] = vl.writables
 	//m["locations"] = vl.vid2location
 	return m
+}
+
+func (vls volumeIdList) Len() int { return len(vls) }
+
+func (vls volumeIdList) Less(i, j int) bool {
+	return vls[i] < vls[j]
+}
+
+func (vls volumeIdList) Swap(i, j int) {
+	vls[i], vls[j] = vls[j], vls[i]
+}
+
+// convienence sorting
+func (vls volumeIdList) Sort() {
+	sort.Sort(vls)
 }
