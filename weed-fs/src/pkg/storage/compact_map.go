@@ -175,3 +175,23 @@ func (cm *CompactMap) Peek() {
 		}
 	}
 }
+
+// iterate over the keys by calling iterate on each key till error is returned
+func (cm *CompactMap) Walk(pedestrian func(*NeedleValue) error) (err error) {
+	var i int
+	for _, cs := range cm.list {
+		for key := cs.start; key < cs.end; key++ {
+			if i = cs.binarySearchValues(key); i >= 0 {
+				if err = pedestrian(&cs.values[i]); err != nil {
+					return
+				}
+			}
+		}
+		for _, val := range cs.overflow {
+			if err = pedestrian(val); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
