@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path"
 	"sync"
@@ -64,6 +65,18 @@ func (v *Volume) Size() int64 {
 	fmt.Printf("Failed to read file size %s %s\n", v.dataFile.Name(), e.Error())
 	return -1
 }
+
+// a volume is writable, if its data file is writable and the index is not frozen
+func (v *Volume) IsWritable() bool {
+	stat, e := v.dataFile.Stat()
+	if e != nil {
+		log.Printf("Failed to read file permission %s %s\n", v.dataFile.Name(), e.Error())
+		return false
+	}
+	//  4 for r, 2 for w, 1 for x
+	return stat.Mode().Perm()&0222 > 0 && !v.nm.IsFrozen()
+}
+
 func (v *Volume) Close() {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()

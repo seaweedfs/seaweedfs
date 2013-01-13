@@ -107,8 +107,14 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	if ip == "" {
 		ip = r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")]
 	}
-	port, _ := strconv.Atoi(r.FormValue("port"))
-	maxVolumeCount, _ := strconv.Atoi(r.FormValue("maxVolumeCount"))
+	port, err := strconv.Atoi(r.FormValue("port"))
+	if err != nil {
+		log.Printf("ERROR bad port number %s: %s", r.FormValue("port"), err)
+	}
+	maxVolumeCount, err := strconv.Atoi(r.FormValue("maxVolumeCount"))
+	if err != nil {
+		log.Printf("ERROR bad maxVolumeCount %s: %s", r.FormValue("maxVolumeCount"), err)
+	}
 	s := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")+1] + r.FormValue("port")
 	publicUrl := r.FormValue("publicUrl")
 	volumes := new([]storage.VolumeInfo)
