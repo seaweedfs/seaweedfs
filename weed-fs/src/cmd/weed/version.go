@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	VERSION = "0.27 beta"
+	VERSION = "0.27"
 )
 
 var cmdVersion = &Command{
