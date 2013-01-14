@@ -28,7 +28,7 @@ func NewCdbMap(filename string) (*CdbMap, error) {
 // writes the content of the index file to a CDB and returns that
 func NewCdbMapFromIndex(indexFile *os.File) (*CdbMap, error) {
 	nm := indexFile.Name()
-	nm = nm[strings.LastIndex(nm, ".")+1:] + "cdb"
+	nm = nm[:strings.LastIndex(nm, ".")+1] + "cdb"
 
 	var (
 		key    uint64
@@ -52,12 +52,14 @@ func NewCdbMapFromIndex(indexFile *os.File) (*CdbMap, error) {
 		return nil, err
 	}
 
+	log.Printf("deleted: %s\nnm=%s", deleted, nm)
 	w, err := cdb.NewWriter(nm)
 	if err != nil {
 		return nil, err
 	}
 	iterFun := func(buf []byte) error {
 		key = util.BytesToUint64(buf[:8])
+		log.Printf("iter key=%d", key)
 		if _, ok = deleted[key]; !ok {
 			w.PutPair(buf[:8], buf[8:16])
 		}
@@ -67,6 +69,9 @@ func NewCdbMapFromIndex(indexFile *os.File) (*CdbMap, error) {
 	err = readIndexFile(indexFile, iterFun)
 	w.Close()
 	if err != nil {
+		return nil, err
+	}
+	if err = util.SetFilePerm(nil, nm, 0444, -1); err != nil {
 		return nil, err
 	}
 

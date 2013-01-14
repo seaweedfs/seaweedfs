@@ -33,6 +33,8 @@ func NewStore(port int, ip, publicUrl, dirname string, maxVolumeCount int) (s *S
 	log.Println("Store started on dir:", dirname, "with", len(s.volumes), "volumes")
 	return
 }
+
+// adds a volume to the store
 func (s *Store) AddVolume(volumeListString string, replicationType string) error {
 	rt, e := NewReplicationTypeFromString(replicationType)
 	if e != nil {
@@ -74,6 +76,7 @@ func (s *Store) addVolume(vid VolumeId, replicationType ReplicationType) (err er
 	return err
 }
 
+// checks whether compaction is needed
 func (s *Store) CheckCompactVolume(volumeIdString string, garbageThresholdString string) (error, bool) {
 	vid, err := NewVolumeId(volumeIdString)
 	if err != nil {
@@ -85,6 +88,8 @@ func (s *Store) CheckCompactVolume(volumeIdString string, garbageThresholdString
 	}
 	return nil, garbageThreshold < s.volumes[vid].garbageLevel()
 }
+
+// compacts the volume
 func (s *Store) CompactVolume(volumeIdString string) error {
 	vid, err := NewVolumeId(volumeIdString)
 	if err != nil {
@@ -92,6 +97,8 @@ func (s *Store) CompactVolume(volumeIdString string) error {
 	}
 	return s.volumes[vid].compact()
 }
+
+// commits the compaction
 func (s *Store) CommitCompactVolume(volumeIdString string) error {
 	vid, err := NewVolumeId(volumeIdString)
 	if err != nil {
@@ -99,6 +106,8 @@ func (s *Store) CommitCompactVolume(volumeIdString string) error {
 	}
 	return s.volumes[vid].commitCompact()
 }
+
+// reads directory and loads volumes
 func (s *Store) loadExistingVolumes() {
 	if dirs, err := ioutil.ReadDir(s.dir); err == nil {
 		for _, dir := range dirs {
