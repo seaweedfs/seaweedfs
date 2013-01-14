@@ -36,7 +36,14 @@ func (v *Volume) load() error {
 	fileName := path.Join(v.dir, v.Id.String())
 	v.dataFile, e = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {
-		return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
+		if os.IsPermission(e) {
+			if util.FileExists(fileName + ".cdb") {
+				v.dataFile, e = os.Open(fileName + ".dat")
+			}
+		}
+		if e != nil {
+			return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
+		}
 	}
 	if v.replicaType == CopyNil {
 		if e = v.readSuperBlock(); e != nil {

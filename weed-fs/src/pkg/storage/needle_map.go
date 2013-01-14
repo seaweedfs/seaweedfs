@@ -178,7 +178,11 @@ func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) (int, error) {
 	return nm.indexFile.Write(nm.bytes)
 }
 func (nm *NeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
-	element, ok = nm.m.Get(Key(key))
+	if nm.m != nil {
+		element, ok = nm.m.Get(Key(key))
+	} else {
+		element, ok = nm.fm.Get(Key(key))
+	}
 	return
 }
 func (nm *NeedleMap) Delete(key uint64) error {
@@ -202,5 +206,8 @@ func (nm *NeedleMap) ContentSize() uint64 {
 
 // iterate through all needles using the iterator function
 func (nm *NeedleMap) Walk(pedestrian func(*NeedleValue) error) (err error) {
-	return nm.m.Walk(pedestrian)
+	if nm.m != nil {
+		return nm.m.Walk(pedestrian)
+	}
+	return nm.fm.Walk(pedestrian)
 }

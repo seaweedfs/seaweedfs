@@ -118,7 +118,9 @@ func (s *Store) loadExistingVolumes() {
 					if s.volumes[vid] == nil {
 						if v, e := NewVolume(s.dir, vid, CopyNil); e == nil {
 							s.volumes[vid] = v
-							log.Println("In dir", s.dir, "read volume =", vid, "replicationType =", v.replicaType, "version =", v.version, "size =", v.Size())
+							log.Println("In dir", s.dir, "read volume =", vid, "replicationType =", v.replicaType, "version =", v.version, "size =", v.Size(), "frozen?", !v.IsWritable())
+						} else {
+							log.Println("ERROR loading volume", vid, "in dir", s.dir, ":", e.Error())
 						}
 					}
 				}
