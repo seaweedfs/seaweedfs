@@ -2,10 +2,10 @@ package storage
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"pkg/util"
-	"fmt"
 )
 
 func (n *Needle) Append(w io.Writer, version Version) uint32 {
@@ -62,7 +62,8 @@ func (n *Needle) Append(w io.Writer, version Version) uint32 {
 	return n.Size
 }
 func (n *Needle) Read(r io.Reader, size uint32, version Version) (int, error) {
-	if version == Version1 {
+	switch version {
+	case Version1:
 		bytes := make([]byte, NeedleHeaderSize+size+NeedleChecksumSize)
 		ret, e := r.Read(bytes)
 		n.readNeedleHeader(bytes)
@@ -72,7 +73,7 @@ func (n *Needle) Read(r io.Reader, size uint32, version Version) (int, error) {
 			return 0, errors.New("CRC error! Data On Disk Corrupted!")
 		}
 		return ret, e
-	} else if version == Version2 {
+	case Version2:
 		if size == 0 {
 			return 0, nil
 		}
@@ -95,7 +96,7 @@ func (n *Needle) Read(r io.Reader, size uint32, version Version) (int, error) {
 		}
 		return ret, e
 	}
-	return 0, errors.New("Unsupported Version!")
+	return 0, fmt.Errorf("Unsupported Version! (%d)", version)
 }
 func (n *Needle) readNeedleHeader(bytes []byte) {
 	n.Cookie = util.BytesToUint32(bytes[0:4])

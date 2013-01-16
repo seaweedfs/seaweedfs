@@ -21,6 +21,7 @@ var server *string
 
 var commands = []*Command{
 	cmdFix,
+	cmdFreeze,
 	cmdMaster,
 	cmdUpload,
 	cmdShell,
@@ -175,9 +176,9 @@ func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
 	w.Header().Set("Content-Type", "application/javascript")
 	var bytes []byte
 	if r.FormValue("pretty") != "" {
-    bytes, _ = json.MarshalIndent(obj, "", "  ")
+		bytes, _ = json.MarshalIndent(obj, "", "  ")
 	} else {
-    bytes, _ = json.Marshal(obj)
+		bytes, _ = json.Marshal(obj)
 	}
 	callback := r.FormValue("callback")
 	if callback == "" {

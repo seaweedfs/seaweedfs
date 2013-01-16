@@ -33,6 +33,8 @@ func NewStore(port int, ip, publicUrl, dirname string, maxVolumeCount int) (s *S
 	log.Println("Store started on dir:", dirname, "with", len(s.volumes), "volumes")
 	return
 }
+
+// adds a volume to the store
 func (s *Store) AddVolume(volumeListString string, replicationType string) error {
 	rt, e := NewReplicationTypeFromString(replicationType)
 	if e != nil {
@@ -65,15 +67,16 @@ func (s *Store) AddVolume(volumeListString string, replicationType string) error
 	}
 	return e
 }
-func (s *Store) addVolume(vid VolumeId, replicationType ReplicationType) error {
+func (s *Store) addVolume(vid VolumeId, replicationType ReplicationType) (err error) {
 	if s.volumes[vid] != nil {
 		return errors.New("Volume Id " + vid.String() + " already exists!")
 	}
 	log.Println("In dir", s.dir, "adds volume =", vid, ", replicationType =", replicationType)
-	s.volumes[vid] = NewVolume(s.dir, vid, replicationType)
-	return nil
+	s.volumes[vid], err = NewVolume(s.dir, vid, replicationType)
+	return err
 }
 
+// checks whether compaction is needed
 func (s *Store) CheckCompactVolume(volumeIdString string, garbageThresholdString string) (error, bool) {
 	vid, err := NewVolumeId(volumeIdString)
 	if err != nil {
@@ -85,6 +88,8 @@ func (s *Store) CheckCompactVolume(volumeIdString string, garbageThresholdString
 	}
 	return nil, garbageThreshold < s.volumes[vid].garbageLevel()
 }
+
+// compacts the volume
 func (s *Store) CompactVolume(volumeIdString string) error {
 	vid, err := NewVolumeId(volumeIdString)
 	if err != nil {
@@ -92,6 +97,8 @@ func (s *Store) CompactVolume(volumeIdString string) error {
 	}
 	return s.volumes[vid].compact()
 }
+
+// commits the compaction
 func (s *Store) CommitCompactVolume(volumeIdString string) error {
 	vid, err := NewVolumeId(volumeIdString)
 	if err != nil {
@@ -99,6 +106,8 @@ func (s *Store) CommitCompactVolume(volumeIdString string) error {
 	}
 	return s.volumes[vid].commitCompact()
 }
+
+// reads directory and loads volumes
 func (s *Store) loadExistingVolumes() {
 	if dirs, err := ioutil.ReadDir(s.dir); err == nil {
 		for _, dir := range dirs {
@@ -107,9 +116,12 @@ func (s *Store) loadExistingVolumes() {
 				base := name[:len(name)-len(".dat")]
 				if vid, err := NewVolumeId(base); err == nil {
 					if s.volumes[vid] == nil {
-						v := NewVolume(s.dir, vid, CopyNil)
-						s.volumes[vid] = v
-						log.Println("In dir", s.dir, "read volume =", vid, "replicationType =", v.replicaType, "version =", v.version, "size =", v.Size())
+						if v, e := NewVolume(s.dir, vid, CopyNil); e == nil {
+							s.volumes[vid] = v
+							log.Println("In dir", s.dir, "read volume =", vid, "replicationType =", v.replicaType, "version =", v.version, "size =", v.Size(), "frozen?", !v.IsWritable())
+						} else {
+							log.Println("ERROR loading volume", vid, "in dir", s.dir, ":", e.Error())
+						}
 					}
 				}
 			}
@@ -119,8 +131,16 @@ func (s *Store) loadExistingVolumes() {
 func (s *Store) Status() []*VolumeInfo {
 	var stats []*VolumeInfo
 	for k, v := range s.volumes {
-		s := new(VolumeInfo)
-		s.Id, s.Size, s.RepType, s.Version, s.FileCount, s.DeleteCount, s.DeletedByteCount = VolumeId(k), v.ContentSize(), v.replicaType, v.Version(), v.nm.fileCounter, v.nm.deletionCounter, v.nm.deletionByteCounter
+		s := &VolumeInfo{
+			Id:               VolumeId(k),
+			Size:             v.ContentSize(),
+			RepType:          v.replicaType,
+			Version:          v.Version(),
+			FileCount:        v.nm.fileCounter,
+			DeleteCount:      v.nm.deletionCounter,
+			DeletedByteCount: v.nm.deletionByteCounter,
+			Frozen:           !v.IsWritable(),
+		}
 		stats = append(stats, s)
 	}
 	return stats
@@ -133,6 +153,8 @@ type JoinResult struct {
 func (s *Store) SetMaster(mserver string) {
 	s.masterNode = mserver
 }
+
+// call master's /dir/join
 func (s *Store) Join() error {
 	stats := new([]*VolumeInfo)
 	for k, v := range s.volumes {
@@ -170,7 +192,8 @@ func (s *Store) Close() {
 func (s *Store) Write(i VolumeId, n *Needle) uint32 {
 	if v := s.volumes[i]; v != nil {
 		size := v.write(n)
-		if s.volumeSizeLimit < v.ContentSize()+uint64(size) && s.volumeSizeLimit >= v.ContentSize() {
+		if s.volumeSizeLimit < v.ContentSize()+uint64(size) &&
+			s.volumeSizeLimit >= v.ContentSize() {
 			log.Println("volume", i, "size is", v.ContentSize(), "close to", s.volumeSizeLimit)
 			s.Join()
 		}

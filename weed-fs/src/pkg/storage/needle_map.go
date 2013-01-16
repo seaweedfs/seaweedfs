@@ -1,14 +1,18 @@
 package storage
 
 import (
+	"errors"
+	"io"
 	"log"
 	"os"
 	"pkg/util"
+	"strings"
 )
 
 type NeedleMap struct {
 	indexFile *os.File
-	m         CompactMap
+	m         MapGetSetter // modifiable map
+	fm        MapGetter    // frozen map
 
 	//transient
 	bytes []byte
@@ -19,55 +23,148 @@ type NeedleMap struct {
 	fileByteCounter     uint64
 }
 
+// Map interface for frozen maps
+type MapGetter interface {
+	Get(key Key) (element *NeedleValue, ok bool)
+	Walk(pedestrian func(*NeedleValue) error) error
+}
+
+// Modifiable map interface
+type MapSetter interface {
+	Set(key Key, offset, size uint32) (oldsize uint32)
+	Delete(key Key) uint32
+}
+
+// Settable and gettable map
+type MapGetSetter interface {
+	MapGetter
+	MapSetter
+}
+
+// New in-memory needle map, backed by "file" index file
 func NewNeedleMap(file *os.File) *NeedleMap {
-	nm := &NeedleMap{
+	return &NeedleMap{
 		m:         NewCompactMap(),
 		bytes:     make([]byte, 16),
 		indexFile: file,
 	}
-	return nm
+}
+
+// Nes frozen (on-disk, not modifiable(!)) needle map
+func NewFrozenNeedleMap(fileName string) (*NeedleMap, error) {
+	if strings.HasSuffix(fileName, ".dat") {
+		fileName = fileName[:4]
+	}
+	var (
+		fm          *CdbMap
+		indexExists bool
+	)
+	file, err := os.Open(fileName + ".idx")
+	if err != nil && os.IsNotExist(err) {
+		if fm, err = NewCdbMap(fileName + ".cdb"); err != nil {
+			log.Printf("error opening %s.cdb: %s", fileName, err)
+			fm = nil
+		} else {
+			if dstat, e := os.Stat(fileName + ".dat"); e == nil {
+				if cstat, e := os.Stat(fileName + ".cdb"); e == nil {
+					if cstat.ModTime().Before(dstat.ModTime()) {
+						return nil, errors.New("CDB file " + fileName +
+							".cdb is older than data file " + fileName + ".dat!")
+					}
+				}
+			}
+		}
+	} else {
+		indexExists = true
+	}
+	if fm == nil {
+		fm, err = NewCdbMapFromIndex(file)
+		if err != nil {
+			return nil, err
+		}
+		if indexExists {
+			os.Remove(fileName + ".idx")
+		}
+	}
+	return &NeedleMap{
+		fm:    fm,
+		bytes: make([]byte, 16),
+	}, nil
+}
+
+func (nm NeedleMap) IsFrozen() bool {
+	return nm.m == nil && nm.fm != nil
 }
 
 const (
 	RowsToRead = 1024
 )
 
-func LoadNeedleMap(file *os.File) *NeedleMap {
+var MapIsFrozen = errors.New("Map is frozen!")
+
+func LoadNeedleMap(file *os.File) (*NeedleMap, error) {
 	nm := NewNeedleMap(file)
-	bytes := make([]byte, 16*RowsToRead)
-	count, e := nm.indexFile.Read(bytes)
-	if count > 0 {
-		fstat, _ := file.Stat()
-		log.Println("Loading index file", fstat.Name(), "size", fstat.Size())
+
+	var (
+		key                   uint64
+		offset, size, oldSize uint32
+	)
+	iterFun := func(buf []byte) error {
+		key = util.BytesToUint64(buf[:8])
+		offset = util.BytesToUint32(buf[8:12])
+		size = util.BytesToUint32(buf[12:16])
+		nm.fileCounter++
+		nm.fileByteCounter = nm.fileByteCounter + uint64(size)
+		if offset > 0 {
+			oldSize = nm.m.Set(Key(key), offset, size)
+			//log.Println("reading key", key, "offset", offset, "size", size, "oldSize", oldSize)
+			if oldSize > 0 {
+				nm.deletionCounter++
+				nm.deletionByteCounter = nm.deletionByteCounter + uint64(oldSize)
+			}
+		} else {
+			nm.m.Delete(Key(key))
+			//log.Println("removing key", key)
+			nm.deletionCounter++
+			nm.deletionByteCounter = nm.deletionByteCounter + uint64(size)
+		}
+
+		return nil
+	}
+	if err := readIndexFile(file, iterFun); err != nil {
+		return nil, err
+	}
+	return nm, nil
+}
+
+// calls iterFun with each row (raw 16 bytes)
+func readIndexFile(indexFile *os.File, iterFun func([]byte) error) error {
+	buf := make([]byte, 16*RowsToRead)
+	count, e := io.ReadAtLeast(indexFile, buf, 16)
+	if e != nil && count > 0 {
+		fstat, err := indexFile.Stat()
+		if err != nil {
+			log.Println("ERROR stating %s: %s", indexFile, err)
+		} else {
+			log.Println("Loading index file", fstat.Name(), "size", fstat.Size())
+		}
 	}
 	for count > 0 && e == nil {
 		for i := 0; i < count; i += 16 {
-			key := util.BytesToUint64(bytes[i : i+8])
-			offset := util.BytesToUint32(bytes[i+8 : i+12])
-			size := util.BytesToUint32(bytes[i+12 : i+16])
-			nm.fileCounter++
-			nm.fileByteCounter = nm.fileByteCounter + uint64(size)
-			if offset > 0 {
-				oldSize := nm.m.Set(Key(key), offset, size)
-				//log.Println("reading key", key, "offset", offset, "size", size, "oldSize", oldSize)
-				if oldSize > 0 {
-					nm.deletionCounter++
-					nm.deletionByteCounter = nm.deletionByteCounter + uint64(oldSize)
-				}
-			} else {
-				nm.m.Delete(Key(key))
-				//log.Println("removing key", key)
-				nm.deletionCounter++
-				nm.deletionByteCounter = nm.deletionByteCounter + uint64(size)
+			if e = iterFun(buf[i : i+16]); e != nil {
+				return e
 			}
 		}
 
-		count, e = nm.indexFile.Read(bytes)
+		count, e = io.ReadAtLeast(indexFile, buf, 16)
 	}
-	return nm
+	return nil
 }
 
 func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) (int, error) {
+	if nm.IsFrozen() {
+		return 0, MapIsFrozen
+	}
 	oldSize := nm.m.Set(Key(key), offset, size)
 	util.Uint64toBytes(nm.bytes[0:8], key)
 	util.Uint32toBytes(nm.bytes[8:12], offset)
@@ -81,20 +178,36 @@ func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) (int, error) {
 	return nm.indexFile.Write(nm.bytes)
 }
 func (nm *NeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
-	element, ok = nm.m.Get(Key(key))
+	if nm.m != nil {
+		element, ok = nm.m.Get(Key(key))
+	} else {
+		element, ok = nm.fm.Get(Key(key))
+	}
 	return
 }
-func (nm *NeedleMap) Delete(key uint64) {
+func (nm *NeedleMap) Delete(key uint64) error {
+	if nm.IsFrozen() {
+		return MapIsFrozen
+	}
 	nm.deletionByteCounter = nm.deletionByteCounter + uint64(nm.m.Delete(Key(key)))
 	util.Uint64toBytes(nm.bytes[0:8], key)
 	util.Uint32toBytes(nm.bytes[8:12], 0)
 	util.Uint32toBytes(nm.bytes[12:16], 0)
 	nm.indexFile.Write(nm.bytes)
 	nm.deletionCounter++
+	return nil
 }
 func (nm *NeedleMap) Close() {
 	nm.indexFile.Close()
 }
 func (nm *NeedleMap) ContentSize() uint64 {
 	return nm.fileByteCounter
+}
+
+// iterate through all needles using the iterator function
+func (nm *NeedleMap) Walk(pedestrian func(*NeedleValue) error) (err error) {
+	if nm.m != nil {
+		return nm.m.Walk(pedestrian)
+	}
+	return nm.fm.Walk(pedestrian)
 }

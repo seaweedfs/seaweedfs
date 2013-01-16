@@ -3,8 +3,10 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path"
+	"pkg/util"
 	"sync"
 )
 
@@ -24,9 +26,9 @@ type Volume struct {
 	accessLock sync.Mutex
 }
 
-func NewVolume(dirname string, id VolumeId, replicationType ReplicationType) (v *Volume) {
+func NewVolume(dirname string, id VolumeId, replicationType ReplicationType) (v *Volume, e error) {
 	v = &Volume{dir: dirname, Id: id, replicaType: replicationType}
-	v.load()
+	e = v.load()
 	return
 }
 func (v *Volume) load() error {
@@ -34,7 +36,14 @@ func (v *Volume) load() error {
 	fileName := path.Join(v.dir, v.Id.String())
 	v.dataFile, e = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {
-		return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
+		if os.IsPermission(e) {
+			if util.FileExists(fileName + ".cdb") {
+				v.dataFile, e = os.Open(fileName + ".dat")
+			}
+		}
+		if e != nil {
+			return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
+		}
 	}
 	if v.replicaType == CopyNil {
 		if e = v.readSuperBlock(); e != nil {
@@ -43,13 +52,19 @@ func (v *Volume) load() error {
 	} else {
 		v.maybeWriteSuperBlock()
 	}
-	indexFile, ie := os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644)
-	if ie != nil {
-		return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
+	// TODO: if .idx not exists, but .cdb exists, then use (but don't load!) that
+	if !util.FileIsWritable(v.dataFile.Name()) { //Read-Only
+		v.nm, e = NewFrozenNeedleMap(fileName)
+	} else {
+		indexFile, ie := os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644)
+		if ie != nil {
+			return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
+		}
+		v.nm, e = LoadNeedleMap(indexFile)
 	}
-	v.nm = LoadNeedleMap(indexFile)
-	return nil
+	return e
 }
+
 func (v *Volume) Version() Version {
 	return v.version
 }
@@ -63,6 +78,18 @@ func (v *Volume) Size() int64 {
 	fmt.Printf("Failed to read file size %s %s\n", v.dataFile.Name(), e.Error())
 	return -1
 }
+
+// a volume is writable, if its data file is writable and the index is not frozen
+func (v *Volume) IsWritable() bool {
+	stat, e := v.dataFile.Stat()
+	if e != nil {
+		log.Printf("Failed to read file permission %s %s\n", v.dataFile.Name(), e.Error())
+		return false
+	}
+	//  4 for r, 2 for w, 1 for x
+	return stat.Mode().Perm()&0222 > 0 && !v.nm.IsFrozen()
+}
+
 func (v *Volume) Close() {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
@@ -79,21 +106,23 @@ func (v *Volume) maybeWriteSuperBlock() {
 		v.dataFile.Write(header)
 	}
 }
-func (v *Volume) readSuperBlock() error {
+func (v *Volume) readSuperBlock() (err error) {
 	v.dataFile.Seek(0, 0)
 	header := make([]byte, SuperBlockSize)
 	if _, e := v.dataFile.Read(header); e != nil {
 		return fmt.Errorf("cannot read superblock: %s", e)
 	}
-	var err error
 	v.version, v.replicaType, err = ParseSuperBlock(header)
 	return err
 }
-func ParseSuperBlock(header []byte) (version Version, replicaType ReplicationType, e error) {
+func ParseSuperBlock(header []byte) (version Version, replicaType ReplicationType, err error) {
 	version = Version(header[0])
-	var err error
+	if version == 0 {
+		err = errors.New("Zero version impossible - bad superblock!")
+		return
+	}
 	if replicaType, err = NewReplicationTypeFromByte(header[1]); err != nil {
-		e = fmt.Errorf("cannot read replica type: %s", err)
+		err = fmt.Errorf("cannot read replica type: %s", err)
 	}
 	return
 }
@@ -220,4 +249,40 @@ func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) 
 }
 func (v *Volume) ContentSize() uint64 {
 	return v.nm.fileByteCounter
+}
+
+// Walk over the contained needles (call the function with each NeedleValue till error is returned)
+func (v *Volume) WalkValues(pedestrian func(*Needle) error) error {
+	pedplus := func(nv *NeedleValue) (err error) {
+		n := new(Needle)
+		if nv.Offset > 0 {
+			v.dataFile.Seek(int64(nv.Offset)*NeedlePaddingSize, 0)
+			if _, err = n.Read(v.dataFile, nv.Size, v.version); err != nil {
+				return
+			}
+			if err = pedestrian(n); err != nil {
+				return
+			}
+		}
+		return nil
+	}
+	return v.nm.Walk(pedplus)
+}
+
+// Walk over the keys
+func (v *Volume) WalkKeys(pedestrian func(Key) error) error {
+	pedplus := func(nv *NeedleValue) (err error) {
+		if nv.Offset > 0 && nv.Key > 0 {
+			if err = pedestrian(nv.Key); err != nil {
+				return
+			}
+		}
+		return nil
+	}
+	return v.nm.Walk(pedplus)
+}
+
+func (v *Volume) String() string {
+	return fmt.Sprintf("%d@%s:v%d:r%s", v.Id, v.dataFile.Name(),
+		v.Version(), v.replicaType)
 }
