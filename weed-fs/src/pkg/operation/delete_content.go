@@ -1,8 +1,8 @@
 package operation
 
 import (
-	"net/http"
 	"log"
+	"net/http"
 )
 
 func Delete(url string) error {

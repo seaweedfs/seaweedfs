@@ -30,13 +30,13 @@ func TestLoadConfiguration(t *testing.T) {
 </Configuration>
 `
 	c, err := NewConfiguration([]byte(confContent))
-	
-  fmt.Printf("%s\n", c)
-	if err!=nil{
-	  t.Fatalf("unmarshal error:%s",err.Error())
+
+	fmt.Printf("%s\n", c)
+	if err != nil {
+		t.Fatalf("unmarshal error:%s", err.Error())
 	}
-	
+
 	if len(c.Topo.DataCenters) <= 0 || c.Topo.DataCenters[0].Name != "dc1" {
-    t.Fatalf("unmarshal error:%s",c)
+		t.Fatalf("unmarshal error:%s", c)
 	}
 }

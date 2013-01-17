@@ -52,14 +52,14 @@ func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 		vl := t.GetVolumeLayout(v.RepType)
 		vl.SetVolumeUnavailable(dn, v.Id)
 	}
-    dn.UpAdjustVolumeCountDelta(-dn.GetVolumeCount())
+	dn.UpAdjustVolumeCountDelta(-dn.GetVolumeCount())
 	dn.UpAdjustActiveVolumeCountDelta(-dn.GetActiveVolumeCount())
 	dn.UpAdjustMaxVolumeCountDelta(-dn.GetMaxVolumeCount())
 	dn.Parent().UnlinkChildNode(dn.Id())
 }
 func (t *Topology) RegisterRecoveredDataNode(dn *DataNode) {
 	for _, v := range dn.volumes {
-        vl := t.GetVolumeLayout(v.RepType)
+		vl := t.GetVolumeLayout(v.RepType)
 		if vl.isWritable(&v) {
 			vl.SetVolumeAvailable(dn, v.Id)
 		}

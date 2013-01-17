@@ -24,9 +24,9 @@ type Volume struct {
 	accessLock sync.Mutex
 }
 
-func NewVolume(dirname string, id VolumeId, replicationType ReplicationType) (v *Volume) {
+func NewVolume(dirname string, id VolumeId, replicationType ReplicationType) (v *Volume, e error) {
 	v = &Volume{dir: dirname, Id: id, replicaType: replicationType}
-	v.load()
+	e = v.load()
 	return
 }
 func (v *Volume) load() error {
@@ -79,21 +79,19 @@ func (v *Volume) maybeWriteSuperBlock() {
 		v.dataFile.Write(header)
 	}
 }
-func (v *Volume) readSuperBlock() error {
+func (v *Volume) readSuperBlock() (err error) {
 	v.dataFile.Seek(0, 0)
 	header := make([]byte, SuperBlockSize)
 	if _, e := v.dataFile.Read(header); e != nil {
 		return fmt.Errorf("cannot read superblock: %s", e)
 	}
-	var err error
 	v.version, v.replicaType, err = ParseSuperBlock(header)
 	return err
 }
-func ParseSuperBlock(header []byte) (version Version, replicaType ReplicationType, e error) {
+func ParseSuperBlock(header []byte) (version Version, replicaType ReplicationType, err error) {
 	version = Version(header[0])
-	var err error
 	if replicaType, err = NewReplicationTypeFromByte(header[1]); err != nil {
-		e = fmt.Errorf("cannot read replica type: %s", err)
+		err = fmt.Errorf("cannot read replica type: %s", err)
 	}
 	return
 }

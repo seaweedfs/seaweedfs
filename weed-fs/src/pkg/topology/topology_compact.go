@@ -101,10 +101,10 @@ type VacuumVolumeResult struct {
 func vacuumVolume_Check(urlLocation string, vid storage.VolumeId, garbageThreshold string) (error, bool) {
 	values := make(url.Values)
 	values.Add("volume", vid.String())
-    values.Add("garbageThreshold", garbageThreshold)
+	values.Add("garbageThreshold", garbageThreshold)
 	jsonBlob, err := util.Post("http://"+urlLocation+"/admin/vacuum_volume_check", values)
 	if err != nil {
-	    fmt.Println("parameters:",values)
+		fmt.Println("parameters:", values)
 		return err, false
 	}
 	var ret VacuumVolumeResult
