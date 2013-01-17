@@ -10,5 +10,4 @@ type VolumeInfo struct {
 	FileCount        int
 	DeleteCount      int
 	DeletedByteCount uint64
-	Frozen           bool
 }

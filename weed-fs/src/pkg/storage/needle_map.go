@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"errors"
 	"io"
 	"log"
 	"os"
@@ -61,15 +60,9 @@ func NewFrozenNeedleMap(file *os.File) (*NeedleMap, error) {
 	}, nil
 }
 
-func (nm NeedleMap) IsFrozen() bool {
-	return nm.m == nil && nm.fm != nil
-}
-
 const (
 	RowsToRead = 1024
 )
-
-var MapIsFrozen = errors.New("Map is frozen!")
 
 func LoadNeedleMap(file *os.File) (*NeedleMap, error) {
 	nm := NewNeedleMap(file)
@@ -131,9 +124,6 @@ func readIndexFile(indexFile *os.File, iterFun func([]byte) error) error {
 }
 
 func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) (int, error) {
-	if nm.IsFrozen() {
-		return 0, MapIsFrozen
-	}
 	oldSize := nm.m.Set(Key(key), offset, size)
 	util.Uint64toBytes(nm.bytes[0:8], key)
 	util.Uint32toBytes(nm.bytes[8:12], offset)
@@ -150,17 +140,13 @@ func (nm *NeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
 	element, ok = nm.m.Get(Key(key))
 	return
 }
-func (nm *NeedleMap) Delete(key uint64) error {
-	if nm.IsFrozen() {
-		return MapIsFrozen
-	}
+func (nm *NeedleMap) Delete(key uint64) {
 	nm.deletionByteCounter = nm.deletionByteCounter + uint64(nm.m.Delete(Key(key)))
 	util.Uint64toBytes(nm.bytes[0:8], key)
 	util.Uint32toBytes(nm.bytes[8:12], 0)
 	util.Uint32toBytes(nm.bytes[12:16], 0)
 	nm.indexFile.Write(nm.bytes)
 	nm.deletionCounter++
-	return nil
 }
 func (nm *NeedleMap) Close() {
 	nm.indexFile.Close()

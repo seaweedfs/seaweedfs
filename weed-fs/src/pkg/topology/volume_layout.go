@@ -45,9 +45,7 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 }
 
 func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool {
-	return !v.Frozen &&
-		uint64(v.Size) < vl.volumeSizeLimit &&
-		v.Version == storage.CurrentVersion
+	return uint64(v.Size) < vl.volumeSizeLimit && v.Version == storage.CurrentVersion
 }
 
 func (vl *VolumeLayout) Lookup(vid storage.VolumeId) []*DataNode {
@@ -94,7 +92,6 @@ func (vl *VolumeLayout) setVolumeWritable(vid storage.VolumeId) bool {
 			return false
 		}
 	}
-	// FIXME: how to refuse if volume is unwritable/frozen?
 	fmt.Println("Volume", vid, "becomes writable")
 	vl.writables = append(vl.writables, vid)
 	if len(vl.writables) > 1 {

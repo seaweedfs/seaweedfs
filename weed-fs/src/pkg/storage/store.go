@@ -120,16 +120,8 @@ func (s *Store) loadExistingVolumes() {
 func (s *Store) Status() []*VolumeInfo {
 	var stats []*VolumeInfo
 	for k, v := range s.volumes {
-		s := &VolumeInfo{
-			Id:               VolumeId(k),
-			Size:             v.ContentSize(),
-			RepType:          v.replicaType,
-			Version:          v.Version(),
-			FileCount:        v.nm.fileCounter,
-			DeleteCount:      v.nm.deletionCounter,
-			DeletedByteCount: v.nm.deletionByteCounter,
-			Frozen:           !v.IsWritable(),
-		}
+		s := new(VolumeInfo)
+		s.Id, s.Size, s.RepType, s.Version, s.FileCount, s.DeleteCount, s.DeletedByteCount = VolumeId(k), v.ContentSize(), v.replicaType, v.Version(), v.nm.fileCounter, v.nm.deletionCounter, v.nm.deletionByteCounter
 		stats = append(stats, s)
 	}
 	return stats
@@ -142,8 +134,6 @@ type JoinResult struct {
 func (s *Store) SetMaster(mserver string) {
 	s.masterNode = mserver
 }
-
-// call master's /dir/join
 func (s *Store) Join() error {
 	stats := new([]*VolumeInfo)
 	for k, v := range s.volumes {
@@ -181,8 +171,7 @@ func (s *Store) Close() {
 func (s *Store) Write(i VolumeId, n *Needle) uint32 {
 	if v := s.volumes[i]; v != nil {
 		size := v.write(n)
-		if s.volumeSizeLimit < v.ContentSize()+uint64(size) &&
-			s.volumeSizeLimit >= v.ContentSize() {
+		if s.volumeSizeLimit < v.ContentSize()+uint64(size) && s.volumeSizeLimit >= v.ContentSize() {
 			log.Println("volume", i, "size is", v.ContentSize(), "close to", s.volumeSizeLimit)
 			s.Join()
 		}
