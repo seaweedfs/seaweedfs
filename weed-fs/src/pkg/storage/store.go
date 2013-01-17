@@ -65,13 +65,13 @@ func (s *Store) AddVolume(volumeListString string, replicationType string) error
 	}
 	return e
 }
-func (s *Store) addVolume(vid VolumeId, replicationType ReplicationType) (err error) {
+func (s *Store) addVolume(vid VolumeId, replicationType ReplicationType) error {
 	if s.volumes[vid] != nil {
 		return errors.New("Volume Id " + vid.String() + " already exists!")
 	}
 	log.Println("In dir", s.dir, "adds volume =", vid, ", replicationType =", replicationType)
-	s.volumes[vid], err = NewVolume(s.dir, vid, replicationType)
-	return err
+	s.volumes[vid] = NewVolume(s.dir, vid, replicationType)
+	return nil
 }
 
 func (s *Store) CheckCompactVolume(volumeIdString string, garbageThresholdString string) (error, bool) {
@@ -107,10 +107,9 @@ func (s *Store) loadExistingVolumes() {
 				base := name[:len(name)-len(".dat")]
 				if vid, err := NewVolumeId(base); err == nil {
 					if s.volumes[vid] == nil {
-						if v, e := NewVolume(s.dir, vid, CopyNil); e == nil {
-							s.volumes[vid] = v
-							log.Println("In dir", s.dir, "read volume =", vid, "replicationType =", v.replicaType, "version =", v.version, "size =", v.Size())
-						}
+						v := NewVolume(s.dir, vid, CopyNil)
+						s.volumes[vid] = v
+						log.Println("In dir", s.dir, "read volume =", vid, "replicationType =", v.replicaType, "version =", v.version, "size =", v.Size())
 					}
 				}
 			}

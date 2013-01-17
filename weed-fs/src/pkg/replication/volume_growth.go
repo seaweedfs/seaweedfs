@@ -7,7 +7,7 @@ import (
 	"pkg/operation"
 	"pkg/storage"
 	"pkg/topology"
-	"sync"
+  "sync"
 )
 
 /*
@@ -24,7 +24,7 @@ type VolumeGrowth struct {
 	copy3factor int
 	copyAll     int
 
-	accessLock sync.Mutex
+  accessLock sync.Mutex
 }
 
 func NewDefaultVolumeGrowth() *VolumeGrowth {
@@ -49,8 +49,8 @@ func (vg *VolumeGrowth) GrowByType(repType storage.ReplicationType, topo *topolo
 	return 0, errors.New("Unknown Replication Type!")
 }
 func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.ReplicationType, topo *topology.Topology) (counter int, err error) {
-	vg.accessLock.Lock()
-	defer vg.accessLock.Unlock()
+  vg.accessLock.Lock()
+  defer vg.accessLock.Unlock()
 
 	counter = 0
 	switch repType {
@@ -182,7 +182,7 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 func (vg *VolumeGrowth) grow(topo *topology.Topology, vid storage.VolumeId, repType storage.ReplicationType, servers ...*topology.DataNode) error {
 	for _, server := range servers {
 		if err := operation.AllocateVolume(server, vid, repType); err == nil {
-			vi := storage.VolumeInfo{Id: vid, Size: 0, RepType: repType, Version: storage.CurrentVersion}
+			vi := storage.VolumeInfo{Id: vid, Size: 0, RepType: repType, Version:storage.CurrentVersion}
 			server.AddOrUpdateVolume(vi)
 			topo.RegisterVolumeLayout(&vi, server)
 			fmt.Println("Created Volume", vid, "on", server)

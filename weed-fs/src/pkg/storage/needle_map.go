@@ -98,8 +98,3 @@ func (nm *NeedleMap) Close() {
 func (nm *NeedleMap) ContentSize() uint64 {
 	return nm.fileByteCounter
 }
-
-// iterate through all needles using the iterator function
-func (nm *NeedleMap) Walk(pedestrian func(*NeedleValue) error) (err error) {
-	return nm.m.Walk(pedestrian)
-}

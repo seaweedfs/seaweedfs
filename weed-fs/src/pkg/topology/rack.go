@@ -19,13 +19,13 @@ func NewRack(id string) *Rack {
 }
 
 func (r *Rack) FindDataNode(ip string, port int) *DataNode {
-	for _, c := range r.Children() {
-		dn := c.(*DataNode)
-		if dn.MatchLocation(ip, port) {
-			return dn
-		}
-	}
-	return nil
+    for _, c := range r.Children() {
+        dn := c.(*DataNode)
+        if dn.MatchLocation(ip, port) {
+            return dn
+        }
+    }
+    return nil
 }
 func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVolumeCount int) *DataNode {
 	for _, c := range r.Children() {

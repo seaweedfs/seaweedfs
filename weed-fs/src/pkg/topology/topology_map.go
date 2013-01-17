@@ -1,6 +1,7 @@
 package topology
 
-import ()
+import (
+)
 
 func (t *Topology) ToMap() interface{} {
 	m := make(map[string]interface{})

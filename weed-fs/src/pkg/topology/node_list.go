@@ -37,14 +37,14 @@ func (nl *NodeList) RandomlyPickN(n int, min int) ([]Node, bool) {
 			list = append(list, n)
 		}
 	}
-	if n > len(list) {
-		return nil, false
+	if n > len(list){
+	  return nil,false
 	}
 	for i := n; i > 0; i-- {
-		r := rand.Intn(i)
-		t := list[r]
-		list[r] = list[i-1]
-		list[i-1] = t
+	  r := rand.Intn(i)
+	  t := list[r]
+	  list[r] = list[i-1]
+	  list[i-1] = t
 	}
 	return list[len(list)-n:], true
 }
