@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"io"
 	"log"
 	"os"
 	"pkg/util"
@@ -9,8 +8,7 @@ import (
 
 type NeedleMap struct {
 	indexFile *os.File
-	m         MapGetSetter // modifiable map
-	fm        MapGetter    // frozen map
+	m         CompactMap
 
 	//transient
 	bytes []byte
@@ -21,106 +19,52 @@ type NeedleMap struct {
 	fileByteCounter     uint64
 }
 
-// Map interface for frozen maps
-type MapGetter interface {
-	Get(key Key) (element *NeedleValue, ok bool)
-	Walk(pedestrian func(*NeedleValue) error) error
-}
-
-// Modifiable map interface
-type MapSetter interface {
-	Set(key Key, offset, size uint32) (oldsize uint32)
-	Delete(key Key) uint32
-}
-
-// Settable and gettable map
-type MapGetSetter interface {
-	MapGetter
-	MapSetter
-}
-
-// New in-memory needle map, backed by "file" index file
 func NewNeedleMap(file *os.File) *NeedleMap {
-	return &NeedleMap{
+	nm := &NeedleMap{
 		m:         NewCompactMap(),
 		bytes:     make([]byte, 16),
 		indexFile: file,
 	}
-}
-
-// Nes frozen (on-disk, not modifiable(!)) needle map
-func NewFrozenNeedleMap(file *os.File) (*NeedleMap, error) {
-	fm, err := NewCdbMapFromIndex(file)
-	if err != nil {
-		return nil, err
-	}
-	return &NeedleMap{
-		fm:    fm,
-		bytes: make([]byte, 16),
-	}, nil
+	return nm
 }
 
 const (
 	RowsToRead = 1024
 )
 
-func LoadNeedleMap(file *os.File) (*NeedleMap, error) {
+func LoadNeedleMap(file *os.File) *NeedleMap {
 	nm := NewNeedleMap(file)
-
-	var (
-		key                   uint64
-		offset, size, oldSize uint32
-	)
-	iterFun := func(buf []byte) error {
-		key = util.BytesToUint64(buf[:8])
-		offset = util.BytesToUint32(buf[8:12])
-		size = util.BytesToUint32(buf[12:16])
-		nm.fileCounter++
-		nm.fileByteCounter = nm.fileByteCounter + uint64(size)
-		if offset > 0 {
-			oldSize = nm.m.Set(Key(key), offset, size)
-			//log.Println("reading key", key, "offset", offset, "size", size, "oldSize", oldSize)
-			if oldSize > 0 {
-				nm.deletionCounter++
-				nm.deletionByteCounter = nm.deletionByteCounter + uint64(oldSize)
-			}
-		} else {
-			nm.m.Delete(Key(key))
-			//log.Println("removing key", key)
-			nm.deletionCounter++
-			nm.deletionByteCounter = nm.deletionByteCounter + uint64(size)
-		}
-
-		return nil
-	}
-	if err := readIndexFile(file, iterFun); err != nil {
-		return nil, err
-	}
-	return nm, nil
-}
-
-// calls iterFun with each row (raw 16 bytes)
-func readIndexFile(indexFile *os.File, iterFun func([]byte) error) error {
-	buf := make([]byte, 16*RowsToRead)
-	count, e := io.ReadAtLeast(indexFile, buf, 16)
-	if e != nil && count > 0 {
-		fstat, err := indexFile.Stat()
-		if err != nil {
-			log.Println("ERROR stating %s: %s", indexFile, err)
-		} else {
-			log.Println("Loading index file", fstat.Name(), "size", fstat.Size())
-		}
+	bytes := make([]byte, 16*RowsToRead)
+	count, e := nm.indexFile.Read(bytes)
+	if count > 0 {
+		fstat, _ := file.Stat()
+		log.Println("Loading index file", fstat.Name(), "size", fstat.Size())
 	}
 	for count > 0 && e == nil {
 		for i := 0; i < count; i += 16 {
-			if e = iterFun(buf[i : i+16]); e != nil {
-				return e
+			key := util.BytesToUint64(bytes[i : i+8])
+			offset := util.BytesToUint32(bytes[i+8 : i+12])
+			size := util.BytesToUint32(bytes[i+12 : i+16])
+			nm.fileCounter++
+			nm.fileByteCounter = nm.fileByteCounter + uint64(size)
+			if offset > 0 {
+				oldSize := nm.m.Set(Key(key), offset, size)
+				//log.Println("reading key", key, "offset", offset, "size", size, "oldSize", oldSize)
+				if oldSize > 0 {
+					nm.deletionCounter++
+					nm.deletionByteCounter = nm.deletionByteCounter + uint64(oldSize)
+				}
+			} else {
+				nm.m.Delete(Key(key))
+				//log.Println("removing key", key)
+				nm.deletionCounter++
+				nm.deletionByteCounter = nm.deletionByteCounter + uint64(size)
 			}
 		}
 
-		count, e = io.ReadAtLeast(indexFile, buf, 16)
+		count, e = nm.indexFile.Read(bytes)
 	}
-	return nil
+	return nm
 }
 
 func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) (int, error) {

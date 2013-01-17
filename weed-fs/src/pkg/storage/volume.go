@@ -48,8 +48,8 @@ func (v *Volume) load() error {
 	if ie != nil {
 		return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
 	}
-	v.nm, e = LoadNeedleMap(indexFile)
-	return e
+	v.nm = LoadNeedleMap(indexFile)
+	return nil
 }
 func (v *Volume) Version() Version {
 	return v.version
