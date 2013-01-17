@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"path"
-	"pkg/util"
 	"sync"
 )
 
@@ -46,18 +45,13 @@ func (v *Volume) load() error {
 		v.maybeWriteSuperBlock()
 	}
 	// TODO: if .idx not exists, but .cdb exists, then use (but don't load!) that
-	if !util.FileIsWritable(v.dataFile.Name()) { //Read-Only
-		v.nm, e = NewFrozenNeedleMap(fileName)
-	} else {
-		indexFile, ie := os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644)
-		if ie != nil {
-			return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
-		}
-		v.nm, e = LoadNeedleMap(indexFile)
+	indexFile, ie := os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644)
+	if ie != nil {
+		return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
 	}
+	v.nm, e = LoadNeedleMap(indexFile)
 	return e
 }
-
 func (v *Volume) Version() Version {
 	return v.version
 }

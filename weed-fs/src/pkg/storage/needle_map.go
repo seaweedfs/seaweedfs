@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"pkg/util"
-	"strings"
 )
 
 type NeedleMap struct {
@@ -51,40 +50,10 @@ func NewNeedleMap(file *os.File) *NeedleMap {
 }
 
 // Nes frozen (on-disk, not modifiable(!)) needle map
-func NewFrozenNeedleMap(fileName string) (*NeedleMap, error) {
-	if strings.HasSuffix(fileName, ".dat") {
-		fileName = fileName[:4]
-	}
-	var (
-		fm          *CdbMap
-		indexExists bool
-	)
-	file, err := os.Open(fileName + ".idx")
-	if err != nil && os.IsNotExist(err) {
-		if fm, err = NewCdbMap(fileName + ".cdb"); err != nil {
-			log.Printf("error opening %s.cdb: %s", fileName, err)
-			fm = nil
-		} else {
-			if dstat, e := os.Stat(fileName + ".dat"); e == nil {
-				if cstat, e := os.Stat(fileName + ".cdb"); e == nil {
-					if cstat.ModTime().Before(dstat.ModTime()) {
-						return nil, errors.New("CDB file " + fileName +
-							".cdb is older than data file " + fileName + ".dat!")
-					}
-				}
-			}
-		}
-	} else {
-		indexExists = true
-	}
-	if fm == nil {
-		fm, err = NewCdbMapFromIndex(file)
-		if err != nil {
-			return nil, err
-		}
-		if indexExists {
-			os.Remove(fileName + ".idx")
-		}
+func NewFrozenNeedleMap(file *os.File) (*NeedleMap, error) {
+	fm, err := NewCdbMapFromIndex(file)
+	if err != nil {
+		return nil, err
 	}
 	return &NeedleMap{
 		fm:    fm,

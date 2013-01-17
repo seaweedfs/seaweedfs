@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"log"
 	"os"
 	"path"
@@ -34,36 +33,24 @@ func runFix(cmd *Command, args []string) bool {
 	}
 
 	fileName := strconv.Itoa(*volumeId)
-
-	if err := createIndexFile(path.Join(*dir, fileName+".dat")); err != nil {
-		log.Fatalf("[ERROR] " + err.Error())
-	}
-	return true
-}
-
-func createIndexFile(datafn string) error {
-	dataFile, e := os.OpenFile(datafn, os.O_RDONLY, 0644)
+	dataFile, e := os.OpenFile(path.Join(*dir, fileName+".dat"), os.O_RDONLY, 0644)
 	if e != nil {
-		return errors.New("Read Volume " + e.Error())
+		log.Fatalf("Read Volume [ERROR] %s\n", e)
 	}
 	defer dataFile.Close()
-	// log.Printf("dataFile=%s", dataFile)
-	indexFile, ie := os.OpenFile(datafn[:len(datafn)-4]+".idx", os.O_WRONLY|os.O_CREATE, 0644)
+	indexFile, ie := os.OpenFile(path.Join(*dir, fileName+".idx"), os.O_WRONLY|os.O_CREATE, 0644)
 	if ie != nil {
-		return errors.New("Create Volume Index " + ie.Error())
+		log.Fatalf("Create Volume Index [ERROR] %s\n", ie)
 	}
 	defer indexFile.Close()
 
 	dataFile.Seek(0, 0)
 	header := make([]byte, storage.SuperBlockSize)
 	if _, e := dataFile.Read(header); e != nil {
-		return errors.New("cannot read superblock: " + e.Error())
+		log.Fatalf("cannot read superblock: %s", e)
 	}
 
-	ver, _, e := storage.ParseSuperBlock(header)
-	if e != nil {
-		return errors.New("cannot parse superblock: " + e.Error())
-	}
+	ver, _, _ := storage.ParseSuperBlock(header)
 
 	n, rest := storage.ReadNeedleHeader(dataFile, ver)
 	dataFile.Seek(int64(rest), 1)
@@ -79,5 +66,5 @@ func createIndexFile(datafn string) error {
 		n, rest = storage.ReadNeedleHeader(dataFile, ver)
 		dataFile.Seek(int64(rest), 1)
 	}
-	return nil
+	return true
 }
