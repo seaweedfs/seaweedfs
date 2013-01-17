@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	NeedleHeaderSize   = 16 //should never change this
-	NeedlePaddingSize  = 8
+	NeedleHeaderSize  = 16 //should never change this
+	NeedlePaddingSize = 8
 	NeedleChecksumSize = 4
 )
 
@@ -64,9 +64,7 @@ func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
 		mtype = contentType
 	}
 	if IsGzippable(ext, mtype) {
-		if data, e = GzipData(data); e != nil {
-			return
-		}
+		data = GzipData(data)
 		n.SetGzipped()
 	}
 	if ext == ".gz" {

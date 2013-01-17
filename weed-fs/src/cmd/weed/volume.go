@@ -42,7 +42,7 @@ var (
 	store *storage.Store
 )
 
-var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
+var fileNameEscaper = strings.NewReplacer("\\","\\\\","\"","\\\"")
 
 func statusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
@@ -156,9 +156,7 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 				w.Header().Set("Content-Encoding", "gzip")
 			} else {
-				if n.Data, err = storage.UnGzipData(n.Data); err != nil {
-					debug("lookup error:", err, r.URL.Path)
-				}
+				n.Data = storage.UnGzipData(n.Data)
 			}
 		}
 	}
