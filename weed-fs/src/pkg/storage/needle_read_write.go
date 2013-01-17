@@ -2,14 +2,15 @@ package storage
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"pkg/util"
-	"fmt"
 )
 
 func (n *Needle) Append(w io.Writer, version Version) uint32 {
-	if version == Version1 {
+	switch version {
+	case Version1:
 		header := make([]byte, NeedleHeaderSize)
 		util.Uint32toBytes(header[0:4], n.Cookie)
 		util.Uint64toBytes(header[4:12], n.Id)
@@ -21,7 +22,7 @@ func (n *Needle) Append(w io.Writer, version Version) uint32 {
 		util.Uint32toBytes(header[0:NeedleChecksumSize], n.Checksum.Value())
 		w.Write(header[0 : NeedleChecksumSize+padding])
 		return n.Size
-	} else if version == Version2 {
+	case Version2:
 		header := make([]byte, NeedleHeaderSize)
 		util.Uint32toBytes(header[0:4], n.Cookie)
 		util.Uint64toBytes(header[4:12], n.Id)
@@ -62,7 +63,8 @@ func (n *Needle) Append(w io.Writer, version Version) uint32 {
 	return n.Size
 }
 func (n *Needle) Read(r io.Reader, size uint32, version Version) (int, error) {
-	if version == Version1 {
+	switch version {
+	case Version1:
 		bytes := make([]byte, NeedleHeaderSize+size+NeedleChecksumSize)
 		ret, e := r.Read(bytes)
 		n.readNeedleHeader(bytes)
@@ -72,7 +74,7 @@ func (n *Needle) Read(r io.Reader, size uint32, version Version) (int, error) {
 			return 0, errors.New("CRC error! Data On Disk Corrupted!")
 		}
 		return ret, e
-	} else if version == Version2 {
+	case Version2:
 		if size == 0 {
 			return 0, nil
 		}
@@ -95,7 +97,7 @@ func (n *Needle) Read(r io.Reader, size uint32, version Version) (int, error) {
 		}
 		return ret, e
 	}
-	return 0, errors.New("Unsupported Version!")
+	return 0, fmt.Errorf("Unsupported Version! (%d)", version)
 }
 func (n *Needle) readNeedleHeader(bytes []byte) {
 	n.Cookie = util.BytesToUint32(bytes[0:4])
@@ -142,12 +144,13 @@ func ReadNeedleHeader(r *os.File, version Version) (n *Needle, bodyLength uint32
 //n should be a needle already read the header
 //the input stream will read until next file entry
 func (n *Needle) ReadNeedleBody(r *os.File, version Version, bodyLength uint32) {
-	if version == Version1 {
+	switch version {
+	case Version1:
 		bytes := make([]byte, bodyLength)
 		r.Read(bytes)
 		n.Data = bytes[:n.Size]
 		n.Checksum = NewCRC(n.Data)
-	} else if version == Version2 {
+	case Version2:
 		bytes := make([]byte, bodyLength)
 		r.Read(bytes)
 		n.readNeedleDataVersion2(bytes[0:n.Size])
