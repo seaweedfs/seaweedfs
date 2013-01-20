@@ -168,23 +168,23 @@ func (s *Store) Close() {
 		v.Close()
 	}
 }
-func (s *Store) Write(i VolumeId, n *Needle) uint32 {
+func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 	if v := s.volumes[i]; v != nil {
-		size := v.write(n)
-		if s.volumeSizeLimit < v.ContentSize()+uint64(size) && s.volumeSizeLimit >= v.ContentSize() {
+		size, err = v.write(n)
+		if err != nil && s.volumeSizeLimit < v.ContentSize()+uint64(size) && s.volumeSizeLimit >= v.ContentSize() {
 			log.Println("volume", i, "size is", v.ContentSize(), "close to", s.volumeSizeLimit)
 			s.Join()
 		}
-		return size
+		return
 	}
 	log.Println("volume", i, "not found!")
-	return 0
+	return
 }
-func (s *Store) Delete(i VolumeId, n *Needle) uint32 {
+func (s *Store) Delete(i VolumeId, n *Needle) (uint32, error) {
 	if v := s.volumes[i]; v != nil {
 		return v.delete(n)
 	}
-	return 0
+	return 0, nil
 }
 func (s *Store) Read(i VolumeId, n *Needle) (int, error) {
 	if v := s.volumes[i]; v != nil {

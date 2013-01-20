@@ -38,8 +38,8 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	}
 }
 
-func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool{
-    return uint64(v.Size) < vl.volumeSizeLimit && v.Version == storage.CurrentVersion
+func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool {
+	return uint64(v.Size) < vl.volumeSizeLimit && v.Version == storage.CurrentVersion
 }
 
 func (vl *VolumeLayout) Lookup(vid storage.VolumeId) []*DataNode {

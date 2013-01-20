@@ -8,20 +8,31 @@ import (
 	"pkg/util"
 )
 
-func (n *Needle) Append(w io.Writer, version Version) uint32 {
+const (
+	FlagGzip    = 0x01
+	FlagHasName = 0x02
+	FlagHasMime = 0x04
+)
+
+func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 	switch version {
 	case Version1:
 		header := make([]byte, NeedleHeaderSize)
 		util.Uint32toBytes(header[0:4], n.Cookie)
 		util.Uint64toBytes(header[4:12], n.Id)
 		n.Size = uint32(len(n.Data))
+		size = n.Size
 		util.Uint32toBytes(header[12:16], n.Size)
-		w.Write(header)
-		w.Write(n.Data)
+		if _, err = w.Write(header); err != nil {
+			return
+		}
+		if _, err = w.Write(n.Data); err != nil {
+			return
+		}
 		padding := NeedlePaddingSize - ((NeedleHeaderSize + n.Size + NeedleChecksumSize) % NeedlePaddingSize)
 		util.Uint32toBytes(header[0:NeedleChecksumSize], n.Checksum.Value())
-		w.Write(header[0 : NeedleChecksumSize+padding])
-		return n.Size
+		_, err = w.Write(header[0 : NeedleChecksumSize+padding])
+		return
 	case Version2:
 		header := make([]byte, NeedleHeaderSize)
 		util.Uint32toBytes(header[0:4], n.Cookie)
@@ -36,52 +47,71 @@ func (n *Needle) Append(w io.Writer, version Version) uint32 {
 				n.Size = n.Size + 1 + uint32(n.MimeSize)
 			}
 		}
+		size = n.DataSize
 		util.Uint32toBytes(header[12:16], n.Size)
-		w.Write(header)
+		if _, err = w.Write(header); err != nil {
+			return
+		}
 		if n.DataSize > 0 {
 			util.Uint32toBytes(header[0:4], n.DataSize)
-			w.Write(header[0:4])
-			w.Write(n.Data)
+			if _, err = w.Write(header[0:4]); err != nil {
+				return
+			}
+			if _, err = w.Write(n.Data); err != nil {
+				return
+			}
 			util.Uint8toBytes(header[0:1], n.Flags)
-			w.Write(header[0:1])
+			if _, err = w.Write(header[0:1]); err != nil {
+				return
+			}
 		}
 		if n.HasName() {
 			util.Uint8toBytes(header[0:1], n.NameSize)
-			w.Write(header[0:1])
-			w.Write(n.Name)
+			if _, err = w.Write(header[0:1]); err != nil {
+				return
+			}
+			if _, err = w.Write(n.Name); err != nil {
+				return
+			}
 		}
 		if n.HasMime() {
 			util.Uint8toBytes(header[0:1], n.MimeSize)
-			w.Write(header[0:1])
-			w.Write(n.Mime)
+			if _, err = w.Write(header[0:1]); err != nil {
+				return
+			}
+			if _, err = w.Write(n.Mime); err != nil {
+				return
+			}
 		}
 		padding := NeedlePaddingSize - ((NeedleHeaderSize + n.Size + NeedleChecksumSize) % NeedlePaddingSize)
 		util.Uint32toBytes(header[0:NeedleChecksumSize], n.Checksum.Value())
-		w.Write(header[0 : NeedleChecksumSize+padding])
-		return n.DataSize
+		_, err = w.Write(header[0 : NeedleChecksumSize+padding])
+		return n.DataSize, err
 	}
-	return n.Size
+	return 0, fmt.Errorf("Unsupported Version! (%d)", version)
 }
-func (n *Needle) Read(r io.Reader, size uint32, version Version) (int, error) {
+
+func (n *Needle) Read(r io.Reader, size uint32, version Version) (ret int, err error) {
 	switch version {
 	case Version1:
 		bytes := make([]byte, NeedleHeaderSize+size+NeedleChecksumSize)
-		ret, e := r.Read(bytes)
+		if ret, err = r.Read(bytes); err != nil {
+			return
+		}
 		n.readNeedleHeader(bytes)
 		n.Data = bytes[NeedleHeaderSize : NeedleHeaderSize+size]
 		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+size : NeedleHeaderSize+size+NeedleChecksumSize])
 		if checksum != NewCRC(n.Data).Value() {
 			return 0, errors.New("CRC error! Data On Disk Corrupted!")
 		}
-		return ret, e
+		return
 	case Version2:
 		if size == 0 {
 			return 0, nil
 		}
 		bytes := make([]byte, NeedleHeaderSize+size+NeedleChecksumSize)
-		ret, e := r.Read(bytes)
-		if e != nil {
-			return 0, e
+		if ret, err = r.Read(bytes); err != nil {
+			return
 		}
 		if ret != int(NeedleHeaderSize+size+NeedleChecksumSize) {
 			return 0, errors.New("File Entry Not Found!")
@@ -95,7 +125,7 @@ func (n *Needle) Read(r io.Reader, size uint32, version Version) (int, error) {
 		if checksum != NewCRC(n.Data).Value() {
 			return 0, errors.New("CRC error! Data On Disk Corrupted!")
 		}
-		return ret, e
+		return
 	}
 	return 0, fmt.Errorf("Unsupported Version! (%d)", version)
 }
@@ -126,13 +156,14 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) {
 		n.Mime = bytes[index : index+int(n.MimeSize)]
 	}
 }
-func ReadNeedleHeader(r *os.File, version Version) (n *Needle, bodyLength uint32) {
+func ReadNeedleHeader(r *os.File, version Version) (n *Needle, bodyLength uint32, err error) {
 	n = new(Needle)
 	if version == Version1 || version == Version2 {
 		bytes := make([]byte, NeedleHeaderSize)
-		count, e := r.Read(bytes)
-		if count <= 0 || e != nil {
-			return nil, 0
+		var count int
+		count, err = r.Read(bytes)
+		if count <= 0 || err != nil {
+			return nil, 0, err
 		}
 		n.readNeedleHeader(bytes)
 		padding := NeedlePaddingSize - ((n.Size + NeedleHeaderSize + NeedleChecksumSize) % NeedlePaddingSize)
@@ -143,37 +174,43 @@ func ReadNeedleHeader(r *os.File, version Version) (n *Needle, bodyLength uint32
 
 //n should be a needle already read the header
 //the input stream will read until next file entry
-func (n *Needle) ReadNeedleBody(r *os.File, version Version, bodyLength uint32) {
+func (n *Needle) ReadNeedleBody(r *os.File, version Version, bodyLength uint32) (err error) {
 	switch version {
 	case Version1:
 		bytes := make([]byte, bodyLength)
-		r.Read(bytes)
+		if _, err = r.Read(bytes); err != nil {
+			return
+		}
 		n.Data = bytes[:n.Size]
 		n.Checksum = NewCRC(n.Data)
 	case Version2:
 		bytes := make([]byte, bodyLength)
-		r.Read(bytes)
+		if _, err = r.Read(bytes); err != nil {
+			return
+		}
 		n.readNeedleDataVersion2(bytes[0:n.Size])
 		n.Checksum = NewCRC(n.Data)
+	default:
+		err = fmt.Errorf("Unsupported Version! (%d)", version)
 	}
 	return
 }
 
 func (n *Needle) IsGzipped() bool {
-	return n.Flags&0x01 == 0x01
+	return n.Flags&FlagGzip > 0
 }
 func (n *Needle) SetGzipped() {
-	n.Flags = n.Flags | 0x01
+	n.Flags = n.Flags | FlagGzip
 }
 func (n *Needle) HasName() bool {
-	return n.Flags&0x02 == 0x02
+	return n.Flags&FlagHasName > 0
 }
 func (n *Needle) SetHasName() {
-	n.Flags = n.Flags | 0x02
+	n.Flags = n.Flags | FlagHasName
 }
 func (n *Needle) HasMime() bool {
-	return n.Flags&0x04 == 0x04
+	return n.Flags&FlagHasMime > 0
 }
 func (n *Needle) SetHasMime() {
-	n.Flags = n.Flags | 0x04
+	n.Flags = n.Flags | FlagHasMime
 }

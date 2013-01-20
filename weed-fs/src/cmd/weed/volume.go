@@ -176,10 +176,12 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 		if ne != nil {
 			writeJson(w, r, ne)
 		} else {
-			ret := store.Write(volumeId, needle)
+			ret, err := store.Write(volumeId, needle)
 			errorStatus := ""
 			needToReplicate := !store.HasVolume(volumeId)
-			if ret > 0 {
+			if err != nil {
+				errorStatus = "Failed to write to local disk (" + err.Error() + ")"
+			} else if ret > 0 {
 				needToReplicate = needToReplicate || store.GetVolume(volumeId).NeedToReplicate()
 			} else {
 				errorStatus = "Failed to write to local disk"
@@ -238,7 +240,11 @@ func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	n.Size = 0
-	ret := store.Delete(volumeId, n)
+	ret, err := store.Delete(volumeId, n)
+	if err != nil {
+		log.Println("delete error: %s", err)
+		return
+	}
 
 	needToReplicate := !store.HasVolume(volumeId)
 	if !needToReplicate && ret > 0 {
