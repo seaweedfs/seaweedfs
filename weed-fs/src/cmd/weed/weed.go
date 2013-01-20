@@ -65,7 +65,7 @@ func main() {
 			cmd.Flag.Usage = func() { cmd.Usage() }
 			cmd.Flag.Parse(args[1:])
 			args = cmd.Flag.Args()
-			*IsDebug = *cmd.IsDebug
+			IsDebug = cmd.IsDebug
 			if !cmd.Run(cmd, args) {
 				fmt.Fprintf(os.Stderr, "\n")
 				cmd.Flag.Usage()
