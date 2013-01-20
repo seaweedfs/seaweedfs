@@ -16,7 +16,7 @@ type Key uint64
 
 type CompactSection struct {
 	values   []NeedleValue
-	overflow map[Key]*NeedleValue
+	overflow map[Key]NeedleValue
 	start    Key
 	end      Key
 	counter  int
@@ -25,7 +25,7 @@ type CompactSection struct {
 func NewCompactSection(start Key) CompactSection {
 	return CompactSection{
 		values:   make([]NeedleValue, batch),
-		overflow: make(map[Key]*NeedleValue),
+		overflow: make(map[Key]NeedleValue),
 		start:    start,
 	}
 }
@@ -45,10 +45,10 @@ func (cs *CompactSection) Set(key Key, offset uint32, size uint32) uint32 {
 		needOverflow = needOverflow || cs.counter > 0 && cs.values[cs.counter-1].Key > key
 		if needOverflow {
 			//println("start", cs.start, "counter", cs.counter, "key", key)
-			if oldValue := cs.overflow[key]; oldValue != nil {
+			if oldValue, found := cs.overflow[key]; found {
 				ret = oldValue.Size
 			}
-			cs.overflow[key] = &NeedleValue{Key: key, Offset: offset, Size: size}
+			cs.overflow[key] = NeedleValue{Key: key, Offset: offset, Size: size}
 		} else {
 			p := &cs.values[cs.counter]
 			p.Key, p.Offset, p.Size = key, offset, size
@@ -68,7 +68,7 @@ func (cs *CompactSection) Delete(key Key) uint32 {
 			cs.values[i].Size = 0
 		}
 	}
-	if v := cs.overflow[key]; v != nil {
+	if v, found := cs.overflow[key]; found {
 		delete(cs.overflow, key)
 		ret = v.Size
 	}
@@ -76,7 +76,7 @@ func (cs *CompactSection) Delete(key Key) uint32 {
 }
 func (cs *CompactSection) Get(key Key) (*NeedleValue, bool) {
 	if v, ok := cs.overflow[key]; ok {
-		return v, true
+		return &v, true
 	}
 	if i := cs.binarySearchValues(key); i >= 0 {
 		return &cs.values[i], true
@@ -163,15 +163,20 @@ func (cm *CompactMap) binarySearchCompactSection(key Key) int {
 	return -3
 }
 
-func (cm *CompactMap) Peek() {
-	for k, v := range cm.list[0].values {
-		if k < 100 {
-			println("[", v.Key, v.Offset, v.Size, "]")
+func (cm *CompactMap) Visit(visit func(NeedleValue) error) error {
+	for _, cs := range cm.list {
+		for _, v := range cs.overflow {
+			if err := visit(v); err != nil {
+				return err
+			}
+		}
+		for _, v := range cs.values {
+			if _, found := cs.overflow[v.Key]; !found {
+				if err := visit(v); err != nil {
+					return err
+				}
+			}
 		}
 	}
-	for k, v := range cm.list[0].overflow {
-		if k < 100 {
-			println("o[", v.Key, v.Offset, v.Size, "]")
-		}
-	}
+	return nil
 }

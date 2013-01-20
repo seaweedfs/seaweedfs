@@ -98,3 +98,6 @@ func (nm *NeedleMap) Close() {
 func (nm *NeedleMap) ContentSize() uint64 {
 	return nm.fileByteCounter
 }
+func (nm *NeedleMap) Visit(visit func(NeedleValue) error) (err error) {
+	return nm.m.Visit(visit)
+}
