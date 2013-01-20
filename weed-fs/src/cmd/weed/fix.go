@@ -10,11 +10,11 @@ import (
 
 func init() {
 	cmdFix.Run = runFix // break init cycle
-	IsDebug = cmdFix.Flag.Bool("debug", false, "enable debug mode")
+	cmdFix.IsDebug = cmdFix.Flag.Bool("debug", false, "enable debug mode")
 }
 
 var cmdFix = &Command{
-	UsageLine: "fix -dir=/tmp -volumeId=234 -debug=1",
+	UsageLine: "fix -dir=/tmp -volumeId=234",
 	Short:     "run weed tool fix on index file if corrupted",
 	Long: `Fix runs the WeedFS fix command to re-create the index .idx file.
 
@@ -22,23 +22,23 @@ var cmdFix = &Command{
 }
 
 var (
-	dir      = cmdFix.Flag.String("dir", "/tmp", "data directory to store files")
-	volumeId = cmdFix.Flag.Int("volumeId", -1, "a non-negative volume id. The volume should already exist in the dir. The volume index file should not exist.")
+	fixVolumePath = cmdFix.Flag.String("dir", "/tmp", "data directory to store files")
+	fixVolumeId   = cmdFix.Flag.Int("volumeId", -1, "a volume id. The volume should already exist in the dir. The volume index file should not exist.")
 )
 
 func runFix(cmd *Command, args []string) bool {
 
-	if *volumeId == -1 {
+	if *fixVolumeId == -1 {
 		return false
 	}
 
-	fileName := strconv.Itoa(*volumeId)
-	dataFile, e := os.OpenFile(path.Join(*dir, fileName+".dat"), os.O_RDONLY, 0644)
+	fileName := strconv.Itoa(*fixVolumeId)
+	dataFile, e := os.OpenFile(path.Join(*fixVolumePath, fileName+".dat"), os.O_RDONLY, 0644)
 	if e != nil {
 		log.Fatalf("Read Volume [ERROR] %s\n", e)
 	}
 	defer dataFile.Close()
-	indexFile, ie := os.OpenFile(path.Join(*dir, fileName+".idx"), os.O_WRONLY|os.O_CREATE, 0644)
+	indexFile, ie := os.OpenFile(path.Join(*fixVolumePath, fileName+".idx"), os.O_WRONLY|os.O_CREATE, 0644)
 	if ie != nil {
 		log.Fatalf("Create Volume Index [ERROR] %s\n", ie)
 	}

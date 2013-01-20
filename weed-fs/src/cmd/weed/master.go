@@ -16,7 +16,7 @@ import (
 
 func init() {
 	cmdMaster.Run = runMaster // break init cycle
-	IsDebug = cmdMaster.Flag.Bool("debug", false, "enable debug mode")
+	cmdMaster.IsDebug = cmdMaster.Flag.Bool("debug", false, "enable debug mode")
 }
 
 var cmdMaster = &Command{

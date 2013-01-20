@@ -17,7 +17,7 @@ import (
 
 func init() {
 	cmdVolume.Run = runVolume // break init cycle
-	IsDebug = cmdVolume.Flag.Bool("debug", false, "enable debug mode")
+	cmdVolume.IsDebug = cmdVolume.Flag.Bool("debug", false, "enable debug mode")
 }
 
 var cmdVolume = &Command{

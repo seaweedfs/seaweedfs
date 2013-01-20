@@ -24,6 +24,8 @@ type Command struct {
 
 	// Flag is a set of flags specific to this command.
 	Flag flag.FlagSet
+
+	IsDebug *bool
 }
 
 // Name returns the command's name: the first word in the usage line.
