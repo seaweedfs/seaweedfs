@@ -33,46 +33,32 @@ func runFix(cmd *Command, args []string) bool {
 	}
 
 	fileName := strconv.Itoa(*fixVolumeId)
-	dataFile, e := os.OpenFile(path.Join(*fixVolumePath, fileName+".dat"), os.O_RDONLY, 0644)
-	if e != nil {
-		log.Fatalf("Read Volume [ERROR] %s\n", e)
-	}
-	defer dataFile.Close()
-	indexFile, ie := os.OpenFile(path.Join(*fixVolumePath, fileName+".idx"), os.O_WRONLY|os.O_CREATE, 0644)
-	if ie != nil {
-		log.Fatalf("Create Volume Index [ERROR] %s\n", ie)
+	indexFile, err := os.OpenFile(path.Join(*fixVolumePath, fileName+".idx"), os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		log.Fatalf("Create Volume Index [ERROR] %s\n", err)
 	}
 	defer indexFile.Close()
 
-	dataFile.Seek(0, 0)
-	header := make([]byte, storage.SuperBlockSize)
-	if _, e := dataFile.Read(header); e != nil {
-		log.Fatalf("cannot read superblock: %s", e)
-	}
-
-	ver, _, e := storage.ParseSuperBlock(header)
-	if e != nil {
-		log.Fatalf("error parsing superblock: %s", e)
-	}
-
-	n, rest, e := storage.ReadNeedleHeader(dataFile, ver)
-	if e != nil {
-		log.Fatalf("error reading needle header: %s", e)
-	}
-	dataFile.Seek(int64(rest), 1)
 	nm := storage.NewNeedleMap(indexFile)
-	offset := uint32(storage.SuperBlockSize)
-	for n != nil {
-		debug("key", n.Id, "volume offset", offset, "data_size", n.Size, "rest", rest)
+	defer nm.Close()
+
+	vid := storage.VolumeId(*fixVolumeId)
+	err = storage.ScanVolumeFile(*fixVolumePath, vid, func(superBlock storage.SuperBlock) error {
+		return nil
+	}, func(n *storage.Needle, offset uint32) error {
+		debug("key", n.Id, "offset", offset, "size", n.Size, "disk_size", n.DiskSize(), "gzip", n.IsGzipped())
 		if n.Size > 0 {
 			count, pe := nm.Put(n.Id, offset/storage.NeedlePaddingSize, n.Size)
 			debug("saved", count, "with error", pe)
+		}else{
+      debug("skipping deleted file ...")
+      nm.Delete(n.Id)
 		}
-		offset += rest + 16
-		if n, rest, e = storage.ReadNeedleHeader(dataFile, ver); e != nil {
-			log.Fatalf("error reading needle header: %s", e)
-		}
-		dataFile.Seek(int64(rest), 1)
+		return nil
+	})
+	if err != nil {
+		log.Fatalf("Export Volume File [ERROR] %s\n", err)
 	}
+
 	return true
 }

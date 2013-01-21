@@ -128,24 +128,13 @@ func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func volumeVacuumHandler(w http.ResponseWriter, r *http.Request) {
-	count := 0
-	rt, err := storage.NewReplicationTypeFromString(r.FormValue("replication"))
-	if err == nil {
-		if count, err = strconv.Atoi(r.FormValue("count")); err == nil {
-			if topo.FreeSpace() < count*rt.GetCopyCount() {
-				err = errors.New("Only " + strconv.Itoa(topo.FreeSpace()) + " volumes left! Not enough for " + strconv.Itoa(count*rt.GetCopyCount()))
-			} else {
-				count, err = vg.GrowByCountAndType(count, rt, topo)
-			}
-		}
+	gcThreshold := r.FormValue("garbageThreshold")
+	if gcThreshold == "" {
+		gcThreshold = *garbageThreshold
 	}
-	if err != nil {
-		w.WriteHeader(http.StatusNotAcceptable)
-		writeJson(w, r, map[string]string{"error": err.Error()})
-	} else {
-		w.WriteHeader(http.StatusNotAcceptable)
-		writeJson(w, r, map[string]interface{}{"count": count})
-	}
+	debug("garbageThreshold =", gcThreshold)
+	topo.Vacuum(gcThreshold)
+	dirStatusHandler(w, r)
 }
 
 func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
@@ -208,6 +197,8 @@ func runMaster(cmd *Command, args []string) bool {
 	http.HandleFunc("/dir/status", dirStatusHandler)
 	http.HandleFunc("/vol/grow", volumeGrowHandler)
 	http.HandleFunc("/vol/status", volumeStatusHandler)
+	http.HandleFunc("/vol/vacuum", volumeVacuumHandler)
+
 	http.HandleFunc("/", redirectHandler)
 
 	topo.StartRefreshWritableVolumes(*garbageThreshold)

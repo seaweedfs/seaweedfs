@@ -116,6 +116,7 @@ func (n *Needle) ParsePath(fid string) {
 		}
 	}
 }
+
 func ParseKeyHash(key_hash_string string) (uint64, uint32) {
 	key_hash_bytes, khe := hex.DecodeString(key_hash_string)
 	key_hash_len := len(key_hash_bytes)

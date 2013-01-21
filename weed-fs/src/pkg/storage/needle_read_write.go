@@ -14,6 +14,10 @@ const (
 	FlagHasMime = 0x04
 )
 
+func (n *Needle) DiskSize() uint32 {
+	padding := NeedlePaddingSize - ((NeedleHeaderSize + n.Size + NeedleChecksumSize) % NeedlePaddingSize)
+	return NeedleHeaderSize + n.Size + padding + NeedleChecksumSize
+}
 func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 	switch version {
 	case Version1:
@@ -156,6 +160,7 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) {
 		n.Mime = bytes[index : index+int(n.MimeSize)]
 	}
 }
+
 func ReadNeedleHeader(r *os.File, version Version) (n *Needle, bodyLength uint32, err error) {
 	n = new(Needle)
 	if version == Version1 || version == Version2 {

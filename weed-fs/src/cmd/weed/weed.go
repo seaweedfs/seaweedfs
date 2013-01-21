@@ -26,6 +26,7 @@ var commands = []*Command{
 	cmdShell,
 	cmdVersion,
 	cmdVolume,
+	cmdExport,
 }
 
 var exitStatus = 0

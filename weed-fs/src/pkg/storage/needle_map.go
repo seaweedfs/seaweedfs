@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"log"
+	//"log"
 	"os"
 	"pkg/util"
 )
@@ -36,10 +36,6 @@ func LoadNeedleMap(file *os.File) *NeedleMap {
 	nm := NewNeedleMap(file)
 	bytes := make([]byte, 16*RowsToRead)
 	count, e := nm.indexFile.Read(bytes)
-	if count > 0 {
-		fstat, _ := file.Stat()
-		log.Println("Loading index file", fstat.Name(), "size", fstat.Size())
-	}
 	for count > 0 && e == nil {
 		for i := 0; i < count; i += 16 {
 			key := util.BytesToUint64(bytes[i : i+8])
@@ -55,10 +51,10 @@ func LoadNeedleMap(file *os.File) *NeedleMap {
 					nm.deletionByteCounter = nm.deletionByteCounter + uint64(oldSize)
 				}
 			} else {
-				nm.m.Delete(Key(key))
-				//log.Println("removing key", key)
+				oldSize := nm.m.Delete(Key(key))
+				//log.Println("removing key", key, "offset", offset, "size", size, "oldSize", oldSize)
 				nm.deletionCounter++
-				nm.deletionByteCounter = nm.deletionByteCounter + uint64(size)
+				nm.deletionByteCounter = nm.deletionByteCounter + uint64(oldSize)
 			}
 		}
 

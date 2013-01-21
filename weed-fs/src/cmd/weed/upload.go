@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"pkg/operation"
 	"pkg/util"
 	"strconv"
@@ -65,7 +66,7 @@ func upload(filename string, server string, fid string) (int, error) {
 		debug("Failed to open file:", filename)
 		return 0, err
 	}
-	ret, e := operation.Upload("http://"+server+"/"+fid, filename, fh)
+	ret, e := operation.Upload("http://"+server+"/"+fid, path.Base(filename), fh)
 	if e != nil {
 		return 0, e
 	}

@@ -19,7 +19,7 @@ func batchVacuumVolumeCheck(vl *VolumeLayout, vid storage.VolumeId, locationlist
 				//fmt.Println(index, "Error when checking vacuuming", vid, "on", url, e)
 				ch <- false
 			} else {
-				//fmt.Println(index, "Checked vacuuming", vid, "on", url)
+				//fmt.Println(index, "Checked vacuuming", vid, "on", url, "needVacuum", ret)
 				ch <- ret
 			}
 		}(index, dn.Url(), vid)

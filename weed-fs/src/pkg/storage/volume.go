@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"sync"
@@ -12,46 +13,66 @@ const (
 	SuperBlockSize = 8
 )
 
+type SuperBlock struct {
+	Version     Version
+	ReplicaType ReplicationType
+}
+
+func (s *SuperBlock) Bytes() []byte {
+	header := make([]byte, SuperBlockSize)
+	header[0] = byte(s.Version)
+	header[1] = s.ReplicaType.Byte()
+	return header
+}
+
 type Volume struct {
 	Id       VolumeId
 	dir      string
 	dataFile *os.File
 	nm       *NeedleMap
 
-	version     Version
-	replicaType ReplicationType
+	SuperBlock
 
 	accessLock sync.Mutex
 }
 
 func NewVolume(dirname string, id VolumeId, replicationType ReplicationType) (v *Volume, e error) {
-	v = &Volume{dir: dirname, Id: id, replicaType: replicationType}
-	e = v.load()
+	v = &Volume{dir: dirname, Id: id}
+	v.SuperBlock = SuperBlock{ReplicaType: replicationType}
+	e = v.load(true)
 	return
 }
-func (v *Volume) load() error {
+func LoadVolumeOnly(dirname string, id VolumeId) (v *Volume, e error) {
+	v = &Volume{dir: dirname, Id: id}
+	v.SuperBlock = SuperBlock{ReplicaType: CopyNil}
+	e = v.load(false)
+	return
+}
+func (v *Volume) load(alsoLoadIndex bool) error {
 	var e error
 	fileName := path.Join(v.dir, v.Id.String())
 	v.dataFile, e = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {
 		return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
 	}
-	if v.replicaType == CopyNil {
+	if v.ReplicaType == CopyNil {
 		if e = v.readSuperBlock(); e != nil {
 			return e
 		}
 	} else {
 		v.maybeWriteSuperBlock()
 	}
-	indexFile, ie := os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644)
-	if ie != nil {
-		return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
+	if alsoLoadIndex {
+		indexFile, ie := os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644)
+		if ie != nil {
+			return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
+		}
+		v.nm = LoadNeedleMap(indexFile)
 	}
-	v.nm = LoadNeedleMap(indexFile)
 	return nil
 }
 func (v *Volume) Version() Version {
-	return v.version
+	return v.SuperBlock.Version
 }
 func (v *Volume) Size() int64 {
 	v.accessLock.Lock()
@@ -76,11 +97,8 @@ func (v *Volume) maybeWriteSuperBlock() {
 		return
 	}
 	if stat.Size() == 0 {
-		v.version = CurrentVersion
-		header := make([]byte, SuperBlockSize)
-		header[0] = byte(v.version)
-		header[1] = v.replicaType.Byte()
-		v.dataFile.Write(header)
+		v.SuperBlock.Version = CurrentVersion
+		v.dataFile.Write(v.SuperBlock.Bytes())
 	}
 }
 func (v *Volume) readSuperBlock() (err error) {
@@ -89,18 +107,18 @@ func (v *Volume) readSuperBlock() (err error) {
 	if _, e := v.dataFile.Read(header); e != nil {
 		return fmt.Errorf("cannot read superblock: %s", e)
 	}
-	v.version, v.replicaType, err = ParseSuperBlock(header)
+	v.SuperBlock, err = ParseSuperBlock(header)
 	return err
 }
-func ParseSuperBlock(header []byte) (version Version, replicaType ReplicationType, err error) {
-	version = Version(header[0])
-	if replicaType, err = NewReplicationTypeFromByte(header[1]); err != nil {
+func ParseSuperBlock(header []byte) (superBlock SuperBlock, err error) {
+	superBlock.Version = Version(header[0])
+	if superBlock.ReplicaType, err = NewReplicationTypeFromByte(header[1]); err != nil {
 		err = fmt.Errorf("cannot read replica type: %s", err)
 	}
 	return
 }
 func (v *Volume) NeedToReplicate() bool {
-	return v.replicaType.GetCopyCount() > 1
+	return v.ReplicaType.GetCopyCount() > 1
 }
 
 func (v *Volume) write(n *Needle) (size uint32, err error) {
@@ -110,7 +128,7 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 	if offset, err = v.dataFile.Seek(0, 2); err != nil {
 		return
 	}
-	if size, err = n.Append(v.dataFile, v.version); err != nil {
+	if size, err = n.Append(v.dataFile, v.Version()); err != nil {
 		return
 	}
 	nv, ok := v.nm.Get(n.Id)
@@ -127,7 +145,7 @@ func (v *Volume) delete(n *Needle) (uint32, error) {
 	if ok {
 		v.nm.Delete(n.Id)
 		v.dataFile.Seek(int64(nv.Offset*NeedlePaddingSize), 0)
-		_, err := n.Append(v.dataFile, v.version)
+		_, err := n.Append(v.dataFile, v.Version())
 		return nv.Size, err
 	}
 	return 0, nil
@@ -139,7 +157,7 @@ func (v *Volume) read(n *Needle) (int, error) {
 	nv, ok := v.nm.Get(n.Id)
 	if ok && nv.Offset > 0 {
 		v.dataFile.Seek(int64(nv.Offset)*NeedlePaddingSize, 0)
-		return n.Read(v.dataFile, nv.Size, v.version)
+		return n.Read(v.dataFile, nv.Size, v.Version())
 	}
 	return -1, errors.New("Not Found")
 }
@@ -153,7 +171,7 @@ func (v *Volume) compact() error {
 	defer v.accessLock.Unlock()
 
 	filePath := path.Join(v.dir, v.Id.String())
-	return v.copyDataAndGenerateIndexFile(filePath+".dat", filePath+".cpd", filePath+".cpx")
+	return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx")
 }
 func (v *Volume) commitCompact() error {
 	v.accessLock.Lock()
@@ -166,21 +184,55 @@ func (v *Volume) commitCompact() error {
 	if e = os.Rename(path.Join(v.dir, v.Id.String()+".cpx"), path.Join(v.dir, v.Id.String()+".idx")); e != nil {
 		return e
 	}
-	if e = v.load(); e != nil {
+	if e = v.load(true); e != nil {
 		return e
 	}
 	return nil
 }
 
-func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) (err error) {
-	var (
-		src, dst, idx *os.File
-	)
-	if src, err = os.OpenFile(srcName, os.O_RDONLY, 0644); err != nil {
+func ScanVolumeFile(dirname string, id VolumeId,
+	visitSuperBlock func(SuperBlock) error,
+	visitNeedle func(n *Needle, offset uint32) error) (err error) {
+	var v *Volume
+	if v, err = LoadVolumeOnly(dirname, id); err != nil {
 		return
 	}
-	defer src.Close()
+	if err = visitSuperBlock(v.SuperBlock); err != nil {
+		return
+	}
 
+	version := v.Version()
+
+	offset := uint32(SuperBlockSize)
+	n, rest, e := ReadNeedleHeader(v.dataFile, version)
+	if e != nil {
+		err = fmt.Errorf("cannot read needle header: %s", e)
+		return
+	}
+	for n != nil {
+		if err = n.ReadNeedleBody(v.dataFile, version, rest); err != nil {
+			err = fmt.Errorf("cannot read needle body: %s", err)
+			return
+		}
+		if err = visitNeedle(n, offset); err != nil {
+			return
+		}
+		offset += NeedleHeaderSize + rest
+		if n, rest, err = ReadNeedleHeader(v.dataFile, version); err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return fmt.Errorf("cannot read needle header: %s", err)
+		}
+	}
+
+	return
+}
+
+func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string) (err error) {
+	var (
+		dst, idx *os.File
+	)
 	if dst, err = os.OpenFile(dstName, os.O_WRONLY|os.O_CREATE, 0644); err != nil {
 		return
 	}
@@ -191,58 +243,31 @@ func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) 
 	}
 	defer idx.Close()
 
-	src.Seek(0, 0)
-	header := make([]byte, SuperBlockSize)
-	if _, err = src.Read(header); err == nil {
-		_, err = dst.Write(header)
-	}
-	if err != nil {
-		return err
-	}
-
-	version, _, e := ParseSuperBlock(header)
-	if e != nil {
-		err = fmt.Errorf("cannot parse superblock: %s", e)
-		return
-	}
-
-	n, rest, e := ReadNeedleHeader(src, version)
-	if e != nil {
-		err = fmt.Errorf("cannot read needle header: %s", e)
-		return
-	}
 	nm := NewNeedleMap(idx)
-	old_offset := uint32(SuperBlockSize)
 	new_offset := uint32(SuperBlockSize)
-	for n != nil {
+
+	err = ScanVolumeFile(v.dir, v.Id, func(superBlock SuperBlock) error {
+		_, err = dst.Write(superBlock.Bytes())
+		return err
+	}, func(n *Needle, offset uint32) error {
 		nv, ok := v.nm.Get(n.Id)
 		//log.Println("file size is", n.Size, "rest", rest)
-		if !ok || nv.Offset*NeedlePaddingSize != old_offset {
-			src.Seek(int64(rest), 1)
-		} else {
+		if ok && nv.Offset*NeedlePaddingSize == offset {
 			if nv.Size > 0 {
 				if _, err = nm.Put(n.Id, new_offset/NeedlePaddingSize, n.Size); err != nil {
 					return fmt.Errorf("cannot put needle: %s", err)
 				}
-				if err = n.ReadNeedleBody(src, version, rest); err != nil {
-					return fmt.Errorf("cannot read needle body: %s", err)
-				}
-				if _, err = n.Append(dst, v.version); err != nil {
+				if _, err = n.Append(dst, v.Version()); err != nil {
 					return fmt.Errorf("cannot append needle: %s", err)
 				}
-				new_offset += rest + NeedleHeaderSize
+				new_offset += n.DiskSize()
 				//log.Println("saving key", n.Id, "volume offset", old_offset, "=>", new_offset, "data_size", n.Size, "rest", rest)
-			} else {
-				src.Seek(int64(rest), 1)
 			}
 		}
-		old_offset += rest + NeedleHeaderSize
-		if n, rest, err = ReadNeedleHeader(src, version); err != nil {
-			return fmt.Errorf("cannot read needle header: %s", err)
-		}
-	}
+		return nil
+	})
 
-	return nil
+	return
 }
 func (v *Volume) ContentSize() uint64 {
 	return v.nm.fileByteCounter
