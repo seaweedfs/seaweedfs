@@ -20,8 +20,8 @@ func init() {
 
 var cmdExport = &Command{
 	UsageLine: "export -dir=/tmp -volumeId=234 -o=/dir/name.tar",
-	Short:     "export files out of one volume",
-	Long: `export all files in a volume
+	Short:     "list or export files from one volume data file",
+	Long: `List all files in a volume, or Export all files in a volume to a tar file if the output is specified.
 
   `,
 }
@@ -29,7 +29,7 @@ var cmdExport = &Command{
 var (
 	exportVolumePath = cmdExport.Flag.String("dir", "/tmp", "input data directory to store volume data files")
 	exportVolumeId   = cmdExport.Flag.Int("volumeId", -1, "a volume id. The volume should already exist in the dir. The volume index file should not exist.")
-	dest             = cmdExport.Flag.String("o", "", "output tar file name")
+	dest             = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar")
 	tarFh            *tar.Writer
 	tarHeader        tar.Header
 )
