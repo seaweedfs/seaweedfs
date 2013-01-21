@@ -40,6 +40,10 @@ func runExport(cmd *Command, args []string) bool {
 		return false
 	}
 
+  if *dest!="" && !strings.HasSuffix(*dest, ".tar") {
+    fmt.Println("the output file", *dest, "should ends with .tar")
+    return false
+  }
 	var err error
 	if strings.HasSuffix(*dest, ".tar") {
 		var fh *os.File
