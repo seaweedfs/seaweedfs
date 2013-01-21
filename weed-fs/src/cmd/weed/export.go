@@ -27,12 +27,11 @@ var cmdExport = &Command{
 }
 
 var (
-	exportVolumePath = cmdExport.Flag.String("dir", "/tmp", "data directory to store files")
+	exportVolumePath = cmdExport.Flag.String("dir", "/tmp", "input data directory to store volume data files")
 	exportVolumeId   = cmdExport.Flag.Int("volumeId", -1, "a volume id. The volume should already exist in the dir. The volume index file should not exist.")
 	dest             = cmdExport.Flag.String("o", "", "output tar file name")
 	tarFh            *tar.Writer
 	tarHeader        tar.Header
-	counter          int
 )
 
 func runExport(cmd *Command, args []string) bool {
@@ -109,12 +108,9 @@ func walker(vid storage.VolumeId, n *storage.Needle) (err error) {
 			directory.NewFileId(vid, n.Id, n.Cookie).String(),
 			n.Name,
 			n.DataSize,
-      n.IsGzipped(),
+			n.IsGzipped(),
 			n.Mime,
-			)
-	}
-	if err == nil {
-		counter++
+		)
 	}
 	return
 }
