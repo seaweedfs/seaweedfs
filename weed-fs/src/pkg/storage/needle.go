@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"mime"
 	"net/http"
+	"path"
 	"pkg/util"
 	"strconv"
 	"strings"
@@ -50,6 +51,7 @@ func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
 		return
 	}
 	fname = part.FileName()
+	fname = path.Base(fname)
 	data, _ := ioutil.ReadAll(part)
 	dotIndex := strings.LastIndex(fname, ".")
 	ext, mtype := "", ""
