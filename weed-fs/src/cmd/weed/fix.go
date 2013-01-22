@@ -50,9 +50,9 @@ func runFix(cmd *Command, args []string) bool {
 		if n.Size > 0 {
 			count, pe := nm.Put(n.Id, offset/storage.NeedlePaddingSize, n.Size)
 			debug("saved", count, "with error", pe)
-		}else{
-      debug("skipping deleted file ...")
-      nm.Delete(n.Id)
+		} else {
+			debug("skipping deleted file ...")
+			nm.Delete(n.Id)
 		}
 		return nil
 	})

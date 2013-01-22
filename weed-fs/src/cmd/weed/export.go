@@ -29,7 +29,7 @@ var cmdExport = &Command{
 var (
 	exportVolumePath = cmdExport.Flag.String("dir", "/tmp", "input data directory to store volume data files")
 	exportVolumeId   = cmdExport.Flag.Int("volumeId", -1, "a volume id. The volume should already exist in the dir. The volume index file should not exist.")
-	dest             = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar")
+	dest             = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
 	tarFh            *tar.Writer
 	tarHeader        tar.Header
 )
@@ -40,14 +40,14 @@ func runExport(cmd *Command, args []string) bool {
 		return false
 	}
 
-  if *dest!="" && !strings.HasSuffix(*dest, ".tar") {
-    fmt.Println("the output file", *dest, "should ends with .tar")
-    return false
-  }
 	var err error
-	if strings.HasSuffix(*dest, ".tar") {
+	if *dest != "" {
+		if *dest != "-" && !strings.HasSuffix(*dest, ".tar") {
+			fmt.Println("the output file", *dest, "should be '-' or end with .tar")
+			return false
+		}
 		var fh *os.File
-		if *dest == "" {
+		if *dest == "-" {
 			fh = os.Stdout
 		} else {
 			if fh, err = os.Create(*dest); err != nil {
@@ -74,13 +74,16 @@ func runExport(cmd *Command, args []string) bool {
 
 	nm := storage.LoadNeedleMap(indexFile)
 
+	var version storage.Version
+
 	err = storage.ScanVolumeFile(*exportVolumePath, vid, func(superBlock storage.SuperBlock) error {
+		version = superBlock.Version
 		return nil
 	}, func(n *storage.Needle, offset uint32) error {
 		debug("key", n.Id, "offset", offset, "size", n.Size, "disk_size", n.DiskSize(), "gzip", n.IsGzipped())
 		nv, ok := nm.Get(n.Id)
 		if ok && nv.Size > 0 {
-			return walker(vid, n)
+			return walker(vid, n, version)
 		} else {
 			if !ok {
 				debug("This seems deleted", n.Id)
@@ -96,8 +99,8 @@ func runExport(cmd *Command, args []string) bool {
 	return true
 }
 
-func walker(vid storage.VolumeId, n *storage.Needle) (err error) {
-	nm := fmt.Sprintf("%s/%d#%s", n.Mime, n.Id, n.Name)
+func walker(vid storage.VolumeId, n *storage.Needle, version storage.Version) (err error) {
+	nm := fmt.Sprintf("%s/%d:%s", n.Mime, n.Id, n.Name)
 	if n.IsGzipped() && path.Ext(nm) != ".gz" {
 		nm = nm + ".gz"
 	}
@@ -108,10 +111,14 @@ func walker(vid storage.VolumeId, n *storage.Needle) (err error) {
 		}
 		_, err = tarFh.Write(n.Data)
 	} else {
+		size := n.DataSize
+		if version == storage.Version1 {
+			size = n.Size
+		}
 		fmt.Printf("key=%s Name=%s Size=%d gzip=%t mime=%s\n",
 			directory.NewFileId(vid, n.Id, n.Cookie).String(),
 			n.Name,
-			n.DataSize,
+			size,
 			n.IsGzipped(),
 			n.Mime,
 		)
