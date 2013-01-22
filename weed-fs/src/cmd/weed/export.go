@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"fmt"
 	"log"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"pkg/storage"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 )
 
@@ -18,10 +20,16 @@ func init() {
 	cmdExport.IsDebug = cmdExport.Flag.Bool("debug", false, "enable debug mode")
 }
 
+const (
+	defaultFnFormat = `{{.Mime}}/{{.Id}}:{{.Name}}`
+)
+
 var cmdExport = &Command{
-	UsageLine: "export -dir=/tmp -volumeId=234 -o=/dir/name.tar",
+	UsageLine: "export -dir=/tmp -volumeId=234 -o=/dir/name.tar -fileNameFormat={{.Name}}",
 	Short:     "list or export files from one volume data file",
 	Long: `List all files in a volume, or Export all files in a volume to a tar file if the output is specified.
+	
+	The format of file name in the tar file can be customized. Default is {{.Mime}}/{{.Id}}:{{.Name}}. Also available is {{Key}}.
 
   `,
 }
@@ -30,8 +38,11 @@ var (
 	exportVolumePath = cmdExport.Flag.String("dir", "/tmp", "input data directory to store volume data files")
 	exportVolumeId   = cmdExport.Flag.Int("volumeId", -1, "a volume id. The volume should already exist in the dir. The volume index file should not exist.")
 	dest             = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
+	format           = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename format, default to {{.Mime}}/{{.Id}}:{{.Name}}")
 	tarFh            *tar.Writer
 	tarHeader        tar.Header
+	fnTmpl           *template.Template
+	fnTmplBuf        = bytes.NewBuffer(nil)
 )
 
 func runExport(cmd *Command, args []string) bool {
@@ -46,6 +57,12 @@ func runExport(cmd *Command, args []string) bool {
 			fmt.Println("the output file", *dest, "should be '-' or end with .tar")
 			return false
 		}
+
+		if fnTmpl, err = template.New("name").Parse(*format); err != nil {
+			fmt.Println("cannot parse format " + *format + ": " + err.Error())
+			return false
+		}
+
 		var fh *os.File
 		if *dest == "-" {
 			fh = os.Stdout
@@ -99,12 +116,32 @@ func runExport(cmd *Command, args []string) bool {
 	return true
 }
 
+type nameParams struct {
+	Name string
+	Id   uint64
+	Mime string
+	Key  string
+}
+
 func walker(vid storage.VolumeId, n *storage.Needle, version storage.Version) (err error) {
-	nm := fmt.Sprintf("%s/%d:%s", n.Mime, n.Id, n.Name)
-	if n.IsGzipped() && path.Ext(nm) != ".gz" {
-		nm = nm + ".gz"
-	}
+	key := directory.NewFileId(vid, n.Id, n.Cookie).String()
 	if tarFh != nil {
+		fnTmplBuf.Reset()
+		if err = fnTmpl.Execute(fnTmplBuf,
+			nameParams{Name: string(n.Name),
+				Id:   n.Id,
+				Mime: string(n.Mime),
+				Key:  key,
+			},
+		); err != nil {
+			return err
+		}
+		nm := fnTmplBuf.String()
+
+		if n.IsGzipped() && path.Ext(nm) != ".gz" {
+			nm = nm + ".gz"
+		}
+
 		tarHeader.Name, tarHeader.Size = nm, int64(len(n.Data))
 		if err = tarFh.WriteHeader(&tarHeader); err != nil {
 			return err
@@ -116,7 +153,7 @@ func walker(vid storage.VolumeId, n *storage.Needle, version storage.Version) (e
 			size = n.Size
 		}
 		fmt.Printf("key=%s Name=%s Size=%d gzip=%t mime=%s\n",
-			directory.NewFileId(vid, n.Id, n.Cookie).String(),
+			key,
 			n.Name,
 			size,
 			n.IsGzipped(),
