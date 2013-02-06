@@ -19,6 +19,20 @@ func (n *Needle) DiskSize() uint32 {
 	return NeedleHeaderSize + n.Size + padding + NeedleChecksumSize
 }
 func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
+	if s, ok := w.(io.Seeker); ok {
+		if end, e := s.Seek(0, 1); e == nil {
+			defer func(s io.Seeker, off int64) {
+				if err != nil {
+					if _, e = s.Seek(off, 0); e != nil {
+						fmt.Printf("Failed to seek back to %d with error: %s\n", w, off, e)
+					}
+				}
+			}(s, end)
+		} else {
+			err = fmt.Errorf("Cnnot Read Current Volume Position: %s", e)
+			return
+		}
+	}
 	switch version {
 	case Version1:
 		header := make([]byte, NeedleHeaderSize)
@@ -180,6 +194,9 @@ func ReadNeedleHeader(r *os.File, version Version) (n *Needle, bodyLength uint32
 //n should be a needle already read the header
 //the input stream will read until next file entry
 func (n *Needle) ReadNeedleBody(r *os.File, version Version, bodyLength uint32) (err error) {
+	if bodyLength <= 0 {
+		return nil
+	}
 	switch version {
 	case Version1:
 		bytes := make([]byte, bodyLength)
