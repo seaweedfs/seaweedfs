@@ -1,9 +1,9 @@
 package storage
 
 import (
-	//"log"
-	"os"
 	"code.google.com/p/weed-fs/go/util"
+	"fmt"
+	"os"
 )
 
 type NeedleMap struct {
@@ -32,7 +32,7 @@ const (
 	RowsToRead = 1024
 )
 
-func LoadNeedleMap(file *os.File) *NeedleMap {
+func LoadNeedleMap(file *os.File) (*NeedleMap, error) {
 	nm := NewNeedleMap(file)
 	bytes := make([]byte, 16*RowsToRead)
 	count, e := nm.indexFile.Read(bytes)
@@ -60,7 +60,7 @@ func LoadNeedleMap(file *os.File) *NeedleMap {
 
 		count, e = nm.indexFile.Read(bytes)
 	}
-	return nm
+	return nm, e
 }
 
 func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) (int, error) {
@@ -80,13 +80,21 @@ func (nm *NeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
 	element, ok = nm.m.Get(Key(key))
 	return
 }
-func (nm *NeedleMap) Delete(key uint64) {
+func (nm *NeedleMap) Delete(key uint64) error {
 	nm.deletionByteCounter = nm.deletionByteCounter + uint64(nm.m.Delete(Key(key)))
+	offset, err := nm.indexFile.Seek(0, 1)
+	if err != nil {
+		return fmt.Errorf("cannot get position of indexfile: %s", err)
+	}
 	util.Uint64toBytes(nm.bytes[0:8], key)
 	util.Uint32toBytes(nm.bytes[8:12], 0)
 	util.Uint32toBytes(nm.bytes[12:16], 0)
-	nm.indexFile.Write(nm.bytes)
+	if _, err = nm.indexFile.Write(nm.bytes); err != nil {
+		nm.indexFile.Truncate(offset)
+		return fmt.Errorf("error writing to indexfile %s: %s", nm.indexFile, err)
+	}
 	nm.deletionCounter++
+	return nil
 }
 func (nm *NeedleMap) Close() {
 	nm.indexFile.Close()

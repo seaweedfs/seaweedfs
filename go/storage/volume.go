@@ -56,20 +56,18 @@ func (v *Volume) load(alsoLoadIndex bool) error {
 		return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
 	}
 	if v.ReplicaType == CopyNil {
-		if e = v.readSuperBlock(); e != nil {
-			return e
-		}
+		e = v.readSuperBlock()
 	} else {
-		v.maybeWriteSuperBlock()
+		e = v.maybeWriteSuperBlock()
 	}
-	if alsoLoadIndex {
+	if e == nil && alsoLoadIndex {
 		indexFile, ie := os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644)
 		if ie != nil {
 			return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
 		}
-		v.nm = LoadNeedleMap(indexFile)
+		v.nm, e = LoadNeedleMap(indexFile)
 	}
-	return nil
+	return e
 }
 func (v *Volume) Version() Version {
 	return v.SuperBlock.Version
@@ -90,16 +88,17 @@ func (v *Volume) Close() {
 	v.nm.Close()
 	v.dataFile.Close()
 }
-func (v *Volume) maybeWriteSuperBlock() {
+func (v *Volume) maybeWriteSuperBlock() error {
 	stat, e := v.dataFile.Stat()
 	if e != nil {
 		fmt.Printf("failed to stat datafile %s: %s", v.dataFile, e)
-		return
+		return e
 	}
 	if stat.Size() == 0 {
 		v.SuperBlock.Version = CurrentVersion
-		v.dataFile.Write(v.SuperBlock.Bytes())
+		_, e = v.dataFile.Write(v.SuperBlock.Bytes())
 	}
+	return e
 }
 func (v *Volume) readSuperBlock() (err error) {
 	v.dataFile.Seek(0, 0)
@@ -129,6 +128,7 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 		return
 	}
 	if size, err = n.Append(v.dataFile, v.Version()); err != nil {
+		v.dataFile.Truncate(offset)
 		return
 	}
 	nv, ok := v.nm.Get(n.Id)
@@ -143,9 +143,17 @@ func (v *Volume) delete(n *Needle) (uint32, error) {
 	nv, ok := v.nm.Get(n.Id)
 	//fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
 	if ok {
-		v.nm.Delete(n.Id)
-		v.dataFile.Seek(int64(nv.Offset*NeedlePaddingSize), 0)
-		_, err := n.Append(v.dataFile, v.Version())
+		if err := v.nm.Delete(n.Id); err != nil {
+			return 0, err
+		}
+		offset, err := v.dataFile.Seek(int64(nv.Offset*NeedlePaddingSize), 0)
+		if err != nil {
+			return 0, fmt.Errorf("cannot get datafile (%s) position: %s", v.dataFile, err)
+		}
+		if _, err = n.Append(v.dataFile, v.Version()); err != nil {
+			v.dataFile.Truncate(offset)
+			return 0, err
+		}
 		return nv.Size, err
 	}
 	return 0, nil
