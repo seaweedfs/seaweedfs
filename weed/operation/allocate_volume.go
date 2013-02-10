@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
-	"weed/storage"
-	"weed/topology"
-	"weed/util"
+	"code.google.com/p/weed-fs/weed/storage"
+	"code.google.com/p/weed-fs/weed/topology"
+	"code.google.com/p/weed-fs/weed/util"
 )
 
 type AllocateVolumeResult struct {

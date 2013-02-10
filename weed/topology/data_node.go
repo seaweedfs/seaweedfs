@@ -2,7 +2,7 @@ package topology
 
 import (
 	_ "fmt"
-	"weed/storage"
+	"code.google.com/p/weed-fs/weed/storage"
 	"strconv"
 )
 

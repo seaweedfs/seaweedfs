@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"weed/storage"
-	"weed/util"
+	"code.google.com/p/weed-fs/weed/storage"
+	"code.google.com/p/weed-fs/weed/util"
 	"time"
 )
 

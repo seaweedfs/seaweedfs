@@ -4,9 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"weed/operation"
-	"weed/storage"
-	"weed/topology"
+	"code.google.com/p/weed-fs/weed/operation"
+	"code.google.com/p/weed-fs/weed/storage"
+	"code.google.com/p/weed-fs/weed/topology"
 	"sync"
 )
 

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"weed/storage"
+	"code.google.com/p/weed-fs/weed/storage"
 )
 
 type VolumeLayout struct {

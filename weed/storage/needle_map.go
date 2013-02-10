@@ -3,7 +3,7 @@ package storage
 import (
 	//"log"
 	"os"
-	"weed/util"
+	"code.google.com/p/weed-fs/weed/util"
 )
 
 type NeedleMap struct {

@@ -6,7 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/url"
-	"weed/util"
+	"code.google.com/p/weed-fs/weed/util"
 	"strconv"
 	"strings"
 )

@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
-	"weed/storage"
-	"weed/topology"
+	"code.google.com/p/weed-fs/weed/storage"
+	"code.google.com/p/weed-fs/weed/topology"
 	"testing"
 	"time"
 )

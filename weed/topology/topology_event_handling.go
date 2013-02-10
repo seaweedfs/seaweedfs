@@ -3,7 +3,7 @@ package topology
 import (
 	"fmt"
 	"math/rand"
-	"weed/storage"
+	"code.google.com/p/weed-fs/weed/storage"
 	"time"
 )
 

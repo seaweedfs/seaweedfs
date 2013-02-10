@@ -4,7 +4,7 @@ import (
 	"log"
 	"os"
 	"path"
-	"weed/storage"
+	"code.google.com/p/weed-fs/weed/storage"
 	"strconv"
 )
 

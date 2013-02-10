@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"weed/util"
+	"code.google.com/p/weed-fs/weed/util"
 )
 
 const (
