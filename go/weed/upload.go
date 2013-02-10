@@ -32,11 +32,11 @@ var cmdUpload = &Command{
 }
 
 type AssignResult struct {
-	Fid       string "fid"
-	Url       string "url"
-	PublicUrl string "publicUrl"
+	Fid       string `json:"fid"`
+	Url       string `json:"url"`
+	PublicUrl string `json:"publicUrl"`
 	Count     int
-	Error     string "error"
+	Error     string `json:"error"`
 }
 
 func assign(count int) (*AssignResult, error) {
@@ -74,9 +74,9 @@ func upload(filename string, server string, fid string) (int, error) {
 }
 
 type SubmitResult struct {
-	Fid   string "fid"
-	Size  int    "size"
-	Error string "error"
+	Fid   string `json:"fid"`
+	Size  int    `json:"size"`
+	Error string `json:"error"`
 }
 
 func submit(files []string) []SubmitResult {

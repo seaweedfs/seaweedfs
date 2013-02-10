@@ -41,7 +41,7 @@ func batchVacuumVolumeCompact(vl *VolumeLayout, vid storage.VolumeId, locationli
 	ch := make(chan bool, locationlist.Length())
 	for index, dn := range locationlist.list {
 		go func(index int, url string, vid storage.VolumeId) {
-			fmt.Println(index, "Start vacuuming", vid, "on", dn.Url())
+			fmt.Println(index, "Start vacuuming", vid, "on", url)
 			if e := vacuumVolume_Compact(url, vid); e != nil {
 				fmt.Println(index, "Error when vacuuming", vid, "on", url, e)
 				ch <- false

@@ -19,20 +19,20 @@ const (
 )
 
 type Needle struct {
-	Cookie uint32 "random number to mitigate brute force lookups"
-	Id     uint64 "needle id"
-	Size   uint32 "sum of DataSize,Data,NameSize,Name,MimeSize,Mime"
+	Cookie uint32 `comment:"random number to mitigate brute force lookups"`
+	Id     uint64 `comment:"needle id"`
+	Size   uint32 `comment:"sum of DataSize,Data,NameSize,Name,MimeSize,Mime"`
 
-	DataSize uint32 "Data size" //version2
-	Data     []byte "The actual file data"
-	Flags    byte   "boolean flags" //version2
+	DataSize uint32 `comment:"Data size"` //version2
+	Data     []byte `comment:"The actual file data"`
+	Flags    byte   `comment:"boolean flags"` //version2
 	NameSize uint8  //version2
-	Name     []byte "maximum 256 characters" //version2
+	Name     []byte `comment:"maximum 256 characters"` //version2
 	MimeSize uint8  //version2
-	Mime     []byte "maximum 256 characters" //version2
+	Mime     []byte `comment:"maximum 256 characters"` //version2
 
-	Checksum CRC    "CRC32 to check integrity"
-	Padding  []byte "Aligned to 8 bytes"
+	Checksum CRC    `comment:"CRC32 to check integrity"`
+	Padding  []byte `comment:"Aligned to 8 bytes"`
 }
 
 func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {

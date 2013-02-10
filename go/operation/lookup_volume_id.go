@@ -10,12 +10,12 @@ import (
 )
 
 type Location struct {
-	Url       string "url"
-	PublicUrl string "publicUrl"
+	Url       string `json:"url"`
+	PublicUrl string `json:"publicUrl"`
 }
 type LookupResult struct {
-	Locations []Location "locations"
-	Error     string     "error"
+	Locations []Location `json:"locations"`
+	Error     string     `json:"error"`
 }
 
 //TODO: Add a caching for vid here

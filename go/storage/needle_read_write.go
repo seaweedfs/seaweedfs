@@ -24,7 +24,7 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 			defer func(s io.Seeker, off int64) {
 				if err != nil {
 					if _, e = s.Seek(off, 0); e != nil {
-						fmt.Printf("Failed to seek back to %d with error: %s\n", w, off, e)
+						fmt.Printf("Failed to seek %s back to %d with error: %s\n", w, off, e)
 					}
 				}
 			}(s, end)

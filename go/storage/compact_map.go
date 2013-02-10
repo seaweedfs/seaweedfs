@@ -4,8 +4,8 @@ import ()
 
 type NeedleValue struct {
 	Key    Key
-	Offset uint32 "Volume offset" //since aligned to 8 bytes, range is 4G*8=32G
-	Size   uint32 "Size of the data portion"
+	Offset uint32 `comment:"Volume offset"` //since aligned to 8 bytes, range is 4G*8=32G
+	Size   uint32 `comment:"Size of the data portion"`
 }
 
 const (

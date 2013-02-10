@@ -242,7 +242,7 @@ func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	n.Size = 0
 	ret, err := store.Delete(volumeId, n)
 	if err != nil {
-		log.Printf("delete error: %s\n", err)
+		log.Println("delete error:", err)
 		return
 	}
 
