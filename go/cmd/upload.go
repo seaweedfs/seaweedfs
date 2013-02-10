@@ -7,8 +7,8 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"code.google.com/p/weed-fs/weed/operation"
-	"code.google.com/p/weed-fs/weed/util"
+	"code.google.com/p/weed-fs/go/operation"
+	"code.google.com/p/weed-fs/go/util"
 	"strconv"
 )
 

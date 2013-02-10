@@ -7,7 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"path"
-	"code.google.com/p/weed-fs/weed/util"
+	"code.google.com/p/weed-fs/go/util"
 	"strconv"
 	"strings"
 )

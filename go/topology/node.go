@@ -2,7 +2,7 @@ package topology
 
 import (
 	"fmt"
-	"code.google.com/p/weed-fs/weed/storage"
+	"code.google.com/p/weed-fs/go/storage"
 )
 
 type NodeId string

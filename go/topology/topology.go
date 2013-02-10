@@ -4,9 +4,9 @@ import (
 	"errors"
 	"io/ioutil"
 	"math/rand"
-	"code.google.com/p/weed-fs/weed/directory"
-	"code.google.com/p/weed-fs/weed/sequence"
-	"code.google.com/p/weed-fs/weed/storage"
+	"code.google.com/p/weed-fs/go/directory"
+	"code.google.com/p/weed-fs/go/sequence"
+	"code.google.com/p/weed-fs/go/storage"
 )
 
 type Topology struct {

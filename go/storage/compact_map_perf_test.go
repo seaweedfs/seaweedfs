@@ -3,13 +3,13 @@ package storage
 import (
 	"log"
 	"os"
-	"code.google.com/p/weed-fs/weed/util"
+	"code.google.com/p/weed-fs/go/util"
 	"testing"
 )
 
 func TestMemoryUsage(t *testing.T) {
 
-	indexFile, ie := os.OpenFile("sample.idx", os.O_RDWR|os.O_RDONLY, 0644)
+	indexFile, ie := os.OpenFile("../../test/sample.idx", os.O_RDWR|os.O_RDONLY, 0644)
 	if ie != nil {
 		log.Fatalln(ie)
 	}

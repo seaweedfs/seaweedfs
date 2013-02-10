@@ -3,7 +3,7 @@ package topology
 import (
 	"fmt"
 	"math/rand"
-	"code.google.com/p/weed-fs/weed/storage"
+	"code.google.com/p/weed-fs/go/storage"
 )
 
 type NodeList struct {
