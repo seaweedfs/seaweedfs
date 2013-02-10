@@ -89,7 +89,10 @@ func runExport(cmd *Command, args []string) bool {
 	}
 	defer indexFile.Close()
 
-	nm := storage.LoadNeedleMap(indexFile)
+	nm, err := storage.LoadNeedleMap(indexFile)
+	if err != nil {
+		log.Fatalf("cannot load needle map from %s: %s", indexFile, err)
+	}
 
 	var version storage.Version
 
