@@ -3,6 +3,7 @@ package storage
 import (
 	"code.google.com/p/weed-fs/go/util"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -60,7 +61,10 @@ func LoadNeedleMap(file *os.File) (*NeedleMap, error) {
 
 		count, e = nm.indexFile.Read(bytes)
 	}
-	return nm, nil
+	if e == io.EOF {
+		e = nil
+	}
+	return nm, e
 }
 
 func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) (int, error) {
