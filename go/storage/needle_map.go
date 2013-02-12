@@ -60,7 +60,7 @@ func LoadNeedleMap(file *os.File) (*NeedleMap, error) {
 
 		count, e = nm.indexFile.Read(bytes)
 	}
-	return nm, e
+	return nm, nil
 }
 
 func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) (int, error) {
