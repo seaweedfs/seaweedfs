@@ -143,17 +143,9 @@ func (v *Volume) delete(n *Needle) (uint32, error) {
 	nv, ok := v.nm.Get(n.Id)
 	//fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
 	if ok {
-		if err := v.nm.Delete(n.Id); err != nil {
-			return 0, err
-		}
-		offset, err := v.dataFile.Seek(int64(nv.Offset*NeedlePaddingSize), 0)
-		if err != nil {
-			return 0, fmt.Errorf("cannot get datafile (%s) position: %s", v.dataFile, err)
-		}
-		if _, err = n.Append(v.dataFile, v.Version()); err != nil {
-			v.dataFile.Truncate(offset)
-			return 0, err
-		}
+		v.nm.Delete(n.Id)
+		v.dataFile.Seek(int64(nv.Offset*NeedlePaddingSize), 0)
+		_, err := n.Append(v.dataFile, v.Version())
 		return nv.Size, err
 	}
 	return 0, nil
