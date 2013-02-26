@@ -1,13 +1,14 @@
 package storage
 
 import (
+	"code.google.com/p/weed-fs/go/util"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"mime"
 	"net/http"
 	"path"
-	"code.google.com/p/weed-fs/go/util"
 	"strconv"
 	"strings"
 )
@@ -51,7 +52,12 @@ func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
 		return
 	}
 	fname = part.FileName()
-	fname = path.Base(fname)
+	if fname != "" {
+		fname = path.Base(part.FileName())
+	} else {
+		e = errors.New("No file found!")
+		return
+	}
 	data, _ := ioutil.ReadAll(part)
 	dotIndex := strings.LastIndex(fname, ".")
 	ext, mtype := "", ""
