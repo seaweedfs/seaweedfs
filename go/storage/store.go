@@ -1,12 +1,12 @@
 package storage
 
 import (
+	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"io/ioutil"
 	"log"
 	"net/url"
-	"code.google.com/p/weed-fs/go/util"
 	"strconv"
 	"strings"
 )
@@ -175,7 +175,9 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 		size, err = v.write(n)
 		if err != nil && s.volumeSizeLimit < v.ContentSize()+uint64(size) && s.volumeSizeLimit >= v.ContentSize() {
 			log.Println("volume", i, "size is", v.ContentSize(), "close to", s.volumeSizeLimit)
-			s.Join()
+			if err = s.Join(); err != nil {
+				log.Printf("error with Join: %s", err)
+			}
 		}
 		return
 	}

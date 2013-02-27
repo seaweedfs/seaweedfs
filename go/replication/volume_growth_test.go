@@ -1,11 +1,11 @@
 package replication
 
 import (
+	"code.google.com/p/weed-fs/go/storage"
+	"code.google.com/p/weed-fs/go/topology"
 	"encoding/json"
 	"fmt"
 	"math/rand"
-	"code.google.com/p/weed-fs/go/storage"
-	"code.google.com/p/weed-fs/go/topology"
 	"testing"
 	"time"
 )
@@ -96,7 +96,10 @@ func setup(topologyLayout string) *topology.Topology {
 				rack.LinkChildNode(server)
 				for _, v := range serverMap["volumes"].([]interface{}) {
 					m := v.(map[string]interface{})
-					vi := storage.VolumeInfo{Id: storage.VolumeId(int64(m["id"].(float64))), Size: int64(m["size"].(float64)), Version: storage.CurrentVersion}
+					vi := storage.VolumeInfo{
+						Id:      storage.VolumeId(int64(m["id"].(float64))),
+						Size:    uint64(m["size"].(float64)),
+						Version: storage.CurrentVersion}
 					server.AddOrUpdateVolume(vi)
 				}
 				server.UpAdjustMaxVolumeCountDelta(int(serverMap["limit"].(float64)))

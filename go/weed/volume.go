@@ -2,13 +2,13 @@ package main
 
 import (
 	"bytes"
+	"code.google.com/p/weed-fs/go/operation"
+	"code.google.com/p/weed-fs/go/storage"
 	"log"
 	"math/rand"
 	"mime"
 	"net/http"
 	"os"
-	"code.google.com/p/weed-fs/go/operation"
-	"code.google.com/p/weed-fs/go/storage"
 	"runtime"
 	"strconv"
 	"strings"
@@ -48,41 +48,41 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = VERSION
 	m["Volumes"] = store.Status()
-	writeJson(w, r, m)
+	writeJsonQuiet(w, r, m)
 }
 func assignVolumeHandler(w http.ResponseWriter, r *http.Request) {
 	err := store.AddVolume(r.FormValue("volume"), r.FormValue("replicationType"))
 	if err == nil {
-		writeJson(w, r, map[string]string{"error": ""})
+		writeJsonQuiet(w, r, map[string]string{"error": ""})
 	} else {
-		writeJson(w, r, map[string]string{"error": err.Error()})
+		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 	}
 	debug("assign volume =", r.FormValue("volume"), ", replicationType =", r.FormValue("replicationType"), ", error =", err)
 }
 func vacuumVolumeCheckHandler(w http.ResponseWriter, r *http.Request) {
 	err, ret := store.CheckCompactVolume(r.FormValue("volume"), r.FormValue("garbageThreshold"))
 	if err == nil {
-		writeJson(w, r, map[string]interface{}{"error": "", "result": ret})
+		writeJsonQuiet(w, r, map[string]interface{}{"error": "", "result": ret})
 	} else {
-		writeJson(w, r, map[string]interface{}{"error": err.Error(), "result": false})
+		writeJsonQuiet(w, r, map[string]interface{}{"error": err.Error(), "result": false})
 	}
 	debug("checked compacting volume =", r.FormValue("volume"), "garbageThreshold =", r.FormValue("garbageThreshold"), "vacuum =", ret)
 }
 func vacuumVolumeCompactHandler(w http.ResponseWriter, r *http.Request) {
 	err := store.CompactVolume(r.FormValue("volume"))
 	if err == nil {
-		writeJson(w, r, map[string]string{"error": ""})
+		writeJsonQuiet(w, r, map[string]string{"error": ""})
 	} else {
-		writeJson(w, r, map[string]string{"error": err.Error()})
+		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 	}
 	debug("compacted volume =", r.FormValue("volume"), ", error =", err)
 }
 func vacuumVolumeCommitHandler(w http.ResponseWriter, r *http.Request) {
 	err := store.CommitCompactVolume(r.FormValue("volume"))
 	if err == nil {
-		writeJson(w, r, map[string]interface{}{"error": ""})
+		writeJsonQuiet(w, r, map[string]interface{}{"error": ""})
 	} else {
-		writeJson(w, r, map[string]string{"error": err.Error()})
+		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 	}
 	debug("commit compact volume =", r.FormValue("volume"), ", error =", err)
 }
@@ -163,18 +163,29 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Length", strconv.Itoa(len(n.Data)))
-	w.Write(n.Data)
+	if _, e = w.Write(n.Data); e != nil {
+		debug("response write error:", e)
+	}
 }
 func PostHandler(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
+	if e := r.ParseForm(); e != nil {
+		debug("form parse error:", e)
+		writeJsonQuiet(w, r, e)
+		return
+	}
 	vid, _, _ := parseURLPath(r.URL.Path)
 	volumeId, e := storage.NewVolumeId(vid)
 	if e != nil {
-		writeJson(w, r, e)
+		debug("NewVolumeId error:", e)
+		writeJsonQuiet(w, r, e)
+		return
+	}
+	if e != nil {
+		writeJsonQuiet(w, r, e)
 	} else {
 		needle, filename, ne := storage.NewNeedle(r)
 		if ne != nil {
-			writeJson(w, r, ne)
+			writeJsonQuiet(w, r, ne)
 		} else {
 			ret, err := store.Write(volumeId, needle)
 			errorStatus := ""
@@ -204,15 +215,19 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 			if errorStatus == "" {
 				w.WriteHeader(http.StatusCreated)
 			} else {
-				store.Delete(volumeId, needle)
-				distributedOperation(volumeId, func(location operation.Location) bool {
-					return nil == operation.Delete("http://"+location.Url+r.URL.Path+"?type=standard")
-				})
+				if _, e = store.Delete(volumeId, needle); e != nil {
+					errorStatus += "\nCannot delete " + strconv.FormatUint(needle.Id, 10) + " from " +
+						strconv.FormatUint(uint64(volumeId), 10) + ": " + e.Error()
+				} else {
+					distributedOperation(volumeId, func(location operation.Location) bool {
+						return nil == operation.Delete("http://"+location.Url+r.URL.Path+"?type=standard")
+					})
+				}
 				w.WriteHeader(http.StatusInternalServerError)
 				m["error"] = errorStatus
 			}
 			m["size"] = ret
-			writeJson(w, r, m)
+			writeJsonQuiet(w, r, m)
 		}
 	}
 }
@@ -230,7 +245,7 @@ func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	if ok != nil {
 		m := make(map[string]uint32)
 		m["size"] = 0
-		writeJson(w, r, m)
+		writeJsonQuiet(w, r, m)
 		return
 	}
 
@@ -268,7 +283,7 @@ func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	m := make(map[string]uint32)
 	m["size"] = uint32(count)
-	writeJson(w, r, m)
+	writeJsonQuiet(w, r, m)
 }
 
 func parseURLPath(path string) (vid, fid, ext string) {

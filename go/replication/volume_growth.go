@@ -1,12 +1,12 @@
 package replication
 
 import (
-	"errors"
-	"fmt"
-	"math/rand"
 	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/storage"
 	"code.google.com/p/weed-fs/go/topology"
+	"errors"
+	"fmt"
+	"math/rand"
 	"sync"
 )
 

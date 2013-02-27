@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 )
 
@@ -25,8 +26,13 @@ func runShell(command *Command, args []string) bool {
 	o := bufio.NewWriter(os.Stdout)
 	e := bufio.NewWriter(os.Stderr)
 	prompt := func() {
-		o.WriteString("> ")
-		o.Flush()
+		var err error
+		if _, err = o.WriteString("> "); err != nil {
+			log.Printf("error writing to stdout: %s", err)
+		}
+		if err = o.Flush(); err != nil {
+			log.Printf("error flushing stdout: %s", err)
+		}
 	}
 	readLine := func() string {
 		ret, err := r.ReadString('\n')
@@ -38,7 +44,9 @@ func runShell(command *Command, args []string) bool {
 	}
 	execCmd := func(cmd string) int {
 		if cmd != "" {
-			o.WriteString(cmd)
+			if _, err := o.WriteString(cmd); err != nil {
+				log.Printf("error writing to stdout: %s", err)
+			}
 		}
 		return 0
 	}

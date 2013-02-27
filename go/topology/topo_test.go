@@ -1,72 +1,72 @@
 package topology
 
 import (
+	"code.google.com/p/weed-fs/go/storage"
 	"encoding/json"
 	"fmt"
 	"math/rand"
-	"code.google.com/p/weed-fs/go/storage"
 	"testing"
 	"time"
 )
 
 var topologyLayout = `
 {
-  "dc1":{
-    "rack1":{
-      "server1":{
-        "volumes":[
-          {"id":1, "size":12312},
-          {"id":2, "size":12312},
-          {"id":3, "size":12312}
-        ],
-        "limit":3
-      },
-      "server2":{
-        "volumes":[
-          {"id":4, "size":12312},
-          {"id":5, "size":12312},
-          {"id":6, "size":12312}
-        ],
-        "limit":10
-      }
-    },
-    "rack2":{
-      "server1":{
-        "volumes":[
-          {"id":4, "size":12312},
-          {"id":5, "size":12312},
-          {"id":6, "size":12312}
-        ],
-        "limit":4
-      },
-      "server2":{
-        "volumes":[],
-        "limit":4
-      },
-      "server3":{
-        "volumes":[
-          {"id":2, "size":12312},
-          {"id":3, "size":12312},
-          {"id":4, "size":12312}
-        ],
-        "limit":2
-      }
-    }
-  },
-  "dc2":{
-  },
-  "dc3":{
-    "rack2":{
-      "server1":{
-        "volumes":[
-          {"id":1, "size":12312},
-          {"id":3, "size":12312},
-          {"id":5, "size":12312}
-        ],
-        "limit":4
-      }
-    }
-  }
+	"dc1":{
+		"rack1":{
+			"server1":{
+				"volumes":[
+					{"id":1, "size":12312},
+					{"id":2, "size":12312},
+					{"id":3, "size":12312}
+				],
+				"limit":3
+			},
+			"server2":{
+				"volumes":[
+					{"id":4, "size":12312},
+					{"id":5, "size":12312},
+					{"id":6, "size":12312}
+				],
+				"limit":10
+			}
+		},
+		"rack2":{
+			"server1":{
+				"volumes":[
+					{"id":4, "size":12312},
+					{"id":5, "size":12312},
+					{"id":6, "size":12312}
+				],
+				"limit":4
+			},
+			"server2":{
+				"volumes":[],
+				"limit":4
+			},
+			"server3":{
+				"volumes":[
+					{"id":2, "size":12312},
+					{"id":3, "size":12312},
+					{"id":4, "size":12312}
+				],
+				"limit":2
+			}
+		}
+	},
+	"dc2":{
+	},
+	"dc3":{
+		"rack2":{
+			"server1":{
+				"volumes":[
+					{"id":1, "size":12312},
+					{"id":3, "size":12312},
+					{"id":5, "size":12312}
+				],
+				"limit":4
+			}
+		}
+	}
 }
 `
 
@@ -78,7 +78,10 @@ func setup(topologyLayout string) *Topology {
 	}
 
 	//need to connect all nodes first before server adding volumes
-	topo := NewTopology("mynetwork", "/etc/weed.conf", "/tmp", "test", 234, 5)
+	topo, err := NewTopology("mynetwork", "/etc/weed.conf", "/tmp", "test", 234, 5)
+	if err != nil {
+		fmt.Println("error:", err)
+	}
 	mTopology := data.(map[string]interface{})
 	for dcKey, dcValue := range mTopology {
 		dc := NewDataCenter(dcKey)
@@ -94,7 +97,10 @@ func setup(topologyLayout string) *Topology {
 				rack.LinkChildNode(server)
 				for _, v := range serverMap["volumes"].([]interface{}) {
 					m := v.(map[string]interface{})
-					vi := storage.VolumeInfo{Id: storage.VolumeId(int64(m["id"].(float64))), Size: int64(m["size"].(float64)), Version: storage.CurrentVersion}
+					vi := storage.VolumeInfo{
+						Id:      storage.VolumeId(int64(m["id"].(float64))),
+						Size:    uint64(m["size"].(float64)),
+						Version: storage.CurrentVersion}
 					server.AddOrUpdateVolume(vi)
 				}
 				server.UpAdjustMaxVolumeCountDelta(int(serverMap["limit"].(float64)))

@@ -1,8 +1,8 @@
 package topology
 
 import (
-	_ "fmt"
 	"code.google.com/p/weed-fs/go/storage"
+	_ "fmt"
 	"strconv"
 )
 

@@ -94,14 +94,17 @@ func (nm *NeedleMap) Delete(key uint64) error {
 	util.Uint32toBytes(nm.bytes[8:12], 0)
 	util.Uint32toBytes(nm.bytes[12:16], 0)
 	if _, err = nm.indexFile.Write(nm.bytes); err != nil {
-		nm.indexFile.Truncate(offset)
-		return fmt.Errorf("error writing to indexfile %s: %s", nm.indexFile, err)
+		plus := ""
+		if e := nm.indexFile.Truncate(offset); e != nil {
+			plus = "\ncouldn't truncate index file: " + e.Error()
+		}
+		return fmt.Errorf("error writing to indexfile %s: %s%s", nm.indexFile, err, plus)
 	}
 	nm.deletionCounter++
 	return nil
 }
 func (nm *NeedleMap) Close() {
-	nm.indexFile.Close()
+	_ = nm.indexFile.Close()
 }
 func (nm *NeedleMap) ContentSize() uint64 {
 	return nm.fileByteCounter

@@ -1,12 +1,12 @@
 package operation
 
 import (
-	"encoding/json"
-	"errors"
-	"net/url"
 	"code.google.com/p/weed-fs/go/storage"
 	"code.google.com/p/weed-fs/go/topology"
 	"code.google.com/p/weed-fs/go/util"
+	"encoding/json"
+	"errors"
+	"net/url"
 )
 
 type AllocateVolumeResult struct {

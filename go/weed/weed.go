@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net/http"
 	"os"
@@ -173,22 +174,40 @@ func exitIfErrors() {
 		exit()
 	}
 }
-func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) {
+
+func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) (err error) {
 	w.Header().Set("Content-Type", "application/javascript")
 	var bytes []byte
 	if r.FormValue("pretty") != "" {
-		bytes, _ = json.MarshalIndent(obj, "", "  ")
+		bytes, err = json.MarshalIndent(obj, "", "  ")
 	} else {
-		bytes, _ = json.Marshal(obj)
+		bytes, err = json.Marshal(obj)
+	}
+	if err != nil {
+		return
 	}
 	callback := r.FormValue("callback")
 	if callback == "" {
-		w.Write(bytes)
+		_, err = w.Write(bytes)
 	} else {
-		w.Write([]uint8(callback))
-		w.Write([]uint8("("))
+		if _, err = w.Write([]uint8(callback)); err != nil {
+			return
+		}
+		if _, err = w.Write([]uint8("(")); err != nil {
+			return
+		}
 		fmt.Fprint(w, string(bytes))
-		w.Write([]uint8(")"))
+		if _, err = w.Write([]uint8(")")); err != nil {
+			return
+		}
+	}
+	return
+}
+
+// wrapper for writeJson - just logs errors
+func writeJsonQuiet(w http.ResponseWriter, r *http.Request, obj interface{}) {
+	if err := writeJson(w, r, obj); err != nil {
+		log.Printf("error writing JSON %s: %s", obj, err)
 	}
 }
 

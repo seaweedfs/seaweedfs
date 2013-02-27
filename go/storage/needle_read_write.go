@@ -1,11 +1,11 @@
 package storage
 
 import (
+	"code.google.com/p/weed-fs/go/util"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"code.google.com/p/weed-fs/go/util"
 )
 
 const (

@@ -86,7 +86,7 @@ func (v *Volume) Close() {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
 	v.nm.Close()
-	v.dataFile.Close()
+	_ = v.dataFile.Close()
 }
 func (v *Volume) maybeWriteSuperBlock() error {
 	stat, e := v.dataFile.Stat()
@@ -101,7 +101,9 @@ func (v *Volume) maybeWriteSuperBlock() error {
 	return e
 }
 func (v *Volume) readSuperBlock() (err error) {
-	v.dataFile.Seek(0, 0)
+	if _, err = v.dataFile.Seek(0, 0); err != nil {
+		return fmt.Errorf("cannot seek to the beginning of %s: %s", v.dataFile, err)
+	}
 	header := make([]byte, SuperBlockSize)
 	if _, e := v.dataFile.Read(header); e != nil {
 		return fmt.Errorf("cannot read superblock: %s", e)
@@ -128,7 +130,9 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 		return
 	}
 	if size, err = n.Append(v.dataFile, v.Version()); err != nil {
-		v.dataFile.Truncate(offset)
+		if e := v.dataFile.Truncate(offset); e != nil {
+			err = fmt.Errorf("%s\ncannot truncate %s: %s", err, v.dataFile, e)
+		}
 		return
 	}
 	nv, ok := v.nm.Get(n.Id)
@@ -143,9 +147,14 @@ func (v *Volume) delete(n *Needle) (uint32, error) {
 	nv, ok := v.nm.Get(n.Id)
 	//fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
 	if ok {
-		v.nm.Delete(n.Id)
-		v.dataFile.Seek(int64(nv.Offset*NeedlePaddingSize), 0)
-		_, err := n.Append(v.dataFile, v.Version())
+		var err error
+		if err = v.nm.Delete(n.Id); err != nil {
+			return nv.Size, err
+		}
+		if _, err = v.dataFile.Seek(int64(nv.Offset*NeedlePaddingSize), 0); err != nil {
+			return nv.Size, err
+		}
+		_, err = n.Append(v.dataFile, v.Version())
 		return nv.Size, err
 	}
 	return 0, nil
@@ -156,7 +165,9 @@ func (v *Volume) read(n *Needle) (int, error) {
 	defer v.accessLock.Unlock()
 	nv, ok := v.nm.Get(n.Id)
 	if ok && nv.Offset > 0 {
-		v.dataFile.Seek(int64(nv.Offset)*NeedlePaddingSize, 0)
+		if _, err := v.dataFile.Seek(int64(nv.Offset)*NeedlePaddingSize, 0); err != nil {
+			return -1, err
+		}
 		return n.Read(v.dataFile, nv.Size, v.Version())
 	}
 	return -1, errors.New("Not Found")
@@ -176,7 +187,7 @@ func (v *Volume) compact() error {
 func (v *Volume) commitCompact() error {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
-	v.dataFile.Close()
+	_ = v.dataFile.Close()
 	var e error
 	if e = os.Rename(path.Join(v.dir, v.Id.String()+".cpd"), path.Join(v.dir, v.Id.String()+".dat")); e != nil {
 		return e

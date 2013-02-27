@@ -1,9 +1,9 @@
 package storage
 
 import (
+	"code.google.com/p/weed-fs/go/util"
 	"log"
 	"os"
-	"code.google.com/p/weed-fs/go/util"
 	"testing"
 )
 

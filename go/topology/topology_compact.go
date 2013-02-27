@@ -1,12 +1,12 @@
 package topology
 
 import (
+	"code.google.com/p/weed-fs/go/storage"
+	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
-	"code.google.com/p/weed-fs/go/storage"
-	"code.google.com/p/weed-fs/go/util"
 	"time"
 )
 

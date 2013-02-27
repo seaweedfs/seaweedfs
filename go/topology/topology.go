@@ -1,12 +1,12 @@
 package topology
 
 import (
-	"errors"
-	"io/ioutil"
-	"math/rand"
 	"code.google.com/p/weed-fs/go/directory"
 	"code.google.com/p/weed-fs/go/sequence"
 	"code.google.com/p/weed-fs/go/storage"
+	"errors"
+	"io/ioutil"
+	"math/rand"
 )
 
 type Topology struct {
@@ -28,7 +28,7 @@ type Topology struct {
 	configuration *Configuration
 }
 
-func NewTopology(id string, confFile string, dirname string, sequenceFilename string, volumeSizeLimit uint64, pulse int) *Topology {
+func NewTopology(id string, confFile string, dirname string, sequenceFilename string, volumeSizeLimit uint64, pulse int) (*Topology, error) {
 	t := &Topology{}
 	t.id = NodeId(id)
 	t.nodeType = "Topology"
@@ -44,9 +44,9 @@ func NewTopology(id string, confFile string, dirname string, sequenceFilename st
 	t.chanRecoveredDataNodes = make(chan *DataNode)
 	t.chanFullVolumes = make(chan storage.VolumeInfo)
 
-	t.loadConfiguration(confFile)
+	err := t.loadConfiguration(confFile)
 
-	return t
+	return t, err
 }
 
 func (t *Topology) loadConfiguration(configurationFile string) error {

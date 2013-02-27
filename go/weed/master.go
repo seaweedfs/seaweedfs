@@ -1,13 +1,13 @@
 package main
 
 import (
+	"code.google.com/p/weed-fs/go/replication"
+	"code.google.com/p/weed-fs/go/storage"
+	"code.google.com/p/weed-fs/go/topology"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
-	"code.google.com/p/weed-fs/go/replication"
-	"code.google.com/p/weed-fs/go/storage"
-	"code.google.com/p/weed-fs/go/topology"
 	"runtime"
 	"strconv"
 	"strings"
@@ -57,14 +57,14 @@ func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 			for _, dn := range machines {
 				ret = append(ret, map[string]string{"url": dn.Url(), "publicUrl": dn.PublicUrl})
 			}
-			writeJson(w, r, map[string]interface{}{"locations": ret})
+			writeJsonQuiet(w, r, map[string]interface{}{"locations": ret})
 		} else {
 			w.WriteHeader(http.StatusNotFound)
-			writeJson(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found. "})
+			writeJsonQuiet(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found. "})
 		}
 	} else {
 		w.WriteHeader(http.StatusNotAcceptable)
-		writeJson(w, r, map[string]string{"error": "unknown volumeId format " + vid})
+		writeJsonQuiet(w, r, map[string]string{"error": "unknown volumeId format " + vid})
 	}
 }
 
@@ -80,24 +80,27 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 	rt, err := storage.NewReplicationTypeFromString(repType)
 	if err != nil {
 		w.WriteHeader(http.StatusNotAcceptable)
-		writeJson(w, r, map[string]string{"error": err.Error()})
+		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 	if topo.GetVolumeLayout(rt).GetActiveVolumeCount() <= 0 {
 		if topo.FreeSpace() <= 0 {
 			w.WriteHeader(http.StatusNotFound)
-			writeJson(w, r, map[string]string{"error": "No free volumes left!"})
+			writeJsonQuiet(w, r, map[string]string{"error": "No free volumes left!"})
 			return
 		} else {
-			vg.GrowByType(rt, topo)
+			if _, err = vg.GrowByType(rt, topo); err != nil {
+				writeJsonQuiet(w, r, map[string]string{"error": "Cannot grow volume group! " + err.Error()})
+				return
+			}
 		}
 	}
 	fid, count, dn, err := topo.PickForWrite(rt, c)
 	if err == nil {
-		writeJson(w, r, map[string]interface{}{"fid": fid, "url": dn.Url(), "publicUrl": dn.PublicUrl, "count": count})
+		writeJsonQuiet(w, r, map[string]interface{}{"fid": fid, "url": dn.Url(), "publicUrl": dn.PublicUrl, "count": count})
 	} else {
 		w.WriteHeader(http.StatusNotAcceptable)
-		writeJson(w, r, map[string]string{"error": err.Error()})
+		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 	}
 }
 
@@ -112,19 +115,22 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	s := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")+1] + r.FormValue("port")
 	publicUrl := r.FormValue("publicUrl")
 	volumes := new([]storage.VolumeInfo)
-	json.Unmarshal([]byte(r.FormValue("volumes")), volumes)
+	if err := json.Unmarshal([]byte(r.FormValue("volumes")), volumes); err != nil {
+		writeJsonQuiet(w, r, map[string]string{"error": "Cannot unmarshal \"volumes\": " + err.Error()})
+		return
+	}
 	debug(s, "volumes", r.FormValue("volumes"))
 	topo.RegisterVolumes(init, *volumes, ip, port, publicUrl, maxVolumeCount)
 	m := make(map[string]interface{})
 	m["VolumeSizeLimit"] = uint64(*volumeSizeLimitMB) * 1024 * 1024
-	writeJson(w, r, m)
+	writeJsonQuiet(w, r, m)
 }
 
 func dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = VERSION
 	m["Topology"] = topo.ToMap()
-	writeJson(w, r, m)
+	writeJsonQuiet(w, r, m)
 }
 
 func volumeVacuumHandler(w http.ResponseWriter, r *http.Request) {
@@ -153,10 +159,10 @@ func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		w.WriteHeader(http.StatusNotAcceptable)
-		writeJson(w, r, map[string]string{"error": "parameter replication " + err.Error()})
+		writeJsonQuiet(w, r, map[string]string{"error": "parameter replication " + err.Error()})
 	} else {
 		w.WriteHeader(http.StatusNotAcceptable)
-		writeJson(w, r, map[string]interface{}{"count": count})
+		writeJsonQuiet(w, r, map[string]interface{}{"count": count})
 	}
 }
 
@@ -164,7 +170,7 @@ func volumeStatusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = VERSION
 	m["Volumes"] = topo.ToVolumeMap()
-	writeJson(w, r, m)
+	writeJsonQuiet(w, r, m)
 }
 
 func redirectHandler(w http.ResponseWriter, r *http.Request) {
@@ -179,7 +185,7 @@ func redirectHandler(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "http://"+machines[0].PublicUrl+r.URL.Path, http.StatusMovedPermanently)
 	} else {
 		w.WriteHeader(http.StatusNotFound)
-		writeJson(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found. "})
+		writeJsonQuiet(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found. "})
 	}
 }
 
@@ -188,7 +194,11 @@ func runMaster(cmd *Command, args []string) bool {
 		*mMaxCpu = runtime.NumCPU()
 	}
 	runtime.GOMAXPROCS(*mMaxCpu)
-	topo = topology.NewTopology("topo", *confFile, *metaFolder, "weed", uint64(*volumeSizeLimitMB)*1024*1024, *mpulse)
+	var e error
+	if topo, e = topology.NewTopology("topo", *confFile, *metaFolder, "weed",
+		uint64(*volumeSizeLimitMB)*1024*1024, *mpulse); e != nil {
+		log.Fatalf("cannot create topology:%s", e)
+	}
 	vg = replication.NewDefaultVolumeGrowth()
 	log.Println("Volume Size Limit is", *volumeSizeLimitMB, "MB")
 	http.HandleFunc("/dir/assign", dirAssignHandler)
@@ -209,9 +219,9 @@ func runMaster(cmd *Command, args []string) bool {
 		Handler:     http.DefaultServeMux,
 		ReadTimeout: time.Duration(*mReadTimeout) * time.Second,
 	}
-	e := srv.ListenAndServe()
+	e = srv.ListenAndServe()
 	if e != nil {
-		log.Fatalf("Fail to start:%s", e.Error())
+		log.Fatalf("Fail to start:%s", e)
 	}
 	return true
 }

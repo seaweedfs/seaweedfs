@@ -1,10 +1,10 @@
 package main
 
 import (
+	"code.google.com/p/weed-fs/go/storage"
 	"log"
 	"os"
 	"path"
-	"code.google.com/p/weed-fs/go/storage"
 	"strconv"
 )
 
@@ -52,7 +52,7 @@ func runFix(cmd *Command, args []string) bool {
 			debug("saved", count, "with error", pe)
 		} else {
 			debug("skipping deleted file ...")
-			nm.Delete(n.Id)
+			return nm.Delete(n.Id)
 		}
 		return nil
 	})

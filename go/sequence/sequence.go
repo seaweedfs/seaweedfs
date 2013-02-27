@@ -36,10 +36,15 @@ func NewSequencer(dirname string, filename string) (m *SequencerImpl) {
 	} else {
 		decoder := gob.NewDecoder(seqFile)
 		defer seqFile.Close()
-		decoder.Decode(&m.FileIdSequence)
-		log.Println("Loading file id sequence", m.FileIdSequence, "=>", m.FileIdSequence+FileIdSaveInterval)
+		if se = decoder.Decode(&m.FileIdSequence); se != nil {
+			log.Printf("error decoding FileIdSequence: %s", se)
+			m.FileIdSequence = FileIdSaveInterval
+			log.Println("Setting file id sequence", m.FileIdSequence)
+		} else {
+			log.Println("Loading file id sequence", m.FileIdSequence, "=>", m.FileIdSequence+FileIdSaveInterval)
+			m.FileIdSequence += FileIdSaveInterval
+		}
 		//in case the server stops between intervals
-		m.FileIdSequence += FileIdSaveInterval
 	}
 	return
 }
@@ -67,5 +72,7 @@ func (m *SequencerImpl) saveSequence() {
 	}
 	defer seqFile.Close()
 	encoder := gob.NewEncoder(seqFile)
-	encoder.Encode(m.FileIdSequence)
+	if e = encoder.Encode(m.FileIdSequence); e != nil {
+		log.Fatalf("Sequence File Save [ERROR] %s\n", e)
+	}
 }

@@ -1,9 +1,9 @@
 package topology
 
 import (
+	"code.google.com/p/weed-fs/go/storage"
 	"fmt"
 	"math/rand"
-	"code.google.com/p/weed-fs/go/storage"
 )
 
 type NodeList struct {

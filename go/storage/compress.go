@@ -10,7 +10,7 @@ import (
 
 /*
 * Default more not to gzip since gzip can be done on client side.
-*/
+ */
 func IsGzippable(ext, mtype string) bool {
 	if strings.HasPrefix(mtype, "text/") {
 		return true

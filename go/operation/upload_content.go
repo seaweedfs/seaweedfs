@@ -21,9 +21,19 @@ func Upload(uploadUrl string, filename string, reader io.Reader) (*UploadResult,
 	body_buf := bytes.NewBufferString("")
 	body_writer := multipart.NewWriter(body_buf)
 	file_writer, err := body_writer.CreateFormFile("file", filename)
-	io.Copy(file_writer, reader)
+	if err != nil {
+		log.Println("error creating form file", err)
+		return nil, err
+	}
+	if _, err = io.Copy(file_writer, reader); err != nil {
+		log.Println("error copying data", err)
+		return nil, err
+	}
 	content_type := body_writer.FormDataContentType()
-	body_writer.Close()
+	if err = body_writer.Close(); err != nil {
+		log.Println("error closing body", err)
+		return nil, err
+	}
 	resp, err := http.Post(uploadUrl, content_type, body_buf)
 	if err != nil {
 		log.Println("failing to upload to", uploadUrl)

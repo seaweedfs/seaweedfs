@@ -1,9 +1,9 @@
 package directory
 
 import (
-	"encoding/hex"
 	"code.google.com/p/weed-fs/go/storage"
 	"code.google.com/p/weed-fs/go/util"
+	"encoding/hex"
 	"strings"
 )
 
