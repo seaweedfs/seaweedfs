@@ -29,7 +29,7 @@ var cmdExport = &Command{
 	Short:     "list or export files from one volume data file",
 	Long: `List all files in a volume, or Export all files in a volume to a tar file if the output is specified.
 	
-	The format of file name in the tar file can be customized. Default is {{.Mime}}/{{.Id}}:{{.Name}}. Also available is {{Key}}.
+	The format of file name in the tar file can be customized. Default is {{.Mime}}/{{.Id}}:{{.Name}}. Also available is {{.Key}}.
 
   `,
 }
