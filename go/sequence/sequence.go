@@ -62,7 +62,7 @@ func (m *SequencerImpl) NextFileId(count int) (uint64, int) {
 		m.saveSequence()
 	}
 	m.fileIdCounter = m.fileIdCounter - uint64(count)
-	return m.FileIdSequence - m.fileIdCounter, count
+	return m.FileIdSequence - m.fileIdCounter - uint64(count), count
 }
 func (m *SequencerImpl) saveSequence() {
 	log.Println("Saving file id sequence", m.FileIdSequence, "to", path.Join(m.dir, m.fileName+".seq"))
