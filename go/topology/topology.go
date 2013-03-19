@@ -54,6 +54,8 @@ func (t *Topology) loadConfiguration(configurationFile string) error {
 	if e == nil {
 		t.configuration, e = NewConfiguration(b)
 		return e
+	}else{
+    log.Println("Using default configurations.")
 	}
 	return nil
 }
