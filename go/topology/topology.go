@@ -53,8 +53,9 @@ func (t *Topology) loadConfiguration(configurationFile string) error {
 	b, e := ioutil.ReadFile(configurationFile)
 	if e == nil {
 		t.configuration, e = NewConfiguration(b)
+		return e
 	}
-	return e
+	return nil
 }
 
 func (t *Topology) Lookup(vid storage.VolumeId) []*DataNode {
