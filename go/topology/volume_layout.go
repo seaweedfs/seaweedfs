@@ -43,7 +43,10 @@ func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool {
 }
 
 func (vl *VolumeLayout) Lookup(vid storage.VolumeId) []*DataNode {
-	return vl.vid2location[vid].list
+  if location := vl.vid2location[vid]; location != nil {
+    return location.list
+  }
+	return nil
 }
 
 func (vl *VolumeLayout) PickForWrite(count int) (*storage.VolumeId, int, *VolumeLocationList, error) {
