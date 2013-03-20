@@ -105,7 +105,7 @@ func (t *Topology) PickForWrite(repType storage.ReplicationType, count int) (str
 		t.replicaType2VolumeLayout[replicationTypeIndex] = NewVolumeLayout(repType, t.volumeSizeLimit, t.pulse)
 	}
 	vid, count, datanodes, err := t.replicaType2VolumeLayout[replicationTypeIndex].PickForWrite(count)
-	if err != nil {
+	if err != nil || datanodes.Length() == 0 {
 		return "", 0, nil, errors.New("No writable volumes avalable!")
 	}
 	fileId, count := t.sequence.NextFileId(count)
