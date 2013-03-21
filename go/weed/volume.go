@@ -89,14 +89,16 @@ func vacuumVolumeCommitHandler(w http.ResponseWriter, r *http.Request) {
 func storeHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		GetHandler(w, r)
+		GetOrHeadHandler(w, r, true)
+	case "HEAD":
+		GetOrHeadHandler(w, r, false)
 	case "DELETE":
 		DeleteHandler(w, r)
 	case "POST":
 		PostHandler(w, r)
 	}
 }
-func GetHandler(w http.ResponseWriter, r *http.Request) {
+func GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
 	n := new(storage.Needle)
 	vid, fid, ext := parseURLPath(r.URL.Path)
 	volumeId, err := storage.NewVolumeId(vid)
@@ -163,8 +165,10 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Length", strconv.Itoa(len(n.Data)))
-	if _, e = w.Write(n.Data); e != nil {
-		debug("response write error:", e)
+	if isGetMethod {
+		if _, e = w.Write(n.Data); e != nil {
+			debug("response write error:", e)
+		}
 	}
 }
 func PostHandler(w http.ResponseWriter, r *http.Request) {
