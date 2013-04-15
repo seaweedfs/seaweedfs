@@ -120,9 +120,10 @@ func (s *Store) loadExistingVolumes() {
 func (s *Store) Status() []*VolumeInfo {
 	var stats []*VolumeInfo
 	for k, v := range s.volumes {
-		s := new(VolumeInfo)
-		s.Id, s.Size, s.RepType, s.Version, s.FileCount, s.DeleteCount, s.DeletedByteCount =
-			VolumeId(k), v.ContentSize(), v.ReplicaType, v.Version(), v.nm.fileCounter, v.nm.deletionCounter, v.nm.deletionByteCounter
+		s := &VolumeInfo{Id: VolumeId(k), Size: v.ContentSize(),
+			RepType: v.ReplicaType, Version: v.Version(), FileCount: v.nm.fileCounter,
+			DeleteCount: v.nm.deletionCounter, DeletedByteCount: v.nm.deletionByteCounter,
+			ReadOnly: v.readOnly}
 		stats = append(stats, s)
 	}
 	return stats
@@ -138,9 +139,10 @@ func (s *Store) SetMaster(mserver string) {
 func (s *Store) Join() error {
 	stats := new([]*VolumeInfo)
 	for k, v := range s.volumes {
-		s := new(VolumeInfo)
-		s.Id, s.Size, s.RepType, s.Version, s.FileCount, s.DeleteCount, s.DeletedByteCount =
-			VolumeId(k), uint64(v.Size()), v.ReplicaType, v.Version(), v.nm.fileCounter, v.nm.deletionCounter, v.nm.deletionByteCounter
+		s := &VolumeInfo{Id: VolumeId(k), Size: uint64(v.Size()),
+			RepType: v.ReplicaType, Version: v.Version(), FileCount: v.nm.fileCounter,
+			DeleteCount: v.nm.deletionCounter, DeletedByteCount: v.nm.deletionByteCounter,
+			ReadOnly: v.readOnly}
 		*stats = append(*stats, s)
 	}
 	bytes, _ := json.Marshal(stats)
@@ -171,7 +173,7 @@ func (s *Store) Close() {
 	}
 }
 func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
-	if v := s.volumes[i]; v != nil {
+	if v := s.volumes[i]; v != nil && !v.readOnly {
 		size, err = v.write(n)
 		if err != nil && s.volumeSizeLimit < v.ContentSize()+uint64(size) && s.volumeSizeLimit >= v.ContentSize() {
 			log.Println("volume", i, "size is", v.ContentSize(), "close to", s.volumeSizeLimit)
@@ -185,7 +187,7 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 	return
 }
 func (s *Store) Delete(i VolumeId, n *Needle) (uint32, error) {
-	if v := s.volumes[i]; v != nil {
+	if v := s.volumes[i]; v != nil && !v.readOnly {
 		return v.delete(n)
 	}
 	return 0, nil

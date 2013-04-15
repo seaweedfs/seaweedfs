@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path"
 	"sync"
@@ -30,6 +31,7 @@ type Volume struct {
 	dir      string
 	dataFile *os.File
 	nm       *NeedleMap
+	readOnly bool
 
 	SuperBlock
 
@@ -53,7 +55,14 @@ func (v *Volume) load(alsoLoadIndex bool) error {
 	fileName := path.Join(v.dir, v.Id.String())
 	v.dataFile, e = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {
-		return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
+		if !os.IsPermission(e) {
+			return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
+		}
+		if v.dataFile, e = os.Open(fileName + ".dat"); e != nil {
+			return fmt.Errorf("cannot open Volume Data %s.dat: %s", fileName, e)
+		}
+		log.Printf("opening " + fileName + ".dat in READONLY mode")
+		v.readOnly = true
 	}
 	if v.ReplicaType == CopyNil {
 		e = v.readSuperBlock()
@@ -97,6 +106,14 @@ func (v *Volume) maybeWriteSuperBlock() error {
 	if stat.Size() == 0 {
 		v.SuperBlock.Version = CurrentVersion
 		_, e = v.dataFile.Write(v.SuperBlock.Bytes())
+		if e != nil && os.IsPermission(e) {
+			//read-only, but zero length - recreate it!
+			if v.dataFile, e = os.Create(v.dataFile.Name()); e == nil {
+				if _, e = v.dataFile.Write(v.SuperBlock.Bytes()); e == nil {
+					v.readOnly = false
+				}
+			}
+		}
 	}
 	return e
 }
@@ -123,6 +140,10 @@ func (v *Volume) NeedToReplicate() bool {
 }
 
 func (v *Volume) write(n *Needle) (size uint32, err error) {
+	if v.readOnly {
+		err = fmt.Errorf("%s is read-only", v.dataFile)
+		return
+	}
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
 	var offset int64
@@ -142,6 +163,9 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 	return
 }
 func (v *Volume) delete(n *Needle) (uint32, error) {
+	if v.readOnly {
+		return 0, fmt.Errorf("%s is read-only", v.dataFile)
+	}
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
 	nv, ok := v.nm.Get(n.Id)

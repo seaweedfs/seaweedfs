@@ -80,7 +80,11 @@ func setup(topologyLayout string) *topology.Topology {
 	fmt.Println("data:", data)
 
 	//need to connect all nodes first before server adding volumes
-	topo := topology.NewTopology("mynetwork", "/etc/weedfs/weedfs.conf", "/tmp", "testing", 32*1024, 5)
+	topo, err := topology.NewTopology("mynetwork", "/etc/weedfs/weedfs.conf",
+		"/tmp", "testing", 32*1024, 5)
+	if err != nil {
+		panic("error: " + err.Error())
+	}
 	mTopology := data.(map[string]interface{})
 	for dcKey, dcValue := range mTopology {
 		dc := topology.NewDataCenter(dcKey)
