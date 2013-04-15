@@ -174,16 +174,21 @@ func (s *Store) Close() {
 }
 func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 	if v := s.volumes[i]; v != nil && !v.readOnly {
-		size, err = v.write(n)
-		if err != nil && s.volumeSizeLimit < v.ContentSize()+uint64(size) && s.volumeSizeLimit >= v.ContentSize() {
-			log.Println("volume", i, "size is", v.ContentSize(), "close to", s.volumeSizeLimit)
-			if err = s.Join(); err != nil {
-				log.Printf("error with Join: %s", err)
+		if v.readOnly {
+		  err = errors.New("Volume " + i + " is read only!")
+		} else {
+			size, err = v.write(n)
+			if err != nil && s.volumeSizeLimit < v.ContentSize()+uint64(size) && s.volumeSizeLimit >= v.ContentSize() {
+				log.Println("volume", i, "size is", v.ContentSize(), "close to", s.volumeSizeLimit)
+				if err = s.Join(); err != nil {
+					log.Printf("error with Join: %s", err)
+				}
 			}
 		}
 		return
 	}
 	log.Println("volume", i, "not found!")
+  err = errors.New("Volume " + i + " not found!")
 	return
 }
 func (s *Store) Delete(i VolumeId, n *Needle) (uint32, error) {
