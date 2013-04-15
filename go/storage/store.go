@@ -173,9 +173,10 @@ func (s *Store) Close() {
 	}
 }
 func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
-	if v := s.volumes[i]; v != nil && !v.readOnly {
+	if v := s.volumes[i]; v != nil {
 		if v.readOnly {
-		  err = errors.New("Volume " + i + " is read only!")
+		  err = errors.New("Volume " + i.String() + " is read only!")
+		  return
 		} else {
 			size, err = v.write(n)
 			if err != nil && s.volumeSizeLimit < v.ContentSize()+uint64(size) && s.volumeSizeLimit >= v.ContentSize() {
@@ -188,7 +189,7 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 		return
 	}
 	log.Println("volume", i, "not found!")
-  err = errors.New("Volume " + i + " not found!")
+  err = errors.New("Volume " + i.String() + " not found!")
 	return
 }
 func (s *Store) Delete(i VolumeId, n *Needle) (uint32, error) {
