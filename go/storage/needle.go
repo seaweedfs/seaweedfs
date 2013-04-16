@@ -36,7 +36,7 @@ type Needle struct {
 	Padding  []byte `comment:"Aligned to 8 bytes"`
 }
 
-func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
+func NewNeedle(r *http.Request) (n *Needle, e error) {
 
 	n = new(Needle)
 	form, fe := r.MultipartReader()
@@ -51,7 +51,7 @@ func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
 		e = fe
 		return
 	}
-	fname = part.FileName()
+	fname := part.FileName()
 	if fname != "" {
 		fname = path.Base(part.FileName())
 	} else {

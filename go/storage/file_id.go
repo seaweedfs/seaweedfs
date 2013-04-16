@@ -1,19 +1,18 @@
-package directory
+package storage
 
 import (
-	"code.google.com/p/weed-fs/go/storage"
 	"code.google.com/p/weed-fs/go/util"
 	"encoding/hex"
 	"strings"
 )
 
 type FileId struct {
-	VolumeId storage.VolumeId
+	VolumeId VolumeId
 	Key      uint64
 	Hashcode uint32
 }
 
-func NewFileId(VolumeId storage.VolumeId, Key uint64, Hashcode uint32) *FileId {
+func NewFileId(VolumeId VolumeId, Key uint64, Hashcode uint32) *FileId {
 	return &FileId{VolumeId: VolumeId, Key: Key, Hashcode: Hashcode}
 }
 func ParseFileId(fid string) *FileId {
@@ -23,8 +22,8 @@ func ParseFileId(fid string) *FileId {
 		return nil
 	}
 	vid_string, key_hash_string := a[0], a[1]
-	volumeId, _ := storage.NewVolumeId(vid_string)
-	key, hash := storage.ParseKeyHash(key_hash_string)
+	volumeId, _ := NewVolumeId(vid_string)
+	key, hash := ParseKeyHash(key_hash_string)
 	return &FileId{VolumeId: volumeId, Key: key, Hashcode: hash}
 }
 func (n *FileId) String() string {

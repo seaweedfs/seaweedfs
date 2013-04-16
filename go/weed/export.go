@@ -3,7 +3,6 @@ package main
 import (
 	"archive/tar"
 	"bytes"
-	"code.google.com/p/weed-fs/go/directory"
 	"code.google.com/p/weed-fs/go/storage"
 	"fmt"
 	"log"
@@ -127,7 +126,7 @@ type nameParams struct {
 }
 
 func walker(vid storage.VolumeId, n *storage.Needle, version storage.Version) (err error) {
-	key := directory.NewFileId(vid, n.Id, n.Cookie).String()
+	key := storage.NewFileId(vid, n.Id, n.Cookie).String()
 	if tarFh != nil {
 		fnTmplBuf.Reset()
 		if err = fnTmpl.Execute(fnTmplBuf,

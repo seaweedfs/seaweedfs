@@ -1,7 +1,6 @@
 package topology
 
 import (
-	"code.google.com/p/weed-fs/go/directory"
 	"code.google.com/p/weed-fs/go/sequence"
 	"code.google.com/p/weed-fs/go/storage"
 	"errors"
@@ -109,7 +108,7 @@ func (t *Topology) PickForWrite(repType storage.ReplicationType, count int) (str
 		return "", 0, nil, errors.New("No writable volumes avalable!")
 	}
 	fileId, count := t.sequence.NextFileId(count)
-	return directory.NewFileId(*vid, fileId, rand.Uint32()).String(), count, datanodes.Head(), nil
+	return storage.NewFileId(*vid, fileId, rand.Uint32()).String(), count, datanodes.Head(), nil
 }
 
 func (t *Topology) GetVolumeLayout(repType storage.ReplicationType) *VolumeLayout {
