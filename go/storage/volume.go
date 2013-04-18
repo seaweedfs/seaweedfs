@@ -30,7 +30,7 @@ type Volume struct {
 	Id       VolumeId
 	dir      string
 	dataFile *os.File
-	nm       *NeedleMap
+	nm       NeedleMapper
 	readOnly bool
 
 	SuperBlock
@@ -70,10 +70,10 @@ func (v *Volume) load(alsoLoadIndex bool) error {
 		e = v.maybeWriteSuperBlock()
 	}
 	if e == nil && alsoLoadIndex {
-		indexFile, ie := os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644)
-		if ie != nil {
-			return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
-		}
+    indexFile, ie := os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644)
+    if ie != nil {
+      return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
+    }
 		v.nm, e = LoadNeedleMap(indexFile)
 	}
 	return e
@@ -198,7 +198,7 @@ func (v *Volume) read(n *Needle) (int, error) {
 }
 
 func (v *Volume) garbageLevel() float64 {
-	return float64(v.nm.deletionByteCounter) / float64(v.ContentSize())
+	return float64(v.nm.DeletedSize()) / float64(v.ContentSize())
 }
 
 func (v *Volume) compact() error {
@@ -305,5 +305,5 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string) (err erro
 	return
 }
 func (v *Volume) ContentSize() uint64 {
-	return v.nm.fileByteCounter
+	return v.nm.ContentSize()
 }

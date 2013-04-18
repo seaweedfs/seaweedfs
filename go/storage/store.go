@@ -121,9 +121,11 @@ func (s *Store) Status() []*VolumeInfo {
 	var stats []*VolumeInfo
 	for k, v := range s.volumes {
 		s := &VolumeInfo{Id: VolumeId(k), Size: v.ContentSize(),
-			RepType: v.ReplicaType, Version: v.Version(), FileCount: v.nm.fileCounter,
-			DeleteCount: v.nm.deletionCounter, DeletedByteCount: v.nm.deletionByteCounter,
-			ReadOnly: v.readOnly}
+			RepType: v.ReplicaType, Version: v.Version(),
+			FileCount:        v.nm.FileCount(),
+			DeleteCount:      v.nm.DeletedCount(),
+			DeletedByteCount: v.nm.DeletedSize(),
+			ReadOnly:         v.readOnly}
 		stats = append(stats, s)
 	}
 	return stats
@@ -140,9 +142,11 @@ func (s *Store) Join() error {
 	stats := new([]*VolumeInfo)
 	for k, v := range s.volumes {
 		s := &VolumeInfo{Id: VolumeId(k), Size: uint64(v.Size()),
-			RepType: v.ReplicaType, Version: v.Version(), FileCount: v.nm.fileCounter,
-			DeleteCount: v.nm.deletionCounter, DeletedByteCount: v.nm.deletionByteCounter,
-			ReadOnly: v.readOnly}
+			RepType: v.ReplicaType, Version: v.Version(),
+			FileCount:        v.nm.FileCount(),
+			DeleteCount:      v.nm.DeletedCount(),
+			DeletedByteCount: v.nm.DeletedSize(),
+			ReadOnly:         v.readOnly}
 		*stats = append(*stats, s)
 	}
 	bytes, _ := json.Marshal(stats)
@@ -175,8 +179,8 @@ func (s *Store) Close() {
 func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 	if v := s.volumes[i]; v != nil {
 		if v.readOnly {
-		  err = errors.New("Volume " + i.String() + " is read only!")
-		  return
+			err = errors.New("Volume " + i.String() + " is read only!")
+			return
 		} else {
 			size, err = v.write(n)
 			if err != nil && s.volumeSizeLimit < v.ContentSize()+uint64(size) && s.volumeSizeLimit >= v.ContentSize() {
@@ -189,7 +193,7 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 		return
 	}
 	log.Println("volume", i, "not found!")
-  err = errors.New("Volume " + i.String() + " not found!")
+	err = errors.New("Volume " + i.String() + " not found!")
 	return
 }
 func (s *Store) Delete(i VolumeId, n *Needle) (uint32, error) {
