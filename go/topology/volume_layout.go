@@ -51,22 +51,52 @@ func (vl *VolumeLayout) Lookup(vid storage.VolumeId) []*DataNode {
 	return nil
 }
 
-func (vl *VolumeLayout) PickForWrite(count int) (*storage.VolumeId, int, *VolumeLocationList, error) {
+func (vl *VolumeLayout) PickForWrite(count int, dataCenter string) (*storage.VolumeId, int, *VolumeLocationList, error) {
 	len_writers := len(vl.writables)
 	if len_writers <= 0 {
 		fmt.Println("No more writable volumes!")
 		return nil, 0, nil, errors.New("No more writable volumes!")
 	}
-	vid := vl.writables[rand.Intn(len_writers)]
-	locationList := vl.vid2location[vid]
-	if locationList != nil {
+	if dataCenter == "" {
+		vid := vl.writables[rand.Intn(len_writers)]
+		locationList := vl.vid2location[vid]
+		if locationList != nil {
+			return &vid, count, locationList, nil
+		}
+		return nil, 0, nil, errors.New("Strangely vid " + vid.String() + " is on no machine!")
+	} else {
+		var vid storage.VolumeId
+		var locationList *VolumeLocationList
+		counter := 0
+		for _, v := range vl.writables {
+			volumeLocationList := vl.vid2location[v]
+			for _, dn := range volumeLocationList.list {
+				if dn.GetDataCenter().Id() == NodeId(dataCenter) {
+					counter++
+					if rand.Intn(counter) < 1 {
+						vid, locationList = v, volumeLocationList
+					}
+				}
+			}
+		}
 		return &vid, count, locationList, nil
 	}
-	return nil, 0, nil, errors.New("Strangely vid " + vid.String() + " is on no machine!")
+	return nil, 0, nil, errors.New("Strangely This Should Never Have Happened!")
 }
 
-func (vl *VolumeLayout) GetActiveVolumeCount() int {
-	return len(vl.writables)
+func (vl *VolumeLayout) GetActiveVolumeCount(dataCenter string) int {
+	if dataCenter == "" {
+		return len(vl.writables)
+	}
+	counter := 0
+	for _, v := range vl.writables {
+		for _, dn := range vl.vid2location[v].list {
+			if dn.GetDataCenter().Id() == NodeId(dataCenter) {
+				counter++
+			}
+		}
+	}
+	return counter
 }
 
 func (vl *VolumeLayout) removeFromWritable(vid storage.VolumeId) bool {

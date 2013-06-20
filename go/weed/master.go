@@ -77,25 +77,27 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 	if repType == "" {
 		repType = *defaultRepType
 	}
+	dataCenter := r.FormValue("dataCenter")
 	rt, err := storage.NewReplicationTypeFromString(repType)
 	if err != nil {
 		w.WriteHeader(http.StatusNotAcceptable)
 		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 		return
 	}
-	if topo.GetVolumeLayout(rt).GetActiveVolumeCount() <= 0 {
+
+	if topo.GetVolumeLayout(rt).GetActiveVolumeCount(dataCenter) <= 0 {
 		if topo.FreeSpace() <= 0 {
 			w.WriteHeader(http.StatusNotFound)
 			writeJsonQuiet(w, r, map[string]string{"error": "No free volumes left!"})
 			return
 		} else {
-			if _, err = vg.GrowByType(rt, topo); err != nil {
+			if _, err = vg.GrowByType(rt, dataCenter, topo); err != nil {
 				writeJsonQuiet(w, r, map[string]string{"error": "Cannot grow volume group! " + err.Error()})
 				return
 			}
 		}
 	}
-	fid, count, dn, err := topo.PickForWrite(rt, c)
+	fid, count, dn, err := topo.PickForWrite(rt, c, dataCenter)
 	if err == nil {
 		writeJsonQuiet(w, r, map[string]interface{}{"fid": fid, "url": dn.Url(), "publicUrl": dn.PublicUrl, "count": count})
 	} else {
@@ -120,7 +122,7 @@ func dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	debug(s, "volumes", r.FormValue("volumes"))
-	topo.RegisterVolumes(init, *volumes, ip, port, publicUrl, maxVolumeCount)
+	topo.RegisterVolumes(init, *volumes, ip, port, publicUrl, maxVolumeCount, r.FormValue("dataCenter"), r.FormValue("rack"))
 	m := make(map[string]interface{})
 	m["VolumeSizeLimit"] = uint64(*volumeSizeLimitMB) * 1024 * 1024
 	writeJsonQuiet(w, r, m)
@@ -151,7 +153,7 @@ func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
 			if topo.FreeSpace() < count*rt.GetCopyCount() {
 				err = errors.New("Only " + strconv.Itoa(topo.FreeSpace()) + " volumes left! Not enough for " + strconv.Itoa(count*rt.GetCopyCount()))
 			} else {
-				count, err = vg.GrowByCountAndType(count, rt, topo)
+				count, err = vg.GrowByCountAndType(count, rt, r.FormValue("dataCneter"), topo)
 			}
 		} else {
 			err = errors.New("parameter count is not found")

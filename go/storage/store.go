@@ -20,6 +20,8 @@ type Store struct {
 	MaxVolumeCount int
 
 	masterNode      string
+	dataCenter      string //optional informaton, overwriting master setting if exists
+	rack            string //optional information, overwriting master setting if exists
 	connected       bool
 	volumeSizeLimit uint64 //read from the master
 
@@ -99,6 +101,16 @@ func (s *Store) CommitCompactVolume(volumeIdString string) error {
 	}
 	return s.volumes[vid].commitCompact()
 }
+func (s *Store) FreezeVolume(volumeIdString string) error {
+	vid, err := NewVolumeId(volumeIdString)
+	if err != nil {
+		return errors.New("Volume Id " + volumeIdString + " is not a valid unsigned integer!")
+	}
+	if s.volumes[vid].readOnly {
+		return errors.New("Volume " + volumeIdString + " is already read-only")
+	}
+	return s.volumes[vid].freeze()
+}
 func (s *Store) loadExistingVolumes() {
 	if dirs, err := ioutil.ReadDir(s.dir); err == nil {
 		for _, dir := range dirs {
@@ -138,6 +150,12 @@ type JoinResult struct {
 func (s *Store) SetMaster(mserver string) {
 	s.masterNode = mserver
 }
+func (s *Store) SetDataCenter(dataCenter string) {
+	s.dataCenter = dataCenter
+}
+func (s *Store) SetRack(rack string) {
+	s.rack = rack
+}
 func (s *Store) Join() error {
 	stats := new([]*VolumeInfo)
 	for k, v := range s.volumes {
@@ -159,6 +177,8 @@ func (s *Store) Join() error {
 	values.Add("publicUrl", s.PublicUrl)
 	values.Add("volumes", string(bytes))
 	values.Add("maxVolumeCount", strconv.Itoa(s.MaxVolumeCount))
+	values.Add("dataCenter", s.dataCenter)
+	values.Add("rack", s.rack)
 	jsonBlob, err := util.Post("http://"+s.masterNode+"/dir/join", values)
 	if err != nil {
 		return err

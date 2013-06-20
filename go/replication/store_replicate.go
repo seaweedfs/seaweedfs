@@ -3,7 +3,7 @@ package replication
 import (
 	"bytes"
 	"code.google.com/p/weed-fs/go/operation"
-  "code.google.com/p/weed-fs/go/storage"
+	"code.google.com/p/weed-fs/go/storage"
 	"log"
 	"net/http"
 	"strconv"

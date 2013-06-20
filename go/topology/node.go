@@ -10,7 +10,7 @@ type Node interface {
 	Id() NodeId
 	String() string
 	FreeSpace() int
-	ReserveOneVolume(r int, vid storage.VolumeId) (bool, *DataNode)
+	ReserveOneVolume(r int, vid storage.VolumeId, dataCenter string) (bool, *DataNode)
 	UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int)
 	UpAdjustVolumeCountDelta(volumeCountDelta int)
 	UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int)
@@ -26,6 +26,8 @@ type Node interface {
 	CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSizeLimit uint64)
 
 	IsDataNode() bool
+	IsRack() bool
+	IsDataCenter() bool
 	Children() map[NodeId]Node
 	Parent() Node
 
@@ -78,23 +80,26 @@ func (n *NodeImpl) Parent() Node {
 func (n *NodeImpl) GetValue() interface{} {
 	return n.value
 }
-func (n *NodeImpl) ReserveOneVolume(r int, vid storage.VolumeId) (bool, *DataNode) {
+func (n *NodeImpl) ReserveOneVolume(r int, vid storage.VolumeId, dataCenter string) (bool, *DataNode) {
 	ret := false
 	var assignedNode *DataNode
 	for _, node := range n.children {
 		freeSpace := node.FreeSpace()
-		//fmt.Println("r =", r, ", node =", node, ", freeSpace =", freeSpace)
+		// fmt.Println("r =", r, ", node =", node, ", freeSpace =", freeSpace)
 		if freeSpace <= 0 {
+			continue
+		}
+		if dataCenter != "" && node.IsDataCenter() && node.Id() != NodeId(dataCenter) {
 			continue
 		}
 		if r >= freeSpace {
 			r -= freeSpace
 		} else {
 			if node.IsDataNode() && node.FreeSpace() > 0 {
-				//fmt.Println("vid =", vid, " assigned to node =", node, ", freeSpace =", node.FreeSpace())
+				// fmt.Println("vid =", vid, " assigned to node =", node, ", freeSpace =", node.FreeSpace())
 				return true, node.(*DataNode)
 			}
-			ret, assignedNode = node.ReserveOneVolume(r, vid)
+			ret, assignedNode = node.ReserveOneVolume(r, vid, dataCenter)
 			if ret {
 				break
 			}

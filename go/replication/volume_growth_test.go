@@ -5,9 +5,7 @@ import (
 	"code.google.com/p/weed-fs/go/topology"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"testing"
-	"time"
 )
 
 var topologyLayout = `
@@ -80,7 +78,7 @@ func setup(topologyLayout string) *topology.Topology {
 	fmt.Println("data:", data)
 
 	//need to connect all nodes first before server adding volumes
-	topo, err := topology.NewTopology("mynetwork", "/etc/weedfs/weedfs.conf",
+	topo, err := topology.NewTopology("weedfs", "/etc/weedfs/weedfs.conf",
 		"/tmp", "testing", 32*1024, 5)
 	if err != nil {
 		panic("error: " + err.Error())
@@ -123,14 +121,5 @@ func TestRemoveDataCenter(t *testing.T) {
 	topo.UnlinkChildNode(topology.NodeId("dc3"))
 	if topo.GetActiveVolumeCount() != 12 {
 		t.Fail()
-	}
-}
-
-func TestReserveOneVolume(t *testing.T) {
-	topo := setup(topologyLayout)
-	rand.Seed(time.Now().UnixNano())
-	vg := &VolumeGrowth{copy1factor: 3, copy2factor: 2, copy3factor: 1, copyAll: 4}
-	if c, e := vg.GrowByCountAndType(1, storage.Copy000, topo); e == nil {
-		t.Log("reserved", c)
 	}
 }

@@ -127,7 +127,10 @@ func TestReserveOneVolume(t *testing.T) {
 	topo := setup(topologyLayout)
 	rand.Seed(time.Now().UnixNano())
 	rand.Seed(1)
-	ret, node, vid := topo.RandomlyReserveOneVolume()
+	ret, node, vid := topo.RandomlyReserveOneVolume("dc1")
+	if node.Parent().Parent().Id() != NodeId("dc1") {
+		t.Fail()
+	}
 	fmt.Println("assigned :", ret, ", node :", node, ", volume id:", vid)
 
 }

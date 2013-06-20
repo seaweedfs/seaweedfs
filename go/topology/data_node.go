@@ -34,8 +34,11 @@ func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) {
 		dn.volumes[v.Id] = v
 	}
 }
+func (dn *DataNode) GetDataCenter() *DataCenter {
+	return dn.Parent().Parent().(*NodeImpl).value.(*DataCenter)
+}
 func (dn *DataNode) GetTopology() *Topology {
-	p := dn.parent
+	p := dn.Parent()
 	for p.Parent() != nil {
 		p = p.Parent()
 	}

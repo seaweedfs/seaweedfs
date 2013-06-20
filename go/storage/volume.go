@@ -70,10 +70,29 @@ func (v *Volume) load(alsoLoadIndex bool) error {
 		e = v.maybeWriteSuperBlock()
 	}
 	if e == nil && alsoLoadIndex {
-    indexFile, ie := os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644)
-    if ie != nil {
-      return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
-    }
+		var indexFile *os.File
+		if v.readOnly {
+			if indexFile, e = os.Open(fileName + ".idx"); e != nil && !os.IsNotExist(e) {
+				return fmt.Errorf("cannot open index file %s.idx: %s", fileName, e)
+			}
+			if indexFile != nil {
+				log.Printf("converting %s.idx to %s.cdb", fileName, fileName)
+				if e = ConvertIndexToCdb(fileName+".cdb", indexFile); e != nil {
+					log.Printf("error converting %s.idx to %s.cdb: %s", fileName, fileName)
+				} else {
+					indexFile.Close()
+					os.Remove(indexFile.Name())
+					indexFile = nil
+				}
+			}
+			v.nm, e = OpenCdbMap(fileName + ".cdb")
+			return e
+		} else {
+			indexFile, e = os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644)
+			if e != nil {
+				return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
+			}
+		}
 		v.nm, e = LoadNeedleMap(indexFile)
 	}
 	return e
@@ -222,6 +241,31 @@ func (v *Volume) commitCompact() error {
 	if e = v.load(true); e != nil {
 		return e
 	}
+	return nil
+}
+func (v *Volume) freeze() error {
+	if v.readOnly {
+		return nil
+	}
+	nm, ok := v.nm.(*NeedleMap)
+	if !ok {
+		return nil
+	}
+	v.accessLock.Lock()
+	defer v.accessLock.Unlock()
+	bn, _ := nakeFilename(v.dataFile.Name())
+	cdbFn := bn + ".cdb"
+	log.Printf("converting %s to %s", nm.indexFile.Name(), cdbFn)
+	err := DumpNeedleMapToCdb(cdbFn, nm)
+	if err != nil {
+		return err
+	}
+	if v.nm, err = OpenCdbMap(cdbFn); err != nil {
+		return err
+	}
+	nm.indexFile.Close()
+	os.Remove(nm.indexFile.Name())
+	v.readOnly = true
 	return nil
 }
 
