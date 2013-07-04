@@ -3,7 +3,7 @@ package storage
 import (
 	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/url"
@@ -45,18 +45,18 @@ func (s *Store) AddVolume(volumeListString string, replicationType string) error
 			id_string := range_string
 			id, err := NewVolumeId(id_string)
 			if err != nil {
-				return errors.New("Volume Id " + id_string + " is not a valid unsigned integer!")
+				return fmt.Errorf("Volume Id %s is not a valid unsigned integer!", id_string)
 			}
 			e = s.addVolume(VolumeId(id), rt)
 		} else {
 			pair := strings.Split(range_string, "-")
 			start, start_err := strconv.ParseUint(pair[0], 10, 64)
 			if start_err != nil {
-				return errors.New("Volume Start Id" + pair[0] + " is not a valid unsigned integer!")
+				return fmt.Errorf("Volume Start Id %s is not a valid unsigned integer!", pair[0])
 			}
 			end, end_err := strconv.ParseUint(pair[1], 10, 64)
 			if end_err != nil {
-				return errors.New("Volume End Id" + pair[1] + " is not a valid unsigned integer!")
+				return fmt.Errorf("Volume End Id %s is not a valid unsigned integer!", pair[1] )
 			}
 			for id := start; id <= end; id++ {
 				if err := s.addVolume(VolumeId(id), rt); err != nil {
@@ -69,7 +69,7 @@ func (s *Store) AddVolume(volumeListString string, replicationType string) error
 }
 func (s *Store) addVolume(vid VolumeId, replicationType ReplicationType) (err error) {
 	if s.volumes[vid] != nil {
-		return errors.New("Volume Id " + vid.String() + " already exists!")
+		return fmt.Errorf("Volume Id %s already exists!", vid)
 	}
 	log.Println("In dir", s.dir, "adds volume =", vid, ", replicationType =", replicationType)
 	s.volumes[vid], err = NewVolume(s.dir, vid, replicationType)
@@ -79,35 +79,35 @@ func (s *Store) addVolume(vid VolumeId, replicationType ReplicationType) (err er
 func (s *Store) CheckCompactVolume(volumeIdString string, garbageThresholdString string) (error, bool) {
 	vid, err := NewVolumeId(volumeIdString)
 	if err != nil {
-		return errors.New("Volume Id " + volumeIdString + " is not a valid unsigned integer!"), false
+		return fmt.Errorf("Volume Id %s is not a valid unsigned integer!", volumeIdString), false
 	}
 	garbageThreshold, e := strconv.ParseFloat(garbageThresholdString, 32)
 	if e != nil {
-		return errors.New("garbageThreshold " + garbageThresholdString + " is not a valid float number!"), false
+		return fmt.Errorf("garbageThreshold %s is not a valid float number!", garbageThresholdString), false
 	}
 	return nil, garbageThreshold < s.volumes[vid].garbageLevel()
 }
 func (s *Store) CompactVolume(volumeIdString string) error {
 	vid, err := NewVolumeId(volumeIdString)
 	if err != nil {
-		return errors.New("Volume Id " + volumeIdString + " is not a valid unsigned integer!")
+		return fmt.Errorf("Volume Id %s is not a valid unsigned integer!", volumeIdString)
 	}
 	return s.volumes[vid].compact()
 }
 func (s *Store) CommitCompactVolume(volumeIdString string) error {
 	vid, err := NewVolumeId(volumeIdString)
 	if err != nil {
-		return errors.New("Volume Id " + volumeIdString + " is not a valid unsigned integer!")
+		return fmt.Errorf("Volume Id %s is not a valid unsigned integer!", volumeIdString)
 	}
 	return s.volumes[vid].commitCompact()
 }
 func (s *Store) FreezeVolume(volumeIdString string) error {
 	vid, err := NewVolumeId(volumeIdString)
 	if err != nil {
-		return errors.New("Volume Id " + volumeIdString + " is not a valid unsigned integer!")
+		return fmt.Errorf("Volume Id %s is not a valid unsigned integer!", volumeIdString)
 	}
 	if s.volumes[vid].readOnly {
-		return errors.New("Volume " + volumeIdString + " is already read-only")
+		return fmt.Errorf("Volume %s is already read-only", volumeIdString)
 	}
 	return s.volumes[vid].freeze()
 }
@@ -199,10 +199,14 @@ func (s *Store) Close() {
 func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 	if v := s.volumes[i]; v != nil {
 		if v.readOnly {
-			err = errors.New("Volume " + i.String() + " is read only!")
+			err = fmt.Errorf("Volume %s is read only!", i)
 			return
 		} else {
-			size, err = v.write(n)
+			if s.volumeSizeLimit >= v.ContentSize()+uint64(size) {
+				size, err = v.write(n)
+			} else {
+				err = fmt.Errorf("Volume Size Limit %d Exceeded! Current size is %d", s.volumeSizeLimit, v.ContentSize())
+			}
 			if err != nil && s.volumeSizeLimit < v.ContentSize()+uint64(size) && s.volumeSizeLimit >= v.ContentSize() {
 				log.Println("volume", i, "size is", v.ContentSize(), "close to", s.volumeSizeLimit)
 				if err = s.Join(); err != nil {
@@ -213,7 +217,7 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 		return
 	}
 	log.Println("volume", i, "not found!")
-	err = errors.New("Volume " + i.String() + " not found!")
+	err = fmt.Errorf("Volume %s not found!", i)
 	return
 }
 func (s *Store) Delete(i VolumeId, n *Needle) (uint32, error) {
@@ -226,7 +230,7 @@ func (s *Store) Read(i VolumeId, n *Needle) (int, error) {
 	if v := s.volumes[i]; v != nil {
 		return v.read(n)
 	}
-	return 0, errors.New("Not Found")
+	return 0, fmt.Errorf("Volume %s not found!", i)
 }
 func (s *Store) GetVolume(i VolumeId) *Volume {
 	return s.volumes[i]
