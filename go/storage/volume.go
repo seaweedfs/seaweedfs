@@ -169,6 +169,15 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 	if offset, err = v.dataFile.Seek(0, 2); err != nil {
 		return
 	}
+
+	//ensure file writing starting from aligned positions
+	if offset%NeedlePaddingSize != 0 {
+		offset = offset + (NeedlePaddingSize - offset%NeedlePaddingSize)
+		if offset, err = v.dataFile.Seek(offset, 0); err != nil {
+			return
+		}
+	}
+
 	if size, err = n.Append(v.dataFile, v.Version()); err != nil {
 		if e := v.dataFile.Truncate(offset); e != nil {
 			err = fmt.Errorf("%s\ncannot truncate %s: %s", err, v.dataFile, e)
@@ -181,6 +190,7 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 	}
 	return
 }
+
 func (v *Volume) delete(n *Needle) (uint32, error) {
 	if v.readOnly {
 		return 0, fmt.Errorf("%s is read-only", v.dataFile)
