@@ -145,6 +145,17 @@ func GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) 
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	if n.LastModified != 0 {
+		w.Header().Set("Last-Modified", time.Unix(int64(n.LastModified), 0).UTC().Format(http.TimeFormat))
+		if r.Header.Get("If-Modified-Since") != "" {
+			if t, parseError := time.Parse(http.TimeFormat, r.Header.Get("If-Modified-Since")); parseError == nil {
+				if t.Unix() <= int64(n.LastModified) {
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
+			}
+		}
+	}
 	if n.NameSize > 0 {
 		fname := string(n.Name)
 		dotIndex := strings.LastIndex(fname, ".")
@@ -164,10 +175,6 @@ func GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) 
 	}
 	if n.NameSize > 0 {
 		w.Header().Set("Content-Disposition", "filename="+fileNameEscaper.Replace(string(n.Name)))
-	}
-	if n.LastModified != 0 {
-		println("file time is", n.LastModified)
-		w.Header().Set("Last-Modified", time.Unix(int64(n.LastModified), 0).Format(http.TimeFormat))
 	}
 	if ext != ".gz" {
 		if n.IsGzipped() {

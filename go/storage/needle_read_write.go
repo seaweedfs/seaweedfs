@@ -9,9 +9,11 @@ import (
 )
 
 const (
-	FlagGzip    = 0x01
-	FlagHasName = 0x02
-	FlagHasMime = 0x04
+	FlagGzip                = 0x01
+	FlagHasName             = 0x02
+	FlagHasMime             = 0x04
+	FlagHasLastModifiedDate = 0x08
+	LastModifiedBytesLength = 5
 )
 
 func (n *Needle) DiskSize() uint32 {
@@ -64,6 +66,9 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 			if n.HasMime() {
 				n.Size = n.Size + 1 + uint32(n.MimeSize)
 			}
+			if n.HasLastModifiedDate() {
+				n.Size = n.Size + LastModifiedBytesLength
+			}
 		}
 		size = n.DataSize
 		util.Uint32toBytes(header[12:16], n.Size)
@@ -98,6 +103,12 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 				return
 			}
 			if _, err = w.Write(n.Mime); err != nil {
+				return
+			}
+		}
+		if n.HasLastModifiedDate() {
+			util.Uint64toBytes(header[0:8], n.LastModified)
+			if _, err = w.Write(header[8-LastModifiedBytesLength : 8]); err != nil {
 				return
 			}
 		}
@@ -172,6 +183,11 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) {
 		n.MimeSize = uint8(bytes[index])
 		index = index + 1
 		n.Mime = bytes[index : index+int(n.MimeSize)]
+		index = index + int(n.MimeSize)
+	}
+	if index < lenBytes && n.HasLastModifiedDate() {
+		n.LastModified = util.BytesToUint64(bytes[index : index+LastModifiedBytesLength])
+		index = index + LastModifiedBytesLength
 	}
 }
 
@@ -235,4 +251,10 @@ func (n *Needle) HasMime() bool {
 }
 func (n *Needle) SetHasMime() {
 	n.Flags = n.Flags | FlagHasMime
+}
+func (n *Needle) HasLastModifiedDate() bool {
+	return n.Flags&FlagHasLastModifiedDate > 0
+}
+func (n *Needle) SetHasLastModifiedDate() {
+	n.Flags = n.Flags | FlagHasLastModifiedDate
 }

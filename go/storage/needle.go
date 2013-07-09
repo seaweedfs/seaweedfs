@@ -11,6 +11,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -24,13 +25,14 @@ type Needle struct {
 	Id     uint64 `comment:"needle id"`
 	Size   uint32 `comment:"sum of DataSize,Data,NameSize,Name,MimeSize,Mime"`
 
-	DataSize uint32 `comment:"Data size"` //version2
-	Data     []byte `comment:"The actual file data"`
-	Flags    byte   `comment:"boolean flags"` //version2
-	NameSize uint8  //version2
-	Name     []byte `comment:"maximum 256 characters"` //version2
-	MimeSize uint8  //version2
-	Mime     []byte `comment:"maximum 256 characters"` //version2
+	DataSize     uint32 `comment:"Data size"` //version2
+	Data         []byte `comment:"The actual file data"`
+	Flags        byte   `comment:"boolean flags"` //version2
+	NameSize     uint8  //version2
+	Name         []byte `comment:"maximum 256 characters"` //version2
+	MimeSize     uint8  //version2
+	Mime         []byte `comment:"maximum 256 characters"` //version2
+	LastModified uint64 //only store LastModifiedBytesLength bytes, which is 5 bytes to disk
 
 	Checksum CRC    `comment:"CRC32 to check integrity"`
 	Padding  []byte `comment:"Aligned to 8 bytes"`
@@ -88,6 +90,8 @@ func NewNeedle(r *http.Request) (n *Needle, e error) {
 		}
 		n.SetHasName()
 	}
+	n.LastModified = uint64(time.Now().Unix())
+	n.SetHasLastModifiedDate()
 
 	n.Data = data
 	n.Checksum = NewCRC(data)
