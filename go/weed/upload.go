@@ -66,7 +66,12 @@ func upload(filename string, server string, fid string) (int, error) {
 		debug("Failed to open file:", filename)
 		return 0, err
 	}
-	ret, e := operation.Upload("http://"+server+"/"+fid, path.Base(filename), fh)
+	fi, fiErr := fh.Stat()
+	if fiErr!=nil {
+    debug("Failed to stat file:", filename)
+    return 0, fiErr
+	}
+	ret, e := operation.Upload("http://"+server+"/"+fid+"?ts="+strconv.Itoa(int(fi.ModTime().Unix()) ), path.Base(filename), fh)
 	if e != nil {
 		return 0, e
 	}

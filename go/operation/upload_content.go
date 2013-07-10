@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	_ "fmt"
 	"io"
 	"io/ioutil"
 	"log"
+	"mime"
 	"mime/multipart"
 	"net/http"
 )
@@ -29,7 +31,8 @@ func Upload(uploadUrl string, filename string, reader io.Reader) (*UploadResult,
 		log.Println("error copying data", err)
 		return nil, err
 	}
-	content_type := body_writer.FormDataContentType()
+	content_type := mime.TypeByExtension(filepath.Ext(filename))
+  content_type := body_writer.FormDataContentType()
 	if err = body_writer.Close(); err != nil {
 		log.Println("error closing body", err)
 		return nil, err

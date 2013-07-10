@@ -23,9 +23,9 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId storage.Volum
 		needToReplicate = s.GetVolume(volumeId).NeedToReplicate()
 	}
 	if needToReplicate { //send to other replica locations
-		if r.FormValue("type") != "standard" {
+		if r.FormValue("type") != "replicate" {
 			if !distributedOperation(masterNode, s, volumeId, func(location operation.Location) bool {
-				_, err := operation.Upload("http://"+location.Url+r.URL.Path+"?type=standard", string(needle.Name), bytes.NewReader(needle.Data))
+				_, err := operation.Upload("http://"+location.Url+r.URL.Path+"?type=replicate&ts="+strconv.FormatUint(needle.LastModified,10), string(needle.Name), bytes.NewReader(needle.Data))
 				return err == nil
 			}) {
 				ret = 0
@@ -39,7 +39,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId storage.Volum
 				volumeId.String() + ": " + err.Error()
 		} else {
 			distributedOperation(masterNode, s, volumeId, func(location operation.Location) bool {
-				return nil == operation.Delete("http://"+location.Url+r.URL.Path+"?type=standard")
+				return nil == operation.Delete("http://"+location.Url+r.URL.Path+"?type=replicate")
 			})
 		}
 	}
@@ -59,9 +59,9 @@ func ReplicatedDelete(masterNode string, store *storage.Store, volumeId storage.
 		needToReplicate = store.GetVolume(volumeId).NeedToReplicate()
 	}
 	if needToReplicate { //send to other replica locations
-		if r.FormValue("type") != "standard" {
+		if r.FormValue("type") != "replicate" {
 			if !distributedOperation(masterNode, store, volumeId, func(location operation.Location) bool {
-				return nil == operation.Delete("http://"+location.Url+r.URL.Path+"?type=standard")
+				return nil == operation.Delete("http://"+location.Url+r.URL.Path+"?type=replicate")
 			}) {
 				ret = 0
 			}

@@ -90,7 +90,10 @@ func NewNeedle(r *http.Request) (n *Needle, e error) {
 		}
 		n.SetHasName()
 	}
-	n.LastModified = uint64(time.Now().Unix())
+	var parseError error
+	if n.LastModified, parseError = strconv.ParseUint(r.FormValue("ts"), 10, 64); parseError != nil {
+		n.LastModified = uint64(time.Now().Unix())
+	}
 	n.SetHasLastModifiedDate()
 
 	n.Data = data
