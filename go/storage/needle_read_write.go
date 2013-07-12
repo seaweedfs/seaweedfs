@@ -87,29 +87,29 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 			if _, err = w.Write(header[0:1]); err != nil {
 				return
 			}
-		}
-		if n.HasName() {
-			util.Uint8toBytes(header[0:1], n.NameSize)
-			if _, err = w.Write(header[0:1]); err != nil {
-				return
+			if n.HasName() {
+				util.Uint8toBytes(header[0:1], n.NameSize)
+				if _, err = w.Write(header[0:1]); err != nil {
+					return
+				}
+				if _, err = w.Write(n.Name); err != nil {
+					return
+				}
 			}
-			if _, err = w.Write(n.Name); err != nil {
-				return
+			if n.HasMime() {
+				util.Uint8toBytes(header[0:1], n.MimeSize)
+				if _, err = w.Write(header[0:1]); err != nil {
+					return
+				}
+				if _, err = w.Write(n.Mime); err != nil {
+					return
+				}
 			}
-		}
-		if n.HasMime() {
-			util.Uint8toBytes(header[0:1], n.MimeSize)
-			if _, err = w.Write(header[0:1]); err != nil {
-				return
-			}
-			if _, err = w.Write(n.Mime); err != nil {
-				return
-			}
-		}
-		if n.HasLastModifiedDate() {
-			util.Uint64toBytes(header[0:8], n.LastModified)
-			if _, err = w.Write(header[8-LastModifiedBytesLength : 8]); err != nil {
-				return
+			if n.HasLastModifiedDate() {
+				util.Uint64toBytes(header[0:8], n.LastModified)
+				if _, err = w.Write(header[8-LastModifiedBytesLength : 8]); err != nil {
+					return
+				}
 			}
 		}
 		padding := NeedlePaddingSize - ((NeedleHeaderSize + n.Size + NeedleChecksumSize) % NeedlePaddingSize)
