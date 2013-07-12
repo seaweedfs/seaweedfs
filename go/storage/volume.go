@@ -158,6 +158,27 @@ func (v *Volume) NeedToReplicate() bool {
 	return v.ReplicaType.GetCopyCount() > 1
 }
 
+func (v *Volume) isFileUnchanged(n *Needle) bool {
+	nv, ok := v.nm.Get(n.Id)
+	if ok && nv.Offset > 0 {
+		if _, err := v.dataFile.Seek(int64(nv.Offset)*NeedlePaddingSize, 0); err != nil {
+			return false
+		}
+		oldNeedle := new(Needle)
+		oldNeedle.Read(v.dataFile, nv.Size, v.Version())
+		if len(oldNeedle.Data) == len(n.Data) && oldNeedle.Checksum == n.Checksum {
+			length := len(n.Data)
+			for i := 0; i < length; i++ {
+				if n.Data[i] != oldNeedle.Data[i] {
+					return false
+				}
+			}
+			n.Size = oldNeedle.Size
+			return true
+		}
+	}
+	return false
+}
 func (v *Volume) write(n *Needle) (size uint32, err error) {
 	if v.readOnly {
 		err = fmt.Errorf("%s is read-only", v.dataFile)
@@ -165,6 +186,10 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 	}
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
+	if v.isFileUnchanged(n) {
+		size = n.Size
+		return
+	}
 	var offset int64
 	if offset, err = v.dataFile.Seek(0, 2); err != nil {
 		return

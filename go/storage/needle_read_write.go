@@ -130,9 +130,11 @@ func (n *Needle) Read(r io.Reader, size uint32, version Version) (ret int, err e
 		n.readNeedleHeader(bytes)
 		n.Data = bytes[NeedleHeaderSize : NeedleHeaderSize+size]
 		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+size : NeedleHeaderSize+size+NeedleChecksumSize])
-		if checksum != NewCRC(n.Data).Value() {
+		newChecksum := NewCRC(n.Data)
+		if checksum != newChecksum.Value() {
 			return 0, errors.New("CRC error! Data On Disk Corrupted!")
 		}
+		n.Checksum = newChecksum
 		return
 	case Version2:
 		if size == 0 {
@@ -151,9 +153,11 @@ func (n *Needle) Read(r io.Reader, size uint32, version Version) (ret int, err e
 		}
 		n.readNeedleDataVersion2(bytes[NeedleHeaderSize : NeedleHeaderSize+int(n.Size)])
 		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+n.Size : NeedleHeaderSize+n.Size+NeedleChecksumSize])
-		if checksum != NewCRC(n.Data).Value() {
+		newChecksum := NewCRC(n.Data)
+		if checksum != newChecksum.Value() {
 			return 0, errors.New("CRC error! Data On Disk Corrupted!")
 		}
+		n.Checksum = newChecksum
 		return
 	}
 	return 0, fmt.Errorf("Unsupported Version! (%d)", version)
