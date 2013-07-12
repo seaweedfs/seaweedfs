@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	_ "fmt"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
+	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
+	"path/filepath"
 )
 
 type UploadResult struct {
@@ -20,7 +23,10 @@ type UploadResult struct {
 func Upload(uploadUrl string, filename string, reader io.Reader) (*UploadResult, error) {
 	body_buf := bytes.NewBufferString("")
 	body_writer := multipart.NewWriter(body_buf)
-	file_writer, err := body_writer.CreateFormFile("file", filename)
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
+	h.Set("Content-Type", mime.TypeByExtension(filepath.Ext(filename)))
+	file_writer, err := body_writer.CreatePart(h)
 	if err != nil {
 		log.Println("error creating form file", err)
 		return nil, err
