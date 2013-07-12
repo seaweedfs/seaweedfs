@@ -213,6 +213,6 @@ func writeJsonQuiet(w http.ResponseWriter, r *http.Request, obj interface{}) {
 
 func debug(params ...interface{}) {
 	if *IsDebug {
-		fmt.Println(params)
+		log.Println(params)
 	}
 }

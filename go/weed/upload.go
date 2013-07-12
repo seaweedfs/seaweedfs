@@ -67,11 +67,11 @@ func upload(filename string, server string, fid string) (int, error) {
 		return 0, err
 	}
 	fi, fiErr := fh.Stat()
-	if fiErr!=nil {
-    debug("Failed to stat file:", filename)
-    return 0, fiErr
+	if fiErr != nil {
+		debug("Failed to stat file:", filename)
+		return 0, fiErr
 	}
-	ret, e := operation.Upload("http://"+server+"/"+fid+"?ts="+strconv.Itoa(int(fi.ModTime().Unix()) ), path.Base(filename), fh)
+	ret, e := operation.Upload("http://"+server+"/"+fid+"?ts="+strconv.Itoa(int(fi.ModTime().Unix())), path.Base(filename), fh)
 	if e != nil {
 		return 0, e
 	}
@@ -79,9 +79,11 @@ func upload(filename string, server string, fid string) (int, error) {
 }
 
 type SubmitResult struct {
-	Fid   string `json:"fid"`
-	Size  int    `json:"size"`
-	Error string `json:"error"`
+	FileName string `json:"fileName"`
+	FileUrl  string `json:"fileUrl"`
+	Fid      string `json:"fid"`
+	Size     int    `json:"size"`
+	Error    string `json:"error"`
 }
 
 func submit(files []string) []SubmitResult {
@@ -101,13 +103,14 @@ func submit(files []string) []SubmitResult {
 			fid = ""
 			results[index].Error = err.Error()
 		}
+		results[index].FileName = file
 		results[index].Fid = fid
+		results[index].FileUrl = ret.PublicUrl + "/" + fid
 	}
 	return results
 }
 
 func runUpload(cmd *Command, args []string) bool {
-	*IsDebug = true
 	if len(cmdUpload.Flag.Args()) == 0 {
 		return false
 	}
