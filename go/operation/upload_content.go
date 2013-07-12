@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"path/filepath"
+	"strings"
 )
 
 type UploadResult struct {
@@ -25,7 +26,7 @@ func Upload(uploadUrl string, filename string, reader io.Reader) (*UploadResult,
 	body_writer := multipart.NewWriter(body_buf)
 	h := make(textproto.MIMEHeader)
 	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
-	h.Set("Content-Type", mime.TypeByExtension(filepath.Ext(filename)))
+	h.Set("Content-Type", mime.TypeByExtension(strings.ToLower(filepath.Ext(filename))))
 	file_writer, err := body_writer.CreatePart(h)
 	if err != nil {
 		log.Println("error creating form file", err)
