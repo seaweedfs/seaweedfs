@@ -176,7 +176,7 @@ func volumeStatusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func redirectHandler(w http.ResponseWriter, r *http.Request) {
-	vid, _, _ := parseURLPath(r.URL.Path)
+	vid, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, err := storage.NewVolumeId(vid)
 	if err != nil {
 		debug("parsing error:", err, r.URL.Path)

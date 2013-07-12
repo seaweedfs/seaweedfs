@@ -112,7 +112,7 @@ func storeHandler(w http.ResponseWriter, r *http.Request) {
 }
 func GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
 	n := new(storage.Needle)
-	vid, fid, ext := parseURLPath(r.URL.Path)
+	vid, fid, filename, ext := parseURLPath(r.URL.Path)
 	volumeId, err := storage.NewVolumeId(vid)
 	if err != nil {
 		debug("parsing error:", err, r.URL.Path)
@@ -156,11 +156,11 @@ func GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) 
 			}
 		}
 	}
-	if n.NameSize > 0 {
-		fname := string(n.Name)
-		dotIndex := strings.LastIndex(fname, ".")
+	if n.NameSize > 0 && filename == "" {
+		filename := string(n.Name)
+		dotIndex := strings.LastIndex(filename, ".")
 		if dotIndex > 0 {
-			ext = fname[dotIndex:]
+			ext = filename[dotIndex:]
 		}
 	}
 	mtype := ""
@@ -173,8 +173,8 @@ func GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) 
 	if mtype != "" {
 		w.Header().Set("Content-Type", mtype)
 	}
-	if n.NameSize > 0 {
-		w.Header().Set("Content-Disposition", "filename="+fileNameEscaper.Replace(string(n.Name)))
+	if filename != "" {
+		w.Header().Set("Content-Disposition", "filename="+fileNameEscaper.Replace(filename))
 	}
 	if ext != ".gz" {
 		if n.IsGzipped() {
@@ -200,7 +200,7 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonQuiet(w, r, e)
 		return
 	}
-	vid, _, _ := parseURLPath(r.URL.Path)
+	vid, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, e := storage.NewVolumeId(vid)
 	if e != nil {
 		debug("NewVolumeId error:", e)
@@ -229,7 +229,7 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 }
 func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	n := new(storage.Needle)
-	vid, fid, _ := parseURLPath(r.URL.Path)
+	vid, fid, _, _ := parseURLPath(r.URL.Path)
 	volumeId, _ := storage.NewVolumeId(vid)
 	n.ParsePath(fid)
 
@@ -264,23 +264,28 @@ func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	writeJsonQuiet(w, r, m)
 }
 
-func parseURLPath(path string) (vid, fid, ext string) {
-
-	sepIndex := strings.LastIndex(path, "/")
-	commaIndex := strings.LastIndex(path[sepIndex:], ",")
-	if commaIndex <= 0 {
-		if "favicon.ico" != path[sepIndex+1:] {
-			log.Println("unknown file id", path[sepIndex+1:])
+func parseURLPath(path string) (vid, fid, filename, ext string) {
+	if strings.Count(path, "/") == 3 {
+		parts := strings.Split(path, "/")
+		vid, fid, filename = parts[1], parts[2], parts[3]
+		ext = filename[strings.LastIndex(filename, "."):]
+	} else {
+		sepIndex := strings.LastIndex(path, "/")
+		commaIndex := strings.LastIndex(path[sepIndex:], ",")
+		if commaIndex <= 0 {
+			if "favicon.ico" != path[sepIndex+1:] {
+				log.Println("unknown file id", path[sepIndex+1:])
+			}
+			return
 		}
-		return
-	}
-	dotIndex := strings.LastIndex(path[sepIndex:], ".")
-	vid = path[sepIndex+1 : commaIndex]
-	fid = path[commaIndex+1:]
-	ext = ""
-	if dotIndex > 0 {
-		fid = path[commaIndex+1 : dotIndex]
-		ext = path[dotIndex:]
+		dotIndex := strings.LastIndex(path[sepIndex:], ".")
+		vid = path[sepIndex+1 : commaIndex]
+		fid = path[commaIndex+1:]
+		ext = ""
+		if dotIndex > 0 {
+			fid = path[commaIndex+1 : dotIndex]
+			ext = path[dotIndex:]
+		}
 	}
 	return
 }
