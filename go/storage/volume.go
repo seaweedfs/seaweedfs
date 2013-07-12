@@ -229,10 +229,10 @@ func (v *Volume) delete(n *Needle) (uint32, error) {
 		if err = v.nm.Delete(n.Id); err != nil {
 			return nv.Size, err
 		}
-		if _, err = v.dataFile.Seek(int64(nv.Offset*NeedlePaddingSize), 0); err != nil {
+		if _, err = v.dataFile.Seek(0, 2); err != nil {
 			return nv.Size, err
 		}
-		n.Data = make([]byte,0)
+		n.Data = make([]byte, 0)
 		_, err = n.Append(v.dataFile, v.Version())
 		return nv.Size, err
 	}
