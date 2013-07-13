@@ -92,11 +92,17 @@ type SubmitResult struct {
 }
 
 func submit(files []string) ([]SubmitResult, error) {
+	results := make([]SubmitResult, len(files))
+	for index, file := range files {
+		results[index].FileName = file
+	}
 	ret, err := assign(len(files))
 	if err != nil {
-		return nil, err
+		for index, _ := range files {
+			results[index].Error = err.Error()
+		}
+		return results, err
 	}
-	results := make([]SubmitResult, len(files))
 	for index, file := range files {
 		fid := ret.Fid
 		if index > 0 {
@@ -107,7 +113,6 @@ func submit(files []string) ([]SubmitResult, error) {
 			fid = ""
 			results[index].Error = err.Error()
 		}
-		results[index].FileName = file
 		results[index].Fid = fid
 		results[index].FileUrl = ret.PublicUrl + "/" + fid
 	}
@@ -121,25 +126,19 @@ func runUpload(cmd *Command, args []string) bool {
 		}
 		filepath.Walk(*uploadDir, func(path string, info os.FileInfo, err error) error {
 			if !info.IsDir() {
-				if results, err := submit([]string{path}); err == nil {
-					bytes, _ := json.Marshal(results)
-					if bytes != nil {
-						fmt.Println(string(bytes))
-					}
-				} else {
-					fmt.Println(err, "when uploading", path)
-					return err
+        results, e := submit([]string{path})
+				bytes, _ := json.Marshal(results)
+				fmt.Println(string(bytes))
+				if e != nil {
+				  return e
 				}
 			}
 			return err
 		})
 	} else {
-		if results, err := submit(args); err == nil {
-			bytes, _ := json.Marshal(results)
-			fmt.Println(string(bytes))
-		} else {
-			fmt.Println(err)
-		}
+		results, _ := submit(args)
+		bytes, _ := json.Marshal(results)
+		fmt.Println(string(bytes))
 	}
 	return true
 }
