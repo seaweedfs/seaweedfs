@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -268,7 +269,7 @@ func parseURLPath(path string) (vid, fid, filename, ext string) {
 	if strings.Count(path, "/") == 3 {
 		parts := strings.Split(path, "/")
 		vid, fid, filename = parts[1], parts[2], parts[3]
-		ext = filename[strings.LastIndex(filename, "."):]
+		ext = filepath.Ext(filename)
 	} else {
 		sepIndex := strings.LastIndex(path, "/")
 		commaIndex := strings.LastIndex(path[sepIndex:], ",")
@@ -317,7 +318,7 @@ func runVolume(cmd *Command, args []string) bool {
 			log.Fatalf("Volume Folder should not be a file:%s", folder)
 		}
 		perm := fileInfo.Mode().Perm()
-    log.Println("Volume Folder", folder)
+		log.Println("Volume Folder", folder)
 		log.Println("Permission:", perm)
 	}
 
