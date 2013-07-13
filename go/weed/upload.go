@@ -9,22 +9,27 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 )
 
-var uploadReplication *string
+var (
+	uploadReplication *string
+	uploadDir         *string
+)
 
 func init() {
 	cmdUpload.Run = runUpload // break init cycle
 	cmdUpload.IsDebug = cmdUpload.Flag.Bool("debug", false, "verbose debug information")
 	server = cmdUpload.Flag.String("server", "localhost:9333", "weedfs master location")
+	uploadDir = cmdUpload.Flag.String("dir", "", "Upload the whole folder recursively if specified.")
 	uploadReplication = cmdUpload.Flag.String("replication", "000", "replication type(000,001,010,100,110,200)")
 }
 
 var cmdUpload = &Command{
-	UsageLine: "upload -server=localhost:9333 file1 [file2 file3]",
+	UsageLine: "upload -server=localhost:9333 file1 [file2 file3]\n upload -server=localhost:9333 -dir=one_directory",
 	Short:     "upload one or a list of files",
-	Long: `upload one or a list of files. 
+	Long: `upload one or a list of files, or batch upload one whole folder recursively.
   It uses consecutive file keys for the list of files.
   e.g. If the file1 uses key k, file2 can be read via k_1
 
@@ -86,11 +91,10 @@ type SubmitResult struct {
 	Error    string `json:"error"`
 }
 
-func submit(files []string) []SubmitResult {
+func submit(files []string) ([]SubmitResult, error) {
 	ret, err := assign(len(files))
 	if err != nil {
-		fmt.Println(err)
-		return nil
+		return nil, err
 	}
 	results := make([]SubmitResult, len(files))
 	for index, file := range files {
@@ -107,15 +111,35 @@ func submit(files []string) []SubmitResult {
 		results[index].Fid = fid
 		results[index].FileUrl = ret.PublicUrl + "/" + fid
 	}
-	return results
+	return results, nil
 }
 
 func runUpload(cmd *Command, args []string) bool {
 	if len(cmdUpload.Flag.Args()) == 0 {
-		return false
+		if *uploadDir == "" {
+			return false
+		}
+		filepath.Walk(*uploadDir, func(path string, info os.FileInfo, err error) error {
+			if !info.IsDir() {
+				if results, err := submit([]string{path}); err == nil {
+					bytes, _ := json.Marshal(results)
+					if bytes != nil {
+						fmt.Println(string(bytes))
+					}
+				} else {
+					fmt.Println(err, "when uploading", path)
+					return err
+				}
+			}
+			return err
+		})
+	} else {
+		if results, err := submit(args); err == nil {
+			bytes, _ := json.Marshal(results)
+			fmt.Println(string(bytes))
+		} else {
+			fmt.Println(err)
+		}
 	}
-	results := submit(args)
-	bytes, _ := json.Marshal(results)
-	fmt.Print(string(bytes))
 	return true
 }
