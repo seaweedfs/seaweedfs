@@ -4,7 +4,7 @@ import (
 	"code.google.com/p/weed-fs/go/util"
 	"encoding/hex"
 	"errors"
-	"fmt"
+	"log"
 	"io/ioutil"
 	"mime"
 	"net/http"
@@ -43,13 +43,13 @@ func NewNeedle(r *http.Request) (n *Needle, e error) {
 	n = new(Needle)
 	form, fe := r.MultipartReader()
 	if fe != nil {
-		fmt.Println("MultipartReader [ERROR]", fe)
+		log.Println("MultipartReader [ERROR]", fe)
 		e = fe
 		return
 	}
 	part, fe := form.NextPart()
 	if fe != nil {
-		fmt.Println("Reading Multi part [ERROR]", fe)
+		log.Println("Reading Multi part [ERROR]", fe)
 		e = fe
 		return
 	}
@@ -114,7 +114,7 @@ func (n *Needle) ParsePath(fid string) {
 	length := len(fid)
 	if length <= 8 {
 		if length > 0 {
-			println("Invalid fid", fid, "length", length)
+			log.Println("Invalid fid", fid, "length", length)
 		}
 		return
 	}
@@ -136,7 +136,7 @@ func ParseKeyHash(key_hash_string string) (uint64, uint32) {
 	key_hash_bytes, khe := hex.DecodeString(key_hash_string)
 	key_hash_len := len(key_hash_bytes)
 	if khe != nil || key_hash_len <= 4 {
-		println("Invalid key_hash", key_hash_string, "length:", key_hash_len, "error", khe)
+		log.Println("Invalid key_hash", key_hash_string, "length:", key_hash_len, "error", khe)
 		return 0, 0
 	}
 	key := util.BytesToUint64(key_hash_bytes[0 : key_hash_len-4])

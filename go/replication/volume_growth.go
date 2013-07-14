@@ -6,6 +6,7 @@ import (
 	"code.google.com/p/weed-fs/go/topology"
 	"errors"
 	"fmt"
+	"log"
 	"math/rand"
 	"sync"
 )
@@ -106,7 +107,6 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 			nl := topology.NewNodeList(topo.Children(), nil)
 			picked, ret := nl.RandomlyPickN(2, 1, dataCenter)
 			vid := topo.NextVolumeId()
-			println("growing on picked servers", picked)
 			if ret {
 				var servers []*topology.DataNode
 				for _, n := range picked {
@@ -116,7 +116,6 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 						}
 					}
 				}
-				println("growing on servers", servers)
 				if len(servers) == 2 {
 					if err = vg.grow(topo, vid, repType, servers...); err == nil {
 						counter++
@@ -193,9 +192,9 @@ func (vg *VolumeGrowth) grow(topo *topology.Topology, vid storage.VolumeId, repT
 			vi := storage.VolumeInfo{Id: vid, Size: 0, RepType: repType, Version: storage.CurrentVersion}
 			server.AddOrUpdateVolume(vi)
 			topo.RegisterVolumeLayout(&vi, server)
-			fmt.Println("Created Volume", vid, "on", server)
+			log.Println("Created Volume", vid, "on", server)
 		} else {
-			fmt.Println("Failed to assign", vid, "to", servers, "error", err)
+			log.Println("Failed to assign", vid, "to", servers, "error", err)
 			return errors.New("Failed to assign " + vid.String())
 		}
 	}

@@ -3,7 +3,7 @@ package topology
 import (
 	"code.google.com/p/weed-fs/go/storage"
 	"errors"
-	"fmt"
+	"log"
 	"math/rand"
 )
 
@@ -54,7 +54,7 @@ func (vl *VolumeLayout) Lookup(vid storage.VolumeId) []*DataNode {
 func (vl *VolumeLayout) PickForWrite(count int, dataCenter string) (*storage.VolumeId, int, *VolumeLocationList, error) {
 	len_writers := len(vl.writables)
 	if len_writers <= 0 {
-		fmt.Println("No more writable volumes!")
+		log.Println("No more writable volumes!")
 		return nil, 0, nil, errors.New("No more writable volumes!")
 	}
 	if dataCenter == "" {
@@ -102,7 +102,7 @@ func (vl *VolumeLayout) GetActiveVolumeCount(dataCenter string) int {
 func (vl *VolumeLayout) removeFromWritable(vid storage.VolumeId) bool {
 	for i, v := range vl.writables {
 		if v == vid {
-			fmt.Println("Volume", vid, "becomes unwritable")
+			log.Println("Volume", vid, "becomes unwritable")
 			vl.writables = append(vl.writables[:i], vl.writables[i+1:]...)
 			return true
 		}
@@ -115,7 +115,7 @@ func (vl *VolumeLayout) setVolumeWritable(vid storage.VolumeId) bool {
 			return false
 		}
 	}
-	fmt.Println("Volume", vid, "becomes writable")
+	log.Println("Volume", vid, "becomes writable")
 	vl.writables = append(vl.writables, vid)
 	return true
 }
@@ -123,7 +123,7 @@ func (vl *VolumeLayout) setVolumeWritable(vid storage.VolumeId) bool {
 func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid storage.VolumeId) bool {
 	if vl.vid2location[vid].Remove(dn) {
 		if vl.vid2location[vid].Length() < vl.repType.GetCopyCount() {
-			fmt.Println("Volume", vid, "has", vl.vid2location[vid].Length(), "replica, less than required", vl.repType.GetCopyCount())
+			log.Println("Volume", vid, "has", vl.vid2location[vid].Length(), "replica, less than required", vl.repType.GetCopyCount())
 			return vl.removeFromWritable(vid)
 		}
 	}

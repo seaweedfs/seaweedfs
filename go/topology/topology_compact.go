@@ -5,7 +5,7 @@ import (
 	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"log"
 	"net/url"
 	"time"
 )
@@ -14,12 +14,12 @@ func batchVacuumVolumeCheck(vl *VolumeLayout, vid storage.VolumeId, locationlist
 	ch := make(chan bool, locationlist.Length())
 	for index, dn := range locationlist.list {
 		go func(index int, url string, vid storage.VolumeId) {
-			//fmt.Println(index, "Check vacuuming", vid, "on", dn.Url())
+			//log.Println(index, "Check vacuuming", vid, "on", dn.Url())
 			if e, ret := vacuumVolume_Check(url, vid, garbageThreshold); e != nil {
-				//fmt.Println(index, "Error when checking vacuuming", vid, "on", url, e)
+				//log.Println(index, "Error when checking vacuuming", vid, "on", url, e)
 				ch <- false
 			} else {
-				//fmt.Println(index, "Checked vacuuming", vid, "on", url, "needVacuum", ret)
+				//log.Println(index, "Checked vacuuming", vid, "on", url, "needVacuum", ret)
 				ch <- ret
 			}
 		}(index, dn.Url(), vid)
@@ -41,12 +41,12 @@ func batchVacuumVolumeCompact(vl *VolumeLayout, vid storage.VolumeId, locationli
 	ch := make(chan bool, locationlist.Length())
 	for index, dn := range locationlist.list {
 		go func(index int, url string, vid storage.VolumeId) {
-			fmt.Println(index, "Start vacuuming", vid, "on", url)
+			log.Println(index, "Start vacuuming", vid, "on", url)
 			if e := vacuumVolume_Compact(url, vid); e != nil {
-				fmt.Println(index, "Error when vacuuming", vid, "on", url, e)
+				log.Println(index, "Error when vacuuming", vid, "on", url, e)
 				ch <- false
 			} else {
-				fmt.Println(index, "Complete vacuuming", vid, "on", url)
+				log.Println(index, "Complete vacuuming", vid, "on", url)
 				ch <- true
 			}
 		}(index, dn.Url(), vid)
@@ -65,12 +65,12 @@ func batchVacuumVolumeCompact(vl *VolumeLayout, vid storage.VolumeId, locationli
 func batchVacuumVolumeCommit(vl *VolumeLayout, vid storage.VolumeId, locationlist *VolumeLocationList) bool {
 	isCommitSuccess := true
 	for _, dn := range locationlist.list {
-		fmt.Println("Start Commiting vacuum", vid, "on", dn.Url())
+		log.Println("Start Commiting vacuum", vid, "on", dn.Url())
 		if e := vacuumVolume_Commit(dn.Url(), vid); e != nil {
-			fmt.Println("Error when committing vacuum", vid, "on", dn.Url(), e)
+			log.Println("Error when committing vacuum", vid, "on", dn.Url(), e)
 			isCommitSuccess = false
 		} else {
-			fmt.Println("Complete Commiting vacuum", vid, "on", dn.Url())
+			log.Println("Complete Commiting vacuum", vid, "on", dn.Url())
 		}
 	}
 	if isCommitSuccess {
@@ -104,7 +104,7 @@ func vacuumVolume_Check(urlLocation string, vid storage.VolumeId, garbageThresho
 	values.Add("garbageThreshold", garbageThreshold)
 	jsonBlob, err := util.Post("http://"+urlLocation+"/admin/vacuum_volume_check", values)
 	if err != nil {
-		fmt.Println("parameters:", values)
+		log.Println("parameters:", values)
 		return err, false
 	}
 	var ret VacuumVolumeResult

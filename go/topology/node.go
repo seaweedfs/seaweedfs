@@ -2,7 +2,7 @@ package topology
 
 import (
 	"code.google.com/p/weed-fs/go/storage"
-	"fmt"
+	"log"
 )
 
 type NodeId string
@@ -155,7 +155,7 @@ func (n *NodeImpl) LinkChildNode(node Node) {
 		n.UpAdjustVolumeCountDelta(node.GetVolumeCount())
 		n.UpAdjustActiveVolumeCountDelta(node.GetActiveVolumeCount())
 		node.SetParent(n)
-		fmt.Println(n, "adds child", node.Id())
+		log.Println(n, "adds child", node.Id())
 	}
 }
 
@@ -167,7 +167,7 @@ func (n *NodeImpl) UnlinkChildNode(nodeId NodeId) {
 		n.UpAdjustVolumeCountDelta(-node.GetVolumeCount())
 		n.UpAdjustActiveVolumeCountDelta(-node.GetActiveVolumeCount())
 		n.UpAdjustMaxVolumeCountDelta(-node.GetMaxVolumeCount())
-		fmt.Println(n, "removes", node, "volumeCount =", n.activeVolumeCount)
+		log.Println(n, "removes", node, "volumeCount =", n.activeVolumeCount)
 	}
 }
 

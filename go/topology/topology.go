@@ -4,7 +4,6 @@ import (
 	"code.google.com/p/weed-fs/go/sequence"
 	"code.google.com/p/weed-fs/go/storage"
 	"errors"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -74,7 +73,7 @@ func (t *Topology) Lookup(vid storage.VolumeId) []*DataNode {
 
 func (t *Topology) RandomlyReserveOneVolume(dataCenter string) (bool, *DataNode, *storage.VolumeId) {
 	if t.FreeSpace() <= 0 {
-		fmt.Println("Topology does not have free space left!")
+		log.Println("Topology does not have free space left!")
 		return false, nil, nil
 	}
 	vid := t.NextVolumeId()
@@ -103,7 +102,7 @@ func (t *Topology) PickForWrite(repType storage.ReplicationType, count int, data
 func (t *Topology) GetVolumeLayout(repType storage.ReplicationType) *VolumeLayout {
 	replicationTypeIndex := repType.GetReplicationLevelIndex()
 	if t.replicaType2VolumeLayout[replicationTypeIndex] == nil {
-		fmt.Println("adding replication type", repType)
+		log.Println("adding replication type", repType)
 		t.replicaType2VolumeLayout[replicationTypeIndex] = NewVolumeLayout(repType, t.volumeSizeLimit, t.pulse)
 	}
 	return t.replicaType2VolumeLayout[replicationTypeIndex]

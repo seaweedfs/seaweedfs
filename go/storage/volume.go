@@ -108,7 +108,7 @@ func (v *Volume) Size() int64 {
 	if e == nil {
 		return stat.Size()
 	}
-	fmt.Printf("Failed to read file size %s %s\n", v.dataFile.Name(), e.Error())
+	log.Printf("Failed to read file size %s %s\n", v.dataFile.Name(), e.Error())
 	return -1
 }
 func (v *Volume) Close() {
@@ -120,7 +120,7 @@ func (v *Volume) Close() {
 func (v *Volume) maybeWriteSuperBlock() error {
 	stat, e := v.dataFile.Stat()
 	if e != nil {
-		fmt.Printf("failed to stat datafile %s: %s", v.dataFile, e)
+		log.Printf("failed to stat datafile %s: %s", v.dataFile, e)
 		return e
 	}
 	if stat.Size() == 0 {
