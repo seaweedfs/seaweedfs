@@ -16,6 +16,7 @@ import (
 var (
 	uploadReplication *string
 	uploadDir         *string
+	include           *string
 )
 
 func init() {
@@ -23,6 +24,7 @@ func init() {
 	cmdUpload.IsDebug = cmdUpload.Flag.Bool("debug", false, "verbose debug information")
 	server = cmdUpload.Flag.String("server", "localhost:9333", "weedfs master location")
 	uploadDir = cmdUpload.Flag.String("dir", "", "Upload the whole folder recursively if specified.")
+	include = cmdUpload.Flag.String("include", "", "pattens of files to upload, e.g., *.pdf, *.html, ab?d.txt, works together with -dir")
 	uploadReplication = cmdUpload.Flag.String("replication", "000", "replication type(000,001,010,100,110,200)")
 }
 
@@ -127,6 +129,11 @@ func runUpload(cmd *Command, args []string) bool {
 		filepath.Walk(*uploadDir, func(path string, info os.FileInfo, err error) error {
 			if err == nil {
 				if !info.IsDir() {
+					if *include != "" {
+						if ok, _ := filepath.Match(*include, filepath.Base(path)); !ok {
+							return nil
+						}
+					}
 					results, e := submit([]string{path})
 					bytes, _ := json.Marshal(results)
 					fmt.Println(string(bytes))
