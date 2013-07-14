@@ -125,13 +125,17 @@ func runUpload(cmd *Command, args []string) bool {
 			return false
 		}
 		filepath.Walk(*uploadDir, func(path string, info os.FileInfo, err error) error {
-			if !info.IsDir() {
-        results, e := submit([]string{path})
-				bytes, _ := json.Marshal(results)
-				fmt.Println(string(bytes))
-				if e != nil {
-				  return e
+			if err == nil {
+				if !info.IsDir() {
+					results, e := submit([]string{path})
+					bytes, _ := json.Marshal(results)
+					fmt.Println(string(bytes))
+					if e != nil {
+						return e
+					}
 				}
+			} else {
+				fmt.Println(err)
 			}
 			return err
 		})
