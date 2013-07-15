@@ -21,12 +21,16 @@ type UploadResult struct {
 	Error string
 }
 
-func Upload(uploadUrl string, filename string, reader io.Reader) (*UploadResult, error) {
+func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool) (*UploadResult, error) {
 	body_buf := bytes.NewBufferString("")
 	body_writer := multipart.NewWriter(body_buf)
 	h := make(textproto.MIMEHeader)
 	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
 	h.Set("Content-Type", mime.TypeByExtension(strings.ToLower(filepath.Ext(filename))))
+	println("content is gzipped", isGzipped)
+	if isGzipped {
+		h.Set("Content-Encoding", "gzip")
+	}
 	file_writer, err := body_writer.CreatePart(h)
 	if err != nil {
 		log.Println("error creating form file", err)

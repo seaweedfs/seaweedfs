@@ -4,8 +4,8 @@ import (
 	"code.google.com/p/weed-fs/go/util"
 	"encoding/hex"
 	"errors"
-	"log"
 	"io/ioutil"
+	"log"
 	"mime"
 	"net/http"
 	"path"
@@ -73,7 +73,9 @@ func NewNeedle(r *http.Request) (n *Needle, e error) {
 		n.SetHasMime()
 		mtype = contentType
 	}
-	if IsGzippable(ext, mtype) {
+	if part.Header.Get("Content-Encoding") == "gzip" {
+		n.SetGzipped()
+	} else if IsGzippable(ext, mtype) {
 		if data, e = GzipData(data); e != nil {
 			return
 		}
