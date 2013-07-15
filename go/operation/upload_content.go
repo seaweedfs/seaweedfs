@@ -27,7 +27,6 @@ func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool)
 	h := make(textproto.MIMEHeader)
 	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
 	h.Set("Content-Type", mime.TypeByExtension(strings.ToLower(filepath.Ext(filename))))
-	println("content is gzipped", isGzipped)
 	if isGzipped {
 		h.Set("Content-Encoding", "gzip")
 	}
