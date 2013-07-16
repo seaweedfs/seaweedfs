@@ -272,13 +272,13 @@ func parseURLPath(path string) (vid, fid, filename, ext string) {
 		vid, fid, filename = parts[1], parts[2], parts[3]
 		ext = filepath.Ext(filename)
 	case 2:
-    parts := strings.Split(path, "/")
-    vid, fid = parts[1], parts[2]
-    dotIndex := strings.LastIndex(fid, ".")
-    if dotIndex > 0 {
-      ext = fid[dotIndex:]
-      fid = fid[0:dotIndex]
-    }
+		parts := strings.Split(path, "/")
+		vid, fid = parts[1], parts[2]
+		dotIndex := strings.LastIndex(fid, ".")
+		if dotIndex > 0 {
+			ext = fid[dotIndex:]
+			fid = fid[0:dotIndex]
+		}
 	default:
 		sepIndex := strings.LastIndex(path, "/")
 		commaIndex := strings.LastIndex(path[sepIndex:], ",")

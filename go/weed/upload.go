@@ -78,7 +78,12 @@ func upload(filename string, server string, fid string) (int, error) {
 		debug("Failed to stat file:", filename)
 		return 0, fiErr
 	}
-	ret, e := operation.Upload("http://"+server+"/"+fid+"?ts="+strconv.Itoa(int(fi.ModTime().Unix())), path.Base(filename), fh, false)
+	filename = path.Base(filename)
+	isGzipped := path.Ext(filename) == ".gz"
+	if isGzipped {
+	  filename = filename[0:len(filename)-3]
+	}
+	ret, e := operation.Upload("http://"+server+"/"+fid+"?ts="+strconv.Itoa(int(fi.ModTime().Unix())), filename, fh, isGzipped)
 	if e != nil {
 		return 0, e
 	}
