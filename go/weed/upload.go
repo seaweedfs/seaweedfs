@@ -25,7 +25,7 @@ func init() {
 	server = cmdUpload.Flag.String("server", "localhost:9333", "weedfs master location")
 	uploadDir = cmdUpload.Flag.String("dir", "", "Upload the whole folder recursively if specified.")
 	include = cmdUpload.Flag.String("include", "", "pattens of files to upload, e.g., *.pdf, *.html, ab?d.txt, works together with -dir")
-	uploadReplication = cmdUpload.Flag.String("replication", "000", "replication type(000,001,010,100,110,200)")
+	uploadReplication = cmdUpload.Flag.String("replication", "", "replication type(000,001,010,100,110,200)")
 }
 
 var cmdUpload = &Command{
@@ -49,7 +49,9 @@ type AssignResult struct {
 func assign(count int) (*AssignResult, error) {
 	values := make(url.Values)
 	values.Add("count", strconv.Itoa(count))
-	values.Add("replication", *uploadReplication)
+	if *uploadReplication != "" {
+		values.Add("replication", *uploadReplication)
+	}
 	jsonBlob, err := util.Post("http://"+*server+"/dir/assign", values)
 	debug("assign result :", string(jsonBlob))
 	if err != nil {
@@ -81,7 +83,7 @@ func upload(filename string, server string, fid string) (int, error) {
 	filename = path.Base(filename)
 	isGzipped := path.Ext(filename) == ".gz"
 	if isGzipped {
-	  filename = filename[0:len(filename)-3]
+		filename = filename[0 : len(filename)-3]
 	}
 	ret, e := operation.Upload("http://"+server+"/"+fid+"?ts="+strconv.Itoa(int(fi.ModTime().Unix())), filename, fh, isGzipped)
 	if e != nil {
