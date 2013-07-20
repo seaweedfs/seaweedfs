@@ -146,9 +146,8 @@ func (s *Store) FreezeVolume(volumeIdString string) error {
 			return fmt.Errorf("Volume %s is already read-only", volumeIdString)
 		}
 		return v.freeze()
-	} else {
-		return fmt.Errorf("volume id %s is not found during freeze!", vid)
 	}
+	return fmt.Errorf("volume id %s is not found during freeze!", vid)
 }
 func (l *DiskLocation) loadExistingVolumes() {
 	if dirs, err := ioutil.ReadDir(l.directory); err == nil {
