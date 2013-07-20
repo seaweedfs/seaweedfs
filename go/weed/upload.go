@@ -32,8 +32,18 @@ var cmdUpload = &Command{
 	UsageLine: "upload -server=localhost:9333 file1 [file2 file3]\n upload -server=localhost:9333 -dir=one_directory -include=*.pdf",
 	Short:     "upload one or a list of files",
 	Long: `upload one or a list of files, or batch upload one whole folder recursively.
+	
+	If uploading a list of files:
   It uses consecutive file keys for the list of files.
   e.g. If the file1 uses key k, file2 can be read via k_1
+
+  If uploading a whole folder recursively:
+  All files under the folder and subfolders will be uploaded, each with its own file key.
+  Optional parameter "-include" allows you to specify the file name patterns.
+  
+  If any file has a ".gz" extension, the content are considered gzipped already, and will be stored as is.
+  This can save volume server's gzipped processing and allow customizable gzip compression level.
+  The file name will strip out ".gz" and stored. For example, "jquery.js.gz" will be stored as "jquery.js".
 
   `,
 }
