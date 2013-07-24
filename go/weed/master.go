@@ -91,7 +91,7 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 			writeJsonQuiet(w, r, map[string]string{"error": "No free volumes left!"})
 			return
 		} else {
-			if _, err = vg.GrowByType(rt, dataCenter, topo); err != nil {
+			if _, err = vg.AutomaticGrowByType(rt, dataCenter, topo); err != nil {
 				writeJsonQuiet(w, r, map[string]string{"error": "Cannot grow volume group! " + err.Error()})
 				return
 			}

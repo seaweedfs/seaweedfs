@@ -32,22 +32,34 @@ func NewDefaultVolumeGrowth() *VolumeGrowth {
 	return &VolumeGrowth{copy1factor: 7, copy2factor: 6, copy3factor: 3}
 }
 
-func (vg *VolumeGrowth) GrowByType(repType storage.ReplicationType, dataCenter string, topo *topology.Topology) (int, error) {
+func (vg *VolumeGrowth) AutomaticGrowByType(repType storage.ReplicationType, dataCenter string, topo *topology.Topology) (count int, err error) {
+	factor := 1
 	switch repType {
 	case storage.Copy000:
-		return vg.GrowByCountAndType(vg.copy1factor, repType, dataCenter, topo)
+		factor = 1
+		count, err = vg.GrowByCountAndType(vg.copy1factor, repType, dataCenter, topo)
 	case storage.Copy001:
-		return vg.GrowByCountAndType(vg.copy2factor, repType, dataCenter, topo)
+    factor = 2
+		count, err = vg.GrowByCountAndType(vg.copy2factor, repType, dataCenter, topo)
 	case storage.Copy010:
-		return vg.GrowByCountAndType(vg.copy2factor, repType, dataCenter, topo)
+    factor = 2
+		count, err = vg.GrowByCountAndType(vg.copy2factor, repType, dataCenter, topo)
 	case storage.Copy100:
-		return vg.GrowByCountAndType(vg.copy2factor, repType, dataCenter, topo)
+    factor = 2
+		count, err = vg.GrowByCountAndType(vg.copy2factor, repType, dataCenter, topo)
 	case storage.Copy110:
-		return vg.GrowByCountAndType(vg.copy3factor, repType, dataCenter, topo)
+		factor = 3
+		count, err = vg.GrowByCountAndType(vg.copy3factor, repType, dataCenter, topo)
 	case storage.Copy200:
-		return vg.GrowByCountAndType(vg.copy3factor, repType, dataCenter, topo)
+		factor = 3
+		count, err = vg.GrowByCountAndType(vg.copy3factor, repType, dataCenter, topo)
+	default:
+		err = errors.New("Unknown Replication Type!")
 	}
-	return 0, errors.New("Unknown Replication Type!")
+	if count > 0 && count%factor == 0 {
+		return count, nil
+	}
+	return count, err
 }
 func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.ReplicationType, dataCenter string, topo *topology.Topology) (counter int, err error) {
 	vg.accessLock.Lock()
