@@ -23,12 +23,15 @@ type UploadResult struct {
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
-func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool) (*UploadResult, error) {
+func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string) (*UploadResult, error) {
 	body_buf := bytes.NewBufferString("")
 	body_writer := multipart.NewWriter(body_buf)
 	h := make(textproto.MIMEHeader)
 	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, fileNameEscaper.Replace(filename)))
-	h.Set("Content-Type", mime.TypeByExtension(strings.ToLower(filepath.Ext(filename))))
+	if mtype == "" {
+		mtype = mime.TypeByExtension(strings.ToLower(filepath.Ext(filename)))
+	}
+	h.Set("Content-Type", mtype)
 	if isGzipped {
 		h.Set("Content-Encoding", "gzip")
 	}

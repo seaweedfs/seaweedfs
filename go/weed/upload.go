@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 var (
@@ -95,7 +97,8 @@ func upload(filename string, server string, fid string) (int, error) {
 	if isGzipped {
 		filename = filename[0 : len(filename)-3]
 	}
-	ret, e := operation.Upload("http://"+server+"/"+fid+"?ts="+strconv.Itoa(int(fi.ModTime().Unix())), filename, fh, isGzipped)
+	mtype := mime.TypeByExtension(strings.ToLower(filepath.Ext(filename)))
+	ret, e := operation.Upload("http://"+server+"/"+fid+"?ts="+strconv.Itoa(int(fi.ModTime().Unix())), filename, fh, isGzipped, mtype)
 	if e != nil {
 		return 0, e
 	}
