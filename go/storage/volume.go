@@ -220,16 +220,15 @@ func (v *Volume) delete(n *Needle) (uint32, error) {
 	nv, ok := v.nm.Get(n.Id)
 	//fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
 	if ok {
-		var err error
 		size := nv.Size
-		if err = v.nm.Delete(n.Id); err != nil {
+		if err:= v.nm.Delete(n.Id); err != nil {
 			return size, err
 		}
-		if _, err = v.dataFile.Seek(0, 2); err != nil {
+		if _, err:= v.dataFile.Seek(0, 2); err != nil {
 			return size, err
 		}
 		n.Data = make([]byte, 0)
-		_, err = n.Append(v.dataFile, v.Version())
+		_, err := n.Append(v.dataFile, v.Version())
 		return size, err
 	}
 	return 0, nil
