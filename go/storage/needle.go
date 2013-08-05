@@ -60,7 +60,12 @@ func NewNeedle(r *http.Request) (n *Needle, e error) {
 		e = errors.New("No file found!")
 		return
 	}
-	data, _ := ioutil.ReadAll(part)
+	data, ioe := ioutil.ReadAll(part)
+	if ioe != nil {
+		e = ioe
+		log.Println("Reading Content [ERROR]", ioe)
+		return
+	}
 	dotIndex := strings.LastIndex(fname, ".")
 	ext, mtype := "", ""
 	if dotIndex > 0 {

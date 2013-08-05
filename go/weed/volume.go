@@ -37,7 +37,7 @@ var (
 	publicUrl       = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible <ip|server_name>:<port>")
 	masterNode      = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
 	vpulse          = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than the master's setting")
-	vReadTimeout    = cmdVolume.Flag.Int("readTimeout", 3, "connection read timeout in seconds")
+	vReadTimeout    = cmdVolume.Flag.Int("readTimeout", 3, "connection read timeout in seconds. Increase this if uploading large files.")
 	vMaxCpu         = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	dataCenter      = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	rack            = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
@@ -196,37 +196,36 @@ func GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) 
 	}
 }
 func PostHandler(w http.ResponseWriter, r *http.Request) {
+	m := make(map[string]interface{})
 	if e := r.ParseForm(); e != nil {
 		debug("form parse error:", e)
-		writeJsonQuiet(w, r, e)
+		m["error"] = e.Error()
+		writeJsonQuiet(w, r, m)
 		return
 	}
 	vid, _, _, _ := parseURLPath(r.URL.Path)
-	volumeId, e := storage.NewVolumeId(vid)
-	if e != nil {
-		debug("NewVolumeId error:", e)
-		writeJsonQuiet(w, r, e)
+	volumeId, ve := storage.NewVolumeId(vid)
+	if ve != nil {
+		debug("NewVolumeId error:", ve)
+		m["error"] = ve.Error()
+		writeJsonQuiet(w, r, m)
 		return
 	}
-	if e != nil {
-		writeJsonQuiet(w, r, e)
-	} else {
-		needle, ne := storage.NewNeedle(r)
-		if ne != nil {
-			writeJsonQuiet(w, r, ne)
-		} else {
-			ret, errorStatus := replication.ReplicatedWrite(*masterNode, store, volumeId, needle, r)
-			m := make(map[string]interface{})
-			if errorStatus == "" {
-				w.WriteHeader(http.StatusCreated)
-			} else {
-				w.WriteHeader(http.StatusInternalServerError)
-				m["error"] = errorStatus
-			}
-			m["size"] = ret
-			writeJsonQuiet(w, r, m)
-		}
+	needle, ne := storage.NewNeedle(r)
+	if ne != nil {
+		m["error"] = ne.Error()
+		writeJsonQuiet(w, r, m)
+		return
 	}
+	ret, errorStatus := replication.ReplicatedWrite(*masterNode, store, volumeId, needle, r)
+	if errorStatus == "" {
+		w.WriteHeader(http.StatusCreated)
+	} else {
+		w.WriteHeader(http.StatusInternalServerError)
+		m["error"] = errorStatus
+	}
+	m["size"] = ret
+	writeJsonQuiet(w, r, m)
 }
 func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	n := new(storage.Needle)
