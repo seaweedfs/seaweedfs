@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/replication"
 	"code.google.com/p/weed-fs/go/storage"
@@ -98,6 +99,47 @@ func freezeVolumeHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 	}
 	debug("freeze volume =", r.FormValue("volume"), ", error =", err)
+}
+func submitForClientHandler(w http.ResponseWriter, r *http.Request) {
+	m := make(map[string]interface{})
+	if r.Method != "POST" {
+		m["error"] = "Only submit via POST!"
+		writeJsonQuiet(w, r, m)
+		return
+	}
+
+	debug("parsing upload file...")
+	fname, data, mimeType, isGzipped, lastModified, pe := storage.ParseUpload(r)
+	if pe != nil {
+		writeJsonError(w, r, pe)
+		return
+	}
+
+	debug("assigning file id for", fname)
+	assignResult, ae := Assign(*masterNode, 1)
+	if ae != nil {
+		writeJsonError(w, r, ae)
+		return
+	}
+
+	url := "http://" + assignResult.PublicUrl + "/" + assignResult.Fid
+	if lastModified != 0 {
+		url = url + "?ts=" + strconv.FormatUint(lastModified, 10)
+	}
+
+	debug("upload file to store", url)
+	uploadResult, err := operation.Upload(url, fname, bytes.NewReader(data), isGzipped, mimeType)
+	if err != nil {
+		writeJsonError(w, r, err)
+		return
+	}
+
+	m["fileName"] = fname
+	m["fid"] = assignResult.Fid
+	m["fileUrl"] = assignResult.PublicUrl + "/" + assignResult.Fid
+	m["size"] = uploadResult.Size
+	writeJsonQuiet(w, r, m)
+	return
 }
 func storeHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -199,22 +241,19 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	if e := r.ParseForm(); e != nil {
 		debug("form parse error:", e)
-		m["error"] = e.Error()
-		writeJsonQuiet(w, r, m)
+		writeJsonError(w, r, e)
 		return
 	}
 	vid, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, ve := storage.NewVolumeId(vid)
 	if ve != nil {
 		debug("NewVolumeId error:", ve)
-		m["error"] = ve.Error()
-		writeJsonQuiet(w, r, m)
+		writeJsonError(w, r, ve)
 		return
 	}
 	needle, ne := storage.NewNeedle(r)
 	if ne != nil {
-		m["error"] = ne.Error()
-		writeJsonQuiet(w, r, m)
+		writeJsonError(w, r, ne)
 		return
 	}
 	ret, errorStatus := replication.ReplicatedWrite(*masterNode, store, volumeId, needle, r)
@@ -337,6 +376,7 @@ func runVolume(cmd *Command, args []string) bool {
 	store = storage.NewStore(*vport, *ip, *publicUrl, folders, maxCounts)
 	defer store.Close()
 	http.HandleFunc("/", storeHandler)
+	http.HandleFunc("/submit", submitForClientHandler)
 	http.HandleFunc("/status", statusHandler)
 	http.HandleFunc("/admin/assign_volume", assignVolumeHandler)
 	http.HandleFunc("/admin/vacuum_volume_check", vacuumVolumeCheckHandler)

@@ -58,13 +58,13 @@ type AssignResult struct {
 	Error     string `json:"error"`
 }
 
-func assign(count int) (*AssignResult, error) {
+func Assign(server string, count int) (*AssignResult, error) {
 	values := make(url.Values)
 	values.Add("count", strconv.Itoa(count))
 	if *uploadReplication != "" {
 		values.Add("replication", *uploadReplication)
 	}
-	jsonBlob, err := util.Post("http://"+*server+"/dir/assign", values)
+	jsonBlob, err := util.Post("http://"+server+"/dir/assign", values)
 	debug("assign result :", string(jsonBlob))
 	if err != nil {
 		return nil, err
@@ -118,7 +118,7 @@ func submit(files []string) ([]SubmitResult, error) {
 	for index, file := range files {
 		results[index].FileName = file
 	}
-	ret, err := assign(len(files))
+	ret, err := Assign(*server, len(files))
 	if err != nil {
 		for index, _ := range files {
 			results[index].Error = err.Error()

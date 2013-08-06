@@ -210,6 +210,11 @@ func writeJsonQuiet(w http.ResponseWriter, r *http.Request, obj interface{}) {
 		log.Printf("error writing JSON %s: %s", obj, err)
 	}
 }
+func writeJsonError(w http.ResponseWriter, r *http.Request, err error) {
+	m := make(map[string]interface{})
+	m["error"] = err.Error()
+	writeJsonQuiet(w, r, m)
+}
 
 func debug(params ...interface{}) {
 	if *IsDebug {
