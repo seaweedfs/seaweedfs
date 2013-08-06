@@ -1,6 +1,8 @@
 package main
 
 import (
+  "bytes"
+  "code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/replication"
 	"code.google.com/p/weed-fs/go/storage"
 	"code.google.com/p/weed-fs/go/topology"
@@ -191,6 +193,10 @@ func redirectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func submitFromMasterServerHandler(w http.ResponseWriter, r *http.Request) {
+	submitForClientHandler(w, r, "localhost:"+strconv.Itoa(*mport))
+}
+
 func runMaster(cmd *Command, args []string) bool {
 	if *mMaxCpu < 1 {
 		*mMaxCpu = runtime.NumCPU()
@@ -211,6 +217,7 @@ func runMaster(cmd *Command, args []string) bool {
 	http.HandleFunc("/vol/status", volumeStatusHandler)
 	http.HandleFunc("/vol/vacuum", volumeVacuumHandler)
 
+	http.HandleFunc("/submit", submitFromMasterServerHandler)
 	http.HandleFunc("/", redirectHandler)
 
 	topo.StartRefreshWritableVolumes(*garbageThreshold)
@@ -226,4 +233,46 @@ func runMaster(cmd *Command, args []string) bool {
 		log.Fatalf("Fail to start:%s", e)
 	}
 	return true
+}
+
+func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl string) {
+	m := make(map[string]interface{})
+	if r.Method != "POST" {
+		m["error"] = "Only submit via POST!"
+		writeJsonQuiet(w, r, m)
+		return
+	}
+
+	debug("parsing upload file...")
+	fname, data, mimeType, isGzipped, lastModified, pe := storage.ParseUpload(r)
+	if pe != nil {
+		writeJsonError(w, r, pe)
+		return
+	}
+
+	debug("assigning file id for", fname)
+	assignResult, ae := Assign(masterUrl, 1)
+	if ae != nil {
+		writeJsonError(w, r, ae)
+		return
+	}
+
+	url := "http://" + assignResult.PublicUrl + "/" + assignResult.Fid
+	if lastModified != 0 {
+		url = url + "?ts=" + strconv.FormatUint(lastModified, 10)
+	}
+
+	debug("upload file to store", url)
+	uploadResult, err := operation.Upload(url, fname, bytes.NewReader(data), isGzipped, mimeType)
+	if err != nil {
+		writeJsonError(w, r, err)
+		return
+	}
+
+	m["fileName"] = fname
+	m["fid"] = assignResult.Fid
+	m["fileUrl"] = assignResult.PublicUrl + "/" + assignResult.Fid
+	m["size"] = uploadResult.Size
+	writeJsonQuiet(w, r, m)
+	return
 }
