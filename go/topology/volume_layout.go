@@ -153,7 +153,7 @@ func (vl *VolumeLayout) SetVolumeCapacityFull(vid storage.VolumeId) bool {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
-	log.Println("Volume", vid, "reaches full capacity.")
+	// log.Println("Volume", vid, "reaches full capacity.")
 	return vl.removeFromWritable(vid)
 }
 
