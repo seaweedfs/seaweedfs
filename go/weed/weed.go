@@ -1,11 +1,11 @@
 package main
 
 import (
+	"code.google.com/p/weed-fs/go/glog"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
-	"code.google.com/p/weed-fs/go/glog"
 	"math/rand"
 	"net/http"
 	"os"
@@ -42,7 +42,8 @@ func setExitStatus(n int) {
 }
 
 func main() {
-  glog.ToStderrAndLog()
+	glog.ToStderrAndLog()
+	glog.MaxSize = 1024 * 1024 * 32
 	rand.Seed(time.Now().UnixNano())
 	flag.Usage = usage
 	flag.Parse()
