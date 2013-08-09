@@ -5,7 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
+	"code.google.com/p/weed-fs/go/glog"
 	"math/rand"
 	"net/http"
 	"os"
@@ -42,6 +42,7 @@ func setExitStatus(n int) {
 }
 
 func main() {
+  glog.ToStderrAndLog()
 	rand.Seed(time.Now().UnixNano())
 	flag.Usage = usage
 	flag.Parse()
@@ -207,7 +208,7 @@ func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) (err err
 // wrapper for writeJson - just logs errors
 func writeJsonQuiet(w http.ResponseWriter, r *http.Request, obj interface{}) {
 	if err := writeJson(w, r, obj); err != nil {
-		log.Printf("error writing JSON %s: %s", obj, err)
+		glog.V(0).Infof("error writing JSON %s: %s", obj, err.Error())
 	}
 }
 func writeJsonError(w http.ResponseWriter, r *http.Request, err error) {
@@ -218,6 +219,6 @@ func writeJsonError(w http.ResponseWriter, r *http.Request, err error) {
 
 func debug(params ...interface{}) {
 	if *IsDebug {
-		log.Println(params)
+		glog.V(0).Infoln(params)
 	}
 }

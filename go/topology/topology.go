@@ -5,7 +5,7 @@ import (
 	"code.google.com/p/weed-fs/go/storage"
 	"errors"
 	"io/ioutil"
-	"log"
+	"code.google.com/p/weed-fs/go/glog"
 	"math/rand"
 )
 
@@ -55,7 +55,7 @@ func (t *Topology) loadConfiguration(configurationFile string) error {
 		t.configuration, e = NewConfiguration(b)
 		return e
 	} else {
-		log.Println("Using default configurations.")
+		glog.V(0).Infoln("Using default configurations.")
 	}
 	return nil
 }
@@ -73,7 +73,7 @@ func (t *Topology) Lookup(vid storage.VolumeId) []*DataNode {
 
 func (t *Topology) RandomlyReserveOneVolume(dataCenter string) (bool, *DataNode, *storage.VolumeId) {
 	if t.FreeSpace() <= 0 {
-		log.Println("Topology does not have free space left!")
+		glog.V(0).Infoln("Topology does not have free space left!")
 		return false, nil, nil
 	}
 	vid := t.NextVolumeId()
@@ -102,7 +102,7 @@ func (t *Topology) PickForWrite(repType storage.ReplicationType, count int, data
 func (t *Topology) GetVolumeLayout(repType storage.ReplicationType) *VolumeLayout {
 	replicationTypeIndex := repType.GetReplicationLevelIndex()
 	if t.replicaType2VolumeLayout[replicationTypeIndex] == nil {
-		log.Println("adding replication type", repType)
+		glog.V(0).Infoln("adding replication type", repType)
 		t.replicaType2VolumeLayout[replicationTypeIndex] = NewVolumeLayout(repType, t.volumeSizeLimit, t.pulse)
 	}
 	return t.replicaType2VolumeLayout[replicationTypeIndex]

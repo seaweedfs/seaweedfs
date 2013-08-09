@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
+	"code.google.com/p/weed-fs/go/glog"
 	"net/url"
 	"strconv"
 	"strings"
@@ -95,7 +95,7 @@ func (s *Store) addVolume(vid VolumeId, replicationType ReplicationType) error {
 		return fmt.Errorf("Volume Id %s already exists!", vid)
 	}
 	if location := s.findFreeLocation(); location != nil {
-		log.Println("In dir", location.directory, "adds volume =", vid, ", replicationType =", replicationType)
+		glog.V(0).Infoln("In dir", location.directory, "adds volume =", vid, ", replicationType =", replicationType)
 		if volume, err := NewVolume(location.directory, vid, replicationType); err == nil {
       location.volumes[vid] = volume
       return nil
@@ -163,14 +163,14 @@ func (l *DiskLocation) loadExistingVolumes() {
 					if l.volumes[vid] == nil {
 						if v, e := NewVolume(l.directory, vid, CopyNil); e == nil {
 							l.volumes[vid] = v
-							log.Println("In dir", l.directory, "read volume =", vid, "replicationType =", v.ReplicaType, "version =", v.Version(), "size =", v.Size())
+							glog.V(0).Infoln("In dir", l.directory, "read volume =", vid, "replicationType =", v.ReplicaType, "version =", v.Version(), "size =", v.Size())
 						}
 					}
 				}
 			}
 		}
 	}
-	log.Println("Store started on dir:", l.directory, "with", len(l.volumes), "volumes", "max", l.maxVolumeCount)
+	glog.V(0).Infoln("Store started on dir:", l.directory, "with", len(l.volumes), "volumes", "max", l.maxVolumeCount)
 }
 func (s *Store) Status() []*VolumeInfo {
 	var stats []*VolumeInfo
@@ -259,15 +259,15 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 				err = fmt.Errorf("Volume Size Limit %d Exceeded! Current size is %d", s.volumeSizeLimit, v.ContentSize())
 			}
 			if err != nil && s.volumeSizeLimit < v.ContentSize()+uint64(size) && s.volumeSizeLimit >= v.ContentSize() {
-				log.Println("volume", i, "size is", v.ContentSize(), "close to", s.volumeSizeLimit)
+				glog.V(0).Infoln("volume", i, "size is", v.ContentSize(), "close to", s.volumeSizeLimit)
 				if err = s.Join(); err != nil {
-					log.Printf("error with Join: %s", err)
+					glog.V(0).Infoln("error with Join:", err)
 				}
 			}
 		}
 		return
 	}
-	log.Println("volume", i, "not found!")
+	glog.V(0).Infoln("volume", i, "not found!")
 	err = fmt.Errorf("Volume %s not found!", i)
 	return
 }

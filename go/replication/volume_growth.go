@@ -6,7 +6,7 @@ import (
 	"code.google.com/p/weed-fs/go/topology"
 	"errors"
 	"fmt"
-	"log"
+	"code.google.com/p/weed-fs/go/glog"
 	"math/rand"
 	"sync"
 )
@@ -204,9 +204,9 @@ func (vg *VolumeGrowth) grow(topo *topology.Topology, vid storage.VolumeId, repT
 			vi := storage.VolumeInfo{Id: vid, Size: 0, RepType: repType, Version: storage.CurrentVersion}
 			server.AddOrUpdateVolume(vi)
 			topo.RegisterVolumeLayout(&vi, server)
-			log.Println("Created Volume", vid, "on", server)
+			glog.V(0).Infoln("Created Volume", vid, "on", server)
 		} else {
-			log.Println("Failed to assign", vid, "to", servers, "error", err)
+			glog.V(0).Infoln("Failed to assign", vid, "to", servers, "error", err)
 			return errors.New("Failed to assign " + vid.String())
 		}
 	}

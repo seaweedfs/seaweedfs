@@ -8,7 +8,7 @@ import (
 	"code.google.com/p/weed-fs/go/topology"
 	"encoding/json"
 	"errors"
-	"log"
+	"code.google.com/p/weed-fs/go/glog"
 	"net/http"
 	"runtime"
 	"strconv"
@@ -205,10 +205,10 @@ func runMaster(cmd *Command, args []string) bool {
 	var e error
 	if topo, e = topology.NewTopology("topo", *confFile, *metaFolder, "weed",
 		uint64(*volumeSizeLimitMB)*1024*1024, *mpulse); e != nil {
-		log.Fatalf("cannot create topology:%s", e)
+		glog.Fatalf("cannot create topology:%s", e)
 	}
 	vg = replication.NewDefaultVolumeGrowth()
-	log.Println("Volume Size Limit is", *volumeSizeLimitMB, "MB")
+	glog.V(0).Infoln("Volume Size Limit is", *volumeSizeLimitMB, "MB")
 	http.HandleFunc("/dir/assign", dirAssignHandler)
 	http.HandleFunc("/dir/lookup", dirLookupHandler)
 	http.HandleFunc("/dir/join", dirJoinHandler)
@@ -222,7 +222,7 @@ func runMaster(cmd *Command, args []string) bool {
 
 	topo.StartRefreshWritableVolumes(*garbageThreshold)
 
-	log.Println("Start Weed Master", VERSION, "at port", strconv.Itoa(*mport))
+	glog.V(0).Infoln("Start Weed Master", VERSION, "at port", strconv.Itoa(*mport))
 	srv := &http.Server{
 		Addr:        ":" + strconv.Itoa(*mport),
 		Handler:     http.DefaultServeMux,
@@ -230,7 +230,7 @@ func runMaster(cmd *Command, args []string) bool {
 	}
 	e = srv.ListenAndServe()
 	if e != nil {
-		log.Fatalf("Fail to start:%s", e)
+		glog.Fatalf("Fail to start:%s", e)
 	}
 	return true
 }

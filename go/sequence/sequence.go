@@ -2,7 +2,7 @@ package sequence
 
 import (
 	"encoding/gob"
-	"log"
+	"code.google.com/p/weed-fs/go/glog"
 	"os"
 	"path"
 	"sync"
@@ -32,16 +32,16 @@ func NewSequencer(dirname string, filename string) (m *SequencerImpl) {
 	seqFile, se := os.OpenFile(path.Join(m.dir, m.fileName+".seq"), os.O_RDONLY, 0644)
 	if se != nil {
 		m.FileIdSequence = FileIdSaveInterval
-		log.Println("Setting file id sequence", m.FileIdSequence)
+		glog.V(0).Infoln("Setting file id sequence", m.FileIdSequence)
 	} else {
 		decoder := gob.NewDecoder(seqFile)
 		defer seqFile.Close()
 		if se = decoder.Decode(&m.FileIdSequence); se != nil {
-			log.Printf("error decoding FileIdSequence: %s", se)
+			glog.V(0).Infof("error decoding FileIdSequence: %s", se)
 			m.FileIdSequence = FileIdSaveInterval
-			log.Println("Setting file id sequence", m.FileIdSequence)
+			glog.V(0).Infoln("Setting file id sequence", m.FileIdSequence)
 		} else {
-			log.Println("Loading file id sequence", m.FileIdSequence, "=>", m.FileIdSequence+FileIdSaveInterval)
+			glog.V(0).Infoln("Loading file id sequence", m.FileIdSequence, "=>", m.FileIdSequence+FileIdSaveInterval)
 			m.FileIdSequence += FileIdSaveInterval
 		}
 		//in case the server stops between intervals
@@ -65,14 +65,14 @@ func (m *SequencerImpl) NextFileId(count int) (uint64, int) {
 	return m.FileIdSequence - m.fileIdCounter - uint64(count), count
 }
 func (m *SequencerImpl) saveSequence() {
-	log.Println("Saving file id sequence", m.FileIdSequence, "to", path.Join(m.dir, m.fileName+".seq"))
+	glog.V(0).Infoln("Saving file id sequence", m.FileIdSequence, "to", path.Join(m.dir, m.fileName+".seq"))
 	seqFile, e := os.OpenFile(path.Join(m.dir, m.fileName+".seq"), os.O_CREATE|os.O_WRONLY, 0644)
 	if e != nil {
-		log.Fatalf("Sequence File Save [ERROR] %s\n", e)
+		glog.Fatalf("Sequence File Save [ERROR] %s", e)
 	}
 	defer seqFile.Close()
 	encoder := gob.NewEncoder(seqFile)
 	if e = encoder.Encode(m.FileIdSequence); e != nil {
-		log.Fatalf("Sequence File Save [ERROR] %s\n", e)
+		glog.Fatalf("Sequence File Save [ERROR] %s", e)
 	}
 }

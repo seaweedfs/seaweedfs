@@ -2,7 +2,7 @@ package topology
 
 import (
 	"code.google.com/p/weed-fs/go/storage"
-	"log"
+	"code.google.com/p/weed-fs/go/glog"
 	"math/rand"
 	"time"
 )
@@ -28,10 +28,10 @@ func (t *Topology) StartRefreshWritableVolumes(garbageThreshold string) {
 				t.SetVolumeCapacityFull(v)
 			case dn := <-t.chanRecoveredDataNodes:
 				t.RegisterRecoveredDataNode(dn)
-				log.Println("DataNode", dn, "is back alive!")
+				glog.V(0).Infoln("DataNode", dn, "is back alive!")
 			case dn := <-t.chanDeadDataNodes:
 				t.UnRegisterDataNode(dn)
-				log.Println("DataNode", dn, "is dead!")
+				glog.V(0).Infoln("DataNode", dn, "is dead!")
 			}
 		}
 	}()
@@ -48,7 +48,7 @@ func (t *Topology) SetVolumeCapacityFull(volumeInfo storage.VolumeInfo) bool {
 }
 func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 	for _, v := range dn.volumes {
-		log.Println("Removing Volume", v.Id, "from the dead volume server", dn)
+		glog.V(0).Infoln("Removing Volume", v.Id, "from the dead volume server", dn)
 		vl := t.GetVolumeLayout(v.RepType)
 		vl.SetVolumeUnavailable(dn, v.Id)
 	}

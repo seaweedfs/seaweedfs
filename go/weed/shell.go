@@ -3,7 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"log"
+	"code.google.com/p/weed-fs/go/glog"
 	"os"
 )
 
@@ -28,10 +28,10 @@ func runShell(command *Command, args []string) bool {
 	prompt := func() {
 		var err error
 		if _, err = o.WriteString("> "); err != nil {
-			log.Printf("error writing to stdout: %s", err)
+			glog.V(0).Infoln("error writing to stdout:", err)
 		}
 		if err = o.Flush(); err != nil {
-			log.Printf("error flushing stdout: %s", err)
+			glog.V(0).Infoln("error flushing stdout:", err)
 		}
 	}
 	readLine := func() string {
@@ -45,7 +45,7 @@ func runShell(command *Command, args []string) bool {
 	execCmd := func(cmd string) int {
 		if cmd != "" {
 			if _, err := o.WriteString(cmd); err != nil {
-				log.Printf("error writing to stdout: %s", err)
+				glog.V(0).Infoln("error writing to stdout:", err)
 			}
 		}
 		return 0

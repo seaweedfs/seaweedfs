@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io/ioutil"
-	"log"
+	"code.google.com/p/weed-fs/go/glog"
 	"mime"
 	"net/http"
 	"path"
@@ -41,13 +41,13 @@ type Needle struct {
 func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string, isGzipped bool, modifiedTime uint64, e error) {
 	form, fe := r.MultipartReader()
 	if fe != nil {
-		log.Println("MultipartReader [ERROR]", fe)
+		glog.V(0).Infoln("MultipartReader [ERROR]", fe)
 		e = fe
 		return
 	}
 	part, fe := form.NextPart()
 	if fe != nil {
-		log.Println("Reading Multi part [ERROR]", fe)
+		glog.V(0).Infoln("Reading Multi part [ERROR]", fe)
 		e = fe
 		return
 	}
@@ -60,7 +60,7 @@ func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string
 	}
 	data, e = ioutil.ReadAll(part)
 	if e != nil {
-		log.Println("Reading Content [ERROR]", e)
+		glog.V(0).Infoln("Reading Content [ERROR]", e)
 		return
 	}
 	dotIndex := strings.LastIndex(fileName, ".")
@@ -131,7 +131,7 @@ func (n *Needle) ParsePath(fid string) {
 	length := len(fid)
 	if length <= 8 {
 		if length > 0 {
-			log.Println("Invalid fid", fid, "length", length)
+			glog.V(0).Infoln("Invalid fid", fid, "length", length)
 		}
 		return
 	}
@@ -153,7 +153,7 @@ func ParseKeyHash(key_hash_string string) (uint64, uint32) {
 	key_hash_bytes, khe := hex.DecodeString(key_hash_string)
 	key_hash_len := len(key_hash_bytes)
 	if khe != nil || key_hash_len <= 4 {
-		log.Println("Invalid key_hash", key_hash_string, "length:", key_hash_len, "error", khe)
+		glog.V(0).Infoln("Invalid key_hash", key_hash_string, "length:", key_hash_len, "error", khe)
 		return 0, 0
 	}
 	key := util.BytesToUint64(key_hash_bytes[0 : key_hash_len-4])

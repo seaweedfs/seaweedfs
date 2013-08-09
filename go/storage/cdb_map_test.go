@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"log"
+	"code.google.com/p/weed-fs/go/glog"
 	"math/rand"
 	"os"
 	"runtime"
@@ -39,7 +39,7 @@ func TestCdbMap1Mem(t *testing.T) {
 		t.Fatalf("error opening cdb: %s", err)
 	}
 	b := getMemStats()
-	log.Printf("opening cdb consumed %d bytes", b-a)
+	glog.V(0).Infof("opening cdb consumed %d bytes", b-a)
 	defer nm.Close()
 
 	a = getMemStats()
@@ -47,7 +47,7 @@ func TestCdbMap1Mem(t *testing.T) {
 		t.Fatalf("error visiting %s: %s", nm, err)
 	}
 	b = getMemStats()
-	log.Printf("visit cdb %d consumed %d bytes", i, b-a)
+	glog.V(0).Infof("visit cdb %d consumed %d bytes", i, b-a)
 	nm.Close()
 
 	indexFile, err := os.Open(testIndexFilename)
@@ -61,7 +61,7 @@ func TestCdbMap1Mem(t *testing.T) {
 	}
 	defer nm.Close()
 	b = getMemStats()
-	log.Printf("opening idx consumed %d bytes", b-a)
+	glog.V(0).Infof("opening idx consumed %d bytes", b-a)
 
 	i = 0
 	a = getMemStats()
@@ -69,7 +69,7 @@ func TestCdbMap1Mem(t *testing.T) {
 		t.Fatalf("error visiting %s: %s", nm, err)
 	}
 	b = getMemStats()
-	log.Printf("visit idx %d consumed %d bytes", i, b-a)
+	glog.V(0).Infof("visit idx %d consumed %d bytes", i, b-a)
 }
 
 func BenchmarkCdbMap9List(t *testing.B) {
@@ -88,7 +88,7 @@ func BenchmarkCdbMap9List(t *testing.B) {
 	}
 	defer idx.Close()
 	b := getMemStats()
-	log.Printf("LoadNeedleMap consumed %d bytes", b-a)
+	glog.V(0).Infof("LoadNeedleMap consumed %d bytes", b-a)
 
 	cdbFn := testIndexFilename + ".cdb"
 	a = getMemStats()
@@ -99,10 +99,10 @@ func BenchmarkCdbMap9List(t *testing.B) {
 	}
 	defer m.Close()
 	b = getMemStats()
-	log.Printf("OpenCdbMap consumed %d bytes", b-a)
+	glog.V(0).Infof("OpenCdbMap consumed %d bytes", b-a)
 
 	i := 0
-	log.Printf("checking whether the cdb contains every key")
+	glog.V(0).Infoln("checking whether the cdb contains every key")
 	t.StartTimer()
 	err = idx.Visit(func(nv NeedleValue) error {
 		if i > t.N || rand.Intn(10) < 9 {
@@ -110,7 +110,7 @@ func BenchmarkCdbMap9List(t *testing.B) {
 		}
 		i++
 		if i%1000 == 0 {
-			log.Printf("%d. %s", i, nv)
+			glog.V(0).Infof("%d. %s", i, nv)
 		}
 		if nv2, ok := m.Get(uint64(nv.Key)); !ok || nv2 == nil {
 			t.Errorf("%s in index, not in cdb", nv.Key)
@@ -130,7 +130,7 @@ func BenchmarkCdbMap9List(t *testing.B) {
 	}
 
 	i = 0
-	log.Printf("checking wheter the cdb contains no stray keys")
+	glog.V(0).Infoln("checking wheter the cdb contains no stray keys")
 	t.StartTimer()
 	err = m.Visit(func(nv NeedleValue) error {
 		if i > t.N || rand.Intn(10) < 9 {
@@ -147,7 +147,7 @@ func BenchmarkCdbMap9List(t *testing.B) {
 		}
 		i++
 		if i%1000 == 0 {
-			log.Printf("%d. %s", i, nv)
+			glog.V(0).Infof("%d. %s", i, nv)
 		}
 		t.SetBytes(int64(nv.Size))
 		return nil

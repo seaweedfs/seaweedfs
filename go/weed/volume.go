@@ -4,7 +4,7 @@ import (
 	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/replication"
 	"code.google.com/p/weed-fs/go/storage"
-	"log"
+	"code.google.com/p/weed-fs/go/glog"
 	"math/rand"
 	"mime"
 	"net/http"
@@ -145,7 +145,7 @@ func GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) 
 		return
 	}
 	if n.Cookie != cookie {
-		log.Println("request with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
+		glog.V(0).Infoln("request with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -246,7 +246,7 @@ func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if n.Cookie != cookie {
-		log.Println("delete with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
+		glog.V(0).Infoln("delete with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
 		return
 	}
 
@@ -283,7 +283,7 @@ func parseURLPath(path string) (vid, fid, filename, ext string) {
 		commaIndex := strings.LastIndex(path[sepIndex:], ",")
 		if commaIndex <= 0 {
 			if "favicon.ico" != path[sepIndex+1:] {
-				log.Println("unknown file id", path[sepIndex+1:])
+				glog.V(0).Infoln("unknown file id", path[sepIndex+1:])
 			}
 			return
 		}
@@ -311,23 +311,23 @@ func runVolume(cmd *Command, args []string) bool {
 		if max, e := strconv.Atoi(maxString); e == nil {
 			maxCounts = append(maxCounts, max)
 		} else {
-			log.Fatalf("The max specified in -max not a valid number %s", max)
+			glog.Fatalf("The max specified in -max not a valid number %s", max)
 		}
 	}
 	if len(folders) != len(maxCounts) {
-		log.Fatalf("%d directories by -dir, but only %d max is set by -max", len(folders), len(maxCounts))
+		glog.Fatalf("%d directories by -dir, but only %d max is set by -max", len(folders), len(maxCounts))
 	}
 	for _, folder := range folders {
 		fileInfo, err := os.Stat(folder)
 		if err != nil {
-			log.Fatalf("No Existing Folder:%s", folder)
+			glog.Fatalf("No Existing Folder:%s", folder)
 		}
 		if !fileInfo.IsDir() {
-			log.Fatalf("Volume Folder should not be a file:%s", folder)
+			glog.Fatalf("Volume Folder should not be a file:%s", folder)
 		}
 		perm := fileInfo.Mode().Perm()
-		log.Println("Volume Folder", folder)
-		log.Println("Permission:", perm)
+		glog.V(0).Infoln("Volume Folder", folder)
+		glog.V(0).Infoln("Permission:", perm)
 	}
 
 	if *publicUrl == "" {
@@ -355,7 +355,7 @@ func runVolume(cmd *Command, args []string) bool {
 			if err == nil {
 				if !connected {
 					connected = true
-					log.Println("Reconnected with master")
+					glog.V(0).Infoln("Reconnected with master")
 				}
 			} else {
 				if connected {
@@ -365,9 +365,9 @@ func runVolume(cmd *Command, args []string) bool {
 			time.Sleep(time.Duration(float32(*vpulse*1e3)*(1+rand.Float32())) * time.Millisecond)
 		}
 	}()
-	log.Println("store joined at", *masterNode)
+	glog.V(0).Infoln("store joined at", *masterNode)
 
-	log.Println("Start Weed volume server", VERSION, "at http://"+*ip+":"+strconv.Itoa(*vport))
+	glog.V(0).Infoln("Start Weed volume server", VERSION, "at http://"+*ip+":"+strconv.Itoa(*vport))
 	srv := &http.Server{
 		Addr:        ":" + strconv.Itoa(*vport),
 		Handler:     http.DefaultServeMux,
@@ -375,7 +375,7 @@ func runVolume(cmd *Command, args []string) bool {
 	}
 	e := srv.ListenAndServe()
 	if e != nil {
-		log.Fatalf("Fail to start:%s", e.Error())
+		glog.Fatalf("Fail to start:%s", e.Error())
 	}
 	return true
 }

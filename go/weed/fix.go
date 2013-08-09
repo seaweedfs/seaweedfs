@@ -2,7 +2,7 @@ package main
 
 import (
 	"code.google.com/p/weed-fs/go/storage"
-	"log"
+	"code.google.com/p/weed-fs/go/glog"
 	"os"
 	"path"
 	"strconv"
@@ -35,7 +35,7 @@ func runFix(cmd *Command, args []string) bool {
 	fileName := strconv.Itoa(*fixVolumeId)
 	indexFile, err := os.OpenFile(path.Join(*fixVolumePath, fileName+".idx"), os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
-		log.Fatalf("Create Volume Index [ERROR] %s\n", err)
+		glog.Fatalf("Create Volume Index [ERROR] %s\n", err)
 	}
 	defer indexFile.Close()
 
@@ -57,7 +57,7 @@ func runFix(cmd *Command, args []string) bool {
 		return nil
 	})
 	if err != nil {
-		log.Fatalf("Export Volume File [ERROR] %s\n", err)
+		glog.Fatalf("Export Volume File [ERROR] %s\n", err)
 	}
 
 	return true

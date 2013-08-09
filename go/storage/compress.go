@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
+	"code.google.com/p/weed-fs/go/glog"
 	"io/ioutil"
 	"strings"
 )
@@ -36,11 +37,11 @@ func GzipData(input []byte) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	w, _ := gzip.NewWriterLevel(buf, flate.BestCompression)
 	if _, err := w.Write(input); err != nil {
-		println("error compressing data:", err)
+		glog.V(4).Infoln("error compressing data:", err)
 		return nil, err
 	}
 	if err := w.Close(); err != nil {
-		println("error closing compressed data:", err)
+		glog.V(4).Infoln("error closing compressed data:", err)
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -51,7 +52,7 @@ func UnGzipData(input []byte) ([]byte, error) {
 	defer r.Close()
 	output, err := ioutil.ReadAll(r)
 	if err != nil {
-		println("error uncompressing data:", err)
+		glog.V(4).Infoln("error uncompressing data:", err)
 	}
 	return output, err
 }

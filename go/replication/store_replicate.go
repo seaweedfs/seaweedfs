@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/storage"
-	"log"
+	"code.google.com/p/weed-fs/go/glog"
 	"net/http"
 	"strconv"
 )
@@ -50,7 +50,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId storage.Volum
 func ReplicatedDelete(masterNode string, store *storage.Store, volumeId storage.VolumeId, n *storage.Needle, r *http.Request) (ret uint32) {
 	ret, err := store.Delete(volumeId, n)
 	if err != nil {
-		log.Println("delete error:", err)
+		glog.V(0).Infoln("delete error:", err)
 		return
 	}
 
@@ -89,7 +89,7 @@ func distributedOperation(masterNode string, store *storage.Store, volumeId stor
 		}
 		return ret
 	} else {
-		log.Println("Failed to lookup for", volumeId, lookupErr.Error())
+		glog.V(0).Infoln("Failed to lookup for", volumeId, lookupErr.Error())
 	}
 	return false
 }

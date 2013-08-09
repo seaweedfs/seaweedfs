@@ -38,13 +38,13 @@ func (cs *CompactSection) Set(key Key, offset uint32, size uint32) uint32 {
 	}
 	if i := cs.binarySearchValues(key); i >= 0 {
 		ret = cs.values[i].Size
-		//println("key", key, "old size", ret)
+		//glog.V(4).Infoln("key", key, "old size", ret)
 		cs.values[i].Offset, cs.values[i].Size = offset, size
 	} else {
 		needOverflow := cs.counter >= batch
 		needOverflow = needOverflow || cs.counter > 0 && cs.values[cs.counter-1].Key > key
 		if needOverflow {
-			//println("start", cs.start, "counter", cs.counter, "key", key)
+			//glog.V(4).Infoln("start", cs.start, "counter", cs.counter, "key", key)
 			if oldValue, found := cs.overflow[key]; found {
 				ret = oldValue.Size
 			}
@@ -52,7 +52,7 @@ func (cs *CompactSection) Set(key Key, offset uint32, size uint32) uint32 {
 		} else {
 			p := &cs.values[cs.counter]
 			p.Key, p.Offset, p.Size = key, offset, size
-			//println("added index", cs.counter, "key", key, cs.values[cs.counter].Key)
+			//glog.V(4).Infoln("added index", cs.counter, "key", key, cs.values[cs.counter].Key)
 			cs.counter++
 		}
 	}
@@ -88,16 +88,16 @@ func (cs *CompactSection) binarySearchValues(key Key) int {
 	if h >= 0 && cs.values[h].Key < key {
 		return -2
 	}
-	//println("looking for key", key)
+	//glog.V(4).Infoln("looking for key", key)
 	for l <= h {
 		m := (l + h) / 2
-		//println("mid", m, "key", cs.values[m].Key, cs.values[m].Offset, cs.values[m].Size)
+		//glog.V(4).Infoln("mid", m, "key", cs.values[m].Key, cs.values[m].Offset, cs.values[m].Size)
 		if cs.values[m].Key < key {
 			l = m + 1
 		} else if key < cs.values[m].Key {
 			h = m - 1
 		} else {
-			//println("found", m)
+			//glog.V(4).Infoln("found", m)
 			return m
 		}
 	}
@@ -116,7 +116,7 @@ func NewCompactMap() CompactMap {
 func (cm *CompactMap) Set(key Key, offset uint32, size uint32) uint32 {
 	x := cm.binarySearchCompactSection(key)
 	if x < 0 {
-		//println(x, "creating", len(cm.list), "section1, starting", key)
+		//glog.V(4).Infoln(x, "creating", len(cm.list), "section1, starting", key)
 		cm.list = append(cm.list, NewCompactSection(key))
 		x = len(cm.list) - 1
 	}

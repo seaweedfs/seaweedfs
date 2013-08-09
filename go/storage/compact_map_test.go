@@ -20,7 +20,7 @@ func TestXYZ(t *testing.T) {
 
 	//	for i := uint32(0); i < 100; i++ {
 	//		if v := m.Get(Key(i)); v != nil {
-	//			println(i, "=", v.Key, v.Offset, v.Size)
+	//			glog.V(4).Infoln(i, "=", v.Key, v.Offset, v.Size)
 	//		}
 	//	}
 

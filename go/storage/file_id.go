@@ -4,6 +4,7 @@ import (
 	"code.google.com/p/weed-fs/go/util"
 	"encoding/hex"
 	"strings"
+  "code.google.com/p/weed-fs/go/glog"
 )
 
 type FileId struct {
@@ -18,7 +19,7 @@ func NewFileId(VolumeId VolumeId, Key uint64, Hashcode uint32) *FileId {
 func ParseFileId(fid string) *FileId {
 	a := strings.Split(fid, ",")
 	if len(a) != 2 {
-		println("Invalid fid", fid, ", split length", len(a))
+		glog.V(4).Infoln("Invalid fid", fid, ", split length", len(a))
 		return nil
 	}
 	vid_string, key_hash_string := a[0], a[1]
