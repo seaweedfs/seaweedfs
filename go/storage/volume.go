@@ -73,12 +73,12 @@ func (v *Volume) load(alsoLoadIndex bool) error {
 	if e == nil && alsoLoadIndex {
 		var indexFile *os.File
 		if v.readOnly {
-			glog.V(4).Infoln("opening file", fileName+".idx")
+			glog.V(2).Infoln("opening file", fileName+".idx")
 			if indexFile, e = os.Open(fileName + ".idx"); e != nil && !os.IsNotExist(e) {
 				return fmt.Errorf("cannot open index file %s.idx: %s", fileName, e.Error())
 			}
 			if indexFile != nil {
-				glog.V(4).Infoln("check file", fileName+".cdb")
+				glog.V(2).Infoln("check file", fileName+".cdb")
 				if _, err := os.Stat(fileName + ".cdb"); os.IsNotExist(err) {
 					glog.V(0).Infof("converting %s.idx to %s.cdb", fileName, fileName)
 					if e = ConvertIndexToCdb(fileName+".cdb", indexFile); e != nil {
@@ -89,7 +89,7 @@ func (v *Volume) load(alsoLoadIndex bool) error {
 					}
 				}
 			}
-			glog.V(4).Infoln("open file", fileName+".cdb")
+			glog.V(2).Infoln("open file", fileName+".cdb")
 			if v.nm, e = OpenCdbMap(fileName + ".cdb"); e != nil {
 				if os.IsNotExist(e) {
 					glog.V(0).Infof("Failed to read cdb file :%s, fall back to normal readonly mode.", fileName)
@@ -99,14 +99,23 @@ func (v *Volume) load(alsoLoadIndex bool) error {
 				}
 			}
 		}
-		glog.V(4).Infoln("open to write file", fileName+".idx")
-		indexFile, e = os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644)
-		if e != nil {
-			return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e.Error())
+		if v.readOnly {
+			glog.V(1).Infoln("open to read file", fileName+".idx")
+			indexFile, e = os.OpenFile(fileName+".idx", os.O_RDONLY, 0644)
+			if e != nil {
+				return fmt.Errorf("cannot read Volume Data %s.dat: %s", fileName, e.Error())
+			}
+		} else {
+			glog.V(1).Infoln("open to write file", fileName+".idx")
+			indexFile, e = os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644)
+			if e != nil {
+				return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e.Error())
+			}
 		}
-		glog.V(4).Infoln("loading file", fileName+".idx")
-		v.nm, e = LoadNeedleMap(indexFile)
-		glog.V(4).Infoln("loading error:", e)
+		glog.V(0).Infoln("loading file", fileName+".idx", "readonly", v.readOnly)
+		if v.nm, e = LoadNeedleMap(indexFile); e != nil {
+			glog.V(0).Infoln("loading error:", e)
+		}
 	}
 	return e
 }

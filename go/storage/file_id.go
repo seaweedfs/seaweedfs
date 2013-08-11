@@ -19,7 +19,7 @@ func NewFileId(VolumeId VolumeId, Key uint64, Hashcode uint32) *FileId {
 func ParseFileId(fid string) *FileId {
 	a := strings.Split(fid, ",")
 	if len(a) != 2 {
-		glog.V(4).Infoln("Invalid fid", fid, ", split length", len(a))
+		glog.V(1).Infoln("Invalid fid", fid, ", split length", len(a))
 		return nil
 	}
 	vid_string, key_hash_string := a[0], a[1]
