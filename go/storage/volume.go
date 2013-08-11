@@ -92,7 +92,7 @@ func (v *Volume) load(alsoLoadIndex bool) error {
 			glog.V(2).Infoln("open file", fileName+".cdb")
 			if v.nm, e = OpenCdbMap(fileName + ".cdb"); e != nil {
 				if os.IsNotExist(e) {
-					glog.V(0).Infof("Failed to read cdb file :%s, fall back to normal readonly mode.", fileName)
+					glog.V(0).Infof("Failed to read cdb file %s, fall back to normal readonly mode.", fileName)
 				} else {
 					glog.V(0).Infof("%s.cdb open errro:%s", fileName, e.Error())
 					return e
@@ -109,7 +109,7 @@ func (v *Volume) load(alsoLoadIndex bool) error {
 			glog.V(1).Infoln("open to write file", fileName+".idx")
 			indexFile, e = os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644)
 			if e != nil {
-				return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e.Error())
+				return fmt.Errorf("cannot write Volume Data %s.dat: %s", fileName, e.Error())
 			}
 		}
 		glog.V(0).Infoln("loading file", fileName+".idx", "readonly", v.readOnly)
