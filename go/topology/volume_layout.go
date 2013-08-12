@@ -1,9 +1,9 @@
 package topology
 
 import (
+	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/storage"
 	"errors"
-	"code.google.com/p/weed-fs/go/glog"
 	"math/rand"
 	"sync"
 )
@@ -38,6 +38,8 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 		if len(vl.vid2location[v.Id].list) == v.RepType.GetCopyCount() {
 			if vl.isWritable(v) {
 				vl.writables = append(vl.writables, v.Id)
+			} else {
+				vl.removeFromWritable(v.Id)
 			}
 		}
 	}
@@ -105,12 +107,17 @@ func (vl *VolumeLayout) GetActiveVolumeCount(dataCenter string) int {
 }
 
 func (vl *VolumeLayout) removeFromWritable(vid storage.VolumeId) bool {
-	for i, v := range vl.writables {
-		if v == vid {
-			glog.V(0).Infoln("Volume", vid, "becomes unwritable")
-			vl.writables = append(vl.writables[:i], vl.writables[i+1:]...)
-			return true
+	toDeleteIndex := -1
+	for k, id := range vl.writables {
+		if id == vid {
+			toDeleteIndex = k
+			break
 		}
+	}
+	if toDeleteIndex >= 0 {
+		glog.V(0).Infoln("Volume", vid, "becomes unwritable")
+		vl.writables = append(vl.writables[0:toDeleteIndex], vl.writables[toDeleteIndex+1:]...)
+		return true
 	}
 	return false
 }
