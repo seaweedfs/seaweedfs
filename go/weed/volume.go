@@ -31,21 +31,21 @@ var cmdVolume = &Command{
 }
 
 var (
-	vport           = cmdVolume.Flag.Int("port", 8080, "http listen port")
-	volumeFolders   = cmdVolume.Flag.String("dir", "/tmp", "directories to store data files. dir[,dir]...")
-	maxVolumeCounts = cmdVolume.Flag.String("max", "7", "maximum numbers of volumes, count[,count]...")
-	ip              = cmdVolume.Flag.String("ip", "localhost", "ip or server name")
-	publicUrl       = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible <ip|server_name>:<port>")
-	masterNode      = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
-	vpulse          = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than the master's setting")
-	vReadTimeout    = cmdVolume.Flag.Int("readTimeout", 3, "connection read timeout in seconds. Increase this if uploading large files.")
-	vMaxCpu         = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
-	dataCenter      = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
-	rack            = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
-	whiteListOption = cmdVolume.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
+	vport                 = cmdVolume.Flag.Int("port", 8080, "http listen port")
+	volumeFolders         = cmdVolume.Flag.String("dir", "/tmp", "directories to store data files. dir[,dir]...")
+	maxVolumeCounts       = cmdVolume.Flag.String("max", "7", "maximum numbers of volumes, count[,count]...")
+	ip                    = cmdVolume.Flag.String("ip", "localhost", "ip or server name")
+	publicUrl             = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible <ip|server_name>:<port>")
+	masterNode            = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
+	vpulse                = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than the master's setting")
+	vReadTimeout          = cmdVolume.Flag.Int("readTimeout", 3, "connection read timeout in seconds. Increase this if uploading large files.")
+	vMaxCpu               = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
+	dataCenter            = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
+	rack                  = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
+	volumeWhiteListOption = cmdVolume.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 
-	store     *storage.Store
-	whiteList []string
+	store           *storage.Store
+	volumeWhiteList []string
 )
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
@@ -112,9 +112,9 @@ func storeHandler(w http.ResponseWriter, r *http.Request) {
 	case "HEAD":
 		GetOrHeadHandler(w, r, false)
 	case "DELETE":
-		secure(DeleteHandler)(w, r)
+		secure(volumeWhiteList, DeleteHandler)(w, r)
 	case "POST":
-		secure(PostHandler)(w, r)
+		secure(volumeWhiteList, PostHandler)(w, r)
 	}
 }
 func GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
@@ -336,20 +336,20 @@ func runVolume(cmd *Command, args []string) bool {
 	if *publicUrl == "" {
 		*publicUrl = *ip + ":" + strconv.Itoa(*vport)
 	}
-	if *whiteListOption != "" {
-		whiteList = strings.Split(*whiteListOption, ",")
+	if *volumeWhiteListOption != "" {
+		volumeWhiteList = strings.Split(*volumeWhiteListOption, ",")
 	}
 
 	store = storage.NewStore(*vport, *ip, *publicUrl, folders, maxCounts)
 	defer store.Close()
 	http.HandleFunc("/", storeHandler)
-	http.HandleFunc("/submit", secure(submitFromVolumeServerHandler))
-	http.HandleFunc("/status", secure(statusHandler))
-	http.HandleFunc("/admin/assign_volume", secure(assignVolumeHandler))
-	http.HandleFunc("/admin/vacuum_volume_check", secure(vacuumVolumeCheckHandler))
-	http.HandleFunc("/admin/vacuum_volume_compact", secure(vacuumVolumeCompactHandler))
-	http.HandleFunc("/admin/vacuum_volume_commit", secure(vacuumVolumeCommitHandler))
-	http.HandleFunc("/admin/freeze_volume", secure(freezeVolumeHandler))
+	http.HandleFunc("/submit", secure(volumeWhiteList, submitFromVolumeServerHandler))
+	http.HandleFunc("/status", secure(volumeWhiteList, statusHandler))
+	http.HandleFunc("/admin/assign_volume", secure(volumeWhiteList, assignVolumeHandler))
+	http.HandleFunc("/admin/vacuum_volume_check", secure(volumeWhiteList, vacuumVolumeCheckHandler))
+	http.HandleFunc("/admin/vacuum_volume_compact", secure(volumeWhiteList, vacuumVolumeCompactHandler))
+	http.HandleFunc("/admin/vacuum_volume_commit", secure(volumeWhiteList, vacuumVolumeCommitHandler))
+	http.HandleFunc("/admin/freeze_volume", secure(volumeWhiteList, freezeVolumeHandler))
 
 	go func() {
 		connected := true
@@ -386,7 +386,7 @@ func runVolume(cmd *Command, args []string) bool {
 	return true
 }
 
-func secure(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
+func secure(whiteList []string, f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if len(whiteList) == 0 {
 			f(w, r)
