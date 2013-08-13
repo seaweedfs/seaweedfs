@@ -1,14 +1,14 @@
 package main
 
 import (
-  "bytes"
-  "code.google.com/p/weed-fs/go/operation"
+	"bytes"
+	"code.google.com/p/weed-fs/go/glog"
+	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/replication"
 	"code.google.com/p/weed-fs/go/storage"
 	"code.google.com/p/weed-fs/go/topology"
 	"encoding/json"
 	"errors"
-	"code.google.com/p/weed-fs/go/glog"
 	"net/http"
 	"runtime"
 	"strconv"
@@ -31,15 +31,18 @@ var cmdMaster = &Command{
 }
 
 var (
-	mport             = cmdMaster.Flag.Int("port", 9333, "http listen port")
-	metaFolder        = cmdMaster.Flag.String("mdir", "/tmp", "data directory to store mappings")
-	volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", 32*1024, "Default Volume Size in MegaBytes")
-	mpulse            = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
-	confFile          = cmdMaster.Flag.String("conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
-	defaultRepType    = cmdMaster.Flag.String("defaultReplicationType", "000", "Default replication type if not specified.")
-	mReadTimeout      = cmdMaster.Flag.Int("readTimeout", 3, "connection read timeout in seconds")
-	mMaxCpu           = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
-	garbageThreshold  = cmdMaster.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
+	mport                 = cmdMaster.Flag.Int("port", 9333, "http listen port")
+	metaFolder            = cmdMaster.Flag.String("mdir", "/tmp", "data directory to store mappings")
+	volumeSizeLimitMB     = cmdMaster.Flag.Uint("volumeSizeLimitMB", 32*1024, "Default Volume Size in MegaBytes")
+	mpulse                = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
+	confFile              = cmdMaster.Flag.String("conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
+	defaultRepType        = cmdMaster.Flag.String("defaultReplicationType", "000", "Default replication type if not specified.")
+	mReadTimeout          = cmdMaster.Flag.Int("readTimeout", 3, "connection read timeout in seconds")
+	mMaxCpu               = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
+	garbageThreshold      = cmdMaster.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
+	masterWhiteListOption = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
+
+	masterWhiteList []string
 )
 
 var topo *topology.Topology
@@ -202,6 +205,9 @@ func runMaster(cmd *Command, args []string) bool {
 		*mMaxCpu = runtime.NumCPU()
 	}
 	runtime.GOMAXPROCS(*mMaxCpu)
+	if *masterWhiteListOption != "" {
+		masterWhiteList = strings.Split(*masterWhiteListOption, ",")
+	}
 	var e error
 	if topo, e = topology.NewTopology("topo", *confFile, *metaFolder, "weed",
 		uint64(*volumeSizeLimitMB)*1024*1024, *mpulse); e != nil {
@@ -209,15 +215,15 @@ func runMaster(cmd *Command, args []string) bool {
 	}
 	vg = replication.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", *volumeSizeLimitMB, "MB")
-	http.HandleFunc("/dir/assign", dirAssignHandler)
-	http.HandleFunc("/dir/lookup", dirLookupHandler)
-	http.HandleFunc("/dir/join", dirJoinHandler)
-	http.HandleFunc("/dir/status", dirStatusHandler)
-	http.HandleFunc("/vol/grow", volumeGrowHandler)
-	http.HandleFunc("/vol/status", volumeStatusHandler)
-	http.HandleFunc("/vol/vacuum", volumeVacuumHandler)
+	http.HandleFunc("/dir/assign", secure(masterWhiteList, dirAssignHandler))
+	http.HandleFunc("/dir/lookup", secure(masterWhiteList, dirLookupHandler))
+	http.HandleFunc("/dir/join", secure(masterWhiteList, dirJoinHandler))
+	http.HandleFunc("/dir/status", secure(masterWhiteList, dirStatusHandler))
+	http.HandleFunc("/vol/grow", secure(masterWhiteList, volumeGrowHandler))
+	http.HandleFunc("/vol/status", secure(masterWhiteList, volumeStatusHandler))
+	http.HandleFunc("/vol/vacuum", secure(masterWhiteList, volumeVacuumHandler))
 
-	http.HandleFunc("/submit", submitFromMasterServerHandler)
+	http.HandleFunc("/submit", secure(masterWhiteList, submitFromMasterServerHandler))
 	http.HandleFunc("/", redirectHandler)
 
 	topo.StartRefreshWritableVolumes(*garbageThreshold)

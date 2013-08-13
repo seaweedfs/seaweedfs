@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+  "net"
 	"net/http"
 	"os"
 	"strings"
@@ -222,4 +223,22 @@ func debug(params ...interface{}) {
 	if *IsDebug {
 		glog.V(0).Infoln(params)
 	}
+}
+func secure(whiteList []string, f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
+  return func(w http.ResponseWriter, r *http.Request) {
+    if len(whiteList) == 0 {
+      f(w, r)
+      return
+    }
+    host, _, err := net.SplitHostPort(r.RemoteAddr)
+    if err == nil {
+      for _, ip := range whiteList {
+        if ip == host {
+          f(w, r)
+          return
+        }
+      }
+    }
+    writeJsonQuiet(w, r, map[string]interface{}{"error": "No write permisson from " + host})
+  }
 }
