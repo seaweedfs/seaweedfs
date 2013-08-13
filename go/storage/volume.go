@@ -57,12 +57,14 @@ func (v *Volume) load(alsoLoadIndex bool) error {
 	fileName := path.Join(v.dir, v.Id.String())
 	if exists, canRead, canWrite, _ := checkFile(fileName + ".dat"); exists && !canRead {
 		return fmt.Errorf("cannot read Volume Data file %s.dat", fileName)
-	} else if canWrite {
+	} else if !exists || canWrite {
 		v.dataFile, e = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
-	} else {
+	} else if exists && canRead {
 		glog.V(0).Infoln("opening " + fileName + ".dat in READONLY mode")
 		v.dataFile, e = os.Open(fileName + ".dat")
 		v.readOnly = true
+	} else {
+    return fmt.Errorf("Unknown state about Volume Data file %s.dat", fileName)
 	}
 	if e != nil {
 		if !os.IsPermission(e) {

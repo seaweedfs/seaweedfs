@@ -7,6 +7,7 @@ import (
 	"code.google.com/p/weed-fs/go/storage"
 	"math/rand"
 	"mime"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -41,9 +42,10 @@ var (
 	vMaxCpu         = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	dataCenter      = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	rack            = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
-	whiteList       = cmdVolume.Flag.String("whiteList", "", "Ip addresses having write permission. No limit if empty.")
+	whiteListOption = cmdVolume.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 
-	store *storage.Store
+	store     *storage.Store
+	whiteList []string
 )
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
@@ -334,6 +336,9 @@ func runVolume(cmd *Command, args []string) bool {
 	if *publicUrl == "" {
 		*publicUrl = *ip + ":" + strconv.Itoa(*vport)
 	}
+	if *whiteListOption != "" {
+		whiteList = strings.Split(*whiteListOption, ",")
+	}
 
 	store = storage.NewStore(*vport, *ip, *publicUrl, folders, maxCounts)
 	defer store.Close()
@@ -383,15 +388,19 @@ func runVolume(cmd *Command, args []string) bool {
 
 func secure(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if *whiteList == "" {
+		if len(whiteList) == 0 {
 			f(w, r)
 			return
 		}
-		ip := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")]
-		if strings.Contains(*whiteList, ip) {
-      f(w, r)
-      return
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err == nil {
+			for _, ip := range whiteList {
+				if ip == host {
+					f(w, r)
+					return
+				}
+			}
 		}
-		return
+		writeJsonQuiet(w, r, map[string]interface{}{"error": "No write permisson from " + host})
 	}
 }
