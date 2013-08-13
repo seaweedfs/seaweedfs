@@ -1,10 +1,10 @@
 package main
 
 import (
+	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/replication"
 	"code.google.com/p/weed-fs/go/storage"
-	"code.google.com/p/weed-fs/go/glog"
 	"math/rand"
 	"mime"
 	"net/http"
@@ -41,6 +41,7 @@ var (
 	vMaxCpu         = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	dataCenter      = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	rack            = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
+	whiteList       = cmdVolume.Flag.String("whiteList", "", "Ip addresses having write permission. No limit if empty.")
 
 	store *storage.Store
 )
@@ -109,9 +110,9 @@ func storeHandler(w http.ResponseWriter, r *http.Request) {
 	case "HEAD":
 		GetOrHeadHandler(w, r, false)
 	case "DELETE":
-		DeleteHandler(w, r)
+		secure(DeleteHandler)(w, r)
 	case "POST":
-		PostHandler(w, r)
+		secure(PostHandler)(w, r)
 	}
 }
 func GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
@@ -337,13 +338,13 @@ func runVolume(cmd *Command, args []string) bool {
 	store = storage.NewStore(*vport, *ip, *publicUrl, folders, maxCounts)
 	defer store.Close()
 	http.HandleFunc("/", storeHandler)
-	http.HandleFunc("/submit", submitFromVolumeServerHandler)
-	http.HandleFunc("/status", statusHandler)
-	http.HandleFunc("/admin/assign_volume", assignVolumeHandler)
-	http.HandleFunc("/admin/vacuum_volume_check", vacuumVolumeCheckHandler)
-	http.HandleFunc("/admin/vacuum_volume_compact", vacuumVolumeCompactHandler)
-	http.HandleFunc("/admin/vacuum_volume_commit", vacuumVolumeCommitHandler)
-	http.HandleFunc("/admin/freeze_volume", freezeVolumeHandler)
+	http.HandleFunc("/submit", secure(submitFromVolumeServerHandler))
+	http.HandleFunc("/status", secure(statusHandler))
+	http.HandleFunc("/admin/assign_volume", secure(assignVolumeHandler))
+	http.HandleFunc("/admin/vacuum_volume_check", secure(vacuumVolumeCheckHandler))
+	http.HandleFunc("/admin/vacuum_volume_compact", secure(vacuumVolumeCompactHandler))
+	http.HandleFunc("/admin/vacuum_volume_commit", secure(vacuumVolumeCommitHandler))
+	http.HandleFunc("/admin/freeze_volume", secure(freezeVolumeHandler))
 
 	go func() {
 		connected := true
@@ -378,4 +379,17 @@ func runVolume(cmd *Command, args []string) bool {
 		glog.Fatalf("Fail to start:%s", e.Error())
 	}
 	return true
+}
+
+func secure(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if *whiteList == "" {
+			return f(w, r)
+		}
+		ip := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")]
+		if strings.Contains(*whiteList, ip) {
+			return f(w, r)
+		}
+		return
+	}
 }
