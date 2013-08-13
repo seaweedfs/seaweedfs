@@ -384,11 +384,13 @@ func runVolume(cmd *Command, args []string) bool {
 func secure(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if *whiteList == "" {
-			return f(w, r)
+			f(w, r)
+			return
 		}
 		ip := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")]
 		if strings.Contains(*whiteList, ip) {
-			return f(w, r)
+      f(w, r)
+      return
 		}
 		return
 	}
