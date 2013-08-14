@@ -3,7 +3,6 @@ package storage
 import (
 	"code.google.com/p/weed-fs/go/util"
 	"encoding/hex"
-	"errors"
 	"io/ioutil"
 	"code.google.com/p/weed-fs/go/glog"
 	"mime"
@@ -54,10 +53,8 @@ func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string
 	fileName = part.FileName()
 	if fileName != "" {
 		fileName = path.Base(fileName)
-	} else {
-		e = errors.New("No file found!")
-		return
 	}
+
 	data, e = ioutil.ReadAll(part)
 	if e != nil {
 		glog.V(0).Infoln("Reading Content [ERROR]", e)
