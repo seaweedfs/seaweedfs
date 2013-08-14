@@ -2,12 +2,12 @@ package operation
 
 import (
 	"bytes"
+	"code.google.com/p/weed-fs/go/glog"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"code.google.com/p/weed-fs/go/glog"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -24,6 +24,12 @@ type UploadResult struct {
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
 func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string) (*UploadResult, error) {
+	return upload_content(uploadUrl, func(w io.Writer) (err error) {
+		_, err = io.Copy(w, reader)
+		return
+	}, filename, isGzipped, mtype)
+}
+func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, mtype string) (*UploadResult, error) {
 	body_buf := bytes.NewBufferString("")
 	body_writer := multipart.NewWriter(body_buf)
 	h := make(textproto.MIMEHeader)
@@ -31,7 +37,9 @@ func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool,
 	if mtype == "" {
 		mtype = mime.TypeByExtension(strings.ToLower(filepath.Ext(filename)))
 	}
-	h.Set("Content-Type", mtype)
+	if mtype != "" {
+		h.Set("Content-Type", mtype)
+	}
 	if isGzipped {
 		h.Set("Content-Encoding", "gzip")
 	}
@@ -40,7 +48,7 @@ func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool,
 		glog.V(0).Infoln("error creating form file", err)
 		return nil, err
 	}
-	if _, err = io.Copy(file_writer, reader); err != nil {
+	if err = fillBufferFunction(file_writer); err != nil {
 		glog.V(0).Infoln("error copying data", err)
 		return nil, err
 	}
