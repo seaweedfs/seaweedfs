@@ -62,7 +62,7 @@ func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool,
 	var ret UploadResult
 	err = json.Unmarshal(resp_body, &ret)
 	if err != nil {
-		glog.V(0).Infoln("failing to read upload resonse", uploadUrl, resp_body)
+		glog.V(0).Infoln("failing to read upload resonse", uploadUrl, string(resp_body))
 		return nil, err
 	}
 	if ret.Error != "" {
