@@ -11,11 +11,11 @@ import (
 )
 
 type FilePart struct {
-	ReadCloser io.ReadCloser //required, all rest are optional
-	FileName   string
-	IsGzipped  bool
-	MimeType   string
-	ModTime    int64 //in seconds
+	Reader    io.Reader //required, all rest are optional
+	FileName  string
+	IsGzipped bool
+	MimeType  string
+	ModTime   int64 //in seconds
 }
 
 type SubmitResult struct {
@@ -69,7 +69,7 @@ func NewFilePart(fullPathFilename string) (ret FilePart, err error) {
 		glog.V(0).Info("Failed to open file: ", fullPathFilename)
 		return ret, openErr
 	}
-	ret.ReadCloser = fh
+	ret.Reader = fh
 
 	if fi, fiErr := fh.Stat(); fiErr != nil {
 		glog.V(0).Info("Failed to stat file:", fullPathFilename)
@@ -95,8 +95,10 @@ func (fi FilePart) Upload(server string, fid string) (int, error) {
 	if fi.ModTime != 0 {
 		fileUrl += "?ts=" + strconv.Itoa(int(fi.ModTime))
 	}
-	defer fi.ReadCloser.Close()
-	ret, e := Upload(fileUrl, fi.FileName, fi.ReadCloser, fi.IsGzipped, fi.MimeType)
+	if closer, ok := fi.Reader.(io.Closer); ok{
+	  defer closer.Close()
+	}
+	ret, e := Upload(fileUrl, fi.FileName, fi.Reader, fi.IsGzipped, fi.MimeType)
 	if e != nil {
 		return 0, e
 	}
