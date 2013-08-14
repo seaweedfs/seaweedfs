@@ -56,7 +56,11 @@ func runUpload(cmd *Command, args []string) bool {
 							return nil
 						}
 					}
-					results, e := operation.SubmitFiles(*server, []string{path}, *uploadReplication)
+					parts, e := operation.NewFileParts([]string{path})
+					if e != nil {
+						return e
+					}
+					results, e := operation.SubmitFiles(*server, parts, *uploadReplication)
 					bytes, _ := json.Marshal(results)
 					fmt.Println(string(bytes))
 					if e != nil {
@@ -69,7 +73,11 @@ func runUpload(cmd *Command, args []string) bool {
 			return err
 		})
 	} else {
-		results, _ := operation.SubmitFiles(*server, args, *uploadReplication)
+		parts, e := operation.NewFileParts(args)
+		if e != nil {
+			fmt.Println(e.Error())
+		}
+		results, _ := operation.SubmitFiles(*server, parts, *uploadReplication)
 		bytes, _ := json.Marshal(results)
 		fmt.Println(string(bytes))
 	}
