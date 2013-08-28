@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -32,7 +33,7 @@ var cmdMaster = &Command{
 
 var (
 	mport                 = cmdMaster.Flag.Int("port", 9333, "http listen port")
-	metaFolder            = cmdMaster.Flag.String("mdir", "/tmp", "data directory to store mappings")
+	metaFolder            = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store mappings")
 	volumeSizeLimitMB     = cmdMaster.Flag.Uint("volumeSizeLimitMB", 32*1024, "Default Volume Size in MegaBytes")
 	mpulse                = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	confFile              = cmdMaster.Flag.String("conf", "/etc/weedfs/weedfs.conf", "xml configuration file")

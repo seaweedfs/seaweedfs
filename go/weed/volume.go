@@ -31,7 +31,7 @@ var cmdVolume = &Command{
 
 var (
 	vport                 = cmdVolume.Flag.Int("port", 8080, "http listen port")
-	volumeFolders         = cmdVolume.Flag.String("dir", "/tmp", "directories to store data files. dir[,dir]...")
+	volumeFolders         = cmdVolume.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	maxVolumeCounts       = cmdVolume.Flag.String("max", "7", "maximum numbers of volumes, count[,count]...")
 	ip                    = cmdVolume.Flag.String("ip", "localhost", "ip or server name")
 	publicUrl             = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible <ip|server_name>:<port>")
