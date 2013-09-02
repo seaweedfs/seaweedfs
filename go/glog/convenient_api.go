@@ -12,5 +12,5 @@ func ToStderr() {
 	logging.toStderr = true
 }
 func ToStderrAndLog() {
-  logging.alsoToStderr = true
+	logging.alsoToStderr = true
 }

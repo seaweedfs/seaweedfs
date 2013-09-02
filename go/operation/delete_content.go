@@ -6,19 +6,19 @@ import (
 	"net/http"
 )
 
-func DeleteFile(server string, fileId string) (error) {
+func DeleteFile(server string, fileId string) error {
 	fid, parseErr := storage.ParseFileId(fileId)
 	if parseErr != nil {
 		return parseErr
 	}
-	lookup, lookupError := Lookup(server,fid.VolumeId)
+	lookup, lookupError := Lookup(server, fid.VolumeId)
 	if lookupError != nil {
-	  return lookupError
+		return lookupError
 	}
 	if len(lookup.Locations) == 0 {
-	  return nil
+		return nil
 	}
-	return Delete("http://"+lookup.Locations[0].PublicUrl+"/"+fileId)
+	return Delete("http://" + lookup.Locations[0].PublicUrl + "/" + fileId)
 }
 func Delete(url string) error {
 	req, err := http.NewRequest("DELETE", url, nil)

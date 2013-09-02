@@ -2,9 +2,9 @@ package storage
 
 import (
 	"bytes"
+	"code.google.com/p/weed-fs/go/glog"
 	"compress/flate"
 	"compress/gzip"
-	"code.google.com/p/weed-fs/go/glog"
 	"io/ioutil"
 	"strings"
 )

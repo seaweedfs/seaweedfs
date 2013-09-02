@@ -64,7 +64,7 @@ func (v *Volume) load(alsoLoadIndex bool) error {
 		v.dataFile, e = os.Open(fileName + ".dat")
 		v.readOnly = true
 	} else {
-    return fmt.Errorf("Unknown state about Volume Data file %s.dat", fileName)
+		return fmt.Errorf("Unknown state about Volume Data file %s.dat", fileName)
 	}
 	if e != nil {
 		if !os.IsPermission(e) {

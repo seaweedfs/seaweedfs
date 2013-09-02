@@ -1,8 +1,8 @@
 package util
 
 import (
-	"io/ioutil"
 	"code.google.com/p/weed-fs/go/glog"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 )

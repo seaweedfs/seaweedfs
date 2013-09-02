@@ -76,6 +76,9 @@ func (m cdbMap) FileCount() int {
 func (m *cdbMap) DeletedCount() int {
 	return m.DeletionCounter
 }
+func (m *cdbMap) NextFileKey(count int) (uint64) {
+  return 0
+}
 
 func getMetric(c *cdb.Cdb, m *mapMetric) error {
 	data, err := c.Data([]byte{'M'})

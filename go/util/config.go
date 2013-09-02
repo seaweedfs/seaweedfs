@@ -10,8 +10,8 @@ package util
 
 import (
 	"bytes"
-	"encoding/json"
 	"code.google.com/p/weed-fs/go/glog"
+	"encoding/json"
 	"os"
 )
 

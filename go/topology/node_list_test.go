@@ -25,21 +25,21 @@ func TestXYZ(t *testing.T) {
 		t.Error("need to randomly pick 1 node")
 	}
 
-  picked, ret = nl.RandomlyPickN(1, 0, "dc1")
-  if !ret || len(picked) != 1 {
-    t.Error("need to randomly pick 1 node")
-  }
-  if picked[0].Id() != "dc1" {
-    t.Error("need to randomly pick 1 dc1 node")
-  }
+	picked, ret = nl.RandomlyPickN(1, 0, "dc1")
+	if !ret || len(picked) != 1 {
+		t.Error("need to randomly pick 1 node")
+	}
+	if picked[0].Id() != "dc1" {
+		t.Error("need to randomly pick 1 dc1 node")
+	}
 
-  picked, ret = nl.RandomlyPickN(2, 0, "dc1")
-  if !ret || len(picked) != 2 {
-    t.Error("need to randomly pick 1 node")
-  }
-  if picked[0].Id() != "dc1" {
-    t.Error("need to randomly pick 2 with one dc1 node")
-  }
+	picked, ret = nl.RandomlyPickN(2, 0, "dc1")
+	if !ret || len(picked) != 2 {
+		t.Error("need to randomly pick 1 node")
+	}
+	if picked[0].Id() != "dc1" {
+		t.Error("need to randomly pick 2 with one dc1 node")
+	}
 
 	picked, ret = nl.RandomlyPickN(4, 0, "")
 	if !ret || len(picked) != 4 {

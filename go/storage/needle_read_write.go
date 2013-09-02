@@ -1,11 +1,11 @@
 package storage
 
 import (
+	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/util"
 	"errors"
 	"fmt"
 	"io"
-	"code.google.com/p/weed-fs/go/glog"
 	"os"
 )
 

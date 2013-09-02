@@ -118,7 +118,7 @@ func storeHandler(w http.ResponseWriter, r *http.Request) {
 }
 func GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
 	n := new(storage.Needle)
-	vid, fid, filename, ext := parseURLPath(r.URL.Path)
+	vid, fid, filename, ext, _ := parseURLPath(r.URL.Path)
 	volumeId, err := storage.NewVolumeId(vid)
 	if err != nil {
 		debug("parsing error:", err, r.URL.Path)
@@ -207,7 +207,7 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, e)
 		return
 	}
-	vid, _, _, _ := parseURLPath(r.URL.Path)
+	vid, _, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, ve := storage.NewVolumeId(vid)
 	if ve != nil {
 		debug("NewVolumeId error:", ve)
@@ -231,7 +231,7 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 }
 func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	n := new(storage.Needle)
-	vid, fid, _, _ := parseURLPath(r.URL.Path)
+	vid, fid, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, _ := storage.NewVolumeId(vid)
 	n.ParsePath(fid)
 
@@ -266,7 +266,7 @@ func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	writeJsonQuiet(w, r, m)
 }
 
-func parseURLPath(path string) (vid, fid, filename, ext string) {
+func parseURLPath(path string) (vid, fid, filename, ext string, isVolumeIdOnly bool) {
 	switch strings.Count(path, "/") {
 	case 3:
 		parts := strings.Split(path, "/")
@@ -284,9 +284,7 @@ func parseURLPath(path string) (vid, fid, filename, ext string) {
 		sepIndex := strings.LastIndex(path, "/")
 		commaIndex := strings.LastIndex(path[sepIndex:], ",")
 		if commaIndex <= 0 {
-			if "favicon.ico" != path[sepIndex+1:] {
-				glog.V(0).Infoln("unknown file id", path[sepIndex+1:])
-			}
+			vid, isVolumeIdOnly = path[sepIndex+1:], true
 			return
 		}
 		dotIndex := strings.LastIndex(path[sepIndex:], ".")

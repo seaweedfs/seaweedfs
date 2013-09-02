@@ -1,12 +1,12 @@
 package replication
 
 import (
+	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/storage"
 	"code.google.com/p/weed-fs/go/topology"
 	"errors"
 	"fmt"
-	"code.google.com/p/weed-fs/go/glog"
 	"math/rand"
 	"sync"
 )
@@ -39,13 +39,13 @@ func (vg *VolumeGrowth) AutomaticGrowByType(repType storage.ReplicationType, dat
 		factor = 1
 		count, err = vg.GrowByCountAndType(vg.copy1factor, repType, dataCenter, topo)
 	case storage.Copy001:
-    factor = 2
+		factor = 2
 		count, err = vg.GrowByCountAndType(vg.copy2factor, repType, dataCenter, topo)
 	case storage.Copy010:
-    factor = 2
+		factor = 2
 		count, err = vg.GrowByCountAndType(vg.copy2factor, repType, dataCenter, topo)
 	case storage.Copy100:
-    factor = 2
+		factor = 2
 		count, err = vg.GrowByCountAndType(vg.copy2factor, repType, dataCenter, topo)
 	case storage.Copy110:
 		factor = 3

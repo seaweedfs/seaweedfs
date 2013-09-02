@@ -1,11 +1,11 @@
 package topology
 
 import (
+	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/sequence"
 	"code.google.com/p/weed-fs/go/storage"
 	"errors"
 	"io/ioutil"
-	"code.google.com/p/weed-fs/go/glog"
 	"math/rand"
 )
 

@@ -2,8 +2,8 @@ package main
 
 import (
 	"bufio"
-	"fmt"
 	"code.google.com/p/weed-fs/go/glog"
+	"fmt"
 	"os"
 )
 

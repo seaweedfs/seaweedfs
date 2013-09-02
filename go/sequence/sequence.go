@@ -1,8 +1,8 @@
 package sequence
 
 import (
-	"encoding/gob"
 	"code.google.com/p/weed-fs/go/glog"
+	"encoding/gob"
 	"os"
 	"path"
 	"sync"

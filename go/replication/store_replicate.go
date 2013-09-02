@@ -2,9 +2,9 @@ package replication
 
 import (
 	"bytes"
+	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/storage"
-	"code.google.com/p/weed-fs/go/glog"
 	"net/http"
 	"strconv"
 )
@@ -25,7 +25,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId storage.Volum
 	if needToReplicate { //send to other replica locations
 		if r.FormValue("type") != "replicate" {
 			if !distributedOperation(masterNode, s, volumeId, func(location operation.Location) bool {
-				_, err := operation.Upload("http://"+location.Url+r.URL.Path+"?type=replicate&ts="+strconv.FormatUint(needle.LastModified,10), string(needle.Name), bytes.NewReader(needle.Data), needle.IsGzipped(), string(needle.Mime))
+				_, err := operation.Upload("http://"+location.Url+r.URL.Path+"?type=replicate&ts="+strconv.FormatUint(needle.LastModified, 10), string(needle.Name), bytes.NewReader(needle.Data), needle.IsGzipped(), string(needle.Mime))
 				return err == nil
 			}) {
 				ret = 0

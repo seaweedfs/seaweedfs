@@ -1,11 +1,11 @@
 package storage
 
 import (
+	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"code.google.com/p/weed-fs/go/glog"
 	"net/url"
 	"strconv"
 	"strings"
@@ -97,10 +97,10 @@ func (s *Store) addVolume(vid VolumeId, replicationType ReplicationType) error {
 	if location := s.findFreeLocation(); location != nil {
 		glog.V(0).Infoln("In dir", location.directory, "adds volume =", vid, ", replicationType =", replicationType)
 		if volume, err := NewVolume(location.directory, vid, replicationType); err == nil {
-      location.volumes[vid] = volume
-      return nil
+			location.volumes[vid] = volume
+			return nil
 		} else {
-      return err
+			return err
 		}
 	}
 	return fmt.Errorf("No more free space left")

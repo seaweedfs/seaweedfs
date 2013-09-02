@@ -3,9 +3,9 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/storage"
 	"fmt"
-	"code.google.com/p/weed-fs/go/glog"
 	"os"
 	"path"
 	"strconv"

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bufio"
+	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/util"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ type NeedleMapper interface {
 	FileCount() int
 	DeletedCount() int
 	Visit(visit func(NeedleValue) error) (err error)
+	NextFileKey(count int) uint64
 }
 
 type mapMetric struct {
@@ -25,6 +27,7 @@ type mapMetric struct {
 	FileCounter         int    `json:"FileCounter"`
 	DeletionByteCounter uint64 `json:"DeletionByteCounter"`
 	FileByteCounter     uint64 `json:"FileByteCounter"`
+	MaximumFileKey      uint64 `json:"MaxFileKey"`
 }
 
 type NeedleMap struct {
@@ -53,23 +56,27 @@ const (
 func LoadNeedleMap(file *os.File) (*NeedleMap, error) {
 	nm := NewNeedleMap(file)
 	e := walkIndexFile(file, func(key uint64, offset, size uint32) error {
+		if key > nm.MaximumFileKey {
+			nm.MaximumFileKey = key
+		}
 		nm.FileCounter++
 		nm.FileByteCounter = nm.FileByteCounter + uint64(size)
 		if offset > 0 {
 			oldSize := nm.m.Set(Key(key), offset, size)
-			//glog.V(0).Infoln("reading key", key, "offset", offset, "size", size, "oldSize", oldSize)
+			glog.V(4).Infoln("reading key", key, "offset", offset, "size", size, "oldSize", oldSize)
 			if oldSize > 0 {
 				nm.DeletionCounter++
 				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 			}
 		} else {
 			oldSize := nm.m.Delete(Key(key))
-			//glog.V(0).Infoln("removing key", key, "offset", offset, "size", size, "oldSize", oldSize)
+			glog.V(4).Infoln("removing key", key, "offset", offset, "size", size, "oldSize", oldSize)
 			nm.DeletionCounter++
 			nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 		}
 		return nil
 	})
+	glog.V(1).Infoln("max file key:", nm.MaximumFileKey)
 	return nm, e
 }
 
@@ -162,4 +169,15 @@ func (nm NeedleMap) DeletedCount() int {
 }
 func (nm *NeedleMap) Visit(visit func(NeedleValue) error) (err error) {
 	return nm.m.Visit(visit)
+}
+func (nm NeedleMap) MaxFileKey() uint64 {
+	return nm.MaximumFileKey
+}
+func (nm NeedleMap) NextFileKey(count int) (ret uint64) {
+	if count <= 0 {
+		return 0
+	}
+	ret = nm.MaximumFileKey
+	nm.MaximumFileKey += uint64(count)
+	return
 }

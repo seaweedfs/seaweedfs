@@ -95,8 +95,8 @@ func (fi FilePart) Upload(server string, fid string) (int, error) {
 	if fi.ModTime != 0 {
 		fileUrl += "?ts=" + strconv.Itoa(int(fi.ModTime))
 	}
-	if closer, ok := fi.Reader.(io.Closer); ok{
-	  defer closer.Close()
+	if closer, ok := fi.Reader.(io.Closer); ok {
+		defer closer.Close()
 	}
 	ret, e := Upload(fileUrl, fi.FileName, fi.Reader, fi.IsGzipped, fi.MimeType)
 	if e != nil {
