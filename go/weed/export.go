@@ -98,7 +98,7 @@ func runExport(cmd *Command, args []string) bool {
 	err = storage.ScanVolumeFile(*exportVolumePath, vid, func(superBlock storage.SuperBlock) error {
 		version = superBlock.Version
 		return nil
-	}, func(n *storage.Needle, offset uint32) error {
+	}, func(n *storage.Needle, offset int64) error {
 		debug("key", n.Id, "offset", offset, "size", n.Size, "disk_size", n.DiskSize(), "gzip", n.IsGzipped())
 		nv, ok := nm.Get(n.Id)
 		if ok && nv.Size > 0 {

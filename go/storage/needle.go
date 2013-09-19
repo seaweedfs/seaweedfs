@@ -19,6 +19,9 @@ const (
 	NeedleChecksumSize = 4
 )
 
+/*
+* Needle file size is limited to 4GB for now.
+ */
 type Needle struct {
 	Cookie uint32 `comment:"random number to mitigate brute force lookups"`
 	Id     uint64 `comment:"needle id"`

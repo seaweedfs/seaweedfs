@@ -307,7 +307,7 @@ func (v *Volume) freeze() error {
 
 func ScanVolumeFile(dirname string, id VolumeId,
 	visitSuperBlock func(SuperBlock) error,
-	visitNeedle func(n *Needle, offset uint32) error) (err error) {
+	visitNeedle func(n *Needle, offset int64) error) (err error) {
 	var v *Volume
 	if v, err = loadVolumeWithoutIndex(dirname, id); err != nil {
 		return
@@ -318,7 +318,7 @@ func ScanVolumeFile(dirname string, id VolumeId,
 
 	version := v.Version()
 
-	offset := uint32(SuperBlockSize)
+	offset := int64(SuperBlockSize)
 	n, rest, e := ReadNeedleHeader(v.dataFile, version)
 	if e != nil {
 		err = fmt.Errorf("cannot read needle header: %s", e)
@@ -332,7 +332,7 @@ func ScanVolumeFile(dirname string, id VolumeId,
 		if err = visitNeedle(n, offset); err != nil {
 			return
 		}
-		offset += NeedleHeaderSize + rest
+		offset += int64(NeedleHeaderSize + rest)
 		if n, rest, err = ReadNeedleHeader(v.dataFile, version); err != nil {
 			if err == io.EOF {
 				return nil
@@ -359,17 +359,17 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string) (err erro
 	defer idx.Close()
 
 	nm := NewNeedleMap(idx)
-	new_offset := uint32(SuperBlockSize)
+	new_offset := int64(SuperBlockSize)
 
 	err = ScanVolumeFile(v.dir, v.Id, func(superBlock SuperBlock) error {
 		_, err = dst.Write(superBlock.Bytes())
 		return err
-	}, func(n *Needle, offset uint32) error {
+	}, func(n *Needle, offset int64) error {
 		nv, ok := v.nm.Get(n.Id)
 		//glog.V(0).Infoln("file size is", n.Size, "rest", rest)
-		if ok && nv.Offset*NeedlePaddingSize == offset {
+		if ok && int64(nv.Offset)*NeedlePaddingSize == offset {
 			if nv.Size > 0 {
-				if _, err = nm.Put(n.Id, new_offset/NeedlePaddingSize, n.Size); err != nil {
+				if _, err = nm.Put(n.Id, uint32(new_offset/NeedlePaddingSize), n.Size); err != nil {
 					return fmt.Errorf("cannot put needle: %s", err)
 				}
 				if _, err = n.Append(dst, v.Version()); err != nil {

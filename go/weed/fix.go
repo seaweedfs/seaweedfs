@@ -45,10 +45,10 @@ func runFix(cmd *Command, args []string) bool {
 	vid := storage.VolumeId(*fixVolumeId)
 	err = storage.ScanVolumeFile(*fixVolumePath, vid, func(superBlock storage.SuperBlock) error {
 		return nil
-	}, func(n *storage.Needle, offset uint32) error {
+	}, func(n *storage.Needle, offset int64) error {
 		debug("key", n.Id, "offset", offset, "size", n.Size, "disk_size", n.DiskSize(), "gzip", n.IsGzipped())
 		if n.Size > 0 {
-			count, pe := nm.Put(n.Id, offset/storage.NeedlePaddingSize, n.Size)
+			count, pe := nm.Put(n.Id, uint32(offset/storage.NeedlePaddingSize), n.Size)
 			debug("saved", count, "with error", pe)
 		} else {
 			debug("skipping deleted file ...")

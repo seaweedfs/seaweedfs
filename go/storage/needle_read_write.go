@@ -17,9 +17,9 @@ const (
 	LastModifiedBytesLength = 5
 )
 
-func (n *Needle) DiskSize() uint32 {
-	padding := NeedlePaddingSize - ((NeedleHeaderSize + n.Size + NeedleChecksumSize) % NeedlePaddingSize)
-	return NeedleHeaderSize + n.Size + padding + NeedleChecksumSize
+func (n *Needle) DiskSize() int64 {
+	padding := NeedlePaddingSize - ((NeedleHeaderSize + int64(n.Size) + NeedleChecksumSize) % NeedlePaddingSize)
+	return NeedleHeaderSize + int64(n.Size) + padding + NeedleChecksumSize
 }
 func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 	if s, ok := w.(io.Seeker); ok {
