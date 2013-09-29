@@ -126,7 +126,7 @@ func (s *Store) CompactVolume(volumeIdString string) error {
 		return fmt.Errorf("Volume Id %s is not a valid unsigned integer!", volumeIdString)
 	}
 	if v := s.findVolume(vid); v != nil {
-		return v.compact()
+		return v.Compact()
 	}
 	return fmt.Errorf("volume id %s is not found during compact!", vid)
 }

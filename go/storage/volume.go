@@ -256,7 +256,7 @@ func (v *Volume) garbageLevel() float64 {
 	return float64(v.nm.DeletedSize()) / float64(v.ContentSize())
 }
 
-func (v *Volume) compact() error {
+func (v *Volume) Compact() error {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
 

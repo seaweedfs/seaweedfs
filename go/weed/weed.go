@@ -22,6 +22,7 @@ var IsDebug *bool
 var server *string
 
 var commands = []*Command{
+  cmdCompact,
 	cmdFix,
 	cmdMaster,
 	cmdUpload,
