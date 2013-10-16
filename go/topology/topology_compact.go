@@ -72,9 +72,9 @@ func batchVacuumVolumeCommit(vl *VolumeLayout, vid storage.VolumeId, locationlis
 		} else {
 			glog.V(0).Infoln("Complete Commiting vacuum", vid, "on", dn.Url())
 		}
-	}
-	if isCommitSuccess {
-		vl.setVolumeWritable(vid)
+		if isCommitSuccess {
+			vl.SetVolumeAvailable(dn, vid)
+		}
 	}
 	return isCommitSuccess
 }
