@@ -74,7 +74,7 @@ func batchVacuumVolumeCommit(vl *VolumeLayout, vid storage.VolumeId, locationlis
 		}
 	}
 	if isCommitSuccess {
-		vl.setVolumeWritable(vid)
+	  vl.SetVolumeAvailable(dn,vid)
 	}
 	return isCommitSuccess
 }
