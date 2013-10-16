@@ -111,8 +111,8 @@ func NewNeedle(r *http.Request) (n *Needle, e error) {
 	}
 	if n.LastModified == 0 {
 		n.LastModified = uint64(time.Now().Unix())
-		n.SetHasLastModifiedDate()
 	}
+	n.SetHasLastModifiedDate()
 
 	n.Checksum = NewCRC(n.Data)
 
