@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -48,6 +49,7 @@ var (
 
 var topo *topology.Topology
 var vg *replication.VolumeGrowth
+var vgLock sync.Mutex
 
 func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 	vid := r.FormValue("volumeId")
@@ -97,9 +99,13 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 			writeJsonQuiet(w, r, map[string]string{"error": "No free volumes left!"})
 			return
 		} else {
-			if _, err = vg.AutomaticGrowByType(rt, dataCenter, topo); err != nil {
-				writeJsonQuiet(w, r, map[string]string{"error": "Cannot grow volume group! " + err.Error()})
-				return
+			vgLock.Lock()
+			defer vgLock.Unlock()
+			if topo.GetVolumeLayout(rt).GetActiveVolumeCount(dataCenter) <= 0 {
+				if _, err = vg.AutomaticGrowByType(rt, dataCenter, topo); err != nil {
+					writeJsonQuiet(w, r, map[string]string{"error": "Cannot grow volume group! " + err.Error()})
+					return
+				}
 			}
 		}
 	}
