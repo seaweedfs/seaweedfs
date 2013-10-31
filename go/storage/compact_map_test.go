@@ -4,6 +4,20 @@ import (
 	"testing"
 )
 
+func TestIssue52(t *testing.T) {
+	m := NewCompactMap()
+	m.Set(Key(10002), 10002, 10002)
+	if element, ok := m.Get(Key(10002)); ok {
+		println("key", 10002, "ok", ok, element.Key, element.Offset, element.Size)
+	}
+	m.Set(Key(10001), 10001, 10001)
+	if element, ok := m.Get(Key(10002)); ok {
+		println("key", 10002, "ok", ok, element.Key, element.Offset, element.Size)
+	} else {
+		t.Fatal("key 10002 missing after setting 10001")
+	}
+}
+
 func TestXYZ(t *testing.T) {
 	m := NewCompactMap()
 	for i := uint32(0); i < 100*batch; i += 2 {
