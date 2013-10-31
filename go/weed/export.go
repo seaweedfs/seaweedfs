@@ -105,7 +105,7 @@ func runExport(cmd *Command, args []string) bool {
 			return walker(vid, n, version)
 		} else {
 			if !ok {
-				debug("This seems deleted", n.Id)
+				debug("This seems deleted", n.Id, "size", n.Size)
 			} else {
 				debug("Id", n.Id, "size", n.Size)
 			}
