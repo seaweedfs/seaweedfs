@@ -22,8 +22,8 @@ type CompactSection struct {
 	counter  int
 }
 
-func NewCompactSection(start Key) CompactSection {
-	return CompactSection{
+func NewCompactSection(start Key) *CompactSection {
+	return &CompactSection{
 		values:   make([]NeedleValue, batch),
 		overflow: make(map[Key]NeedleValue),
 		start:    start,
@@ -38,13 +38,13 @@ func (cs *CompactSection) Set(key Key, offset uint32, size uint32) uint32 {
 	}
 	if i := cs.binarySearchValues(key); i >= 0 {
 		ret = cs.values[i].Size
-		//glog.V(4).Infoln("key", key, "old size", ret)
+		//println("key", key, "old size", ret)
 		cs.values[i].Offset, cs.values[i].Size = offset, size
 	} else {
 		needOverflow := cs.counter >= batch
 		needOverflow = needOverflow || cs.counter > 0 && cs.values[cs.counter-1].Key > key
 		if needOverflow {
-			//glog.V(4).Infoln("start", cs.start, "counter", cs.counter, "key", key)
+			//println("start", cs.start, "counter", cs.counter, "key", key)
 			if oldValue, found := cs.overflow[key]; found {
 				ret = oldValue.Size
 			}
@@ -52,7 +52,7 @@ func (cs *CompactSection) Set(key Key, offset uint32, size uint32) uint32 {
 		} else {
 			p := &cs.values[cs.counter]
 			p.Key, p.Offset, p.Size = key, offset, size
-			//glog.V(4).Infoln("added index", cs.counter, "key", key, cs.values[cs.counter].Key)
+			//println("added index", cs.counter, "key", key, cs.values[cs.counter].Key)
 			cs.counter++
 		}
 	}
@@ -88,16 +88,16 @@ func (cs *CompactSection) binarySearchValues(key Key) int {
 	if h >= 0 && cs.values[h].Key < key {
 		return -2
 	}
-	//glog.V(4).Infoln("looking for key", key)
+	//println("looking for key", key)
 	for l <= h {
 		m := (l + h) / 2
-		//glog.V(4).Infoln("mid", m, "key", cs.values[m].Key, cs.values[m].Offset, cs.values[m].Size)
+		//println("mid", m, "key", cs.values[m].Key, cs.values[m].Offset, cs.values[m].Size)
 		if cs.values[m].Key < key {
 			l = m + 1
 		} else if key < cs.values[m].Key {
 			h = m - 1
 		} else {
-			//glog.V(4).Infoln("found", m)
+			//println("found", m)
 			return m
 		}
 	}
@@ -106,7 +106,7 @@ func (cs *CompactSection) binarySearchValues(key Key) int {
 
 //This map assumes mostly inserting increasing keys
 type CompactMap struct {
-	list []CompactSection
+	list []*CompactSection
 }
 
 func NewCompactMap() CompactMap {
@@ -116,9 +116,18 @@ func NewCompactMap() CompactMap {
 func (cm *CompactMap) Set(key Key, offset uint32, size uint32) uint32 {
 	x := cm.binarySearchCompactSection(key)
 	if x < 0 {
-		//glog.V(4).Infoln(x, "creating", len(cm.list), "section1, starting", key)
+		//println(x, "creating", len(cm.list), "section, starting", key)
 		cm.list = append(cm.list, NewCompactSection(key))
 		x = len(cm.list) - 1
+		//keep compact section sorted by start
+		for x > 0 {
+			if cm.list[x-1].start > cm.list[x].start {
+				cm.list[x-1], cm.list[x] = cm.list[x], cm.list[x-1]
+				x = x - 1
+			} else {
+				break
+			}
+		}
 	}
 	return cm.list[x].Set(key, offset, size)
 }
