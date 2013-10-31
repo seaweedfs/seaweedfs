@@ -144,7 +144,7 @@ func (v *Volume) maybeWriteSuperBlock() error {
 }
 func (v *Volume) readSuperBlock() (err error) {
 	if _, err = v.dataFile.Seek(0, 0); err != nil {
-		return fmt.Errorf("cannot seek to the beginning of %s: %s", v.dataFile, err.Error())
+		return fmt.Errorf("cannot seek to the beginning of %s: %s", v.dataFile.Name(), err.Error())
 	}
 	header := make([]byte, SuperBlockSize)
 	if _, e := v.dataFile.Read(header); e != nil {
@@ -188,6 +188,7 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 	defer v.accessLock.Unlock()
 	if v.isFileUnchanged(n) {
 		size = n.Size
+		glog.V(4).Infof("needle is unchanged!")
 		return
 	}
 	var offset int64
@@ -199,6 +200,7 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 	if offset%NeedlePaddingSize != 0 {
 		offset = offset + (NeedlePaddingSize - offset%NeedlePaddingSize)
 		if offset, err = v.dataFile.Seek(offset, 0); err != nil {
+			glog.V(4).Infof("failed to align in datafile %s: %s", v.dataFile.Name(), err.Error())
 			return
 		}
 	}
@@ -211,7 +213,9 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 	}
 	nv, ok := v.nm.Get(n.Id)
 	if !ok || int64(nv.Offset)*NeedlePaddingSize < offset {
-		_, err = v.nm.Put(n.Id, uint32(offset/NeedlePaddingSize), n.Size)
+		if _, err = v.nm.Put(n.Id, uint32(offset/NeedlePaddingSize), n.Size); err != nil {
+			glog.V(4).Infof("failed to save in needle map %d: %s", n.Id, err.Error())
+		}
 	}
 	return
 }
