@@ -1,9 +1,10 @@
 package sequence
 
 import (
+	"bytes"
 	"code.google.com/p/weed-fs/go/glog"
+	"code.google.com/p/weed-fs/go/metastore"
 	"encoding/gob"
-	"os"
 	"path"
 	"sync"
 )
@@ -24,25 +25,28 @@ type SequencerImpl struct {
 
 	FileIdSequence uint64
 	fileIdCounter  uint64
+
+	metaStore *metastore.MetaStore
 }
 
 func NewSequencer(dirname string, filename string) (m *SequencerImpl) {
 	m = &SequencerImpl{dir: dirname, fileName: filename}
+	m.metaStore = &metastore.MetaStore{metastore.NewMetaStoreFileBacking()}
 
-	seqFile, se := os.OpenFile(path.Join(m.dir, m.fileName+".seq"), os.O_RDONLY, 0644)
-	if se != nil {
+	if !m.metaStore.Has(m.dir, m.fileName+".seq") {
 		m.FileIdSequence = FileIdSaveInterval
 		glog.V(0).Infoln("Setting file id sequence", m.FileIdSequence)
 	} else {
-		decoder := gob.NewDecoder(seqFile)
-		defer seqFile.Close()
-		if se = decoder.Decode(&m.FileIdSequence); se != nil {
-			glog.V(0).Infof("error decoding FileIdSequence: %s", se)
-			m.FileIdSequence = FileIdSaveInterval
-			glog.V(0).Infoln("Setting file id sequence", m.FileIdSequence)
+		var err error
+		if m.FileIdSequence, err = m.metaStore.GetUint64(m.dir, m.fileName+".seq"); err != nil {
+			if data, err := m.metaStore.Get(m.dir, m.fileName+".seq"); err == nil {
+				m.FileIdSequence = decode(data)
+        glog.V(0).Infoln("Decoding old version of FileIdSequence", m.FileIdSequence)
+			} else {
+				glog.V(0).Infof("No existing FileIdSequence: %s", err)
+			}
 		} else {
-			glog.V(0).Infoln("Loading file id sequence", m.FileIdSequence, "=>", m.FileIdSequence+FileIdSaveInterval)
-			m.FileIdSequence += FileIdSaveInterval
+			glog.V(0).Infoln("Loading file id sequence", m.FileIdSequence)
 		}
 		//in case the server stops between intervals
 	}
@@ -66,13 +70,18 @@ func (m *SequencerImpl) NextFileId(count int) (uint64, int) {
 }
 func (m *SequencerImpl) saveSequence() {
 	glog.V(0).Infoln("Saving file id sequence", m.FileIdSequence, "to", path.Join(m.dir, m.fileName+".seq"))
-	seqFile, e := os.OpenFile(path.Join(m.dir, m.fileName+".seq"), os.O_CREATE|os.O_WRONLY, 0644)
-	if e != nil {
-		glog.Fatalf("Sequence File Save [ERROR] %s", e)
+	if e := m.metaStore.SetUint64(m.FileIdSequence, m.dir, m.fileName+".seq"); e != nil {
+		glog.Fatalf("Sequence id Save [ERROR] %s", e)
 	}
-	defer seqFile.Close()
-	encoder := gob.NewEncoder(seqFile)
-	if e = encoder.Encode(m.FileIdSequence); e != nil {
-		glog.Fatalf("Sequence File Save [ERROR] %s", e)
+}
+
+//decode are for backward compatible purpose
+func decode(input []byte) uint64 {
+	var x uint64
+	b := bytes.NewReader(input)
+	decoder := gob.NewDecoder(b)
+	if e := decoder.Decode(&x); e == nil {
+		return x
 	}
+	return 0
 }
