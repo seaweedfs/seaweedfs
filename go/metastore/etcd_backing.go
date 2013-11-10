@@ -21,14 +21,14 @@ func NewMetaStoreEtcdBacking(etcdCluster string) *MetaStoreEtcdBacking {
 
 func (m MetaStoreEtcdBacking) Set(path, val string) error {
 	res, e := m.client.Set(path, val, 0)
-	glog.V(0).Infof("etcd set response: %+v\n", res)
+	glog.V(2).Infof("etcd set response: %+v\n", res)
 	return e
 }
 
 func (m MetaStoreEtcdBacking) Get(path string) (string, error) {
 	results, err := m.client.Get(path)
 	for i, res := range results {
-		glog.V(0).Infof("[%d] get response: %+v\n", i, res)
+		glog.V(2).Infof("[%d] get response: %+v\n", i, res)
 	}
 	if err != nil {
 		return "", err
