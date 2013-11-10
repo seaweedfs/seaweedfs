@@ -28,7 +28,7 @@ type Topology struct {
 	configuration *Configuration
 }
 
-func NewTopology(id string, confFile string, dirname string, sequenceFilename string, volumeSizeLimit uint64, pulse int) (*Topology, error) {
+func NewTopology(id string, confFile string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int) (*Topology, error) {
 	t := &Topology{}
 	t.id = NodeId(id)
 	t.nodeType = "Topology"
@@ -38,7 +38,7 @@ func NewTopology(id string, confFile string, dirname string, sequenceFilename st
 	t.pulse = int64(pulse)
 	t.volumeSizeLimit = volumeSizeLimit
 
-	t.sequence = sequence.NewSequencer(dirname, sequenceFilename)
+	t.sequence = seq
 
 	t.chanDeadDataNodes = make(chan *DataNode)
 	t.chanRecoveredDataNodes = make(chan *DataNode)

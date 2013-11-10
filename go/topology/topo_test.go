@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"code.google.com/p/weed-fs/go/sequence"
 	"code.google.com/p/weed-fs/go/storage"
 	"encoding/json"
 	"fmt"
@@ -78,7 +79,7 @@ func setup(topologyLayout string) *Topology {
 	}
 
 	//need to connect all nodes first before server adding volumes
-	topo, err := NewTopology("mynetwork", "/etc/weed.conf", "/tmp", "test", 234, 5)
+	topo, err := NewTopology("mynetwork", "/etc/weed.conf", sequence.NewMemorySequencer(), 234, 5)
 	if err != nil {
 		fmt.Println("error:", err)
 	}

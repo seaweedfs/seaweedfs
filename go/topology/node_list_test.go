@@ -1,13 +1,14 @@
 package topology
 
 import (
+	"code.google.com/p/weed-fs/go/sequence"
 	_ "fmt"
 	"strconv"
 	"testing"
 )
 
 func TestXYZ(t *testing.T) {
-	topo, err := NewTopology("topo", "/etc/weed.conf", "/tmp", "test", 234, 5)
+	topo, err := NewTopology("topo", "/etc/weed.conf", sequence.NewMemorySequencer(), 234, 5)
 	if err != nil {
 		t.Error("cannot create new topology:", err)
 		t.FailNow()

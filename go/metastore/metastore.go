@@ -1,35 +1,33 @@
 package metastore
 
 import (
-	"code.google.com/p/weed-fs/go/util"
 	"errors"
-	"path"
+	"strconv"
 )
 
 type MetaStoreBacking interface {
-	Get(elem ...string) ([]byte, error)
-	Set(val []byte, elem ...string) error
-  Has(elem ...string) bool
+	Get(path string) (string, error)
+	Set(path, val string) error
+	Has(path string) bool
 }
 
 type MetaStore struct {
 	MetaStoreBacking
 }
 
-func (m *MetaStore) SetUint64(val uint64, elem ...string) error {
-	b := make([]byte, 8)
-	util.Uint64toBytes(b, val)
-	return m.Set(b, elem...)
+func (m *MetaStore) SetUint64(path string, val uint64) error {
+	return m.Set(path, strconv.FormatUint(val, 10))
 }
 
-func (m *MetaStore) GetUint64(elem ...string) (val uint64, err error) {
-	if b, e := m.Get(elem...); e == nil && len(b) == 8 {
-		val = util.BytesToUint64(b)
+func (m *MetaStore) GetUint64(path string) (val uint64, err error) {
+	if b, e := m.Get(path); e == nil {
+		val, err = strconv.ParseUint(b, 10, 64)
+		return
 	} else {
 		if e != nil {
 			return 0, e
 		}
-		err = errors.New("Not found value for " + path.Join(elem...))
+		err = errors.New("Not found value for " + path)
 	}
 	return
 }

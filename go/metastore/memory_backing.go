@@ -2,36 +2,35 @@ package metastore
 
 import (
 	"fmt"
-	"path"
 )
 
 //this is for testing only
 
 type MetaStoreMemoryBacking struct {
-	m map[string][]byte
+	m map[string]string
 }
 
-func NewMetaStoreMemoryBacking() MetaStoreMemoryBacking {
-	mms := MetaStoreMemoryBacking{}
-	mms.m = make(map[string][]byte)
+func NewMetaStoreMemoryBacking() *MetaStoreMemoryBacking {
+	mms := &MetaStoreMemoryBacking{}
+	mms.m = make(map[string]string)
 	return mms
 }
 
-func (mms MetaStoreMemoryBacking) Set(val []byte, elem ...string) error {
-	mms.m[path.Join(elem...)] = val
+func (mms MetaStoreMemoryBacking) Set(path, val string) error {
+	mms.m[path] = val
 	return nil
 }
 
-func (mms MetaStoreMemoryBacking) Get(elem ...string) (val []byte, err error) {
+func (mms MetaStoreMemoryBacking) Get(path string) (val string, err error) {
 	var ok bool
-	val, ok = mms.m[path.Join(elem...)]
+	val, ok = mms.m[path]
 	if !ok {
-		return nil, fmt.Errorf("Missing value for %s", path.Join(elem...))
+		return "", fmt.Errorf("Missing value for %s", path)
 	}
 	return
 }
 
-func (mms MetaStoreMemoryBacking) Has(elem ...string) (ok bool) {
-	_, ok = mms.m[path.Join(elem...)]
+func (mms MetaStoreMemoryBacking) Has(path string) (ok bool) {
+	_, ok = mms.m[path]
 	return
 }

@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"code.google.com/p/weed-fs/go/sequence"
 	"code.google.com/p/weed-fs/go/storage"
 	"code.google.com/p/weed-fs/go/topology"
 	"encoding/json"
@@ -79,7 +80,7 @@ func setup(topologyLayout string) *topology.Topology {
 
 	//need to connect all nodes first before server adding volumes
 	topo, err := topology.NewTopology("weedfs", "/etc/weedfs/weedfs.conf",
-		"/tmp", "testing", 32*1024, 5)
+		sequence.NewMemorySequencer(), 32*1024, 5)
 	if err != nil {
 		panic("error: " + err.Error())
 	}
