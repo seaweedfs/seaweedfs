@@ -12,17 +12,15 @@ type VolumeLayout struct {
 	repType         storage.ReplicationType
 	vid2location    map[storage.VolumeId]*VolumeLocationList
 	writables       []storage.VolumeId // transient array of writable volume id
-	pulse           int64
 	volumeSizeLimit uint64
 	accessLock      sync.Mutex
 }
 
-func NewVolumeLayout(repType storage.ReplicationType, volumeSizeLimit uint64, pulse int64) *VolumeLayout {
+func NewVolumeLayout(repType storage.ReplicationType, volumeSizeLimit uint64) *VolumeLayout {
 	return &VolumeLayout{
 		repType:         repType,
 		vid2location:    make(map[storage.VolumeId]*VolumeLocationList),
 		writables:       *new([]storage.VolumeId),
-		pulse:           pulse,
 		volumeSizeLimit: volumeSizeLimit,
 	}
 }
@@ -164,7 +162,7 @@ func (vl *VolumeLayout) SetVolumeCapacityFull(vid storage.VolumeId) bool {
 	return vl.removeFromWritable(vid)
 }
 
-func (vl *VolumeLayout) ToMap() interface{} {
+func (vl *VolumeLayout) ToMap() map[string]interface{} {
 	m := make(map[string]interface{})
 	m["replication"] = vl.repType.String()
 	m["writables"] = vl.writables
