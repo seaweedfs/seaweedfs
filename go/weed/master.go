@@ -56,13 +56,14 @@ var vgLock sync.Mutex
 
 func dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 	vid := r.FormValue("volumeId")
+	collection := r.FormValue("collection") //optional, but can be faster if too many collections
 	commaSep := strings.Index(vid, ",")
 	if commaSep > 0 {
 		vid = vid[0:commaSep]
 	}
 	volumeId, err := storage.NewVolumeId(vid)
 	if err == nil {
-		machines := topo.Lookup(volumeId)
+		machines := topo.Lookup(collection, volumeId)
 		if machines != nil {
 			ret := []map[string]string{}
 			for _, dn := range machines {
@@ -88,6 +89,7 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 	if repType == "" {
 		repType = *defaultRepType
 	}
+	collection := r.FormValue("collection")
 	dataCenter := r.FormValue("dataCenter")
 	rt, err := storage.NewReplicationTypeFromString(repType)
 	if err != nil {
@@ -96,7 +98,7 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if topo.GetVolumeLayout(rt).GetActiveVolumeCount(dataCenter) <= 0 {
+	if topo.GetVolumeLayout(collection, rt).GetActiveVolumeCount(dataCenter) <= 0 {
 		if topo.FreeSpace() <= 0 {
 			w.WriteHeader(http.StatusNotFound)
 			writeJsonQuiet(w, r, map[string]string{"error": "No free volumes left!"})
@@ -104,15 +106,15 @@ func dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 		} else {
 			vgLock.Lock()
 			defer vgLock.Unlock()
-			if topo.GetVolumeLayout(rt).GetActiveVolumeCount(dataCenter) <= 0 {
-				if _, err = vg.AutomaticGrowByType(rt, dataCenter, topo); err != nil {
+			if topo.GetVolumeLayout(collection, rt).GetActiveVolumeCount(dataCenter) <= 0 {
+				if _, err = vg.AutomaticGrowByType(collection, rt, dataCenter, topo); err != nil {
 					writeJsonQuiet(w, r, map[string]string{"error": "Cannot grow volume group! " + err.Error()})
 					return
 				}
 			}
 		}
 	}
-	fid, count, dn, err := topo.PickForWrite(rt, c, dataCenter)
+	fid, count, dn, err := topo.PickForWrite(collection, rt, c, dataCenter)
 	if err == nil {
 		writeJsonQuiet(w, r, map[string]interface{}{"fid": fid, "url": dn.Url(), "publicUrl": dn.PublicUrl, "count": count})
 	} else {
@@ -168,7 +170,7 @@ func volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
 			if topo.FreeSpace() < count*rt.GetCopyCount() {
 				err = errors.New("Only " + strconv.Itoa(topo.FreeSpace()) + " volumes left! Not enough for " + strconv.Itoa(count*rt.GetCopyCount()))
 			} else {
-				count, err = vg.GrowByCountAndType(count, rt, r.FormValue("dataCneter"), topo)
+				count, err = vg.GrowByCountAndType(count, r.FormValue("collection"), rt, r.FormValue("dataCneter"), topo)
 			}
 		} else {
 			err = errors.New("parameter count is not found")
@@ -197,7 +199,7 @@ func redirectHandler(w http.ResponseWriter, r *http.Request) {
 		debug("parsing error:", err, r.URL.Path)
 		return
 	}
-	machines := topo.Lookup(volumeId)
+	machines := topo.Lookup("", volumeId)
 	if machines != nil && len(machines) > 0 {
 		http.Redirect(w, r, "http://"+machines[0].PublicUrl+r.URL.Path, http.StatusMovedPermanently)
 	} else {

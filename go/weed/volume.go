@@ -56,13 +56,13 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 	writeJsonQuiet(w, r, m)
 }
 func assignVolumeHandler(w http.ResponseWriter, r *http.Request) {
-	err := store.AddVolume(r.FormValue("volume"), r.FormValue("replicationType"))
+	err := store.AddVolume(r.FormValue("volume"), r.FormValue("collection"), r.FormValue("replicationType"))
 	if err == nil {
 		writeJsonQuiet(w, r, map[string]string{"error": ""})
 	} else {
 		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 	}
-	debug("assign volume =", r.FormValue("volume"), ", replicationType =", r.FormValue("replicationType"), ", error =", err)
+	debug("assign volume =", r.FormValue("volume"), ", collection =", r.FormValue("collection"), ", replicationType =", r.FormValue("replicationType"), ", error =", err)
 }
 func vacuumVolumeCheckHandler(w http.ResponseWriter, r *http.Request) {
 	err, ret := store.CheckCompactVolume(r.FormValue("volume"), r.FormValue("garbageThreshold"))
@@ -112,6 +112,8 @@ func storeHandler(w http.ResponseWriter, r *http.Request) {
 		GetOrHeadHandler(w, r, false)
 	case "DELETE":
 		secure(volumeWhiteList, DeleteHandler)(w, r)
+	case "PUT":
+		secure(volumeWhiteList, PostHandler)(w, r)
 	case "POST":
 		secure(volumeWhiteList, PostHandler)(w, r)
 	}

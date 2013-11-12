@@ -39,7 +39,7 @@ func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts
 	}
 	return
 }
-func (s *Store) AddVolume(volumeListString string, replicationType string) error {
+func (s *Store) AddVolume(volumeListString string, collection string, replicationType string) error {
 	rt, e := NewReplicationTypeFromString(replicationType)
 	if e != nil {
 		return e
@@ -51,7 +51,7 @@ func (s *Store) AddVolume(volumeListString string, replicationType string) error
 			if err != nil {
 				return fmt.Errorf("Volume Id %s is not a valid unsigned integer!", id_string)
 			}
-			e = s.addVolume(VolumeId(id), rt)
+			e = s.addVolume(VolumeId(id), collection, rt)
 		} else {
 			pair := strings.Split(range_string, "-")
 			start, start_err := strconv.ParseUint(pair[0], 10, 64)
@@ -63,7 +63,7 @@ func (s *Store) AddVolume(volumeListString string, replicationType string) error
 				return fmt.Errorf("Volume End Id %s is not a valid unsigned integer!", pair[1])
 			}
 			for id := start; id <= end; id++ {
-				if err := s.addVolume(VolumeId(id), rt); err != nil {
+				if err := s.addVolume(VolumeId(id), collection, rt); err != nil {
 					e = err
 				}
 			}
@@ -90,13 +90,13 @@ func (s *Store) findFreeLocation() (ret *DiskLocation) {
 	}
 	return ret
 }
-func (s *Store) addVolume(vid VolumeId, replicationType ReplicationType) error {
+func (s *Store) addVolume(vid VolumeId, collection string, replicationType ReplicationType) error {
 	if s.findVolume(vid) != nil {
 		return fmt.Errorf("Volume Id %s already exists!", vid)
 	}
 	if location := s.findFreeLocation(); location != nil {
-		glog.V(0).Infoln("In dir", location.directory, "adds volume =", vid, ", replicationType =", replicationType)
-		if volume, err := NewVolume(location.directory, vid, replicationType); err == nil {
+		glog.V(0).Infoln("In dir", location.directory, "adds volume =", vid, ", collection =", collection, ", replicationType =", replicationType)
+		if volume, err := NewVolume(location.directory, collection, vid, replicationType); err == nil {
 			location.volumes[vid] = volume
 			return nil
 		} else {
@@ -158,12 +158,17 @@ func (l *DiskLocation) loadExistingVolumes() {
 		for _, dir := range dirs {
 			name := dir.Name()
 			if !dir.IsDir() && strings.HasSuffix(name, ".dat") {
+				collection := ""
 				base := name[:len(name)-len(".dat")]
+				i := strings.Index(base, "_")
+				if i > 0 {
+					collection, base = base[0:i], base[i+1:]
+				}
 				if vid, err := NewVolumeId(base); err == nil {
 					if l.volumes[vid] == nil {
-						if v, e := NewVolume(l.directory, vid, CopyNil); e == nil {
+						if v, e := NewVolume(l.directory, collection, vid, CopyNil); e == nil {
 							l.volumes[vid] = v
-							glog.V(0).Infoln("In dir", l.directory, "read volume =", vid, "replicationType =", v.ReplicaType, "version =", v.Version(), "size =", v.Size())
+							glog.V(0).Infoln("data file", l.directory+"/"+name, "replicationType =", v.ReplicaType, "version =", v.Version(), "size =", v.Size())
 						}
 					}
 				}
@@ -177,7 +182,9 @@ func (s *Store) Status() []*VolumeInfo {
 	for _, location := range s.locations {
 		for k, v := range location.volumes {
 			s := &VolumeInfo{Id: VolumeId(k), Size: v.ContentSize(),
-				RepType: v.ReplicaType, Version: v.Version(),
+				Collection:       v.Collection,
+				RepType:          v.ReplicaType,
+				Version:          v.Version(),
 				FileCount:        v.nm.FileCount(),
 				DeleteCount:      v.nm.DeletedCount(),
 				DeletedByteCount: v.nm.DeletedSize(),
@@ -208,7 +215,9 @@ func (s *Store) Join() error {
 		maxVolumeCount = maxVolumeCount + location.maxVolumeCount
 		for k, v := range location.volumes {
 			s := &VolumeInfo{Id: VolumeId(k), Size: uint64(v.Size()),
-				RepType: v.ReplicaType, Version: v.Version(),
+				Collection:       v.Collection,
+				RepType:          v.ReplicaType,
+				Version:          v.Version(),
 				FileCount:        v.nm.FileCount(),
 				DeleteCount:      v.nm.DeletedCount(),
 				DeletedByteCount: v.nm.DeletedSize(),

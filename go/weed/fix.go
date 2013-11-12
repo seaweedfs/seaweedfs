@@ -22,8 +22,9 @@ var cmdFix = &Command{
 }
 
 var (
-	fixVolumePath = cmdFix.Flag.String("dir", "/tmp", "data directory to store files")
-	fixVolumeId   = cmdFix.Flag.Int("volumeId", -1, "a volume id. The volume should already exist in the dir. The volume index file should not exist.")
+	fixVolumePath       = cmdFix.Flag.String("dir", "/tmp", "data directory to store files")
+	fixVolumeCollection = cmdFix.Flag.String("collection", "", "the volume collection name")
+	fixVolumeId         = cmdFix.Flag.Int("volumeId", -1, "a volume id. The volume should already exist in the dir. The volume index file should not exist.")
 )
 
 func runFix(cmd *Command, args []string) bool {
@@ -33,6 +34,9 @@ func runFix(cmd *Command, args []string) bool {
 	}
 
 	fileName := strconv.Itoa(*fixVolumeId)
+	if *fixVolumeCollection != "" {
+		fileName = *fixVolumeCollection + "_" + fileName
+	}
 	indexFile, err := os.OpenFile(path.Join(*fixVolumePath, fileName+".idx"), os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
 		glog.Fatalf("Create Volume Index [ERROR] %s\n", err)
@@ -43,7 +47,7 @@ func runFix(cmd *Command, args []string) bool {
 	defer nm.Close()
 
 	vid := storage.VolumeId(*fixVolumeId)
-	err = storage.ScanVolumeFile(*fixVolumePath, vid, func(superBlock storage.SuperBlock) error {
+	err = storage.ScanVolumeFile(*fixVolumePath, *fixVolumeCollection, vid, func(superBlock storage.SuperBlock) error {
 		return nil
 	}, func(n *storage.Needle, offset int64) error {
 		debug("key", n.Id, "offset", offset, "size", n.Size, "disk_size", n.DiskSize(), "gzip", n.IsGzipped())

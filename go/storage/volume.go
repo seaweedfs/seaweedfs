@@ -29,32 +29,38 @@ func (s *SuperBlock) Bytes() []byte {
 }
 
 type Volume struct {
-	Id       VolumeId
-	dir      string
-	dataFile *os.File
-	nm       NeedleMapper
-	readOnly bool
+	Id         VolumeId
+	dir        string
+	Collection string
+	dataFile   *os.File
+	nm         NeedleMapper
+	readOnly   bool
 
 	SuperBlock
 
 	accessLock sync.Mutex
 }
 
-func NewVolume(dirname string, id VolumeId, replicationType ReplicationType) (v *Volume, e error) {
-	v = &Volume{dir: dirname, Id: id}
+func NewVolume(dirname string, collection string, id VolumeId, replicationType ReplicationType) (v *Volume, e error) {
+	v = &Volume{dir: dirname, Collection: collection, Id: id}
 	v.SuperBlock = SuperBlock{ReplicaType: replicationType}
 	e = v.load(true)
 	return
 }
-func loadVolumeWithoutIndex(dirname string, id VolumeId) (v *Volume, e error) {
-	v = &Volume{dir: dirname, Id: id}
+func loadVolumeWithoutIndex(dirname string, collection string, id VolumeId) (v *Volume, e error) {
+	v = &Volume{dir: dirname, Collection: collection, Id: id}
 	v.SuperBlock = SuperBlock{ReplicaType: CopyNil}
 	e = v.load(false)
 	return
 }
 func (v *Volume) load(alsoLoadIndex bool) error {
 	var e error
-	fileName := path.Join(v.dir, v.Id.String())
+	var fileName string
+	if v.Collection == "" {
+		fileName = path.Join(v.dir, v.Id.String())
+	} else {
+		fileName = path.Join(v.dir, v.Collection+"_"+v.Id.String())
+	}
 	if exists, canRead, canWrite, _ := checkFile(fileName + ".dat"); exists && !canRead {
 		return fmt.Errorf("cannot read Volume Data file %s.dat", fileName)
 	} else if !exists || canWrite {
@@ -309,11 +315,11 @@ func (v *Volume) freeze() error {
 	return nil
 }
 
-func ScanVolumeFile(dirname string, id VolumeId,
+func ScanVolumeFile(dirname string, collection string, id VolumeId,
 	visitSuperBlock func(SuperBlock) error,
 	visitNeedle func(n *Needle, offset int64) error) (err error) {
 	var v *Volume
-	if v, err = loadVolumeWithoutIndex(dirname, id); err != nil {
+	if v, err = loadVolumeWithoutIndex(dirname, collection, id); err != nil {
 		return
 	}
 	if err = visitSuperBlock(v.SuperBlock); err != nil {
@@ -365,7 +371,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string) (err erro
 	nm := NewNeedleMap(idx)
 	new_offset := int64(SuperBlockSize)
 
-	err = ScanVolumeFile(v.dir, v.Id, func(superBlock SuperBlock) error {
+	err = ScanVolumeFile(v.dir, v.Collection, v.Id, func(superBlock SuperBlock) error {
 		_, err = dst.Write(superBlock.Bytes())
 		return err
 	}, func(n *Needle, offset int64) error {

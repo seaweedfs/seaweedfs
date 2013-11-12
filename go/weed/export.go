@@ -35,6 +35,7 @@ var cmdExport = &Command{
 
 var (
 	exportVolumePath = cmdExport.Flag.String("dir", "/tmp", "input data directory to store volume data files")
+	exportCollection = cmdExport.Flag.String("collection", "", "the volume collection name")
 	exportVolumeId   = cmdExport.Flag.Int("volumeId", -1, "a volume id. The volume should already exist in the dir. The volume index file should not exist.")
 	dest             = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
 	format           = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename format, default to {{.Mime}}/{{.Id}}:{{.Name}}")
@@ -95,7 +96,7 @@ func runExport(cmd *Command, args []string) bool {
 
 	var version storage.Version
 
-	err = storage.ScanVolumeFile(*exportVolumePath, vid, func(superBlock storage.SuperBlock) error {
+	err = storage.ScanVolumeFile(*exportVolumePath, *exportCollection, vid, func(superBlock storage.SuperBlock) error {
 		version = superBlock.Version
 		return nil
 	}, func(n *storage.Needle, offset int64) error {

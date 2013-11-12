@@ -32,27 +32,27 @@ func NewDefaultVolumeGrowth() *VolumeGrowth {
 	return &VolumeGrowth{copy1factor: 7, copy2factor: 6, copy3factor: 3}
 }
 
-func (vg *VolumeGrowth) AutomaticGrowByType(repType storage.ReplicationType, dataCenter string, topo *topology.Topology) (count int, err error) {
+func (vg *VolumeGrowth) AutomaticGrowByType(collection string, repType storage.ReplicationType, dataCenter string, topo *topology.Topology) (count int, err error) {
 	factor := 1
 	switch repType {
 	case storage.Copy000:
 		factor = 1
-		count, err = vg.GrowByCountAndType(vg.copy1factor, repType, dataCenter, topo)
+		count, err = vg.GrowByCountAndType(vg.copy1factor, collection, repType, dataCenter, topo)
 	case storage.Copy001:
 		factor = 2
-		count, err = vg.GrowByCountAndType(vg.copy2factor, repType, dataCenter, topo)
+		count, err = vg.GrowByCountAndType(vg.copy2factor, collection, repType, dataCenter, topo)
 	case storage.Copy010:
 		factor = 2
-		count, err = vg.GrowByCountAndType(vg.copy2factor, repType, dataCenter, topo)
+		count, err = vg.GrowByCountAndType(vg.copy2factor, collection, repType, dataCenter, topo)
 	case storage.Copy100:
 		factor = 2
-		count, err = vg.GrowByCountAndType(vg.copy2factor, repType, dataCenter, topo)
+		count, err = vg.GrowByCountAndType(vg.copy2factor, collection, repType, dataCenter, topo)
 	case storage.Copy110:
 		factor = 3
-		count, err = vg.GrowByCountAndType(vg.copy3factor, repType, dataCenter, topo)
+		count, err = vg.GrowByCountAndType(vg.copy3factor, collection, repType, dataCenter, topo)
 	case storage.Copy200:
 		factor = 3
-		count, err = vg.GrowByCountAndType(vg.copy3factor, repType, dataCenter, topo)
+		count, err = vg.GrowByCountAndType(vg.copy3factor, collection, repType, dataCenter, topo)
 	default:
 		err = errors.New("Unknown Replication Type!")
 	}
@@ -61,7 +61,7 @@ func (vg *VolumeGrowth) AutomaticGrowByType(repType storage.ReplicationType, dat
 	}
 	return count, err
 }
-func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.ReplicationType, dataCenter string, topo *topology.Topology) (counter int, err error) {
+func (vg *VolumeGrowth) GrowByCountAndType(count int, collection string, repType storage.ReplicationType, dataCenter string, topo *topology.Topology) (counter int, err error) {
 	vg.accessLock.Lock()
 	defer vg.accessLock.Unlock()
 
@@ -70,7 +70,7 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 	case storage.Copy000:
 		for i := 0; i < count; i++ {
 			if ok, server, vid := topo.RandomlyReserveOneVolume(dataCenter); ok {
-				if err = vg.grow(topo, *vid, repType, server); err == nil {
+				if err = vg.grow(topo, *vid, collection, repType, server); err == nil {
 					counter++
 				} else {
 					return counter, err
@@ -89,7 +89,7 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 				newNodeList := topology.NewNodeList(rack.Children(), exclusion)
 				if newNodeList.FreeSpace() > 0 {
 					if ok2, server2 := newNodeList.ReserveOneVolume(rand.Intn(newNodeList.FreeSpace()), *vid); ok2 {
-						if err = vg.grow(topo, *vid, repType, server1, server2); err == nil {
+						if err = vg.grow(topo, *vid, collection, repType, server1, server2); err == nil {
 							counter++
 						}
 					}
@@ -107,7 +107,7 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 				newNodeList := topology.NewNodeList(dc.Children(), exclusion)
 				if newNodeList.FreeSpace() > 0 {
 					if ok2, server2 := newNodeList.ReserveOneVolume(rand.Intn(newNodeList.FreeSpace()), *vid); ok2 {
-						if err = vg.grow(topo, *vid, repType, server1, server2); err == nil {
+						if err = vg.grow(topo, *vid, collection, repType, server1, server2); err == nil {
 							counter++
 						}
 					}
@@ -129,7 +129,7 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 					}
 				}
 				if len(servers) == 2 {
-					if err = vg.grow(topo, vid, repType, servers...); err == nil {
+					if err = vg.grow(topo, vid, collection, repType, servers...); err == nil {
 						counter++
 					}
 				}
@@ -168,7 +168,7 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 					}
 				}
 				if len(servers) == 3 {
-					if err = vg.grow(topo, vid, repType, servers...); err == nil {
+					if err = vg.grow(topo, vid, collection, repType, servers...); err == nil {
 						counter++
 					}
 				}
@@ -189,7 +189,7 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 					}
 				}
 				if len(servers) == 3 {
-					if err = vg.grow(topo, vid, repType, servers...); err == nil {
+					if err = vg.grow(topo, vid, collection, repType, servers...); err == nil {
 						counter++
 					}
 				}
@@ -198,10 +198,10 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, repType storage.Replicatio
 	}
 	return
 }
-func (vg *VolumeGrowth) grow(topo *topology.Topology, vid storage.VolumeId, repType storage.ReplicationType, servers ...*topology.DataNode) error {
+func (vg *VolumeGrowth) grow(topo *topology.Topology, vid storage.VolumeId, collection string, repType storage.ReplicationType, servers ...*topology.DataNode) error {
 	for _, server := range servers {
-		if err := operation.AllocateVolume(server, vid, repType); err == nil {
-			vi := storage.VolumeInfo{Id: vid, Size: 0, RepType: repType, Version: storage.CurrentVersion}
+		if err := operation.AllocateVolume(server, vid, collection, repType); err == nil {
+			vi := storage.VolumeInfo{Id: vid, Size: 0, Collection: collection, RepType: repType, Version: storage.CurrentVersion}
 			server.AddOrUpdateVolume(vi)
 			topo.RegisterVolumeLayout(&vi, server)
 			glog.V(0).Infoln("Created Volume", vid, "on", server)

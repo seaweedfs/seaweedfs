@@ -12,8 +12,7 @@ import (
 type Topology struct {
 	NodeImpl
 
-	//transient vid~servers mapping for each replication type
-	replicaType2VolumeLayout []*VolumeLayout
+	collectionMap map[string]*Collection
 
 	pulse int64
 
@@ -34,7 +33,7 @@ func NewTopology(id string, confFile string, seq sequence.Sequencer, volumeSizeL
 	t.nodeType = "Topology"
 	t.NodeImpl.value = t
 	t.children = make(map[NodeId]Node)
-	t.replicaType2VolumeLayout = make([]*VolumeLayout, storage.LengthRelicationType)
+	t.collectionMap = make(map[string]*Collection)
 	t.pulse = int64(pulse)
 	t.volumeSizeLimit = volumeSizeLimit
 
@@ -60,12 +59,17 @@ func (t *Topology) loadConfiguration(configurationFile string) error {
 	return nil
 }
 
-func (t *Topology) Lookup(vid storage.VolumeId) []*DataNode {
-	for _, vl := range t.replicaType2VolumeLayout {
-		if vl != nil {
-			if list := vl.Lookup(vid); list != nil {
+func (t *Topology) Lookup(collection string, vid storage.VolumeId) []*DataNode {
+	//maybe an issue if lots of collections?
+	if collection == "" {
+		for _, c := range t.collectionMap {
+			if list := c.Lookup(vid); list != nil {
 				return list
 			}
+		}
+	} else {
+		if c, ok := t.collectionMap[collection]; ok {
+			return c.Lookup(vid)
 		}
 	}
 	return nil
@@ -86,12 +90,8 @@ func (t *Topology) NextVolumeId() storage.VolumeId {
 	return vid.Next()
 }
 
-func (t *Topology) PickForWrite(repType storage.ReplicationType, count int, dataCenter string) (string, int, *DataNode, error) {
-	replicationTypeIndex := repType.GetReplicationLevelIndex()
-	if t.replicaType2VolumeLayout[replicationTypeIndex] == nil {
-		t.replicaType2VolumeLayout[replicationTypeIndex] = NewVolumeLayout(repType, t.volumeSizeLimit, t.pulse)
-	}
-	vid, count, datanodes, err := t.replicaType2VolumeLayout[replicationTypeIndex].PickForWrite(count, dataCenter)
+func (t *Topology) PickForWrite(collectionName string, repType storage.ReplicationType, count int, dataCenter string) (string, int, *DataNode, error) {
+	vid, count, datanodes, err := t.GetVolumeLayout(collectionName, repType).PickForWrite(count, dataCenter)
 	if err != nil || datanodes.Length() == 0 {
 		return "", 0, nil, errors.New("No writable volumes avalable!")
 	}
@@ -99,17 +99,16 @@ func (t *Topology) PickForWrite(repType storage.ReplicationType, count int, data
 	return storage.NewFileId(*vid, fileId, rand.Uint32()).String(), count, datanodes.Head(), nil
 }
 
-func (t *Topology) GetVolumeLayout(repType storage.ReplicationType) *VolumeLayout {
-	replicationTypeIndex := repType.GetReplicationLevelIndex()
-	if t.replicaType2VolumeLayout[replicationTypeIndex] == nil {
-		glog.V(0).Infoln("adding replication type", repType)
-		t.replicaType2VolumeLayout[replicationTypeIndex] = NewVolumeLayout(repType, t.volumeSizeLimit, t.pulse)
+func (t *Topology) GetVolumeLayout(collectionName string, repType storage.ReplicationType) *VolumeLayout {
+	_, ok := t.collectionMap[collectionName]
+	if !ok {
+		t.collectionMap[collectionName] = NewCollection(collectionName, t.volumeSizeLimit)
 	}
-	return t.replicaType2VolumeLayout[replicationTypeIndex]
+	return t.collectionMap[collectionName].GetOrCreateVolumeLayout(repType)
 }
 
 func (t *Topology) RegisterVolumeLayout(v *storage.VolumeInfo, dn *DataNode) {
-	t.GetVolumeLayout(v.RepType).RegisterVolume(v, dn)
+	t.GetVolumeLayout(v.Collection, v.RepType).RegisterVolume(v, dn)
 }
 
 func (t *Topology) RegisterVolumes(init bool, volumeInfos []storage.VolumeInfo, ip string, port int, publicUrl string, maxVolumeCount int, dcName string, rackName string) {

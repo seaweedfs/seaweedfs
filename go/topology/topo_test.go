@@ -99,9 +99,10 @@ func setup(topologyLayout string) *Topology {
 				for _, v := range serverMap["volumes"].([]interface{}) {
 					m := v.(map[string]interface{})
 					vi := storage.VolumeInfo{
-						Id:      storage.VolumeId(int64(m["id"].(float64))),
-						Size:    uint64(m["size"].(float64)),
-						Version: storage.CurrentVersion}
+						Id:         storage.VolumeId(int64(m["id"].(float64))),
+						Size:       uint64(m["size"].(float64)),
+						Collection: "testingCollection",
+						Version:    storage.CurrentVersion}
 					server.AddOrUpdateVolume(vi)
 				}
 				server.UpAdjustMaxVolumeCountDelta(int(serverMap["limit"].(float64)))

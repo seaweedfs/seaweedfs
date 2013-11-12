@@ -79,12 +79,14 @@ func batchVacuumVolumeCommit(vl *VolumeLayout, vid storage.VolumeId, locationlis
 	return isCommitSuccess
 }
 func (t *Topology) Vacuum(garbageThreshold string) int {
-	for _, vl := range t.replicaType2VolumeLayout {
-		if vl != nil {
-			for vid, locationlist := range vl.vid2location {
-				if batchVacuumVolumeCheck(vl, vid, locationlist, garbageThreshold) {
-					if batchVacuumVolumeCompact(vl, vid, locationlist) {
-						batchVacuumVolumeCommit(vl, vid, locationlist)
+	for _, c := range t.collectionMap {
+		for _, vl := range c.replicaType2VolumeLayout {
+			if vl != nil {
+				for vid, locationlist := range vl.vid2location {
+					if batchVacuumVolumeCheck(vl, vid, locationlist, garbageThreshold) {
+						if batchVacuumVolumeCompact(vl, vid, locationlist) {
+							batchVacuumVolumeCommit(vl, vid, locationlist)
+						}
 					}
 				}
 			}
