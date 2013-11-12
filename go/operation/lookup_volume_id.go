@@ -18,7 +18,6 @@ type LookupResult struct {
 	Error     string     `json:"error"`
 }
 
-//TODO: Add a caching for vid here
 func Lookup(server string, vid storage.VolumeId) (*LookupResult, error) {
 	values := make(url.Values)
 	values.Add("volumeId", vid.String())
