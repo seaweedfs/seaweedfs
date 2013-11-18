@@ -31,7 +31,7 @@ func OpenCdbMap(fileName string) (m *cdbMap, err error) {
 		return
 	}
 	if os.IsNotExist(err) {
-		bn, ext := nakeFilename(fileName)
+		bn, ext := baseFilename(fileName)
 		m.fn1 = bn + ".1" + ext
 		if m.c1, err = cdb.Open(m.fn1); err != nil {
 			return nil, err
@@ -199,7 +199,7 @@ func DumpNeedleMapToCdb(cdbName string, nm *NeedleMap) error {
 	if len(fnames) == 1 {
 		return os.Rename(fnames[0], cdbName)
 	}
-	bn, ext := nakeFilename(cdbName)
+	bn, ext := baseFilename(cdbName)
 	if err = os.Rename(fnames[0], bn+".1"+ext); err != nil {
 		return err
 	}
@@ -227,7 +227,7 @@ func openTempCdb(fileName string) (cdb.AdderFunc, cdb.CloserFunc, error) {
 }
 
 // returns filename without extension, and the extension
-func nakeFilename(fileName string) (string, string) {
+func baseFilename(fileName string) (string, string) {
 	ext := filepath.Ext(fileName)
 	return fileName[:len(fileName)-len(ext)], ext
 }

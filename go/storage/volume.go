@@ -299,7 +299,7 @@ func (v *Volume) freeze() error {
 	}
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
-	bn, _ := nakeFilename(v.dataFile.Name())
+	bn, _ := baseFilename(v.dataFile.Name())
 	cdbFn := bn + ".cdb"
 	glog.V(0).Infof("converting %s to %s", nm.indexFile.Name(), cdbFn)
 	err := DumpNeedleMapToCdb(cdbFn, nm)
