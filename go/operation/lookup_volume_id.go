@@ -35,3 +35,18 @@ func Lookup(server string, vid storage.VolumeId) (*LookupResult, error) {
 	}
 	return &ret, nil
 }
+
+func LookupFileId(server string, fileId string) (fullUrl string, err error) {
+	fid, parseErr := storage.ParseFileId(fileId)
+	if parseErr != nil {
+		return "", parseErr
+	}
+	lookup, lookupError := Lookup(server, fid.VolumeId)
+	if lookupError != nil {
+		return "", lookupError
+	}
+	if len(lookup.Locations) == 0 {
+		return "", errors.New("File Not Found")
+	}
+	return "http://" + lookup.Locations[0].PublicUrl + "/" + fileId, nil
+}
