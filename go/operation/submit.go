@@ -112,11 +112,8 @@ func (fi FilePart) upload(server string, fid string, maxMB int, master, replicat
 			}
 			fids = append(fids, id)
 			retSize += count
-			if e = upload_file_id_list(fileUrl, fi.FileName+"-list", fids); e != nil {
-				return 0, e
-			}
 		}
-		return retSize, nil
+		err = upload_file_id_list(fileUrl, fi.FileName+"-list", fids)
 	} else {
 		ret, e := Upload(fileUrl, fi.FileName, fi.Reader, fi.IsGzipped, fi.MimeType)
 		if e != nil {
@@ -124,7 +121,7 @@ func (fi FilePart) upload(server string, fid string, maxMB int, master, replicat
 		}
 		return ret.Size, e
 	}
-	return 0, nil
+	return
 }
 
 func upload_one_chunk(filename string, reader io.Reader, master, replication string) (fid string, size int, e error) {
