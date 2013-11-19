@@ -45,7 +45,7 @@ var (
 	mMaxCpu               = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	garbageThreshold      = cmdMaster.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
 	masterWhiteListOption = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	etcdCluster           = cmdMaster.Flag.String("etcd", "", "comma separated etcd urls, e.g., http://localhost:4001, See github.com/coreos/go-etcd/etcd")
+	//etcdCluster           = cmdMaster.Flag.String("etcd", "", "comma separated etcd urls, e.g., http://localhost:4001, See github.com/coreos/go-etcd/etcd")
 
 	masterWhiteList []string
 )
@@ -221,11 +221,11 @@ func runMaster(cmd *Command, args []string) bool {
 		masterWhiteList = strings.Split(*masterWhiteListOption, ",")
 	}
 	var seq sequence.Sequencer
-	if len(*etcdCluster) == 0 {
-		seq = sequence.NewFileSequencer(path.Join(*metaFolder, "weed.seq"))
-	} else {
-		seq = sequence.NewEtcdSequencer(*etcdCluster)
-	}
+	//if len(*etcdCluster) == 0 {
+	seq = sequence.NewFileSequencer(path.Join(*metaFolder, "weed.seq"))
+	//} else {
+	//	seq = sequence.NewEtcdSequencer(*etcdCluster)
+	//}
 	var e error
 	if topo, e = topology.NewTopology("topo", *confFile, seq,
 		uint64(*volumeSizeLimitMB)*1024*1024, *mpulse); e != nil {

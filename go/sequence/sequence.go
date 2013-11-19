@@ -34,12 +34,12 @@ func NewFileSequencer(filepath string) (m *SequencerImpl) {
 	return
 }
 
-func NewEtcdSequencer(etcdCluster string) (m *SequencerImpl) {
-	m = &SequencerImpl{fileFullPath: "/weedfs/default/sequence"}
-	m.metaStore = &metastore.MetaStore{metastore.NewMetaStoreEtcdBacking(etcdCluster)}
-	m.initilize()
-	return
-}
+//func NewEtcdSequencer(etcdCluster string) (m *SequencerImpl) {
+//	m = &SequencerImpl{fileFullPath: "/weedfs/default/sequence"}
+//	m.metaStore = &metastore.MetaStore{metastore.NewMetaStoreEtcdBacking(etcdCluster)}
+//	m.initilize()
+//	return
+//}
 
 func (m *SequencerImpl) initilize() {
 	if !m.metaStore.Has(m.fileFullPath) {
