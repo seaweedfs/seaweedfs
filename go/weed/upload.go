@@ -12,6 +12,7 @@ var (
 	uploadReplication *string
 	uploadDir         *string
 	include           *string
+	maxMB             *int
 )
 
 func init() {
@@ -21,6 +22,7 @@ func init() {
 	uploadDir = cmdUpload.Flag.String("dir", "", "Upload the whole folder recursively if specified.")
 	include = cmdUpload.Flag.String("include", "", "pattens of files to upload, e.g., *.pdf, *.html, ab?d.txt, works together with -dir")
 	uploadReplication = cmdUpload.Flag.String("replication", "", "replication type(000,001,010,100,110,200)")
+	maxMB = cmdUpload.Flag.Int("maxMB", 0, "split files larger than the limit")
 }
 
 var cmdUpload = &Command{
@@ -39,6 +41,9 @@ var cmdUpload = &Command{
   If any file has a ".gz" extension, the content are considered gzipped already, and will be stored as is.
   This can save volume server's gzipped processing and allow customizable gzip compression level.
   The file name will strip out ".gz" and stored. For example, "jquery.js.gz" will be stored as "jquery.js".
+  
+  If "maxMB" is set to a positive number, files larger than it would be split into chunks and uploaded separatedly. 
+  The list of file ids of those chunks would be stored in an additional chunk, and this additional chunk's file id would be returned. 
 
   `,
 }
@@ -60,7 +65,7 @@ func runUpload(cmd *Command, args []string) bool {
 					if e != nil {
 						return e
 					}
-					results, e := operation.SubmitFiles(*server, parts, *uploadReplication)
+					results, e := operation.SubmitFiles(*server, parts, *uploadReplication, *maxMB)
 					bytes, _ := json.Marshal(results)
 					fmt.Println(string(bytes))
 					if e != nil {
@@ -77,7 +82,7 @@ func runUpload(cmd *Command, args []string) bool {
 		if e != nil {
 			fmt.Println(e.Error())
 		}
-		results, _ := operation.SubmitFiles(*server, parts, *uploadReplication)
+		results, _ := operation.SubmitFiles(*server, parts, *uploadReplication, *maxMB)
 		bytes, _ := json.Marshal(results)
 		fmt.Println(string(bytes))
 	}
