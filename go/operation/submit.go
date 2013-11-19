@@ -132,7 +132,10 @@ func upload_one_chunk(filename string, reader io.Reader, master, replication str
 	fileUrl, fid := "http://"+ret.PublicUrl+"/"+ret.Fid, ret.Fid
 	glog.V(4).Info("Uploading part ", filename, " to ", fileUrl, "...")
 	uploadResult, uploadError := Upload(fileUrl, filename, reader, false, "application/octet-stream")
-	return fid, uploadResult.Size, uploadError
+	if uploadError != nil {
+		return fid, 0, uploadError
+	}
+	return fid, uploadResult.Size, nil
 }
 
 func upload_file_id_list(fileUrl, filename string, fids []string) error {
