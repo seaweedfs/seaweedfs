@@ -165,7 +165,7 @@ func GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) 
 		}
 	}
 	if n.NameSize > 0 && filename == "" {
-		filename := string(n.Name)
+		filename = string(n.Name)
 		dotIndex := strings.LastIndex(filename, ".")
 		if dotIndex > 0 {
 			ext = filename[dotIndex:]
