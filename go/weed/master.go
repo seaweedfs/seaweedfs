@@ -10,6 +10,7 @@ import (
 	"code.google.com/p/weed-fs/go/topology"
 	"encoding/json"
 	"errors"
+	"github.com/gorilla/mux"
 	"net/http"
 	"os"
 	"path"
@@ -233,23 +234,24 @@ func runMaster(cmd *Command, args []string) bool {
 	}
 	vg = replication.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", *volumeSizeLimitMB, "MB")
-	http.HandleFunc("/dir/assign", secure(masterWhiteList, dirAssignHandler))
-	http.HandleFunc("/dir/lookup", secure(masterWhiteList, dirLookupHandler))
-	http.HandleFunc("/dir/join", secure(masterWhiteList, dirJoinHandler))
-	http.HandleFunc("/dir/status", secure(masterWhiteList, dirStatusHandler))
-	http.HandleFunc("/vol/grow", secure(masterWhiteList, volumeGrowHandler))
-	http.HandleFunc("/vol/status", secure(masterWhiteList, volumeStatusHandler))
-	http.HandleFunc("/vol/vacuum", secure(masterWhiteList, volumeVacuumHandler))
 
-	http.HandleFunc("/submit", secure(masterWhiteList, submitFromMasterServerHandler))
-	http.HandleFunc("/", redirectHandler)
+	r := mux.NewRouter()
+	r.HandleFunc("/dir/assign", secure(masterWhiteList, dirAssignHandler))
+	r.HandleFunc("/dir/lookup", secure(masterWhiteList, dirLookupHandler))
+	r.HandleFunc("/dir/join", secure(masterWhiteList, dirJoinHandler))
+	r.HandleFunc("/dir/status", secure(masterWhiteList, dirStatusHandler))
+	r.HandleFunc("/vol/grow", secure(masterWhiteList, volumeGrowHandler))
+	r.HandleFunc("/vol/status", secure(masterWhiteList, volumeStatusHandler))
+	r.HandleFunc("/vol/vacuum", secure(masterWhiteList, volumeVacuumHandler))
+	r.HandleFunc("/submit", secure(masterWhiteList, submitFromMasterServerHandler))
+	r.HandleFunc("/", redirectHandler)
 
 	topo.StartRefreshWritableVolumes(*garbageThreshold)
 
 	glog.V(0).Infoln("Start Weed Master", VERSION, "at port", strconv.Itoa(*mport))
 	srv := &http.Server{
 		Addr:        ":" + strconv.Itoa(*mport),
-		Handler:     http.DefaultServeMux,
+		Handler:     r,
 		ReadTimeout: time.Duration(*mReadTimeout) * time.Second,
 	}
 	e = srv.ListenAndServe()

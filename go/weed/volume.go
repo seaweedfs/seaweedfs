@@ -5,6 +5,7 @@ import (
 	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/replication"
 	"code.google.com/p/weed-fs/go/storage"
+	"github.com/gorilla/mux"
 	"math/rand"
 	"mime"
 	"net/http"
@@ -341,14 +342,15 @@ func runVolume(cmd *Command, args []string) bool {
 
 	store = storage.NewStore(*vport, *ip, *publicUrl, folders, maxCounts)
 	defer store.Close()
-	http.HandleFunc("/", storeHandler)
-	http.HandleFunc("/submit", secure(volumeWhiteList, submitFromVolumeServerHandler))
-	http.HandleFunc("/status", secure(volumeWhiteList, statusHandler))
-	http.HandleFunc("/admin/assign_volume", secure(volumeWhiteList, assignVolumeHandler))
-	http.HandleFunc("/admin/vacuum_volume_check", secure(volumeWhiteList, vacuumVolumeCheckHandler))
-	http.HandleFunc("/admin/vacuum_volume_compact", secure(volumeWhiteList, vacuumVolumeCompactHandler))
-	http.HandleFunc("/admin/vacuum_volume_commit", secure(volumeWhiteList, vacuumVolumeCommitHandler))
-	http.HandleFunc("/admin/freeze_volume", secure(volumeWhiteList, freezeVolumeHandler))
+	r := mux.NewRouter()
+	r.HandleFunc("/submit", secure(volumeWhiteList, submitFromVolumeServerHandler))
+	r.HandleFunc("/status", secure(volumeWhiteList, statusHandler))
+	r.HandleFunc("/admin/assign_volume", secure(volumeWhiteList, assignVolumeHandler))
+	r.HandleFunc("/admin/vacuum_volume_check", secure(volumeWhiteList, vacuumVolumeCheckHandler))
+	r.HandleFunc("/admin/vacuum_volume_compact", secure(volumeWhiteList, vacuumVolumeCompactHandler))
+	r.HandleFunc("/admin/vacuum_volume_commit", secure(volumeWhiteList, vacuumVolumeCommitHandler))
+	r.HandleFunc("/admin/freeze_volume", secure(volumeWhiteList, freezeVolumeHandler))
+	r.HandleFunc("/", storeHandler)
 
 	go func() {
 		connected := true
@@ -375,7 +377,7 @@ func runVolume(cmd *Command, args []string) bool {
 	glog.V(0).Infoln("Start Weed volume server", VERSION, "at http://"+*ip+":"+strconv.Itoa(*vport))
 	srv := &http.Server{
 		Addr:        ":" + strconv.Itoa(*vport),
-		Handler:     http.DefaultServeMux,
+		Handler:     r,
 		ReadTimeout: (time.Duration(*vReadTimeout) * time.Second),
 	}
 	e := srv.ListenAndServe()
