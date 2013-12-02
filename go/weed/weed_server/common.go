@@ -14,8 +14,6 @@ import (
 	"strings"
 )
 
-var IsDebug *bool
-
 func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) (err error) {
 	w.Header().Set("Content-Type", "application/javascript")
 	var bytes []byte
@@ -58,9 +56,7 @@ func writeJsonError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func debug(params ...interface{}) {
-	if *IsDebug {
-		glog.V(0).Infoln(params)
-	}
+	glog.V(4).Infoln(params)
 }
 
 func secure(whiteList []string, f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
