@@ -87,7 +87,7 @@ func runVolume(cmd *Command, args []string) bool {
 
 	glog.V(0).Infoln("Start Weed volume server", VERSION, "at http://"+*ip+":"+strconv.Itoa(*vport))
 	srv := &http.Server{
-		Addr:        ":" + strconv.Itoa(*vport),
+		Addr:        *ip + ":" + strconv.Itoa(*vport),
 		Handler:     r,
 		ReadTimeout: (time.Duration(*vReadTimeout) * time.Second),
 	}

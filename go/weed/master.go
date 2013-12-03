@@ -27,6 +27,7 @@ var cmdMaster = &Command{
 
 var (
 	mport                 = cmdMaster.Flag.Int("port", 9333, "http listen port")
+	mip                   = cmdMaster.Flag.String("ip", "localhost", "http listen port")
 	metaFolder            = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store mappings")
 	volumeSizeLimitMB     = cmdMaster.Flag.Uint("volumeSizeLimitMB", 32*1024, "Default Volume Size in MegaBytes")
 	mpulse                = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
@@ -55,9 +56,9 @@ func runMaster(cmd *Command, args []string) bool {
 		*volumeSizeLimitMB, *mpulse, *confFile, *defaultRepType, *garbageThreshold, masterWhiteList,
 	)
 
-	glog.V(0).Infoln("Start Weed Master", VERSION, "at port", strconv.Itoa(*mport))
+	glog.V(0).Infoln("Start Weed Master", VERSION, "at port", *mip+":"+strconv.Itoa(*mport))
 	srv := &http.Server{
-		Addr:        ":" + strconv.Itoa(*mport),
+		Addr:        *mip+":" + strconv.Itoa(*mport),
 		Handler:     r,
 		ReadTimeout: time.Duration(*mReadTimeout) * time.Second,
 	}
