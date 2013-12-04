@@ -37,7 +37,6 @@ var (
 	mMaxCpu               = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	garbageThreshold      = cmdMaster.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
 	masterWhiteListOption = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	//etcdCluster           = cmdMaster.Flag.String("etcd", "", "comma separated etcd urls, e.g., http://localhost:4001, See github.com/coreos/go-etcd/etcd")
 
 	masterWhiteList []string
 )

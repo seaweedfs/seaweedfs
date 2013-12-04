@@ -14,11 +14,6 @@ func TestFileBacking(t *testing.T) {
 	verifySetGet(t, ms)
 }
 
-func TestEtcdBacking(t *testing.T) {
-	ms := &MetaStore{NewMetaStoreEtcdBacking("http://localhost:4001")}
-	verifySetGet(t, ms)
-}
-
 func verifySetGet(t *testing.T, ms *MetaStore) {
 	data := uint64(234234)
 	ms.SetUint64("/tmp/sequence", data)

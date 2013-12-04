@@ -40,11 +40,7 @@ func NewMasterServer(r *mux.Router, version string, port int, metaFolder string,
 		garbageThreshold:  garbageThreshold,
 		whiteList:         whiteList,
 	}
-	//if len(*etcdCluster) == 0 {
 	seq := sequence.NewFileSequencer(path.Join(metaFolder, "weed.seq"))
-	//} else {
-	//	seq = sequence.NewEtcdSequencer(*etcdCluster)
-	//}
 	var e error
 	if ms.topo, e = topology.NewTopology("topo", confFile, seq,
 		uint64(volumeSizeLimitMB)*1024*1024, pulseSeconds); e != nil {
