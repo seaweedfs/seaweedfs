@@ -21,6 +21,7 @@ var server *string
 var commands = []*Command{
 	cmdCompact,
 	cmdFix,
+	cmdServer,
 	cmdMaster,
 	cmdUpload,
 	cmdDownload,
