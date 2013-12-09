@@ -25,8 +25,8 @@ func ParseFileId(fid string) (*FileId, error) {
 	}
 	vid_string, key_hash_string := a[0], a[1]
 	volumeId, _ := NewVolumeId(vid_string)
-	key, hash := ParseKeyHash(key_hash_string)
-	return &FileId{VolumeId: volumeId, Key: key, Hashcode: hash}, nil
+	key, hash, e := ParseKeyHash(key_hash_string)
+	return &FileId{VolumeId: volumeId, Key: key, Hashcode: hash}, e
 }
 func (n *FileId) String() string {
 	bytes := make([]byte, 12)
