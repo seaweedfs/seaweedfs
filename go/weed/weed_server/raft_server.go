@@ -32,7 +32,7 @@ func NewRaftServer(r *mux.Router, version string, peers []string, httpAddr strin
 		router:   r,
 	}
 
-	raft.SetLogLevel(2)
+	//raft.SetLogLevel(2)
 
 	var err error
 	transporter := raft.NewHTTPTransporter("/raft")
