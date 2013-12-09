@@ -41,7 +41,7 @@ var (
 	serverDataCenter          = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
 	serverRack                = cmdServer.Flag.String("rack", "", "current volume server's rack name")
 	serverWhiteListOption     = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	serverMembers             = cmdServer.Flag.String("members", "", "comma separated ip:masterPort list")
+	serverPeers               = cmdServer.Flag.String("peers", "", "comma separated ip:masterPort list")
 	masterPort                = cmdServer.Flag.Int("masterPort", 9333, "master server http listen port")
 	masterMetaFolder          = cmdServer.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
 	masterVolumeSizeLimitMB   = cmdServer.Flag.Uint("volumeSizeLimitMB", 32*1024, "Default Volume Size in MegaBytes")
@@ -107,11 +107,11 @@ func runServer(cmd *Command, args []string) bool {
 
 		go func() {
 			time.Sleep(100 * time.Millisecond)
-			var members []string
-			if *serverMembers != "" {
-				members = strings.Split(*serverMembers, ",")
+			var peers []string
+			if *serverPeers != "" {
+				peers = strings.Split(*serverPeers, ",")
 			}
-			weed_server.NewRaftServer(r, VERSION, members, *serverIp+":"+strconv.Itoa(*masterPort), *masterMetaFolder)
+			weed_server.NewRaftServer(r, VERSION, peers, *serverIp+":"+strconv.Itoa(*masterPort), *masterMetaFolder)
 		}()
 
 		e := masterServer.ListenAndServe()
