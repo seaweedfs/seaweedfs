@@ -2,8 +2,8 @@ package main
 
 import (
 	"code.google.com/p/weed-fs/go/glog"
+	"code.google.com/p/weed-fs/go/util"
 	"code.google.com/p/weed-fs/go/weed/weed_server"
-	"github.com/gorilla/mux"
 	"net/http"
 	"os"
 	"runtime"
@@ -60,16 +60,9 @@ func runVolume(cmd *Command, args []string) bool {
 		glog.Fatalf("%d directories by -dir, but only %d max is set by -max", len(folders), len(maxCounts))
 	}
 	for _, folder := range folders {
-		fileInfo, err := os.Stat(folder)
-		if err != nil {
-			glog.Fatalf("No Existing Folder:%s", folder)
+		if err := util.TestFolderWritable(folder); err != nil {
+			glog.Fatalf("Check Data Folder(-dir) Writable %s : %s", folder, err)
 		}
-		if !fileInfo.IsDir() {
-			glog.Fatalf("Volume Folder should not be a file:%s", folder)
-		}
-		perm := fileInfo.Mode().Perm()
-		glog.V(0).Infoln("Volume Folder", folder)
-		glog.V(0).Infoln("Permission:", perm)
 	}
 
 	if *publicUrl == "" {
@@ -79,7 +72,7 @@ func runVolume(cmd *Command, args []string) bool {
 		volumeWhiteList = strings.Split(*volumeWhiteListOption, ",")
 	}
 
-	r := mux.NewRouter()
+	r := http.NewServeMux()
 
 	weed_server.NewVolumeServer(r, VERSION, *ip, *vport, *publicUrl, folders, maxCounts,
 		*masterNode, *vpulse, *dataCenter, *rack, volumeWhiteList,

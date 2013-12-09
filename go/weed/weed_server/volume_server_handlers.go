@@ -27,7 +27,7 @@ func (vs *VolumeServer) assignVolumeHandler(w http.ResponseWriter, r *http.Reque
 	} else {
 		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 	}
-	debug("assign volume =", r.FormValue("volume"), ", collection =", r.FormValue("collection"), ", replicationType =", r.FormValue("replicationType"), ", error =", err)
+	glog.V(2).Infoln("assign volume =", r.FormValue("volume"), ", collection =", r.FormValue("collection"), ", replicationType =", r.FormValue("replicationType"), ", error =", err)
 }
 func (vs *VolumeServer) vacuumVolumeCheckHandler(w http.ResponseWriter, r *http.Request) {
 	err, ret := vs.store.CheckCompactVolume(r.FormValue("volume"), r.FormValue("garbageThreshold"))
@@ -36,7 +36,7 @@ func (vs *VolumeServer) vacuumVolumeCheckHandler(w http.ResponseWriter, r *http.
 	} else {
 		writeJsonQuiet(w, r, map[string]interface{}{"error": err.Error(), "result": false})
 	}
-	debug("checked compacting volume =", r.FormValue("volume"), "garbageThreshold =", r.FormValue("garbageThreshold"), "vacuum =", ret)
+	glog.V(2).Infoln("checked compacting volume =", r.FormValue("volume"), "garbageThreshold =", r.FormValue("garbageThreshold"), "vacuum =", ret)
 }
 func (vs *VolumeServer) vacuumVolumeCompactHandler(w http.ResponseWriter, r *http.Request) {
 	err := vs.store.CompactVolume(r.FormValue("volume"))
@@ -45,7 +45,7 @@ func (vs *VolumeServer) vacuumVolumeCompactHandler(w http.ResponseWriter, r *htt
 	} else {
 		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 	}
-	debug("compacted volume =", r.FormValue("volume"), ", error =", err)
+	glog.V(2).Infoln("compacted volume =", r.FormValue("volume"), ", error =", err)
 }
 func (vs *VolumeServer) vacuumVolumeCommitHandler(w http.ResponseWriter, r *http.Request) {
 	err := vs.store.CommitCompactVolume(r.FormValue("volume"))
@@ -54,7 +54,7 @@ func (vs *VolumeServer) vacuumVolumeCommitHandler(w http.ResponseWriter, r *http
 	} else {
 		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 	}
-	debug("commit compact volume =", r.FormValue("volume"), ", error =", err)
+	glog.V(2).Infoln("commit compact volume =", r.FormValue("volume"), ", error =", err)
 }
 func (vs *VolumeServer) freezeVolumeHandler(w http.ResponseWriter, r *http.Request) {
 	//TODO: notify master that this volume will be read-only
@@ -64,7 +64,7 @@ func (vs *VolumeServer) freezeVolumeHandler(w http.ResponseWriter, r *http.Reque
 	} else {
 		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 	}
-	debug("freeze volume =", r.FormValue("volume"), ", error =", err)
+	glog.V(2).Infoln("freeze volume =", r.FormValue("volume"), ", error =", err)
 }
 func (vs *VolumeServer) submitFromVolumeServerHandler(w http.ResponseWriter, r *http.Request) {
 	submitForClientHandler(w, r, vs.masterNode)
@@ -89,28 +89,28 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request,
 	vid, fid, filename, ext, _ := parseURLPath(r.URL.Path)
 	volumeId, err := storage.NewVolumeId(vid)
 	if err != nil {
-		debug("parsing error:", err, r.URL.Path)
+		glog.V(2).Infoln("parsing error:", err, r.URL.Path)
 		return
 	}
 	n.ParsePath(fid)
 
-	debug("volume", volumeId, "reading", n)
+	glog.V(2).Infoln("volume", volumeId, "reading", n)
 	if !vs.store.HasVolume(volumeId) {
 		lookupResult, err := operation.Lookup(vs.masterNode, volumeId)
-		debug("volume", volumeId, "found on", lookupResult, "error", err)
+		glog.V(2).Infoln("volume", volumeId, "found on", lookupResult, "error", err)
 		if err == nil {
 			http.Redirect(w, r, "http://"+lookupResult.Locations[0].PublicUrl+r.URL.Path, http.StatusMovedPermanently)
 		} else {
-			debug("lookup error:", err, r.URL.Path)
+			glog.V(2).Infoln("lookup error:", err, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 		}
 		return
 	}
 	cookie := n.Cookie
 	count, e := vs.store.Read(volumeId, n)
-	debug("read bytes", count, "error", e)
+	glog.V(2).Infoln("read bytes", count, "error", e)
 	if e != nil || count <= 0 {
-		debug("read error:", e, r.URL.Path)
+		glog.V(0).Infoln("read error:", e, r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -156,7 +156,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request,
 				w.Header().Set("Content-Encoding", "gzip")
 			} else {
 				if n.Data, err = storage.UnGzipData(n.Data); err != nil {
-					debug("lookup error:", err, r.URL.Path)
+					glog.V(0).Infoln("lookup error:", err, r.URL.Path)
 				}
 			}
 		}
@@ -164,21 +164,21 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request,
 	w.Header().Set("Content-Length", strconv.Itoa(len(n.Data)))
 	if isGetMethod {
 		if _, e = w.Write(n.Data); e != nil {
-			debug("response write error:", e)
+			glog.V(0).Infoln("response write error:", e)
 		}
 	}
 }
 func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	if e := r.ParseForm(); e != nil {
-		debug("form parse error:", e)
+		glog.V(0).Infoln("form parse error:", e)
 		writeJsonError(w, r, e)
 		return
 	}
 	vid, _, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, ve := storage.NewVolumeId(vid)
 	if ve != nil {
-		debug("NewVolumeId error:", ve)
+		glog.V(0).Infoln("NewVolumeId error:", ve)
 		writeJsonError(w, r, ve)
 		return
 	}
@@ -203,7 +203,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	volumeId, _ := storage.NewVolumeId(vid)
 	n.ParsePath(fid)
 
-	debug("deleting", n)
+	glog.V(2).Infoln("deleting", n)
 
 	cookie := n.Cookie
 	count, ok := vs.store.Read(volumeId, n)
@@ -233,4 +233,3 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	m["size"] = uint32(count)
 	writeJsonQuiet(w, r, m)
 }
-

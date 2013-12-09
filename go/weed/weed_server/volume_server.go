@@ -3,8 +3,8 @@ package weed_server
 import (
 	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/storage"
-	"github.com/gorilla/mux"
 	"math/rand"
+	"net/http"
 	"time"
 )
 
@@ -18,7 +18,7 @@ type VolumeServer struct {
 	version      string
 }
 
-func NewVolumeServer(r *mux.Router, version string, ip string, port int, publicUrl string, folders []string, maxCounts []int,
+func NewVolumeServer(r *http.ServeMux, version string, ip string, port int, publicUrl string, folders []string, maxCounts []int,
 	masterNode string, pulseSeconds int,
 	dataCenter string, rack string,
 	whiteList []string) *VolumeServer {

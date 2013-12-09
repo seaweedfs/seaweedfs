@@ -2,6 +2,7 @@ package main
 
 import (
 	"code.google.com/p/weed-fs/go/glog"
+	"code.google.com/p/weed-fs/go/util"
 	"code.google.com/p/weed-fs/go/weed/weed_server"
 	"github.com/gorilla/mux"
 	"net/http"
@@ -46,6 +47,9 @@ func runMaster(cmd *Command, args []string) bool {
 		*mMaxCpu = runtime.NumCPU()
 	}
 	runtime.GOMAXPROCS(*mMaxCpu)
+	if err := util.TestFolderWritable(*metaFolder); err != nil {
+		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *metaFolder, err)
+	}
 	if *masterWhiteListOption != "" {
 		masterWhiteList = strings.Split(*masterWhiteListOption, ",")
 	}

@@ -14,6 +14,7 @@ import (
 	"strings"
 )
 
+
 func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) (err error) {
 	w.Header().Set("Content-Type", "application/javascript")
 	var bytes []byte

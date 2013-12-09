@@ -2,6 +2,7 @@ package main
 
 import (
 	"code.google.com/p/weed-fs/go/glog"
+	"code.google.com/p/weed-fs/go/util"
 	"code.google.com/p/weed-fs/go/weed/weed_server"
 	"github.com/gorilla/mux"
 	"net/http"
@@ -40,6 +41,7 @@ var (
 	serverDataCenter          = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
 	serverRack                = cmdServer.Flag.String("rack", "", "current volume server's rack name")
 	serverWhiteListOption     = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
+	serverMembers             = cmdServer.Flag.String("members", "", "comma separated ip:masterPort list")
 	masterPort                = cmdServer.Flag.Int("masterPort", 9333, "master server http listen port")
 	masterMetaFolder          = cmdServer.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
 	masterVolumeSizeLimitMB   = cmdServer.Flag.Uint("volumeSizeLimitMB", 32*1024, "Default Volume Size in MegaBytes")
@@ -60,6 +62,10 @@ func runServer(cmd *Command, args []string) bool {
 	}
 	runtime.GOMAXPROCS(*serverMaxCpu)
 
+	if err := util.TestFolderWritable(*masterMetaFolder); err != nil {
+		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *masterMetaFolder, err)
+	}
+
 	folders := strings.Split(*volumeDataFolders, ",")
 	maxCountStrings := strings.Split(*volumeMaxDataVolumeCounts, ",")
 	maxCounts := make([]int, 0)
@@ -74,16 +80,9 @@ func runServer(cmd *Command, args []string) bool {
 		glog.Fatalf("%d directories by -dir, but only %d max is set by -max", len(folders), len(maxCounts))
 	}
 	for _, folder := range folders {
-		fileInfo, err := os.Stat(folder)
-		if err != nil {
-			glog.Fatalf("No Existing Folder:%s", folder)
+		if err := util.TestFolderWritable(folder); err != nil {
+			glog.Fatalf("Check Data Folder(-dir) Writable %s : %s", folder, err)
 		}
-		if !fileInfo.IsDir() {
-			glog.Fatalf("Volume Folder should not be a file:%s", folder)
-		}
-		perm := fileInfo.Mode().Perm()
-		glog.V(0).Infoln("Volume Folder", folder)
-		glog.V(0).Infoln("Permission:", perm)
 	}
 
 	if *volumePublicUrl == "" {
@@ -105,13 +104,24 @@ func runServer(cmd *Command, args []string) bool {
 			Handler:     r,
 			ReadTimeout: time.Duration(*serverReadTimeout) * time.Second,
 		}
+
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			var members []string
+			if *serverMembers != "" {
+				members = strings.Split(*serverMembers, ",")
+			}
+			weed_server.NewRaftServer(r, VERSION, members, *serverIp+":"+strconv.Itoa(*masterPort), *masterMetaFolder)
+		}()
+
 		e := masterServer.ListenAndServe()
 		if e != nil {
 			glog.Fatalf("Fail to start master:%s", e)
 		}
 	}()
 
-	r := mux.NewRouter()
+	time.Sleep(100 * time.Millisecond)
+	r := http.NewServeMux()
 	weed_server.NewVolumeServer(r, VERSION, *serverIp, *volumePort, *volumePublicUrl, folders, maxCounts,
 		*serverIp+":"+strconv.Itoa(*masterPort), *volumePulse, *serverDataCenter, *serverRack, serverWhiteList,
 	)
