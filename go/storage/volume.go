@@ -53,14 +53,17 @@ func loadVolumeWithoutIndex(dirname string, collection string, id VolumeId) (v *
 	e = v.load(false)
 	return
 }
+func (v *Volume) FileName() (fileName string) {
+  if v.Collection == "" {
+    fileName = path.Join(v.dir, v.Id.String())
+  } else {
+    fileName = path.Join(v.dir, v.Collection+"_"+v.Id.String())
+  }
+  return
+}
 func (v *Volume) load(alsoLoadIndex bool) error {
 	var e error
-	var fileName string
-	if v.Collection == "" {
-		fileName = path.Join(v.dir, v.Id.String())
-	} else {
-		fileName = path.Join(v.dir, v.Collection+"_"+v.Id.String())
-	}
+	fileName := v.FileName()
 	if exists, canRead, canWrite, _ := checkFile(fileName + ".dat"); exists && !canRead {
 		return fmt.Errorf("cannot read Volume Data file %s.dat", fileName)
 	} else if !exists || canWrite {
