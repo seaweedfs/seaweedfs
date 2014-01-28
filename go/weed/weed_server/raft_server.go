@@ -42,7 +42,7 @@ func NewRaftServer(r *mux.Router, version string, peers []string, httpAddr strin
 		return nil
 	}
 	transporter.Install(s.raftServer, s)
-	s.raftServer.SetHeartbeatTimeout(1 * time.Second)
+	s.raftServer.SetHeartbeatInterval(1 * time.Second)
 	s.raftServer.SetElectionTimeout(1500 * time.Millisecond)
 	s.raftServer.Start()
 
