@@ -32,10 +32,12 @@ func NewRaftServer(r *mux.Router, version string, peers []string, httpAddr strin
 		router:   r,
 	}
 
-	//raft.SetLogLevel(2)
+  if glog.V(4) {
+    raft.SetLogLevel(2)
+  }
 
 	var err error
-	transporter := raft.NewHTTPTransporter("/raft")
+	transporter := raft.NewHTTPTransporter("/cluster")
 	s.raftServer, err = raft.NewServer(s.httpAddr, s.dataDir, transporter, nil, nil, "")
 	if err != nil {
 		glog.V(0).Infoln(err)
@@ -46,7 +48,8 @@ func NewRaftServer(r *mux.Router, version string, peers []string, httpAddr strin
 	s.raftServer.SetElectionTimeout(1500 * time.Millisecond)
 	s.raftServer.Start()
 
-	s.router.HandleFunc("/raft/join", s.joinHandler).Methods("POST")
+	s.router.HandleFunc("/cluster/join", s.joinHandler).Methods("POST")
+  s.router.HandleFunc("/cluster/status", s.statusHandler).Methods("GET")
 
 	// Join to leader if specified.
 	if len(s.peers) > 0 {
@@ -117,7 +120,7 @@ func (s *RaftServer) Join(peers []string) error {
 	for _, m := range peers {
 		glog.V(0).Infoln("Attempting to connect to:", m)
 
-		resp, err := http.Post(fmt.Sprintf("http://%s/raft/join", strings.TrimSpace(m)), "application/json", &b)
+		resp, err := http.Post(fmt.Sprintf("http://%s/cluster/join", strings.TrimSpace(m)), "application/json", &b)
 		glog.V(0).Infoln("Post returned: ", err)
 
 		if err != nil {
