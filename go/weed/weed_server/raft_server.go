@@ -32,9 +32,9 @@ func NewRaftServer(r *mux.Router, version string, peers []string, httpAddr strin
 		router:   r,
 	}
 
-  if glog.V(4) {
-    raft.SetLogLevel(2)
-  }
+	if glog.V(4) {
+		raft.SetLogLevel(2)
+	}
 
 	var err error
 	transporter := raft.NewHTTPTransporter("/cluster")
@@ -49,7 +49,7 @@ func NewRaftServer(r *mux.Router, version string, peers []string, httpAddr strin
 	s.raftServer.Start()
 
 	s.router.HandleFunc("/cluster/join", s.joinHandler).Methods("POST")
-  s.router.HandleFunc("/cluster/status", s.statusHandler).Methods("GET")
+	s.router.HandleFunc("/cluster/status", s.statusHandler).Methods("GET")
 
 	// Join to leader if specified.
 	if len(s.peers) > 0 {

@@ -46,8 +46,8 @@ func (s *RaftServer) redirectToLeader(w http.ResponseWriter, req *http.Request) 
 }
 
 func (s *RaftServer) statusHandler(w http.ResponseWriter, r *http.Request) {
-  m := make(map[string]interface{})
-  m["Leader"] = s.Leader()
-  m["Members"] = s.Members()
-  writeJsonQuiet(w, r, m)
+	m := make(map[string]interface{})
+	m["Leader"] = s.Leader()
+	m["Members"] = s.Members()
+	writeJsonQuiet(w, r, m)
 }
