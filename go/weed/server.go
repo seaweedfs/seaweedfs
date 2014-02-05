@@ -41,7 +41,7 @@ var (
 	serverDataCenter          = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
 	serverRack                = cmdServer.Flag.String("rack", "", "current volume server's rack name")
 	serverWhiteListOption     = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	serverPeers               = cmdServer.Flag.String("peers", "", "comma separated ip:masterPort list")
+	serverPeers               = cmdServer.Flag.String("peers", "", "other master nodes in comma separated ip:masterPort list")
 	masterPort                = cmdServer.Flag.Int("masterPort", 9333, "master server http listen port")
 	masterMetaFolder          = cmdServer.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
 	masterVolumeSizeLimitMB   = cmdServer.Flag.Uint("volumeSizeLimitMB", 32*1000, "Default Volume Size in MegaBytes")
