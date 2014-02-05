@@ -4,7 +4,9 @@ import (
 	"code.google.com/p/weed-fs/go/glog"
 	"encoding/json"
 	"github.com/goraft/raft"
+	"io/ioutil"
 	"net/http"
+	"strings"
 )
 
 // Handles incoming RAFT joins.
@@ -12,7 +14,9 @@ func (s *RaftServer) joinHandler(w http.ResponseWriter, req *http.Request) {
 	glog.V(0).Infoln("Processing incoming join. Current Leader", s.raftServer.Leader(), "Self", s.raftServer.Name(), "Peers", s.raftServer.Peers())
 	command := &raft.DefaultJoinCommand{}
 
-	if err := json.NewDecoder(req.Body).Decode(&command); err != nil {
+	commandText, _ := ioutil.ReadAll(req.Body)
+	glog.V(0).Info("Command:", string(commandText))
+	if err := json.NewDecoder(strings.NewReader(string(commandText))).Decode(&command); err != nil {
 		glog.V(0).Infoln("Error decoding json message:", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -37,7 +41,8 @@ func (s *RaftServer) HandleFunc(pattern string, handler func(http.ResponseWriter
 
 func (s *RaftServer) redirectToLeader(w http.ResponseWriter, req *http.Request) {
 	if s.Leader() != "" {
-		glog.V(0).Infoln("Redirecting to", "http://"+s.Leader()+req.URL.Path)
+		//http.StatusMovedPermanently does not cause http POST following redirection
+		glog.V(0).Infoln("Redirecting to", http.StatusMovedPermanently, "http://"+s.Leader()+req.URL.Path)
 		http.Redirect(w, req, "http://"+s.Leader()+req.URL.Path, http.StatusMovedPermanently)
 	} else {
 		glog.V(0).Infoln("Error: Leader Unknown")
@@ -47,7 +52,8 @@ func (s *RaftServer) redirectToLeader(w http.ResponseWriter, req *http.Request) 
 
 func (s *RaftServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
+	m["IsLeader"] = s.IsLeader()
 	m["Leader"] = s.Leader()
-	m["Members"] = s.Members()
+	m["Peers"] = s.Peers()
 	writeJsonQuiet(w, r, m)
 }
