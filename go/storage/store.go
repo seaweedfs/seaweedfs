@@ -267,9 +267,9 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 			} else {
 				err = fmt.Errorf("Volume Size Limit %d Exceeded! Current size is %d", s.volumeSizeLimit, v.ContentSize())
 			}
-			if s.volumeSizeLimit < v.ContentSize()+uint64(size) {
+			if s.volumeSizeLimit < v.ContentSize()+3*uint64(size) {
 				glog.V(0).Infoln("volume", i, "size", v.ContentSize(), "will exceed limit", s.volumeSizeLimit)
-				if e = s.Join(); e != nil {
+				if e := s.Join(); e != nil {
 					glog.V(0).Infoln("error when reporting size:", e)
 				}
 			}
