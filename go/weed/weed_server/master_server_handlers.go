@@ -164,5 +164,9 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *http.Request) {
-	submitForClientHandler(w, r, "localhost:"+strconv.Itoa(ms.port))
+	if ms.IsLeader() {
+		submitForClientHandler(w, r, "localhost:"+strconv.Itoa(ms.port))
+	} else {
+		submitForClientHandler(w, r, ms.raftServer.Leader())
+	}
 }

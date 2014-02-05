@@ -62,7 +62,7 @@ func NewMasterServer(r *mux.Router, version string, port int, metaFolder string,
 	r.HandleFunc("/vol/grow", ms.proxyToLeader(secure(ms.whiteList, ms.volumeGrowHandler)))
 	r.HandleFunc("/vol/status", ms.proxyToLeader(secure(ms.whiteList, ms.volumeStatusHandler)))
 	r.HandleFunc("/vol/vacuum", ms.proxyToLeader(secure(ms.whiteList, ms.volumeVacuumHandler)))
-	r.HandleFunc("/submit", ms.proxyToLeader(secure(ms.whiteList, ms.submitFromMasterServerHandler)))
+	r.HandleFunc("/submit", secure(ms.whiteList, ms.submitFromMasterServerHandler))
 	r.HandleFunc("/", ms.redirectHandler)
 
 	ms.topo.StartRefreshWritableVolumes(garbageThreshold)
@@ -74,9 +74,13 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	ms.raftServer = raftServer
 }
 
+func (ms *MasterServer) IsLeader() bool {
+	return ms.raftServer == nil || ms.raftServer.IsLeader()
+}
+
 func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if ms.raftServer == nil || ms.raftServer.IsLeader() {
+		if ms.IsLeader() {
 			f(w, r)
 		} else {
 			targetUrl, err := url.Parse("http://" + ms.raftServer.Leader())
