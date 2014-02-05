@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	NeedleHeaderSize   = 16 //should never change this
-	NeedlePaddingSize  = 8
-	NeedleChecksumSize = 4
+	NeedleHeaderSize      = 16 //should never change this
+	NeedlePaddingSize     = 8
+	NeedleChecksumSize    = 4
+	MaxPossibleVolumeSize = 4 * 1024 * 1024 * 1024 * 8
 )
 
 /*

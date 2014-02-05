@@ -262,15 +262,15 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 			err = fmt.Errorf("Volume %s is read only!", i)
 			return
 		} else {
-			if s.volumeSizeLimit >= v.ContentSize()+uint64(size) {
+			if MaxPossibleVolumeSize >= v.ContentSize()+uint64(size) {
 				size, err = v.write(n)
 			} else {
 				err = fmt.Errorf("Volume Size Limit %d Exceeded! Current size is %d", s.volumeSizeLimit, v.ContentSize())
 			}
-			if err != nil && s.volumeSizeLimit < v.ContentSize()+uint64(size) && s.volumeSizeLimit >= v.ContentSize() {
-				glog.V(0).Infoln("volume", i, "size is", v.ContentSize(), "close to", s.volumeSizeLimit)
-				if err = s.Join(); err != nil {
-					glog.V(0).Infoln("error with Join:", err)
+			if s.volumeSizeLimit < v.ContentSize()+uint64(size) {
+				glog.V(0).Infoln("volume", i, "size", v.ContentSize(), "will exceed limit", s.volumeSizeLimit)
+				if e = s.Join(); e != nil {
+					glog.V(0).Infoln("error when reporting size:", e)
 				}
 			}
 		}
