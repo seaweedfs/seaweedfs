@@ -94,7 +94,7 @@ func runServer(cmd *Command, args []string) bool {
 
 	go func() {
 		r := mux.NewRouter()
-		weed_server.NewMasterServer(r, VERSION, *masterPort, *masterMetaFolder,
+		ms := weed_server.NewMasterServer(r, VERSION, *masterPort, *masterMetaFolder,
 			*masterVolumeSizeLimitMB, *volumePulse, *masterConfFile, *masterDefaultRepType, *garbageThreshold, serverWhiteList,
 		)
 
@@ -111,7 +111,8 @@ func runServer(cmd *Command, args []string) bool {
 			if *serverPeers != "" {
 				peers = strings.Split(*serverPeers, ",")
 			}
-			weed_server.NewRaftServer(r, VERSION, peers, *serverIp+":"+strconv.Itoa(*masterPort), *masterMetaFolder)
+			raftServer := weed_server.NewRaftServer(r, VERSION, peers, *serverIp+":"+strconv.Itoa(*masterPort), *masterMetaFolder)
+			ms.SetRaftServer(raftServer)
 		}()
 
 		e := masterServer.ListenAndServe()
