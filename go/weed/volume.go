@@ -31,7 +31,7 @@ var (
 	ip                    = cmdVolume.Flag.String("ip", "localhost", "ip or server name")
 	publicUrl             = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible <ip|server_name>:<port>")
 	masterNode            = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
-	vpulse                = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than the master's setting")
+	vpulse                = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
 	vReadTimeout          = cmdVolume.Flag.Int("readTimeout", 3, "connection read timeout in seconds. Increase this if uploading large files.")
 	vMaxCpu               = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	dataCenter            = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
