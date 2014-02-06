@@ -21,13 +21,13 @@ func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 	writeJsonQuiet(w, r, m)
 }
 func (vs *VolumeServer) assignVolumeHandler(w http.ResponseWriter, r *http.Request) {
-	err := vs.store.AddVolume(r.FormValue("volume"), r.FormValue("collection"), r.FormValue("replicationType"))
+	err := vs.store.AddVolume(r.FormValue("volume"), r.FormValue("collection"), r.FormValue("replication"))
 	if err == nil {
 		writeJsonQuiet(w, r, map[string]string{"error": ""})
 	} else {
 		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 	}
-	glog.V(2).Infoln("assign volume =", r.FormValue("volume"), ", collection =", r.FormValue("collection"), ", replicationType =", r.FormValue("replicationType"), ", error =", err)
+	glog.V(2).Infoln("assign volume =", r.FormValue("volume"), ", collection =", r.FormValue("collection"), ", replication =", r.FormValue("replication"), ", error =", err)
 }
 func (vs *VolumeServer) vacuumVolumeCheckHandler(w http.ResponseWriter, r *http.Request) {
 	err, ret := vs.store.CheckCompactVolume(r.FormValue("volume"), r.FormValue("garbageThreshold"))
@@ -102,7 +102,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request,
 	if !vs.store.HasVolume(volumeId) {
 		lookupResult, err := operation.Lookup(vs.masterNode, volumeId)
 		glog.V(2).Infoln("volume", volumeId, "found on", lookupResult, "error", err)
-		if err == nil {
+		if err == nil && len(lookupResult.Locations)>0{
 			http.Redirect(w, r, "http://"+lookupResult.Locations[0].PublicUrl+r.URL.Path, http.StatusMovedPermanently)
 		} else {
 			glog.V(2).Infoln("lookup error:", err, r.URL.Path)
