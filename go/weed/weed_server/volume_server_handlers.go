@@ -90,13 +90,13 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request,
 	volumeId, err := storage.NewVolumeId(vid)
 	if err != nil {
 		glog.V(2).Infoln("parsing error:", err, r.URL.Path)
-		w.WriteHeader(http.StatusNotFound)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	err = n.ParsePath(fid)
 	if err != nil {
 		glog.V(2).Infoln("parsing fid error:", err, r.URL.Path)
-		w.WriteHeader(http.StatusNotFound)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
