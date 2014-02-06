@@ -90,11 +90,13 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request,
 	volumeId, err := storage.NewVolumeId(vid)
 	if err != nil {
 		glog.V(2).Infoln("parsing error:", err, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	err = n.ParsePath(fid)
 	if err != nil {
 		glog.V(2).Infoln("parsing fid error:", err, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
@@ -102,7 +104,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request,
 	if !vs.store.HasVolume(volumeId) {
 		lookupResult, err := operation.Lookup(vs.masterNode, volumeId)
 		glog.V(2).Infoln("volume", volumeId, "found on", lookupResult, "error", err)
-		if err == nil && len(lookupResult.Locations)>0{
+		if err == nil && len(lookupResult.Locations) > 0 {
 			http.Redirect(w, r, "http://"+lookupResult.Locations[0].PublicUrl+r.URL.Path, http.StatusMovedPermanently)
 		} else {
 			glog.V(2).Infoln("lookup error:", err, r.URL.Path)
