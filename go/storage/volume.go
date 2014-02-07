@@ -44,37 +44,46 @@ type Volume struct {
 func NewVolume(dirname string, collection string, id VolumeId, replicationType ReplicationType) (v *Volume, e error) {
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
 	v.SuperBlock = SuperBlock{ReplicaType: replicationType}
-	e = v.load(true)
+	e = v.load(true, true)
 	return
 }
 func loadVolumeWithoutIndex(dirname string, collection string, id VolumeId) (v *Volume, e error) {
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
 	v.SuperBlock = SuperBlock{ReplicaType: CopyNil}
-	e = v.load(false)
+	e = v.load(false, false)
 	return
 }
 func (v *Volume) FileName() (fileName string) {
-  if v.Collection == "" {
-    fileName = path.Join(v.dir, v.Id.String())
-  } else {
-    fileName = path.Join(v.dir, v.Collection+"_"+v.Id.String())
-  }
-  return
+	if v.Collection == "" {
+		fileName = path.Join(v.dir, v.Id.String())
+	} else {
+		fileName = path.Join(v.dir, v.Collection+"_"+v.Id.String())
+	}
+	return
 }
-func (v *Volume) load(alsoLoadIndex bool) error {
+func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool) error {
 	var e error
 	fileName := v.FileName()
-	if exists, canRead, canWrite, _ := checkFile(fileName + ".dat"); exists && !canRead {
-		return fmt.Errorf("cannot read Volume Data file %s.dat", fileName)
-	} else if !exists || canWrite {
-		v.dataFile, e = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
-	} else if exists && canRead {
-		glog.V(0).Infoln("opening " + fileName + ".dat in READONLY mode")
-		v.dataFile, e = os.Open(fileName + ".dat")
-		v.readOnly = true
+
+	if exists, canRead, canWrite, _ := checkFile(fileName + ".dat"); exists {
+		if !canRead {
+			return fmt.Errorf("cannot read Volume Data file %s.dat", fileName)
+		}
+		if canWrite {
+			v.dataFile, e = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
+		} else {
+			glog.V(0).Infoln("opening " + fileName + ".dat in READONLY mode")
+			v.dataFile, e = os.Open(fileName + ".dat")
+			v.readOnly = true
+		}
 	} else {
-		return fmt.Errorf("Unknown state about Volume Data file %s.dat", fileName)
+		if createDatIfMissing {
+			v.dataFile, e = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
+		} else {
+			return fmt.Errorf("Volume Data file %s.dat does not exist.", fileName)
+		}
 	}
+
 	if e != nil {
 		if !os.IsPermission(e) {
 			return fmt.Errorf("cannot load Volume Data %s.dat: %s", fileName, e.Error())
@@ -287,7 +296,7 @@ func (v *Volume) commitCompact() error {
 	if e = os.Rename(path.Join(v.dir, v.Id.String()+".cpx"), path.Join(v.dir, v.Id.String()+".idx")); e != nil {
 		return e
 	}
-	if e = v.load(true); e != nil {
+	if e = v.load(true, false); e != nil {
 		return e
 	}
 	return nil
