@@ -12,6 +12,8 @@ import (
 type Topology struct {
 	NodeImpl
 
+	IsLeader bool
+
 	collectionMap map[string]*Collection
 
 	pulse int64

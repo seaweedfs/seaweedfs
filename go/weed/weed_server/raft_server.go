@@ -87,6 +87,10 @@ func NewRaftServer(r *mux.Router, version string, peers []string, httpAddr strin
 	return s
 }
 
+func (s *RaftServer) Name() string {
+	return s.raftServer.Name()
+}
+
 func (s *RaftServer) IsLeader() bool {
 	return s.Leader() == s.raftServer.Name()
 }

@@ -5,6 +5,7 @@ import (
 	"code.google.com/p/weed-fs/go/replication"
 	"code.google.com/p/weed-fs/go/sequence"
 	"code.google.com/p/weed-fs/go/topology"
+	"github.com/goraft/raft"
 	"github.com/gorilla/mux"
 	"net/http"
 	"net/http/httputil"
@@ -72,6 +73,16 @@ func NewMasterServer(r *mux.Router, version string, port int, metaFolder string,
 
 func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	ms.raftServer = raftServer
+	ms.raftServer.raftServer.AddEventListener(raft.LeaderChangeEventType, func(e raft.Event) {
+		ms.topo.IsLeader = ms.IsLeader()
+		glog.V(0).Infoln("[", ms.raftServer.Name(), "]", ms.raftServer.Leader(), "becomes leader.")
+	})
+	ms.topo.IsLeader = ms.IsLeader()
+	if ms.topo.IsLeader {
+		glog.V(0).Infoln("[", ms.raftServer.Name(), "]", "I am the leader!")
+	} else {
+		glog.V(0).Infoln("[", ms.raftServer.Name(), "]", ms.raftServer.Leader(), "is the leader.")
+	}
 }
 
 func (ms *MasterServer) IsLeader() bool {
