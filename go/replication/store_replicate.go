@@ -71,7 +71,7 @@ func ReplicatedDelete(masterNode string, store *storage.Store, volumeId storage.
 }
 
 func distributedOperation(masterNode string, store *storage.Store, volumeId storage.VolumeId, op func(location operation.Location) bool) bool {
-	if lookupResult, lookupErr := operation.Lookup(masterNode, volumeId); lookupErr == nil {
+	if lookupResult, lookupErr := operation.Lookup(masterNode, volumeId.String()); lookupErr == nil {
 		length := 0
 		selfUrl := (store.Ip + ":" + strconv.Itoa(store.Port))
 		results := make(chan bool)

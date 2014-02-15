@@ -2,7 +2,6 @@ package replication
 
 import (
 	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/storage"
 	"code.google.com/p/weed-fs/go/topology"
 	"errors"
@@ -200,7 +199,7 @@ func (vg *VolumeGrowth) GrowByCountAndType(count int, collection string, repType
 }
 func (vg *VolumeGrowth) grow(topo *topology.Topology, vid storage.VolumeId, collection string, repType storage.ReplicationType, servers ...*topology.DataNode) error {
 	for _, server := range servers {
-		if err := operation.AllocateVolume(server, vid, collection, repType); err == nil {
+		if err := AllocateVolume(server, vid, collection, repType); err == nil {
 			vi := storage.VolumeInfo{Id: vid, Size: 0, Collection: collection, RepType: repType, Version: storage.CurrentVersion}
 			server.AddOrUpdateVolume(vi)
 			topo.RegisterVolumeLayout(&vi, server)

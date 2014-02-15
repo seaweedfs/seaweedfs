@@ -1,12 +1,12 @@
 package operation
 
 import (
-	"code.google.com/p/weed-fs/go/storage"
 	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	_ "fmt"
 	"net/url"
+	"strings"
 )
 
 type Location struct {
@@ -18,9 +18,9 @@ type LookupResult struct {
 	Error     string     `json:"error"`
 }
 
-func Lookup(server string, vid storage.VolumeId) (*LookupResult, error) {
+func Lookup(server string, vid string) (*LookupResult, error) {
 	values := make(url.Values)
-	values.Add("volumeId", vid.String())
+	values.Add("volumeId", vid)
 	jsonBlob, err := util.Post("http://"+server+"/dir/lookup", values)
 	if err != nil {
 		return nil, err
@@ -37,11 +37,11 @@ func Lookup(server string, vid storage.VolumeId) (*LookupResult, error) {
 }
 
 func LookupFileId(server string, fileId string) (fullUrl string, err error) {
-	fid, parseErr := storage.ParseFileId(fileId)
-	if parseErr != nil {
-		return "", parseErr
+	a := strings.Split(fileId, ",")
+	if len(a) != 2 {
+		return "", errors.New("Invalid fileId " + fileId)
 	}
-	lookup, lookupError := Lookup(server, fid.VolumeId)
+	lookup, lookupError := Lookup(server, a[0])
 	if lookupError != nil {
 		return "", lookupError
 	}

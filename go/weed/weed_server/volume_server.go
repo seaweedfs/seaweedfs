@@ -43,7 +43,7 @@ func NewVolumeServer(r *http.ServeMux, version string, ip string, port int, publ
 
 	go func() {
 		connected := true
-		vs.store.SetMaster(vs.masterNode)
+		vs.store.SetBootstrapMaster(vs.masterNode)
 		vs.store.SetDataCenter(vs.dataCenter)
 		vs.store.SetRack(vs.rack)
 		for {
@@ -58,7 +58,11 @@ func NewVolumeServer(r *http.ServeMux, version string, ip string, port int, publ
 					connected = false
 				}
 			}
-			time.Sleep(time.Duration(float32(vs.pulseSeconds*1e3)*(1+rand.Float32())) * time.Millisecond)
+			if connected {
+				time.Sleep(time.Duration(float32(vs.pulseSeconds*1e3)*(1+rand.Float32())) * time.Millisecond)
+			} else {
+				time.Sleep(time.Duration(float32(vs.pulseSeconds*1e3)* 0.25) * time.Millisecond)
+			}
 		}
 	}()
 	glog.V(0).Infoln("store joined at", vs.masterNode)

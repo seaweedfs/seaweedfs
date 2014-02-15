@@ -28,8 +28,9 @@ var cmdMaster = &Command{
 
 var (
 	mport                 = cmdMaster.Flag.Int("port", 9333, "http listen port")
-	mip                   = cmdMaster.Flag.String("ip", "localhost", "http listen port")
+	masterIp              = cmdMaster.Flag.String("ip", "", "master ip address")
 	metaFolder            = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
+	masterPeers           = cmdMaster.Flag.String("peers", "", "other master nodes in comma separated ip:port list")
 	volumeSizeLimitMB     = cmdMaster.Flag.Uint("volumeSizeLimitMB", 32*1000, "Default Volume Size in MegaBytes")
 	mpulse                = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	confFile              = cmdMaster.Flag.String("conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
@@ -55,16 +56,28 @@ func runMaster(cmd *Command, args []string) bool {
 	}
 
 	r := mux.NewRouter()
-	weed_server.NewMasterServer(r, VERSION, *mport, *metaFolder,
+	ms := weed_server.NewMasterServer(r, VERSION, *mport, *metaFolder,
 		*volumeSizeLimitMB, *mpulse, *confFile, *defaultRepType, *garbageThreshold, masterWhiteList,
 	)
 
-	glog.V(0).Infoln("Start Weed Master", VERSION, "at port", *mip+":"+strconv.Itoa(*mport))
+	glog.V(0).Infoln("Start Weed Master", VERSION, "at port", *masterIp+":"+strconv.Itoa(*mport))
+
 	srv := &http.Server{
-		Addr:        *mip + ":" + strconv.Itoa(*mport),
+		Addr:        *masterIp + ":" + strconv.Itoa(*mport),
 		Handler:     r,
 		ReadTimeout: time.Duration(*mReadTimeout) * time.Second,
 	}
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		var peers []string
+		if *masterPeers != "" {
+			peers = strings.Split(*masterPeers, ",")
+		}
+		raftServer := weed_server.NewRaftServer(r, VERSION, peers, *masterIp+":"+strconv.Itoa(*mport), *metaFolder)
+		ms.SetRaftServer(raftServer)
+	}()
+
 	e := srv.ListenAndServe()
 	if e != nil {
 		glog.Fatalf("Fail to start:%s", e)

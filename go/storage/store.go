@@ -2,10 +2,13 @@ package storage
 
 import (
 	"code.google.com/p/weed-fs/go/glog"
+	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"net/url"
 	"strconv"
 	"strings"
@@ -16,16 +19,53 @@ type DiskLocation struct {
 	maxVolumeCount int
 	volumes        map[VolumeId]*Volume
 }
+type MasterNodes struct {
+	nodes    []string
+	lastNode int
+}
+
+func NewMasterNodes(bootstrapNode string) (mn *MasterNodes) {
+	mn = &MasterNodes{nodes: []string{bootstrapNode}, lastNode: -1}
+	return
+}
+func (mn *MasterNodes) reset() {
+	if len(mn.nodes) > 1 && mn.lastNode > 0 {
+		mn.lastNode = -mn.lastNode
+	}
+}
+func (mn *MasterNodes) findMaster() (string, error) {
+	if len(mn.nodes) == 0 {
+		return "", errors.New("No master node found!")
+	}
+	if mn.lastNode < 0 {
+		for _, m := range mn.nodes {
+			if masters, e := operation.ListMasters(m); e == nil {
+				mn.nodes = masters
+				mn.lastNode = rand.Intn(len(mn.nodes))
+				glog.V(2).Info("current master node is :", mn.nodes[mn.lastNode])
+				break
+			}
+		}
+	}
+	if len(mn.nodes) == 1 {
+		return mn.nodes[0], nil
+	}
+	if mn.lastNode < 0 {
+		return "", errors.New("No master node avalable!")
+	}
+	return mn.nodes[mn.lastNode], nil
+}
+
 type Store struct {
 	Port            int
 	Ip              string
 	PublicUrl       string
 	locations       []*DiskLocation
-	masterNode      string
 	dataCenter      string //optional informaton, overwriting master setting if exists
 	rack            string //optional information, overwriting master setting if exists
 	connected       bool
 	volumeSizeLimit uint64 //read from the master
+	masterNodes     *MasterNodes
 }
 
 func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int) (s *Store) {
@@ -199,16 +239,21 @@ type JoinResult struct {
 	VolumeSizeLimit uint64
 }
 
-func (s *Store) SetMaster(mserver string) {
-	s.masterNode = mserver
-}
 func (s *Store) SetDataCenter(dataCenter string) {
 	s.dataCenter = dataCenter
 }
 func (s *Store) SetRack(rack string) {
 	s.rack = rack
 }
+
+func (s *Store) SetBootstrapMaster(bootstrapMaster string) {
+	s.masterNodes = NewMasterNodes(bootstrapMaster)
+}
 func (s *Store) Join() error {
+	masterNode, e := s.masterNodes.findMaster()
+	if e != nil {
+		return e
+	}
 	stats := new([]*VolumeInfo)
 	maxVolumeCount := 0
 	for _, location := range s.locations {
@@ -237,8 +282,9 @@ func (s *Store) Join() error {
 	values.Add("maxVolumeCount", strconv.Itoa(maxVolumeCount))
 	values.Add("dataCenter", s.dataCenter)
 	values.Add("rack", s.rack)
-	jsonBlob, err := util.Post("http://"+s.masterNode+"/dir/join", values)
+	jsonBlob, err := util.Post("http://"+masterNode+"/dir/join", values)
 	if err != nil {
+		s.masterNodes.reset()
 		return err
 	}
 	var ret JoinResult

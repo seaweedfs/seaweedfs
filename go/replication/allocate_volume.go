@@ -1,4 +1,4 @@
-package operation
+package replication
 
 import (
 	"code.google.com/p/weed-fs/go/storage"
