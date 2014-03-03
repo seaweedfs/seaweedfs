@@ -125,7 +125,7 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 			if ms.topo.FreeSpace() < count*replicaPlacement.GetCopyCount() {
 				err = errors.New("Only " + strconv.Itoa(ms.topo.FreeSpace()) + " volumes left! Not enough for " + strconv.Itoa(count*replicaPlacement.GetCopyCount()))
 			} else {
-				count, err = ms.vg.GrowByCountAndType(count, r.FormValue("collection"), replicaPlacement, r.FormValue("dataCneter"), ms.topo)
+				count, err = ms.vg.GrowByCountAndType(count, r.FormValue("collection"), replicaPlacement, r.FormValue("dataCenter"), ms.topo)
 			}
 		} else {
 			err = errors.New("parameter count is not found")
