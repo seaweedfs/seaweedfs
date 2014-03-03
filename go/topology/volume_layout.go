@@ -9,16 +9,16 @@ import (
 )
 
 type VolumeLayout struct {
-	repType         storage.ReplicationType
+	rp              *storage.ReplicaPlacement
 	vid2location    map[storage.VolumeId]*VolumeLocationList
 	writables       []storage.VolumeId // transient array of writable volume id
 	volumeSizeLimit uint64
 	accessLock      sync.Mutex
 }
 
-func NewVolumeLayout(repType storage.ReplicationType, volumeSizeLimit uint64) *VolumeLayout {
+func NewVolumeLayout(rp *storage.ReplicaPlacement, volumeSizeLimit uint64) *VolumeLayout {
 	return &VolumeLayout{
-		repType:         repType,
+		rp:              rp,
 		vid2location:    make(map[storage.VolumeId]*VolumeLocationList),
 		writables:       *new([]storage.VolumeId),
 		volumeSizeLimit: volumeSizeLimit,
@@ -33,7 +33,7 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 		vl.vid2location[v.Id] = NewVolumeLocationList()
 	}
 	if vl.vid2location[v.Id].Add(dn) {
-		if len(vl.vid2location[v.Id].list) == v.RepType.GetCopyCount() {
+		if len(vl.vid2location[v.Id].list) == v.ReplicaPlacement.GetCopyCount() {
 			if vl.isWritable(v) {
 				vl.writables = append(vl.writables, v.Id)
 			} else {
@@ -135,8 +135,8 @@ func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid storage.VolumeId)
 	defer vl.accessLock.Unlock()
 
 	if vl.vid2location[vid].Remove(dn) {
-		if vl.vid2location[vid].Length() < vl.repType.GetCopyCount() {
-			glog.V(0).Infoln("Volume", vid, "has", vl.vid2location[vid].Length(), "replica, less than required", vl.repType.GetCopyCount())
+		if vl.vid2location[vid].Length() < vl.rp.GetCopyCount() {
+			glog.V(0).Infoln("Volume", vid, "has", vl.vid2location[vid].Length(), "replica, less than required", vl.rp.GetCopyCount())
 			return vl.removeFromWritable(vid)
 		}
 	}
@@ -147,7 +147,7 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid storage.VolumeId) b
 	defer vl.accessLock.Unlock()
 
 	if vl.vid2location[vid].Add(dn) {
-		if vl.vid2location[vid].Length() >= vl.repType.GetCopyCount() {
+		if vl.vid2location[vid].Length() >= vl.rp.GetCopyCount() {
 			return vl.setVolumeWritable(vid)
 		}
 	}
@@ -164,7 +164,7 @@ func (vl *VolumeLayout) SetVolumeCapacityFull(vid storage.VolumeId) bool {
 
 func (vl *VolumeLayout) ToMap() map[string]interface{} {
 	m := make(map[string]interface{})
-	m["replication"] = vl.repType.String()
+	m["replication"] = vl.rp.String()
 	m["writables"] = vl.writables
 	//m["locations"] = vl.vid2location
 	return m

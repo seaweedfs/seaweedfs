@@ -79,8 +79,8 @@ func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts
 	}
 	return
 }
-func (s *Store) AddVolume(volumeListString string, collection string, replicationType string) error {
-	rt, e := NewReplicationTypeFromString(replicationType)
+func (s *Store) AddVolume(volumeListString string, collection string, replicaPlacement string) error {
+	rt, e := NewReplicaPlacementFromString(replicaPlacement)
 	if e != nil {
 		return e
 	}
@@ -130,13 +130,13 @@ func (s *Store) findFreeLocation() (ret *DiskLocation) {
 	}
 	return ret
 }
-func (s *Store) addVolume(vid VolumeId, collection string, replicationType ReplicationType) error {
+func (s *Store) addVolume(vid VolumeId, collection string, replicaPlacement *ReplicaPlacement) error {
 	if s.findVolume(vid) != nil {
 		return fmt.Errorf("Volume Id %s already exists!", vid)
 	}
 	if location := s.findFreeLocation(); location != nil {
-		glog.V(0).Infoln("In dir", location.directory, "adds volume =", vid, ", collection =", collection, ", replicationType =", replicationType)
-		if volume, err := NewVolume(location.directory, collection, vid, replicationType); err == nil {
+		glog.V(0).Infoln("In dir", location.directory, "adds volume =", vid, ", collection =", collection, ", replicaPlacement =", replicaPlacement)
+		if volume, err := NewVolume(location.directory, collection, vid, replicaPlacement); err == nil {
 			location.volumes[vid] = volume
 			return nil
 		} else {
@@ -206,9 +206,9 @@ func (l *DiskLocation) loadExistingVolumes() {
 				}
 				if vid, err := NewVolumeId(base); err == nil {
 					if l.volumes[vid] == nil {
-						if v, e := NewVolume(l.directory, collection, vid, CopyNil); e == nil {
+						if v, e := NewVolume(l.directory, collection, vid, nil); e == nil {
 							l.volumes[vid] = v
-							glog.V(0).Infoln("data file", l.directory+"/"+name, "replicationType =", v.ReplicaType, "version =", v.Version(), "size =", v.Size())
+							glog.V(0).Infoln("data file", l.directory+"/"+name, "replicaPlacement =", v.ReplicaPlacement, "version =", v.Version(), "size =", v.Size())
 						}
 					}
 				}
@@ -223,7 +223,7 @@ func (s *Store) Status() []*VolumeInfo {
 		for k, v := range location.volumes {
 			s := &VolumeInfo{Id: VolumeId(k), Size: v.ContentSize(),
 				Collection:       v.Collection,
-				RepType:          v.ReplicaType,
+				ReplicaPlacement: v.ReplicaPlacement,
 				Version:          v.Version(),
 				FileCount:        v.nm.FileCount(),
 				DeleteCount:      v.nm.DeletedCount(),
@@ -261,7 +261,7 @@ func (s *Store) Join() error {
 		for k, v := range location.volumes {
 			s := &VolumeInfo{Id: VolumeId(k), Size: uint64(v.Size()),
 				Collection:       v.Collection,
-				RepType:          v.ReplicaType,
+				ReplicaPlacement: v.ReplicaPlacement,
 				Version:          v.Version(),
 				FileCount:        v.nm.FileCount(),
 				DeleteCount:      v.nm.DeletedCount(),

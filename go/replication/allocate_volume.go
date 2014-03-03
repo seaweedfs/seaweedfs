@@ -13,11 +13,11 @@ type AllocateVolumeResult struct {
 	Error string
 }
 
-func AllocateVolume(dn *topology.DataNode, vid storage.VolumeId, collection string, repType storage.ReplicationType) error {
+func AllocateVolume(dn *topology.DataNode, vid storage.VolumeId, collection string, rp *storage.ReplicaPlacement) error {
 	values := make(url.Values)
 	values.Add("volume", vid.String())
 	values.Add("collection", collection)
-	values.Add("replication", repType.String())
+	values.Add("replication", rp.String())
 	jsonBlob, err := util.Post("http://"+dn.PublicUrl+"/admin/assign_volume", values)
 	if err != nil {
 		return err

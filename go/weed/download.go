@@ -49,7 +49,7 @@ func runDownload(cmd *Command, args []string) bool {
 			filename = fid
 		}
 		if strings.HasSuffix(filename, "-list") {
-		  filename = filename[0:len(filename)-len("-list")]
+			filename = filename[0 : len(filename)-len("-list")]
 			fids := strings.Split(string(content), "\n")
 			f, err := os.OpenFile(path.Join(*downloadDir, filename), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.ModePerm)
 			if err != nil {

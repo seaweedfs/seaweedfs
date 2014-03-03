@@ -77,23 +77,13 @@ func (t *Topology) Lookup(collection string, vid storage.VolumeId) []*DataNode {
 	return nil
 }
 
-func (t *Topology) RandomlyReserveOneVolume(dataCenter string) (bool, *DataNode, *storage.VolumeId) {
-	if t.FreeSpace() <= 0 {
-		glog.V(0).Infoln("Topology does not have free space left!")
-		return false, nil, nil
-	}
-	vid := t.NextVolumeId()
-	ret, node := t.ReserveOneVolume(rand.Intn(t.FreeSpace()), vid, dataCenter)
-	return ret, node, &vid
-}
-
 func (t *Topology) NextVolumeId() storage.VolumeId {
 	vid := t.GetMaxVolumeId()
 	return vid.Next()
 }
 
-func (t *Topology) PickForWrite(collectionName string, repType storage.ReplicationType, count int, dataCenter string) (string, int, *DataNode, error) {
-	vid, count, datanodes, err := t.GetVolumeLayout(collectionName, repType).PickForWrite(count, dataCenter)
+func (t *Topology) PickForWrite(collectionName string, rp *storage.ReplicaPlacement, count int, dataCenter string) (string, int, *DataNode, error) {
+	vid, count, datanodes, err := t.GetVolumeLayout(collectionName, rp).PickForWrite(count, dataCenter)
 	if err != nil || datanodes.Length() == 0 {
 		return "", 0, nil, errors.New("No writable volumes avalable!")
 	}
@@ -101,16 +91,16 @@ func (t *Topology) PickForWrite(collectionName string, repType storage.Replicati
 	return storage.NewFileId(*vid, fileId, rand.Uint32()).String(), count, datanodes.Head(), nil
 }
 
-func (t *Topology) GetVolumeLayout(collectionName string, repType storage.ReplicationType) *VolumeLayout {
+func (t *Topology) GetVolumeLayout(collectionName string, rp *storage.ReplicaPlacement) *VolumeLayout {
 	_, ok := t.collectionMap[collectionName]
 	if !ok {
 		t.collectionMap[collectionName] = NewCollection(collectionName, t.volumeSizeLimit)
 	}
-	return t.collectionMap[collectionName].GetOrCreateVolumeLayout(repType)
+	return t.collectionMap[collectionName].GetOrCreateVolumeLayout(rp)
 }
 
 func (t *Topology) RegisterVolumeLayout(v *storage.VolumeInfo, dn *DataNode) {
-	t.GetVolumeLayout(v.Collection, v.RepType).RegisterVolume(v, dn)
+	t.GetVolumeLayout(v.Collection, v.ReplicaPlacement).RegisterVolume(v, dn)
 }
 
 func (t *Topology) RegisterVolumes(init bool, volumeInfos []storage.VolumeInfo, ip string, port int, publicUrl string, maxVolumeCount int, dcName string, rackName string) {

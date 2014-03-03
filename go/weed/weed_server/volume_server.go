@@ -61,7 +61,7 @@ func NewVolumeServer(r *http.ServeMux, version string, ip string, port int, publ
 			if connected {
 				time.Sleep(time.Duration(float32(vs.pulseSeconds*1e3)*(1+rand.Float32())) * time.Millisecond)
 			} else {
-				time.Sleep(time.Duration(float32(vs.pulseSeconds*1e3)* 0.25) * time.Millisecond)
+				time.Sleep(time.Duration(float32(vs.pulseSeconds*1e3)*0.25) * time.Millisecond)
 			}
 		}
 	}()

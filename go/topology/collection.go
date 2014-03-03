@@ -13,17 +13,17 @@ type Collection struct {
 
 func NewCollection(name string, volumeSizeLimit uint64) *Collection {
 	c := &Collection{Name: name, volumeSizeLimit: volumeSizeLimit}
-	c.replicaType2VolumeLayout = make([]*VolumeLayout, storage.LengthRelicationType)
+	c.replicaType2VolumeLayout = make([]*VolumeLayout, storage.ReplicaPlacementCount)
 	return c
 }
 
-func (c *Collection) GetOrCreateVolumeLayout(repType storage.ReplicationType) *VolumeLayout {
-	replicationTypeIndex := repType.GetReplicationLevelIndex()
-	if c.replicaType2VolumeLayout[replicationTypeIndex] == nil {
-		glog.V(0).Infoln("collection", c.Name, "adding replication type", repType)
-		c.replicaType2VolumeLayout[replicationTypeIndex] = NewVolumeLayout(repType, c.volumeSizeLimit)
+func (c *Collection) GetOrCreateVolumeLayout(rp *storage.ReplicaPlacement) *VolumeLayout {
+	replicaPlacementIndex := rp.GetReplicationLevelIndex()
+	if c.replicaType2VolumeLayout[replicaPlacementIndex] == nil {
+		glog.V(0).Infoln("collection", c.Name, "adding replication type", rp)
+		c.replicaType2VolumeLayout[replicaPlacementIndex] = NewVolumeLayout(rp, c.volumeSizeLimit)
 	}
-	return c.replicaType2VolumeLayout[replicationTypeIndex]
+	return c.replicaType2VolumeLayout[replicaPlacementIndex]
 }
 
 func (c *Collection) Lookup(vid storage.VolumeId) []*DataNode {

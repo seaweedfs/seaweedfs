@@ -59,11 +59,6 @@ If any "assign" request comes in
   3. return a writable volume to the user
 
   
-Plan:
-  Step 1. implement one copy(no replication), automatically assign volume ids
-  Step 2. add replication
-
-For the above operations, here are the todo list:
   for data node:
     0. detect existing volumes DONE
     1. onStartUp, and periodically, send existing volumes and maxVolumeCount  store.Join(), DONE
@@ -77,10 +72,38 @@ For the above operations, here are the todo list:
     1. accept data node's report of existing volumes and maxVolumeCount ALREADY EXISTS /dir/join
     2. periodically refresh for active data nodes, and adjust writable volumes
     3. send command to grow a volume(id + replication level)  DONE
-    4. NOT_IMPLEMENTING: if dead/stale data nodes are found, for the affected volumes, send stale info
-       to other data nodes. BECAUSE the master will stop sending writes to these data nodes
     5. accept lookup for volume locations    ALREADY EXISTS /dir/lookup
     6. read topology/datacenter/rack layout
+
+An algorithm to allocate volumes evenly, but may be inefficient if free volumes are plenty:
+input: replication=xyz
+algorithm:
+ret_dcs = []
+foreach dc that has y+z+1 volumes{
+  ret_racks = []
+  foreach rack with z+1 volumes{
+    ret = select z+1 servers with 1 volume
+  if ret.size()==z+1 {
+    ret_racks.append(ret)
+  }
+  }
+  randomly pick one rack from ret_racks
+  ret += select y racks with 1 volume each
+  if ret.size()==y+z+1{
+    ret_dcs.append(ret)
+  }
+}
+randomly pick one dc from ret_dcs
+ret += select x data centers with 1 volume each
+
+A simple replica placement algorithm, but may fail when free volume slots are not plenty:
+ret := []volumes
+dc = randomly pick 1 data center with y+z+1 volumes
+  rack = randomly pick 1 rack with z+1 volumes
+    ret = ret.append(randomly pick z+1 volumes)
+  ret = ret.append(randomly pick y racks with 1 volume)
+ret = ret.append(randomly pick x data centers with 1 volume)
+
 
 TODO:
   1. replicate content to the other server if the replication type needs replicas

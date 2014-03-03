@@ -15,14 +15,14 @@ import (
 )
 
 type MasterServer struct {
-	port              int
-	metaFolder        string
-	volumeSizeLimitMB uint
-	pulseSeconds      int
-	defaultRepType    string
-	garbageThreshold  string
-	whiteList         []string
-	version           string
+	port                    int
+	metaFolder              string
+	volumeSizeLimitMB       uint
+	pulseSeconds            int
+	defaultReplicaPlacement string
+	garbageThreshold        string
+	whiteList               []string
+	version                 string
 
 	topo   *topology.Topology
 	vg     *replication.VolumeGrowth
@@ -35,17 +35,17 @@ func NewMasterServer(r *mux.Router, version string, port int, metaFolder string,
 	volumeSizeLimitMB uint,
 	pulseSeconds int,
 	confFile string,
-	defaultRepType string,
+	defaultReplicaPlacement string,
 	garbageThreshold string,
 	whiteList []string,
 ) *MasterServer {
 	ms := &MasterServer{
-		version:           version,
-		volumeSizeLimitMB: volumeSizeLimitMB,
-		pulseSeconds:      pulseSeconds,
-		defaultRepType:    defaultRepType,
-		garbageThreshold:  garbageThreshold,
-		whiteList:         whiteList,
+		version:                 version,
+		volumeSizeLimitMB:       volumeSizeLimitMB,
+		pulseSeconds:            pulseSeconds,
+		defaultReplicaPlacement: defaultReplicaPlacement,
+		garbageThreshold:        garbageThreshold,
+		whiteList:               whiteList,
 	}
 	seq := sequence.NewFileSequencer(path.Join(metaFolder, "weed.seq"))
 	var e error

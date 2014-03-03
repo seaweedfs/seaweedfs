@@ -17,14 +17,14 @@ const (
 )
 
 type SuperBlock struct {
-	Version     Version
-	ReplicaType ReplicationType
+	Version          Version
+	ReplicaPlacement *ReplicaPlacement
 }
 
 func (s *SuperBlock) Bytes() []byte {
 	header := make([]byte, SuperBlockSize)
 	header[0] = byte(s.Version)
-	header[1] = s.ReplicaType.Byte()
+	header[1] = s.ReplicaPlacement.Byte()
 	return header
 }
 
@@ -41,15 +41,15 @@ type Volume struct {
 	accessLock sync.Mutex
 }
 
-func NewVolume(dirname string, collection string, id VolumeId, replicationType ReplicationType) (v *Volume, e error) {
+func NewVolume(dirname string, collection string, id VolumeId, replicaPlacement *ReplicaPlacement) (v *Volume, e error) {
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
-	v.SuperBlock = SuperBlock{ReplicaType: replicationType}
+	v.SuperBlock = SuperBlock{ReplicaPlacement: replicaPlacement}
 	e = v.load(true, true)
 	return
 }
 func loadVolumeWithoutIndex(dirname string, collection string, id VolumeId) (v *Volume, e error) {
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
-	v.SuperBlock = SuperBlock{ReplicaType: CopyNil}
+	v.SuperBlock = SuperBlock{}
 	e = v.load(false, false)
 	return
 }
@@ -90,7 +90,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool) error {
 		}
 	}
 
-	if v.ReplicaType == CopyNil {
+	if v.ReplicaPlacement == nil {
 		e = v.readSuperBlock()
 	} else {
 		e = v.maybeWriteSuperBlock()
@@ -173,13 +173,13 @@ func (v *Volume) readSuperBlock() (err error) {
 }
 func ParseSuperBlock(header []byte) (superBlock SuperBlock, err error) {
 	superBlock.Version = Version(header[0])
-	if superBlock.ReplicaType, err = NewReplicationTypeFromByte(header[1]); err != nil {
+	if superBlock.ReplicaPlacement, err = NewReplicaPlacementFromByte(header[1]); err != nil {
 		err = fmt.Errorf("cannot read replica type: %s", err.Error())
 	}
 	return
 }
 func (v *Volume) NeedToReplicate() bool {
-	return v.ReplicaType.GetCopyCount() > 1
+	return v.ReplicaPlacement.GetCopyCount() > 1
 }
 
 func (v *Volume) isFileUnchanged(n *Needle) bool {

@@ -5,7 +5,7 @@ import ()
 type VolumeInfo struct {
 	Id               VolumeId
 	Size             uint64
-	RepType          ReplicationType
+	ReplicaPlacement *ReplicaPlacement
 	Collection       string
 	Version          Version
 	FileCount        int

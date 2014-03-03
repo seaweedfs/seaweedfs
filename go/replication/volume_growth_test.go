@@ -13,7 +13,7 @@ var topologyLayout = `
 {
   "dc1":{
     "rack1":{
-      "server1":{
+      "server111":{
         "volumes":[
           {"id":1, "size":12312},
           {"id":2, "size":12312},
@@ -21,7 +21,7 @@ var topologyLayout = `
         ],
         "limit":3
       },
-      "server2":{
+      "server112":{
         "volumes":[
           {"id":4, "size":12312},
           {"id":5, "size":12312},
@@ -31,7 +31,7 @@ var topologyLayout = `
       }
     },
     "rack2":{
-      "server1":{
+      "server121":{
         "volumes":[
           {"id":4, "size":12312},
           {"id":5, "size":12312},
@@ -39,17 +39,17 @@ var topologyLayout = `
         ],
         "limit":4
       },
-      "server2":{
+      "server122":{
         "volumes":[],
         "limit":4
       },
-      "server3":{
+      "server123":{
         "volumes":[
           {"id":2, "size":12312},
           {"id":3, "size":12312},
           {"id":4, "size":12312}
         ],
-        "limit":2
+        "limit":5
       }
     }
   },
@@ -57,7 +57,7 @@ var topologyLayout = `
   },
   "dc3":{
     "rack2":{
-      "server1":{
+      "server321":{
         "volumes":[
           {"id":1, "size":12312},
           {"id":3, "size":12312},
@@ -113,14 +113,16 @@ func setup(topologyLayout string) *topology.Topology {
 	return topo
 }
 
-func TestRemoveDataCenter(t *testing.T) {
+func TestFindEmptySlotsForOneVolume(t *testing.T) {
 	topo := setup(topologyLayout)
-	topo.UnlinkChildNode(topology.NodeId("dc2"))
-	if topo.GetActiveVolumeCount() != 15 {
+	vg := NewDefaultVolumeGrowth()
+	rp, _ := storage.NewReplicaPlacementFromString("002")
+	servers, err := vg.findEmptySlotsForOneVolume(topo, "dc1", rp)
+	if err != nil {
+		fmt.Println("finding empty slots error :", err)
 		t.Fail()
 	}
-	topo.UnlinkChildNode(topology.NodeId("dc3"))
-	if topo.GetActiveVolumeCount() != 12 {
-		t.Fail()
+	for _, server := range servers {
+		fmt.Println("assigned node :", server.Id())
 	}
 }

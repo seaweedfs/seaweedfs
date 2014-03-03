@@ -1,7 +1,7 @@
 package util
 
 import (
-  "code.google.com/p/weed-fs/go/glog"
+	"code.google.com/p/weed-fs/go/glog"
 	"errors"
 	"os"
 )

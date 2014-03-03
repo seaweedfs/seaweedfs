@@ -82,8 +82,8 @@ func runExport(cmd *Command, args []string) bool {
 	}
 
 	fileName := strconv.Itoa(*exportVolumeId)
-	if *exportCollection!=""{
-	  fileName = *exportCollection + "_" + fileName
+	if *exportCollection != "" {
+		fileName = *exportCollection + "_" + fileName
 	}
 	vid := storage.VolumeId(*exportVolumeId)
 	indexFile, err := os.OpenFile(path.Join(*exportVolumePath, fileName+".idx"), os.O_RDONLY, 0644)

@@ -35,23 +35,23 @@ var cmdServer = &Command{
 }
 
 var (
-	serverIp                  = cmdServer.Flag.String("ip", "localhost", "ip or server name")
-	serverMaxCpu              = cmdServer.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
-	serverReadTimeout         = cmdServer.Flag.Int("readTimeout", 3, "connection read timeout in seconds. Increase this if uploading large files.")
-	serverDataCenter          = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
-	serverRack                = cmdServer.Flag.String("rack", "", "current volume server's rack name")
-	serverWhiteListOption     = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	serverPeers               = cmdServer.Flag.String("peers", "", "other master nodes in comma separated ip:masterPort list")
-	masterPort                = cmdServer.Flag.Int("masterPort", 9333, "master server http listen port")
-	masterMetaFolder          = cmdServer.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
-	masterVolumeSizeLimitMB   = cmdServer.Flag.Uint("volumeSizeLimitMB", 32*1000, "Default Volume Size in MegaBytes")
-	masterConfFile            = cmdServer.Flag.String("conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
-	masterDefaultRepType      = cmdServer.Flag.String("defaultReplicationType", "000", "Default replication type if not specified.")
-	volumePort                = cmdServer.Flag.Int("port", 8080, "volume server http listen port")
-	volumePublicUrl           = cmdServer.Flag.String("publicUrl", "", "Publicly accessible <ip|server_name>:<port>")
-	volumeDataFolders         = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
-	volumeMaxDataVolumeCounts = cmdServer.Flag.String("max", "7", "maximum numbers of volumes, count[,count]...")
-	volumePulse               = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than the master's setting")
+	serverIp                      = cmdServer.Flag.String("ip", "localhost", "ip or server name")
+	serverMaxCpu                  = cmdServer.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
+	serverReadTimeout             = cmdServer.Flag.Int("readTimeout", 3, "connection read timeout in seconds. Increase this if uploading large files.")
+	serverDataCenter              = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
+	serverRack                    = cmdServer.Flag.String("rack", "", "current volume server's rack name")
+	serverWhiteListOption         = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
+	serverPeers                   = cmdServer.Flag.String("peers", "", "other master nodes in comma separated ip:masterPort list")
+	masterPort                    = cmdServer.Flag.Int("masterPort", 9333, "master server http listen port")
+	masterMetaFolder              = cmdServer.Flag.String("mdir", "", "data directory to store meta data, default to same as -dir specified")
+	masterVolumeSizeLimitMB       = cmdServer.Flag.Uint("volumeSizeLimitMB", 32*1000, "Default Volume Size in MegaBytes")
+	masterConfFile                = cmdServer.Flag.String("conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
+	masterDefaultReplicaPlacement = cmdServer.Flag.String("defaultReplicaPlacement", "000", "Default replication type if not specified.")
+	volumePort                    = cmdServer.Flag.Int("port", 8080, "volume server http listen port")
+	volumePublicUrl               = cmdServer.Flag.String("publicUrl", "", "Publicly accessible <ip|server_name>:<port>")
+	volumeDataFolders             = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
+	volumeMaxDataVolumeCounts     = cmdServer.Flag.String("max", "7", "maximum numbers of volumes, count[,count]...")
+	volumePulse                   = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than the master's setting")
 
 	serverWhiteList []string
 )
@@ -62,6 +62,9 @@ func runServer(cmd *Command, args []string) bool {
 	}
 	runtime.GOMAXPROCS(*serverMaxCpu)
 
+	if *masterMetaFolder == "" {
+		*masterMetaFolder = *volumeDataFolders
+	}
 	if err := util.TestFolderWritable(*masterMetaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *masterMetaFolder, err)
 	}
@@ -95,7 +98,7 @@ func runServer(cmd *Command, args []string) bool {
 	go func() {
 		r := mux.NewRouter()
 		ms := weed_server.NewMasterServer(r, VERSION, *masterPort, *masterMetaFolder,
-			*masterVolumeSizeLimitMB, *volumePulse, *masterConfFile, *masterDefaultRepType, *garbageThreshold, serverWhiteList,
+			*masterVolumeSizeLimitMB, *volumePulse, *masterConfFile, *masterDefaultReplicaPlacement, *garbageThreshold, serverWhiteList,
 		)
 
 		glog.V(0).Infoln("Start Weed Master", VERSION, "at port", *serverIp+":"+strconv.Itoa(*masterPort))

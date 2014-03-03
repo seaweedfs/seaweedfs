@@ -23,5 +23,9 @@ func ListMasters(server string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ret.Peers, nil
+	masters := ret.Peers
+	if ret.IsLeader {
+		masters = append(masters, ret.Leader)
+	}
+	return masters, nil
 }

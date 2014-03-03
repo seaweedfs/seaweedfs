@@ -52,6 +52,7 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVol
 
 func (rack *Rack) ToMap() interface{} {
 	m := make(map[string]interface{})
+	m["Id"] = rack.Id()
 	m["Max"] = rack.GetMaxVolumeCount()
 	m["Free"] = rack.FreeSpace()
 	var dns []interface{}

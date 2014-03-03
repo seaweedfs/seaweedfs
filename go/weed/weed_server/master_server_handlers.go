@@ -40,20 +40,20 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 	if e != nil {
 		c = 1
 	}
-	repType := r.FormValue("replication")
-	if repType == "" {
-		repType = ms.defaultRepType
+	replication := r.FormValue("replication")
+	if replication == "" {
+		replication = ms.defaultReplicaPlacement
 	}
 	collection := r.FormValue("collection")
 	dataCenter := r.FormValue("dataCenter")
-	rt, err := storage.NewReplicationTypeFromString(repType)
+	replicaPlacement, err := storage.NewReplicaPlacementFromString(replication)
 	if err != nil {
 		w.WriteHeader(http.StatusNotAcceptable)
 		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
-	if ms.topo.GetVolumeLayout(collection, rt).GetActiveVolumeCount(dataCenter) <= 0 {
+	if ms.topo.GetVolumeLayout(collection, replicaPlacement).GetActiveVolumeCount(dataCenter) <= 0 {
 		if ms.topo.FreeSpace() <= 0 {
 			w.WriteHeader(http.StatusNotFound)
 			writeJsonQuiet(w, r, map[string]string{"error": "No free volumes left!"})
@@ -61,15 +61,15 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		} else {
 			ms.vgLock.Lock()
 			defer ms.vgLock.Unlock()
-			if ms.topo.GetVolumeLayout(collection, rt).GetActiveVolumeCount(dataCenter) <= 0 {
-				if _, err = ms.vg.AutomaticGrowByType(collection, rt, dataCenter, ms.topo); err != nil {
+			if ms.topo.GetVolumeLayout(collection, replicaPlacement).GetActiveVolumeCount(dataCenter) <= 0 {
+				if _, err = ms.vg.AutomaticGrowByType(collection, replicaPlacement, dataCenter, ms.topo); err != nil {
 					writeJsonQuiet(w, r, map[string]string{"error": "Cannot grow volume group! " + err.Error()})
 					return
 				}
 			}
 		}
 	}
-	fid, count, dn, err := ms.topo.PickForWrite(collection, rt, c, dataCenter)
+	fid, count, dn, err := ms.topo.PickForWrite(collection, replicaPlacement, c, dataCenter)
 	if err == nil {
 		writeJsonQuiet(w, r, map[string]interface{}{"fid": fid, "url": dn.Url(), "publicUrl": dn.PublicUrl, "count": count})
 	} else {
@@ -119,13 +119,13 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 
 func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
 	count := 0
-	rt, err := storage.NewReplicationTypeFromString(r.FormValue("replication"))
+	replicaPlacement, err := storage.NewReplicaPlacementFromString(r.FormValue("replication"))
 	if err == nil {
 		if count, err = strconv.Atoi(r.FormValue("count")); err == nil {
-			if ms.topo.FreeSpace() < count*rt.GetCopyCount() {
-				err = errors.New("Only " + strconv.Itoa(ms.topo.FreeSpace()) + " volumes left! Not enough for " + strconv.Itoa(count*rt.GetCopyCount()))
+			if ms.topo.FreeSpace() < count*replicaPlacement.GetCopyCount() {
+				err = errors.New("Only " + strconv.Itoa(ms.topo.FreeSpace()) + " volumes left! Not enough for " + strconv.Itoa(count*replicaPlacement.GetCopyCount()))
 			} else {
-				count, err = ms.vg.GrowByCountAndType(count, r.FormValue("collection"), rt, r.FormValue("dataCneter"), ms.topo)
+				count, err = ms.vg.GrowByCountAndType(count, r.FormValue("collection"), replicaPlacement, r.FormValue("dataCneter"), ms.topo)
 			}
 		} else {
 			err = errors.New("parameter count is not found")

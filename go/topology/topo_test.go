@@ -5,9 +5,7 @@ import (
 	"code.google.com/p/weed-fs/go/storage"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"testing"
-	"time"
 )
 
 var topologyLayout = `
@@ -123,16 +121,4 @@ func TestRemoveDataCenter(t *testing.T) {
 	if topo.GetActiveVolumeCount() != 12 {
 		t.Fail()
 	}
-}
-
-func TestReserveOneVolume(t *testing.T) {
-	topo := setup(topologyLayout)
-	rand.Seed(time.Now().UnixNano())
-	rand.Seed(1)
-	ret, node, vid := topo.RandomlyReserveOneVolume("dc1")
-	if node.Parent().Parent().Id() != NodeId("dc1") {
-		t.Fail()
-	}
-	fmt.Println("assigned :", ret, ", node :", node, ", volume id:", vid)
-
 }
