@@ -64,7 +64,7 @@ func NewMasterServer(r *mux.Router, version string, port int, metaFolder string,
 	r.HandleFunc("/vol/status", ms.proxyToLeader(secure(ms.whiteList, ms.volumeStatusHandler)))
 	r.HandleFunc("/vol/vacuum", ms.proxyToLeader(secure(ms.whiteList, ms.volumeVacuumHandler)))
 	r.HandleFunc("/submit", secure(ms.whiteList, ms.submitFromMasterServerHandler))
-	r.HandleFunc("/", ms.redirectHandler)
+	r.HandleFunc("/{filekey}", ms.redirectHandler)
 
 	ms.topo.StartRefreshWritableVolumes(garbageThreshold)
 
