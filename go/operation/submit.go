@@ -17,7 +17,9 @@ type FilePart struct {
 	FileSize  int64
 	IsGzipped bool
 	MimeType  string
-	ModTime   int64 //in seconds
+	ModTime   int64  //in seconds
+	Server    string //this comes from assign result
+	Fid       string //this comes from assign result, but customizable
 }
 
 type SubmitResult struct {
@@ -41,17 +43,17 @@ func SubmitFiles(master string, files []FilePart, replication string, maxMB int)
 		return results, err
 	}
 	for index, file := range files {
-		fid := ret.Fid
+		file.Fid = ret.Fid
 		if index > 0 {
-			fid = fid + "_" + strconv.Itoa(index)
+			file.Fid = file.Fid + "_" + strconv.Itoa(index)
 		}
-		results[index].Size, err = file.upload(ret.PublicUrl, fid, maxMB, master, replication)
+		file.Server = ret.PublicUrl
+		results[index].Size, err = file.Upload(maxMB, master, replication)
 		if err != nil {
-			fid = ""
 			results[index].Error = err.Error()
 		}
-		results[index].Fid = fid
-		results[index].FileUrl = ret.PublicUrl + "/" + fid
+		results[index].Fid = file.Fid
+		results[index].FileUrl = file.Server + "/" + file.Fid
 	}
 	return results, nil
 }
@@ -93,8 +95,8 @@ func newFilePart(fullPathFilename string) (ret FilePart, err error) {
 	return ret, nil
 }
 
-func (fi FilePart) upload(server string, fid string, maxMB int, master, replication string) (retSize int, err error) {
-	fileUrl := "http://" + server + "/" + fid
+func (fi FilePart) Upload(maxMB int, master, replication string) (retSize int, err error) {
+	fileUrl := "http://" + fi.Server + "/" + fi.Fid
 	if fi.ModTime != 0 {
 		fileUrl += "?ts=" + strconv.Itoa(int(fi.ModTime))
 	}
