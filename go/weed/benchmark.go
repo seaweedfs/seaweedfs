@@ -285,7 +285,7 @@ func (s *stats) checkProgress(testName string, finishChan chan bool) {
 
 func (s *stats) printStats() {
 	timeTaken := float64(int64(s.end.Sub(s.start))) / 1000000000
-	fmt.Printf("Concurrency Level:      %d\n", *b.concurrency)
+	fmt.Printf("\nConcurrency Level:      %d\n", *b.concurrency)
 	fmt.Printf("Time taken for tests:   %.3f seconds\n", timeTaken)
 	fmt.Printf("Complete requests:      %d\n", s.completed)
 	fmt.Printf("Failed requests:        %d\n", s.failed)
