@@ -6,8 +6,8 @@ import (
 	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/util"
 	"fmt"
-	"github.com/patrick-higgins/summstat"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -68,13 +68,9 @@ var cmdBenchmark = &Command{
 }
 
 var (
-	countWritten int64
-	sizeWritten  int64
-	countRead    int64
-	sizeRead     int64
-	wait         sync.WaitGroup
-	writeStats   stats
-	readStats    stats
+	wait       sync.WaitGroup
+	writeStats *stats
+	readStats  *stats
 )
 
 func runbenchmark(cmd *Command, args []string) bool {
@@ -88,39 +84,40 @@ func runbenchmark(cmd *Command, args []string) bool {
 		wait.Add(*b.concurrency)
 		go writeFileIds(*b.idListFile, fileIdLineChan, finishChan)
 		for i := 0; i < *b.concurrency; i++ {
-			go writeFiles(idChan, fileIdLineChan)
+			go writeFiles(idChan, fileIdLineChan, writeStats)
 		}
+		writeStats.start = time.Now()
 		for i := 0; i < *b.numberOfFiles; i++ {
 			idChan <- i
 		}
 		close(idChan)
 		wait.Wait()
+		writeStats.end = time.Now()
 		wait.Add(1)
 		finishChan <- true
 		wait.Wait()
-		println("completed", countWritten, "write requests, bytes:", sizeWritten)
-		writeStats.printStats()
+		writeStats.printStats("Writing Benchmark")
 	}
 
 	if *b.read {
 		readStats = newStats()
 		wait.Add(*b.concurrency)
 		go readFileIds(*b.idListFile, fileIdLineChan)
+		readStats.start = time.Now()
 		for i := 0; i < *b.concurrency; i++ {
-			go readFiles(fileIdLineChan)
+			go readFiles(fileIdLineChan, readStats)
 		}
 		wait.Wait()
-		println("completed", countRead, "read requests, bytes:", sizeRead)
-		readStats.printStats()
+		readStats.end = time.Now()
+		readStats.printStats("Randomly Reading Benchmark")
 	}
 
 	return true
 }
 
-func writeFiles(idChan chan int, fileIdLineChan chan string) {
+func writeFiles(idChan chan int, fileIdLineChan chan string, s *stats) {
 	for {
 		if id, ok := <-idChan; ok {
-			countWritten++
 			start := time.Now()
 			fp := &operation.FilePart{Reader: &FakeReader{id: uint64(id), size: int64(*b.fileSize)}, FileSize: int64(*b.fileSize)}
 			if assignResult, err := operation.Assign(*b.server, 1, ""); err == nil {
@@ -128,11 +125,13 @@ func writeFiles(idChan chan int, fileIdLineChan chan string) {
 				fp.Upload(0, *b.server, "")
 				writeStats.addSample(time.Now().Sub(start))
 				fileIdLineChan <- fp.Fid
-				sizeWritten += int64(*b.fileSize)
+				s.transferred += int64(*b.fileSize)
+				s.completed++
 				if *cmdBenchmark.IsDebug {
 					fmt.Printf("writing %d file %s\n", id, fp.Fid)
 				}
 			} else {
+				s.failed++
 				println("writing file error:", err.Error())
 			}
 		} else {
@@ -142,7 +141,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string) {
 	wait.Done()
 }
 
-func readFiles(fileIdLineChan chan string) {
+func readFiles(fileIdLineChan chan string, s *stats) {
 	for {
 		if fid, ok := <-fileIdLineChan; ok {
 			if len(fid) == 0 {
@@ -168,13 +167,15 @@ func readFiles(fileIdLineChan chan string) {
 			if server, ok := b.vid2server[vid]; ok {
 				url := "http://" + server + "/" + fid
 				if bytesRead, err := util.Get(url); err == nil {
-					countRead++
-					sizeRead += int64(len(bytesRead))
+					s.completed++
+					s.transferred += int64(len(bytesRead))
 					readStats.addSample(time.Now().Sub(start))
 				} else {
+					s.failed++
 					println("!!!! Failed to read from ", url, " !!!!!")
 				}
 			} else {
+				s.failed++
 				println("!!!! volume id ", vid, " location not found!!!!!")
 			}
 		} else {
@@ -221,31 +222,83 @@ func readFileIds(fileName string, fileIdLineChan chan string) {
 	close(fileIdLineChan)
 }
 
+const (
+	benchResolution = 10000 //0.1 microsecond
+	benchBucket     = 1000000000 / benchResolution
+)
+
 type stats struct {
-	stats *summstat.Stats
+	data        []int
+	completed   int
+	failed      int
+	transferred int64
+	start       time.Time
+	end         time.Time
 }
 
-func newStats() stats {
-	s := stats{stats: summstat.NewStats()}
-	s.stats.CreateBins(21, 1000, 20000)
-	return s
+var percentages = []int{50, 66, 75, 80, 90, 95, 98, 99, 100}
+
+func newStats() *stats {
+	return &stats{data: make([]int, benchResolution)}
 }
 
 func (s stats) addSample(d time.Duration) {
-	//fmt.Printf("adding %d μs\n", int(d / 1000))
-	s.stats.AddSample(summstat.Sample(int(d / 1000)))
+	s.data[int(d/benchBucket)]++
 }
-func (s stats) printStats() {
-	fmt.Printf("\n%s Count:%d ", time.Now().Local(), s.stats.Count())
-	fmt.Printf("Min:%.2fms ", s.stats.Min()/1000)
-	fmt.Printf("Max:%.2fms ", s.stats.Max()/1000)
-	fmt.Printf("Stddev:%.2fms\n", s.stats.Stddev()/1000)
-	for b := 0; b < s.stats.NBins(); b++ {
-		count, _, _ := s.stats.Bin(b)
-		if b+1 != s.stats.NBins() {
-			fmt.Printf("%2d ~ %2d ms: %2.4f%% %d\n", b, (b + 1), float64(count)*100.0/float64(s.stats.Count()), count)
-		} else {
-			fmt.Printf("%2d ~    ms: %2.4f%% %d\n", b, float64(count)*100.0/float64(s.stats.Count()), count)
+
+func (s stats) printStats(testName string) {
+	fmt.Printf("\n------------ %s ----------\n", testName)
+	timeTaken := float64(int64(s.end.Sub(s.start))) / 1000000000
+	fmt.Printf("Concurrency Level:      %d\n", *b.concurrency)
+	fmt.Printf("Time taken for tests:   %.3f seconds\n", timeTaken)
+	fmt.Printf("Complete requests:      %d\n", s.completed)
+	fmt.Printf("Failed requests:        %d\n", s.failed)
+	fmt.Printf("Total transferred:      %d bytes\n", s.transferred)
+	fmt.Printf("Requests per second:    %.2f [#/sec]\n", float64(s.completed)/timeTaken)
+	fmt.Printf("Transfer rate:          %.2f [Kbytes/sec]\n", float64(s.transferred)/1024/timeTaken)
+	n, sum := 0, 0
+	min, max := 10000000, 0
+	for i := 0; i < len(s.data); i++ {
+		n += s.data[i]
+		sum += s.data[i] * i
+		if s.data[i] > 0 {
+			if min > i {
+				min = i
+			}
+			if max < i {
+				max = i
+			}
+		}
+	}
+	avg := float64(sum) / float64(n)
+	varianceSum := 0.0
+	for i := 0; i < len(s.data); i++ {
+		if s.data[i] > 0 {
+			d := float64(i) - avg
+			varianceSum += d * d * float64(s.data[i])
+		}
+	}
+	std := math.Sqrt(varianceSum / float64(n))
+	fmt.Printf("\nConnection Times (ms)\n")
+	fmt.Printf("              min      avg        max      std\n")
+	fmt.Printf("Total:        %2.1f      %3.1f       %3.1f      %3.1f\n", float32(min)/10, float32(avg)/10, float32(max)/10, std/10)
+	//printing percentiles
+	fmt.Printf("\nPercentage of the requests served within a certain time (ms)\n")
+	percentiles := make([]int, len(percentages))
+	for i := 0; i < len(percentages); i++ {
+		percentiles[i] = n * percentages[i] / 100
+	}
+	percentiles[len(percentiles)-1] = n
+	percentileIndex := 0
+	currentSum := 0
+	for i := 0; i < len(s.data); i++ {
+		currentSum += s.data[i]
+		if s.data[i] > 0 && percentileIndex < len(percentiles) && currentSum >= percentiles[percentileIndex] {
+			fmt.Printf("  %3d%%    %5.1f ms\n", percentages[percentileIndex], float32(i)/10.0)
+			percentileIndex++
+			for percentileIndex < len(percentiles) && currentSum >= percentiles[percentileIndex] {
+				percentileIndex++
+			}
 		}
 	}
 }
