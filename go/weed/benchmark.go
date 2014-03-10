@@ -10,6 +10,7 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -82,6 +83,8 @@ func runbenchmark(cmd *Command, args []string) bool {
 	finishChan := make(chan bool)
 	fileIdLineChan := make(chan string)
 	b.vid2server = make(map[string]string)
+
+	fmt.Printf("This is Weed File System version %s %s %s\n", VERSION, runtime.GOOS, runtime.GOARCH)
 
 	if *b.write {
 		writeStats = newStats()
@@ -278,7 +281,7 @@ func (s *stats) checkProgress(testName string, finishChan chan bool) {
 		case <-finishChan:
 			break
 		case <-ticker:
-			fmt.Printf("Completed %d of %d requests, %3d%%\n", s.completed, *b.numberOfFiles, s.completed*100 / *b.numberOfFiles)
+			fmt.Printf("Completed %d of %d requests, %3.1f%%\n", s.completed, *b.numberOfFiles, float64(s.completed)*100/float64(*b.numberOfFiles))
 		}
 	}
 }
