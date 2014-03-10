@@ -37,7 +37,7 @@ func runFix(cmd *Command, args []string) bool {
 	if *fixVolumeCollection != "" {
 		fileName = *fixVolumeCollection + "_" + fileName
 	}
-	indexFile, err := os.OpenFile(path.Join(*fixVolumePath, fileName+".idx"), os.O_WRONLY|os.O_CREATE, 0644)
+	indexFile, err := os.OpenFile(path.Join(*fixVolumePath, fileName+".idx"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		glog.Fatalf("Create Volume Index [ERROR] %s\n", err)
 	}
