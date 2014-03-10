@@ -12,14 +12,16 @@ import (
 )
 
 type FilePart struct {
-	Reader    io.Reader
-	FileName  string
-	FileSize  int64
-	IsGzipped bool
-	MimeType  string
-	ModTime   int64  //in seconds
-	Server    string //this comes from assign result
-	Fid       string //this comes from assign result, but customizable
+	Reader      io.Reader
+	FileName    string
+	FileSize    int64
+	IsGzipped   bool
+	MimeType    string
+	ModTime     int64 //in seconds
+	Replication string
+	Collection  string
+	Server      string //this comes from assign result
+	Fid         string //this comes from assign result, but customizable
 }
 
 type SubmitResult struct {
@@ -30,12 +32,12 @@ type SubmitResult struct {
 	Error    string `json:"error"`
 }
 
-func SubmitFiles(master string, files []FilePart, replication string, maxMB int) ([]SubmitResult, error) {
+func SubmitFiles(master string, files []FilePart, replication string, collection string, maxMB int) ([]SubmitResult, error) {
 	results := make([]SubmitResult, len(files))
 	for index, file := range files {
 		results[index].FileName = file.FileName
 	}
-	ret, err := Assign(master, len(files), replication)
+	ret, err := Assign(master, len(files), replication, collection)
 	if err != nil {
 		for index, _ := range files {
 			results[index].Error = err.Error()
@@ -48,7 +50,9 @@ func SubmitFiles(master string, files []FilePart, replication string, maxMB int)
 			file.Fid = file.Fid + "_" + strconv.Itoa(index)
 		}
 		file.Server = ret.PublicUrl
-		results[index].Size, err = file.Upload(maxMB, master, replication)
+		file.Replication = replication
+		file.Collection = collection
+		results[index].Size, err = file.Upload(maxMB, master)
 		if err != nil {
 			results[index].Error = err.Error()
 		}
@@ -95,7 +99,7 @@ func newFilePart(fullPathFilename string) (ret FilePart, err error) {
 	return ret, nil
 }
 
-func (fi FilePart) Upload(maxMB int, master, replication string) (retSize int, err error) {
+func (fi FilePart) Upload(maxMB int, master string) (retSize int, err error) {
 	fileUrl := "http://" + fi.Server + "/" + fi.Fid
 	if fi.ModTime != 0 {
 		fileUrl += "?ts=" + strconv.Itoa(int(fi.ModTime))
@@ -108,7 +112,7 @@ func (fi FilePart) Upload(maxMB int, master, replication string) (retSize int, e
 		chunks := fi.FileSize/chunkSize + 1
 		fids := make([]string, 0)
 		for i := int64(0); i < chunks; i++ {
-			id, count, e := upload_one_chunk(fi.FileName+"-"+strconv.FormatInt(i+1, 10), io.LimitReader(fi.Reader, chunkSize), master, replication)
+			id, count, e := upload_one_chunk(fi.FileName+"-"+strconv.FormatInt(i+1, 10), io.LimitReader(fi.Reader, chunkSize), master, fi.Replication, fi.Collection)
 			if e != nil {
 				return 0, e
 			}
@@ -126,8 +130,8 @@ func (fi FilePart) Upload(maxMB int, master, replication string) (retSize int, e
 	return
 }
 
-func upload_one_chunk(filename string, reader io.Reader, master, replication string) (fid string, size int, e error) {
-	ret, err := Assign(master, 1, replication)
+func upload_one_chunk(filename string, reader io.Reader, master, replication string, collection string) (fid string, size int, e error) {
+	ret, err := Assign(master, 1, replication, collection)
 	if err != nil {
 		return "", 0, err
 	}

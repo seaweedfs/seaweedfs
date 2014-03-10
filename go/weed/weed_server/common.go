@@ -94,7 +94,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	}
 
 	debug("assigning file id for", fname)
-	assignResult, ae := operation.Assign(masterUrl, 1, r.FormValue("replication"))
+	assignResult, ae := operation.Assign(masterUrl, 1, r.FormValue("replication"), r.FormValue("collection"))
 	if ae != nil {
 		writeJsonError(w, r, ae)
 		return

@@ -17,11 +17,14 @@ type AssignResult struct {
 	Error     string `json:"error"`
 }
 
-func Assign(server string, count int, replication string) (*AssignResult, error) {
+func Assign(server string, count int, replication string, collection string) (*AssignResult, error) {
 	values := make(url.Values)
 	values.Add("count", strconv.Itoa(count))
 	if replication != "" {
 		values.Add("replication", replication)
+	}
+	if collection != "" {
+		values.Add("collection", collection)
 	}
 	jsonBlob, err := util.Post("http://"+server+"/dir/assign", values)
 	glog.V(2).Info("assign result :", string(jsonBlob))

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand"
 	"os"
 	"strings"
 	"sync"
@@ -15,14 +16,16 @@ import (
 )
 
 type BenchmarkOptions struct {
-	server        *string
-	concurrency   *int
-	numberOfFiles *int
-	fileSize      *int
-	idListFile    *string
-	write         *bool
-	read          *bool
-	vid2server    map[string]string //cache for vid locations
+	server         *string
+	concurrency    *int
+	numberOfFiles  *int
+	fileSize       *int
+	idListFile     *string
+	write          *bool
+	read           *bool
+	sequentialRead *bool
+	collection     *string
+	vid2server     map[string]string //cache for vid locations
 }
 
 var (
@@ -39,6 +42,8 @@ func init() {
 	b.idListFile = cmdBenchmark.Flag.String("list", os.TempDir()+"/benchmark_list.txt", "list of uploaded file ids")
 	b.write = cmdBenchmark.Flag.Bool("write", true, "enable write")
 	b.read = cmdBenchmark.Flag.Bool("read", true, "enable read")
+	b.sequentialRead = cmdBenchmark.Flag.Bool("readSequentially", false, "randomly read by ids from \"-list\" specified file")
+	b.collection = cmdBenchmark.Flag.String("collection", "benchmark", "write data to this collection")
 }
 
 var cmdBenchmark = &Command{
@@ -120,9 +125,9 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stats) {
 		if id, ok := <-idChan; ok {
 			start := time.Now()
 			fp := &operation.FilePart{Reader: &FakeReader{id: uint64(id), size: int64(*b.fileSize)}, FileSize: int64(*b.fileSize)}
-			if assignResult, err := operation.Assign(*b.server, 1, ""); err == nil {
-				fp.Server, fp.Fid = assignResult.PublicUrl, assignResult.Fid
-				fp.Upload(0, *b.server, "")
+			if assignResult, err := operation.Assign(*b.server, 1, "", *b.collection); err == nil {
+				fp.Server, fp.Fid, fp.Collection = assignResult.PublicUrl, assignResult.Fid, *b.collection
+				fp.Upload(0, *b.server)
 				writeStats.addSample(time.Now().Sub(start))
 				fileIdLineChan <- fp.Fid
 				s.transferred += int64(*b.fileSize)
@@ -212,13 +217,28 @@ func readFileIds(fileName string, fileIdLineChan chan string) {
 	defer file.Close()
 
 	r := bufio.NewReader(file)
-	for {
-		if line, err := Readln(r); err == nil {
-			fileIdLineChan <- string(line)
-		} else {
-			break
+	if *b.sequentialRead {
+		for {
+			if line, err := Readln(r); err == nil {
+				fileIdLineChan <- string(line)
+			} else {
+				break
+			}
+		}
+	} else {
+		lines := make([]string, 0, *b.numberOfFiles)
+		for {
+			if line, err := Readln(r); err == nil {
+				lines = append(lines, string(line))
+			} else {
+				break
+			}
+		}
+		for i := 0; i < *b.numberOfFiles; i++ {
+			fileIdLineChan <- lines[rand.Intn(len(lines))]
 		}
 	}
+
 	close(fileIdLineChan)
 }
 
