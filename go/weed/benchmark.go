@@ -92,6 +92,7 @@ func runbenchmark(cmd *Command, args []string) bool {
 			go writeFiles(idChan, fileIdLineChan, writeStats)
 		}
 		writeStats.start = time.Now()
+		go writeStats.checkProgress("Writing Benchmark", finishChan)
 		for i := 0; i < *b.numberOfFiles; i++ {
 			idChan <- i
 		}
@@ -100,8 +101,9 @@ func runbenchmark(cmd *Command, args []string) bool {
 		writeStats.end = time.Now()
 		wait.Add(1)
 		finishChan <- true
+		finishChan <- true
 		wait.Wait()
-		writeStats.printStats("Writing Benchmark")
+		writeStats.printStats()
 	}
 
 	if *b.read {
@@ -109,12 +111,14 @@ func runbenchmark(cmd *Command, args []string) bool {
 		wait.Add(*b.concurrency)
 		go readFileIds(*b.idListFile, fileIdLineChan)
 		readStats.start = time.Now()
+		go readStats.checkProgress("Randomly Reading Benchmark", finishChan)
 		for i := 0; i < *b.concurrency; i++ {
 			go readFiles(fileIdLineChan, readStats)
 		}
 		wait.Wait()
+		finishChan <- true
 		readStats.end = time.Now()
-		readStats.printStats("Randomly Reading Benchmark")
+		readStats.printStats()
 	}
 
 	return true
@@ -262,12 +266,24 @@ func newStats() *stats {
 	return &stats{data: make([]int, benchResolution)}
 }
 
-func (s stats) addSample(d time.Duration) {
+func (s *stats) addSample(d time.Duration) {
 	s.data[int(d/benchBucket)]++
 }
 
-func (s stats) printStats(testName string) {
+func (s *stats) checkProgress(testName string, finishChan chan bool) {
 	fmt.Printf("\n------------ %s ----------\n", testName)
+	ticker := time.Tick(time.Second)
+	for {
+		select {
+		case <-finishChan:
+			break
+		case <-ticker:
+			fmt.Printf("Completed %d of %d requests, %3d%%\n", s.completed, *b.numberOfFiles, s.completed*100 / *b.numberOfFiles)
+		}
+	}
+}
+
+func (s *stats) printStats() {
 	timeTaken := float64(int64(s.end.Sub(s.start))) / 1000000000
 	fmt.Printf("Concurrency Level:      %d\n", *b.concurrency)
 	fmt.Printf("Time taken for tests:   %.3f seconds\n", timeTaken)
