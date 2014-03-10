@@ -29,6 +29,19 @@ func (vs *VolumeServer) assignVolumeHandler(w http.ResponseWriter, r *http.Reque
 	}
 	glog.V(2).Infoln("assign volume =", r.FormValue("volume"), ", collection =", r.FormValue("collection"), ", replication =", r.FormValue("replication"), ", error =", err)
 }
+func (vs *VolumeServer) deleteCollectionHandler(w http.ResponseWriter, r *http.Request) {
+	if "benchmark" != r.FormValue("collection") {
+		glog.V(0).Infoln("deleting collection =", r.FormValue("collection"), "!!!")
+		return
+	}
+	err := vs.store.DeleteCollection(r.FormValue("collection"))
+	if err == nil {
+		writeJsonQuiet(w, r, map[string]string{"error": ""})
+	} else {
+		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
+	}
+	glog.V(2).Infoln("deleting collection =", r.FormValue("collection"), ", error =", err)
+}
 func (vs *VolumeServer) vacuumVolumeCheckHandler(w http.ResponseWriter, r *http.Request) {
 	err, ret := vs.store.CheckCompactVolume(r.FormValue("volume"), r.FormValue("garbageThreshold"))
 	if err == nil {

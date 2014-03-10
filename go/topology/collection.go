@@ -36,3 +36,14 @@ func (c *Collection) Lookup(vid storage.VolumeId) []*DataNode {
 	}
 	return nil
 }
+
+func (c *Collection) ListVolumeServers() (nodes []*DataNode) {
+	for _, vl := range c.replicaType2VolumeLayout {
+		if vl != nil {
+			if list := vl.ListVolumeServers(); list != nil {
+				nodes = append(nodes, list...)
+			}
+		}
+	}
+	return
+}

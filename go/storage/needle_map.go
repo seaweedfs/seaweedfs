@@ -14,6 +14,7 @@ type NeedleMapper interface {
 	Get(key uint64) (element *NeedleValue, ok bool)
 	Delete(key uint64) error
 	Close()
+	Destroy() error
 	ContentSize() uint64
 	DeletedSize() uint64
 	FileCount() int
@@ -154,6 +155,10 @@ func (nm *NeedleMap) Delete(key uint64) error {
 }
 func (nm *NeedleMap) Close() {
 	_ = nm.indexFile.Close()
+}
+func (nm *NeedleMap) Destroy() error {
+	nm.Close()
+	return os.Remove(nm.indexFile.Name())
 }
 func (nm NeedleMap) ContentSize() uint64 {
 	return nm.FileByteCounter

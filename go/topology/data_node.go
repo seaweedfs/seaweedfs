@@ -1,8 +1,8 @@
 package topology
 
 import (
+	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/storage"
-	_ "fmt"
 	"strconv"
 )
 
@@ -28,10 +28,30 @@ func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) {
 	if _, ok := dn.volumes[v.Id]; !ok {
 		dn.volumes[v.Id] = v
 		dn.UpAdjustVolumeCountDelta(1)
-		dn.UpAdjustActiveVolumeCountDelta(1)
+		if !v.ReadOnly {
+			dn.UpAdjustActiveVolumeCountDelta(1)
+		}
 		dn.UpAdjustMaxVolumeId(v.Id)
 	} else {
 		dn.volumes[v.Id] = v
+	}
+}
+func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) {
+	actualVolumeMap := make(map[storage.VolumeId]storage.VolumeInfo)
+	for _, v := range actualVolumes {
+		actualVolumeMap[v.Id] = v
+	}
+	for vid, _ := range dn.volumes {
+		glog.V(2).Infoln("Checking volume id:", vid)
+		if _, ok := actualVolumeMap[vid]; !ok {
+			glog.V(0).Infoln("Deleting volume id:", vid)
+			delete(dn.volumes, vid)
+			dn.UpAdjustVolumeCountDelta(-1)
+			dn.UpAdjustActiveVolumeCountDelta(-1)
+		}
+	} //TODO: adjust max volume id, if need to reclaim volume ids
+	for _, v := range actualVolumes {
+		dn.AddOrUpdateVolume(v)
 	}
 }
 func (dn *DataNode) GetDataCenter() *DataCenter {

@@ -111,6 +111,20 @@ func (s *Store) AddVolume(volumeListString string, collection string, replicaPla
 	}
 	return e
 }
+func (s *Store) DeleteCollection(collection string) (e error) {
+	for _, location := range s.locations {
+		for k, v := range location.volumes {
+			if v.Collection == collection {
+				e = v.Destroy()
+				if e != nil {
+					return
+				}
+				delete(location.volumes, k)
+			}
+		}
+	}
+	return
+}
 func (s *Store) findVolume(vid VolumeId) *Volume {
 	for _, location := range s.locations {
 		if v, found := location.volumes[vid]; found {

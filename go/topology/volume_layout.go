@@ -8,6 +8,7 @@ import (
 	"sync"
 )
 
+// mapping from volume to its locations, inverted from server to volume
 type VolumeLayout struct {
 	rp              *storage.ReplicaPlacement
 	vid2location    map[storage.VolumeId]*VolumeLocationList
@@ -54,6 +55,13 @@ func (vl *VolumeLayout) Lookup(vid storage.VolumeId) []*DataNode {
 		return location.list
 	}
 	return nil
+}
+
+func (vl *VolumeLayout) ListVolumeServers() (nodes []*DataNode) {
+	for _, location := range vl.vid2location {
+		nodes = append(nodes, location.list...)
+	}
+	return
 }
 
 func (vl *VolumeLayout) PickForWrite(count int, dataCenter string) (*storage.VolumeId, int, *VolumeLocationList, error) {
@@ -134,10 +142,12 @@ func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid storage.VolumeId)
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
-	if vl.vid2location[vid].Remove(dn) {
-		if vl.vid2location[vid].Length() < vl.rp.GetCopyCount() {
-			glog.V(0).Infoln("Volume", vid, "has", vl.vid2location[vid].Length(), "replica, less than required", vl.rp.GetCopyCount())
-			return vl.removeFromWritable(vid)
+	if location, ok := vl.vid2location[vid]; ok {
+		if location.Remove(dn) {
+			if location.Length() < vl.rp.GetCopyCount() {
+				glog.V(0).Infoln("Volume", vid, "has", location.Length(), "replica, less than required", vl.rp.GetCopyCount())
+				return vl.removeFromWritable(vid)
+			}
 		}
 	}
 	return false

@@ -99,6 +99,15 @@ func (t *Topology) GetVolumeLayout(collectionName string, rp *storage.ReplicaPla
 	return t.collectionMap[collectionName].GetOrCreateVolumeLayout(rp)
 }
 
+func (t *Topology) GetCollection(collectionName string) (collection *Collection, ok bool) {
+	collection, ok = t.collectionMap[collectionName]
+	return
+}
+
+func (t *Topology) DeleteCollection(collectionName string) {
+	delete(t.collectionMap, collectionName)
+}
+
 func (t *Topology) RegisterVolumeLayout(v *storage.VolumeInfo, dn *DataNode) {
 	t.GetVolumeLayout(v.Collection, v.ReplicaPlacement).RegisterVolume(v, dn)
 }
@@ -112,8 +121,8 @@ func (t *Topology) RegisterVolumes(init bool, volumeInfos []storage.VolumeInfo, 
 		t.UnRegisterDataNode(dn)
 	}
 	dn = rack.GetOrCreateDataNode(ip, port, publicUrl, maxVolumeCount)
+	dn.UpdateVolumes(volumeInfos)
 	for _, v := range volumeInfos {
-		dn.AddOrUpdateVolume(v)
 		t.RegisterVolumeLayout(&v, dn)
 	}
 }

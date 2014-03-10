@@ -64,6 +64,10 @@ func (m *cdbMap) Close() {
 	}
 }
 
+func (m *cdbMap) Destroy() error {
+	return errors.New("Can not delete readonly volumes")
+}
+
 func (m cdbMap) ContentSize() uint64 {
 	return m.FileByteCounter
 }

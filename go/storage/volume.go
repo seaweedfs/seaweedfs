@@ -197,6 +197,21 @@ func (v *Volume) isFileUnchanged(n *Needle) bool {
 	}
 	return false
 }
+
+func (v *Volume) Destroy() (err error) {
+	if v.readOnly {
+		err = fmt.Errorf("%s is read-only", v.dataFile)
+		return
+	}
+	v.Close()
+	err = os.Remove(v.dataFile.Name())
+	if err != nil {
+		return
+	}
+	err = v.nm.Destroy()
+	return
+}
+
 func (v *Volume) write(n *Needle) (size uint32, err error) {
 	if v.readOnly {
 		err = fmt.Errorf("%s is read-only", v.dataFile)

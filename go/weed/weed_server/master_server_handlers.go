@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"code.google.com/p/weed-fs/go/storage"
+	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -76,6 +77,22 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusNotAcceptable)
 		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 	}
+}
+
+func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	collection, ok := ms.topo.GetCollection(r.FormValue("collection"))
+	if !ok {
+		writeJsonQuiet(w, r, map[string]interface{}{"error": "collection " + r.FormValue("collection") + "does not exist!"})
+		return
+	}
+	for _, server := range collection.ListVolumeServers() {
+		_, err := util.Get("http://" + server.Ip + ":" + strconv.Itoa(server.Port) + "/admin/delete_collection?collection=" + r.FormValue("collection"))
+		if err != nil {
+			writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+	ms.topo.DeleteCollection(r.FormValue("collection"))
 }
 
 func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
