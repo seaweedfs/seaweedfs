@@ -133,7 +133,7 @@ func (s *RaftServer) Join(peers []string) error {
 		err := postFollowingOneRedirect(target, "application/json", &b)
 
 		if err != nil {
-			glog.V(0).Infoln("Post returned error: ", err)
+			glog.V(0).Infoln("Post returned error: ", err.Error())
 			if _, ok := err.(*url.Error); ok {
 				// If we receive a network error try the next member
 				continue
