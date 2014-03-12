@@ -12,6 +12,7 @@ import (
 	"os"
 	"runtime"
 	"runtime/pprof"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -39,7 +40,7 @@ func init() {
 	cmdBenchmark.Run = runbenchmark // break init cycle
 	cmdBenchmark.IsDebug = cmdBenchmark.Flag.Bool("debug", false, "verbose debug information")
 	b.server = cmdBenchmark.Flag.String("server", "localhost:9333", "weedfs master location")
-	b.concurrency = cmdBenchmark.Flag.Int("c", 7, "number of concurrent write or read processes")
+	b.concurrency = cmdBenchmark.Flag.Int("c", 64, "number of concurrent write or read processes")
 	b.fileSize = cmdBenchmark.Flag.Int("size", 1024, "simulated file size in bytes")
 	b.numberOfFiles = cmdBenchmark.Flag.Int("n", 1024*1024, "number of files to write for each thread")
 	b.idListFile = cmdBenchmark.Flag.String("list", os.TempDir()+"/benchmark_list.txt", "list of uploaded file ids")
@@ -161,12 +162,15 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stats) {
 					serverLimitChan[fp.Server] = make(chan bool, 7)
 				}
 				serverLimitChan[fp.Server] <- true
-				fp.Upload(0, *b.server)
+				if _, err := fp.Upload(0, *b.server); err == nil {
+					fileIdLineChan <- fp.Fid
+					s.completed++
+					s.transferred += int64(*b.fileSize)
+				} else {
+					s.failed++
+				}
 				writeStats.addSample(time.Now().Sub(start))
 				<-serverLimitChan[fp.Server]
-				fileIdLineChan <- fp.Fid
-				s.transferred += int64(*b.fileSize)
-				s.completed++
 				if *cmdBenchmark.IsDebug {
 					fmt.Printf("writing %d file %s\n", id, fp.Fid)
 				}
@@ -291,8 +295,10 @@ const (
 	benchBucket     = 1000000000 / benchResolution
 )
 
+// An efficient statics collecting and rendering
 type stats struct {
 	data        []int
+	overflow    []int
 	completed   int
 	failed      int
 	transferred int64
@@ -303,15 +309,17 @@ type stats struct {
 var percentages = []int{50, 66, 75, 80, 90, 95, 98, 99, 100}
 
 func newStats() *stats {
-	return &stats{data: make([]int, benchResolution)}
+	return &stats{data: make([]int, benchResolution), overflow: make([]int, 0)}
 }
 
 func (s *stats) addSample(d time.Duration) {
 	index := int(d / benchBucket)
-	if 0 <= index && index < len(s.data) {
+	if index < 0 {
+		fmt.Printf("This request takes %3.1f seconds, skipping!\n", float64(index)/10000)
+	} else if index < len(s.data) {
 		s.data[int(d/benchBucket)]++
 	} else {
-		fmt.Printf("This request takes %3.1f seconds, skipping!\n", float64(index)/10000)
+		s.overflow = append(s.overflow, index)
 	}
 }
 
@@ -321,7 +329,7 @@ func (s *stats) checkProgress(testName string, finishChan chan bool) {
 	for {
 		select {
 		case <-finishChan:
-			break
+			return
 		case <-ticker:
 			fmt.Printf("Completed %d of %d requests, %3.1f%%\n", s.completed, *b.numberOfFiles, float64(s.completed)*100/float64(*b.numberOfFiles))
 		}
@@ -351,6 +359,16 @@ func (s *stats) printStats() {
 			}
 		}
 	}
+	n += len(s.overflow)
+	for i := 0; i < len(s.overflow); i++ {
+		sum += s.overflow[i]
+		if min > s.overflow[i] {
+			min = s.overflow[i]
+		}
+		if max < s.overflow[i] {
+			max = s.overflow[i]
+		}
+	}
 	avg := float64(sum) / float64(n)
 	varianceSum := 0.0
 	for i := 0; i < len(s.data); i++ {
@@ -358,6 +376,10 @@ func (s *stats) printStats() {
 			d := float64(i) - avg
 			varianceSum += d * d * float64(s.data[i])
 		}
+	}
+	for i := 0; i < len(s.overflow); i++ {
+		d := float64(s.overflow[i]) - avg
+		varianceSum += d * d
 	}
 	std := math.Sqrt(varianceSum / float64(n))
 	fmt.Printf("\nConnection Times (ms)\n")
@@ -376,6 +398,17 @@ func (s *stats) printStats() {
 		currentSum += s.data[i]
 		if s.data[i] > 0 && percentileIndex < len(percentiles) && currentSum >= percentiles[percentileIndex] {
 			fmt.Printf("  %3d%%    %5.1f ms\n", percentages[percentileIndex], float32(i)/10.0)
+			percentileIndex++
+			for percentileIndex < len(percentiles) && currentSum >= percentiles[percentileIndex] {
+				percentileIndex++
+			}
+		}
+	}
+	sort.Ints(s.overflow)
+	for i := 0; i < len(s.overflow); i++ {
+		currentSum++
+		if percentileIndex < len(percentiles) && currentSum >= percentiles[percentileIndex] {
+			fmt.Printf("  %3d%%    %5.1f ms\n", percentages[percentileIndex], float32(s.overflow[i])/10.0)
 			percentileIndex++
 			for percentileIndex < len(percentiles) && currentSum >= percentiles[percentileIndex] {
 				percentileIndex++
