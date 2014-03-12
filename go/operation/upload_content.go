@@ -53,35 +53,35 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	if isGzipped {
 		h.Set("Content-Encoding", "gzip")
 	}
-	file_writer, err := body_writer.CreatePart(h)
-	if err != nil {
-		glog.V(0).Infoln("error creating form file", err)
-		return nil, err
+	file_writer, cp_err := body_writer.CreatePart(h)
+	if cp_err != nil {
+		glog.V(0).Infoln("error creating form file", cp_err.Error())
+		return nil, cp_err
 	}
-	if err = fillBufferFunction(file_writer); err != nil {
+	if err := fillBufferFunction(file_writer); err != nil {
 		glog.V(0).Infoln("error copying data", err)
 		return nil, err
 	}
 	content_type := body_writer.FormDataContentType()
-	if err = body_writer.Close(); err != nil {
+	if err := body_writer.Close(); err != nil {
 		glog.V(0).Infoln("error closing body", err)
 		return nil, err
 	}
-	resp, err := client.Post(uploadUrl, content_type, body_buf)
-	if err != nil {
-		glog.V(0).Infoln("failing to upload to", uploadUrl, err.Error())
-		return nil, err
+	resp, post_err := client.Post(uploadUrl, content_type, body_buf)
+	if post_err != nil {
+		glog.V(0).Infoln("failing to upload to", uploadUrl, post_err.Error())
+		return nil, post_err
 	}
 	defer resp.Body.Close()
-	resp_body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+	resp_body, ra_err := ioutil.ReadAll(resp.Body)
+	if ra_err != nil {
+		return nil, ra_err
 	}
 	var ret UploadResult
-	err = json.Unmarshal(resp_body, &ret)
-	if err != nil {
+	unmarshal_err := json.Unmarshal(resp_body, &ret)
+	if unmarshal_err != nil {
 		glog.V(0).Infoln("failing to read upload resonse", uploadUrl, string(resp_body))
-		return nil, err
+		return nil, unmarshal_err
 	}
 	if ret.Error != "" {
 		return nil, errors.New(ret.Error)
