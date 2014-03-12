@@ -134,7 +134,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if n.Cookie != cookie {
-		glog.V(0).Infoln("request with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
+		glog.V(0).Infoln("request with unmaching cookie seen:", cookie, "expected:", n.Cookie, "from", r.RemoteAddr, "agent", r.UserAgent())
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
