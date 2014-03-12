@@ -21,6 +21,16 @@ type UploadResult struct {
 	Error string
 }
 
+var (
+	client *http.Client
+)
+
+func init() {
+	client = &http.Client{Transport: &http.Transport{
+		MaxIdleConnsPerHost: 1024,
+	}}
+}
+
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
 func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string) (*UploadResult, error) {
@@ -57,7 +67,7 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 		glog.V(0).Infoln("error closing body", err)
 		return nil, err
 	}
-	resp, err := http.Post(uploadUrl, content_type, body_buf)
+	resp, err := client.Post(uploadUrl, content_type, body_buf)
 	if err != nil {
 		glog.V(0).Infoln("failing to upload to", uploadUrl, err.Error())
 		return nil, err
