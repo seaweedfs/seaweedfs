@@ -28,7 +28,7 @@ var cmdMaster = &Command{
 
 var (
 	mport                   = cmdMaster.Flag.Int("port", 9333, "http listen port")
-	masterIp                = cmdMaster.Flag.String("ip", "", "master ip address")
+	masterIp                = cmdMaster.Flag.String("ip", "localhost", "master ip address")
 	metaFolder              = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
 	masterPeers             = cmdMaster.Flag.String("peers", "", "other master nodes in comma separated ip:port list")
 	volumeSizeLimitMB       = cmdMaster.Flag.Uint("volumeSizeLimitMB", 32*1000, "Default Volume Size in MegaBytes")
