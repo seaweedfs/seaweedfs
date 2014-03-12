@@ -59,7 +59,7 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	}
 	resp, err := http.Post(uploadUrl, content_type, body_buf)
 	if err != nil {
-		glog.V(0).Infoln("failing to upload to", uploadUrl)
+		glog.V(0).Infoln("failing to upload to", uploadUrl, err.Error())
 		return nil, err
 	}
 	defer resp.Body.Close()
