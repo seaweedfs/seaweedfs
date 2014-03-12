@@ -23,7 +23,7 @@ func init() {
 func Post(url string, values url.Values) ([]byte, error) {
 	r, err := client.PostForm(url, values)
 	if err != nil {
-		glog.V(0).Infoln("post to", url, err)
+		glog.V(0).Infoln(err)
 		return nil, err
 	}
 	defer r.Body.Close()
@@ -38,7 +38,7 @@ func Post(url string, values url.Values) ([]byte, error) {
 func Get(url string) ([]byte, error) {
 	r, err := client.Get(url)
 	if err != nil {
-		glog.V(0).Infoln("getting ", url, err)
+		glog.V(0).Infoln(err)
 		return nil, err
 	}
 	defer r.Body.Close()
