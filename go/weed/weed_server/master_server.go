@@ -5,6 +5,7 @@ import (
 	"code.google.com/p/weed-fs/go/replication"
 	"code.google.com/p/weed-fs/go/sequence"
 	"code.google.com/p/weed-fs/go/topology"
+	"code.google.com/p/weed-fs/go/util"
 	"github.com/goraft/raft"
 	"github.com/gorilla/mux"
 	"net/http"
@@ -28,7 +29,8 @@ type MasterServer struct {
 	vg     *replication.VolumeGrowth
 	vgLock sync.Mutex
 
-	raftServer *RaftServer
+	raftServer       *RaftServer
+	bounedLeaderChan chan int
 }
 
 func NewMasterServer(r *mux.Router, version string, port int, metaFolder string,
@@ -47,6 +49,7 @@ func NewMasterServer(r *mux.Router, version string, port int, metaFolder string,
 		garbageThreshold:        garbageThreshold,
 		whiteList:               whiteList,
 	}
+	ms.bounedLeaderChan = make(chan int, 16)
 	seq := sequence.NewFileSequencer(path.Join(metaFolder, "weed.seq"))
 	var e error
 	if ms.topo, e = topology.NewTopology("topo", confFile, seq,
@@ -95,6 +98,8 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 		if ms.IsLeader() {
 			f(w, r)
 		} else {
+			ms.bounedLeaderChan <- 1
+			defer func() { <-ms.bounedLeaderChan }()
 			targetUrl, err := url.Parse("http://" + ms.raftServer.Leader())
 			if err != nil {
 				writeJsonQuiet(w, r, map[string]interface{}{"error": "Leader URL Parse Error " + err.Error()})
@@ -102,6 +107,7 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 			}
 			glog.V(4).Infoln("proxying to leader", ms.raftServer.Leader())
 			proxy := httputil.NewSingleHostReverseProxy(targetUrl)
+			proxy.Transport = util.Transport
 			proxy.ServeHTTP(w, r)
 		}
 	}
