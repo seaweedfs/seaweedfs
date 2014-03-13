@@ -5,6 +5,7 @@ import (
 	"code.google.com/p/weed-fs/go/storage"
 	"errors"
 	"math/rand"
+	"strings"
 )
 
 type NodeId string
@@ -50,15 +51,18 @@ type NodeImpl struct {
 }
 
 // the first node must satisfy filterFirstNodeFn(), the rest nodes must have one free slot
-func (n *NodeImpl) RandomlyPickNodes(numberOfNodes int, filterFirstNodeFn func(dn Node) bool) (firstNode Node, restNodes []Node, err error) {
+func (n *NodeImpl) RandomlyPickNodes(numberOfNodes int, filterFirstNodeFn func(dn Node) error) (firstNode Node, restNodes []Node, err error) {
 	candidates := make([]Node, 0, len(n.children))
+	errs := make([]string, 0)
 	for _, node := range n.children {
-		if filterFirstNodeFn(node) {
+		if err := filterFirstNodeFn(node); err == nil {
 			candidates = append(candidates, node)
+		} else {
+			errs = append(errs, string(node.Id())+":"+err.Error())
 		}
 	}
 	if len(candidates) == 0 {
-		return nil, nil, errors.New("No matching data node found!")
+		return nil, nil, errors.New("No matching data node found! \n" + strings.Join(errs, "\n"))
 	}
 	firstNode = candidates[rand.Intn(len(candidates))]
 	glog.V(2).Infoln(n.Id(), "picked main node:", firstNode.Id())

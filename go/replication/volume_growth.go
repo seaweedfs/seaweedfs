@@ -4,7 +4,7 @@ import (
 	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/storage"
 	"code.google.com/p/weed-fs/go/topology"
-	"errors"
+	"fmt"
 	"math/rand"
 	"sync"
 )
@@ -74,27 +74,36 @@ func (vg *VolumeGrowth) findAndGrow(topo *topology.Topology, preferredDataCenter
 
 func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *topology.Topology, preferredDataCenter string, rp *storage.ReplicaPlacement) (servers []*topology.DataNode, err error) {
 	//find main datacenter and other data centers
-	mainDataCenter, otherDataCenters, dc_err := topo.RandomlyPickNodes(rp.DiffDataCenterCount+1, func(node topology.Node) bool {
+	mainDataCenter, otherDataCenters, dc_err := topo.RandomlyPickNodes(rp.DiffDataCenterCount+1, func(node topology.Node) error {
 		if preferredDataCenter != "" && node.IsDataCenter() && node.Id() != topology.NodeId(preferredDataCenter) {
-			return false
+			return fmt.Errorf("Not matching preferred:%s", preferredDataCenter)
 		}
-		return node.FreeSpace() > rp.DiffRackCount+rp.SameRackCount+1
+		if node.FreeSpace() < rp.DiffRackCount+rp.SameRackCount+1 {
+			return fmt.Errorf("Free:%d < Expected:%d", node.FreeSpace(), rp.DiffRackCount+rp.SameRackCount+1)
+		}
+		return nil
 	})
 	if dc_err != nil {
 		return nil, dc_err
 	}
 
 	//find main rack and other racks
-	mainRack, otherRacks, rack_err := mainDataCenter.(*topology.DataCenter).RandomlyPickNodes(rp.DiffRackCount+1, func(node topology.Node) bool {
-		return node.FreeSpace() > rp.SameRackCount+1
+	mainRack, otherRacks, rack_err := mainDataCenter.(*topology.DataCenter).RandomlyPickNodes(rp.DiffRackCount+1, func(node topology.Node) error {
+		if node.FreeSpace() < rp.SameRackCount+1 {
+			return fmt.Errorf("Free:%d < Expected:%d", node.FreeSpace(), rp.SameRackCount+1)
+		}
+		return nil
 	})
 	if rack_err != nil {
 		return nil, rack_err
 	}
 
 	//find main rack and other racks
-	mainServer, otherServers, server_err := mainRack.(*topology.Rack).RandomlyPickNodes(rp.SameRackCount+1, func(node topology.Node) bool {
-		return node.FreeSpace() > 1
+	mainServer, otherServers, server_err := mainRack.(*topology.Rack).RandomlyPickNodes(rp.SameRackCount+1, func(node topology.Node) error {
+		if node.FreeSpace() < 1 {
+			return fmt.Errorf("Free:%d < Expected:%d", node.FreeSpace(), 1)
+		}
+		return nil
 	})
 	if server_err != nil {
 		return nil, server_err
@@ -132,7 +141,7 @@ func (vg *VolumeGrowth) grow(topo *topology.Topology, vid storage.VolumeId, coll
 			glog.V(0).Infoln("Created Volume", vid, "on", server)
 		} else {
 			glog.V(0).Infoln("Failed to assign", vid, "to", servers, "error", err)
-			return errors.New("Failed to assign " + vid.String() + ", " + err.Error())
+			return fmt.Errorf("Failed to assign %s: %s", vid.String(), err.Error())
 		}
 	}
 	return nil
