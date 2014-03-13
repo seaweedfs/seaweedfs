@@ -150,7 +150,7 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 	}
 	if err != nil {
 		w.WriteHeader(http.StatusNotAcceptable)
-		writeJsonQuiet(w, r, map[string]string{"error": "parameter replication " + err.Error()})
+		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 	} else {
 		w.WriteHeader(http.StatusNotAcceptable)
 		writeJsonQuiet(w, r, map[string]interface{}{"count": count})
