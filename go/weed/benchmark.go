@@ -62,18 +62,21 @@ var cmdBenchmark = &Command{
   2) read the files out
   
   The file content is mostly zero, but no compression is done.
-  
-  By default, write 1 million files of 1KB each with 7 concurrent threads, 
-  and randomly read them out with 7 concurrent threads.
-  
+    
   You can choose to only benchmark read or write.
   During write, the list of uploaded file ids is stored in "-list" specified file.
   You can also use your own list of file ids to run read test.
   
   Write speed and read speed will be collected.
   The numbers are used to get a sense of the system.
-  But usually your network or the hard drive is 
-  the real bottleneck.
+  Usually your network or the hard drive is the real bottleneck.
+  
+  Another thing to watch is whether the volumes are evenly distributed
+  to each volume server. Because the 7 more benchmark volumes are randomly distributed
+  to servers with free slots, it's highly possible some servers have uneven amount of
+  benchmark volumes. To remedy this, you can use this to grow the benchmark volumes 
+  before starting the benchmark command:
+    http://localhost:9333/vol/grow?collection=benchmark&count=5
 
   `,
 }
