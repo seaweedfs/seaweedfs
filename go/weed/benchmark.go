@@ -40,7 +40,7 @@ func init() {
 	cmdBenchmark.Run = runbenchmark // break init cycle
 	cmdBenchmark.IsDebug = cmdBenchmark.Flag.Bool("debug", false, "verbose debug information")
 	b.server = cmdBenchmark.Flag.String("server", "localhost:9333", "weedfs master location")
-	b.concurrency = cmdBenchmark.Flag.Int("c", 64, "number of concurrent write or read processes")
+	b.concurrency = cmdBenchmark.Flag.Int("c", 16, "number of concurrent write or read processes")
 	b.fileSize = cmdBenchmark.Flag.Int("size", 1024, "simulated file size in bytes")
 	b.numberOfFiles = cmdBenchmark.Flag.Int("n", 1024*1024, "number of files to write for each thread")
 	b.idListFile = cmdBenchmark.Flag.String("list", os.TempDir()+"/benchmark_list.txt", "list of uploaded file ids")
@@ -77,6 +77,9 @@ var cmdBenchmark = &Command{
   benchmark volumes. To remedy this, you can use this to grow the benchmark volumes 
   before starting the benchmark command:
     http://localhost:9333/vol/grow?collection=benchmark&count=5
+
+  After benchmarking, you can clean up the written data by deleting the benchmark collection
+    http://localhost:9333/col/delete?collection=benchmark
 
   `,
 }
@@ -329,12 +332,19 @@ func (s *stats) addSample(d time.Duration) {
 func (s *stats) checkProgress(testName string, finishChan chan bool) {
 	fmt.Printf("\n------------ %s ----------\n", testName)
 	ticker := time.Tick(time.Second)
+	lastCompleted, lastTransferred, lastTime := 0, int64(0), time.Now()
 	for {
 		select {
 		case <-finishChan:
 			return
-		case <-ticker:
-			fmt.Printf("Completed %d of %d requests, %3.1f%%\n", s.completed, *b.numberOfFiles, float64(s.completed)*100/float64(*b.numberOfFiles))
+		case t := <-ticker:
+			completed, transferred, taken := s.completed-lastCompleted, s.transferred-lastTransferred, t.Sub(lastTime)
+			fmt.Printf("Completed %d of %d requests, %3.1f%% %3.1f/s %3.1fMB/s\n",
+				s.completed, *b.numberOfFiles, float64(s.completed)*100/float64(*b.numberOfFiles),
+				float64(completed)*float64(int64(time.Second))/float64(int64(taken)),
+				float64(transferred)*float64(int64(time.Second))/float64(int64(taken))/float64(1024*1024),
+			)
+			lastCompleted, lastTransferred, lastTime = s.completed, s.transferred, t
 		}
 	}
 }
