@@ -58,13 +58,12 @@ func NewRaftServer(r *mux.Router, version string, peers []string, httpAddr strin
 
 		if !s.raftServer.IsLogEmpty() {
 			glog.V(0).Infoln("Cannot join with an existing log")
+		} else {
+			if err := s.Join(s.peers); err != nil {
+				return nil
+			}
+			glog.V(0).Infoln("Joined cluster")
 		}
-
-		if err := s.Join(s.peers); err != nil {
-			return nil
-		}
-
-		glog.V(0).Infoln("Joined cluster")
 
 		// Initialize the server by joining itself.
 	} else if s.raftServer.IsLogEmpty() {
