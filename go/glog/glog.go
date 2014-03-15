@@ -557,12 +557,10 @@ func (l *loggingT) header(s severity) *buffer {
 	buf.twoDigits(9, minute)
 	buf.tmp[11] = ':'
 	buf.twoDigits(12, second)
-	//buf.tmp[14] = '.'
-	//buf.nDigits(6, 15, now.Nanosecond()/1000)
-	buf.tmp[21] = ' '
-	buf.nDigits(5, 22, pid) // TODO: should be TID
-	buf.tmp[27] = ' '
-	buf.Write(buf.tmp[:28])
+	buf.tmp[14] = ' '
+	buf.nDigits(5, 15, pid) // TODO: should be TID
+	buf.tmp[20] = ' '
+	buf.Write(buf.tmp[:21])
 	buf.WriteString(file)
 	buf.tmp[0] = ':'
 	n := buf.someDigits(1, line)
