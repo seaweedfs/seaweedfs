@@ -10,7 +10,7 @@ import (
 func (t *Topology) StartRefreshWritableVolumes(garbageThreshold string) {
 	go func() {
 		for {
-			if t.IsLeader {
+			if t.IsLeader() {
 				freshThreshHold := time.Now().Unix() - 3*t.pulse //3 times of sleep interval
 				t.CollectDeadNodeAndFullVolumes(freshThreshHold, t.volumeSizeLimit)
 			}
@@ -19,7 +19,7 @@ func (t *Topology) StartRefreshWritableVolumes(garbageThreshold string) {
 	}()
 	go func(garbageThreshold string) {
 		c := time.Tick(15 * time.Minute)
-		if t.IsLeader {
+		if t.IsLeader() {
 			for _ = range c {
 				t.Vacuum(garbageThreshold)
 			}

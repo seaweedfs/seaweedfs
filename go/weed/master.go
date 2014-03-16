@@ -74,7 +74,7 @@ func runMaster(cmd *Command, args []string) bool {
 		if *masterPeers != "" {
 			peers = strings.Split(*masterPeers, ",")
 		}
-		raftServer := weed_server.NewRaftServer(r, VERSION, peers, *masterIp+":"+strconv.Itoa(*mport), *metaFolder)
+		raftServer := weed_server.NewRaftServer(r, VERSION, peers, *masterIp+":"+strconv.Itoa(*mport), *metaFolder, ms.Topo, *mpulse)
 		ms.SetRaftServer(raftServer)
 	}()
 

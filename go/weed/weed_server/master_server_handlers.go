@@ -19,7 +19,7 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 	}
 	volumeId, err := storage.NewVolumeId(vid)
 	if err == nil {
-		machines := ms.topo.Lookup(collection, volumeId)
+		machines := ms.Topo.Lookup(collection, volumeId)
 		if machines != nil {
 			ret := []map[string]string{}
 			for _, dn := range machines {
@@ -54,23 +54,23 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if ms.topo.GetVolumeLayout(collection, replicaPlacement).GetActiveVolumeCount(dataCenter) <= 0 {
-		if ms.topo.FreeSpace() <= 0 {
+	if ms.Topo.GetVolumeLayout(collection, replicaPlacement).GetActiveVolumeCount(dataCenter) <= 0 {
+		if ms.Topo.FreeSpace() <= 0 {
 			w.WriteHeader(http.StatusNotFound)
 			writeJsonQuiet(w, r, map[string]string{"error": "No free volumes left!"})
 			return
 		} else {
 			ms.vgLock.Lock()
 			defer ms.vgLock.Unlock()
-			if ms.topo.GetVolumeLayout(collection, replicaPlacement).GetActiveVolumeCount(dataCenter) <= 0 {
-				if _, err = ms.vg.AutomaticGrowByType(collection, replicaPlacement, dataCenter, ms.topo); err != nil {
+			if ms.Topo.GetVolumeLayout(collection, replicaPlacement).GetActiveVolumeCount(dataCenter) <= 0 {
+				if _, err = ms.vg.AutomaticGrowByType(collection, replicaPlacement, dataCenter, ms.Topo); err != nil {
 					writeJsonQuiet(w, r, map[string]string{"error": "Cannot grow volume group! " + err.Error()})
 					return
 				}
 			}
 		}
 	}
-	fid, count, dn, err := ms.topo.PickForWrite(collection, replicaPlacement, c, dataCenter)
+	fid, count, dn, err := ms.Topo.PickForWrite(collection, replicaPlacement, c, dataCenter)
 	if err == nil {
 		writeJsonQuiet(w, r, map[string]interface{}{"fid": fid, "url": dn.Url(), "publicUrl": dn.PublicUrl, "count": count})
 	} else {
@@ -80,7 +80,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	collection, ok := ms.topo.GetCollection(r.FormValue("collection"))
+	collection, ok := ms.Topo.GetCollection(r.FormValue("collection"))
 	if !ok {
 		writeJsonQuiet(w, r, map[string]interface{}{"error": "collection " + r.FormValue("collection") + "does not exist!"})
 		return
@@ -92,7 +92,7 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 			return
 		}
 	}
-	ms.topo.DeleteCollection(r.FormValue("collection"))
+	ms.Topo.DeleteCollection(r.FormValue("collection"))
 }
 
 func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +111,7 @@ func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	debug(s, "volumes", r.FormValue("volumes"))
-	ms.topo.RegisterVolumes(init, *volumes, ip, port, publicUrl, maxVolumeCount, r.FormValue("dataCenter"), r.FormValue("rack"))
+	ms.Topo.RegisterVolumes(init, *volumes, ip, port, publicUrl, maxVolumeCount, r.FormValue("dataCenter"), r.FormValue("rack"))
 	m := make(map[string]interface{})
 	m["VolumeSizeLimit"] = uint64(ms.volumeSizeLimitMB) * 1024 * 1024
 	writeJsonQuiet(w, r, m)
@@ -120,7 +120,7 @@ func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = ms.version
-	m["Topology"] = ms.topo.ToMap()
+	m["Topology"] = ms.Topo.ToMap()
 	writeJsonQuiet(w, r, m)
 }
 
@@ -130,7 +130,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 		gcThreshold = ms.garbageThreshold
 	}
 	debug("garbageThreshold =", gcThreshold)
-	ms.topo.Vacuum(gcThreshold)
+	ms.Topo.Vacuum(gcThreshold)
 	ms.dirStatusHandler(w, r)
 }
 
@@ -139,10 +139,10 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 	replicaPlacement, err := storage.NewReplicaPlacementFromString(r.FormValue("replication"))
 	if err == nil {
 		if count, err = strconv.Atoi(r.FormValue("count")); err == nil {
-			if ms.topo.FreeSpace() < count*replicaPlacement.GetCopyCount() {
-				err = errors.New("Only " + strconv.Itoa(ms.topo.FreeSpace()) + " volumes left! Not enough for " + strconv.Itoa(count*replicaPlacement.GetCopyCount()))
+			if ms.Topo.FreeSpace() < count*replicaPlacement.GetCopyCount() {
+				err = errors.New("Only " + strconv.Itoa(ms.Topo.FreeSpace()) + " volumes left! Not enough for " + strconv.Itoa(count*replicaPlacement.GetCopyCount()))
 			} else {
-				count, err = ms.vg.GrowByCountAndType(count, r.FormValue("collection"), replicaPlacement, r.FormValue("dataCenter"), ms.topo)
+				count, err = ms.vg.GrowByCountAndType(count, r.FormValue("collection"), replicaPlacement, r.FormValue("dataCenter"), ms.Topo)
 			}
 		} else {
 			err = errors.New("parameter count is not found")
@@ -160,7 +160,7 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 func (ms *MasterServer) volumeStatusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = ms.version
-	m["Volumes"] = ms.topo.ToVolumeMap()
+	m["Volumes"] = ms.Topo.ToVolumeMap()
 	writeJsonQuiet(w, r, m)
 }
 
@@ -171,7 +171,7 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 		debug("parsing error:", err, r.URL.Path)
 		return
 	}
-	machines := ms.topo.Lookup("", volumeId)
+	machines := ms.Topo.Lookup("", volumeId)
 	if machines != nil && len(machines) > 0 {
 		http.Redirect(w, r, "http://"+machines[0].PublicUrl+r.URL.Path, http.StatusMovedPermanently)
 	} else {
@@ -181,9 +181,9 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *http.Request) {
-	if ms.IsLeader() {
+	if ms.Topo.IsLeader() {
 		submitForClientHandler(w, r, "localhost:"+strconv.Itoa(ms.port))
 	} else {
-		submitForClientHandler(w, r, ms.raftServer.Leader())
+		submitForClientHandler(w, r, ms.Topo.RaftServer.Leader())
 	}
 }

@@ -25,11 +25,10 @@ type MasterServer struct {
 	whiteList               []string
 	version                 string
 
-	topo   *topology.Topology
+	Topo   *topology.Topology
 	vg     *replication.VolumeGrowth
 	vgLock sync.Mutex
 
-	raftServer       *RaftServer
 	bounedLeaderChan chan int
 }
 
@@ -52,7 +51,7 @@ func NewMasterServer(r *mux.Router, version string, port int, metaFolder string,
 	ms.bounedLeaderChan = make(chan int, 16)
 	seq := sequence.NewFileSequencer(path.Join(metaFolder, "weed.seq"))
 	var e error
-	if ms.topo, e = topology.NewTopology("topo", confFile, seq,
+	if ms.Topo, e = topology.NewTopology("topo", confFile, seq,
 		uint64(volumeSizeLimitMB)*1024*1024, pulseSeconds); e != nil {
 		glog.Fatalf("cannot create topology:%s", e)
 	}
@@ -70,42 +69,36 @@ func NewMasterServer(r *mux.Router, version string, port int, metaFolder string,
 	r.HandleFunc("/submit", secure(ms.whiteList, ms.submitFromMasterServerHandler))
 	r.HandleFunc("/{filekey}", ms.redirectHandler)
 
-	ms.topo.StartRefreshWritableVolumes(garbageThreshold)
+	ms.Topo.StartRefreshWritableVolumes(garbageThreshold)
 
 	return ms
 }
 
 func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
-	ms.raftServer = raftServer
-	ms.raftServer.raftServer.AddEventListener(raft.LeaderChangeEventType, func(e raft.Event) {
-		ms.topo.IsLeader = ms.IsLeader()
-		glog.V(0).Infoln("[", ms.raftServer.Name(), "]", ms.raftServer.Leader(), "becomes leader.")
+	ms.Topo.RaftServer = raftServer.raftServer
+	ms.Topo.RaftServer.AddEventListener(raft.LeaderChangeEventType, func(e raft.Event) {
+		glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "becomes leader.")
 	})
-	ms.topo.IsLeader = ms.IsLeader()
-	if ms.topo.IsLeader {
-		glog.V(0).Infoln("[", ms.raftServer.Name(), "]", "I am the leader!")
+	if ms.Topo.IsLeader() {
+		glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", "I am the leader!")
 	} else {
-		glog.V(0).Infoln("[", ms.raftServer.Name(), "]", ms.raftServer.Leader(), "is the leader.")
+		glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "is the leader.")
 	}
-}
-
-func (ms *MasterServer) IsLeader() bool {
-	return ms.raftServer == nil || ms.raftServer.IsLeader()
 }
 
 func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if ms.IsLeader() {
+		if ms.Topo.IsLeader() {
 			f(w, r)
 		} else {
 			ms.bounedLeaderChan <- 1
 			defer func() { <-ms.bounedLeaderChan }()
-			targetUrl, err := url.Parse("http://" + ms.raftServer.Leader())
+			targetUrl, err := url.Parse("http://" + ms.Topo.RaftServer.Leader())
 			if err != nil {
 				writeJsonQuiet(w, r, map[string]interface{}{"error": "Leader URL Parse Error " + err.Error()})
 				return
 			}
-			glog.V(4).Infoln("proxying to leader", ms.raftServer.Leader())
+			glog.V(4).Infoln("proxying to leader", ms.Topo.RaftServer.Leader())
 			proxy := httputil.NewSingleHostReverseProxy(targetUrl)
 			proxy.Transport = util.Transport
 			proxy.ServeHTTP(w, r)

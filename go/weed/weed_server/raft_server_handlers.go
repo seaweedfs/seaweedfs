@@ -40,10 +40,10 @@ func (s *RaftServer) HandleFunc(pattern string, handler func(http.ResponseWriter
 }
 
 func (s *RaftServer) redirectToLeader(w http.ResponseWriter, req *http.Request) {
-	if s.Leader() != "" {
+	if s.topo.Leader() != "" {
 		//http.StatusMovedPermanently does not cause http POST following redirection
-		glog.V(0).Infoln("Redirecting to", http.StatusMovedPermanently, "http://"+s.Leader()+req.URL.Path)
-		http.Redirect(w, req, "http://"+s.Leader()+req.URL.Path, http.StatusMovedPermanently)
+		glog.V(0).Infoln("Redirecting to", http.StatusMovedPermanently, "http://"+s.topo.Leader()+req.URL.Path)
+		http.Redirect(w, req, "http://"+s.topo.Leader()+req.URL.Path, http.StatusMovedPermanently)
 	} else {
 		glog.V(0).Infoln("Error: Leader Unknown")
 		http.Error(w, "Leader unknown", http.StatusInternalServerError)
@@ -52,8 +52,8 @@ func (s *RaftServer) redirectToLeader(w http.ResponseWriter, req *http.Request) 
 
 func (s *RaftServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
-	m["IsLeader"] = s.IsLeader()
-	m["Leader"] = s.Leader()
+	m["IsLeader"] = s.topo.IsLeader()
+	m["Leader"] = s.topo.Leader()
 	m["Peers"] = s.Peers()
 	writeJsonQuiet(w, r, m)
 }

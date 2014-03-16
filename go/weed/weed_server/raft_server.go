@@ -3,6 +3,7 @@ package weed_server
 import (
 	"bytes"
 	"code.google.com/p/weed-fs/go/glog"
+	"code.google.com/p/weed-fs/go/topology"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,31 +23,35 @@ type RaftServer struct {
 	httpAddr   string
 	version    string
 	router     *mux.Router
+	topo       *topology.Topology
 }
 
-func NewRaftServer(r *mux.Router, version string, peers []string, httpAddr string, dataDir string) *RaftServer {
+func NewRaftServer(r *mux.Router, version string, peers []string, httpAddr string, dataDir string, topo *topology.Topology, pulseSeconds int) *RaftServer {
 	s := &RaftServer{
 		version:  version,
 		peers:    peers,
 		httpAddr: httpAddr,
 		dataDir:  dataDir,
 		router:   r,
+		topo:     topo,
 	}
 
 	if glog.V(4) {
 		raft.SetLogLevel(2)
 	}
 
+	raft.RegisterCommand(&topology.MaxVolumeIdCommand{})
+
 	var err error
 	transporter := raft.NewHTTPTransporter("/cluster")
-	s.raftServer, err = raft.NewServer(s.httpAddr, s.dataDir, transporter, nil, nil, "")
+	s.raftServer, err = raft.NewServer(s.httpAddr, s.dataDir, transporter, nil, topo, "")
 	if err != nil {
 		glog.V(0).Infoln(err)
 		return nil
 	}
 	transporter.Install(s.raftServer, s)
 	s.raftServer.SetHeartbeatInterval(1 * time.Second)
-	s.raftServer.SetElectionTimeout(1500 * time.Millisecond)
+	s.raftServer.SetElectionTimeout(time.Duration(pulseSeconds) * 1150 * time.Millisecond)
 	s.raftServer.Start()
 
 	s.router.HandleFunc("/cluster/join", s.joinHandler).Methods("POST")
@@ -84,25 +89,6 @@ func NewRaftServer(r *mux.Router, version string, peers []string, httpAddr strin
 	}
 
 	return s
-}
-
-func (s *RaftServer) Name() string {
-	return s.raftServer.Name()
-}
-
-func (s *RaftServer) IsLeader() bool {
-	return s.Leader() == s.raftServer.Name()
-}
-
-func (s *RaftServer) Leader() string {
-	l := s.raftServer.Leader()
-
-	if l == "" {
-		// We are a single node cluster, we are the leader
-		return s.raftServer.Name()
-	}
-
-	return l
 }
 
 func (s *RaftServer) Peers() (members []string) {

@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -51,7 +52,7 @@ var (
 	volumePublicUrl               = cmdServer.Flag.String("publicUrl", "", "Publicly accessible <ip|server_name>:<port>")
 	volumeDataFolders             = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	volumeMaxDataVolumeCounts     = cmdServer.Flag.String("max", "7", "maximum numbers of volumes, count[,count]...")
-	volumePulse                   = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than the master's setting")
+	volumePulse                   = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 
 	serverWhiteList []string
 )
@@ -95,6 +96,12 @@ func runServer(cmd *Command, args []string) bool {
 		serverWhiteList = strings.Split(*serverWhiteListOption, ",")
 	}
 
+	var raftWaitForMaster sync.WaitGroup
+	var volumeWait sync.WaitGroup
+
+	raftWaitForMaster.Add(1)
+	volumeWait.Add(1)
+
 	go func() {
 		r := mux.NewRouter()
 		ms := weed_server.NewMasterServer(r, VERSION, *masterPort, *masterMetaFolder,
@@ -109,21 +116,25 @@ func runServer(cmd *Command, args []string) bool {
 		}
 
 		go func() {
+			raftWaitForMaster.Wait()
 			time.Sleep(100 * time.Millisecond)
 			var peers []string
 			if *serverPeers != "" {
 				peers = strings.Split(*serverPeers, ",")
 			}
-			raftServer := weed_server.NewRaftServer(r, VERSION, peers, *serverIp+":"+strconv.Itoa(*masterPort), *masterMetaFolder)
+			raftServer := weed_server.NewRaftServer(r, VERSION, peers, *serverIp+":"+strconv.Itoa(*masterPort), *masterMetaFolder, ms.Topo, *volumePulse)
 			ms.SetRaftServer(raftServer)
+			volumeWait.Done()
 		}()
 
+		raftWaitForMaster.Done()
 		e := masterServer.ListenAndServe()
 		if e != nil {
 			glog.Fatalf("Fail to start master:%s", e)
 		}
 	}()
 
+	volumeWait.Wait()
 	time.Sleep(100 * time.Millisecond)
 	r := http.NewServeMux()
 	weed_server.NewVolumeServer(r, VERSION, *serverIp, *volumePort, *volumePublicUrl, folders, maxCounts,
