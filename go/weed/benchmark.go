@@ -193,7 +193,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stats) {
 
 func readFiles(fileIdLineChan chan string, s *stats) {
 	serverLimitChan := make(map[string]chan bool)
-	masterLimitChan := make(chan bool, 7)
+	masterLimitChan := make(chan bool, 1)
 	for {
 		if fid, ok := <-fileIdLineChan; ok {
 			if len(fid) == 0 {
@@ -210,10 +210,12 @@ func readFiles(fileIdLineChan chan string, s *stats) {
 			start := time.Now()
 			if server, ok := b.vid2server[vid]; !ok {
 				masterLimitChan <- true
-				if ret, err := operation.Lookup(*b.server, vid); err == nil {
-					if len(ret.Locations) > 0 {
-						server = ret.Locations[0].PublicUrl
-						b.vid2server[vid] = server
+				if _, now_ok := b.vid2server[vid]; !now_ok {
+					if ret, err := operation.Lookup(*b.server, vid); err == nil {
+						if len(ret.Locations) > 0 {
+							server = ret.Locations[0].PublicUrl
+							b.vid2server[vid] = server
+						}
 					}
 				}
 				<-masterLimitChan
