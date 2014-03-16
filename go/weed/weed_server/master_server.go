@@ -94,8 +94,8 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 			ms.bounedLeaderChan <- 1
 			defer func() { <-ms.bounedLeaderChan }()
 			targetUrl, err := url.Parse("http://" + ms.Topo.RaftServer.Leader())
-			if err != nil {
-				writeJsonQuiet(w, r, map[string]interface{}{"error": "Leader URL Parse Error " + err.Error()})
+			if err != nil || ms.Topo.RaftServer.Leader() == "" {
+				writeJsonQuiet(w, r, map[string]interface{}{"error": "Leader URL http://" + ms.Topo.RaftServer.Leader() + " Parse Error " + err.Error()})
 				return
 			}
 			glog.V(4).Infoln("proxying to leader", ms.Topo.RaftServer.Leader())
