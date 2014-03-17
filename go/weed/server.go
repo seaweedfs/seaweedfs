@@ -45,7 +45,7 @@ var (
 	serverPeers                   = cmdServer.Flag.String("peers", "", "other master nodes in comma separated ip:masterPort list")
 	masterPort                    = cmdServer.Flag.Int("masterPort", 9333, "master server http listen port")
 	masterMetaFolder              = cmdServer.Flag.String("mdir", "", "data directory to store meta data, default to same as -dir specified")
-	masterVolumeSizeLimitMB       = cmdServer.Flag.Uint("volumeSizeLimitMB", 32*1000, "Default Volume Size in MegaBytes")
+	masterVolumeSizeLimitMB       = cmdServer.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
 	masterConfFile                = cmdServer.Flag.String("conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
 	masterDefaultReplicaPlacement = cmdServer.Flag.String("defaultReplicaPlacement", "000", "Default replication type if not specified.")
 	volumePort                    = cmdServer.Flag.Int("port", 8080, "volume server http listen port")
