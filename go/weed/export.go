@@ -103,8 +103,8 @@ func runExport(cmd *Command, args []string) bool {
 		version = superBlock.Version
 		return nil
 	}, func(n *storage.Needle, offset int64) error {
-		debug("key", n.Id, "offset", offset, "size", n.Size, "disk_size", n.DiskSize(), "gzip", n.IsGzipped())
 		nv, ok := nm.Get(n.Id)
+		glog.V(3).Infoln("key", n.Id, "offset", offset, "size", n.Size, "disk_size", n.DiskSize(), "gzip", n.IsGzipped(), "ok", ok, "nv", nv)
 		if ok && nv.Size > 0 {
 			return walker(vid, n, version)
 		} else {
