@@ -161,7 +161,8 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stats) {
 	for {
 		if id, ok := <-idChan; ok {
 			start := time.Now()
-			fp := &operation.FilePart{Reader: &FakeReader{id: uint64(id), size: int64(*b.fileSize)}, FileSize: int64(*b.fileSize)}
+			fileSize := int64(*b.fileSize + rand.Intn(64))
+			fp := &operation.FilePart{Reader: &FakeReader{id: uint64(id), size: fileSize}, FileSize: fileSize}
 			if assignResult, err := operation.Assign(*b.server, 1, "", *b.collection); err == nil {
 				fp.Server, fp.Fid, fp.Collection = assignResult.PublicUrl, assignResult.Fid, *b.collection
 				if _, ok := serverLimitChan[fp.Server]; !ok {
@@ -171,7 +172,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stats) {
 				if _, err := fp.Upload(0, *b.server); err == nil {
 					fileIdLineChan <- fp.Fid
 					s.completed++
-					s.transferred += int64(*b.fileSize)
+					s.transferred += fileSize
 				} else {
 					s.failed++
 				}
