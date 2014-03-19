@@ -42,7 +42,6 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) {
 		actualVolumeMap[v.Id] = v
 	}
 	for vid, _ := range dn.volumes {
-		glog.V(2).Infoln("Checking volume id:", vid)
 		if _, ok := actualVolumeMap[vid]; !ok {
 			glog.V(0).Infoln("Deleting volume id:", vid)
 			delete(dn.volumes, vid)
