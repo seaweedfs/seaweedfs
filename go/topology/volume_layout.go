@@ -33,15 +33,22 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	if _, ok := vl.vid2location[v.Id]; !ok {
 		vl.vid2location[v.Id] = NewVolumeLocationList()
 	}
-	if vl.vid2location[v.Id].Add(dn) {
-		if len(vl.vid2location[v.Id].list) == v.ReplicaPlacement.GetCopyCount() {
-			if vl.isWritable(v) {
-				vl.writables = append(vl.writables, v.Id)
-			} else {
-				vl.removeFromWritable(v.Id)
-			}
+	vl.vid2location[v.Id].Set(dn)
+	glog.V(3).Infoln("volume", v.Id, "added to dn", dn, "len", vl.vid2location[v.Id].Length(), "copy", v.ReplicaPlacement.GetCopyCount())
+	if vl.vid2location[v.Id].Length() == vl.rp.GetCopyCount() && vl.isWritable(v) {
+		vl.AddToWritable(v.Id)
+	} else {
+		vl.removeFromWritable(v.Id)
+	}
+}
+
+func (vl *VolumeLayout) AddToWritable(vid storage.VolumeId) {
+	for _, id := range vl.writables {
+		if vid == id {
+			return
 		}
 	}
+	vl.writables = append(vl.writables, vid)
 }
 
 func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool {
@@ -156,10 +163,9 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid storage.VolumeId) b
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
-	if vl.vid2location[vid].Add(dn) {
-		if vl.vid2location[vid].Length() >= vl.rp.GetCopyCount() {
-			return vl.setVolumeWritable(vid)
-		}
+	vl.vid2location[vid].Set(dn)
+	if vl.vid2location[vid].Length() >= vl.rp.GetCopyCount() {
+		return vl.setVolumeWritable(vid)
 	}
 	return false
 }

@@ -106,12 +106,12 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool) error {
 		if v.readOnly {
 			glog.V(1).Infoln("open to read file", fileName+".idx")
 			if indexFile, e = os.OpenFile(fileName+".idx", os.O_RDONLY, 0644); e != nil {
-				return fmt.Errorf("cannot read Volume Data %s.dat: %s", fileName, e.Error())
+				return fmt.Errorf("cannot read Volume Index %s.idx: %s", fileName, e.Error())
 			}
 		} else {
 			glog.V(1).Infoln("open to write file", fileName+".idx")
 			if indexFile, e = os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644); e != nil {
-				return fmt.Errorf("cannot write Volume Data %s.dat: %s", fileName, e.Error())
+				return fmt.Errorf("cannot write Volume Index %s.idx: %s", fileName, e.Error())
 			}
 		}
 		glog.V(0).Infoln("loading file", fileName+".idx", "readonly", v.readOnly)
@@ -287,7 +287,8 @@ func (v *Volume) Compact() error {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
 
-	filePath := path.Join(v.dir, v.Id.String())
+	filePath := v.FileName()
+	glog.V(3).Infof("creating copies for volume %d ...", v.Id)
 	return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx")
 }
 func (v *Volume) commitCompact() error {
@@ -295,10 +296,10 @@ func (v *Volume) commitCompact() error {
 	defer v.accessLock.Unlock()
 	_ = v.dataFile.Close()
 	var e error
-	if e = os.Rename(path.Join(v.dir, v.Id.String()+".cpd"), path.Join(v.dir, v.Id.String()+".dat")); e != nil {
+	if e = os.Rename(v.FileName()+".cpd", v.FileName()+".dat"); e != nil {
 		return e
 	}
-	if e = os.Rename(path.Join(v.dir, v.Id.String()+".cpx"), path.Join(v.dir, v.Id.String()+".idx")); e != nil {
+	if e = os.Rename(v.FileName()+".cpx", v.FileName()+".idx"); e != nil {
 		return e
 	}
 	if e = v.load(true, false); e != nil {
@@ -337,10 +338,10 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 	visitNeedle func(n *Needle, offset int64) error) (err error) {
 	var v *Volume
 	if v, err = loadVolumeWithoutIndex(dirname, collection, id); err != nil {
-		return
+		return errors.New("Failed to load volume:" + err.Error())
 	}
 	if err = visitSuperBlock(v.SuperBlock); err != nil {
-		return
+		return errors.New("Failed to read super block:" + err.Error())
 	}
 
 	version := v.Version()
@@ -352,15 +353,14 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 		return
 	}
 	for n != nil {
-		offset += int64(NeedleHeaderSize)
-		if err = n.ReadNeedleBody(v.dataFile, version, offset, rest); err != nil {
+		if err = n.ReadNeedleBody(v.dataFile, version, offset+int64(NeedleHeaderSize), rest); err != nil {
 			err = fmt.Errorf("cannot read needle body: %s", err)
 			return
 		}
 		if err = visitNeedle(n, offset); err != nil {
 			return
 		}
-		offset += int64(rest)
+		offset += int64(NeedleHeaderSize) + int64(rest)
 		if n, rest, err = ReadNeedleHeader(v.dataFile, version, offset); err != nil {
 			if err == io.EOF {
 				return nil
@@ -386,6 +386,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string) (err erro
 	}
 	defer idx.Close()
 
+	nm := NewNeedleMap(idx)
 	new_offset := int64(SuperBlockSize)
 
 	err = ScanVolumeFile(v.dir, v.Collection, v.Id, func(superBlock SuperBlock) error {
@@ -393,13 +394,16 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string) (err erro
 		return err
 	}, func(n *Needle, offset int64) error {
 		nv, ok := v.nm.Get(n.Id)
-		//glog.V(0).Infoln("file size is", n.Size, "rest", rest)
+		glog.V(3).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
 		if ok && int64(nv.Offset)*NeedlePaddingSize == offset && nv.Size > 0 {
+			if _, err = nm.Put(n.Id, uint32(new_offset/NeedlePaddingSize), n.Size); err != nil {
+				return fmt.Errorf("cannot put needle: %s", err)
+			}
 			if _, err = n.Append(dst, v.Version()); err != nil {
 				return fmt.Errorf("cannot append needle: %s", err)
 			}
 			new_offset += n.DiskSize()
-			//glog.V(0).Infoln("saving key", n.Id, "volume offset", old_offset, "=>", new_offset, "data_size", n.Size, "rest", rest)
+			glog.V(3).Infoln("saving key", n.Id, "volume offset", offset, "=>", new_offset, "data_size", n.Size)
 		}
 		return nil
 	})

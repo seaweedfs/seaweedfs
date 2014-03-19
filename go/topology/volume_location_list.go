@@ -18,14 +18,14 @@ func (dnll *VolumeLocationList) Length() int {
 	return len(dnll.list)
 }
 
-func (dnll *VolumeLocationList) Add(loc *DataNode) bool {
-	for _, dnl := range dnll.list {
-		if loc.Ip == dnl.Ip && loc.Port == dnl.Port {
-			return false
+func (dnll *VolumeLocationList) Set(loc *DataNode) {
+	for i := 0; i < len(dnll.list); i++ {
+		if loc.Ip == dnll.list[i].Ip && loc.Port == dnll.list[i].Port {
+			dnll.list[i] = loc
+			return
 		}
 	}
 	dnll.list = append(dnll.list, loc)
-	return true
 }
 
 func (dnll *VolumeLocationList) Remove(loc *DataNode) bool {
