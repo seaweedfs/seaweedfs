@@ -167,6 +167,7 @@ func (s *Store) CheckCompactVolume(volumeIdString string, garbageThresholdString
 		return fmt.Errorf("garbageThreshold %s is not a valid float number!", garbageThresholdString), false
 	}
 	if v := s.findVolume(vid); v != nil {
+		glog.V(3).Infoln(vid, "garbage level is", v.garbageLevel())
 		return nil, garbageThreshold < v.garbageLevel()
 	}
 	return fmt.Errorf("volume id %s is not found during check compact!", vid), false
