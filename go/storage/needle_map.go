@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"bufio"
 	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/util"
 	"fmt"
@@ -35,16 +34,12 @@ type NeedleMap struct {
 	indexFile *os.File
 	m         CompactMap
 
-	//transient
-	bytes []byte
-
 	mapMetric
 }
 
 func NewNeedleMap(file *os.File) *NeedleMap {
 	nm := &NeedleMap{
 		m:         NewCompactMap(),
-		bytes:     make([]byte, 16),
 		indexFile: file,
 	}
 	return nm
@@ -64,14 +59,14 @@ func LoadNeedleMap(file *os.File) (*NeedleMap, error) {
 		nm.FileByteCounter = nm.FileByteCounter + uint64(size)
 		if offset > 0 {
 			oldSize := nm.m.Set(Key(key), offset, size)
-			glog.V(4).Infoln("reading key", key, "offset", offset, "size", size, "oldSize", oldSize)
+			glog.V(3).Infoln("reading key", key, "offset", offset, "size", size, "oldSize", oldSize)
 			if oldSize > 0 {
 				nm.DeletionCounter++
 				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 			}
 		} else {
 			oldSize := nm.m.Delete(Key(key))
-			glog.V(4).Infoln("removing key", key, "offset", offset, "size", size, "oldSize", oldSize)
+			glog.V(3).Infoln("removing key", key, "offset", offset, "size", size, "oldSize", oldSize)
 			nm.DeletionCounter++
 			nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 		}
@@ -83,17 +78,19 @@ func LoadNeedleMap(file *os.File) (*NeedleMap, error) {
 
 // walks through the index file, calls fn function with each key, offset, size
 // stops with the error returned by the fn function
-func walkIndexFile(r io.Reader, fn func(key uint64, offset, size uint32) error) error {
-	br := bufio.NewReaderSize(r, 1024*1024)
+func walkIndexFile(r *os.File, fn func(key uint64, offset, size uint32) error) error {
+	var readerOffset int64
 	bytes := make([]byte, 16*RowsToRead)
-	count, e := br.Read(bytes)
+	count, e := r.ReadAt(bytes, readerOffset)
+	glog.V(3).Infoln("file", r.Name(), "readerOffset", readerOffset, "count", count, "e", e)
+	readerOffset += int64(count)
 	var (
 		key          uint64
 		offset, size uint32
 		i            int
 	)
 
-	for count > 0 && e == nil {
+	for count > 0 && e == nil || e == io.EOF {
 		for i = 0; i+16 <= count; i += 16 {
 			key = util.BytesToUint64(bytes[i : i+8])
 			offset = util.BytesToUint32(bytes[i+8 : i+12])
@@ -102,33 +99,29 @@ func walkIndexFile(r io.Reader, fn func(key uint64, offset, size uint32) error) 
 				return e
 			}
 		}
-		if count%16 != 0 {
-			copy(bytes[:count-i], bytes[i:count])
-			i = count - i
-			count, e = br.Read(bytes[i:])
-			count += i
-		} else {
-			count, e = br.Read(bytes)
+		if e == io.EOF {
+			return nil
 		}
-	}
-	if e == io.EOF {
-		return nil
+		count, e = r.ReadAt(bytes, readerOffset)
+		glog.V(3).Infoln("file", r.Name(), "readerOffset", readerOffset, "count", count, "e", e)
+		readerOffset += int64(count)
 	}
 	return e
 }
 
 func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) (int, error) {
 	oldSize := nm.m.Set(Key(key), offset, size)
-	util.Uint64toBytes(nm.bytes[0:8], key)
-	util.Uint32toBytes(nm.bytes[8:12], offset)
-	util.Uint32toBytes(nm.bytes[12:16], size)
+	bytes := make([]byte, 16)
+	util.Uint64toBytes(bytes[0:8], key)
+	util.Uint32toBytes(bytes[8:12], offset)
+	util.Uint32toBytes(bytes[12:16], size)
 	nm.FileCounter++
 	nm.FileByteCounter = nm.FileByteCounter + uint64(size)
 	if oldSize > 0 {
 		nm.DeletionCounter++
 		nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 	}
-	return nm.indexFile.Write(nm.bytes)
+	return nm.indexFile.Write(bytes)
 }
 func (nm *NeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
 	element, ok = nm.m.Get(Key(key))
@@ -140,10 +133,11 @@ func (nm *NeedleMap) Delete(key uint64) error {
 	if err != nil {
 		return fmt.Errorf("cannot get position of indexfile: %s", err)
 	}
-	util.Uint64toBytes(nm.bytes[0:8], key)
-	util.Uint32toBytes(nm.bytes[8:12], 0)
-	util.Uint32toBytes(nm.bytes[12:16], 0)
-	if _, err = nm.indexFile.Write(nm.bytes); err != nil {
+	bytes := make([]byte, 16)
+	util.Uint64toBytes(bytes[0:8], key)
+	util.Uint32toBytes(bytes[8:12], 0)
+	util.Uint32toBytes(bytes[12:16], 0)
+	if _, err = nm.indexFile.Write(bytes); err != nil {
 		plus := ""
 		if e := nm.indexFile.Truncate(offset); e != nil {
 			plus = "\ncouldn't truncate index file: " + e.Error()

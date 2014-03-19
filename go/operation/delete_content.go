@@ -18,6 +18,6 @@ func Delete(url string) error {
 		glog.V(0).Infoln("failing to delete", url)
 		return err
 	}
-	_, err = http.DefaultClient.Do(req)
+	_, err = client.Do(req)
 	return err
 }
