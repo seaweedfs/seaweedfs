@@ -113,7 +113,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	glog.V(2).Infoln("volume", volumeId, "reading", n)
+	glog.V(4).Infoln("volume", volumeId, "reading", n)
 	if !vs.store.HasVolume(volumeId) {
 		lookupResult, err := operation.Lookup(vs.masterNode, volumeId.String())
 		glog.V(2).Infoln("volume", volumeId, "found on", lookupResult, "error", err)
@@ -127,7 +127,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request,
 	}
 	cookie := n.Cookie
 	count, e := vs.store.Read(volumeId, n)
-	glog.V(2).Infoln("read bytes", count, "error", e)
+	glog.V(4).Infoln("read bytes", count, "error", e)
 	if e != nil || count <= 0 {
 		glog.V(0).Infoln("read error:", e, r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
