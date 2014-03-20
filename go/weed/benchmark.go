@@ -165,17 +165,25 @@ func bench_read() {
 	readStats.printStats()
 }
 
+type delayedFile struct {
+	enterTime time.Time
+	fp        *operation.FilePart
+}
+
 func writeFiles(idChan chan int, fileIdLineChan chan string, s *stats) {
-	deleteChan := make(chan *operation.FilePart, 100)
+	deleteChan := make(chan *delayedFile, 100)
 	var waitForDeletions sync.WaitGroup
-	time.Sleep(time.Duration(rand.Intn(1000)) * time.Millisecond)
 	for i := 0; i < 7; i++ {
 		go func() {
 			waitForDeletions.Add(1)
-			for fp := range deleteChan {
-				if fp == nil {
+			for df := range deleteChan {
+				if df == nil {
 					break
 				}
+				if df.enterTime.Add(time.Second).Before(time.Now()) {
+					time.Sleep(df.enterTime.Add(time.Second).Sub(time.Now()))
+				}
+				fp := df.fp
 				serverLimitChan[fp.Server] <- true
 				if e := util.Delete("http://" + fp.Server + "/" + fp.Fid); e == nil {
 					s.completed++
@@ -202,7 +210,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stats) {
 				if _, err := fp.Upload(0, *b.server); err == nil {
 					if rand.Intn(100) < *b.deletePercentage {
 						s.total++
-						deleteChan <- fp
+						deleteChan <- &delayedFile{time.Now(), fp}
 					} else {
 						fileIdLineChan <- fp.Fid
 					}
@@ -320,7 +328,7 @@ func readFileIds(fileName string, fileIdLineChan chan string) {
 			}
 		}
 	} else {
-		lines := make([]string, 0, *b.numberOfFiles)
+		lines := make([]string, 0, readStats.total)
 		for {
 			if line, err := Readln(r); err == nil {
 				lines = append(lines, string(line))
@@ -329,7 +337,7 @@ func readFileIds(fileName string, fileIdLineChan chan string) {
 			}
 		}
 		if len(lines) > 0 {
-			for i := 0; i < *b.numberOfFiles; i++ {
+			for i := 0; i < readStats.total; i++ {
 				fileIdLineChan <- lines[rand.Intn(len(lines))]
 			}
 		}
