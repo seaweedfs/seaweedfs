@@ -32,7 +32,7 @@ var (
 	publicUrl             = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible <ip|server_name>:<port>")
 	masterNode            = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
 	vpulse                = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
-	vReadTimeout          = cmdVolume.Flag.Int("readTimeout", 30, "connection read timeout in seconds. Increase this if uploading large files.")
+	vTimeout              = cmdVolume.Flag.Int("idleTimeout", 10, "connection idle seconds")
 	vMaxCpu               = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	dataCenter            = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	rack                  = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
@@ -79,14 +79,16 @@ func runVolume(cmd *Command, args []string) bool {
 	)
 
 	glog.V(0).Infoln("Start Weed volume server", VERSION, "at http://"+*ip+":"+strconv.Itoa(*vport))
-	srv := &http.Server{
-		Addr:        *ip + ":" + strconv.Itoa(*vport),
-		Handler:     r,
-		ReadTimeout: (time.Duration(*vReadTimeout) * time.Second),
-	}
-	e := srv.ListenAndServe()
+	listener, e := util.NewListener(
+		*ip+":"+strconv.Itoa(*vport),
+		time.Duration(*vTimeout)*time.Second,
+	)
 	if e != nil {
-		glog.Fatalf("Fail to start:%s", e.Error())
+		glog.Fatalf(e.Error())
+	}
+
+	if e := http.Serve(listener, r); e != nil {
+		glog.Fatalf("Fail to serve:%s", e.Error())
 	}
 	return true
 }

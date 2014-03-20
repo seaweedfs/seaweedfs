@@ -38,7 +38,7 @@ var cmdServer = &Command{
 var (
 	serverIp                      = cmdServer.Flag.String("ip", "localhost", "ip or server name")
 	serverMaxCpu                  = cmdServer.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
-	serverReadTimeout             = cmdServer.Flag.Int("readTimeout", 30, "connection read timeout in seconds. Increase this if uploading large files.")
+	serverTimeout                 = cmdServer.Flag.Int("idleTimeout", 10, "connection idle seconds")
 	serverDataCenter              = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
 	serverRack                    = cmdServer.Flag.String("rack", "", "current volume server's rack name")
 	serverWhiteListOption         = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
@@ -109,10 +109,12 @@ func runServer(cmd *Command, args []string) bool {
 		)
 
 		glog.V(0).Infoln("Start Weed Master", VERSION, "at port", *serverIp+":"+strconv.Itoa(*masterPort))
-		masterServer := &http.Server{
-			Addr:        *serverIp + ":" + strconv.Itoa(*masterPort),
-			Handler:     r,
-			ReadTimeout: time.Duration(*serverReadTimeout) * time.Second,
+		masterListener, e := util.NewListener(
+			*serverIp+":"+strconv.Itoa(*masterPort),
+			time.Duration(*serverTimeout)*time.Second,
+		)
+		if e != nil {
+			glog.Fatalf(e.Error())
 		}
 
 		go func() {
@@ -128,9 +130,8 @@ func runServer(cmd *Command, args []string) bool {
 		}()
 
 		raftWaitForMaster.Done()
-		e := masterServer.ListenAndServe()
-		if e != nil {
-			glog.Fatalf("Fail to start master:%s", e)
+		if e := http.Serve(masterListener, r); e != nil {
+			glog.Fatalf("Master Fail to serve:%s", e.Error())
 		}
 	}()
 
@@ -142,14 +143,15 @@ func runServer(cmd *Command, args []string) bool {
 	)
 
 	glog.V(0).Infoln("Start Weed volume server", VERSION, "at http://"+*serverIp+":"+strconv.Itoa(*volumePort))
-	volumeServer := &http.Server{
-		Addr:        *serverIp + ":" + strconv.Itoa(*volumePort),
-		Handler:     r,
-		ReadTimeout: (time.Duration(*serverReadTimeout) * time.Second),
-	}
-	e := volumeServer.ListenAndServe()
+	volumeListener, e := util.NewListener(
+		*serverIp+":"+strconv.Itoa(*volumePort),
+		time.Duration(*serverTimeout)*time.Second,
+	)
 	if e != nil {
-		glog.Fatalf("Fail to start volume:%s", e.Error())
+		glog.Fatalf(e.Error())
+	}
+	if e := http.Serve(volumeListener, r); e != nil {
+		glog.Fatalf("Fail to serve:%s", e.Error())
 	}
 
 	return true

@@ -35,7 +35,7 @@ var (
 	mpulse                  = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	confFile                = cmdMaster.Flag.String("conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
 	defaultReplicaPlacement = cmdMaster.Flag.String("defaultReplication", "000", "Default replication type if not specified.")
-	mReadTimeout            = cmdMaster.Flag.Int("readTimeout", 30, "connection read timeout in seconds")
+	mTimeout                = cmdMaster.Flag.Int("idleTimeout", 10, "connection idle seconds")
 	mMaxCpu                 = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	garbageThreshold        = cmdMaster.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
 	masterWhiteListOption   = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
@@ -62,10 +62,12 @@ func runMaster(cmd *Command, args []string) bool {
 
 	glog.V(0).Infoln("Start Weed Master", VERSION, "at port", *masterIp+":"+strconv.Itoa(*mport))
 
-	srv := &http.Server{
-		Addr:        *masterIp + ":" + strconv.Itoa(*mport),
-		Handler:     r,
-		ReadTimeout: time.Duration(*mReadTimeout) * time.Second,
+	listener, e := util.NewListener(
+		*masterIp+":"+strconv.Itoa(*mport),
+		time.Duration(*mTimeout)*time.Second,
+	)
+	if e != nil {
+		glog.Fatalf(e.Error())
 	}
 
 	go func() {
@@ -78,9 +80,8 @@ func runMaster(cmd *Command, args []string) bool {
 		ms.SetRaftServer(raftServer)
 	}()
 
-	e := srv.ListenAndServe()
-	if e != nil {
-		glog.Fatalf("Fail to start:%s", e)
+	if e := http.Serve(listener, r); e != nil {
+		glog.Fatalf("Fail to serve:%s", e.Error())
 	}
 	return true
 }
