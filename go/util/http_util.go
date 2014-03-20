@@ -52,3 +52,22 @@ func Get(url string) ([]byte, error) {
 	}
 	return b, nil
 }
+
+func Delete(url string) error {
+	req, err := http.NewRequest("DELETE", url, nil)
+	if err != nil {
+		glog.V(0).Infoln("failing to delete", url)
+		return err
+	}
+	resp, e := client.Do(req)
+	if e != nil {
+		glog.V(0).Infoln(e)
+		return e
+	}
+	defer resp.Body.Close()
+	if _, err := ioutil.ReadAll(resp.Body); err != nil {
+		glog.V(0).Infoln("read get result from", url, err)
+		return err
+	}
+	return nil
+}

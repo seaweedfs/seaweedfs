@@ -5,6 +5,7 @@ import (
 	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/storage"
+	"code.google.com/p/weed-fs/go/util"
 	"net/http"
 	"strconv"
 )
@@ -39,7 +40,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId storage.Volum
 				volumeId.String() + ": " + err.Error()
 		} else {
 			distributedOperation(masterNode, s, volumeId, func(location operation.Location) bool {
-				return nil == operation.Delete("http://"+location.Url+r.URL.Path+"?type=replicate")
+				return nil == util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate")
 			})
 		}
 	}
@@ -61,7 +62,7 @@ func ReplicatedDelete(masterNode string, store *storage.Store, volumeId storage.
 	if needToReplicate { //send to other replica locations
 		if r.FormValue("type") != "replicate" {
 			if !distributedOperation(masterNode, store, volumeId, func(location operation.Location) bool {
-				return nil == operation.Delete("http://"+location.Url+r.URL.Path+"?type=replicate")
+				return nil == util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate")
 			}) {
 				ret = 0
 			}

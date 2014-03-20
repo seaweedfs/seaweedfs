@@ -166,6 +166,28 @@ func bench_read() {
 }
 
 func writeFiles(idChan chan int, fileIdLineChan chan string, s *stats) {
+	deleteChan := make(chan *operation.FilePart, 100)
+	var waitForDeletions sync.WaitGroup
+	time.Sleep(time.Duration(rand.Intn(1000)) * time.Millisecond)
+	for i := 0; i < 7; i++ {
+		go func() {
+			waitForDeletions.Add(1)
+			for fp := range deleteChan {
+				if fp == nil {
+					break
+				}
+				serverLimitChan[fp.Server] <- true
+				if e := util.Delete("http://" + fp.Server + "/" + fp.Fid); e == nil {
+					s.completed++
+				} else {
+					s.failed++
+				}
+				<-serverLimitChan[fp.Server]
+			}
+			waitForDeletions.Done()
+		}()
+	}
+
 	for {
 		if id, ok := <-idChan; ok {
 			start := time.Now()
@@ -180,16 +202,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stats) {
 				if _, err := fp.Upload(0, *b.server); err == nil {
 					if rand.Intn(100) < *b.deletePercentage {
 						s.total++
-						go func() {
-							time.Sleep(time.Duration(rand.Intn(1000)) * time.Millisecond)
-							serverLimitChan[fp.Server] <- true
-							if e := operation.DeleteFile(*b.server, fp.Fid); e == nil {
-								s.completed++
-							} else {
-								s.failed++
-							}
-							<-serverLimitChan[fp.Server]
-						}()
+						deleteChan <- fp
 					} else {
 						fileIdLineChan <- fp.Fid
 					}
@@ -211,8 +224,8 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stats) {
 			break
 		}
 	}
-	//wait for the deleting goroutines
-	time.Sleep(time.Duration(1500) * time.Millisecond)
+	close(deleteChan)
+	waitForDeletions.Wait()
 	wait.Done()
 }
 
