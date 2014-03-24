@@ -171,17 +171,17 @@ type delayedFile struct {
 }
 
 func writeFiles(idChan chan int, fileIdLineChan chan string, s *stats) {
-	deleteChan := make(chan *delayedFile, 100)
+	delayedDeleteChan := make(chan *delayedFile, 100)
 	var waitForDeletions sync.WaitGroup
 	for i := 0; i < 7; i++ {
 		go func() {
 			waitForDeletions.Add(1)
-			for df := range deleteChan {
+			for df := range delayedDeleteChan {
 				if df == nil {
 					break
 				}
-				if df.enterTime.Add(time.Second).Before(time.Now()) {
-					time.Sleep(df.enterTime.Add(time.Second).Sub(time.Now()))
+				if df.enterTime.After(time.Now()) {
+					time.Sleep(df.enterTime.Sub(time.Now()))
 				}
 				fp := df.fp
 				serverLimitChan[fp.Server] <- true
@@ -210,7 +210,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stats) {
 				if _, err := fp.Upload(0, *b.server); err == nil {
 					if rand.Intn(100) < *b.deletePercentage {
 						s.total++
-						deleteChan <- &delayedFile{time.Now(), fp}
+						delayedDeleteChan <- &delayedFile{time.Now().Add(time.Second), fp}
 					} else {
 						fileIdLineChan <- fp.Fid
 					}
@@ -232,7 +232,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stats) {
 			break
 		}
 	}
-	close(deleteChan)
+	close(delayedDeleteChan)
 	waitForDeletions.Wait()
 	wait.Done()
 }
