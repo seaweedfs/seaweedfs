@@ -130,7 +130,7 @@ type nameParams struct {
 }
 
 func walker(vid storage.VolumeId, n *storage.Needle, version storage.Version) (err error) {
-	key := storage.NewFileId(vid, n.Id, n.Cookie).String()
+	key := storage.NewFileIdFromNeedle(vid, n).String()
 	if tarFh != nil {
 		fnTmplBuf.Reset()
 		if err = fnTmpl.Execute(fnTmplBuf,

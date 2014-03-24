@@ -14,6 +14,9 @@ type FileId struct {
 	Hashcode uint32
 }
 
+func NewFileIdFromNeedle(VolumeId VolumeId, n *Needle) *FileId {
+	return &FileId{VolumeId: VolumeId, Key: n.Id, Hashcode: n.Cookie}
+}
 func NewFileId(VolumeId VolumeId, Key uint64, Hashcode uint32) *FileId {
 	return &FileId{VolumeId: VolumeId, Key: Key, Hashcode: Hashcode}
 }
