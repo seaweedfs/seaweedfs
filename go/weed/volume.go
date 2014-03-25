@@ -74,11 +74,11 @@ func runVolume(cmd *Command, args []string) bool {
 
 	r := http.NewServeMux()
 
-	weed_server.NewVolumeServer(r, VERSION, *ip, *vport, *publicUrl, folders, maxCounts,
+	weed_server.NewVolumeServer(r, *ip, *vport, *publicUrl, folders, maxCounts,
 		*masterNode, *vpulse, *dataCenter, *rack, volumeWhiteList,
 	)
 
-	glog.V(0).Infoln("Start Weed volume server", VERSION, "at http://"+*ip+":"+strconv.Itoa(*vport))
+	glog.V(0).Infoln("Start Weed volume server", util.VERSION, "at http://"+*ip+":"+strconv.Itoa(*vport))
 	listener, e := util.NewListener(
 		*ip+":"+strconv.Itoa(*vport),
 		time.Duration(*vTimeout)*time.Second,

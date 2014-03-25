@@ -104,11 +104,11 @@ func runServer(cmd *Command, args []string) bool {
 
 	go func() {
 		r := mux.NewRouter()
-		ms := weed_server.NewMasterServer(r, VERSION, *masterPort, *masterMetaFolder,
+		ms := weed_server.NewMasterServer(r, *masterPort, *masterMetaFolder,
 			*masterVolumeSizeLimitMB, *volumePulse, *masterConfFile, *masterDefaultReplicaPlacement, *garbageThreshold, serverWhiteList,
 		)
 
-		glog.V(0).Infoln("Start Weed Master", VERSION, "at port", *serverIp+":"+strconv.Itoa(*masterPort))
+		glog.V(0).Infoln("Start Weed Master", util.VERSION, "at port", *serverIp+":"+strconv.Itoa(*masterPort))
 		masterListener, e := util.NewListener(
 			*serverIp+":"+strconv.Itoa(*masterPort),
 			time.Duration(*serverTimeout)*time.Second,
@@ -124,7 +124,7 @@ func runServer(cmd *Command, args []string) bool {
 			if *serverPeers != "" {
 				peers = strings.Split(*serverPeers, ",")
 			}
-			raftServer := weed_server.NewRaftServer(r, VERSION, peers, *serverIp+":"+strconv.Itoa(*masterPort), *masterMetaFolder, ms.Topo, *volumePulse)
+			raftServer := weed_server.NewRaftServer(r, peers, *serverIp+":"+strconv.Itoa(*masterPort), *masterMetaFolder, ms.Topo, *volumePulse)
 			ms.SetRaftServer(raftServer)
 			volumeWait.Done()
 		}()
@@ -138,11 +138,11 @@ func runServer(cmd *Command, args []string) bool {
 	volumeWait.Wait()
 	time.Sleep(100 * time.Millisecond)
 	r := http.NewServeMux()
-	weed_server.NewVolumeServer(r, VERSION, *serverIp, *volumePort, *volumePublicUrl, folders, maxCounts,
+	weed_server.NewVolumeServer(r, *serverIp, *volumePort, *volumePublicUrl, folders, maxCounts,
 		*serverIp+":"+strconv.Itoa(*masterPort), *volumePulse, *serverDataCenter, *serverRack, serverWhiteList,
 	)
 
-	glog.V(0).Infoln("Start Weed volume server", VERSION, "at http://"+*serverIp+":"+strconv.Itoa(*volumePort))
+	glog.V(0).Infoln("Start Weed volume server", util.VERSION, "at http://"+*serverIp+":"+strconv.Itoa(*volumePort))
 	volumeListener, e := util.NewListener(
 		*serverIp+":"+strconv.Itoa(*volumePort),
 		time.Duration(*serverTimeout)*time.Second,

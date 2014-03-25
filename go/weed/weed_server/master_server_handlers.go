@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"code.google.com/p/weed-fs/go/stats"
 	"code.google.com/p/weed-fs/go/storage"
 	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
@@ -37,6 +38,7 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request) {
+	stats.AssignRequest()
 	c, e := strconv.Atoi(r.FormValue("count"))
 	if e != nil {
 		c = 1
@@ -119,7 +121,7 @@ func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 
 func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
-	m["Version"] = ms.version
+	m["Version"] = util.VERSION
 	m["Topology"] = ms.Topo.ToMap()
 	writeJsonQuiet(w, r, m)
 }
@@ -159,7 +161,7 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 
 func (ms *MasterServer) volumeStatusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
-	m["Version"] = ms.version
+	m["Version"] = util.VERSION
 	m["Volumes"] = ms.Topo.ToVolumeMap()
 	writeJsonQuiet(w, r, m)
 }

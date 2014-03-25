@@ -1,6 +1,7 @@
 package util
 
 import (
+	"code.google.com/p/weed-fs/go/stats"
 	"net"
 	"time"
 )
@@ -18,6 +19,7 @@ func (l *Listener) Accept() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	stats.ConnectionOpen()
 	tc := &Conn{
 		Conn:         c,
 		ReadTimeout:  l.ReadTimeout,
@@ -34,20 +36,33 @@ type Conn struct {
 	WriteTimeout time.Duration
 }
 
-func (c *Conn) Read(b []byte) (int, error) {
+func (c *Conn) Read(b []byte) (count int, e error) {
 	err := c.Conn.SetReadDeadline(time.Now().Add(c.ReadTimeout))
 	if err != nil {
 		return 0, err
 	}
-	return c.Conn.Read(b)
+	count, e = c.Conn.Read(b)
+	if e == nil {
+		stats.BytesIn(int64(count))
+	}
+	return
 }
 
-func (c *Conn) Write(b []byte) (int, error) {
+func (c *Conn) Write(b []byte) (count int, e error) {
 	err := c.Conn.SetWriteDeadline(time.Now().Add(c.WriteTimeout))
 	if err != nil {
 		return 0, err
 	}
-	return c.Conn.Write(b)
+	count, e = c.Conn.Write(b)
+	if e == nil {
+		stats.BytesOut(int64(count))
+	}
+	return
+}
+
+func (c *Conn) Close() error {
+	stats.ConnectionClose()
+	return c.Conn.Close()
 }
 
 func NewListener(addr string, timeout time.Duration) (net.Listener, error) {

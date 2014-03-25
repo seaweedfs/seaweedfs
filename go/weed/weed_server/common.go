@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/operation"
+	"code.google.com/p/weed-fs/go/stats"
 	"code.google.com/p/weed-fs/go/storage"
+	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -13,6 +15,14 @@ import (
 	"strconv"
 	"strings"
 )
+
+var serverStats *stats.ServerStats
+
+func init() {
+	serverStats = stats.NewServerStats()
+	go serverStats.Start()
+
+}
 
 func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) (err error) {
 	w.Header().Set("Content-Type", "application/javascript")
@@ -151,4 +161,16 @@ func parseURLPath(path string) (vid, fid, filename, ext string, isVolumeIdOnly b
 		}
 	}
 	return
+}
+func statsCounterHandler(w http.ResponseWriter, r *http.Request) {
+	m := make(map[string]interface{})
+	m["Version"] = util.VERSION
+	m["Statistics"] = serverStats
+	writeJsonQuiet(w, r, m)
+}
+func statsMemoryHandler(w http.ResponseWriter, r *http.Request) {
+	m := make(map[string]interface{})
+	m["Version"] = util.VERSION
+	m["Statistics"] = serverStats
+	writeJsonQuiet(w, r, m)
 }

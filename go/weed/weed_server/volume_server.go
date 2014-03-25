@@ -15,15 +15,13 @@ type VolumeServer struct {
 	rack         string
 	whiteList    []string
 	store        *storage.Store
-	version      string
 }
 
-func NewVolumeServer(r *http.ServeMux, version string, ip string, port int, publicUrl string, folders []string, maxCounts []int,
+func NewVolumeServer(r *http.ServeMux, ip string, port int, publicUrl string, folders []string, maxCounts []int,
 	masterNode string, pulseSeconds int,
 	dataCenter string, rack string,
 	whiteList []string) *VolumeServer {
 	vs := &VolumeServer{
-		version:      version,
 		masterNode:   masterNode,
 		pulseSeconds: pulseSeconds,
 		dataCenter:   dataCenter,
@@ -40,6 +38,8 @@ func NewVolumeServer(r *http.ServeMux, version string, ip string, port int, publ
 	r.HandleFunc("/admin/vacuum_volume_commit", secure(vs.whiteList, vs.vacuumVolumeCommitHandler))
 	r.HandleFunc("/admin/freeze_volume", secure(vs.whiteList, vs.freezeVolumeHandler))
 	r.HandleFunc("/admin/delete_collection", secure(vs.whiteList, vs.deleteCollectionHandler))
+	r.HandleFunc("/stats/counter", secure(vs.whiteList, statsCounterHandler))
+	r.HandleFunc("/stats/memory", secure(vs.whiteList, statsMemoryHandler))
 	r.HandleFunc("/", vs.storeHandler)
 
 	go func() {

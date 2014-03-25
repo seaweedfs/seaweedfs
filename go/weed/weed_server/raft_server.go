@@ -21,14 +21,12 @@ type RaftServer struct {
 	raftServer raft.Server
 	dataDir    string
 	httpAddr   string
-	version    string
 	router     *mux.Router
 	topo       *topology.Topology
 }
 
-func NewRaftServer(r *mux.Router, version string, peers []string, httpAddr string, dataDir string, topo *topology.Topology, pulseSeconds int) *RaftServer {
+func NewRaftServer(r *mux.Router, peers []string, httpAddr string, dataDir string, topo *topology.Topology, pulseSeconds int) *RaftServer {
 	s := &RaftServer{
-		version:  version,
 		peers:    peers,
 		httpAddr: httpAddr,
 		dataDir:  dataDir,

@@ -1,12 +1,9 @@
 package main
 
 import (
+	"code.google.com/p/weed-fs/go/util"
 	"fmt"
 	"runtime"
-)
-
-const (
-	VERSION = "0.51"
 )
 
 var cmdVersion = &Command{
@@ -21,6 +18,6 @@ func runVersion(cmd *Command, args []string) bool {
 		cmd.Usage()
 	}
 
-	fmt.Printf("version %s %s %s\n", VERSION, runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)
 	return true
 }

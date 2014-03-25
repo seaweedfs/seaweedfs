@@ -23,7 +23,6 @@ type MasterServer struct {
 	defaultReplicaPlacement string
 	garbageThreshold        string
 	whiteList               []string
-	version                 string
 
 	Topo   *topology.Topology
 	vg     *replication.VolumeGrowth
@@ -32,7 +31,7 @@ type MasterServer struct {
 	bounedLeaderChan chan int
 }
 
-func NewMasterServer(r *mux.Router, version string, port int, metaFolder string,
+func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	volumeSizeLimitMB uint,
 	pulseSeconds int,
 	confFile string,
@@ -41,7 +40,6 @@ func NewMasterServer(r *mux.Router, version string, port int, metaFolder string,
 	whiteList []string,
 ) *MasterServer {
 	ms := &MasterServer{
-		version:                 version,
 		volumeSizeLimitMB:       volumeSizeLimitMB,
 		pulseSeconds:            pulseSeconds,
 		defaultReplicaPlacement: defaultReplicaPlacement,
@@ -68,6 +66,8 @@ func NewMasterServer(r *mux.Router, version string, port int, metaFolder string,
 	r.HandleFunc("/vol/vacuum", ms.proxyToLeader(secure(ms.whiteList, ms.volumeVacuumHandler)))
 	r.HandleFunc("/submit", secure(ms.whiteList, ms.submitFromMasterServerHandler))
 	r.HandleFunc("/{filekey}", ms.redirectHandler)
+	r.HandleFunc("/stats/counter", secure(ms.whiteList, statsCounterHandler))
+	r.HandleFunc("/stats/memory", secure(ms.whiteList, statsMemoryHandler))
 
 	ms.Topo.StartRefreshWritableVolumes(garbageThreshold)
 

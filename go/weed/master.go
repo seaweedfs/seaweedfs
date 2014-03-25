@@ -56,11 +56,11 @@ func runMaster(cmd *Command, args []string) bool {
 	}
 
 	r := mux.NewRouter()
-	ms := weed_server.NewMasterServer(r, VERSION, *mport, *metaFolder,
+	ms := weed_server.NewMasterServer(r, *mport, *metaFolder,
 		*volumeSizeLimitMB, *mpulse, *confFile, *defaultReplicaPlacement, *garbageThreshold, masterWhiteList,
 	)
 
-	glog.V(0).Infoln("Start Weed Master", VERSION, "at port", *masterIp+":"+strconv.Itoa(*mport))
+	glog.V(0).Infoln("Start Weed Master", util.VERSION, "at port", *masterIp+":"+strconv.Itoa(*mport))
 
 	listener, e := util.NewListener(
 		*masterIp+":"+strconv.Itoa(*mport),
@@ -76,7 +76,7 @@ func runMaster(cmd *Command, args []string) bool {
 		if *masterPeers != "" {
 			peers = strings.Split(*masterPeers, ",")
 		}
-		raftServer := weed_server.NewRaftServer(r, VERSION, peers, *masterIp+":"+strconv.Itoa(*mport), *metaFolder, ms.Topo, *mpulse)
+		raftServer := weed_server.NewRaftServer(r, peers, *masterIp+":"+strconv.Itoa(*mport), *metaFolder, ms.Topo, *mpulse)
 		ms.SetRaftServer(raftServer)
 	}()
 

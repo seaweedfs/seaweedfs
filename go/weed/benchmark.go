@@ -98,7 +98,7 @@ func init() {
 }
 
 func runbenchmark(cmd *Command, args []string) bool {
-	fmt.Printf("This is Weed File System version %s %s %s\n", VERSION, runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("This is Weed File System version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)
 	if *b.cpuprofile != "" {
 		f, err := os.Create(*b.cpuprofile)
 		if err != nil {

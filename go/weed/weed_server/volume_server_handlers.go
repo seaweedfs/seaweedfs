@@ -4,7 +4,9 @@ import (
 	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/replication"
+	"code.google.com/p/weed-fs/go/stats"
 	"code.google.com/p/weed-fs/go/storage"
+	"code.google.com/p/weed-fs/go/util"
 	"mime"
 	"net/http"
 	"strconv"
@@ -16,7 +18,7 @@ var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
 func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
-	m["Version"] = vs.version
+	m["Version"] = util.VERSION
 	m["Volumes"] = vs.store.Status()
 	writeJsonQuiet(w, r, m)
 }
@@ -86,14 +88,19 @@ func (vs *VolumeServer) submitFromVolumeServerHandler(w http.ResponseWriter, r *
 func (vs *VolumeServer) storeHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
+		stats.ReadRequest()
 		vs.GetOrHeadHandler(w, r, true)
 	case "HEAD":
+		stats.ReadRequest()
 		vs.GetOrHeadHandler(w, r, false)
 	case "DELETE":
+		stats.DeleteRequest()
 		secure(vs.whiteList, vs.DeleteHandler)(w, r)
 	case "PUT":
+		stats.WriteRequest()
 		secure(vs.whiteList, vs.PostHandler)(w, r)
 	case "POST":
+		stats.WriteRequest()
 		secure(vs.whiteList, vs.PostHandler)(w, r)
 	}
 }
