@@ -165,12 +165,16 @@ func parseURLPath(path string) (vid, fid, filename, ext string, isVolumeIdOnly b
 func statsCounterHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
-	m["Statistics"] = serverStats
+	m["Counters"] = serverStats
 	writeJsonQuiet(w, r, m)
 }
+
+type MemoryStatistics struct {
+}
+
 func statsMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
-	m["Statistics"] = serverStats
+	m["Memory"] = stats.MemStat()
 	writeJsonQuiet(w, r, m)
 }

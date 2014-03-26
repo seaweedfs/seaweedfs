@@ -9,6 +9,7 @@ import (
 	"code.google.com/p/weed-fs/go/util"
 	"mime"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -257,5 +258,18 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	m := make(map[string]uint32)
 	m["size"] = uint32(count)
+	writeJsonQuiet(w, r, m)
+}
+
+func (vs *VolumeServer) statsDiskHandler(w http.ResponseWriter, r *http.Request) {
+	m := make(map[string]interface{})
+	m["Version"] = util.VERSION
+	ds := make([]*stats.DiskStatus, 0)
+	for _, loc := range vs.store.Locations {
+		if dir, e := filepath.Abs(loc.Directory); e == nil {
+			ds = append(ds, stats.NewDiskStatus(dir))
+		}
+	}
+	m["DiskStatues"] = ds
 	writeJsonQuiet(w, r, m)
 }

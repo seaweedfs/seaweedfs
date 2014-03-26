@@ -15,10 +15,14 @@ import (
 )
 
 type DiskLocation struct {
-	directory      string
-	maxVolumeCount int
+	Directory      string
+	MaxVolumeCount int
 	volumes        map[VolumeId]*Volume
 }
+
+func (mn *DiskLocation) reset() {
+}
+
 type MasterNodes struct {
 	nodes    []string
 	lastNode int
@@ -57,7 +61,7 @@ type Store struct {
 	Port            int
 	Ip              string
 	PublicUrl       string
-	locations       []*DiskLocation
+	Locations       []*DiskLocation
 	dataCenter      string //optional informaton, overwriting master setting if exists
 	rack            string //optional information, overwriting master setting if exists
 	connected       bool
@@ -67,12 +71,12 @@ type Store struct {
 
 func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int) (s *Store) {
 	s = &Store{Port: port, Ip: ip, PublicUrl: publicUrl}
-	s.locations = make([]*DiskLocation, 0)
+	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirnames); i++ {
-		location := &DiskLocation{directory: dirnames[i], maxVolumeCount: maxVolumeCounts[i]}
+		location := &DiskLocation{Directory: dirnames[i], MaxVolumeCount: maxVolumeCounts[i]}
 		location.volumes = make(map[VolumeId]*Volume)
 		location.loadExistingVolumes()
-		s.locations = append(s.locations, location)
+		s.Locations = append(s.Locations, location)
 	}
 	return
 }
@@ -109,7 +113,7 @@ func (s *Store) AddVolume(volumeListString string, collection string, replicaPla
 	return e
 }
 func (s *Store) DeleteCollection(collection string) (e error) {
-	for _, location := range s.locations {
+	for _, location := range s.Locations {
 		for k, v := range location.volumes {
 			if v.Collection == collection {
 				e = v.Destroy()
@@ -123,7 +127,7 @@ func (s *Store) DeleteCollection(collection string) (e error) {
 	return
 }
 func (s *Store) findVolume(vid VolumeId) *Volume {
-	for _, location := range s.locations {
+	for _, location := range s.Locations {
 		if v, found := location.volumes[vid]; found {
 			return v
 		}
@@ -132,8 +136,8 @@ func (s *Store) findVolume(vid VolumeId) *Volume {
 }
 func (s *Store) findFreeLocation() (ret *DiskLocation) {
 	max := 0
-	for _, location := range s.locations {
-		currentFreeCount := location.maxVolumeCount - len(location.volumes)
+	for _, location := range s.Locations {
+		currentFreeCount := location.MaxVolumeCount - len(location.volumes)
 		if currentFreeCount > max {
 			max = currentFreeCount
 			ret = location
@@ -146,8 +150,8 @@ func (s *Store) addVolume(vid VolumeId, collection string, replicaPlacement *Rep
 		return fmt.Errorf("Volume Id %s already exists!", vid)
 	}
 	if location := s.findFreeLocation(); location != nil {
-		glog.V(0).Infoln("In dir", location.directory, "adds volume =", vid, ", collection =", collection, ", replicaPlacement =", replicaPlacement)
-		if volume, err := NewVolume(location.directory, collection, vid, replicaPlacement); err == nil {
+		glog.V(0).Infoln("In dir", location.Directory, "adds volume =", vid, ", collection =", collection, ", replicaPlacement =", replicaPlacement)
+		if volume, err := NewVolume(location.Directory, collection, vid, replicaPlacement); err == nil {
 			location.volumes[vid] = volume
 			return nil
 		} else {
@@ -206,7 +210,7 @@ func (s *Store) FreezeVolume(volumeIdString string) error {
 	return fmt.Errorf("volume id %s is not found during freeze!", vid)
 }
 func (l *DiskLocation) loadExistingVolumes() {
-	if dirs, err := ioutil.ReadDir(l.directory); err == nil {
+	if dirs, err := ioutil.ReadDir(l.Directory); err == nil {
 		for _, dir := range dirs {
 			name := dir.Name()
 			if !dir.IsDir() && strings.HasSuffix(name, ".dat") {
@@ -218,20 +222,20 @@ func (l *DiskLocation) loadExistingVolumes() {
 				}
 				if vid, err := NewVolumeId(base); err == nil {
 					if l.volumes[vid] == nil {
-						if v, e := NewVolume(l.directory, collection, vid, nil); e == nil {
+						if v, e := NewVolume(l.Directory, collection, vid, nil); e == nil {
 							l.volumes[vid] = v
-							glog.V(0).Infoln("data file", l.directory+"/"+name, "replicaPlacement =", v.ReplicaPlacement, "version =", v.Version(), "size =", v.Size())
+							glog.V(0).Infoln("data file", l.Directory+"/"+name, "replicaPlacement =", v.ReplicaPlacement, "version =", v.Version(), "size =", v.Size())
 						}
 					}
 				}
 			}
 		}
 	}
-	glog.V(0).Infoln("Store started on dir:", l.directory, "with", len(l.volumes), "volumes", "max", l.maxVolumeCount)
+	glog.V(0).Infoln("Store started on dir:", l.Directory, "with", len(l.volumes), "volumes", "max", l.MaxVolumeCount)
 }
 func (s *Store) Status() []*VolumeInfo {
 	var stats []*VolumeInfo
-	for _, location := range s.locations {
+	for _, location := range s.Locations {
 		for k, v := range location.volumes {
 			s := &VolumeInfo{Id: VolumeId(k), Size: v.ContentSize(),
 				Collection:       v.Collection,
@@ -268,8 +272,8 @@ func (s *Store) Join() error {
 	}
 	stats := new([]*VolumeInfo)
 	maxVolumeCount := 0
-	for _, location := range s.locations {
-		maxVolumeCount = maxVolumeCount + location.maxVolumeCount
+	for _, location := range s.Locations {
+		maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
 		for k, v := range location.volumes {
 			s := &VolumeInfo{Id: VolumeId(k), Size: uint64(v.Size()),
 				Collection:       v.Collection,
@@ -308,7 +312,7 @@ func (s *Store) Join() error {
 	return nil
 }
 func (s *Store) Close() {
-	for _, location := range s.locations {
+	for _, location := range s.Locations {
 		for _, v := range location.volumes {
 			v.Close()
 		}

@@ -7,11 +7,12 @@ import (
 )
 
 type DiskStatus struct {
-	All  uint64 `json:"all"`
-	Used uint64 `json:"used"`
-	Free uint64 `json:"free"`
+	Dir  string
+	All  uint64
+	Used uint64
+	Free uint64
 }
 
-func DiskUsage(path string) (disk *DiskStatus) {
+func NewDiskStatus(path string) (disk *DiskStatus) {
 	return
 }
