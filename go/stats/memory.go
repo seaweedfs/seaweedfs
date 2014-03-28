@@ -1,10 +1,7 @@
-// +build !windows
-
 package stats
 
 import (
 	"runtime"
-	"syscall"
 )
 
 type MemStatus struct {
@@ -26,13 +23,6 @@ func MemStat() MemStatus {
 	mem.Heap = memStat.HeapAlloc
 	mem.Stack = memStat.StackInuse
 
-	//system memory usage
-	sysInfo := new(syscall.Sysinfo_t)
-	err := syscall.Sysinfo(sysInfo)
-	if err == nil {
-		mem.All = sysInfo.Totalram //* uint64(syscall.Getpagesize())
-		mem.Free = sysInfo.Freeram //* uint64(syscall.Getpagesize())
-		mem.Used = mem.All - mem.Free
-	}
+	mem.fillInStatus()
 	return mem
 }
