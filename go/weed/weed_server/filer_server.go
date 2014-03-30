@@ -157,10 +157,12 @@ func (fs *FilerServer) ensureFolderHasEntry(path string, sub string) (err error)
 	} else if e != nil {
 		return e
 	}
-	for _, v := range strings.Split(val, ":") {
+	list := strings.Split(val, ":")
+	for _, v := range list {
 		if v == sub {
 			return nil
 		}
 	}
-	return fs.db.Put([]byte(path), []byte(val+":"+sub), nil)
+	list = append(list, sub)
+	return fs.db.Put([]byte(path), []byte(strings.Join(list, ":")), nil)
 }
