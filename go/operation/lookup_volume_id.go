@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	_ "fmt"
+	"math/rand"
 	"net/url"
 	"strings"
 )
@@ -37,16 +38,16 @@ func Lookup(server string, vid string) (*LookupResult, error) {
 }
 
 func LookupFileId(server string, fileId string) (fullUrl string, err error) {
-	a := strings.Split(fileId, ",")
-	if len(a) != 2 {
+	parts := strings.Split(fileId, ",")
+	if len(parts) != 2 {
 		return "", errors.New("Invalid fileId " + fileId)
 	}
-	lookup, lookupError := Lookup(server, a[0])
+	lookup, lookupError := Lookup(server, parts[0])
 	if lookupError != nil {
 		return "", lookupError
 	}
 	if len(lookup.Locations) == 0 {
 		return "", errors.New("File Not Found")
 	}
-	return "http://" + lookup.Locations[0].PublicUrl + "/" + fileId, nil
+	return "http://" + lookup.Locations[rand.Intn(len(lookup.Locations))].PublicUrl + "/" + fileId, nil
 }

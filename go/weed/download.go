@@ -1,12 +1,11 @@
 package main
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/operation"
+	"code.google.com/p/weed-fs/go/util"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -78,31 +77,12 @@ func runDownload(cmd *Command, args []string) bool {
 	return true
 }
 
-func fetchFileId(server string, fildId string) (filename string, content []byte, e error) {
-	fileUrl, lookupError := operation.LookupFileId(server, fildId)
+func fetchFileId(server string, fileId string) (filename string, content []byte, e error) {
+	fileUrl, lookupError := operation.LookupFileId(server, fileId)
 	if lookupError != nil {
 		return "", nil, lookupError
 	}
-	filename, content, e = fetchUrl(fileUrl)
-	return
-}
-
-func fetchUrl(fileUrl string) (filename string, content []byte, e error) {
-	response, err := http.Get(fileUrl)
-	if err != nil {
-		return "", nil, err
-	}
-	defer response.Body.Close()
-	contentDisposition := response.Header["Content-Disposition"]
-	if len(contentDisposition) > 0 {
-		glog.V(4).Info("Content-Disposition: ", contentDisposition[0])
-		if strings.HasPrefix(contentDisposition[0], "filename=") {
-			filename = contentDisposition[0][len("filename="):]
-		}
-	} else {
-		glog.V(4).Info("No Content-Disposition!")
-	}
-	content, e = ioutil.ReadAll(response.Body)
+	filename, content, e = util.DownloadUrl(fileUrl)
 	return
 }
 

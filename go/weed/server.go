@@ -96,6 +96,25 @@ func runServer(cmd *Command, args []string) bool {
 		serverWhiteList = strings.Split(*serverWhiteListOption, ",")
 	}
 
+	go func() {
+		r := http.NewServeMux()
+		_, nfs_err := weed_server.NewFilerServer(r, *serverIp+":"+strconv.Itoa(*masterPort), *volumeDataFolders)
+		if nfs_err != nil {
+			glog.Fatalf(nfs_err.Error())
+		}
+		glog.V(0).Infoln("Start Weed Filer", util.VERSION, "at port", *serverIp+":"+strconv.Itoa(8888))
+		filerListener, e := util.NewListener(
+			*serverIp+":"+strconv.Itoa(8888),
+			time.Duration(*serverTimeout)*time.Second,
+		)
+		if e != nil {
+			glog.Fatalf(e.Error())
+		}
+		if e := http.Serve(filerListener, r); e != nil {
+			glog.Fatalf("Master Fail to serve:%s", e.Error())
+		}
+	}()
+
 	var raftWaitForMaster sync.WaitGroup
 	var volumeWait sync.WaitGroup
 

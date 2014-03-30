@@ -66,7 +66,7 @@ func writeJsonError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func debug(params ...interface{}) {
-	glog.V(3).Infoln(params)
+	glog.V(4).Infoln(params)
 }
 
 func secure(whiteList []string, f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
