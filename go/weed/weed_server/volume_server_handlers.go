@@ -221,6 +221,9 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		m["error"] = errorStatus
 	}
+	if needle.HasName() {
+		m["name"] = string(needle.Name)
+	}
 	m["size"] = ret
 	writeJsonQuiet(w, r, m)
 }

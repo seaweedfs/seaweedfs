@@ -57,7 +57,11 @@ func (fs *FilerServer) ListDirectories(fullpath string) (dirs []string, err erro
 	if e != nil {
 		return nil, e
 	}
-	return strings.Split(string(data), ":"), nil
+	val := string(data)
+	if val == "" {
+		return nil, nil
+	}
+	return strings.Split(val, ":"), nil
 }
 
 func (fs *FilerServer) ListFiles(fullpath string, start, limit int) (files []string) {
@@ -82,6 +86,9 @@ func (fs *FilerServer) ListFiles(fullpath string, start, limit int) (files []str
 			break
 		}
 		fileName := key[len(fullpath):]
+		if fileName == "" {
+			continue //skip the directory entry
+		}
 		if strings.Contains(fileName, "/") {
 			break
 		}
@@ -129,15 +136,17 @@ func (fs *FilerServer) findEntry(fullpath string) (value string, err error) {
 func (fs *FilerServer) ensureFileFolder(fullFileName string) (err error) {
 	parts := strings.Split(fullFileName, "/")
 	path := "/"
-	for i := 1; i < len(parts)-1; i++ {
+	for i := 1; i < len(parts); i++ {
 		sub := parts[i]
-		if sub == "" {
-			continue
+		if i == len(parts)-1 {
+			sub = ""
 		}
 		if err = fs.ensureFolderHasEntry(path, sub); err != nil {
 			return
 		}
-		path = path + sub + "/"
+		if sub != "" {
+			path = path + sub + "/"
+		}
 	}
 	return nil
 }

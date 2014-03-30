@@ -12,6 +12,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -29,9 +30,35 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		fs.PostHandler(w, r)
 	}
 }
+func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasSuffix(r.URL.Path, "/") {
+		return
+	}
+	dirlist, err := fs.ListDirectories(r.URL.Path)
+	if err == leveldb.ErrNotFound {
+		glog.V(3).Infoln("Directory Not Found in db", r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	m := make(map[string]interface{})
+	m["Directory"] = r.URL.Path
+	m["Subdirectories"] = dirlist
+	start, _ := strconv.Atoi(r.FormValue("start"))
+	limit, limit_err := strconv.Atoi(r.FormValue("limit"))
+	if limit_err != nil {
+		limit = 100
+	}
+	m["Files"] = fs.ListFiles(r.URL.Path, start, limit)
+	writeJsonQuiet(w, r, m)
+}
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
+	if strings.HasSuffix(r.URL.Path, "/") {
+		fs.listDirectoryHandler(w, r)
+		return
+	}
 	fileId, err := fs.FindFile(r.URL.Path)
 	if err == leveldb.ErrNotFound {
+		glog.V(3).Infoln("Not found in db", r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -128,13 +155,25 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, errors.New(ret.Error))
 		return
 	}
-	if db_err := fs.CreateFile(r.URL.Path, assignResult.Fid); db_err != nil {
+	path := r.URL.Path
+	if strings.HasSuffix(path, "/") {
+		if ret.Name != "" {
+			path += ret.Name
+		} else {
+			operation.DeleteFile(fs.master, assignResult.Fid) //clean up
+			glog.V(0).Infoln("Can not to write to folder", path, "without a file name!")
+			w.WriteHeader(http.StatusInternalServerError)
+			writeJsonError(w, r, errors.New("Can not to write to folder "+path+" without a file name"))
+			return
+		}
+	}
+	if db_err := fs.CreateFile(path, assignResult.Fid); db_err != nil {
 		operation.DeleteFile(fs.master, assignResult.Fid) //clean up
 		glog.V(0).Infoln("failing to write to filer server", db_err.Error())
 		w.WriteHeader(http.StatusInternalServerError)
 		writeJsonError(w, r, db_err)
+		return
 	}
-	w.WriteHeader(http.StatusCreated)
 }
 
 func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {

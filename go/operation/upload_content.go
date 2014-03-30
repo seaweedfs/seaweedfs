@@ -17,6 +17,7 @@ import (
 )
 
 type UploadResult struct {
+	Name  string
 	Size  int
 	Error string
 }
