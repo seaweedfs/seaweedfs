@@ -1,11 +1,11 @@
 package weed_server
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
 	"errors"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/util"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -25,11 +25,11 @@ type FilerServer struct {
 	db         *leveldb.DB
 }
 
-func NewFilerServer(r *http.ServeMux, master string, dir string) (fs *FilerServer, err error) {
+func NewFilerServer(r *http.ServeMux, port int, master string, dir string, collection string) (fs *FilerServer, err error) {
 	fs = &FilerServer{
 		master:     master,
-		collection: "",
-		port:       ":8888",
+		collection: collection,
+		port:       ":" + strconv.Itoa(port),
 	}
 
 	if fs.db, err = leveldb.OpenFile(dir, nil); err != nil {
@@ -37,8 +37,6 @@ func NewFilerServer(r *http.ServeMux, master string, dir string) (fs *FilerServe
 	}
 
 	r.HandleFunc("/", fs.filerHandler)
-
-	glog.V(0).Infoln("file server started on port ", fs.port)
 
 	return fs, nil
 }

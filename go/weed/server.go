@@ -14,6 +14,10 @@ import (
 	"time"
 )
 
+var (
+	filer FilerOptions
+)
+
 func init() {
 	cmdServer.Run = runServer // break init cycle
 }
@@ -28,10 +32,6 @@ var cmdServer = &Command{
   The servers are the same as starting them separately.
   So other volume servers can use this embedded master server also.
   
-  However, this may change very soon.
-  The target is to start both volume server and embedded master server on all instances,
-  and use a leader election process to auto choose a master server.
-
   `,
 }
 
@@ -53,22 +53,31 @@ var (
 	volumeDataFolders             = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	volumeMaxDataVolumeCounts     = cmdServer.Flag.String("max", "7", "maximum numbers of volumes, count[,count]...")
 	volumePulse                   = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
+	isStartingFiler               = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 
 	serverWhiteList []string
 )
 
+func init() {
+	filer.master = cmdServer.Flag.String("filer.master", "", "default to current master server")
+	filer.collection = cmdServer.Flag.String("filer.collection", "", "all data will be stored in this collection")
+	filer.port = cmdServer.Flag.Int("filer.port", 8888, "filer server http listen port")
+	filer.dir = cmdServer.Flag.String("filer.dir", "", "directory to store meta data, default to a 'filer' sub directory of what -mdir is specified")
+	filer.defaultReplicaPlacement = cmdServer.Flag.String("filer.defaultReplicaPlacement", "", "Default replication type if not specified during runtime.")
+}
+
 func runServer(cmd *Command, args []string) bool {
+
+	*filer.master = *serverIp + ":" + strconv.Itoa(*masterPort)
+
+	if *filer.defaultReplicaPlacement == "" {
+		*filer.defaultReplicaPlacement = *masterDefaultReplicaPlacement
+	}
+
 	if *serverMaxCpu < 1 {
 		*serverMaxCpu = runtime.NumCPU()
 	}
 	runtime.GOMAXPROCS(*serverMaxCpu)
-
-	if *masterMetaFolder == "" {
-		*masterMetaFolder = *volumeDataFolders
-	}
-	if err := util.TestFolderWritable(*masterMetaFolder); err != nil {
-		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *masterMetaFolder, err)
-	}
 
 	folders := strings.Split(*volumeDataFolders, ",")
 	maxCountStrings := strings.Split(*volumeMaxDataVolumeCounts, ",")
@@ -89,6 +98,20 @@ func runServer(cmd *Command, args []string) bool {
 		}
 	}
 
+	if *masterMetaFolder == "" {
+		*masterMetaFolder = folders[0]
+	}
+	if *filer.dir == "" {
+		*filer.dir = *masterMetaFolder + "/filer"
+		os.MkdirAll(*filer.dir, 0700)
+	}
+	if err := util.TestFolderWritable(*masterMetaFolder); err != nil {
+		glog.Fatalf("Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterMetaFolder, err)
+	}
+	if err := util.TestFolderWritable(*filer.dir); err != nil {
+		glog.Fatalf("Check Mapping Meta Folder (-filer.dir=\"%s\") Writable: %s", *filer.dir, err)
+	}
+
 	if *volumePublicUrl == "" {
 		*volumePublicUrl = *serverIp + ":" + strconv.Itoa(*volumePort)
 	}
@@ -96,24 +119,26 @@ func runServer(cmd *Command, args []string) bool {
 		serverWhiteList = strings.Split(*serverWhiteListOption, ",")
 	}
 
-	go func() {
-		r := http.NewServeMux()
-		_, nfs_err := weed_server.NewFilerServer(r, *serverIp+":"+strconv.Itoa(*masterPort), *volumeDataFolders)
-		if nfs_err != nil {
-			glog.Fatalf(nfs_err.Error())
-		}
-		glog.V(0).Infoln("Start Weed Filer", util.VERSION, "at port", *serverIp+":"+strconv.Itoa(8888))
-		filerListener, e := util.NewListener(
-			*serverIp+":"+strconv.Itoa(8888),
-			time.Duration(*serverTimeout)*time.Second,
-		)
-		if e != nil {
-			glog.Fatalf(e.Error())
-		}
-		if e := http.Serve(filerListener, r); e != nil {
-			glog.Fatalf("Master Fail to serve:%s", e.Error())
-		}
-	}()
+	if *isStartingFiler {
+		go func() {
+			r := http.NewServeMux()
+			_, nfs_err := weed_server.NewFilerServer(r, *filer.port, *filer.master, *filer.dir, *filer.collection)
+			if nfs_err != nil {
+				glog.Fatalf(nfs_err.Error())
+			}
+			glog.V(0).Infoln("Start Weed Filer", util.VERSION, "at port", strconv.Itoa(*filer.port))
+			filerListener, e := util.NewListener(
+				":"+strconv.Itoa(*filer.port),
+				time.Duration(10)*time.Second,
+			)
+			if e != nil {
+				glog.Fatalf(e.Error())
+			}
+			if e := http.Serve(filerListener, r); e != nil {
+				glog.Fatalf("Filer Fail to serve:%s", e.Error())
+			}
+		}()
+	}
 
 	var raftWaitForMaster sync.WaitGroup
 	var volumeWait sync.WaitGroup
