@@ -34,7 +34,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 	if !strings.HasSuffix(r.URL.Path, "/") {
 		return
 	}
-	dirlist, err := fs.ListDirectories(r.URL.Path)
+	dirlist, err := fs.filer.ListDirectories(r.URL.Path)
 	if err == leveldb.ErrNotFound {
 		glog.V(3).Infoln("Directory Not Found in db", r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
@@ -43,12 +43,12 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 	m := make(map[string]interface{})
 	m["Directory"] = r.URL.Path
 	m["Subdirectories"] = dirlist
-	start, _ := strconv.Atoi(r.FormValue("start"))
+	lastFile := r.FormValue("lastFile")
 	limit, limit_err := strconv.Atoi(r.FormValue("limit"))
 	if limit_err != nil {
 		limit = 100
 	}
-	m["Files"] = fs.ListFiles(r.URL.Path, start, limit)
+	m["Files"], _ = fs.filer.ListFiles(r.URL.Path, lastFile, limit)
 	writeJsonQuiet(w, r, m)
 }
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
@@ -56,7 +56,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		fs.listDirectoryHandler(w, r)
 		return
 	}
-	fileId, err := fs.FindFile(r.URL.Path)
+	fileId, err := fs.filer.FindFile(r.URL.Path)
 	if err == leveldb.ErrNotFound {
 		glog.V(3).Infoln("Not found in db", r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
@@ -115,6 +115,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	u, _ := url.Parse("http://" + assignResult.PublicUrl + "/" + assignResult.Fid)
+	glog.V(4).Infoln("post to", u)
 	request := &http.Request{
 		Method:        r.Method,
 		URL:           u,
@@ -141,6 +142,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, ra_err)
 		return
 	}
+	glog.V(4).Infoln("post result", string(resp_body))
 	var ret operation.UploadResult
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
@@ -167,7 +169,8 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if db_err := fs.CreateFile(path, assignResult.Fid); db_err != nil {
+	glog.V(4).Infoln("saving", path, "=>", assignResult.Fid)
+	if db_err := fs.filer.CreateFile(path, assignResult.Fid); db_err != nil {
 		operation.DeleteFile(fs.master, assignResult.Fid) //clean up
 		glog.V(0).Infoln("failing to write to filer server", db_err.Error())
 		w.WriteHeader(http.StatusInternalServerError)
@@ -177,10 +180,13 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
-	isForceDirectoryRemoval := r.FormValue("force") == "true" // force remove for directories
-	fid, isFile, err := fs.Delete(r.URL.Path, isForceDirectoryRemoval)
-	if err == nil {
-		if isFile {
+	var err error
+	var fid string
+	if strings.HasSuffix(r.URL.Path, "/") {
+		err = fs.filer.DeleteDirectory(r.URL.Path)
+	} else {
+		fid, err = fs.filer.DeleteFile(r.URL.Path)
+		if err == nil {
 			err = operation.DeleteFile(fs.master, fid)
 		}
 	}

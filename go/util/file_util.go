@@ -1,6 +1,7 @@
 package util
 
 import (
+	"bufio"
 	"code.google.com/p/weed-fs/go/glog"
 	"errors"
 	"os"
@@ -20,4 +21,17 @@ func TestFolderWritable(folder string) (err error) {
 		return nil
 	}
 	return errors.New("Not writable!")
+}
+
+func Readln(r *bufio.Reader) ([]byte, error) {
+	var (
+		isPrefix bool  = true
+		err      error = nil
+		line, ln []byte
+	)
+	for isPrefix && err == nil {
+		line, isPrefix, err = r.ReadLine()
+		ln = append(ln, line...)
+	}
+	return ln, err
 }

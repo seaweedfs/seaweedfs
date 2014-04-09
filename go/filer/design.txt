@@ -1,0 +1,26 @@
+Design Assumptions:
+1. the number of directories are magnitudely smaller than the number of files
+2. unlimited number of files under any directories
+Phylosophy:
+  metadata for directories and files should be separated
+Design:
+  Store directories in normal map
+    all of directories hopefully all be in memory
+    efficient to move/rename/list_directories
+  Log directory changes to append only log file
+  Store files in sorted string table in <dir_id/filename> format
+    efficient to list_files, just simple iterator
+    efficient to locate files, binary search
+
+Testing:
+1. starting server, "weed server -filer=true"
+2. posting files to different folders
+curl -F "filename=@design.txt"   "http://localhost:8888/sources/"
+curl -F "filename=@design.txt"   "http://localhost:8888/design/"
+curl -F "filename=@directory.go" "http://localhost:8888/sources/weed/go/"
+curl -F "filename=@directory.go" "http://localhost:8888/sources/testing/go/"
+curl -F "filename=@filer.go"     "http://localhost:8888/sources/weed/go/"
+curl -F "filename=@filer_in_leveldb.go"     "http://localhost:8888/sources/weed/go/"
+curl "http://localhost:8888/?pretty=y"
+curl "http://localhost:8888/sources/weed/go/?pretty=y"
+curl "http://localhost:8888/sources/weed/go/?pretty=y"
