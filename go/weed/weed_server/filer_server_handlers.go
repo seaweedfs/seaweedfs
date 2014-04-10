@@ -43,12 +43,12 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 	m := make(map[string]interface{})
 	m["Directory"] = r.URL.Path
 	m["Subdirectories"] = dirlist
-	lastFile := r.FormValue("lastFile")
+	lastFileName := r.FormValue("lastFileName")
 	limit, limit_err := strconv.Atoi(r.FormValue("limit"))
 	if limit_err != nil {
 		limit = 100
 	}
-	m["Files"], _ = fs.filer.ListFiles(r.URL.Path, lastFile, limit)
+	m["Files"], _ = fs.filer.ListFiles(r.URL.Path, lastFileName, limit)
 	writeJsonQuiet(w, r, m)
 }
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
@@ -190,10 +190,12 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 			err = operation.DeleteFile(fs.master, fid)
 		}
 	}
-	if err != nil {
-		glog.V(1).Infoln("deleting", r.URL.Path, ":", err.Error())
+	if err == nil {
 		w.WriteHeader(http.StatusAccepted)
+		writeJsonQuiet(w, r, map[string]string{"error": ""})
 	} else {
+		glog.V(4).Infoln("deleting", r.URL.Path, ":", err.Error())
 		w.WriteHeader(http.StatusInternalServerError)
+		writeJsonError(w, r, err)
 	}
 }

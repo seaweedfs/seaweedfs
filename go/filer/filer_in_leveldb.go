@@ -50,20 +50,23 @@ func (fl *FileListInLevelDb) ListFiles(dirId DirectoryId, lastFileName string, l
 	glog.V(4).Infoln("directory", dirId, "lastFileName", lastFileName, "limit", limit)
 	dirKey := genKey(dirId, "")
 	iter := fl.db.NewIterator(&util.Range{Start: genKey(dirId, lastFileName)}, nil)
-	limitCounter := -1
+	limitCounter := 0
 	for iter.Next() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, dirKey) {
+			break
+		}
+		fileName := string(key[len(dirKey):])
+		if fileName == lastFileName {
+			continue
+		}
 		limitCounter++
 		if limit > 0 {
 			if limitCounter > limit {
 				break
 			}
 		}
-		key := iter.Key()
-		if !bytes.HasPrefix(key, dirKey) {
-			break
-		}
-		fileName := key[len(dirKey):]
-		files = append(files, FileEntry{Name: string(fileName), Id: FileId(string(iter.Value()))})
+		files = append(files, FileEntry{Name: fileName, Id: FileId(string(iter.Value()))})
 	}
 	iter.Release()
 	return

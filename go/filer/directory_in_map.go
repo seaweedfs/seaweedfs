@@ -28,8 +28,8 @@ type DirectoryManagerInMap struct {
 func (dm *DirectoryManagerInMap) NewDirectoryEntryInMap(parent *DirectoryEntryInMap, name string) (d *DirectoryEntryInMap) {
 	d = &DirectoryEntryInMap{Name: name, Parent: parent}
 	d.SubDirectories = make(map[string]*DirectoryEntryInMap)
-	d.Id = dm.max
 	dm.max++
+	d.Id = dm.max
 	parts := make([]string, 0)
 	for p := d; p != nil && p.Name != ""; p = p.Parent {
 		parts = append(parts, p.Name)

@@ -22,7 +22,7 @@ func NewFilerServer(r *http.ServeMux, port int, master string, dir string, colle
 	}
 
 	if fs.filer, err = filer.NewFilerEmbedded(dir); err != nil {
-		glog.Fatal("Can not start filer in dir:", dir)
+		glog.Fatal("Can not start filer in dir", dir, ": ", err.Error())
 		return
 	}
 

@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"fmt"
 	"path/filepath"
 )
 
@@ -52,6 +53,13 @@ func (filer *FilerEmbedded) ListFiles(dirPath string, lastFileName string, limit
 	return filer.files.ListFiles(dirId, lastFileName, limit), nil
 }
 func (filer *FilerEmbedded) DeleteDirectory(dirPath string) (err error) {
+	dirId, e := filer.directories.FindDirectory(dirPath)
+	if e != nil {
+		return e
+	}
+	if len(filer.files.ListFiles(dirId, "", 1)) > 0 {
+		return fmt.Errorf("Fail to delete non-empty directory %s!", dirPath)
+	}
 	return filer.directories.DeleteDirectory(dirPath)
 }
 func (filer *FilerEmbedded) DeleteFile(filePath string) (fid string, err error) {
