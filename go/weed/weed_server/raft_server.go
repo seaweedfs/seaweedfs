@@ -10,6 +10,7 @@ import (
 	"github.com/goraft/raft"
 	"github.com/gorilla/mux"
 	"io/ioutil"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
@@ -59,13 +60,28 @@ func NewRaftServer(r *mux.Router, peers []string, httpAddr string, dataDir strin
 
 	// Join to leader if specified.
 	if len(s.peers) > 0 {
-		glog.V(0).Infoln("Joining cluster:", strings.Join(s.peers, ","))
-
 		if !s.raftServer.IsLogEmpty() {
-			glog.V(0).Infoln("Cannot join with an existing log")
+			glog.V(0).Infoln("Starting cluster with existing logs.")
 		} else {
-			if err := s.Join(s.peers); err != nil {
-				return nil
+			glog.V(0).Infoln("Joining cluster:", strings.Join(s.peers, ","))
+			time.Sleep(time.Duration(rand.Intn(1000)) * time.Millisecond)
+			firstJoinError := s.Join(s.peers)
+			if firstJoinError != nil {
+				glog.V(0).Infoln("No existing server found. Starting as leader in the new cluster.")
+				_, err := s.raftServer.Do(&raft.DefaultJoinCommand{
+					Name:             s.raftServer.Name(),
+					ConnectionString: "http://" + s.httpAddr,
+				})
+				if err != nil {
+					glog.V(0).Infoln(err)
+					return nil
+				}
+			}
+			var err error
+			for err != nil {
+				glog.V(0).Infoln("waiting for peers on", strings.Join(s.peers, ","), "...")
+				time.Sleep(time.Duration(1000+rand.Intn(2000)) * time.Millisecond)
+				err = s.Join(s.peers)
 			}
 			glog.V(0).Infoln("Joined cluster")
 		}

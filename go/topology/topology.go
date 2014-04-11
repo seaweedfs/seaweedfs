@@ -52,21 +52,26 @@ func NewTopology(id string, confFile string, seq sequence.Sequencer, volumeSizeL
 }
 
 func (t *Topology) IsLeader() bool {
-	return t.RaftServer == nil || t.Leader() == t.RaftServer.Name()
+	if leader, e := t.Leader(); e == nil {
+		return leader == t.RaftServer.Name()
+	}
+	return false
 }
 
-func (t *Topology) Leader() string {
+func (t *Topology) Leader() (string, error) {
 	l := ""
 	if t.RaftServer != nil {
 		l = t.RaftServer.Leader()
+	} else {
+		return "", errors.New("Raft Server not ready yet!")
 	}
 
 	if l == "" {
 		// We are a single node cluster, we are the leader
-		return t.RaftServer.Name()
+		return t.RaftServer.Name(), errors.New("Raft Server not initialized!")
 	}
 
-	return l
+	return l, nil
 }
 
 func (t *Topology) loadConfiguration(configurationFile string) error {
