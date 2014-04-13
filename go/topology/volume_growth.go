@@ -79,14 +79,12 @@ func (vg *VolumeGrowth) findAndGrow(topo *Topology, option *VolumeGrowOption) (i
 	return len(servers), err
 }
 
+// 1. find the main data node
+// 1.1 collect all data nodes that have 1 slots
+// 2.2 collect all racks that have rp.SameRackCount+1
+// 2.2 collect all data centers that have DiffRackCount+rp.SameRackCount+1
+// 2. find rest data nodes
 func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption) (servers []*DataNode, err error) {
-	//the algorithms need improvement
-	//better steps:
-	// 1. find the main data node
-	// 1.1 collect all data nodes that have 1 slots
-	// 2.2 collect all racks that have rp.SameRackCount+1
-	// 2.2 collect all data centers that have DiffRackCount+rp.SameRackCount+1
-	// 2. find rest data nodes
 	//find main datacenter and other data centers
 	rp := option.ReplicaPlacement
 	mainDataCenter, otherDataCenters, dc_err := topo.RandomlyPickNodes(rp.DiffDataCenterCount+1, func(node Node) error {
@@ -98,6 +96,21 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		}
 		if node.FreeSpace() < rp.DiffRackCount+rp.SameRackCount+1 {
 			return fmt.Errorf("Free:%d < Expected:%d", node.FreeSpace(), rp.DiffRackCount+rp.SameRackCount+1)
+		}
+		possibleRacksCount := 0
+		for _, rack := range node.Children() {
+			possibleDataNodesCount := 0
+			for _, n := range rack.Children() {
+				if n.FreeSpace() >= 1 {
+					possibleDataNodesCount++
+				}
+			}
+			if possibleDataNodesCount >= rp.SameRackCount+1 {
+				possibleRacksCount++
+			}
+		}
+		if possibleRacksCount < rp.DiffRackCount+1 {
+			return fmt.Errorf("Only has %d racks with more than %d free data nodes, not enough for %d.", possibleRacksCount, rp.SameRackCount+1, rp.DiffRackCount+1)
 		}
 		return nil
 	})
@@ -114,17 +127,17 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 			return fmt.Errorf("Free:%d < Expected:%d", node.FreeSpace(), rp.SameRackCount+1)
 		}
 		if len(node.Children()) < rp.SameRackCount+1 {
-			// a bit faster way test failed cases
+			// a bit faster way to test free racks
 			return fmt.Errorf("Only has %d data nodes, not enough for %d.", len(node.Children()), rp.SameRackCount+1)
 		}
-		possibleDataNodeCount := 0
+		possibleDataNodesCount := 0
 		for _, n := range node.Children() {
 			if n.FreeSpace() >= 1 {
-				possibleDataNodeCount++
+				possibleDataNodesCount++
 			}
 		}
-		if possibleDataNodeCount < rp.SameRackCount+1 {
-			return fmt.Errorf("Only has %d data nodes with a slot, not enough for %d.", possibleDataNodeCount, rp.SameRackCount+1)
+		if possibleDataNodesCount < rp.SameRackCount+1 {
+			return fmt.Errorf("Only has %d data nodes with a slot, not enough for %d.", possibleDataNodesCount, rp.SameRackCount+1)
 		}
 		return nil
 	})
