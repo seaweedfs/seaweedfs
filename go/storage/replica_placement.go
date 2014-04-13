@@ -36,7 +36,7 @@ func NewReplicaPlacementFromString(t string) (*ReplicaPlacement, error) {
 }
 
 func NewReplicaPlacementFromByte(b byte) (*ReplicaPlacement, error) {
-	return NewReplicaPlacementFromString(fmt.Sprintf("%d", b))
+	return NewReplicaPlacementFromString(fmt.Sprintf("%03d", b))
 }
 
 func (rp *ReplicaPlacement) Byte() byte {
