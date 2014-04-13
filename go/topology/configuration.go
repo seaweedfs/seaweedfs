@@ -47,19 +47,19 @@ func (c *Configuration) String() string {
 }
 
 func (c *Configuration) Locate(ip string, dcName string, rackName string) (dc string, rack string) {
-	if dcName == "" {
-		if c != nil && c.ip2location != nil {
-			if loc, ok := c.ip2location[ip]; ok {
-				return loc.dcName, loc.rackName
-			}
-		}
-	} else {
-		if rackName == "" {
-			return dcName, "DefaultRack"
-		} else {
-			return dcName, rackName
+	if c != nil && c.ip2location != nil {
+		if loc, ok := c.ip2location[ip]; ok {
+			return loc.dcName, loc.rackName
 		}
 	}
 
-	return "DefaultDataCenter", "DefaultRack"
+	if dcName == "" {
+		dcName = "DefaultDataCenter"
+	}
+
+	if rackName == "" {
+		rackName = "DefaultRack"
+	}
+
+	return dcName, rackName
 }

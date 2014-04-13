@@ -1,9 +1,8 @@
-package replication
+package topology
 
 import (
 	"code.google.com/p/weed-fs/go/sequence"
 	"code.google.com/p/weed-fs/go/storage"
-	"code.google.com/p/weed-fs/go/topology"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -70,7 +69,7 @@ var topologyLayout = `
 }
 `
 
-func setup(topologyLayout string) *topology.Topology {
+func setup(topologyLayout string) *Topology {
 	var data interface{}
 	err := json.Unmarshal([]byte(topologyLayout), &data)
 	if err != nil {
@@ -79,22 +78,22 @@ func setup(topologyLayout string) *topology.Topology {
 	fmt.Println("data:", data)
 
 	//need to connect all nodes first before server adding volumes
-	topo, err := topology.NewTopology("weedfs", "/etc/weedfs/weedfs.conf",
+	topo, err := NewTopology("weedfs", "/etc/weedfs/weedfs.conf",
 		sequence.NewMemorySequencer(), 32*1024, 5)
 	if err != nil {
 		panic("error: " + err.Error())
 	}
 	mTopology := data.(map[string]interface{})
 	for dcKey, dcValue := range mTopology {
-		dc := topology.NewDataCenter(dcKey)
+		dc := NewDataCenter(dcKey)
 		dcMap := dcValue.(map[string]interface{})
 		topo.LinkChildNode(dc)
 		for rackKey, rackValue := range dcMap {
-			rack := topology.NewRack(rackKey)
+			rack := NewRack(rackKey)
 			rackMap := rackValue.(map[string]interface{})
 			dc.LinkChildNode(rack)
 			for serverKey, serverValue := range rackMap {
-				server := topology.NewDataNode(serverKey)
+				server := NewDataNode(serverKey)
 				serverMap := serverValue.(map[string]interface{})
 				rack.LinkChildNode(server)
 				for _, v := range serverMap["volumes"].([]interface{}) {

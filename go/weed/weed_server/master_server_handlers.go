@@ -3,6 +3,7 @@ package weed_server
 import (
 	"code.google.com/p/weed-fs/go/stats"
 	"code.google.com/p/weed-fs/go/storage"
+	"code.google.com/p/weed-fs/go/topology"
 	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
 	"errors"
@@ -39,24 +40,19 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 
 func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 	stats.AssignRequest()
-	c, e := strconv.Atoi(r.FormValue("count"))
+	requestedCount, e := strconv.Atoi(r.FormValue("count"))
 	if e != nil {
-		c = 1
+		requestedCount = 1
 	}
-	replication := r.FormValue("replication")
-	if replication == "" {
-		replication = ms.defaultReplicaPlacement
-	}
-	collection := r.FormValue("collection")
-	dataCenter := r.FormValue("dataCenter")
-	replicaPlacement, err := storage.NewReplicaPlacementFromString(replication)
+
+	option, err := ms.getVolumeGrowOption(r)
 	if err != nil {
 		w.WriteHeader(http.StatusNotAcceptable)
 		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
-	if ms.Topo.GetVolumeLayout(collection, replicaPlacement).GetActiveVolumeCount(dataCenter) <= 0 {
+	if !ms.Topo.HasWriableVolume(option) {
 		if ms.Topo.FreeSpace() <= 0 {
 			w.WriteHeader(http.StatusNotFound)
 			writeJsonQuiet(w, r, map[string]string{"error": "No free volumes left!"})
@@ -64,15 +60,15 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		} else {
 			ms.vgLock.Lock()
 			defer ms.vgLock.Unlock()
-			if ms.Topo.GetVolumeLayout(collection, replicaPlacement).GetActiveVolumeCount(dataCenter) <= 0 {
-				if _, err = ms.vg.AutomaticGrowByType(collection, replicaPlacement, dataCenter, ms.Topo); err != nil {
+			if !ms.Topo.HasWriableVolume(option) {
+				if _, err = ms.vg.AutomaticGrowByType(option, ms.Topo); err != nil {
 					writeJsonQuiet(w, r, map[string]string{"error": "Cannot grow volume group! " + err.Error()})
 					return
 				}
 			}
 		}
 	}
-	fid, count, dn, err := ms.Topo.PickForWrite(collection, replicaPlacement, c, dataCenter)
+	fid, count, dn, err := ms.Topo.PickForWrite(requestedCount, option)
 	if err == nil {
 		writeJsonQuiet(w, r, map[string]interface{}{"fid": fid, "url": dn.Url(), "publicUrl": dn.PublicUrl, "count": count})
 	} else {
@@ -138,13 +134,18 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 
 func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
 	count := 0
-	replicaPlacement, err := storage.NewReplicaPlacementFromString(r.FormValue("replication"))
+	option, err := ms.getVolumeGrowOption(r)
+	if err != nil {
+		w.WriteHeader(http.StatusNotAcceptable)
+		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
+		return
+	}
 	if err == nil {
 		if count, err = strconv.Atoi(r.FormValue("count")); err == nil {
-			if ms.Topo.FreeSpace() < count*replicaPlacement.GetCopyCount() {
-				err = errors.New("Only " + strconv.Itoa(ms.Topo.FreeSpace()) + " volumes left! Not enough for " + strconv.Itoa(count*replicaPlacement.GetCopyCount()))
+			if ms.Topo.FreeSpace() < count*option.ReplicaPlacement.GetCopyCount() {
+				err = errors.New("Only " + strconv.Itoa(ms.Topo.FreeSpace()) + " volumes left! Not enough for " + strconv.Itoa(count*option.ReplicaPlacement.GetCopyCount()))
 			} else {
-				count, err = ms.vg.GrowByCountAndType(count, r.FormValue("collection"), replicaPlacement, r.FormValue("dataCenter"), ms.Topo)
+				count, err = ms.vg.GrowByCountAndType(count, option, ms.Topo)
 			}
 		} else {
 			err = errors.New("parameter count is not found")
@@ -188,4 +189,28 @@ func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *
 	} else {
 		submitForClientHandler(w, r, ms.Topo.RaftServer.Leader())
 	}
+}
+
+func (ms *MasterServer) hasWriableVolume(option *topology.VolumeGrowOption) bool {
+	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement)
+	return vl.GetActiveVolumeCount(option) > 0
+}
+
+func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGrowOption, error) {
+	replicationString := r.FormValue("replication")
+	if replicationString == "" {
+		replicationString = ms.defaultReplicaPlacement
+	}
+	replicaPlacement, err := storage.NewReplicaPlacementFromString(replicationString)
+	if err != nil {
+		return nil, err
+	}
+	volumeGrowOption := &topology.VolumeGrowOption{
+		Collection:       r.FormValue("collection"),
+		ReplicaPlacement: replicaPlacement,
+		DataCenter:       r.FormValue("dataCenter"),
+		Rack:             r.FormValue("rack"),
+		DataNode:         r.FormValue("dataNode"),
+	}
+	return volumeGrowOption, nil
 }

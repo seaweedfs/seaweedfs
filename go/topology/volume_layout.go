@@ -71,13 +71,13 @@ func (vl *VolumeLayout) ListVolumeServers() (nodes []*DataNode) {
 	return
 }
 
-func (vl *VolumeLayout) PickForWrite(count int, dataCenter string) (*storage.VolumeId, int, *VolumeLocationList, error) {
+func (vl *VolumeLayout) PickForWrite(count int, option *VolumeGrowOption) (*storage.VolumeId, int, *VolumeLocationList, error) {
 	len_writers := len(vl.writables)
 	if len_writers <= 0 {
 		glog.V(0).Infoln("No more writable volumes!")
 		return nil, 0, nil, errors.New("No more writable volumes!")
 	}
-	if dataCenter == "" {
+	if option.DataCenter == "" {
 		vid := vl.writables[rand.Intn(len_writers)]
 		locationList := vl.vid2location[vid]
 		if locationList != nil {
@@ -91,7 +91,13 @@ func (vl *VolumeLayout) PickForWrite(count int, dataCenter string) (*storage.Vol
 		for _, v := range vl.writables {
 			volumeLocationList := vl.vid2location[v]
 			for _, dn := range volumeLocationList.list {
-				if dn.GetDataCenter().Id() == NodeId(dataCenter) {
+				if dn.GetDataCenter().Id() == NodeId(option.DataCenter) {
+					if option.Rack != "" && dn.GetRack().Id() != NodeId(option.Rack) {
+						continue
+					}
+					if option.DataNode != "" && dn.Id() != NodeId(option.DataNode) {
+						continue
+					}
 					counter++
 					if rand.Intn(counter) < 1 {
 						vid, locationList = v, volumeLocationList
@@ -104,14 +110,20 @@ func (vl *VolumeLayout) PickForWrite(count int, dataCenter string) (*storage.Vol
 	return nil, 0, nil, errors.New("Strangely This Should Never Have Happened!")
 }
 
-func (vl *VolumeLayout) GetActiveVolumeCount(dataCenter string) int {
-	if dataCenter == "" {
+func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) int {
+	if option.DataCenter == "" {
 		return len(vl.writables)
 	}
 	counter := 0
 	for _, v := range vl.writables {
 		for _, dn := range vl.vid2location[v].list {
-			if dn.GetDataCenter().Id() == NodeId(dataCenter) {
+			if dn.GetDataCenter().Id() == NodeId(option.DataCenter) {
+				if option.Rack != "" && dn.GetRack().Id() != NodeId(option.Rack) {
+					continue
+				}
+				if option.DataNode != "" && dn.Id() != NodeId(option.DataNode) {
+					continue
+				}
 				counter++
 			}
 		}

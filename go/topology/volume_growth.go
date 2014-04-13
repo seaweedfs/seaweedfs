@@ -1,9 +1,8 @@
-package replication
+package topology
 
 import (
 	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/storage"
-	"code.google.com/p/weed-fs/go/topology"
 	"fmt"
 	"math/rand"
 	"sync"
@@ -16,6 +15,14 @@ This package is created to resolve these replica placement issues:
 3. optimizing for hot data on faster disk, cold data on cheaper storage,
 4. volume allocation for each bucket
 */
+
+type VolumeGrowOption struct {
+	Collection       string
+	ReplicaPlacement *storage.ReplicaPlacement
+	DataCenter       string
+	Rack             string
+	DataNode         string
+}
 
 type VolumeGrowth struct {
 	accessLock sync.Mutex
@@ -41,19 +48,19 @@ func (vg *VolumeGrowth) findVolumeCount(copyCount int) (count int) {
 	return
 }
 
-func (vg *VolumeGrowth) AutomaticGrowByType(collection string, rp *storage.ReplicaPlacement, preferredDataCenter string, topo *topology.Topology) (count int, err error) {
-	count, err = vg.GrowByCountAndType(vg.findVolumeCount(rp.GetCopyCount()), collection, rp, preferredDataCenter, topo)
-	if count > 0 && count%rp.GetCopyCount() == 0 {
+func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, topo *Topology) (count int, err error) {
+	count, err = vg.GrowByCountAndType(vg.findVolumeCount(option.ReplicaPlacement.GetCopyCount()), option, topo)
+	if count > 0 && count%option.ReplicaPlacement.GetCopyCount() == 0 {
 		return count, nil
 	}
 	return count, err
 }
-func (vg *VolumeGrowth) GrowByCountAndType(targetCount int, collection string, rp *storage.ReplicaPlacement, preferredDataCenter string, topo *topology.Topology) (counter int, err error) {
+func (vg *VolumeGrowth) GrowByCountAndType(targetCount int, option *VolumeGrowOption, topo *Topology) (counter int, err error) {
 	vg.accessLock.Lock()
 	defer vg.accessLock.Unlock()
 
 	for i := 0; i < targetCount; i++ {
-		if c, e := vg.findAndGrow(topo, preferredDataCenter, collection, rp); e == nil {
+		if c, e := vg.findAndGrow(topo, option); e == nil {
 			counter += c
 		} else {
 			return counter, e
@@ -62,21 +69,22 @@ func (vg *VolumeGrowth) GrowByCountAndType(targetCount int, collection string, r
 	return
 }
 
-func (vg *VolumeGrowth) findAndGrow(topo *topology.Topology, preferredDataCenter string, collection string, rp *storage.ReplicaPlacement) (int, error) {
-	servers, e := vg.findEmptySlotsForOneVolume(topo, preferredDataCenter, rp)
+func (vg *VolumeGrowth) findAndGrow(topo *Topology, option *VolumeGrowOption) (int, error) {
+	servers, e := vg.findEmptySlotsForOneVolume(topo, option)
 	if e != nil {
 		return 0, e
 	}
 	vid := topo.NextVolumeId()
-	err := vg.grow(topo, vid, collection, rp, servers...)
+	err := vg.grow(topo, vid, option, servers...)
 	return len(servers), err
 }
 
-func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *topology.Topology, preferredDataCenter string, rp *storage.ReplicaPlacement) (servers []*topology.DataNode, err error) {
+func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption) (servers []*DataNode, err error) {
 	//find main datacenter and other data centers
-	mainDataCenter, otherDataCenters, dc_err := topo.RandomlyPickNodes(rp.DiffDataCenterCount+1, func(node topology.Node) error {
-		if preferredDataCenter != "" && node.IsDataCenter() && node.Id() != topology.NodeId(preferredDataCenter) {
-			return fmt.Errorf("Not matching preferred:%s", preferredDataCenter)
+	rp := option.ReplicaPlacement
+	mainDataCenter, otherDataCenters, dc_err := topo.RandomlyPickNodes(rp.DiffDataCenterCount+1, func(node Node) error {
+		if option.DataCenter != "" && node.IsDataCenter() && node.Id() != NodeId(option.DataCenter) {
+			return fmt.Errorf("Not matching preferred data center:%s", option.DataCenter)
 		}
 		if node.FreeSpace() < rp.DiffRackCount+rp.SameRackCount+1 {
 			return fmt.Errorf("Free:%d < Expected:%d", node.FreeSpace(), rp.DiffRackCount+rp.SameRackCount+1)
@@ -88,7 +96,10 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *topology.Topology, pref
 	}
 
 	//find main rack and other racks
-	mainRack, otherRacks, rack_err := mainDataCenter.(*topology.DataCenter).RandomlyPickNodes(rp.DiffRackCount+1, func(node topology.Node) error {
+	mainRack, otherRacks, rack_err := mainDataCenter.(*DataCenter).RandomlyPickNodes(rp.DiffRackCount+1, func(node Node) error {
+		if option.Rack != "" && node.IsRack() && node.Id() != NodeId(option.Rack) {
+			return fmt.Errorf("Not matching preferred rack:%s", option.Rack)
+		}
 		if node.FreeSpace() < rp.SameRackCount+1 {
 			return fmt.Errorf("Free:%d < Expected:%d", node.FreeSpace(), rp.SameRackCount+1)
 		}
@@ -99,7 +110,10 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *topology.Topology, pref
 	}
 
 	//find main rack and other racks
-	mainServer, otherServers, server_err := mainRack.(*topology.Rack).RandomlyPickNodes(rp.SameRackCount+1, func(node topology.Node) error {
+	mainServer, otherServers, server_err := mainRack.(*Rack).RandomlyPickNodes(rp.SameRackCount+1, func(node Node) error {
+		if option.DataNode != "" && node.IsDataNode() && node.Id() != NodeId(option.DataNode) {
+			return fmt.Errorf("Not matching preferred data node:%s", option.DataNode)
+		}
 		if node.FreeSpace() < 1 {
 			return fmt.Errorf("Free:%d < Expected:%d", node.FreeSpace(), 1)
 		}
@@ -109,9 +123,9 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *topology.Topology, pref
 		return nil, server_err
 	}
 
-	servers = append(servers, mainServer.(*topology.DataNode))
+	servers = append(servers, mainServer.(*DataNode))
 	for _, server := range otherServers {
-		servers = append(servers, server.(*topology.DataNode))
+		servers = append(servers, server.(*DataNode))
 	}
 	for _, rack := range otherRacks {
 		r := rand.Intn(rack.FreeSpace())
@@ -132,10 +146,10 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *topology.Topology, pref
 	return
 }
 
-func (vg *VolumeGrowth) grow(topo *topology.Topology, vid storage.VolumeId, collection string, rp *storage.ReplicaPlacement, servers ...*topology.DataNode) error {
+func (vg *VolumeGrowth) grow(topo *Topology, vid storage.VolumeId, option *VolumeGrowOption, servers ...*DataNode) error {
 	for _, server := range servers {
-		if err := AllocateVolume(server, vid, collection, rp); err == nil {
-			vi := storage.VolumeInfo{Id: vid, Size: 0, Collection: collection, ReplicaPlacement: rp, Version: storage.CurrentVersion}
+		if err := AllocateVolume(server, vid, option.Collection, option.ReplicaPlacement); err == nil {
+			vi := storage.VolumeInfo{Id: vid, Size: 0, Collection: option.Collection, ReplicaPlacement: option.ReplicaPlacement, Version: storage.CurrentVersion}
 			server.AddOrUpdateVolume(vi)
 			topo.RegisterVolumeLayout(vi, server)
 			glog.V(0).Infoln("Created Volume", vid, "on", server)

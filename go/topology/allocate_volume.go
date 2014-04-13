@@ -1,8 +1,7 @@
-package replication
+package topology
 
 import (
 	"code.google.com/p/weed-fs/go/storage"
-	"code.google.com/p/weed-fs/go/topology"
 	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
 	"errors"
@@ -13,7 +12,7 @@ type AllocateVolumeResult struct {
 	Error string
 }
 
-func AllocateVolume(dn *topology.DataNode, vid storage.VolumeId, collection string, rp *storage.ReplicaPlacement) error {
+func AllocateVolume(dn *DataNode, vid storage.VolumeId, collection string, rp *storage.ReplicaPlacement) error {
 	values := make(url.Values)
 	values.Add("volume", vid.String())
 	values.Add("collection", collection)

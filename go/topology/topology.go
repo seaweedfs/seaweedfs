@@ -108,8 +108,13 @@ func (t *Topology) NextVolumeId() storage.VolumeId {
 	return next
 }
 
-func (t *Topology) PickForWrite(collectionName string, rp *storage.ReplicaPlacement, count int, dataCenter string) (string, int, *DataNode, error) {
-	vid, count, datanodes, err := t.GetVolumeLayout(collectionName, rp).PickForWrite(count, dataCenter)
+func (t *Topology) HasWriableVolume(option *VolumeGrowOption) bool {
+	vl := t.GetVolumeLayout(option.Collection, option.ReplicaPlacement)
+	return vl.GetActiveVolumeCount(option) > 0
+}
+
+func (t *Topology) PickForWrite(count int, option *VolumeGrowOption) (string, int, *DataNode, error) {
+	vid, count, datanodes, err := t.GetVolumeLayout(option.Collection, option.ReplicaPlacement).PickForWrite(count, option)
 	if err != nil || datanodes.Length() == 0 {
 		return "", 0, nil, errors.New("No writable volumes avalable!")
 	}

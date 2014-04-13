@@ -3,9 +3,9 @@ package weed_server
 import (
 	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/operation"
-	"code.google.com/p/weed-fs/go/replication"
 	"code.google.com/p/weed-fs/go/stats"
 	"code.google.com/p/weed-fs/go/storage"
+	"code.google.com/p/weed-fs/go/topology"
 	"code.google.com/p/weed-fs/go/util"
 	"mime"
 	"net/http"
@@ -214,7 +214,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, ne)
 		return
 	}
-	ret, errorStatus := replication.ReplicatedWrite(vs.masterNode, vs.store, volumeId, needle, r)
+	ret, errorStatus := topology.ReplicatedWrite(vs.masterNode, vs.store, volumeId, needle, r)
 	if errorStatus == "" {
 		w.WriteHeader(http.StatusCreated)
 	} else {
@@ -251,7 +251,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	n.Size = 0
-	ret := replication.ReplicatedDelete(vs.masterNode, vs.store, volumeId, n, r)
+	ret := topology.ReplicatedDelete(vs.masterNode, vs.store, volumeId, n, r)
 
 	if ret != 0 {
 		w.WriteHeader(http.StatusAccepted)

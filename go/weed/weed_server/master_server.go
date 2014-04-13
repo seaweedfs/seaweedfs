@@ -2,10 +2,10 @@ package weed_server
 
 import (
 	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/replication"
 	"code.google.com/p/weed-fs/go/sequence"
 	"code.google.com/p/weed-fs/go/topology"
 	"code.google.com/p/weed-fs/go/util"
+	"errors"
 	"github.com/goraft/raft"
 	"github.com/gorilla/mux"
 	"net/http"
@@ -25,7 +25,7 @@ type MasterServer struct {
 	whiteList               []string
 
 	Topo   *topology.Topology
-	vg     *replication.VolumeGrowth
+	vg     *topology.VolumeGrowth
 	vgLock sync.Mutex
 
 	bounedLeaderChan chan int
@@ -53,7 +53,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 		uint64(volumeSizeLimitMB)*1024*1024, pulseSeconds); e != nil {
 		glog.Fatalf("cannot create topology:%s", e)
 	}
-	ms.vg = replication.NewDefaultVolumeGrowth()
+	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", volumeSizeLimitMB, "MB")
 
 	r.HandleFunc("/dir/assign", ms.proxyToLeader(secure(ms.whiteList, ms.dirAssignHandler)))
@@ -94,11 +94,11 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 	return func(w http.ResponseWriter, r *http.Request) {
 		if ms.Topo.IsLeader() {
 			f(w, r)
-		} else {
+		} else if ms.Topo.RaftServer.Leader() != "" {
 			ms.bounedLeaderChan <- 1
 			defer func() { <-ms.bounedLeaderChan }()
 			targetUrl, err := url.Parse("http://" + ms.Topo.RaftServer.Leader())
-			if err != nil || ms.Topo.RaftServer.Leader() == "" {
+			if err != nil {
 				writeJsonQuiet(w, r, map[string]interface{}{"error": "Leader URL http://" + ms.Topo.RaftServer.Leader() + " Parse Error " + err.Error()})
 				return
 			}
@@ -106,6 +106,9 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 			proxy := httputil.NewSingleHostReverseProxy(targetUrl)
 			proxy.Transport = util.Transport
 			proxy.ServeHTTP(w, r)
+		} else {
+			//drop it to the floor
+			writeJsonError(w, r, errors.New(ms.Topo.RaftServer.Name()+"does not know Leader yet:"+ms.Topo.RaftServer.Leader()))
 		}
 	}
 }

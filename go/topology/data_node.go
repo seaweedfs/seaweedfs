@@ -24,6 +24,7 @@ func NewDataNode(id string) *DataNode {
 	s.NodeImpl.value = s
 	return s
 }
+
 func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) {
 	if _, ok := dn.volumes[v.Id]; !ok {
 		dn.volumes[v.Id] = v
@@ -36,6 +37,7 @@ func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) {
 		dn.volumes[v.Id] = v
 	}
 }
+
 func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) {
 	actualVolumeMap := make(map[storage.VolumeId]storage.VolumeInfo)
 	for _, v := range actualVolumes {
@@ -53,9 +55,15 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) {
 		dn.AddOrUpdateVolume(v)
 	}
 }
+
 func (dn *DataNode) GetDataCenter() *DataCenter {
 	return dn.Parent().Parent().(*NodeImpl).value.(*DataCenter)
 }
+
+func (dn *DataNode) GetRack() *Rack {
+	return dn.Parent().(*NodeImpl).value.(*Rack)
+}
+
 func (dn *DataNode) GetTopology() *Topology {
 	p := dn.Parent()
 	for p.Parent() != nil {
@@ -64,9 +72,11 @@ func (dn *DataNode) GetTopology() *Topology {
 	t := p.(*Topology)
 	return t
 }
+
 func (dn *DataNode) MatchLocation(ip string, port int) bool {
 	return dn.Ip == ip && dn.Port == port
 }
+
 func (dn *DataNode) Url() string {
 	return dn.Ip + ":" + strconv.Itoa(dn.Port)
 }
