@@ -45,7 +45,6 @@ func setExitStatus(n int) {
 }
 
 func main() {
-	glog.ToStderrAndLog()
 	glog.MaxSize = 1024 * 1024 * 32
 	rand.Seed(time.Now().UnixNano())
 	flag.Usage = usage
@@ -89,7 +88,8 @@ func main() {
 	exit()
 }
 
-var usageTemplate = `WeedFS is a software to store billions of files and serve them fast!
+var usageTemplate = `
+Weed File System : store billions of files and serve them fast!
 
 Usage:
 
@@ -132,6 +132,8 @@ func printUsage(w io.Writer) {
 
 func usage() {
 	printUsage(os.Stderr)
+	fmt.Fprintf(os.Stderr, "For Logging, use \"weed [logging_options] [command]\". The logging options are:\n")
+	flag.PrintDefaults()
 	os.Exit(2)
 }
 
