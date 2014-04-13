@@ -80,11 +80,21 @@ func (vg *VolumeGrowth) findAndGrow(topo *Topology, option *VolumeGrowOption) (i
 }
 
 func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption) (servers []*DataNode, err error) {
+  //the algorithms need improvement
+  //better steps:
+  // 1. find the main data node
+  // 1.1 collect all data nodes that have 1 slots
+  // 2.2 collect all racks that have rp.SameRackCount+1
+  // 2.2 collect all data centers that have DiffRackCount+rp.SameRackCount+1
+  // 2. find rest data nodes
 	//find main datacenter and other data centers
 	rp := option.ReplicaPlacement
 	mainDataCenter, otherDataCenters, dc_err := topo.RandomlyPickNodes(rp.DiffDataCenterCount+1, func(node Node) error {
 		if option.DataCenter != "" && node.IsDataCenter() && node.Id() != NodeId(option.DataCenter) {
 			return fmt.Errorf("Not matching preferred data center:%s", option.DataCenter)
+		}
+		if len(node.Children()) < rp.DiffRackCount+1 {
+			return fmt.Errorf("Only has %d racks, not enough for %d.", len(node.Children()), rp.DiffRackCount+1)
 		}
 		if node.FreeSpace() < rp.DiffRackCount+rp.SameRackCount+1 {
 			return fmt.Errorf("Free:%d < Expected:%d", node.FreeSpace(), rp.DiffRackCount+rp.SameRackCount+1)
@@ -99,6 +109,9 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 	mainRack, otherRacks, rack_err := mainDataCenter.(*DataCenter).RandomlyPickNodes(rp.DiffRackCount+1, func(node Node) error {
 		if option.Rack != "" && node.IsRack() && node.Id() != NodeId(option.Rack) {
 			return fmt.Errorf("Not matching preferred rack:%s", option.Rack)
+		}
+		if len(node.Children()) < rp.SameRackCount+1 {
+			return fmt.Errorf("Only has %d data nodes, not enough for %d.", len(node.Children()), rp.SameRackCount+1)
 		}
 		if node.FreeSpace() < rp.SameRackCount+1 {
 			return fmt.Errorf("Free:%d < Expected:%d", node.FreeSpace(), rp.SameRackCount+1)
