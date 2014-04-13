@@ -80,13 +80,13 @@ func (vg *VolumeGrowth) findAndGrow(topo *Topology, option *VolumeGrowOption) (i
 }
 
 func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption) (servers []*DataNode, err error) {
-  //the algorithms need improvement
-  //better steps:
-  // 1. find the main data node
-  // 1.1 collect all data nodes that have 1 slots
-  // 2.2 collect all racks that have rp.SameRackCount+1
-  // 2.2 collect all data centers that have DiffRackCount+rp.SameRackCount+1
-  // 2. find rest data nodes
+	//the algorithms need improvement
+	//better steps:
+	// 1. find the main data node
+	// 1.1 collect all data nodes that have 1 slots
+	// 2.2 collect all racks that have rp.SameRackCount+1
+	// 2.2 collect all data centers that have DiffRackCount+rp.SameRackCount+1
+	// 2. find rest data nodes
 	//find main datacenter and other data centers
 	rp := option.ReplicaPlacement
 	mainDataCenter, otherDataCenters, dc_err := topo.RandomlyPickNodes(rp.DiffDataCenterCount+1, func(node Node) error {
@@ -110,11 +110,21 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		if option.Rack != "" && node.IsRack() && node.Id() != NodeId(option.Rack) {
 			return fmt.Errorf("Not matching preferred rack:%s", option.Rack)
 		}
-		if len(node.Children()) < rp.SameRackCount+1 {
-			return fmt.Errorf("Only has %d data nodes, not enough for %d.", len(node.Children()), rp.SameRackCount+1)
-		}
 		if node.FreeSpace() < rp.SameRackCount+1 {
 			return fmt.Errorf("Free:%d < Expected:%d", node.FreeSpace(), rp.SameRackCount+1)
+		}
+		if len(node.Children()) < rp.SameRackCount+1 {
+			// a bit faster way test failed cases
+			return fmt.Errorf("Only has %d data nodes, not enough for %d.", len(node.Children()), rp.SameRackCount+1)
+		}
+		possibleDataNodeCount := 0
+		for _, n := range node.Children() {
+			if n.FreeSpace() >= 1 {
+				possibleDataNodeCount++
+			}
+		}
+		if possibleDataNodeCount < rp.SameRackCount+1 {
+			return fmt.Errorf("Only has %d data nodes with a slot, not enough for %d.", possibleDataNodeCount, rp.SameRackCount+1)
 		}
 		return nil
 	})
