@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/stats"
 	"code.google.com/p/weed-fs/go/storage"
 	"code.google.com/p/weed-fs/go/topology"
@@ -12,18 +13,8 @@ import (
 	"strings"
 )
 
-type LookupResultLocation struct {
-	Url       string `json:"url,omitempty"`
-	PublicUrl string `json:"publicUrl,omitempty"`
-}
-type LookupResult struct {
-	VolumeId  string                 `json:"volumeId,omitempty"`
-	Locations []LookupResultLocation `json:"locations,omitempty"`
-	Error     string                 `json:"error,omitempty"`
-}
-
-func (ms *MasterServer) lookupVolumeId(vids []string, collection string) (volumeLocations map[string]LookupResult) {
-	volumeLocations = make(map[string]LookupResult)
+func (ms *MasterServer) lookupVolumeId(vids []string, collection string) (volumeLocations map[string]operation.LookupResult) {
+	volumeLocations = make(map[string]operation.LookupResult)
 	for _, vid := range vids {
 		commaSep := strings.Index(vid, ",")
 		if commaSep > 0 {
@@ -36,16 +27,16 @@ func (ms *MasterServer) lookupVolumeId(vids []string, collection string) (volume
 		if err == nil {
 			machines := ms.Topo.Lookup(collection, volumeId)
 			if machines != nil {
-				var ret []LookupResultLocation
+				var ret []operation.Location
 				for _, dn := range machines {
-					ret = append(ret, LookupResultLocation{Url: dn.Url(), PublicUrl: dn.PublicUrl})
+					ret = append(ret, operation.Location{Url: dn.Url(), PublicUrl: dn.PublicUrl})
 				}
-				volumeLocations[vid] = LookupResult{VolumeId: vid, Locations: ret}
+				volumeLocations[vid] = operation.LookupResult{VolumeId: vid, Locations: ret}
 			} else {
-				volumeLocations[vid] = LookupResult{VolumeId: vid, Error: "volumeId not found."}
+				volumeLocations[vid] = operation.LookupResult{VolumeId: vid, Error: "volumeId not found."}
 			}
 		} else {
-			volumeLocations[vid] = LookupResult{VolumeId: vid, Error: "Unknown volumeId format."}
+			volumeLocations[vid] = operation.LookupResult{VolumeId: vid, Error: "Unknown volumeId format."}
 		}
 	}
 	return
@@ -74,7 +65,7 @@ func (ms *MasterServer) volumeLookupHandler(w http.ResponseWriter, r *http.Reque
 	vids := r.Form["volumeId"]
 	collection := r.FormValue("collection") //optional, but can be faster if too many collections
 	volumeLocations := ms.lookupVolumeId(vids, collection)
-	var ret []LookupResult
+	var ret []operation.LookupResult
 	for _, volumeLocation := range volumeLocations {
 		ret = append(ret, volumeLocation)
 	}

@@ -11,12 +11,13 @@ import (
 )
 
 type Location struct {
-	Url       string `json:"url"`
-	PublicUrl string `json:"publicUrl"`
+	Url       string `json:"url,omitempty"`
+	PublicUrl string `json:"publicUrl,omitempty"`
 }
 type LookupResult struct {
-	Locations []Location `json:"locations"`
-	Error     string     `json:"error"`
+	VolumeId  string     `json:"volumeId,omitempty"`
+	Locations []Location `json:"locations,omitempty"`
+	Error     string     `json:"error,omitempty"`
 }
 
 func Lookup(server string, vid string) (*LookupResult, error) {
@@ -50,4 +51,21 @@ func LookupFileId(server string, fileId string) (fullUrl string, err error) {
 		return "", errors.New("File Not Found")
 	}
 	return "http://" + lookup.Locations[rand.Intn(len(lookup.Locations))].PublicUrl + "/" + fileId, nil
+}
+
+func LookupVolumeIds(server string, vids []string) ([]LookupResult, error) {
+	values := make(url.Values)
+	for _, vid := range vids {
+		values.Add("volumeId", vid)
+	}
+	jsonBlob, err := util.Post("http://"+server+"/vol/lookup", values)
+	if err != nil {
+		return nil, err
+	}
+	var ret []LookupResult
+	err = json.Unmarshal(jsonBlob, &ret)
+	if err != nil {
+		return nil, err
+	}
+	return ret, nil
 }
