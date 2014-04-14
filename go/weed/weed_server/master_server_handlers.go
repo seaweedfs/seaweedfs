@@ -12,30 +12,73 @@ import (
 	"strings"
 )
 
+type LookupResultLocation struct {
+	Url       string `json:"url,omitempty"`
+	PublicUrl string `json:"publicUrl,omitempty"`
+}
+type LookupResult struct {
+	VolumeId  string                 `json:"volumeId,omitempty"`
+	Locations []LookupResultLocation `json:"locations,omitempty"`
+	Error     string                 `json:"error,omitempty"`
+}
+
+func (ms *MasterServer) lookupVolumeId(vids []string, collection string) (volumeLocations map[string]LookupResult) {
+	volumeLocations = make(map[string]LookupResult)
+	for _, vid := range vids {
+		commaSep := strings.Index(vid, ",")
+		if commaSep > 0 {
+			vid = vid[0:commaSep]
+		}
+		if _, ok := volumeLocations[vid]; ok {
+			continue
+		}
+		volumeId, err := storage.NewVolumeId(vid)
+		if err == nil {
+			machines := ms.Topo.Lookup(collection, volumeId)
+			if machines != nil {
+				var ret []LookupResultLocation
+				for _, dn := range machines {
+					ret = append(ret, LookupResultLocation{Url: dn.Url(), PublicUrl: dn.PublicUrl})
+				}
+				volumeLocations[vid] = LookupResult{VolumeId: vid, Locations: ret}
+			} else {
+				volumeLocations[vid] = LookupResult{VolumeId: vid, Error: "volumeId not found."}
+			}
+		} else {
+			volumeLocations[vid] = LookupResult{VolumeId: vid, Error: "Unknown volumeId format."}
+		}
+	}
+	return
+}
+
+// Takes one volumeId only, can not do batch lookup
 func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request) {
 	vid := r.FormValue("volumeId")
-	collection := r.FormValue("collection") //optional, but can be faster if too many collections
 	commaSep := strings.Index(vid, ",")
 	if commaSep > 0 {
 		vid = vid[0:commaSep]
 	}
-	volumeId, err := storage.NewVolumeId(vid)
-	if err == nil {
-		machines := ms.Topo.Lookup(collection, volumeId)
-		if machines != nil {
-			ret := []map[string]string{}
-			for _, dn := range machines {
-				ret = append(ret, map[string]string{"url": dn.Url(), "publicUrl": dn.PublicUrl})
-			}
-			writeJsonQuiet(w, r, map[string]interface{}{"locations": ret})
-		} else {
-			w.WriteHeader(http.StatusNotFound)
-			writeJsonQuiet(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found. "})
-		}
-	} else {
-		w.WriteHeader(http.StatusNotAcceptable)
-		writeJsonQuiet(w, r, map[string]string{"error": "unknown volumeId format " + vid})
+	vids := []string{vid}
+	collection := r.FormValue("collection") //optional, but can be faster if too many collections
+	volumeLocations := ms.lookupVolumeId(vids, collection)
+	location := volumeLocations[vid]
+	if location.Error != "" {
+		w.WriteHeader(http.StatusNotFound)
 	}
+	writeJsonQuiet(w, r, location)
+}
+
+// This can take batched volumeIds, &volumeId=x&volumeId=y&volumeId=z
+func (ms *MasterServer) volumeLookupHandler(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	vids := r.Form["volumeId"]
+	collection := r.FormValue("collection") //optional, but can be faster if too many collections
+	volumeLocations := ms.lookupVolumeId(vids, collection)
+	var ret []LookupResult
+	for _, volumeLocation := range volumeLocations {
+		ret = append(ret, volumeLocation)
+	}
+	writeJsonQuiet(w, r, ret)
 }
 
 func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request) {
@@ -188,6 +231,14 @@ func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *
 		submitForClientHandler(w, r, "localhost:"+strconv.Itoa(ms.port))
 	} else {
 		submitForClientHandler(w, r, ms.Topo.RaftServer.Leader())
+	}
+}
+
+func (ms *MasterServer) deleteFromMasterServerHandler(w http.ResponseWriter, r *http.Request) {
+	if ms.Topo.IsLeader() {
+		deleteForClientHandler(w, r, "localhost:"+strconv.Itoa(ms.port))
+	} else {
+		deleteForClientHandler(w, r, ms.Topo.RaftServer.Leader())
 	}
 }
 

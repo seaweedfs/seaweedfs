@@ -130,6 +130,14 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	return
 }
 
+func deleteForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl string) {
+	r.ParseForm()
+	fids := r.Form["fid"]
+	fids = fids
+	m := make(map[string]interface{})
+	writeJsonQuiet(w, r, m)
+}
+
 func parseURLPath(path string) (vid, fid, filename, ext string, isVolumeIdOnly bool) {
 	switch strings.Count(path, "/") {
 	case 3:
@@ -162,14 +170,12 @@ func parseURLPath(path string) (vid, fid, filename, ext string, isVolumeIdOnly b
 	}
 	return
 }
+
 func statsCounterHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
 	m["Counters"] = serverStats
 	writeJsonQuiet(w, r, m)
-}
-
-type MemoryStatistics struct {
 }
 
 func statsMemoryHandler(w http.ResponseWriter, r *http.Request) {
