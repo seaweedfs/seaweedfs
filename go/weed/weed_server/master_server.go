@@ -67,7 +67,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	r.HandleFunc("/vol/vacuum", ms.proxyToLeader(secure(ms.whiteList, ms.volumeVacuumHandler)))
 	r.HandleFunc("/submit", secure(ms.whiteList, ms.submitFromMasterServerHandler))
 	r.HandleFunc("/delete", secure(ms.whiteList, ms.deleteFromMasterServerHandler))
-	r.HandleFunc("/{filekey}", ms.redirectHandler)
+	r.HandleFunc("/{fileId}", ms.redirectHandler)
 	r.HandleFunc("/stats/counter", secure(ms.whiteList, statsCounterHandler))
 	r.HandleFunc("/stats/memory", secure(ms.whiteList, statsMemoryHandler))
 
