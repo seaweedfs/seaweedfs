@@ -4,8 +4,8 @@ import (
 	"code.google.com/p/weed-fs/go/util"
 )
 
-func DeleteFile(server string, fileId string) error {
-	fileUrl, err := LookupFileId(server, fileId)
+func DeleteFile(master string, fileId string) error {
+	fileUrl, err := LookupFileId(master, fileId)
 	if err != nil {
 		return err
 	}
