@@ -352,7 +352,7 @@ func (s *Store) Read(i VolumeId, n *Needle) (int, error) {
 	if v := s.findVolume(i); v != nil {
 		return v.read(n)
 	}
-	return 0, fmt.Errorf("Volume %s not found!", i)
+	return 0, fmt.Errorf("Volume %v not found!", i)
 }
 func (s *Store) GetVolume(i VolumeId) *Volume {
 	return s.findVolume(i)

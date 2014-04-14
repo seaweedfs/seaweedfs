@@ -41,6 +41,7 @@ func NewVolumeServer(r *http.ServeMux, ip string, port int, publicUrl string, fo
 	r.HandleFunc("/stats/counter", secure(vs.whiteList, statsCounterHandler))
 	r.HandleFunc("/stats/memory", secure(vs.whiteList, statsMemoryHandler))
 	r.HandleFunc("/stats/disk", secure(vs.whiteList, vs.statsDiskHandler))
+	r.HandleFunc("/delete", secure(vs.whiteList, vs.batchDeleteHandler))
 	r.HandleFunc("/", vs.storeHandler)
 
 	go func() {
