@@ -10,11 +10,11 @@ import (
 )
 
 type AssignResult struct {
-	Fid       string `json:"fid"`
-	Url       string `json:"url"`
-	PublicUrl string `json:"publicUrl"`
-	Count     int
-	Error     string `json:"error"`
+	Fid       string `json:"fid,omitempty"`
+	Url       string `json:"url,omitempty"`
+	PublicUrl string `json:"publicUrl,omitempty"`
+	Count     int    `json:"count,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 func Assign(server string, count int, replication string, collection string) (*AssignResult, error) {

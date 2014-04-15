@@ -74,21 +74,21 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 	option, err := ms.getVolumeGrowOption(r)
 	if err != nil {
 		w.WriteHeader(http.StatusNotAcceptable)
-		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
+		writeJsonQuiet(w, r, AssignResult{Error: err.Error()})
 		return
 	}
 
 	if !ms.Topo.HasWriableVolume(option) {
 		if ms.Topo.FreeSpace() <= 0 {
 			w.WriteHeader(http.StatusNotFound)
-			writeJsonQuiet(w, r, map[string]string{"error": "No free volumes left!"})
+			writeJsonQuiet(w, r, AssignResult{Error: "No free volumes left!"})
 			return
 		} else {
 			ms.vgLock.Lock()
 			defer ms.vgLock.Unlock()
 			if !ms.Topo.HasWriableVolume(option) {
 				if _, err = ms.vg.AutomaticGrowByType(option, ms.Topo); err != nil {
-					writeJsonQuiet(w, r, map[string]string{"error": "Cannot grow volume group! " + err.Error()})
+					writeJsonQuiet(w, r, AssignResult{Error: "Cannot grow volume group! " + err.Error()})
 					return
 				}
 			}
@@ -96,9 +96,9 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 	}
 	fid, count, dn, err := ms.Topo.PickForWrite(requestedCount, option)
 	if err == nil {
-		writeJsonQuiet(w, r, map[string]interface{}{"fid": fid, "url": dn.Url(), "publicUrl": dn.PublicUrl, "count": count})
+		writeJsonQuiet(w, r, AssignResult{Fid: fid, Url: dn.Url(), PublicUrl: dn.PublicUrl, Count: count})
 	} else {
 		w.WriteHeader(http.StatusNotAcceptable)
-		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
+		writeJsonQuiet(w, r, AssignResult{Error: err.Error()})
 	}
 }
