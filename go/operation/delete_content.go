@@ -84,13 +84,13 @@ func DeleteFiles(master string, fileIds []string) (*DeleteFilesResult, error) {
 			}
 			jsonBlob, err := util.Post("http://"+server+"/delete", values)
 			if err != nil {
-				ret.Errors = append(ret.Errors, err.Error()+"\n"+string(jsonBlob))
+				ret.Errors = append(ret.Errors, err.Error()+" "+string(jsonBlob))
 				return
 			}
 			var result []DeleteResult
 			err = json.Unmarshal(jsonBlob, &result)
 			if err != nil {
-				ret.Errors = append(ret.Errors, err.Error()+"\n"+string(jsonBlob))
+				ret.Errors = append(ret.Errors, err.Error()+" "+string(jsonBlob))
 				return
 			}
 			ret.Results = append(ret.Results, result...)
