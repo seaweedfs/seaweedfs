@@ -7,9 +7,9 @@ import (
 )
 
 type ClusterStatusResult struct {
-	IsLeader bool
-	Leader   string
-	Peers    []string
+	IsLeader bool     `json:"IsLeader,omitempty"`
+	Leader   string   `json:"Leader,omitempty"`
+	Peers    []string `json:"Peers,omitempty"`
 }
 
 func ListMasters(server string) ([]string, error) {

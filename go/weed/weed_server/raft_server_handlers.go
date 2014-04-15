@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"code.google.com/p/weed-fs/go/glog"
+	"code.google.com/p/weed-fs/go/operation"
 	"encoding/json"
 	"github.com/goraft/raft"
 	"io/ioutil"
@@ -51,13 +52,12 @@ func (s *RaftServer) redirectToLeader(w http.ResponseWriter, req *http.Request) 
 }
 
 func (s *RaftServer) statusHandler(w http.ResponseWriter, r *http.Request) {
-	m := make(map[string]interface{})
-	m["IsLeader"] = s.topo.IsLeader()
-	if leader, e := s.topo.Leader(); e == nil {
-		m["Leader"] = leader
-	} else {
-		m["Leader"] = ""
+	ret := operation.ClusterStatusResult{
+		IsLeader: s.topo.IsLeader(),
+		Peers:    s.Peers(),
 	}
-	m["Peers"] = s.Peers()
-	writeJsonQuiet(w, r, m)
+	if leader, e := s.topo.Leader(); e == nil {
+		ret.Leader = leader
+	}
+	writeJsonQuiet(w, r, ret)
 }
