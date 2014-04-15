@@ -96,7 +96,6 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	resp, do_err := util.Do(request)
 	if do_err != nil {
 		glog.V(0).Infoln("failing to connect to volume server", do_err.Error())
-		w.WriteHeader(http.StatusInternalServerError)
 		writeJsonError(w, r, do_err)
 		return
 	}
@@ -109,7 +108,6 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	assignResult, ae := operation.Assign(fs.master, 1, query.Get("replication"), fs.collection)
 	if ae != nil {
 		glog.V(0).Infoln("failing to assign a file id", ae.Error())
-		w.WriteHeader(http.StatusInternalServerError)
 		writeJsonError(w, r, ae)
 		return
 	}
@@ -130,7 +128,6 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	resp, do_err := util.Do(request)
 	if do_err != nil {
 		glog.V(0).Infoln("failing to connect to volume server", do_err.Error())
-		w.WriteHeader(http.StatusInternalServerError)
 		writeJsonError(w, r, do_err)
 		return
 	}
@@ -138,7 +135,6 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	resp_body, ra_err := ioutil.ReadAll(resp.Body)
 	if ra_err != nil {
 		glog.V(0).Infoln("failing to upload to volume server", ra_err.Error())
-		w.WriteHeader(http.StatusInternalServerError)
 		writeJsonError(w, r, ra_err)
 		return
 	}
@@ -147,13 +143,11 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
 		glog.V(0).Infoln("failing to read upload resonse", string(resp_body))
-		w.WriteHeader(http.StatusInternalServerError)
 		writeJsonError(w, r, unmarshal_err)
 		return
 	}
 	if ret.Error != "" {
 		glog.V(0).Infoln("failing to post to volume server", ra_err.Error())
-		w.WriteHeader(http.StatusInternalServerError)
 		writeJsonError(w, r, errors.New(ret.Error))
 		return
 	}
@@ -164,7 +158,6 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		} else {
 			operation.DeleteFile(fs.master, assignResult.Fid) //clean up
 			glog.V(0).Infoln("Can not to write to folder", path, "without a file name!")
-			w.WriteHeader(http.StatusInternalServerError)
 			writeJsonError(w, r, errors.New("Can not to write to folder "+path+" without a file name"))
 			return
 		}
@@ -173,7 +166,6 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	if db_err := fs.filer.CreateFile(path, assignResult.Fid); db_err != nil {
 		operation.DeleteFile(fs.master, assignResult.Fid) //clean up
 		glog.V(0).Infoln("failing to write to filer server", db_err.Error())
-		w.WriteHeader(http.StatusInternalServerError)
 		writeJsonError(w, r, db_err)
 		return
 	}
@@ -195,7 +187,6 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonQuiet(w, r, map[string]string{"error": ""})
 	} else {
 		glog.V(4).Infoln("deleting", r.URL.Path, ":", err.Error())
-		w.WriteHeader(http.StatusInternalServerError)
 		writeJsonError(w, r, err)
 	}
 }

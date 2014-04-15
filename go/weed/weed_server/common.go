@@ -60,6 +60,7 @@ func writeJsonQuiet(w http.ResponseWriter, r *http.Request, obj interface{}) {
 	}
 }
 func writeJsonError(w http.ResponseWriter, r *http.Request, err error) {
+	w.WriteHeader(http.StatusInternalServerError)
 	m := make(map[string]interface{})
 	m["error"] = err.Error()
 	writeJsonQuiet(w, r, m)
@@ -133,9 +134,12 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 func deleteForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl string) {
 	r.ParseForm()
 	fids := r.Form["fid"]
-	fids = fids
-	m := make(map[string]interface{})
-	writeJsonQuiet(w, r, m)
+	ret, err := operation.DeleteFiles(masterUrl, fids)
+	if err != nil {
+		writeJsonError(w, r, err)
+		return
+	}
+	writeJsonQuiet(w, r, ret)
 }
 
 func parseURLPath(path string) (vid, fid, filename, ext string, isVolumeIdOnly bool) {

@@ -53,7 +53,7 @@ func LookupFileId(server string, fileId string) (fullUrl string, err error) {
 	return "http://" + lookup.Locations[rand.Intn(len(lookup.Locations))].PublicUrl + "/" + fileId, nil
 }
 
-func LookupVolumeIds(server string, vids []string) ([]LookupResult, error) {
+func LookupVolumeIds(server string, vids []string) (map[string]LookupResult, error) {
 	values := make(url.Values)
 	for _, vid := range vids {
 		values.Add("volumeId", vid)
@@ -62,10 +62,10 @@ func LookupVolumeIds(server string, vids []string) ([]LookupResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	var ret []LookupResult
+	ret := make(map[string]LookupResult)
 	err = json.Unmarshal(jsonBlob, &ret)
 	if err != nil {
-		return nil, err
+		return nil, errors.New(err.Error() + " " + string(jsonBlob))
 	}
 	return ret, nil
 }

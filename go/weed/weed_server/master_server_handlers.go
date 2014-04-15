@@ -61,11 +61,7 @@ func (ms *MasterServer) volumeLookupHandler(w http.ResponseWriter, r *http.Reque
 	vids := r.Form["volumeId"]
 	collection := r.FormValue("collection") //optional, but can be faster if too many collections
 	volumeLocations := ms.lookupVolumeId(vids, collection)
-	var ret []operation.LookupResult
-	for _, volumeLocation := range volumeLocations {
-		ret = append(ret, volumeLocation)
-	}
-	writeJsonQuiet(w, r, ret)
+	writeJsonQuiet(w, r, volumeLocations)
 }
 
 func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request) {

@@ -40,6 +40,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	whiteList []string,
 ) *MasterServer {
 	ms := &MasterServer{
+		port:                    port,
 		volumeSizeLimitMB:       volumeSizeLimitMB,
 		pulseSeconds:            pulseSeconds,
 		defaultReplicaPlacement: defaultReplicaPlacement,

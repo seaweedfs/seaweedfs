@@ -196,42 +196,34 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	writeJsonQuiet(w, r, m)
 }
 
-type DeleteResult struct {
-	Fid   string `json:"fid"`
-	Size  int    `json:"size"`
-	Error string `json:"error,omitempty"`
-}
-
 //Experts only: takes multiple fid parameters. This function does not propagate deletes to replicas.
 func (vs *VolumeServer) batchDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
-	var ret []DeleteResult
+	var ret []operation.DeleteResult
 	for _, fid := range r.Form["fid"] {
-		n := new(storage.Needle)
-		commaIndex := strings.Index(fid, ",")
-		if commaIndex <= 0 {
-			ret = append(ret, DeleteResult{Fid: fid, Error: "Wrong fid format."})
+		vid, id_cookie, err := operation.ParseFileId(fid)
+		if err != nil {
+			ret = append(ret, operation.DeleteResult{Fid: fid, Error: err.Error()})
 			continue
 		}
-		vid := fid[:commaIndex]
+		n := new(storage.Needle)
 		volumeId, _ := storage.NewVolumeId(vid)
-		id_cookie := fid[commaIndex+1:]
 		n.ParsePath(id_cookie)
 		glog.V(4).Infoln("batch deleting", n)
 		cookie := n.Cookie
 		if _, err := vs.store.Read(volumeId, n); err != nil {
-			ret = append(ret, DeleteResult{Fid: fid, Error: err.Error()})
+			ret = append(ret, operation.DeleteResult{Fid: fid, Error: err.Error()})
 			continue
 		}
 		if n.Cookie != cookie {
-			ret = append(ret, DeleteResult{Fid: fid, Error: "File Random Cookie does not match."})
+			ret = append(ret, operation.DeleteResult{Fid: fid, Error: "File Random Cookie does not match."})
 			glog.V(0).Infoln("deleting", fid, "with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
 			return
 		}
 		if size, err := vs.store.Delete(volumeId, n); err != nil {
-			ret = append(ret, DeleteResult{Fid: fid, Error: err.Error()})
+			ret = append(ret, operation.DeleteResult{Fid: fid, Error: err.Error()})
 		} else {
-			ret = append(ret, DeleteResult{Fid: fid, Size: int(size)})
+			ret = append(ret, operation.DeleteResult{Fid: fid, Size: int(size)})
 		}
 	}
 
