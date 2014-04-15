@@ -25,11 +25,11 @@ type FilePart struct {
 }
 
 type SubmitResult struct {
-	FileName string `json:"fileName"`
-	FileUrl  string `json:"fileUrl"`
-	Fid      string `json:"fid"`
-	Size     int    `json:"size"`
-	Error    string `json:"error"`
+	FileName string `json:"fileName,omitempty"`
+	FileUrl  string `json:"fileUrl,omitempty"`
+	Fid      string `json:"fid,omitempty"`
+	Size     uint32 `json:"size,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 func SubmitFiles(master string, files []FilePart, replication string, collection string, maxMB int) ([]SubmitResult, error) {
@@ -99,7 +99,7 @@ func newFilePart(fullPathFilename string) (ret FilePart, err error) {
 	return ret, nil
 }
 
-func (fi FilePart) Upload(maxMB int, master string) (retSize int, err error) {
+func (fi FilePart) Upload(maxMB int, master string) (retSize uint32, err error) {
 	fileUrl := "http://" + fi.Server + "/" + fi.Fid
 	if fi.ModTime != 0 {
 		fileUrl += "?ts=" + strconv.Itoa(int(fi.ModTime))
@@ -130,7 +130,7 @@ func (fi FilePart) Upload(maxMB int, master string) (retSize int, err error) {
 	return
 }
 
-func upload_one_chunk(filename string, reader io.Reader, master, replication string, collection string) (fid string, size int, e error) {
+func upload_one_chunk(filename string, reader io.Reader, master, replication string, collection string) (fid string, size uint32, e error) {
 	ret, err := Assign(master, 1, replication, collection)
 	if err != nil {
 		return "", 0, err

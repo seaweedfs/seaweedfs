@@ -17,9 +17,9 @@ import (
 )
 
 type UploadResult struct {
-	Name  string
-	Size  int
-	Error string
+	Name  string `json:"name,omitempty"`
+	Size  uint32 `json:"size,omitempty"`
+	Error string `json:"error,omitempty"`
 }
 
 var (

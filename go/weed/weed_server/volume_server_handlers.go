@@ -127,7 +127,6 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request,
 }
 
 func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
-	m := make(map[string]interface{})
 	if e := r.ParseForm(); e != nil {
 		glog.V(0).Infoln("form parse error:", e)
 		writeJsonError(w, r, e)
@@ -145,18 +144,20 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, ne)
 		return
 	}
-	ret, errorStatus := topology.ReplicatedWrite(vs.masterNode, vs.store, volumeId, needle, r)
+
+	ret := operation.UploadResult{}
+	size, errorStatus := topology.ReplicatedWrite(vs.masterNode, vs.store, volumeId, needle, r)
 	if errorStatus == "" {
 		w.WriteHeader(http.StatusCreated)
 	} else {
 		w.WriteHeader(http.StatusInternalServerError)
-		m["error"] = errorStatus
+		ret.Error = errorStatus
 	}
 	if needle.HasName() {
-		m["name"] = string(needle.Name)
+		ret.Name = string(needle.Name)
 	}
-	m["size"] = ret
-	writeJsonQuiet(w, r, m)
+	ret.Size = size
+	writeJsonQuiet(w, r, ret)
 }
 
 func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
