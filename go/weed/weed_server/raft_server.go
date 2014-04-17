@@ -77,13 +77,6 @@ func NewRaftServer(r *mux.Router, peers []string, httpAddr string, dataDir strin
 					return nil
 				}
 			}
-			var err error
-			for err != nil {
-				glog.V(0).Infoln("waiting for peers on", strings.Join(s.peers, ","), "...")
-				time.Sleep(time.Duration(1000+rand.Intn(2000)) * time.Millisecond)
-				err = s.Join(s.peers)
-			}
-			glog.V(0).Infoln("Joined cluster")
 		}
 
 		// Initialize the server by joining itself.
@@ -124,14 +117,17 @@ func (s *RaftServer) Join(peers []string) error {
 		ConnectionString: "http://" + s.httpAddr,
 	}
 
+	var err error
 	var b bytes.Buffer
 	json.NewEncoder(&b).Encode(command)
-
 	for _, m := range peers {
+		if m == s.httpAddr {
+			continue
+		}
 		target := fmt.Sprintf("http://%s/cluster/join", strings.TrimSpace(m))
 		glog.V(0).Infoln("Attempting to connect to:", target)
 
-		err := postFollowingOneRedirect(target, "application/json", &b)
+		err = postFollowingOneRedirect(target, "application/json", &b)
 
 		if err != nil {
 			glog.V(0).Infoln("Post returned error: ", err.Error())
@@ -139,11 +135,9 @@ func (s *RaftServer) Join(peers []string) error {
 				// If we receive a network error try the next member
 				continue
 			}
-
-			return err
+		} else {
+			return nil
 		}
-
-		return nil
 	}
 
 	return errors.New("Could not connect to any cluster peers")

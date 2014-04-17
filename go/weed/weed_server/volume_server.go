@@ -54,10 +54,10 @@ func NewVolumeServer(r *http.ServeMux, ip string, port int, publicUrl string, fo
 			if err == nil {
 				if !connected {
 					connected = true
-					glog.V(0).Infoln("Reconnected with master")
+					glog.V(0).Infoln("Volume Server Connected with master")
 				}
 			} else {
-				glog.V(4).Infoln("Failing to talk with master:", err.Error())
+				glog.V(4).Infoln("Volume Server Failed to talk with master:", err.Error())
 				if connected {
 					connected = false
 				}

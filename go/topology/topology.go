@@ -19,7 +19,7 @@ type Topology struct {
 
 	volumeSizeLimit uint64
 
-	sequence sequence.Sequencer
+	Sequence sequence.Sequencer
 
 	chanDeadDataNodes      chan *DataNode
 	chanRecoveredDataNodes chan *DataNode
@@ -40,7 +40,7 @@ func NewTopology(id string, confFile string, seq sequence.Sequencer, volumeSizeL
 	t.pulse = int64(pulse)
 	t.volumeSizeLimit = volumeSizeLimit
 
-	t.sequence = seq
+	t.Sequence = seq
 
 	t.chanDeadDataNodes = make(chan *DataNode)
 	t.chanRecoveredDataNodes = make(chan *DataNode)
@@ -118,7 +118,7 @@ func (t *Topology) PickForWrite(count int, option *VolumeGrowOption) (string, in
 	if err != nil || datanodes.Length() == 0 {
 		return "", 0, nil, errors.New("No writable volumes avalable!")
 	}
-	fileId, count := t.sequence.NextFileId(count)
+	fileId, count := t.Sequence.NextFileId(count)
 	return storage.NewFileId(*vid, fileId, rand.Uint32()).String(), count, datanodes.Head(), nil
 }
 
@@ -143,7 +143,8 @@ func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	t.GetVolumeLayout(v.Collection, v.ReplicaPlacement).RegisterVolume(&v, dn)
 }
 
-func (t *Topology) RegisterVolumes(init bool, volumeInfos []storage.VolumeInfo, ip string, port int, publicUrl string, maxVolumeCount int, dcName string, rackName string) {
+func (t *Topology) RegisterVolumes(init bool, volumeInfos []storage.VolumeInfo, ip string, port int, publicUrl string, maxVolumeCount int, maxFileKey uint64, dcName string, rackName string) {
+	t.Sequence.SetMax(maxFileKey)
 	dcName, rackName = t.configuration.Locate(ip, dcName, rackName)
 	dc := t.GetOrCreateDataCenter(dcName)
 	rack := dc.GetOrCreateRack(rackName)

@@ -72,11 +72,12 @@ func runMaster(cmd *Command, args []string) bool {
 
 	go func() {
 		time.Sleep(100 * time.Millisecond)
+		myAddress := *masterIp + ":" + strconv.Itoa(*mport)
 		var peers []string
 		if *masterPeers != "" {
 			peers = strings.Split(*masterPeers, ",")
 		}
-		raftServer := weed_server.NewRaftServer(r, peers, *masterIp+":"+strconv.Itoa(*mport), *metaFolder, ms.Topo, *mpulse)
+		raftServer := weed_server.NewRaftServer(r, peers, myAddress, *metaFolder, ms.Topo, *mpulse)
 		ms.SetRaftServer(raftServer)
 	}()
 

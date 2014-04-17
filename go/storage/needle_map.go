@@ -19,7 +19,7 @@ type NeedleMapper interface {
 	FileCount() int
 	DeletedCount() int
 	Visit(visit func(NeedleValue) error) (err error)
-	NextFileKey(count int) uint64
+	MaxFileKey() uint64
 }
 
 type mapMetric struct {
@@ -110,6 +110,9 @@ func walkIndexFile(r *os.File, fn func(key uint64, offset, size uint32) error) e
 }
 
 func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) (int, error) {
+	if key > nm.MaximumFileKey {
+		nm.MaximumFileKey = key
+	}
 	oldSize := nm.m.Set(Key(key), offset, size)
 	bytes := make([]byte, 16)
 	util.Uint64toBytes(bytes[0:8], key)
@@ -171,12 +174,4 @@ func (nm *NeedleMap) Visit(visit func(NeedleValue) error) (err error) {
 }
 func (nm NeedleMap) MaxFileKey() uint64 {
 	return nm.MaximumFileKey
-}
-func (nm NeedleMap) NextFileKey(count int) (ret uint64) {
-	if count <= 0 {
-		return 0
-	}
-	ret = nm.MaximumFileKey
-	nm.MaximumFileKey += uint64(count)
-	return
 }

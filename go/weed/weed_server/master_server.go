@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"path"
 	"sync"
 )
 
@@ -48,7 +47,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 		whiteList:               whiteList,
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
-	seq := sequence.NewFileSequencer(path.Join(metaFolder, "weed.seq"))
+	seq := sequence.NewMemorySequencer()
 	var e error
 	if ms.Topo, e = topology.NewTopology("topo", confFile, seq,
 		uint64(volumeSizeLimitMB)*1024*1024, pulseSeconds); e != nil {
@@ -97,7 +96,7 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 	return func(w http.ResponseWriter, r *http.Request) {
 		if ms.Topo.IsLeader() {
 			f(w, r)
-		} else if ms.Topo.RaftServer.Leader() != "" {
+		} else if ms.Topo.RaftServer != nil && ms.Topo.RaftServer.Leader() != "" {
 			ms.bounedLeaderChan <- 1
 			defer func() { <-ms.bounedLeaderChan }()
 			targetUrl, err := url.Parse("http://" + ms.Topo.RaftServer.Leader())
@@ -111,7 +110,7 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 			proxy.ServeHTTP(w, r)
 		} else {
 			//drop it to the floor
-			writeJsonError(w, r, errors.New(ms.Topo.RaftServer.Name()+"does not know Leader yet:"+ms.Topo.RaftServer.Leader()))
+			writeJsonError(w, r, errors.New(ms.Topo.RaftServer.Name()+" does not know Leader yet:"+ms.Topo.RaftServer.Leader()))
 		}
 	}
 }

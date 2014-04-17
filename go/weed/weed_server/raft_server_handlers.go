@@ -18,7 +18,7 @@ func (s *RaftServer) joinHandler(w http.ResponseWriter, req *http.Request) {
 	commandText, _ := ioutil.ReadAll(req.Body)
 	glog.V(0).Info("Command:", string(commandText))
 	if err := json.NewDecoder(strings.NewReader(string(commandText))).Decode(&command); err != nil {
-		glog.V(0).Infoln("Error decoding json message:", err)
+		glog.V(0).Infoln("Error decoding json message:", err, string(commandText))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

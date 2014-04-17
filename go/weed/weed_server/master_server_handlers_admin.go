@@ -36,6 +36,7 @@ func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	port, _ := strconv.Atoi(r.FormValue("port"))
 	maxVolumeCount, _ := strconv.Atoi(r.FormValue("maxVolumeCount"))
+	maxFileKey, _ := strconv.ParseUint(r.FormValue("maxFileKey"), 10, 64)
 	s := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")+1] + r.FormValue("port")
 	publicUrl := r.FormValue("publicUrl")
 	volumes := new([]storage.VolumeInfo)
@@ -44,7 +45,7 @@ func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	debug(s, "volumes", r.FormValue("volumes"))
-	ms.Topo.RegisterVolumes(init, *volumes, ip, port, publicUrl, maxVolumeCount, r.FormValue("dataCenter"), r.FormValue("rack"))
+	ms.Topo.RegisterVolumes(init, *volumes, ip, port, publicUrl, maxVolumeCount, maxFileKey, r.FormValue("dataCenter"), r.FormValue("rack"))
 	writeJsonQuiet(w, r, operation.JoinResult{VolumeSizeLimit: uint64(ms.volumeSizeLimitMB) * 1024 * 1024})
 }
 

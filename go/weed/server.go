@@ -164,11 +164,12 @@ func runServer(cmd *Command, args []string) bool {
 		go func() {
 			raftWaitForMaster.Wait()
 			time.Sleep(100 * time.Millisecond)
+			myAddress := *serverIp + ":" + strconv.Itoa(*masterPort)
 			var peers []string
 			if *serverPeers != "" {
 				peers = strings.Split(*serverPeers, ",")
 			}
-			raftServer := weed_server.NewRaftServer(r, peers, *serverIp+":"+strconv.Itoa(*masterPort), *masterMetaFolder, ms.Topo, *volumePulse)
+			raftServer := weed_server.NewRaftServer(r, peers, myAddress, *masterMetaFolder, ms.Topo, *volumePulse)
 			ms.SetRaftServer(raftServer)
 			volumeWait.Done()
 		}()

@@ -44,6 +44,9 @@ func (mn *MasterNodes) findMaster() (string, error) {
 	if mn.lastNode < 0 {
 		for _, m := range mn.nodes {
 			if masters, e := operation.ListMasters(m); e == nil {
+				if len(masters) == 0 {
+					continue
+				}
 				mn.nodes = masters
 				mn.lastNode = rand.Intn(len(mn.nodes))
 				glog.V(2).Info("current master node is :", mn.nodes[mn.lastNode])
@@ -268,6 +271,7 @@ func (s *Store) Join() error {
 	}
 	stats := new([]*VolumeInfo)
 	maxVolumeCount := 0
+	var maxFileKey uint64
 	for _, location := range s.Locations {
 		maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
 		for k, v := range location.volumes {
@@ -280,6 +284,9 @@ func (s *Store) Join() error {
 				DeletedByteCount: v.nm.DeletedSize(),
 				ReadOnly:         v.readOnly}
 			*stats = append(*stats, s)
+			if maxFileKey < v.nm.MaxFileKey() {
+				maxFileKey = v.nm.MaxFileKey()
+			}
 		}
 	}
 	bytes, _ := json.Marshal(stats)
@@ -292,6 +299,7 @@ func (s *Store) Join() error {
 	values.Add("publicUrl", s.PublicUrl)
 	values.Add("volumes", string(bytes))
 	values.Add("maxVolumeCount", strconv.Itoa(maxVolumeCount))
+	values.Add("maxFileKey", strconv.FormatUint(maxFileKey, 10))
 	values.Add("dataCenter", s.dataCenter)
 	values.Add("rack", s.rack)
 	jsonBlob, err := util.Post("http://"+masterNode+"/dir/join", values)
