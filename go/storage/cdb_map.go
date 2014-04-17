@@ -142,7 +142,7 @@ func (m cdbMap) Visit(visit func(NeedleValue) error) (err error) {
 func ConvertIndexToCdb(cdbName string, index *os.File) error {
 	idx, err := LoadNeedleMap(index)
 	if err != nil {
-		return fmt.Errorf("error loading needle map %s: %s", index, err)
+		return fmt.Errorf("error loading needle map %s: %s", index.Name(), err)
 	}
 	defer idx.Close()
 	return DumpNeedleMapToCdb(cdbName, idx)
@@ -185,12 +185,12 @@ func DumpNeedleMapToCdb(cdbName string, nm *NeedleMap) error {
 	})
 	if err != nil {
 		closer()
-		return fmt.Errorf("error walking index %s: %s", nm, err)
+		return fmt.Errorf("error walking index %v: %s", nm, err)
 	}
 	// store fileBytes
 	data, e := json.Marshal(nm.mapMetric)
 	if e != nil {
-		return fmt.Errorf("error marshaling metric %s: %s", nm.mapMetric, e)
+		return fmt.Errorf("error marshaling metric %v: %s", nm.mapMetric, e)
 	}
 	if err = adder(cdb.Element{Key: []byte{'M'}, Data: data}); err != nil {
 		return err

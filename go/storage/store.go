@@ -150,7 +150,7 @@ func (s *Store) findFreeLocation() (ret *DiskLocation) {
 }
 func (s *Store) addVolume(vid VolumeId, collection string, replicaPlacement *ReplicaPlacement) error {
 	if s.findVolume(vid) != nil {
-		return fmt.Errorf("Volume Id %s already exists!", vid)
+		return fmt.Errorf("Volume Id %d already exists!", vid)
 	}
 	if location := s.findFreeLocation(); location != nil {
 		glog.V(0).Infoln("In dir", location.Directory, "adds volume =", vid, ", collection =", collection, ", replicaPlacement =", replicaPlacement)
@@ -177,7 +177,7 @@ func (s *Store) CheckCompactVolume(volumeIdString string, garbageThresholdString
 		glog.V(3).Infoln(vid, "garbage level is", v.garbageLevel())
 		return nil, garbageThreshold < v.garbageLevel()
 	}
-	return fmt.Errorf("volume id %s is not found during check compact!", vid), false
+	return fmt.Errorf("volume id %d is not found during check compact!", vid), false
 }
 func (s *Store) CompactVolume(volumeIdString string) error {
 	vid, err := NewVolumeId(volumeIdString)
@@ -187,7 +187,7 @@ func (s *Store) CompactVolume(volumeIdString string) error {
 	if v := s.findVolume(vid); v != nil {
 		return v.Compact()
 	}
-	return fmt.Errorf("volume id %s is not found during compact!", vid)
+	return fmt.Errorf("volume id %d is not found during compact!", vid)
 }
 func (s *Store) CommitCompactVolume(volumeIdString string) error {
 	vid, err := NewVolumeId(volumeIdString)
@@ -197,7 +197,7 @@ func (s *Store) CommitCompactVolume(volumeIdString string) error {
 	if v := s.findVolume(vid); v != nil {
 		return v.commitCompact()
 	}
-	return fmt.Errorf("volume id %s is not found during commit compact!", vid)
+	return fmt.Errorf("volume id %d is not found during commit compact!", vid)
 }
 func (s *Store) FreezeVolume(volumeIdString string) error {
 	vid, err := NewVolumeId(volumeIdString)
@@ -210,7 +210,7 @@ func (s *Store) FreezeVolume(volumeIdString string) error {
 		}
 		return v.freeze()
 	}
-	return fmt.Errorf("volume id %s is not found during freeze!", vid)
+	return fmt.Errorf("volume id %d is not found during freeze!", vid)
 }
 func (l *DiskLocation) loadExistingVolumes() {
 	if dirs, err := ioutil.ReadDir(l.Directory); err == nil {
@@ -328,7 +328,7 @@ func (s *Store) Close() {
 func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 	if v := s.findVolume(i); v != nil {
 		if v.readOnly {
-			err = fmt.Errorf("Volume %s is read only!", i)
+			err = fmt.Errorf("Volume %d is read only!", i)
 			return
 		} else {
 			if MaxPossibleVolumeSize >= v.ContentSize()+uint64(size) {
@@ -346,7 +346,7 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 		return
 	}
 	glog.V(0).Infoln("volume", i, "not found!")
-	err = fmt.Errorf("Volume %s not found!", i)
+	err = fmt.Errorf("Volume %d not found!", i)
 	return
 }
 func (s *Store) Delete(i VolumeId, n *Needle) (uint32, error) {

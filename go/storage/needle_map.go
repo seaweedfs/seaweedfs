@@ -145,7 +145,7 @@ func (nm *NeedleMap) Delete(key uint64) error {
 		if e := nm.indexFile.Truncate(offset); e != nil {
 			plus = "\ncouldn't truncate index file: " + e.Error()
 		}
-		return fmt.Errorf("error writing to indexfile %s: %s%s", nm.indexFile, err, plus)
+		return fmt.Errorf("error writing to indexfile %s: %s%s", nm.indexFile.Name(), err, plus)
 	}
 	nm.DeletionCounter++
 	return nil

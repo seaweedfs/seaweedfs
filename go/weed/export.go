@@ -94,7 +94,7 @@ func runExport(cmd *Command, args []string) bool {
 
 	nm, err := storage.LoadNeedleMap(indexFile)
 	if err != nil {
-		glog.Fatalf("cannot load needle map from %s: %s", indexFile, err)
+		glog.Fatalf("cannot load needle map from %s: %s", indexFile.Name(), err)
 	}
 
 	var version storage.Version

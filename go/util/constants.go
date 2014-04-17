@@ -3,5 +3,5 @@ package util
 import ()
 
 const (
-	VERSION = "0.54 beta"
+	VERSION = "0.54"
 )

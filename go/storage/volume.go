@@ -195,7 +195,7 @@ func (v *Volume) isFileUnchanged(n *Needle) bool {
 
 func (v *Volume) Destroy() (err error) {
 	if v.readOnly {
-		err = fmt.Errorf("%s is read-only", v.dataFile)
+		err = fmt.Errorf("%s is read-only", v.dataFile.Name())
 		return
 	}
 	v.Close()
@@ -210,7 +210,7 @@ func (v *Volume) Destroy() (err error) {
 func (v *Volume) write(n *Needle) (size uint32, err error) {
 	glog.V(4).Infof("writing needle %s", NewFileIdFromNeedle(v.Id, n).String())
 	if v.readOnly {
-		err = fmt.Errorf("%s is read-only", v.dataFile)
+		err = fmt.Errorf("%s is read-only", v.dataFile.Name())
 		return
 	}
 	v.accessLock.Lock()
@@ -236,7 +236,7 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 
 	if size, err = n.Append(v.dataFile, v.Version()); err != nil {
 		if e := v.dataFile.Truncate(offset); e != nil {
-			err = fmt.Errorf("%s\ncannot truncate %s: %s", err, v.dataFile, e.Error())
+			err = fmt.Errorf("%s\ncannot truncate %s: %s", err, v.dataFile.Name(), e.Error())
 		}
 		return
 	}
@@ -252,7 +252,7 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 func (v *Volume) delete(n *Needle) (uint32, error) {
 	glog.V(4).Infof("delete needle %s", NewFileIdFromNeedle(v.Id, n).String())
 	if v.readOnly {
-		return 0, fmt.Errorf("%s is read-only", v.dataFile)
+		return 0, fmt.Errorf("%s is read-only", v.dataFile.Name())
 	}
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()

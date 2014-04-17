@@ -107,7 +107,6 @@ func (vl *VolumeLayout) PickForWrite(count int, option *VolumeGrowOption) (*stor
 		}
 		return &vid, count, locationList, nil
 	}
-	return nil, 0, nil, errors.New("Strangely This Should Never Have Happened!")
 }
 
 func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) int {

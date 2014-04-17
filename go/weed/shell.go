@@ -57,5 +57,4 @@ func runShell(command *Command, args []string) bool {
 		cmd = readLine()
 		execCmd(cmd)
 	}
-	return true
 }

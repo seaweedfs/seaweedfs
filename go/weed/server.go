@@ -86,7 +86,7 @@ func runServer(cmd *Command, args []string) bool {
 		if max, e := strconv.Atoi(maxString); e == nil {
 			maxCounts = append(maxCounts, max)
 		} else {
-			glog.Fatalf("The max specified in -max not a valid number %s", max)
+			glog.Fatalf("The max specified in -max not a valid number %s", maxString)
 		}
 	}
 	if len(folders) != len(maxCounts) {
