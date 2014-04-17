@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/storage"
 	"code.google.com/p/weed-fs/go/topology"
 	"code.google.com/p/weed-fs/go/util"
@@ -39,14 +40,12 @@ func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	publicUrl := r.FormValue("publicUrl")
 	volumes := new([]storage.VolumeInfo)
 	if err := json.Unmarshal([]byte(r.FormValue("volumes")), volumes); err != nil {
-		writeJsonQuiet(w, r, map[string]string{"error": "Cannot unmarshal \"volumes\": " + err.Error()})
+		writeJsonQuiet(w, r, operation.JoinResult{Error: "Cannot unmarshal \"volumes\": " + err.Error()})
 		return
 	}
 	debug(s, "volumes", r.FormValue("volumes"))
 	ms.Topo.RegisterVolumes(init, *volumes, ip, port, publicUrl, maxVolumeCount, r.FormValue("dataCenter"), r.FormValue("rack"))
-	m := make(map[string]interface{})
-	m["VolumeSizeLimit"] = uint64(ms.volumeSizeLimitMB) * 1024 * 1024
-	writeJsonQuiet(w, r, m)
+	writeJsonQuiet(w, r, operation.JoinResult{VolumeSizeLimit: uint64(ms.volumeSizeLimitMB) * 1024 * 1024})
 }
 
 func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request) {

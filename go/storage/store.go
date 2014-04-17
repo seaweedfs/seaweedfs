@@ -251,10 +251,6 @@ func (s *Store) Status() []*VolumeInfo {
 	return stats
 }
 
-type JoinResult struct {
-	VolumeSizeLimit uint64
-}
-
 func (s *Store) SetDataCenter(dataCenter string) {
 	s.dataCenter = dataCenter
 }
@@ -303,9 +299,12 @@ func (s *Store) Join() error {
 		s.masterNodes.reset()
 		return err
 	}
-	var ret JoinResult
+	var ret operation.JoinResult
 	if err := json.Unmarshal(jsonBlob, &ret); err != nil {
 		return err
+	}
+	if ret.Error != "" {
+		return errors.New(ret.Error)
 	}
 	s.volumeSizeLimit = ret.VolumeSizeLimit
 	s.connected = true
