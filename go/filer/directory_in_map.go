@@ -26,8 +26,7 @@ type DirectoryManagerInMap struct {
 }
 
 func (dm *DirectoryManagerInMap) NewDirectoryEntryInMap(parent *DirectoryEntryInMap, name string) (d *DirectoryEntryInMap) {
-	d = &DirectoryEntryInMap{Name: name, Parent: parent}
-	d.SubDirectories = make(map[string]*DirectoryEntryInMap)
+	d = &DirectoryEntryInMap{Name: name, Parent: parent, SubDirectories: make(map[string]*DirectoryEntryInMap)}
 	dm.max++
 	d.Id = dm.max
 	parts := make([]string, 0)
@@ -53,7 +52,8 @@ func (dm *DirectoryManagerInMap) log(words ...string) {
 
 func NewDirectoryManagerInMap(dirLogFile string) (dm *DirectoryManagerInMap, err error) {
 	dm = &DirectoryManagerInMap{}
-	dm.Root = dm.NewDirectoryEntryInMap(nil, "")
+	//dm.Root do not use NewDirectoryEntryInMap, since dm.max will be changed
+	dm.Root = &DirectoryEntryInMap{SubDirectories: make(map[string]*DirectoryEntryInMap)}
 	if dm.logFile, err = os.OpenFile(dirLogFile, os.O_RDWR|os.O_CREATE, 0644); err != nil {
 		return nil, fmt.Errorf("cannot write directory log file %s.idx: %s", dirLogFile, err.Error())
 	}
