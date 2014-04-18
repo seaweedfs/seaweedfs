@@ -171,11 +171,14 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// curl -X DELETE http://localhost:8888/path/to
+// curl -X DELETE http://localhost:8888/path/to?recursive=true
 func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	var err error
 	var fid string
 	if strings.HasSuffix(r.URL.Path, "/") {
-		err = fs.filer.DeleteDirectory(r.URL.Path)
+		isRecursive := r.FormValue("recursive") == "true"
+		err = fs.filer.DeleteDirectory(r.URL.Path, isRecursive)
 	} else {
 		fid, err = fs.filer.DeleteFile(r.URL.Path)
 		if err == nil {

@@ -14,6 +14,6 @@ type Filer interface {
 	FindFile(filePath string) (fid string, err error)
 	ListDirectories(dirPath string) (dirs []DirectoryEntry, err error)
 	ListFiles(dirPath string, lastFileName string, limit int) (files []FileEntry, err error)
-	DeleteDirectory(dirPath string) (err error)
+	DeleteDirectory(dirPath string, recursive bool) (err error)
 	DeleteFile(filePath string) (fid string, err error)
 }
