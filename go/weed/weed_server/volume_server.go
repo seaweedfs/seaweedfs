@@ -50,11 +50,11 @@ func NewVolumeServer(r *http.ServeMux, ip string, port int, publicUrl string, fo
 		vs.store.SetDataCenter(vs.dataCenter)
 		vs.store.SetRack(vs.rack)
 		for {
-			err := vs.store.Join()
+			master, err := vs.store.Join()
 			if err == nil {
 				if !connected {
 					connected = true
-					glog.V(0).Infoln("Volume Server Connected with master")
+					glog.V(0).Infoln("Volume Server Connected with master at", master)
 				}
 			} else {
 				glog.V(4).Infoln("Volume Server Failed to talk with master:", err.Error())
@@ -69,7 +69,6 @@ func NewVolumeServer(r *http.ServeMux, ip string, port int, publicUrl string, fo
 			}
 		}
 	}()
-	glog.V(0).Infoln("store joined at", vs.masterNode)
 
 	return vs
 }

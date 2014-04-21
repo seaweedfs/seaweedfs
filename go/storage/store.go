@@ -264,10 +264,10 @@ func (s *Store) SetRack(rack string) {
 func (s *Store) SetBootstrapMaster(bootstrapMaster string) {
 	s.masterNodes = NewMasterNodes(bootstrapMaster)
 }
-func (s *Store) Join() error {
-	masterNode, e := s.masterNodes.findMaster()
+func (s *Store) Join() (masterNode string, e error) {
+	masterNode, e = s.masterNodes.findMaster()
 	if e != nil {
-		return e
+		return
 	}
 	stats := new([]*VolumeInfo)
 	maxVolumeCount := 0
@@ -305,18 +305,18 @@ func (s *Store) Join() error {
 	jsonBlob, err := util.Post("http://"+masterNode+"/dir/join", values)
 	if err != nil {
 		s.masterNodes.reset()
-		return err
+		return "", err
 	}
 	var ret operation.JoinResult
 	if err := json.Unmarshal(jsonBlob, &ret); err != nil {
-		return err
+		return masterNode, err
 	}
 	if ret.Error != "" {
-		return errors.New(ret.Error)
+		return masterNode, errors.New(ret.Error)
 	}
 	s.volumeSizeLimit = ret.VolumeSizeLimit
 	s.connected = true
-	return nil
+	return
 }
 func (s *Store) Close() {
 	for _, location := range s.Locations {
@@ -338,7 +338,7 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 			}
 			if s.volumeSizeLimit < v.ContentSize()+3*uint64(size) {
 				glog.V(0).Infoln("volume", i, "size", v.ContentSize(), "will exceed limit", s.volumeSizeLimit)
-				if e := s.Join(); e != nil {
+				if _, e := s.Join(); e != nil {
 					glog.V(0).Infoln("error when reporting size:", e)
 				}
 			}
