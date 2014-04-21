@@ -2,6 +2,7 @@ package topology
 
 import (
 	"code.google.com/p/weed-fs/go/glog"
+	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/sequence"
 	"code.google.com/p/weed-fs/go/storage"
 	"errors"
@@ -143,16 +144,24 @@ func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	t.GetVolumeLayout(v.Collection, v.ReplicaPlacement).RegisterVolume(&v, dn)
 }
 
-func (t *Topology) RegisterVolumes(init bool, volumeInfos []storage.VolumeInfo, ip string, port int, publicUrl string, maxVolumeCount int, maxFileKey uint64, dcName string, rackName string) {
-	t.Sequence.SetMax(maxFileKey)
-	dcName, rackName = t.configuration.Locate(ip, dcName, rackName)
+func (t *Topology) RegisterVolumes(joinMessage *operation.JoinMessage) {
+	t.Sequence.SetMax(*joinMessage.MaxFileKey)
+	dcName, rackName := t.configuration.Locate(*joinMessage.Ip, *joinMessage.DataCenter, *joinMessage.Rack)
 	dc := t.GetOrCreateDataCenter(dcName)
 	rack := dc.GetOrCreateRack(rackName)
-	dn := rack.FindDataNode(ip, port)
-	if init && dn != nil {
+	dn := rack.FindDataNode(*joinMessage.Ip, int(*joinMessage.Port))
+	if *joinMessage.IsInit && dn != nil {
 		t.UnRegisterDataNode(dn)
 	}
-	dn = rack.GetOrCreateDataNode(ip, port, publicUrl, maxVolumeCount)
+	dn = rack.GetOrCreateDataNode(*joinMessage.Ip, int(*joinMessage.Port), *joinMessage.PublicUrl, int(*joinMessage.MaxVolumeCount))
+	var volumeInfos []storage.VolumeInfo
+	for _, v := range joinMessage.Volumes {
+		if vi, err := storage.NewVolumeInfo(v); err == nil {
+			volumeInfos = append(volumeInfos, vi)
+		} else {
+			glog.V(0).Infoln("Fail to convert joined volume information:", err.Error())
+		}
+	}
 	dn.UpdateVolumes(volumeInfos)
 	for _, v := range volumeInfos {
 		t.RegisterVolumeLayout(v, dn)

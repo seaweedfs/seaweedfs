@@ -1,6 +1,7 @@
 package storage
 
 import (
+	proto "code.google.com/p/goprotobuf/proto"
 	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/util"
@@ -9,7 +10,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math/rand"
-	"net/url"
 	"strconv"
 	"strings"
 )
@@ -269,40 +269,50 @@ func (s *Store) Join() (masterNode string, e error) {
 	if e != nil {
 		return
 	}
-	stats := new([]*VolumeInfo)
+	var volumeMessages []*operation.VolumeInformationMessage
 	maxVolumeCount := 0
 	var maxFileKey uint64
 	for _, location := range s.Locations {
 		maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
 		for k, v := range location.volumes {
-			s := &VolumeInfo{Id: VolumeId(k), Size: uint64(v.Size()),
-				Collection:       v.Collection,
-				ReplicaPlacement: v.ReplicaPlacement,
-				Version:          v.Version(),
-				FileCount:        v.nm.FileCount(),
-				DeleteCount:      v.nm.DeletedCount(),
-				DeletedByteCount: v.nm.DeletedSize(),
-				ReadOnly:         v.readOnly}
-			*stats = append(*stats, s)
+			volumeMessage := &operation.VolumeInformationMessage{
+				Id:               proto.Uint32(uint32(k)),
+				Size:             proto.Uint64(uint64(v.Size())),
+				Collection:       proto.String(v.Collection),
+				FileCount:        proto.Uint64(uint64(v.nm.FileCount())),
+				DeleteCount:      proto.Uint64(uint64(v.nm.DeletedCount())),
+				DeletedByteCount: proto.Uint64(v.nm.DeletedSize()),
+				ReadOnly:         proto.Bool(v.readOnly),
+				ReplicaPlacement: proto.Uint32(uint32(v.ReplicaPlacement.Byte())),
+				Version:          proto.Uint32(uint32(v.Version())),
+			}
+			volumeMessages = append(volumeMessages, volumeMessage)
 			if maxFileKey < v.nm.MaxFileKey() {
 				maxFileKey = v.nm.MaxFileKey()
 			}
 		}
 	}
-	bytes, _ := json.Marshal(stats)
-	values := make(url.Values)
-	if !s.connected {
-		values.Add("init", "true")
+
+	joinMessage := &operation.JoinMessage{
+		IsInit:         proto.Bool(!s.connected),
+		Ip:             proto.String(s.Ip),
+		Port:           proto.Uint32(uint32(s.Port)),
+		PublicUrl:      proto.String(s.PublicUrl),
+		MaxVolumeCount: proto.Uint32(uint32(maxVolumeCount)),
+		MaxFileKey:     proto.Uint64(maxFileKey),
+		DataCenter:     proto.String(s.dataCenter),
+		Rack:           proto.String(s.rack),
+		Volumes:        volumeMessages,
 	}
-	values.Add("port", strconv.Itoa(s.Port))
-	values.Add("ip", s.Ip)
-	values.Add("publicUrl", s.PublicUrl)
-	values.Add("volumes", string(bytes))
-	values.Add("maxVolumeCount", strconv.Itoa(maxVolumeCount))
-	values.Add("maxFileKey", strconv.FormatUint(maxFileKey, 10))
-	values.Add("dataCenter", s.dataCenter)
-	values.Add("rack", s.rack)
-	jsonBlob, err := util.Post("http://"+masterNode+"/dir/join", values)
+
+	data, err := proto.Marshal(joinMessage)
+	if err != nil {
+		return "", err
+	}
+
+	println("join data size", len(data))
+
+	jsonBlob, err := util.PostBytes("http://"+masterNode+"/dir/join", data)
 	if err != nil {
 		s.masterNodes.reset()
 		return "", err

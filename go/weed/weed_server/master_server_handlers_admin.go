@@ -1,12 +1,15 @@
 package weed_server
 
 import (
+	proto "code.google.com/p/goprotobuf/proto"
+	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/storage"
 	"code.google.com/p/weed-fs/go/topology"
 	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
 	"errors"
+	"io/ioutil"
 	"net/http"
 	"strconv"
 	"strings"
@@ -29,23 +32,30 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 }
 
 func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
-	init := r.FormValue("init") == "true"
-	ip := r.FormValue("ip")
-	if ip == "" {
-		ip = r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")]
-	}
-	port, _ := strconv.Atoi(r.FormValue("port"))
-	maxVolumeCount, _ := strconv.Atoi(r.FormValue("maxVolumeCount"))
-	maxFileKey, _ := strconv.ParseUint(r.FormValue("maxFileKey"), 10, 64)
-	s := r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")+1] + r.FormValue("port")
-	publicUrl := r.FormValue("publicUrl")
-	volumes := new([]storage.VolumeInfo)
-	if err := json.Unmarshal([]byte(r.FormValue("volumes")), volumes); err != nil {
-		writeJsonQuiet(w, r, operation.JoinResult{Error: "Cannot unmarshal \"volumes\": " + err.Error()})
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		writeJsonError(w, r, err)
 		return
 	}
-	debug(s, "volumes", r.FormValue("volumes"))
-	ms.Topo.RegisterVolumes(init, *volumes, ip, port, publicUrl, maxVolumeCount, maxFileKey, r.FormValue("dataCenter"), r.FormValue("rack"))
+	joinMessage := &operation.JoinMessage{}
+	if err = proto.Unmarshal(body, joinMessage); err != nil {
+		writeJsonError(w, r, err)
+		return
+	}
+	if *joinMessage.Ip == "" {
+		*joinMessage.Ip = r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")]
+	}
+	if glog.V(4) {
+		if jsonData, jsonError := json.Marshal(joinMessage); jsonError != nil {
+			glog.V(0).Infoln("json marshaling error: ", jsonError)
+			writeJsonError(w, r, jsonError)
+			return
+		} else {
+			glog.V(4).Infoln("Proto size", len(body), "json size", len(jsonData), string(jsonData))
+		}
+	}
+
+	ms.Topo.RegisterVolumes(joinMessage)
 	writeJsonQuiet(w, r, operation.JoinResult{VolumeSizeLimit: uint64(ms.volumeSizeLimitMB) * 1024 * 1024})
 }
 

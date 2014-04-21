@@ -1,6 +1,7 @@
 package util
 
 import (
+	"bytes"
 	"code.google.com/p/weed-fs/go/glog"
 	"fmt"
 	"io/ioutil"
@@ -19,6 +20,21 @@ func init() {
 		MaxIdleConnsPerHost: 1024,
 	}
 	client = &http.Client{Transport: Transport}
+}
+
+func PostBytes(url string, body []byte) ([]byte, error) {
+	r, err := client.Post(url, "application/octet-stream", bytes.NewReader(body))
+	if err != nil {
+		glog.V(0).Infoln(err)
+		return nil, err
+	}
+	defer r.Body.Close()
+	b, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		glog.V(0).Infoln("read post result from", url, err)
+		return nil, err
+	}
+	return b, nil
 }
 
 func Post(url string, values url.Values) ([]byte, error) {
