@@ -310,8 +310,6 @@ func (s *Store) Join() (masterNode string, e error) {
 		return "", err
 	}
 
-	println("join data size", len(data))
-
 	jsonBlob, err := util.PostBytes("http://"+masterNode+"/dir/join", data)
 	if err != nil {
 		s.masterNodes.reset()
