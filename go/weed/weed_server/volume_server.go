@@ -5,6 +5,7 @@ import (
 	"code.google.com/p/weed-fs/go/storage"
 	"math/rand"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -17,10 +18,11 @@ type VolumeServer struct {
 	store        *storage.Store
 }
 
-func NewVolumeServer(r *http.ServeMux, ip string, port int, publicUrl string, folders []string, maxCounts []int,
+func NewVolumeServer(r *http.ServeMux, ip string, port int, publicIp string, folders []string, maxCounts []int,
 	masterNode string, pulseSeconds int,
 	dataCenter string, rack string,
 	whiteList []string) *VolumeServer {
+	publicUrl := publicIp + ":" + strconv.Itoa(port)
 	vs := &VolumeServer{
 		masterNode:   masterNode,
 		pulseSeconds: pulseSeconds,

@@ -28,8 +28,8 @@ var (
 	vport                 = cmdVolume.Flag.Int("port", 8080, "http listen port")
 	volumeFolders         = cmdVolume.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	maxVolumeCounts       = cmdVolume.Flag.String("max", "7", "maximum numbers of volumes, count[,count]...")
-	ip                    = cmdVolume.Flag.String("ip", "localhost", "ip or server name")
-	publicUrl             = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible <ip|server_name>:<port>")
+	ip                    = cmdVolume.Flag.String("ip", "", "ip or server name")
+	publicIp              = cmdVolume.Flag.String("publicIp", "", "Publicly accessible <ip|server_name>")
 	masterNode            = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
 	vpulse                = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
 	vTimeout              = cmdVolume.Flag.Int("idleTimeout", 10, "connection idle seconds")
@@ -65,8 +65,12 @@ func runVolume(cmd *Command, args []string) bool {
 		}
 	}
 
-	if *publicUrl == "" {
-		*publicUrl = *ip + ":" + strconv.Itoa(*vport)
+	if *publicIp == "" {
+		if *ip == "" {
+			*publicIp = "localhost"
+		} else {
+			*publicIp = *ip
+		}
 	}
 	if *volumeWhiteListOption != "" {
 		volumeWhiteList = strings.Split(*volumeWhiteListOption, ",")
@@ -74,15 +78,15 @@ func runVolume(cmd *Command, args []string) bool {
 
 	r := http.NewServeMux()
 
-	weed_server.NewVolumeServer(r, *ip, *vport, *publicUrl, folders, maxCounts,
+	weed_server.NewVolumeServer(r, *ip, *vport, *publicIp, folders, maxCounts,
 		*masterNode, *vpulse, *dataCenter, *rack, volumeWhiteList,
 	)
 
-	glog.V(0).Infoln("Start Weed volume server", util.VERSION, "at http://"+*ip+":"+strconv.Itoa(*vport))
-	listener, e := util.NewListener(
-		*ip+":"+strconv.Itoa(*vport),
-		time.Duration(*vTimeout)*time.Second,
-	)
+	listeningAddress := *ip + ":" + strconv.Itoa(*vport)
+
+	glog.V(0).Infoln("Start Weed volume server", util.VERSION, "at", listeningAddress)
+
+	listener, e := util.NewListener(listeningAddress, time.Duration(*vTimeout)*time.Second)
 	if e != nil {
 		glog.Fatalf(e.Error())
 	}

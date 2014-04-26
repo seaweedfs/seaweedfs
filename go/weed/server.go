@@ -29,29 +29,33 @@ var cmdServer = &Command{
   and a master server to provide volume=>location mapping service and sequence number of file ids
   
   This is provided as a convenient way to start both volume server and master server.
-  The servers are the same as starting them separately.
+  The servers are exactly the same as starting them separately.
+
   So other volume servers can use this embedded master server also.
+  
+  Optionally, one filer server can be started. Logically, filer servers should not be in a cluster.
+  They run with meta data on disk, not shared. So each filer server is different.
   
   `,
 }
 
 var (
-	serverIp                      = cmdServer.Flag.String("ip", "localhost", "ip or server name")
+	serverIp                      = cmdServer.Flag.String("ip", "", "ip or server name")
+	serverPublicIp                = cmdServer.Flag.String("publicIp", "", "ip or server name")
 	serverMaxCpu                  = cmdServer.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	serverTimeout                 = cmdServer.Flag.Int("idleTimeout", 10, "connection idle seconds")
 	serverDataCenter              = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
 	serverRack                    = cmdServer.Flag.String("rack", "", "current volume server's rack name")
 	serverWhiteListOption         = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	serverPeers                   = cmdServer.Flag.String("peers", "", "other master nodes in comma separated ip:masterPort list")
-	masterPort                    = cmdServer.Flag.Int("masterPort", 9333, "master server http listen port")
-	masterMetaFolder              = cmdServer.Flag.String("mdir", "", "data directory to store meta data, default to same as -dir specified")
-	masterVolumeSizeLimitMB       = cmdServer.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
-	masterConfFile                = cmdServer.Flag.String("conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
-	masterDefaultReplicaPlacement = cmdServer.Flag.String("defaultReplicaPlacement", "000", "Default replication type if not specified.")
-	volumePort                    = cmdServer.Flag.Int("port", 8080, "volume server http listen port")
-	volumePublicUrl               = cmdServer.Flag.String("publicUrl", "", "Publicly accessible <ip|server_name>:<port>")
+	serverPeers                   = cmdServer.Flag.String("master.peers", "", "other master nodes in comma separated ip:masterPort list")
+	masterPort                    = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
+	masterMetaFolder              = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
+	masterVolumeSizeLimitMB       = cmdServer.Flag.Uint("master.volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
+	masterConfFile                = cmdServer.Flag.String("master.conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
+	masterDefaultReplicaPlacement = cmdServer.Flag.String("master.defaultReplicaPlacement", "000", "Default replication type if not specified.")
+	volumePort                    = cmdServer.Flag.Int("volume.port", 8080, "volume server http listen port")
 	volumeDataFolders             = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
-	volumeMaxDataVolumeCounts     = cmdServer.Flag.String("max", "7", "maximum numbers of volumes, count[,count]...")
+	volumeMaxDataVolumeCounts     = cmdServer.Flag.String("volume.max", "7", "maximum numbers of volumes, count[,count]...")
 	volumePulse                   = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	isStartingFiler               = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 
@@ -68,7 +72,15 @@ func init() {
 
 func runServer(cmd *Command, args []string) bool {
 
-	*filer.master = *serverIp + ":" + strconv.Itoa(*masterPort)
+	if *serverPublicIp == "" {
+		if *serverIp == "" {
+			*serverPublicIp = "localhost"
+		} else {
+			*serverPublicIp = *serverIp
+		}
+	}
+
+	*filer.master = *serverPublicIp + ":" + strconv.Itoa(*masterPort)
 
 	if *filer.defaultReplicaPlacement == "" {
 		*filer.defaultReplicaPlacement = *masterDefaultReplicaPlacement
@@ -112,9 +124,6 @@ func runServer(cmd *Command, args []string) bool {
 		glog.Fatalf("Check Mapping Meta Folder (-filer.dir=\"%s\") Writable: %s", *filer.dir, err)
 	}
 
-	if *volumePublicUrl == "" {
-		*volumePublicUrl = *serverIp + ":" + strconv.Itoa(*volumePort)
-	}
 	if *serverWhiteListOption != "" {
 		serverWhiteList = strings.Split(*serverWhiteListOption, ",")
 	}
@@ -152,11 +161,8 @@ func runServer(cmd *Command, args []string) bool {
 			*masterVolumeSizeLimitMB, *volumePulse, *masterConfFile, *masterDefaultReplicaPlacement, *garbageThreshold, serverWhiteList,
 		)
 
-		glog.V(0).Infoln("Start Weed Master", util.VERSION, "at port", *serverIp+":"+strconv.Itoa(*masterPort))
-		masterListener, e := util.NewListener(
-			*serverIp+":"+strconv.Itoa(*masterPort),
-			time.Duration(*serverTimeout)*time.Second,
-		)
+		glog.V(0).Infoln("Start Weed Master", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*masterPort))
+		masterListener, e := util.NewListener(*serverIp+":"+strconv.Itoa(*masterPort), time.Duration(*serverTimeout)*time.Second)
 		if e != nil {
 			glog.Fatalf(e.Error())
 		}
@@ -164,7 +170,7 @@ func runServer(cmd *Command, args []string) bool {
 		go func() {
 			raftWaitForMaster.Wait()
 			time.Sleep(100 * time.Millisecond)
-			myAddress := *serverIp + ":" + strconv.Itoa(*masterPort)
+			myAddress := *serverPublicIp + ":" + strconv.Itoa(*masterPort)
 			var peers []string
 			if *serverPeers != "" {
 				peers = strings.Split(*serverPeers, ",")
@@ -183,11 +189,11 @@ func runServer(cmd *Command, args []string) bool {
 	volumeWait.Wait()
 	time.Sleep(100 * time.Millisecond)
 	r := http.NewServeMux()
-	weed_server.NewVolumeServer(r, *serverIp, *volumePort, *volumePublicUrl, folders, maxCounts,
+	weed_server.NewVolumeServer(r, *serverIp, *volumePort, *serverPublicIp, folders, maxCounts,
 		*serverIp+":"+strconv.Itoa(*masterPort), *volumePulse, *serverDataCenter, *serverRack, serverWhiteList,
 	)
 
-	glog.V(0).Infoln("Start Weed volume server", util.VERSION, "at http://"+*serverIp+":"+strconv.Itoa(*volumePort))
+	glog.V(0).Infoln("Start Weed volume server", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*volumePort))
 	volumeListener, e := util.NewListener(
 		*serverIp+":"+strconv.Itoa(*volumePort),
 		time.Duration(*serverTimeout)*time.Second,

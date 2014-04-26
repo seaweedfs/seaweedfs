@@ -28,7 +28,8 @@ var cmdMaster = &Command{
 
 var (
 	mport                   = cmdMaster.Flag.Int("port", 9333, "http listen port")
-	masterIp                = cmdMaster.Flag.String("ip", "localhost", "master ip address")
+	masterIp                = cmdMaster.Flag.String("ip", "", "master listening ip address, default to listen on all network interfaces")
+	mPublicIp               = cmdMaster.Flag.String("publicIp", "", "peer accessible <ip>|<server_name>")
 	metaFolder              = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
 	masterPeers             = cmdMaster.Flag.String("peers", "", "other master nodes in comma separated ip:port list")
 	volumeSizeLimitMB       = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
@@ -60,24 +61,30 @@ func runMaster(cmd *Command, args []string) bool {
 		*volumeSizeLimitMB, *mpulse, *confFile, *defaultReplicaPlacement, *garbageThreshold, masterWhiteList,
 	)
 
-	glog.V(0).Infoln("Start Weed Master", util.VERSION, "at port", *masterIp+":"+strconv.Itoa(*mport))
+	listeningAddress := *masterIp + ":" + strconv.Itoa(*mport)
 
-	listener, e := util.NewListener(
-		*masterIp+":"+strconv.Itoa(*mport),
-		time.Duration(*mTimeout)*time.Second,
-	)
+	glog.V(0).Infoln("Start Weed Master", util.VERSION, "at", listeningAddress)
+
+	listener, e := util.NewListener(listeningAddress, time.Duration(*mTimeout)*time.Second)
 	if e != nil {
 		glog.Fatalf(e.Error())
 	}
 
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		myAddress := *masterIp + ":" + strconv.Itoa(*mport)
+		if *mPublicIp == "" {
+			if *masterIp == "" {
+				*mPublicIp = "localhost"
+			} else {
+				*mPublicIp = *masterIp
+			}
+		}
+		myPublicMasterAddress := *mPublicIp + ":" + strconv.Itoa(*mport)
 		var peers []string
 		if *masterPeers != "" {
 			peers = strings.Split(*masterPeers, ",")
 		}
-		raftServer := weed_server.NewRaftServer(r, peers, myAddress, *metaFolder, ms.Topo, *mpulse)
+		raftServer := weed_server.NewRaftServer(r, peers, myPublicMasterAddress, *metaFolder, ms.Topo, *mpulse)
 		ms.SetRaftServer(raftServer)
 	}()
 
