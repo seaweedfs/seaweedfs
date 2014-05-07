@@ -125,15 +125,15 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request,
 		}
 	}
 	if ext == ".png" || ext == ".jpg" || ext == ".gif" {
-		if srcImage, _, err := image.Decode(bytes.NewReader(n.Data)); err == nil {
-			width, height := 0, 0
-			if r.FormValue("width") != "" {
-				width, _ = strconv.Atoi(r.FormValue("width"))
-			}
-			if r.FormValue("height") != "" {
-				height, _ = strconv.Atoi(r.FormValue("height"))
-			}
-			if width != 0 || height != 0 {
+		width, height := 0, 0
+		if r.FormValue("width") != "" {
+			width, _ = strconv.Atoi(r.FormValue("width"))
+		}
+		if r.FormValue("height") != "" {
+			height, _ = strconv.Atoi(r.FormValue("height"))
+		}
+		if width != 0 || height != 0 {
+			if srcImage, _, err := image.Decode(bytes.NewReader(n.Data)); err == nil {
 				bounds := srcImage.Bounds()
 				var dstImage *image.NRGBA
 				if width == height && bounds.Dx() != bounds.Dy() {
