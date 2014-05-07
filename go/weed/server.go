@@ -7,15 +7,22 @@ import (
 	"github.com/gorilla/mux"
 	"net/http"
 	"os"
+	"os/signal"
 	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
+type ServerOptions struct {
+	cpuprofile *string
+}
+
 var (
-	filer FilerOptions
+	filer         FilerOptions
+	serverOptions ServerOptions
 )
 
 func init() {
@@ -68,9 +75,29 @@ func init() {
 	filer.port = cmdServer.Flag.Int("filer.port", 8888, "filer server http listen port")
 	filer.dir = cmdServer.Flag.String("filer.dir", "", "directory to store meta data, default to a 'filer' sub directory of what -mdir is specified")
 	filer.defaultReplicaPlacement = cmdServer.Flag.String("filer.defaultReplicaPlacement", "", "Default replication type if not specified during runtime.")
+	serverOptions.cpuprofile = cmdServer.Flag.String("cpuprofile", "", "write cpu profile to file")
 }
 
 func runServer(cmd *Command, args []string) bool {
+	if *serverOptions.cpuprofile != "" {
+		f, err := os.Create(*serverOptions.cpuprofile)
+		if err != nil {
+			glog.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+
+		signalChan := make(chan os.Signal, 1)
+		signal.Notify(signalChan, os.Interrupt)
+		go func() {
+			for _ = range signalChan {
+				// sig is a ^C, handle it
+				pprof.StopCPUProfile()
+				os.Exit(0)
+			}
+		}()
+
+	}
 
 	if *serverPublicIp == "" {
 		if *serverIp == "" {
