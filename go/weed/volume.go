@@ -78,7 +78,7 @@ func runVolume(cmd *Command, args []string) bool {
 
 	r := http.NewServeMux()
 
-	weed_server.NewVolumeServer(r, *ip, *vport, *publicIp, folders, maxCounts,
+	volumeServer := weed_server.NewVolumeServer(r, *ip, *vport, *publicIp, folders, maxCounts,
 		*masterNode, *vpulse, *dataCenter, *rack, volumeWhiteList,
 	)
 
@@ -90,6 +90,16 @@ func runVolume(cmd *Command, args []string) bool {
 	if e != nil {
 		glog.Fatalf(e.Error())
 	}
+
+	// deal with control+c
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt)
+	go func() {
+		for _ = range signalChan {
+			volumeServer.Shutdown()
+			os.Exit(0)
+		}
+	}()
 
 	if e := http.Serve(listener, r); e != nil {
 		glog.Fatalf("Fail to serve:%s", e.Error())
