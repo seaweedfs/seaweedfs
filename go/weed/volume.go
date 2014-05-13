@@ -6,6 +6,7 @@ import (
 	"code.google.com/p/weed-fs/go/weed/weed_server"
 	"net/http"
 	"os"
+	"os/signal"
 	"runtime"
 	"strconv"
 	"strings"
