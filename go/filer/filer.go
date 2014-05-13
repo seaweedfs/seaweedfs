@@ -5,8 +5,8 @@ import ()
 type FileId string //file id on weedfs
 
 type FileEntry struct {
-	Name string //file name without path
-	Id   FileId
+	Name string `json:"name,omitempty"` //file name without path
+	Id   FileId `json:"fid,omitempty"`
 }
 
 type Filer interface {

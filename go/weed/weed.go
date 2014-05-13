@@ -21,16 +21,17 @@ var server *string
 var commands = []*Command{
 	cmdBenchmark,
 	cmdCompact,
-	cmdFiler,
 	cmdFix,
 	cmdServer,
 	cmdMaster,
+	cmdFiler,
 	cmdUpload,
 	cmdDownload,
 	cmdShell,
 	cmdVersion,
 	cmdVolume,
 	cmdExport,
+	cmdMount,
 }
 
 var exitStatus = 0
