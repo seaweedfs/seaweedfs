@@ -1,7 +1,6 @@
 package main
 
-import (
-)
+import ()
 
 type MountOptions struct {
 	filer *string

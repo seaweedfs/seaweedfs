@@ -220,7 +220,7 @@ func runServer(cmd *Command, args []string) bool {
 
 	// deal with control+c
 	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt)
+	signal.Notify(signalChan, os.Interrupt, os.Kill)
 	go func() {
 		for _ = range signalChan {
 			volumeServer.Shutdown()

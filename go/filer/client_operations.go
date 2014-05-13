@@ -68,4 +68,3 @@ func call(server string, request ApiRequest, ret interface{}) error {
 	}
 	return nil
 }
-

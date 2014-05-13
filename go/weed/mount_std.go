@@ -29,7 +29,7 @@ func runMount(cmd *Command, args []string) bool {
 	}
 
 	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt)
+	signal.Notify(signalChan, os.Interrupt, os.Kill)
 	go func() {
 		for _ = range signalChan {
 			// sig is a ^C, handle it
