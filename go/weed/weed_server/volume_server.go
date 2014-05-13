@@ -74,3 +74,9 @@ func NewVolumeServer(r *http.ServeMux, ip string, port int, publicIp string, fol
 
 	return vs
 }
+
+func (vs *VolumeServer) Shutdown() {
+	glog.V(0).Infoln("Shutting down volume server...")
+	vs.store.Close()
+	glog.V(0).Infoln("Shut down successfully!")
+}

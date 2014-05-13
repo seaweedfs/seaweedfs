@@ -21,8 +21,8 @@ type ServerOptions struct {
 }
 
 var (
-	filer         FilerOptions
 	serverOptions ServerOptions
+	filerOptions  FilerOptions
 )
 
 func init() {
@@ -70,12 +70,12 @@ var (
 )
 
 func init() {
-	filer.master = cmdServer.Flag.String("filer.master", "", "default to current master server")
-	filer.collection = cmdServer.Flag.String("filer.collection", "", "all data will be stored in this collection")
-	filer.port = cmdServer.Flag.Int("filer.port", 8888, "filer server http listen port")
-	filer.dir = cmdServer.Flag.String("filer.dir", "", "directory to store meta data, default to a 'filer' sub directory of what -mdir is specified")
-	filer.defaultReplicaPlacement = cmdServer.Flag.String("filer.defaultReplicaPlacement", "", "Default replication type if not specified during runtime.")
 	serverOptions.cpuprofile = cmdServer.Flag.String("cpuprofile", "", "write cpu profile to file")
+	filerOptions.master = cmdServer.Flag.String("filer.master", "", "default to current master server")
+	filerOptions.collection = cmdServer.Flag.String("filer.collection", "", "all data will be stored in this collection")
+	filerOptions.port = cmdServer.Flag.Int("filer.port", 8888, "filer server http listen port")
+	filerOptions.dir = cmdServer.Flag.String("filer.dir", "", "directory to store meta data, default to a 'filer' sub directory of what -mdir is specified")
+	filerOptions.defaultReplicaPlacement = cmdServer.Flag.String("filer.defaultReplicaPlacement", "", "Default replication type if not specified during runtime.")
 }
 
 func runServer(cmd *Command, args []string) bool {
@@ -86,17 +86,6 @@ func runServer(cmd *Command, args []string) bool {
 		}
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
-
-		signalChan := make(chan os.Signal, 1)
-		signal.Notify(signalChan, os.Interrupt)
-		go func() {
-			for _ = range signalChan {
-				// sig is a ^C, handle it
-				pprof.StopCPUProfile()
-				os.Exit(0)
-			}
-		}()
-
 	}
 
 	if *serverPublicIp == "" {
@@ -107,10 +96,10 @@ func runServer(cmd *Command, args []string) bool {
 		}
 	}
 
-	*filer.master = *serverPublicIp + ":" + strconv.Itoa(*masterPort)
+	*filerOptions.master = *serverPublicIp + ":" + strconv.Itoa(*masterPort)
 
-	if *filer.defaultReplicaPlacement == "" {
-		*filer.defaultReplicaPlacement = *masterDefaultReplicaPlacement
+	if *filerOptions.defaultReplicaPlacement == "" {
+		*filerOptions.defaultReplicaPlacement = *masterDefaultReplicaPlacement
 	}
 
 	if *serverMaxCpu < 1 {
@@ -140,15 +129,15 @@ func runServer(cmd *Command, args []string) bool {
 	if *masterMetaFolder == "" {
 		*masterMetaFolder = folders[0]
 	}
-	if *filer.dir == "" {
-		*filer.dir = *masterMetaFolder + "/filer"
-		os.MkdirAll(*filer.dir, 0700)
+	if *filerOptions.dir == "" {
+		*filerOptions.dir = *masterMetaFolder + "/filer"
+		os.MkdirAll(*filerOptions.dir, 0700)
 	}
 	if err := util.TestFolderWritable(*masterMetaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterMetaFolder, err)
 	}
-	if err := util.TestFolderWritable(*filer.dir); err != nil {
-		glog.Fatalf("Check Mapping Meta Folder (-filer.dir=\"%s\") Writable: %s", *filer.dir, err)
+	if err := util.TestFolderWritable(*filerOptions.dir); err != nil {
+		glog.Fatalf("Check Mapping Meta Folder (-filer.dir=\"%s\") Writable: %s", *filerOptions.dir, err)
 	}
 
 	if *serverWhiteListOption != "" {
@@ -158,13 +147,13 @@ func runServer(cmd *Command, args []string) bool {
 	if *isStartingFiler {
 		go func() {
 			r := http.NewServeMux()
-			_, nfs_err := weed_server.NewFilerServer(r, *filer.port, *filer.master, *filer.dir, *filer.collection)
+			_, nfs_err := weed_server.NewFilerServer(r, *filerOptions.port, *filerOptions.master, *filerOptions.dir, *filerOptions.collection)
 			if nfs_err != nil {
 				glog.Fatalf(nfs_err.Error())
 			}
-			glog.V(0).Infoln("Start Weed Filer", util.VERSION, "at port", strconv.Itoa(*filer.port))
+			glog.V(0).Infoln("Start Weed Filer", util.VERSION, "at port", strconv.Itoa(*filerOptions.port))
 			filerListener, e := util.NewListener(
-				":"+strconv.Itoa(*filer.port),
+				":"+strconv.Itoa(*filerOptions.port),
 				time.Duration(10)*time.Second,
 			)
 			if e != nil {
@@ -216,7 +205,7 @@ func runServer(cmd *Command, args []string) bool {
 	volumeWait.Wait()
 	time.Sleep(100 * time.Millisecond)
 	r := http.NewServeMux()
-	weed_server.NewVolumeServer(r, *serverIp, *volumePort, *serverPublicIp, folders, maxCounts,
+	volumeServer := weed_server.NewVolumeServer(r, *serverIp, *volumePort, *serverPublicIp, folders, maxCounts,
 		*serverIp+":"+strconv.Itoa(*masterPort), *volumePulse, *serverDataCenter, *serverRack, serverWhiteList,
 	)
 
@@ -228,6 +217,18 @@ func runServer(cmd *Command, args []string) bool {
 	if e != nil {
 		glog.Fatalf(e.Error())
 	}
+
+	// deal with control+c
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt)
+	go func() {
+		for _ = range signalChan {
+			volumeServer.Shutdown()
+			pprof.StopCPUProfile()
+			os.Exit(0)
+		}
+	}()
+
 	if e := http.Serve(volumeListener, r); e != nil {
 		glog.Fatalf("Fail to serve:%s", e.Error())
 	}
