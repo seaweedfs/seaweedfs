@@ -111,7 +111,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request,
 		w.Header().Set("Content-Type", mtype)
 	}
 	if filename != "" {
-		w.Header().Set("Content-Disposition", "filename="+fileNameEscaper.Replace(filename))
+		w.Header().Set("Content-Disposition", "filename=\""+fileNameEscaper.Replace(filename)+"\"")
 	}
 	if ext != ".gz" {
 		if n.IsGzipped() {

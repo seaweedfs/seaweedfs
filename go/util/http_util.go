@@ -100,6 +100,7 @@ func DownloadUrl(fileUrl string) (filename string, content []byte, e error) {
 		glog.V(4).Info("Content-Disposition: ", contentDisposition[0])
 		if strings.HasPrefix(contentDisposition[0], "filename=") {
 			filename = contentDisposition[0][len("filename="):]
+			filename = strings.Trim(filename, "\"")
 		}
 	} else {
 		glog.V(4).Info("No Content-Disposition!")
