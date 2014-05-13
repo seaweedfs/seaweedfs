@@ -11,7 +11,6 @@ import (
 	"code.google.com/p/weed-fs/go/util"
 	"fmt"
 	"os"
-	"os/signal"
 	"runtime"
 )
 
@@ -28,16 +27,10 @@ func runMount(cmd *Command, args []string) bool {
 		return false
 	}
 
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt, os.Kill)
-	go func() {
-		for _ = range signalChan {
-			// sig is a ^C, handle it
-			fuse.Unmount(*mountOptions.dir)
-			c.Close()
-			os.Exit(0)
-		}
-	}()
+	OnInterrupt(func() {
+		fuse.Unmount(*mountOptions.dir)
+		c.Close()
+	})
 
 	err = fs.Serve(c, WFS{})
 	if err != nil {

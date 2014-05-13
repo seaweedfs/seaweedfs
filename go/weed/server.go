@@ -7,7 +7,6 @@ import (
 	"github.com/gorilla/mux"
 	"net/http"
 	"os"
-	"os/signal"
 	"runtime"
 	"runtime/pprof"
 	"strconv"
@@ -218,16 +217,10 @@ func runServer(cmd *Command, args []string) bool {
 		glog.Fatalf(e.Error())
 	}
 
-	// deal with control+c
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt, os.Kill)
-	go func() {
-		for _ = range signalChan {
-			volumeServer.Shutdown()
-			pprof.StopCPUProfile()
-			os.Exit(0)
-		}
-	}()
+	OnInterrupt(func() {
+		volumeServer.Shutdown()
+		pprof.StopCPUProfile()
+	})
 
 	if e := http.Serve(volumeListener, r); e != nil {
 		glog.Fatalf("Fail to serve:%s", e.Error())

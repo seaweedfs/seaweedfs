@@ -6,7 +6,6 @@ import (
 	"code.google.com/p/weed-fs/go/weed/weed_server"
 	"net/http"
 	"os"
-	"os/signal"
 	"runtime"
 	"strconv"
 	"strings"
@@ -92,15 +91,9 @@ func runVolume(cmd *Command, args []string) bool {
 		glog.Fatalf(e.Error())
 	}
 
-	// deal with control+c
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt, os.Kill)
-	go func() {
-		for _ = range signalChan {
-			volumeServer.Shutdown()
-			os.Exit(0)
-		}
-	}()
+	OnInterrupt(func() {
+		volumeServer.Shutdown()
+	})
 
 	if e := http.Serve(listener, r); e != nil {
 		glog.Fatalf("Fail to serve:%s", e.Error())
