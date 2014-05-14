@@ -14,6 +14,7 @@ func OnInterrupt(fn func()) {
 	signal.Notify(signalChan,
 		os.Interrupt,
 		os.Kill,
+		syscall.SIGALRM,
 		syscall.SIGHUP,
 		syscall.SIGINT,
 		syscall.SIGTERM,
