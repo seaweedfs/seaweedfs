@@ -2,6 +2,7 @@ package storage
 
 import (
 	"code.google.com/p/weed-fs/go/glog"
+	"code.google.com/p/weed-fs/go/images"
 	"code.google.com/p/weed-fs/go/util"
 	"encoding/hex"
 	"errors"
@@ -93,7 +94,7 @@ func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string
 	modifiedTime, _ = strconv.ParseUint(r.FormValue("ts"), 10, 64)
 	return
 }
-func NewNeedle(r *http.Request) (n *Needle, e error) {
+func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
 	fname, mimeType, isGzipped := "", "", false
 	n = new(Needle)
 	fname, n.Data, mimeType, isGzipped, n.LastModified, e = ParseUpload(r)
@@ -115,6 +116,10 @@ func NewNeedle(r *http.Request) (n *Needle, e error) {
 		n.LastModified = uint64(time.Now().Unix())
 	}
 	n.SetHasLastModifiedDate()
+
+	if fixJpgOrientation && strings.HasSuffix(strings.ToLower(string(n.Name)), ".jpg") {
+		n.Data = images.FixJpgOrientation(n.Data)
+	}
 
 	n.Checksum = NewCRC(n.Data)
 

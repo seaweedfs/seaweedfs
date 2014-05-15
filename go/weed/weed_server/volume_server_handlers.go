@@ -150,14 +150,10 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, ve)
 		return
 	}
-	needle, ne := storage.NewNeedle(r)
+	needle, ne := storage.NewNeedle(r, vs.FixJpgOrientation)
 	if ne != nil {
 		writeJsonError(w, r, ne)
 		return
-	}
-
-	if vs.FixJpgOrientation && strings.HasSuffix(string(needle.Name), ".jpg") {
-		needle.Data = images.FixJpgOrientation(needle.Data)
 	}
 
 	ret := operation.UploadResult{}
