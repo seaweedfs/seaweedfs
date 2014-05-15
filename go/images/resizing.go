@@ -9,9 +9,6 @@ import (
 	"image/png"
 )
 
-func FixJpgOrientation() {
-}
-
 func Resized(ext string, data []byte, width, height int) (resized []byte) {
 	if width == 0 && height == 0 {
 		return data
