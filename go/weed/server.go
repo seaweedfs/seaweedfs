@@ -63,6 +63,7 @@ var (
 	volumeDataFolders             = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	volumeMaxDataVolumeCounts     = cmdServer.Flag.String("volume.max", "7", "maximum numbers of volumes, count[,count]...")
 	volumePulse                   = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
+	volumeFixJpgOrientation       = cmdServer.Flag.Bool("volume.fix.jpg.orientation", false, "Adjust jpg orientation when uploading.")
 	isStartingFiler               = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 
 	serverWhiteList []string
@@ -206,6 +207,7 @@ func runServer(cmd *Command, args []string) bool {
 	r := http.NewServeMux()
 	volumeServer := weed_server.NewVolumeServer(r, *serverIp, *volumePort, *serverPublicIp, folders, maxCounts,
 		*serverIp+":"+strconv.Itoa(*masterPort), *volumePulse, *serverDataCenter, *serverRack, serverWhiteList,
+		*volumeFixJpgOrientation,
 	)
 
 	glog.V(0).Infoln("Start Weed volume server", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*volumePort))

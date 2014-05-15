@@ -5,17 +5,12 @@ import (
 	"github.com/rwcarlsen/goexif/exif"
 	"image"
 	"image/draw"
-	"image/gif"
 	"image/jpeg"
-	"image/png"
 	"log"
 )
 
 //many code is copied from http://camlistore.org/pkg/images/images.go
-func FixJpgOrientation(ext string, data []byte) (oriented []byte) {
-	if ext != ".jpg" {
-		return data
-	}
+func FixJpgOrientation(data []byte) (oriented []byte) {
 	ex, err := exif.Decode(bytes.NewReader(data))
 	if err != nil {
 		return data
@@ -53,14 +48,7 @@ func FixJpgOrientation(ext string, data []byte) (oriented []byte) {
 	if srcImage, _, err := image.Decode(bytes.NewReader(data)); err == nil {
 		dstImage := flip(rotate(srcImage, angle), flipMode)
 		var buf bytes.Buffer
-		switch ext {
-		case ".png":
-			png.Encode(&buf, dstImage)
-		case ".jpg":
-			jpeg.Encode(&buf, dstImage, nil)
-		case ".gif":
-			gif.Encode(&buf, dstImage, nil)
-		}
+		jpeg.Encode(&buf, dstImage, nil)
 		return buf.Bytes()
 	}
 

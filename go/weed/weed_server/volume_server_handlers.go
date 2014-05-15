@@ -156,6 +156,10 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if vs.FixJpgOrientation && strings.HasSuffix(string(needle.Name), ".jpg") {
+		needle.Data = images.FixJpgOrientation(needle.Data)
+	}
+
 	ret := operation.UploadResult{}
 	size, errorStatus := topology.ReplicatedWrite(vs.masterNode, vs.store, volumeId, needle, r)
 	if errorStatus == "" {

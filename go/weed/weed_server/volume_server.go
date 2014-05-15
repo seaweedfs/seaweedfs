@@ -16,19 +16,22 @@ type VolumeServer struct {
 	rack         string
 	whiteList    []string
 	store        *storage.Store
+
+	FixJpgOrientation bool
 }
 
 func NewVolumeServer(r *http.ServeMux, ip string, port int, publicIp string, folders []string, maxCounts []int,
 	masterNode string, pulseSeconds int,
 	dataCenter string, rack string,
-	whiteList []string) *VolumeServer {
+	whiteList []string, fixJpgOrientation bool) *VolumeServer {
 	publicUrl := publicIp + ":" + strconv.Itoa(port)
 	vs := &VolumeServer{
-		masterNode:   masterNode,
-		pulseSeconds: pulseSeconds,
-		dataCenter:   dataCenter,
-		rack:         rack,
-		whiteList:    whiteList,
+		masterNode:        masterNode,
+		pulseSeconds:      pulseSeconds,
+		dataCenter:        dataCenter,
+		rack:              rack,
+		whiteList:         whiteList,
+		FixJpgOrientation: fixJpgOrientation,
 	}
 	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts)
 

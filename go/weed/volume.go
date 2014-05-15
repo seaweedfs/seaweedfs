@@ -37,6 +37,7 @@ var (
 	dataCenter            = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	rack                  = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
 	volumeWhiteListOption = cmdVolume.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
+	fixJpgOrientation     = cmdVolume.Flag.Bool("fix.jpg.orientation", false, "Adjust jpg orientation when uploading.")
 
 	volumeWhiteList []string
 )
@@ -80,6 +81,7 @@ func runVolume(cmd *Command, args []string) bool {
 
 	volumeServer := weed_server.NewVolumeServer(r, *ip, *vport, *publicIp, folders, maxCounts,
 		*masterNode, *vpulse, *dataCenter, *rack, volumeWhiteList,
+		*fixJpgOrientation,
 	)
 
 	listeningAddress := *ip + ":" + strconv.Itoa(*vport)
