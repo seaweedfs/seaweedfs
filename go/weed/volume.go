@@ -37,7 +37,7 @@ var (
 	dataCenter            = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	rack                  = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
 	volumeWhiteListOption = cmdVolume.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	fixJpgOrientation     = cmdVolume.Flag.Bool("fix.jpg.orientation", false, "Adjust jpg orientation when uploading.")
+	fixJpgOrientation     = cmdVolume.Flag.Bool("images.fix.orientation", true, "Adjust jpg orientation when uploading.")
 
 	volumeWhiteList []string
 )

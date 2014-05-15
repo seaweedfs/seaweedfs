@@ -63,7 +63,7 @@ var (
 	volumeDataFolders             = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	volumeMaxDataVolumeCounts     = cmdServer.Flag.String("volume.max", "7", "maximum numbers of volumes, count[,count]...")
 	volumePulse                   = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
-	volumeFixJpgOrientation       = cmdServer.Flag.Bool("volume.fix.jpg.orientation", false, "Adjust jpg orientation when uploading.")
+	volumeFixJpgOrientation       = cmdServer.Flag.Bool("volume.images.fix.orientation", true, "Adjust jpg orientation when uploading.")
 	isStartingFiler               = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 
 	serverWhiteList []string
