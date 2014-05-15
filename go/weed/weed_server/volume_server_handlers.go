@@ -1,17 +1,12 @@
 package weed_server
 
 import (
-	"bytes"
 	"code.google.com/p/weed-fs/go/glog"
+	"code.google.com/p/weed-fs/go/images"
 	"code.google.com/p/weed-fs/go/operation"
 	"code.google.com/p/weed-fs/go/stats"
 	"code.google.com/p/weed-fs/go/storage"
 	"code.google.com/p/weed-fs/go/topology"
-	"github.com/disintegration/imaging"
-	"image"
-	"image/gif"
-	"image/jpeg"
-	"image/png"
 	"mime"
 	"net/http"
 	"strconv"
@@ -132,27 +127,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request,
 		if r.FormValue("height") != "" {
 			height, _ = strconv.Atoi(r.FormValue("height"))
 		}
-		if width != 0 || height != 0 {
-			if srcImage, _, err := image.Decode(bytes.NewReader(n.Data)); err == nil {
-				bounds := srcImage.Bounds()
-				var dstImage *image.NRGBA
-				if width == height && bounds.Dx() != bounds.Dy() {
-					dstImage = imaging.Thumbnail(srcImage, width, height, imaging.Lanczos)
-				} else {
-					dstImage = imaging.Resize(srcImage, width, height, imaging.Lanczos)
-				}
-				var buf bytes.Buffer
-				switch ext {
-				case ".png":
-					png.Encode(&buf, dstImage)
-				case ".jpg":
-					jpeg.Encode(&buf, dstImage, nil)
-				case ".gif":
-					gif.Encode(&buf, dstImage, nil)
-				}
-				n.Data = buf.Bytes()
-			}
-		}
+		n.Data = images.Resized(ext, n.Data, width, height)
 	}
 	w.Header().Set("Content-Length", strconv.Itoa(len(n.Data)))
 	if isGetMethod {

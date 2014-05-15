@@ -59,16 +59,16 @@ func (File) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 }
 
 type Dir struct {
-	DirectoryId filer.DirectoryId
-	Name        string
+	Path string
+	Id   uint64
 }
 
 func (dir Dir) Attr() fuse.Attr {
-	return fuse.Attr{Inode: 1, Mode: os.ModeDir | 0555}
+	return fuse.Attr{Inode: dir.Id, Mode: os.ModeDir | 0555}
 }
 
 func (dir Dir) Lookup(name string, intr fs.Intr) (fs.Node, fuse.Error) {
-	files_result, e := filer.ListFiles(*mountOptions.filer, dir.DirectoryId, name)
+	files_result, e := filer.ListFiles(*mountOptions.filer, dir.Path, name)
 	if e != nil {
 		return nil, fuse.ENOENT
 	}
@@ -86,13 +86,13 @@ func (WFS) Root() (fs.Node, fuse.Error) {
 
 func (dir *Dir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 	ret := make([]fuse.Dirent, 0)
-	if dirs, e := filer.ListDirectories(*mountOptions.filer, dir.DirectoryId); e == nil {
+	if dirs, e := filer.ListDirectories(*mountOptions.filer, dir.Path); e == nil {
 		for _, d := range dirs.Directories {
 			dirId := uint64(d.Id)
 			ret = append(ret, fuse.Dirent{Inode: dirId, Name: d.Name, Type: fuse.DT_Dir})
 		}
 	}
-	if files, e := filer.ListFiles(*mountOptions.filer, dir.DirectoryId, ""); e == nil {
+	if files, e := filer.ListFiles(*mountOptions.filer, dir.Path, ""); e == nil {
 		for _, f := range files.Files {
 			if fileId, e := storage.ParseFileId(string(f.Id)); e == nil {
 				fileInode := uint64(fileId.VolumeId)<<48 + fileId.Key

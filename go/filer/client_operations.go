@@ -11,9 +11,9 @@ import (
 )
 
 type ApiRequest struct {
-	Command     string //"listFiles", "listDirectories"
-	DirectoryId DirectoryId
-	FileName    string
+	Command   string //"listFiles", "listDirectories"
+	Directory string
+	FileName  string
 }
 
 type ListFilesResult struct {
@@ -21,9 +21,9 @@ type ListFilesResult struct {
 	Error string `json:"error,omitempty"`
 }
 
-func ListFiles(server string, directoryId DirectoryId, fileName string) (*ListFilesResult, error) {
+func ListFiles(server string, directory string, fileName string) (*ListFilesResult, error) {
 	var ret ListFilesResult
-	if err := call(server, ApiRequest{Command: "listFiles", DirectoryId: directoryId, FileName: fileName}, &ret); err == nil {
+	if err := call(server, ApiRequest{Command: "listFiles", Directory: directory, FileName: fileName}, &ret); err == nil {
 		if ret.Error != "" {
 			return nil, errors.New(ret.Error)
 		}
@@ -38,9 +38,9 @@ type ListDirectoriesResult struct {
 	Error       string `json:"error,omitempty"`
 }
 
-func ListDirectories(server string, directoryId DirectoryId) (*ListDirectoriesResult, error) {
+func ListDirectories(server string, directory string) (*ListDirectoriesResult, error) {
 	var ret ListDirectoriesResult
-	if err := call(server, ApiRequest{Command: "listDirectories", DirectoryId: directoryId}, &ret); err == nil {
+	if err := call(server, ApiRequest{Command: "listDirectories", Directory: directory}, &ret); err == nil {
 		if ret.Error != "" {
 			return nil, errors.New(ret.Error)
 		}

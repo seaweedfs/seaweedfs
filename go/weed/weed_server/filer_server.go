@@ -26,7 +26,6 @@ func NewFilerServer(r *http.ServeMux, port int, master string, dir string, colle
 		return
 	}
 
-	r.HandleFunc("/__api__", fs.filerApiHandler)
 	r.HandleFunc("/", fs.filerHandler)
 
 	return fs, nil
