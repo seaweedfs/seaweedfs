@@ -117,8 +117,11 @@ func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
 	}
 	n.SetHasLastModifiedDate()
 
-	if fixJpgOrientation && strings.HasSuffix(strings.ToLower(string(n.Name)), ".jpg") {
-		n.Data = images.FixJpgOrientation(n.Data)
+	if fixJpgOrientation {
+		loweredName := strings.ToLower(fname)
+		if mimeType == "image/jpeg" || strings.HasSuffix(loweredName, ".jpg") || strings.HasSuffix(loweredName, ".jpeg") {
+			n.Data = images.FixJpgOrientation(n.Data)
+		}
 	}
 
 	n.Checksum = NewCRC(n.Data)
