@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/url"
 	"strings"
+	"time"
 )
 
 type Location struct {
@@ -20,7 +21,22 @@ type LookupResult struct {
 	Error     string     `json:"error,omitempty"`
 }
 
-func Lookup(server string, vid string) (*LookupResult, error) {
+var (
+	vc VidCache
+)
+
+func Lookup(server string, vid string) (ret *LookupResult, err error) {
+	locations, cache_err := vc.Get(vid)
+	if cache_err != nil {
+		ret, err = do_lookup(server, vid)
+		vc.Set(vid, ret.Locations, 1*time.Minute)
+	} else {
+		ret = &LookupResult{VolumeId: vid, Locations: locations}
+	}
+	return
+}
+
+func do_lookup(server string, vid string) (*LookupResult, error) {
 	values := make(url.Values)
 	values.Add("volumeId", vid)
 	jsonBlob, err := util.Post("http://"+server+"/dir/lookup", values)
