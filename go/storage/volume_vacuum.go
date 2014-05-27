@@ -4,7 +4,7 @@ import (
 	"code.google.com/p/weed-fs/go/glog"
 	"fmt"
 	"os"
-	"time"
+	_ "time"
 )
 
 func (v *Volume) garbageLevel() float64 {
