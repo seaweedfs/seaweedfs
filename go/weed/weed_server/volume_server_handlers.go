@@ -7,7 +7,9 @@ import (
 	"code.google.com/p/weed-fs/go/stats"
 	"code.google.com/p/weed-fs/go/storage"
 	"code.google.com/p/weed-fs/go/topology"
+	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,10 +22,10 @@ func (vs *VolumeServer) storeHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		stats.ReadRequest()
-		vs.GetOrHeadHandler(w, r, true)
+		vs.GetOrHeadHandler(w, r)
 	case "HEAD":
 		stats.ReadRequest()
-		vs.GetOrHeadHandler(w, r, false)
+		vs.GetOrHeadHandler(w, r)
 	case "DELETE":
 		stats.DeleteRequest()
 		secure(vs.whiteList, vs.DeleteHandler)(w, r)
@@ -36,7 +38,7 @@ func (vs *VolumeServer) storeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
+func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
 	n := new(storage.Needle)
 	vid, fid, filename, ext, _ := parseURLPath(r.URL.Path)
 	volumeId, err := storage.NewVolumeId(vid)
@@ -129,12 +131,95 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request,
 		}
 		n.Data = images.Resized(ext, n.Data, width, height)
 	}
-	w.Header().Set("Content-Length", strconv.Itoa(len(n.Data)))
-	if isGetMethod {
+
+	w.Header().Set("Accept-Ranges", "bytes")
+	if r.Method == "HEAD" {
+		w.Header().Set("Content-Length", strconv.Itoa(len(n.Data)))
+		return
+	}
+	rangeReq := r.Header.Get("Range")
+	if rangeReq == "" {
+		w.Header().Set("Content-Length", strconv.Itoa(len(n.Data)))
 		if _, e = w.Write(n.Data); e != nil {
 			glog.V(0).Infoln("response write error:", e)
 		}
+		return
 	}
+
+	//the rest is dealing with partial content request
+	//mostly copy from src/pkg/net/http/fs.go
+	size := int64(len(n.Data))
+	ranges, err := parseRange(rangeReq, size)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusRequestedRangeNotSatisfiable)
+		return
+	}
+	if sumRangesSize(ranges) > size {
+		// The total number of bytes in all the ranges
+		// is larger than the size of the file by
+		// itself, so this is probably an attack, or a
+		// dumb client.  Ignore the range request.
+		ranges = nil
+		return
+	}
+	if len(ranges) == 0 {
+		return
+	}
+	if len(ranges) == 1 {
+		// RFC 2616, Section 14.16:
+		// "When an HTTP message includes the content of a single
+		// range (for example, a response to a request for a
+		// single range, or to a request for a set of ranges
+		// that overlap without any holes), this content is
+		// transmitted with a Content-Range header, and a
+		// Content-Length header showing the number of bytes
+		// actually transferred.
+		// ...
+		// A response to a request for a single range MUST NOT
+		// be sent using the multipart/byteranges media type."
+		ra := ranges[0]
+		w.Header().Set("Content-Length", strconv.FormatInt(ra.length, 10))
+		w.Header().Set("Content-Range", ra.contentRange(size))
+		w.WriteHeader(http.StatusPartialContent)
+		if _, e = w.Write(n.Data[ra.start : ra.start+ra.length]); e != nil {
+			glog.V(0).Infoln("response write error:", e)
+		}
+		return
+	}
+	// process mulitple ranges
+	for _, ra := range ranges {
+		if ra.start > size {
+			http.Error(w, "Out of Range", http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+	}
+	sendSize := rangesMIMESize(ranges, mtype, size)
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+	w.Header().Set("Content-Type", "multipart/byteranges; boundary="+mw.Boundary())
+	sendContent := pr
+	defer pr.Close() // cause writing goroutine to fail and exit if CopyN doesn't finish.
+	go func() {
+		for _, ra := range ranges {
+			part, err := mw.CreatePart(ra.mimeHeader(mtype, size))
+			if err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+			if _, err = part.Write(n.Data[ra.start : ra.start+ra.length]); err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+		}
+		mw.Close()
+		pw.Close()
+	}()
+	if w.Header().Get("Content-Encoding") == "" {
+		w.Header().Set("Content-Length", strconv.FormatInt(sendSize, 10))
+	}
+	w.WriteHeader(http.StatusPartialContent)
+	io.CopyN(w, sendContent, sendSize)
+
 }
 
 func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
