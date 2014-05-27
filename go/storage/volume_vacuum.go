@@ -4,6 +4,7 @@ import (
 	"code.google.com/p/weed-fs/go/glog"
 	"fmt"
 	"os"
+	"time"
 )
 
 func (v *Volume) garbageLevel() float64 {
@@ -11,16 +12,20 @@ func (v *Volume) garbageLevel() float64 {
 }
 
 func (v *Volume) Compact() error {
+	glog.V(3).Infof("Compacting ...")
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
+	glog.V(3).Infof("Got Compaction lock...")
 
 	filePath := v.FileName()
 	glog.V(3).Infof("creating copies for volume %d ...", v.Id)
 	return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx")
 }
 func (v *Volume) commitCompact() error {
+	glog.V(3).Infof("Committing vacuuming...")
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
+	glog.V(3).Infof("Got Committing lock...")
 	_ = v.dataFile.Close()
 	var e error
 	if e = os.Rename(v.FileName()+".cpd", v.FileName()+".dat"); e != nil {
@@ -29,6 +34,8 @@ func (v *Volume) commitCompact() error {
 	if e = os.Rename(v.FileName()+".cpx", v.FileName()+".idx"); e != nil {
 		return e
 	}
+	//glog.V(3).Infof("Pretending to be vacuuming...")
+	//time.Sleep(20 * time.Second)
 	if e = v.load(true, false); e != nil {
 		return e
 	}
@@ -57,7 +64,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string) (err erro
 		return err
 	}, func(n *Needle, offset int64) error {
 		nv, ok := v.nm.Get(n.Id)
-		glog.V(3).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
+		glog.V(4).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
 		if ok && int64(nv.Offset)*NeedlePaddingSize == offset && nv.Size > 0 {
 			if _, err = nm.Put(n.Id, uint32(new_offset/NeedlePaddingSize), n.Size); err != nil {
 				return fmt.Errorf("cannot put needle: %s", err)

@@ -5,7 +5,6 @@ import (
 	"code.google.com/p/weed-fs/go/sequence"
 	"code.google.com/p/weed-fs/go/topology"
 	"code.google.com/p/weed-fs/go/util"
-	"errors"
 	"github.com/goraft/raft"
 	"github.com/gorilla/mux"
 	"net/http"
@@ -110,7 +109,7 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 			proxy.ServeHTTP(w, r)
 		} else {
 			//drop it to the floor
-			writeJsonError(w, r, errors.New(ms.Topo.RaftServer.Name()+" does not know Leader yet:"+ms.Topo.RaftServer.Leader()))
+			//writeJsonError(w, r, errors.New(ms.Topo.RaftServer.Name()+" does not know Leader yet:"+ms.Topo.RaftServer.Leader()))
 		}
 	}
 }
