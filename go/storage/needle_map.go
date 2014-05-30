@@ -51,7 +51,7 @@ const (
 
 func LoadNeedleMap(file *os.File) (*NeedleMap, error) {
 	nm := NewNeedleMap(file)
-	e := walkIndexFile(file, func(key uint64, offset, size uint32) error {
+	e := WalkIndexFile(file, func(key uint64, offset, size uint32) error {
 		if key > nm.MaximumFileKey {
 			nm.MaximumFileKey = key
 		}
@@ -78,7 +78,7 @@ func LoadNeedleMap(file *os.File) (*NeedleMap, error) {
 
 // walks through the index file, calls fn function with each key, offset, size
 // stops with the error returned by the fn function
-func walkIndexFile(r *os.File, fn func(key uint64, offset, size uint32) error) error {
+func WalkIndexFile(r *os.File, fn func(key uint64, offset, size uint32) error) error {
 	var readerOffset int64
 	bytes := make([]byte, 16*RowsToRead)
 	count, e := r.ReadAt(bytes, readerOffset)
@@ -124,6 +124,9 @@ func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) (int, error) {
 		nm.DeletionCounter++
 		nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 	}
+	if _, err := nm.indexFile.Seek(0, 2); err != nil {
+		return 0, fmt.Errorf("cannot go to the end of indexfile %s: %s", nm.indexFile.Name(), err.Error())
+	}
 	return nm.indexFile.Write(bytes)
 }
 func (nm *NeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
@@ -132,20 +135,15 @@ func (nm *NeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
 }
 func (nm *NeedleMap) Delete(key uint64) error {
 	nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(nm.m.Delete(Key(key)))
-	offset, err := nm.indexFile.Seek(0, 1)
-	if err != nil {
-		return fmt.Errorf("cannot get position of indexfile: %s", err)
-	}
 	bytes := make([]byte, 16)
 	util.Uint64toBytes(bytes[0:8], key)
 	util.Uint32toBytes(bytes[8:12], 0)
 	util.Uint32toBytes(bytes[12:16], 0)
-	if _, err = nm.indexFile.Write(bytes); err != nil {
-		plus := ""
-		if e := nm.indexFile.Truncate(offset); e != nil {
-			plus = "\ncouldn't truncate index file: " + e.Error()
-		}
-		return fmt.Errorf("error writing to indexfile %s: %s%s", nm.indexFile.Name(), err, plus)
+	if _, err := nm.indexFile.Seek(0, 2); err != nil {
+		return fmt.Errorf("cannot go to the end of indexfile %s: %s", nm.indexFile.Name(), err.Error())
+	}
+	if _, err := nm.indexFile.Write(bytes); err != nil {
+		return fmt.Errorf("error writing to indexfile %s: %s", nm.indexFile.Name(), err.Error())
 	}
 	nm.DeletionCounter++
 	return nil
