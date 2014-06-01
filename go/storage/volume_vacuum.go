@@ -62,7 +62,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string) (err erro
 	err = ScanVolumeFile(v.dir, v.Collection, v.Id, func(superBlock SuperBlock) error {
 		_, err = dst.Write(superBlock.Bytes())
 		return err
-	}, func(n *Needle, offset int64) error {
+	}, true, func(n *Needle, offset int64) error {
 		nv, ok := v.nm.Get(n.Id)
 		glog.V(4).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
 		if ok && int64(nv.Offset)*NeedlePaddingSize == offset && nv.Size > 0 {

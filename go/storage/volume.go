@@ -309,6 +309,7 @@ func (v *Volume) freeze() error {
 
 func ScanVolumeFile(dirname string, collection string, id VolumeId,
 	visitSuperBlock func(SuperBlock) error,
+	readNeedleBody bool,
 	visitNeedle func(n *Needle, offset int64) error) (err error) {
 	var v *Volume
 	if v, err = loadVolumeWithoutIndex(dirname, collection, id); err != nil {
@@ -327,9 +328,11 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 		return
 	}
 	for n != nil {
-		if err = n.ReadNeedleBody(v.dataFile, version, offset+int64(NeedleHeaderSize), rest); err != nil {
-			err = fmt.Errorf("cannot read needle body: %s", err)
-			return
+		if readNeedleBody {
+			if err = n.ReadNeedleBody(v.dataFile, version, offset+int64(NeedleHeaderSize), rest); err != nil {
+				err = fmt.Errorf("cannot read needle body: %s", err)
+				return
+			}
 		}
 		if err = visitNeedle(n, offset); err != nil {
 			return
