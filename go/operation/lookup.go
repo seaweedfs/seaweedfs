@@ -28,8 +28,9 @@ var (
 func Lookup(server string, vid string) (ret *LookupResult, err error) {
 	locations, cache_err := vc.Get(vid)
 	if cache_err != nil {
-		ret, err = do_lookup(server, vid)
-		vc.Set(vid, ret.Locations, 1*time.Minute)
+		if ret, err = do_lookup(server, vid); err == nil {
+			vc.Set(vid, ret.Locations, 1*time.Minute)
+		}
 	} else {
 		ret = &LookupResult{VolumeId: vid, Locations: locations}
 	}
