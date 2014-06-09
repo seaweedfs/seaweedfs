@@ -102,7 +102,10 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		mtype = mime.TypeByExtension(ext)
 	}
 	if n.MimeSize > 0 {
-		mtype = string(n.Mime)
+		mt := string(n.Mime)
+		if mt != "application/octet-stream" {
+			mtype = mt
+		}
 	}
 	if mtype != "" {
 		w.Header().Set("Content-Type", mtype)
