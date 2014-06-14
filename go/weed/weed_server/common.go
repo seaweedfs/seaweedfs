@@ -25,7 +25,6 @@ func init() {
 }
 
 func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) (err error) {
-	w.Header().Set("Content-Type", "application/javascript")
 	var bytes []byte
 	if r.FormValue("pretty") != "" {
 		bytes, err = json.MarshalIndent(obj, "", "  ")
@@ -37,8 +36,10 @@ func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) (err err
 	}
 	callback := r.FormValue("callback")
 	if callback == "" {
+		w.Header().Set("Content-Type", "application/json")
 		_, err = w.Write(bytes)
 	} else {
+		w.Header().Set("Content-Type", "application/javascript")
 		if _, err = w.Write([]uint8(callback)); err != nil {
 			return
 		}
