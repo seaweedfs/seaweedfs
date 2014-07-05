@@ -25,7 +25,7 @@ func Resized(ext string, data []byte, width, height int) (resized []byte) {
 		switch ext {
 		case ".png":
 			png.Encode(&buf, dstImage)
-		case ".jpg":
+		case ".jpg", ".jpeg":
 			jpeg.Encode(&buf, dstImage, nil)
 		case ".gif":
 			gif.Encode(&buf, dstImage, nil)
