@@ -12,7 +12,7 @@ import (
 * Call this function on any file uploaded to weedfs
 * 
 */
-func MaybePreprocessImage(filename string, data []byte, width, height int) (resized []byte) {
+func MaybePreprocessImage(filename string, data []byte, width, height int) (resized []byte, w int, h int) {
 	ext := filepath.Ext(filename)
 	switch ext {
 	case ".png", ".gif":
@@ -21,5 +21,5 @@ func MaybePreprocessImage(filename string, data []byte, width, height int) (resi
 	  data = FixJpgOrientation(data)
 		return Resized(ext, data, width, height)
 	}
-	return data
+	return data, 0, 0
 }

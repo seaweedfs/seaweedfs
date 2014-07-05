@@ -132,7 +132,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		if r.FormValue("height") != "" {
 			height, _ = strconv.Atoi(r.FormValue("height"))
 		}
-		n.Data = images.Resized(ext, n.Data, width, height)
+		n.Data, _, _ = images.Resized(ext, n.Data, width, height)
 	}
 
 	w.Header().Set("Accept-Ranges", "bytes")
