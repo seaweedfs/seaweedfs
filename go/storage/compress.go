@@ -19,7 +19,7 @@ func IsGzippable(ext, mtype string) bool {
 	switch ext {
 	case ".zip", ".rar", ".gz", ".bz2", ".xz":
 		return false
-	case ".pdf", ".txt", ".html", ".css", ".js", ".json":
+	case ".pdf", ".txt", ".html", ".htm", ".css", ".js", ".json":
 		return true
 	}
 	if strings.HasPrefix(mtype, "application/") {
