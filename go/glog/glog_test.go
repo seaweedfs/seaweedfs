@@ -106,7 +106,7 @@ func TestHeader(t *testing.T) {
 	}
 	Info("test")
 	var line, pid int
-	n, err := fmt.Sscanf(contents(infoLog), "I0102 15:04:05.678901 %d glog_test.go:%d] test\n", &pid, &line)
+	n, err := fmt.Sscanf(contents(infoLog), "I0102 15:04:05 %d glog_test.go:%d] test\n", &pid, &line)
 	if n != 2 || err != nil {
 		t.Errorf("log format error: %d elements, error %s:\n%s", n, err, contents(infoLog))
 	}

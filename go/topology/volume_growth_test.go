@@ -116,7 +116,14 @@ func TestFindEmptySlotsForOneVolume(t *testing.T) {
 	topo := setup(topologyLayout)
 	vg := NewDefaultVolumeGrowth()
 	rp, _ := storage.NewReplicaPlacementFromString("002")
-	servers, err := vg.findEmptySlotsForOneVolume(topo, "dc1", rp)
+	volumeGrowOption := &VolumeGrowOption{
+		Collection:       "",
+		ReplicaPlacement: rp,
+		DataCenter:       "dc1",
+		Rack:             "",
+		DataNode:         "",
+	}
+	servers, err := vg.findEmptySlotsForOneVolume(topo, volumeGrowOption)
 	if err != nil {
 		fmt.Println("finding empty slots error :", err)
 		t.Fail()
