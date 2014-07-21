@@ -18,12 +18,19 @@ func TestDirectory(t *testing.T) {
 	dm.MakeDirectory("/a/b/e")
 	dm.MakeDirectory("/a/b/e/f")
 	dm.MakeDirectory("/a/b/e/f/g")
-	dm.MoveUnderDirectory("/a/b/e/f/g", "/a/b", "")
+	dm.MoveUnderDirectory("/a/b/e/f/g", "/a/b", "t")
 	if _, err := dm.FindDirectory("/a/b/e/f/g"); err == nil {
 		t.Fatal("/a/b/e/f/g should not exist any more after moving")
 	}
-	if _, err := dm.FindDirectory("/a/b/g"); err != nil {
-		t.Fatal("/a/b/g should exist after moving")
+	if _, err := dm.FindDirectory("/a/b/t"); err != nil {
+		t.Fatal("/a/b/t should exist after moving")
+	}
+	if _, err := dm.FindDirectory("/a/b/g"); err == nil {
+		t.Fatal("/a/b/g should not exist after moving")
+	}
+	dm.MoveUnderDirectory("/a/b/e/f", "/a/b", "")
+	if _, err := dm.FindDirectory("/a/b/f"); err != nil {
+		t.Fatal("/a/b/g should not exist after moving")
 	}
 	dm.MakeDirectory("/a/b/g/h/i")
 	dm.DeleteDirectory("/a/b/e/f")
