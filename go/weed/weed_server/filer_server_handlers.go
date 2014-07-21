@@ -147,7 +147,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ret.Error != "" {
-		glog.V(0).Infoln("failing to post to volume server", ra_err.Error())
+		glog.V(0).Infoln("failing to post to volume server", ret.Error)
 		writeJsonError(w, r, errors.New(ret.Error))
 		return
 	}
