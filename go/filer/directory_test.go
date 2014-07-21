@@ -18,7 +18,7 @@ func TestDirectory(t *testing.T) {
 	dm.MakeDirectory("/a/b/e")
 	dm.MakeDirectory("/a/b/e/f")
 	dm.MakeDirectory("/a/b/e/f/g")
-	dm.MoveUnderDirectory("/a/b/e/f/g", "/a/b")
+	dm.MoveUnderDirectory("/a/b/e/f/g", "/a/b", "")
 	if _, err := dm.FindDirectory("/a/b/e/f/g"); err == nil {
 		t.Fatal("/a/b/e/f/g should not exist any more after moving")
 	}
