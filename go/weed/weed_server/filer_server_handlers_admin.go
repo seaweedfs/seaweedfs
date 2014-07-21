@@ -7,10 +7,10 @@ import (
 
 /*
 Move a folder or a file, with 4 Use cases:
-mv fromDir toNewDir
-mv fromDir toOldDir
-mv fromFile toDir
-mv fromFile toFile
+	mv fromDir toNewDir
+	mv fromDir toOldDir
+	mv fromFile toDir
+	mv fromFile toFile
 
 Wildcard is not supported.
 
