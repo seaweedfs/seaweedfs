@@ -47,6 +47,9 @@ func (filer *FilerEmbedded) FindFile(filePath string) (fid string, err error) {
 	}
 	return filer.files.FindFile(dirId, file)
 }
+func (filer *FilerEmbedded) FindDirectory(dirPath string) (dirId DirectoryId, err error) {
+	return filer.directories.FindDirectory(dirPath)
+}
 func (filer *FilerEmbedded) ListDirectories(dirPath string) (dirs []DirectoryEntry, err error) {
 	return filer.directories.ListDirectories(dirPath)
 }
@@ -98,6 +101,7 @@ func (filer *FilerEmbedded) DeleteDirectory(dirPath string, recursive bool) (err
 	}
 
 }
+
 func (filer *FilerEmbedded) DeleteFile(filePath string) (fid string, err error) {
 	dir, file := filepath.Split(filePath)
 	dirId, e := filer.directories.FindDirectory(dir)
@@ -105,4 +109,33 @@ func (filer *FilerEmbedded) DeleteFile(filePath string) (fid string, err error) 
 		return "", e
 	}
 	return filer.files.DeleteFile(dirId, file)
+}
+
+/*
+Move a folder or a file, with 4 Use cases:
+mv fromDir toNewDir
+mv fromDir toOldDir
+mv fromFile toDir
+mv fromFile toFile
+*/
+func (filer *FilerEmbedded) Move(fromPath string, toPath string) error {
+	if _, dir_err := filer.FindDirectory(fromPath); dir_err == nil {
+		if _, err := filer.FindDirectory(toPath); err == nil {
+			// move folder under an existing folder
+			return filer.directories.MoveUnderDirectory(fromPath, toPath, "")
+		} else {
+			// move folder to a new folder
+			return filer.directories.MoveUnderDirectory(fromPath, filepath.Dir(toPath), filepath.Base(toPath))
+		}
+	}
+	if fid, file_err := filer.DeleteFile(fromPath); file_err == nil {
+		if _, err := filer.FindDirectory(toPath); err == nil {
+			// move file under an existing folder
+			return filer.CreateFile(filepath.Join(toPath, filepath.Base(fromPath)), fid)
+		} else {
+			// move to a folder with new name
+			return filer.CreateFile(toPath, fid)
+		}
+	}
+	return fmt.Errorf("File %s is not found!", fromPath)
 }

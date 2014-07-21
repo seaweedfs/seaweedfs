@@ -81,7 +81,11 @@ func (dm *DirectoryManagerInMap) processEachLine(line string) error {
 			return e
 		}
 	case "mov":
-		if e := dm.MoveUnderDirectory(parts[1], parts[2]); e != nil {
+		newName := ""
+		if len(parts) >= 4 {
+			newName = parts[3]
+		}
+		if e := dm.MoveUnderDirectory(parts[1], parts[2], newName); e != nil {
 			return e
 		}
 	case "del":
@@ -188,7 +192,7 @@ func (dm *DirectoryManagerInMap) MakeDirectory(dirPath string) (DirectoryId, err
 	return dir.Id, nil
 }
 
-func (dm *DirectoryManagerInMap) MoveUnderDirectory(oldDirPath string, newParentDirPath string) error {
+func (dm *DirectoryManagerInMap) MoveUnderDirectory(oldDirPath string, newParentDirPath string, newName string) error {
 	oldDir, oe := dm.findDirectory(oldDirPath)
 	if oe != nil {
 		return oe
@@ -197,10 +201,14 @@ func (dm *DirectoryManagerInMap) MoveUnderDirectory(oldDirPath string, newParent
 	if pe != nil {
 		return pe
 	}
+	dm.log("mov", oldDirPath, newParentDirPath, newName)
 	delete(oldDir.Parent.SubDirectories, oldDir.Name)
-	parentDir.SubDirectories[oldDir.Name] = oldDir
+	if newName == "" {
+		newName = oldDir.Name
+	}
+	parentDir.SubDirectories[newName] = oldDir
+	oldDir.Name = newName
 	oldDir.Parent = parentDir
-	dm.log("mov", oldDirPath, newParentDirPath)
 	return nil
 }
 

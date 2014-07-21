@@ -7,6 +7,13 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
+/*
+The entry in level db has this format:
+  key: genKey(dirId, fileName)
+  value: []byte(fid)
+And genKey(dirId, fileName) use first 4 bytes to store dirId, and rest for fileName
+*/
+
 type FileListInLevelDb struct {
 	db *leveldb.DB
 }

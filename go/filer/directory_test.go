@@ -7,38 +7,44 @@ import (
 )
 
 func TestDirectory(t *testing.T) {
-	{
-		dm, _ := NewDirectoryManagerInMap("/tmp/dir.log")
-		dm.MakeDirectory("/a/b/c")
-		dm.MakeDirectory("/a/b/d")
-		dm.MakeDirectory("/a/b/e")
-		dm.MakeDirectory("/a/b/e/f")
-		dm.MakeDirectory("/a/b/e/f/g")
-		dm.MoveUnderDirectory("/a/b/e/f/g", "/a/b")
-		dm.MakeDirectory("/a/b/g/h/i")
-		dm.DeleteDirectory("/a/b/e/f")
-		dm.DeleteDirectory("/a/b/e")
-		dirNames, _ := dm.ListDirectories("/a/b/e")
-		for _, v := range dirNames {
-			println("sub1 dir:", v.Name, "id", v.Id)
+	dm, _ := NewDirectoryManagerInMap("/tmp/dir.log")
+	defer func() {
+		if true {
+			os.Remove("/tmp/dir.log")
 		}
-		dm.logFile.Close()
-
-		var path []string
-		printTree(dm.Root, path)
-
-		dm2, e := NewDirectoryManagerInMap("/tmp/dir.log")
-		if e != nil {
-			println("load error", e.Error())
-		}
-		if !compare(dm.Root, dm2.Root) {
-			t.Fatal("restored dir not the same!")
-		}
-		printTree(dm2.Root, path)
+	}()
+	dm.MakeDirectory("/a/b/c")
+	dm.MakeDirectory("/a/b/d")
+	dm.MakeDirectory("/a/b/e")
+	dm.MakeDirectory("/a/b/e/f")
+	dm.MakeDirectory("/a/b/e/f/g")
+	dm.MoveUnderDirectory("/a/b/e/f/g", "/a/b")
+	if _, err := dm.FindDirectory("/a/b/e/f/g"); err == nil {
+		t.Fatal("/a/b/e/f/g should not exist any more after moving")
 	}
-	if true {
-		os.Remove("/tmp/dir.log")
+	if _, err := dm.FindDirectory("/a/b/g"); err != nil {
+		t.Fatal("/a/b/g should exist after moving")
 	}
+	dm.MakeDirectory("/a/b/g/h/i")
+	dm.DeleteDirectory("/a/b/e/f")
+	dm.DeleteDirectory("/a/b/e")
+	dirNames, _ := dm.ListDirectories("/a/b/e")
+	for _, v := range dirNames {
+		println("sub1 dir:", v.Name, "id", v.Id)
+	}
+	dm.logFile.Close()
+
+	var path []string
+	printTree(dm.Root, path)
+
+	dm2, e := NewDirectoryManagerInMap("/tmp/dir.log")
+	if e != nil {
+		println("load error", e.Error())
+	}
+	if !compare(dm.Root, dm2.Root) {
+		t.Fatal("restored dir not the same!")
+	}
+	printTree(dm2.Root, path)
 }
 
 func printTree(node *DirectoryEntryInMap, path []string) {

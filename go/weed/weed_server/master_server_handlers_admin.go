@@ -99,7 +99,7 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 		w.WriteHeader(http.StatusNotAcceptable)
 		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 	} else {
-		w.WriteHeader(http.StatusNotAcceptable)
+		w.WriteHeader(http.StatusOK)
 		writeJsonQuiet(w, r, map[string]interface{}{"count": count})
 	}
 }

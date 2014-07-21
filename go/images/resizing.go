@@ -23,8 +23,8 @@ func Resized(ext string, data []byte, width, height int) (resized []byte, w int,
 			} else {
 				dstImage = imaging.Resize(srcImage, width, height, imaging.Lanczos)
 			}
-		}else{
-		  return data, bounds.Dx(), bounds.Dy()
+		} else {
+			return data, bounds.Dx(), bounds.Dy()
 		}
 		var buf bytes.Buffer
 		switch ext {
