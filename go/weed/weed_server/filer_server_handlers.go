@@ -100,6 +100,9 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	defer resp.Body.Close()
+	for k, v := range resp.Header {
+		w.Header()[k] = v
+	}
 	io.Copy(w, resp.Body)
 }
 
@@ -169,6 +172,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, db_err)
 		return
 	}
+	w.WriteHeader(http.StatusCreated)
 }
 
 // curl -X DELETE http://localhost:8888/path/to
