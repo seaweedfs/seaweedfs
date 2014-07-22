@@ -90,6 +90,12 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
+	etag := n.Etag()
+	if inm := r.Header.Get("If-None-Match"); inm == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Etag", etag)
 	if n.NameSize > 0 && filename == "" {
 		filename = string(n.Name)
 		dotIndex := strings.LastIndex(filename, ".")

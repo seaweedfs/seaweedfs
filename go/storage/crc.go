@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"code.google.com/p/weed-fs/go/util"
+	"fmt"
 	"hash/crc32"
 )
 
@@ -18,4 +20,10 @@ func (c CRC) Update(b []byte) CRC {
 
 func (c CRC) Value() uint32 {
 	return uint32(c>>15|c<<17) + 0xa282ead8
+}
+
+func (n *Needle) Etag() string {
+	bits := make([]byte, 4)
+	util.Uint32toBytes(bits, uint32(n.Checksum))
+	return fmt.Sprintf("%x", bits)
 }
