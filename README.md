@@ -10,3 +10,7 @@ This repo and the google code repo will be kept synchronized.
 
 For documents and bug reporting, Please visit
  http://weed-fs.googlecode.com
+ 
+For pre-compiled releases,
+ https://bintray.com/chrislusf/Weed-FS/weed
+
