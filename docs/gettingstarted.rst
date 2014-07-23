@@ -11,9 +11,8 @@ Put the file "weed" to all related computers, in any folder you want. Use
 
 .. code-block:: bash
 
-	./weed -h
+	./weed -h # to check available options
 
-to check available options.
 
 Set up Weed Master
 *********************************
@@ -36,7 +35,7 @@ Set up Weed Volume Server
 
 .. code-block:: bash
 
-	./weed volume -h # to check available options.
+	./weed volume -h # to check available options
 
 Usually volume servers are spread on different computers. They can have different disk space, or even different operating system.
 
