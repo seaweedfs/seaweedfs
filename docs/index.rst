@@ -30,6 +30,7 @@ Contents:
    failover
    usecases
    directories
+   optimization
 
 
 Indices and tables
