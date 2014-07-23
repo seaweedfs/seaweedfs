@@ -18,19 +18,19 @@ Clients
 +---------------------------------------------------------------------------------+--------------+-----------+
 | `Java Weed-FS client <https://github.com/simplebread/WeedFSClient>`_            | Xu Zhang     |  Java     |
 +---------------------------------------------------------------------------------+--------------+-----------+
-| `Java Weed-FS client 2 <https://github.com/zenria/Weed-FS-Java-Client>`_        | zenria       |  Java     |
+| `Java Weed-FS client 2 <https://github.com/zenria/Weed-FS-Java-Client>`_        | Zenria       |  Java     |
 +---------------------------------------------------------------------------------+--------------+-----------+
-| `Python-weed            <https://github.com/darkdarkfruit/python-weed>`_        | darkdarkfruit|  Python   |
+| `Python-weed            <https://github.com/darkdarkfruit/python-weed>`_        | Darkdarkfruit|  Python   |
 +---------------------------------------------------------------------------------+--------------+-----------+
-| `Pyweed <https://github.com/utek/pyweed>`_                                      | utek         |  Python   |
+| `Pyweed <https://github.com/utek/pyweed>`_                                      | Utek         |  Python   |
 +---------------------------------------------------------------------------------+--------------+-----------+
 | `Camlistore blobserver Storage <https://github.com/zenria/Weed-FS-Java-Client>`_| Tamás Gulácsi|  Go       |
 +---------------------------------------------------------------------------------+--------------+-----------+
-| `Scala Weed-FS client <https://github.com/chiradip/WeedFsScalaClient>`_         | chiradip     |  Scala    |
+| `Scala Weed-FS client <https://github.com/chiradip/WeedFsScalaClient>`_         | Chiradip     |  Scala    |
 +---------------------------------------------------------------------------------+--------------+-----------+
-| `Module for kohana <https://github.com/bububa/kohanaphp-weedfs>`_               | bububa       |  PHP      |
+| `Module for kohana <https://github.com/bububa/kohanaphp-weedfs>`_               | Bububa       |  PHP      |
 +---------------------------------------------------------------------------------+--------------+-----------+
-| `Weedo <https://github.com/ginuerzh/weedo>`_                                    | ginuerzh     |  Go       |
+| `Weedo <https://github.com/ginuerzh/weedo>`_                                    | Ginuerzh     |  Go       |
 +---------------------------------------------------------------------------------+--------------+-----------+
 | `Django-weed <https://github.com/ProstoKSI/django-weed>`_                       | ProstoKSI    |  Python   |
 +---------------------------------------------------------------------------------+--------------+-----------+
