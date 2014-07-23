@@ -28,6 +28,7 @@ Contents:
    api
    replication
    failover
+   usecases
 
 
 Indices and tables
