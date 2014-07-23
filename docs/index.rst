@@ -31,6 +31,7 @@ Contents:
    usecases
    directories
    optimization
+   benchmarks
 
 
 Indices and tables
