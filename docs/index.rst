@@ -25,6 +25,7 @@ Contents:
 
    gettingstarted
    clients
+   api
 
 
 Indices and tables
