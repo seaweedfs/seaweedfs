@@ -29,6 +29,7 @@ Contents:
    replication
    failover
    usecases
+   directories
 
 
 Indices and tables
