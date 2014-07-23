@@ -1,7 +1,7 @@
 API
 ===================================
 
-Master
+Master server
 ###################################
 You can append to any HTTP API with &pretty=y to see a formatted json output.
 

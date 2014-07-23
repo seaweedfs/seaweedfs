@@ -35,10 +35,10 @@ Clients
 | `Django-weed <https://github.com/ProstoKSI/django-weed>`_                       | ProstoKSI    |  Python   |
 +---------------------------------------------------------------------------------+--------------+-----------+
 
-Projects using WeedFS
+Projects using Weed-Fs
 ###################################
 * An `email River Plugin <https://github.com/medcl/elasticsearch-river-email/>`_ for Elasticsearch uses weed-fs server to save attachments
 
-Websites using Weed-FS
+Websites using Weed-Fs
 ###################################
 * `Email to create Web Pages <http://mailp.in/>`_ uses weed-fs to save email attachments.
