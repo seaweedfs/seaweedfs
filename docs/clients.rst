@@ -24,7 +24,7 @@ Clients
 +---------------------------------------------------------------------------------+--------------+-----------+
 | `Pyweed <https://github.com/utek/pyweed>`_                                      | Utek         |  Python   |
 +---------------------------------------------------------------------------------+--------------+-----------+
-| `Camlistore blobserver Storage <https://github.com/zenria/Weed-FS-Java-Client>`_| Tamás Gulácsi|  Go       |
+| `Camlistore blobserver Storage <https://github.com/tgulacsi/camli-weed>`_       | Tamás Gulácsi|  Go       |
 +---------------------------------------------------------------------------------+--------------+-----------+
 | `Scala Weed-FS client <https://github.com/chiradip/WeedFsScalaClient>`_         | Chiradip     |  Scala    |
 +---------------------------------------------------------------------------------+--------------+-----------+
