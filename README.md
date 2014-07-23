@@ -2,6 +2,8 @@ weed-fs
 =======
 
 [![Build Status](https://travis-ci.org/chrislusf/weed-fs.svg?branch=master)](https://travis-ci.org/chrislusf/weed-fs)
+[![RTD](https://readthedocs.org/projects/ernadoweed-fs/badge/?version=latest)](http://ernadoweed-fs.readthedocs.org/en/latest/
+)
 
 An official mirrow of code.google.com/p/weed-fs . 
 Moving to github.com to make cooperations easier. 
