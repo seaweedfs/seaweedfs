@@ -27,6 +27,7 @@ Contents:
    clients
    api
    replication
+   failover
 
 
 Indices and tables
