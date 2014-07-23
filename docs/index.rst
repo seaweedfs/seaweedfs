@@ -26,6 +26,7 @@ Contents:
    gettingstarted
    clients
    api
+   replication
 
 
 Indices and tables
