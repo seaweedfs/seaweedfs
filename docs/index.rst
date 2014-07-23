@@ -24,6 +24,7 @@ Contents:
    :maxdepth: 2
 
    gettingstarted
+   clients
 
 
 Indices and tables
