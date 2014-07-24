@@ -1,4 +1,4 @@
-// +build !windows,!openbsd,!netbsd,!plan9
+// +build !windows,!openbsd,!netbsd,!plan9,!solaris
 
 package stats
 
