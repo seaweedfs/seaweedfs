@@ -76,3 +76,39 @@ This command would recursively upload all files. Or you can specify what files y
 Then, you can simply check "du -m -s /some/big/folder" to see the actual disk usage by OS, and compare it with the file size under "/data". Usually if you are uploading a lot of textual files, the consumed disk size would be much smaller since textual files are gzipped automatically.
 
 Now you can use your tools to hit weed-fs as hard as you can.
+
+Using Weed-Fs in docker
+####################################
+
+You can use image "cydev/weed" or build your own with  `dockerfile <https://github.com/chrislusf/weed-fs/blob/master/Dockerfile>`_  in the root of repo.
+
+.. code-block:: bash
+
+	docker run --name weed cydev/weed server
+
+And in another terminal
+
+.. code-block:: bash
+
+	IP=$(docker inspect --format '{{ .NetworkSettings.IPAddress }}' weed)
+	curl "http://$IP:9333/cluster/status?pretty=y"	
+	{
+  		"IsLeader": true,
+  		"Leader": "localhost:9333"
+	}
+	# use $IP as host for api queries
+
+In production
+**************************************************************
+
+To gain persistency you can use docker volumes.
+
+.. code-block:: bash
+
+	# start our weed server daemonized
+	docker run --name weed -d -p 9333:9333 -p 8080:8080 \
+		-v /opt/weedfs/data:/data cydev/weed server -dir="/data" \ 
+		-publicIp="$(curl -s cydev.ru/ip)"
+
+Now our weed-fs server will be persistent and accessible by localhost:9333 and :8080 on host machine.
+Dont forget to specify "-publicIp" for correct connectivity.
