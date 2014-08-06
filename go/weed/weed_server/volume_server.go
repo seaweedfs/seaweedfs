@@ -35,7 +35,6 @@ func NewVolumeServer(r *http.ServeMux, ip string, port int, publicIp string, fol
 	}
 	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts)
 
-	r.HandleFunc("/submit", secure(vs.whiteList, vs.submitFromVolumeServerHandler))
 	r.HandleFunc("/status", secure(vs.whiteList, vs.statusHandler))
 	r.HandleFunc("/admin/assign_volume", secure(vs.whiteList, vs.assignVolumeHandler))
 	r.HandleFunc("/admin/vacuum_volume_check", secure(vs.whiteList, vs.vacuumVolumeCheckHandler))

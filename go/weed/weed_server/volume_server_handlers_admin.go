@@ -50,10 +50,6 @@ func (vs *VolumeServer) freezeVolumeHandler(w http.ResponseWriter, r *http.Reque
 	glog.V(2).Infoln("freeze volume =", r.FormValue("volume"), ", error =", err)
 }
 
-func (vs *VolumeServer) submitFromVolumeServerHandler(w http.ResponseWriter, r *http.Request) {
-	submitForClientHandler(w, r, vs.masterNode)
-}
-
 func (vs *VolumeServer) statsDiskHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
