@@ -27,7 +27,7 @@ var cmdExport = &Command{
 	UsageLine: "export -dir=/tmp -volumeId=234 -o=/dir/name.tar -fileNameFormat={{.Name}}",
 	Short:     "list or export files from one volume data file",
 	Long: `List all files in a volume, or Export all files in a volume to a tar file if the output is specified.
-	
+
 	The format of file name in the tar file can be customized. Default is {{.Mime}}/{{.Id}}:{{.Name}}. Also available is {{.Key}}.
 
   `,
@@ -100,7 +100,7 @@ func runExport(cmd *Command, args []string) bool {
 	var version storage.Version
 
 	err = storage.ScanVolumeFile(*exportVolumePath, *exportCollection, vid, func(superBlock storage.SuperBlock) error {
-		version = superBlock.Version
+		version = superBlock.Version()
 		return nil
 	}, true, func(n *storage.Needle, offset int64) error {
 		nv, ok := nm.Get(n.Id)
