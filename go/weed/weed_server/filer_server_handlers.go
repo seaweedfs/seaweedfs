@@ -103,6 +103,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	for k, v := range resp.Header {
 		w.Header()[k] = v
 	}
+	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
 
