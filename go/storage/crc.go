@@ -25,5 +25,5 @@ func (c CRC) Value() uint32 {
 func (n *Needle) Etag() string {
 	bits := make([]byte, 4)
 	util.Uint32toBytes(bits, uint32(n.Checksum))
-	return fmt.Sprintf("%x", bits)
+	return fmt.Sprintf("\"%x\"", bits)
 }
