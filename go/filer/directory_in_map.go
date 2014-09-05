@@ -9,7 +9,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
+
+var writeLock sync.Mutex //serialize changes to dir.log
 
 type DirectoryEntryInMap struct {
 	Name           string
@@ -26,9 +29,9 @@ type DirectoryManagerInMap struct {
 }
 
 func (dm *DirectoryManagerInMap) NewDirectoryEntryInMap(parent *DirectoryEntryInMap, name string) (d *DirectoryEntryInMap) {
+	writeLock.Lock()
+	defer writeLock.Unlock()
 	d = &DirectoryEntryInMap{Name: name, Parent: parent, SubDirectories: make(map[string]*DirectoryEntryInMap)}
-	dm.max++
-	d.Id = dm.max
 	parts := make([]string, 0)
 	for p := d; p != nil && p.Name != ""; p = p.Parent {
 		parts = append(parts, p.Name)
@@ -40,6 +43,8 @@ func (dm *DirectoryManagerInMap) NewDirectoryEntryInMap(parent *DirectoryEntryIn
 	for i := 0; i < n/2; i++ {
 		parts[i], parts[n-1-i] = parts[n-1-i], parts[i]
 	}
+	dm.max++
+	d.Id = dm.max
 	dm.log("add", "/"+strings.Join(parts, "/"), strconv.Itoa(int(d.Id)))
 	return d
 }
@@ -193,6 +198,8 @@ func (dm *DirectoryManagerInMap) MakeDirectory(dirPath string) (DirectoryId, err
 }
 
 func (dm *DirectoryManagerInMap) MoveUnderDirectory(oldDirPath string, newParentDirPath string, newName string) error {
+	writeLock.Lock()
+	defer writeLock.Unlock()
 	oldDir, oe := dm.findDirectory(oldDirPath)
 	if oe != nil {
 		return oe
@@ -223,6 +230,8 @@ func (dm *DirectoryManagerInMap) ListDirectories(dirPath string) (dirNames []Dir
 	return dirNames, nil
 }
 func (dm *DirectoryManagerInMap) DeleteDirectory(dirPath string) error {
+	writeLock.Lock()
+	defer writeLock.Unlock()
 	if dirPath == "/" {
 		return fmt.Errorf("Can not delete %s", dirPath)
 	}
