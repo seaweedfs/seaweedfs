@@ -1,33 +1,34 @@
 package topology
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
 	"code.google.com/p/weed-fs/go/storage"
 )
 
 type Collection struct {
 	Name                     string
 	volumeSizeLimit          uint64
-	replicaType2VolumeLayout []*VolumeLayout
+	storageType2VolumeLayout map[string]*VolumeLayout
 }
 
 func NewCollection(name string, volumeSizeLimit uint64) *Collection {
 	c := &Collection{Name: name, volumeSizeLimit: volumeSizeLimit}
-	c.replicaType2VolumeLayout = make([]*VolumeLayout, storage.ReplicaPlacementCount)
+	c.storageType2VolumeLayout = make(map[string]*VolumeLayout)
 	return c
 }
 
-func (c *Collection) GetOrCreateVolumeLayout(rp *storage.ReplicaPlacement) *VolumeLayout {
-	replicaPlacementIndex := rp.GetReplicationLevelIndex()
-	if c.replicaType2VolumeLayout[replicaPlacementIndex] == nil {
-		glog.V(0).Infoln("collection", c.Name, "adding replication type", rp)
-		c.replicaType2VolumeLayout[replicaPlacementIndex] = NewVolumeLayout(rp, c.volumeSizeLimit)
+func (c *Collection) GetOrCreateVolumeLayout(rp *storage.ReplicaPlacement, ttl *storage.TTL) *VolumeLayout {
+	keyString := rp.String()
+	if ttl != nil {
+		keyString += ttl.String()
 	}
-	return c.replicaType2VolumeLayout[replicaPlacementIndex]
+	if c.storageType2VolumeLayout[keyString] == nil {
+		c.storageType2VolumeLayout[keyString] = NewVolumeLayout(rp, ttl, c.volumeSizeLimit)
+	}
+	return c.storageType2VolumeLayout[keyString]
 }
 
 func (c *Collection) Lookup(vid storage.VolumeId) []*DataNode {
-	for _, vl := range c.replicaType2VolumeLayout {
+	for _, vl := range c.storageType2VolumeLayout {
 		if vl != nil {
 			if list := vl.Lookup(vid); list != nil {
 				return list
@@ -38,7 +39,7 @@ func (c *Collection) Lookup(vid storage.VolumeId) []*DataNode {
 }
 
 func (c *Collection) ListVolumeServers() (nodes []*DataNode) {
-	for _, vl := range c.replicaType2VolumeLayout {
+	for _, vl := range c.storageType2VolumeLayout {
 		if vl != nil {
 			if list := vl.ListVolumeServers(); list != nil {
 				nodes = append(nodes, list...)

@@ -14,7 +14,9 @@ const (
 	FlagHasName             = 0x02
 	FlagHasMime             = 0x04
 	FlagHasLastModifiedDate = 0x08
+	FlagHasTtl              = 0x10
 	LastModifiedBytesLength = 5
+	TtlBytesLength          = 2
 )
 
 func (n *Needle) DiskSize() int64 {
@@ -70,6 +72,9 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 			if n.HasLastModifiedDate() {
 				n.Size = n.Size + LastModifiedBytesLength
 			}
+			if n.HasTtl() {
+				n.Size = n.Size + TtlBytesLength
+			}
 		}
 		size = n.DataSize
 		util.Uint32toBytes(header[12:16], n.Size)
@@ -109,6 +114,12 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 			if n.HasLastModifiedDate() {
 				util.Uint64toBytes(header[0:8], n.LastModified)
 				if _, err = w.Write(header[8-LastModifiedBytesLength : 8]); err != nil {
+					return
+				}
+			}
+			if n.HasTtl() {
+				n.Ttl.ToBytes(header[0:TtlBytesLength])
+				if _, err = w.Write(header[0:TtlBytesLength]); err != nil {
 					return
 				}
 			}
@@ -194,6 +205,10 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) {
 		n.LastModified = util.BytesToUint64(bytes[index : index+LastModifiedBytesLength])
 		index = index + LastModifiedBytesLength
 	}
+	if index < lenBytes && n.HasTtl() {
+		n.Ttl = LoadTTLFromBytes(bytes[index : index+TtlBytesLength])
+		index = index + TtlBytesLength
+	}
 }
 
 func ReadNeedleHeader(r *os.File, version Version, offset int64) (n *Needle, bodyLength uint32, err error) {
@@ -262,4 +277,10 @@ func (n *Needle) HasLastModifiedDate() bool {
 }
 func (n *Needle) SetHasLastModifiedDate() {
 	n.Flags = n.Flags | FlagHasLastModifiedDate
+}
+func (n *Needle) HasTtl() bool {
+	return n.Flags&FlagHasTtl > 0
+}
+func (n *Needle) SetHasTtl() {
+	n.Flags = n.Flags | FlagHasTtl
 }

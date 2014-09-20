@@ -187,10 +187,10 @@ func (dm *DirectoryManagerInMap) makeDirectory(dirPath string) (dir *DirectoryEn
 	for i := 1; i < len(parts); i++ {
 		sub, ok := dir.SubDirectories[parts[i]]
 		if !ok {
-		  var err error
+			var err error
 			sub, err = dm.NewDirectoryEntryInMap(dir, parts[i])
 			if err != nil {
-			  return nil, false
+				return nil, false
 			}
 			dir.SubDirectories[parts[i]] = sub
 			created = true

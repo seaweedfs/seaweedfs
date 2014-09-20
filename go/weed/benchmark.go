@@ -201,7 +201,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stats) {
 			start := time.Now()
 			fileSize := int64(*b.fileSize + rand.Intn(64))
 			fp := &operation.FilePart{Reader: &FakeReader{id: uint64(id), size: fileSize}, FileSize: fileSize}
-			if assignResult, err := operation.Assign(*b.server, 1, "", *b.collection); err == nil {
+			if assignResult, err := operation.Assign(*b.server, 1, "", *b.collection, ""); err == nil {
 				fp.Server, fp.Fid, fp.Collection = assignResult.PublicUrl, assignResult.Fid, *b.collection
 				if _, ok := serverLimitChan[fp.Server]; !ok {
 					serverLimitChan[fp.Server] = make(chan bool, 7)

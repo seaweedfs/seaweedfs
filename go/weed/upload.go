@@ -12,6 +12,7 @@ var (
 	uploadReplication *string
 	uploadCollection  *string
 	uploadDir         *string
+	uploadTtl         *string
 	include           *string
 	maxMB             *int
 )
@@ -24,6 +25,7 @@ func init() {
 	include = cmdUpload.Flag.String("include", "", "pattens of files to upload, e.g., *.pdf, *.html, ab?d.txt, works together with -dir")
 	uploadReplication = cmdUpload.Flag.String("replication", "", "replication type")
 	uploadCollection = cmdUpload.Flag.String("collection", "", "optional collection name")
+	uploadTtl = cmdUpload.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
 	maxMB = cmdUpload.Flag.Int("maxMB", 0, "split files larger than the limit")
 }
 
@@ -67,7 +69,7 @@ func runUpload(cmd *Command, args []string) bool {
 					if e != nil {
 						return e
 					}
-					results, e := operation.SubmitFiles(*server, parts, *uploadReplication, *uploadCollection, *maxMB)
+					results, e := operation.SubmitFiles(*server, parts, *uploadReplication, *uploadCollection, *uploadTtl, *maxMB)
 					bytes, _ := json.Marshal(results)
 					fmt.Println(string(bytes))
 					if e != nil {
@@ -84,7 +86,7 @@ func runUpload(cmd *Command, args []string) bool {
 		if e != nil {
 			fmt.Println(e.Error())
 		}
-		results, _ := operation.SubmitFiles(*server, parts, *uploadReplication, *uploadCollection, *maxMB)
+		results, _ := operation.SubmitFiles(*server, parts, *uploadReplication, *uploadCollection, *uploadTtl, *maxMB)
 		bytes, _ := json.Marshal(results)
 		fmt.Println(string(bytes))
 	}

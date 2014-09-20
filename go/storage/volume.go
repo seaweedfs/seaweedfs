@@ -22,12 +22,13 @@ type Volume struct {
 
 	SuperBlock
 
-	accessLock sync.Mutex
+	accessLock       sync.Mutex
+	lastModifiedTime uint64 //unix time in seconds
 }
 
-func NewVolume(dirname string, collection string, id VolumeId, replicaPlacement *ReplicaPlacement) (v *Volume, e error) {
+func NewVolume(dirname string, collection string, id VolumeId, replicaPlacement *ReplicaPlacement, ttl *TTL) (v *Volume, e error) {
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
-	v.SuperBlock = SuperBlock{ReplicaPlacement: replicaPlacement}
+	v.SuperBlock = SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
 	e = v.load(true, true)
 	return
 }
@@ -49,12 +50,13 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool) error {
 	var e error
 	fileName := v.FileName()
 
-	if exists, canRead, canWrite, _ := checkFile(fileName + ".dat"); exists {
+	if exists, canRead, canWrite, modifiedTime := checkFile(fileName + ".dat"); exists {
 		if !canRead {
 			return fmt.Errorf("cannot read Volume Data file %s.dat", fileName)
 		}
 		if canWrite {
 			v.dataFile, e = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
+			v.lastModifiedTime = uint64(modifiedTime.Unix())
 		} else {
 			glog.V(0).Infoln("opening " + fileName + ".dat in READONLY mode")
 			v.dataFile, e = os.Open(fileName + ".dat")
@@ -192,6 +194,9 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 			glog.V(4).Infof("failed to save in needle map %d: %s", n.Id, err.Error())
 		}
 	}
+	if v.lastModifiedTime < n.LastModified {
+		v.lastModifiedTime = n.LastModified
+	}
 	return
 }
 
@@ -221,8 +226,25 @@ func (v *Volume) delete(n *Needle) (uint32, error) {
 
 func (v *Volume) read(n *Needle) (int, error) {
 	nv, ok := v.nm.Get(n.Id)
-	if ok && nv.Offset > 0 {
-		return n.Read(v.dataFile, int64(nv.Offset)*NeedlePaddingSize, nv.Size, v.Version())
+	if !ok || nv.Offset == 0 {
+		return -1, errors.New("Not Found")
+	}
+	bytesRead, err := n.Read(v.dataFile, int64(nv.Offset)*NeedlePaddingSize, nv.Size, v.Version())
+	if err != nil {
+		return bytesRead, err
+	}
+	if !n.HasTtl() {
+		return bytesRead, err
+	}
+	ttlMinutes := n.Ttl.Minutes()
+	if ttlMinutes == 0 {
+		return bytesRead, nil
+	}
+	if !n.HasLastModifiedDate() {
+		return bytesRead, nil
+	}
+	if uint64(time.Now().Unix()) < n.LastModified+uint64(ttlMinutes*60) {
+		return bytesRead, nil
 	}
 	return -1, errors.New("Not Found")
 }
@@ -342,4 +364,44 @@ func (v *Volume) ensureConvertIdxToCdb(fileName string) (cdbCanRead bool) {
 		return false
 	}
 	return true
+}
+
+// volume is expired if modified time + volume ttl < now
+// except when volume is empty
+// or when the volume does not have a ttl
+// or when volumeSizeLimit is 0 when server just starts
+func (v *Volume) expired(volumeSizeLimit uint64) bool {
+	if volumeSizeLimit == 0 {
+		//skip if we don't know size limit
+		return false
+	}
+	if v.ContentSize() == 0 {
+		return false
+	}
+	if v.Ttl == nil || v.Ttl.Minutes() == 0 {
+		return false
+	}
+	glog.V(0).Infof("now:%v lastModified:%v", time.Now().Unix(), v.lastModifiedTime)
+	livedMinutes := (time.Now().Unix() - int64(v.lastModifiedTime)) / 60
+	glog.V(0).Infof("ttl:%v lived:%v", v.Ttl, livedMinutes)
+	if int64(v.Ttl.Minutes()) < livedMinutes {
+		return true
+	}
+	return false
+}
+
+// wait either maxDelayMinutes or 10% of ttl minutes
+func (v *Volume) exiredLongEnough(maxDelayMinutes uint32) bool {
+	if v.Ttl == nil || v.Ttl.Minutes() == 0 {
+		return false
+	}
+	removalDelay := v.Ttl.Minutes() / 10
+	if removalDelay > maxDelayMinutes {
+		removalDelay = maxDelayMinutes
+	}
+
+	if uint64(v.Ttl.Minutes()+removalDelay)*60+v.lastModifiedTime < uint64(time.Now().Unix()) {
+		return true
+	}
+	return false
 }

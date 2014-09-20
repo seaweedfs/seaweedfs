@@ -38,12 +38,13 @@ type Needle struct {
 	MimeSize     uint8  //version2
 	Mime         []byte `comment:"maximum 256 characters"` //version2
 	LastModified uint64 //only store LastModifiedBytesLength bytes, which is 5 bytes to disk
+	Ttl          *TTL
 
 	Checksum CRC    `comment:"CRC32 to check integrity"`
 	Padding  []byte `comment:"Aligned to 8 bytes"`
 }
 
-func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string, isGzipped bool, modifiedTime uint64, e error) {
+func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string, isGzipped bool, modifiedTime uint64, ttl *TTL, e error) {
 	form, fe := r.MultipartReader()
 	if fe != nil {
 		glog.V(0).Infoln("MultipartReader [ERROR]", fe)
@@ -92,12 +93,13 @@ func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string
 		fileName = fileName[:len(fileName)-3]
 	}
 	modifiedTime, _ = strconv.ParseUint(r.FormValue("ts"), 10, 64)
+	ttl, _ = ReadTTL(r.FormValue("ttl"))
 	return
 }
 func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
 	fname, mimeType, isGzipped := "", "", false
 	n = new(Needle)
-	fname, n.Data, mimeType, isGzipped, n.LastModified, e = ParseUpload(r)
+	fname, n.Data, mimeType, isGzipped, n.LastModified, n.Ttl, e = ParseUpload(r)
 	if e != nil {
 		return
 	}
@@ -116,6 +118,9 @@ func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
 		n.LastModified = uint64(time.Now().Unix())
 	}
 	n.SetHasLastModifiedDate()
+	if n.Ttl != nil {
+		n.SetHasTtl()
+	}
 
 	if fixJpgOrientation {
 		loweredName := strings.ToLower(fname)

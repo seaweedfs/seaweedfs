@@ -2,7 +2,6 @@ package storage
 
 import (
 	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/util"
 	"fmt"
 	"os"
 )
@@ -15,12 +14,13 @@ const (
 * Super block currently has 8 bytes allocated for each volume.
 * Byte 0: version, 1 or 2
 * Byte 1: Replica Placement strategy, 000, 001, 002, 010, etc
-* Byte 2 and byte 3: Time to live in minutes
+* Byte 2 and byte 3: Time to live. See TTL for definition
+* Rest bytes: Reserved
  */
 type SuperBlock struct {
 	version          Version
 	ReplicaPlacement *ReplicaPlacement
-	Ttl              uint16
+	Ttl              *TTL
 }
 
 func (s *SuperBlock) Version() Version {
@@ -30,7 +30,7 @@ func (s *SuperBlock) Bytes() []byte {
 	header := make([]byte, SuperBlockSize)
 	header[0] = byte(s.version)
 	header[1] = s.ReplicaPlacement.Byte()
-	util.Uint16toBytes(header[2:4], s.Ttl)
+	s.Ttl.ToBytes(header[2:4])
 	return header
 }
 
@@ -70,6 +70,6 @@ func ParseSuperBlock(header []byte) (superBlock SuperBlock, err error) {
 	if superBlock.ReplicaPlacement, err = NewReplicaPlacementFromByte(header[1]); err != nil {
 		err = fmt.Errorf("cannot read replica type: %s", err.Error())
 	}
-	superBlock.Ttl = util.BytesToUint16(header[2:4])
+	superBlock.Ttl = LoadTTLFromBytes(header[2:4])
 	return
 }
