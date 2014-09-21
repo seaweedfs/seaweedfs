@@ -9,8 +9,8 @@ import (
 var cmdVersion = &Command{
 	Run:       runVersion,
 	UsageLine: "version",
-	Short:     "print Weed File System version",
-	Long:      `Version prints the Weed File System version`,
+	Short:     "print Seaweed File System version",
+	Long:      `Version prints the Seaweed File System version`,
 }
 
 func runVersion(cmd *Command, args []string) bool {

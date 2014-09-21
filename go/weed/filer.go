@@ -63,7 +63,7 @@ func runFiler(cmd *Command, args []string) bool {
 	if nfs_err != nil {
 		glog.Fatalf(nfs_err.Error())
 	}
-	glog.V(0).Infoln("Start Weed Filer", util.VERSION, "at port", strconv.Itoa(*f.port))
+	glog.V(0).Infoln("Start Seaweed Filer", util.VERSION, "at port", strconv.Itoa(*f.port))
 	filerListener, e := util.NewListener(
 		":"+strconv.Itoa(*f.port),
 		time.Duration(10)*time.Second,
