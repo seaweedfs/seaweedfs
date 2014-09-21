@@ -48,7 +48,7 @@ var cmdServer = &Command{
 var (
 	serverIp                      = cmdServer.Flag.String("ip", "", "ip or server name")
 	serverPublicIp                = cmdServer.Flag.String("publicIp", "", "ip or server name")
-	serverBindIp                  = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
+	serverBindIp                  = cmdServer.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	serverMaxCpu                  = cmdServer.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	serverTimeout                 = cmdServer.Flag.Int("idleTimeout", 10, "connection idle seconds")
 	serverDataCenter              = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
