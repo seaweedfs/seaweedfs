@@ -63,7 +63,7 @@ func runMaster(cmd *Command, args []string) bool {
 
 	listeningAddress := *masterIp + ":" + strconv.Itoa(*mport)
 
-	glog.V(0).Infoln("Start Weed Master", util.VERSION, "at", listeningAddress)
+	glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", listeningAddress)
 
 	listener, e := util.NewListener(listeningAddress, time.Duration(*mTimeout)*time.Second)
 	if e != nil {
