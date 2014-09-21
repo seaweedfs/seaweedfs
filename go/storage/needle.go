@@ -118,7 +118,7 @@ func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
 		n.LastModified = uint64(time.Now().Unix())
 	}
 	n.SetHasLastModifiedDate()
-	if n.Ttl != nil {
+	if n.Ttl != EMPTY_TTL {
 		n.SetHasTtl()
 	}
 

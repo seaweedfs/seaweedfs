@@ -4,10 +4,6 @@ import (
 	"strconv"
 )
 
-var (
-	TtlRange []uint16
-)
-
 const (
 	//stored unit types
 	Empty byte = iota
@@ -18,14 +14,6 @@ const (
 	Month
 	Year
 )
-
-func init() {
-	TtlRange = []uint16{3, 10, 30,
-		60 /*1 hour*/, 60 * 3, 60 * 6, 60 * 12,
-		1440 /*1 day*/, 1440 * 3, 1440 * 7, 1440 * 15, 1440 * 31,
-		44888 /*1 month*/, 65535,
-	}
-}
 
 type TTL struct {
 	count byte
@@ -120,7 +108,7 @@ func toStoredByte(readableUnitByte byte) byte {
 		return Week
 	case 'M':
 		return Month
-	case 'Y':
+	case 'y':
 		return Year
 	}
 	return 0
@@ -141,7 +129,7 @@ func (t TTL) Minutes() uint32 {
 	case Month:
 		return uint32(t.count) * 60 * 24 * 31
 	case Year:
-		return uint32(t.count) * 60 * 24 * 31 * 365
+		return uint32(t.count) * 60 * 24 * 365
 	}
 	return 0
 }
