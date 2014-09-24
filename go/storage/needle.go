@@ -1,9 +1,9 @@
 package storage
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/images"
-	"code.google.com/p/weed-fs/go/util"
+	"github.com/aszxqw/weed-fs/go/glog"
+	"github.com/aszxqw/weed-fs/go/images"
+	"github.com/aszxqw/weed-fs/go/util"
 	"encoding/hex"
 	"errors"
 	"io/ioutil"

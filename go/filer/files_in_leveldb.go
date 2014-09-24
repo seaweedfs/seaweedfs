@@ -2,7 +2,7 @@ package filer
 
 import (
 	"bytes"
-	"code.google.com/p/weed-fs/go/glog"
+	"github.com/aszxqw/weed-fs/go/glog"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/util"
 )

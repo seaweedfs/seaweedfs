@@ -1,9 +1,9 @@
 package main
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/util"
-	"code.google.com/p/weed-fs/go/weed/weed_server"
+	"github.com/aszxqw/weed-fs/go/glog"
+	"github.com/aszxqw/weed-fs/go/util"
+	"github.com/aszxqw/weed-fs/go/weed/weed_server"
 	"github.com/gorilla/mux"
 	"net/http"
 	"os"

@@ -2,7 +2,7 @@ package main
 
 import (
 	"bufio"
-	"code.google.com/p/weed-fs/go/glog"
+	"github.com/aszxqw/weed-fs/go/glog"
 	"fmt"
 	"os"
 )

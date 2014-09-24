@@ -2,11 +2,11 @@ package weed_server
 
 import (
 	proto "code.google.com/p/goprotobuf/proto"
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/operation"
-	"code.google.com/p/weed-fs/go/storage"
-	"code.google.com/p/weed-fs/go/topology"
-	"code.google.com/p/weed-fs/go/util"
+	"github.com/aszxqw/weed-fs/go/glog"
+	"github.com/aszxqw/weed-fs/go/operation"
+	"github.com/aszxqw/weed-fs/go/storage"
+	"github.com/aszxqw/weed-fs/go/topology"
+	"github.com/aszxqw/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"io/ioutil"

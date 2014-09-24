@@ -1,7 +1,7 @@
 package main
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
+	"github.com/aszxqw/weed-fs/go/glog"
 	"net/http"
 	"testing"
 	"time"

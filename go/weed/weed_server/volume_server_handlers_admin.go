@@ -1,9 +1,9 @@
 package weed_server
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/stats"
-	"code.google.com/p/weed-fs/go/util"
+	"github.com/aszxqw/weed-fs/go/glog"
+	"github.com/aszxqw/weed-fs/go/stats"
+	"github.com/aszxqw/weed-fs/go/util"
 	"net/http"
 	"path/filepath"
 )

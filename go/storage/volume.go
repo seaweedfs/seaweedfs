@@ -2,7 +2,7 @@ package storage
 
 import (
 	"bytes"
-	"code.google.com/p/weed-fs/go/glog"
+	"github.com/aszxqw/weed-fs/go/glog"
 	"errors"
 	"fmt"
 	"io"

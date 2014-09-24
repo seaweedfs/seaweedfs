@@ -1,8 +1,8 @@
 package storage
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/util"
+	"github.com/aszxqw/weed-fs/go/glog"
+	"github.com/aszxqw/weed-fs/go/util"
 	"fmt"
 	"io"
 	"os"

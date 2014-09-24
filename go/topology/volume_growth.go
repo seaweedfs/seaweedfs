@@ -1,8 +1,8 @@
 package topology
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/storage"
+	"github.com/aszxqw/weed-fs/go/glog"
+	"github.com/aszxqw/weed-fs/go/storage"
 	"fmt"
 	"math/rand"
 	"sync"

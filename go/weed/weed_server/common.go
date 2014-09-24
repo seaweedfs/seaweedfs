@@ -2,11 +2,11 @@ package weed_server
 
 import (
 	"bytes"
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/operation"
-	"code.google.com/p/weed-fs/go/stats"
-	"code.google.com/p/weed-fs/go/storage"
-	"code.google.com/p/weed-fs/go/util"
+	"github.com/aszxqw/weed-fs/go/glog"
+	"github.com/aszxqw/weed-fs/go/operation"
+	"github.com/aszxqw/weed-fs/go/stats"
+	"github.com/aszxqw/weed-fs/go/storage"
+	"github.com/aszxqw/weed-fs/go/util"
 	"encoding/json"
 	"fmt"
 	"net"

@@ -1,10 +1,10 @@
 package topology
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/operation"
-	"code.google.com/p/weed-fs/go/sequence"
-	"code.google.com/p/weed-fs/go/storage"
+	"github.com/aszxqw/weed-fs/go/glog"
+	"github.com/aszxqw/weed-fs/go/operation"
+	"github.com/aszxqw/weed-fs/go/sequence"
+	"github.com/aszxqw/weed-fs/go/storage"
 	"errors"
 	"github.com/goraft/raft"
 	"io/ioutil"
