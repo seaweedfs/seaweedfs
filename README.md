@@ -14,7 +14,7 @@ This repo and the google code repo will be kept synchronized.
 ## Usage
 
 ```
-go get github.com/aszxqw/weed-fs/go/weed
+go get github.com/chrislusf/weed-fs/go/weed
 ```
 
 ## Reference
