@@ -10,7 +10,7 @@ package util
 
 import (
 	"bytes"
-	"github.com/aszxqw/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/glog"
 	"encoding/json"
 	"os"
 )

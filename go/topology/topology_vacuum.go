@@ -1,9 +1,9 @@
 package topology
 
 import (
-	"github.com/aszxqw/weed-fs/go/glog"
-	"github.com/aszxqw/weed-fs/go/storage"
-	"github.com/aszxqw/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"net/url"

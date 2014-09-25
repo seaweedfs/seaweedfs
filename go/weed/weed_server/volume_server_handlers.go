@@ -1,12 +1,12 @@
 package weed_server
 
 import (
-	"github.com/aszxqw/weed-fs/go/glog"
-	"github.com/aszxqw/weed-fs/go/images"
-	"github.com/aszxqw/weed-fs/go/operation"
-	"github.com/aszxqw/weed-fs/go/stats"
-	"github.com/aszxqw/weed-fs/go/storage"
-	"github.com/aszxqw/weed-fs/go/topology"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/images"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/stats"
+	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/topology"
 	"io"
 	"mime"
 	"mime/multipart"

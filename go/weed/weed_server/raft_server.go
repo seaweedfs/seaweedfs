@@ -2,8 +2,8 @@ package weed_server
 
 import (
 	"bytes"
-	"github.com/aszxqw/weed-fs/go/glog"
-	"github.com/aszxqw/weed-fs/go/topology"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/topology"
 	"encoding/json"
 	"errors"
 	"fmt"

@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/aszxqw/weed-fs/go/operation"
-	"github.com/aszxqw/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/util"
 	"fmt"
 	"io"
 	"io/ioutil"

@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"github.com/aszxqw/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/util"
 	"fmt"
 	"hash/crc32"
 )

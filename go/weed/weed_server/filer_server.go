@@ -1,8 +1,8 @@
 package weed_server
 
 import (
-	"github.com/aszxqw/weed-fs/go/filer"
-	"github.com/aszxqw/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/filer"
+	"github.com/chrislusf/weed-fs/go/glog"
 	"net/http"
 	"strconv"
 )

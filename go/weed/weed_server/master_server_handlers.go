@@ -1,9 +1,9 @@
 package weed_server
 
 import (
-	"github.com/aszxqw/weed-fs/go/operation"
-	"github.com/aszxqw/weed-fs/go/stats"
-	"github.com/aszxqw/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/stats"
+	"github.com/chrislusf/weed-fs/go/storage"
 	"net/http"
 	"strconv"
 	"strings"

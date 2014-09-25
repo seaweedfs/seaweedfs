@@ -2,7 +2,7 @@ package filer
 
 import (
 	"bufio"
-	"github.com/aszxqw/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/util"
 	"fmt"
 	"io"
 	"os"

@@ -3,7 +3,7 @@ package filer
 import ()
 
 import (
-	"github.com/aszxqw/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"fmt"

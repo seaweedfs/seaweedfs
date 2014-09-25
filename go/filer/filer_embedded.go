@@ -1,7 +1,7 @@
 package filer
 
 import (
-	"github.com/aszxqw/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/operation"
 	"errors"
 	"fmt"
 	"path/filepath"

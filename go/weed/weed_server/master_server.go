@@ -1,10 +1,10 @@
 package weed_server
 
 import (
-	"github.com/aszxqw/weed-fs/go/glog"
-	"github.com/aszxqw/weed-fs/go/sequence"
-	"github.com/aszxqw/weed-fs/go/topology"
-	"github.com/aszxqw/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/sequence"
+	"github.com/chrislusf/weed-fs/go/topology"
+	"github.com/chrislusf/weed-fs/go/util"
 	"github.com/goraft/raft"
 	"github.com/gorilla/mux"
 	"net/http"

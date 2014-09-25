@@ -3,8 +3,8 @@ package main
 import (
 	"archive/tar"
 	"bytes"
-	"github.com/aszxqw/weed-fs/go/glog"
-	"github.com/aszxqw/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
 	"fmt"
 	"os"
 	"path"
