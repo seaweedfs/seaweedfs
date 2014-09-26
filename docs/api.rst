@@ -180,7 +180,7 @@ Upload File
 	curl -F file=@/home/chris/myphoto.jpg http://127.0.0.1:8080/3,01637037d6
 	{"size": 43234}
 
-The size returned is the size stored on WeedFS, sometimes the file is automatically gzipped based on the mime type.
+The size returned is the size stored on Seaweed-FS, sometimes the file is automatically gzipped based on the mime type.
 
 Upload File Directly
 ***********************************

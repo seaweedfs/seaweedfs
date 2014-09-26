@@ -1,14 +1,14 @@
 Optimization
 ==============
 
-Here are the strategies or best ways to optimize WeedFS.
+Here are the strategies or best ways to optimize Seaweed-FS.
 
 Increase concurrent writes
 ################################
 
-By default, WeedFS grows the volumes automatically. For example, for no-replication volumes, there will be concurrently 7 writable volumes allocated.
+By default, Seaweed-FS grows the volumes automatically. For example, for no-replication volumes, there will be concurrently 7 writable volumes allocated.
 
-If you want to distribute writes to more volumes, you can do so by instructing WeedFS master via this URL.
+If you want to distribute writes to more volumes, you can do so by instructing Seaweed-FS master via this URL.
 
 .. code-block:: bash
 	
@@ -31,14 +31,14 @@ More hard drives will give you better write/read throughput.
 Gzip content
 ################################
 
-WeedFS determines the file can be gzipped based on the file name extension. So if you submit a textual file, it's better to use an common file name extension, like ".txt", ".html", ".js", ".css", etc. If the name is unknown, like ".go", WeedFS will not gzip the content, but just save the content as is.
+Seaweed-FS determines the file can be gzipped based on the file name extension. So if you submit a textual file, it's better to use an common file name extension, like ".txt", ".html", ".js", ".css", etc. If the name is unknown, like ".go", Seaweed-FS will not gzip the content, but just save the content as is.
 
-You can also manually gzip content before submission. If you do so, make sure the submitted file has file name with ends with ".gz". For example, "my.css" can be gzipped to "my.css.gz" and sent to WeedFS. When retrieving the content, if the http client supports "gzip" encoding, the gzipped content would be sent back. Otherwise, the unzipped content would be sent back.
+You can also manually gzip content before submission. If you do so, make sure the submitted file has file name with ends with ".gz". For example, "my.css" can be gzipped to "my.css.gz" and sent to Seaweed-FS. When retrieving the content, if the http client supports "gzip" encoding, the gzipped content would be sent back. Otherwise, the unzipped content would be sent back.
 
 Memory consumption
 #################################
 
-For volume servers, the memory consumption is tightly related to the number of files. For example, one 32G volume can easily have 1.5 million files if each file is only 20KB. To store the 1.5 million entries of meta data in memory, currently WeedFS consumes 36MB memory, about 24bytes per entry in memory. So if you allocate 64 volumes(2TB), you would need 2~3GB memory. However, if the average file size is larger, say 200KB, only 200~300MB memory is needed.
+For volume servers, the memory consumption is tightly related to the number of files. For example, one 32G volume can easily have 1.5 million files if each file is only 20KB. To store the 1.5 million entries of meta data in memory, currently Seaweed-FS consumes 36MB memory, about 24bytes per entry in memory. So if you allocate 64 volumes(2TB), you would need 2~3GB memory. However, if the average file size is larger, say 200KB, only 200~300MB memory is needed.
 
 Theoretically the memory consumption can go even lower by compacting since the file ids are mostly monotonically increasing. I did not invest time on that yet since the memory consumption, 24bytes/entry(including uncompressed 8bytes file id, 4 bytes file size, plus additional map data structure cost) is already pretty low. But I welcome any one to compact these data in memory even more efficiently.
 
@@ -106,7 +106,7 @@ In case you need to delete them later, you can go to the volume servers and dele
 Logging
 ##############################
 
-When going to production, you will want to collect the logs. WeedFS uses glog. Here are some examples:
+When going to production, you will want to collect the logs. Seaweed-FS uses glog. Here are some examples:
 
 .. code-block:: bash
 

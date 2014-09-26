@@ -3,7 +3,7 @@ Getting started
 Installing Weed-Fs
 ###################################
 
-Download a proper version from  `WeedFS download page <https://bintray.com/chrislusf/Weed-FS/weed/>`_.
+Download a proper version from  `Seaweed-FS download page <https://bintray.com/chrislusf/Weed-FS/weed/>`_.
 
 Decompress the downloaded file. You will only find one executable file, either "weed" on most systems or "weed.exe" on windows.
 

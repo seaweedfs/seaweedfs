@@ -41,7 +41,7 @@ The wrong way to send it:
 
 	curl -H "Content-Type:image/png" -F file=@myImage.png http://127.0.0.1:8080/5,2730a7f18b44
 	
-Securing WeedFS
+Securing Seaweed-FS
 #############################
 
 The simple way is to front all master and volume servers with firewall.
