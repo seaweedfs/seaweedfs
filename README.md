@@ -268,7 +268,7 @@ POSIX support
 
 ## Benchmark
 
-My Own Unscientific Single Machine Results on Mac Book with Solid State Disk, CPU: 1 Intel Core i7@2.2GHz.
+My Own Unscientific Single Machine Results on Mac Book with Solid State Disk, CPU: 1 Intel Core i7 2.2GHz.
 
 Write 1 million 1KB file:
 ```
