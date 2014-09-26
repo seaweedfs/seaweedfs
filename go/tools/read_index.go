@@ -1,7 +1,7 @@
 package main
 
 import (
-	"code.google.com/p/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/storage"
 	"flag"
 	"fmt"
 	"log"

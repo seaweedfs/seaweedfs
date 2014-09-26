@@ -1,7 +1,7 @@
 package util
 
 import (
-	"code.google.com/p/weed-fs/go/stats"
+	"github.com/chrislusf/weed-fs/go/stats"
 	"net"
 	"time"
 )

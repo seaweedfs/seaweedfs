@@ -2,7 +2,7 @@ package util
 
 import (
 	"bufio"
-	"code.google.com/p/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/glog"
 	"errors"
 	"os"
 )

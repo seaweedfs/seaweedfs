@@ -1,7 +1,7 @@
 package main
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/glog"
 	"flag"
 	"fmt"
 	"io"

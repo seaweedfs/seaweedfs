@@ -1,7 +1,7 @@
 package main
 
 import (
-	"code.google.com/p/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/operation"
 	"encoding/json"
 	"fmt"
 	"os"
