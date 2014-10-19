@@ -78,7 +78,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !ms.Topo.HasWriableVolume(option) {
+	if !ms.Topo.HasWriteableVolume(option) {
 		if ms.Topo.FreeSpace() <= 0 {
 			w.WriteHeader(http.StatusNotFound)
 			writeJsonQuiet(w, r, operation.AssignResult{Error: "No free volumes left!"})
@@ -86,7 +86,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		} else {
 			ms.vgLock.Lock()
 			defer ms.vgLock.Unlock()
-			if !ms.Topo.HasWriableVolume(option) {
+			if !ms.Topo.HasWriteableVolume(option) {
 				if _, err = ms.vg.AutomaticGrowByType(option, ms.Topo); err != nil {
 					writeJsonQuiet(w, r, operation.AssignResult{Error: "Cannot grow volume group! " + err.Error()})
 					return
