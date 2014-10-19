@@ -14,7 +14,7 @@ go get github.com/chrislusf/weed-fs/go/weed
 ## Reference
 
 For pre-compiled releases,
- https://bintray.com/chrislusf/Weed-FS/weed
+ https://bintray.com/chrislusf/Weed-FS/seaweed
 
 ## Introduction
 
