@@ -109,7 +109,7 @@ func (t *Topology) NextVolumeId() storage.VolumeId {
 	return next
 }
 
-func (t *Topology) HasWriteableVolume(option *VolumeGrowOption) bool {
+func (t *Topology) HasWriableVolume(option *VolumeGrowOption) bool {
 	vl := t.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl)
 	return vl.GetActiveVolumeCount(option) > 0
 }
