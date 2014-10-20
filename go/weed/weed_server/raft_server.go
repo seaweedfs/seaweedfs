@@ -44,6 +44,7 @@ func NewRaftServer(r *mux.Router, peers []string, httpAddr string, dataDir strin
 	var err error
 	transporter := raft.NewHTTPTransporter("/cluster", 0)
 	transporter.Transport.MaxIdleConnsPerHost = 1024
+	glog.V(1).Infof("Starting RaftServer with IP:%v:", httpAddr)
 
 	s.raftServer, err = raft.NewServer(s.httpAddr, s.dataDir, transporter, nil, topo, "")
 	if err != nil {
