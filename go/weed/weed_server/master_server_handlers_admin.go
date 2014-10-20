@@ -143,7 +143,7 @@ func (ms *MasterServer) deleteFromMasterServerHandler(w http.ResponseWriter, r *
 	}
 }
 
-func (ms *MasterServer) hasWriteableVolume(option *topology.VolumeGrowOption) bool {
+func (ms *MasterServer) hasWriableVolume(option *topology.VolumeGrowOption) bool {
 	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl)
 	return vl.GetActiveVolumeCount(option) > 0
 }
