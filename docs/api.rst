@@ -69,17 +69,6 @@ One volume servers one write a time. If you need to increase concurrency, you ca
 
 This generates 4 empty volumes.
 
-Upload File Directly
-***********************************
-
-.. code-block:: bash
-
-	curl -F file=@/home/chris/myphoto.jpg http://localhost:9333/submit
-	{"fid":"3,01fbe0dc6f1f38","fileName":"myphoto.jpg",
-	 "fileUrl":"localhost:8080/3,01fbe0dc6f1f38","size":68231}
-
-This API is a little convenient. The master server would contact itself via HTTP to get an file id and store it to the right volume server. It is a convenient API and does not support different parameters when assigning file id.
-
 Check System Status
 ***********************************
 
@@ -191,7 +180,7 @@ Upload File
 	curl -F file=@/home/chris/myphoto.jpg http://127.0.0.1:8080/3,01637037d6
 	{"size": 43234}
 
-The size returned is the size stored on WeedFS, sometimes the file is automatically gzipped based on the mime type.
+The size returned is the size stored on Seaweed-FS, sometimes the file is automatically gzipped based on the mime type.
 
 Upload File Directly
 ***********************************

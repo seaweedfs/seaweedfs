@@ -2,9 +2,9 @@ package main
 
 import (
 	"bufio"
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/operation"
-	"code.google.com/p/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/util"
 	"fmt"
 	"io"
 	"math"
@@ -98,7 +98,7 @@ func init() {
 }
 
 func runbenchmark(cmd *Command, args []string) bool {
-	fmt.Printf("This is Weed File System version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("This is Seaweed File System version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)
 	if *b.cpuprofile != "" {
 		f, err := os.Create(*b.cpuprofile)
 		if err != nil {
@@ -201,7 +201,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stats) {
 			start := time.Now()
 			fileSize := int64(*b.fileSize + rand.Intn(64))
 			fp := &operation.FilePart{Reader: &FakeReader{id: uint64(id), size: fileSize}, FileSize: fileSize}
-			if assignResult, err := operation.Assign(*b.server, 1, "", *b.collection); err == nil {
+			if assignResult, err := operation.Assign(*b.server, 1, "", *b.collection, ""); err == nil {
 				fp.Server, fp.Fid, fp.Collection = assignResult.PublicUrl, assignResult.Fid, *b.collection
 				if _, ok := serverLimitChan[fp.Server]; !ok {
 					serverLimitChan[fp.Server] = make(chan bool, 7)

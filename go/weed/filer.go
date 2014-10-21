@@ -1,9 +1,9 @@
 package main
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/util"
-	"code.google.com/p/weed-fs/go/weed/weed_server"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/weed/weed_server"
 	"net/http"
 	"os"
 	"strconv"
@@ -63,7 +63,7 @@ func runFiler(cmd *Command, args []string) bool {
 	if nfs_err != nil {
 		glog.Fatalf(nfs_err.Error())
 	}
-	glog.V(0).Infoln("Start Weed Filer", util.VERSION, "at port", strconv.Itoa(*f.port))
+	glog.V(0).Infoln("Start Seaweed Filer", util.VERSION, "at port", strconv.Itoa(*f.port))
 	filerListener, e := util.NewListener(
 		":"+strconv.Itoa(*f.port),
 		time.Duration(10)*time.Second,

@@ -1,9 +1,9 @@
 package weed_server
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/stats"
-	"code.google.com/p/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/stats"
+	"github.com/chrislusf/weed-fs/go/util"
 	"net/http"
 	"path/filepath"
 )
@@ -16,7 +16,7 @@ func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (vs *VolumeServer) assignVolumeHandler(w http.ResponseWriter, r *http.Request) {
-	err := vs.store.AddVolume(r.FormValue("volume"), r.FormValue("collection"), r.FormValue("replication"))
+	err := vs.store.AddVolume(r.FormValue("volume"), r.FormValue("collection"), r.FormValue("replication"), r.FormValue("ttl"))
 	if err == nil {
 		writeJsonQuiet(w, r, map[string]string{"error": ""})
 	} else {
@@ -48,10 +48,6 @@ func (vs *VolumeServer) freezeVolumeHandler(w http.ResponseWriter, r *http.Reque
 		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
 	}
 	glog.V(2).Infoln("freeze volume =", r.FormValue("volume"), ", error =", err)
-}
-
-func (vs *VolumeServer) submitFromVolumeServerHandler(w http.ResponseWriter, r *http.Request) {
-	submitForClientHandler(w, r, vs.masterNode)
 }
 
 func (vs *VolumeServer) statsDiskHandler(w http.ResponseWriter, r *http.Request) {

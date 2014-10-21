@@ -1,9 +1,9 @@
 package topology
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/storage"
-	"code.google.com/p/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"net/url"
@@ -80,7 +80,7 @@ func batchVacuumVolumeCommit(vl *VolumeLayout, vid storage.VolumeId, locationlis
 }
 func (t *Topology) Vacuum(garbageThreshold string) int {
 	for _, c := range t.collectionMap {
-		for _, vl := range c.replicaType2VolumeLayout {
+		for _, vl := range c.storageType2VolumeLayout {
 			if vl != nil {
 				for vid, locationlist := range vl.vid2location {
 					if batchVacuumVolumeCheck(vl, vid, locationlist, garbageThreshold) {

@@ -1,13 +1,14 @@
 package storage
 
 import (
-	"code.google.com/p/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/operation"
 )
 
 type VolumeInfo struct {
 	Id               VolumeId
 	Size             uint64
 	ReplicaPlacement *ReplicaPlacement
+	Ttl              *TTL
 	Collection       string
 	Version          Version
 	FileCount        int
@@ -32,5 +33,6 @@ func NewVolumeInfo(m *operation.VolumeInformationMessage) (vi VolumeInfo, err er
 		return vi, e
 	}
 	vi.ReplicaPlacement = rp
+	vi.Ttl = LoadTTLFromUint32(*m.Ttl)
 	return vi, nil
 }

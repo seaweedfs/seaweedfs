@@ -1,9 +1,9 @@
 package weed_server
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/operation"
-	"code.google.com/p/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"github.com/syndtr/goleveldb/leveldb"
@@ -103,12 +103,13 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	for k, v := range resp.Header {
 		w.Header()[k] = v
 	}
+	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
 
 func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
-	assignResult, ae := operation.Assign(fs.master, 1, query.Get("replication"), fs.collection)
+	assignResult, ae := operation.Assign(fs.master, 1, query.Get("replication"), fs.collection, query.Get("ttl"))
 	if ae != nil {
 		glog.V(0).Infoln("failing to assign a file id", ae.Error())
 		writeJsonError(w, r, ae)
@@ -130,14 +131,14 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, do_err := util.Do(request)
 	if do_err != nil {
-		glog.V(0).Infoln("failing to connect to volume server", do_err.Error())
+		glog.V(0).Infoln("failing to connect to volume server", r.RequestURI, do_err.Error())
 		writeJsonError(w, r, do_err)
 		return
 	}
 	defer resp.Body.Close()
 	resp_body, ra_err := ioutil.ReadAll(resp.Body)
 	if ra_err != nil {
-		glog.V(0).Infoln("failing to upload to volume server", ra_err.Error())
+		glog.V(0).Infoln("failing to upload to volume server", r.RequestURI, ra_err.Error())
 		writeJsonError(w, r, ra_err)
 		return
 	}
@@ -145,12 +146,12 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	var ret operation.UploadResult
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
-		glog.V(0).Infoln("failing to read upload resonse", string(resp_body))
+		glog.V(0).Infoln("failing to read upload resonse", r.RequestURI, string(resp_body))
 		writeJsonError(w, r, unmarshal_err)
 		return
 	}
 	if ret.Error != "" {
-		glog.V(0).Infoln("failing to post to volume server", ret.Error)
+		glog.V(0).Infoln("failing to post to volume server", r.RequestURI, ret.Error)
 		writeJsonError(w, r, errors.New(ret.Error))
 		return
 	}
@@ -168,7 +169,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	glog.V(4).Infoln("saving", path, "=>", assignResult.Fid)
 	if db_err := fs.filer.CreateFile(path, assignResult.Fid); db_err != nil {
 		operation.DeleteFile(fs.master, assignResult.Fid) //clean up
-		glog.V(0).Infoln("failing to write to filer server", db_err.Error())
+		glog.V(0).Infoln("failing to write to filer server", r.RequestURI, db_err.Error())
 		writeJsonError(w, r, db_err)
 		return
 	}

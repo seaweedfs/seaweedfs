@@ -1,8 +1,8 @@
 package topology
 
 import (
-	"code.google.com/p/weed-fs/go/sequence"
-	"code.google.com/p/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/sequence"
+	"github.com/chrislusf/weed-fs/go/storage"
 	"encoding/json"
 	"fmt"
 	"testing"

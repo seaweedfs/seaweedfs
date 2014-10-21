@@ -1,9 +1,9 @@
 package main
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/util"
-	"code.google.com/p/weed-fs/go/weed/weed_server"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/weed/weed_server"
 	"github.com/gorilla/mux"
 	"net/http"
 	"os"
@@ -48,6 +48,7 @@ var cmdServer = &Command{
 var (
 	serverIp                      = cmdServer.Flag.String("ip", "", "ip or server name")
 	serverPublicIp                = cmdServer.Flag.String("publicIp", "", "ip or server name")
+	serverBindIp                  = cmdServer.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	serverMaxCpu                  = cmdServer.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	serverTimeout                 = cmdServer.Flag.Int("idleTimeout", 10, "connection idle seconds")
 	serverDataCenter              = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
@@ -152,7 +153,7 @@ func runServer(cmd *Command, args []string) bool {
 			if nfs_err != nil {
 				glog.Fatalf(nfs_err.Error())
 			}
-			glog.V(0).Infoln("Start Weed Filer", util.VERSION, "at port", strconv.Itoa(*filerOptions.port))
+			glog.V(0).Infoln("Start Seaweed Filer", util.VERSION, "at port", strconv.Itoa(*filerOptions.port))
 			filerListener, e := util.NewListener(
 				":"+strconv.Itoa(*filerOptions.port),
 				time.Duration(10)*time.Second,
@@ -178,8 +179,8 @@ func runServer(cmd *Command, args []string) bool {
 			*masterVolumeSizeLimitMB, *volumePulse, *masterConfFile, *masterDefaultReplicaPlacement, *serverGarbageThreshold, serverWhiteList,
 		)
 
-		glog.V(0).Infoln("Start Weed Master", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*masterPort))
-		masterListener, e := util.NewListener(*serverIp+":"+strconv.Itoa(*masterPort), time.Duration(*serverTimeout)*time.Second)
+		glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*masterPort))
+		masterListener, e := util.NewListener(*serverBindIp+":"+strconv.Itoa(*masterPort), time.Duration(*serverTimeout)*time.Second)
 		if e != nil {
 			glog.Fatalf(e.Error())
 		}
@@ -211,9 +212,9 @@ func runServer(cmd *Command, args []string) bool {
 		*volumeFixJpgOrientation,
 	)
 
-	glog.V(0).Infoln("Start Weed volume server", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*volumePort))
+	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*volumePort))
 	volumeListener, e := util.NewListener(
-		*serverIp+":"+strconv.Itoa(*volumePort),
+		*serverBindIp+":"+strconv.Itoa(*volumePort),
 		time.Duration(*serverTimeout)*time.Second,
 	)
 	if e != nil {

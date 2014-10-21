@@ -2,11 +2,11 @@ package weed_server
 
 import (
 	"bytes"
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/operation"
-	"code.google.com/p/weed-fs/go/stats"
-	"code.google.com/p/weed-fs/go/storage"
-	"code.google.com/p/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/stats"
+	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/util"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -99,14 +99,14 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	}
 
 	debug("parsing upload file...")
-	fname, data, mimeType, isGzipped, lastModified, pe := storage.ParseUpload(r)
+	fname, data, mimeType, isGzipped, lastModified, _, pe := storage.ParseUpload(r)
 	if pe != nil {
 		writeJsonError(w, r, pe)
 		return
 	}
 
 	debug("assigning file id for", fname)
-	assignResult, ae := operation.Assign(masterUrl, 1, r.FormValue("replication"), r.FormValue("collection"))
+	assignResult, ae := operation.Assign(masterUrl, 1, r.FormValue("replication"), r.FormValue("collection"), r.FormValue("ttl"))
 	if ae != nil {
 		writeJsonError(w, r, ae)
 		return

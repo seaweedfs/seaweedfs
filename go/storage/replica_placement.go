@@ -5,10 +5,6 @@ import (
 	"fmt"
 )
 
-const (
-	ReplicaPlacementCount = 9
-)
-
 type ReplicaPlacement struct {
 	SameRackCount       int
 	DiffRackCount       int
@@ -54,8 +50,4 @@ func (rp *ReplicaPlacement) String() string {
 
 func (rp *ReplicaPlacement) GetCopyCount() int {
 	return rp.DiffDataCenterCount + rp.DiffRackCount + rp.SameRackCount + 1
-}
-
-func (rp *ReplicaPlacement) GetReplicationLevelIndex() int {
-	return rp.DiffDataCenterCount*3 + rp.DiffRackCount*3 + rp.SameRackCount
 }

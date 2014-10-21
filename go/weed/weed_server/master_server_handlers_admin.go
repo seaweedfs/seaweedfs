@@ -2,11 +2,11 @@ package weed_server
 
 import (
 	proto "code.google.com/p/goprotobuf/proto"
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/operation"
-	"code.google.com/p/weed-fs/go/storage"
-	"code.google.com/p/weed-fs/go/topology"
-	"code.google.com/p/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/topology"
+	"github.com/chrislusf/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"io/ioutil"
@@ -55,7 +55,7 @@ func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ms.Topo.RegisterVolumes(joinMessage)
+	ms.Topo.ProcessJoinMessage(joinMessage)
 	writeJsonQuiet(w, r, operation.JoinResult{VolumeSizeLimit: uint64(ms.volumeSizeLimitMB) * 1024 * 1024})
 }
 
@@ -144,7 +144,7 @@ func (ms *MasterServer) deleteFromMasterServerHandler(w http.ResponseWriter, r *
 }
 
 func (ms *MasterServer) hasWriableVolume(option *topology.VolumeGrowOption) bool {
-	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement)
+	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl)
 	return vl.GetActiveVolumeCount(option) > 0
 }
 
@@ -157,9 +157,14 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 	if err != nil {
 		return nil, err
 	}
+	ttl, err := storage.ReadTTL(r.FormValue("ttl"))
+	if err != nil {
+		return nil, err
+	}
 	volumeGrowOption := &topology.VolumeGrowOption{
 		Collection:       r.FormValue("collection"),
 		ReplicaPlacement: replicaPlacement,
+		Ttl:              ttl,
 		DataCenter:       r.FormValue("dataCenter"),
 		Rack:             r.FormValue("rack"),
 		DataNode:         r.FormValue("dataNode"),

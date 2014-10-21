@@ -1,9 +1,9 @@
 package main
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/util"
-	"code.google.com/p/weed-fs/go/weed/weed_server"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/weed/weed_server"
 	"github.com/gorilla/mux"
 	"net/http"
 	"os"
@@ -63,7 +63,7 @@ func runMaster(cmd *Command, args []string) bool {
 
 	listeningAddress := *masterIp + ":" + strconv.Itoa(*mport)
 
-	glog.V(0).Infoln("Start Weed Master", util.VERSION, "at", listeningAddress)
+	glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", listeningAddress)
 
 	listener, e := util.NewListener(listeningAddress, time.Duration(*mTimeout)*time.Second)
 	if e != nil {

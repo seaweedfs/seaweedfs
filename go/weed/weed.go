@@ -1,7 +1,7 @@
 package main
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/glog"
 	"flag"
 	"fmt"
 	"io"
@@ -90,7 +90,7 @@ func main() {
 }
 
 var usageTemplate = `
-Weed File System : store billions of files and serve them fast!
+Seaweed File System : store billions of files and serve them fast!
 
 Usage:
 
