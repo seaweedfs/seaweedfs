@@ -30,7 +30,7 @@ var (
 	maxVolumeCounts       = cmdVolume.Flag.String("max", "7", "maximum numbers of volumes, count[,count]...")
 	ip                    = cmdVolume.Flag.String("ip", "", "ip or server name")
 	publicIp              = cmdVolume.Flag.String("publicIp", "", "Publicly accessible <ip|server_name>")
-	bindIp                = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
+	volumeBindIp          = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	masterNode            = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
 	vpulse                = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
 	vTimeout              = cmdVolume.Flag.Int("idleTimeout", 10, "connection idle seconds")
@@ -85,7 +85,7 @@ func runVolume(cmd *Command, args []string) bool {
 		*fixJpgOrientation,
 	)
 
-	listeningAddress := *bindIp + ":" + strconv.Itoa(*vport)
+	listeningAddress := *volumeBindIp + ":" + strconv.Itoa(*vport)
 
 	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "at", listeningAddress)
 
