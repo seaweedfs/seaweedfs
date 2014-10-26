@@ -3,9 +3,9 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"fmt"
 	"github.com/chrislusf/weed-fs/go/glog"
 	"github.com/chrislusf/weed-fs/go/storage"
-	"fmt"
 	"os"
 	"path"
 	"strconv"
@@ -36,7 +36,7 @@ var cmdExport = &Command{
 var (
 	exportVolumePath = cmdExport.Flag.String("dir", "/tmp", "input data directory to store volume data files")
 	exportCollection = cmdExport.Flag.String("collection", "", "the volume collection name")
-	exportVolumeId   = cmdExport.Flag.Int("volumeId", -1, "a volume id. The volume should already exist in the dir. The volume index file should not exist.")
+	exportVolumeId   = cmdExport.Flag.Int("volumeId", -1, "a volume id. The volume .dat and .idx files should already exist in the dir.")
 	dest             = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
 	format           = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename format, default to {{.Mime}}/{{.Id}}:{{.Name}}")
 	tarFh            *tar.Writer
