@@ -1,9 +1,10 @@
 package storage
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
 	"fmt"
 	"os"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 const (

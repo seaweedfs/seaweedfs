@@ -1,7 +1,5 @@
 package storage
 
-import ()
-
 type NeedleValue struct {
 	Key    Key
 	Offset uint32 `comment:"Volume offset"` //since aligned to 8 bytes, range is 4G*8=32G

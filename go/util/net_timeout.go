@@ -1,9 +1,10 @@
 package util
 
 import (
-	"github.com/chrislusf/weed-fs/go/stats"
 	"net"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/stats"
 )
 
 // Listener wraps a net.Listener, and gives a place to store the timeout

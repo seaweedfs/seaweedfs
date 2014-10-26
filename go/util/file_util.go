@@ -2,9 +2,10 @@ package util
 
 import (
 	"bufio"
-	"github.com/chrislusf/weed-fs/go/glog"
 	"errors"
 	"os"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 func TestFolderWritable(folder string) (err error) {

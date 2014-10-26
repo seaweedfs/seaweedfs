@@ -2,19 +2,20 @@ package weed_server
 
 import (
 	"bytes"
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/topology"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/goraft/raft"
-	"github.com/gorilla/mux"
 	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/topology"
+	"github.com/goraft/raft"
+	"github.com/gorilla/mux"
 )
 
 type RaftServer struct {

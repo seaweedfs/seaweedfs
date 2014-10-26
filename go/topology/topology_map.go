@@ -1,7 +1,5 @@
 package topology
 
-import ()
-
 func (t *Topology) ToMap() interface{} {
 	m := make(map[string]interface{})
 	m["Max"] = t.GetMaxVolumeCount()

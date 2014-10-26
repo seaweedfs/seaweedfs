@@ -1,10 +1,11 @@
 package storage
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 func (v *Volume) garbageLevel() float64 {

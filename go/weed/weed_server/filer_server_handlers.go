@@ -1,12 +1,8 @@
 package weed_server
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/operation"
-	"github.com/chrislusf/weed-fs/go/util"
 	"encoding/json"
 	"errors"
-	"github.com/syndtr/goleveldb/leveldb"
 	"io"
 	"io/ioutil"
 	"math/rand"
@@ -14,6 +10,11 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/syndtr/goleveldb/leveldb"
 )
 
 func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {

@@ -1,13 +1,14 @@
 package main
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/util"
-	"github.com/chrislusf/weed-fs/go/weed/weed_server"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/weed/weed_server"
 )
 
 var (

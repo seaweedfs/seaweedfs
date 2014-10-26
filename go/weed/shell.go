@@ -2,9 +2,10 @@ package main
 
 import (
 	"bufio"
-	"github.com/chrislusf/weed-fs/go/glog"
 	"fmt"
 	"os"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 func init() {

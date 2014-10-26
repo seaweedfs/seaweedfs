@@ -1,12 +1,13 @@
 package operation
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"net/url"
 	"strconv"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 type AssignResult struct {

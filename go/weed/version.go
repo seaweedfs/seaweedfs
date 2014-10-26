@@ -1,9 +1,10 @@
 package main
 
 import (
-	"github.com/chrislusf/weed-fs/go/util"
 	"fmt"
 	"runtime"
+
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 var cmdVersion = &Command{

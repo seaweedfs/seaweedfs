@@ -3,15 +3,16 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"runtime"
+
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"github.com/chrislusf/weed-fs/go/filer"
 	"github.com/chrislusf/weed-fs/go/glog"
 	"github.com/chrislusf/weed-fs/go/storage"
 	"github.com/chrislusf/weed-fs/go/util"
-	"fmt"
-	"os"
-	"runtime"
 )
 
 func runMount(cmd *Command, args []string) bool {

@@ -1,7 +1,6 @@
 package operation
 
 import (
-	"github.com/chrislusf/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	_ "fmt"
@@ -9,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 type Location struct {

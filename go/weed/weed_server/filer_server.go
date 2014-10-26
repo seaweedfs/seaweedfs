@@ -1,10 +1,11 @@
 package weed_server
 
 import (
-	"github.com/chrislusf/weed-fs/go/filer"
-	"github.com/chrislusf/weed-fs/go/glog"
 	"net/http"
 	"strconv"
+
+	"github.com/chrislusf/weed-fs/go/filer"
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 type FilerServer struct {

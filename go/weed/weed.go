@@ -1,7 +1,6 @@
 package main
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
 	"flag"
 	"fmt"
 	"io"
@@ -13,6 +12,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 var IsDebug *bool

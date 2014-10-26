@@ -1,11 +1,12 @@
 package topology
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/storage"
 	"fmt"
 	"math/rand"
 	"sync"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 /*

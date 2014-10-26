@@ -1,18 +1,19 @@
 package weed_server
 
 import (
-	proto "code.google.com/p/goprotobuf/proto"
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/operation"
-	"github.com/chrislusf/weed-fs/go/storage"
-	"github.com/chrislusf/weed-fs/go/topology"
-	"github.com/chrislusf/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"io/ioutil"
 	"net/http"
 	"strconv"
 	"strings"
+
+	proto "code.google.com/p/goprotobuf/proto"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/topology"
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {

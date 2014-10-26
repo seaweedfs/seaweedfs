@@ -1,10 +1,11 @@
 package topology
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/storage"
 	"math/rand"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 func (t *Topology) StartRefreshWritableVolumes(garbageThreshold string) {

@@ -1,14 +1,15 @@
 package topology
 
 import (
+	"errors"
+	"io/ioutil"
+	"math/rand"
+
 	"github.com/chrislusf/weed-fs/go/glog"
 	"github.com/chrislusf/weed-fs/go/operation"
 	"github.com/chrislusf/weed-fs/go/sequence"
 	"github.com/chrislusf/weed-fs/go/storage"
-	"errors"
 	"github.com/goraft/raft"
-	"io/ioutil"
-	"math/rand"
 )
 
 type Topology struct {

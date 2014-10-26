@@ -1,7 +1,5 @@
 package filer
 
-import ()
-
 type FileId string //file id on weedfs
 
 type FileEntry struct {

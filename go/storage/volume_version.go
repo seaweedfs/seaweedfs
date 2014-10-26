@@ -1,7 +1,5 @@
 package storage
 
-import ()
-
 type Version uint8
 
 const (

@@ -2,11 +2,12 @@ package images
 
 import (
 	"bytes"
-	"github.com/disintegration/imaging"
 	"image"
 	"image/gif"
 	"image/jpeg"
 	"image/png"
+
+	"github.com/disintegration/imaging"
 )
 
 func Resized(ext string, data []byte, width, height int) (resized []byte, w int, h int) {

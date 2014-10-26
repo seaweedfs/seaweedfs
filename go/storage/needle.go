@@ -1,9 +1,6 @@
 package storage
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/images"
-	"github.com/chrislusf/weed-fs/go/util"
 	"encoding/hex"
 	"errors"
 	"io/ioutil"
@@ -13,6 +10,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/images"
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 const (

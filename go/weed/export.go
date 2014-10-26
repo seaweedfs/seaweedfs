@@ -4,14 +4,15 @@ import (
 	"archive/tar"
 	"bytes"
 	"fmt"
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/storage"
 	"os"
 	"path"
 	"strconv"
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 func init() {

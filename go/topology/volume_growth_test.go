@@ -1,11 +1,12 @@
 package topology
 
 import (
-	"github.com/chrislusf/weed-fs/go/sequence"
-	"github.com/chrislusf/weed-fs/go/storage"
 	"encoding/json"
 	"fmt"
 	"testing"
+
+	"github.com/chrislusf/weed-fs/go/sequence"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 var topologyLayout = `

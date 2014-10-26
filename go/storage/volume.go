@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/chrislusf/weed-fs/go/glog"
 	"io"
 	"os"
 	"path"
 	"sync"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 type Volume struct {
