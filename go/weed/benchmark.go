@@ -31,6 +31,7 @@ type BenchmarkOptions struct {
 	sequentialRead   *bool
 	collection       *string
 	cpuprofile       *string
+	maxCpu           *int
 	vid2server       map[string]string //cache for vid locations
 }
 
@@ -51,7 +52,8 @@ func init() {
 	b.read = cmdBenchmark.Flag.Bool("read", true, "enable read")
 	b.sequentialRead = cmdBenchmark.Flag.Bool("readSequentially", false, "randomly read by ids from \"-list\" specified file")
 	b.collection = cmdBenchmark.Flag.String("collection", "benchmark", "write data to this collection")
-	b.cpuprofile = cmdBenchmark.Flag.String("cpuprofile", "", "write cpu profile to file")
+	b.cpuprofile = cmdBenchmark.Flag.String("cpuprofile", "", "cpu profile output file")
+	b.maxCpu = cmdBenchmark.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	b.vid2server = make(map[string]string)
 }
 
@@ -59,25 +61,25 @@ var cmdBenchmark = &Command{
 	UsageLine: "benchmark -server=localhost:9333 -c=10 -n=100000",
 	Short:     "benchmark on writing millions of files and read out",
 	Long: `benchmark on an empty weed file system.
-  
+
   Two tests during benchmark:
   1) write lots of small files to the system
   2) read the files out
-  
+
   The file content is mostly zero, but no compression is done.
-    
+
   You can choose to only benchmark read or write.
   During write, the list of uploaded file ids is stored in "-list" specified file.
   You can also use your own list of file ids to run read test.
-  
+
   Write speed and read speed will be collected.
   The numbers are used to get a sense of the system.
   Usually your network or the hard drive is the real bottleneck.
-  
+
   Another thing to watch is whether the volumes are evenly distributed
   to each volume server. Because the 7 more benchmark volumes are randomly distributed
   to servers with free slots, it's highly possible some servers have uneven amount of
-  benchmark volumes. To remedy this, you can use this to grow the benchmark volumes 
+  benchmark volumes. To remedy this, you can use this to grow the benchmark volumes
   before starting the benchmark command:
     http://localhost:9333/vol/grow?collection=benchmark&count=5
 
@@ -100,6 +102,10 @@ func init() {
 
 func runbenchmark(cmd *Command, args []string) bool {
 	fmt.Printf("This is Seaweed File System version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)
+	if *b.maxCpu < 1 {
+		*b.maxCpu = runtime.NumCPU()
+	}
+	runtime.GOMAXPROCS(*b.maxCpu)
 	if *b.cpuprofile != "" {
 		f, err := os.Create(*b.cpuprofile)
 		if err != nil {
@@ -497,9 +503,9 @@ func (l *FakeReader) Read(p []byte) (n int, err error) {
 	} else {
 		n = len(p)
 	}
-	for i := 0; i < n-8; i += 8 {
-		for s := uint(0); s < 8; s++ {
-			p[i] = byte(l.id >> (s * 8))
+	if n >= 8 {
+		for i := 0; i < 8; i++ {
+			p[i] = byte(l.id >> uint(i*8))
 		}
 	}
 	l.size -= int64(n)
