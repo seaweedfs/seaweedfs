@@ -1,7 +1,7 @@
 Benchmarks
 ======================
 
-Do we really need the benchmark? People always use benchmark to compare systems. But benchmarks are misleading. The resources, e.g., CPU, disk, memory, network, all matter a lot. And with Weed File System, single node vs multiple nodes, benchmarking on one machine vs several multiple machines, all matter a lot.
+Do we really need the benchmark? People always use benchmark to compare systems. But benchmarks are misleading. The resources, e.g., CPU, disk, memory, network, all matter a lot. And with Seaweed File System, single node vs multiple nodes, benchmarking on one machine vs several multiple machines, all matter a lot.
 
 Here is the steps on how to run benchmark if you really need some numbers.
 
@@ -38,7 +38,22 @@ Many options are options are configurable. Please check the help content:
 Common Problems
 ###############################
 
-The most common problem is "too many open files" error. This is because the test itself starts too many network connections on one single machine. In my local macbook, if I ran "random read" following writing right away, the error happens always. I have to run "weed benchmark -write=false" to run the reading test only. Also, changing the concurrency level to "-c=16" would also help.
+The most common
+I start weed servers in one console for simplicity. Better run servers on different consoles.
+
+For more realistic tests, please start them on different machines.
+
+.. code-block:: bash
+
+  # prepare directories
+  mkdir 3 4 5
+  # start 3 servers
+  ./weed server -dir=./3 -master.port=9333 -volume.port=8083 &
+  ./weed volume -dir=./4 -port=8084 &
+  ./weed volume -dir=./5 -port=8085 &
+  ./weed benchmark -server=localhost:9333
+
+ problem is "too many open files" error. This is because the test itself starts too many network connections on one single machine. In my local macbook, if I ran "random read" following writing right away, the error happens always. I have to run "weed benchmark -write=false" to run the reading test only. Also, changing the concurrency level to "-c=16" would also help.
 
 My own unscientific single machine results
 ###################################################

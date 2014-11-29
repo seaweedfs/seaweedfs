@@ -1,6 +1,6 @@
 Getting started
 ===================================
-Installing Weed-Fs
+Installing Seaweed-FS
 ###################################
 
 Download a proper version from  `Seaweed-FS download page <https://bintray.com/chrislusf/Weed-FS/weed/>`_.
@@ -57,7 +57,7 @@ Actually, forget about previous commands. You can setup one master server and on
 	# use "weed server -h" to find out more
 	./weed server -master.port=9333 -volume.port=8080 -dir="./data"
 
-Testing Weed-Fs
+Testing Seaweed-FS
 ###################################
 
 With the master and volume server up, now what? Let's pump in a lot of files into the system!
@@ -77,7 +77,7 @@ Then, you can simply check "du -m -s /some/big/folder" to see the actual disk us
 
 Now you can use your tools to hit weed-fs as hard as you can.
 
-Using Weed-Fs in docker
+Using Seaweed-FS in docker
 ####################################
 
 You can use image "cydev/weed" or build your own with  `dockerfile <https://github.com/chrislusf/weed-fs/blob/master/Dockerfile>`_  in the root of repo.

@@ -1,7 +1,7 @@
 Directories and files
 ===========================
 
-When talking about file systems, many people would assume directories, list files under a directory, etc. These are expected if we want to hook up Weed File System with linux by FUSE, or with Hadoop, etc.
+When talking about file systems, many people would assume directories, list files under a directory, etc. These are expected if we want to hook up Seaweed File System with linux by FUSE, or with Hadoop, etc.
 
 Sample usage
 #####################
