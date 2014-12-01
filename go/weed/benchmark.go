@@ -33,10 +33,12 @@ type BenchmarkOptions struct {
 	cpuprofile       *string
 	maxCpu           *int
 	vid2server       map[string]string //cache for vid locations
+
 }
 
 var (
-	b BenchmarkOptions
+	b           BenchmarkOptions
+	sharedBytes []byte
 )
 
 func init() {
@@ -55,6 +57,7 @@ func init() {
 	b.cpuprofile = cmdBenchmark.Flag.String("cpuprofile", "", "cpu profile output file")
 	b.maxCpu = cmdBenchmark.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	b.vid2server = make(map[string]string)
+	sharedBytes = make([]byte, 1024)
 }
 
 var cmdBenchmark = &Command{
@@ -512,6 +515,23 @@ func (l *FakeReader) Read(p []byte) (n int, err error) {
 	return
 }
 
+func (l *FakeReader) WriteTo(w io.Writer) (n int64, err error) {
+	size := int(l.size)
+	bufferSize := len(sharedBytes)
+	for size > 0 {
+		tempBuffer := sharedBytes
+		if size < bufferSize {
+			tempBuffer = sharedBytes[0:size]
+		}
+		count, e := w.Write(tempBuffer)
+		if e != nil {
+			return int64(size), e
+		}
+		size -= count
+	}
+	return l.size, nil
+}
+
 func Readln(r *bufio.Reader) ([]byte, error) {
 	var (
 		isPrefix bool  = true
@@ -524,3 +544,4 @@ func Readln(r *bufio.Reader) ([]byte, error) {
 	}
 	return ln, err
 }
+
