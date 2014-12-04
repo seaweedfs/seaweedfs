@@ -5,41 +5,6 @@ Seaweed File System
 [![GoDoc](https://godoc.org/github.com/chrislusf/weed-fs/go?status.svg)](https://godoc.org/github.com/chrislusf/weed-fs/go)
 [![RTD](https://readthedocs.org/projects/weed-fs/badge/?version=latest)](http://weed-fs.readthedocs.org/en/latest/)
 
-## Usage
-
-```
-go get github.com/chrislusf/weed-fs/go/weed
-```
-
-## Installation guide for users who are not familiar with golang
-
-step 1: install go on your machine and setup the environment by following the instructions from the following link:
-
-https://golang.org/doc/install
-
-make sure you set up your $GOPATH
-
-
-step 2: also you may need to install Mercurial by following the instructions below
-
-http://mercurial.selenic.com/downloads
-
-
-step 3: download, compile, and install the project by executing the following command 
-
-go get github.com/chrislusf/weed-fs/go/weed
-
-once this is down, you should see the executable "weed" under $GOPATH/bin
-
-step 4: after you modify your code locally, you could start a local build by calling "go build" under $GOPATH/src/github.com/chrislusf/weed-fs/go/weed
-
-
- 
-
-## Reference
-
-For pre-compiled releases,
- https://bintray.com/chrislusf/Weed-FS/seaweed
 
 ## Introduction
 
@@ -271,12 +236,34 @@ More tools and documentation, on how to maintain and scale the system. For examp
 
 This is a super exciting project! And I need helpers!
 
-## Contributions ##
 
-To make contributions easier, I have mirrored a repo in github.com
-```
- https://github.com/chrislusf/weed-fs.git
-```
+## Installation guide for users who are not familiar with golang
+
+step 1: install go on your machine and setup the environment by following the instructions from the following link:
+
+https://golang.org/doc/install
+
+make sure you set up your $GOPATH
+
+
+step 2: also you may need to install Mercurial by following the instructions below
+
+http://mercurial.selenic.com/downloads
+
+
+step 3: download, compile, and install the project by executing the following command 
+
+go get github.com/chrislusf/weed-fs/go/weed
+
+once this is done, you should see the executable "weed" under $GOPATH/bin
+
+step 4: after you modify your code locally, you could start a local build by calling "go install" under $GOPATH/src/github.com/chrislusf/weed-fs/go/weed
+
+## Reference
+
+For pre-compiled releases,
+ https://bintray.com/chrislusf/Weed-FS/seaweed
+
 ## Disk Related topics ##
 
 ### Hard Drive Performance ###
