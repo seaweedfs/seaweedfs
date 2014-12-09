@@ -9,13 +9,14 @@ import (
 	"github.com/chrislusf/weed-fs/go/operation"
 	"github.com/chrislusf/weed-fs/go/sequence"
 	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/util"
 	"github.com/goraft/raft"
 )
 
 type Topology struct {
 	NodeImpl
 
-	collectionMap map[string]*Collection
+	collectionMap *util.ConcurrentReadMap
 
 	pulse int64
 
@@ -38,7 +39,7 @@ func NewTopology(id string, confFile string, seq sequence.Sequencer, volumeSizeL
 	t.nodeType = "Topology"
 	t.NodeImpl.value = t
 	t.children = make(map[NodeId]Node)
-	t.collectionMap = make(map[string]*Collection)
+	t.collectionMap = util.NewConcurrentReadMap()
 	t.pulse = int64(pulse)
 	t.volumeSizeLimit = volumeSizeLimit
 
@@ -90,14 +91,14 @@ func (t *Topology) loadConfiguration(configurationFile string) error {
 func (t *Topology) Lookup(collection string, vid storage.VolumeId) []*DataNode {
 	//maybe an issue if lots of collections?
 	if collection == "" {
-		for _, c := range t.collectionMap {
-			if list := c.Lookup(vid); list != nil {
+		for _, c := range t.collectionMap.Items {
+			if list := c.(*Collection).Lookup(vid); list != nil {
 				return list
 			}
 		}
 	} else {
-		if c, ok := t.collectionMap[collection]; ok {
-			return c.Lookup(vid)
+		if c, ok := t.collectionMap.Items[collection]; ok {
+			return c.(*Collection).Lookup(vid)
 		}
 	}
 	return nil
@@ -125,20 +126,18 @@ func (t *Topology) PickForWrite(count int, option *VolumeGrowOption) (string, in
 }
 
 func (t *Topology) GetVolumeLayout(collectionName string, rp *storage.ReplicaPlacement, ttl *storage.TTL) *VolumeLayout {
-	_, ok := t.collectionMap[collectionName]
-	if !ok {
-		t.collectionMap[collectionName] = NewCollection(collectionName, t.volumeSizeLimit)
-	}
-	return t.collectionMap[collectionName].GetOrCreateVolumeLayout(rp, ttl)
+	return t.collectionMap.Get(collectionName, func() interface{} {
+		return NewCollection(collectionName, t.volumeSizeLimit)
+	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl)
 }
 
-func (t *Topology) GetCollection(collectionName string) (collection *Collection, ok bool) {
-	collection, ok = t.collectionMap[collectionName]
-	return
+func (t *Topology) GetCollection(collectionName string) (*Collection, bool) {
+	c, hasCollection := t.collectionMap.Items[collectionName]
+	return c.(*Collection), hasCollection
 }
 
 func (t *Topology) DeleteCollection(collectionName string) {
-	delete(t.collectionMap, collectionName)
+	delete(t.collectionMap.Items, collectionName)
 }
 
 func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {

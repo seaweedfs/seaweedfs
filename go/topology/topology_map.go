@@ -11,10 +11,11 @@ func (t *Topology) ToMap() interface{} {
 	}
 	m["DataCenters"] = dcs
 	var layouts []interface{}
-	for _, c := range t.collectionMap {
-		for _, layout := range c.storageType2VolumeLayout {
+	for _, col := range t.collectionMap.Items {
+		c := col.(*Collection)
+		for _, layout := range c.storageType2VolumeLayout.Items {
 			if layout != nil {
-				tmp := layout.ToMap()
+				tmp := layout.(*VolumeLayout).ToMap()
 				tmp["collection"] = c.Name
 				layouts = append(layouts, tmp)
 			}
