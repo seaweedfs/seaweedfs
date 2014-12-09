@@ -83,7 +83,8 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	urlLocation := lookup.Locations[rand.Intn(len(lookup.Locations))].PublicUrl
 	urlString := "http://" + urlLocation + "/" + fileId
 	if fs.redirectOnRead {
-
+		http.Redirect(w, r, urlString, http.StatusFound)
+		return
 	}
 	u, _ := url.Parse(urlString)
 	request := &http.Request{
