@@ -9,17 +9,23 @@ import (
 )
 
 type FilerServer struct {
-	port       string
-	master     string
-	collection string
-	filer      filer.Filer
+	port               string
+	master             string
+	collection         string
+	defaultReplication string
+	redirectOnRead     bool
+	filer              filer.Filer
 }
 
-func NewFilerServer(r *http.ServeMux, port int, master string, dir string, collection string) (fs *FilerServer, err error) {
+func NewFilerServer(r *http.ServeMux, port int, master string, dir string, collection string,
+	replication string, redirectOnRead bool,
+) (fs *FilerServer, err error) {
 	fs = &FilerServer{
-		master:     master,
-		collection: collection,
-		port:       ":" + strconv.Itoa(port),
+		master:             master,
+		collection:         collection,
+		defaultReplication: replication,
+		redirectOnRead:     redirectOnRead,
+		port:               ":" + strconv.Itoa(port),
 	}
 
 	if fs.filer, err = filer.NewFilerEmbedded(master, dir); err != nil {
