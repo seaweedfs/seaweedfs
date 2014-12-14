@@ -101,6 +101,10 @@ func runServer(cmd *Command, args []string) bool {
 		}
 	}
 
+	if *filerOptions.redirectOnRead {
+		*isStartingFiler = true
+	}
+
 	*filerOptions.master = *serverPublicIp + ":" + strconv.Itoa(*masterPort)
 
 	if *filerOptions.defaultReplicaPlacement == "" {
