@@ -9,10 +9,10 @@ import (
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
-	"github.com/mcqueenorama/weed-fs/go/filer"
-	"github.com/mcqueenorama/weed-fs/go/glog"
-	"github.com/mcqueenorama/weed-fs/go/storage"
-	"github.com/mcqueenorama/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/filer"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 func runMount(cmd *Command, args []string) bool {

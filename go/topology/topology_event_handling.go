@@ -4,8 +4,8 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/mcqueenorama/weed-fs/go/glog"
-	"github.com/mcqueenorama/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 func (t *Topology) StartRefreshWritableVolumes(garbageThreshold string) {

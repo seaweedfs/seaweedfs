@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/mcqueenorama/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 var (

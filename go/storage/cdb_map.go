@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mcqueenorama/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/util"
 	"github.com/tgulacsi/go-cdb"
 )
 

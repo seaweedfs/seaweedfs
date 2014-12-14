@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mcqueenorama/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 type Location struct {

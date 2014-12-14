@@ -5,8 +5,8 @@ import (
 	"errors"
 	"net/url"
 
-	"github.com/mcqueenorama/weed-fs/go/storage"
-	"github.com/mcqueenorama/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 type AllocateVolumeResult struct {

@@ -1,8 +1,8 @@
 package topology
 
 import (
-	"github.com/mcqueenorama/weed-fs/go/storage"
-	"github.com/mcqueenorama/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 type Collection struct {

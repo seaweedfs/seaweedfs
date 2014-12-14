@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/mcqueenorama/weed-fs/go/filer"
-	"github.com/mcqueenorama/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/filer"
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 type FilerServer struct {

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"hash/crc32"
 
-	"github.com/mcqueenorama/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 var table = crc32.MakeTable(crc32.Castagnoli)

@@ -9,11 +9,11 @@ import (
 	"strings"
 
 	proto "code.google.com/p/goprotobuf/proto"
-	"github.com/mcqueenorama/weed-fs/go/glog"
-	"github.com/mcqueenorama/weed-fs/go/operation"
-	"github.com/mcqueenorama/weed-fs/go/storage"
-	"github.com/mcqueenorama/weed-fs/go/topology"
-	"github.com/mcqueenorama/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/topology"
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {

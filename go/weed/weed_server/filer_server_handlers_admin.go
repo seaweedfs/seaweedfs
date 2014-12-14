@@ -3,7 +3,7 @@ package weed_server
 import (
 	"net/http"
 
-	"github.com/mcqueenorama/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 /*

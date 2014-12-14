@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"github.com/mcqueenorama/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/operation"
 )
 
 type VolumeInfo struct {

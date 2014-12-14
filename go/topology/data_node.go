@@ -3,8 +3,8 @@ package topology
 import (
 	"strconv"
 
-	"github.com/mcqueenorama/weed-fs/go/glog"
-	"github.com/mcqueenorama/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 type DataNode struct {
