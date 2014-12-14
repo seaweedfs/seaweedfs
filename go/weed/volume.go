@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/util"
-	"github.com/chrislusf/weed-fs/go/weed/weed_server"
+	"github.com/mcqueenorama/weed-fs/go/glog"
+	"github.com/mcqueenorama/weed-fs/go/util"
+	"github.com/mcqueenorama/weed-fs/go/weed/weed_server"
 )
 
 func init() {

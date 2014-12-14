@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/mcqueenorama/weed-fs/go/util"
 )
 
 var cmdVersion = &Command{

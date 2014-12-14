@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/mcqueenorama/weed-fs/go/glog"
 )
 
 var testIndexFilename string = "../../test/sample.idx"

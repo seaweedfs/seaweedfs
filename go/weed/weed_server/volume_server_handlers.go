@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/images"
-	"github.com/chrislusf/weed-fs/go/operation"
-	"github.com/chrislusf/weed-fs/go/stats"
-	"github.com/chrislusf/weed-fs/go/storage"
-	"github.com/chrislusf/weed-fs/go/topology"
+	"github.com/mcqueenorama/weed-fs/go/glog"
+	"github.com/mcqueenorama/weed-fs/go/images"
+	"github.com/mcqueenorama/weed-fs/go/operation"
+	"github.com/mcqueenorama/weed-fs/go/stats"
+	"github.com/mcqueenorama/weed-fs/go/storage"
+	"github.com/mcqueenorama/weed-fs/go/topology"
 )
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/mcqueenorama/weed-fs/go/util"
 )
 
 var writeLock sync.Mutex //serialize changes to dir.log

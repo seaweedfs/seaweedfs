@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/mcqueenorama/weed-fs/go/glog"
 )
 
 func init() {

@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/mcqueenorama/weed-fs/go/operation"
 )
 
 var (

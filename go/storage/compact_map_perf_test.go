@@ -5,8 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/mcqueenorama/weed-fs/go/glog"
+	"github.com/mcqueenorama/weed-fs/go/util"
 )
 
 func TestMemoryUsage(t *testing.T) {

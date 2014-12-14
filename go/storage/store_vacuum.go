@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/mcqueenorama/weed-fs/go/glog"
 )
 
 func (s *Store) CheckCompactVolume(volumeIdString string, garbageThresholdString string) (error, bool) {

@@ -3,7 +3,7 @@ package filer
 import (
 	"bytes"
 
-	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/mcqueenorama/weed-fs/go/glog"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/util"
 )

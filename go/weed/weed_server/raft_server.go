@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/topology"
+	"github.com/mcqueenorama/weed-fs/go/glog"
+	"github.com/mcqueenorama/weed-fs/go/topology"
 	"github.com/goraft/raft"
 	"github.com/gorilla/mux"
 )

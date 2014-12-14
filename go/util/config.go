@@ -13,7 +13,7 @@ import (
 	"encoding/json"
 	"os"
 
-	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/mcqueenorama/weed-fs/go/glog"
 )
 
 type Config struct {
