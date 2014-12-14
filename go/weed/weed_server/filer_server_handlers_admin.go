@@ -1,8 +1,9 @@
 package weed_server
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
 	"net/http"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 /*

@@ -1,11 +1,12 @@
 package main
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/storage"
 	"os"
 	"path"
 	"strconv"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 func init() {
@@ -16,7 +17,7 @@ func init() {
 var cmdFix = &Command{
 	UsageLine: "fix -dir=/tmp -volumeId=234",
 	Short:     "run weed tool fix on index file if corrupted",
-	Long: `Fix runs the WeedFS fix command to re-create the index .idx file.
+	Long: `Fix runs the SeeweedFS fix command to re-create the index .idx file.
 
   `,
 }

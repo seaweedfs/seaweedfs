@@ -187,10 +187,11 @@ Upload File Directly
 
 .. code-block:: bash
 
-	curl -F file=@/home/chris/myphoto.jpg http://localhost:8080/submit
+	curl -F file=@/home/chris/myphoto.jpg http://localhost:9333/submit
 	{"fid":"3,01fbe0dc6f1f38","fileName":"myphoto.jpg","fileUrl":"localhost:8080/3,01fbe0dc6f1f38","size":68231}
 
-This API is a little convenient. The volume server would contact the master to get an file id and store it to the right volume server(not necessarily itself).
+This API is just for convenience. The master server would get an file id and store the file to the right volume server.
+It is a convenient API and does not support different parameters when assigning file id. (or you can add the support and send a push request.)
 
 Delete File
 ***********************************

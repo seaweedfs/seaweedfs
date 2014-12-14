@@ -1,13 +1,14 @@
 package main
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/util"
-	"github.com/chrislusf/weed-fs/go/weed/weed_server"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/weed/weed_server"
 )
 
 var (
@@ -20,6 +21,7 @@ type FilerOptions struct {
 	collection              *string
 	defaultReplicaPlacement *string
 	dir                     *string
+	redirectOnRead          *bool
 }
 
 func init() {
@@ -28,7 +30,8 @@ func init() {
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this collection")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
 	f.dir = cmdFiler.Flag.String("dir", os.TempDir(), "directory to store meta data")
-	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "000", "Default replication type if not specified.")
+	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "000", "default replication type if not specified")
+	f.redirectOnRead = cmdFiler.Flag.Bool("redirectOnRead", false, "whether proxy or redirect to volume server during file GET request")
 }
 
 var cmdFiler = &Command{
@@ -59,7 +62,9 @@ func runFiler(cmd *Command, args []string) bool {
 	}
 
 	r := http.NewServeMux()
-	_, nfs_err := weed_server.NewFilerServer(r, *f.port, *f.master, *f.dir, *f.collection)
+	_, nfs_err := weed_server.NewFilerServer(r, *f.port, *f.master, *f.dir, *f.collection,
+		*f.defaultReplicaPlacement, *f.redirectOnRead,
+	)
 	if nfs_err != nil {
 		glog.Fatalf(nfs_err.Error())
 	}

@@ -2,11 +2,12 @@ package images
 
 import (
 	"bytes"
-	"github.com/rwcarlsen/goexif/exif"
 	"image"
 	"image/draw"
 	"image/jpeg"
 	"log"
+
+	"github.com/rwcarlsen/goexif/exif"
 )
 
 //many code is copied from http://camlistore.org/pkg/images/images.go

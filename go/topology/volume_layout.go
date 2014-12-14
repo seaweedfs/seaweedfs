@@ -1,11 +1,12 @@
 package topology
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/storage"
 	"errors"
 	"math/rand"
 	"sync"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 // mapping from volume to its locations, inverted from server to volume

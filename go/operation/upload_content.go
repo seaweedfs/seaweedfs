@@ -2,7 +2,6 @@ package operation
 
 import (
 	"bytes"
-	"github.com/chrislusf/weed-fs/go/glog"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +13,8 @@ import (
 	"net/textproto"
 	"path/filepath"
 	"strings"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 type UploadResult struct {

@@ -2,7 +2,5 @@
 
 package main
 
-import ()
-
 func OnInterrupt(fn func()) {
 }

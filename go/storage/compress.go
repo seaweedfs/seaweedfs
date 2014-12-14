@@ -2,11 +2,12 @@ package storage
 
 import (
 	"bytes"
-	"github.com/chrislusf/weed-fs/go/glog"
 	"compress/flate"
 	"compress/gzip"
 	"io/ioutil"
 	"strings"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 /*

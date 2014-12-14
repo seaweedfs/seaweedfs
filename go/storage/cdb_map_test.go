@@ -1,11 +1,12 @@
 package storage
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
 	"math/rand"
 	"os"
 	"runtime"
 	"testing"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 var testIndexFilename string = "../../test/sample.idx"

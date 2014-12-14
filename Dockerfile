@@ -1,5 +1,5 @@
 FROM cydev/go
-RUN go get code.google.com/p/weed-fs/go/weed
+RUN go get github.com/chrislusf/weed-fs/go/weed
 EXPOSE 8080
 EXPOSE 9333
 VOLUME /data

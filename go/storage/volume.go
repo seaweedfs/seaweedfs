@@ -2,7 +2,6 @@ package storage
 
 import (
 	"bytes"
-	"github.com/chrislusf/weed-fs/go/glog"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +9,8 @@ import (
 	"path"
 	"sync"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 type Volume struct {
@@ -72,7 +73,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool) error {
 
 	if e != nil {
 		if !os.IsPermission(e) {
-			return fmt.Errorf("cannot load Volume Data %s.dat: %s", fileName, e.Error())
+			return fmt.Errorf("cannot load Volume Data %s.dat: %v", fileName, e)
 		}
 	}
 
@@ -92,12 +93,12 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool) error {
 		if v.readOnly {
 			glog.V(1).Infoln("open to read file", fileName+".idx")
 			if indexFile, e = os.OpenFile(fileName+".idx", os.O_RDONLY, 0644); e != nil {
-				return fmt.Errorf("cannot read Volume Index %s.idx: %s", fileName, e.Error())
+				return fmt.Errorf("cannot read Volume Index %s.idx: %v", fileName, e)
 			}
 		} else {
 			glog.V(1).Infoln("open to write file", fileName+".idx")
 			if indexFile, e = os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644); e != nil {
-				return fmt.Errorf("cannot write Volume Index %s.idx: %s", fileName, e.Error())
+				return fmt.Errorf("cannot write Volume Index %s.idx: %v", fileName, e)
 			}
 		}
 		glog.V(0).Infoln("loading file", fileName+".idx", "readonly", v.readOnly)
@@ -115,7 +116,7 @@ func (v *Volume) Size() int64 {
 	if e == nil {
 		return stat.Size()
 	}
-	glog.V(0).Infof("Failed to read file size %s %s", v.dataFile.Name(), e.Error())
+	glog.V(0).Infof("Failed to read file size %s %v", v.dataFile.Name(), e)
 	return -1
 }
 func (v *Volume) Close() {
@@ -170,6 +171,7 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 	}
 	var offset int64
 	if offset, err = v.dataFile.Seek(0, 2); err != nil {
+		glog.V(0).Infof("faile to seek the end of file: %v", err)
 		return
 	}
 
@@ -177,21 +179,21 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 	if offset%NeedlePaddingSize != 0 {
 		offset = offset + (NeedlePaddingSize - offset%NeedlePaddingSize)
 		if offset, err = v.dataFile.Seek(offset, 0); err != nil {
-			glog.V(4).Infof("failed to align in datafile %s: %s", v.dataFile.Name(), err.Error())
+			glog.V(0).Infof("failed to align in datafile %s: %v", v.dataFile.Name(), err)
 			return
 		}
 	}
 
 	if size, err = n.Append(v.dataFile, v.Version()); err != nil {
 		if e := v.dataFile.Truncate(offset); e != nil {
-			err = fmt.Errorf("%s\ncannot truncate %s: %s", err, v.dataFile.Name(), e.Error())
+			err = fmt.Errorf("%s\ncannot truncate %s: %v", err, v.dataFile.Name(), e)
 		}
 		return
 	}
 	nv, ok := v.nm.Get(n.Id)
 	if !ok || int64(nv.Offset)*NeedlePaddingSize < offset {
 		if _, err = v.nm.Put(n.Id, uint32(offset/NeedlePaddingSize), n.Size); err != nil {
-			glog.V(4).Infof("failed to save in needle map %d: %s", n.Id, err.Error())
+			glog.V(4).Infof("failed to save in needle map %d: %v", n.Id, err)
 		}
 	}
 	if v.lastModifiedTime < n.LastModified {
@@ -292,13 +294,13 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 	offset := int64(SuperBlockSize)
 	n, rest, e := ReadNeedleHeader(v.dataFile, version, offset)
 	if e != nil {
-		err = fmt.Errorf("cannot read needle header: %s", e)
+		err = fmt.Errorf("cannot read needle header: %v", e)
 		return
 	}
 	for n != nil {
 		if readNeedleBody {
 			if err = n.ReadNeedleBody(v.dataFile, version, offset+int64(NeedleHeaderSize), rest); err != nil {
-				err = fmt.Errorf("cannot read needle body: %s", err)
+				err = fmt.Errorf("cannot read needle body: %v", err)
 				return
 			}
 		}
@@ -310,7 +312,7 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 			if err == io.EOF {
 				return nil
 			}
-			return fmt.Errorf("cannot read needle header: %s", err)
+			return fmt.Errorf("cannot read needle header: %v", err)
 		}
 	}
 
@@ -360,7 +362,7 @@ func (v *Volume) ensureConvertIdxToCdb(fileName string) (cdbCanRead bool) {
 	defer indexFile.Close()
 	glog.V(0).Infof("converting %s.idx to %s.cdb", fileName, fileName)
 	if e = ConvertIndexToCdb(fileName+".cdb", indexFile); e != nil {
-		glog.V(0).Infof("error converting %s.idx to %s.cdb: %s", fileName, fileName, e.Error())
+		glog.V(0).Infof("error converting %s.idx to %s.cdb: %v", fileName, fileName, e)
 		return false
 	}
 	return true

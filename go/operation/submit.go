@@ -2,13 +2,14 @@ package operation
 
 import (
 	"bytes"
-	"github.com/chrislusf/weed-fs/go/glog"
 	"io"
 	"mime"
 	"os"
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 type FilePart struct {

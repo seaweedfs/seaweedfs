@@ -1,16 +1,17 @@
 package weed_server
 
 import (
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"sync"
+
 	"github.com/chrislusf/weed-fs/go/glog"
 	"github.com/chrislusf/weed-fs/go/sequence"
 	"github.com/chrislusf/weed-fs/go/topology"
 	"github.com/chrislusf/weed-fs/go/util"
 	"github.com/goraft/raft"
 	"github.com/gorilla/mux"
-	"net/http"
-	"net/http/httputil"
-	"net/url"
-	"sync"
 )
 
 type MasterServer struct {

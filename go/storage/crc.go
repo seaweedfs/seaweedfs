@@ -1,9 +1,10 @@
 package storage
 
 import (
-	"github.com/chrislusf/weed-fs/go/util"
 	"fmt"
 	"hash/crc32"
+
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 var table = crc32.MakeTable(crc32.Castagnoli)

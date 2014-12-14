@@ -1,11 +1,12 @@
 package weed_server
 
 import (
+	"net/http"
+	"path/filepath"
+
 	"github.com/chrislusf/weed-fs/go/glog"
 	"github.com/chrislusf/weed-fs/go/stats"
 	"github.com/chrislusf/weed-fs/go/util"
-	"net/http"
-	"path/filepath"
 )
 
 func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {

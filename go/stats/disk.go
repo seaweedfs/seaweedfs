@@ -1,7 +1,5 @@
 package stats
 
-import ()
-
 type DiskStatus struct {
 	Dir  string
 	All  uint64

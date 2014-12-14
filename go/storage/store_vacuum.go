@@ -1,9 +1,10 @@
 package storage
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
 	"fmt"
 	"strconv"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 func (s *Store) CheckCompactVolume(volumeIdString string, garbageThresholdString string) (error, bool) {

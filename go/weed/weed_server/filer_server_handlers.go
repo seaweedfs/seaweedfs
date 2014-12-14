@@ -1,12 +1,8 @@
 package weed_server
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/operation"
-	"github.com/chrislusf/weed-fs/go/util"
 	"encoding/json"
 	"errors"
-	"github.com/syndtr/goleveldb/leveldb"
 	"io"
 	"io/ioutil"
 	"math/rand"
@@ -14,6 +10,11 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/syndtr/goleveldb/leveldb"
 )
 
 func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +81,12 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	urlLocation := lookup.Locations[rand.Intn(len(lookup.Locations))].PublicUrl
-	u, _ := url.Parse("http://" + urlLocation + "/" + fileId)
+	urlString := "http://" + urlLocation + "/" + fileId
+	if fs.redirectOnRead {
+		http.Redirect(w, r, urlString, http.StatusFound)
+		return
+	}
+	u, _ := url.Parse(urlString)
 	request := &http.Request{
 		Method:        r.Method,
 		URL:           u,
@@ -109,7 +115,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 
 func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
-	assignResult, ae := operation.Assign(fs.master, 1, query.Get("replication"), fs.collection, query.Get("ttl"))
+	replication := query.Get("replication")
+	if replication == "" {
+		replication = fs.defaultReplication
+	}
+	assignResult, ae := operation.Assign(fs.master, 1, replication, fs.collection, query.Get("ttl"))
 	if ae != nil {
 		glog.V(0).Infoln("failing to assign a file id", ae.Error())
 		writeJsonError(w, r, ae)

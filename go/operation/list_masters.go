@@ -1,9 +1,10 @@
 package operation
 
 import (
+	"encoding/json"
+
 	"github.com/chrislusf/weed-fs/go/glog"
 	"github.com/chrislusf/weed-fs/go/util"
-	"encoding/json"
 )
 
 type ClusterStatusResult struct {
