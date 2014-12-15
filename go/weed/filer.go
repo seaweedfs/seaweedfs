@@ -57,6 +57,7 @@ var cmdFiler = &Command{
 }
 
 func runFiler(cmd *Command, args []string) bool {
+
 	if err := util.TestFolderWritable(*f.dir); err != nil {
 		glog.Fatalf("Check Meta Folder (-dir) Writable %s : %s", *f.dir, err)
 	}
