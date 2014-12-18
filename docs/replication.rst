@@ -1,6 +1,6 @@
 Replication
 ===================================
-Weed-FS can support replication. The replication is implemented not on file level, but on volume level.
+Seaweed-FS can support replication. The replication is implemented not on file level, but on volume level.
 
 How to use
 ###################################
@@ -58,7 +58,7 @@ Each replication type will physically create x+y+z+1 copies of volume data files
 Example topology configuration 
 ###################################
 
-The WeedFS master server tries to read the default topology configuration file are read from /etc/weedfs/weedfs.conf, if it exists. The topology setting to configure data center and racks file format is as this.
+The Seaweed-FS master server tries to read the default topology configuration file are read from /etc/weedfs/weedfs.conf, if it exists. The topology setting to configure data center and racks file format is as this.
 
 .. code-block:: xml
 

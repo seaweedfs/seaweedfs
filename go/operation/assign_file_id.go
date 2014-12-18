@@ -1,12 +1,13 @@
 package operation
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"net/url"
 	"strconv"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 type AssignResult struct {
@@ -17,7 +18,7 @@ type AssignResult struct {
 	Error     string `json:"error,omitempty"`
 }
 
-func Assign(server string, count int, replication string, collection string) (*AssignResult, error) {
+func Assign(server string, count int, replication string, collection string, ttl string) (*AssignResult, error) {
 	values := make(url.Values)
 	values.Add("count", strconv.Itoa(count))
 	if replication != "" {
@@ -25,6 +26,9 @@ func Assign(server string, count int, replication string, collection string) (*A
 	}
 	if collection != "" {
 		values.Add("collection", collection)
+	}
+	if ttl != "" {
+		values.Add("ttl", ttl)
 	}
 	jsonBlob, err := util.Post("http://"+server+"/dir/assign", values)
 	glog.V(2).Info("assign result :", string(jsonBlob))

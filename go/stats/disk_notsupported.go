@@ -2,8 +2,6 @@
 
 package stats
 
-import ()
-
 func (disk *DiskStatus) fillInStatus() {
 	return
 }

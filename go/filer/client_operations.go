@@ -1,12 +1,12 @@
 package filer
 
-import ()
-
 import (
-	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/chrislusf/weed-fs/go/util"
+
 	"net/url"
 )
 

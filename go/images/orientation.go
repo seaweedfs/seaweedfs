@@ -2,11 +2,12 @@ package images
 
 import (
 	"bytes"
-	"github.com/rwcarlsen/goexif/exif"
 	"image"
 	"image/draw"
 	"image/jpeg"
 	"log"
+
+	"github.com/rwcarlsen/goexif/exif"
 )
 
 //many code is copied from http://camlistore.org/pkg/images/images.go
@@ -21,7 +22,10 @@ func FixJpgOrientation(data []byte) (oriented []byte) {
 	}
 	angle := 0
 	flipMode := FlipDirection(0)
-	orient := tag.Int(0)
+	orient, err := tag.Int(0)
+	if err != nil {
+		return data
+	}
 	switch orient {
 	case topLeftSide:
 		// do nothing

@@ -1,13 +1,14 @@
 package topology
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/storage"
-	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"net/url"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 func batchVacuumVolumeCheck(vl *VolumeLayout, vid storage.VolumeId, locationlist *VolumeLocationList, garbageThreshold string) bool {
@@ -79,13 +80,15 @@ func batchVacuumVolumeCommit(vl *VolumeLayout, vid storage.VolumeId, locationlis
 	return isCommitSuccess
 }
 func (t *Topology) Vacuum(garbageThreshold string) int {
-	for _, c := range t.collectionMap {
-		for _, vl := range c.replicaType2VolumeLayout {
+	for _, col := range t.collectionMap.Items {
+		c := col.(*Collection)
+		for _, vl := range c.storageType2VolumeLayout.Items {
 			if vl != nil {
-				for vid, locationlist := range vl.vid2location {
-					if batchVacuumVolumeCheck(vl, vid, locationlist, garbageThreshold) {
-						if batchVacuumVolumeCompact(vl, vid, locationlist) {
-							batchVacuumVolumeCommit(vl, vid, locationlist)
+				volumeLayout := vl.(*VolumeLayout)
+				for vid, locationlist := range volumeLayout.vid2location {
+					if batchVacuumVolumeCheck(volumeLayout, vid, locationlist, garbageThreshold) {
+						if batchVacuumVolumeCompact(volumeLayout, vid, locationlist) {
+							batchVacuumVolumeCommit(volumeLayout, vid, locationlist)
 						}
 					}
 				}

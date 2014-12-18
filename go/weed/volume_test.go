@@ -1,10 +1,11 @@
 package main
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 func TestXYZ(t *testing.T) {

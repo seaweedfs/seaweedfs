@@ -1,16 +1,17 @@
 package main
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/util"
-	"code.google.com/p/weed-fs/go/weed/weed_server"
-	"github.com/gorilla/mux"
 	"net/http"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/weed/weed_server"
+	"github.com/gorilla/mux"
 )
 
 func init() {
@@ -29,6 +30,7 @@ var cmdMaster = &Command{
 var (
 	mport                   = cmdMaster.Flag.Int("port", 9333, "http listen port")
 	masterIp                = cmdMaster.Flag.String("ip", "", "master listening ip address, default to listen on all network interfaces")
+	masterBindIp            = cmdMaster.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	mPublicIp               = cmdMaster.Flag.String("publicIp", "", "peer accessible <ip>|<server_name>")
 	metaFolder              = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
 	masterPeers             = cmdMaster.Flag.String("peers", "", "other master nodes in comma separated ip:port list")
@@ -61,9 +63,9 @@ func runMaster(cmd *Command, args []string) bool {
 		*volumeSizeLimitMB, *mpulse, *confFile, *defaultReplicaPlacement, *garbageThreshold, masterWhiteList,
 	)
 
-	listeningAddress := *masterIp + ":" + strconv.Itoa(*mport)
+	listeningAddress := *masterBindIp + ":" + strconv.Itoa(*mport)
 
-	glog.V(0).Infoln("Start Weed Master", util.VERSION, "at", listeningAddress)
+	glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", listeningAddress)
 
 	listener, e := util.NewListener(listeningAddress, time.Duration(*mTimeout)*time.Second)
 	if e != nil {

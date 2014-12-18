@@ -2,14 +2,18 @@ package filer
 
 import (
 	"bufio"
-	"code.google.com/p/weed-fs/go/util"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+
+	"github.com/chrislusf/weed-fs/go/util"
 )
+
+var writeLock sync.Mutex //serialize changes to dir.log
 
 type DirectoryEntryInMap struct {
 	Name           string
@@ -25,23 +29,25 @@ type DirectoryManagerInMap struct {
 	isLoading bool
 }
 
-func (dm *DirectoryManagerInMap) NewDirectoryEntryInMap(parent *DirectoryEntryInMap, name string) (d *DirectoryEntryInMap) {
+func (dm *DirectoryManagerInMap) NewDirectoryEntryInMap(parent *DirectoryEntryInMap, name string) (d *DirectoryEntryInMap, err error) {
+	writeLock.Lock()
+	defer writeLock.Unlock()
 	d = &DirectoryEntryInMap{Name: name, Parent: parent, SubDirectories: make(map[string]*DirectoryEntryInMap)}
-	dm.max++
-	d.Id = dm.max
 	parts := make([]string, 0)
 	for p := d; p != nil && p.Name != ""; p = p.Parent {
 		parts = append(parts, p.Name)
 	}
 	n := len(parts)
 	if n <= 0 {
-		return d
+		return nil, fmt.Errorf("Failed to create folder %s/%s", parent.Name, name)
 	}
 	for i := 0; i < n/2; i++ {
 		parts[i], parts[n-1-i] = parts[n-1-i], parts[i]
 	}
+	dm.max++
+	d.Id = dm.max
 	dm.log("add", "/"+strings.Join(parts, "/"), strconv.Itoa(int(d.Id)))
-	return d
+	return d, nil
 }
 
 func (dm *DirectoryManagerInMap) log(words ...string) {
@@ -157,7 +163,11 @@ func (dm *DirectoryManagerInMap) loadDirectory(dirPath string, dirId DirectoryId
 			if i != len(parts)-1 {
 				return fmt.Errorf("%s should be created after parent %s!", dirPath, parts[i])
 			}
-			sub = dm.NewDirectoryEntryInMap(dir, parts[i])
+			var err error
+			sub, err = dm.NewDirectoryEntryInMap(dir, parts[i])
+			if err != nil {
+				return err
+			}
 			if sub.Id != dirId {
 				return fmt.Errorf("%s should be have id %v instead of %v!", dirPath, sub.Id, dirId)
 			}
@@ -178,7 +188,11 @@ func (dm *DirectoryManagerInMap) makeDirectory(dirPath string) (dir *DirectoryEn
 	for i := 1; i < len(parts); i++ {
 		sub, ok := dir.SubDirectories[parts[i]]
 		if !ok {
-			sub = dm.NewDirectoryEntryInMap(dir, parts[i])
+			var err error
+			sub, err = dm.NewDirectoryEntryInMap(dir, parts[i])
+			if err != nil {
+				return nil, false
+			}
 			dir.SubDirectories[parts[i]] = sub
 			created = true
 		}
@@ -193,6 +207,8 @@ func (dm *DirectoryManagerInMap) MakeDirectory(dirPath string) (DirectoryId, err
 }
 
 func (dm *DirectoryManagerInMap) MoveUnderDirectory(oldDirPath string, newParentDirPath string, newName string) error {
+	writeLock.Lock()
+	defer writeLock.Unlock()
 	oldDir, oe := dm.findDirectory(oldDirPath)
 	if oe != nil {
 		return oe
@@ -223,6 +239,8 @@ func (dm *DirectoryManagerInMap) ListDirectories(dirPath string) (dirNames []Dir
 	return dirNames, nil
 }
 func (dm *DirectoryManagerInMap) DeleteDirectory(dirPath string) error {
+	writeLock.Lock()
+	defer writeLock.Unlock()
 	if dirPath == "/" {
 		return fmt.Errorf("Can not delete %s", dirPath)
 	}

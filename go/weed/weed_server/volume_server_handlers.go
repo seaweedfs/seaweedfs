@@ -1,12 +1,6 @@
 package weed_server
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/images"
-	"code.google.com/p/weed-fs/go/operation"
-	"code.google.com/p/weed-fs/go/stats"
-	"code.google.com/p/weed-fs/go/storage"
-	"code.google.com/p/weed-fs/go/topology"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -14,6 +8,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/images"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/stats"
+	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/topology"
 )
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")

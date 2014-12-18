@@ -10,9 +10,10 @@ package util
 
 import (
 	"bytes"
-	"code.google.com/p/weed-fs/go/glog"
 	"encoding/json"
 	"os"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 type Config struct {

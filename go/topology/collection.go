@@ -1,35 +1,37 @@
 package topology
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 type Collection struct {
 	Name                     string
 	volumeSizeLimit          uint64
-	replicaType2VolumeLayout []*VolumeLayout
+	storageType2VolumeLayout *util.ConcurrentReadMap
 }
 
 func NewCollection(name string, volumeSizeLimit uint64) *Collection {
 	c := &Collection{Name: name, volumeSizeLimit: volumeSizeLimit}
-	c.replicaType2VolumeLayout = make([]*VolumeLayout, storage.ReplicaPlacementCount)
+	c.storageType2VolumeLayout = util.NewConcurrentReadMap()
 	return c
 }
 
-func (c *Collection) GetOrCreateVolumeLayout(rp *storage.ReplicaPlacement) *VolumeLayout {
-	replicaPlacementIndex := rp.GetReplicationLevelIndex()
-	if c.replicaType2VolumeLayout[replicaPlacementIndex] == nil {
-		glog.V(0).Infoln("collection", c.Name, "adding replication type", rp)
-		c.replicaType2VolumeLayout[replicaPlacementIndex] = NewVolumeLayout(rp, c.volumeSizeLimit)
+func (c *Collection) GetOrCreateVolumeLayout(rp *storage.ReplicaPlacement, ttl *storage.TTL) *VolumeLayout {
+	keyString := rp.String()
+	if ttl != nil {
+		keyString += ttl.String()
 	}
-	return c.replicaType2VolumeLayout[replicaPlacementIndex]
+	vl := c.storageType2VolumeLayout.Get(keyString, func() interface{} {
+		return NewVolumeLayout(rp, ttl, c.volumeSizeLimit)
+	})
+	return vl.(*VolumeLayout)
 }
 
 func (c *Collection) Lookup(vid storage.VolumeId) []*DataNode {
-	for _, vl := range c.replicaType2VolumeLayout {
+	for _, vl := range c.storageType2VolumeLayout.Items {
 		if vl != nil {
-			if list := vl.Lookup(vid); list != nil {
+			if list := vl.(*VolumeLayout).Lookup(vid); list != nil {
 				return list
 			}
 		}
@@ -38,9 +40,9 @@ func (c *Collection) Lookup(vid storage.VolumeId) []*DataNode {
 }
 
 func (c *Collection) ListVolumeServers() (nodes []*DataNode) {
-	for _, vl := range c.replicaType2VolumeLayout {
+	for _, vl := range c.storageType2VolumeLayout.Items {
 		if vl != nil {
-			if list := vl.ListVolumeServers(); list != nil {
+			if list := vl.(*VolumeLayout).ListVolumeServers(); list != nil {
 				nodes = append(nodes, list...)
 			}
 		}

@@ -1,7 +1,7 @@
 Directories and files
 ===========================
 
-When talking about file systems, many people would assume directories, list files under a directory, etc. These are expected if we want to hook up Weed File System with linux by FUSE, or with Hadoop, etc.
+When talking about file systems, many people would assume directories, list files under a directory, etc. These are expected if we want to hook up Seaweed File System with linux by FUSE, or with Hadoop, etc.
 
 Sample usage
 #####################
@@ -37,7 +37,7 @@ Design
 
 A common file system would use inode to store meta data for each folder and file. The folder tree structure are usually linked. And sub folders and files are usually organized as an on-disk b+tree or similar variations. This scales well in terms of storage, but not well for fast file retrieval due to multiple disk access just for the file meta data, before even trying to get the file content.
 
-WeedFS wants to make as small number of disk access as possible, yet still be able to store a lot of file metadata. So we need to think very differently.
+Seaweed-FS wants to make as small number of disk access as possible, yet still be able to store a lot of file metadata. So we need to think very differently.
 
 From a full file path to get to the file content, there are several steps:
 
@@ -48,7 +48,7 @@ From a full file path to get to the file content, there are several steps:
 	file_id => data_block
 
 
-Because default WeedFS only provides file_id=>data_block mapping, the first 2 steps need to be implemented.
+Because default Seaweed-FS only provides file_id=>data_block mapping, the first 2 steps need to be implemented.
 
 
 There are several data features I noticed:
@@ -122,7 +122,7 @@ The LevelDB implementation may be switched underneath to external data storage, 
 
 Also, a HA feature will be added, so that multiple "weed filer" instance can share the same set of view of files.
 
-Later, FUSE or HCFS plugins will be created, to really integrate WeedFS to existing systems.
+Later, FUSE or HCFS plugins will be created, to really integrate Seaweed-FS to existing systems.
 
 Helps Wanted
 ########################

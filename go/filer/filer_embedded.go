@@ -1,11 +1,12 @@
 package filer
 
 import (
-	"code.google.com/p/weed-fs/go/operation"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/chrislusf/weed-fs/go/operation"
 )
 
 type FilerEmbedded struct {

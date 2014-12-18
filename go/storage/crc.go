@@ -1,9 +1,10 @@
 package storage
 
 import (
-	"code.google.com/p/weed-fs/go/util"
 	"fmt"
 	"hash/crc32"
+
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 var table = crc32.MakeTable(crc32.Castagnoli)
@@ -25,5 +26,5 @@ func (c CRC) Value() uint32 {
 func (n *Needle) Etag() string {
 	bits := make([]byte, 4)
 	util.Uint32toBytes(bits, uint32(n.Checksum))
-	return fmt.Sprintf("%x", bits)
+	return fmt.Sprintf("\"%x\"", bits)
 }

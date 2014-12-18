@@ -1,13 +1,14 @@
 package storage
 
 import (
-	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/tgulacsi/go-cdb"
 	"os"
 	"path/filepath"
+
+	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/tgulacsi/go-cdb"
 )
 
 // CDB-backed read-only needle map

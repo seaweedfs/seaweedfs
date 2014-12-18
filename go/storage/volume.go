@@ -2,7 +2,6 @@ package storage
 
 import (
 	"bytes"
-	"code.google.com/p/weed-fs/go/glog"
 	"errors"
 	"fmt"
 	"io"
@@ -10,23 +9,9 @@ import (
 	"path"
 	"sync"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
-
-const (
-	SuperBlockSize = 8
-)
-
-type SuperBlock struct {
-	Version          Version
-	ReplicaPlacement *ReplicaPlacement
-}
-
-func (s *SuperBlock) Bytes() []byte {
-	header := make([]byte, SuperBlockSize)
-	header[0] = byte(s.Version)
-	header[1] = s.ReplicaPlacement.Byte()
-	return header
-}
 
 type Volume struct {
 	Id         VolumeId
@@ -38,12 +23,13 @@ type Volume struct {
 
 	SuperBlock
 
-	accessLock sync.Mutex
+	accessLock       sync.Mutex
+	lastModifiedTime uint64 //unix time in seconds
 }
 
-func NewVolume(dirname string, collection string, id VolumeId, replicaPlacement *ReplicaPlacement) (v *Volume, e error) {
+func NewVolume(dirname string, collection string, id VolumeId, replicaPlacement *ReplicaPlacement, ttl *TTL) (v *Volume, e error) {
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
-	v.SuperBlock = SuperBlock{ReplicaPlacement: replicaPlacement}
+	v.SuperBlock = SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
 	e = v.load(true, true)
 	return
 }
@@ -65,12 +51,13 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool) error {
 	var e error
 	fileName := v.FileName()
 
-	if exists, canRead, canWrite, _ := checkFile(fileName + ".dat"); exists {
+	if exists, canRead, canWrite, modifiedTime := checkFile(fileName + ".dat"); exists {
 		if !canRead {
 			return fmt.Errorf("cannot read Volume Data file %s.dat", fileName)
 		}
 		if canWrite {
 			v.dataFile, e = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
+			v.lastModifiedTime = uint64(modifiedTime.Unix())
 		} else {
 			glog.V(0).Infoln("opening " + fileName + ".dat in READONLY mode")
 			v.dataFile, e = os.Open(fileName + ".dat")
@@ -86,7 +73,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool) error {
 
 	if e != nil {
 		if !os.IsPermission(e) {
-			return fmt.Errorf("cannot load Volume Data %s.dat: %s", fileName, e.Error())
+			return fmt.Errorf("cannot load Volume Data %s.dat: %v", fileName, e)
 		}
 	}
 
@@ -106,12 +93,12 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool) error {
 		if v.readOnly {
 			glog.V(1).Infoln("open to read file", fileName+".idx")
 			if indexFile, e = os.OpenFile(fileName+".idx", os.O_RDONLY, 0644); e != nil {
-				return fmt.Errorf("cannot read Volume Index %s.idx: %s", fileName, e.Error())
+				return fmt.Errorf("cannot read Volume Index %s.idx: %v", fileName, e)
 			}
 		} else {
 			glog.V(1).Infoln("open to write file", fileName+".idx")
 			if indexFile, e = os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644); e != nil {
-				return fmt.Errorf("cannot write Volume Index %s.idx: %s", fileName, e.Error())
+				return fmt.Errorf("cannot write Volume Index %s.idx: %v", fileName, e)
 			}
 		}
 		glog.V(0).Infoln("loading file", fileName+".idx", "readonly", v.readOnly)
@@ -122,14 +109,14 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool) error {
 	return e
 }
 func (v *Volume) Version() Version {
-	return v.SuperBlock.Version
+	return v.SuperBlock.Version()
 }
 func (v *Volume) Size() int64 {
 	stat, e := v.dataFile.Stat()
 	if e == nil {
 		return stat.Size()
 	}
-	glog.V(0).Infof("Failed to read file size %s %s", v.dataFile.Name(), e.Error())
+	glog.V(0).Infof("Failed to read file size %s %v", v.dataFile.Name(), e)
 	return -1
 }
 func (v *Volume) Close() {
@@ -137,44 +124,6 @@ func (v *Volume) Close() {
 	defer v.accessLock.Unlock()
 	v.nm.Close()
 	_ = v.dataFile.Close()
-}
-func (v *Volume) maybeWriteSuperBlock() error {
-	stat, e := v.dataFile.Stat()
-	if e != nil {
-		glog.V(0).Infof("failed to stat datafile %s: %s", v.dataFile, e.Error())
-		return e
-	}
-	if stat.Size() == 0 {
-		v.SuperBlock.Version = CurrentVersion
-		_, e = v.dataFile.Write(v.SuperBlock.Bytes())
-		if e != nil && os.IsPermission(e) {
-			//read-only, but zero length - recreate it!
-			if v.dataFile, e = os.Create(v.dataFile.Name()); e == nil {
-				if _, e = v.dataFile.Write(v.SuperBlock.Bytes()); e == nil {
-					v.readOnly = false
-				}
-			}
-		}
-	}
-	return e
-}
-func (v *Volume) readSuperBlock() (err error) {
-	if _, err = v.dataFile.Seek(0, 0); err != nil {
-		return fmt.Errorf("cannot seek to the beginning of %s: %s", v.dataFile.Name(), err.Error())
-	}
-	header := make([]byte, SuperBlockSize)
-	if _, e := v.dataFile.Read(header); e != nil {
-		return fmt.Errorf("cannot read superblock: %s", e.Error())
-	}
-	v.SuperBlock, err = ParseSuperBlock(header)
-	return err
-}
-func ParseSuperBlock(header []byte) (superBlock SuperBlock, err error) {
-	superBlock.Version = Version(header[0])
-	if superBlock.ReplicaPlacement, err = NewReplicaPlacementFromByte(header[1]); err != nil {
-		err = fmt.Errorf("cannot read replica type: %s", err.Error())
-	}
-	return
 }
 func (v *Volume) NeedToReplicate() bool {
 	return v.ReplicaPlacement.GetCopyCount() > 1
@@ -222,6 +171,7 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 	}
 	var offset int64
 	if offset, err = v.dataFile.Seek(0, 2); err != nil {
+		glog.V(0).Infof("faile to seek the end of file: %v", err)
 		return
 	}
 
@@ -229,22 +179,25 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 	if offset%NeedlePaddingSize != 0 {
 		offset = offset + (NeedlePaddingSize - offset%NeedlePaddingSize)
 		if offset, err = v.dataFile.Seek(offset, 0); err != nil {
-			glog.V(4).Infof("failed to align in datafile %s: %s", v.dataFile.Name(), err.Error())
+			glog.V(0).Infof("failed to align in datafile %s: %v", v.dataFile.Name(), err)
 			return
 		}
 	}
 
 	if size, err = n.Append(v.dataFile, v.Version()); err != nil {
 		if e := v.dataFile.Truncate(offset); e != nil {
-			err = fmt.Errorf("%s\ncannot truncate %s: %s", err, v.dataFile.Name(), e.Error())
+			err = fmt.Errorf("%s\ncannot truncate %s: %v", err, v.dataFile.Name(), e)
 		}
 		return
 	}
 	nv, ok := v.nm.Get(n.Id)
 	if !ok || int64(nv.Offset)*NeedlePaddingSize < offset {
 		if _, err = v.nm.Put(n.Id, uint32(offset/NeedlePaddingSize), n.Size); err != nil {
-			glog.V(4).Infof("failed to save in needle map %d: %s", n.Id, err.Error())
+			glog.V(4).Infof("failed to save in needle map %d: %v", n.Id, err)
 		}
+	}
+	if v.lastModifiedTime < n.LastModified {
+		v.lastModifiedTime = n.LastModified
 	}
 	return
 }
@@ -275,8 +228,25 @@ func (v *Volume) delete(n *Needle) (uint32, error) {
 
 func (v *Volume) read(n *Needle) (int, error) {
 	nv, ok := v.nm.Get(n.Id)
-	if ok && nv.Offset > 0 {
-		return n.Read(v.dataFile, int64(nv.Offset)*NeedlePaddingSize, nv.Size, v.Version())
+	if !ok || nv.Offset == 0 {
+		return -1, errors.New("Not Found")
+	}
+	bytesRead, err := n.Read(v.dataFile, int64(nv.Offset)*NeedlePaddingSize, nv.Size, v.Version())
+	if err != nil {
+		return bytesRead, err
+	}
+	if !n.HasTtl() {
+		return bytesRead, err
+	}
+	ttlMinutes := n.Ttl.Minutes()
+	if ttlMinutes == 0 {
+		return bytesRead, nil
+	}
+	if !n.HasLastModifiedDate() {
+		return bytesRead, nil
+	}
+	if uint64(time.Now().Unix()) < n.LastModified+uint64(ttlMinutes*60) {
+		return bytesRead, nil
 	}
 	return -1, errors.New("Not Found")
 }
@@ -324,13 +294,13 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 	offset := int64(SuperBlockSize)
 	n, rest, e := ReadNeedleHeader(v.dataFile, version, offset)
 	if e != nil {
-		err = fmt.Errorf("cannot read needle header: %s", e)
+		err = fmt.Errorf("cannot read needle header: %v", e)
 		return
 	}
 	for n != nil {
 		if readNeedleBody {
 			if err = n.ReadNeedleBody(v.dataFile, version, offset+int64(NeedleHeaderSize), rest); err != nil {
-				err = fmt.Errorf("cannot read needle body: %s", err)
+				err = fmt.Errorf("cannot read needle body: %v", err)
 				return
 			}
 		}
@@ -342,7 +312,7 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 			if err == io.EOF {
 				return nil
 			}
-			return fmt.Errorf("cannot read needle header: %s", err)
+			return fmt.Errorf("cannot read needle header: %v", err)
 		}
 	}
 
@@ -392,8 +362,48 @@ func (v *Volume) ensureConvertIdxToCdb(fileName string) (cdbCanRead bool) {
 	defer indexFile.Close()
 	glog.V(0).Infof("converting %s.idx to %s.cdb", fileName, fileName)
 	if e = ConvertIndexToCdb(fileName+".cdb", indexFile); e != nil {
-		glog.V(0).Infof("error converting %s.idx to %s.cdb: %s", fileName, fileName, e.Error())
+		glog.V(0).Infof("error converting %s.idx to %s.cdb: %v", fileName, fileName, e)
 		return false
 	}
 	return true
+}
+
+// volume is expired if modified time + volume ttl < now
+// except when volume is empty
+// or when the volume does not have a ttl
+// or when volumeSizeLimit is 0 when server just starts
+func (v *Volume) expired(volumeSizeLimit uint64) bool {
+	if volumeSizeLimit == 0 {
+		//skip if we don't know size limit
+		return false
+	}
+	if v.ContentSize() == 0 {
+		return false
+	}
+	if v.Ttl == nil || v.Ttl.Minutes() == 0 {
+		return false
+	}
+	glog.V(0).Infof("now:%v lastModified:%v", time.Now().Unix(), v.lastModifiedTime)
+	livedMinutes := (time.Now().Unix() - int64(v.lastModifiedTime)) / 60
+	glog.V(0).Infof("ttl:%v lived:%v", v.Ttl, livedMinutes)
+	if int64(v.Ttl.Minutes()) < livedMinutes {
+		return true
+	}
+	return false
+}
+
+// wait either maxDelayMinutes or 10% of ttl minutes
+func (v *Volume) exiredLongEnough(maxDelayMinutes uint32) bool {
+	if v.Ttl == nil || v.Ttl.Minutes() == 0 {
+		return false
+	}
+	removalDelay := v.Ttl.Minutes() / 10
+	if removalDelay > maxDelayMinutes {
+		removalDelay = maxDelayMinutes
+	}
+
+	if uint64(v.Ttl.Minutes()+removalDelay)*60+v.lastModifiedTime < uint64(time.Now().Unix()) {
+		return true
+	}
+	return false
 }

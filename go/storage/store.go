@@ -1,10 +1,6 @@
 package storage
 
 import (
-	proto "code.google.com/p/goprotobuf/proto"
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/operation"
-	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +8,15 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
+
+	proto "code.google.com/p/goprotobuf/proto"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/util"
+)
+
+const (
+	MAX_TTL_VOLUME_REMOVAL_DELAY = 10 // 10 minutes
 )
 
 type DiskLocation struct {
@@ -83,8 +88,12 @@ func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts
 	}
 	return
 }
-func (s *Store) AddVolume(volumeListString string, collection string, replicaPlacement string) error {
+func (s *Store) AddVolume(volumeListString string, collection string, replicaPlacement string, ttlString string) error {
 	rt, e := NewReplicaPlacementFromString(replicaPlacement)
+	if e != nil {
+		return e
+	}
+	ttl, e := ReadTTL(ttlString)
 	if e != nil {
 		return e
 	}
@@ -95,7 +104,7 @@ func (s *Store) AddVolume(volumeListString string, collection string, replicaPla
 			if err != nil {
 				return fmt.Errorf("Volume Id %s is not a valid unsigned integer!", id_string)
 			}
-			e = s.addVolume(VolumeId(id), collection, rt)
+			e = s.addVolume(VolumeId(id), collection, rt, ttl)
 		} else {
 			pair := strings.Split(range_string, "-")
 			start, start_err := strconv.ParseUint(pair[0], 10, 64)
@@ -107,7 +116,7 @@ func (s *Store) AddVolume(volumeListString string, collection string, replicaPla
 				return fmt.Errorf("Volume End Id %s is not a valid unsigned integer!", pair[1])
 			}
 			for id := start; id <= end; id++ {
-				if err := s.addVolume(VolumeId(id), collection, rt); err != nil {
+				if err := s.addVolume(VolumeId(id), collection, rt, ttl); err != nil {
 					e = err
 				}
 			}
@@ -129,6 +138,14 @@ func (s *Store) DeleteCollection(collection string) (e error) {
 	}
 	return
 }
+func (s *Store) DeleteVolume(volumes map[VolumeId]*Volume, v *Volume) (e error) {
+	e = v.Destroy()
+	if e != nil {
+		return
+	}
+	delete(volumes, v.Id)
+	return
+}
 func (s *Store) findVolume(vid VolumeId) *Volume {
 	for _, location := range s.Locations {
 		if v, found := location.volumes[vid]; found {
@@ -148,13 +165,14 @@ func (s *Store) findFreeLocation() (ret *DiskLocation) {
 	}
 	return ret
 }
-func (s *Store) addVolume(vid VolumeId, collection string, replicaPlacement *ReplicaPlacement) error {
+func (s *Store) addVolume(vid VolumeId, collection string, replicaPlacement *ReplicaPlacement, ttl *TTL) error {
 	if s.findVolume(vid) != nil {
 		return fmt.Errorf("Volume Id %d already exists!", vid)
 	}
 	if location := s.findFreeLocation(); location != nil {
-		glog.V(0).Infoln("In dir", location.Directory, "adds volume =", vid, ", collection =", collection, ", replicaPlacement =", replicaPlacement)
-		if volume, err := NewVolume(location.Directory, collection, vid, replicaPlacement); err == nil {
+		glog.V(0).Infof("In dir %s adds volume:%v collection:%s replicaPlacement:%v ttl:%v",
+			location.Directory, vid, collection, replicaPlacement, ttl)
+		if volume, err := NewVolume(location.Directory, collection, vid, replicaPlacement, ttl); err == nil {
 			location.volumes[vid] = volume
 			return nil
 		} else {
@@ -190,9 +208,9 @@ func (l *DiskLocation) loadExistingVolumes() {
 				}
 				if vid, err := NewVolumeId(base); err == nil {
 					if l.volumes[vid] == nil {
-						if v, e := NewVolume(l.Directory, collection, vid, nil); e == nil {
+						if v, e := NewVolume(l.Directory, collection, vid, nil, nil); e == nil {
 							l.volumes[vid] = v
-							glog.V(0).Infoln("data file", l.Directory+"/"+name, "replicaPlacement =", v.ReplicaPlacement, "version =", v.Version(), "size =", v.Size())
+							glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s", l.Directory+"/"+name, v.ReplicaPlacement, v.Version(), v.Size(), v.Ttl.String())
 						}
 					}
 				}
@@ -240,20 +258,30 @@ func (s *Store) Join() (masterNode string, e error) {
 	for _, location := range s.Locations {
 		maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
 		for k, v := range location.volumes {
-			volumeMessage := &operation.VolumeInformationMessage{
-				Id:               proto.Uint32(uint32(k)),
-				Size:             proto.Uint64(uint64(v.Size())),
-				Collection:       proto.String(v.Collection),
-				FileCount:        proto.Uint64(uint64(v.nm.FileCount())),
-				DeleteCount:      proto.Uint64(uint64(v.nm.DeletedCount())),
-				DeletedByteCount: proto.Uint64(v.nm.DeletedSize()),
-				ReadOnly:         proto.Bool(v.readOnly),
-				ReplicaPlacement: proto.Uint32(uint32(v.ReplicaPlacement.Byte())),
-				Version:          proto.Uint32(uint32(v.Version())),
-			}
-			volumeMessages = append(volumeMessages, volumeMessage)
 			if maxFileKey < v.nm.MaxFileKey() {
 				maxFileKey = v.nm.MaxFileKey()
+			}
+			if !v.expired(s.volumeSizeLimit) {
+				volumeMessage := &operation.VolumeInformationMessage{
+					Id:               proto.Uint32(uint32(k)),
+					Size:             proto.Uint64(uint64(v.Size())),
+					Collection:       proto.String(v.Collection),
+					FileCount:        proto.Uint64(uint64(v.nm.FileCount())),
+					DeleteCount:      proto.Uint64(uint64(v.nm.DeletedCount())),
+					DeletedByteCount: proto.Uint64(v.nm.DeletedSize()),
+					ReadOnly:         proto.Bool(v.readOnly),
+					ReplicaPlacement: proto.Uint32(uint32(v.ReplicaPlacement.Byte())),
+					Version:          proto.Uint32(uint32(v.Version())),
+					Ttl:              proto.Uint32(v.Ttl.ToUint32()),
+				}
+				volumeMessages = append(volumeMessages, volumeMessage)
+			} else {
+				if v.exiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
+					s.DeleteVolume(location.volumes, v)
+					glog.V(0).Infoln("volume", v.Id, "is deleted.")
+				} else {
+					glog.V(0).Infoln("volume", v.Id, "is expired.")
+				}
 			}
 		}
 	}

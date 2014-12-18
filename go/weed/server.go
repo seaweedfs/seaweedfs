@@ -1,10 +1,6 @@
 package main
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/util"
-	"code.google.com/p/weed-fs/go/weed/weed_server"
-	"github.com/gorilla/mux"
 	"net/http"
 	"os"
 	"runtime"
@@ -13,6 +9,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/weed/weed_server"
+	"github.com/gorilla/mux"
 )
 
 type ServerOptions struct {
@@ -31,23 +32,24 @@ func init() {
 var cmdServer = &Command{
 	UsageLine: "server -port=8080 -dir=/tmp -volume.max=5 -ip=server_name",
 	Short:     "start a server, including volume server, and automatically elect a master server",
-	Long: `start both a volume server to provide storage spaces 
+	Long: `start both a volume server to provide storage spaces
   and a master server to provide volume=>location mapping service and sequence number of file ids
-  
+
   This is provided as a convenient way to start both volume server and master server.
   The servers are exactly the same as starting them separately.
 
   So other volume servers can use this embedded master server also.
-  
+
   Optionally, one filer server can be started. Logically, filer servers should not be in a cluster.
   They run with meta data on disk, not shared. So each filer server is different.
-  
+
   `,
 }
 
 var (
 	serverIp                      = cmdServer.Flag.String("ip", "", "ip or server name")
 	serverPublicIp                = cmdServer.Flag.String("publicIp", "", "ip or server name")
+	serverBindIp                  = cmdServer.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	serverMaxCpu                  = cmdServer.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	serverTimeout                 = cmdServer.Flag.Int("idleTimeout", 10, "connection idle seconds")
 	serverDataCenter              = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
@@ -71,12 +73,14 @@ var (
 )
 
 func init() {
-	serverOptions.cpuprofile = cmdServer.Flag.String("cpuprofile", "", "write cpu profile to file")
+	serverOptions.cpuprofile = cmdServer.Flag.String("cpuprofile", "", "cpu profile output file")
 	filerOptions.master = cmdServer.Flag.String("filer.master", "", "default to current master server")
 	filerOptions.collection = cmdServer.Flag.String("filer.collection", "", "all data will be stored in this collection")
 	filerOptions.port = cmdServer.Flag.Int("filer.port", 8888, "filer server http listen port")
 	filerOptions.dir = cmdServer.Flag.String("filer.dir", "", "directory to store meta data, default to a 'filer' sub directory of what -mdir is specified")
 	filerOptions.defaultReplicaPlacement = cmdServer.Flag.String("filer.defaultReplicaPlacement", "", "Default replication type if not specified during runtime.")
+	filerOptions.redirectOnRead = cmdServer.Flag.Bool("filer.redirectOnRead", false, "whether proxy or redirect to volume server during file GET request")
+
 }
 
 func runServer(cmd *Command, args []string) bool {
@@ -95,6 +99,10 @@ func runServer(cmd *Command, args []string) bool {
 		} else {
 			*serverPublicIp = *serverIp
 		}
+	}
+
+	if *filerOptions.redirectOnRead {
+		*isStartingFiler = true
 	}
 
 	*filerOptions.master = *serverPublicIp + ":" + strconv.Itoa(*masterPort)
@@ -148,11 +156,13 @@ func runServer(cmd *Command, args []string) bool {
 	if *isStartingFiler {
 		go func() {
 			r := http.NewServeMux()
-			_, nfs_err := weed_server.NewFilerServer(r, *filerOptions.port, *filerOptions.master, *filerOptions.dir, *filerOptions.collection)
+			_, nfs_err := weed_server.NewFilerServer(r, *filerOptions.port, *filerOptions.master, *filerOptions.dir, *filerOptions.collection,
+				*filerOptions.defaultReplicaPlacement, *filerOptions.redirectOnRead,
+			)
 			if nfs_err != nil {
 				glog.Fatalf(nfs_err.Error())
 			}
-			glog.V(0).Infoln("Start Weed Filer", util.VERSION, "at port", strconv.Itoa(*filerOptions.port))
+			glog.V(0).Infoln("Start Seaweed Filer", util.VERSION, "at port", strconv.Itoa(*filerOptions.port))
 			filerListener, e := util.NewListener(
 				":"+strconv.Itoa(*filerOptions.port),
 				time.Duration(10)*time.Second,
@@ -178,8 +188,8 @@ func runServer(cmd *Command, args []string) bool {
 			*masterVolumeSizeLimitMB, *volumePulse, *masterConfFile, *masterDefaultReplicaPlacement, *serverGarbageThreshold, serverWhiteList,
 		)
 
-		glog.V(0).Infoln("Start Weed Master", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*masterPort))
-		masterListener, e := util.NewListener(*serverIp+":"+strconv.Itoa(*masterPort), time.Duration(*serverTimeout)*time.Second)
+		glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*masterPort))
+		masterListener, e := util.NewListener(*serverBindIp+":"+strconv.Itoa(*masterPort), time.Duration(*serverTimeout)*time.Second)
 		if e != nil {
 			glog.Fatalf(e.Error())
 		}
@@ -211,9 +221,9 @@ func runServer(cmd *Command, args []string) bool {
 		*volumeFixJpgOrientation,
 	)
 
-	glog.V(0).Infoln("Start Weed volume server", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*volumePort))
+	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*volumePort))
 	volumeListener, e := util.NewListener(
-		*serverIp+":"+strconv.Itoa(*volumePort),
+		*serverBindIp+":"+strconv.Itoa(*volumePort),
 		time.Duration(*serverTimeout)*time.Second,
 	)
 	if e != nil {

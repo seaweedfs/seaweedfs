@@ -1,7 +1,5 @@
 package filer
 
-import ()
-
 type DirectoryId int32
 
 type DirectoryEntry struct {

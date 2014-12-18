@@ -15,12 +15,10 @@ It has these top-level messages:
 package operation
 
 import proto "code.google.com/p/goprotobuf/proto"
-import json "encoding/json"
 import math "math"
 
-// Reference proto, json, and math imports to suppress error if they are not otherwise used.
+// Reference imports to suppress errors if they are not otherwise used.
 var _ = proto.Marshal
-var _ = &json.SyntaxError{}
 var _ = math.Inf
 
 type VolumeInformationMessage struct {
@@ -33,6 +31,7 @@ type VolumeInformationMessage struct {
 	ReadOnly         *bool   `protobuf:"varint,7,opt,name=read_only" json:"read_only,omitempty"`
 	ReplicaPlacement *uint32 `protobuf:"varint,8,req,name=replica_placement" json:"replica_placement,omitempty"`
 	Version          *uint32 `protobuf:"varint,9,opt,name=version,def=2" json:"version,omitempty"`
+	Ttl              *uint32 `protobuf:"varint,10,opt,name=ttl" json:"ttl,omitempty"`
 	XXX_unrecognized []byte  `json:"-"`
 }
 
@@ -103,6 +102,13 @@ func (m *VolumeInformationMessage) GetVersion() uint32 {
 		return *m.Version
 	}
 	return Default_VolumeInformationMessage_Version
+}
+
+func (m *VolumeInformationMessage) GetTtl() uint32 {
+	if m != nil && m.Ttl != nil {
+		return *m.Ttl
+	}
+	return 0
 }
 
 type JoinMessage struct {

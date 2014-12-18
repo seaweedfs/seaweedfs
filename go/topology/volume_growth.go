@@ -1,11 +1,12 @@
 package topology
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/storage"
 	"fmt"
 	"math/rand"
 	"sync"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 /*
@@ -19,6 +20,7 @@ This package is created to resolve these replica placement issues:
 type VolumeGrowOption struct {
 	Collection       string
 	ReplicaPlacement *storage.ReplicaPlacement
+	Ttl              *storage.TTL
 	DataCenter       string
 	Rack             string
 	DataNode         string
@@ -184,8 +186,15 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 
 func (vg *VolumeGrowth) grow(topo *Topology, vid storage.VolumeId, option *VolumeGrowOption, servers ...*DataNode) error {
 	for _, server := range servers {
-		if err := AllocateVolume(server, vid, option.Collection, option.ReplicaPlacement); err == nil {
-			vi := storage.VolumeInfo{Id: vid, Size: 0, Collection: option.Collection, ReplicaPlacement: option.ReplicaPlacement, Version: storage.CurrentVersion}
+		if err := AllocateVolume(server, vid, option); err == nil {
+			vi := storage.VolumeInfo{
+				Id:               vid,
+				Size:             0,
+				Collection:       option.Collection,
+				ReplicaPlacement: option.ReplicaPlacement,
+				Ttl:              option.Ttl,
+				Version:          storage.CurrentVersion,
+			}
 			server.AddOrUpdateVolume(vi)
 			topo.RegisterVolumeLayout(vi, server)
 			glog.V(0).Infoln("Created Volume", vid, "on", server)

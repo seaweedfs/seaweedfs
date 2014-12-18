@@ -1,9 +1,10 @@
 package topology
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/storage"
 	"strconv"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 type DataNode struct {
@@ -38,15 +39,16 @@ func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) {
 	}
 }
 
-func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) {
+func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (deletedVolumes []storage.VolumeInfo) {
 	actualVolumeMap := make(map[storage.VolumeId]storage.VolumeInfo)
 	for _, v := range actualVolumes {
 		actualVolumeMap[v.Id] = v
 	}
-	for vid, _ := range dn.volumes {
+	for vid, v := range dn.volumes {
 		if _, ok := actualVolumeMap[vid]; !ok {
 			glog.V(0).Infoln("Deleting volume id:", vid)
 			delete(dn.volumes, vid)
+			deletedVolumes = append(deletedVolumes, v)
 			dn.UpAdjustVolumeCountDelta(-1)
 			dn.UpAdjustActiveVolumeCountDelta(-1)
 		}
@@ -54,6 +56,7 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) {
 	for _, v := range actualVolumes {
 		dn.AddOrUpdateVolume(v)
 	}
+	return
 }
 
 func (dn *DataNode) GetDataCenter() *DataCenter {

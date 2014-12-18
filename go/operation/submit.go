@@ -2,13 +2,14 @@ package operation
 
 import (
 	"bytes"
-	"code.google.com/p/weed-fs/go/glog"
 	"io"
 	"mime"
 	"os"
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 type FilePart struct {
@@ -20,6 +21,7 @@ type FilePart struct {
 	ModTime     int64 //in seconds
 	Replication string
 	Collection  string
+	Ttl         string
 	Server      string //this comes from assign result
 	Fid         string //this comes from assign result, but customizable
 }
@@ -32,12 +34,12 @@ type SubmitResult struct {
 	Error    string `json:"error,omitempty"`
 }
 
-func SubmitFiles(master string, files []FilePart, replication string, collection string, maxMB int) ([]SubmitResult, error) {
+func SubmitFiles(master string, files []FilePart, replication string, collection string, ttl string, maxMB int) ([]SubmitResult, error) {
 	results := make([]SubmitResult, len(files))
 	for index, file := range files {
 		results[index].FileName = file.FileName
 	}
-	ret, err := Assign(master, len(files), replication, collection)
+	ret, err := Assign(master, len(files), replication, collection, ttl)
 	if err != nil {
 		for index, _ := range files {
 			results[index].Error = err.Error()
@@ -112,7 +114,7 @@ func (fi FilePart) Upload(maxMB int, master string) (retSize uint32, err error) 
 		chunks := fi.FileSize/chunkSize + 1
 		fids := make([]string, 0)
 		for i := int64(0); i < chunks; i++ {
-			id, count, e := upload_one_chunk(fi.FileName+"-"+strconv.FormatInt(i+1, 10), io.LimitReader(fi.Reader, chunkSize), master, fi.Replication, fi.Collection)
+			id, count, e := upload_one_chunk(fi.FileName+"-"+strconv.FormatInt(i+1, 10), io.LimitReader(fi.Reader, chunkSize), master, fi.Replication, fi.Collection, fi.Ttl)
 			if e != nil {
 				return 0, e
 			}
@@ -130,8 +132,8 @@ func (fi FilePart) Upload(maxMB int, master string) (retSize uint32, err error) 
 	return
 }
 
-func upload_one_chunk(filename string, reader io.Reader, master, replication string, collection string) (fid string, size uint32, e error) {
-	ret, err := Assign(master, 1, replication, collection)
+func upload_one_chunk(filename string, reader io.Reader, master, replication string, collection string, ttl string) (fid string, size uint32, e error) {
+	ret, err := Assign(master, 1, replication, collection, ttl)
 	if err != nil {
 		return "", 0, err
 	}

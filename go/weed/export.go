@@ -3,8 +3,6 @@ package main
 import (
 	"archive/tar"
 	"bytes"
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/storage"
 	"fmt"
 	"os"
 	"path"
@@ -12,6 +10,9 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 func init() {
@@ -27,7 +28,7 @@ var cmdExport = &Command{
 	UsageLine: "export -dir=/tmp -volumeId=234 -o=/dir/name.tar -fileNameFormat={{.Name}}",
 	Short:     "list or export files from one volume data file",
 	Long: `List all files in a volume, or Export all files in a volume to a tar file if the output is specified.
-	
+
 	The format of file name in the tar file can be customized. Default is {{.Mime}}/{{.Id}}:{{.Name}}. Also available is {{.Key}}.
 
   `,
@@ -36,7 +37,7 @@ var cmdExport = &Command{
 var (
 	exportVolumePath = cmdExport.Flag.String("dir", "/tmp", "input data directory to store volume data files")
 	exportCollection = cmdExport.Flag.String("collection", "", "the volume collection name")
-	exportVolumeId   = cmdExport.Flag.Int("volumeId", -1, "a volume id. The volume should already exist in the dir. The volume index file should not exist.")
+	exportVolumeId   = cmdExport.Flag.Int("volumeId", -1, "a volume id. The volume .dat and .idx files should already exist in the dir.")
 	dest             = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
 	format           = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename format, default to {{.Mime}}/{{.Id}}:{{.Name}}")
 	tarFh            *tar.Writer
@@ -100,7 +101,7 @@ func runExport(cmd *Command, args []string) bool {
 	var version storage.Version
 
 	err = storage.ScanVolumeFile(*exportVolumePath, *exportCollection, vid, func(superBlock storage.SuperBlock) error {
-		version = superBlock.Version
+		version = superBlock.Version()
 		return nil
 	}, true, func(n *storage.Needle, offset int64) error {
 		nv, ok := nm.Get(n.Id)

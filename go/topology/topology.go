@@ -1,20 +1,22 @@
 package topology
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/operation"
-	"code.google.com/p/weed-fs/go/sequence"
-	"code.google.com/p/weed-fs/go/storage"
 	"errors"
-	"github.com/goraft/raft"
 	"io/ioutil"
 	"math/rand"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/sequence"
+	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/goraft/raft"
 )
 
 type Topology struct {
 	NodeImpl
 
-	collectionMap map[string]*Collection
+	collectionMap *util.ConcurrentReadMap
 
 	pulse int64
 
@@ -37,7 +39,7 @@ func NewTopology(id string, confFile string, seq sequence.Sequencer, volumeSizeL
 	t.nodeType = "Topology"
 	t.NodeImpl.value = t
 	t.children = make(map[NodeId]Node)
-	t.collectionMap = make(map[string]*Collection)
+	t.collectionMap = util.NewConcurrentReadMap()
 	t.pulse = int64(pulse)
 	t.volumeSizeLimit = volumeSizeLimit
 
@@ -89,14 +91,14 @@ func (t *Topology) loadConfiguration(configurationFile string) error {
 func (t *Topology) Lookup(collection string, vid storage.VolumeId) []*DataNode {
 	//maybe an issue if lots of collections?
 	if collection == "" {
-		for _, c := range t.collectionMap {
-			if list := c.Lookup(vid); list != nil {
+		for _, c := range t.collectionMap.Items {
+			if list := c.(*Collection).Lookup(vid); list != nil {
 				return list
 			}
 		}
 	} else {
-		if c, ok := t.collectionMap[collection]; ok {
-			return c.Lookup(vid)
+		if c, ok := t.collectionMap.Items[collection]; ok {
+			return c.(*Collection).Lookup(vid)
 		}
 	}
 	return nil
@@ -109,13 +111,13 @@ func (t *Topology) NextVolumeId() storage.VolumeId {
 	return next
 }
 
-func (t *Topology) HasWriableVolume(option *VolumeGrowOption) bool {
-	vl := t.GetVolumeLayout(option.Collection, option.ReplicaPlacement)
+func (t *Topology) HasWritableVolume(option *VolumeGrowOption) bool {
+	vl := t.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl)
 	return vl.GetActiveVolumeCount(option) > 0
 }
 
 func (t *Topology) PickForWrite(count int, option *VolumeGrowOption) (string, int, *DataNode, error) {
-	vid, count, datanodes, err := t.GetVolumeLayout(option.Collection, option.ReplicaPlacement).PickForWrite(count, option)
+	vid, count, datanodes, err := t.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl).PickForWrite(count, option)
 	if err != nil || datanodes.Length() == 0 {
 		return "", 0, nil, errors.New("No writable volumes avalable!")
 	}
@@ -123,28 +125,30 @@ func (t *Topology) PickForWrite(count int, option *VolumeGrowOption) (string, in
 	return storage.NewFileId(*vid, fileId, rand.Uint32()).String(), count, datanodes.Head(), nil
 }
 
-func (t *Topology) GetVolumeLayout(collectionName string, rp *storage.ReplicaPlacement) *VolumeLayout {
-	_, ok := t.collectionMap[collectionName]
-	if !ok {
-		t.collectionMap[collectionName] = NewCollection(collectionName, t.volumeSizeLimit)
-	}
-	return t.collectionMap[collectionName].GetOrCreateVolumeLayout(rp)
+func (t *Topology) GetVolumeLayout(collectionName string, rp *storage.ReplicaPlacement, ttl *storage.TTL) *VolumeLayout {
+	return t.collectionMap.Get(collectionName, func() interface{} {
+		return NewCollection(collectionName, t.volumeSizeLimit)
+	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl)
 }
 
-func (t *Topology) GetCollection(collectionName string) (collection *Collection, ok bool) {
-	collection, ok = t.collectionMap[collectionName]
-	return
+func (t *Topology) GetCollection(collectionName string) (*Collection, bool) {
+	c, hasCollection := t.collectionMap.Items[collectionName]
+	return c.(*Collection), hasCollection
 }
 
 func (t *Topology) DeleteCollection(collectionName string) {
-	delete(t.collectionMap, collectionName)
+	delete(t.collectionMap.Items, collectionName)
 }
 
 func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
-	t.GetVolumeLayout(v.Collection, v.ReplicaPlacement).RegisterVolume(&v, dn)
+	t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl).RegisterVolume(&v, dn)
+}
+func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
+	glog.Infof("removing volume info:%+v", v)
+	t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl).UnRegisterVolume(&v, dn)
 }
 
-func (t *Topology) RegisterVolumes(joinMessage *operation.JoinMessage) {
+func (t *Topology) ProcessJoinMessage(joinMessage *operation.JoinMessage) {
 	t.Sequence.SetMax(*joinMessage.MaxFileKey)
 	dcName, rackName := t.configuration.Locate(*joinMessage.Ip, *joinMessage.DataCenter, *joinMessage.Rack)
 	dc := t.GetOrCreateDataCenter(dcName)
@@ -162,9 +166,12 @@ func (t *Topology) RegisterVolumes(joinMessage *operation.JoinMessage) {
 			glog.V(0).Infoln("Fail to convert joined volume information:", err.Error())
 		}
 	}
-	dn.UpdateVolumes(volumeInfos)
+	deletedVolumes := dn.UpdateVolumes(volumeInfos)
 	for _, v := range volumeInfos {
 		t.RegisterVolumeLayout(v, dn)
+	}
+	for _, v := range deletedVolumes {
+		t.UnRegisterVolumeLayout(v, dn)
 	}
 }
 

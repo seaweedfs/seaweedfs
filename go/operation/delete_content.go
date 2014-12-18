@@ -1,12 +1,13 @@
 package operation
 
 import (
-	"code.google.com/p/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"net/url"
 	"strings"
 	"sync"
+
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 type DeleteResult struct {

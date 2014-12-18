@@ -1,10 +1,11 @@
 package storage
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
 	"fmt"
 	"os"
-	_ "time"
+	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 func (v *Volume) garbageLevel() float64 {
@@ -13,9 +14,10 @@ func (v *Volume) garbageLevel() float64 {
 
 func (v *Volume) Compact() error {
 	glog.V(3).Infof("Compacting ...")
-	v.accessLock.Lock()
-	defer v.accessLock.Unlock()
-	glog.V(3).Infof("Got Compaction lock...")
+	//no need to lock for copy on write
+	//v.accessLock.Lock()
+	//defer v.accessLock.Unlock()
+	//glog.V(3).Infof("Got Compaction lock...")
 
 	filePath := v.FileName()
 	glog.V(3).Infof("creating copies for volume %d ...", v.Id)
@@ -59,10 +61,15 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string) (err erro
 	nm := NewNeedleMap(idx)
 	new_offset := int64(SuperBlockSize)
 
+	now := uint64(time.Now().Unix())
+
 	err = ScanVolumeFile(v.dir, v.Collection, v.Id, func(superBlock SuperBlock) error {
 		_, err = dst.Write(superBlock.Bytes())
 		return err
 	}, true, func(n *Needle, offset int64) error {
+		if n.HasTtl() && now >= n.LastModified+uint64(v.Ttl.Minutes()*60) {
+			return nil
+		}
 		nv, ok := v.nm.Get(n.Id)
 		glog.V(4).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
 		if ok && int64(nv.Offset)*NeedlePaddingSize == offset && nv.Size > 0 {

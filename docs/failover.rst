@@ -7,7 +7,7 @@ Introduction
 
 Some user will ask for no single point of failure. Although google runs its file system with a single master for years, no SPOF seems becoming a criteria for architects to pick solutions.
 
-Luckily, it's not too difficult to enable Weed File System with failover master servers.
+Luckily, it's not too difficult to enable Seaweed File System with failover master servers.
 
 Cheat Sheet: Startup multiple servers
 ########################################

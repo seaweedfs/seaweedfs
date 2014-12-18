@@ -1,7 +1,5 @@
 package topology
 
-import ()
-
 type VolumeLocationList struct {
 	list []*DataNode
 }

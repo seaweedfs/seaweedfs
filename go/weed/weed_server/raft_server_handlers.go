@@ -1,13 +1,14 @@
 package weed_server
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/operation"
 	"encoding/json"
-	"github.com/goraft/raft"
 	"io/ioutil"
 	"net/http"
 	"strings"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/goraft/raft"
 )
 
 // Handles incoming RAFT joins.

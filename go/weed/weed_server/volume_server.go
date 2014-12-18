@@ -1,12 +1,13 @@
 package weed_server
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/storage"
 	"math/rand"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 type VolumeServer struct {
@@ -35,7 +36,6 @@ func NewVolumeServer(r *http.ServeMux, ip string, port int, publicIp string, fol
 	}
 	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts)
 
-	r.HandleFunc("/submit", secure(vs.whiteList, vs.submitFromVolumeServerHandler))
 	r.HandleFunc("/status", secure(vs.whiteList, vs.statusHandler))
 	r.HandleFunc("/admin/assign_volume", secure(vs.whiteList, vs.assignVolumeHandler))
 	r.HandleFunc("/admin/vacuum_volume_check", secure(vs.whiteList, vs.vacuumVolumeCheckHandler))

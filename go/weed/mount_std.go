@@ -3,19 +3,20 @@
 package main
 
 import (
-	"bazil.org/fuse"
-	"bazil.org/fuse/fs"
-	"code.google.com/p/weed-fs/go/filer"
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/storage"
-	"code.google.com/p/weed-fs/go/util"
 	"fmt"
 	"os"
 	"runtime"
+
+	"bazil.org/fuse"
+	"bazil.org/fuse/fs"
+	"github.com/chrislusf/weed-fs/go/filer"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 func runMount(cmd *Command, args []string) bool {
-	fmt.Printf("This is Weed File System version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("This is Seaweed File System version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)
 	if *mountOptions.dir == "" {
 		fmt.Printf("Please specify the mount directory via \"-dir\"")
 		return false

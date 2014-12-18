@@ -1,25 +1,28 @@
 package topology
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/storage"
 	"errors"
 	"math/rand"
 	"sync"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 // mapping from volume to its locations, inverted from server to volume
 type VolumeLayout struct {
 	rp              *storage.ReplicaPlacement
+	ttl             *storage.TTL
 	vid2location    map[storage.VolumeId]*VolumeLocationList
 	writables       []storage.VolumeId // transient array of writable volume id
 	volumeSizeLimit uint64
 	accessLock      sync.Mutex
 }
 
-func NewVolumeLayout(rp *storage.ReplicaPlacement, volumeSizeLimit uint64) *VolumeLayout {
+func NewVolumeLayout(rp *storage.ReplicaPlacement, ttl *storage.TTL, volumeSizeLimit uint64) *VolumeLayout {
 	return &VolumeLayout{
 		rp:              rp,
+		ttl:             ttl,
 		vid2location:    make(map[storage.VolumeId]*VolumeLocationList),
 		writables:       *new([]storage.VolumeId),
 		volumeSizeLimit: volumeSizeLimit,
@@ -40,6 +43,14 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	} else {
 		vl.removeFromWritable(v.Id)
 	}
+}
+
+func (vl *VolumeLayout) UnRegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
+
+	vl.removeFromWritable(v.Id)
+	delete(vl.vid2location, v.Id)
 }
 
 func (vl *VolumeLayout) AddToWritable(vid storage.VolumeId) {
@@ -192,6 +203,7 @@ func (vl *VolumeLayout) SetVolumeCapacityFull(vid storage.VolumeId) bool {
 func (vl *VolumeLayout) ToMap() map[string]interface{} {
 	m := make(map[string]interface{})
 	m["replication"] = vl.rp.String()
+	m["ttl"] = vl.ttl.String()
 	m["writables"] = vl.writables
 	//m["locations"] = vl.vid2location
 	return m

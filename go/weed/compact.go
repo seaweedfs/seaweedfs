@@ -1,8 +1,8 @@
 package main
 
 import (
-	"code.google.com/p/weed-fs/go/glog"
-	"code.google.com/p/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 func init() {
@@ -12,7 +12,7 @@ func init() {
 
 var cmdCompact = &Command{
 	UsageLine: "compact -dir=/tmp -volumeId=234",
-	Short:     "run weed tool compact on volume file if corrupted",
+	Short:     "run weed tool compact on volume file",
 	Long: `Force an compaction to remove deleted files from volume files.
   The compacted .dat file is stored as .cpd file.
   The compacted .idx file is stored as .cpx file.
@@ -33,7 +33,7 @@ func runCompact(cmd *Command, args []string) bool {
 	}
 
 	vid := storage.VolumeId(*compactVolumeId)
-	v, err := storage.NewVolume(*compactVolumePath, *compactVolumeCollection, vid, nil)
+	v, err := storage.NewVolume(*compactVolumePath, *compactVolumeCollection, vid, nil, nil)
 	if err != nil {
 		glog.Fatalf("Load Volume [ERROR] %s\n", err)
 	}
