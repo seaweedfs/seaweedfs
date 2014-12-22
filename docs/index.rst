@@ -33,6 +33,7 @@ Contents:
    usecases
    optimization
    benchmarks
+   changelist
 
 
 Indices and tables
