@@ -1,4 +1,4 @@
-Store file with a Time To Live (TTL).
+Store file with a Time To Live
 ===================
 
 Introduction
@@ -12,10 +12,12 @@ How to use it?
 Assume we want to store a file with TTL of 3 minutes.
 
 First, ask the master to assign a file id to a volume with a 3-minute TTL:
+.. code-block:: bash
   > curl http://localhost:9333/dir/assign?ttl=3m
   {"count":1,"fid":"5,01637037d6","url":"127.0.0.1:8080","publicUrl":"localhost:8080"}
 
 Secondly, use the file id to store on the volume server
+.. code-block:: bash
   > curl -F "file=@x.go" http://127.0.0.1:8080/5,01637037d6?ttl=3m
 
 After writing, the file content will be returned as usual if read before the TTL expiry. But if read after the TTL expiry, the file will be reported as missing and return the http response status as not found.
@@ -52,9 +54,9 @@ Supported TTL format examples:
 How efficient it is?
 #############################
 
-TTL seems easy to implement since we just need to report the file as missing if the time is over the TTL. However, the real difficulty is to efficiently reclaim disk space from expired files, similar to JVM memory garbage collection, which is a sophisticated piece of work with many man-years of work.
+TTL seems easy to implement since we just need to report the file as missing if the time is over the TTL. However, the real difficulty is to efficiently reclaim disk space from expired files, similar to JVM memory garbage collection, which is a sophisticated piece of work with many man-years of effort.
 
-Memcached also supports TTL. It gets around this problem by putting entries into fix-sized slabs. If one slab is expired, no work is required and the slab can be overwritten right away. However, this fix-sized slab approach wastes disk spaces since the file contents rarely fit in slabs exactly. And the slab managements are not trivial either.
+Memcached also supports TTL. It gets around this problem by putting entries into fix-sized slabs. If one slab is expired, no work is required and the slab can be overwritten right away. However, this fix-sized slab approach is not applicable to files since the file contents rarely fit in slabs exactly.
 
 Seaweed-FS efficiently resolves this disk space garbage collection problem with great simplicity. One of key differences from "normal" implementation is that the TTL is associated with the volume, together with each specific file.
 
