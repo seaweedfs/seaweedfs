@@ -12,12 +12,10 @@ How to use it?
 Assume we want to store a file with TTL of 3 minutes.
 
 First, ask the master to assign a file id to a volume with a 3-minute TTL:
-.. code-block:: bash
   > curl http://localhost:9333/dir/assign?ttl=3m
   {"count":1,"fid":"5,01637037d6","url":"127.0.0.1:8080","publicUrl":"localhost:8080"}
 
 Secondly, use the file id to store on the volume server
-.. code-block:: bash
   > curl -F "file=@x.go" http://127.0.0.1:8080/5,01637037d6?ttl=3m
 
 After writing, the file content will be returned as usual if read before the TTL expiry. But if read after the TTL expiry, the file will be reported as missing and return the http response status as not found.
