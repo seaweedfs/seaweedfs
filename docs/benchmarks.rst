@@ -1,7 +1,10 @@
 Benchmarks
 ======================
 
-Do we really need the benchmark? People always use benchmark to compare systems. But benchmarks are misleading. The resources, e.g., CPU, disk, memory, network, all matter a lot. And with Seaweed File System, single node vs multiple nodes, benchmarking on one machine vs several multiple machines, all matter a lot.
+Do we really need the benchmark? People always use benchmark to compare systems. 
+But benchmarks are misleading. The resources, e.g., CPU, disk, memory, network, 
+all matter a lot. And with Seaweed File System, single node vs multiple nodes, 
+benchmarking on one machine vs several multiple machines, all matter a lot.
 
 Here is the steps on how to run benchmark if you really need some numbers.
 
@@ -25,9 +28,13 @@ For more realistic tests, please start them on different machines.
 What does the test do?
 #############################
 
-By default, the benchmark command would start writing 1 million files, each having 1KB size, uncompressed. For each file, one request is sent to assign a file key, and a second request is sent to post the file to the volume server. The written file keys are stored in a temp file.
+By default, the benchmark command would start writing 1 million files, each having 1KB size, uncompressed. 
+For each file, one request is sent to assign a file key, and a second request is sent to post the file to the volume server. 
+The written file keys are stored in a temp file.
 
-Then the benchmark command would read the list of file keys, randomly read 1 million files. For each volume, the volume id is cached, so there is several request to lookup the volume id, and all the rest requests are to get the file content.
+Then the benchmark command would read the list of file keys, randomly read 1 million files. 
+For each volume, the volume id is cached, so there is several request to lookup the volume id, 
+and all the rest requests are to get the file content.
 
 Many options are options are configurable. Please check the help content:
 
@@ -35,25 +42,11 @@ Many options are options are configurable. Please check the help content:
 
   ./weed benchmark -h
 
-Common Problems
+Different Benchmark Target
 ###############################
 
-The most common
-I start weed servers in one console for simplicity. Better run servers on different consoles.
-
-For more realistic tests, please start them on different machines.
-
-.. code-block:: bash
-
-  # prepare directories
-  mkdir 3 4 5
-  # start 3 servers
-  ./weed server -dir=./3 -master.port=9333 -volume.port=8083 &
-  ./weed volume -dir=./4 -port=8084 &
-  ./weed volume -dir=./5 -port=8085 &
-  ./weed benchmark -server=localhost:9333
-
- problem is "too many open files" error. This is because the test itself starts too many network connections on one single machine. In my local macbook, if I ran "random read" following writing right away, the error happens always. I have to run "weed benchmark -write=false" to run the reading test only. Also, changing the concurrency level to "-c=16" would also help.
+The default "weed benchmark" uses 1 million 1KB file. This is to stress the number of files per second. 
+Increasing the file size to 100KB or more can show much larger number of IO throughput in KB/second.
 
 My own unscientific single machine results
 ###################################################
@@ -171,4 +164,6 @@ Create benchmark volumes directly
      99%      9.4 ms
     100%    256.9 ms
 How can the replication 001 writes faster than no replication?
-I could not tell. Very likely, the computer was in turbo mode. I can not reproduce it consistently either. Posted the number here just to illustrate that number lies. Don't quote on the exact number, just get an idea of the performance would be good enough.
+I could not tell. Very likely, the computer was in turbo mode. 
+I can not reproduce it consistently either. Posted the number here just to illustrate that number lies. 
+Don't quote on the exact number, just get an idea of the performance would be good enough.

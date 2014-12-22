@@ -29,8 +29,8 @@ Contents:
    replication
    ttl
    failover
-   usecases
    directories
+   usecases
    optimization
    benchmarks
 
