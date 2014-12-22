@@ -23,8 +23,9 @@ Secondly, use the file id to store on the volume server
 After writing, the file content will be returned as usual if read before the TTL expiry. But if read after the TTL expiry, the file will be reported as missing and return the http response status as not found.
 
 For next writes with ttl=3m, the same set of volumes with ttl=3m will be used until:
- 1. the ttl=3m volumes are full. If so, new volumes will be created.
- 1. there are no write activities for 3 minutes. If so, these volumes will be stopped and deleted.
+
+1. the ttl=3m volumes are full. If so, new volumes will be created.
+2. there are no write activities for 3 minutes. If so, these volumes will be stopped and deleted.
 
 Advanced Usage
 #############################
@@ -41,13 +42,13 @@ Supported TTL format
 The TTL is in the format of one integer number followed by one unit. The unit can be 'm', 'h', 'd', 'w', 'M', 'y'.
 
 Supported TTL format examples:
-.. code-block:: bash
-	3m: 3 minutes
-	4h: 4 hours
-	5d: 5 days
-	6w: 6 weeks
-	7M: 7 months
-	8y: 8 years
+
+- 3m: 3 minutes
+-  4h: 4 hours
+-  5d: 5 days
+-  6w: 6 weeks
+-  7M: 7 months
+-  8y: 8 years
 
 
 How efficient it is?
@@ -63,12 +64,11 @@ During the file id assigning step, the file id will be assigned to a volume with
 
 Implementation Details
 #############################
-
-  1. When assigning file key, the master would pick one TTL volume with matching TTL. If such volumes do not exist, create a few.
-  1. Volume servers will write the file with expiration time. When serving file, if the file is expired, the file will be reported as not found.
-  1. Volume servers will track each volume's largest expiration time, and stop reporting the expired volumes to the master server.
-  1. Master server will think the previously existed volumes are dead, and stop assigning write requests to them.
-  1. After about 10% of the TTL time, or at most 10 minutes, the volume servers will delete the expired volume.
+1. When assigning file key, the master would pick one TTL volume with matching TTL. If such volumes do not exist, create a few.
+2. Volume servers will write the file with expiration time. When serving file, if the file is expired, the file will be reported as not found.
+3. Volume servers will track each volume's largest expiration time, and stop reporting the expired volumes to the master server.
+4. Master server will think the previously existed volumes are dead, and stop assigning write requests to them.
+5. After about 10% of the TTL time, or at most 10 minutes, the volume servers will delete the expired volume.
 
 Deployment
 #############################
