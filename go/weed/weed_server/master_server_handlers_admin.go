@@ -8,12 +8,12 @@ import (
 	"strconv"
 	"strings"
 
-	proto "code.google.com/p/goprotobuf/proto"
 	"github.com/chrislusf/weed-fs/go/glog"
 	"github.com/chrislusf/weed-fs/go/operation"
 	"github.com/chrislusf/weed-fs/go/storage"
 	"github.com/chrislusf/weed-fs/go/topology"
 	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/golang/protobuf/proto"
 )
 
 func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {
