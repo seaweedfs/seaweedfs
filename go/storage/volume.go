@@ -33,6 +33,10 @@ func NewVolume(dirname string, collection string, id VolumeId, replicaPlacement 
 	e = v.load(true, true)
 	return
 }
+func (v *Volume) String() string {
+	return fmt.Sprintf("Id:%v, dir:%s, Collection:%s, dataFile:%v, nm:%v, readOnly:%v", v.Id, v.dir, v.Collection, v.dataFile, v.nm, v.readOnly)
+}
+
 func loadVolumeWithoutIndex(dirname string, collection string, id VolumeId) (v *Volume, e error) {
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
 	v.SuperBlock = SuperBlock{}
@@ -135,7 +139,7 @@ func (v *Volume) isFileUnchanged(n *Needle) bool {
 		oldNeedle := new(Needle)
 		oldNeedle.Read(v.dataFile, int64(nv.Offset)*NeedlePaddingSize, nv.Size, v.Version())
 		if oldNeedle.Checksum == n.Checksum && bytes.Equal(oldNeedle.Data, n.Data) {
-			n.Size = oldNeedle.Size
+			n.DataSize = oldNeedle.DataSize
 			return true
 		}
 	}
@@ -165,7 +169,7 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
 	if v.isFileUnchanged(n) {
-		size = n.Size
+		size = n.DataSize
 		glog.V(4).Infof("needle is unchanged!")
 		return
 	}

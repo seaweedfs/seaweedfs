@@ -25,6 +25,7 @@ const (
 )
 
 /*
+* A Needle means a uploaded and stored file.
 * Needle file size is limited to 4GB for now.
  */
 type Needle struct {
