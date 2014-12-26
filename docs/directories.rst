@@ -39,7 +39,7 @@ A common file system would use inode to store meta data for each folder and file
 
 Seaweed-FS wants to make as small number of disk access as possible, yet still be able to store a lot of file metadata. So we need to think very differently.
 
-From a full file path to get to the file content, there are several steps:
+We can take the following steps to map a full file path to the actual data block:
 
 .. code-block:: bash
 
@@ -48,7 +48,7 @@ From a full file path to get to the file content, there are several steps:
 	file_id => data_block
 
 
-Because default Seaweed-FS only provides file_id=>data_block mapping, the first 2 steps need to be implemented.
+Because default Seaweed-FS only provides file_id=>data_block mapping, only the first 2 steps need to be implemented.
 
 
 There are several data features I noticed:
@@ -72,7 +72,7 @@ I believe these are reasonable assumptions:
 Data structure
 #################
 
-This difference lead to the design that the metadata for directories and files should have different data structure.
+This assumed differences between directories and files lead to the design that the metadata for directories and files should have different data structure.
 
 * Store directories in memory
 
@@ -100,16 +100,18 @@ For file renaming, it's just trivially delete and then add a row in leveldb.
 Details
 ########################
 
-In the current first version, the path_to_file=>file_id mapping is stored with an efficient embedded leveldb. Being embedded, it runs on single machine. So it's not linearly scalable yet. However, it can handle LOTS AND LOTS of files on weed-fs on other servers. Using an external distributed database is possible. Your contribution is welcome!
+In the current first version, the path_to_file=>file_id mapping is stored with an efficient embedded leveldb. Being embedded, it runs on single machine. So it's not linearly scalable yet. However, it can handle LOTS AND LOTS of files on Seaweed-FS on other master/volume servers.
 
-The in-memory directory structure can improve on memory efficiency. Current simple map in memory works when the number of directories is less than 1 million, which will use about 500MB memory. But I would highly doubt any common use case would have more than 100 directories.
+Switching from the embedded leveldb to an external distributed database is very feasible. Your contribution is welcome!
+
+The in-memory directory structure can improve on memory efficiency. Current simple map in memory works when the number of directories is less than 1 million, which will use about 500MB memory. But I would expect common use case would have a few, not even more than 100 directories.
 
 Use Cases
 #########################
 
 Clients can assess one "weed filer" via HTTP, list files under a directory, create files via HTTP POST, read files via HTTP POST directly.
 
-Although one "weed filer" can only sits in one machine, you can start multiple "weed filer" on several machines, each "weed filer" instance running in its own collection, having its own namespace, but sharing the same weed-fs.
+Although one "weed filer" can only sits in one machine, you can start multiple "weed filer" on several machines, each "weed filer" instance running in its own collection, having its own namespace, but sharing the same Seaweed-FS storage.
 
 Future
 ###################
@@ -127,6 +129,6 @@ Later, FUSE or HCFS plugins will be created, to really integrate Seaweed-FS to e
 Helps Wanted
 ########################
 
-This is a big step towards more interesting weed-fs usage and integration with existing systems.
+This is a big step towards more interesting Seaweed-FS usage and integration with existing systems.
 
 If you can help to refactor and implement other directory meta data, or file meta data storage, please do so.

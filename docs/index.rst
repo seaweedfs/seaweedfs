@@ -15,7 +15,7 @@ For documents and bug reporting, Please visit
  http://weed-fs.googlecode.com
  
 For pre-compiled releases,
- https://bintray.com/chrislusf/Weed-FS/weed
+ https://bintray.com/chrislusf/Weed-FS/seaweed
 
 
 Contents:
@@ -27,11 +27,13 @@ Contents:
    clients
    api
    replication
+   ttl
    failover
-   usecases
    directories
+   usecases
    optimization
    benchmarks
+   changelist
 
 
 Indices and tables
