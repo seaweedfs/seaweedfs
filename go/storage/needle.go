@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"mime"
 	"net/http"
@@ -43,6 +44,11 @@ type Needle struct {
 
 	Checksum CRC    `comment:"CRC32 to check integrity"`
 	Padding  []byte `comment:"Aligned to 8 bytes"`
+}
+
+func (n *Needle) String() (str string) {
+	str = fmt.Sprintf("Cookie:%d, Id:%d, Size:%d, DataSize:%d, Name: %s, Mime: %s", n.Cookie, n.Id, n.Size, n.DataSize, n.Name, n.Mime)
+	return
 }
 
 func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string, isGzipped bool, modifiedTime uint64, ttl *TTL, e error) {
