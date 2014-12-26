@@ -9,10 +9,10 @@ import (
 	"strconv"
 	"strings"
 
-	proto "code.google.com/p/goprotobuf/proto"
 	"github.com/chrislusf/weed-fs/go/glog"
 	"github.com/chrislusf/weed-fs/go/operation"
 	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/golang/protobuf/proto"
 )
 
 const (

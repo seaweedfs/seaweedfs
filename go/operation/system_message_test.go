@@ -5,7 +5,7 @@ import (
 	"log"
 	"testing"
 
-	proto "code.google.com/p/goprotobuf/proto"
+	"github.com/golang/protobuf/proto"
 )
 
 func TestSerialDeserial(t *testing.T) {
