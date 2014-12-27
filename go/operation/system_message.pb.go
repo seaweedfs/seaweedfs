@@ -14,7 +14,7 @@ It has these top-level messages:
 */
 package operation
 
-import "github.com/golang/protobuf/proto"
+import proto "github.com/golang/protobuf/proto"
 import math "math"
 
 // Reference imports to suppress errors if they are not otherwise used.
