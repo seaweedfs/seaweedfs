@@ -114,7 +114,7 @@ Minimal Image (~19.6 MB)
 
 .. code-block:: bash
 
-	docker build --no-cache --rm -t 'cydev/weed' .
+	docker build --no-cache -t 'cydev/weed' .
 
 Go-Build Docker Image (~764 MB)
 
@@ -122,7 +122,7 @@ Go-Build Docker Image (~764 MB)
 
 	mv Dockerfile Dockerfile.minimal
 	mv Dockerfile.go_build Dockerfile
-	docker build --no-cache --rm -t 'cydev/weed' .
+	docker build --no-cache -t 'cydev/weed' .
 
 In production
 **************************************************************
