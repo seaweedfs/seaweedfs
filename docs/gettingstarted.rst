@@ -82,6 +82,9 @@ Using Seaweed-FS in docker
 
 You can use image "cydev/weed" or build your own with  `dockerfile <https://github.com/chrislusf/weed-fs/blob/master/Dockerfile>`_  in the root of repo.
 
+Using pre-built Docker image
+**************************************************************
+
 .. code-block:: bash
 
 	docker run --name weed cydev/weed server
@@ -97,6 +100,29 @@ And in another terminal
   		"Leader": "localhost:9333"
 	}
 	# use $IP as host for api queries
+
+Building image from dockerfile
+**************************************************************
+
+Make a local copy of weed-fs from github
+
+.. code-block:: bash
+
+	git clone https://github.com/chrislusf/weed-fs.git
+
+Minimal Image (~19.6 MB)
+
+.. code-block:: bash
+
+	docker build --no-cache -t 'cydev/weed' .
+
+Go-Build Docker Image (~764 MB)
+
+.. code-block:: bash
+
+	mv Dockerfile Dockerfile.minimal
+	mv Dockerfile.go_build Dockerfile
+	docker build --no-cache -t 'cydev/weed' .
 
 In production
 **************************************************************
