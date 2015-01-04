@@ -26,11 +26,15 @@ func init() {
 }
 
 func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) (err error) {
-	var bytes []byte
+	var b []byte
 	if r.FormValue("pretty") != "" {
-		bytes, err = json.MarshalIndent(obj, "", "  ")
+		b, err = json.MarshalIndent(obj, "", "  ")
+		// to show & for human
+		if err == nil {
+			b = bytes.Replace(b, []byte("\\u0026"), []byte("&"), -1)
+		}
 	} else {
-		bytes, err = json.Marshal(obj)
+		b, err = json.Marshal(obj)
 	}
 	if err != nil {
 		return
@@ -38,7 +42,7 @@ func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) (err err
 	callback := r.FormValue("callback")
 	if callback == "" {
 		w.Header().Set("Content-Type", "application/json")
-		_, err = w.Write(bytes)
+		_, err = w.Write(b)
 	} else {
 		w.Header().Set("Content-Type", "application/javascript")
 		if _, err = w.Write([]uint8(callback)); err != nil {
@@ -47,7 +51,7 @@ func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) (err err
 		if _, err = w.Write([]uint8("(")); err != nil {
 			return
 		}
-		fmt.Fprint(w, string(bytes))
+		fmt.Fprint(w, string(b))
 		if _, err = w.Write([]uint8(")")); err != nil {
 			return
 		}
@@ -188,5 +192,28 @@ func statsMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
 	m["Memory"] = stats.MemStat()
+	writeJsonQuiet(w, r, m)
+}
+
+func helpHandler(w http.ResponseWriter, r *http.Request) {
+	m := make(map[string]interface{})
+	m["Version"] = util.VERSION
+	examples := make([]string, 0, 16)
+	examples = append(examples, "/dir/assign")
+	examples = append(examples, "/dir/lookup")
+	examples = append(examples, "/dir/lookup?volumeId=3,01637037d6")
+	examples = append(examples, "/dir/status")
+	examples = append(examples, "/col/delete?collection=benchmark&pretty=y")
+	examples = append(examples, "/vol/grow?dataCenter=dc1&count=4")
+	examples = append(examples, "/vol/grow?collection=turbo&count=4")
+	examples = append(examples, "/vol/grow?dataCenter=dc1&count=4")
+	examples = append(examples, "/vol/status")
+	examples = append(examples, "/stats/counter")
+	examples = append(examples, "/stats/memory")
+	m["Examples"] = examples
+
+	r.ParseForm()
+	r.Form["pretty"] = make([]string, 0)
+	r.Form["pretty"] = append(r.Form["pretty"], "y")
 	writeJsonQuiet(w, r, m)
 }

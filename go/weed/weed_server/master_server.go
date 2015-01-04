@@ -58,7 +58,6 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 
 	r.HandleFunc("/dir/assign", ms.proxyToLeader(secure(ms.whiteList, ms.dirAssignHandler)))
 	r.HandleFunc("/dir/lookup", ms.proxyToLeader(secure(ms.whiteList, ms.dirLookupHandler)))
-	r.HandleFunc("/dir/join", ms.proxyToLeader(secure(ms.whiteList, ms.dirJoinHandler)))
 	r.HandleFunc("/dir/status", ms.proxyToLeader(secure(ms.whiteList, ms.dirStatusHandler)))
 	r.HandleFunc("/col/delete", ms.proxyToLeader(secure(ms.whiteList, ms.collectionDeleteHandler)))
 	r.HandleFunc("/vol/lookup", ms.proxyToLeader(secure(ms.whiteList, ms.volumeLookupHandler)))
@@ -67,9 +66,12 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	r.HandleFunc("/vol/vacuum", ms.proxyToLeader(secure(ms.whiteList, ms.volumeVacuumHandler)))
 	r.HandleFunc("/submit", secure(ms.whiteList, ms.submitFromMasterServerHandler))
 	r.HandleFunc("/delete", secure(ms.whiteList, ms.deleteFromMasterServerHandler))
-	r.HandleFunc("/{fileId}", ms.redirectHandler)
 	r.HandleFunc("/stats/counter", secure(ms.whiteList, statsCounterHandler))
 	r.HandleFunc("/stats/memory", secure(ms.whiteList, statsMemoryHandler))
+	r.HandleFunc("/help", secure(ms.whiteList, helpHandler))
+
+	r.HandleFunc("/dir/join", ms.proxyToLeader(secure(ms.whiteList, ms.dirJoinHandler)))
+	r.HandleFunc("/{fileId}", ms.redirectHandler)
 
 	ms.Topo.StartRefreshWritableVolumes(garbageThreshold)
 
