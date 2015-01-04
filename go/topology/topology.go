@@ -127,7 +127,8 @@ func (t *Topology) PickForWrite(count int, option *VolumeGrowOption) (string, in
 
 func (t *Topology) GetVolumeLayout(collectionName string, rp *storage.ReplicaPlacement, ttl *storage.TTL) *VolumeLayout {
 	return t.collectionMap.Get(collectionName, func() interface{} {
-		return NewCollection(collectionName, t.volumeSizeLimit)
+		nc := NewCollection(collectionName, t.volumeSizeLimit)
+		return nc
 	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl)
 }
 
