@@ -42,6 +42,7 @@ var (
 	mMaxCpu                 = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	garbageThreshold        = cmdMaster.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
 	masterWhiteListOption   = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
+	masterSecureKey         = cmdMaster.Flag.String("secure.key", "", "secret key to check permission")
 
 	masterWhiteList []string
 )
@@ -60,7 +61,8 @@ func runMaster(cmd *Command, args []string) bool {
 
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, *mport, *metaFolder,
-		*volumeSizeLimitMB, *mpulse, *confFile, *defaultReplicaPlacement, *garbageThreshold, masterWhiteList,
+		*volumeSizeLimitMB, *mpulse, *confFile, *defaultReplicaPlacement, *garbageThreshold,
+		masterWhiteList, *masterSecureKey,
 	)
 
 	listeningAddress := *masterBindIp + ":" + strconv.Itoa(*mport)

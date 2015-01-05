@@ -27,6 +27,7 @@ var cmdVolume = &Command{
 
 var (
 	vport                 = cmdVolume.Flag.Int("port", 8080, "http listen port")
+	volumeSecurePort      = cmdVolume.Flag.Int("port.secure", 8443, "https listen port, active when SSL certs are specified. Not ready yet.")
 	volumeFolders         = cmdVolume.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	maxVolumeCounts       = cmdVolume.Flag.String("max", "7", "maximum numbers of volumes, count[,count]...")
 	ip                    = cmdVolume.Flag.String("ip", "", "ip or server name")
@@ -82,7 +83,8 @@ func runVolume(cmd *Command, args []string) bool {
 	r := http.NewServeMux()
 
 	volumeServer := weed_server.NewVolumeServer(r, *ip, *vport, *publicIp, folders, maxCounts,
-		*masterNode, *vpulse, *dataCenter, *rack, volumeWhiteList,
+		*masterNode, *vpulse, *dataCenter, *rack,
+		volumeWhiteList,
 		*fixJpgOrientation,
 	)
 

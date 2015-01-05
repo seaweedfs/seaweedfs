@@ -29,13 +29,13 @@ func (vs *VolumeServer) storeHandler(w http.ResponseWriter, r *http.Request) {
 		vs.GetOrHeadHandler(w, r)
 	case "DELETE":
 		stats.DeleteRequest()
-		secure(vs.whiteList, vs.DeleteHandler)(w, r)
+		vs.guard.Secure(vs.DeleteHandler)(w, r)
 	case "PUT":
 		stats.WriteRequest()
-		secure(vs.whiteList, vs.PostHandler)(w, r)
+		vs.guard.Secure(vs.PostHandler)(w, r)
 	case "POST":
 		stats.WriteRequest()
-		secure(vs.whiteList, vs.PostHandler)(w, r)
+		vs.guard.Secure(vs.PostHandler)(w, r)
 	}
 }
 
