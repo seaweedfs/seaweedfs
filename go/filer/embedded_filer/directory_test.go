@@ -1,4 +1,4 @@
-package filer
+package embedded_filer
 
 import (
 	"os"

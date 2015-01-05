@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/chrislusf/weed-fs/go/filer"
+	"github.com/chrislusf/weed-fs/go/filer/embedded_filer"
 	"github.com/chrislusf/weed-fs/go/glog"
 )
 
@@ -28,7 +29,7 @@ func NewFilerServer(r *http.ServeMux, port int, master string, dir string, colle
 		port:               ":" + strconv.Itoa(port),
 	}
 
-	if fs.filer, err = filer.NewFilerEmbedded(master, dir); err != nil {
+	if fs.filer, err = embedded_filer.NewFilerEmbedded(master, dir); err != nil {
 		glog.Fatal("Can not start filer in dir", dir, ": ", err.Error())
 		return
 	}
