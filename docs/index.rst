@@ -3,16 +3,11 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-Welcome to weed-fs's documentation!
+Welcome to Seaweed-FS documentation!
 ===================================
 
-An official mirror of code.google.com/p/weed-fs .
-Moving to github.com to make cooperations easier.
-This repo and the google code repo will be kept synchronized.
-
-
-For documents and bug reporting, Please visit
- http://weed-fs.googlecode.com
+This is the official site for Seaweed-FS.
+The one on google code is deprecated.
 
 For pre-compiled releases,
  https://bintray.com/chrislusf/Weed-FS/seaweed
