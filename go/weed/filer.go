@@ -22,6 +22,8 @@ type FilerOptions struct {
 	defaultReplicaPlacement *string
 	dir                     *string
 	redirectOnRead          *bool
+	cassandra_server        *string
+	cassandra_keyspace      *string
 }
 
 func init() {
@@ -32,13 +34,15 @@ func init() {
 	f.dir = cmdFiler.Flag.String("dir", os.TempDir(), "directory to store meta data")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "000", "default replication type if not specified")
 	f.redirectOnRead = cmdFiler.Flag.Bool("redirectOnRead", false, "whether proxy or redirect to volume server during file GET request")
+	f.cassandra_server = cmdFiler.Flag.String("cassandra.server", "", "host[:port] of the cassandra server")
+	f.cassandra_keyspace = cmdFiler.Flag.String("cassandra.keyspace", "seaweed", "keyspace of the cassandra server")
 }
 
 var cmdFiler = &Command{
 	UsageLine: "filer -port=8888 -dir=/tmp -master=<ip:port>",
 	Short:     "start a file server that points to a master server",
 	Long: `start a file server which accepts REST operation for any files.
-	
+
 	//create or overwrite the file, the directories /path/to will be automatically created
 	POST /path/to/file
 	//get the file content
@@ -47,10 +51,10 @@ var cmdFiler = &Command{
 	POST /path/to/
 	//return a json format subdirectory and files listing
 	GET /path/to/
-  
+
   Current <fullpath~fileid> mapping metadata store is local embedded leveldb.
   It should be highly scalable to hundreds of millions of files on a modest machine.
-  
+
   Future we will ensure it can avoid of being SPOF.
 
   `,
@@ -63,8 +67,9 @@ func runFiler(cmd *Command, args []string) bool {
 	}
 
 	r := http.NewServeMux()
-	_, nfs_err := weed_server.NewFilerServer(r, *f.port, *f.master, *f.dir, *f.collection,
+	_, nfs_err := weed_server.NewEmbeddedFilerServer(r, *f.port, *f.master, *f.dir, *f.collection,
 		*f.defaultReplicaPlacement, *f.redirectOnRead,
+		*f.cassandra_server, *f.cassandra_keyspace,
 	)
 	if nfs_err != nil {
 		glog.Fatalf(nfs_err.Error())

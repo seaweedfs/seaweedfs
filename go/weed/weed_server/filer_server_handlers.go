@@ -179,7 +179,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	glog.V(4).Infoln("saving", path, "=>", assignResult.Fid)
 	if db_err := fs.filer.CreateFile(path, assignResult.Fid); db_err != nil {
 		operation.DeleteFile(fs.master, assignResult.Fid) //clean up
-		glog.V(0).Infoln("failing to write to filer server", r.RequestURI, db_err.Error())
+		glog.V(0).Infof("failing to write %s to filer server : %v", path, db_err)
 		writeJsonError(w, r, db_err)
 		return
 	}
