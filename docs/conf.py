@@ -43,8 +43,8 @@ source_suffix = '.rst'
 master_doc = 'index'
 
 # General information about the project.
-project = u'weed-fs'
-copyright = u'2014, chrislusf, ernado'
+project = u'seaweed-fs'
+copyright = u'2015, chrislusf, ernado'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -240,8 +240,8 @@ man_pages = [
 # (source start file, target name, title, author,
 #  dir menu entry, description, category)
 texinfo_documents = [
-  ('index', 'weed-fs', u'weed-fs Documentation',
-   u'chrislusf, ernado', 'weed-fs', 'One line description of project.',
+  ('index', 'seaweed-fs', u'seaweed-fs Documentation',
+   u'chrislusf, ernado', 'seaweed-fs', 'One line description of project.',
    'Miscellaneous'),
 ]
 

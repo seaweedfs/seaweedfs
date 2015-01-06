@@ -30,12 +30,3 @@ Contents:
    optimization
    benchmarks
    changelist
-
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
-
