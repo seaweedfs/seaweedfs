@@ -44,7 +44,7 @@ To start a weed filer in distributed mode:
 	# assuming you already started weed master and weed volume
 	weed filer -cassandra.server=localhost
 
-Now you can add/delete files, and even browse the sub directories and files
+Now you can add/delete files
 
 .. code-block:: bash
 
@@ -73,6 +73,10 @@ A flat namespace would take more space because the parent directories are
 repeatedly stored. But disk space is a lesser concern especially for
 distributed systems.
 
+The Cassandra table is a simple file_full_path ~ file_id mapping. Actually
+it is a file_full_path ~ list_of_file_ids mapping with the hope to support
+easy file appending for streaming files.
+
 Complexity
 ###################
 
@@ -83,14 +87,15 @@ take longer than the Cassandra internal lookup.
 Use Cases
 #########################
 
-Clients can assess one "weed filer" via HTTP, list files under a directory, create files via HTTP POST, read files via HTTP POST directly.
-
-Although one "weed filer" can only sits in one machine, you can start multiple "weed filer" on several machines, each "weed filer" instance running in its own collection, having its own namespace, but sharing the same Seaweed-FS storage.
+Clients can assess one "weed filer" via HTTP, create files via HTTP POST,
+read files via HTTP POST directly.
 
 Future
 ###################
 
-The Cassandra implementation can be switched to other distributed hash table.
+SeaweedFS can support additional distributed databases. It will be better
+if that database can support prefix search, in order to list files
+under a directory.
 
 Helps Wanted
 ########################
