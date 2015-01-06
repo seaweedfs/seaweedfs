@@ -6,14 +6,14 @@
 Welcome to weed-fs's documentation!
 ===================================
 
-An official mirror of code.google.com/p/weed-fs . 
-Moving to github.com to make cooperations easier. 
+An official mirror of code.google.com/p/weed-fs .
+Moving to github.com to make cooperations easier.
 This repo and the google code repo will be kept synchronized.
 
 
 For documents and bug reporting, Please visit
  http://weed-fs.googlecode.com
- 
+
 For pre-compiled releases,
  https://bintray.com/chrislusf/Weed-FS/seaweed
 
@@ -30,6 +30,7 @@ Contents:
    ttl
    failover
    directories
+   distributed_filer
    usecases
    optimization
    benchmarks

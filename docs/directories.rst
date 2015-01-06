@@ -1,19 +1,21 @@
 Directories and files
 ===========================
 
-When talking about file systems, many people would assume directories, list files under a directory, etc. These are expected if we want to hook up Seaweed File System with linux by FUSE, or with Hadoop, etc.
+When talking about file systems, many people would assume directories,
+list files under a directory, etc. These are expected if we want to hook up
+Seaweed File System with linux by FUSE, or with Hadoop, etc.
 
 Sample usage
 #####################
 
-Two ways to start a weed filer
+Two ways to start a weed filer in standalone mode:
 
 .. code-block:: bash
-	
+
 	# assuming you already started weed master and weed volume
 	weed filer
-	# Or assuming you have nothing started yet, 
-	# this command starts master server, volume server, and filer in one shot. 
+	# Or assuming you have nothing started yet,
+	# this command starts master server, volume server, and filer in one shot.
 	# It's strictly the same as starting them separately.
 	weed server -filer=true
 
@@ -80,10 +82,10 @@ This assumed differences between directories and files lead to the design that t
 	* efficient to move/rename/list_directories
 
 * Store files in a sorted string table in <dir_id/filename, file_id> format
-	
+
 	* efficient to list_files, just simple iterator
 	* efficient to locate files, binary search
-	
+
 Complexity
 ###################
 
