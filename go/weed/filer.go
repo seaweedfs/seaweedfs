@@ -67,7 +67,7 @@ func runFiler(cmd *Command, args []string) bool {
 	}
 
 	r := http.NewServeMux()
-	_, nfs_err := weed_server.NewEmbeddedFilerServer(r, *f.port, *f.master, *f.dir, *f.collection,
+	_, nfs_err := weed_server.NewFilerServer(r, *f.port, *f.master, *f.dir, *f.collection,
 		*f.defaultReplicaPlacement, *f.redirectOnRead,
 		*f.cassandra_server, *f.cassandra_keyspace,
 	)
