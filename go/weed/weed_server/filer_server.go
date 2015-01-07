@@ -20,7 +20,7 @@ type FilerServer struct {
 	filer              filer.Filer
 }
 
-func NewEmbeddedFilerServer(r *http.ServeMux, port int, master string, dir string, collection string,
+func NewFilerServer(r *http.ServeMux, port int, master string, dir string, collection string,
 	replication string, redirectOnRead bool,
 	cassandra_server string, cassandra_keyspace string,
 ) (fs *FilerServer, err error) {
