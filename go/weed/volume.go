@@ -71,6 +71,7 @@ func runVolume(cmd *Command, args []string) bool {
 
 	if *publicIp == "" {
 		if *ip == "" {
+			*ip = "127.0.0.1"
 			*publicIp = "localhost"
 		} else {
 			*publicIp = *ip
