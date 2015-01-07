@@ -160,6 +160,7 @@ func runServer(cmd *Command, args []string) bool {
 			_, nfs_err := weed_server.NewFilerServer(r, *filerOptions.port, *filerOptions.master, *filerOptions.dir, *filerOptions.collection,
 				*filerOptions.defaultReplicaPlacement, *filerOptions.redirectOnRead,
 				"", "",
+				"", 0,
 			)
 			if nfs_err != nil {
 				glog.Fatalf(nfs_err.Error())

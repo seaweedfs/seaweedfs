@@ -10,7 +10,11 @@ However, no SPOF is a must-have requirement for many projects.
 Luckily, SeaweedFS is so flexible that we can use a completely different way
 to manage file metadata.
 
-This distributed filer uses Cassandra to store the metadata.
+This distributed filer uses Redis or Cassandra to store the metadata.
+
+Redis Setup
+#####################
+No setup required.
 
 Cassandra Setup
 #####################
@@ -37,7 +41,14 @@ For production server, you would want to set replication_factor to 3.
 Sample usage
 #####################
 
-To start a weed filer in distributed mode:
+To start a weed filer in distributed mode with Redis:
+
+.. code-block:: bash
+
+	# assuming you already started weed master and weed volume
+	weed filer -redis.server=localhost:6379
+
+To start a weed filer in distributed mode with Cassandra:
 
 .. code-block:: bash
 
@@ -57,8 +68,8 @@ Now you can add/delete files
 
 Limitation
 ############
-List sub folders and files are not supported because Cassandra does not support
-prefix search.
+List sub folders and files are not supported because Redis or Cassandra
+does not support prefix search.
 
 Flat Namespace Design
 ############
@@ -73,16 +84,16 @@ A flat namespace would take more space because the parent directories are
 repeatedly stored. But disk space is a lesser concern especially for
 distributed systems.
 
-The Cassandra table is a simple file_full_path ~ file_id mapping. Actually
-it is a file_full_path ~ list_of_file_ids mapping with the hope to support
-easy file appending for streaming files.
+So either Redis or Cassandra is a simple file_full_path ~ file_id mapping.
+(Actually Cassandra is a file_full_path ~ list_of_file_ids mapping
+with the hope to support easy file appending for streaming files.)
 
 Complexity
 ###################
 
 For one file retrieval, the full_filename=>file_id lookup will be O(logN)
-using Cassandra. But very likely the one additional network hop would
-take longer than the Cassandra internal lookup.
+using Redis or Cassandra. But very likely the one additional network hop would
+take longer than the actual lookup.
 
 Use Cases
 #########################
@@ -93,7 +104,7 @@ read files via HTTP POST directly.
 Future
 ###################
 
-SeaweedFS can support additional distributed databases. It will be better
+SeaweedFS can support other distributed databases. It will be better
 if that database can support prefix search, in order to list files
 under a directory.
 

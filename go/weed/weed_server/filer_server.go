@@ -8,6 +8,7 @@ import (
 	"github.com/chrislusf/weed-fs/go/filer/cassandra_store"
 	"github.com/chrislusf/weed-fs/go/filer/embedded_filer"
 	"github.com/chrislusf/weed-fs/go/filer/flat_namespace"
+	"github.com/chrislusf/weed-fs/go/filer/redis_store"
 	"github.com/chrislusf/weed-fs/go/glog"
 )
 
@@ -23,6 +24,7 @@ type FilerServer struct {
 func NewFilerServer(r *http.ServeMux, port int, master string, dir string, collection string,
 	replication string, redirectOnRead bool,
 	cassandra_server string, cassandra_keyspace string,
+	redis_server string, redis_database int,
 ) (fs *FilerServer, err error) {
 	fs = &FilerServer{
 		master:             master,
@@ -32,19 +34,22 @@ func NewFilerServer(r *http.ServeMux, port int, master string, dir string, colle
 		port:               ":" + strconv.Itoa(port),
 	}
 
-	if cassandra_server == "" {
+	if cassandra_server != "" {
+		cassandra_store, err := cassandra_store.NewCassandraStore(cassandra_keyspace, cassandra_server)
+		if err != nil {
+			glog.Fatalf("Can not connect to cassandra server %s with keyspace %s: %v", cassandra_server, cassandra_keyspace, err)
+		}
+		fs.filer = flat_namespace.NewFlatNamesapceFiler(master, cassandra_store)
+	} else if redis_server != "" {
+		redis_store := redis_store.NewRedisStore(redis_server, redis_database)
+		fs.filer = flat_namespace.NewFlatNamesapceFiler(master, redis_store)
+	} else {
 		if fs.filer, err = embedded_filer.NewFilerEmbedded(master, dir); err != nil {
 			glog.Fatalf("Can not start filer in dir %s : %v", err)
 			return
 		}
 
 		r.HandleFunc("/admin/mv", fs.moveHandler)
-	} else {
-		cassandra_store, err := cassandra_store.NewCassandraStore(cassandra_keyspace, cassandra_server)
-		if err != nil {
-			glog.Fatalf("Can not connect to cassandra server %s with keyspace %s: %v", cassandra_server, cassandra_keyspace, err)
-		}
-		fs.filer = flat_namespace.NewFlatNamesapceFiler(master, cassandra_store)
 	}
 
 	r.HandleFunc("/", fs.filerHandler)

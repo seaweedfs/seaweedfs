@@ -24,6 +24,8 @@ type FilerOptions struct {
 	redirectOnRead          *bool
 	cassandra_server        *string
 	cassandra_keyspace      *string
+	redis_server            *string
+	redis_database          *int
 }
 
 func init() {
@@ -36,6 +38,8 @@ func init() {
 	f.redirectOnRead = cmdFiler.Flag.Bool("redirectOnRead", false, "whether proxy or redirect to volume server during file GET request")
 	f.cassandra_server = cmdFiler.Flag.String("cassandra.server", "", "host[:port] of the cassandra server")
 	f.cassandra_keyspace = cmdFiler.Flag.String("cassandra.keyspace", "seaweed", "keyspace of the cassandra server")
+	f.redis_server = cmdFiler.Flag.String("redis.server", "", "host:port of the cassandra server, e.g., 127.0.0.1:6379")
+	f.redis_database = cmdFiler.Flag.Int("redis.database", 0, "the database on the redis server")
 }
 
 var cmdFiler = &Command{
@@ -70,6 +74,7 @@ func runFiler(cmd *Command, args []string) bool {
 	_, nfs_err := weed_server.NewFilerServer(r, *f.port, *f.master, *f.dir, *f.collection,
 		*f.defaultReplicaPlacement, *f.redirectOnRead,
 		*f.cassandra_server, *f.cassandra_keyspace,
+		*f.redis_server, *f.redis_database,
 	)
 	if nfs_err != nil {
 		glog.Fatalf(nfs_err.Error())
