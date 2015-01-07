@@ -20,7 +20,8 @@ Cassandra Setup
 #####################
 Here is the CQL to create the table.CassandraStore.
 Optionally you can adjust the keyspace name and replication settings.
-For production server, you would want to set replication_factor to 3.
+For production, you would want to set replication_factor to 3
+if there are at least 3 Cassandra servers.
 
 .. code-block:: bash
 
