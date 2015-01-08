@@ -38,7 +38,7 @@ func init() {
 	f.redirectOnRead = cmdFiler.Flag.Bool("redirectOnRead", false, "whether proxy or redirect to volume server during file GET request")
 	f.cassandra_server = cmdFiler.Flag.String("cassandra.server", "", "host[:port] of the cassandra server")
 	f.cassandra_keyspace = cmdFiler.Flag.String("cassandra.keyspace", "seaweed", "keyspace of the cassandra server")
-	f.redis_server = cmdFiler.Flag.String("redis.server", "", "host:port of the cassandra server, e.g., 127.0.0.1:6379")
+	f.redis_server = cmdFiler.Flag.String("redis.server", "", "host:port of the redis server, e.g., 127.0.0.1:6379")
 	f.redis_database = cmdFiler.Flag.Int("redis.database", 0, "the database on the redis server")
 }
 
