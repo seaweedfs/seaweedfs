@@ -1,6 +1,8 @@
 package topology
 
 import (
+	"fmt"
+
 	"github.com/chrislusf/weed-fs/go/storage"
 	"github.com/chrislusf/weed-fs/go/util"
 )
@@ -15,6 +17,10 @@ func NewCollection(name string, volumeSizeLimit uint64) *Collection {
 	c := &Collection{Name: name, volumeSizeLimit: volumeSizeLimit}
 	c.storageType2VolumeLayout = util.NewConcurrentReadMap()
 	return c
+}
+
+func (c *Collection) String() string {
+	return fmt.Sprintf("Name:%s, volumeSizeLimit:%d, storageType2VolumeLayout:%v", c.Name, c.volumeSizeLimit, c.storageType2VolumeLayout)
 }
 
 func (c *Collection) GetOrCreateVolumeLayout(rp *storage.ReplicaPlacement, ttl *storage.TTL) *VolumeLayout {
