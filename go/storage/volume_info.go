@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"github.com/chrislusf/weed-fs/go/operation"
 )
 
@@ -35,4 +36,8 @@ func NewVolumeInfo(m *operation.VolumeInformationMessage) (vi VolumeInfo, err er
 	vi.ReplicaPlacement = rp
 	vi.Ttl = LoadTTLFromUint32(*m.Ttl)
 	return vi, nil
+}
+
+func (vi VolumeInfo) String() string {
+	return fmt.Sprintf("Id:%s, Size:%d, ReplicaPlacement:%s, Collection:%s, Version:%v, FileCount:%d, DeleteCount:%d, DeletedByteCount:%d, ReadOnly:%v", vi.Id, vi.Size, vi.ReplicaPlacement, vi.Collection, vi.Version, vi.FileCount, vi.DeleteCount, vi.DeletedByteCount, vi.ReadOnly)
 }

@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/chrislusf/weed-fs/go/glog"
@@ -24,6 +25,10 @@ func NewDataNode(id string) *DataNode {
 	s.volumes = make(map[storage.VolumeId]storage.VolumeInfo)
 	s.NodeImpl.value = s
 	return s
+}
+
+func (dn *DataNode) String() string {
+	return fmt.Sprintf("NodeImpl:%s ,volumes:%v, Ip:%s, Port:%d, PublicUrl:%s, Dead:%v", dn.NodeImpl.String(), dn.volumes, dn.Ip, dn.Port, dn.PublicUrl, dn.Dead)
 }
 
 func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) {
