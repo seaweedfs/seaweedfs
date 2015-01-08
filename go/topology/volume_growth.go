@@ -30,6 +30,10 @@ type VolumeGrowth struct {
 	accessLock sync.Mutex
 }
 
+func (o *VolumeGrowOption) String() string {
+	return fmt.Sprintf("Collection:%s, ReplicaPlacement:%v, Ttl:%v, DataCenter:%s, Rack:%s, DataNode:%s", o.Collection, o.ReplicaPlacement, o.Ttl, o.DataCenter, o.Rack, o.DataNode)
+}
+
 func NewDefaultVolumeGrowth() *VolumeGrowth {
 	return &VolumeGrowth{}
 }
