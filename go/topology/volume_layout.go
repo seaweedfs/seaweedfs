@@ -2,6 +2,7 @@ package topology
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
 	"sync"
 
@@ -27,6 +28,10 @@ func NewVolumeLayout(rp *storage.ReplicaPlacement, ttl *storage.TTL, volumeSizeL
 		writables:       *new([]storage.VolumeId),
 		volumeSizeLimit: volumeSizeLimit,
 	}
+}
+
+func (vl *VolumeLayout) String() string {
+	return fmt.Sprintf("rp:%v, ttl:%v, vid2location:%v, writables:%v, volumeSizeLimit:%v", vl.rp, vl.ttl, vl.vid2location, vl.writables, vl.volumeSizeLimit)
 }
 
 func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {

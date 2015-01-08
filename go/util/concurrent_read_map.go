@@ -1,6 +1,8 @@
 package util
 
-import "sync"
+import (
+	"sync"
+)
 
 // A mostly for read map, which can thread-safely
 // initialize the map entries.
