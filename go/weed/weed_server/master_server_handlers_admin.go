@@ -3,6 +3,7 @@ package weed_server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"strconv"
@@ -19,13 +20,13 @@ import (
 func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	collection, ok := ms.Topo.GetCollection(r.FormValue("collection"))
 	if !ok {
-		writeJsonQuiet(w, r, map[string]interface{}{"error": "collection " + r.FormValue("collection") + "does not exist!"})
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("collection %s does not exist!", r.FormValue("collection")))
 		return
 	}
 	for _, server := range collection.ListVolumeServers() {
 		_, err := util.Get("http://" + server.Ip + ":" + strconv.Itoa(server.Port) + "/admin/delete_collection?collection=" + r.FormValue("collection"))
 		if err != nil {
-			writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
+			writeJsonError(w, r, http.StatusInternalServerError, err)
 			return
 		}
 	}
@@ -35,12 +36,12 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		writeJsonError(w, r, err)
+		writeJsonError(w, r, http.StatusBadRequest, err)
 		return
 	}
 	joinMessage := &operation.JoinMessage{}
 	if err = proto.Unmarshal(body, joinMessage); err != nil {
-		writeJsonError(w, r, err)
+		writeJsonError(w, r, http.StatusBadRequest, err)
 		return
 	}
 	if *joinMessage.Ip == "" {
@@ -49,7 +50,7 @@ func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	if glog.V(4) {
 		if jsonData, jsonError := json.Marshal(joinMessage); jsonError != nil {
 			glog.V(0).Infoln("json marshaling error: ", jsonError)
-			writeJsonError(w, r, jsonError)
+			writeJsonError(w, r, http.StatusBadRequest, jsonError)
 			return
 		} else {
 			glog.V(4).Infoln("Proto size", len(body), "json size", len(jsonData), string(jsonData))
@@ -57,14 +58,14 @@ func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ms.Topo.ProcessJoinMessage(joinMessage)
-	writeJsonQuiet(w, r, operation.JoinResult{VolumeSizeLimit: uint64(ms.volumeSizeLimitMB) * 1024 * 1024})
+	writeJsonQuiet(w, r, http.StatusOK, operation.JoinResult{VolumeSizeLimit: uint64(ms.volumeSizeLimitMB) * 1024 * 1024})
 }
 
 func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
 	m["Topology"] = ms.Topo.ToMap()
-	writeJsonQuiet(w, r, m)
+	writeJsonQuiet(w, r, http.StatusOK, m)
 }
 
 func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Request) {
@@ -81,8 +82,7 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 	count := 0
 	option, err := ms.getVolumeGrowOption(r)
 	if err != nil {
-		w.WriteHeader(http.StatusNotAcceptable)
-		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
+		writeJsonError(w, r, http.StatusNotAcceptable, err)
 		return
 	}
 	if err == nil {
@@ -97,11 +97,9 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if err != nil {
-		w.WriteHeader(http.StatusNotAcceptable)
-		writeJsonQuiet(w, r, map[string]string{"error": err.Error()})
+		writeJsonError(w, r, http.StatusNotAcceptable, err)
 	} else {
-		w.WriteHeader(http.StatusOK)
-		writeJsonQuiet(w, r, map[string]interface{}{"count": count})
+		writeJsonQuiet(w, r, http.StatusOK, map[string]interface{}{"count": count})
 	}
 }
 
@@ -109,7 +107,7 @@ func (ms *MasterServer) volumeStatusHandler(w http.ResponseWriter, r *http.Reque
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
 	m["Volumes"] = ms.Topo.ToVolumeMap()
-	writeJsonQuiet(w, r, m)
+	writeJsonQuiet(w, r, http.StatusOK, m)
 }
 
 func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) {
@@ -123,8 +121,7 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 	if machines != nil && len(machines) > 0 {
 		http.Redirect(w, r, "http://"+machines[0].PublicUrl+r.URL.Path, http.StatusMovedPermanently)
 	} else {
-		w.WriteHeader(http.StatusNotFound)
-		writeJsonQuiet(w, r, map[string]string{"error": "volume id " + volumeId.String() + " not found. "})
+		writeJsonError(w, r, http.StatusNotFound, fmt.Errorf("volume id %s not found.", volumeId))
 	}
 }
 

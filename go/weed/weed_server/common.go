@@ -3,6 +3,7 @@ package weed_server
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -24,7 +25,7 @@ func init() {
 
 }
 
-func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) (err error) {
+func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) (err error) {
 	var bytes []byte
 	if r.FormValue("pretty") != "" {
 		bytes, err = json.MarshalIndent(obj, "", "  ")
@@ -37,9 +38,11 @@ func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) (err err
 	callback := r.FormValue("callback")
 	if callback == "" {
 		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(httpStatus)
 		_, err = w.Write(bytes)
 	} else {
 		w.Header().Set("Content-Type", "application/javascript")
+		w.WriteHeader(httpStatus)
 		if _, err = w.Write([]uint8(callback)); err != nil {
 			return
 		}
@@ -51,20 +54,21 @@ func writeJson(w http.ResponseWriter, r *http.Request, obj interface{}) (err err
 			return
 		}
 	}
+
 	return
 }
 
 // wrapper for writeJson - just logs errors
-func writeJsonQuiet(w http.ResponseWriter, r *http.Request, obj interface{}) {
-	if err := writeJson(w, r, obj); err != nil {
+func writeJsonQuiet(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) {
+	if err := writeJson(w, r, httpStatus, obj); err != nil {
 		glog.V(0).Infof("error writing JSON %s: %s", obj, err.Error())
 	}
 }
-func writeJsonError(w http.ResponseWriter, r *http.Request, err error) {
+func writeJsonError(w http.ResponseWriter, r *http.Request, httpStatus int, err error) {
 	w.WriteHeader(http.StatusInternalServerError)
 	m := make(map[string]interface{})
 	m["error"] = err.Error()
-	writeJsonQuiet(w, r, m)
+	writeJsonQuiet(w, r, httpStatus, m)
 }
 
 func debug(params ...interface{}) {
@@ -74,15 +78,14 @@ func debug(params ...interface{}) {
 func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl string) {
 	m := make(map[string]interface{})
 	if r.Method != "POST" {
-		m["error"] = "Only submit via POST!"
-		writeJsonQuiet(w, r, m)
+		writeJsonError(w, r, http.StatusMethodNotAllowed, errors.New("Only submit via POST!"))
 		return
 	}
 
 	debug("parsing upload file...")
 	fname, data, mimeType, isGzipped, lastModified, _, pe := storage.ParseUpload(r)
 	if pe != nil {
-		writeJsonError(w, r, pe)
+		writeJsonError(w, r, http.StatusBadRequest, pe)
 		return
 	}
 
@@ -90,7 +93,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	r.ParseForm()
 	assignResult, ae := operation.Assign(masterUrl, 1, r.FormValue("replication"), r.FormValue("collection"), r.FormValue("ttl"))
 	if ae != nil {
-		writeJsonError(w, r, ae)
+		writeJsonError(w, r, http.StatusInternalServerError, ae)
 		return
 	}
 
@@ -102,7 +105,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	debug("upload file to store", url)
 	uploadResult, err := operation.Upload(url, fname, bytes.NewReader(data), isGzipped, mimeType)
 	if err != nil {
-		writeJsonError(w, r, err)
+		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -110,7 +113,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	m["fid"] = assignResult.Fid
 	m["fileUrl"] = assignResult.PublicUrl + "/" + assignResult.Fid
 	m["size"] = uploadResult.Size
-	writeJsonQuiet(w, r, m)
+	writeJsonQuiet(w, r, http.StatusCreated, m)
 	return
 }
 
@@ -119,10 +122,10 @@ func deleteForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	fids := r.Form["fid"]
 	ret, err := operation.DeleteFiles(masterUrl, fids)
 	if err != nil {
-		writeJsonError(w, r, err)
+		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
-	writeJsonQuiet(w, r, ret)
+	writeJsonQuiet(w, r, http.StatusAccepted, ret)
 }
 
 func parseURLPath(path string) (vid, fid, filename, ext string, isVolumeIdOnly bool) {
@@ -162,12 +165,12 @@ func statsCounterHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
 	m["Counters"] = serverStats
-	writeJsonQuiet(w, r, m)
+	writeJsonQuiet(w, r, http.StatusOK, m)
 }
 
 func statsMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
 	m["Memory"] = stats.MemStat()
-	writeJsonQuiet(w, r, m)
+	writeJsonQuiet(w, r, http.StatusOK, m)
 }

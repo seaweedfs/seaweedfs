@@ -22,7 +22,7 @@ func (fs *FilerServer) moveHandler(w http.ResponseWriter, r *http.Request) {
 	err := fs.filer.Move(from, to)
 	if err != nil {
 		glog.V(4).Infoln("moving", from, "->", to, err.Error())
-		writeJsonError(w, r, err)
+		writeJsonError(w, r, http.StatusInternalServerError, err)
 	} else {
 		w.WriteHeader(http.StatusOK)
 	}
