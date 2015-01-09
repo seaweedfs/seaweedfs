@@ -60,11 +60,20 @@ func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string
 		return
 	}
 	part, fe := form.NextPart()
-	if fe != nil {
-		glog.V(0).Infoln("Reading Multi part [ERROR]", fe)
-		e = fe
-		return
+	for {
+		if fe != nil {
+			glog.V(0).Infoln("Reading Multi part [ERROR]", fe)
+			e = fe
+			return
+		}
+
+		if part.FileName() != "" {
+			break //found the first <file type> multi-part
+		}
+
+		part, fe = form.NextPart()
 	}
+
 	fileName = part.FileName()
 	if fileName != "" {
 		fileName = path.Base(fileName)
