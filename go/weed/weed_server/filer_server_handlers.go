@@ -185,6 +185,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
+	w.Write(resp_body)
 }
 
 // curl -X DELETE http://localhost:8888/path/to
