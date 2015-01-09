@@ -1,12 +1,14 @@
 package weed_server
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/storage"
 	"math/rand"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/security"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 type VolumeServer struct {
@@ -14,8 +16,8 @@ type VolumeServer struct {
 	pulseSeconds int
 	dataCenter   string
 	rack         string
-	whiteList    []string
 	store        *storage.Store
+	guard        *security.Guard
 
 	FixJpgOrientation bool
 }
@@ -23,29 +25,31 @@ type VolumeServer struct {
 func NewVolumeServer(r *http.ServeMux, ip string, port int, publicIp string, folders []string, maxCounts []int,
 	masterNode string, pulseSeconds int,
 	dataCenter string, rack string,
-	whiteList []string, fixJpgOrientation bool) *VolumeServer {
+	whiteList []string,
+	fixJpgOrientation bool) *VolumeServer {
 	publicUrl := publicIp + ":" + strconv.Itoa(port)
 	vs := &VolumeServer{
 		masterNode:        masterNode,
 		pulseSeconds:      pulseSeconds,
 		dataCenter:        dataCenter,
 		rack:              rack,
-		whiteList:         whiteList,
 		FixJpgOrientation: fixJpgOrientation,
 	}
 	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts)
 
-	r.HandleFunc("/status", secure(vs.whiteList, vs.statusHandler))
-	r.HandleFunc("/admin/assign_volume", secure(vs.whiteList, vs.assignVolumeHandler))
-	r.HandleFunc("/admin/vacuum_volume_check", secure(vs.whiteList, vs.vacuumVolumeCheckHandler))
-	r.HandleFunc("/admin/vacuum_volume_compact", secure(vs.whiteList, vs.vacuumVolumeCompactHandler))
-	r.HandleFunc("/admin/vacuum_volume_commit", secure(vs.whiteList, vs.vacuumVolumeCommitHandler))
-	r.HandleFunc("/admin/freeze_volume", secure(vs.whiteList, vs.freezeVolumeHandler))
-	r.HandleFunc("/admin/delete_collection", secure(vs.whiteList, vs.deleteCollectionHandler))
-	r.HandleFunc("/stats/counter", secure(vs.whiteList, statsCounterHandler))
-	r.HandleFunc("/stats/memory", secure(vs.whiteList, statsMemoryHandler))
-	r.HandleFunc("/stats/disk", secure(vs.whiteList, vs.statsDiskHandler))
-	r.HandleFunc("/delete", secure(vs.whiteList, vs.batchDeleteHandler))
+	vs.guard = security.NewGuard(whiteList, "")
+
+	r.HandleFunc("/status", vs.guard.Secure(vs.statusHandler))
+	r.HandleFunc("/admin/assign_volume", vs.guard.Secure(vs.assignVolumeHandler))
+	r.HandleFunc("/admin/vacuum_volume_check", vs.guard.Secure(vs.vacuumVolumeCheckHandler))
+	r.HandleFunc("/admin/vacuum_volume_compact", vs.guard.Secure(vs.vacuumVolumeCompactHandler))
+	r.HandleFunc("/admin/vacuum_volume_commit", vs.guard.Secure(vs.vacuumVolumeCommitHandler))
+	r.HandleFunc("/admin/freeze_volume", vs.guard.Secure(vs.freezeVolumeHandler))
+	r.HandleFunc("/admin/delete_collection", vs.guard.Secure(vs.deleteCollectionHandler))
+	r.HandleFunc("/stats/counter", vs.guard.Secure(statsCounterHandler))
+	r.HandleFunc("/stats/memory", vs.guard.Secure(statsMemoryHandler))
+	r.HandleFunc("/stats/disk", vs.guard.Secure(vs.statsDiskHandler))
+	r.HandleFunc("/delete", vs.guard.Secure(vs.batchDeleteHandler))
 	r.HandleFunc("/", vs.storeHandler)
 
 	go func() {

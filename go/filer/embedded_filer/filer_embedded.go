@@ -1,11 +1,13 @@
-package filer
+package embedded_filer
 
 import (
-	"github.com/chrislusf/weed-fs/go/operation"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/chrislusf/weed-fs/go/filer"
+	"github.com/chrislusf/weed-fs/go/operation"
 )
 
 type FilerEmbedded struct {
@@ -47,13 +49,13 @@ func (filer *FilerEmbedded) FindFile(filePath string) (fid string, err error) {
 	}
 	return filer.files.FindFile(dirId, file)
 }
-func (filer *FilerEmbedded) FindDirectory(dirPath string) (dirId DirectoryId, err error) {
+func (filer *FilerEmbedded) FindDirectory(dirPath string) (dirId filer.DirectoryId, err error) {
 	return filer.directories.FindDirectory(dirPath)
 }
-func (filer *FilerEmbedded) ListDirectories(dirPath string) (dirs []DirectoryEntry, err error) {
+func (filer *FilerEmbedded) ListDirectories(dirPath string) (dirs []filer.DirectoryEntry, err error) {
 	return filer.directories.ListDirectories(dirPath)
 }
-func (filer *FilerEmbedded) ListFiles(dirPath string, lastFileName string, limit int) (files []FileEntry, err error) {
+func (filer *FilerEmbedded) ListFiles(dirPath string, lastFileName string, limit int) (files []filer.FileEntry, err error) {
 	dirId, e := filer.directories.FindDirectory(dirPath)
 	if e != nil {
 		return nil, e

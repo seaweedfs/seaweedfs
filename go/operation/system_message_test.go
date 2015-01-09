@@ -1,10 +1,11 @@
 package operation
 
 import (
-	proto "code.google.com/p/goprotobuf/proto"
 	"encoding/json"
 	"log"
 	"testing"
+
+	"github.com/golang/protobuf/proto"
 )
 
 func TestSerialDeserial(t *testing.T) {

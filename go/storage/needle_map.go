@@ -1,11 +1,12 @@
 package storage
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/util"
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 type NeedleMapper interface {

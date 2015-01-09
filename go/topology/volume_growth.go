@@ -1,11 +1,12 @@
 package topology
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/storage"
 	"fmt"
 	"math/rand"
 	"sync"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 /*
@@ -27,6 +28,10 @@ type VolumeGrowOption struct {
 
 type VolumeGrowth struct {
 	accessLock sync.Mutex
+}
+
+func (o *VolumeGrowOption) String() string {
+	return fmt.Sprintf("Collection:%s, ReplicaPlacement:%v, Ttl:%v, DataCenter:%s, Rack:%s, DataNode:%s", o.Collection, o.ReplicaPlacement, o.Ttl, o.DataCenter, o.Rack, o.DataNode)
 }
 
 func NewDefaultVolumeGrowth() *VolumeGrowth {

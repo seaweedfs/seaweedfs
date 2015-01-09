@@ -1,12 +1,7 @@
 package weed_server
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/images"
-	"github.com/chrislusf/weed-fs/go/operation"
-	"github.com/chrislusf/weed-fs/go/stats"
-	"github.com/chrislusf/weed-fs/go/storage"
-	"github.com/chrislusf/weed-fs/go/topology"
+	"errors"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -14,6 +9,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/images"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/stats"
+	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/topology"
 )
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
@@ -28,13 +30,13 @@ func (vs *VolumeServer) storeHandler(w http.ResponseWriter, r *http.Request) {
 		vs.GetOrHeadHandler(w, r)
 	case "DELETE":
 		stats.DeleteRequest()
-		secure(vs.whiteList, vs.DeleteHandler)(w, r)
+		vs.guard.Secure(vs.DeleteHandler)(w, r)
 	case "PUT":
 		stats.WriteRequest()
-		secure(vs.whiteList, vs.PostHandler)(w, r)
+		vs.guard.Secure(vs.PostHandler)(w, r)
 	case "POST":
 		stats.WriteRequest()
-		secure(vs.whiteList, vs.PostHandler)(w, r)
+		vs.guard.Secure(vs.PostHandler)(w, r)
 	}
 }
 
@@ -234,35 +236,34 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	if e := r.ParseForm(); e != nil {
 		glog.V(0).Infoln("form parse error:", e)
-		writeJsonError(w, r, e)
+		writeJsonError(w, r, http.StatusBadRequest, e)
 		return
 	}
 	vid, _, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, ve := storage.NewVolumeId(vid)
 	if ve != nil {
 		glog.V(0).Infoln("NewVolumeId error:", ve)
-		writeJsonError(w, r, ve)
+		writeJsonError(w, r, http.StatusBadRequest, ve)
 		return
 	}
 	needle, ne := storage.NewNeedle(r, vs.FixJpgOrientation)
 	if ne != nil {
-		writeJsonError(w, r, ne)
+		writeJsonError(w, r, http.StatusBadRequest, ne)
 		return
 	}
 
 	ret := operation.UploadResult{}
 	size, errorStatus := topology.ReplicatedWrite(vs.masterNode, vs.store, volumeId, needle, r)
-	if errorStatus == "" {
-		w.WriteHeader(http.StatusCreated)
-	} else {
-		w.WriteHeader(http.StatusInternalServerError)
+	httpStatus := http.StatusCreated
+	if errorStatus != "" {
+		httpStatus = http.StatusInternalServerError
 		ret.Error = errorStatus
 	}
 	if needle.HasName() {
 		ret.Name = string(needle.Name)
 	}
 	ret.Size = size
-	writeJsonQuiet(w, r, ret)
+	writeJsonQuiet(w, r, httpStatus, ret)
 }
 
 func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
@@ -279,7 +280,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	if ok != nil {
 		m := make(map[string]uint32)
 		m["size"] = 0
-		writeJsonQuiet(w, r, m)
+		writeJsonQuiet(w, r, http.StatusNotFound, m)
 		return
 	}
 
@@ -292,14 +293,13 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	ret := topology.ReplicatedDelete(vs.masterNode, vs.store, volumeId, n, r)
 
 	if ret != 0 {
-		w.WriteHeader(http.StatusAccepted)
+		m := make(map[string]uint32)
+		m["size"] = uint32(count)
+		writeJsonQuiet(w, r, http.StatusAccepted, m)
 	} else {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeJsonError(w, r, http.StatusInternalServerError, errors.New("Deletion Failed."))
 	}
 
-	m := make(map[string]uint32)
-	m["size"] = uint32(count)
-	writeJsonQuiet(w, r, m)
 }
 
 //Experts only: takes multiple fid parameters. This function does not propagate deletes to replicas.
@@ -333,7 +333,5 @@ func (vs *VolumeServer) batchDeleteHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	w.WriteHeader(http.StatusAccepted)
-
-	writeJsonQuiet(w, r, ret)
+	writeJsonQuiet(w, r, http.StatusAccepted, ret)
 }

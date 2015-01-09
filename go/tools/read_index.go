@@ -1,11 +1,12 @@
 package main
 
 import (
-	"github.com/chrislusf/weed-fs/go/storage"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 var (

@@ -1,12 +1,13 @@
 package storage
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/util"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 const (

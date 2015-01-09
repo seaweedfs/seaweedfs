@@ -1,12 +1,14 @@
 package weed_server
 
 import (
-	"github.com/chrislusf/weed-fs/go/operation"
-	"github.com/chrislusf/weed-fs/go/stats"
-	"github.com/chrislusf/weed-fs/go/storage"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/stats"
+	"github.com/chrislusf/weed-fs/go/storage"
 )
 
 func (ms *MasterServer) lookupVolumeId(vids []string, collection string) (volumeLocations map[string]operation.LookupResult) {
@@ -49,10 +51,11 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 	collection := r.FormValue("collection") //optional, but can be faster if too many collections
 	volumeLocations := ms.lookupVolumeId(vids, collection)
 	location := volumeLocations[vid]
+	httpStatus := http.StatusOK
 	if location.Error != "" {
-		w.WriteHeader(http.StatusNotFound)
+		httpStatus = http.StatusNotFound
 	}
-	writeJsonQuiet(w, r, location)
+	writeJsonQuiet(w, r, httpStatus, location)
 }
 
 // This can take batched volumeIds, &volumeId=x&volumeId=y&volumeId=z
@@ -61,7 +64,7 @@ func (ms *MasterServer) volumeLookupHandler(w http.ResponseWriter, r *http.Reque
 	vids := r.Form["volumeId"]
 	collection := r.FormValue("collection") //optional, but can be faster if too many collections
 	volumeLocations := ms.lookupVolumeId(vids, collection)
-	writeJsonQuiet(w, r, volumeLocations)
+	writeJsonQuiet(w, r, http.StatusOK, volumeLocations)
 }
 
 func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request) {
@@ -73,22 +76,21 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 
 	option, err := ms.getVolumeGrowOption(r)
 	if err != nil {
-		w.WriteHeader(http.StatusNotAcceptable)
-		writeJsonQuiet(w, r, operation.AssignResult{Error: err.Error()})
+		writeJsonQuiet(w, r, http.StatusNotAcceptable, operation.AssignResult{Error: err.Error()})
 		return
 	}
 
-	if !ms.Topo.HasWriableVolume(option) {
+	if !ms.Topo.HasWritableVolume(option) {
 		if ms.Topo.FreeSpace() <= 0 {
-			w.WriteHeader(http.StatusNotFound)
-			writeJsonQuiet(w, r, operation.AssignResult{Error: "No free volumes left!"})
+			writeJsonQuiet(w, r, http.StatusNotFound, operation.AssignResult{Error: "No free volumes left!"})
 			return
 		} else {
 			ms.vgLock.Lock()
 			defer ms.vgLock.Unlock()
-			if !ms.Topo.HasWriableVolume(option) {
+			if !ms.Topo.HasWritableVolume(option) {
 				if _, err = ms.vg.AutomaticGrowByType(option, ms.Topo); err != nil {
-					writeJsonQuiet(w, r, operation.AssignResult{Error: "Cannot grow volume group! " + err.Error()})
+					writeJsonError(w, r, http.StatusInternalServerError,
+						fmt.Errorf("Cannot grow volume group! %v", err))
 					return
 				}
 			}
@@ -96,9 +98,8 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 	}
 	fid, count, dn, err := ms.Topo.PickForWrite(requestedCount, option)
 	if err == nil {
-		writeJsonQuiet(w, r, operation.AssignResult{Fid: fid, Url: dn.Url(), PublicUrl: dn.PublicUrl, Count: count})
+		writeJsonQuiet(w, r, http.StatusOK, operation.AssignResult{Fid: fid, Url: dn.Url(), PublicUrl: dn.PublicUrl, Count: count})
 	} else {
-		w.WriteHeader(http.StatusNotAcceptable)
-		writeJsonQuiet(w, r, operation.AssignResult{Error: err.Error()})
+		writeJsonQuiet(w, r, http.StatusNotAcceptable, operation.AssignResult{Error: err.Error()})
 	}
 }

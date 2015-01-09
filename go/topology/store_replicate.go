@@ -2,12 +2,13 @@ package topology
 
 import (
 	"bytes"
+	"net/http"
+	"strconv"
+
 	"github.com/chrislusf/weed-fs/go/glog"
 	"github.com/chrislusf/weed-fs/go/operation"
 	"github.com/chrislusf/weed-fs/go/storage"
 	"github.com/chrislusf/weed-fs/go/util"
-	"net/http"
-	"strconv"
 )
 
 func ReplicatedWrite(masterNode string, s *storage.Store, volumeId storage.VolumeId, needle *storage.Needle, r *http.Request) (size uint32, errorStatus string) {

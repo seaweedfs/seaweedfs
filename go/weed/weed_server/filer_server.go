@@ -1,32 +1,57 @@
 package weed_server
 
 import (
-	"github.com/chrislusf/weed-fs/go/filer"
-	"github.com/chrislusf/weed-fs/go/glog"
 	"net/http"
 	"strconv"
+
+	"github.com/chrislusf/weed-fs/go/filer"
+	"github.com/chrislusf/weed-fs/go/filer/cassandra_store"
+	"github.com/chrislusf/weed-fs/go/filer/embedded_filer"
+	"github.com/chrislusf/weed-fs/go/filer/flat_namespace"
+	"github.com/chrislusf/weed-fs/go/filer/redis_store"
+	"github.com/chrislusf/weed-fs/go/glog"
 )
 
 type FilerServer struct {
-	port       string
-	master     string
-	collection string
-	filer      filer.Filer
+	port               string
+	master             string
+	collection         string
+	defaultReplication string
+	redirectOnRead     bool
+	filer              filer.Filer
 }
 
-func NewFilerServer(r *http.ServeMux, port int, master string, dir string, collection string) (fs *FilerServer, err error) {
+func NewFilerServer(r *http.ServeMux, port int, master string, dir string, collection string,
+	replication string, redirectOnRead bool,
+	cassandra_server string, cassandra_keyspace string,
+	redis_server string, redis_database int,
+) (fs *FilerServer, err error) {
 	fs = &FilerServer{
-		master:     master,
-		collection: collection,
-		port:       ":" + strconv.Itoa(port),
+		master:             master,
+		collection:         collection,
+		defaultReplication: replication,
+		redirectOnRead:     redirectOnRead,
+		port:               ":" + strconv.Itoa(port),
 	}
 
-	if fs.filer, err = filer.NewFilerEmbedded(master, dir); err != nil {
-		glog.Fatal("Can not start filer in dir", dir, ": ", err.Error())
-		return
+	if cassandra_server != "" {
+		cassandra_store, err := cassandra_store.NewCassandraStore(cassandra_keyspace, cassandra_server)
+		if err != nil {
+			glog.Fatalf("Can not connect to cassandra server %s with keyspace %s: %v", cassandra_server, cassandra_keyspace, err)
+		}
+		fs.filer = flat_namespace.NewFlatNamesapceFiler(master, cassandra_store)
+	} else if redis_server != "" {
+		redis_store := redis_store.NewRedisStore(redis_server, redis_database)
+		fs.filer = flat_namespace.NewFlatNamesapceFiler(master, redis_store)
+	} else {
+		if fs.filer, err = embedded_filer.NewFilerEmbedded(master, dir); err != nil {
+			glog.Fatalf("Can not start filer in dir %s : %v", err)
+			return
+		}
+
+		r.HandleFunc("/admin/mv", fs.moveHandler)
 	}
 
-	r.HandleFunc("/admin/mv", fs.moveHandler)
 	r.HandleFunc("/", fs.filerHandler)
 
 	return fs, nil

@@ -1,11 +1,9 @@
 package storage
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/images"
-	"github.com/chrislusf/weed-fs/go/util"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"mime"
 	"net/http"
@@ -13,6 +11,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/images"
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 const (
@@ -23,6 +25,7 @@ const (
 )
 
 /*
+* A Needle means a uploaded and stored file.
 * Needle file size is limited to 4GB for now.
  */
 type Needle struct {
@@ -42,6 +45,11 @@ type Needle struct {
 
 	Checksum CRC    `comment:"CRC32 to check integrity"`
 	Padding  []byte `comment:"Aligned to 8 bytes"`
+}
+
+func (n *Needle) String() (str string) {
+	str = fmt.Sprintf("Cookie:%d, Id:%d, Size:%d, DataSize:%d, Name: %s, Mime: %s", n.Cookie, n.Id, n.Size, n.DataSize, n.Name, n.Mime)
+	return
 }
 
 func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string, isGzipped bool, modifiedTime uint64, ttl *TTL, e error) {

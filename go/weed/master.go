@@ -1,16 +1,17 @@
 package main
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/util"
-	"github.com/chrislusf/weed-fs/go/weed/weed_server"
-	"github.com/gorilla/mux"
 	"net/http"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/weed/weed_server"
+	"github.com/gorilla/mux"
 )
 
 func init() {
@@ -29,6 +30,7 @@ var cmdMaster = &Command{
 var (
 	mport                   = cmdMaster.Flag.Int("port", 9333, "http listen port")
 	masterIp                = cmdMaster.Flag.String("ip", "", "master listening ip address, default to listen on all network interfaces")
+	masterBindIp            = cmdMaster.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	mPublicIp               = cmdMaster.Flag.String("publicIp", "", "peer accessible <ip>|<server_name>")
 	metaFolder              = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
 	masterPeers             = cmdMaster.Flag.String("peers", "", "other master nodes in comma separated ip:port list")
@@ -40,6 +42,7 @@ var (
 	mMaxCpu                 = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	garbageThreshold        = cmdMaster.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
 	masterWhiteListOption   = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
+	masterSecureKey         = cmdMaster.Flag.String("secure.key", "", "secret key to check permission")
 
 	masterWhiteList []string
 )
@@ -58,10 +61,11 @@ func runMaster(cmd *Command, args []string) bool {
 
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, *mport, *metaFolder,
-		*volumeSizeLimitMB, *mpulse, *confFile, *defaultReplicaPlacement, *garbageThreshold, masterWhiteList,
+		*volumeSizeLimitMB, *mpulse, *confFile, *defaultReplicaPlacement, *garbageThreshold,
+		masterWhiteList, *masterSecureKey,
 	)
 
-	listeningAddress := *masterIp + ":" + strconv.Itoa(*mport)
+	listeningAddress := *masterBindIp + ":" + strconv.Itoa(*mport)
 
 	glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", listeningAddress)
 

@@ -1,6 +1,8 @@
 package topology
 
-import ()
+import (
+	"fmt"
+)
 
 type VolumeLocationList struct {
 	list []*DataNode
@@ -8,6 +10,10 @@ type VolumeLocationList struct {
 
 func NewVolumeLocationList() *VolumeLocationList {
 	return &VolumeLocationList{}
+}
+
+func (dnll *VolumeLocationList) String() string {
+	return fmt.Sprintf("%v", dnll.list)
 }
 
 func (dnll *VolumeLocationList) Head() *DataNode {

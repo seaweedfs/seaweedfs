@@ -1,16 +1,19 @@
 package weed_server
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"sync"
+
 	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/security"
 	"github.com/chrislusf/weed-fs/go/sequence"
 	"github.com/chrislusf/weed-fs/go/topology"
 	"github.com/chrislusf/weed-fs/go/util"
 	"github.com/goraft/raft"
 	"github.com/gorilla/mux"
-	"net/http"
-	"net/http/httputil"
-	"net/url"
-	"sync"
 )
 
 type MasterServer struct {
@@ -20,7 +23,6 @@ type MasterServer struct {
 	pulseSeconds            int
 	defaultReplicaPlacement string
 	garbageThreshold        string
-	whiteList               []string
 
 	Topo   *topology.Topology
 	vg     *topology.VolumeGrowth
@@ -36,6 +38,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	defaultReplicaPlacement string,
 	garbageThreshold string,
 	whiteList []string,
+	secureKey string,
 ) *MasterServer {
 	ms := &MasterServer{
 		port:                    port,
@@ -43,7 +46,6 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 		pulseSeconds:            pulseSeconds,
 		defaultReplicaPlacement: defaultReplicaPlacement,
 		garbageThreshold:        garbageThreshold,
-		whiteList:               whiteList,
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
 	seq := sequence.NewMemorySequencer()
@@ -55,20 +57,22 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", volumeSizeLimitMB, "MB")
 
-	r.HandleFunc("/dir/assign", ms.proxyToLeader(secure(ms.whiteList, ms.dirAssignHandler)))
-	r.HandleFunc("/dir/lookup", ms.proxyToLeader(secure(ms.whiteList, ms.dirLookupHandler)))
-	r.HandleFunc("/dir/join", ms.proxyToLeader(secure(ms.whiteList, ms.dirJoinHandler)))
-	r.HandleFunc("/dir/status", ms.proxyToLeader(secure(ms.whiteList, ms.dirStatusHandler)))
-	r.HandleFunc("/col/delete", ms.proxyToLeader(secure(ms.whiteList, ms.collectionDeleteHandler)))
-	r.HandleFunc("/vol/lookup", ms.proxyToLeader(secure(ms.whiteList, ms.volumeLookupHandler)))
-	r.HandleFunc("/vol/grow", ms.proxyToLeader(secure(ms.whiteList, ms.volumeGrowHandler)))
-	r.HandleFunc("/vol/status", ms.proxyToLeader(secure(ms.whiteList, ms.volumeStatusHandler)))
-	r.HandleFunc("/vol/vacuum", ms.proxyToLeader(secure(ms.whiteList, ms.volumeVacuumHandler)))
-	r.HandleFunc("/submit", secure(ms.whiteList, ms.submitFromMasterServerHandler))
-	r.HandleFunc("/delete", secure(ms.whiteList, ms.deleteFromMasterServerHandler))
+	guard := security.NewGuard(whiteList, secureKey)
+
+	r.HandleFunc("/dir/assign", ms.proxyToLeader(guard.Secure(ms.dirAssignHandler)))
+	r.HandleFunc("/dir/lookup", ms.proxyToLeader(guard.Secure(ms.dirLookupHandler)))
+	r.HandleFunc("/dir/join", ms.proxyToLeader(guard.Secure(ms.dirJoinHandler)))
+	r.HandleFunc("/dir/status", ms.proxyToLeader(guard.Secure(ms.dirStatusHandler)))
+	r.HandleFunc("/col/delete", ms.proxyToLeader(guard.Secure(ms.collectionDeleteHandler)))
+	r.HandleFunc("/vol/lookup", ms.proxyToLeader(guard.Secure(ms.volumeLookupHandler)))
+	r.HandleFunc("/vol/grow", ms.proxyToLeader(guard.Secure(ms.volumeGrowHandler)))
+	r.HandleFunc("/vol/status", ms.proxyToLeader(guard.Secure(ms.volumeStatusHandler)))
+	r.HandleFunc("/vol/vacuum", ms.proxyToLeader(guard.Secure(ms.volumeVacuumHandler)))
+	r.HandleFunc("/submit", guard.Secure(ms.submitFromMasterServerHandler))
+	r.HandleFunc("/delete", guard.Secure(ms.deleteFromMasterServerHandler))
 	r.HandleFunc("/{fileId}", ms.redirectHandler)
-	r.HandleFunc("/stats/counter", secure(ms.whiteList, statsCounterHandler))
-	r.HandleFunc("/stats/memory", secure(ms.whiteList, statsMemoryHandler))
+	r.HandleFunc("/stats/counter", guard.Secure(statsCounterHandler))
+	r.HandleFunc("/stats/memory", guard.Secure(statsMemoryHandler))
 
 	ms.Topo.StartRefreshWritableVolumes(garbageThreshold)
 
@@ -100,7 +104,8 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 			defer func() { <-ms.bounedLeaderChan }()
 			targetUrl, err := url.Parse("http://" + ms.Topo.RaftServer.Leader())
 			if err != nil {
-				writeJsonQuiet(w, r, map[string]interface{}{"error": "Leader URL http://" + ms.Topo.RaftServer.Leader() + " Parse Error " + err.Error()})
+				writeJsonError(w, r, http.StatusInternalServerError,
+					fmt.Errorf("Leader URL http://%s Parse Error: %v", ms.Topo.RaftServer.Leader(), err))
 				return
 			}
 			glog.V(4).Infoln("proxying to leader", ms.Topo.RaftServer.Leader())

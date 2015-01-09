@@ -1,11 +1,12 @@
 package main
 
 import (
-	"github.com/chrislusf/weed-fs/go/operation"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/chrislusf/weed-fs/go/operation"
 )
 
 var (

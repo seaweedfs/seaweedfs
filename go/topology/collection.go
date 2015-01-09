@@ -1,19 +1,26 @@
 package topology
 
 import (
+	"fmt"
+
 	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 type Collection struct {
 	Name                     string
 	volumeSizeLimit          uint64
-	storageType2VolumeLayout map[string]*VolumeLayout
+	storageType2VolumeLayout *util.ConcurrentReadMap
 }
 
 func NewCollection(name string, volumeSizeLimit uint64) *Collection {
 	c := &Collection{Name: name, volumeSizeLimit: volumeSizeLimit}
-	c.storageType2VolumeLayout = make(map[string]*VolumeLayout)
+	c.storageType2VolumeLayout = util.NewConcurrentReadMap()
 	return c
+}
+
+func (c *Collection) String() string {
+	return fmt.Sprintf("Name:%s, volumeSizeLimit:%d, storageType2VolumeLayout:%v", c.Name, c.volumeSizeLimit, c.storageType2VolumeLayout)
 }
 
 func (c *Collection) GetOrCreateVolumeLayout(rp *storage.ReplicaPlacement, ttl *storage.TTL) *VolumeLayout {
@@ -21,16 +28,16 @@ func (c *Collection) GetOrCreateVolumeLayout(rp *storage.ReplicaPlacement, ttl *
 	if ttl != nil {
 		keyString += ttl.String()
 	}
-	if c.storageType2VolumeLayout[keyString] == nil {
-		c.storageType2VolumeLayout[keyString] = NewVolumeLayout(rp, ttl, c.volumeSizeLimit)
-	}
-	return c.storageType2VolumeLayout[keyString]
+	vl := c.storageType2VolumeLayout.Get(keyString, func() interface{} {
+		return NewVolumeLayout(rp, ttl, c.volumeSizeLimit)
+	})
+	return vl.(*VolumeLayout)
 }
 
 func (c *Collection) Lookup(vid storage.VolumeId) []*DataNode {
-	for _, vl := range c.storageType2VolumeLayout {
+	for _, vl := range c.storageType2VolumeLayout.Items {
 		if vl != nil {
-			if list := vl.Lookup(vid); list != nil {
+			if list := vl.(*VolumeLayout).Lookup(vid); list != nil {
 				return list
 			}
 		}
@@ -39,9 +46,9 @@ func (c *Collection) Lookup(vid storage.VolumeId) []*DataNode {
 }
 
 func (c *Collection) ListVolumeServers() (nodes []*DataNode) {
-	for _, vl := range c.storageType2VolumeLayout {
+	for _, vl := range c.storageType2VolumeLayout.Items {
 		if vl != nil {
-			if list := vl.ListVolumeServers(); list != nil {
+			if list := vl.(*VolumeLayout).ListVolumeServers(); list != nil {
 				nodes = append(nodes, list...)
 			}
 		}

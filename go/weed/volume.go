@@ -1,15 +1,16 @@
 package main
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/util"
-	"github.com/chrislusf/weed-fs/go/weed/weed_server"
 	"net/http"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/chrislusf/weed-fs/go/weed/weed_server"
 )
 
 func init() {
@@ -26,11 +27,12 @@ var cmdVolume = &Command{
 
 var (
 	vport                 = cmdVolume.Flag.Int("port", 8080, "http listen port")
+	volumeSecurePort      = cmdVolume.Flag.Int("port.secure", 8443, "https listen port, active when SSL certs are specified. Not ready yet.")
 	volumeFolders         = cmdVolume.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	maxVolumeCounts       = cmdVolume.Flag.String("max", "7", "maximum numbers of volumes, count[,count]...")
 	ip                    = cmdVolume.Flag.String("ip", "", "ip or server name")
 	publicIp              = cmdVolume.Flag.String("publicIp", "", "Publicly accessible <ip|server_name>")
-	bindIp                = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
+	volumeBindIp          = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	masterNode            = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
 	vpulse                = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
 	vTimeout              = cmdVolume.Flag.Int("idleTimeout", 10, "connection idle seconds")
@@ -69,6 +71,7 @@ func runVolume(cmd *Command, args []string) bool {
 
 	if *publicIp == "" {
 		if *ip == "" {
+			*ip = "127.0.0.1"
 			*publicIp = "localhost"
 		} else {
 			*publicIp = *ip
@@ -81,11 +84,12 @@ func runVolume(cmd *Command, args []string) bool {
 	r := http.NewServeMux()
 
 	volumeServer := weed_server.NewVolumeServer(r, *ip, *vport, *publicIp, folders, maxCounts,
-		*masterNode, *vpulse, *dataCenter, *rack, volumeWhiteList,
+		*masterNode, *vpulse, *dataCenter, *rack,
+		volumeWhiteList,
 		*fixJpgOrientation,
 	)
 
-	listeningAddress := *bindIp + ":" + strconv.Itoa(*vport)
+	listeningAddress := *volumeBindIp + ":" + strconv.Itoa(*vport)
 
 	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "at", listeningAddress)
 

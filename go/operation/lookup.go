@@ -1,14 +1,15 @@
 package operation
 
 import (
-	"github.com/chrislusf/weed-fs/go/util"
 	"encoding/json"
 	"errors"
-	_ "fmt"
+	"fmt"
 	"math/rand"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/weed-fs/go/util"
 )
 
 type Location struct {
@@ -19,6 +20,10 @@ type LookupResult struct {
 	VolumeId  string     `json:"volumeId,omitempty"`
 	Locations []Location `json:"locations,omitempty"`
 	Error     string     `json:"error,omitempty"`
+}
+
+func (lr *LookupResult) String() string {
+	return fmt.Sprintf("VolumeId:%s, Locations:%v, Error:%s", lr.VolumeId, lr.Locations, lr.Error)
 }
 
 var (

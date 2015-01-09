@@ -1,13 +1,14 @@
 package weed_server
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/operation"
 	"encoding/json"
-	"github.com/goraft/raft"
 	"io/ioutil"
 	"net/http"
 	"strings"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/goraft/raft"
 )
 
 // Handles incoming RAFT joins.
@@ -59,5 +60,5 @@ func (s *RaftServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 	if leader, e := s.topo.Leader(); e == nil {
 		ret.Leader = leader
 	}
-	writeJsonQuiet(w, r, ret)
+	writeJsonQuiet(w, r, http.StatusOK, ret)
 }

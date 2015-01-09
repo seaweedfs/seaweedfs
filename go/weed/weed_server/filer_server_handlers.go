@@ -1,12 +1,8 @@
 package weed_server
 
 import (
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/operation"
-	"github.com/chrislusf/weed-fs/go/util"
 	"encoding/json"
 	"errors"
-	"github.com/syndtr/goleveldb/leveldb"
 	"io"
 	"io/ioutil"
 	"math/rand"
@@ -14,6 +10,11 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/syndtr/goleveldb/leveldb"
 )
 
 func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +50,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		limit = 100
 	}
 	m["Files"], _ = fs.filer.ListFiles(r.URL.Path, lastFileName, limit)
-	writeJsonQuiet(w, r, m)
+	writeJsonQuiet(w, r, http.StatusOK, m)
 }
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
 	if strings.HasSuffix(r.URL.Path, "/") {
@@ -80,7 +81,12 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	urlLocation := lookup.Locations[rand.Intn(len(lookup.Locations))].PublicUrl
-	u, _ := url.Parse("http://" + urlLocation + "/" + fileId)
+	urlString := "http://" + urlLocation + "/" + fileId
+	if fs.redirectOnRead {
+		http.Redirect(w, r, urlString, http.StatusFound)
+		return
+	}
+	u, _ := url.Parse(urlString)
 	request := &http.Request{
 		Method:        r.Method,
 		URL:           u,
@@ -96,7 +102,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	resp, do_err := util.Do(request)
 	if do_err != nil {
 		glog.V(0).Infoln("failing to connect to volume server", do_err.Error())
-		writeJsonError(w, r, do_err)
+		writeJsonError(w, r, http.StatusInternalServerError, do_err)
 		return
 	}
 	defer resp.Body.Close()
@@ -109,10 +115,14 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 
 func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
-	assignResult, ae := operation.Assign(fs.master, 1, query.Get("replication"), fs.collection, query.Get("ttl"))
+	replication := query.Get("replication")
+	if replication == "" {
+		replication = fs.defaultReplication
+	}
+	assignResult, ae := operation.Assign(fs.master, 1, replication, fs.collection, query.Get("ttl"))
 	if ae != nil {
 		glog.V(0).Infoln("failing to assign a file id", ae.Error())
-		writeJsonError(w, r, ae)
+		writeJsonError(w, r, http.StatusInternalServerError, ae)
 		return
 	}
 
@@ -132,14 +142,14 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	resp, do_err := util.Do(request)
 	if do_err != nil {
 		glog.V(0).Infoln("failing to connect to volume server", r.RequestURI, do_err.Error())
-		writeJsonError(w, r, do_err)
+		writeJsonError(w, r, http.StatusInternalServerError, do_err)
 		return
 	}
 	defer resp.Body.Close()
 	resp_body, ra_err := ioutil.ReadAll(resp.Body)
 	if ra_err != nil {
 		glog.V(0).Infoln("failing to upload to volume server", r.RequestURI, ra_err.Error())
-		writeJsonError(w, r, ra_err)
+		writeJsonError(w, r, http.StatusInternalServerError, ra_err)
 		return
 	}
 	glog.V(4).Infoln("post result", string(resp_body))
@@ -147,12 +157,12 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
 		glog.V(0).Infoln("failing to read upload resonse", r.RequestURI, string(resp_body))
-		writeJsonError(w, r, unmarshal_err)
+		writeJsonError(w, r, http.StatusInternalServerError, unmarshal_err)
 		return
 	}
 	if ret.Error != "" {
 		glog.V(0).Infoln("failing to post to volume server", r.RequestURI, ret.Error)
-		writeJsonError(w, r, errors.New(ret.Error))
+		writeJsonError(w, r, http.StatusInternalServerError, errors.New(ret.Error))
 		return
 	}
 	path := r.URL.Path
@@ -162,18 +172,20 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		} else {
 			operation.DeleteFile(fs.master, assignResult.Fid) //clean up
 			glog.V(0).Infoln("Can not to write to folder", path, "without a file name!")
-			writeJsonError(w, r, errors.New("Can not to write to folder "+path+" without a file name"))
+			writeJsonError(w, r, http.StatusInternalServerError,
+				errors.New("Can not to write to folder "+path+" without a file name"))
 			return
 		}
 	}
 	glog.V(4).Infoln("saving", path, "=>", assignResult.Fid)
 	if db_err := fs.filer.CreateFile(path, assignResult.Fid); db_err != nil {
 		operation.DeleteFile(fs.master, assignResult.Fid) //clean up
-		glog.V(0).Infoln("failing to write to filer server", r.RequestURI, db_err.Error())
-		writeJsonError(w, r, db_err)
+		glog.V(0).Infof("failing to write %s to filer server : %v", path, db_err)
+		writeJsonError(w, r, http.StatusInternalServerError, db_err)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
+	w.Write(resp_body)
 }
 
 // curl -X DELETE http://localhost:8888/path/to
@@ -191,10 +203,9 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err == nil {
-		w.WriteHeader(http.StatusAccepted)
-		writeJsonQuiet(w, r, map[string]string{"error": ""})
+		writeJsonQuiet(w, r, http.StatusAccepted, map[string]string{"error": ""})
 	} else {
 		glog.V(4).Infoln("deleting", r.URL.Path, ":", err.Error())
-		writeJsonError(w, r, err)
+		writeJsonError(w, r, http.StatusInternalServerError, err)
 	}
 }

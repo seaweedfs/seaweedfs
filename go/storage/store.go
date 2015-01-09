@@ -1,10 +1,6 @@
 package storage
 
 import (
-	proto "code.google.com/p/goprotobuf/proto"
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/operation"
-	"github.com/chrislusf/weed-fs/go/util"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +8,11 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
+
+	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/golang/protobuf/proto"
 )
 
 const (
@@ -30,6 +31,10 @@ func (mn *DiskLocation) reset() {
 type MasterNodes struct {
 	nodes    []string
 	lastNode int
+}
+
+func (mn *MasterNodes) String() string {
+	return fmt.Sprintf("nodes:%v, lastNode:%d", mn.nodes, mn.lastNode)
 }
 
 func NewMasterNodes(bootstrapNode string) (mn *MasterNodes) {
@@ -64,6 +69,9 @@ func (mn *MasterNodes) findMaster() (string, error) {
 	return mn.nodes[mn.lastNode], nil
 }
 
+/*
+ * A VolumeServer contains one Store
+ */
 type Store struct {
 	Port            int
 	Ip              string
@@ -74,6 +82,11 @@ type Store struct {
 	connected       bool
 	volumeSizeLimit uint64 //read from the master
 	masterNodes     *MasterNodes
+}
+
+func (s *Store) String() (str string) {
+	str = fmt.Sprintf("Ip:%s, Port:%d, PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d, masterNodes:%s", s.Ip, s.Port, s.PublicUrl, s.dataCenter, s.rack, s.connected, s.volumeSizeLimit, s.masterNodes)
+	return
 }
 
 func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int) (s *Store) {
