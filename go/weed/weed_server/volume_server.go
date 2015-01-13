@@ -22,7 +22,7 @@ type VolumeServer struct {
 	FixJpgOrientation bool
 }
 
-func NewVolumeServer(r *http.ServeMux, ip string, port int, publicIp string, folders []string, maxCounts []int,
+func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string, port int, publicIp string, folders []string, maxCounts []int,
 	masterNode string, pulseSeconds int,
 	dataCenter string, rack string,
 	whiteList []string,
@@ -39,18 +39,18 @@ func NewVolumeServer(r *http.ServeMux, ip string, port int, publicIp string, fol
 
 	vs.guard = security.NewGuard(whiteList, "")
 
-	r.HandleFunc("/status", vs.guard.Secure(vs.statusHandler))
-	r.HandleFunc("/admin/assign_volume", vs.guard.Secure(vs.assignVolumeHandler))
-	r.HandleFunc("/admin/vacuum_volume_check", vs.guard.Secure(vs.vacuumVolumeCheckHandler))
-	r.HandleFunc("/admin/vacuum_volume_compact", vs.guard.Secure(vs.vacuumVolumeCompactHandler))
-	r.HandleFunc("/admin/vacuum_volume_commit", vs.guard.Secure(vs.vacuumVolumeCommitHandler))
-	r.HandleFunc("/admin/freeze_volume", vs.guard.Secure(vs.freezeVolumeHandler))
-	r.HandleFunc("/admin/delete_collection", vs.guard.Secure(vs.deleteCollectionHandler))
-	r.HandleFunc("/stats/counter", vs.guard.Secure(statsCounterHandler))
-	r.HandleFunc("/stats/memory", vs.guard.Secure(statsMemoryHandler))
-	r.HandleFunc("/stats/disk", vs.guard.Secure(vs.statsDiskHandler))
-	r.HandleFunc("/delete", vs.guard.Secure(vs.batchDeleteHandler))
-	r.HandleFunc("/", vs.storeHandler)
+	adminMux.HandleFunc("/status", vs.guard.Secure(vs.statusHandler))
+	adminMux.HandleFunc("/admin/assign_volume", vs.guard.Secure(vs.assignVolumeHandler))
+	adminMux.HandleFunc("/admin/vacuum_volume_check", vs.guard.Secure(vs.vacuumVolumeCheckHandler))
+	adminMux.HandleFunc("/admin/vacuum_volume_compact", vs.guard.Secure(vs.vacuumVolumeCompactHandler))
+	adminMux.HandleFunc("/admin/vacuum_volume_commit", vs.guard.Secure(vs.vacuumVolumeCommitHandler))
+	adminMux.HandleFunc("/admin/freeze_volume", vs.guard.Secure(vs.freezeVolumeHandler))
+	adminMux.HandleFunc("/admin/delete_collection", vs.guard.Secure(vs.deleteCollectionHandler))
+	adminMux.HandleFunc("/stats/counter", vs.guard.Secure(statsCounterHandler))
+	adminMux.HandleFunc("/stats/memory", vs.guard.Secure(statsMemoryHandler))
+	adminMux.HandleFunc("/stats/disk", vs.guard.Secure(vs.statsDiskHandler))
+	publicMux.HandleFunc("/delete", vs.guard.Secure(vs.batchDeleteHandler))
+	publicMux.HandleFunc("/", vs.storeHandler)
 
 	go func() {
 		connected := true

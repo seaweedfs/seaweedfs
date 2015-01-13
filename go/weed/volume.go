@@ -107,7 +107,7 @@ func runVolume(cmd *Command, args []string) bool {
 
 	r := http.NewServeMux()
 
-	volumeServer := weed_server.NewVolumeServer(r, *v.ip, *v.port, *v.publicIp, v.folders, v.folderMaxLimits,
+	volumeServer := weed_server.NewVolumeServer(r, r, *v.ip, *v.port, *v.publicIp, v.folders, v.folderMaxLimits,
 		*v.master, *v.pulseSeconds, *v.dataCenter, *v.rack,
 		v.whiteList,
 		*v.fixJpgOrientation,
