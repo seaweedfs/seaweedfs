@@ -3,7 +3,7 @@ Design for Seaweed-FS security
 Design Objectives
 	Security can mean many different things. The original vision is that: if you have one machine lying around
 	somewhere with some disk space, it should be able to join your file system to contribute some disk space and
-	network bandwidth.
+	network bandwidth, securely!
 
 	To achieve this purpose, the security should be able to:
 	1. Secure the inter-server communication. Only real cluster servers can join and communicate.
@@ -14,7 +14,7 @@ Non Objective
 	User specific access control.
 
 Design Architect
-	master, and volume servers all talk securely via 2-way SSL for admin.
+	master, and volume servers all talk securely via 2-way SSL for admin operations.
 	upon joining, master gives its secret key to volume servers.
 	filer or clients talk to master to get secret key, and use the key to generate JWT to write on volume server.
 	A side benefit:
@@ -34,3 +34,18 @@ file uploading:
 	when filer/clients wants to upload, master generate a JWT
 		filer~>volume(public port)
 		master~>volume(public port)
+
+Currently, volume server has 2 ip addresses: ip and publicUrl.
+	The ip is for admin purpose, and master talk to volume server this way.
+	The publicUrl is for clients to access the server, via http GET/POST/DELETE etc.
+		The write operations are secured by JWT.
+	clients talk to master also via https? possible. Decide on this later.
+
+Dev plan:
+	1. volume server separate admin from public GET/POST/DELETE handlers
+		The step 1 may be good enough for most use cases.
+
+	If 2-way ssl are still needed
+	2. volume server add ssl support
+	3. https connections to operate on volume servers
+
