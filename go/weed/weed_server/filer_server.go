@@ -45,7 +45,7 @@ func NewFilerServer(r *http.ServeMux, port int, master string, dir string, colle
 		fs.filer = flat_namespace.NewFlatNamesapceFiler(master, redis_store)
 	} else {
 		if fs.filer, err = embedded_filer.NewFilerEmbedded(master, dir); err != nil {
-			glog.Fatalf("Can not start filer in dir %s : %v", err)
+			glog.Fatalf("Can not start filer in dir %s : %v", dir, err)
 			return
 		}
 
