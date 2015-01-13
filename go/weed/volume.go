@@ -71,6 +71,7 @@ func runVolume(cmd *Command, args []string) bool {
 	}
 	runtime.GOMAXPROCS(*v.maxCpu)
 
+	//Set multiple folders and each folder's max volume count limit'
 	v.folders = strings.Split(*volumeFolders, ",")
 	maxCountStrings := strings.Split(*maxVolumeCounts, ",")
 	for _, maxString := range maxCountStrings {
@@ -88,10 +89,13 @@ func runVolume(cmd *Command, args []string) bool {
 			glog.Fatalf("Check Data Folder(-dir) Writable %s : %s", folder, err)
 		}
 	}
+
+	//security related white list configuration
 	if *volumeWhiteListOption != "" {
 		v.whiteList = strings.Split(*volumeWhiteListOption, ",")
 	}
 
+	//derive default public ip address
 	if *v.publicIp == "" {
 		if *v.ip == "" {
 			*v.ip = "127.0.0.1"
@@ -109,7 +113,7 @@ func runVolume(cmd *Command, args []string) bool {
 		*v.fixJpgOrientation,
 	)
 
-	listeningAddress := *v.ip + ":" + strconv.Itoa(*v.port)
+	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port)
 
 	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "at", listeningAddress)
 
