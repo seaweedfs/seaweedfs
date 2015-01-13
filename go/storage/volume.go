@@ -175,7 +175,7 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 	}
 	var offset int64
 	if offset, err = v.dataFile.Seek(0, 2); err != nil {
-		glog.V(0).Infof("faile to seek the end of file: %v", err)
+		glog.V(0).Infof("failed to seek the end of file: %v", err)
 		return
 	}
 
