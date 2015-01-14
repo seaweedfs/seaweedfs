@@ -30,12 +30,12 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 			defer func(s io.Seeker, off int64) {
 				if err != nil {
 					if _, e = s.Seek(off, 0); e != nil {
-						glog.V(0).Infof("Failed to seek %s back to %d with error: %s", w, off, e.Error())
+						glog.V(0).Infof("Failed to seek %s back to %d with error: %v", w, off, e)
 					}
 				}
 			}(s, end)
 		} else {
-			err = fmt.Errorf("Cnnot Read Current Volume Position: %s", e.Error())
+			err = fmt.Errorf("Cnnot Read Current Volume Position: %v", e)
 			return
 		}
 	}

@@ -287,10 +287,10 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 	visitNeedle func(n *Needle, offset int64) error) (err error) {
 	var v *Volume
 	if v, err = loadVolumeWithoutIndex(dirname, collection, id); err != nil {
-		return errors.New("Failed to load volume:" + err.Error())
+		return fmt.Errorf("Failed to load volume %d: %v", id, err)
 	}
 	if err = visitSuperBlock(v.SuperBlock); err != nil {
-		return errors.New("Failed to read super block:" + err.Error())
+		return fmt.Errorf("Failed to read volume %d super block: %v", id, err)
 	}
 
 	version := v.Version()

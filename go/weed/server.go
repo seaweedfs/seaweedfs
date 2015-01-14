@@ -167,7 +167,7 @@ func runServer(cmd *Command, args []string) bool {
 				"", 0,
 			)
 			if nfs_err != nil {
-				glog.Fatalf(nfs_err.Error())
+				glog.Fatalf("Filer startup error: %v", nfs_err)
 			}
 			glog.V(0).Infoln("Start Seaweed Filer", util.VERSION, "at port", strconv.Itoa(*filerOptions.port))
 			filerListener, e := util.NewListener(
@@ -175,10 +175,11 @@ func runServer(cmd *Command, args []string) bool {
 				time.Duration(10)*time.Second,
 			)
 			if e != nil {
+				glog.Fatalf("Filer listener error: %v", e)
 				glog.Fatalf(e.Error())
 			}
 			if e := http.Serve(filerListener, r); e != nil {
-				glog.Fatalf("Filer Fail to serve:%s", e.Error())
+				glog.Fatalf("Filer Fail to serve: %v", e)
 			}
 		}()
 	}
@@ -199,7 +200,7 @@ func runServer(cmd *Command, args []string) bool {
 		glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*masterPort))
 		masterListener, e := util.NewListener(*serverBindIp+":"+strconv.Itoa(*masterPort), time.Duration(*serverTimeout)*time.Second)
 		if e != nil {
-			glog.Fatalf(e.Error())
+			glog.Fatalf("Master startup error: %v", e)
 		}
 
 		go func() {
@@ -235,7 +236,7 @@ func runServer(cmd *Command, args []string) bool {
 		time.Duration(*serverTimeout)*time.Second,
 	)
 	if e != nil {
-		glog.Fatalf(e.Error())
+		glog.Fatalf("Volume server listener error: %v", e)
 	}
 
 	OnInterrupt(func() {
@@ -244,7 +245,7 @@ func runServer(cmd *Command, args []string) bool {
 	})
 
 	if e := http.Serve(volumeListener, r); e != nil {
-		glog.Fatalf("Fail to serve:%s", e.Error())
+		glog.Fatalf("Volume server fail to serve:%v", e)
 	}
 
 	return true

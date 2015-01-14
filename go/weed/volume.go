@@ -119,7 +119,7 @@ func runVolume(cmd *Command, args []string) bool {
 
 	listener, e := util.NewListener(listeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
-		glog.Fatalf(e.Error())
+		glog.Fatalf("Volume server listener error:%v", e)
 	}
 
 	OnInterrupt(func() {
@@ -127,7 +127,7 @@ func runVolume(cmd *Command, args []string) bool {
 	})
 
 	if e := http.Serve(listener, r); e != nil {
-		glog.Fatalf("Fail to serve:%s", e.Error())
+		glog.Fatalf("Volume server fail to serve: %v", e)
 	}
 	return true
 }

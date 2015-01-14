@@ -77,7 +77,7 @@ func runFiler(cmd *Command, args []string) bool {
 		*f.redis_server, *f.redis_database,
 	)
 	if nfs_err != nil {
-		glog.Fatalf(nfs_err.Error())
+		glog.Fatalf("Filer startup error: %v", nfs_err)
 	}
 	glog.V(0).Infoln("Start Seaweed Filer", util.VERSION, "at port", strconv.Itoa(*f.port))
 	filerListener, e := util.NewListener(
@@ -85,10 +85,10 @@ func runFiler(cmd *Command, args []string) bool {
 		time.Duration(10)*time.Second,
 	)
 	if e != nil {
-		glog.Fatalf(e.Error())
+		glog.Fatalf("Filer listener error: %v", e)
 	}
 	if e := http.Serve(filerListener, r); e != nil {
-		glog.Fatalf("Filer Fail to serve:%s", e.Error())
+		glog.Fatalf("Filer Fail to serve: %v", e)
 	}
 
 	return true
