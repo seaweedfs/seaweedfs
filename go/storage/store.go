@@ -64,7 +64,7 @@ func (mn *MasterNodes) findMaster() (string, error) {
 		}
 	}
 	if mn.lastNode < 0 {
-		return "", errors.New("No master node avalable!")
+		return "", errors.New("No master node available!")
 	}
 	return mn.nodes[mn.lastNode], nil
 }

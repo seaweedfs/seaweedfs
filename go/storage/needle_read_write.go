@@ -35,7 +35,7 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 				}
 			}(s, end)
 		} else {
-			err = fmt.Errorf("Cnnot Read Current Volume Position: %v", e)
+			err = fmt.Errorf("Cannot Read Current Volume Position: %v", e)
 			return
 		}
 	}
