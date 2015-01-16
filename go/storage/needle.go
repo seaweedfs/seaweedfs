@@ -59,19 +59,13 @@ func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string
 		e = fe
 		return
 	}
+
+	//first multi-part item
 	part, fe := form.NextPart()
-	for {
-		if fe != nil {
-			glog.V(0).Infoln("Reading Multi part [ERROR]", fe)
-			e = fe
-			return
-		}
-
-		if part.FileName() != "" {
-			break //found the first <file type> multi-part
-		}
-
-		part, fe = form.NextPart()
+	if fe != nil {
+		glog.V(0).Infoln("Reading Multi part [ERROR]", fe)
+		e = fe
+		return
 	}
 
 	fileName = part.FileName()
@@ -84,6 +78,32 @@ func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string
 		glog.V(0).Infoln("Reading Content [ERROR]", e)
 		return
 	}
+
+	//if the filename is empty string, do a search on the other multi-part items
+	for fileName == "" {
+		part2, fe := form.NextPart()
+		if fe != nil {
+			break // no more or on error, just safely break
+		}
+
+		fName := part2.FileName()
+
+		//found the first <file type> multi-part has filename
+		if fName != "" {
+			data2, fe2 := ioutil.ReadAll(part2)
+			if fe2 != nil {
+				glog.V(0).Infoln("Reading Content [ERROR]", fe2)
+				e = fe2
+				return
+			}
+
+			//update
+			data = data2
+			fileName = path.Base(fName)
+			break
+		}
+	}
+
 	dotIndex := strings.LastIndex(fileName, ".")
 	ext, mtype := "", ""
 	if dotIndex > 0 {
