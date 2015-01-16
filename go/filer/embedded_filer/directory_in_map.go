@@ -62,7 +62,7 @@ func NewDirectoryManagerInMap(dirLogFile string) (dm *DirectoryManagerInMap, err
 	//dm.Root do not use NewDirectoryEntryInMap, since dm.max will be changed
 	dm.Root = &DirectoryEntryInMap{SubDirectories: make(map[string]*DirectoryEntryInMap)}
 	if dm.logFile, err = os.OpenFile(dirLogFile, os.O_RDWR|os.O_CREATE, 0644); err != nil {
-		return nil, fmt.Errorf("cannot write directory log file %s.idx: %s", dirLogFile, err.Error())
+		return nil, fmt.Errorf("cannot write directory log file %s.idx: %v", dirLogFile, err)
 	}
 	return dm, dm.load()
 }

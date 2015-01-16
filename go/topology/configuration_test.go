@@ -33,7 +33,7 @@ func TestLoadConfiguration(t *testing.T) {
 
 	fmt.Printf("%s\n", c)
 	if err != nil {
-		t.Fatalf("unmarshal error:%s", err.Error())
+		t.Fatalf("unmarshal error:%v", err)
 	}
 
 	if len(c.Topo.DataCenters) <= 0 || c.Topo.DataCenters[0].Name != "dc1" {

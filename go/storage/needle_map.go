@@ -126,7 +126,7 @@ func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) (int, error) {
 		nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 	}
 	if _, err := nm.indexFile.Seek(0, 2); err != nil {
-		return 0, fmt.Errorf("cannot go to the end of indexfile %s: %s", nm.indexFile.Name(), err.Error())
+		return 0, fmt.Errorf("cannot go to the end of indexfile %s: %v", nm.indexFile.Name(), err)
 	}
 	return nm.indexFile.Write(bytes)
 }
@@ -141,10 +141,10 @@ func (nm *NeedleMap) Delete(key uint64) error {
 	util.Uint32toBytes(bytes[8:12], 0)
 	util.Uint32toBytes(bytes[12:16], 0)
 	if _, err := nm.indexFile.Seek(0, 2); err != nil {
-		return fmt.Errorf("cannot go to the end of indexfile %s: %s", nm.indexFile.Name(), err.Error())
+		return fmt.Errorf("cannot go to the end of indexfile %s: %v", nm.indexFile.Name(), err)
 	}
 	if _, err := nm.indexFile.Write(bytes); err != nil {
-		return fmt.Errorf("error writing to indexfile %s: %s", nm.indexFile.Name(), err.Error())
+		return fmt.Errorf("error writing to indexfile %s: %v", nm.indexFile.Name(), err)
 	}
 	nm.DeletionCounter++
 	return nil

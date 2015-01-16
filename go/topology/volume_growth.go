@@ -204,7 +204,7 @@ func (vg *VolumeGrowth) grow(topo *Topology, vid storage.VolumeId, option *Volum
 			glog.V(0).Infoln("Created Volume", vid, "on", server)
 		} else {
 			glog.V(0).Infoln("Failed to assign", vid, "to", servers, "error", err)
-			return fmt.Errorf("Failed to assign %s: %s", vid.String(), err.Error())
+			return fmt.Errorf("Failed to assign %d: %v", vid, err)
 		}
 	}
 	return nil

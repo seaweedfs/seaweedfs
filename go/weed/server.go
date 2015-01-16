@@ -81,10 +81,10 @@ func init() {
 	filerOptions.dir = cmdServer.Flag.String("filer.dir", "", "directory to store meta data, default to a 'filer' sub directory of what -mdir is specified")
 	filerOptions.defaultReplicaPlacement = cmdServer.Flag.String("filer.defaultReplicaPlacement", "", "Default replication type if not specified during runtime.")
 	filerOptions.redirectOnRead = cmdServer.Flag.Bool("filer.redirectOnRead", false, "whether proxy or redirect to volume server during file GET request")
-	filerOptions.cassandra_server = cmdFiler.Flag.String("filer.cassandra.server", "", "host[:port] of the cassandra server")
-	filerOptions.cassandra_keyspace = cmdFiler.Flag.String("filer.cassandra.keyspace", "seaweed", "keyspace of the cassandra server")
+	filerOptions.cassandra_server = cmdServer.Flag.String("filer.cassandra.server", "", "host[:port] of the cassandra server")
+	filerOptions.cassandra_keyspace = cmdServer.Flag.String("filer.cassandra.keyspace", "seaweed", "keyspace of the cassandra server")
 	filerOptions.redis_server = cmdServer.Flag.String("filer.redis.server", "", "host:port of the redis server, e.g., 127.0.0.1:6379")
-	filerOptions.redis_database = cmdFiler.Flag.Int("filer.redis.database", 0, "the database on the redis server")
+	filerOptions.redis_database = cmdServer.Flag.Int("filer.redis.database", 0, "the database on the redis server")
 
 }
 
@@ -167,7 +167,7 @@ func runServer(cmd *Command, args []string) bool {
 				"", 0,
 			)
 			if nfs_err != nil {
-				glog.Fatalf(nfs_err.Error())
+				glog.Fatalf("Filer startup error: %v", nfs_err)
 			}
 			glog.V(0).Infoln("Start Seaweed Filer", util.VERSION, "at port", strconv.Itoa(*filerOptions.port))
 			filerListener, e := util.NewListener(
@@ -175,10 +175,11 @@ func runServer(cmd *Command, args []string) bool {
 				time.Duration(10)*time.Second,
 			)
 			if e != nil {
+				glog.Fatalf("Filer listener error: %v", e)
 				glog.Fatalf(e.Error())
 			}
 			if e := http.Serve(filerListener, r); e != nil {
-				glog.Fatalf("Filer Fail to serve:%s", e.Error())
+				glog.Fatalf("Filer Fail to serve: %v", e)
 			}
 		}()
 	}
@@ -199,7 +200,7 @@ func runServer(cmd *Command, args []string) bool {
 		glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*masterPort))
 		masterListener, e := util.NewListener(*serverBindIp+":"+strconv.Itoa(*masterPort), time.Duration(*serverTimeout)*time.Second)
 		if e != nil {
-			glog.Fatalf(e.Error())
+			glog.Fatalf("Master startup error: %v", e)
 		}
 
 		go func() {
@@ -224,7 +225,7 @@ func runServer(cmd *Command, args []string) bool {
 	volumeWait.Wait()
 	time.Sleep(100 * time.Millisecond)
 	r := http.NewServeMux()
-	volumeServer := weed_server.NewVolumeServer(r, *serverIp, *volumePort, *serverPublicIp, folders, maxCounts,
+	volumeServer := weed_server.NewVolumeServer(r, r, *serverIp, *volumePort, *serverPublicIp, folders, maxCounts,
 		*serverIp+":"+strconv.Itoa(*masterPort), *volumePulse, *serverDataCenter, *serverRack,
 		serverWhiteList, *volumeFixJpgOrientation,
 	)
@@ -235,7 +236,7 @@ func runServer(cmd *Command, args []string) bool {
 		time.Duration(*serverTimeout)*time.Second,
 	)
 	if e != nil {
-		glog.Fatalf(e.Error())
+		glog.Fatalf("Volume server listener error: %v", e)
 	}
 
 	OnInterrupt(func() {
@@ -244,7 +245,7 @@ func runServer(cmd *Command, args []string) bool {
 	})
 
 	if e := http.Serve(volumeListener, r); e != nil {
-		glog.Fatalf("Fail to serve:%s", e.Error())
+		glog.Fatalf("Volume server fail to serve:%v", e)
 	}
 
 	return true

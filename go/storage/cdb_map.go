@@ -214,12 +214,12 @@ func DumpNeedleMapToCdb(cdbName string, nm *NeedleMap) error {
 func openTempCdb(fileName string) (cdb.AdderFunc, cdb.CloserFunc, error) {
 	fh, err := os.Create(fileName)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot create cdb file %s: %s", fileName, err.Error())
+		return nil, nil, fmt.Errorf("cannot create cdb file %s: %v", fileName, err)
 	}
 	adder, closer, err := cdb.MakeFactory(fh)
 	if err != nil {
 		fh.Close()
-		return nil, nil, fmt.Errorf("error creating factory: %s", err.Error())
+		return nil, nil, fmt.Errorf("error creating factory: %v", err)
 	}
 	return adder, func() error {
 		if e := closer(); e != nil {

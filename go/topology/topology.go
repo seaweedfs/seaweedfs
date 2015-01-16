@@ -119,7 +119,7 @@ func (t *Topology) HasWritableVolume(option *VolumeGrowOption) bool {
 func (t *Topology) PickForWrite(count int, option *VolumeGrowOption) (string, int, *DataNode, error) {
 	vid, count, datanodes, err := t.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl).PickForWrite(count, option)
 	if err != nil || datanodes.Length() == 0 {
-		return "", 0, nil, errors.New("No writable volumes avalable!")
+		return "", 0, nil, errors.New("No writable volumes available!")
 	}
 	fileId, count := t.Sequence.NextFileId(count)
 	return storage.NewFileId(*vid, fileId, rand.Uint32()).String(), count, datanodes.Head(), nil

@@ -27,14 +27,14 @@ func (lr *LookupResult) String() string {
 }
 
 var (
-	vc VidCache
+	vc VidCache // caching of volume locations, re-check if after 10 minutes
 )
 
 func Lookup(server string, vid string) (ret *LookupResult, err error) {
 	locations, cache_err := vc.Get(vid)
 	if cache_err != nil {
 		if ret, err = do_lookup(server, vid); err == nil {
-			vc.Set(vid, ret.Locations, 1*time.Minute)
+			vc.Set(vid, ret.Locations, 10*time.Minute)
 		}
 	} else {
 		ret = &LookupResult{VolumeId: vid, Locations: locations}
@@ -75,19 +75,44 @@ func LookupFileId(server string, fileId string) (fullUrl string, err error) {
 	return "http://" + lookup.Locations[rand.Intn(len(lookup.Locations))].PublicUrl + "/" + fileId, nil
 }
 
+// LookupVolumeIds find volume locations by cache and actual lookup
 func LookupVolumeIds(server string, vids []string) (map[string]LookupResult, error) {
-	values := make(url.Values)
+	ret := make(map[string]LookupResult)
+	var unknown_vids []string
+
+	//check vid cache first
 	for _, vid := range vids {
+		locations, cache_err := vc.Get(vid)
+		if cache_err == nil {
+			ret[vid] = LookupResult{VolumeId: vid, Locations: locations}
+		} else {
+			unknown_vids = append(unknown_vids, vid)
+		}
+	}
+	//return success if all volume ids are known
+	if len(unknown_vids) == 0 {
+		return ret, nil
+	}
+
+	//only query unknown_vids
+	values := make(url.Values)
+	for _, vid := range unknown_vids {
 		values.Add("volumeId", vid)
 	}
 	jsonBlob, err := util.Post("http://"+server+"/vol/lookup", values)
 	if err != nil {
 		return nil, err
 	}
-	ret := make(map[string]LookupResult)
 	err = json.Unmarshal(jsonBlob, &ret)
 	if err != nil {
 		return nil, errors.New(err.Error() + " " + string(jsonBlob))
 	}
+
+	//set newly checked vids to cache
+	for _, vid := range unknown_vids {
+		locations := ret[vid].Locations
+		vc.Set(vid, locations, 10*time.Minute)
+	}
+
 	return ret, nil
 }

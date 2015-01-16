@@ -71,7 +71,7 @@ func runMaster(cmd *Command, args []string) bool {
 
 	listener, e := util.NewListener(listeningAddress, time.Duration(*mTimeout)*time.Second)
 	if e != nil {
-		glog.Fatalf(e.Error())
+		glog.Fatalf("Master startup error: %v", e)
 	}
 
 	go func() {
@@ -93,7 +93,7 @@ func runMaster(cmd *Command, args []string) bool {
 	}()
 
 	if e := http.Serve(listener, r); e != nil {
-		glog.Fatalf("Fail to serve:%s", e.Error())
+		glog.Fatalf("Fail to serve: %v", e)
 	}
 	return true
 }

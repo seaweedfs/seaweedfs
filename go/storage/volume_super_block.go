@@ -38,7 +38,7 @@ func (s *SuperBlock) Bytes() []byte {
 func (v *Volume) maybeWriteSuperBlock() error {
 	stat, e := v.dataFile.Stat()
 	if e != nil {
-		glog.V(0).Infof("failed to stat datafile %s: %s", v.dataFile, e.Error())
+		glog.V(0).Infof("failed to stat datafile %s: %v", v.dataFile, e)
 		return e
 	}
 	if stat.Size() == 0 {
@@ -57,11 +57,11 @@ func (v *Volume) maybeWriteSuperBlock() error {
 }
 func (v *Volume) readSuperBlock() (err error) {
 	if _, err = v.dataFile.Seek(0, 0); err != nil {
-		return fmt.Errorf("cannot seek to the beginning of %s: %s", v.dataFile.Name(), err.Error())
+		return fmt.Errorf("cannot seek to the beginning of %s: %v", v.dataFile.Name(), err)
 	}
 	header := make([]byte, SuperBlockSize)
 	if _, e := v.dataFile.Read(header); e != nil {
-		return fmt.Errorf("cannot read superblock: %s", e.Error())
+		return fmt.Errorf("cannot read volume %d super block: %v", v.Id, e)
 	}
 	v.SuperBlock, err = ParseSuperBlock(header)
 	return err

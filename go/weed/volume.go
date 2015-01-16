@@ -13,8 +13,42 @@ import (
 	"github.com/chrislusf/weed-fs/go/weed/weed_server"
 )
 
+var (
+	v VolumeServerOptions
+)
+
+type VolumeServerOptions struct {
+	port                  *int
+	adminPort             *int
+	folders               []string
+	folderMaxLimits       []int
+	ip                    *string
+	publicIp              *string
+	bindIp                *string
+	master                *string
+	pulseSeconds          *int
+	idleConnectionTimeout *int
+	maxCpu                *int
+	dataCenter            *string
+	rack                  *string
+	whiteList             []string
+	fixJpgOrientation     *bool
+}
+
 func init() {
 	cmdVolume.Run = runVolume // break init cycle
+	v.port = cmdVolume.Flag.Int("port", 8080, "http listen port")
+	v.adminPort = cmdVolume.Flag.Int("port.admin", 8443, "https admin port, active when SSL certs are specified. Not ready yet.")
+	v.ip = cmdVolume.Flag.String("ip", "", "ip or server name")
+	v.publicIp = cmdVolume.Flag.String("publicIp", "", "Publicly accessible <ip|server_name>")
+	v.bindIp = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
+	v.master = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
+	v.pulseSeconds = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
+	v.idleConnectionTimeout = cmdVolume.Flag.Int("idleTimeout", 10, "connection idle seconds")
+	v.maxCpu = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
+	v.dataCenter = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
+	v.rack = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
+	v.fixJpgOrientation = cmdVolume.Flag.Bool("images.fix.orientation", true, "Adjust jpg orientation when uploading.")
 }
 
 var cmdVolume = &Command{
@@ -26,76 +60,66 @@ var cmdVolume = &Command{
 }
 
 var (
-	vport                 = cmdVolume.Flag.Int("port", 8080, "http listen port")
-	volumeSecurePort      = cmdVolume.Flag.Int("port.secure", 8443, "https listen port, active when SSL certs are specified. Not ready yet.")
 	volumeFolders         = cmdVolume.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	maxVolumeCounts       = cmdVolume.Flag.String("max", "7", "maximum numbers of volumes, count[,count]...")
-	ip                    = cmdVolume.Flag.String("ip", "", "ip or server name")
-	publicIp              = cmdVolume.Flag.String("publicIp", "", "Publicly accessible <ip|server_name>")
-	volumeBindIp          = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
-	masterNode            = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
-	vpulse                = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
-	vTimeout              = cmdVolume.Flag.Int("idleTimeout", 10, "connection idle seconds")
-	vMaxCpu               = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
-	dataCenter            = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
-	rack                  = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
 	volumeWhiteListOption = cmdVolume.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	fixJpgOrientation     = cmdVolume.Flag.Bool("images.fix.orientation", true, "Adjust jpg orientation when uploading.")
-
-	volumeWhiteList []string
 )
 
 func runVolume(cmd *Command, args []string) bool {
-	if *vMaxCpu < 1 {
-		*vMaxCpu = runtime.NumCPU()
+	if *v.maxCpu < 1 {
+		*v.maxCpu = runtime.NumCPU()
 	}
-	runtime.GOMAXPROCS(*vMaxCpu)
-	folders := strings.Split(*volumeFolders, ",")
+	runtime.GOMAXPROCS(*v.maxCpu)
+
+	//Set multiple folders and each folder's max volume count limit'
+	v.folders = strings.Split(*volumeFolders, ",")
 	maxCountStrings := strings.Split(*maxVolumeCounts, ",")
-	maxCounts := make([]int, 0)
 	for _, maxString := range maxCountStrings {
 		if max, e := strconv.Atoi(maxString); e == nil {
-			maxCounts = append(maxCounts, max)
+			v.folderMaxLimits = append(v.folderMaxLimits, max)
 		} else {
 			glog.Fatalf("The max specified in -max not a valid number %s", maxString)
 		}
 	}
-	if len(folders) != len(maxCounts) {
-		glog.Fatalf("%d directories by -dir, but only %d max is set by -max", len(folders), len(maxCounts))
+	if len(v.folders) != len(v.folderMaxLimits) {
+		glog.Fatalf("%d directories by -dir, but only %d max is set by -max", len(v.folders), len(v.folderMaxLimits))
 	}
-	for _, folder := range folders {
+	for _, folder := range v.folders {
 		if err := util.TestFolderWritable(folder); err != nil {
 			glog.Fatalf("Check Data Folder(-dir) Writable %s : %s", folder, err)
 		}
 	}
 
-	if *publicIp == "" {
-		if *ip == "" {
-			*ip = "127.0.0.1"
-			*publicIp = "localhost"
-		} else {
-			*publicIp = *ip
-		}
-	}
+	//security related white list configuration
 	if *volumeWhiteListOption != "" {
-		volumeWhiteList = strings.Split(*volumeWhiteListOption, ",")
+		v.whiteList = strings.Split(*volumeWhiteListOption, ",")
+	}
+
+	//derive default public ip address
+	if *v.publicIp == "" {
+		if *v.ip == "" {
+			*v.ip = "127.0.0.1"
+			*v.publicIp = "localhost"
+		} else {
+			*v.publicIp = *v.ip
+		}
 	}
 
 	r := http.NewServeMux()
 
-	volumeServer := weed_server.NewVolumeServer(r, *ip, *vport, *publicIp, folders, maxCounts,
-		*masterNode, *vpulse, *dataCenter, *rack,
-		volumeWhiteList,
-		*fixJpgOrientation,
+	volumeServer := weed_server.NewVolumeServer(r, r, *v.ip, *v.port, *v.publicIp, v.folders, v.folderMaxLimits,
+		*v.master, *v.pulseSeconds, *v.dataCenter, *v.rack,
+		v.whiteList,
+		*v.fixJpgOrientation,
 	)
 
-	listeningAddress := *volumeBindIp + ":" + strconv.Itoa(*vport)
+	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port)
 
 	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "at", listeningAddress)
 
-	listener, e := util.NewListener(listeningAddress, time.Duration(*vTimeout)*time.Second)
+	listener, e := util.NewListener(listeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
-		glog.Fatalf(e.Error())
+		glog.Fatalf("Volume server listener error:%v", e)
 	}
 
 	OnInterrupt(func() {
@@ -103,7 +127,7 @@ func runVolume(cmd *Command, args []string) bool {
 	})
 
 	if e := http.Serve(listener, r); e != nil {
-		glog.Fatalf("Fail to serve:%s", e.Error())
+		glog.Fatalf("Volume server fail to serve: %v", e)
 	}
 	return true
 }

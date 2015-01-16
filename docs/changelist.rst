@@ -5,6 +5,9 @@ Introduction
 ############
 This file contains list of recent changes, important features, usage changes, data format changes, etc. Do read this if you upgrade.
 
+v0.68
+#####
+1. Filer supports storing file~file_id mapping to remote key-value storage Redis, Cassandra. So multiple filers are supported.
 
 v0.67
 #####
