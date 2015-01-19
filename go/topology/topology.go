@@ -157,7 +157,7 @@ func (t *Topology) ProcessJoinMessage(joinMessage *operation.JoinMessage) {
 	if *joinMessage.IsInit && dn != nil {
 		t.UnRegisterDataNode(dn)
 	}
-	adminPort = *joinMessage.Port
+	adminPort := *joinMessage.Port
 	if joinMessage.AdminPort != nil {
 		adminPort = *joinMessage.AdminPort
 	}
