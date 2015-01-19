@@ -22,7 +22,9 @@ type VolumeServer struct {
 	FixJpgOrientation bool
 }
 
-func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string, port int, publicIp string, folders []string, maxCounts []int,
+func NewVolumeServer(publicMux, adminMux *http.ServeMux, ip string,
+	port, adminPort int, publicIp string,
+	folders []string, maxCounts []int,
 	masterNode string, pulseSeconds int,
 	dataCenter string, rack string,
 	whiteList []string,
@@ -35,7 +37,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string, port int, pu
 		rack:              rack,
 		FixJpgOrientation: fixJpgOrientation,
 	}
-	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts)
+	vs.store = storage.NewStore(port, adminPort, ip, publicUrl, folders, maxCounts)
 
 	vs.guard = security.NewGuard(whiteList, "")
 

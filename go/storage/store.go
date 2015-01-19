@@ -73,8 +73,9 @@ func (mn *MasterNodes) findMaster() (string, error) {
  * A VolumeServer contains one Store
  */
 type Store struct {
-	Port            int
 	Ip              string
+	Port            int
+	AdminPort       int
 	PublicUrl       string
 	Locations       []*DiskLocation
 	dataCenter      string //optional informaton, overwriting master setting if exists
@@ -89,8 +90,8 @@ func (s *Store) String() (str string) {
 	return
 }
 
-func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int) (s *Store) {
-	s = &Store{Port: port, Ip: ip, PublicUrl: publicUrl}
+func NewStore(port, adminPort int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int) (s *Store) {
+	s = &Store{Port: port, AdminPort: adminPort, Ip: ip, PublicUrl: publicUrl}
 	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirnames); i++ {
 		location := &DiskLocation{Directory: dirnames[i], MaxVolumeCount: maxVolumeCounts[i]}
@@ -308,6 +309,7 @@ func (s *Store) Join() (masterNode string, e error) {
 		DataCenter:     proto.String(s.dataCenter),
 		Rack:           proto.String(s.rack),
 		Volumes:        volumeMessages,
+		AdminPort:      proto.Uint32(uint32(s.AdminPort)),
 	}
 
 	data, err := proto.Marshal(joinMessage)

@@ -27,7 +27,7 @@ func (r *Rack) FindDataNode(ip string, port int) *DataNode {
 	}
 	return nil
 }
-func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVolumeCount int) *DataNode {
+func (r *Rack) GetOrCreateDataNode(ip string, port, adminPort int, publicUrl string, maxVolumeCount int) *DataNode {
 	for _, c := range r.Children() {
 		dn := c.(*DataNode)
 		if dn.MatchLocation(ip, port) {
@@ -43,6 +43,7 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVol
 	dn := NewDataNode(ip + ":" + strconv.Itoa(port))
 	dn.Ip = ip
 	dn.Port = port
+	dn.AdminPort = adminPort
 	dn.PublicUrl = publicUrl
 	dn.maxVolumeCount = maxVolumeCount
 	dn.LastSeen = time.Now().Unix()

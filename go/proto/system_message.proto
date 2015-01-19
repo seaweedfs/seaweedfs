@@ -23,4 +23,5 @@ message JoinMessage {
   optional string data_center = 7;
   optional string rack = 8;
   repeated VolumeInformationMessage volumes = 9;
+  optional uint32 admin_port = 10;
 }
