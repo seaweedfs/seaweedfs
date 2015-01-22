@@ -25,6 +25,8 @@ Seaweed-FS costs only 40 bytes disk storage for each file's metadata. It is so s
 ![](https://api.bintray.com/packages/chrislusf/Weed-FS/seaweed/images/download.png)
 https://bintray.com/chrislusf/Weed-FS/seaweed Download latest compiled binaries for different platforms here.
 
+http://groups.google.com/group/weed-file-system Seaweed File System Discussion Group
+
 ## Additional Features
 * Can choose no replication or different replication level, rack and data center aware
 * Automatic master servers failover. No single point of failure, SPOF.
