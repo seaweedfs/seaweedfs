@@ -63,13 +63,13 @@ Seaweed-FS uses HTTP REST operations to write, read, delete. The return results 
 Here is a simple usage on how to save a file:
 
 ```
-> curl http://localhost:9333/dir/assign
+> curl -X POST http://localhost:9333/dir/assign
 {"count":1,"fid":"3,01637037d6","url":"127.0.0.1:8080","publicUrl":"localhost:8080"}
 ```
 First, send a HTTP request to get an fid and a volume server url.
 
 ```
-> curl -F file=@/home/chris/myphoto.jpg http://127.0.0.1:8080/3,01637037d6
+> curl -X PUT -F file=@/home/chris/myphoto.jpg http://127.0.0.1:8080/3,01637037d6
 {"size": 43234}
 ```
 Second, send a HTTP multipart POST request to the volume server url+'/'+fid, to really store the file content.
@@ -119,7 +119,7 @@ If you want a nicer URL, you can use one of these alternative URL formats:
 ### Rack-Aware and Data Center-Aware Replication ###
 Seaweed-FS apply the replication strategy on a volume level. So when you are getting a file id, you can specify the replication strategy. For example:
 ```
-curl http://localhost:9333/dir/assign?replication=001
+curl -X POST http://localhost:9333/dir/assign?replication=001
 ```
 
 Here is the meaning of the replication parameter 
