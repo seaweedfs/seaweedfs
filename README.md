@@ -184,9 +184,9 @@ When a client needs to read a file based on <volume id, file key, file cookie>, 
 Please see the example for details on write-read process.
 
 ### Storage Size ###
-In current implementation, each volume can be size of 8x2^32^=32G bytes. This is because of aligning contents to 8 bytes. We can be easily increased to 64G, or 128G, or more, by changing 2 lines of code, at the cost of some wasted padding space due to alignment.
+In current implementation, each volume can be size of 8x2^32 bytes (32GiB). This is because of aligning contents to 8 bytes. We can be easily increased to 64G, or 128G, or more, by changing 2 lines of code, at the cost of some wasted padding space due to alignment.
 
-There can be 2^32^ volumes. So total system size is 8 x 2^32^ x 2^32^ = 8 x 4G x 4G = 128GG bytes. (Sorry, I don't know the word for giga of giga bytes.)
+There can be 2^32 volumes. So total system size is 8 x 2^32 bytes x 2^32 = 8 x 4GiB x 4Gi = 128EiB (2^67 bytes, or 128 exbibytes).
 
 Each individual file size is limited to the volume size.
 
