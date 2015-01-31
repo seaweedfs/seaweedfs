@@ -64,6 +64,7 @@ func NewVolumeServer(publicMux, adminMux *http.ServeMux, ip string,
 			if err == nil {
 				if !connected {
 					connected = true
+					vs.masterNode = master
 					glog.V(0).Infoln("Volume Server Connected with master at", master)
 				}
 			} else {
