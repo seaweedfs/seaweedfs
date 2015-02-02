@@ -49,6 +49,7 @@ var cmdServer = &Command{
 var (
 	serverIp                      = cmdServer.Flag.String("ip", "", "ip or server name")
 	serverPublicIp                = cmdServer.Flag.String("publicIp", "", "ip or server name")
+	reverseProxyServer            = cmdServer.Flag.String("reverseProxyServer", "", "front-end reverse proxy server url <ip:port|domain_name>, for replication > 000")
 	serverBindIp                  = cmdServer.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	serverMaxCpu                  = cmdServer.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	serverTimeout                 = cmdServer.Flag.Int("idleTimeout", 10, "connection idle seconds")
@@ -230,10 +231,13 @@ func runServer(cmd *Command, args []string) bool {
 		*serverIp, *volumePort, *volumeAdminPort, *serverPublicIp,
 		folders, maxCounts,
 		*serverIp+":"+strconv.Itoa(*masterPort), *volumePulse, *serverDataCenter, *serverRack,
-		serverWhiteList, *volumeFixJpgOrientation,
+		serverWhiteList, *volumeFixJpgOrientation, *reverseProxyServer,
 	)
 
 	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*volumePort))
+	if *reverseProxyServer != "" {
+		glog.V(0).Infoln("The Seaweed volume server", util.VERSION, " is running behind the reverse proxy server", *reverseProxyServer)
+	}
 	volumeListener, e := util.NewListener(
 		*serverBindIp+":"+strconv.Itoa(*volumePort),
 		time.Duration(*serverTimeout)*time.Second,
