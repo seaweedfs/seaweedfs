@@ -28,8 +28,13 @@ func NewVolumeServer(publicMux, adminMux *http.ServeMux, ip string,
 	masterNode string, pulseSeconds int,
 	dataCenter string, rack string,
 	whiteList []string,
-	fixJpgOrientation bool) *VolumeServer {
+	fixJpgOrientation bool,
+	reverseProxyServer string) *VolumeServer {
+
 	publicUrl := publicIp + ":" + strconv.Itoa(port)
+	if reverseProxyServer != "" {
+		publicUrl = reverseProxyServer
+	}
 	vs := &VolumeServer{
 		masterNode:        masterNode,
 		pulseSeconds:      pulseSeconds,

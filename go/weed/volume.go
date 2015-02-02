@@ -33,6 +33,7 @@ type VolumeServerOptions struct {
 	rack                  *string
 	whiteList             []string
 	fixJpgOrientation     *bool
+	reverseProxyServer    *string
 }
 
 func init() {
@@ -49,6 +50,7 @@ func init() {
 	v.dataCenter = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	v.rack = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
 	v.fixJpgOrientation = cmdVolume.Flag.Bool("images.fix.orientation", true, "Adjust jpg orientation when uploading.")
+	v.reverseProxyServer = cmdVolume.Flag.String("reverseProxyServer", "", "front-end reverse proxy server url <ip:port|domain_name>, for replication > 000")
 }
 
 var cmdVolume = &Command{
@@ -122,6 +124,7 @@ func runVolume(cmd *Command, args []string) bool {
 		*v.master, *v.pulseSeconds, *v.dataCenter, *v.rack,
 		v.whiteList,
 		*v.fixJpgOrientation,
+		*v.reverseProxyServer,
 	)
 
 	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port)
@@ -150,6 +153,10 @@ func runVolume(cmd *Command, args []string) bool {
 
 	if e := http.Serve(listener, publicMux); e != nil {
 		glog.Fatalf("Volume server fail to serve: %v", e)
+	}
+
+	if *v.reverseProxyServer != "" {
+		glog.V(0).Infoln("The Seaweed volume server", util.VERSION, "is running behind the reverse proxy server", *v.reverseProxyServer)
 	}
 	return true
 }
