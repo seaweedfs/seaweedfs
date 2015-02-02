@@ -53,3 +53,62 @@ However, if blocking servicing port is not feasible or trivial, a white list opt
 	weed master -whiteList="::1,127.0.0.1"
 	weed volume -whiteList="::1,127.0.0.1"
 	# "::1" is for IP v6 localhost.
+
+
+Data Migration Example
+#############################
+
+.. code-block:: bash
+
+    weed master -mdir="/tmp/mdata" -defaultReplication="001" -ip="localhost" -port=9334
+    weed volume -dir=/tmp/vol1/ -mserver="localhost:9334" -ip="localhost" -port=8081
+    weed volume -dir=/tmp/vol2/ -mserver="localhost:9334" -ip="localhost" -port=8082
+    weed volume -dir=/tmp/vol3/ -mserver="localhost:9334" -ip="localhost" -port=8083
+
+.. code-block:: bash
+
+    ls vol1 vol2 vol3
+    vol1:
+    1.dat 1.idx 2.dat 2.idx 3.dat 3.idx 5.dat 5.idx
+    vol2:
+    2.dat 2.idx 3.dat 3.idx 4.dat 4.idx 6.dat 6.idx
+    vol3:
+    1.dat 1.idx 4.dat 4.idx 5.dat 5.idx 6.dat 6.idx
+
+stop all of them
+
+move vol3/* to vol1 and vol2
+
+it is ok to move x.dat and x.idx from one volumeserver to another volumeserver, 
+because they are exactly the same. 
+it can be checked by md5.
+
+.. code-block:: bash
+
+    md5 vol1/1.dat vol2/1.dat
+    MD5 (vol1/1.dat) = c1a49a0ee550b44fef9f8ae9e55215c7
+    MD5 (vol2/1.dat) = c1a49a0ee550b44fef9f8ae9e55215c7
+    md5 vol1/1.idx vol2/1.idx
+    MD5 (vol1/1.idx) = b9edc95795dfb3b0f9063c9cc9ba8095
+    MD5 (vol2/1.idx) = b9edc95795dfb3b0f9063c9cc9ba8095
+
+.. code-block:: bash
+
+    ls vol1 vol2 vol3
+    vol1:
+    1.dat 1.idx 2.dat 2.idx 3.dat 3.idx 4.dat 4.idx 5.dat 5.idx 6.dat 6.idx
+    vol2:
+    1.dat 1.idx 2.dat 2.idx 3.dat 3.idx 4.dat 4.idx 5.dat 5.idx 6.dat 6.idx
+    vol3:
+
+start
+
+.. code-block:: bash
+
+    weed master -mdir="/tmp/mdata" -defaultReplication="001" -ip="localhost" -port=9334
+    weed volume -dir=/tmp/vol1/ -mserver="localhost:9334" -ip="localhost" -port=8081
+    weed volume -dir=/tmp/vol2/ -mserver="localhost:9334" -ip="localhost" -port=8082
+
+so we finished moving data of localhost:8083 to localhost:8081/localhost:8082 
+
+
