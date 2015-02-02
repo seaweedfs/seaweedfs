@@ -13,6 +13,7 @@ type DataNode struct {
 	volumes   map[storage.VolumeId]storage.VolumeInfo
 	Ip        string
 	Port      int
+	AdminPort int
 	PublicUrl string
 	LastSeen  int64 // unix time in seconds
 	Dead      bool
@@ -28,7 +29,7 @@ func NewDataNode(id string) *DataNode {
 }
 
 func (dn *DataNode) String() string {
-	return fmt.Sprintf("NodeImpl:%s ,volumes:%v, Ip:%s, Port:%d, PublicUrl:%s, Dead:%v", dn.NodeImpl.String(), dn.volumes, dn.Ip, dn.Port, dn.PublicUrl, dn.Dead)
+	return fmt.Sprintf("Node:%s, volumes:%v, Ip:%s, Port:%d, PublicUrl:%s, Dead:%v", dn.NodeImpl.String(), dn.volumes, dn.Ip, dn.Port, dn.PublicUrl, dn.Dead)
 }
 
 func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) {
@@ -87,6 +88,10 @@ func (dn *DataNode) MatchLocation(ip string, port int) bool {
 
 func (dn *DataNode) Url() string {
 	return dn.Ip + ":" + strconv.Itoa(dn.Port)
+}
+
+func (dn *DataNode) AdminUrl() string {
+	return dn.Ip + ":" + strconv.Itoa(dn.AdminPort)
 }
 
 func (dn *DataNode) ToMap() interface{} {

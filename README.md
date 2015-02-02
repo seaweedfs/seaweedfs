@@ -25,6 +25,8 @@ Seaweed-FS costs only 40 bytes disk storage for each file's metadata. It is so s
 ![](https://api.bintray.com/packages/chrislusf/Weed-FS/seaweed/images/download.png)
 https://bintray.com/chrislusf/Weed-FS/seaweed Download latest compiled binaries for different platforms here.
 
+http://groups.google.com/group/weed-file-system Seaweed File System Discussion Group
+
 ## Additional Features
 * Can choose no replication or different replication level, rack and data center aware
 * Automatic master servers failover. No single point of failure, SPOF.
@@ -58,23 +60,25 @@ Seaweed-FS uses HTTP REST operations to write, read, delete. The return results 
 ```
 
 ### Write File ###
-Here is a simple usage on how to save a file:
+
+To upload a file, first, send a HTTP POST, PUT, or GET request to `/dir/assign` to get an fid and a volume server url:
 
 ```
-> curl http://localhost:9333/dir/assign
+> curl -X POST http://localhost:9333/dir/assign
 {"count":1,"fid":"3,01637037d6","url":"127.0.0.1:8080","publicUrl":"localhost:8080"}
 ```
-First, send a HTTP request to get an fid and a volume server url.
+
+Second, to store the file content, send a HTTP multipart PUT or POST request to `url + '/' + fid` from the response:
 
 ```
-> curl -F file=@/home/chris/myphoto.jpg http://127.0.0.1:8080/3,01637037d6
+> curl -X PUT -F file=@/home/chris/myphoto.jpg http://127.0.0.1:8080/3,01637037d6
 {"size": 43234}
 ```
-Second, send a HTTP multipart POST request to the volume server url+'/'+fid, to really store the file content.
 
-For update, send another POST request with updated file content. 
+For update, send another PUT or POST request with updated file content. 
 
-For deletion, send a http DELETE request
+For deletion, send an HTTP DELETE request to the same `url + '/' + fid` URL:
+
 ```
 > curl -X DELETE http://127.0.0.1:8080/3,01637037d6
 ```
@@ -92,20 +96,28 @@ If stored as a string, in theory, you would need 8+1+16+8=33 bytes. A char(33) w
 If space is really a concern, you can store the file id in your own format. You would need one 4-byte integer for volume id, 8-byte long number for file key, 4-byte integer for file cookie. So 16 bytes are enough (more than enough).
 
 ### Read File ###
+
 Here is the example on how to render the URL.
+
+First lookup the volume server's URLs by the file's volumeId:
+
 ```
 > curl http://localhost:9333/dir/lookup?volumeId=3
 {"locations":[{"publicUrl":"localhost:8080","url":"localhost:8080"}]}
 ```
-First lookup the volume server's URLs by the file's volumeId. However, since usually there are not too many volume servers, and volumes does not move often, you can cache the results most of the time. Depends on the replication type, one volume can have multiple replica locations. Just randomly pick one location to read.
+
+(However, since usually there are not too many volume servers, and volumes does not move often, you can cache the results most of the time. Depends on the replication type, one volume can have multiple replica locations. Just randomly pick one location to read.)
 
 Now you can take the public url, render the url or directly read from the volume server via url:
+
 ```
  http://localhost:8080/3,01637037d6.jpg
 ```
+
 Notice we add an file extension ".jpg" here. It's optional and just one way for the client to specify the file content type.
 
 If you want a nicer URL, you can use one of these alternative URL formats:
+
 ```
  http://localhost:8080/3/01637037d6/my_preferred_name.jpg
  http://localhost:8080/3/01637037d6.jpg
@@ -116,11 +128,13 @@ If you want a nicer URL, you can use one of these alternative URL formats:
 
 ### Rack-Aware and Data Center-Aware Replication ###
 Seaweed-FS apply the replication strategy on a volume level. So when you are getting a file id, you can specify the replication strategy. For example:
+
 ```
-curl http://localhost:9333/dir/assign?replication=001
+curl -X POST http://localhost:9333/dir/assign?replication=001
 ```
 
-Here is the meaning of the replication parameter 
+Here is the meaning of the replication parameter:
+
 ```
 000: no replication
 001: replicate once on the same rack
@@ -136,14 +150,18 @@ https://code.google.com/p/weed-fs/wiki/RackDataCenterAwareReplication
 You can also set the default replication strategy when starting the master server.
 
 ### Allocate File Key on specific data center ###
-Volume servers can start with a specific data center name.
+
+Volume servers can start with a specific data center name:
+
 ```
  weed volume -dir=/tmp/1 -port=8080 -dataCenter=dc1
  weed volume -dir=/tmp/2 -port=8081 -dataCenter=dc2
 ```
+
 Or the master server can determine the data center via volume server's IP address and settings in weed.conf file.
 
-Now when requesting a file key, an optional "dataCenter" parameter can limit the assigned volume to the specific data center. For example, this specify
+Now when requesting a file key, an optional "dataCenter" parameter can limit the assigned volume to the specific data center. For example, this specifies that the assigned volume should be limited to 'dc1':
+
 ```
  http://localhost:9333/dir/assign?dataCenter=dc1
 ```
@@ -182,9 +200,9 @@ When a client needs to read a file based on <volume id, file key, file cookie>, 
 Please see the example for details on write-read process.
 
 ### Storage Size ###
-In current implementation, each volume can be size of 8x2^32^=32G bytes. This is because of aligning contents to 8 bytes. We can be easily increased to 64G, or 128G, or more, by changing 2 lines of code, at the cost of some wasted padding space due to alignment.
+In current implementation, each volume can be size of 8x2^32 bytes (32GiB). This is because of aligning contents to 8 bytes. We can be easily increased to 64G, or 128G, or more, by changing 2 lines of code, at the cost of some wasted padding space due to alignment.
 
-There can be 2^32^ volumes. So total system size is 8 x 2^32^ x 2^32^ = 8 x 4G x 4G = 128GG bytes. (Sorry, I don't know the word for giga of giga bytes.)
+There can be 2^32 volumes. So total system size is 8 x 2^32 bytes x 2^32 = 8 x 4GiB x 4Gi = 128EiB (2^67 bytes, or 128 exbibytes).
 
 Each individual file size is limited to the volume size.
 

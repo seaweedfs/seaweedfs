@@ -38,7 +38,7 @@ type VolumeServerOptions struct {
 func init() {
 	cmdVolume.Run = runVolume // break init cycle
 	v.port = cmdVolume.Flag.Int("port", 8080, "http listen port")
-	v.adminPort = cmdVolume.Flag.Int("port.admin", 8443, "https admin port, active when SSL certs are specified. Not ready yet.")
+	v.adminPort = cmdVolume.Flag.Int("port.admin", 0, "admin port to talk with master and other volume servers")
 	v.ip = cmdVolume.Flag.String("ip", "", "ip or server name")
 	v.publicIp = cmdVolume.Flag.String("publicIp", "", "Publicly accessible <ip|server_name>")
 	v.bindIp = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
@@ -105,28 +105,50 @@ func runVolume(cmd *Command, args []string) bool {
 		}
 	}
 
-	r := http.NewServeMux()
+	if *v.adminPort == 0 {
+		*v.adminPort = *v.port
+	}
+	isSeperatedAdminPort := *v.adminPort != *v.port
 
-	volumeServer := weed_server.NewVolumeServer(r, r, *v.ip, *v.port, *v.publicIp, v.folders, v.folderMaxLimits,
+	publicMux := http.NewServeMux()
+	adminMux := publicMux
+	if isSeperatedAdminPort {
+		adminMux = http.NewServeMux()
+	}
+
+	volumeServer := weed_server.NewVolumeServer(publicMux, adminMux,
+		*v.ip, *v.port, *v.adminPort, *v.publicIp,
+		v.folders, v.folderMaxLimits,
 		*v.master, *v.pulseSeconds, *v.dataCenter, *v.rack,
 		v.whiteList,
 		*v.fixJpgOrientation,
 	)
 
 	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port)
-
 	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "at", listeningAddress)
-
 	listener, e := util.NewListener(listeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)
+	}
+	if isSeperatedAdminPort {
+		adminListeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.adminPort)
+		glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "admin at", adminListeningAddress)
+		adminListener, e := util.NewListener(adminListeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
+		if e != nil {
+			glog.Fatalf("Volume server listener error:%v", e)
+		}
+		go func() {
+			if e := http.Serve(adminListener, adminMux); e != nil {
+				glog.Fatalf("Volume server fail to serve admin: %v", e)
+			}
+		}()
 	}
 
 	OnInterrupt(func() {
 		volumeServer.Shutdown()
 	})
 
-	if e := http.Serve(listener, r); e != nil {
+	if e := http.Serve(listener, publicMux); e != nil {
 		glog.Fatalf("Volume server fail to serve: %v", e)
 	}
 	return true

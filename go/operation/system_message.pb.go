@@ -14,7 +14,7 @@ It has these top-level messages:
 */
 package operation
 
-import "github.com/golang/protobuf/proto"
+import proto "github.com/golang/protobuf/proto"
 import math "math"
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -121,6 +121,7 @@ type JoinMessage struct {
 	DataCenter       *string                     `protobuf:"bytes,7,opt,name=data_center" json:"data_center,omitempty"`
 	Rack             *string                     `protobuf:"bytes,8,opt,name=rack" json:"rack,omitempty"`
 	Volumes          []*VolumeInformationMessage `protobuf:"bytes,9,rep,name=volumes" json:"volumes,omitempty"`
+	AdminPort        *uint32                     `protobuf:"varint,10,opt,name=admin_port" json:"admin_port,omitempty"`
 	XXX_unrecognized []byte                      `json:"-"`
 }
 
@@ -189,6 +190,13 @@ func (m *JoinMessage) GetVolumes() []*VolumeInformationMessage {
 		return m.Volumes
 	}
 	return nil
+}
+
+func (m *JoinMessage) GetAdminPort() uint32 {
+	if m != nil && m.AdminPort != nil {
+		return *m.AdminPort
+	}
+	return 0
 }
 
 func init() {

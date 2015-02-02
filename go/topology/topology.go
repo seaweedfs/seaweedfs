@@ -157,7 +157,13 @@ func (t *Topology) ProcessJoinMessage(joinMessage *operation.JoinMessage) {
 	if *joinMessage.IsInit && dn != nil {
 		t.UnRegisterDataNode(dn)
 	}
-	dn = rack.GetOrCreateDataNode(*joinMessage.Ip, int(*joinMessage.Port), *joinMessage.PublicUrl, int(*joinMessage.MaxVolumeCount))
+	adminPort := *joinMessage.Port
+	if joinMessage.AdminPort != nil {
+		adminPort = *joinMessage.AdminPort
+	}
+	dn = rack.GetOrCreateDataNode(*joinMessage.Ip,
+		int(*joinMessage.Port), int(adminPort), *joinMessage.PublicUrl,
+		int(*joinMessage.MaxVolumeCount))
 	var volumeInfos []storage.VolumeInfo
 	for _, v := range joinMessage.Volumes {
 		if vi, err := storage.NewVolumeInfo(v); err == nil {
