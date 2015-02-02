@@ -23,7 +23,7 @@ type VolumeServerOptions struct {
 	folders               []string
 	folderMaxLimits       []int
 	ip                    *string
-	publicIp              *string
+	publicUrl             *string
 	bindIp                *string
 	master                *string
 	pulseSeconds          *int
@@ -40,7 +40,7 @@ func init() {
 	v.port = cmdVolume.Flag.Int("port", 8080, "http listen port")
 	v.adminPort = cmdVolume.Flag.Int("port.admin", 0, "admin port to talk with master and other volume servers")
 	v.ip = cmdVolume.Flag.String("ip", "", "ip or server name")
-	v.publicIp = cmdVolume.Flag.String("publicIp", "", "Publicly accessible <ip|server_name>")
+	v.publicUrl = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible address")
 	v.bindIp = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	v.master = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
 	v.pulseSeconds = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
@@ -95,14 +95,8 @@ func runVolume(cmd *Command, args []string) bool {
 		v.whiteList = strings.Split(*volumeWhiteListOption, ",")
 	}
 
-	//derive default public ip address
-	if *v.publicIp == "" {
-		if *v.ip == "" {
-			*v.ip = "127.0.0.1"
-			*v.publicIp = "localhost"
-		} else {
-			*v.publicIp = *v.ip
-		}
+	if *v.ip == "" {
+		*v.ip = "127.0.0.1"
 	}
 
 	if *v.adminPort == 0 {
@@ -117,7 +111,7 @@ func runVolume(cmd *Command, args []string) bool {
 	}
 
 	volumeServer := weed_server.NewVolumeServer(publicMux, adminMux,
-		*v.ip, *v.port, *v.adminPort, *v.publicIp,
+		*v.ip, *v.port, *v.adminPort, *v.publicUrl,
 		v.folders, v.folderMaxLimits,
 		*v.master, *v.pulseSeconds, *v.dataCenter, *v.rack,
 		v.whiteList,

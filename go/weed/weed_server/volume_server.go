@@ -3,7 +3,6 @@ package weed_server
 import (
 	"math/rand"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/chrislusf/weed-fs/go/glog"
@@ -23,13 +22,12 @@ type VolumeServer struct {
 }
 
 func NewVolumeServer(publicMux, adminMux *http.ServeMux, ip string,
-	port, adminPort int, publicIp string,
+	port, adminPort int, publicUrl string,
 	folders []string, maxCounts []int,
 	masterNode string, pulseSeconds int,
 	dataCenter string, rack string,
 	whiteList []string,
 	fixJpgOrientation bool) *VolumeServer {
-	publicUrl := publicIp + ":" + strconv.Itoa(port)
 	vs := &VolumeServer{
 		masterNode:        masterNode,
 		pulseSeconds:      pulseSeconds,

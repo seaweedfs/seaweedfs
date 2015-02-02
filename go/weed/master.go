@@ -31,7 +31,6 @@ var (
 	mport                   = cmdMaster.Flag.Int("port", 9333, "http listen port")
 	masterIp                = cmdMaster.Flag.String("ip", "", "master listening ip address, default to listen on all network interfaces")
 	masterBindIp            = cmdMaster.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
-	mPublicIp               = cmdMaster.Flag.String("publicIp", "", "peer accessible <ip>|<server_name>")
 	metaFolder              = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
 	masterPeers             = cmdMaster.Flag.String("peers", "", "other master nodes in comma separated ip:port list")
 	volumeSizeLimitMB       = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
@@ -76,19 +75,15 @@ func runMaster(cmd *Command, args []string) bool {
 
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		if *mPublicIp == "" {
-			if *masterIp == "" {
-				*mPublicIp = "localhost"
-			} else {
-				*mPublicIp = *masterIp
-			}
+		if *masterIp == "" {
+			*masterIp = "localhost"
 		}
-		myPublicMasterAddress := *mPublicIp + ":" + strconv.Itoa(*mport)
+		myMasterAddress := *masterIp + ":" + strconv.Itoa(*mport)
 		var peers []string
 		if *masterPeers != "" {
 			peers = strings.Split(*masterPeers, ",")
 		}
-		raftServer := weed_server.NewRaftServer(r, peers, myPublicMasterAddress, *metaFolder, ms.Topo, *mpulse)
+		raftServer := weed_server.NewRaftServer(r, peers, myMasterAddress, *metaFolder, ms.Topo, *mpulse)
 		ms.SetRaftServer(raftServer)
 	}()
 
