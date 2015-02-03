@@ -140,9 +140,11 @@ func runServer(cmd *Command, args []string) bool {
 	if *masterMetaFolder == "" {
 		*masterMetaFolder = folders[0]
 	}
-	if *filerOptions.dir == "" {
-		*filerOptions.dir = *masterMetaFolder + "/filer"
-		os.MkdirAll(*filerOptions.dir, 0700)
+	if *isStartingFiler {
+		if *filerOptions.dir == "" {
+			*filerOptions.dir = *masterMetaFolder + "/filer"
+			os.MkdirAll(*filerOptions.dir, 0700)
+		}
 	}
 	if err := util.TestFolderWritable(*masterMetaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterMetaFolder, err)
