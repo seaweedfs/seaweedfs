@@ -66,11 +66,11 @@ func DeleteFiles(master string, fileIds []string) (*DeleteFilesResult, error) {
 			continue
 		}
 		for _, location := range result.Locations {
-			if _, ok := server_to_fileIds[location.PublicUrl]; !ok {
-				server_to_fileIds[location.PublicUrl] = make([]string, 0)
+			if _, ok := server_to_fileIds[location.Url]; !ok {
+				server_to_fileIds[location.Url] = make([]string, 0)
 			}
-			server_to_fileIds[location.PublicUrl] = append(
-				server_to_fileIds[location.PublicUrl], vid_to_fileIds[vid]...)
+			server_to_fileIds[location.Url] = append(
+				server_to_fileIds[location.Url], vid_to_fileIds[vid]...)
 		}
 	}
 

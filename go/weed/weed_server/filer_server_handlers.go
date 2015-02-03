@@ -80,7 +80,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	urlLocation := lookup.Locations[rand.Intn(len(lookup.Locations))].PublicUrl
+	urlLocation := lookup.Locations[rand.Intn(len(lookup.Locations))].Url
 	urlString := "http://" + urlLocation + "/" + fileId
 	if fs.redirectOnRead {
 		http.Redirect(w, r, urlString, http.StatusFound)
@@ -126,7 +126,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, _ := url.Parse("http://" + assignResult.PublicUrl + "/" + assignResult.Fid)
+	u, _ := url.Parse("http://" + assignResult.Url + "/" + assignResult.Fid)
 	glog.V(4).Infoln("post to", u)
 	request := &http.Request{
 		Method:        r.Method,

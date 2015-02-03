@@ -203,7 +203,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 		fileSize := int64(*b.fileSize + rand.Intn(64))
 		fp := &operation.FilePart{Reader: &FakeReader{id: uint64(id), size: fileSize}, FileSize: fileSize}
 		if assignResult, err := operation.Assign(*b.server, 1, "", *b.collection, ""); err == nil {
-			fp.Server, fp.Fid, fp.Collection = assignResult.PublicUrl, assignResult.Fid, *b.collection
+			fp.Server, fp.Fid, fp.Collection = assignResult.Url, assignResult.Fid, *b.collection
 			if _, err := fp.Upload(0, *b.server); err == nil {
 				if rand.Intn(100) < *b.deletePercentage {
 					s.total++
@@ -251,7 +251,7 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 			if _, now_ok := b.vid2server[vid]; !now_ok {
 				if ret, err := operation.Lookup(*b.server, vid); err == nil {
 					if len(ret.Locations) > 0 {
-						server = ret.Locations[0].PublicUrl
+						server = ret.Locations[0].Url
 						b.vid2server[vid] = server
 					}
 				}

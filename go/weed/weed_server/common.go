@@ -96,7 +96,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 		return
 	}
 
-	url := "http://" + assignResult.PublicUrl + "/" + assignResult.Fid
+	url := "http://" + assignResult.Url + "/" + assignResult.Fid
 	if lastModified != 0 {
 		url = url + "?ts=" + strconv.FormatUint(lastModified, 10)
 	}

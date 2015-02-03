@@ -48,7 +48,7 @@ var cmdServer = &Command{
 
 var (
 	serverIp                      = cmdServer.Flag.String("ip", "", "ip or server name")
-	serverPublicIp                = cmdServer.Flag.String("publicIp", "", "ip or server name")
+	serverPublicUrl               = cmdServer.Flag.String("publicUrl", "", "publicly accessible address")
 	serverBindIp                  = cmdServer.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	serverMaxCpu                  = cmdServer.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	serverTimeout                 = cmdServer.Flag.Int("idleTimeout", 10, "connection idle seconds")
@@ -99,19 +99,15 @@ func runServer(cmd *Command, args []string) bool {
 		defer pprof.StopCPUProfile()
 	}
 
-	if *serverPublicIp == "" {
-		if *serverIp == "" {
-			*serverPublicIp = "localhost"
-		} else {
-			*serverPublicIp = *serverIp
-		}
+	if *serverIp == "" {
+		*serverIp = "localhost"
 	}
 
 	if *filerOptions.redirectOnRead {
 		*isStartingFiler = true
 	}
 
-	*filerOptions.master = *serverPublicIp + ":" + strconv.Itoa(*masterPort)
+	*filerOptions.master = *serverIp + ":" + strconv.Itoa(*masterPort)
 
 	if *filerOptions.defaultReplicaPlacement == "" {
 		*filerOptions.defaultReplicaPlacement = *masterDefaultReplicaPlacement
@@ -144,9 +140,11 @@ func runServer(cmd *Command, args []string) bool {
 	if *masterMetaFolder == "" {
 		*masterMetaFolder = folders[0]
 	}
-	if *filerOptions.dir == "" {
-		*filerOptions.dir = *masterMetaFolder + "/filer"
-		os.MkdirAll(*filerOptions.dir, 0700)
+	if *isStartingFiler {
+		if *filerOptions.dir == "" {
+			*filerOptions.dir = *masterMetaFolder + "/filer"
+			os.MkdirAll(*filerOptions.dir, 0700)
+		}
 	}
 	if err := util.TestFolderWritable(*masterMetaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterMetaFolder, err)
@@ -207,7 +205,7 @@ func runServer(cmd *Command, args []string) bool {
 		go func() {
 			raftWaitForMaster.Wait()
 			time.Sleep(100 * time.Millisecond)
-			myAddress := *serverPublicIp + ":" + strconv.Itoa(*masterPort)
+			myAddress := *serverIp + ":" + strconv.Itoa(*masterPort)
 			var peers []string
 			if *serverPeers != "" {
 				peers = strings.Split(*serverPeers, ",")
@@ -227,7 +225,7 @@ func runServer(cmd *Command, args []string) bool {
 	time.Sleep(100 * time.Millisecond)
 	r := http.NewServeMux()
 	volumeServer := weed_server.NewVolumeServer(r, r,
-		*serverIp, *volumePort, *volumeAdminPort, *serverPublicIp,
+		*serverIp, *volumePort, *volumeAdminPort, *serverPublicUrl,
 		folders, maxCounts,
 		*serverIp+":"+strconv.Itoa(*masterPort), *volumePulse, *serverDataCenter, *serverRack,
 		serverWhiteList, *volumeFixJpgOrientation,

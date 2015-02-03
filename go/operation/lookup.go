@@ -72,7 +72,7 @@ func LookupFileId(server string, fileId string) (fullUrl string, err error) {
 	if len(lookup.Locations) == 0 {
 		return "", errors.New("File Not Found")
 	}
-	return "http://" + lookup.Locations[rand.Intn(len(lookup.Locations))].PublicUrl + "/" + fileId, nil
+	return "http://" + lookup.Locations[rand.Intn(len(lookup.Locations))].Url + "/" + fileId, nil
 }
 
 // LookupVolumeIds find volume locations by cache and actual lookup
