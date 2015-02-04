@@ -58,7 +58,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 
 	glog.V(4).Infoln("volume", volumeId, "reading", n)
 	if !vs.store.HasVolume(volumeId) {
-		lookupResult, err := operation.Lookup(vs.masterNode, volumeId.String())
+		lookupResult, err := operation.Lookup(vs.GetMasterNode(), volumeId.String())
 		glog.V(2).Infoln("volume", volumeId, "found on", lookupResult, "error", err)
 		if err == nil && len(lookupResult.Locations) > 0 {
 			http.Redirect(w, r, "http://"+lookupResult.Locations[0].Url+r.URL.Path, http.StatusMovedPermanently)
@@ -253,7 +253,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ret := operation.UploadResult{}
-	size, errorStatus := topology.ReplicatedWrite(vs.masterNode, vs.store, volumeId, needle, r)
+	size, errorStatus := topology.ReplicatedWrite(vs.GetMasterNode(), vs.store, volumeId, needle, r)
 	httpStatus := http.StatusCreated
 	if errorStatus != "" {
 		httpStatus = http.StatusInternalServerError
@@ -290,7 +290,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	n.Size = 0
-	ret := topology.ReplicatedDelete(vs.masterNode, vs.store, volumeId, n, r)
+	ret := topology.ReplicatedDelete(vs.GetMasterNode(), vs.store, volumeId, n, r)
 
 	if ret != 0 {
 		m := make(map[string]uint32)
