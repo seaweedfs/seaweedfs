@@ -145,12 +145,12 @@ func runServer(cmd *Command, args []string) bool {
 			*filerOptions.dir = *masterMetaFolder + "/filer"
 			os.MkdirAll(*filerOptions.dir, 0700)
 		}
+		if err := util.TestFolderWritable(*filerOptions.dir); err != nil {
+			glog.Fatalf("Check Mapping Meta Folder (-filer.dir=\"%s\") Writable: %s", *filerOptions.dir, err)
+		}
 	}
 	if err := util.TestFolderWritable(*masterMetaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterMetaFolder, err)
-	}
-	if err := util.TestFolderWritable(*filerOptions.dir); err != nil {
-		glog.Fatalf("Check Mapping Meta Folder (-filer.dir=\"%s\") Writable: %s", *filerOptions.dir, err)
 	}
 
 	if *serverWhiteListOption != "" {
