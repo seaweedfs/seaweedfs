@@ -13,6 +13,7 @@ import (
 	"github.com/chrislusf/weed-fs/go/glog"
 	"github.com/chrislusf/weed-fs/go/storage"
 	"github.com/chrislusf/weed-fs/go/util"
+	"golang.org/x/net/context"
 )
 
 func runMount(cmd *Command, args []string) bool {
@@ -55,7 +56,7 @@ type File struct {
 func (File) Attr() fuse.Attr {
 	return fuse.Attr{Mode: 0444}
 }
-func (File) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
+func (File) ReadAll(ctx context.Context) ([]byte, error) {
 	return []byte("hello, world\n"), nil
 }
 
@@ -68,7 +69,7 @@ func (dir Dir) Attr() fuse.Attr {
 	return fuse.Attr{Inode: dir.Id, Mode: os.ModeDir | 0555}
 }
 
-func (dir Dir) Lookup(name string, intr fs.Intr) (fs.Node, fuse.Error) {
+func (dir Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	files_result, e := filer.ListFiles(*mountOptions.filer, dir.Path, name)
 	if e != nil {
 		return nil, fuse.ENOENT
@@ -81,11 +82,11 @@ func (dir Dir) Lookup(name string, intr fs.Intr) (fs.Node, fuse.Error) {
 
 type WFS struct{}
 
-func (WFS) Root() (fs.Node, fuse.Error) {
+func (WFS) Root() (fs.Node, error) {
 	return Dir{}, nil
 }
 
-func (dir *Dir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
+func (dir *Dir) ReadDir(ctx context.Context) ([]fuse.Dirent, error) {
 	ret := make([]fuse.Dirent, 0)
 	if dirs, e := filer.ListDirectories(*mountOptions.filer, dir.Path); e == nil {
 		for _, d := range dirs.Directories {
