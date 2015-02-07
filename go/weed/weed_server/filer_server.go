@@ -10,6 +10,7 @@ import (
 	"github.com/chrislusf/weed-fs/go/filer/flat_namespace"
 	"github.com/chrislusf/weed-fs/go/filer/redis_store"
 	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/security"
 )
 
 type FilerServer struct {
@@ -18,11 +19,13 @@ type FilerServer struct {
 	collection         string
 	defaultReplication string
 	redirectOnRead     bool
+	secret             security.Secret
 	filer              filer.Filer
 }
 
 func NewFilerServer(r *http.ServeMux, port int, master string, dir string, collection string,
 	replication string, redirectOnRead bool,
+	secret string,
 	cassandra_server string, cassandra_keyspace string,
 	redis_server string, redis_database int,
 ) (fs *FilerServer, err error) {
@@ -55,4 +58,8 @@ func NewFilerServer(r *http.ServeMux, port int, master string, dir string, colle
 	r.HandleFunc("/", fs.filerHandler)
 
 	return fs, nil
+}
+
+func (fs *FilerServer) jwt(fileId string) security.EncodedJwt {
+	return security.GenJwt(fs.secret, fileId)
 }

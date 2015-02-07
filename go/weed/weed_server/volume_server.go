@@ -41,16 +41,16 @@ func NewVolumeServer(publicMux, adminMux *http.ServeMux, ip string,
 
 	vs.guard = security.NewGuard(whiteList, "")
 
-	adminMux.HandleFunc("/status", vs.guard.Secure(vs.statusHandler))
-	adminMux.HandleFunc("/admin/assign_volume", vs.guard.Secure(vs.assignVolumeHandler))
-	adminMux.HandleFunc("/admin/vacuum_volume_check", vs.guard.Secure(vs.vacuumVolumeCheckHandler))
-	adminMux.HandleFunc("/admin/vacuum_volume_compact", vs.guard.Secure(vs.vacuumVolumeCompactHandler))
-	adminMux.HandleFunc("/admin/vacuum_volume_commit", vs.guard.Secure(vs.vacuumVolumeCommitHandler))
-	adminMux.HandleFunc("/admin/freeze_volume", vs.guard.Secure(vs.freezeVolumeHandler))
-	adminMux.HandleFunc("/admin/delete_collection", vs.guard.Secure(vs.deleteCollectionHandler))
-	adminMux.HandleFunc("/stats/counter", vs.guard.Secure(statsCounterHandler))
-	adminMux.HandleFunc("/stats/memory", vs.guard.Secure(statsMemoryHandler))
-	adminMux.HandleFunc("/stats/disk", vs.guard.Secure(vs.statsDiskHandler))
+	adminMux.HandleFunc("/status", vs.guard.WhiteList(vs.statusHandler))
+	adminMux.HandleFunc("/admin/assign_volume", vs.guard.WhiteList(vs.assignVolumeHandler))
+	adminMux.HandleFunc("/admin/vacuum_volume_check", vs.guard.WhiteList(vs.vacuumVolumeCheckHandler))
+	adminMux.HandleFunc("/admin/vacuum_volume_compact", vs.guard.WhiteList(vs.vacuumVolumeCompactHandler))
+	adminMux.HandleFunc("/admin/vacuum_volume_commit", vs.guard.WhiteList(vs.vacuumVolumeCommitHandler))
+	adminMux.HandleFunc("/admin/freeze_volume", vs.guard.WhiteList(vs.freezeVolumeHandler))
+	adminMux.HandleFunc("/admin/delete_collection", vs.guard.WhiteList(vs.deleteCollectionHandler))
+	adminMux.HandleFunc("/stats/counter", vs.guard.WhiteList(statsCounterHandler))
+	adminMux.HandleFunc("/stats/memory", vs.guard.WhiteList(statsMemoryHandler))
+	adminMux.HandleFunc("/stats/disk", vs.guard.WhiteList(vs.statsDiskHandler))
 	publicMux.HandleFunc("/delete", vs.guard.Secure(vs.batchDeleteHandler))
 	publicMux.HandleFunc("/", vs.storeHandler)
 
@@ -61,12 +61,13 @@ func NewVolumeServer(publicMux, adminMux *http.ServeMux, ip string,
 		vs.store.SetDataCenter(vs.dataCenter)
 		vs.store.SetRack(vs.rack)
 		for {
-			master, err := vs.store.Join()
+			master, secretKey, err := vs.store.Join()
 			if err == nil {
 				if !connected {
 					connected = true
 					vs.SetMasterNode(master)
-					glog.V(0).Infoln("Volume Server Connected with master at", master, "and set it as masterNode")
+					vs.guard.SecretKey = secretKey
+					glog.V(0).Infoln("Volume Server Connected with master at", master)
 				}
 			} else {
 				glog.V(4).Infoln("Volume Server Failed to talk with master:", err.Error())
@@ -101,4 +102,8 @@ func (vs *VolumeServer) Shutdown() {
 	glog.V(0).Infoln("Shutting down volume server...")
 	vs.store.Close()
 	glog.V(0).Infoln("Shut down successfully!")
+}
+
+func (vs *VolumeServer) jwt(fileId string) security.EncodedJwt {
+	return security.GenJwt(vs.guard.SecretKey, fileId)
 }

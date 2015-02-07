@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/chrislusf/weed-fs/go/security"
 )
 
 var (
@@ -63,8 +65,11 @@ func Get(url string) ([]byte, error) {
 	return b, nil
 }
 
-func Delete(url string) error {
+func Delete(url string, jwt security.EncodedJwt) error {
 	req, err := http.NewRequest("DELETE", url, nil)
+	if jwt != "" {
+		req.Header.Set("Authorization", "BEARER "+string(jwt))
+	}
 	if err != nil {
 		return err
 	}

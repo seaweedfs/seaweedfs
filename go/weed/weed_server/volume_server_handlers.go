@@ -253,7 +253,8 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ret := operation.UploadResult{}
-	size, errorStatus := topology.ReplicatedWrite(vs.GetMasterNode(), vs.store, volumeId, needle, r)
+	size, errorStatus := topology.ReplicatedWrite(vs.GetMasterNode(),
+		vs.store, volumeId, needle, r)
 	httpStatus := http.StatusCreated
 	if errorStatus != "" {
 		httpStatus = http.StatusInternalServerError

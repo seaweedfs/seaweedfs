@@ -11,6 +11,7 @@ import (
 
 	"github.com/chrislusf/weed-fs/go/glog"
 	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/security"
 	"github.com/chrislusf/weed-fs/go/util"
 	"github.com/golang/protobuf/proto"
 )
@@ -260,7 +261,7 @@ func (s *Store) SetRack(rack string) {
 func (s *Store) SetBootstrapMaster(bootstrapMaster string) {
 	s.masterNodes = NewMasterNodes(bootstrapMaster)
 }
-func (s *Store) Join() (masterNode string, e error) {
+func (s *Store) Join() (masterNode string, secretKey security.Secret, e error) {
 	masterNode, e = s.masterNodes.findMaster()
 	if e != nil {
 		return
@@ -314,22 +315,23 @@ func (s *Store) Join() (masterNode string, e error) {
 
 	data, err := proto.Marshal(joinMessage)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	jsonBlob, err := util.PostBytes("http://"+masterNode+"/dir/join", data)
 	if err != nil {
 		s.masterNodes.reset()
-		return "", err
+		return "", "", err
 	}
 	var ret operation.JoinResult
 	if err := json.Unmarshal(jsonBlob, &ret); err != nil {
-		return masterNode, err
+		return masterNode, "", err
 	}
 	if ret.Error != "" {
-		return masterNode, errors.New(ret.Error)
+		return masterNode, "", errors.New(ret.Error)
 	}
 	s.volumeSizeLimit = ret.VolumeSizeLimit
+	secretKey = security.Secret(ret.SecretKey)
 	s.connected = true
 	return
 }
@@ -353,7 +355,7 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 			}
 			if s.volumeSizeLimit < v.ContentSize()+3*uint64(size) {
 				glog.V(0).Infoln("volume", i, "size", v.ContentSize(), "will exceed limit", s.volumeSizeLimit)
-				if _, e := s.Join(); e != nil {
+				if _, _, e := s.Join(); e != nil {
 					glog.V(0).Infoln("error when reporting size:", e)
 				}
 			}

@@ -56,7 +56,7 @@ var (
 	serverRack                    = cmdServer.Flag.String("rack", "", "current volume server's rack name")
 	serverWhiteListOption         = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 	serverPeers                   = cmdServer.Flag.String("master.peers", "", "other master nodes in comma separated ip:masterPort list")
-	serverSecureKey               = cmdServer.Flag.String("secure.key", "", "secret key to ensure authenticated access")
+	serverSecureKey               = cmdServer.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 	serverGarbageThreshold        = cmdServer.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
 	masterPort                    = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
 	masterMetaFolder              = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
@@ -86,10 +86,10 @@ func init() {
 	filerOptions.cassandra_keyspace = cmdServer.Flag.String("filer.cassandra.keyspace", "seaweed", "keyspace of the cassandra server")
 	filerOptions.redis_server = cmdServer.Flag.String("filer.redis.server", "", "host:port of the redis server, e.g., 127.0.0.1:6379")
 	filerOptions.redis_database = cmdServer.Flag.Int("filer.redis.database", 0, "the database on the redis server")
-
 }
 
 func runServer(cmd *Command, args []string) bool {
+	filerOptions.secretKey = serverSecureKey
 	if *serverOptions.cpuprofile != "" {
 		f, err := os.Create(*serverOptions.cpuprofile)
 		if err != nil {
@@ -162,6 +162,7 @@ func runServer(cmd *Command, args []string) bool {
 			r := http.NewServeMux()
 			_, nfs_err := weed_server.NewFilerServer(r, *filerOptions.port, *filerOptions.master, *filerOptions.dir, *filerOptions.collection,
 				*filerOptions.defaultReplicaPlacement, *filerOptions.redirectOnRead,
+				*filerOptions.secretKey,
 				"", "",
 				"", 0,
 			)

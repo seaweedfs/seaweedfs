@@ -41,7 +41,7 @@ var (
 	mMaxCpu                 = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	garbageThreshold        = cmdMaster.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
 	masterWhiteListOption   = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	masterSecureKey         = cmdMaster.Flag.String("secure.key", "", "secret key to check permission")
+	masterSecureKey         = cmdMaster.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 
 	masterWhiteList []string
 )

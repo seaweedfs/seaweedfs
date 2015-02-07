@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/security"
 )
 
 type FilePart struct {
@@ -34,7 +35,10 @@ type SubmitResult struct {
 	Error    string `json:"error,omitempty"`
 }
 
-func SubmitFiles(master string, files []FilePart, replication string, collection string, ttl string, maxMB int) ([]SubmitResult, error) {
+func SubmitFiles(master string, files []FilePart,
+	replication string, collection string, ttl string, maxMB int,
+	secret security.Secret,
+) ([]SubmitResult, error) {
 	results := make([]SubmitResult, len(files))
 	for index, file := range files {
 		results[index].FileName = file.FileName
@@ -54,7 +58,7 @@ func SubmitFiles(master string, files []FilePart, replication string, collection
 		file.Server = ret.PublicUrl
 		file.Replication = replication
 		file.Collection = collection
-		results[index].Size, err = file.Upload(maxMB, master)
+		results[index].Size, err = file.Upload(maxMB, master, secret)
 		if err != nil {
 			results[index].Error = err.Error()
 		}
@@ -101,7 +105,8 @@ func newFilePart(fullPathFilename string) (ret FilePart, err error) {
 	return ret, nil
 }
 
-func (fi FilePart) Upload(maxMB int, master string) (retSize uint32, err error) {
+func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (retSize uint32, err error) {
+	jwt := security.GenJwt(secret, fi.Fid)
 	fileUrl := "http://" + fi.Server + "/" + fi.Fid
 	if fi.ModTime != 0 {
 		fileUrl += "?ts=" + strconv.Itoa(int(fi.ModTime))
@@ -114,16 +119,20 @@ func (fi FilePart) Upload(maxMB int, master string) (retSize uint32, err error) 
 		chunks := fi.FileSize/chunkSize + 1
 		fids := make([]string, 0)
 		for i := int64(0); i < chunks; i++ {
-			id, count, e := upload_one_chunk(fi.FileName+"-"+strconv.FormatInt(i+1, 10), io.LimitReader(fi.Reader, chunkSize), master, fi.Replication, fi.Collection, fi.Ttl)
+			id, count, e := upload_one_chunk(
+				fi.FileName+"-"+strconv.FormatInt(i+1, 10),
+				io.LimitReader(fi.Reader, chunkSize),
+				master, fi.Replication, fi.Collection, fi.Ttl,
+				jwt)
 			if e != nil {
 				return 0, e
 			}
 			fids = append(fids, id)
 			retSize += count
 		}
-		err = upload_file_id_list(fileUrl, fi.FileName+"-list", fids)
+		err = upload_file_id_list(fileUrl, fi.FileName+"-list", fids, jwt)
 	} else {
-		ret, e := Upload(fileUrl, fi.FileName, fi.Reader, fi.IsGzipped, fi.MimeType)
+		ret, e := Upload(fileUrl, fi.FileName, fi.Reader, fi.IsGzipped, fi.MimeType, jwt)
 		if e != nil {
 			return 0, e
 		}
@@ -132,24 +141,27 @@ func (fi FilePart) Upload(maxMB int, master string) (retSize uint32, err error) 
 	return
 }
 
-func upload_one_chunk(filename string, reader io.Reader, master, replication string, collection string, ttl string) (fid string, size uint32, e error) {
+func upload_one_chunk(filename string, reader io.Reader, master,
+	replication string, collection string, ttl string, jwt security.EncodedJwt,
+) (fid string, size uint32, e error) {
 	ret, err := Assign(master, 1, replication, collection, ttl)
 	if err != nil {
 		return "", 0, err
 	}
 	fileUrl, fid := "http://"+ret.Url+"/"+ret.Fid, ret.Fid
 	glog.V(4).Info("Uploading part ", filename, " to ", fileUrl, "...")
-	uploadResult, uploadError := Upload(fileUrl, filename, reader, false, "application/octet-stream")
+	uploadResult, uploadError := Upload(fileUrl, filename, reader, false,
+		"application/octet-stream", jwt)
 	if uploadError != nil {
 		return fid, 0, uploadError
 	}
 	return fid, uploadResult.Size, nil
 }
 
-func upload_file_id_list(fileUrl, filename string, fids []string) error {
+func upload_file_id_list(fileUrl, filename string, fids []string, jwt security.EncodedJwt) error {
 	var buf bytes.Buffer
 	buf.WriteString(strings.Join(fids, "\n"))
 	glog.V(4).Info("Uploading final list ", filename, " to ", fileUrl, "...")
-	_, e := Upload(fileUrl, filename, &buf, false, "text/plain")
+	_, e := Upload(fileUrl, filename, &buf, false, "text/plain", jwt)
 	return e
 }

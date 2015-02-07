@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/chrislusf/weed-fs/go/security"
 	"github.com/chrislusf/weed-fs/go/util"
 )
 
@@ -16,12 +17,12 @@ type DeleteResult struct {
 	Error string `json:"error,omitempty"`
 }
 
-func DeleteFile(master string, fileId string) error {
+func DeleteFile(master string, fileId string, jwt security.EncodedJwt) error {
 	fileUrl, err := LookupFileId(master, fileId)
 	if err != nil {
 		return err
 	}
-	return util.Delete(fileUrl)
+	return util.Delete(fileUrl, jwt)
 }
 
 func ParseFileId(fid string) (vid string, key_cookie string, err error) {

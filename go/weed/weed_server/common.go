@@ -12,6 +12,7 @@ import (
 
 	"github.com/chrislusf/weed-fs/go/glog"
 	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/security"
 	"github.com/chrislusf/weed-fs/go/stats"
 	"github.com/chrislusf/weed-fs/go/storage"
 	"github.com/chrislusf/weed-fs/go/util"
@@ -75,6 +76,7 @@ func debug(params ...interface{}) {
 }
 
 func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl string) {
+	jwt := security.GetJwt(r)
 	m := make(map[string]interface{})
 	if r.Method != "POST" {
 		writeJsonError(w, r, http.StatusMethodNotAllowed, errors.New("Only submit via POST!"))
@@ -102,7 +104,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	}
 
 	debug("upload file to store", url)
-	uploadResult, err := operation.Upload(url, fname, bytes.NewReader(data), isGzipped, mimeType)
+	uploadResult, err := operation.Upload(url, fname, bytes.NewReader(data), isGzipped, mimeType, jwt)
 	if err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
