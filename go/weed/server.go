@@ -47,7 +47,7 @@ var cmdServer = &Command{
 }
 
 var (
-	serverIp                      = cmdServer.Flag.String("ip", "", "ip or server name")
+	serverIp                      = cmdServer.Flag.String("ip", "localhost", "ip or server name")
 	serverPublicUrl               = cmdServer.Flag.String("publicUrl", "", "publicly accessible address")
 	serverBindIp                  = cmdServer.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	serverMaxCpu                  = cmdServer.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
@@ -97,10 +97,6 @@ func runServer(cmd *Command, args []string) bool {
 		}
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
-	}
-
-	if *serverIp == "" {
-		*serverIp = "localhost"
 	}
 
 	if *filerOptions.redirectOnRead {

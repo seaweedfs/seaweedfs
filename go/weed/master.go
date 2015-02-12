@@ -29,8 +29,9 @@ var cmdMaster = &Command{
 
 var (
 	mport                   = cmdMaster.Flag.Int("port", 9333, "http listen port")
-	masterIp                = cmdMaster.Flag.String("ip", "", "master listening ip address, default to listen on all network interfaces")
+	masterIp                = cmdMaster.Flag.String("ip", "localhost", "master <ip>|<server> address")
 	masterBindIp            = cmdMaster.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
+	mPublicUrl              = cmdMaster.Flag.String("publicUrl", "", "peer accessible <ip>|<server_name>:port")
 	metaFolder              = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
 	masterPeers             = cmdMaster.Flag.String("peers", "", "other master nodes in comma separated ip:port list")
 	volumeSizeLimitMB       = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
@@ -75,10 +76,10 @@ func runMaster(cmd *Command, args []string) bool {
 
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		if *masterIp == "" {
-			*masterIp = "localhost"
-		}
 		myMasterAddress := *masterIp + ":" + strconv.Itoa(*mport)
+		if *mPublicUrl != "" {
+			myMasterAddress = *mPublicUrl
+		}
 		var peers []string
 		if *masterPeers != "" {
 			peers = strings.Split(*masterPeers, ",")
