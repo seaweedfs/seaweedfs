@@ -87,6 +87,9 @@ func (dn *DataNode) MatchLocation(ip string, port int) bool {
 }
 
 func (dn *DataNode) Url() string {
+	if dn.PublicUrl != "" {
+		return dn.PublicUrl
+	}
 	return dn.Ip + ":" + strconv.Itoa(dn.Port)
 }
 
