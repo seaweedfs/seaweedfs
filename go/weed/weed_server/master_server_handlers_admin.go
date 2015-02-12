@@ -122,7 +122,11 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	machines := ms.Topo.Lookup("", volumeId)
 	if machines != nil && len(machines) > 0 {
-		http.Redirect(w, r, "http://"+machines[0].Url()+r.URL.Path, http.StatusMovedPermanently)
+		url := machines[0].PublicUrl
+		if url == "" {
+			url = machines[0].Url()
+		}
+		http.Redirect(w, r, "http://"+url+r.URL.Path, http.StatusMovedPermanently)
 	} else {
 		writeJsonError(w, r, http.StatusNotFound, fmt.Errorf("volume id %d not found.", volumeId))
 	}
