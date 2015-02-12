@@ -7,11 +7,18 @@ import (
 
 	"github.com/chrislusf/weed-fs/go/glog"
 	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/security"
 	"github.com/chrislusf/weed-fs/go/storage"
 	"github.com/chrislusf/weed-fs/go/util"
 )
 
-func ReplicatedWrite(masterNode string, s *storage.Store, volumeId storage.VolumeId, needle *storage.Needle, r *http.Request) (size uint32, errorStatus string) {
+func ReplicatedWrite(masterNode string, s *storage.Store,
+	volumeId storage.VolumeId, needle *storage.Needle,
+	r *http.Request) (size uint32, errorStatus string) {
+
+	//check JWT
+	jwt := security.GetJwt(r)
+
 	ret, err := s.Write(volumeId, needle)
 	needToReplicate := !s.HasVolume(volumeId)
 	if err != nil {
@@ -27,7 +34,10 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId storage.Volum
 	if needToReplicate { //send to other replica locations
 		if r.FormValue("type") != "replicate" {
 			if !distributedOperation(masterNode, s, volumeId, func(location operation.Location) bool {
-				_, err := operation.Upload("http://"+location.Url+r.URL.Path+"?type=replicate&ts="+strconv.FormatUint(needle.LastModified, 10), string(needle.Name), bytes.NewReader(needle.Data), needle.IsGzipped(), string(needle.Mime))
+				_, err := operation.Upload(
+					"http://"+location.Url+r.URL.Path+"?type=replicate&ts="+strconv.FormatUint(needle.LastModified, 10),
+					string(needle.Name), bytes.NewReader(needle.Data), needle.IsGzipped(), string(needle.Mime),
+					jwt)
 				return err == nil
 			}) {
 				ret = 0
@@ -41,7 +51,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId storage.Volum
 				volumeId.String() + ": " + err.Error()
 		} else {
 			distributedOperation(masterNode, s, volumeId, func(location operation.Location) bool {
-				return nil == util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate")
+				return nil == util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", jwt)
 			})
 		}
 	}
@@ -49,7 +59,13 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId storage.Volum
 	return
 }
 
-func ReplicatedDelete(masterNode string, store *storage.Store, volumeId storage.VolumeId, n *storage.Needle, r *http.Request) (ret uint32) {
+func ReplicatedDelete(masterNode string, store *storage.Store,
+	volumeId storage.VolumeId, n *storage.Needle,
+	r *http.Request) (ret uint32) {
+
+	//check JWT
+	jwt := security.GetJwt(r)
+
 	ret, err := store.Delete(volumeId, n)
 	if err != nil {
 		glog.V(0).Infoln("delete error:", err)
@@ -63,7 +79,7 @@ func ReplicatedDelete(masterNode string, store *storage.Store, volumeId storage.
 	if needToReplicate { //send to other replica locations
 		if r.FormValue("type") != "replicate" {
 			if !distributedOperation(masterNode, store, volumeId, func(location operation.Location) bool {
-				return nil == util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate")
+				return nil == util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", jwt)
 			}) {
 				ret = 0
 			}

@@ -5,11 +5,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strings"
-	"time"
 
 	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/dgrijalva/jwt-go"
 )
 
 var (
@@ -44,15 +41,29 @@ https://github.com/pkieltyka/jwtauth/blob/master/jwtauth.go
 */
 type Guard struct {
 	whiteList []string
-	secretKey string
+	SecretKey Secret
 
 	isActive bool
 }
 
 func NewGuard(whiteList []string, secretKey string) *Guard {
-	g := &Guard{whiteList: whiteList, secretKey: secretKey}
-	g.isActive = len(g.whiteList) != 0 || len(g.secretKey) != 0
+	g := &Guard{whiteList: whiteList, SecretKey: Secret(secretKey)}
+	g.isActive = len(g.whiteList) != 0 || len(g.SecretKey) != 0
 	return g
+}
+
+func (g *Guard) WhiteList(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
+	if !g.isActive {
+		//if no security needed, just skip all checkings
+		return f
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := g.checkWhiteList(w, r); err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		f(w, r)
+	}
 }
 
 func (g *Guard) Secure(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +72,7 @@ func (g *Guard) Secure(f func(w http.ResponseWriter, r *http.Request)) func(w ht
 		return f
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := g.doCheck(w, r); err != nil {
+		if err := g.checkJwt(w, r); err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -69,76 +80,48 @@ func (g *Guard) Secure(f func(w http.ResponseWriter, r *http.Request)) func(w ht
 	}
 }
 
-func (g *Guard) NewToken() (tokenString string, err error) {
-	m := make(map[string]interface{})
-	m["exp"] = time.Now().Unix() + 10
-	return g.Encode(m)
-}
-
-func (g *Guard) Encode(claims map[string]interface{}) (tokenString string, err error) {
-	if !g.isActive {
-		return "", nil
+func (g *Guard) checkWhiteList(w http.ResponseWriter, r *http.Request) error {
+	if len(g.whiteList) == 0 {
+		return nil
 	}
 
-	t := jwt.New(jwt.GetSigningMethod("HS256"))
-	t.Claims = claims
-	return t.SignedString(g.secretKey)
-}
-
-func (g *Guard) Decode(tokenString string) (token *jwt.Token, err error) {
-	return jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		return g.secretKey, nil
-	})
-}
-
-func (g *Guard) doCheck(w http.ResponseWriter, r *http.Request) error {
-	if len(g.whiteList) != 0 {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err == nil {
-			for _, ip := range g.whiteList {
-				if ip == host {
-					return nil
-				}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		for _, ip := range g.whiteList {
+			if ip == host {
+				return nil
 			}
 		}
 	}
 
-	if len(g.secretKey) != 0 {
+	glog.V(1).Infof("Not in whitelist: %s", r.RemoteAddr)
+	return fmt.Errorf("Not in whitelis: %s", r.RemoteAddr)
+}
 
-		// Get token from query params
-		tokenStr := r.URL.Query().Get("jwt")
+func (g *Guard) checkJwt(w http.ResponseWriter, r *http.Request) error {
+	if g.checkWhiteList(w, r) == nil {
+		return nil
+	}
 
-		// Get token from authorization header
-		if tokenStr == "" {
-			bearer := r.Header.Get("Authorization")
-			if len(bearer) > 7 && strings.ToUpper(bearer[0:6]) == "BEARER" {
-				tokenStr = bearer[7:]
-			}
-		}
+	if len(g.SecretKey) == 0 {
+		return nil
+	}
 
-		// Get token from cookie
-		if tokenStr == "" {
-			cookie, err := r.Cookie("jwt")
-			if err == nil {
-				tokenStr = cookie.Value
-			}
-		}
+	tokenStr := GetJwt(r)
 
-		if tokenStr == "" {
-			return ErrUnauthorized
-		}
+	if tokenStr == "" {
+		return ErrUnauthorized
+	}
 
-		// Verify the token
-		token, err := g.Decode(tokenStr)
-		if err != nil {
-			glog.V(1).Infof("Token verification error from %s: %v", r.RemoteAddr, err)
-			return ErrUnauthorized
-		}
-		if !token.Valid {
-			glog.V(1).Infof("Token invliad from %s: %v", r.RemoteAddr, tokenStr)
-			return ErrUnauthorized
-		}
-
+	// Verify the token
+	token, err := DecodeJwt(g.SecretKey, tokenStr)
+	if err != nil {
+		glog.V(1).Infof("Token verification error from %s: %v", r.RemoteAddr, err)
+		return ErrUnauthorized
+	}
+	if !token.Valid {
+		glog.V(1).Infof("Token invliad from %s: %v", r.RemoteAddr, tokenStr)
+		return ErrUnauthorized
 	}
 
 	glog.V(1).Infof("No permission from %s", r.RemoteAddr)

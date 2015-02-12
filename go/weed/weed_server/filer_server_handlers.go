@@ -170,7 +170,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		if ret.Name != "" {
 			path += ret.Name
 		} else {
-			operation.DeleteFile(fs.master, assignResult.Fid) //clean up
+			operation.DeleteFile(fs.master, assignResult.Fid, fs.jwt(assignResult.Fid)) //clean up
 			glog.V(0).Infoln("Can not to write to folder", path, "without a file name!")
 			writeJsonError(w, r, http.StatusInternalServerError,
 				errors.New("Can not to write to folder "+path+" without a file name"))
@@ -179,7 +179,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	glog.V(4).Infoln("saving", path, "=>", assignResult.Fid)
 	if db_err := fs.filer.CreateFile(path, assignResult.Fid); db_err != nil {
-		operation.DeleteFile(fs.master, assignResult.Fid) //clean up
+		operation.DeleteFile(fs.master, assignResult.Fid, fs.jwt(assignResult.Fid)) //clean up
 		glog.V(0).Infof("failing to write %s to filer server : %v", path, db_err)
 		writeJsonError(w, r, http.StatusInternalServerError, db_err)
 		return
@@ -199,7 +199,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		fid, err = fs.filer.DeleteFile(r.URL.Path)
 		if err == nil {
-			err = operation.DeleteFile(fs.master, fid)
+			err = operation.DeleteFile(fs.master, fid, fs.jwt(fid))
 		}
 	}
 	if err == nil {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/chrislusf/weed-fs/go/glog"
 	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/security"
 	"github.com/chrislusf/weed-fs/go/util"
 )
 
@@ -32,6 +33,7 @@ type BenchmarkOptions struct {
 	collection       *string
 	cpuprofile       *string
 	maxCpu           *int
+	secretKey        *string
 	vid2server       map[string]string //cache for vid locations
 
 }
@@ -56,6 +58,7 @@ func init() {
 	b.collection = cmdBenchmark.Flag.String("collection", "benchmark", "write data to this collection")
 	b.cpuprofile = cmdBenchmark.Flag.String("cpuprofile", "", "cpu profile output file")
 	b.maxCpu = cmdBenchmark.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
+	b.secretKey = cmdBenchmark.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 	b.vid2server = make(map[string]string)
 	sharedBytes = make([]byte, 1024)
 }
@@ -181,6 +184,8 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 	defer wait.Done()
 	delayedDeleteChan := make(chan *delayedFile, 100)
 	var waitForDeletions sync.WaitGroup
+	secret := security.Secret(*b.secretKey)
+
 	for i := 0; i < 7; i++ {
 		waitForDeletions.Add(1)
 		go func() {
@@ -189,7 +194,8 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 				if df.enterTime.After(time.Now()) {
 					time.Sleep(df.enterTime.Sub(time.Now()))
 				}
-				if e := util.Delete("http://" + df.fp.Server + "/" + df.fp.Fid); e == nil {
+				if e := util.Delete("http://"+df.fp.Server+"/"+df.fp.Fid,
+					security.GenJwt(secret, df.fp.Fid)); e == nil {
 					s.completed++
 				} else {
 					s.failed++
@@ -204,7 +210,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 		fp := &operation.FilePart{Reader: &FakeReader{id: uint64(id), size: fileSize}, FileSize: fileSize}
 		if assignResult, err := operation.Assign(*b.server, 1, "", *b.collection, ""); err == nil {
 			fp.Server, fp.Fid, fp.Collection = assignResult.Url, assignResult.Fid, *b.collection
-			if _, err := fp.Upload(0, *b.server); err == nil {
+			if _, err := fp.Upload(0, *b.server, secret); err == nil {
 				if rand.Intn(100) < *b.deletePercentage {
 					s.total++
 					delayedDeleteChan <- &delayedFile{time.Now().Add(time.Second), fp}

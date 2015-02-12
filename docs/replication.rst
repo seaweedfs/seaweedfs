@@ -10,7 +10,7 @@ Basically, the way it works is:
 
 .. code-block:: bash
   
-  ./weed master -defaultReplicationType=001
+  ./weed master -defaultReplication=001
 
 2. start volume servers as this:
 

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/weed-fs/go/security"
 )
 
 var (
@@ -15,6 +16,7 @@ var (
 	uploadDir         *string
 	uploadTtl         *string
 	include           *string
+	uploadSecretKey   *string
 	maxMB             *int
 )
 
@@ -28,13 +30,14 @@ func init() {
 	uploadCollection = cmdUpload.Flag.String("collection", "", "optional collection name")
 	uploadTtl = cmdUpload.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
 	maxMB = cmdUpload.Flag.Int("maxMB", 0, "split files larger than the limit")
+	uploadSecretKey = cmdUpload.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 }
 
 var cmdUpload = &Command{
 	UsageLine: "upload -server=localhost:9333 file1 [file2 file3]\n upload -server=localhost:9333 -dir=one_directory -include=*.pdf",
 	Short:     "upload one or a list of files",
 	Long: `upload one or a list of files, or batch upload one whole folder recursively.
-  
+
   If uploading a list of files:
   It uses consecutive file keys for the list of files.
   e.g. If the file1 uses key k, file2 can be read via k_1
@@ -42,18 +45,19 @@ var cmdUpload = &Command{
   If uploading a whole folder recursively:
   All files under the folder and subfolders will be uploaded, each with its own file key.
   Optional parameter "-include" allows you to specify the file name patterns.
-  
+
   If any file has a ".gz" extension, the content are considered gzipped already, and will be stored as is.
   This can save volume server's gzipped processing and allow customizable gzip compression level.
   The file name will strip out ".gz" and stored. For example, "jquery.js.gz" will be stored as "jquery.js".
-  
-  If "maxMB" is set to a positive number, files larger than it would be split into chunks and uploaded separatedly. 
-  The list of file ids of those chunks would be stored in an additional chunk, and this additional chunk's file id would be returned. 
+
+  If "maxMB" is set to a positive number, files larger than it would be split into chunks and uploaded separatedly.
+  The list of file ids of those chunks would be stored in an additional chunk, and this additional chunk's file id would be returned.
 
   `,
 }
 
 func runUpload(cmd *Command, args []string) bool {
+	secret := security.Secret(*uploadSecretKey)
 	if len(cmdUpload.Flag.Args()) == 0 {
 		if *uploadDir == "" {
 			return false
@@ -70,7 +74,9 @@ func runUpload(cmd *Command, args []string) bool {
 					if e != nil {
 						return e
 					}
-					results, e := operation.SubmitFiles(*server, parts, *uploadReplication, *uploadCollection, *uploadTtl, *maxMB)
+					results, e := operation.SubmitFiles(*server, parts,
+						*uploadReplication, *uploadCollection,
+						*uploadTtl, *maxMB, secret)
 					bytes, _ := json.Marshal(results)
 					fmt.Println(string(bytes))
 					if e != nil {
@@ -87,7 +93,9 @@ func runUpload(cmd *Command, args []string) bool {
 		if e != nil {
 			fmt.Println(e.Error())
 		}
-		results, _ := operation.SubmitFiles(*server, parts, *uploadReplication, *uploadCollection, *uploadTtl, *maxMB)
+		results, _ := operation.SubmitFiles(*server, parts,
+			*uploadReplication, *uploadCollection,
+			*uploadTtl, *maxMB, secret)
 		bytes, _ := json.Marshal(results)
 		fmt.Println(string(bytes))
 	}

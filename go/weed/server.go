@@ -47,7 +47,7 @@ var cmdServer = &Command{
 }
 
 var (
-	serverIp                      = cmdServer.Flag.String("ip", "", "ip or server name")
+	serverIp                      = cmdServer.Flag.String("ip", "localhost", "ip or server name")
 	serverPublicUrl               = cmdServer.Flag.String("publicUrl", "", "publicly accessible address")
 	serverBindIp                  = cmdServer.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	serverMaxCpu                  = cmdServer.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
@@ -56,7 +56,7 @@ var (
 	serverRack                    = cmdServer.Flag.String("rack", "", "current volume server's rack name")
 	serverWhiteListOption         = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 	serverPeers                   = cmdServer.Flag.String("master.peers", "", "other master nodes in comma separated ip:masterPort list")
-	serverSecureKey               = cmdServer.Flag.String("secure.key", "", "secret key to ensure authenticated access")
+	serverSecureKey               = cmdServer.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 	serverGarbageThreshold        = cmdServer.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
 	masterPort                    = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
 	masterMetaFolder              = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
@@ -86,10 +86,10 @@ func init() {
 	filerOptions.cassandra_keyspace = cmdServer.Flag.String("filer.cassandra.keyspace", "seaweed", "keyspace of the cassandra server")
 	filerOptions.redis_server = cmdServer.Flag.String("filer.redis.server", "", "host:port of the redis server, e.g., 127.0.0.1:6379")
 	filerOptions.redis_database = cmdServer.Flag.Int("filer.redis.database", 0, "the database on the redis server")
-
 }
 
 func runServer(cmd *Command, args []string) bool {
+	filerOptions.secretKey = serverSecureKey
 	if *serverOptions.cpuprofile != "" {
 		f, err := os.Create(*serverOptions.cpuprofile)
 		if err != nil {
@@ -97,10 +97,6 @@ func runServer(cmd *Command, args []string) bool {
 		}
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
-	}
-
-	if *serverIp == "" {
-		*serverIp = "localhost"
 	}
 
 	if *filerOptions.redirectOnRead {
@@ -145,12 +141,12 @@ func runServer(cmd *Command, args []string) bool {
 			*filerOptions.dir = *masterMetaFolder + "/filer"
 			os.MkdirAll(*filerOptions.dir, 0700)
 		}
+		if err := util.TestFolderWritable(*filerOptions.dir); err != nil {
+			glog.Fatalf("Check Mapping Meta Folder (-filer.dir=\"%s\") Writable: %s", *filerOptions.dir, err)
+		}
 	}
 	if err := util.TestFolderWritable(*masterMetaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterMetaFolder, err)
-	}
-	if err := util.TestFolderWritable(*filerOptions.dir); err != nil {
-		glog.Fatalf("Check Mapping Meta Folder (-filer.dir=\"%s\") Writable: %s", *filerOptions.dir, err)
 	}
 
 	if *serverWhiteListOption != "" {
@@ -162,6 +158,7 @@ func runServer(cmd *Command, args []string) bool {
 			r := http.NewServeMux()
 			_, nfs_err := weed_server.NewFilerServer(r, *filerOptions.port, *filerOptions.master, *filerOptions.dir, *filerOptions.collection,
 				*filerOptions.defaultReplicaPlacement, *filerOptions.redirectOnRead,
+				*filerOptions.secretKey,
 				"", "",
 				"", 0,
 			)

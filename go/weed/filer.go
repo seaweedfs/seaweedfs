@@ -22,6 +22,7 @@ type FilerOptions struct {
 	defaultReplicaPlacement *string
 	dir                     *string
 	redirectOnRead          *bool
+	secretKey               *string
 	cassandra_server        *string
 	cassandra_keyspace      *string
 	redis_server            *string
@@ -40,6 +41,8 @@ func init() {
 	f.cassandra_keyspace = cmdFiler.Flag.String("cassandra.keyspace", "seaweed", "keyspace of the cassandra server")
 	f.redis_server = cmdFiler.Flag.String("redis.server", "", "host:port of the redis server, e.g., 127.0.0.1:6379")
 	f.redis_database = cmdFiler.Flag.Int("redis.database", 0, "the database on the redis server")
+	f.secretKey = cmdFiler.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
+
 }
 
 var cmdFiler = &Command{
@@ -73,6 +76,7 @@ func runFiler(cmd *Command, args []string) bool {
 	r := http.NewServeMux()
 	_, nfs_err := weed_server.NewFilerServer(r, *f.port, *f.master, *f.dir, *f.collection,
 		*f.defaultReplicaPlacement, *f.redirectOnRead,
+		*f.secretKey,
 		*f.cassandra_server, *f.cassandra_keyspace,
 		*f.redis_server, *f.redis_database,
 	)

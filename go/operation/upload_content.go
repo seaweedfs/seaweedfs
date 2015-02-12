@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/security"
 )
 
 type UploadResult struct {
@@ -35,13 +36,13 @@ func init() {
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
-func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string) (*UploadResult, error) {
+func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string, jwt security.EncodedJwt) (*UploadResult, error) {
 	return upload_content(uploadUrl, func(w io.Writer) (err error) {
 		_, err = io.Copy(w, reader)
 		return
-	}, filename, isGzipped, mtype)
+	}, filename, isGzipped, mtype, jwt)
 }
-func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, mtype string) (*UploadResult, error) {
+func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, mtype string, jwt security.EncodedJwt) (*UploadResult, error) {
 	body_buf := bytes.NewBufferString("")
 	body_writer := multipart.NewWriter(body_buf)
 	h := make(textproto.MIMEHeader)
@@ -54,6 +55,9 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	}
 	if isGzipped {
 		h.Set("Content-Encoding", "gzip")
+	}
+	if jwt != "" {
+		h.Set("Authorization", "BEARER "+string(jwt))
 	}
 	file_writer, cp_err := body_writer.CreatePart(h)
 	if cp_err != nil {
