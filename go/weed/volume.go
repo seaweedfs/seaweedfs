@@ -99,7 +99,7 @@ func runVolume(cmd *Command, args []string) bool {
 		*v.ip = "127.0.0.1"
 	}
 	if *v.publicUrl == "" {
-		*v.publicUrl = *v.ip + ":" + *v.port
+		*v.publicUrl = *v.ip + ":" + strconv.Itoa(*v.port)
 	}
 
 	if *v.adminPort == 0 {
