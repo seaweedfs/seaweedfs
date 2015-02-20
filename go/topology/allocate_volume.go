@@ -3,6 +3,7 @@ package topology
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 
 	"github.com/chrislusf/weed-fs/go/storage"
@@ -25,7 +26,7 @@ func AllocateVolume(dn *DataNode, vid storage.VolumeId, option *VolumeGrowOption
 	}
 	var ret AllocateVolumeResult
 	if err := json.Unmarshal(jsonBlob, &ret); err != nil {
-		return err
+		return fmt.Errorf("Invalid JSON result for %s: %s", "/admin/assign_volum", string(jsonBlob))
 	}
 	if ret.Error != "" {
 		return errors.New(ret.Error)
