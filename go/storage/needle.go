@@ -126,7 +126,8 @@ func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string
 	if ext == ".gz" {
 		isGzipped = true
 	}
-	if strings.HasSuffix(fileName, ".gz") {
+	if strings.HasSuffix(fileName, ".gz") &&
+		!strings.HasSuffix(fileName, ".tar.gz") {
 		fileName = fileName[:len(fileName)-3]
 	}
 	modifiedTime, _ = strconv.ParseUint(r.FormValue("ts"), 10, 64)
