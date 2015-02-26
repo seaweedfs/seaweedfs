@@ -101,5 +101,6 @@ func (dn *DataNode) ToMap() interface{} {
 	ret["Max"] = dn.GetMaxVolumeCount()
 	ret["Free"] = dn.FreeSpace()
 	ret["PublicUrl"] = dn.PublicUrl
+	ret["AdminUrl"] = dn.AdminUrl()
 	return ret
 }
