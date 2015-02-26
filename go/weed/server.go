@@ -109,6 +109,10 @@ func runServer(cmd *Command, args []string) bool {
 		*filerOptions.defaultReplicaPlacement = *masterDefaultReplicaPlacement
 	}
 
+	if *volumeAdminPort == 0 {
+		*volumeAdminPort = *volumePort
+	}
+
 	if *serverMaxCpu < 1 {
 		*serverMaxCpu = runtime.NumCPU()
 	}
@@ -172,7 +176,6 @@ func runServer(cmd *Command, args []string) bool {
 			)
 			if e != nil {
 				glog.Fatalf("Filer listener error: %v", e)
-				glog.Fatalf(e.Error())
 			}
 			if e := http.Serve(filerListener, r); e != nil {
 				glog.Fatalf("Filer Fail to serve: %v", e)
@@ -229,12 +232,12 @@ func runServer(cmd *Command, args []string) bool {
 	)
 
 	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*volumePort))
-	volumeListener, e := util.NewListener(
+	volumeListener, eListen := util.NewListener(
 		*serverBindIp+":"+strconv.Itoa(*volumePort),
 		time.Duration(*serverTimeout)*time.Second,
 	)
-	if e != nil {
-		glog.Fatalf("Volume server listener error: %v", e)
+	if eListen != nil {
+		glog.Fatalf("Volume server listener error: %v", eListen)
 	}
 
 	OnInterrupt(func() {
