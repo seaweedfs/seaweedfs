@@ -3,7 +3,7 @@ Seaweed File System
 
 [![Build Status](https://travis-ci.org/chrislusf/weed-fs.svg?branch=master)](https://travis-ci.org/chrislusf/weed-fs)
 [![GoDoc](https://godoc.org/github.com/chrislusf/weed-fs/go?status.svg)](https://godoc.org/github.com/chrislusf/weed-fs/go)
-[![RTD](https://readthedocs.org/projects/weed-fs/badge/?version=latest)](http://weed-fs.readthedocs.org/en/latest/)
+[![Wiki](https://img.shields.io/badge/docs-wiki-blue.svg)](https://github.com/chrislusf/weed-fs/wiki)
 
 
 ## Introduction
@@ -17,9 +17,9 @@ Instead of supporting full POSIX file system semantics, Seaweed-FS choose to imp
 
 Instead of managing all file metadata in a central master, Seaweed-FS choose to manages file volumes in the central master, and let volume servers manage files and the metadata. This relieves concurrency pressure from the central master and spreads file metadata into volume servers' memories, allowing faster file access with just one disk read operation!
 
-Seaweed-FS models after [Facebook's Haystack design paper](http://www.usenix.org/event/osdi10/tech/full_papers/Beaver.pdf). 
+Seaweed-FS models after [Facebook's Haystack design paper](http://www.usenix.org/event/osdi10/tech/full_papers/Beaver.pdf).
 
-Seaweed-FS costs only 40 bytes disk storage for each file's metadata. It is so simple with O(1) disk read that you are welcome to challenge the performance with your actual use cases. 
+Seaweed-FS costs only 40 bytes disk storage for each file's metadata. It is so simple with O(1) disk read that you are welcome to challenge the performance with your actual use cases.
 
 
 ![](https://api.bintray.com/packages/chrislusf/Weed-FS/seaweed/images/download.png)
@@ -39,7 +39,7 @@ http://groups.google.com/group/weed-file-system Seaweed File System Discussion G
 * Support Etag, Accept-Range, Last-Modified, etc.
 
 ## Example Usage
-By default, the master node runs on port 9333, and the volume nodes runs on port 8080. 
+By default, the master node runs on port 9333, and the volume nodes runs on port 8080.
 Here I will start one master node, and two volume nodes on port 8080 and 8081. Ideally, they should be started from different machines. Here I just use localhost as example.
 
 Seaweed-FS uses HTTP REST operations to write, read, delete. The return results are JSON or JSONP format.
@@ -55,7 +55,7 @@ Seaweed-FS uses HTTP REST operations to write, read, delete. The return results 
 
 ```
 > weed volume -dir="/tmp/data1" -max=5  -mserver="localhost:9333" -port=8080 &
-> weed volume -dir="/tmp/data2" -max=10 -mserver="localhost:9333" -port=8081 & 
+> weed volume -dir="/tmp/data2" -max=10 -mserver="localhost:9333" -port=8081 &
 
 ```
 
@@ -75,7 +75,7 @@ Second, to store the file content, send a HTTP multipart PUT or POST request to 
 {"size": 43234}
 ```
 
-For update, send another PUT or POST request with updated file content. 
+For update, send another PUT or POST request with updated file content.
 
 For deletion, send an HTTP DELETE request to the same `url + '/' + fid` URL:
 
@@ -89,7 +89,7 @@ The number 3 here, is a volume id. After the comma, it's one file key, 01, and a
 
 The volume id is an unsigned 32 bit integer. The file key is an unsigned 64bit integer. The file cookie is an unsigned 32bit integer, used to prevent URL guessing.
 
-The file key and file cookie are both coded in hex. You can store the <volume id, file key, file cookie> tuple in your own format, or simply store the fid as string. 
+The file key and file cookie are both coded in hex. You can store the <volume id, file key, file cookie> tuple in your own format, or simply store the fid as string.
 
 If stored as a string, in theory, you would need 8+1+16+8=33 bytes. A char(33) would be enough, if not more than enough, since most usage would not need 2^32 volumes.
 
@@ -269,7 +269,7 @@ step 2: also you may need to install Mercurial by following the instructions bel
 http://mercurial.selenic.com/downloads
 
 
-step 3: download, compile, and install the project by executing the following command 
+step 3: download, compile, and install the project by executing the following command
 
 go get github.com/chrislusf/weed-fs/go/weed
 
