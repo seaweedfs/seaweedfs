@@ -34,9 +34,11 @@ http://groups.google.com/group/weed-file-system Seaweed File System Discussion G
 * Automatic compaction to reclaimed disk spaces after deletion or update
 * Servers in the same cluster can have different disk spaces, different file systems, different OS
 * Adding/Removing servers do not cause any data re-balancing
-* Optional  [filer server](https://code.google.com/p/weed-fs/wiki/DirectoriesAndFiles) provides "normal" directories and files via http
+* Optional [filer server][Filer] provides "normal" directories and files via http
 * For jpeg pictures, optionally fix the orientation.
 * Support Etag, Accept-Range, Last-Modified, etc.
+
+[Filer]: https://github.com/chrislusf/weed-fs/wiki/Filer
 
 ## Example Usage
 By default, the master node runs on port 9333, and the volume nodes runs on port 8080.
@@ -144,8 +146,9 @@ Here is the meaning of the replication parameter:
 110: replicate once on a different rack, and once on a different data center
 ```
 
-More details about replication can be found here:
-https://code.google.com/p/weed-fs/wiki/RackDataCenterAwareReplication
+More details about replication can be found [on the wiki][Replication].
+
+[Replication]: https://github.com/chrislusf/weed-fs/wiki/Replication
 
 You can also set the default replication strategy when starting the master server.
 
@@ -167,10 +170,15 @@ Now when requesting a file key, an optional "dataCenter" parameter can limit the
 ```
 
 ### Other Features ###
-  * [No Single Point of Failure](https://code.google.com/p/weed-fs/wiki/FailoverMasterServer)
-  * [Insert  with your own keys](https://code.google.com/p/weed-fs/wiki/Optimization#Insert_with_your_own_keys)
-  * [ Chunking large files](https://code.google.com/p/weed-fs/wiki/Optimization#Upload_large_files)
-  * [Collection as a Simple Name Space](https://code.google.com/p/weed-fs/wiki/Optimization#Collection_as_a_Simple_Name_Space)
+  * [No Single Point of Failure][feat-1]
+  * [Insert with your own keys][feat-2]
+  * [Chunking large files][feat-3]
+  * [Collection as a Simple Name Space][feat-4]
+
+[feat-1]: https://github.com/chrislusf/weed-fs/wiki/Failover-Master-Server
+[feat-2]: https://github.com/chrislusf/weed-fs/wiki/Optimization#insert-with-your-own-keys
+[feat-3]: https://github.com/chrislusf/weed-fs/wiki/Optimization#upload-large-files
+[feat-4]: https://github.com/chrislusf/weed-fs/wiki/Optimization#collection-as-a-simple-name-space
 
 ## Architecture ##
 Usually distributed file system split each file into chunks, and a central master keeps a mapping of a filename and a chunk index to chunk handles, and also which chunks each chunk server has.
