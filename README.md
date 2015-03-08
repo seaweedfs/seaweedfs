@@ -8,18 +8,18 @@ Seaweed File System
 
 ## Introduction
 
-Seaweed-FS is a simple and highly scalable distributed file system. There are two objectives:
+SeaweedFS is a simple and highly scalable distributed file system. There are two objectives:
 
 1. to store billions of files!
 2. to serve the files fast!
 
-Instead of supporting full POSIX file system semantics, Seaweed-FS choose to implement only a key~file mapping. Similar to the word "NoSQL", you can call it as "NoFS".
+Instead of supporting full POSIX file system semantics, SeaweedFS choose to implement only a key~file mapping. Similar to the word "NoSQL", you can call it as "NoFS".
 
-Instead of managing all file metadata in a central master, Seaweed-FS choose to manages file volumes in the central master, and let volume servers manage files and the metadata. This relieves concurrency pressure from the central master and spreads file metadata into volume servers' memories, allowing faster file access with just one disk read operation!
+Instead of managing all file metadata in a central master, SeaweedFS choose to manages file volumes in the central master, and let volume servers manage files and the metadata. This relieves concurrency pressure from the central master and spreads file metadata into volume servers' memories, allowing faster file access with just one disk read operation!
 
-Seaweed-FS models after [Facebook's Haystack design paper](http://www.usenix.org/event/osdi10/tech/full_papers/Beaver.pdf).
+SeaweedFS models after [Facebook's Haystack design paper](http://www.usenix.org/event/osdi10/tech/full_papers/Beaver.pdf).
 
-Seaweed-FS costs only 40 bytes disk storage for each file's metadata. It is so simple with O(1) disk read that you are welcome to challenge the performance with your actual use cases.
+SeaweedFS costs only 40 bytes disk storage for each file's metadata. It is so simple with O(1) disk read that you are welcome to challenge the performance with your actual use cases.
 
 
 ![](https://api.bintray.com/packages/chrislusf/Weed-FS/seaweed/images/download.png)
@@ -44,7 +44,7 @@ http://groups.google.com/group/weed-file-system Seaweed File System Discussion G
 By default, the master node runs on port 9333, and the volume nodes runs on port 8080.
 Here I will start one master node, and two volume nodes on port 8080 and 8081. Ideally, they should be started from different machines. Here I just use localhost as example.
 
-Seaweed-FS uses HTTP REST operations to write, read, delete. The return results are JSON or JSONP format.
+SeaweedFS uses HTTP REST operations to write, read, delete. The return results are JSON or JSONP format.
 
 ### Start Master Server
 
@@ -129,7 +129,7 @@ If you want a nicer URL, you can use one of these alternative URL formats:
 ```
 
 ### Rack-Aware and Data Center-Aware Replication ###
-Seaweed-FS apply the replication strategy on a volume level. So when you are getting a file id, you can specify the replication strategy. For example:
+SeaweedFS apply the replication strategy on a volume level. So when you are getting a file id, you can specify the replication strategy. For example:
 
 ```
 curl -X POST http://localhost:9333/dir/assign?replication=001
@@ -185,7 +185,7 @@ Usually distributed file system split each file into chunks, and a central maste
 
 This has the draw back that the central master can not handle many small files efficiently, and since all read requests need to go through the chunk master, responses would be slow for many concurrent web users.
 
-Instead of managing chunks, Seaweed-FS choose to manage data volumes in the master server. Each data volume is size 32GB, and can hold a lot of files. And each storage node can has many data volumes. So the master node only needs to store the metadata about the volumes, which is fairly small amount of data and pretty static most of the time.
+Instead of managing chunks, SeaweedFS choose to manage data volumes in the master server. Each data volume is size 32GB, and can hold a lot of files. And each storage node can has many data volumes. So the master node only needs to store the metadata about the volumes, which is fairly small amount of data and pretty static most of the time.
 
 The actual file metadata is stored in each volume on volume servers. Since each volume server only manage metadata of files on its own disk, and only 16 bytes for each file, all file access can read file metadata just from memory and only needs one disk operation to actually read file data.
 
@@ -222,30 +222,30 @@ All file meta information on volume server is readable from memory without disk 
 Frankly, I don't use other distributed file systems too often. All seems more complicated than necessary. Please correct me if anything here is wrong.
 
 ### Compared to Ceph ###
-Ceph can be setup similar to Seaweed-FS as a key~blob store. It is much more complicated, with the need to support layers on top of it. Here is a more detailed comparison. https://code.google.com/p/weed-fs/issues/detail?id=44
+Ceph can be setup similar to SeaweedFS as a key~blob store. It is much more complicated, with the need to support layers on top of it. Here is a more detailed comparison. https://code.google.com/p/weed-fs/issues/detail?id=44
 
-Seaweed-FS is meant to be fast and simple, both during usage and during setup. If you do not understand how it works when you reach here, we failed! Jokes aside, you should not need any consulting service for it.
+SeaweedFS is meant to be fast and simple, both during usage and during setup. If you do not understand how it works when you reach here, we failed! Jokes aside, you should not need any consulting service for it.
 
-Seaweed-FS has a centralized master to lookup free volumes, while Ceph uses hashing to locate its objects. Having a centralized master makes it easy to code and manage. HDFS/GFS has the single name node for years. Seaweed-FS now support multiple master nodes.
+SeaweedFS has a centralized master to lookup free volumes, while Ceph uses hashing to locate its objects. Having a centralized master makes it easy to code and manage. HDFS/GFS has the single name node for years. SeaweedFS now support multiple master nodes.
 
 Ceph hashing avoids SPOF, but makes it complicated when moving or adding servers.
 
 ### Compared to HDFS ###
 HDFS uses the chunk approach for each file, and is ideal for streaming large files.
 
-Seaweed-FS is ideal for serving relatively smaller files quickly and concurrently.
+SeaweedFS is ideal for serving relatively smaller files quickly and concurrently.
 
-Seaweed-FS can also store extra large files by splitting them into manageable data chunks, and store the file ids of the data chunks into a meta chunk. This is managed by "weed upload/download" tool, and the weed master or volume servers are agnostic about it.
+SeaweedFS can also store extra large files by splitting them into manageable data chunks, and store the file ids of the data chunks into a meta chunk. This is managed by "weed upload/download" tool, and the weed master or volume servers are agnostic about it.
 
 ### Compared to MogileFS###
-Seaweed-FS has 2 components: directory server, storage nodes.
+SeaweedFS has 2 components: directory server, storage nodes.
 
 MogileFS has 3 components: tracers, database, storage nodes.
 
 One more layer means slower access, more operation complexity, more failure possibility.
 
 ### Compared to GlusterFS ###
-Seaweed-FS is not POSIX compliant, and has simple implementation.
+SeaweedFS is not POSIX compliant, and has simple implementation.
 
 GlusterFS is POSIX compliant, much more complex.
 
@@ -254,7 +254,7 @@ Mongo's GridFS splits files into chunks and manage chunks in the central mongodb
 
 Since files are chunked(default to 256KB), there will be multiple metadata readings and multiple chunk readings, linear to the file size. One  2.56MB file would require at least 20 disk read requests.
 
-On the contrary, Seaweed-FS uses large file volume of 32G size to store lots of files, and only manages file volumes in the master server. Each volume manages file metadata themselves. So all the file metadata is spread onto the volume nodes memories, and just one disk read is needed.
+On the contrary, SeaweedFS uses large file volume of 32G size to store lots of files, and only manages file volumes in the master server. Each volume manages file metadata themselves. So all the file metadata is spread onto the volume nodes memories, and just one disk read is needed.
 
 ## Dev plan ##
 
@@ -293,11 +293,11 @@ For pre-compiled releases,
 ## Disk Related topics ##
 
 ### Hard Drive Performance ###
-When testing read performance on Seaweed-FS, it basically becomes performance test your hard drive's random read speed. Hard Drive usually get 100MB/s~200MB/s.
+When testing read performance on SeaweedFS, it basically becomes performance test your hard drive's random read speed. Hard Drive usually get 100MB/s~200MB/s.
 
 ### Solid State Disk
 
-To modify or delete small files, SSD must delete a whole block at a time, and move content in existing blocks to a new block. SSD is fast when brand new, but will get fragmented over time and you have to garbage collect, compacting blocks. Seaweed-FS is friendly to SSD since it is append-only. Deletion and compaction are done on volume level in the background, not slowing reading and not causing fragmentation.
+To modify or delete small files, SSD must delete a whole block at a time, and move content in existing blocks to a new block. SSD is fast when brand new, but will get fragmented over time and you have to garbage collect, compacting blocks. SeaweedFS is friendly to SSD since it is append-only. Deletion and compaction are done on volume level in the background, not slowing reading and not causing fragmentation.
 
 ## Not Planned
 
