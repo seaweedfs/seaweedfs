@@ -20,7 +20,7 @@ func AllocateVolume(dn *DataNode, vid storage.VolumeId, option *VolumeGrowOption
 	values.Add("collection", option.Collection)
 	values.Add("replication", option.ReplicaPlacement.String())
 	values.Add("ttl", option.Ttl.String())
-	jsonBlob, err := util.Post("http://"+dn.AdminUrl()+"/admin/assign_volume", values)
+	jsonBlob, err := util.Post("http://"+dn.Url()+"/admin/assign_volume", values)
 	if err != nil {
 		return err
 	}

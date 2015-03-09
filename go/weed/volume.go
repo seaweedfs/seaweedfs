@@ -19,7 +19,7 @@ var (
 
 type VolumeServerOptions struct {
 	port                  *int
-	adminPort             *int
+	publicPort            *int
 	folders               []string
 	folderMaxLimits       []int
 	ip                    *string
@@ -38,7 +38,7 @@ type VolumeServerOptions struct {
 func init() {
 	cmdVolume.Run = runVolume // break init cycle
 	v.port = cmdVolume.Flag.Int("port", 8080, "http listen port")
-	v.adminPort = cmdVolume.Flag.Int("port.admin", 0, "admin port to talk with master and other volume servers")
+	v.publicPort = cmdVolume.Flag.Int("port.public", 0, "port opened to public")
 	v.ip = cmdVolume.Flag.String("ip", "", "ip or server name")
 	v.publicUrl = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible address")
 	v.bindIp = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
@@ -102,19 +102,19 @@ func runVolume(cmd *Command, args []string) bool {
 		*v.publicUrl = *v.ip + ":" + strconv.Itoa(*v.port)
 	}
 
-	if *v.adminPort == 0 {
-		*v.adminPort = *v.port
+	if *v.publicPort == 0 {
+		*v.publicPort = *v.port
 	}
-	isSeperatedAdminPort := *v.adminPort != *v.port
+	isSeperatedPublicPort := *v.publicPort != *v.port
 
-	publicMux := http.NewServeMux()
-	adminMux := publicMux
-	if isSeperatedAdminPort {
-		adminMux = http.NewServeMux()
+	volumeMux := http.NewServeMux()
+	publicVolumeMux := volumeMux
+	if isSeperatedPublicPort {
+		publicVolumeMux = http.NewServeMux()
 	}
 
-	volumeServer := weed_server.NewVolumeServer(publicMux, adminMux,
-		*v.ip, *v.port, *v.adminPort, *v.publicUrl,
+	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
+		*v.ip, *v.port, *v.publicUrl,
 		v.folders, v.folderMaxLimits,
 		*v.master, *v.pulseSeconds, *v.dataCenter, *v.rack,
 		v.whiteList,
@@ -127,16 +127,16 @@ func runVolume(cmd *Command, args []string) bool {
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)
 	}
-	if isSeperatedAdminPort {
-		adminListeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.adminPort)
-		glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "admin at", adminListeningAddress)
-		adminListener, e := util.NewListener(adminListeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
+	if isSeperatedPublicPort {
+		publicListeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.publicPort)
+		glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "public at", publicListeningAddress)
+		publicListener, e := util.NewListener(publicListeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
 		if e != nil {
 			glog.Fatalf("Volume server listener error:%v", e)
 		}
 		go func() {
-			if e := http.Serve(adminListener, adminMux); e != nil {
-				glog.Fatalf("Volume server fail to serve admin: %v", e)
+			if e := http.Serve(publicListener, publicVolumeMux); e != nil {
+				glog.Fatalf("Volume server fail to serve public: %v", e)
 			}
 		}()
 	}
@@ -145,7 +145,7 @@ func runVolume(cmd *Command, args []string) bool {
 		volumeServer.Shutdown()
 	})
 
-	if e := http.Serve(listener, publicMux); e != nil {
+	if e := http.Serve(listener, volumeMux); e != nil {
 		glog.Fatalf("Volume server fail to serve: %v", e)
 	}
 	return true

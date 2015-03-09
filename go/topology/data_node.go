@@ -13,7 +13,6 @@ type DataNode struct {
 	volumes   map[storage.VolumeId]storage.VolumeInfo
 	Ip        string
 	Port      int
-	AdminPort int
 	PublicUrl string
 	LastSeen  int64 // unix time in seconds
 	Dead      bool
@@ -90,10 +89,6 @@ func (dn *DataNode) Url() string {
 	return dn.Ip + ":" + strconv.Itoa(dn.Port)
 }
 
-func (dn *DataNode) AdminUrl() string {
-	return dn.Ip + ":" + strconv.Itoa(dn.AdminPort)
-}
-
 func (dn *DataNode) ToMap() interface{} {
 	ret := make(map[string]interface{})
 	ret["Url"] = dn.Url()
@@ -101,6 +96,5 @@ func (dn *DataNode) ToMap() interface{} {
 	ret["Max"] = dn.GetMaxVolumeCount()
 	ret["Free"] = dn.FreeSpace()
 	ret["PublicUrl"] = dn.PublicUrl
-	ret["AdminUrl"] = dn.AdminUrl()
 	return ret
 }

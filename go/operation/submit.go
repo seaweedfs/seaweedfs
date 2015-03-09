@@ -55,7 +55,7 @@ func SubmitFiles(master string, files []FilePart,
 		if index > 0 {
 			file.Fid = file.Fid + "_" + strconv.Itoa(index)
 		}
-		file.Server = ret.PublicUrl
+		file.Server = ret.Url
 		file.Replication = replication
 		file.Collection = collection
 		results[index].Size, err = file.Upload(maxMB, master, secret)

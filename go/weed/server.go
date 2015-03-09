@@ -64,7 +64,7 @@ var (
 	masterConfFile                = cmdServer.Flag.String("master.conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
 	masterDefaultReplicaPlacement = cmdServer.Flag.String("master.defaultReplicaPlacement", "000", "Default replication type if not specified.")
 	volumePort                    = cmdServer.Flag.Int("volume.port", 8080, "volume server http listen port")
-	volumeAdminPort               = cmdServer.Flag.Int("volume.port.admin", 0, "volume server admin port to talk with master and other volume servers")
+	volumePublicPort              = cmdServer.Flag.Int("volume.port.public", 0, "volume server public port")
 	volumeDataFolders             = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	volumeMaxDataVolumeCounts     = cmdServer.Flag.String("volume.max", "7", "maximum numbers of volumes, count[,count]...")
 	volumePulse                   = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
@@ -109,8 +109,8 @@ func runServer(cmd *Command, args []string) bool {
 		*filerOptions.defaultReplicaPlacement = *masterDefaultReplicaPlacement
 	}
 
-	if *volumeAdminPort == 0 {
-		*volumeAdminPort = *volumePort
+	if *volumePublicPort == 0 {
+		*volumePublicPort = *volumePort
 	}
 
 	if *serverMaxCpu < 1 {
@@ -223,9 +223,17 @@ func runServer(cmd *Command, args []string) bool {
 
 	volumeWait.Wait()
 	time.Sleep(100 * time.Millisecond)
-	r := http.NewServeMux()
-	volumeServer := weed_server.NewVolumeServer(r, r,
-		*serverIp, *volumePort, *volumeAdminPort, *serverPublicUrl,
+	if *volumePublicPort == 0 {
+		*volumePublicPort = *volumePort
+	}
+	isSeperatedPublicPort := *volumePublicPort != *volumePort
+	volumeMux := http.NewServeMux()
+	publicVolumeMux := volumeMux
+	if isSeperatedPublicPort {
+		publicVolumeMux = http.NewServeMux()
+	}
+	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
+		*serverIp, *volumePort, *serverPublicUrl,
 		folders, maxCounts,
 		*serverIp+":"+strconv.Itoa(*masterPort), *volumePulse, *serverDataCenter, *serverRack,
 		serverWhiteList, *volumeFixJpgOrientation,
@@ -239,13 +247,26 @@ func runServer(cmd *Command, args []string) bool {
 	if eListen != nil {
 		glog.Fatalf("Volume server listener error: %v", eListen)
 	}
+	if isSeperatedPublicPort {
+		publicListeningAddress := *serverIp + ":" + strconv.Itoa(*volumePublicPort)
+		glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "public at", publicListeningAddress)
+		publicListener, e := util.NewListener(publicListeningAddress, time.Duration(*serverTimeout)*time.Second)
+		if e != nil {
+			glog.Fatalf("Volume server listener error:%v", e)
+		}
+		go func() {
+			if e := http.Serve(publicListener, publicVolumeMux); e != nil {
+				glog.Fatalf("Volume server fail to serve public: %v", e)
+			}
+		}()
+	}
 
 	OnInterrupt(func() {
 		volumeServer.Shutdown()
 		pprof.StopCPUProfile()
 	})
 
-	if e := http.Serve(volumeListener, r); e != nil {
+	if e := http.Serve(volumeListener, volumeMux); e != nil {
 		glog.Fatalf("Volume server fail to serve:%v", e)
 	}
 

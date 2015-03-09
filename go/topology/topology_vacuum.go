@@ -23,7 +23,7 @@ func batchVacuumVolumeCheck(vl *VolumeLayout, vid storage.VolumeId, locationlist
 				//glog.V(0).Infoln(index, "Checked vacuuming", vid, "on", url, "needVacuum", ret)
 				ch <- ret
 			}
-		}(index, dn.AdminUrl(), vid)
+		}(index, dn.Url(), vid)
 	}
 	isCheckSuccess := true
 	for _ = range locationlist.list {
@@ -50,7 +50,7 @@ func batchVacuumVolumeCompact(vl *VolumeLayout, vid storage.VolumeId, locationli
 				glog.V(0).Infoln(index, "Complete vacuuming", vid, "on", url)
 				ch <- true
 			}
-		}(index, dn.AdminUrl(), vid)
+		}(index, dn.Url(), vid)
 	}
 	isVacuumSuccess := true
 	for _ = range locationlist.list {
@@ -66,12 +66,12 @@ func batchVacuumVolumeCompact(vl *VolumeLayout, vid storage.VolumeId, locationli
 func batchVacuumVolumeCommit(vl *VolumeLayout, vid storage.VolumeId, locationlist *VolumeLocationList) bool {
 	isCommitSuccess := true
 	for _, dn := range locationlist.list {
-		glog.V(0).Infoln("Start Commiting vacuum", vid, "on", dn.AdminUrl())
-		if e := vacuumVolume_Commit(dn.AdminUrl(), vid); e != nil {
-			glog.V(0).Infoln("Error when committing vacuum", vid, "on", dn.AdminUrl(), e)
+		glog.V(0).Infoln("Start Commiting vacuum", vid, "on", dn.Url())
+		if e := vacuumVolume_Commit(dn.Url(), vid); e != nil {
+			glog.V(0).Infoln("Error when committing vacuum", vid, "on", dn.Url(), e)
 			isCommitSuccess = false
 		} else {
-			glog.V(0).Infoln("Complete Commiting vacuum", vid, "on", dn.AdminUrl())
+			glog.V(0).Infoln("Complete Commiting vacuum", vid, "on", dn.Url())
 		}
 		if isCommitSuccess {
 			vl.SetVolumeAvailable(dn, vid)

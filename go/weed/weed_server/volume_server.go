@@ -23,8 +23,8 @@ type VolumeServer struct {
 	FixJpgOrientation bool
 }
 
-func NewVolumeServer(publicMux, adminMux *http.ServeMux, ip string,
-	port, adminPort int, publicUrl string,
+func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
+	port int, publicUrl string,
 	folders []string, maxCounts []int,
 	masterNode string, pulseSeconds int,
 	dataCenter string, rack string,
@@ -37,7 +37,7 @@ func NewVolumeServer(publicMux, adminMux *http.ServeMux, ip string,
 		FixJpgOrientation: fixJpgOrientation,
 	}
 	vs.SetMasterNode(masterNode)
-	vs.store = storage.NewStore(port, adminPort, ip, publicUrl, folders, maxCounts)
+	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts)
 
 	vs.guard = security.NewGuard(whiteList, "")
 
@@ -56,8 +56,7 @@ func NewVolumeServer(publicMux, adminMux *http.ServeMux, ip string,
 		adminMux.HandleFunc("/delete", vs.guard.WhiteList(vs.batchDeleteHandler))
 		adminMux.HandleFunc("/", vs.privateStoreHandler)
 	}
-	publicMux.HandleFunc("/delete", vs.guard.Secure(vs.batchDeleteHandler))
-	publicMux.HandleFunc("/", vs.publicStoreHandler)
+	publicMux.HandleFunc("/", vs.publicReadOnlyHandler)
 
 	go func() {
 		connected := true
