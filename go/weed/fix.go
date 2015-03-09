@@ -11,7 +11,6 @@ import (
 
 func init() {
 	cmdFix.Run = runFix // break init cycle
-	cmdFix.IsDebug = cmdFix.Flag.Bool("debug", false, "enable debug mode")
 }
 
 var cmdFix = &Command{
@@ -51,12 +50,12 @@ func runFix(cmd *Command, args []string) bool {
 	err = storage.ScanVolumeFile(*fixVolumePath, *fixVolumeCollection, vid, func(superBlock storage.SuperBlock) error {
 		return nil
 	}, false, func(n *storage.Needle, offset int64) error {
-		debug("key", n.Id, "offset", offset, "size", n.Size, "disk_size", n.DiskSize(), "gzip", n.IsGzipped())
+		glog.V(2).Infof("key %d offset %d size %d disk_size %d gzip %v", n.Id, offset, n.Size, n.DiskSize(), n.IsGzipped())
 		if n.Size > 0 {
 			count, pe := nm.Put(n.Id, uint32(offset/storage.NeedlePaddingSize), n.Size)
-			debug("saved", count, "with error", pe)
+			glog.V(2).Infof("saved %d with error %v", count, pe)
 		} else {
-			debug("skipping deleted file ...")
+			glog.V(2).Infof("skipping deleted file ...")
 			return nm.Delete(n.Id)
 		}
 		return nil

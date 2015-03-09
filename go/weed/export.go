@@ -17,7 +17,6 @@ import (
 
 func init() {
 	cmdExport.Run = runExport // break init cycle
-	cmdExport.IsDebug = cmdExport.Flag.Bool("debug", false, "enable debug mode")
 }
 
 const (
@@ -105,14 +104,15 @@ func runExport(cmd *Command, args []string) bool {
 		return nil
 	}, true, func(n *storage.Needle, offset int64) error {
 		nv, ok := nm.Get(n.Id)
-		glog.V(3).Infoln("key", n.Id, "offset", offset, "size", n.Size, "disk_size", n.DiskSize(), "gzip", n.IsGzipped(), "ok", ok, "nv", nv)
-		if ok && nv.Size > 0 {
+		glog.V(3).Infof("key %d offset %d size %d disk_size %d gzip %v ok %v nv %+v",
+			n.Id, offset, n.Size, n.DiskSize(), n.IsGzipped(), ok, nv)
+		if ok && nv.Size > 0 && int64(nv.Offset)*8 == offset {
 			return walker(vid, n, version)
 		} else {
 			if !ok {
-				debug("This seems deleted", n.Id, "size", n.Size)
+				glog.V(2).Infof("This seems deleted %d size %d", n.Id, n.Size)
 			} else {
-				debug("Id", n.Id, "size", n.Size)
+				glog.V(2).Infof("Skipping later-updated Id %d size %d", n.Id, n.Size)
 			}
 		}
 		return nil

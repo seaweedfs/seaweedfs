@@ -60,14 +60,14 @@ func LoadNeedleMap(file *os.File) (*NeedleMap, error) {
 		nm.FileByteCounter = nm.FileByteCounter + uint64(size)
 		if offset > 0 {
 			oldSize := nm.m.Set(Key(key), offset, size)
-			glog.V(3).Infoln("reading key", key, "offset", offset, "size", size, "oldSize", oldSize)
+			glog.V(3).Infoln("reading key", key, "offset", offset*NeedlePaddingSize, "size", size, "oldSize", oldSize)
 			if oldSize > 0 {
 				nm.DeletionCounter++
 				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 			}
 		} else {
 			oldSize := nm.m.Delete(Key(key))
-			glog.V(3).Infoln("removing key", key, "offset", offset, "size", size, "oldSize", oldSize)
+			glog.V(3).Infoln("removing key", key, "offset", offset*NeedlePaddingSize, "size", size, "oldSize", oldSize)
 			nm.DeletionCounter++
 			nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 		}
