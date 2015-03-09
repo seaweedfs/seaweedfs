@@ -76,6 +76,8 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 			if n.HasTtl() {
 				n.Size = n.Size + TtlBytesLength
 			}
+		} else {
+			n.Size = 0
 		}
 		size = n.DataSize
 		util.Uint32toBytes(header[12:16], n.Size)
@@ -185,6 +187,11 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) {
 	if index < lenBytes {
 		n.DataSize = util.BytesToUint32(bytes[index : index+4])
 		index = index + 4
+		if int(n.DataSize)+index > lenBytes {
+			// this if clause is due to bug #87 and #93, fixed in v0.69
+			// remove this clause later
+			return
+		}
 		n.Data = bytes[index : index+int(n.DataSize)]
 		index = index + int(n.DataSize)
 		n.Flags = bytes[index]

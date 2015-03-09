@@ -67,7 +67,6 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	n.Size = 0
 	ret := topology.ReplicatedDelete(vs.GetMasterNode(), vs.store, volumeId, n, r)
 
 	if ret != 0 {

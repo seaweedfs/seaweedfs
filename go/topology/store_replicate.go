@@ -45,16 +45,6 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 			}
 		}
 	}
-	if errorStatus != "" {
-		if _, err = s.Delete(volumeId, needle); err != nil {
-			errorStatus += "\nCannot delete " + strconv.FormatUint(needle.Id, 10) + " from " +
-				volumeId.String() + ": " + err.Error()
-		} else {
-			distributedOperation(masterNode, s, volumeId, func(location operation.Location) bool {
-				return nil == util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", jwt)
-			})
-		}
-	}
 	size = ret
 	return
 }
