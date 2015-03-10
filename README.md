@@ -5,6 +5,7 @@ Seaweed File System
 [![GoDoc](https://godoc.org/github.com/chrislusf/weed-fs/go?status.svg)](https://godoc.org/github.com/chrislusf/weed-fs/go)
 [![Wiki](https://img.shields.io/badge/docs-wiki-blue.svg)](https://github.com/chrislusf/weed-fs/wiki)
 
+![SeaweedFS Logo](https://raw.githubusercontent.com/chrislusf/weed-fs/master/note/seaweedfs.png)
 
 ## Introduction
 
