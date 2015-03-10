@@ -32,8 +32,7 @@ func (m *ConcurrentReadMap) Get(key string, newEntry func() interface{}) interfa
 	if value, ok := m.Items[key]; ok {
 		m.rmutex.RUnlock()
 		return value
-	} else {
-		m.rmutex.RUnlock()
-		return m.initMapEntry(key, newEntry)
 	}
+	m.rmutex.RUnlock()
+	return m.initMapEntry(key, newEntry)
 }

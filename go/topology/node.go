@@ -54,7 +54,7 @@ type NodeImpl struct {
 // the first node must satisfy filterFirstNodeFn(), the rest nodes must have one free slot
 func (n *NodeImpl) RandomlyPickNodes(numberOfNodes int, filterFirstNodeFn func(dn Node) error) (firstNode Node, restNodes []Node, err error) {
 	candidates := make([]Node, 0, len(n.children))
-	errs := make([]string, 0)
+	var errs []string
 	for _, node := range n.children {
 		if err := filterFirstNodeFn(node); err == nil {
 			candidates = append(candidates, node)

@@ -117,7 +117,7 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 	if maxMB > 0 && fi.FileSize > int64(maxMB*1024*1024) {
 		chunkSize := int64(maxMB * 1024 * 1024)
 		chunks := fi.FileSize/chunkSize + 1
-		fids := make([]string, 0)
+		var fids []string
 		for i := int64(0); i < chunks; i++ {
 			id, count, e := upload_one_chunk(
 				fi.FileName+"-"+strconv.FormatInt(i+1, 10),

@@ -96,7 +96,7 @@ func getMetric(c *cdb.Cdb, m *mapMetric) error {
 func (m cdbMap) Get(key uint64) (element *NeedleValue, ok bool) {
 	var (
 		data []byte
-		k    []byte = make([]byte, 8)
+		k    = make([]byte, 8)
 		err  error
 	)
 	util.Uint64toBytes(k, key)

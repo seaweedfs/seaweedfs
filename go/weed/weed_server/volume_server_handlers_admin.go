@@ -54,7 +54,7 @@ func (vs *VolumeServer) freezeVolumeHandler(w http.ResponseWriter, r *http.Reque
 func (vs *VolumeServer) statsDiskHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
-	ds := make([]*stats.DiskStatus, 0)
+	var ds []*stats.DiskStatus
 	for _, loc := range vs.store.Locations {
 		if dir, e := filepath.Abs(loc.Directory); e == nil {
 			ds = append(ds, stats.NewDiskStatus(dir))

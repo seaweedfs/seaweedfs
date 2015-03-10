@@ -21,7 +21,7 @@ import (
 func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	collection, ok := ms.Topo.GetCollection(r.FormValue("collection"))
 	if !ok {
-		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("collection %s does not exist!", r.FormValue("collection")))
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("collection %s does not exist", r.FormValue("collection")))
 		return
 	}
 	for _, server := range collection.ListVolumeServers() {
@@ -125,7 +125,7 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 	if machines != nil && len(machines) > 0 {
 		http.Redirect(w, r, "http://"+machines[rand.Intn(len(machines))].PublicUrl+r.URL.Path, http.StatusMovedPermanently)
 	} else {
-		writeJsonError(w, r, http.StatusNotFound, fmt.Errorf("volume id %d not found.", volumeId))
+		writeJsonError(w, r, http.StatusNotFound, fmt.Errorf("volume id %d not found", volumeId))
 	}
 }
 

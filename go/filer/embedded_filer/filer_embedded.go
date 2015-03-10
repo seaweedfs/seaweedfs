@@ -125,19 +125,17 @@ func (filer *FilerEmbedded) Move(fromPath string, toPath string) error {
 		if _, err := filer.FindDirectory(toPath); err == nil {
 			// move folder under an existing folder
 			return filer.directories.MoveUnderDirectory(fromPath, toPath, "")
-		} else {
-			// move folder to a new folder
-			return filer.directories.MoveUnderDirectory(fromPath, filepath.Dir(toPath), filepath.Base(toPath))
 		}
+		// move folder to a new folder
+		return filer.directories.MoveUnderDirectory(fromPath, filepath.Dir(toPath), filepath.Base(toPath))
 	}
 	if fid, file_err := filer.DeleteFile(fromPath); file_err == nil {
 		if _, err := filer.FindDirectory(toPath); err == nil {
 			// move file under an existing folder
 			return filer.CreateFile(filepath.Join(toPath, filepath.Base(fromPath)), fid)
-		} else {
-			// move to a folder with new name
-			return filer.CreateFile(toPath, fid)
 		}
+		// move to a folder with new name
+		return filer.CreateFile(toPath, fid)
 	}
 	return fmt.Errorf("File %s is not found!", fromPath)
 }

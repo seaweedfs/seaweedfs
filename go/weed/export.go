@@ -108,12 +108,11 @@ func runExport(cmd *Command, args []string) bool {
 			n.Id, offset, n.Size, n.DiskSize(), n.IsGzipped(), ok, nv)
 		if ok && nv.Size > 0 && int64(nv.Offset)*8 == offset {
 			return walker(vid, n, version)
+		}
+		if !ok {
+			glog.V(2).Infof("This seems deleted %d size %d", n.Id, n.Size)
 		} else {
-			if !ok {
-				glog.V(2).Infof("This seems deleted %d size %d", n.Id, n.Size)
-			} else {
-				glog.V(2).Infof("Skipping later-updated Id %d size %d", n.Id, n.Size)
-			}
+			glog.V(2).Infof("Skipping later-updated Id %d size %d", n.Id, n.Size)
 		}
 		return nil
 	})

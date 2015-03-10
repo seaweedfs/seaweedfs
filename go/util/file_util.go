@@ -26,8 +26,8 @@ func TestFolderWritable(folder string) (err error) {
 
 func Readln(r *bufio.Reader) ([]byte, error) {
 	var (
-		isPrefix bool  = true
-		err      error = nil
+		isPrefix = true
+		err      error
 		line, ln []byte
 	)
 	for isPrefix && err == nil {

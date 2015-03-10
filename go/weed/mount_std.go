@@ -87,7 +87,7 @@ func (WFS) Root() (fs.Node, error) {
 }
 
 func (dir *Dir) ReadDir(ctx context.Context) ([]fuse.Dirent, error) {
-	ret := make([]fuse.Dirent, 0)
+	var ret []fuse.Dirent
 	if dirs, e := filer.ListDirectories(*mountOptions.filer, dir.Path); e == nil {
 		for _, d := range dirs.Directories {
 			dirId := uint64(d.Id)

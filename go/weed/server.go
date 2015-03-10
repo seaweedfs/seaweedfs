@@ -120,7 +120,7 @@ func runServer(cmd *Command, args []string) bool {
 
 	folders := strings.Split(*volumeDataFolders, ",")
 	maxCountStrings := strings.Split(*volumeMaxDataVolumeCounts, ",")
-	maxCounts := make([]int, 0)
+	var maxCounts []int
 	for _, maxString := range maxCountStrings {
 		if max, e := strconv.Atoi(maxString); e == nil {
 			maxCounts = append(maxCounts, max)

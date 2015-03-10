@@ -34,7 +34,7 @@ func (dm *DirectoryManagerInMap) NewDirectoryEntryInMap(parent *DirectoryEntryIn
 	writeLock.Lock()
 	defer writeLock.Unlock()
 	d = &DirectoryEntryInMap{Name: name, Parent: parent, SubDirectories: make(map[string]*DirectoryEntryInMap)}
-	parts := make([]string, 0)
+	var parts []string
 	for p := d; p != nil && p.Name != ""; p = p.Parent {
 		parts = append(parts, p.Name)
 	}
@@ -162,7 +162,7 @@ func (dm *DirectoryManagerInMap) loadDirectory(dirPath string, dirId filer.Direc
 		sub, ok := dir.SubDirectories[parts[i]]
 		if !ok {
 			if i != len(parts)-1 {
-				return fmt.Errorf("%s should be created after parent %s!", dirPath, parts[i])
+				return fmt.Errorf("%s should be created after parent %s", dirPath, parts[i])
 			}
 			var err error
 			sub, err = dm.NewDirectoryEntryInMap(dir, parts[i])
@@ -170,7 +170,7 @@ func (dm *DirectoryManagerInMap) loadDirectory(dirPath string, dirId filer.Direc
 				return err
 			}
 			if sub.Id != dirId {
-				return fmt.Errorf("%s should be have id %v instead of %v!", dirPath, sub.Id, dirId)
+				return fmt.Errorf("%s should be have id %v instead of %v", dirPath, sub.Id, dirId)
 			}
 			dir.SubDirectories[parts[i]] = sub
 		}

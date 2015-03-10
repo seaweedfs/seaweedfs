@@ -1,3 +1,5 @@
+package util
+
 // Copyright 2011 Numerotron Inc.
 // Use of this source code is governed by an MIT-style license
 // that can be found in the LICENSE file.
@@ -6,7 +8,6 @@
 // Contact us on twitter with any questions:  twitter.com/stat_hat
 
 // The jconfig package provides a simple, basic configuration file parser using JSON.
-package util
 
 import (
 	"bytes"

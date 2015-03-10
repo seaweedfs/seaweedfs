@@ -82,9 +82,8 @@ func (t *Topology) loadConfiguration(configurationFile string) error {
 	if e == nil {
 		t.configuration, e = NewConfiguration(b)
 		return e
-	} else {
-		glog.V(0).Infoln("Using default configurations.")
 	}
+	glog.V(0).Infoln("Using default configurations.")
 	return nil
 }
 

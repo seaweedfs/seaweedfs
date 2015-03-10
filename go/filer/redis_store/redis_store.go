@@ -41,8 +41,8 @@ func (s *RedisStore) Delete(fullFileName string) (fid string, err error) {
 	return "", err
 }
 
-func (c *RedisStore) Close() {
-	if c.Client != nil {
-		c.Client.Close()
+func (s *RedisStore) Close() {
+	if s.Client != nil {
+		s.Client.Close()
 	}
 }

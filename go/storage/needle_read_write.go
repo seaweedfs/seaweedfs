@@ -147,7 +147,7 @@ func (n *Needle) Read(r *os.File, offset int64, size uint32, version Version) (r
 		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+size : NeedleHeaderSize+size+NeedleChecksumSize])
 		newChecksum := NewCRC(n.Data)
 		if checksum != newChecksum.Value() {
-			return 0, errors.New("CRC error! Data On Disk Corrupted!")
+			return 0, errors.New("CRC error! Data On Disk Corrupted")
 		}
 		n.Checksum = newChecksum
 		return
@@ -160,17 +160,17 @@ func (n *Needle) Read(r *os.File, offset int64, size uint32, version Version) (r
 			return
 		}
 		if ret != int(NeedleHeaderSize+size+NeedleChecksumSize) {
-			return 0, errors.New("File Entry Not Found!")
+			return 0, errors.New("File Entry Not Found")
 		}
 		n.readNeedleHeader(bytes)
 		if n.Size != size {
-			return 0, fmt.Errorf("File Entry Not Found! Needle %d Memory %d", n.Size, size)
+			return 0, fmt.Errorf("File Entry Not Found. Needle %d Memory %d", n.Size, size)
 		}
 		n.readNeedleDataVersion2(bytes[NeedleHeaderSize : NeedleHeaderSize+int(n.Size)])
 		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+n.Size : NeedleHeaderSize+n.Size+NeedleChecksumSize])
 		newChecksum := NewCRC(n.Data)
 		if checksum != newChecksum.Value() {
-			return 0, errors.New("CRC error! Data On Disk Corrupted!")
+			return 0, errors.New("CRC Found Data On Disk Corrupted")
 		}
 		n.Checksum = newChecksum
 		return

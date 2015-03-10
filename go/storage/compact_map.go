@@ -151,9 +151,8 @@ func (cm *CompactMap) binarySearchCompactSection(key Key) int {
 	if cm.list[h].start <= key {
 		if cm.list[h].counter < batch || key <= cm.list[h].end {
 			return h
-		} else {
-			return -4
 		}
+		return -4
 	}
 	for l <= h {
 		m := (l + h) / 2

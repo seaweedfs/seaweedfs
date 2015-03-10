@@ -163,7 +163,7 @@ func postFollowingOneRedirect(target string, contentType string, b *bytes.Buffer
 	if statusCode == http.StatusMovedPermanently {
 		var urlStr string
 		if urlStr = resp.Header.Get("Location"); urlStr == "" {
-			return errors.New(fmt.Sprintf("%d response missing Location header", resp.StatusCode))
+			return fmt.Errorf("%d response missing Location header", resp.StatusCode)
 		}
 
 		glog.V(0).Infoln("Post redirected to ", urlStr)

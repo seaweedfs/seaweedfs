@@ -198,7 +198,7 @@ func (s *Store) addVolume(vid VolumeId, collection string, replicaPlacement *Rep
 func (s *Store) FreezeVolume(volumeIdString string) error {
 	vid, err := NewVolumeId(volumeIdString)
 	if err != nil {
-		return fmt.Errorf("Volume Id %s is not a valid unsigned integer!", volumeIdString)
+		return fmt.Errorf("Volume Id %s is not a valid unsigned integer", volumeIdString)
 	}
 	if v := s.findVolume(vid); v != nil {
 		if v.readOnly {
@@ -206,7 +206,7 @@ func (s *Store) FreezeVolume(volumeIdString string) error {
 		}
 		return v.freeze()
 	}
-	return fmt.Errorf("volume id %d is not found during freeze!", vid)
+	return fmt.Errorf("volume id %d is not found during freeze", vid)
 }
 func (l *DiskLocation) loadExistingVolumes() {
 	if dirs, err := ioutil.ReadDir(l.Directory); err == nil {
@@ -343,19 +343,18 @@ func (s *Store) Close() {
 func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 	if v := s.findVolume(i); v != nil {
 		if v.readOnly {
-			err = fmt.Errorf("Volume %d is read only!", i)
+			err = fmt.Errorf("Volume %d is read only", i)
 			return
+		}
+		if MaxPossibleVolumeSize >= v.ContentSize()+uint64(size) {
+			size, err = v.write(n)
 		} else {
-			if MaxPossibleVolumeSize >= v.ContentSize()+uint64(size) {
-				size, err = v.write(n)
-			} else {
-				err = fmt.Errorf("Volume Size Limit %d Exceeded! Current size is %d", s.volumeSizeLimit, v.ContentSize())
-			}
-			if s.volumeSizeLimit < v.ContentSize()+3*uint64(size) {
-				glog.V(0).Infoln("volume", i, "size", v.ContentSize(), "will exceed limit", s.volumeSizeLimit)
-				if _, _, e := s.Join(); e != nil {
-					glog.V(0).Infoln("error when reporting size:", e)
-				}
+			err = fmt.Errorf("Volume Size Limit %d Exceeded! Current size is %d", s.volumeSizeLimit, v.ContentSize())
+		}
+		if s.volumeSizeLimit < v.ContentSize()+3*uint64(size) {
+			glog.V(0).Infoln("volume", i, "size", v.ContentSize(), "will exceed limit", s.volumeSizeLimit)
+			if _, _, e := s.Join(); e != nil {
+				glog.V(0).Infoln("error when reporting size:", e)
 			}
 		}
 		return

@@ -100,29 +100,28 @@ func (vl *VolumeLayout) PickForWrite(count int, option *VolumeGrowOption) (*stor
 			return &vid, count, locationList, nil
 		}
 		return nil, 0, nil, errors.New("Strangely vid " + vid.String() + " is on no machine!")
-	} else {
-		var vid storage.VolumeId
-		var locationList *VolumeLocationList
-		counter := 0
-		for _, v := range vl.writables {
-			volumeLocationList := vl.vid2location[v]
-			for _, dn := range volumeLocationList.list {
-				if dn.GetDataCenter().Id() == NodeId(option.DataCenter) {
-					if option.Rack != "" && dn.GetRack().Id() != NodeId(option.Rack) {
-						continue
-					}
-					if option.DataNode != "" && dn.Id() != NodeId(option.DataNode) {
-						continue
-					}
-					counter++
-					if rand.Intn(counter) < 1 {
-						vid, locationList = v, volumeLocationList
-					}
+	}
+	var vid storage.VolumeId
+	var locationList *VolumeLocationList
+	counter := 0
+	for _, v := range vl.writables {
+		volumeLocationList := vl.vid2location[v]
+		for _, dn := range volumeLocationList.list {
+			if dn.GetDataCenter().Id() == NodeId(option.DataCenter) {
+				if option.Rack != "" && dn.GetRack().Id() != NodeId(option.Rack) {
+					continue
+				}
+				if option.DataNode != "" && dn.Id() != NodeId(option.DataNode) {
+					continue
+				}
+				counter++
+				if rand.Intn(counter) < 1 {
+					vid, locationList = v, volumeLocationList
 				}
 			}
 		}
-		return &vid, count, locationList, nil
 	}
+	return &vid, count, locationList, nil
 }
 
 func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) int {

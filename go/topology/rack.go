@@ -50,13 +50,13 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVol
 	return dn
 }
 
-func (rack *Rack) ToMap() interface{} {
+func (r *Rack) ToMap() interface{} {
 	m := make(map[string]interface{})
-	m["Id"] = rack.Id()
-	m["Max"] = rack.GetMaxVolumeCount()
-	m["Free"] = rack.FreeSpace()
+	m["Id"] = r.Id()
+	m["Max"] = r.GetMaxVolumeCount()
+	m["Free"] = r.FreeSpace()
 	var dns []interface{}
-	for _, c := range rack.Children() {
+	for _, c := range r.Children() {
 		dn := c.(*DataNode)
 		dns = append(dns, dn.ToMap())
 	}
