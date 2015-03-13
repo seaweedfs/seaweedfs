@@ -51,12 +51,12 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	adminMux.HandleFunc("/stats/counter", vs.guard.WhiteList(statsCounterHandler))
 	adminMux.HandleFunc("/stats/memory", vs.guard.WhiteList(statsMemoryHandler))
 	adminMux.HandleFunc("/stats/disk", vs.guard.WhiteList(vs.statsDiskHandler))
+	adminMux.HandleFunc("/delete", vs.guard.WhiteList(vs.batchDeleteHandler))
+	adminMux.HandleFunc("/", vs.privateStoreHandler)
 	if publicMux != adminMux {
 		// separated admin and public port
-		adminMux.HandleFunc("/delete", vs.guard.WhiteList(vs.batchDeleteHandler))
-		adminMux.HandleFunc("/", vs.privateStoreHandler)
+		publicMux.HandleFunc("/", vs.publicReadOnlyHandler)
 	}
-	publicMux.HandleFunc("/", vs.publicReadOnlyHandler)
 
 	go func() {
 		connected := true
