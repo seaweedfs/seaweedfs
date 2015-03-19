@@ -41,6 +41,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 
 	vs.guard = security.NewGuard(whiteList, "")
 
+	adminMux.HandleFunc("/ui/index.html", vs.uiStatusHandler)
 	adminMux.HandleFunc("/status", vs.guard.WhiteList(vs.statusHandler))
 	adminMux.HandleFunc("/admin/assign_volume", vs.guard.WhiteList(vs.assignVolumeHandler))
 	adminMux.HandleFunc("/admin/vacuum_volume_check", vs.guard.WhiteList(vs.vacuumVolumeCheckHandler))

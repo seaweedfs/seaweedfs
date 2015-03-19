@@ -60,6 +60,6 @@ func (vs *VolumeServer) statsDiskHandler(w http.ResponseWriter, r *http.Request)
 			ds = append(ds, stats.NewDiskStatus(dir))
 		}
 	}
-	m["DiskStatues"] = ds
+	m["DiskStatuses"] = ds
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }

@@ -60,6 +60,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 
 	ms.guard = security.NewGuard(whiteList, secureKey)
 
+	r.HandleFunc("/ui/index.html", ms.uiStatusHandler)
 	r.HandleFunc("/dir/assign", ms.proxyToLeader(ms.guard.WhiteList(ms.dirAssignHandler)))
 	r.HandleFunc("/dir/lookup", ms.proxyToLeader(ms.guard.WhiteList(ms.dirLookupHandler)))
 	r.HandleFunc("/dir/join", ms.proxyToLeader(ms.guard.WhiteList(ms.dirJoinHandler)))
