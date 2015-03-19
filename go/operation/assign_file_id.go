@@ -39,7 +39,7 @@ func Assign(server string, count int, replication string, collection string, ttl
 	var ret AssignResult
 	err = json.Unmarshal(jsonBlob, &ret)
 	if err != nil {
-		return nil, fmt.Errorf("JSON unmarshal error:%v, json:%s", err, string(jsonBlob))
+		return nil, fmt.Errorf("/dir/assign result JSON unmarshal error:%v, json:%s", err, string(jsonBlob))
 	}
 	if ret.Count <= 0 {
 		return nil, errors.New(ret.Error)
