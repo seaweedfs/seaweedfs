@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/chrislusf/weed-fs/go/glog"
 	"github.com/chrislusf/weed-fs/go/operation"
@@ -19,6 +20,7 @@ import (
 )
 
 var serverStats *stats.ServerStats
+var startTime = time.Now()
 
 func init() {
 	serverStats = stats.NewServerStats()

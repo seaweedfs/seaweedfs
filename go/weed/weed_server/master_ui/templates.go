@@ -44,6 +44,10 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
         <div class="col-sm-6">
           <h2>System Stats</h2>
           <table class="table table-condensed table-striped">
+            <tr>
+              <th>Concurrent Connections</th>
+              <td>{{ .Counters.Connections.WeekCounter.Count }}</td>
+            </tr>
           {{ range $key, $val := .Stats }}
             <tr>
               <th>{{ $key }}</th>

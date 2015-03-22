@@ -60,19 +60,19 @@ func LoadTTLFromUint32(ttl uint32) (t *TTL) {
 }
 
 // save stored bytes to an output with 2 bytes
-func (t TTL) ToBytes(output []byte) {
+func (t *TTL) ToBytes(output []byte) {
 	output[0] = t.count
 	output[1] = t.unit
 }
 
-func (t TTL) ToUint32() (output uint32) {
+func (t *TTL) ToUint32() (output uint32) {
 	output = uint32(t.count) << 8
 	output += uint32(t.unit)
 	return output
 }
 
-func (t TTL) String() string {
-	if t.count == 0 {
+func (t *TTL) String() string {
+	if t == nil || t.count == 0 {
 		return ""
 	}
 	if t.unit == Empty {

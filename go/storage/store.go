@@ -243,7 +243,8 @@ func (s *Store) Status() []*VolumeInfo {
 				FileCount:        v.nm.FileCount(),
 				DeleteCount:      v.nm.DeletedCount(),
 				DeletedByteCount: v.nm.DeletedSize(),
-				ReadOnly:         v.readOnly}
+				ReadOnly:         v.readOnly,
+				Ttl:              v.Ttl}
 			stats = append(stats, s)
 		}
 	}

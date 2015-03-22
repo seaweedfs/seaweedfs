@@ -58,6 +58,20 @@ func (rrc *RoundRobinCounter) Sum() (sum int64) {
 	return
 }
 
+func (rrc *RoundRobinCounter) ToList() (ret []int64) {
+	index := rrc.LastIndex
+	step := len(rrc.Values)
+	for step > 0 {
+		step--
+		index++
+		if index >= len(rrc.Values) {
+			index = 0
+		}
+		ret = append(ret, rrc.Values[index])
+	}
+	return
+}
+
 type DurationCounter struct {
 	MinuteCounter *RoundRobinCounter
 	HourCounter   *RoundRobinCounter
