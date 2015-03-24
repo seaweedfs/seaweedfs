@@ -30,6 +30,10 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
                 <td>{{ .Topology.Max }}</td>
               </tr>
               <tr>
+                <th>Leader</th>
+                <td><a href="http://{{ .Leader }}">{{ .Leader }}</a></td>
+              </tr>
+              <tr>
                 <td class="col-sm-2 field-label"><label>Peers:</label></td>
                 <td class="col-sm-10"><ul class="list-unstyled">
                 {{ range $k, $p := .Peers }}

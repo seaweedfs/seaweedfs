@@ -14,12 +14,14 @@ func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 	args := struct {
 		Version  string
 		Topology interface{}
+		Leader   string
 		Peers    interface{}
 		Stats    map[string]interface{}
 		Counters *stats.ServerStats
 	}{
 		util.VERSION,
 		ms.Topo.ToMap(),
+		ms.Topo.RaftServer.Leader(),
 		ms.Topo.RaftServer.Peers(),
 		infos,
 		serverStats,
