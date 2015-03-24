@@ -4,7 +4,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"runtime"
 
 	"bazil.org/fuse"
@@ -53,8 +52,7 @@ type File struct {
 	Name   string
 }
 
-func (File) Attr() fuse.Attr {
-	return fuse.Attr{Mode: 0444}
+func (File) Attr(attr *fuse.Attr) {
 }
 func (File) ReadAll(ctx context.Context) ([]byte, error) {
 	return []byte("hello, world\n"), nil
@@ -65,8 +63,7 @@ type Dir struct {
 	Id   uint64
 }
 
-func (dir Dir) Attr() fuse.Attr {
-	return fuse.Attr{Inode: dir.Id, Mode: os.ModeDir | 0555}
+func (dir Dir) Attr(attr *fuse.Attr) {
 }
 
 func (dir Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
