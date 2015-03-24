@@ -15,7 +15,7 @@ func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		Version  string
 		Topology interface{}
 		Peers    interface{}
-		Stats    interface{}
+		Stats    map[string]interface{}
 		Counters *stats.ServerStats
 	}{
 		util.VERSION,
