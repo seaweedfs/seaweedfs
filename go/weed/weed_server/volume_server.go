@@ -20,12 +20,14 @@ type VolumeServer struct {
 	store        *storage.Store
 	guard        *security.Guard
 
+	UseLevelDb        bool
 	FixJpgOrientation bool
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	port int, publicUrl string,
 	folders []string, maxCounts []int,
+	useLevelDb bool,
 	masterNode string, pulseSeconds int,
 	dataCenter string, rack string,
 	whiteList []string,
@@ -34,10 +36,11 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		pulseSeconds:      pulseSeconds,
 		dataCenter:        dataCenter,
 		rack:              rack,
+		UseLevelDb:        useLevelDb,
 		FixJpgOrientation: fixJpgOrientation,
 	}
 	vs.SetMasterNode(masterNode)
-	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts)
+	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts, vs.UseLevelDb)
 
 	vs.guard = security.NewGuard(whiteList, "")
 
@@ -47,7 +50,6 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	adminMux.HandleFunc("/admin/vacuum_volume_check", vs.guard.WhiteList(vs.vacuumVolumeCheckHandler))
 	adminMux.HandleFunc("/admin/vacuum_volume_compact", vs.guard.WhiteList(vs.vacuumVolumeCompactHandler))
 	adminMux.HandleFunc("/admin/vacuum_volume_commit", vs.guard.WhiteList(vs.vacuumVolumeCommitHandler))
-	adminMux.HandleFunc("/admin/freeze_volume", vs.guard.WhiteList(vs.freezeVolumeHandler))
 	adminMux.HandleFunc("/admin/delete_collection", vs.guard.WhiteList(vs.deleteCollectionHandler))
 	adminMux.HandleFunc("/stats/counter", vs.guard.WhiteList(statsCounterHandler))
 	adminMux.HandleFunc("/stats/memory", vs.guard.WhiteList(statsMemoryHandler))
@@ -66,7 +68,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		vs.store.SetDataCenter(vs.dataCenter)
 		vs.store.SetRack(vs.rack)
 		for {
-			master, secretKey, err := vs.store.Join()
+			master, secretKey, err := vs.store.SendHeartbeatToMaster()
 			if err == nil {
 				if !connected {
 					connected = true
@@ -75,7 +77,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 					glog.V(0).Infoln("Volume Server Connected with master at", master)
 				}
 			} else {
-				glog.V(4).Infoln("Volume Server Failed to talk with master:", err.Error())
+				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", vs, err)
 				if connected {
 					connected = false
 				}

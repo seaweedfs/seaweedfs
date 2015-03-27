@@ -17,7 +17,7 @@ func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (vs *VolumeServer) assignVolumeHandler(w http.ResponseWriter, r *http.Request) {
-	err := vs.store.AddVolume(r.FormValue("volume"), r.FormValue("collection"), r.FormValue("replication"), r.FormValue("ttl"))
+	err := vs.store.AddVolume(r.FormValue("volume"), r.FormValue("collection"), vs.UseLevelDb, r.FormValue("replication"), r.FormValue("ttl"))
 	if err == nil {
 		writeJsonQuiet(w, r, http.StatusAccepted, map[string]string{"error": ""})
 	} else {
@@ -38,17 +38,6 @@ func (vs *VolumeServer) deleteCollectionHandler(w http.ResponseWriter, r *http.R
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 	}
 	glog.V(2).Infoln("deleting collection =", r.FormValue("collection"), ", error =", err)
-}
-
-func (vs *VolumeServer) freezeVolumeHandler(w http.ResponseWriter, r *http.Request) {
-	//TODO: notify master that this volume will be read-only
-	err := vs.store.FreezeVolume(r.FormValue("volume"))
-	if err == nil {
-		writeJsonQuiet(w, r, http.StatusOK, map[string]string{"error": ""})
-	} else {
-		writeJsonError(w, r, http.StatusInternalServerError, err)
-	}
-	glog.V(2).Infoln("freeze volume =", r.FormValue("volume"), ", error =", err)
 }
 
 func (vs *VolumeServer) statsDiskHandler(w http.ResponseWriter, r *http.Request) {

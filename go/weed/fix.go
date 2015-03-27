@@ -52,8 +52,8 @@ func runFix(cmd *Command, args []string) bool {
 	}, false, func(n *storage.Needle, offset int64) error {
 		glog.V(2).Infof("key %d offset %d size %d disk_size %d gzip %v", n.Id, offset, n.Size, n.DiskSize(), n.IsGzipped())
 		if n.Size > 0 {
-			count, pe := nm.Put(n.Id, uint32(offset/storage.NeedlePaddingSize), n.Size)
-			glog.V(2).Infof("saved %d with error %v", count, pe)
+			pe := nm.Put(n.Id, uint32(offset/storage.NeedlePaddingSize), n.Size)
+			glog.V(2).Infof("saved %d with error %v", n.Size, pe)
 		} else {
 			glog.V(2).Infof("skipping deleted file ...")
 			return nm.Delete(n.Id)

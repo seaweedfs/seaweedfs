@@ -26,12 +26,12 @@ func init() {
 func PostBytes(url string, body []byte) ([]byte, error) {
 	r, err := client.Post(url, "application/octet-stream", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Post to %s: %v", url, err)
 	}
 	defer r.Body.Close()
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Read response body: %v", err)
 	}
 	return b, nil
 }

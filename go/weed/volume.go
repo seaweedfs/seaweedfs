@@ -32,6 +32,7 @@ type VolumeServerOptions struct {
 	dataCenter            *string
 	rack                  *string
 	whiteList             []string
+	useLevelDb            *bool
 	fixJpgOrientation     *bool
 }
 
@@ -48,6 +49,7 @@ func init() {
 	v.maxCpu = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	v.dataCenter = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	v.rack = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
+	v.useLevelDb = cmdVolume.Flag.Bool("leveldb", false, "Change to leveldb mode to save memory with reduced performance of read and write.")
 	v.fixJpgOrientation = cmdVolume.Flag.Bool("images.fix.orientation", true, "Adjust jpg orientation when uploading.")
 }
 
@@ -116,6 +118,7 @@ func runVolume(cmd *Command, args []string) bool {
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.publicUrl,
 		v.folders, v.folderMaxLimits,
+		*v.useLevelDb,
 		*v.master, *v.pulseSeconds, *v.dataCenter, *v.rack,
 		v.whiteList,
 		*v.fixJpgOrientation,

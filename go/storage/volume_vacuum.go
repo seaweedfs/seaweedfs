@@ -38,7 +38,7 @@ func (v *Volume) commitCompact() error {
 	}
 	//glog.V(3).Infof("Pretending to be vacuuming...")
 	//time.Sleep(20 * time.Second)
-	if e = v.load(true, false); e != nil {
+	if e = v.load(true, false, false); e != nil {
 		return e
 	}
 	return nil
@@ -73,7 +73,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string) (err erro
 		nv, ok := v.nm.Get(n.Id)
 		glog.V(4).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
 		if ok && int64(nv.Offset)*NeedlePaddingSize == offset && nv.Size > 0 {
-			if _, err = nm.Put(n.Id, uint32(new_offset/NeedlePaddingSize), n.Size); err != nil {
+			if err = nm.Put(n.Id, uint32(new_offset/NeedlePaddingSize), n.Size); err != nil {
 				return fmt.Errorf("cannot put needle: %s", err)
 			}
 			if _, err = n.Append(dst, v.Version()); err != nil {

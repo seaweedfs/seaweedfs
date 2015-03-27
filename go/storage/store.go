@@ -90,18 +90,18 @@ func (s *Store) String() (str string) {
 	return
 }
 
-func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int) (s *Store) {
+func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int, useLevelDb bool) (s *Store) {
 	s = &Store{Port: port, Ip: ip, PublicUrl: publicUrl}
 	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirnames); i++ {
 		location := &DiskLocation{Directory: dirnames[i], MaxVolumeCount: maxVolumeCounts[i]}
 		location.volumes = make(map[VolumeId]*Volume)
-		location.loadExistingVolumes()
+		location.loadExistingVolumes(useLevelDb)
 		s.Locations = append(s.Locations, location)
 	}
 	return
 }
-func (s *Store) AddVolume(volumeListString string, collection string, replicaPlacement string, ttlString string) error {
+func (s *Store) AddVolume(volumeListString string, collection string, useLevelDb bool, replicaPlacement string, ttlString string) error {
 	rt, e := NewReplicaPlacementFromString(replicaPlacement)
 	if e != nil {
 		return e
@@ -117,7 +117,7 @@ func (s *Store) AddVolume(volumeListString string, collection string, replicaPla
 			if err != nil {
 				return fmt.Errorf("Volume Id %s is not a valid unsigned integer!", id_string)
 			}
-			e = s.addVolume(VolumeId(id), collection, rt, ttl)
+			e = s.addVolume(VolumeId(id), collection, useLevelDb, rt, ttl)
 		} else {
 			pair := strings.Split(range_string, "-")
 			start, start_err := strconv.ParseUint(pair[0], 10, 64)
@@ -129,7 +129,7 @@ func (s *Store) AddVolume(volumeListString string, collection string, replicaPla
 				return fmt.Errorf("Volume End Id %s is not a valid unsigned integer!", pair[1])
 			}
 			for id := start; id <= end; id++ {
-				if err := s.addVolume(VolumeId(id), collection, rt, ttl); err != nil {
+				if err := s.addVolume(VolumeId(id), collection, useLevelDb, rt, ttl); err != nil {
 					e = err
 				}
 			}
@@ -178,14 +178,14 @@ func (s *Store) findFreeLocation() (ret *DiskLocation) {
 	}
 	return ret
 }
-func (s *Store) addVolume(vid VolumeId, collection string, replicaPlacement *ReplicaPlacement, ttl *TTL) error {
+func (s *Store) addVolume(vid VolumeId, collection string, useLevelDb bool, replicaPlacement *ReplicaPlacement, ttl *TTL) error {
 	if s.findVolume(vid) != nil {
 		return fmt.Errorf("Volume Id %d already exists!", vid)
 	}
 	if location := s.findFreeLocation(); location != nil {
 		glog.V(0).Infof("In dir %s adds volume:%v collection:%s replicaPlacement:%v ttl:%v",
 			location.Directory, vid, collection, replicaPlacement, ttl)
-		if volume, err := NewVolume(location.Directory, collection, vid, replicaPlacement, ttl); err == nil {
+		if volume, err := NewVolume(location.Directory, collection, vid, useLevelDb, replicaPlacement, ttl); err == nil {
 			location.volumes[vid] = volume
 			return nil
 		} else {
@@ -195,20 +195,7 @@ func (s *Store) addVolume(vid VolumeId, collection string, replicaPlacement *Rep
 	return fmt.Errorf("No more free space left")
 }
 
-func (s *Store) FreezeVolume(volumeIdString string) error {
-	vid, err := NewVolumeId(volumeIdString)
-	if err != nil {
-		return fmt.Errorf("Volume Id %s is not a valid unsigned integer", volumeIdString)
-	}
-	if v := s.findVolume(vid); v != nil {
-		if v.readOnly {
-			return fmt.Errorf("Volume %s is already read-only", volumeIdString)
-		}
-		return v.freeze()
-	}
-	return fmt.Errorf("volume id %d is not found during freeze", vid)
-}
-func (l *DiskLocation) loadExistingVolumes() {
+func (l *DiskLocation) loadExistingVolumes(useLevelDb bool) {
 	if dirs, err := ioutil.ReadDir(l.Directory); err == nil {
 		for _, dir := range dirs {
 			name := dir.Name()
@@ -221,7 +208,7 @@ func (l *DiskLocation) loadExistingVolumes() {
 				}
 				if vid, err := NewVolumeId(base); err == nil {
 					if l.volumes[vid] == nil {
-						if v, e := NewVolume(l.Directory, collection, vid, nil, nil); e == nil {
+						if v, e := NewVolume(l.Directory, collection, vid, useLevelDb, nil, nil); e == nil {
 							l.volumes[vid] = v
 							glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s", l.Directory+"/"+name, v.ReplicaPlacement, v.Version(), v.Size(), v.Ttl.String())
 						}
@@ -261,7 +248,7 @@ func (s *Store) SetRack(rack string) {
 func (s *Store) SetBootstrapMaster(bootstrapMaster string) {
 	s.masterNodes = NewMasterNodes(bootstrapMaster)
 }
-func (s *Store) Join() (masterNode string, secretKey security.Secret, e error) {
+func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.Secret, e error) {
 	masterNode, e = s.masterNodes.findMaster()
 	if e != nil {
 		return
@@ -317,13 +304,16 @@ func (s *Store) Join() (masterNode string, secretKey security.Secret, e error) {
 		return "", "", err
 	}
 
-	jsonBlob, err := util.PostBytes("http://"+masterNode+"/dir/join", data)
+	joinUrl := "http://" + masterNode + "/dir/join"
+
+	jsonBlob, err := util.PostBytes(joinUrl, data)
 	if err != nil {
 		s.masterNodes.reset()
 		return "", "", err
 	}
 	var ret operation.JoinResult
 	if err := json.Unmarshal(jsonBlob, &ret); err != nil {
+		glog.V(0).Infof("Failed to join %s with response: %s", joinUrl, string(jsonBlob))
 		return masterNode, "", err
 	}
 	if ret.Error != "" {
@@ -354,7 +344,7 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 		}
 		if s.volumeSizeLimit < v.ContentSize()+3*uint64(size) {
 			glog.V(0).Infoln("volume", i, "size", v.ContentSize(), "will exceed limit", s.volumeSizeLimit)
-			if _, _, e := s.Join(); e != nil {
+			if _, _, e := s.SendHeartbeatToMaster(); e != nil {
 				glog.V(0).Infoln("error when reporting size:", e)
 			}
 		}
