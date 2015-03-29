@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/weed-fs/go/storage"
 	"github.com/chrislusf/weed-fs/go/util"
 	"github.com/chrislusf/weed-fs/go/weed/weed_server"
 	"github.com/gorilla/mux"
@@ -68,7 +69,7 @@ var (
 	volumeDataFolders             = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	volumeMaxDataVolumeCounts     = cmdServer.Flag.String("volume.max", "7", "maximum numbers of volumes, count[,count]...")
 	volumePulse                   = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
-	volumeUseLevelDb              = cmdServer.Flag.Bool("volume.leveldb", false, "Change to leveldb mode to save memory with reduced performance of read and write.")
+	volumeIndexType               = cmdServer.Flag.String("volume.index", "memory", "Choose [memory|leveldb|boltdb] mode for memory~performance balance.")
 	volumeFixJpgOrientation       = cmdServer.Flag.Bool("volume.images.fix.orientation", true, "Adjust jpg orientation when uploading.")
 	isStartingFiler               = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 
@@ -233,10 +234,17 @@ func runServer(cmd *Command, args []string) bool {
 	if isSeperatedPublicPort {
 		publicVolumeMux = http.NewServeMux()
 	}
+	volumeNeedleMapKind := storage.NeedleMapInMemory
+	switch *volumeIndexType {
+	case "leveldb":
+		volumeNeedleMapKind = storage.NeedleMapLevelDb
+	case "boltdb":
+		volumeNeedleMapKind = storage.NeedleMapBoltDb
+	}
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*serverIp, *volumePort, *serverPublicUrl,
 		folders, maxCounts,
-		*volumeUseLevelDb,
+		volumeNeedleMapKind,
 		*serverIp+":"+strconv.Itoa(*masterPort), *volumePulse, *serverDataCenter, *serverRack,
 		serverWhiteList, *volumeFixJpgOrientation,
 	)

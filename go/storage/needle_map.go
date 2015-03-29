@@ -7,6 +7,14 @@ import (
 	"github.com/chrislusf/weed-fs/go/util"
 )
 
+type NeedleMapType int
+
+const (
+	NeedleMapInMemory NeedleMapType = iota
+	NeedleMapLevelDb
+	NeedleMapBoltDb
+)
+
 type NeedleMapper interface {
 	Put(key uint64, offset uint32, size uint32) error
 	Get(key uint64) (element *NeedleValue, ok bool)

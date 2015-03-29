@@ -38,7 +38,7 @@ func (v *Volume) commitCompact() error {
 	}
 	//glog.V(3).Infof("Pretending to be vacuuming...")
 	//time.Sleep(20 * time.Second)
-	if e = v.load(true, false, false); e != nil {
+	if e = v.load(true, false, v.needleMapKind); e != nil {
 		return e
 	}
 	return nil
@@ -63,27 +63,28 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string) (err erro
 
 	now := uint64(time.Now().Unix())
 
-	err = ScanVolumeFile(v.dir, v.Collection, v.Id, func(superBlock SuperBlock) error {
-		_, err = dst.Write(superBlock.Bytes())
-		return err
-	}, true, func(n *Needle, offset int64) error {
-		if n.HasTtl() && now >= n.LastModified+uint64(v.Ttl.Minutes()*60) {
+	err = ScanVolumeFile(v.dir, v.Collection, v.Id, v.needleMapKind,
+		func(superBlock SuperBlock) error {
+			_, err = dst.Write(superBlock.Bytes())
+			return err
+		}, true, func(n *Needle, offset int64) error {
+			if n.HasTtl() && now >= n.LastModified+uint64(v.Ttl.Minutes()*60) {
+				return nil
+			}
+			nv, ok := v.nm.Get(n.Id)
+			glog.V(4).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
+			if ok && int64(nv.Offset)*NeedlePaddingSize == offset && nv.Size > 0 {
+				if err = nm.Put(n.Id, uint32(new_offset/NeedlePaddingSize), n.Size); err != nil {
+					return fmt.Errorf("cannot put needle: %s", err)
+				}
+				if _, err = n.Append(dst, v.Version()); err != nil {
+					return fmt.Errorf("cannot append needle: %s", err)
+				}
+				new_offset += n.DiskSize()
+				glog.V(3).Infoln("saving key", n.Id, "volume offset", offset, "=>", new_offset, "data_size", n.Size)
+			}
 			return nil
-		}
-		nv, ok := v.nm.Get(n.Id)
-		glog.V(4).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
-		if ok && int64(nv.Offset)*NeedlePaddingSize == offset && nv.Size > 0 {
-			if err = nm.Put(n.Id, uint32(new_offset/NeedlePaddingSize), n.Size); err != nil {
-				return fmt.Errorf("cannot put needle: %s", err)
-			}
-			if _, err = n.Append(dst, v.Version()); err != nil {
-				return fmt.Errorf("cannot append needle: %s", err)
-			}
-			new_offset += n.DiskSize()
-			glog.V(3).Infoln("saving key", n.Id, "volume offset", offset, "=>", new_offset, "data_size", n.Size)
-		}
-		return nil
-	})
+		})
 
 	return
 }

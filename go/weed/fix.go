@@ -47,19 +47,21 @@ func runFix(cmd *Command, args []string) bool {
 	defer nm.Close()
 
 	vid := storage.VolumeId(*fixVolumeId)
-	err = storage.ScanVolumeFile(*fixVolumePath, *fixVolumeCollection, vid, func(superBlock storage.SuperBlock) error {
-		return nil
-	}, false, func(n *storage.Needle, offset int64) error {
-		glog.V(2).Infof("key %d offset %d size %d disk_size %d gzip %v", n.Id, offset, n.Size, n.DiskSize(), n.IsGzipped())
-		if n.Size > 0 {
-			pe := nm.Put(n.Id, uint32(offset/storage.NeedlePaddingSize), n.Size)
-			glog.V(2).Infof("saved %d with error %v", n.Size, pe)
-		} else {
-			glog.V(2).Infof("skipping deleted file ...")
-			return nm.Delete(n.Id)
-		}
-		return nil
-	})
+	err = storage.ScanVolumeFile(*fixVolumePath, *fixVolumeCollection, vid,
+		storage.NeedleMapInMemory,
+		func(superBlock storage.SuperBlock) error {
+			return nil
+		}, false, func(n *storage.Needle, offset int64) error {
+			glog.V(2).Infof("key %d offset %d size %d disk_size %d gzip %v", n.Id, offset, n.Size, n.DiskSize(), n.IsGzipped())
+			if n.Size > 0 {
+				pe := nm.Put(n.Id, uint32(offset/storage.NeedlePaddingSize), n.Size)
+				glog.V(2).Infof("saved %d with error %v", n.Size, pe)
+			} else {
+				glog.V(2).Infof("skipping deleted file ...")
+				return nm.Delete(n.Id)
+			}
+			return nil
+		})
 	if err != nil {
 		glog.Fatalf("Export Volume File [ERROR] %s\n", err)
 	}

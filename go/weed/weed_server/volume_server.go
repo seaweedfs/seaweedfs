@@ -20,14 +20,14 @@ type VolumeServer struct {
 	store        *storage.Store
 	guard        *security.Guard
 
-	UseLevelDb        bool
+	needleMapKind     storage.NeedleMapType
 	FixJpgOrientation bool
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	port int, publicUrl string,
 	folders []string, maxCounts []int,
-	useLevelDb bool,
+	needleMapKind storage.NeedleMapType,
 	masterNode string, pulseSeconds int,
 	dataCenter string, rack string,
 	whiteList []string,
@@ -36,11 +36,11 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		pulseSeconds:      pulseSeconds,
 		dataCenter:        dataCenter,
 		rack:              rack,
-		UseLevelDb:        useLevelDb,
+		needleMapKind:     needleMapKind,
 		FixJpgOrientation: fixJpgOrientation,
 	}
 	vs.SetMasterNode(masterNode)
-	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts, vs.UseLevelDb)
+	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts, vs.needleMapKind)
 
 	vs.guard = security.NewGuard(whiteList, "")
 
@@ -77,7 +77,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 					glog.V(0).Infoln("Volume Server Connected with master at", master)
 				}
 			} else {
-				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", vs, err)
+				glog.V(0).Infof("Volume Server Failed to talk with master %+v: %v", vs, err)
 				if connected {
 					connected = false
 				}

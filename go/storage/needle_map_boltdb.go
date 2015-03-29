@@ -3,29 +3,31 @@ package storage
 import (
 	"fmt"
 	"os"
-	"path/filepath"
+
+	"github.com/boltdb/bolt"
 
 	"github.com/chrislusf/weed-fs/go/glog"
 	"github.com/chrislusf/weed-fs/go/util"
-	"github.com/syndtr/goleveldb/leveldb"
 )
 
-type LevelDbNeedleMap struct {
+type BoltDbNeedleMap struct {
 	dbFileName string
 	indexFile  *os.File
-	db         *leveldb.DB
+	db         *bolt.DB
 	mapMetric
 }
 
-func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File) (m *LevelDbNeedleMap, err error) {
-	m = &LevelDbNeedleMap{indexFile: indexFile, dbFileName: dbFileName}
-	if !isLevelDbFresh(dbFileName, indexFile) {
+var boltdbBucket = []byte("weed")
+
+func NewBoltDbNeedleMap(dbFileName string, indexFile *os.File) (m *BoltDbNeedleMap, err error) {
+	m = &BoltDbNeedleMap{indexFile: indexFile, dbFileName: dbFileName}
+	if !isBoltDbFresh(dbFileName, indexFile) {
 		glog.V(1).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
-		generateLevelDbFile(dbFileName, indexFile)
+		generateBoltDbFile(dbFileName, indexFile)
 		glog.V(1).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
 	}
 	glog.V(1).Infof("Opening %s...", dbFileName)
-	if m.db, err = leveldb.OpenFile(dbFileName, nil); err != nil {
+	if m.db, err = bolt.Open(dbFileName, 0644, nil); err != nil {
 		return
 	}
 	glog.V(1).Infof("Loading %s...", indexFile.Name())
@@ -37,9 +39,9 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File) (m *LevelDbNeedl
 	return
 }
 
-func isLevelDbFresh(dbFileName string, indexFile *os.File) bool {
+func isBoltDbFresh(dbFileName string, indexFile *os.File) bool {
 	// normally we always write to index file first
-	dbLogFile, err := os.Open(filepath.Join(dbFileName, "LOG"))
+	dbLogFile, err := os.Open(dbFileName)
 	if err != nil {
 		return false
 	}
@@ -54,27 +56,38 @@ func isLevelDbFresh(dbFileName string, indexFile *os.File) bool {
 	return dbStat.ModTime().After(indexStat.ModTime())
 }
 
-func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
-	db, err := leveldb.OpenFile(dbFileName, nil)
+func generateBoltDbFile(dbFileName string, indexFile *os.File) error {
+	db, err := bolt.Open(dbFileName, 0644, nil)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 	return WalkIndexFile(indexFile, func(key uint64, offset, size uint32) error {
 		if offset > 0 {
-			levelDbWrite(db, key, offset, size)
+			boltDbWrite(db, key, offset, size)
 		} else {
-			levelDbDelete(db, key)
+			boltDbDelete(db, key)
 		}
 		return nil
 	})
 }
 
-func (m *LevelDbNeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
+func (m *BoltDbNeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
 	bytes := make([]byte, 8)
+	var data []byte
 	util.Uint64toBytes(bytes, key)
-	data, err := m.db.Get(bytes, nil)
+	err := m.db.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(boltdbBucket)
+		if bucket == nil {
+			return fmt.Errorf("Bucket %q not found!", boltdbBucket)
+		}
+
+		data = bucket.Get(bytes)
+		return nil
+	})
+
 	if err != nil || len(data) != 8 {
+		glog.V(0).Infof("Failed to get %d %v", key, err)
 		return nil, false
 	}
 	offset := util.BytesToUint32(data[0:4])
@@ -82,7 +95,7 @@ func (m *LevelDbNeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
 	return &NeedleValue{Key: Key(key), Offset: offset, Size: size}, true
 }
 
-func (m *LevelDbNeedleMap) Put(key uint64, offset uint32, size uint32) error {
+func (m *BoltDbNeedleMap) Put(key uint64, offset uint32, size uint32) error {
 	var oldSize uint32
 	if oldNeedle, ok := m.Get(key); ok {
 		oldSize = oldNeedle.Size
@@ -92,27 +105,46 @@ func (m *LevelDbNeedleMap) Put(key uint64, offset uint32, size uint32) error {
 	if err := appendToIndexFile(m.indexFile, key, offset, size); err != nil {
 		return fmt.Errorf("cannot write to indexfile %s: %v", m.indexFile.Name(), err)
 	}
-	return levelDbWrite(m.db, key, offset, size)
+	return boltDbWrite(m.db, key, offset, size)
 }
 
-func levelDbWrite(db *leveldb.DB,
+func boltDbWrite(db *bolt.DB,
 	key uint64, offset uint32, size uint32) error {
 	bytes := make([]byte, 16)
 	util.Uint64toBytes(bytes[0:8], key)
 	util.Uint32toBytes(bytes[8:12], offset)
 	util.Uint32toBytes(bytes[12:16], size)
-	if err := db.Put(bytes[0:8], bytes[8:16], nil); err != nil {
-		return fmt.Errorf("failed to write leveldb: %v", err)
-	}
-	return nil
+	return db.Update(func(tx *bolt.Tx) error {
+		bucket, err := tx.CreateBucketIfNotExists(boltdbBucket)
+		if err != nil {
+			return err
+		}
+
+		err = bucket.Put(bytes[0:8], bytes[8:16])
+		if err != nil {
+			return err
+		}
+		return nil
+	})
 }
-func levelDbDelete(db *leveldb.DB, key uint64) error {
+func boltDbDelete(db *bolt.DB, key uint64) error {
 	bytes := make([]byte, 8)
 	util.Uint64toBytes(bytes, key)
-	return db.Delete(bytes, nil)
+	return db.Update(func(tx *bolt.Tx) error {
+		bucket, err := tx.CreateBucketIfNotExists(boltdbBucket)
+		if err != nil {
+			return err
+		}
+
+		err = bucket.Delete(bytes)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
-func (m *LevelDbNeedleMap) Delete(key uint64) error {
+func (m *BoltDbNeedleMap) Delete(key uint64) error {
 	if oldNeedle, ok := m.Get(key); ok {
 		m.logDelete(oldNeedle.Size)
 	}
@@ -120,31 +152,31 @@ func (m *LevelDbNeedleMap) Delete(key uint64) error {
 	if err := appendToIndexFile(m.indexFile, key, 0, 0); err != nil {
 		return err
 	}
-	return levelDbDelete(m.db, key)
+	return boltDbDelete(m.db, key)
 }
 
-func (m *LevelDbNeedleMap) Close() {
+func (m *BoltDbNeedleMap) Close() {
 	m.db.Close()
 }
 
-func (m *LevelDbNeedleMap) Destroy() error {
+func (m *BoltDbNeedleMap) Destroy() error {
 	m.Close()
 	os.Remove(m.indexFile.Name())
 	return os.Remove(m.dbFileName)
 }
 
-func (m *LevelDbNeedleMap) ContentSize() uint64 {
+func (m *BoltDbNeedleMap) ContentSize() uint64 {
 	return m.FileByteCounter
 }
-func (m *LevelDbNeedleMap) DeletedSize() uint64 {
+func (m *BoltDbNeedleMap) DeletedSize() uint64 {
 	return m.DeletionByteCounter
 }
-func (m *LevelDbNeedleMap) FileCount() int {
+func (m *BoltDbNeedleMap) FileCount() int {
 	return m.FileCounter
 }
-func (m *LevelDbNeedleMap) DeletedCount() int {
+func (m *BoltDbNeedleMap) DeletedCount() int {
 	return m.DeletionCounter
 }
-func (m *LevelDbNeedleMap) MaxFileKey() uint64 {
+func (m *BoltDbNeedleMap) MaxFileKey() uint64 {
 	return m.MaximumFileKey
 }

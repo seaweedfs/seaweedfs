@@ -14,12 +14,13 @@ import (
 )
 
 type Volume struct {
-	Id         VolumeId
-	dir        string
-	Collection string
-	dataFile   *os.File
-	nm         NeedleMapper
-	readOnly   bool
+	Id            VolumeId
+	dir           string
+	Collection    string
+	dataFile      *os.File
+	nm            NeedleMapper
+	needleMapKind NeedleMapType
+	readOnly      bool
 
 	SuperBlock
 
@@ -27,20 +28,22 @@ type Volume struct {
 	lastModifiedTime uint64 //unix time in seconds
 }
 
-func NewVolume(dirname string, collection string, id VolumeId, useLevelDb bool, replicaPlacement *ReplicaPlacement, ttl *TTL) (v *Volume, e error) {
+func NewVolume(dirname string, collection string, id VolumeId, needleMapKind NeedleMapType, replicaPlacement *ReplicaPlacement, ttl *TTL) (v *Volume, e error) {
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
 	v.SuperBlock = SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
-	e = v.load(true, true, useLevelDb)
+	v.needleMapKind = needleMapKind
+	e = v.load(true, true, needleMapKind)
 	return
 }
 func (v *Volume) String() string {
 	return fmt.Sprintf("Id:%v, dir:%s, Collection:%s, dataFile:%v, nm:%v, readOnly:%v", v.Id, v.dir, v.Collection, v.dataFile, v.nm, v.readOnly)
 }
 
-func loadVolumeWithoutIndex(dirname string, collection string, id VolumeId) (v *Volume, e error) {
+func loadVolumeWithoutIndex(dirname string, collection string, id VolumeId, needleMapKind NeedleMapType) (v *Volume, e error) {
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
 	v.SuperBlock = SuperBlock{}
-	e = v.load(false, false, false)
+	v.needleMapKind = needleMapKind
+	e = v.load(false, false, needleMapKind)
 	return
 }
 func (v *Volume) FileName() (fileName string) {
@@ -51,7 +54,7 @@ func (v *Volume) FileName() (fileName string) {
 	}
 	return
 }
-func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, useLevelDb bool) error {
+func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind NeedleMapType) error {
 	var e error
 	fileName := v.FileName()
 
@@ -99,15 +102,21 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, useLevelDb bo
 				return fmt.Errorf("cannot write Volume Index %s.idx: %v", fileName, e)
 			}
 		}
-		if !useLevelDb {
+		switch needleMapKind {
+		case NeedleMapInMemory:
 			glog.V(0).Infoln("loading index file", fileName+".idx", "readonly", v.readOnly)
 			if v.nm, e = LoadNeedleMap(indexFile); e != nil {
 				glog.V(0).Infof("loading index %s error: %v", fileName+".idx", e)
 			}
-		} else {
+		case NeedleMapLevelDb:
 			glog.V(0).Infoln("loading leveldb file", fileName+".ldb")
 			if v.nm, e = NewLevelDbNeedleMap(fileName+".ldb", indexFile); e != nil {
 				glog.V(0).Infof("loading leveldb %s error: %v", fileName+".ldb", e)
+			}
+		case NeedleMapBoltDb:
+			glog.V(0).Infoln("loading boltdb file", fileName+".bdb")
+			if v.nm, e = NewBoltDbNeedleMap(fileName+".bdb", indexFile); e != nil {
+				glog.V(0).Infof("loading boltdb %s error: %v", fileName+".bdb", e)
 			}
 		}
 	}
@@ -263,11 +272,12 @@ func (v *Volume) read(n *Needle) (int, error) {
 }
 
 func ScanVolumeFile(dirname string, collection string, id VolumeId,
+	needleMapKind NeedleMapType,
 	visitSuperBlock func(SuperBlock) error,
 	readNeedleBody bool,
 	visitNeedle func(n *Needle, offset int64) error) (err error) {
 	var v *Volume
-	if v, err = loadVolumeWithoutIndex(dirname, collection, id); err != nil {
+	if v, err = loadVolumeWithoutIndex(dirname, collection, id, needleMapKind); err != nil {
 		return fmt.Errorf("Failed to load volume %d: %v", id, err)
 	}
 	if err = visitSuperBlock(v.SuperBlock); err != nil {

@@ -17,7 +17,7 @@ func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (vs *VolumeServer) assignVolumeHandler(w http.ResponseWriter, r *http.Request) {
-	err := vs.store.AddVolume(r.FormValue("volume"), r.FormValue("collection"), vs.UseLevelDb, r.FormValue("replication"), r.FormValue("ttl"))
+	err := vs.store.AddVolume(r.FormValue("volume"), r.FormValue("collection"), vs.needleMapKind, r.FormValue("replication"), r.FormValue("ttl"))
 	if err == nil {
 		writeJsonQuiet(w, r, http.StatusAccepted, map[string]string{"error": ""})
 	} else {

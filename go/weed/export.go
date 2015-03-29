@@ -99,23 +99,25 @@ func runExport(cmd *Command, args []string) bool {
 
 	var version storage.Version
 
-	err = storage.ScanVolumeFile(*exportVolumePath, *exportCollection, vid, func(superBlock storage.SuperBlock) error {
-		version = superBlock.Version()
-		return nil
-	}, true, func(n *storage.Needle, offset int64) error {
-		nv, ok := nm.Get(n.Id)
-		glog.V(3).Infof("key %d offset %d size %d disk_size %d gzip %v ok %v nv %+v",
-			n.Id, offset, n.Size, n.DiskSize(), n.IsGzipped(), ok, nv)
-		if ok && nv.Size > 0 && int64(nv.Offset)*8 == offset {
-			return walker(vid, n, version)
-		}
-		if !ok {
-			glog.V(2).Infof("This seems deleted %d size %d", n.Id, n.Size)
-		} else {
-			glog.V(2).Infof("Skipping later-updated Id %d size %d", n.Id, n.Size)
-		}
-		return nil
-	})
+	err = storage.ScanVolumeFile(*exportVolumePath, *exportCollection, vid,
+		storage.NeedleMapInMemory,
+		func(superBlock storage.SuperBlock) error {
+			version = superBlock.Version()
+			return nil
+		}, true, func(n *storage.Needle, offset int64) error {
+			nv, ok := nm.Get(n.Id)
+			glog.V(3).Infof("key %d offset %d size %d disk_size %d gzip %v ok %v nv %+v",
+				n.Id, offset, n.Size, n.DiskSize(), n.IsGzipped(), ok, nv)
+			if ok && nv.Size > 0 && int64(nv.Offset)*8 == offset {
+				return walker(vid, n, version)
+			}
+			if !ok {
+				glog.V(2).Infof("This seems deleted %d size %d", n.Id, n.Size)
+			} else {
+				glog.V(2).Infof("Skipping later-updated Id %d size %d", n.Id, n.Size)
+			}
+			return nil
+		})
 	if err != nil {
 		glog.Fatalf("Export Volume File [ERROR] %s\n", err)
 	}
