@@ -87,7 +87,6 @@ func (m *BoltDbNeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
 	})
 
 	if err != nil || len(data) != 8 {
-		glog.V(0).Infof("Failed to get %d %v", key, err)
 		return nil, false
 	}
 	offset := util.BytesToUint32(data[0:4])
