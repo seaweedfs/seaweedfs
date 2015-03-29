@@ -38,6 +38,7 @@ http://groups.google.com/group/weed-file-system Seaweed File System Discussion G
 * Optional [filer server][Filer] provides "normal" directories and files via http
 * For jpeg pictures, optionally fix the orientation.
 * Support Etag, Accept-Range, Last-Modified, etc.
+* Support in-memory/leveldb/boltdb mode tuning for memory/performance balance.
 
 [Filer]: https://github.com/chrislusf/weed-fs/wiki/Filer
 
