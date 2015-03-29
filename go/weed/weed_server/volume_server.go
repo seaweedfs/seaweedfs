@@ -77,7 +77,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 					glog.V(0).Infoln("Volume Server Connected with master at", master)
 				}
 			} else {
-				glog.V(0).Infof("Volume Server Failed to talk with master %+v: %v", vs, err)
+				glog.V(1).Infof("Volume Server Failed to talk with master %+v: %v", vs, err)
 				if connected {
 					connected = false
 				}
