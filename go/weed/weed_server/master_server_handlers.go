@@ -69,8 +69,8 @@ func (ms *MasterServer) volumeLookupHandler(w http.ResponseWriter, r *http.Reque
 
 func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 	stats.AssignRequest()
-	requestedCount, e := strconv.Atoi(r.FormValue("count"))
-	if e != nil {
+	requestedCount, e := strconv.ParseUint(r.FormValue("count"), 10, 64)
+	if e != nil || requestedCount == 0 {
 		requestedCount = 1
 	}
 

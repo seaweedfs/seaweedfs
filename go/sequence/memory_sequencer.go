@@ -15,7 +15,7 @@ func NewMemorySequencer() (m *MemorySequencer) {
 	return
 }
 
-func (m *MemorySequencer) NextFileId(count int) (uint64, int) {
+func (m *MemorySequencer) NextFileId(count uint64) (uint64, uint64) {
 	m.sequenceLock.Lock()
 	defer m.sequenceLock.Unlock()
 	ret := m.counter

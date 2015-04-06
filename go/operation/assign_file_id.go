@@ -15,13 +15,13 @@ type AssignResult struct {
 	Fid       string `json:"fid,omitempty"`
 	Url       string `json:"url,omitempty"`
 	PublicUrl string `json:"publicUrl,omitempty"`
-	Count     int    `json:"count,omitempty"`
+	Count     uint64 `json:"count,omitempty"`
 	Error     string `json:"error,omitempty"`
 }
 
-func Assign(server string, count int, replication string, collection string, ttl string) (*AssignResult, error) {
+func Assign(server string, count uint64, replication string, collection string, ttl string) (*AssignResult, error) {
 	values := make(url.Values)
-	values.Add("count", strconv.Itoa(count))
+	values.Add("count", strconv.FormatUint(count, 10))
 	if replication != "" {
 		values.Add("replication", replication)
 	}
