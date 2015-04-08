@@ -228,6 +228,9 @@ func runServer(cmd *Command, args []string) bool {
 	if *volumePublicPort == 0 {
 		*volumePublicPort = *volumePort
 	}
+	if *serverPublicUrl == "" {
+		*serverPublicUrl = *serverIp + ":" + strconv.Itoa(*volumePublicPort)
+	}
 	isSeperatedPublicPort := *volumePublicPort != *volumePort
 	volumeMux := http.NewServeMux()
 	publicVolumeMux := volumeMux

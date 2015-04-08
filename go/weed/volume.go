@@ -101,12 +101,12 @@ func runVolume(cmd *Command, args []string) bool {
 	if *v.ip == "" {
 		*v.ip = "127.0.0.1"
 	}
-	if *v.publicUrl == "" {
-		*v.publicUrl = *v.ip + ":" + strconv.Itoa(*v.port)
-	}
 
 	if *v.publicPort == 0 {
 		*v.publicPort = *v.port
+	}
+	if *v.publicUrl == "" {
+		*v.publicUrl = *v.ip + ":" + strconv.Itoa(*v.publicPort)
 	}
 	isSeperatedPublicPort := *v.publicPort != *v.port
 
