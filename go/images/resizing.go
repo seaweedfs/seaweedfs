@@ -7,6 +7,7 @@ import (
 	"image/jpeg"
 	"image/png"
 
+	"github.com/chrislusf/weed-fs/go/glog"
 	"github.com/disintegration/imaging"
 )
 
@@ -14,7 +15,8 @@ func Resized(ext string, data []byte, width, height int) (resized []byte, w int,
 	if width == 0 && height == 0 {
 		return data, 0, 0
 	}
-	if srcImage, _, err := image.Decode(bytes.NewReader(data)); err == nil {
+	srcImage, _, err := image.Decode(bytes.NewReader(data))
+	if err == nil {
 		bounds := srcImage.Bounds()
 		var dstImage *image.NRGBA
 		if bounds.Dx() > width && width != 0 || bounds.Dy() > height && height != 0 {
@@ -37,6 +39,8 @@ func Resized(ext string, data []byte, width, height int) (resized []byte, w int,
 			gif.Encode(&buf, dstImage, nil)
 		}
 		return buf.Bytes(), dstImage.Bounds().Dx(), dstImage.Bounds().Dy()
+	} else {
+		glog.Error(err)
 	}
 	return data, 0, 0
 }
