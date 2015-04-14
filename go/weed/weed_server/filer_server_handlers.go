@@ -31,6 +31,11 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		fs.PostHandler(w, r)
 	}
 }
+
+// listDirectoryHandler lists directories and folers under a directory
+// files are sorted by name and paginated via "lastFileName" and "limit".
+// sub directories are listed on the first page, when "lastFileName"
+// is empty.
 func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasSuffix(r.URL.Path, "/") {
 		return
@@ -43,8 +48,10 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 	}
 	m := make(map[string]interface{})
 	m["Directory"] = r.URL.Path
-	m["Subdirectories"] = dirlist
 	lastFileName := r.FormValue("lastFileName")
+	if lastFileName == "" {
+		m["Subdirectories"] = dirlist
+	}
 	limit, limit_err := strconv.Atoi(r.FormValue("limit"))
 	if limit_err != nil {
 		limit = 100
