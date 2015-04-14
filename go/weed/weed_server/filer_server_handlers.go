@@ -54,6 +54,10 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 }
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
 	if strings.HasSuffix(r.URL.Path, "/") {
+		if fs.disableDirListing {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 		fs.listDirectoryHandler(w, r)
 		return
 	}
