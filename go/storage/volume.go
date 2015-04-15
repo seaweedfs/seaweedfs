@@ -152,7 +152,11 @@ func (v *Volume) isFileUnchanged(n *Needle) bool {
 	nv, ok := v.nm.Get(n.Id)
 	if ok && nv.Offset > 0 {
 		oldNeedle := new(Needle)
-		oldNeedle.Read(v.dataFile, int64(nv.Offset)*NeedlePaddingSize, nv.Size, v.Version())
+		_, err := oldNeedle.Read(v.dataFile, int64(nv.Offset)*NeedlePaddingSize, nv.Size, v.Version())
+		if err != nil {
+			glog.V(0).Infof("Failed to check updated file %v", err)
+			return false
+		}
 		if oldNeedle.Checksum == n.Checksum && bytes.Equal(oldNeedle.Data, n.Data) {
 			n.DataSize = oldNeedle.DataSize
 			return true
