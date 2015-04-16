@@ -1,5 +1,4 @@
-Seaweed File System
-=======
+# SeaweedFS
 
 [![Build Status](https://travis-ci.org/chrislusf/seaweedfs.svg?branch=master)](https://travis-ci.org/chrislusf/seaweedfs)
 [![GoDoc](https://godoc.org/github.com/chrislusf/seaweedfs/go?status.svg)](https://godoc.org/github.com/chrislusf/seaweedfs/go)
@@ -26,7 +25,7 @@ SeaweedFS costs only 40 bytes disk storage for each file's metadata. It is so si
 ![](https://api.bintray.com/packages/chrislusf/Weed-FS/seaweed/images/download.png)
 https://bintray.com/chrislusf/Weed-FS/seaweed Download latest compiled binaries for different platforms here.
 
-http://groups.google.com/group/weed-file-system Seaweed File System Discussion Group
+http://groups.google.com/group/weed-file-system SeaweedFS Discussion Group
 
 ## Additional Features
 * Can choose no replication or different replication level, rack and data center aware

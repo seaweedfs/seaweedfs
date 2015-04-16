@@ -3,7 +3,7 @@ How to submit a content
 1.c Create a hash value
 1.d find a write logic volume id, and return [logic volume id, {physical volume ids}]
 2. submit to physical volumes
-2.c 
+2.c
   generate the cookie
   generate a unique id as key
   choose the right altKey
@@ -26,7 +26,7 @@ How to retrieve a content
 
 
 How to submit a content
-1. send bytes to weedfs, got <volume id, key uint64, cookie code>
+1. send bytes to SeaweedFS, got <volume id, key uint64, cookie code>
    store <key uint64, volume id uint32, cookie code uint32, ext>, and other information
 
 To read a content
@@ -40,7 +40,7 @@ The directory server
   find a free logic volume id, start sending content to 3 machines
   if all of them finishes, return <logic volume id, key, cookie code>
 2.on read content
-  based on logic volume id, pick a machine with less load, 
+  based on logic volume id, pick a machine with less load,
     return <machine id>
-  
+
 

@@ -91,7 +91,7 @@ func main() {
 }
 
 var usageTemplate = `
-Seaweed File System : store billions of files and serve them fast!
+SeaweedFS: store billions of files and serve them fast!
 
 Usage:
 

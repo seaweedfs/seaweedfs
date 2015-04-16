@@ -1,4 +1,4 @@
-Design for Seaweed-FS security
+Design for SeaweedFS security
 
 Design Objectives
 	Security can mean many different things. The original vision is that: if you have one machine lying around
