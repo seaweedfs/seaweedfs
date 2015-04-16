@@ -63,7 +63,7 @@ func SubmitFiles(master string, files []FilePart,
 			results[index].Error = err.Error()
 		}
 		results[index].Fid = file.Fid
-		results[index].FileUrl = file.Server + "/" + file.Fid
+		results[index].FileUrl = ret.PublicUrl + "/" + file.Fid
 	}
 	return results, nil
 }
