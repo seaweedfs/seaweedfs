@@ -445,6 +445,10 @@ type loggingT struct {
 	// safely using atomic.LoadInt32.
 	vmodule   moduleSpec // The state of the -vmodule flag.
 	verbosity Level      // V logging level, the value of the -v flag/
+
+	// If the logging exits, the system should still run.
+	// This flag is to disable the logging if logging exited.
+	exited bool
 }
 
 // buffer holds a byte Buffer for reuse. The zero value is ready for use.
@@ -743,7 +747,7 @@ func (l *loggingT) exit(err error) {
 		return
 	}
 	l.flushAll()
-	os.Exit(2)
+	l.exited = true // os.Exit(2)
 }
 
 // syncBuffer joins a bufio.Writer to its underlying file, providing access to the
@@ -763,6 +767,9 @@ func (sb *syncBuffer) Sync() error {
 }
 
 func (sb *syncBuffer) Write(p []byte) (n int, err error) {
+	if sb.logger.exited {
+		return
+	}
 	if sb.nbytes+uint64(len(p)) >= MaxSize {
 		if err := sb.rotateFile(time.Now()); err != nil {
 			sb.logger.exit(err)
