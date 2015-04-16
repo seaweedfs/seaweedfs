@@ -49,7 +49,6 @@ var cmdServer = &Command{
 
 var (
 	serverIp                      = cmdServer.Flag.String("ip", "localhost", "ip or server name")
-	serverPublicUrl               = cmdServer.Flag.String("publicUrl", "", "publicly accessible address")
 	serverBindIp                  = cmdServer.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	serverMaxCpu                  = cmdServer.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	serverTimeout                 = cmdServer.Flag.Int("idleTimeout", 10, "connection idle seconds")
@@ -71,6 +70,7 @@ var (
 	volumePulse                   = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	volumeIndexType               = cmdServer.Flag.String("volume.index", "memory", "Choose [memory|leveldb|boltdb] mode for memory~performance balance.")
 	volumeFixJpgOrientation       = cmdServer.Flag.Bool("volume.images.fix.orientation", true, "Adjust jpg orientation when uploading.")
+	volumeServerPublicUrl         = cmdServer.Flag.String("volume.publicUrl", "", "publicly accessible address")
 	isStartingFiler               = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 
 	serverWhiteList []string
@@ -230,8 +230,8 @@ func runServer(cmd *Command, args []string) bool {
 	if *volumePublicPort == 0 {
 		*volumePublicPort = *volumePort
 	}
-	if *serverPublicUrl == "" {
-		*serverPublicUrl = *serverIp + ":" + strconv.Itoa(*volumePublicPort)
+	if *volumeServerPublicUrl == "" {
+		*volumeServerPublicUrl = *serverIp + ":" + strconv.Itoa(*volumePublicPort)
 	}
 	isSeperatedPublicPort := *volumePublicPort != *volumePort
 	volumeMux := http.NewServeMux()
@@ -247,7 +247,7 @@ func runServer(cmd *Command, args []string) bool {
 		volumeNeedleMapKind = storage.NeedleMapBoltDb
 	}
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
-		*serverIp, *volumePort, *serverPublicUrl,
+		*serverIp, *volumePort, *volumeServerPublicUrl,
 		folders, maxCounts,
 		volumeNeedleMapKind,
 		*serverIp+":"+strconv.Itoa(*masterPort), *volumePulse, *serverDataCenter, *serverRack,
