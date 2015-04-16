@@ -10,7 +10,7 @@ import (
 * 1. possibly adjust the orientation
 * 2. resize the image to a width or height limit
 * 3. remove the exif data
-* Call this function on any file uploaded to weedfs
+* Call this function on any file uploaded to SeaweedFS
 *
  */
 func MaybePreprocessImage(filename string, data []byte, width, height int) (resized []byte, w int, h int) {

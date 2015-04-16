@@ -12,17 +12,17 @@ var (
 func init() {
 	cmdMount.Run = runMount // break init cycle
 	cmdMount.IsDebug = cmdMount.Flag.Bool("debug", false, "verbose debug information")
-	mountOptions.filer = cmdMount.Flag.String("filer", "localhost:8888", "weedfs filer location")
+	mountOptions.filer = cmdMount.Flag.String("filer", "localhost:8888", "weed filer location")
 	mountOptions.dir = cmdMount.Flag.String("dir", "", "mount weed filer to this directory")
 }
 
 var cmdMount = &Command{
 	UsageLine: "mount -filer=localhost:8888 -dir=/some/dir",
 	Short:     "mount weed filer to a directory as file system in userspace(FUSE)",
-	Long: `mount weed file system to userspace.
-  
+	Long: `mount weed filer to userspace.
+
   Pre-requisites:
-  1) have a weed file system running
+  1) have SeaweedFS master and volume servers running
   2) have a "weed filer" running
   These 2 requirements can be achieved with one command "weed server -filer=true"
 

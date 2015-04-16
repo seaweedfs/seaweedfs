@@ -16,7 +16,7 @@ import (
 )
 
 func runMount(cmd *Command, args []string) bool {
-	fmt.Printf("This is Seaweed File System version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)
 	if *mountOptions.dir == "" {
 		fmt.Printf("Please specify the mount directory via \"-dir\"")
 		return false

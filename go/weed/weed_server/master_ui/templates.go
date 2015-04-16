@@ -7,13 +7,13 @@ import (
 var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
 <html>
   <head>
-    <title>Seaweed File System {{ .Version }}</title>
+    <title>SeaweedFS {{ .Version }}</title>
     <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap.min.css">
   </head>
   <body>
     <div class="container">
       <div class="page-header">
-        <h1>Seaweed File System <small>{{ .Version }}</small></h1>
+        <h1>SeaweedFS <small>{{ .Version }}</small></h1>
       </div>
 
       <div class="row">

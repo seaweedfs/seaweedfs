@@ -1,6 +1,6 @@
 package filer
 
-type FileId string //file id on weedfs
+type FileId string //file id in SeaweedFS
 
 type FileEntry struct {
 	Name string `json:"name,omitempty"` //file name without path

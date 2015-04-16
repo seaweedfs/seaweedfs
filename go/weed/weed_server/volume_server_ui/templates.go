@@ -21,7 +21,7 @@ var funcMap = template.FuncMap{
 var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOCTYPE html>
 <html>
   <head>
-    <title>Seaweed File System {{ .Version }}</title>
+    <title>SeaweedFS {{ .Version }}</title>
     <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap.min.css">
 	<script type="text/javascript" src="https://code.jquery.com/jquery-2.1.3.min.js"></script>
 	<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/jquery-sparklines/2.1.2/jquery.sparkline.min.js"></script>
@@ -48,7 +48,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
   <body>
     <div class="container">
       <div class="page-header">
-        <h1>Seaweed File System <small>{{ .Version }}</small></h1>
+        <h1>SeaweedFS <small>{{ .Version }}</small></h1>
       </div>
 
       <div class="row">
