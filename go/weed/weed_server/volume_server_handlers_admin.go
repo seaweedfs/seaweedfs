@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"path/filepath"
 
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/stats"
-	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/chrislusf/seaweedfs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/stats"
+	"github.com/chrislusf/seaweedfs/go/util"
 )
 
 func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {

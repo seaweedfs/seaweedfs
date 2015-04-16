@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/glog"
 )
 
 type Volume struct {

@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/chrislusf/weed-fs/go/operation"
-	"github.com/chrislusf/weed-fs/go/security"
+	"github.com/chrislusf/seaweedfs/go/operation"
+	"github.com/chrislusf/seaweedfs/go/security"
 )
 
 var (

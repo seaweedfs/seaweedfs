@@ -3,9 +3,9 @@ package weed_server
 import (
 	"net/http"
 
-	"github.com/chrislusf/weed-fs/go/stats"
-	"github.com/chrislusf/weed-fs/go/util"
-	ui "github.com/chrislusf/weed-fs/go/weed/weed_server/master_ui"
+	"github.com/chrislusf/seaweedfs/go/stats"
+	"github.com/chrislusf/seaweedfs/go/util"
+	ui "github.com/chrislusf/seaweedfs/go/weed/weed_server/master_ui"
 )
 
 func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) {

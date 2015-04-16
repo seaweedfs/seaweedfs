@@ -5,8 +5,8 @@ import (
 	"path"
 	"strconv"
 
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/seaweedfs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/storage"
 )
 
 func init() {

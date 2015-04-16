@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/chrislusf/seaweedfs/go/util"
 )
 
 type NeedleMapType int

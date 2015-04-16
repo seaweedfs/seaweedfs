@@ -9,10 +9,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/operation"
-	"github.com/chrislusf/weed-fs/go/security"
-	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/chrislusf/seaweedfs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/operation"
+	"github.com/chrislusf/seaweedfs/go/security"
+	"github.com/chrislusf/seaweedfs/go/util"
 	"github.com/golang/protobuf/proto"
 )
 

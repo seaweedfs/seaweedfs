@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chrislusf/weed-fs/go/operation"
-	"github.com/chrislusf/weed-fs/go/stats"
-	"github.com/chrislusf/weed-fs/go/storage"
+	"github.com/chrislusf/seaweedfs/go/operation"
+	"github.com/chrislusf/seaweedfs/go/stats"
+	"github.com/chrislusf/seaweedfs/go/storage"
 )
 
 func (ms *MasterServer) lookupVolumeId(vids []string, collection string) (volumeLocations map[string]operation.LookupResult) {

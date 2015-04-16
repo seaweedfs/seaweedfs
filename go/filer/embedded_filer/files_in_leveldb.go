@@ -3,8 +3,8 @@ package embedded_filer
 import (
 	"bytes"
 
-	"github.com/chrislusf/weed-fs/go/filer"
-	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/filer"
+	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/util"
 )

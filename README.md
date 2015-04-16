@@ -2,8 +2,8 @@ Seaweed File System
 =======
 
 [![Build Status](https://travis-ci.org/chrislusf/weed-fs.svg?branch=master)](https://travis-ci.org/chrislusf/weed-fs)
-[![GoDoc](https://godoc.org/github.com/chrislusf/weed-fs/go?status.svg)](https://godoc.org/github.com/chrislusf/weed-fs/go)
-[![Wiki](https://img.shields.io/badge/docs-wiki-blue.svg)](https://github.com/chrislusf/weed-fs/wiki)
+[![GoDoc](https://godoc.org/github.com/chrislusf/seaweedfs/go?status.svg)](https://godoc.org/github.com/chrislusf/seaweedfs/go)
+[![Wiki](https://img.shields.io/badge/docs-wiki-blue.svg)](https://github.com/chrislusf/seaweedfs/wiki)
 
 ![SeaweedFS Logo](https://raw.githubusercontent.com/chrislusf/weed-fs/master/note/seaweedfs.png)
 
@@ -40,7 +40,7 @@ http://groups.google.com/group/weed-file-system Seaweed File System Discussion G
 * Support Etag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/boltdb mode tuning for memory/performance balance.
 
-[Filer]: https://github.com/chrislusf/weed-fs/wiki/Filer
+[Filer]: https://github.com/chrislusf/seaweedfs/wiki/Filer
 
 ## Example Usage
 By default, the master node runs on port 9333, and the volume nodes runs on port 8080.
@@ -150,7 +150,7 @@ Here is the meaning of the replication parameter:
 
 More details about replication can be found [on the wiki][Replication].
 
-[Replication]: https://github.com/chrislusf/weed-fs/wiki/Replication
+[Replication]: https://github.com/chrislusf/seaweedfs/wiki/Replication
 
 You can also set the default replication strategy when starting the master server.
 
@@ -177,10 +177,10 @@ Now when requesting a file key, an optional "dataCenter" parameter can limit the
   * [Chunking large files][feat-3]
   * [Collection as a Simple Name Space][feat-4]
 
-[feat-1]: https://github.com/chrislusf/weed-fs/wiki/Failover-Master-Server
-[feat-2]: https://github.com/chrislusf/weed-fs/wiki/Optimization#insert-with-your-own-keys
-[feat-3]: https://github.com/chrislusf/weed-fs/wiki/Optimization#upload-large-files
-[feat-4]: https://github.com/chrislusf/weed-fs/wiki/Optimization#collection-as-a-simple-name-space
+[feat-1]: https://github.com/chrislusf/seaweedfs/wiki/Failover-Master-Server
+[feat-2]: https://github.com/chrislusf/seaweedfs/wiki/Optimization#insert-with-your-own-keys
+[feat-3]: https://github.com/chrislusf/seaweedfs/wiki/Optimization#upload-large-files
+[feat-4]: https://github.com/chrislusf/seaweedfs/wiki/Optimization#collection-as-a-simple-name-space
 
 ## Architecture ##
 Usually distributed file system split each file into chunks, and a central master keeps a mapping of a filename and a chunk index to chunk handles, and also which chunks each chunk server has.
@@ -281,11 +281,11 @@ http://mercurial.selenic.com/downloads
 
 step 3: download, compile, and install the project by executing the following command
 
-go get github.com/chrislusf/weed-fs/go/weed
+go get github.com/chrislusf/seaweedfs/go/weed
 
 once this is done, you should see the executable "weed" under $GOPATH/bin
 
-step 4: after you modify your code locally, you could start a local build by calling "go install" under $GOPATH/src/github.com/chrislusf/weed-fs/go/weed
+step 4: after you modify your code locally, you could start a local build by calling "go install" under $GOPATH/src/github.com/chrislusf/seaweedfs/go/weed
 
 ## Reference
 

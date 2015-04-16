@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/seaweedfs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/operation"
 	"github.com/goraft/raft"
 )
 

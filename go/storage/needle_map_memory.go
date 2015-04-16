@@ -4,8 +4,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/chrislusf/seaweedfs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/util"
 )
 
 type NeedleMap struct {

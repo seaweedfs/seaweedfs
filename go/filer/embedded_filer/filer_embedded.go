@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/chrislusf/weed-fs/go/filer"
-	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/seaweedfs/go/filer"
+	"github.com/chrislusf/seaweedfs/go/operation"
 )
 
 type FilerEmbedded struct {

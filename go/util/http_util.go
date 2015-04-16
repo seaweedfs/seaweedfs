@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/chrislusf/weed-fs/go/security"
+	"github.com/chrislusf/seaweedfs/go/security"
 )
 
 var (

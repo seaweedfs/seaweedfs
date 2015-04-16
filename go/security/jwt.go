@@ -6,7 +6,7 @@ import (
 
 	"time"
 
-	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/glog"
 	jwt "github.com/dgrijalva/jwt-go"
 )
 

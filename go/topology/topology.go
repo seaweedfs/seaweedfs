@@ -5,11 +5,11 @@ import (
 	"io/ioutil"
 	"math/rand"
 
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/operation"
-	"github.com/chrislusf/weed-fs/go/sequence"
-	"github.com/chrislusf/weed-fs/go/storage"
-	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/chrislusf/seaweedfs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/operation"
+	"github.com/chrislusf/seaweedfs/go/sequence"
+	"github.com/chrislusf/seaweedfs/go/storage"
+	"github.com/chrislusf/seaweedfs/go/util"
 	"github.com/goraft/raft"
 )
 
