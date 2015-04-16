@@ -3,7 +3,7 @@ package flat_namespace
 import (
 	"errors"
 
-	"github.com/chrislusf/weed-fs/go/filer"
+	"github.com/chrislusf/seaweedfs/go/filer"
 )
 
 type FlatNamesapceFiler struct {

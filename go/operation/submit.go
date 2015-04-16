@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/security"
+	"github.com/chrislusf/seaweedfs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/security"
 )
 
 type FilePart struct {

@@ -8,8 +8,8 @@ import (
 	"path"
 	"strings"
 
-	"github.com/chrislusf/weed-fs/go/operation"
-	"github.com/chrislusf/weed-fs/go/util"
+	"github.com/chrislusf/seaweedfs/go/operation"
+	"github.com/chrislusf/seaweedfs/go/util"
 )
 
 var (

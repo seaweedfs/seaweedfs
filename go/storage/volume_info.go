@@ -2,7 +2,7 @@ package storage
 
 import (
 	"fmt"
-	"github.com/chrislusf/weed-fs/go/operation"
+	"github.com/chrislusf/seaweedfs/go/operation"
 )
 
 type VolumeInfo struct {

@@ -4,13 +4,13 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/chrislusf/weed-fs/go/filer"
-	"github.com/chrislusf/weed-fs/go/filer/cassandra_store"
-	"github.com/chrislusf/weed-fs/go/filer/embedded_filer"
-	"github.com/chrislusf/weed-fs/go/filer/flat_namespace"
-	"github.com/chrislusf/weed-fs/go/filer/redis_store"
-	"github.com/chrislusf/weed-fs/go/glog"
-	"github.com/chrislusf/weed-fs/go/security"
+	"github.com/chrislusf/seaweedfs/go/filer"
+	"github.com/chrislusf/seaweedfs/go/filer/cassandra_store"
+	"github.com/chrislusf/seaweedfs/go/filer/embedded_filer"
+	"github.com/chrislusf/seaweedfs/go/filer/flat_namespace"
+	"github.com/chrislusf/seaweedfs/go/filer/redis_store"
+	"github.com/chrislusf/seaweedfs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/security"
 )
 
 type FilerServer struct {

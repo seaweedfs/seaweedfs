@@ -6,7 +6,7 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/chrislusf/weed-fs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/glog"
 )
 
 var (
