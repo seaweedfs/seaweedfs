@@ -224,7 +224,7 @@ All file meta information on volume server is readable from memory without disk 
 Frankly, I don't use other distributed file systems too often. All seems more complicated than necessary. Please correct me if anything here is wrong.
 
 ### Compared to Ceph ###
-Ceph can be setup similar to SeaweedFS as a key~blob store. It is much more complicated, with the need to support layers on top of it. Here is a more detailed comparison. https://code.google.com/p/weed-fs/issues/detail?id=44
+Ceph can be setup similar to SeaweedFS as a key~blob store. It is much more complicated, with the need to support layers on top of it. Here is a more detailed comparison. https://github.com/chrislusf/seaweedfs/issues/120
 
 SeaweedFS is meant to be fast and simple, both during usage and during setup. If you do not understand how it works when you reach here, we failed! Jokes aside, you should not need any consulting service for it.
 
