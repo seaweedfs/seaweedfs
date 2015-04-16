@@ -20,7 +20,7 @@ var (
 func init() {
 	cmdDownload.Run = runDownload // break init cycle
 	cmdDownload.IsDebug = cmdDownload.Flag.Bool("debug", false, "verbose debug information")
-	server = cmdDownload.Flag.String("server", "localhost:9333", "weedfs master location")
+	server = cmdDownload.Flag.String("server", "localhost:9333", "SeaweedFS master location")
 	downloadDir = cmdDownload.Flag.String("dir", ".", "Download the whole folder recursively if specified.")
 }
 
@@ -28,7 +28,7 @@ var cmdDownload = &Command{
 	UsageLine: "download -server=localhost:9333 -dir=one_directory fid1 [fid2 fid3 ...]",
 	Short:     "download files by file id",
 	Long: `download files by file id.
-  
+
   Usually you just need to use curl to lookup the file's volume server, and then download them directly.
   This download tool combine the two steps into one.
 
