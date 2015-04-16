@@ -44,10 +44,10 @@ func NewFilerServer(r *http.ServeMux, port int, master string, dir string, colle
 		if err != nil {
 			glog.Fatalf("Can not connect to cassandra server %s with keyspace %s: %v", cassandra_server, cassandra_keyspace, err)
 		}
-		fs.filer = flat_namespace.NewFlatNamesapceFiler(master, cassandra_store)
+		fs.filer = flat_namespace.NewFlatNamespaceFiler(master, cassandra_store)
 	} else if redis_server != "" {
 		redis_store := redis_store.NewRedisStore(redis_server, redis_database)
-		fs.filer = flat_namespace.NewFlatNamesapceFiler(master, redis_store)
+		fs.filer = flat_namespace.NewFlatNamespaceFiler(master, redis_store)
 	} else {
 		if fs.filer, err = embedded_filer.NewFilerEmbedded(master, dir); err != nil {
 			glog.Fatalf("Can not start filer in dir %s : %v", dir, err)
