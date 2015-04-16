@@ -104,3 +104,10 @@ func DownloadUrl(fileUrl string) (filename string, content []byte, e error) {
 func Do(req *http.Request) (resp *http.Response, err error) {
 	return client.Do(req)
 }
+
+func NormalizeUrl(url string) string {
+	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+		return url
+	}
+	return "http://" + url
+}
