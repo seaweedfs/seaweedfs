@@ -287,11 +287,6 @@ once this is done, you should see the executable "weed" under $GOPATH/bin
 
 step 4: after you modify your code locally, you could start a local build by calling "go install" under $GOPATH/src/github.com/chrislusf/seaweedfs/go/weed
 
-## Reference
-
-For pre-compiled releases,
- https://bintray.com/chrislusf/Weed-FS/seaweed
-
 ## Disk Related topics ##
 
 ### Hard Drive Performance ###
