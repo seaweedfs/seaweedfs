@@ -1,7 +1,7 @@
 Seaweed File System
 =======
 
-[![Build Status](https://travis-ci.org/chrislusf/weed-fs.svg?branch=master)](https://travis-ci.org/chrislusf/weed-fs)
+[![Build Status](https://travis-ci.org/chrislusf/seaweedfs.svg?branch=master)](https://travis-ci.org/chrislusf/seaweedfs)
 [![GoDoc](https://godoc.org/github.com/chrislusf/seaweedfs/go?status.svg)](https://godoc.org/github.com/chrislusf/seaweedfs/go)
 [![Wiki](https://img.shields.io/badge/docs-wiki-blue.svg)](https://github.com/chrislusf/seaweedfs/wiki)
 
