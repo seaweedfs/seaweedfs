@@ -22,8 +22,8 @@ SeaweedFS models after [Facebook's Haystack design paper](http://www.usenix.org/
 SeaweedFS costs only 40 bytes disk storage for each file's metadata. It is so simple with O(1) disk read that you are welcome to challenge the performance with your actual use cases.
 
 
-![](https://api.bintray.com/packages/chrislusf/Weed-FS/seaweed/images/download.png)
-https://bintray.com/chrislusf/Weed-FS/seaweed Download latest compiled binaries for different platforms here.
+![](https://api.bintray.com/packages/chrislusf/seaweedfs/seaweedfs/images/download.png)
+https://bintray.com/chrislusf/seaweedfs/seaweedfs Download latest compiled binaries for different platforms here.
 
 http://groups.google.com/group/weed-file-system SeaweedFS Discussion Group
 
