@@ -17,9 +17,7 @@ Instead of supporting full POSIX file system semantics, SeaweedFS choose to impl
 
 Instead of managing all file metadata in a central master, SeaweedFS choose to manages file volumes in the central master, and let volume servers manage files and the metadata. This relieves concurrency pressure from the central master and spreads file metadata into volume servers' memories, allowing faster file access with just one disk read operation!
 
-SeaweedFS models after [Facebook's Haystack design paper](http://www.usenix.org/event/osdi10/tech/full_papers/Beaver.pdf).
-
-SeaweedFS costs only 40 bytes disk storage for each file's metadata. It is so simple with O(1) disk read that you are welcome to challenge the performance with your actual use cases.
+SeaweedFS costs only 40 bytes disk storage for each file's metadata. The volume storage is modelled after [Facebook's Haystack design paper](http://www.usenix.org/event/osdi10/tech/full_papers/Beaver.pdf). It is so simple with O(1) disk read that you are welcome to challenge the performance with your actual use cases.
 
 
 ![](https://api.bintray.com/packages/chrislusf/seaweedfs/seaweedfs/images/download.png)
