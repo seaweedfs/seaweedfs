@@ -25,7 +25,7 @@ SeaweedFS costs only 40 bytes disk storage for each file's metadata. It is so si
 ![](https://api.bintray.com/packages/chrislusf/seaweedfs/seaweedfs/images/download.png)
 https://bintray.com/chrislusf/seaweedfs/seaweedfs Download latest compiled binaries for different platforms here.
 
-http://groups.google.com/group/weed-file-system SeaweedFS Discussion Group
+https://groups.google.com/d/forum/seaweedfs SeaweedFS Discussion Group
 
 ## Additional Features
 * Can choose no replication or different replication level, rack and data center aware
