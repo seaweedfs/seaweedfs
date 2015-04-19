@@ -133,7 +133,12 @@ func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *
 	if ms.Topo.IsLeader() {
 		submitForClientHandler(w, r, "localhost:"+strconv.Itoa(ms.port))
 	} else {
-		submitForClientHandler(w, r, ms.Topo.RaftServer.Leader())
+		masterUrl, err := ms.Topo.Leader()
+		if err != nil {
+			writeJsonError(w, r, http.StatusInternalServerError, err)
+		} else {
+			submitForClientHandler(w, r, masterUrl)
+		}
 	}
 }
 
