@@ -205,6 +205,9 @@ func (n *Needle) ParsePath(fid string) (err error) {
 }
 
 func ParseKeyHash(key_hash_string string) (uint64, uint32, error) {
+	if len(key_hash_string)%2 == 1 {
+		key_hash_string = "0" + key_hash_string
+	}
 	key_hash_bytes, khe := hex.DecodeString(key_hash_string)
 	key_hash_len := len(key_hash_bytes)
 	if khe != nil || key_hash_len <= 4 {
