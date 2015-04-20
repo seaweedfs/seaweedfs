@@ -223,7 +223,9 @@ func (s *Store) Status() []*VolumeInfo {
 	var stats []*VolumeInfo
 	for _, location := range s.Locations {
 		for k, v := range location.volumes {
-			s := &VolumeInfo{Id: VolumeId(k), Size: v.ContentSize(),
+			s := &VolumeInfo{
+				Id:               VolumeId(k),
+				Size:             v.ContentSize(),
 				Collection:       v.Collection,
 				ReplicaPlacement: v.ReplicaPlacement,
 				Version:          v.Version(),
@@ -235,6 +237,7 @@ func (s *Store) Status() []*VolumeInfo {
 			stats = append(stats, s)
 		}
 	}
+	sortVolumeInfos(stats)
 	return stats
 }
 
