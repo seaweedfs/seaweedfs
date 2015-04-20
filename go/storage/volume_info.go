@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/go/operation"
+	"sort"
 )
 
 type VolumeInfo struct {
@@ -41,4 +42,24 @@ func NewVolumeInfo(m *operation.VolumeInformationMessage) (vi VolumeInfo, err er
 func (vi VolumeInfo) String() string {
 	return fmt.Sprintf("Id:%d, Size:%d, ReplicaPlacement:%s, Collection:%s, Version:%v, FileCount:%d, DeleteCount:%d, DeletedByteCount:%d, ReadOnly:%v",
 		vi.Id, vi.Size, vi.ReplicaPlacement, vi.Collection, vi.Version, vi.FileCount, vi.DeleteCount, vi.DeletedByteCount, vi.ReadOnly)
+}
+
+/*VolumesInfo sorting*/
+
+type volumeInfos []*VolumeInfo
+
+func (vis volumeInfos) Len() int {
+	return len(vis)
+}
+
+func (vis volumeInfos) Less(i, j int) bool {
+	return vis[i].Id < vis[j].Id
+}
+
+func (vis volumeInfos) Swap(i, j int) {
+	vis[i], vis[j] = vis[j], vis[i]
+}
+
+func sortVolumeInfos(vis volumeInfos) {
+	sort.Sort(vis)
 }
