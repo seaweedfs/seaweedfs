@@ -23,14 +23,11 @@ func NewRoundRobinCounter(slots int) *RoundRobinCounter {
 	return &RoundRobinCounter{LastIndex: -1, Values: make([]int64, slots), Counts: make([]int64, slots)}
 }
 func (rrc *RoundRobinCounter) Add(index int, val int64) {
+	if index >= len(rrc.Values) {
+		return
+	}
 	for rrc.LastIndex != index {
-		rrc.LastIndex++
-		if rrc.LastIndex >= len(rrc.Values) {
-			if index >= len(rrc.Values) {
-				break //just avoid endless loop
-			}
-			rrc.LastIndex = 0
-		}
+		rrc.LastIndex = (rrc.LastIndex + 1) % len(rrc.Values)
 		rrc.Values[rrc.LastIndex] = 0
 		rrc.Counts[rrc.LastIndex] = 0
 	}
