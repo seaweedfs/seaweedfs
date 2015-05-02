@@ -15,7 +15,7 @@ SeaweedFS is a simple and highly scalable distributed file system. There are two
 
 Instead of supporting full POSIX file system semantics, SeaweedFS choose to implement only a key~file mapping. Similar to the word "NoSQL", you can call it as "NoFS".
 
-Instead of managing all file metadata in a central master, SeaweedFS choose to manages file volumes in the central master, and let volume servers manage files and the metadata. This relieves concurrency pressure from the central master and spreads file metadata into volume servers' memories, allowing faster file access with just one disk read operation!
+Instead of managing all file metadata in a central master, SeaweedFS choose to manage file volumes in the central master, and let volume servers manage files and the metadata. This relieves concurrency pressure from the central master and spreads file metadata into volume servers' memories, allowing faster file access with just one disk read operation!
 
 SeaweedFS costs only 40 bytes disk storage for each file's metadata. It is so simple with O(1) disk read that you are welcome to challenge the performance with your actual use cases.
 
@@ -116,7 +116,7 @@ Now you can take the public url, render the url or directly read from the volume
  http://localhost:8080/3,01637037d6.jpg
 ```
 
-Notice we add an file extension ".jpg" here. It's optional and just one way for the client to specify the file content type.
+Notice we add a file extension ".jpg" here. It's optional and just one way for the client to specify the file content type.
 
 If you want a nicer URL, you can use one of these alternative URL formats:
 
@@ -183,11 +183,11 @@ Now when requesting a file key, an optional "dataCenter" parameter can limit the
 ## Architecture ##
 Usually distributed file system split each file into chunks, and a central master keeps a mapping of a filename and a chunk index to chunk handles, and also which chunks each chunk server has.
 
-This has the draw back that the central master can not handle many small files efficiently, and since all read requests need to go through the chunk master, responses would be slow for many concurrent web users.
+This has the draw back that the central master can't handle many small files efficiently, and since all read requests need to go through the chunk master, responses would be slow for many concurrent web users.
 
-Instead of managing chunks, SeaweedFS choose to manage data volumes in the master server. Each data volume is size 32GB, and can hold a lot of files. And each storage node can has many data volumes. So the master node only needs to store the metadata about the volumes, which is fairly small amount of data and pretty static most of the time.
+Instead of managing chunks, SeaweedFS choose to manage data volumes in the master server. Each data volume is size 32GB, and can hold a lot of files. And each storage node can have many data volumes. So the master node only needs to store the metadata about the volumes, which is fairly small amount of data and pretty static most of the time.
 
-The actual file metadata is stored in each volume on volume servers. Since each volume server only manage metadata of files on its own disk, and only 16 bytes for each file, all file access can read file metadata just from memory and only needs one disk operation to actually read file data.
+The actual file metadata is stored in each volume on volume servers. Since each volume server only manages metadata of files on its own disk, and only 16 bytes for each file, all file access can read file metadata just from memory and only needs one disk operation to actually read file data.
 
 For comparison, consider that an xfs inode structure in Linux is 536 bytes.
 
@@ -201,7 +201,7 @@ On each write request, the master server also generates a file key, which is a g
 
 ### Write and Read files ###
 
-When a client sends a write request, the master server returns <volume id, file key, file cookie, volume node url> for the file. The client then contact the volume node and POST the file content via REST.
+When a client sends a write request, the master server returns <volume id, file key, file cookie, volume node url> for the file. The client then contacts the volume node and POST the file content via REST.
 
 When a client needs to read a file based on <volume id, file key, file cookie>, it can ask the master server by the <volum id> for the <volume node url, volume node public url>, or from cache. Then the client can HTTP GET the content via REST, or just render the URL on web pages and let browsers to fetch the content.
 
