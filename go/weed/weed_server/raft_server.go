@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chrislusf/raft"
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/topology"
-	"github.com/goraft/raft"
 	"github.com/gorilla/mux"
 )
 

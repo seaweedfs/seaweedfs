@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/chrislusf/raft"
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/operation"
-	"github.com/goraft/raft"
 )
 
 // Handles incoming RAFT joins.

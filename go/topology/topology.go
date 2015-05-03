@@ -5,12 +5,12 @@ import (
 	"io/ioutil"
 	"math/rand"
 
+	"github.com/chrislusf/raft"
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/operation"
 	"github.com/chrislusf/seaweedfs/go/sequence"
 	"github.com/chrislusf/seaweedfs/go/storage"
 	"github.com/chrislusf/seaweedfs/go/util"
-	"github.com/goraft/raft"
 )
 
 type Topology struct {

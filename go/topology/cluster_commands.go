@@ -1,9 +1,9 @@
 package topology
 
 import (
+	"github.com/chrislusf/raft"
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/storage"
-	"github.com/goraft/raft"
 )
 
 type MaxVolumeIdCommand struct {
