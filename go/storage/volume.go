@@ -285,7 +285,7 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 		return fmt.Errorf("Failed to load volume %d: %v", id, err)
 	}
 	if err = visitSuperBlock(v.SuperBlock); err != nil {
-		return fmt.Errorf("Failed to read volume %d super block: %v", id, err)
+		return fmt.Errorf("Failed to process volume %d super block: %v", id, err)
 	}
 
 	version := v.Version()
