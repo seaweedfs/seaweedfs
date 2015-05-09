@@ -65,6 +65,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string) (err erro
 
 	err = ScanVolumeFile(v.dir, v.Collection, v.Id, v.needleMapKind,
 		func(superBlock SuperBlock) error {
+			superBlock.CompactRevision++
 			_, err = dst.Write(superBlock.Bytes())
 			return err
 		}, true, func(n *Needle, offset int64) error {
