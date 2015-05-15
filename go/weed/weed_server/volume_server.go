@@ -64,10 +64,12 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	go func() {
 		connected := true
 
+		glog.V(0).Infof("Volume server bootstraps with master %s", vs.GetMasterNode())
 		vs.store.SetBootstrapMaster(vs.GetMasterNode())
 		vs.store.SetDataCenter(vs.dataCenter)
 		vs.store.SetRack(vs.rack)
 		for {
+			glog.V(4).Infof("Volume server sending to master %s", vs.GetMasterNode())
 			master, secretKey, err := vs.store.SendHeartbeatToMaster()
 			if err == nil {
 				if !connected {
