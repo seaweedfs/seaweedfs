@@ -89,7 +89,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 	if n.MimeSize > 0 {
 		mt := string(n.Mime)
-		if mt != "application/octet-stream" {
+		if !strings.HasPrefix(mt, "application/octet-stream") {
 			mtype = mt
 		}
 	}
