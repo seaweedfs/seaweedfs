@@ -107,7 +107,7 @@ func vacuumVolume_Check(urlLocation string, vid storage.VolumeId, garbageThresho
 	values := make(url.Values)
 	values.Add("volume", vid.String())
 	values.Add("garbageThreshold", garbageThreshold)
-	jsonBlob, err := util.Post("http://"+urlLocation+"/admin/vacuum_volume_check", values)
+	jsonBlob, err := util.Post("http://"+urlLocation+"/admin/vacuum/check", values)
 	if err != nil {
 		glog.V(0).Infoln("parameters:", values)
 		return err, false
@@ -124,7 +124,7 @@ func vacuumVolume_Check(urlLocation string, vid storage.VolumeId, garbageThresho
 func vacuumVolume_Compact(urlLocation string, vid storage.VolumeId) error {
 	values := make(url.Values)
 	values.Add("volume", vid.String())
-	jsonBlob, err := util.Post("http://"+urlLocation+"/admin/vacuum_volume_compact", values)
+	jsonBlob, err := util.Post("http://"+urlLocation+"/admin/vacuum/compact", values)
 	if err != nil {
 		return err
 	}
@@ -140,7 +140,7 @@ func vacuumVolume_Compact(urlLocation string, vid storage.VolumeId) error {
 func vacuumVolume_Commit(urlLocation string, vid storage.VolumeId) error {
 	values := make(url.Values)
 	values.Add("volume", vid.String())
-	jsonBlob, err := util.Post("http://"+urlLocation+"/admin/vacuum_volume_commit", values)
+	jsonBlob, err := util.Post("http://"+urlLocation+"/admin/vacuum/commit", values)
 	if err != nil {
 		return err
 	}
