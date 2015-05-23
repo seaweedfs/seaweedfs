@@ -169,6 +169,7 @@ func (cm *CompactMap) binarySearchCompactSection(key Key) int {
 	return -3
 }
 
+// Visit visits all entries or stop if any error when visiting
 func (cm *CompactMap) Visit(visit func(NeedleValue) error) error {
 	for _, cs := range cm.list {
 		for _, v := range cs.overflow {
