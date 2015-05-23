@@ -24,8 +24,8 @@ type Volume struct {
 
 	SuperBlock
 
-	accessLock       sync.Mutex
-	lastModifiedTime uint64 //unix time in seconds
+	dataFileAccessLock sync.Mutex
+	lastModifiedTime   uint64 //unix time in seconds
 }
 
 func NewVolume(dirname string, collection string, id VolumeId, needleMapKind NeedleMapType, replicaPlacement *ReplicaPlacement, ttl *TTL) (v *Volume, e error) {
@@ -136,8 +136,8 @@ func (v *Volume) Size() int64 {
 
 // Close cleanly shuts down this volume
 func (v *Volume) Close() {
-	v.accessLock.Lock()
-	defer v.accessLock.Unlock()
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
 	v.nm.Close()
 	_ = v.dataFile.Close()
 }
@@ -186,8 +186,8 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 		err = fmt.Errorf("%s is read-only", v.dataFile.Name())
 		return
 	}
-	v.accessLock.Lock()
-	defer v.accessLock.Unlock()
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
 	if v.isFileUnchanged(n) {
 		size = n.DataSize
 		glog.V(4).Infof("needle is unchanged!")
@@ -231,8 +231,8 @@ func (v *Volume) delete(n *Needle) (uint32, error) {
 	if v.readOnly {
 		return 0, fmt.Errorf("%s is read-only", v.dataFile.Name())
 	}
-	v.accessLock.Lock()
-	defer v.accessLock.Unlock()
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
 	nv, ok := v.nm.Get(n.Id)
 	//fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
 	if ok {
