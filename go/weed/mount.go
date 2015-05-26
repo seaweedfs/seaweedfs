@@ -13,7 +13,7 @@ func init() {
 	cmdMount.Run = runMount // break init cycle
 	cmdMount.IsDebug = cmdMount.Flag.Bool("debug", false, "verbose debug information")
 	mountOptions.filer = cmdMount.Flag.String("filer", "localhost:8888", "weed filer location")
-	mountOptions.dir = cmdMount.Flag.String("dir", "", "mount weed filer to this directory")
+	mountOptions.dir = cmdMount.Flag.String("dir", ".", "mount weed filer to this directory")
 }
 
 var cmdMount = &Command{

@@ -21,11 +21,11 @@ func init() {
 
 const (
 	defaultFnFormat = `{{.Mime}}/{{.Id}}:{{.Name}}`
-	timeFormat = "2006-01-02T15:04:05"
+	timeFormat      = "2006-01-02T15:04:05"
 )
 
 var cmdExport = &Command{
-	UsageLine: "export -dir=/tmp -volumeId=234 -o=/dir/name.tar -fileNameFormat={{.Name}} -newer='"+timeFormat+"'",
+	UsageLine: "export -dir=/tmp -volumeId=234 -o=/dir/name.tar -fileNameFormat={{.Name}} -newer='" + timeFormat + "'",
 	Short:     "list or export files from one volume data file",
 	Long: `List all files in a volume, or Export all files in a volume to a tar file if the output is specified.
 
@@ -35,7 +35,7 @@ var cmdExport = &Command{
 }
 
 var (
-	exportVolumePath = cmdExport.Flag.String("dir", "/tmp", "input data directory to store volume data files")
+	exportVolumePath = cmdExport.Flag.String("dir", ".", "input data directory to store volume data files")
 	exportCollection = cmdExport.Flag.String("collection", "", "the volume collection name")
 	exportVolumeId   = cmdExport.Flag.Int("volumeId", -1, "a volume id. The volume .dat and .idx files should already exist in the dir.")
 	dest             = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
@@ -47,7 +47,7 @@ var (
 	fnTmplBuf        = bytes.NewBuffer(nil)
 	newerThan        time.Time
 	newerThanUnix    int64 = -1
-	localLocation, _    = time.LoadLocation("Local")
+	localLocation, _       = time.LoadLocation("Local")
 )
 
 func runExport(cmd *Command, args []string) bool {
@@ -173,7 +173,7 @@ func walker(vid storage.VolumeId, n *storage.Needle, version storage.Version) (e
 		if n.HasLastModifiedDate() {
 			tarHeader.ModTime = time.Unix(int64(n.LastModified), 0)
 		} else {
-			tarHeader.ModTime = time.Unix(0,0)
+			tarHeader.ModTime = time.Unix(0, 0)
 		}
 		tarHeader.ChangeTime = tarHeader.ModTime
 		if err = tarFh.WriteHeader(&tarHeader); err != nil {

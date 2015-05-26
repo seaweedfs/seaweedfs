@@ -22,7 +22,7 @@ var cmdFix = &Command{
 }
 
 var (
-	fixVolumePath       = cmdFix.Flag.String("dir", "/tmp", "data directory to store files")
+	fixVolumePath       = cmdFix.Flag.String("dir", ".", "data directory to store files")
 	fixVolumeCollection = cmdFix.Flag.String("collection", "", "the volume collection name")
 	fixVolumeId         = cmdFix.Flag.Int("volumeId", -1, "a volume id. The volume should already exist in the dir. The volume index file should not exist.")
 )
