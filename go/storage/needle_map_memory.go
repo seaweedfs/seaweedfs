@@ -5,21 +5,19 @@ import (
 	"os"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
-	"github.com/chrislusf/seaweedfs/go/util"
 )
 
 type NeedleMap struct {
-	indexFile *os.File
-	m         CompactMap
+	m CompactMap
 
-	mapMetric
+	baseNeedleMapper
 }
 
 func NewNeedleMap(file *os.File) *NeedleMap {
 	nm := &NeedleMap{
-		m:         NewCompactMap(),
-		indexFile: file,
+		m: NewCompactMap(),
 	}
+	nm.indexFile = file
 	return nm
 }
 
@@ -70,9 +68,7 @@ func WalkIndexFile(r *os.File, fn func(key uint64, offset, size uint32) error) e
 
 	for count > 0 && e == nil || e == io.EOF {
 		for i = 0; i+16 <= count; i += 16 {
-			key = util.BytesToUint64(bytes[i : i+8])
-			offset = util.BytesToUint32(bytes[i+8 : i+12])
-			size = util.BytesToUint32(bytes[i+12 : i+16])
+			key, offset, size = idxFileEntry(bytes[i : i+16])
 			if e = fn(key, offset, size); e != nil {
 				return e
 			}
@@ -90,7 +86,7 @@ func WalkIndexFile(r *os.File, fn func(key uint64, offset, size uint32) error) e
 func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) error {
 	oldSize := nm.m.Set(Key(key), offset, size)
 	nm.logPut(key, oldSize, size)
-	return appendToIndexFile(nm.indexFile, key, offset, size)
+	return nm.appendToIndexFile(key, offset, size)
 }
 func (nm *NeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
 	element, ok = nm.m.Get(Key(key))
@@ -99,7 +95,7 @@ func (nm *NeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
 func (nm *NeedleMap) Delete(key uint64) error {
 	deletedBytes := nm.m.Delete(Key(key))
 	nm.logDelete(deletedBytes)
-	return appendToIndexFile(nm.indexFile, key, 0, 0)
+	return nm.appendToIndexFile(key, 0, 0)
 }
 func (nm *NeedleMap) Close() {
 	_ = nm.indexFile.Close()
@@ -107,20 +103,4 @@ func (nm *NeedleMap) Close() {
 func (nm *NeedleMap) Destroy() error {
 	nm.Close()
 	return os.Remove(nm.indexFile.Name())
-}
-func (nm NeedleMap) ContentSize() uint64 {
-	return nm.FileByteCounter
-}
-func (nm NeedleMap) DeletedSize() uint64 {
-	return nm.DeletionByteCounter
-}
-func (nm NeedleMap) FileCount() int {
-	return nm.FileCounter
-}
-func (nm NeedleMap) DeletedCount() int {
-	return nm.DeletionCounter
-}
-
-func (nm NeedleMap) MaxFileKey() uint64 {
-	return nm.MaximumFileKey
 }

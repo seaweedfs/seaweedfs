@@ -53,7 +53,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	glog.V(2).Infoln("deleting", n)
 
 	cookie := n.Cookie
-	count, ok := vs.store.Read(volumeId, n)
+	count, ok := vs.store.ReadVolumeNeedle(volumeId, n)
 
 	if ok != nil {
 		m := make(map[string]uint32)
@@ -94,7 +94,7 @@ func (vs *VolumeServer) batchDeleteHandler(w http.ResponseWriter, r *http.Reques
 		n.ParsePath(id_cookie)
 		glog.V(4).Infoln("batch deleting", n)
 		cookie := n.Cookie
-		if _, err := vs.store.Read(volumeId, n); err != nil {
+		if _, err := vs.store.ReadVolumeNeedle(volumeId, n); err != nil {
 			ret = append(ret, operation.DeleteResult{Fid: fid, Error: err.Error()})
 			continue
 		}

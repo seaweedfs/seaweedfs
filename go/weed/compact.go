@@ -7,7 +7,6 @@ import (
 
 func init() {
 	cmdCompact.Run = runCompact // break init cycle
-	cmdCompact.IsDebug = cmdCompact.Flag.Bool("debug", false, "enable debug mode")
 }
 
 var cmdCompact = &Command{

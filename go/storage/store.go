@@ -371,9 +371,9 @@ func (s *Store) Delete(i VolumeId, n *Needle) (uint32, error) {
 	}
 	return 0, nil
 }
-func (s *Store) Read(i VolumeId, n *Needle) (int, error) {
+func (s *Store) ReadVolumeNeedle(i VolumeId, n *Needle) (int, error) {
 	if v := s.findVolume(i); v != nil {
-		return v.read(n)
+		return v.readNeedle(n)
 	}
 	return 0, fmt.Errorf("Volume %v not found!", i)
 }

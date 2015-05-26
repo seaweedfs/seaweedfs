@@ -3,6 +3,7 @@ package util
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -82,6 +83,43 @@ func Delete(url string, jwt security.EncodedJwt) error {
 		return err
 	}
 	return nil
+}
+
+func GetBufferStream(url string, values url.Values, allocatedBytes []byte, eachBuffer func([]byte)) error {
+	r, err := client.PostForm(url, values)
+	if err != nil {
+		return err
+	}
+	defer r.Body.Close()
+	if r.StatusCode != 200 {
+		return fmt.Errorf("%s: %s", url, r.Status)
+	}
+	bufferSize := len(allocatedBytes)
+	for {
+		n, err := r.Body.Read(allocatedBytes)
+		if n == bufferSize {
+			eachBuffer(allocatedBytes)
+		}
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func GetUrlStream(url string, values url.Values, readFn func(io.Reader) error) error {
+	r, err := client.PostForm(url, values)
+	if err != nil {
+		return err
+	}
+	defer r.Body.Close()
+	if r.StatusCode != 200 {
+		return fmt.Errorf("%s: %s", url, r.Status)
+	}
+	return readFn(r.Body)
 }
 
 func DownloadUrl(fileUrl string) (filename string, content []byte, e error) {

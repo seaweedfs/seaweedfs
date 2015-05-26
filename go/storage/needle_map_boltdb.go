@@ -12,15 +12,15 @@ import (
 
 type BoltDbNeedleMap struct {
 	dbFileName string
-	indexFile  *os.File
 	db         *bolt.DB
-	mapMetric
+	baseNeedleMapper
 }
 
 var boltdbBucket = []byte("weed")
 
 func NewBoltDbNeedleMap(dbFileName string, indexFile *os.File) (m *BoltDbNeedleMap, err error) {
-	m = &BoltDbNeedleMap{indexFile: indexFile, dbFileName: dbFileName}
+	m = &BoltDbNeedleMap{dbFileName: dbFileName}
+	m.indexFile = indexFile
 	if !isBoltDbFresh(dbFileName, indexFile) {
 		glog.V(1).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
 		generateBoltDbFile(dbFileName, indexFile)
@@ -101,7 +101,7 @@ func (m *BoltDbNeedleMap) Put(key uint64, offset uint32, size uint32) error {
 	}
 	m.logPut(key, oldSize, size)
 	// write to index file first
-	if err := appendToIndexFile(m.indexFile, key, offset, size); err != nil {
+	if err := m.appendToIndexFile(key, offset, size); err != nil {
 		return fmt.Errorf("cannot write to indexfile %s: %v", m.indexFile.Name(), err)
 	}
 	return boltDbWrite(m.db, key, offset, size)
@@ -148,7 +148,7 @@ func (m *BoltDbNeedleMap) Delete(key uint64) error {
 		m.logDelete(oldNeedle.Size)
 	}
 	// write to index file first
-	if err := appendToIndexFile(m.indexFile, key, 0, 0); err != nil {
+	if err := m.appendToIndexFile(key, 0, 0); err != nil {
 		return err
 	}
 	return boltDbDelete(m.db, key)
@@ -162,20 +162,4 @@ func (m *BoltDbNeedleMap) Destroy() error {
 	m.Close()
 	os.Remove(m.indexFile.Name())
 	return os.Remove(m.dbFileName)
-}
-
-func (m *BoltDbNeedleMap) ContentSize() uint64 {
-	return m.FileByteCounter
-}
-func (m *BoltDbNeedleMap) DeletedSize() uint64 {
-	return m.DeletionByteCounter
-}
-func (m *BoltDbNeedleMap) FileCount() int {
-	return m.FileCounter
-}
-func (m *BoltDbNeedleMap) DeletedCount() int {
-	return m.DeletionCounter
-}
-func (m *BoltDbNeedleMap) MaxFileKey() uint64 {
-	return m.MaximumFileKey
 }

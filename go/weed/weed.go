@@ -21,6 +21,7 @@ var server *string
 
 var commands = []*Command{
 	cmdBenchmark,
+	cmdBackup,
 	cmdCompact,
 	cmdFix,
 	cmdServer,

@@ -47,7 +47,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	cookie := n.Cookie
-	count, e := vs.store.Read(volumeId, n)
+	count, e := vs.store.ReadVolumeNeedle(volumeId, n)
 	glog.V(4).Infoln("read bytes", count, "error", e)
 	if e != nil || count <= 0 {
 		glog.V(0).Infoln("read error:", e, r.URL.Path)

@@ -12,13 +12,13 @@ import (
 
 type LevelDbNeedleMap struct {
 	dbFileName string
-	indexFile  *os.File
 	db         *leveldb.DB
-	mapMetric
+	baseNeedleMapper
 }
 
 func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File) (m *LevelDbNeedleMap, err error) {
-	m = &LevelDbNeedleMap{indexFile: indexFile, dbFileName: dbFileName}
+	m = &LevelDbNeedleMap{dbFileName: dbFileName}
+	m.indexFile = indexFile
 	if !isLevelDbFresh(dbFileName, indexFile) {
 		glog.V(1).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
 		generateLevelDbFile(dbFileName, indexFile)
@@ -89,7 +89,7 @@ func (m *LevelDbNeedleMap) Put(key uint64, offset uint32, size uint32) error {
 	}
 	m.logPut(key, oldSize, size)
 	// write to index file first
-	if err := appendToIndexFile(m.indexFile, key, offset, size); err != nil {
+	if err := m.appendToIndexFile(key, offset, size); err != nil {
 		return fmt.Errorf("cannot write to indexfile %s: %v", m.indexFile.Name(), err)
 	}
 	return levelDbWrite(m.db, key, offset, size)
@@ -117,7 +117,7 @@ func (m *LevelDbNeedleMap) Delete(key uint64) error {
 		m.logDelete(oldNeedle.Size)
 	}
 	// write to index file first
-	if err := appendToIndexFile(m.indexFile, key, 0, 0); err != nil {
+	if err := m.appendToIndexFile(key, 0, 0); err != nil {
 		return err
 	}
 	return levelDbDelete(m.db, key)
@@ -131,20 +131,4 @@ func (m *LevelDbNeedleMap) Destroy() error {
 	m.Close()
 	os.Remove(m.indexFile.Name())
 	return os.Remove(m.dbFileName)
-}
-
-func (m *LevelDbNeedleMap) ContentSize() uint64 {
-	return m.FileByteCounter
-}
-func (m *LevelDbNeedleMap) DeletedSize() uint64 {
-	return m.DeletionByteCounter
-}
-func (m *LevelDbNeedleMap) FileCount() int {
-	return m.FileCounter
-}
-func (m *LevelDbNeedleMap) DeletedCount() int {
-	return m.DeletionCounter
-}
-func (m *LevelDbNeedleMap) MaxFileKey() uint64 {
-	return m.MaximumFileKey
 }

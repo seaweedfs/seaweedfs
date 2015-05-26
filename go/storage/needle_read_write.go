@@ -135,49 +135,37 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 	return 0, fmt.Errorf("Unsupported Version! (%d)", version)
 }
 
-func (n *Needle) Read(r *os.File, offset int64, size uint32, version Version) (ret int, err error) {
+func ReadNeedleBlob(r *os.File, offset int64, size uint32) (bytes []byte, err error) {
+	padding := NeedlePaddingSize - ((NeedleHeaderSize + size + NeedleChecksumSize) % NeedlePaddingSize)
+	bytes = make([]byte, NeedleHeaderSize+size+NeedleChecksumSize+padding)
+	_, err = r.ReadAt(bytes, offset)
+	return
+}
+
+func (n *Needle) ReadData(r *os.File, offset int64, size uint32, version Version) (err error) {
+	bytes, err := ReadNeedleBlob(r, offset, size)
+	if err != nil {
+		return err
+	}
+	n.ParseNeedleHeader(bytes)
+	if n.Size != size {
+		return fmt.Errorf("File Entry Not Found. Needle %d Memory %d", n.Size, size)
+	}
 	switch version {
 	case Version1:
-		bytes := make([]byte, NeedleHeaderSize+size+NeedleChecksumSize)
-		if ret, err = r.ReadAt(bytes, offset); err != nil {
-			return
-		}
-		n.readNeedleHeader(bytes)
 		n.Data = bytes[NeedleHeaderSize : NeedleHeaderSize+size]
-		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+size : NeedleHeaderSize+size+NeedleChecksumSize])
-		newChecksum := NewCRC(n.Data)
-		if checksum != newChecksum.Value() {
-			return 0, errors.New("CRC error! Data On Disk Corrupted")
-		}
-		n.Checksum = newChecksum
-		return
 	case Version2:
-		if size == 0 {
-			return 0, nil
-		}
-		bytes := make([]byte, NeedleHeaderSize+size+NeedleChecksumSize)
-		if ret, err = r.ReadAt(bytes, offset); err != nil {
-			return
-		}
-		if ret != int(NeedleHeaderSize+size+NeedleChecksumSize) {
-			return 0, errors.New("File Entry Not Found")
-		}
-		n.readNeedleHeader(bytes)
-		if n.Size != size {
-			return 0, fmt.Errorf("File Entry Not Found. Needle %d Memory %d", n.Size, size)
-		}
 		n.readNeedleDataVersion2(bytes[NeedleHeaderSize : NeedleHeaderSize+int(n.Size)])
-		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+n.Size : NeedleHeaderSize+n.Size+NeedleChecksumSize])
-		newChecksum := NewCRC(n.Data)
-		if checksum != newChecksum.Value() {
-			return 0, errors.New("CRC Found Data On Disk Corrupted")
-		}
-		n.Checksum = newChecksum
-		return
 	}
-	return 0, fmt.Errorf("Unsupported Version! (%d)", version)
+	checksum := util.BytesToUint32(bytes[NeedleHeaderSize+size : NeedleHeaderSize+size+NeedleChecksumSize])
+	newChecksum := NewCRC(n.Data)
+	if checksum != newChecksum.Value() {
+		return errors.New("CRC error! Data On Disk Corrupted")
+	}
+	n.Checksum = newChecksum
+	return nil
 }
-func (n *Needle) readNeedleHeader(bytes []byte) {
+func (n *Needle) ParseNeedleHeader(bytes []byte) {
 	n.Cookie = util.BytesToUint32(bytes[0:4])
 	n.Id = util.BytesToUint64(bytes[4:12])
 	n.Size = util.BytesToUint32(bytes[12:NeedleHeaderSize])
@@ -228,7 +216,7 @@ func ReadNeedleHeader(r *os.File, version Version, offset int64) (n *Needle, bod
 		if count <= 0 || err != nil {
 			return nil, 0, err
 		}
-		n.readNeedleHeader(bytes)
+		n.ParseNeedleHeader(bytes)
 		padding := NeedlePaddingSize - ((n.Size + NeedleHeaderSize + NeedleChecksumSize) % NeedlePaddingSize)
 		bodyLength = n.Size + NeedleChecksumSize + padding
 	}
