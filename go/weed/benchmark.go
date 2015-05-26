@@ -34,8 +34,6 @@ type BenchmarkOptions struct {
 	cpuprofile       *string
 	maxCpu           *int
 	secretKey        *string
-	vid2server       map[string]string //cache for vid locations
-
 }
 
 var (
@@ -59,7 +57,6 @@ func init() {
 	b.cpuprofile = cmdBenchmark.Flag.String("cpuprofile", "", "cpu profile output file")
 	b.maxCpu = cmdBenchmark.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	b.secretKey = cmdBenchmark.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
-	b.vid2server = make(map[string]string)
 	sharedBytes = make([]byte, 1024)
 }
 
@@ -238,7 +235,6 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 
 func readFiles(fileIdLineChan chan string, s *stat) {
 	defer wait.Done()
-	masterLimitChan := make(chan bool, 1)
 	for fid := range fileIdLineChan {
 		if len(fid) == 0 {
 			continue
@@ -252,31 +248,21 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 		parts := strings.SplitN(fid, ",", 2)
 		vid := parts[0]
 		start := time.Now()
-		if server, ok := b.vid2server[vid]; !ok {
-			masterLimitChan <- true
-			if _, now_ok := b.vid2server[vid]; !now_ok {
-				if ret, err := operation.Lookup(*b.server, vid); err == nil {
-					if len(ret.Locations) > 0 {
-						server = ret.Locations[0].Url
-						b.vid2server[vid] = server
-					}
-				}
-			}
-			<-masterLimitChan
-		}
-		if server, ok := b.vid2server[vid]; ok {
-			url := "http://" + server + "/" + fid
-			if bytesRead, err := util.Get(url); err == nil {
-				s.completed++
-				s.transferred += int64(len(bytesRead))
-				readStats.addSample(time.Now().Sub(start))
-			} else {
-				s.failed++
-				fmt.Printf("Failed to read %s error:%v\n", url, err)
-			}
-		} else {
+		ret, err := operation.Lookup(*b.server, vid)
+		if err != nil || len(ret.Locations) == 0 {
 			s.failed++
 			println("!!!! volume id ", vid, " location not found!!!!!")
+			continue
+		}
+		server := ret.Locations[rand.Intn(len(ret.Locations))].Url
+		url := "http://" + server + "/" + fid
+		if bytesRead, err := util.Get(url); err == nil {
+			s.completed++
+			s.transferred += int64(len(bytesRead))
+			readStats.addSample(time.Now().Sub(start))
+		} else {
+			s.failed++
+			fmt.Printf("Failed to read %s error:%v\n", url, err)
 		}
 	}
 }

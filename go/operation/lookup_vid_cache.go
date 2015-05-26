@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strconv"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/go/glog"
 )
 
 type VidInfo struct {
@@ -15,7 +17,11 @@ type VidCache struct {
 }
 
 func (vc *VidCache) Get(vid string) ([]Location, error) {
-	id, _ := strconv.Atoi(vid)
+	id, err := strconv.Atoi(vid)
+	if err != nil {
+		glog.V(1).Infof("Unknown volume id %s", vid)
+		return nil, err
+	}
 	if 0 < id && id <= len(vc.cache) {
 		if vc.cache[id-1].Locations == nil {
 			return nil, errors.New("Not Set")
@@ -28,14 +34,18 @@ func (vc *VidCache) Get(vid string) ([]Location, error) {
 	return nil, errors.New("Not Found")
 }
 func (vc *VidCache) Set(vid string, locations []Location, duration time.Duration) {
-	id, _ := strconv.Atoi(vid)
-	if id >= len(vc.cache) {
+	id, err := strconv.Atoi(vid)
+	if err != nil {
+		glog.V(1).Infof("Unknown volume id %s", vid)
+		return
+	}
+	if id > len(vc.cache) {
 		for i := id - len(vc.cache); i > 0; i-- {
 			vc.cache = append(vc.cache, VidInfo{})
 		}
 	}
-
-	vc.cache[id-1].Locations = locations
-	vc.cache[id-1].NextRefreshTime = time.Now().Add(duration)
-
+	if id > 0 {
+		vc.cache[id-1].Locations = locations
+		vc.cache[id-1].NextRefreshTime = time.Now().Add(duration)
+	}
 }
