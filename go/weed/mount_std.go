@@ -52,7 +52,8 @@ type File struct {
 	Name   string
 }
 
-func (File) Attr(attr *fuse.Attr) {
+func (File) Attr(context context.Context, attr *fuse.Attr) error {
+	return nil
 }
 func (File) ReadAll(ctx context.Context) ([]byte, error) {
 	return []byte("hello, world\n"), nil
@@ -63,7 +64,8 @@ type Dir struct {
 	Id   uint64
 }
 
-func (dir Dir) Attr(attr *fuse.Attr) {
+func (dir Dir) Attr(context context.Context, attr *fuse.Attr) error {
+	return nil
 }
 
 func (dir Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
