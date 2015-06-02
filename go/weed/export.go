@@ -48,17 +48,17 @@ func init() {
 }
 
 var (
-	dest   = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
+	output = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
 	format = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename format, default to {{.Mime}}/{{.Id}}:{{.Name}}")
 	newer  = cmdExport.Flag.String("newer", "", "export only files newer than this time, default is all files. Must be specified in RFC3339 without timezone")
 
-	tarFh            *tar.Writer
-	tarHeader        tar.Header
-	fnTmpl           *template.Template
-	fnTmplBuf        = bytes.NewBuffer(nil)
-	newerThan        time.Time
-	newerThanUnix    int64 = -1
-	localLocation, _       = time.LoadLocation("Local")
+	tarOutputFile          *tar.Writer
+	tarHeader              tar.Header
+	fileNameTemplate       *template.Template
+	fileNameTemplateBuffer = bytes.NewBuffer(nil)
+	newerThan              time.Time
+	newerThanUnix          int64 = -1
+	localLocation, _             = time.LoadLocation("Local")
 )
 
 func runExport(cmd *Command, args []string) bool {
@@ -77,28 +77,28 @@ func runExport(cmd *Command, args []string) bool {
 		return false
 	}
 
-	if *dest != "" {
-		if *dest != "-" && !strings.HasSuffix(*dest, ".tar") {
-			fmt.Println("the output file", *dest, "should be '-' or end with .tar")
+	if *output != "" {
+		if *output != "-" && !strings.HasSuffix(*output, ".tar") {
+			fmt.Println("the output file", *output, "should be '-' or end with .tar")
 			return false
 		}
 
-		if fnTmpl, err = template.New("name").Parse(*format); err != nil {
+		if fileNameTemplate, err = template.New("name").Parse(*format); err != nil {
 			fmt.Println("cannot parse format " + *format + ": " + err.Error())
 			return false
 		}
 
-		var fh *os.File
-		if *dest == "-" {
-			fh = os.Stdout
+		var outputFile *os.File
+		if *output == "-" {
+			outputFile = os.Stdout
 		} else {
-			if fh, err = os.Create(*dest); err != nil {
-				glog.Fatalf("cannot open output tar %s: %s", *dest, err)
+			if outputFile, err = os.Create(*output); err != nil {
+				glog.Fatalf("cannot open output tar %s: %s", *output, err)
 			}
 		}
-		defer fh.Close()
-		tarFh = tar.NewWriter(fh)
-		defer tarFh.Close()
+		defer outputFile.Close()
+		tarOutputFile = tar.NewWriter(outputFile)
+		defer tarOutputFile.Close()
 		t := time.Now()
 		tarHeader = tar.Header{Mode: 0644,
 			ModTime: t, Uid: os.Getuid(), Gid: os.Getgid(),
@@ -117,7 +117,7 @@ func runExport(cmd *Command, args []string) bool {
 	}
 	defer indexFile.Close()
 
-	nm, err := storage.LoadNeedleMap(indexFile)
+	needleMap, err := storage.LoadNeedleMap(indexFile)
 	if err != nil {
 		glog.Fatalf("cannot load needle map from %s: %s", indexFile.Name(), err)
 	}
@@ -130,7 +130,7 @@ func runExport(cmd *Command, args []string) bool {
 			version = superBlock.Version()
 			return nil
 		}, true, func(n *storage.Needle, offset int64) error {
-			nv, ok := nm.Get(n.Id)
+			nv, ok := needleMap.Get(n.Id)
 			glog.V(3).Infof("key %d offset %d size %d disk_size %d gzip %v ok %v nv %+v",
 				n.Id, offset, n.Size, n.DiskSize(), n.IsGzipped(), ok, nv)
 			if ok && nv.Size > 0 && int64(nv.Offset)*8 == offset {
@@ -163,9 +163,9 @@ type nameParams struct {
 
 func walker(vid storage.VolumeId, n *storage.Needle, version storage.Version) (err error) {
 	key := storage.NewFileIdFromNeedle(vid, n).String()
-	if tarFh != nil {
-		fnTmplBuf.Reset()
-		if err = fnTmpl.Execute(fnTmplBuf,
+	if tarOutputFile != nil {
+		fileNameTemplateBuffer.Reset()
+		if err = fileNameTemplate.Execute(fileNameTemplateBuffer,
 			nameParams{Name: string(n.Name),
 				Id:   n.Id,
 				Mime: string(n.Mime),
@@ -174,23 +174,24 @@ func walker(vid storage.VolumeId, n *storage.Needle, version storage.Version) (e
 		); err != nil {
 			return err
 		}
-		nm := fnTmplBuf.String()
 
-		if n.IsGzipped() && path.Ext(nm) != ".gz" {
-			nm = nm + ".gz"
+		fileName := fileNameTemplateBuffer.String()
+
+		if n.IsGzipped() && path.Ext(fileName) != ".gz" {
+			fileName = fileName + ".gz"
 		}
 
-		tarHeader.Name, tarHeader.Size = nm, int64(len(n.Data))
+		tarHeader.Name, tarHeader.Size = fileName, int64(len(n.Data))
 		if n.HasLastModifiedDate() {
 			tarHeader.ModTime = time.Unix(int64(n.LastModified), 0)
 		} else {
 			tarHeader.ModTime = time.Unix(0, 0)
 		}
 		tarHeader.ChangeTime = tarHeader.ModTime
-		if err = tarFh.WriteHeader(&tarHeader); err != nil {
+		if err = tarOutputFile.WriteHeader(&tarHeader); err != nil {
 			return err
 		}
-		_, err = tarFh.Write(n.Data)
+		_, err = tarOutputFile.Write(n.Data)
 	} else {
 		size := n.DataSize
 		if version == storage.Version1 {
