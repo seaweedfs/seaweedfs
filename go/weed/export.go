@@ -45,12 +45,13 @@ func init() {
 	export.dir = cmdExport.Flag.String("dir", ".", "input data directory to store volume data files")
 	export.collection = cmdExport.Flag.String("collection", "", "the volume collection name")
 	export.volumeId = cmdExport.Flag.Int("volumeId", -1, "a volume id. The volume .dat and .idx files should already exist in the dir.")
-	dest = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
-	format = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename format, default to {{.Mime}}/{{.Id}}:{{.Name}}")
-	newer = cmdExport.Flag.String("newer", "", "export only files newer than this time, default is all files. Must be specified in RFC3339 without timezone")
 }
 
 var (
+	dest   = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
+	format = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename format, default to {{.Mime}}/{{.Id}}:{{.Name}}")
+	newer  = cmdExport.Flag.String("newer", "", "export only files newer than this time, default is all files. Must be specified in RFC3339 without timezone")
+
 	tarFh            *tar.Writer
 	tarHeader        tar.Header
 	fnTmpl           *template.Template
@@ -72,7 +73,7 @@ func runExport(cmd *Command, args []string) bool {
 		newerThanUnix = newerThan.Unix()
 	}
 
-	if *exportVolumeId == -1 {
+	if *export.volumeId == -1 {
 		return false
 	}
 
@@ -105,12 +106,12 @@ func runExport(cmd *Command, args []string) bool {
 			AccessTime: t, ChangeTime: t}
 	}
 
-	fileName := strconv.Itoa(*exportVolumeId)
-	if *exportCollection != "" {
-		fileName = *exportCollection + "_" + fileName
+	fileName := strconv.Itoa(*export.volumeId)
+	if *export.collection != "" {
+		fileName = *export.collection + "_" + fileName
 	}
-	vid := storage.VolumeId(*exportVolumeId)
-	indexFile, err := os.OpenFile(path.Join(*exportVolumePath, fileName+".idx"), os.O_RDONLY, 0644)
+	vid := storage.VolumeId(*export.volumeId)
+	indexFile, err := os.OpenFile(path.Join(*export.dir, fileName+".idx"), os.O_RDONLY, 0644)
 	if err != nil {
 		glog.Fatalf("Create Volume Index [ERROR] %s\n", err)
 	}
@@ -123,7 +124,7 @@ func runExport(cmd *Command, args []string) bool {
 
 	var version storage.Version
 
-	err = storage.ScanVolumeFile(*exportVolumePath, *exportCollection, vid,
+	err = storage.ScanVolumeFile(*export.dir, *export.collection, vid,
 		storage.NeedleMapInMemory,
 		func(superBlock storage.SuperBlock) error {
 			version = superBlock.Version()
