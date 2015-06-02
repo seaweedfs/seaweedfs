@@ -11,26 +11,31 @@ import (
 )
 
 var (
-	uploadReplication *string
-	uploadCollection  *string
-	uploadDir         *string
-	uploadTtl         *string
-	include           *string
-	uploadSecretKey   *string
-	maxMB             *int
+	upload UploadOptions
 )
+
+type UploadOptions struct {
+	server      *string
+	dir         *string
+	include     *string
+	replication *string
+	collection  *string
+	ttl         *string
+	maxMB       *int
+	secretKey   *string
+}
 
 func init() {
 	cmdUpload.Run = runUpload // break init cycle
 	cmdUpload.IsDebug = cmdUpload.Flag.Bool("debug", false, "verbose debug information")
-	server = cmdUpload.Flag.String("server", "localhost:9333", "SeaweedFS master location")
-	uploadDir = cmdUpload.Flag.String("dir", "", "Upload the whole folder recursively if specified.")
-	include = cmdUpload.Flag.String("include", "", "pattens of files to upload, e.g., *.pdf, *.html, ab?d.txt, works together with -dir")
-	uploadReplication = cmdUpload.Flag.String("replication", "", "replication type")
-	uploadCollection = cmdUpload.Flag.String("collection", "", "optional collection name")
-	uploadTtl = cmdUpload.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
-	maxMB = cmdUpload.Flag.Int("maxMB", 0, "split files larger than the limit")
-	uploadSecretKey = cmdUpload.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
+	upload.server = cmdUpload.Flag.String("server", "localhost:9333", "SeaweedFS master location")
+	upload.dir = cmdUpload.Flag.String("dir", "", "Upload the whole folder recursively if specified.")
+	upload.include = cmdUpload.Flag.String("include", "", "pattens of files to upload, e.g., *.pdf, *.html, ab?d.txt, works together with -dir")
+	upload.replication = cmdUpload.Flag.String("replication", "", "replication type")
+	upload.collection = cmdUpload.Flag.String("collection", "", "optional collection name")
+	upload.ttl = cmdUpload.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
+	upload.maxMB = cmdUpload.Flag.Int("maxMB", 0, "split files larger than the limit")
+	upload.secretKey = cmdUpload.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 }
 
 var cmdUpload = &Command{
@@ -57,16 +62,16 @@ var cmdUpload = &Command{
 }
 
 func runUpload(cmd *Command, args []string) bool {
-	secret := security.Secret(*uploadSecretKey)
+	secret := security.Secret(*upload.secretKey)
 	if len(cmdUpload.Flag.Args()) == 0 {
-		if *uploadDir == "" {
+		if *upload.dir == "" {
 			return false
 		}
-		filepath.Walk(*uploadDir, func(path string, info os.FileInfo, err error) error {
+		filepath.Walk(*upload.dir, func(path string, info os.FileInfo, err error) error {
 			if err == nil {
 				if !info.IsDir() {
-					if *include != "" {
-						if ok, _ := filepath.Match(*include, filepath.Base(path)); !ok {
+					if *upload.include != "" {
+						if ok, _ := filepath.Match(*upload.include, filepath.Base(path)); !ok {
 							return nil
 						}
 					}
@@ -74,9 +79,9 @@ func runUpload(cmd *Command, args []string) bool {
 					if e != nil {
 						return e
 					}
-					results, e := operation.SubmitFiles(*server, parts,
-						*uploadReplication, *uploadCollection,
-						*uploadTtl, *maxMB, secret)
+					results, e := operation.SubmitFiles(*upload.server, parts,
+						*upload.replication, *upload.collection,
+						*upload.ttl, *upload.maxMB, secret)
 					bytes, _ := json.Marshal(results)
 					fmt.Println(string(bytes))
 					if e != nil {
@@ -93,9 +98,9 @@ func runUpload(cmd *Command, args []string) bool {
 		if e != nil {
 			fmt.Println(e.Error())
 		}
-		results, _ := operation.SubmitFiles(*server, parts,
-			*uploadReplication, *uploadCollection,
-			*uploadTtl, *maxMB, secret)
+		results, _ := operation.SubmitFiles(*upload.server, parts,
+			*upload.replication, *upload.collection,
+			*upload.ttl, *upload.maxMB, secret)
 		bytes, _ := json.Marshal(results)
 		fmt.Println(string(bytes))
 	}

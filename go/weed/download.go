@@ -13,15 +13,18 @@ import (
 )
 
 var (
-	downloadReplication *string
-	downloadDir         *string
+	d DownloadOptions
 )
+
+type DownloadOptions struct {
+	server *string
+	dir    *string
+}
 
 func init() {
 	cmdDownload.Run = runDownload // break init cycle
-	cmdDownload.IsDebug = cmdDownload.Flag.Bool("debug", false, "verbose debug information")
-	server = cmdDownload.Flag.String("server", "localhost:9333", "SeaweedFS master location")
-	downloadDir = cmdDownload.Flag.String("dir", ".", "Download the whole folder recursively if specified.")
+	d.server = cmdDownload.Flag.String("server", "localhost:9333", "SeaweedFS master location")
+	d.dir = cmdDownload.Flag.String("dir", ".", "Download the whole folder recursively if specified.")
 }
 
 var cmdDownload = &Command{
@@ -40,7 +43,7 @@ var cmdDownload = &Command{
 
 func runDownload(cmd *Command, args []string) bool {
 	for _, fid := range args {
-		filename, content, e := fetchFileId(*server, fid)
+		filename, content, e := fetchFileId(*d.server, fid)
 		if e != nil {
 			fmt.Println("Fetch Error:", e)
 			continue
@@ -51,7 +54,7 @@ func runDownload(cmd *Command, args []string) bool {
 		if strings.HasSuffix(filename, "-list") {
 			filename = filename[0 : len(filename)-len("-list")]
 			fids := strings.Split(string(content), "\n")
-			f, err := os.OpenFile(path.Join(*downloadDir, filename), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.ModePerm)
+			f, err := os.OpenFile(path.Join(*d.dir, filename), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.ModePerm)
 			if err != nil {
 				fmt.Println("File Creation Error:", e)
 				continue
@@ -59,7 +62,7 @@ func runDownload(cmd *Command, args []string) bool {
 			defer f.Close()
 			for _, partId := range fids {
 				var n int
-				_, part, err := fetchFileId(*server, partId)
+				_, part, err := fetchFileId(*d.server, partId)
 				if err == nil {
 					n, err = f.Write(part)
 				}
@@ -72,7 +75,7 @@ func runDownload(cmd *Command, args []string) bool {
 				}
 			}
 		} else {
-			ioutil.WriteFile(path.Join(*downloadDir, filename), content, os.ModePerm)
+			ioutil.WriteFile(path.Join(*d.dir, filename), content, os.ModePerm)
 		}
 	}
 	return true

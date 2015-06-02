@@ -15,14 +15,20 @@ import (
 	"github.com/chrislusf/seaweedfs/go/storage"
 )
 
-func init() {
-	cmdExport.Run = runExport // break init cycle
-}
-
 const (
 	defaultFnFormat = `{{.Mime}}/{{.Id}}:{{.Name}}`
 	timeFormat      = "2006-01-02T15:04:05"
 )
+
+var (
+	export ExportOptions
+)
+
+type ExportOptions struct {
+	dir        *string
+	collection *string
+	volumeId   *int
+}
 
 var cmdExport = &Command{
 	UsageLine: "export -dir=/tmp -volumeId=234 -o=/dir/name.tar -fileNameFormat={{.Name}} -newer='" + timeFormat + "'",
@@ -34,13 +40,17 @@ var cmdExport = &Command{
   `,
 }
 
+func init() {
+	cmdExport.Run = runExport // break init cycle
+	export.dir = cmdExport.Flag.String("dir", ".", "input data directory to store volume data files")
+	export.collection = cmdExport.Flag.String("collection", "", "the volume collection name")
+	export.volumeId = cmdExport.Flag.Int("volumeId", -1, "a volume id. The volume .dat and .idx files should already exist in the dir.")
+	dest = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
+	format = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename format, default to {{.Mime}}/{{.Id}}:{{.Name}}")
+	newer = cmdExport.Flag.String("newer", "", "export only files newer than this time, default is all files. Must be specified in RFC3339 without timezone")
+}
+
 var (
-	exportVolumePath = cmdExport.Flag.String("dir", ".", "input data directory to store volume data files")
-	exportCollection = cmdExport.Flag.String("collection", "", "the volume collection name")
-	exportVolumeId   = cmdExport.Flag.Int("volumeId", -1, "a volume id. The volume .dat and .idx files should already exist in the dir.")
-	dest             = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
-	format           = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename format, default to {{.Mime}}/{{.Id}}:{{.Name}}")
-	newer            = cmdExport.Flag.String("newer", "", "export only files newer than this time, default is all files. Must be specified in RFC3339 without timezone")
 	tarFh            *tar.Writer
 	tarHeader        tar.Header
 	fnTmpl           *template.Template
