@@ -44,9 +44,9 @@ func NewMasterNodes(bootstrapNode string) (mn *MasterNodes) {
 }
 func (mn *MasterNodes) reset() {
 	glog.V(4).Infof("Resetting master nodes: %v", mn)
-	if len(mn.nodes) > 1 && mn.lastNode > 0 {
+	if len(mn.nodes) > 1 && mn.lastNode >= 0 {
 		glog.V(0).Infof("Reset master %s from: %v", mn.nodes[mn.lastNode], mn.nodes)
-		mn.lastNode = -mn.lastNode
+		mn.lastNode = -mn.lastNode - 1
 	}
 }
 func (mn *MasterNodes) findMaster() (string, error) {
