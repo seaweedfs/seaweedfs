@@ -129,9 +129,15 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+func (ms *MasterServer) selfUrl(r *http.Request) string {
+	if r.Host != "" {
+		return r.Host
+	}
+	return "localhost:" + strconv.Itoa(ms.port)
+}
 func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *http.Request) {
 	if ms.Topo.IsLeader() {
-		submitForClientHandler(w, r, "localhost:"+strconv.Itoa(ms.port))
+		submitForClientHandler(w, r, ms.selfUrl(r))
 	} else {
 		masterUrl, err := ms.Topo.Leader()
 		if err != nil {
@@ -144,7 +150,7 @@ func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *
 
 func (ms *MasterServer) deleteFromMasterServerHandler(w http.ResponseWriter, r *http.Request) {
 	if ms.Topo.IsLeader() {
-		deleteForClientHandler(w, r, "localhost:"+strconv.Itoa(ms.port))
+		deleteForClientHandler(w, r, ms.selfUrl(r))
 	} else {
 		deleteForClientHandler(w, r, ms.Topo.RaftServer.Leader())
 	}
