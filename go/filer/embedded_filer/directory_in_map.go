@@ -62,7 +62,7 @@ func NewDirectoryManagerInMap(dirLogFile string) (dm *DirectoryManagerInMap, err
 	//dm.Root do not use NewDirectoryEntryInMap, since dm.max will be changed
 	dm.Root = &DirectoryEntryInMap{SubDirectories: make(map[string]*DirectoryEntryInMap)}
 	if dm.logFile, err = os.OpenFile(dirLogFile, os.O_RDWR|os.O_CREATE, 0644); err != nil {
-		return nil, fmt.Errorf("cannot write directory log file %s.idx: %v", dirLogFile, err)
+		return nil, fmt.Errorf("cannot write directory log file %s: %v", dirLogFile, err)
 	}
 	return dm, dm.load()
 }
@@ -128,7 +128,7 @@ func (dm *DirectoryManagerInMap) findDirectory(dirPath string) (*DirectoryEntryI
 	if dirPath == "" {
 		return dm.Root, nil
 	}
-	dirPath = filepath.Clean(dirPath)
+	dirPath = CleanFilePath(dirPath)
 	if dirPath == "/" {
 		return dm.Root, nil
 	}
@@ -152,7 +152,7 @@ func (dm *DirectoryManagerInMap) FindDirectory(dirPath string) (filer.DirectoryI
 }
 
 func (dm *DirectoryManagerInMap) loadDirectory(dirPath string, dirId filer.DirectoryId) error {
-	dirPath = filepath.Clean(dirPath)
+	dirPath = CleanFilePath(dirPath)
 	if dirPath == "/" {
 		return nil
 	}
@@ -180,7 +180,7 @@ func (dm *DirectoryManagerInMap) loadDirectory(dirPath string, dirId filer.Direc
 }
 
 func (dm *DirectoryManagerInMap) makeDirectory(dirPath string) (dir *DirectoryEntryInMap, created bool) {
-	dirPath = filepath.Clean(dirPath)
+	dirPath = CleanFilePath(dirPath)
 	if dirPath == "/" {
 		return dm.Root, false
 	}
@@ -256,4 +256,12 @@ func (dm *DirectoryManagerInMap) DeleteDirectory(dirPath string) error {
 	d.Parent = nil
 	dm.log("del", dirPath)
 	return nil
+}
+
+func CleanFilePath(fp string) string {
+	ret := filepath.Clean(fp)
+	if os.PathSeparator == '\\' {
+		return strings.Replace(ret, "\\", "/", -1)
+	}
+	return ret
 }
