@@ -77,7 +77,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 	if gcThreshold == "" {
 		gcThreshold = ms.garbageThreshold
 	}
-	debug("garbageThreshold =", gcThreshold)
+	glog.Infoln("garbageThreshold =", gcThreshold)
 	ms.Topo.Vacuum(gcThreshold)
 	ms.dirStatusHandler(w, r)
 }
