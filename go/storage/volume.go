@@ -152,7 +152,7 @@ func (v *Volume) NeedToReplicate() bool {
 // isFileUnchanged checks whether this needle to write is same as last one.
 // It requires serialized access in the same volume.
 func (v *Volume) isFileUnchanged(n *Needle) bool {
-	if v.Ttl == EMPTY_TTL || v.Ttl.String() == "" {
+	if v.Ttl.String() != "" {
 		return true
 	}
 	nv, ok := v.nm.Get(n.Id)
