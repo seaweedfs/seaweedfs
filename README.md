@@ -301,58 +301,55 @@ POSIX support
 
 ## Benchmark
 
-My Own Unscientific Single Machine Results on Mac Book with Solid State Disk, CPU: 1 Intel Core i7 2.2GHz.
+My Own Unscientific Single Machine Results on Mac Book with Solid State Disk, CPU: 1 Intel Core i7 2.6GHz.
 
 Write 1 million 1KB file:
 ```
-Concurrency Level:      64
-Time taken for tests:   182.456 seconds
+Concurrency Level:      16
+Time taken for tests:   88.796 seconds
 Complete requests:      1048576
 Failed requests:        0
-Total transferred:      1073741824 bytes
-Requests per second:    5747.01 [#/sec]
-Transfer rate:          5747.01 [Kbytes/sec]
+Total transferred:      1106764659 bytes
+Requests per second:    11808.87 [#/sec]
+Transfer rate:          12172.05 [Kbytes/sec]
 
 Connection Times (ms)
               min      avg        max      std
-Total:        0.3      10.9       430.9      5.7
+Total:        0.2      1.3       44.8      0.9
 
 Percentage of the requests served within a certain time (ms)
-   50%     10.2 ms
-   66%     12.0 ms
-   75%     12.6 ms
-   80%     12.9 ms
-   90%     14.0 ms
-   95%     14.9 ms
-   98%     16.2 ms
-   99%     17.3 ms
-  100%    430.9 ms
+   50%      1.1 ms
+   66%      1.3 ms
+   75%      1.5 ms
+   80%      1.7 ms
+   90%      2.1 ms
+   95%      2.6 ms
+   98%      3.7 ms
+   99%      4.6 ms
+  100%     44.8 ms
 ```
 
 Randomly read 1 million files:
 ```
-Concurrency Level:      64
-Time taken for tests:   80.732 seconds
+Concurrency Level:      16
+Time taken for tests:   34.263 seconds
 Complete requests:      1048576
 Failed requests:        0
-Total transferred:      1073741824 bytes
-Requests per second:    12988.37 [#/sec]
-Transfer rate:          12988.37 [Kbytes/sec]
+Total transferred:      1106762945 bytes
+Requests per second:    30603.34 [#/sec]
+Transfer rate:          31544.49 [Kbytes/sec]
 
 Connection Times (ms)
               min      avg        max      std
-Total:        0.0      4.7       254.3      6.3
+Total:        0.0      0.5       20.7      0.7
 
 Percentage of the requests served within a certain time (ms)
-   50%      2.6 ms
-   66%      2.9 ms
-   75%      3.7 ms
-   80%      4.7 ms
-   90%     10.3 ms
-   95%     16.6 ms
-   98%     26.3 ms
-   99%     34.8 ms
-  100%    254.3 ms
+   50%      0.4 ms
+   75%      0.5 ms
+   95%      0.6 ms
+   98%      0.8 ms
+   99%      1.2 ms
+  100%     20.7 ms
 ```
 
 

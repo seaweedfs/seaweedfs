@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/template"
@@ -49,7 +50,7 @@ func init() {
 
 var (
 	output = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
-	format = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename format, default to {{.Mime}}/{{.Id}}:{{.Name}}")
+	format = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename formatted with {{.Mime}} {{.Id}} {{.Name}} {{.Ext}}")
 	newer  = cmdExport.Flag.String("newer", "", "export only files newer than this time, default is all files. Must be specified in RFC3339 without timezone")
 
 	tarOutputFile          *tar.Writer
@@ -159,6 +160,7 @@ type nameParams struct {
 	Id   uint64
 	Mime string
 	Key  string
+	Ext  string
 }
 
 func walker(vid storage.VolumeId, n *storage.Needle, version storage.Version) (err error) {
@@ -166,10 +168,12 @@ func walker(vid storage.VolumeId, n *storage.Needle, version storage.Version) (e
 	if tarOutputFile != nil {
 		fileNameTemplateBuffer.Reset()
 		if err = fileNameTemplate.Execute(fileNameTemplateBuffer,
-			nameParams{Name: string(n.Name),
+			nameParams{
+				Name: string(n.Name),
 				Id:   n.Id,
 				Mime: string(n.Mime),
 				Key:  key,
+				Ext:  filepath.Ext(string(n.Name)),
 			},
 		); err != nil {
 			return err

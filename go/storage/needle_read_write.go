@@ -120,7 +120,7 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 					return
 				}
 			}
-			if n.HasTtl() {
+			if n.HasTtl() && n.Ttl != nil {
 				n.Ttl.ToBytes(header[0:TtlBytesLength])
 				if _, err = w.Write(header[0:TtlBytesLength]); err != nil {
 					return
