@@ -153,7 +153,7 @@ func (v *Volume) NeedToReplicate() bool {
 // It requires serialized access in the same volume.
 func (v *Volume) isFileUnchanged(n *Needle) bool {
 	if v.Ttl.String() != "" {
-		return true
+		return false
 	}
 	nv, ok := v.nm.Get(n.Id)
 	if ok && nv.Offset > 0 {
