@@ -36,6 +36,11 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 
 	glog.V(4).Infoln("volume", volumeId, "reading", n)
 	if !vs.store.HasVolume(volumeId) {
+		if !vs.ReadRedirect {
+			glog.V(2).Infoln("volume is not local:", err, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		lookupResult, err := operation.Lookup(vs.GetMasterNode(), volumeId.String())
 		glog.V(2).Infoln("volume", volumeId, "found on", lookupResult, "error", err)
 		if err == nil && len(lookupResult.Locations) > 0 {

@@ -70,6 +70,7 @@ var (
 	volumePulse                   = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	volumeIndexType               = cmdServer.Flag.String("volume.index", "memory", "Choose [memory|leveldb|boltdb] mode for memory~performance balance.")
 	volumeFixJpgOrientation       = cmdServer.Flag.Bool("volume.images.fix.orientation", true, "Adjust jpg orientation when uploading.")
+	volumeReadRedirect            = cmdServer.Flag.Bool("volume.read.redirect", true, "Redirect moved or non-local volumes.")
 	volumeServerPublicUrl         = cmdServer.Flag.String("volume.publicUrl", "", "publicly accessible address")
 	isStartingFiler               = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 
@@ -251,7 +252,7 @@ func runServer(cmd *Command, args []string) bool {
 		folders, maxCounts,
 		volumeNeedleMapKind,
 		*serverIp+":"+strconv.Itoa(*masterPort), *volumePulse, *serverDataCenter, *serverRack,
-		serverWhiteList, *volumeFixJpgOrientation,
+		serverWhiteList, *volumeFixJpgOrientation, *volumeReadRedirect,
 	)
 
 	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*volumePort))
