@@ -41,6 +41,8 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 				return err == nil
 			}) {
 				ret = 0
+				// If failed replication then try to delete inconsistent file
+				ReplicatedDelete(masterNode, s, volumeId, needle, r)
 				errorStatus = "Failed to write to replicas for volume " + volumeId.String()
 			}
 		}
