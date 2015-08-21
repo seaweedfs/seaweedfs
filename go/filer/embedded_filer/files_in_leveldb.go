@@ -43,6 +43,9 @@ func (fl *FileListInLevelDb) CreateFile(dirId filer.DirectoryId, fileName string
 }
 func (fl *FileListInLevelDb) DeleteFile(dirId filer.DirectoryId, fileName string) (fid string, err error) {
 	if fid, err = fl.FindFile(dirId, fileName); err != nil {
+		if err == leveldb.ErrNotFound {
+			return "", nil
+		}
 		return
 	}
 	err = fl.db.Delete(genKey(dirId, fileName), nil)

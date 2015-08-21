@@ -209,7 +209,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		err = fs.filer.DeleteDirectory(r.URL.Path, isRecursive)
 	} else {
 		fid, err = fs.filer.DeleteFile(r.URL.Path)
-		if err == nil {
+		if err == nil && fid != "" {
 			err = operation.DeleteFile(fs.master, fid, fs.jwt(fid))
 		}
 	}
