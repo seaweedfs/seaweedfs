@@ -168,8 +168,8 @@ func runServer(cmd *Command, args []string) bool {
 				*filerOptions.defaultReplicaPlacement,
 				*filerOptions.redirectOnRead, *filerOptions.disableDirListing,
 				*filerOptions.secretKey,
-				"", "",
-				"", 0,
+				*filerOptions.cassandra_server, *filerOptions.cassandra_keyspace,
+				*filerOptions.redis_server, *filerOptions.redis_database,
 			)
 			if nfs_err != nil {
 				glog.Fatalf("Filer startup error: %v", nfs_err)
