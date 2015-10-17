@@ -27,10 +27,6 @@ func (vs *VolumeServer) assignVolumeHandler(w http.ResponseWriter, r *http.Reque
 }
 
 func (vs *VolumeServer) deleteCollectionHandler(w http.ResponseWriter, r *http.Request) {
-	if "benchmark" != r.FormValue("collection") {
-		glog.V(0).Infoln("deleting collection =", r.FormValue("collection"), "!!!")
-		return
-	}
 	err := vs.store.DeleteCollection(r.FormValue("collection"))
 	if err == nil {
 		writeJsonQuiet(w, r, http.StatusOK, map[string]string{"error": ""})
