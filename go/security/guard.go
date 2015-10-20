@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
-        "regexp"
 	"net/http"
+	"regexp"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
 )
@@ -90,25 +90,24 @@ func (g *Guard) checkWhiteList(w http.ResponseWriter, r *http.Request) error {
 	if err == nil {
 		for _, ip := range g.whiteList {
 
-                        // If the whitelist entry contains a "/" it
-                        // is a CIDR range, and we should check the
-                        // remote host is within it
-                        match, _ := regexp.MatchString("/", ip)
-                        if ( match ) {
-                               _, cidrnet, err := net.ParseCIDR(ip)
-                               if err != nil {
-                               		panic(err)
-                               }
-                               remote := net.ParseIP(host)
-                               if cidrnet.Contains(remote) {
-                               		return nil
-                               }
-                        }
+			// If the whitelist entry contains a "/" it
+			// is a CIDR range, and we should check the
+			// remote host is within it
+			match, _ := regexp.MatchString("/", ip)
+			if match {
+				_, cidrnet, err := net.ParseCIDR(ip)
+				if err != nil {
+					panic(err)
+				}
+				remote := net.ParseIP(host)
+				if cidrnet.Contains(remote) {
+					return nil
+				}
+			}
 
-
-                        //
-                        // Otherwise we're looking for a literal match.
-                        //
+			//
+			// Otherwise we're looking for a literal match.
+			//
 			if ip == host {
 				return nil
 			}
