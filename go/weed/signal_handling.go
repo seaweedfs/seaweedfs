@@ -9,10 +9,13 @@ import (
 )
 
 func OnInterrupt(fn func()) {
-	// deal with control+c,etc
+	// Deal with control+c,etc
+
+	// Controlling terminal close, daemon not exit
+	ignoreChan := make(chan os.Signal, 1)
+	signal.Notify(ignoreChan, syscall.SIGHUP)
+
 	signalChan := make(chan os.Signal, 1)
-	// controlling terminal close, daemon not exit
-	signal.Ignore(syscall.SIGHUP)
 	signal.Notify(signalChan,
 		os.Interrupt,
 		os.Kill,
@@ -21,10 +24,18 @@ func OnInterrupt(fn func()) {
 		syscall.SIGINT,
 		syscall.SIGTERM,
 		syscall.SIGQUIT)
+
 	go func() {
-		for _ = range signalChan {
-			fn()
-			os.Exit(0)
+		for {
+			select {
+			case <-signalChan:
+				fn()
+				os.Exit(0)
+
+			case <-ignoreChan:
+				// Ignore
+				break
+			}
 		}
 	}()
 }
