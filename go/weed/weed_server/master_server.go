@@ -117,7 +117,7 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 			proxy.Director = func(req *http.Request) {
 				actualHost, err := security.GetActualRemoteHost(req)
 				if err == nil {
-					req.Header.Set(("HTTP_X_FORWARDED_FOR", actualHost)
+					req.Header.Set("HTTP_X_FORWARDED_FOR", actualHost)
 				}
 				director(req)
 			}
