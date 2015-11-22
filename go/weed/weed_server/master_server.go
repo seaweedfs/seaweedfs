@@ -113,6 +113,14 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 			}
 			glog.V(4).Infoln("proxying to leader", ms.Topo.RaftServer.Leader())
 			proxy := httputil.NewSingleHostReverseProxy(targetUrl)
+			director := proxy.Director
+			proxy.Director = func(req *http.Request) {
+				actualHost, err := security.GetActualRemoteHost(req)
+				if err == nil {
+					req.Header.Set(("HTTP_X_FORWARDED_FOR", actualHost)
+				}
+				director(req)
+			}
 			proxy.Transport = util.Transport
 			proxy.ServeHTTP(w, r)
 		} else {
