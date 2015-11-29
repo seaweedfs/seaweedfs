@@ -15,8 +15,8 @@ var ErrOutOfRange = errors.New("Out of Range")
 
 type ChunkInfo struct {
 	Fid    string `json:"fid,omitempty"`
-	Offset uint64 `json:"offset,omitempty"`
-	Size   uint32 `json:"size,omitempty"`
+	Offset int64  `json:"offset,omitempty"`
+	Size   int64  `json:"size,omitempty"`
 }
 
 type ChunkList []*ChunkInfo
@@ -24,7 +24,7 @@ type ChunkList []*ChunkInfo
 type ChunkedFile struct {
 	Name   string    `json:"name,omitempty"`
 	Mime   string    `json:"mime,omitempty"`
-	Size   uint64    `json:"size,omitempty"`
+	Size   int64     `json:"size,omitempty"`
 	Chunks ChunkList `json:"chunks,omitempty"`
 
 	master string `json:"-"`
@@ -62,15 +62,15 @@ func copyChunk(fileUrl string, w io.Writer, startOffset, size int64) (written in
 	if err != nil {
 		return written, err
 	}
-	defer resp.Close()
+	defer resp.Body.Close()
 	if startOffset > 0 && resp.StatusCode != 206 {
 		return written, fmt.Errorf("Cannot Read Needle Position: %d [%s]", startOffset, fileUrl)
 	}
 
 	if size > 0 {
-		return io.CopyN(w, resp, size)
+		return io.CopyN(w, resp.Body, size)
 	} else {
-		return io.Copy(w, resp)
+		return io.Copy(w, resp.Body)
 	}
 }
 
@@ -79,7 +79,7 @@ func (c *ChunkedFile) WriteBuffer(w io.Writer, offset, size int64) (written int6
 		return written, ErrOutOfRange
 	}
 	chunkIndex := -1
-	chunkStartOffset := 0
+	chunkStartOffset := int64(0)
 	for i, ci := range c.Chunks {
 		if offset >= ci.Offset && offset < ci.Offset+ci.Size {
 			chunkIndex = i
@@ -90,13 +90,14 @@ func (c *ChunkedFile) WriteBuffer(w io.Writer, offset, size int64) (written int6
 	if chunkIndex < 0 {
 		return written, ErrOutOfRange
 	}
+	//preload next chunk?
 	for ; chunkIndex < c.Chunks.Len(); chunkIndex++ {
 		ci := c.Chunks[chunkIndex]
 		fileUrl, lookupError := LookupFileId(c.master, ci.Fid)
 		if lookupError != nil {
 			return written, lookupError
 		}
-		rsize := 0
+		rsize := int64(0)
 		if size > 0 {
 			rsize = size - written
 		}
