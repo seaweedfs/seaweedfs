@@ -180,7 +180,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
-	// process mulitple ranges
+	// process multiple ranges
 	for _, ra := range ranges {
 		if ra.start > size {
 			http.Error(w, "Out of Range", http.StatusRequestedRangeNotSatisfiable)

@@ -16,6 +16,7 @@ const (
 	FlagHasMime             = 0x04
 	FlagHasLastModifiedDate = 0x08
 	FlagHasTtl              = 0x10
+	FlagChunkList           = 0x80
 	LastModifiedBytesLength = 5
 	TtlBytesLength          = 2
 )
@@ -279,4 +280,12 @@ func (n *Needle) HasTtl() bool {
 }
 func (n *Needle) SetHasTtl() {
 	n.Flags = n.Flags | FlagHasTtl
+}
+
+func (n *Needle) IsChunkList() bool {
+	return n.Flags&FlagChunkList > 0
+}
+
+func (n *Needle) SetChunkList() {
+	n.Flags = n.Flags | FlagChunkList
 }
