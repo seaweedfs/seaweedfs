@@ -52,7 +52,7 @@ func (n *Needle) String() (str string) {
 	return
 }
 
-func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string, isGzipped bool, modifiedTime uint64, ttl *TTL, e error) {
+func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string, isGzipped bool, modifiedTime uint64, ttl *TTL, isChunkedFile bool, e error) {
 	form, fe := r.MultipartReader()
 	if fe != nil {
 		glog.V(0).Infoln("MultipartReader [ERROR]", fe)
@@ -132,12 +132,13 @@ func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string
 	}
 	modifiedTime, _ = strconv.ParseUint(r.FormValue("ts"), 10, 64)
 	ttl, _ = ReadTTL(r.FormValue("ttl"))
+	isChunkedFile, _ = strconv.ParseBool(r.FormValue("cf"))
 	return
 }
 func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
-	fname, mimeType, isGzipped := "", "", false
+	fname, mimeType, isGzipped, isChunkedFile := "", "", false, false
 	n = new(Needle)
-	fname, n.Data, mimeType, isGzipped, n.LastModified, n.Ttl, e = ParseUpload(r)
+	fname, n.Data, mimeType, isGzipped, n.LastModified, n.Ttl, isChunkedFile, e = ParseUpload(r)
 	if e != nil {
 		return
 	}
@@ -158,6 +159,10 @@ func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
 	n.SetHasLastModifiedDate()
 	if n.Ttl != EMPTY_TTL {
 		n.SetHasTtl()
+	}
+
+	if isChunkedFile {
+		n.SetChunkedFile()
 	}
 
 	if fixJpgOrientation {
