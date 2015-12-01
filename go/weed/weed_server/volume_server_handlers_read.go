@@ -222,7 +222,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string, w http.ResponseWriter, r *http.Request) (processed bool) {
-	if !n.IsChunkedFile() {
+	if !n.IsChunkedManifest() {
 		return false
 	}
 	processed = true

@@ -162,7 +162,7 @@ func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
 	}
 
 	if isChunkedFile {
-		n.SetChunkedFile()
+		n.SetChunkManifest()
 	}
 
 	if fixJpgOrientation {
