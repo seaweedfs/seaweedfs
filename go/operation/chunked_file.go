@@ -30,10 +30,10 @@ type ChunkInfo struct {
 type ChunkList []*ChunkInfo
 
 type ChunkManifest struct {
-	Name      string    `json:"name,omitempty"`
-	Mime      string    `json:"mime,omitempty"`
-	Size      int64     `json:"size,omitempty"`
-	Chunks    ChunkList `json:"chunks,omitempty"`
+	Name   string    `json:"name,omitempty"`
+	Mime   string    `json:"mime,omitempty"`
+	Size   int64     `json:"size,omitempty"`
+	Chunks ChunkList `json:"chunks,omitempty"`
 }
 
 // seekable chunked file reader
@@ -50,7 +50,13 @@ func (s ChunkList) Len() int           { return len(s) }
 func (s ChunkList) Less(i, j int) bool { return s[i].Offset < s[j].Offset }
 func (s ChunkList) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
-func LoadChunkedManifest(buffer []byte) (*ChunkManifest, error) {
+func LoadChunkManifest(buffer []byte, isGzipped bool) (*ChunkManifest, error) {
+	if isGzipped {
+		var err error
+		if buffer, err = UnGzipData(buffer); err != nil {
+			return nil, err
+		}
+	}
 	cm := ChunkManifest{}
 	if e := json.Unmarshal(buffer, &cm); e != nil {
 		return nil, e

@@ -15,6 +15,7 @@ import (
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/images"
 	"github.com/chrislusf/seaweedfs/go/util"
+	"github.com/chrislusf/seaweedfs/go/operation"
 )
 
 const (
@@ -117,8 +118,8 @@ func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string
 	}
 	if part.Header.Get("Content-Encoding") == "gzip" {
 		isGzipped = true
-	} else if IsGzippable(ext, mtype) {
-		if data, e = GzipData(data); e != nil {
+	} else if operation.IsGzippable(ext, mtype) {
+		if data, e = operation.GzipData(data); e != nil {
 			return
 		}
 		isGzipped = true

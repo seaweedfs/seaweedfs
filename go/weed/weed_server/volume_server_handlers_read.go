@@ -114,7 +114,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 				w.Header().Set("Content-Encoding", "gzip")
 			} else {
-				if n.Data, err = storage.UnGzipData(n.Data); err != nil {
+				if n.Data, err = operation.UnGzipData(n.Data); err != nil {
 					glog.V(0).Infoln("lookup error:", err, r.URL.Path)
 				}
 			}
@@ -230,15 +230,8 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string,
 		return false
 	}
 	processed = true
-	if n.IsGzipped(){
-		var err error
-		if n.Data, err = storage.UnGzipData(n.Data); err != nil {
-			glog.V(0).Infoln("ungzip data error:", err, r.URL.Path)
-			return false
-		}
-	}
 
-	chunkManifest, e := operation.LoadChunkedManifest(n.Data)
+	chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsGzipped())
 	if e != nil {
 		glog.V(0).Infoln("load chunked manifest error:", e)
 		return false

@@ -66,6 +66,17 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		glog.V(0).Infoln("delete", r.URL.Path, "with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
 		return
 	}
+	if n.IsChunkedManifest(){
+		chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsGzipped())
+		if e != nil {
+			writeJsonError(w, r, http.StatusInternalServerError, errors.New("Load chunks manifest error: " + e.Error()))
+			return
+		}
+		if e := chunkManifest.DeleteChunks(vs.GetMasterNode()); e != nil {
+			writeJsonError(w, r, http.StatusInternalServerError, errors.New("Delete chunks error: " + e.Error()))
+			return
+		}
+	}
 
 	ret := topology.ReplicatedDelete(vs.GetMasterNode(), vs.store, volumeId, n, r)
 
