@@ -270,7 +270,7 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string,
 		return true
 	}
 
-	chunkedFileReader := operation.ChunkedFileReader{
+	chunkedFileReader := &operation.ChunkedFileReader{
 		Manifest: chunkManifest,
 		Master:   vs.GetMasterNode(),
 	}

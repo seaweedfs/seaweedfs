@@ -132,7 +132,7 @@ func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string
 	}
 	modifiedTime, _ = strconv.ParseUint(r.FormValue("ts"), 10, 64)
 	ttl, _ = ReadTTL(r.FormValue("ttl"))
-	isChunkedFile, _ = strconv.ParseBool(r.FormValue("cf"))
+	isChunkedFile, _ = strconv.ParseBool(r.FormValue("cm"))
 	return
 }
 func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
