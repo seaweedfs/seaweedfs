@@ -225,18 +225,22 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string,
 	if !n.IsChunkedManifest() {
 		return false
 	}
-	processed = true
 	raw, _ := strconv.ParseBool(r.FormValue("raw"))
 	if raw {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Content-Length", strconv.Itoa(len(n.Data)))
-		if _, e := w.Write(n.Data); e != nil {
-			glog.V(0).Infoln("response write error:", e)
-		}
-		return true
+		return false
 	}
+	processed = true
+	if n.IsGzipped(){
+		var err error
+		if n.Data, err = storage.UnGzipData(n.Data); err != nil {
+			glog.V(0).Infoln("ungzip data error:", err, r.URL.Path)
+			return false
+		}
+	}
+
 	chunkManifest, e := operation.LoadChunkedManifest(n.Data)
 	if e != nil {
+		glog.V(0).Infoln("load chunked manifest error:", e)
 		return false
 	}
 	ext := ""

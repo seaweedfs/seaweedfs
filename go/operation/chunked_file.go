@@ -22,9 +22,9 @@ var (
 )
 
 type ChunkInfo struct {
-	Fid    string `json:"fid,omitempty"`
-	Offset int64  `json:"offset,omitempty"`
-	Size   int64  `json:"size,omitempty"`
+	Fid    string `json:"fid"`
+	Offset int64  `json:"offset"`
+	Size   int64  `json:"size"`
 }
 
 type ChunkList []*ChunkInfo
@@ -52,7 +52,7 @@ func (s ChunkList) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
 func LoadChunkedManifest(buffer []byte) (*ChunkManifest, error) {
 	cm := ChunkManifest{}
-	if e := json.Unmarshal(buffer, cm); e != nil {
+	if e := json.Unmarshal(buffer, &cm); e != nil {
 		return nil, e
 	}
 	sort.Sort(cm.Chunks)

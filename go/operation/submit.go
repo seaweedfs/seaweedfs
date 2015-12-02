@@ -116,11 +116,12 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 	if closer, ok := fi.Reader.(io.Closer); ok {
 		defer closer.Close()
 	}
+	baseName := path.Base(fi.FileName)
 	if maxMB > 0 && fi.FileSize > int64(maxMB*1024*1024) {
 		chunkSize := int64(maxMB * 1024 * 1024)
 		chunks := fi.FileSize/chunkSize + 1
 		cm := ChunkManifest{
-			Name:   fi.FileName,
+			Name:   baseName,
 			Size:   fi.FileSize,
 			Mime:   fi.MimeType,
 			Chunks: make([]*ChunkInfo, 0, chunks),
@@ -128,7 +129,7 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 
 		for i := int64(0); i < chunks; i++ {
 			id, count, e := upload_one_chunk(
-				fi.FileName+"-"+strconv.FormatInt(i+1, 10),
+				baseName+"-"+strconv.FormatInt(i+1, 10),
 				io.LimitReader(fi.Reader, chunkSize),
 				master, fi.Replication, fi.Collection, fi.Ttl,
 				jwt)
@@ -152,7 +153,7 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 			cm.DeleteChunks(master)
 		}
 	} else {
-		ret, e := Upload(fileUrl, fi.FileName, fi.Reader, fi.IsGzipped, fi.MimeType, jwt)
+		ret, e := Upload(fileUrl, baseName, fi.Reader, fi.IsGzipped, fi.MimeType, jwt)
 		if e != nil {
 			return 0, e
 		}
