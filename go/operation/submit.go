@@ -190,6 +190,6 @@ func upload_chunked_file_manifest(fileUrl string, manifest *ChunkManifest, jwt s
 	q := u.Query()
 	q.Set("cm", "1")
 	u.RawQuery = q.Encode()
-	_, e = Upload(u.String(), manifest.Name, bufReader, false, "text/plain", jwt)
+	_, e = Upload(u.String(), manifest.Name, bufReader, false, "application/json", jwt)
 	return e
 }

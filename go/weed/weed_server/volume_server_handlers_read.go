@@ -140,7 +140,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	if rangeReq == "" {
 		w.Header().Set("Content-Length", strconv.Itoa(len(n.Data)))
 		if _, e = w.Write(n.Data); e != nil {
-			glog.V(0).Infoln("response write error:", e)
+			glog.V(4).Infoln("response write error:", e)
 		}
 		return
 	}
@@ -181,7 +181,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		w.Header().Set("Content-Range", ra.contentRange(size))
 		w.WriteHeader(http.StatusPartialContent)
 		if _, e = w.Write(n.Data[ra.start : ra.start+ra.length]); e != nil {
-			glog.V(0).Infoln("response write error:", e)
+			glog.V(4).Infoln("response write error:", e)
 		}
 		return
 	}
@@ -324,10 +324,10 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string,
 		w.Header().Set("Content-Range", ra.contentRange(size))
 		w.WriteHeader(http.StatusPartialContent)
 		if _, e = chunkedFileReader.Seek(ra.start, 0); e != nil {
-			glog.V(0).Infoln("response write error:", e)
+			glog.V(0).Infoln("chunkedFileReader Seek error:", e)
 		}
 		if _, e = io.CopyN(w, chunkedFileReader, ra.length); e != nil {
-			glog.V(0).Infoln("response write error:", e)
+			glog.V(4).Infoln("response write error:", e)
 		}
 		return
 	}
@@ -352,7 +352,7 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string,
 				return
 			}
 			if _, e = chunkedFileReader.Seek(ra.start, 0); e != nil {
-				glog.V(0).Infoln("response write error:", e)
+				glog.V(4).Infoln("response write error:", e)
 			}
 			if _, err = io.CopyN(part, chunkedFileReader, ra.length); err != nil {
 				pw.CloseWithError(err)
