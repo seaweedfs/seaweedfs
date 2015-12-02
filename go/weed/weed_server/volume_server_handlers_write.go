@@ -53,9 +53,8 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	glog.V(2).Infoln("deleting", n)
 
 	cookie := n.Cookie
-	count, ok := vs.store.ReadVolumeNeedle(volumeId, n)
 
-	if ok != nil {
+	if _, ok := vs.store.ReadVolumeNeedle(volumeId, n); ok != nil {
 		m := make(map[string]uint32)
 		m["size"] = 0
 		writeJsonQuiet(w, r, http.StatusNotFound, m)
@@ -66,6 +65,9 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		glog.V(0).Infoln("delete", r.URL.Path, "with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
 		return
 	}
+
+	count := int64(n.Size)
+
 	if n.IsChunkedManifest(){
 		chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsGzipped())
 		if e != nil {
@@ -82,8 +84,8 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	ret := topology.ReplicatedDelete(vs.GetMasterNode(), vs.store, volumeId, n, r)
 
 	if ret != 0 {
-		m := make(map[string]uint32)
-		m["size"] = uint32(count)
+		m := make(map[string]int64)
+		m["size"] = count
 		writeJsonQuiet(w, r, http.StatusAccepted, m)
 	} else {
 		writeJsonError(w, r, http.StatusInternalServerError, errors.New("Deletion Failed."))
