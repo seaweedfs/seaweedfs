@@ -76,6 +76,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 			writeJsonError(w, r, http.StatusInternalServerError, errors.New("Delete chunks error: " + e.Error()))
 			return
 		}
+		count = chunkManifest.Size
 	}
 
 	ret := topology.ReplicatedDelete(vs.GetMasterNode(), vs.store, volumeId, n, r)
