@@ -7,14 +7,17 @@ import (
 	"strings"
 	"sync"
 
+	"net/http"
+
 	"github.com/chrislusf/seaweedfs/go/security"
 	"github.com/chrislusf/seaweedfs/go/util"
 )
 
 type DeleteResult struct {
-	Fid   string `json:"fid"`
-	Size  int    `json:"size"`
-	Error string `json:"error,omitempty"`
+	Fid    string `json:"fid"`
+	Size   int    `json:"size"`
+	Status int    `json:"status"`
+	Error  string `json:"error,omitempty"`
 }
 
 func DeleteFile(master string, fileId string, jwt security.EncodedJwt) error {
@@ -45,7 +48,11 @@ func DeleteFiles(master string, fileIds []string) (*DeleteFilesResult, error) {
 	for _, fileId := range fileIds {
 		vid, _, err := ParseFileId(fileId)
 		if err != nil {
-			ret.Results = append(ret.Results, DeleteResult{Fid: vid, Error: err.Error()})
+			ret.Results = append(ret.Results, DeleteResult{
+				Fid:    vid,
+				Status: http.StatusBadRequest,
+				Error:  err.Error()},
+			)
 			continue
 		}
 		if _, ok := vid_to_fileIds[vid]; !ok {
@@ -76,6 +83,7 @@ func DeleteFiles(master string, fileIds []string) (*DeleteFilesResult, error) {
 	}
 
 	var wg sync.WaitGroup
+
 	for server, fidList := range server_to_fileIds {
 		wg.Add(1)
 		go func(server string, fidList []string) {

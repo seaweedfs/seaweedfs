@@ -70,19 +70,11 @@ func (cm *ChunkManifest) GetData() ([]byte, error) {
 }
 
 func (cm *ChunkManifest) DeleteChunks(master string) error {
-	fileIds := make([]string, 0, len(cm.Chunks))
-	for _, ci := range cm.Chunks {
-		fileIds = append(fileIds, ci.Fid)
-	}
-	results, e := DeleteFiles(master, fileIds)
-	if e != nil {
-		return e
-	}
 	deleteError := 0
-	for _, ret := range results.Results {
-		if ret.Error != "" {
+	for _, ci := range cm.Chunks {
+		if e := DeleteFile(master, ci.Fid, ""); e != nil {
 			deleteError++
-			glog.V(0).Infoln("delete error:", ret.Error, ret.Fid)
+			glog.V(0).Infoln("delete error:", e, ci.Fid)
 		}
 	}
 	if deleteError > 0 {
