@@ -17,6 +17,7 @@ func (dnll *VolumeLocationList) String() string {
 }
 
 func (dnll *VolumeLocationList) Head() *DataNode {
+	//mark first node as master volume
 	return dnll.list[0]
 }
 

@@ -86,7 +86,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	}
 
 	debug("parsing upload file...")
-	fname, data, mimeType, isGzipped, lastModified, _, pe := storage.ParseUpload(r)
+	fname, data, mimeType, isGzipped, lastModified, _, _, pe := storage.ParseUpload(r)
 	if pe != nil {
 		writeJsonError(w, r, http.StatusBadRequest, pe)
 		return

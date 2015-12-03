@@ -9,7 +9,10 @@ import (
 	"net/url"
 	"strings"
 
+	"encoding/json"
+
 	"github.com/chrislusf/seaweedfs/go/security"
+	"github.com/syndtr/goleveldb/leveldb/errors"
 )
 
 var (
@@ -79,10 +82,21 @@ func Delete(url string, jwt security.EncodedJwt) error {
 		return e
 	}
 	defer resp.Body.Close()
-	if _, err := ioutil.ReadAll(resp.Body); err != nil {
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
 		return err
 	}
-	return nil
+	switch resp.StatusCode {
+	case http.StatusNotFound, http.StatusAccepted, http.StatusOK:
+		return nil
+	}
+	m := make(map[string]interface{})
+	if e := json.Unmarshal(body, m); e == nil {
+		if s, ok := m["error"].(string); ok {
+			return errors.New(s)
+		}
+	}
+	return errors.New(string(body))
 }
 
 func GetBufferStream(url string, values url.Values, allocatedBytes []byte, eachBuffer func([]byte)) error {
