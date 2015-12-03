@@ -87,7 +87,7 @@ func (cm *ChunkManifest) DeleteChunks(master string) error {
 //	return nil
 //}
 
-func httpRangeDownload(fileUrl string, w io.Writer, offset int64) (written int64, e error) {
+func readChunkNeedle(fileUrl string, w io.Writer, offset int64) (written int64, e error) {
 	req, err := http.NewRequest("GET", fileUrl, nil)
 	if err != nil {
 		return written, err
@@ -112,7 +112,7 @@ func httpRangeDownload(fileUrl string, w io.Writer, offset int64) (written int64
 	case http.StatusPartialContent:
 		break
 	default:
-		return written, fmt.Errorf("Read Needle http error: [%d] %s", resp.StatusCode, fileUrl)
+		return written, fmt.Errorf("Read chunk needle error: [%d] %s", resp.StatusCode, fileUrl)
 
 	}
 	return io.Copy(w, resp.Body)
@@ -158,7 +158,7 @@ func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
 		if lookupError != nil {
 			return n, lookupError
 		}
-		if wn, e := httpRangeDownload(fileUrl, w, chunkStartOffset); e != nil {
+		if wn, e := readChunkNeedle(fileUrl, w, chunkStartOffset); e != nil {
 			return n, e
 		} else {
 			n += wn

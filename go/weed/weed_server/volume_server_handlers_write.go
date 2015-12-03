@@ -75,6 +75,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 			writeJsonError(w, r, http.StatusInternalServerError, errors.New("Load chunks manifest error: "+e.Error()))
 			return
 		}
+		// make sure all chunks had deleted before delete manifest
 		if e := chunkManifest.DeleteChunks(vs.GetMasterNode()); e != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, errors.New("Delete chunks error: "+e.Error()))
 			return
