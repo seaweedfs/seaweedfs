@@ -51,7 +51,7 @@ func ScanDirtyData(indexFileContent []byte) (dirtys DirtyDatas) {
 				if int64(nv.Size)-NeedleHeaderSize > 0 {
 					dirtys = append(dirtys, DirtyData{
 						Offset: int64(nv.Offset)*8 + NeedleHeaderSize,
-						Size:   nv.Size - NeedleHeaderSize,
+						Size:   nv.Size,
 					})
 				}
 			}
@@ -193,7 +193,7 @@ func (v *Volume) GetVolumeCleanReader() (cr *CleanReader, err error) {
 	} else {
 		dirtys = ScanDirtyData(indexData)
 	}
-	dataFile, e := os.Open(v.FileName())
+	dataFile, e := os.Open(v.FileName()+".dat")
 
 	if e != nil {
 		return nil, e

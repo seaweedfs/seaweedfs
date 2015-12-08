@@ -10,23 +10,24 @@ import (
 )
 
 func (vs *VolumeServer) getVolumeCleanDataHandler(w http.ResponseWriter, r *http.Request) {
-	v, err := vs.getVolume("volume", r)
+	v, e := vs.getVolume("volume", r)
 	if v == nil {
-		http.Error(w, fmt.Sprintf("Not Found volume: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Not Found volume: %v", e), http.StatusBadRequest)
 		return
 	}
 	cr, e := v.GetVolumeCleanReader()
 	if e != nil {
-		http.Error(w, fmt.Sprintf("Get volume clean reader: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Get volume clean reader: %v", e), http.StatusInternalServerError)
 		return
 	}
 	totalSize, e := cr.Size()
 	if e != nil {
-		http.Error(w, fmt.Sprintf("Get volume size: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Get volume size: %v", e), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Content-Encoding", "lz4")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`filename="%d.dat.lz4"`, v.Id))
 	lz4w := lz4.NewWriter(w)
 	defer lz4w.Close()
 	rangeReq := r.Header.Get("Range")
@@ -37,9 +38,9 @@ func (vs *VolumeServer) getVolumeCleanDataHandler(w http.ResponseWriter, r *http
 		}
 		return
 	}
-	ranges, err := parseRange(rangeReq, totalSize)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusRequestedRangeNotSatisfiable)
+	ranges, e := parseRange(rangeReq, totalSize)
+	if e != nil {
+		http.Error(w, e.Error(), http.StatusRequestedRangeNotSatisfiable)
 		return
 	}
 	if len(ranges) != 1 {
@@ -48,7 +49,7 @@ func (vs *VolumeServer) getVolumeCleanDataHandler(w http.ResponseWriter, r *http
 	}
 	ra := ranges[0]
 	if _, e := cr.Seek(ra.start, 0); e != nil {
-		http.Error(w, fmt.Sprintf("Seek: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Seek: %v", e), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Length", strconv.FormatInt(ra.length, 10))
