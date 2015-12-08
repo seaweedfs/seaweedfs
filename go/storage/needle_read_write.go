@@ -248,6 +248,9 @@ func (n *Needle) ReadNeedleBody(r *os.File, version Version, offset int64, bodyL
 			return
 		}
 		n.readNeedleDataVersion2(bytes[0:n.Size])
+		if n.DataSize == 0 {
+			return
+		}
 		n.Checksum = NewCRC(n.Data)
 		checksum := util.BytesToUint32(bytes[n.Size : n.Size+NeedleChecksumSize])
 		if n.Checksum.Value() != checksum {
