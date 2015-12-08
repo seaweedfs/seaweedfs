@@ -123,14 +123,14 @@ func (cdr *CleanReader) WriteTo(w io.Writer) (written int64, err error) {
 			if nextDirty != nil {
 				sz = nextDirty.Offset - off
 			}
-			if sz > 0 {
-				if n, e = io.CopyN(w, cdr.DataFile, sz); e != nil {
-					return
-				}
-			} else {
-				if n, e = io.Copy(w, cdr.DataFile); e != nil {
-					return
-				}
+			if sz <= 0 {
+				// copy until eof
+				n, e = io.Copy(w, cdr.DataFile);
+				written += n
+				return
+			}
+			if n, e = io.CopyN(w, cdr.DataFile, sz); e != nil {
+				return
 			}
 			off += n
 			written += n
