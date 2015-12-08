@@ -73,6 +73,14 @@ func (cr *CleanReader) Seek(offset int64, whence int) (int64, error) {
 	return cr.DataFile.Seek(offset, whence)
 }
 
+func (cr *CleanReader) Size() (int64, error) {
+	fi, e := cr.DataFile.Stat()
+	if e != nil {
+		return 0, e
+	}
+	return fi.Size(), nil
+}
+
 func (cdr *CleanReader) WriteTo(w io.Writer) (written int64, err error) {
 	off, e := cdr.DataFile.Seek(0, 1)
 	if e != nil {
@@ -84,9 +92,6 @@ func (cdr *CleanReader) WriteTo(w io.Writer) (written int64, err error) {
 	var nextDirty *DirtyData
 	if dirtyIndex < len(cdr.Dirtys) {
 		nextDirty = &cdr.Dirtys[dirtyIndex]
-		if nextDirty.Offset+int64(nextDirty.Size) < off {
-			nextDirty = nil
-		}
 	}
 	for {
 		if nextDirty != nil && off >= nextDirty.Offset && off < nextDirty.Offset+int64(nextDirty.Size) {
@@ -189,6 +194,7 @@ func (v *Volume) GetVolumeCleanReader() (cr *CleanReader, err error) {
 		dirtys = ScanDirtyData(indexData)
 	}
 	dataFile, e := os.Open(v.FileName())
+
 	if e != nil {
 		return nil, e
 	}
