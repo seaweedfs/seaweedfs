@@ -59,6 +59,7 @@ func (v *Volume) maybeWriteSuperBlock() error {
 	}
 	return e
 }
+
 func (v *Volume) readSuperBlock() (err error) {
 	if _, err = v.dataFile.Seek(0, 0); err != nil {
 		return fmt.Errorf("cannot seek to the beginning of %s: %v", v.dataFile.Name(), err)
@@ -70,6 +71,16 @@ func (v *Volume) readSuperBlock() (err error) {
 	v.SuperBlock, err = ParseSuperBlock(header)
 	return err
 }
+
+func (v *Volume) writeSuperBlock() (err error) {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	if _, e := v.dataFile.WriteAt(v.SuperBlock.Bytes(), 0); e != nil {
+		return fmt.Errorf("cannot write volume %d super block: %v", v.Id, e)
+	}
+	return nil
+}
+
 func ParseSuperBlock(header []byte) (superBlock SuperBlock, err error) {
 	superBlock.version = Version(header[0])
 	if superBlock.ReplicaPlacement, err = NewReplicaPlacementFromByte(header[1]); err != nil {

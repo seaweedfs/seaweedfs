@@ -426,3 +426,12 @@ func (v *Volume) exiredLongEnough(maxDelayMinutes uint32) bool {
 	}
 	return false
 }
+
+
+func (v *Volume) SetReplica(replica *ReplicaPlacement) error{
+	if v.ReplicaPlacement.String() == replica.String(){
+		return nil
+	}
+	v.ReplicaPlacement = replica
+	return v.writeSuperBlock()
+}

@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/storage"
 	"github.com/pierrec/lz4"
 )
 
@@ -63,4 +64,43 @@ func (vs *VolumeServer) getVolumeCleanDataHandler(w http.ResponseWriter, r *http
 		glog.V(2).Infoln("response write error:", e)
 	}
 	lz4w.Close()
+}
+
+type VolumeOptError struct {
+	Volume string `json:"volume"`
+	Err    string `json:"err"`
+}
+
+func (vs *VolumeServer) setVolumeReplicaHandler(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	replica, e := storage.NewReplicaPlacementFromString(r.FormValue("replica"))
+	if e != nil {
+		writeJsonError(w, r, http.StatusBadRequest, e)
+		return
+	}
+	errs := []VolumeOptError{}
+	for _, volume := range r.Form["volume"] {
+		if vid, e := storage.NewVolumeId(volume); e == nil {
+			if v := vs.store.GetVolume(vid); v != nil {
+				if e := v.SetReplica(replica); e != nil {
+					errs = append(errs, VolumeOptError{
+						Volume: volume,
+						Err:    e.Error(),
+					})
+				}
+			}
+		} else {
+			errs = append(errs, VolumeOptError{
+				Volume: volume,
+				Err:    e.Error(),
+			})
+		}
+	}
+	result := make(map[string]interface{})
+	if len(errs) > 0 {
+		result["error"] = "set volume replica error."
+		result["errors"] = errs
+	}
+
+	writeJson(w, r, http.StatusAccepted, result)
 }
