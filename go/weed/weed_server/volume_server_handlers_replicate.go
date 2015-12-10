@@ -9,6 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/storage"
 	"github.com/pierrec/lz4"
+	"strings"
 )
 
 func (vs *VolumeServer) getVolumeCleanDataHandler(w http.ResponseWriter, r *http.Request) {
@@ -79,23 +80,43 @@ func (vs *VolumeServer) setVolumeReplicaHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	errs := []VolumeOptError{}
-	for _, volume := range r.Form["volume"] {
-		if vid, e := storage.NewVolumeId(volume); e == nil {
-			if v := vs.store.GetVolume(vid); v != nil {
+	all, _ := strconv.ParseBool(r.FormValue("all"))
+	if all {
+		vs.store.WalkVolume(func(v *storage.Volume) (e error) {
+			if e := v.SetReplica(replica); e != nil {
+				errs = append(errs, VolumeOptError{
+					Volume: v.Id.String(),
+					Err:    e.Error(),
+				})
+			}
+			return nil
+		})
+	} else {
+		volumesSet := make(map[string]bool)
+		for _, volume := range r.Form["volume"] {
+			volumesSet[strings.TrimSpace(volume)] = true
+		}
+		collectionsSet := make(map[string]bool)
+		for _, c := range r.Form["collection"] {
+			collectionsSet[strings.TrimSpace(c)] = true
+		}
+		if len(collectionsSet) > 0 || len(volumesSet) > 0 {
+			vs.store.WalkVolume(func(v *storage.Volume) (e error) {
+				if !collectionsSet[v.Collection] && !volumesSet[v.Id.String()] {
+					return nil
+				}
 				if e := v.SetReplica(replica); e != nil {
 					errs = append(errs, VolumeOptError{
-						Volume: volume,
+						Volume: v.Id.String(),
 						Err:    e.Error(),
 					})
 				}
-			}
-		} else {
-			errs = append(errs, VolumeOptError{
-				Volume: volume,
-				Err:    e.Error(),
+				return nil
 			})
 		}
+
 	}
+
 	result := make(map[string]interface{})
 	if len(errs) > 0 {
 		result["error"] = "set volume replica error."

@@ -387,3 +387,16 @@ func (s *Store) HasVolume(i VolumeId) bool {
 	v := s.findVolume(i)
 	return v != nil
 }
+
+type VolumeWalker func(v *Volume) (e error)
+
+func (s *Store) WalkVolume(walker VolumeWalker) error{
+	for _, location := range s.Locations {
+		for _, v := range location.volumes {
+			if e := walker(v); e != nil {
+				return e
+			}
+		}
+	}
+	return nil
+}
