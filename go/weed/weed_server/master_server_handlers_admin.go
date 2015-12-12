@@ -10,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 
+	"net/url"
+	"sync"
+
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/operation"
 	"github.com/chrislusf/seaweedfs/go/storage"
@@ -183,4 +186,44 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 		DataNode:         r.FormValue("dataNode"),
 	}
 	return volumeGrowOption, nil
+}
+
+//only proxy to each volume server
+func (ms *MasterServer) setReplicaHandler(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	if _, e := storage.NewReplicaPlacementFromString(r.FormValue("replication")); e != nil {
+		writeJsonError(w, r, http.StatusBadRequest, e)
+		return
+	}
+	all, _ := strconv.ParseBool(r.FormValue("all"))
+	if !all && len(r.Form["volume"]) == 0 && len(r.Form["collection"]) == 0 {
+		writeJsonError(w, r, http.StatusBadRequest, errors.New("No available agrs found."))
+		return
+	}
+	result := make(map[string]interface{})
+	forms := r.Form
+	var wg sync.WaitGroup
+	ms.Topo.WalkDataNode(func(dn *topology.DataNode) (e error) {
+		wg.Add(1)
+		go func(server string, values url.Values) {
+			defer wg.Done()
+			jsonBlob, e := util.Post("http://"+server+"/admin/set_replica", values)
+			if e != nil {
+				result[server] = map[string]interface{}{
+					"error": e.Error() + " " + string(jsonBlob),
+				}
+			}
+			var ret interface{}
+			if e := json.Unmarshal(jsonBlob, ret); e == nil {
+				result[server] = ret
+			} else {
+				result[server] = map[string]interface{}{
+					"error": e.Error() + " " + string(jsonBlob),
+				}
+			}
+		}(dn.Url(), forms)
+		return nil
+	})
+	wg.Wait()
+	writeJson(w, r, http.StatusOK, result)
 }

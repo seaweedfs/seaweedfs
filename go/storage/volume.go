@@ -437,3 +437,17 @@ func (v *Volume) SetReplica(replica *ReplicaPlacement) error {
 	v.ReplicaPlacement = replica
 	return v.writeSuperBlock()
 }
+
+func (v *Volume) SetReadOnly(isReadOnly bool) error {
+	if isReadOnly == false {
+		if fi, e := v.dataFile.Stat(); e != nil {
+			return e
+		} else {
+			if fi.Mode()&0200 == 0 {
+				return errors.New(v.FileName() + ".dat is READONLY")
+			}
+		}
+	}
+	v.readOnly = isReadOnly
+	return nil
+}

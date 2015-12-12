@@ -187,3 +187,18 @@ func (t *Topology) GetOrCreateDataCenter(dcName string) *DataCenter {
 	t.LinkChildNode(dc)
 	return dc
 }
+
+type DataNodeWalker func(dn *DataNode) (e error)
+
+func (t *Topology) WalkDataNode(walker DataNodeWalker) error {
+	for _, c := range t.Children() {
+		for _, rack := range c.(*DataCenter).Children() {
+			for _, dn := range rack.(*Rack).Children() {
+				if e := walker(dn.(*DataNode)); e != nil {
+					return e
+				}
+			}
+		}
+	}
+	return nil
+}
