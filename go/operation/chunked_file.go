@@ -83,10 +83,6 @@ func (cm *ChunkManifest) DeleteChunks(master string) error {
 	return nil
 }
 
-//func (cm *ChunkManifest) StoredHelper() error {
-//	return nil
-//}
-
 func readChunkNeedle(fileUrl string, w io.Writer, offset int64) (written int64, e error) {
 	req, err := http.NewRequest("GET", fileUrl, nil)
 	if err != nil {
