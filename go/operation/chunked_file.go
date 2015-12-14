@@ -65,7 +65,7 @@ func LoadChunkManifest(buffer []byte, isGzipped bool) (*ChunkManifest, error) {
 	return &cm, nil
 }
 
-func (cm *ChunkManifest) GetData() ([]byte, error) {
+func (cm *ChunkManifest) Marshal() ([]byte, error) {
 	return json.Marshal(cm)
 }
 
