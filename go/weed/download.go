@@ -46,7 +46,7 @@ var cmdDownload = &Command{
 func runDownload(cmd *Command, args []string) bool {
 	for _, fid := range args {
 		if e := downloadToFile(*d.server, fid, *d.dir); e != nil {
-			fmt.Println("Download Error:", e)
+			fmt.Println("Download Error: ", fid, e)
 		}
 	}
 	return true
