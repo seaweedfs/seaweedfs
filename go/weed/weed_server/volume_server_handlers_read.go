@@ -143,7 +143,7 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string,
 
 	chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsGzipped())
 	if e != nil {
-		glog.V(0).Infof("Load chunked manifest (%s) error: %s", r.URL.Path, e.Error())
+		glog.V(0).Infof("load chunked manifest (%s) error: %s", r.URL.Path, e.Error())
 		return false
 	}
 	if fileName == "" && chunkManifest.Name != "" {
