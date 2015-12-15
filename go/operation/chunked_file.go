@@ -65,7 +65,7 @@ func LoadChunkManifest(buffer []byte, isGzipped bool) (*ChunkManifest, error) {
 	return &cm, nil
 }
 
-func (cm *ChunkManifest) GetData() ([]byte, error) {
+func (cm *ChunkManifest) Marshal() ([]byte, error) {
 	return json.Marshal(cm)
 }
 
@@ -74,7 +74,7 @@ func (cm *ChunkManifest) DeleteChunks(master string) error {
 	for _, ci := range cm.Chunks {
 		if e := DeleteFile(master, ci.Fid, ""); e != nil {
 			deleteError++
-			glog.V(0).Infoln("delete error:", e, ci.Fid)
+			glog.V(0).Infof("Delete %s error: %s, master: %s", ci.Fid, e.Error(), master)
 		}
 	}
 	if deleteError > 0 {
@@ -82,10 +82,6 @@ func (cm *ChunkManifest) DeleteChunks(master string) error {
 	}
 	return nil
 }
-
-//func (cm *ChunkManifest) StoredHelper() error {
-//	return nil
-//}
 
 func readChunkNeedle(fileUrl string, w io.Writer, offset int64) (written int64, e error) {
 	req, err := http.NewRequest("GET", fileUrl, nil)

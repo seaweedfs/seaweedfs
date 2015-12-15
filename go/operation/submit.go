@@ -180,7 +180,7 @@ func upload_one_chunk(filename string, reader io.Reader, master,
 }
 
 func upload_chunked_file_manifest(fileUrl string, manifest *ChunkManifest, jwt security.EncodedJwt) error {
-	buf, e := manifest.GetData()
+	buf, e := manifest.Marshal()
 	if e != nil {
 		return e
 	}

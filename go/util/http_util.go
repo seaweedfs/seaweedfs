@@ -136,12 +136,11 @@ func GetUrlStream(url string, values url.Values, readFn func(io.Reader) error) e
 	return readFn(r.Body)
 }
 
-func DownloadUrl(fileUrl string) (filename string, content []byte, e error) {
+func DownloadUrl(fileUrl string) (filename string, rc io.ReadCloser, e error) {
 	response, err := client.Get(fileUrl)
 	if err != nil {
 		return "", nil, err
 	}
-	defer response.Body.Close()
 	contentDisposition := response.Header["Content-Disposition"]
 	if len(contentDisposition) > 0 {
 		if strings.HasPrefix(contentDisposition[0], "filename=") {
@@ -149,7 +148,7 @@ func DownloadUrl(fileUrl string) (filename string, content []byte, e error) {
 			filename = strings.Trim(filename, "\"")
 		}
 	}
-	content, e = ioutil.ReadAll(response.Body)
+	rc = response.Body
 	return
 }
 

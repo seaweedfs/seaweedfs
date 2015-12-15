@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path"
+
+	"io/ioutil"
+
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/go/operation"
@@ -43,50 +45,76 @@ var cmdDownload = &Command{
 
 func runDownload(cmd *Command, args []string) bool {
 	for _, fid := range args {
-		filename, content, e := fetchFileId(*d.server, fid)
-		if e != nil {
-			fmt.Println("Fetch Error:", e)
-			continue
-		}
-		if filename == "" {
-			filename = fid
-		}
-		if strings.HasSuffix(filename, "-list") {
-			filename = filename[0 : len(filename)-len("-list")]
-			fids := strings.Split(string(content), "\n")
-			f, err := os.OpenFile(path.Join(*d.dir, filename), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.ModePerm)
-			if err != nil {
-				fmt.Println("File Creation Error:", e)
-				continue
-			}
-			defer f.Close()
-			for _, partId := range fids {
-				var n int
-				_, part, err := fetchFileId(*d.server, partId)
-				if err == nil {
-					n, err = f.Write(part)
-				}
-				if err == nil && n < len(part) {
-					err = io.ErrShortWrite
-				}
-				if err != nil {
-					fmt.Println("File Write Error:", err)
-					break
-				}
-			}
-		} else {
-			ioutil.WriteFile(path.Join(*d.dir, filename), content, os.ModePerm)
+		if e := downloadToFile(*d.server, fid, *d.dir); e != nil {
+			fmt.Println("Download Error: ", fid, e)
 		}
 	}
 	return true
 }
 
-func fetchFileId(server string, fileId string) (filename string, content []byte, e error) {
+func downloadToFile(server, fileId, saveDir string) error {
+	fileUrl, lookupError := operation.LookupFileId(server, fileId)
+	if lookupError != nil {
+		return lookupError
+	}
+	filename, rc, err := util.DownloadUrl(fileUrl)
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	if filename == "" {
+		filename = fileId
+	}
+	isFileList := false
+	if strings.HasSuffix(filename, "-list") {
+		// old command compatible
+		isFileList = true
+		filename = filename[0 : len(filename)-len("-list")]
+	}
+	f, err := os.OpenFile(path.Join(saveDir, filename), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.ModePerm)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if isFileList {
+		content, err := ioutil.ReadAll(rc)
+		if err != nil {
+			return err
+		}
+		fids := strings.Split(string(content), "\n")
+		for _, partId := range fids {
+			var n int
+			_, part, err := fetchContent(*d.server, partId)
+			if err == nil {
+				n, err = f.Write(part)
+			}
+			if err == nil && n < len(part) {
+				err = io.ErrShortWrite
+			}
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		if _, err = io.Copy(f, rc); err != nil {
+			return err
+		}
+
+	}
+	return nil
+}
+
+func fetchContent(server string, fileId string) (filename string, content []byte, e error) {
 	fileUrl, lookupError := operation.LookupFileId(server, fileId)
 	if lookupError != nil {
 		return "", nil, lookupError
 	}
-	filename, content, e = util.DownloadUrl(fileUrl)
+	var rc io.ReadCloser
+	if filename, rc, e = util.DownloadUrl(fileUrl); e != nil {
+		return "", nil, e
+	}
+	content, e = ioutil.ReadAll(rc)
+	rc.Close()
 	return
 }
 
