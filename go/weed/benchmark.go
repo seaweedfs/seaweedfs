@@ -254,7 +254,7 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 			println("!!!! volume id ", vid, " location not found!!!!!")
 			continue
 		}
-		server := ret.Locations[rand.Intn(len(ret.Locations))].Url
+		server := ret.Locations.PickForRead().Url
 		url := "http://" + server + "/" + fid
 		if bytesRead, err := util.Get(url); err == nil {
 			s.completed++

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"io/ioutil"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -91,7 +90,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	urlLocation := lookup.Locations[rand.Intn(len(lookup.Locations))].Url
+	urlLocation := lookup.Locations.PickForRead().Url
 	urlString := "http://" + urlLocation + "/" + fileId
 	if fs.redirectOnRead {
 		http.Redirect(w, r, urlString, http.StatusFound)

@@ -150,7 +150,7 @@ func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
 	for ; chunkIndex < cm.Chunks.Len(); chunkIndex++ {
 		ci := cm.Chunks[chunkIndex]
 		// if we need read date from local volume server first?
-		fileUrl, lookupError := LookupFileId(cf.Master, ci.Fid)
+		fileUrl, lookupError := LookupFileId(cf.Master, ci.Fid, true)
 		if lookupError != nil {
 			return n, lookupError
 		}

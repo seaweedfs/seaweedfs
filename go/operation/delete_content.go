@@ -21,7 +21,7 @@ type DeleteResult struct {
 }
 
 func DeleteFile(master string, fileId string, jwt security.EncodedJwt) error {
-	fileUrl, err := LookupFileId(master, fileId)
+	fileUrl, err := LookupFileId(master, fileId, false)
 	if err != nil {
 		return err
 	}

@@ -9,14 +9,14 @@ import (
 )
 
 type VidInfo struct {
-	Locations       []Location
+	Locations       Locations
 	NextRefreshTime time.Time
 }
 type VidCache struct {
 	cache []VidInfo
 }
 
-func (vc *VidCache) Get(vid string) ([]Location, error) {
+func (vc *VidCache) Get(vid string) (Locations, error) {
 	id, err := strconv.Atoi(vid)
 	if err != nil {
 		glog.V(1).Infof("Unknown volume id %s", vid)
@@ -33,7 +33,7 @@ func (vc *VidCache) Get(vid string) ([]Location, error) {
 	}
 	return nil, errors.New("Not Found")
 }
-func (vc *VidCache) Set(vid string, locations []Location, duration time.Duration) {
+func (vc *VidCache) Set(vid string, locations Locations, duration time.Duration) {
 	id, err := strconv.Atoi(vid)
 	if err != nil {
 		glog.V(1).Infof("Unknown volume id %s", vid)

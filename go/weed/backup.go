@@ -57,7 +57,7 @@ func runBackup(cmd *Command, args []string) bool {
 		fmt.Printf("Error looking up volume %d: %v\n", vid, err)
 		return true
 	}
-	volumeServer := lookup.Locations[0].Url
+	volumeServer := lookup.Locations.Head().Url
 
 	stats, err := operation.GetVolumeSyncStatus(volumeServer, vid.String())
 	if err != nil {
