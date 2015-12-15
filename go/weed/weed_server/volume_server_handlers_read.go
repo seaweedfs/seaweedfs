@@ -1,17 +1,15 @@
 package weed_server
 
 import (
+	"bytes"
 	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
-
-	"path"
-
-	"bytes"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/images"
@@ -135,15 +133,10 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string,
 	if !n.IsChunkedManifest() {
 		return false
 	}
-	raw, _ := strconv.ParseBool(r.FormValue("raw"))
-	if raw {
-		return false
-	}
-	processed = true
 
 	chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsGzipped())
 	if e != nil {
-		glog.V(0).Infof("load chunked manifest (%s) error: %s", r.URL.Path, e.Error())
+		glog.V(0).Infof("load chunked manifest (%s) error: %v", r.URL.Path, e)
 		return false
 	}
 	if fileName == "" && chunkManifest.Name != "" {
@@ -167,7 +160,7 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string,
 	if e := writeResponseContent(fileName, mType, chunkedFileReader, w, r); e != nil {
 		glog.V(2).Infoln("response write error:", e)
 	}
-	return
+	return true
 }
 
 func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.ResponseWriter, r *http.Request) error {

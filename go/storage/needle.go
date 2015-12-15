@@ -14,8 +14,8 @@ import (
 
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/images"
-	"github.com/chrislusf/seaweedfs/go/util"
 	"github.com/chrislusf/seaweedfs/go/operation"
+	"github.com/chrislusf/seaweedfs/go/util"
 )
 
 const (
@@ -53,7 +53,9 @@ func (n *Needle) String() (str string) {
 	return
 }
 
-func ParseUpload(r *http.Request) (fileName string, data []byte, mimeType string, isGzipped bool, modifiedTime uint64, ttl *TTL, isChunkedFile bool, e error) {
+func ParseUpload(r *http.Request) (
+	fileName string, data []byte, mimeType string, isGzipped bool,
+	modifiedTime uint64, ttl *TTL, isChunkedFile bool, e error) {
 	form, fe := r.MultipartReader()
 	if fe != nil {
 		glog.V(0).Infoln("MultipartReader [ERROR]", fe)
@@ -163,7 +165,7 @@ func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
 	}
 
 	if isChunkedFile {
-		n.SetChunkManifest()
+		n.SetIsChunkManifest()
 	}
 
 	if fixJpgOrientation {
