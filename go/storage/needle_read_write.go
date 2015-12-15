@@ -16,7 +16,7 @@ const (
 	FlagHasMime             = 0x04
 	FlagHasLastModifiedDate = 0x08
 	FlagHasTtl              = 0x10
-	FlagChunkManifest       = 0x80
+	FlagIsChunkManifest     = 0x80
 	LastModifiedBytesLength = 5
 	TtlBytesLength          = 2
 )
@@ -294,9 +294,9 @@ func (n *Needle) SetHasTtl() {
 }
 
 func (n *Needle) IsChunkedManifest() bool {
-	return n.Flags&FlagChunkManifest > 0
+	return n.Flags&FlagIsChunkManifest > 0
 }
 
-func (n *Needle) SetChunkManifest() {
-	n.Flags = n.Flags | FlagChunkManifest
+func (n *Needle) SetIsChunkManifest() {
+	n.Flags = n.Flags | FlagIsChunkManifest
 }

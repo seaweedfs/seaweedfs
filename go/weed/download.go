@@ -3,11 +3,9 @@ package main
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"path"
-
-	"io/ioutil"
-
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/go/operation"

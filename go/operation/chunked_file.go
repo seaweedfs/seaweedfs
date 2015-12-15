@@ -74,7 +74,7 @@ func (cm *ChunkManifest) DeleteChunks(master string) error {
 	for _, ci := range cm.Chunks {
 		if e := DeleteFile(master, ci.Fid, ""); e != nil {
 			deleteError++
-			glog.V(0).Infof("Delete %s error: %s, master: %s", ci.Fid, e.Error(), master)
+			glog.V(0).Infof("Delete %s error: %v, master: %s", ci.Fid, e, master)
 		}
 	}
 	if deleteError > 0 {
