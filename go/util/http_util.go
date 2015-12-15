@@ -9,7 +9,10 @@ import (
 	"net/url"
 	"strings"
 
+	"encoding/json"
+
 	"github.com/chrislusf/seaweedfs/go/security"
+	"github.com/syndtr/goleveldb/leveldb/errors"
 )
 
 var (
@@ -79,10 +82,21 @@ func Delete(url string, jwt security.EncodedJwt) error {
 		return e
 	}
 	defer resp.Body.Close()
-	if _, err := ioutil.ReadAll(resp.Body); err != nil {
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
 		return err
 	}
-	return nil
+	switch resp.StatusCode {
+	case http.StatusNotFound, http.StatusAccepted, http.StatusOK:
+		return nil
+	}
+	m := make(map[string]interface{})
+	if e := json.Unmarshal(body, m); e == nil {
+		if s, ok := m["error"].(string); ok {
+			return errors.New(s)
+		}
+	}
+	return errors.New(string(body))
 }
 
 func GetBufferStream(url string, values url.Values, allocatedBytes []byte, eachBuffer func([]byte)) error {
@@ -122,12 +136,11 @@ func GetUrlStream(url string, values url.Values, readFn func(io.Reader) error) e
 	return readFn(r.Body)
 }
 
-func DownloadUrl(fileUrl string) (filename string, content []byte, e error) {
+func DownloadUrl(fileUrl string) (filename string, rc io.ReadCloser, e error) {
 	response, err := client.Get(fileUrl)
 	if err != nil {
 		return "", nil, err
 	}
-	defer response.Body.Close()
 	contentDisposition := response.Header["Content-Disposition"]
 	if len(contentDisposition) > 0 {
 		if strings.HasPrefix(contentDisposition[0], "filename=") {
@@ -135,7 +148,7 @@ func DownloadUrl(fileUrl string) (filename string, content []byte, e error) {
 			filename = strings.Trim(filename, "\"")
 		}
 	}
-	content, e = ioutil.ReadAll(response.Body)
+	rc = response.Body
 	return
 }
 

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"net/url"
+
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/security"
 )
@@ -114,25 +116,44 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 	if closer, ok := fi.Reader.(io.Closer); ok {
 		defer closer.Close()
 	}
+	baseName := path.Base(fi.FileName)
 	if maxMB > 0 && fi.FileSize > int64(maxMB*1024*1024) {
 		chunkSize := int64(maxMB * 1024 * 1024)
 		chunks := fi.FileSize/chunkSize + 1
-		var fids []string
+		cm := ChunkManifest{
+			Name:   baseName,
+			Size:   fi.FileSize,
+			Mime:   fi.MimeType,
+			Chunks: make([]*ChunkInfo, 0, chunks),
+		}
+
 		for i := int64(0); i < chunks; i++ {
 			id, count, e := upload_one_chunk(
-				fi.FileName+"-"+strconv.FormatInt(i+1, 10),
+				baseName+"-"+strconv.FormatInt(i+1, 10),
 				io.LimitReader(fi.Reader, chunkSize),
 				master, fi.Replication, fi.Collection, fi.Ttl,
 				jwt)
 			if e != nil {
+				// delete all uploaded chunks
+				cm.DeleteChunks(master)
 				return 0, e
 			}
-			fids = append(fids, id)
+			cm.Chunks = append(cm.Chunks,
+				&ChunkInfo{
+					Offset: i * chunkSize,
+					Size:   int64(count),
+					Fid:    id,
+				},
+			)
 			retSize += count
 		}
-		err = upload_file_id_list(fileUrl, fi.FileName+"-list", fids, jwt)
+		err = upload_chunked_file_manifest(fileUrl, &cm, jwt)
+		if err != nil {
+			// delete all uploaded chunks
+			cm.DeleteChunks(master)
+		}
 	} else {
-		ret, e := Upload(fileUrl, fi.FileName, fi.Reader, fi.IsGzipped, fi.MimeType, jwt)
+		ret, e := Upload(fileUrl, baseName, fi.Reader, fi.IsGzipped, fi.MimeType, jwt)
 		if e != nil {
 			return 0, e
 		}
@@ -158,10 +179,17 @@ func upload_one_chunk(filename string, reader io.Reader, master,
 	return fid, uploadResult.Size, nil
 }
 
-func upload_file_id_list(fileUrl, filename string, fids []string, jwt security.EncodedJwt) error {
-	var buf bytes.Buffer
-	buf.WriteString(strings.Join(fids, "\n"))
-	glog.V(4).Info("Uploading final list ", filename, " to ", fileUrl, "...")
-	_, e := Upload(fileUrl, filename, &buf, false, "text/plain", jwt)
+func upload_chunked_file_manifest(fileUrl string, manifest *ChunkManifest, jwt security.EncodedJwt) error {
+	buf, e := manifest.Marshal()
+	if e != nil {
+		return e
+	}
+	bufReader := bytes.NewReader(buf)
+	glog.V(4).Info("Uploading chunks manifest ", manifest.Name, " to ", fileUrl, "...")
+	u, _ := url.Parse(fileUrl)
+	q := u.Query()
+	q.Set("cm", "1")
+	u.RawQuery = q.Encode()
+	_, e = Upload(u.String(), manifest.Name, bufReader, false, "application/json", jwt)
 	return e
 }
