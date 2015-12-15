@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
@@ -72,12 +73,12 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	if n.IsChunkedManifest() {
 		chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsGzipped())
 		if e != nil {
-			writeJsonError(w, r, http.StatusInternalServerError, errors.New("Load chunks manifest error: "+e.Error()))
+			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Load chunks manifest error: %v", e))
 			return
 		}
 		// make sure all chunks had deleted before delete manifest
 		if e := chunkManifest.DeleteChunks(vs.GetMasterNode()); e != nil {
-			writeJsonError(w, r, http.StatusInternalServerError, errors.New("Delete chunks error: "+e.Error()))
+			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Delete chunks error: %v", e))
 			return
 		}
 		count = chunkManifest.Size
@@ -123,11 +124,10 @@ func (vs *VolumeServer) batchDeleteHandler(w http.ResponseWriter, r *http.Reques
 		}
 
 		if n.IsChunkedManifest() {
-			//Don't allow delete manifest in batch delete mode
 			ret = append(ret, operation.DeleteResult{
 				Fid:    fid,
 				Status: http.StatusNotAcceptable,
-				Error:  "ChunkManifest: not allow.",
+				Error:  "ChunkManifest: not allowed in batch delete mode.",
 			})
 			continue
 		}

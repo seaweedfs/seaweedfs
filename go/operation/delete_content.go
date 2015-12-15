@@ -3,6 +3,7 @@ package operation
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"sync"
@@ -23,9 +24,13 @@ type DeleteResult struct {
 func DeleteFile(master string, fileId string, jwt security.EncodedJwt) error {
 	fileUrl, err := LookupFileId(master, fileId)
 	if err != nil {
-		return err
+		return fmt.Errorf("Failed to lookup %s:%v", fileId, err)
 	}
-	return util.Delete(fileUrl, jwt)
+	err = util.Delete(fileUrl, jwt)
+	if err != nil {
+		return fmt.Errorf("Failed to delete %s:%v", fileUrl, err)
+	}
+	return nil
 }
 
 func ParseFileId(fid string) (vid string, key_cookie string, err error) {

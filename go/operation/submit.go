@@ -4,12 +4,11 @@ import (
 	"bytes"
 	"io"
 	"mime"
+	"net/url"
 	"os"
 	"path"
 	"strconv"
 	"strings"
-
-	"net/url"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/security"
@@ -188,7 +187,7 @@ func upload_chunked_file_manifest(fileUrl string, manifest *ChunkManifest, jwt s
 	glog.V(4).Info("Uploading chunks manifest ", manifest.Name, " to ", fileUrl, "...")
 	u, _ := url.Parse(fileUrl)
 	q := u.Query()
-	q.Set("cm", "1")
+	q.Set("cm", "true")
 	u.RawQuery = q.Encode()
 	_, e = Upload(u.String(), manifest.Name, bufReader, false, "application/json", jwt)
 	return e

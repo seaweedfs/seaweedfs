@@ -2,6 +2,8 @@ package util
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -9,10 +11,7 @@ import (
 	"net/url"
 	"strings"
 
-	"encoding/json"
-
 	"github.com/chrislusf/seaweedfs/go/security"
-	"github.com/syndtr/goleveldb/leveldb/errors"
 )
 
 var (
