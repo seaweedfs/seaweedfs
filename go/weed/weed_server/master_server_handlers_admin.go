@@ -191,7 +191,8 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 //only proxy to each volume server
 func (ms *MasterServer) setReplicaHandler(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
-	if _, e := storage.NewReplicaPlacementFromString(r.FormValue("replication")); e != nil {
+	replicationValue := r.FormValue("replication")
+	if _, e := storage.NewReplicaPlacementFromString(replicationValue); e != nil {
 		writeJsonError(w, r, http.StatusBadRequest, e)
 		return
 	}
@@ -200,14 +201,27 @@ func (ms *MasterServer) setReplicaHandler(w http.ResponseWriter, r *http.Request
 		writeJsonError(w, r, http.StatusBadRequest, errors.New("No available agrs found."))
 		return
 	}
-	result := make(map[string]interface{})
-	forms := r.Form
+	result := ms.batchSetVolumeOption("replication", replicationValue, r.Form["volume"], r.Form["collection"])
+	writeJson(w, r, http.StatusOK, result)
+}
+
+func (ms *MasterServer) batchSetVolumeOption(settingKey, settingValue string, volumes, collections []string)(result map[string]interface{}){
+	forms := url.Values{}
+	forms.Set("key", settingKey)
+	forms.Set("value", settingValue)
+	if len(volumes) == 0 && len(collections) == 0 {
+		forms.Set("all", "true")
+	}else{
+		forms["volume"] = volumes
+		forms["collection"] = collections
+	}
+
 	var wg sync.WaitGroup
 	ms.Topo.WalkDataNode(func(dn *topology.DataNode) (e error) {
 		wg.Add(1)
 		go func(server string, values url.Values) {
 			defer wg.Done()
-			jsonBlob, e := util.Post("http://"+server+"/admin/set_replica", values)
+			jsonBlob, e := util.Post("http://"+server+"/admin/setting", values)
 			if e != nil {
 				result[server] = map[string]interface{}{
 					"error": e.Error() + " " + string(jsonBlob),
@@ -225,5 +239,6 @@ func (ms *MasterServer) setReplicaHandler(w http.ResponseWriter, r *http.Request
 		return nil
 	})
 	wg.Wait()
-	writeJson(w, r, http.StatusOK, result)
+	return
 }
+
