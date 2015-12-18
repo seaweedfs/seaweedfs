@@ -114,6 +114,10 @@ func toStoredByte(readableUnitByte byte) byte {
 	return 0
 }
 
+func (t *TTL) Equal(t1 *TTL) bool {
+	return t.count == t1.count && t.unit == t1.unit
+}
+
 func (t TTL) Minutes() uint32 {
 	switch t.unit {
 	case Empty:

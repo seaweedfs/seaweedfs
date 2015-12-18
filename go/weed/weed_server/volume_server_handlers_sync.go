@@ -94,9 +94,6 @@ func (vs *VolumeServer) getVolumeCleanDataHandler(w http.ResponseWriter, r *http
 		http.Error(w, fmt.Sprintf("Not Found volume: %v", e), http.StatusBadRequest)
 		return
 	}
-	//set read only when replicating
-	v.SetReadOnly(true)
-	defer v.SetReadOnly(false)
 	cr, e := v.GetVolumeCleanReader()
 	if e != nil {
 		http.Error(w, fmt.Sprintf("Get volume clean reader: %v", e), http.StatusInternalServerError)

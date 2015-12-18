@@ -51,3 +51,9 @@ func (rp *ReplicaPlacement) String() string {
 func (rp *ReplicaPlacement) GetCopyCount() int {
 	return rp.DiffDataCenterCount + rp.DiffRackCount + rp.SameRackCount + 1
 }
+
+func (rp *ReplicaPlacement) Equal(rp1 *ReplicaPlacement) bool {
+	return rp.SameRackCount == rp1.SameRackCount &&
+		rp.DiffRackCount == rp1.DiffRackCount &&
+		rp.DiffDataCenterCount == rp1.DiffDataCenterCount
+}

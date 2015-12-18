@@ -31,8 +31,9 @@ func (dn *DataNode) String() string {
 	return fmt.Sprintf("Node:%s, volumes:%v, Ip:%s, Port:%d, PublicUrl:%s, Dead:%v", dn.NodeImpl.String(), dn.volumes, dn.Ip, dn.Port, dn.PublicUrl, dn.Dead)
 }
 
-func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) {
-	if _, ok := dn.volumes[v.Id]; !ok {
+func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) (optionChanged bool) {
+	optionChanged = false
+	if v1, ok := dn.volumes[v.Id]; !ok {
 		dn.volumes[v.Id] = v
 		dn.UpAdjustVolumeCountDelta(1)
 		if !v.ReadOnly {
@@ -40,11 +41,13 @@ func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) {
 		}
 		dn.UpAdjustMaxVolumeId(v.Id)
 	} else {
+		optionChanged = !v1.Ttl.Equal(v.Ttl) || v1.Collection != v.Collection || !v1.ReplicaPlacement.Equal(v.ReplicaPlacement)
 		dn.volumes[v.Id] = v
 	}
+	return
 }
 
-func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (deletedVolumes []storage.VolumeInfo) {
+func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (needToDeleteVolumes []storage.VolumeInfo) {
 	actualVolumeMap := make(map[storage.VolumeId]storage.VolumeInfo)
 	for _, v := range actualVolumes {
 		actualVolumeMap[v.Id] = v
@@ -53,13 +56,15 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (deletedVo
 		if _, ok := actualVolumeMap[vid]; !ok {
 			glog.V(0).Infoln("Deleting volume id:", vid)
 			delete(dn.volumes, vid)
-			deletedVolumes = append(deletedVolumes, v)
+			needToDeleteVolumes = append(needToDeleteVolumes, v)
 			dn.UpAdjustVolumeCountDelta(-1)
 			dn.UpAdjustActiveVolumeCountDelta(-1)
 		}
 	} //TODO: adjust max volume id, if need to reclaim volume ids
 	for _, v := range actualVolumes {
-		dn.AddOrUpdateVolume(v)
+		if dn.AddOrUpdateVolume(v) {
+			needToDeleteVolumes = append(needToDeleteVolumes, v)
+		}
 	}
 	return
 }
