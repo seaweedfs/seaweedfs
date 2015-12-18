@@ -14,12 +14,12 @@ clean:
 deps:
 	go get $(GO_FLAGS) -d $(SOURCE_DIR)
 
-build: deps
+imports:
+	goimports -w $(SOURCE_DIR)
+
+build: deps imports
 	go build $(GO_FLAGS) -o $(BINARY) $(SOURCE_DIR)
 
 linux: deps
 	mkdir -p linux
 	GOOS=linux GOARCH=amd64 go build $(GO_FLAGS) -o linux/$(BINARY) $(SOURCE_DIR)
-
-imports:
-	goimports -w $(SOURCE_DIR)
