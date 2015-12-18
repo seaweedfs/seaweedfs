@@ -205,13 +205,13 @@ func (ms *MasterServer) setReplicaHandler(w http.ResponseWriter, r *http.Request
 	writeJson(w, r, http.StatusOK, result)
 }
 
-func (ms *MasterServer) batchSetVolumeOption(settingKey, settingValue string, volumes, collections []string)(result map[string]interface{}){
+func (ms *MasterServer) batchSetVolumeOption(settingKey, settingValue string, volumes, collections []string) (result map[string]interface{}) {
 	forms := url.Values{}
 	forms.Set("key", settingKey)
 	forms.Set("value", settingValue)
 	if len(volumes) == 0 && len(collections) == 0 {
 		forms.Set("all", "true")
-	}else{
+	} else {
 		forms["volume"] = volumes
 		forms["collection"] = collections
 	}
@@ -241,4 +241,3 @@ func (ms *MasterServer) batchSetVolumeOption(settingKey, settingValue string, vo
 	wg.Wait()
 	return
 }
-
