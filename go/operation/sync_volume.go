@@ -10,7 +10,6 @@ import (
 )
 
 type SyncVolumeResponse struct {
-	Replication     string `json:"Replication,omitempty"`
 	Ttl             string `json:"Ttl,omitempty"`
 	TailOffset      uint64 `json:"TailOffset,omitempty"`
 	CompactRevision uint16 `json:"CompactRevision,omitempty"`

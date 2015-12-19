@@ -195,7 +195,6 @@ func (vg *VolumeGrowth) grow(topo *Topology, vid storage.VolumeId, option *Volum
 				Id:               vid,
 				Size:             0,
 				Collection:       option.Collection,
-				ReplicaPlacement: option.ReplicaPlacement,
 				Ttl:              option.Ttl,
 				Version:          storage.CurrentVersion,
 			}

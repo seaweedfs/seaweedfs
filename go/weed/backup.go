@@ -69,13 +69,8 @@ func runBackup(cmd *Command, args []string) bool {
 		fmt.Printf("Error get volume %d ttl %s: %v\n", vid, stats.Ttl, err)
 		return true
 	}
-	replication, err := storage.NewReplicaPlacementFromString(stats.Replication)
-	if err != nil {
-		fmt.Printf("Error get volume %d replication %s : %v\n", vid, stats.Replication, err)
-		return true
-	}
 
-	v, err := storage.NewVolume(*s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl)
+	v, err := storage.NewVolume(*s.dir, *s.collection, vid, storage.NeedleMapInMemory, ttl)
 	if err != nil {
 		fmt.Printf("Error creating or reading from volume %d: %v\n", vid, err)
 		return true

@@ -26,7 +26,7 @@ func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (vs *VolumeServer) assignVolumeHandler(w http.ResponseWriter, r *http.Request) {
-	err := vs.store.AddVolume(r.FormValue("volume"), r.FormValue("collection"), vs.needleMapKind, r.FormValue("replication"), r.FormValue("ttl"))
+	err := vs.store.AddVolume(r.FormValue("volume"), r.FormValue("collection"), vs.needleMapKind, r.FormValue("ttl"))
 	if err == nil {
 		writeJsonQuiet(w, r, http.StatusAccepted, map[string]string{"error": ""})
 	} else {
@@ -75,21 +75,6 @@ func (vs *VolumeServer) setVolumeOptionHandler(w http.ResponseWriter, r *http.Re
 		}
 		setter = func(v *storage.Volume) error {
 			if e := v.SetReadOnly(isReadOnly); e != nil {
-				errs = append(errs, VolumeOptError{
-					Volume: v.Id.String(),
-					Err:    e.Error(),
-				})
-			}
-			return nil
-		}
-	} else if key == "replication" {
-		replica, e := storage.NewReplicaPlacementFromString(r.FormValue(value))
-		if e != nil {
-			writeJsonError(w, r, http.StatusBadRequest, e)
-			return
-		}
-		setter = func(v *storage.Volume) error {
-			if e := v.SetReplica(replica); e != nil {
 				errs = append(errs, VolumeOptError{
 					Volume: v.Id.String(),
 					Err:    e.Error(),

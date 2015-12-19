@@ -160,7 +160,7 @@ func (ms *MasterServer) deleteFromMasterServerHandler(w http.ResponseWriter, r *
 }
 
 func (ms *MasterServer) HasWritableVolume(option *topology.VolumeGrowOption) bool {
-	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl)
+	vl := ms.Topo.GetVolumeLayout(option.Collection, option.Ttl)
 	return vl.GetActiveVolumeCount(option) > 0
 }
 
@@ -186,23 +186,6 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 		DataNode:         r.FormValue("dataNode"),
 	}
 	return volumeGrowOption, nil
-}
-
-//only proxy to each volume server
-func (ms *MasterServer) setReplicaHandler(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	replicationValue := r.FormValue("replication")
-	if _, e := storage.NewReplicaPlacementFromString(replicationValue); e != nil {
-		writeJsonError(w, r, http.StatusBadRequest, e)
-		return
-	}
-	all, _ := strconv.ParseBool(r.FormValue("all"))
-	if !all && len(r.Form["volume"]) == 0 && len(r.Form["collection"]) == 0 {
-		writeJsonError(w, r, http.StatusBadRequest, errors.New("No available agrs found."))
-		return
-	}
-	result := ms.batchSetVolumeOption("replication", replicationValue, r.Form["volume"], r.Form["collection"])
-	writeJson(w, r, http.StatusOK, result)
 }
 
 func (ms *MasterServer) batchSetVolumeOption(settingKey, settingValue string, volumes, collections []string) (result map[string]interface{}) {

@@ -20,31 +20,25 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 	jwt := security.GetJwt(r)
 
 	ret, err := s.Write(volumeId, needle)
-	needToReplicate := !s.HasVolume(volumeId)
 	if err != nil {
 		errorStatus = "Failed to write to local disk (" + err.Error() + ")"
-	} else if ret > 0 {
-		needToReplicate = needToReplicate || s.GetVolume(volumeId).NeedToReplicate()
-	} else {
+	} else if ret <= 0 {
 		errorStatus = "Failed to write to local disk"
 	}
-	if !needToReplicate && ret > 0 {
-		needToReplicate = s.GetVolume(volumeId).NeedToReplicate()
-	}
-	if needToReplicate { //send to other replica locations
-		if r.FormValue("type") != "replicate" {
-			if !distributedOperation(masterNode, s, volumeId, func(location operation.Location) bool {
-				_, err := operation.Upload(
-					"http://"+location.Url+r.URL.Path+"?type=replicate&ts="+strconv.FormatUint(needle.LastModified, 10),
-					string(needle.Name), bytes.NewReader(needle.Data), needle.IsGzipped(), string(needle.Mime),
-					jwt)
-				return err == nil
-			}) {
-				ret = 0
-				errorStatus = "Failed to write to replicas for volume " + volumeId.String()
-			}
+	//send to other replica locations
+	if r.FormValue("type") != "replicate" {
+		if !distributedOperation(masterNode, s, volumeId, func(location operation.Location) bool {
+			_, err := operation.Upload(
+				"http://"+location.Url+r.URL.Path+"?type=replicate&ts="+strconv.FormatUint(needle.LastModified, 10),
+				string(needle.Name), bytes.NewReader(needle.Data), needle.IsGzipped(), string(needle.Mime),
+				jwt)
+			return err == nil
+		}) {
+			ret = 0
+			errorStatus = "Failed to write to replicas for volume " + volumeId.String()
 		}
 	}
+
 	size = ret
 	return
 }
@@ -61,18 +55,12 @@ func ReplicatedDelete(masterNode string, store *storage.Store,
 		glog.V(0).Infoln("delete error:", err)
 		return
 	}
-
-	needToReplicate := !store.HasVolume(volumeId)
-	if !needToReplicate && ret > 0 {
-		needToReplicate = store.GetVolume(volumeId).NeedToReplicate()
-	}
-	if needToReplicate { //send to other replica locations
-		if r.FormValue("type") != "replicate" {
-			if !distributedOperation(masterNode, store, volumeId, func(location operation.Location) bool {
-				return nil == util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", jwt)
-			}) {
-				ret = 0
-			}
+	//send to other replica locations
+	if r.FormValue("type") != "replicate" {
+		if !distributedOperation(masterNode, store, volumeId, func(location operation.Location) bool {
+			return nil == util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", jwt)
+		}) {
+			ret = 0
 		}
 	}
 	return

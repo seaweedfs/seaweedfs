@@ -106,11 +106,7 @@ func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts
 	}
 	return
 }
-func (s *Store) AddVolume(volumeListString string, collection string, needleMapKind NeedleMapType, replicaPlacement string, ttlString string) error {
-	rt, e := NewReplicaPlacementFromString(replicaPlacement)
-	if e != nil {
-		return e
-	}
+func (s *Store) AddVolume(volumeListString string, collection string, needleMapKind NeedleMapType, ttlString string) error {
 	ttl, e := ReadTTL(ttlString)
 	if e != nil {
 		return e
@@ -122,7 +118,7 @@ func (s *Store) AddVolume(volumeListString string, collection string, needleMapK
 			if err != nil {
 				return fmt.Errorf("Volume Id %s is not a valid unsigned integer!", id_string)
 			}
-			e = s.addVolume(VolumeId(id), collection, needleMapKind, rt, ttl)
+			e = s.addVolume(VolumeId(id), collection, needleMapKind, ttl)
 		} else {
 			pair := strings.Split(range_string, "-")
 			start, start_err := strconv.ParseUint(pair[0], 10, 64)
@@ -134,7 +130,7 @@ func (s *Store) AddVolume(volumeListString string, collection string, needleMapK
 				return fmt.Errorf("Volume End Id %s is not a valid unsigned integer!", pair[1])
 			}
 			for id := start; id <= end; id++ {
-				if err := s.addVolume(VolumeId(id), collection, needleMapKind, rt, ttl); err != nil {
+				if err := s.addVolume(VolumeId(id), collection, needleMapKind, ttl); err != nil {
 					e = err
 				}
 			}
@@ -183,14 +179,14 @@ func (s *Store) findFreeLocation() (ret *DiskLocation) {
 	}
 	return ret
 }
-func (s *Store) addVolume(vid VolumeId, collection string, needleMapKind NeedleMapType, replicaPlacement *ReplicaPlacement, ttl *TTL) error {
+func (s *Store) addVolume(vid VolumeId, collection string, needleMapKind NeedleMapType, ttl *TTL) error {
 	if s.findVolume(vid) != nil {
 		return fmt.Errorf("Volume Id %d already exists!", vid)
 	}
 	if location := s.findFreeLocation(); location != nil {
-		glog.V(0).Infof("In dir %s adds volume:%v collection:%s replicaPlacement:%v ttl:%v",
-			location.Directory, vid, collection, replicaPlacement, ttl)
-		if volume, err := NewVolume(location.Directory, collection, vid, needleMapKind, replicaPlacement, ttl); err == nil {
+		glog.V(0).Infof("In dir %s adds volume:%v collection:%s ttl:%v",
+			location.Directory, vid, collection,  ttl)
+		if volume, err := NewVolume(location.Directory, collection, vid, needleMapKind, ttl); err == nil {
 			location.volumes[vid] = volume
 			return nil
 		} else {
@@ -213,9 +209,9 @@ func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
 				}
 				if vid, err := NewVolumeId(base); err == nil {
 					if l.volumes[vid] == nil {
-						if v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil, nil); e == nil {
+						if v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil); e == nil {
 							l.volumes[vid] = v
-							glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s", l.Directory+"/"+name, v.ReplicaPlacement, v.Version(), v.Size(), v.Ttl.String())
+							glog.V(0).Infof("data file %s, v=%d size=%d ttl=%s", l.Directory+"/"+name, v.Version(), v.Size(), v.Ttl.String())
 						} else {
 							glog.V(0).Infof("new volume %s error %s", name, e)
 						}
@@ -234,7 +230,6 @@ func (s *Store) Status() []*VolumeInfo {
 				Id:               VolumeId(k),
 				Size:             v.ContentSize(),
 				Collection:       v.Collection,
-				ReplicaPlacement: v.ReplicaPlacement,
 				Version:          v.Version(),
 				FileCount:        v.nm.FileCount(),
 				DeleteCount:      v.nm.DeletedCount(),
@@ -281,7 +276,6 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 					DeleteCount:      proto.Uint64(uint64(v.nm.DeletedCount())),
 					DeletedByteCount: proto.Uint64(v.nm.DeletedSize()),
 					ReadOnly:         proto.Bool(v.readOnly),
-					ReplicaPlacement: proto.Uint32(uint32(v.ReplicaPlacement.Byte())),
 					Version:          proto.Uint32(uint32(v.Version())),
 					Ttl:              proto.Uint32(v.Ttl.ToUint32()),
 				}

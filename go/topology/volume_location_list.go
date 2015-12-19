@@ -2,6 +2,8 @@ package topology
 
 import (
 	"fmt"
+
+	"github.com/chrislusf/seaweedfs/go/storage"
 )
 
 type VolumeLocationList struct {
@@ -23,6 +25,11 @@ func (dnll *VolumeLocationList) Head() *DataNode {
 
 func (dnll *VolumeLocationList) Length() int {
 	return len(dnll.list)
+}
+
+func (dnll *VolumeLocationList) CalcReplicaPlacement() (rp *storage.ReplicaPlacement) {
+	//TODO CalcReplicaPlacement
+	return nil
 }
 
 func (dnll *VolumeLocationList) Set(loc *DataNode) {

@@ -10,7 +10,6 @@ import (
 type VolumeInfo struct {
 	Id               VolumeId
 	Size             uint64
-	ReplicaPlacement *ReplicaPlacement
 	Ttl              *TTL
 	Collection       string
 	Version          Version
@@ -31,18 +30,13 @@ func NewVolumeInfo(m *operation.VolumeInformationMessage) (vi VolumeInfo, err er
 		ReadOnly:         *m.ReadOnly,
 		Version:          Version(*m.Version),
 	}
-	rp, e := NewReplicaPlacementFromByte(byte(*m.ReplicaPlacement))
-	if e != nil {
-		return vi, e
-	}
-	vi.ReplicaPlacement = rp
 	vi.Ttl = LoadTTLFromUint32(*m.Ttl)
 	return vi, nil
 }
 
 func (vi VolumeInfo) String() string {
-	return fmt.Sprintf("Id:%d, Size:%d, ReplicaPlacement:%s, Collection:%s, Version:%v, FileCount:%d, DeleteCount:%d, DeletedByteCount:%d, ReadOnly:%v",
-		vi.Id, vi.Size, vi.ReplicaPlacement, vi.Collection, vi.Version, vi.FileCount, vi.DeleteCount, vi.DeletedByteCount, vi.ReadOnly)
+	return fmt.Sprintf("Id:%d, Size:%d, Collection:%s, Version:%v, FileCount:%d, DeleteCount:%d, DeletedByteCount:%d, ReadOnly:%v",
+		vi.Id, vi.Size, vi.Collection, vi.Version, vi.FileCount, vi.DeleteCount, vi.DeletedByteCount, vi.ReadOnly)
 }
 
 /*VolumesInfo sorting*/

@@ -80,6 +80,7 @@ func setup(topologyLayout string) *Topology {
 
 	//need to connect all nodes first before server adding volumes
 	topo, err := NewTopology("weedfs", "/etc/weedfs/weedfs.conf",
+		storage.NewReplicaPlacements("000"),
 		sequence.NewMemorySequencer(), 32*1024, 5)
 	if err != nil {
 		panic("error: " + err.Error())

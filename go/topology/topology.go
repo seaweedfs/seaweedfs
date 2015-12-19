@@ -28,12 +28,14 @@ type Topology struct {
 	chanRecoveredDataNodes chan *DataNode
 	chanFullVolumes        chan storage.VolumeInfo
 
+	ReplicaPlacements *storage.ReplicaPlacements
+
 	configuration *Configuration
 
 	RaftServer raft.Server
 }
 
-func NewTopology(id string, confFile string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int) (*Topology, error) {
+func NewTopology(id string, confFile string, rp *storage.ReplicaPlacements, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int) (*Topology, error) {
 	t := &Topology{}
 	t.id = NodeId(id)
 	t.nodeType = "Topology"
@@ -42,6 +44,7 @@ func NewTopology(id string, confFile string, seq sequence.Sequencer, volumeSizeL
 	t.collectionMap = util.NewConcurrentReadMap()
 	t.pulse = int64(pulse)
 	t.volumeSizeLimit = volumeSizeLimit
+	t.ReplicaPlacements = rp
 
 	t.Sequence = seq
 
@@ -111,12 +114,12 @@ func (t *Topology) NextVolumeId() storage.VolumeId {
 }
 
 func (t *Topology) HasWritableVolume(option *VolumeGrowOption) bool {
-	vl := t.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl)
+	vl := t.GetVolumeLayout(option.Collection, option.Ttl)
 	return vl.GetActiveVolumeCount(option) > 0
 }
 
 func (t *Topology) PickForWrite(count uint64, option *VolumeGrowOption) (string, uint64, *DataNode, error) {
-	vid, count, dataNodes, err := t.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl).PickForWrite(count, option)
+	vid, count, dataNodes, err := t.GetVolumeLayout(option.Collection, option.Ttl).PickForWrite(count, option)
 	if err != nil || dataNodes.Length() == 0 {
 		return "", 0, nil, errors.New("No writable volumes available!")
 	}
@@ -124,10 +127,10 @@ func (t *Topology) PickForWrite(count uint64, option *VolumeGrowOption) (string,
 	return storage.NewFileId(*vid, fileId, rand.Uint32()).String(), count, dataNodes.Head(), nil
 }
 
-func (t *Topology) GetVolumeLayout(collectionName string, rp *storage.ReplicaPlacement, ttl *storage.TTL) *VolumeLayout {
+func (t *Topology) GetVolumeLayout(collectionName string, ttl *storage.TTL) *VolumeLayout {
 	return t.collectionMap.Get(collectionName, func() interface{} {
-		return NewCollection(collectionName, t.volumeSizeLimit)
-	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl)
+		return NewCollection(collectionName, t.ReplicaPlacements.Get(collectionName), t.volumeSizeLimit)
+	}).(*Collection).GetOrCreateVolumeLayout(ttl)
 }
 
 func (t *Topology) GetCollection(collectionName string) (*Collection, bool) {
@@ -140,11 +143,11 @@ func (t *Topology) DeleteCollection(collectionName string) {
 }
 
 func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
-	t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl).RegisterVolume(&v, dn)
+	t.GetVolumeLayout(v.Collection, v.Ttl).RegisterVolume(&v, dn)
 }
 func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	glog.Infof("removing volume info:%+v", v)
-	t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl).UnRegisterVolume(&v, dn)
+	t.GetVolumeLayout(v.Collection, v.Ttl).UnRegisterVolume(&v, dn)
 }
 
 func (t *Topology) ProcessJoinMessage(joinMessage *operation.JoinMessage) {
@@ -168,14 +171,12 @@ func (t *Topology) ProcessJoinMessage(joinMessage *operation.JoinMessage) {
 		}
 	}
 
-	// If volume options(replica placement, ttl or collection) have changed,
-	// we need update its volume layout.
-	needToDeleteVolumes := dn.UpdateVolumes(volumeInfos)
-	for _, v := range needToDeleteVolumes {
-		t.UnRegisterVolumeLayout(v, dn)
-	}
+	deletedVolumes := dn.UpdateVolumes(volumeInfos)
 	for _, v := range volumeInfos {
 		t.RegisterVolumeLayout(v, dn)
+	}
+	for _, v := range deletedVolumes {
+		t.UnRegisterVolumeLayout(v, dn)
 	}
 
 }

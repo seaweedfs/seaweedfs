@@ -169,7 +169,6 @@ func (v *Volume) GetVolumeSyncStatus() operation.SyncVolumeResponse {
 	syncStatus.IdxFileSize = v.nm.IndexFileSize()
 	syncStatus.CompactRevision = v.SuperBlock.CompactRevision
 	syncStatus.Ttl = v.SuperBlock.Ttl.String()
-	syncStatus.Replication = v.SuperBlock.ReplicaPlacement.String()
 	return syncStatus
 }
 
