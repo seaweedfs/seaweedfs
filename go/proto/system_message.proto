@@ -8,7 +8,7 @@ message VolumeInformationMessage {
     required uint64 delete_count = 5;
     required uint64 deleted_byte_count = 6;
     optional bool read_only = 7;
-//    required uint32 replica_placement = 8;
+    required uint32 replica_placement = 8;
     optional uint32 version = 9 [default=2];
     optional uint32 ttl = 10;
 }
@@ -26,6 +26,7 @@ message JoinMessage {
     optional uint32 admin_port = 10;
 }
 
+/*
 message CollectionReplicaPlacement {
     optional string collection = 1;
     required string replica_placement = 2;
@@ -39,6 +40,5 @@ message GlobalSetting {
 message JoinResponse {
     optional GlobalSetting settings = 1;
 }
-
-
+*/
 
