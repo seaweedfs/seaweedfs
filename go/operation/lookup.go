@@ -42,7 +42,6 @@ var (
 )
 
 func Lookup(server string, vid string) (ret *LookupResult, err error) {
-	//Maybe we should fetch from master when lookup location for write
 	locations, cache_err := vc.Get(vid)
 	if cache_err != nil {
 		if ret, err = do_lookup(server, vid); err == nil {
@@ -50,6 +49,13 @@ func Lookup(server string, vid string) (ret *LookupResult, err error) {
 		}
 	} else {
 		ret = &LookupResult{VolumeId: vid, Locations: locations}
+	}
+	return
+}
+
+func LookupNoCache(server string, vid string) (ret *LookupResult, err error) {
+	if ret, err = do_lookup(server, vid); err == nil {
+		vc.Set(vid, ret.Locations, 10*time.Minute)
 	}
 	return
 }
