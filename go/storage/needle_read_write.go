@@ -16,6 +16,7 @@ const (
 	FlagHasMime             = 0x04
 	FlagHasLastModifiedDate = 0x08
 	FlagHasTtl              = 0x10
+	FlagIsExtendNeedle      = 0x40 	// TODO Reserve: use extent file to save big needle
 	FlagIsChunkManifest     = 0x80
 	LastModifiedBytesLength = 5
 	TtlBytesLength          = 2
