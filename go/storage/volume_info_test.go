@@ -4,13 +4,13 @@ import "testing"
 
 func TestSortVolumeInfos(t *testing.T) {
 	vis := []*VolumeInfo{
-		&VolumeInfo{
+		{
 			Id: 2,
 		},
-		&VolumeInfo{
+		{
 			Id: 1,
 		},
-		&VolumeInfo{
+		{
 			Id: 3,
 		},
 	}

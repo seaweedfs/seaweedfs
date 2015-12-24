@@ -20,8 +20,6 @@ var cmdShell = &Command{
   `,
 }
 
-var ()
-
 func runShell(command *Command, args []string) bool {
 	r := bufio.NewReader(os.Stdin)
 	o := bufio.NewWriter(os.Stdout)

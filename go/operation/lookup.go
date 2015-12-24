@@ -85,9 +85,9 @@ func LookupFileId(server string, fileId string, readonly bool) (fullUrl string, 
 		return "", errors.New("File Not Found")
 	}
 	var u string
-	if readonly{
+	if readonly {
 		u = lookup.Locations.PickForRead().Url
-	}else{
+	} else {
 		u = lookup.Locations.Head().Url
 	}
 	return "http://" + u + "/" + fileId, nil

@@ -31,7 +31,7 @@ func (dn *DataNode) String() string {
 	return fmt.Sprintf("Node:%s, volumes:%v, Ip:%s, Port:%d, PublicUrl:%s, Dead:%v", dn.NodeImpl.String(), dn.volumes, dn.Ip, dn.Port, dn.PublicUrl, dn.Dead)
 }
 
-func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo){
+func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) {
 	if _, ok := dn.volumes[v.Id]; !ok {
 		dn.volumes[v.Id] = v
 		dn.UpAdjustVolumeCountDelta(1)

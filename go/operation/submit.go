@@ -46,7 +46,7 @@ func SubmitFiles(master string, files []FilePart,
 	}
 	ret, err := Assign(master, uint64(len(files)), replication, collection, ttl)
 	if err != nil {
-		for index, _ := range files {
+		for index := range files {
 			results[index].Error = err.Error()
 		}
 		return results, err

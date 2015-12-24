@@ -13,24 +13,6 @@ message VolumeInformationMessage {
     optional uint32 ttl = 10;
 }
 
-enum VolumeTask {
-    Vacuum = 0;
-    Replicate = 1;
-}
-
-enum VolumeTaskStatus {
-    Working = 0;
-    Completed = 1;
-    Failed = 2;
-}
-
-message BusyVolume {
-    required uint32 id = 1;
-    required VolumeTask task = 2;
-    required VolumeTaskStatus status = 3;
-    required int64 start_time = 4;
-}
-
 message JoinMessage {
     optional bool   is_init = 1;
     required string ip = 2;
@@ -42,5 +24,21 @@ message JoinMessage {
     optional string rack = 8;
     repeated VolumeInformationMessage volumes = 9;
     optional uint32 admin_port = 10;
-    repeated BusyVolume busy_volumes = 11;
 }
+
+message CollectionReplicaPlacement {
+    optional string collection = 1;
+    required string replica_placement = 2;
+}
+
+message GlobalSetting {
+    repeated CollectionReplicaPlacement replica_placements = 1;
+    repeated string master_peers = 2;
+}
+
+message JoinResponse {
+    optional GlobalSetting settings = 1;
+}
+
+
+

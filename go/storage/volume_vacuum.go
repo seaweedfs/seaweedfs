@@ -46,6 +46,12 @@ func (v *Volume) commitCompact() error {
 	return nil
 }
 
+func (v *Volume) cleanCompact() error {
+	os.Remove(v.FileName() + ".cpd")
+	os.Remove(v.FileName() + ".cpx")
+	return nil
+}
+
 func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string) (err error) {
 	var (
 		dst, idx *os.File

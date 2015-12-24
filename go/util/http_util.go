@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 
+	"os"
+
 	"github.com/chrislusf/seaweedfs/go/security"
 )
 
@@ -140,6 +142,10 @@ func DownloadUrl(fileUrl string) (filename string, rc io.ReadCloser, e error) {
 	if err != nil {
 		return "", nil, err
 	}
+	if response.StatusCode != http.StatusOK {
+		response.Body.Close()
+		return "", nil, fmt.Errorf("%s: %s", fileUrl, response.Status)
+	}
 	contentDisposition := response.Header["Content-Disposition"]
 	if len(contentDisposition) > 0 {
 		if strings.HasPrefix(contentDisposition[0], "filename=") {
@@ -148,6 +154,21 @@ func DownloadUrl(fileUrl string) (filename string, rc io.ReadCloser, e error) {
 		}
 	}
 	rc = response.Body
+	return
+}
+
+func DownloadToFile(fileUrl, savePath string) (e error) {
+	_, rc, err := DownloadUrl(fileUrl)
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	var f *os.File
+	if f, e = os.OpenFile(savePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.ModePerm); e != nil {
+		return
+	}
+	_, e = io.Copy(f, rc)
+	f.Close()
 	return
 }
 

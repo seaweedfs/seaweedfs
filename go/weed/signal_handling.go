@@ -22,7 +22,7 @@ func OnInterrupt(fn func()) {
 		syscall.SIGTERM,
 		syscall.SIGQUIT)
 	go func() {
-		for _ = range signalChan {
+		for range signalChan {
 			fn()
 			os.Exit(0)
 		}

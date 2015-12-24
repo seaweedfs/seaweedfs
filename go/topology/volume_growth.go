@@ -192,11 +192,11 @@ func (vg *VolumeGrowth) grow(topo *Topology, vid storage.VolumeId, option *Volum
 	for _, server := range servers {
 		if err := AllocateVolume(server, vid, option); err == nil {
 			vi := storage.VolumeInfo{
-				Id:               vid,
-				Size:             0,
-				Collection:       option.Collection,
-				Ttl:              option.Ttl,
-				Version:          storage.CurrentVersion,
+				Id:         vid,
+				Size:       0,
+				Collection: option.Collection,
+				Ttl:        option.Ttl,
+				Version:    storage.CurrentVersion,
 			}
 			server.AddOrUpdateVolume(vi)
 			topo.RegisterVolumeLayout(vi, server)

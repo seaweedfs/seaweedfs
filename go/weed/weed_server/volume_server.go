@@ -20,7 +20,6 @@ type VolumeServer struct {
 	store        *storage.Store
 	guard        *security.Guard
 
-	needleMapKind     storage.NeedleMapType
 	FixJpgOrientation bool
 	ReadRedirect      bool
 }
@@ -38,12 +37,11 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		pulseSeconds:      pulseSeconds,
 		dataCenter:        dataCenter,
 		rack:              rack,
-		needleMapKind:     needleMapKind,
 		FixJpgOrientation: fixJpgOrientation,
 		ReadRedirect:      readRedirect,
 	}
 	vs.SetMasterNode(masterNode)
-	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts, vs.needleMapKind)
+	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts, needleMapKind)
 
 	vs.guard = security.NewGuard(whiteList, "")
 
@@ -59,6 +57,11 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	adminMux.HandleFunc("/admin/sync/index", vs.guard.WhiteList(vs.getVolumeIndexContentHandler))
 	adminMux.HandleFunc("/admin/sync/data", vs.guard.WhiteList(vs.getVolumeDataContentHandler))
 	adminMux.HandleFunc("/admin/sync/vol_data", vs.guard.WhiteList(vs.getVolumeCleanDataHandler))
+	adminMux.HandleFunc("/admin/task/new", vs.guard.WhiteList(vs.newTaskHandler))
+	adminMux.HandleFunc("/admin/task/query", vs.guard.WhiteList(vs.queryTaskHandler))
+	adminMux.HandleFunc("/admin/task/commit", vs.guard.WhiteList(vs.commitTaskHandler))
+	adminMux.HandleFunc("/admin/task/clean", vs.guard.WhiteList(vs.cleanTaskHandler))
+	adminMux.HandleFunc("/admin/task/all", vs.guard.WhiteList(vs.allTaskHandler))
 	adminMux.HandleFunc("/stats/counter", vs.guard.WhiteList(statsCounterHandler))
 	adminMux.HandleFunc("/stats/memory", vs.guard.WhiteList(statsMemoryHandler))
 	adminMux.HandleFunc("/stats/disk", vs.guard.WhiteList(vs.statsDiskHandler))

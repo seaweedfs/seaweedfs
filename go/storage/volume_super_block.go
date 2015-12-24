@@ -21,9 +21,9 @@ const (
 * Rest bytes: Reserved
  */
 type SuperBlock struct {
-	version          Version
-	Ttl              *TTL
-	CompactRevision  uint16
+	version         Version
+	Ttl             *TTL
+	CompactRevision uint16
 }
 
 func (s *SuperBlock) Version() Version {

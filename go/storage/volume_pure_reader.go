@@ -27,7 +27,7 @@ func (s DirtyDatas) Search(offset int64) int {
 	})
 }
 
-type CleanReader struct {
+type PureReader struct {
 	Dirtys   DirtyDatas
 	DataFile *os.File
 	pr       *io.PipeReader
@@ -62,7 +62,7 @@ func ScanDirtyData(indexFileContent []byte) (dirtys DirtyDatas) {
 	return dirtys
 }
 
-func (cr *CleanReader) Seek(offset int64, whence int) (int64, error) {
+func (cr *PureReader) Seek(offset int64, whence int) (int64, error) {
 	oldOff, e := cr.DataFile.Seek(0, 1)
 	if e != nil {
 		return 0, e
@@ -77,7 +77,7 @@ func (cr *CleanReader) Seek(offset int64, whence int) (int64, error) {
 	return newOff, nil
 }
 
-func (cr *CleanReader) Size() (int64, error) {
+func (cr *PureReader) Size() (int64, error) {
 	fi, e := cr.DataFile.Stat()
 	if e != nil {
 		return 0, e
@@ -85,7 +85,7 @@ func (cr *CleanReader) Size() (int64, error) {
 	return fi.Size(), nil
 }
 
-func (cdr *CleanReader) WriteTo(w io.Writer) (written int64, err error) {
+func (cdr *PureReader) WriteTo(w io.Writer) (written int64, err error) {
 	off, e := cdr.DataFile.Seek(0, 1)
 	if e != nil {
 		return 0, nil
@@ -143,21 +143,21 @@ func (cdr *CleanReader) WriteTo(w io.Writer) (written int64, err error) {
 	return
 }
 
-func (cr *CleanReader) ReadAt(p []byte, off int64) (n int, err error) {
+func (cr *PureReader) ReadAt(p []byte, off int64) (n int, err error) {
 	cr.Seek(off, 0)
 	return cr.Read(p)
 }
 
-func (cr *CleanReader) Read(p []byte) (int, error) {
+func (cr *PureReader) Read(p []byte) (int, error) {
 	return cr.getPipeReader().Read(p)
 }
 
-func (cr *CleanReader) Close() (e error) {
+func (cr *PureReader) Close() (e error) {
 	cr.closePipe(true)
 	return cr.DataFile.Close()
 }
 
-func (cr *CleanReader) closePipe(lock bool) (e error) {
+func (cr *PureReader) closePipe(lock bool) (e error) {
 	if lock {
 		cr.mutex.Lock()
 		defer cr.mutex.Unlock()
@@ -177,7 +177,7 @@ func (cr *CleanReader) closePipe(lock bool) (e error) {
 	return e
 }
 
-func (cr *CleanReader) getPipeReader() io.Reader {
+func (cr *PureReader) getPipeReader() io.Reader {
 	cr.mutex.Lock()
 	defer cr.mutex.Unlock()
 	if cr.pr != nil && cr.pw != nil {
@@ -192,7 +192,7 @@ func (cr *CleanReader) getPipeReader() io.Reader {
 	return cr.pr
 }
 
-func (v *Volume) GetVolumeCleanReader() (cr *CleanReader, err error) {
+func (v *Volume) GetVolumeCleanReader() (cr *PureReader, err error) {
 	var dirtys DirtyDatas
 	if indexData, e := v.nm.IndexFileContent(); e != nil {
 		return nil, err
@@ -204,7 +204,7 @@ func (v *Volume) GetVolumeCleanReader() (cr *CleanReader, err error) {
 	if e != nil {
 		return nil, e
 	}
-	cr = &CleanReader{
+	cr = &PureReader{
 		Dirtys:   dirtys,
 		DataFile: dataFile,
 	}

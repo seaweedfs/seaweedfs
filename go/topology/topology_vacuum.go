@@ -26,7 +26,7 @@ func batchVacuumVolumeCheck(vl *VolumeLayout, vid storage.VolumeId, locationlist
 		}(index, dn.Url(), vid)
 	}
 	isCheckSuccess := true
-	for _ = range locationlist.list {
+	for range locationlist.list {
 		select {
 		case canVacuum := <-ch:
 			isCheckSuccess = isCheckSuccess && canVacuum
@@ -53,7 +53,7 @@ func batchVacuumVolumeCompact(vl *VolumeLayout, vid storage.VolumeId, locationli
 		}(index, dn.Url(), vid)
 	}
 	isVacuumSuccess := true
-	for _ = range locationlist.list {
+	for range locationlist.list {
 		select {
 		case _ = <-ch:
 		case <-time.After(30 * time.Minute):

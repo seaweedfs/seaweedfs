@@ -25,7 +25,6 @@ func NewVolumeLayout(rp *storage.ReplicaPlacement, ttl *storage.TTL, volumeSizeL
 		rp:              rp,
 		ttl:             ttl,
 		vid2location:    make(map[storage.VolumeId]*VolumeLocationList),
-		writables:       *new([]storage.VolumeId),
 		volumeSizeLimit: volumeSizeLimit,
 	}
 }
@@ -43,7 +42,7 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	}
 	vl.vid2location[v.Id].Set(dn)
 	glog.V(4).Infoln("volume", v.Id, "added to dn", dn.Id(), "len", vl.vid2location[v.Id].Length())
-	//TODO
+	//TODO balancing data when have more replications
 	if vl.vid2location[v.Id].Length() == vl.rp.GetCopyCount() && vl.isWritable(v) {
 		vl.AddToWritable(v.Id)
 	} else {
