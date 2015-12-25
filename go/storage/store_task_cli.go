@@ -20,9 +20,9 @@ type TaskCli struct {
 	DataNode string
 }
 
-func NewTaskCli(dataNode string, task TaskType, params TaskParams) (*TaskCli, error) {
+func NewTaskCli(dataNode string, task string, params TaskParams) (*TaskCli, error) {
 	args := url.Values{}
-	args.Set("task", string(task))
+	args.Set("task", task)
 	for k, v := range params {
 		args.Set(k, v)
 	}

@@ -8,12 +8,10 @@ import (
 	"github.com/chrislusf/seaweedfs/go/glog"
 )
 
-type TaskType string
-
 const (
-	TaskVacuum  TaskType = "VACUUM"
-	TaskReplica TaskType = "REPLICA"
-	TaskBalance TaskType = "BALANCE"
+	TaskVacuum  = "VACUUM"
+	TaskReplica = "REPLICA"
+	TaskBalance = "BALANCE"
 )
 
 var (
@@ -87,7 +85,7 @@ func (tm *TaskManager) NewTask(s *Store, args url.Values) (tid string, e error) 
 		return tid, ErrTaskExists
 	}
 	var tw TaskWorker
-	switch TaskType(tt) {
+	switch tt {
 	case TaskVacuum:
 		tw, e = NewVacuumTask(s, args)
 	case TaskReplica:
