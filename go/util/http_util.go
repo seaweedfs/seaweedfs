@@ -28,6 +28,18 @@ func init() {
 	client = &http.Client{Transport: Transport}
 }
 
+func MkUrl(host, path string, args url.Values) string {
+	u := url.URL{
+		Scheme: "http",
+		Host:   host,
+		Path:   path,
+	}
+	if args != nil {
+		u.RawQuery = args.Encode()
+	}
+	return u.String()
+}
+
 func PostBytes(url string, body []byte) ([]byte, error) {
 	r, err := client.Post(url, "application/octet-stream", bytes.NewReader(body))
 	if err != nil {
@@ -41,20 +53,45 @@ func PostBytes(url string, body []byte) ([]byte, error) {
 	return b, nil
 }
 
-func Post(url string, values url.Values) ([]byte, error) {
+func PostEx(host, path string, values url.Values) (content []byte, statusCode int, e error) {
+	url := MkUrl(host, path, nil)
 	r, err := client.PostForm(url, values)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer r.Body.Close()
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		return nil, err
+		return nil, r.StatusCode, err
 	}
-	return b, nil
+	return b, r.StatusCode, nil
 }
 
-func Get(url string) ([]byte, error) {
+func Post(host, path string, values url.Values) (content []byte, e error) {
+	content, _, e = PostEx(host, path, values)
+	return
+}
+
+func RemoteApiCall(host, path string, values url.Values) (result map[string]interface{}, e error) {
+	jsonBlob, code, e := PostEx(host, path, values)
+	if e != nil {
+		return nil, e
+	}
+	result = make(map[string]interface{})
+	if e := json.Unmarshal(jsonBlob, result); e != nil {
+		return nil, e
+	}
+	if err, ok := result["error"]; ok && err.(string) != "" {
+		return nil, errors.New(err.(string))
+	}
+	if code != http.StatusOK {
+		return nil, fmt.Errorf("RemoteApiCall %s/%s return %d", host, path, code)
+	}
+	return result, nil
+}
+
+func Get(host, path string, values url.Values) ([]byte, error) {
+	url := MkUrl(host, path, values)
 	r, err := client.Get(url)
 	if err != nil {
 		return nil, err

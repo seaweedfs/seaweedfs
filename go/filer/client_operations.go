@@ -58,7 +58,7 @@ func call(server string, request ApiRequest, ret interface{}) error {
 	}
 	values := make(url.Values)
 	values.Add("request", string(b))
-	jsonBlob, err := util.Post("http://"+server+"/__api__", values)
+	jsonBlob, err := util.Post(server, "/__api__", values)
 	if err != nil {
 		return err
 	}

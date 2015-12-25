@@ -28,7 +28,7 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	for _, server := range collection.ListVolumeServers() {
-		_, err := util.Get("http://" + server.Ip + ":" + strconv.Itoa(server.Port) + "/admin/delete_collection?collection=" + r.FormValue("collection"))
+		_, err := util.Get(server.Ip+":"+strconv.Itoa(server.Port), "/admin/delete_collection", url.Values{"collection": r.Form["collection"]})
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 			return
@@ -204,7 +204,7 @@ func (ms *MasterServer) batchSetVolumeOption(settingKey, settingValue string, vo
 		wg.Add(1)
 		go func(server string, values url.Values) {
 			defer wg.Done()
-			jsonBlob, e := util.Post("http://"+server+"/admin/setting", values)
+			jsonBlob, e := util.Post(server, "/admin/setting", values)
 			if e != nil {
 				result[server] = map[string]interface{}{
 					"error": e.Error() + " " + string(jsonBlob),

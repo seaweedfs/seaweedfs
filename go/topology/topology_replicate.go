@@ -6,7 +6,7 @@ func (t *Topology) Replicate() int {
 	glog.V(0).Infoln("Start replicate checker on demand")
 	for _, col := range t.collectionMap.Items {
 		c := col.(*Collection)
-		glog.V(0).Infoln("replicate on collection:", c.Name)
+		glog.V(0).Infoln("checking replicate on collection:", c.Name)
 		for _, vl := range c.storageType2VolumeLayout.Items {
 			if vl != nil {
 				volumeLayout := vl.(*VolumeLayout)

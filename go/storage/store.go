@@ -316,7 +316,7 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 		return "", "", err
 	}
 
-	joinUrl := "http://" + masterNode + "/dir/join"
+	joinUrl := util.MkUrl(masterNode, "/dir/join", nil)
 	glog.V(4).Infof("Connecting to %s ...", joinUrl)
 
 	jsonBlob, err := util.PostBytes(joinUrl, data)

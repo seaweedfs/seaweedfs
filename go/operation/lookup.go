@@ -63,7 +63,7 @@ func LookupNoCache(server string, vid string) (ret *LookupResult, err error) {
 func do_lookup(server string, vid string) (*LookupResult, error) {
 	values := make(url.Values)
 	values.Add("volumeId", vid)
-	jsonBlob, err := util.Post("http://"+server+"/dir/lookup", values)
+	jsonBlob, err := util.Post(server, "/dir/lookup", values)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func LookupFileId(server string, fileId string, readonly bool) (fullUrl string, 
 	} else {
 		u = lookup.Locations.Head().Url
 	}
-	return "http://" + u + "/" + fileId, nil
+	return util.MkUrl(u, "/"+fileId, nil), nil
 }
 
 // LookupVolumeIds find volume locations by cache and actual lookup
@@ -123,7 +123,7 @@ func LookupVolumeIds(server string, vids []string) (map[string]LookupResult, err
 	for _, vid := range unknown_vids {
 		values.Add("volumeId", vid)
 	}
-	jsonBlob, err := util.Post("http://"+server+"/vol/lookup", values)
+	jsonBlob, err := util.Post(server, "/vol/lookup", values)
 	if err != nil {
 		return nil, err
 	}

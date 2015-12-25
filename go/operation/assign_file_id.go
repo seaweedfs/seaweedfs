@@ -31,7 +31,7 @@ func Assign(server string, count uint64, replication string, collection string, 
 	if ttl != "" {
 		values.Add("ttl", ttl)
 	}
-	jsonBlob, err := util.Post("http://"+server+"/dir/assign", values)
+	jsonBlob, err := util.Post(server, "/dir/assign", values)
 	glog.V(2).Info("assign result :", string(jsonBlob))
 	if err != nil {
 		return nil, err

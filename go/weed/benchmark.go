@@ -255,14 +255,13 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 			continue
 		}
 		server := ret.Locations.PickForRead().Url
-		url := "http://" + server + "/" + fid
-		if bytesRead, err := util.Get(url); err == nil {
+		if bytesRead, err := util.Get(server, "/"+fid, nil); err == nil {
 			s.completed++
 			s.transferred += int64(len(bytesRead))
 			readStats.addSample(time.Now().Sub(start))
 		} else {
 			s.failed++
-			fmt.Printf("Failed to read %s error:%v\n", url, err)
+			fmt.Printf("Failed to read %s/%s error:%v\n", server, fid, err)
 		}
 	}
 }

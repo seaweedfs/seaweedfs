@@ -4,12 +4,16 @@ import (
 	"errors"
 	"net/url"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/go/glog"
 )
 
+type TaskType string
+
 const (
-	TaskVacuum  = "VACUUM"
-	TaskReplica = "REPLICA"
-	TaskBalance = "BALANCE"
+	TaskVacuum  TaskType = "VACUUM"
+	TaskReplica TaskType = "REPLICA"
+	TaskBalance TaskType = "BALANCE"
 )
 
 var (
@@ -27,18 +31,21 @@ type TaskWorker interface {
 }
 
 type Task struct {
-	startTime time.Time
-	worker    TaskWorker
-	ch        chan bool
-	result    error
+	Id              string
+	startTime       time.Time
+	worker          TaskWorker
+	ch              chan bool
+	result          error
+	cleanWhenFinish bool
 }
 
 type TaskManager struct {
 	TaskList map[string]*Task
 }
 
-func NewTask(worker TaskWorker) *Task {
+func NewTask(worker TaskWorker, id string) *Task {
 	t := &Task{
+		Id:        id,
 		worker:    worker,
 		startTime: time.Now(),
 		result:    ErrTaskNotFinish,
@@ -46,7 +53,12 @@ func NewTask(worker TaskWorker) *Task {
 	}
 	go func(t *Task) {
 		t.result = t.worker.Run()
+		if t.cleanWhenFinish {
+			glog.V(0).Infof("clean task (%s) when finish.", t.Id)
+			t.worker.Clean()
+		}
 		t.ch <- true
+
 	}(t)
 	return t
 }
@@ -75,7 +87,7 @@ func (tm *TaskManager) NewTask(s *Store, args url.Values) (tid string, e error) 
 		return tid, ErrTaskExists
 	}
 	var tw TaskWorker
-	switch tt {
+	switch TaskType(tt) {
 	case TaskVacuum:
 		tw, e = NewVacuumTask(s, args)
 	case TaskReplica:
@@ -88,7 +100,7 @@ func (tm *TaskManager) NewTask(s *Store, args url.Values) (tid string, e error) 
 	if tw == nil {
 		return "", ErrTaskInvalid
 	}
-	tm.TaskList[tid] = NewTask(tw)
+	tm.TaskList[tid] = NewTask(tw, tid)
 	return tid, nil
 }
 
@@ -112,16 +124,19 @@ func (tm *TaskManager) Commit(tid string) (e error) {
 	return t.worker.Commit()
 }
 
-func (tm *TaskManager) Clean(tid string) (e error) {
+func (tm *TaskManager) Clean(tid string) error {
 	t, ok := tm.TaskList[tid]
 	if !ok {
 		return ErrTaskNotFound
 	}
-	if t.QueryResult(time.Second*30) == ErrTaskNotFinish {
-		return ErrTaskNotFinish
-	}
 	delete(tm.TaskList, tid)
-	return t.worker.Clean()
+	if t.QueryResult(time.Second*30) == ErrTaskNotFinish {
+		t.cleanWhenFinish = true
+		glog.V(0).Infof("task (%s) is not finish, clean it later.", tid)
+	} else {
+		t.worker.Clean()
+	}
+	return nil
 }
 
 func (tm *TaskManager) ElapsedDuration(tid string) (time.Duration, error) {

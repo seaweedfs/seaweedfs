@@ -61,7 +61,7 @@ func (t *ReplicaTask) Run() error {
 		}
 		ch <- e
 	}()
-	errs := make([]error, 0, 2)
+	errs := make([]error, 0)
 	for i := 0; i < 2; i++ {
 		if e := <-ch; e != nil {
 			errs = append(errs, e)

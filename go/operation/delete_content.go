@@ -97,7 +97,7 @@ func DeleteFiles(master string, fileIds []string) (*DeleteFilesResult, error) {
 			for _, fid := range fidList {
 				values.Add("fid", fid)
 			}
-			jsonBlob, err := util.Post("http://"+server+"/delete", values)
+			jsonBlob, err := util.Post(server, "/delete", values)
 			if err != nil {
 				ret.Errors = append(ret.Errors, err.Error()+" "+string(jsonBlob))
 				return
