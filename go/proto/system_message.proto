@@ -26,19 +26,20 @@ message JoinMessage {
     optional uint32 admin_port = 10;
 }
 
-/*
-message CollectionReplicaPlacement {
+
+message CollectionSetting {
     optional string collection = 1;
     required string replica_placement = 2;
+    optional string vacuum_garbage_threshold = 3;
 }
 
 message GlobalSetting {
-    repeated CollectionReplicaPlacement replica_placements = 1;
+    repeated CollectionSetting settings = 1;
     repeated string master_peers = 2;
 }
 
 message JoinResponse {
     optional GlobalSetting settings = 1;
 }
-*/
+
 
