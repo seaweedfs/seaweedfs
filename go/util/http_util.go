@@ -72,6 +72,22 @@ func Post(host, path string, values url.Values) (content []byte, e error) {
 	return
 }
 
+type RApiError struct {
+	E string
+}
+
+func (e *RApiError) Error() string {
+	return e.E
+}
+
+func IsRemoteApiError(e error) bool {
+	switch e.(type) {
+	case *RApiError:
+		return true
+	}
+	return false
+}
+
 func RemoteApiCall(host, path string, values url.Values) (result map[string]interface{}, e error) {
 	jsonBlob, code, e := PostEx(host, path, values)
 	if e != nil {
@@ -82,7 +98,7 @@ func RemoteApiCall(host, path string, values url.Values) (result map[string]inte
 		return nil, e
 	}
 	if err, ok := result["error"]; ok && err.(string) != "" {
-		return nil, errors.New(err.(string))
+		return nil, &RApiError{E: err.(string)}
 	}
 	if code != http.StatusOK {
 		return nil, fmt.Errorf("RemoteApiCall %s/%s return %d", host, path, code)

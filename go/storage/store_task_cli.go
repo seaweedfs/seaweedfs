@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/util"
 )
 
@@ -44,12 +45,29 @@ func (c *TaskCli) WaitAndQueryResult(timeout time.Duration) error {
 	startTime := time.Now()
 	args := url.Values{}
 	args.Set("task", c.TID)
+	args.Set("timeout", time.Minute.String())
+	tryTimes := 0
 	for time.Since(startTime) < timeout {
 		_, e := util.RemoteApiCall(c.DataNode, "/admin/task/query", args)
-		if e.Error() == ErrTaskNotFinish.Error() {
-			continue
+		if e == nil {
+			//task finished and have no error
+			return nil
 		}
-		return e
+		if util.IsRemoteApiError(e) {
+			if e.Error() == ErrTaskNotFinish.Error() {
+				tryTimes = 0
+				continue
+			}
+			return e
+		} else {
+			tryTimes++
+			if tryTimes >= 10 {
+				return e
+			}
+			glog.V(0).Infof("query task (%s) error %v, wait 1 minute then retry %d times", c.TID, e, tryTimes)
+			time.Sleep(time.Minute)
+		}
+
 	}
 	return ErrTaskTimeout
 }
