@@ -28,14 +28,14 @@ type Topology struct {
 	chanRecoveredDataNodes chan *DataNode
 	chanFullVolumes        chan storage.VolumeInfo
 
-	ReplicaPlacements *storage.ReplicaPlacements
+	CollectionSettings *storage.CollectionSettings
 
 	configuration *Configuration
 
 	RaftServer raft.Server
 }
 
-func NewTopology(id string, confFile string, rp *storage.ReplicaPlacements, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int) (*Topology, error) {
+func NewTopology(id string, confFile string, cs *storage.CollectionSettings, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int) (*Topology, error) {
 	t := &Topology{}
 	t.id = NodeId(id)
 	t.nodeType = "Topology"
@@ -44,7 +44,7 @@ func NewTopology(id string, confFile string, rp *storage.ReplicaPlacements, seq 
 	t.collectionMap = util.NewConcurrentReadMap()
 	t.pulse = int64(pulse)
 	t.volumeSizeLimit = volumeSizeLimit
-	t.ReplicaPlacements = rp
+	t.CollectionSettings = cs
 
 	t.Sequence = seq
 
@@ -129,7 +129,7 @@ func (t *Topology) PickForWrite(count uint64, option *VolumeGrowOption) (string,
 
 func (t *Topology) GetVolumeLayout(collectionName string, ttl *storage.TTL) *VolumeLayout {
 	return t.collectionMap.Get(collectionName, func() interface{} {
-		return NewCollection(collectionName, t.ReplicaPlacements.Get(collectionName), t.volumeSizeLimit)
+		return NewCollection(collectionName, t.CollectionSettings.GetReplicaPlacement(collectionName), t.volumeSizeLimit)
 	}).(*Collection).GetOrCreateVolumeLayout(ttl)
 }
 

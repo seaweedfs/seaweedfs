@@ -29,8 +29,8 @@ message JoinMessage {
 
 message CollectionSetting {
     optional string collection = 1;
-    required string replica_placement = 2;
-    optional string vacuum_garbage_threshold = 3;
+    optional string replica_placement = 2;
+    optional float vacuum_garbage_threshold = 3;
 }
 
 message GlobalSetting {

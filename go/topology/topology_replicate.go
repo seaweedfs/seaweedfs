@@ -2,8 +2,8 @@ package topology
 
 import "github.com/chrislusf/seaweedfs/go/glog"
 
-func (t *Topology) Replicate(garbageThreshold string) int {
-	glog.V(0).Infoln("Start replicate on demand")
+func (t *Topology) Replicate() int {
+	glog.V(0).Infoln("Start replicate checker on demand")
 	for _, col := range t.collectionMap.Items {
 		c := col.(*Collection)
 		glog.V(0).Infoln("replicate on collection:", c.Name)

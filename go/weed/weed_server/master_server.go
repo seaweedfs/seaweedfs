@@ -51,8 +51,9 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
 	seq := sequence.NewMemorySequencer()
+	cs := storage.NewCollectionSettings(defaultReplicaPlacement, garbageThreshold)
 	var e error
-	if ms.Topo, e = topology.NewTopology("topo", confFile, storage.NewReplicaPlacements(defaultReplicaPlacement),
+	if ms.Topo, e = topology.NewTopology("topo", confFile, cs,
 		seq, uint64(volumeSizeLimitMB)*1024*1024, pulseSeconds); e != nil {
 		glog.Fatalf("cannot create topology:%s", e)
 	}
