@@ -20,9 +20,9 @@ type TaskCli struct {
 	DataNode string
 }
 
-func NewTaskCli(dataNode string, task string, params TaskParams) (*TaskCli, error) {
+func NewTaskCli(dataNode string, taskType string, params TaskParams) (*TaskCli, error) {
 	args := url.Values{}
-	args.Set("task", task)
+	args.Set("task", taskType)
 	for k, v := range params {
 		args.Set(k, v)
 	}
@@ -32,7 +32,7 @@ func NewTaskCli(dataNode string, task string, params TaskParams) (*TaskCli, erro
 	}
 	tid := m["tid"].(string)
 	if tid == "" {
-		return nil, fmt.Errorf("Empty %s task", task)
+		return nil, fmt.Errorf("Empty %s task", taskType)
 	}
 	return &TaskCli{
 		TID:      tid,
