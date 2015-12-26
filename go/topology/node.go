@@ -7,6 +7,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/storage"
+	"sort"
 )
 
 type NodeId string
@@ -51,8 +52,11 @@ type NodeImpl struct {
 	value    interface{}
 }
 
+type FilterNodeFn func(dn Node) error
+type PickNodesFn func(nodes []Node, count int) []Node
+
 // the first node must satisfy filterFirstNodeFn(), the rest nodes must have one free slot
-func (n *NodeImpl) RandomlyPickNodes(numberOfNodes int, filterFirstNodeFn func(dn Node) error) (firstNode Node, restNodes []Node, err error) {
+func (n *NodeImpl) PickNodes(numberOfNodes int, filterFirstNodeFn FilterNodeFn, pickFn PickNodesFn) (firstNode Node, restNodes []Node, err error) {
 	candidates := make([]Node, 0, len(n.children))
 	var errs []string
 	for _, node := range n.children {
@@ -62,13 +66,14 @@ func (n *NodeImpl) RandomlyPickNodes(numberOfNodes int, filterFirstNodeFn func(d
 			errs = append(errs, string(node.Id())+":"+err.Error())
 		}
 	}
-	if len(candidates) == 0 {
+	ns := pickFn(candidates, 1)
+	if ns == nil {
 		return nil, nil, errors.New("No matching data node found! \n" + strings.Join(errs, "\n"))
 	}
-	firstNode = candidates[rand.Intn(len(candidates))]
+	firstNode = ns[0]
+
 	glog.V(2).Infoln(n.Id(), "picked main node:", firstNode.Id())
 
-	restNodes = make([]Node, numberOfNodes-1)
 	candidates = candidates[:0]
 	for _, node := range n.children {
 		if node.Id() == firstNode.Id() {
@@ -81,25 +86,45 @@ func (n *NodeImpl) RandomlyPickNodes(numberOfNodes int, filterFirstNodeFn func(d
 		candidates = append(candidates, node)
 	}
 	glog.V(2).Infoln(n.Id(), "picking", numberOfNodes-1, "from rest", len(candidates), "node candidates")
-	ret := len(restNodes) == 0
-	for k, node := range candidates {
-		if k < len(restNodes) {
-			restNodes[k] = node
-			if k == len(restNodes)-1 {
-				ret = true
-			}
-		} else {
-			r := rand.Intn(k + 1)
-			if r < len(restNodes) {
-				restNodes[r] = node
-			}
-		}
-	}
-	if !ret {
+	restNodes = pickFn(candidates, numberOfNodes-1)
+	if restNodes == nil {
 		glog.V(2).Infoln(n.Id(), "failed to pick", numberOfNodes-1, "from rest", len(candidates), "node candidates")
 		err = errors.New("Not enough data node found!")
 	}
 	return
+}
+
+func RandomlyPickNodeFn(nodes []Node, count int) []Node {
+	if len(nodes) < count {
+		return nil
+	}
+	for i := range nodes {
+		j := rand.Intn(i + 1)
+		nodes[i], nodes[j] = nodes[j], nodes[i]
+	}
+	return nodes[:count]
+}
+
+func (n *NodeImpl) RandomlyPickNodes(numberOfNodes int, filterFirstNodeFn FilterNodeFn) (firstNode Node, restNodes []Node, err error) {
+	return n.PickNodes(numberOfNodes, filterFirstNodeFn, RandomlyPickNodeFn)
+}
+
+type nodeList []Node
+
+func (s nodeList) Len() int           { return len(s) }
+func (s nodeList) Less(i, j int) bool { return s[i].FreeSpace() < s[j].FreeSpace() }
+func (s nodeList) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+
+func LowUsagePickNodeFn(nodes []Node, count int) []Node {
+	if len(nodes) < count {
+		return nil
+	}
+	sort.Sort(nodeList(nodes))
+	return nodes[:count]
+}
+
+func (n *NodeImpl) PickLowUsageNodes(numberOfNodes int, filterFirstNodeFn FilterNodeFn) (firstNode Node, restNodes []Node, err error) {
+	return n.PickNodes(numberOfNodes, filterFirstNodeFn, LowUsagePickNodeFn)
 }
 
 func (n *NodeImpl) IsDataNode() bool {
