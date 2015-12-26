@@ -115,16 +115,16 @@ func (s nodeList) Len() int           { return len(s) }
 func (s nodeList) Less(i, j int) bool { return s[i].FreeSpace() < s[j].FreeSpace() }
 func (s nodeList) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
-func LowUsagePickNodeFn(nodes []Node, count int) []Node {
+func PickLowUsageNodeFn(nodes []Node, count int) []Node {
 	if len(nodes) < count {
 		return nil
 	}
-	sort.Sort(nodeList(nodes))
+	sort.Sort(sort.Reverse(nodeList(nodes)))
 	return nodes[:count]
 }
 
 func (n *NodeImpl) PickLowUsageNodes(numberOfNodes int, filterFirstNodeFn FilterNodeFn) (firstNode Node, restNodes []Node, err error) {
-	return n.PickNodes(numberOfNodes, filterFirstNodeFn, LowUsagePickNodeFn)
+	return n.PickNodes(numberOfNodes, filterFirstNodeFn, PickLowUsageNodeFn)
 }
 
 func (n *NodeImpl) IsDataNode() bool {

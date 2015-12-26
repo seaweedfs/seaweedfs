@@ -87,11 +87,11 @@ func (t *Topology) Vacuum(garbageThreshold string) int {
 		for _, vl := range c.storageType2VolumeLayout.Items {
 			if vl != nil {
 				volumeLayout := vl.(*VolumeLayout)
-				for vid, locationlist := range volumeLayout.vid2location {
+				for vid, locationList := range volumeLayout.vid2location {
 					glog.V(0).Infoln("vacuum on collection:", c.Name, "volume", vid)
-					if batchVacuumVolumeCheck(volumeLayout, vid, locationlist, garbageThreshold) {
-						if batchVacuumVolumeCompact(volumeLayout, vid, locationlist) {
-							batchVacuumVolumeCommit(volumeLayout, vid, locationlist)
+					if batchVacuumVolumeCheck(volumeLayout, vid, locationList, garbageThreshold) {
+						if batchVacuumVolumeCompact(volumeLayout, vid, locationList) {
+							batchVacuumVolumeCommit(volumeLayout, vid, locationList)
 						}
 					}
 				}

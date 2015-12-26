@@ -100,7 +100,7 @@ func RemoteApiCall(host, path string, values url.Values) (result map[string]inte
 	if err, ok := result["error"]; ok && err.(string) != "" {
 		return nil, &RApiError{E: err.(string)}
 	}
-	if code != http.StatusOK {
+	if code != http.StatusOK || code != http.StatusAccepted {
 		return nil, fmt.Errorf("RemoteApiCall %s/%s return %d", host, path, code)
 	}
 	return result, nil

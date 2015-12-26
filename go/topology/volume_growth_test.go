@@ -131,6 +131,6 @@ func TestFindEmptySlotsForOneVolume(t *testing.T) {
 		t.Fail()
 	}
 	for _, server := range servers {
-		fmt.Println("assigned node :", server.Id())
+		fmt.Printf("assigned node: %s, free space: %d\n", server.Id(), server.FreeSpace())
 	}
 }

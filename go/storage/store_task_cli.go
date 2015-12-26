@@ -50,7 +50,7 @@ func (c *TaskCli) WaitAndQueryResult(timeout time.Duration) error {
 	for time.Since(startTime) < timeout {
 		_, e := util.RemoteApiCall(c.DataNode, "/admin/task/query", args)
 		if e == nil {
-			//task finished and have no error
+			//task have finished and have no error
 			return nil
 		}
 		if util.IsRemoteApiError(e) {
