@@ -95,6 +95,13 @@ func distributedOperation(masterNode string, store *storage.Store, volumeId stor
 		for i := 0; i < length; i++ {
 			ret = ret && <-results
 		}
+		if volume := store.GetVolume(volumeId); volume != nil {
+			copyCount := volume.ReplicaPlacement.GetCopyCount() - 1
+			if length < copyCount {
+				glog.V(0).Infoln("replicating opetations [%d] is less than volume's replication copy count [%d]", length, copyCount)
+				ret = false
+			}
+		}		
 		return ret
 	} else {
 		glog.V(0).Infoln("Failed to lookup for", volumeId, lookupErr.Error())
