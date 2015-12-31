@@ -2,12 +2,14 @@ package topology
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
 	"strings"
 
+	"sort"
+
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/storage"
-	"sort"
 )
 
 type NodeId string
@@ -52,25 +54,34 @@ type NodeImpl struct {
 	value    interface{}
 }
 
+type NodePicker interface {
+	PickNodes(numberOfNodes int, filterNodeFn FilterNodeFn, pickFn PickNodesFn) (nodes []Node, err error)
+}
+
+
+var ErrFilterContinue = errors.New("continue")
+
 type FilterNodeFn func(dn Node) error
 type PickNodesFn func(nodes []Node, count int) []Node
 
 // the first node must satisfy filterFirstNodeFn(), the rest nodes must have one free slot
-func (n *NodeImpl) PickNodes(numberOfNodes int, filterFirstNodeFn FilterNodeFn, pickFn PickNodesFn) (firstNode Node, restNodes []Node, err error) {
+func (n *NodeImpl) PickNodes(numberOfNodes int, filterNodeFn FilterNodeFn, pickFn PickNodesFn) (nodes []Node, err error) {
 	candidates := make([]Node, 0, len(n.children))
 	var errs []string
 	for _, node := range n.children {
-		if err := filterFirstNodeFn(node); err == nil {
+		if err := filterNodeFn(node); err == nil {
 			candidates = append(candidates, node)
+		}else if err == ErrFilterContinue{
+			continue
 		} else {
 			errs = append(errs, string(node.Id())+":"+err.Error())
 		}
 	}
-	ns := pickFn(candidates, 1)
-	if ns == nil {
-		return nil, nil, errors.New("No matching data node found! \n" + strings.Join(errs, "\n"))
+	if len(candidates) < numberOfNodes{
+		return nil, errors.New("No matching data node found! \n" + strings.Join(errs, "\n"))
 	}
-	firstNode = ns[0]
+	return pickFn(candidates, numberOfNodes), nil
+
 
 	glog.V(2).Infoln(n.Id(), "picked main node:", firstNode.Id())
 
@@ -163,7 +174,7 @@ func (n *NodeImpl) GetValue() interface{} {
 func (n *NodeImpl) ReserveOneVolume(r int) (assignedNode *DataNode, err error) {
 	for _, node := range n.children {
 		freeSpace := node.FreeSpace()
-		// fmt.Println("r =", r, ", node =", node, ", freeSpace =", freeSpace)
+		fmt.Println("r =", r, ", node =", node, ", freeSpace =", freeSpace)
 		if freeSpace <= 0 {
 			continue
 		}
@@ -171,7 +182,7 @@ func (n *NodeImpl) ReserveOneVolume(r int) (assignedNode *DataNode, err error) {
 			r -= freeSpace
 		} else {
 			if node.IsDataNode() && node.FreeSpace() > 0 {
-				// fmt.Println("vid =", vid, " assigned to node =", node, ", freeSpace =", node.FreeSpace())
+				fmt.Println("assigned to node =", node, ", freeSpace =", node.FreeSpace())
 				return node.(*DataNode), nil
 			}
 			assignedNode, err = node.ReserveOneVolume(r)

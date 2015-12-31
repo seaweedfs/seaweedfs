@@ -1,8 +1,11 @@
 package topology
 
-import "github.com/chrislusf/seaweedfs/go/glog"
+import (
+	"github.com/chrislusf/seaweedfs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/storage"
+)
 
-func (t *Topology) Replicate() int {
+func (t *Topology) CheckReplicate() int {
 	glog.V(0).Infoln("Start replicate checker on demand")
 	for _, col := range t.collectionMap.Items {
 		c := col.(*Collection)
@@ -15,6 +18,7 @@ func (t *Topology) Replicate() int {
 					if locationList.Length() < copyCount {
 						//set volume readonly
 						glog.V(0).Infoln("replicate volume :", vid)
+						SetVolumeReadonly(locationList, vid.String(), true)
 
 					}
 				}
@@ -22,4 +26,13 @@ func (t *Topology) Replicate() int {
 		}
 	}
 	return 0
+}
+
+func (t *Topology) doReplicate(vl *VolumeLayout, vid storage.VolumeId) {
+	locationList := vl.vid2location[vid]
+	if !SetVolumeReadonly(locationList, vid.String(), true) {
+		return
+	}
+	defer SetVolumeReadonly(locationList, vid.String(), false)
+
 }

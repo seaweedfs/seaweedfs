@@ -19,7 +19,7 @@ var topologyLayout = `
           {"id":2, "size":12312},
           {"id":3, "size":12312}
         ],
-        "limit":3
+        "limit":15
       },
       "server112":{
         "volumes":[
@@ -28,6 +28,18 @@ var topologyLayout = `
           {"id":6, "size":12312}
         ],
         "limit":10
+      },
+      "server113":{
+        "volumes":[
+          {"id":7, "size":12312},
+          {"id":8, "size":12312},
+          {"id":9, "size":12312}
+        ],
+        "limit":8
+      },
+      "server114":{
+        "volumes":[],
+        "limit":8
       }
     },
     "rack2":{
@@ -37,11 +49,15 @@ var topologyLayout = `
           {"id":5, "size":12312},
           {"id":6, "size":12312}
         ],
-        "limit":4
+        "limit":8
       },
       "server122":{
         "volumes":[],
-        "limit":4
+        "limit":8
+      },
+      "server124":{
+        "volumes":[],
+        "limit":8
       },
       "server123":{
         "volumes":[
@@ -63,7 +79,11 @@ var topologyLayout = `
           {"id":3, "size":12312},
           {"id":5, "size":12312}
         ],
-        "limit":4
+        "limit":8
+      },
+      "server322":{
+        "volumes":[],
+        "limit":7
       }
     }
   }
@@ -117,7 +137,7 @@ func setup(topologyLayout string) *Topology {
 func TestFindEmptySlotsForOneVolume(t *testing.T) {
 	topo := setup(topologyLayout)
 	vg := NewDefaultVolumeGrowth()
-	rp, _ := storage.NewReplicaPlacementFromString("002")
+	rp, _ := storage.NewReplicaPlacementFromString("011")
 	volumeGrowOption := &VolumeGrowOption{
 		Collection:       "",
 		ReplicaPlacement: rp,
