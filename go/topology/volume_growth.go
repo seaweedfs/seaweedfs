@@ -76,13 +76,34 @@ func (vg *VolumeGrowth) GrowByCountAndType(targetCount int, option *VolumeGrowOp
 }
 
 func (vg *VolumeGrowth) findAndGrow(topo *Topology, option *VolumeGrowOption) (int, error) {
-	servers, e := vg.findEmptySlotsForOneVolume(topo, option, nil)
+	servers, e := FindEmptySlotsForOneVolume(topo, option, nil)
 	if e != nil {
 		return 0, e
 	}
 	vid := topo.NextVolumeId()
 	err := vg.grow(topo, vid, option, servers...)
 	return len(servers), err
+}
+
+func (vg *VolumeGrowth) grow(topo *Topology, vid storage.VolumeId, option *VolumeGrowOption, servers ...*DataNode) error {
+	for _, server := range servers {
+		if err := AllocateVolume(server, vid, option); err == nil {
+			vi := storage.VolumeInfo{
+				Id:         vid,
+				Size:       0,
+				Collection: option.Collection,
+				Ttl:        option.Ttl,
+				Version:    storage.CurrentVersion,
+			}
+			server.AddOrUpdateVolume(vi)
+			topo.RegisterVolumeLayout(vi, server)
+			glog.V(0).Infoln("Created Volume", vid, "on", server.NodeImpl.String())
+		} else {
+			glog.V(0).Infoln("Failed to assign volume", vid, "to", servers, "error", err)
+			return fmt.Errorf("Failed to assign %d: %v", vid, err)
+		}
+	}
+	return nil
 }
 
 func filterMainDataCenter(option *VolumeGrowOption, node Node) error {
@@ -159,7 +180,7 @@ func makeExceptNodeFilter(nodes []Node) FilterNodeFn {
 // 2.2 collect all racks that have rp.SameRackCount+1
 // 2.2 collect all data centers that have DiffRackCount+rp.SameRackCount+1
 // 2. find rest data nodes
-func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption, existsServers *VolumeLocationList) (additionServers []*DataNode, err error) {
+func FindEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption, existsServers *VolumeLocationList) (additionServers []*DataNode, err error) {
 	//find main datacenter and other data centers
 	pickNodesFn := PickLowUsageNodeFn
 	rp := option.ReplicaPlacement
@@ -267,25 +288,4 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		}
 	}
 	return
-}
-
-func (vg *VolumeGrowth) grow(topo *Topology, vid storage.VolumeId, option *VolumeGrowOption, servers ...*DataNode) error {
-	for _, server := range servers {
-		if err := AllocateVolume(server, vid, option); err == nil {
-			vi := storage.VolumeInfo{
-				Id:         vid,
-				Size:       0,
-				Collection: option.Collection,
-				Ttl:        option.Ttl,
-				Version:    storage.CurrentVersion,
-			}
-			server.AddOrUpdateVolume(vi)
-			topo.RegisterVolumeLayout(vi, server)
-			glog.V(0).Infoln("Created Volume", vid, "on", server.NodeImpl.String())
-		} else {
-			glog.V(0).Infoln("Failed to assign volume", vid, "to", servers, "error", err)
-			return fmt.Errorf("Failed to assign %d: %v", vid, err)
-		}
-	}
-	return nil
 }

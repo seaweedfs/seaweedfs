@@ -157,7 +157,6 @@ func setup(topologyLayout string) *Topology {
 
 func TestFindEmptySlotsForOneVolume(t *testing.T) {
 	topo := setup(topologyLayout)
-	vg := NewDefaultVolumeGrowth()
 	rp, _ := storage.NewReplicaPlacementFromString("111")
 	volumeGrowOption := &VolumeGrowOption{
 		Collection:       "",
@@ -166,7 +165,7 @@ func TestFindEmptySlotsForOneVolume(t *testing.T) {
 		Rack:             "",
 		DataNode:         "",
 	}
-	servers, err := vg.findEmptySlotsForOneVolume(topo, volumeGrowOption, nil)
+	servers, err := FindEmptySlotsForOneVolume(topo, volumeGrowOption, nil)
 	if err != nil {
 		fmt.Println("finding empty slots error :", err)
 		t.Fail()
@@ -213,7 +212,6 @@ func joinNodeId(dns []*DataNode) string {
 
 func TestFindEmptySlotsWithExistsNodes(t *testing.T) {
 	topo := setup(topologyLayout)
-	vg := NewDefaultVolumeGrowth()
 	rp, _ := storage.NewReplicaPlacementFromString("112")
 	volumeGrowOption := &VolumeGrowOption{
 		Collection:       "",
@@ -227,7 +225,7 @@ func TestFindEmptySlotsWithExistsNodes(t *testing.T) {
 		lrp := locationList.CalcReplicaPlacement()
 		t.Logf("location list: [%s], replica placement = %s\n", joinNodeId(locationList.list), lrp.String())
 		if lrp.Compare(rp) < 0 {
-			servers, err := vg.findEmptySlotsForOneVolume(topo, volumeGrowOption, locationList)
+			servers, err := FindEmptySlotsForOneVolume(topo, volumeGrowOption, locationList)
 			if err != nil {
 				t.Log("finding empty slots error :", err)
 				t.Fail()
