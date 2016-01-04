@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"testing"
 
+	"strings"
+
 	"github.com/chrislusf/seaweedfs/go/sequence"
 	"github.com/chrislusf/seaweedfs/go/storage"
+	"github.com/syndtr/goleveldb/leveldb/errors"
 )
 
 var topologyLayout = `
@@ -100,6 +103,14 @@ var topologyLayout = `
 }
 `
 
+var testLocList = [][]string{
+	{"server111", "server121"},
+	{"server111", "server112"},
+	{"server111", "server112", "server113"},
+	{"server111", "server221", "server321"},
+	{"server112"},
+}
+
 func setup(topologyLayout string) *Topology {
 	var data interface{}
 	err := json.Unmarshal([]byte(topologyLayout), &data)
@@ -162,5 +173,66 @@ func TestFindEmptySlotsForOneVolume(t *testing.T) {
 	}
 	for _, server := range servers {
 		fmt.Printf("assigned node: %s, free space: %d\n", server.Id(), server.FreeSpace())
+	}
+
+}
+
+func getDataNodeFromId(topo *Topology, id string) (foundDn *DataNode) {
+	nid := NodeId(id)
+	topo.WalkDataNode(func(dn *DataNode) (e error) {
+		if dn.Id() == nid {
+			foundDn = dn
+			e = errors.New("Found.")
+		}
+		return
+	})
+	return
+}
+
+func setupTestLocationList(topo *Topology) (ret []*VolumeLocationList) {
+
+	for _, ll := range testLocList {
+		vl := &VolumeLocationList{}
+		for _, nid := range ll {
+			if n := getDataNodeFromId(topo, nid); n != nil {
+				vl.list = append(vl.list, n)
+			}
+		}
+		ret = append(ret, vl)
+	}
+	return
+}
+
+func joinNodeId(dns []*DataNode) string {
+	ss := []string{}
+	for _, dn := range dns {
+		ss = append(ss, string(dn.Id()))
+	}
+	return strings.Join(ss, ", ")
+}
+
+func TestFindEmptySlotsWithExistsNodes(t *testing.T) {
+	topo := setup(topologyLayout)
+	vg := NewDefaultVolumeGrowth()
+	rp, _ := storage.NewReplicaPlacementFromString("112")
+	volumeGrowOption := &VolumeGrowOption{
+		Collection:       "",
+		ReplicaPlacement: rp,
+		DataCenter:       "dc1",
+		Rack:             "",
+		DataNode:         "",
+	}
+	testLocationList := setupTestLocationList(topo)
+	for _, locationList := range testLocationList {
+		lrp := locationList.CalcReplicaPlacement()
+		t.Logf("location list: [%s], replica placement = %s\n", joinNodeId(locationList.list), lrp.String())
+		if lrp.Compare(rp) < 0 {
+			servers, err := vg.findEmptySlotsForOneVolume(topo, volumeGrowOption, locationList)
+			if err != nil {
+				t.Log("finding empty slots error :", err)
+				t.Fail()
+			}
+			t.Logf("assigned node: %s\n\n", joinNodeId(servers))
+		}
 	}
 }

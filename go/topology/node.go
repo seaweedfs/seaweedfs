@@ -2,7 +2,6 @@ package topology
 
 import (
 	"errors"
-	"fmt"
 	"math/rand"
 
 	"sort"
@@ -151,7 +150,7 @@ func (n *NodeImpl) GetValue() interface{} {
 func (n *NodeImpl) ReserveOneVolume(r int) (assignedNode *DataNode, err error) {
 	for _, node := range n.children {
 		freeSpace := node.FreeSpace()
-		fmt.Println("r =", r, ", node =", node, ", freeSpace =", freeSpace)
+		// fmt.Println("r =", r, ", node =", node, ", freeSpace =", freeSpace)
 		if freeSpace <= 0 {
 			continue
 		}
@@ -159,7 +158,7 @@ func (n *NodeImpl) ReserveOneVolume(r int) (assignedNode *DataNode, err error) {
 			r -= freeSpace
 		} else {
 			if node.IsDataNode() && node.FreeSpace() > 0 {
-				fmt.Println("assigned to node =", node, ", freeSpace =", node.FreeSpace())
+				// fmt.Println("assigned to node =", node, ", freeSpace =", node.FreeSpace())
 				return node.(*DataNode), nil
 			}
 			assignedNode, err = node.ReserveOneVolume(r)

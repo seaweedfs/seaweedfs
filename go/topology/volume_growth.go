@@ -159,7 +159,7 @@ func makeExceptNodeFilter(nodes []Node) FilterNodeFn {
 // 2.2 collect all racks that have rp.SameRackCount+1
 // 2.2 collect all data centers that have DiffRackCount+rp.SameRackCount+1
 // 2. find rest data nodes
-func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption, existsServer *VolumeLocationList) (additionServers []*DataNode, err error) {
+func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption, existsServers *VolumeLocationList) (additionServers []*DataNode, err error) {
 	//find main datacenter and other data centers
 	pickNodesFn := PickLowUsageNodeFn
 	rp := option.ReplicaPlacement
@@ -194,8 +194,8 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		return mainNode, restNodes, nil
 	}
 	var existsNode []Node
-	if existsServer != nil {
-		existsNode = existsServer.DiffDataCenters()
+	if existsServers != nil {
+		existsNode = existsServers.DiffDataCenters()
 	}
 	mainDataCenter, otherDataCenters, dc_err := pickMainAndRestNodes(topo, rp.DiffDataCenterCount+1,
 		func(node Node) error {
@@ -205,8 +205,8 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		return nil, dc_err
 	}
 	//find main rack and other racks
-	if existsServer != nil {
-		existsNode = existsServer.DiffRacks(mainDataCenter.(*DataCenter))
+	if existsServers != nil {
+		existsNode = existsServers.DiffRacks(mainDataCenter.(*DataCenter))
 	} else {
 		existsNode = nil
 	}
@@ -221,8 +221,8 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 	}
 
 	//find main server and other servers
-	if existsServer != nil {
-		existsNode = existsServer.SameServers(mainRack.(*Rack))
+	if existsServers != nil {
+		existsNode = existsServers.SameServers(mainRack.(*Rack))
 	} else {
 		existsNode = nil
 	}
@@ -242,8 +242,11 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 	if server_err != nil {
 		return nil, server_err
 	}
+	if existsServers != nil && existsServers.ContainsDataNode(mainServer.(*DataNode)) {
+	} else {
+		additionServers = append(additionServers, mainServer.(*DataNode))
+	}
 
-	additionServers = append(additionServers, mainServer.(*DataNode))
 	for _, server := range otherServers {
 		additionServers = append(additionServers, server.(*DataNode))
 	}

@@ -118,7 +118,9 @@ func (dnll *VolumeLocationList) DiffRacks(mainDC *DataCenter) []Node {
 		racks = append(racks, mainRack)
 	}
 	for rack := range m {
-		racks = append(racks, rack)
+		if rack != mainRack {
+			racks = append(racks, rack)
+		}
 	}
 	return racks
 }
@@ -138,17 +140,28 @@ func (dnll *VolumeLocationList) SameServers(mainRack *Rack) (servers []Node) {
 }
 
 func (dnll *VolumeLocationList) CalcReplicaPlacement() (rp *storage.ReplicaPlacement) {
-	dcs := dnll.DiffDataCenters()
-	rs := dnll.DiffRacks(dcs[0].(*DataCenter))
-	ss := dnll.SameServers(rs[0].(*Rack))
+	var dcs, rs, ss []Node
+	dcs = dnll.DiffDataCenters()
+	if len(dcs) > 0 {
+		rs = dnll.DiffRacks(dcs[0].(*DataCenter))
+		if len(rs) > 0 {
+			ss = dnll.SameServers(rs[0].(*Rack))
+		}
+	}
+
 	rp = &storage.ReplicaPlacement{
-		len(dcs) - 1,
-		len(rs) - 1,
-		len(ss) - 1,
+		SameRackCount:       len(ss) - 1,
+		DiffRackCount:       len(rs) - 1,
+		DiffDataCenterCount: len(dcs) - 1,
 	}
 	return
 }
 
-//func (dnll *VolumeLocationList)ContainDataNode(nodeType, id string)bool {
-//
-//}
+func (dnll *VolumeLocationList) ContainsDataNode(n *DataNode) bool {
+	for _, dn := range dnll.list {
+		if dn == n {
+			return true
+		}
+	}
+	return false
+}
