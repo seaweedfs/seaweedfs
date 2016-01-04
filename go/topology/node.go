@@ -19,11 +19,13 @@ type Node interface {
 	UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int)
 	UpAdjustVolumeCountDelta(volumeCountDelta int)
 	UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int)
+	UpAdjustPlannedVolumeCountDelta(delta int)
 	UpAdjustMaxVolumeId(vid storage.VolumeId)
 
 	GetVolumeCount() int
 	GetActiveVolumeCount() int
 	GetMaxVolumeCount() int
+	GetPlannedVolumeCount() int
 	GetMaxVolumeId() storage.VolumeId
 	SetParent(Node)
 	LinkChildNode(node Node)
@@ -39,13 +41,14 @@ type Node interface {
 	GetValue() interface{} //get reference to the topology,dc,rack,datanode
 }
 type NodeImpl struct {
-	id                NodeId
-	volumeCount       int
-	activeVolumeCount int
-	maxVolumeCount    int
-	parent            Node
-	children          map[NodeId]Node
-	maxVolumeId       storage.VolumeId
+	id                 NodeId
+	volumeCount        int
+	activeVolumeCount  int
+	maxVolumeCount     int
+	plannedVolumeCount int
+	parent             Node
+	children           map[NodeId]Node
+	maxVolumeId        storage.VolumeId
 
 	//for rack, data center, topology
 	nodeType string
@@ -133,7 +136,7 @@ func (n *NodeImpl) Id() NodeId {
 	return n.id
 }
 func (n *NodeImpl) FreeSpace() int {
-	return n.maxVolumeCount - n.volumeCount
+	return n.maxVolumeCount - n.volumeCount - n.plannedVolumeCount
 }
 func (n *NodeImpl) SetParent(node Node) {
 	n.parent = node
@@ -188,6 +191,14 @@ func (n *NodeImpl) UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int) { 
 		n.parent.UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta)
 	}
 }
+
+func (n *NodeImpl) UpAdjustPlannedVolumeCountDelta(delta int) { //can be negative
+	n.plannedVolumeCount += delta
+	if n.parent != nil {
+		n.parent.UpAdjustPlannedVolumeCountDelta(delta)
+	}
+}
+
 func (n *NodeImpl) UpAdjustMaxVolumeId(vid storage.VolumeId) { //can be negative
 	if n.maxVolumeId < vid {
 		n.maxVolumeId = vid
@@ -207,6 +218,10 @@ func (n *NodeImpl) GetActiveVolumeCount() int {
 }
 func (n *NodeImpl) GetMaxVolumeCount() int {
 	return n.maxVolumeCount
+}
+
+func (n *NodeImpl) GetPlannedVolumeCount() int {
+	return n.plannedVolumeCount
 }
 
 func (n *NodeImpl) LinkChildNode(node Node) {
