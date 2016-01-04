@@ -139,11 +139,11 @@ func filterMainRack(option *VolumeGrowOption, node Node) error {
 }
 
 func makeExceptNodeFilter(nodes []Node) FilterNodeFn {
-	m := make(map[string]bool)
+	m := make(map[NodeId]bool)
 	for _, n := range nodes {
 		m[n.Id()] = true
 	}
-	return func(dn Node) {
+	return func(dn Node) error {
 		if dn.FreeSpace() <= 0 {
 			return ErrFilterContinue
 		}
@@ -164,38 +164,69 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 	pickNodesFn := PickLowUsageNodeFn
 	rp := option.ReplicaPlacement
 
-	pickMainAndRestNodes := func(np NodePicker, restNodeCount int, filterNodeFn FilterNodeFn) (mainNode Node, restNodes []Node, e error) {
-		mainNodes, err := np.PickNodes(1, filterNodeFn, pickNodesFn)
-		if err != nil {
-			return nil, err
+	pickMainAndRestNodes := func(np NodePicker, totalNodeCount int, filterNodeFn FilterNodeFn, existsNodes []Node) (mainNode Node, restNodes []Node, e error) {
+		for _, n := range existsNodes {
+			if filterNodeFn(n) == nil {
+				mainNode = n
+				break
+			}
 		}
-		restNodes, err := np.PickNodes(restNodeCount,
-			makeExceptNodeFilter(mainNodes), pickNodesFn)
-		if err != nil {
-			return nil, err
+		if mainNode == nil {
+			mainNodes, err := np.PickNodes(1, filterNodeFn, pickNodesFn)
+			if err != nil {
+				return nil, nil, err
+			}
+			mainNode = mainNodes[0]
+			existsNodes = append(existsNodes, mainNode)
 		}
-		return mainNodes[0], restNodes
-	}
+		glog.V(2).Infoln(mainNode.Id(), "picked main node:", mainNode.Id())
 
-	mainDataCenter, otherDataCenters, dc_err := pickMainAndRestNodes(topo, rp.DiffDataCenterCount,
+		restCount := totalNodeCount - len(existsNodes)
+
+		if restCount > 0 {
+			restNodes, err = np.PickNodes(restCount,
+				makeExceptNodeFilter(existsNodes), pickNodesFn)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+
+		return mainNode, restNodes, nil
+	}
+	var existsNode []Node
+	if existsServer != nil {
+		existsNode = existsServer.DiffDataCenters()
+	}
+	mainDataCenter, otherDataCenters, dc_err := pickMainAndRestNodes(topo, rp.DiffDataCenterCount+1,
 		func(node Node) error {
 			return filterMainDataCenter(option, node)
-		})
+		}, existsNode)
 	if dc_err != nil {
 		return nil, dc_err
 	}
 	//find main rack and other racks
-	mainRack, otherRacks, rack_err := pickMainAndRestNodes(mainDataCenter.(*DataCenter), rp.DiffRackCount,
+	if existsServer != nil {
+		existsNode = existsServer.DiffRacks(mainDataCenter.(*DataCenter))
+	} else {
+		existsNode = nil
+	}
+	mainRack, otherRacks, rack_err := pickMainAndRestNodes(mainDataCenter.(*DataCenter), rp.DiffRackCount+1,
 		func(node Node) error {
 			return filterMainRack(option, node)
 		},
+		existsNode,
 	)
 	if rack_err != nil {
 		return nil, rack_err
 	}
 
 	//find main server and other servers
-	mainServer, otherServers, server_err := pickMainAndRestNodes(mainRack.(*Rack), rp.SameRackCount,
+	if existsServer != nil {
+		existsNode = existsServer.SameServers(mainRack.(*Rack))
+	} else {
+		existsNode = nil
+	}
+	mainServer, otherServers, server_err := pickMainAndRestNodes(mainRack.(*Rack), rp.SameRackCount+1,
 		func(node Node) error {
 			if option.DataNode != "" && node.IsDataNode() && node.Id() != NodeId(option.DataNode) {
 				return fmt.Errorf("Not matching preferred data node:%s", option.DataNode)
@@ -205,6 +236,7 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 			}
 			return nil
 		},
+		existsNode,
 	)
 
 	if server_err != nil {

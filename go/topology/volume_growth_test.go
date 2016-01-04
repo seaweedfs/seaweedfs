@@ -70,6 +70,16 @@ var topologyLayout = `
     }
   },
   "dc2":{
+  	"rack2":{
+  		"server221":{
+  			"volumes":[],
+        	"limit":8
+  		},
+  		"server222":{
+  			"volumes":[],
+        	"limit":8
+  		}
+  	}
   },
   "dc3":{
     "rack2":{
@@ -137,7 +147,7 @@ func setup(topologyLayout string) *Topology {
 func TestFindEmptySlotsForOneVolume(t *testing.T) {
 	topo := setup(topologyLayout)
 	vg := NewDefaultVolumeGrowth()
-	rp, _ := storage.NewReplicaPlacementFromString("011")
+	rp, _ := storage.NewReplicaPlacementFromString("111")
 	volumeGrowOption := &VolumeGrowOption{
 		Collection:       "",
 		ReplicaPlacement: rp,
@@ -145,7 +155,7 @@ func TestFindEmptySlotsForOneVolume(t *testing.T) {
 		Rack:             "",
 		DataNode:         "",
 	}
-	servers, err := vg.findEmptySlotsForOneVolume(topo, volumeGrowOption)
+	servers, err := vg.findEmptySlotsForOneVolume(topo, volumeGrowOption, nil)
 	if err != nil {
 		fmt.Println("finding empty slots error :", err)
 		t.Fail()

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"strings"
 
 	"sort"
 
@@ -58,7 +57,6 @@ type NodePicker interface {
 	PickNodes(numberOfNodes int, filterNodeFn FilterNodeFn, pickFn PickNodesFn) (nodes []Node, err error)
 }
 
-
 var ErrFilterContinue = errors.New("continue")
 
 type FilterNodeFn func(dn Node) error
@@ -71,38 +69,17 @@ func (n *NodeImpl) PickNodes(numberOfNodes int, filterNodeFn FilterNodeFn, pickF
 	for _, node := range n.children {
 		if err := filterNodeFn(node); err == nil {
 			candidates = append(candidates, node)
-		}else if err == ErrFilterContinue{
+		} else if err == ErrFilterContinue {
 			continue
 		} else {
 			errs = append(errs, string(node.Id())+":"+err.Error())
 		}
 	}
-	if len(candidates) < numberOfNodes{
-		return nil, errors.New("No matching data node found! \n" + strings.Join(errs, "\n"))
+	if len(candidates) < numberOfNodes {
+		return nil, errors.New("Not enough data node found!")
+		// 	return nil, errors.New("No matching data node found! \n" + strings.Join(errs, "\n"))
 	}
 	return pickFn(candidates, numberOfNodes), nil
-
-
-	glog.V(2).Infoln(n.Id(), "picked main node:", firstNode.Id())
-
-	candidates = candidates[:0]
-	for _, node := range n.children {
-		if node.Id() == firstNode.Id() {
-			continue
-		}
-		if node.FreeSpace() <= 0 {
-			continue
-		}
-		glog.V(2).Infoln("select rest node candidate:", node.Id())
-		candidates = append(candidates, node)
-	}
-	glog.V(2).Infoln(n.Id(), "picking", numberOfNodes-1, "from rest", len(candidates), "node candidates")
-	restNodes = pickFn(candidates, numberOfNodes-1)
-	if restNodes == nil {
-		glog.V(2).Infoln(n.Id(), "failed to pick", numberOfNodes-1, "from rest", len(candidates), "node candidates")
-		err = errors.New("Not enough data node found!")
-	}
-	return
 }
 
 func RandomlyPickNodeFn(nodes []Node, count int) []Node {
@@ -116,7 +93,7 @@ func RandomlyPickNodeFn(nodes []Node, count int) []Node {
 	return nodes[:count]
 }
 
-func (n *NodeImpl) RandomlyPickNodes(numberOfNodes int, filterFirstNodeFn FilterNodeFn) (firstNode Node, restNodes []Node, err error) {
+func (n *NodeImpl) RandomlyPickNodes(numberOfNodes int, filterFirstNodeFn FilterNodeFn) (nodes []Node, err error) {
 	return n.PickNodes(numberOfNodes, filterFirstNodeFn, RandomlyPickNodeFn)
 }
 
@@ -134,7 +111,7 @@ func PickLowUsageNodeFn(nodes []Node, count int) []Node {
 	return nodes[:count]
 }
 
-func (n *NodeImpl) PickLowUsageNodes(numberOfNodes int, filterFirstNodeFn FilterNodeFn) (firstNode Node, restNodes []Node, err error) {
+func (n *NodeImpl) PickLowUsageNodes(numberOfNodes int, filterFirstNodeFn FilterNodeFn) (nodes []Node, err error) {
 	return n.PickNodes(numberOfNodes, filterFirstNodeFn, PickLowUsageNodeFn)
 }
 
