@@ -91,7 +91,7 @@ func (vs *VolumeServer) getVolume(volumeParameterName string, r *http.Request) (
 func (vs *VolumeServer) getVolumeCleanDataHandler(w http.ResponseWriter, r *http.Request) {
 	v, e := vs.getVolume("volume", r)
 	if v == nil {
-		http.Error(w, fmt.Sprintf("Not Found volume: %v", e), http.StatusBadRequest)
+		http.Error(w, e.Error(), http.StatusBadRequest)
 		return
 	}
 	cr, e := v.GetVolumeCleanReader()
@@ -109,7 +109,7 @@ func (vs *VolumeServer) getVolumeCleanDataHandler(w http.ResponseWriter, r *http
 
 	rangeReq := r.Header.Get("Range")
 	if rangeReq == "" {
-		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
+		w.Header().Set("X-Content-Length", strconv.FormatInt(totalSize, 10))
 		w.Header().Set("Content-Encoding", "lz4")
 		lz4w := lz4.NewWriter(w)
 		if _, e = io.Copy(lz4w, cr); e != nil {
@@ -132,7 +132,7 @@ func (vs *VolumeServer) getVolumeCleanDataHandler(w http.ResponseWriter, r *http
 		http.Error(w, e.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Length", strconv.FormatInt(ra.length, 10))
+	w.Header().Set("X-Content-Length", strconv.FormatInt(ra.length, 10))
 	w.Header().Set("Content-Range", ra.contentRange(totalSize))
 	w.Header().Set("Content-Encoding", "lz4")
 	w.WriteHeader(http.StatusPartialContent)

@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	TaskVacuum  = "VACUUM"
-	TaskReplica = "REPLICA"
-	TaskBalance = "BALANCE"
+	TaskVacuum    = "vacuum"
+	TaskReplicate = "replicate"
+	TaskBalance   = "balance"
 )
 
 var (
@@ -79,16 +79,17 @@ func NewTaskManager() *TaskManager {
 
 func (tm *TaskManager) NewTask(s *Store, args url.Values) (tid string, e error) {
 	tt := args.Get("task")
-	vid := args.Get("volumme")
+	vid := args.Get("volume")
 	tid = tt + "-" + vid
 	if _, ok := tm.TaskList[tid]; ok {
 		return tid, ErrTaskExists
 	}
+
 	var tw TaskWorker
 	switch tt {
 	case TaskVacuum:
 		tw, e = NewVacuumTask(s, args)
-	case TaskReplica:
+	case TaskReplicate:
 		tw, e = NewReplicaTask(s, args)
 	case TaskBalance:
 	}

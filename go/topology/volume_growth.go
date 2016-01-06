@@ -200,7 +200,7 @@ func FindEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption, exists
 			mainNode = mainNodes[0]
 			existsNodes = append(existsNodes, mainNode)
 		}
-		glog.V(2).Infoln(mainNode.Id(), "picked main node:", mainNode.Id())
+		glog.V(3).Infoln(mainNode.Id(), "picked main node:", mainNode.Id())
 
 		restCount := totalNodeCount - len(existsNodes)
 

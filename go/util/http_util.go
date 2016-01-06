@@ -13,7 +13,10 @@ import (
 
 	"os"
 
+	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/security"
+	"github.com/pierrec/lz4"
+	"strconv"
 )
 
 var (
@@ -55,6 +58,7 @@ func PostBytes(url string, body []byte) ([]byte, error) {
 
 func PostEx(host, path string, values url.Values) (content []byte, statusCode int, e error) {
 	url := MkUrl(host, path, nil)
+	glog.V(4).Infoln("Post", url+"?"+values.Encode())
 	r, err := client.PostForm(url, values)
 	if err != nil {
 		return nil, 0, err
@@ -94,13 +98,13 @@ func RemoteApiCall(host, path string, values url.Values) (result map[string]inte
 		return nil, e
 	}
 	result = make(map[string]interface{})
-	if e := json.Unmarshal(jsonBlob, result); e != nil {
+	if e := json.Unmarshal(jsonBlob, &result); e != nil {
 		return nil, e
 	}
 	if err, ok := result["error"]; ok && err.(string) != "" {
 		return nil, &RApiError{E: err.(string)}
 	}
-	if code != http.StatusOK || code != http.StatusAccepted {
+	if code != http.StatusOK && code != http.StatusAccepted {
 		return nil, fmt.Errorf("RemoteApiCall %s/%s return %d", host, path, code)
 	}
 	return result, nil
@@ -145,7 +149,7 @@ func Delete(url string, jwt security.EncodedJwt) error {
 		return nil
 	}
 	m := make(map[string]interface{})
-	if e := json.Unmarshal(body, m); e == nil {
+	if e := json.Unmarshal(body, &m); e == nil {
 		if s, ok := m["error"].(string); ok {
 			return errors.New(s)
 		}
@@ -211,16 +215,36 @@ func DownloadUrl(fileUrl string) (filename string, rc io.ReadCloser, e error) {
 }
 
 func DownloadToFile(fileUrl, savePath string) (e error) {
-	_, rc, err := DownloadUrl(fileUrl)
+	response, err := client.Get(fileUrl)
 	if err != nil {
 		return err
 	}
-	defer rc.Close()
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("%s: %s", fileUrl, response.Status)
+	}
+	var r io.Reader
+	content_encoding := strings.ToLower(response.Header.Get("Content-Encoding"))
+	size := response.ContentLength
+	if n, e := strconv.ParseInt(response.Header.Get("X-Content-Length"), 10, 64); e == nil {
+		size = n
+	}
+	switch content_encoding {
+	case "lz4":
+		r = lz4.NewReader(response.Body)
+	default:
+		r = response.Body
+	}
 	var f *os.File
 	if f, e = os.OpenFile(savePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.ModePerm); e != nil {
 		return
 	}
-	_, e = io.Copy(f, rc)
+	if size >= 0 {
+		_, e = io.CopyN(f, r, size)
+	} else {
+		_, e = io.Copy(f, r)
+	}
+
 	f.Close()
 	return
 }

@@ -15,7 +15,7 @@ type Collection struct {
 }
 
 func NewCollection(name string, rp *storage.ReplicaPlacement, volumeSizeLimit uint64) *Collection {
-	c := &Collection{Name: name, volumeSizeLimit: volumeSizeLimit}
+	c := &Collection{Name: name, volumeSizeLimit: volumeSizeLimit, rp: rp}
 	c.storageType2VolumeLayout = util.NewConcurrentReadMap()
 	return c
 }

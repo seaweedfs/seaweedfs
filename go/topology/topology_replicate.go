@@ -34,7 +34,7 @@ func (t *ReplicateTask) Run(topo *Topology) error {
 		return fmt.Errorf("set volume readonly failed, vid=%v", t.Vid)
 	}
 	defer SetVolumeReadonly(locationList, t.Vid.String(), false)
-	tc, e := storage.NewTaskCli(t.DstDN.Url(), storage.TaskReplica, storage.TaskParams{
+	tc, e := storage.NewTaskCli(t.DstDN.Url(), storage.TaskReplicate, storage.TaskParams{
 		"volume":     t.Vid.String(),
 		"source":     t.SrcDN.Url(),
 		"collection": t.Collection,

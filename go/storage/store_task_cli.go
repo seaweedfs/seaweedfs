@@ -44,7 +44,7 @@ func NewTaskCli(dataNode string, taskType string, params TaskParams) (*TaskCli, 
 func (c *TaskCli) WaitAndQueryResult(timeout time.Duration) error {
 	startTime := time.Now()
 	args := url.Values{}
-	args.Set("task", c.TID)
+	args.Set("tid", c.TID)
 	args.Set("timeout", time.Minute.String())
 	tryTimes := 0
 	for time.Since(startTime) < timeout {
@@ -74,14 +74,14 @@ func (c *TaskCli) WaitAndQueryResult(timeout time.Duration) error {
 
 func (c *TaskCli) Commit() error {
 	args := url.Values{}
-	args.Set("task", c.TID)
+	args.Set("tid", c.TID)
 	_, e := util.RemoteApiCall(c.DataNode, "/admin/task/commit", args)
 	return e
 }
 
 func (c *TaskCli) Clean() error {
 	args := url.Values{}
-	args.Set("task", c.TID)
+	args.Set("tid", c.TID)
 	_, e := util.RemoteApiCall(c.DataNode, "/admin/task/clean", args)
 	return e
 }

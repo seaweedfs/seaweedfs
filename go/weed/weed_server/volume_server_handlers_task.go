@@ -12,6 +12,7 @@ import (
 )
 
 func (vs *VolumeServer) newTaskHandler(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
 	tid, e := vs.store.TaskManager.NewTask(vs.store, r.Form)
 	if e == nil {
 		writeJsonQuiet(w, r, http.StatusOK, map[string]string{"tid": tid})
@@ -22,8 +23,8 @@ func (vs *VolumeServer) newTaskHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (vs *VolumeServer) queryTaskHandler(w http.ResponseWriter, r *http.Request) {
-	tid := r.Form.Get("tid")
-	timeoutStr := strings.TrimSpace(r.Form.Get("timeout"))
+	tid := r.FormValue("tid")
+	timeoutStr := strings.TrimSpace(r.FormValue("timeout"))
 	d := time.Minute
 	if td, e := time.ParseDuration(timeoutStr); e == nil {
 		d = td
@@ -33,11 +34,13 @@ func (vs *VolumeServer) queryTaskHandler(w http.ResponseWriter, r *http.Request)
 		writeJsonError(w, r, http.StatusRequestTimeout, err)
 	} else if err == nil {
 		writeJsonError(w, r, http.StatusOK, err)
+	} else {
+		writeJsonError(w, r, http.StatusInternalServerError, err)
 	}
 	glog.V(2).Infoln("query task =", tid, ", error =", err)
 }
 func (vs *VolumeServer) commitTaskHandler(w http.ResponseWriter, r *http.Request) {
-	tid := r.Form.Get("tid")
+	tid := r.FormValue("tid")
 	err := vs.store.TaskManager.Commit(tid)
 	if err == storage.ErrTaskNotFinish {
 		writeJsonError(w, r, http.StatusRequestTimeout, err)
@@ -47,7 +50,7 @@ func (vs *VolumeServer) commitTaskHandler(w http.ResponseWriter, r *http.Request
 	glog.V(2).Infoln("query task =", tid, ", error =", err)
 }
 func (vs *VolumeServer) cleanTaskHandler(w http.ResponseWriter, r *http.Request) {
-	tid := r.Form.Get("tid")
+	tid := r.FormValue("tid")
 	err := vs.store.TaskManager.Clean(tid)
 	if err == storage.ErrTaskNotFinish {
 		writeJsonError(w, r, http.StatusRequestTimeout, err)
