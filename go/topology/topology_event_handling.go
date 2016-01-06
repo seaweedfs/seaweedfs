@@ -23,6 +23,7 @@ func (t *Topology) StartRefreshWritableVolumes(garbageThreshold string) {
 		if t.IsLeader() {
 			for range c {
 				t.Vacuum(garbageThreshold)
+				t.CheckReplicate()
 			}
 		}
 	}(garbageThreshold)

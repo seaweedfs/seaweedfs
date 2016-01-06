@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/chrislusf/seaweedfs/go/storage"
+	"math/rand"
 )
 
 type VolumeLocationList struct {
@@ -21,6 +22,14 @@ func (dnll *VolumeLocationList) String() string {
 func (dnll *VolumeLocationList) Head() *DataNode {
 	//mark first node as master volume
 	return dnll.list[0]
+}
+
+func (dnll *VolumeLocationList) PickForRead() *DataNode {
+	return dnll.list[rand.Intn(len(dnll.list))]
+}
+
+func (dnll *VolumeLocationList) AllDataNode() []*DataNode {
+	return dnll.list
 }
 
 func (dnll *VolumeLocationList) Length() int {

@@ -90,7 +90,7 @@ func (t *Topology) loadConfiguration(configurationFile string) error {
 	return nil
 }
 
-func (t *Topology) Lookup(collection string, vid storage.VolumeId) []*DataNode {
+func (t *Topology) Lookup(collection string, vid storage.VolumeId) *VolumeLocationList {
 	//maybe an issue if lots of collections?
 	if collection == "" {
 		for _, c := range t.collectionMap.Items {

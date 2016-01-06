@@ -23,10 +23,10 @@ func (ms *MasterServer) lookupVolumeId(vids []string, collection string) (volume
 		}
 		volumeId, err := storage.NewVolumeId(vid)
 		if err == nil {
-			machines := ms.Topo.Lookup(collection, volumeId)
-			if machines != nil {
+			locationList := ms.Topo.Lookup(collection, volumeId)
+			if locationList != nil {
 				var ret operation.Locations
-				for _, dn := range machines {
+				for _, dn := range locationList.AllDataNode() {
 					ret = append(ret, operation.Location{Url: dn.Url(), PublicUrl: dn.PublicUrl})
 				}
 				volumeLocations[vid] = operation.LookupResult{VolumeId: vid, Locations: ret}

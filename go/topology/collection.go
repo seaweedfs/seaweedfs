@@ -35,7 +35,7 @@ func (c *Collection) GetOrCreateVolumeLayout(ttl *storage.TTL) *VolumeLayout {
 	return vl.(*VolumeLayout)
 }
 
-func (c *Collection) Lookup(vid storage.VolumeId) []*DataNode {
+func (c *Collection) Lookup(vid storage.VolumeId) *VolumeLocationList {
 	for _, vl := range c.storageType2VolumeLayout.Items {
 		if vl != nil {
 			if list := vl.(*VolumeLayout).Lookup(vid); list != nil {

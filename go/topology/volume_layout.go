@@ -73,9 +73,9 @@ func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool {
 		!v.ReadOnly
 }
 
-func (vl *VolumeLayout) Lookup(vid storage.VolumeId) []*DataNode {
+func (vl *VolumeLayout) Lookup(vid storage.VolumeId) *VolumeLocationList {
 	if location := vl.vid2location[vid]; location != nil {
-		return location.list
+		return location
 	}
 	return nil
 }
