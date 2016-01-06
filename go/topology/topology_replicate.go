@@ -9,6 +9,10 @@ import (
 	"github.com/chrislusf/seaweedfs/go/storage"
 )
 
+var (
+	isReplicateCheckerRunning = false
+)
+
 const ReplicateTaskTimeout = time.Hour
 
 type ReplicateTask struct {
@@ -16,6 +20,41 @@ type ReplicateTask struct {
 	Collection string
 	SrcDN      *DataNode
 	DstDN      *DataNode
+}
+
+func (t *ReplicateTask) Run(topo *Topology) error {
+	//is lookup thread safe?
+	locationList := topo.Lookup(t.Collection, t.Vid)
+	rp := topo.CollectionSettings.GetReplicaPlacement(t.Collection)
+	if locationList.CalcReplicaPlacement().Compare(rp) >= 0 {
+		glog.V(0).Infof("volume [%v] has right replica placement, rp: %s", t.Vid, rp.String())
+		return nil
+	}
+	if !SetVolumeReadonly(locationList, t.Vid.String(), true) {
+		return fmt.Errorf("set volume readonly failed, vid=%v", t.Vid)
+	}
+	defer SetVolumeReadonly(locationList, t.Vid.String(), false)
+	tc, e := storage.NewTaskCli(t.DstDN.Url(), storage.TaskReplica, storage.TaskParams{
+		"volume":     t.Vid.String(),
+		"source":     t.SrcDN.Url(),
+		"collection": t.Collection,
+	})
+	if e != nil {
+		return e
+	}
+	if e = tc.WaitAndQueryResult(ReplicateTaskTimeout); e != nil {
+		tc.Clean()
+		return e
+	}
+	e = tc.Commit()
+	return e
+}
+
+func (t *ReplicateTask) WorkingDataNodes() []*DataNode {
+	return []*DataNode{
+		t.SrcDN,
+		t.DstDN,
+	}
 }
 
 func planReplicateTasks(t *Topology) (tasks []*ReplicateTask) {
@@ -54,6 +93,10 @@ func planReplicateTasks(t *Topology) (tasks []*ReplicateTask) {
 }
 
 func (topo *Topology) CheckReplicate() {
+	isReplicateCheckerRunning = true
+	defer func() {
+		isReplicateCheckerRunning = false
+	}()
 	glog.V(1).Infoln("Start replicate checker on demand")
 	busyDataNodes := make(map[*DataNode]int)
 	taskCount := 0
@@ -102,37 +145,10 @@ func (topo *Topology) CheckReplicate() {
 	glog.V(1).Infoln("finish replicate check.")
 }
 
-func (t *ReplicateTask) Run(topo *Topology) error {
-	//is lookup thread safe?
-	locationList := topo.Lookup(t.Collection, t.Vid)
-	rp := topo.CollectionSettings.GetReplicaPlacement(t.Collection)
-	if locationList.CalcReplicaPlacement().Compare(rp) >= 0 {
-		glog.V(0).Infof("volume [%v] has right replica placement, rp: %s", t.Vid, rp.String())
-		return nil
+func (topo *Topology) StartCheckReplicate() {
+	if isReplicateCheckerRunning {
+		return
 	}
-	if !SetVolumeReadonly(locationList, t.Vid.String(), true) {
-		return fmt.Errorf("set volume readonly failed, vid=%v", t.Vid)
-	}
-	defer SetVolumeReadonly(locationList, t.Vid.String(), false)
-	tc, e := storage.NewTaskCli(t.DstDN.Url(), storage.TaskReplica, storage.TaskParams{
-		"volume":     t.Vid.String(),
-		"source":     t.SrcDN.Url(),
-		"collection": t.Collection,
-	})
-	if e != nil {
-		return e
-	}
-	if e = tc.WaitAndQueryResult(ReplicateTaskTimeout); e != nil {
-		tc.Clean()
-		return e
-	}
-	e = tc.Commit()
-	return e
-}
+	go topo.CheckReplicate()
 
-func (t *ReplicateTask) WorkingDataNodes() []*DataNode {
-	return []*DataNode{
-		t.SrcDN,
-		t.DstDN,
-	}
 }

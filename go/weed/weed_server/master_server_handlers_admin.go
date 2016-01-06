@@ -84,6 +84,11 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 	ms.dirStatusHandler(w, r)
 }
 
+func (ms *MasterServer) volumeCheckReplicateHandler(w http.ResponseWriter, r *http.Request) {
+	ms.Topo.StartCheckReplicate()
+	ms.dirStatusHandler(w, r)
+}
+
 func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
 	count := 0
 	option, err := ms.getVolumeGrowOption(r)
