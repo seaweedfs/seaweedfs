@@ -142,7 +142,7 @@ func (topo *Topology) CheckReplicate() {
 		taskCount--
 		finishedTask.DstDN.UpAdjustPlannedVolumeCountDelta(-1)
 	}
-	glog.V(1).Infoln("finish replicate check.")
+	glog.V(0).Infoln("finish replicate check.")
 }
 
 func (topo *Topology) StartCheckReplicate() {
@@ -150,5 +150,4 @@ func (topo *Topology) StartCheckReplicate() {
 		return
 	}
 	go topo.CheckReplicate()
-
 }

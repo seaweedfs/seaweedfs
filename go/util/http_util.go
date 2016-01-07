@@ -236,7 +236,7 @@ func DownloadToFile(fileUrl, savePath string) (e error) {
 		r = response.Body
 	}
 	var f *os.File
-	if f, e = os.OpenFile(savePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.ModePerm); e != nil {
+	if f, e = os.OpenFile(savePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644); e != nil {
 		return
 	}
 	if size >= 0 {

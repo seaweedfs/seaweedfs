@@ -86,7 +86,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 
 func (ms *MasterServer) volumeCheckReplicateHandler(w http.ResponseWriter, r *http.Request) {
 	ms.Topo.StartCheckReplicate()
-	ms.dirStatusHandler(w, r)
+	writeJsonQuiet(w, r, http.StatusOK, map[string]interface{}{"status": "running"})
 }
 
 func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request) {

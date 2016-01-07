@@ -185,15 +185,13 @@ func FindEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption, exists
 	pickNodesFn := PickLowUsageNodeFn
 	rp := option.ReplicaPlacement
 
-	pickMainAndRestNodes := func(np NodePicker, totalNodeCount int, filterNodeFn FilterNodeFn, existsNodes []Node) (mainNode Node, restNodes []Node, e error) {
-		for _, n := range existsNodes {
-			if filterNodeFn(n) == nil {
-				mainNode = n
-				break
-			}
+	pickMainAndRestNodes := func(np NodePicker, totalNodeCount int, filterFirstNodeFn FilterNodeFn, existsNodes []Node) (mainNode Node, restNodes []Node, e error) {
+		if len(existsNodes) > 0 {
+			mainNode = existsNodes[0]
 		}
+
 		if mainNode == nil {
-			mainNodes, err := np.PickNodes(1, filterNodeFn, pickNodesFn)
+			mainNodes, err := np.PickNodes(1, filterFirstNodeFn, pickNodesFn)
 			if err != nil {
 				return nil, nil, err
 			}
