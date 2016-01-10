@@ -128,9 +128,15 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 		debug("parsing error:", err, r.URL.Path)
 		return
 	}
-	locations := ms.Topo.Lookup("", volumeId)
-	if locations != nil && locations.Length() > 0 {
-		http.Redirect(w, r, util.NormalizeUrl(locations.PickForRead().PublicUrl)+r.URL.Path, http.StatusMovedPermanently)
+	machines := ms.Topo.Lookup("", volumeId)
+	if machines != nil && machines.Length() > 0 {
+		var url string
+		if r.URL.RawQuery != "" {
+			url = util.NormalizeUrl(machines.PickForRead().PublicUrl) + r.URL.Path + "?" + r.URL.RawQuery
+		} else {
+			url = util.NormalizeUrl(machines.PickForRead().PublicUrl) + r.URL.Path
+		}
+		http.Redirect(w, r, url, http.StatusMovedPermanently)
 	} else {
 		writeJsonError(w, r, http.StatusNotFound, fmt.Errorf("volume id %d not found", volumeId))
 	}

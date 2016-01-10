@@ -129,7 +129,11 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	if replication == "" {
 		replication = fs.defaultReplication
 	}
-	assignResult, ae := operation.Assign(fs.master, 1, replication, fs.collection, query.Get("ttl"))
+	collection := query.Get("collection")
+	if collection == "" {
+		collection = fs.collection
+	}
+	assignResult, ae := operation.Assign(fs.master, 1, replication, collection, query.Get("ttl"))
 	if ae != nil {
 		glog.V(0).Infoln("failing to assign a file id", ae.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, ae)
