@@ -169,7 +169,6 @@ func (v *Volume) GetVolumeSyncStatus() operation.SyncVolumeResponse {
 	syncStatus.IdxFileSize = v.nm.IndexFileSize()
 	syncStatus.CompactRevision = v.SuperBlock.CompactRevision
 	syncStatus.Ttl = v.SuperBlock.Ttl.String()
-	syncStatus.Replication = v.SuperBlock.ReplicaPlacement.String()
 	return syncStatus
 }
 
@@ -201,6 +200,9 @@ func (v *Volume) fetchNeedle(volumeDataContentHandlerUrl string,
 		b, err := ioutil.ReadAll(r)
 		if err != nil {
 			return fmt.Errorf("Reading from %s error: %v", volumeDataContentHandlerUrl, err)
+		}
+		if needleValue.Size != uint32(len(b)) {
+			return fmt.Errorf("Reading from %s error: size incorrect", volumeDataContentHandlerUrl)
 		}
 		offset, err := v.AppendBlob(b)
 		if err != nil {

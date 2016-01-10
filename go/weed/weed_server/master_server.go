@@ -11,6 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/security"
 	"github.com/chrislusf/seaweedfs/go/sequence"
+	"github.com/chrislusf/seaweedfs/go/storage"
 	"github.com/chrislusf/seaweedfs/go/topology"
 	"github.com/chrislusf/seaweedfs/go/util"
 	"github.com/gorilla/mux"
@@ -50,9 +51,10 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
 	seq := sequence.NewMemorySequencer()
+	cs := storage.NewCollectionSettings(defaultReplicaPlacement, garbageThreshold)
 	var e error
-	if ms.Topo, e = topology.NewTopology("topo", confFile, seq,
-		uint64(volumeSizeLimitMB)*1024*1024, pulseSeconds); e != nil {
+	if ms.Topo, e = topology.NewTopology("topo", confFile, cs,
+		seq, uint64(volumeSizeLimitMB)*1024*1024, pulseSeconds); e != nil {
 		glog.Fatalf("cannot create topology:%s", e)
 	}
 	ms.vg = topology.NewDefaultVolumeGrowth()
@@ -71,6 +73,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	r.HandleFunc("/vol/grow", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeGrowHandler)))
 	r.HandleFunc("/vol/status", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeStatusHandler)))
 	r.HandleFunc("/vol/vacuum", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeVacuumHandler)))
+	r.HandleFunc("/vol/check_replicate", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeCheckReplicateHandler)))
 	r.HandleFunc("/submit", ms.guard.WhiteList(ms.submitFromMasterServerHandler))
 	r.HandleFunc("/delete", ms.guard.WhiteList(ms.deleteFromMasterServerHandler))
 	r.HandleFunc("/{fileId}", ms.proxyToLeader(ms.redirectHandler))

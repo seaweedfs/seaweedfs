@@ -25,7 +25,6 @@ func NewVolumeLayout(rp *storage.ReplicaPlacement, ttl *storage.TTL, volumeSizeL
 		rp:              rp,
 		ttl:             ttl,
 		vid2location:    make(map[storage.VolumeId]*VolumeLocationList),
-		writables:       *new([]storage.VolumeId),
 		volumeSizeLimit: volumeSizeLimit,
 	}
 }
@@ -42,7 +41,8 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 		vl.vid2location[v.Id] = NewVolumeLocationList()
 	}
 	vl.vid2location[v.Id].Set(dn)
-	glog.V(4).Infoln("volume", v.Id, "added to dn", dn.Id(), "len", vl.vid2location[v.Id].Length(), "copy", v.ReplicaPlacement.GetCopyCount())
+	glog.V(4).Infoln("volume", v.Id, "added to dn", dn.Id(), "len", vl.vid2location[v.Id].Length())
+	//TODO balancing data when have more replications
 	if vl.vid2location[v.Id].Length() == vl.rp.GetCopyCount() && vl.isWritable(v) {
 		vl.AddToWritable(v.Id)
 	} else {
@@ -53,7 +53,7 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 func (vl *VolumeLayout) UnRegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
-
+	//TODO only delete data node from locations?
 	vl.removeFromWritable(v.Id)
 	delete(vl.vid2location, v.Id)
 }
@@ -73,9 +73,9 @@ func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool {
 		!v.ReadOnly
 }
 
-func (vl *VolumeLayout) Lookup(vid storage.VolumeId) []*DataNode {
+func (vl *VolumeLayout) Lookup(vid storage.VolumeId) *VolumeLocationList {
 	if location := vl.vid2location[vid]; location != nil {
-		return location.list
+		return location
 	}
 	return nil
 }

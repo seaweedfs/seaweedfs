@@ -22,7 +22,7 @@ type DeleteResult struct {
 }
 
 func DeleteFile(master string, fileId string, jwt security.EncodedJwt) error {
-	fileUrl, err := LookupFileId(master, fileId)
+	fileUrl, err := LookupFileId(master, fileId, false)
 	if err != nil {
 		return fmt.Errorf("Failed to lookup %s:%v", fileId, err)
 	}
@@ -97,7 +97,7 @@ func DeleteFiles(master string, fileIds []string) (*DeleteFilesResult, error) {
 			for _, fid := range fidList {
 				values.Add("fid", fid)
 			}
-			jsonBlob, err := util.Post("http://"+server+"/delete", values)
+			jsonBlob, err := util.Post(server, "/delete", values)
 			if err != nil {
 				ret.Errors = append(ret.Errors, err.Error()+" "+string(jsonBlob))
 				return

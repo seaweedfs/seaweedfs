@@ -30,6 +30,7 @@ func (v *Volume) commitCompact() error {
 	glog.V(3).Infof("Got Committing lock...")
 	_ = v.dataFile.Close()
 	var e error
+
 	if e = os.Rename(v.FileName()+".cpd", v.FileName()+".dat"); e != nil {
 		return e
 	}
@@ -42,6 +43,12 @@ func (v *Volume) commitCompact() error {
 	if e = v.load(true, false, v.needleMapKind); e != nil {
 		return e
 	}
+	return nil
+}
+
+func (v *Volume) cleanCompact() error {
+	os.Remove(v.FileName() + ".cpd")
+	os.Remove(v.FileName() + ".cpx")
 	return nil
 }
 

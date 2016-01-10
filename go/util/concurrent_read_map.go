@@ -7,9 +7,8 @@ import (
 // A mostly for read map, which can thread-safely
 // initialize the map entries.
 type ConcurrentReadMap struct {
-	rmutex sync.RWMutex
-	mutex  sync.Mutex
-	Items  map[string]interface{}
+	rwmutex sync.RWMutex
+	Items   map[string]interface{}
 }
 
 func NewConcurrentReadMap() *ConcurrentReadMap {
@@ -17,8 +16,8 @@ func NewConcurrentReadMap() *ConcurrentReadMap {
 }
 
 func (m *ConcurrentReadMap) initMapEntry(key string, newEntry func() interface{}) (value interface{}) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+	m.rwmutex.Lock()
+	defer m.rwmutex.Unlock()
 	if value, ok := m.Items[key]; ok {
 		return value
 	}
@@ -28,11 +27,11 @@ func (m *ConcurrentReadMap) initMapEntry(key string, newEntry func() interface{}
 }
 
 func (m *ConcurrentReadMap) Get(key string, newEntry func() interface{}) interface{} {
-	m.rmutex.RLock()
-	if value, ok := m.Items[key]; ok {
-		m.rmutex.RUnlock()
+	m.rwmutex.RLock()
+	value, ok := m.Items[key]
+	m.rwmutex.RUnlock()
+	if ok {
 		return value
 	}
-	m.rmutex.RUnlock()
 	return m.initMapEntry(key, newEntry)
 }

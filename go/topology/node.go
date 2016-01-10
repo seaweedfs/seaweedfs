@@ -3,7 +3,8 @@ package topology
 import (
 	"errors"
 	"math/rand"
-	"strings"
+
+	"sort"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/storage"
@@ -18,11 +19,13 @@ type Node interface {
 	UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int)
 	UpAdjustVolumeCountDelta(volumeCountDelta int)
 	UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int)
+	UpAdjustPlannedVolumeCountDelta(delta int)
 	UpAdjustMaxVolumeId(vid storage.VolumeId)
 
 	GetVolumeCount() int
 	GetActiveVolumeCount() int
 	GetMaxVolumeCount() int
+	GetPlannedVolumeCount() int
 	GetMaxVolumeId() storage.VolumeId
 	SetParent(Node)
 	LinkChildNode(node Node)
@@ -38,68 +41,80 @@ type Node interface {
 	GetValue() interface{} //get reference to the topology,dc,rack,datanode
 }
 type NodeImpl struct {
-	id                NodeId
-	volumeCount       int
-	activeVolumeCount int
-	maxVolumeCount    int
-	parent            Node
-	children          map[NodeId]Node
-	maxVolumeId       storage.VolumeId
+	id                 NodeId
+	volumeCount        int
+	activeVolumeCount  int
+	maxVolumeCount     int
+	plannedVolumeCount int
+	parent             Node
+	children           map[NodeId]Node
+	maxVolumeId        storage.VolumeId
 
 	//for rack, data center, topology
 	nodeType string
 	value    interface{}
 }
 
+type NodePicker interface {
+	PickNodes(numberOfNodes int, filterNodeFn FilterNodeFn, pickFn PickNodesFn) (nodes []Node, err error)
+}
+
+var ErrFilterContinue = errors.New("continue")
+
+type FilterNodeFn func(dn Node) error
+type PickNodesFn func(nodes []Node, count int) []Node
+
 // the first node must satisfy filterFirstNodeFn(), the rest nodes must have one free slot
-func (n *NodeImpl) RandomlyPickNodes(numberOfNodes int, filterFirstNodeFn func(dn Node) error) (firstNode Node, restNodes []Node, err error) {
+func (n *NodeImpl) PickNodes(numberOfNodes int, filterNodeFn FilterNodeFn, pickFn PickNodesFn) (nodes []Node, err error) {
 	candidates := make([]Node, 0, len(n.children))
 	var errs []string
 	for _, node := range n.children {
-		if err := filterFirstNodeFn(node); err == nil {
+		if err := filterNodeFn(node); err == nil {
 			candidates = append(candidates, node)
+		} else if err == ErrFilterContinue {
+			continue
 		} else {
 			errs = append(errs, string(node.Id())+":"+err.Error())
 		}
 	}
-	if len(candidates) == 0 {
-		return nil, nil, errors.New("No matching data node found! \n" + strings.Join(errs, "\n"))
+	if len(candidates) < numberOfNodes {
+		return nil, errors.New("Not enough data node found!")
+		// 	return nil, errors.New("No matching data node found! \n" + strings.Join(errs, "\n"))
 	}
-	firstNode = candidates[rand.Intn(len(candidates))]
-	glog.V(2).Infoln(n.Id(), "picked main node:", firstNode.Id())
+	return pickFn(candidates, numberOfNodes), nil
+}
 
-	restNodes = make([]Node, numberOfNodes-1)
-	candidates = candidates[:0]
-	for _, node := range n.children {
-		if node.Id() == firstNode.Id() {
-			continue
-		}
-		if node.FreeSpace() <= 0 {
-			continue
-		}
-		glog.V(2).Infoln("select rest node candidate:", node.Id())
-		candidates = append(candidates, node)
+func RandomlyPickNodeFn(nodes []Node, count int) []Node {
+	if len(nodes) < count {
+		return nil
 	}
-	glog.V(2).Infoln(n.Id(), "picking", numberOfNodes-1, "from rest", len(candidates), "node candidates")
-	ret := len(restNodes) == 0
-	for k, node := range candidates {
-		if k < len(restNodes) {
-			restNodes[k] = node
-			if k == len(restNodes)-1 {
-				ret = true
-			}
-		} else {
-			r := rand.Intn(k + 1)
-			if r < len(restNodes) {
-				restNodes[r] = node
-			}
-		}
+	for i := range nodes {
+		j := rand.Intn(i + 1)
+		nodes[i], nodes[j] = nodes[j], nodes[i]
 	}
-	if !ret {
-		glog.V(2).Infoln(n.Id(), "failed to pick", numberOfNodes-1, "from rest", len(candidates), "node candidates")
-		err = errors.New("Not enough data node found!")
+	return nodes[:count]
+}
+
+func (n *NodeImpl) RandomlyPickNodes(numberOfNodes int, filterFirstNodeFn FilterNodeFn) (nodes []Node, err error) {
+	return n.PickNodes(numberOfNodes, filterFirstNodeFn, RandomlyPickNodeFn)
+}
+
+type nodeList []Node
+
+func (s nodeList) Len() int           { return len(s) }
+func (s nodeList) Less(i, j int) bool { return s[i].FreeSpace() < s[j].FreeSpace() }
+func (s nodeList) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+
+func PickLowUsageNodeFn(nodes []Node, count int) []Node {
+	if len(nodes) < count {
+		return nil
 	}
-	return
+	sort.Sort(sort.Reverse(nodeList(nodes)))
+	return nodes[:count]
+}
+
+func (n *NodeImpl) PickLowUsageNodes(numberOfNodes int, filterFirstNodeFn FilterNodeFn) (nodes []Node, err error) {
+	return n.PickNodes(numberOfNodes, filterFirstNodeFn, PickLowUsageNodeFn)
 }
 
 func (n *NodeImpl) IsDataNode() bool {
@@ -121,7 +136,7 @@ func (n *NodeImpl) Id() NodeId {
 	return n.id
 }
 func (n *NodeImpl) FreeSpace() int {
-	return n.maxVolumeCount - n.volumeCount
+	return n.maxVolumeCount - n.volumeCount - n.plannedVolumeCount
 }
 func (n *NodeImpl) SetParent(node Node) {
 	n.parent = node
@@ -146,7 +161,7 @@ func (n *NodeImpl) ReserveOneVolume(r int) (assignedNode *DataNode, err error) {
 			r -= freeSpace
 		} else {
 			if node.IsDataNode() && node.FreeSpace() > 0 {
-				// fmt.Println("vid =", vid, " assigned to node =", node, ", freeSpace =", node.FreeSpace())
+				// fmt.Println("assigned to node =", node, ", freeSpace =", node.FreeSpace())
 				return node.(*DataNode), nil
 			}
 			assignedNode, err = node.ReserveOneVolume(r)
@@ -176,6 +191,14 @@ func (n *NodeImpl) UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int) { 
 		n.parent.UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta)
 	}
 }
+
+func (n *NodeImpl) UpAdjustPlannedVolumeCountDelta(delta int) { //can be negative
+	n.plannedVolumeCount += delta
+	if n.parent != nil {
+		n.parent.UpAdjustPlannedVolumeCountDelta(delta)
+	}
+}
+
 func (n *NodeImpl) UpAdjustMaxVolumeId(vid storage.VolumeId) { //can be negative
 	if n.maxVolumeId < vid {
 		n.maxVolumeId = vid
@@ -195,6 +218,10 @@ func (n *NodeImpl) GetActiveVolumeCount() int {
 }
 func (n *NodeImpl) GetMaxVolumeCount() int {
 	return n.maxVolumeCount
+}
+
+func (n *NodeImpl) GetPlannedVolumeCount() int {
+	return n.plannedVolumeCount
 }
 
 func (n *NodeImpl) LinkChildNode(node Node) {

@@ -11,7 +11,12 @@ import (
 	"net/url"
 	"strings"
 
+	"os"
+
+	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/security"
+	"github.com/pierrec/lz4"
+	"strconv"
 )
 
 var (
@@ -24,6 +29,18 @@ func init() {
 		MaxIdleConnsPerHost: 1024,
 	}
 	client = &http.Client{Transport: Transport}
+}
+
+func MkUrl(host, path string, args url.Values) string {
+	u := url.URL{
+		Scheme: "http",
+		Host:   host,
+		Path:   path,
+	}
+	if args != nil {
+		u.RawQuery = args.Encode()
+	}
+	return u.String()
 }
 
 func PostBytes(url string, body []byte) ([]byte, error) {
@@ -39,20 +56,62 @@ func PostBytes(url string, body []byte) ([]byte, error) {
 	return b, nil
 }
 
-func Post(url string, values url.Values) ([]byte, error) {
+func PostEx(host, path string, values url.Values) (content []byte, statusCode int, e error) {
+	url := MkUrl(host, path, nil)
+	glog.V(4).Infoln("Post", url+"?"+values.Encode())
 	r, err := client.PostForm(url, values)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer r.Body.Close()
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		return nil, err
+		return nil, r.StatusCode, err
 	}
-	return b, nil
+	return b, r.StatusCode, nil
 }
 
-func Get(url string) ([]byte, error) {
+func Post(host, path string, values url.Values) (content []byte, e error) {
+	content, _, e = PostEx(host, path, values)
+	return
+}
+
+type RApiError struct {
+	E string
+}
+
+func (e *RApiError) Error() string {
+	return e.E
+}
+
+func IsRemoteApiError(e error) bool {
+	switch e.(type) {
+	case *RApiError:
+		return true
+	}
+	return false
+}
+
+func RemoteApiCall(host, path string, values url.Values) (result map[string]interface{}, e error) {
+	jsonBlob, code, e := PostEx(host, path, values)
+	if e != nil {
+		return nil, e
+	}
+	result = make(map[string]interface{})
+	if e := json.Unmarshal(jsonBlob, &result); e != nil {
+		return nil, e
+	}
+	if err, ok := result["error"]; ok && err.(string) != "" {
+		return nil, &RApiError{E: err.(string)}
+	}
+	if code != http.StatusOK && code != http.StatusAccepted {
+		return nil, fmt.Errorf("RemoteApiCall %s/%s return %d", host, path, code)
+	}
+	return result, nil
+}
+
+func Get(host, path string, values url.Values) ([]byte, error) {
+	url := MkUrl(host, path, values)
 	r, err := client.Get(url)
 	if err != nil {
 		return nil, err
@@ -90,7 +149,7 @@ func Delete(url string, jwt security.EncodedJwt) error {
 		return nil
 	}
 	m := make(map[string]interface{})
-	if e := json.Unmarshal(body, m); e == nil {
+	if e := json.Unmarshal(body, &m); e == nil {
 		if s, ok := m["error"].(string); ok {
 			return errors.New(s)
 		}
@@ -140,6 +199,10 @@ func DownloadUrl(fileUrl string) (filename string, rc io.ReadCloser, e error) {
 	if err != nil {
 		return "", nil, err
 	}
+	if response.StatusCode != http.StatusOK {
+		response.Body.Close()
+		return "", nil, fmt.Errorf("%s: %s", fileUrl, response.Status)
+	}
 	contentDisposition := response.Header["Content-Disposition"]
 	if len(contentDisposition) > 0 {
 		if strings.HasPrefix(contentDisposition[0], "filename=") {
@@ -148,6 +211,41 @@ func DownloadUrl(fileUrl string) (filename string, rc io.ReadCloser, e error) {
 		}
 	}
 	rc = response.Body
+	return
+}
+
+func DownloadToFile(fileUrl, savePath string) (e error) {
+	response, err := client.Get(fileUrl)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("%s: %s", fileUrl, response.Status)
+	}
+	var r io.Reader
+	content_encoding := strings.ToLower(response.Header.Get("Content-Encoding"))
+	size := response.ContentLength
+	if n, e := strconv.ParseInt(response.Header.Get("X-Content-Length"), 10, 64); e == nil {
+		size = n
+	}
+	switch content_encoding {
+	case "lz4":
+		r = lz4.NewReader(response.Body)
+	default:
+		r = response.Body
+	}
+	var f *os.File
+	if f, e = os.OpenFile(savePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644); e != nil {
+		return
+	}
+	if size >= 0 {
+		_, e = io.CopyN(f, r, size)
+	} else {
+		_, e = io.Copy(f, r)
+	}
+
+	f.Close()
 	return
 }
 

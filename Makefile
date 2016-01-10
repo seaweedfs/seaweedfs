@@ -14,7 +14,10 @@ clean:
 deps:
 	go get $(GO_FLAGS) -d $(SOURCE_DIR)
 
-build: deps
+fmt:
+	gofmt -w -s ./go/
+
+build: deps fmt
 	go build $(GO_FLAGS) -o $(BINARY) $(SOURCE_DIR)
 
 linux: deps

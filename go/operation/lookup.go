@@ -16,14 +16,25 @@ type Location struct {
 	Url       string `json:"url,omitempty"`
 	PublicUrl string `json:"publicUrl,omitempty"`
 }
+
+type Locations []Location
+
 type LookupResult struct {
-	VolumeId  string     `json:"volumeId,omitempty"`
-	Locations []Location `json:"locations,omitempty"`
-	Error     string     `json:"error,omitempty"`
+	VolumeId  string    `json:"volumeId,omitempty"`
+	Locations Locations `json:"locations,omitempty"`
+	Error     string    `json:"error,omitempty"`
 }
 
 func (lr *LookupResult) String() string {
 	return fmt.Sprintf("VolumeId:%s, Locations:%v, Error:%s", lr.VolumeId, lr.Locations, lr.Error)
+}
+
+func (ls Locations) Head() *Location {
+	return &ls[0]
+}
+
+func (ls Locations) PickForRead() *Location {
+	return &ls[rand.Intn(len(ls))]
 }
 
 var (
@@ -42,10 +53,17 @@ func Lookup(server string, vid string) (ret *LookupResult, err error) {
 	return
 }
 
+func LookupNoCache(server string, vid string) (ret *LookupResult, err error) {
+	if ret, err = do_lookup(server, vid); err == nil {
+		vc.Set(vid, ret.Locations, 10*time.Minute)
+	}
+	return
+}
+
 func do_lookup(server string, vid string) (*LookupResult, error) {
 	values := make(url.Values)
 	values.Add("volumeId", vid)
-	jsonBlob, err := util.Post("http://"+server+"/dir/lookup", values)
+	jsonBlob, err := util.Post(server, "/dir/lookup", values)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +78,7 @@ func do_lookup(server string, vid string) (*LookupResult, error) {
 	return &ret, nil
 }
 
-func LookupFileId(server string, fileId string) (fullUrl string, err error) {
+func LookupFileId(server string, fileId string, readonly bool) (fullUrl string, err error) {
 	parts := strings.Split(fileId, ",")
 	if len(parts) != 2 {
 		return "", errors.New("Invalid fileId " + fileId)
@@ -72,7 +90,13 @@ func LookupFileId(server string, fileId string) (fullUrl string, err error) {
 	if len(lookup.Locations) == 0 {
 		return "", errors.New("File Not Found")
 	}
-	return "http://" + lookup.Locations[rand.Intn(len(lookup.Locations))].Url + "/" + fileId, nil
+	var u string
+	if readonly {
+		u = lookup.Locations.PickForRead().Url
+	} else {
+		u = lookup.Locations.Head().Url
+	}
+	return util.MkUrl(u, "/"+fileId, nil), nil
 }
 
 // LookupVolumeIds find volume locations by cache and actual lookup
@@ -99,7 +123,7 @@ func LookupVolumeIds(server string, vids []string) (map[string]LookupResult, err
 	for _, vid := range unknown_vids {
 		values.Add("volumeId", vid)
 	}
-	jsonBlob, err := util.Post("http://"+server+"/vol/lookup", values)
+	jsonBlob, err := util.Post(server, "/vol/lookup", values)
 	if err != nil {
 		return nil, err
 	}

@@ -254,15 +254,14 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 			println("!!!! volume id ", vid, " location not found!!!!!")
 			continue
 		}
-		server := ret.Locations[rand.Intn(len(ret.Locations))].Url
-		url := "http://" + server + "/" + fid
-		if bytesRead, err := util.Get(url); err == nil {
+		server := ret.Locations.PickForRead().Url
+		if bytesRead, err := util.Get(server, "/"+fid, nil); err == nil {
 			s.completed++
 			s.transferred += int64(len(bytesRead))
 			readStats.addSample(time.Now().Sub(start))
 		} else {
 			s.failed++
-			fmt.Printf("Failed to read %s error:%v\n", url, err)
+			fmt.Printf("Failed to read %s/%s error:%v\n", server, fid, err)
 		}
 	}
 }

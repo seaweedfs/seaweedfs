@@ -15,16 +15,15 @@ const (
 /*
 * Super block currently has 8 bytes allocated for each volume.
 * Byte 0: version, 1 or 2
-* Byte 1: Replica Placement strategy, 000, 001, 002, 010, etc
+* Byte 1: Replica Placement strategy, 000, 001, 002, 010, etc (Deprecated!)
 * Byte 2 and byte 3: Time to live. See TTL for definition
 * Byte 4 and byte 5: The number of times the volume has been compacted.
 * Rest bytes: Reserved
  */
 type SuperBlock struct {
-	version          Version
-	ReplicaPlacement *ReplicaPlacement
-	Ttl              *TTL
-	CompactRevision  uint16
+	version         Version
+	Ttl             *TTL
+	CompactRevision uint16
 }
 
 func (s *SuperBlock) Version() Version {
@@ -33,7 +32,7 @@ func (s *SuperBlock) Version() Version {
 func (s *SuperBlock) Bytes() []byte {
 	header := make([]byte, SuperBlockSize)
 	header[0] = byte(s.version)
-	header[1] = s.ReplicaPlacement.Byte()
+	header[1] = 0
 	s.Ttl.ToBytes(header[2:4])
 	util.Uint16toBytes(header[4:6], s.CompactRevision)
 	return header
@@ -59,6 +58,7 @@ func (v *Volume) maybeWriteSuperBlock() error {
 	}
 	return e
 }
+
 func (v *Volume) readSuperBlock() (err error) {
 	if _, err = v.dataFile.Seek(0, 0); err != nil {
 		return fmt.Errorf("cannot seek to the beginning of %s: %v", v.dataFile.Name(), err)
@@ -70,11 +70,18 @@ func (v *Volume) readSuperBlock() (err error) {
 	v.SuperBlock, err = ParseSuperBlock(header)
 	return err
 }
+
+func (v *Volume) writeSuperBlock() (err error) {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	if _, e := v.dataFile.WriteAt(v.SuperBlock.Bytes(), 0); e != nil {
+		return fmt.Errorf("cannot write volume %d super block: %v", v.Id, e)
+	}
+	return nil
+}
+
 func ParseSuperBlock(header []byte) (superBlock SuperBlock, err error) {
 	superBlock.version = Version(header[0])
-	if superBlock.ReplicaPlacement, err = NewReplicaPlacementFromByte(header[1]); err != nil {
-		err = fmt.Errorf("cannot read replica type: %s", err.Error())
-	}
 	superBlock.Ttl = LoadTTLFromBytes(header[2:4])
 	superBlock.CompactRevision = util.BytesToUint16(header[4:6])
 	return

@@ -26,7 +26,7 @@ func batchVacuumVolumeCheck(vl *VolumeLayout, vid storage.VolumeId, locationlist
 		}(index, dn.Url(), vid)
 	}
 	isCheckSuccess := true
-	for _ = range locationlist.list {
+	for range locationlist.list {
 		select {
 		case canVacuum := <-ch:
 			isCheckSuccess = isCheckSuccess && canVacuum
@@ -53,7 +53,7 @@ func batchVacuumVolumeCompact(vl *VolumeLayout, vid storage.VolumeId, locationli
 		}(index, dn.Url(), vid)
 	}
 	isVacuumSuccess := true
-	for _ = range locationlist.list {
+	for range locationlist.list {
 		select {
 		case _ = <-ch:
 		case <-time.After(30 * time.Minute):
@@ -87,11 +87,11 @@ func (t *Topology) Vacuum(garbageThreshold string) int {
 		for _, vl := range c.storageType2VolumeLayout.Items {
 			if vl != nil {
 				volumeLayout := vl.(*VolumeLayout)
-				for vid, locationlist := range volumeLayout.vid2location {
+				for vid, locationList := range volumeLayout.vid2location {
 					glog.V(0).Infoln("vacuum on collection:", c.Name, "volume", vid)
-					if batchVacuumVolumeCheck(volumeLayout, vid, locationlist, garbageThreshold) {
-						if batchVacuumVolumeCompact(volumeLayout, vid, locationlist) {
-							batchVacuumVolumeCommit(volumeLayout, vid, locationlist)
+					if batchVacuumVolumeCheck(volumeLayout, vid, locationList, garbageThreshold) {
+						if batchVacuumVolumeCompact(volumeLayout, vid, locationList) {
+							batchVacuumVolumeCommit(volumeLayout, vid, locationList)
 						}
 					}
 				}
@@ -110,7 +110,7 @@ func vacuumVolume_Check(urlLocation string, vid storage.VolumeId, garbageThresho
 	values := make(url.Values)
 	values.Add("volume", vid.String())
 	values.Add("garbageThreshold", garbageThreshold)
-	jsonBlob, err := util.Post("http://"+urlLocation+"/admin/vacuum/check", values)
+	jsonBlob, err := util.Post(urlLocation, "/admin/vacuum/check", values)
 	if err != nil {
 		glog.V(0).Infoln("parameters:", values)
 		return err, false
@@ -127,7 +127,7 @@ func vacuumVolume_Check(urlLocation string, vid storage.VolumeId, garbageThresho
 func vacuumVolume_Compact(urlLocation string, vid storage.VolumeId) error {
 	values := make(url.Values)
 	values.Add("volume", vid.String())
-	jsonBlob, err := util.Post("http://"+urlLocation+"/admin/vacuum/compact", values)
+	jsonBlob, err := util.Post(urlLocation, "/admin/vacuum/compact", values)
 	if err != nil {
 		return err
 	}
@@ -143,7 +143,7 @@ func vacuumVolume_Compact(urlLocation string, vid storage.VolumeId) error {
 func vacuumVolume_Commit(urlLocation string, vid storage.VolumeId) error {
 	values := make(url.Values)
 	values.Add("volume", vid.String())
-	jsonBlob, err := util.Post("http://"+urlLocation+"/admin/vacuum/commit", values)
+	jsonBlob, err := util.Post(urlLocation, "/admin/vacuum/commit", values)
 	if err != nil {
 		return err
 	}

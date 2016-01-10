@@ -69,7 +69,12 @@ func writeJsonQuiet(w http.ResponseWriter, r *http.Request, httpStatus int, obj 
 }
 func writeJsonError(w http.ResponseWriter, r *http.Request, httpStatus int, err error) {
 	m := make(map[string]interface{})
-	m["error"] = err.Error()
+	if err == nil {
+		m["error"] = ""
+	} else {
+		m["error"] = err.Error()
+
+	}
 	writeJsonQuiet(w, r, httpStatus, m)
 }
 

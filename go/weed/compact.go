@@ -33,7 +33,7 @@ func runCompact(cmd *Command, args []string) bool {
 
 	vid := storage.VolumeId(*compactVolumeId)
 	v, err := storage.NewVolume(*compactVolumePath, *compactVolumeCollection, vid,
-		storage.NeedleMapInMemory, nil, nil)
+		storage.NeedleMapInMemory, nil)
 	if err != nil {
 		glog.Fatalf("Load Volume [ERROR] %s\n", err)
 	}

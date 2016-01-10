@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"math/rand"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"net/url"
+	"sync"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/operation"
@@ -25,7 +27,7 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	for _, server := range collection.ListVolumeServers() {
-		_, err := util.Get("http://" + server.Ip + ":" + strconv.Itoa(server.Port) + "/admin/delete_collection?collection=" + r.FormValue("collection"))
+		_, err := util.Get(server.Ip+":"+strconv.Itoa(server.Port), "/admin/delete_collection", url.Values{"collection": r.Form["collection"]})
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 			return
@@ -82,6 +84,11 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 	ms.dirStatusHandler(w, r)
 }
 
+func (ms *MasterServer) volumeCheckReplicateHandler(w http.ResponseWriter, r *http.Request) {
+	ms.Topo.StartCheckReplicate()
+	writeJsonQuiet(w, r, http.StatusOK, map[string]interface{}{"status": "running"})
+}
+
 func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
 	count := 0
 	option, err := ms.getVolumeGrowOption(r)
@@ -122,8 +129,14 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	machines := ms.Topo.Lookup("", volumeId)
-	if machines != nil && len(machines) > 0 {
-		http.Redirect(w, r, util.NormalizeUrl(machines[rand.Intn(len(machines))].PublicUrl)+r.URL.Path, http.StatusMovedPermanently)
+	if machines != nil && machines.Length() > 0 {
+		var url string
+		if r.URL.RawQuery != "" {
+			url = util.NormalizeUrl(machines.PickForRead().PublicUrl) + r.URL.Path + "?" + r.URL.RawQuery
+		} else {
+			url = util.NormalizeUrl(machines.PickForRead().PublicUrl) + r.URL.Path
+		}
+		http.Redirect(w, r, url, http.StatusMovedPermanently)
 	} else {
 		writeJsonError(w, r, http.StatusNotFound, fmt.Errorf("volume id %d not found", volumeId))
 	}
@@ -157,7 +170,7 @@ func (ms *MasterServer) deleteFromMasterServerHandler(w http.ResponseWriter, r *
 }
 
 func (ms *MasterServer) HasWritableVolume(option *topology.VolumeGrowOption) bool {
-	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl)
+	vl := ms.Topo.GetVolumeLayout(option.Collection, option.Ttl)
 	return vl.GetActiveVolumeCount(option) > 0
 }
 
@@ -183,4 +196,41 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 		DataNode:         r.FormValue("dataNode"),
 	}
 	return volumeGrowOption, nil
+}
+
+func (ms *MasterServer) batchSetVolumeOption(settingKey, settingValue string, volumes, collections []string) (result map[string]interface{}) {
+	forms := url.Values{}
+	forms.Set("key", settingKey)
+	forms.Set("value", settingValue)
+	if len(volumes) == 0 && len(collections) == 0 {
+		forms.Set("all", "true")
+	} else {
+		forms["volume"] = volumes
+		forms["collection"] = collections
+	}
+
+	var wg sync.WaitGroup
+	ms.Topo.WalkDataNode(func(dn *topology.DataNode) (e error) {
+		wg.Add(1)
+		go func(server string, values url.Values) {
+			defer wg.Done()
+			jsonBlob, e := util.Post(server, "/admin/setting", values)
+			if e != nil {
+				result[server] = map[string]interface{}{
+					"error": e.Error() + " " + string(jsonBlob),
+				}
+			}
+			var ret interface{}
+			if e := json.Unmarshal(jsonBlob, ret); e == nil {
+				result[server] = ret
+			} else {
+				result[server] = map[string]interface{}{
+					"error": e.Error() + " " + string(jsonBlob),
+				}
+			}
+		}(dn.Url(), forms)
+		return nil
+	})
+	wg.Wait()
+	return
 }

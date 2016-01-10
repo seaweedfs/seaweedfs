@@ -14,7 +14,7 @@ type ClusterStatusResult struct {
 }
 
 func ListMasters(server string) ([]string, error) {
-	jsonBlob, err := util.Get("http://" + server + "/cluster/status")
+	jsonBlob, err := util.Get(server, "/cluster/status", nil)
 	glog.V(2).Info("list masters result :", string(jsonBlob))
 	if err != nil {
 		return nil, err

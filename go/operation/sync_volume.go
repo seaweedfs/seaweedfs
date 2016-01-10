@@ -10,7 +10,6 @@ import (
 )
 
 type SyncVolumeResponse struct {
-	Replication     string `json:"Replication,omitempty"`
 	Ttl             string `json:"Ttl,omitempty"`
 	TailOffset      uint64 `json:"TailOffset,omitempty"`
 	CompactRevision uint16 `json:"CompactRevision,omitempty"`
@@ -21,7 +20,7 @@ type SyncVolumeResponse struct {
 func GetVolumeSyncStatus(server string, vid string) (*SyncVolumeResponse, error) {
 	values := make(url.Values)
 	values.Add("volume", vid)
-	jsonBlob, err := util.Post("http://"+server+"/admin/sync/status", values)
+	jsonBlob, err := util.Post(server, "/admin/sync/status", values)
 	glog.V(2).Info("sync volume result :", string(jsonBlob))
 	if err != nil {
 		return nil, err

@@ -10,7 +10,7 @@ func TestCaching(t *testing.T) {
 	var (
 		vc VidCache
 	)
-	var locations []Location
+	var locations Locations
 	locations = append(locations, Location{Url: "a.com:8080"})
 	vc.Set("123", locations, time.Second)
 	ret, _ := vc.Get("123")

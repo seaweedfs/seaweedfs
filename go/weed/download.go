@@ -51,7 +51,7 @@ func runDownload(cmd *Command, args []string) bool {
 }
 
 func downloadToFile(server, fileId, saveDir string) error {
-	fileUrl, lookupError := operation.LookupFileId(server, fileId)
+	fileUrl, lookupError := operation.LookupFileId(server, fileId, true)
 	if lookupError != nil {
 		return lookupError
 	}
@@ -103,7 +103,7 @@ func downloadToFile(server, fileId, saveDir string) error {
 }
 
 func fetchContent(server string, fileId string) (filename string, content []byte, e error) {
-	fileUrl, lookupError := operation.LookupFileId(server, fileId)
+	fileUrl, lookupError := operation.LookupFileId(server, fileId, true)
 	if lookupError != nil {
 		return "", nil, lookupError
 	}

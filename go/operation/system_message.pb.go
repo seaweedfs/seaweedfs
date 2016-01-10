@@ -11,6 +11,9 @@ It is generated from these files:
 It has these top-level messages:
 	VolumeInformationMessage
 	JoinMessage
+	CollectionSetting
+	GlobalSetting
+	JoinResponse
 */
 package operation
 
@@ -29,7 +32,7 @@ type VolumeInformationMessage struct {
 	DeleteCount      *uint64 `protobuf:"varint,5,req,name=delete_count" json:"delete_count,omitempty"`
 	DeletedByteCount *uint64 `protobuf:"varint,6,req,name=deleted_byte_count" json:"deleted_byte_count,omitempty"`
 	ReadOnly         *bool   `protobuf:"varint,7,opt,name=read_only" json:"read_only,omitempty"`
-	ReplicaPlacement *uint32 `protobuf:"varint,8,req,name=replica_placement" json:"replica_placement,omitempty"`
+	ReplicaPlacement *uint32 `protobuf:"varint,8,opt,name=replica_placement" json:"replica_placement,omitempty"`
 	Version          *uint32 `protobuf:"varint,9,opt,name=version,def=2" json:"version,omitempty"`
 	Ttl              *uint32 `protobuf:"varint,10,opt,name=ttl" json:"ttl,omitempty"`
 	XXX_unrecognized []byte  `json:"-"`
@@ -197,6 +200,78 @@ func (m *JoinMessage) GetAdminPort() uint32 {
 		return *m.AdminPort
 	}
 	return 0
+}
+
+type CollectionSetting struct {
+	Collection             *string  `protobuf:"bytes,1,opt,name=collection" json:"collection,omitempty"`
+	ReplicaPlacement       *string  `protobuf:"bytes,2,opt,name=replica_placement" json:"replica_placement,omitempty"`
+	VacuumGarbageThreshold *float32 `protobuf:"fixed32,3,opt,name=vacuum_garbage_threshold" json:"vacuum_garbage_threshold,omitempty"`
+	XXX_unrecognized       []byte   `json:"-"`
+}
+
+func (m *CollectionSetting) Reset()         { *m = CollectionSetting{} }
+func (m *CollectionSetting) String() string { return proto.CompactTextString(m) }
+func (*CollectionSetting) ProtoMessage()    {}
+
+func (m *CollectionSetting) GetCollection() string {
+	if m != nil && m.Collection != nil {
+		return *m.Collection
+	}
+	return ""
+}
+
+func (m *CollectionSetting) GetReplicaPlacement() string {
+	if m != nil && m.ReplicaPlacement != nil {
+		return *m.ReplicaPlacement
+	}
+	return ""
+}
+
+func (m *CollectionSetting) GetVacuumGarbageThreshold() float32 {
+	if m != nil && m.VacuumGarbageThreshold != nil {
+		return *m.VacuumGarbageThreshold
+	}
+	return 0
+}
+
+type GlobalSetting struct {
+	Settings         []*CollectionSetting `protobuf:"bytes,1,rep,name=settings" json:"settings,omitempty"`
+	MasterPeers      []string             `protobuf:"bytes,2,rep,name=master_peers" json:"master_peers,omitempty"`
+	XXX_unrecognized []byte               `json:"-"`
+}
+
+func (m *GlobalSetting) Reset()         { *m = GlobalSetting{} }
+func (m *GlobalSetting) String() string { return proto.CompactTextString(m) }
+func (*GlobalSetting) ProtoMessage()    {}
+
+func (m *GlobalSetting) GetSettings() []*CollectionSetting {
+	if m != nil {
+		return m.Settings
+	}
+	return nil
+}
+
+func (m *GlobalSetting) GetMasterPeers() []string {
+	if m != nil {
+		return m.MasterPeers
+	}
+	return nil
+}
+
+type JoinResponse struct {
+	Settings         *GlobalSetting `protobuf:"bytes,1,opt,name=settings" json:"settings,omitempty"`
+	XXX_unrecognized []byte         `json:"-"`
+}
+
+func (m *JoinResponse) Reset()         { *m = JoinResponse{} }
+func (m *JoinResponse) String() string { return proto.CompactTextString(m) }
+func (*JoinResponse) ProtoMessage()    {}
+
+func (m *JoinResponse) GetSettings() *GlobalSetting {
+	if m != nil {
+		return m.Settings
+	}
+	return nil
 }
 
 func init() {

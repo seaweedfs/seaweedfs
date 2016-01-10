@@ -28,9 +28,9 @@ type Volume struct {
 	lastModifiedTime   uint64 //unix time in seconds
 }
 
-func NewVolume(dirname string, collection string, id VolumeId, needleMapKind NeedleMapType, replicaPlacement *ReplicaPlacement, ttl *TTL) (v *Volume, e error) {
+func NewVolume(dirname string, collection string, id VolumeId, needleMapKind NeedleMapType, ttl *TTL) (v *Volume, e error) {
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
-	v.SuperBlock = SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
+	v.SuperBlock = SuperBlock{Ttl: ttl}
 	v.needleMapKind = needleMapKind
 	e = v.load(true, true, needleMapKind)
 	return
@@ -87,7 +87,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 	}
 
-	if v.ReplicaPlacement == nil {
+	if v.version == NoneVersion {
 		e = v.readSuperBlock()
 	} else {
 		e = v.maybeWriteSuperBlock()
@@ -143,10 +143,6 @@ func (v *Volume) Close() {
 	defer v.dataFileAccessLock.Unlock()
 	v.nm.Close()
 	_ = v.dataFile.Close()
-}
-
-func (v *Volume) NeedToReplicate() bool {
-	return v.ReplicaPlacement.GetCopyCount() > 1
 }
 
 // isFileUnchanged checks whether this needle to write is same as last one.
@@ -425,4 +421,18 @@ func (v *Volume) exiredLongEnough(maxDelayMinutes uint32) bool {
 		return true
 	}
 	return false
+}
+
+func (v *Volume) SetReadOnly(isReadOnly bool) error {
+	if isReadOnly == false {
+		if fi, e := v.dataFile.Stat(); e != nil {
+			return e
+		} else {
+			if fi.Mode()&0200 == 0 {
+				return errors.New(v.FileName() + ".dat is READONLY")
+			}
+		}
+	}
+	v.readOnly = isReadOnly
+	return nil
 }

@@ -42,6 +42,7 @@ func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) {
 	} else {
 		dn.volumes[v.Id] = v
 	}
+	return
 }
 
 func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (deletedVolumes []storage.VolumeInfo) {

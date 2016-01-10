@@ -16,6 +16,7 @@ const (
 	FlagHasMime             = 0x04
 	FlagHasLastModifiedDate = 0x08
 	FlagHasTtl              = 0x10
+	FlagIsExtendNeedle      = 0x40 // TODO: Reserve flag, use extent file to save big needle
 	FlagIsChunkManifest     = 0x80
 	LastModifiedBytesLength = 5
 	TtlBytesLength          = 2
@@ -238,13 +239,24 @@ func (n *Needle) ReadNeedleBody(r *os.File, version Version, offset int64, bodyL
 		}
 		n.Data = bytes[:n.Size]
 		n.Checksum = NewCRC(n.Data)
+		checksum := util.BytesToUint32(bytes[n.Size : n.Size+NeedleChecksumSize])
+		if n.Checksum.Value() != checksum {
+			glog.V(0).Infof("CRC error! Data On Disk Corrupted, needle id = %x", n.Id)
+		}
 	case Version2:
 		bytes := make([]byte, bodyLength)
 		if _, err = r.ReadAt(bytes, offset); err != nil {
 			return
 		}
 		n.readNeedleDataVersion2(bytes[0:n.Size])
+		if n.DataSize == 0 {
+			return
+		}
 		n.Checksum = NewCRC(n.Data)
+		checksum := util.BytesToUint32(bytes[n.Size : n.Size+NeedleChecksumSize])
+		if n.Checksum.Value() != checksum {
+			glog.V(0).Infof("CRC error! Data On Disk Corrupted, needle id = %x", n.Id)
+		}
 	default:
 		err = fmt.Errorf("Unsupported Version! (%d)", version)
 	}
