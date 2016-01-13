@@ -33,7 +33,9 @@ func (s *SuperBlock) Bytes() []byte {
 	header := make([]byte, SuperBlockSize)
 	header[0] = byte(s.version)
 	header[1] = 0
-	s.Ttl.ToBytes(header[2:4])
+	if s.Ttl != nil {
+		s.Ttl.ToBytes(header[2:4])
+	}
 	util.Uint16toBytes(header[4:6], s.CompactRevision)
 	return header
 }
