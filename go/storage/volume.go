@@ -87,12 +87,14 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 	}
 
-	if v.version == NoneVersion {
-		e = v.readSuperBlock()
-	} else {
-		e = v.maybeWriteSuperBlock()
+	if e = v.maybeWriteSuperBlock(); e != nil {
+		return e
 	}
-	if e == nil && alsoLoadIndex {
+	if e = v.readSuperBlock(); e != nil {
+		return e
+	}
+
+	if alsoLoadIndex {
 		var indexFile *os.File
 		if v.readOnly {
 			glog.V(1).Infoln("open to read file", fileName+".idx")
