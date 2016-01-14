@@ -43,6 +43,11 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVol
 	dn := NewDataNode(ip + ":" + strconv.Itoa(port))
 	dn.Ip = ip
 	dn.Port = port
+	if publicUrl == "" {
+		publicUrl = ip + ":" + strconv.Itoa(port)
+	} else if publicUrl[0] == ':' {
+		publicUrl = ip + publicUrl
+	}
 	dn.PublicUrl = publicUrl
 	dn.maxVolumeCount = maxVolumeCount
 	dn.LastSeen = time.Now().Unix()

@@ -100,9 +100,9 @@ func runVolume(cmd *Command, args []string) bool {
 		v.whiteList = strings.Split(*volumeWhiteListOption, ",")
 	}
 
-	if *v.ip == "" {
-		*v.ip = "127.0.0.1"
-	}
+	//	if *v.ip == "" {
+	//		*v.ip = "127.0.0.1"
+	//	}
 
 	if *v.publicPort == 0 {
 		*v.publicPort = *v.port
