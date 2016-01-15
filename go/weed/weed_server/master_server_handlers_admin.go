@@ -7,10 +7,11 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"net/url"
 	"sync"
+
+	"net"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/operation"
@@ -27,7 +28,7 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	for _, server := range collection.ListVolumeServers() {
-		_, err := util.Get(server.Ip+":"+strconv.Itoa(server.Port), "/admin/delete_collection", url.Values{"collection": r.Form["collection"]})
+		_, err := util.Get(net.JoinHostPort(server.Ip, strconv.Itoa(server.Port)), "/admin/delete_collection", url.Values{"collection": r.Form["collection"]})
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 			return
@@ -48,7 +49,12 @@ func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if *joinMessage.Ip == "" {
-		*joinMessage.Ip = r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")]
+		if ip, _, e := net.SplitHostPort(r.RemoteAddr); e == nil {
+			*joinMessage.Ip = ip
+		} else {
+			glog.V(2).Infof("SplitHostPort (%s) error, %v", r.RemoteAddr, e)
+			*joinMessage.Ip = r.RemoteAddr
+		}
 	}
 	if glog.V(4) {
 		if jsonData, jsonError := json.Marshal(joinMessage); jsonError != nil {

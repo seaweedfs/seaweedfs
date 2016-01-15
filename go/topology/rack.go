@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"net"
 	"strconv"
 	"time"
 )
@@ -40,13 +41,13 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVol
 			return dn
 		}
 	}
-	dn := NewDataNode(ip + ":" + strconv.Itoa(port))
+	dn := NewDataNode(net.JoinHostPort(ip, strconv.Itoa(port)))
 	dn.Ip = ip
 	dn.Port = port
 	if publicUrl == "" {
-		publicUrl = ip + ":" + strconv.Itoa(port)
+		publicUrl = net.JoinHostPort(ip, strconv.Itoa(port))
 	} else if publicUrl[0] == ':' {
-		publicUrl = ip + publicUrl
+		publicUrl = net.JoinHostPort(ip, publicUrl[1:])
 	}
 	dn.PublicUrl = publicUrl
 	dn.maxVolumeCount = maxVolumeCount

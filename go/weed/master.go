@@ -12,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/go/util"
 	"github.com/chrislusf/seaweedfs/go/weed/weed_server"
 	"github.com/gorilla/mux"
+	"net"
 )
 
 func init() {
@@ -64,7 +65,7 @@ func runMaster(cmd *Command, args []string) bool {
 		masterWhiteList, *masterSecureKey,
 	)
 
-	listeningAddress := *masterBindIp + ":" + strconv.Itoa(*mport)
+	listeningAddress := net.JoinHostPort(*masterBindIp, strconv.Itoa(*mport))
 
 	glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", listeningAddress)
 
@@ -75,7 +76,7 @@ func runMaster(cmd *Command, args []string) bool {
 
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		myMasterAddress := *masterIp + ":" + strconv.Itoa(*mport)
+		myMasterAddress := net.JoinHostPort(*masterIp, strconv.Itoa(*mport))
 		var peers []string
 		if *masterPeers != "" {
 			peers = strings.Split(*masterPeers, ",")

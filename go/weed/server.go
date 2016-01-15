@@ -15,6 +15,7 @@ import (
 	"github.com/chrislusf/seaweedfs/go/util"
 	"github.com/chrislusf/seaweedfs/go/weed/weed_server"
 	"github.com/gorilla/mux"
+	"net"
 )
 
 type ServerOptions struct {
@@ -107,7 +108,7 @@ func runServer(cmd *Command, args []string) bool {
 		*isStartingFiler = true
 	}
 
-	*filerOptions.master = *serverIp + ":" + strconv.Itoa(*masterPort)
+	*filerOptions.master = net.JoinHostPort(*serverIp, strconv.Itoa(*masterPort))
 
 	if *filerOptions.defaultReplicaPlacement == "" {
 		*filerOptions.defaultReplicaPlacement = *masterDefaultReplicaPlacement
@@ -201,8 +202,8 @@ func runServer(cmd *Command, args []string) bool {
 			serverWhiteList, *serverSecureKey,
 		)
 
-		glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*masterPort))
-		masterListener, e := util.NewListener(*serverBindIp+":"+strconv.Itoa(*masterPort), time.Duration(*serverTimeout)*time.Second)
+		glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", net.JoinHostPort(*serverIp, strconv.Itoa(*masterPort)))
+		masterListener, e := util.NewListener(net.JoinHostPort(*serverBindIp, strconv.Itoa(*masterPort)), time.Duration(*serverTimeout)*time.Second)
 		if e != nil {
 			glog.Fatalf("Master startup error: %v", e)
 		}
@@ -210,7 +211,7 @@ func runServer(cmd *Command, args []string) bool {
 		go func() {
 			raftWaitForMaster.Wait()
 			time.Sleep(100 * time.Millisecond)
-			myAddress := *serverIp + ":" + strconv.Itoa(*masterPort)
+			myAddress := net.JoinHostPort(*serverIp, strconv.Itoa(*masterPort))
 			var peers []string
 			if *serverPeers != "" {
 				peers = strings.Split(*serverPeers, ",")
@@ -232,7 +233,7 @@ func runServer(cmd *Command, args []string) bool {
 		*volumePublicPort = *volumePort
 	}
 	if *volumeServerPublicUrl == "" {
-		*volumeServerPublicUrl = *serverIp + ":" + strconv.Itoa(*volumePublicPort)
+		*volumeServerPublicUrl = net.JoinHostPort(*serverIp, strconv.Itoa(*volumePublicPort))
 	}
 	isSeperatedPublicPort := *volumePublicPort != *volumePort
 	volumeMux := http.NewServeMux()
@@ -251,20 +252,20 @@ func runServer(cmd *Command, args []string) bool {
 		*serverIp, *volumePort, *volumeServerPublicUrl,
 		folders, maxCounts,
 		volumeNeedleMapKind,
-		*serverIp+":"+strconv.Itoa(*masterPort), *volumePulse, *serverDataCenter, *serverRack,
+		net.JoinHostPort(*serverIp, strconv.Itoa(*masterPort)), *volumePulse, *serverDataCenter, *serverRack,
 		serverWhiteList, *volumeFixJpgOrientation, *volumeReadRedirect,
 	)
 
-	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*volumePort))
+	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "at", net.JoinHostPort(*serverIp, strconv.Itoa(*volumePort)))
 	volumeListener, eListen := util.NewListener(
-		*serverBindIp+":"+strconv.Itoa(*volumePort),
+		net.JoinHostPort(*serverBindIp, strconv.Itoa(*volumePort)),
 		time.Duration(*serverTimeout)*time.Second,
 	)
 	if eListen != nil {
 		glog.Fatalf("Volume server listener error: %v", eListen)
 	}
 	if isSeperatedPublicPort {
-		publicListeningAddress := *serverIp + ":" + strconv.Itoa(*volumePublicPort)
+		publicListeningAddress := net.JoinHostPort(*serverIp, strconv.Itoa(*volumePublicPort))
 		glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "public at", publicListeningAddress)
 		publicListener, e := util.NewListener(publicListeningAddress, time.Duration(*serverTimeout)*time.Second)
 		if e != nil {

@@ -10,6 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/go/security"
 	"github.com/chrislusf/seaweedfs/go/storage"
 	"github.com/chrislusf/seaweedfs/go/util"
+	"net"
 )
 
 func ReplicatedWrite(masterNode string, s *storage.Store,
@@ -69,7 +70,7 @@ func ReplicatedDelete(masterNode string, store *storage.Store,
 func distributedOperation(masterNode string, store *storage.Store, volumeId storage.VolumeId, op func(location operation.Location) bool) bool {
 	if lookupResult, lookupErr := operation.LookupNoCache(masterNode, volumeId.String()); lookupErr == nil {
 		length := 0
-		selfUrl := (store.Ip + ":" + strconv.Itoa(store.Port))
+		selfUrl := net.JoinHostPort(store.Ip, strconv.Itoa(store.Port))
 		results := make(chan bool)
 		for _, location := range lookupResult.Locations {
 			if location.Url != selfUrl {

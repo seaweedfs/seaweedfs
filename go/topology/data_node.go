@@ -6,6 +6,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/storage"
+	"net"
 )
 
 type DataNode struct {
@@ -87,7 +88,7 @@ func (dn *DataNode) MatchLocation(ip string, port int) bool {
 }
 
 func (dn *DataNode) Url() string {
-	return dn.Ip + ":" + strconv.Itoa(dn.Port)
+	return net.JoinHostPort(dn.Ip, strconv.Itoa(dn.Port))
 }
 
 func (dn *DataNode) ToMap() interface{} {

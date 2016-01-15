@@ -12,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/go/storage"
 	"github.com/chrislusf/seaweedfs/go/util"
 	"github.com/chrislusf/seaweedfs/go/weed/weed_server"
+	"net"
 )
 
 var (
@@ -108,7 +109,7 @@ func runVolume(cmd *Command, args []string) bool {
 		*v.publicPort = *v.port
 	}
 	if *v.publicUrl == "" {
-		*v.publicUrl = *v.ip + ":" + strconv.Itoa(*v.publicPort)
+		*v.publicUrl = net.JoinHostPort(*v.ip, strconv.Itoa(*v.publicPort))
 	}
 	isSeperatedPublicPort := *v.publicPort != *v.port
 
@@ -134,14 +135,14 @@ func runVolume(cmd *Command, args []string) bool {
 		*v.fixJpgOrientation, *v.readRedirect,
 	)
 
-	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port)
+	listeningAddress := net.JoinHostPort(*v.bindIp, strconv.Itoa(*v.port))
 	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "at", listeningAddress)
 	listener, e := util.NewListener(listeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)
 	}
 	if isSeperatedPublicPort {
-		publicListeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.publicPort)
+		publicListeningAddress := net.JoinHostPort(*v.bindIp, strconv.Itoa(*v.publicPort))
 		glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "public at", publicListeningAddress)
 		publicListener, e := util.NewListener(publicListeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
 		if e != nil {
