@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"io/ioutil"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -31,15 +30,6 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		fs.PostHandler(w, r)
 	case "POST":
 		fs.PostHandler(w, r)
-	}
-}
-
-func (fs *FilerServer) publicReadOnlyfilerHandler(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		fs.GetOrHeadHandler(w, r, true)
-	case "HEAD":
-		fs.GetOrHeadHandler(w, r, false)
 	}
 }
 
@@ -70,6 +60,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 	m["Files"], _ = fs.filer.ListFiles(r.URL.Path, lastFileName, limit)
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
+
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
 	if strings.HasSuffix(r.URL.Path, "/") {
 		if fs.disableDirListing {
@@ -79,40 +70,21 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		fs.listDirectoryHandler(w, r)
 		return
 	}
-	var fileId string
-	uri_elements := strings.Split(r.URL.Path, "/")
-	//glog.V(1).Infof("debug uri_elements %#v", uri_elements)
-	if len(uri_elements) == 2 {
-		// /3,01e587647e will be split into []string{"","3,01e587647e"}
-		fileId = uri_elements[1]
-	} else {
-		var err error
-		fileId, err = fs.filer.FindFile(r.URL.Path)
-		if err == leveldb.ErrNotFound {
-			glog.V(3).Infoln("Not found in db", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-	}
-	parts := strings.Split(fileId, ",")
-	if len(parts) != 2 {
-		glog.V(1).Infoln("Invalid fileId", fileId)
+
+	fileId, err := fs.filer.FindFile(r.URL.Path)
+	if err == leveldb.ErrNotFound {
+		glog.V(3).Infoln("Not found in db", r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	lookup, lookupError := operation.Lookup(fs.master, parts[0])
-	if lookupError != nil {
-		glog.V(1).Infoln("Invalid lookup", lookupError.Error())
+
+	urlLocation, err := operation.LookupFileId(fs.master, fileId)
+	if err != nil {
+		glog.V(1).Infoln("operation LookupFileId %s failed, err is %s", fileId, err.Error())
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	if len(lookup.Locations) == 0 {
-		glog.V(1).Infoln("Can not find location for volume", parts[0])
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	urlLocation := lookup.Locations[rand.Intn(len(lookup.Locations))].Url
-	urlString := "http://" + urlLocation + "/" + fileId
+	urlString := urlLocation
 	if fs.redirectOnRead {
 		http.Redirect(w, r, urlString, http.StatusFound)
 		return
@@ -162,50 +134,41 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		collection = fs.collection
 	}
 
-	buf, _ := ioutil.ReadAll(r.Body)
-	r.Body = analogueReader{bytes.NewBuffer(buf)}
-	fileName, _, _, _, _, _, _, pe := storage.ParseUpload(r)
-	if pe != nil {
-		glog.V(0).Infoln("failing to parse post body", pe.Error())
-		writeJsonError(w, r, http.StatusInternalServerError, pe)
-		return
-	}
-	//reconstruct http request body for following new request to volume server
-	r.Body = analogueReader{bytes.NewBuffer(buf)}
-
-	path := r.URL.Path
-	if strings.HasSuffix(path, "/") {
-		if fileName != "" {
-			path += fileName
-		}
-	}
 	var fileId string
 	var err error
 	var urlLocation string
-	if fileId, err = fs.filer.FindFile(path); err != nil {
-		glog.V(0).Infoln("failing to find path in filer store", path, pe.Error())
-		writeJsonError(w, r, http.StatusInternalServerError, err)
-		return
-	} else if fileId != "" {
-		parts := strings.Split(fileId, ",")
-		if len(parts) != 2 {
-			glog.V(1).Infoln("Invalid fileId", fileId)
-			w.WriteHeader(http.StatusNotFound)
+	if r.Method == "PUT" {
+		buf, _ := ioutil.ReadAll(r.Body)
+		r.Body = analogueReader{bytes.NewBuffer(buf)}
+		fileName, _, _, _, _, _, _, pe := storage.ParseUpload(r)
+		if pe != nil {
+			glog.V(0).Infoln("failing to parse post body", pe.Error())
+			writeJsonError(w, r, http.StatusInternalServerError, pe)
 			return
 		}
-		lookup, lookupError := operation.Lookup(fs.master, parts[0])
-		if lookupError != nil {
-			glog.V(1).Infoln("Invalid lookup", lookupError.Error())
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		if len(lookup.Locations) == 0 {
-			glog.V(1).Infoln("Can not find location for volume", parts[0])
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		urlLocation = lookup.Locations[rand.Intn(len(lookup.Locations))].Url
+		//reconstruct http request body for following new request to volume server
+		r.Body = analogueReader{bytes.NewBuffer(buf)}
 
+		path := r.URL.Path
+		if strings.HasSuffix(path, "/") {
+			if fileName != "" {
+				path += fileName
+			}
+		}
+
+		if fileId, err = fs.filer.FindFile(path); err != nil && err != leveldb.ErrNotFound {
+			glog.V(0).Infoln("failing to find path in filer store", path, err.Error())
+			writeJsonError(w, r, http.StatusInternalServerError, err)
+			return
+		} else if fileId != "" && err == nil {
+			var le error
+			urlLocation, le = operation.LookupFileId(fs.master, fileId)
+			if le != nil {
+				glog.V(1).Infoln("operation LookupFileId %s failed, err is %s", fileId, le.Error())
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+		}
 	} else {
 		assignResult, ae := operation.Assign(fs.master, 1, replication, collection, query.Get("ttl"))
 		if ae != nil {
@@ -214,10 +177,10 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		fileId = assignResult.Fid
-		urlLocation = assignResult.Url
+		urlLocation = "http://" + assignResult.Url + "/" + assignResult.Fid
 	}
 
-	u, _ := url.Parse("http://" + urlLocation + "/" + fileId)
+	u, _ := url.Parse(urlLocation)
 	glog.V(4).Infoln("post to", u)
 	request := &http.Request{
 		Method:        r.Method,
@@ -256,7 +219,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, http.StatusInternalServerError, errors.New(ret.Error))
 		return
 	}
-	path = r.URL.Path
+	path := r.URL.Path
 	if strings.HasSuffix(path, "/") {
 		if ret.Name != "" {
 			path += ret.Name
