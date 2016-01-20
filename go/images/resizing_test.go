@@ -15,7 +15,6 @@ func TestResizing(t *testing.T) {
 	ioutil.WriteFile("resized.jpg", new_data, 0644)
 }
 
-
 func BenchmarkResizing(b *testing.B) {
 	fName := "test1.png"
 	data, _ := ioutil.ReadFile(fName)
