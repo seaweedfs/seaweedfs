@@ -56,13 +56,14 @@ func ReplicatedDelete(masterNode string, store *storage.Store,
 	//check JWT
 	jwt := security.GetJwt(r)
 
-	ret, err := store.Delete(volumeId, n)
-	if err != nil {
-		glog.V(0).Infoln("delete error:", err)
-		return
-	}
-
-	needToReplicate := !store.HasVolume(volumeId)
+	// fix in 0.70 beta
+	// Contributions: Meng Shi (rookie-xy)
+	// date:          2016-01-22 16:02:55
+	// reason: 
+	//        When using the replication technique, found deleting
+	//        inconsistent (or called sync deletion) problems.
+	//
+	needToReplicate := store.HasVolume(volumeId)
 	if !needToReplicate && ret > 0 {
 		needToReplicate = store.GetVolume(volumeId).NeedToReplicate()
 	}
@@ -72,8 +73,15 @@ func ReplicatedDelete(masterNode string, store *storage.Store,
 				return nil == util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", jwt)
 			}) {
 				ret = 0
+				return
 			}
 		}
+	}
+
+	ret, err := store.Delete(volumeId, n)
+	if err != nil {
+		glog.V(0).Infoln("delete error:", err)
+		return
 	}
 	return
 }
