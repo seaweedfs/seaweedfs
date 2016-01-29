@@ -13,9 +13,6 @@ import (
 
 const defaultJpegQuality = 85
 
-// TODO resize image with vipsthumbnail
-// use `/dev/shm` as memory file system
-
 func Resized(ext string, data []byte, width, height int) (resized []byte, w int, h int) {
 	if width == 0 && height == 0 {
 		return data, 0, 0
