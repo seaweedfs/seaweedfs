@@ -3,6 +3,8 @@ package cassandra_store
 import (
 	"fmt"
 
+	"github.com/chrislusf/seaweedfs/go/filer"
+	"github.com/chrislusf/seaweedfs/go/filer/flat_namespace"
 	"github.com/chrislusf/seaweedfs/go/glog"
 
 	"github.com/gocql/gocql"
@@ -84,4 +86,21 @@ func (c *CassandraStore) Close() {
 	if c.session != nil {
 		c.session.Close()
 	}
+}
+
+func (c *CassandraStore) FindDirectory(dirPath string) (dirId filer.DirectoryId, err error) {
+	return 0, flat_namespace.ErrNotImplemented
+}
+func (c *CassandraStore) ListDirectories(dirPath string) (dirs []filer.DirectoryEntry, err error) {
+	return nil, flat_namespace.ErrNotImplemented
+}
+func (c *CassandraStore) ListFiles(dirPath string, lastFileName string, limit int) (files []filer.FileEntry, err error) {
+	return nil, flat_namespace.ErrNotImplemented
+}
+func (c *CassandraStore) DeleteDirectory(dirPath string, recursive bool) (err error) {
+	return flat_namespace.ErrNotImplemented
+}
+
+func (c *CassandraStore) Move(fromPath string, toPath string) error {
+	return flat_namespace.ErrNotImplemented
 }
