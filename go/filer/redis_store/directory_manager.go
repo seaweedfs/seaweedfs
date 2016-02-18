@@ -3,6 +3,7 @@ package redis_store
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -86,26 +87,38 @@ func (dm *DirectoryManager) MakeDirectory(dirPath string) (filer.DirectoryId, er
 }
 
 //delete directory dirPath and its sub-directories recursively;
-//it's not this function's responsibility to check whether dirPath is empty.
+//it's not this function's responsibility to check whether dirPath is en empty directory.
 func (dm *DirectoryManager) DeleteDirectory(dirPath string) error {
 	dirPath = embedded_filer.CleanFilePath(dirPath)
 	if dirPath == "/" {
 		return fmt.Errorf("Can not delete %s", dirPath)
 	}
+	dirPathParent := filepath.Dir(dirPath)
+	dirPathName := filepath.Base(dirPath)
+	/*
+		lua comments:
+			1. delete dirPath's sub-directories recursively
+			2. delete dirPath itself from its parent dir
+
+	*/
 	script := redis.NewScript(`
 		local delSubs
 		delSubs = function(dir) 
 			local subs=redis.call('hgetall', dir); 
 			for i, v in ipairs(subs) do 
 				if i%2 ~= 0 then 
+					redis.call('hdel', dir, v)
 					local subd=dir..'/'..v; 
 					delSubs(subd); 
 				end 
 			end 
 		end
 		delSubs(KEYS[1])
+		redis.call('hdel', KEYS[2], KEYS[3])
+		return 0
 	`)
-	err := script.Run(dm.Client, []string{dm.dirKeyPrefix + dirPath}, nil).Err()
+	//we do not use lua to get dirPath's parent dir and its basename, so do it in golang
+	err := script.Run(dm.Client, []string{dm.dirKeyPrefix + dirPath, dm.dirKeyPrefix + dirPathParent, dirPathName}, nil).Err()
 	return err
 }
 
@@ -208,6 +221,7 @@ func (dm *DirectoryManager) MoveUnderDirectory(oldDirPath string, newParentDirPa
 	return err
 }
 
+//return a dir's sub-directories, directories' name are sorted lexicographically
 func (dm *DirectoryManager) ListDirectories(dirPath string) (dirNames []filer.DirectoryEntry, err error) {
 	dirPath = embedded_filer.CleanFilePath(dirPath)
 	result, le := dm.Client.HGetAllMap(dm.dirKeyPrefix + dirPath).Result()
@@ -215,7 +229,16 @@ func (dm *DirectoryManager) ListDirectories(dirPath string) (dirNames []filer.Di
 		glog.Errorf("get sub-directories of %s error:%v", dirPath, err)
 		return dirNames, le
 	}
-	for k, v := range result {
+	//sort entries by directories' name
+	keys := make(sort.StringSlice, len(result))
+	i := 0
+	for k, _ := range result {
+		keys[i] = k
+		i++
+	}
+	keys.Sort()
+	for _, k := range keys {
+		v := result[k]
 		did, _ := strconv.Atoi(v)
 		entry := filer.DirectoryEntry{Name: k, Id: filer.DirectoryId(did)}
 		dirNames = append(dirNames, entry)

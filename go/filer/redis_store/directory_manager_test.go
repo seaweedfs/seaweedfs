@@ -145,6 +145,41 @@ func TestDirectory(t *testing.T) {
 		t.Errorf("new dir %s has a wrong dir id:%d, 6 is expected", dir, did)
 	}
 
+	/*
+	 * list a dir's sub-directories
+	 *
+	 */
+	dir = "/a/b"
+	entries, err := dm.ListDirectories(dir)
+	if !(entries[0].Name == "d" && entries[1].Name == "f") {
+		t.Errorf("get entries:%v, expect 'd', 'f'", entries)
+	}
+	/*
+		* delete a dir: /a/b/f/e
+		 *
+	*/
+	dir = "/a/b/f"
+	err = dm.DeleteDirectory(dir)
+	if err != nil {
+		t.Errorf("delete dir:%s error:%v", dir, err)
+	}
+	// now the deleted dir should not exist
+	did, err = dm.FindDirectory(dir)
+	if err != nil {
+		t.Errorf("get deleted dir %s error:%v", dir, err)
+	}
+	if did != 0 {
+		t.Errorf("the dir %s is not deleted!", dir)
+	}
+	// now the deleted dir's sub-directory also should not exist
+	dir = "/a/b/f/e"
+	did, err = dm.FindDirectory(dir)
+	if err != nil {
+		t.Errorf("get deleted dir %s error:%v", dir, err)
+	}
+	if did != 0 {
+		t.Errorf("the dir %s is not deleted!", dir)
+	}
 }
 
 func clearRedisKeys(client *redis.Client, dirKeyPrefix string, dirMaxIdKey string) error {

@@ -8,6 +8,7 @@ import (
 
 type RedisStore struct {
 	Client *redis.Client
+	dm     *DirectoryManager
 }
 
 func NewRedisStore(hostPort string, database int) *RedisStore {
@@ -16,7 +17,8 @@ func NewRedisStore(hostPort string, database int) *RedisStore {
 		Password: "", // no password set
 		DB:       int64(database),
 	})
-	return &RedisStore{Client: client}
+	dm := InitDirectoryManger(client)
+	return &RedisStore{Client: client, dm: dm}
 }
 
 /*
@@ -75,10 +77,10 @@ func (s *RedisStore) Close() {
 }
 
 func (c *RedisStore) FindDirectory(dirPath string) (dirId filer.DirectoryId, err error) {
-	return 0, flat_namespace.ErrNotImplemented
+	return c.dm.FindDirectory(dirPath)
 }
 func (c *RedisStore) ListDirectories(dirPath string) (dirs []filer.DirectoryEntry, err error) {
-	return nil, flat_namespace.ErrNotImplemented
+	return c.dm.ListDirectories(dirPath)
 }
 func (c *RedisStore) ListFiles(dirPath string, lastFileName string, limit int) (files []filer.FileEntry, err error) {
 	return nil, flat_namespace.ErrNotImplemented
