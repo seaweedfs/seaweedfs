@@ -182,6 +182,49 @@ func TestDirectory(t *testing.T) {
 	}
 }
 
+func TestFiles(t *testing.T) {
+	// put one file
+	fname := "/a/b/c/test.txt"
+	fid := "1,23"
+	err := dm.PutFile(fname, fid)
+	if err != nil {
+		t.Errorf("put file %s error:%v", fname, err)
+	}
+	// put another file
+	fname = "/a/b/c/abc.txt"
+	fid = "1,234"
+	err = dm.PutFile(fname, fid)
+	if err != nil {
+		t.Errorf("put file %s error:%v", fname, err)
+	}
+	//get file
+	id, err := dm.FindFile(fname)
+	if err != nil {
+		t.Errorf("get file %s error:%v", fname, err)
+	}
+	if id != fid {
+		t.Errorf("get wrong fid %s, expect %s", id, fid)
+	}
+	//list files
+	lastFileName := "abc.txt"
+	dir := filepath.Dir(fname)
+	files, err := dm.ListFiles(dir, lastFileName, 10)
+	if err != nil {
+		t.Errorf("list files for %s error:%v", dir, err)
+	}
+	if files[0].Name != "test.txt" {
+		t.Errorf("files list order wrong, first file is %s, expect %s", files[0].Name, "test.txt")
+	}
+	//delete file
+	id, err = dm.DeleteFile(fname)
+	if err != nil {
+		t.Errorf("delete file get error:%v", err)
+	}
+	if id != fid {
+		t.Errorf("delete file return wrong fid %s, expect %s", id, fid)
+	}
+}
+
 func clearRedisKeys(client *redis.Client, dirKeyPrefix string, dirMaxIdKey string) error {
 	result, err := client.Keys(dirKeyPrefix + "*").Result()
 	if err != nil {

@@ -58,10 +58,10 @@ func (dm *DirectoryManager) MakeDirectory(dirPath string) (filer.DirectoryId, er
 	script := redis.NewScript(`
 		local root=KEYS[1]
 		local dirMaxIdKey=KEYS[2]
-		local did, exists
+		local did
 		for i, v in ipairs(ARGV) do
-			exists=redis.call('hexists', root, v)
-			if exists == 0 then
+			did=redis.call('hget', root, v)
+			if did == false then
 				did=redis.call('incr', dirMaxIdKey)
 				redis.call('hset', root, v, did)
 			end
@@ -71,7 +71,6 @@ func (dm *DirectoryManager) MakeDirectory(dirPath string) (filer.DirectoryId, er
 				root=root..'/'..v
 			end
 		end
-		redis.call('set', 'last-dir-id', did)
 		return did
 	`)
 	result, err := script.Run(dm.Client, []string{root, dm.dirMaxIdKey}, parts[1:]).Result()
@@ -86,7 +85,7 @@ func (dm *DirectoryManager) MakeDirectory(dirPath string) (filer.DirectoryId, er
 	return filer.DirectoryId(did), err
 }
 
-//delete directory dirPath and its sub-directories recursively;
+//delete directory dirPath and its sub-directories or files recursively ;
 //it's not this function's responsibility to check whether dirPath is en empty directory.
 func (dm *DirectoryManager) DeleteDirectory(dirPath string) error {
 	dirPath = embedded_filer.CleanFilePath(dirPath)
@@ -97,28 +96,33 @@ func (dm *DirectoryManager) DeleteDirectory(dirPath string) error {
 	dirPathName := filepath.Base(dirPath)
 	/*
 		lua comments:
-			1. delete dirPath's sub-directories recursively
+			1. delete dirPath's sub-directories and files recursively
 			2. delete dirPath itself from its parent dir
 
 	*/
 	script := redis.NewScript(`
 		local delSubs
+		local dirKeyPrefix=KEYS[1]
+		local dirFileKeyPrefix=KEYS[2]
+		local dirPathParent=ARGV[1]
+		local dirPathName=ARGV[2]
 		delSubs = function(dir) 
-			local subs=redis.call('hgetall', dir); 
+			local subs=redis.call('hgetall', dirKeyPrefix..dir); 
 			for i, v in ipairs(subs) do 
 				if i%2 ~= 0 then 
-					redis.call('hdel', dir, v)
+					redis.call('hdel', dirKeyPrefix..dir, v)
 					local subd=dir..'/'..v; 
 					delSubs(subd); 
 				end 
 			end 
+			redis.call('del', dirFileKeyPrefix..dir)
 		end
-		delSubs(KEYS[1])
-		redis.call('hdel', KEYS[2], KEYS[3])
+		delSubs(dirPathParent..'/'..dirPathName)
+		redis.call('hdel', dirKeyPrefix..dirPathParent, dirPathName)
 		return 0
 	`)
 	//we do not use lua to get dirPath's parent dir and its basename, so do it in golang
-	err := script.Run(dm.Client, []string{dm.dirKeyPrefix + dirPath, dm.dirKeyPrefix + dirPathParent, dirPathName}, nil).Err()
+	err := script.Run(dm.Client, []string{dm.dirKeyPrefix, dm.dirFileKeyPrefix}, []string{dirPathParent, dirPathName}).Err()
 	return err
 }
 
@@ -244,4 +248,111 @@ func (dm *DirectoryManager) ListDirectories(dirPath string) (dirNames []filer.Di
 		dirNames = append(dirNames, entry)
 	}
 	return dirNames, nil
+}
+
+//use lua script to make directories and then put file for atomic
+func (dm *DirectoryManager) PutFile(fullFileName string, fid string) error {
+	fullFileName = embedded_filer.CleanFilePath(fullFileName)
+	dirPath := filepath.Dir(fullFileName)
+	fname := filepath.Base(fullFileName)
+	parts := strings.Split(dirPath, "/")
+	//'d' stands for directory. root must end with a slash
+	root := dm.dirKeyPrefix + "/"
+	script := redis.NewScript(`
+		local root=KEYS[1]
+		local dirMaxIdKey=KEYS[2]
+		local dirFileKeyPrefix=KEYS[3]
+		local fname=KEYS[4]
+		local fid=KEYS[5]
+		local dirPath=table.concat(ARGV, '/')
+		local did
+		for i, v in ipairs(ARGV) do
+			did=redis.call('hget', root, v)
+			if did == false then
+				did=redis.call('incr', dirMaxIdKey)
+				redis.call('hset', root, v, did)
+			end
+			if i==1 then
+				root=root .. v
+			else
+				root=root..'/'..v
+			end
+		end
+		redis.call('hset', dirFileKeyPrefix..'/'..dirPath, fname, fid)
+		return did
+	`)
+	err := script.Run(dm.Client, []string{root, dm.dirMaxIdKey, dm.dirFileKeyPrefix, fname, fid}, parts[1:]).Err()
+	if err != nil {
+		glog.Errorln("redis eval put file script error:", err)
+	}
+	return err
+}
+
+func (dm *DirectoryManager) FindFile(fullFileName string) (fid string, err error) {
+	fullFileName = embedded_filer.CleanFilePath(fullFileName)
+	dirPath := filepath.Dir(fullFileName)
+	fname := filepath.Base(fullFileName)
+	result, err := dm.Client.HGet(dm.dirFileKeyPrefix+dirPath, fname).Result()
+	if err == redis.Nil {
+		err = nil
+	}
+	if err != nil {
+		glog.Errorf("get file %s error:%v", fullFileName, err)
+	}
+	return result, err
+}
+
+func (dm *DirectoryManager) DeleteFile(fullFileName string) (fid string, err error) {
+	fullFileName = embedded_filer.CleanFilePath(fullFileName)
+	dirPath := filepath.Dir(fullFileName)
+	fname := filepath.Base(fullFileName)
+	script := redis.NewScript(`
+		local dirPathKey=KEYS[1]
+		local fname = ARGV[1]
+		local fid=redis.call('hget', dirPathKey, fname)
+		redis.call('hdel', dirPathKey, fname)
+		return fid
+	`)
+	result, err := script.Run(dm.Client, []string{dm.dirFileKeyPrefix + dirPath}, []string{fname}).Result()
+	if err != nil {
+		glog.Errorf("delete file %s error:%v\n", fullFileName, err)
+	}
+	fid, ok := result.(string)
+	if !ok {
+		glog.Errorf("convert result %v to string failed", result)
+	}
+	return fid, err
+}
+
+//list files under dirPath, use lastFileName and limit for pagination
+//in fact, this implemention has a bug, you can not get first file of the first page;
+//the api needs to be modified
+func (dm *DirectoryManager) ListFiles(dirPath string, lastFileName string, limit int) (files []filer.FileEntry, err error) {
+
+	dirPath = embedded_filer.CleanFilePath(dirPath)
+	result, le := dm.Client.HGetAllMap(dm.dirFileKeyPrefix + dirPath).Result()
+	if le != nil {
+		glog.Errorf("get files of %s error:%v", dirPath, err)
+		return files, le
+	}
+	//if the lastFileName argument is ok
+	if _, ok := result[lastFileName]; ok {
+		//sort entries by file names
+		//when files amount is large, here may be slow
+		nResult := len(result)
+		keys := make(sort.StringSlice, nResult)
+		i := 0
+		for k, _ := range result {
+			keys[i] = k
+			i++
+		}
+		keys.Sort()
+		index := keys.Search(lastFileName)
+		for _, k := range keys[index+1:] {
+			fid := result[k]
+			entry := filer.FileEntry{Name: k, Id: filer.FileId(fid)}
+			files = append(files, entry)
+		}
+	}
+	return files, le
 }
