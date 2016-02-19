@@ -155,6 +155,8 @@ moving is finished by following steps:
 2.delete old dir from its parent's hash table
 3.add old dir's directory id into new parent dir's hash table, if newName is not empty, use it
 4.if the full old dir path key exists(its a non-empty directory), rename it to full new dir path key
+
+after moving is done, it returns 0, -1 indicates that source dir is not found, -2 indicates that destination dir is not found
 */
 func (dm *DirectoryManager) MoveUnderDirectory(oldDirPath string, newParentDirPath string, newName string) error {
 	oldDirPath = embedded_filer.CleanFilePath(oldDirPath)
@@ -250,6 +252,12 @@ func (dm *DirectoryManager) ListDirectories(dirPath string) (dirNames []filer.Di
 	return dirNames, nil
 }
 
+//get the amount of directories under a directory
+func (dm *DirectoryManager) GetSubDirectoriesNum(dirPath string) (int64, error) {
+	dirPath = embedded_filer.CleanFilePath(dirPath)
+	return dm.getSubItemsNum(dm.dirKeyPrefix + dirPath)
+}
+
 //use lua script to make directories and then put file for atomic
 func (dm *DirectoryManager) PutFile(fullFileName string, fid string) error {
 	fullFileName = embedded_filer.CleanFilePath(fullFileName)
@@ -310,7 +318,9 @@ func (dm *DirectoryManager) DeleteFile(fullFileName string) (fid string, err err
 		local dirPathKey=KEYS[1]
 		local fname = ARGV[1]
 		local fid=redis.call('hget', dirPathKey, fname)
-		redis.call('hdel', dirPathKey, fname)
+		if fid != false then
+			redis.call('hdel', dirPathKey, fname)
+		end
 		return fid
 	`)
 	result, err := script.Run(dm.Client, []string{dm.dirFileKeyPrefix + dirPath}, []string{fname}).Result()
@@ -355,4 +365,22 @@ func (dm *DirectoryManager) ListFiles(dirPath string, lastFileName string, limit
 		}
 	}
 	return files, le
+}
+
+//get the amount of files under a directory
+func (dm *DirectoryManager) GetFilesNum(dirPath string) (int64, error) {
+	dirPath = embedded_filer.CleanFilePath(dirPath)
+	return dm.getSubItemsNum(dm.dirFileKeyPrefix + dirPath)
+}
+
+//get a hash key's fields number
+func (dm *DirectoryManager) getSubItemsNum(key string) (int64, error) {
+	result, err := dm.Client.HLen(key).Result()
+	if err == redis.Nil {
+		err = nil
+	}
+	if err != nil {
+		glog.Errorf("hlen %s error:%v", key, err)
+	}
+	return result, err
 }
