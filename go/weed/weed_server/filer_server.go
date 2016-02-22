@@ -6,6 +6,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/go/filer"
 	"github.com/chrislusf/seaweedfs/go/filer/cassandra_store"
+	"github.com/chrislusf/seaweedfs/go/filer/distributed_filer"
 	"github.com/chrislusf/seaweedfs/go/filer/embedded_filer"
 	"github.com/chrislusf/seaweedfs/go/filer/flat_namespace"
 	"github.com/chrislusf/seaweedfs/go/filer/redis_store"
@@ -47,7 +48,7 @@ func NewFilerServer(r *http.ServeMux, port int, master string, dir string, colle
 		fs.filer = flat_namespace.NewFlatNamespaceFiler(master, cassandra_store)
 	} else if redis_server != "" {
 		redis_store := redis_store.NewRedisStore(redis_server, redis_database)
-		fs.filer = flat_namespace.NewFlatNamespaceFiler(master, redis_store)
+		fs.filer = distributed_filer.NewDistributedFiler(master, redis_store)
 	} else {
 		if fs.filer, err = embedded_filer.NewFilerEmbedded(master, dir); err != nil {
 			glog.Fatalf("Can not start filer in dir %s : %v", dir, err)
