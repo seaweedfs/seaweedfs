@@ -318,7 +318,7 @@ func (dm *DirectoryManager) DeleteFile(fullFileName string) (fid string, err err
 		local dirPathKey=KEYS[1]
 		local fname = ARGV[1]
 		local fid=redis.call('hget', dirPathKey, fname)
-		if fid != false then
+		if fid ~= false then
 			redis.call('hdel', dirPathKey, fname)
 		end
 		return fid
@@ -346,7 +346,8 @@ func (dm *DirectoryManager) ListFiles(dirPath string, lastFileName string, limit
 		return files, le
 	}
 	//if the lastFileName argument is ok
-	if _, ok := result[lastFileName]; ok {
+	//when list first page, pass lastFileName an empty string
+	if _, ok := result[lastFileName]; ok || lastFileName == "" {
 		//sort entries by file names
 		//when files amount is large, here may be slow
 		nResult := len(result)
@@ -357,11 +358,19 @@ func (dm *DirectoryManager) ListFiles(dirPath string, lastFileName string, limit
 			i++
 		}
 		keys.Sort()
-		index := keys.Search(lastFileName)
+		index := -1
+		if ok {
+			index = keys.Search(lastFileName)
+		}
+		cnt := 0
 		for _, k := range keys[index+1:] {
 			fid := result[k]
 			entry := filer.FileEntry{Name: k, Id: filer.FileId(fid)}
 			files = append(files, entry)
+			cnt++
+			if cnt == limit {
+				break
+			}
 		}
 	}
 	return files, le
