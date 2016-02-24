@@ -1,6 +1,7 @@
 package redis_store
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -112,7 +113,7 @@ func TestDirectory(t *testing.T) {
 
 	/*
 	 *
-	 * move to an new dir
+	 * move to a new dir
 	 *
 	 */
 
@@ -247,18 +248,41 @@ func clearRedisKeys(client *redis.Client, dirKeyPrefix string, dirMaxIdKey strin
 	}
 	return err
 }
+
+//don't use flag.PrintDefaults() for help, because it show a lot of flags which are used by go test command
+func printUsage() {
+	fmt.Println("usage:\n\tgo test github.com/chrislusf/seaweedfs/go/filer/redis_store -redis_addr localhost:6379 [-redis_passwd \"\"] [-redis_db 0]\n")
+}
 func TestMain(m *testing.M) {
+	var (
+		redisAddr    string
+		redisPasswd  string
+		redisDb      int64
+		dirKeyPrefix = "d:"
+		dirMaxIdKey  = "swfs:dir-max-id"
+	)
+	flag.StringVar(&redisAddr, "redis_addr", "", "A redis server to run this test, e.g. localhost:6379")
+	flag.StringVar(&redisPasswd, "redis_passwd", "", "The redis server's password if any")
+	flag.Int64Var(&redisDb, "redis_db", 0, "the redis DB to use")
+	flag.Parse()
+	if redisAddr == "" {
+		fmt.Println("[WARN] You need to specify a value for the redis_addr flag!\n")
+		printUsage()
+		os.Exit(1)
+	}
 	redisClient := redis.NewTCPClient(&redis.Options{
-		Addr:     "localhost:6379",
-		Password: "", // no password set
-		DB:       0,
+		Addr:     redisAddr,
+		Password: redisPasswd, // no password set
+		DB:       redisDb,
 	})
-	err := clearRedisKeys(redisClient, "d:", "swfs:dir-max-id")
+	err := clearRedisKeys(redisClient, dirKeyPrefix, dirMaxIdKey)
 	if err != nil {
 		os.Exit(-1)
 	}
 	dm = InitDirectoryManger(redisClient)
 	ret := m.Run()
+	//clean used keys
+	clearRedisKeys(redisClient, dirKeyPrefix, dirMaxIdKey)
 	redisClient.Close()
 	os.Exit(ret)
 }
