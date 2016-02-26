@@ -11,6 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/go/storage"
 	"github.com/chrislusf/seaweedfs/go/util"
 	"net"
+	"net/url"
 )
 
 func ReplicatedWrite(masterNode string, s *storage.Store,
@@ -29,8 +30,19 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 	//send to other replica locations
 	if r.FormValue("type") != "replicate" {
 		if !distributedOperation(masterNode, s, volumeId, func(location operation.Location) bool {
-			_, err := operation.Upload(
-				"http://"+location.Url+r.URL.Path+"?type=replicate&ts="+strconv.FormatUint(needle.LastModified, 10),
+			args := url.Values{
+				"type": {"replicate"},
+			}
+			if needle.LastModified > 0 {
+				args.Set("ts", strconv.FormatUint(needle.LastModified, 10))
+			}
+			if needle.IsChunkedManifest() {
+				args.Set("cm", "true")
+			}
+
+			u := util.MkUrl(location.Url, r.URL.Path, args)
+			needle.IsChunkedManifest()
+			_, err := operation.Upload(u,
 				string(needle.Name), bytes.NewReader(needle.Data), needle.IsGzipped(), string(needle.Mime),
 				jwt)
 			return err == nil
