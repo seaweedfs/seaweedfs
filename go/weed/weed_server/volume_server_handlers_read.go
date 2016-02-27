@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"net/url"
+
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/images"
 	"github.com/chrislusf/seaweedfs/go/operation"
@@ -46,7 +48,15 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		lookupResult, err := operation.Lookup(vs.GetMasterNode(), volumeId.String())
 		glog.V(2).Infoln("volume", volumeId, "found on", lookupResult, "error", err)
 		if err == nil && len(lookupResult.Locations) > 0 {
-			http.Redirect(w, r, util.NormalizeUrl(lookupResult.Locations[0].PublicUrl)+r.URL.Path, http.StatusMovedPermanently)
+			u, _ := url.Parse(util.NormalizeUrl(lookupResult.Locations[0].PublicUrl))
+			u.Path = r.URL.Path
+			arg := url.Values{}
+			if c := r.FormValue("collection"); c != "" {
+				arg.Set("collection", c)
+			}
+			u.RawQuery = arg.Encode()
+			http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
+
 		} else {
 			glog.V(2).Infoln("lookup error:", err, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)

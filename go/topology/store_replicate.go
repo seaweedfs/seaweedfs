@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"net/url"
+
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/operation"
 	"github.com/chrislusf/seaweedfs/go/security"
@@ -33,9 +35,24 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 	}
 	if needToReplicate { //send to other replica locations
 		if r.FormValue("type") != "replicate" {
+
 			if !distributedOperation(masterNode, s, volumeId, func(location operation.Location) bool {
-				_, err := operation.Upload(
-					"http://"+location.Url+r.URL.Path+"?type=replicate&ts="+strconv.FormatUint(needle.LastModified, 10),
+				u := url.URL{
+					Scheme: "http",
+					Host:   location.Url,
+					Path:   r.URL.Path,
+				}
+				q := url.Values{
+					"type": {"replicate"},
+				}
+				if needle.LastModified > 0 {
+					q.Set("ts", strconv.FormatUint(needle.LastModified, 10))
+				}
+				if needle.IsChunkedManifest() {
+					q.Set("cm", "true")
+				}
+				u.RawQuery = q.Encode()
+				_, err := operation.Upload(u.String(),
 					string(needle.Name), bytes.NewReader(needle.Data), needle.IsGzipped(), string(needle.Mime),
 					jwt)
 				return err == nil
