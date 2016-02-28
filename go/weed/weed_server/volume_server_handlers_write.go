@@ -77,7 +77,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// make sure all chunks had deleted before delete manifest
-		if e := chunkManifest.DeleteChunks(vs.GetMasterNode()); e != nil {
+		if e := chunkManifest.DeleteChunks(vs.GetMasterNode(), r.FormValue("collection")); e != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Delete chunks error: %v", e))
 			return
 		}

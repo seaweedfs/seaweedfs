@@ -41,7 +41,6 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 			}
 
 			u := util.MkUrl(location.Url, r.URL.Path, args)
-			needle.IsChunkedManifest()
 			_, err := operation.Upload(u,
 				string(needle.Name), bytes.NewReader(needle.Data), needle.IsGzipped(), string(needle.Mime),
 				jwt)
@@ -80,7 +79,11 @@ func ReplicatedDelete(masterNode string, store *storage.Store,
 }
 
 func distributedOperation(masterNode string, store *storage.Store, volumeId storage.VolumeId, op func(location operation.Location) bool) bool {
-	if lookupResult, lookupErr := operation.LookupNoCache(masterNode, volumeId.String()); lookupErr == nil {
+	collection := ""
+	if v := store.GetVolume(volumeId); v != nil {
+		collection = v.Collection
+	}
+	if lookupResult, lookupErr := operation.LookupNoCache(masterNode, volumeId.String(), collection); lookupErr == nil {
 		length := 0
 		selfUrl := net.JoinHostPort(store.Ip, strconv.Itoa(store.Port))
 		results := make(chan bool)

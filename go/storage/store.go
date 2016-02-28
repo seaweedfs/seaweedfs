@@ -141,10 +141,7 @@ func (s *Store) DeleteCollection(collection string) (e error) {
 	}
 	return
 }
-func (s *Store) DeleteVolume(dl *DiskLocation, v *Volume) (e error) {
 
-	return dl.DeleteVolume(v.Id)
-}
 func (s *Store) findVolume(vid VolumeId) *Volume {
 	for _, location := range s.Locations {
 		if v, found := location.GetVolume(vid); found {

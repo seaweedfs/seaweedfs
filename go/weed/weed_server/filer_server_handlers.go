@@ -77,8 +77,12 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-
-	urlString, err := operation.LookupFileId(fs.master, fileId, true)
+	query := r.URL.Query()
+	collection := query.Get("collection")
+	if collection == "" {
+		collection = fs.collection
+	}
+	urlString, err := operation.LookupFileId(fs.master, fileId, collection, true)
 	if err != nil {
 		glog.V(1).Infoln("operation LookupFileId %s failed, err is %s", fileId, err.Error())
 		w.WriteHeader(http.StatusNotFound)
@@ -162,7 +166,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		} else if fileId != "" && err == nil {
 			var le error
-			urlLocation, le = operation.LookupFileId(fs.master, fileId, false)
+			urlLocation, le = operation.LookupFileId(fs.master, fileId, collection, false)
 			if le != nil {
 				glog.V(1).Infoln("operation LookupFileId %s failed, err is %s", fileId, le.Error())
 				w.WriteHeader(http.StatusNotFound)
@@ -224,7 +228,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		if ret.Name != "" {
 			path += ret.Name
 		} else {
-			operation.DeleteFile(fs.master, fileId, fs.jwt(fileId)) //clean up
+			operation.DeleteFile(fs.master, fileId, collection, fs.jwt(fileId)) //clean up
 			glog.V(0).Infoln("Can not to write to folder", path, "without a file name!")
 			writeJsonError(w, r, http.StatusInternalServerError,
 				errors.New("Can not to write to folder "+path+" without a file name"))
@@ -233,7 +237,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	glog.V(4).Infoln("saving", path, "=>", fileId)
 	if db_err := fs.filer.CreateFile(path, fileId); db_err != nil {
-		operation.DeleteFile(fs.master, fileId, fs.jwt(fileId)) //clean up
+		operation.DeleteFile(fs.master, fileId, collection, fs.jwt(fileId)) //clean up
 		glog.V(0).Infof("failing to write %s to filer server : %v", path, db_err)
 		writeJsonError(w, r, http.StatusInternalServerError, db_err)
 		return
@@ -253,7 +257,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		fid, err = fs.filer.DeleteFile(r.URL.Path)
 		if err == nil && fid != "" {
-			err = operation.DeleteFile(fs.master, fid, fs.jwt(fid))
+			err = operation.DeleteFile(fs.master, fid, r.FormValue("collection"), fs.jwt(fid))
 		}
 	}
 	if err == nil {

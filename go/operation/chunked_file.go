@@ -38,12 +38,13 @@ type ChunkManifest struct {
 
 // seekable chunked file reader
 type ChunkedFileReader struct {
-	Manifest *ChunkManifest
-	Master   string
-	pos      int64
-	pr       *io.PipeReader
-	pw       *io.PipeWriter
-	mutex    sync.Mutex
+	Manifest   *ChunkManifest
+	Master     string
+	Collection string
+	pos        int64
+	pr         *io.PipeReader
+	pw         *io.PipeWriter
+	mutex      sync.Mutex
 }
 
 func (s ChunkList) Len() int           { return len(s) }
@@ -69,10 +70,10 @@ func (cm *ChunkManifest) Marshal() ([]byte, error) {
 	return json.Marshal(cm)
 }
 
-func (cm *ChunkManifest) DeleteChunks(master string) error {
+func (cm *ChunkManifest) DeleteChunks(master, collection string) error {
 	deleteError := 0
 	for _, ci := range cm.Chunks {
-		if e := DeleteFile(master, ci.Fid, ""); e != nil {
+		if e := DeleteFile(master, ci.Fid, collection, ""); e != nil {
 			deleteError++
 			glog.V(0).Infof("Delete %s error: %v, master: %s", ci.Fid, e, master)
 		}
@@ -150,7 +151,7 @@ func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
 	for ; chunkIndex < cm.Chunks.Len(); chunkIndex++ {
 		ci := cm.Chunks[chunkIndex]
 		// if we need read date from local volume server first?
-		fileUrl, lookupError := LookupFileId(cf.Master, ci.Fid, true)
+		fileUrl, lookupError := LookupFileId(cf.Master, ci.Fid, cf.Collection, true)
 		if lookupError != nil {
 			return n, lookupError
 		}

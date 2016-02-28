@@ -11,12 +11,13 @@ import (
 	"strings"
 	"time"
 
+	"net/url"
+
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/images"
 	"github.com/chrislusf/seaweedfs/go/operation"
 	"github.com/chrislusf/seaweedfs/go/storage"
 	"github.com/chrislusf/seaweedfs/go/util"
-	"net/url"
 )
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
@@ -44,16 +45,11 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		lookupResult, err := operation.Lookup(vs.GetMasterNode(), volumeId.String())
+		lookupResult, err := operation.Lookup(vs.GetMasterNode(), volumeId.String(), r.FormValue("collection"))
 		glog.V(2).Infoln("volume", volumeId, "found on", lookupResult, "error", err)
 		if err == nil && len(lookupResult.Locations) > 0 {
 			u, _ := url.Parse(util.NormalizeUrl(lookupResult.Locations.Head().PublicUrl))
 			u.Path = r.URL.Path
-			arg := url.Values{}
-			if c := r.FormValue("collection"); c != "" {
-				arg.Set("collection", c)
-			}
-			u.RawQuery = arg.Encode()
 			http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
 		} else {
 			glog.V(2).Infoln("lookup error:", err, r.URL.Path)
@@ -92,7 +88,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 	w.Header().Set("Etag", etag)
 
-	if vs.tryHandleChunkedFile(n, filename, w, r) {
+	if vs.tryHandleChunkedFile(volumeId, n, filename, w, r) {
 		return
 	}
 
@@ -137,7 +133,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string, w http.ResponseWriter, r *http.Request) (processed bool) {
+func (vs *VolumeServer) tryHandleChunkedFile(vid storage.VolumeId, n *storage.Needle, fileName string, w http.ResponseWriter, r *http.Request) (processed bool) {
 	if !n.IsChunkedManifest() {
 		return false
 	}
@@ -163,6 +159,9 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string,
 	chunkedFileReader := &operation.ChunkedFileReader{
 		Manifest: chunkManifest,
 		Master:   vs.GetMasterNode(),
+	}
+	if v := vs.store.GetVolume(vid); v != nil {
+		chunkedFileReader.Collection = v.Collection
 	}
 	defer chunkedFileReader.Close()
 	if e := writeResponseContent(fileName, mType, chunkedFileReader, w, r); e != nil {

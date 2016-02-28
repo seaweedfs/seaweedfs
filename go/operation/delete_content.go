@@ -21,8 +21,8 @@ type DeleteResult struct {
 	Error  string `json:"error,omitempty"`
 }
 
-func DeleteFile(master string, fileId string, jwt security.EncodedJwt) error {
-	fileUrl, err := LookupFileId(master, fileId, false)
+func DeleteFile(master, fileId, collection string, jwt security.EncodedJwt) error {
+	fileUrl, err := LookupFileId(master, fileId, collection, false)
 	if err != nil {
 		return fmt.Errorf("Failed to lookup %s:%v", fileId, err)
 	}

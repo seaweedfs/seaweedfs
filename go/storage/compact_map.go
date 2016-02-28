@@ -21,7 +21,6 @@ func (k Key) String() string {
 	return strconv.FormatUint(uint64(k), 10)
 }
 
-
 //CompactSection is not concurrent safe,you should lock it when access in multi-thread
 type CompactSection struct {
 	values   []NeedleValue

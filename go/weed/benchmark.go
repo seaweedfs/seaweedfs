@@ -248,7 +248,7 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 		parts := strings.SplitN(fid, ",", 2)
 		vid := parts[0]
 		start := time.Now()
-		ret, err := operation.Lookup(*b.server, vid)
+		ret, err := operation.Lookup(*b.server, vid, "")
 		if err != nil || len(ret.Locations) == 0 {
 			s.failed++
 			println("!!!! volume id ", vid, " location not found!!!!!")

@@ -52,7 +52,7 @@ func runBackup(cmd *Command, args []string) bool {
 	vid := storage.VolumeId(*s.volumeId)
 
 	// find volume location, replication, ttl info
-	lookup, err := operation.Lookup(*s.master, vid.String())
+	lookup, err := operation.Lookup(*s.master, vid.String(), "")
 	if err != nil {
 		fmt.Printf("Error looking up volume %d: %v\n", vid, err)
 		return true

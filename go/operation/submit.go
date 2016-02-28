@@ -134,7 +134,7 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 				jwt)
 			if e != nil {
 				// delete all uploaded chunks
-				cm.DeleteChunks(master)
+				cm.DeleteChunks(master, fi.Collection)
 				return 0, e
 			}
 			cm.Chunks = append(cm.Chunks,
@@ -149,7 +149,7 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 		err = upload_chunked_file_manifest(fileUrl, &cm, jwt)
 		if err != nil {
 			// delete all uploaded chunks
-			cm.DeleteChunks(master)
+			cm.DeleteChunks(master, fi.Collection)
 		}
 	} else {
 		ret, e := Upload(fileUrl, baseName, fi.Reader, fi.IsGzipped, fi.MimeType, jwt)

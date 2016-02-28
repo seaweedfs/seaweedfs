@@ -41,10 +41,10 @@ var (
 	vc VidCache // caching of volume locations, re-check if after 10 minutes
 )
 
-func Lookup(server string, vid string) (ret *LookupResult, err error) {
+func Lookup(server, vid, collection string) (ret *LookupResult, err error) {
 	locations, cache_err := vc.Get(vid)
 	if cache_err != nil {
-		if ret, err = do_lookup(server, vid); err == nil {
+		if ret, err = do_lookup(server, vid, collection); err == nil {
 			vc.Set(vid, ret.Locations, 10*time.Minute)
 		}
 	} else {
@@ -53,16 +53,19 @@ func Lookup(server string, vid string) (ret *LookupResult, err error) {
 	return
 }
 
-func LookupNoCache(server string, vid string) (ret *LookupResult, err error) {
-	if ret, err = do_lookup(server, vid); err == nil {
+func LookupNoCache(server, vid, collection string) (ret *LookupResult, err error) {
+	if ret, err = do_lookup(server, vid, collection); err == nil {
 		vc.Set(vid, ret.Locations, 10*time.Minute)
 	}
 	return
 }
 
-func do_lookup(server string, vid string) (*LookupResult, error) {
+func do_lookup(server, vid, collection string) (*LookupResult, error) {
 	values := make(url.Values)
 	values.Add("volumeId", vid)
+	if collection != "" {
+		values.Set("collection", collection)
+	}
 	jsonBlob, err := util.Post(server, "/dir/lookup", values)
 	if err != nil {
 		return nil, err
@@ -78,12 +81,12 @@ func do_lookup(server string, vid string) (*LookupResult, error) {
 	return &ret, nil
 }
 
-func LookupFileId(server string, fileId string, readonly bool) (fullUrl string, err error) {
+func LookupFileId(server, fileId, collection string, readonly bool) (fullUrl string, err error) {
 	parts := strings.Split(fileId, ",")
 	if len(parts) != 2 {
 		return "", errors.New("Invalid fileId " + fileId)
 	}
-	lookup, lookupError := Lookup(server, parts[0])
+	lookup, lookupError := Lookup(server, parts[0], collection)
 	if lookupError != nil {
 		return "", lookupError
 	}
