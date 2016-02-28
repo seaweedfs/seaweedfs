@@ -24,7 +24,7 @@ type Volume struct {
 
 	SuperBlock
 
-	dataFileAccessLock sync.Mutex
+	dataFileAccessLock sync.RWMutex
 	lastModifiedTime   uint64 //unix time in seconds
 }
 
@@ -284,7 +284,9 @@ func (v *Volume) readNeedle(n *Needle) (int, error) {
 	if !ok || nv.Offset == 0 {
 		return -1, errors.New("Not Found")
 	}
+	v.dataFileAccessLock.RLock()
 	err := n.ReadData(v.dataFile, int64(nv.Offset)*NeedlePaddingSize, nv.Size, v.Version())
+	v.dataFileAccessLock.RUnlock()
 	if err != nil {
 		return 0, err
 	}
@@ -410,7 +412,7 @@ func (v *Volume) expired(volumeSizeLimit uint64) bool {
 }
 
 // wait either maxDelayMinutes or 10% of ttl minutes
-func (v *Volume) exiredLongEnough(maxDelayMinutes uint32) bool {
+func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
 	if v.Ttl == nil || v.Ttl.Minutes() == 0 {
 		return false
 	}

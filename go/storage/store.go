@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -19,15 +18,6 @@ import (
 const (
 	MAX_TTL_VOLUME_REMOVAL_DELAY = 10 // 10 minutes
 )
-
-type DiskLocation struct {
-	Directory      string
-	MaxVolumeCount int
-	volumes        map[VolumeId]*Volume
-}
-
-func (mn *DiskLocation) reset() {
-}
 
 type MasterNodes struct {
 	nodes    []string
@@ -107,9 +97,8 @@ func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts
 	}
 	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirnames); i++ {
-		location := &DiskLocation{Directory: dirnames[i], MaxVolumeCount: maxVolumeCounts[i]}
-		location.volumes = make(map[VolumeId]*Volume)
-		location.loadExistingVolumes(needleMapKind)
+		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i])
+		location.LoadExistingVolumes(needleMapKind)
 		s.Locations = append(s.Locations, location)
 	}
 	return
@@ -148,29 +137,17 @@ func (s *Store) AddVolume(volumeListString string, collection string, ttlString 
 }
 func (s *Store) DeleteCollection(collection string) (e error) {
 	for _, location := range s.Locations {
-		for k, v := range location.volumes {
-			if v.Collection == collection {
-				e = v.Destroy()
-				if e != nil {
-					return
-				}
-				delete(location.volumes, k)
-			}
-		}
+		location.DeleteCollection(collection)
 	}
 	return
 }
-func (s *Store) DeleteVolume(volumes map[VolumeId]*Volume, v *Volume) (e error) {
-	e = v.Destroy()
-	if e != nil {
-		return
-	}
-	delete(volumes, v.Id)
-	return
+func (s *Store) DeleteVolume(dl *DiskLocation, v *Volume) (e error) {
+
+	return dl.DeleteVolume(v.Id)
 }
 func (s *Store) findVolume(vid VolumeId) *Volume {
 	for _, location := range s.Locations {
-		if v, found := location.volumes[vid]; found {
+		if v, found := location.GetVolume(vid); found {
 			return v
 		}
 	}
@@ -179,7 +156,7 @@ func (s *Store) findVolume(vid VolumeId) *Volume {
 func (s *Store) findFreeLocation() (ret *DiskLocation) {
 	max := 0
 	for _, location := range s.Locations {
-		currentFreeCount := location.MaxVolumeCount - len(location.volumes)
+		currentFreeCount := location.MaxVolumeCount - location.VolumeCount()
 		if currentFreeCount > max {
 			max = currentFreeCount
 			ret = location
@@ -195,7 +172,7 @@ func (s *Store) addVolume(vid VolumeId, collection string, ttl *TTL) error {
 		glog.V(0).Infof("In dir %s adds volume:%v collection:%s ttl:%v",
 			location.Directory, vid, collection, ttl)
 		if volume, err := NewVolume(location.Directory, collection, vid, s.needleMapKind, ttl); err == nil {
-			location.volumes[vid] = volume
+			location.AddVolume(vid, volume)
 			return nil
 		} else {
 			return err
@@ -204,38 +181,12 @@ func (s *Store) addVolume(vid VolumeId, collection string, ttl *TTL) error {
 	return fmt.Errorf("No more free space left")
 }
 
-func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
-	if dirs, err := ioutil.ReadDir(l.Directory); err == nil {
-		for _, dir := range dirs {
-			name := dir.Name()
-			if !dir.IsDir() && strings.HasSuffix(name, ".dat") {
-				collection := ""
-				base := name[:len(name)-len(".dat")]
-				i := strings.LastIndex(base, "_")
-				if i > 0 {
-					collection, base = base[0:i], base[i+1:]
-				}
-				if vid, err := NewVolumeId(base); err == nil {
-					if l.volumes[vid] == nil {
-						if v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil); e == nil {
-							l.volumes[vid] = v
-							glog.V(0).Infof("data file %s, v=%d size=%d ttl=%s", l.Directory+"/"+name, v.Version(), v.Size(), v.Ttl.String())
-						} else {
-							glog.V(0).Infof("new volume %s error %s", name, e)
-						}
-					}
-				}
-			}
-		}
-	}
-	glog.V(0).Infoln("Store started on dir:", l.Directory, "with", len(l.volumes), "volumes", "max", l.MaxVolumeCount)
-}
 func (s *Store) Status() []*VolumeInfo {
 	var stats []*VolumeInfo
 	for _, location := range s.Locations {
-		for k, v := range location.volumes {
+		location.WalkVolume(func(v *Volume) (e error) {
 			s := &VolumeInfo{
-				Id:               VolumeId(k),
+				Id:               VolumeId(v.Id),
 				Size:             v.ContentSize(),
 				Collection:       v.Collection,
 				Version:          v.Version(),
@@ -245,7 +196,8 @@ func (s *Store) Status() []*VolumeInfo {
 				ReadOnly:         v.readOnly,
 				Ttl:              v.Ttl}
 			stats = append(stats, s)
-		}
+			return nil
+		})
 	}
 	sortVolumeInfos(stats)
 	return stats
@@ -271,13 +223,14 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 	var maxFileKey uint64
 	for _, location := range s.Locations {
 		maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
-		for k, v := range location.volumes {
+		volumeToDelete := []VolumeId{}
+		location.WalkVolume(func(v *Volume) (e error) {
 			if maxFileKey < v.nm.MaxFileKey() {
 				maxFileKey = v.nm.MaxFileKey()
 			}
 			if !v.expired(s.volumeSizeLimit) {
 				volumeMessage := &operation.VolumeInformationMessage{
-					Id:               proto.Uint32(uint32(k)),
+					Id:               proto.Uint32(uint32(v.Id)),
 					Size:             proto.Uint64(uint64(v.Size())),
 					Collection:       proto.String(v.Collection),
 					FileCount:        proto.Uint64(uint64(v.nm.FileCount())),
@@ -289,13 +242,17 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 				}
 				volumeMessages = append(volumeMessages, volumeMessage)
 			} else {
-				if v.exiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
-					s.DeleteVolume(location.volumes, v)
+				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
+					volumeToDelete = append(volumeToDelete, v.Id)
 					glog.V(0).Infoln("volume", v.Id, "is deleted.")
 				} else {
 					glog.V(0).Infoln("volume", v.Id, "is expired.")
 				}
 			}
+			return nil
+		})
+		for _, vid := range volumeToDelete {
+			location.DeleteVolume(vid)
 		}
 	}
 
@@ -341,9 +298,7 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 }
 func (s *Store) Close() {
 	for _, location := range s.Locations {
-		for _, v := range location.volumes {
-			v.Close()
-		}
+		location.CloseAllVolume()
 	}
 }
 func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
@@ -390,14 +345,10 @@ func (s *Store) HasVolume(i VolumeId) bool {
 	return v != nil
 }
 
-type VolumeWalker func(v *Volume) (e error)
-
 func (s *Store) WalkVolume(walker VolumeWalker) error {
 	for _, location := range s.Locations {
-		for _, v := range location.volumes {
-			if e := walker(v); e != nil {
-				return e
-			}
+		if e := location.WalkVolume(walker); e != nil {
+			return e
 		}
 	}
 	return nil
