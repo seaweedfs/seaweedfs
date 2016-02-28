@@ -1,6 +1,9 @@
 package storage
 
-import "strconv"
+import (
+	"strconv"
+	"sync"
+)
 
 type NeedleValue struct {
 	Key    Key
@@ -18,6 +21,8 @@ func (k Key) String() string {
 	return strconv.FormatUint(uint64(k), 10)
 }
 
+
+//CompactSection is not concurrent safe,you should lock it when access in multi-thread
 type CompactSection struct {
 	values   []NeedleValue
 	overflow map[Key]NeedleValue
@@ -78,6 +83,7 @@ func (cs *CompactSection) Delete(key Key) uint32 {
 	}
 	return ret
 }
+
 func (cs *CompactSection) Get(key Key) (*NeedleValue, bool) {
 	if v, ok := cs.overflow[key]; ok {
 		return &v, true
@@ -87,6 +93,7 @@ func (cs *CompactSection) Get(key Key) (*NeedleValue, bool) {
 	}
 	return nil, false
 }
+
 func (cs *CompactSection) binarySearchValues(key Key) int {
 	l, h := 0, cs.counter-1
 	if h >= 0 && cs.values[h].Key < key {
@@ -109,8 +116,10 @@ func (cs *CompactSection) binarySearchValues(key Key) int {
 }
 
 //This map assumes mostly inserting increasing keys
+//It is concurrent safe
 type CompactMap struct {
 	list []*CompactSection
+	lock sync.RWMutex
 }
 
 func NewCompactMap() CompactMap {
@@ -118,6 +127,8 @@ func NewCompactMap() CompactMap {
 }
 
 func (cm *CompactMap) Set(key Key, offset uint32, size uint32) uint32 {
+	cm.lock.Lock()
+	defer cm.lock.Unlock()
 	x := cm.binarySearchCompactSection(key)
 	if x < 0 {
 		//println(x, "creating", len(cm.list), "section, starting", key)
@@ -135,14 +146,20 @@ func (cm *CompactMap) Set(key Key, offset uint32, size uint32) uint32 {
 	}
 	return cm.list[x].Set(key, offset, size)
 }
+
 func (cm *CompactMap) Delete(key Key) uint32 {
+	cm.lock.Lock()
+	defer cm.lock.Unlock()
 	x := cm.binarySearchCompactSection(key)
 	if x < 0 {
 		return uint32(0)
 	}
 	return cm.list[x].Delete(key)
 }
+
 func (cm *CompactMap) Get(key Key) (*NeedleValue, bool) {
+	cm.lock.RLock()
+	defer cm.lock.RUnlock()
 	x := cm.binarySearchCompactSection(key)
 	if x < 0 {
 		return nil, false
@@ -176,7 +193,10 @@ func (cm *CompactMap) binarySearchCompactSection(key Key) int {
 }
 
 // Visit visits all entries or stop if any error when visiting
+// You should NOT add or delete item in visit func
 func (cm *CompactMap) Visit(visit func(NeedleValue) error) error {
+	cm.lock.RLock()
+	defer cm.lock.RUnlock()
 	for _, cs := range cm.list {
 		for _, v := range cs.overflow {
 			if err := visit(v); err != nil {
