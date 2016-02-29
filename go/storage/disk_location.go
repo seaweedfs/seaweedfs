@@ -48,7 +48,7 @@ func (l *DiskLocation) LoadExistingVolumes(needleMapKind NeedleMapType) {
 			}
 		}
 	}
-	glog.V(0).Infoln("Store started on dir:", l.Directory, "with", len(l.volumes), "volumes", "max", l.MaxVolumeCount)
+	glog.V(0).Infoln("Store started on dir:", l.Directory, "with", len(l.VolumeCount()), "volumes", "max", l.MaxVolumeCount)
 }
 
 func (l *DiskLocation) AddVolume(vid VolumeId, v *Volume) {
