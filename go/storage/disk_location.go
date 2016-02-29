@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/golang/glog"
+	"github.com/chrislusf/seaweedfs/go/glog"
 )
 
 // DiskLocation is concurrent safe
