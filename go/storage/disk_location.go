@@ -13,7 +13,7 @@ type DiskLocation struct {
 	Directory      string
 	MaxVolumeCount int
 	volumes        map[VolumeId]*Volume
-	lock           sync.RWMutex
+	mutex          sync.RWMutex
 }
 
 func NewDiskLocation(dir string, maxVolCount int) *DiskLocation {
@@ -52,14 +52,14 @@ func (l *DiskLocation) LoadExistingVolumes(needleMapKind NeedleMapType) {
 }
 
 func (l *DiskLocation) AddVolume(vid VolumeId, v *Volume) {
-	l.lock.Lock()
-	defer l.lock.Unlock()
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
 	l.volumes[vid] = v
 }
 
 func (l *DiskLocation) DeleteVolume(vid VolumeId) (e error) {
-	l.lock.Lock()
-	defer l.lock.Unlock()
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
 	if v, ok := l.volumes[vid]; ok {
 		e = v.Destroy()
 	}
@@ -68,8 +68,8 @@ func (l *DiskLocation) DeleteVolume(vid VolumeId) (e error) {
 }
 
 func (l *DiskLocation) DeleteCollection(collection string) (e error) {
-	l.lock.Lock()
-	defer l.lock.Unlock()
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
 	for k, v := range l.volumes {
 		if v.Collection == collection {
 			e = v.Destroy()
@@ -83,28 +83,28 @@ func (l *DiskLocation) DeleteCollection(collection string) (e error) {
 }
 
 func (l *DiskLocation) HasVolume(vid VolumeId) bool {
-	l.lock.RLock()
-	defer l.lock.RUnlock()
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
 	_, ok := l.volumes[vid]
 	return ok
 }
 
 func (l *DiskLocation) GetVolume(vid VolumeId) (v *Volume, ok bool) {
-	l.lock.RLock()
-	defer l.lock.RUnlock()
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
 	v, ok = l.volumes[vid]
 	return
 }
 
 func (l *DiskLocation) VolumeCount() int {
-	l.lock.RLock()
-	defer l.lock.RUnlock()
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
 	return len(l.volumes)
 }
 
 func (l *DiskLocation) CloseAllVolume() {
-	l.lock.RLock()
-	defer l.lock.RUnlock()
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
 	for _, v := range l.volumes {
 		v.Close()
 	}
@@ -115,8 +115,8 @@ type VolumeWalker func(v *Volume) (e error)
 
 // must not add or delete volume in walker
 func (l *DiskLocation) WalkVolume(vw VolumeWalker) (e error) {
-	l.lock.RLock()
-	defer l.lock.RUnlock()
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
 	for _, v := range l.volumes {
 		if e = vw(v); e != nil {
 			return e
