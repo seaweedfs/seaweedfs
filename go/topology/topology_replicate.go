@@ -58,33 +58,34 @@ func (t *ReplicateTask) WorkingDataNodes() []*DataNode {
 }
 
 func planReplicateTasks(t *Topology) (tasks []*ReplicateTask) {
-	for _, col := range t.collectionMap.Items {
-		c := col.(*Collection)
+	for i1 := range t.collectionMap.IterItems() {
+		c := i1.Value.(*Collection)
 		glog.V(0).Infoln("checking replicate on collection:", c.Name)
 		growOption := &VolumeGrowOption{ReplicaPlacement: c.rp}
-		for _, vl := range c.storageType2VolumeLayout.Items {
-			if vl != nil {
-				volumeLayout := vl.(*VolumeLayout)
-				for vid, locationList := range volumeLayout.vid2location {
-					rp1 := locationList.CalcReplicaPlacement()
-					if rp1.Compare(volumeLayout.rp) >= 0 {
-						continue
-					}
-					if additionServers, e := FindEmptySlotsForOneVolume(t, growOption, locationList); e == nil {
-						for _, s := range additionServers {
-							s.UpAdjustPlannedVolumeCountDelta(1)
-							rt := &ReplicateTask{
-								Vid:        vid,
-								Collection: c.Name,
-								SrcDN:      locationList.PickForRead(),
-								DstDN:      s,
-							}
-							tasks = append(tasks, rt)
-							glog.V(0).Infof("add replicate task, vid: %v, src: %s, dst: %s", vid, rt.SrcDN.Url(), rt.DstDN.Url())
+		for i2 := range c.storageType2VolumeLayout.IterItems() {
+			if i2.Value == nil {
+				continue
+			}
+			volumeLayout := i2.Value.(*VolumeLayout)
+			for vid, locationList := range volumeLayout.vid2location {
+				rp1 := locationList.CalcReplicaPlacement()
+				if rp1.Compare(volumeLayout.rp) >= 0 {
+					continue
+				}
+				if additionServers, e := FindEmptySlotsForOneVolume(t, growOption, locationList); e == nil {
+					for _, s := range additionServers {
+						s.UpAdjustPlannedVolumeCountDelta(1)
+						rt := &ReplicateTask{
+							Vid:        vid,
+							Collection: c.Name,
+							SrcDN:      locationList.PickForRead(),
+							DstDN:      s,
 						}
-					} else {
-						glog.V(0).Infof("find empty slots error, vid: %v, rp: %s => %s, %v", vid, rp1.String(), volumeLayout.rp.String(), e)
+						tasks = append(tasks, rt)
+						glog.V(0).Infof("add replicate task, vid: %v, src: %s, dst: %s", vid, rt.SrcDN.Url(), rt.DstDN.Url())
 					}
+				} else {
+					glog.V(0).Infof("find empty slots error, vid: %v, rp: %s => %s, %v", vid, rp1.String(), volumeLayout.rp.String(), e)
 				}
 			}
 		}

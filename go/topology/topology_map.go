@@ -11,14 +11,15 @@ func (t *Topology) ToMap() interface{} {
 	}
 	m["DataCenters"] = dcs
 	var layouts []interface{}
-	for _, col := range t.collectionMap.Items {
-		c := col.(*Collection)
-		for _, layout := range c.storageType2VolumeLayout.Items {
-			if layout != nil {
-				tmp := layout.(*VolumeLayout).ToMap()
-				tmp["collection"] = c.Name
-				layouts = append(layouts, tmp)
+	for i1 := range t.collectionMap.IterItems() {
+		c := i1.Value.(*Collection)
+		for i2 := range c.storageType2VolumeLayout.IterItems() {
+			if i2.Value == nil {
+				continue
 			}
+			tmp := i2.Value.(*VolumeLayout).ToMap()
+			tmp["collection"] = c.Name
+			layouts = append(layouts, tmp)
 		}
 	}
 	m["layouts"] = layouts
