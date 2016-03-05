@@ -1,9 +1,19 @@
 package master_ui
 
 import (
+	"fmt"
 	"html/template"
 	"strconv"
 	"strings"
+)
+
+const (
+	_          = iota // ignore first value by assigning to blank identifier
+	KB float64 = 1 << (10 * iota)
+	MB
+	GB
+	TB
+	PB
 )
 
 func join(data []int64) string {
@@ -14,8 +24,26 @@ func join(data []int64) string {
 	return strings.Join(ret, ",")
 }
 
+func prettySize(byteSize uint64) string {
+	sz := float64(byteSize)
+	switch {
+	case sz >= PB:
+		return fmt.Sprintf("%.2f PB", sz/PB)
+	case sz >= TB:
+		return fmt.Sprintf("%.2f TB", sz/TB)
+	case sz >= GB:
+		return fmt.Sprintf("%.2f GB", sz/GB)
+	case sz >= MB:
+		return fmt.Sprintf("%.2f MB", sz/MB)
+	case sz >= KB:
+		return fmt.Sprintf("%.2f KB", sz/KB)
+	}
+	return fmt.Sprintf("%.0f Bytes", sz)
+}
+
 var funcMap = template.FuncMap{
-	"join": join,
+	"join":       join,
+	"prettySize": prettySize,
 }
 
 var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOCTYPE html>
@@ -62,7 +90,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
           {{ range .DiskStatuses }}
             <tr>
               <th>{{ .Dir }}</th>
-              <td>{{ .Free }} Bytes Free</td>
+              <td>{{ .Free | prettySize }} Free</td>
             </tr>
           {{ end }}
           </table>
@@ -119,9 +147,9 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
             <tr>
               <td><code>{{ .Id }}</code></td>
               <td>{{ .Collection }}</td>
-              <td>{{ .Size }} Bytes</td>
+              <td>{{ .Size | prettySize }}</td>
               <td>{{ .FileCount }}</td>
-              <td>{{ .DeleteCount }} / {{.DeletedByteCount}} Bytes</td>
+              <td>{{ .DeleteCount }} / {{.DeletedByteCount | prettySize }}</td>
               <td>{{ .Ttl }}</td>
             </tr>
           {{ end }}
