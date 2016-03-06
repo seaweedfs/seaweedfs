@@ -38,7 +38,7 @@ func batchVacuumVolumeCheck(vl *VolumeLayout, vid storage.VolumeId, locationlist
 	return isCheckSuccess
 }
 func batchVacuumVolumeCompact(vl *VolumeLayout, vid storage.VolumeId, locationlist *VolumeLocationList) bool {
-	vl.removeFromWritable(vid)
+	vl.RemoveFromWritable(vid)
 	ch := make(chan bool, locationlist.Length())
 	for index, dn := range locationlist.AllDataNode() {
 		go func(index int, url string, vid storage.VolumeId) {
@@ -89,7 +89,11 @@ func (t *Topology) Vacuum(garbageThreshold string) int {
 				continue
 			}
 			volumeLayout := item1.Value.(*VolumeLayout)
-			for vid, locationList := range volumeLayout.vid2location {
+			for _, vid := range volumeLayout.ListVolumeId() {
+				locationList := volumeLayout.Lookup(vid)
+				if locationList == nil {
+					continue
+				}
 				glog.V(0).Infoln("vacuum on collection:", c.Name, "volume", vid)
 				if batchVacuumVolumeCheck(volumeLayout, vid, locationList, garbageThreshold) {
 					if batchVacuumVolumeCompact(volumeLayout, vid, locationList) {

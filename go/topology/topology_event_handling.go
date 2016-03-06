@@ -47,7 +47,11 @@ func (t *Topology) SetVolumeCapacityFull(volumeInfo storage.VolumeInfo) bool {
 	if !vl.SetVolumeCapacityFull(volumeInfo.Id) {
 		return false
 	}
-	for _, dn := range vl.vid2location[volumeInfo.Id].AllDataNode() {
+	vll := vl.Lookup(volumeInfo.Id)
+	if vll != nil {
+		return false
+	}
+	for _, dn := range vll.AllDataNode() {
 		if !volumeInfo.ReadOnly {
 			dn.UpAdjustActiveVolumeCountDelta(-1)
 		}
@@ -68,7 +72,7 @@ func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 func (t *Topology) RegisterRecoveredDataNode(dn *DataNode) {
 	for _, v := range dn.volumes {
 		vl := t.GetVolumeLayout(v.Collection, v.Ttl)
-		if vl.isWritable(&v) {
+		if vl.IsWritable(&v) {
 			vl.SetVolumeAvailable(dn, v.Id)
 		}
 	}

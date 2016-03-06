@@ -67,7 +67,11 @@ func planReplicateTasks(t *Topology) (tasks []*ReplicateTask) {
 				continue
 			}
 			volumeLayout := i2.Value.(*VolumeLayout)
-			for vid, locationList := range volumeLayout.vid2location {
+			for _, vid := range volumeLayout.ListVolumeId() {
+				locationList := volumeLayout.Lookup(vid)
+				if locationList == nil {
+					continue
+				}
 				rp1 := locationList.CalcReplicaPlacement()
 				if rp1.Compare(volumeLayout.rp) >= 0 {
 					continue
