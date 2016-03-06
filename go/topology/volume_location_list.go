@@ -32,6 +32,12 @@ func (dnll *VolumeLocationList) AllDataNode() []*DataNode {
 	return dnll.list
 }
 
+func (dnll *VolumeLocationList) Duplicate() *VolumeLocationList {
+	l := make([]*DataNode, len(dnll.list))
+	copy(l, dnll.list)
+	return &VolumeLocationList{list: l}
+}
+
 func (dnll *VolumeLocationList) Length() int {
 	return len(dnll.list)
 }

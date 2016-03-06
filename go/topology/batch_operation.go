@@ -11,7 +11,7 @@ import (
 
 func BatchOperation(locationList *VolumeLocationList, path string, values url.Values) (isSuccess bool) {
 	ch := make(chan bool, locationList.Length())
-	for _, dn := range locationList.list {
+	for _, dn := range locationList.AllDataNode() {
 		go func(url string, path string, values url.Values) {
 			_, e := util.RemoteApiCall(url, path, values)
 			if e != nil {
@@ -22,7 +22,7 @@ func BatchOperation(locationList *VolumeLocationList, path string, values url.Va
 		}(dn.Url(), path, values)
 	}
 	isSuccess = true
-	for range locationList.list {
+	for range locationList.AllDataNode() {
 		select {
 		case canVacuum := <-ch:
 			isSuccess = isSuccess && canVacuum

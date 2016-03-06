@@ -17,7 +17,7 @@ type VolumeLayout struct {
 	vid2location    map[storage.VolumeId]*VolumeLocationList
 	writables       []storage.VolumeId // transient array of writable volume id
 	volumeSizeLimit uint64
-	accessLock      sync.Mutex
+	accessLock      sync.RWMutex
 }
 
 func NewVolumeLayout(rp *storage.ReplicaPlacement, ttl *storage.TTL, volumeSizeLimit uint64) *VolumeLayout {
@@ -44,7 +44,7 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	glog.V(4).Infoln("volume", v.Id, "added to dn", dn.Id(), "len", vl.vid2location[v.Id].Length())
 	//TODO balancing data when have more replications
 	if vl.vid2location[v.Id].Length() == vl.rp.GetCopyCount() && vl.isWritable(v) {
-		vl.AddToWritable(v.Id)
+		vl.addToWritable(v.Id)
 	} else {
 		vl.removeFromWritable(v.Id)
 	}
@@ -58,7 +58,7 @@ func (vl *VolumeLayout) UnRegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	delete(vl.vid2location, v.Id)
 }
 
-func (vl *VolumeLayout) AddToWritable(vid storage.VolumeId) {
+func (vl *VolumeLayout) addToWritable(vid storage.VolumeId) {
 	for _, id := range vl.writables {
 		if vid == id {
 			return
@@ -75,14 +75,14 @@ func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool {
 
 func (vl *VolumeLayout) Lookup(vid storage.VolumeId) *VolumeLocationList {
 	if location := vl.vid2location[vid]; location != nil {
-		return location
+		return location.Duplicate()
 	}
 	return nil
 }
 
 func (vl *VolumeLayout) ListVolumeServers() (nodes []*DataNode) {
 	for _, location := range vl.vid2location {
-		nodes = append(nodes, location.list...)
+		nodes = append(nodes, location.AllDataNode()...)
 	}
 	return
 }
@@ -106,7 +106,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (*s
 	counter := 0
 	for _, v := range vl.writables {
 		volumeLocationList := vl.vid2location[v]
-		for _, dn := range volumeLocationList.list {
+		for _, dn := range volumeLocationList.AllDataNode() {
 			if dn.GetDataCenter().Id() == NodeId(option.DataCenter) {
 				if option.Rack != "" && dn.GetRack().Id() != NodeId(option.Rack) {
 					continue
@@ -130,7 +130,7 @@ func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) int {
 	}
 	counter := 0
 	for _, v := range vl.writables {
-		for _, dn := range vl.vid2location[v].list {
+		for _, dn := range vl.vid2location[v].AllDataNode() {
 			if dn.GetDataCenter().Id() == NodeId(option.DataCenter) {
 				if option.Rack != "" && dn.GetRack().Id() != NodeId(option.Rack) {
 					continue
@@ -205,6 +205,8 @@ func (vl *VolumeLayout) SetVolumeCapacityFull(vid storage.VolumeId) bool {
 }
 
 func (vl *VolumeLayout) ToMap() map[string]interface{} {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
 	m := make(map[string]interface{})
 	m["replication"] = vl.rp.String()
 	m["ttl"] = vl.ttl.String()

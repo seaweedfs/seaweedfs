@@ -47,7 +47,7 @@ func (t *Topology) SetVolumeCapacityFull(volumeInfo storage.VolumeInfo) bool {
 	if !vl.SetVolumeCapacityFull(volumeInfo.Id) {
 		return false
 	}
-	for _, dn := range vl.vid2location[volumeInfo.Id].list {
+	for _, dn := range vl.vid2location[volumeInfo.Id].AllDataNode() {
 		if !volumeInfo.ReadOnly {
 			dn.UpAdjustActiveVolumeCountDelta(-1)
 		}

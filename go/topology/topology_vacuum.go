@@ -13,7 +13,7 @@ import (
 
 func batchVacuumVolumeCheck(vl *VolumeLayout, vid storage.VolumeId, locationlist *VolumeLocationList, garbageThreshold string) bool {
 	ch := make(chan bool, locationlist.Length())
-	for index, dn := range locationlist.list {
+	for index, dn := range locationlist.AllDataNode() {
 		go func(index int, url string, vid storage.VolumeId) {
 			//glog.V(0).Infoln(index, "Check vacuuming", vid, "on", dn.Url())
 			if e, ret := vacuumVolume_Check(url, vid, garbageThreshold); e != nil {
@@ -26,7 +26,7 @@ func batchVacuumVolumeCheck(vl *VolumeLayout, vid storage.VolumeId, locationlist
 		}(index, dn.Url(), vid)
 	}
 	isCheckSuccess := true
-	for range locationlist.list {
+	for range locationlist.AllDataNode() {
 		select {
 		case canVacuum := <-ch:
 			isCheckSuccess = isCheckSuccess && canVacuum
@@ -40,7 +40,7 @@ func batchVacuumVolumeCheck(vl *VolumeLayout, vid storage.VolumeId, locationlist
 func batchVacuumVolumeCompact(vl *VolumeLayout, vid storage.VolumeId, locationlist *VolumeLocationList) bool {
 	vl.removeFromWritable(vid)
 	ch := make(chan bool, locationlist.Length())
-	for index, dn := range locationlist.list {
+	for index, dn := range locationlist.AllDataNode() {
 		go func(index int, url string, vid storage.VolumeId) {
 			glog.V(0).Infoln(index, "Start vacuuming", vid, "on", url)
 			if e := vacuumVolume_Compact(url, vid); e != nil {
@@ -53,7 +53,7 @@ func batchVacuumVolumeCompact(vl *VolumeLayout, vid storage.VolumeId, locationli
 		}(index, dn.Url(), vid)
 	}
 	isVacuumSuccess := true
-	for range locationlist.list {
+	for range locationlist.AllDataNode() {
 		select {
 		case _ = <-ch:
 		case <-time.After(30 * time.Minute):
@@ -65,7 +65,7 @@ func batchVacuumVolumeCompact(vl *VolumeLayout, vid storage.VolumeId, locationli
 }
 func batchVacuumVolumeCommit(vl *VolumeLayout, vid storage.VolumeId, locationlist *VolumeLocationList) bool {
 	isCommitSuccess := true
-	for _, dn := range locationlist.list {
+	for _, dn := range locationlist.AllDataNode() {
 		glog.V(0).Infoln("Start Commiting vacuum", vid, "on", dn.Url())
 		if e := vacuumVolume_Commit(dn.Url(), vid); e != nil {
 			glog.V(0).Infoln("Error when committing vacuum", vid, "on", dn.Url(), e)
