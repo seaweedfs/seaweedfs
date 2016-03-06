@@ -16,23 +16,17 @@ import (
 type Topology struct {
 	NodeImpl
 
-	collectionMap *util.ConcurrentMap
-
-	pulse int64
-
-	volumeSizeLimit uint64
-
-	Sequence sequence.Sequencer
+	collectionMap      *util.ConcurrentMap
+	pulse              int64
+	volumeSizeLimit    uint64
+	Sequence           sequence.Sequencer
+	CollectionSettings *storage.CollectionSettings
+	configuration      *Configuration
+	RaftServer         raft.Server
 
 	chanDeadDataNodes      chan *DataNode
 	chanRecoveredDataNodes chan *DataNode
 	chanFullVolumes        chan storage.VolumeInfo
-
-	CollectionSettings *storage.CollectionSettings
-
-	configuration *Configuration
-
-	RaftServer raft.Server
 }
 
 func NewTopology(id string, confFile string, cs *storage.CollectionSettings, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int) (*Topology, error) {
