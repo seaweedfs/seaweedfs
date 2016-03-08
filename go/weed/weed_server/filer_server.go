@@ -28,7 +28,7 @@ func NewFilerServer(r *http.ServeMux, port int, master string, dir string, colle
 	replication string, redirectOnRead bool, disableDirListing bool,
 	secret string,
 	cassandra_server string, cassandra_keyspace string,
-	redis_server string, redis_database int,
+	redis_server string, redis_password string, redis_database int,
 ) (fs *FilerServer, err error) {
 	fs = &FilerServer{
 		master:             master,
@@ -46,7 +46,7 @@ func NewFilerServer(r *http.ServeMux, port int, master string, dir string, colle
 		}
 		fs.filer = flat_namespace.NewFlatNamespaceFiler(master, cassandra_store)
 	} else if redis_server != "" {
-		redis_store := redis_store.NewRedisStore(redis_server, redis_database)
+		redis_store := redis_store.NewRedisStore(redis_server, redis_password, redis_database)
 		fs.filer = flat_namespace.NewFlatNamespaceFiler(master, redis_store)
 	} else {
 		if fs.filer, err = embedded_filer.NewFilerEmbedded(master, dir); err != nil {

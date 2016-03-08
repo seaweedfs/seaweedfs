@@ -8,10 +8,10 @@ type RedisStore struct {
 	Client *redis.Client
 }
 
-func NewRedisStore(hostPort string, database int) *RedisStore {
+func NewRedisStore(hostPort string, password string, database int) *RedisStore {
 	client := redis.NewTCPClient(&redis.Options{
 		Addr:     hostPort,
-		Password: "", // no password set
+		Password: password,
 		DB:       int64(database),
 	})
 	return &RedisStore{Client: client}

@@ -27,6 +27,7 @@ type FilerOptions struct {
 	cassandra_server        *string
 	cassandra_keyspace      *string
 	redis_server            *string
+	redis_password          *string
 	redis_database          *int
 }
 
@@ -42,6 +43,7 @@ func init() {
 	f.cassandra_server = cmdFiler.Flag.String("cassandra.server", "", "host[:port] of the cassandra server")
 	f.cassandra_keyspace = cmdFiler.Flag.String("cassandra.keyspace", "seaweed", "keyspace of the cassandra server")
 	f.redis_server = cmdFiler.Flag.String("redis.server", "", "host:port of the redis server, e.g., 127.0.0.1:6379")
+	f.redis_password = cmdFiler.Flag.String("redis.password", "", "password in clear text")
 	f.redis_database = cmdFiler.Flag.Int("redis.database", 0, "the database on the redis server")
 	f.secretKey = cmdFiler.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 
@@ -80,7 +82,7 @@ func runFiler(cmd *Command, args []string) bool {
 		*f.defaultReplicaPlacement, *f.redirectOnRead, *f.disableDirListing,
 		*f.secretKey,
 		*f.cassandra_server, *f.cassandra_keyspace,
-		*f.redis_server, *f.redis_database,
+		*f.redis_server, *f.redis_password, *f.redis_database,
 	)
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
