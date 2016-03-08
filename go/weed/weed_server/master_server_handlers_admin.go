@@ -46,7 +46,7 @@ func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if *joinMessage.Ip == "" {
-		*joinMessage.Ip = r.RemoteAddr[0:strings.Index(r.RemoteAddr, ":")]
+		*joinMessage.Ip = r.RemoteAddr[0:strings.LastIndex(r.RemoteAddr, ":")]
 	}
 	if glog.V(4) {
 		if jsonData, jsonError := json.Marshal(joinMessage); jsonError != nil {
