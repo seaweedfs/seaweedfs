@@ -90,6 +90,7 @@ func init() {
 	filerOptions.cassandra_server = cmdServer.Flag.String("filer.cassandra.server", "", "host[:port] of the cassandra server")
 	filerOptions.cassandra_keyspace = cmdServer.Flag.String("filer.cassandra.keyspace", "seaweed", "keyspace of the cassandra server")
 	filerOptions.redis_server = cmdServer.Flag.String("filer.redis.server", "", "host:port of the redis server, e.g., 127.0.0.1:6379")
+	filerOptions.redis_password = cmdServer.Flag.String("filer.redis.password", "", "redis password in clear text")
 	filerOptions.redis_database = cmdServer.Flag.Int("filer.redis.database", 0, "the database on the redis server")
 }
 
@@ -170,7 +171,7 @@ func runServer(cmd *Command, args []string) bool {
 				*filerOptions.redirectOnRead, *filerOptions.disableDirListing,
 				*filerOptions.secretKey,
 				*filerOptions.cassandra_server, *filerOptions.cassandra_keyspace,
-				*filerOptions.redis_server, *filerOptions.redis_database,
+				*filerOptions.redis_server, *filerOptions.redis_password, *filerOptions.redis_database,
 			)
 			if nfs_err != nil {
 				glog.Fatalf("Filer startup error: %v", nfs_err)
