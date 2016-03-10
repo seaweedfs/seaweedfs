@@ -156,9 +156,10 @@ func (vs *VolumeServer) tryHandleChunkedFile(vid storage.VolumeId, n *storage.Ne
 
 	w.Header().Set("X-File-Store", "chunked")
 
-	chunkedFileReader := &operation.ChunkedFileReader{
+	chunkedFileReader := &storage.ChunkedFileReader{
 		Manifest: chunkManifest,
 		Master:   vs.GetMasterNode(),
+		Store:    vs.store,
 	}
 	if v := vs.store.GetVolume(vid); v != nil {
 		chunkedFileReader.Collection = v.Collection

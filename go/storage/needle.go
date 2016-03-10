@@ -193,36 +193,38 @@ func (n *Needle) ParsePath(fid string) (err error) {
 	if length <= 8 {
 		return errors.New("Invalid fid:" + fid)
 	}
+	n.Id, n.Cookie, err = ParseIdCookie(fid)
+	if err != nil {
+		return err
+	}
+	return err
+}
+
+func ParseIdCookie(fid string) (uint64, uint32, error) {
 	delta := ""
 	deltaIndex := strings.LastIndex(fid, "_")
 	if deltaIndex > 0 {
 		fid, delta = fid[0:deltaIndex], fid[deltaIndex+1:]
 	}
-	n.Id, n.Cookie, err = ParseKeyHash(fid)
-	if err != nil {
-		return err
-	}
-	if delta != "" {
-		if d, e := strconv.ParseUint(delta, 10, 64); e == nil {
-			n.Id += d
-		} else {
-			return e
-		}
-	}
-	return err
-}
 
-func ParseKeyHash(key_hash_string string) (uint64, uint32, error) {
-	if len(key_hash_string)%2 == 1 {
-		key_hash_string = "0" + key_hash_string
+	if len(fid)%2 == 1 {
+		fid = "0" + fid
 	}
-	key_hash_bytes, khe := hex.DecodeString(key_hash_string)
+	key_hash_bytes, khe := hex.DecodeString(fid)
 	key_hash_len := len(key_hash_bytes)
 	if khe != nil || key_hash_len <= 4 {
-		glog.V(0).Infoln("Invalid key_hash", key_hash_string, "length:", key_hash_len, "error", khe)
-		return 0, 0, errors.New("Invalid key and hash:" + key_hash_string)
+		glog.V(0).Infoln("Invalid key_hash", fid, "length:", key_hash_len, "error", khe)
+		return 0, 0, errors.New("Invalid key and hash:" + fid)
 	}
-	key := util.BytesToUint64(key_hash_bytes[0 : key_hash_len-4])
-	hash := util.BytesToUint32(key_hash_bytes[key_hash_len-4 : key_hash_len])
-	return key, hash, nil
+	id := util.BytesToUint64(key_hash_bytes[0 : key_hash_len-4])
+	cookie := util.BytesToUint32(key_hash_bytes[key_hash_len-4 : key_hash_len])
+
+	if delta != "" {
+		if d, e := strconv.ParseUint(delta, 10, 64); e == nil {
+			id += d
+		} else {
+			return 0, 0, e
+		}
+	}
+	return id, cookie, nil
 }

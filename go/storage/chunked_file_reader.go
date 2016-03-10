@@ -1,16 +1,13 @@
-package operation
+package storage
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
-
 	"sync"
 
-	"github.com/chrislusf/seaweedfs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/operation"
 	"github.com/chrislusf/seaweedfs/go/util"
 )
 
@@ -21,70 +18,43 @@ var (
 	ErrInvalidRange = errors.New("Invalid range")
 )
 
-type ChunkInfo struct {
-	Fid    string `json:"fid"`
-	Offset int64  `json:"offset"`
-	Size   int64  `json:"size"`
-}
-
-type ChunkList []*ChunkInfo
-
-type ChunkManifest struct {
-	Name   string    `json:"name,omitempty"`
-	Mime   string    `json:"mime,omitempty"`
-	Size   int64     `json:"size,omitempty"`
-	Chunks ChunkList `json:"chunks,omitempty"`
-}
-
 // seekable chunked file reader
 type ChunkedFileReader struct {
-	Manifest   *ChunkManifest
+	Manifest   *operation.ChunkManifest
 	Master     string
 	Collection string
+	Store      *Store
 	pos        int64
 	pr         *io.PipeReader
 	pw         *io.PipeWriter
 	mutex      sync.Mutex
 }
 
-func (s ChunkList) Len() int           { return len(s) }
-func (s ChunkList) Less(i, j int) bool { return s[i].Offset < s[j].Offset }
-func (s ChunkList) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
-
-func LoadChunkManifest(buffer []byte, isGzipped bool) (*ChunkManifest, error) {
-	if isGzipped {
-		var err error
-		if buffer, err = UnGzipData(buffer); err != nil {
-			return nil, err
-		}
+func (cf *ChunkedFileReader) Seek(offset int64, whence int) (int64, error) {
+	var err error
+	switch whence {
+	case 0:
+	case 1:
+		offset += cf.pos
+	case 2:
+		offset = cf.Manifest.Size - offset
 	}
-	cm := ChunkManifest{}
-	if e := json.Unmarshal(buffer, &cm); e != nil {
-		return nil, e
+	if offset > cf.Manifest.Size {
+		err = ErrInvalidRange
 	}
-	sort.Sort(cm.Chunks)
-	return &cm, nil
+	if cf.pos != offset {
+		cf.Close()
+	}
+	cf.pos = offset
+	return cf.pos, err
 }
 
-func (cm *ChunkManifest) Marshal() ([]byte, error) {
-	return json.Marshal(cm)
-}
-
-func (cm *ChunkManifest) DeleteChunks(master, collection string) error {
-	deleteError := 0
-	for _, ci := range cm.Chunks {
-		if e := DeleteFile(master, ci.Fid, collection, ""); e != nil {
-			deleteError++
-			glog.V(0).Infof("Delete %s error: %v, master: %s", ci.Fid, e, master)
-		}
+func (cf *ChunkedFileReader) readRemoteChunkNeedle(fid string, w io.Writer, offset int64) (written int64, e error) {
+	fileUrl, lookupError := operation.LookupFileId(cf.Master, fid, cf.Collection, true)
+	if lookupError != nil {
+		return 0, lookupError
 	}
-	if deleteError > 0 {
-		return errors.New("Not all chunks deleted.")
-	}
-	return nil
-}
 
-func readChunkNeedle(fileUrl string, w io.Writer, offset int64) (written int64, e error) {
 	req, err := http.NewRequest("GET", fileUrl, nil)
 	if err != nil {
 		return written, err
@@ -115,23 +85,21 @@ func readChunkNeedle(fileUrl string, w io.Writer, offset int64) (written int64, 
 	return io.Copy(w, resp.Body)
 }
 
-func (cf *ChunkedFileReader) Seek(offset int64, whence int) (int64, error) {
-	var err error
-	switch whence {
-	case 0:
-	case 1:
-		offset += cf.pos
-	case 2:
-		offset = cf.Manifest.Size - offset
+func (cf *ChunkedFileReader) readLocalChunkNeedle(fid *FileId, w io.Writer, offset int64) (written int64, e error) {
+	n := &Needle{
+		Id:     fid.Key,
+		Cookie: fid.Hashcode,
 	}
-	if offset > cf.Manifest.Size {
-		err = ErrInvalidRange
+	cookie := n.Cookie
+	count, e := cf.Store.ReadVolumeNeedle(fid.VolumeId, n)
+	if e != nil || count <= 0 {
+		return 0, e
 	}
-	if cf.pos != offset {
-		cf.Close()
+	if n.Cookie != cookie {
+		return 0, fmt.Errorf("read error: with unmaching cookie seen: %s expected: %s", cookie, n.Cookie)
 	}
-	cf.pos = offset
-	return cf.pos, err
+	wn, e := w.Write(n.Data[offset:])
+	return int64(wn), e
 }
 
 func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
@@ -150,12 +118,18 @@ func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
 	}
 	for ; chunkIndex < cm.Chunks.Len(); chunkIndex++ {
 		ci := cm.Chunks[chunkIndex]
-		// if we need read date from local volume server first?
-		fileUrl, lookupError := LookupFileId(cf.Master, ci.Fid, cf.Collection, true)
-		if lookupError != nil {
-			return n, lookupError
+		fid, e := ParseFileId(ci.Fid)
+		if e != nil {
+			return n, e
 		}
-		if wn, e := readChunkNeedle(fileUrl, w, chunkStartOffset); e != nil {
+		var wn int64
+		if cf.Store != nil && cf.Store.HasVolume(fid.VolumeId) {
+			wn, e = cf.readLocalChunkNeedle(fid, w, chunkStartOffset)
+		} else {
+			wn, e = cf.readRemoteChunkNeedle(ci.Fid, w, chunkStartOffset)
+		}
+
+		if e != nil {
 			return n, e
 		} else {
 			n += wn
