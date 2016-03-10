@@ -48,7 +48,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		lookupResult, err := operation.Lookup(vs.GetMasterNode(), volumeId.String(), r.FormValue("collection"))
 		glog.V(2).Infoln("volume", volumeId, "found on", lookupResult, "error", err)
 		if err == nil && len(lookupResult.Locations) > 0 {
-			u, _ := url.Parse(util.NormalizeUrl(lookupResult.Locations.Head().PublicUrl))
+			u, _ := url.Parse(util.NormalizeUrl(lookupResult.Locations.PickForRead().PublicUrl))
 			u.Path = r.URL.Path
 			http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
 		} else {

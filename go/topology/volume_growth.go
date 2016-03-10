@@ -182,7 +182,7 @@ func makeExceptNodeFilter(nodes []Node) FilterNodeFn {
 // 2. find rest data nodes
 func FindEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption, existsServers *VolumeLocationList) (additionServers []*DataNode, err error) {
 	//find main datacenter and other data centers
-	pickNodesFn := PickLowUsageNodeFn
+	pickNodesFn := RandomlyPickNodeFn
 	rp := option.ReplicaPlacement
 
 	pickMainAndRestNodes := func(np NodePicker, totalNodeCount int, filterFirstNodeFn FilterNodeFn, existsNodes []Node) (mainNode Node, restNodes []Node, e error) {
