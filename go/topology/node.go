@@ -326,9 +326,9 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 	if n.IsRack() {
 		for _, c := range n.Children() {
 			dn := c.(*DataNode) //can not cast n to DataNode
-			if dn.LastSeen < freshThreshHold {
-				if !dn.Dead {
-					dn.Dead = true
+			if dn.LastSeen() < freshThreshHold {
+				if !dn.IsDead() {
+					dn.SetDead(true)
 					n.GetTopology().chanDeadDataNodes <- dn
 				}
 			}

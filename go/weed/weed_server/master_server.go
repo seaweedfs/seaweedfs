@@ -86,17 +86,17 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 }
 
 func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
-	ms.Topo.RaftServer = raftServer.raftServer
-	ms.Topo.RaftServer.AddEventListener(raft.LeaderChangeEventType, func(e raft.Event) {
-		if ms.Topo.RaftServer.Leader() != "" {
-			glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "becomes leader.")
+	ms.Topo.SetRaftServer(raftServer.raftServer)
+	ms.Topo.GetRaftServer().AddEventListener(raft.LeaderChangeEventType, func(e raft.Event) {
+		if ms.Topo.GetRaftServer().Leader() != "" {
+			glog.V(0).Infoln("[", ms.Topo.GetRaftServer().Name(), "]", ms.Topo.GetRaftServer().Leader(), "becomes leader.")
 		}
 	})
 	if ms.Topo.IsLeader() {
-		glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", "I am the leader!")
+		glog.V(0).Infoln("[", ms.Topo.GetRaftServer().Name(), "]", "I am the leader!")
 	} else {
-		if ms.Topo.RaftServer.Leader() != "" {
-			glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "is the leader.")
+		if ms.Topo.GetRaftServer().Leader() != "" {
+			glog.V(0).Infoln("[", ms.Topo.GetRaftServer().Name(), "]", ms.Topo.GetRaftServer().Leader(), "is the leader.")
 		}
 	}
 }
@@ -105,16 +105,16 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 	return func(w http.ResponseWriter, r *http.Request) {
 		if ms.Topo.IsLeader() {
 			f(w, r)
-		} else if ms.Topo.RaftServer != nil && ms.Topo.RaftServer.Leader() != "" {
+		} else if ms.Topo.GetRaftServer() != nil && ms.Topo.GetRaftServer().Leader() != "" {
 			ms.bounedLeaderChan <- 1
 			defer func() { <-ms.bounedLeaderChan }()
-			targetUrl, err := url.Parse("http://" + ms.Topo.RaftServer.Leader())
+			targetUrl, err := url.Parse("http://" + ms.Topo.GetRaftServer().Leader())
 			if err != nil {
 				writeJsonError(w, r, http.StatusInternalServerError,
-					fmt.Errorf("Leader URL http://%s Parse Error: %v", ms.Topo.RaftServer.Leader(), err))
+					fmt.Errorf("Leader URL http://%s Parse Error: %v", ms.Topo.GetRaftServer().Leader(), err))
 				return
 			}
-			glog.V(4).Infoln("proxying to leader", ms.Topo.RaftServer.Leader())
+			glog.V(4).Infoln("proxying to leader", ms.Topo.GetRaftServer().Leader())
 			proxy := httputil.NewSingleHostReverseProxy(targetUrl)
 			director := proxy.Director
 			proxy.Director = func(req *http.Request) {

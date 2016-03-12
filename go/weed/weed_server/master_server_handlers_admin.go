@@ -171,7 +171,7 @@ func (ms *MasterServer) deleteFromMasterServerHandler(w http.ResponseWriter, r *
 	if ms.Topo.IsLeader() {
 		deleteForClientHandler(w, r, ms.selfUrl(r))
 	} else {
-		deleteForClientHandler(w, r, ms.Topo.RaftServer.Leader())
+		deleteForClientHandler(w, r, ms.Topo.GetRaftServer().Leader())
 	}
 }
 

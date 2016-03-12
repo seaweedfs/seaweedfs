@@ -1,6 +1,6 @@
 BINARY = weed
 
-GO_FLAGS = #-v
+GO_FLAGS = -race #-v
 SOURCE_DIR = ./go/weed/
 
 all: build

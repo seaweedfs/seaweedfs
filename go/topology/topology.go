@@ -22,7 +22,7 @@ type Topology struct {
 	Sequence           sequence.Sequencer
 	CollectionSettings *storage.CollectionSettings
 	configuration      *Configuration
-	RaftServer         raft.Server
+	raftServer         raft.Server
 
 	chanDeadDataNodes      chan *DataNode
 	chanRecoveredDataNodes chan *DataNode
@@ -51,24 +51,36 @@ func NewTopology(id string, confFile string, cs *storage.CollectionSettings, seq
 	return t, err
 }
 
+func (t *Topology) GetRaftServer() raft.Server {
+	t.mutex.RLock()
+	defer t.mutex.RUnlock()
+	return t.raftServer
+}
+
+func (t *Topology) SetRaftServer(s raft.Server) {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	t.raftServer = s
+}
+
 func (t *Topology) IsLeader() bool {
 	if leader, e := t.Leader(); e == nil {
-		return leader == t.RaftServer.Name()
+		return leader == t.GetRaftServer().Name()
 	}
 	return false
 }
 
 func (t *Topology) Leader() (string, error) {
 	l := ""
-	if t.RaftServer != nil {
-		l = t.RaftServer.Leader()
+	if t.GetRaftServer() != nil {
+		l = t.GetRaftServer().Leader()
 	} else {
 		return "", errors.New("Raft Server not ready yet!")
 	}
 
 	if l == "" {
 		// We are a single node cluster, we are the leader
-		return t.RaftServer.Name(), errors.New("Raft Server not initialized!")
+		return t.GetRaftServer().Name(), errors.New("Raft Server not initialized!")
 	}
 
 	return l, nil
@@ -106,7 +118,7 @@ func (t *Topology) Lookup(collection string, vid storage.VolumeId) (vl *VolumeLo
 func (t *Topology) NextVolumeId() storage.VolumeId {
 	vid := t.GetMaxVolumeId()
 	next := vid.Next()
-	go t.RaftServer.Do(NewMaxVolumeIdCommand(next))
+	go t.GetRaftServer().Do(NewMaxVolumeIdCommand(next))
 	return next
 }
 
@@ -179,11 +191,11 @@ func (t *Topology) ProcessJoinMessage(joinMessage *operation.JoinMessage) {
 }
 
 func (t *Topology) GetOrCreateDataCenter(dcName string) *DataCenter {
-	dc := t.GetChildren(NodeId(dcName)).(*DataCenter)
-	if dc != nil {
-		return dc
+	n := t.GetChildren(NodeId(dcName))
+	if n != nil {
+		return n.(*DataCenter)
 	}
-	dc = NewDataCenter(dcName)
+	dc := NewDataCenter(dcName)
 	t.LinkChildNode(dc)
 	return dc
 }

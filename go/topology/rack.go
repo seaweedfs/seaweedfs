@@ -3,7 +3,6 @@ package topology
 import (
 	"net"
 	"strconv"
-	"time"
 )
 
 type Rack struct {
@@ -24,14 +23,17 @@ func (r *Rack) FindDataNode(ip string, port int) *DataNode {
 		dn := c.(*DataNode)
 		return dn.MatchLocation(ip, port)
 	})
+	if n == nil {
+		return nil
+	}
 	return n.(*DataNode)
 }
 
 func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVolumeCount int) *DataNode {
 	if dn := r.FindDataNode(ip, port); dn != nil {
-		dn.LastSeen = time.Now().Unix()
-		if dn.Dead {
-			dn.Dead = false
+		dn.UpdateLastSeen()
+		if dn.IsDead() {
+			dn.SetDead(false)
 			r.GetTopology().chanRecoveredDataNodes <- dn
 			dn.UpAdjustMaxVolumeCountDelta(maxVolumeCount - dn.maxVolumeCount)
 		}
@@ -48,7 +50,7 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVol
 	}
 	dn.PublicUrl = publicUrl
 	dn.maxVolumeCount = maxVolumeCount
-	dn.LastSeen = time.Now().Unix()
+	dn.UpdateLastSeen()
 	r.LinkChildNode(dn)
 	return dn
 }

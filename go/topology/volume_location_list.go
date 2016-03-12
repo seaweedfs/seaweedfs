@@ -65,7 +65,7 @@ func (dnll *VolumeLocationList) Remove(loc *DataNode) bool {
 func (dnll *VolumeLocationList) Refresh(freshThreshHold int64) {
 	var changed bool
 	for _, dnl := range dnll.list {
-		if dnl.LastSeen < freshThreshHold {
+		if dnl.LastSeen() < freshThreshHold {
 			changed = true
 			break
 		}
@@ -73,7 +73,7 @@ func (dnll *VolumeLocationList) Refresh(freshThreshHold int64) {
 	if changed {
 		var l []*DataNode
 		for _, dnl := range dnll.list {
-			if dnl.LastSeen >= freshThreshHold {
+			if dnl.LastSeen() >= freshThreshHold {
 				l = append(l, dnl)
 			}
 		}

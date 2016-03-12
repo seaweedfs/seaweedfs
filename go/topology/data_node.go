@@ -7,16 +7,17 @@ import (
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/storage"
 	"net"
+	"time"
 )
 
 type DataNode struct {
 	NodeImpl
 	volumes   map[storage.VolumeId]*storage.VolumeInfo
+	lastSeen  int64 // unix time in seconds
+	dead      bool
 	Ip        string
 	Port      int
 	PublicUrl string
-	LastSeen  int64 // unix time in seconds
-	Dead      bool
 }
 
 func NewDataNode(id string) *DataNode {
@@ -29,7 +30,33 @@ func NewDataNode(id string) *DataNode {
 }
 
 func (dn *DataNode) String() string {
-	return fmt.Sprintf("Node:%s, volumes:%v, Ip:%s, Port:%d, PublicUrl:%s, Dead:%v", dn.NodeImpl.String(), dn.volumes, dn.Ip, dn.Port, dn.PublicUrl, dn.Dead)
+	dn.mutex.RLock()
+	defer dn.mutex.RUnlock()
+	return fmt.Sprintf("Node:%s, volumes:%v, Ip:%s, Port:%d, PublicUrl:%s, Dead:%v", dn.NodeImpl.String(), dn.volumes, dn.Ip, dn.Port, dn.PublicUrl, dn.dead)
+}
+
+func (dn *DataNode) LastSeen() int64 {
+	dn.mutex.RLock()
+	defer dn.mutex.RUnlock()
+	return dn.lastSeen
+}
+
+func (dn *DataNode) UpdateLastSeen() {
+	dn.mutex.Lock()
+	defer dn.mutex.Unlock()
+	dn.lastSeen = time.Now().Unix()
+}
+
+func (dn *DataNode) IsDead() bool {
+	dn.mutex.RLock()
+	defer dn.mutex.RUnlock()
+	return dn.dead
+}
+
+func (dn *DataNode) SetDead(b bool) {
+	dn.mutex.Lock()
+	defer dn.mutex.Unlock()
+	dn.dead = b
 }
 
 func (dn *DataNode) AddOrUpdateVolume(v *storage.VolumeInfo) {

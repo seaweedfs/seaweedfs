@@ -21,8 +21,8 @@ func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 	}{
 		util.VERSION,
 		ms.Topo.ToMap(),
-		ms.Topo.RaftServer.Leader(),
-		ms.Topo.RaftServer.Peers(),
+		ms.Topo.GetRaftServer().Leader(),
+		ms.Topo.GetRaftServer().Peers(),
 		infos,
 		serverStats,
 	}
