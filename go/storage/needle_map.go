@@ -35,12 +35,17 @@ type NeedleMapper interface {
 
 type baseNeedleMapper struct {
 	indexFile           *os.File
-	indexFileAccessLock sync.Mutex
-
-	mapMetric
+	mutex               sync.RWMutex
+	deletionCounter     int    `json:"DeletionCounter"`
+	fileCounter         int    `json:"FileCounter"`
+	deletionByteCounter uint64 `json:"DeletionByteCounter"`
+	fileByteCounter     uint64 `json:"FileByteCounter"`
+	maximumFileKey      uint64 `json:"MaxFileKey"`
 }
 
-func (nm baseNeedleMapper) IndexFileSize() uint64 {
+func (nm *baseNeedleMapper) IndexFileSize() uint64 {
+	nm.mutex.RLock()
+	defer nm.mutex.RUnlock()
 	stat, err := nm.indexFile.Stat()
 	if err == nil {
 		return uint64(stat.Size())
@@ -48,7 +53,9 @@ func (nm baseNeedleMapper) IndexFileSize() uint64 {
 	return 0
 }
 
-func (nm baseNeedleMapper) IndexFileName() string {
+func (nm *baseNeedleMapper) IndexFileName() string {
+	nm.mutex.RLock()
+	defer nm.mutex.RUnlock()
 	return nm.indexFile.Name()
 }
 
@@ -58,14 +65,14 @@ func idxFileEntry(bytes []byte) (key uint64, offset uint32, size uint32) {
 	size = util.BytesToUint32(bytes[12:16])
 	return
 }
-func (nm baseNeedleMapper) appendToIndexFile(key uint64, offset uint32, size uint32) error {
+func (nm *baseNeedleMapper) appendToIndexFile(key uint64, offset uint32, size uint32) error {
 	bytes := make([]byte, 16)
 	util.Uint64toBytes(bytes[0:8], key)
 	util.Uint32toBytes(bytes[8:12], offset)
 	util.Uint32toBytes(bytes[12:16], size)
 
-	nm.indexFileAccessLock.Lock()
-	defer nm.indexFileAccessLock.Unlock()
+	nm.mutex.Lock()
+	defer nm.mutex.Unlock()
 	if _, err := nm.indexFile.Seek(0, 2); err != nil {
 		return fmt.Errorf("cannot seek end of indexfile %s: %v",
 			nm.indexFile.Name(), err)
@@ -73,51 +80,55 @@ func (nm baseNeedleMapper) appendToIndexFile(key uint64, offset uint32, size uin
 	_, err := nm.indexFile.Write(bytes)
 	return err
 }
-func (nm baseNeedleMapper) IndexFileContent() ([]byte, error) {
-	nm.indexFileAccessLock.Lock()
-	defer nm.indexFileAccessLock.Unlock()
+func (nm *baseNeedleMapper) IndexFileContent() ([]byte, error) {
+	nm.mutex.RLock()
+	defer nm.mutex.RUnlock()
 	return ioutil.ReadFile(nm.indexFile.Name())
 }
 
-type mapMetric struct {
-	indexFile *os.File
-
-	DeletionCounter     int    `json:"DeletionCounter"`
-	FileCounter         int    `json:"FileCounter"`
-	DeletionByteCounter uint64 `json:"DeletionByteCounter"`
-	FileByteCounter     uint64 `json:"FileByteCounter"`
-	MaximumFileKey      uint64 `json:"MaxFileKey"`
+func (nm *baseNeedleMapper) logDelete(deletedByteCount uint32) {
+	nm.mutex.Lock()
+	defer nm.mutex.Unlock()
+	nm.deletionByteCounter = nm.deletionByteCounter + uint64(deletedByteCount)
+	nm.deletionCounter++
 }
 
-func (mm *mapMetric) logDelete(deletedByteCount uint32) {
-	mm.DeletionByteCounter = mm.DeletionByteCounter + uint64(deletedByteCount)
-	mm.DeletionCounter++
-}
-
-func (mm *mapMetric) logPut(key uint64, oldSize uint32, newSize uint32) {
-	if key > mm.MaximumFileKey {
-		mm.MaximumFileKey = key
+func (nm *baseNeedleMapper) logPut(key uint64, oldSize uint32, newSize uint32) {
+	nm.mutex.Lock()
+	defer nm.mutex.Unlock()
+	if key > nm.maximumFileKey {
+		nm.maximumFileKey = key
 	}
-	mm.FileCounter++
-	mm.FileByteCounter = mm.FileByteCounter + uint64(newSize)
+	nm.fileCounter++
+	nm.fileByteCounter = nm.fileByteCounter + uint64(newSize)
 	if oldSize > 0 {
-		mm.DeletionCounter++
-		mm.DeletionByteCounter = mm.DeletionByteCounter + uint64(oldSize)
+		nm.deletionCounter++
+		nm.deletionByteCounter = nm.deletionByteCounter + uint64(oldSize)
 	}
 }
 
-func (mm mapMetric) ContentSize() uint64 {
-	return mm.FileByteCounter
+func (nm *baseNeedleMapper) ContentSize() uint64 {
+	nm.mutex.RLock()
+	defer nm.mutex.RUnlock()
+	return nm.fileByteCounter
 }
-func (mm mapMetric) DeletedSize() uint64 {
-	return mm.DeletionByteCounter
+func (nm *baseNeedleMapper) DeletedSize() uint64 {
+	nm.mutex.RLock()
+	defer nm.mutex.RUnlock()
+	return nm.deletionByteCounter
 }
-func (mm mapMetric) FileCount() int {
-	return mm.FileCounter
+func (nm *baseNeedleMapper) FileCount() int {
+	nm.mutex.RLock()
+	defer nm.mutex.RUnlock()
+	return nm.fileCounter
 }
-func (mm mapMetric) DeletedCount() int {
-	return mm.DeletionCounter
+func (nm *baseNeedleMapper) DeletedCount() int {
+	nm.mutex.RLock()
+	defer nm.mutex.RUnlock()
+	return nm.deletionCounter
 }
-func (mm mapMetric) MaxFileKey() uint64 {
-	return mm.MaximumFileKey
+func (nm *baseNeedleMapper) MaxFileKey() uint64 {
+	nm.mutex.RLock()
+	defer nm.mutex.RUnlock()
+	return nm.maximumFileKey
 }

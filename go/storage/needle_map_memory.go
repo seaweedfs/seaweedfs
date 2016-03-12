@@ -28,27 +28,27 @@ const (
 func LoadNeedleMap(file *os.File) (*NeedleMap, error) {
 	nm := NewNeedleMap(file)
 	e := WalkIndexFile(file, func(key uint64, offset, size uint32) error {
-		if key > nm.MaximumFileKey {
-			nm.MaximumFileKey = key
+		if key > nm.maximumFileKey {
+			nm.maximumFileKey = key
 		}
-		nm.FileCounter++
-		nm.FileByteCounter = nm.FileByteCounter + uint64(size)
+		nm.fileCounter++
+		nm.fileByteCounter = nm.fileByteCounter + uint64(size)
 		if offset > 0 {
 			oldSize := nm.m.Set(Key(key), offset, size)
 			glog.V(3).Infoln("reading key", key, "offset", offset*NeedlePaddingSize, "size", size, "oldSize", oldSize)
 			if oldSize > 0 {
-				nm.DeletionCounter++
-				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
+				nm.deletionCounter++
+				nm.deletionByteCounter = nm.deletionByteCounter + uint64(oldSize)
 			}
 		} else {
 			oldSize := nm.m.Delete(Key(key))
 			glog.V(3).Infoln("removing key", key, "offset", offset*NeedlePaddingSize, "size", size, "oldSize", oldSize)
-			nm.DeletionCounter++
-			nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
+			nm.deletionCounter++
+			nm.deletionByteCounter = nm.deletionByteCounter + uint64(oldSize)
 		}
 		return nil
 	})
-	glog.V(1).Infoln("max file key:", nm.MaximumFileKey)
+	glog.V(1).Infoln("max file key:", nm.maximumFileKey)
 	return nm, e
 }
 
@@ -98,7 +98,9 @@ func (nm *NeedleMap) Delete(key uint64) error {
 	return nm.appendToIndexFile(key, 0, 0)
 }
 func (nm *NeedleMap) Close() {
-	_ = nm.indexFile.Close()
+	nm.mutex.Lock()
+	nm.indexFile.Close()
+	nm.mutex.Unlock()
 }
 func (nm *NeedleMap) Destroy() error {
 	nm.Close()

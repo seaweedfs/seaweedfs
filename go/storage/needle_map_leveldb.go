@@ -33,7 +33,7 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File) (m *LevelDbNeedl
 	if indexLoadError != nil {
 		return nil, indexLoadError
 	}
-	m.mapMetric = nm.mapMetric
+	m.baseNeedleMapper = nm.baseNeedleMapper
 	return
 }
 

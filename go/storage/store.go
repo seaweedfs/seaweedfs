@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	"sync"
+
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/operation"
 	"github.com/chrislusf/seaweedfs/go/security"
@@ -80,10 +82,12 @@ type Store struct {
 	masterNodes     *MasterNodes
 	needleMapKind   NeedleMapType
 	TaskManager     *TaskManager
+	mutex           sync.RWMutex
 }
 
 func (s *Store) String() (str string) {
-	str = fmt.Sprintf("Ip:%s, Port:%d, PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d, masterNodes:%s", s.Ip, s.Port, s.PublicUrl, s.dataCenter, s.rack, s.connected, s.volumeSizeLimit, s.masterNodes)
+	str = fmt.Sprintf("Ip:%s, Port:%d, PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d, masterNodes:%s",
+		s.Ip, s.Port, s.PublicUrl, s.dataCenter, s.rack, s.IsConnected(), s.GetVolumeSizeLimit(), s.masterNodes)
 	return
 }
 
@@ -225,7 +229,7 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 			if maxFileKey < v.nm.MaxFileKey() {
 				maxFileKey = v.nm.MaxFileKey()
 			}
-			if !v.expired(s.volumeSizeLimit) {
+			if !v.expired(s.GetVolumeSizeLimit()) {
 				volumeMessage := &operation.VolumeInformationMessage{
 					Id:               proto.Uint32(uint32(v.Id)),
 					Size:             proto.Uint64(uint64(v.Size())),
@@ -254,7 +258,7 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 	}
 
 	joinMessage := &operation.JoinMessage{
-		IsInit:         proto.Bool(!s.connected),
+		IsInit:         proto.Bool(!s.IsConnected()),
 		Ip:             proto.String(s.Ip),
 		Port:           proto.Uint32(uint32(s.Port)),
 		PublicUrl:      proto.String(s.PublicUrl),
@@ -288,9 +292,9 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 		s.masterNodes.reset()
 		return masterNode, "", errors.New(ret.Error)
 	}
-	s.volumeSizeLimit = ret.VolumeSizeLimit
+	s.SetVolumeSizeLimit(ret.VolumeSizeLimit)
 	secretKey = security.Secret(ret.SecretKey)
-	s.connected = true
+	s.SetConnected(true)
 	return
 }
 func (s *Store) Close() {
@@ -307,10 +311,10 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 		if MaxPossibleVolumeSize >= v.ContentSize()+uint64(size) {
 			size, err = v.write(n)
 		} else {
-			err = fmt.Errorf("Volume Size Limit %d Exceeded! Current size is %d", s.volumeSizeLimit, v.ContentSize())
+			err = fmt.Errorf("Volume Size Limit %d Exceeded! Current size is %d", s.GetVolumeSizeLimit(), v.ContentSize())
 		}
-		if s.volumeSizeLimit < v.ContentSize()+3*uint64(size) {
-			glog.V(0).Infoln("volume", i, "size", v.ContentSize(), "will exceed limit", s.volumeSizeLimit)
+		if s.GetVolumeSizeLimit() < v.ContentSize()+3*uint64(size) {
+			glog.V(0).Infoln("volume", i, "size", v.ContentSize(), "will exceed limit", s.GetVolumeSizeLimit())
 			if _, _, e := s.SendHeartbeatToMaster(); e != nil {
 				glog.V(0).Infoln("error when reporting size:", e)
 			}
@@ -349,4 +353,28 @@ func (s *Store) WalkVolume(walker VolumeWalker) error {
 		}
 	}
 	return nil
+}
+
+func (s *Store) GetVolumeSizeLimit() uint64 {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.volumeSizeLimit
+}
+
+func (s *Store) SetVolumeSizeLimit(sz uint64) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.volumeSizeLimit = sz
+}
+
+func (s *Store) IsConnected() bool {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.connected
+}
+
+func (s *Store) SetConnected(b bool) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.connected = b
 }

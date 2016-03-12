@@ -35,7 +35,7 @@ func NewBoltDbNeedleMap(dbFileName string, indexFile *os.File) (m *BoltDbNeedleM
 	if indexLoadError != nil {
 		return nil, indexLoadError
 	}
-	m.mapMetric = nm.mapMetric
+	m.baseNeedleMapper = nm.baseNeedleMapper
 	return
 }
 
