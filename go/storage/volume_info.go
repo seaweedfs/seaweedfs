@@ -19,8 +19,8 @@ type VolumeInfo struct {
 	ReadOnly         bool
 }
 
-func NewVolumeInfo(m *operation.VolumeInformationMessage) (vi VolumeInfo, err error) {
-	vi = VolumeInfo{
+func NewVolumeInfo(m *operation.VolumeInformationMessage) (vi *VolumeInfo, err error) {
+	vi = &VolumeInfo{
 		Id:               VolumeId(*m.Id),
 		Size:             *m.Size,
 		Collection:       *m.Collection,

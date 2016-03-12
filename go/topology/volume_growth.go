@@ -88,7 +88,7 @@ func (vg *VolumeGrowth) findAndGrow(topo *Topology, option *VolumeGrowOption) (i
 func (vg *VolumeGrowth) grow(topo *Topology, vid storage.VolumeId, option *VolumeGrowOption, servers ...*DataNode) error {
 	for _, server := range servers {
 		if err := AllocateVolume(server, vid, option); err == nil {
-			vi := storage.VolumeInfo{
+			vi := &storage.VolumeInfo{
 				Id:         vid,
 				Size:       0,
 				Collection: option.Collection,

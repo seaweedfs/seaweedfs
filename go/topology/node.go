@@ -6,6 +6,8 @@ import (
 
 	"sort"
 
+	"sync"
+
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/storage"
 )
@@ -35,7 +37,7 @@ type Node interface {
 	IsDataNode() bool
 	IsRack() bool
 	IsDataCenter() bool
-	Children() map[NodeId]Node
+	Children() []Node
 	Parent() Node
 
 	GetValue() interface{} //get reference to the topology,dc,rack,datanode
@@ -53,6 +55,7 @@ type NodeImpl struct {
 	//for rack, data center, topology
 	nodeType string
 	value    interface{}
+	mutex    sync.RWMutex
 }
 
 type NodePicker interface {
@@ -66,6 +69,8 @@ type PickNodesFn func(nodes []Node, count int) []Node
 
 // the first node must satisfy filterFirstNodeFn(), the rest nodes must have one free slot
 func (n *NodeImpl) PickNodes(numberOfNodes int, filterNodeFn FilterNodeFn, pickFn PickNodesFn) (nodes []Node, err error) {
+	n.mutex.RLock()
+	defer n.mutex.RUnlock()
 	candidates := make([]Node, 0, len(n.children))
 	var errs []string
 	for _, node := range n.children {
@@ -127,6 +132,8 @@ func (n *NodeImpl) IsDataCenter() bool {
 	return n.nodeType == "DataCenter"
 }
 func (n *NodeImpl) String() string {
+	n.mutex.RLock()
+	defer n.mutex.RUnlock()
 	if n.parent != nil {
 		return n.parent.String() + ":" + string(n.id)
 	}
@@ -136,21 +143,68 @@ func (n *NodeImpl) Id() NodeId {
 	return n.id
 }
 func (n *NodeImpl) FreeSpace() int {
+	n.mutex.RLock()
+	defer n.mutex.RUnlock()
 	return n.maxVolumeCount - n.volumeCount - n.plannedVolumeCount
 }
+
 func (n *NodeImpl) SetParent(node Node) {
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
 	n.parent = node
 }
-func (n *NodeImpl) Children() map[NodeId]Node {
-	return n.children
+
+func (n *NodeImpl) GetChildren(id NodeId) Node {
+	n.mutex.RLock()
+	defer n.mutex.RUnlock()
+	return n.children[id]
+}
+
+func (n *NodeImpl) SetChildren(c Node) {
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
+	n.children[c.Id()] = c
+}
+
+func (n *NodeImpl) DeleteChildren(id NodeId) {
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
+	delete(n.children, id)
+}
+
+func (n *NodeImpl) FindChildren(filter func(Node) bool) Node {
+	n.mutex.RLock()
+	defer n.mutex.RUnlock()
+	for _, c := range n.children {
+		if filter(c) {
+			return c
+		}
+	}
+	return nil
+}
+
+func (n *NodeImpl) Children() (children []Node) {
+	n.mutex.RLock()
+	defer n.mutex.RUnlock()
+	children = make([]Node, 0, len(n.children))
+	for _, c := range n.children {
+		children = append(children, c)
+	}
+	return
 }
 func (n *NodeImpl) Parent() Node {
+	n.mutex.RLock()
+	defer n.mutex.RUnlock()
 	return n.parent
 }
 func (n *NodeImpl) GetValue() interface{} {
+	n.mutex.RLock()
+	defer n.mutex.RUnlock()
 	return n.value
 }
 func (n *NodeImpl) ReserveOneVolume(r int) (assignedNode *DataNode, err error) {
+	n.mutex.RLock()
+	defer n.mutex.RUnlock()
 	for _, node := range n.children {
 		freeSpace := node.FreeSpace()
 		// fmt.Println("r =", r, ", node =", node, ", freeSpace =", freeSpace)
@@ -174,18 +228,24 @@ func (n *NodeImpl) ReserveOneVolume(r int) (assignedNode *DataNode, err error) {
 }
 
 func (n *NodeImpl) UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int) { //can be negative
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
 	n.maxVolumeCount += maxVolumeCountDelta
 	if n.parent != nil {
 		n.parent.UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta)
 	}
 }
 func (n *NodeImpl) UpAdjustVolumeCountDelta(volumeCountDelta int) { //can be negative
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
 	n.volumeCount += volumeCountDelta
 	if n.parent != nil {
 		n.parent.UpAdjustVolumeCountDelta(volumeCountDelta)
 	}
 }
 func (n *NodeImpl) UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int) { //can be negative
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
 	n.activeVolumeCount += activeVolumeCountDelta
 	if n.parent != nil {
 		n.parent.UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta)
@@ -193,6 +253,8 @@ func (n *NodeImpl) UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int) { 
 }
 
 func (n *NodeImpl) UpAdjustPlannedVolumeCountDelta(delta int) { //can be negative
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
 	n.plannedVolumeCount += delta
 	if n.parent != nil {
 		n.parent.UpAdjustPlannedVolumeCountDelta(delta)
@@ -200,6 +262,8 @@ func (n *NodeImpl) UpAdjustPlannedVolumeCountDelta(delta int) { //can be negativ
 }
 
 func (n *NodeImpl) UpAdjustMaxVolumeId(vid storage.VolumeId) { //can be negative
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
 	if n.maxVolumeId < vid {
 		n.maxVolumeId = vid
 		if n.parent != nil {
@@ -208,25 +272,35 @@ func (n *NodeImpl) UpAdjustMaxVolumeId(vid storage.VolumeId) { //can be negative
 	}
 }
 func (n *NodeImpl) GetMaxVolumeId() storage.VolumeId {
+	n.mutex.RLock()
+	defer n.mutex.RUnlock()
 	return n.maxVolumeId
 }
 func (n *NodeImpl) GetVolumeCount() int {
+	n.mutex.RLock()
+	defer n.mutex.RUnlock()
 	return n.volumeCount
 }
 func (n *NodeImpl) GetActiveVolumeCount() int {
+	n.mutex.RLock()
+	defer n.mutex.RUnlock()
 	return n.activeVolumeCount
 }
 func (n *NodeImpl) GetMaxVolumeCount() int {
+	n.mutex.RLock()
+	defer n.mutex.RUnlock()
 	return n.maxVolumeCount
 }
 
 func (n *NodeImpl) GetPlannedVolumeCount() int {
+	n.mutex.RLock()
+	defer n.mutex.RUnlock()
 	return n.plannedVolumeCount
 }
 
 func (n *NodeImpl) LinkChildNode(node Node) {
-	if n.children[node.Id()] == nil {
-		n.children[node.Id()] = node
+	if n.GetChildren(node.Id()) == nil {
+		n.SetChildren(node)
 		n.UpAdjustMaxVolumeCountDelta(node.GetMaxVolumeCount())
 		n.UpAdjustMaxVolumeId(node.GetMaxVolumeId())
 		n.UpAdjustVolumeCountDelta(node.GetVolumeCount())
@@ -237,10 +311,10 @@ func (n *NodeImpl) LinkChildNode(node Node) {
 }
 
 func (n *NodeImpl) UnlinkChildNode(nodeId NodeId) {
-	node := n.children[nodeId]
+	node := n.GetChildren(nodeId)
 	node.SetParent(nil)
 	if node != nil {
-		delete(n.children, node.Id())
+		n.DeleteChildren(node.Id())
 		n.UpAdjustVolumeCountDelta(-node.GetVolumeCount())
 		n.UpAdjustActiveVolumeCountDelta(-node.GetActiveVolumeCount())
 		n.UpAdjustMaxVolumeCountDelta(-node.GetMaxVolumeCount())
@@ -258,10 +332,10 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 					n.GetTopology().chanDeadDataNodes <- dn
 				}
 			}
-			for _, v := range dn.volumes {
+			for _, v := range dn.Volumes() {
 				if uint64(v.Size) >= volumeSizeLimit {
 					//fmt.Println("volume",v.Id,"size",v.Size,">",volumeSizeLimit)
-					n.GetTopology().chanFullVolumes <- v
+					n.GetTopology().chanFullVolumes <- *v
 				}
 			}
 		}

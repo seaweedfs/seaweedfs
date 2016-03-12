@@ -20,27 +20,24 @@ func NewRack(id string) *Rack {
 }
 
 func (r *Rack) FindDataNode(ip string, port int) *DataNode {
-	for _, c := range r.Children() {
+	n := r.FindChildren(func(c Node) bool {
 		dn := c.(*DataNode)
-		if dn.MatchLocation(ip, port) {
-			return dn
-		}
-	}
-	return nil
+		return dn.MatchLocation(ip, port)
+	})
+	return n.(*DataNode)
 }
+
 func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVolumeCount int) *DataNode {
-	for _, c := range r.Children() {
-		dn := c.(*DataNode)
-		if dn.MatchLocation(ip, port) {
-			dn.LastSeen = time.Now().Unix()
-			if dn.Dead {
-				dn.Dead = false
-				r.GetTopology().chanRecoveredDataNodes <- dn
-				dn.UpAdjustMaxVolumeCountDelta(maxVolumeCount - dn.maxVolumeCount)
-			}
-			return dn
+	if dn := r.FindDataNode(ip, port); dn != nil {
+		dn.LastSeen = time.Now().Unix()
+		if dn.Dead {
+			dn.Dead = false
+			r.GetTopology().chanRecoveredDataNodes <- dn
+			dn.UpAdjustMaxVolumeCountDelta(maxVolumeCount - dn.maxVolumeCount)
 		}
+		return dn
 	}
+
 	dn := NewDataNode(net.JoinHostPort(ip, strconv.Itoa(port)))
 	dn.Ip = ip
 	dn.Port = port

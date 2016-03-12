@@ -139,12 +139,12 @@ func (t *Topology) DeleteCollection(collectionName string) {
 	t.collectionMap.Delete(collectionName)
 }
 
-func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
-	t.GetVolumeLayout(v.Collection, v.Ttl).RegisterVolume(&v, dn)
+func (t *Topology) RegisterVolumeLayout(v *storage.VolumeInfo, dn *DataNode) {
+	t.GetVolumeLayout(v.Collection, v.Ttl).RegisterVolume(v, dn)
 }
-func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
+func (t *Topology) UnRegisterVolumeLayout(v *storage.VolumeInfo, dn *DataNode) {
 	glog.Infof("removing volume info:%+v", v)
-	t.GetVolumeLayout(v.Collection, v.Ttl).UnRegisterVolume(&v, dn)
+	t.GetVolumeLayout(v.Collection, v.Ttl).UnRegisterVolume(v, dn)
 }
 
 func (t *Topology) ProcessJoinMessage(joinMessage *operation.JoinMessage) {
@@ -159,7 +159,7 @@ func (t *Topology) ProcessJoinMessage(joinMessage *operation.JoinMessage) {
 	dn = rack.GetOrCreateDataNode(*joinMessage.Ip,
 		int(*joinMessage.Port), *joinMessage.PublicUrl,
 		int(*joinMessage.MaxVolumeCount))
-	var volumeInfos []storage.VolumeInfo
+	var volumeInfos []*storage.VolumeInfo
 	for _, v := range joinMessage.Volumes {
 		if vi, err := storage.NewVolumeInfo(v); err == nil {
 			volumeInfos = append(volumeInfos, vi)
@@ -179,13 +179,11 @@ func (t *Topology) ProcessJoinMessage(joinMessage *operation.JoinMessage) {
 }
 
 func (t *Topology) GetOrCreateDataCenter(dcName string) *DataCenter {
-	for _, c := range t.Children() {
-		dc := c.(*DataCenter)
-		if string(dc.Id()) == dcName {
-			return dc
-		}
+	dc := t.GetChildren(NodeId(dcName)).(*DataCenter)
+	if dc != nil {
+		return dc
 	}
-	dc := NewDataCenter(dcName)
+	dc = NewDataCenter(dcName)
 	t.LinkChildNode(dc)
 	return dc
 }
