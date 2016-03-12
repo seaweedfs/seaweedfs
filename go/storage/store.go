@@ -190,7 +190,7 @@ func (s *Store) Status() []*VolumeInfo {
 				FileCount:        v.nm.FileCount(),
 				DeleteCount:      v.nm.DeletedCount(),
 				DeletedByteCount: v.nm.DeletedSize(),
-				ReadOnly:         v.readOnly,
+				ReadOnly:         v.IsReadOnly(),
 				Ttl:              v.Ttl}
 			stats = append(stats, s)
 			return nil
@@ -233,7 +233,7 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 					FileCount:        proto.Uint64(uint64(v.nm.FileCount())),
 					DeleteCount:      proto.Uint64(uint64(v.nm.DeletedCount())),
 					DeletedByteCount: proto.Uint64(v.nm.DeletedSize()),
-					ReadOnly:         proto.Bool(v.readOnly),
+					ReadOnly:         proto.Bool(v.IsReadOnly()),
 					Version:          proto.Uint32(uint32(v.Version())),
 					Ttl:              proto.Uint32(v.Ttl.ToUint32()),
 				}
@@ -300,7 +300,7 @@ func (s *Store) Close() {
 }
 func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 	if v := s.findVolume(i); v != nil {
-		if v.readOnly {
+		if v.IsReadOnly() {
 			err = fmt.Errorf("Volume %d is read only", i)
 			return
 		}
@@ -322,7 +322,7 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 	return
 }
 func (s *Store) Delete(i VolumeId, n *Needle) (uint32, error) {
-	if v := s.findVolume(i); v != nil && !v.readOnly {
+	if v := s.findVolume(i); v != nil && !v.IsReadOnly() {
 		return v.delete(n)
 	}
 	return 0, nil

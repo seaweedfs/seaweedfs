@@ -24,8 +24,8 @@ type Volume struct {
 
 	SuperBlock
 
-	dataFileAccessLock sync.RWMutex
-	lastModifiedTime   uint64 //unix time in seconds
+	mutex            sync.RWMutex
+	lastModifiedTime uint64 //unix time in seconds
 }
 
 func NewVolume(dirname string, collection string, id VolumeId, needleMapKind NeedleMapType, ttl *TTL) (v *Volume, e error) {
@@ -36,6 +36,8 @@ func NewVolume(dirname string, collection string, id VolumeId, needleMapKind Nee
 	return
 }
 func (v *Volume) String() string {
+	v.mutex.RLock()
+	defer v.mutex.RUnlock()
 	return fmt.Sprintf("Id:%v, dir:%s, Collection:%s, dataFile:%v, nm:%v, readOnly:%v", v.Id, v.dir, v.Collection, v.dataFile, v.nm, v.readOnly)
 }
 
@@ -131,20 +133,22 @@ func (v *Volume) Version() Version {
 	return v.SuperBlock.Version()
 }
 func (v *Volume) Size() int64 {
+	v.mutex.RLock()
+	defer v.mutex.RUnlock()
 	stat, e := v.dataFile.Stat()
 	if e == nil {
 		return stat.Size()
 	}
-	glog.V(0).Infof("Failed to read file size %s %v", v.dataFile.Name(), e)
+	glog.V(2).Infof("Failed to read file size %s %v", v.dataFile.Name(), e)
 	return -1
 }
 
 // Close cleanly shuts down this volume
 func (v *Volume) Close() {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.mutex.Lock()
+	defer v.mutex.Unlock()
 	v.nm.Close()
-	_ = v.dataFile.Close()
+	v.dataFile.Close()
 }
 
 // isFileUnchanged checks whether this needle to write is same as last one.
@@ -171,7 +175,7 @@ func (v *Volume) isFileUnchanged(n *Needle) bool {
 
 // Destroy removes everything related to this volume
 func (v *Volume) Destroy() (err error) {
-	if v.readOnly {
+	if v.IsReadOnly() {
 		err = fmt.Errorf("%s is read-only", v.dataFile.Name())
 		return
 	}
@@ -186,12 +190,12 @@ func (v *Volume) Destroy() (err error) {
 
 // AppendBlob append a blob to end of the data file, used in replication
 func (v *Volume) AppendBlob(b []byte) (offset int64, err error) {
+	v.mutex.Lock()
+	defer v.mutex.Unlock()
 	if v.readOnly {
 		err = fmt.Errorf("%s is read-only", v.dataFile.Name())
 		return
 	}
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
 	if offset, err = v.dataFile.Seek(0, 2); err != nil {
 		glog.V(0).Infof("failed to seek the end of file: %v", err)
 		return
@@ -209,13 +213,13 @@ func (v *Volume) AppendBlob(b []byte) (offset int64, err error) {
 }
 
 func (v *Volume) write(n *Needle) (size uint32, err error) {
+	v.mutex.Lock()
+	defer v.mutex.Unlock()
 	glog.V(4).Infof("writing needle %s", NewFileIdFromNeedle(v.Id, n).String())
 	if v.readOnly {
 		err = fmt.Errorf("%s is read-only", v.dataFile.Name())
 		return
 	}
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
 	if v.isFileUnchanged(n) {
 		size = n.DataSize
 		glog.V(4).Infof("needle is unchanged!")
@@ -255,12 +259,12 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 }
 
 func (v *Volume) delete(n *Needle) (uint32, error) {
+	v.mutex.Lock()
+	defer v.mutex.Unlock()
 	glog.V(4).Infof("delete needle %s", NewFileIdFromNeedle(v.Id, n).String())
 	if v.readOnly {
 		return 0, fmt.Errorf("%s is read-only", v.dataFile.Name())
 	}
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
 	nv, ok := v.nm.Get(n.Id)
 	//fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
 	if ok {
@@ -284,9 +288,9 @@ func (v *Volume) readNeedle(n *Needle) (int, error) {
 	if !ok || nv.Offset == 0 {
 		return -1, errors.New("Not Found")
 	}
-	v.dataFileAccessLock.RLock()
+	v.mutex.RLock()
 	err := n.ReadData(v.dataFile, int64(nv.Offset)*NeedlePaddingSize, nv.Size, v.Version())
-	v.dataFileAccessLock.RUnlock()
+	v.mutex.RUnlock()
 	if err != nil {
 		return 0, err
 	}
@@ -392,6 +396,8 @@ func checkFile(filename string) (exists, canRead, canWrite bool, modTime time.Ti
 // or when the volume does not have a ttl
 // or when volumeSizeLimit is 0 when server just starts
 func (v *Volume) expired(volumeSizeLimit uint64) bool {
+	v.mutex.RLock()
+	defer v.mutex.RUnlock()
 	if volumeSizeLimit == 0 {
 		//skip if we don't know size limit
 		return false
@@ -413,6 +419,8 @@ func (v *Volume) expired(volumeSizeLimit uint64) bool {
 
 // wait either maxDelayMinutes or 10% of ttl minutes
 func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
+	v.mutex.RLock()
+	defer v.mutex.RUnlock()
 	if v.Ttl == nil || v.Ttl.Minutes() == 0 {
 		return false
 	}
@@ -428,6 +436,8 @@ func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
 }
 
 func (v *Volume) SetReadOnly(isReadOnly bool) error {
+	v.mutex.Lock()
+	defer v.mutex.Unlock()
 	if isReadOnly == false {
 		if fi, e := v.dataFile.Stat(); e != nil {
 			return e
@@ -439,4 +449,10 @@ func (v *Volume) SetReadOnly(isReadOnly bool) error {
 	}
 	v.readOnly = isReadOnly
 	return nil
+}
+
+func (v *Volume) IsReadOnly() bool {
+	v.mutex.RLock()
+	defer v.mutex.RUnlock()
+	return v.readOnly
 }

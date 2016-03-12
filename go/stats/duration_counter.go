@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"sync"
 	"time"
 )
 
@@ -14,28 +15,33 @@ func NewTimedValue(t time.Time, val int64) *TimedValue {
 }
 
 type RoundRobinCounter struct {
-	LastIndex int
-	Values    []int64
-	Counts    []int64
+	lastIndex int
+	values    []int64
+	counts    []int64
+	mutex     sync.RWMutex
 }
 
 func NewRoundRobinCounter(slots int) *RoundRobinCounter {
-	return &RoundRobinCounter{LastIndex: -1, Values: make([]int64, slots), Counts: make([]int64, slots)}
+	return &RoundRobinCounter{lastIndex: -1, values: make([]int64, slots), counts: make([]int64, slots)}
 }
 func (rrc *RoundRobinCounter) Add(index int, val int64) {
-	if index >= len(rrc.Values) {
+	rrc.mutex.Lock()
+	defer rrc.mutex.Unlock()
+	if index >= len(rrc.values) {
 		return
 	}
-	for rrc.LastIndex != index {
-		rrc.LastIndex = (rrc.LastIndex + 1) % len(rrc.Values)
-		rrc.Values[rrc.LastIndex] = 0
-		rrc.Counts[rrc.LastIndex] = 0
+	for rrc.lastIndex != index {
+		rrc.lastIndex = (rrc.lastIndex + 1) % len(rrc.values)
+		rrc.values[rrc.lastIndex] = 0
+		rrc.counts[rrc.lastIndex] = 0
 	}
-	rrc.Values[index] += val
-	rrc.Counts[index]++
+	rrc.values[index] += val
+	rrc.counts[index]++
 }
 func (rrc *RoundRobinCounter) Max() (max int64) {
-	for _, val := range rrc.Values {
+	rrc.mutex.RLock()
+	defer rrc.mutex.RUnlock()
+	for _, val := range rrc.values {
 		if max < val {
 			max = val
 		}
@@ -43,28 +49,34 @@ func (rrc *RoundRobinCounter) Max() (max int64) {
 	return
 }
 func (rrc *RoundRobinCounter) Count() (cnt int64) {
-	for _, c := range rrc.Counts {
+	rrc.mutex.RLock()
+	defer rrc.mutex.RUnlock()
+	for _, c := range rrc.counts {
 		cnt += c
 	}
 	return
 }
 func (rrc *RoundRobinCounter) Sum() (sum int64) {
-	for _, val := range rrc.Values {
+	rrc.mutex.RLock()
+	defer rrc.mutex.RUnlock()
+	for _, val := range rrc.values {
 		sum += val
 	}
 	return
 }
 
 func (rrc *RoundRobinCounter) ToList() (ret []int64) {
-	index := rrc.LastIndex
-	step := len(rrc.Values)
+	rrc.mutex.RLock()
+	defer rrc.mutex.RUnlock()
+	index := rrc.lastIndex
+	step := len(rrc.values)
 	for step > 0 {
 		step--
 		index++
-		if index >= len(rrc.Values) {
+		if index >= len(rrc.values) {
 			index = 0
 		}
-		ret = append(ret, rrc.Values[index])
+		ret = append(ret, rrc.values[index])
 	}
 	return
 }

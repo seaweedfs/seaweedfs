@@ -74,8 +74,8 @@ func (v *Volume) readSuperBlock() (err error) {
 }
 
 func (v *Volume) writeSuperBlock() (err error) {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.mutex.Lock()
+	defer v.mutex.Unlock()
 	if _, e := v.dataFile.WriteAt(v.SuperBlock.Bytes(), 0); e != nil {
 		return fmt.Errorf("cannot write volume %d super block: %v", v.Id, e)
 	}

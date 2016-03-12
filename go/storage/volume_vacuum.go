@@ -25,8 +25,8 @@ func (v *Volume) Compact() error {
 }
 func (v *Volume) commitCompact() error {
 	glog.V(3).Infof("Committing vacuuming...")
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.mutex.Lock()
+	defer v.mutex.Unlock()
 	glog.V(3).Infof("Got Committing lock...")
 	_ = v.dataFile.Close()
 	var e error
