@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
+	"sync"
 )
 
 type VidInfo struct {
@@ -14,9 +15,12 @@ type VidInfo struct {
 }
 type VidCache struct {
 	cache []VidInfo
+	mutex sync.RWMutex
 }
 
 func (vc *VidCache) Get(vid string) (Locations, error) {
+	vc.mutex.RLock()
+	defer vc.mutex.RUnlock()
 	id, err := strconv.Atoi(vid)
 	if err != nil {
 		glog.V(1).Infof("Unknown volume id %s", vid)
@@ -34,6 +38,8 @@ func (vc *VidCache) Get(vid string) (Locations, error) {
 	return nil, errors.New("Not Found")
 }
 func (vc *VidCache) Set(vid string, locations Locations, duration time.Duration) {
+	vc.mutex.Lock()
+	defer vc.mutex.Unlock()
 	id, err := strconv.Atoi(vid)
 	if err != nil {
 		glog.V(1).Infof("Unknown volume id %s", vid)
