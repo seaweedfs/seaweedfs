@@ -7,10 +7,10 @@ func TestRobinCounter(t *testing.T) {
 	rrc.Add(0, 1)
 	rrc.Add(50, 2)
 	if rrc.Count() != 2 {
-		t.Fatal()
+		t.Fatal("faild1")
 	}
 	if rrc.Sum() != 3 {
-		t.Fatal()
+		t.Fatal("faild2")
 	}
 	/*
 		index out of range

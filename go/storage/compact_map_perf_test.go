@@ -19,7 +19,7 @@ func TestMemoryUsage(t *testing.T) {
 
 }
 
-func LoadNewNeedleMap(file *os.File) CompactMap {
+func LoadNewNeedleMap(file *os.File) *CompactMap {
 	m := NewCompactMap()
 	bytes := make([]byte, 16*1024)
 	count, e := file.Read(bytes)

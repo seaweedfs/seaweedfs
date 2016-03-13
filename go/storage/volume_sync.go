@@ -48,7 +48,7 @@ optimized more later).
 func (v *Volume) Synchronize(volumeServer string) (err error) {
 	var lastCompactRevision uint16 = 0
 	var compactRevision uint16 = 0
-	var masterMap CompactMap
+	var masterMap *CompactMap
 	for i := 0; i < 3; i++ {
 		if masterMap, _, compactRevision, err = fetchVolumeFileEntries(volumeServer, v.Id); err != nil {
 			return fmt.Errorf("Failed to sync volume %d entries with %s: %v", v.Id, volumeServer, err)
@@ -77,7 +77,7 @@ func (a ByOffset) Less(i, j int) bool { return a[i].Offset < a[j].Offset }
 
 // trySynchronizing sync with remote volume server incrementally by
 // make up the local and remote delta.
-func (v *Volume) trySynchronizing(volumeServer string, masterMap CompactMap, compactRevision uint16) error {
+func (v *Volume) trySynchronizing(volumeServer string, masterMap *CompactMap, compactRevision uint16) error {
 	slaveIdxFile, err := os.Open(v.nm.IndexFileName())
 	if err != nil {
 		return fmt.Errorf("Open volume %d index file: %v", v.Id, err)
@@ -137,7 +137,7 @@ func (v *Volume) trySynchronizing(volumeServer string, masterMap CompactMap, com
 	return nil
 }
 
-func fetchVolumeFileEntries(volumeServer string, vid VolumeId) (m CompactMap, lastOffset uint64, compactRevision uint16, err error) {
+func fetchVolumeFileEntries(volumeServer string, vid VolumeId) (m *CompactMap, lastOffset uint64, compactRevision uint16, err error) {
 	m = NewCompactMap()
 
 	syncStatus, err := operation.GetVolumeSyncStatus(volumeServer, vid.String())

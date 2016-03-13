@@ -17,7 +17,7 @@ func TestSortVolumeInfos(t *testing.T) {
 	sortVolumeInfos(vis)
 	for i := 0; i < len(vis); i++ {
 		if vis[i].Id != VolumeId(i+1) {
-			t.Fatal()
+			t.Fatal("id error")
 		}
 	}
 }

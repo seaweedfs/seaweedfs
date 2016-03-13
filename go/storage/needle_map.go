@@ -36,11 +36,11 @@ type NeedleMapper interface {
 type baseNeedleMapper struct {
 	indexFile           *os.File
 	mutex               sync.RWMutex
-	deletionCounter     int    `json:"DeletionCounter"`
-	fileCounter         int    `json:"FileCounter"`
-	deletionByteCounter uint64 `json:"DeletionByteCounter"`
-	fileByteCounter     uint64 `json:"FileByteCounter"`
-	maximumFileKey      uint64 `json:"MaxFileKey"`
+	deletionCounter     int
+	fileCounter         int
+	deletionByteCounter uint64
+	fileByteCounter     uint64
+	maximumFileKey      uint64
 }
 
 func (nm *baseNeedleMapper) IndexFileSize() uint64 {

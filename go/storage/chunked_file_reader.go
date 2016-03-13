@@ -96,7 +96,7 @@ func (cf *ChunkedFileReader) readLocalChunkNeedle(fid *FileId, w io.Writer, offs
 		return 0, e
 	}
 	if n.Cookie != cookie {
-		return 0, fmt.Errorf("read error: with unmaching cookie seen: %s expected: %s", cookie, n.Cookie)
+		return 0, fmt.Errorf("read error: with unmaching cookie seen: %x expected: %x", cookie, n.Cookie)
 	}
 	wn, e := w.Write(n.Data[offset:])
 	return int64(wn), e

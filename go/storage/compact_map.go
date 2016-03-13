@@ -121,8 +121,8 @@ type CompactMap struct {
 	lock sync.RWMutex
 }
 
-func NewCompactMap() CompactMap {
-	return CompactMap{}
+func NewCompactMap() *CompactMap {
+	return &CompactMap{}
 }
 
 func (cm *CompactMap) Set(key Key, offset uint32, size uint32) uint32 {

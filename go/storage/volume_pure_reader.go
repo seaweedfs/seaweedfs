@@ -140,7 +140,6 @@ func (cdr *PureReader) WriteTo(w io.Writer) (written int64, err error) {
 			written += n
 		}
 	}
-	return
 }
 
 func (cr *PureReader) ReadAt(p []byte, off int64) (n int, err error) {

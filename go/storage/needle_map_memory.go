@@ -8,7 +8,7 @@ import (
 )
 
 type NeedleMap struct {
-	m CompactMap
+	m *CompactMap
 
 	baseNeedleMapper
 }
