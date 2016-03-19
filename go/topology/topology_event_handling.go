@@ -34,10 +34,12 @@ func (t *Topology) StartRefreshWritableVolumes(garbageThreshold string) {
 				t.SetVolumeCapacityFull(v)
 			case dn := <-t.chanRecoveredDataNodes:
 				t.RegisterRecoveredDataNode(dn)
-				glog.V(0).Infoln("DataNode", dn, "is back alive!")
+				glog.V(0).Infoln("DataNode", dn.Id(), "is back alive!")
+				glog.V(4).Infoln("DataNode", dn, "is back alive!")
 			case dn := <-t.chanDeadDataNodes:
 				t.UnRegisterDataNode(dn)
-				glog.V(0).Infoln("DataNode", dn, "is dead!")
+				glog.V(0).Infoln("DataNode", dn.Id(), "is dead!")
+				glog.V(4).Infoln("DataNode", dn, "is dead!")
 			}
 		}
 	}()
