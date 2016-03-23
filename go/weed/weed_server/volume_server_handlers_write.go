@@ -47,9 +47,9 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	n := new(storage.Needle)
-	vid, fid, _, _, _ := parseURLPath(r.URL.Path)
+	vid, nid, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, _ := storage.NewVolumeId(vid)
-	n.ParsePath(fid)
+	n.ParseNid(nid)
 
 	glog.V(2).Infoln("deleting", n)
 
@@ -111,7 +111,7 @@ func (vs *VolumeServer) batchDeleteHandler(w http.ResponseWriter, r *http.Reques
 		}
 		n := new(storage.Needle)
 		volumeId, _ := storage.NewVolumeId(vid)
-		n.ParsePath(id_cookie)
+		n.ParseNid(id_cookie)
 		glog.V(4).Infoln("batch deleting", n)
 		cookie := n.Cookie
 		if _, err := vs.store.ReadVolumeNeedle(volumeId, n); err != nil {

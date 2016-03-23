@@ -63,7 +63,7 @@ func (cf *ChunkedFileReader) readRemoteChunkNeedle(fid string, w io.Writer, offs
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	}
 
-	resp, err := util.Do(req)
+	resp, err := util.HttpDo(req)
 	if err != nil {
 		return written, err
 	}

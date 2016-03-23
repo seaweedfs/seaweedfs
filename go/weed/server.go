@@ -10,12 +10,13 @@ import (
 	"sync"
 	"time"
 
+	"net"
+
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/storage"
 	"github.com/chrislusf/seaweedfs/go/util"
 	"github.com/chrislusf/seaweedfs/go/weed/weed_server"
 	"github.com/gorilla/mux"
-	"net"
 )
 
 type ServerOptions struct {
@@ -72,6 +73,7 @@ var (
 	volumeIndexType               = cmdServer.Flag.String("volume.index", "memory", "Choose [memory|leveldb|boltdb] mode for memory~performance balance.")
 	volumeFixJpgOrientation       = cmdServer.Flag.Bool("volume.images.fix.orientation", true, "Adjust jpg orientation when uploading.")
 	volumeReadRedirect            = cmdServer.Flag.Bool("volume.read.redirect", true, "Redirect moved or non-local volumes.")
+	volumeReadRemoteNeedle        = cmdServer.Flag.Bool("volume.read.remote.needle", false, "Read remote needle when have non-local volumes.")
 	volumeServerPublicUrl         = cmdServer.Flag.String("volume.publicUrl", "", "publicly accessible address")
 	isStartingFiler               = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 
@@ -254,7 +256,7 @@ func runServer(cmd *Command, args []string) bool {
 		folders, maxCounts,
 		volumeNeedleMapKind,
 		net.JoinHostPort(*serverIp, strconv.Itoa(*masterPort)), *volumePulse, *serverDataCenter, *serverRack,
-		serverWhiteList, *volumeFixJpgOrientation, *volumeReadRedirect,
+		serverWhiteList, *volumeFixJpgOrientation, *volumeReadRedirect, *volumeReadRemoteNeedle,
 	)
 
 	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "at", net.JoinHostPort(*serverIp, strconv.Itoa(*volumePort)))

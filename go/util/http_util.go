@@ -248,7 +248,7 @@ func DownloadToFile(fileUrl, savePath string) (e error) {
 	return
 }
 
-func Do(req *http.Request) (resp *http.Response, err error) {
+func HttpDo(req *http.Request) (resp *http.Response, err error) {
 	return client.Do(req)
 }
 

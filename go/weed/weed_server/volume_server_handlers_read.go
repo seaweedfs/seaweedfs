@@ -13,6 +13,9 @@ import (
 
 	"net/url"
 
+	"io/ioutil"
+
+	"errors"
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/images"
 	"github.com/chrislusf/seaweedfs/go/operation"
@@ -24,14 +27,14 @@ var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
 	n := new(storage.Needle)
-	vid, fid, filename, ext, _ := parseURLPath(r.URL.Path)
+	vid, nid, filename, ext, _ := parseURLPath(r.URL.Path)
 	volumeId, err := storage.NewVolumeId(vid)
 	if err != nil {
 		glog.V(2).Infoln("parsing error:", err, r.URL.Path)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	err = n.ParsePath(fid)
+	err = n.ParseNid(nid)
 	if err != nil {
 		glog.V(2).Infoln("parsing fid error:", err, r.URL.Path)
 		w.WriteHeader(http.StatusBadRequest)
@@ -39,12 +42,29 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	glog.V(4).Infoln("volume", volumeId, "reading", n)
-	if !vs.store.HasVolume(volumeId) {
-		if !vs.ReadRedirect {
-			glog.V(2).Infoln("volume is not local:", err, r.URL.Path)
+	if vs.store.HasVolume(volumeId) {
+		cookie := n.Cookie
+		count, e := vs.store.ReadVolumeNeedle(volumeId, n)
+		glog.V(4).Infoln("read local bytes", count, "error", e)
+		if e != nil || count <= 0 {
+			glog.V(0).Infoln("read local error:", e, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+		if n.Cookie != cookie {
+			glog.V(0).Infoln("request", r.URL.Path, "with unmaching cookie seen:", cookie, "expected:", n.Cookie, "from", r.RemoteAddr, "agent", r.UserAgent())
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	} else if vs.ReadRemoteNeedle {
+		count, e := vs.readRemoteNeedle(volumeId.String(), n, r.FormValue("collection"))
+		glog.V(4).Infoln("read remote needle bytes ", count, "error", e)
+		if e != nil || count <= 0 {
+			glog.V(2).Infoln("read remote needle error:", e, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	} else if vs.ReadRedirect {
 		lookupResult, err := operation.Lookup(vs.GetMasterNode(), volumeId.String(), r.FormValue("collection"))
 		glog.V(2).Infoln("volume", volumeId, "found on", lookupResult, "error", err)
 		if err == nil && len(lookupResult.Locations) > 0 {
@@ -56,20 +76,12 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			w.WriteHeader(http.StatusNotFound)
 		}
 		return
-	}
-	cookie := n.Cookie
-	count, e := vs.store.ReadVolumeNeedle(volumeId, n)
-	glog.V(4).Infoln("read bytes", count, "error", e)
-	if e != nil || count <= 0 {
-		glog.V(0).Infoln("read error:", e, r.URL.Path)
+	} else {
+		glog.V(2).Infoln("volume is not local:", err, r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	if n.Cookie != cookie {
-		glog.V(0).Infoln("request", r.URL.Path, "with unmaching cookie seen:", cookie, "expected:", n.Cookie, "from", r.RemoteAddr, "agent", r.UserAgent())
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
+
 	if n.LastModified != 0 {
 		w.Header().Set("Last-Modified", time.Unix(int64(n.LastModified), 0).UTC().Format(http.TimeFormat))
 		if r.Header.Get("If-Modified-Since") != "" {
@@ -277,4 +289,49 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 	w.WriteHeader(http.StatusPartialContent)
 	_, e = io.CopyN(w, sendContent, sendSize)
 	return e
+}
+
+func (vs *VolumeServer) readRemoteNeedle(vid string, n *storage.Needle, collection string) (int, error) {
+	lookupResult, err := operation.Lookup(vs.GetMasterNode(), vid, collection)
+	glog.V(2).Infoln("volume", vid, "found on", lookupResult, "error", err)
+	if err != nil || len(lookupResult.Locations) == 0 {
+		return 0, errors.New("lookup error:" + err.Error())
+	}
+	u, _ := url.Parse(util.NormalizeUrl(lookupResult.Locations.PickForRead().PublicUrl))
+	u.Path = "/admin/sync/needle"
+	args := url.Values{
+		"vid": {vid},
+		"nid": {n.Nid()},
+	}
+	u.RawQuery = args.Encode()
+	req, _ := http.NewRequest("GET", u.String(), nil)
+	resp, err := util.HttpDo(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if n.Data, err = ioutil.ReadAll(resp.Body); err != nil {
+		return 0, err
+	}
+	n.DataSize = uint32(len(n.Data))
+	if h := resp.Header.Get("SFS-FLAGS"); h != "" {
+		if i, err := strconv.ParseInt(h, 16, 64); err == nil {
+			n.Flags = byte(i)
+		}
+	}
+	if h := resp.Header.Get("SFS-LastModified"); h != "" {
+		if i, err := strconv.ParseUint(h, 16, 64); err == nil {
+			n.LastModified = i
+			n.SetHasLastModifiedDate()
+		}
+	}
+	if h := resp.Header.Get("SFS-Name"); h != "" {
+		n.Name = []byte(h)
+		n.SetHasName()
+	}
+	if h := resp.Header.Get("SFS-Mime"); h != "" {
+		n.Mime = []byte(h)
+		n.SetHasMime()
+	}
+	return int(n.DataSize), nil
 }

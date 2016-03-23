@@ -179,42 +179,46 @@ func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
 
 	commaSep := strings.LastIndex(r.URL.Path, ",")
 	dotSep := strings.LastIndex(r.URL.Path, ".")
-	fid := r.URL.Path[commaSep+1:]
+	nid := r.URL.Path[commaSep+1:]
 	if dotSep > 0 {
-		fid = r.URL.Path[commaSep+1 : dotSep]
+		nid = r.URL.Path[commaSep+1 : dotSep]
 	}
 
-	e = n.ParsePath(fid)
+	e = n.ParseNid(nid)
 
 	return
 }
-func (n *Needle) ParsePath(fid string) (err error) {
-	length := len(fid)
+func (n *Needle) ParseNid(nid string) (err error) {
+	length := len(nid)
 	if length <= 8 {
-		return errors.New("Invalid fid:" + fid)
+		return errors.New("Invalid nid:" + nid)
 	}
-	n.Id, n.Cookie, err = ParseIdCookie(fid)
+	n.Id, n.Cookie, err = ParseIdCookie(nid)
 	if err != nil {
 		return err
 	}
 	return err
 }
 
-func ParseIdCookie(fid string) (uint64, uint32, error) {
+func (n *Needle) Nid() string {
+	return ToNid(n.Id, n.Cookie)
+}
+
+func ParseIdCookie(nid string) (uint64, uint32, error) {
 	delta := ""
-	deltaIndex := strings.LastIndex(fid, "_")
+	deltaIndex := strings.LastIndex(nid, "_")
 	if deltaIndex > 0 {
-		fid, delta = fid[0:deltaIndex], fid[deltaIndex+1:]
+		nid, delta = nid[0:deltaIndex], nid[deltaIndex+1:]
 	}
 
-	if len(fid)%2 == 1 {
-		fid = "0" + fid
+	if len(nid)%2 == 1 {
+		nid = "0" + nid
 	}
-	key_hash_bytes, khe := hex.DecodeString(fid)
+	key_hash_bytes, khe := hex.DecodeString(nid)
 	key_hash_len := len(key_hash_bytes)
 	if khe != nil || key_hash_len <= 4 {
-		glog.V(0).Infoln("Invalid key_hash", fid, "length:", key_hash_len, "error", khe)
-		return 0, 0, errors.New("Invalid key and hash:" + fid)
+		glog.V(0).Infoln("Invalid key_hash", nid, "length:", key_hash_len, "error", khe)
+		return 0, 0, errors.New("Invalid key and hash:" + nid)
 	}
 	id := util.BytesToUint64(key_hash_bytes[0 : key_hash_len-4])
 	cookie := util.BytesToUint32(key_hash_bytes[key_hash_len-4 : key_hash_len])
@@ -227,4 +231,14 @@ func ParseIdCookie(fid string) (uint64, uint32, error) {
 		}
 	}
 	return id, cookie, nil
+}
+
+func ToNid(key uint64, cookie uint32) string {
+	bytes := make([]byte, 12)
+	util.Uint64toBytes(bytes[0:8], key)
+	util.Uint32toBytes(bytes[8:12], cookie)
+	nonzero_index := 0
+	for ; bytes[nonzero_index] == 0; nonzero_index++ {
+	}
+	return hex.EncodeToString(bytes[nonzero_index:])
 }

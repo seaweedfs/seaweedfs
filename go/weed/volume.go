@@ -8,11 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"net"
+
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/storage"
 	"github.com/chrislusf/seaweedfs/go/util"
 	"github.com/chrislusf/seaweedfs/go/weed/weed_server"
-	"net"
 )
 
 var (
@@ -37,6 +38,7 @@ type VolumeServerOptions struct {
 	indexType             *string
 	fixJpgOrientation     *bool
 	readRedirect          *bool
+	readRemoteNeedle      *bool
 }
 
 func init() {
@@ -55,6 +57,8 @@ func init() {
 	v.indexType = cmdVolume.Flag.String("index", "memory", "Choose [memory|leveldb|boltdb] mode for memory~performance balance.")
 	v.fixJpgOrientation = cmdVolume.Flag.Bool("images.fix.orientation", true, "Adjust jpg orientation when uploading.")
 	v.readRedirect = cmdVolume.Flag.Bool("read.redirect", true, "Redirect moved or non-local volumes.")
+	v.readRemoteNeedle = cmdVolume.Flag.Bool("read.remote.needle", false, "Read remote needle when have non-local volumes.")
+
 }
 
 var cmdVolume = &Command{
@@ -132,7 +136,7 @@ func runVolume(cmd *Command, args []string) bool {
 		volumeNeedleMapKind,
 		*v.master, *v.pulseSeconds, *v.dataCenter, *v.rack,
 		v.whiteList,
-		*v.fixJpgOrientation, *v.readRedirect,
+		*v.fixJpgOrientation, *v.readRedirect, *v.readRemoteNeedle,
 	)
 
 	listeningAddress := net.JoinHostPort(*v.bindIp, strconv.Itoa(*v.port))

@@ -106,7 +106,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		ContentLength: r.ContentLength,
 	}
 	glog.V(3).Infoln("retrieving from", u)
-	resp, do_err := util.Do(request)
+	resp, do_err := util.HttpDo(request)
 	if do_err != nil {
 		glog.V(0).Infoln("failing to connect to volume server", do_err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, do_err)
@@ -197,7 +197,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		Host:          r.Host,
 		ContentLength: r.ContentLength,
 	}
-	resp, do_err := util.Do(request)
+	resp, do_err := util.HttpDo(request)
 	if do_err != nil {
 		glog.V(0).Infoln("failing to connect to volume server", r.RequestURI, do_err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, do_err)

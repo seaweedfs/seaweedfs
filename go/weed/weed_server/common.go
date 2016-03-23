@@ -136,19 +136,19 @@ func deleteForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	writeJsonQuiet(w, r, http.StatusAccepted, ret)
 }
 
-func parseURLPath(path string) (vid, fid, filename, ext string, isVolumeIdOnly bool) {
+func parseURLPath(path string) (vid, nid, filename, ext string, isVolumeIdOnly bool) {
 	switch strings.Count(path, "/") {
 	case 3:
 		parts := strings.Split(path, "/")
-		vid, fid, filename = parts[1], parts[2], parts[3]
+		vid, nid, filename = parts[1], parts[2], parts[3]
 		ext = filepath.Ext(filename)
 	case 2:
 		parts := strings.Split(path, "/")
-		vid, fid = parts[1], parts[2]
-		dotIndex := strings.LastIndex(fid, ".")
+		vid, nid = parts[1], parts[2]
+		dotIndex := strings.LastIndex(nid, ".")
 		if dotIndex > 0 {
-			ext = fid[dotIndex:]
-			fid = fid[0:dotIndex]
+			ext = nid[dotIndex:]
+			nid = nid[0:dotIndex]
 		}
 	default:
 		sepIndex := strings.LastIndex(path, "/")
@@ -159,10 +159,10 @@ func parseURLPath(path string) (vid, fid, filename, ext string, isVolumeIdOnly b
 		}
 		dotIndex := strings.LastIndex(path[sepIndex:], ".")
 		vid = path[sepIndex+1 : commaIndex]
-		fid = path[commaIndex+1:]
+		nid = path[commaIndex+1:]
 		ext = ""
 		if dotIndex > 0 {
-			fid = path[commaIndex+1 : dotIndex]
+			nid = path[commaIndex+1 : dotIndex]
 			ext = path[dotIndex:]
 		}
 	}

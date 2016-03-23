@@ -22,6 +22,7 @@ type VolumeServer struct {
 
 	FixJpgOrientation bool
 	ReadRedirect      bool
+	ReadRemoteNeedle  bool
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
@@ -32,13 +33,14 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	dataCenter string, rack string,
 	whiteList []string,
 	fixJpgOrientation bool,
-	readRedirect bool) *VolumeServer {
+	readRedirect, readRemoteNeedle bool) *VolumeServer {
 	vs := &VolumeServer{
 		pulseSeconds:      pulseSeconds,
 		dataCenter:        dataCenter,
 		rack:              rack,
 		FixJpgOrientation: fixJpgOrientation,
 		ReadRedirect:      readRedirect,
+		ReadRemoteNeedle:  readRemoteNeedle,
 	}
 	vs.SetMasterNode(masterNode)
 	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts, needleMapKind)
@@ -57,6 +59,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	adminMux.HandleFunc("/admin/sync/index", vs.guard.WhiteList(vs.getVolumeIndexContentHandler))
 	adminMux.HandleFunc("/admin/sync/data", vs.guard.WhiteList(vs.getVolumeDataContentHandler))
 	adminMux.HandleFunc("/admin/sync/vol_data", vs.guard.WhiteList(vs.getVolumeCleanDataHandler))
+	adminMux.HandleFunc("/admin/sync/needle", vs.guard.WhiteList(vs.getNeedleHandler))
 	adminMux.HandleFunc("/admin/task/new", vs.guard.WhiteList(vs.newTaskHandler))
 	adminMux.HandleFunc("/admin/task/query", vs.guard.WhiteList(vs.queryTaskHandler))
 	adminMux.HandleFunc("/admin/task/commit", vs.guard.WhiteList(vs.commitTaskHandler))

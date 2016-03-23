@@ -1,12 +1,10 @@
 package storage
 
 import (
-	"encoding/hex"
 	"errors"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
-	"github.com/chrislusf/seaweedfs/go/util"
 )
 
 type FileId struct {
@@ -38,12 +36,11 @@ func ParseFileId(fid string) (*FileId, error) {
 	key, hash, e := ParseIdCookie(key_hash_string)
 	return &FileId{VolumeId: volumeId, Key: key, Hashcode: hash}, e
 }
+
 func (n *FileId) String() string {
-	bytes := make([]byte, 12)
-	util.Uint64toBytes(bytes[0:8], n.Key)
-	util.Uint32toBytes(bytes[8:12], n.Hashcode)
-	nonzero_index := 0
-	for ; bytes[nonzero_index] == 0; nonzero_index++ {
-	}
-	return n.VolumeId.String() + "," + hex.EncodeToString(bytes[nonzero_index:])
+	return n.VolumeId.String() + "," + n.Nid()
+}
+
+func (n *FileId) Nid() string {
+	return ToNid(n.Key, n.Hashcode)
 }

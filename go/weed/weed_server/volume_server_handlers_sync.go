@@ -142,3 +142,48 @@ func (vs *VolumeServer) getVolumeCleanDataHandler(w http.ResponseWriter, r *http
 	}
 	lz4w.Close()
 }
+
+func (vs *VolumeServer) getNeedleHandler(w http.ResponseWriter, r *http.Request) {
+	vid, err := storage.NewVolumeId(r.FormValue("volume"))
+	if err != nil {
+		e := fmt.Errorf("parsing volume error: %v", err)
+		glog.V(2).Infoln(e)
+		writeJsonError(w, r, http.StatusBadRequest, e)
+		return
+	}
+	nid := r.FormValue("nid")
+	n := new(storage.Needle)
+	err = n.ParseNid(nid)
+	if err != nil {
+		e := fmt.Errorf("parsing fid (%s) error: %v", nid, err)
+		glog.V(2).Infoln(e)
+		writeJsonError(w, r, http.StatusBadRequest, e)
+		return
+	}
+	cookie := n.Cookie
+	count, e := vs.store.ReadVolumeNeedle(vid, n)
+	glog.V(4).Infoln("read bytes", count, "error", e)
+	if e != nil || count <= 0 {
+		e := fmt.Errorf("read needle (%v,%v) error: %v", vid, nid, err)
+		glog.V(2).Infoln(e)
+		writeJsonError(w, r, http.StatusNotFound, e)
+		return
+	}
+	if n.Cookie != cookie {
+		e := fmt.Errorf("request (%v,%v) with unmaching cookie seen: %v expected: %v", vid, nid, cookie, n.Cookie)
+		glog.V(2).Infoln(e)
+		writeJsonError(w, r, http.StatusNotFound, e)
+		return
+	}
+	w.Header().Set("SFS-FLAGS", strconv.FormatInt(int64(n.Flags), 16))
+	if n.HasLastModifiedDate() {
+		w.Header().Set("SFS-LastModified", strconv.FormatUint(n.LastModified, 16))
+	}
+	if n.HasName() && n.NameSize > 0 {
+		w.Header().Set("SFS-Name", string(n.Name))
+	}
+	if n.HasMime() && n.MimeSize > 0 {
+		w.Header().Set("SFS-Mime", string(n.Mime))
+	}
+	w.Write(n.Data)
+}
