@@ -333,6 +333,12 @@ func (vs *VolumeServer) readRemoteNeedle(vid string, n *storage.Needle, collecti
 			n.Flags = byte(i)
 		}
 	}
+	if h := resp.Header.Get("Seaweed-Checksum"); h != "" {
+		if i, err := strconv.ParseInt(h, 16, 64); err == nil {
+			n.Checksum = storage.CRC(i)
+		}
+	}
+
 	if h := resp.Header.Get("Seaweed-LastModified"); h != "" {
 		if i, err := strconv.ParseUint(h, 16, 64); err == nil {
 			n.LastModified = i

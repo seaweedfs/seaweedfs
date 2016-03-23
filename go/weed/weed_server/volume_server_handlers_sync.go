@@ -176,6 +176,7 @@ func (vs *VolumeServer) getNeedleHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.Header().Set("Seaweed-Flags", strconv.FormatInt(int64(n.Flags), 16))
+	w.Header().Set("Seaweed-Checksum", strconv.FormatInt(int64(n.Checksum), 16))
 	if n.HasLastModifiedDate() {
 		w.Header().Set("Seaweed-LastModified", strconv.FormatUint(n.LastModified, 16))
 	}
