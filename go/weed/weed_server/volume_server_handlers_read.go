@@ -15,7 +15,9 @@ import (
 
 	"io/ioutil"
 
+	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/images"
 	"github.com/chrislusf/seaweedfs/go/operation"
@@ -58,7 +60,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		}
 	} else if vs.ReadRemoteNeedle {
 		count, e := vs.readRemoteNeedle(volumeId.String(), n, r.FormValue("collection"))
-		glog.V(4).Infoln("read remote needle bytes ", count, "error", e)
+		glog.V(4).Infoln("read remote needle bytes", count, "error", e)
 		if e != nil || count <= 0 {
 			glog.V(2).Infoln("read remote needle error:", e, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -300,8 +302,8 @@ func (vs *VolumeServer) readRemoteNeedle(vid string, n *storage.Needle, collecti
 	u, _ := url.Parse(util.NormalizeUrl(lookupResult.Locations.PickForRead().PublicUrl))
 	u.Path = "/admin/sync/needle"
 	args := url.Values{
-		"vid": {vid},
-		"nid": {n.Nid()},
+		"volume": {vid},
+		"nid":    {n.Nid()},
 	}
 	u.RawQuery = args.Encode()
 	req, _ := http.NewRequest("GET", u.String(), nil)
@@ -310,26 +312,38 @@ func (vs *VolumeServer) readRemoteNeedle(vid string, n *storage.Needle, collecti
 		return 0, err
 	}
 	defer resp.Body.Close()
-	if n.Data, err = ioutil.ReadAll(resp.Body); err != nil {
+	var buf []byte
+	if buf, err = ioutil.ReadAll(resp.Body); err != nil {
 		return 0, err
 	}
+	if resp.StatusCode != http.StatusOK {
+		errMsg := strconv.Itoa(resp.StatusCode)
+		m := map[string]string{}
+		if e := json.Unmarshal(buf, &m); e == nil {
+			if s, ok := m["error"]; ok {
+				errMsg += ", " + s
+			}
+		}
+		return 0, errors.New(errMsg)
+	}
+	n.Data = buf
 	n.DataSize = uint32(len(n.Data))
-	if h := resp.Header.Get("SFS-FLAGS"); h != "" {
+	if h := resp.Header.Get("Seaweed-Flags"); h != "" {
 		if i, err := strconv.ParseInt(h, 16, 64); err == nil {
 			n.Flags = byte(i)
 		}
 	}
-	if h := resp.Header.Get("SFS-LastModified"); h != "" {
+	if h := resp.Header.Get("Seaweed-LastModified"); h != "" {
 		if i, err := strconv.ParseUint(h, 16, 64); err == nil {
 			n.LastModified = i
 			n.SetHasLastModifiedDate()
 		}
 	}
-	if h := resp.Header.Get("SFS-Name"); h != "" {
+	if h := resp.Header.Get("Seaweed-Name"); h != "" {
 		n.Name = []byte(h)
 		n.SetHasName()
 	}
-	if h := resp.Header.Get("SFS-Mime"); h != "" {
+	if h := resp.Header.Get("Seaweed-Mime"); h != "" {
 		n.Mime = []byte(h)
 		n.SetHasMime()
 	}

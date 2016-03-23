@@ -175,15 +175,15 @@ func (vs *VolumeServer) getNeedleHandler(w http.ResponseWriter, r *http.Request)
 		writeJsonError(w, r, http.StatusNotFound, e)
 		return
 	}
-	w.Header().Set("SFS-FLAGS", strconv.FormatInt(int64(n.Flags), 16))
+	w.Header().Set("Seaweed-Flags", strconv.FormatInt(int64(n.Flags), 16))
 	if n.HasLastModifiedDate() {
-		w.Header().Set("SFS-LastModified", strconv.FormatUint(n.LastModified, 16))
+		w.Header().Set("Seaweed-LastModified", strconv.FormatUint(n.LastModified, 16))
 	}
 	if n.HasName() && n.NameSize > 0 {
-		w.Header().Set("SFS-Name", string(n.Name))
+		w.Header().Set("Seaweed-Name", string(n.Name))
 	}
 	if n.HasMime() && n.MimeSize > 0 {
-		w.Header().Set("SFS-Mime", string(n.Mime))
+		w.Header().Set("Seaweed-Mime", string(n.Mime))
 	}
 	w.Write(n.Data)
 }
