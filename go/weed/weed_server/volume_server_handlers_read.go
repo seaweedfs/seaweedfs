@@ -17,7 +17,7 @@ import (
 
 	"encoding/json"
 	"errors"
-	"fmt"
+
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/images"
 	"github.com/chrislusf/seaweedfs/go/operation"
