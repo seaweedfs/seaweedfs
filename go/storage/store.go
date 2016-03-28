@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -10,11 +9,12 @@ import (
 
 	"sync"
 
+	"encoding/json"
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/operation"
 	"github.com/chrislusf/seaweedfs/go/security"
 	"github.com/chrislusf/seaweedfs/go/util"
-	"github.com/golang/protobuf/proto"
+	"github.com/chrislusf/seaweedfs/go/weedpb"
 )
 
 const (
@@ -71,13 +71,13 @@ func (mn *MasterNodes) findMaster() (string, error) {
  * A VolumeServer contains one Store
  */
 type Store struct {
-	Ip              string
+	joinKey         string
+	ip              string
 	Port            int
 	PublicUrl       string
 	Locations       []*DiskLocation
 	dataCenter      string //optional informaton, overwriting master setting if exists
 	rack            string //optional information, overwriting master setting if exists
-	connected       bool
 	volumeSizeLimit uint64 //read from the master
 	masterNodes     *MasterNodes
 	needleMapKind   NeedleMapType
@@ -86,15 +86,15 @@ type Store struct {
 }
 
 func (s *Store) String() (str string) {
-	str = fmt.Sprintf("Ip:%s, Port:%d, PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d, masterNodes:%s",
-		s.Ip, s.Port, s.PublicUrl, s.dataCenter, s.rack, s.IsConnected(), s.GetVolumeSizeLimit(), s.masterNodes)
+	str = fmt.Sprintf("Ip:%s, Port:%d, PublicUrl:%s, dataCenter:%s, rack:%s, joinKey:%v, volumeSizeLimit:%d, masterNodes:%s",
+		s.GetIP(), s.Port, s.PublicUrl, s.dataCenter, s.rack, s.GetJoinKey(), s.GetVolumeSizeLimit(), s.masterNodes)
 	return
 }
 
 func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int, needleMapKind NeedleMapType) (s *Store) {
 	s = &Store{
 		Port:          port,
-		Ip:            ip,
+		ip:            ip,
 		PublicUrl:     publicUrl,
 		TaskManager:   NewTaskManager(),
 		needleMapKind: needleMapKind,
@@ -219,7 +219,7 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 	if e != nil {
 		return
 	}
-	var volumeMessages []*operation.VolumeInformationMessage
+	var volumeMessages []*weedpb.VolumeInformationMessage
 	maxVolumeCount := 0
 	var maxFileKey uint64
 	for _, location := range s.Locations {
@@ -230,16 +230,16 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 				maxFileKey = v.nm.MaxFileKey()
 			}
 			if !v.expired(s.GetVolumeSizeLimit()) {
-				volumeMessage := &operation.VolumeInformationMessage{
-					Id:               proto.Uint32(uint32(v.Id)),
-					Size:             proto.Uint64(uint64(v.Size())),
-					Collection:       proto.String(v.Collection),
-					FileCount:        proto.Uint64(uint64(v.nm.FileCount())),
-					DeleteCount:      proto.Uint64(uint64(v.nm.DeletedCount())),
-					DeletedByteCount: proto.Uint64(v.nm.DeletedSize()),
-					ReadOnly:         proto.Bool(v.IsReadOnly()),
-					Version:          proto.Uint32(uint32(v.Version())),
-					Ttl:              proto.Uint32(v.Ttl.ToUint32()),
+				volumeMessage := &weedpb.VolumeInformationMessage{
+					Id:               uint32(v.Id),
+					Size:             uint64(v.Size()),
+					Collection:       v.Collection,
+					FileCount:        uint64(v.nm.FileCount()),
+					DeleteCount:      uint64(v.nm.DeletedCount()),
+					DeletedByteCount: v.nm.DeletedSize(),
+					ReadOnly:         v.IsReadOnly(),
+					Version:          uint32(v.Version()),
+					Ttl:              v.Ttl.ToUint32(),
 				}
 				volumeMessages = append(volumeMessages, volumeMessage)
 			} else {
@@ -257,44 +257,44 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 		}
 	}
 
-	joinMessage := &operation.JoinMessage{
-		IsInit:         proto.Bool(!s.IsConnected()),
-		Ip:             proto.String(s.Ip),
-		Port:           proto.Uint32(uint32(s.Port)),
-		PublicUrl:      proto.String(s.PublicUrl),
-		MaxVolumeCount: proto.Uint32(uint32(maxVolumeCount)),
-		MaxFileKey:     proto.Uint64(maxFileKey),
-		DataCenter:     proto.String(s.dataCenter),
-		Rack:           proto.String(s.rack),
+	joinMsgV2 := &weedpb.JoinMessageV2{
+		JoinKey:        s.GetJoinKey(),
+		Ip:             s.GetIP(),
+		Port:           uint32(s.Port),
+		PublicUrl:      s.PublicUrl,
+		MaxVolumeCount: uint32(maxVolumeCount),
+		MaxFileKey:     maxFileKey,
+		DataCenter:     s.dataCenter,
+		Rack:           s.rack,
 		Volumes:        volumeMessages,
 	}
-
-	data, err := proto.Marshal(joinMessage)
-	if err != nil {
-		return "", "", err
-	}
-
-	joinUrl := util.MkUrl(masterNode, "/dir/join", nil)
+	ret := &weedpb.JoinResponse{}
+	joinUrl := util.MkUrl(masterNode, "/dir/join2", nil)
 	glog.V(4).Infof("Connecting to %s ...", joinUrl)
-
-	jsonBlob, err := util.PostBytes(joinUrl, data)
-	if err != nil {
+	if err := util.PostPbMsg(joinUrl, joinMsgV2, ret); err != nil {
 		s.masterNodes.reset()
 		return "", "", err
 	}
-	var ret operation.JoinResult
-	if err := json.Unmarshal(jsonBlob, &ret); err != nil {
-		glog.V(0).Infof("Failed to join %s with response: %s", joinUrl, string(jsonBlob))
-		s.masterNodes.reset()
-		return masterNode, "", err
-	}
+
 	if ret.Error != "" {
 		s.masterNodes.reset()
 		return masterNode, "", errors.New(ret.Error)
 	}
-	s.SetVolumeSizeLimit(ret.VolumeSizeLimit)
+	if ret.JoinKey != s.GetJoinKey() {
+		if glog.V(4) {
+			jsonData, _ := json.Marshal(ret)
+			glog.V(4).Infof("dir join sync settings: %v", string(jsonData))
+		}
+		s.SetJoinKey(ret.JoinKey)
+		if ret.JoinIp != "" {
+			s.SetIP(ret.JoinIp)
+		}
+		if ret.VolumeSizeLimit != 0 {
+			s.SetVolumeSizeLimit(ret.VolumeSizeLimit)
+		}
+	}
+	//todo
 	secretKey = security.Secret(ret.SecretKey)
-	s.SetConnected(true)
 	return
 }
 func (s *Store) Close() {
@@ -367,14 +367,26 @@ func (s *Store) SetVolumeSizeLimit(sz uint64) {
 	s.volumeSizeLimit = sz
 }
 
-func (s *Store) IsConnected() bool {
+func (s *Store) GetIP() string {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
-	return s.connected
+	return s.ip
 }
 
-func (s *Store) SetConnected(b bool) {
+func (s *Store) SetIP(ip string) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	s.connected = b
+	s.ip = ip
+}
+
+func (s *Store) GetJoinKey() string {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.joinKey
+}
+
+func (s *Store) SetJoinKey(k string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.joinKey = k
 }

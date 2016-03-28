@@ -15,6 +15,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/security"
+	"github.com/golang/protobuf/proto"
 	"github.com/pierrec/lz4"
 	"strconv"
 )
@@ -54,6 +55,34 @@ func PostBytes(url string, body []byte) ([]byte, error) {
 		return nil, fmt.Errorf("Read response body: %v", err)
 	}
 	return b, nil
+}
+
+func PostPbMsg(url string, msg proto.Message, ret proto.Message) error {
+	data, err := proto.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/protobuf")
+	req.Header.Set("Accept", "application/protobuf")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("Post to %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	retBlob, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("Read response body: %v", err)
+	}
+
+	if err := proto.Unmarshal(retBlob, ret); err != nil {
+		glog.V(0).Infof("Failed to umarshal pb %s with response: %s", url, string(retBlob))
+		return err
+	}
+	return nil
 }
 
 func PostEx(host, path string, values url.Values) (content []byte, statusCode int, e error) {

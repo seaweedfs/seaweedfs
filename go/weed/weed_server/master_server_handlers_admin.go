@@ -14,10 +14,10 @@ import (
 	"net"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
-	"github.com/chrislusf/seaweedfs/go/operation"
 	"github.com/chrislusf/seaweedfs/go/storage"
 	"github.com/chrislusf/seaweedfs/go/topology"
 	"github.com/chrislusf/seaweedfs/go/util"
+	"github.com/chrislusf/seaweedfs/go/weedpb"
 	"github.com/golang/protobuf/proto"
 )
 
@@ -37,23 +37,24 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 	ms.Topo.DeleteCollection(r.FormValue("collection"))
 }
 
+// deprecated
 func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		writeJsonError(w, r, http.StatusBadRequest, err)
 		return
 	}
-	joinMessage := &operation.JoinMessage{}
+	joinMessage := &weedpb.JoinMessage{}
 	if err = proto.Unmarshal(body, joinMessage); err != nil {
 		writeJsonError(w, r, http.StatusBadRequest, err)
 		return
 	}
-	if *joinMessage.Ip == "" {
+	if joinMessage.Ip == "" {
 		if ip, _, e := net.SplitHostPort(r.RemoteAddr); e == nil {
-			*joinMessage.Ip = ip
+			joinMessage.Ip = ip
 		} else {
 			glog.V(2).Infof("SplitHostPort (%s) error, %v", r.RemoteAddr, e)
-			*joinMessage.Ip = r.RemoteAddr
+			joinMessage.Ip = r.RemoteAddr
 		}
 	}
 	if glog.V(4) {
@@ -65,12 +66,49 @@ func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 			glog.V(4).Infoln("Proto size", len(body), "json size", len(jsonData), string(jsonData))
 		}
 	}
-
 	ms.Topo.ProcessJoinMessage(joinMessage)
-	writeJsonQuiet(w, r, http.StatusOK, operation.JoinResult{
+	type JoinResult struct {
+		VolumeSizeLimit uint64 `json:"VolumeSizeLimit,omitempty"`
+		SecretKey       string `json:"secretKey,omitempty"`
+		Error           string `json:"error,omitempty"`
+	}
+	writeJsonQuiet(w, r, http.StatusOK, JoinResult{
 		VolumeSizeLimit: uint64(ms.volumeSizeLimitMB) * 1024 * 1024,
 		SecretKey:       string(ms.guard.SecretKey),
 	})
+}
+
+func (ms *MasterServer) dirJoin2Handler(w http.ResponseWriter, r *http.Request) {
+	joinResp := &weedpb.JoinResponse{}
+	joinMsgV2 := &weedpb.JoinMessageV2{}
+
+	if err := readObjRequest(r, joinMsgV2); err != nil {
+		joinResp.Error = err.Error()
+		writeObjResponse(w, r, http.StatusBadRequest, joinResp)
+		return
+	}
+	if joinMsgV2.Ip == "" {
+		if ip, _, e := net.SplitHostPort(r.RemoteAddr); e == nil {
+			joinMsgV2.Ip = ip
+		} else {
+			glog.V(2).Infof("SplitHostPort (%s) error, %v", r.RemoteAddr, e)
+			joinMsgV2.Ip = r.RemoteAddr
+		}
+	}
+	if glog.V(4) {
+		jsonData, _ := json.Marshal(joinMsgV2)
+		glog.V(4).Infoln("join proto:", string(jsonData))
+	}
+
+	ms.Topo.ProcessJoinMessageV2(joinMsgV2)
+
+	joinResp.JoinKey = ms.Topo.GetJoinKey()
+	if joinMsgV2.JoinKey != joinResp.JoinKey {
+		joinResp.JoinIp = joinMsgV2.Ip
+		joinResp.VolumeSizeLimit = ms.Topo.GetVolumeSizeLimit()
+		joinResp.SecretKey = string(ms.guard.SecretKey)
+	}
+	writeObjResponse(w, r, http.StatusOK, joinResp)
 }
 
 func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request) {

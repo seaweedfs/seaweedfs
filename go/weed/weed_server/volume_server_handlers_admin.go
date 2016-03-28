@@ -117,5 +117,5 @@ func (vs *VolumeServer) setVolumeOptionHandler(w http.ResponseWriter, r *http.Re
 		result["errors"] = errs
 	}
 
-	writeJson(w, r, http.StatusAccepted, result)
+	writeObjResponse(w, r, http.StatusAccepted, result)
 }

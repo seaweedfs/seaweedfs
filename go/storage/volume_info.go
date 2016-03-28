@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/chrislusf/seaweedfs/go/operation"
+	"github.com/chrislusf/seaweedfs/go/weedpb"
 )
 
 type VolumeInfo struct {
@@ -19,18 +19,18 @@ type VolumeInfo struct {
 	ReadOnly         bool
 }
 
-func NewVolumeInfo(m *operation.VolumeInformationMessage) (vi *VolumeInfo, err error) {
+func NewVolumeInfo(m *weedpb.VolumeInformationMessage) (vi *VolumeInfo, err error) {
 	vi = &VolumeInfo{
-		Id:               VolumeId(*m.Id),
-		Size:             *m.Size,
-		Collection:       *m.Collection,
-		FileCount:        int(*m.FileCount),
-		DeleteCount:      int(*m.DeleteCount),
-		DeletedByteCount: *m.DeletedByteCount,
-		ReadOnly:         *m.ReadOnly,
-		Version:          Version(*m.Version),
+		Id:               VolumeId(m.Id),
+		Size:             m.Size,
+		Collection:       m.Collection,
+		FileCount:        int(m.FileCount),
+		DeleteCount:      int(m.DeleteCount),
+		DeletedByteCount: m.DeletedByteCount,
+		ReadOnly:         m.ReadOnly,
+		Version:          Version(m.Version),
 	}
-	vi.Ttl = LoadTTLFromUint32(*m.Ttl)
+	vi.Ttl = LoadTTLFromUint32(m.Ttl)
 	return vi, nil
 }
 

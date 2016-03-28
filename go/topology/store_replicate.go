@@ -41,6 +41,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 			}
 
 			u := util.MkUrl(location.Url, r.URL.Path, args)
+			glog.V(4).Infoln("write replication to", u)
 			_, err := operation.Upload(u,
 				string(needle.Name), bytes.NewReader(needle.Data), needle.IsGzipped(), string(needle.Mime),
 				jwt)
@@ -85,7 +86,7 @@ func distributedOperation(masterNode string, store *storage.Store, volumeId stor
 	}
 	if lookupResult, lookupErr := operation.LookupNoCache(masterNode, volumeId.String(), collection); lookupErr == nil {
 		length := 0
-		selfUrl := net.JoinHostPort(store.Ip, strconv.Itoa(store.Port))
+		selfUrl := net.JoinHostPort(store.GetIP(), strconv.Itoa(store.Port))
 		results := make(chan bool)
 		for _, location := range lookupResult.Locations {
 			if location.Url != selfUrl {

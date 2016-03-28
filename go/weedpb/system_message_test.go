@@ -1,4 +1,4 @@
-package operation
+package weedpb
 
 import (
 	"encoding/json"
@@ -10,28 +10,28 @@ import (
 
 func TestSerialDeserial(t *testing.T) {
 	volumeMessage := &VolumeInformationMessage{
-		Id:               proto.Uint32(12),
-		Size:             proto.Uint64(2341234),
-		Collection:       proto.String("benchmark"),
-		FileCount:        proto.Uint64(2341234),
-		DeleteCount:      proto.Uint64(234),
-		DeletedByteCount: proto.Uint64(21234),
-		ReadOnly:         proto.Bool(false),
-		ReplicaPlacement: proto.Uint32(210),
-		Version:          proto.Uint32(2),
+		Id:               12,
+		Size:             2341234,
+		Collection:       "benchmark",
+		FileCount:        2341234,
+		DeleteCount:      234,
+		DeletedByteCount: 21234,
+		ReadOnly:         false,
+		ReplicaPlacement: 210,
+		Version:          2,
 	}
 	var volumeMessages []*VolumeInformationMessage
 	volumeMessages = append(volumeMessages, volumeMessage)
 
 	joinMessage := &JoinMessage{
-		IsInit:         proto.Bool(true),
-		Ip:             proto.String("127.0.3.12"),
-		Port:           proto.Uint32(34546),
-		PublicUrl:      proto.String("localhost:2342"),
-		MaxVolumeCount: proto.Uint32(210),
-		MaxFileKey:     proto.Uint64(324234423),
-		DataCenter:     proto.String("dc1"),
-		Rack:           proto.String("rack2"),
+		IsInit:         true,
+		Ip:             "127.0.3.12",
+		Port:           34546,
+		PublicUrl:      "localhost:2342",
+		MaxVolumeCount: 210,
+		MaxFileKey:     324234423,
+		DataCenter:     "dc1",
+		Rack:           "rack2",
 		Volumes:        volumeMessages,
 	}
 
@@ -53,7 +53,7 @@ func TestSerialDeserial(t *testing.T) {
 	log.Println("The json data size is", len(jsonData), string(jsonData))
 
 	// Now test and newTest contain the same data.
-	if *joinMessage.PublicUrl != *newMessage.PublicUrl {
-		log.Fatalf("data mismatch %q != %q", *joinMessage.PublicUrl, *newMessage.PublicUrl)
+	if joinMessage.PublicUrl != newMessage.PublicUrl {
+		log.Fatalf("data mismatch %q != %q", joinMessage.PublicUrl, newMessage.PublicUrl)
 	}
 }

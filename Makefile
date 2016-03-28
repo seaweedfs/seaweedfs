@@ -5,7 +5,7 @@ SOURCE_DIR = ./go/weed/
 
 all: build
 
-.PHONY : clean deps build linux
+.PHONY : clean deps build linux vet
 
 clean:
 	go clean -i $(GO_FLAGS) $(SOURCE_DIR)
@@ -16,6 +16,9 @@ deps:
 
 fmt:
 	gofmt -w -s ./go/
+
+vet:
+	go vet ./go/...
 
 build: deps fmt
 	go build $(GO_FLAGS) -o $(BINARY) $(SOURCE_DIR)

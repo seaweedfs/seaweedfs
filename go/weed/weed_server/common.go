@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"io/ioutil"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/operation"
@@ -17,6 +18,7 @@ import (
 	"github.com/chrislusf/seaweedfs/go/stats"
 	"github.com/chrislusf/seaweedfs/go/storage"
 	"github.com/chrislusf/seaweedfs/go/util"
+	"github.com/golang/protobuf/proto"
 )
 
 var serverStats *stats.ServerStats
@@ -28,42 +30,57 @@ func init() {
 
 }
 
-func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) (err error) {
-	var bytes []byte
-	if r.FormValue("pretty") != "" {
-		bytes, err = json.MarshalIndent(obj, "", "  ")
-	} else {
-		bytes, err = json.Marshal(obj)
-	}
+func readObjRequest(r *http.Request, obj interface{}) error {
+	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		return
+		return err
 	}
-	callback := r.FormValue("callback")
-	if callback == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(httpStatus)
-		_, err = w.Write(bytes)
+	if pbMsg, ok := obj.(proto.Message); ok && strings.Contains(r.Header.Get("Content-Type"), "protobuf") {
+		if err := proto.Unmarshal(body, pbMsg); err != nil {
+			return err
+		}
 	} else {
-		w.Header().Set("Content-Type", "application/javascript")
-		w.WriteHeader(httpStatus)
-		if _, err = w.Write([]uint8(callback)); err != nil {
-			return
+		if err := json.Unmarshal(body, obj); err != nil {
+			return err
 		}
-		if _, err = w.Write([]uint8("(")); err != nil {
-			return
+	}
+	return nil
+}
+
+func writeObjResponse(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) (err error) {
+	var (
+		bytes       []byte
+		contentType string
+	)
+	if pbMsg, ok := obj.(proto.Message); ok && strings.Contains(r.Header.Get("Accept"), "protobuf") {
+		bytes, err = proto.Marshal(pbMsg)
+		contentType = "application/protobuf"
+	} else {
+		if r.FormValue("pretty") != "" {
+			bytes, err = json.MarshalIndent(obj, "", "  ")
+		} else {
+			bytes, err = json.Marshal(obj)
 		}
-		fmt.Fprint(w, string(bytes))
-		if _, err = w.Write([]uint8(")")); err != nil {
-			return
+		if callback := r.FormValue("callback"); callback != "" {
+			contentType = "application/javascript"
+			bytes = []byte(callback + "(" + string(bytes) + ")")
+		} else {
+			contentType = "application/json"
 		}
 	}
 
+	if err != nil {
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(httpStatus)
+	_, err = w.Write(bytes)
 	return
 }
 
 // wrapper for writeJson - just logs errors
 func writeJsonQuiet(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) {
-	if err := writeJson(w, r, httpStatus, obj); err != nil {
+	if err := writeObjResponse(w, r, httpStatus, obj); err != nil {
 		glog.V(0).Infof("error writing JSON %s: %v", obj, err)
 	}
 }
