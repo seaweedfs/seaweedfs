@@ -57,6 +57,10 @@ func (t *ReplicateTask) WorkingDataNodes() []*DataNode {
 	}
 }
 
+func (t *ReplicateTask) String() string {
+	return fmt.Sprintf("<Replicate> vid: %v, src: %s, dst: %s", t.Vid, t.SrcDN.Url(), t.DstDN.Url())
+}
+
 func planReplicateTasks(t *Topology) (tasks []*ReplicateTask) {
 	for i1 := range t.collectionMap.IterItems() {
 		c := i1.Value.(*Collection)
