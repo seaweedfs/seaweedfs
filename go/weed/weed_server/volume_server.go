@@ -3,20 +3,16 @@ package weed_server
 import (
 	"math/rand"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/security"
 	"github.com/chrislusf/seaweedfs/go/storage"
+	"github.com/chrislusf/seaweedfs/go/weedpb"
 )
 
 type VolumeServer struct {
-	masterNode   string
-	mnLock       sync.RWMutex
 	pulseSeconds int
-	dataCenter   string
-	rack         string
 	store        *storage.Store
 	guard        *security.Guard
 
@@ -36,14 +32,14 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	readRedirect, readRemoteNeedle bool) *VolumeServer {
 	vs := &VolumeServer{
 		pulseSeconds:      pulseSeconds,
-		dataCenter:        dataCenter,
-		rack:              rack,
 		FixJpgOrientation: fixJpgOrientation,
 		ReadRedirect:      readRedirect,
 		ReadRemoteNeedle:  readRemoteNeedle,
 	}
-	vs.SetMasterNode(masterNode)
 	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts, needleMapKind)
+	vs.store.SetBootstrapMaster(masterNode)
+	vs.store.SetDataCenter(dataCenter)
+	vs.store.SetRack(rack)
 
 	vs.guard = security.NewGuard(whiteList, "")
 
@@ -77,23 +73,19 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 
 	go func() {
 		connected := true
+		glog.V(0).Infof("Volume server bootstraps with master %s", masterNode)
 
-		glog.V(0).Infof("Volume server bootstraps with master %s", vs.GetMasterNode())
-		vs.store.SetBootstrapMaster(vs.GetMasterNode())
-		vs.store.SetDataCenter(vs.dataCenter)
-		vs.store.SetRack(vs.rack)
 		for {
-			glog.V(4).Infof("Volume server sending to master %s", vs.GetMasterNode())
-			master, secretKey, err := vs.store.SendHeartbeatToMaster()
+			err := vs.store.SendHeartbeatToMaster(func(s *weedpb.JoinResponse) {
+				vs.guard.SetSecretKey(s.SecretKey)
+			})
 			if err == nil {
 				if !connected {
 					connected = true
-					vs.SetMasterNode(master)
-					vs.guard.SecretKey = secretKey
-					glog.V(0).Infoln("Volume Server Connected with master at", master)
+					glog.V(0).Infoln("Volume Server Connected with master at", vs.GetMasterNode())
 				}
 			} else {
-				glog.V(1).Infof("Volume Server Failed to talk with master %s: %v", vs.masterNode, err)
+				glog.V(1).Infof("Volume Server Failed to talk with master %s: %v", vs.GetMasterNode(), err)
 				if connected {
 					connected = false
 				}
@@ -110,15 +102,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 }
 
 func (vs *VolumeServer) GetMasterNode() string {
-	vs.mnLock.RLock()
-	defer vs.mnLock.RUnlock()
-	return vs.masterNode
-}
-
-func (vs *VolumeServer) SetMasterNode(masterNode string) {
-	vs.mnLock.Lock()
-	defer vs.mnLock.Unlock()
-	vs.masterNode = masterNode
+	return vs.store.GetMaster()
 }
 
 func (vs *VolumeServer) Shutdown() {
@@ -128,5 +112,5 @@ func (vs *VolumeServer) Shutdown() {
 }
 
 func (vs *VolumeServer) jwt(fileId string) security.EncodedJwt {
-	return security.GenJwt(vs.guard.SecretKey, fileId)
+	return security.GenJwt(vs.guard.GetSecretKey(), fileId)
 }

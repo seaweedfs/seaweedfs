@@ -41,17 +41,33 @@ Referenced:
 https://github.com/pkieltyka/jwtauth/blob/master/jwtauth.go
 
 */
+
+//TODO lock on data access?
 type Guard struct {
 	whiteList []string
-	SecretKey Secret
+	secretKey Secret
 
 	isActive bool
 }
 
 func NewGuard(whiteList []string, secretKey string) *Guard {
-	g := &Guard{whiteList: whiteList, SecretKey: Secret(secretKey)}
-	g.isActive = len(g.whiteList) != 0 || len(g.SecretKey) != 0
+	g := &Guard{whiteList: whiteList, secretKey: Secret(secretKey)}
+	g.isActive = len(g.whiteList) != 0 || len(g.secretKey) != 0
 	return g
+}
+
+func (g *Guard) SetSecretKey(k string) {
+	g.secretKey = Secret(k)
+	g.isActive = len(g.whiteList) != 0 || len(g.secretKey) != 0
+}
+
+func (g *Guard) GetSecretKey() Secret {
+	return g.secretKey
+}
+
+func (g *Guard) SetWhiteList(l []string) {
+	g.whiteList = l
+	g.isActive = len(g.whiteList) != 0 || len(g.secretKey) != 0
 }
 
 func (g *Guard) WhiteList(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
@@ -138,7 +154,7 @@ func (g *Guard) checkJwt(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 
-	if len(g.SecretKey) == 0 {
+	if len(g.secretKey) == 0 {
 		return nil
 	}
 
@@ -149,7 +165,7 @@ func (g *Guard) checkJwt(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	// Verify the token
-	token, err := DecodeJwt(g.SecretKey, tokenStr)
+	token, err := DecodeJwt(g.secretKey, tokenStr)
 	if err != nil {
 		glog.V(1).Infof("Token verification error from %s: %v", r.RemoteAddr, err)
 		return ErrUnauthorized

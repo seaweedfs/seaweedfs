@@ -10,9 +10,9 @@ import (
 	"sync"
 
 	"encoding/json"
+
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/operation"
-	"github.com/chrislusf/seaweedfs/go/security"
 	"github.com/chrislusf/seaweedfs/go/util"
 	"github.com/chrislusf/seaweedfs/go/weedpb"
 )
@@ -22,30 +22,30 @@ const (
 )
 
 type MasterNodes struct {
-	nodes    []string
-	lastNode int
+	nodes  []string
+	master string
 }
 
 func (mn *MasterNodes) String() string {
-	return fmt.Sprintf("nodes:%v, lastNode:%d", mn.nodes, mn.lastNode)
+	return fmt.Sprintf("nodes:%v, master:%d", mn.nodes, mn.master)
 }
 
 func NewMasterNodes(bootstrapNode string) (mn *MasterNodes) {
-	mn = &MasterNodes{nodes: []string{bootstrapNode}, lastNode: -1}
+	mn = &MasterNodes{nodes: []string{bootstrapNode}}
 	return
 }
 func (mn *MasterNodes) reset() {
 	glog.V(4).Infof("Resetting master nodes: %v", mn)
-	if len(mn.nodes) > 1 && mn.lastNode >= 0 {
-		glog.V(0).Infof("Reset master %s from: %v", mn.nodes[mn.lastNode], mn.nodes)
-		mn.lastNode = -mn.lastNode - 1
+	if len(mn.nodes) > 1 && mn.master != "" {
+		glog.V(0).Infof("Reset master %s from: %v", mn.master, mn.nodes)
+		mn.master = ""
 	}
 }
 func (mn *MasterNodes) findMaster() (string, error) {
 	if len(mn.nodes) == 0 {
 		return "", errors.New("No master node found!")
 	}
-	if mn.lastNode < 0 {
+	if mn.master == "" {
 		for _, m := range mn.nodes {
 			glog.V(4).Infof("Listing masters on %s", m)
 			if masters, e := operation.ListMasters(m); e == nil {
@@ -53,7 +53,7 @@ func (mn *MasterNodes) findMaster() (string, error) {
 					continue
 				}
 				mn.nodes = append(masters, m)
-				mn.lastNode = rand.Intn(len(mn.nodes))
+				mn.master = mn.nodes[rand.Intn(len(mn.nodes))]
 				glog.V(2).Infof("current master nodes is %v", mn)
 				break
 			} else {
@@ -61,10 +61,14 @@ func (mn *MasterNodes) findMaster() (string, error) {
 			}
 		}
 	}
-	if mn.lastNode < 0 {
+	if mn.master == "" {
 		return "", errors.New("No master node available!")
 	}
-	return mn.nodes[mn.lastNode], nil
+	return mn.master, nil
+}
+
+func (mn *MasterNodes) GetMaster() string {
+	return mn.master
 }
 
 /*
@@ -212,12 +216,17 @@ func (s *Store) SetRack(rack string) {
 }
 
 func (s *Store) SetBootstrapMaster(bootstrapMaster string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 	s.masterNodes = NewMasterNodes(bootstrapMaster)
 }
-func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.Secret, e error) {
-	masterNode, e = s.masterNodes.findMaster()
-	if e != nil {
-		return
+
+type SettingChanged func(s *weedpb.JoinResponse)
+
+func (s *Store) SendHeartbeatToMaster(callback SettingChanged) error {
+	masterNode, err := s.masterNodes.findMaster()
+	if err != nil {
+		return err
 	}
 	var volumeMessages []*weedpb.VolumeInformationMessage
 	maxVolumeCount := 0
@@ -270,15 +279,15 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 	}
 	ret := &weedpb.JoinResponse{}
 	joinUrl := util.MkUrl(masterNode, "/dir/join2", nil)
-	glog.V(4).Infof("Connecting to %s ...", joinUrl)
-	if err := util.PostPbMsg(joinUrl, joinMsgV2, ret); err != nil {
+	glog.V(4).Infof("Sending heartbeat to %s ...", joinUrl)
+	if err = util.PostPbMsg(joinUrl, joinMsgV2, ret); err != nil {
 		s.masterNodes.reset()
-		return "", "", err
+		return err
 	}
 
 	if ret.Error != "" {
 		s.masterNodes.reset()
-		return masterNode, "", errors.New(ret.Error)
+		return errors.New(ret.Error)
 	}
 	if ret.JoinKey != s.GetJoinKey() {
 		if glog.V(4) {
@@ -292,10 +301,11 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 		if ret.VolumeSizeLimit != 0 {
 			s.SetVolumeSizeLimit(ret.VolumeSizeLimit)
 		}
+		if callback != nil {
+			callback(ret)
+		}
 	}
-	//todo
-	secretKey = security.Secret(ret.SecretKey)
-	return
+	return nil
 }
 func (s *Store) Close() {
 	for _, location := range s.Locations {
@@ -315,7 +325,7 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 		}
 		if s.GetVolumeSizeLimit() < v.ContentSize()+3*uint64(size) {
 			glog.V(0).Infoln("volume", i, "size", v.ContentSize(), "will exceed limit", s.GetVolumeSizeLimit())
-			if _, _, e := s.SendHeartbeatToMaster(); e != nil {
+			if e := s.SendHeartbeatToMaster(nil); e != nil {
 				glog.V(0).Infoln("error when reporting size:", e)
 			}
 		}
@@ -389,4 +399,8 @@ func (s *Store) SetJoinKey(k string) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	s.joinKey = k
+}
+
+func (s *Store) GetMaster() string {
+	return s.masterNodes.GetMaster()
 }

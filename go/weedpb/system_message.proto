@@ -54,8 +54,6 @@ message JoinResponse {
     uint64 volume_size_limit = 4;
     repeated CollectionSetting collection_settings = 5;
     string secret_key = 6;
-//    repeated string master_peers = 7;
-
 }
 
 

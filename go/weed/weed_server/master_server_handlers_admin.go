@@ -74,7 +74,7 @@ func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJsonQuiet(w, r, http.StatusOK, JoinResult{
 		VolumeSizeLimit: uint64(ms.volumeSizeLimitMB) * 1024 * 1024,
-		SecretKey:       string(ms.guard.SecretKey),
+		SecretKey:       string(ms.guard.GetSecretKey()),
 	})
 }
 
@@ -106,7 +106,7 @@ func (ms *MasterServer) dirJoin2Handler(w http.ResponseWriter, r *http.Request) 
 	if joinMsgV2.JoinKey != joinResp.JoinKey {
 		joinResp.JoinIp = joinMsgV2.Ip
 		joinResp.VolumeSizeLimit = ms.Topo.GetVolumeSizeLimit()
-		joinResp.SecretKey = string(ms.guard.SecretKey)
+		joinResp.SecretKey = string(ms.guard.GetSecretKey())
 	}
 	writeObjResponse(w, r, http.StatusOK, joinResp)
 }

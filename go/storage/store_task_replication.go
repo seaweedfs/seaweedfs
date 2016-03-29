@@ -89,7 +89,7 @@ func (t *ReplicaTask) Commit() error {
 	volume, e = NewVolume(t.location.Directory, t.Collection, t.VID, t.s.needleMapKind, nil)
 	if e == nil {
 		t.location.AddVolume(t.VID, volume)
-		t.s.SendHeartbeatToMaster()
+		t.s.SendHeartbeatToMaster(nil)
 	}
 	return e
 }

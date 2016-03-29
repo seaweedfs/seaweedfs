@@ -1,5 +1,7 @@
 package storage
 
+import "sync"
+
 type SettingKey int
 
 const (
@@ -9,6 +11,7 @@ const (
 
 type CollectionSettings struct {
 	settings map[string]map[SettingKey]interface{}
+	mutex    sync.RWMutex
 }
 
 func NewCollectionSettings(defaultReplicatePlacement, defaultGarbageThreshold string) *CollectionSettings {
@@ -24,23 +27,27 @@ func NewCollectionSettings(defaultReplicatePlacement, defaultGarbageThreshold st
 	return c
 }
 
-func (c *CollectionSettings) get(collection string, key SettingKey) interface{} {
-	if m, ok := c.settings[collection]; ok {
+func (cs *CollectionSettings) get(collection string, key SettingKey) interface{} {
+	cs.mutex.RLock()
+	defer cs.mutex.RUnlock()
+	if m, ok := cs.settings[collection]; ok {
 		if v, ok := m[key]; ok {
 			return v
 		}
 	}
-	if m, ok := c.settings[""]; ok {
+	if m, ok := cs.settings[""]; ok {
 		return m[key]
 	}
 	return nil
 }
 
-func (c *CollectionSettings) set(collection string, key SettingKey, value interface{}) {
-	m := c.settings[collection]
+func (cs *CollectionSettings) set(collection string, key SettingKey, value interface{}) {
+	cs.mutex.Lock()
+	defer cs.mutex.Unlock()
+	m := cs.settings[collection]
 	if m == nil {
 		m = make(map[SettingKey]interface{})
-		c.settings[collection] = m
+		cs.settings[collection] = m
 	}
 	if value == nil {
 		//mustn't delete default setting
@@ -52,22 +59,22 @@ func (c *CollectionSettings) set(collection string, key SettingKey, value interf
 	}
 }
 
-func (c *CollectionSettings) GetGarbageThreshold(collection string) string {
-	return c.get(collection, keyGarbageThreshold).(string)
+func (cs *CollectionSettings) GetGarbageThreshold(collection string) string {
+	return cs.get(collection, keyGarbageThreshold).(string)
 }
 
-func (c *CollectionSettings) SetGarbageThreshold(collection string, gt string) {
-	c.set(collection, keyGarbageThreshold, gt)
+func (cs *CollectionSettings) SetGarbageThreshold(collection string, gt string) {
+	cs.set(collection, keyGarbageThreshold, gt)
 }
 
-func (c *CollectionSettings) GetReplicaPlacement(collection string) *ReplicaPlacement {
-	return c.get(collection, keyReplicatePlacement).(*ReplicaPlacement)
+func (cs *CollectionSettings) GetReplicaPlacement(collection string) *ReplicaPlacement {
+	return cs.get(collection, keyReplicatePlacement).(*ReplicaPlacement)
 }
 
-func (c *CollectionSettings) SetReplicaPlacement(collection, t string) error {
+func (cs *CollectionSettings) SetReplicaPlacement(collection, t string) error {
 	rp, e := NewReplicaPlacementFromString(t)
 	if e == nil {
-		c.set(collection, keyReplicatePlacement, rp)
+		cs.set(collection, keyReplicatePlacement, rp)
 	}
 	return e
 }
