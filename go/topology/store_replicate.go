@@ -5,22 +5,27 @@ import (
 	"net/http"
 	"strconv"
 
+	"net"
+	"net/url"
+
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/operation"
 	"github.com/chrislusf/seaweedfs/go/security"
 	"github.com/chrislusf/seaweedfs/go/storage"
 	"github.com/chrislusf/seaweedfs/go/util"
-	"net"
-	"net/url"
 )
 
 func ReplicatedWrite(masterNode string, s *storage.Store,
 	volumeId storage.VolumeId, needle *storage.Needle,
 	r *http.Request) (size uint32, errorStatus string) {
-
 	//check JWT
 	jwt := security.GetJwt(r)
-
+	defer func() {
+		if errorStatus == "" {
+			return
+		}
+		ReplicatedDelete(masterNode, s, volumeId, needle, r)
+	}()
 	ret, err := s.Write(volumeId, needle)
 	if err != nil {
 		errorStatus = "Failed to write to local disk (" + err.Error() + ")"
@@ -29,7 +34,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 	}
 	//send to other replica locations
 	if r.FormValue("type") != "replicate" {
-		if !distributedOperation(masterNode, s, volumeId, func(location operation.Location) bool {
+		repWrite := func(location operation.Location) bool {
 			args := url.Values{
 				"type": {"replicate"},
 			}
@@ -46,7 +51,8 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 				string(needle.Name), bytes.NewReader(needle.Data), needle.IsGzipped(), string(needle.Mime),
 				jwt)
 			return err == nil
-		}) {
+		}
+		if !distributedOperation(masterNode, s, volumeId, repWrite) {
 			ret = 0
 			errorStatus = "Failed to write to replicas for volume " + volumeId.String()
 		}
@@ -100,14 +106,12 @@ func distributedOperation(masterNode string, store *storage.Store, volumeId stor
 		for i := 0; i < length; i++ {
 			ret = ret && <-results
 		}
-		// we shouldn't check ReplicaPlacement because the needle have been written in head volume
-
-		// if volume := store.GetVolume(volumeId); volume != nil {
-		// 		if length+1 < volume.ReplicaPlacement.GetCopyCount() {
-		// 			glog.V(0).Infof("replicating opetations [%d] is less than volume's replication copy count [%d]", length+1, volume.ReplicaPlacement.GetCopyCount())
-		// 			ret = false
-		// 		}
-		// }
+		if rp := store.GetVolumeReplicaPlacement(volumeId); rp != nil {
+			if length+1 < rp.GetCopyCount() {
+				glog.V(0).Infof("replicating opetations [%d] is less than volume's replication copy count [%d]", length+1, rp.GetCopyCount())
+				ret = false
+			}
+		}
 		return ret
 	} else {
 		glog.V(0).Infoln("Failed to lookup for", volumeId, lookupErr.Error())

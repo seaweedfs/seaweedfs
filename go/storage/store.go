@@ -80,6 +80,7 @@ type Store struct {
 	Port            int
 	PublicUrl       string
 	Locations       []*DiskLocation
+	colSettings     *CollectionSettings
 	dataCenter      string //optional informaton, overwriting master setting if exists
 	rack            string //optional information, overwriting master setting if exists
 	volumeSizeLimit uint64 //read from the master
@@ -304,6 +305,10 @@ func (s *Store) SendHeartbeatToMaster(callback SettingChanged) error {
 		if callback != nil {
 			callback(ret)
 		}
+		if len(ret.CollectionSettings) > 0 {
+			cs := NewCollectionSettingsFromPbMessage(ret.CollectionSettings)
+			s.SetCollectionSettings(cs)
+		}
 	}
 	return nil
 }
@@ -403,4 +408,28 @@ func (s *Store) SetJoinKey(k string) {
 
 func (s *Store) GetMaster() string {
 	return s.masterNodes.GetMaster()
+}
+
+func (s *Store) GetCollectionSettings() *CollectionSettings {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.colSettings
+}
+
+func (s *Store) SetCollectionSettings(cs *CollectionSettings) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.colSettings = cs
+}
+
+func (s *Store) GetVolumeReplicaPlacement(volumeId VolumeId) *ReplicaPlacement {
+	cs := s.GetCollectionSettings()
+	if cs == nil {
+		return nil
+	}
+	collection := ""
+	if v := s.GetVolume(volumeId); v != nil {
+		collection = v.Collection
+	}
+	return cs.GetReplicaPlacement(collection)
 }

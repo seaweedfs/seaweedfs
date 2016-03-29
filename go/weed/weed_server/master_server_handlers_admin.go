@@ -107,6 +107,7 @@ func (ms *MasterServer) dirJoin2Handler(w http.ResponseWriter, r *http.Request) 
 		joinResp.JoinIp = joinMsgV2.Ip
 		joinResp.VolumeSizeLimit = ms.Topo.GetVolumeSizeLimit()
 		joinResp.SecretKey = string(ms.guard.GetSecretKey())
+		joinResp.CollectionSettings = ms.Topo.CollectionSettings.ToPbMessage()
 	}
 	writeObjResponse(w, r, http.StatusOK, joinResp)
 }

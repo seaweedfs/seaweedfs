@@ -1,6 +1,6 @@
 package storage
 
-import "sync"
+import "github.com/chrislusf/seaweedfs/go/weedpb"
 
 type SettingKey int
 
@@ -11,7 +11,6 @@ const (
 
 type CollectionSettings struct {
 	settings map[string]map[SettingKey]interface{}
-	mutex    sync.RWMutex
 }
 
 func NewCollectionSettings(defaultReplicatePlacement, defaultGarbageThreshold string) *CollectionSettings {
@@ -27,9 +26,35 @@ func NewCollectionSettings(defaultReplicatePlacement, defaultGarbageThreshold st
 	return c
 }
 
+func NewCollectionSettingsFromPbMessage(msg []*weedpb.CollectionSetting) *CollectionSettings {
+	c := &CollectionSettings{
+		settings: make(map[string]map[SettingKey]interface{}),
+	}
+	for _, m := range msg {
+		c.SetGarbageThreshold(m.Collection, m.VacuumGarbageThreshold)
+		c.SetReplicaPlacement(m.Collection, m.ReplicaPlacement)
+	}
+	return c
+}
+
+func (cs *CollectionSettings) ToPbMessage() []*weedpb.CollectionSetting {
+	msg := make([]*weedpb.CollectionSetting, 0, len(cs.settings))
+	for collection, m := range cs.settings {
+		setting := &weedpb.CollectionSetting{
+			Collection: collection,
+		}
+		if v, ok := m[keyReplicatePlacement]; ok {
+			setting.ReplicaPlacement = v.(*ReplicaPlacement).String()
+		}
+		if v, ok := m[keyGarbageThreshold]; ok {
+			setting.ReplicaPlacement = v.(string)
+		}
+		msg = append(msg, setting)
+	}
+	return msg
+}
+
 func (cs *CollectionSettings) get(collection string, key SettingKey) interface{} {
-	cs.mutex.RLock()
-	defer cs.mutex.RUnlock()
 	if m, ok := cs.settings[collection]; ok {
 		if v, ok := m[key]; ok {
 			return v
@@ -42,8 +67,6 @@ func (cs *CollectionSettings) get(collection string, key SettingKey) interface{}
 }
 
 func (cs *CollectionSettings) set(collection string, key SettingKey, value interface{}) {
-	cs.mutex.Lock()
-	defer cs.mutex.Unlock()
 	m := cs.settings[collection]
 	if m == nil {
 		m = make(map[SettingKey]interface{})
@@ -68,7 +91,12 @@ func (cs *CollectionSettings) SetGarbageThreshold(collection string, gt string) 
 }
 
 func (cs *CollectionSettings) GetReplicaPlacement(collection string) *ReplicaPlacement {
-	return cs.get(collection, keyReplicatePlacement).(*ReplicaPlacement)
+	v := cs.get(collection, keyReplicatePlacement)
+	if v == nil {
+		return nil
+	} else {
+		return v.(*ReplicaPlacement)
+	}
 }
 
 func (cs *CollectionSettings) SetReplicaPlacement(collection, t string) error {

@@ -8,7 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/go/storage"
 )
 
-func (t *Topology) StartRefreshWritableVolumes(garbageThreshold string) {
+func (t *Topology) StartRefreshWritableVolumes() {
 	go func() {
 		for {
 			if t.IsLeader() {
@@ -18,15 +18,15 @@ func (t *Topology) StartRefreshWritableVolumes(garbageThreshold string) {
 			time.Sleep(time.Duration(float32(t.pulse*1e3)*(1+rand.Float32())) * time.Millisecond)
 		}
 	}()
-	go func(garbageThreshold string) {
+	go func() {
 		c := time.Tick(15 * time.Minute)
 		if t.IsLeader() {
 			for range c {
-				t.Vacuum(garbageThreshold)
+				t.Vacuum("")
 				//				t.CheckReplicate()
 			}
 		}
-	}(garbageThreshold)
+	}()
 	go func() {
 		for {
 			select {

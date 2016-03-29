@@ -44,7 +44,7 @@ message JoinMessageV2 {
 message CollectionSetting {
     string collection = 1;
     string replica_placement = 2;
-//    float vacuum_garbage_threshold = 3;
+    string vacuum_garbage_threshold = 3;
 }
 
 message JoinResponse {

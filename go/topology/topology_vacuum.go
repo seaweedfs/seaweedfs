@@ -83,6 +83,10 @@ func (t *Topology) Vacuum(garbageThreshold string) int {
 	glog.V(0).Infoln("Start vacuum on demand")
 	for item := range t.collectionMap.IterItems() {
 		c := item.Value.(*Collection)
+		gcThreshold := garbageThreshold
+		if gcThreshold == "" {
+			gcThreshold = t.CollectionSettings.GetGarbageThreshold(c.Name)
+		}
 		glog.V(0).Infoln("vacuum on collection:", c.Name)
 		for item1 := range c.storageType2VolumeLayout.IterItems() {
 			if item1.Value == nil {
@@ -95,7 +99,7 @@ func (t *Topology) Vacuum(garbageThreshold string) int {
 					continue
 				}
 				glog.V(0).Infoln("vacuum on collection:", c.Name, "volume", vid)
-				if batchVacuumVolumeCheck(volumeLayout, vid, locationList, garbageThreshold) {
+				if batchVacuumVolumeCheck(volumeLayout, vid, locationList, gcThreshold) {
 					if batchVacuumVolumeCompact(volumeLayout, vid, locationList) {
 						batchVacuumVolumeCommit(volumeLayout, vid, locationList)
 					}
