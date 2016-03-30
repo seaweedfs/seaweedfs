@@ -106,19 +106,20 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []*storage.VolumeInfo) (deletedV
 	for _, v := range actualVolumes {
 		actualVolumeMap[v.Id] = v
 	}
+	dn.mutex.RLock()
 	for vid, v := range dn.volumes {
 		if _, ok := actualVolumeMap[vid]; !ok {
 			deletedVolumes = append(deletedVolumes, v)
 		}
 	}
-	dn.mutex.Lock()
+	dn.mutex.RUnlock()
+
 	for _, v := range deletedVolumes {
 		glog.V(0).Infoln("Deleting volume id:", v.Id)
 		dn.DeleteVolume(v.Id)
 		dn.UpAdjustVolumeCountDelta(-1)
 		dn.UpAdjustActiveVolumeCountDelta(-1)
 	}
-	dn.mutex.Unlock()
 
 	//TODO: adjust max volume id, if need to reclaim volume ids
 
