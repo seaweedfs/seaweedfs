@@ -27,7 +27,7 @@ type MasterNodes struct {
 }
 
 func (mn *MasterNodes) String() string {
-	return fmt.Sprintf("nodes:%v, master:%d", mn.nodes, mn.master)
+	return fmt.Sprintf("nodes:%v, master:%s", mn.nodes, mn.master)
 }
 
 func NewMasterNodes(bootstrapNode string) (mn *MasterNodes) {
