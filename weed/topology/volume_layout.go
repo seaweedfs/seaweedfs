@@ -115,7 +115,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (*s
 		vid := vl.writables[rand.Intn(len_writers)]
 		locationList := vl.vid2location[vid]
 		if locationList != nil {
-			return &vid, count, locationList, nil
+			return &vid, count, locationList.Duplicate(), nil
 		}
 		return nil, 0, nil, errors.New("Strangely vid " + vid.String() + " is on no machine!")
 	}
