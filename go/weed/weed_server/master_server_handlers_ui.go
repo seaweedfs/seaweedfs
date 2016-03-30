@@ -19,12 +19,12 @@ func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		Stats    map[string]interface{}
 		Counters *stats.ServerStats
 	}{
-		util.VERSION,
-		ms.Topo.ToMap(),
-		ms.Topo.GetRaftServer().Leader(),
-		ms.Topo.GetRaftServer().Peers(),
-		infos,
-		serverStats,
+		Version:  util.VERSION,
+		Topology: ms.Topo.ToMap(),
+		Leader:   ms.Topo.GetRaftServer().Leader(),
+		Peers:    ms.Topo.GetRaftServer().Peers(),
+		Stats:    infos,
+		Counters: serverStats,
 	}
 	ui.StatusTpl.Execute(w, args)
 }
