@@ -5,12 +5,10 @@ import (
 )
 
 func TestSuperBlockReadWrite(t *testing.T) {
-	rp, _ := NewReplicaPlacementFromByte(byte(001))
 	ttl, _ := ReadTTL("15d")
 	s := &SuperBlock{
-		version:          CurrentVersion,
-		ReplicaPlacement: rp,
-		Ttl:              ttl,
+		version: CurrentVersion,
+		Ttl:     ttl,
 	}
 
 	bytes := s.Bytes()

@@ -43,11 +43,11 @@ func (cs *CollectionSettings) ToPbMessage() []*weedpb.CollectionSetting {
 		setting := &weedpb.CollectionSetting{
 			Collection: collection,
 		}
-		if v, ok := m[keyReplicatePlacement]; ok {
+		if v, ok := m[keyReplicatePlacement]; ok && v != nil {
 			setting.ReplicaPlacement = v.(*ReplicaPlacement).String()
 		}
-		if v, ok := m[keyGarbageThreshold]; ok {
-			setting.ReplicaPlacement = v.(string)
+		if v, ok := m[keyGarbageThreshold]; ok && v != nil {
+			setting.VacuumGarbageThreshold = v.(string)
 		}
 		msg = append(msg, setting)
 	}
@@ -87,7 +87,12 @@ func (cs *CollectionSettings) GetGarbageThreshold(collection string) string {
 }
 
 func (cs *CollectionSettings) SetGarbageThreshold(collection string, gt string) {
-	cs.set(collection, keyGarbageThreshold, gt)
+	if gt == "" {
+		cs.set(collection, keyGarbageThreshold, nil)
+	} else {
+		cs.set(collection, keyGarbageThreshold, gt)
+
+	}
 }
 
 func (cs *CollectionSettings) GetReplicaPlacement(collection string) *ReplicaPlacement {
@@ -100,6 +105,10 @@ func (cs *CollectionSettings) GetReplicaPlacement(collection string) *ReplicaPla
 }
 
 func (cs *CollectionSettings) SetReplicaPlacement(collection, t string) error {
+	if t == "" {
+		cs.set(collection, keyReplicatePlacement, nil)
+		return nil
+	}
 	rp, e := NewReplicaPlacementFromString(t)
 	if e == nil {
 		cs.set(collection, keyReplicatePlacement, rp)
