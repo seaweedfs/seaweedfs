@@ -21,14 +21,7 @@ import (
 	"github.com/golang/protobuf/proto"
 )
 
-var serverStats *stats.ServerStats
 var startTime = time.Now()
-
-func init() {
-	serverStats = stats.NewServerStats()
-	go serverStats.Start()
-
-}
 
 func readObjRequest(r *http.Request, obj interface{}) error {
 	body, err := ioutil.ReadAll(r.Body)
@@ -189,7 +182,7 @@ func parseURLPath(path string) (vid, nid, filename, ext string, isVolumeIdOnly b
 func statsCounterHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
-	m["Counters"] = serverStats
+	m["Counters"] = stats.ServStats
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
 

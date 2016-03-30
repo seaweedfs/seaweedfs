@@ -32,7 +32,7 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		vs.store.Status(),
 		ds,
 		infos,
-		serverStats,
+		stats.ServStats,
 	}
 	ui.StatusTpl.Execute(w, args)
 }

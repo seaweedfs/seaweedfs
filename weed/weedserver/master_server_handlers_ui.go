@@ -24,7 +24,7 @@ func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		Leader:   ms.Topo.GetRaftServer().Leader(),
 		Peers:    ms.Topo.GetRaftServer().Peers(),
 		Stats:    infos,
-		Counters: serverStats,
+		Counters: stats.ServStats,
 	}
 	ui.StatusTpl.Execute(w, args)
 }
