@@ -1,9 +1,9 @@
 package storage
 
 import (
-	"testing"
-	"reflect"
 	"encoding/json"
+	"reflect"
+	"testing"
 )
 
 func TestCollectionSettings(t *testing.T) {
@@ -20,9 +20,9 @@ func TestCollectionSettings(t *testing.T) {
 		t.Fatal("Value incorrect.")
 	}
 	pb := cs1.ToPbMessage()
-	if buf, e := json.MarshalIndent(pb, "", "\t");e == nil {
+	if buf, e := json.MarshalIndent(pb, "", "\t"); e == nil {
 		t.Log(string(buf))
-	}else{
+	} else {
 		t.Fatal(e)
 	}
 	cs2 := NewCollectionSettingsFromPbMessage(pb)
