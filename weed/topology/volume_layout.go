@@ -139,7 +139,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (*s
 			}
 		}
 	}
-	return &vid, count, locationList, nil
+	return &vid, count, locationList.Duplicate(), nil
 }
 
 func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) int {
