@@ -36,7 +36,7 @@ func ConnectionOpen() {
 	ServStats.Connections.Add(NewTimedValue(time.Now(), 1))
 }
 func ConnectionClose() {
-	ServStats.Connections.Add(NewTimedValue(time.Now(), 1))
+	ServStats.Connections.Add(NewTimedValue(time.Now(), -1))
 }
 func RequestOpen() {
 	ServStats.Requests.Add(NewTimedValue(time.Now(), 1))
