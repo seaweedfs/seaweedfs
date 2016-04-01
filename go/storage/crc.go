@@ -2,7 +2,7 @@ package storage
 
 import (
 	"fmt"
-	"hash/crc32"
+	"github.com/klauspost/crc32"
 
 	"github.com/chrislusf/seaweedfs/go/util"
 )
