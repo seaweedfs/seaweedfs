@@ -1,7 +1,8 @@
 sudo: false
 language: go
-go: 
+go:
  - 1.5
+ - 1.6
  - tip
 
 before_install:
@@ -9,6 +10,6 @@ before_install:
 
 install:
  - go get ./go/...
- 
+
 script:
  - go test ./go/...
