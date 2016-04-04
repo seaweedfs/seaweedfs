@@ -132,10 +132,8 @@ func (n *NodeImpl) IsDataCenter() bool {
 	return n.nodeType == "DataCenter"
 }
 func (n *NodeImpl) String() string {
-	n.mutex.RLock()
-	defer n.mutex.RUnlock()
-	if n.parent != nil {
-		return n.parent.String() + ":" + string(n.id)
+	if n.Parent() != nil {
+		return n.Parent().String() + ":" + string(n.id)
 	}
 	return string(n.id)
 }

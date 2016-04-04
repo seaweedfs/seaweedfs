@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 	"net"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/storage"
 )
 
 type DataNode struct {
@@ -32,7 +33,13 @@ func NewDataNode(id string) *DataNode {
 func (dn *DataNode) String() string {
 	dn.mutex.RLock()
 	defer dn.mutex.RUnlock()
-	return fmt.Sprintf("Node:%s, volumes:%v, Ip:%s, Port:%d, PublicUrl:%s, Dead:%v", dn.NodeImpl.String(), dn.volumes, dn.Ip, dn.Port, dn.PublicUrl, dn.dead)
+	return fmt.Sprintf("Node:%s, volumes:%v, Ip:%s, Port:%d, PublicUrl:%s, Dead:%v",
+		dn.NodeImpl.String(),
+		dn.volumes,
+		dn.Ip,
+		dn.Port,
+		dn.PublicUrl,
+		dn.dead)
 }
 
 func (dn *DataNode) LastSeen() int64 {
