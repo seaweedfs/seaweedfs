@@ -13,7 +13,7 @@ import (
 func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) {
 	infos := make(map[string]interface{})
 	infos["Version"] = util.VERSION
-	infos["Up Time"] = time.Now().Sub(startTime).String()
+	infos["Up Time"] = util.FormatDuration(time.Now().Sub(startTime))
 	args := struct {
 		Version  string
 		Topology interface{}

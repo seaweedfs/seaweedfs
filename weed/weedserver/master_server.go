@@ -83,6 +83,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	r.HandleFunc("/stats/counter", ms.guard.WhiteList(statsCounterHandler))
 	r.HandleFunc("/stats/memory", ms.guard.WhiteList(statsMemoryHandler))
 	r.HandleFunc("/debug/pprof/", ms.guard.WhiteList(pprof.Index))
+	r.HandleFunc("/debug/pprof/trace", ms.guard.WhiteList(pprof.Trace))
 	r.HandleFunc("/debug/pprof/{name}", ms.guard.WhiteList(pprof.Index))
 
 	ms.Topo.StartRefreshWritableVolumes()

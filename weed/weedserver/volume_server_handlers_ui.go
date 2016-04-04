@@ -13,7 +13,7 @@ import (
 func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) {
 	infos := make(map[string]interface{})
 	infos["Version"] = util.VERSION
-	infos["Up Time"] = time.Now().Sub(startTime).String()
+	infos["Up Time"] = util.FormatDuration(time.Now().Sub(startTime))
 	var ds []*stats.DiskStatus
 	for _, loc := range vs.store.Locations {
 		if dir, e := filepath.Abs(loc.Directory); e == nil {
