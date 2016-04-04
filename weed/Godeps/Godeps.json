@@ -84,6 +84,11 @@
 			"Rev": "0637eae892be221164aff5fcbccc57171aea6406"
 		},
 		{
+			"ImportPath": "github.com/klauspost/crc32",
+			"Comment": "v1.0",
+			"Rev": "19b0b332c9e4516a6370a0456e6182c3b5036720"
+		},
+		{
 			"ImportPath": "github.com/pierrec/lz4",
 			"Rev": "0b67ae4bb1ab03691079e38dddbc3909d68de64f"
 		},

@@ -6,14 +6,11 @@ SOURCE_DIR = ./weed
 
 all: build
 
-.PHONY : clean deps build linux vet
+.PHONY : clean godep build linux vet
 
 clean:
 	go clean -i $(GO_FLAGS) $(SOURCE_DIR)
 	rm -f $(BINARY)
-
-deps:
-	go get $(GO_FLAGS) -d $(SOURCE_DIR)
 
 fmt:
 	gofmt -w -s $(SOURCE_DIR)
