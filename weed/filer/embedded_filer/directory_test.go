@@ -57,13 +57,13 @@ func TestDirectory(t *testing.T) {
 func printTree(node *DirectoryEntryInMap, path []string) {
 	println(strings.Join(path, "/") + "/" + node.Name)
 	path = append(path, node.Name)
-	for _, v := range node.SubDirectories {
+	for _, v := range node.subDirectories {
 		printTree(v, path)
 	}
 }
 
 func compare(root1 *DirectoryEntryInMap, root2 *DirectoryEntryInMap) bool {
-	if len(root1.SubDirectories) != len(root2.SubDirectories) {
+	if len(root1.subDirectories) != len(root2.subDirectories) {
 		return false
 	}
 	if root1.Name != root2.Name {
@@ -77,8 +77,8 @@ func compare(root1 *DirectoryEntryInMap, root2 *DirectoryEntryInMap) bool {
 			return false
 		}
 	}
-	for k, v := range root1.SubDirectories {
-		if !compare(v, root2.SubDirectories[k]) {
+	for k, v := range root1.subDirectories {
+		if !compare(v, root2.subDirectories[k]) {
 			return false
 		}
 	}
