@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"net/http/pprof"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
@@ -64,6 +66,8 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	adminMux.HandleFunc("/stats/counter", vs.guard.WhiteList(statsCounterHandler))
 	adminMux.HandleFunc("/stats/memory", vs.guard.WhiteList(statsMemoryHandler))
 	adminMux.HandleFunc("/stats/disk", vs.guard.WhiteList(vs.statsDiskHandler))
+	adminMux.HandleFunc("/debug/pprof/", vs.guard.WhiteList(pprof.Index))
+	adminMux.HandleFunc("/debug/pprof/{name}", vs.guard.WhiteList(pprof.Index))
 	adminMux.HandleFunc("/delete", vs.guard.WhiteList(vs.batchDeleteHandler))
 	adminMux.HandleFunc("/", vs.privateStoreHandler)
 	if publicMux != adminMux {

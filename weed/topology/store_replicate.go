@@ -50,6 +50,9 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 			_, err := operation.Upload(u,
 				string(needle.Name), bytes.NewReader(needle.Data), needle.IsGzipped(), string(needle.Mime),
 				jwt)
+			if err != nil {
+				glog.V(0).Infof("write replication to %s err, %v", u, err)
+			}
 			return err == nil
 		}
 		if !distributedOperation(masterNode, s, volumeId, repWrite) {
