@@ -61,9 +61,7 @@ type DirectoryManagerInMap struct {
 	isLoading bool
 }
 
-func (dm *DirectoryManagerInMap) NewDirectoryEntryInMap(parent *DirectoryEntryInMap, name string) (d *DirectoryEntryInMap, err error) {
-	writeLock.Lock()
-	defer writeLock.Unlock()
+func (dm *DirectoryManagerInMap) newDirectoryEntryInMap(parent *DirectoryEntryInMap, name string) (d *DirectoryEntryInMap, err error) {
 	d = &DirectoryEntryInMap{Name: name, Parent: parent, subDirectories: make(map[string]*DirectoryEntryInMap)}
 	var parts []string
 	for p := d; p != nil && p.Name != ""; p = p.Parent {
@@ -90,7 +88,7 @@ func (dm *DirectoryManagerInMap) log(words ...string) {
 
 func NewDirectoryManagerInMap(dirLogFile string) (dm *DirectoryManagerInMap, err error) {
 	dm = &DirectoryManagerInMap{}
-	//dm.Root do not use NewDirectoryEntryInMap, since dm.max will be changed
+	//dm.Root do not use newDirectoryEntryInMap, since dm.max will be changed
 	dm.Root = &DirectoryEntryInMap{subDirectories: make(map[string]*DirectoryEntryInMap)}
 	if dm.logFile, err = os.OpenFile(dirLogFile, os.O_RDWR|os.O_CREATE, 0644); err != nil {
 		return nil, fmt.Errorf("cannot write directory log file %s: %v", dirLogFile, err)
@@ -192,18 +190,28 @@ func (dm *DirectoryManagerInMap) loadDirectory(dirPath string, dirId filer.Direc
 	for i := 1; i < len(parts); i++ {
 		sub, ok := dir.getChild(parts[i])
 		if !ok {
-			if i != len(parts)-1 {
-				return fmt.Errorf("%s should be created after parent %s", dirPath, parts[i])
+			writeLock.Lock()
+			if sub2, createdByOtherThread := dir.getChild(parts[i]); createdByOtherThread {
+				sub = sub2
+			} else {
+				if i != len(parts)-1 {
+					writeLock.Unlock()
+					return fmt.Errorf("%s should be created after parent %s", dirPath, parts[i])
+				}
+				var err error
+				sub, err = dm.newDirectoryEntryInMap(dir, parts[i])
+				if err != nil {
+					writeLock.Unlock()
+					return err
+				}
+				if sub.Id != dirId {
+					writeLock.Unlock()
+					// the dir.log should be the same order as in-memory directory id
+					return fmt.Errorf("%s should be have id %v instead of %v", dirPath, sub.Id, dirId)
+				}
+				dir.addChild(parts[i], sub)
 			}
-			var err error
-			sub, err = dm.NewDirectoryEntryInMap(dir, parts[i])
-			if err != nil {
-				return err
-			}
-			if sub.Id != dirId {
-				return fmt.Errorf("%s should be have id %v instead of %v", dirPath, sub.Id, dirId)
-			}
-			dir.addChild(parts[i], sub)
+			writeLock.Unlock()
 		}
 		dir = sub
 	}
@@ -220,13 +228,20 @@ func (dm *DirectoryManagerInMap) makeDirectory(dirPath string) (dir *DirectoryEn
 	for i := 1; i < len(parts); i++ {
 		sub, ok := dir.getChild(parts[i])
 		if !ok {
-			var err error
-			sub, err = dm.NewDirectoryEntryInMap(dir, parts[i])
-			if err != nil {
-				return nil, false
+			writeLock.Lock()
+			if sub2, createdByOtherThread := dir.getChild(parts[i]); createdByOtherThread {
+				sub = sub2
+			} else {
+				var err error
+				sub, err = dm.newDirectoryEntryInMap(dir, parts[i])
+				if err != nil {
+					writeLock.Unlock()
+					return nil, false
+				}
+				dir.addChild(parts[i], sub)
+				created = true
 			}
-			dir.addChild(parts[i], sub)
-			created = true
+			writeLock.Unlock()
 		}
 		dir = sub
 	}
