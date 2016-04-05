@@ -39,7 +39,7 @@ func (l *DiskLocation) LoadExistingVolumes(needleMapKind NeedleMapType) {
 					if !l.HasVolume(vid) {
 						if v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil); e == nil {
 							l.AddVolume(vid, v)
-							glog.V(0).Infof("data file %s, v=%d size=%d ttl=%s", l.Directory+"/"+name, v.Version(), v.Size(), v.Ttl.String())
+							glog.V(1).Infof("data file %s, v=%d size=%d ttl=%s", l.Directory+"/"+name, v.Version(), v.Size(), v.Ttl.String())
 						} else {
 							glog.V(0).Infof("new volume %s error %s", name, e)
 						}

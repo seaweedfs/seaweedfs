@@ -111,17 +111,17 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 		switch needleMapKind {
 		case NeedleMapInMemory:
-			glog.V(0).Infoln("loading index file", fileName+".idx", "readonly", v.readOnly)
+			glog.V(1).Infoln("loading index file", fileName+".idx", "readonly", v.readOnly)
 			if v.nm, e = LoadNeedleMap(indexFile); e != nil {
 				glog.V(0).Infof("loading index %s error: %v", fileName+".idx", e)
 			}
 		case NeedleMapLevelDb:
-			glog.V(0).Infoln("loading leveldb file", fileName+".ldb")
+			glog.V(1).Infoln("loading leveldb file", fileName+".ldb")
 			if v.nm, e = NewLevelDbNeedleMap(fileName+".ldb", indexFile); e != nil {
 				glog.V(0).Infof("loading leveldb %s error: %v", fileName+".ldb", e)
 			}
 		case NeedleMapBoltDb:
-			glog.V(0).Infoln("loading boltdb file", fileName+".bdb")
+			glog.V(1).Infoln("loading boltdb file", fileName+".bdb")
 			if v.nm, e = NewBoltDbNeedleMap(fileName+".bdb", indexFile); e != nil {
 				glog.V(0).Infof("loading boltdb %s error: %v", fileName+".bdb", e)
 			}
