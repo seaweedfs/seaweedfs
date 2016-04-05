@@ -23,5 +23,5 @@ build: fmt
 	go build $(GO_FLAGS) -o $(OUT_DIR)/$(BINARY) $(SOURCE_DIR)
 
 linux:
-	mkdir -p $(OUT_DIR)
-	GOOS=linux GOARCH=amd64 go build $(GO_FLAGS) -o $(OUT_DIR)/$(BINARY)-linux-amd64 $(SOURCE_DIR)
+	mkdir -p $(OUT_DIR)/linux-amd64
+	GOOS=linux GOARCH=amd64 go build $(GO_FLAGS) -o $(OUT_DIR)/linux-amd64/$(BINARY) $(SOURCE_DIR)
