@@ -24,24 +24,37 @@ const (
 type MasterNodes struct {
 	nodes  []string
 	master string
-}
-
-func (mn *MasterNodes) String() string {
-	return fmt.Sprintf("nodes:%v, master:%s", mn.nodes, mn.master)
+	mutex  sync.RWMutex
 }
 
 func NewMasterNodes(bootstrapNode string) (mn *MasterNodes) {
 	mn = &MasterNodes{nodes: []string{bootstrapNode}}
 	return
 }
-func (mn *MasterNodes) reset() {
+
+func (mn *MasterNodes) String() string {
+	mn.mutex.RLock()
+	defer mn.mutex.RUnlock()
+	return fmt.Sprintf("nodes:%v, master:%s", mn.nodes, mn.master)
+}
+
+func (mn *MasterNodes) Reset() {
 	glog.V(4).Infof("Resetting master nodes: %v", mn)
+	mn.mutex.Lock()
+	defer mn.mutex.Unlock()
 	if len(mn.nodes) > 1 && mn.master != "" {
 		glog.V(0).Infof("Reset master %s from: %v", mn.master, mn.nodes)
 		mn.master = ""
 	}
 }
+
 func (mn *MasterNodes) findMaster() (string, error) {
+	master := mn.GetMaster()
+	if master != "" {
+		return master, nil
+	}
+	mn.mutex.Lock()
+	defer mn.mutex.Unlock()
 	if len(mn.nodes) == 0 {
 		return "", errors.New("No master node found!")
 	}
@@ -54,7 +67,7 @@ func (mn *MasterNodes) findMaster() (string, error) {
 				}
 				mn.nodes = append(masters, m)
 				mn.master = mn.nodes[rand.Intn(len(mn.nodes))]
-				glog.V(2).Infof("current master nodes is %v", mn)
+				glog.V(2).Infof("current master nodes is (nodes:%v, master:%s)", mn, mn.nodes, mn.master)
 				break
 			} else {
 				glog.V(4).Infof("Failed listing masters on %s: %v", m, e)
@@ -68,6 +81,8 @@ func (mn *MasterNodes) findMaster() (string, error) {
 }
 
 func (mn *MasterNodes) GetMaster() string {
+	mn.mutex.RLock()
+	defer mn.mutex.RUnlock()
 	return mn.master
 }
 
@@ -282,12 +297,12 @@ func (s *Store) SendHeartbeatToMaster(callback SettingChanged) error {
 	joinUrl := util.MkUrl(masterNode, "/dir/join2", nil)
 	glog.V(4).Infof("Sending heartbeat to %s ...", joinUrl)
 	if err = util.PostPbMsg(joinUrl, joinMsgV2, ret); err != nil {
-		s.masterNodes.reset()
+		s.masterNodes.Reset()
 		return err
 	}
 
 	if ret.Error != "" {
-		s.masterNodes.reset()
+		s.masterNodes.Reset()
 		return errors.New(ret.Error)
 	}
 	if ret.JoinKey != s.GetJoinKey() {
