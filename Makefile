@@ -1,7 +1,7 @@
 BINARY = weed
 OUT_DIR = bin
 
-GO_FLAGS = -race -v
+GO_FLAGS = #-race -v
 SOURCE_DIR = ./weed
 
 all: build
