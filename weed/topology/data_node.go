@@ -34,7 +34,7 @@ func (dn *DataNode) String() string {
 	dn.mutex.RLock()
 	defer dn.mutex.RUnlock()
 	return fmt.Sprintf("Node:%s, volumes:%v, Ip:%s, Port:%d, PublicUrl:%s, Dead:%v",
-		dn.NodeImpl.String(),
+		dn.NodeImpl.toString(),
 		dn.volumes,
 		dn.Ip,
 		dn.Port,

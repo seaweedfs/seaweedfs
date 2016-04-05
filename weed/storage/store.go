@@ -67,7 +67,7 @@ func (mn *MasterNodes) findMaster() (string, error) {
 				}
 				mn.nodes = append(masters, m)
 				mn.master = mn.nodes[rand.Intn(len(mn.nodes))]
-				glog.V(2).Infof("current master nodes is (nodes:%v, master:%s)", mn, mn.nodes, mn.master)
+				glog.V(2).Infof("current master nodes is (nodes:%v, master:%s)", mn.nodes, mn.master)
 				break
 			} else {
 				glog.V(4).Infof("Failed listing masters on %s: %v", m, e)

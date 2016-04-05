@@ -38,7 +38,13 @@ func NewVolume(dirname string, collection string, id VolumeId, needleMapKind Nee
 func (v *Volume) String() string {
 	v.mutex.RLock()
 	defer v.mutex.RUnlock()
-	return fmt.Sprintf("Id:%v, dir:%s, Collection:%s, dataFile:%v, nm:%v, readOnly:%v", v.Id, v.dir, v.Collection, v.dataFile, v.nm, v.readOnly)
+	return fmt.Sprintf("Id:%v, dir:%s, Collection:%s, dataFile:%v, nm:%v, readOnly:%v",
+		v.Id,
+		v.dir,
+		v.Collection,
+		v.dataFile,
+		v.nm,
+		v.readOnly)
 }
 
 func loadVolumeWithoutIndex(dirname string, collection string, id VolumeId, needleMapKind NeedleMapType) (v *Volume, e error) {
