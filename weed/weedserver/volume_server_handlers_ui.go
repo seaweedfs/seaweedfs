@@ -28,12 +28,12 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		Stats        interface{}
 		Counters     *stats.ServerStats
 	}{
-		util.VERSION,
-		vs.GetMasterNode(),
-		vs.store.Status(),
-		ds,
-		infos,
-		stats.ServStats,
+		Version:      util.VERSION,
+		Master:       vs.GetMasterNode(),
+		Volumes:      vs.store.Status(),
+		DiskStatuses: ds,
+		Stats:        infos,
+		Counters:     stats.ServStats,
 	}
 	ui.StatusTpl.Execute(w, args)
 }

@@ -119,6 +119,10 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
               <th>Last Minute # ReadRequests</th>
               <td><span class="inlinesparkline-second">{{ .Counters.ReadRequests.MinuteCounter.ToList | join }}</span></td>
             </tr>
+            <tr>
+              <th>Concurrent Connections</th>
+              <td>{{ .Counters.Connections.WeekCounter.Sum }}</td>
+            </tr>
           {{ range $key, $val := .Stats }}
             <tr>
               <th>{{ $key }}</th>
