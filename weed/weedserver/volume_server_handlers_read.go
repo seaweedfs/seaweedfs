@@ -299,7 +299,7 @@ func (vs *VolumeServer) readRemoteNeedle(vid string, n *storage.Needle, collecti
 	if err != nil || len(lookupResult.Locations) == 0 {
 		return 0, errors.New("lookup error:" + err.Error())
 	}
-	u, _ := url.Parse(util.NormalizeUrl(lookupResult.Locations.PickForRead().PublicUrl))
+	u, _ := url.Parse(util.NormalizeUrl(lookupResult.Locations.PickForRead().Url))
 	u.Path = "/admin/sync/needle"
 	args := url.Values{
 		"volume": {vid},
