@@ -7,11 +7,11 @@ import (
 func TestRemoveDataCenter(t *testing.T) {
 	topo := setup(topologyLayout)
 	topo.UnlinkChildNode(NodeId("dc2"))
-	if topo.GetActiveVolumeCount() != 15 {
+	if topo.GetActiveVolumeCount() != 18 {
 		t.Fail()
 	}
 	topo.UnlinkChildNode(NodeId("dc3"))
-	if topo.GetActiveVolumeCount() != 12 {
+	if topo.GetActiveVolumeCount() != 15 {
 		t.Fail()
 	}
 }
