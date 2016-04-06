@@ -1,0 +1,59 @@
+syntax = "proto3";
+package weedpb;
+
+
+message VolumeInformationMessage {
+    uint32 id = 1;
+    uint64 size = 2;
+    string collection = 3;
+    uint64 file_count = 4;
+    uint64 delete_count = 5;
+    uint64 deleted_byte_count = 6;
+    bool read_only = 7;
+    uint32 replica_placement = 8 [deprecated=true];
+    uint32 version = 9;
+    uint32 ttl = 10;
+}
+
+// deprecated
+message JoinMessage {
+    bool   is_init = 1;
+    string ip = 2;
+    uint32 port = 3;
+    string public_url = 4;
+    uint32 max_volume_count = 5;
+    uint64 max_file_key = 6;
+    string data_center = 7;
+    string rack = 8;
+    repeated VolumeInformationMessage volumes = 9;
+    uint32 admin_port = 10;
+}
+
+message JoinMessageV2 {
+    string join_key = 1; //if data node is init, set join key  empty
+    string ip = 2;
+    uint32 port = 3;
+    string public_url = 4;
+    uint32 max_volume_count = 5;
+    uint64 max_file_key = 6;
+    string data_center = 7;
+    string rack = 8;
+    repeated VolumeInformationMessage volumes = 9;
+}
+
+message CollectionSetting {
+    string collection = 1;
+    string replica_placement = 2;
+    string vacuum_garbage_threshold = 3;
+}
+
+message JoinResponse {
+    string error = 1;
+    string join_key = 2;
+    string join_ip = 3;
+    uint64 volume_size_limit = 4;
+    repeated CollectionSetting collection_settings = 5;
+    string secret_key = 6;
+}
+
+

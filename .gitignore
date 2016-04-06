@@ -1,4 +1,4 @@
-go/weed/.goxc*
+weed/weedcmd/.goxc*
 tags
 *.swp
 ### OSX template
@@ -75,3 +75,4 @@ crashlytics.properties
 crashlytics-build.properties
 
 test_data
+bin

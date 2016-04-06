@@ -1,7 +1,7 @@
 # SeaweedFS
 
 [![Build Status](https://travis-ci.org/chrislusf/seaweedfs.svg?branch=master)](https://travis-ci.org/chrislusf/seaweedfs)
-[![GoDoc](https://godoc.org/github.com/chrislusf/seaweedfs/go?status.svg)](https://godoc.org/github.com/chrislusf/seaweedfs/go)
+[![GoDoc](https://godoc.org/github.com/chrislusf/seaweedfs/weed?status.svg)](https://godoc.org/github.com/chrislusf/seaweedfs/weed)
 [![Wiki](https://img.shields.io/badge/docs-wiki-blue.svg)](https://github.com/chrislusf/seaweedfs/wiki)
 
 ![SeaweedFS Logo](https://raw.githubusercontent.com/chrislusf/seaweedfs/master/note/seaweedfs.png)
@@ -287,11 +287,11 @@ http://mercurial.selenic.com/downloads
 
 step 3: download, compile, and install the project by executing the following command
 
-go get github.com/chrislusf/seaweedfs/go/weed
+go get github.com/chrislusf/seaweedfs/weed
 
 once this is done, you should see the executable "weed" under $GOPATH/bin
 
-step 4: after you modify your code locally, you could start a local build by calling "go install" under $GOPATH/src/github.com/chrislusf/seaweedfs/go/weed
+step 4: after you modify your code locally, you could start a local build by calling "go install" under $GOPATH/src/github.com/chrislusf/seaweedfs/weed
 
 ## Disk Related topics ##
 

@@ -1,22 +1,27 @@
 BINARY = weed
+OUT_DIR = bin
 
-GO_FLAGS = #-v
-SOURCE_DIR = ./go/weed/
+GO_FLAGS = #-race -v
+SOURCE_DIR = ./weed
 
 all: build
 
-.PHONY : clean deps build linux
+.PHONY : clean godep build linux vet
 
 clean:
 	go clean -i $(GO_FLAGS) $(SOURCE_DIR)
 	rm -f $(BINARY)
 
-deps:
-	go get $(GO_FLAGS) -d $(SOURCE_DIR)
+fmt:
+	gofmt -w -s $(SOURCE_DIR)
 
-build: deps
-	go build $(GO_FLAGS) -o $(BINARY) $(SOURCE_DIR)
+vet:
+	go vet $(SOURCE_DIR)/...
 
-linux: deps
-	mkdir -p linux
-	GOOS=linux GOARCH=amd64 go build $(GO_FLAGS) -o linux/$(BINARY) $(SOURCE_DIR)
+build: fmt
+	mkdir -p $(OUT_DIR)
+	go build $(GO_FLAGS) -o $(OUT_DIR)/$(BINARY) $(SOURCE_DIR)
+
+linux:
+	mkdir -p $(OUT_DIR)/linux-amd64
+	GOOS=linux GOARCH=amd64 go build $(GO_FLAGS) -o $(OUT_DIR)/linux-amd64/$(BINARY) $(SOURCE_DIR)

@@ -8,9 +8,9 @@ import (
 	"path"
 	"strconv"
 
-	"github.com/chrislusf/seaweedfs/go/glog"
-	"github.com/chrislusf/seaweedfs/go/storage"
-	"github.com/chrislusf/seaweedfs/go/util"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 var (
