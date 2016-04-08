@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/images"
 	"github.com/chrislusf/seaweedfs/go/operation"
+	"github.com/chrislusf/seaweedfs/go/util"
 )
 
 const (
@@ -222,7 +222,7 @@ func ParseKeyHash(key_hash_string string) (uint64, uint32, error) {
 		glog.V(0).Infoln("Invalid key_hash", key_hash_string, "length:", key_hash_len, "error", khe)
 		return 0, 0, errors.New("Invalid key and hash:" + key_hash_string)
 	}
-	key := binary.BigEndian.Uint64(key_hash_bytes[0 : key_hash_len-4])
-	hash := binary.BigEndian.Uint32(key_hash_bytes[key_hash_len-4 : key_hash_len])
+	key := util.BytesToUint64(key_hash_bytes[0 : key_hash_len-4])
+	hash := util.BytesToUint32(key_hash_bytes[key_hash_len-4 : key_hash_len])
 	return key, hash, nil
 }

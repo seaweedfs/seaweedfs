@@ -1,12 +1,12 @@
 package storage
 
 import (
-	"encoding/binary"
 	"log"
 	"os"
 	"testing"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/util"
 )
 
 func TestMemoryUsage(t *testing.T) {
@@ -29,9 +29,9 @@ func LoadNewNeedleMap(file *os.File) CompactMap {
 	}
 	for count > 0 && e == nil {
 		for i := 0; i < count; i += 16 {
-			key := binary.BigEndian.Uint64(bytes[i : i+8])
-			offset := binary.BigEndian.Uint32(bytes[i+8 : i+12])
-			size := binary.BigEndian.Uint32(bytes[i+12 : i+16])
+			key := util.BytesToUint64(bytes[i : i+8])
+			offset := util.BytesToUint32(bytes[i+8 : i+12])
+			size := util.BytesToUint32(bytes[i+12 : i+16])
 			if offset > 0 {
 				m.Set(Key(key), offset, size)
 			} else {

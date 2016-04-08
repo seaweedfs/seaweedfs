@@ -1,10 +1,10 @@
 package storage
 
 import (
-	"encoding/binary"
 	"fmt"
-
 	"github.com/klauspost/crc32"
+
+	"github.com/chrislusf/seaweedfs/go/util"
 )
 
 var table = crc32.MakeTable(crc32.Castagnoli)
@@ -25,6 +25,6 @@ func (c CRC) Value() uint32 {
 
 func (n *Needle) Etag() string {
 	bits := make([]byte, 4)
-	binary.BigEndian.PutUint32(bits, uint32(n.Checksum))
+	util.Uint32toBytes(bits, uint32(n.Checksum))
 	return fmt.Sprintf("\"%x\"", bits)
 }

@@ -1,13 +1,13 @@
 package storage
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/util"
 )
 
 const (
@@ -43,11 +43,11 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 	switch version {
 	case Version1:
 		header := make([]byte, NeedleHeaderSize)
-		binary.BigEndian.PutUint32(header[0:4], n.Cookie)
-		binary.BigEndian.PutUint64(header[4:12], n.Id)
+		util.Uint32toBytes(header[0:4], n.Cookie)
+		util.Uint64toBytes(header[4:12], n.Id)
 		n.Size = uint32(len(n.Data))
 		size = n.Size
-		binary.BigEndian.PutUint32(header[12:16], n.Size)
+		util.Uint32toBytes(header[12:16], n.Size)
 		if _, err = w.Write(header); err != nil {
 			return
 		}
@@ -55,13 +55,13 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 			return
 		}
 		padding := NeedlePaddingSize - ((NeedleHeaderSize + n.Size + NeedleChecksumSize) % NeedlePaddingSize)
-		binary.BigEndian.PutUint32(header[0:NeedleChecksumSize], n.Checksum.Value())
+		util.Uint32toBytes(header[0:NeedleChecksumSize], n.Checksum.Value())
 		_, err = w.Write(header[0 : NeedleChecksumSize+padding])
 		return
 	case Version2:
 		header := make([]byte, NeedleHeaderSize)
-		binary.BigEndian.PutUint32(header[0:4], n.Cookie)
-		binary.BigEndian.PutUint64(header[4:12], n.Id)
+		util.Uint32toBytes(header[0:4], n.Cookie)
+		util.Uint64toBytes(header[4:12], n.Id)
 		n.DataSize, n.NameSize, n.MimeSize = uint32(len(n.Data)), uint8(len(n.Name)), uint8(len(n.Mime))
 		if n.DataSize > 0 {
 			n.Size = 4 + n.DataSize + 1
@@ -81,24 +81,24 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 			n.Size = 0
 		}
 		size = n.DataSize
-		binary.BigEndian.PutUint32(header[12:16], n.Size)
+		util.Uint32toBytes(header[12:16], n.Size)
 		if _, err = w.Write(header); err != nil {
 			return
 		}
 		if n.DataSize > 0 {
-			binary.BigEndian.PutUint32(header[0:4], n.DataSize)
+			util.Uint32toBytes(header[0:4], n.DataSize)
 			if _, err = w.Write(header[0:4]); err != nil {
 				return
 			}
 			if _, err = w.Write(n.Data); err != nil {
 				return
 			}
-			header[0] = n.Flags
+			util.Uint8toBytes(header[0:1], n.Flags)
 			if _, err = w.Write(header[0:1]); err != nil {
 				return
 			}
 			if n.HasName() {
-				header[0] = n.NameSize
+				util.Uint8toBytes(header[0:1], n.NameSize)
 				if _, err = w.Write(header[0:1]); err != nil {
 					return
 				}
@@ -107,7 +107,7 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 				}
 			}
 			if n.HasMime() {
-				header[0] = n.MimeSize
+				util.Uint8toBytes(header[0:1], n.MimeSize)
 				if _, err = w.Write(header[0:1]); err != nil {
 					return
 				}
@@ -116,7 +116,7 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 				}
 			}
 			if n.HasLastModifiedDate() {
-				binary.BigEndian.PutUint64(header[0:8], n.LastModified)
+				util.Uint64toBytes(header[0:8], n.LastModified)
 				if _, err = w.Write(header[8-LastModifiedBytesLength : 8]); err != nil {
 					return
 				}
@@ -129,7 +129,7 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 			}
 		}
 		padding := NeedlePaddingSize - ((NeedleHeaderSize + n.Size + NeedleChecksumSize) % NeedlePaddingSize)
-		binary.BigEndian.PutUint32(header[0:NeedleChecksumSize], n.Checksum.Value())
+		util.Uint32toBytes(header[0:NeedleChecksumSize], n.Checksum.Value())
 		_, err = w.Write(header[0 : NeedleChecksumSize+padding])
 		return n.DataSize, err
 	}
@@ -158,7 +158,7 @@ func (n *Needle) ReadData(r *os.File, offset int64, size uint32, version Version
 	case Version2:
 		n.readNeedleDataVersion2(bytes[NeedleHeaderSize : NeedleHeaderSize+int(n.Size)])
 	}
-	checksum := binary.BigEndian.Uint32(bytes[NeedleHeaderSize+size : NeedleHeaderSize+size+NeedleChecksumSize])
+	checksum := util.BytesToUint32(bytes[NeedleHeaderSize+size : NeedleHeaderSize+size+NeedleChecksumSize])
 	newChecksum := NewCRC(n.Data)
 	if checksum != newChecksum.Value() {
 		return errors.New("CRC error! Data On Disk Corrupted")
@@ -167,14 +167,14 @@ func (n *Needle) ReadData(r *os.File, offset int64, size uint32, version Version
 	return nil
 }
 func (n *Needle) ParseNeedleHeader(bytes []byte) {
-	n.Cookie = binary.BigEndian.Uint32(bytes[0:4])
-	n.Id = binary.BigEndian.Uint64(bytes[4:12])
-	n.Size = binary.BigEndian.Uint32(bytes[12:NeedleHeaderSize])
+	n.Cookie = util.BytesToUint32(bytes[0:4])
+	n.Id = util.BytesToUint64(bytes[4:12])
+	n.Size = util.BytesToUint32(bytes[12:NeedleHeaderSize])
 }
 func (n *Needle) readNeedleDataVersion2(bytes []byte) {
 	index, lenBytes := 0, len(bytes)
 	if index < lenBytes {
-		n.DataSize = binary.BigEndian.Uint32(bytes[index : index+4])
+		n.DataSize = util.BytesToUint32(bytes[index : index+4])
 		index = index + 4
 		if int(n.DataSize)+index > lenBytes {
 			// this if clause is due to bug #87 and #93, fixed in v0.69
@@ -199,7 +199,7 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) {
 		index = index + int(n.MimeSize)
 	}
 	if index < lenBytes && n.HasLastModifiedDate() {
-		n.LastModified = binary.BigEndian.Uint64(bytes[index : index+LastModifiedBytesLength])
+		n.LastModified = util.BytesToUint64(bytes[index : index+LastModifiedBytesLength])
 		index = index + LastModifiedBytesLength
 	}
 	if index < lenBytes && n.HasTtl() {

@@ -1,11 +1,11 @@
 package storage
 
 import (
-	"encoding/binary"
 	"fmt"
 	"os"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/util"
 )
 
 const (
@@ -35,7 +35,7 @@ func (s *SuperBlock) Bytes() []byte {
 	header[0] = byte(s.version)
 	header[1] = s.ReplicaPlacement.Byte()
 	s.Ttl.ToBytes(header[2:4])
-	binary.BigEndian.PutUint16(header[4:6], s.CompactRevision)
+	util.Uint16toBytes(header[4:6], s.CompactRevision)
 	return header
 }
 
@@ -76,6 +76,6 @@ func ParseSuperBlock(header []byte) (superBlock SuperBlock, err error) {
 		err = fmt.Errorf("cannot read replica type: %s", err.Error())
 	}
 	superBlock.Ttl = LoadTTLFromBytes(header[2:4])
-	superBlock.CompactRevision = binary.BigEndian.Uint16(header[4:6])
+	superBlock.CompactRevision = util.BytesToUint16(header[4:6])
 	return
 }

@@ -1,12 +1,13 @@
 package storage
 
 import (
-	"encoding/binary"
 	"fmt"
 	"os"
 
 	"github.com/boltdb/bolt"
+
 	"github.com/chrislusf/seaweedfs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/util"
 )
 
 type BoltDbNeedleMap struct {
@@ -74,7 +75,7 @@ func generateBoltDbFile(dbFileName string, indexFile *os.File) error {
 func (m *BoltDbNeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
 	bytes := make([]byte, 8)
 	var data []byte
-	binary.BigEndian.PutUint64(bytes, key)
+	util.Uint64toBytes(bytes, key)
 	err := m.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(boltdbBucket)
 		if bucket == nil {
@@ -88,8 +89,8 @@ func (m *BoltDbNeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
 	if err != nil || len(data) != 8 {
 		return nil, false
 	}
-	offset := binary.BigEndian.Uint32(data[0:4])
-	size := binary.BigEndian.Uint32(data[4:8])
+	offset := util.BytesToUint32(data[0:4])
+	size := util.BytesToUint32(data[4:8])
 	return &NeedleValue{Key: Key(key), Offset: offset, Size: size}, true
 }
 
@@ -109,9 +110,9 @@ func (m *BoltDbNeedleMap) Put(key uint64, offset uint32, size uint32) error {
 func boltDbWrite(db *bolt.DB,
 	key uint64, offset uint32, size uint32) error {
 	bytes := make([]byte, 16)
-	binary.BigEndian.PutUint64(bytes[0:8], key)
-	binary.BigEndian.PutUint32(bytes[8:12], offset)
-	binary.BigEndian.PutUint32(bytes[12:16], size)
+	util.Uint64toBytes(bytes[0:8], key)
+	util.Uint32toBytes(bytes[8:12], offset)
+	util.Uint32toBytes(bytes[12:16], size)
 	return db.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists(boltdbBucket)
 		if err != nil {
@@ -127,7 +128,7 @@ func boltDbWrite(db *bolt.DB,
 }
 func boltDbDelete(db *bolt.DB, key uint64) error {
 	bytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(bytes, key)
+	util.Uint64toBytes(bytes, key)
 	return db.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists(boltdbBucket)
 		if err != nil {

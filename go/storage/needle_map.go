@@ -1,11 +1,12 @@
 package storage
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"sync"
+
+	"github.com/chrislusf/seaweedfs/go/util"
 )
 
 type NeedleMapType int
@@ -52,16 +53,16 @@ func (nm baseNeedleMapper) IndexFileName() string {
 }
 
 func idxFileEntry(bytes []byte) (key uint64, offset uint32, size uint32) {
-	key = binary.BigEndian.Uint64(bytes[:8])
-	offset = binary.BigEndian.Uint32(bytes[8:12])
-	size = binary.BigEndian.Uint32(bytes[12:16])
+	key = util.BytesToUint64(bytes[:8])
+	offset = util.BytesToUint32(bytes[8:12])
+	size = util.BytesToUint32(bytes[12:16])
 	return
 }
 func (nm baseNeedleMapper) appendToIndexFile(key uint64, offset uint32, size uint32) error {
 	bytes := make([]byte, 16)
-	binary.BigEndian.PutUint64(bytes[0:8], key)
-	binary.BigEndian.PutUint32(bytes[8:12], offset)
-	binary.BigEndian.PutUint32(bytes[12:16], size)
+	util.Uint64toBytes(bytes[0:8], key)
+	util.Uint32toBytes(bytes[8:12], offset)
+	util.Uint32toBytes(bytes[12:16], size)
 
 	nm.indexFileAccessLock.Lock()
 	defer nm.indexFileAccessLock.Unlock()
