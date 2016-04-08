@@ -238,7 +238,8 @@ func (n *Needle) ReadNeedleBody(r *os.File, version Version, offset int64, bodyL
 		}
 		n.Data = bytes[:n.Size]
 		n.Checksum = NewCRC(n.Data)
-		checksum := util.BytesToUint32(bytes[n.Size : n.Size+NeedleChecksumSize])
+		checksum := binary.BigEndian.Uint32(bytes[n.Size : n.Size+NeedleChecksumSize])
+
 		if n.Checksum.Value() != checksum {
 			glog.V(0).Infof("CRC error! Data On Disk Corrupted, needle id = %x", n.Id)
 		}
@@ -252,7 +253,7 @@ func (n *Needle) ReadNeedleBody(r *os.File, version Version, offset int64, bodyL
 			return
 		}
 		n.Checksum = NewCRC(n.Data)
-		checksum := util.BytesToUint32(bytes[n.Size : n.Size+NeedleChecksumSize])
+		checksum := binary.BigEndian.Uint32(bytes[n.Size : n.Size+NeedleChecksumSize])
 		if n.Checksum.Value() != checksum {
 			glog.V(0).Infof("CRC error! Data On Disk Corrupted, needle id = %x", n.Id)
 		}

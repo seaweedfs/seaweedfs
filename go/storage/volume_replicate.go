@@ -6,7 +6,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/chrislusf/seaweedfs/go/util"
+	"encoding/binary"
 )
 
 type DirtyData struct {
@@ -39,9 +39,9 @@ func ScanDirtyData(indexFileContent []byte) (dirtys DirtyDatas) {
 	m := NewCompactMap()
 	for i := 0; i+16 <= len(indexFileContent); i += 16 {
 		bytes := indexFileContent[i : i+16]
-		key := util.BytesToUint64(bytes[:8])
-		offset := util.BytesToUint32(bytes[8:12])
-		size := util.BytesToUint32(bytes[12:16])
+		key := binary.BigEndian.Uint64(bytes[:8])
+		offset := binary.BigEndian.Uint32(bytes[8:12])
+		size := binary.BigEndian.Uint32(bytes[12:16])
 		k := Key(key)
 		if offset != 0 && size != 0 {
 			m.Set(k, offset, size)
