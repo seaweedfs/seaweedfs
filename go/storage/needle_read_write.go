@@ -238,13 +238,25 @@ func (n *Needle) ReadNeedleBody(r *os.File, version Version, offset int64, bodyL
 		}
 		n.Data = bytes[:n.Size]
 		n.Checksum = NewCRC(n.Data)
+		checksum := binary.BigEndian.Uint32(bytes[n.Size : n.Size+NeedleChecksumSize])
+
+		if n.Checksum.Value() != checksum {
+			glog.V(0).Infof("CRC error! Data On Disk Corrupted, needle id = %x", n.Id)
+		}
 	case Version2:
 		bytes := make([]byte, bodyLength)
 		if _, err = r.ReadAt(bytes, offset); err != nil {
 			return
 		}
 		n.readNeedleDataVersion2(bytes[0:n.Size])
+		if n.DataSize == 0 {
+			return
+		}
 		n.Checksum = NewCRC(n.Data)
+		checksum := binary.BigEndian.Uint32(bytes[n.Size : n.Size+NeedleChecksumSize])
+		if n.Checksum.Value() != checksum {
+			glog.V(0).Infof("CRC error! Data On Disk Corrupted, needle id = %x", n.Id)
+		}
 	default:
 		err = fmt.Errorf("Unsupported Version! (%d)", version)
 	}
