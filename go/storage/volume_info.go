@@ -2,8 +2,9 @@ package storage
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/go/operation"
 	"sort"
+
+	"github.com/chrislusf/seaweedfs/go/operation"
 )
 
 type VolumeInfo struct {

@@ -202,6 +202,9 @@ func (v *Volume) fetchNeedle(volumeDataContentHandlerUrl string,
 		if err != nil {
 			return fmt.Errorf("Reading from %s error: %v", volumeDataContentHandlerUrl, err)
 		}
+		if needleValue.Size != uint32(len(b)) {
+			return fmt.Errorf("Reading from %s error: size incorrect", volumeDataContentHandlerUrl)
+		}
 		offset, err := v.AppendBlob(b)
 		if err != nil {
 			return fmt.Errorf("Appending volume %d error: %v", v.Id, err)

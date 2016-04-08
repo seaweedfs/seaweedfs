@@ -20,3 +20,6 @@ build: deps
 linux: deps
 	mkdir -p linux
 	GOOS=linux GOARCH=amd64 go build $(GO_FLAGS) -o linux/$(BINARY) $(SOURCE_DIR)
+
+imports:
+	goimports -w $(SOURCE_DIR)
