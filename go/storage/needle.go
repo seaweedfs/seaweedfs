@@ -218,7 +218,7 @@ func ParseKeyHash(key_hash_string string) (uint64, uint32, error) {
 	}
 	key_hash_bytes, khe := hex.DecodeString(key_hash_string)
 	key_hash_len := len(key_hash_bytes)
-	if khe != nil || key_hash_len <= 4 {
+	if khe != nil || key_hash_len <= 4 || key_hash_len > 12 {
 		glog.V(0).Infoln("Invalid key_hash", key_hash_string, "length:", key_hash_len, "error", khe)
 		return 0, 0, errors.New("Invalid key and hash:" + key_hash_string)
 	}
