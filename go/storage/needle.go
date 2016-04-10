@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -15,7 +14,6 @@ import (
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/images"
 	"github.com/chrislusf/seaweedfs/go/operation"
-	"github.com/chrislusf/seaweedfs/go/util"
 )
 
 const (
@@ -213,16 +211,25 @@ func (n *Needle) ParsePath(fid string) (err error) {
 }
 
 func ParseKeyHash(key_hash_string string) (uint64, uint32, error) {
-	if len(key_hash_string)%2 == 1 {
-		key_hash_string = "0" + key_hash_string
-	}
-	key_hash_bytes, khe := hex.DecodeString(key_hash_string)
-	key_hash_len := len(key_hash_bytes)
-	if khe != nil || key_hash_len <= 4 || key_hash_len > 12 {
-		glog.V(0).Infoln("Invalid key_hash", key_hash_string, "length:", key_hash_len, "error", khe)
+	key, hash, ok := parseKeyHash(key_hash_string)
+	if !ok {
 		return 0, 0, errors.New("Invalid key and hash:" + key_hash_string)
 	}
-	key := util.BytesToUint64(key_hash_bytes[0 : key_hash_len-4])
-	hash := util.BytesToUint32(key_hash_bytes[key_hash_len-4 : key_hash_len])
 	return key, hash, nil
+}
+
+func parseKeyHash(keyhash string) (uint64, uint32, bool) {
+	if len(keyhash) <= 8 || len(keyhash) > 24 {
+		return 0, 0, false
+	}
+	split := len(keyhash) - 8
+	key, err := strconv.ParseUint(keyhash[:split], 16, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	hash, err := strconv.ParseUint(keyhash[split:], 16, 32)
+	if err != nil {
+		return 0, 0, false
+	}
+	return key, uint32(hash), true
 }
