@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"mime"
@@ -189,7 +188,7 @@ func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
 func (n *Needle) ParsePath(fid string) (err error) {
 	length := len(fid)
 	if length <= 8 {
-		return errors.New("Invalid fid:" + fid)
+		return fmt.Errorf("Invalid fid: %s", fid)
 	}
 	delta := ""
 	deltaIndex := strings.LastIndex(fid, "_")
@@ -211,25 +210,20 @@ func (n *Needle) ParsePath(fid string) (err error) {
 }
 
 func ParseKeyHash(key_hash_string string) (uint64, uint32, error) {
-	key, hash, ok := parseKeyHash(key_hash_string)
-	if !ok {
-		return 0, 0, errors.New("Invalid key and hash:" + key_hash_string)
+	if len(key_hash_string) <= 8 {
+		return 0, 0, fmt.Errorf("KeyHash is too short.")
 	}
-	return key, hash, nil
-}
-
-func parseKeyHash(keyhash string) (uint64, uint32, bool) {
-	if len(keyhash) <= 8 || len(keyhash) > 24 {
-		return 0, 0, false
+	if len(key_hash_string) > 24 {
+		return 0, 0, fmt.Errorf("KeyHash is too long.")
 	}
-	split := len(keyhash) - 8
-	key, err := strconv.ParseUint(keyhash[:split], 16, 64)
+	split := len(key_hash_string) - 8
+	key, err := strconv.ParseUint(key_hash_string[:split], 16, 64)
 	if err != nil {
-		return 0, 0, false
+		return 0, 0, fmt.Errorf("Parse key error: %v", err)
 	}
-	hash, err := strconv.ParseUint(keyhash[split:], 16, 32)
+	hash, err := strconv.ParseUint(key_hash_string[split:], 16, 32)
 	if err != nil {
-		return 0, 0, false
+		return 0, 0, fmt.Errorf("Parse hash error: %v", err)
 	}
-	return key, uint32(hash), true
+	return key, uint32(hash), nil
 }
