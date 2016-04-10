@@ -1,7 +1,6 @@
 package operation
 
 import (
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -43,9 +42,9 @@ func GetVolumeIdxEntries(server string, vid string, eachEntryFn func(key uint64,
 	values.Add("volume", vid)
 	line := make([]byte, 16)
 	err := util.GetBufferStream("http://"+server+"/admin/sync/index", values, line, func(bytes []byte) {
-		key := binary.BigEndian.Uint64(bytes[:8])
-		offset := binary.BigEndian.Uint32(bytes[8:12])
-		size := binary.BigEndian.Uint32(bytes[12:16])
+		key := util.BytesToUint64(bytes[:8])
+		offset := util.BytesToUint32(bytes[8:12])
+		size := util.BytesToUint32(bytes[12:16])
 		eachEntryFn(key, offset, size)
 	})
 	if err != nil {

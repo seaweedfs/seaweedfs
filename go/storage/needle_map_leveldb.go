@@ -1,12 +1,12 @@
 package storage
 
 import (
-	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
+	"github.com/chrislusf/seaweedfs/go/util"
 	"github.com/syndtr/goleveldb/leveldb"
 )
 
@@ -72,13 +72,13 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 
 func (m *LevelDbNeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
 	bytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(bytes, key)
+	util.Uint64toBytes(bytes, key)
 	data, err := m.db.Get(bytes, nil)
 	if err != nil || len(data) != 8 {
 		return nil, false
 	}
-	offset := binary.BigEndian.Uint32(data[0:4])
-	size := binary.BigEndian.Uint32(data[4:8])
+	offset := util.BytesToUint32(data[0:4])
+	size := util.BytesToUint32(data[4:8])
 	return &NeedleValue{Key: Key(key), Offset: offset, Size: size}, true
 }
 
@@ -98,9 +98,9 @@ func (m *LevelDbNeedleMap) Put(key uint64, offset uint32, size uint32) error {
 func levelDbWrite(db *leveldb.DB,
 	key uint64, offset uint32, size uint32) error {
 	bytes := make([]byte, 16)
-	binary.BigEndian.PutUint64(bytes[0:8], key)
-	binary.BigEndian.PutUint32(bytes[8:12], offset)
-	binary.BigEndian.PutUint32(bytes[12:16], size)
+	util.Uint64toBytes(bytes[0:8], key)
+	util.Uint32toBytes(bytes[8:12], offset)
+	util.Uint32toBytes(bytes[12:16], size)
 	if err := db.Put(bytes[0:8], bytes[8:16], nil); err != nil {
 		return fmt.Errorf("failed to write leveldb: %v", err)
 	}
@@ -108,7 +108,7 @@ func levelDbWrite(db *leveldb.DB,
 }
 func levelDbDelete(db *leveldb.DB, key uint64) error {
 	bytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(bytes, key)
+	util.Uint64toBytes(bytes, key)
 	return db.Delete(bytes, nil)
 }
 
