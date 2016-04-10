@@ -39,7 +39,7 @@ type baseNeedleMapper struct {
 	mapMetric
 }
 
-func (nm baseNeedleMapper) IndexFileSize() uint64 {
+func (nm *baseNeedleMapper) IndexFileSize() uint64 {
 	stat, err := nm.indexFile.Stat()
 	if err == nil {
 		return uint64(stat.Size())
@@ -47,7 +47,7 @@ func (nm baseNeedleMapper) IndexFileSize() uint64 {
 	return 0
 }
 
-func (nm baseNeedleMapper) IndexFileName() string {
+func (nm *baseNeedleMapper) IndexFileName() string {
 	return nm.indexFile.Name()
 }
 
@@ -57,7 +57,7 @@ func idxFileEntry(bytes []byte) (key uint64, offset uint32, size uint32) {
 	size = binary.BigEndian.Uint32(bytes[12:16])
 	return
 }
-func (nm baseNeedleMapper) appendToIndexFile(key uint64, offset uint32, size uint32) error {
+func (nm *baseNeedleMapper) appendToIndexFile(key uint64, offset uint32, size uint32) error {
 	bytes := make([]byte, 16)
 	binary.BigEndian.PutUint64(bytes[0:8], key)
 	binary.BigEndian.PutUint32(bytes[8:12], offset)
@@ -72,7 +72,7 @@ func (nm baseNeedleMapper) appendToIndexFile(key uint64, offset uint32, size uin
 	_, err := nm.indexFile.Write(bytes)
 	return err
 }
-func (nm baseNeedleMapper) IndexFileContent() ([]byte, error) {
+func (nm *baseNeedleMapper) IndexFileContent() ([]byte, error) {
 	nm.indexFileAccessLock.Lock()
 	defer nm.indexFileAccessLock.Unlock()
 	return ioutil.ReadFile(nm.indexFile.Name())
