@@ -8,7 +8,6 @@ import (
 // initialize the map entries.
 type ConcurrentReadMap struct {
 	rmutex sync.RWMutex
-	mutex  sync.Mutex
 	Items  map[string]interface{}
 }
 
@@ -17,8 +16,8 @@ func NewConcurrentReadMap() *ConcurrentReadMap {
 }
 
 func (m *ConcurrentReadMap) initMapEntry(key string, newEntry func() interface{}) (value interface{}) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+	m.rmutex.Lock()
+	defer m.rmutex.Unlock()
 	if value, ok := m.Items[key]; ok {
 		return value
 	}
