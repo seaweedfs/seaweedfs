@@ -211,8 +211,8 @@ func (n *NodeImpl) LinkChildNode(node Node) {
 
 func (n *NodeImpl) UnlinkChildNode(nodeId NodeId) {
 	node := n.children[nodeId]
-	node.SetParent(nil)
 	if node != nil {
+		node.SetParent(nil)
 		delete(n.children, node.Id())
 		n.UpAdjustVolumeCountDelta(-node.GetVolumeCount())
 		n.UpAdjustActiveVolumeCountDelta(-node.GetActiveVolumeCount())
