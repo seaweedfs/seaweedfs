@@ -140,6 +140,18 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+func (vs *VolumeServer) FaviconHandler(w http.ResponseWriter, r *http.Request) {
+	data, err := images.Asset("favicon/favicon.ico")
+	if err != nil {
+	    glog.V(2).Infoln("favicon read error:", err)
+	    return
+	}
+
+	if e := writeResponseContent("favicon.ico", "image/x-icon", bytes.NewReader(data), w, r); e != nil {
+		glog.V(2).Infoln("response write error:", e)
+	}
+}
+
 func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string, w http.ResponseWriter, r *http.Request) (processed bool) {
 	if !n.IsChunkedManifest() {
 		return false
