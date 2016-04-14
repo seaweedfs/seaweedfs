@@ -64,6 +64,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	adminMux.HandleFunc("/", vs.privateStoreHandler)
 	if publicMux != adminMux {
 		// separated admin and public port
+		publicMux.HandleFunc("/favicon.ico", vs.faviconHandler)
 		publicMux.HandleFunc("/", vs.publicReadOnlyHandler)
 	}
 
