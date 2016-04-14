@@ -20,7 +20,8 @@ func OnInterrupt(fn func()) {
 		// syscall.SIGHUP,
 		syscall.SIGINT,
 		syscall.SIGTERM,
-		syscall.SIGQUIT)
+		// syscall.SIGQUIT,
+	)
 	go func() {
 		for _ = range signalChan {
 			fn()

@@ -13,6 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/images"
 	"github.com/chrislusf/seaweedfs/go/operation"
+	"github.com/chrislusf/seaweedfs/go/util"
 )
 
 const (
@@ -21,6 +22,14 @@ const (
 	NeedleChecksumSize    = 4
 	MaxPossibleVolumeSize = 4 * 1024 * 1024 * 1024 * 8
 )
+
+var (
+	BYTESPOOL *util.BytesPool
+)
+
+func init() {
+	BYTESPOOL = util.NewBytesPool()
+}
 
 /*
 * A Needle means a uploaded and stored file.
@@ -43,6 +52,8 @@ type Needle struct {
 
 	Checksum CRC    `comment:"CRC32 to check integrity"`
 	Padding  []byte `comment:"Aligned to 8 bytes"`
+
+	rawBytes []byte // underlying supporing []byte, fetched and released into a pool
 }
 
 func (n *Needle) String() (str string) {

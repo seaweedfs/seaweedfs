@@ -55,7 +55,9 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	cookie := n.Cookie
 
-	if _, ok := vs.store.ReadVolumeNeedle(volumeId, n); ok != nil {
+	_, ok := vs.store.ReadVolumeNeedle(volumeId, n)
+	defer n.ReleaseMemory()
+	if ok != nil {
 		m := make(map[string]uint32)
 		m["size"] = 0
 		writeJsonQuiet(w, r, http.StatusNotFound, m)
@@ -120,6 +122,7 @@ func (vs *VolumeServer) batchDeleteHandler(w http.ResponseWriter, r *http.Reques
 				Status: http.StatusNotFound,
 				Error:  err.Error(),
 			})
+			n.ReleaseMemory()
 			continue
 		}
 
@@ -129,6 +132,7 @@ func (vs *VolumeServer) batchDeleteHandler(w http.ResponseWriter, r *http.Reques
 				Status: http.StatusNotAcceptable,
 				Error:  "ChunkManifest: not allowed in batch delete mode.",
 			})
+			n.ReleaseMemory()
 			continue
 		}
 
@@ -139,6 +143,7 @@ func (vs *VolumeServer) batchDeleteHandler(w http.ResponseWriter, r *http.Reques
 				Error:  "File Random Cookie does not match.",
 			})
 			glog.V(0).Infoln("deleting", fid, "with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
+			n.ReleaseMemory()
 			return
 		}
 		if size, err := vs.store.Delete(volumeId, n); err != nil {
@@ -154,6 +159,7 @@ func (vs *VolumeServer) batchDeleteHandler(w http.ResponseWriter, r *http.Reques
 				Size:   int(size)},
 			)
 		}
+		n.ReleaseMemory()
 	}
 
 	writeJsonQuiet(w, r, http.StatusAccepted, ret)
