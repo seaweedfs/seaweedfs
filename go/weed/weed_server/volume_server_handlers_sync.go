@@ -50,8 +50,8 @@ func (vs *VolumeServer) getVolumeDataContentHandler(w http.ResponseWriter, r *ht
 	}
 	offset := uint32(util.ParseUint64(r.FormValue("offset"), 0))
 	size := uint32(util.ParseUint64(r.FormValue("size"), 0))
-	content, rawBytes, err := storage.ReadNeedleBlob(v.DataFile(), int64(offset)*storage.NeedlePaddingSize, size)
-	defer storage.ReleaseBytes(rawBytes)
+	content, block, err := storage.ReadNeedleBlob(v.DataFile(), int64(offset)*storage.NeedlePaddingSize, size)
+	defer storage.ReleaseBytes(block.Bytes)
 	if err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return

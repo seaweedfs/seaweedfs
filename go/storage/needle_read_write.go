@@ -136,33 +136,20 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 	return 0, fmt.Errorf("Unsupported Version! (%d)", version)
 }
 
-func ReleaseBytes(b []byte) {
-	// println("Releasing", len(b))
-	BYTESPOOL.Put(b)
-}
-
-func BorrwoBytes(size int) []byte {
-	ret := BYTESPOOL.Get(size)
-	// println("Reading", len(ret))
-	return ret
-}
-
-func ReadNeedleBlob(r *os.File, offset int64, size uint32) (dataSlice, rawBytes []byte, err error) {
+func ReadNeedleBlob(r *os.File, offset int64, size uint32) (dataSlice []byte, block *Block, err error) {
 	padding := NeedlePaddingSize - ((NeedleHeaderSize + size + NeedleChecksumSize) % NeedlePaddingSize)
 	readSize := NeedleHeaderSize + size + NeedleChecksumSize + padding
-	rawBytes = BorrwoBytes(int(readSize))
-	dataSlice = rawBytes[0:int(readSize)]
-	_, err = r.ReadAt(dataSlice, offset)
-	return
-}
-
-func (n *Needle) ReleaseMemory() {
-	ReleaseBytes(n.rawBytes)
+	block, isNew := getBytesForFileBlock(r, offset, int(readSize))
+	dataSlice = block.Bytes[0:int(readSize)]
+	if isNew {
+		_, err = r.ReadAt(dataSlice, offset)
+	}
+	return dataSlice, block, err
 }
 
 func (n *Needle) ReadData(r *os.File, offset int64, size uint32, version Version) (err error) {
-	bytes, rawBytes, err := ReadNeedleBlob(r, offset, size)
-	n.rawBytes = rawBytes
+	bytes, block, err := ReadNeedleBlob(r, offset, size)
+	n.rawBlock = block
 	if err != nil {
 		return err
 	}
