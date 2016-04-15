@@ -20,11 +20,11 @@ There are one level of caching, and one level of pooling.
 
 In pooling, all []byte are fetched and returned to the pool bytesPool.
 
-In caching, the string~[]byte mapping is cached, to
+In caching, the string~[]byte mapping is cached
 */
 func init() {
 	bytesPool = util.NewBytesPool()
-	bytesCache, _ = lru.NewWithEvict(1, func(key interface{}, value interface{}) {
+	bytesCache, _ = lru.NewWithEvict(512, func(key interface{}, value interface{}) {
 		value.(*Block).decreaseReference()
 	})
 }
