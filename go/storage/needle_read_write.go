@@ -139,12 +139,7 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 func ReadNeedleBlob(r *os.File, offset int64, size uint32) (dataSlice []byte, block *Block, err error) {
 	padding := NeedlePaddingSize - ((NeedleHeaderSize + size + NeedleChecksumSize) % NeedlePaddingSize)
 	readSize := NeedleHeaderSize + size + NeedleChecksumSize + padding
-	block, isNew := getBytesForFileBlock(r, offset, int(readSize))
-	dataSlice = block.Bytes[0:int(readSize)]
-	if isNew {
-		_, err = r.ReadAt(dataSlice, offset)
-	}
-	return dataSlice, block, err
+	return getBytesForFileBlock(r, offset, int(readSize))
 }
 
 func (n *Needle) ReadData(r *os.File, offset int64, size uint32, version Version) (err error) {

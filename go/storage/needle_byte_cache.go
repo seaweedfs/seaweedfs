@@ -45,21 +45,24 @@ func (block *Block) increaseReference() {
 
 // get bytes from the LRU cache of []byte first, then from the bytes pool
 // when []byte in LRU cache is evicted, it will be put back to the bytes pool
-func getBytesForFileBlock(r *os.File, offset int64, readSize int) (block *Block, isNew bool) {
+func getBytesForFileBlock(r *os.File, offset int64, readSize int) (dataSlice []byte, block *Block, err error) {
 	// check cache, return if found
 	cacheKey := fmt.Sprintf("%d:%d:%d", r.Fd(), offset>>3, readSize)
 	if obj, found := bytesCache.Get(cacheKey); found {
 		block = obj.(*Block)
 		block.increaseReference()
-		return block, false
+		dataSlice = block.Bytes[0:readSize]
+		return dataSlice, block, nil
 	}
 
 	// get the []byte from pool
 	b := bytesPool.Get(readSize)
 	// refCount = 2, one by the bytesCache, one by the actual needle object
 	block = &Block{Bytes: b, refCount: 2}
+	dataSlice = block.Bytes[0:readSize]
+	_, err = r.ReadAt(dataSlice, offset)
 	bytesCache.Add(cacheKey, block)
-	return block, true
+	return dataSlice, block, err
 }
 
 func (n *Needle) ReleaseMemory() {
