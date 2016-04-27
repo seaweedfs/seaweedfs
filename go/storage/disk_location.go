@@ -13,10 +13,14 @@ type DiskLocation struct {
 	volumes        map[VolumeId]*Volume
 }
 
-func (mn *DiskLocation) reset() {
+func NewDiskLocation(dir string, maxVolumeCount int) *DiskLocation {
+	location := &DiskLocation{Directory: dir, MaxVolumeCount: maxVolumeCount}
+	location.volumes = make(map[VolumeId]*Volume)
+	return location
 }
 
 func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
+
 	if dirs, err := ioutil.ReadDir(l.Directory); err == nil {
 		for _, dir := range dirs {
 			name := dir.Name()
@@ -41,4 +45,29 @@ func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
 		}
 	}
 	glog.V(0).Infoln("Store started on dir:", l.Directory, "with", len(l.volumes), "volumes", "max", l.MaxVolumeCount)
+}
+
+func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e error) {
+	for k, v := range l.volumes {
+		if v.Collection == collection {
+			e = l.deleteVolumeById(k)
+			if e != nil {
+				return
+			}
+		}
+	}
+	return
+}
+
+func (l *DiskLocation) deleteVolumeById(vid VolumeId) (e error) {
+	v, ok := l.volumes[vid]
+	if !ok {
+		return
+	}
+	e = v.Destroy()
+	if e != nil {
+		return
+	}
+	delete(l.volumes, vid)
+	return
 }

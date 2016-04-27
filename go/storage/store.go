@@ -89,8 +89,7 @@ func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts
 	s = &Store{Port: port, Ip: ip, PublicUrl: publicUrl}
 	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirnames); i++ {
-		location := &DiskLocation{Directory: dirnames[i], MaxVolumeCount: maxVolumeCounts[i]}
-		location.volumes = make(map[VolumeId]*Volume)
+		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i])
 		location.loadExistingVolumes(needleMapKind)
 		s.Locations = append(s.Locations, location)
 	}
@@ -134,26 +133,14 @@ func (s *Store) AddVolume(volumeListString string, collection string, needleMapK
 }
 func (s *Store) DeleteCollection(collection string) (e error) {
 	for _, location := range s.Locations {
-		for k, v := range location.volumes {
-			if v.Collection == collection {
-				e = v.Destroy()
-				if e != nil {
-					return
-				}
-				delete(location.volumes, k)
-			}
+		e = location.DeleteCollectionFromDiskLocation(collection)
+		if e != nil {
+			return
 		}
 	}
 	return
 }
-func (s *Store) DeleteVolume(volumes map[VolumeId]*Volume, v *Volume) (e error) {
-	e = v.Destroy()
-	if e != nil {
-		return
-	}
-	delete(volumes, v.Id)
-	return
-}
+
 func (s *Store) findVolume(vid VolumeId) *Volume {
 	for _, location := range s.Locations {
 		if v, found := location.volumes[vid]; found {
@@ -252,7 +239,7 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 				volumeMessages = append(volumeMessages, volumeMessage)
 			} else {
 				if v.exiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
-					s.DeleteVolume(location.volumes, v)
+					location.deleteVolumeById(v.Id)
 					glog.V(0).Infoln("volume", v.Id, "is deleted.")
 				} else {
 					glog.V(0).Infoln("volume", v.Id, "is expired.")
