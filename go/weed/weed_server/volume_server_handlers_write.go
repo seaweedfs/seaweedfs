@@ -86,14 +86,14 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		count = chunkManifest.Size
 	}
 
-	ret := topology.ReplicatedDelete(vs.GetMasterNode(), vs.store, volumeId, n, r)
+	_, err := topology.ReplicatedDelete(vs.GetMasterNode(), vs.store, volumeId, n, r)
 
-	if ret != 0 {
+	if err == nil {
 		m := make(map[string]int64)
 		m["size"] = count
 		writeJsonQuiet(w, r, http.StatusAccepted, m)
 	} else {
-		writeJsonError(w, r, http.StatusInternalServerError, errors.New("Deletion Failed."))
+		writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Deletion Failed: %v", err))
 	}
 
 }
