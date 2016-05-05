@@ -107,6 +107,9 @@ func (dr DistributedOperationResult) Error() error {
 			errs = append(errs, fmt.Sprintf("[%s]: %v", k, v))
 		}
 	}
+	if len(errs) == 0 {
+		return nil
+	}
 	return errors.New(strings.Join(errs, "\n"))
 }
 
