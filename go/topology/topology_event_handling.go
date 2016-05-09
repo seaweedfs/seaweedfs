@@ -20,8 +20,8 @@ func (t *Topology) StartRefreshWritableVolumes(garbageThreshold string) {
 	}()
 	go func(garbageThreshold string) {
 		c := time.Tick(15 * time.Minute)
-		if t.IsLeader() {
-			for _ = range c {
+		for _ = range c {
+			if t.IsLeader() {
 				t.Vacuum(garbageThreshold)
 			}
 		}
