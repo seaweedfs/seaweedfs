@@ -28,6 +28,7 @@ func (v *Volume) commitCompact() error {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 	glog.V(3).Infof("Got Committing lock...")
+	v.nm.Close()
 	_ = v.dataFile.Close()
 	var e error
 	if e = os.Rename(v.FileName()+".cpd", v.FileName()+".dat"); e != nil {
