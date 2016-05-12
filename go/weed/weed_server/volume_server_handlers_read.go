@@ -197,7 +197,13 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 		w.Header().Set("Content-Type", mimeType)
 	}
 	if filename != "" {
-		w.Header().Set("Content-Disposition", `filename="`+fileNameEscaper.Replace(filename)+`"`)
+		contentDisposition := "inline"
+		if r.FormValue("dl") != "" {
+			if dl, _ := strconv.ParseBool(r.FormValue("dl")); dl {
+				contentDisposition = "attachment"
+			}
+		}
+		w.Header().Set("Content-Disposition", contentDisposition+`; filename="`+fileNameEscaper.Replace(filename)+`"`)
 	}
 	w.Header().Set("Accept-Ranges", "bytes")
 	if r.Method == "HEAD" {
