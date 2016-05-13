@@ -144,10 +144,10 @@ func ReadNeedleBlob(r *os.File, offset int64, size uint32) (dataSlice []byte, bl
 
 func (n *Needle) ReadData(r *os.File, offset int64, size uint32, version Version) (err error) {
 	bytes, block, err := ReadNeedleBlob(r, offset, size)
-	n.rawBlock = block
 	if err != nil {
 		return err
 	}
+	n.rawBlock = block
 	n.ParseNeedleHeader(bytes)
 	if n.Size != size {
 		return fmt.Errorf("File Entry Not Found. Needle %d Memory %d", n.Size, size)

@@ -66,7 +66,9 @@ func getBytesForFileBlock(r *os.File, offset int64, readSize int) (dataSlice []b
 }
 
 func (n *Needle) ReleaseMemory() {
-	n.rawBlock.decreaseReference()
+	if n.rawBlock != nil {
+		n.rawBlock.decreaseReference()
+	}
 }
 func ReleaseBytes(b []byte) {
 	bytesPool.Put(b)
