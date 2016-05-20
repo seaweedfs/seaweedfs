@@ -231,7 +231,7 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 					n.GetTopology().chanDeadDataNodes <- dn
 				}
 			}
-			for _, v := range dn.volumes {
+			for _, v := range dn.GetVolumes() {
 				if uint64(v.Size) >= volumeSizeLimit {
 					//fmt.Println("volume",v.Id,"size",v.Size,">",volumeSizeLimit)
 					n.GetTopology().chanFullVolumes <- v

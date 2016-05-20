@@ -54,7 +54,7 @@ func (t *Topology) SetVolumeCapacityFull(volumeInfo storage.VolumeInfo) bool {
 	return true
 }
 func (t *Topology) UnRegisterDataNode(dn *DataNode) {
-	for _, v := range dn.volumes {
+	for _, v := range dn.GetVolumes() {
 		glog.V(0).Infoln("Removing Volume", v.Id, "from the dead volume server", dn)
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl)
 		vl.SetVolumeUnavailable(dn, v.Id)
@@ -65,7 +65,7 @@ func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 	dn.Parent().UnlinkChildNode(dn.Id())
 }
 func (t *Topology) RegisterRecoveredDataNode(dn *DataNode) {
-	for _, v := range dn.volumes {
+	for _, v := range dn.GetVolumes() {
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl)
 		if vl.isWritable(&v) {
 			vl.SetVolumeAvailable(dn, v.Id)

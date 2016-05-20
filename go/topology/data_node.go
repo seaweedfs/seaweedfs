@@ -3,6 +3,7 @@ package topology
 import (
 	"fmt"
 	"strconv"
+	"sync"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/storage"
@@ -10,6 +11,7 @@ import (
 
 type DataNode struct {
 	NodeImpl
+	sync.RWMutex
 	volumes   map[storage.VolumeId]storage.VolumeInfo
 	Ip        string
 	Port      int
@@ -28,10 +30,14 @@ func NewDataNode(id string) *DataNode {
 }
 
 func (dn *DataNode) String() string {
+	dn.RLock()
+	defer dn.RUnlock()
 	return fmt.Sprintf("Node:%s, volumes:%v, Ip:%s, Port:%d, PublicUrl:%s, Dead:%v", dn.NodeImpl.String(), dn.volumes, dn.Ip, dn.Port, dn.PublicUrl, dn.Dead)
 }
 
 func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) {
+	dn.Lock()
+	defer dn.Unlock()
 	if _, ok := dn.volumes[v.Id]; !ok {
 		dn.volumes[v.Id] = v
 		dn.UpAdjustVolumeCountDelta(1)
@@ -49,6 +55,7 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (deletedVo
 	for _, v := range actualVolumes {
 		actualVolumeMap[v.Id] = v
 	}
+	dn.RLock()
 	for vid, v := range dn.volumes {
 		if _, ok := actualVolumeMap[vid]; !ok {
 			glog.V(0).Infoln("Deleting volume id:", vid)
@@ -58,10 +65,20 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (deletedVo
 			dn.UpAdjustActiveVolumeCountDelta(-1)
 		}
 	} //TODO: adjust max volume id, if need to reclaim volume ids
+	dn.RUnlock()
 	for _, v := range actualVolumes {
 		dn.AddOrUpdateVolume(v)
 	}
 	return
+}
+
+func (dn *DataNode) GetVolumes() (ret []storage.VolumeInfo) {
+	dn.RLock()
+	for _, v := range dn.volumes {
+		ret = append(ret, v)
+	}
+	dn.RUnlock()
+	return ret
 }
 
 func (dn *DataNode) GetDataCenter() *DataCenter {

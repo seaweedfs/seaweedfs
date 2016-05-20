@@ -39,7 +39,7 @@ func (t *Topology) ToVolumeMap() interface{} {
 			for _, d := range rack.Children() {
 				dn := d.(*DataNode)
 				var volumes []interface{}
-				for _, v := range dn.volumes {
+				for _, v := range dn.GetVolumes() {
 					volumes = append(volumes, v)
 				}
 				dataNodes[d.Id()] = volumes
