@@ -1,0 +1,107 @@
+hash: 97328ff2a0b9e682660bd51e424a7f850388df96bd153fa6f9ee419c993065c1
+updated: 2016-05-23T14:27:00.216163267-07:00
+imports:
+- name: bazil.org/fuse
+  version: 5d02b06737b3b3c2e6a44e03348b6f2b44aa6835
+  subpackages:
+  - fs
+  - fuseutil
+- name: github.com/boltdb/bolt
+  version: dfb21201d9270c1082d5fb0f07f500311ff72f18
+- name: github.com/chrislusf/raft
+  version: 90f631ee823c83f594f27257bab64911190856af
+  subpackages:
+  - protobuf
+- name: github.com/chrislusf/seaweedfs
+  version: dfde029430fabd7fc29b8e4f61d1e80b64d6a4de
+  subpackages:
+  - go/filer
+  - go/glog
+  - go/operation
+  - go/security
+  - go/storage
+  - go/util
+  - go/weed/weed_server
+  - go/filer/cassandra_store
+  - go/filer/embedded_filer
+  - go/filer/flat_namespace
+  - go/filer/redis_store
+  - go/images
+  - go/sequence
+  - go/stats
+  - go/topology
+  - go/weed/weed_server/master_ui
+  - go/weed/weed_server/volume_server_ui
+- name: github.com/dgrijalva/jwt-go
+  version: 40bd0f3b4891a9d7f121bfb7b8e8b0525625e262
+- name: github.com/disintegration/imaging
+  version: d8bbae1de109b518dabc98c6c1633eb358c148a4
+- name: github.com/gocql/gocql
+  version: 7218e81e87ca6f3d2285c56e0aae80bc0d8fb655
+  subpackages:
+  - internal/lru
+  - internal/murmur
+  - internal/streams
+- name: github.com/gogo/protobuf
+  version: c18eea6ad611eecf94a9ba38471f59706199409e
+  subpackages:
+  - proto
+- name: github.com/golang/protobuf
+  version: e51d002c610dbe8c136679a67a6ded5df4d49b5c
+  subpackages:
+  - proto
+- name: github.com/golang/snappy
+  version: d6668316e43571d7dde95be6fd077f96de002f8b
+- name: github.com/gorilla/context
+  version: a8d44e7d8e4d532b6a27a02dd82abb31cc1b01bd
+- name: github.com/gorilla/mux
+  version: 9c19ed558d5df4da88e2ade9c8940d742aef0e7e
+- name: github.com/hailocab/go-hostpool
+  version: e80d13ce29ede4452c43dea11e79b9bc8a15b478
+- name: github.com/hashicorp/golang-lru
+  version: a0d98a5f288019575c6d1f4bb1573fef2d1fcdc4
+  subpackages:
+  - simplelru
+- name: github.com/klauspost/crc32
+  version: 19b0b332c9e4516a6370a0456e6182c3b5036720
+- name: github.com/rwcarlsen/goexif
+  version: 709fab3d192d7c62f86043caff1e7e3fb0f42bd8
+  subpackages:
+  - exif
+  - tiff
+- name: github.com/syndtr/goleveldb
+  version: cfa635847112c5dc4782e128fa7e0d05fdbfb394
+  subpackages:
+  - leveldb
+  - leveldb/util
+  - leveldb/cache
+  - leveldb/comparer
+  - leveldb/errors
+  - leveldb/filter
+  - leveldb/iterator
+  - leveldb/journal
+  - leveldb/memdb
+  - leveldb/opt
+  - leveldb/storage
+  - leveldb/table
+- name: golang.org/x/image
+  version: f551d3a6b7fc11df315ad9e18b404280680f8bec
+  subpackages:
+  - bmp
+  - tiff
+  - tiff/lzw
+- name: golang.org/x/net
+  version: 0c607074acd38c5f23d1344dfe74c977464d1257
+  subpackages:
+  - context
+- name: golang.org/x/sys
+  version: d4feaf1a7e61e1d9e79e6c4e76c6349e9cab0a03
+  subpackages:
+  - unix
+- name: gopkg.in/bufio.v1
+  version: 567b2bfa514e796916c4747494d6ff5132a1dfce
+- name: gopkg.in/inf.v0
+  version: 3887ee99ecf07df5b447e9b00d9c0b2adaa9f3e4
+- name: gopkg.in/redis.v2
+  version: e6179049628164864e6e84e973cfb56335748dea
+devImports: []

@@ -1,0 +1,16 @@
+package: github.com/chrislusf/seaweedfs/go/weed
+import:
+- package: bazil.org/fuse
+  subpackages:
+  - fs
+- package: github.com/chrislusf/raft
+- package: github.com/golang/protobuf
+  subpackages:
+  - proto
+- package: github.com/gorilla/mux
+- package: github.com/syndtr/goleveldb
+  subpackages:
+  - leveldb
+- package: golang.org/x/net
+  subpackages:
+  - context
