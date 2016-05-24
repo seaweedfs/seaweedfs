@@ -1,5 +1,5 @@
 hash: 97328ff2a0b9e682660bd51e424a7f850388df96bd153fa6f9ee419c993065c1
-updated: 2016-05-23T14:27:00.216163267-07:00
+updated: 2016-05-24T10:27:49.252798956-07:00
 imports:
 - name: bazil.org/fuse
   version: 5d02b06737b3b3c2e6a44e03348b6f2b44aa6835
@@ -12,26 +12,6 @@ imports:
   version: 90f631ee823c83f594f27257bab64911190856af
   subpackages:
   - protobuf
-- name: github.com/chrislusf/seaweedfs
-  version: dfde029430fabd7fc29b8e4f61d1e80b64d6a4de
-  subpackages:
-  - go/filer
-  - go/glog
-  - go/operation
-  - go/security
-  - go/storage
-  - go/util
-  - go/weed/weed_server
-  - go/filer/cassandra_store
-  - go/filer/embedded_filer
-  - go/filer/flat_namespace
-  - go/filer/redis_store
-  - go/images
-  - go/sequence
-  - go/stats
-  - go/topology
-  - go/weed/weed_server/master_ui
-  - go/weed/weed_server/volume_server_ui
 - name: github.com/dgrijalva/jwt-go
   version: 40bd0f3b4891a9d7f121bfb7b8e8b0525625e262
 - name: github.com/disintegration/imaging
