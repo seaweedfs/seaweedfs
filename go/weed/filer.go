@@ -17,6 +17,7 @@ var (
 
 type FilerOptions struct {
 	master                  *string
+	ip                      *string
 	port                    *int
 	collection              *string
 	defaultReplicaPlacement *string
@@ -35,6 +36,7 @@ func init() {
 	cmdFiler.Run = runFiler // break init cycle
 	f.master = cmdFiler.Flag.String("master", "localhost:9333", "master server location")
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this collection")
+	f.ip = cmdFiler.Flag.String("ip", "", "filer server http listen ip address")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
 	f.dir = cmdFiler.Flag.String("dir", os.TempDir(), "directory to store meta data")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "000", "default replication type if not specified")
@@ -78,7 +80,7 @@ func runFiler(cmd *Command, args []string) bool {
 	}
 
 	r := http.NewServeMux()
-	_, nfs_err := weed_server.NewFilerServer(r, *f.port, *f.master, *f.dir, *f.collection,
+	_, nfs_err := weed_server.NewFilerServer(r, *f.ip, *f.port, *f.master, *f.dir, *f.collection,
 		*f.defaultReplicaPlacement, *f.redirectOnRead, *f.disableDirListing,
 		*f.secretKey,
 		*f.cassandra_server, *f.cassandra_keyspace,

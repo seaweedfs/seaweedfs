@@ -165,7 +165,7 @@ func runServer(cmd *Command, args []string) bool {
 	if *isStartingFiler {
 		go func() {
 			r := http.NewServeMux()
-			_, nfs_err := weed_server.NewFilerServer(r, *filerOptions.port, *filerOptions.master, *filerOptions.dir, *filerOptions.collection,
+			_, nfs_err := weed_server.NewFilerServer(r, *serverBindIp, *filerOptions.port, *filerOptions.master, *filerOptions.dir, *filerOptions.collection,
 				*filerOptions.defaultReplicaPlacement,
 				*filerOptions.redirectOnRead, *filerOptions.disableDirListing,
 				*filerOptions.secretKey,
