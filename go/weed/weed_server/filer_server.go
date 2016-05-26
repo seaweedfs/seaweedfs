@@ -24,7 +24,7 @@ type FilerServer struct {
 	filer              filer.Filer
 }
 
-func NewFilerServer(r *http.ServeMux, port int, master string, dir string, collection string,
+func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir string, collection string,
 	replication string, redirectOnRead bool, disableDirListing bool,
 	secret string,
 	cassandra_server string, cassandra_keyspace string,
@@ -36,7 +36,7 @@ func NewFilerServer(r *http.ServeMux, port int, master string, dir string, colle
 		defaultReplication: replication,
 		redirectOnRead:     redirectOnRead,
 		disableDirListing:  disableDirListing,
-		port:               ":" + strconv.Itoa(port),
+		port:               ip + ":" + strconv.Itoa(port),
 	}
 
 	if cassandra_server != "" {
