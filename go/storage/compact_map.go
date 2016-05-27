@@ -1,6 +1,9 @@
 package storage
 
-import "strconv"
+import (
+	"strconv"
+	"sync"
+)
 
 type NeedleValue struct {
 	Key    Key
@@ -19,6 +22,7 @@ func (k Key) String() string {
 }
 
 type CompactSection struct {
+	sync.RWMutex
 	values   []NeedleValue
 	overflow map[Key]NeedleValue
 	start    Key
@@ -40,6 +44,7 @@ func (cs *CompactSection) Set(key Key, offset uint32, size uint32) uint32 {
 	if key > cs.end {
 		cs.end = key
 	}
+	cs.Lock()
 	if i := cs.binarySearchValues(key); i >= 0 {
 		ret = cs.values[i].Size
 		//println("key", key, "old size", ret)
@@ -60,11 +65,13 @@ func (cs *CompactSection) Set(key Key, offset uint32, size uint32) uint32 {
 			cs.counter++
 		}
 	}
+	cs.Unlock()
 	return ret
 }
 
 //return old entry size
 func (cs *CompactSection) Delete(key Key) uint32 {
+	cs.Lock()
 	ret := uint32(0)
 	if i := cs.binarySearchValues(key); i >= 0 {
 		if cs.values[i].Size > 0 {
@@ -76,15 +83,20 @@ func (cs *CompactSection) Delete(key Key) uint32 {
 		delete(cs.overflow, key)
 		ret = v.Size
 	}
+	cs.Unlock()
 	return ret
 }
 func (cs *CompactSection) Get(key Key) (*NeedleValue, bool) {
+	cs.RLock()
 	if v, ok := cs.overflow[key]; ok {
+		cs.RUnlock()
 		return &v, true
 	}
 	if i := cs.binarySearchValues(key); i >= 0 {
+		cs.RUnlock()
 		return &cs.values[i], true
 	}
+	cs.RUnlock()
 	return nil, false
 }
 func (cs *CompactSection) binarySearchValues(key Key) int {
