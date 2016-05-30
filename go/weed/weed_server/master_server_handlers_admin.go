@@ -19,7 +19,7 @@ import (
 )
 
 func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	collection, ok := ms.Topo.GetCollection(r.FormValue("collection"))
+	collection, ok := ms.Topo.FindCollection(r.FormValue("collection"))
 	if !ok {
 		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("collection %s does not exist", r.FormValue("collection")))
 		return

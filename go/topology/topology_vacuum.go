@@ -81,10 +81,10 @@ func batchVacuumVolumeCommit(vl *VolumeLayout, vid storage.VolumeId, locationlis
 }
 func (t *Topology) Vacuum(garbageThreshold string) int {
 	glog.V(0).Infoln("Start vacuum on demand")
-	for _, col := range t.collectionMap.Items {
+	for _, col := range t.collectionMap.Items() {
 		c := col.(*Collection)
 		glog.V(0).Infoln("vacuum on collection:", c.Name)
-		for _, vl := range c.storageType2VolumeLayout.Items {
+		for _, vl := range c.storageType2VolumeLayout.Items() {
 			if vl != nil {
 				volumeLayout := vl.(*VolumeLayout)
 				for vid, locationlist := range volumeLayout.vid2location {

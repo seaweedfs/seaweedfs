@@ -90,13 +90,13 @@ func (t *Topology) loadConfiguration(configurationFile string) error {
 func (t *Topology) Lookup(collection string, vid storage.VolumeId) []*DataNode {
 	//maybe an issue if lots of collections?
 	if collection == "" {
-		for _, c := range t.collectionMap.Items {
+		for _, c := range t.collectionMap.Items() {
 			if list := c.(*Collection).Lookup(vid); list != nil {
 				return list
 			}
 		}
 	} else {
-		if c, ok := t.collectionMap.Items[collection]; ok {
+		if c, ok := t.collectionMap.Find(collection); ok {
 			return c.(*Collection).Lookup(vid)
 		}
 	}
@@ -130,13 +130,13 @@ func (t *Topology) GetVolumeLayout(collectionName string, rp *storage.ReplicaPla
 	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl)
 }
 
-func (t *Topology) GetCollection(collectionName string) (*Collection, bool) {
-	c, hasCollection := t.collectionMap.Items[collectionName]
+func (t *Topology) FindCollection(collectionName string) (*Collection, bool) {
+	c, hasCollection := t.collectionMap.Find(collectionName)
 	return c.(*Collection), hasCollection
 }
 
 func (t *Topology) DeleteCollection(collectionName string) {
-	delete(t.collectionMap.Items, collectionName)
+	t.collectionMap.Delete(collectionName)
 }
 
 func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {

@@ -35,7 +35,7 @@ func (c *Collection) GetOrCreateVolumeLayout(rp *storage.ReplicaPlacement, ttl *
 }
 
 func (c *Collection) Lookup(vid storage.VolumeId) []*DataNode {
-	for _, vl := range c.storageType2VolumeLayout.Items {
+	for _, vl := range c.storageType2VolumeLayout.Items() {
 		if vl != nil {
 			if list := vl.(*VolumeLayout).Lookup(vid); list != nil {
 				return list
@@ -46,7 +46,7 @@ func (c *Collection) Lookup(vid storage.VolumeId) []*DataNode {
 }
 
 func (c *Collection) ListVolumeServers() (nodes []*DataNode) {
-	for _, vl := range c.storageType2VolumeLayout.Items {
+	for _, vl := range c.storageType2VolumeLayout.Items() {
 		if vl != nil {
 			if list := vl.(*VolumeLayout).ListVolumeServers(); list != nil {
 				nodes = append(nodes, list...)

@@ -7,31 +7,53 @@ import (
 // A mostly for read map, which can thread-safely
 // initialize the map entries.
 type ConcurrentReadMap struct {
-	rmutex sync.RWMutex
-	Items  map[string]interface{}
+	sync.RWMutex
+
+	items map[string]interface{}
 }
 
 func NewConcurrentReadMap() *ConcurrentReadMap {
-	return &ConcurrentReadMap{Items: make(map[string]interface{})}
+	return &ConcurrentReadMap{items: make(map[string]interface{})}
 }
 
 func (m *ConcurrentReadMap) initMapEntry(key string, newEntry func() interface{}) (value interface{}) {
-	m.rmutex.Lock()
-	defer m.rmutex.Unlock()
-	if value, ok := m.Items[key]; ok {
+	m.Lock()
+	defer m.Unlock()
+	if value, ok := m.items[key]; ok {
 		return value
 	}
 	value = newEntry()
-	m.Items[key] = value
+	m.items[key] = value
 	return value
 }
 
 func (m *ConcurrentReadMap) Get(key string, newEntry func() interface{}) interface{} {
-	m.rmutex.RLock()
-	if value, ok := m.Items[key]; ok {
-		m.rmutex.RUnlock()
+	m.RLock()
+	if value, ok := m.items[key]; ok {
+		m.RUnlock()
 		return value
 	}
-	m.rmutex.RUnlock()
+	m.RUnlock()
 	return m.initMapEntry(key, newEntry)
+}
+
+func (m *ConcurrentReadMap) Find(key string) (interface{}, bool) {
+	m.RLock()
+	value, ok := m.items[key]
+	m.RUnlock()
+	return value, ok
+}
+
+func (m *ConcurrentReadMap) Items() (itemsCopy []interface{}) {
+	m.RLock()
+	for _, i := range m.items {
+		itemsCopy = append(itemsCopy, i)
+	}
+	return itemsCopy
+}
+
+func (m *ConcurrentReadMap) Delete(key string) {
+	m.Lock()
+	delete(m.items, key)
+	m.Unlock()
 }

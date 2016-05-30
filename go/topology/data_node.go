@@ -3,7 +3,6 @@ package topology
 import (
 	"fmt"
 	"strconv"
-	"sync"
 
 	"github.com/chrislusf/seaweedfs/go/glog"
 	"github.com/chrislusf/seaweedfs/go/storage"
@@ -11,7 +10,6 @@ import (
 
 type DataNode struct {
 	NodeImpl
-	sync.RWMutex
 	volumes   map[storage.VolumeId]storage.VolumeInfo
 	Ip        string
 	Port      int
