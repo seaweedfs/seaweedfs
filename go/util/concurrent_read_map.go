@@ -49,6 +49,7 @@ func (m *ConcurrentReadMap) Items() (itemsCopy []interface{}) {
 	for _, i := range m.items {
 		itemsCopy = append(itemsCopy, i)
 	}
+	m.RUnlock()
 	return itemsCopy
 }
 
