@@ -1,0 +1,31 @@
+package: github.com/chrislusf/seaweedfs/weed
+import:
+- package: bazil.org/fuse
+  subpackages:
+  - fs
+- package: github.com/boltdb/bolt
+- package: github.com/chrislusf/raft
+- package: github.com/dgrijalva/jwt-go
+- package: github.com/disintegration/imaging
+- package: github.com/gocql/gocql
+- package: github.com/golang/protobuf
+  subpackages:
+  - proto
+- package: github.com/gorilla/mux
+- package: github.com/hashicorp/golang-lru
+- package: github.com/klauspost/crc32
+- package: github.com/reducedb/encoding
+  subpackages:
+  - cursor
+  - delta/bp32
+- package: github.com/rwcarlsen/goexif
+  subpackages:
+  - exif
+- package: github.com/syndtr/goleveldb
+  subpackages:
+  - leveldb
+  - leveldb/util
+- package: golang.org/x/net
+  subpackages:
+  - context
+- package: gopkg.in/redis.v2

@@ -1,5 +1,5 @@
-go/weed/.goxc*
-go/weed/vendor
+.goxc*
+vendor
 tags
 *.swp
 ### OSX template
