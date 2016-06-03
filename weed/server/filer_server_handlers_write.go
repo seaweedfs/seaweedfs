@@ -139,6 +139,14 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
+	// also delete the old fid unless PUT operation
+	if r.Method != "PUT" {
+		if oldFid, err := fs.filer.FindFile(path); err == nil {
+			operation.DeleteFile(fs.master, oldFid, fs.jwt(oldFid))
+		}
+	}
+
 	glog.V(4).Infoln("saving", path, "=>", fileId)
 	if db_err := fs.filer.CreateFile(path, fileId); db_err != nil {
 		operation.DeleteFile(fs.master, fileId, fs.jwt(fileId)) //clean up
