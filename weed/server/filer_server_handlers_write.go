@@ -23,6 +23,14 @@ type analogueReader struct {
 // So that it implements the io.ReadCloser interface
 func (m analogueReader) Close() error { return nil }
 
+type FilerPostResult struct {
+	Name  string `json:"name,omitempty"`
+	Size  uint32 `json:"size,omitempty"`
+	Error string `json:"error,omitempty"`
+	Fid   string `json:"fid,omitempty"`
+	Url   string `json:"url,omitempty"`
+}
+
 func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	replication := query.Get("replication")
@@ -138,8 +146,15 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, http.StatusInternalServerError, db_err)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	w.Write(resp_body)
+
+	reply := FilerPostResult{
+		Name:  ret.Name,
+		Size:  ret.Size,
+		Error: ret.Error,
+		Fid:   fileId,
+		Url:   urlLocation,
+	}
+	writeJsonQuiet(w, r, http.StatusCreated, reply)
 }
 
 // curl -X DELETE http://localhost:8888/path/to
