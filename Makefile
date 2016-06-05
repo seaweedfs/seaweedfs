@@ -1,7 +1,7 @@
-BINARY = weed
+BINARY = weed/weed
 
 GO_FLAGS = #-v
-SOURCE_DIR = ./go/weed/
+SOURCE_DIR = ./weed/
 
 all: build
 
