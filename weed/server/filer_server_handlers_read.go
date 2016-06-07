@@ -58,7 +58,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	urlLocation, err := operation.LookupFileId(fs.master, fileId)
+	urlLocation, err := operation.LookupFileId(fs.getMasterNode(), fileId)
 	if err != nil {
 		glog.V(1).Infoln("operation LookupFileId %s failed, err is %s", fileId, err.Error())
 		w.WriteHeader(http.StatusNotFound)
