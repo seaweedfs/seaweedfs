@@ -1,8 +1,11 @@
 package weed_server
 
 import (
+	"math/rand"
 	"net/http"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/filer/cassandra_store"
@@ -11,17 +14,21 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer/redis_store"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type FilerServer struct {
 	port               string
 	master             string
+	mnLock             sync.RWMutex
 	collection         string
 	defaultReplication string
 	redirectOnRead     bool
 	disableDirListing  bool
 	secret             security.Secret
 	filer              filer.Filer
+	masterNodes        *storage.MasterNodes
 }
 
 func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir string, collection string,
@@ -59,9 +66,80 @@ func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir st
 
 	r.HandleFunc("/", fs.filerHandler)
 
+	go func() {
+		connected := true
+
+		fs.masterNodes = storage.NewMasterNodes(fs.master)
+		glog.V(0).Infof("Filer server bootstraps with master %s", fs.getMasterNode())
+
+		//force initialize with all available master nodes
+		fs.masterNodes.FindMaster()
+
+		for {
+			glog.V(4).Infof("Filer server sending to master %s", fs.getMasterNode())
+			master, err := fs.detectHealthyMaster(fs.getMasterNode())
+			if err == nil {
+				if !connected {
+					connected = true
+					if fs.getMasterNode() != master {
+						fs.setMasterNode(master)
+					}
+					glog.V(0).Infoln("Filer Server Connected with master at", master)
+				}
+			} else {
+				glog.V(1).Infof("Filer Server Failed to talk with master %s: %v", fs.getMasterNode(), err)
+				if connected {
+					connected = false
+				}
+			}
+			if connected {
+				time.Sleep(time.Duration(float32(10*1e3)*(1+rand.Float32())) * time.Millisecond)
+			} else {
+				time.Sleep(time.Duration(float32(10*1e3)*0.25) * time.Millisecond)
+			}
+		}
+	}()
+
 	return fs, nil
 }
 
 func (fs *FilerServer) jwt(fileId string) security.EncodedJwt {
 	return security.GenJwt(fs.secret, fileId)
+}
+
+func (fs *FilerServer) getMasterNode() string {
+	fs.mnLock.RLock()
+	defer fs.mnLock.RUnlock()
+	return fs.master
+}
+
+func (fs *FilerServer) setMasterNode(masterNode string) {
+	fs.mnLock.Lock()
+	defer fs.mnLock.Unlock()
+	fs.master = masterNode
+}
+
+func (fs *FilerServer) detectHealthyMaster(masterNode string) (master string, e error) {
+	statUrl := "http://" + masterNode + "/stats"
+	glog.V(4).Infof("Connecting to %s ...", statUrl)
+	_, e = util.Get(statUrl)
+	if e != nil {
+		fs.masterNodes.Reset()
+		for i := 0; i <= 3; i++ {
+			master, e = fs.masterNodes.FindMaster()
+			if e != nil {
+				continue
+			} else {
+				statUrl := "http://" + master + "/stats"
+				glog.V(4).Infof("Connecting to %s ...", statUrl)
+				_, e = util.Get(statUrl)
+				if e == nil {
+					break
+				}
+			}
+		}
+	} else {
+		master = masterNode
+	}
+	return
 }

@@ -32,14 +32,14 @@ func NewMasterNodes(bootstrapNode string) (mn *MasterNodes) {
 	mn = &MasterNodes{nodes: []string{bootstrapNode}, lastNode: -1}
 	return
 }
-func (mn *MasterNodes) reset() {
+func (mn *MasterNodes) Reset() {
 	glog.V(4).Infof("Resetting master nodes: %v", mn)
 	if len(mn.nodes) > 1 && mn.lastNode >= 0 {
 		glog.V(0).Infof("Reset master %s from: %v", mn.nodes[mn.lastNode], mn.nodes)
 		mn.lastNode = -mn.lastNode - 1
 	}
 }
-func (mn *MasterNodes) findMaster() (string, error) {
+func (mn *MasterNodes) FindMaster() (string, error) {
 	if len(mn.nodes) == 0 {
 		return "", errors.New("No master node found!")
 	}
@@ -210,7 +210,7 @@ func (s *Store) SetBootstrapMaster(bootstrapMaster string) {
 	s.masterNodes = NewMasterNodes(bootstrapMaster)
 }
 func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.Secret, e error) {
-	masterNode, e = s.masterNodes.findMaster()
+	masterNode, e = s.masterNodes.FindMaster()
 	if e != nil {
 		return
 	}
@@ -270,17 +270,17 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 
 	jsonBlob, err := util.PostBytes(joinUrl, data)
 	if err != nil {
-		s.masterNodes.reset()
+		s.masterNodes.Reset()
 		return "", "", err
 	}
 	var ret operation.JoinResult
 	if err := json.Unmarshal(jsonBlob, &ret); err != nil {
 		glog.V(0).Infof("Failed to join %s with response: %s", joinUrl, string(jsonBlob))
-		s.masterNodes.reset()
+		s.masterNodes.Reset()
 		return masterNode, "", err
 	}
 	if ret.Error != "" {
-		s.masterNodes.reset()
+		s.masterNodes.Reset()
 		return masterNode, "", errors.New(ret.Error)
 	}
 	s.volumeSizeLimit = ret.VolumeSizeLimit
