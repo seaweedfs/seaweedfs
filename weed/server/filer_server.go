@@ -120,20 +120,14 @@ func (fs *FilerServer) setMasterNode(masterNode string) {
 }
 
 func (fs *FilerServer) detectHealthyMaster(masterNode string) (master string, e error) {
-	statUrl := "http://" + masterNode + "/stats"
-	glog.V(4).Infof("Connecting to %s ...", statUrl)
-	_, e = util.Get(statUrl)
-	if e != nil {
+	if e = checkMaster(masterNode); e != nil {
 		fs.masterNodes.Reset()
 		for i := 0; i <= 3; i++ {
 			master, e = fs.masterNodes.FindMaster()
 			if e != nil {
 				continue
 			} else {
-				statUrl := "http://" + master + "/stats"
-				glog.V(4).Infof("Connecting to %s ...", statUrl)
-				_, e = util.Get(statUrl)
-				if e == nil {
+				if e = checkMaster(masterNode); e == nil {
 					break
 				}
 			}
@@ -142,4 +136,11 @@ func (fs *FilerServer) detectHealthyMaster(masterNode string) (master string, e 
 		master = masterNode
 	}
 	return
+}
+
+func checkMaster(masterNode string) error {
+	statUrl := "http://" + masterNode + "/stats"
+	glog.V(4).Infof("Connecting to %s ...", statUrl)
+	_, e := util.Get(statUrl)
+	return e
 }
