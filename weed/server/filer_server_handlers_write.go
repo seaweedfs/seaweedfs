@@ -2,10 +2,16 @@ package weed_server
 
 import (
 	"bytes"
+	"crypto/md5"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"io/ioutil"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strings"
 
@@ -16,19 +22,52 @@ import (
 	"github.com/syndtr/goleveldb/leveldb"
 )
 
-type analogueReader struct {
-	*bytes.Buffer
-}
-
-// So that it implements the io.ReadCloser interface
-func (m analogueReader) Close() error { return nil }
-
 type FilerPostResult struct {
 	Name  string `json:"name,omitempty"`
 	Size  uint32 `json:"size,omitempty"`
 	Error string `json:"error,omitempty"`
 	Fid   string `json:"fid,omitempty"`
 	Url   string `json:"url,omitempty"`
+}
+
+var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
+
+func escapeQuotes(s string) string {
+	return quoteEscaper.Replace(s)
+}
+
+func createFormFile(writer *multipart.Writer, fieldname, filename, mime string) (io.Writer, error) {
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition",
+		fmt.Sprintf(`form-data; name="%s"; filename="%s"`,
+			escapeQuotes(fieldname), escapeQuotes(filename)))
+	if len(mime) == 0 {
+		mime = "application/octet-stream"
+	}
+	h.Set("Content-Type", mime)
+	return writer.CreatePart(h)
+}
+
+func makeFormData(filename, mimeType string, content io.Reader) (formData io.Reader, contentType string, err error) {
+	buf := new(bytes.Buffer)
+	writer := multipart.NewWriter(buf)
+	defer writer.Close()
+
+	part, err := createFormFile(writer, "file", filename, mimeType)
+	if err != nil {
+		glog.V(0).Infoln(err)
+		return
+	}
+	_, err = io.Copy(part, content)
+	if err != nil {
+		glog.V(0).Infoln(err)
+		return
+	}
+
+	formData = buf
+	contentType = writer.FormDataContentType()
+
+	return
 }
 
 func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
@@ -45,24 +84,69 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	var fileId string
 	var err error
 	var urlLocation string
-	if r.Method == "PUT" {
-		buf, _ := ioutil.ReadAll(r.Body)
-		r.Body = analogueReader{bytes.NewBuffer(buf)}
-		fileName, _, _, _, _, _, _, pe := storage.ParseUpload(r)
-		if pe != nil {
-			glog.V(0).Infoln("failing to parse post body", pe.Error())
-			writeJsonError(w, r, http.StatusInternalServerError, pe)
+
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data; boundary=") {
+		//Default handle way for http multipart
+		if r.Method == "PUT" {
+			buf, _ := ioutil.ReadAll(r.Body)
+			r.Body = ioutil.NopCloser(bytes.NewBuffer(buf))
+			fileName, _, _, _, _, _, _, pe := storage.ParseUpload(r)
+			if pe != nil {
+				glog.V(0).Infoln("failing to parse post body", pe.Error())
+				writeJsonError(w, r, http.StatusInternalServerError, pe)
+				return
+			}
+			//reconstruct http request body for following new request to volume server
+			r.Body = ioutil.NopCloser(bytes.NewBuffer(buf))
+
+			path := r.URL.Path
+			if strings.HasSuffix(path, "/") {
+				if fileName != "" {
+					path += fileName
+				}
+			}
+
+			if fileId, err = fs.filer.FindFile(path); err != nil && err != leveldb.ErrNotFound {
+				glog.V(0).Infoln("failing to find path in filer store", path, err.Error())
+				writeJsonError(w, r, http.StatusInternalServerError, err)
+				return
+			} else if fileId != "" && err == nil {
+				var le error
+				urlLocation, le = operation.LookupFileId(fs.getMasterNode(), fileId)
+				if le != nil {
+					glog.V(1).Infoln("operation LookupFileId %s failed, err is %s", fileId, le.Error())
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+			}
+		} else {
+			assignResult, ae := operation.Assign(fs.getMasterNode(), 1, replication, collection, query.Get("ttl"))
+			if ae != nil {
+				glog.V(0).Infoln("failing to assign a file id", ae.Error())
+				writeJsonError(w, r, http.StatusInternalServerError, ae)
+				return
+			}
+			fileId = assignResult.Fid
+			urlLocation = "http://" + assignResult.Url + "/" + assignResult.Fid
+		}
+	} else {
+		/*
+			Amazon S3 ref link:[http://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html]
+			There is a long way to provide a completely compatibility against all Amazon S3 API, I just made
+			a simple data stream adapter between S3 PUT API and seaweedfs's volume storage Write API
+			1. The request url format should be http://$host:$port/$bucketName/$objectName
+			2. bucketName will be mapped to seaweedfs's collection name
+		*/
+		lastPos := strings.LastIndex(r.URL.Path, "/")
+		if lastPos == -1 || lastPos == 0 || lastPos == len(r.URL.Path)-1 {
+			glog.V(0).Infoln("URL Path [%s] is invalid, could not retrieve file name", r.URL.Path)
+			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("URL Path is invalid"))
 			return
 		}
-		//reconstruct http request body for following new request to volume server
-		r.Body = analogueReader{bytes.NewBuffer(buf)}
 
+		secondPos := strings.Index(r.URL.Path[1:], "/") + 1
+		collection = r.URL.Path[1:secondPos]
 		path := r.URL.Path
-		if strings.HasSuffix(path, "/") {
-			if fileName != "" {
-				path += fileName
-			}
-		}
 
 		if fileId, err = fs.filer.FindFile(path); err != nil && err != leveldb.ErrNotFound {
 			glog.V(0).Infoln("failing to find path in filer store", path, err.Error())
@@ -76,16 +160,56 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
+		} else {
+			assignResult, ae := operation.Assign(fs.getMasterNode(), 1, replication, collection, query.Get("ttl"))
+			if ae != nil {
+				glog.V(0).Infoln("failing to assign a file id", ae.Error())
+				writeJsonError(w, r, http.StatusInternalServerError, ae)
+				return
+			}
+			fileId = assignResult.Fid
+			urlLocation = "http://" + assignResult.Url + "/" + assignResult.Fid
 		}
-	} else {
-		assignResult, ae := operation.Assign(fs.getMasterNode(), 1, replication, collection, query.Get("ttl"))
-		if ae != nil {
-			glog.V(0).Infoln("failing to assign a file id", ae.Error())
-			writeJsonError(w, r, http.StatusInternalServerError, ae)
+
+		if contentMD5 := r.Header.Get("Content-MD5"); contentMD5 != "" {
+			buf, _ := ioutil.ReadAll(r.Body)
+			//checkMD5
+			sum := md5.Sum(buf)
+			fileDataMD5 := base64.StdEncoding.EncodeToString(sum[0:len(sum)])
+			if strings.ToLower(fileDataMD5) != strings.ToLower(contentMD5) {
+				glog.V(0).Infof("fileDataMD5 [%s] is not equal to Content-MD5 [%s]", fileDataMD5, contentMD5)
+				writeJsonError(w, r, http.StatusNotAcceptable, fmt.Errorf("MD5 check failed"))
+				return
+			}
+			//reconstruct http request body for following new request to volume server
+			r.Body = ioutil.NopCloser(bytes.NewBuffer(buf))
+		}
+
+		fileName := r.URL.Path[lastPos+1:]
+		body, contentType, te := makeFormData(fileName, r.Header.Get("Content-Type"), r.Body)
+		if te != nil {
+			glog.V(0).Infoln("S3 protocol to raw seaweed protocol failed", te.Error())
+			writeJsonError(w, r, http.StatusInternalServerError, te)
 			return
 		}
-		fileId = assignResult.Fid
-		urlLocation = "http://" + assignResult.Url + "/" + assignResult.Fid
+
+		if body != nil {
+			switch v := body.(type) {
+			case *bytes.Buffer:
+				r.ContentLength = int64(v.Len())
+			case *bytes.Reader:
+				r.ContentLength = int64(v.Len())
+			case *strings.Reader:
+				r.ContentLength = int64(v.Len())
+			}
+		}
+
+		r.Header.Set("Content-Type", contentType)
+		rc, ok := body.(io.ReadCloser)
+		if !ok && body != nil {
+			rc = ioutil.NopCloser(body)
+		}
+		r.Body = rc
 	}
 
 	u, _ := url.Parse(urlLocation)
