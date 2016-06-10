@@ -42,7 +42,19 @@ func (filer *FlatNamespaceFiler) DeleteDirectory(dirPath string, recursive bool)
 }
 
 func (filer *FlatNamespaceFiler) DeleteFile(fullFileName string) (fid string, err error) {
-	return filer.store.Delete(fullFileName)
+	fid, err = filer.FindFile(fullFileName)
+	if err != nil {
+		return "", err
+	}
+
+	err = filer.store.Delete(fullFileName)
+	if err != nil {
+		return "", err
+	}
+
+	return fid, nil
+	//return filer.store.Delete(fullFileName)
+	//are you kidding me!!!!
 }
 
 func (filer *FlatNamespaceFiler) Move(fromPath string, toPath string) error {

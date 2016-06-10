@@ -68,16 +68,16 @@ func (c *CassandraStore) Get(fullFileName string) (fid string, err error) {
 }
 
 // Currently the fid is not returned
-func (c *CassandraStore) Delete(fullFileName string) (fid string, err error) {
+func (c *CassandraStore) Delete(fullFileName string) (err error) {
 	if err := c.session.Query(
 		`DELETE FROM seaweed_files WHERE path = ?`,
 		fullFileName).Exec(); err != nil {
 		if err != gocql.ErrNotFound {
 			glog.V(0).Infof("Failed to delete file %s: %v", fullFileName, err)
 		}
-		return "", err
+		return err
 	}
-	return "", nil
+	return nil
 }
 
 func (c *CassandraStore) Close() {
