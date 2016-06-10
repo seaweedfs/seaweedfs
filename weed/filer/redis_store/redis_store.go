@@ -33,12 +33,12 @@ func (s *RedisStore) Put(fullFileName string, fid string) (err error) {
 }
 
 // Currently the fid is not returned
-func (s *RedisStore) Delete(fullFileName string) (fid string, err error) {
+func (s *RedisStore) Delete(fullFileName string) (err error) {
 	_, err = s.Client.Del(fullFileName).Result()
 	if err == redis.Nil {
 		err = nil
 	}
-	return "", err
+	return err
 }
 
 func (s *RedisStore) Close() {
