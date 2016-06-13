@@ -3,6 +3,7 @@ package operation
 import (
 	"errors"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -13,6 +14,7 @@ type VidInfo struct {
 	NextRefreshTime time.Time
 }
 type VidCache struct {
+	sync.RWMutex
 	cache []VidInfo
 }
 
@@ -22,6 +24,8 @@ func (vc *VidCache) Get(vid string) ([]Location, error) {
 		glog.V(1).Infof("Unknown volume id %s", vid)
 		return nil, err
 	}
+	vc.RLock()
+	defer vc.RUnlock()
 	if 0 < id && id <= len(vc.cache) {
 		if vc.cache[id-1].Locations == nil {
 			return nil, errors.New("Not Set")
@@ -39,6 +43,8 @@ func (vc *VidCache) Set(vid string, locations []Location, duration time.Duration
 		glog.V(1).Infof("Unknown volume id %s", vid)
 		return
 	}
+	vc.Lock()
+	defer vc.Unlock()
 	if id > len(vc.cache) {
 		for i := id - len(vc.cache); i > 0; i-- {
 			vc.cache = append(vc.cache, VidInfo{})
