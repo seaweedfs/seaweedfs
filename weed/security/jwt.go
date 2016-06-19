@@ -19,8 +19,10 @@ func GenJwt(secret Secret, fileId string) EncodedJwt {
 	}
 
 	t := jwt.New(jwt.GetSigningMethod("HS256"))
-	t.Claims["exp"] = time.Now().Unix() + 10
-	t.Claims["sub"] = fileId
+	t.Claims = &jwt.StandardClaims{
+		ExpiresAt: time.Now().Add(time.Second * 10).Unix(),
+		Subject:   fileId,
+	}
 	encoded, e := t.SignedString(secret)
 	if e != nil {
 		glog.V(0).Infof("Failed to sign claims: %v", t.Claims)
@@ -53,7 +55,7 @@ func GetJwt(r *http.Request) EncodedJwt {
 	return EncodedJwt(tokenStr)
 }
 
-func EncodeJwt(secret Secret, claims map[string]interface{}) (EncodedJwt, error) {
+func EncodeJwt(secret Secret, claims *jwt.StandardClaims) (EncodedJwt, error) {
 	if secret == "" {
 		return "", nil
 	}
