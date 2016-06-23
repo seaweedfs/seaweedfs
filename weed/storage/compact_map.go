@@ -190,18 +190,22 @@ func (cm *CompactMap) binarySearchCompactSection(key Key) int {
 // Visit visits all entries or stop if any error when visiting
 func (cm *CompactMap) Visit(visit func(NeedleValue) error) error {
 	for _, cs := range cm.list {
+		cs.RLock()
 		for _, v := range cs.overflow {
 			if err := visit(v); err != nil {
+				cs.RUnlock()
 				return err
 			}
 		}
 		for _, v := range cs.values {
 			if _, found := cs.overflow[v.Key]; !found {
 				if err := visit(v); err != nil {
+					cs.RUnlock()
 					return err
 				}
 			}
 		}
+		cs.RUnlock()
 	}
 	return nil
 }
