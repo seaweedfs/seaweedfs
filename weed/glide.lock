@@ -1,19 +1,19 @@
 hash: fc2f4ccfa5d703b62b9c93047bae2295e6926ce1603c2164510c9010ff829945
-updated: 2016-06-02T12:26:29.018990826-07:00
+updated: 2016-06-24T14:19:43.337337605-07:00
 imports:
 - name: bazil.org/fuse
-  version: 5d02b06737b3b3c2e6a44e03348b6f2b44aa6835
+  version: 9e8e65293a037ce998ba0df102710c49313aa513
   subpackages:
   - fs
   - fuseutil
 - name: github.com/boltdb/bolt
-  version: dfb21201d9270c1082d5fb0f07f500311ff72f18
+  version: 3f7947a25d970e1e5f512276c14d5dcf731ccd5e
 - name: github.com/chrislusf/raft
   version: 5f7ddd8f479583daf05879d3d3b174aa202c8fb7
   subpackages:
   - protobuf
 - name: github.com/dgrijalva/jwt-go
-  version: 9b486c879bab3fde556ce8c27d9a2bb05d5b2c60
+  version: f0777076321ab64f6efc15a82d9d23b98539b943
 - name: github.com/disintegration/imaging
   version: d8bbae1de109b518dabc98c6c1633eb358c148a4
 - name: github.com/gocql/gocql
@@ -23,11 +23,11 @@ imports:
   - internal/murmur
   - internal/streams
 - name: github.com/gogo/protobuf
-  version: 7883e1468d48d969e1c3ce4bcde89b6a7dd4adc4
+  version: 2752d97bbd91927dd1c43296dbf8700e50e2708c
   subpackages:
   - proto
 - name: github.com/golang/protobuf
-  version: 3b06fc7a4cad73efce5fe6217ab6c33e7231ab4a
+  version: 0c1f6d65b5a189c2250d10e71a5506f06f9fa0a0
   subpackages:
   - proto
 - name: github.com/golang/snappy
@@ -35,7 +35,7 @@ imports:
 - name: github.com/gorilla/context
   version: aed02d124ae4a0e94fea4541c8effd05bf0c8296
 - name: github.com/gorilla/mux
-  version: bd09be08ed4377796d312df0a45314e11b8f5dc1
+  version: 9fa818a44c2bf1396a17f9d5a3c0f6dd39d2ff8e
 - name: github.com/hailocab/go-hostpool
   version: e80d13ce29ede4452c43dea11e79b9bc8a15b478
 - name: github.com/hashicorp/golang-lru
@@ -56,7 +56,7 @@ imports:
   - exif
   - tiff
 - name: github.com/syndtr/goleveldb
-  version: cfa635847112c5dc4782e128fa7e0d05fdbfb394
+  version: fa5b5c78794bc5c18f330361059f871ae8c2b9d6
   subpackages:
   - leveldb
   - leveldb/util
@@ -77,11 +77,11 @@ imports:
   - tiff
   - tiff/lzw
 - name: golang.org/x/net
-  version: c4c3ea71919de159c9e246d7be66deb7f0a39a58
+  version: bc3663df0ac92f928d419e31e0d2af22e683a5a2
   subpackages:
   - context
 - name: golang.org/x/sys
-  version: 076b546753157f758b316e59bcb51e6807c04057
+  version: 62bee037599929a6e9146f29d10dd5208c43507d
   subpackages:
   - unix
 - name: gopkg.in/bufio.v1
