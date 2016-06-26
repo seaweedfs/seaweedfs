@@ -80,15 +80,14 @@ func batchVacuumVolumeCommit(vl *VolumeLayout, vid storage.VolumeId, locationlis
 	return isCommitSuccess
 }
 func (t *Topology) Vacuum(garbageThreshold string) int {
-	glog.V(0).Infoln("Start vacuum on demand")
+	glog.V(0).Infof("Start vacuum on demand with threshold:%s", garbageThreshold)
 	for _, col := range t.collectionMap.Items() {
 		c := col.(*Collection)
-		glog.V(0).Infoln("vacuum on collection:", c.Name)
 		for _, vl := range c.storageType2VolumeLayout.Items() {
 			if vl != nil {
 				volumeLayout := vl.(*VolumeLayout)
 				for vid, locationlist := range volumeLayout.vid2location {
-					glog.V(0).Infoln("vacuum on collection:", c.Name, "volume", vid)
+					glog.V(0).Infof("check vacuum on collection:%s volume:%d", c.Name, vid)
 					if batchVacuumVolumeCheck(volumeLayout, vid, locationlist, garbageThreshold) {
 						if batchVacuumVolumeCompact(volumeLayout, vid, locationlist) {
 							batchVacuumVolumeCommit(volumeLayout, vid, locationlist)
