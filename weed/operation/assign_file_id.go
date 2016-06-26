@@ -11,6 +11,16 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
+type VolumeAssignRequest struct {
+	Count       uint64
+	Replication string
+	Collection  string
+	Ttl         string
+	DataCenter  string
+	Rack        string
+	DataNode    string
+}
+
 type AssignResult struct {
 	Fid       string `json:"fid,omitempty"`
 	Url       string `json:"url,omitempty"`
@@ -19,47 +29,26 @@ type AssignResult struct {
 	Error     string `json:"error,omitempty"`
 }
 
-/*
-options params meaning:
-options[0] main data Center
-options[1] main rack
-options[2] main data node
-*/
-func Assign(server string, count uint64, replication string, collection string, ttl string, options ...string) (*AssignResult, error) {
+func Assign(server string, r *VolumeAssignRequest) (*AssignResult, error) {
 	values := make(url.Values)
-	values.Add("count", strconv.FormatUint(count, 10))
-	if replication != "" {
-		values.Add("replication", replication)
+	values.Add("count", strconv.FormatUint(r.Count, 10))
+	if r.Replication != "" {
+		values.Add("replication", r.Replication)
 	}
-	if collection != "" {
-		values.Add("collection", collection)
+	if r.Collection != "" {
+		values.Add("collection", r.Collection)
 	}
-	if ttl != "" {
-		values.Add("ttl", ttl)
+	if r.Ttl != "" {
+		values.Add("ttl", r.Ttl)
 	}
-
-	var dataCenter, rack, dataNode string
-	switch len(options) {
-	case 1:
-		dataCenter = options[0]
-	case 2:
-		dataCenter = options[0]
-		rack = options[1]
-	case 3:
-		dataCenter = options[0]
-		rack = options[1]
-		dataNode = options[2]
-	default:
+	if r.DataCenter != "" {
+		values.Add("dataCenter", r.DataCenter)
 	}
-
-	if dataCenter != "" {
-		values.Add("dataCenter", dataCenter)
+	if r.Rack != "" {
+		values.Add("rack", r.Rack)
 	}
-	if rack != "" {
-		values.Add("rack", rack)
-	}
-	if dataNode != "" {
-		values.Add("dataNode", dataNode)
+	if r.DataNode != "" {
+		values.Add("dataNode", r.DataNode)
 	}
 
 	jsonBlob, err := util.Post("http://"+server+"/dir/assign", values)
