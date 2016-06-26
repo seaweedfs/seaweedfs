@@ -11,6 +11,16 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
+type VolumeAssignRequest struct {
+	Count       uint64
+	Replication string
+	Collection  string
+	Ttl         string
+	DataCenter  string
+	Rack        string
+	DataNode    string
+}
+
 type AssignResult struct {
 	Fid       string `json:"fid,omitempty"`
 	Url       string `json:"url,omitempty"`
@@ -19,18 +29,28 @@ type AssignResult struct {
 	Error     string `json:"error,omitempty"`
 }
 
-func Assign(server string, count uint64, replication string, collection string, ttl string) (*AssignResult, error) {
+func Assign(server string, r *VolumeAssignRequest) (*AssignResult, error) {
 	values := make(url.Values)
-	values.Add("count", strconv.FormatUint(count, 10))
-	if replication != "" {
-		values.Add("replication", replication)
+	values.Add("count", strconv.FormatUint(r.Count, 10))
+	if r.Replication != "" {
+		values.Add("replication", r.Replication)
 	}
-	if collection != "" {
-		values.Add("collection", collection)
+	if r.Collection != "" {
+		values.Add("collection", r.Collection)
 	}
-	if ttl != "" {
-		values.Add("ttl", ttl)
+	if r.Ttl != "" {
+		values.Add("ttl", r.Ttl)
 	}
+	if r.DataCenter != "" {
+		values.Add("dataCenter", r.DataCenter)
+	}
+	if r.Rack != "" {
+		values.Add("rack", r.Rack)
+	}
+	if r.DataNode != "" {
+		values.Add("dataNode", r.DataNode)
+	}
+
 	jsonBlob, err := util.Post("http://"+server+"/dir/assign", values)
 	glog.V(2).Info("assign result :", string(jsonBlob))
 	if err != nil {

@@ -87,7 +87,13 @@ func (fs *FilerServer) queryFileInfoByPath(w http.ResponseWriter, r *http.Reques
 }
 
 func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request, replication, collection string) (fileId, urlLocation string, err error) {
-	assignResult, ae := operation.Assign(fs.getMasterNode(), 1, replication, collection, r.URL.Query().Get("ttl"))
+	ar := &operation.VolumeAssignRequest{
+		Count:       1,
+		Replication: replication,
+		Collection:  collection,
+		Ttl:         r.URL.Query().Get("ttl"),
+	}
+	assignResult, ae := operation.Assign(fs.getMasterNode(), ar)
 	if ae != nil {
 		glog.V(0).Infoln("failing to assign a file id", ae.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, ae)

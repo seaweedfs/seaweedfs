@@ -44,7 +44,13 @@ func SubmitFiles(master string, files []FilePart,
 	for index, file := range files {
 		results[index].FileName = file.FileName
 	}
-	ret, err := Assign(master, uint64(len(files)), replication, collection, ttl)
+	ar := &VolumeAssignRequest{
+		Count:       uint64(len(files)),
+		Replication: replication,
+		Collection:  collection,
+		Ttl:         ttl,
+	}
+	ret, err := Assign(master, ar)
 	if err != nil {
 		for index, _ := range files {
 			results[index].Error = err.Error()
@@ -164,7 +170,13 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 func upload_one_chunk(filename string, reader io.Reader, master,
 	replication string, collection string, ttl string, jwt security.EncodedJwt,
 ) (fid string, size uint32, e error) {
-	ret, err := Assign(master, 1, replication, collection, ttl)
+	ar := &VolumeAssignRequest{
+		Count:       1,
+		Replication: replication,
+		Collection:  collection,
+		Ttl:         ttl,
+	}
+	ret, err := Assign(master, ar)
 	if err != nil {
 		return "", 0, err
 	}

@@ -94,7 +94,13 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 
 	debug("assigning file id for", fname)
 	r.ParseForm()
-	assignResult, ae := operation.Assign(masterUrl, 1, r.FormValue("replication"), r.FormValue("collection"), r.FormValue("ttl"))
+	ar := &operation.VolumeAssignRequest{
+		Count:       1,
+		Replication: r.FormValue("replication"),
+		Collection:  r.FormValue("collection"),
+		Ttl:         r.FormValue("ttl"),
+	}
+	assignResult, ae := operation.Assign(masterUrl, ar)
 	if ae != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, ae)
 		return

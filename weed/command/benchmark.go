@@ -205,7 +205,11 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 		start := time.Now()
 		fileSize := int64(*b.fileSize + rand.Intn(64))
 		fp := &operation.FilePart{Reader: &FakeReader{id: uint64(id), size: fileSize}, FileSize: fileSize}
-		if assignResult, err := operation.Assign(*b.server, 1, "", *b.collection, ""); err == nil {
+		ar := &operation.VolumeAssignRequest{
+			Count:      1,
+			Collection: *b.collection,
+		}
+		if assignResult, err := operation.Assign(*b.server, ar); err == nil {
 			fp.Server, fp.Fid, fp.Collection = assignResult.Url, assignResult.Fid, *b.collection
 			if _, err := fp.Upload(0, *b.server, secret); err == nil {
 				if rand.Intn(100) < *b.deletePercentage {
