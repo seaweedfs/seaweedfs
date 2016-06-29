@@ -79,11 +79,11 @@ func (vl *VolumeLayout) addToWritable(vid storage.VolumeId) {
 }
 
 func (vl *VolumeLayout) isOversized(v *storage.VolumeInfo) bool {
-	return uint64(v.Size) < vl.volumeSizeLimit
+	return uint64(v.Size) >= vl.volumeSizeLimit
 }
 
 func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool {
-	return vl.isOversized(v) &&
+	return !vl.isOversized(v) &&
 		v.Version == storage.CurrentVersion &&
 		!v.ReadOnly
 }

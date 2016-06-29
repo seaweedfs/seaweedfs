@@ -70,6 +70,13 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	u, _ := url.Parse(urlString)
+	q := u.Query()
+	for key, values := range r.URL.Query() {
+		for _, value := range values {
+			q.Add(key, value)
+		}
+	}
+	u.RawQuery = q.Encode()
 	request := &http.Request{
 		Method:        r.Method,
 		URL:           u,

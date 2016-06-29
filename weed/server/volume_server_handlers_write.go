@@ -42,6 +42,8 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		ret.Name = string(needle.Name)
 	}
 	ret.Size = size
+	etag := needle.Etag()
+	w.Header().Set("Etag", etag)
 	writeJsonQuiet(w, r, httpStatus, ret)
 }
 
