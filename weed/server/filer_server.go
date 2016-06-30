@@ -73,7 +73,10 @@ func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir st
 		glog.V(0).Infof("Filer server bootstraps with master %s", fs.getMasterNode())
 
 		//force initialize with all available master nodes
-		fs.masterNodes.FindMaster()
+		_, err := fs.masterNodes.FindMaster()
+		if err != nil {
+			glog.Fatalf("filer server failed to get master cluster info:%s", err.Error())
+		}
 
 		for {
 			glog.V(4).Infof("Filer server sending to master %s", fs.getMasterNode())
@@ -127,7 +130,7 @@ func (fs *FilerServer) detectHealthyMaster(masterNode string) (master string, e 
 			if e != nil {
 				continue
 			} else {
-				if e = checkMaster(masterNode); e == nil {
+				if e = checkMaster(master); e == nil {
 					break
 				}
 			}
