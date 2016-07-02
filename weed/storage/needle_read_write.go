@@ -226,7 +226,7 @@ func ReadNeedleHeader(r *os.File, version Version, offset int64) (n *Needle, bod
 
 //n should be a needle already read the header
 //the input stream will read until next file entry
-func (n *Needle) ReadNeedleBody(r *os.File, version Version, offset int64, bodyLength uint32) (err error) {
+func (n *Needle) ReadNeedleBody(r *os.File, version Version, offset int64, bodyLength uint32, verifyCheckSum bool) (err error) {
 	if bodyLength <= 0 {
 		return nil
 	}
@@ -238,6 +238,12 @@ func (n *Needle) ReadNeedleBody(r *os.File, version Version, offset int64, bodyL
 		}
 		n.Data = bytes[:n.Size]
 		n.Checksum = NewCRC(n.Data)
+		if verifyCheckSum {
+			checksum := util.BytesToUint32(bytes[n.Size : n.Size+NeedleChecksumSize])
+			if n.Checksum.Value() != checksum {
+				err = fmt.Errorf("CRC check failed")
+			}
+		}
 	case Version2:
 		bytes := make([]byte, bodyLength)
 		if _, err = r.ReadAt(bytes, offset); err != nil {
@@ -245,6 +251,12 @@ func (n *Needle) ReadNeedleBody(r *os.File, version Version, offset int64, bodyL
 		}
 		n.readNeedleDataVersion2(bytes[0:n.Size])
 		n.Checksum = NewCRC(n.Data)
+		if verifyCheckSum {
+			checksum := util.BytesToUint32(bytes[n.Size : n.Size+NeedleChecksumSize])
+			if n.Checksum.Value() != checksum {
+				err = fmt.Errorf("CRC check failed")
+			}
+		}
 	default:
 		err = fmt.Errorf("Unsupported Version! (%d)", version)
 	}

@@ -46,6 +46,57 @@ func loadVolumeWithoutIndex(dirname string, collection string, id VolumeId, need
 	e = v.load(false, false, needleMapKind)
 	return
 }
+func verifyIndexFileIntegrity(indexFile *os.File) (indexSize int64, err error) {
+	var fi os.FileInfo
+	if fi, err = indexFile.Stat(); err != nil {
+		return
+	} else if indexSize = fi.Size(); indexSize != 0 && indexSize%16 != 0 {
+		err = fmt.Errorf("index file %s's size is %d bytes, maybe corrupted", indexFile.Name(), fi.Size())
+		return
+	}
+	return
+}
+func readIndexEntryAtOffset(indexFile *os.File, offset int64, v Version) (bytes []byte, err error) {
+	if offset < 0 {
+		err = fmt.Errorf("offset %d for index file %s is invalid", offset, indexFile.Name())
+		return
+	}
+	bytes = make([]byte, 16)
+	_, err = indexFile.ReadAt(bytes, offset)
+	return
+}
+func verifyNeedleIntegrity(datFile *os.File, v Version, offset int64, key uint64) error {
+	if n, bodyLength, err := ReadNeedleHeader(datFile, v, offset); err != nil {
+		return fmt.Errorf("can not read needle header: %s", err.Error())
+	} else {
+		if n.Id != key {
+			return fmt.Errorf("index key %#x does not match needle's Id %#x", key, n.Id)
+		} else {
+			if err := n.ReadNeedleBody(datFile, v, offset+int64(NeedleHeaderSize), bodyLength, true); err != nil {
+				return fmt.Errorf("dat file %s's body reading failed: %s", datFile.Name(), err.Error())
+			}
+		}
+	}
+	return nil
+}
+func volumeDataIntegrityChecking(v *Volume, indexFile *os.File) {
+	var indexSize int64
+	var e error
+	if indexSize, e = verifyIndexFileIntegrity(indexFile); e != nil {
+		glog.V(0).Infof("verifyIndexFileIntegrity failed %s", e.Error())
+		v.readOnly = true
+	}
+	var lastIdxEntry []byte
+	if lastIdxEntry, e = readIndexEntryAtOffset(indexFile, indexSize-16, v.Version()); e != nil {
+		glog.V(0).Infof("readLastIndexEntry failed %s", e.Error())
+		v.readOnly = true
+	}
+	key, offset, _ := idxFileEntry(lastIdxEntry)
+	if e = verifyNeedleIntegrity(v.dataFile, v.Version(), int64(offset)*NeedlePaddingSize, key); e != nil {
+		glog.V(0).Infof("verifyNeedleIntegrity failed %s", e.Error())
+		v.readOnly = true
+	}
+}
 func (v *Volume) FileName() (fileName string) {
 	if v.Collection == "" {
 		fileName = path.Join(v.dir, v.Id.String())
@@ -105,6 +156,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				return fmt.Errorf("cannot write Volume Index %s.idx: %v", fileName, e)
 			}
 		}
+		volumeDataIntegrityChecking(v, indexFile)
 		switch needleMapKind {
 		case NeedleMapInMemory:
 			glog.V(0).Infoln("loading index file", fileName+".idx", "readonly", v.readOnly)
@@ -332,7 +384,7 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 	}
 	for n != nil {
 		if readNeedleBody {
-			if err = n.ReadNeedleBody(v.dataFile, version, offset+int64(NeedleHeaderSize), rest); err != nil {
+			if err = n.ReadNeedleBody(v.dataFile, version, offset+int64(NeedleHeaderSize), rest, false); err != nil {
 				glog.V(0).Infof("cannot read needle body: %v", err)
 				//err = fmt.Errorf("cannot read needle body: %v", err)
 				//return
