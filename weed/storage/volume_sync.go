@@ -181,7 +181,7 @@ func (v *Volume) IndexFileContent() ([]byte, error) {
 func (v *Volume) removeNeedle(key Key) {
 	n := new(Needle)
 	n.Id = uint64(key)
-	v.delete(n)
+	v.deleteNeedle(n)
 }
 
 // fetchNeedle fetches a remote volume needle by vid, id, offset

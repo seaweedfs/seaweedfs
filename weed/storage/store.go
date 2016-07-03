@@ -302,7 +302,7 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 			return
 		}
 		if MaxPossibleVolumeSize >= v.ContentSize()+uint64(size) {
-			size, err = v.write(n)
+			size, err = v.writeNeedle(n)
 		} else {
 			err = fmt.Errorf("Volume Size Limit %d Exceeded! Current size is %d", s.volumeSizeLimit, v.ContentSize())
 		}
@@ -320,7 +320,7 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 }
 func (s *Store) Delete(i VolumeId, n *Needle) (uint32, error) {
 	if v := s.findVolume(i); v != nil && !v.readOnly {
-		return v.delete(n)
+		return v.deleteNeedle(n)
 	}
 	return 0, nil
 }
