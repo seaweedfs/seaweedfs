@@ -299,23 +299,6 @@ func (v *Volume) ContentSize() uint64 {
 	return v.nm.ContentSize()
 }
 
-func checkFile(filename string) (exists, canRead, canWrite bool, modTime time.Time) {
-	exists = true
-	fi, err := os.Stat(filename)
-	if os.IsNotExist(err) {
-		exists = false
-		return
-	}
-	if fi.Mode()&0400 != 0 {
-		canRead = true
-	}
-	if fi.Mode()&0200 != 0 {
-		canWrite = true
-	}
-	modTime = fi.ModTime()
-	return
-}
-
 // volume is expired if modified time + volume ttl < now
 // except when volume is empty
 // or when the volume does not have a ttl
