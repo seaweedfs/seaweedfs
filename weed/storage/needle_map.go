@@ -17,6 +17,10 @@ const (
 	NeedleMapBoltDb
 )
 
+const (
+	NeedleIndexSize = 16
+)
+
 type NeedleMapper interface {
 	Put(key uint64, offset uint32, size uint32) error
 	Get(key uint64) (element *NeedleValue, ok bool)
