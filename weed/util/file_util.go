@@ -36,3 +36,11 @@ func Readln(r *bufio.Reader) ([]byte, error) {
 	}
 	return ln, err
 }
+
+func GetFileSize(file *os.File) (size int64, err error) {
+	var fi os.FileInfo
+	if fi, err = file.Stat(); err == nil {
+		size = fi.Size()
+	}
+	return
+}

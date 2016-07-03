@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type Volume struct {
@@ -45,6 +46,58 @@ func loadVolumeWithoutIndex(dirname string, collection string, id VolumeId, need
 	v.needleMapKind = needleMapKind
 	e = v.load(false, false, needleMapKind)
 	return
+}
+func verifyIndexFileIntegrity(indexFile *os.File) (indexSize int64, err error) {
+	if indexSize, err = util.GetFileSize(indexFile); err == nil {
+		if indexSize%NeedleIndexSize != 0 {
+			err = fmt.Errorf("index file's size is %d bytes, maybe corrupted", indexSize)
+		}
+	}
+	return
+}
+func readIndexEntryAtOffset(indexFile *os.File, offset int64, v Version) (bytes []byte, err error) {
+	if offset < 0 {
+		err = fmt.Errorf("offset %d for index file is invalid", offset)
+		return
+	}
+	bytes = make([]byte, NeedleIndexSize)
+	_, err = indexFile.ReadAt(bytes, offset)
+	return
+}
+func verifyNeedleIntegrity(datFile *os.File, v Version, offset int64, key uint64, size uint32) error {
+	n := new(Needle)
+	err := n.ReadData(datFile, offset, size, v)
+	if err != nil {
+		return err
+	}
+	if n.Id != key {
+		return fmt.Errorf("index key %#x does not match needle's Id %#x", key, n.Id)
+	}
+	return nil
+}
+func volumeDataIntegrityChecking(v *Volume, indexFile *os.File) error {
+	var indexSize int64
+	var e error
+	if indexSize, e = verifyIndexFileIntegrity(indexFile); e != nil {
+		return fmt.Errorf("verifyIndexFileIntegrity failed: %v", e)
+	}
+	if indexSize != 0 {
+		var lastIdxEntry []byte
+		if lastIdxEntry, e = readIndexEntryAtOffset(indexFile, indexSize-NeedleIndexSize, v.Version()); e != nil {
+			return fmt.Errorf("readLastIndexEntry failed: %v", e)
+		}
+		key, offset, size := idxFileEntry(lastIdxEntry)
+		if e = verifyNeedleIntegrity(v.dataFile, v.Version(), int64(offset)*NeedlePaddingSize, key, size); e != nil {
+			return fmt.Errorf("verifyNeedleIntegrity failed: %v", e)
+		}
+	} else {
+		if datSize, err := util.GetFileSize(v.dataFile); err == nil {
+			if datSize > 0 {
+				return fmt.Errorf("dat file size is %d, not empty while the index file is empty!", datSize)
+			}
+		}
+	}
+	return nil
 }
 func (v *Volume) FileName() (fileName string) {
 	if v.Collection == "" {
@@ -104,6 +157,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			if indexFile, e = os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644); e != nil {
 				return fmt.Errorf("cannot write Volume Index %s.idx: %v", fileName, e)
 			}
+		}
+		if e = volumeDataIntegrityChecking(v, indexFile); e != nil {
+			v.readOnly = true
+			glog.V(0).Infof("volumeDataIntegrityChecking failed %v", e)
 		}
 		switch needleMapKind {
 		case NeedleMapInMemory:
