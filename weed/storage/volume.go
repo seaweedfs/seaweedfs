@@ -55,7 +55,7 @@ func verifyIndexFileIntegrity(indexFile *os.File) (indexSize int64, err error) {
 	}
 	return
 }
-func readIndexEntryAtOffset(indexFile *os.File, offset int64, v Version) (bytes []byte, err error) {
+func readIndexEntryAtOffset(indexFile *os.File, offset int64) (bytes []byte, err error) {
 	if offset < 0 {
 		err = fmt.Errorf("offset %d for index file is invalid", offset)
 		return
@@ -79,23 +79,18 @@ func volumeDataIntegrityChecking(v *Volume, indexFile *os.File) error {
 	var indexSize int64
 	var e error
 	if indexSize, e = verifyIndexFileIntegrity(indexFile); e != nil {
-		return fmt.Errorf("verifyIndexFileIntegrity failed: %v", e)
+		return fmt.Errorf("verifyIndexFileIntegrity %s failed: %v", indexFile.Name(), e)
 	}
-	if indexSize != 0 {
-		var lastIdxEntry []byte
-		if lastIdxEntry, e = readIndexEntryAtOffset(indexFile, indexSize-NeedleIndexSize, v.Version()); e != nil {
-			return fmt.Errorf("readLastIndexEntry failed: %v", e)
-		}
-		key, offset, size := idxFileEntry(lastIdxEntry)
-		if e = verifyNeedleIntegrity(v.dataFile, v.Version(), int64(offset)*NeedlePaddingSize, key, size); e != nil {
-			return fmt.Errorf("verifyNeedleIntegrity failed: %v", e)
-		}
-	} else {
-		if datSize, err := util.GetFileSize(v.dataFile); err == nil {
-			if datSize > 0 {
-				return fmt.Errorf("dat file size is %d, not empty while the index file is empty!", datSize)
-			}
-		}
+	if indexSize == 0 {
+		return nil
+	}
+	var lastIdxEntry []byte
+	if lastIdxEntry, e = readIndexEntryAtOffset(indexFile, indexSize-NeedleIndexSize); e != nil {
+		return fmt.Errorf("readLastIndexEntry %s failed: %v", indexFile.Name(), e)
+	}
+	key, offset, size := idxFileEntry(lastIdxEntry)
+	if e = verifyNeedleIntegrity(v.dataFile, v.Version(), int64(offset)*NeedlePaddingSize, key, size); e != nil {
+		return fmt.Errorf("verifyNeedleIntegrity %s failed: %v", indexFile.Name(), e)
 	}
 	return nil
 }
