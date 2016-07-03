@@ -226,20 +226,20 @@ func ReadNeedleHeader(r *os.File, version Version, offset int64) (n *Needle, bod
 
 //n should be a needle already read the header
 //the input stream will read until next file entry
-func (n *Needle) ReadNeedleBody(r *os.File, version Version, offset int64, bodyLength uint32) (bytes []byte, err error) {
+func (n *Needle) ReadNeedleBody(r *os.File, version Version, offset int64, bodyLength uint32) (err error) {
 	if bodyLength <= 0 {
-		return
+		return nil
 	}
 	switch version {
 	case Version1:
-		bytes = make([]byte, bodyLength)
+		bytes := make([]byte, bodyLength)
 		if _, err = r.ReadAt(bytes, offset); err != nil {
 			return
 		}
 		n.Data = bytes[:n.Size]
 		n.Checksum = NewCRC(n.Data)
 	case Version2:
-		bytes = make([]byte, bodyLength)
+		bytes := make([]byte, bodyLength)
 		if _, err = r.ReadAt(bytes, offset); err != nil {
 			return
 		}

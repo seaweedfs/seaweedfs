@@ -64,22 +64,14 @@ func readIndexEntryAtOffset(indexFile *os.File, offset int64, v Version) (bytes 
 	_, err = indexFile.ReadAt(bytes, offset)
 	return
 }
-func verifyNeedleIntegrity(datFile *os.File, v Version, offset int64, key uint64) error {
-	if n, bodyLength, err := ReadNeedleHeader(datFile, v, offset); err != nil {
-		return fmt.Errorf("can not read needle header: %v", err)
-	} else {
-		if n.Id != key {
-			return fmt.Errorf("index key %#x does not match needle's Id %#x", key, n.Id)
-		} else {
-			if bytes, err := n.ReadNeedleBody(datFile, v, offset+int64(NeedleHeaderSize), bodyLength); err != nil {
-				return fmt.Errorf("dat file's body reading failed: %v", err)
-			} else {
-				checksum := util.BytesToUint32(bytes[n.Size : n.Size+NeedleChecksumSize])
-				if n.Checksum.Value() != checksum {
-					return fmt.Errorf("CRC check failed")
-				}
-			}
-		}
+func verifyNeedleIntegrity(datFile *os.File, v Version, offset int64, key uint64, size uint32) error {
+	n := new(Needle)
+	err := n.ReadData(datFile, offset, size, v)
+	if err != nil {
+		return err
+	}
+	if n.Id != key {
+		return fmt.Errorf("index key %#x does not match needle's Id %#x", key, n.Id)
 	}
 	return nil
 }
@@ -94,8 +86,8 @@ func volumeDataIntegrityChecking(v *Volume, indexFile *os.File) error {
 		if lastIdxEntry, e = readIndexEntryAtOffset(indexFile, indexSize-NeedleIndexSize, v.Version()); e != nil {
 			return fmt.Errorf("readLastIndexEntry failed: %v", e)
 		}
-		key, offset, _ := idxFileEntry(lastIdxEntry)
-		if e = verifyNeedleIntegrity(v.dataFile, v.Version(), int64(offset)*NeedlePaddingSize, key); e != nil {
+		key, offset, size := idxFileEntry(lastIdxEntry)
+		if e = verifyNeedleIntegrity(v.dataFile, v.Version(), int64(offset)*NeedlePaddingSize, key, size); e != nil {
 			return fmt.Errorf("verifyNeedleIntegrity failed: %v", e)
 		}
 	} else {
@@ -397,7 +389,7 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 	}
 	for n != nil {
 		if readNeedleBody {
-			if _, err = n.ReadNeedleBody(v.dataFile, version, offset+int64(NeedleHeaderSize), rest); err != nil {
+			if err = n.ReadNeedleBody(v.dataFile, version, offset+int64(NeedleHeaderSize), rest); err != nil {
 				glog.V(0).Infof("cannot read needle body: %v", err)
 				//err = fmt.Errorf("cannot read needle body: %v", err)
 				//return
