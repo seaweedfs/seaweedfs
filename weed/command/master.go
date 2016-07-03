@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"time"
@@ -42,6 +43,7 @@ var (
 	garbageThreshold        = cmdMaster.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
 	masterWhiteListOption   = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 	masterSecureKey         = cmdMaster.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
+	masterCpuProfile        = cmdMaster.Flag.String("cpuprofile", "", "cpu profile output file")
 
 	masterWhiteList []string
 )
@@ -51,6 +53,14 @@ func runMaster(cmd *Command, args []string) bool {
 		*mMaxCpu = runtime.NumCPU()
 	}
 	runtime.GOMAXPROCS(*mMaxCpu)
+	if *masterCpuProfile != "" {
+		f, err := os.Create(*masterCpuProfile)
+		if err != nil {
+			glog.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
 	if err := util.TestFolderWritable(*metaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *metaFolder, err)
 	}
