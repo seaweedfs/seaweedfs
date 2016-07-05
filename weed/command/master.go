@@ -60,6 +60,9 @@ func runMaster(cmd *Command, args []string) bool {
 		}
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
+		OnInterrupt(func() {
+			pprof.StopCPUProfile()
+		})
 	}
 	if err := util.TestFolderWritable(*metaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *metaFolder, err)
