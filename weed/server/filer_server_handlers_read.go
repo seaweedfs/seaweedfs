@@ -1,15 +1,12 @@
 package weed_server
 
 import (
-	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	ui "github.com/chrislusf/seaweedfs/weed/server/filer_ui"
 	"github.com/syndtr/goleveldb/leveldb"
 )
 
@@ -42,63 +39,30 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 }
 
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
-	if strings.HasSuffix(r.URL.Path, "/") {
-		if fs.disableDirListing {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		fs.listDirectoryHandler(w, r)
-		return
-	}
+	fileLimit := 100
+	files, err := fs.filer.ListFiles(r.URL.Path, "", fileLimit)
 
-	fileId, err := fs.filer.FindFile(r.URL.Path)
 	if err == leveldb.ErrNotFound {
-		glog.V(3).Infoln("Not found in db", r.URL.Path)
-		w.WriteHeader(http.StatusNotFound)
+		glog.V(0).Infof("Error %s", err)
 		return
 	}
 
-	urlLocation, err := operation.LookupFileId(fs.getMasterNode(), fileId)
-	if err != nil {
-		glog.V(1).Infoln("operation LookupFileId %s failed, err is %s", fileId, err.Error())
-		w.WriteHeader(http.StatusNotFound)
+	directories, err2 := fs.filer.ListDirectories(r.URL.Path)
+	if err2 == leveldb.ErrNotFound {
+		glog.V(0).Infof("Error %s", err)
 		return
 	}
-	urlString := urlLocation
-	if fs.redirectOnRead {
-		http.Redirect(w, r, urlString, http.StatusFound)
-		return
+
+	args := struct {
+		Path                 string
+		Files                interface{}
+		Directories          interface{}
+		NotAllFilesDisplayed bool
+	}{
+		r.URL.Path,
+		files,
+		directories,
+		len(files) == fileLimit,
 	}
-	u, _ := url.Parse(urlString)
-	q := u.Query()
-	for key, values := range r.URL.Query() {
-		for _, value := range values {
-			q.Add(key, value)
-		}
-	}
-	u.RawQuery = q.Encode()
-	request := &http.Request{
-		Method:        r.Method,
-		URL:           u,
-		Proto:         r.Proto,
-		ProtoMajor:    r.ProtoMajor,
-		ProtoMinor:    r.ProtoMinor,
-		Header:        r.Header,
-		Body:          r.Body,
-		Host:          r.Host,
-		ContentLength: r.ContentLength,
-	}
-	glog.V(3).Infoln("retrieving from", u)
-	resp, do_err := util.Do(request)
-	if do_err != nil {
-		glog.V(0).Infoln("failing to connect to volume server", do_err.Error())
-		writeJsonError(w, r, http.StatusInternalServerError, do_err)
-		return
-	}
-	defer resp.Body.Close()
-	for k, v := range resp.Header {
-		w.Header()[k] = v
-	}
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	ui.StatusTpl.Execute(w, args)
 }
