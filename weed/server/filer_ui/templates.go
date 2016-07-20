@@ -42,9 +42,11 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
 			</ul>
 		</div>
 
-		{{if .NotAllFilesDisplayed}}
+{{if .ShouldDisplayLoadMore}}
 		<div class="row">
-			Not all files are displayed.
+		<a href=		{{ print .Path "?limit=" .Limit	"&lastFileName=" .LastFileName}} >
+		Load more
+		</a>
 		</div>
 		{{end}}
 	</div>

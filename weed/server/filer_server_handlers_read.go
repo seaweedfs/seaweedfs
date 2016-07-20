@@ -10,59 +10,66 @@ import (
 	"github.com/syndtr/goleveldb/leveldb"
 )
 
-// listDirectoryHandler lists directories and folers under a directory
-// files are sorted by name and paginated via "lastFileName" and "limit".
-// sub directories are listed on the first page, when "lastFileName"
-// is empty.
-func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Request) {
+func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
 	if !strings.HasSuffix(r.URL.Path, "/") {
 		return
 	}
-	dirlist, err := fs.filer.ListDirectories(r.URL.Path)
-	if err == leveldb.ErrNotFound {
-		glog.V(3).Infoln("Directory Not Found in db", r.URL.Path)
-		w.WriteHeader(http.StatusNotFound)
+
+	if fs.disableDirListing {
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	m := make(map[string]interface{})
-	m["Directory"] = r.URL.Path
-	lastFileName := r.FormValue("lastFileName")
-	if lastFileName == "" {
-		m["Subdirectories"] = dirlist
-	}
+
 	limit, limit_err := strconv.Atoi(r.FormValue("limit"))
 	if limit_err != nil {
 		limit = 100
 	}
-	m["Files"], _ = fs.filer.ListFiles(r.URL.Path, lastFileName, limit)
-	writeJsonQuiet(w, r, http.StatusOK, m)
-}
 
-func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
-	fileLimit := 100
-	files, err := fs.filer.ListFiles(r.URL.Path, "", fileLimit)
+	lastFileName := r.FormValue("lastFileName")
+	files, err := fs.filer.ListFiles(r.URL.Path, lastFileName, limit)
 
 	if err == leveldb.ErrNotFound {
 		glog.V(0).Infof("Error %s", err)
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
 	directories, err2 := fs.filer.ListDirectories(r.URL.Path)
 	if err2 == leveldb.ErrNotFound {
 		glog.V(0).Infof("Error %s", err)
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
+	shouldDisplayLoadMore := len(files) > 0
+
+	lastFileName = ""
+	if len(files) > 0 {
+		lastFileName = files[len(files)-1].Name
+
+		files2, err3 := fs.filer.ListFiles(r.URL.Path, lastFileName, limit)
+		if err3 == leveldb.ErrNotFound {
+			glog.V(0).Infof("Error %s", err)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		shouldDisplayLoadMore = len(files2) > 0
+	}
+
 	args := struct {
-		Path                 string
-		Files                interface{}
-		Directories          interface{}
-		NotAllFilesDisplayed bool
+		Path                  string
+		Files                 interface{}
+		Directories           interface{}
+		Limit                 int
+		LastFileName          string
+		ShouldDisplayLoadMore bool
 	}{
 		r.URL.Path,
 		files,
 		directories,
-		len(files) == fileLimit,
+		limit,
+		lastFileName,
+		shouldDisplayLoadMore,
 	}
 	ui.StatusTpl.Execute(w, args)
 }
