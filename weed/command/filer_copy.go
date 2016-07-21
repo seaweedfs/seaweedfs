@@ -42,7 +42,7 @@ func init() {
 }
 
 var cmdCopy = &Command{
-	UsageLine: "copy file_or_dir1 [file_or_dir2 file_or_dir3] http://localhost:8888/path/to/a/folder/",
+	UsageLine: "filer.copy file_or_dir1 [file_or_dir2 file_or_dir3] http://localhost:8888/path/to/a/folder/",
 	Short:     "copy one or a list of files to a filer folder",
 	Long: `copy one or a list of files, or batch copy one whole folder recursively, to a filer folder
 
@@ -75,13 +75,13 @@ func runCopy(cmd *Command, args []string) bool {
 		fmt.Printf("The last argument should be a URL on filer: %v\n", err)
 		return false
 	}
-	if len(fileOrDirs) > 1 && !strings.HasSuffix(filerUrl.Path, "/") {
-		fmt.Println("Can not copy multiple items to a file. The last argument must be a folder ended with \"/\"")
-		return false
+	path := filerUrl.Path
+	if !strings.HasSuffix(path, "/") {
+		path = path + "/"
 	}
 
 	for _, fileOrDir := range fileOrDirs {
-		if !doEachCopy(fileOrDir, filerUrl.Host, filerUrl.Path) {
+		if !doEachCopy(fileOrDir, filerUrl.Host, path) {
 			return false
 		}
 	}
@@ -141,7 +141,7 @@ func doEachCopy(fileOrDir string, host string, path string) bool {
 		return false
 	}
 
-	fmt.Printf("Copy %s => http://%s/%s\n", fileOrDir, host, path)
+	fmt.Printf("Copy %s => http://%s%s\n", fileOrDir, host, path)
 
 	return true
 }
