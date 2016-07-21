@@ -15,7 +15,7 @@ var (
 )
 
 type UploadOptions struct {
-	server      *string
+	master      *string
 	dir         *string
 	include     *string
 	replication *string
@@ -28,7 +28,7 @@ type UploadOptions struct {
 func init() {
 	cmdUpload.Run = runUpload // break init cycle
 	cmdUpload.IsDebug = cmdUpload.Flag.Bool("debug", false, "verbose debug information")
-	upload.server = cmdUpload.Flag.String("server", "localhost:9333", "SeaweedFS master location")
+	upload.master = cmdUpload.Flag.String("master", "localhost:9333", "SeaweedFS master location")
 	upload.dir = cmdUpload.Flag.String("dir", "", "Upload the whole folder recursively if specified.")
 	upload.include = cmdUpload.Flag.String("include", "", "pattens of files to upload, e.g., *.pdf, *.html, ab?d.txt, works together with -dir")
 	upload.replication = cmdUpload.Flag.String("replication", "", "replication type")
@@ -39,7 +39,7 @@ func init() {
 }
 
 var cmdUpload = &Command{
-	UsageLine: "upload -server=localhost:9333 file1 [file2 file3]\n         weed upload -server=localhost:9333 -dir=one_directory -include=*.pdf",
+	UsageLine: "upload -master=localhost:9333 file1 [file2 file3]\n         weed upload -server=localhost:9333 -dir=one_directory -include=*.pdf",
 	Short:     "upload one or a list of files",
 	Long: `upload one or a list of files, or batch upload one whole folder recursively.
 
@@ -79,7 +79,7 @@ func runUpload(cmd *Command, args []string) bool {
 					if e != nil {
 						return e
 					}
-					results, e := operation.SubmitFiles(*upload.server, parts,
+					results, e := operation.SubmitFiles(*upload.master, parts,
 						*upload.replication, *upload.collection,
 						*upload.ttl, *upload.maxMB, secret)
 					bytes, _ := json.Marshal(results)
@@ -98,7 +98,7 @@ func runUpload(cmd *Command, args []string) bool {
 		if e != nil {
 			fmt.Println(e.Error())
 		}
-		results, _ := operation.SubmitFiles(*upload.server, parts,
+		results, _ := operation.SubmitFiles(*upload.master, parts,
 			*upload.replication, *upload.collection,
 			*upload.ttl, *upload.maxMB, secret)
 		bytes, _ := json.Marshal(results)

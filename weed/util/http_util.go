@@ -32,6 +32,9 @@ func PostBytes(url string, body []byte) ([]byte, error) {
 		return nil, fmt.Errorf("Post to %s: %v", url, err)
 	}
 	defer r.Body.Close()
+	if r.StatusCode >= 400 {
+		return nil, fmt.Errorf("%s: %s", url, r.Status)
+	}
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return nil, fmt.Errorf("Read response body: %v", err)
@@ -45,6 +48,9 @@ func Post(url string, values url.Values) ([]byte, error) {
 		return nil, err
 	}
 	defer r.Body.Close()
+	if r.StatusCode >= 400 {
+		return nil, fmt.Errorf("%s: %s", url, r.Status)
+	}
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return nil, err
@@ -59,7 +65,7 @@ func Get(url string) ([]byte, error) {
 	}
 	defer r.Body.Close()
 	b, err := ioutil.ReadAll(r.Body)
-	if r.StatusCode != 200 {
+	if r.StatusCode >= 400 {
 		return nil, fmt.Errorf("%s: %s", url, r.Status)
 	}
 	if err != nil {
@@ -81,6 +87,9 @@ func Delete(url string, jwt security.EncodedJwt) error {
 		return e
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("%s: %s", url, resp.Status)
+	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return err
