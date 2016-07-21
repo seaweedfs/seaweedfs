@@ -87,9 +87,6 @@ func Delete(url string, jwt security.EncodedJwt) error {
 		return e
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("%s: %s", url, resp.Status)
-	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return err
