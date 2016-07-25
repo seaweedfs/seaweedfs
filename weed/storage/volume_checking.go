@@ -22,7 +22,7 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) error {
 	}
 	key, offset, size := idxFileEntry(lastIdxEntry)
 	//deleted index entry could not point to deleted needle
-	if offset == 0 || size == 0 {
+	if offset == 0 {
 		return nil
 	}
 	if e = verifyNeedleIntegrity(v.dataFile, v.Version(), int64(offset)*NeedlePaddingSize, key, size); e != nil {
