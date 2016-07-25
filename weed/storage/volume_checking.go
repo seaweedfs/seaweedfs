@@ -21,6 +21,10 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) error {
 		return fmt.Errorf("readLastIndexEntry %s failed: %v", indexFile.Name(), e)
 	}
 	key, offset, size := idxFileEntry(lastIdxEntry)
+	//deleted index entry could not point to deleted needle
+	if offset == 0 || size == 0 {
+		return nil
+	}
 	if e = verifyNeedleIntegrity(v.dataFile, v.Version(), int64(offset)*NeedlePaddingSize, key, size); e != nil {
 		return fmt.Errorf("verifyNeedleIntegrity %s failed: %v", indexFile.Name(), e)
 	}
