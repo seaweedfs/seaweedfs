@@ -62,6 +62,7 @@ func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir st
 		}
 
 		r.HandleFunc("/admin/mv", fs.moveHandler)
+		r.HandleFunc("/admin/register", fs.registerHandler)
 	}
 
 	r.HandleFunc("/", fs.filerHandler)
@@ -73,9 +74,14 @@ func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir st
 		glog.V(0).Infof("Filer server bootstraps with master %s", fs.getMasterNode())
 
 		//force initialize with all available master nodes
-		_, err := fs.masterNodes.FindMaster()
-		if err != nil {
-			glog.Fatalf("filer server failed to get master cluster info:%s", err.Error())
+		for {
+			_, err := fs.masterNodes.FindMaster()
+			if err != nil {
+				glog.Infof("filer server failed to get master cluster info:%s", err.Error())
+				time.Sleep(3 * time.Second)
+			} else {
+				break
+			}
 		}
 
 		for {
