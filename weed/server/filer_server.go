@@ -28,7 +28,6 @@ type FilerServer struct {
 	disableDirListing  bool
 	secret             security.Secret
 	filer              filer.Filer
-	maxMB		   int
 	masterNodes        *storage.MasterNodes
 }
 
@@ -44,7 +43,6 @@ func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir st
 		defaultReplication: replication,
 		redirectOnRead:     redirectOnRead,
 		disableDirListing:  disableDirListing,
-		maxMB:		    maxMB,
 		port:               ip + ":" + strconv.Itoa(port),
 	}
 

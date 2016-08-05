@@ -24,7 +24,6 @@ type FilerOptions struct {
 	dir                     *string
 	redirectOnRead          *bool
 	disableDirListing       *bool
-	maxMB			*int
 	secretKey               *string
 	cassandra_server        *string
 	cassandra_keyspace      *string
@@ -43,7 +42,6 @@ func init() {
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "000", "default replication type if not specified")
 	f.redirectOnRead = cmdFiler.Flag.Bool("redirectOnRead", false, "whether proxy or redirect to volume server during file GET request")
 	f.disableDirListing = cmdFiler.Flag.Bool("disableDirListing", false, "turn off directory listing")
-	f.maxMB = cmdFiler.Flag.Int("maxMB", 0, "split files larger than the limit")
 	f.cassandra_server = cmdFiler.Flag.String("cassandra.server", "", "host[:port] of the cassandra server")
 	f.cassandra_keyspace = cmdFiler.Flag.String("cassandra.keyspace", "seaweed", "keyspace of the cassandra server")
 	f.redis_server = cmdFiler.Flag.String("redis.server", "", "host:port of the redis server, e.g., 127.0.0.1:6379")
@@ -84,7 +82,6 @@ func runFiler(cmd *Command, args []string) bool {
 	r := http.NewServeMux()
 	_, nfs_err := weed_server.NewFilerServer(r, *f.ip, *f.port, *f.master, *f.dir, *f.collection,
 		*f.defaultReplicaPlacement, *f.redirectOnRead, *f.disableDirListing,
-		*f.maxMB,
 		*f.secretKey,
 		*f.cassandra_server, *f.cassandra_keyspace,
 		*f.redis_server, *f.redis_password, *f.redis_database,
