@@ -9,7 +9,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"strings"
 )
 
 var (
@@ -32,31 +31,6 @@ type FilerOptions struct {
 	redis_server            *string
 	redis_password          *string
 	redis_database          *int
-	get_ip_whitelist_option      *string
-	get_root_whitelist_option    *string
-	head_ip_whitelist_option     *string
-	head_root_whitelist_option   *string
-	delete_ip_whitelist_option   *string
-	delete_root_whitelist_option *string
-	put_ip_whitelist_option      *string
-	put_root_whitelist_option    *string
-	post_ip_whitelist_option     *string
-	post_root_whitelist_option   *string
-	get_secure_key               *string
-	head_secure_key              *string
-	delete_secure_key            *string
-	put_secure_key               *string
-	post_secure_key              *string
-	get_ip_whitelist      []string
-	get_root_whitelist    []string
-	head_ip_whitelist     []string
-	head_root_whitelist   []string
-	delete_ip_whitelist   []string
-	delete_root_whitelist []string
-	put_ip_whitelist      []string
-	put_root_whitelist    []string
-	post_ip_whitelist     []string
-	post_root_whitelist   []string
 }
 
 func init() {
@@ -76,21 +50,6 @@ func init() {
 	f.redis_password = cmdFiler.Flag.String("redis.password", "", "password in clear text")
 	f.redis_database = cmdFiler.Flag.Int("redis.database", 0, "the database on the redis server")
 	f.secretKey = cmdFiler.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
-	f.get_ip_whitelist_option = cmdFiler.Flag.String("whitelist.ip.get", "", "comma separated Ip addresses having get permission. No limit if empty.")
-	f.get_root_whitelist_option = cmdFiler.Flag.String("whitelist.root.get", "", "comma separated root paths having get permission. No limit if empty.")
-	f.head_ip_whitelist_option = cmdFiler.Flag.String("whitelist.ip.head", "", "comma separated Ip addresses having head permission. No limit if empty.")
-	f.head_root_whitelist_option = cmdFiler.Flag.String("whitelist.root.head", "", "comma separated root paths having head permission. No limit if empty.")
-	f.delete_ip_whitelist_option = cmdFiler.Flag.String("whitelist.ip.delete", "", "comma separated Ip addresses having delete permission. No limit if empty.")
-	f.delete_root_whitelist_option = cmdFiler.Flag.String("whitelist.root.delete", "", "comma separated root paths having delete permission. No limit if empty.")
-	f.put_ip_whitelist_option = cmdFiler.Flag.String("whitelist.ip.put", "", "comma separated Ip addresses having put permission. No limit if empty.")
-	f.put_root_whitelist_option = cmdFiler.Flag.String("whitelist.root.put", "", "comma separated root paths having put permission. No limit if empty.")
-	f.post_ip_whitelist_option = cmdFiler.Flag.String("whitelist.ip.post", "", "comma separated Ip addresses having post permission. No limit if empty.")
-	f.post_root_whitelist_option = cmdFiler.Flag.String("whitelist.root.post", "", "comma separated root paths having post permission. No limit if empty.")
-	f.get_secure_key = cmdFiler.Flag.String("secure.secret.get", "", "secret to encrypt Json Web Token(JWT)")
-	f.head_secure_key = cmdFiler.Flag.String("secure.secret.head", "", "secret to encrypt Json Web Token(JWT)")
-	f.delete_secure_key = cmdFiler.Flag.String("secure.secret.delete", "", "secret to encrypt Json Web Token(JWT)")
-	f.put_secure_key = cmdFiler.Flag.String("secure.secret.put", "", "secret to encrypt Json Web Token(JWT)")
-	f.post_secure_key = cmdFiler.Flag.String("secure.secret.post", "", "secret to encrypt Json Web Token(JWT)")
 
 }
 
@@ -122,36 +81,6 @@ func runFiler(cmd *Command, args []string) bool {
 		glog.Fatalf("Check Meta Folder (-dir) Writable %s : %s", *f.dir, err)
 	}
 
-	if *f.get_ip_whitelist_option != "" {
-		f.get_ip_whitelist = strings.Split(*f.get_ip_whitelist_option, ",")
-	}
-	if *f.get_root_whitelist_option != "" {
-		f.get_root_whitelist = strings.Split(*f.get_root_whitelist_option, ",")
-	}
-	if *f.head_ip_whitelist_option != "" {
-		f.head_ip_whitelist = strings.Split(*f.head_ip_whitelist_option, ",")
-	}
-	if *f.head_root_whitelist_option != "" {
-		f.head_root_whitelist = strings.Split(*f.head_root_whitelist_option, ",")
-	}
-	if *f.delete_ip_whitelist_option != "" {
-		f.delete_ip_whitelist = strings.Split(*f.delete_ip_whitelist_option, ",")
-	}
-	if *f.delete_root_whitelist_option != "" {
-		f.delete_root_whitelist = strings.Split(*f.delete_root_whitelist_option, ",")
-	}
-	if *f.put_ip_whitelist_option != "" {
-		f.put_ip_whitelist = strings.Split(*f.put_ip_whitelist_option, ",")
-	}
-	if *f.put_root_whitelist_option != "" {
-		f.put_root_whitelist = strings.Split(*f.put_root_whitelist_option, ",")
-	}
-	if *f.post_ip_whitelist_option != "" {
-		f.post_ip_whitelist = strings.Split(*f.post_ip_whitelist_option, ",")
-	}
-	if *f.post_root_whitelist_option != "" {
-		f.post_root_whitelist = strings.Split(*f.post_root_whitelist_option, ",")
-	}
 	r := http.NewServeMux()
 	_, nfs_err := weed_server.NewFilerServer(r, *f.ip, *f.port, *f.master, *f.dir, *f.collection,
 		*f.defaultReplicaPlacement, *f.redirectOnRead, *f.disableDirListing,
@@ -159,9 +88,6 @@ func runFiler(cmd *Command, args []string) bool {
 		*f.secretKey,
 		*f.cassandra_server, *f.cassandra_keyspace,
 		*f.redis_server, *f.redis_password, *f.redis_database,
-		f.get_ip_whitelist, f.head_ip_whitelist, f.delete_ip_whitelist, f.put_ip_whitelist, f.post_ip_whitelist,
-		f.get_root_whitelist, f.head_root_whitelist, f.delete_root_whitelist, f.put_root_whitelist, f.post_root_whitelist,
-		*f.get_secure_key, *f.head_secure_key, *f.delete_secure_key, *f.put_secure_key, *f.post_secure_key,
 	)
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

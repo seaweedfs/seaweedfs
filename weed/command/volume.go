@@ -2,7 +2,6 @@ package command
 
 import (
 	"net/http"
-	_ "net/http/pprof"
 	"os"
 	"runtime"
 	"strconv"
@@ -33,8 +32,7 @@ type VolumeServerOptions struct {
 	maxCpu                *int
 	dataCenter            *string
 	rack                  *string
-	readWhitelist         []string
-	writeWhitelist         []string
+	whiteList             []string
 	indexType             *string
 	fixJpgOrientation     *bool
 	readRedirect          *bool
@@ -69,8 +67,7 @@ var cmdVolume = &Command{
 var (
 	volumeFolders         = cmdVolume.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	maxVolumeCounts       = cmdVolume.Flag.String("max", "7", "maximum numbers of volumes, count[,count]...")
-	volumeReadWhiteListOption = cmdVolume.Flag.String("read.whitelist", "", "comma separated Ip addresses having read permission. No limit if empty.")
-	volumeWriteWhiteListOption = cmdVolume.Flag.String("write.whitelist", "", "comma separated Ip addresses having write permission. No limit if empty.")
+	volumeWhiteListOption = cmdVolume.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 )
 
 func runVolume(cmd *Command, args []string) bool {
@@ -99,11 +96,8 @@ func runVolume(cmd *Command, args []string) bool {
 	}
 
 	//security related white list configuration
-	if *volumeReadWhiteListOption != "" {
-		v.readWhitelist = strings.Split(*volumeReadWhiteListOption, ",")
-	}
-	if *volumeWriteWhiteListOption != "" {
-		v.writeWhitelist = strings.Split(*volumeWriteWhiteListOption, ",")
+	if *volumeWhiteListOption != "" {
+		v.whiteList = strings.Split(*volumeWhiteListOption, ",")
 	}
 
 	if *v.ip == "" {
@@ -136,7 +130,7 @@ func runVolume(cmd *Command, args []string) bool {
 		v.folders, v.folderMaxLimits,
 		volumeNeedleMapKind,
 		*v.master, *v.pulseSeconds, *v.dataCenter, *v.rack,
-		v.readWhitelist, v.writeWhitelist, nil,
+		v.whiteList,
 		*v.fixJpgOrientation, *v.readRedirect,
 	)
 

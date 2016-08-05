@@ -54,8 +54,7 @@ var (
 	serverTimeout                 = cmdServer.Flag.Int("idleTimeout", 10, "connection idle seconds")
 	serverDataCenter              = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
 	serverRack                    = cmdServer.Flag.String("rack", "", "current volume server's rack name")
-	serverReadWhiteListOption     = cmdServer.Flag.String("read.whitelist", "", "comma separated Ip addresses having read permission. No limit if empty.")
-	serverWriteWhiteListOption    = cmdServer.Flag.String("write.whitelist", "", "comma separated Ip addresses having write permission. No limit if empty.")
+	serverWhiteListOption         = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 	serverPeers                   = cmdServer.Flag.String("master.peers", "", "other master nodes in comma separated ip:masterPort list")
 	serverSecureKey               = cmdServer.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 	serverGarbageThreshold        = cmdServer.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
@@ -75,8 +74,7 @@ var (
 	volumeServerPublicUrl         = cmdServer.Flag.String("volume.publicUrl", "", "publicly accessible address")
 	isStartingFiler               = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 
-	serverReadWhiteList []string
-	serverWriteWhiteList []string
+	serverWhiteList []string
 )
 
 func init() {
@@ -84,7 +82,7 @@ func init() {
 	filerOptions.master = cmdServer.Flag.String("filer.master", "", "default to current master server")
 	filerOptions.collection = cmdServer.Flag.String("filer.collection", "", "all data will be stored in this collection")
 	filerOptions.port = cmdServer.Flag.Int("filer.port", 8888, "filer server http listen port")
-	filerOptions.dir = cmdServer.Flag.String("filer.dir", "", "directory to store meta data, default to a 'filer' sub directory of what -mdir is specified")
+	filerOptions.dir = cmdServer.Flag.String("filer.dir", "", "directory to store meta data, default to a 'filer' sub directory of what -dir is specified")
 	filerOptions.defaultReplicaPlacement = cmdServer.Flag.String("filer.defaultReplicaPlacement", "", "Default replication type if not specified during runtime.")
 	filerOptions.redirectOnRead = cmdServer.Flag.Bool("filer.redirectOnRead", false, "whether proxy or redirect to volume server during file GET request")
 	filerOptions.disableDirListing = cmdServer.Flag.Bool("filer.disableDirListing", false, "turn off directory listing")
@@ -94,21 +92,6 @@ func init() {
 	filerOptions.redis_server = cmdServer.Flag.String("filer.redis.server", "", "host:port of the redis server, e.g., 127.0.0.1:6379")
 	filerOptions.redis_password = cmdServer.Flag.String("filer.redis.password", "", "redis password in clear text")
 	filerOptions.redis_database = cmdServer.Flag.Int("filer.redis.database", 0, "the database on the redis server")
-	filerOptions.get_ip_whitelist_option = cmdServer.Flag.String("filer.whitelist.ip.get", "", "comma separated Ip addresses having filer GET permission. No limit if empty.")
-	filerOptions.get_root_whitelist_option = cmdServer.Flag.String("filer.whitelist.root.get", "", "comma separated root paths having filer GET permission. No limit if empty.")
-	filerOptions.head_ip_whitelist_option = cmdServer.Flag.String("filer.whitelist.ip.head", "", "comma separated Ip addresses having filer HEAD permission. No limit if empty.")
-	filerOptions.head_root_whitelist_option = cmdServer.Flag.String("filer.whitelist.root.head", "", "comma separated root paths having filer HEAD permission. No limit if empty.")
-	filerOptions.delete_ip_whitelist_option = cmdServer.Flag.String("filer.whitelist.ip.delete", "", "comma separated Ip addresses having filer DELETE permission. No limit if empty.")
-	filerOptions.delete_root_whitelist_option = cmdServer.Flag.String("filer.whitelist.root.delete", "", "comma separated root paths having filer DELETE permission. No limit if empty.")
-	filerOptions.put_ip_whitelist_option = cmdServer.Flag.String("filer.whitelist.ip.put", "", "comma separated Ip addresses having filer PUT permission. No limit if empty.")
-	filerOptions.put_root_whitelist_option = cmdServer.Flag.String("filer.whitelist.root.put", "", "comma separated root paths having filer PUT permission. No limit if empty.")
-	filerOptions.post_ip_whitelist_option = cmdServer.Flag.String("filer.whitelist.ip.post", "", "comma separated Ip addresses having filer POST permission. No limit if empty.")
-	filerOptions.post_root_whitelist_option = cmdServer.Flag.String("filer.whitelist.root.post", "", "comma separated root paths having filer POST permission. No limit if empty.")
-	filerOptions.get_secure_key = cmdServer.Flag.String("filer.secure.secret.get", "", "secret to encrypt Json Web Token(JWT)")
-	filerOptions.head_secure_key = cmdServer.Flag.String("filer.secure.secret.head", "", "secret to encrypt Json Web Token(JWT)")
-	filerOptions.delete_secure_key = cmdServer.Flag.String("filer.secure.secret.delete", "", "secret to encrypt Json Web Token(JWT)")
-	filerOptions.put_secure_key = cmdServer.Flag.String("filer.secure.secret.put", "", "secret to encrypt Json Web Token(JWT)")
-	filerOptions.post_secure_key = cmdServer.Flag.String("filer.secure.secret.post", "", "secret to encrypt Json Web Token(JWT)")
 }
 
 func runServer(cmd *Command, args []string) bool {
@@ -171,56 +154,13 @@ func runServer(cmd *Command, args []string) bool {
 		if err := util.TestFolderWritable(*filerOptions.dir); err != nil {
 			glog.Fatalf("Check Mapping Meta Folder (-filer.dir=\"%s\") Writable: %s", *filerOptions.dir, err)
 		}
-		if *filerOptions.get_ip_whitelist_option != "" {
-			glog.V(0).Infof("Filer GET IP whitelist: %s", *filerOptions.get_ip_whitelist_option)
-			filerOptions.get_ip_whitelist = strings.Split(*filerOptions.get_ip_whitelist_option, ",")
-		}
-		if *filerOptions.get_root_whitelist_option != "" {
-			glog.V(0).Infof("Filer GET root whitelist: %s", *filerOptions.get_root_whitelist_option)
-			filerOptions.get_root_whitelist = strings.Split(*filerOptions.get_root_whitelist_option, ",")
-		}
-		if *filerOptions.head_ip_whitelist_option != "" {
-			glog.V(0).Infof("Filer HEAD IP whitelist: %s", *filerOptions.head_ip_whitelist_option)
-			filerOptions.head_ip_whitelist = strings.Split(*filerOptions.head_ip_whitelist_option, ",")
-		}
-		if *filerOptions.head_root_whitelist_option != "" {
-			glog.V(0).Infof("Filer HEAD root whitelist: %s", *filerOptions.head_root_whitelist_option)
-			filerOptions.head_root_whitelist = strings.Split(*filerOptions.head_root_whitelist_option, ",")
-		}
-		if *filerOptions.delete_ip_whitelist_option != "" {
-			glog.V(0).Infof("Filer DELETE IP whitelist: %s", *filerOptions.delete_ip_whitelist_option)
-			filerOptions.delete_ip_whitelist = strings.Split(*filerOptions.delete_ip_whitelist_option, ",")
-		}
-		if *filerOptions.delete_root_whitelist_option != "" {
-			glog.V(0).Infof("Filer DELETE root whitelist: %s", *filerOptions.delete_root_whitelist_option)
-			filerOptions.delete_root_whitelist = strings.Split(*filerOptions.delete_root_whitelist_option, ",")
-		}
-		if *filerOptions.put_ip_whitelist_option != "" {
-			glog.V(0).Infof("Filer PUT IP whitelist: %s", *filerOptions.put_ip_whitelist_option)
-			filerOptions.put_ip_whitelist = strings.Split(*filerOptions.put_ip_whitelist_option, ",")
-		}
-		if *filerOptions.put_root_whitelist_option != "" {
-			glog.V(0).Infof("Filer PUT root whitelist: %s", *filerOptions.put_root_whitelist_option)
-			filerOptions.put_root_whitelist = strings.Split(*filerOptions.put_root_whitelist_option, ",")
-		}
-		if *filerOptions.post_ip_whitelist_option != "" {
-			glog.V(0).Infof("Filer POST IP whitelist: %s", *filerOptions.post_ip_whitelist_option)
-			filerOptions.post_ip_whitelist = strings.Split(*filerOptions.post_ip_whitelist_option, ",")
-		}
-		if *filerOptions.post_root_whitelist_option != "" {
-			glog.V(0).Infof("Filer POST root whitelist: %s", *filerOptions.post_root_whitelist_option)
-			filerOptions.post_root_whitelist = strings.Split(*filerOptions.post_root_whitelist_option, ",")
-		}
 	}
 	if err := util.TestFolderWritable(*masterMetaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterMetaFolder, err)
 	}
 
-	if *serverReadWhiteListOption != "" {
-		serverReadWhiteList = strings.Split(*serverReadWhiteListOption, ",")
-	}
-	if *serverWriteWhiteListOption != "" {
-		serverWriteWhiteList = strings.Split(*serverWriteWhiteListOption, ",")
+	if *serverWhiteListOption != "" {
+		serverWhiteList = strings.Split(*serverWhiteListOption, ",")
 	}
 
 	if *isStartingFiler {
@@ -234,9 +174,6 @@ func runServer(cmd *Command, args []string) bool {
 				*filerOptions.secretKey,
 				*filerOptions.cassandra_server, *filerOptions.cassandra_keyspace,
 				*filerOptions.redis_server, *filerOptions.redis_password, *filerOptions.redis_database,
-				filerOptions.get_ip_whitelist, filerOptions.head_ip_whitelist, filerOptions.delete_ip_whitelist, filerOptions.put_ip_whitelist, filerOptions.post_ip_whitelist,
-				filerOptions.get_root_whitelist, filerOptions.head_root_whitelist, filerOptions.delete_root_whitelist, filerOptions.put_root_whitelist, filerOptions.post_root_whitelist,
-				*f.get_secure_key, *f.head_secure_key, *f.delete_secure_key, *f.put_secure_key, *f.post_secure_key,
 			)
 			if nfs_err != nil {
 				glog.Fatalf("Filer startup error: %v", nfs_err)
@@ -265,7 +202,7 @@ func runServer(cmd *Command, args []string) bool {
 		r := mux.NewRouter()
 		ms := weed_server.NewMasterServer(r, *masterPort, *masterMetaFolder,
 			*masterVolumeSizeLimitMB, *volumePulse, *masterConfFile, *masterDefaultReplicaPlacement, *serverGarbageThreshold,
-			serverReadWhiteList, serverWriteWhiteList, nil, *serverSecureKey,
+			serverWhiteList, *serverSecureKey,
 		)
 
 		glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*masterPort))
@@ -319,7 +256,7 @@ func runServer(cmd *Command, args []string) bool {
 		folders, maxCounts,
 		volumeNeedleMapKind,
 		*serverIp+":"+strconv.Itoa(*masterPort), *volumePulse, *serverDataCenter, *serverRack,
-		serverReadWhiteList, serverWriteWhiteList, nil, *volumeFixJpgOrientation, *volumeReadRedirect,
+		serverWhiteList, *volumeFixJpgOrientation, *volumeReadRedirect,
 	)
 
 	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*volumePort))
