@@ -28,11 +28,13 @@ type FilerServer struct {
 	disableDirListing  bool
 	secret             security.Secret
 	filer              filer.Filer
+	maxMB		   int
 	masterNodes        *storage.MasterNodes
 }
 
 func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir string, collection string,
 	replication string, redirectOnRead bool, disableDirListing bool,
+	maxMB int,
 	secret string,
 	cassandra_server string, cassandra_keyspace string,
 	redis_server string, redis_password string, redis_database int,
@@ -43,6 +45,7 @@ func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir st
 		defaultReplication: replication,
 		redirectOnRead:     redirectOnRead,
 		disableDirListing:  disableDirListing,
+		maxMB:		    maxMB,
 		port:               ip + ":" + strconv.Itoa(port),
 	}
 
