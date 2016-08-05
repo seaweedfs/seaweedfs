@@ -9,6 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	//"net/http/pprof"
 )
 
 type VolumeServer struct {
@@ -18,7 +19,8 @@ type VolumeServer struct {
 	dataCenter   string
 	rack         string
 	store        *storage.Store
-	guard        *security.Guard
+	read_guard   *security.Guard
+	write_guard  *security.Guard
 
 	needleMapKind     storage.NeedleMapType
 	FixJpgOrientation bool
@@ -31,7 +33,9 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	needleMapKind storage.NeedleMapType,
 	masterNode string, pulseSeconds int,
 	dataCenter string, rack string,
-	whiteList []string,
+	ipReadWhiteList []string,
+	ipWriteWhiteList []string,
+	rootWhiteList []string,
 	fixJpgOrientation bool,
 	readRedirect bool) *VolumeServer {
 	vs := &VolumeServer{
@@ -45,28 +49,40 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	vs.SetMasterNode(masterNode)
 	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts, vs.needleMapKind)
 
-	vs.guard = security.NewGuard(whiteList, "")
+	vs.read_guard = security.NewGuard(ipReadWhiteList, rootWhiteList, "")
+	vs.write_guard = security.NewGuard(ipWriteWhiteList, rootWhiteList, "")
 
-	adminMux.HandleFunc("/ui/index.html", vs.uiStatusHandler)
-	adminMux.HandleFunc("/status", vs.guard.WhiteList(vs.statusHandler))
-	adminMux.HandleFunc("/admin/assign_volume", vs.guard.WhiteList(vs.assignVolumeHandler))
-	adminMux.HandleFunc("/admin/vacuum/check", vs.guard.WhiteList(vs.vacuumVolumeCheckHandler))
-	adminMux.HandleFunc("/admin/vacuum/compact", vs.guard.WhiteList(vs.vacuumVolumeCompactHandler))
-	adminMux.HandleFunc("/admin/vacuum/commit", vs.guard.WhiteList(vs.vacuumVolumeCommitHandler))
-	adminMux.HandleFunc("/admin/delete_collection", vs.guard.WhiteList(vs.deleteCollectionHandler))
-	adminMux.HandleFunc("/admin/sync/status", vs.guard.WhiteList(vs.getVolumeSyncStatusHandler))
-	adminMux.HandleFunc("/admin/sync/index", vs.guard.WhiteList(vs.getVolumeIndexContentHandler))
-	adminMux.HandleFunc("/admin/sync/data", vs.guard.WhiteList(vs.getVolumeDataContentHandler))
-	adminMux.HandleFunc("/stats/counter", vs.guard.WhiteList(statsCounterHandler))
-	adminMux.HandleFunc("/stats/memory", vs.guard.WhiteList(statsMemoryHandler))
-	adminMux.HandleFunc("/stats/disk", vs.guard.WhiteList(vs.statsDiskHandler))
-	adminMux.HandleFunc("/delete", vs.guard.WhiteList(vs.batchDeleteHandler))
-	adminMux.HandleFunc("/", vs.privateStoreHandler)
+	adminMux.HandleFunc("/ui/index.html", vs.read_guard.WhiteList(vs.uiStatusHandler))
+	adminMux.HandleFunc("/status", vs.read_guard.WhiteList(vs.statusHandler))
+	adminMux.HandleFunc("/admin/assign_volume", vs.write_guard.WhiteList(vs.assignVolumeHandler))
+	adminMux.HandleFunc("/admin/vacuum/check", vs.write_guard.WhiteList(vs.vacuumVolumeCheckHandler))
+	adminMux.HandleFunc("/admin/vacuum/compact", vs.write_guard.WhiteList(vs.vacuumVolumeCompactHandler))
+	adminMux.HandleFunc("/admin/vacuum/commit", vs.write_guard.WhiteList(vs.vacuumVolumeCommitHandler))
+	adminMux.HandleFunc("/admin/delete_collection", vs.write_guard.WhiteList(vs.deleteCollectionHandler))
+	adminMux.HandleFunc("/admin/sync/status", vs.read_guard.WhiteList(vs.getVolumeSyncStatusHandler))
+	adminMux.HandleFunc("/admin/sync/index", vs.write_guard.WhiteList(vs.getVolumeIndexContentHandler))
+	adminMux.HandleFunc("/admin/sync/data", vs.write_guard.WhiteList(vs.getVolumeDataContentHandler))
+	adminMux.HandleFunc("/stats/counter", vs.read_guard.WhiteList(statsCounterHandler))
+	adminMux.HandleFunc("/stats/memory", vs.read_guard.WhiteList(statsMemoryHandler))
+	adminMux.HandleFunc("/stats/disk", vs.read_guard.WhiteList(vs.statsDiskHandler))
+	adminMux.HandleFunc("/delete", vs.write_guard.WhiteList(vs.batchDeleteHandler))
+	adminMux.HandleFunc("/", vs.read_guard.WhiteList(vs.privateStoreHandler))
 	if publicMux != adminMux {
 		// separated admin and public port
 		publicMux.HandleFunc("/favicon.ico", vs.faviconHandler)
 		publicMux.HandleFunc("/", vs.publicReadOnlyHandler)
 	}
+	/*
+	// add in profiling support
+	adminMux.HandleFunc("/debug/pprof/", pprof.Index)
+	adminMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	adminMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	adminMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	adminMux.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
+	adminMux.Handle("/debug/pprof/heap", pprof.Handler("heap"))
+	adminMux.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
+	adminMux.Handle("/debug/pprof/block", pprof.Handler("block"))
+	*/
 
 	go func() {
 		connected := true
@@ -82,7 +98,8 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 				if !connected {
 					connected = true
 					vs.SetMasterNode(master)
-					vs.guard.SecretKey = secretKey
+					vs.read_guard.SecretKey = secretKey
+					vs.write_guard.SecretKey = secretKey
 					glog.V(0).Infoln("Volume Server Connected with master at", master)
 				}
 			} else {
@@ -121,5 +138,5 @@ func (vs *VolumeServer) Shutdown() {
 }
 
 func (vs *VolumeServer) jwt(fileId string) security.EncodedJwt {
-	return security.GenJwt(vs.guard.SecretKey, fileId)
+	return security.GenJwt(vs.read_guard.SecretKey, fileId)
 }

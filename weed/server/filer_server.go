@@ -30,6 +30,11 @@ type FilerServer struct {
 	filer              filer.Filer
 	maxMB		   int
 	masterNodes        *storage.MasterNodes
+	get_guard          *security.Guard
+	head_guard         *security.Guard
+	delete_guard       *security.Guard
+	put_guard          *security.Guard
+	post_guard         *security.Guard
 }
 
 func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir string, collection string,
@@ -38,6 +43,9 @@ func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir st
 	secret string,
 	cassandra_server string, cassandra_keyspace string,
 	redis_server string, redis_password string, redis_database int,
+	get_ip_whitelist []string, head_ip_whitelist []string, delete_ip_whitelist []string, put_ip_whitelist []string, post_ip_whitelist []string,
+	get_root_whitelist []string, head_root_whitelist []string, delete_root_whitelist []string, put_root_whitelist []string, post_root_whitelist []string,
+	get_secure_key string, head_secure_key string, delete_secure_key string, put_secure_key string, post_secure_key string,
 ) (fs *FilerServer, err error) {
 	fs = &FilerServer{
 		master:             master,
@@ -46,6 +54,11 @@ func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir st
 		redirectOnRead:     redirectOnRead,
 		disableDirListing:  disableDirListing,
 		maxMB:		    maxMB,
+		get_guard:          security.NewGuard(get_ip_whitelist, get_root_whitelist, get_secure_key),
+		head_guard:         security.NewGuard(head_ip_whitelist, head_root_whitelist, head_secure_key),
+		delete_guard:       security.NewGuard(delete_ip_whitelist, delete_root_whitelist, delete_secure_key),
+		put_guard:          security.NewGuard(put_ip_whitelist, put_root_whitelist, put_secure_key),
+		post_guard:         security.NewGuard(post_ip_whitelist, post_root_whitelist, post_secure_key),
 		port:               ip + ":" + strconv.Itoa(port),
 	}
 

@@ -23,7 +23,8 @@ type MasterServer struct {
 	pulseSeconds            int
 	defaultReplicaPlacement string
 	garbageThreshold        string
-	guard                   *security.Guard
+	read_guard              *security.Guard
+	write_guard             *security.Guard
 
 	Topo   *topology.Topology
 	vg     *topology.VolumeGrowth
@@ -38,7 +39,9 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	confFile string,
 	defaultReplicaPlacement string,
 	garbageThreshold string,
-	whiteList []string,
+	ipReadWhiteList []string,
+	ipWriteWhiteList []string,
+        rootWhiteList []string,
 	secureKey string,
 ) *MasterServer {
 	ms := &MasterServer{
@@ -58,24 +61,25 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", volumeSizeLimitMB, "MB")
 
-	ms.guard = security.NewGuard(whiteList, secureKey)
+	ms.read_guard = security.NewGuard(ipReadWhiteList, rootWhiteList, secureKey)
+	ms.write_guard = security.NewGuard(ipWriteWhiteList, rootWhiteList, secureKey)
 
 	r.HandleFunc("/", ms.uiStatusHandler)
-	r.HandleFunc("/ui/index.html", ms.uiStatusHandler)
-	r.HandleFunc("/dir/assign", ms.proxyToLeader(ms.guard.WhiteList(ms.dirAssignHandler)))
-	r.HandleFunc("/dir/lookup", ms.proxyToLeader(ms.guard.WhiteList(ms.dirLookupHandler)))
-	r.HandleFunc("/dir/join", ms.proxyToLeader(ms.guard.WhiteList(ms.dirJoinHandler)))
-	r.HandleFunc("/dir/status", ms.proxyToLeader(ms.guard.WhiteList(ms.dirStatusHandler)))
-	r.HandleFunc("/col/delete", ms.proxyToLeader(ms.guard.WhiteList(ms.collectionDeleteHandler)))
-	r.HandleFunc("/vol/lookup", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeLookupHandler)))
-	r.HandleFunc("/vol/grow", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeGrowHandler)))
-	r.HandleFunc("/vol/status", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeStatusHandler)))
-	r.HandleFunc("/vol/vacuum", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeVacuumHandler)))
-	r.HandleFunc("/submit", ms.guard.WhiteList(ms.submitFromMasterServerHandler))
-	r.HandleFunc("/delete", ms.guard.WhiteList(ms.deleteFromMasterServerHandler))
-	r.HandleFunc("/{fileId}", ms.proxyToLeader(ms.redirectHandler))
-	r.HandleFunc("/stats/counter", ms.guard.WhiteList(statsCounterHandler))
-	r.HandleFunc("/stats/memory", ms.guard.WhiteList(statsMemoryHandler))
+	r.HandleFunc("/ui/index.html", ms.read_guard.WhiteList(ms.uiStatusHandler))
+	r.HandleFunc("/dir/assign", ms.proxyToLeader(ms.write_guard.WhiteList(ms.dirAssignHandler)))
+	r.HandleFunc("/dir/lookup", ms.proxyToLeader(ms.read_guard.WhiteList(ms.dirLookupHandler)))
+	r.HandleFunc("/dir/join", ms.proxyToLeader(ms.write_guard.WhiteList(ms.dirJoinHandler)))
+	r.HandleFunc("/dir/status", ms.proxyToLeader(ms.read_guard.WhiteList(ms.dirStatusHandler)))
+	r.HandleFunc("/col/delete", ms.proxyToLeader(ms.write_guard.WhiteList(ms.collectionDeleteHandler)))
+	r.HandleFunc("/vol/lookup", ms.proxyToLeader(ms.read_guard.WhiteList(ms.volumeLookupHandler)))
+	r.HandleFunc("/vol/grow", ms.proxyToLeader(ms.write_guard.WhiteList(ms.volumeGrowHandler)))
+	r.HandleFunc("/vol/status", ms.proxyToLeader(ms.read_guard.WhiteList(ms.volumeStatusHandler)))
+	r.HandleFunc("/vol/vacuum", ms.proxyToLeader(ms.write_guard.WhiteList(ms.volumeVacuumHandler)))
+	r.HandleFunc("/submit", ms.write_guard.WhiteList(ms.submitFromMasterServerHandler))
+	r.HandleFunc("/delete", ms.write_guard.WhiteList(ms.deleteFromMasterServerHandler))
+	r.HandleFunc("/{fileId}", ms.proxyToLeader(ms.read_guard.WhiteList(ms.redirectHandler)))
+	r.HandleFunc("/stats/counter", ms.read_guard.WhiteList(statsCounterHandler))
+	r.HandleFunc("/stats/memory", ms.read_guard.WhiteList(statsMemoryHandler))
 
 	ms.Topo.StartRefreshWritableVolumes(garbageThreshold)
 

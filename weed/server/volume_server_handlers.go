@@ -25,19 +25,19 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 	switch r.Method {
 	case "GET":
 		stats.ReadRequest()
-		vs.GetOrHeadHandler(w, r)
+		vs.write_guard.WhiteList(vs.GetOrHeadHandler)(w, r)
 	case "HEAD":
 		stats.ReadRequest()
-		vs.GetOrHeadHandler(w, r)
+		vs.write_guard.WhiteList(vs.GetOrHeadHandler)(w, r)
 	case "DELETE":
 		stats.DeleteRequest()
-		vs.guard.WhiteList(vs.DeleteHandler)(w, r)
+		vs.write_guard.WhiteList(vs.DeleteHandler)(w, r)
 	case "PUT":
 		stats.WriteRequest()
-		vs.guard.WhiteList(vs.PostHandler)(w, r)
+		vs.write_guard.WhiteList(vs.PostHandler)(w, r)
 	case "POST":
 		stats.WriteRequest()
-		vs.guard.WhiteList(vs.PostHandler)(w, r)
+		vs.write_guard.WhiteList(vs.PostHandler)(w, r)
 	}
 }
 

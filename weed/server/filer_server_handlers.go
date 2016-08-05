@@ -7,14 +7,14 @@ import (
 func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		fs.GetOrHeadHandler(w, r, true)
+		fs.get_guard.WhiteList2(fs.GetOrHeadHandler)(w, r, true)
 	case "HEAD":
-		fs.GetOrHeadHandler(w, r, false)
+		fs.head_guard.WhiteList2(fs.GetOrHeadHandler)(w, r, false)
 	case "DELETE":
-		fs.DeleteHandler(w, r)
+		fs.delete_guard.WhiteList(fs.DeleteHandler)(w, r)
 	case "PUT":
-		fs.PostHandler(w, r)
+		fs.put_guard.WhiteList(fs.PostHandler)(w, r)
 	case "POST":
-		fs.PostHandler(w, r)
+		fs.post_guard.WhiteList(fs.PostHandler)(w, r)
 	}
 }

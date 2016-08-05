@@ -61,7 +61,7 @@ func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
 	ms.Topo.ProcessJoinMessage(joinMessage)
 	writeJsonQuiet(w, r, http.StatusOK, operation.JoinResult{
 		VolumeSizeLimit: uint64(ms.volumeSizeLimitMB) * 1024 * 1024,
-		SecretKey:       string(ms.guard.SecretKey),
+		SecretKey:       string(ms.write_guard.SecretKey),
 	})
 }
 

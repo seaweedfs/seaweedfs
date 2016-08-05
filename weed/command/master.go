@@ -41,11 +41,13 @@ var (
 	mTimeout                = cmdMaster.Flag.Int("idleTimeout", 10, "connection idle seconds")
 	mMaxCpu                 = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	garbageThreshold        = cmdMaster.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
-	masterWhiteListOption   = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
+	masterReadWhiteListOption  = cmdMaster.Flag.String("readWhiteList", "", "comma separated Ip addresses having read permission. No limit if empty.")
+	masterWriteWhiteListOption = cmdMaster.Flag.String("writeWhiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 	masterSecureKey         = cmdMaster.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 	masterCpuProfile        = cmdMaster.Flag.String("cpuprofile", "", "cpu profile output file")
 
-	masterWhiteList []string
+	masterReadWhiteList  []string
+	masterWriteWhiteList []string
 )
 
 func runMaster(cmd *Command, args []string) bool {
@@ -67,14 +69,17 @@ func runMaster(cmd *Command, args []string) bool {
 	if err := util.TestFolderWritable(*metaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *metaFolder, err)
 	}
-	if *masterWhiteListOption != "" {
-		masterWhiteList = strings.Split(*masterWhiteListOption, ",")
+	if *masterReadWhiteListOption != "" {
+		masterReadWhiteList = strings.Split(*masterReadWhiteListOption, ",")
+	}
+	if *masterWriteWhiteListOption != "" {
+		masterWriteWhiteList = strings.Split(*masterWriteWhiteListOption, ",")
 	}
 
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, *mport, *metaFolder,
 		*volumeSizeLimitMB, *mpulse, *confFile, *defaultReplicaPlacement, *garbageThreshold,
-		masterWhiteList, *masterSecureKey,
+		masterReadWhiteList, masterWriteWhiteList, nil, *masterSecureKey,
 	)
 
 	listeningAddress := *masterBindIp + ":" + strconv.Itoa(*mport)
