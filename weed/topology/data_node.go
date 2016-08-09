@@ -79,6 +79,17 @@ func (dn *DataNode) GetVolumes() (ret []storage.VolumeInfo) {
 	return ret
 }
 
+func (dn *DataNode) GetVolumesById(id storage.VolumeId) (storage.VolumeInfo, error) {
+	dn.RLock()
+	defer dn.RUnlock()
+	v_info, ok := dn.volumes[id]
+	if ok {
+		return v_info, nil
+	} else {
+		return storage.VolumeInfo{}, fmt.Errorf("volumeInfo not found")
+	}
+}
+
 func (dn *DataNode) GetDataCenter() *DataCenter {
 	return dn.Parent().Parent().(*NodeImpl).value.(*DataCenter)
 }
