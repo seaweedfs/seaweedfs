@@ -1,8 +1,10 @@
 package weed_server
 
 import (
+	"encoding/json"
 	"math/rand"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -11,12 +13,32 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer/cassandra_store"
 	"github.com/chrislusf/seaweedfs/weed/filer/embedded_filer"
 	"github.com/chrislusf/seaweedfs/weed/filer/flat_namespace"
+	"github.com/chrislusf/seaweedfs/weed/filer/mysql_store"
 	"github.com/chrislusf/seaweedfs/weed/filer/redis_store"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
+
+type filerConf struct {
+	MysqlConf []mysql_store.MySqlConf `json:"mysql"`
+}
+
+func parseConfFile(confPath string) (*filerConf, error) {
+	var setting filerConf
+	configFile, err := os.Open(confPath)
+	defer configFile.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	jsonParser := json.NewDecoder(configFile)
+	if err = jsonParser.Decode(&setting); err != nil {
+		return nil, err
+	}
+	return &setting, nil
+}
 
 type FilerServer struct {
 	port               string
@@ -28,12 +50,13 @@ type FilerServer struct {
 	disableDirListing  bool
 	secret             security.Secret
 	filer              filer.Filer
-	maxMB		   int
+	maxMB              int
 	masterNodes        *storage.MasterNodes
 }
 
 func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir string, collection string,
 	replication string, redirectOnRead bool, disableDirListing bool,
+	confFile string,
 	maxMB int,
 	secret string,
 	cassandra_server string, cassandra_keyspace string,
@@ -45,11 +68,24 @@ func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir st
 		defaultReplication: replication,
 		redirectOnRead:     redirectOnRead,
 		disableDirListing:  disableDirListing,
-		maxMB:		    maxMB,
+		maxMB:              maxMB,
 		port:               ip + ":" + strconv.Itoa(port),
 	}
 
-	if cassandra_server != "" {
+	var setting *filerConf
+	if confFile != "" {
+		setting, err = parseConfFile(confFile)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		setting = new(filerConf)
+	}
+
+	if setting.MysqlConf != nil && len(setting.MysqlConf) != 0 {
+		mysql_store := mysql_store.NewMysqlStore(setting.MysqlConf)
+		fs.filer = flat_namespace.NewFlatNamespaceFiler(master, mysql_store)
+	} else if cassandra_server != "" {
 		cassandra_store, err := cassandra_store.NewCassandraStore(cassandra_keyspace, cassandra_server)
 		if err != nil {
 			glog.Fatalf("Can not connect to cassandra server %s with keyspace %s: %v", cassandra_server, cassandra_keyspace, err)
