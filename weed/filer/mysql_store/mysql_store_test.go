@@ -37,8 +37,8 @@ sample conf should be
 */
 
 func TestGenerateMysqlConf(t *testing.T) {
-	var conf MySqlConf
-	conf = append(conf, MySqlInstConf{
+	var conf []MySqlConf
+	conf = append(conf, MySqlConf{
 		User:     "root",
 		Password: "root",
 		HostName: "localhost",
