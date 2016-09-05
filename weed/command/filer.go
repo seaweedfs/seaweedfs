@@ -24,13 +24,17 @@ type FilerOptions struct {
 	dir                     *string
 	redirectOnRead          *bool
 	disableDirListing       *bool
-	maxMB			*int
+	maxMB                   *int
 	secretKey               *string
 	cassandra_server        *string
 	cassandra_keyspace      *string
 	redis_server            *string
 	redis_password          *string
 	redis_database          *int
+	mysql_dsn               *string
+	mysql_table             *string
+	mysql_fnameCol          *string
+	mysql_fidCol            *string
 }
 
 func init() {
@@ -50,7 +54,10 @@ func init() {
 	f.redis_password = cmdFiler.Flag.String("redis.password", "", "password in clear text")
 	f.redis_database = cmdFiler.Flag.Int("redis.database", 0, "the database on the redis server")
 	f.secretKey = cmdFiler.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
-
+	f.mysql_dsn = cmdFiler.Flag.String("mysql.dsn", "", "database source name")
+	f.mysql_table = cmdFiler.Flag.String("mysql.table", "weed", "mysql table")
+	f.mysql_fnameCol = cmdFiler.Flag.String("mysql.fnameCol", "fname", "file name column")
+	f.mysql_fidCol = cmdFiler.Flag.String("mysql.fidCol", "fid", "file id column")
 }
 
 var cmdFiler = &Command{
@@ -88,6 +95,7 @@ func runFiler(cmd *Command, args []string) bool {
 		*f.secretKey,
 		*f.cassandra_server, *f.cassandra_keyspace,
 		*f.redis_server, *f.redis_password, *f.redis_database,
+		*f.mysql_dsn, *f.mysql_table, *f.mysql_fnameCol, *f.mysql_fidCol,
 	)
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

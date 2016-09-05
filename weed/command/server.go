@@ -174,6 +174,7 @@ func runServer(cmd *Command, args []string) bool {
 				*filerOptions.secretKey,
 				*filerOptions.cassandra_server, *filerOptions.cassandra_keyspace,
 				*filerOptions.redis_server, *filerOptions.redis_password, *filerOptions.redis_database,
+				*filerOptions.mysql_dsn, *filerOptions.mysql_table, *filerOptions.mysql_fnameCol, *filerOptions.mysql_fidCol,
 			)
 			if nfs_err != nil {
 				glog.Fatalf("Filer startup error: %v", nfs_err)

@@ -11,6 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer/cassandra_store"
 	"github.com/chrislusf/seaweedfs/weed/filer/embedded_filer"
 	"github.com/chrislusf/seaweedfs/weed/filer/flat_namespace"
+	"github.com/chrislusf/seaweedfs/weed/filer/mysql_store"
 	"github.com/chrislusf/seaweedfs/weed/filer/redis_store"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -28,7 +29,7 @@ type FilerServer struct {
 	disableDirListing  bool
 	secret             security.Secret
 	filer              filer.Filer
-	maxMB		   int
+	maxMB              int
 	masterNodes        *storage.MasterNodes
 }
 
@@ -38,6 +39,7 @@ func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir st
 	secret string,
 	cassandra_server string, cassandra_keyspace string,
 	redis_server string, redis_password string, redis_database int,
+	mysql_dsn string, mysql_table, mysql_fnameCol, mysql_fidCol string,
 ) (fs *FilerServer, err error) {
 	fs = &FilerServer{
 		master:             master,
@@ -45,7 +47,7 @@ func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir st
 		defaultReplication: replication,
 		redirectOnRead:     redirectOnRead,
 		disableDirListing:  disableDirListing,
-		maxMB:		    maxMB,
+		maxMB:              maxMB,
 		port:               ip + ":" + strconv.Itoa(port),
 	}
 
@@ -58,6 +60,12 @@ func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir st
 	} else if redis_server != "" {
 		redis_store := redis_store.NewRedisStore(redis_server, redis_password, redis_database)
 		fs.filer = flat_namespace.NewFlatNamespaceFiler(master, redis_store)
+	} else if mysql_dsn != "" {
+		mysql_store, err := mysql_store.NewMysqlStore(mysql_dsn, mysql_table, mysql_fnameCol, mysql_fidCol)
+		if err != nil {
+			glog.Fatalf("Can not connect to mysql server %s err %v", mysql_dsn, err)
+		}
+		fs.filer = flat_namespace.NewFlatNamespaceFiler(master, mysql_store)
 	} else {
 		if fs.filer, err = embedded_filer.NewFilerEmbedded(master, dir); err != nil {
 			glog.Fatalf("Can not start filer in dir %s : %v", dir, err)
