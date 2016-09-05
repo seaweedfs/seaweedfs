@@ -23,6 +23,7 @@ import (
 
 type filerConf struct {
 	MysqlConf []mysql_store.MySqlConf `json:"mysql"`
+	mysql_store.ShardingConf
 }
 
 func parseConfFile(confPath string) (*filerConf, error) {
@@ -83,7 +84,7 @@ func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir st
 	}
 
 	if setting.MysqlConf != nil && len(setting.MysqlConf) != 0 {
-		mysql_store := mysql_store.NewMysqlStore(setting.MysqlConf)
+		mysql_store := mysql_store.NewMysqlStore(setting.MysqlConf, setting.IsSharding, setting.ShardingNum)
 		fs.filer = flat_namespace.NewFlatNamespaceFiler(master, mysql_store)
 	} else if cassandra_server != "" {
 		cassandra_store, err := cassandra_store.NewCassandraStore(cassandra_keyspace, cassandra_server)

@@ -11,11 +11,11 @@ import (
 )
 
 const (
-	sqlUrl             = "%s:%s@tcp(%s:%d)/%s?charset=utf8"
-	maxIdleConnections = 100
-	maxOpenConnections = 50
-	maxTableNums       = 1024
-	tableName          = "filer_mapping"
+	sqlUrl                     = "%s:%s@tcp(%s:%d)/%s?charset=utf8"
+	default_maxIdleConnections = 100
+	default_maxOpenConnections = 50
+	default_maxTableNums       = 1024
+	tableName                  = "filer_mapping"
 )
 
 var (
@@ -24,15 +24,24 @@ var (
 )
 
 type MySqlConf struct {
-	User     string
-	Password string
-	HostName string
-	Port     int
-	DataBase string
+	User               string
+	Password           string
+	HostName           string
+	Port               int
+	DataBase           string
+	MaxIdleConnections int
+	MaxOpenConnections int
+}
+
+type ShardingConf struct {
+	IsSharding  bool `json:"isSharding"`
+	ShardingNum int  `json:"shardingNum"`
 }
 
 type MySqlStore struct {
-	dbs []*sql.DB
+	dbs         []*sql.DB
+	isSharding  bool
+	shardingNum int
 }
 
 func getDbConnection(confs []MySqlConf) []*sql.DB {
@@ -47,6 +56,19 @@ func getDbConnection(confs []MySqlConf) []*sql.DB {
 				_db_connection = nil
 				panic(dbErr)
 			}
+			var maxIdleConnections, maxOpenConnections int
+
+			if conf.MaxIdleConnections != 0 {
+				maxIdleConnections = conf.MaxIdleConnections
+			} else {
+				maxIdleConnections = default_maxIdleConnections
+			}
+			if conf.MaxOpenConnections != 0 {
+				maxOpenConnections = conf.MaxOpenConnections
+			} else {
+				maxOpenConnections = default_maxOpenConnections
+			}
+
 			_db_connection.SetMaxIdleConns(maxIdleConnections)
 			_db_connection.SetMaxOpenConns(maxOpenConnections)
 			_db_connections = append(_db_connections, _db_connection)
@@ -55,15 +77,24 @@ func getDbConnection(confs []MySqlConf) []*sql.DB {
 	return _db_connections
 }
 
-func NewMysqlStore(confs []MySqlConf) *MySqlStore {
+func NewMysqlStore(confs []MySqlConf, isSharding bool, shardingNum int) *MySqlStore {
 	ms := &MySqlStore{
-		dbs: getDbConnection(confs),
+		dbs:         getDbConnection(confs),
+		isSharding:  isSharding,
+		shardingNum: shardingNum,
 	}
 
 	for _, db := range ms.dbs {
-		for i := 0; i < maxTableNums; i++ {
+		if !isSharding {
+			ms.shardingNum = 1
+		} else {
+			if ms.shardingNum == 0 {
+				ms.shardingNum = default_maxTableNums
+			}
+		}
+		for i := 0; i < ms.shardingNum; i++ {
 			if err := ms.createTables(db, tableName, i); err != nil {
-				fmt.Printf("create table failed %s", err.Error())
+				fmt.Printf("create table failed %v", err)
 			}
 		}
 	}
@@ -74,21 +105,25 @@ func NewMysqlStore(confs []MySqlConf) *MySqlStore {
 func (s *MySqlStore) hash(fullFileName string) (instance_offset, table_postfix int) {
 	hash_value := crc32.ChecksumIEEE([]byte(fullFileName))
 	instance_offset = int(hash_value) % len(s.dbs)
-	table_postfix = int(hash_value) % maxTableNums
+	table_postfix = int(hash_value) % s.shardingNum
 	return
 }
 
 func (s *MySqlStore) parseFilerMappingInfo(path string) (instanceId int, tableFullName string, err error) {
 	instance_offset, table_postfix := s.hash(path)
 	instanceId = instance_offset
-	tableFullName = fmt.Sprintf("%s_%04d", tableName, table_postfix)
+	if s.isSharding {
+		tableFullName = fmt.Sprintf("%s_%04d", tableName, table_postfix)
+	} else {
+		tableFullName = tableName
+	}
 	return
 }
 
 func (s *MySqlStore) Get(fullFilePath string) (fid string, err error) {
 	instance_offset, tableFullName, err := s.parseFilerMappingInfo(fullFilePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("MySqlStore Get operation can not parse file path %s: err is %v", fullFilePath, err)
 	}
 	fid, err = s.query(fullFilePath, s.dbs[instance_offset], tableFullName)
 	if err == sql.ErrNoRows {
@@ -103,16 +138,18 @@ func (s *MySqlStore) Put(fullFilePath string, fid string) (err error) {
 
 	instance_offset, tableFullName, err := s.parseFilerMappingInfo(fullFilePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("MySqlStore Put operation can not parse file path %s: err is %v", fullFilePath, err)
 	}
-	if old_fid, localErr := s.query(fullFilePath, s.dbs[instance_offset], tableFullName); localErr != nil && localErr != sql.ErrNoRows {
-		err = localErr
-		return
+	var old_fid string
+	if old_fid, err = s.query(fullFilePath, s.dbs[instance_offset], tableFullName); err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("MySqlStore Put operation failed when querying path %s: err is %v", fullFilePath, err)
 	} else {
 		if len(old_fid) == 0 {
 			err = s.insert(fullFilePath, fid, s.dbs[instance_offset], tableFullName)
+			err = fmt.Errorf("MySqlStore Put operation failed when inserting path %s with fid %s : err is %v", fullFilePath, fid, err)
 		} else {
 			err = s.update(fullFilePath, fid, s.dbs[instance_offset], tableFullName)
+			err = fmt.Errorf("MySqlStore Put operation failed when updating path %s with fid %s : err is %v", fullFilePath, fid, err)
 		}
 	}
 	return
@@ -122,15 +159,15 @@ func (s *MySqlStore) Delete(fullFilePath string) (err error) {
 	var fid string
 	instance_offset, tableFullName, err := s.parseFilerMappingInfo(fullFilePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("MySqlStore Delete operation can not parse file path %s: err is %v", fullFilePath, err)
 	}
 	if fid, err = s.query(fullFilePath, s.dbs[instance_offset], tableFullName); err != nil {
-		return err
+		return fmt.Errorf("MySqlStore Delete operation failed when querying path %s: err is %v", fullFilePath, err)
 	} else if fid == "" {
 		return nil
 	}
-	if err := s.delete(fullFilePath, s.dbs[instance_offset], tableFullName); err != nil {
-		return err
+	if err = s.delete(fullFilePath, s.dbs[instance_offset], tableFullName); err != nil {
+		return fmt.Errorf("MySqlStore Delete operation failed when deleting path %s: err is %v", fullFilePath, err)
 	} else {
 		return nil
 	}
@@ -143,7 +180,7 @@ func (s *MySqlStore) Close() {
 }
 
 var createTable = `
-CREATE TABLE IF NOT EXISTS %s_%04d (
+CREATE TABLE IF NOT EXISTS %s (
   id bigint(20) NOT NULL AUTO_INCREMENT,
   uriPath char(256) NOT NULL DEFAULT "" COMMENT 'http uriPath',
   fid char(36) NOT NULL DEFAULT "" COMMENT 'seaweedfs fid',
@@ -153,11 +190,18 @@ CREATE TABLE IF NOT EXISTS %s_%04d (
   status tinyint(2) DEFAULT '1' COMMENT 'resource status',
   PRIMARY KEY (id),
   UNIQUE KEY index_uriPath (uriPath)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) DEFAULT CHARSET=utf8;
 `
 
 func (s *MySqlStore) createTables(db *sql.DB, tableName string, postfix int) error {
-	stmt, err := db.Prepare(fmt.Sprintf(createTable, tableName, postfix))
+	var realTableName string
+	if s.isSharding {
+		realTableName = fmt.Sprintf("%s_%4d", tableName, postfix)
+	} else {
+		realTableName = tableName
+	}
+
+	stmt, err := db.Prepare(fmt.Sprintf(createTable, realTableName))
 	if err != nil {
 		return err
 	}
