@@ -47,19 +47,20 @@ The sample config file's  content is below:
         }
     ],
     "IsSharding":true,
-    "ShardingNum":1024
+    "ShardCount":1024
 }
 </code></pre>
 
 
 The "mysql" field in above conf file is an array which include all mysql instances you prepared to store sharding data.
+
 1. If one mysql instance is enough, just keep one instance in "mysql" field.
-2. If table sharding at a specific mysql instance is needed , mark "IsSharding" field with true and specify total table
-sharding numbers using "ShardingNum" field.
-3. If the mysql service could be auto scaled transparently in your environment, just config one mysql instance(usually it's a frondend proxy or VIP),
-and mark "IsSharding" with false value
-4. If your prepare more than one mysql instances and have no plan to use table sharding for any instance(mark isSharding with false), instance sharding
-will still be done implicitly
+
+2. If table sharding at a specific mysql instance is needed , mark "IsSharding" field with true and specify total table sharding numbers using "ShardCount" field.
+
+3. If the mysql service could be auto scaled transparently in your environment, just config one mysql instance(usually it's a frondend proxy or VIP),and mark "IsSharding" with false value
+
+4. If you prepare more than one mysql instance and have no plan to use table sharding for any instance(mark isSharding with false), instance sharding will still be done implicitly
 
 
 

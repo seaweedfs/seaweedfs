@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/filer"
+
 	_ "github.com/go-sql-driver/mysql"
 )
 
@@ -34,14 +36,14 @@ type MySqlConf struct {
 }
 
 type ShardingConf struct {
-	IsSharding  bool `json:"isSharding"`
-	ShardingNum int  `json:"shardingNum"`
+	IsSharding bool `json:"isSharding"`
+	ShardCount int  `json:"shardCount"`
 }
 
 type MySqlStore struct {
-	dbs         []*sql.DB
-	isSharding  bool
-	shardingNum int
+	dbs        []*sql.DB
+	isSharding bool
+	shardCount int
 }
 
 func getDbConnection(confs []MySqlConf) []*sql.DB {
@@ -77,22 +79,22 @@ func getDbConnection(confs []MySqlConf) []*sql.DB {
 	return _db_connections
 }
 
-func NewMysqlStore(confs []MySqlConf, isSharding bool, shardingNum int) *MySqlStore {
+func NewMysqlStore(confs []MySqlConf, isSharding bool, shardCount int) *MySqlStore {
 	ms := &MySqlStore{
-		dbs:         getDbConnection(confs),
-		isSharding:  isSharding,
-		shardingNum: shardingNum,
+		dbs:        getDbConnection(confs),
+		isSharding: isSharding,
+		shardCount: shardCount,
 	}
 
 	for _, db := range ms.dbs {
 		if !isSharding {
-			ms.shardingNum = 1
+			ms.shardCount = 1
 		} else {
-			if ms.shardingNum == 0 {
-				ms.shardingNum = default_maxTableNums
+			if ms.shardCount == 0 {
+				ms.shardCount = default_maxTableNums
 			}
 		}
-		for i := 0; i < ms.shardingNum; i++ {
+		for i := 0; i < ms.shardCount; i++ {
 			if err := ms.createTables(db, tableName, i); err != nil {
 				fmt.Printf("create table failed %v", err)
 			}
@@ -105,7 +107,7 @@ func NewMysqlStore(confs []MySqlConf, isSharding bool, shardingNum int) *MySqlSt
 func (s *MySqlStore) hash(fullFileName string) (instance_offset, table_postfix int) {
 	hash_value := crc32.ChecksumIEEE([]byte(fullFileName))
 	instance_offset = int(hash_value) % len(s.dbs)
-	table_postfix = int(hash_value) % s.shardingNum
+	table_postfix = int(hash_value) % s.shardCount
 	return
 }
 
@@ -128,7 +130,7 @@ func (s *MySqlStore) Get(fullFilePath string) (fid string, err error) {
 	fid, err = s.query(fullFilePath, s.dbs[instance_offset], tableFullName)
 	if err == sql.ErrNoRows {
 		//Could not found
-		err = nil
+		err = filer.ErrNotFound
 	}
 	return fid, err
 }

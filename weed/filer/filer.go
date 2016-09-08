@@ -1,5 +1,9 @@
 package filer
 
+import (
+	"errors"
+)
+
 type FileId string //file id in SeaweedFS
 
 type FileEntry struct {
@@ -26,3 +30,5 @@ type Filer interface {
 	DeleteDirectory(dirPath string, recursive bool) (err error)
 	Move(fromPath string, toPath string) (err error)
 }
+
+var ErrNotFound = errors.New("filer: no entry is found in filer store")
