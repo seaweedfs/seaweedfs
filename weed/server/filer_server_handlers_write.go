@@ -15,11 +15,11 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/syndtr/goleveldb/leveldb"
 	"path"
 	"strconv"
 )
@@ -73,17 +73,17 @@ func makeFormData(filename, mimeType string, content io.Reader) (formData io.Rea
 }
 
 func (fs *FilerServer) queryFileInfoByPath(w http.ResponseWriter, r *http.Request, path string) (fileId, urlLocation string, err error) {
-	if fileId, err = fs.filer.FindFile(path); err != nil && err != leveldb.ErrNotFound {
+	if fileId, err = fs.filer.FindFile(path); err != nil && err != filer.ErrNotFound {
 		glog.V(0).Infoln("failing to find path in filer store", path, err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)
-		return
 	} else if fileId != "" && err == nil {
 		urlLocation, err = operation.LookupFileId(fs.getMasterNode(), fileId)
 		if err != nil {
 			glog.V(1).Infoln("operation LookupFileId %s failed, err is %s", fileId, err.Error())
 			w.WriteHeader(http.StatusNotFound)
-			return
 		}
+	} else if fileId == "" && err == filer.ErrNotFound {
+		w.WriteHeader(http.StatusNotFound)
 	}
 	return
 }
@@ -315,6 +315,8 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "PUT" {
 		if oldFid, err := fs.filer.FindFile(path); err == nil {
 			operation.DeleteFile(fs.getMasterNode(), oldFid, fs.jwt(oldFid))
+		} else if err != nil && err != filer.ErrNotFound {
+			glog.V(0).Infof("error %v occur when finding %s in filer store", err, path)
 		}
 	}
 
@@ -498,6 +500,8 @@ func (fs *FilerServer) doAutoChunk(w http.ResponseWriter, r *http.Request, conte
 	if r.Method != "PUT" {
 		if oldFid, err := fs.filer.FindFile(path); err == nil {
 			operation.DeleteFile(fs.getMasterNode(), oldFid, fs.jwt(oldFid))
+		} else if err != nil && err != filer.ErrNotFound {
+			glog.V(0).Infof("error %v occur when finding %s in filer store", err, path)
 		}
 	}
 

@@ -3,6 +3,7 @@ package cassandra_store
 import (
 	"fmt"
 
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 
 	"github.com/gocql/gocql"
@@ -59,6 +60,7 @@ func (c *CassandraStore) Get(fullFileName string) (fid string, err error) {
 		fullFileName).Consistency(gocql.One).Scan(&output); err != nil {
 		if err != gocql.ErrNotFound {
 			glog.V(0).Infof("Failed to find file %s: %v", fullFileName, fid, err)
+			return "", filer.ErrNotFound
 		}
 	}
 	if len(output) == 0 {

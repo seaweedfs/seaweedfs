@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	ui "github.com/chrislusf/seaweedfs/weed/server/filer_ui"
@@ -87,7 +88,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	}
 
 	fileId, err := fs.filer.FindFile(r.URL.Path)
-	if err == leveldb.ErrNotFound {
+	if err == filer.ErrNotFound {
 		glog.V(3).Infoln("Not found in db", r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
 		return
