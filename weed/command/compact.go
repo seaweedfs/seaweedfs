@@ -23,6 +23,7 @@ var (
 	compactVolumePath       = cmdCompact.Flag.String("dir", ".", "data directory to store files")
 	compactVolumeCollection = cmdCompact.Flag.String("collection", "", "volume collection name")
 	compactVolumeId         = cmdCompact.Flag.Int("volumeId", -1, "a volume id. The volume should already exist in the dir.")
+	compactMethod           = cmdCompact.Flag.Int("method", 0, "option to choose which compact method. use 0 or 1.")
 )
 
 func runCompact(cmd *Command, args []string) bool {
@@ -37,8 +38,14 @@ func runCompact(cmd *Command, args []string) bool {
 	if err != nil {
 		glog.Fatalf("Load Volume [ERROR] %s\n", err)
 	}
-	if err = v.Compact(); err != nil {
-		glog.Fatalf("Compact Volume [ERROR] %s\n", err)
+	if *compactMethod == 0 {
+		if err = v.Compact(); err != nil {
+			glog.Fatalf("Compact Volume [ERROR] %s\n", err)
+		}
+	} else {
+		if err = v.Compact2(); err != nil {
+			glog.Fatalf("Compact Volume [ERROR] %s\n", err)
+		}
 	}
 
 	return true
