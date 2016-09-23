@@ -62,28 +62,6 @@ SeaweedFS uses HTTP REST operations to write, read, delete. The responses are in
 > weed volume -dir="/tmp/data2" -max=10 -mserver="localhost:9333" -port=8081 &
 ```
 
-### Running with Docker ###
-
-Use with docker is easy as run locally, you can pass all args like above. But you don't need to worry about "-ip". It'll be treated by the entrypoint script.
-
-```
-docker run -p 9333:9333 --name master chrislusf/seaweedfs master
-```
-```
-docker run -p 8080:8080 --name volume --link master chrislusf/seaweedfs volume -max=5 -mserver="master:9333" -port=8080
-```
-#### With Compose ####
-But with Compose it's easiest.
-To startup just run:
-```
-docker-compose -f docker/docker-compose.yml up
-```
-And to scale:
-```
-docker-compose -f docker/docker-compose.yml scale volume=2
-```
-Remember that if multiple containers for volume are created on a single host, the port will clash.
-
 
 ### Write File ###
 
