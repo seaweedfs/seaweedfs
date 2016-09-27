@@ -38,6 +38,7 @@ func (v *Volume) commitCompact() error {
 	glog.V(3).Infof("Got Committing lock...")
 	v.nm.Close()
 	_ = v.dataFile.Close()
+	makeupDiff(v.FileName()+".cpd", v.FileName()+".cpx", v.FileName()+".dat", v.FileName()+".idx")
 	var e error
 	if e = os.Rename(v.FileName()+".cpd", v.FileName()+".dat"); e != nil {
 		return e
@@ -52,6 +53,9 @@ func (v *Volume) commitCompact() error {
 		return e
 	}
 	return nil
+}
+
+func makeupDiff(newDatFile, newIdxFile, oldDatFile, oldIdxFile string) (err error) {
 }
 
 func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string) (err error) {
