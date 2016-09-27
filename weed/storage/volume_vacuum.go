@@ -56,6 +56,7 @@ func (v *Volume) commitCompact() error {
 }
 
 func makeupDiff(newDatFile, newIdxFile, oldDatFile, oldIdxFile string) (err error) {
+	return nil
 }
 
 func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string) (err error) {
