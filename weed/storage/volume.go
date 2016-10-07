@@ -10,11 +10,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
-type keyField struct {
-	offset uint32
-	size   uint32
-}
-
 type Volume struct {
 	Id            VolumeId
 	dir           string
@@ -29,8 +24,8 @@ type Volume struct {
 	dataFileAccessLock sync.Mutex
 	lastModifiedTime   uint64 //unix time in seconds
 
-	lastCompactingIndexOffset       uint64
-	incrementedHasUpdatedIndexEntry map[uint64]keyField
+	lastCompactIndexOffset uint64
+	lastCompactRevision    uint16
 }
 
 func NewVolume(dirname string, collection string, id VolumeId, needleMapKind NeedleMapType, replicaPlacement *ReplicaPlacement, ttl *TTL) (v *Volume, e error) {
