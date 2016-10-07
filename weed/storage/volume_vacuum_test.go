@@ -34,6 +34,7 @@ preparing test prerequisite easier )
 9. Now you should get updated file A,B,C
 */
 
+/*
 func TestMakeDiff(t *testing.T) {
 
 	v := new(Volume)
@@ -51,3 +52,4 @@ func TestMakeDiff(t *testing.T) {
 		t.Log("makeupDiff Succeeded")
 	}
 }
+*/
