@@ -34,22 +34,22 @@ preparing test prerequisite easier )
 9. Now you should get updated file A,B,C
 */
 
-/*
 func TestMakeDiff(t *testing.T) {
 
 	v := new(Volume)
 	//lastCompactIndexOffset value is the index file size before step 4
 	v.lastCompactIndexOffset = 96
 	v.SuperBlock.version = 0x2
-	err := v.makeupDiff(
-		"/yourpath/1.cpd",
-		"/yourpath/1.cpx",
-		"/yourpath/1.dat",
-		"/yourpath/1.idx")
-	if err != nil {
-		t.Errorf("makeupDiff err is %v", err)
-	} else {
-		t.Log("makeupDiff Succeeded")
-	}
+	/*
+		err := v.makeupDiff(
+			"/yourpath/1.cpd",
+			"/yourpath/1.cpx",
+			"/yourpath/1.dat",
+			"/yourpath/1.idx")
+		if err != nil {
+			t.Errorf("makeupDiff err is %v", err)
+		} else {
+			t.Log("makeupDiff Succeeded")
+		}
+	*/
 }
-*/
