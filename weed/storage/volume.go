@@ -23,6 +23,9 @@ type Volume struct {
 
 	dataFileAccessLock sync.Mutex
 	lastModifiedTime   uint64 //unix time in seconds
+
+	lastCompactIndexOffset uint64
+	lastCompactRevision    uint16
 }
 
 func NewVolume(dirname string, collection string, id VolumeId, needleMapKind NeedleMapType, replicaPlacement *ReplicaPlacement, ttl *TTL) (v *Volume, e error) {
