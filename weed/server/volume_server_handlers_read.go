@@ -133,7 +133,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		if r.FormValue("h") != "" {
 			height, _ = strconv.Atoi(r.FormValue("h"))
 		}
-		if r.FormValue("rotate") != "" {
+		if r.FormValue("r") != "" {
 			rotate, _ = strconv.Atoi(r.FormValue("r"))
 		}
 
