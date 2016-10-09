@@ -87,11 +87,24 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	fileId, err := fs.filer.FindFile(r.URL.Path)
+	reqUrl := r.URL.RequestURI()
+	if r.FormValue("w") != "" || r.FormValue("h") != "" || r.FormValue("r") != "" {
+		reqUrl = r.URL.Path + "?w=" + r.FormValue("w") + "&h=" + r.FormValue("h") + "&r=" + r.FormValue("r")
+	}
+	fileId, err := fs.filer.FindFile(reqUrl)
 	if err == filer.ErrNotFound {
-		glog.V(3).Infoln("Not found in db", r.URL.Path)
-		w.WriteHeader(http.StatusNotFound)
-		return
+		glog.V(0).Infoln(reqUrl, "not exist")
+		r.Header.Add("exist", "0")
+		r.Header.Add("path", r.URL.Path)
+		fileId, err = fs.filer.FindFile(r.URL.Path)
+		if err == filer.ErrNotFound {
+			glog.V(3).Infoln("Not found in db", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	} else {
+		glog.V(0).Infoln(reqUrl, "exist")
+		r.Header.Add("exist", "1")
 	}
 
 	urlLocation, err := operation.LookupFileId(fs.getMasterNode(), fileId)

@@ -298,7 +298,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, http.StatusInternalServerError, errors.New(ret.Error))
 		return
 	}
-	path := r.URL.Path
+	path := r.URL.RequestURI()
 	if strings.HasSuffix(path, "/") {
 		if ret.Name != "" {
 			path += ret.Name

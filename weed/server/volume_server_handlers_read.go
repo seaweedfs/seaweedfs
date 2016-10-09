@@ -15,6 +15,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -123,20 +124,31 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
-	if ext == ".png" || ext == ".jpg" || ext == ".gif" {
-		width, height := 0, 0
-		if r.FormValue("width") != "" {
-			width, _ = strconv.Atoi(r.FormValue("width"))
-		}
-		if r.FormValue("height") != "" {
-			height, _ = strconv.Atoi(r.FormValue("height"))
-		}
-		n.Data, _, _ = images.Resized(ext, n.Data, width, height)
 
-		//旋转
+	if ext == ".png" || ext == ".jpg" || ext == ".gif" {
+		width, height, rotate := 0, 0, 0
+		if r.FormValue("w") != "" {
+			width, _ = strconv.Atoi(r.FormValue("w"))
+		}
+		if r.FormValue("h") != "" {
+			height, _ = strconv.Atoi(r.FormValue("h"))
+		}
 		if r.FormValue("rotate") != "" {
-			rotate, _ := strconv.Atoi(r.FormValue("rotate"))
+			rotate, _ = strconv.Atoi(r.FormValue("r"))
+		}
+
+		//缓存
+		if r.Header.Get("exist") != "1" && (r.FormValue("w") != "" || r.FormValue("h") != "" || r.FormValue("r") != "") {
+			glog.V(0).Infoln("生成")
+			n.Data, _, _ = images.Resized(ext, n.Data, width, height)
 			n.Data = images.Rotate(ext, n.Data, rotate)
+
+			reqUrl := r.Header.Get("path") + "?w=" + r.FormValue("w") + "&h=" + r.FormValue("h") + "&r=" + r.FormValue("r")
+			jwt := security.GetJwt(r)
+			_, err = operation.Upload("http://localhost:8888"+reqUrl, filename, bytes.NewReader(n.Data), false, "image/jpeg", jwt)
+			if err != nil {
+				glog.V(0).Infoln(err)
+			}
 		}
 	}
 
