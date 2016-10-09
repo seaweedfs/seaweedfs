@@ -132,6 +132,17 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			height, _ = strconv.Atoi(r.FormValue("height"))
 		}
 		n.Data, _, _ = images.Resized(ext, n.Data, width, height)
+
+		//旋转
+		if r.FormValue("rotate") != "" {
+			rotate, _ := strconv.Atoi(r.FormValue("rotate"))
+			n.Data = images.Rotate(ext, n.Data, rotate)
+		}
+	}
+
+	//重命名
+	if r.FormValue("rename") != "" {
+		filename = r.FormValue("rename")
 	}
 
 	if e := writeResponseContent(filename, mtype, bytes.NewReader(n.Data), w, r); e != nil {
