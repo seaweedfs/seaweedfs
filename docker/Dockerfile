@@ -1,8 +1,5 @@
 FROM progrium/busybox
 
-COPY entrypoint.sh /entrypoint.sh
-COPY Dockerfile /etc/Dockerfile
-
 RUN opkg-install curl
 RUN echo tlsv1 >> ~/.curlrc
 
@@ -14,5 +11,8 @@ EXPOSE 8080
 EXPOSE 9333
 
 VOLUME /data
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
