@@ -1,6 +1,8 @@
 package redis_store
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/filer"
+
 	redis "gopkg.in/redis.v2"
 )
 
@@ -20,7 +22,7 @@ func NewRedisStore(hostPort string, password string, database int) *RedisStore {
 func (s *RedisStore) Get(fullFileName string) (fid string, err error) {
 	fid, err = s.Client.Get(fullFileName).Result()
 	if err == redis.Nil {
-		err = nil
+		err = filer.ErrNotFound
 	}
 	return fid, err
 }

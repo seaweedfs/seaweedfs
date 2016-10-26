@@ -21,7 +21,6 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) error {
 		return fmt.Errorf("readLastIndexEntry %s failed: %v", indexFile.Name(), e)
 	}
 	key, offset, size := idxFileEntry(lastIdxEntry)
-	//deleted index entry could not point to deleted needle
 	if offset == 0 {
 		return nil
 	}

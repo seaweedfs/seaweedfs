@@ -53,7 +53,6 @@ SeaweedFS uses HTTP REST operations to write, read, delete. The responses are in
 
 ```
 > ./weed master
-
 ```
 
 ### Start Volume Servers ###
@@ -61,8 +60,8 @@ SeaweedFS uses HTTP REST operations to write, read, delete. The responses are in
 ```
 > weed volume -dir="/tmp/data1" -max=5  -mserver="localhost:9333" -port=8080 &
 > weed volume -dir="/tmp/data2" -max=10 -mserver="localhost:9333" -port=8081 &
-
 ```
+
 
 ### Write File ###
 

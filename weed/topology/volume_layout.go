@@ -45,6 +45,19 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	}
 	vl.vid2location[v.Id].Set(dn)
 	glog.V(4).Infoln("volume", v.Id, "added to dn", dn.Id(), "len", vl.vid2location[v.Id].Length(), "copy", v.ReplicaPlacement.GetCopyCount())
+	for _, dn := range vl.vid2location[v.Id].list {
+		if v_info, err := dn.GetVolumesById(v.Id); err == nil {
+			if v_info.ReadOnly {
+				glog.V(3).Infof("vid %d removed from writable", v.Id)
+				vl.removeFromWritable(v.Id)
+				return
+			}
+		} else {
+			glog.V(3).Infof("vid %d removed from writable", v.Id)
+			vl.removeFromWritable(v.Id)
+			return
+		}
+	}
 	if vl.vid2location[v.Id].Length() == vl.rp.GetCopyCount() && vl.isWritable(v) {
 		if _, ok := vl.oversizedVolumes[v.Id]; !ok {
 			vl.addToWritable(v.Id)

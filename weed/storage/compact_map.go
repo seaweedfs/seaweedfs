@@ -41,10 +41,10 @@ func NewCompactSection(start Key) *CompactSection {
 //return old entry size
 func (cs *CompactSection) Set(key Key, offset uint32, size uint32) uint32 {
 	ret := uint32(0)
+	cs.Lock()
 	if key > cs.end {
 		cs.end = key
 	}
-	cs.Lock()
 	if i := cs.binarySearchValues(key); i >= 0 {
 		ret = cs.values[i].Size
 		//println("key", key, "old size", ret)
