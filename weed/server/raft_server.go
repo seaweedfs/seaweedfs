@@ -144,7 +144,7 @@ func isPeersChanged(dir string, self string, peers []string) (oldPeers []string,
 	sort.Strings(peers)
 	sort.Strings(oldPeers)
 
-	return oldPeers, reflect.DeepEqual(peers, oldPeers)
+	return oldPeers, !reflect.DeepEqual(peers, oldPeers)
 
 }
 
