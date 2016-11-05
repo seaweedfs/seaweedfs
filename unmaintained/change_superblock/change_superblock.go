@@ -16,6 +16,7 @@ var (
 	fixVolumeCollection = flag.String("collection", "", "the volume collection name")
 	fixVolumeId         = flag.Int("volumeId", -1, "a volume id. The volume should already exist in the dir. The volume index file should not exist.")
 	targetReplica       = flag.String("replication", "", "If just empty, only print out current replication setting.")
+	targetTTL           = flag.String("ttl", "", "If just empty, only print out current ttl setting.")
 )
 
 /*
@@ -58,27 +59,45 @@ func main() {
 	}
 
 	fmt.Printf("Current Volume Replication: %s\n", superBlock.ReplicaPlacement)
+	fmt.Printf("Current Volume TTL: %s\n", superBlock.Ttl.String())
 
-	if *targetReplica == "" {
-		return
+	hasChange := false
+
+	if *targetReplica != "" {
+		replica, err := storage.NewReplicaPlacementFromString(*targetReplica)
+
+		if err != nil {
+			glog.Fatalf("cannot parse target replica %s: %v", *targetReplica, err)
+		}
+
+		fmt.Printf("Changing replication to: %s\n", replica)
+
+		superBlock.ReplicaPlacement = replica
+		hasChange = true
 	}
 
-	replica, err := storage.NewReplicaPlacementFromString(*targetReplica)
+	if *targetTTL != "" {
+		ttl, err := storage.ReadTTL(*targetTTL)
 
-	if err != nil {
-		glog.Fatalf("cannot parse target replica %s: %v", *targetReplica, err)
+		if err != nil {
+			glog.Fatalf("cannot parse target ttl %s: %v", *targetTTL, err)
+		}
+
+		fmt.Printf("Changing ttl to: %s\n", ttl)
+
+		superBlock.Ttl = ttl
+		hasChange = true
 	}
 
-	fmt.Printf("Changing to: %s\n", replica)
+	if hasChange {
 
-	superBlock.ReplicaPlacement = replica
+		header = superBlock.Bytes()
 
-	header = superBlock.Bytes()
+		if n, e := datFile.WriteAt(header, 0); n == 0 || e != nil {
+			glog.Fatalf("cannot write super block: %v", e)
+		}
 
-	if n, e := datFile.WriteAt(header, 0); n == 0 || e != nil {
-		glog.Fatalf("cannot write super block: %v", e)
+		fmt.Println("Change Applied.")
 	}
-
-	fmt.Println("Done.")
 
 }
