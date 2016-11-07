@@ -3,6 +3,7 @@ package storage
 import (
 	"io/ioutil"
 	"strings"
+	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
@@ -11,6 +12,7 @@ type DiskLocation struct {
 	Directory      string
 	MaxVolumeCount int
 	volumes        map[VolumeId]*Volume
+	sync.RWMutex
 }
 
 func NewDiskLocation(dir string, maxVolumeCount int) *DiskLocation {
@@ -20,6 +22,8 @@ func NewDiskLocation(dir string, maxVolumeCount int) *DiskLocation {
 }
 
 func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
+	l.Lock()
+	defer l.Unlock()
 
 	if dirs, err := ioutil.ReadDir(l.Directory); err == nil {
 		for _, dir := range dirs {
@@ -48,6 +52,9 @@ func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
 }
 
 func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e error) {
+	l.Lock()
+	defer l.Unlock()
+
 	for k, v := range l.volumes {
 		if v.Collection == collection {
 			e = l.deleteVolumeById(k)
@@ -69,5 +76,37 @@ func (l *DiskLocation) deleteVolumeById(vid VolumeId) (e error) {
 		return
 	}
 	delete(l.volumes, vid)
+	return
+}
+
+func (l *DiskLocation) SetVolume(vid VolumeId, volume *Volume) {
+	l.Lock()
+	defer l.Unlock()
+
+	l.volumes[vid] = volume
+}
+
+func (l *DiskLocation) FindVolume(vid VolumeId) (*Volume, bool) {
+	l.RLock()
+	defer l.RUnlock()
+
+	v, ok := l.volumes[vid]
+	return v, ok
+}
+
+func (l *DiskLocation) VolumesLen() int {
+	l.RLock()
+	defer l.RUnlock()
+
+	return len(l.volumes)
+}
+
+func (l *DiskLocation) Close() {
+	l.Lock()
+	defer l.Unlock()
+
+	for _, v := range l.volumes {
+		v.Close()
+	}
 	return
 }
