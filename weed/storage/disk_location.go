@@ -22,11 +22,43 @@ func NewDiskLocation(dir string, maxVolumeCount int) *DiskLocation {
 	return location
 }
 
-func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
-	l.Lock()
-	defer l.Unlock()
+func (l *DiskLocation) loadExistingVolume(dir os.FileInfo, needleMapKind NeedleMapType, mutex *sync.RWMutex) {
+	name := dir.Name()
+	if !dir.IsDir() && strings.HasSuffix(name, ".dat") {
+		collection := ""
+		base := name[:len(name)-len(".dat")]
+		i := strings.LastIndex(base, "_")
+		if i > 0 {
+			collection, base = base[0:i], base[i+1:]
+		}
+		if vid, err := NewVolumeId(base); err == nil {
+			mutex.RLock()
+			_, found := l.volumes[vid]
+			mutex.RUnlock()
+			if !found {
+				if v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil, nil); e == nil {
+					mutex.Lock()
+					l.volumes[vid] = v
+					mutex.Unlock()
+					glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s", l.Directory+"/"+name, v.ReplicaPlacement, v.Version(), v.Size(), v.Ttl.String())
+				} else {
+					glog.V(0).Infof("new volume %s error %s", name, e)
+				}
+			}
+		}
+	}
+}
 
-	task_queue := make(chan os.FileInfo, 100)
+func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapType, concurrentFlag bool) {
+	var concurrency int
+	if concurrentFlag {
+		//You could choose a better optimized concurency value after testing at your environment
+		concurrency = 10
+	} else {
+		concurrency = 1
+	}
+
+	task_queue := make(chan os.FileInfo, 10*concurrency)
 	go func() {
 		if dirs, err := ioutil.ReadDir(l.Directory); err == nil {
 			for _, dir := range dirs {
@@ -36,7 +68,6 @@ func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
 		close(task_queue)
 	}()
 
-	const concurrency int = 10
 	var wg sync.WaitGroup
 	var mutex sync.RWMutex
 	for workerNum := 0; workerNum < concurrency; workerNum++ {
@@ -44,34 +75,19 @@ func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
 		go func() {
 			defer wg.Done()
 			for dir := range task_queue {
-				name := dir.Name()
-				if !dir.IsDir() && strings.HasSuffix(name, ".dat") {
-					collection := ""
-					base := name[:len(name)-len(".dat")]
-					i := strings.LastIndex(base, "_")
-					if i > 0 {
-						collection, base = base[0:i], base[i+1:]
-					}
-					if vid, err := NewVolumeId(base); err == nil {
-						mutex.RLock()
-						_, found := l.volumes[vid]
-						mutex.RUnlock()
-						if !found {
-							if v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil, nil); e == nil {
-								mutex.Lock()
-								l.volumes[vid] = v
-								mutex.Unlock()
-								glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s", l.Directory+"/"+name, v.ReplicaPlacement, v.Version(), v.Size(), v.Ttl.String())
-							} else {
-								glog.V(0).Infof("new volume %s error %s", name, e)
-							}
-						}
-					}
-				}
+				l.loadExistingVolume(dir, needleMapKind, &mutex)
 			}
 		}()
 	}
 	wg.Wait()
+
+}
+
+func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
+	l.Lock()
+	defer l.Unlock()
+
+	l.concurrentLoadingVolumes(needleMapKind, true)
 
 	glog.V(0).Infoln("Store started on dir:", l.Directory, "with", len(l.volumes), "volumes", "max", l.MaxVolumeCount)
 }
