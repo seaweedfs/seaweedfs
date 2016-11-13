@@ -48,7 +48,7 @@ func LoadNeedleMap(file *os.File) (*NeedleMap, error) {
 		}
 		return nil
 	})
-	glog.V(1).Infoln("max file key:", nm.MaximumFileKey)
+	glog.V(1).Infof("max file key: %d for file: %s", nm.MaximumFileKey, file.Name())
 	return nm, e
 }
 
