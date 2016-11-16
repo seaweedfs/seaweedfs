@@ -23,6 +23,9 @@ type Volume struct {
 
 	dataFileAccessLock sync.Mutex
 	lastModifiedTime   uint64 //unix time in seconds
+
+	lastCompactIndexOffset uint64
+	lastCompactRevision    uint16
 }
 
 func NewVolume(dirname string, collection string, id VolumeId, needleMapKind NeedleMapType, replicaPlacement *ReplicaPlacement, ttl *TTL) (v *Volume, e error) {
@@ -92,9 +95,9 @@ func (v *Volume) expired(volumeSizeLimit uint64) bool {
 	if v.Ttl == nil || v.Ttl.Minutes() == 0 {
 		return false
 	}
-	glog.V(0).Infof("now:%v lastModified:%v", time.Now().Unix(), v.lastModifiedTime)
+	glog.V(1).Infof("now:%v lastModified:%v", time.Now().Unix(), v.lastModifiedTime)
 	livedMinutes := (time.Now().Unix() - int64(v.lastModifiedTime)) / 60
-	glog.V(0).Infof("ttl:%v lived:%v", v.Ttl, livedMinutes)
+	glog.V(1).Infof("ttl:%v lived:%v", v.Ttl, livedMinutes)
 	if int64(v.Ttl.Minutes()) < livedMinutes {
 		return true
 	}

@@ -143,7 +143,7 @@ func (s *Store) DeleteCollection(collection string) (e error) {
 
 func (s *Store) findVolume(vid VolumeId) *Volume {
 	for _, location := range s.Locations {
-		if v, found := location.volumes[vid]; found {
+		if v, found := location.FindVolume(vid); found {
 			return v
 		}
 	}
@@ -152,7 +152,7 @@ func (s *Store) findVolume(vid VolumeId) *Volume {
 func (s *Store) findFreeLocation() (ret *DiskLocation) {
 	max := 0
 	for _, location := range s.Locations {
-		currentFreeCount := location.MaxVolumeCount - len(location.volumes)
+		currentFreeCount := location.MaxVolumeCount - location.VolumesLen()
 		if currentFreeCount > max {
 			max = currentFreeCount
 			ret = location
@@ -168,7 +168,7 @@ func (s *Store) addVolume(vid VolumeId, collection string, needleMapKind NeedleM
 		glog.V(0).Infof("In dir %s adds volume:%v collection:%s replicaPlacement:%v ttl:%v",
 			location.Directory, vid, collection, replicaPlacement, ttl)
 		if volume, err := NewVolume(location.Directory, collection, vid, needleMapKind, replicaPlacement, ttl); err == nil {
-			location.volumes[vid] = volume
+			location.SetVolume(vid, volume)
 			return nil
 		} else {
 			return err
@@ -180,6 +180,7 @@ func (s *Store) addVolume(vid VolumeId, collection string, needleMapKind NeedleM
 func (s *Store) Status() []*VolumeInfo {
 	var stats []*VolumeInfo
 	for _, location := range s.Locations {
+		location.RLock()
 		for k, v := range location.volumes {
 			s := &VolumeInfo{
 				Id:               VolumeId(k),
@@ -194,6 +195,7 @@ func (s *Store) Status() []*VolumeInfo {
 				Ttl:              v.Ttl}
 			stats = append(stats, s)
 		}
+		location.RUnlock()
 	}
 	sortVolumeInfos(stats)
 	return stats
@@ -219,6 +221,7 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 	var maxFileKey uint64
 	for _, location := range s.Locations {
 		maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
+		location.Lock()
 		for k, v := range location.volumes {
 			if maxFileKey < v.nm.MaxFileKey() {
 				maxFileKey = v.nm.MaxFileKey()
@@ -246,6 +249,7 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 				}
 			}
 		}
+		location.Unlock()
 	}
 
 	joinMessage := &operation.JoinMessage{
@@ -290,9 +294,7 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 }
 func (s *Store) Close() {
 	for _, location := range s.Locations {
-		for _, v := range location.volumes {
-			v.Close()
-		}
+		location.Close()
 	}
 }
 func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
