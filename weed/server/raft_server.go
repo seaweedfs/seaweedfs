@@ -144,7 +144,7 @@ func isPeersChanged(dir string, self string, peers []string) (oldPeers []string,
 	sort.Strings(peers)
 	sort.Strings(oldPeers)
 
-	return oldPeers, reflect.DeepEqual(peers, oldPeers)
+	return oldPeers, !reflect.DeepEqual(peers, oldPeers)
 
 }
 
@@ -165,7 +165,7 @@ func (s *RaftServer) Join(peers []string) error {
 		target := fmt.Sprintf("http://%s/cluster/join", strings.TrimSpace(m))
 		glog.V(0).Infoln("Attempting to connect to:", target)
 
-		err = postFollowingOneRedirect(target, "application/json", &b)
+		err = postFollowingOneRedirect(target, "application/json", b)
 
 		if err != nil {
 			glog.V(0).Infoln("Post returned error: ", err.Error())
@@ -182,9 +182,9 @@ func (s *RaftServer) Join(peers []string) error {
 }
 
 // a workaround because http POST following redirection misses request body
-func postFollowingOneRedirect(target string, contentType string, b *bytes.Buffer) error {
+func postFollowingOneRedirect(target string, contentType string, b bytes.Buffer) error {
 	backupReader := bytes.NewReader(b.Bytes())
-	resp, err := http.Post(target, contentType, b)
+	resp, err := http.Post(target, contentType, &b)
 	if err != nil {
 		return err
 	}
