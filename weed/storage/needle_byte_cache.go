@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	bytesCache *lru.Cache
-	bytesPool  *util.BytesPool
+	EnableBytesCache = true
+	bytesCache       *lru.Cache
+	bytesPool        *util.BytesPool
 )
 
 /*
@@ -48,11 +49,13 @@ func (block *Block) increaseReference() {
 func getBytesForFileBlock(r *os.File, offset int64, readSize int) (dataSlice []byte, block *Block, err error) {
 	// check cache, return if found
 	cacheKey := fmt.Sprintf("%d:%d:%d", r.Fd(), offset>>3, readSize)
-	if obj, found := bytesCache.Get(cacheKey); found {
-		block = obj.(*Block)
-		block.increaseReference()
-		dataSlice = block.Bytes[0:readSize]
-		return dataSlice, block, nil
+	if EnableBytesCache {
+		if obj, found := bytesCache.Get(cacheKey); found {
+			block = obj.(*Block)
+			block.increaseReference()
+			dataSlice = block.Bytes[0:readSize]
+			return dataSlice, block, nil
+		}
 	}
 
 	// get the []byte from pool
@@ -61,7 +64,9 @@ func getBytesForFileBlock(r *os.File, offset int64, readSize int) (dataSlice []b
 	block = &Block{Bytes: b, refCount: 2}
 	dataSlice = block.Bytes[0:readSize]
 	_, err = r.ReadAt(dataSlice, offset)
-	bytesCache.Add(cacheKey, block)
+	if EnableBytesCache {
+		bytesCache.Add(cacheKey, block)
+	}
 	return dataSlice, block, err
 }
 
