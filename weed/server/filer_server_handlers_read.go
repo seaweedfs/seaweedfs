@@ -1,19 +1,28 @@
 package weed_server
 
 import (
+	"bytes"
+	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	ui "github.com/chrislusf/seaweedfs/weed/server/filer_ui"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/syndtr/goleveldb/leveldb"
 )
+
+//文件服务器地址
+var fileUrl string = "http://127.0.0.1:8888"
+var resourceUrl string = "http://resource.k12cloud.cn"
 
 // listDirectoryHandler lists directories and folers under a directory
 // files are sorted by name and paginated via "lastFileName" and "limit".
@@ -87,11 +96,29 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
+	//先在文件存储中查找该文件是否存在，不存在则去七牛查找，下载并上传到文件存储中
+	fileId, err := fs.filer.FindFile(r.URL.Path)
+	if err == filer.ErrNotFound {
+		data, fileName, contentType, err := download(resourceUrl + r.URL.Path)
+		if err != nil {
+			glog.V(0).Infoln(err)
+			return
+		}
+
+		jwt := security.GetJwt(r)
+		_, err = operation.Upload(fileUrl+r.URL.Path, fileName, bytes.NewReader(data), false, contentType, jwt)
+		if err != nil {
+			glog.V(0).Infoln(err)
+			return
+		}
+		glog.V(0).Infoln("path", resourceUrl+r.URL.Path)
+	}
+
 	reqUrl := r.URL.RequestURI()
 	if r.FormValue("w") != "" || r.FormValue("h") != "" || r.FormValue("r") != "" {
 		reqUrl = r.URL.Path + "?w=" + r.FormValue("w") + "&h=" + r.FormValue("h") + "&r=" + r.FormValue("r")
 	}
-	fileId, err := fs.filer.FindFile(reqUrl)
+	fileId, err = fs.filer.FindFile(reqUrl)
 	if err == filer.ErrNotFound {
 		glog.V(0).Infoln(reqUrl, "not exist")
 		r.Header.Add("exist", "0")
@@ -151,4 +178,36 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 
+}
+
+func download(u string) (data []byte, fileName, contentType string, err error) {
+	client := &http.Client{}
+	request, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return
+	}
+
+	resp, err := client.Do(request)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		err = fmt.Errorf("%s", "下载失败")
+	}
+	data, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return
+	}
+
+	contentType = resp.Header.Get("Content-type")
+
+	ur, err := url.Parse(u)
+	if err != nil {
+		return
+	}
+	_, fileName = path.Split(ur.Path)
+
+	return
 }
