@@ -35,15 +35,11 @@ var cmdServer = &Command{
 	Short:     "start a server, including volume server, and automatically elect a master server",
 	Long: `start both a volume server to provide storage spaces
   and a master server to provide volume=>location mapping service and sequence number of file ids
-
   This is provided as a convenient way to start both volume server and master server.
   The servers are exactly the same as starting them separately.
-
   So other volume servers can use this embedded master server also.
-
   Optionally, one filer server can be started. Logically, filer servers should not be in a cluster.
   They run with meta data on disk, not shared. So each filer server is different.
-
   `,
 }
 
@@ -72,6 +68,7 @@ var (
 	volumeFixJpgOrientation       = cmdServer.Flag.Bool("volume.images.fix.orientation", true, "Adjust jpg orientation when uploading.")
 	volumeReadRedirect            = cmdServer.Flag.Bool("volume.read.redirect", true, "Redirect moved or non-local volumes.")
 	volumeServerPublicUrl         = cmdServer.Flag.String("volume.publicUrl", "", "publicly accessible address")
+	volumeEnableBytesCache        = cmdServer.Flag.Bool("volume.cache.enable", false, "direct cache instead of OS cache, cost more memory.")
 	isStartingFiler               = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 
 	serverWhiteList []string
@@ -259,6 +256,7 @@ func runServer(cmd *Command, args []string) bool {
 		volumeNeedleMapKind,
 		*serverIp+":"+strconv.Itoa(*masterPort), *volumePulse, *serverDataCenter, *serverRack,
 		serverWhiteList, *volumeFixJpgOrientation, *volumeReadRedirect,
+		*volumeEnableBytesCache,
 	)
 
 	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*volumePort))

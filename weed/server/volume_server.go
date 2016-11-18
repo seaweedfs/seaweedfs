@@ -33,7 +33,8 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	dataCenter string, rack string,
 	whiteList []string,
 	fixJpgOrientation bool,
-	readRedirect bool) *VolumeServer {
+	readRedirect bool,
+	enableBytesCache bool) *VolumeServer {
 	vs := &VolumeServer{
 		pulseSeconds:      pulseSeconds,
 		dataCenter:        dataCenter,
@@ -44,6 +45,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	}
 	vs.SetMasterNode(masterNode)
 	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts, vs.needleMapKind)
+	storage.EnableBytesCache = enableBytesCache
 
 	vs.guard = security.NewGuard(whiteList, "")
 

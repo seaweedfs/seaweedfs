@@ -36,6 +36,7 @@ type VolumeServerOptions struct {
 	indexType             *string
 	fixJpgOrientation     *bool
 	readRedirect          *bool
+	enableBytesCache      *bool
 }
 
 func init() {
@@ -54,13 +55,13 @@ func init() {
 	v.indexType = cmdVolume.Flag.String("index", "memory", "Choose [memory|leveldb|boltdb] mode for memory~performance balance.")
 	v.fixJpgOrientation = cmdVolume.Flag.Bool("images.fix.orientation", true, "Adjust jpg orientation when uploading.")
 	v.readRedirect = cmdVolume.Flag.Bool("read.redirect", true, "Redirect moved or non-local volumes.")
+	v.enableBytesCache = cmdVolume.Flag.Bool("cache.enable", false, "direct cache instead of OS cache, cost more memory.")
 }
 
 var cmdVolume = &Command{
 	UsageLine: "volume -port=8080 -dir=/tmp -max=5 -ip=server_name -mserver=localhost:9333",
 	Short:     "start a volume server",
 	Long: `start a volume server to provide storage spaces
-
   `,
 }
 
@@ -132,6 +133,7 @@ func runVolume(cmd *Command, args []string) bool {
 		*v.master, *v.pulseSeconds, *v.dataCenter, *v.rack,
 		v.whiteList,
 		*v.fixJpgOrientation, *v.readRedirect,
+		*v.enableBytesCache,
 	)
 
 	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port)
