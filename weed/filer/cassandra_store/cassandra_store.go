@@ -32,7 +32,12 @@ type CassandraStore struct {
 
 func NewCassandraStore(keyspace string, hosts ...string) (c *CassandraStore, err error) {
 	c = &CassandraStore{}
-	c.cluster = gocql.NewCluster(hosts...)
+	        s := strings.Split(hosts, ",")
+        if len(s) == 1 {
+                c.cluster = gocql.NewCluster(hosts...)
+        } else if len(s) > 1 {
+                c.cluster = gocql.NewCluster(s[0], s[1])
+        }
 	c.cluster.Keyspace = keyspace
 	c.cluster.Consistency = gocql.Quorum
 	c.session, err = c.cluster.CreateSession()
