@@ -34,11 +34,10 @@ func NewCassandraStore(keyspace string, hosts string) (c *CassandraStore, err er
 	c = &CassandraStore{}
 	        s := strings.Split(hosts, ",")
         if len(s) == 1 {
-
 		glog.V(2).Info("Only one  cassandra node to connect!A Cluster is Proposed!Now using:", string(hosts))
                 c.cluster = gocql.NewCluster(hosts)
         } else if len(s) > 1 {
-                c.cluster = gocql.NewCluster(s[0], s[1])
+                c.cluster = gocql.NewCluster(s...)
         }
 	c.cluster.Keyspace = keyspace
 	c.cluster.Consistency = gocql.Quorum
