@@ -34,8 +34,11 @@ func NewCassandraStore(keyspace string, hosts ...string) (c *CassandraStore, err
 	c = &CassandraStore{}
 	        s := strings.Split(hosts, ",")
         if len(s) == 1 {
+		fmt.Println("000")
                 c.cluster = gocql.NewCluster(hosts...)
         } else if len(s) > 1 {
+		fmt.Println("111",s[0])
+		fmt.Println("222",s[1])
                 c.cluster = gocql.NewCluster(s[0], s[1])
         }
 	c.cluster.Keyspace = keyspace
