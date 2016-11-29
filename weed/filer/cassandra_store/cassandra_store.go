@@ -3,6 +3,7 @@ package cassandra_store
 import (
 	"fmt"
 	"strings"
+
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 
@@ -32,13 +33,13 @@ type CassandraStore struct {
 
 func NewCassandraStore(keyspace string, hosts string) (c *CassandraStore, err error) {
 	c = &CassandraStore{}
-	        s := strings.Split(hosts, ",")
-        if len(s) == 1 {
-		glog.V(2).Info("Only one  cassandra node to connect!A Cluster is Proposed!Now using:", string(hosts))
-                c.cluster = gocql.NewCluster(hosts)
-        } else if len(s) > 1 {
-                c.cluster = gocql.NewCluster(s...)
-        }
+	s := strings.Split(hosts, ",")
+	if len(s) == 1 {
+		glog.V(2).Info("Only one cassandra node to connect! A cluster is Recommended! Now using:", string(hosts))
+		c.cluster = gocql.NewCluster(hosts)
+	} else if len(s) > 1 {
+		c.cluster = gocql.NewCluster(s...)
+	}
 	c.cluster.Keyspace = keyspace
 	c.cluster.Consistency = gocql.Quorum
 	c.session, err = c.cluster.CreateSession()
