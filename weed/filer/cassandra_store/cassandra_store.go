@@ -2,6 +2,7 @@ package cassandra_store
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -10,29 +11,31 @@ import (
 )
 
 /*
-
 Basically you need a table just like this:
-
 CREATE TABLE seaweed_files (
    path varchar,
    fids list<varchar>,
    PRIMARY KEY (path)
 );
-
 Need to match flat_namespace.FlatNamespaceStore interface
 	Put(fullFileName string, fid string) (err error)
 	Get(fullFileName string) (fid string, err error)
 	Delete(fullFileName string) (fid string, err error)
-
 */
 type CassandraStore struct {
 	cluster *gocql.ClusterConfig
 	session *gocql.Session
 }
 
-func NewCassandraStore(keyspace string, hosts ...string) (c *CassandraStore, err error) {
+func NewCassandraStore(keyspace string, hosts string) (c *CassandraStore, err error) {
 	c = &CassandraStore{}
-	c.cluster = gocql.NewCluster(hosts...)
+	s := strings.Split(hosts, ",")
+	if len(s) == 1 {
+		glog.V(2).Info("Only one cassandra node to connect! A cluster is Recommended! Now using:", string(hosts))
+		c.cluster = gocql.NewCluster(hosts)
+	} else if len(s) > 1 {
+		c.cluster = gocql.NewCluster(s...)
+	}
 	c.cluster.Keyspace = keyspace
 	c.cluster.Consistency = gocql.Quorum
 	c.session, err = c.cluster.CreateSession()

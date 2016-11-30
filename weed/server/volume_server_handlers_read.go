@@ -112,7 +112,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			mtype = mt
 		}
 	}
-
+	ext = strings.ToLower(ext) // 后缀先转小写，防止匹配不上大写的后缀
 	if ext != ".gz" {
 		if n.IsGzipped() {
 			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
