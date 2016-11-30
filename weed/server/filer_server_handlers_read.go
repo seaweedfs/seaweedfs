@@ -20,8 +20,7 @@ import (
 	"github.com/syndtr/goleveldb/leveldb"
 )
 
-//文件服务器地址
-var fileUrl string = "http://127.0.0.1:8888"
+//七牛资源域名
 var resourceUrl string = "http://resource.k12cloud.cn"
 
 // listDirectoryHandler lists directories and folers under a directory
@@ -106,7 +105,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		}
 
 		jwt := security.GetJwt(r)
-		_, err = operation.Upload(fileUrl+r.URL.Path, fileName, bytes.NewReader(data), false, contentType, jwt)
+		_, err = operation.Upload("http://"+r.Host+r.URL.Path, fileName, bytes.NewReader(data), false, contentType, jwt)
 		if err != nil {
 			glog.V(0).Infoln(err)
 			return
