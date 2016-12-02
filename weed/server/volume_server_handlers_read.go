@@ -125,7 +125,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	if ext == ".png" || ext == ".jpg" || ext == ".gif" {
+	if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" {
 		width, height, rotate := 0, 0, 0
 		if r.FormValue("w") != "" {
 			width, _ = strconv.Atoi(r.FormValue("w"))
@@ -154,7 +154,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 
 	//重命名
 	if r.FormValue("rename") != "" {
-		filename = r.FormValue("rename")
+		filename = r.FormValue("rename") + ext
 	}
 
 	if e := writeResponseContent(filename, mtype, bytes.NewReader(n.Data), w, r); e != nil {
