@@ -2,6 +2,10 @@ package weed_server
 
 import (
 	"bytes"
+	"crypto/md5"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -21,6 +25,12 @@ import (
 )
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
+
+type JsonEncode struct {
+	Data   interface{} `json:"data"`
+	Msg    string      `json:"msg"`
+	Status int         `json:"status"`
+}
 
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
 	n := new(storage.Needle)
@@ -150,6 +160,20 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 				glog.V(0).Infoln(err)
 			}
 		}
+	}
+
+	if r.FormValue("md5") != "" {
+		md5Ctx := md5.New()
+		md5Ctx.Write(n.Data)
+		cipherStr := md5Ctx.Sum(nil)
+		glog.V(0).Infoln("md5", hex.EncodeToString(cipherStr))
+
+		fileInfo := map[string]interface{}{
+			"url": r.Header.Get("path"),
+			"md5": hex.EncodeToString(cipherStr),
+		}
+		fmt.Fprintf(w, "%v", (&JsonEncode{fileInfo, "success", 200}).ReturnJson())
+		return
 	}
 
 	//重命名
@@ -320,4 +344,10 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 	w.WriteHeader(http.StatusPartialContent)
 	_, e = io.CopyN(w, sendContent, sendSize)
 	return e
+}
+
+//返回json
+func (j *JsonEncode) ReturnJson() string {
+	b, _ := json.MarshalIndent(j, "", "	")
+	return string(b)
 }
