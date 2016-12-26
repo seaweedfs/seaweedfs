@@ -74,7 +74,12 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		lastFileName,
 		shouldDisplayLoadMore,
 	}
-	ui.StatusTpl.Execute(w, args)
+	
+	if strings.ToLower(r.Header.Get("Content-Type")) == "application/json" {
+		writeJsonQuiet(w, r, http.StatusOK, args)
+	} else {
+		ui.StatusTpl.Execute(w, args)
+	}
 }
 
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
