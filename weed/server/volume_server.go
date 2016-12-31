@@ -47,7 +47,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts, vs.needleMapKind)
 	storage.EnableBytesCache = enableBytesCache
 
-	vs.guard = security.NewGuard(whiteList, "")
+	vs.guard = security.NewGuard(whiteList, "", nil)
 
 	adminMux.HandleFunc("/ui/index.html", vs.uiStatusHandler)
 	adminMux.HandleFunc("/status", vs.guard.WhiteList(vs.statusHandler))
