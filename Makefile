@@ -13,9 +13,9 @@ tar = cd build && tar -cvzf $(1)_$(2).tar.gz $(appname)$(3) && rm $(appname)$(3)
 zip = cd build && zip $(1)_$(2).zip $(appname)$(3) && rm $(appname)$(3)
 
 
-all: build
+all: release
 
-.PHONY : clean deps build linux release windows_build darwin_build linux_build clean
+.PHONY : clean deps build linux release windows_build darwin_build linux_build bsd_build clean
 
 clean:
 	go clean -i $(GO_FLAGS) $(SOURCE_DIR)
@@ -32,7 +32,7 @@ linux: deps
 	mkdir -p linux
 	GOOS=linux GOARCH=amd64 go build $(GO_FLAGS) -o linux/$(BINARY) $(SOURCE_DIR)
 
-release: windows_build darwin_build linux_build
+release: windows_build darwin_build linux_build bsd_build
 
 ##### LINUX BUILDS #####
 linux_build: build/linux_arm.tar.gz build/linux_arm64.tar.gz build/linux_386.tar.gz build/linux_amd64.tar.gz
@@ -70,3 +70,44 @@ build/windows_386.zip: $(sources)
 build/windows_amd64.zip: $(sources)
 	$(call build,windows,amd64,.exe)
 	$(call zip,windows,amd64,.exe)
+
+##### BSD BUILDS #####
+bsd_build: build/freebsd_arm.tar.gz build/freebsd_386.tar.gz build/freebsd_amd64.tar.gz \
+ build/netbsd_arm.tar.gz build/netbsd_386.tar.gz build/netbsd_amd64.tar.gz \
+ build/openbsd_arm.tar.gz build/openbsd_386.tar.gz build/openbsd_amd64.tar.gz
+
+build/freebsd_386.tar.gz: $(sources)
+	$(call build,freebsd,386,)
+	$(call tar,freebsd,386)
+
+build/freebsd_amd64.tar.gz: $(sources)
+	$(call build,freebsd,amd64,)
+	$(call tar,freebsd,amd64)
+
+build/freebsd_arm.tar.gz: $(sources)
+	$(call build,freebsd,arm,)
+	$(call tar,freebsd,arm)
+
+build/netbsd_386.tar.gz: $(sources)
+	$(call build,netbsd,386,)
+	$(call tar,netbsd,386)
+
+build/netbsd_amd64.tar.gz: $(sources)
+	$(call build,netbsd,amd64,)
+	$(call tar,netbsd,amd64)
+
+build/netbsd_arm.tar.gz: $(sources)
+	$(call build,netbsd,arm,)
+	$(call tar,netbsd,arm)
+
+build/openbsd_386.tar.gz: $(sources)
+	$(call build,openbsd,386,)
+	$(call tar,openbsd,386)
+
+build/openbsd_amd64.tar.gz: $(sources)
+	$(call build,openbsd,amd64,)
+	$(call tar,openbsd,amd64)
+
+build/openbsd_arm.tar.gz: $(sources)
+	$(call build,openbsd,arm,)
+	$(call tar,openbsd,arm)

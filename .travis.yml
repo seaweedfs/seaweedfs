@@ -26,5 +26,14 @@ deploy:
   - build/darwin_amd64.tar.gz
   - build/windows_386.zip
   - build/windows_amd64.zip
+  - build/freebsd_arm.tar.gz
+  - build/freebsd_amd64.tar.gz
+  - build/freebsd_386.tar.gz
+  - build/netbsd_arm.tar.gz
+  - build/netbsd_amd64.tar.gz
+  - build/netbsd_386.tar.gz
+  - build/openbsd_arm.tar.gz
+  - build/openbsd_amd64.tar.gz
+  - build/openbsd_386.tar.gz
   on:
     repo: chrislusf/seaweedfs
