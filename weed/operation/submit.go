@@ -92,18 +92,15 @@ func newFilePart(fullPathFilename string) (ret FilePart, err error) {
 	}
 	ret.Reader = fh
 
-	if fi, fiErr := fh.Stat(); fiErr != nil {
+	fi, fiErr := fh.Stat()
+	if fiErr != nil {
 		glog.V(0).Info("Failed to stat file:", fullPathFilename)
 		return ret, fiErr
-	} else {
-		ret.ModTime = fi.ModTime().UTC().Unix()
-		ret.FileSize = fi.Size()
 	}
+	ret.ModTime = fi.ModTime().UTC().Unix()
+	ret.FileSize = fi.Size()
 	ext := strings.ToLower(path.Ext(fullPathFilename))
 	ret.IsGzipped = ext == ".gz"
-	if ret.IsGzipped {
-		ret.FileName = fullPathFilename[0 : len(fullPathFilename)-3]
-	}
 	ret.FileName = fullPathFilename
 	if ext != "" {
 		ret.MimeType = mime.TypeByExtension(ext)

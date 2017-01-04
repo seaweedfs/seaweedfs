@@ -63,7 +63,7 @@ var cmdUpload = &Command{
 
 func runUpload(cmd *Command, args []string) bool {
 	secret := security.Secret(*upload.secretKey)
-	if len(cmdUpload.Flag.Args()) == 0 {
+	if len(args) == 0 {
 		if *upload.dir == "" {
 			return false
 		}
