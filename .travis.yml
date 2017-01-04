@@ -38,5 +38,5 @@ deploy:
   - build/openbsd_amd64.tar.gz
   - build/openbsd_386.tar.gz
   on:
-    branch: release
+    tags: true
 	repo: chrislusf/seaweedfs
