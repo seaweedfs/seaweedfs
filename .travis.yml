@@ -13,6 +13,7 @@ install:
 
 script:
 - go test ./weed/...
+- make release
 
 deploy:
   provider: releases

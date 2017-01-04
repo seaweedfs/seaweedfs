@@ -13,7 +13,7 @@ tar = cd build && tar -cvzf $(1)_$(2).tar.gz $(appname)$(3) && rm $(appname)$(3)
 zip = cd build && zip $(1)_$(2).zip $(appname)$(3) && rm $(appname)$(3)
 
 
-all: release
+all: build
 
 .PHONY : clean deps build linux release windows_build darwin_build linux_build bsd_build clean
 
