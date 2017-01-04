@@ -3,9 +3,10 @@ FROM progrium/busybox
 RUN opkg-install curl
 RUN echo tlsv1 >> ~/.curlrc
 
-RUN curl -Lks https://bintray.com$(curl -Lk http://bintray.com/chrislusf/seaweedfs/seaweedfs/_latestVersion | grep linux_amd64.tar.gz | sed -n "/href/ s/.*href=['\"]\([^'\"]*\)['\"].*/\1/gp") | gunzip | tar -xf - && \
-  mv go_*amd64/weed /usr/bin/ && \
-  rm -r go_*amd64
+RUN curl -s -L https://github.com/chrislusf/seaweedfs/releases/latest | egrep -o '/chrislusf/seaweedfs/releases/download/.*/linux_amd64.tar.gz' | wget --base=http://github.com/ -i - && \
+  tar xzvf linux_amd64.tar.gz && \
+  mv weed /usr/bin/ && \
+  rm -r linux_amd64.tar.gz
 
 EXPOSE 8080
 EXPOSE 9333
