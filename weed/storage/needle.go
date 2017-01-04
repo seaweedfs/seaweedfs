@@ -106,35 +106,39 @@ func ParseUpload(r *http.Request) (
 		}
 	}
 
-	dotIndex := strings.LastIndex(fileName, ".")
-	ext, mtype := "", ""
-	if dotIndex > 0 {
-		ext = strings.ToLower(fileName[dotIndex:])
-		mtype = mime.TypeByExtension(ext)
-	}
-	contentType := part.Header.Get("Content-Type")
-	if contentType != "" && mtype != contentType {
-		mimeType = contentType //only return mime type if not deductable
-		mtype = contentType
-	}
-	if part.Header.Get("Content-Encoding") == "gzip" {
-		isGzipped = true
-	} else if operation.IsGzippable(ext, mtype) {
-		if data, e = operation.GzipData(data); e != nil {
-			return
+	isChunkedFile, _ = strconv.ParseBool(r.FormValue("cm"))
+	isGzipped = false
+	if !isChunkedFile {
+		dotIndex := strings.LastIndex(fileName, ".")
+		ext, mtype := "", ""
+		if dotIndex > 0 {
+			ext = strings.ToLower(fileName[dotIndex:])
+			mtype = mime.TypeByExtension(ext)
 		}
-		isGzipped = true
-	}
-	if ext == ".gz" {
-		isGzipped = true
-	}
-	if strings.HasSuffix(fileName, ".gz") &&
-		!strings.HasSuffix(fileName, ".tar.gz") {
-		fileName = fileName[:len(fileName)-3]
+		contentType := part.Header.Get("Content-Type")
+		if contentType != "" && mtype != contentType {
+			mimeType = contentType //only return mime type if not deductable
+			mtype = contentType
+		}
+		if part.Header.Get("Content-Encoding") == "gzip" {
+			isGzipped = true
+		} else if operation.IsGzippable(ext, mtype) {
+			if data, e = operation.GzipData(data); e != nil {
+				return
+			}
+			isGzipped = true
+		}
+		if ext == ".gz" {
+			isGzipped = true
+		}
+		if strings.HasSuffix(fileName, ".gz") &&
+			!strings.HasSuffix(fileName, ".tar.gz") {
+			fileName = fileName[:len(fileName)-3]
+		}
 	}
 	modifiedTime, _ = strconv.ParseUint(r.FormValue("ts"), 10, 64)
 	ttl, _ = ReadTTL(r.FormValue("ttl"))
-	isChunkedFile, _ = strconv.ParseBool(r.FormValue("cm"))
+
 	return
 }
 func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
