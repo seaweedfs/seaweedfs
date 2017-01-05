@@ -170,8 +170,6 @@ Volume servers can start with a specific data center name:
  weed volume -dir=/tmp/2 -port=8081 -dataCenter=dc2
 ```
 
-Or the master server can determine the data center via volume server's IP address and settings in weed.conf file.
-
 When requesting a file key, an optional "dataCenter" parameter can limit the assigned volume to the specific data center. For example, this specifies that the assigned volume should be limited to 'dc1':
 
 ```
