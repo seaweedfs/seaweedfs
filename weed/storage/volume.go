@@ -15,6 +15,7 @@ type Volume struct {
 	dir           string
 	Collection    string
 	dataFile      *os.File
+	dataFileSize  int64
 	nm            NeedleMapper
 	needleMapKind NeedleMapType
 	readOnly      bool

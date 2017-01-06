@@ -22,10 +22,10 @@ const (
 )
 
 func (n *Needle) DiskSize() int64 {
-	padding := NeedlePaddingSize - ((NeedleHeaderSize + int64(n.Size) + NeedleChecksumSize) % NeedlePaddingSize)
-	return NeedleHeaderSize + int64(n.Size) + padding + NeedleChecksumSize
+	return getActualSize(n.Size)
 }
-func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
+
+func (n *Needle) Append(w io.Writer, version Version) (size uint32, actualSize int64, err error) {
 	if s, ok := w.(io.Seeker); ok {
 		if end, e := s.Seek(0, 1); e == nil {
 			defer func(s io.Seeker, off int64) {
@@ -54,6 +54,7 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 		if _, err = w.Write(n.Data); err != nil {
 			return
 		}
+		actualSize = NeedleHeaderSize + int64(n.Size)
 		padding := NeedlePaddingSize - ((NeedleHeaderSize + n.Size + NeedleChecksumSize) % NeedlePaddingSize)
 		util.Uint32toBytes(header[0:NeedleChecksumSize], n.Checksum.Value())
 		_, err = w.Write(header[0 : NeedleChecksumSize+padding])
@@ -131,9 +132,12 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 		padding := NeedlePaddingSize - ((NeedleHeaderSize + n.Size + NeedleChecksumSize) % NeedlePaddingSize)
 		util.Uint32toBytes(header[0:NeedleChecksumSize], n.Checksum.Value())
 		_, err = w.Write(header[0 : NeedleChecksumSize+padding])
-		return n.DataSize, err
+
+		actualSize = NeedleHeaderSize + int64(n.Size) + NeedleChecksumSize + int64(padding)
+
+		return n.DataSize, actualSize, err
 	}
-	return 0, fmt.Errorf("Unsupported Version! (%d)", version)
+	return 0, 0, fmt.Errorf("Unsupported Version! (%d)", version)
 }
 
 func ReadNeedleBlob(r *os.File, offset int64, size uint32) (dataSlice []byte, block *Block, err error) {

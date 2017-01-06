@@ -35,7 +35,7 @@ func (v *Volume) Compact2() error {
 }
 
 func (v *Volume) commitCompact() error {
-	glog.V(3).Infof("Committing vacuuming...")
+	glog.V(0).Infof("Committing vacuuming...")
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 	glog.V(3).Infof("Got Committing lock...")
@@ -189,7 +189,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 				fakeDelNeedle := new(Needle)
 				fakeDelNeedle.Id = key
 				fakeDelNeedle.Cookie = 0x12345678
-				_, err = fakeDelNeedle.Append(dst, v.Version())
+				_, _, err = fakeDelNeedle.Append(dst, v.Version())
 				if err != nil {
 					return
 				}
@@ -241,7 +241,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string) (err erro
 				if err = nm.Put(n.Id, uint32(new_offset/NeedlePaddingSize), n.Size); err != nil {
 					return fmt.Errorf("cannot put needle: %s", err)
 				}
-				if _, err = n.Append(dst, v.Version()); err != nil {
+				if _, _, err := n.Append(dst, v.Version()); err != nil {
 					return fmt.Errorf("cannot append needle: %s", err)
 				}
 				new_offset += n.DiskSize()
@@ -280,7 +280,7 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 	new_offset := int64(SuperBlockSize)
 
 	WalkIndexFile(oldIndexFile, func(key uint64, offset, size uint32) error {
-		if size <= 0 {
+		if offset == 0 || size == TombstoneFileSize {
 			return nil
 		}
 
@@ -302,7 +302,7 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 			if err = nm.Put(n.Id, uint32(new_offset/NeedlePaddingSize), n.Size); err != nil {
 				return fmt.Errorf("cannot put needle: %s", err)
 			}
-			if _, err = n.Append(dst, v.Version()); err != nil {
+			if _, _, err = n.Append(dst, v.Version()); err != nil {
 				return fmt.Errorf("cannot append needle: %s", err)
 			}
 			new_offset += n.DiskSize()

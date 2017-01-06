@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"io/ioutil"
+	"math"
 	"mime"
 	"net/http"
 	"path"
@@ -20,6 +21,7 @@ const (
 	NeedlePaddingSize     = 8
 	NeedleChecksumSize    = 4
 	MaxPossibleVolumeSize = 4 * 1024 * 1024 * 1024 * 8
+	TombstoneFileSize     = math.MaxUint32
 )
 
 /*

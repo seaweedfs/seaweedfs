@@ -33,7 +33,7 @@ func LoadNeedleMap(file *os.File) (*NeedleMap, error) {
 		}
 		nm.FileCounter++
 		nm.FileByteCounter = nm.FileByteCounter + uint64(size)
-		if offset > 0 {
+		if offset > 0 && size != TombstoneFileSize {
 			oldSize := nm.m.Set(Key(key), offset, size)
 			glog.V(3).Infoln("reading key", key, "offset", offset*NeedlePaddingSize, "size", size, "oldSize", oldSize)
 			if oldSize > 0 {
@@ -92,10 +92,10 @@ func (nm *NeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
 	element, ok = nm.m.Get(Key(key))
 	return
 }
-func (nm *NeedleMap) Delete(key uint64) error {
+func (nm *NeedleMap) Delete(key uint64, offset uint32) error {
 	deletedBytes := nm.m.Delete(Key(key))
 	nm.logDelete(deletedBytes)
-	return nm.appendToIndexFile(key, 0, 0)
+	return nm.appendToIndexFile(key, offset, TombstoneFileSize)
 }
 func (nm *NeedleMap) Close() {
 	_ = nm.indexFile.Close()
