@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"path"
+	"strconv"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
@@ -20,8 +22,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"path"
-	"strconv"
 )
 
 type FilerPostResult struct {
@@ -112,7 +112,7 @@ func (fs *FilerServer) multipartUploadAnalyzer(w http.ResponseWriter, r *http.Re
 	if r.Method == "PUT" {
 		buf, _ := ioutil.ReadAll(r.Body)
 		r.Body = ioutil.NopCloser(bytes.NewBuffer(buf))
-		fileName, _, _, _, _, _, _, pe := storage.ParseUpload(r)
+		fileName, _, _, _, _, _, _, _, pe := storage.ParseUpload(r)
 		if pe != nil {
 			glog.V(0).Infoln("failing to parse post body", pe.Error())
 			writeJsonError(w, r, http.StatusInternalServerError, pe)
@@ -521,7 +521,7 @@ func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *ht
 	err = nil
 
 	ioReader := ioutil.NopCloser(bytes.NewBuffer(chunkBuf))
-	uploadResult, uploadError := operation.Upload(urlLocation, fileName, ioReader, false, contentType, fs.jwt(fileId))
+	uploadResult, uploadError := operation.Upload(urlLocation, fileName, ioReader, false, contentType, nil, fs.jwt(fileId))
 	if uploadResult != nil {
 		glog.V(0).Infoln("Chunk upload result. Name:", uploadResult.Name, "Fid:", fileId, "Size:", uploadResult.Size)
 	}

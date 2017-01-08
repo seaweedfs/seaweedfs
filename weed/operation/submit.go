@@ -155,7 +155,7 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 			cm.DeleteChunks(master)
 		}
 	} else {
-		ret, e := Upload(fileUrl, baseName, fi.Reader, fi.IsGzipped, fi.MimeType, jwt)
+		ret, e := Upload(fileUrl, baseName, fi.Reader, fi.IsGzipped, fi.MimeType, nil, jwt)
 		if e != nil {
 			return 0, e
 		}
@@ -180,7 +180,7 @@ func upload_one_chunk(filename string, reader io.Reader, master,
 	fileUrl, fid := "http://"+ret.Url+"/"+ret.Fid, ret.Fid
 	glog.V(4).Info("Uploading part ", filename, " to ", fileUrl, "...")
 	uploadResult, uploadError := Upload(fileUrl, filename, reader, false,
-		"application/octet-stream", jwt)
+		"application/octet-stream", nil, jwt)
 	if uploadError != nil {
 		return fid, 0, uploadError
 	}
@@ -198,6 +198,6 @@ func upload_chunked_file_manifest(fileUrl string, manifest *ChunkManifest, jwt s
 	q := u.Query()
 	q.Set("cm", "true")
 	u.RawQuery = q.Encode()
-	_, e = Upload(u.String(), manifest.Name, bufReader, false, "application/json", jwt)
+	_, e = Upload(u.String(), manifest.Name, bufReader, false, "application/json", nil, jwt)
 	return e
 }

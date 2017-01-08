@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"math"
@@ -22,6 +23,7 @@ const (
 	NeedleChecksumSize    = 4
 	MaxPossibleVolumeSize = 4 * 1024 * 1024 * 1024 * 8
 	TombstoneFileSize     = math.MaxUint32
+	PairNamePrefix        = "Seaweed-"
 )
 
 /*
@@ -40,6 +42,8 @@ type Needle struct {
 	Name         []byte `comment:"maximum 256 characters"` //version2
 	MimeSize     uint8  //version2
 	Mime         []byte `comment:"maximum 256 characters"` //version2
+	PairsSize    uint16 //version2
+	Pairs        []byte `comment:"additional name value pairs, json format, maximum 64kB"`
 	LastModified uint64 //only store LastModifiedBytesLength bytes, which is 5 bytes to disk
 	Ttl          *TTL
 
@@ -55,8 +59,15 @@ func (n *Needle) String() (str string) {
 }
 
 func ParseUpload(r *http.Request) (
-	fileName string, data []byte, mimeType string, isGzipped bool,
+	fileName string, data []byte, mimeType string, pairMap map[string]string, isGzipped bool,
 	modifiedTime uint64, ttl *TTL, isChunkedFile bool, e error) {
+	pairMap = make(map[string]string)
+	for k, v := range r.Header {
+		if len(v) > 0 && strings.HasPrefix(k, PairNamePrefix) {
+			pairMap[k] = v[0]
+		}
+	}
+
 	form, fe := r.MultipartReader()
 	if fe != nil {
 		glog.V(0).Infoln("MultipartReader [ERROR]", fe)
@@ -109,19 +120,19 @@ func ParseUpload(r *http.Request) (
 	}
 
 	isChunkedFile, _ = strconv.ParseBool(r.FormValue("cm"))
-	isGzipped = false
+	dotIndex := strings.LastIndex(fileName, ".")
+	ext, mtype := "", ""
+	if dotIndex > 0 {
+		ext = strings.ToLower(fileName[dotIndex:])
+		mtype = mime.TypeByExtension(ext)
+	}
+	contentType := part.Header.Get("Content-Type")
+	if contentType != "" && mtype != contentType {
+		mimeType = contentType //only return mime type if not deductable
+		mtype = contentType
+	}
+
 	if !isChunkedFile {
-		dotIndex := strings.LastIndex(fileName, ".")
-		ext, mtype := "", ""
-		if dotIndex > 0 {
-			ext = strings.ToLower(fileName[dotIndex:])
-			mtype = mime.TypeByExtension(ext)
-		}
-		contentType := part.Header.Get("Content-Type")
-		if contentType != "" && mtype != contentType {
-			mimeType = contentType //only return mime type if not deductable
-			mtype = contentType
-		}
 		if part.Header.Get("Content-Encoding") == "gzip" {
 			isGzipped = true
 		} else if operation.IsGzippable(ext, mtype) {
@@ -144,9 +155,10 @@ func ParseUpload(r *http.Request) (
 	return
 }
 func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
+	var pairMap map[string]string
 	fname, mimeType, isGzipped, isChunkedFile := "", "", false, false
 	n = new(Needle)
-	fname, n.Data, mimeType, isGzipped, n.LastModified, n.Ttl, isChunkedFile, e = ParseUpload(r)
+	fname, n.Data, mimeType, pairMap, isGzipped, n.LastModified, n.Ttl, isChunkedFile, e = ParseUpload(r)
 	if e != nil {
 		return
 	}
@@ -157,6 +169,19 @@ func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
 	if len(mimeType) < 256 {
 		n.Mime = []byte(mimeType)
 		n.SetHasMime()
+	}
+	if len(pairMap) != 0 {
+		trimmedPairMap := make(map[string]string)
+		for k, v := range pairMap {
+			trimmedPairMap[k[len(PairNamePrefix):]] = v
+		}
+
+		pairs, _ := json.Marshal(trimmedPairMap)
+		if len(pairs) < 65536 {
+			n.Pairs = pairs
+			n.PairsSize = uint16(len(pairs))
+			n.SetHasPairs()
+		}
 	}
 	if isGzipped {
 		n.SetGzipped()
