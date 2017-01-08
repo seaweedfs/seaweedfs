@@ -36,13 +36,13 @@ func init() {
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
-func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string, jwt security.EncodedJwt) (*UploadResult, error) {
+func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string, pairs []byte, jwt security.EncodedJwt) (*UploadResult, error) {
 	return upload_content(uploadUrl, func(w io.Writer) (err error) {
 		_, err = io.Copy(w, reader)
 		return
-	}, filename, isGzipped, mtype, jwt)
+	}, filename, isGzipped, mtype, pairs, jwt)
 }
-func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, mtype string, jwt security.EncodedJwt) (*UploadResult, error) {
+func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, mtype string, pairs []byte, jwt security.EncodedJwt) (*UploadResult, error) {
 	body_buf := bytes.NewBufferString("")
 	body_writer := multipart.NewWriter(body_buf)
 	h := make(textproto.MIMEHeader)
@@ -59,6 +59,14 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	if jwt != "" {
 		h.Set("Authorization", "BEARER "+string(jwt))
 	}
+	pairMap := make(map[string]string)
+	if len(pairs) != 0 {
+		err := json.Unmarshal(pairs, &pairMap)
+		if err != nil {
+			glog.V(0).Infoln("Unmarshal pairs error:", err)
+		}
+	}
+
 	file_writer, cp_err := body_writer.CreatePart(h)
 	if cp_err != nil {
 		glog.V(0).Infoln("error creating form file", cp_err.Error())
@@ -73,7 +81,17 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 		glog.V(0).Infoln("error closing body", err)
 		return nil, err
 	}
-	resp, post_err := client.Post(uploadUrl, content_type, body_buf)
+
+	req, postErr := http.NewRequest("POST", uploadUrl, body_buf)
+	if postErr != nil {
+		glog.V(0).Infoln("failing to upload to", uploadUrl, postErr.Error())
+		return nil, postErr
+	}
+	req.Header.Set("Content-Type", content_type)
+	for k, v := range pairMap {
+		req.Header.Set(k, v)
+	}
+	resp, post_err := client.Do(req)
 	if post_err != nil {
 		glog.V(0).Infoln("failing to upload to", uploadUrl, post_err.Error())
 		return nil, post_err
@@ -86,7 +104,7 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	var ret UploadResult
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
-		glog.V(0).Infoln("failing to read upload resonse", uploadUrl, string(resp_body))
+		glog.V(0).Infoln("failing to read upload response", uploadUrl, string(resp_body))
 		return nil, unmarshal_err
 	}
 	if ret.Error != "" {

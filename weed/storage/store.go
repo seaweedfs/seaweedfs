@@ -303,6 +303,7 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 			err = fmt.Errorf("Volume %d is read only", i)
 			return
 		}
+		// TODO: count needle size ahead
 		if MaxPossibleVolumeSize >= v.ContentSize()+uint64(size) {
 			size, err = v.writeNeedle(n)
 		} else {

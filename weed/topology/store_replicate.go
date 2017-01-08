@@ -57,7 +57,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 				u.RawQuery = q.Encode()
 				_, err := operation.Upload(u.String(),
 					string(needle.Name), bytes.NewReader(needle.Data), needle.IsGzipped(), string(needle.Mime),
-					jwt)
+					needle.Pairs, jwt)
 				return err
 			}); err != nil {
 				ret = 0

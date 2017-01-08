@@ -16,6 +16,7 @@ const (
 	FlagHasMime             = 0x04
 	FlagHasLastModifiedDate = 0x08
 	FlagHasTtl              = 0x10
+	FlagHasPairs            = 0x20
 	FlagIsChunkManifest     = 0x80
 	LastModifiedBytesLength = 5
 	TtlBytesLength          = 2
@@ -78,6 +79,9 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, actualSize i
 			if n.HasTtl() {
 				n.Size = n.Size + TtlBytesLength
 			}
+			if n.HasPairs() {
+				n.Size += 2 + uint32(n.PairsSize)
+			}
 		} else {
 			n.Size = 0
 		}
@@ -128,6 +132,15 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, actualSize i
 					return
 				}
 			}
+			if n.HasPairs() {
+				util.Uint16toBytes(header[0:2], n.PairsSize)
+				if _, err = w.Write(header[0:2]); err != nil {
+					return
+				}
+				if _, err = w.Write(n.Pairs); err != nil {
+					return
+				}
+			}
 		}
 		padding := NeedlePaddingSize - ((NeedleHeaderSize + n.Size + NeedleChecksumSize) % NeedlePaddingSize)
 		util.Uint32toBytes(header[0:NeedleChecksumSize], n.Checksum.Value())
@@ -141,8 +154,9 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, actualSize i
 }
 
 func ReadNeedleBlob(r *os.File, offset int64, size uint32) (dataSlice []byte, block *Block, err error) {
-	padding := NeedlePaddingSize - ((NeedleHeaderSize + size + NeedleChecksumSize) % NeedlePaddingSize)
-	readSize := NeedleHeaderSize + size + NeedleChecksumSize + padding
+	NeedleWithoutPaddingSize := NeedleHeaderSize + size + NeedleChecksumSize
+	padding := NeedlePaddingSize - (NeedleWithoutPaddingSize % NeedlePaddingSize)
+	readSize := NeedleWithoutPaddingSize + padding
 	return getBytesForFileBlock(r, offset, int(readSize))
 }
 
@@ -212,6 +226,13 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) {
 	if index < lenBytes && n.HasTtl() {
 		n.Ttl = LoadTTLFromBytes(bytes[index : index+TtlBytesLength])
 		index = index + TtlBytesLength
+	}
+	if index < lenBytes && n.HasPairs() {
+		n.PairsSize = util.BytesToUint16(bytes[index : index+2])
+		index += 2
+		end := index + int(n.PairsSize)
+		n.Pairs = bytes[index:end]
+		index = end
 	}
 }
 
@@ -295,4 +316,12 @@ func (n *Needle) IsChunkedManifest() bool {
 
 func (n *Needle) SetIsChunkManifest() {
 	n.Flags = n.Flags | FlagIsChunkManifest
+}
+
+func (n *Needle) HasPairs() bool {
+	return n.Flags&FlagHasPairs != 0
+}
+
+func (n *Needle) SetHasPairs() {
+	n.Flags = n.Flags | FlagHasPairs
 }
