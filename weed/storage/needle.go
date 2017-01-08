@@ -120,19 +120,21 @@ func ParseUpload(r *http.Request) (
 	}
 
 	isChunkedFile, _ = strconv.ParseBool(r.FormValue("cm"))
-	dotIndex := strings.LastIndex(fileName, ".")
-	ext, mtype := "", ""
-	if dotIndex > 0 {
-		ext = strings.ToLower(fileName[dotIndex:])
-		mtype = mime.TypeByExtension(ext)
-	}
-	contentType := part.Header.Get("Content-Type")
-	if contentType != "" && mtype != contentType {
-		mimeType = contentType //only return mime type if not deductable
-		mtype = contentType
-	}
 
 	if !isChunkedFile {
+
+		dotIndex := strings.LastIndex(fileName, ".")
+		ext, mtype := "", ""
+		if dotIndex > 0 {
+			ext = strings.ToLower(fileName[dotIndex:])
+			mtype = mime.TypeByExtension(ext)
+		}
+		contentType := part.Header.Get("Content-Type")
+		if contentType != "" && mtype != contentType {
+			mimeType = contentType //only return mime type if not deductable
+			mtype = contentType
+		}
+
 		if part.Header.Get("Content-Encoding") == "gzip" {
 			isGzipped = true
 		} else if operation.IsGzippable(ext, mtype) {
