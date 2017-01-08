@@ -146,18 +146,13 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, actualSize i
 		util.Uint32toBytes(header[0:NeedleChecksumSize], n.Checksum.Value())
 		_, err = w.Write(header[0 : NeedleChecksumSize+padding])
 
-		actualSize = NeedleHeaderSize + int64(n.Size) + NeedleChecksumSize + int64(padding)
-
-		return n.DataSize, actualSize, err
+		return n.DataSize, getActualSize(n.Size), err
 	}
 	return 0, 0, fmt.Errorf("Unsupported Version! (%d)", version)
 }
 
 func ReadNeedleBlob(r *os.File, offset int64, size uint32) (dataSlice []byte, block *Block, err error) {
-	NeedleWithoutPaddingSize := NeedleHeaderSize + size + NeedleChecksumSize
-	padding := NeedlePaddingSize - (NeedleWithoutPaddingSize % NeedlePaddingSize)
-	readSize := NeedleWithoutPaddingSize + padding
-	return getBytesForFileBlock(r, offset, int(readSize))
+	return getBytesForFileBlock(r, offset, int(getActualSize(size)))
 }
 
 func (n *Needle) ReadData(r *os.File, offset int64, size uint32, version Version) (err error) {

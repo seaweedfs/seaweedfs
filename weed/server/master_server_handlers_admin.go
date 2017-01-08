@@ -181,10 +181,18 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 	if err != nil {
 		return nil, err
 	}
+	preallocate := ms.preallocate
+	if r.FormValue("preallocate") != "" {
+		preallocate, err = strconv.ParseInt(r.FormValue("preallocate"), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("Failed to parse int64 preallocate = %s: %v", r.FormValue("preallocate"), err)
+		}
+	}
 	volumeGrowOption := &topology.VolumeGrowOption{
 		Collection:       r.FormValue("collection"),
 		ReplicaPlacement: replicaPlacement,
 		Ttl:              ttl,
+		Prealloacte:      preallocate,
 		DataCenter:       r.FormValue("dataCenter"),
 		Rack:             r.FormValue("rack"),
 		DataNode:         r.FormValue("dataNode"),

@@ -24,7 +24,7 @@ func (v *Volume) Compact() error {
 	v.lastCompactIndexOffset = v.nm.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactRevision
 	glog.V(3).Infof("creating copies for volume %d ,last offset %d...", v.Id, v.lastCompactIndexOffset)
-	return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx")
+	return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx", v.dataFileSize)
 }
 
 func (v *Volume) Compact2() error {
@@ -66,7 +66,7 @@ func (v *Volume) commitCompact() error {
 	//glog.V(3).Infof("Pretending to be vacuuming...")
 	//time.Sleep(20 * time.Second)
 	glog.V(3).Infof("Loading Commit file...")
-	if e = v.load(true, false, v.needleMapKind); e != nil {
+	if e = v.load(true, false, v.needleMapKind, 0); e != nil {
 		return e
 	}
 	return nil
@@ -207,11 +207,11 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 	return nil
 }
 
-func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string) (err error) {
+func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, preallocate int64) (err error) {
 	var (
 		dst, idx *os.File
 	)
-	if dst, err = os.OpenFile(dstName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644); err != nil {
+	if dst, err = createVolumeFile(dstName, preallocate); err != nil {
 		return
 	}
 	defer dst.Close()

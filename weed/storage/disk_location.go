@@ -36,7 +36,7 @@ func (l *DiskLocation) loadExistingVolume(dir os.FileInfo, needleMapKind NeedleM
 			_, found := l.volumes[vid]
 			mutex.RUnlock()
 			if !found {
-				if v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil, nil); e == nil {
+				if v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil, nil, 0); e == nil {
 					mutex.Lock()
 					l.volumes[vid] = v
 					mutex.Unlock()

@@ -21,6 +21,7 @@ type VolumeGrowOption struct {
 	Collection       string
 	ReplicaPlacement *storage.ReplicaPlacement
 	Ttl              *storage.TTL
+	Prealloacte      int64
 	DataCenter       string
 	Rack             string
 	DataNode         string

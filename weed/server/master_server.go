@@ -20,6 +20,7 @@ type MasterServer struct {
 	port                    int
 	metaFolder              string
 	volumeSizeLimitMB       uint
+	preallocate             int64
 	pulseSeconds            int
 	defaultReplicaPlacement string
 	garbageThreshold        string
@@ -34,6 +35,7 @@ type MasterServer struct {
 
 func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	volumeSizeLimitMB uint,
+	preallocate bool,
 	pulseSeconds int,
 	confFile string,
 	defaultReplicaPlacement string,
@@ -41,9 +43,15 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	whiteList []string,
 	secureKey string,
 ) *MasterServer {
+
+	var preallocateSize int64
+	if preallocate {
+		preallocateSize = int64(volumeSizeLimitMB) * (1 << 20)
+	}
 	ms := &MasterServer{
 		port:                    port,
 		volumeSizeLimitMB:       volumeSizeLimitMB,
+		preallocate:             preallocateSize,
 		pulseSeconds:            pulseSeconds,
 		defaultReplicaPlacement: defaultReplicaPlacement,
 		garbageThreshold:        garbageThreshold,
