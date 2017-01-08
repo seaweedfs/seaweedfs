@@ -13,10 +13,9 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
-	"strings"
-
 	"path"
 	"strconv"
+	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"

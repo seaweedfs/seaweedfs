@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"math"
@@ -10,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"encoding/json"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/images"
@@ -60,17 +59,15 @@ func (n *Needle) String() (str string) {
 }
 
 func ParseUpload(r *http.Request) (
-	fileName string, data []byte, mimeType string, pairs []byte, isGzipped bool,
+	fileName string, data []byte, mimeType string, pairMap map[string]string, isGzipped bool,
 	modifiedTime uint64, ttl *TTL, isChunkedFile bool, e error) {
-	pairMap := make(map[string]string)
+	pairMap = make(map[string]string)
 	for k, v := range r.Header {
 		if len(v) > 0 && strings.HasPrefix(k, PairNamePrefix) {
 			pairMap[k] = v[0]
 		}
 	}
-	if len(pairMap) != 0 {
-		pairs, _ = json.Marshal(pairMap)
-	}
+
 	form, fe := r.MultipartReader()
 	if fe != nil {
 		glog.V(0).Infoln("MultipartReader [ERROR]", fe)
@@ -158,10 +155,10 @@ func ParseUpload(r *http.Request) (
 	return
 }
 func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
-	var pair []byte
+	var pairMap map[string]string
 	fname, mimeType, isGzipped, isChunkedFile := "", "", false, false
 	n = new(Needle)
-	fname, n.Data, mimeType, pair, isGzipped, n.LastModified, n.Ttl, isChunkedFile, e = ParseUpload(r)
+	fname, n.Data, mimeType, pairMap, isGzipped, n.LastModified, n.Ttl, isChunkedFile, e = ParseUpload(r)
 	if e != nil {
 		return
 	}
@@ -173,10 +170,18 @@ func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
 		n.Mime = []byte(mimeType)
 		n.SetHasMime()
 	}
-	if len(pair) < 65536 {
-		n.Pairs = pair
-		n.PairsSize = uint16(len(pair))
-		n.SetHasPairs()
+	if len(pairMap) != 0 {
+		trimmedPairMap := make(map[string]string)
+		for k, v := range pairMap {
+			trimmedPairMap[k[len(PairNamePrefix):]] = v
+		}
+
+		pairs, _ := json.Marshal(trimmedPairMap)
+		if len(pairs) < 65536 {
+			n.Pairs = pairs
+			n.PairsSize = uint16(len(pairs))
+			n.SetHasPairs()
+		}
 	}
 	if isGzipped {
 		n.SetGzipped()

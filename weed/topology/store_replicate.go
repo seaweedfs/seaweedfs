@@ -2,13 +2,13 @@ package topology
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
-
-	"net/url"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -55,9 +55,18 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 					q.Set("cm", "true")
 				}
 				u.RawQuery = q.Encode()
+
+				pairMap := make(map[string]string)
+				if needle.HasPairs() {
+					err := json.Unmarshal(needle.Pairs, &pairMap)
+					if err != nil {
+						glog.V(0).Infoln("Unmarshal pairs error:", err)
+					}
+				}
+
 				_, err := operation.Upload(u.String(),
 					string(needle.Name), bytes.NewReader(needle.Data), needle.IsGzipped(), string(needle.Mime),
-					needle.Pairs, jwt)
+					pairMap, jwt)
 				return err
 			}); err != nil {
 				ret = 0

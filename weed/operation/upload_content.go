@@ -36,13 +36,13 @@ func init() {
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
-func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string, pairs []byte, jwt security.EncodedJwt) (*UploadResult, error) {
+func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
 	return upload_content(uploadUrl, func(w io.Writer) (err error) {
 		_, err = io.Copy(w, reader)
 		return
-	}, filename, isGzipped, mtype, pairs, jwt)
+	}, filename, isGzipped, mtype, pairMap, jwt)
 }
-func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, mtype string, pairs []byte, jwt security.EncodedJwt) (*UploadResult, error) {
+func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
 	body_buf := bytes.NewBufferString("")
 	body_writer := multipart.NewWriter(body_buf)
 	h := make(textproto.MIMEHeader)
@@ -58,13 +58,6 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	}
 	if jwt != "" {
 		h.Set("Authorization", "BEARER "+string(jwt))
-	}
-	pairMap := make(map[string]string)
-	if len(pairs) != 0 {
-		err := json.Unmarshal(pairs, &pairMap)
-		if err != nil {
-			glog.V(0).Infoln("Unmarshal pairs error:", err)
-		}
 	}
 
 	file_writer, cp_err := body_writer.CreatePart(h)
