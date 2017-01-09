@@ -126,7 +126,7 @@ func doEachCopy(fileOrDir string, host string, path string) bool {
 	}
 
 	results, err := operation.SubmitFiles(*copy.master, parts,
-		*copy.replication, *copy.collection,
+		*copy.replication, *copy.collection, "",
 		*copy.ttl, *copy.maxMB, copy.secret)
 	if err != nil {
 		fmt.Printf("Failed to submit file %s: %v", fileOrDir, err)
