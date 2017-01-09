@@ -20,6 +20,7 @@ type UploadOptions struct {
 	include     *string
 	replication *string
 	collection  *string
+	dataCenter  *string
 	ttl         *string
 	maxMB       *int
 	secretKey   *string
@@ -33,6 +34,7 @@ func init() {
 	upload.include = cmdUpload.Flag.String("include", "", "pattens of files to upload, e.g., *.pdf, *.html, ab?d.txt, works together with -dir")
 	upload.replication = cmdUpload.Flag.String("replication", "", "replication type")
 	upload.collection = cmdUpload.Flag.String("collection", "", "optional collection name")
+	upload.dataCenter = cmdUpload.Flag.String("dataCenter", "", "optional data center name")
 	upload.ttl = cmdUpload.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
 	upload.maxMB = cmdUpload.Flag.Int("maxMB", 0, "split files larger than the limit")
 	upload.secretKey = cmdUpload.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
@@ -80,7 +82,7 @@ func runUpload(cmd *Command, args []string) bool {
 						return e
 					}
 					results, e := operation.SubmitFiles(*upload.master, parts,
-						*upload.replication, *upload.collection,
+						*upload.replication, *upload.collection, *upload.dataCenter,
 						*upload.ttl, *upload.maxMB, secret)
 					bytes, _ := json.Marshal(results)
 					fmt.Println(string(bytes))
@@ -99,7 +101,7 @@ func runUpload(cmd *Command, args []string) bool {
 			fmt.Println(e.Error())
 		}
 		results, _ := operation.SubmitFiles(*upload.master, parts,
-			*upload.replication, *upload.collection,
+			*upload.replication, *upload.collection, *upload.dataCenter,
 			*upload.ttl, *upload.maxMB, secret)
 		bytes, _ := json.Marshal(results)
 		fmt.Println(string(bytes))
