@@ -148,8 +148,9 @@ func DownloadUrl(fileUrl string) (filename string, rc io.ReadCloser, e error) {
 	}
 	contentDisposition := response.Header["Content-Disposition"]
 	if len(contentDisposition) > 0 {
-		if strings.HasPrefix(contentDisposition[0], "filename=") {
-			filename = contentDisposition[0][len("filename="):]
+		idx := strings.Index(contentDisposition[0], "filename=")
+		if idx != -1 {
+			filename = contentDisposition[0][idx+len("filename="):]
 			filename = strings.Trim(filename, "\"")
 		}
 	}
