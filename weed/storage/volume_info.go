@@ -2,8 +2,9 @@ package storage
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/operation"
 	"sort"
+
+	"github.com/chrislusf/seaweedfs/weed/pb"
 )
 
 type VolumeInfo struct {
@@ -19,23 +20,23 @@ type VolumeInfo struct {
 	ReadOnly         bool
 }
 
-func NewVolumeInfo(m *operation.VolumeInformationMessage) (vi VolumeInfo, err error) {
+func NewVolumeInfo(m *pb.VolumeInformationMessage) (vi VolumeInfo, err error) {
 	vi = VolumeInfo{
-		Id:               VolumeId(*m.Id),
-		Size:             *m.Size,
-		Collection:       *m.Collection,
-		FileCount:        int(*m.FileCount),
-		DeleteCount:      int(*m.DeleteCount),
-		DeletedByteCount: *m.DeletedByteCount,
-		ReadOnly:         *m.ReadOnly,
-		Version:          Version(*m.Version),
+		Id:               VolumeId(m.Id),
+		Size:             m.Size,
+		Collection:       m.Collection,
+		FileCount:        int(m.FileCount),
+		DeleteCount:      int(m.DeleteCount),
+		DeletedByteCount: m.DeletedByteCount,
+		ReadOnly:         m.ReadOnly,
+		Version:          Version(m.Version),
 	}
-	rp, e := NewReplicaPlacementFromByte(byte(*m.ReplicaPlacement))
+	rp, e := NewReplicaPlacementFromByte(byte(m.ReplicaPlacement))
 	if e != nil {
 		return vi, e
 	}
 	vi.ReplicaPlacement = rp
-	vi.Ttl = LoadTTLFromUint32(*m.Ttl)
+	vi.Ttl = LoadTTLFromUint32(m.Ttl)
 	return vi, nil
 }
 

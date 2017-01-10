@@ -32,11 +32,6 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVol
 		dn := c.(*DataNode)
 		if dn.MatchLocation(ip, port) {
 			dn.LastSeen = time.Now().Unix()
-			if dn.Dead {
-				dn.Dead = false
-				r.GetTopology().chanRecoveredDataNodes <- dn
-				dn.UpAdjustMaxVolumeCountDelta(maxVolumeCount - dn.maxVolumeCount)
-			}
 			return dn
 		}
 	}

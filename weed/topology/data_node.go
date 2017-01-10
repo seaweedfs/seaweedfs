@@ -15,7 +15,6 @@ type DataNode struct {
 	Port      int
 	PublicUrl string
 	LastSeen  int64 // unix time in seconds
-	Dead      bool
 }
 
 func NewDataNode(id string) *DataNode {
@@ -30,7 +29,7 @@ func NewDataNode(id string) *DataNode {
 func (dn *DataNode) String() string {
 	dn.RLock()
 	defer dn.RUnlock()
-	return fmt.Sprintf("Node:%s, volumes:%v, Ip:%s, Port:%d, PublicUrl:%s, Dead:%v", dn.NodeImpl.String(), dn.volumes, dn.Ip, dn.Port, dn.PublicUrl, dn.Dead)
+	return fmt.Sprintf("Node:%s, volumes:%v, Ip:%s, Port:%d, PublicUrl:%s", dn.NodeImpl.String(), dn.volumes, dn.Ip, dn.Port, dn.PublicUrl)
 }
 
 func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) {

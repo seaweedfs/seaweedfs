@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -10,9 +9,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/golang/protobuf/proto"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 )
 
 const (
@@ -76,12 +73,12 @@ type Store struct {
 	dataCenter      string //optional informaton, overwriting master setting if exists
 	rack            string //optional information, overwriting master setting if exists
 	connected       bool
-	volumeSizeLimit uint64 //read from the master
-	masterNodes     *MasterNodes
+	VolumeSizeLimit uint64 //read from the master
+	Client          pb.Seaweed_SendHeartbeatClient
 }
 
 func (s *Store) String() (str string) {
-	str = fmt.Sprintf("Ip:%s, Port:%d, PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d, masterNodes:%s", s.Ip, s.Port, s.PublicUrl, s.dataCenter, s.rack, s.connected, s.volumeSizeLimit, s.masterNodes)
+	str = fmt.Sprintf("Ip:%s, Port:%d, PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d", s.Ip, s.Port, s.PublicUrl, s.dataCenter, s.rack, s.connected, s.VolumeSizeLimit)
 	return
 }
 
@@ -208,15 +205,8 @@ func (s *Store) SetRack(rack string) {
 	s.rack = rack
 }
 
-func (s *Store) SetBootstrapMaster(bootstrapMaster string) {
-	s.masterNodes = NewMasterNodes(bootstrapMaster)
-}
-func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.Secret, e error) {
-	masterNode, e = s.masterNodes.FindMaster()
-	if e != nil {
-		return
-	}
-	var volumeMessages []*operation.VolumeInformationMessage
+func (s *Store) CollectHeartbeat() *pb.Heartbeat {
+	var volumeMessages []*pb.VolumeInformationMessage
 	maxVolumeCount := 0
 	var maxFileKey uint64
 	for _, location := range s.Locations {
@@ -226,18 +216,18 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 			if maxFileKey < v.nm.MaxFileKey() {
 				maxFileKey = v.nm.MaxFileKey()
 			}
-			if !v.expired(s.volumeSizeLimit) {
-				volumeMessage := &operation.VolumeInformationMessage{
-					Id:               proto.Uint32(uint32(k)),
-					Size:             proto.Uint64(uint64(v.Size())),
-					Collection:       proto.String(v.Collection),
-					FileCount:        proto.Uint64(uint64(v.nm.FileCount())),
-					DeleteCount:      proto.Uint64(uint64(v.nm.DeletedCount())),
-					DeletedByteCount: proto.Uint64(v.nm.DeletedSize()),
-					ReadOnly:         proto.Bool(v.readOnly),
-					ReplicaPlacement: proto.Uint32(uint32(v.ReplicaPlacement.Byte())),
-					Version:          proto.Uint32(uint32(v.Version())),
-					Ttl:              proto.Uint32(v.Ttl.ToUint32()),
+			if !v.expired(s.VolumeSizeLimit) {
+				volumeMessage := &pb.VolumeInformationMessage{
+					Id:               uint32(k),
+					Size:             uint64(v.Size()),
+					Collection:       v.Collection,
+					FileCount:        uint64(v.nm.FileCount()),
+					DeleteCount:      uint64(v.nm.DeletedCount()),
+					DeletedByteCount: v.nm.DeletedSize(),
+					ReadOnly:         v.readOnly,
+					ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
+					Version:          uint32(v.Version()),
+					Ttl:              v.Ttl.ToUint32(),
 				}
 				volumeMessages = append(volumeMessages, volumeMessage)
 			} else {
@@ -252,45 +242,17 @@ func (s *Store) SendHeartbeatToMaster() (masterNode string, secretKey security.S
 		location.Unlock()
 	}
 
-	joinMessage := &operation.JoinMessage{
-		IsInit:         proto.Bool(!s.connected),
-		Ip:             proto.String(s.Ip),
-		Port:           proto.Uint32(uint32(s.Port)),
-		PublicUrl:      proto.String(s.PublicUrl),
-		MaxVolumeCount: proto.Uint32(uint32(maxVolumeCount)),
-		MaxFileKey:     proto.Uint64(maxFileKey),
-		DataCenter:     proto.String(s.dataCenter),
-		Rack:           proto.String(s.rack),
+	return &pb.Heartbeat{
+		Ip:             s.Ip,
+		Port:           uint32(s.Port),
+		PublicUrl:      s.PublicUrl,
+		MaxVolumeCount: uint32(maxVolumeCount),
+		MaxFileKey:     maxFileKey,
+		DataCenter:     s.dataCenter,
+		Rack:           s.rack,
 		Volumes:        volumeMessages,
 	}
 
-	data, err := proto.Marshal(joinMessage)
-	if err != nil {
-		return "", "", err
-	}
-
-	joinUrl := "http://" + masterNode + "/dir/join"
-	glog.V(4).Infof("Connecting to %s ...", joinUrl)
-
-	jsonBlob, err := util.PostBytes(joinUrl, data)
-	if err != nil {
-		s.masterNodes.Reset()
-		return "", "", err
-	}
-	var ret operation.JoinResult
-	if err := json.Unmarshal(jsonBlob, &ret); err != nil {
-		glog.V(0).Infof("Failed to join %s with response: %s", joinUrl, string(jsonBlob))
-		s.masterNodes.Reset()
-		return masterNode, "", err
-	}
-	if ret.Error != "" {
-		s.masterNodes.Reset()
-		return masterNode, "", errors.New(ret.Error)
-	}
-	s.volumeSizeLimit = ret.VolumeSizeLimit
-	secretKey = security.Secret(ret.SecretKey)
-	s.connected = true
-	return
 }
 func (s *Store) Close() {
 	for _, location := range s.Locations {
@@ -307,12 +269,14 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 		if MaxPossibleVolumeSize >= v.ContentSize()+uint64(size) {
 			size, err = v.writeNeedle(n)
 		} else {
-			err = fmt.Errorf("Volume Size Limit %d Exceeded! Current size is %d", s.volumeSizeLimit, v.ContentSize())
+			err = fmt.Errorf("Volume Size Limit %d Exceeded! Current size is %d", s.VolumeSizeLimit, v.ContentSize())
 		}
-		if s.volumeSizeLimit < v.ContentSize()+3*uint64(size) {
-			glog.V(0).Infoln("volume", i, "size", v.ContentSize(), "will exceed limit", s.volumeSizeLimit)
-			if _, _, e := s.SendHeartbeatToMaster(); e != nil {
-				glog.V(0).Infoln("error when reporting size:", e)
+		if s.VolumeSizeLimit < v.ContentSize()+3*uint64(size) {
+			glog.V(0).Infoln("volume", i, "size", v.ContentSize(), "will exceed limit", s.VolumeSizeLimit)
+			if s.Client != nil {
+				if e := s.Client.Send(s.CollectHeartbeat()); e != nil {
+					glog.V(0).Infoln("error when reporting size:", e)
+				}
 			}
 		}
 		return
