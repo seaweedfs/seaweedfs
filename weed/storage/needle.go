@@ -144,11 +144,13 @@ func ParseUpload(r *http.Request) (
 			isGzipped = true
 		}
 		if ext == ".gz" {
-			isGzipped = true
-		}
-		if strings.HasSuffix(fileName, ".gz") &&
-			!strings.HasSuffix(fileName, ".tar.gz") {
-			fileName = fileName[:len(fileName)-3]
+			if strings.HasSuffix(fileName, ".css.gz") ||
+				strings.HasSuffix(fileName, ".html.gz") ||
+				strings.HasSuffix(fileName, ".txt.gz") ||
+				strings.HasSuffix(fileName, ".js.gz") {
+				fileName = fileName[:len(fileName)-3]
+				isGzipped = true
+			}
 		}
 	}
 	modifiedTime, _ = strconv.ParseUint(r.FormValue("ts"), 10, 64)
