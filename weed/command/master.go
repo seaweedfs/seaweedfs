@@ -43,12 +43,12 @@ var (
 	mpulse                  = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	confFile                = cmdMaster.Flag.String("conf", "/etc/weedfs/weedfs.conf", "Deprecating! xml configuration file")
 	defaultReplicaPlacement = cmdMaster.Flag.String("defaultReplication", "000", "Default replication type if not specified.")
-	mTimeout                = cmdMaster.Flag.Int("idleTimeout", 30, "connection idle seconds")
-	mMaxCpu                 = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
-	garbageThreshold        = cmdMaster.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
-	masterWhiteListOption   = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	masterSecureKey         = cmdMaster.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
-	masterCpuProfile        = cmdMaster.Flag.String("cpuprofile", "", "cpu profile output file")
+	// mTimeout                = cmdMaster.Flag.Int("idleTimeout", 30, "connection idle seconds")
+	mMaxCpu               = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
+	garbageThreshold      = cmdMaster.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
+	masterWhiteListOption = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
+	masterSecureKey       = cmdMaster.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
+	masterCpuProfile      = cmdMaster.Flag.String("cpuprofile", "", "cpu profile output file")
 
 	masterWhiteList []string
 )
@@ -87,7 +87,7 @@ func runMaster(cmd *Command, args []string) bool {
 
 	glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", listeningAddress)
 
-	listener, e := util.NewListener(listeningAddress, time.Duration(*mTimeout)*time.Second)
+	listener, e := util.NewListener(listeningAddress, 0)
 	if e != nil {
 		glog.Fatalf("Master startup error: %v", e)
 	}

@@ -53,10 +53,13 @@ func (vs *VolumeServer) doHeartbeat(sleepInterval time.Duration) error {
 	vs.store.Client = stream
 	defer func() { vs.store.Client = nil }()
 
+	doneChan := make(chan error, 1)
+
 	go func() {
 		for {
 			in, err := stream.Recv()
 			if err != nil {
+				doneChan <- err
 				return
 			}
 			vs.store.VolumeSizeLimit = in.GetVolumeSizeLimit()
@@ -64,11 +67,22 @@ func (vs *VolumeServer) doHeartbeat(sleepInterval time.Duration) error {
 		}
 	}()
 
+	if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
+		glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
+		return err
+	}
+
+	tickChan := time.NewTimer(sleepInterval).C
+
 	for {
-		if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
-			glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
+		select {
+		case <-tickChan:
+			if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
+				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
+				return err
+			}
+		case err := <-doneChan:
 			return err
 		}
-		time.Sleep(sleepInterval)
 	}
 }

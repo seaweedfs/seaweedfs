@@ -234,7 +234,7 @@ func (n *NodeImpl) UnlinkChildNode(nodeId NodeId) {
 		n.UpAdjustVolumeCountDelta(-node.GetVolumeCount())
 		n.UpAdjustActiveVolumeCountDelta(-node.GetActiveVolumeCount())
 		n.UpAdjustMaxVolumeCountDelta(-node.GetMaxVolumeCount())
-		glog.V(0).Infoln(n, "removes", node, "volumeCount =", n.activeVolumeCount)
+		glog.V(0).Infoln(n, "removes", node.Id())
 	}
 }
 
