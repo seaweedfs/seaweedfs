@@ -11,16 +11,15 @@ service Seaweed {
 //////////////////////////////////////////////////
 
 message Heartbeat {
-  bool   is_init = 1;
-  string ip = 2;
-  uint32 port = 3;
-  string public_url = 4;
-  uint32 max_volume_count = 5;
-  uint64 max_file_key = 6;
-  string data_center = 7;
-  string rack = 8;
+  string ip = 1;
+  uint32 port = 2;
+  string public_url = 3;
+  uint32 max_volume_count = 4;
+  uint64 max_file_key = 5;
+  string data_center = 6;
+  string rack = 7;
+  uint32 admin_port = 8;
   repeated VolumeInformationMessage volumes = 9;
-  uint32 admin_port = 10;
 }
 message HeartbeatResponse {
   uint64 volumeSizeLimit = 1;
