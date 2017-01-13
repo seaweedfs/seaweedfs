@@ -110,7 +110,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		}
 
 		jwt := security.GetJwt(r)
-		_, err = operation.Upload("http://"+r.Host+r.URL.Path, fileName, bytes.NewReader(data), false, contentType, jwt)
+		_, err = operation.Upload("http://"+r.Host+r.URL.Path, fileName, bytes.NewReader(data), false, contentType, nil, jwt)
 		if err != nil {
 			glog.V(0).Infoln(err)
 			return

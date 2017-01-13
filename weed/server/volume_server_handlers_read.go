@@ -16,8 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"encoding/json"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -168,7 +166,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 
 			reqUrl := r.Header.Get("path") + "?w=" + r.FormValue("w") + "&h=" + r.FormValue("h") + "&r=" + r.FormValue("r")
 			jwt := security.GetJwt(r)
-			_, err = operation.Upload("http://"+r.Host+reqUrl, filename, bytes.NewReader(n.Data), false, "image/jpeg", jwt)
+			_, err = operation.Upload("http://"+r.Host+reqUrl, filename, bytes.NewReader(n.Data), false, "image/jpeg", nil, jwt)
 			if err != nil {
 				glog.V(0).Infoln(err)
 			}
