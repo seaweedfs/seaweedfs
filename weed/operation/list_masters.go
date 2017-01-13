@@ -13,20 +13,20 @@ type ClusterStatusResult struct {
 	Peers    []string `json:"Peers,omitempty"`
 }
 
-func ListMasters(server string) ([]string, error) {
+func ListMasters(server string) (leader string, peers []string, err error) {
 	jsonBlob, err := util.Get("http://" + server + "/cluster/status")
 	glog.V(2).Info("list masters result :", string(jsonBlob))
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	var ret ClusterStatusResult
 	err = json.Unmarshal(jsonBlob, &ret)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	masters := ret.Peers
+	peers = ret.Peers
 	if ret.IsLeader {
-		masters = append(masters, ret.Leader)
+		peers = append(peers, ret.Leader)
 	}
-	return masters, nil
+	return ret.Leader, peers, nil
 }

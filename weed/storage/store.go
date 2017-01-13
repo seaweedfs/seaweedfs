@@ -3,7 +3,6 @@ package storage
 import (
 	"errors"
 	"fmt"
-	"math/rand"
 	"strconv"
 	"strings"
 
@@ -17,49 +16,47 @@ const (
 )
 
 type MasterNodes struct {
-	nodes    []string
-	lastNode int
+	nodes  []string
+	leader string
 }
 
 func (mn *MasterNodes) String() string {
-	return fmt.Sprintf("nodes:%v, lastNode:%d", mn.nodes, mn.lastNode)
+	return fmt.Sprintf("nodes:%v, leader:%s", mn.nodes, mn.leader)
 }
 
 func NewMasterNodes(bootstrapNode string) (mn *MasterNodes) {
-	mn = &MasterNodes{nodes: []string{bootstrapNode}, lastNode: -1}
+	mn = &MasterNodes{nodes: []string{bootstrapNode}, leader: ""}
 	return
 }
 func (mn *MasterNodes) Reset() {
-	glog.V(4).Infof("Resetting master nodes: %v", mn)
-	if len(mn.nodes) > 1 && mn.lastNode >= 0 {
-		glog.V(0).Infof("Reset master %s from: %v", mn.nodes[mn.lastNode], mn.nodes)
-		mn.lastNode = -mn.lastNode - 1
+	if mn.leader != "" {
+		mn.leader = ""
+		glog.V(0).Infof("Resetting master nodes: %v", mn)
 	}
 }
-func (mn *MasterNodes) FindMaster() (string, error) {
+func (mn *MasterNodes) FindMaster() (leader string, err error) {
 	if len(mn.nodes) == 0 {
 		return "", errors.New("No master node found!")
 	}
-	if mn.lastNode < 0 {
+	if mn.leader == "" {
 		for _, m := range mn.nodes {
 			glog.V(4).Infof("Listing masters on %s", m)
-			if masters, e := operation.ListMasters(m); e == nil {
-				if len(masters) == 0 {
-					continue
+			if leader, masters, e := operation.ListMasters(m); e == nil {
+				if leader != "" {
+					mn.nodes = append(masters, m)
+					mn.leader = leader
+					glog.V(2).Infof("current master nodes is %v", mn)
+					break
 				}
-				mn.nodes = append(masters, m)
-				mn.lastNode = rand.Intn(len(mn.nodes))
-				glog.V(2).Infof("current master nodes is %v", mn)
-				break
 			} else {
 				glog.V(4).Infof("Failed listing masters on %s: %v", m, e)
 			}
 		}
 	}
-	if mn.lastNode < 0 {
+	if mn.leader == "" {
 		return "", errors.New("No master node available!")
 	}
-	return mn.nodes[mn.lastNode], nil
+	return mn.leader, nil
 }
 
 /*
