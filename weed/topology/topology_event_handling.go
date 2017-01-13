@@ -31,12 +31,6 @@ func (t *Topology) StartRefreshWritableVolumes(garbageThreshold string) {
 			select {
 			case v := <-t.chanFullVolumes:
 				t.SetVolumeCapacityFull(v)
-			case dn := <-t.chanRecoveredDataNodes:
-				t.RegisterRecoveredDataNode(dn)
-				glog.V(0).Infoln("Recovered DataNode: %v", dn)
-			case dn := <-t.chanDeadDataNodes:
-				t.UnRegisterDataNode(dn)
-				glog.V(0).Infof("Dead DataNode: %v", dn)
 			}
 		}
 	}()
@@ -55,7 +49,7 @@ func (t *Topology) SetVolumeCapacityFull(volumeInfo storage.VolumeInfo) bool {
 }
 func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 	for _, v := range dn.GetVolumes() {
-		glog.V(0).Infoln("Removing Volume", v.Id, "from the dead volume server", dn)
+		glog.V(0).Infoln("Removing Volume", v.Id, "from the dead volume server", dn.Id())
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl)
 		vl.SetVolumeUnavailable(dn, v.Id)
 	}
@@ -63,12 +57,4 @@ func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 	dn.UpAdjustActiveVolumeCountDelta(-dn.GetActiveVolumeCount())
 	dn.UpAdjustMaxVolumeCountDelta(-dn.GetMaxVolumeCount())
 	dn.Parent().UnlinkChildNode(dn.Id())
-}
-func (t *Topology) RegisterRecoveredDataNode(dn *DataNode) {
-	for _, v := range dn.GetVolumes() {
-		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl)
-		if vl.isWritable(&v) {
-			vl.SetVolumeAvailable(dn, v.Id)
-		}
-	}
 }

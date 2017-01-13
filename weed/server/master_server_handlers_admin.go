@@ -1,21 +1,16 @@
 package weed_server
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/golang/protobuf/proto"
 )
 
 func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {
@@ -32,37 +27,6 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 	ms.Topo.DeleteCollection(r.FormValue("collection"))
-}
-
-func (ms *MasterServer) dirJoinHandler(w http.ResponseWriter, r *http.Request) {
-	body, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		writeJsonError(w, r, http.StatusBadRequest, err)
-		return
-	}
-	joinMessage := &operation.JoinMessage{}
-	if err = proto.Unmarshal(body, joinMessage); err != nil {
-		writeJsonError(w, r, http.StatusBadRequest, err)
-		return
-	}
-	if *joinMessage.Ip == "" {
-		*joinMessage.Ip = r.RemoteAddr[0:strings.LastIndex(r.RemoteAddr, ":")]
-	}
-	if glog.V(4) {
-		if jsonData, jsonError := json.Marshal(joinMessage); jsonError != nil {
-			glog.V(0).Infoln("json marshaling error: ", jsonError)
-			writeJsonError(w, r, http.StatusBadRequest, jsonError)
-			return
-		} else {
-			glog.V(4).Infoln("Proto size", len(body), "json size", len(jsonData), string(jsonData))
-		}
-	}
-
-	ms.Topo.ProcessJoinMessage(joinMessage)
-	writeJsonQuiet(w, r, http.StatusOK, operation.JoinResult{
-		VolumeSizeLimit: uint64(ms.volumeSizeLimitMB) * 1024 * 1024,
-		SecretKey:       string(ms.guard.SecretKey),
-	})
 }
 
 func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request) {
@@ -181,10 +145,18 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 	if err != nil {
 		return nil, err
 	}
+	preallocate := ms.preallocate
+	if r.FormValue("preallocate") != "" {
+		preallocate, err = strconv.ParseInt(r.FormValue("preallocate"), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("Failed to parse int64 preallocate = %s: %v", r.FormValue("preallocate"), err)
+		}
+	}
 	volumeGrowOption := &topology.VolumeGrowOption{
 		Collection:       r.FormValue("collection"),
 		ReplicaPlacement: replicaPlacement,
 		Ttl:              ttl,
+		Prealloacte:      preallocate,
 		DataCenter:       r.FormValue("dataCenter"),
 		Rack:             r.FormValue("rack"),
 		DataNode:         r.FormValue("dataNode"),

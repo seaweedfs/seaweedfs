@@ -148,7 +148,7 @@ func fetchVolumeFileEntries(volumeServer string, vid VolumeId) (m CompactMap, la
 	total := 0
 	err = operation.GetVolumeIdxEntries(volumeServer, vid.String(), func(key uint64, offset, size uint32) {
 		// println("remote key", key, "offset", offset*NeedlePaddingSize, "size", size)
-		if offset != 0 && size != 0 {
+		if offset > 0 && size != TombstoneFileSize {
 			m.Set(Key(key), offset, size)
 		} else {
 			m.Delete(Key(key))

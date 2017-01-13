@@ -38,9 +38,11 @@ type Conn struct {
 }
 
 func (c *Conn) Read(b []byte) (count int, e error) {
-	err := c.Conn.SetReadDeadline(time.Now().Add(c.ReadTimeout))
-	if err != nil {
-		return 0, err
+	if c.ReadTimeout != 0 {
+		err := c.Conn.SetReadDeadline(time.Now().Add(c.ReadTimeout))
+		if err != nil {
+			return 0, err
+		}
 	}
 	count, e = c.Conn.Read(b)
 	if e == nil {
@@ -50,9 +52,11 @@ func (c *Conn) Read(b []byte) (count int, e error) {
 }
 
 func (c *Conn) Write(b []byte) (count int, e error) {
-	err := c.Conn.SetWriteDeadline(time.Now().Add(c.WriteTimeout))
-	if err != nil {
-		return 0, err
+	if c.WriteTimeout != 0 {
+		err := c.Conn.SetWriteDeadline(time.Now().Add(c.WriteTimeout))
+		if err != nil {
+			return 0, err
+		}
 	}
 	count, e = c.Conn.Write(b)
 	if e == nil {

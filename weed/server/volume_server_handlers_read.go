@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"encoding/json"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -104,6 +106,17 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.Header().Set("Etag", etag)
+
+	if n.HasPairs() {
+		pairMap := make(map[string]string)
+		err = json.Unmarshal(n.Pairs, &pairMap)
+		if err != nil {
+			glog.V(0).Infoln("Unmarshal pairs error:", err)
+		}
+		for k, v := range pairMap {
+			w.Header().Set(k, v)
+		}
+	}
 
 	if vs.tryHandleChunkedFile(n, filename, w, r) {
 		return

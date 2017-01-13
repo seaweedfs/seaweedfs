@@ -3,7 +3,7 @@
 [![Build Status](https://travis-ci.org/chrislusf/seaweedfs.svg?branch=master)](https://travis-ci.org/chrislusf/seaweedfs)
 [![GoDoc](https://godoc.org/github.com/chrislusf/seaweedfs/weed?status.svg)](https://godoc.org/github.com/chrislusf/seaweedfs/weed)
 [![Wiki](https://img.shields.io/badge/docs-wiki-blue.svg)](https://github.com/chrislusf/seaweedfs/wiki)
-[![](https://api.bintray.com/packages/chrislusf/seaweedfs/seaweedfs/images/download.png)](https://bintray.com/chrislusf/seaweedfs/seaweedfs)
+[download](https://github.com/chrislusf/seaweedfs/releases/latest)
 
 ![SeaweedFS Logo](https://raw.githubusercontent.com/chrislusf/seaweedfs/master/note/seaweedfs.png)
 
@@ -24,8 +24,7 @@ There is only a 40 bytes disk storage overhead for each file's metadata. It is s
 
 SeaweedFS started by implementing [Facebook's Haystack design paper](http://www.usenix.org/event/osdi10/tech/full_papers/Beaver.pdf). SeaweedFS is currently growing, with more features on the way.
 
-Download latest compiled binaries for different platforms here:
-[![](https://api.bintray.com/packages/chrislusf/seaweedfs/seaweedfs/images/download.png)](https://bintray.com/chrislusf/seaweedfs/seaweedfs)
+[Download latest compiled binaries for different platforms](https://github.com/chrislusf/seaweedfs/releases/latest)
 
 [SeaweedFS Discussion Group](https://groups.google.com/d/forum/seaweedfs)
 
@@ -170,8 +169,6 @@ Volume servers can start with a specific data center name:
  weed volume -dir=/tmp/1 -port=8080 -dataCenter=dc1
  weed volume -dir=/tmp/2 -port=8081 -dataCenter=dc2
 ```
-
-Or the master server can determine the data center via volume server's IP address and settings in weed.conf file.
 
 When requesting a file key, an optional "dataCenter" parameter can limit the assigned volume to the specific data center. For example, this specifies that the assigned volume should be limited to 'dc1':
 

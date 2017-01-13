@@ -63,7 +63,7 @@ func generateBoltDbFile(dbFileName string, indexFile *os.File) error {
 	}
 	defer db.Close()
 	return WalkIndexFile(indexFile, func(key uint64, offset, size uint32) error {
-		if offset > 0 {
+		if offset > 0 && size != TombstoneFileSize {
 			boltDbWrite(db, key, offset, size)
 		} else {
 			boltDbDelete(db, key)
@@ -143,12 +143,12 @@ func boltDbDelete(db *bolt.DB, key uint64) error {
 	})
 }
 
-func (m *BoltDbNeedleMap) Delete(key uint64) error {
+func (m *BoltDbNeedleMap) Delete(key uint64, offset uint32) error {
 	if oldNeedle, ok := m.Get(key); ok {
 		m.logDelete(oldNeedle.Size)
 	}
 	// write to index file first
-	if err := m.appendToIndexFile(key, 0, 0); err != nil {
+	if err := m.appendToIndexFile(key, offset, TombstoneFileSize); err != nil {
 		return err
 	}
 	return boltDbDelete(m.db, key)

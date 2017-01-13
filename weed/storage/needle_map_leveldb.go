@@ -61,7 +61,7 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 	}
 	defer db.Close()
 	return WalkIndexFile(indexFile, func(key uint64, offset, size uint32) error {
-		if offset > 0 {
+		if offset > 0 && size != TombstoneFileSize {
 			levelDbWrite(db, key, offset, size)
 		} else {
 			levelDbDelete(db, key)
@@ -112,12 +112,12 @@ func levelDbDelete(db *leveldb.DB, key uint64) error {
 	return db.Delete(bytes, nil)
 }
 
-func (m *LevelDbNeedleMap) Delete(key uint64) error {
+func (m *LevelDbNeedleMap) Delete(key uint64, offset uint32) error {
 	if oldNeedle, ok := m.Get(key); ok {
 		m.logDelete(oldNeedle.Size)
 	}
 	// write to index file first
-	if err := m.appendToIndexFile(key, 0, 0); err != nil {
+	if err := m.appendToIndexFile(key, offset, TombstoneFileSize); err != nil {
 		return err
 	}
 	return levelDbDelete(m.db, key)

@@ -8,7 +8,7 @@ case "$1" in
 	if [ -n "$MASTER_PORT_9333_TCP_ADDR" ] ; then
 		ARGS="$ARGS -peers=$MASTER_PORT_9333_TCP_ADDR:$MASTER_PORT_9333_TCP_PORT"
 	fi
-  	/usr/bin/weed $@ $ARGS
+  	exec /usr/bin/weed $@ $ARGS
 	;;
 
   'volume')
@@ -17,7 +17,7 @@ case "$1" in
   	if [ -n "$MASTER_PORT_9333_TCP_ADDR" ] ; then
 		ARGS="$ARGS -mserver=$MASTER_PORT_9333_TCP_ADDR:$MASTER_PORT_9333_TCP_PORT"
 	fi
-  	/usr/bin/weed $@ $ARGS
+  	exec /usr/bin/weed $@ $ARGS
 	;;
 
   'server')
@@ -25,10 +25,10 @@ case "$1" in
   	if [ -n "$MASTER_PORT_9333_TCP_ADDR" ] ; then
 		ARGS="$ARGS -master.peers=$MASTER_PORT_9333_TCP_ADDR:$MASTER_PORT_9333_TCP_PORT"
 	fi
-  	/usr/bin/weed $@ $ARGS
+  	exec /usr/bin/weed $@ $ARGS
   	;;
 
   *)
-  	/usr/bin/weed $@
+  	exec /usr/bin/weed $@
 	;;
-esac	
+esac

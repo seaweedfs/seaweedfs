@@ -15,6 +15,7 @@ type Volume struct {
 	dir           string
 	Collection    string
 	dataFile      *os.File
+	dataFileSize  int64
 	nm            NeedleMapper
 	needleMapKind NeedleMapType
 	readOnly      bool
@@ -28,11 +29,11 @@ type Volume struct {
 	lastCompactRevision    uint16
 }
 
-func NewVolume(dirname string, collection string, id VolumeId, needleMapKind NeedleMapType, replicaPlacement *ReplicaPlacement, ttl *TTL) (v *Volume, e error) {
+func NewVolume(dirname string, collection string, id VolumeId, needleMapKind NeedleMapType, replicaPlacement *ReplicaPlacement, ttl *TTL, preallocate int64) (v *Volume, e error) {
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
 	v.SuperBlock = SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
 	v.needleMapKind = needleMapKind
-	e = v.load(true, true, needleMapKind)
+	e = v.load(true, true, needleMapKind, preallocate)
 	return
 }
 func (v *Volume) String() string {

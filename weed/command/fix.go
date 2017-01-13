@@ -58,7 +58,7 @@ func runFix(cmd *Command, args []string) bool {
 				glog.V(2).Infof("saved %d with error %v", n.Size, pe)
 			} else {
 				glog.V(2).Infof("skipping deleted file ...")
-				return nm.Delete(n.Id)
+				return nm.Delete(n.Id, uint32(offset/storage.NeedlePaddingSize))
 			}
 			return nil
 		})

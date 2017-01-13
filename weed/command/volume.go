@@ -48,7 +48,7 @@ func init() {
 	v.bindIp = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	v.master = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
 	v.pulseSeconds = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
-	v.idleConnectionTimeout = cmdVolume.Flag.Int("idleTimeout", 10, "connection idle seconds")
+	v.idleConnectionTimeout = cmdVolume.Flag.Int("idleTimeout", 30, "connection idle seconds")
 	v.maxCpu = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	v.dataCenter = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	v.rack = cmdVolume.Flag.String("rack", "", "current volume server's rack name")

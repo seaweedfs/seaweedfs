@@ -1,18 +1,17 @@
-FROM progrium/busybox
+FROM frolvlad/alpine-glibc:alpine-3.4
 
-COPY entrypoint.sh /entrypoint.sh
-COPY Dockerfile /etc/Dockerfile
-
-RUN opkg-install curl
-RUN echo tlsv1 >> ~/.curlrc
-
-RUN curl -Lks https://bintray.com$(curl -Lk http://bintray.com/chrislusf/seaweedfs/seaweedfs/_latestVersion | grep linux_amd64.tar.gz | sed -n "/href/ s/.*href=['\"]\([^'\"]*\)['\"].*/\1/gp") | gunzip | tar -xf - && \
-  mv go_*amd64/weed /usr/bin/ && \
-  rm -r go_*amd64
+RUN apk add --no-cache --virtual=build-dependencies --update curl wget ca-certificates && \
+    wget -P /tmp https://github.com/$(curl -s -L https://github.com/chrislusf/seaweedfs/releases/latest | egrep -o '/chrislusf/seaweedfs/releases/download/.*/linux_amd64.tar.gz') && \
+    tar -C /usr/bin/ -xzvf /tmp/linux_amd64.tar.gz && \
+    apk del curl wget ca-certificates build-dependencies && \
+    rm -rf /tmp/*
 
 EXPOSE 8080
 EXPOSE 9333
 
 VOLUME /data
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]

@@ -83,7 +83,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		shouldDisplayLoadMore,
 	}
 
-	if strings.ToLower(r.Header.Get("Content-Type")) == "application/json" {
+	if r.Header.Get("Accept") == "application/json" {
 		writeJsonQuiet(w, r, http.StatusOK, args)
 	} else {
 		ui.StatusTpl.Execute(w, args)

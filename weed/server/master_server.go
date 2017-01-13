@@ -20,6 +20,7 @@ type MasterServer struct {
 	port                    int
 	metaFolder              string
 	volumeSizeLimitMB       uint
+	preallocate             int64
 	pulseSeconds            int
 	defaultReplicaPlacement string
 	garbageThreshold        string
@@ -34,6 +35,7 @@ type MasterServer struct {
 
 func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	volumeSizeLimitMB uint,
+	preallocate bool,
 	pulseSeconds int,
 	confFile string,
 	defaultReplicaPlacement string,
@@ -41,9 +43,15 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	whiteList []string,
 	secureKey string,
 ) *MasterServer {
+
+	var preallocateSize int64
+	if preallocate {
+		preallocateSize = int64(volumeSizeLimitMB) * (1 << 20)
+	}
 	ms := &MasterServer{
 		port:                    port,
 		volumeSizeLimitMB:       volumeSizeLimitMB,
+		preallocate:             preallocateSize,
 		pulseSeconds:            pulseSeconds,
 		defaultReplicaPlacement: defaultReplicaPlacement,
 		garbageThreshold:        garbageThreshold,
@@ -64,7 +72,6 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	r.HandleFunc("/ui/index.html", ms.uiStatusHandler)
 	r.HandleFunc("/dir/assign", ms.proxyToLeader(ms.guard.WhiteList(ms.dirAssignHandler)))
 	r.HandleFunc("/dir/lookup", ms.proxyToLeader(ms.guard.WhiteList(ms.dirLookupHandler)))
-	r.HandleFunc("/dir/join", ms.proxyToLeader(ms.guard.WhiteList(ms.dirJoinHandler)))
 	r.HandleFunc("/dir/status", ms.proxyToLeader(ms.guard.WhiteList(ms.dirStatusHandler)))
 	r.HandleFunc("/col/delete", ms.proxyToLeader(ms.guard.WhiteList(ms.collectionDeleteHandler)))
 	r.HandleFunc("/vol/lookup", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeLookupHandler)))

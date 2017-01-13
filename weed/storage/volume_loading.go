@@ -12,11 +12,11 @@ func loadVolumeWithoutIndex(dirname string, collection string, id VolumeId, need
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
 	v.SuperBlock = SuperBlock{}
 	v.needleMapKind = needleMapKind
-	e = v.load(false, false, needleMapKind)
+	e = v.load(false, false, needleMapKind, 0)
 	return
 }
 
-func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind NeedleMapType) error {
+func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind NeedleMapType, preallocate int64) error {
 	var e error
 	fileName := v.FileName()
 
@@ -34,7 +34,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 	} else {
 		if createDatIfMissing {
-			v.dataFile, e = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
+			v.dataFile, e = createVolumeFile(fileName+".dat", preallocate)
 		} else {
 			return fmt.Errorf("Volume Data file %s.dat does not exist.", fileName)
 		}
@@ -64,7 +64,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				return fmt.Errorf("cannot write Volume Index %s.idx: %v", fileName, e)
 			}
 		}
-		if e = CheckVolumeDataIntegrity(v, indexFile); e != nil {
+		if v.dataFileSize, e = CheckVolumeDataIntegrity(v, indexFile); e != nil {
 			v.readOnly = true
 			glog.V(0).Infof("volumeDataIntegrityChecking failed %v", e)
 		}
@@ -86,6 +86,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			}
 		}
 	}
+
 	return e
 }
 

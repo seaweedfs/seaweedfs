@@ -234,7 +234,7 @@ func (n *NodeImpl) UnlinkChildNode(nodeId NodeId) {
 		n.UpAdjustVolumeCountDelta(-node.GetVolumeCount())
 		n.UpAdjustActiveVolumeCountDelta(-node.GetActiveVolumeCount())
 		n.UpAdjustMaxVolumeCountDelta(-node.GetMaxVolumeCount())
-		glog.V(0).Infoln(n, "removes", node, "volumeCount =", n.activeVolumeCount)
+		glog.V(0).Infoln(n, "removes", node.Id())
 	}
 }
 
@@ -242,12 +242,6 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 	if n.IsRack() {
 		for _, c := range n.Children() {
 			dn := c.(*DataNode) //can not cast n to DataNode
-			if dn.LastSeen < freshThreshHold {
-				if !dn.Dead {
-					dn.Dead = true
-					n.GetTopology().chanDeadDataNodes <- dn
-				}
-			}
 			for _, v := range dn.GetVolumes() {
 				if uint64(v.Size) >= volumeSizeLimit {
 					//fmt.Println("volume",v.Id,"size",v.Size,">",volumeSizeLimit)

@@ -36,11 +36,16 @@ func (l *DiskLocation) loadExistingVolume(dir os.FileInfo, needleMapKind NeedleM
 			_, found := l.volumes[vid]
 			mutex.RUnlock()
 			if !found {
-				if v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil, nil); e == nil {
+				if v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil, nil, 0); e == nil {
 					mutex.Lock()
 					l.volumes[vid] = v
 					mutex.Unlock()
-					glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s", l.Directory+"/"+name, v.ReplicaPlacement, v.Version(), v.Size(), v.Ttl.String())
+					glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s",
+						l.Directory+"/"+name, v.ReplicaPlacement, v.Version(), v.Size(), v.Ttl.String())
+					if v.Size() != v.dataFileSize {
+						glog.V(0).Infof("data file %s, size=%d expected=%d",
+							l.Directory+"/"+name, v.Size(), v.dataFileSize)
+					}
 				} else {
 					glog.V(0).Infof("new volume %s error %s", name, e)
 				}

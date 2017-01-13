@@ -7,7 +7,6 @@ import (
 
 	"github.com/chrislusf/raft"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/sequence"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -24,11 +23,9 @@ type Topology struct {
 
 	Sequence sequence.Sequencer
 
-	chanDeadDataNodes      chan *DataNode
-	chanRecoveredDataNodes chan *DataNode
-	chanFullVolumes        chan storage.VolumeInfo
+	chanFullVolumes chan storage.VolumeInfo
 
-	configuration *Configuration
+	Configuration *Configuration
 
 	RaftServer raft.Server
 }
@@ -45,8 +42,6 @@ func NewTopology(id string, confFile string, seq sequence.Sequencer, volumeSizeL
 
 	t.Sequence = seq
 
-	t.chanDeadDataNodes = make(chan *DataNode)
-	t.chanRecoveredDataNodes = make(chan *DataNode)
 	t.chanFullVolumes = make(chan storage.VolumeInfo)
 
 	err := t.loadConfiguration(confFile)
@@ -80,7 +75,7 @@ func (t *Topology) Leader() (string, error) {
 func (t *Topology) loadConfiguration(configurationFile string) error {
 	b, e := ioutil.ReadFile(configurationFile)
 	if e == nil {
-		t.configuration, e = NewConfiguration(b)
+		t.Configuration, e = NewConfiguration(b)
 		return e
 	}
 	glog.V(0).Infoln("Using default configurations.")
@@ -145,35 +140,6 @@ func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	glog.Infof("removing volume info:%+v", v)
 	t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl).UnRegisterVolume(&v, dn)
-}
-
-func (t *Topology) ProcessJoinMessage(joinMessage *operation.JoinMessage) {
-	t.Sequence.SetMax(*joinMessage.MaxFileKey)
-	dcName, rackName := t.configuration.Locate(*joinMessage.Ip, *joinMessage.DataCenter, *joinMessage.Rack)
-	dc := t.GetOrCreateDataCenter(dcName)
-	rack := dc.GetOrCreateRack(rackName)
-	dn := rack.FindDataNode(*joinMessage.Ip, int(*joinMessage.Port))
-	if *joinMessage.IsInit && dn != nil {
-		t.UnRegisterDataNode(dn)
-	}
-	dn = rack.GetOrCreateDataNode(*joinMessage.Ip,
-		int(*joinMessage.Port), *joinMessage.PublicUrl,
-		int(*joinMessage.MaxVolumeCount))
-	var volumeInfos []storage.VolumeInfo
-	for _, v := range joinMessage.Volumes {
-		if vi, err := storage.NewVolumeInfo(v); err == nil {
-			volumeInfos = append(volumeInfos, vi)
-		} else {
-			glog.V(0).Infoln("Fail to convert joined volume information:", err.Error())
-		}
-	}
-	deletedVolumes := dn.UpdateVolumes(volumeInfos)
-	for _, v := range volumeInfos {
-		t.RegisterVolumeLayout(v, dn)
-	}
-	for _, v := range deletedVolumes {
-		t.UnRegisterVolumeLayout(v, dn)
-	}
 }
 
 func (t *Topology) GetOrCreateDataCenter(dcName string) *DataCenter {

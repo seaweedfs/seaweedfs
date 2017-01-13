@@ -11,10 +11,14 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
+	"github.com/soheilhy/cmux"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
 
 type ServerOptions struct {
@@ -47,7 +51,7 @@ var (
 	serverIp                      = cmdServer.Flag.String("ip", "localhost", "ip or server name")
 	serverBindIp                  = cmdServer.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	serverMaxCpu                  = cmdServer.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
-	serverTimeout                 = cmdServer.Flag.Int("idleTimeout", 10, "connection idle seconds")
+	serverTimeout                 = cmdServer.Flag.Int("idleTimeout", 30, "connection idle seconds")
 	serverDataCenter              = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
 	serverRack                    = cmdServer.Flag.String("rack", "", "current volume server's rack name")
 	serverWhiteListOption         = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
@@ -57,6 +61,7 @@ var (
 	masterPort                    = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
 	masterMetaFolder              = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
 	masterVolumeSizeLimitMB       = cmdServer.Flag.Uint("master.volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
+	masterVolumePreallocate       = cmdServer.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
 	masterConfFile                = cmdServer.Flag.String("master.conf", "/etc/weedfs/weedfs.conf", "xml configuration file")
 	masterDefaultReplicaPlacement = cmdServer.Flag.String("master.defaultReplicaPlacement", "000", "Default replication type if not specified.")
 	volumePort                    = cmdServer.Flag.Int("volume.port", 8080, "volume server http listen port")
@@ -200,12 +205,13 @@ func runServer(cmd *Command, args []string) bool {
 	go func() {
 		r := mux.NewRouter()
 		ms := weed_server.NewMasterServer(r, *masterPort, *masterMetaFolder,
-			*masterVolumeSizeLimitMB, *volumePulse, *masterConfFile, *masterDefaultReplicaPlacement, *serverGarbageThreshold,
+			*masterVolumeSizeLimitMB, *masterVolumePreallocate,
+			*volumePulse, *masterConfFile, *masterDefaultReplicaPlacement, *serverGarbageThreshold,
 			serverWhiteList, *serverSecureKey,
 		)
 
 		glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*masterPort))
-		masterListener, e := util.NewListener(*serverBindIp+":"+strconv.Itoa(*masterPort), time.Duration(*serverTimeout)*time.Second)
+		masterListener, e := util.NewListener(*serverBindIp+":"+strconv.Itoa(*masterPort), 0)
 		if e != nil {
 			glog.Fatalf("Master startup error: %v", e)
 		}
@@ -224,9 +230,27 @@ func runServer(cmd *Command, args []string) bool {
 		}()
 
 		raftWaitForMaster.Done()
-		if e := http.Serve(masterListener, r); e != nil {
-			glog.Fatalf("Master Fail to serve:%s", e.Error())
+
+		// start grpc and http server
+		m := cmux.New(masterListener)
+
+		grpcL := m.Match(cmux.HTTP2HeaderField("content-type", "application/grpc"))
+		httpL := m.Match(cmux.Any())
+
+		// Create your protocol servers.
+		grpcS := grpc.NewServer()
+		pb.RegisterSeaweedServer(grpcS, ms)
+		reflection.Register(grpcS)
+
+		httpS := &http.Server{Handler: r}
+
+		go grpcS.Serve(grpcL)
+		go httpS.Serve(httpL)
+
+		if err := m.Serve(); err != nil {
+			glog.Fatalf("master server failed to serve: %v", err)
 		}
+
 	}()
 
 	volumeWait.Wait()

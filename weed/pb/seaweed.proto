@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package pb;
+
+//////////////////////////////////////////////////
+
+service Seaweed {
+  rpc SendHeartbeat(stream Heartbeat) returns (stream HeartbeatResponse) {}
+}
+
+//////////////////////////////////////////////////
+
+message Heartbeat {
+  string ip = 1;
+  uint32 port = 2;
+  string public_url = 3;
+  uint32 max_volume_count = 4;
+  uint64 max_file_key = 5;
+  string data_center = 6;
+  string rack = 7;
+  uint32 admin_port = 8;
+  repeated VolumeInformationMessage volumes = 9;
+}
+message HeartbeatResponse {
+  uint64 volumeSizeLimit = 1;
+  string secretKey = 2;
+}
+
+message VolumeInformationMessage {
+  uint32 id = 1;
+  uint64 size = 2;
+  string collection = 3;
+  uint64 file_count = 4;
+  uint64 delete_count = 5;
+  uint64 deleted_byte_count = 6;
+  bool read_only = 7;
+  uint32 replica_placement = 8;
+  uint32 version = 9;
+  uint32 ttl = 10;
+}

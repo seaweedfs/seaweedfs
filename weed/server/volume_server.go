@@ -1,10 +1,8 @@
 package weed_server
 
 import (
-	"math/rand"
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -19,6 +17,7 @@ type VolumeServer struct {
 	rack         string
 	store        *storage.Store
 	guard        *security.Guard
+	masterNodes  *storage.MasterNodes
 
 	needleMapKind     storage.NeedleMapType
 	FixJpgOrientation bool
@@ -70,36 +69,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		publicMux.HandleFunc("/", vs.publicReadOnlyHandler)
 	}
 
-	go func() {
-		connected := true
-
-		glog.V(0).Infof("Volume server bootstraps with master %s", vs.GetMasterNode())
-		vs.store.SetBootstrapMaster(vs.GetMasterNode())
-		vs.store.SetDataCenter(vs.dataCenter)
-		vs.store.SetRack(vs.rack)
-		for {
-			glog.V(4).Infof("Volume server sending to master %s", vs.GetMasterNode())
-			master, secretKey, err := vs.store.SendHeartbeatToMaster()
-			if err == nil {
-				if !connected {
-					connected = true
-					vs.SetMasterNode(master)
-					vs.guard.SecretKey = secretKey
-					glog.V(0).Infoln("Volume Server Connected with master at", master)
-				}
-			} else {
-				glog.V(1).Infof("Volume Server Failed to talk with master %s: %v", vs.masterNode, err)
-				if connected {
-					connected = false
-				}
-			}
-			if connected {
-				time.Sleep(time.Duration(float32(vs.pulseSeconds*1e3)*(1+rand.Float32())) * time.Millisecond)
-			} else {
-				time.Sleep(time.Duration(float32(vs.pulseSeconds*1e3)*0.25) * time.Millisecond)
-			}
-		}
-	}()
+	go vs.heartbeat()
 
 	return vs
 }
