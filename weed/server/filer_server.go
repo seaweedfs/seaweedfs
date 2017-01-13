@@ -117,17 +117,6 @@ func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir st
 		fs.masterNodes = storage.NewMasterNodes(fs.master)
 		glog.V(0).Infof("Filer server bootstraps with master %s", fs.getMasterNode())
 
-		//force initialize with all available master nodes
-		for {
-			_, err := fs.masterNodes.FindMaster()
-			if err != nil {
-				glog.Infof("filer server failed to get master cluster info:%s", err.Error())
-				time.Sleep(3 * time.Second)
-			} else {
-				break
-			}
-		}
-
 		for {
 			glog.V(4).Infof("Filer server sending to master %s", fs.getMasterNode())
 			master, err := fs.detectHealthyMaster(fs.getMasterNode())

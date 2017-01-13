@@ -23,13 +23,14 @@ func (vs *VolumeServer) heartbeat() {
 		err := vs.doHeartbeat(time.Duration(vs.pulseSeconds) * time.Second)
 		if err != nil {
 			glog.V(0).Infof("heartbeat error: %v", err)
-			time.Sleep(time.Duration(3*vs.pulseSeconds) * time.Second)
+			time.Sleep(time.Duration(vs.pulseSeconds) * time.Second)
 		}
 	}
 }
 
 func (vs *VolumeServer) doHeartbeat(sleepInterval time.Duration) error {
 
+	vs.masterNodes.Reset()
 	masterNode, err := vs.masterNodes.FindMaster()
 	if err != nil {
 		return fmt.Errorf("No master found: %v", err)
