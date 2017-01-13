@@ -278,7 +278,6 @@ func (s *PostgresStore) FindFiles(dirPath string, lastFileName string, limit int
 }
 
 var createDirectoryTable = `
-
 CREATE TABLE IF NOT EXISTS %s (
   id BIGSERIAL NOT NULL,
   directoryRoot VARCHAR(1024) NOT NULL DEFAULT '',
@@ -288,7 +287,6 @@ CREATE TABLE IF NOT EXISTS %s (
 `
 
 var createFileTable = `
-
 CREATE TABLE IF NOT EXISTS %s (
   id BIGSERIAL NOT NULL,
   directoryPart VARCHAR(1024) NOT NULL DEFAULT '',

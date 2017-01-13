@@ -11,20 +11,16 @@ import (
 )
 
 /*
-
 Basically you need a table just like this:
-
 CREATE TABLE seaweed_files (
    path varchar,
    fids list<varchar>,
    PRIMARY KEY (path)
 );
-
 Need to match flat_namespace.FlatNamespaceStore interface
 	Put(fullFileName string, fid string) (err error)
 	Get(fullFileName string) (fid string, err error)
 	Delete(fullFileName string) (fid string, err error)
-
 */
 type CassandraStore struct {
 	cluster *gocql.ClusterConfig

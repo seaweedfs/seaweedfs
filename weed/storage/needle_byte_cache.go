@@ -18,9 +18,7 @@ var (
 
 /*
 There are one level of caching, and one level of pooling.
-
 In pooling, all []byte are fetched and returned to the pool bytesPool.
-
 In caching, the string~[]byte mapping is cached
 */
 func init() {

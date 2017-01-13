@@ -62,7 +62,6 @@ var cmdVolume = &Command{
 	UsageLine: "volume -port=8080 -dir=/tmp -max=5 -ip=server_name -mserver=localhost:9333",
 	Short:     "start a volume server",
 	Long: `start a volume server to provide storage spaces
-
   `,
 }
 

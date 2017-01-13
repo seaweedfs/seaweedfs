@@ -39,15 +39,11 @@ var cmdServer = &Command{
 	Short:     "start a server, including volume server, and automatically elect a master server",
 	Long: `start both a volume server to provide storage spaces
   and a master server to provide volume=>location mapping service and sequence number of file ids
-
   This is provided as a convenient way to start both volume server and master server.
   The servers are exactly the same as starting them separately.
-
   So other volume servers can use this embedded master server also.
-
   Optionally, one filer server can be started. Logically, filer servers should not be in a cluster.
   They run with meta data on disk, not shared. So each filer server is different.
-
   `,
 }
 
