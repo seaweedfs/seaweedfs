@@ -3,7 +3,10 @@
 [![Build Status](https://travis-ci.org/chrislusf/seaweedfs.svg?branch=master)](https://travis-ci.org/chrislusf/seaweedfs)
 [![GoDoc](https://godoc.org/github.com/chrislusf/seaweedfs/weed?status.svg)](https://godoc.org/github.com/chrislusf/seaweedfs/weed)
 [![Wiki](https://img.shields.io/badge/docs-wiki-blue.svg)](https://github.com/chrislusf/seaweedfs/wiki)
-[download](https://github.com/chrislusf/seaweedfs/releases/latest)
+
+- [Download Binaries](https://github.com/chrislusf/seaweedfs/releases/latest)
+- [Mailing List](https://groups.google.com/forum/#!forum/seaweedfs)
+- [Documentation](https://github.com/chrislusf/seaweedfs/wiki)
 
 ![SeaweedFS Logo](https://raw.githubusercontent.com/chrislusf/seaweedfs/master/note/seaweedfs.png)
 
