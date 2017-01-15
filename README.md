@@ -7,9 +7,10 @@
 ![SeaweedFS Logo](https://raw.githubusercontent.com/chrislusf/seaweedfs/master/note/seaweedfs.png)
 
 
-- [Download Binaries](https://github.com/chrislusf/seaweedfs/releases/latest)
-- [Mailing List](https://groups.google.com/forum/#!forum/seaweedfs)
-- [Documentation](https://github.com/chrislusf/seaweedfs/wiki)
+- [Download Binaries for different platforms](https://github.com/chrislusf/seaweedfs/releases/latest)
+- [SeaweedFS Mailing List](https://groups.google.com/d/forum/seaweedfs)
+- [Wiki Documentation](https://github.com/chrislusf/seaweedfs/wiki)
+
 
 [![](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=EEECLJ8QGTTPC) 
 
@@ -27,10 +28,6 @@ Instead of managing all file metadata in a central master, the central master on
 There is only a 40 bytes disk storage overhead for each file's metadata. It is so simple with O(1) disk read that you are welcome to challenge the performance with your actual use cases.
 
 SeaweedFS started by implementing [Facebook's Haystack design paper](http://www.usenix.org/event/osdi10/tech/full_papers/Beaver.pdf). SeaweedFS is currently growing, with more features on the way.
-
-[Download latest compiled binaries for different platforms](https://github.com/chrislusf/seaweedfs/releases/latest)
-
-[SeaweedFS Discussion Group](https://groups.google.com/d/forum/seaweedfs)
 
 ## Additional Features
 * Can choose no replication or different replication level, rack and data center aware
