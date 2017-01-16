@@ -91,6 +91,10 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 }
 
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET")
+	w.Header().Set("Access-Control-Max-Age", "1000")
+
 	if strings.HasSuffix(r.URL.Path, "/") {
 		if fs.disableDirListing {
 			w.WriteHeader(http.StatusMethodNotAllowed)

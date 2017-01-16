@@ -33,6 +33,10 @@ type JsonEncode struct {
 }
 
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET")
+	w.Header().Set("Access-Control-Max-Age", "1000")
+
 	n := new(storage.Needle)
 	vid, fid, filename, ext, _ := parseURLPath(r.URL.Path)
 	volumeId, err := storage.NewVolumeId(vid)
