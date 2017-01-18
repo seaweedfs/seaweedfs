@@ -31,12 +31,12 @@ func LoadNeedleMap(file *os.File) (*NeedleMap, error) {
 		if key > nm.MaximumFileKey {
 			nm.MaximumFileKey = key
 		}
-		nm.FileCounter++
-		nm.FileByteCounter = nm.FileByteCounter + uint64(size)
 		if offset > 0 && size != TombstoneFileSize {
-			oldSize := nm.m.Set(Key(key), offset, size)
+			nm.FileCounter++
+			nm.FileByteCounter = nm.FileByteCounter + uint64(size)
+			oldOffset, oldSize := nm.m.Set(Key(key), offset, size)
 			glog.V(3).Infoln("reading key", key, "offset", offset*NeedlePaddingSize, "size", size, "oldSize", oldSize)
-			if oldSize > 0 {
+			if oldOffset > 0 && oldSize != TombstoneFileSize {
 				nm.DeletionCounter++
 				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 			}
@@ -84,7 +84,7 @@ func WalkIndexFile(r *os.File, fn func(key uint64, offset, size uint32) error) e
 }
 
 func (nm *NeedleMap) Put(key uint64, offset uint32, size uint32) error {
-	oldSize := nm.m.Set(Key(key), offset, size)
+	_, oldSize := nm.m.Set(Key(key), offset, size)
 	nm.logPut(key, oldSize, size)
 	return nm.appendToIndexFile(key, offset, size)
 }
