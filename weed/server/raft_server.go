@@ -65,8 +65,8 @@ func NewRaftServer(r *mux.Router, peers []string, httpAddr string, dataDir strin
 		return nil
 	}
 	transporter.Install(s.raftServer, s)
-	s.raftServer.SetHeartbeatInterval(1 * time.Second)
-	s.raftServer.SetElectionTimeout(time.Duration(pulseSeconds) * 3450 * time.Millisecond)
+	s.raftServer.SetHeartbeatInterval(500 * time.Millisecond)
+	s.raftServer.SetElectionTimeout(time.Duration(pulseSeconds) * 500 * time.Millisecond)
 	s.raftServer.Start()
 
 	s.router.HandleFunc("/cluster/join", s.joinHandler).Methods("POST")
