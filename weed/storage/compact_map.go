@@ -39,14 +39,13 @@ func NewCompactSection(start Key) *CompactSection {
 }
 
 //return old entry size
-func (cs *CompactSection) Set(key Key, offset uint32, size uint32) uint32 {
-	ret := uint32(0)
+func (cs *CompactSection) Set(key Key, offset, size uint32) (oldOffset, oldSize uint32) {
 	cs.Lock()
 	if key > cs.end {
 		cs.end = key
 	}
 	if i := cs.binarySearchValues(key); i >= 0 {
-		ret = cs.values[i].Size
+		oldOffset, oldSize = cs.values[i].Offset, cs.values[i].Size
 		//println("key", key, "old size", ret)
 		cs.values[i].Offset, cs.values[i].Size = offset, size
 	} else {
@@ -55,7 +54,7 @@ func (cs *CompactSection) Set(key Key, offset uint32, size uint32) uint32 {
 		if needOverflow {
 			//println("start", cs.start, "counter", cs.counter, "key", key)
 			if oldValue, found := cs.overflow[key]; found {
-				ret = oldValue.Size
+				oldOffset, oldSize = oldValue.Offset, oldValue.Size
 			}
 			cs.overflow[key] = NeedleValue{Key: key, Offset: offset, Size: size}
 		} else {
@@ -66,7 +65,7 @@ func (cs *CompactSection) Set(key Key, offset uint32, size uint32) uint32 {
 		}
 	}
 	cs.Unlock()
-	return ret
+	return
 }
 
 //return old entry size
@@ -129,7 +128,7 @@ func NewCompactMap() CompactMap {
 	return CompactMap{}
 }
 
-func (cm *CompactMap) Set(key Key, offset uint32, size uint32) uint32 {
+func (cm *CompactMap) Set(key Key, offset, size uint32) (oldOffset, oldSize uint32) {
 	x := cm.binarySearchCompactSection(key)
 	if x < 0 {
 		//println(x, "creating", len(cm.list), "section, starting", key)
