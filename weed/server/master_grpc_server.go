@@ -65,5 +65,17 @@ func (ms MasterServer) SendHeartbeat(stream pb.Seaweed_SendHeartbeatServer) erro
 			}
 			return err
 		}
+
+		if !t.IsLeader() {
+			newLeader, err := t.Leader()
+			if err == nil {
+				if err := stream.Send(&pb.HeartbeatResponse{
+					Leader: newLeader,
+				}); err != nil {
+					return err
+				}
+			}
+		}
+
 	}
 }

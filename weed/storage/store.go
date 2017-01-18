@@ -16,8 +16,9 @@ const (
 )
 
 type MasterNodes struct {
-	nodes  []string
-	leader string
+	nodes          []string
+	leader         string
+	possibleLeader string
 }
 
 func (mn *MasterNodes) String() string {
@@ -33,6 +34,10 @@ func (mn *MasterNodes) Reset() {
 		mn.leader = ""
 		glog.V(0).Infof("Resetting master nodes: %v", mn)
 	}
+}
+func (mn *MasterNodes) SetPossibleLeader(possibleLeader string) {
+	// TODO try to check this leader first
+	mn.possibleLeader = possibleLeader
 }
 func (mn *MasterNodes) FindMaster() (leader string, err error) {
 	if len(mn.nodes) == 0 {
