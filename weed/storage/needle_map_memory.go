@@ -32,8 +32,8 @@ func LoadNeedleMap(file *os.File) (*NeedleMap, error) {
 			nm.MaximumFileKey = key
 		}
 		nm.FileCounter++
-		nm.FileByteCounter = nm.FileByteCounter + uint64(size)
 		if offset > 0 && size != TombstoneFileSize {
+			nm.FileByteCounter = nm.FileByteCounter + uint64(size)
 			oldSize := nm.m.Set(Key(key), offset, size)
 			glog.V(3).Infoln("reading key", key, "offset", offset*NeedlePaddingSize, "size", size, "oldSize", oldSize)
 			if oldSize > 0 {

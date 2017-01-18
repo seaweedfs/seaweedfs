@@ -263,10 +263,10 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 			return
 		}
 		// TODO: count needle size ahead
-		if MaxPossibleVolumeSize >= v.ContentSize()+uint64(size) {
-			size, err = v.writeNeedle(n)
+		if s.VolumeSizeLimit >= v.ContentSize()+uint64(size) {
+		    size, err = v.writeNeedle(n)
 		} else {
-			err = fmt.Errorf("Volume Size Limit %d Exceeded! Current size is %d", s.VolumeSizeLimit, v.ContentSize())
+		    err = fmt.Errorf("Volume Size Limit %d Exceeded! Current size is %d, Needle size is %d", s.VolumeSizeLimit, v.ContentSize(), size)
 		}
 		if s.VolumeSizeLimit < v.ContentSize()+3*uint64(size) {
 			glog.V(0).Infoln("volume", i, "size", v.ContentSize(), "will exceed limit", s.VolumeSizeLimit)
