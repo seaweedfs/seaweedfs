@@ -77,6 +77,7 @@ type Store struct {
 	connected       bool
 	VolumeSizeLimit uint64 //read from the master
 	Client          pb.Seaweed_SendHeartbeatClient
+	NeedleMapType   NeedleMapType
 }
 
 func (s *Store) String() (str string) {
@@ -85,7 +86,7 @@ func (s *Store) String() (str string) {
 }
 
 func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int, needleMapKind NeedleMapType) (s *Store) {
-	s = &Store{Port: port, Ip: ip, PublicUrl: publicUrl}
+	s = &Store{Port: port, Ip: ip, PublicUrl: publicUrl, NeedleMapType: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirnames); i++ {
 		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i])
@@ -261,6 +262,7 @@ func (s *Store) Close() {
 		location.Close()
 	}
 }
+
 func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 	if v := s.findVolume(i); v != nil {
 		if v.readOnly {
@@ -275,11 +277,7 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 		}
 		if s.VolumeSizeLimit < v.ContentSize()+3*uint64(size) {
 			glog.V(0).Infoln("volume", i, "size", v.ContentSize(), "will exceed limit", s.VolumeSizeLimit)
-			if s.Client != nil {
-				if e := s.Client.Send(s.CollectHeartbeat()); e != nil {
-					glog.V(0).Infoln("error when reporting size:", e)
-				}
-			}
+			s.updateMaster()
 		}
 		return
 	}
@@ -287,17 +285,27 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 	err = fmt.Errorf("Volume %d not found!", i)
 	return
 }
+
+func (s *Store) updateMaster() {
+	if s.Client != nil {
+		if e := s.Client.Send(s.CollectHeartbeat()); e != nil {
+			glog.V(0).Infoln("error when reporting size:", e)
+		}
+	}
+}
+
 func (s *Store) Delete(i VolumeId, n *Needle) (uint32, error) {
 	if v := s.findVolume(i); v != nil && !v.readOnly {
 		return v.deleteNeedle(n)
 	}
 	return 0, nil
 }
+
 func (s *Store) ReadVolumeNeedle(i VolumeId, n *Needle) (int, error) {
 	if v := s.findVolume(i); v != nil {
 		return v.readNeedle(n)
 	}
-	return 0, fmt.Errorf("Volume %v not found!", i)
+	return 0, fmt.Errorf("Volume %d not found!", i)
 }
 func (s *Store) GetVolume(i VolumeId) *Volume {
 	return s.findVolume(i)
@@ -307,3 +315,26 @@ func (s *Store) HasVolume(i VolumeId) bool {
 	v := s.findVolume(i)
 	return v != nil
 }
+
+func (s *Store) MountVolume(i VolumeId) error {
+	for _, location := range s.Locations {
+		if found := location.LoadVolume(i, s.NeedleMapType); found == true {
+			s.updateMaster()
+			return nil
+		}
+	}
+
+	return fmt.Errorf("Volume %d not found on disk", i)
+}
+
+func (s *Store) UnmountVolume(i VolumeId) error {
+	for _, location := range s.Locations {
+		if err := location.UnloadVolume(i); err == nil {
+			s.updateMaster()
+			return nil
+		}
+	}
+
+	return fmt.Errorf("Volume %d not found on disk", i)
+}
+

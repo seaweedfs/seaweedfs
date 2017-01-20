@@ -68,20 +68,51 @@ func (vs *VolumeServer) getVolumeDataContentHandler(w http.ResponseWriter, r *ht
 	w.Write(content)
 }
 
-func (vs *VolumeServer) getVolume(volumeParameterName string, r *http.Request) (*storage.Volume, error) {
+func (vs *VolumeServer) getVolumeId(volumeParameterName string, r *http.Request) (storage.VolumeId, error) {
 	volumeIdString := r.FormValue(volumeParameterName)
+
 	if volumeIdString == "" {
 		err := fmt.Errorf("Empty Volume Id: Need to pass in %s=the_volume_id.", volumeParameterName)
-		return nil, err
+		return 0, err
 	}
+
 	vid, err := storage.NewVolumeId(volumeIdString)
 	if err != nil {
 		err = fmt.Errorf("Volume Id %s is not a valid unsigned integer", volumeIdString)
+		return 0, err
+	}
+
+	return vid, err
+}
+
+func (vs *VolumeServer) getVolume(volumeParameterName string, r *http.Request) (*storage.Volume, error) {
+	vid, err := vs.getVolumeId(volumeParameterName, r)
+	if err != nil {
 		return nil, err
 	}
 	v := vs.store.GetVolume(vid)
 	if v == nil {
-		return nil, fmt.Errorf("Not Found Volume Id %s: %d", volumeIdString, vid)
+		return nil, fmt.Errorf("Not Found Volume Id %d", vid)
 	}
 	return v, nil
+}
+
+func (vs *VolumeServer) getVolumeMountHandler(w http.ResponseWriter, r *http.Request) {
+	vid, err := vs.getVolumeId("volume", r)
+	if err != nil {
+		writeJsonError(w, r, http.StatusNotFound, err)
+		return
+	}
+	vs.store.MountVolume(vid)
+	writeJsonQuiet(w, r, http.StatusOK, "Volume mounted")
+}
+
+func (vs *VolumeServer) getVolumeUnmountHandler(w http.ResponseWriter, r *http.Request) {
+	vid, err := vs.getVolumeId("volume", r)
+	if err != nil {
+		writeJsonError(w, r, http.StatusNotFound, err)
+		return
+	}
+	vs.store.UnmountVolume(vid)
+	writeJsonQuiet(w, r, http.StatusOK, "Volume unmounted")
 }

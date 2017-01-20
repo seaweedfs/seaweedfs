@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"fmt"
 )
 
 type DiskLocation struct {
@@ -22,16 +23,27 @@ func NewDiskLocation(dir string, maxVolumeCount int) *DiskLocation {
 	return location
 }
 
-func (l *DiskLocation) loadExistingVolume(dir os.FileInfo, needleMapKind NeedleMapType, mutex *sync.RWMutex) {
+func (l *DiskLocation) volumeIdFromPath(dir os.FileInfo) (VolumeId, string, error) {
 	name := dir.Name()
 	if !dir.IsDir() && strings.HasSuffix(name, ".dat") {
 		collection := ""
-		base := name[:len(name)-len(".dat")]
+		base := name[:len(name) - len(".dat")]
 		i := strings.LastIndex(base, "_")
 		if i > 0 {
-			collection, base = base[0:i], base[i+1:]
+			collection, base = base[0:i], base[i + 1:]
 		}
-		if vid, err := NewVolumeId(base); err == nil {
+		vol, err := NewVolumeId(base);
+		return vol, collection, err
+	}
+
+	return 0, "", fmt.Errorf("Path is not a volume: %s", name)
+}
+
+func (l *DiskLocation) loadExistingVolume(dir os.FileInfo, needleMapKind NeedleMapType, mutex *sync.RWMutex) {
+	name := dir.Name()
+	if !dir.IsDir() && strings.HasSuffix(name, ".dat") {
+		vid, collection, err := l.volumeIdFromPath(dir)
+		if err == nil {
 			mutex.RLock()
 			_, found := l.volumes[vid]
 			mutex.RUnlock()
@@ -123,6 +135,30 @@ func (l *DiskLocation) deleteVolumeById(vid VolumeId) (e error) {
 	}
 	delete(l.volumes, vid)
 	return
+}
+
+func (l *DiskLocation) LoadVolume(vid VolumeId, needleMapKind NeedleMapType) bool {
+	if dirs, err := ioutil.ReadDir(l.Directory); err == nil {
+		for _, dir := range dirs {
+			volId, _, err := l.volumeIdFromPath(dir)
+			if vid == volId && err == nil {
+				var mutex sync.RWMutex
+				l.loadExistingVolume(dir, needleMapKind, &mutex)
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func (l *DiskLocation) UnloadVolume(vid VolumeId) (e error) {
+	_, ok := l.volumes[vid]
+	if !ok {
+		return fmt.Errorf("Volume not loaded, VolumeId: %d", vid)
+	}
+	delete(l.volumes, vid)
+	return nil
 }
 
 func (l *DiskLocation) SetVolume(vid VolumeId, volume *Volume) {
