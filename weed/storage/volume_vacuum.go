@@ -24,7 +24,7 @@ func (v *Volume) Compact() error {
 	v.lastCompactIndexOffset = v.nm.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactRevision
 	glog.V(3).Infof("creating copies for volume %d ,last offset %d...", v.Id, v.lastCompactIndexOffset)
-	return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx", v.dataFileSize)
+	return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx", 0)
 }
 
 func (v *Volume) Compact2() error {

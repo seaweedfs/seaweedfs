@@ -56,7 +56,6 @@ func (v *Volume) maybeWriteSuperBlock() error {
 				}
 			}
 		}
-		v.dataFileSize = SuperBlockSize
 	}
 	return e
 }
