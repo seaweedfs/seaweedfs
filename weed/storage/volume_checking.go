@@ -12,28 +12,28 @@ func getActualSize(size uint32) int64 {
 	return NeedleHeaderSize + int64(size) + NeedleChecksumSize + int64(padding)
 }
 
-func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (int64, error) {
+func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (error) {
 	var indexSize int64
 	var e error
 	if indexSize, e = verifyIndexFileIntegrity(indexFile); e != nil {
-		return 0, fmt.Errorf("verifyIndexFileIntegrity %s failed: %v", indexFile.Name(), e)
+		return fmt.Errorf("verifyIndexFileIntegrity %s failed: %v", indexFile.Name(), e)
 	}
 	if indexSize == 0 {
-		return int64(SuperBlockSize), nil
+		return nil
 	}
 	var lastIdxEntry []byte
 	if lastIdxEntry, e = readIndexEntryAtOffset(indexFile, indexSize-NeedleIndexSize); e != nil {
-		return 0, fmt.Errorf("readLastIndexEntry %s failed: %v", indexFile.Name(), e)
+		return fmt.Errorf("readLastIndexEntry %s failed: %v", indexFile.Name(), e)
 	}
 	key, offset, size := idxFileEntry(lastIdxEntry)
 	if offset == 0 || size == TombstoneFileSize {
-		return 0, nil
+		return nil
 	}
 	if e = verifyNeedleIntegrity(v.dataFile, v.Version(), int64(offset)*NeedlePaddingSize, key, size); e != nil {
-		return 0, fmt.Errorf("verifyNeedleIntegrity %s failed: %v", indexFile.Name(), e)
+		return fmt.Errorf("verifyNeedleIntegrity %s failed: %v", indexFile.Name(), e)
 	}
 
-	return int64(offset)*int64(NeedlePaddingSize) + getActualSize(size), nil
+	return nil
 }
 
 func verifyIndexFileIntegrity(indexFile *os.File) (indexSize int64, err error) {

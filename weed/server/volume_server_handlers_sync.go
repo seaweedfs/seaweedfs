@@ -68,20 +68,19 @@ func (vs *VolumeServer) getVolumeDataContentHandler(w http.ResponseWriter, r *ht
 	w.Write(content)
 }
 
-func (vs *VolumeServer) getVolume(volumeParameterName string, r *http.Request) (*storage.Volume, error) {
+func (vs *VolumeServer) getVolumeId(volumeParameterName string, r *http.Request) (storage.VolumeId, error) {
 	volumeIdString := r.FormValue(volumeParameterName)
+
 	if volumeIdString == "" {
 		err := fmt.Errorf("Empty Volume Id: Need to pass in %s=the_volume_id.", volumeParameterName)
-		return nil, err
+		return 0, err
 	}
+
 	vid, err := storage.NewVolumeId(volumeIdString)
 	if err != nil {
 		err = fmt.Errorf("Volume Id %s is not a valid unsigned integer", volumeIdString)
-		return nil, err
+		return 0, err
 	}
-	v := vs.store.GetVolume(vid)
-	if v == nil {
-		return nil, fmt.Errorf("Not Found Volume Id %s: %d", volumeIdString, vid)
-	}
-	return v, nil
+
+	return vid, err
 }
