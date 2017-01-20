@@ -152,7 +152,15 @@ func (l *DiskLocation) LoadVolume(vid VolumeId, needleMapKind NeedleMapType) boo
 	return false
 }
 
-func (l *DiskLocation) UnloadVolume(vid VolumeId) (e error) {
+func (l *DiskLocation) DeleteVolume(vid VolumeId) (error) {
+	_, ok := l.volumes[vid]
+	if !ok {
+		return fmt.Errorf("Volume not found, VolumeId: %d", vid)
+	}
+	return l.deleteVolumeById(vid)
+}
+
+func (l *DiskLocation) UnloadVolume(vid VolumeId) (error) {
 	_, ok := l.volumes[vid]
 	if !ok {
 		return fmt.Errorf("Volume not loaded, VolumeId: %d", vid)

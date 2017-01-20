@@ -84,35 +84,3 @@ func (vs *VolumeServer) getVolumeId(volumeParameterName string, r *http.Request)
 
 	return vid, err
 }
-
-func (vs *VolumeServer) getVolume(volumeParameterName string, r *http.Request) (*storage.Volume, error) {
-	vid, err := vs.getVolumeId(volumeParameterName, r)
-	if err != nil {
-		return nil, err
-	}
-	v := vs.store.GetVolume(vid)
-	if v == nil {
-		return nil, fmt.Errorf("Not Found Volume Id %d", vid)
-	}
-	return v, nil
-}
-
-func (vs *VolumeServer) getVolumeMountHandler(w http.ResponseWriter, r *http.Request) {
-	vid, err := vs.getVolumeId("volume", r)
-	if err != nil {
-		writeJsonError(w, r, http.StatusNotFound, err)
-		return
-	}
-	vs.store.MountVolume(vid)
-	writeJsonQuiet(w, r, http.StatusOK, "Volume mounted")
-}
-
-func (vs *VolumeServer) getVolumeUnmountHandler(w http.ResponseWriter, r *http.Request) {
-	vid, err := vs.getVolumeId("volume", r)
-	if err != nil {
-		writeJsonError(w, r, http.StatusNotFound, err)
-		return
-	}
-	vs.store.UnmountVolume(vid)
-	writeJsonQuiet(w, r, http.StatusOK, "Volume unmounted")
-}
