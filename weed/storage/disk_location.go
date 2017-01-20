@@ -6,8 +6,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"fmt"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 type DiskLocation struct {
@@ -27,12 +28,12 @@ func (l *DiskLocation) volumeIdFromPath(dir os.FileInfo) (VolumeId, string, erro
 	name := dir.Name()
 	if !dir.IsDir() && strings.HasSuffix(name, ".dat") {
 		collection := ""
-		base := name[:len(name) - len(".dat")]
+		base := name[:len(name)-len(".dat")]
 		i := strings.LastIndex(base, "_")
 		if i > 0 {
-			collection, base = base[0:i], base[i + 1:]
+			collection, base = base[0:i], base[i+1:]
 		}
-		vol, err := NewVolumeId(base);
+		vol, err := NewVolumeId(base)
 		return vol, collection, err
 	}
 
@@ -148,7 +149,10 @@ func (l *DiskLocation) LoadVolume(vid VolumeId, needleMapKind NeedleMapType) boo
 	return false
 }
 
-func (l *DiskLocation) DeleteVolume(vid VolumeId) (error) {
+func (l *DiskLocation) DeleteVolume(vid VolumeId) error {
+	l.Lock()
+	defer l.Unlock()
+
 	_, ok := l.volumes[vid]
 	if !ok {
 		return fmt.Errorf("Volume not found, VolumeId: %d", vid)
@@ -156,7 +160,10 @@ func (l *DiskLocation) DeleteVolume(vid VolumeId) (error) {
 	return l.deleteVolumeById(vid)
 }
 
-func (l *DiskLocation) UnloadVolume(vid VolumeId) (error) {
+func (l *DiskLocation) UnloadVolume(vid VolumeId) error {
+	l.Lock()
+	defer l.Unlock()
+
 	_, ok := l.volumes[vid]
 	if !ok {
 		return fmt.Errorf("Volume not loaded, VolumeId: %d", vid)
