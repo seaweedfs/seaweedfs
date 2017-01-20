@@ -61,7 +61,7 @@ func (v *Volume) AppendBlob(b []byte) (offset int64, err error) {
 		glog.V(0).Infof("failed to seek the end of file: %v", err)
 		return
 	} else if offset != int64(v.dataFileSize) {
-		glog.V(0).Infof("dataFileSize %d != actual data file size: %d", v.dataFileSize, offset)
+		glog.V(0).Infof("dataFileSize %d != actual data file size: %d, volumeId: %s", v.dataFileSize, offset, v.Id.String())
 	}
 	//ensure file writing starting from aligned positions
 	if offset%NeedlePaddingSize != 0 {
@@ -70,7 +70,7 @@ func (v *Volume) AppendBlob(b []byte) (offset int64, err error) {
 			glog.V(0).Infof("failed to align in datafile %s: %v", v.dataFile.Name(), err)
 			return
 		} else if offset != int64(v.dataFileSize) {
-			glog.V(0).Infof("dataFileSize %d != actual data file size: %d", v.dataFileSize, offset)
+			glog.V(0).Infof("dataFileSize %d != actual data file size: %d, volumeId: %s", v.dataFileSize, offset, v.Id.String())
 		}
 	}
 	_, err = v.dataFile.Write(b)
@@ -96,7 +96,7 @@ func (v *Volume) writeNeedle(n *Needle) (size uint32, err error) {
 		glog.V(0).Infof("failed to seek the end of file: %v", err)
 		return
 	} else if offset != int64(v.dataFileSize) {
-		glog.V(0).Infof("dataFileSize %d != actual data file size: %d", v.dataFileSize, offset)
+		glog.V(0).Infof("dataFileSize %d != actual data file size: %d, volumeId: %s", v.dataFileSize, offset, v.Id.String())
 	}
 
 	//ensure file writing starting from aligned positions
@@ -146,7 +146,7 @@ func (v *Volume) deleteNeedle(n *Needle) (uint32, error) {
 		if offset, err := v.dataFile.Seek(0, 2); err != nil {
 			return size, err
 		} else if offset != int64(v.dataFileSize) {
-			glog.V(0).Infof("dataFileSize %d != actual data file size: %d, deleteMarker: %d", v.dataFileSize, offset, getActualSize(0))
+			glog.V(0).Infof("dataFileSize %d != actual data file size: %d, deleteMarker: %d, volumeId: %s", v.dataFileSize, offset, getActualSize(0), v.Id.String())
 		}
 		n.Data = nil
 		_, actualSize, err := n.Append(v.dataFile, v.Version())
