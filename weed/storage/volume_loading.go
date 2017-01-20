@@ -64,7 +64,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				return fmt.Errorf("cannot write Volume Index %s.idx: %v", fileName, e)
 			}
 		}
-		if _, e = CheckVolumeDataIntegrity(v, indexFile); e != nil {
+		if e = CheckVolumeDataIntegrity(v, indexFile); e != nil {
 			v.readOnly = true
 			glog.V(0).Infof("volumeDataIntegrityChecking failed %v", e)
 		}
