@@ -63,8 +63,12 @@ func (vs *VolumeServer) doHeartbeat(sleepInterval time.Duration) error {
 				doneChan <- err
 				return
 			}
-			vs.store.VolumeSizeLimit = in.GetVolumeSizeLimit()
-			vs.guard.SecretKey = security.Secret(in.GetSecretKey())
+			if in.GetVolumeSizeLimit() != 0 {
+				vs.store.VolumeSizeLimit = in.GetVolumeSizeLimit()
+			}
+			if in.GetSecretKey() != "" {
+				vs.guard.SecretKey = security.Secret(in.GetSecretKey())
+			}
 			if in.GetLeader() != "" && masterNode != in.GetLeader() {
 				vs.masterNodes.SetPossibleLeader(in.GetLeader())
 				doneChan <- nil
