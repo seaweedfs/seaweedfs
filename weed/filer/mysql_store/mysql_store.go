@@ -184,7 +184,7 @@ func (s *MySqlStore) Close() {
 var createTable = `
 CREATE TABLE IF NOT EXISTS %s (
   id bigint(20) NOT NULL AUTO_INCREMENT,
-  uriPath char(256) NOT NULL DEFAULT "" COMMENT 'http uriPath',
+  uriPath char(255) NOT NULL DEFAULT "" COMMENT 'http uriPath',
   fid char(36) NOT NULL DEFAULT "" COMMENT 'seaweedfs fid',
   createTime int(10) NOT NULL DEFAULT 0 COMMENT 'createdTime in unix timestamp',
   updateTime int(10) NOT NULL DEFAULT 0 COMMENT 'updatedTime in unix timestamp',
