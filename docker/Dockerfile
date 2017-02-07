@@ -1,4 +1,4 @@
-FROM frolvlad/alpine-glibc:alpine-3.4
+FROM frolvlad/alpine-glibc:alpine-3.5
 
 RUN apk add --no-cache --virtual=build-dependencies --update curl wget ca-certificates && \
     wget -P /tmp https://github.com/$(curl -s -L https://github.com/chrislusf/seaweedfs/releases/latest | egrep -o '/chrislusf/seaweedfs/releases/download/.*/linux_amd64.tar.gz') && \
