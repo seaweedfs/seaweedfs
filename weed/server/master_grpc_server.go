@@ -59,8 +59,8 @@ func (ms MasterServer) SendHeartbeat(stream pb.Seaweed_SendHeartbeatServer) erro
 			}
 
 		} else {
-			glog.V(0).Infof("lost volume server %s:%d", dn.Ip, dn.Port)
 			if dn != nil {
+				glog.V(0).Infof("lost volume server %s:%d", dn.Ip, dn.Port)
 				t.UnRegisterDataNode(dn)
 			}
 			return err
