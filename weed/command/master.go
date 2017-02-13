@@ -41,7 +41,6 @@ var (
 	volumeSizeLimitMB       = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
 	volumePreallocate       = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
 	mpulse                  = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
-	confFile                = cmdMaster.Flag.String("conf", "/etc/weedfs/weedfs.conf", "Deprecating! xml configuration file")
 	defaultReplicaPlacement = cmdMaster.Flag.String("defaultReplication", "000", "Default replication type if not specified.")
 	// mTimeout                = cmdMaster.Flag.Int("idleTimeout", 30, "connection idle seconds")
 	mMaxCpu               = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
@@ -79,7 +78,7 @@ func runMaster(cmd *Command, args []string) bool {
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, *mport, *metaFolder,
 		*volumeSizeLimitMB, *volumePreallocate,
-		*mpulse, *confFile, *defaultReplicaPlacement, *garbageThreshold,
+		*mpulse, *defaultReplicaPlacement, *garbageThreshold,
 		masterWhiteList, *masterSecureKey,
 	)
 

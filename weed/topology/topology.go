@@ -2,7 +2,6 @@ package topology
 
 import (
 	"errors"
-	"io/ioutil"
 	"math/rand"
 
 	"github.com/chrislusf/raft"
@@ -30,7 +29,7 @@ type Topology struct {
 	RaftServer raft.Server
 }
 
-func NewTopology(id string, confFile string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int) (*Topology, error) {
+func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int) *Topology {
 	t := &Topology{}
 	t.id = NodeId(id)
 	t.nodeType = "Topology"
@@ -44,9 +43,9 @@ func NewTopology(id string, confFile string, seq sequence.Sequencer, volumeSizeL
 
 	t.chanFullVolumes = make(chan storage.VolumeInfo)
 
-	err := t.loadConfiguration(confFile)
+	t.Configuration = &Configuration{}
 
-	return t, err
+	return t
 }
 
 func (t *Topology) IsLeader() bool {
@@ -70,16 +69,6 @@ func (t *Topology) Leader() (string, error) {
 	}
 
 	return l, nil
-}
-
-func (t *Topology) loadConfiguration(configurationFile string) error {
-	b, e := ioutil.ReadFile(configurationFile)
-	if e == nil {
-		t.Configuration, e = NewConfiguration(b)
-		return e
-	}
-	glog.V(0).Infoln("Using default configurations.")
-	return nil
 }
 
 func (t *Topology) Lookup(collection string, vid storage.VolumeId) []*DataNode {
