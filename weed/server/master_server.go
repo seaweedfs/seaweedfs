@@ -37,7 +37,6 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	volumeSizeLimitMB uint,
 	preallocate bool,
 	pulseSeconds int,
-	confFile string,
 	defaultReplicaPlacement string,
 	garbageThreshold string,
 	whiteList []string,
@@ -58,11 +57,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
 	seq := sequence.NewMemorySequencer()
-	var e error
-	if ms.Topo, e = topology.NewTopology("topo", confFile, seq,
-		uint64(volumeSizeLimitMB)*1024*1024, pulseSeconds); e != nil {
-		glog.Fatalf("cannot create topology:%s", e)
-	}
+	ms.Topo = topology.NewTopology("topo", seq, uint64(volumeSizeLimitMB)*1024*1024, pulseSeconds)
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", volumeSizeLimitMB, "MB")
 

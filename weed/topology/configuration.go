@@ -25,20 +25,6 @@ type Configuration struct {
 	ip2location map[string]loc
 }
 
-func NewConfiguration(b []byte) (*Configuration, error) {
-	c := &Configuration{}
-	err := xml.Unmarshal(b, c)
-	c.ip2location = make(map[string]loc)
-	for _, dc := range c.Topo.DataCenters {
-		for _, rack := range dc.Racks {
-			for _, ip := range rack.Ips {
-				c.ip2location[ip] = loc{dcName: dc.Name, rackName: rack.Name}
-			}
-		}
-	}
-	return c, err
-}
-
 func (c *Configuration) String() string {
 	if b, e := xml.MarshalIndent(c, "  ", "  "); e == nil {
 		return string(b)
