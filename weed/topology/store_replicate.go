@@ -58,9 +58,13 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 
 				pairMap := make(map[string]string)
 				if needle.HasPairs() {
-					err := json.Unmarshal(needle.Pairs, &pairMap)
+					tmpMap := make(map[string]string)
+					err := json.Unmarshal(needle.Pairs, &tmpMap)
 					if err != nil {
 						glog.V(0).Infoln("Unmarshal pairs error:", err)
+					}
+					for k, v := range tmpMap {
+						pairMap[storage.PairNamePrefix+k] = v
 					}
 				}
 
