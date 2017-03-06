@@ -4,6 +4,7 @@ package command
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 
 	"bazil.org/fuse"
@@ -47,16 +48,10 @@ func runMount(cmd *Command, args []string) bool {
 	return true
 }
 
-type File struct {
-	FileId filer.FileId
-	Name   string
-}
+type WFS struct{}
 
-func (File) Attr(context context.Context, attr *fuse.Attr) error {
-	return nil
-}
-func (File) ReadAll(ctx context.Context) ([]byte, error) {
-	return []byte("hello, world\n"), nil
+func (WFS) Root() (fs.Node, error) {
+	return Dir{}, nil
 }
 
 type Dir struct {
@@ -65,6 +60,8 @@ type Dir struct {
 }
 
 func (dir Dir) Attr(context context.Context, attr *fuse.Attr) error {
+	attr.Inode = 1
+	attr.Mode = os.ModeDir | 0555
 	return nil
 }
 
@@ -79,13 +76,7 @@ func (dir Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	return nil, fmt.Errorf("File Not Found for %s", name)
 }
 
-type WFS struct{}
-
-func (WFS) Root() (fs.Node, error) {
-	return Dir{}, nil
-}
-
-func (dir *Dir) ReadDir(ctx context.Context) ([]fuse.Dirent, error) {
+func (dir Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	var ret []fuse.Dirent
 	if dirs, e := filer.ListDirectories(*mountOptions.filer, dir.Path); e == nil {
 		for _, d := range dirs.Directories {
@@ -103,4 +94,18 @@ func (dir *Dir) ReadDir(ctx context.Context) ([]fuse.Dirent, error) {
 		}
 	}
 	return ret, nil
+}
+
+type File struct {
+	FileId filer.FileId
+	Name   string
+}
+
+func (File) Attr(context context.Context, attr *fuse.Attr) error {
+	attr.Inode = 2
+	attr.Mode = 0444
+	return nil
+}
+func (File) ReadAll(ctx context.Context) ([]byte, error) {
+	return []byte("hello, world\n"), nil
 }

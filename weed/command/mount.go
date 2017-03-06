@@ -26,7 +26,7 @@ var cmdMount = &Command{
   2) have a "weed filer" running
   These 2 requirements can be achieved with one command "weed server -filer=true"
 
-  This uses bazil.org/fuse, whichenables writing FUSE file systems on
+  This uses bazil.org/fuse, which enables writing FUSE file systems on
   Linux, and OS X.
 
   On OS X, it requires OSXFUSE (http://osxfuse.github.com/).
