@@ -107,8 +107,6 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	return ret, nil
 }
 
-const greeting = "hello, world\n"
-
 type File struct {
 	Id uint64
 	// FileId filer.FileId
@@ -117,11 +115,6 @@ type File struct {
 
 func (file *File) Attr(context context.Context, attr *fuse.Attr) error {
 	attr.Inode = file.Id
-	attr.Mode = 0444
-	attr.Size = uint64(len(greeting))
+	attr.Mode = 0000
 	return nil
-}
-
-func (file *File) ReadAll(ctx context.Context) ([]byte, error) {
-	return []byte(greeting), nil
 }

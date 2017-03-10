@@ -27,11 +27,7 @@ func (fs *FilerServer) apiHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonQuiet(w, r, http.StatusOK, res)
 	case "listFiles":
 		res := filer.ListFilesResult{}
-		limit := 1
-		if len(apiRequest.FileName) == 0 {
-			limit = 100
-		}
-		res.Files, err = fs.filer.ListFiles(apiRequest.Directory, apiRequest.FileName, limit)
+		res.Files, err = fs.filer.ListFiles(apiRequest.Directory, apiRequest.FileName, 100)
 		if err != nil {
 			res.Error = err.Error()
 		}
