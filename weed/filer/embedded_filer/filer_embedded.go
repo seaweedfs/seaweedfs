@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -14,6 +15,7 @@ type FilerEmbedded struct {
 	master      string
 	directories *DirectoryManagerInMap
 	files       *FileListInLevelDb
+	mvMutex     sync.Mutex
 }
 
 func NewFilerEmbedded(master string, dir string) (filer *FilerEmbedded, err error) {
@@ -121,6 +123,9 @@ mv fromFile toDir
 mv fromFile toFile
 */
 func (filer *FilerEmbedded) Move(fromPath string, toPath string) error {
+	filer.mvMutex.Lock()
+	defer filer.mvMutex.Unlock()
+
 	if _, dir_err := filer.FindDirectory(fromPath); dir_err == nil {
 		if _, err := filer.FindDirectory(toPath); err == nil {
 			// move folder under an existing folder
