@@ -107,6 +107,7 @@ func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir st
 
 		r.HandleFunc("/admin/mv", fs.moveHandler)
 		r.HandleFunc("/admin/register", fs.registerHandler)
+		r.HandleFunc("/__api__", fs.apiHandler)
 	}
 
 	r.HandleFunc("/", fs.filerHandler)

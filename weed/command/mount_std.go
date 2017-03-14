@@ -7,6 +7,8 @@ import (
 	"os"
 	"runtime"
 
+	"path"
+
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"github.com/chrislusf/seaweedfs/weed/filer"
@@ -23,7 +25,7 @@ func runMount(cmd *Command, args []string) bool {
 		return false
 	}
 
-	c, err := fuse.Mount(*mountOptions.dir)
+	c, err := fuse.Mount(*mountOptions.dir, fuse.LocalVolume())
 	if err != nil {
 		glog.Fatal(err)
 		return false
@@ -51,61 +53,68 @@ func runMount(cmd *Command, args []string) bool {
 type WFS struct{}
 
 func (WFS) Root() (fs.Node, error) {
-	return Dir{}, nil
+	return &Dir{Path: "/"}, nil
 }
 
 type Dir struct {
-	Path string
-	Id   uint64
+	Id        uint64
+	Path      string
+	DirentMap map[string]*fuse.Dirent
 }
 
-func (dir Dir) Attr(context context.Context, attr *fuse.Attr) error {
-	attr.Inode = 1
+func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
+	attr.Inode = dir.Id
 	attr.Mode = os.ModeDir | 0555
 	return nil
 }
 
-func (dir Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
-	files_result, e := filer.ListFiles(*mountOptions.filer, dir.Path, name)
-	if e != nil {
-		return nil, fuse.ENOENT
+func (dir *Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
+	if dirent, ok := dir.DirentMap[name]; ok {
+		if dirent.Type == fuse.DT_File {
+			return &File{dirent.Inode, dirent.Name}, nil
+		}
+		return &Dir{
+			Id:   dirent.Inode,
+			Path: path.Join(dir.Path, dirent.Name),
+		}, nil
 	}
-	if len(files_result.Files) > 0 {
-		return File{files_result.Files[0].Id, files_result.Files[0].Name}, nil
-	}
-	return nil, fmt.Errorf("File Not Found for %s", name)
+	return nil, fuse.ENOENT
 }
 
-func (dir Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
+func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	var ret []fuse.Dirent
+	if dir.DirentMap == nil {
+		dir.DirentMap = make(map[string]*fuse.Dirent)
+	}
 	if dirs, e := filer.ListDirectories(*mountOptions.filer, dir.Path); e == nil {
 		for _, d := range dirs.Directories {
 			dirId := uint64(d.Id)
-			ret = append(ret, fuse.Dirent{Inode: dirId, Name: d.Name, Type: fuse.DT_Dir})
+			dirent := fuse.Dirent{Inode: dirId, Name: d.Name, Type: fuse.DT_Dir}
+			ret = append(ret, dirent)
+			dir.DirentMap[d.Name] = &dirent
 		}
 	}
 	if files, e := filer.ListFiles(*mountOptions.filer, dir.Path, ""); e == nil {
 		for _, f := range files.Files {
 			if fileId, e := storage.ParseFileId(string(f.Id)); e == nil {
 				fileInode := uint64(fileId.VolumeId)<<48 + fileId.Key
-				ret = append(ret, fuse.Dirent{Inode: fileInode, Name: f.Name, Type: fuse.DT_File})
+				dirent := fuse.Dirent{Inode: fileInode, Name: f.Name, Type: fuse.DT_File}
+				ret = append(ret, dirent)
+				dir.DirentMap[f.Name] = &dirent
 			}
-
 		}
 	}
 	return ret, nil
 }
 
 type File struct {
-	FileId filer.FileId
-	Name   string
+	Id uint64
+	// FileId filer.FileId
+	Name string
 }
 
-func (File) Attr(context context.Context, attr *fuse.Attr) error {
-	attr.Inode = 2
-	attr.Mode = 0444
+func (file *File) Attr(context context.Context, attr *fuse.Attr) error {
+	attr.Inode = file.Id
+	attr.Mode = 0000
 	return nil
-}
-func (File) ReadAll(ctx context.Context) ([]byte, error) {
-	return []byte("hello, world\n"), nil
 }
