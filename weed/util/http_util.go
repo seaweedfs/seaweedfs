@@ -74,6 +74,17 @@ func Get(url string) ([]byte, error) {
 	return b, nil
 }
 
+func Head(url string) (http.Header, error) {
+	r, err := client.Head(url)
+	if err != nil {
+		return nil, err
+	}
+	if r.StatusCode >= 400 {
+		return nil, fmt.Errorf("%s: %s", url, r.Status)
+	}
+	return r.Header, nil
+}
+
 func Delete(url string, jwt security.EncodedJwt) error {
 	req, err := http.NewRequest("DELETE", url, nil)
 	if jwt != "" {

@@ -532,7 +532,7 @@ func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *ht
 }
 
 // curl -X DELETE http://localhost:8888/path/to
-// curl -X DELETE http://localhost:8888/path/to?recursive=true
+// curl -X DELETE http://localhost:8888/path/to/?recursive=true
 func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	var err error
 	var fid string
