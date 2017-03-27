@@ -82,7 +82,7 @@ func (vs *VolumeServer) doHeartbeat(sleepInterval time.Duration) error {
 		return err
 	}
 
-	tickChan := time.NewTimer(sleepInterval).C
+	tickChan := time.Tick(sleepInterval)
 
 	for {
 		select {
@@ -92,6 +92,7 @@ func (vs *VolumeServer) doHeartbeat(sleepInterval time.Duration) error {
 				return err
 			}
 		case err := <-doneChan:
+			glog.V(0).Infof("Volume Server heart beat stops with %v", err)
 			return err
 		}
 	}
