@@ -16,6 +16,22 @@ func Resized(ext string, data []byte, width, height int) (resized []byte, w int,
 		return data, 0, 0
 	}
 	srcImage, _, err := image.Decode(bytes.NewReader(data))
+
+	dx := srcImage.Bounds().Dx()
+	dy := srcImage.Bounds().Dy()
+
+	if height == 0 {
+		height = width * dy / dx
+	} else if width == 0 {
+		width = height * dx / dy
+	} else {
+		if width/height > dx/dy { //定高
+			width = height * dx / dy
+		} else if width/height < dx/dy { //定宽
+			height = width * dy / dx
+		}
+	}
+
 	if err == nil {
 		bounds := srcImage.Bounds()
 		var dstImage *image.NRGBA

@@ -2,6 +2,10 @@ package weed_server
 
 import (
 	"bytes"
+	"crypto/md5"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -12,18 +16,27 @@ import (
 	"strings"
 	"time"
 
-	"encoding/json"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
+type JsonEncode struct {
+	Data   interface{} `json:"data"`
+	Msg    string      `json:"msg"`
+	Status int         `json:"status"`
+}
+
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET")
+	w.Header().Set("Access-Control-Max-Age", "1000")
+
 	n := new(storage.Needle)
 	vid, fid, filename, ext, _ := parseURLPath(r.URL.Path)
 	volumeId, err := storage.NewVolumeId(vid)
@@ -124,7 +137,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			mtype = mt
 		}
 	}
-
+	ext = strings.ToLower(ext) // 后缀先转小写，防止匹配不上大写的后缀
 	if ext != ".gz" {
 		if n.IsGzipped() {
 			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
@@ -136,15 +149,51 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
-	if ext == ".png" || ext == ".jpg" || ext == ".gif" {
-		width, height := 0, 0
-		if r.FormValue("width") != "" {
-			width, _ = strconv.Atoi(r.FormValue("width"))
+
+	if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" {
+		width, height, rotate := 0, 0, 0
+		if r.FormValue("w") != "" {
+			width, _ = strconv.Atoi(r.FormValue("w"))
 		}
-		if r.FormValue("height") != "" {
-			height, _ = strconv.Atoi(r.FormValue("height"))
+		if r.FormValue("h") != "" {
+			height, _ = strconv.Atoi(r.FormValue("h"))
 		}
-		n.Data, _, _ = images.Resized(ext, n.Data, width, height)
+		if r.FormValue("r") != "" {
+			rotate, _ = strconv.Atoi(r.FormValue("r"))
+		}
+
+		//缓存
+		if r.Header.Get("exist") != "1" && (r.FormValue("w") != "" || r.FormValue("h") != "" || r.FormValue("r") != "") {
+			glog.V(0).Infoln("生成")
+			n.Data, _, _ = images.Resized(ext, n.Data, width, height)
+			n.Data = images.Rotate(ext, n.Data, rotate)
+
+			reqUrl := r.Header.Get("path") + "?w=" + r.FormValue("w") + "&h=" + r.FormValue("h") + "&r=" + r.FormValue("r")
+			jwt := security.GetJwt(r)
+			_, err = operation.Upload("http://"+r.Host+reqUrl, filename, bytes.NewReader(n.Data), false, "image/jpeg", nil, jwt)
+			if err != nil {
+				glog.V(0).Infoln(err)
+			}
+		}
+	}
+
+	if r.FormValue("md5") != "" {
+		md5Ctx := md5.New()
+		md5Ctx.Write(n.Data)
+		cipherStr := md5Ctx.Sum(nil)
+		glog.V(0).Infoln("md5", hex.EncodeToString(cipherStr))
+
+		fileInfo := map[string]interface{}{
+			"url": r.Header.Get("path"),
+			"md5": hex.EncodeToString(cipherStr),
+		}
+		fmt.Fprintf(w, "%v", (&JsonEncode{fileInfo, "success", 200}).ReturnJson())
+		return
+	}
+
+	//重命名
+	if r.FormValue("rename") != "" {
+		filename = r.FormValue("rename") + ext
 	}
 
 	if e := writeResponseContent(filename, mtype, bytes.NewReader(n.Data), w, r); e != nil {
@@ -310,4 +359,10 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 	w.WriteHeader(http.StatusPartialContent)
 	_, e = io.CopyN(w, sendContent, sendSize)
 	return e
+}
+
+//返回json
+func (j *JsonEncode) ReturnJson() string {
+	b, _ := json.MarshalIndent(j, "", "	")
+	return string(b)
 }
