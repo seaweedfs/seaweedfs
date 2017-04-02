@@ -17,7 +17,7 @@ func MaybePreprocessImage(filename string, data []byte, width, height int) (resi
 	ext := filepath.Ext(filename)
 	ext = strings.ToLower(ext)
 	switch ext {
-	case ".png", ".gif":
+	case ".png", ".gif", ".webp":
 		return Resized(ext, data, width, height)
 	case ".jpg", ".jpeg":
 		data = FixJpgOrientation(data)

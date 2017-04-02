@@ -136,7 +136,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
-	if ext == ".png" || ext == ".jpg" || ext == ".gif" {
+	if ext == ".png" || ext == ".jpg" || ext == ".gif"|| ext == ".webp" {
 		width, height := 0, 0
 		if r.FormValue("width") != "" {
 			width, _ = strconv.Atoi(r.FormValue("width"))
