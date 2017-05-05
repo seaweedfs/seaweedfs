@@ -12,7 +12,7 @@ import (
 	"github.com/disintegration/imaging"
 )
 
-func Resized(ext string, data []byte, width, height int) (resized []byte, w int, h int) {
+func Resized(ext string, data []byte, width, height int, mode string) (resized []byte, w int, h int) {
 	if width == 0 && height == 0 {
 		return data, 0, 0
 	}
@@ -21,11 +21,18 @@ func Resized(ext string, data []byte, width, height int) (resized []byte, w int,
 		bounds := srcImage.Bounds()
 		var dstImage *image.NRGBA
 		if bounds.Dx() > width && width != 0 || bounds.Dy() > height && height != 0 {
-			if width == height && bounds.Dx() != bounds.Dy() {
-				dstImage = imaging.Thumbnail(srcImage, width, height, imaging.Lanczos)
-				w, h = width, height
-			} else {
-				dstImage = imaging.Resize(srcImage, width, height, imaging.Lanczos)
+			switch mode {
+			case "fit":
+				dstImage = imaging.Fit(srcImage, width, height, imaging.Lanczos)
+			case "fill":
+				dstImage = imaging.Fill(srcImage, width, height, imaging.Center, imaging.Lanczos)
+			default:
+				if width == height && bounds.Dx() != bounds.Dy() {
+					dstImage = imaging.Thumbnail(srcImage, width, height, imaging.Lanczos)
+					w, h = width, height
+				} else {
+					dstImage = imaging.Resize(srcImage, width, height, imaging.Lanczos)
+				}
 			}
 		} else {
 			return data, bounds.Dx(), bounds.Dy()
