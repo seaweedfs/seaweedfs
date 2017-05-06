@@ -12,7 +12,7 @@
 - [Wiki Documentation](https://github.com/chrislusf/seaweedfs/wiki)
 
 
-[![](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=EEECLJ8QGTTPC) 
+[![](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=EEECLJ8QGTTPC)
 
 ## Introduction
 
@@ -135,6 +135,8 @@ If you want get a scaled version of an image, you can add some params:
 
 ```
 http://localhost:8080/3/01637037d6.jpg?height=200&width=200
+http://localhost:8080/3/01637037d6.jpg?height=200&width=200&mode=fit
+http://localhost:8080/3/01637037d6.jpg?height=200&width=200&mode=fill
 ```
 
 ### Rack-Aware and Data Center-Aware Replication ###
