@@ -201,9 +201,11 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 		}()
 	}
 
+	random := rand.New(rand.NewSource(time.Now().UnixNano()))
+
 	for id := range idChan {
 		start := time.Now()
-		fileSize := int64(*b.fileSize + rand.Intn(64))
+		fileSize := int64(*b.fileSize + random.Intn(64))
 		fp := &operation.FilePart{Reader: &FakeReader{id: uint64(id), size: fileSize}, FileSize: fileSize}
 		ar := &operation.VolumeAssignRequest{
 			Count:      1,
@@ -212,7 +214,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 		if assignResult, err := operation.Assign(*b.server, ar); err == nil {
 			fp.Server, fp.Fid, fp.Collection = assignResult.Url, assignResult.Fid, *b.collection
 			if _, err := fp.Upload(0, *b.server, secret); err == nil {
-				if rand.Intn(100) < *b.deletePercentage {
+				if random.Intn(100) < *b.deletePercentage {
 					s.total++
 					delayedDeleteChan <- &delayedFile{time.Now().Add(time.Second), fp}
 				} else {
@@ -239,6 +241,8 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 
 func readFiles(fileIdLineChan chan string, s *stat) {
 	defer wait.Done()
+	random := rand.New(rand.NewSource(time.Now().UnixNano()))
+
 	for fid := range fileIdLineChan {
 		if len(fid) == 0 {
 			continue
@@ -258,7 +262,7 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 			println("!!!! volume id ", vid, " location not found!!!!!")
 			continue
 		}
-		server := ret.Locations[rand.Intn(len(ret.Locations))].Url
+		server := ret.Locations[random.Intn(len(ret.Locations))].Url
 		url := "http://" + server + "/" + fid
 		if bytesRead, err := util.Get(url); err == nil {
 			s.completed++
@@ -297,6 +301,8 @@ func readFileIds(fileName string, fileIdLineChan chan string) {
 	}
 	defer file.Close()
 
+	random := rand.New(rand.NewSource(time.Now().UnixNano()))
+
 	r := bufio.NewReader(file)
 	if *b.sequentialRead {
 		for {
@@ -317,7 +323,7 @@ func readFileIds(fileName string, fileIdLineChan chan string) {
 		}
 		if len(lines) > 0 {
 			for i := 0; i < readStats.total; i++ {
-				fileIdLineChan <- lines[rand.Intn(len(lines))]
+				fileIdLineChan <- lines[random.Intn(len(lines))]
 			}
 		}
 	}
