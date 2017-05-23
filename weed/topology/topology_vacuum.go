@@ -88,9 +88,9 @@ func (t *Topology) Vacuum(garbageThreshold string) int {
 				volumeLayout := vl.(*VolumeLayout)
 				for vid, locationlist := range volumeLayout.vid2location {
 
-					vl.accessLock.RLock()
+					volumeLayout.accessLock.RLock()
 					isReadOnly, hasValue := volumeLayout.readonlyVolumes[vid]
-					vl.accessLock.RUnlock()
+					volumeLayout.accessLock.RUnlock()
 
 					if hasValue && isReadOnly {
 						continue
