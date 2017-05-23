@@ -16,6 +16,7 @@ type VolumeLayout struct {
 	ttl              *storage.TTL
 	vid2location     map[storage.VolumeId]*VolumeLocationList
 	writables        []storage.VolumeId        // transient array of writable volume id
+	readonlyVolumes  map[storage.VolumeId]bool // transient set of readonly volumes
 	oversizedVolumes map[storage.VolumeId]bool // set of oversized volumes
 	volumeSizeLimit  uint64
 	accessLock       sync.RWMutex
@@ -27,6 +28,7 @@ func NewVolumeLayout(rp *storage.ReplicaPlacement, ttl *storage.TTL, volumeSizeL
 		ttl:              ttl,
 		vid2location:     make(map[storage.VolumeId]*VolumeLocationList),
 		writables:        *new([]storage.VolumeId),
+		readonlyVolumes:  make(map[storage.VolumeId]bool),
 		oversizedVolumes: make(map[storage.VolumeId]bool),
 		volumeSizeLimit:  volumeSizeLimit,
 	}
@@ -50,11 +52,15 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 			if v_info.ReadOnly {
 				glog.V(3).Infof("vid %d removed from writable", v.Id)
 				vl.removeFromWritable(v.Id)
+				vl.readonlyVolumes[v.Id] = true
 				return
+			} else {
+				delete(vl.readonlyVolumes, v.Id)
 			}
 		} else {
 			glog.V(3).Infof("vid %d removed from writable", v.Id)
 			vl.removeFromWritable(v.Id)
+			delete(vl.readonlyVolumes, v.Id)
 			return
 		}
 	}

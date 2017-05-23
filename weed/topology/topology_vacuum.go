@@ -86,14 +86,16 @@ func (t *Topology) Vacuum(garbageThreshold string) int {
 		for _, vl := range c.storageType2VolumeLayout.Items() {
 			if vl != nil {
 				volumeLayout := vl.(*VolumeLayout)
-				writableSet := make(map[storage.VolumeId]bool)
-				for _, id := range volumeLayout.writables {
-					writableSet[id] = true
-				}
 				for vid, locationlist := range volumeLayout.vid2location {
-					if _, isWritable := writableSet[vid]; !isWritable {
+
+					vl.accessLock.RLock()
+					isReadOnly, hasValue := volumeLayout.readonlyVolumes[vid]
+					vl.accessLock.RUnlock()
+
+					if hasValue && isReadOnly {
 						continue
 					}
+
 					glog.V(0).Infof("check vacuum on collection:%s volume:%d", c.Name, vid)
 					if batchVacuumVolumeCheck(volumeLayout, vid, locationlist, garbageThreshold) {
 						if batchVacuumVolumeCompact(volumeLayout, vid, locationlist) {
