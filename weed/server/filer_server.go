@@ -26,6 +26,7 @@ type filerConf struct {
 	MysqlConf []mysql_store.MySqlConf `json:"mysql"`
 	mysql_store.ShardingConf
 	PostgresConf *postgres_store.PostgresConf `json:"postgres"`
+	AppConf      []security.AppConf           `json:"appInfo"`
 }
 
 func parseConfFile(confPath string) (*filerConf, error) {
@@ -55,6 +56,7 @@ type FilerServer struct {
 	filer              filer.Filer
 	maxMB              int
 	masterNodes        *storage.MasterNodes
+	guard              *security.Guard
 }
 
 func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir string, collection string,
@@ -110,6 +112,11 @@ func NewFilerServer(r *http.ServeMux, ip string, port int, master string, dir st
 		r.HandleFunc("/__api__", fs.apiHandler)
 	}
 
+	/*
+		guard := security.NewGuard(nil, secret, setting.AppConf)
+		fs.guard = guard
+		r.HandleFunc("/", guard.CheckAuthorization(fs.filerHandler))
+	*/
 	r.HandleFunc("/", fs.filerHandler)
 
 	go func() {

@@ -61,7 +61,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", volumeSizeLimitMB, "MB")
 
-	ms.guard = security.NewGuard(whiteList, secureKey)
+	ms.guard = security.NewGuard(whiteList, secureKey, nil)
 
 	r.HandleFunc("/", ms.uiStatusHandler)
 	r.HandleFunc("/ui/index.html", ms.uiStatusHandler)
