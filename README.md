@@ -39,7 +39,7 @@ SeaweedFS started by implementing [Facebook's Haystack design paper](http://www.
 * Optional [filer server][Filer] provides "normal" directories and files via http
 * Optionally fix the orientation for jpeg pictures
 * Support Etag, Accept-Range, Last-Modified, etc.
-* Support in-memory/leveldb/boltdb mode tuning for memory/performance balance.
+* Support in-memory/leveldb/boltdb/btree mode tuning for memory/performance balance.
 
 [Filer]: https://github.com/chrislusf/seaweedfs/wiki/Filer
 
