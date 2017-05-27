@@ -118,7 +118,7 @@ func runExport(cmd *Command, args []string) bool {
 	}
 	defer indexFile.Close()
 
-	needleMap, err := storage.LoadNeedleMap(indexFile)
+	needleMap, err := storage.LoadBtreeNeedleMap(indexFile)
 	if err != nil {
 		glog.Fatalf("cannot load needle map from %s: %s", indexFile.Name(), err)
 	}

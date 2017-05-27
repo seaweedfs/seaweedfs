@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -15,6 +16,7 @@ const (
 	NeedleMapInMemory NeedleMapType = iota
 	NeedleMapLevelDb
 	NeedleMapBoltDb
+	NeedleMapBtree
 )
 
 const (
@@ -23,7 +25,7 @@ const (
 
 type NeedleMapper interface {
 	Put(key uint64, offset uint32, size uint32) error
-	Get(key uint64) (element *NeedleValue, ok bool)
+	Get(key uint64) (element *needle.NeedleValue, ok bool)
 	Delete(key uint64, offset uint32) error
 	Close()
 	Destroy() error

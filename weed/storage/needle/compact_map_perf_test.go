@@ -1,4 +1,4 @@
-package storage
+package needle
 
 import (
 	"log"
@@ -11,15 +11,15 @@ import (
 
 func TestMemoryUsage(t *testing.T) {
 
-	indexFile, ie := os.OpenFile("../../test/sample.idx", os.O_RDWR|os.O_RDONLY, 0644)
+	indexFile, ie := os.OpenFile("../../../test/sample.idx", os.O_RDWR|os.O_RDONLY, 0644)
 	if ie != nil {
 		log.Fatalln(ie)
 	}
-	LoadNewNeedleMap(indexFile)
+	loadNewNeedleMap(indexFile)
 
 }
 
-func LoadNewNeedleMap(file *os.File) CompactMap {
+func loadNewNeedleMap(file *os.File) {
 	m := NewCompactMap()
 	bytes := make([]byte, 16*1024)
 	count, e := file.Read(bytes)
@@ -41,5 +41,4 @@ func LoadNewNeedleMap(file *os.File) CompactMap {
 
 		count, e = file.Read(bytes)
 	}
-	return m
 }

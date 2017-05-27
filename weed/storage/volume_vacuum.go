@@ -221,7 +221,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 	}
 	defer idx.Close()
 
-	nm := NewNeedleMap(idx)
+	nm := NewBtreeNeedleMap(idx)
 	new_offset := int64(SuperBlockSize)
 
 	now := uint64(time.Now().Unix())
@@ -272,7 +272,7 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 	}
 	defer oldIndexFile.Close()
 
-	nm := NewNeedleMap(idx)
+	nm := NewBtreeNeedleMap(idx)
 	now := uint64(time.Now().Unix())
 
 	v.SuperBlock.CompactRevision++

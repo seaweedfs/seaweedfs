@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/syndtr/goleveldb/leveldb"
 )
@@ -29,7 +30,7 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File) (m *LevelDbNeedl
 		return
 	}
 	glog.V(1).Infof("Loading %s...", indexFile.Name())
-	nm, indexLoadError := LoadNeedleMap(indexFile)
+	nm, indexLoadError := LoadBtreeNeedleMap(indexFile)
 	if indexLoadError != nil {
 		return nil, indexLoadError
 	}
@@ -70,7 +71,7 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 	})
 }
 
-func (m *LevelDbNeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
+func (m *LevelDbNeedleMap) Get(key uint64) (element *needle.NeedleValue, ok bool) {
 	bytes := make([]byte, 8)
 	util.Uint64toBytes(bytes, key)
 	data, err := m.db.Get(bytes, nil)
@@ -79,7 +80,7 @@ func (m *LevelDbNeedleMap) Get(key uint64) (element *NeedleValue, ok bool) {
 	}
 	offset := util.BytesToUint32(data[0:4])
 	size := util.BytesToUint32(data[4:8])
-	return &NeedleValue{Key: Key(key), Offset: offset, Size: size}, true
+	return &needle.NeedleValue{Key: needle.Key(key), Offset: offset, Size: size}, true
 }
 
 func (m *LevelDbNeedleMap) Put(key uint64, offset uint32, size uint32) error {

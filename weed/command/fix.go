@@ -43,7 +43,7 @@ func runFix(cmd *Command, args []string) bool {
 	}
 	defer indexFile.Close()
 
-	nm := storage.NewNeedleMap(indexFile)
+	nm := storage.NewBtreeNeedleMap(indexFile)
 	defer nm.Close()
 
 	vid := storage.VolumeId(*fixVolumeId)
