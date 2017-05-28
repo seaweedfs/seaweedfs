@@ -41,4 +41,4 @@ deploy:
   on:
     tags: true
     repo: chrislusf/seaweedfs
-    go: tip
+    go: 1.8.3
