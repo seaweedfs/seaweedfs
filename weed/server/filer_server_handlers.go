@@ -18,3 +18,12 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		fs.PostHandler(w, r)
 	}
 }
+
+func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		fs.GetOrHeadHandler(w, r, true)
+	case "HEAD":
+		fs.GetOrHeadHandler(w, r, false)
+	}
+}
