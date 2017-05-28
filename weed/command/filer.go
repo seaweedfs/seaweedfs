@@ -83,8 +83,8 @@ func runFiler(cmd *Command, args []string) bool {
 		glog.Fatalf("Check Meta Folder (-dir) Writable %s : %s", *f.dir, err)
 	}
 
-	r := http.NewServeMux()
-	_, nfs_err := weed_server.NewFilerServer(r, *f.ip, *f.port, *f.master, *f.dir, *f.collection,
+	defaultMux := http.NewServeMux()
+	_, nfs_err := weed_server.NewFilerServer(defaultMux, *f.ip, *f.port, *f.master, *f.dir, *f.collection,
 		*f.defaultReplicaPlacement, *f.redirectOnRead, *f.disableDirListing,
 		*f.confFile,
 		*f.maxMB,
@@ -103,7 +103,7 @@ func runFiler(cmd *Command, args []string) bool {
 	if e != nil {
 		glog.Fatalf("Filer listener error: %v", e)
 	}
-	if e := http.Serve(filerListener, r); e != nil {
+	if e := http.Serve(filerListener, defaultMux); e != nil {
 		glog.Fatalf("Filer Fail to serve: %v", e)
 	}
 
