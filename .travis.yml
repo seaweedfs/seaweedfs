@@ -3,7 +3,7 @@ language: go
 go:
 - 1.7
 - 1.8.3
-# - tip
+- tip
 
 before_install:
 - export PATH=/home/travis/gopath/bin:$PATH
@@ -41,4 +41,4 @@ deploy:
   on:
     tags: true
     repo: chrislusf/seaweedfs
-    go: 1.8.3
+    go: tip
