@@ -6,7 +6,6 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
-	"github.com/chai2010/webp"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/disintegration/imaging"
@@ -45,8 +44,6 @@ func Resized(ext string, data []byte, width, height int, mode string) (resized [
 			jpeg.Encode(&buf, dstImage, nil)
 		case ".gif":
 			gif.Encode(&buf, dstImage, nil)
-		case ".webp":
-			webp.Encode(&buf, dstImage, &webp.Options{Quality: 70})
 		}
 		return buf.Bytes(), dstImage.Bounds().Dx(), dstImage.Bounds().Dy()
 	} else {
