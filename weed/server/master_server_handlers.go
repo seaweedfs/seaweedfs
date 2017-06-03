@@ -31,10 +31,10 @@ func (ms *MasterServer) lookupVolumeId(vids []string, collection string) (volume
 				}
 				volumeLocations[vid] = operation.LookupResult{VolumeId: vid, Locations: ret}
 			} else {
-				volumeLocations[vid] = operation.LookupResult{VolumeId: vid, Error: "volumeId not found."}
+				volumeLocations[vid] = operation.LookupResult{VolumeId: vid, Error: fmt.Sprintf("volumeId %s not found.", vid)}
 			}
 		} else {
-			volumeLocations[vid] = operation.LookupResult{VolumeId: vid, Error: "Unknown volumeId format."}
+			volumeLocations[vid] = operation.LookupResult{VolumeId: vid, Error: fmt.Sprintf("Unknown volumeId format: %s", vid)}
 		}
 	}
 	return
