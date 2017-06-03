@@ -178,7 +178,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 			if incre_idx_entry.offset != 0 && incre_idx_entry.size != 0 {
 				//even the needle cache in memory is hit, the need_bytes is correct
 				var needle_bytes []byte
-				needle_bytes, _, err = ReadNeedleBlob(oldDatFile, int64(incre_idx_entry.offset)*NeedlePaddingSize, incre_idx_entry.size)
+				needle_bytes, err = ReadNeedleBlob(oldDatFile, int64(incre_idx_entry.offset)*NeedlePaddingSize, incre_idx_entry.size)
 				if err != nil {
 					return
 				}
@@ -291,7 +291,6 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 
 		n := new(Needle)
 		n.ReadData(v.dataFile, int64(offset)*NeedlePaddingSize, size, v.Version())
-		defer n.ReleaseMemory()
 
 		if n.HasTtl() && now >= n.LastModified+uint64(v.Ttl.Minutes()*60) {
 			return nil

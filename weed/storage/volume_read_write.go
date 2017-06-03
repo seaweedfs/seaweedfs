@@ -25,7 +25,6 @@ func (v *Volume) isFileUnchanged(n *Needle) bool {
 			glog.V(0).Infof("Failed to check updated file %v", err)
 			return false
 		}
-		defer oldNeedle.ReleaseMemory()
 		if oldNeedle.Checksum == n.Checksum && bytes.Equal(oldNeedle.Data, n.Data) {
 			n.DataSize = oldNeedle.DataSize
 			return true
@@ -172,7 +171,6 @@ func (v *Volume) readNeedle(n *Needle) (int, error) {
 	if uint64(time.Now().Unix()) < n.LastModified+uint64(ttlMinutes*60) {
 		return bytesRead, nil
 	}
-	n.ReleaseMemory()
 	return -1, errors.New("Not Found")
 }
 
