@@ -49,8 +49,6 @@ type Needle struct {
 
 	Checksum CRC    `comment:"CRC32 to check integrity"`
 	Padding  []byte `comment:"Aligned to 8 bytes"`
-
-	rawBlock *Block // underlying supporing []byte, fetched and released into a pool
 }
 
 func (n *Needle) String() (str string) {

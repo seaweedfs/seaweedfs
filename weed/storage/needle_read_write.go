@@ -151,16 +151,15 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, actualSize i
 	return 0, 0, fmt.Errorf("Unsupported Version! (%d)", version)
 }
 
-func ReadNeedleBlob(r *os.File, offset int64, size uint32) (dataSlice []byte, block *Block, err error) {
+func ReadNeedleBlob(r *os.File, offset int64, size uint32) (dataSlice []byte, err error) {
 	return getBytesForFileBlock(r, offset, int(getActualSize(size)))
 }
 
 func (n *Needle) ReadData(r *os.File, offset int64, size uint32, version Version) (err error) {
-	bytes, block, err := ReadNeedleBlob(r, offset, size)
+	bytes, err := ReadNeedleBlob(r, offset, size)
 	if err != nil {
 		return err
 	}
-	n.rawBlock = block
 	n.ParseNeedleHeader(bytes)
 	if n.Size != size {
 		return fmt.Errorf("File Entry Not Found. Needle %d Memory %d", n.Size, size)
