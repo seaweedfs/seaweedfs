@@ -44,8 +44,10 @@ func (s *RaftServer) HandleFunc(pattern string, handler func(http.ResponseWriter
 func (s *RaftServer) redirectToLeader(w http.ResponseWriter, req *http.Request) {
 	if leader, e := s.topo.Leader(); e == nil {
 		//http.StatusMovedPermanently does not cause http POST following redirection
-		glog.V(0).Infoln("Redirecting to", http.StatusMovedPermanently, "http://"+leader+req.URL.Path)
-		http.Redirect(w, req, "http://"+leader+req.URL.Path, http.StatusMovedPermanently)
+		learderLocation := "http://" + leader + req.URL.Path
+		glog.V(0).Infoln("Redirecting to", learderLocation)
+		writeJsonQuiet(w, req, http.StatusOK, learderLocation)
+		// http.Redirect(w, req, "http://"+leader+req.URL.Path, http.StatusFound) // not working any more
 	} else {
 		glog.V(0).Infoln("Error: Leader Unknown")
 		http.Error(w, "Leader unknown", http.StatusInternalServerError)

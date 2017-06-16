@@ -189,14 +189,12 @@ func postFollowingOneRedirect(target string, contentType string, b bytes.Buffer)
 		return err
 	}
 	defer resp.Body.Close()
-	reply, _ := ioutil.ReadAll(resp.Body)
 	statusCode := resp.StatusCode
+	data, _ := ioutil.ReadAll(resp.Body)
+	reply := string(data)
 
-	if statusCode == http.StatusMovedPermanently {
-		var urlStr string
-		if urlStr = resp.Header.Get("Location"); urlStr == "" {
-			return fmt.Errorf("%d response missing Location header", resp.StatusCode)
-		}
+	if strings.HasPrefix(reply, "\"http") {
+		urlStr := reply[1 : len(reply)-1]
 
 		glog.V(0).Infoln("Post redirected to ", urlStr)
 		resp2, err2 := http.Post(urlStr, contentType, backupReader)
@@ -204,13 +202,13 @@ func postFollowingOneRedirect(target string, contentType string, b bytes.Buffer)
 			return err2
 		}
 		defer resp2.Body.Close()
-		reply, _ = ioutil.ReadAll(resp2.Body)
+		data, _ = ioutil.ReadAll(resp2.Body)
 		statusCode = resp2.StatusCode
 	}
 
-	glog.V(0).Infoln("Post returned status: ", statusCode, string(reply))
+	glog.V(0).Infoln("Post returned status: ", statusCode, string(data))
 	if statusCode != http.StatusOK {
-		return errors.New(string(reply))
+		return errors.New(string(data))
 	}
 
 	return nil
