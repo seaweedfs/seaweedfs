@@ -56,5 +56,7 @@ func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 	dn.UpAdjustVolumeCountDelta(-dn.GetVolumeCount())
 	dn.UpAdjustActiveVolumeCountDelta(-dn.GetActiveVolumeCount())
 	dn.UpAdjustMaxVolumeCountDelta(-dn.GetMaxVolumeCount())
-	dn.Parent().UnlinkChildNode(dn.Id())
+	if dn.Parent() != nil {
+		dn.Parent().UnlinkChildNode(dn.Id())
+	}
 }
