@@ -1,6 +1,6 @@
 // +build plan9
 
-package command
+package util
 
 func OnInterrupt(fn func()) {
 }

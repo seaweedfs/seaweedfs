@@ -31,7 +31,7 @@ func runMount(cmd *Command, args []string) bool {
 		return false
 	}
 
-	OnInterrupt(func() {
+	util.OnInterrupt(func() {
 		fuse.Unmount(*mountOptions.dir)
 		c.Close()
 	})

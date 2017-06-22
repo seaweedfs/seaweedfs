@@ -1,6 +1,6 @@
 // +build !plan9
 
-package command
+package util
 
 import (
 	"os"
