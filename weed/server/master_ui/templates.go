@@ -33,6 +33,7 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
                 <th>Max</th>
                 <td>{{ .Topology.Max }}</td>
               </tr>
+              {{ with .RaftServer }}
               <tr>
                 <th>Leader</th>
                 <td><a href="http://{{ .Leader }}">{{ .Leader }}</a></td>
@@ -45,6 +46,7 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
                 {{ end }}
                 </ul></td>
               </tr>
+              {{ end }}
             </tbody>
           </table>
         </div>
