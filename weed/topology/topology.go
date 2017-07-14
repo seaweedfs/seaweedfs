@@ -116,6 +116,9 @@ func (t *Topology) GetVolumeLayout(collectionName string, rp *storage.ReplicaPla
 
 func (t *Topology) FindCollection(collectionName string) (*Collection, bool) {
 	c, hasCollection := t.collectionMap.Find(collectionName)
+	if !hasCollection {
+		return nil, false
+	}
 	return c.(*Collection), hasCollection
 }
 
