@@ -151,6 +151,10 @@ func runServer(cmd *Command, args []string) bool {
 		}
 	}
 
+	if *masterVolumeSizeLimitMB > 30*1000 {
+		glog.Fatalf("masterVolumeSizeLimitMB should be less than 30000")
+	}
+
 	if *masterMetaFolder == "" {
 		*masterMetaFolder = folders[0]
 	}

@@ -65,6 +65,9 @@ func runMaster(cmd *Command, args []string) bool {
 	if *masterWhiteListOption != "" {
 		masterWhiteList = strings.Split(*masterWhiteListOption, ",")
 	}
+	if *volumeSizeLimitMB > 30*1000 {
+		glog.Fatalf("volumeSizeLimitMB should be smaller than 30000")
+	}
 
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, *mport, *metaFolder,
