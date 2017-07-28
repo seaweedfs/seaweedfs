@@ -48,10 +48,14 @@ func Post(url string, values url.Values) ([]byte, error) {
 		return nil, err
 	}
 	defer r.Body.Close()
-	if r.StatusCode >= 400 {
-		return nil, fmt.Errorf("%s: %s", url, r.Status)
-	}
 	b, err := ioutil.ReadAll(r.Body)
+	if r.StatusCode >= 400 {
+		if err != nil {
+			return nil, fmt.Errorf("%s: %d - %s", url, r.StatusCode, string(b))
+		} else {
+			return nil, fmt.Errorf("%s: %s", url, r.Status)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
