@@ -41,7 +41,7 @@ func init() {
 }
 
 var cmdUpload = &Command{
-	UsageLine: "upload -master=localhost:9333 file1 [file2 file3]\n         weed upload -server=localhost:9333 -dir=one_directory -include=*.pdf",
+	UsageLine: "upload -master=localhost:9333 file1 [file2 file3]\n         weed upload -master=localhost:9333 -dir=one_directory -include=*.pdf",
 	Short:     "upload one or a list of files",
 	Long: `upload one or a list of files, or batch upload one whole folder recursively.
 
