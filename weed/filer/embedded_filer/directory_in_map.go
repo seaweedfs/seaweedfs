@@ -167,7 +167,7 @@ func (dm *DirectoryManagerInMap) findDirectory(dirPath string) (*DirectoryEntryI
 		if sub, ok := dir.getChild(parts[i]); ok {
 			dir = sub
 		} else {
-			return dm.Root, fmt.Errorf("Directory %s Not Found", dirPath)
+			return dm.Root, filer.ErrNotFound
 		}
 	}
 	return dir, nil
