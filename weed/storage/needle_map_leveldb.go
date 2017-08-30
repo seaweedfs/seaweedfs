@@ -131,5 +131,5 @@ func (m *LevelDbNeedleMap) Close() {
 func (m *LevelDbNeedleMap) Destroy() error {
 	m.Close()
 	os.Remove(m.indexFile.Name())
-	return os.Remove(m.dbFileName)
+	return os.RemoveAll(m.dbFileName)
 }
