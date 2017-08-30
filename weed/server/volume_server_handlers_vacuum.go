@@ -2,10 +2,9 @@ package weed_server
 
 import (
 	"net/http"
-
-	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"strconv"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 func (vs *VolumeServer) vacuumVolumeCheckHandler(w http.ResponseWriter, r *http.Request) {
