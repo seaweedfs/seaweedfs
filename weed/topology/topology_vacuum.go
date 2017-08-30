@@ -55,7 +55,8 @@ func batchVacuumVolumeCompact(vl *VolumeLayout, vid storage.VolumeId, locationli
 	isVacuumSuccess := true
 	for _ = range locationlist.list {
 		select {
-		case _ = <-ch:
+		case canCommit := <-ch:
+			isVacuumSuccess = isVacuumSuccess && canCommit
 		case <-time.After(30 * time.Minute):
 			isVacuumSuccess = false
 			break
