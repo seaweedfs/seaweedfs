@@ -33,14 +33,16 @@ func runCompact(cmd *Command, args []string) bool {
 		return false
 	}
 
+	preallocate := *compactVolumePreallocate * (1 << 20)
+
 	vid := storage.VolumeId(*compactVolumeId)
 	v, err := storage.NewVolume(*compactVolumePath, *compactVolumeCollection, vid,
-		storage.NeedleMapInMemory, nil, nil, *compactVolumePreallocate*(1<<20))
+		storage.NeedleMapInMemory, nil, nil, preallocate)
 	if err != nil {
 		glog.Fatalf("Load Volume [ERROR] %s\n", err)
 	}
 	if *compactMethod == 0 {
-		if err = v.Compact(); err != nil {
+		if err = v.Compact(preallocate); err != nil {
 			glog.Fatalf("Compact Volume [ERROR] %s\n", err)
 		}
 	} else {

@@ -22,13 +22,13 @@ func (s *Store) CheckCompactVolume(volumeIdString string, garbageThresholdString
 	}
 	return fmt.Errorf("volume id %d is not found during check compact", vid), false
 }
-func (s *Store) CompactVolume(volumeIdString string) error {
+func (s *Store) CompactVolume(volumeIdString string, preallocate int64) error {
 	vid, err := NewVolumeId(volumeIdString)
 	if err != nil {
 		return fmt.Errorf("Volume Id %s is not a valid unsigned integer", volumeIdString)
 	}
 	if v := s.findVolume(vid); v != nil {
-		return v.Compact()
+		return v.Compact(preallocate)
 	}
 	return fmt.Errorf("volume id %d is not found during compact", vid)
 }
@@ -41,4 +41,14 @@ func (s *Store) CommitCompactVolume(volumeIdString string) error {
 		return v.commitCompact()
 	}
 	return fmt.Errorf("volume id %d is not found during commit compact", vid)
+}
+func (s *Store) CommitCleanupVolume(volumeIdString string) error {
+	vid, err := NewVolumeId(volumeIdString)
+	if err != nil {
+		return fmt.Errorf("Volume Id %s is not a valid unsigned integer", volumeIdString)
+	}
+	if v := s.findVolume(vid); v != nil {
+		return v.cleanupCompact()
+	}
+	return fmt.Errorf("volume id %d is not found during cleaning up", vid)
 }

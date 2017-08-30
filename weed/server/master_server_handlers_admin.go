@@ -42,7 +42,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 		gcThreshold = ms.garbageThreshold
 	}
 	glog.Infoln("garbageThreshold =", gcThreshold)
-	ms.Topo.Vacuum(gcThreshold)
+	ms.Topo.Vacuum(gcThreshold, ms.preallocate)
 	ms.dirStatusHandler(w, r)
 }
 

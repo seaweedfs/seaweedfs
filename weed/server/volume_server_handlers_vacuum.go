@@ -3,7 +3,9 @@ package weed_server
 import (
 	"net/http"
 
+	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"strconv"
 )
 
 func (vs *VolumeServer) vacuumVolumeCheckHandler(w http.ResponseWriter, r *http.Request) {
@@ -16,7 +18,15 @@ func (vs *VolumeServer) vacuumVolumeCheckHandler(w http.ResponseWriter, r *http.
 	glog.V(2).Infoln("checked compacting volume =", r.FormValue("volume"), "garbageThreshold =", r.FormValue("garbageThreshold"), "vacuum =", ret)
 }
 func (vs *VolumeServer) vacuumVolumeCompactHandler(w http.ResponseWriter, r *http.Request) {
-	err := vs.store.CompactVolume(r.FormValue("volume"))
+	var preallocate int64
+	var err error
+	if r.FormValue("preallocate") != "" {
+		preallocate, err = strconv.ParseInt(r.FormValue("preallocate"), 10, 64)
+		if err != nil {
+			glog.V(0).Infoln("Failed to parse int64 preallocate = %s: %v", r.FormValue("preallocate"), err)
+		}
+	}
+	err = vs.store.CompactVolume(r.FormValue("volume"), preallocate)
 	if err == nil {
 		writeJsonQuiet(w, r, http.StatusOK, map[string]string{"error": ""})
 	} else {
@@ -32,4 +42,13 @@ func (vs *VolumeServer) vacuumVolumeCommitHandler(w http.ResponseWriter, r *http
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 	}
 	glog.V(2).Infoln("commit compact volume =", r.FormValue("volume"), ", error =", err)
+}
+func (vs *VolumeServer) vacuumVolumeCleanupHandler(w http.ResponseWriter, r *http.Request) {
+	err := vs.store.CommitCleanupVolume(r.FormValue("volume"))
+	if err == nil {
+		writeJsonQuiet(w, r, http.StatusOK, map[string]string{"error": ""})
+	} else {
+		writeJsonError(w, r, http.StatusInternalServerError, err)
+	}
+	glog.V(2).Infoln("cleanup compact volume =", r.FormValue("volume"), ", error =", err)
 }

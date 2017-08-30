@@ -13,7 +13,7 @@ func (v *Volume) garbageLevel() float64 {
 	return float64(v.nm.DeletedSize()) / float64(v.ContentSize())
 }
 
-func (v *Volume) Compact() error {
+func (v *Volume) Compact(preallocate int64) error {
 	glog.V(3).Infof("Compacting ...")
 	//no need to lock for copy on write
 	//v.accessLock.Lock()
@@ -24,7 +24,7 @@ func (v *Volume) Compact() error {
 	v.lastCompactIndexOffset = v.nm.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactRevision
 	glog.V(3).Infof("creating copies for volume %d ,last offset %d...", v.Id, v.lastCompactIndexOffset)
-	return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx", 0)
+	return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx", preallocate)
 }
 
 func (v *Volume) Compact2() error {
@@ -68,6 +68,20 @@ func (v *Volume) commitCompact() error {
 	glog.V(3).Infof("Loading Commit file...")
 	if e = v.load(true, false, v.needleMapKind, 0); e != nil {
 		return e
+	}
+	return nil
+}
+
+func (v *Volume) cleanupCompact() error {
+	glog.V(0).Infof("Cleaning up vacuuming...")
+
+	e1 := os.Remove(v.FileName() + ".cpd")
+	e2 := os.Remove(v.FileName() + ".cpx")
+	if e1 != nil {
+		return e1
+	}
+	if e2 != nil {
+		return e2
 	}
 	return nil
 }

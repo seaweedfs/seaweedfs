@@ -55,7 +55,7 @@ func (v *Volume) Synchronize(volumeServer string) (err error) {
 			return fmt.Errorf("Failed to sync volume %d entries with %s: %v", v.Id, volumeServer, err)
 		}
 		if lastCompactRevision != compactRevision && lastCompactRevision != 0 {
-			if err = v.Compact(); err != nil {
+			if err = v.Compact(0); err != nil {
 				return fmt.Errorf("Compact Volume before synchronizing %v", err)
 			}
 			if err = v.commitCompact(); err != nil {

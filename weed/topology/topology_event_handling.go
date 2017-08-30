@@ -8,7 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage"
 )
 
-func (t *Topology) StartRefreshWritableVolumes(garbageThreshold string) {
+func (t *Topology) StartRefreshWritableVolumes(garbageThreshold string, preallocate int64) {
 	go func() {
 		for {
 			if t.IsLeader() {
@@ -22,7 +22,7 @@ func (t *Topology) StartRefreshWritableVolumes(garbageThreshold string) {
 		c := time.Tick(15 * time.Minute)
 		for _ = range c {
 			if t.IsLeader() {
-				t.Vacuum(garbageThreshold)
+				t.Vacuum(garbageThreshold, preallocate)
 			}
 		}
 	}(garbageThreshold)
