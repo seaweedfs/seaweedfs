@@ -10,7 +10,13 @@
 
 SeaweedFS is Apache-licensed open source project, independent project with its ongoing development made 
 possible entirely thanks to the support by these awesome [backers](https://github.com/chrislusf/seaweedfs/blob/master/backers.md). 
-If you'd like to join them, please consider:
+If you'd like to grow SeaweedFS even stronger, please consider to 
+<a href="https://www.patreon.com/seaweedfs">Sponsor SeaweedFS via Patreon</a>.
+
+Platinum ($2500/month), Gold ($500/month): put your company logo on the SeaweedFS github page
+Generous Backer($50/month), Backer($10/month): put your name on the SeaweedFS backer page.
+
+Your support will be really appreciated by me and other supporters!
 
 <h3 align="center"><a href="https://www.patreon.com/seaweedfs">Sponsors SeaweedFS via Patreon</a></h3>
 
