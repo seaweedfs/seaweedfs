@@ -6,13 +6,44 @@
 
 ![SeaweedFS Logo](https://raw.githubusercontent.com/chrislusf/seaweedfs/master/note/seaweedfs.png)
 
+<h2 align="center">Supporting SeaweedFS</h2>
+
+SeaweedFS is Apache-licensed open source project, independent project with its ongoing development made 
+possible entirely thanks to the support by these awesome [backers](https://github.com/chrislusf/seaweedfs/blob/master/backers.md). 
+If you'd like to join them, please consider:
+
+<h3 align="center"><a href="https://www.patreon.com/seaweedfs">Sponsors SeaweedFS via Patreon</a></h3>
+
+<h4 align="center">Platinum</h4>
+
+<p align="center">
+  <a href="" target="_blank">
+    Add your name or icon here
+  </a>
+</p>
+
+<h4 align="center">Gold</h4>
+
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="middle">
+        <a href="" target="_blank">
+          Add your name or icon here
+        </a>
+      </td>
+    </tr>
+    <tr></tr>
+  </tbody>
+</table>
+
+---
+
 
 - [Download Binaries for different platforms](https://github.com/chrislusf/seaweedfs/releases/latest)
 - [SeaweedFS Mailing List](https://groups.google.com/d/forum/seaweedfs)
 - [Wiki Documentation](https://github.com/chrislusf/seaweedfs/wiki)
 
-
-[![](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=EEECLJ8QGTTPC)
 
 ## Introduction
 
