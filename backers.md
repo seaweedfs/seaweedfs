@@ -4,7 +4,7 @@
 
 <h2 align="center">Generous Backers ($50+)</h2>
 
-- ...
+- [Evercam Camera Management Software](https://evercam.io/)
 
 <h2 align="center">Backers</h2>
 
