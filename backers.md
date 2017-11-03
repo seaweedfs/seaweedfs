@@ -9,3 +9,4 @@
 <h2 align="center">Backers</h2>
 
 - [ColorfulClouds Tech Co. Ltd.](https://caiyunai.com/)
+- [Haravan - Ecommerce Platform](https://www.haravan.com)
