@@ -25,7 +25,7 @@ func RegisterFile(filer string, path string, fileId string, secret security.Secr
 	values.Add("fileId", fileId)
 	_, err := util.Post("http://"+filer+"/admin/register", values)
 	if err != nil {
-		return fmt.Errorf("Failed to register path:%s on filer:%s to file id:%s", path, filer, fileId)
+		return fmt.Errorf("Failed to register path %s on filer %s to file id %s : %v", path, filer, fileId, err)
 	}
 	return nil
 }
