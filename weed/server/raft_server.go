@@ -55,7 +55,7 @@ func NewRaftServer(r *mux.Router, peers []string, httpAddr string, dataDir strin
 	if oldPeers, changed := isPeersChanged(s.dataDir, httpAddr, s.peers); changed {
 		glog.V(0).Infof("Peers Change: %v => %v", oldPeers, s.peers)
 		os.RemoveAll(path.Join(s.dataDir, "conf"))
-		os.RemoveAll(path.Join(s.dataDir, "log"))
+		// os.RemoveAll(path.Join(s.dataDir, "log"))
 		os.RemoveAll(path.Join(s.dataDir, "snapshot"))
 	}
 
@@ -194,7 +194,7 @@ func postFollowingOneRedirect(target string, contentType string, b bytes.Buffer)
 	reply := string(data)
 
 	if strings.HasPrefix(reply, "\"http") {
-		urlStr := reply[1 : len(reply)-1]
+		urlStr := reply[1: len(reply)-1]
 
 		glog.V(0).Infoln("Post redirected to ", urlStr)
 		resp2, err2 := http.Post(urlStr, contentType, backupReader)

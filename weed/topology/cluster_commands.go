@@ -25,7 +25,7 @@ func (c *MaxVolumeIdCommand) Apply(server raft.Server) (interface{}, error) {
 	before := topo.GetMaxVolumeId()
 	topo.UpAdjustMaxVolumeId(c.MaxVolumeId)
 
-	glog.V(4).Infoln("max volume id", before, "==>", topo.GetMaxVolumeId())
+	glog.V(0).Infoln("max volume id", before, "==>", topo.GetMaxVolumeId())
 
 	return nil, nil
 }
