@@ -55,7 +55,7 @@ func NewRaftServer(r *mux.Router, peers []string, httpAddr string, dataDir strin
 	if oldPeers, changed := isPeersChanged(s.dataDir, httpAddr, s.peers); changed {
 		glog.V(0).Infof("Peers Change: %v => %v", oldPeers, s.peers)
 		os.RemoveAll(path.Join(s.dataDir, "conf"))
-		// os.RemoveAll(path.Join(s.dataDir, "log"))
+		os.RemoveAll(path.Join(s.dataDir, "log"))
 		os.RemoveAll(path.Join(s.dataDir, "snapshot"))
 	}
 
@@ -140,6 +140,10 @@ func isPeersChanged(dir string, self string, peers []string) (oldPeers []string,
 		oldPeers = append(oldPeers, strings.TrimPrefix(p.ConnectionString, "http://"))
 	}
 	oldPeers = append(oldPeers, self)
+
+	if len(peers) == 0 && len(oldPeers) <= 1 {
+		return oldPeers, false
+	}
 
 	sort.Strings(peers)
 	sort.Strings(oldPeers)
