@@ -52,6 +52,7 @@ var (
 	output = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
 	format = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename formatted with {{.Mime}} {{.Id}} {{.Name}} {{.Ext}}")
 	newer  = cmdExport.Flag.String("newer", "", "export only files newer than this time, default is all files. Must be specified in RFC3339 without timezone, e.g. 2006-01-02T15:04:05")
+	showDeleted = cmdExport.Flag.Bool("deleted", false, "export deleted files. only applies if -o is not specified")
 
 	tarOutputFile          *tar.Writer
 	tarHeader              tar.Header
@@ -61,6 +62,24 @@ var (
 	newerThanUnix          int64 = -1
 	localLocation, _             = time.LoadLocation("Local")
 )
+
+func printNeedle(vid storage.VolumeId, n *storage.Needle, version storage.Version, deleted bool) {
+	key := storage.NewFileIdFromNeedle(vid, n).String()
+	size := n.DataSize
+	if version == storage.Version1 {
+		size = n.Size
+	}
+	fmt.Printf("%s;%s;%d;%t;%s;%d;%s;%t\n",
+		key,
+		n.Name,
+		size,
+		n.IsGzipped(),
+		n.Mime,
+		n.LastModified,
+		n.Ttl.String(),
+		deleted,
+	)
+}
 
 func runExport(cmd *Command, args []string) bool {
 
@@ -125,6 +144,10 @@ func runExport(cmd *Command, args []string) bool {
 
 	var version storage.Version
 
+	if tarOutputFile == nil {
+		fmt.Printf("key;name;size;gzip;mime;modified;ttl;deleted\n")
+	}
+
 	err = storage.ScanVolumeFile(*export.dir, *export.collection, vid,
 		storage.NeedleMapInMemory,
 		func(superBlock storage.SuperBlock) error {
@@ -143,6 +166,10 @@ func runExport(cmd *Command, args []string) bool {
 				return walker(vid, n, version)
 			}
 			if !ok {
+				if *showDeleted && tarOutputFile == nil && n.DataSize > 0 {
+					printNeedle(vid, n, version,true)
+				}
+
 				glog.V(2).Infof("This seems deleted %d size %d", n.Id, n.Size)
 			} else {
 				glog.V(2).Infof("Skipping later-updated Id %d size %d", n.Id, n.Size)
@@ -197,17 +224,7 @@ func walker(vid storage.VolumeId, n *storage.Needle, version storage.Version) (e
 		}
 		_, err = tarOutputFile.Write(n.Data)
 	} else {
-		size := n.DataSize
-		if version == storage.Version1 {
-			size = n.Size
-		}
-		fmt.Printf("key=%s Name=%s Size=%d gzip=%t mime=%s\n",
-			key,
-			n.Name,
-			size,
-			n.IsGzipped(),
-			n.Mime,
-		)
+		printNeedle(vid, n, version, false)
 	}
 	return
 }
