@@ -49,9 +49,10 @@ func init() {
 }
 
 var (
-	output = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
-	format = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename formatted with {{.Mime}} {{.Id}} {{.Name}} {{.Ext}}")
-	newer  = cmdExport.Flag.String("newer", "", "export only files newer than this time, default is all files. Must be specified in RFC3339 without timezone, e.g. 2006-01-02T15:04:05")
+	output      = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
+	format      = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename formatted with {{.Mime}} {{.Id}} {{.Name}} {{.Ext}}")
+	newer       = cmdExport.Flag.String("newer", "", "export only files newer than this time, default is all files. Must be specified in RFC3339 without timezone, e.g. 2006-01-02T15:04:05")
+	showDeleted = cmdExport.Flag.Bool("deleted", false, "export deleted files. only applies if -o is not specified")
 
 	tarOutputFile          *tar.Writer
 	tarHeader              tar.Header
@@ -61,6 +62,24 @@ var (
 	newerThanUnix          int64 = -1
 	localLocation, _             = time.LoadLocation("Local")
 )
+
+func printNeedle(vid storage.VolumeId, n *storage.Needle, version storage.Version, deleted bool) {
+	key := storage.NewFileIdFromNeedle(vid, n).String()
+	size := n.DataSize
+	if version == storage.Version1 {
+		size = n.Size
+	}
+	fmt.Printf("\"%s\",\"%s\",%d,%t,%s,%s,%s,%t\n",
+		key,
+		strings.Replace(string(n.Name), "\"", "\"\"", -1),
+		size,
+		n.IsGzipped(),
+		n.Mime,
+		n.LastModifiedString(),
+		n.Ttl.String(),
+		deleted,
+	)
+}
 
 func runExport(cmd *Command, args []string) bool {
 
@@ -103,7 +122,7 @@ func runExport(cmd *Command, args []string) bool {
 		t := time.Now()
 		tarHeader = tar.Header{Mode: 0644,
 			ModTime: t, Uid: os.Getuid(), Gid: os.Getgid(),
-			Typeflag:   tar.TypeReg,
+			Typeflag: tar.TypeReg,
 			AccessTime: t, ChangeTime: t}
 	}
 
@@ -125,6 +144,10 @@ func runExport(cmd *Command, args []string) bool {
 
 	var version storage.Version
 
+	if tarOutputFile == nil {
+		fmt.Printf("key,name,size,gzip,mime,modified,ttl,deleted\n")
+	}
+
 	err = storage.ScanVolumeFile(*export.dir, *export.collection, vid,
 		storage.NeedleMapInMemory,
 		func(superBlock storage.SuperBlock) error {
@@ -140,9 +163,24 @@ func runExport(cmd *Command, args []string) bool {
 						n.LastModified, newerThanUnix)
 					return nil
 				}
-				return walker(vid, n, version)
+
+				if tarOutputFile != nil {
+					return writeFile(vid, n, version)
+				} else {
+					printNeedle(vid, n, version, false)
+					return nil
+				}
 			}
 			if !ok {
+				if *showDeleted && tarOutputFile == nil {
+					if (n.DataSize > 0) {
+						printNeedle(vid, n, version, true)
+					} else {
+						n.Name = []byte("*tombstone")
+						printNeedle(vid, n, version, true)
+					}
+				}
+
 				glog.V(2).Infof("This seems deleted %d size %d", n.Id, n.Size)
 			} else {
 				glog.V(2).Infof("Skipping later-updated Id %d size %d", n.Id, n.Size)
@@ -163,51 +201,37 @@ type nameParams struct {
 	Ext  string
 }
 
-func walker(vid storage.VolumeId, n *storage.Needle, version storage.Version) (err error) {
+func writeFile(vid storage.VolumeId, n *storage.Needle, version storage.Version) (err error) {
 	key := storage.NewFileIdFromNeedle(vid, n).String()
-	if tarOutputFile != nil {
-		fileNameTemplateBuffer.Reset()
-		if err = fileNameTemplate.Execute(fileNameTemplateBuffer,
-			nameParams{
-				Name: string(n.Name),
-				Id:   n.Id,
-				Mime: string(n.Mime),
-				Key:  key,
-				Ext:  filepath.Ext(string(n.Name)),
-			},
-		); err != nil {
-			return err
-		}
-
-		fileName := fileNameTemplateBuffer.String()
-
-		if n.IsGzipped() && path.Ext(fileName) != ".gz" {
-			fileName = fileName + ".gz"
-		}
-
-		tarHeader.Name, tarHeader.Size = fileName, int64(len(n.Data))
-		if n.HasLastModifiedDate() {
-			tarHeader.ModTime = time.Unix(int64(n.LastModified), 0)
-		} else {
-			tarHeader.ModTime = time.Unix(0, 0)
-		}
-		tarHeader.ChangeTime = tarHeader.ModTime
-		if err = tarOutputFile.WriteHeader(&tarHeader); err != nil {
-			return err
-		}
-		_, err = tarOutputFile.Write(n.Data)
-	} else {
-		size := n.DataSize
-		if version == storage.Version1 {
-			size = n.Size
-		}
-		fmt.Printf("key=%s Name=%s Size=%d gzip=%t mime=%s\n",
-			key,
-			n.Name,
-			size,
-			n.IsGzipped(),
-			n.Mime,
-		)
+	fileNameTemplateBuffer.Reset()
+	if err = fileNameTemplate.Execute(fileNameTemplateBuffer,
+		nameParams{
+			Name: string(n.Name),
+			Id:   n.Id,
+			Mime: string(n.Mime),
+			Key:  key,
+			Ext:  filepath.Ext(string(n.Name)),
+		},
+	); err != nil {
+		return err
 	}
+
+	fileName := fileNameTemplateBuffer.String()
+
+	if n.IsGzipped() && path.Ext(fileName) != ".gz" {
+		fileName = fileName + ".gz"
+	}
+
+	tarHeader.Name, tarHeader.Size = fileName, int64(len(n.Data))
+	if n.HasLastModifiedDate() {
+		tarHeader.ModTime = time.Unix(int64(n.LastModified), 0)
+	} else {
+		tarHeader.ModTime = time.Unix(0, 0)
+	}
+	tarHeader.ChangeTime = tarHeader.ModTime
+	if err = tarOutputFile.WriteHeader(&tarHeader); err != nil {
+		return err
+	}
+	_, err = tarOutputFile.Write(n.Data)
 	return
 }
