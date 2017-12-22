@@ -8,6 +8,14 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
+func LoadVolume(dirname string, collection string, id VolumeId, needleMapKind NeedleMapType) (v *Volume, e error) {
+	v = &Volume{dir: dirname, Collection: collection, Id: id}
+	v.SuperBlock = SuperBlock{}
+	v.needleMapKind = needleMapKind
+	e = v.load(true, false, needleMapKind, 0)
+	return
+}
+
 func loadVolumeWithoutIndex(dirname string, collection string, id VolumeId, needleMapKind NeedleMapType) (v *Volume, e error) {
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
 	v.SuperBlock = SuperBlock{}

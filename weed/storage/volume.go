@@ -80,6 +80,26 @@ func (v *Volume) ContentSize() uint64 {
 	return v.nm.ContentSize()
 }
 
+func (v *Volume) DeletedSize() uint64 {
+	return v.nm.DeletedSize()
+}
+
+func (v *Volume) FileCount() int {
+	return v.nm.FileCount()
+}
+
+func (v *Volume) DeletedCount() int {
+	return v.nm.DeletedCount()
+}
+
+func (v *Volume) LastModifiedTime() uint64 {
+	return v.lastModifiedTime
+}
+
+func (v *Volume) LastModifiedString() string {
+	return time.Unix(int64(v.lastModifiedTime), 0).Format("2006-01-02T15:04:05")
+}
+
 // volume is expired if modified time + volume ttl < now
 // except when volume is empty
 // or when the volume does not have a ttl
