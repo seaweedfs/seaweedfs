@@ -1,8 +1,8 @@
 package compress
 
 import (
-	"github.com/reducedb/encoding/cursor"
-	"github.com/reducedb/encoding/delta/bp32"
+	"github.com/dataence/encoding/cursor"
+	"github.com/dataence/encoding/delta/bp32"
 )
 
 // Compress compresses in[]int32 to out[]int32
