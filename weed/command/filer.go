@@ -50,7 +50,7 @@ func init() {
 	f.maxMB = cmdFiler.Flag.Int("maxMB", 32, "split files larger than the limit")
 	f.cassandra_server = cmdFiler.Flag.String("cassandra.server", "", "host[:port] of the cassandra server")
 	f.cassandra_keyspace = cmdFiler.Flag.String("cassandra.keyspace", "seaweed", "keyspace of the cassandra server")
-	f.redis_server = cmdFiler.Flag.String("redis.server", "", "host:port of the redis server, e.g., 127.0.0.1:6379")
+	f.redis_server = cmdFiler.Flag.String("redis.server", "", "comma separated host:port[,host2:port2]* of the redis server, e.g., 127.0.0.1:6379")
 	f.redis_password = cmdFiler.Flag.String("redis.password", "", "password in clear text")
 	f.redis_database = cmdFiler.Flag.Int("redis.database", 0, "the database on the redis server")
 	f.secretKey = cmdFiler.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
