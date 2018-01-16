@@ -18,6 +18,7 @@ import (
 
 	"github.com/chrislusf/raft"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"github.com/gorilla/mux"
 )
@@ -159,14 +160,23 @@ func (s *RaftServer) Join(peers []string) error {
 		ConnectionString: "http://" + s.httpAddr,
 	}
 
-	var err error
 	var b bytes.Buffer
 	json.NewEncoder(&b).Encode(command)
 	for _, m := range peers {
 		if m == s.httpAddr {
 			continue
 		}
-		target := fmt.Sprintf("http://%s/cluster/join", strings.TrimSpace(m))
+		leader, _, err := operation.ListMasters(strings.TrimSpace(m))
+		if err != nil {
+			glog.V(0).Infof("Get [%s] status error: %s\n", m, err.Error())
+			if _, ok := err.(*url.Error); ok {
+				// If we receive a network error try the next member
+				continue
+			}
+		}
+
+		glog.V(0).Infof("Member:[%s] => Leader:[%s]", m, leader)
+		target := fmt.Sprintf("http://%s/cluster/join", leader)
 		glog.V(0).Infoln("Attempting to connect to:", target)
 
 		err = postFollowingOneRedirect(target, "application/json", b)
@@ -198,7 +208,7 @@ func postFollowingOneRedirect(target string, contentType string, b bytes.Buffer)
 	reply := string(data)
 
 	if strings.HasPrefix(reply, "\"http") {
-		urlStr := reply[1: len(reply)-1]
+		urlStr := reply[1 : len(reply)-1]
 
 		glog.V(0).Infoln("Post redirected to ", urlStr)
 		resp2, err2 := http.Post(urlStr, contentType, backupReader)
