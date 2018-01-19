@@ -163,7 +163,7 @@ func (n *NodeImpl) ReserveOneVolume(r int) (assignedNode *DataNode, err error) {
 				return node.(*DataNode), nil
 			}
 			assignedNode, err = node.ReserveOneVolume(r)
-			if err != nil {
+			if err == nil {
 				return
 			}
 		}
