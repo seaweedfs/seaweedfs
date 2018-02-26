@@ -104,7 +104,7 @@ func newFilePart(fullPathFilename string) (ret FilePart, err error) {
 	ret.FileSize = fi.Size()
 	ext := strings.ToLower(path.Ext(fullPathFilename))
 	ret.IsGzipped = ext == ".gz"
-	ret.FileName = fullPathFilename
+	ret.FileName = fi.Name()
 	if ext != "" {
 		ret.MimeType = mime.TypeByExtension(ext)
 	}
