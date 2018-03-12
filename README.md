@@ -47,7 +47,7 @@ Your support will be really appreciated by me and other supporters!
 
 
 - [Download Binaries for different platforms](https://github.com/chrislusf/seaweedfs/releases/latest)
-- [SeaweedFS Slack](https://join.slack.com/t/seaweedfs/shared_invite/enQtMzI4MTMwMjU2MzA3LTc4MmVlYmFlNjBmZTgzZmJlYmI1MDE1YzkyNWYyZjkwZDFiM2RlMDdjNjVlNjdjYzc4NGFhZGIyYzEyMzJkYTA)
+- [SeaweedFS on Slack](https://join.slack.com/t/seaweedfs/shared_invite/enQtMzI4MTMwMjU2MzA3LTc4MmVlYmFlNjBmZTgzZmJlYmI1MDE1YzkyNWYyZjkwZDFiM2RlMDdjNjVlNjdjYzc4NGFhZGIyYzEyMzJkYTA)
 - [SeaweedFS Mailing List](https://groups.google.com/d/forum/seaweedfs)
 - [Wiki Documentation](https://github.com/chrislusf/seaweedfs/wiki)
 
