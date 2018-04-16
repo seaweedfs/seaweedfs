@@ -41,7 +41,7 @@ func NewCassandraStore(keyspace string, hosts string) (c *CassandraStore, err er
 		c.cluster = gocql.NewCluster(s...)
 	}
 	c.cluster.Keyspace = keyspace
-	c.cluster.Consistency = gocql.Quorum
+	c.cluster.Consistency = gocql.LocalQuorum
 	c.session, err = c.cluster.CreateSession()
 	if err != nil {
 		glog.V(0).Infof("Failed to open cassandra store, hosts %v, keyspace %s", hosts, keyspace)
