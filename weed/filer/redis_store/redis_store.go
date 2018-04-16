@@ -3,7 +3,7 @@ package redis_store
 import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
 
-	redis "gopkg.in/redis.v2"
+	"github.com/go-redis/redis"
 )
 
 type RedisStore struct {
@@ -11,10 +11,10 @@ type RedisStore struct {
 }
 
 func NewRedisStore(hostPort string, password string, database int) *RedisStore {
-	client := redis.NewTCPClient(&redis.Options{
+	client := redis.NewClient(&redis.Options{
 		Addr:     hostPort,
 		Password: password,
-		DB:       int64(database),
+		DB:       database,
 	})
 	return &RedisStore{Client: client}
 }
@@ -27,7 +27,7 @@ func (s *RedisStore) Get(fullFileName string) (fid string, err error) {
 	return fid, err
 }
 func (s *RedisStore) Put(fullFileName string, fid string) (err error) {
-	_, err = s.Client.Set(fullFileName, fid).Result()
+	_, err = s.Client.Set(fullFileName, fid, 0).Result()
 	if err == redis.Nil {
 		err = nil
 	}
