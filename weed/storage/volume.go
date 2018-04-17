@@ -61,7 +61,7 @@ func (v *Volume) Size() int64 {
 		return stat.Size()
 	}
 	glog.V(0).Infof("Failed to read file size %s %v", v.dataFile.Name(), e)
-	return -1
+	return 0 // -1 causes integer overflow and the volume to become unwritable.
 }
 
 // Close cleanly shuts down this volume
