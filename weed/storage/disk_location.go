@@ -164,11 +164,11 @@ func (l *DiskLocation) UnloadVolume(vid VolumeId) error {
 	l.Lock()
 	defer l.Unlock()
 
-	_, ok := l.volumes[vid]
+	v, ok := l.volumes[vid]
 	if !ok {
 		return fmt.Errorf("Volume not loaded, VolumeId: %d", vid)
 	}
-	l.volumes[vid].Close()
+	v.Close()
 	delete(l.volumes, vid)
 	return nil
 }
