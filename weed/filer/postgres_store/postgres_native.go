@@ -94,17 +94,12 @@ func getDbConnection(conf PostgresConf) *sql.DB {
 			panic(pingErr)
 		}
 
-		var maxIdleConnections, maxOpenConnections int
-
+		maxIdleConnections, maxOpenConnections := default_maxIdleConnections, default_maxOpenConnections
 		if conf.MaxIdleConnections != 0 {
 			maxIdleConnections = conf.MaxIdleConnections
-		} else {
-			maxIdleConnections = default_maxIdleConnections
 		}
 		if conf.MaxOpenConnections != 0 {
 			maxOpenConnections = conf.MaxOpenConnections
-		} else {
-			maxOpenConnections = default_maxOpenConnections
 		}
 
 		_db_connection.SetMaxIdleConns(maxIdleConnections)
