@@ -28,15 +28,17 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
 				{{$path := .Path }}
 				{{ range $dirs_index, $dir := .Directories }}
 				<li>
-					<a href=		{{ print $path  $dir.Name  "/"}} >
-						{{ $dir.Name }}
+					<a href={{ print $path  $dir  "/"}} >
+						{{ $dir }}
 					</a>
 				</li>
 				{{ end }}
 
 				{{ range $file_index, $file := .Files }}
 				<li>
+					<a href={{ print $path  $file.Name}} >
 					{{ $file.Name }}
+					</a>
 				</li>
 				{{ end }}
 			</ul>
