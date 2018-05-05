@@ -37,7 +37,7 @@ func TestDirectory(t *testing.T) {
 	dm.DeleteDirectory("/a/b/e")
 	dirNames, _ := dm.ListDirectories("/a/b/e")
 	for _, v := range dirNames {
-		println("sub1 dir:", v.Name, "id", v.Id)
+		println("sub1 dir:", v)
 	}
 	dm.logFile.Close()
 
