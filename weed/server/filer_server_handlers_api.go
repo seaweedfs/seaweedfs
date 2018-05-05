@@ -21,6 +21,13 @@ func (fs *FilerServer) apiHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 	}
 	switch apiRequest.Command {
+	case "lookupDirectoryEntry":
+		res := filer.LookupDirectoryEntryResult{}
+		res.Found, res.FileId, err = fs.filer.LookupDirectoryEntry(apiRequest.Directory, apiRequest.FileName)
+		if err != nil {
+			res.Error = err.Error()
+		}
+		writeJsonQuiet(w, r, http.StatusOK, res)
 	case "listDirectories":
 		res := filer.ListDirectoriesResult{}
 		res.Directories, err = fs.filer.ListDirectories(apiRequest.Directory)
@@ -30,7 +37,7 @@ func (fs *FilerServer) apiHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonQuiet(w, r, http.StatusOK, res)
 	case "listFiles":
 		res := filer.ListFilesResult{}
-		res.Files, err = fs.filer.ListFiles(apiRequest.Directory, apiRequest.FileName, 100)
+		res.Files, err = fs.filer.ListFiles(apiRequest.Directory, apiRequest.FileName, 1000)
 		if err != nil {
 			res.Error = err.Error()
 		}

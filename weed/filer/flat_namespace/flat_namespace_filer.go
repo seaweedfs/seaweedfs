@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
+	"path/filepath"
 )
 
 type FlatNamespaceFiler struct {
@@ -28,10 +29,13 @@ func (filer *FlatNamespaceFiler) CreateFile(fullFileName string, fid string) (er
 func (filer *FlatNamespaceFiler) FindFile(fullFileName string) (fid string, err error) {
 	return filer.store.Get(fullFileName)
 }
-func (filer *FlatNamespaceFiler) FindDirectory(dirPath string) (dirId filer.DirectoryId, err error) {
-	return 0, ErrNotImplemented
+func (filer *FlatNamespaceFiler) LookupDirectoryEntry(dirPath string, name string) (found bool, fileId string, err error) {
+	if fileId, err = filer.FindFile(filepath.Join(dirPath, name)); err == nil {
+		return true, fileId, nil
+	}
+	return false, "", err
 }
-func (filer *FlatNamespaceFiler) ListDirectories(dirPath string) (dirs []filer.DirectoryEntry, err error) {
+func (filer *FlatNamespaceFiler) ListDirectories(dirPath string) (dirs []filer.DirectoryName, err error) {
 	return nil, ErrNotImplemented
 }
 func (filer *FlatNamespaceFiler) ListFiles(dirPath string, lastFileName string, limit int) (files []filer.FileEntry, err error) {

@@ -45,27 +45,37 @@ func (filer *FilerEmbedded) CreateFile(filePath string, fid string) (err error) 
 }
 func (filer *FilerEmbedded) FindFile(filePath string) (fid string, err error) {
 	dir, file := filepath.Split(filePath)
-	dirId, e := filer.directories.FindDirectory(dir)
+	return filer.findFileEntry(dir, file)
+}
+func (filer *FilerEmbedded) findFileEntry(parentPath string, fileName string) (fid string, err error) {
+	dirId, e := filer.directories.findDirectoryId(parentPath)
 	if e != nil {
 		return "", e
 	}
-	return filer.files.FindFile(dirId, file)
+	return filer.files.FindFile(dirId, fileName)
 }
-func (filer *FilerEmbedded) FindDirectory(dirPath string) (dirId filer.DirectoryId, err error) {
-	return filer.directories.FindDirectory(dirPath)
+
+func (filer *FilerEmbedded) LookupDirectoryEntry(dirPath string, name string) (found bool, fileId string, err error) {
+	if _, err = filer.directories.findDirectory(filepath.Join(dirPath, name)); err == nil {
+		return true, "", nil
+	}
+	if fileId, err = filer.findFileEntry(dirPath, name); err == nil {
+		return true, fileId, nil
+	}
+	return false, "", err
 }
-func (filer *FilerEmbedded) ListDirectories(dirPath string) (dirs []filer.DirectoryEntry, err error) {
+func (filer *FilerEmbedded) ListDirectories(dirPath string) (dirs []filer.DirectoryName, err error) {
 	return filer.directories.ListDirectories(dirPath)
 }
 func (filer *FilerEmbedded) ListFiles(dirPath string, lastFileName string, limit int) (files []filer.FileEntry, err error) {
-	dirId, e := filer.directories.FindDirectory(dirPath)
+	dirId, e := filer.directories.findDirectoryId(dirPath)
 	if e != nil {
 		return nil, e
 	}
 	return filer.files.ListFiles(dirId, lastFileName, limit), nil
 }
 func (filer *FilerEmbedded) DeleteDirectory(dirPath string, recursive bool) (err error) {
-	dirId, e := filer.directories.FindDirectory(dirPath)
+	dirId, e := filer.directories.findDirectoryId(dirPath)
 	if e != nil {
 		return e
 	}
@@ -74,7 +84,7 @@ func (filer *FilerEmbedded) DeleteDirectory(dirPath string, recursive bool) (err
 			return fmt.Errorf("Fail to delete directory %s: %d sub directories found!", dirPath, len(sub_dirs))
 		}
 		for _, sub := range sub_dirs {
-			if delete_sub_err := filer.DeleteDirectory(filepath.Join(dirPath, sub.Name), recursive); delete_sub_err != nil {
+			if delete_sub_err := filer.DeleteDirectory(filepath.Join(dirPath, string(sub)), recursive); delete_sub_err != nil {
 				return delete_sub_err
 			}
 		}
@@ -108,7 +118,7 @@ func (filer *FilerEmbedded) DeleteDirectory(dirPath string, recursive bool) (err
 
 func (filer *FilerEmbedded) DeleteFile(filePath string) (fid string, err error) {
 	dir, file := filepath.Split(filePath)
-	dirId, e := filer.directories.FindDirectory(dir)
+	dirId, e := filer.directories.findDirectoryId(dir)
 	if e != nil {
 		return "", e
 	}
@@ -126,8 +136,8 @@ func (filer *FilerEmbedded) Move(fromPath string, toPath string) error {
 	filer.mvMutex.Lock()
 	defer filer.mvMutex.Unlock()
 
-	if _, dir_err := filer.FindDirectory(fromPath); dir_err == nil {
-		if _, err := filer.FindDirectory(toPath); err == nil {
+	if _, dir_err := filer.directories.findDirectoryId(fromPath); dir_err == nil {
+		if _, err := filer.directories.findDirectoryId(toPath); err == nil {
 			// move folder under an existing folder
 			return filer.directories.MoveUnderDirectory(fromPath, toPath, "")
 		}
@@ -135,7 +145,7 @@ func (filer *FilerEmbedded) Move(fromPath string, toPath string) error {
 		return filer.directories.MoveUnderDirectory(fromPath, filepath.Dir(toPath), filepath.Base(toPath))
 	}
 	if fid, file_err := filer.DeleteFile(fromPath); file_err == nil {
-		if _, err := filer.FindDirectory(toPath); err == nil {
+		if _, err := filer.directories.findDirectoryId(toPath); err == nil {
 			// move file under an existing folder
 			return filer.CreateFile(filepath.Join(toPath, filepath.Base(fromPath)), fid)
 		}

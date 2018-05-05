@@ -5,11 +5,11 @@ import (
 )
 
 type DirectoryManager interface {
-	FindDirectory(dirPath string) (filer.DirectoryId, error)
-	ListDirectories(dirPath string) (dirs []filer.DirectoryEntry, err error)
-	MakeDirectory(currentDirPath string, dirName string) (filer.DirectoryId, error)
+	FindDirectory(dirPath string) (DirectoryId, error)
+	ListDirectories(dirPath string) (dirs []filer.DirectoryName, err error)
+	MakeDirectory(currentDirPath string, dirName string) (DirectoryId, error)
 	MoveUnderDirectory(oldDirPath string, newParentDirPath string) error
 	DeleteDirectory(dirPath string) error
 	//functions used by FUSE
-	FindDirectoryById(filer.DirectoryId, error)
+	FindDirectoryById(DirectoryId, error)
 }

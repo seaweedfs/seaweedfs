@@ -59,27 +59,27 @@ func (WFS) Root() (fs.Node, error) {
 var fileIdMap = make(map[uint64]filer.FileId)
 
 type Dir struct {
-	Id        uint64
 	Path      string
 	DirentMap map[string]*fuse.Dirent
 }
 
 func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
-	attr.Inode = dir.Id
 	attr.Mode = os.ModeDir | 0555
 	return nil
 }
 
 func (dir *Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
-	if dirent, ok := dir.DirentMap[name]; ok {
-		if dirent.Type == fuse.DT_File {
-			return &File{Id: dirent.Inode, FileId: fileIdMap[dirent.Inode], Name: dirent.Name}, nil
+	if entry, err := filer.LookupDirectoryEntry(*mountOptions.filer, dir.Path, name); err == nil {
+		if !entry.Found {
+			return nil, fuse.ENOENT
 		}
-		return &Dir{
-			Id:   dirent.Inode,
-			Path: path.Join(dir.Path, dirent.Name),
-		}, nil
+		if entry.FileId != "" {
+			return &File{FileId: filer.FileId(entry.FileId), Name: name}, nil
+		} else {
+			return &Dir{Path: path.Join(dir.Path, name)}, nil
+		}
 	}
+
 	return nil, fuse.ENOENT
 }
 
@@ -90,17 +90,16 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	}
 	if dirs, e := filer.ListDirectories(*mountOptions.filer, dir.Path); e == nil {
 		for _, d := range dirs.Directories {
-			dirId := uint64(d.Id)
-			dirent := fuse.Dirent{Inode: dirId, Name: d.Name, Type: fuse.DT_Dir}
+			dirent := fuse.Dirent{Name: string(d), Type: fuse.DT_Dir}
 			ret = append(ret, dirent)
-			dir.DirentMap[d.Name] = &dirent
+			dir.DirentMap[string(d)] = &dirent
 		}
 	}
 	if files, e := filer.ListFiles(*mountOptions.filer, dir.Path, ""); e == nil {
 		for _, f := range files.Files {
 			if fileId, e := storage.ParseFileId(string(f.Id)); e == nil {
 				fileInode := uint64(fileId.VolumeId)<<48 + fileId.Key
-				dirent := fuse.Dirent{Inode: fileInode, Name: f.Name, Type: fuse.DT_File}
+				dirent := fuse.Dirent{Name: f.Name, Type: fuse.DT_File}
 				ret = append(ret, dirent)
 				dir.DirentMap[f.Name] = &dirent
 				fileIdMap[fileInode] = f.Id
@@ -120,13 +119,11 @@ func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 }
 
 type File struct {
-	Id     uint64
 	FileId filer.FileId
 	Name   string
 }
 
 func (file *File) Attr(context context.Context, attr *fuse.Attr) error {
-	attr.Inode = file.Id
 	attr.Mode = 0444
 	ret, err := filer.GetFileSize(*mountOptions.filer, string(file.FileId))
 	if err == nil {

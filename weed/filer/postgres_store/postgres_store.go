@@ -10,6 +10,7 @@ import (
 
 	_ "github.com/lib/pq"
 	_ "path/filepath"
+	"path/filepath"
 )
 
 const (
@@ -74,6 +75,17 @@ func (s *PostgresStore) FindFile(fullFilePath string) (fid string, err error) {
 	return fid, err
 }
 
+func (s *PostgresStore) LookupDirectoryEntry(dirPath string, name string) (found bool, fileId string, err error) {
+	fullPath := filepath.Join(dirPath, name)
+	if fileId, err = s.FindFile(fullPath); err == nil {
+		return true, fileId, nil
+	}
+	if _, _, err := s.lookupDirectory(fullPath); err == nil {
+		return true, "", err
+	}
+	return false, "", err
+}
+
 func (s *PostgresStore) DeleteFile(fullFilePath string) (fid string, err error) {
 	if err != nil {
 		return "", fmt.Errorf("PostgresStore Delete operation can not parse file path %s: err is %v", fullFilePath, err)
@@ -90,14 +102,9 @@ func (s *PostgresStore) DeleteFile(fullFilePath string) (fid string, err error) 
 	}
 }
 
-func (s *PostgresStore) FindDirectory(dirPath string) (dirId filer.DirectoryId, err error) {
-	dirId, _, err = s.lookupDirectory(dirPath)
-	return dirId, err
-}
+func (s *PostgresStore) ListDirectories(dirPath string) (dirs []filer.DirectoryName, err error) {
 
-func (s *PostgresStore) ListDirectories(dirPath string) (dirs []filer.DirectoryEntry, err error) {
-
-	dirs, err = s.findDirectories(dirPath, 20)
+	dirs, err = s.findDirectories(dirPath, 1000)
 
 	glog.V(3).Infof("Postgres ListDirs = found %d directories under %s", len(dirs), dirPath)
 
