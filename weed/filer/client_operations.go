@@ -65,13 +65,30 @@ func GetFileContent(server string, fileId string) (ret *GetFileContentResult, er
 }
 
 type ListDirectoriesResult struct {
-	Directories []DirectoryEntry
+	Directories []DirectoryName
 	Error       string `json:"error,omitempty"`
 }
 
 func ListDirectories(server string, directory string) (ret *ListDirectoriesResult, err error) {
 	ret = new(ListDirectoriesResult)
 	if err := call(server, ApiRequest{Command: "listDirectories", Directory: directory}, ret); err == nil {
+		if ret.Error != "" {
+			return nil, errors.New(ret.Error)
+		}
+		return ret, nil
+	}
+	return nil, err
+}
+
+type LookupDirectoryEntryResult struct {
+	Found  bool
+	FileId string
+	Error  string `json:"error,omitempty"`
+}
+
+func LookupDirectoryEntry(server string, directory string, name string) (ret *LookupDirectoryEntryResult, err error) {
+	ret = new(LookupDirectoryEntryResult)
+	if err := call(server, ApiRequest{Command: "lookupDirectoryEntry", Directory: directory, FileName: name}, ret); err == nil {
 		if ret.Error != "" {
 			return nil, errors.New(ret.Error)
 		}

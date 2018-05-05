@@ -16,12 +16,14 @@ import (
 
 var writeLock sync.Mutex //serialize changes to dir.log
 
+type DirectoryId int32
+
 type DirectoryEntryInMap struct {
 	sync.Mutex
 	Name           string
 	Parent         *DirectoryEntryInMap
 	subDirectories map[string]*DirectoryEntryInMap
-	Id             filer.DirectoryId
+	Id             DirectoryId
 }
 
 func (de *DirectoryEntryInMap) getChild(dirName string) (*DirectoryEntryInMap, bool) {
@@ -45,18 +47,18 @@ func (de *DirectoryEntryInMap) hasChildren() bool {
 	defer de.Unlock()
 	return len(de.subDirectories) > 0
 }
-func (de *DirectoryEntryInMap) children() (dirNames []filer.DirectoryEntry) {
+func (de *DirectoryEntryInMap) children() (dirNames []filer.DirectoryName) {
 	de.Lock()
 	defer de.Unlock()
-	for k, v := range de.subDirectories {
-		dirNames = append(dirNames, filer.DirectoryEntry{Name: k, Id: v.Id})
+	for k, _ := range de.subDirectories {
+		dirNames = append(dirNames, filer.DirectoryName(k))
 	}
 	return dirNames
 }
 
 type DirectoryManagerInMap struct {
 	Root      *DirectoryEntryInMap
-	max       filer.DirectoryId
+	max       DirectoryId
 	logFile   *os.File
 	isLoading bool
 }
@@ -113,7 +115,7 @@ func (dm *DirectoryManagerInMap) processEachLine(line string) error {
 		if pe != nil {
 			return pe
 		}
-		if e := dm.loadDirectory(parts[1], filer.DirectoryId(v)); e != nil {
+		if e := dm.loadDirectory(parts[1], DirectoryId(v)); e != nil {
 			return e
 		}
 	case "mov":
@@ -172,7 +174,7 @@ func (dm *DirectoryManagerInMap) findDirectory(dirPath string) (*DirectoryEntryI
 	}
 	return dir, nil
 }
-func (dm *DirectoryManagerInMap) FindDirectory(dirPath string) (filer.DirectoryId, error) {
+func (dm *DirectoryManagerInMap) findDirectoryId(dirPath string) (DirectoryId, error) {
 	d, e := dm.findDirectory(dirPath)
 	if e == nil {
 		return d.Id, nil
@@ -180,7 +182,7 @@ func (dm *DirectoryManagerInMap) FindDirectory(dirPath string) (filer.DirectoryI
 	return dm.Root.Id, e
 }
 
-func (dm *DirectoryManagerInMap) loadDirectory(dirPath string, dirId filer.DirectoryId) error {
+func (dm *DirectoryManagerInMap) loadDirectory(dirPath string, dirId DirectoryId) error {
 	dirPath = CleanFilePath(dirPath)
 	if dirPath == "/" {
 		return nil
@@ -248,7 +250,7 @@ func (dm *DirectoryManagerInMap) makeDirectory(dirPath string) (dir *DirectoryEn
 	return dir, created
 }
 
-func (dm *DirectoryManagerInMap) MakeDirectory(dirPath string) (filer.DirectoryId, error) {
+func (dm *DirectoryManagerInMap) MakeDirectory(dirPath string) (DirectoryId, error) {
 	dir, _ := dm.makeDirectory(dirPath)
 	return dir.Id, nil
 }
@@ -275,7 +277,7 @@ func (dm *DirectoryManagerInMap) MoveUnderDirectory(oldDirPath string, newParent
 	return nil
 }
 
-func (dm *DirectoryManagerInMap) ListDirectories(dirPath string) (dirNames []filer.DirectoryEntry, err error) {
+func (dm *DirectoryManagerInMap) ListDirectories(dirPath string) (dirNames []filer.DirectoryName, err error) {
 	d, e := dm.findDirectory(dirPath)
 	if e != nil {
 		return dirNames, e

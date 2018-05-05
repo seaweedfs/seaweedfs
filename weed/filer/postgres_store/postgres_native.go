@@ -14,6 +14,8 @@ import (
 	"strings"
 )
 
+type DirectoryId int32
+
 func databaseExists(db *sql.DB, databaseName string) (bool, error) {
 	sqlStatement := "SELECT datname from pg_database WHERE datname='%s'"
 	row := db.QueryRow(fmt.Sprintf(sqlStatement, databaseName))
@@ -293,13 +295,13 @@ func (s *PostgresStore) delete(uriPath string) error {
 	return nil
 }
 
-func (s *PostgresStore) lookupDirectory(dirPath string) (filer.DirectoryId, string, error) {
+func (s *PostgresStore) lookupDirectory(dirPath string) (DirectoryId, string, error) {
 	directoryRoot, directoryName := s.mySplitPath(dirPath)
 
 	sqlStatement := fmt.Sprintf("SELECT id, directoryroot, directoryname FROM %s WHERE directoryRoot=$1 AND directoryName=$2", directoriesTableName)
 
 	row := s.db.QueryRow(sqlStatement, directoryRoot, directoryName)
-	var id filer.DirectoryId
+	var id DirectoryId
 	var dirRoot string
 	var dirName string
 	err := row.Scan(&id, &dirRoot, &dirName)
@@ -312,7 +314,7 @@ func (s *PostgresStore) lookupDirectory(dirPath string) (filer.DirectoryId, stri
 	return id, filepath.Join(dirRoot, dirName), err
 }
 
-func (s *PostgresStore) findDirectories(dirPath string, limit int) (dirs []filer.DirectoryEntry, err error) {
+func (s *PostgresStore) findDirectories(dirPath string, limit int) (dirs []filer.DirectoryName, err error) {
 	sqlStatement := fmt.Sprintf("SELECT id, directoryroot, directoryname FROM %s WHERE directoryRoot=$1 AND directoryName != '' ORDER BY id LIMIT $2", directoriesTableName)
 	rows, err := s.db.Query(sqlStatement, dirPath, limit)
 
@@ -323,7 +325,7 @@ func (s *PostgresStore) findDirectories(dirPath string, limit int) (dirs []filer
 	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
-			var id filer.DirectoryId
+			var id DirectoryId
 			var directoryRoot string
 			var directoryName string
 
@@ -331,7 +333,7 @@ func (s *PostgresStore) findDirectories(dirPath string, limit int) (dirs []filer
 			if scanErr != nil {
 				err = scanErr
 			}
-			dirs = append(dirs, filer.DirectoryEntry{Name: (directoryName), Id: id})
+			dirs = append(dirs, filer.DirectoryName(directoryName))
 		}
 	}
 	return
@@ -344,7 +346,7 @@ func (s *PostgresStore) safeToDeleteDirectory(dirPath string, recursive bool) bo
 	sqlStatement := fmt.Sprintf("SELECT id FROM %s WHERE directoryRoot LIKE $1 LIMIT 1", directoriesTableName)
 	row := s.db.QueryRow(sqlStatement, dirPath+"%")
 
-	var id filer.DirectoryId
+	var id DirectoryId
 	err := row.Scan(&id)
 	if err != nil {
 		if err == sql.ErrNoRows {
