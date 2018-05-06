@@ -1,12 +1,13 @@
 package filesys
 
 import (
+	"context"
+	"fmt"
+	"os"
+	"path"
+
 	"bazil.org/fuse/fs"
 	"bazil.org/fuse"
-	"context"
-	"os"
-	"fmt"
-	"path"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 )
 

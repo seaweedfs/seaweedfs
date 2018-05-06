@@ -1,10 +1,11 @@
 package filesys
 
 import (
-	"bazil.org/fuse"
-	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
 	"context"
+	"fmt"
+
+	"bazil.org/fuse"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 )
 
 type File struct {
