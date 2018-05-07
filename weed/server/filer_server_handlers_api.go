@@ -20,6 +20,9 @@ func (fs *FilerServer) apiHandler(w http.ResponseWriter, r *http.Request) {
 		glog.V(0).Infoln("failing to read request", r.RequestURI, request)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 	}
+
+	glog.V(2).Infof("api request: %+v", apiRequest)
+
 	switch apiRequest.Command {
 	case "lookupDirectoryEntry":
 		res := filer.LookupDirectoryEntryResult{}

@@ -170,6 +170,11 @@ func parseURLPath(path string) (vid, fid, filename, ext string, isVolumeIdOnly b
 	return
 }
 
+func statsHealthHandler(w http.ResponseWriter, r *http.Request) {
+	m := make(map[string]interface{})
+	m["Version"] = util.VERSION
+	writeJsonQuiet(w, r, http.StatusOK, m)
+}
 func statsCounterHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION

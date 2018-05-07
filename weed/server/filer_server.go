@@ -185,7 +185,7 @@ func (fs *FilerServer) detectHealthyMaster(masterNode string) (master string, e 
 }
 
 func checkMaster(masterNode string) error {
-	statUrl := "http://" + masterNode + "/stats"
+	statUrl := "http://" + masterNode + "/stats/health"
 	glog.V(4).Infof("Connecting to %s ...", statUrl)
 	_, e := util.Get(statUrl)
 	return e
