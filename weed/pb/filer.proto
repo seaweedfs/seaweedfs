@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package filer;
+
+//////////////////////////////////////////////////
+
+service SeaweedFiler {
+
+    rpc LookupDirectoryEntry (LookupDirectoryEntryRequest) returns (LookupDirectoryEntryResponse) {
+    }
+
+    rpc ListEntries (ListEntriesRequest) returns (ListEntriesResponse) {
+    }
+
+    rpc GetFileAttributes (GetFileAttributesRequest) returns (GetFileAttributesResponse) {
+    }
+
+    rpc GetFileContent (GetFileContentRequest) returns (GetFileContentResponse) {
+    }
+
+    rpc DeleteEntry (DeleteEntryRequest) returns (DeleteEntryResponse) {
+    }
+
+}
+
+//////////////////////////////////////////////////
+
+message LookupDirectoryEntryRequest {
+    string directory = 1;
+    string name = 2;
+}
+
+message LookupDirectoryEntryResponse {
+    Entry entry = 1;
+}
+
+message ListEntriesRequest {
+    string directory = 1;
+}
+
+message ListEntriesResponse {
+    repeated Entry entries = 1;
+}
+
+message Entry {
+    string name = 1;
+    bool is_directory = 2;
+    string file_id = 3;
+    FuseAttributes attributes = 4;
+}
+
+message FuseAttributes {
+    uint64 file_size = 1;
+    int64 mtime = 2;
+    uint32 file_mode = 3;
+    uint32 uid = 4;
+    uint32 gid = 5;
+}
+
+message GetFileAttributesRequest {
+    string name = 1;
+    string parent_dir = 2;
+    string file_id = 3;
+}
+
+message GetFileAttributesResponse {
+    FuseAttributes attributes = 1;
+}
+
+message GetFileContentRequest {
+    string file_id = 1;
+}
+
+message GetFileContentResponse {
+    bytes content = 1;
+}
+
+message DeleteEntryRequest {
+    string directory = 1;
+    string name = 2;
+    bool is_directory = 3;
+}
+
+message DeleteEntryResponse {
+}

@@ -106,7 +106,6 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, ip string, port int,
 		}
 
 		defaultMux.HandleFunc("/admin/mv", fs.moveHandler)
-		defaultMux.HandleFunc("/__api__", fs.apiHandler)
 	}
 
 	defaultMux.HandleFunc("/admin/register", fs.registerHandler)

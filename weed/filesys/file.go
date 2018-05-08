@@ -6,7 +6,17 @@ import (
 
 	"bazil.org/fuse"
 	"github.com/chrislusf/seaweedfs/weed/filer"
+	"bazil.org/fuse/fs"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
+
+var _ = fs.Node(&File{})
+// var _ = fs.NodeOpener(&File{})
+// var _ = fs.NodeFsyncer(&File{})
+var _ = fs.Handle(&File{})
+var _ = fs.HandleReadAller(&File{})
+// var _ = fs.HandleReader(&File{})
+var _ = fs.HandleWriter(&File{})
 
 type File struct {
 	FileId filer.FileId
@@ -16,20 +26,49 @@ type File struct {
 
 func (file *File) Attr(context context.Context, attr *fuse.Attr) error {
 	attr.Mode = 0444
-	ret, err := filer.GetFileSize(file.wfs.filer, string(file.FileId))
-	if err == nil {
-		attr.Size = ret.Size
-	} else {
-		fmt.Printf("Get file %s attr [ERROR] %s\n", file.Name, err)
-	}
-	return err
+	return file.wfs.withFilerClient(func(client filer.SeaweedFilerClient) error {
+
+		request := &filer.GetFileAttributesRequest{
+			Name:      file.Name,
+			ParentDir: "", //TODO add parent folder
+			FileId:    string(file.FileId),
+		}
+
+		glog.V(1).Infof("read file size: %v", request)
+		resp, err := client.GetFileAttributes(context, request)
+		if err != nil {
+			return err
+		}
+
+		attr.Size = resp.Attributes.FileSize
+
+		return nil
+	})
 }
 
-func (file *File) ReadAll(ctx context.Context) ([]byte, error) {
-	ret, err := filer.GetFileContent(file.wfs.filer, string(file.FileId))
-	if err == nil {
-		return ret.Content, nil
-	}
-	fmt.Printf("Get file %s content [ERROR] %s\n", file.Name, err)
-	return nil, err
+func (file *File) ReadAll(ctx context.Context) (content []byte, err error) {
+
+	err = file.wfs.withFilerClient(func(client filer.SeaweedFilerClient) error {
+
+		request := &filer.GetFileContentRequest{
+			FileId: string(file.FileId),
+		}
+
+		glog.V(1).Infof("read file content: %v", request)
+		resp, err := client.GetFileContent(ctx, request)
+		if err != nil {
+			return err
+		}
+
+		content = resp.Content
+
+		return nil
+	})
+
+	return content, err
+}
+
+func (file *File) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
+	fmt.Printf("write file %+v\n", req)
+	return nil
 }
