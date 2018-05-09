@@ -19,6 +19,7 @@ type BoltDbNeedleMap struct {
 
 var boltdbBucket = []byte("weed")
 
+// TODO avoid using btree to count deletions.
 func NewBoltDbNeedleMap(dbFileName string, indexFile *os.File) (m *BoltDbNeedleMap, err error) {
 	m = &BoltDbNeedleMap{dbFileName: dbFileName}
 	m.indexFile = indexFile
