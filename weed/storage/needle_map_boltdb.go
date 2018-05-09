@@ -32,7 +32,7 @@ func NewBoltDbNeedleMap(dbFileName string, indexFile *os.File) (m *BoltDbNeedleM
 		return
 	}
 	glog.V(1).Infof("Loading %s...", indexFile.Name())
-	nm, indexLoadError := LoadBtreeNeedleMap(indexFile)
+	nm, indexLoadError := NewBoltDbNeedleMap(dbFileName, indexFile)
 	if indexLoadError != nil {
 		return nil, indexLoadError
 	}

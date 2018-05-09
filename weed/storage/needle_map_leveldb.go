@@ -30,7 +30,7 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File) (m *LevelDbNeedl
 		return
 	}
 	glog.V(1).Infof("Loading %s...", indexFile.Name())
-	nm, indexLoadError := LoadBtreeNeedleMap(indexFile)
+	nm, indexLoadError := NewLevelDbNeedleMap(dbFileName, indexFile)
 	if indexLoadError != nil {
 		return nil, indexLoadError
 	}
