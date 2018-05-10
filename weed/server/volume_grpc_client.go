@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"golang.org/x/net/context"
@@ -42,7 +42,7 @@ func (vs *VolumeServer) doHeartbeat(sleepInterval time.Duration) error {
 	}
 	defer grpcConection.Close()
 
-	client := pb.NewSeaweedClient(grpcConection)
+	client := master_pb.NewSeaweedClient(grpcConection)
 	stream, err := client.SendHeartbeat(context.Background())
 	if err != nil {
 		glog.V(0).Infof("%v.SendHeartbeat(_) = _, %v", client, err)

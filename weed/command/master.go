@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
@@ -104,7 +104,7 @@ func runMaster(cmd *Command, args []string) bool {
 
 	// Create your protocol servers.
 	grpcS := grpc.NewServer()
-	pb.RegisterSeaweedServer(grpcS, ms)
+	master_pb.RegisterSeaweedServer(grpcS, ms)
 	reflection.Register(grpcS)
 
 	httpS := &http.Server{Handler: r}

@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package pb;
+package master_pb;
 
 //////////////////////////////////////////////////
 

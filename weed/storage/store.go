@@ -8,7 +8,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 )
 
 const (
@@ -76,7 +76,7 @@ type Store struct {
 	rack            string //optional information, overwriting master setting if exists
 	connected       bool
 	VolumeSizeLimit uint64 //read from the master
-	Client          pb.Seaweed_SendHeartbeatClient
+	Client          master_pb.Seaweed_SendHeartbeatClient
 	NeedleMapType   NeedleMapType
 }
 
@@ -208,8 +208,8 @@ func (s *Store) SetRack(rack string) {
 	s.rack = rack
 }
 
-func (s *Store) CollectHeartbeat() *pb.Heartbeat {
-	var volumeMessages []*pb.VolumeInformationMessage
+func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
+	var volumeMessages []*master_pb.VolumeInformationMessage
 	maxVolumeCount := 0
 	var maxFileKey uint64
 	for _, location := range s.Locations {
@@ -220,7 +220,7 @@ func (s *Store) CollectHeartbeat() *pb.Heartbeat {
 				maxFileKey = v.nm.MaxFileKey()
 			}
 			if !v.expired(s.VolumeSizeLimit) {
-				volumeMessage := &pb.VolumeInformationMessage{
+				volumeMessage := &master_pb.VolumeInformationMessage{
 					Id:               uint32(k),
 					Size:             uint64(v.Size()),
 					Collection:       v.Collection,
@@ -245,7 +245,7 @@ func (s *Store) CollectHeartbeat() *pb.Heartbeat {
 		location.Unlock()
 	}
 
-	return &pb.Heartbeat{
+	return &master_pb.Heartbeat{
 		Ip:             s.Ip,
 		Port:           uint32(s.Port),
 		PublicUrl:      s.PublicUrl,

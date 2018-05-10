@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 )
 
 type VolumeInfo struct {
@@ -20,7 +20,7 @@ type VolumeInfo struct {
 	ReadOnly         bool
 }
 
-func NewVolumeInfo(m *pb.VolumeInformationMessage) (vi VolumeInfo, err error) {
+func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err error) {
 	vi = VolumeInfo{
 		Id:               VolumeId(m.Id),
 		Size:             m.Size,
