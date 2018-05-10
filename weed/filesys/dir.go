@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"sync"
 
 	"bazil.org/fuse/fs"
 	"bazil.org/fuse"
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"sync"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
 type Dir struct {
@@ -50,10 +51,10 @@ func (dir *Dir) Lookup(ctx context.Context, name string) (node fs.Node, err erro
 		return node, nil
 	}
 
-	var entry *filer.Entry
-	err = dir.wfs.withFilerClient(func(client filer.SeaweedFilerClient) error {
+	var entry *filer_pb.Entry
+	err = dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		request := &filer.LookupDirectoryEntryRequest{
+		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir.Path,
 			Name:      name,
 		}
@@ -84,9 +85,9 @@ func (dir *Dir) Lookup(ctx context.Context, name string) (node fs.Node, err erro
 
 func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
-	err = dir.wfs.withFilerClient(func(client filer.SeaweedFilerClient) error {
+	err = dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		request := &filer.ListEntriesRequest{
+		request := &filer_pb.ListEntriesRequest{
 			Directory: dir.Path,
 		}
 
@@ -117,9 +118,9 @@ func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 	dir.NodeMapLock.Lock()
 	defer dir.NodeMapLock.Unlock()
 
-	return dir.wfs.withFilerClient(func(client filer.SeaweedFilerClient) error {
+	return dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		request := &filer.DeleteEntryRequest{
+		request := &filer_pb.DeleteEntryRequest{
 			Directory:   dir.Path,
 			Name:        req.Name,
 			IsDirectory: req.Dir,

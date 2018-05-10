@@ -8,6 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"bazil.org/fuse/fs"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
 var _ = fs.Node(&File{})
@@ -26,9 +27,9 @@ type File struct {
 
 func (file *File) Attr(context context.Context, attr *fuse.Attr) error {
 	attr.Mode = 0444
-	return file.wfs.withFilerClient(func(client filer.SeaweedFilerClient) error {
+	return file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		request := &filer.GetFileAttributesRequest{
+		request := &filer_pb.GetFileAttributesRequest{
 			Name:      file.Name,
 			ParentDir: "", //TODO add parent folder
 			FileId:    string(file.FileId),
@@ -48,9 +49,9 @@ func (file *File) Attr(context context.Context, attr *fuse.Attr) error {
 
 func (file *File) ReadAll(ctx context.Context) (content []byte, err error) {
 
-	err = file.wfs.withFilerClient(func(client filer.SeaweedFilerClient) error {
+	err = file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		request := &filer.GetFileContentRequest{
+		request := &filer_pb.GetFileContentRequest{
 			FileId: string(file.FileId),
 		}
 

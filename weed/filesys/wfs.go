@@ -4,7 +4,7 @@ import (
 	"bazil.org/fuse/fs"
 	"fmt"
 	"google.golang.org/grpc"
-	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
 type WFS struct {
@@ -21,7 +21,7 @@ func (wfs *WFS) Root() (fs.Node, error) {
 	return &Dir{Path: "/", wfs: wfs}, nil
 }
 
-func (wfs *WFS) withFilerClient(fn func(filer.SeaweedFilerClient) error) error {
+func (wfs *WFS) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
 	grpcConnection, err := grpc.Dial(wfs.filer, grpc.WithInsecure())
 	if err != nil {
@@ -29,7 +29,7 @@ func (wfs *WFS) withFilerClient(fn func(filer.SeaweedFilerClient) error) error {
 	}
 	defer grpcConnection.Close()
 
-	client := filer.NewSeaweedFilerClient(grpcConnection)
+	client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 
 	return fn(client)
 }

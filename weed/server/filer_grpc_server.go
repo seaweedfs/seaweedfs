@@ -2,14 +2,15 @@ package weed_server
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/filer"
+	"strconv"
+
 	"bazil.org/fuse"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"strconv"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
-func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer.LookupDirectoryEntryRequest) (*filer.LookupDirectoryEntryResponse, error) {
+func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 
 	found, fileId, err := fs.filer.LookupDirectoryEntry(req.Directory, req.Name)
 	if err != nil {
@@ -19,8 +20,8 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer.Look
 		return nil, fuse.ENOENT
 	}
 
-	return &filer.LookupDirectoryEntryResponse{
-		Entry: &filer.Entry{
+	return &filer_pb.LookupDirectoryEntryResponse{
+		Entry: &filer_pb.Entry{
 			Name:        req.Name,
 			IsDirectory: fileId == "",
 			FileId:      fileId,
@@ -28,7 +29,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer.Look
 	}, nil
 }
 
-func (fs *FilerServer) ListEntries(ctx context.Context, req *filer.ListEntriesRequest) (*filer.ListEntriesResponse, error) {
+func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntriesRequest) (*filer_pb.ListEntriesResponse, error) {
 
 	directoryNames, err := fs.filer.ListDirectories(req.Directory)
 	if err != nil {
@@ -39,15 +40,15 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer.ListEntriesRe
 		return nil, err
 	}
 
-	resp := &filer.ListEntriesResponse{}
+	resp := &filer_pb.ListEntriesResponse{}
 	for _, dir := range directoryNames {
-		resp.Entries = append(resp.Entries, &filer.Entry{
+		resp.Entries = append(resp.Entries, &filer_pb.Entry{
 			Name:        string(dir),
 			IsDirectory: true,
 		})
 	}
 	for _, fileEntry := range files {
-		resp.Entries = append(resp.Entries, &filer.Entry{
+		resp.Entries = append(resp.Entries, &filer_pb.Entry{
 			Name:        fileEntry.Name,
 			IsDirectory: false,
 			FileId:      string(fileEntry.Id),
@@ -57,9 +58,9 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer.ListEntriesRe
 	return resp, nil
 }
 
-func (fs *FilerServer) GetFileAttributes(ctx context.Context, req *filer.GetFileAttributesRequest) (*filer.GetFileAttributesResponse, error) {
+func (fs *FilerServer) GetFileAttributes(ctx context.Context, req *filer_pb.GetFileAttributesRequest) (*filer_pb.GetFileAttributesResponse, error) {
 
-	attributes := &filer.FuseAttributes{}
+	attributes := &filer_pb.FuseAttributes{}
 
 	server, err := operation.LookupFileId(fs.getMasterNode(), req.FileId)
 	if err != nil {
@@ -74,12 +75,12 @@ func (fs *FilerServer) GetFileAttributes(ctx context.Context, req *filer.GetFile
 		return nil, err
 	}
 
-	return &filer.GetFileAttributesResponse{
+	return &filer_pb.GetFileAttributesResponse{
 		Attributes: attributes,
 	}, nil
 }
 
-func (fs *FilerServer) GetFileContent(ctx context.Context, req *filer.GetFileContentRequest) (*filer.GetFileContentResponse, error) {
+func (fs *FilerServer) GetFileContent(ctx context.Context, req *filer_pb.GetFileContentRequest) (*filer_pb.GetFileContentResponse, error) {
 
 	server, err := operation.LookupFileId(fs.getMasterNode(), req.FileId)
 	if err != nil {
@@ -90,12 +91,12 @@ func (fs *FilerServer) GetFileContent(ctx context.Context, req *filer.GetFileCon
 		return nil, err
 	}
 
-	return &filer.GetFileContentResponse{
+	return &filer_pb.GetFileContentResponse{
 		Content: content,
 	}, nil
 }
 
-func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer.DeleteEntryRequest) (resp *filer.DeleteEntryResponse, err error) {
+func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {
 	if req.IsDirectory {
 		err = fs.filer.DeleteDirectory(req.Directory+req.Name, false)
 	} else {

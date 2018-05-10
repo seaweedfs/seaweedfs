@@ -11,8 +11,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/soheilhy/cmux"
 	"google.golang.org/grpc/reflection"
-	"github.com/chrislusf/seaweedfs/weed/filer"
 	"google.golang.org/grpc"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
 var (
@@ -145,7 +145,7 @@ func (fo *FilerOptions) start() {
 
 	// Create your protocol servers.
 	grpcS := grpc.NewServer()
-	filer.RegisterSeaweedFilerServer(grpcS, fs)
+	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
 	reflection.Register(grpcS)
 
 	httpS := &http.Server{Handler: defaultMux}
