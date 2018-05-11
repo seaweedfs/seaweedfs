@@ -39,7 +39,7 @@ func (f *Filer) CreateEntry(entry Entry) (error) {
 	3. add the file entry
 	*/
 
-	f.recursivelyEnsureDirectory(entry.Dir, func(parent, name string) error {
+	recursivelyEnsureDirectory(entry.Dir, func(parent, name string) error {
 		return nil
 	})
 
@@ -66,7 +66,7 @@ func (f *Filer) UpdateEntry(entry Entry) (error) {
 	return f.store.UpdateEntry(entry)
 }
 
-func (f *Filer) recursivelyEnsureDirectory(fullPath string, fn func(parent, name string) error) (error) {
+func recursivelyEnsureDirectory(fullPath string, fn func(parent, name string) error) (error) {
 	if strings.HasSuffix(fullPath, "/") {
 		fullPath = fullPath[0:len(fullPath)-1]
 	}
@@ -82,11 +82,15 @@ func (f *Filer) recursivelyEnsureDirectory(fullPath string, fn func(parent, name
 		parentDirPath = "/"
 	}
 
+	if err := recursivelyEnsureDirectory(parentDirPath, fn); err != nil {
+		return err
+	}
+
 	if err := fn(parentDirPath, dirName); err != nil {
 		return err
 	}
 
-	return f.recursivelyEnsureDirectory(parentDirPath, fn)
+	return nil
 }
 
 func (f *Filer) cacheGetDirectory(dirpath string) (error) {
