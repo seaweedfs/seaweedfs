@@ -4,28 +4,35 @@ import (
 	"errors"
 	"os"
 	"time"
+	"path/filepath"
 )
 
 type FileId string //file id in SeaweedFS
-type FullPath struct {
-	Dir  string //full path of the parent dir
-	Name string //file name without path
+type FullPath string
+
+func (fp FullPath) DirAndName() (string, string) {
+	dir, name := filepath.Split(string(fp))
+	if dir == "/" {
+		return dir, name
+	}
+	if len(dir) < 1 {
+		return "/", ""
+	}
+	return dir[:len(dir)-1], name
 }
 
 type Attr struct {
-	Mtime       time.Time   // time of last modification
-	Crtime      time.Time   // time of creation (OS X only)
-	Mode        os.FileMode // file mode
-	Uid         uint32      // owner uid
-	Gid         uint32      // group gid
-	IsDirectory bool
-	Size        uint64 // total size in bytes
-	Nlink       uint32 // number of links (usually 1)
+	Mtime  time.Time   // time of last modification
+	Crtime time.Time   // time of creation (OS X only)
+	Mode   os.FileMode // file mode
+	Uid    uint32      // owner uid
+	Gid    uint32      // group gid
+	Size   uint64      // total size in bytes
+	Nlink  uint32      // number of links (usually 1)
 }
 
 type Entry struct {
-	Dir  string `json:"dir,omitempty"`  //full path of the parent dir
-	Name string `json:"name,omitempty"` //file name without path
+	FullPath
 
 	Attr
 
@@ -40,23 +47,23 @@ type FileChunk struct {
 }
 
 type AbstractFiler interface {
-	CreateEntry(Entry) (error)
+	CreateEntry(*Entry) (error)
 	AppendFileChunk(FullPath, FileChunk) (err error)
-	FindEntry(FullPath) (found bool, fileEntry Entry, err error)
-	DeleteEntry(FullPath) (fileEntry Entry, err error)
+	FindEntry(FullPath) (found bool, fileEntry *Entry, err error)
+	DeleteEntry(FullPath) (fileEntry *Entry, err error)
 
-	ListDirectoryEntries(dirPath FullPath) ([]Entry, error)
-	UpdateEntry(Entry) (error)
+	ListDirectoryEntries(dirPath FullPath) ([]*Entry, error)
+	UpdateEntry(*Entry) (error)
 }
 
 var ErrNotFound = errors.New("filer: no entry is found in filer store")
 
 type FilerStore interface {
-	CreateEntry(Entry) (error)
+	InsertEntry(*Entry) (error)
+	AddDirectoryLink(directory *Entry, delta int32) (err error)
 	AppendFileChunk(FullPath, FileChunk) (err error)
-	FindEntry(FullPath) (found bool, fileEntry Entry, err error)
-	DeleteEntry(FullPath) (fileEntry Entry, err error)
+	FindEntry(FullPath) (found bool, entry *Entry, err error)
+	DeleteEntry(FullPath) (fileEntry *Entry, err error)
 
-	ListDirectoryEntries(dirPath FullPath) ([]Entry, error)
-	UpdateEntry(Entry) (error)
+	ListDirectoryEntries(dirPath FullPath) ([]*Entry, error)
 }
