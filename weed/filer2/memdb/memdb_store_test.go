@@ -71,6 +71,7 @@ func TestCreateFileAndList(t *testing.T) {
 	filer.CreateEntry(entry1)
 	filer.CreateEntry(entry2)
 
+	// checking the 2 files
 	entries, err := filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is/one/"))
 
 	if err != nil {
@@ -90,6 +91,30 @@ func TestCreateFileAndList(t *testing.T) {
 
 	if entries[1].FullPath != entry2.FullPath {
 		t.Errorf("find wrong entry 2: %v", entries[1].FullPath)
+		return
+	}
+
+	// checking one upper directory
+	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"))
+	if len(entries) != 1 {
+		t.Errorf("list entries count: %v", len(entries))
+		return
+	}
+
+	entry3 := &filer2.Entry{
+		FullPath: filer2.FullPath("/home/chris/this/is/file3.jpg"),
+		Attr: filer2.Attr{
+			Mode: 0440,
+			Uid:  1234,
+			Gid:  5678,
+		},
+	}
+	filer.CreateEntry(entry3)
+
+	// checking one upper directory
+	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"))
+	if len(entries) != 2 {
+		t.Errorf("list entries count: %v", len(entries))
 		return
 	}
 
