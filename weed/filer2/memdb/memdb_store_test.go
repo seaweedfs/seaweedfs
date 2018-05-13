@@ -101,8 +101,9 @@ func TestCreateFileAndList(t *testing.T) {
 		return
 	}
 
+	file3Path := filer2.FullPath("/home/chris/this/is/file3.jpg")
 	entry3 := &filer2.Entry{
-		FullPath: filer2.FullPath("/home/chris/this/is/file3.jpg"),
+		FullPath: file3Path,
 		Attr: filer2.Attr{
 			Mode: 0440,
 			Uid:  1234,
@@ -114,6 +115,14 @@ func TestCreateFileAndList(t *testing.T) {
 	// checking one upper directory
 	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"))
 	if len(entries) != 2 {
+		t.Errorf("list entries count: %v", len(entries))
+		return
+	}
+
+	// delete file and count
+	filer.DeleteEntry(file3Path)
+	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"))
+	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
 		return
 	}

@@ -31,11 +31,6 @@ func (filer *MemDbStore) InsertEntry(entry *filer2.Entry) (err error) {
 	return nil
 }
 
-func (filer *MemDbStore) AddDirectoryLink(directory *filer2.Entry, delta int32) (err error) {
-	directory.Nlink = uint32(int32(directory.Nlink) + delta)
-	return nil
-}
-
 func (filer *MemDbStore) AppendFileChunk(fullpath filer2.FullPath, fileChunk filer2.FileChunk) (err error) {
 	found, entry, err := filer.FindEntry(fullpath)
 	if !found {

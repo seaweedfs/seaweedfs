@@ -28,7 +28,6 @@ type Attr struct {
 	Uid    uint32      // owner uid
 	Gid    uint32      // group gid
 	Size   uint64      // total size in bytes
-	Nlink  uint32      // number of links (usually 1)
 }
 
 type Entry struct {
@@ -60,7 +59,6 @@ var ErrNotFound = errors.New("filer: no entry is found in filer store")
 
 type FilerStore interface {
 	InsertEntry(*Entry) (error)
-	AddDirectoryLink(directory *Entry, delta int32) (err error)
 	AppendFileChunk(FullPath, FileChunk) (err error)
 	FindEntry(FullPath) (found bool, entry *Entry, err error)
 	DeleteEntry(FullPath) (fileEntry *Entry, err error)

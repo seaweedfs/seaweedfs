@@ -71,7 +71,6 @@ func (f *Filer) CreateEntry(entry *Entry) (error) {
 					Mode:   os.ModeDir | 0660,
 					Uid:    entry.Uid,
 					Gid:    entry.Gid,
-					Nlink:  2,
 				},
 			}
 
@@ -100,9 +99,6 @@ func (f *Filer) CreateEntry(entry *Entry) (error) {
 	}
 
 	if err := f.store.InsertEntry(entry); err != nil {
-		return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
-	}
-	if err := f.store.AddDirectoryLink(lastDirectoryEntry, 1); err != nil {
 		return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
 	}
 
