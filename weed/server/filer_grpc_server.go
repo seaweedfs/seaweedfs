@@ -4,10 +4,10 @@ import (
 	"context"
 	"strconv"
 
-	"bazil.org/fuse"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"fmt"
 )
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -17,7 +17,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 		return nil, err
 	}
 	if !found {
-		return nil, fuse.ENOENT
+		return nil, fmt.Errorf("%s not found under %s", req.Name, req.Directory)
 	}
 
 	return &filer_pb.LookupDirectoryEntryResponse{
