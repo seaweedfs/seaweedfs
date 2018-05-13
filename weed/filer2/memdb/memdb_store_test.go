@@ -72,7 +72,7 @@ func TestCreateFileAndList(t *testing.T) {
 	filer.CreateEntry(entry2)
 
 	// checking the 2 files
-	entries, err := filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is/one/"))
+	entries, err := filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is/one/"), "", false, 100)
 
 	if err != nil {
 		t.Errorf("list entries: %v", err)
@@ -94,8 +94,15 @@ func TestCreateFileAndList(t *testing.T) {
 		return
 	}
 
+	// checking the offset
+	entries, err = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is/one/"), "file1.jpg", false, 100)
+	if len(entries) != 1 {
+		t.Errorf("list entries count: %v", len(entries))
+		return
+	}
+
 	// checking one upper directory
-	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"))
+	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"), "", false, 100)
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
 		return
@@ -113,7 +120,7 @@ func TestCreateFileAndList(t *testing.T) {
 	filer.CreateEntry(entry3)
 
 	// checking one upper directory
-	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"))
+	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"), "", false, 100)
 	if len(entries) != 2 {
 		t.Errorf("list entries count: %v", len(entries))
 		return
@@ -121,7 +128,7 @@ func TestCreateFileAndList(t *testing.T) {
 
 	// delete file and count
 	filer.DeleteEntry(file3Path)
-	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"))
+	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"), "", false, 100)
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
 		return

@@ -117,11 +117,11 @@ func (f *Filer) DeleteEntry(p FullPath) (fileEntry *Entry, err error) {
 	return f.store.DeleteEntry(p)
 }
 
-func (f *Filer) ListDirectoryEntries(p FullPath) ([]*Entry, error) {
+func (f *Filer) ListDirectoryEntries(p FullPath, startFileName string, inclusive bool, limit int) ([]*Entry, error) {
 	if strings.HasSuffix(string(p), "/") {
 		p = p[0:len(p)-1]
 	}
-	return f.store.ListDirectoryEntries(p)
+	return f.store.ListDirectoryEntries(p, startFileName, inclusive, limit)
 }
 
 func (f *Filer) cacheGetDirectory(dirpath string) (*Entry) {

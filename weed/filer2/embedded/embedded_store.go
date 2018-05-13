@@ -37,6 +37,6 @@ func (filer *EmbeddedStore) DeleteEntry(fullpath filer2.FullPath) (entry *filer2
 	return nil, nil
 }
 
-func (filer *EmbeddedStore) ListDirectoryEntries(fullpath filer2.FullPath) (entries []*filer2.Entry, err error) {
+func (filer *EmbeddedStore) ListDirectoryEntries(fullpath filer2.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
 	return nil, nil
 }

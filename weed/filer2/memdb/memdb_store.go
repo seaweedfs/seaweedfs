@@ -60,9 +60,18 @@ func (filer *MemDbStore) DeleteEntry(fullpath filer2.FullPath) (entry *filer2.En
 	return entry, nil
 }
 
-func (filer *MemDbStore) ListDirectoryEntries(fullpath filer2.FullPath) (entries []*filer2.Entry, err error) {
-	filer.tree.AscendGreaterOrEqual(Entry{&filer2.Entry{FullPath: fullpath}},
+func (filer *MemDbStore) ListDirectoryEntries(fullpath filer2.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
+
+	startFrom := string(fullpath)
+	if startFileName != "" {
+		startFrom = startFrom + "/" + startFileName
+	}
+
+	filer.tree.AscendGreaterOrEqual(Entry{&filer2.Entry{FullPath: filer2.FullPath(startFrom)}},
 		func(item btree.Item) bool {
+			if limit <= 0 {
+				return false
+			}
 			entry := item.(Entry).Entry
 			// println("checking", entry.FullPath)
 			if entry.FullPath == fullpath {
@@ -70,7 +79,14 @@ func (filer *MemDbStore) ListDirectoryEntries(fullpath filer2.FullPath) (entries
 				// println("skipping the folder", entry.FullPath)
 				return true
 			}
-			dir, _ := entry.FullPath.DirAndName()
+			dir, name := entry.FullPath.DirAndName()
+			if name == startFileName {
+				if inclusive {
+					limit--
+					entries = append(entries, entry)
+				}
+				return true
+			}
 			if !strings.HasPrefix(dir, string(fullpath)) {
 				// println("directory is:", dir, "fullpath:", fullpath)
 				// println("breaking from", entry.FullPath)
@@ -83,6 +99,7 @@ func (filer *MemDbStore) ListDirectoryEntries(fullpath filer2.FullPath) (entries
 			}
 			// now process the directory items
 			// println("adding entry", entry.FullPath)
+			limit--
 			entries = append(entries, entry)
 			return true
 		},

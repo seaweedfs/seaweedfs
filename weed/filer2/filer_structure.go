@@ -62,5 +62,5 @@ type FilerStore interface {
 	FindEntry(FullPath) (found bool, entry *Entry, err error)
 	DeleteEntry(FullPath) (fileEntry *Entry, err error)
 
-	ListDirectoryEntries(dirPath FullPath) ([]*Entry, error)
+	ListDirectoryEntries(dirPath FullPath, startFileName string, inclusive bool, limit int) ([]*Entry, error)
 }
