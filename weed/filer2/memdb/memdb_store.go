@@ -5,6 +5,7 @@ import (
 	"github.com/google/btree"
 	"strings"
 	"fmt"
+	"time"
 )
 
 type MemDbStore struct {
@@ -37,6 +38,7 @@ func (filer *MemDbStore) AppendFileChunk(fullpath filer2.FullPath, fileChunk fil
 		return fmt.Errorf("No such file: %s", fullpath)
 	}
 	entry.Chunks = append(entry.Chunks, fileChunk)
+	entry.Mtime = time.Now()
 	return nil
 }
 

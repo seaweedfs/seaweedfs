@@ -27,7 +27,6 @@ type Attr struct {
 	Mode   os.FileMode // file mode
 	Uid    uint32      // owner uid
 	Gid    uint32      // group gid
-	Size   uint64      // total size in bytes
 }
 
 type Entry struct {
