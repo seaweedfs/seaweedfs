@@ -9,21 +9,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/filer/cassandra_store"
-	"github.com/chrislusf/seaweedfs/weed/filer/embedded_filer"
-	"github.com/chrislusf/seaweedfs/weed/filer/flat_namespace"
 	"github.com/chrislusf/seaweedfs/weed/filer/mysql_store"
 	"github.com/chrislusf/seaweedfs/weed/filer/postgres_store"
-	"github.com/chrislusf/seaweedfs/weed/filer/redis_store"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer2/memdb"
 )
 
 type filerConf struct {
-	MysqlConf []mysql_store.MySqlConf `json:"mysql"`
+	MysqlConf    []mysql_store.MySqlConf      `json:"mysql"`
 	mysql_store.ShardingConf
 	PostgresConf *postgres_store.PostgresConf `json:"postgres"`
 }
@@ -52,7 +49,7 @@ type FilerServer struct {
 	redirectOnRead     bool
 	disableDirListing  bool
 	secret             security.Secret
-	filer              filer.Filer
+	filer              *filer2.Filer
 	maxMB              int
 	masterNodes        *storage.MasterNodes
 }
@@ -86,27 +83,30 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, ip string, port int,
 	}
 
 	if setting.MysqlConf != nil && len(setting.MysqlConf) != 0 {
-		mysql_store := mysql_store.NewMysqlStore(setting.MysqlConf, setting.IsSharding, setting.ShardCount)
-		fs.filer = flat_namespace.NewFlatNamespaceFiler(master, mysql_store)
+		// mysql_store := mysql_store.NewMysqlStore(setting.MysqlConf, setting.IsSharding, setting.ShardCount)
+		// fs.filer = flat_namespace.NewFlatNamespaceFiler(master, mysql_store)
 	} else if setting.PostgresConf != nil {
-		fs.filer = postgres_store.NewPostgresStore(master, *setting.PostgresConf)
+		// fs.filer = postgres_store.NewPostgresStore(master, *setting.PostgresConf)
 	} else if cassandra_server != "" {
-		cassandra_store, err := cassandra_store.NewCassandraStore(cassandra_keyspace, cassandra_server)
-		if err != nil {
-			glog.Fatalf("Can not connect to cassandra server %s with keyspace %s: %v", cassandra_server, cassandra_keyspace, err)
-		}
-		fs.filer = flat_namespace.NewFlatNamespaceFiler(master, cassandra_store)
+		// cassandra_store, err := cassandra_store.NewCassandraStore(cassandra_keyspace, cassandra_server)
+		// if err != nil {
+		// 	glog.Fatalf("Can not connect to cassandra server %s with keyspace %s: %v", cassandra_server, cassandra_keyspace, err)
+		// }
+		// fs.filer = flat_namespace.NewFlatNamespaceFiler(master, cassandra_store)
 	} else if redis_server != "" {
-		redis_store := redis_store.NewRedisStore(redis_server, redis_password, redis_database)
-		fs.filer = flat_namespace.NewFlatNamespaceFiler(master, redis_store)
+		// redis_store := redis_store.NewRedisStore(redis_server, redis_password, redis_database)
+		// fs.filer = flat_namespace.NewFlatNamespaceFiler(master, redis_store)
 	} else {
+		/*
 		if fs.filer, err = embedded_filer.NewFilerEmbedded(master, dir); err != nil {
 			glog.Fatalf("Can not start filer in dir %s : %v", dir, err)
 			return
 		}
-
-		defaultMux.HandleFunc("/admin/mv", fs.moveHandler)
+		*/
 	}
+
+	fs.filer = filer2.NewFiler(master)
+	fs.filer.SetStore(memdb.NewMemDbStore())
 
 	defaultMux.HandleFunc("/admin/register", fs.registerHandler)
 	defaultMux.HandleFunc("/", fs.filerHandler)

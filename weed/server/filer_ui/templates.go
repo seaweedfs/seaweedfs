@@ -26,22 +26,21 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
 		<div class="row">
 			<ul>
 				{{$path := .Path }}
-				{{ range $dirs_index, $dir := .Directories }}
+				{{ range $entry_index, $entry := .Entries }}
 				<li>
-					<img src="https://www.w3.org/TR/WWWicn/folder.gif" width="20" height="23">
-					<a href={{ print $path  $dir  "/"}} >
-						{{ $dir }}
-					</a>
+					{{if $entry.IsDirectory}}
+						<img src="https://www.w3.org/TR/WWWicn/folder.gif" width="20" height="23">
+						<a href={{ print $path  "/" $entry.Name  "/"}} >
+							{{ $entry.Name }}
+						</a>
+					{{else}}
+						<a href={{ print $path  "/" $entry.Name }} >
+							{{ $entry.Name }}
+						</a>
+					{{end}}
 				</li>
 				{{ end }}
 
-				{{ range $file_index, $file := .Files }}
-				<li>
-					<a href={{ print $path  $file.Name}} >
-					{{ $file.Name }}
-					</a>
-				</li>
-				{{ end }}
 			</ul>
 		</div>
 

@@ -114,11 +114,24 @@ func (f *Filer) FindEntry(p FullPath) (found bool, entry *Entry, err error) {
 }
 
 func (f *Filer) DeleteEntry(p FullPath) (fileEntry *Entry, err error) {
+	found, entry, err := f.FindEntry(p)
+	if err != nil || !found {
+		return nil, err
+	}
+	if entry.IsDirectory() {
+		entries, err := f.ListDirectoryEntries(p, "", false, 1)
+		if err != nil {
+			return nil, fmt.Errorf("list folder %s: %v", p, err)
+		}
+		if len(entries) > 0 {
+			return nil, fmt.Errorf("folder %s is not empty", p)
+		}
+	}
 	return f.store.DeleteEntry(p)
 }
 
 func (f *Filer) ListDirectoryEntries(p FullPath, startFileName string, inclusive bool, limit int) ([]*Entry, error) {
-	if strings.HasSuffix(string(p), "/") {
+	if strings.HasSuffix(string(p), "/") && len(p) > 1 {
 		p = p[0:len(p)-1]
 	}
 	return f.store.ListDirectoryEntries(p, startFileName, inclusive, limit)

@@ -108,6 +108,14 @@ func TestCreateFileAndList(t *testing.T) {
 		return
 	}
 
+	// checking root directory
+	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/"), "", false, 100)
+	if len(entries) != 1 {
+		t.Errorf("list entries count: %v", len(entries))
+		return
+	}
+
+	// add file3
 	file3Path := filer2.FullPath("/home/chris/this/is/file3.jpg")
 	entry3 := &filer2.Entry{
 		FullPath: file3Path,

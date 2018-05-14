@@ -8,11 +8,14 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"path/filepath"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 
-	found, fileId, err := fs.filer.LookupDirectoryEntry(req.Directory, req.Name)
+	found, entry, err := fs.filer.FindEntry(filer2.FullPath(filepath.Join(req.Directory, req.Name)))
 	if err != nil {
 		return nil, err
 	}
@@ -20,10 +23,15 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 		return nil, fmt.Errorf("%s not found under %s", req.Name, req.Directory)
 	}
 
+	var fileId string
+	if !entry.IsDirectory() && len(entry.Chunks) > 0 {
+		fileId = string(entry.Chunks[0].Fid)
+	}
+
 	return &filer_pb.LookupDirectoryEntryResponse{
 		Entry: &filer_pb.Entry{
 			Name:        req.Name,
-			IsDirectory: fileId == "",
+			IsDirectory: entry.IsDirectory(),
 			FileId:      fileId,
 		},
 	}, nil
@@ -31,27 +39,21 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 
 func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntriesRequest) (*filer_pb.ListEntriesResponse, error) {
 
-	directoryNames, err := fs.filer.ListDirectories(req.Directory)
-	if err != nil {
-		return nil, err
-	}
-	files, err := fs.filer.ListFiles(req.Directory, "", 1000)
+	entries, err := fs.filer.ListDirectoryEntries(filer2.FullPath(req.Directory), "", false, 1000)
 	if err != nil {
 		return nil, err
 	}
 
 	resp := &filer_pb.ListEntriesResponse{}
-	for _, dir := range directoryNames {
+	for _, entry := range entries {
+		var fileId string
+		if !entry.IsDirectory() && len(entry.Chunks) > 0 {
+			fileId = string(entry.Chunks[0].Fid)
+		}
 		resp.Entries = append(resp.Entries, &filer_pb.Entry{
-			Name:        string(dir),
-			IsDirectory: true,
-		})
-	}
-	for _, fileEntry := range files {
-		resp.Entries = append(resp.Entries, &filer_pb.Entry{
-			Name:        fileEntry.Name,
-			IsDirectory: false,
-			FileId:      string(fileEntry.Id),
+			Name:        entry.Name(),
+			IsDirectory: entry.IsDirectory(),
+			FileId:      fileId,
 		})
 	}
 
@@ -97,12 +99,13 @@ func (fs *FilerServer) GetFileContent(ctx context.Context, req *filer_pb.GetFile
 }
 
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {
-	if req.IsDirectory {
-		err = fs.filer.DeleteDirectory(req.Directory+req.Name, false)
-	} else {
-		fid, err := fs.filer.DeleteFile(req.Directory + req.Name)
-		if err == nil && fid != "" {
-			err = operation.DeleteFile(fs.getMasterNode(), fid, fs.jwt(fid))
+	entry, err := fs.filer.DeleteEntry(filer2.FullPath(filepath.Join(req.Directory, req.Name)))
+	if err == nil {
+		for _, chunk := range entry.Chunks {
+			fid := string(chunk.Fid)
+			if err = operation.DeleteFile(fs.getMasterNode(), fid, fs.jwt(fid)); err != nil {
+				glog.V(0).Infof("deleting file %s: %v", fid, err)
+			}
 		}
 	}
 	return nil, err

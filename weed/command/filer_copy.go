@@ -91,14 +91,14 @@ func runCopy(cmd *Command, args []string) bool {
 func doEachCopy(fileOrDir string, host string, path string) bool {
 	f, err := os.Open(fileOrDir)
 	if err != nil {
-		fmt.Printf("Failed to open file %s: %v", fileOrDir, err)
+		fmt.Printf("Failed to open file %s: %v\n", fileOrDir, err)
 		return false
 	}
 	defer f.Close()
 
 	fi, err := f.Stat()
 	if err != nil {
-		fmt.Printf("Failed to get stat for file %s: %v", fileOrDir, err)
+		fmt.Printf("Failed to get stat for file %s: %v\n", fileOrDir, err)
 		return false
 	}
 
@@ -122,22 +122,22 @@ func doEachCopy(fileOrDir string, host string, path string) bool {
 
 	parts, err := operation.NewFileParts([]string{fileOrDir})
 	if err != nil {
-		fmt.Printf("Failed to read file %s: %v", fileOrDir, err)
+		fmt.Printf("Failed to read file %s: %v\n", fileOrDir, err)
 	}
 
 	results, err := operation.SubmitFiles(*copy.master, parts,
 		*copy.replication, *copy.collection, "",
 		*copy.ttl, *copy.maxMB, copy.secret)
 	if err != nil {
-		fmt.Printf("Failed to submit file %s: %v", fileOrDir, err)
+		fmt.Printf("Failed to submit file %s: %v\n", fileOrDir, err)
 	}
 
 	if strings.HasSuffix(path, "/") {
 		path = path + fi.Name()
 	}
 
-	if err = filer_operation.RegisterFile(host, path, results[0].Fid, copy.secret); err != nil {
-		fmt.Printf("Failed to register file %s on %s: %v", fileOrDir, host, err)
+	if err = filer_operation.RegisterFile(host, path, results[0].Fid, parts[0].FileSize, copy.secret); err != nil {
+		fmt.Printf("Failed to register file %s on %s: %v\n", fileOrDir, host, err)
 		return false
 	}
 

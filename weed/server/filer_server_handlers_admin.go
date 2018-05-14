@@ -4,34 +4,30 @@ import (
 	"net/http"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"strconv"
 )
-
-/*
-Move a folder or a file, with 4 Use cases:
-	mv fromDir toNewDir
-	mv fromDir toOldDir
-	mv fromFile toDir
-	mv fromFile toFile
-
-Wildcard is not supported.
-
-*/
-func (fs *FilerServer) moveHandler(w http.ResponseWriter, r *http.Request) {
-	from := r.FormValue("from")
-	to := r.FormValue("to")
-	err := fs.filer.Move(from, to)
-	if err != nil {
-		glog.V(4).Infoln("moving", from, "->", to, err.Error())
-		writeJsonError(w, r, http.StatusInternalServerError, err)
-	} else {
-		w.WriteHeader(http.StatusOK)
-	}
-}
 
 func (fs *FilerServer) registerHandler(w http.ResponseWriter, r *http.Request) {
 	path := r.FormValue("path")
 	fileId := r.FormValue("fileId")
-	err := fs.filer.CreateFile(path, fileId)
+	fileSize, err := strconv.ParseUint(r.FormValue("fileSize"), 10, 64)
+	if err != nil {
+		glog.V(4).Infof("register %s to %s parse fileSize %s: %v", fileId, path, r.FormValue("fileSize"), err)
+		writeJsonError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	entry := &filer2.Entry{
+		FullPath: filer2.FullPath(path),
+		Attr: filer2.Attr{
+			Mode: 0660,
+		},
+		Chunks: []filer2.FileChunk{{
+			Fid:  filer2.FileId(fileId),
+			Size: fileSize,
+		}},
+	}
+	err = fs.filer.CreateEntry(entry)
 	if err != nil {
 		glog.V(4).Infof("register %s to %s error: %v", fileId, path, err)
 		writeJsonError(w, r, http.StatusInternalServerError, err)

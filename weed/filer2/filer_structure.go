@@ -21,12 +21,21 @@ func (fp FullPath) DirAndName() (string, string) {
 	return dir[:len(dir)-1], name
 }
 
+func (fp FullPath) Name() (string) {
+	_, name := filepath.Split(string(fp))
+	return name
+}
+
 type Attr struct {
 	Mtime  time.Time   // time of last modification
 	Crtime time.Time   // time of creation (OS X only)
 	Mode   os.FileMode // file mode
 	Uid    uint32      // owner uid
 	Gid    uint32      // group gid
+}
+
+func (attr Attr) IsDirectory() (bool) {
+	return attr.Mode & os.ModeDir > 0
 }
 
 type Entry struct {

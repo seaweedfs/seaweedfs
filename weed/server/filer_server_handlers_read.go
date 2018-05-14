@@ -7,12 +7,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	ui "github.com/chrislusf/seaweedfs/weed/server/filer_ui"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 )
 
 // listDirectoryHandler lists directories and folers under a directory
@@ -20,56 +19,40 @@ import (
 // sub directories are listed on the first page, when "lastFileName"
 // is empty.
 func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Request) {
-	if !strings.HasSuffix(r.URL.Path, "/") {
-		return
+	path := r.URL.Path
+	if strings.HasSuffix(path, "/") && len(path) > 1 {
+		path = path[:len(path)-1]
 	}
+
 	limit, limit_err := strconv.Atoi(r.FormValue("limit"))
 	if limit_err != nil {
 		limit = 100
 	}
 
 	lastFileName := r.FormValue("lastFileName")
-	files, err := fs.filer.ListFiles(r.URL.Path, lastFileName, limit)
 
-	if err == leveldb.ErrNotFound {
-		glog.V(0).Infof("Error %s", err)
+	entries, err := fs.filer.ListDirectoryEntries(filer2.FullPath(path), lastFileName, false, limit)
+
+	if err != nil {
+		glog.V(0).Infof("listDirectory %s %s $d: %s", path, lastFileName, limit, err)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
-	directories, err2 := fs.filer.ListDirectories(r.URL.Path)
-	if err2 == leveldb.ErrNotFound {
-		glog.V(0).Infof("Error %s", err)
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	shouldDisplayLoadMore := len(files) > 0
-
-	lastFileName = ""
-	if len(files) > 0 {
-		lastFileName = files[len(files)-1].Name
-
-		files2, err3 := fs.filer.ListFiles(r.URL.Path, lastFileName, limit)
-		if err3 == leveldb.ErrNotFound {
-			glog.V(0).Infof("Error %s", err)
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		shouldDisplayLoadMore = len(files2) > 0
+	shouldDisplayLoadMore := len(entries) == limit
+	if path == "/" {
+		path = ""
 	}
 
 	args := struct {
 		Path                  string
-		Files                 interface{}
-		Directories           interface{}
+		Entries               interface{}
 		Limit                 int
 		LastFileName          string
 		ShouldDisplayLoadMore bool
 	}{
-		r.URL.Path,
-		files,
-		directories,
+		path,
+		entries,
 		limit,
 		lastFileName,
 		shouldDisplayLoadMore,
@@ -83,7 +66,19 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 }
 
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
-	if strings.HasSuffix(r.URL.Path, "/") {
+	path := r.URL.Path
+	if strings.HasSuffix(path, "/") && len(path) > 1 {
+		path = path[:len(path)-1]
+	}
+
+	found, entry, err := fs.filer.FindEntry(filer2.FullPath(path))
+	if !found || err != nil {
+		glog.V(3).Infof("Not found %s: %v", path, err)
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	if entry.IsDirectory() {
 		if fs.disableDirListing {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
@@ -92,12 +87,14 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	fileId, err := fs.filer.FindFile(r.URL.Path)
-	if err == filer.ErrNotFound {
-		glog.V(3).Infoln("Not found in db", r.URL.Path)
-		w.WriteHeader(http.StatusNotFound)
+	if len(entry.Chunks) == 0 {
+		glog.V(3).Infof("Empty %s: %v", path)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+
+	// FIXME pick the right fid
+	fileId := string(entry.Chunks[0].Fid)
 
 	urlLocation, err := operation.LookupFileId(fs.getMasterNode(), fileId)
 	if err != nil {
