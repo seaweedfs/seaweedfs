@@ -108,5 +108,5 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 			}
 		}
 	}
-	return nil, err
+	return &filer_pb.DeleteEntryResponse{}, err
 }
