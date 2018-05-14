@@ -2,8 +2,6 @@ package weed_server
 
 import (
 	"context"
-	"strconv"
-
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -50,10 +48,19 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 		if !entry.IsDirectory() && len(entry.Chunks) > 0 {
 			fileId = string(entry.Chunks[0].Fid)
 		}
+
+		glog.V(0).Infof("%s attr=%v size=%d", entry.Name(), entry.Attr, filer2.Chunks(entry.Chunks).TotalSize())
 		resp.Entries = append(resp.Entries, &filer_pb.Entry{
 			Name:        entry.Name(),
 			IsDirectory: entry.IsDirectory(),
 			FileId:      fileId,
+			Attributes: &filer_pb.FuseAttributes{
+				FileSize: filer2.Chunks(entry.Chunks).TotalSize(),
+				Mtime:    entry.Mtime.Unix(),
+				Gid:      entry.Gid,
+				Uid:      entry.Uid,
+				FileMode: uint32(entry.Mode),
+			},
 		})
 	}
 
@@ -64,17 +71,18 @@ func (fs *FilerServer) GetFileAttributes(ctx context.Context, req *filer_pb.GetF
 
 	attributes := &filer_pb.FuseAttributes{}
 
-	server, err := operation.LookupFileId(fs.getMasterNode(), req.FileId)
+	found, entry, err := fs.filer.FindEntry(filer2.NewFullPath(req.ParentDir, req.Name))
 	if err != nil {
 		return nil, err
 	}
-	head, err := util.Head(server)
-	if err != nil {
-		return nil, err
-	}
-	attributes.FileSize, err = strconv.ParseUint(head.Get("Content-Length"), 10, 0)
-	if err != nil {
-		return nil, err
+	if !found {
+		attributes.FileSize = 0
+	} else {
+		attributes.FileSize = filer2.Chunks(entry.Chunks).TotalSize()
+		attributes.FileMode = uint32(entry.Mode)
+		attributes.Uid = entry.Uid
+		attributes.Gid = entry.Gid
+		attributes.Mtime = entry.Mtime.Unix()
 	}
 
 	return &filer_pb.GetFileAttributesResponse{

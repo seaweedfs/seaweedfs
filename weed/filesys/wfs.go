@@ -5,15 +5,18 @@ import (
 	"fmt"
 	"google.golang.org/grpc"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/karlseguin/ccache"
 )
 
 type WFS struct {
-	filer string
+	filer                     string
+	listDirectoryEntriesCache *ccache.Cache
 }
 
 func NewSeaweedFileSystem(filer string) *WFS {
 	return &WFS{
-		filer: filer,
+		filer:                     filer,
+		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(6000).ItemsToPrune(100)),
 	}
 }
 

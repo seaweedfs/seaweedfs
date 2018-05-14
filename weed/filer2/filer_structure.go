@@ -10,6 +10,13 @@ import (
 type FileId string //file id in SeaweedFS
 type FullPath string
 
+func NewFullPath(dir, name string) FullPath {
+	if dir == "/" {
+		return FullPath(dir + name)
+	}
+	return FullPath(dir + "/" + name)
+}
+
 func (fp FullPath) DirAndName() (string, string) {
 	dir, name := filepath.Split(string(fp))
 	if dir == "/" {
@@ -35,7 +42,7 @@ type Attr struct {
 }
 
 func (attr Attr) IsDirectory() (bool) {
-	return attr.Mode & os.ModeDir > 0
+	return attr.Mode&os.ModeDir > 0
 }
 
 type Entry struct {

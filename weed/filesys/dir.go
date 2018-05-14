@@ -12,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"time"
 )
 
 type Dir struct {
@@ -74,7 +75,7 @@ func (dir *Dir) Lookup(ctx context.Context, name string) (node fs.Node, err erro
 		if entry.IsDirectory {
 			node = &Dir{Path: path.Join(dir.Path, name), wfs: dir.wfs}
 		} else {
-			node = &File{FileId: filer.FileId(entry.FileId), Name: name, wfs: dir.wfs}
+			node = &File{FileId: filer.FileId(entry.FileId), Name: name, dir: dir, wfs: dir.wfs}
 		}
 		dir.NodeMap[name] = node
 		return node, nil
@@ -104,6 +105,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 			} else {
 				dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_File}
 				ret = append(ret, dirent)
+				dir.wfs.listDirectoryEntriesCache.Set(dir.Path+"/"+entry.Name, entry.Attributes, 3*time.Second)
 			}
 		}
 
