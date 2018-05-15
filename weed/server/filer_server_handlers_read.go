@@ -44,6 +44,10 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		path = ""
 	}
 
+	if len(entries) > 0 {
+		lastFileName = entries[len(entries)-1].Name()
+	}
+
 	args := struct {
 		Path                  string
 		Entries               interface{}
