@@ -98,7 +98,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	}
 
 	// FIXME pick the right fid
-	fileId := string(entry.Chunks[0].Fid)
+	fileId := entry.Chunks[0].FileId
 
 	urlLocation, err := operation.LookupFileId(fs.getMasterNode(), fileId)
 	if err != nil {

@@ -52,7 +52,7 @@ func Assign(server string, r *VolumeAssignRequest) (*AssignResult, error) {
 	}
 
 	jsonBlob, err := util.Post("http://"+server+"/dir/assign", values)
-	glog.V(2).Info("assign result :", string(jsonBlob))
+	glog.V(2).Infof("assign result from %s : %s", server, string(jsonBlob))
 	if err != nil {
 		return nil, err
 	}

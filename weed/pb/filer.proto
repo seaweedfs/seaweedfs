@@ -18,7 +18,16 @@ service SeaweedFiler {
     rpc GetFileContent (GetFileContentRequest) returns (GetFileContentResponse) {
     }
 
+    rpc CreateEntry (CreateEntryRequest) returns (CreateEntryResponse) {
+    }
+
+    rpc AppendFileChunks (AppendFileChunksRequest) returns (AppendFileChunksResponse) {
+    }
+
     rpc DeleteEntry (DeleteEntryRequest) returns (DeleteEntryResponse) {
+    }
+
+    rpc AssignVolume (AssignVolumeRequest) returns (AssignVolumeResponse) {
     }
 
 }
@@ -45,8 +54,14 @@ message ListEntriesResponse {
 message Entry {
     string name = 1;
     bool is_directory = 2;
-    string file_id = 3;
+    repeated FileChunk chunks = 3;
     FuseAttributes attributes = 4;
+}
+
+message FileChunk {
+    string file_id = 1;
+    int64 offset = 2;
+    uint64 size = 3;
 }
 
 message FuseAttributes {
@@ -75,6 +90,14 @@ message GetFileContentResponse {
     bytes content = 1;
 }
 
+message CreateEntryRequest {
+    string directory = 1;
+    Entry entry = 2;
+}
+
+message CreateEntryResponse {
+}
+
 message DeleteEntryRequest {
     string directory = 1;
     string name = 2;
@@ -82,4 +105,24 @@ message DeleteEntryRequest {
 }
 
 message DeleteEntryResponse {
+}
+
+message AssignVolumeRequest {
+    int32 count = 1;
+    string collection = 2;
+    string replication = 3;
+}
+
+message AssignVolumeResponse {
+    string file_id = 1;
+    string url = 2;
+    string public_url = 3;
+    int32 count = 4;
+}
+
+message AppendFileChunksRequest {
+    string directory = 1;
+    Entry entry = 2;
+}
+message AppendFileChunksResponse {
 }

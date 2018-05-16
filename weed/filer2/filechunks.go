@@ -1,6 +1,8 @@
 package filer2
 
-type Chunks []FileChunk
+import "github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+
+type Chunks []*filer_pb.FileChunk
 
 func (chunks Chunks) TotalSize() (size uint64) {
 	for _, c := range chunks {

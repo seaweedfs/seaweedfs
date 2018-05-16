@@ -9,7 +9,6 @@ import (
 
 	"bazil.org/fuse/fs"
 	"bazil.org/fuse"
-	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"time"
@@ -27,16 +26,77 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 	return nil
 }
 
+func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
+	resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
+
+	err := dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		request := &filer_pb.CreateEntryRequest{
+			Directory: dir.Path,
+			Entry: &filer_pb.Entry{
+				Name:        req.Name,
+				IsDirectory: req.Mode&os.ModeDir > 0,
+				Attributes: &filer_pb.FuseAttributes{
+					Mtime:    time.Now().Unix(),
+					FileMode: uint32(req.Mode),
+					Uid:      req.Uid,
+					Gid:      req.Gid,
+				},
+			},
+		}
+
+		glog.V(1).Infof("create: %v", request)
+		if _, err := client.CreateEntry(ctx, request); err != nil {
+			return fmt.Errorf("create file: %v", err)
+		}
+
+		return nil
+	})
+
+	if err == nil {
+		node := &File{Name: req.Name, dir: dir, wfs: dir.wfs}
+		dir.NodeMap[req.Name] = node
+		return node, node, nil
+	}
+
+	return nil, nil, err
+}
+
 func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
 	dir.NodeMapLock.Lock()
 	defer dir.NodeMapLock.Unlock()
 
-	fmt.Printf("mkdir %+v\n", req)
+	err := dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-	node := &Dir{Path: path.Join(dir.Path, req.Name), wfs: dir.wfs}
-	dir.NodeMap[req.Name] = node
+		request := &filer_pb.CreateEntryRequest{
+			Directory: dir.Path,
+			Entry: &filer_pb.Entry{
+				Name:        req.Name,
+				IsDirectory: true,
+				Attributes: &filer_pb.FuseAttributes{
+					Mtime:    time.Now().Unix(),
+					FileMode: uint32(req.Mode),
+					Uid:      req.Uid,
+					Gid:      req.Gid,
+				},
+			},
+		}
 
-	return node, nil
+		glog.V(1).Infof("mkdir: %v", request)
+		if _, err := client.CreateEntry(ctx, request); err != nil {
+			return fmt.Errorf("make dir: %v", err)
+		}
+
+		return nil
+	})
+
+	if err == nil {
+		node := &Dir{Path: path.Join(dir.Path, req.Name), wfs: dir.wfs}
+		dir.NodeMap[req.Name] = node
+		return node, nil
+	}
+
+	return nil, err
 }
 
 func (dir *Dir) Lookup(ctx context.Context, name string) (node fs.Node, err error) {
@@ -75,13 +135,13 @@ func (dir *Dir) Lookup(ctx context.Context, name string) (node fs.Node, err erro
 		if entry.IsDirectory {
 			node = &Dir{Path: path.Join(dir.Path, name), wfs: dir.wfs}
 		} else {
-			node = &File{FileId: filer.FileId(entry.FileId), Name: name, dir: dir, wfs: dir.wfs}
+			node = &File{Chunks: entry.Chunks, Name: name, dir: dir, wfs: dir.wfs}
 		}
 		dir.NodeMap[name] = node
 		return node, nil
 	}
 
-	return nil, err
+	return nil, fuse.ENOENT
 }
 
 func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {

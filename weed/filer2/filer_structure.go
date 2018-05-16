@@ -5,9 +5,9 @@ import (
 	"os"
 	"time"
 	"path/filepath"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
-type FileId string //file id in SeaweedFS
 type FullPath string
 
 func NewFullPath(dir, name string) FullPath {
@@ -51,18 +51,12 @@ type Entry struct {
 	Attr
 
 	// the following is for files
-	Chunks []FileChunk `json:"chunks,omitempty"`
-}
-
-type FileChunk struct {
-	Fid    FileId `json:"fid,omitempty"`
-	Offset int64  `json:"offset,omitempty"`
-	Size   uint64 `json:"size,omitempty"` // size in bytes
+	Chunks []*filer_pb.FileChunk `json:"chunks,omitempty"`
 }
 
 type AbstractFiler interface {
 	CreateEntry(*Entry) (error)
-	AppendFileChunk(FullPath, FileChunk) (err error)
+	AppendFileChunk(FullPath, []*filer_pb.FileChunk) (err error)
 	FindEntry(FullPath) (found bool, fileEntry *Entry, err error)
 	DeleteEntry(FullPath) (fileEntry *Entry, err error)
 
@@ -74,7 +68,7 @@ var ErrNotFound = errors.New("filer: no entry is found in filer store")
 
 type FilerStore interface {
 	InsertEntry(*Entry) (error)
-	AppendFileChunk(FullPath, FileChunk) (err error)
+	AppendFileChunk(FullPath, []*filer_pb.FileChunk) (err error)
 	FindEntry(FullPath) (found bool, entry *Entry, err error)
 	DeleteEntry(FullPath) (fileEntry *Entry, err error)
 

@@ -23,6 +23,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
 type FilerPostResult struct {
@@ -80,7 +81,7 @@ func (fs *FilerServer) queryFileInfoByPath(w http.ResponseWriter, r *http.Reques
 		glog.V(0).Infoln("failing to find path in filer store", path, err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 	} else if found {
-		fileId = string(entry.Chunks[0].Fid)
+		fileId = entry.Chunks[0].FileId
 		urlLocation, err = operation.LookupFileId(fs.getMasterNode(), fileId)
 		if err != nil {
 			glog.V(1).Infoln("operation LookupFileId %s failed, err is %s", fileId, err.Error())
@@ -318,7 +319,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	// also delete the old fid unless PUT operation
 	if r.Method != "PUT" {
 		if found, entry, err := fs.filer.FindEntry(filer2.FullPath(path)); err == nil && found {
-			oldFid := string(entry.Chunks[0].Fid)
+			oldFid := entry.Chunks[0].FileId
 			operation.DeleteFile(fs.getMasterNode(), oldFid, fs.jwt(oldFid))
 		} else if err != nil && err != filer.ErrNotFound {
 			glog.V(0).Infof("error %v occur when finding %s in filer store", err, path)
@@ -331,9 +332,9 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		Attr: filer2.Attr{
 			Mode: 0660,
 		},
-		Chunks: []filer2.FileChunk{{
-			Fid:  filer2.FileId(fileId),
-			Size: uint64(r.ContentLength),
+		Chunks: []*filer_pb.FileChunk{{
+			FileId: fileId,
+			Size:   uint64(r.ContentLength),
 		}},
 	}
 	if db_err := fs.filer.CreateEntry(entry); db_err != nil {
@@ -415,7 +416,7 @@ func (fs *FilerServer) doAutoChunk(w http.ResponseWriter, r *http.Request, conte
 		fileName = path.Base(fileName)
 	}
 
-	var fileChunks []filer2.FileChunk
+	var fileChunks []*filer_pb.FileChunk
 
 	totalBytesRead := int64(0)
 	tmpBufferSize := int32(1024 * 1024)
@@ -455,8 +456,8 @@ func (fs *FilerServer) doAutoChunk(w http.ResponseWriter, r *http.Request, conte
 
 			// Save to chunk manifest structure
 			fileChunks = append(fileChunks,
-				filer2.FileChunk{
-					Fid:    filer2.FileId(fileId),
+				&filer_pb.FileChunk{
+					FileId: fileId,
 					Offset: chunkOffset,
 					Size:   uint64(chunkBufOffset),
 				},
@@ -483,7 +484,7 @@ func (fs *FilerServer) doAutoChunk(w http.ResponseWriter, r *http.Request, conte
 	if r.Method != "PUT" {
 		if found, entry, err := fs.filer.FindEntry(filer2.FullPath(path)); found && err == nil {
 			for _, chunk := range entry.Chunks {
-				oldFid := string(chunk.Fid)
+				oldFid := chunk.FileId
 				operation.DeleteFile(fs.getMasterNode(), oldFid, fs.jwt(oldFid))
 			}
 		} else if err != nil {
@@ -535,7 +536,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	if entry != nil && !entry.IsDirectory() {
 		for _, chunk := range entry.Chunks {
-			oldFid := string(chunk.Fid)
+			oldFid := chunk.FileId
 			operation.DeleteFile(fs.getMasterNode(), oldFid, fs.jwt(oldFid))
 		}
 	}

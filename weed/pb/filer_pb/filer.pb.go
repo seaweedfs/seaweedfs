@@ -14,13 +14,20 @@ It has these top-level messages:
 	ListEntriesRequest
 	ListEntriesResponse
 	Entry
+	FileChunk
 	FuseAttributes
 	GetFileAttributesRequest
 	GetFileAttributesResponse
 	GetFileContentRequest
 	GetFileContentResponse
+	CreateEntryRequest
+	CreateEntryResponse
 	DeleteEntryRequest
 	DeleteEntryResponse
+	AssignVolumeRequest
+	AssignVolumeResponse
+	AppendFileChunksRequest
+	AppendFileChunksResponse
 */
 package filer_pb
 
@@ -119,7 +126,7 @@ func (m *ListEntriesResponse) GetEntries() []*Entry {
 type Entry struct {
 	Name        string          `protobuf:"bytes,1,opt,name=name" json:"name,omitempty"`
 	IsDirectory bool            `protobuf:"varint,2,opt,name=is_directory,json=isDirectory" json:"is_directory,omitempty"`
-	FileId      string          `protobuf:"bytes,3,opt,name=file_id,json=fileId" json:"file_id,omitempty"`
+	Chunks      []*FileChunk    `protobuf:"bytes,3,rep,name=chunks" json:"chunks,omitempty"`
 	Attributes  *FuseAttributes `protobuf:"bytes,4,opt,name=attributes" json:"attributes,omitempty"`
 }
 
@@ -142,11 +149,11 @@ func (m *Entry) GetIsDirectory() bool {
 	return false
 }
 
-func (m *Entry) GetFileId() string {
+func (m *Entry) GetChunks() []*FileChunk {
 	if m != nil {
-		return m.FileId
+		return m.Chunks
 	}
-	return ""
+	return nil
 }
 
 func (m *Entry) GetAttributes() *FuseAttributes {
@@ -154,6 +161,38 @@ func (m *Entry) GetAttributes() *FuseAttributes {
 		return m.Attributes
 	}
 	return nil
+}
+
+type FileChunk struct {
+	FileId string `protobuf:"bytes,1,opt,name=file_id,json=fileId" json:"file_id,omitempty"`
+	Offset int64  `protobuf:"varint,2,opt,name=offset" json:"offset,omitempty"`
+	Size   uint64 `protobuf:"varint,3,opt,name=size" json:"size,omitempty"`
+}
+
+func (m *FileChunk) Reset()                    { *m = FileChunk{} }
+func (m *FileChunk) String() string            { return proto.CompactTextString(m) }
+func (*FileChunk) ProtoMessage()               {}
+func (*FileChunk) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{5} }
+
+func (m *FileChunk) GetFileId() string {
+	if m != nil {
+		return m.FileId
+	}
+	return ""
+}
+
+func (m *FileChunk) GetOffset() int64 {
+	if m != nil {
+		return m.Offset
+	}
+	return 0
+}
+
+func (m *FileChunk) GetSize() uint64 {
+	if m != nil {
+		return m.Size
+	}
+	return 0
 }
 
 type FuseAttributes struct {
@@ -167,7 +206,7 @@ type FuseAttributes struct {
 func (m *FuseAttributes) Reset()                    { *m = FuseAttributes{} }
 func (m *FuseAttributes) String() string            { return proto.CompactTextString(m) }
 func (*FuseAttributes) ProtoMessage()               {}
-func (*FuseAttributes) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{5} }
+func (*FuseAttributes) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{6} }
 
 func (m *FuseAttributes) GetFileSize() uint64 {
 	if m != nil {
@@ -213,7 +252,7 @@ type GetFileAttributesRequest struct {
 func (m *GetFileAttributesRequest) Reset()                    { *m = GetFileAttributesRequest{} }
 func (m *GetFileAttributesRequest) String() string            { return proto.CompactTextString(m) }
 func (*GetFileAttributesRequest) ProtoMessage()               {}
-func (*GetFileAttributesRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{6} }
+func (*GetFileAttributesRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{7} }
 
 func (m *GetFileAttributesRequest) GetName() string {
 	if m != nil {
@@ -243,7 +282,7 @@ type GetFileAttributesResponse struct {
 func (m *GetFileAttributesResponse) Reset()                    { *m = GetFileAttributesResponse{} }
 func (m *GetFileAttributesResponse) String() string            { return proto.CompactTextString(m) }
 func (*GetFileAttributesResponse) ProtoMessage()               {}
-func (*GetFileAttributesResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{7} }
+func (*GetFileAttributesResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{8} }
 
 func (m *GetFileAttributesResponse) GetAttributes() *FuseAttributes {
 	if m != nil {
@@ -259,7 +298,7 @@ type GetFileContentRequest struct {
 func (m *GetFileContentRequest) Reset()                    { *m = GetFileContentRequest{} }
 func (m *GetFileContentRequest) String() string            { return proto.CompactTextString(m) }
 func (*GetFileContentRequest) ProtoMessage()               {}
-func (*GetFileContentRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{8} }
+func (*GetFileContentRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{9} }
 
 func (m *GetFileContentRequest) GetFileId() string {
 	if m != nil {
@@ -275,7 +314,7 @@ type GetFileContentResponse struct {
 func (m *GetFileContentResponse) Reset()                    { *m = GetFileContentResponse{} }
 func (m *GetFileContentResponse) String() string            { return proto.CompactTextString(m) }
 func (*GetFileContentResponse) ProtoMessage()               {}
-func (*GetFileContentResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{9} }
+func (*GetFileContentResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{10} }
 
 func (m *GetFileContentResponse) GetContent() []byte {
 	if m != nil {
@@ -283,6 +322,38 @@ func (m *GetFileContentResponse) GetContent() []byte {
 	}
 	return nil
 }
+
+type CreateEntryRequest struct {
+	Directory string `protobuf:"bytes,1,opt,name=directory" json:"directory,omitempty"`
+	Entry     *Entry `protobuf:"bytes,2,opt,name=entry" json:"entry,omitempty"`
+}
+
+func (m *CreateEntryRequest) Reset()                    { *m = CreateEntryRequest{} }
+func (m *CreateEntryRequest) String() string            { return proto.CompactTextString(m) }
+func (*CreateEntryRequest) ProtoMessage()               {}
+func (*CreateEntryRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{11} }
+
+func (m *CreateEntryRequest) GetDirectory() string {
+	if m != nil {
+		return m.Directory
+	}
+	return ""
+}
+
+func (m *CreateEntryRequest) GetEntry() *Entry {
+	if m != nil {
+		return m.Entry
+	}
+	return nil
+}
+
+type CreateEntryResponse struct {
+}
+
+func (m *CreateEntryResponse) Reset()                    { *m = CreateEntryResponse{} }
+func (m *CreateEntryResponse) String() string            { return proto.CompactTextString(m) }
+func (*CreateEntryResponse) ProtoMessage()               {}
+func (*CreateEntryResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{12} }
 
 type DeleteEntryRequest struct {
 	Directory   string `protobuf:"bytes,1,opt,name=directory" json:"directory,omitempty"`
@@ -293,7 +364,7 @@ type DeleteEntryRequest struct {
 func (m *DeleteEntryRequest) Reset()                    { *m = DeleteEntryRequest{} }
 func (m *DeleteEntryRequest) String() string            { return proto.CompactTextString(m) }
 func (*DeleteEntryRequest) ProtoMessage()               {}
-func (*DeleteEntryRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{10} }
+func (*DeleteEntryRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{13} }
 
 func (m *DeleteEntryRequest) GetDirectory() string {
 	if m != nil {
@@ -322,7 +393,111 @@ type DeleteEntryResponse struct {
 func (m *DeleteEntryResponse) Reset()                    { *m = DeleteEntryResponse{} }
 func (m *DeleteEntryResponse) String() string            { return proto.CompactTextString(m) }
 func (*DeleteEntryResponse) ProtoMessage()               {}
-func (*DeleteEntryResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{11} }
+func (*DeleteEntryResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{14} }
+
+type AssignVolumeRequest struct {
+	Count       int32  `protobuf:"varint,1,opt,name=count" json:"count,omitempty"`
+	Collection  string `protobuf:"bytes,2,opt,name=collection" json:"collection,omitempty"`
+	Replication string `protobuf:"bytes,3,opt,name=replication" json:"replication,omitempty"`
+}
+
+func (m *AssignVolumeRequest) Reset()                    { *m = AssignVolumeRequest{} }
+func (m *AssignVolumeRequest) String() string            { return proto.CompactTextString(m) }
+func (*AssignVolumeRequest) ProtoMessage()               {}
+func (*AssignVolumeRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{15} }
+
+func (m *AssignVolumeRequest) GetCount() int32 {
+	if m != nil {
+		return m.Count
+	}
+	return 0
+}
+
+func (m *AssignVolumeRequest) GetCollection() string {
+	if m != nil {
+		return m.Collection
+	}
+	return ""
+}
+
+func (m *AssignVolumeRequest) GetReplication() string {
+	if m != nil {
+		return m.Replication
+	}
+	return ""
+}
+
+type AssignVolumeResponse struct {
+	FileId    string `protobuf:"bytes,1,opt,name=file_id,json=fileId" json:"file_id,omitempty"`
+	Url       string `protobuf:"bytes,2,opt,name=url" json:"url,omitempty"`
+	PublicUrl string `protobuf:"bytes,3,opt,name=public_url,json=publicUrl" json:"public_url,omitempty"`
+	Count     int32  `protobuf:"varint,4,opt,name=count" json:"count,omitempty"`
+}
+
+func (m *AssignVolumeResponse) Reset()                    { *m = AssignVolumeResponse{} }
+func (m *AssignVolumeResponse) String() string            { return proto.CompactTextString(m) }
+func (*AssignVolumeResponse) ProtoMessage()               {}
+func (*AssignVolumeResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{16} }
+
+func (m *AssignVolumeResponse) GetFileId() string {
+	if m != nil {
+		return m.FileId
+	}
+	return ""
+}
+
+func (m *AssignVolumeResponse) GetUrl() string {
+	if m != nil {
+		return m.Url
+	}
+	return ""
+}
+
+func (m *AssignVolumeResponse) GetPublicUrl() string {
+	if m != nil {
+		return m.PublicUrl
+	}
+	return ""
+}
+
+func (m *AssignVolumeResponse) GetCount() int32 {
+	if m != nil {
+		return m.Count
+	}
+	return 0
+}
+
+type AppendFileChunksRequest struct {
+	Directory string `protobuf:"bytes,1,opt,name=directory" json:"directory,omitempty"`
+	Entry     *Entry `protobuf:"bytes,2,opt,name=entry" json:"entry,omitempty"`
+}
+
+func (m *AppendFileChunksRequest) Reset()                    { *m = AppendFileChunksRequest{} }
+func (m *AppendFileChunksRequest) String() string            { return proto.CompactTextString(m) }
+func (*AppendFileChunksRequest) ProtoMessage()               {}
+func (*AppendFileChunksRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{17} }
+
+func (m *AppendFileChunksRequest) GetDirectory() string {
+	if m != nil {
+		return m.Directory
+	}
+	return ""
+}
+
+func (m *AppendFileChunksRequest) GetEntry() *Entry {
+	if m != nil {
+		return m.Entry
+	}
+	return nil
+}
+
+type AppendFileChunksResponse struct {
+}
+
+func (m *AppendFileChunksResponse) Reset()                    { *m = AppendFileChunksResponse{} }
+func (m *AppendFileChunksResponse) String() string            { return proto.CompactTextString(m) }
+func (*AppendFileChunksResponse) ProtoMessage()               {}
+func (*AppendFileChunksResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{18} }
 
 func init() {
 	proto.RegisterType((*LookupDirectoryEntryRequest)(nil), "filer_pb.LookupDirectoryEntryRequest")
@@ -330,13 +505,20 @@ func init() {
 	proto.RegisterType((*ListEntriesRequest)(nil), "filer_pb.ListEntriesRequest")
 	proto.RegisterType((*ListEntriesResponse)(nil), "filer_pb.ListEntriesResponse")
 	proto.RegisterType((*Entry)(nil), "filer_pb.Entry")
+	proto.RegisterType((*FileChunk)(nil), "filer_pb.FileChunk")
 	proto.RegisterType((*FuseAttributes)(nil), "filer_pb.FuseAttributes")
 	proto.RegisterType((*GetFileAttributesRequest)(nil), "filer_pb.GetFileAttributesRequest")
 	proto.RegisterType((*GetFileAttributesResponse)(nil), "filer_pb.GetFileAttributesResponse")
 	proto.RegisterType((*GetFileContentRequest)(nil), "filer_pb.GetFileContentRequest")
 	proto.RegisterType((*GetFileContentResponse)(nil), "filer_pb.GetFileContentResponse")
+	proto.RegisterType((*CreateEntryRequest)(nil), "filer_pb.CreateEntryRequest")
+	proto.RegisterType((*CreateEntryResponse)(nil), "filer_pb.CreateEntryResponse")
 	proto.RegisterType((*DeleteEntryRequest)(nil), "filer_pb.DeleteEntryRequest")
 	proto.RegisterType((*DeleteEntryResponse)(nil), "filer_pb.DeleteEntryResponse")
+	proto.RegisterType((*AssignVolumeRequest)(nil), "filer_pb.AssignVolumeRequest")
+	proto.RegisterType((*AssignVolumeResponse)(nil), "filer_pb.AssignVolumeResponse")
+	proto.RegisterType((*AppendFileChunksRequest)(nil), "filer_pb.AppendFileChunksRequest")
+	proto.RegisterType((*AppendFileChunksResponse)(nil), "filer_pb.AppendFileChunksResponse")
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -354,7 +536,10 @@ type SeaweedFilerClient interface {
 	ListEntries(ctx context.Context, in *ListEntriesRequest, opts ...grpc.CallOption) (*ListEntriesResponse, error)
 	GetFileAttributes(ctx context.Context, in *GetFileAttributesRequest, opts ...grpc.CallOption) (*GetFileAttributesResponse, error)
 	GetFileContent(ctx context.Context, in *GetFileContentRequest, opts ...grpc.CallOption) (*GetFileContentResponse, error)
+	CreateEntry(ctx context.Context, in *CreateEntryRequest, opts ...grpc.CallOption) (*CreateEntryResponse, error)
+	AppendFileChunks(ctx context.Context, in *AppendFileChunksRequest, opts ...grpc.CallOption) (*AppendFileChunksResponse, error)
 	DeleteEntry(ctx context.Context, in *DeleteEntryRequest, opts ...grpc.CallOption) (*DeleteEntryResponse, error)
+	AssignVolume(ctx context.Context, in *AssignVolumeRequest, opts ...grpc.CallOption) (*AssignVolumeResponse, error)
 }
 
 type seaweedFilerClient struct {
@@ -401,9 +586,36 @@ func (c *seaweedFilerClient) GetFileContent(ctx context.Context, in *GetFileCont
 	return out, nil
 }
 
+func (c *seaweedFilerClient) CreateEntry(ctx context.Context, in *CreateEntryRequest, opts ...grpc.CallOption) (*CreateEntryResponse, error) {
+	out := new(CreateEntryResponse)
+	err := grpc.Invoke(ctx, "/filer_pb.SeaweedFiler/CreateEntry", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedFilerClient) AppendFileChunks(ctx context.Context, in *AppendFileChunksRequest, opts ...grpc.CallOption) (*AppendFileChunksResponse, error) {
+	out := new(AppendFileChunksResponse)
+	err := grpc.Invoke(ctx, "/filer_pb.SeaweedFiler/AppendFileChunks", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *seaweedFilerClient) DeleteEntry(ctx context.Context, in *DeleteEntryRequest, opts ...grpc.CallOption) (*DeleteEntryResponse, error) {
 	out := new(DeleteEntryResponse)
 	err := grpc.Invoke(ctx, "/filer_pb.SeaweedFiler/DeleteEntry", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedFilerClient) AssignVolume(ctx context.Context, in *AssignVolumeRequest, opts ...grpc.CallOption) (*AssignVolumeResponse, error) {
+	out := new(AssignVolumeResponse)
+	err := grpc.Invoke(ctx, "/filer_pb.SeaweedFiler/AssignVolume", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -417,7 +629,10 @@ type SeaweedFilerServer interface {
 	ListEntries(context.Context, *ListEntriesRequest) (*ListEntriesResponse, error)
 	GetFileAttributes(context.Context, *GetFileAttributesRequest) (*GetFileAttributesResponse, error)
 	GetFileContent(context.Context, *GetFileContentRequest) (*GetFileContentResponse, error)
+	CreateEntry(context.Context, *CreateEntryRequest) (*CreateEntryResponse, error)
+	AppendFileChunks(context.Context, *AppendFileChunksRequest) (*AppendFileChunksResponse, error)
 	DeleteEntry(context.Context, *DeleteEntryRequest) (*DeleteEntryResponse, error)
+	AssignVolume(context.Context, *AssignVolumeRequest) (*AssignVolumeResponse, error)
 }
 
 func RegisterSeaweedFilerServer(s *grpc.Server, srv SeaweedFilerServer) {
@@ -496,6 +711,42 @@ func _SeaweedFiler_GetFileContent_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SeaweedFiler_CreateEntry_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateEntryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedFilerServer).CreateEntry(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/filer_pb.SeaweedFiler/CreateEntry",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedFilerServer).CreateEntry(ctx, req.(*CreateEntryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedFiler_AppendFileChunks_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AppendFileChunksRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedFilerServer).AppendFileChunks(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/filer_pb.SeaweedFiler/AppendFileChunks",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedFilerServer).AppendFileChunks(ctx, req.(*AppendFileChunksRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _SeaweedFiler_DeleteEntry_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DeleteEntryRequest)
 	if err := dec(in); err != nil {
@@ -510,6 +761,24 @@ func _SeaweedFiler_DeleteEntry_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SeaweedFilerServer).DeleteEntry(ctx, req.(*DeleteEntryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedFiler_AssignVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AssignVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedFilerServer).AssignVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/filer_pb.SeaweedFiler/AssignVolume",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedFilerServer).AssignVolume(ctx, req.(*AssignVolumeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -535,8 +804,20 @@ var _SeaweedFiler_serviceDesc = grpc.ServiceDesc{
 			Handler:    _SeaweedFiler_GetFileContent_Handler,
 		},
 		{
+			MethodName: "CreateEntry",
+			Handler:    _SeaweedFiler_CreateEntry_Handler,
+		},
+		{
+			MethodName: "AppendFileChunks",
+			Handler:    _SeaweedFiler_AppendFileChunks_Handler,
+		},
+		{
 			MethodName: "DeleteEntry",
 			Handler:    _SeaweedFiler_DeleteEntry_Handler,
+		},
+		{
+			MethodName: "AssignVolume",
+			Handler:    _SeaweedFiler_AssignVolume_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -546,39 +827,53 @@ var _SeaweedFiler_serviceDesc = grpc.ServiceDesc{
 func init() { proto.RegisterFile("filer.proto", fileDescriptor0) }
 
 var fileDescriptor0 = []byte{
-	// 532 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0xa4, 0x54, 0x4d, 0x6f, 0xd3, 0x40,
-	0x10, 0xad, 0x71, 0xd2, 0x34, 0x93, 0xb4, 0xc0, 0xb4, 0x05, 0x93, 0xa6, 0x22, 0x2c, 0x2a, 0x82,
-	0x4b, 0x84, 0xc2, 0x85, 0x23, 0x88, 0xb4, 0x08, 0x29, 0x08, 0xc9, 0x55, 0xaf, 0x44, 0x49, 0x3d,
-	0x8d, 0x56, 0x24, 0x76, 0xf0, 0xae, 0x85, 0xda, 0x33, 0x7f, 0x80, 0xbf, 0xc5, 0xaf, 0x42, 0xbb,
-	0xeb, 0x8f, 0x35, 0x76, 0x0a, 0x88, 0x9b, 0xf7, 0xcd, 0xbe, 0x99, 0x37, 0x6f, 0x66, 0x0d, 0x9d,
-	0x2b, 0xbe, 0xa4, 0x78, 0xb8, 0x8e, 0x23, 0x19, 0xe1, 0x8e, 0x3e, 0x4c, 0xd7, 0x73, 0xf6, 0x09,
-	0x8e, 0x26, 0x51, 0xf4, 0x25, 0x59, 0x8f, 0x79, 0x4c, 0x97, 0x32, 0x8a, 0xaf, 0x4f, 0x43, 0x19,
-	0x5f, 0xfb, 0xf4, 0x35, 0x21, 0x21, 0xb1, 0x0f, 0xed, 0x20, 0x0b, 0x78, 0xce, 0xc0, 0x79, 0xde,
-	0xf6, 0x0b, 0x00, 0x11, 0x1a, 0xe1, 0x6c, 0x45, 0xde, 0x1d, 0x1d, 0xd0, 0xdf, 0xec, 0x14, 0xfa,
-	0xf5, 0x09, 0xc5, 0x3a, 0x0a, 0x05, 0xe1, 0x09, 0x34, 0x49, 0x01, 0x3a, 0x5b, 0x67, 0x74, 0x77,
-	0x98, 0x49, 0x19, 0x9a, 0x7b, 0x26, 0xca, 0x46, 0x80, 0x13, 0x2e, 0xa4, 0xc2, 0x38, 0x89, 0xbf,
-	0x92, 0xc3, 0xde, 0xc0, 0x7e, 0x89, 0x93, 0x56, 0x7c, 0x01, 0x2d, 0x32, 0x90, 0xe7, 0x0c, 0xdc,
-	0xba, 0x9a, 0x59, 0x9c, 0xfd, 0x70, 0xa0, 0xa9, 0xa1, 0xbc, 0x35, 0xa7, 0x68, 0x0d, 0x9f, 0x40,
-	0x97, 0x8b, 0x69, 0x21, 0x40, 0xb5, 0xbd, 0xe3, 0x77, 0xb8, 0xc8, 0x5b, 0xc5, 0x87, 0xd0, 0x52,
-	0xb9, 0xa7, 0x3c, 0xf0, 0x5c, 0xcd, 0xdc, 0x56, 0xc7, 0x0f, 0x01, 0xbe, 0x06, 0x98, 0x49, 0x19,
-	0xf3, 0x79, 0x22, 0x49, 0x78, 0x0d, 0xdd, 0xbb, 0x57, 0xe8, 0x38, 0x4b, 0x04, 0xbd, 0xcd, 0xe3,
-	0xbe, 0x75, 0x97, 0x7d, 0x77, 0x60, 0xaf, 0x1c, 0xc6, 0x23, 0x68, 0xeb, 0x2a, 0x82, 0xdf, 0x18,
-	0x85, 0x0d, 0x5f, 0x4f, 0xf4, 0x9c, 0xdf, 0x10, 0x1e, 0x40, 0x73, 0x25, 0x79, 0x3a, 0x15, 0xd7,
-	0x37, 0x87, 0x9c, 0xb2, 0x8a, 0x02, 0xd2, 0xd2, 0x76, 0x0d, 0xe5, 0x63, 0x14, 0x10, 0xde, 0x03,
-	0x37, 0xe1, 0x81, 0x56, 0xb5, 0xeb, 0xab, 0x4f, 0x85, 0x2c, 0x78, 0xe0, 0x35, 0x0d, 0xb2, 0xe0,
-	0x01, 0xbb, 0x02, 0xef, 0x3d, 0xc9, 0x33, 0xbe, 0xb4, 0x75, 0xa6, 0x63, 0xa9, 0x33, 0xeb, 0x18,
-	0x60, 0x3d, 0x8b, 0x29, 0x94, 0xca, 0xb0, 0x74, 0x43, 0xda, 0x06, 0x19, 0xf3, 0x78, 0xa3, 0x51,
-	0xec, 0x02, 0x1e, 0xd5, 0xd4, 0x49, 0x47, 0x59, 0x76, 0xd1, 0xf9, 0x07, 0x17, 0x5f, 0xc2, 0x61,
-	0x9a, 0xf6, 0x5d, 0x14, 0x4a, 0x0a, 0x65, 0xa6, 0xdd, 0x12, 0xe2, 0x94, 0x84, 0x8c, 0xe0, 0xc1,
-	0xef, 0x8c, 0x54, 0x85, 0x07, 0xad, 0x4b, 0x03, 0x69, 0x4a, 0xd7, 0xcf, 0x8e, 0x8c, 0x03, 0x8e,
-	0x69, 0x49, 0x92, 0xfe, 0xef, 0x11, 0x55, 0x36, 0xcd, 0xad, 0x6c, 0x1a, 0x3b, 0x84, 0xfd, 0x52,
-	0x29, 0xa3, 0x6d, 0xf4, 0xd3, 0x85, 0xee, 0x39, 0xcd, 0xbe, 0x11, 0x05, 0x4a, 0x7a, 0x8c, 0x0b,
-	0x38, 0xa8, 0x7b, 0x8f, 0x78, 0x52, 0xd8, 0x76, 0xcb, 0x0f, 0xa0, 0xf7, 0xec, 0x4f, 0xd7, 0x4c,
-	0x5d, 0xb6, 0x85, 0x13, 0xe8, 0x58, 0xaf, 0x0f, 0xfb, 0x16, 0xb1, 0xf2, 0x90, 0x7b, 0xc7, 0x1b,
-	0xa2, 0x79, 0xb6, 0xcf, 0x70, 0xbf, 0xb2, 0x06, 0xc8, 0x0a, 0xd6, 0xa6, 0x5d, 0xec, 0x3d, 0xbd,
-	0xf5, 0x4e, 0x9e, 0xff, 0x02, 0xf6, 0xca, 0xd3, 0xc5, 0xc7, 0x15, 0x62, 0x79, 0x53, 0x7a, 0x83,
-	0xcd, 0x17, 0x6c, 0x13, 0xac, 0xa9, 0xd8, 0x26, 0x54, 0xf7, 0xc2, 0x36, 0xa1, 0x66, 0x94, 0x6c,
-	0x6b, 0xbe, 0xad, 0xff, 0xd6, 0xaf, 0x7e, 0x05, 0x00, 0x00, 0xff, 0xff, 0x6a, 0x83, 0x8a, 0x32,
-	0xbc, 0x05, 0x00, 0x00,
+	// 762 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0xac, 0x56, 0xdd, 0x4e, 0xdb, 0x48,
+	0x14, 0xc6, 0x38, 0x09, 0xe4, 0x24, 0xb0, 0xec, 0x24, 0x80, 0x37, 0xfc, 0x6c, 0x98, 0x15, 0x2b,
+	0x56, 0x2b, 0xa1, 0x55, 0xf6, 0x66, 0x2f, 0x17, 0x01, 0xbb, 0xaa, 0x44, 0x45, 0x65, 0x44, 0xa5,
+	0xaa, 0x12, 0x51, 0x62, 0x9f, 0xa4, 0x23, 0x1c, 0xdb, 0xb5, 0xc7, 0xad, 0xe0, 0xba, 0xaf, 0xd2,
+	0x57, 0xe9, 0x73, 0x55, 0x33, 0x9e, 0xd8, 0x63, 0xec, 0xa4, 0x45, 0xea, 0xdd, 0xcc, 0xf9, 0xfd,
+	0xce, 0xcf, 0x37, 0x36, 0xb4, 0x26, 0xcc, 0xc3, 0xe8, 0x34, 0x8c, 0x02, 0x1e, 0x90, 0x75, 0x79,
+	0x19, 0x86, 0x63, 0x7a, 0x0d, 0x7b, 0x57, 0x41, 0x70, 0x9f, 0x84, 0x17, 0x2c, 0x42, 0x87, 0x07,
+	0xd1, 0xc3, 0xa5, 0xcf, 0xa3, 0x07, 0x1b, 0xdf, 0x27, 0x18, 0x73, 0xb2, 0x0f, 0x4d, 0x77, 0xae,
+	0xb0, 0x8c, 0xbe, 0x71, 0xd2, 0xb4, 0x73, 0x01, 0x21, 0x50, 0xf3, 0x47, 0x33, 0xb4, 0x56, 0xa5,
+	0x42, 0x9e, 0xe9, 0x25, 0xec, 0x57, 0x07, 0x8c, 0xc3, 0xc0, 0x8f, 0x91, 0x1c, 0x43, 0x1d, 0x85,
+	0x40, 0x46, 0x6b, 0x0d, 0x7e, 0x3a, 0x9d, 0x43, 0x39, 0x4d, 0xed, 0x52, 0x2d, 0x1d, 0x00, 0xb9,
+	0x62, 0x31, 0x17, 0x32, 0x86, 0xf1, 0x77, 0xc1, 0xa1, 0xff, 0x42, 0xa7, 0xe0, 0xa3, 0x32, 0xfe,
+	0x01, 0x6b, 0x98, 0x8a, 0x2c, 0xa3, 0x6f, 0x56, 0xe5, 0x9c, 0xeb, 0xe9, 0x67, 0x03, 0xea, 0x52,
+	0x94, 0x95, 0x66, 0xe4, 0xa5, 0x91, 0x23, 0x68, 0xb3, 0x78, 0x98, 0x03, 0x10, 0x65, 0xaf, 0xdb,
+	0x2d, 0x16, 0x67, 0xa5, 0x92, 0x3f, 0xa1, 0xe1, 0xbc, 0x4b, 0xfc, 0xfb, 0xd8, 0x32, 0x65, 0xaa,
+	0x4e, 0x9e, 0xea, 0x3f, 0xe6, 0xe1, 0xb9, 0xd0, 0xd9, 0xca, 0x84, 0xfc, 0x03, 0x30, 0xe2, 0x3c,
+	0x62, 0xe3, 0x84, 0x63, 0x6c, 0xd5, 0x64, 0x3f, 0x2c, 0xcd, 0x21, 0x89, 0xf1, 0x2c, 0xd3, 0xdb,
+	0x9a, 0x2d, 0x7d, 0x05, 0xcd, 0x2c, 0x1c, 0xd9, 0x85, 0x35, 0xe1, 0x33, 0x64, 0xae, 0x42, 0xdb,
+	0x10, 0xd7, 0x17, 0x2e, 0xd9, 0x81, 0x46, 0x30, 0x99, 0xc4, 0xc8, 0x25, 0x52, 0xd3, 0x56, 0x37,
+	0x51, 0x5b, 0xcc, 0x1e, 0xd1, 0x32, 0xfb, 0xc6, 0x49, 0xcd, 0x96, 0x67, 0xfa, 0xc9, 0x80, 0xcd,
+	0x62, 0x42, 0xb2, 0x07, 0x4d, 0x19, 0x57, 0xda, 0x1a, 0xd2, 0x56, 0xee, 0xcd, 0x0d, 0x7b, 0x44,
+	0xd2, 0x85, 0xfa, 0x8c, 0x33, 0x35, 0x7b, 0xd3, 0x4e, 0x2f, 0x99, 0xcb, 0x2c, 0x70, 0xd3, 0xf0,
+	0x1b, 0xa9, 0xcb, 0xcb, 0xc0, 0x45, 0xb2, 0x05, 0x66, 0xc2, 0x5c, 0x59, 0xe7, 0x86, 0x2d, 0x8e,
+	0x42, 0x32, 0x65, 0xae, 0x55, 0x4f, 0x25, 0x53, 0xe6, 0xd2, 0x09, 0x58, 0xff, 0x23, 0x17, 0xb5,
+	0x69, 0x95, 0xab, 0xe1, 0x57, 0x8d, 0xe4, 0x00, 0x20, 0x1c, 0x45, 0xe8, 0x73, 0x31, 0x16, 0xb5,
+	0x87, 0xcd, 0x54, 0x72, 0xc1, 0x22, 0xbd, 0x35, 0xa6, 0xde, 0x1a, 0x7a, 0x0b, 0xbf, 0x54, 0xe4,
+	0x51, 0x0b, 0x53, 0x9c, 0x8b, 0xf1, 0x8c, 0xb9, 0xfc, 0x05, 0xdb, 0x2a, 0xec, 0x79, 0xe0, 0x73,
+	0xf4, 0xf9, 0x1c, 0xfb, 0xa2, 0x19, 0xd1, 0x01, 0xec, 0x3c, 0xf5, 0x50, 0x28, 0x2c, 0x58, 0x73,
+	0x52, 0x91, 0x74, 0x69, 0xdb, 0xf3, 0x2b, 0x7d, 0x03, 0xe4, 0x3c, 0xc2, 0x11, 0xc7, 0x67, 0x50,
+	0x35, 0xa3, 0xdd, 0xea, 0x52, 0xda, 0x6d, 0x43, 0xa7, 0x10, 0x3a, 0xc5, 0x42, 0x19, 0x90, 0x0b,
+	0xf4, 0xf0, 0x59, 0x19, 0x2b, 0x1e, 0x87, 0x12, 0x83, 0xcc, 0x12, 0x83, 0x04, 0x82, 0x42, 0x2a,
+	0x85, 0x60, 0x06, 0x9d, 0xb3, 0x38, 0x66, 0x53, 0xff, 0x75, 0xe0, 0x25, 0x33, 0x9c, 0x43, 0xe8,
+	0x42, 0xdd, 0x09, 0x12, 0xd5, 0xa2, 0xba, 0x9d, 0x5e, 0xc8, 0x21, 0x80, 0x13, 0x78, 0x1e, 0x3a,
+	0x9c, 0x05, 0xbe, 0x02, 0xa0, 0x49, 0x48, 0x1f, 0x5a, 0x11, 0x86, 0x1e, 0x73, 0x46, 0xd2, 0x20,
+	0x5d, 0x0d, 0x5d, 0x44, 0x3f, 0x40, 0xb7, 0x98, 0x4e, 0x0d, 0x65, 0x21, 0xd7, 0xc4, 0x72, 0x47,
+	0x9e, 0xca, 0x25, 0x8e, 0x72, 0x35, 0x93, 0xb1, 0xc7, 0x9c, 0xa1, 0x50, 0x98, 0x6a, 0x35, 0xa5,
+	0xe4, 0x36, 0xf2, 0x72, 0xe4, 0x35, 0x0d, 0x39, 0xbd, 0x83, 0xdd, 0xb3, 0x30, 0x44, 0xdf, 0xcd,
+	0xe8, 0x1d, 0xff, 0xd0, 0xf9, 0xf6, 0xc0, 0x2a, 0xc7, 0x4f, 0x6b, 0x1b, 0x7c, 0xa9, 0x43, 0xfb,
+	0x06, 0x47, 0x1f, 0x11, 0xa5, 0x36, 0x22, 0x53, 0xe8, 0x56, 0x3d, 0xe5, 0xe4, 0x38, 0x0f, 0xbe,
+	0xe4, 0xdb, 0xd1, 0xfb, 0xfd, 0x5b, 0x66, 0x6a, 0xb4, 0x2b, 0xe4, 0x0a, 0x5a, 0xda, 0xc3, 0x4d,
+	0xf6, 0x35, 0xc7, 0xd2, 0x37, 0xa0, 0x77, 0xb0, 0x40, 0x9b, 0x45, 0xbb, 0x83, 0x9f, 0x4b, 0xdc,
+	0x26, 0x34, 0xf7, 0x5a, 0xf4, 0xc0, 0xf4, 0x7e, 0x5b, 0x6a, 0x93, 0xc5, 0xbf, 0x85, 0xcd, 0x22,
+	0x65, 0xc9, 0xaf, 0x25, 0xc7, 0x22, 0xfd, 0x7b, 0xfd, 0xc5, 0x06, 0x7a, 0x13, 0x34, 0xea, 0xe9,
+	0x4d, 0x28, 0x93, 0x5d, 0x6f, 0x42, 0x15, 0x5f, 0x57, 0xc8, 0x5b, 0xd8, 0x7a, 0x3a, 0x68, 0x72,
+	0x94, 0x3b, 0x2d, 0x58, 0xb2, 0x1e, 0x5d, 0x66, 0xa2, 0x43, 0xd5, 0x38, 0xaa, 0x43, 0x2d, 0xbf,
+	0x12, 0x3a, 0xd4, 0x2a, 0x62, 0xaf, 0x90, 0x6b, 0x68, 0xeb, 0x5c, 0x23, 0x9a, 0x43, 0x05, 0xe5,
+	0x7b, 0x87, 0x8b, 0xd4, 0xf3, 0x80, 0xe3, 0x86, 0xfc, 0xc9, 0xf9, 0xfb, 0x6b, 0x00, 0x00, 0x00,
+	0xff, 0xff, 0xfe, 0xa5, 0x31, 0x33, 0xf3, 0x08, 0x00, 0x00,
 }

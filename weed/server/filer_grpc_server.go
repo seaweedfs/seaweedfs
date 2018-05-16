@@ -9,6 +9,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"path/filepath"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"time"
+	"os"
 )
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -21,16 +23,11 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 		return nil, fmt.Errorf("%s not found under %s", req.Name, req.Directory)
 	}
 
-	var fileId string
-	if !entry.IsDirectory() && len(entry.Chunks) > 0 {
-		fileId = string(entry.Chunks[0].Fid)
-	}
-
 	return &filer_pb.LookupDirectoryEntryResponse{
 		Entry: &filer_pb.Entry{
 			Name:        req.Name,
 			IsDirectory: entry.IsDirectory(),
-			FileId:      fileId,
+			Chunks:      entry.Chunks,
 		},
 	}, nil
 }
@@ -44,16 +41,12 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 
 	resp := &filer_pb.ListEntriesResponse{}
 	for _, entry := range entries {
-		var fileId string
-		if !entry.IsDirectory() && len(entry.Chunks) > 0 {
-			fileId = string(entry.Chunks[0].Fid)
-		}
 
 		glog.V(0).Infof("%s attr=%v size=%d", entry.Name(), entry.Attr, filer2.Chunks(entry.Chunks).TotalSize())
 		resp.Entries = append(resp.Entries, &filer_pb.Entry{
 			Name:        entry.Name(),
 			IsDirectory: entry.IsDirectory(),
-			FileId:      fileId,
+			Chunks:      entry.Chunks,
 			Attributes: &filer_pb.FuseAttributes{
 				FileSize: filer2.Chunks(entry.Chunks).TotalSize(),
 				Mtime:    entry.Mtime.Unix(),
@@ -106,15 +99,63 @@ func (fs *FilerServer) GetFileContent(ctx context.Context, req *filer_pb.GetFile
 	}, nil
 }
 
+func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (resp *filer_pb.CreateEntryResponse, err error) {
+	err = fs.filer.CreateEntry(&filer2.Entry{
+		FullPath: filer2.FullPath(filepath.Join(req.Directory, req.Entry.Name)),
+		Attr: filer2.Attr{
+			Mtime:  time.Unix(req.Entry.Attributes.Mtime, 0),
+			Crtime: time.Unix(req.Entry.Attributes.Mtime, 0),
+			Mode:   os.FileMode(req.Entry.Attributes.FileMode),
+			Uid:    req.Entry.Attributes.Uid,
+			Gid:    req.Entry.Attributes.Gid,
+		},
+	})
+
+	if err == nil {
+	}
+
+	return &filer_pb.CreateEntryResponse{}, err
+}
+
+func (fs *FilerServer) AppendFileChunks(ctx context.Context, req *filer_pb.AppendFileChunksRequest) (*filer_pb.AppendFileChunksResponse, error) {
+	err := fs.filer.AppendFileChunk(
+		filer2.FullPath(filepath.Join(req.Directory, req.Entry.Name)),
+		req.Entry.Chunks,
+	)
+
+	return &filer_pb.AppendFileChunksResponse{}, err
+}
+
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {
 	entry, err := fs.filer.DeleteEntry(filer2.FullPath(filepath.Join(req.Directory, req.Name)))
 	if err == nil {
 		for _, chunk := range entry.Chunks {
-			fid := string(chunk.Fid)
-			if err = operation.DeleteFile(fs.getMasterNode(), fid, fs.jwt(fid)); err != nil {
-				glog.V(0).Infof("deleting file %s: %v", fid, err)
+			if err = operation.DeleteFile(fs.getMasterNode(), chunk.FileId, fs.jwt(chunk.FileId)); err != nil {
+				glog.V(0).Infof("deleting file %s: %v", chunk.FileId, err)
 			}
 		}
 	}
 	return &filer_pb.DeleteEntryResponse{}, err
+}
+
+func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVolumeRequest) (resp *filer_pb.AssignVolumeResponse, err error) {
+
+	assignResult, err := operation.Assign(fs.master, &operation.VolumeAssignRequest{
+		Count:       uint64(req.Count),
+		Replication: req.Replication,
+		Collection:  req.Collection,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("assign volume: %v", err)
+	}
+	if assignResult.Error != "" {
+		return nil, fmt.Errorf("assign volume result: %v", assignResult.Error)
+	}
+
+	return &filer_pb.AssignVolumeResponse{
+		FileId:    assignResult.Fid,
+		Count:     int32(assignResult.Count),
+		Url:       assignResult.Url,
+		PublicUrl: assignResult.PublicUrl,
+	}, err
 }
