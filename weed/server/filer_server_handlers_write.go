@@ -24,6 +24,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"time"
 )
 
 type FilerPostResult struct {
@@ -335,6 +336,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		Chunks: []*filer_pb.FileChunk{{
 			FileId: fileId,
 			Size:   uint64(r.ContentLength),
+			Mtime:  time.Now().UnixNano(),
 		}},
 	}
 	if db_err := fs.filer.CreateEntry(entry); db_err != nil {
@@ -460,6 +462,7 @@ func (fs *FilerServer) doAutoChunk(w http.ResponseWriter, r *http.Request, conte
 					FileId: fileId,
 					Offset: chunkOffset,
 					Size:   uint64(chunkBufOffset),
+					Mtime:  time.Now().UnixNano(),
 				},
 			)
 

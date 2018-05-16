@@ -7,6 +7,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"strconv"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"time"
 )
 
 func (fs *FilerServer) registerHandler(w http.ResponseWriter, r *http.Request) {
@@ -26,6 +27,7 @@ func (fs *FilerServer) registerHandler(w http.ResponseWriter, r *http.Request) {
 		Chunks: []*filer_pb.FileChunk{{
 			FileId: fileId,
 			Size:   fileSize,
+			Mtime:  time.Now().UnixNano(),
 		}},
 	}
 	err = fs.filer.CreateEntry(entry)

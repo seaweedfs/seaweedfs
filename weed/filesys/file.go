@@ -175,6 +175,7 @@ func (file *File) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.
 		FileId: fileId,
 		Offset: req.Offset,
 		Size:   uint64(uploadResult.Size),
+		Mtime:  time.Now().UnixNano(),
 	})
 
 	return nil

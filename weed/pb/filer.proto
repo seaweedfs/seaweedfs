@@ -62,6 +62,7 @@ message FileChunk {
     string file_id = 1;
     int64 offset = 2;
     uint64 size = 3;
+    int64 mtime = 4;
 }
 
 message FuseAttributes {
