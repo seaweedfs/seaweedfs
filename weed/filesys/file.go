@@ -17,7 +17,7 @@ import (
 
 var _ = fs.Node(&File{})
 // var _ = fs.NodeOpener(&File{})
-// var _ = fs.NodeFsyncer(&File{})
+var _ = fs.NodeFsyncer(&File{})
 var _ = fs.Handle(&File{})
 var _ = fs.HandleReadAller(&File{})
 // var _ = fs.HandleReader(&File{})
@@ -98,8 +98,17 @@ func (file *File) ReadAll(ctx context.Context) (content []byte, err error) {
 	return content, err
 }
 
-func (file *File) Flush(ctx context.Context, req *fuse.FlushRequest) error {
+func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
+	// fsync works at OS level
 	// write the file chunks to the filer
+	fmt.Printf("flush file %+v\n", req)
+
+	return nil
+}
+
+func (file *File) Flush(ctx context.Context, req *fuse.FlushRequest) error {
+	// fflush works at file level
+	// send the data to the OS
 	fmt.Printf("flush file %+v\n", req)
 
 	err := file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
