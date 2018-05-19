@@ -77,11 +77,13 @@ func (filer *MemDbStore) ListDirectoryEntries(fullpath filer2.FullPath, startFil
 			}
 			entry := item.(Entry).Entry
 			// println("checking", entry.FullPath)
+
 			if entry.FullPath == fullpath {
 				// skipping the current directory
 				// println("skipping the folder", entry.FullPath)
 				return true
 			}
+
 			dir, name := entry.FullPath.DirAndName()
 			if name == startFileName {
 				if inclusive {
@@ -90,11 +92,13 @@ func (filer *MemDbStore) ListDirectoryEntries(fullpath filer2.FullPath, startFil
 				}
 				return true
 			}
-			if !strings.HasPrefix(dir, string(fullpath)) {
-				// println("directory is:", dir, "fullpath:", fullpath)
+
+			// only iterate the same prefix
+			if !strings.HasPrefix(string(entry.FullPath), string(fullpath)) {
 				// println("breaking from", entry.FullPath)
 				return false
 			}
+
 			if dir != string(fullpath) {
 				// this could be items in deeper directories
 				// println("skipping deeper folder", entry.FullPath)

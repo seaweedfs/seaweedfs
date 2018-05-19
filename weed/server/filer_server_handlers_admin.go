@@ -15,7 +15,7 @@ func (fs *FilerServer) registerHandler(w http.ResponseWriter, r *http.Request) {
 	fileId := r.FormValue("fileId")
 	fileSize, err := strconv.ParseUint(r.FormValue("fileSize"), 10, 64)
 	if err != nil {
-		glog.V(4).Infof("register %s to %s parse fileSize %s: %v", fileId, path, r.FormValue("fileSize"), err)
+		glog.V(0).Infof("register %s to %s parse fileSize %s: %v", fileId, path, r.FormValue("fileSize"), err)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
@@ -30,6 +30,7 @@ func (fs *FilerServer) registerHandler(w http.ResponseWriter, r *http.Request) {
 			Mtime:  time.Now().UnixNano(),
 		}},
 	}
+	glog.V(2).Infof("register %s to %s parse fileSize %s", fileId, path, r.FormValue("fileSize"))
 	err = fs.filer.CreateEntry(entry)
 	if err != nil {
 		glog.V(4).Infof("register %s to %s error: %v", fileId, path, err)

@@ -9,6 +9,7 @@ import (
 	"time"
 	"os"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 type Filer struct {
@@ -44,22 +45,23 @@ func (f *Filer) CreateEntry(entry *Entry) (error) {
 		dirPath := "/" + filepath.Join(dirParts[:i]...)
 		// fmt.Printf("%d directory: %+v\n", i, dirPath)
 
-		dirFound := false
-
 		// first check local cache
 		dirEntry := f.cacheGetDirectory(dirPath)
 
 		// not found, check the store directly
 		if dirEntry == nil {
+			glog.V(4).Infof("find uncached directory: %s", dirPath)
 			var dirFindErr error
-			dirFound, dirEntry, dirFindErr = f.FindEntry(FullPath(dirPath))
+			_, dirEntry, dirFindErr = f.FindEntry(FullPath(dirPath))
 			if dirFindErr != nil {
 				return fmt.Errorf("findDirectory %s: %v", dirPath, dirFindErr)
 			}
+		}else{
+			glog.V(4).Infof("found cached directory: %s", dirPath)
 		}
 
 		// no such existing directory
-		if !dirFound {
+		if dirEntry == nil {
 
 			// create the directory
 			now := time.Now()
@@ -75,6 +77,7 @@ func (f *Filer) CreateEntry(entry *Entry) (error) {
 				},
 			}
 
+			glog.V(2).Infof("create directory: %s", dirPath)
 			mkdirErr := f.store.InsertEntry(dirEntry)
 			if mkdirErr != nil {
 				return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)

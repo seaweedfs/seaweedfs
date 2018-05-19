@@ -48,6 +48,8 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		lastFileName = entries[len(entries)-1].Name()
 	}
 
+	glog.V(4).Infof("listDirectory %s, last file %s, limit %d: %d items", path, lastFileName, limit, len(entries))
+
 	args := struct {
 		Path                  string
 		Entries               interface{}
