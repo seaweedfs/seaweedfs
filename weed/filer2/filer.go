@@ -56,7 +56,7 @@ func (f *Filer) CreateEntry(entry *Entry) (error) {
 			if dirFindErr != nil {
 				return fmt.Errorf("findDirectory %s: %v", dirPath, dirFindErr)
 			}
-		}else{
+		} else {
 			glog.V(4).Infof("found cached directory: %s", dirPath)
 		}
 
@@ -98,9 +98,13 @@ func (f *Filer) CreateEntry(entry *Entry) (error) {
 		return fmt.Errorf("parent folder not found: %v", entry.FullPath)
 	}
 
+	/*
 	if !hasWritePermission(lastDirectoryEntry, entry) {
+		glog.V(0).Infof("directory %s: %v, entry: uid=%d gid=%d",
+			lastDirectoryEntry.FullPath, lastDirectoryEntry.Attr, entry.Uid, entry.Gid)
 		return fmt.Errorf("no write permission in folder %v", lastDirectoryEntry.FullPath)
 	}
+	*/
 
 	if err := f.store.InsertEntry(entry); err != nil {
 		return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)

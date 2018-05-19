@@ -84,6 +84,7 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 
 		glog.V(1).Infof("mkdir: %v", request)
 		if _, err := client.CreateEntry(ctx, request); err != nil {
+			glog.V(0).Infof("mkdir %v: %v", request, err)
 			return fmt.Errorf("make dir: %v", err)
 		}
 
