@@ -23,6 +23,7 @@ var _ = fs.HandleReadAller(&File{})
 // var _ = fs.HandleReader(&File{})
 var _ = fs.HandleFlusher(&File{})
 var _ = fs.HandleWriter(&File{})
+var _ = fs.HandleReleaser(&File{})
 
 type File struct {
 	Chunks []*filer_pb.FileChunk
@@ -49,6 +50,7 @@ func (file *File) Attr(context context.Context, attr *fuse.Attr) error {
 			glog.V(1).Infof("read file size: %v", request)
 			resp, err := client.GetFileAttributes(context, request)
 			if err != nil {
+				glog.V(0).Infof("read file attributes %v: %v", request, err)
 				return err
 			}
 
@@ -67,13 +69,17 @@ func (file *File) Attr(context context.Context, attr *fuse.Attr) error {
 	attr.Mtime = time.Unix(attributes.Mtime, 0)
 	attr.Gid = attributes.Gid
 	attr.Uid = attributes.Uid
+
 	return nil
 
 }
 
 func (file *File) ReadAll(ctx context.Context) (content []byte, err error) {
 
+	// fmt.Printf("read all file %+v/%v\n", file.dir.Path, file.Name)
+
 	if len(file.Chunks) == 0 {
+		glog.V(0).Infof("empty file %v/%v", file.dir.Path, file.Name)
 		return
 	}
 
@@ -109,7 +115,12 @@ func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 func (file *File) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	// fflush works at file level
 	// send the data to the OS
-	fmt.Printf("flush file %+v\n", req)
+	glog.V(3).Infof("file flush %v", req)
+
+	if len(file.Chunks) == 0 {
+		glog.V(2).Infof("file flush skipping empty %v", req)
+		return nil
+	}
 
 	err := file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
@@ -134,7 +145,7 @@ func (file *File) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 func (file *File) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
 	// write the request to volume servers
-	fmt.Printf("write file %+v\n", req)
+	// fmt.Printf("write file %+v\n", req)
 
 	var fileId, host string
 
@@ -177,6 +188,15 @@ func (file *File) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.
 		Size:   uint64(uploadResult.Size),
 		Mtime:  time.Now().UnixNano(),
 	})
+
+	resp.Size = int(uploadResult.Size)
+
+	return nil
+}
+
+func (file *File) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
+
+	// fmt.Printf("release file %+v\n", req)
 
 	return nil
 }

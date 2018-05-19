@@ -21,6 +21,9 @@ type Dir struct {
 	wfs         *WFS
 }
 
+var _ = fs.Node(&Dir{})
+var _ = fs.HandleReadDirAller(&Dir{})
+
 func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 	attr.Mode = os.ModeDir | 0777
 	return nil
