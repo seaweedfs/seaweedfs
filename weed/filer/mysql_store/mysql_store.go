@@ -198,7 +198,7 @@ CREATE TABLE IF NOT EXISTS %s (
 func (s *MySqlStore) createTables(db *sql.DB, tableName string, postfix int) error {
 	var realTableName string
 	if s.isSharding {
-		realTableName = fmt.Sprintf("%s_%4d", tableName, postfix)
+		realTableName = fmt.Sprintf("%s_%04d", tableName, postfix)
 	} else {
 		realTableName = tableName
 	}
