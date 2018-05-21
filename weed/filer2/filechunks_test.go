@@ -2,8 +2,9 @@ package filer2
 
 import (
 	"testing"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"log"
+
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
 func TestIntervalMerging(t *testing.T) {
