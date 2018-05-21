@@ -113,8 +113,8 @@ func (f *Filer) CreateEntry(entry *Entry) (error) {
 	return nil
 }
 
-func (f *Filer) AppendFileChunk(p FullPath, chunks []*filer_pb.FileChunk) (err error) {
-	return f.store.AppendFileChunk(p, chunks)
+func (f *Filer) SetFileChunks(p FullPath, chunks []*filer_pb.FileChunk) (err error) {
+	return f.store.SetFileChunks(p, chunks)
 }
 
 func (f *Filer) FindEntry(p FullPath) (found bool, entry *Entry, err error) {

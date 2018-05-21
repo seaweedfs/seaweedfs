@@ -19,12 +19,27 @@ func TotalSize(chunks []*filer_pb.FileChunk) (size uint64) {
 }
 
 func CompactFileChunks(chunks []*filer_pb.FileChunk) (compacted, garbage []*filer_pb.FileChunk) {
+
+	visibles := nonOverlappingVisibleIntervals(chunks)
+
+	fileIds := make(map[string]bool)
+	for _, interval := range visibles {
+		fileIds[interval.fileId] = true
+	}
+	for _, chunk := range chunks {
+		if found := fileIds[chunk.FileId]; found {
+			compacted = append(compacted, chunk)
+		} else {
+			garbage = append(garbage, chunk)
+		}
+	}
+
 	return
 }
 
 func logPrintf(name string, visibles []*visibleInterval) {
 
-	return
+	// return
 
 	log.Printf("%s len %d", name, len(visibles))
 	for _, v := range visibles {
@@ -52,7 +67,7 @@ func nonOverlappingVisibleIntervals(chunks []*filer_pb.FileChunk) (visibles []*v
 	var minStopInterval, upToDateInterval *visibleInterval
 	watermarkStart := chunks[0].Offset
 	for _, chunk := range chunks {
-		// log.Printf("checking chunk: [%d,%d)", chunk.Offset, chunk.Offset+int64(chunk.Size))
+		log.Printf("checking chunk: [%d,%d)", chunk.Offset, chunk.Offset+int64(chunk.Size))
 		logPrintf("parallelIntervals", parallelIntervals)
 		for len(parallelIntervals) > 0 && watermarkStart < chunk.Offset {
 			logPrintf("parallelIntervals loop 1", parallelIntervals)
@@ -72,12 +87,7 @@ func nonOverlappingVisibleIntervals(chunks []*filer_pb.FileChunk) (visibles []*v
 			var remaining []*visibleInterval
 			for _, interval := range parallelIntervals {
 				if interval.stop != watermarkStart {
-					remaining = append(remaining, newVisibleInterval(
-						interval.start,
-						interval.stop,
-						interval.fileId,
-						interval.modifiedTime,
-					))
+					remaining = append(remaining, interval)
 				}
 			}
 			parallelIntervals = remaining
@@ -108,12 +118,7 @@ func nonOverlappingVisibleIntervals(chunks []*filer_pb.FileChunk) (visibles []*v
 		var remaining []*visibleInterval
 		for _, interval := range parallelIntervals {
 			if interval.stop != watermarkStart {
-				remaining = append(remaining, newVisibleInterval(
-					interval.start,
-					interval.stop,
-					interval.fileId,
-					interval.modifiedTime,
-				))
+				remaining = append(remaining, interval)
 			}
 		}
 		parallelIntervals = remaining
@@ -122,11 +127,12 @@ func nonOverlappingVisibleIntervals(chunks []*filer_pb.FileChunk) (visibles []*v
 	logPrintf("intervals", intervals)
 
 	// merge connected intervals, now the intervals are non-intersecting
-	var lastInterval *visibleInterval
+	var lastIntervalIndex int
 	var prevIntervalIndex int
 	for i, interval := range intervals {
 		if i == 0 {
 			prevIntervalIndex = i
+			lastIntervalIndex = i
 			continue
 		}
 		if intervals[i-1].fileId != interval.fileId ||
@@ -139,18 +145,16 @@ func nonOverlappingVisibleIntervals(chunks []*filer_pb.FileChunk) (visibles []*v
 			))
 			prevIntervalIndex = i
 		}
-		lastInterval = intervals[i]
+		lastIntervalIndex = i
 		logPrintf("intervals loop 1 visibles", visibles)
 	}
 
-	if lastInterval != nil {
-		visibles = append(visibles, newVisibleInterval(
-			intervals[prevIntervalIndex].start,
-			lastInterval.stop,
-			intervals[prevIntervalIndex].fileId,
-			intervals[prevIntervalIndex].modifiedTime,
-		))
-	}
+	visibles = append(visibles, newVisibleInterval(
+		intervals[prevIntervalIndex].start,
+		intervals[lastIntervalIndex].stop,
+		intervals[prevIntervalIndex].fileId,
+		intervals[prevIntervalIndex].modifiedTime,
+	))
 
 	logPrintf("visibles", visibles)
 

@@ -68,7 +68,7 @@ var ErrNotFound = errors.New("filer: no entry is found in filer store")
 
 type FilerStore interface {
 	InsertEntry(*Entry) (error)
-	AppendFileChunk(FullPath, []*filer_pb.FileChunk) (err error)
+	SetFileChunks(FullPath, []*filer_pb.FileChunk) (err error)
 	FindEntry(FullPath) (found bool, entry *Entry, err error)
 	DeleteEntry(FullPath) (fileEntry *Entry, err error)
 

@@ -26,7 +26,7 @@ func (filer *EmbeddedStore) AddDirectoryLink(directory *filer2.Entry, delta int3
 	return nil
 }
 
-func (filer *EmbeddedStore) AppendFileChunk(fullpath filer2.FullPath, fileChunks []*filer_pb.FileChunk) (err error) {
+func (filer *EmbeddedStore) SetFileChunks(fullpath filer2.FullPath, fileChunks []*filer_pb.FileChunk) (err error) {
 	return nil
 }
 

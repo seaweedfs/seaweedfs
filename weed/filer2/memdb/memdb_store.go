@@ -33,14 +33,13 @@ func (filer *MemDbStore) InsertEntry(entry *filer2.Entry) (err error) {
 	return nil
 }
 
-func (filer *MemDbStore) AppendFileChunk(fullpath filer2.FullPath, fileChunks []*filer_pb.FileChunk) (err error) {
+func (filer *MemDbStore) SetFileChunks(fullpath filer2.FullPath, fileChunks []*filer_pb.FileChunk) (err error) {
 	found, entry, err := filer.FindEntry(fullpath)
 	if !found {
 		return fmt.Errorf("No such file: %s", fullpath)
 	}
-	entry.Chunks = append(entry.Chunks, fileChunks...)
+	entry.Chunks = fileChunks
 	entry.Mtime = time.Now()
-	println("appending to entry", entry.Name(), len(entry.Chunks))
 	filer.tree.ReplaceOrInsert(Entry{entry})
 	return nil
 }

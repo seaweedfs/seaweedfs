@@ -21,7 +21,7 @@ service SeaweedFiler {
     rpc CreateEntry (CreateEntryRequest) returns (CreateEntryResponse) {
     }
 
-    rpc AppendFileChunks (AppendFileChunksRequest) returns (AppendFileChunksResponse) {
+    rpc SetFileChunks (SetFileChunksRequest) returns (SetFileChunksResponse) {
     }
 
     rpc DeleteEntry (DeleteEntryRequest) returns (DeleteEntryResponse) {
@@ -121,9 +121,9 @@ message AssignVolumeResponse {
     int32 count = 4;
 }
 
-message AppendFileChunksRequest {
+message SetFileChunksRequest {
     string directory = 1;
     Entry entry = 2;
 }
-message AppendFileChunksResponse {
+message SetFileChunksResponse {
 }

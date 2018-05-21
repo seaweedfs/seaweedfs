@@ -116,13 +116,34 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	return &filer_pb.CreateEntryResponse{}, err
 }
 
-func (fs *FilerServer) AppendFileChunks(ctx context.Context, req *filer_pb.AppendFileChunksRequest) (*filer_pb.AppendFileChunksResponse, error) {
-	err := fs.filer.AppendFileChunk(
-		filer2.FullPath(filepath.Join(req.Directory, req.Entry.Name)),
-		req.Entry.Chunks,
+func (fs *FilerServer) SetFileChunks(ctx context.Context, req *filer_pb.SetFileChunksRequest) (*filer_pb.SetFileChunksResponse, error) {
+
+	fullpath := filepath.Join(req.Directory, req.Entry.Name)
+	found, entry, err := fs.filer.FindEntry(filer2.FullPath(fullpath))
+	if err != nil {
+		return &filer_pb.SetFileChunksResponse{}, err
+	}
+	if !found {
+		return &filer_pb.SetFileChunksResponse{}, fmt.Errorf("file not found: %s", fullpath)
+	}
+
+	chunks := append(entry.Chunks, req.Entry.Chunks...)
+
+	chunks, garbages := filer2.CompactFileChunks(chunks)
+
+	err = fs.filer.SetFileChunks(
+		filer2.FullPath(fullpath),
+		chunks,
 	)
 
-	return &filer_pb.AppendFileChunksResponse{}, err
+	if err == nil {
+		for _, garbage := range garbages {
+			glog.V(0).Infof("deleting %s old chunk: %v, [%d, %d)", fullpath, garbage.FileId, garbage.Offset, garbage.Offset+int64(garbage.Size))
+			operation.DeleteFile(fs.master, garbage.FileId, fs.jwt(garbage.FileId))
+		}
+	}
+
+	return &filer_pb.SetFileChunksResponse{}, err
 }
 
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {

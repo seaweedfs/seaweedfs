@@ -13,6 +13,7 @@ import (
 	"time"
 	"bytes"
 	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 )
 
 var _ = fs.Node(&File{})
@@ -24,6 +25,7 @@ var _ = fs.HandleReadAller(&File{})
 var _ = fs.HandleFlusher(&File{})
 var _ = fs.HandleWriter(&File{})
 var _ = fs.HandleReleaser(&File{})
+var _ = fs.NodeSetattrer(&File{})
 
 type File struct {
 	Chunks []*filer_pb.FileChunk
@@ -74,9 +76,32 @@ func (file *File) Attr(context context.Context, attr *fuse.Attr) error {
 
 }
 
+func (file *File) xOpen(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
+	fullPath := filepath.Join(file.dir.Path, file.Name)
+
+	fmt.Printf("Open %v %+v\n", fullPath, req)
+
+	return file, nil
+
+}
+
+func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
+	fullPath := filepath.Join(file.dir.Path, file.Name)
+
+	fmt.Printf("Setattr %v %+v\n", fullPath, req)
+	if req.Valid.Size() && req.Size == 0 {
+		fmt.Printf("truncate %v \n", fullPath)
+		file.Chunks = nil
+		resp.Attr.Size = 0
+	}
+
+	return nil
+
+}
+
 func (file *File) ReadAll(ctx context.Context) (content []byte, err error) {
 
-	// fmt.Printf("read all file %+v/%v\n", file.dir.Path, file.Name)
+	fmt.Printf("read all file %+v/%v\n", file.dir.Path, file.Name)
 
 	if len(file.Chunks) == 0 {
 		glog.V(0).Infof("empty file %v/%v", file.dir.Path, file.Name)
@@ -86,11 +111,14 @@ func (file *File) ReadAll(ctx context.Context) (content []byte, err error) {
 	err = file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		// FIXME: need to either use Read() or implement differently
+		chunks, _ := filer2.CompactFileChunks(file.Chunks)
+		glog.V(1).Infof("read file %v/%v %d/%d chunks", file.dir.Path, file.Name, len(chunks), len(file.Chunks))
 		request := &filer_pb.GetFileContentRequest{
-			FileId: file.Chunks[0].FileId,
+			FileId: chunks[0].FileId,
 		}
 
-		glog.V(1).Infof("read file content: %v", request)
+		glog.V(1).Infof("read file content %d chunk %s [%d,%d): %v", len(chunks),
+			chunks[0].FileId, chunks[0].Offset, chunks[0].Offset+int64(chunks[0].Size), request)
 		resp, err := client.GetFileContent(ctx, request)
 		if err != nil {
 			return err
@@ -124,7 +152,7 @@ func (file *File) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 	err := file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		request := &filer_pb.AppendFileChunksRequest{
+		request := &filer_pb.SetFileChunksRequest{
 			Directory: file.dir.Path,
 			Entry: &filer_pb.Entry{
 				Name:   file.Name,
@@ -133,7 +161,7 @@ func (file *File) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		}
 
 		glog.V(1).Infof("append chunks: %v", request)
-		if _, err := client.AppendFileChunks(ctx, request); err != nil {
+		if _, err := client.SetFileChunks(ctx, request); err != nil {
 			return fmt.Errorf("create file: %v", err)
 		}
 
@@ -180,7 +208,7 @@ func (file *File) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.
 		return fmt.Errorf("upload result: %v", uploadResult.Error)
 	}
 
-	glog.V(1).Infof("uploaded %s/%s to: %v", file.dir.Path, file.Name, fileUrl)
+	resp.Size = int(uploadResult.Size)
 
 	file.Chunks = append(file.Chunks, &filer_pb.FileChunk{
 		FileId: fileId,
@@ -189,7 +217,7 @@ func (file *File) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.
 		Mtime:  time.Now().UnixNano(),
 	})
 
-	resp.Size = int(uploadResult.Size)
+	glog.V(1).Infof("uploaded %s/%s to: %v, [%d,%d)", file.dir.Path, file.Name, fileUrl, req.Offset, req.Offset+int64(resp.Size))
 
 	return nil
 }

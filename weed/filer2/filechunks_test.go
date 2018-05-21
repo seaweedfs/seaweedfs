@@ -7,6 +7,28 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
+func TestCompactFileChunks(t *testing.T) {
+	chunks := []*filer_pb.FileChunk{
+		{Offset:10, Size:100, FileId:"abc", Mtime:50},
+		{Offset:100, Size:100, FileId:"def", Mtime:100},
+		{Offset:200, Size:100, FileId:"ghi", Mtime:200},
+		{Offset:110, Size:200, FileId:"jkl", Mtime:300},
+	}
+
+	compacted, garbarge := CompactFileChunks(chunks)
+
+	log.Printf("Compacted: %+v", compacted)
+	log.Printf("Garbage  : %+v", garbarge)
+
+	if len(compacted) != 3 {
+		t.Fatalf("unexpected compacted: %d", len(compacted))
+	}
+	if len(garbarge) != 1 {
+		t.Fatalf("unexpected garbarge: %d", len(garbarge))
+	}
+
+}
+
 func TestIntervalMerging(t *testing.T) {
 
 	testcases := []struct {
@@ -82,6 +104,17 @@ func TestIntervalMerging(t *testing.T) {
 			Expected: []*visibleInterval{
 				{start: 0, stop: 200, fileId: "asdf"},
 				{start: 200, stop: 220, fileId: "abc"},
+			},
+		},
+		// case 6: same updates
+		{
+			Chunks: []*filer_pb.FileChunk{
+				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
+				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
+				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
+			},
+			Expected: []*visibleInterval{
+				{start: 0, stop: 100, fileId: "abc"},
 			},
 		},
 	}
