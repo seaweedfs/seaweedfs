@@ -71,13 +71,13 @@ func (f *Filer) CreateEntry(entry *Entry) (error) {
 				Attr: Attr{
 					Mtime:  now,
 					Crtime: now,
-					Mode:   os.ModeDir | 0660,
+					Mode:   os.ModeDir | 0770,
 					Uid:    entry.Uid,
 					Gid:    entry.Gid,
 				},
 			}
 
-			glog.V(2).Infof("create directory: %s", dirPath)
+			glog.V(2).Infof("create directory: %s %v", dirPath, dirEntry.Mode)
 			mkdirErr := f.store.InsertEntry(dirEntry)
 			if mkdirErr != nil {
 				return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)

@@ -68,7 +68,7 @@ func runCopy(cmd *Command, args []string) bool {
 		return false
 	}
 	filerDestination := args[len(args)-1]
-	fileOrDirs := args[0 : len(args)-1]
+	fileOrDirs := args[0: len(args)-1]
 
 	filerUrl, err := url.Parse(filerDestination)
 	if err != nil {
@@ -136,7 +136,8 @@ func doEachCopy(fileOrDir string, host string, path string) bool {
 		path = path + fi.Name()
 	}
 
-	if err = filer_operation.RegisterFile(host, path, results[0].Fid, parts[0].FileSize, copy.secret); err != nil {
+	if err = filer_operation.RegisterFile(host, path, results[0].Fid, parts[0].FileSize,
+		os.Getuid(), os.Getgid(), copy.secret); err != nil {
 		fmt.Printf("Failed to register file %s on %s: %v\n", fileOrDir, host, err)
 		return false
 	}

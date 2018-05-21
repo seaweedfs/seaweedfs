@@ -6,12 +6,13 @@ import (
 	"time"
 	"path/filepath"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"strings"
 )
 
 type FullPath string
 
 func NewFullPath(dir, name string) FullPath {
-	if dir == "/" {
+	if strings.HasSuffix(dir, "/") {
 		return FullPath(dir + name)
 	}
 	return FullPath(dir + "/" + name)

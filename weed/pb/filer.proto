@@ -12,7 +12,7 @@ service SeaweedFiler {
     rpc ListEntries (ListEntriesRequest) returns (ListEntriesResponse) {
     }
 
-    rpc GetFileAttributes (GetFileAttributesRequest) returns (GetFileAttributesResponse) {
+    rpc GetEntryAttributes (GetEntryAttributesRequest) returns (GetEntryAttributesResponse) {
     }
 
     rpc GetFileContent (GetFileContentRequest) returns (GetFileContentResponse) {
@@ -73,13 +73,13 @@ message FuseAttributes {
     uint32 gid = 5;
 }
 
-message GetFileAttributesRequest {
+message GetEntryAttributesRequest {
     string name = 1;
     string parent_dir = 2;
     string file_id = 3;
 }
 
-message GetFileAttributesResponse {
+message GetEntryAttributesResponse {
     FuseAttributes attributes = 1;
 }
 

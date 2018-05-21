@@ -59,11 +59,13 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 	return resp, nil
 }
 
-func (fs *FilerServer) GetFileAttributes(ctx context.Context, req *filer_pb.GetFileAttributesRequest) (*filer_pb.GetFileAttributesResponse, error) {
+func (fs *FilerServer) GetEntryAttributes(ctx context.Context, req *filer_pb.GetEntryAttributesRequest) (*filer_pb.GetEntryAttributesResponse, error) {
 
 	attributes := &filer_pb.FuseAttributes{}
 
-	found, entry, err := fs.filer.FindEntry(filer2.NewFullPath(req.ParentDir, req.Name))
+	fullpath := filer2.NewFullPath(req.ParentDir, req.Name)
+
+	found, entry, err := fs.filer.FindEntry(fullpath)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +79,9 @@ func (fs *FilerServer) GetFileAttributes(ctx context.Context, req *filer_pb.GetF
 		attributes.Mtime = entry.Mtime.Unix()
 	}
 
-	return &filer_pb.GetFileAttributesResponse{
+	glog.V(0).Infof("GetEntryAttributes %v: %+v", fullpath, attributes)
+
+	return &filer_pb.GetEntryAttributesResponse{
 		Attributes: attributes,
 	}, nil
 }

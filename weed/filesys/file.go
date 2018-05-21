@@ -44,13 +44,13 @@ func (file *File) Attr(context context.Context, attr *fuse.Attr) error {
 	} else {
 		err := file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-			request := &filer_pb.GetFileAttributesRequest{
+			request := &filer_pb.GetEntryAttributesRequest{
 				Name:      file.Name,
 				ParentDir: file.dir.Path,
 			}
 
 			glog.V(1).Infof("read file size: %v", request)
-			resp, err := client.GetFileAttributes(context, request)
+			resp, err := client.GetEntryAttributes(context, request)
 			if err != nil {
 				glog.V(0).Infof("read file attributes %v: %v", request, err)
 				return err

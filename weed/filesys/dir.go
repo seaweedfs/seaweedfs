@@ -12,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"time"
+	"path/filepath"
 )
 
 type Dir struct {
@@ -25,7 +26,53 @@ var _ = fs.Node(&Dir{})
 var _ = fs.HandleReadDirAller(&Dir{})
 
 func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
-	attr.Mode = os.ModeDir | 0777
+
+	if dir.Path == "/" {
+		attr.Valid = time.Second
+		attr.Mode = os.ModeDir | 0777
+		return nil
+	}
+
+	parent, name := filepath.Split(dir.Path)
+
+	var attributes *filer_pb.FuseAttributes
+
+	err := dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		request := &filer_pb.GetEntryAttributesRequest{
+			Name:      name,
+			ParentDir: parent,
+		}
+
+		glog.V(1).Infof("read dir attr: %v", request)
+		resp, err := client.GetEntryAttributes(context, request)
+		if err != nil {
+			glog.V(0).Infof("read dir attr %v: %v", request, err)
+			return err
+		}
+
+		attributes = resp.Attributes
+
+		return nil
+	})
+
+	if err != nil {
+		return err
+	}
+
+	// glog.V(1).Infof("dir %s: %v", dir.Path, attributes)
+	// glog.V(1).Infof("dir %s permission: %v", dir.Path, os.FileMode(attributes.FileMode))
+
+	attr.Mode = os.FileMode(attributes.FileMode) | os.ModeDir
+	if dir.Path == "/" && attributes.FileMode == 0 {
+		attr.Valid = time.Second
+	}
+
+	attr.Mtime = time.Unix(attributes.Mtime, 0)
+	attr.Ctime = time.Unix(attributes.Mtime, 0)
+	attr.Gid = attributes.Gid
+	attr.Uid = attributes.Uid
+
 	return nil
 }
 

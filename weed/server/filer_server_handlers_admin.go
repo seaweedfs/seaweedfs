@@ -19,10 +19,24 @@ func (fs *FilerServer) registerHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
+	uid, err := strconv.ParseUint(r.FormValue("uid"), 10, 64)
+	if err != nil && r.FormValue("uid") != "" {
+		glog.V(0).Infof("register %s to %s parse uid %s: %v", fileId, path, r.FormValue("uid"), err)
+		writeJsonError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	gid, err := strconv.ParseUint(r.FormValue("gid"), 10, 64)
+	if err != nil && r.FormValue("gid") != "" {
+		glog.V(0).Infof("register %s to %s parse gid %s: %v", fileId, path, r.FormValue("gid"), err)
+		writeJsonError(w, r, http.StatusInternalServerError, err)
+		return
+	}
 	entry := &filer2.Entry{
 		FullPath: filer2.FullPath(path),
 		Attr: filer2.Attr{
 			Mode: 0660,
+			Uid:  uint32(uid),
+			Gid:  uint32(gid),
 		},
 		Chunks: []*filer_pb.FileChunk{{
 			FileId: fileId,
