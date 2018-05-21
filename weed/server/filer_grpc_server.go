@@ -42,13 +42,12 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 	resp := &filer_pb.ListEntriesResponse{}
 	for _, entry := range entries {
 
-		glog.V(0).Infof("%s attr=%v size=%d", entry.Name(), entry.Attr, filer2.Chunks(entry.Chunks).TotalSize())
 		resp.Entries = append(resp.Entries, &filer_pb.Entry{
 			Name:        entry.Name(),
 			IsDirectory: entry.IsDirectory(),
 			Chunks:      entry.Chunks,
 			Attributes: &filer_pb.FuseAttributes{
-				FileSize: filer2.Chunks(entry.Chunks).TotalSize(),
+				FileSize: filer2.TotalSize(entry.Chunks),
 				Mtime:    entry.Mtime.Unix(),
 				Gid:      entry.Gid,
 				Uid:      entry.Uid,
@@ -71,7 +70,7 @@ func (fs *FilerServer) GetFileAttributes(ctx context.Context, req *filer_pb.GetF
 	if !found {
 		attributes.FileSize = 0
 	} else {
-		attributes.FileSize = filer2.Chunks(entry.Chunks).TotalSize()
+		attributes.FileSize = filer2.TotalSize(entry.Chunks)
 		attributes.FileMode = uint32(entry.Mode)
 		attributes.Uid = entry.Uid
 		attributes.Gid = entry.Gid
