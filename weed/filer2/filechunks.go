@@ -37,6 +37,21 @@ func CompactFileChunks(chunks []*filer_pb.FileChunk) (compacted, garbage []*file
 	return
 }
 
+func FindUnusedFileChunks(oldChunks, newChunks []*filer_pb.FileChunk) (unused []*filer_pb.FileChunk) {
+
+	fileIds := make(map[string]bool)
+	for _, interval := range newChunks {
+		fileIds[interval.FileId] = true
+	}
+	for _, chunk := range oldChunks {
+		if found := fileIds[chunk.FileId]; !found {
+			unused = append(unused, chunk)
+		}
+	}
+
+	return
+}
+
 func logPrintf(name string, visibles []*visibleInterval) {
 
 	// return

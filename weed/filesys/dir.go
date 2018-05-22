@@ -76,6 +76,16 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 	return nil
 }
 
+func (dir *Dir) newFile(name string, chunks []*filer_pb.FileChunk) *File {
+	return &File{
+		Name: name,
+		dir:  dir,
+		wfs:  dir.wfs,
+		// attributes: &filer_pb.FuseAttributes{},
+		Chunks: chunks,
+	}
+}
+
 func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
 
@@ -104,7 +114,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	})
 
 	if err == nil {
-		node := &File{Name: req.Name, dir: dir, wfs: dir.wfs}
+		node := dir.newFile(req.Name, nil)
 		dir.NodeMap[req.Name] = node
 		return node, node, nil
 	}
@@ -186,7 +196,7 @@ func (dir *Dir) Lookup(ctx context.Context, name string) (node fs.Node, err erro
 		if entry.IsDirectory {
 			node = &Dir{Path: path.Join(dir.Path, name), wfs: dir.wfs}
 		} else {
-			node = &File{Chunks: entry.Chunks, Name: name, dir: dir, wfs: dir.wfs}
+			node = dir.newFile(name, entry.Chunks)
 		}
 		dir.NodeMap[name] = node
 		return node, nil

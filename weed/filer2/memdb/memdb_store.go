@@ -6,7 +6,6 @@ import (
 	"strings"
 	"fmt"
 	"time"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
 type MemDbStore struct {
@@ -29,16 +28,16 @@ func NewMemDbStore() (filer *MemDbStore) {
 
 func (filer *MemDbStore) InsertEntry(entry *filer2.Entry) (err error) {
 	// println("inserting", entry.FullPath)
+	entry.Crtime = time.Now()
 	filer.tree.ReplaceOrInsert(Entry{entry})
 	return nil
 }
 
-func (filer *MemDbStore) SetFileChunks(fullpath filer2.FullPath, fileChunks []*filer_pb.FileChunk) (err error) {
-	found, entry, err := filer.FindEntry(fullpath)
+func (filer *MemDbStore) UpdateEntry(entry *filer2.Entry) (err error) {
+	found, entry, err := filer.FindEntry(entry.FullPath)
 	if !found {
-		return fmt.Errorf("No such file: %s", fullpath)
+		return fmt.Errorf("No such file: %s", entry.FullPath)
 	}
-	entry.Chunks = fileChunks
 	entry.Mtime = time.Now()
 	filer.tree.ReplaceOrInsert(Entry{entry})
 	return nil

@@ -120,34 +120,46 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	return &filer_pb.CreateEntryResponse{}, err
 }
 
-func (fs *FilerServer) SetFileChunks(ctx context.Context, req *filer_pb.SetFileChunksRequest) (*filer_pb.SetFileChunksResponse, error) {
+func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 
 	fullpath := filepath.Join(req.Directory, req.Entry.Name)
 	found, entry, err := fs.filer.FindEntry(filer2.FullPath(fullpath))
 	if err != nil {
-		return &filer_pb.SetFileChunksResponse{}, err
+		return &filer_pb.UpdateEntryResponse{}, err
 	}
 	if !found {
-		return &filer_pb.SetFileChunksResponse{}, fmt.Errorf("file not found: %s", fullpath)
+		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("file not found: %s", fullpath)
 	}
 
-	chunks := append(entry.Chunks, req.Entry.Chunks...)
+	// remove old chunks if not included in the new ones
+	unusedChunks := filer2.FindUnusedFileChunks(entry.Chunks, req.Entry.Chunks)
 
-	chunks, garbages := filer2.CompactFileChunks(chunks)
+	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
 
-	err = fs.filer.SetFileChunks(
-		filer2.FullPath(fullpath),
-		chunks,
-	)
+	err = fs.filer.UpdateEntry(&filer2.Entry{
+		FullPath: filer2.FullPath(filepath.Join(req.Directory, req.Entry.Name)),
+		Attr: filer2.Attr{
+			Mtime:  time.Unix(req.Entry.Attributes.Mtime, 0),
+			Crtime: time.Unix(req.Entry.Attributes.Mtime, 0),
+			Mode:   os.FileMode(req.Entry.Attributes.FileMode),
+			Uid:    req.Entry.Attributes.Uid,
+			Gid:    req.Entry.Attributes.Gid,
+		},
+		Chunks: chunks,
+	})
 
 	if err == nil {
-		for _, garbage := range garbages {
+		for _, garbage := range unusedChunks {
 			glog.V(0).Infof("deleting %s old chunk: %v, [%d, %d)", fullpath, garbage.FileId, garbage.Offset, garbage.Offset+int64(garbage.Size))
+			operation.DeleteFile(fs.master, garbage.FileId, fs.jwt(garbage.FileId))
+		}
+		for _, garbage := range garbages {
+			glog.V(0).Infof("deleting %s garbage chunk: %v, [%d, %d)", fullpath, garbage.FileId, garbage.Offset, garbage.Offset+int64(garbage.Size))
 			operation.DeleteFile(fs.master, garbage.FileId, fs.jwt(garbage.FileId))
 		}
 	}
 
-	return &filer_pb.SetFileChunksResponse{}, err
+	return &filer_pb.UpdateEntryResponse{}, err
 }
 
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {

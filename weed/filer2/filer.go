@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"time"
 	"os"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
@@ -113,8 +112,8 @@ func (f *Filer) CreateEntry(entry *Entry) (error) {
 	return nil
 }
 
-func (f *Filer) SetFileChunks(p FullPath, chunks []*filer_pb.FileChunk) (err error) {
-	return f.store.SetFileChunks(p, chunks)
+func (f *Filer) UpdateEntry(entry *Entry) (err error) {
+	return f.store.UpdateEntry(entry)
 }
 
 func (f *Filer) FindEntry(p FullPath) (found bool, entry *Entry, err error) {

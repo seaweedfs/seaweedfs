@@ -17,7 +17,7 @@ import (
 )
 
 var _ = fs.Node(&File{})
-// var _ = fs.NodeOpener(&File{})
+var _ = fs.NodeOpener(&File{})
 var _ = fs.NodeFsyncer(&File{})
 var _ = fs.Handle(&File{})
 var _ = fs.HandleReadAller(&File{})
@@ -28,58 +28,63 @@ var _ = fs.HandleReleaser(&File{})
 var _ = fs.NodeSetattrer(&File{})
 
 type File struct {
-	Chunks []*filer_pb.FileChunk
-	Name   string
-	dir    *Dir
-	wfs    *WFS
+	Chunks     []*filer_pb.FileChunk
+	Name       string
+	dir        *Dir
+	wfs        *WFS
+	isOpened   bool
+	attributes *filer_pb.FuseAttributes
 }
 
 func (file *File) Attr(context context.Context, attr *fuse.Attr) error {
-	fullPath := filepath.Join(file.dir.Path, file.Name)
-	item := file.wfs.listDirectoryEntriesCache.Get(fullPath)
-	var attributes *filer_pb.FuseAttributes
-	if item != nil {
-		attributes = item.Value().(*filer_pb.FuseAttributes)
-		glog.V(1).Infof("read cached file %v attributes", file.Name)
-	} else {
-		err := file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-			request := &filer_pb.GetEntryAttributesRequest{
-				Name:      file.Name,
-				ParentDir: file.dir.Path,
-			}
+	if !file.isOpened || file.attributes == nil {
+		fullPath := filepath.Join(file.dir.Path, file.Name)
+		item := file.wfs.listDirectoryEntriesCache.Get(fullPath)
+		if item != nil {
+			file.attributes = item.Value().(*filer_pb.FuseAttributes)
+			glog.V(1).Infof("read cached file %v attributes", file.Name)
+		} else {
+			err := file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-			glog.V(1).Infof("read file size: %v", request)
-			resp, err := client.GetEntryAttributes(context, request)
+				request := &filer_pb.GetEntryAttributesRequest{
+					Name:      file.Name,
+					ParentDir: file.dir.Path,
+				}
+
+				glog.V(1).Infof("read file size: %v", request)
+				resp, err := client.GetEntryAttributes(context, request)
+				if err != nil {
+					glog.V(0).Infof("read file attributes %v: %v", request, err)
+					return err
+				}
+
+				file.attributes = resp.Attributes
+
+				return nil
+			})
+
 			if err != nil {
-				glog.V(0).Infof("read file attributes %v: %v", request, err)
 				return err
 			}
-
-			attributes = resp.Attributes
-
-			return nil
-		})
-
-		if err != nil {
-			return err
 		}
 	}
 
-	attr.Mode = os.FileMode(attributes.FileMode)
-	attr.Size = attributes.FileSize
-	attr.Mtime = time.Unix(attributes.Mtime, 0)
-	attr.Gid = attributes.Gid
-	attr.Uid = attributes.Uid
+	attr.Mode = os.FileMode(file.attributes.FileMode)
+	attr.Size = filer2.TotalSize(file.Chunks)
+	attr.Mtime = time.Unix(file.attributes.Mtime, 0)
+	attr.Gid = file.attributes.Gid
+	attr.Uid = file.attributes.Uid
 
 	return nil
 
 }
 
-func (file *File) xOpen(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
+func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 	fullPath := filepath.Join(file.dir.Path, file.Name)
 
 	fmt.Printf("Open %v %+v\n", fullPath, req)
+	file.isOpened = true
 
 	return file, nil
 
@@ -89,10 +94,28 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 	fullPath := filepath.Join(file.dir.Path, file.Name)
 
 	fmt.Printf("Setattr %v %+v\n", fullPath, req)
-	if req.Valid.Size() && req.Size == 0 {
-		fmt.Printf("truncate %v \n", fullPath)
-		file.Chunks = nil
-		resp.Attr.Size = 0
+	if req.Valid.Size() {
+
+		if req.Size == 0 {
+			fmt.Printf("truncate %v \n", fullPath)
+			file.Chunks = nil
+		}
+		file.attributes.FileSize = req.Size
+	}
+	if req.Valid.Mode() {
+		file.attributes.FileMode = uint32(req.Mode)
+	}
+
+	if req.Valid.Uid() {
+		file.attributes.Uid = req.Uid
+	}
+
+	if req.Valid.Gid() {
+		file.attributes.Gid = req.Gid
+	}
+
+	if req.Valid.Mtime() {
+		file.attributes.Mtime = req.Mtime.Unix()
 	}
 
 	return nil
@@ -152,16 +175,17 @@ func (file *File) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 	err := file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		request := &filer_pb.SetFileChunksRequest{
+		request := &filer_pb.UpdateEntryRequest{
 			Directory: file.dir.Path,
 			Entry: &filer_pb.Entry{
-				Name:   file.Name,
-				Chunks: file.Chunks,
+				Name:       file.Name,
+				Attributes: file.attributes,
+				Chunks:     file.Chunks,
 			},
 		}
 
 		glog.V(1).Infof("append chunks: %v", request)
-		if _, err := client.SetFileChunks(ctx, request); err != nil {
+		if _, err := client.UpdateEntry(ctx, request); err != nil {
 			return fmt.Errorf("create file: %v", err)
 		}
 
@@ -224,7 +248,8 @@ func (file *File) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.
 
 func (file *File) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 
-	// fmt.Printf("release file %+v\n", req)
+	fmt.Printf("release file %+v\n", req)
+	file.isOpened = false
 
 	return nil
 }
