@@ -75,8 +75,8 @@ func generateBoltDbFile(dbFileName string, indexFile *os.File) error {
 }
 
 func (m *BoltDbNeedleMap) Get(key uint64) (element *needle.NeedleValue, ok bool) {
+	var offset, size uint32
 	bytes := make([]byte, 8)
-	var data []byte
 	util.Uint64toBytes(bytes, key)
 	err := m.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(boltdbBucket)
@@ -84,15 +84,22 @@ func (m *BoltDbNeedleMap) Get(key uint64) (element *needle.NeedleValue, ok bool)
 			return fmt.Errorf("Bucket %q not found!", boltdbBucket)
 		}
 
-		data = bucket.Get(bytes)
+		data := bucket.Get(bytes)
+
+		if len(data) != 8 {
+			glog.V(0).Infof("wrong data length: %d", len(data))
+			return fmt.Errorf("wrong data length: %d", len(data))
+		}
+
+		offset = util.BytesToUint32(data[0:4])
+		size = util.BytesToUint32(data[4:8])
+
 		return nil
 	})
 
-	if err != nil || len(data) != 8 {
+	if err != nil {
 		return nil, false
 	}
-	offset := util.BytesToUint32(data[0:4])
-	size := util.BytesToUint32(data[4:8])
 	return &needle.NeedleValue{Key: needle.Key(key), Offset: offset, Size: size}, true
 }
 
