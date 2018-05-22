@@ -148,10 +148,14 @@ func (s *MySqlStore) Put(fullFilePath string, fid string) (err error) {
 	} else {
 		if len(old_fid) == 0 {
 			err = s.insert(fullFilePath, fid, s.dbs[instance_offset], tableFullName)
-			err = fmt.Errorf("MySqlStore Put operation failed when inserting path %s with fid %s : err is %v", fullFilePath, fid, err)
+			if err != nil {
+				err = fmt.Errorf("MySqlStore Put operation failed when inserting path %s with fid %s : err is %v", fullFilePath, fid, err)
+			}
 		} else {
 			err = s.update(fullFilePath, fid, s.dbs[instance_offset], tableFullName)
-			err = fmt.Errorf("MySqlStore Put operation failed when updating path %s with fid %s : err is %v", fullFilePath, fid, err)
+			if err != nil {
+				err = fmt.Errorf("MySqlStore Put operation failed when updating path %s with fid %s : err is %v", fullFilePath, fid, err)
+			}
 		}
 	}
 	return
