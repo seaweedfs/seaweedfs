@@ -81,6 +81,7 @@ message GetEntryAttributesRequest {
 
 message GetEntryAttributesResponse {
     FuseAttributes attributes = 1;
+    repeated FileChunk chunks = 2;
 }
 
 message GetFileContentRequest {

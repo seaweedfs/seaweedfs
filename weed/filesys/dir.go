@@ -181,7 +181,7 @@ func (dir *Dir) Lookup(ctx context.Context, name string) (node fs.Node, err erro
 			Name:      name,
 		}
 
-		glog.V(1).Infof("lookup directory entry: %v", request)
+		glog.V(4).Infof("lookup directory entry: %v", request)
 		resp, err := client.LookupDirectoryEntry(ctx, request)
 		if err != nil {
 			return err
@@ -213,7 +213,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 			Directory: dir.Path,
 		}
 
-		glog.V(1).Infof("read directory: %v", request)
+		glog.V(4).Infof("read directory: %v", request)
 		resp, err := client.ListEntries(ctx, request)
 		if err != nil {
 			return err
@@ -226,7 +226,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 			} else {
 				dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_File}
 				ret = append(ret, dirent)
-				dir.wfs.listDirectoryEntriesCache.Set(dir.Path+"/"+entry.Name, entry.Attributes, 300*time.Millisecond)
+				dir.wfs.listDirectoryEntriesCache.Set(dir.Path+"/"+entry.Name, entry, 300*time.Millisecond)
 			}
 		}
 

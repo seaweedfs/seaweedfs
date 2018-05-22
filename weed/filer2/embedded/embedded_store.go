@@ -3,7 +3,6 @@ package embedded
 import (
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
 type EmbeddedStore struct {

@@ -38,11 +38,13 @@ type File struct {
 
 func (file *File) Attr(context context.Context, attr *fuse.Attr) error {
 
-	if !file.isOpened || file.attributes == nil {
+	if !file.isOpened {
 		fullPath := filepath.Join(file.dir.Path, file.Name)
 		item := file.wfs.listDirectoryEntriesCache.Get(fullPath)
 		if item != nil {
-			file.attributes = item.Value().(*filer_pb.FuseAttributes)
+			entry := item.Value().(*filer_pb.Entry)
+			file.Chunks = entry.Chunks
+			file.attributes = entry.Attributes
 			glog.V(1).Infof("read cached file %v attributes", file.Name)
 		} else {
 			err := file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
@@ -52,14 +54,15 @@ func (file *File) Attr(context context.Context, attr *fuse.Attr) error {
 					ParentDir: file.dir.Path,
 				}
 
-				glog.V(1).Infof("read file size: %v", request)
+				glog.V(1).Infof("read file: %v", request)
 				resp, err := client.GetEntryAttributes(context, request)
 				if err != nil {
-					glog.V(0).Infof("read file attributes %v: %v", request, err)
+					glog.V(0).Infof("read file %v: %v", request, err)
 					return err
 				}
 
 				file.attributes = resp.Attributes
+				file.Chunks = resp.Chunks
 
 				return nil
 			})
@@ -169,7 +172,7 @@ func (file *File) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	glog.V(3).Infof("file flush %v", req)
 
 	if len(file.Chunks) == 0 {
-		glog.V(2).Infof("file flush skipping empty %v", req)
+		glog.V(2).Infof("%x file %s/%s flush skipping empty: %v", file, file.dir.Path, file.Name, req)
 		return nil
 	}
 
@@ -184,9 +187,9 @@ func (file *File) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 			},
 		}
 
-		glog.V(1).Infof("append chunks: %v", request)
+		glog.V(1).Infof("%s/%s set chunks: %v", file.dir.Path, file.Name, len(file.Chunks))
 		if _, err := client.UpdateEntry(ctx, request); err != nil {
-			return fmt.Errorf("create file: %v", err)
+			return fmt.Errorf("update file: %v", err)
 		}
 
 		return nil

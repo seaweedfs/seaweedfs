@@ -71,18 +71,20 @@ func (fs *FilerServer) GetEntryAttributes(ctx context.Context, req *filer_pb.Get
 	}
 	if !found {
 		attributes.FileSize = 0
-	} else {
-		attributes.FileSize = filer2.TotalSize(entry.Chunks)
-		attributes.FileMode = uint32(entry.Mode)
-		attributes.Uid = entry.Uid
-		attributes.Gid = entry.Gid
-		attributes.Mtime = entry.Mtime.Unix()
+		return nil, fmt.Errorf("file %s not found", fullpath)
 	}
 
-	glog.V(0).Infof("GetEntryAttributes %v: %+v", fullpath, attributes)
+	attributes.FileSize = filer2.TotalSize(entry.Chunks)
+	attributes.FileMode = uint32(entry.Mode)
+	attributes.Uid = entry.Uid
+	attributes.Gid = entry.Gid
+	attributes.Mtime = entry.Mtime.Unix()
+
+	glog.V(0).Infof("GetEntryAttributes %v size %d chunks %d: %+v", fullpath, attributes.FileSize, len(entry.Chunks), attributes)
 
 	return &filer_pb.GetEntryAttributesResponse{
 		Attributes: attributes,
+		Chunks:     entry.Chunks,
 	}, nil
 }
 
@@ -112,6 +114,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 			Uid:    req.Entry.Attributes.Uid,
 			Gid:    req.Entry.Attributes.Gid,
 		},
+		Chunks: req.Entry.Chunks,
 	})
 
 	if err == nil {
