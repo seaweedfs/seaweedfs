@@ -34,7 +34,7 @@ func (filer *MemDbStore) InsertEntry(entry *filer2.Entry) (err error) {
 }
 
 func (filer *MemDbStore) UpdateEntry(entry *filer2.Entry) (err error) {
-	found, entry, err := filer.FindEntry(entry.FullPath)
+	found, _, err := filer.FindEntry(entry.FullPath)
 	if !found {
 		return fmt.Errorf("No such file: %s", entry.FullPath)
 	}
