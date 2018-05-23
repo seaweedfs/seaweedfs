@@ -54,7 +54,7 @@ func FindUnusedFileChunks(oldChunks, newChunks []*filer_pb.FileChunk) (unused []
 
 func logPrintf(name string, visibles []*visibleInterval) {
 
-	// return
+	return
 
 	log.Printf("%s len %d", name, len(visibles))
 	for _, v := range visibles {
@@ -82,7 +82,7 @@ func nonOverlappingVisibleIntervals(chunks []*filer_pb.FileChunk) (visibles []*v
 	var minStopInterval, upToDateInterval *visibleInterval
 	watermarkStart := chunks[0].Offset
 	for _, chunk := range chunks {
-		log.Printf("checking chunk: [%d,%d)", chunk.Offset, chunk.Offset+int64(chunk.Size))
+		// log.Printf("checking chunk: [%d,%d)", chunk.Offset, chunk.Offset+int64(chunk.Size))
 		logPrintf("parallelIntervals", parallelIntervals)
 		for len(parallelIntervals) > 0 && watermarkStart < chunk.Offset {
 			logPrintf("parallelIntervals loop 1", parallelIntervals)
