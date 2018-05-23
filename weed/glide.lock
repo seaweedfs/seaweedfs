@@ -12,12 +12,6 @@ imports:
   version: 5f7ddd8f479583daf05879d3d3b174aa202c8fb7
   subpackages:
   - protobuf
-- name: github.com/dataence/encoding
-  version: b90e310a0325f9b765b4be7220df3642ad93ad8d
-  subpackages:
-  - bitpacking
-  - cursor
-  - delta/bp32
 - name: github.com/dgrijalva/jwt-go
   version: 06ea1031745cb8b3dab3f6a236daf2b0aa468b7e
 - name: github.com/disintegration/imaging
