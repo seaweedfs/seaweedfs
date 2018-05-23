@@ -80,7 +80,7 @@ func (fs *FilerServer) GetEntryAttributes(ctx context.Context, req *filer_pb.Get
 	attributes.Gid = entry.Gid
 	attributes.Mtime = entry.Mtime.Unix()
 
-	glog.V(0).Infof("GetEntryAttributes %v size %d chunks %d: %+v", fullpath, attributes.FileSize, len(entry.Chunks), attributes)
+	glog.V(3).Infof("GetEntryAttributes %v size %d chunks %d: %+v", fullpath, attributes.FileSize, len(entry.Chunks), attributes)
 
 	return &filer_pb.GetEntryAttributesResponse{
 		Attributes: attributes,
@@ -139,19 +139,29 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 
 	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
 
-	err = fs.filer.UpdateEntry(&filer2.Entry{
+	newEntry := &filer2.Entry{
 		FullPath: filer2.FullPath(filepath.Join(req.Directory, req.Entry.Name)),
-		Attr: filer2.Attr{
-			Mtime:  time.Unix(req.Entry.Attributes.Mtime, 0),
-			Crtime: time.Unix(req.Entry.Attributes.Mtime, 0),
-			Mode:   os.FileMode(req.Entry.Attributes.FileMode),
-			Uid:    req.Entry.Attributes.Uid,
-			Gid:    req.Entry.Attributes.Gid,
-		},
-		Chunks: chunks,
-	})
+		Attr:     entry.Attr,
+		Chunks:   chunks,
+	}
 
-	if err == nil {
+	glog.V(3).Infof("updating %s: %+v, chunks %d: %v => %+v, chunks %d: %v",
+		fullpath, entry.Attr, len(entry.Chunks), entry.Chunks,
+		req.Entry.Attributes, len(req.Entry.Chunks), req.Entry.Chunks)
+
+	if req.Entry.Attributes != nil {
+		if req.Entry.Attributes.Mtime != 0 {
+			newEntry.Attr.Mtime = time.Unix(req.Entry.Attributes.Mtime, 0)
+		}
+		if req.Entry.Attributes.FileMode != 0 {
+			newEntry.Attr.Mode = os.FileMode(req.Entry.Attributes.FileMode)
+		}
+		newEntry.Attr.Uid = req.Entry.Attributes.Uid
+		newEntry.Attr.Gid = req.Entry.Attributes.Gid
+
+	}
+
+	if err = fs.filer.UpdateEntry(newEntry); err == nil {
 		for _, garbage := range unusedChunks {
 			glog.V(0).Infof("deleting %s old chunk: %v, [%d, %d)", fullpath, garbage.FileId, garbage.Offset, garbage.Offset+int64(garbage.Size))
 			operation.DeleteFile(fs.master, garbage.FileId, fs.jwt(garbage.FileId))

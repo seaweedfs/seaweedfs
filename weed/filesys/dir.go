@@ -114,9 +114,19 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	})
 
 	if err == nil {
-		node := dir.newFile(req.Name, nil)
-		dir.NodeMap[req.Name] = node
-		return node, node, nil
+		file := dir.newFile(req.Name, nil)
+		dir.NodeMap[req.Name] = file
+		return file, &FileHandle{
+			wfs:        file.wfs,
+			dirPath:    file.dir.Path,
+			name:       file.Name,
+			RequestId:  req.Header.ID,
+			NodeId:     req.Header.Node,
+			Uid:        req.Uid,
+			Gid:        req.Gid,
+			attributes: file.attributes,
+			Chunks:     file.Chunks,
+		}, nil
 	}
 
 	return nil, nil, err
