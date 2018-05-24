@@ -183,3 +183,33 @@ func NormalizeUrl(url string) string {
 	}
 	return "http://" + url
 }
+
+func ReadUrl(fileUrl string, offset int64, size int, buf []byte) (n int64, e error) {
+
+	req, _ := http.NewRequest("GET", fileUrl, nil)
+	req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)))
+
+	r, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer r.Body.Close()
+	if r.StatusCode >= 400 {
+		return 0, fmt.Errorf("%s: %s", fileUrl, r.Status)
+	}
+
+	var i, m int
+
+	for {
+		m, err = r.Body.Read(buf[i:cap(buf)])
+		i += m
+		n += int64(m)
+		if err == io.EOF {
+			return n, nil
+		}
+		if e != nil {
+			return n, e
+		}
+	}
+
+}

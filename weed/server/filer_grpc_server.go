@@ -3,7 +3,6 @@ package weed_server
 import (
 	"context"
 	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
@@ -88,20 +87,31 @@ func (fs *FilerServer) GetEntryAttributes(ctx context.Context, req *filer_pb.Get
 	}, nil
 }
 
-func (fs *FilerServer) GetFileContent(ctx context.Context, req *filer_pb.GetFileContentRequest) (*filer_pb.GetFileContentResponse, error) {
+func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
 
-	server, err := operation.LookupFileId(fs.getMasterNode(), req.FileId)
-	if err != nil {
-		return nil, err
-	}
-	content, err := util.Get(server)
+	lookupResult, err := operation.LookupVolumeIds(fs.getMasterNode(), req.VolumeIds)
 	if err != nil {
 		return nil, err
 	}
 
-	return &filer_pb.GetFileContentResponse{
-		Content: content,
-	}, nil
+	resp := &filer_pb.LookupVolumeResponse{
+		LocationsMap: make(map[string]*filer_pb.Locations),
+	}
+
+	for vid, locations := range lookupResult {
+		var locs []*filer_pb.Location
+		for _, loc := range locations.Locations {
+			locs = append(locs, &filer_pb.Location{
+				Url:       loc.Url,
+				PublicUrl: loc.PublicUrl,
+			})
+		}
+		resp.LocationsMap[vid] = &filer_pb.Locations{
+			Locations: locs,
+		}
+	}
+
+	return resp, nil
 }
 
 func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (resp *filer_pb.CreateEntryResponse, err error) {

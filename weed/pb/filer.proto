@@ -15,9 +15,6 @@ service SeaweedFiler {
     rpc GetEntryAttributes (GetEntryAttributesRequest) returns (GetEntryAttributesResponse) {
     }
 
-    rpc GetFileContent (GetFileContentRequest) returns (GetFileContentResponse) {
-    }
-
     rpc CreateEntry (CreateEntryRequest) returns (CreateEntryResponse) {
     }
 
@@ -28,6 +25,9 @@ service SeaweedFiler {
     }
 
     rpc AssignVolume (AssignVolumeRequest) returns (AssignVolumeResponse) {
+    }
+
+    rpc LookupVolume (LookupVolumeRequest) returns (LookupVolumeResponse) {
     }
 
 }
@@ -100,6 +100,13 @@ message CreateEntryRequest {
 message CreateEntryResponse {
 }
 
+message UpdateEntryRequest {
+    string directory = 1;
+    Entry entry = 2;
+}
+message UpdateEntryResponse {
+}
+
 message DeleteEntryRequest {
     string directory = 1;
     string name = 2;
@@ -122,9 +129,18 @@ message AssignVolumeResponse {
     int32 count = 4;
 }
 
-message UpdateEntryRequest {
-    string directory = 1;
-    Entry entry = 2;
+message LookupVolumeRequest {
+    repeated string volume_ids = 1;
 }
-message UpdateEntryResponse {
+
+message Locations {
+    repeated Location locations = 1;
+}
+
+message Location {
+    string url = 1;
+    string public_url = 2;
+}
+message LookupVolumeResponse {
+    map<string, Locations> locations_map = 1;
 }
