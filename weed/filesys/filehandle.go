@@ -41,7 +41,7 @@ var _ = fs.HandleReleaser(&FileHandle{})
 
 func (fh *FileHandle) ReadAll(ctx context.Context) (content []byte, err error) {
 
-	glog.V(3).Infof("read all fh %+v/%v", fh.dirPath, fh.name)
+	glog.V(3).Infof("%v/%v read all fh ", fh.dirPath, fh.name)
 
 	if len(fh.Chunks) == 0 {
 		glog.V(0).Infof("empty fh %v/%v", fh.dirPath, fh.name)
@@ -53,6 +53,9 @@ func (fh *FileHandle) ReadAll(ctx context.Context) (content []byte, err error) {
 		// FIXME: need to either use Read() or implement differently
 		chunks, _ := filer2.CompactFileChunks(fh.Chunks)
 		glog.V(1).Infof("read fh %v/%v %d/%d chunks", fh.dirPath, fh.name, len(chunks), len(fh.Chunks))
+		for i, chunk := range chunks {
+			glog.V(1).Infof("read fh %v/%v %d/%d chunk %s [%d,%d)", fh.dirPath, fh.name, i, len(chunks), chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
+		}
 		request := &filer_pb.GetFileContentRequest{
 			FileId: chunks[0].FileId,
 		}
@@ -74,8 +77,10 @@ func (fh *FileHandle) ReadAll(ctx context.Context) (content []byte, err error) {
 
 // Write to the file handle
 func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
+
 	// write the request to volume servers
-	// glog.V(3).Infof("write fh %+v", req)
+
+	glog.V(3).Infof("%+v/%v write fh: %+v", fh.dirPath, fh.name, req)
 
 	var fileId, host string
 
@@ -128,7 +133,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 
-	glog.V(3).Infof("release fh %+v/%v", fh.dirPath, fh.name)
+	glog.V(3).Infof("%+v/%v release fh", fh.dirPath, fh.name)
 
 	return nil
 }
@@ -138,7 +143,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	// fflush works at fh level
 	// send the data to the OS
-	glog.V(3).Infof("fh flush %v", req)
+	glog.V(3).Infof("%s/%s fh flush %v", fh.dirPath, fh.name, req)
 
 	if !fh.dirty {
 		return nil

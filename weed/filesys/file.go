@@ -77,7 +77,7 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 	fullPath := filepath.Join(file.dir.Path, file.Name)
 
-	glog.V(3).Infof("file open %v %+v", fullPath, req)
+	glog.V(3).Infof("%v file open %+v", fullPath, req)
 
 	return &FileHandle{
 		wfs:        file.wfs,
@@ -96,7 +96,7 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 	fullPath := filepath.Join(file.dir.Path, file.Name)
 
-	glog.V(3).Infof("file setattr %v %+v", fullPath, req)
+	glog.V(3).Infof("%v file setattr %+v", fullPath, req)
 	if req.Valid.Size() {
 
 		if req.Size == 0 {
@@ -128,7 +128,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 	// fsync works at OS level
 	// write the file chunks to the filer
-	glog.V(3).Infof("fsync file %+v\n", req)
+	glog.V(3).Infof("%s/%s fsync file %+v", file.dir.Path, file.Name, req)
 
 	return nil
 }
