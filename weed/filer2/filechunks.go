@@ -52,6 +52,27 @@ func FindUnusedFileChunks(oldChunks, newChunks []*filer_pb.FileChunk) (unused []
 	return
 }
 
+func ReadFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int) (views []*filer_pb.FileChunk) {
+
+	visibles := nonOverlappingVisibleIntervals(chunks)
+
+	stop := offset + int64(size)
+
+	for _, chunk := range visibles {
+		if chunk.start <= offset && offset < chunk.stop {
+			views = append(views, &filer_pb.FileChunk{
+				FileId: chunk.fileId,
+				Offset: offset - chunk.start, // offset is the data starting location in this file id
+				Size:   uint64(min(chunk.stop, stop) - offset),
+			})
+			offset = min(chunk.stop, stop)
+		}
+	}
+
+	return views
+
+}
+
 func logPrintf(name string, visibles []*visibleInterval) {
 
 	return
