@@ -143,9 +143,9 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 			Collection:  "",
 		}
 
-		glog.V(1).Infof("assign volume: %v", request)
 		resp, err := client.AssignVolume(ctx, request)
 		if err != nil {
+			glog.V(0).Infof("assign volume failure %v: %v", request, err)
 			return err
 		}
 
@@ -160,9 +160,11 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 	bufReader := bytes.NewReader(req.Data)
 	uploadResult, err := operation.Upload(fileUrl, fh.name, bufReader, false, "application/octet-stream", nil, "")
 	if err != nil {
+		glog.V(0).Infof("upload data %v to %s: %v", req, fileUrl, err)
 		return fmt.Errorf("upload data: %v", err)
 	}
 	if uploadResult.Error != "" {
+		glog.V(0).Infof("upload failure %v to %s: %v", req, fileUrl, err)
 		return fmt.Errorf("upload result: %v", uploadResult.Error)
 	}
 
@@ -217,6 +219,9 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		}
 
 		glog.V(1).Infof("%s/%s set chunks: %v", fh.dirPath, fh.name, len(fh.Chunks))
+		for i, chunk := range fh.Chunks {
+			glog.V(1).Infof("%s/%s chunks %d: %v [%d,%d)", fh.dirPath, fh.name, i, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
+		}
 		if _, err := client.UpdateEntry(ctx, request); err != nil {
 			return fmt.Errorf("update fh: %v", err)
 		}
