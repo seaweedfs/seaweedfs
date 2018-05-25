@@ -184,6 +184,8 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 
 	glog.V(3).Infof("%+v/%v release fh", fh.f.dir.Path, fh.f.Name)
 
+	fh.f.isOpen = false
+
 	return nil
 }
 

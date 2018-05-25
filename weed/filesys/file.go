@@ -23,13 +23,14 @@ type File struct {
 	dir        *Dir
 	wfs        *WFS
 	attributes *filer_pb.FuseAttributes
+	isOpen     bool
 }
 
 func (file *File) Attr(context context.Context, attr *fuse.Attr) error {
 
 	fullPath := filepath.Join(file.dir.Path, file.Name)
 
-	if file.attributes == nil {
+	if file.attributes == nil || !file.isOpen {
 		item := file.wfs.listDirectoryEntriesCache.Get(fullPath)
 		if item != nil {
 			entry := item.Value().(*filer_pb.Entry)
@@ -79,6 +80,8 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 	fullPath := filepath.Join(file.dir.Path, file.Name)
 
 	glog.V(3).Infof("%v file open %+v", fullPath, req)
+
+	file.isOpen = true
 
 	return &FileHandle{
 		f:         file,

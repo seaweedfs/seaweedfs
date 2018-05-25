@@ -120,6 +120,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	if err == nil {
 		file := dir.newFile(req.Name, nil)
 		dir.NodeMap[req.Name] = file
+		file.isOpen = true
 		return file, &FileHandle{
 			f:         file,
 			RequestId: req.Header.ID,
