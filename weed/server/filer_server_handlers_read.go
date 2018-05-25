@@ -52,12 +52,14 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 
 	args := struct {
 		Path                  string
+		Breadcrumbs           []ui.Breadcrumb
 		Entries               interface{}
 		Limit                 int
 		LastFileName          string
 		ShouldDisplayLoadMore bool
 	}{
 		path,
+		ui.ToBreadcrumb(path),
 		entries,
 		limit,
 		lastFileName,

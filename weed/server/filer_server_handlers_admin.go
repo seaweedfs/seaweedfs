@@ -34,9 +34,11 @@ func (fs *FilerServer) registerHandler(w http.ResponseWriter, r *http.Request) {
 	entry := &filer2.Entry{
 		FullPath: filer2.FullPath(path),
 		Attr: filer2.Attr{
-			Mode: 0660,
-			Uid:  uint32(uid),
-			Gid:  uint32(gid),
+			Mode:   0660,
+			Crtime: time.Now(),
+			Mtime:  time.Now(),
+			Uid:    uint32(uid),
+			Gid:    uint32(gid),
 		},
 		Chunks: []*filer_pb.FileChunk{{
 			FileId: fileId,

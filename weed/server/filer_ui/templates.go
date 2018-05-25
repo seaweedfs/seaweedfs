@@ -20,7 +20,12 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
 			</h1>
 		</div>
 		<div class="row">
-			{{.Path}}
+			{{ range $entry := .Breadcrumbs }}
+				<a href={{ $entry.Link }} >
+					{{ $entry.Name }}
+				</a>
+			{{ end }}
+
 		</div>
 
 		<div class="row">
