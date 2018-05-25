@@ -66,7 +66,7 @@ func ReadFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int) (views
 	stop := offset + int64(size)
 
 	for _, chunk := range visibles {
-		if chunk.start <= offset && offset < chunk.stop {
+		if chunk.start <= offset && offset < chunk.stop && offset < stop {
 			views = append(views, &ChunkView{
 				FileId:      chunk.fileId,
 				Offset:      offset - chunk.start, // offset is the data starting location in this file id

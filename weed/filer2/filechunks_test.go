@@ -249,6 +249,20 @@ func TestChunksReading(t *testing.T) {
 				{Offset: 0, Size: 100, FileId: "abc", LogicOffset:0},
 			},
 		},
+		// case 7: edge cases
+		{
+			Chunks: []*filer_pb.FileChunk{
+				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
+				{Offset: 100, Size: 100, FileId: "asdf", Mtime: 134},
+				{Offset: 200, Size: 100, FileId: "fsad", Mtime: 353},
+			},
+			Offset: 0,
+			Size:   200,
+			Expected: []*ChunkView{
+				{Offset: 0, Size: 100, FileId: "abc", LogicOffset:0},
+				{Offset: 0, Size: 100, FileId: "asdf", LogicOffset:100},
+			},
+		},
 	}
 
 	for i, testcase := range testcases {
