@@ -21,10 +21,6 @@ func (filer *EmbeddedStore) InsertEntry(entry *filer2.Entry) (err error) {
 	return nil
 }
 
-func (filer *EmbeddedStore) AddDirectoryLink(directory *filer2.Entry, delta int32) (err error) {
-	return nil
-}
-
 func (filer *EmbeddedStore) UpdateEntry(entry *filer2.Entry) (err error) {
 	return nil
 }
