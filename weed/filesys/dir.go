@@ -23,7 +23,11 @@ type Dir struct {
 }
 
 var _ = fs.Node(&Dir{})
+var _ = fs.NodeCreater(&Dir{})
+var _ = fs.NodeMkdirer(&Dir{})
+var _ = fs.NodeStringLookuper(&Dir{})
 var _ = fs.HandleReadDirAller(&Dir{})
+var _ = fs.NodeRemover(&Dir{})
 
 func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 
@@ -117,15 +121,11 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 		file := dir.newFile(req.Name, nil)
 		dir.NodeMap[req.Name] = file
 		return file, &FileHandle{
-			wfs:        file.wfs,
-			dirPath:    file.dir.Path,
-			name:       file.Name,
-			RequestId:  req.Header.ID,
-			NodeId:     req.Header.Node,
-			Uid:        req.Uid,
-			Gid:        req.Gid,
-			attributes: file.attributes,
-			Chunks:     file.Chunks,
+			f:         file,
+			RequestId: req.Header.ID,
+			NodeId:    req.Header.Node,
+			Uid:       req.Uid,
+			Gid:       req.Gid,
 		}, nil
 	}
 

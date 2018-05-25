@@ -78,15 +78,11 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 	glog.V(3).Infof("%v file open %+v", fullPath, req)
 
 	return &FileHandle{
-		wfs:        file.wfs,
-		dirPath:    file.dir.Path,
-		name:       file.Name,
-		RequestId:  req.Header.ID,
-		NodeId:     req.Header.Node,
-		Uid:        req.Uid,
-		Gid:        req.Gid,
-		attributes: file.attributes,
-		Chunks:     file.Chunks,
+		f:         file,
+		RequestId: req.Header.ID,
+		NodeId:    req.Header.Node,
+		Uid:       req.Uid,
+		Gid:       req.Gid,
 	}, nil
 
 }

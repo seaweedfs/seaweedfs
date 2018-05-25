@@ -67,16 +67,6 @@ func (entry Entry) Timestamp() time.Time {
 	}
 }
 
-type AbstractFiler interface {
-	CreateEntry(*Entry) (error)
-	AppendFileChunk(FullPath, []*filer_pb.FileChunk) (err error)
-	FindEntry(FullPath) (found bool, fileEntry *Entry, err error)
-	DeleteEntry(FullPath) (fileEntry *Entry, err error)
-
-	ListDirectoryEntries(dirPath FullPath) ([]*Entry, error)
-	UpdateEntry(*Entry) (error)
-}
-
 var ErrNotFound = errors.New("filer: no entry is found in filer store")
 
 type FilerStore interface {

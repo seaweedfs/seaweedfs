@@ -24,15 +24,11 @@ type FileHandle struct {
 
 	handle uint64
 
-	wfs        *WFS
-	dirPath    string
-	name       string
-	RequestId  fuse.RequestID // unique ID for request
-	NodeId     fuse.NodeID    // file or directory the request is about
-	Uid        uint32         // user ID of process making request
-	Gid        uint32         // group ID of process making request
-	attributes *filer_pb.FuseAttributes
-	Chunks     []*filer_pb.FileChunk
+	f         *File
+	RequestId fuse.RequestID // unique ID for request
+	NodeId    fuse.NodeID    // file or directory the request is about
+	Uid       uint32         // user ID of process making request
+	Gid       uint32         // group ID of process making request
 }
 
 var _ = fs.Handle(&FileHandle{})
@@ -44,16 +40,16 @@ var _ = fs.HandleReleaser(&FileHandle{})
 
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 
-	glog.V(3).Infof("%v/%v read fh: [%d,%d)", fh.dirPath, fh.name, req.Offset, req.Offset+int64(req.Size))
+	glog.V(3).Infof("%v/%v read fh: [%d,%d)", fh.f.dir.Path, fh.f.Name, req.Offset, req.Offset+int64(req.Size))
 
-	if len(fh.Chunks) == 0 {
-		glog.V(0).Infof("empty fh %v/%v", fh.dirPath, fh.name)
-		return fmt.Errorf("empty file %v/%v", fh.dirPath, fh.name)
+	if len(fh.f.Chunks) == 0 {
+		glog.V(0).Infof("empty fh %v/%v", fh.f.dir.Path, fh.f.Name)
+		return fmt.Errorf("empty file %v/%v", fh.f.dir.Path, fh.f.Name)
 	}
 
 	buff := make([]byte, req.Size)
 
-	chunkViews := filer2.ReadFromChunks(fh.Chunks, req.Offset, req.Size)
+	chunkViews := filer2.ReadFromChunks(fh.f.Chunks, req.Offset, req.Size)
 
 	var vids []string
 	for _, chunkView := range chunkViews {
@@ -62,7 +58,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	vid2Locations := make(map[string]*filer_pb.Locations)
 
-	err := fh.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := fh.f.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		glog.V(4).Infof("read fh lookup volume id locations: %v", vids)
 		resp, err := client.LookupVolume(ctx, &filer_pb.LookupVolumeRequest{
@@ -78,7 +74,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	})
 
 	if err != nil {
-		glog.V(3).Infof("%v/%v read fh lookup volume ids: %v", fh.dirPath, fh.name, err)
+		glog.V(3).Infof("%v/%v read fh lookup volume ids: %v", fh.f.dir.Path, fh.f.Name, err)
 		return fmt.Errorf("failed to lookup volume ids %v: %v", vids, err)
 	}
 
@@ -107,7 +103,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 			if err != nil {
 
-				glog.V(0).Infof("%v/%v read http://%s/%v %v bytes: %v", fh.dirPath, fh.name, locations.Locations[0].Url, chunkView.FileId, n, err)
+				glog.V(0).Infof("%v/%v read http://%s/%v %v bytes: %v", fh.f.dir.Path, fh.f.Name, locations.Locations[0].Url, chunkView.FileId, n, err)
 
 				err = fmt.Errorf("failed to read http://%s/%s: %v",
 					locations.Locations[0].Url, chunkView.FileId, err)
@@ -131,11 +127,11 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 	// write the request to volume servers
 
-	glog.V(3).Infof("%+v/%v write fh: %+v", fh.dirPath, fh.name, req)
+	glog.V(3).Infof("%+v/%v write fh: %+v", fh.f.dir.Path, fh.f.Name, req)
 
 	var fileId, host string
 
-	if err := fh.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	if err := fh.f.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AssignVolumeRequest{
 			Count:       1,
@@ -158,7 +154,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
 	bufReader := bytes.NewReader(req.Data)
-	uploadResult, err := operation.Upload(fileUrl, fh.name, bufReader, false, "application/octet-stream", nil, "")
+	uploadResult, err := operation.Upload(fileUrl, fh.f.Name, bufReader, false, "application/octet-stream", nil, "")
 	if err != nil {
 		glog.V(0).Infof("upload data %v to %s: %v", req, fileUrl, err)
 		return fmt.Errorf("upload data: %v", err)
@@ -170,14 +166,14 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 	resp.Size = int(uploadResult.Size)
 
-	fh.Chunks = append(fh.Chunks, &filer_pb.FileChunk{
+	fh.f.Chunks = append(fh.f.Chunks, &filer_pb.FileChunk{
 		FileId: fileId,
 		Offset: req.Offset,
 		Size:   uint64(uploadResult.Size),
 		Mtime:  time.Now().UnixNano(),
 	})
 
-	glog.V(1).Infof("uploaded %s/%s to: %v, [%d,%d)", fh.dirPath, fh.name, fileUrl, req.Offset, req.Offset+int64(resp.Size))
+	glog.V(1).Infof("uploaded %s/%s to: %v, [%d,%d)", fh.f.dir.Path, fh.f.Name, fileUrl, req.Offset, req.Offset+int64(resp.Size))
 
 	fh.dirty = true
 
@@ -186,7 +182,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 
-	glog.V(3).Infof("%+v/%v release fh", fh.dirPath, fh.name)
+	glog.V(3).Infof("%+v/%v release fh", fh.f.dir.Path, fh.f.Name)
 
 	return nil
 }
@@ -196,31 +192,31 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	// fflush works at fh level
 	// send the data to the OS
-	glog.V(3).Infof("%s/%s fh flush %v", fh.dirPath, fh.name, req)
+	glog.V(3).Infof("%s/%s fh flush %v", fh.f.dir.Path, fh.f.Name, req)
 
 	if !fh.dirty {
 		return nil
 	}
 
-	if len(fh.Chunks) == 0 {
-		glog.V(2).Infof("fh %s/%s flush skipping empty: %v", fh.dirPath, fh.name, req)
+	if len(fh.f.Chunks) == 0 {
+		glog.V(2).Infof("fh %s/%s flush skipping empty: %v", fh.f.dir.Path, fh.f.Name, req)
 		return nil
 	}
 
-	err := fh.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := fh.f.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
-			Directory: fh.dirPath,
+			Directory: fh.f.dir.Path,
 			Entry: &filer_pb.Entry{
-				Name:       fh.name,
-				Attributes: fh.attributes,
-				Chunks:     fh.Chunks,
+				Name:       fh.f.Name,
+				Attributes: fh.f.attributes,
+				Chunks:     fh.f.Chunks,
 			},
 		}
 
-		glog.V(1).Infof("%s/%s set chunks: %v", fh.dirPath, fh.name, len(fh.Chunks))
-		for i, chunk := range fh.Chunks {
-			glog.V(1).Infof("%s/%s chunks %d: %v [%d,%d)", fh.dirPath, fh.name, i, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
+		glog.V(1).Infof("%s/%s set chunks: %v", fh.f.dir.Path, fh.f.Name, len(fh.f.Chunks))
+		for i, chunk := range fh.f.Chunks {
+			glog.V(1).Infof("%s/%s chunks %d: %v [%d,%d)", fh.f.dir.Path, fh.f.Name, i, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}
 		if _, err := client.UpdateEntry(ctx, request); err != nil {
 			return fmt.Errorf("update fh: %v", err)
