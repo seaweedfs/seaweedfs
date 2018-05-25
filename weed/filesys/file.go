@@ -2,8 +2,6 @@ package filesys
 
 import (
 	"context"
-	"fmt"
-
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -99,8 +97,9 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 	glog.V(3).Infof("%v file setattr %+v", fullPath, req)
 	if req.Valid.Size() {
 
+		glog.V(3).Infof("%v file setattr set size=%v", fullPath, req.Size)
 		if req.Size == 0 {
-			fmt.Printf("truncate %v \n", fullPath)
+			// fmt.Printf("truncate %v \n", fullPath)
 			file.Chunks = nil
 		}
 		file.attributes.FileSize = req.Size
