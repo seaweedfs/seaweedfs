@@ -201,7 +201,10 @@ func ReadUrl(fileUrl string, offset int64, size int, buf []byte) (n int64, e err
 	var i, m int
 
 	for {
-		m, err = r.Body.Read(buf[i:cap(buf)])
+		m, err = r.Body.Read(buf[i:])
+		if m == 0 {
+			return
+		}
 		i += m
 		n += int64(m)
 		if err == io.EOF {
