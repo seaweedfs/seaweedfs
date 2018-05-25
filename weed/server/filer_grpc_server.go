@@ -46,7 +46,7 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 			IsDirectory: entry.IsDirectory(),
 			Chunks:      entry.Chunks,
 			Attributes: &filer_pb.FuseAttributes{
-				FileSize: filer2.TotalSize(entry.Chunks),
+				FileSize: entry.Size(),
 				Mtime:    entry.Mtime.Unix(),
 				Gid:      entry.Gid,
 				Uid:      entry.Uid,
@@ -73,7 +73,7 @@ func (fs *FilerServer) GetEntryAttributes(ctx context.Context, req *filer_pb.Get
 		return nil, fmt.Errorf("file %s not found", fullpath)
 	}
 
-	attributes.FileSize = filer2.TotalSize(entry.Chunks)
+	attributes.FileSize = entry.Size()
 	attributes.FileMode = uint32(entry.Mode)
 	attributes.Uid = entry.Uid
 	attributes.Gid = entry.Gid

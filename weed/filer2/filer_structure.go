@@ -55,6 +55,18 @@ type Entry struct {
 	Chunks []*filer_pb.FileChunk `json:"chunks,omitempty"`
 }
 
+func (entry Entry) Size() uint64 {
+	return TotalSize(entry.Chunks)
+}
+
+func (entry Entry) Timestamp() time.Time {
+	if entry.IsDirectory() {
+		return entry.Crtime
+	} else {
+		return entry.Mtime
+	}
+}
+
 type AbstractFiler interface {
 	CreateEntry(*Entry) (error)
 	AppendFileChunk(FullPath, []*filer_pb.FileChunk) (err error)

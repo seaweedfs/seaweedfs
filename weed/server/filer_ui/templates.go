@@ -24,10 +24,11 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
 		</div>
 
 		<div class="row">
-			<ul>
+			<table width="90%">
 				{{$path := .Path }}
 				{{ range $entry_index, $entry := .Entries }}
-				<li>
+				<tr>
+					<td>
 					{{if $entry.IsDirectory}}
 						<img src="https://www.w3.org/TR/WWWicn/folder.gif" width="20" height="23">
 						<a href={{ print $path  "/" $entry.Name  "/"}} >
@@ -38,10 +39,21 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
 							{{ $entry.Name }}
 						</a>
 					{{end}}
-				</li>
+					</td>
+					<td align="right">
+					{{if $entry.IsDirectory}}
+					{{else}}
+						{{ $entry.Size }} bytes
+						&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+					{{end}}
+					</td>
+					<td>
+						{{ $entry.Timestamp.Format "2006-01-02 15:04" }}
+					</td>
+				</tr>
 				{{ end }}
 
-			</ul>
+			</table>
 		</div>
 
 		{{if .ShouldDisplayLoadMore}}
