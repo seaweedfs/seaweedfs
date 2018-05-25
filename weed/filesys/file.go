@@ -28,36 +28,39 @@ type File struct {
 func (file *File) Attr(context context.Context, attr *fuse.Attr) error {
 
 	fullPath := filepath.Join(file.dir.Path, file.Name)
-	item := file.wfs.listDirectoryEntriesCache.Get(fullPath)
-	if item != nil {
-		entry := item.Value().(*filer_pb.Entry)
-		file.Chunks = entry.Chunks
-		file.attributes = entry.Attributes
-		glog.V(1).Infof("file attr read cached %v attributes", file.Name)
-	} else {
-		err := file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-			request := &filer_pb.GetEntryAttributesRequest{
-				Name:      file.Name,
-				ParentDir: file.dir.Path,
-			}
+	if file.attributes == nil {
+		item := file.wfs.listDirectoryEntriesCache.Get(fullPath)
+		if item != nil {
+			entry := item.Value().(*filer_pb.Entry)
+			file.Chunks = entry.Chunks
+			file.attributes = entry.Attributes
+			glog.V(1).Infof("file attr read cached %v attributes", file.Name)
+		} else {
+			err := file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-			resp, err := client.GetEntryAttributes(context, request)
+				request := &filer_pb.GetEntryAttributesRequest{
+					Name:      file.Name,
+					ParentDir: file.dir.Path,
+				}
+
+				resp, err := client.GetEntryAttributes(context, request)
+				if err != nil {
+					glog.V(0).Infof("file attr read file %v: %v", request, err)
+					return err
+				}
+
+				file.attributes = resp.Attributes
+				file.Chunks = resp.Chunks
+
+				glog.V(1).Infof("file attr %v %+v: %d", fullPath, file.attributes, filer2.TotalSize(file.Chunks))
+
+				return nil
+			})
+
 			if err != nil {
-				glog.V(0).Infof("file attr read file %v: %v", request, err)
 				return err
 			}
-
-			file.attributes = resp.Attributes
-			file.Chunks = resp.Chunks
-
-			glog.V(1).Infof("file attr %v %+v: %d", fullPath, file.attributes, filer2.TotalSize(file.Chunks))
-
-			return nil
-		})
-
-		if err != nil {
-			return err
 		}
 	}
 
