@@ -31,14 +31,14 @@ func (store *MysqlStore) Initialize(viper *viper.Viper) (err error) {
 		viper.GetString("username"),
 		viper.GetString("password"),
 		viper.GetString("hostname"),
-		viper.GetString("port"),
+		viper.GetInt("port"),
 		viper.GetString("database"),
 		viper.GetInt("connection_max_idle"),
 		viper.GetInt("connection_max_open"),
 	)
 }
 
-func (store *MysqlStore) initialize(user, password, hostname, port, database string, maxIdle, maxOpen int) (err error) {
+func (store *MysqlStore) initialize(user, password, hostname string, port int, database string, maxIdle, maxOpen int) (err error) {
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, user, password, hostname, port, database)
 	var dbErr error
 	store.DB, dbErr = sql.Open("mysql", sqlUrl)
@@ -50,5 +50,10 @@ func (store *MysqlStore) initialize(user, password, hostname, port, database str
 
 	store.DB.SetMaxIdleConns(maxIdle)
 	store.DB.SetMaxOpenConns(maxOpen)
+
+	if err = store.DB.Ping(); err != nil {
+		return fmt.Errorf("connect to %s error:%v", sqlUrl, err)
+	}
+
 	return nil
 }

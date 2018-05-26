@@ -20,7 +20,7 @@ func (store *AbstractSqlStore) InsertEntry(entry *filer2.Entry) (err error) {
 		return fmt.Errorf("mysql encode %s: %s", entry.FullPath, err)
 	}
 
-	res, err := store.DB.Exec("INSERT INTO seaweedfs (directory,name,meta) VALUES(?,?,?)", dir, name, meta)
+	res, err := store.DB.Exec("INSERT INTO filemeta (directory,name,meta) VALUES(?,?,?)", dir, name, meta)
 	if err != nil {
 		return fmt.Errorf("mysql insert %s: %s", entry.FullPath, err)
 	}
@@ -40,7 +40,7 @@ func (store *AbstractSqlStore) UpdateEntry(entry *filer2.Entry) (err error) {
 		return fmt.Errorf("mysql encode %s: %s", entry.FullPath, err)
 	}
 
-	res, err := store.DB.Exec("UPDATE seaweedfs SET meta=? WHERE directory=? and name=?", dir, name, meta)
+	res, err := store.DB.Exec("UPDATE filemeta SET meta=? WHERE directory=? and name=?", dir, name, meta)
 	if err != nil {
 		return fmt.Errorf("mysql update %s: %s", entry.FullPath, err)
 	}
@@ -55,7 +55,7 @@ func (store *AbstractSqlStore) UpdateEntry(entry *filer2.Entry) (err error) {
 func (store *AbstractSqlStore) FindEntry(fullpath filer2.FullPath) (*filer2.Entry, error) {
 
 	dir, name := fullpath.DirAndName()
-	row := store.DB.QueryRow("SELECT meta FROM seaweedfs WHERE directory=? and name=?", dir, name)
+	row := store.DB.QueryRow("SELECT meta FROM filemeta WHERE directory=? and name=?", dir, name)
 	var data []byte
 	if err := row.Scan(&data); err != nil {
 		return nil, fmt.Errorf("mysql read entry %s: %v", fullpath, err)
@@ -77,7 +77,7 @@ func (store *AbstractSqlStore) DeleteEntry(fullpath filer2.FullPath) (*filer2.En
 
 	dir, name := fullpath.DirAndName()
 
-	res, err := store.DB.Exec("DELETE FROM seaweedfs WHERE directory=? and name=?", dir, name)
+	res, err := store.DB.Exec("DELETE FROM filemeta WHERE directory=? and name=?", dir, name)
 	if err != nil {
 		return nil, fmt.Errorf("mysql delete %s: %s", fullpath, err)
 	}
@@ -92,7 +92,12 @@ func (store *AbstractSqlStore) DeleteEntry(fullpath filer2.FullPath) (*filer2.En
 
 func (store *AbstractSqlStore) ListDirectoryEntries(fullpath filer2.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
 
-	rows, err := store.DB.Query("SELECT NAME, meta FROM seaweedfs WHERE directory=? and name>?", fullpath, startFileName)
+	sqlText := "SELECT NAME, meta FROM filemeta WHERE directory=? and name>? LIMIT ?"
+	if inclusive {
+		sqlText = "SELECT NAME, meta FROM filemeta WHERE directory=? and name>=? LIMIT ?"
+	}
+
+	rows, err := store.DB.Query(sqlText, string(fullpath), startFileName, limit)
 	if err != nil {
 		return nil, fmt.Errorf("mysql list %s : %v", fullpath, err)
 	}
@@ -107,7 +112,7 @@ func (store *AbstractSqlStore) ListDirectoryEntries(fullpath filer2.FullPath, st
 		}
 
 		entry := &filer2.Entry{
-			FullPath: fullpath,
+			FullPath: filer2.NewFullPath(string(fullpath), name),
 		}
 		if err = entry.DecodeAttributesAndChunks(data); err != nil {
 			glog.V(0).Infof("mysql scan decode %s : %v", entry.FullPath, err)

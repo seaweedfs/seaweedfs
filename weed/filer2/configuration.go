@@ -11,28 +11,32 @@ const (
 	FILER_TOML_EXAMPLE = `
 # A sample TOML config file for SeaweedFS filer store
 
-# local in memory, mostly for testing purpose
 [memory]
+# local in memory, mostly for testing purpose
 enabled = false
 
 [leveldb]
+# local on disk, mostly for simple single-machine setup, fairly scalable
 enabled = false
 dir = "."					# directory to store level db files
 
 [mysql]
-# also need to manually create seaweedfs table.
-# CREATE TABLE IF NOT EXISTS seaweedfs (
-#   directory   VARCHAR(4096) NOT NULL DEFAULT "" COMMENT 'full path to parent directory',
-#   name        VARCHAR(1024) NOT NULL DEFAULT "" COMMENT 'directory or file name',
+# multiple filers on shared storage, fairly scalable
+#
+# need to choose or create a database.
+# need to manually create a table "filemeta".
+# CREATE TABLE IF NOT EXISTS filemeta (
+#   directory   VARCHAR(512) NOT NULL DEFAULT "" COMMENT 'full path to parent directory',
+#   name        VARCHAR(512) NOT NULL DEFAULT "" COMMENT 'directory or file name',
 #   meta        BLOB,
-#   PRIMARY KEY (directory, name),
+#   PRIMARY KEY (directory, name)
 # ) DEFAULT CHARSET=utf8;
 enabled = true
 server = "localhost"
 port = 3306
 username = "root"
 password = ""
-database = ""
+database = ""              # create or use an existing database, create the seaweedfs table.
 connection_max_idle = 2
 connection_max_open = 100
 
