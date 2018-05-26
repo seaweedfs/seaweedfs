@@ -79,9 +79,9 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		path = path[:len(path)-1]
 	}
 
-	found, entry, err := fs.filer.FindEntry(filer2.FullPath(path))
-	if !found || err != nil {
-		glog.V(3).Infof("Not found %s: %v", path, err)
+	entry, err := fs.filer.FindEntry(filer2.FullPath(path))
+	if err != nil {
+		glog.V(1).Infof("Not found %s: %v", path, err)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -96,7 +96,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	}
 
 	if len(entry.Chunks) == 0 {
-		glog.V(3).Infof("Empty %s: %v", path)
+		glog.V(1).Infof("no file chunks for %s, attr=%+v", path, entry.Attr)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

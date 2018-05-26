@@ -7,7 +7,9 @@ import (
 
 func TestCreateAndFind(t *testing.T) {
 	filer := filer2.NewFiler("")
-	filer.SetStore(NewMemDbStore())
+	store := &MemDbStore{}
+	store.Initialize(nil)
+	filer.SetStore(store)
 	filer.DisableDirectoryCache()
 
 	fullpath := filer2.FullPath("/home/chris/this/is/one/file1.jpg")
@@ -47,7 +49,9 @@ func TestCreateAndFind(t *testing.T) {
 
 func TestCreateFileAndList(t *testing.T) {
 	filer := filer2.NewFiler("")
-	filer.SetStore(NewMemDbStore())
+	store := &MemDbStore{}
+	store.Initialize(nil)
+	filer.SetStore(store)
 	filer.DisableDirectoryCache()
 
 	entry1 := &filer2.Entry{

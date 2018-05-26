@@ -50,11 +50,7 @@ func (f *Filer) CreateEntry(entry *Entry) (error) {
 		// not found, check the store directly
 		if dirEntry == nil {
 			glog.V(4).Infof("find uncached directory: %s", dirPath)
-			var dirFindErr error
-			_, dirEntry, dirFindErr = f.FindEntry(FullPath(dirPath))
-			if dirFindErr != nil {
-				return fmt.Errorf("findDirectory %s: %v", dirPath, dirFindErr)
-			}
+			dirEntry, _ = f.FindEntry(FullPath(dirPath))
 		} else {
 			glog.V(4).Infof("found cached directory: %s", dirPath)
 		}
@@ -116,13 +112,13 @@ func (f *Filer) UpdateEntry(entry *Entry) (err error) {
 	return f.store.UpdateEntry(entry)
 }
 
-func (f *Filer) FindEntry(p FullPath) (found bool, entry *Entry, err error) {
+func (f *Filer) FindEntry(p FullPath) (entry *Entry, err error) {
 	return f.store.FindEntry(p)
 }
 
 func (f *Filer) DeleteEntry(p FullPath) (fileEntry *Entry, err error) {
-	found, entry, err := f.FindEntry(p)
-	if err != nil || !found {
+	entry, err := f.FindEntry(p)
+	if err != nil {
 		return nil, err
 	}
 	if entry.IsDirectory() {

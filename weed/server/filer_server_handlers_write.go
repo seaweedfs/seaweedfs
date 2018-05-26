@@ -76,20 +76,17 @@ func makeFormData(filename, mimeType string, content io.Reader) (formData io.Rea
 }
 
 func (fs *FilerServer) queryFileInfoByPath(w http.ResponseWriter, r *http.Request, path string) (fileId, urlLocation string, err error) {
-	var found bool
 	var entry *filer2.Entry
-	if found, entry, err = fs.filer.FindEntry(filer2.FullPath(path)); err != nil {
+	if entry, err = fs.filer.FindEntry(filer2.FullPath(path)); err != nil {
 		glog.V(0).Infoln("failing to find path in filer store", path, err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)
-	} else if found {
+	} else {
 		fileId = entry.Chunks[0].FileId
 		urlLocation, err = operation.LookupFileId(fs.getMasterNode(), fileId)
 		if err != nil {
 			glog.V(1).Infoln("operation LookupFileId %s failed, err is %s", fileId, err.Error())
 			w.WriteHeader(http.StatusNotFound)
 		}
-	} else {
-		w.WriteHeader(http.StatusNotFound)
 	}
 	return
 }
@@ -319,7 +316,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 	// also delete the old fid unless PUT operation
 	if r.Method != "PUT" {
-		if found, entry, err := fs.filer.FindEntry(filer2.FullPath(path)); err == nil && found {
+		if entry, err := fs.filer.FindEntry(filer2.FullPath(path)); err == nil {
 			oldFid := entry.Chunks[0].FileId
 			operation.DeleteFile(fs.getMasterNode(), oldFid, fs.jwt(oldFid))
 		} else if err != nil && err != filer.ErrNotFound {
@@ -485,7 +482,7 @@ func (fs *FilerServer) doAutoChunk(w http.ResponseWriter, r *http.Request, conte
 	path := r.URL.Path
 	// also delete the old fid unless PUT operation
 	if r.Method != "PUT" {
-		if found, entry, err := fs.filer.FindEntry(filer2.FullPath(path)); found && err == nil {
+		if entry, err := fs.filer.FindEntry(filer2.FullPath(path)); err == nil {
 			for _, chunk := range entry.Chunks {
 				oldFid := chunk.FileId
 				operation.DeleteFile(fs.getMasterNode(), oldFid, fs.jwt(oldFid))

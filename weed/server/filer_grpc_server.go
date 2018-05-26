@@ -14,12 +14,9 @@ import (
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 
-	found, entry, err := fs.filer.FindEntry(filer2.FullPath(filepath.Join(req.Directory, req.Name)))
+	entry, err := fs.filer.FindEntry(filer2.FullPath(filepath.Join(req.Directory, req.Name)))
 	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return nil, fmt.Errorf("%s not found under %s", req.Name, req.Directory)
+		return nil, fmt.Errorf("%s not found under %s: %v", req.Name, req.Directory, err)
 	}
 
 	return &filer_pb.LookupDirectoryEntryResponse{
@@ -65,13 +62,10 @@ func (fs *FilerServer) GetEntryAttributes(ctx context.Context, req *filer_pb.Get
 
 	fullpath := filer2.NewFullPath(req.ParentDir, req.Name)
 
-	found, entry, err := fs.filer.FindEntry(fullpath)
+	entry, err := fs.filer.FindEntry(fullpath)
 	if err != nil {
-		return nil, err
-	}
-	if !found {
 		attributes.FileSize = 0
-		return nil, fmt.Errorf("file %s not found", fullpath)
+		return nil, fmt.Errorf("FindEntry %s: %v", fullpath, err)
 	}
 
 	attributes.FileSize = entry.Size()
@@ -138,12 +132,9 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 
 	fullpath := filepath.Join(req.Directory, req.Entry.Name)
-	found, entry, err := fs.filer.FindEntry(filer2.FullPath(fullpath))
+	entry, err := fs.filer.FindEntry(filer2.FullPath(fullpath))
 	if err != nil {
-		return &filer_pb.UpdateEntryResponse{}, err
-	}
-	if !found {
-		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("file not found: %s", fullpath)
+		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("not found %s: %v", fullpath, err)
 	}
 
 	// remove old chunks if not included in the new ones

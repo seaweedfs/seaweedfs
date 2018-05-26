@@ -49,7 +49,7 @@ func (fs *FilerServer) registerHandler(w http.ResponseWriter, r *http.Request) {
 	glog.V(2).Infof("register %s to %s parse fileSize %s", fileId, path, r.FormValue("fileSize"))
 	err = fs.filer.CreateEntry(entry)
 	if err != nil {
-		glog.V(4).Infof("register %s to %s error: %v", fileId, path, err)
+		glog.V(0).Infof("register %s to %s error: %v", fileId, path, err)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 	} else {
 		w.WriteHeader(http.StatusOK)

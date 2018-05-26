@@ -6,7 +6,12 @@ import (
 	"strings"
 	"fmt"
 	"time"
+	"github.com/spf13/viper"
 )
+
+func init() {
+	filer2.Stores = append(filer2.Stores, &MemDbStore{})
+}
 
 type MemDbStore struct {
 	tree *btree.BTree
@@ -20,10 +25,13 @@ func (a Entry) Less(b btree.Item) bool {
 	return strings.Compare(string(a.FullPath), string(b.(Entry).FullPath)) < 0
 }
 
-func NewMemDbStore() (filer *MemDbStore) {
-	filer = &MemDbStore{}
+func (filer *MemDbStore) GetName() string {
+	return "memory"
+}
+
+func (filer *MemDbStore) Initialize(viper *viper.Viper) (err error) {
 	filer.tree = btree.New(8)
-	return
+	return nil
 }
 
 func (filer *MemDbStore) InsertEntry(entry *filer2.Entry) (err error) {
@@ -34,22 +42,21 @@ func (filer *MemDbStore) InsertEntry(entry *filer2.Entry) (err error) {
 }
 
 func (filer *MemDbStore) UpdateEntry(entry *filer2.Entry) (err error) {
-	found, _, err := filer.FindEntry(entry.FullPath)
-	if !found {
-		return fmt.Errorf("No such file: %s", entry.FullPath)
+	if _, err = filer.FindEntry(entry.FullPath); err != nil {
+		return fmt.Errorf("no such file %s : %v", entry.FullPath, err)
 	}
 	entry.Mtime = time.Now()
 	filer.tree.ReplaceOrInsert(Entry{entry})
 	return nil
 }
 
-func (filer *MemDbStore) FindEntry(fullpath filer2.FullPath) (found bool, entry *filer2.Entry, err error) {
+func (filer *MemDbStore) FindEntry(fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
 	item := filer.tree.Get(Entry{&filer2.Entry{FullPath: fullpath}})
 	if item == nil {
-		return false, nil, nil
+		return nil, nil
 	}
 	entry = item.(Entry).Entry
-	return true, entry, nil
+	return entry, nil
 }
 
 func (filer *MemDbStore) DeleteEntry(fullpath filer2.FullPath) (entry *filer2.Entry, err error) {

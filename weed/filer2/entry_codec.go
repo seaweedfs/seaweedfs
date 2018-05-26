@@ -9,7 +9,7 @@ import (
 	"fmt"
 )
 
-func (entry Entry) EncodeAttributesAndChunks() ([]byte, error) {
+func (entry *Entry) EncodeAttributesAndChunks() ([]byte, error) {
 	message := &filer_pb.Entry{
 		Attributes: &filer_pb.FuseAttributes{
 			Crtime:   entry.Attr.Crtime.Unix(),
@@ -23,7 +23,7 @@ func (entry Entry) EncodeAttributesAndChunks() ([]byte, error) {
 	return proto.Marshal(message)
 }
 
-func (entry Entry) DecodeAttributesAndChunks(blob []byte) (error) {
+func (entry *Entry) DecodeAttributesAndChunks(blob []byte) (error) {
 
 	message := &filer_pb.Entry{}
 
