@@ -71,6 +71,7 @@ message FuseAttributes {
     uint32 file_mode = 3;
     uint32 uid = 4;
     uint32 gid = 5;
+    int64 crtime = 6;
 }
 
 message GetEntryAttributesRequest {

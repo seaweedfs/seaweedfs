@@ -102,6 +102,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 				IsDirectory: req.Mode&os.ModeDir > 0,
 				Attributes: &filer_pb.FuseAttributes{
 					Mtime:    time.Now().Unix(),
+					Crtime:   time.Now().Unix(),
 					FileMode: uint32(req.Mode),
 					Uid:      req.Uid,
 					Gid:      req.Gid,
@@ -146,6 +147,7 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 				IsDirectory: true,
 				Attributes: &filer_pb.FuseAttributes{
 					Mtime:    time.Now().Unix(),
+					Crtime:   time.Now().Unix(),
 					FileMode: uint32(req.Mode),
 					Uid:      req.Uid,
 					Gid:      req.Gid,

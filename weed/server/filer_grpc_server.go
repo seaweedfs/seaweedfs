@@ -48,6 +48,7 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 			Attributes: &filer_pb.FuseAttributes{
 				FileSize: entry.Size(),
 				Mtime:    entry.Mtime.Unix(),
+				Crtime:   entry.Crtime.Unix(),
 				Gid:      entry.Gid,
 				Uid:      entry.Uid,
 				FileMode: uint32(entry.Mode),
@@ -78,6 +79,7 @@ func (fs *FilerServer) GetEntryAttributes(ctx context.Context, req *filer_pb.Get
 	attributes.Uid = entry.Uid
 	attributes.Gid = entry.Gid
 	attributes.Mtime = entry.Mtime.Unix()
+	attributes.Crtime = entry.Crtime.Unix()
 
 	glog.V(3).Infof("GetEntryAttributes %v size %d chunks %d: %+v", fullpath, attributes.FileSize, len(entry.Chunks), attributes)
 
