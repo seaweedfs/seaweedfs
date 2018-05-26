@@ -24,21 +24,21 @@ type LevelDBStore struct {
 	db *leveldb.DB
 }
 
-func (filer *LevelDBStore) GetName() string {
+func (store *LevelDBStore) GetName() string {
 	return "leveldb"
 }
 
-func (filer *LevelDBStore) Initialize(viper *viper.Viper) (err error) {
+func (store *LevelDBStore) Initialize(viper *viper.Viper) (err error) {
 	dir := viper.GetString("dir")
-	return filer.initialize(dir)
+	return store.initialize(dir)
 }
 
-func (filer *LevelDBStore) initialize(dir string) (err error) {
+func (store *LevelDBStore) initialize(dir string) (err error) {
 	if err := weed_util.TestFolderWritable(dir); err != nil {
 		return fmt.Errorf("Check Level Folder %s Writable: %s", dir, err)
 	}
 
-	if filer.db, err = leveldb.OpenFile(dir, nil); err != nil {
+	if store.db, err = leveldb.OpenFile(dir, nil); err != nil {
 		return
 	}
 	return

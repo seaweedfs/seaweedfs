@@ -17,70 +17,70 @@ type MemDbStore struct {
 	tree *btree.BTree
 }
 
-type Entry struct {
+type entryItem struct {
 	*filer2.Entry
 }
 
-func (a Entry) Less(b btree.Item) bool {
-	return strings.Compare(string(a.FullPath), string(b.(Entry).FullPath)) < 0
+func (a entryItem) Less(b btree.Item) bool {
+	return strings.Compare(string(a.FullPath), string(b.(entryItem).FullPath)) < 0
 }
 
-func (filer *MemDbStore) GetName() string {
+func (store *MemDbStore) GetName() string {
 	return "memory"
 }
 
-func (filer *MemDbStore) Initialize(viper *viper.Viper) (err error) {
-	filer.tree = btree.New(8)
+func (store *MemDbStore) Initialize(viper *viper.Viper) (err error) {
+	store.tree = btree.New(8)
 	return nil
 }
 
-func (filer *MemDbStore) InsertEntry(entry *filer2.Entry) (err error) {
+func (store *MemDbStore) InsertEntry(entry *filer2.Entry) (err error) {
 	// println("inserting", entry.FullPath)
 	entry.Crtime = time.Now()
-	filer.tree.ReplaceOrInsert(Entry{entry})
+	store.tree.ReplaceOrInsert(entryItem{entry})
 	return nil
 }
 
-func (filer *MemDbStore) UpdateEntry(entry *filer2.Entry) (err error) {
-	if _, err = filer.FindEntry(entry.FullPath); err != nil {
+func (store *MemDbStore) UpdateEntry(entry *filer2.Entry) (err error) {
+	if _, err = store.FindEntry(entry.FullPath); err != nil {
 		return fmt.Errorf("no such file %s : %v", entry.FullPath, err)
 	}
 	entry.Mtime = time.Now()
-	filer.tree.ReplaceOrInsert(Entry{entry})
+	store.tree.ReplaceOrInsert(entryItem{entry})
 	return nil
 }
 
-func (filer *MemDbStore) FindEntry(fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
-	item := filer.tree.Get(Entry{&filer2.Entry{FullPath: fullpath}})
+func (store *MemDbStore) FindEntry(fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
+	item := store.tree.Get(entryItem{&filer2.Entry{FullPath: fullpath}})
 	if item == nil {
 		return nil, nil
 	}
-	entry = item.(Entry).Entry
+	entry = item.(entryItem).Entry
 	return entry, nil
 }
 
-func (filer *MemDbStore) DeleteEntry(fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
-	item := filer.tree.Delete(Entry{&filer2.Entry{FullPath: fullpath}})
+func (store *MemDbStore) DeleteEntry(fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
+	item := store.tree.Delete(entryItem{&filer2.Entry{FullPath: fullpath}})
 	if item == nil {
 		return nil, nil
 	}
-	entry = item.(Entry).Entry
+	entry = item.(entryItem).Entry
 	return entry, nil
 }
 
-func (filer *MemDbStore) ListDirectoryEntries(fullpath filer2.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
+func (store *MemDbStore) ListDirectoryEntries(fullpath filer2.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
 
 	startFrom := string(fullpath)
 	if startFileName != "" {
 		startFrom = startFrom + "/" + startFileName
 	}
 
-	filer.tree.AscendGreaterOrEqual(Entry{&filer2.Entry{FullPath: filer2.FullPath(startFrom)}},
+	store.tree.AscendGreaterOrEqual(entryItem{&filer2.Entry{FullPath: filer2.FullPath(startFrom)}},
 		func(item btree.Item) bool {
 			if limit <= 0 {
 				return false
 			}
-			entry := item.(Entry).Entry
+			entry := item.(entryItem).Entry
 			// println("checking", entry.FullPath)
 
 			if entry.FullPath == fullpath {
