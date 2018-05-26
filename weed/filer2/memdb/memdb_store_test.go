@@ -28,15 +28,10 @@ func TestCreateAndFind(t *testing.T) {
 		return
 	}
 
-	found, entry, err := filer.FindEntry(fullpath)
+	entry, err := filer.FindEntry(fullpath)
 
 	if err != nil {
 		t.Errorf("find entry: %v", err)
-		return
-	}
-
-	if !found {
-		t.Errorf("Failed to find newly created file")
 		return
 	}
 
