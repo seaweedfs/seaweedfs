@@ -25,12 +25,15 @@ dir = "."					# directory to store level db files
 #
 # need to choose or create a database.
 # need to manually create a table "filemeta".
+#
 # CREATE TABLE IF NOT EXISTS filemeta (
-#   directory   VARCHAR(512) NOT NULL DEFAULT "" COMMENT 'full path to parent directory',
-#   name        VARCHAR(512) NOT NULL DEFAULT "" COMMENT 'directory or file name',
+#   dirhash     BINARY(16)   COMMENT 'MD5 hash value of directory field',
+#   name        VARCHAR(1000) NOT NULL DEFAULT "" COMMENT 'directory or file name',
+#   directory   VARCHAR(4096) NOT NULL DEFAULT "" COMMENT 'full path to parent directory',
 #   meta        BLOB,
-#   PRIMARY KEY (directory, name)
+#   PRIMARY KEY (dirhash, name)
 # ) DEFAULT CHARSET=utf8;
+#
 enabled = true
 server = "localhost"
 port = 3306
