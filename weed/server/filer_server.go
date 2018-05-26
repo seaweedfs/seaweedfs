@@ -7,22 +7,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer/mysql_store"
-	"github.com/chrislusf/seaweedfs/weed/filer/postgres_store"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/memdb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/leveldb"
+	_ "github.com/chrislusf/seaweedfs/weed/filer2/memdb"
+	_ "github.com/chrislusf/seaweedfs/weed/filer2/mysql"
 )
-
-type filerConf struct {
-	MysqlConf    []mysql_store.MySqlConf      `json:"mysql"`
-	mysql_store.ShardingConf
-	PostgresConf *postgres_store.PostgresConf `json:"postgres"`
-}
 
 type FilerServer struct {
 	port               string

@@ -20,13 +20,20 @@ enabled = false
 dir = "."					# directory to store level db files
 
 [mysql]
+# also need to manually create seaweedfs table.
+# CREATE TABLE IF NOT EXISTS seaweedfs (
+#   directory   VARCHAR(4096) NOT NULL DEFAULT "" COMMENT 'full path to parent directory',
+#   name        VARCHAR(1024) NOT NULL DEFAULT "" COMMENT 'directory or file name',
+#   meta        BLOB,
+#   PRIMARY KEY (directory, name),
+# ) DEFAULT CHARSET=utf8;
 enabled = true
-server = "192.168.1.1"
-port = 8080
-username = ""
+server = "localhost"
+port = 3306
+username = "root"
 password = ""
 database = ""
-connection_max_idle = 100
+connection_max_idle = 2
 connection_max_open = 100
 
 [postgres]

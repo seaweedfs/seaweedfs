@@ -5,7 +5,6 @@ import (
 	"github.com/google/btree"
 	"strings"
 	"fmt"
-	"time"
 	"github.com/spf13/viper"
 )
 
@@ -36,7 +35,6 @@ func (store *MemDbStore) Initialize(viper *viper.Viper) (err error) {
 
 func (store *MemDbStore) InsertEntry(entry *filer2.Entry) (err error) {
 	// println("inserting", entry.FullPath)
-	entry.Crtime = time.Now()
 	store.tree.ReplaceOrInsert(entryItem{entry})
 	return nil
 }
@@ -45,7 +43,6 @@ func (store *MemDbStore) UpdateEntry(entry *filer2.Entry) (err error) {
 	if _, err = store.FindEntry(entry.FullPath); err != nil {
 		return fmt.Errorf("no such file %s : %v", entry.FullPath, err)
 	}
-	entry.Mtime = time.Now()
 	store.tree.ReplaceOrInsert(entryItem{entry})
 	return nil
 }
