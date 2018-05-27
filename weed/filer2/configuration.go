@@ -35,11 +35,11 @@ dir = "."					# directory to store level db files
 # ) DEFAULT CHARSET=utf8;
 #
 enabled = true
-server = "localhost"
+hostname = "localhost"
 port = 3306
 username = "root"
 password = ""
-database = ""              # create or use an existing database, create the seaweedfs table.
+database = ""              # create or use an existing database
 connection_max_idle = 2
 connection_max_open = 100
 
@@ -52,11 +52,12 @@ connection_max_open = 100
 #   PRIMARY KEY (dirhash, name)
 # );
 enabled = false
-server = "localhost"
+hostname = "localhost"
 port = 5432
 username = "postgres"
 password = ""
-database = ""
+database = ""              # create or use an existing database
+sslmode = "disable"
 connection_max_idle = 100
 connection_max_open = 100
 

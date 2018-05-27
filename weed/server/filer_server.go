@@ -15,6 +15,7 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/leveldb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/memdb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/mysql"
+	_ "github.com/chrislusf/seaweedfs/weed/filer2/postgres"
 )
 
 type FilerServer struct {
