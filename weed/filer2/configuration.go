@@ -74,6 +74,12 @@ hosts=[
 	"localhost:9042",
 ]
 
+[redis]
+enabled = true
+address  = "localhost:6379"
+password = ""
+db = 0
+
 `
 )
 
