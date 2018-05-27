@@ -1,8 +1,8 @@
 package abstract_sql
 
 import (
-	"fmt"
 	"database/sql"
+	"fmt"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"

@@ -1,15 +1,15 @@
 package leveldb
 
 import (
-	"fmt"
 	"bytes"
+	"fmt"
 
-	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
-	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/spf13/viper"
 	weed_util "github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/spf13/viper"
+	"github.com/syndtr/goleveldb/leveldb"
+	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
 )
 
 const (
@@ -162,7 +162,7 @@ func genDirectoryKeyPrefix(fullpath filer2.FullPath, startFileName string) (keyP
 	return keyPrefix
 }
 
-func getNameFromKey(key []byte) (string) {
+func getNameFromKey(key []byte) string {
 
 	sepIndex := len(key) - 1
 	for sepIndex >= 0 && key[sepIndex] != DIR_FILE_SEPARATOR {

@@ -1,8 +1,8 @@
 package filer2
 
 import (
-	"testing"
 	"log"
+	"testing"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
@@ -163,9 +163,9 @@ func TestChunksReading(t *testing.T) {
 			Offset: 0,
 			Size:   250,
 			Expected: []*ChunkView{
-				{Offset: 0, Size: 100, FileId: "abc", LogicOffset:0},
-				{Offset: 0, Size: 100, FileId: "asdf", LogicOffset:100},
-				{Offset: 0, Size: 50, FileId: "fsad", LogicOffset:200},
+				{Offset: 0, Size: 100, FileId: "abc", LogicOffset: 0},
+				{Offset: 0, Size: 100, FileId: "asdf", LogicOffset: 100},
+				{Offset: 0, Size: 50, FileId: "fsad", LogicOffset: 200},
 			},
 		},
 		// case 1: updates overwrite full chunks
@@ -177,7 +177,7 @@ func TestChunksReading(t *testing.T) {
 			Offset: 50,
 			Size:   100,
 			Expected: []*ChunkView{
-				{Offset: 50, Size: 100, FileId: "asdf", LogicOffset:50},
+				{Offset: 50, Size: 100, FileId: "asdf", LogicOffset: 50},
 			},
 		},
 		// case 2: updates overwrite part of previous chunks
@@ -189,8 +189,8 @@ func TestChunksReading(t *testing.T) {
 			Offset: 25,
 			Size:   50,
 			Expected: []*ChunkView{
-				{Offset: 25, Size: 25, FileId: "asdf", LogicOffset:25},
-				{Offset: 0, Size: 25, FileId: "abc", LogicOffset:50},
+				{Offset: 25, Size: 25, FileId: "asdf", LogicOffset: 25},
+				{Offset: 0, Size: 25, FileId: "abc", LogicOffset: 50},
 			},
 		},
 		// case 3: updates overwrite full chunks
@@ -203,8 +203,8 @@ func TestChunksReading(t *testing.T) {
 			Offset: 0,
 			Size:   200,
 			Expected: []*ChunkView{
-				{Offset: 0, Size: 50, FileId: "asdf", LogicOffset:0},
-				{Offset: 0, Size: 150, FileId: "xxxx", LogicOffset:50},
+				{Offset: 0, Size: 50, FileId: "asdf", LogicOffset: 0},
+				{Offset: 0, Size: 150, FileId: "xxxx", LogicOffset: 50},
 			},
 		},
 		// case 4: updates far away from prev chunks
@@ -217,7 +217,7 @@ func TestChunksReading(t *testing.T) {
 			Offset: 0,
 			Size:   400,
 			Expected: []*ChunkView{
-				{Offset: 0, Size: 200, FileId: "asdf", LogicOffset:0},
+				{Offset: 0, Size: 200, FileId: "asdf", LogicOffset: 0},
 				// {Offset: 0, Size: 150, FileId: "xxxx"}, // missing intervals should not happen
 			},
 		},
@@ -232,8 +232,8 @@ func TestChunksReading(t *testing.T) {
 			Offset: 0,
 			Size:   220,
 			Expected: []*ChunkView{
-				{Offset: 0, Size: 200, FileId: "asdf", LogicOffset:0},
-				{Offset: 0, Size: 20, FileId: "abc", LogicOffset:200},
+				{Offset: 0, Size: 200, FileId: "asdf", LogicOffset: 0},
+				{Offset: 0, Size: 20, FileId: "abc", LogicOffset: 200},
 			},
 		},
 		// case 6: same updates
@@ -246,7 +246,7 @@ func TestChunksReading(t *testing.T) {
 			Offset: 0,
 			Size:   100,
 			Expected: []*ChunkView{
-				{Offset: 0, Size: 100, FileId: "abc", LogicOffset:0},
+				{Offset: 0, Size: 100, FileId: "abc", LogicOffset: 0},
 			},
 		},
 		// case 7: edge cases
@@ -259,8 +259,8 @@ func TestChunksReading(t *testing.T) {
 			Offset: 0,
 			Size:   200,
 			Expected: []*ChunkView{
-				{Offset: 0, Size: 100, FileId: "abc", LogicOffset:0},
-				{Offset: 0, Size: 100, FileId: "asdf", LogicOffset:100},
+				{Offset: 0, Size: 100, FileId: "abc", LogicOffset: 0},
+				{Offset: 0, Size: 100, FileId: "asdf", LogicOffset: 100},
 			},
 		},
 	}

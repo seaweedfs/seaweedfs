@@ -68,7 +68,7 @@ func runCopy(cmd *Command, args []string) bool {
 		return false
 	}
 	filerDestination := args[len(args)-1]
-	fileOrDirs := args[0: len(args)-1]
+	fileOrDirs := args[0 : len(args)-1]
 
 	filerUrl, err := url.Parse(filerDestination)
 	if err != nil {

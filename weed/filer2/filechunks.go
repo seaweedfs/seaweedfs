@@ -1,9 +1,9 @@
 package filer2
 
 import (
-	"sort"
 	"log"
 	"math"
+	"sort"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )

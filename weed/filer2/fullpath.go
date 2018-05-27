@@ -25,7 +25,7 @@ func (fp FullPath) DirAndName() (string, string) {
 	return dir[:len(dir)-1], name
 }
 
-func (fp FullPath) Name() (string) {
+func (fp FullPath) Name() string {
 	_, name := filepath.Split(string(fp))
 	return name
 }

@@ -3,9 +3,9 @@ package filesys
 import (
 	"bazil.org/fuse/fs"
 	"fmt"
-	"google.golang.org/grpc"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/karlseguin/ccache"
+	"google.golang.org/grpc"
 )
 
 type WFS struct {
@@ -15,7 +15,7 @@ type WFS struct {
 
 func NewSeaweedFileSystem(filer string) *WFS {
 	return &WFS{
-		filer:                     filer,
+		filer: filer,
 		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(6000).ItemsToPrune(100)),
 	}
 }

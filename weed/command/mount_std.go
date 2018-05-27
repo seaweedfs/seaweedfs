@@ -8,9 +8,9 @@ import (
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
+	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/filesys"
 )
 
 func runMount(cmd *Command, args []string) bool {

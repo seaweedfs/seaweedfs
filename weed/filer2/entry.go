@@ -15,7 +15,7 @@ type Attr struct {
 	Gid    uint32      // group gid
 }
 
-func (attr Attr) IsDirectory() (bool) {
+func (attr Attr) IsDirectory() bool {
 	return attr.Mode&os.ModeDir > 0
 }
 

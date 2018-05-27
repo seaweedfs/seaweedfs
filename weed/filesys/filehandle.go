@@ -1,19 +1,19 @@
 package filesys
 
 import (
-	"bazil.org/fuse/fs"
-	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"context"
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"bazil.org/fuse"
+	"bazil.org/fuse/fs"
 	"bytes"
+	"context"
+	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
-	"time"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"strings"
 	"sync"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"time"
 )
 
 type FileHandle struct {
@@ -32,6 +32,7 @@ type FileHandle struct {
 }
 
 var _ = fs.Handle(&FileHandle{})
+
 // var _ = fs.HandleReadAller(&FileHandle{})
 var _ = fs.HandleReader(&FileHandle{})
 var _ = fs.HandleFlusher(&FileHandle{})

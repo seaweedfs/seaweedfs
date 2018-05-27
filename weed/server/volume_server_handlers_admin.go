@@ -8,8 +8,8 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {

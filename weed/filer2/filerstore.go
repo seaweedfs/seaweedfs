@@ -7,8 +7,8 @@ import (
 
 type FilerStore interface {
 	GetName() string
-	Initialize(viper *viper.Viper) (error)
-	InsertEntry(*Entry) (error)
+	Initialize(viper *viper.Viper) error
+	InsertEntry(*Entry) error
 	UpdateEntry(*Entry) (err error)
 	FindEntry(FullPath) (entry *Entry, err error)
 	DeleteEntry(FullPath) (fileEntry *Entry, err error)

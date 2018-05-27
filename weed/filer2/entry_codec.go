@@ -4,9 +4,9 @@ import (
 	"os"
 	"time"
 
+	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/gogo/protobuf/proto"
-	"fmt"
 )
 
 func (entry *Entry) EncodeAttributesAndChunks() ([]byte, error) {
@@ -23,7 +23,7 @@ func (entry *Entry) EncodeAttributesAndChunks() ([]byte, error) {
 	return proto.Marshal(message)
 }
 
-func (entry *Entry) DecodeAttributesAndChunks(blob []byte) (error) {
+func (entry *Entry) DecodeAttributesAndChunks(blob []byte) error {
 
 	message := &filer_pb.Entry{}
 

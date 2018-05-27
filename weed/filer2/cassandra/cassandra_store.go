@@ -2,9 +2,9 @@ package cassandra
 
 import (
 	"fmt"
-	"github.com/gocql/gocql"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/gocql/gocql"
 	"github.com/spf13/viper"
 )
 

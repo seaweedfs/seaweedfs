@@ -1,10 +1,10 @@
 package leveldb
 
 import (
-	"testing"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"io/ioutil"
 	"os"
+	"testing"
 )
 
 func TestCreateAndFind(t *testing.T) {

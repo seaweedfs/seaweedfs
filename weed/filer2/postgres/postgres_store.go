@@ -1,13 +1,13 @@
 package postgres
 
 import (
-	"fmt"
 	"database/sql"
+	"fmt"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/spf13/viper"
-	_ "github.com/lib/pq"
 	"github.com/chrislusf/seaweedfs/weed/filer2/abstract_sql"
+	_ "github.com/lib/pq"
+	"github.com/spf13/viper"
 )
 
 const (

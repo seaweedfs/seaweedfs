@@ -3,8 +3,8 @@ package filer2
 import (
 	"os"
 
-	"github.com/spf13/viper"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/spf13/viper"
 )
 
 const (
@@ -20,12 +20,11 @@ enabled = false
 enabled = false
 dir = "."					# directory to store level db files
 
-[mysql]
+####################################################
 # multiple filers on shared storage, fairly scalable
-#
-# need to choose or create a database.
-# need to manually create a table "filemeta".
-#
+####################################################
+
+[mysql]
 # CREATE TABLE IF NOT EXISTS filemeta (
 #   dirhash     BIGINT        COMMENT 'first 64 bits of MD5 hash value of directory field',
 #   name        VARCHAR(1000) COMMENT 'directory or file name',
@@ -33,7 +32,6 @@ dir = "."					# directory to store level db files
 #   meta        BLOB,
 #   PRIMARY KEY (dirhash, name)
 # ) DEFAULT CHARSET=utf8;
-#
 enabled = true
 hostname = "localhost"
 port = 3306
@@ -90,10 +88,10 @@ var (
 func (f *Filer) LoadConfiguration() {
 
 	// find a filer store
-	viper.SetConfigName("filer")            // name of config file (without extension)
-	viper.AddConfigPath(".")                // optionally look for config in the working directory
-	viper.AddConfigPath("$HOME/.seaweedfs") // call multiple times to add many search paths
-	viper.AddConfigPath("/etc/seaweedfs/")  // path to look for the config file in
+	viper.SetConfigName("filer")                 // name of config file (without extension)
+	viper.AddConfigPath(".")                     // optionally look for config in the working directory
+	viper.AddConfigPath("$HOME/.seaweedfs")      // call multiple times to add many search paths
+	viper.AddConfigPath("/etc/seaweedfs/")       // path to look for the config file in
 	if err := viper.ReadInConfig(); err != nil { // Handle errors reading the config file
 		glog.Fatalf("Failed to load filer.toml file from current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/" +
 			"\n\nPlease follow this example and add a filer.toml file to " +

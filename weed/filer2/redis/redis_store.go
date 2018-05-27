@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/spf13/viper"
 	"github.com/go-redis/redis"
+	"github.com/spf13/viper"
 	"sort"
 	"strings"
 )

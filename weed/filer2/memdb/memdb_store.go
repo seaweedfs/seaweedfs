@@ -1,11 +1,11 @@
 package memdb
 
 import (
+	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/google/btree"
-	"strings"
-	"fmt"
 	"github.com/spf13/viper"
+	"strings"
 )
 
 func init() {

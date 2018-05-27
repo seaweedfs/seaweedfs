@@ -3,12 +3,12 @@ package filer2
 import (
 	"fmt"
 
-	"github.com/karlseguin/ccache"
-	"strings"
-	"path/filepath"
-	"time"
-	"os"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/karlseguin/ccache"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
 )
 
 type Filer struct {
@@ -24,15 +24,15 @@ func NewFiler(master string) *Filer {
 	}
 }
 
-func (f *Filer) SetStore(store FilerStore) () {
+func (f *Filer) SetStore(store FilerStore) {
 	f.store = store
 }
 
-func (f *Filer) DisableDirectoryCache() () {
+func (f *Filer) DisableDirectoryCache() {
 	f.directoryCache = nil
 }
 
-func (f *Filer) CreateEntry(entry *Entry) (error) {
+func (f *Filer) CreateEntry(entry *Entry) error {
 
 	dirParts := strings.Split(string(entry.FullPath), "/")
 
@@ -94,11 +94,11 @@ func (f *Filer) CreateEntry(entry *Entry) (error) {
 	}
 
 	/*
-	if !hasWritePermission(lastDirectoryEntry, entry) {
-		glog.V(0).Infof("directory %s: %v, entry: uid=%d gid=%d",
-			lastDirectoryEntry.FullPath, lastDirectoryEntry.Attr, entry.Uid, entry.Gid)
-		return fmt.Errorf("no write permission in folder %v", lastDirectoryEntry.FullPath)
-	}
+		if !hasWritePermission(lastDirectoryEntry, entry) {
+			glog.V(0).Infof("directory %s: %v, entry: uid=%d gid=%d",
+				lastDirectoryEntry.FullPath, lastDirectoryEntry.Attr, entry.Uid, entry.Gid)
+			return fmt.Errorf("no write permission in folder %v", lastDirectoryEntry.FullPath)
+		}
 	*/
 
 	if err := f.store.InsertEntry(entry); err != nil {
@@ -135,12 +135,12 @@ func (f *Filer) DeleteEntry(p FullPath) (fileEntry *Entry, err error) {
 
 func (f *Filer) ListDirectoryEntries(p FullPath, startFileName string, inclusive bool, limit int) ([]*Entry, error) {
 	if strings.HasSuffix(string(p), "/") && len(p) > 1 {
-		p = p[0:len(p)-1]
+		p = p[0 : len(p)-1]
 	}
 	return f.store.ListDirectoryEntries(p, startFileName, inclusive, limit)
 }
 
-func (f *Filer) cacheGetDirectory(dirpath string) (*Entry) {
+func (f *Filer) cacheGetDirectory(dirpath string) *Entry {
 	if f.directoryCache == nil {
 		return nil
 	}

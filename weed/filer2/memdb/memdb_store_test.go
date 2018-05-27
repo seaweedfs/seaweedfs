@@ -1,8 +1,8 @@
 package memdb
 
 import (
-	"testing"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"testing"
 )
 
 func TestCreateAndFind(t *testing.T) {

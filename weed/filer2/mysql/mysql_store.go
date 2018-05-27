@@ -1,13 +1,13 @@
 package mysql
 
 import (
-	"fmt"
 	"database/sql"
+	"fmt"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/spf13/viper"
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/chrislusf/seaweedfs/weed/filer2/abstract_sql"
+	_ "github.com/go-sql-driver/mysql"
+	"github.com/spf13/viper"
 )
 
 const (

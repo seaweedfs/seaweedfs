@@ -7,11 +7,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	ui "github.com/chrislusf/seaweedfs/weed/server/filer_ui"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
 )
 
 // listDirectoryHandler lists directories and folers under a directory

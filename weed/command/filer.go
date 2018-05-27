@@ -5,14 +5,14 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/soheilhy/cmux"
-	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"google.golang.org/grpc/reflection"
 )
 
 var (
