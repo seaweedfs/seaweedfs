@@ -61,6 +61,19 @@ sslmode = "disable"
 connection_max_idle = 100
 connection_max_open = 100
 
+[cassandra]
+# CREATE TABLE filemeta (
+#    directory varchar,
+#    name varchar,
+#    meta blob,
+#    PRIMARY KEY (directory, name)
+# ) WITH CLUSTERING ORDER BY (name ASC);
+enabled = false
+keyspace="seaweedfs"
+hosts=[
+	"localhost:9042",
+]
+
 `
 )
 

@@ -12,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
+	_ "github.com/chrislusf/seaweedfs/weed/filer2/cassandra"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/leveldb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/memdb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/mysql"
