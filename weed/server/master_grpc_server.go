@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc/peer"
 )
 
-func (ms MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
+func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
 	var dn *topology.DataNode
 	t := ms.Topo
 	for {
