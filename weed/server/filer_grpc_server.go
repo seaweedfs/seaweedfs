@@ -1,15 +1,16 @@
 package weed_server
 
 import (
-	"context"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"path/filepath"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"context"
 	"time"
 	"os"
+	"path/filepath"
+
+	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
