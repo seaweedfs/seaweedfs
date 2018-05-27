@@ -96,7 +96,10 @@ func (store *LevelDBStore) FindEntry(fullpath filer2.FullPath) (entry *filer2.En
 func (store *LevelDBStore) DeleteEntry(fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
 	key := genKey(fullpath.DirAndName())
 
-	entry, _ = store.FindEntry(fullpath)
+	entry, err = store.FindEntry(fullpath)
+	if err != nil {
+		return nil, nil
+	}
 
 	err = store.db.Delete(key, nil)
 	if err != nil {

@@ -79,7 +79,10 @@ func (store *AbstractSqlStore) FindEntry(fullpath filer2.FullPath) (*filer2.Entr
 
 func (store *AbstractSqlStore) DeleteEntry(fullpath filer2.FullPath) (*filer2.Entry, error) {
 
-	entry, _ := store.FindEntry(fullpath)
+	entry, err := store.FindEntry(fullpath)
+	if err != nil {
+		return nil, nil
+	}
 
 	dir, name := fullpath.DirAndName()
 
