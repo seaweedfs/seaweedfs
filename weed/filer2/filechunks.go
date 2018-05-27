@@ -1,7 +1,6 @@
 package filer2
 
 import (
-	"log"
 	"math"
 	"sort"
 
@@ -82,13 +81,12 @@ func ReadFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int) (views
 }
 
 func logPrintf(name string, visibles []*visibleInterval) {
-
-	return
-
+	/*
 	log.Printf("%s len %d", name, len(visibles))
 	for _, v := range visibles {
 		log.Printf("%s:  => %+v", name, v)
 	}
+	*/
 }
 
 func nonOverlappingVisibleIntervals(chunks []*filer_pb.FileChunk) (visibles []*visibleInterval) {

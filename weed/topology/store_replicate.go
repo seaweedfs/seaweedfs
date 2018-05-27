@@ -159,5 +159,4 @@ func distributedOperation(masterNode string, store *storage.Store, volumeId stor
 		glog.V(0).Infoln()
 		return fmt.Errorf("Failed to lookup for %d: %v", volumeId, lookupErr)
 	}
-	return nil
 }

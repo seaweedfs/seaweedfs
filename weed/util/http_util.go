@@ -141,7 +141,6 @@ func GetBufferStream(url string, values url.Values, allocatedBytes []byte, eachB
 			return err
 		}
 	}
-	return nil
 }
 
 func GetUrlStream(url string, values url.Values, readFn func(io.Reader) error) error {
