@@ -27,9 +27,9 @@ dir = "."					# directory to store level db files
 # need to manually create a table "filemeta".
 #
 # CREATE TABLE IF NOT EXISTS filemeta (
-#   dirhash     BINARY(16)   COMMENT 'MD5 hash value of directory field',
-#   name        VARCHAR(1000) NOT NULL DEFAULT "" COMMENT 'directory or file name',
-#   directory   VARCHAR(4096) NOT NULL DEFAULT "" COMMENT 'full path to parent directory',
+#   dirhash     BIGINT        COMMENT 'first 64 bits of MD5 hash value of directory field',
+#   name        VARCHAR(1000) COMMENT 'directory or file name',
+#   directory   VARCHAR(4096) COMMENT 'full path to parent directory',
 #   meta        BLOB,
 #   PRIMARY KEY (dirhash, name)
 # ) DEFAULT CHARSET=utf8;
@@ -44,10 +44,17 @@ connection_max_idle = 2
 connection_max_open = 100
 
 [postgres]
+# CREATE TABLE IF NOT EXISTS filemeta (
+#   dirhash     BIGINT,
+#   name        VARCHAR(1000),
+#   directory   VARCHAR(4096),
+#   meta        bytea,
+#   PRIMARY KEY (dirhash, name)
+# );
 enabled = false
-server = "192.168.1.1"
-port = 8080
-username = ""
+server = "localhost"
+port = 5432
+username = "postgres"
 password = ""
 database = ""
 connection_max_idle = 100

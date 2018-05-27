@@ -5,9 +5,28 @@ import (
 	"io"
 )
 
-// returns a 128 bit hash
-func md5hash(dir string) []byte {
+// returns a 64 bit big int
+func hashToLong(dir string) (v int64) {
 	h := md5.New()
 	io.WriteString(h, dir)
-	return h.Sum(nil)
+
+	b := h.Sum(nil)
+
+	v += int64(b[0])
+	v <<= 8
+	v += int64(b[1])
+	v <<= 8
+	v += int64(b[2])
+	v <<= 8
+	v += int64(b[3])
+	v <<= 8
+	v += int64(b[4])
+	v <<= 8
+	v += int64(b[5])
+	v <<= 8
+	v += int64(b[6])
+	v <<= 8
+	v += int64(b[7])
+
+	return
 }

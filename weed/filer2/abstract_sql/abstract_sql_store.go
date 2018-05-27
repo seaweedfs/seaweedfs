@@ -21,7 +21,7 @@ func (store *AbstractSqlStore) InsertEntry(entry *filer2.Entry) (err error) {
 	}
 
 	res, err := store.DB.Exec("INSERT INTO filemeta (dirhash,name,directory,meta) VALUES(?,?,?,?)",
-		md5hash(dir), name, dir, meta)
+		hashToLong(dir), name, dir, meta)
 	if err != nil {
 		return fmt.Errorf("mysql insert %s: %s", entry.FullPath, err)
 	}
@@ -42,7 +42,7 @@ func (store *AbstractSqlStore) UpdateEntry(entry *filer2.Entry) (err error) {
 	}
 
 	res, err := store.DB.Exec("UPDATE filemeta SET meta=? WHERE dirhash=? AND name=? AND directory=?",
-		meta, md5hash(dir), name, dir)
+		meta, hashToLong(dir), name, dir)
 	if err != nil {
 		return fmt.Errorf("mysql update %s: %s", entry.FullPath, err)
 	}
@@ -58,7 +58,7 @@ func (store *AbstractSqlStore) FindEntry(fullpath filer2.FullPath) (*filer2.Entr
 
 	dir, name := fullpath.DirAndName()
 	row := store.DB.QueryRow("SELECT meta FROM filemeta WHERE dirhash=? AND name=? AND directory=?",
-		md5hash(dir), name, dir)
+		hashToLong(dir), name, dir)
 	var data []byte
 	if err := row.Scan(&data); err != nil {
 		return nil, fmt.Errorf("mysql read entry %s: %v", fullpath, err)
@@ -81,7 +81,7 @@ func (store *AbstractSqlStore) DeleteEntry(fullpath filer2.FullPath) (*filer2.En
 	dir, name := fullpath.DirAndName()
 
 	res, err := store.DB.Exec("DELETE FROM filemeta WHERE dirhash=? AND name=? AND directory=?",
-		md5hash(dir), name, dir)
+		hashToLong(dir), name, dir)
 	if err != nil {
 		return nil, fmt.Errorf("mysql delete %s: %s", fullpath, err)
 	}
@@ -101,7 +101,7 @@ func (store *AbstractSqlStore) ListDirectoryEntries(fullpath filer2.FullPath, st
 		sqlText = "SELECT NAME, meta FROM filemeta WHERE dirhash=? AND name>=? AND directory=? LIMIT ?"
 	}
 
-	rows, err := store.DB.Query(sqlText, md5hash(string(fullpath)), startFileName, string(fullpath), limit)
+	rows, err := store.DB.Query(sqlText, hashToLong(string(fullpath)), startFileName, string(fullpath), limit)
 	if err != nil {
 		return nil, fmt.Errorf("mysql list %s : %v", fullpath, err)
 	}
