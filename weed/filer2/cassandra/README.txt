@@ -4,6 +4,8 @@ CREATE KEYSPACE seaweedfs WITH replication = {'class':'SimpleStrategy', 'replica
 
 2. create filemeta table
 
+ USE seaweedfs;
+
  CREATE TABLE filemeta (
     directory varchar,
     name varchar,
