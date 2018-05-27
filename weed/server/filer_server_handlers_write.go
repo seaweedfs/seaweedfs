@@ -319,7 +319,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		if entry, err := fs.filer.FindEntry(filer2.FullPath(path)); err == nil {
 			oldFid := entry.Chunks[0].FileId
 			operation.DeleteFile(fs.getMasterNode(), oldFid, fs.jwt(oldFid))
-		} else if err != nil && err != filer.ErrNotFound {
+		} else if err != nil && err != filer2.ErrNotFound {
 			glog.V(0).Infof("error %v occur when finding %s in filer store", err, path)
 		}
 	}
