@@ -13,14 +13,16 @@ type WFS struct {
 	listDirectoryEntriesCache *ccache.Cache
 	collection                string
 	replication               string
+	chunkSizeLimit            int64
 }
 
-func NewSeaweedFileSystem(filer string, collection string, replication string) *WFS {
+func NewSeaweedFileSystem(filer string, collection string, replication string, chunkSizeLimitMB int) *WFS {
 	return &WFS{
 		filer:                     filer,
 		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(6000).ItemsToPrune(100)),
 		collection:                collection,
 		replication:               replication,
+		chunkSizeLimit:            int64(chunkSizeLimitMB) * 1024 * 1024,
 	}
 }
 

@@ -48,7 +48,7 @@ func runMount(cmd *Command, args []string) bool {
 	})
 
 	err = fs.Serve(c, filesys.NewSeaweedFileSystem(
-		*mountOptions.filer, *mountOptions.collection, *mountOptions.replication))
+		*mountOptions.filer, *mountOptions.collection, *mountOptions.replication, *mountOptions.chunkSizeLimitMB))
 	if err != nil {
 		fuse.Unmount(*mountOptions.dir)
 	}
