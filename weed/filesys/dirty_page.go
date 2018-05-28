@@ -60,7 +60,7 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 			Data:   data,
 		})
 
-		if pages.totalSize() >= pages.f.wfs.chunkSizeLimit {
+		if pages.f.wfs.chunkSizeLimit > 0 && pages.totalSize() >= pages.f.wfs.chunkSizeLimit {
 			chunk, err = pages.saveToStorage(ctx)
 			pages.pages = nil
 			glog.V(3).Infof("%s/%s add split [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
