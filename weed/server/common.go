@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/stats"
@@ -187,4 +188,16 @@ func statsMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	m["Version"] = util.VERSION
 	m["Memory"] = stats.MemStat()
 	writeJsonQuiet(w, r, http.StatusOK, m)
+}
+
+func faviconHandler(w http.ResponseWriter, r *http.Request) {
+	data, err := images.Asset("favicon/favicon.ico")
+	if err != nil {
+		glog.V(2).Infoln("favicon read error:", err)
+		return
+	}
+
+	if e := writeResponseContent("favicon.ico", "image/x-icon", bytes.NewReader(data), w, r); e != nil {
+		glog.V(2).Infoln("response write error:", e)
+	}
 }

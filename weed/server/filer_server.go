@@ -53,6 +53,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, ip string, port int,
 	fs.filer.LoadConfiguration()
 
 	defaultMux.HandleFunc("/admin/register", fs.registerHandler)
+	defaultMux.HandleFunc("/favicon.ico", faviconHandler)
 	defaultMux.HandleFunc("/", fs.filerHandler)
 	if defaultMux != readonlyMux {
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)

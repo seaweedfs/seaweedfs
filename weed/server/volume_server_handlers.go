@@ -51,7 +51,3 @@ func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Req
 		vs.GetOrHeadHandler(w, r)
 	}
 }
-
-func (vs *VolumeServer) faviconHandler(w http.ResponseWriter, r *http.Request) {
-	vs.FaviconHandler(w, r)
-}
