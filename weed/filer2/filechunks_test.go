@@ -117,6 +117,24 @@ func TestIntervalMerging(t *testing.T) {
 				{start: 0, stop: 100, fileId: "abc"},
 			},
 		},
+		// case 7: real updates
+		{
+			Chunks: []*filer_pb.FileChunk{
+				{Offset: 0, Size: 2097152, FileId: "7,0294cbb9892b", Mtime: 123},
+				{Offset: 0, Size: 3145728, FileId: "3,029565bf3092", Mtime: 130},
+				{Offset: 2097152, Size: 3145728, FileId: "6,029632f47ae2", Mtime: 140},
+				{Offset: 5242880, Size: 3145728, FileId: "2,029734c5aa10", Mtime: 150},
+				{Offset: 8388608, Size: 3145728, FileId: "5,02982f80de50", Mtime: 160},
+				{Offset: 11534336, Size: 2842193, FileId: "7,0299ad723803", Mtime: 170},
+			},
+			Expected: []*visibleInterval{
+				{start: 0, stop: 2097152, fileId: "3,029565bf3092"},
+				{start: 2097152, stop: 5242880, fileId: "6,029632f47ae2"},
+				{start: 5242880, stop: 8388608, fileId: "2,029734c5aa10"},
+				{start: 8388608, stop: 11534336, fileId: "5,02982f80de50"},
+				{start: 11534336, stop: 14376529, fileId: "7,0299ad723803"},
+			},
+		},
 	}
 
 	for i, testcase := range testcases {
@@ -125,6 +143,8 @@ func TestIntervalMerging(t *testing.T) {
 		for x, interval := range intervals {
 			log.Printf("test case %d, interval %d, start=%d, stop=%d, fileId=%s",
 				i, x, interval.start, interval.stop, interval.fileId)
+		}
+		for x, interval := range intervals {
 			if interval.start != testcase.Expected[x].start {
 				t.Fatalf("failed on test case %d, interval %d, start %d, expect %d",
 					i, x, interval.start, testcase.Expected[x].start)

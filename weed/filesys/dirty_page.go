@@ -2,7 +2,6 @@ package filesys
 
 import (
 	"sync"
-	"sort"
 	"fmt"
 	"bytes"
 	"io"
@@ -63,7 +62,7 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 		if pages.f.wfs.chunkSizeLimit > 0 && pages.totalSize() >= pages.f.wfs.chunkSizeLimit {
 			chunk, err = pages.saveToStorage(ctx)
 			pages.pages = nil
-			glog.V(3).Infof("%s/%s add split [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
+			glog.V(3).Infof("%s/%s over size limit [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}
 		return
 	}
@@ -87,6 +86,9 @@ func (pages *ContinuousDirtyPages) FlushToStorage(ctx context.Context) (chunk *f
 
 	if chunk, err = pages.saveToStorage(ctx); err == nil {
 		pages.pages = nil
+		if chunk != nil {
+			glog.V(3).Infof("%s/%s flush [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
+		}
 	}
 	return
 }
@@ -103,10 +105,6 @@ func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context) (*filer_pb
 	if len(pages.pages) == 0 {
 		return nil, nil
 	}
-
-	sort.Slice(pages.pages, func(i, j int) bool {
-		return pages.pages[i].Offset < pages.pages[j].Offset
-	})
 
 	var fileId, host string
 
