@@ -3,22 +3,20 @@ package filesys
 import (
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
-	"bytes"
 	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"strings"
 	"sync"
-	"time"
 )
 
 type FileHandle struct {
 	// cache file has been written to
-	dirty bool
+	dirtyPages    *ContinuousDirtyPages
+	dirtyMetadata bool
 
 	cachePath string
 
@@ -128,55 +126,20 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 	// write the request to volume servers
 
-	glog.V(3).Infof("%+v/%v write fh: %+v", fh.f.dir.Path, fh.f.Name, req)
+	glog.V(3).Infof("%+v/%v write fh: [%d,%d)", fh.f.dir.Path, fh.f.Name, req.Offset, req.Offset+int64(len(req.Data)))
 
-	var fileId, host string
-
-	if err := fh.f.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-
-		request := &filer_pb.AssignVolumeRequest{
-			Count:       1,
-			Replication: "000",
-			Collection:  "",
-		}
-
-		resp, err := client.AssignVolume(ctx, request)
-		if err != nil {
-			glog.V(0).Infof("assign volume failure %v: %v", request, err)
-			return err
-		}
-
-		fileId, host = resp.FileId, resp.Url
-
-		return nil
-	}); err != nil {
-		return fmt.Errorf("filer assign volume: %v", err)
-	}
-
-	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
-	bufReader := bytes.NewReader(req.Data)
-	uploadResult, err := operation.Upload(fileUrl, fh.f.Name, bufReader, false, "application/octet-stream", nil, "")
+	chunk, err := fh.dirtyPages.AddPage(ctx, req.Offset, req.Data)
 	if err != nil {
-		glog.V(0).Infof("upload data %v to %s: %v", req, fileUrl, err)
-		return fmt.Errorf("upload data: %v", err)
-	}
-	if uploadResult.Error != "" {
-		glog.V(0).Infof("upload failure %v to %s: %v", req, fileUrl, err)
-		return fmt.Errorf("upload result: %v", uploadResult.Error)
+		return fmt.Errorf("write %s/%s at [%d,%d): %v", fh.f.dir.Path, fh.f.Name, req.Offset, req.Offset+int64(len(req.Data)), err)
 	}
 
-	resp.Size = int(uploadResult.Size)
+	resp.Size = len(req.Data)
 
-	fh.f.Chunks = append(fh.f.Chunks, &filer_pb.FileChunk{
-		FileId: fileId,
-		Offset: req.Offset,
-		Size:   uint64(uploadResult.Size),
-		Mtime:  time.Now().UnixNano(),
-	})
-
-	glog.V(1).Infof("uploaded %s/%s to: %v, [%d,%d)", fh.f.dir.Path, fh.f.Name, fileUrl, req.Offset, req.Offset+int64(resp.Size))
-
-	fh.dirty = true
+	if chunk != nil {
+		fh.f.Chunks = append(fh.f.Chunks, chunk)
+		glog.V(1).Infof("uploaded %s/%s to %s [%d,%d)", fh.f.dir.Path, fh.f.Name, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
+		fh.dirtyMetadata = true
+	}
 
 	return nil
 }
@@ -197,7 +160,17 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	// send the data to the OS
 	glog.V(3).Infof("%s/%s fh flush %v", fh.f.dir.Path, fh.f.Name, req)
 
-	if !fh.dirty {
+	chunk, err := fh.dirtyPages.FlushToStorage(ctx)
+	if err != nil {
+		glog.V(0).Infof("flush %s/%s to %s [%d,%d): %v", fh.f.dir.Path, fh.f.Name, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size), err)
+		return fmt.Errorf("flush %s/%s to %s [%d,%d): %v", fh.f.dir.Path, fh.f.Name, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size), err)
+	}
+	if chunk != nil {
+		fh.f.Chunks = append(fh.f.Chunks, chunk)
+		fh.dirtyMetadata = true
+	}
+
+	if !fh.dirtyMetadata {
 		return nil
 	}
 
@@ -206,7 +179,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		return nil
 	}
 
-	err := fh.f.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = fh.f.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: fh.f.dir.Path,
@@ -229,7 +202,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	})
 
 	if err == nil {
-		fh.dirty = false
+		fh.dirtyMetadata = false
 	}
 
 	return err

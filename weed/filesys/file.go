@@ -84,11 +84,12 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 	file.isOpen = true
 
 	return &FileHandle{
-		f:         file,
-		RequestId: req.Header.ID,
-		NodeId:    req.Header.Node,
-		Uid:       req.Uid,
-		Gid:       req.Gid,
+		f:          file,
+		dirtyPages: &ContinuousDirtyPages{f: file},
+		RequestId:  req.Header.ID,
+		NodeId:     req.Header.Node,
+		Uid:        req.Uid,
+		Gid:        req.Gid,
 	}, nil
 
 }
