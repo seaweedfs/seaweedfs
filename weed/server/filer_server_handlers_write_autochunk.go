@@ -3,15 +3,16 @@ package weed_server
 import (
 	"bytes"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"path"
 	"strconv"
+	"time"
+
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"time"
-	"io/ioutil"
 )
 
 func (fs *FilerServer) autoChunk(w http.ResponseWriter, r *http.Request, replication string, collection string) bool {
