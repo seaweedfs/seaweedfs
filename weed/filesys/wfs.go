@@ -11,12 +11,16 @@ import (
 type WFS struct {
 	filer                     string
 	listDirectoryEntriesCache *ccache.Cache
+	collection                string
+	replication               string
 }
 
-func NewSeaweedFileSystem(filer string) *WFS {
+func NewSeaweedFileSystem(filer string, collection string, replication string) *WFS {
 	return &WFS{
-		filer: filer,
+		filer:                     filer,
 		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(6000).ItemsToPrune(100)),
+		collection:                collection,
+		replication:               replication,
 	}
 }
 

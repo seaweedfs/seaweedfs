@@ -108,8 +108,8 @@ func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context) (*filer_pb
 
 		request := &filer_pb.AssignVolumeRequest{
 			Count:       1,
-			Replication: "000",
-			Collection:  "",
+			Replication: pages.f.wfs.replication,
+			Collection:  pages.f.wfs.collection,
 		}
 
 		resp, err := client.AssignVolume(ctx, request)

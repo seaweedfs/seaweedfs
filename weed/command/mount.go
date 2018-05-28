@@ -1,8 +1,10 @@
 package command
 
 type MountOptions struct {
-	filer *string
-	dir   *string
+	filer       *string
+	dir         *string
+	collection  *string
+	replication *string
 }
 
 var (
@@ -14,6 +16,8 @@ func init() {
 	cmdMount.IsDebug = cmdMount.Flag.Bool("debug", false, "verbose debug information")
 	mountOptions.filer = cmdMount.Flag.String("filer", "localhost:8888", "weed filer location")
 	mountOptions.dir = cmdMount.Flag.String("dir", ".", "mount weed filer to this directory")
+	mountOptions.collection = cmdMount.Flag.String("collection", "", "collection to create the files")
+	mountOptions.replication = cmdMount.Flag.String("replication", "000", "replication to create to files")
 }
 
 var cmdMount = &Command{

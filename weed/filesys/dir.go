@@ -123,11 +123,12 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 		dir.NodeMap[req.Name] = file
 		file.isOpen = true
 		return file, &FileHandle{
-			f:         file,
-			RequestId: req.Header.ID,
-			NodeId:    req.Header.Node,
-			Uid:       req.Uid,
-			Gid:       req.Gid,
+			f:          file,
+			dirtyPages: &ContinuousDirtyPages{f: file},
+			RequestId:  req.Header.ID,
+			NodeId:     req.Header.Node,
+			Uid:        req.Uid,
+			Gid:        req.Gid,
 		}, nil
 	}
 
