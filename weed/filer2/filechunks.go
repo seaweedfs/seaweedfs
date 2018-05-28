@@ -58,7 +58,7 @@ type ChunkView struct {
 	LogicOffset int64
 }
 
-func ReadFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int) (views []*ChunkView) {
+func ViewFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int) (views []*ChunkView) {
 
 	visibles := nonOverlappingVisibleIntervals(chunks)
 

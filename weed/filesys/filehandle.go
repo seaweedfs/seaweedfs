@@ -50,7 +50,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	buff := make([]byte, req.Size)
 
-	chunkViews := filer2.ReadFromChunks(fh.f.Chunks, req.Offset, req.Size)
+	chunkViews := filer2.ViewFromChunks(fh.f.Chunks, req.Offset, req.Size)
 
 	var vids []string
 	for _, chunkView := range chunkViews {

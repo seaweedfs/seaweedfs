@@ -267,7 +267,7 @@ func TestChunksReading(t *testing.T) {
 
 	for i, testcase := range testcases {
 		log.Printf("++++++++++ read test case %d ++++++++++++++++++++", i)
-		chunks := ReadFromChunks(testcase.Chunks, testcase.Offset, testcase.Size)
+		chunks := ViewFromChunks(testcase.Chunks, testcase.Offset, testcase.Size)
 		for x, chunk := range chunks {
 			log.Printf("read case %d, chunk %d, offset=%d, size=%d, fileId=%s",
 				i, x, chunk.Offset, chunk.Size, chunk.FileId)

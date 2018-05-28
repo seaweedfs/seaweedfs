@@ -215,3 +215,37 @@ func ReadUrl(fileUrl string, offset int64, size int, buf []byte) (n int64, e err
 	}
 
 }
+
+func ReadUrlAsStream(fileUrl string, offset int64, size int, fn func(data []byte)) (n int64, e error) {
+
+	req, _ := http.NewRequest("GET", fileUrl, nil)
+	req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)))
+
+	r, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer r.Body.Close()
+	if r.StatusCode >= 400 {
+		return 0, fmt.Errorf("%s: %s", fileUrl, r.Status)
+	}
+
+	var m int
+	buf := make([]byte, 64*1024)
+
+	for {
+		m, err = r.Body.Read(buf)
+		if m == 0 {
+			return
+		}
+		fn(buf[:m])
+		n += int64(m)
+		if err == io.EOF {
+			return n, nil
+		}
+		if e != nil {
+			return n, e
+		}
+	}
+
+}
