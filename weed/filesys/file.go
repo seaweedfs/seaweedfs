@@ -85,7 +85,7 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 	return &FileHandle{
 		f:          file,
-		dirtyPages: &ContinuousDirtyPages{f: file},
+		dirtyPages: newDirtyPages(file),
 		RequestId:  req.Header.ID,
 		NodeId:     req.Header.Node,
 		Uid:        req.Uid,

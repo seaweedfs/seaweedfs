@@ -124,7 +124,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 		file.isOpen = true
 		return file, &FileHandle{
 			f:          file,
-			dirtyPages: &ContinuousDirtyPages{f: file},
+			dirtyPages: newDirtyPages(file),
 			RequestId:  req.Header.ID,
 			NodeId:     req.Header.Node,
 			Uid:        req.Uid,

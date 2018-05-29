@@ -1,10 +1,8 @@
 package filesys
 
 import (
-	"sync"
 	"fmt"
 	"bytes"
-	"io"
 	"time"
 	"context"
 
@@ -13,98 +11,64 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
-type DirtyPage struct {
-	Offset int64
-	Data   []byte
+type ContinuousDirtyPages struct {
+	hasData bool
+	Offset  int64
+	Size    int64
+	Data    []byte
+	f       *File
 }
 
-type ContinuousDirtyPages struct {
-	sync.Mutex
-
-	pages []*DirtyPage
-	f     *File
+func newDirtyPages(file *File) *ContinuousDirtyPages {
+	return &ContinuousDirtyPages{
+		Data: make([]byte, file.wfs.chunkSizeLimit),
+		f:    file,
+	}
 }
 
 func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, data []byte) (chunk *filer_pb.FileChunk, err error) {
-	pages.Lock()
-	defer pages.Unlock()
 
-	isPerfectOverwrite := false
-	isPerfectAppend := false
-	if len(pages.pages) > 0 {
-		lastPage := pages.pages[len(pages.pages)-1]
-		if lastPage.Offset+int64(len(lastPage.Data)) == offset {
-			// write continuous pages
-			glog.V(4).Infof("%s/%s append [%d,%d)", pages.f.dir.Path, pages.f.Name, offset, offset+int64(len(data)))
-			isPerfectAppend = true
-		}
-		if pages.pages[0].Offset == offset && pages.totalSize() == int64(len(data)) {
-			glog.V(4).Infof("%s/%s overwrite [%d,%d)", pages.f.dir.Path, pages.f.Name, offset, offset+int64(len(data)))
-			isPerfectOverwrite = true
-		}
-	} else {
-		glog.V(4).Infof("%s/%s append [%d,%d)", pages.f.dir.Path, pages.f.Name, offset, offset+int64(len(data)))
-		isPerfectAppend = true
+	if len(data) > len(pages.Data) {
+		// this is more than what we can hold.
+		panic("not prepared if buffer is smaller than each system write!")
 	}
 
-	isPerfectReplace := false
-	for _, page := range pages.pages {
-		if page.Offset == offset && len(page.Data) == len(data) {
-			// perfect replace
-			glog.V(4).Infof("%s/%s replace [%d,%d)", pages.f.dir.Path, pages.f.Name, offset, offset+int64(len(data)))
-			page.Data = data
-			isPerfectReplace = true
-		}
-	}
+	if offset < pages.Offset || offset >= pages.Offset+int64(len(pages.Data)) ||
+		pages.Offset+int64(len(pages.Data)) < offset+int64(len(data)) {
+		// if the data is out of range,
+		// or buffer is full if adding new data,
+		// flush current buffer and add new data
 
-	if isPerfectReplace {
-		return nil, nil
-	}
+		// println("offset", offset, "size", len(data), "existing offset", pages.Offset, "size", pages.Size)
 
-	if isPerfectAppend || isPerfectOverwrite {
-		if isPerfectAppend {
-			glog.V(4).Infof("%s/%s append2 [%d,%d)", pages.f.dir.Path, pages.f.Name, offset, offset+int64(len(data)))
-			pages.pages = append(pages.pages, &DirtyPage{
-				Offset: offset,
-				Data:   data,
-			})
+		if chunk, err = pages.saveToStorage(ctx); err == nil {
+			if chunk != nil {
+				glog.V(4).Infof("%s/%s add save [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
+			}
+		} else {
+			glog.V(0).Infof("%s/%s add save [%d,%d): %v", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size), err)
+			return
 		}
-
-		if isPerfectOverwrite {
-			glog.V(4).Infof("%s/%s overwrite2 [%d,%d)", pages.f.dir.Path, pages.f.Name, offset, offset+int64(len(data)))
-			pages.pages = []*DirtyPage{&DirtyPage{
-				Offset: offset,
-				Data:   data,
-			}}
-		}
-
-		if pages.f.wfs.chunkSizeLimit > 0 && pages.totalSize() >= pages.f.wfs.chunkSizeLimit {
-			chunk, err = pages.saveToStorage(ctx)
-			pages.pages = nil
-			glog.V(4).Infof("%s/%s over size limit [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
-		}
+		pages.Offset = offset
+		pages.Size = int64(len(data))
+		copy(pages.Data, data)
 		return
 	}
 
-	chunk, err = pages.saveToStorage(ctx)
-
-	glog.V(4).Infof("%s/%s saved [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
-
-	pages.pages = []*DirtyPage{&DirtyPage{
-		Offset: offset,
-		Data:   data,
-	}}
+	copy(pages.Data[offset-pages.Offset:], data)
+	pages.Size = max(pages.Size, offset+int64(len(data))-pages.Offset)
 
 	return
 }
 
 func (pages *ContinuousDirtyPages) FlushToStorage(ctx context.Context) (chunk *filer_pb.FileChunk, err error) {
 
-	pages.Lock()
-	defer pages.Unlock()
+	if pages.Size == 0 {
+		return nil, nil
+	}
 
 	if chunk, err = pages.saveToStorage(ctx); err == nil {
-		pages.pages = nil
+		pages.Size = 0
 		if chunk != nil {
 			glog.V(4).Infof("%s/%s flush [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}
@@ -112,16 +76,9 @@ func (pages *ContinuousDirtyPages) FlushToStorage(ctx context.Context) (chunk *f
 	return
 }
 
-func (pages *ContinuousDirtyPages) totalSize() (total int64) {
-	for _, page := range pages.pages {
-		total += int64(len(page.Data))
-	}
-	return
-}
-
 func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context) (*filer_pb.FileChunk, error) {
 
-	if len(pages.pages) == 0 {
+	if pages.Size == 0 {
 		return nil, nil
 	}
 
@@ -148,13 +105,8 @@ func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context) (*filer_pb
 		return nil, fmt.Errorf("filer assign volume: %v", err)
 	}
 
-	var readers []io.Reader
-	for _, page := range pages.pages {
-		readers = append(readers, bytes.NewReader(page.Data))
-	}
-
 	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
-	bufReader := io.MultiReader(readers...)
+	bufReader := bytes.NewReader(pages.Data[:pages.Size])
 	uploadResult, err := operation.Upload(fileUrl, pages.f.Name, bufReader, false, "application/octet-stream", nil, "")
 	if err != nil {
 		glog.V(0).Infof("upload data %v to %s: %v", pages.f.Name, fileUrl, err)
@@ -167,9 +119,16 @@ func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context) (*filer_pb
 
 	return &filer_pb.FileChunk{
 		FileId: fileId,
-		Offset: pages.pages[0].Offset,
-		Size:   uint64(pages.totalSize()),
+		Offset: pages.Offset,
+		Size:   uint64(pages.Size),
 		Mtime:  time.Now().UnixNano(),
 	}, nil
 
+}
+
+func max(x, y int64) int64 {
+	if x > y {
+		return x
+	}
+	return y
 }

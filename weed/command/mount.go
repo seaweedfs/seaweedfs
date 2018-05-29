@@ -18,7 +18,7 @@ func init() {
 	mountOptions.dir = cmdMount.Flag.String("dir", ".", "mount weed filer to this directory")
 	mountOptions.collection = cmdMount.Flag.String("collection", "", "collection to create the files")
 	mountOptions.replication = cmdMount.Flag.String("replication", "000", "replication to create to files")
-	mountOptions.chunkSizeLimitMB = cmdMount.Flag.Int("chunkSizeLimitMB", 0, "if set, limit the chunk size in MB")
+	mountOptions.chunkSizeLimitMB = cmdMount.Flag.Int("chunkSizeLimitMB", 16, "local write buffer size, also chunk large files")
 }
 
 var cmdMount = &Command{

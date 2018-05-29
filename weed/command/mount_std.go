@@ -19,6 +19,10 @@ func runMount(cmd *Command, args []string) bool {
 		fmt.Printf("Please specify the mount directory via \"-dir\"")
 		return false
 	}
+	if *mountOptions.chunkSizeLimitMB <= 0 {
+		fmt.Printf("Please specify a reasonable buffer size.")
+		return false
+	}
 
 	fuse.Unmount(*mountOptions.dir)
 
