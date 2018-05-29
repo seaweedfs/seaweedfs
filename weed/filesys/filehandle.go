@@ -39,7 +39,7 @@ var _ = fs.HandleReleaser(&FileHandle{})
 
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 
-	glog.V(3).Infof("%v/%v read fh: [%d,%d)", fh.f.dir.Path, fh.f.Name, req.Offset, req.Offset+int64(req.Size))
+	glog.V(4).Infof("%v/%v read fh: [%d,%d)", fh.f.dir.Path, fh.f.Name, req.Offset, req.Offset+int64(req.Size))
 
 	if len(fh.f.Chunks) == 0 {
 		glog.V(0).Infof("empty fh %v/%v", fh.f.dir.Path, fh.f.Name)
@@ -73,7 +73,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	})
 
 	if err != nil {
-		glog.V(3).Infof("%v/%v read fh lookup volume ids: %v", fh.f.dir.Path, fh.f.Name, err)
+		glog.V(4).Infof("%v/%v read fh lookup volume ids: %v", fh.f.dir.Path, fh.f.Name, err)
 		return fmt.Errorf("failed to lookup volume ids %v: %v", vids, err)
 	}
 
@@ -84,7 +84,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 		go func(chunkView *filer2.ChunkView) {
 			defer wg.Done()
 
-			glog.V(3).Infof("read fh reading chunk: %+v", chunkView)
+			glog.V(4).Infof("read fh reading chunk: %+v", chunkView)
 
 			locations := vid2Locations[volumeId(chunkView.FileId)]
 			if locations == nil || len(locations.Locations) == 0 {
@@ -109,7 +109,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 				return
 			}
 
-			glog.V(3).Infof("read fh read %d bytes: %+v", n, chunkView)
+			glog.V(4).Infof("read fh read %d bytes: %+v", n, chunkView)
 			totalRead += n
 
 		}(chunkView)
@@ -126,7 +126,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 	// write the request to volume servers
 
-	glog.V(3).Infof("%+v/%v write fh: [%d,%d)", fh.f.dir.Path, fh.f.Name, req.Offset, req.Offset+int64(len(req.Data)))
+	glog.V(4).Infof("%+v/%v write fh: [%d,%d)", fh.f.dir.Path, fh.f.Name, req.Offset, req.Offset+int64(len(req.Data)))
 
 	chunk, err := fh.dirtyPages.AddPage(ctx, req.Offset, req.Data)
 	if err != nil {
@@ -146,7 +146,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 
-	glog.V(3).Infof("%+v/%v release fh", fh.f.dir.Path, fh.f.Name)
+	glog.V(4).Infof("%+v/%v release fh", fh.f.dir.Path, fh.f.Name)
 
 	fh.f.isOpen = false
 
@@ -158,7 +158,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	// fflush works at fh level
 	// send the data to the OS
-	glog.V(3).Infof("%s/%s fh flush %v", fh.f.dir.Path, fh.f.Name, req)
+	glog.V(4).Infof("%s/%s fh flush %v", fh.f.dir.Path, fh.f.Name, req)
 
 	chunk, err := fh.dirtyPages.FlushToStorage(ctx)
 	if err != nil {

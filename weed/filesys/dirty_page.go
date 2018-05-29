@@ -29,21 +29,29 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 	pages.Lock()
 	defer pages.Unlock()
 
-	isPerfectAppend := len(pages.pages) == 0
+	isPerfectOverwrite := false
+	isPerfectAppend := false
 	if len(pages.pages) > 0 {
 		lastPage := pages.pages[len(pages.pages)-1]
 		if lastPage.Offset+int64(len(lastPage.Data)) == offset {
 			// write continuous pages
-			glog.V(3).Infof("%s/%s append [%d,%d)", pages.f.dir.Path, pages.f.Name, offset, offset+int64(len(data)))
+			glog.V(4).Infof("%s/%s append [%d,%d)", pages.f.dir.Path, pages.f.Name, offset, offset+int64(len(data)))
 			isPerfectAppend = true
 		}
+		if pages.pages[0].Offset == offset && pages.totalSize() == int64(len(data)) {
+			glog.V(4).Infof("%s/%s overwrite [%d,%d)", pages.f.dir.Path, pages.f.Name, offset, offset+int64(len(data)))
+			isPerfectOverwrite = true
+		}
+	} else {
+		glog.V(4).Infof("%s/%s append [%d,%d)", pages.f.dir.Path, pages.f.Name, offset, offset+int64(len(data)))
+		isPerfectAppend = true
 	}
 
 	isPerfectReplace := false
 	for _, page := range pages.pages {
 		if page.Offset == offset && len(page.Data) == len(data) {
 			// perfect replace
-			glog.V(3).Infof("%s/%s replace [%d,%d)", pages.f.dir.Path, pages.f.Name, offset, offset+int64(len(data)))
+			glog.V(4).Infof("%s/%s replace [%d,%d)", pages.f.dir.Path, pages.f.Name, offset, offset+int64(len(data)))
 			page.Data = data
 			isPerfectReplace = true
 		}
@@ -53,23 +61,34 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 		return nil, nil
 	}
 
-	if isPerfectAppend {
-		pages.pages = append(pages.pages, &DirtyPage{
-			Offset: offset,
-			Data:   data,
-		})
+	if isPerfectAppend || isPerfectOverwrite {
+		if isPerfectAppend {
+			glog.V(4).Infof("%s/%s append2 [%d,%d)", pages.f.dir.Path, pages.f.Name, offset, offset+int64(len(data)))
+			pages.pages = append(pages.pages, &DirtyPage{
+				Offset: offset,
+				Data:   data,
+			})
+		}
+
+		if isPerfectOverwrite {
+			glog.V(4).Infof("%s/%s overwrite2 [%d,%d)", pages.f.dir.Path, pages.f.Name, offset, offset+int64(len(data)))
+			pages.pages = []*DirtyPage{&DirtyPage{
+				Offset: offset,
+				Data:   data,
+			}}
+		}
 
 		if pages.f.wfs.chunkSizeLimit > 0 && pages.totalSize() >= pages.f.wfs.chunkSizeLimit {
 			chunk, err = pages.saveToStorage(ctx)
 			pages.pages = nil
-			glog.V(3).Infof("%s/%s over size limit [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
+			glog.V(4).Infof("%s/%s over size limit [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}
 		return
 	}
 
 	chunk, err = pages.saveToStorage(ctx)
 
-	glog.V(3).Infof("%s/%s saved [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
+	glog.V(4).Infof("%s/%s saved [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
 
 	pages.pages = []*DirtyPage{&DirtyPage{
 		Offset: offset,
@@ -87,7 +106,7 @@ func (pages *ContinuousDirtyPages) FlushToStorage(ctx context.Context) (chunk *f
 	if chunk, err = pages.saveToStorage(ctx); err == nil {
 		pages.pages = nil
 		if chunk != nil {
-			glog.V(3).Infof("%s/%s flush [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
+			glog.V(4).Infof("%s/%s flush [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}
 	}
 	return
