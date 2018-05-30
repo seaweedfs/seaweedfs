@@ -149,17 +149,9 @@ func doEachCopy(fileOrDir string, host string, path string) bool {
 
 func uploadFileAsOne(filerUrl string, urlPath string, assignResult *operation.AssignResult, f *os.File, fi os.FileInfo) bool {
 	// upload the file content
-	ext := strings.ToLower(path.Ext(f.Name()))
-	head := make([]byte, 512)
-	f.Seek(0, 0)
-	n, err := f.Read(head)
-	if err != nil {
-		fmt.Printf("read head of %v: %v\n", f.Name(), err)
-		return false
-	}
-	f.Seek(0, 0)
-	mimeType := http.DetectContentType(head[:n])
-	isGzipped := ext == ".gz"
+
+	mimeType := detectMimeType(f)
+	isGzipped := isGzipped(f.Name())
 
 	targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
 
@@ -185,4 +177,21 @@ func uploadFileAsOne(filerUrl string, urlPath string, assignResult *operation.As
 
 func uploadFileInChunks(filerUrl string, path string, assignResult *operation.AssignResult, f *os.File, chunkCount int) bool {
 	return false
+}
+
+func isGzipped(filename string) bool {
+	return strings.ToLower(path.Ext(filename)) == ".gz"
+}
+
+func detectMimeType(f *os.File) string {
+	head := make([]byte, 512)
+	f.Seek(0, 0)
+	n, err := f.Read(head)
+	if err != nil {
+		fmt.Printf("read head of %v: %v\n", f.Name(), err)
+		return "application/octet-stream"
+	}
+	f.Seek(0, 0)
+	mimeType := http.DetectContentType(head[:n])
+	return mimeType
 }
