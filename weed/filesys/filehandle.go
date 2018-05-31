@@ -125,7 +125,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 	glog.V(4).Infof("%+v/%v write fh: [%d,%d)", fh.f.dir.Path, fh.f.Name, req.Offset, req.Offset+int64(len(req.Data)))
 
-	chunk, err := fh.dirtyPages.AddPage(ctx, req.Offset, req.Data)
+	chunks, err := fh.dirtyPages.AddPage(ctx, req.Offset, req.Data)
 	if err != nil {
 		return fmt.Errorf("write %s/%s at [%d,%d): %v", fh.f.dir.Path, fh.f.Name, req.Offset, req.Offset+int64(len(req.Data)), err)
 	}
@@ -137,7 +137,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 		fh.dirtyMetadata = true
 	}
 
-	if chunk != nil {
+	for _, chunk := range chunks {
 		fh.f.Chunks = append(fh.f.Chunks, chunk)
 		glog.V(1).Infof("uploaded %s/%s to %s [%d,%d)", fh.f.dir.Path, fh.f.Name, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
 		fh.dirtyMetadata = true

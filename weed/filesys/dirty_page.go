@@ -26,11 +26,39 @@ func newDirtyPages(file *File) *ContinuousDirtyPages {
 	}
 }
 
-func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, data []byte) (chunk *filer_pb.FileChunk, err error) {
+func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, data []byte) (chunks []*filer_pb.FileChunk, err error) {
+
+	var chunk *filer_pb.FileChunk
 
 	if len(data) > len(pages.Data) {
 		// this is more than what we can hold.
-		panic("not prepared if buffer is smaller than each system write!")
+
+		glog.V(0).Infof("not prepared if buffer is smaller than each system write! file %s [%d,%d)", pages.f.Name, offset, int64(len(data))+offset)
+
+		// flush existing
+		if chunk, err = pages.saveExistingPagesToStorage(ctx); err == nil {
+			if chunk != nil {
+				glog.V(4).Infof("%s/%s flush existing [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
+			}
+			chunks = append(chunks, chunk)
+		} else {
+			glog.V(0).Infof("%s/%s failed to flush1 [%d,%d): %v", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size), err)
+			return
+		}
+		pages.Size = 0
+
+		// flush the big page
+		if chunk, err = pages.saveToStorage(ctx, data, offset); err == nil {
+			if chunk != nil {
+				glog.V(4).Infof("%s/%s flush big request [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
+				chunks = append(chunks, chunk)
+			}
+		} else {
+			glog.V(0).Infof("%s/%s failed to flush2 [%d,%d): %v", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size), err)
+			return
+		}
+
+		return
 	}
 
 	if offset < pages.Offset || offset >= pages.Offset+int64(len(pages.Data)) ||
@@ -41,9 +69,10 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 
 		// println("offset", offset, "size", len(data), "existing offset", pages.Offset, "size", pages.Size)
 
-		if chunk, err = pages.saveToStorage(ctx); err == nil {
+		if chunk, err = pages.saveExistingPagesToStorage(ctx); err == nil {
 			if chunk != nil {
 				glog.V(4).Infof("%s/%s add save [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
+				chunks = append(chunks, chunk)
 			}
 		} else {
 			glog.V(0).Infof("%s/%s add save [%d,%d): %v", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size), err)
@@ -67,7 +96,7 @@ func (pages *ContinuousDirtyPages) FlushToStorage(ctx context.Context) (chunk *f
 		return nil, nil
 	}
 
-	if chunk, err = pages.saveToStorage(ctx); err == nil {
+	if chunk, err = pages.saveExistingPagesToStorage(ctx); err == nil {
 		pages.Size = 0
 		if chunk != nil {
 			glog.V(4).Infof("%s/%s flush [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
@@ -76,7 +105,11 @@ func (pages *ContinuousDirtyPages) FlushToStorage(ctx context.Context) (chunk *f
 	return
 }
 
-func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context) (*filer_pb.FileChunk, error) {
+func (pages *ContinuousDirtyPages) saveExistingPagesToStorage(ctx context.Context) (*filer_pb.FileChunk, error) {
+	return pages.saveToStorage(ctx, pages.Data[:pages.Size], pages.Offset)
+}
+
+func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context, buf []byte, offset int64) (*filer_pb.FileChunk, error) {
 
 	if pages.Size == 0 {
 		return nil, nil
@@ -119,8 +152,8 @@ func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context) (*filer_pb
 
 	return &filer_pb.FileChunk{
 		FileId: fileId,
-		Offset: pages.Offset,
-		Size:   uint64(pages.Size),
+		Offset: offset,
+		Size:   uint64(len(buf)),
 		Mtime:  time.Now().UnixNano(),
 	}, nil
 
