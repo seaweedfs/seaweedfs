@@ -156,35 +156,36 @@ func uploadFileAsOne(filerUrl string, urlFolder string, f *os.File, fi os.FileIn
 	}
 
 	// upload the file content
-
+	fileName := filepath.Base(f.Name())
 	mimeType := detectMimeType(f)
-	isGzipped := isGzipped(f.Name())
+	isGzipped := isGzipped(fileName)
 
 	targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
 
-	uploadResult, err := operation.Upload(targetUrl, f.Name(), f, isGzipped, mimeType, nil, "")
+	uploadResult, err := operation.Upload(targetUrl, fileName, f, isGzipped, mimeType, nil, "")
 	if err != nil {
-		fmt.Printf("upload data %v to %s: %v\n", f.Name(), targetUrl, err)
+		fmt.Printf("upload data %v to %s: %v\n", fileName, targetUrl, err)
 		return false
 	}
 	if uploadResult.Error != "" {
-		fmt.Printf("upload %v to %s result: %v\n", f.Name(), targetUrl, uploadResult.Error)
+		fmt.Printf("upload %v to %s result: %v\n", fileName, targetUrl, uploadResult.Error)
 		return false
 	}
-	fmt.Printf("uploaded %s to %s\n", f.Name(), targetUrl)
+	fmt.Printf("uploaded %s to %s\n", fileName, targetUrl)
 
-	if err = filer_operation.RegisterFile(filerUrl, filepath.Join(urlFolder, f.Name()), assignResult.Fid, fi.Size(),
+	if err = filer_operation.RegisterFile(filerUrl, filepath.Join(urlFolder, fileName), assignResult.Fid, fi.Size(),
 		mimeType, os.Getuid(), os.Getgid(), copy.secret); err != nil {
-		fmt.Printf("Failed to register file %s on %s: %v\n", f.Name(), filerUrl, err)
+		fmt.Printf("Failed to register file %s on %s: %v\n", fileName, filerUrl, err)
 		return false
 	}
 
-	fmt.Printf("copied %s => http://%s%s%s\n", f.Name(), filerUrl, urlFolder, f.Name())
+	fmt.Printf("copied %s => http://%s%s%s\n", fileName, filerUrl, urlFolder, fileName)
 	return true
 }
 
 func uploadFileInChunks(filerUrl string, urlFolder string, f *os.File, fi os.FileInfo, chunkCount int, chunkSize int64) bool {
 
+	fileName := filepath.Base(f.Name())
 	mimeType := detectMimeType(f)
 
 	var chunks []*filer_pb.FileChunk
@@ -205,15 +206,15 @@ func uploadFileInChunks(filerUrl string, urlFolder string, f *os.File, fi os.Fil
 		targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
 
 		uploadResult, err := operation.Upload(targetUrl,
-			f.Name()+"-"+strconv.FormatInt(i+1, 10),
+			fileName+"-"+strconv.FormatInt(i+1, 10),
 			io.LimitReader(f, chunkSize),
 			false, "application/octet-stream", nil, "")
 		if err != nil {
-			fmt.Printf("upload data %v to %s: %v\n", f.Name(), targetUrl, err)
+			fmt.Printf("upload data %v to %s: %v\n", fileName, targetUrl, err)
 			return false
 		}
 		if uploadResult.Error != "" {
-			fmt.Printf("upload %v to %s result: %v\n", f.Name(), targetUrl, uploadResult.Error)
+			fmt.Printf("upload %v to %s result: %v\n", fileName, targetUrl, uploadResult.Error)
 			return false
 		}
 		chunks = append(chunks, &filer_pb.FileChunk{
@@ -222,14 +223,14 @@ func uploadFileInChunks(filerUrl string, urlFolder string, f *os.File, fi os.Fil
 			Size:   uint64(uploadResult.Size),
 			Mtime:  time.Now().UnixNano(),
 		})
-		fmt.Printf("uploaded %s-%d to %s [%d,%d)\n", f.Name(), i+1, targetUrl, i*chunkSize, i*chunkSize+int64(uploadResult.Size))
+		fmt.Printf("uploaded %s-%d to %s [%d,%d)\n", fileName, i+1, targetUrl, i*chunkSize, i*chunkSize+int64(uploadResult.Size))
 	}
 
 	if err := withFilerClient(filerUrl, func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.CreateEntryRequest{
 			Directory: urlFolder,
 			Entry: &filer_pb.Entry{
-				Name: f.Name(),
+				Name: fileName,
 				Attributes: &filer_pb.FuseAttributes{
 					Crtime:   time.Now().Unix(),
 					Mtime:    time.Now().Unix(),
@@ -248,11 +249,11 @@ func uploadFileInChunks(filerUrl string, urlFolder string, f *os.File, fi os.Fil
 		}
 		return nil
 	}); err != nil {
-		fmt.Printf("upload data %v to http://%s%s%s: %v\n", f.Name(), filerUrl, urlFolder, f.Name(), err)
+		fmt.Printf("upload data %v to http://%s%s%s: %v\n", fileName, filerUrl, urlFolder, fileName, err)
 		return false
 	}
 
-	fmt.Printf("copied %s => http://%s%s%s\n", f.Name(), filerUrl, urlFolder, f.Name())
+	fmt.Printf("copied %s => http://%s%s%s\n", fileName, filerUrl, urlFolder, fileName)
 
 	return true
 }
