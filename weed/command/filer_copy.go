@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
-	filer_operation "github.com/chrislusf/seaweedfs/weed/operation/filer"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"path"
 	"net/http"
@@ -144,42 +143,76 @@ func doEachCopy(fileOrDir string, host string, path string) bool {
 
 func uploadFileAsOne(filerUrl string, urlFolder string, f *os.File, fi os.FileInfo) bool {
 
-	// assign a volume
-	assignResult, err := operation.Assign(*copy.master, &operation.VolumeAssignRequest{
-		Count:       1,
-		Replication: *copy.replication,
-		Collection:  *copy.collection,
-		Ttl:         *copy.ttl,
-	})
-	if err != nil {
-		fmt.Printf("Failed to assign from %s: %v\n", *copy.master, err)
-	}
-
 	// upload the file content
 	fileName := filepath.Base(f.Name())
 	mimeType := detectMimeType(f)
 	isGzipped := isGzipped(fileName)
 
-	targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
+	var chunks []*filer_pb.FileChunk
 
-	uploadResult, err := operation.Upload(targetUrl, fileName, f, isGzipped, mimeType, nil, "")
-	if err != nil {
-		fmt.Printf("upload data %v to %s: %v\n", fileName, targetUrl, err)
+	if fi.Size() > 0 {
+
+		// assign a volume
+		assignResult, err := operation.Assign(*copy.master, &operation.VolumeAssignRequest{
+			Count:       1,
+			Replication: *copy.replication,
+			Collection:  *copy.collection,
+			Ttl:         *copy.ttl,
+		})
+		if err != nil {
+			fmt.Printf("Failed to assign from %s: %v\n", *copy.master, err)
+		}
+
+		targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
+
+		uploadResult, err := operation.Upload(targetUrl, fileName, f, isGzipped, mimeType, nil, "")
+		if err != nil {
+			fmt.Printf("upload data %v to %s: %v\n", fileName, targetUrl, err)
+			return false
+		}
+		if uploadResult.Error != "" {
+			fmt.Printf("upload %v to %s result: %v\n", fileName, targetUrl, uploadResult.Error)
+			return false
+		}
+		fmt.Printf("uploaded %s to %s\n", fileName, targetUrl)
+
+		chunks = append(chunks, &filer_pb.FileChunk{
+			FileId: assignResult.Fid,
+			Offset: 0,
+			Size:   uint64(uploadResult.Size),
+			Mtime:  time.Now().UnixNano(),
+		})
+
+		fmt.Printf("copied %s => http://%s%s%s\n", fileName, filerUrl, urlFolder, fileName)
+	}
+
+	if err := withFilerClient(filerUrl, func(client filer_pb.SeaweedFilerClient) error {
+		request := &filer_pb.CreateEntryRequest{
+			Directory: urlFolder,
+			Entry: &filer_pb.Entry{
+				Name: fileName,
+				Attributes: &filer_pb.FuseAttributes{
+					Crtime:   time.Now().Unix(),
+					Mtime:    time.Now().Unix(),
+					Gid:      uint32(os.Getgid()),
+					Uid:      uint32(os.Getuid()),
+					FileSize: uint64(fi.Size()),
+					FileMode: uint32(fi.Mode()),
+					Mime:     mimeType,
+				},
+				Chunks: chunks,
+			},
+		}
+
+		if _, err := client.CreateEntry(context.Background(), request); err != nil {
+			return fmt.Errorf("update fh: %v", err)
+		}
+		return nil
+	}); err != nil {
+		fmt.Printf("upload data %v to http://%s%s%s: %v\n", fileName, filerUrl, urlFolder, fileName, err)
 		return false
 	}
-	if uploadResult.Error != "" {
-		fmt.Printf("upload %v to %s result: %v\n", fileName, targetUrl, uploadResult.Error)
-		return false
-	}
-	fmt.Printf("uploaded %s to %s\n", fileName, targetUrl)
 
-	if err = filer_operation.RegisterFile(filerUrl, filepath.Join(urlFolder, fileName), assignResult.Fid, fi.Size(),
-		mimeType, os.Getuid(), os.Getgid(), copy.secret); err != nil {
-		fmt.Printf("Failed to register file %s on %s: %v\n", fileName, filerUrl, err)
-		return false
-	}
-
-	fmt.Printf("copied %s => http://%s%s%s\n", fileName, filerUrl, urlFolder, fileName)
 	return true
 }
 
@@ -266,6 +299,9 @@ func detectMimeType(f *os.File) string {
 	head := make([]byte, 512)
 	f.Seek(0, 0)
 	n, err := f.Read(head)
+	if err == io.EOF {
+		return ""
+	}
 	if err != nil {
 		fmt.Printf("read head of %v: %v\n", f.Name(), err)
 		return "application/octet-stream"
