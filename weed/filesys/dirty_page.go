@@ -31,9 +31,7 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 	var chunk *filer_pb.FileChunk
 
 	if len(data) > len(pages.Data) {
-		// this is more than what we can hold.
-
-		glog.V(0).Infof("not prepared if buffer is smaller than each system write! file %s [%d,%d)", pages.f.Name, offset, int64(len(data))+offset)
+		// this is more than what buffer can hold.
 
 		// flush existing
 		if chunk, err = pages.saveExistingPagesToStorage(ctx); err == nil {
