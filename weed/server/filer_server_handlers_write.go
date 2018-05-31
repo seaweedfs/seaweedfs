@@ -195,18 +195,11 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 // curl -X DELETE http://localhost:8888/path/to
 func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
-	entry, err := fs.filer.DeleteEntry(filer2.FullPath(r.URL.Path))
+	err := fs.filer.DeleteEntryMetaAndData(filer2.FullPath(r.URL.Path))
 	if err != nil {
 		glog.V(4).Infoln("deleting", r.URL.Path, ":", err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
-	}
-
-	if entry != nil && !entry.IsDirectory() {
-		for _, chunk := range entry.Chunks {
-			oldFid := chunk.FileId
-			operation.DeleteFile(fs.getMasterNode(), oldFid, fs.jwt(oldFid))
-		}
 	}
 
 	writeJsonQuiet(w, r, http.StatusAccepted, map[string]string{"error": ""})

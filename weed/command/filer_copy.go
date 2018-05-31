@@ -174,7 +174,7 @@ func uploadFileAsOne(filerUrl string, urlFolder string, f *os.File, fi os.FileIn
 	fmt.Printf("uploaded %s to %s\n", f.Name(), targetUrl)
 
 	if err = filer_operation.RegisterFile(filerUrl, filepath.Join(urlFolder, f.Name()), assignResult.Fid, fi.Size(),
-		os.Getuid(), os.Getgid(), copy.secret); err != nil {
+		mimeType, os.Getuid(), os.Getgid(), copy.secret); err != nil {
 		fmt.Printf("Failed to register file %s on %s: %v\n", f.Name(), filerUrl, err)
 		return false
 	}
@@ -184,6 +184,8 @@ func uploadFileAsOne(filerUrl string, urlFolder string, f *os.File, fi os.FileIn
 }
 
 func uploadFileInChunks(filerUrl string, urlFolder string, f *os.File, fi os.FileInfo, chunkCount int, chunkSize int64) bool {
+
+	mimeType := detectMimeType(f)
 
 	var chunks []*filer_pb.FileChunk
 
@@ -235,6 +237,7 @@ func uploadFileInChunks(filerUrl string, urlFolder string, f *os.File, fi os.Fil
 					Uid:      uint32(os.Getuid()),
 					FileSize: uint64(fi.Size()),
 					FileMode: uint32(fi.Mode()),
+					Mime:     mimeType,
 				},
 				Chunks: chunks,
 			},

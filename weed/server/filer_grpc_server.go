@@ -50,6 +50,7 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 				Gid:      entry.Gid,
 				Uid:      entry.Uid,
 				FileMode: uint32(entry.Mode),
+				Mime:     entry.Mime,
 			},
 		})
 	}
@@ -75,6 +76,7 @@ func (fs *FilerServer) GetEntryAttributes(ctx context.Context, req *filer_pb.Get
 	attributes.Gid = entry.Gid
 	attributes.Mtime = entry.Mtime.Unix()
 	attributes.Crtime = entry.Crtime.Unix()
+	attributes.Mime = entry.Mime
 
 	glog.V(3).Infof("GetEntryAttributes %v size %d chunks %d: %+v", fullpath, attributes.FileSize, len(entry.Chunks), attributes)
 
@@ -120,6 +122,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 			Mode:   os.FileMode(req.Entry.Attributes.FileMode),
 			Uid:    req.Entry.Attributes.Uid,
 			Gid:    req.Entry.Attributes.Gid,
+			Mime:   req.Entry.Attributes.Mime,
 		},
 		Chunks: req.Entry.Chunks,
 	})
@@ -162,6 +165,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		}
 		newEntry.Attr.Uid = req.Entry.Attributes.Uid
 		newEntry.Attr.Gid = req.Entry.Attributes.Gid
+		newEntry.Attr.Mime = req.Entry.Attributes.Mime
 
 	}
 
@@ -180,14 +184,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 }
 
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {
-	entry, err := fs.filer.DeleteEntry(filer2.FullPath(filepath.Join(req.Directory, req.Name)))
-	if err == nil {
-		for _, chunk := range entry.Chunks {
-			if err = operation.DeleteFile(fs.getMasterNode(), chunk.FileId, fs.jwt(chunk.FileId)); err != nil {
-				glog.V(0).Infof("deleting file %s: %v", chunk.FileId, err)
-			}
-		}
-	}
+	err = fs.filer.DeleteEntryMetaAndData(filer2.FullPath(filepath.Join(req.Directory, req.Name)))
 	return &filer_pb.DeleteEntryResponse{}, err
 }
 

@@ -48,8 +48,14 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
 					<td align="right">
 					{{if $entry.IsDirectory}}
 					{{else}}
+						{{ $entry.Mime }}
+					{{end}}
+					</td>
+					<td align="right">
+					{{if $entry.IsDirectory}}
+					{{else}}
 						{{ $entry.Size }} bytes
-						&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+						&nbsp;&nbsp;&nbsp;
 					{{end}}
 					</td>
 					<td>

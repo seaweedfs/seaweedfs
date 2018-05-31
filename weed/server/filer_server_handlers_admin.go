@@ -32,6 +32,7 @@ func (fs *FilerServer) registerHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("parsing gid: %v", err))
 		return
 	}
+	mime := r.FormValue("mime")
 	entry := &filer2.Entry{
 		FullPath: filer2.FullPath(path),
 		Attr: filer2.Attr{
@@ -40,6 +41,7 @@ func (fs *FilerServer) registerHandler(w http.ResponseWriter, r *http.Request) {
 			Mtime:  time.Now(),
 			Uid:    uint32(uid),
 			Gid:    uint32(gid),
+			Mime:   mime,
 		},
 		Chunks: []*filer_pb.FileChunk{{
 			FileId: fileId,

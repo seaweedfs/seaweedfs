@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"github.com/chrislusf/seaweedfs/weed/operation"
 )
 
 type Filer struct {
@@ -101,6 +102,10 @@ func (f *Filer) CreateEntry(entry *Entry) error {
 		}
 	*/
 
+	if oldEntry, err := f.FindEntry(entry.FullPath); err == nil {
+		f.deleteChunks(oldEntry)
+	}
+
 	if err := f.store.InsertEntry(entry); err != nil {
 		return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
 	}
@@ -116,26 +121,30 @@ func (f *Filer) FindEntry(p FullPath) (entry *Entry, err error) {
 	return f.store.FindEntry(p)
 }
 
-func (f *Filer) DeleteEntry(p FullPath) (fileEntry *Entry, err error) {
+func (f *Filer) DeleteEntryMetaAndData(p FullPath) (err error) {
 	entry, err := f.FindEntry(p)
 	if err != nil {
-		return nil, err
+		return err
 	}
+
 	if entry.IsDirectory() {
 		entries, err := f.ListDirectoryEntries(p, "", false, 1)
 		if err != nil {
-			return nil, fmt.Errorf("list folder %s: %v", p, err)
+			return fmt.Errorf("list folder %s: %v", p, err)
 		}
 		if len(entries) > 0 {
-			return nil, fmt.Errorf("folder %s is not empty", p)
+			return fmt.Errorf("folder %s is not empty", p)
 		}
 	}
+
+	f.deleteChunks(entry)
+
 	return f.store.DeleteEntry(p)
 }
 
 func (f *Filer) ListDirectoryEntries(p FullPath, startFileName string, inclusive bool, limit int) ([]*Entry, error) {
 	if strings.HasSuffix(string(p), "/") && len(p) > 1 {
-		p = p[0 : len(p)-1]
+		p = p[0: len(p)-1]
 	}
 	return f.store.ListDirectoryEntries(p, startFileName, inclusive, limit)
 }
@@ -163,4 +172,18 @@ func (f *Filer) cacheSetDirectory(dirpath string, dirEntry *Entry, level int) {
 	}
 
 	f.directoryCache.Set(dirpath, dirEntry, time.Duration(minutes)*time.Minute)
+}
+
+func (f *Filer) deleteChunks(entry *Entry) {
+	if f.master == "" {
+		return
+	}
+	if entry == nil {
+		return
+	}
+	for _, chunk := range entry.Chunks {
+		if err := operation.DeleteFile(f.master, chunk.FileId, ""); err != nil {
+			glog.V(0).Infof("deleting file %s: %v", chunk.FileId, err)
+		}
+	}
 }

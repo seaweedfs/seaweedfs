@@ -17,6 +17,7 @@ func (entry *Entry) EncodeAttributesAndChunks() ([]byte, error) {
 			FileMode: uint32(entry.Attr.Mode),
 			Uid:      entry.Uid,
 			Gid:      entry.Gid,
+			Mime:     entry.Mime,
 		},
 		Chunks: entry.Chunks,
 	}
@@ -36,6 +37,7 @@ func (entry *Entry) DecodeAttributesAndChunks(blob []byte) error {
 	entry.Attr.Mode = os.FileMode(message.Attributes.FileMode)
 	entry.Attr.Uid = message.Attributes.Uid
 	entry.Attr.Gid = message.Attributes.Gid
+	entry.Attr.Mime = message.Attributes.Mime
 
 	entry.Chunks = message.Chunks
 

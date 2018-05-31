@@ -11,16 +11,13 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"strings"
 	"sync"
+	"net/http"
 )
 
 type FileHandle struct {
 	// cache file has been written to
 	dirtyPages    *ContinuousDirtyPages
 	dirtyMetadata bool
-
-	cachePath string
-
-	handle uint64
 
 	f         *File
 	RequestId fuse.RequestID // unique ID for request
@@ -134,6 +131,11 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 	}
 
 	resp.Size = len(req.Data)
+
+	if req.Offset == 0 {
+		fh.f.attributes.Mime = http.DetectContentType(req.Data)
+		fh.dirtyMetadata = true
+	}
 
 	if chunk != nil {
 		fh.f.Chunks = append(fh.f.Chunks, chunk)

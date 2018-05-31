@@ -88,22 +88,17 @@ func (store *CassandraStore) FindEntry(fullpath filer2.FullPath) (entry *filer2.
 	return entry, nil
 }
 
-func (store *CassandraStore) DeleteEntry(fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
-
-	entry, err = store.FindEntry(fullpath)
-	if err != nil {
-		return nil, nil
-	}
+func (store *CassandraStore) DeleteEntry(fullpath filer2.FullPath) error {
 
 	dir, name := fullpath.DirAndName()
 
 	if err := store.session.Query(
 		"DELETE FROM filemeta WHERE directory=? AND name=?",
 		dir, name).Exec(); err != nil {
-		return entry, fmt.Errorf("delete %s : %v", entry.FullPath, err)
+		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
 
-	return entry, nil
+	return nil
 }
 
 func (store *CassandraStore) ListDirectoryEntries(fullpath filer2.FullPath, startFileName string, inclusive bool,

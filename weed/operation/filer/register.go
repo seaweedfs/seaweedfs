@@ -17,7 +17,7 @@ type SubmitResult struct {
 	Error    string `json:"error,omitempty"`
 }
 
-func RegisterFile(filer string, path string, fileId string, fileSize int64, uid, gid int, secret security.Secret) error {
+func RegisterFile(filer string, path string, fileId string, fileSize int64, mime string, uid, gid int, secret security.Secret) error {
 	// TODO: jwt need to be used
 	_ = security.GenJwt(secret, fileId)
 
@@ -27,6 +27,7 @@ func RegisterFile(filer string, path string, fileId string, fileSize int64, uid,
 	values.Add("fileSize", strconv.FormatInt(fileSize, 10))
 	values.Add("uid", strconv.Itoa(uid))
 	values.Add("gid", strconv.Itoa(gid))
+	values.Add("mime", mime)
 	_, err := util.Post("http://"+filer+"/admin/register", values)
 	if err != nil {
 		return fmt.Errorf("Failed to register path %s on filer %s to file id %s : %v", path, filer, fileId, err)

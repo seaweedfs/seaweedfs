@@ -56,13 +56,9 @@ func (store *MemDbStore) FindEntry(fullpath filer2.FullPath) (entry *filer2.Entr
 	return entry, nil
 }
 
-func (store *MemDbStore) DeleteEntry(fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
-	item := store.tree.Delete(entryItem{&filer2.Entry{FullPath: fullpath}})
-	if item == nil {
-		return nil, nil
-	}
-	entry = item.(entryItem).Entry
-	return entry, nil
+func (store *MemDbStore) DeleteEntry(fullpath filer2.FullPath) (err error) {
+	store.tree.Delete(entryItem{&filer2.Entry{FullPath: fullpath}})
+	return nil
 }
 
 func (store *MemDbStore) ListDirectoryEntries(fullpath filer2.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {

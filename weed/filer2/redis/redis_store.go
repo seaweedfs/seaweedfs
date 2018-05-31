@@ -94,28 +94,23 @@ func (store *RedisStore) FindEntry(fullpath filer2.FullPath) (entry *filer2.Entr
 	return entry, nil
 }
 
-func (store *RedisStore) DeleteEntry(fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
-
-	entry, err = store.FindEntry(fullpath)
-	if err != nil {
-		return nil, nil
-	}
+func (store *RedisStore) DeleteEntry(fullpath filer2.FullPath) (err error) {
 
 	_, err = store.Client.Del(string(fullpath)).Result()
 
 	if err != nil {
-		return entry, fmt.Errorf("delete %s : %v", entry.FullPath, err)
+		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
 
 	dir, name := fullpath.DirAndName()
 	if name != "" {
 		_, err = store.Client.SRem(genDirectoryListKey(dir), name).Result()
 		if err != nil {
-			return nil, fmt.Errorf("delete %s in parent dir: %v", entry.FullPath, err)
+			return fmt.Errorf("delete %s in parent dir: %v", fullpath, err)
 		}
 	}
 
-	return entry, nil
+	return nil
 }
 
 func (store *RedisStore) ListDirectoryEntries(fullpath filer2.FullPath, startFileName string, inclusive bool,

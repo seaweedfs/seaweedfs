@@ -77,26 +77,21 @@ func (store *AbstractSqlStore) FindEntry(fullpath filer2.FullPath) (*filer2.Entr
 	return entry, nil
 }
 
-func (store *AbstractSqlStore) DeleteEntry(fullpath filer2.FullPath) (*filer2.Entry, error) {
-
-	entry, err := store.FindEntry(fullpath)
-	if err != nil {
-		return nil, nil
-	}
+func (store *AbstractSqlStore) DeleteEntry(fullpath filer2.FullPath) (error) {
 
 	dir, name := fullpath.DirAndName()
 
 	res, err := store.DB.Exec(store.SqlDelete, hashToLong(dir), name, dir)
 	if err != nil {
-		return nil, fmt.Errorf("delete %s: %s", fullpath, err)
+		return fmt.Errorf("delete %s: %s", fullpath, err)
 	}
 
 	_, err = res.RowsAffected()
 	if err != nil {
-		return nil, fmt.Errorf("delete %s but no rows affected: %s", fullpath, err)
+		return fmt.Errorf("delete %s but no rows affected: %s", fullpath, err)
 	}
 
-	return entry, nil
+	return nil
 }
 
 func (store *AbstractSqlStore) ListDirectoryEntries(fullpath filer2.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {

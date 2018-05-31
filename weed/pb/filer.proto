@@ -72,6 +72,7 @@ message FuseAttributes {
     uint32 uid = 4;
     uint32 gid = 5;
     int64 crtime = 6;
+    string mime = 7;
 }
 
 message GetEntryAttributesRequest {

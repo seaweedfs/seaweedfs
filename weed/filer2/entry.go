@@ -13,6 +13,7 @@ type Attr struct {
 	Mode   os.FileMode // file mode
 	Uid    uint32      // owner uid
 	Gid    uint32      // group gid
+	Mime   string
 }
 
 func (attr Attr) IsDirectory() bool {

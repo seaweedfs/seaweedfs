@@ -11,7 +11,7 @@ type FilerStore interface {
 	InsertEntry(*Entry) error
 	UpdateEntry(*Entry) (err error)
 	FindEntry(FullPath) (entry *Entry, err error)
-	DeleteEntry(FullPath) (fileEntry *Entry, err error)
+	DeleteEntry(FullPath) (err error)
 	ListDirectoryEntries(dirPath FullPath, startFileName string, inclusive bool, limit int) ([]*Entry, error)
 }
 
