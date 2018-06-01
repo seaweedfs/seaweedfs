@@ -34,7 +34,7 @@ func (fs *FilerServer) queryFileInfoByPath(w http.ResponseWriter, r *http.Reques
 		fileId = entry.Chunks[0].FileId
 		urlLocation, err = operation.LookupFileId(fs.getMasterNode(), fileId)
 		if err != nil {
-			glog.V(1).Infoln("operation LookupFileId %s failed, err is %s", fileId, err.Error())
+			glog.V(1).Infof("operation LookupFileId %s failed, err is %s", fileId, err.Error())
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}
