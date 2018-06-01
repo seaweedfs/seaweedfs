@@ -1,68 +1,17 @@
 package storage
 
 import (
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 )
 
 const (
 	MAX_TTL_VOLUME_REMOVAL_DELAY = 10 // 10 minutes
 )
-
-type MasterNodes struct {
-	nodes          []string
-	leader         string
-	possibleLeader string
-}
-
-func (mn *MasterNodes) String() string {
-	return fmt.Sprintf("nodes:%v, leader:%s", mn.nodes, mn.leader)
-}
-
-func NewMasterNodes(bootstrapNode string) (mn *MasterNodes) {
-	mn = &MasterNodes{nodes: []string{bootstrapNode}, leader: ""}
-	return
-}
-func (mn *MasterNodes) Reset() {
-	if mn.leader != "" {
-		mn.leader = ""
-		glog.V(0).Infof("Resetting master nodes: %v", mn)
-	}
-}
-func (mn *MasterNodes) SetPossibleLeader(possibleLeader string) {
-	// TODO try to check this leader first
-	mn.possibleLeader = possibleLeader
-}
-func (mn *MasterNodes) FindMaster() (leader string, err error) {
-	if len(mn.nodes) == 0 {
-		return "", errors.New("No master node found!")
-	}
-	if mn.leader == "" {
-		for _, m := range mn.nodes {
-			glog.V(4).Infof("Listing masters on %s", m)
-			if leader, masters, e := operation.ListMasters(m); e == nil {
-				if leader != "" {
-					mn.nodes = append(masters, m)
-					mn.leader = leader
-					glog.V(2).Infof("current master nodes is %v", mn)
-					break
-				}
-			} else {
-				glog.V(4).Infof("Failed listing masters on %s: %v", m, e)
-			}
-		}
-	}
-	if mn.leader == "" {
-		return "", errors.New("No master node available!")
-	}
-	return mn.leader, nil
-}
 
 /*
  * A VolumeServer contains one Store

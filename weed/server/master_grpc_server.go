@@ -77,3 +77,15 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 	}
 }
+
+func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServer) error {
+	for {
+		_, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		if err := stream.Send(&master_pb.Empty{}); err != nil {
+			return err
+		}
+	}
+}

@@ -88,7 +88,7 @@ func (fs *FilerServer) GetEntryAttributes(ctx context.Context, req *filer_pb.Get
 
 func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
 
-	lookupResult, err := operation.LookupVolumeIds(fs.getMasterNode(), req.VolumeIds)
+	lookupResult, err := operation.LookupVolumeIds(fs.filer.GetMaster(), req.VolumeIds)
 	if err != nil {
 		return nil, err
 	}
@@ -172,11 +172,11 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	if err = fs.filer.UpdateEntry(newEntry); err == nil {
 		for _, garbage := range unusedChunks {
 			glog.V(0).Infof("deleting %s old chunk: %v, [%d, %d)", fullpath, garbage.FileId, garbage.Offset, garbage.Offset+int64(garbage.Size))
-			operation.DeleteFile(fs.master, garbage.FileId, fs.jwt(garbage.FileId))
+			operation.DeleteFile(fs.filer.GetMaster(), garbage.FileId, fs.jwt(garbage.FileId))
 		}
 		for _, garbage := range garbages {
 			glog.V(0).Infof("deleting %s garbage chunk: %v, [%d, %d)", fullpath, garbage.FileId, garbage.Offset, garbage.Offset+int64(garbage.Size))
-			operation.DeleteFile(fs.master, garbage.FileId, fs.jwt(garbage.FileId))
+			operation.DeleteFile(fs.filer.GetMaster(), garbage.FileId, fs.jwt(garbage.FileId))
 		}
 	}
 
@@ -190,7 +190,7 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVolumeRequest) (resp *filer_pb.AssignVolumeResponse, err error) {
 
-	assignResult, err := operation.Assign(fs.master, &operation.VolumeAssignRequest{
+	assignResult, err := operation.Assign(fs.filer.GetMaster(), &operation.VolumeAssignRequest{
 		Count:       uint64(req.Count),
 		Replication: req.Replication,
 		Collection:  req.Collection,

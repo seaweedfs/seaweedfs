@@ -72,8 +72,8 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
           <h2>System Stats</h2>
           <table class="table table-condensed table-striped">
             <tr>
-              <th>Master</th>
-              <td><a href="http://{{.Master}}/ui/index.html">{{.Master}}</a></td>
+              <th>Masters</th>
+              <td>{{.Masters}}</td>
             </tr>
             <tr>
               <th>Weekly # ReadRequests</th>

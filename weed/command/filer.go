@@ -13,6 +13,7 @@ import (
 	"github.com/soheilhy/cmux"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
+	"strings"
 )
 
 var (
@@ -20,7 +21,7 @@ var (
 )
 
 type FilerOptions struct {
-	master                  *string
+	masters                 *string
 	ip                      *string
 	port                    *int
 	publicPort              *int
@@ -34,7 +35,7 @@ type FilerOptions struct {
 
 func init() {
 	cmdFiler.Run = runFiler // break init cycle
-	f.master = cmdFiler.Flag.String("master", "localhost:9333", "master server location")
+	f.masters = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this collection")
 	f.ip = cmdFiler.Flag.String("ip", "", "filer server http listen ip address")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
@@ -47,8 +48,8 @@ func init() {
 }
 
 var cmdFiler = &Command{
-	UsageLine: "filer -port=8888 -master=<ip:port>",
-	Short:     "start a file server that points to a master server",
+	UsageLine: "filer -port=8888 -master=<ip:port>[,<ip:port>]*",
+	Short:     "start a file server that points to a master server, or a list of master servers",
 	Long: `start a file server which accepts REST operation for any files.
 
 	//create or overwrite the file, the directories /path/to will be automatically created
@@ -83,8 +84,10 @@ func (fo *FilerOptions) start() {
 		publicVolumeMux = http.NewServeMux()
 	}
 
+	masters := *f.masters
+
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux,
-		*fo.ip, *fo.port, *fo.master, *fo.collection,
+		*fo.ip, *fo.port, strings.Split(masters, ","), *fo.collection,
 		*fo.defaultReplicaPlacement, *fo.redirectOnRead, *fo.disableDirListing,
 		*fo.maxMB,
 		*fo.secretKey,

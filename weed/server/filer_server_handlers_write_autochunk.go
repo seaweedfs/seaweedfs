@@ -147,7 +147,7 @@ func (fs *FilerServer) doAutoChunk(w http.ResponseWriter, r *http.Request, conte
 		if entry, err := fs.filer.FindEntry(filer2.FullPath(path)); err == nil {
 			for _, chunk := range entry.Chunks {
 				oldFid := chunk.FileId
-				operation.DeleteFile(fs.getMasterNode(), oldFid, fs.jwt(oldFid))
+				operation.DeleteFile(fs.filer.GetMaster(), oldFid, fs.jwt(oldFid))
 			}
 		} else if err != nil {
 			glog.V(0).Infof("error %v occur when finding %s in filer store", err, path)

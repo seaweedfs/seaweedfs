@@ -8,7 +8,7 @@ import (
 )
 
 func TestCreateAndFind(t *testing.T) {
-	filer := filer2.NewFiler("")
+	filer := filer2.NewFiler(nil)
 	dir, _ := ioutil.TempDir("", "seaweedfs_filer_test")
 	defer os.RemoveAll(dir)
 	store := &LevelDBStore{}

@@ -13,14 +13,16 @@ import (
 )
 
 type Filer struct {
-	master         string
+	masters        []string
 	store          FilerStore
 	directoryCache *ccache.Cache
+
+	currentMaster string
 }
 
-func NewFiler(master string) *Filer {
+func NewFiler(masters []string) *Filer {
 	return &Filer{
-		master:         master,
+		masters:        masters,
 		directoryCache: ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
 	}
 }
@@ -175,14 +177,12 @@ func (f *Filer) cacheSetDirectory(dirpath string, dirEntry *Entry, level int) {
 }
 
 func (f *Filer) deleteChunks(entry *Entry) {
-	if f.master == "" {
-		return
-	}
+
 	if entry == nil {
 		return
 	}
 	for _, chunk := range entry.Chunks {
-		if err := operation.DeleteFile(f.master, chunk.FileId, ""); err != nil {
+		if err := operation.DeleteFile(f.GetMaster(), chunk.FileId, ""); err != nil {
 			glog.V(0).Infof("deleting file %s: %v", chunk.FileId, err)
 		}
 	}

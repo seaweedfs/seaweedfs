@@ -83,7 +83,6 @@ var (
 
 func init() {
 	serverOptions.cpuprofile = cmdServer.Flag.String("cpuprofile", "", "cpu profile output file")
-	filerOptions.master = cmdServer.Flag.String("filer.master", "", "default to current master server")
 	filerOptions.collection = cmdServer.Flag.String("filer.collection", "", "all data will be stored in this collection")
 	filerOptions.port = cmdServer.Flag.Int("filer.port", 8888, "filer server http listen port")
 	filerOptions.publicPort = cmdServer.Flag.Int("filer.port.public", 0, "filer server public http listen port")
@@ -108,7 +107,7 @@ func runServer(cmd *Command, args []string) bool {
 		*isStartingFiler = true
 	}
 
-	*filerOptions.master = *serverIp + ":" + strconv.Itoa(*masterPort)
+	master := *serverIp + ":" + strconv.Itoa(*masterPort)
 	filerOptions.ip = serverIp
 
 	if *filerOptions.defaultReplicaPlacement == "" {
@@ -251,7 +250,7 @@ func runServer(cmd *Command, args []string) bool {
 		*serverIp, *volumePort, *volumeServerPublicUrl,
 		folders, maxCounts,
 		volumeNeedleMapKind,
-		*serverIp+":"+strconv.Itoa(*masterPort), *volumePulse, *serverDataCenter, *serverRack,
+		[]string{master}, *volumePulse, *serverDataCenter, *serverRack,
 		serverWhiteList, *volumeFixJpgOrientation, *volumeReadRedirect,
 	)
 

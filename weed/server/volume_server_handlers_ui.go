@@ -21,14 +21,14 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	args := struct {
 		Version      string
-		Master       string
+		Masters      []string
 		Volumes      interface{}
 		DiskStatuses interface{}
 		Stats        interface{}
 		Counters     *stats.ServerStats
 	}{
 		util.VERSION,
-		vs.masterNode,
+		vs.MasterNodes,
 		vs.store.Status(),
 		ds,
 		infos,

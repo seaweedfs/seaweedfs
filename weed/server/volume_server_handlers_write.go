@@ -31,7 +31,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ret := operation.UploadResult{}
-	size, errorStatus := topology.ReplicatedWrite(vs.GetMasterNode(),
+	size, errorStatus := topology.ReplicatedWrite(vs.GetMaster(),
 		vs.store, volumeId, needle, r)
 	httpStatus := http.StatusCreated
 	if errorStatus != "" {
@@ -80,14 +80,14 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// make sure all chunks had deleted before delete manifest
-		if e := chunkManifest.DeleteChunks(vs.GetMasterNode()); e != nil {
+		if e := chunkManifest.DeleteChunks(vs.GetMaster()); e != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Delete chunks error: %v", e))
 			return
 		}
 		count = chunkManifest.Size
 	}
 
-	_, err := topology.ReplicatedDelete(vs.GetMasterNode(), vs.store, volumeId, n, r)
+	_, err := topology.ReplicatedDelete(vs.GetMaster(), vs.store, volumeId, n, r)
 
 	if err == nil {
 		m := make(map[string]int64)

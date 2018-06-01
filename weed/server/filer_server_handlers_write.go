@@ -32,7 +32,7 @@ func (fs *FilerServer) queryFileInfoByPath(w http.ResponseWriter, r *http.Reques
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 	} else {
 		fileId = entry.Chunks[0].FileId
-		urlLocation, err = operation.LookupFileId(fs.getMasterNode(), fileId)
+		urlLocation, err = operation.LookupFileId(fs.filer.GetMaster(), fileId)
 		if err != nil {
 			glog.V(1).Infof("operation LookupFileId %s failed, err is %s", fileId, err.Error())
 			w.WriteHeader(http.StatusNotFound)
@@ -48,7 +48,7 @@ func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request,
 		Collection:  collection,
 		Ttl:         r.URL.Query().Get("ttl"),
 	}
-	assignResult, ae := operation.Assign(fs.getMasterNode(), ar)
+	assignResult, ae := operation.Assign(fs.filer.GetMaster(), ar)
 	if ae != nil {
 		glog.V(0).Infoln("failing to assign a file id", ae.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, ae)
@@ -145,7 +145,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		if ret.Name != "" {
 			path += ret.Name
 		} else {
-			operation.DeleteFile(fs.getMasterNode(), fileId, fs.jwt(fileId)) //clean up
+			operation.DeleteFile(fs.filer.GetMaster(), fileId, fs.jwt(fileId)) //clean up
 			glog.V(0).Infoln("Can not to write to folder", path, "without a file name!")
 			writeJsonError(w, r, http.StatusInternalServerError,
 				errors.New("Can not to write to folder "+path+" without a file name"))
@@ -157,7 +157,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "PUT" {
 		if entry, err := fs.filer.FindEntry(filer2.FullPath(path)); err == nil {
 			oldFid := entry.Chunks[0].FileId
-			operation.DeleteFile(fs.getMasterNode(), oldFid, fs.jwt(oldFid))
+			operation.DeleteFile(fs.filer.GetMaster(), oldFid, fs.jwt(oldFid))
 		} else if err != nil && err != filer2.ErrNotFound {
 			glog.V(0).Infof("error %v occur when finding %s in filer store", err, path)
 		}
@@ -176,7 +176,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		}},
 	}
 	if db_err := fs.filer.CreateEntry(entry); db_err != nil {
-		operation.DeleteFile(fs.getMasterNode(), fileId, fs.jwt(fileId)) //clean up
+		operation.DeleteFile(fs.filer.GetMaster(), fileId, fs.jwt(fileId)) //clean up
 		glog.V(0).Infof("failing to write %s to filer server : %v", path, db_err)
 		writeJsonError(w, r, http.StatusInternalServerError, db_err)
 		return
