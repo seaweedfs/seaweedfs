@@ -158,7 +158,9 @@ func (fs *FilerServer) doAutoChunk(w http.ResponseWriter, r *http.Request, conte
 	entry := &filer2.Entry{
 		FullPath: filer2.FullPath(path),
 		Attr: filer2.Attr{
-			Mode: 0660,
+			Mtime:  time.Now(),
+			Crtime: time.Now(),
+			Mode:   0660,
 		},
 		Chunks: fileChunks,
 	}
