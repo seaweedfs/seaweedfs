@@ -26,7 +26,7 @@ type VolumeServerOptions struct {
 	ip                    *string
 	publicUrl             *string
 	bindIp                *string
-	master                *string
+	masters               *string
 	pulseSeconds          *int
 	idleConnectionTimeout *int
 	maxCpu                *int
@@ -47,7 +47,7 @@ func init() {
 	v.ip = cmdVolume.Flag.String("ip", "", "ip or server name")
 	v.publicUrl = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible address")
 	v.bindIp = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
-	v.master = cmdVolume.Flag.String("mserver", "localhost:9333", "master server location")
+	v.masters = cmdVolume.Flag.String("mserver", "localhost:9333", "comma-separated master servers")
 	v.pulseSeconds = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
 	v.idleConnectionTimeout = cmdVolume.Flag.Int("idleTimeout", 30, "connection idle seconds")
 	v.maxCpu = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
@@ -132,11 +132,14 @@ func runVolume(cmd *Command, args []string) bool {
 	case "btree":
 		volumeNeedleMapKind = storage.NeedleMapBtree
 	}
+
+	masters := *v.masters
+
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.publicUrl,
 		v.folders, v.folderMaxLimits,
 		volumeNeedleMapKind,
-		*v.master, *v.pulseSeconds, *v.dataCenter, *v.rack,
+		strings.Split(masters, ","), *v.pulseSeconds, *v.dataCenter, *v.rack,
 		v.whiteList,
 		*v.fixJpgOrientation, *v.readRedirect,
 	)

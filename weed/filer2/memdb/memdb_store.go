@@ -1,81 +1,102 @@
 package memdb
 
 import (
+	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/google/btree"
+	"github.com/spf13/viper"
 	"strings"
-	"fmt"
-	"time"
 )
+
+func init() {
+	filer2.Stores = append(filer2.Stores, &MemDbStore{})
+}
 
 type MemDbStore struct {
 	tree *btree.BTree
 }
 
-type Entry struct {
+type entryItem struct {
 	*filer2.Entry
 }
 
-func (a Entry) Less(b btree.Item) bool {
-	return strings.Compare(string(a.FullPath), string(b.(Entry).FullPath)) < 0
+func (a entryItem) Less(b btree.Item) bool {
+	return strings.Compare(string(a.FullPath), string(b.(entryItem).FullPath)) < 0
 }
 
-func NewMemDbStore() (filer *MemDbStore) {
-	filer = &MemDbStore{}
-	filer.tree = btree.New(8)
-	return
+func (store *MemDbStore) GetName() string {
+	return "memory"
 }
 
-func (filer *MemDbStore) InsertEntry(entry *filer2.Entry) (err error) {
+func (store *MemDbStore) Initialize(viper *viper.Viper) (err error) {
+	store.tree = btree.New(8)
+	return nil
+}
+
+func (store *MemDbStore) InsertEntry(entry *filer2.Entry) (err error) {
 	// println("inserting", entry.FullPath)
-	filer.tree.ReplaceOrInsert(Entry{entry})
+	store.tree.ReplaceOrInsert(entryItem{entry})
 	return nil
 }
 
-func (filer *MemDbStore) AppendFileChunk(fullpath filer2.FullPath, fileChunk filer2.FileChunk) (err error) {
-	found, entry, err := filer.FindEntry(fullpath)
-	if !found {
-		return fmt.Errorf("No such file: %s", fullpath)
+func (store *MemDbStore) UpdateEntry(entry *filer2.Entry) (err error) {
+	if _, err = store.FindEntry(entry.FullPath); err != nil {
+		return fmt.Errorf("no such file %s : %v", entry.FullPath, err)
 	}
-	entry.Chunks = append(entry.Chunks, fileChunk)
-	entry.Mtime = time.Now()
+	store.tree.ReplaceOrInsert(entryItem{entry})
 	return nil
 }
 
-func (filer *MemDbStore) FindEntry(fullpath filer2.FullPath) (found bool, entry *filer2.Entry, err error) {
-	item := filer.tree.Get(Entry{&filer2.Entry{FullPath: fullpath}})
-	if item == nil {
-		return false, nil, nil
-	}
-	entry = item.(Entry).Entry
-	return true, entry, nil
-}
-
-func (filer *MemDbStore) DeleteEntry(fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
-	item := filer.tree.Delete(Entry{&filer2.Entry{FullPath: fullpath}})
+func (store *MemDbStore) FindEntry(fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
+	item := store.tree.Get(entryItem{&filer2.Entry{FullPath: fullpath}})
 	if item == nil {
 		return nil, nil
 	}
-	entry = item.(Entry).Entry
+	entry = item.(entryItem).Entry
 	return entry, nil
 }
 
-func (filer *MemDbStore) ListDirectoryEntries(fullpath filer2.FullPath) (entries []*filer2.Entry, err error) {
-	filer.tree.AscendGreaterOrEqual(Entry{&filer2.Entry{FullPath: fullpath}},
+func (store *MemDbStore) DeleteEntry(fullpath filer2.FullPath) (err error) {
+	store.tree.Delete(entryItem{&filer2.Entry{FullPath: fullpath}})
+	return nil
+}
+
+func (store *MemDbStore) ListDirectoryEntries(fullpath filer2.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
+
+	startFrom := string(fullpath)
+	if startFileName != "" {
+		startFrom = startFrom + "/" + startFileName
+	}
+
+	store.tree.AscendGreaterOrEqual(entryItem{&filer2.Entry{FullPath: filer2.FullPath(startFrom)}},
 		func(item btree.Item) bool {
-			entry := item.(Entry).Entry
+			if limit <= 0 {
+				return false
+			}
+			entry := item.(entryItem).Entry
 			// println("checking", entry.FullPath)
+
 			if entry.FullPath == fullpath {
 				// skipping the current directory
 				// println("skipping the folder", entry.FullPath)
 				return true
 			}
-			dir, _ := entry.FullPath.DirAndName()
-			if !strings.HasPrefix(dir, string(fullpath)) {
-				// println("directory is:", dir, "fullpath:", fullpath)
+
+			dir, name := entry.FullPath.DirAndName()
+			if name == startFileName {
+				if inclusive {
+					limit--
+					entries = append(entries, entry)
+				}
+				return true
+			}
+
+			// only iterate the same prefix
+			if !strings.HasPrefix(string(entry.FullPath), string(fullpath)) {
 				// println("breaking from", entry.FullPath)
 				return false
 			}
+
 			if dir != string(fullpath) {
 				// this could be items in deeper directories
 				// println("skipping deeper folder", entry.FullPath)
@@ -83,6 +104,7 @@ func (filer *MemDbStore) ListDirectoryEntries(fullpath filer2.FullPath) (entries
 			}
 			// now process the directory items
 			// println("adding entry", entry.FullPath)
+			limit--
 			entries = append(entries, entry)
 			return true
 		},

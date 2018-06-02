@@ -12,7 +12,7 @@ func getActualSize(size uint32) int64 {
 	return NeedleHeaderSize + int64(size) + NeedleChecksumSize + int64(padding)
 }
 
-func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (error) {
+func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) error {
 	var indexSize int64
 	var e error
 	if indexSize, e = verifyIndexFileIntegrity(indexFile); e != nil {

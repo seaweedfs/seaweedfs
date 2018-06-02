@@ -12,13 +12,22 @@ service SeaweedFiler {
     rpc ListEntries (ListEntriesRequest) returns (ListEntriesResponse) {
     }
 
-    rpc GetFileAttributes (GetFileAttributesRequest) returns (GetFileAttributesResponse) {
+    rpc GetEntryAttributes (GetEntryAttributesRequest) returns (GetEntryAttributesResponse) {
     }
 
-    rpc GetFileContent (GetFileContentRequest) returns (GetFileContentResponse) {
+    rpc CreateEntry (CreateEntryRequest) returns (CreateEntryResponse) {
+    }
+
+    rpc UpdateEntry (UpdateEntryRequest) returns (UpdateEntryResponse) {
     }
 
     rpc DeleteEntry (DeleteEntryRequest) returns (DeleteEntryResponse) {
+    }
+
+    rpc AssignVolume (AssignVolumeRequest) returns (AssignVolumeResponse) {
+    }
+
+    rpc LookupVolume (LookupVolumeRequest) returns (LookupVolumeResponse) {
     }
 
 }
@@ -45,8 +54,15 @@ message ListEntriesResponse {
 message Entry {
     string name = 1;
     bool is_directory = 2;
-    string file_id = 3;
+    repeated FileChunk chunks = 3;
     FuseAttributes attributes = 4;
+}
+
+message FileChunk {
+    string file_id = 1;
+    int64 offset = 2;
+    uint64 size = 3;
+    int64 mtime = 4;
 }
 
 message FuseAttributes {
@@ -55,16 +71,19 @@ message FuseAttributes {
     uint32 file_mode = 3;
     uint32 uid = 4;
     uint32 gid = 5;
+    int64 crtime = 6;
+    string mime = 7;
 }
 
-message GetFileAttributesRequest {
+message GetEntryAttributesRequest {
     string name = 1;
     string parent_dir = 2;
     string file_id = 3;
 }
 
-message GetFileAttributesResponse {
+message GetEntryAttributesResponse {
     FuseAttributes attributes = 1;
+    repeated FileChunk chunks = 2;
 }
 
 message GetFileContentRequest {
@@ -75,6 +94,21 @@ message GetFileContentResponse {
     bytes content = 1;
 }
 
+message CreateEntryRequest {
+    string directory = 1;
+    Entry entry = 2;
+}
+
+message CreateEntryResponse {
+}
+
+message UpdateEntryRequest {
+    string directory = 1;
+    Entry entry = 2;
+}
+message UpdateEntryResponse {
+}
+
 message DeleteEntryRequest {
     string directory = 1;
     string name = 2;
@@ -82,4 +116,33 @@ message DeleteEntryRequest {
 }
 
 message DeleteEntryResponse {
+}
+
+message AssignVolumeRequest {
+    int32 count = 1;
+    string collection = 2;
+    string replication = 3;
+}
+
+message AssignVolumeResponse {
+    string file_id = 1;
+    string url = 2;
+    string public_url = 3;
+    int32 count = 4;
+}
+
+message LookupVolumeRequest {
+    repeated string volume_ids = 1;
+}
+
+message Locations {
+    repeated Location locations = 1;
+}
+
+message Location {
+    string url = 1;
+    string public_url = 2;
+}
+message LookupVolumeResponse {
+    map<string, Locations> locations_map = 1;
 }

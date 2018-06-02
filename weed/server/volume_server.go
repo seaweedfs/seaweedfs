@@ -2,22 +2,19 @@ package weed_server
 
 import (
 	"net/http"
-	"sync"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 )
 
 type VolumeServer struct {
-	masterNode   string
-	mnLock       sync.RWMutex
-	pulseSeconds int
-	dataCenter   string
-	rack         string
-	store        *storage.Store
-	guard        *security.Guard
-	masterNodes  *storage.MasterNodes
+	MasterNodes   []string
+	currentMaster string
+	pulseSeconds  int
+	dataCenter    string
+	rack          string
+	store         *storage.Store
+	guard         *security.Guard
 
 	needleMapKind     storage.NeedleMapType
 	FixJpgOrientation bool
@@ -28,7 +25,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	port int, publicUrl string,
 	folders []string, maxCounts []int,
 	needleMapKind storage.NeedleMapType,
-	masterNode string, pulseSeconds int,
+	masterNodes []string, pulseSeconds int,
 	dataCenter string, rack string,
 	whiteList []string,
 	fixJpgOrientation bool,
@@ -41,7 +38,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		FixJpgOrientation: fixJpgOrientation,
 		ReadRedirect:      readRedirect,
 	}
-	vs.SetMasterNode(masterNode)
+	vs.MasterNodes = masterNodes
 	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts, vs.needleMapKind)
 
 	vs.guard = security.NewGuard(whiteList, "")
@@ -67,25 +64,13 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	adminMux.HandleFunc("/", vs.privateStoreHandler)
 	if publicMux != adminMux {
 		// separated admin and public port
-		publicMux.HandleFunc("/favicon.ico", vs.faviconHandler)
+		publicMux.HandleFunc("/favicon.ico", faviconHandler)
 		publicMux.HandleFunc("/", vs.publicReadOnlyHandler)
 	}
 
 	go vs.heartbeat()
 
 	return vs
-}
-
-func (vs *VolumeServer) GetMasterNode() string {
-	vs.mnLock.RLock()
-	defer vs.mnLock.RUnlock()
-	return vs.masterNode
-}
-
-func (vs *VolumeServer) SetMasterNode(masterNode string) {
-	vs.mnLock.Lock()
-	defer vs.mnLock.Unlock()
-	vs.masterNode = masterNode
 }
 
 func (vs *VolumeServer) Shutdown() {

@@ -3,35 +3,39 @@ package filer2
 import (
 	"fmt"
 
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/karlseguin/ccache"
-	"strings"
-	"path/filepath"
-	"time"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
+	"github.com/chrislusf/seaweedfs/weed/operation"
 )
 
 type Filer struct {
-	master         string
+	masters        []string
 	store          FilerStore
 	directoryCache *ccache.Cache
+
+	currentMaster string
 }
 
-func NewFiler(master string) *Filer {
+func NewFiler(masters []string) *Filer {
 	return &Filer{
-		master:         master,
+		masters:        masters,
 		directoryCache: ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
 	}
 }
 
-func (f *Filer) SetStore(store FilerStore) () {
+func (f *Filer) SetStore(store FilerStore) {
 	f.store = store
 }
 
-func (f *Filer) DisableDirectoryCache() () {
+func (f *Filer) DisableDirectoryCache() {
 	f.directoryCache = nil
 }
 
-func (f *Filer) CreateEntry(entry *Entry) (error) {
+func (f *Filer) CreateEntry(entry *Entry) error {
 
 	dirParts := strings.Split(string(entry.FullPath), "/")
 
@@ -43,22 +47,19 @@ func (f *Filer) CreateEntry(entry *Entry) (error) {
 		dirPath := "/" + filepath.Join(dirParts[:i]...)
 		// fmt.Printf("%d directory: %+v\n", i, dirPath)
 
-		dirFound := false
-
 		// first check local cache
 		dirEntry := f.cacheGetDirectory(dirPath)
 
 		// not found, check the store directly
 		if dirEntry == nil {
-			var dirFindErr error
-			dirFound, dirEntry, dirFindErr = f.FindEntry(FullPath(dirPath))
-			if dirFindErr != nil {
-				return fmt.Errorf("findDirectory %s: %v", dirPath, dirFindErr)
-			}
+			glog.V(4).Infof("find uncached directory: %s", dirPath)
+			dirEntry, _ = f.FindEntry(FullPath(dirPath))
+		} else {
+			glog.V(4).Infof("found cached directory: %s", dirPath)
 		}
 
 		// no such existing directory
-		if !dirFound {
+		if dirEntry == nil {
 
 			// create the directory
 			now := time.Now()
@@ -68,12 +69,13 @@ func (f *Filer) CreateEntry(entry *Entry) (error) {
 				Attr: Attr{
 					Mtime:  now,
 					Crtime: now,
-					Mode:   os.ModeDir | 0660,
+					Mode:   os.ModeDir | 0770,
 					Uid:    entry.Uid,
 					Gid:    entry.Gid,
 				},
 			}
 
+			glog.V(2).Infof("create directory: %s %v", dirPath, dirEntry.Mode)
 			mkdirErr := f.store.InsertEntry(dirEntry)
 			if mkdirErr != nil {
 				return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
@@ -94,8 +96,16 @@ func (f *Filer) CreateEntry(entry *Entry) (error) {
 		return fmt.Errorf("parent folder not found: %v", entry.FullPath)
 	}
 
-	if !hasWritePermission(lastDirectoryEntry, entry) {
-		return fmt.Errorf("no write permission in folder %v", lastDirectoryEntry.FullPath)
+	/*
+		if !hasWritePermission(lastDirectoryEntry, entry) {
+			glog.V(0).Infof("directory %s: %v, entry: uid=%d gid=%d",
+				lastDirectoryEntry.FullPath, lastDirectoryEntry.Attr, entry.Uid, entry.Gid)
+			return fmt.Errorf("no write permission in folder %v", lastDirectoryEntry.FullPath)
+		}
+	*/
+
+	if oldEntry, err := f.FindEntry(entry.FullPath); err == nil {
+		f.deleteChunks(oldEntry)
 	}
 
 	if err := f.store.InsertEntry(entry); err != nil {
@@ -105,26 +115,43 @@ func (f *Filer) CreateEntry(entry *Entry) (error) {
 	return nil
 }
 
-func (f *Filer) AppendFileChunk(p FullPath, c FileChunk) (err error) {
-	return f.store.AppendFileChunk(p, c)
+func (f *Filer) UpdateEntry(entry *Entry) (err error) {
+	return f.store.UpdateEntry(entry)
 }
 
-func (f *Filer) FindEntry(p FullPath) (found bool, entry *Entry, err error) {
+func (f *Filer) FindEntry(p FullPath) (entry *Entry, err error) {
 	return f.store.FindEntry(p)
 }
 
-func (f *Filer) DeleteEntry(p FullPath) (fileEntry *Entry, err error) {
+func (f *Filer) DeleteEntryMetaAndData(p FullPath) (err error) {
+	entry, err := f.FindEntry(p)
+	if err != nil {
+		return err
+	}
+
+	if entry.IsDirectory() {
+		entries, err := f.ListDirectoryEntries(p, "", false, 1)
+		if err != nil {
+			return fmt.Errorf("list folder %s: %v", p, err)
+		}
+		if len(entries) > 0 {
+			return fmt.Errorf("folder %s is not empty", p)
+		}
+	}
+
+	f.deleteChunks(entry)
+
 	return f.store.DeleteEntry(p)
 }
 
-func (f *Filer) ListDirectoryEntries(p FullPath) ([]*Entry, error) {
-	if strings.HasSuffix(string(p), "/") {
-		p = p[0:len(p)-1]
+func (f *Filer) ListDirectoryEntries(p FullPath, startFileName string, inclusive bool, limit int) ([]*Entry, error) {
+	if strings.HasSuffix(string(p), "/") && len(p) > 1 {
+		p = p[0: len(p)-1]
 	}
-	return f.store.ListDirectoryEntries(p)
+	return f.store.ListDirectoryEntries(p, startFileName, inclusive, limit)
 }
 
-func (f *Filer) cacheGetDirectory(dirpath string) (*Entry) {
+func (f *Filer) cacheGetDirectory(dirpath string) *Entry {
 	if f.directoryCache == nil {
 		return nil
 	}
@@ -147,4 +174,16 @@ func (f *Filer) cacheSetDirectory(dirpath string, dirEntry *Entry, level int) {
 	}
 
 	f.directoryCache.Set(dirpath, dirEntry, time.Duration(minutes)*time.Minute)
+}
+
+func (f *Filer) deleteChunks(entry *Entry) {
+
+	if entry == nil {
+		return
+	}
+	for _, chunk := range entry.Chunks {
+		if err := operation.DeleteFile(f.GetMaster(), chunk.FileId, ""); err != nil {
+			glog.V(0).Infof("deleting file %s: %v", chunk.FileId, err)
+		}
+	}
 }

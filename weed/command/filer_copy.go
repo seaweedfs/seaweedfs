@@ -9,8 +9,15 @@ import (
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
-	filer_operation "github.com/chrislusf/seaweedfs/weed/operation/filer"
 	"github.com/chrislusf/seaweedfs/weed/security"
+	"path"
+	"net/http"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"strconv"
+	"io"
+	"time"
+	"google.golang.org/grpc"
+	"context"
 )
 
 var (
@@ -68,20 +75,20 @@ func runCopy(cmd *Command, args []string) bool {
 		return false
 	}
 	filerDestination := args[len(args)-1]
-	fileOrDirs := args[0 : len(args)-1]
+	fileOrDirs := args[0: len(args)-1]
 
 	filerUrl, err := url.Parse(filerDestination)
 	if err != nil {
 		fmt.Printf("The last argument should be a URL on filer: %v\n", err)
 		return false
 	}
-	path := filerUrl.Path
-	if !strings.HasSuffix(path, "/") {
-		path = path + "/"
+	urlPath := filerUrl.Path
+	if !strings.HasSuffix(urlPath, "/") {
+		urlPath = urlPath + "/"
 	}
 
 	for _, fileOrDir := range fileOrDirs {
-		if !doEachCopy(fileOrDir, filerUrl.Host, path) {
+		if !doEachCopy(fileOrDir, filerUrl.Host, urlPath) {
 			return false
 		}
 	}
@@ -91,14 +98,14 @@ func runCopy(cmd *Command, args []string) bool {
 func doEachCopy(fileOrDir string, host string, path string) bool {
 	f, err := os.Open(fileOrDir)
 	if err != nil {
-		fmt.Printf("Failed to open file %s: %v", fileOrDir, err)
+		fmt.Printf("Failed to open file %s: %v\n", fileOrDir, err)
 		return false
 	}
 	defer f.Close()
 
 	fi, err := f.Stat()
 	if err != nil {
-		fmt.Printf("Failed to get stat for file %s: %v", fileOrDir, err)
+		fmt.Printf("Failed to get stat for file %s: %v\n", fileOrDir, err)
 		return false
 	}
 
@@ -120,28 +127,199 @@ func doEachCopy(fileOrDir string, host string, path string) bool {
 		}
 	}
 
-	parts, err := operation.NewFileParts([]string{fileOrDir})
-	if err != nil {
-		fmt.Printf("Failed to read file %s: %v", fileOrDir, err)
+	// find the chunk count
+	chunkSize := int64(*copy.maxMB * 1024 * 1024)
+	chunkCount := 1
+	if chunkSize > 0 && fi.Size() > chunkSize {
+		chunkCount = int(fi.Size()/chunkSize) + 1
 	}
 
-	results, err := operation.SubmitFiles(*copy.master, parts,
-		*copy.replication, *copy.collection, "",
-		*copy.ttl, *copy.maxMB, copy.secret)
-	if err != nil {
-		fmt.Printf("Failed to submit file %s: %v", fileOrDir, err)
+	if chunkCount == 1 {
+		return uploadFileAsOne(host, path, f, fi)
 	}
 
-	if strings.HasSuffix(path, "/") {
-		path = path + fi.Name()
+	return uploadFileInChunks(host, path, f, fi, chunkCount, chunkSize)
+}
+
+func uploadFileAsOne(filerUrl string, urlFolder string, f *os.File, fi os.FileInfo) bool {
+
+	// upload the file content
+	fileName := filepath.Base(f.Name())
+	mimeType := detectMimeType(f)
+	isGzipped := isGzipped(fileName)
+
+	var chunks []*filer_pb.FileChunk
+
+	if fi.Size() > 0 {
+
+		// assign a volume
+		assignResult, err := operation.Assign(*copy.master, &operation.VolumeAssignRequest{
+			Count:       1,
+			Replication: *copy.replication,
+			Collection:  *copy.collection,
+			Ttl:         *copy.ttl,
+		})
+		if err != nil {
+			fmt.Printf("Failed to assign from %s: %v\n", *copy.master, err)
+		}
+
+		targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
+
+		uploadResult, err := operation.Upload(targetUrl, fileName, f, isGzipped, mimeType, nil, "")
+		if err != nil {
+			fmt.Printf("upload data %v to %s: %v\n", fileName, targetUrl, err)
+			return false
+		}
+		if uploadResult.Error != "" {
+			fmt.Printf("upload %v to %s result: %v\n", fileName, targetUrl, uploadResult.Error)
+			return false
+		}
+		fmt.Printf("uploaded %s to %s\n", fileName, targetUrl)
+
+		chunks = append(chunks, &filer_pb.FileChunk{
+			FileId: assignResult.Fid,
+			Offset: 0,
+			Size:   uint64(uploadResult.Size),
+			Mtime:  time.Now().UnixNano(),
+		})
+
+		fmt.Printf("copied %s => http://%s%s%s\n", fileName, filerUrl, urlFolder, fileName)
 	}
 
-	if err = filer_operation.RegisterFile(host, path, results[0].Fid, copy.secret); err != nil {
-		fmt.Printf("Failed to register file %s on %s: %v", fileOrDir, host, err)
+	if err := withFilerClient(filerUrl, func(client filer_pb.SeaweedFilerClient) error {
+		request := &filer_pb.CreateEntryRequest{
+			Directory: urlFolder,
+			Entry: &filer_pb.Entry{
+				Name: fileName,
+				Attributes: &filer_pb.FuseAttributes{
+					Crtime:   time.Now().Unix(),
+					Mtime:    time.Now().Unix(),
+					Gid:      uint32(os.Getgid()),
+					Uid:      uint32(os.Getuid()),
+					FileSize: uint64(fi.Size()),
+					FileMode: uint32(fi.Mode()),
+					Mime:     mimeType,
+				},
+				Chunks: chunks,
+			},
+		}
+
+		if _, err := client.CreateEntry(context.Background(), request); err != nil {
+			return fmt.Errorf("update fh: %v", err)
+		}
+		return nil
+	}); err != nil {
+		fmt.Printf("upload data %v to http://%s%s%s: %v\n", fileName, filerUrl, urlFolder, fileName, err)
 		return false
 	}
 
-	fmt.Printf("Copy %s => http://%s%s\n", fileOrDir, host, path)
+	return true
+}
+
+func uploadFileInChunks(filerUrl string, urlFolder string, f *os.File, fi os.FileInfo, chunkCount int, chunkSize int64) bool {
+
+	fileName := filepath.Base(f.Name())
+	mimeType := detectMimeType(f)
+
+	var chunks []*filer_pb.FileChunk
+
+	for i := int64(0); i < int64(chunkCount); i++ {
+
+		// assign a volume
+		assignResult, err := operation.Assign(*copy.master, &operation.VolumeAssignRequest{
+			Count:       1,
+			Replication: *copy.replication,
+			Collection:  *copy.collection,
+			Ttl:         *copy.ttl,
+		})
+		if err != nil {
+			fmt.Printf("Failed to assign from %s: %v\n", *copy.master, err)
+		}
+
+		targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
+
+		uploadResult, err := operation.Upload(targetUrl,
+			fileName+"-"+strconv.FormatInt(i+1, 10),
+			io.LimitReader(f, chunkSize),
+			false, "application/octet-stream", nil, "")
+		if err != nil {
+			fmt.Printf("upload data %v to %s: %v\n", fileName, targetUrl, err)
+			return false
+		}
+		if uploadResult.Error != "" {
+			fmt.Printf("upload %v to %s result: %v\n", fileName, targetUrl, uploadResult.Error)
+			return false
+		}
+		chunks = append(chunks, &filer_pb.FileChunk{
+			FileId: assignResult.Fid,
+			Offset: i * chunkSize,
+			Size:   uint64(uploadResult.Size),
+			Mtime:  time.Now().UnixNano(),
+		})
+		fmt.Printf("uploaded %s-%d to %s [%d,%d)\n", fileName, i+1, targetUrl, i*chunkSize, i*chunkSize+int64(uploadResult.Size))
+	}
+
+	if err := withFilerClient(filerUrl, func(client filer_pb.SeaweedFilerClient) error {
+		request := &filer_pb.CreateEntryRequest{
+			Directory: urlFolder,
+			Entry: &filer_pb.Entry{
+				Name: fileName,
+				Attributes: &filer_pb.FuseAttributes{
+					Crtime:   time.Now().Unix(),
+					Mtime:    time.Now().Unix(),
+					Gid:      uint32(os.Getgid()),
+					Uid:      uint32(os.Getuid()),
+					FileSize: uint64(fi.Size()),
+					FileMode: uint32(fi.Mode()),
+					Mime:     mimeType,
+				},
+				Chunks: chunks,
+			},
+		}
+
+		if _, err := client.CreateEntry(context.Background(), request); err != nil {
+			return fmt.Errorf("update fh: %v", err)
+		}
+		return nil
+	}); err != nil {
+		fmt.Printf("upload data %v to http://%s%s%s: %v\n", fileName, filerUrl, urlFolder, fileName, err)
+		return false
+	}
+
+	fmt.Printf("copied %s => http://%s%s%s\n", fileName, filerUrl, urlFolder, fileName)
 
 	return true
+}
+
+func isGzipped(filename string) bool {
+	return strings.ToLower(path.Ext(filename)) == ".gz"
+}
+
+func detectMimeType(f *os.File) string {
+	head := make([]byte, 512)
+	f.Seek(0, 0)
+	n, err := f.Read(head)
+	if err == io.EOF {
+		return ""
+	}
+	if err != nil {
+		fmt.Printf("read head of %v: %v\n", f.Name(), err)
+		return "application/octet-stream"
+	}
+	f.Seek(0, 0)
+	mimeType := http.DetectContentType(head[:n])
+	return mimeType
+}
+
+func withFilerClient(filerAddress string, fn func(filer_pb.SeaweedFilerClient) error) error {
+
+	grpcConnection, err := grpc.Dial(filerAddress, grpc.WithInsecure())
+	if err != nil {
+		return fmt.Errorf("fail to dial %s: %v", filerAddress, err)
+	}
+	defer grpcConnection.Close()
+
+	client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+
+	return fn(client)
 }

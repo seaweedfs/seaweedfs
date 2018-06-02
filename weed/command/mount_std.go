@@ -8,15 +8,19 @@ import (
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
+	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/filesys"
 )
 
 func runMount(cmd *Command, args []string) bool {
 	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)
 	if *mountOptions.dir == "" {
 		fmt.Printf("Please specify the mount directory via \"-dir\"")
+		return false
+	}
+	if *mountOptions.chunkSizeLimitMB <= 0 {
+		fmt.Printf("Please specify a reasonable buffer size.")
 		return false
 	}
 
@@ -47,7 +51,8 @@ func runMount(cmd *Command, args []string) bool {
 		c.Close()
 	})
 
-	err = fs.Serve(c, filesys.NewSeaweedFileSystem(*mountOptions.filer))
+	err = fs.Serve(c, filesys.NewSeaweedFileSystem(
+		*mountOptions.filer, *mountOptions.collection, *mountOptions.replication, *mountOptions.chunkSizeLimitMB))
 	if err != nil {
 		fuse.Unmount(*mountOptions.dir)
 	}

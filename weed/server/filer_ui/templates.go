@@ -20,29 +20,51 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
 			</h1>
 		</div>
 		<div class="row">
-			{{.Path}}
+			{{ range $entry := .Breadcrumbs }}
+				<a href={{ $entry.Link }} >
+					{{ $entry.Name }}
+				</a>
+			{{ end }}
+
 		</div>
 
 		<div class="row">
-			<ul>
+			<table width="90%">
 				{{$path := .Path }}
-				{{ range $dirs_index, $dir := .Directories }}
-				<li>
-					<img src="https://www.w3.org/TR/WWWicn/folder.gif" width="20" height="23">
-					<a href={{ print $path  $dir  "/"}} >
-						{{ $dir }}
-					</a>
-				</li>
+				{{ range $entry_index, $entry := .Entries }}
+				<tr>
+					<td>
+					{{if $entry.IsDirectory}}
+						<img src="https://www.w3.org/TR/WWWicn/folder.gif" width="20" height="23">
+						<a href={{ print $path  "/" $entry.Name  "/"}} >
+							{{ $entry.Name }}
+						</a>
+					{{else}}
+						<a href={{ print $path  "/" $entry.Name }} >
+							{{ $entry.Name }}
+						</a>
+					{{end}}
+					</td>
+					<td align="right">
+					{{if $entry.IsDirectory}}
+					{{else}}
+						{{ $entry.Mime }}
+					{{end}}
+					</td>
+					<td align="right">
+					{{if $entry.IsDirectory}}
+					{{else}}
+						{{ $entry.Size }} bytes
+						&nbsp;&nbsp;&nbsp;
+					{{end}}
+					</td>
+					<td>
+						{{ $entry.Timestamp.Format "2006-01-02 15:04" }}
+					</td>
+				</tr>
 				{{ end }}
 
-				{{ range $file_index, $file := .Files }}
-				<li>
-					<a href={{ print $path  $file.Name}} >
-					{{ $file.Name }}
-					</a>
-				</li>
-				{{ end }}
-			</ul>
+			</table>
 		</div>
 
 		{{if .ShouldDisplayLoadMore}}

@@ -2,17 +2,18 @@ package command
 
 import (
 	"net/http"
-	"os"
 	"strconv"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/soheilhy/cmux"
-	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"google.golang.org/grpc/reflection"
+	"strings"
 )
 
 var (
@@ -20,50 +21,35 @@ var (
 )
 
 type FilerOptions struct {
-	master                  *string
+	masters                 *string
 	ip                      *string
 	port                    *int
 	publicPort              *int
 	collection              *string
 	defaultReplicaPlacement *string
-	dir                     *string
 	redirectOnRead          *bool
 	disableDirListing       *bool
-	confFile                *string
 	maxMB                   *int
 	secretKey               *string
-	cassandra_server        *string
-	cassandra_keyspace      *string
-	redis_server            *string
-	redis_password          *string
-	redis_database          *int
 }
 
 func init() {
 	cmdFiler.Run = runFiler // break init cycle
-	f.master = cmdFiler.Flag.String("master", "localhost:9333", "master server location")
+	f.masters = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this collection")
 	f.ip = cmdFiler.Flag.String("ip", "", "filer server http listen ip address")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
 	f.publicPort = cmdFiler.Flag.Int("port.public", 0, "port opened to public")
-	f.dir = cmdFiler.Flag.String("dir", os.TempDir(), "directory to store meta data")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "000", "default replication type if not specified")
 	f.redirectOnRead = cmdFiler.Flag.Bool("redirectOnRead", false, "whether proxy or redirect to volume server during file GET request")
 	f.disableDirListing = cmdFiler.Flag.Bool("disableDirListing", false, "turn off directory listing")
-	f.confFile = cmdFiler.Flag.String("confFile", "", "json encoded filer conf file")
 	f.maxMB = cmdFiler.Flag.Int("maxMB", 32, "split files larger than the limit")
-	f.cassandra_server = cmdFiler.Flag.String("cassandra.server", "", "host[:port] of the cassandra server")
-	f.cassandra_keyspace = cmdFiler.Flag.String("cassandra.keyspace", "seaweed", "keyspace of the cassandra server")
-	f.redis_server = cmdFiler.Flag.String("redis.server", "", "comma separated host:port[,host2:port2]* of the redis server, e.g., 127.0.0.1:6379")
-	f.redis_password = cmdFiler.Flag.String("redis.password", "", "password in clear text")
-	f.redis_database = cmdFiler.Flag.Int("redis.database", 0, "the database on the redis server")
 	f.secretKey = cmdFiler.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
-
 }
 
 var cmdFiler = &Command{
-	UsageLine: "filer -port=8888 -dir=/tmp -master=<ip:port>",
-	Short:     "start a file server that points to a master server",
+	UsageLine: "filer -port=8888 -master=<ip:port>[,<ip:port>]*",
+	Short:     "start a file server that points to a master server, or a list of master servers",
 	Long: `start a file server which accepts REST operation for any files.
 
 	//create or overwrite the file, the directories /path/to will be automatically created
@@ -75,19 +61,14 @@ var cmdFiler = &Command{
 	//return a json format subdirectory and files listing
 	GET /path/to/
 
-  Current <fullpath~fileid> mapping metadata store is local embedded leveldb.
-  It should be highly scalable to hundreds of millions of files on a modest machine.
+	The configuration file "filer.toml" is read from ".", "$HOME/.seaweedfs/", or "/etc/seaweedfs/", in that order.
 
-  Future we will ensure it can avoid of being SPOF.
+	The following are example filer.toml configuration file.
 
-  `,
+` + filer2.FILER_TOML_EXAMPLE + "\n",
 }
 
 func runFiler(cmd *Command, args []string) bool {
-
-	if err := util.TestFolderWritable(*f.dir); err != nil {
-		glog.Fatalf("Check Meta Folder (-dir) Writable %s : %s", *f.dir, err)
-	}
 
 	f.start()
 
@@ -103,14 +84,13 @@ func (fo *FilerOptions) start() {
 		publicVolumeMux = http.NewServeMux()
 	}
 
+	masters := *f.masters
+
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux,
-		*fo.ip, *fo.port, *fo.master, *fo.dir, *fo.collection,
+		*fo.ip, *fo.port, strings.Split(masters, ","), *fo.collection,
 		*fo.defaultReplicaPlacement, *fo.redirectOnRead, *fo.disableDirListing,
-		*fo.confFile,
 		*fo.maxMB,
 		*fo.secretKey,
-		*fo.cassandra_server, *fo.cassandra_keyspace,
-		*fo.redis_server, *fo.redis_password, *fo.redis_database,
 	)
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

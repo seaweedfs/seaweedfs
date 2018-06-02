@@ -198,7 +198,7 @@ func postFollowingOneRedirect(target string, contentType string, b bytes.Buffer)
 	reply := string(data)
 
 	if strings.HasPrefix(reply, "\"http") {
-		urlStr := reply[1: len(reply)-1]
+		urlStr := reply[1 : len(reply)-1]
 
 		glog.V(0).Infoln("Post redirected to ", urlStr)
 		resp2, err2 := http.Post(urlStr, contentType, backupReader)

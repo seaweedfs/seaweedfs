@@ -1,13 +1,15 @@
 package memdb
 
 import (
-	"testing"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"testing"
 )
 
 func TestCreateAndFind(t *testing.T) {
-	filer := filer2.NewFiler("")
-	filer.SetStore(NewMemDbStore())
+	filer := filer2.NewFiler(nil)
+	store := &MemDbStore{}
+	store.Initialize(nil)
+	filer.SetStore(store)
 	filer.DisableDirectoryCache()
 
 	fullpath := filer2.FullPath("/home/chris/this/is/one/file1.jpg")
@@ -26,15 +28,10 @@ func TestCreateAndFind(t *testing.T) {
 		return
 	}
 
-	found, entry, err := filer.FindEntry(fullpath)
+	entry, err := filer.FindEntry(fullpath)
 
 	if err != nil {
 		t.Errorf("find entry: %v", err)
-		return
-	}
-
-	if !found {
-		t.Errorf("Failed to find newly created file")
 		return
 	}
 
@@ -46,8 +43,10 @@ func TestCreateAndFind(t *testing.T) {
 }
 
 func TestCreateFileAndList(t *testing.T) {
-	filer := filer2.NewFiler("")
-	filer.SetStore(NewMemDbStore())
+	filer := filer2.NewFiler(nil)
+	store := &MemDbStore{}
+	store.Initialize(nil)
+	filer.SetStore(store)
 	filer.DisableDirectoryCache()
 
 	entry1 := &filer2.Entry{
@@ -72,7 +71,7 @@ func TestCreateFileAndList(t *testing.T) {
 	filer.CreateEntry(entry2)
 
 	// checking the 2 files
-	entries, err := filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is/one/"))
+	entries, err := filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is/one/"), "", false, 100)
 
 	if err != nil {
 		t.Errorf("list entries: %v", err)
@@ -94,13 +93,28 @@ func TestCreateFileAndList(t *testing.T) {
 		return
 	}
 
-	// checking one upper directory
-	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"))
+	// checking the offset
+	entries, err = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is/one/"), "file1.jpg", false, 100)
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
 		return
 	}
 
+	// checking one upper directory
+	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"), "", false, 100)
+	if len(entries) != 1 {
+		t.Errorf("list entries count: %v", len(entries))
+		return
+	}
+
+	// checking root directory
+	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/"), "", false, 100)
+	if len(entries) != 1 {
+		t.Errorf("list entries count: %v", len(entries))
+		return
+	}
+
+	// add file3
 	file3Path := filer2.FullPath("/home/chris/this/is/file3.jpg")
 	entry3 := &filer2.Entry{
 		FullPath: file3Path,
@@ -113,15 +127,15 @@ func TestCreateFileAndList(t *testing.T) {
 	filer.CreateEntry(entry3)
 
 	// checking one upper directory
-	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"))
+	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"), "", false, 100)
 	if len(entries) != 2 {
 		t.Errorf("list entries count: %v", len(entries))
 		return
 	}
 
 	// delete file and count
-	filer.DeleteEntry(file3Path)
-	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"))
+	filer.DeleteEntryMetaAndData(file3Path)
+	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"), "", false, 100)
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
 		return

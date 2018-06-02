@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc/peer"
 )
 
-func (ms MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
+func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
 	var dn *topology.DataNode
 	t := ms.Topo
 	for {
@@ -74,6 +74,18 @@ func (ms MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServe
 			}); err != nil {
 				return err
 			}
+		}
+	}
+}
+
+func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServer) error {
+	for {
+		_, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		if err := stream.Send(&master_pb.Empty{}); err != nil {
+			return err
 		}
 	}
 }
