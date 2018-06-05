@@ -46,25 +46,35 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 
 	glog.V(4).Infof("listDirectory %s, last file %s, limit %d: %d items", path, lastFileName, limit, len(entries))
 
-	args := struct {
-		Path                  string
-		Breadcrumbs           []ui.Breadcrumb
-		Entries               interface{}
-		Limit                 int
-		LastFileName          string
-		ShouldDisplayLoadMore bool
-	}{
-		path,
-		ui.ToBreadcrumb(path),
-		entries,
-		limit,
-		lastFileName,
-		shouldDisplayLoadMore,
-	}
-
 	if r.Header.Get("Accept") == "application/json" {
-		writeJsonQuiet(w, r, http.StatusOK, args)
+		writeJsonQuiet(w, r, http.StatusOK, struct {
+			Path                  string
+			Entries               interface{}
+			Limit                 int
+			LastFileName          string
+			ShouldDisplayLoadMore bool
+		}{
+			path,
+			entries,
+			limit,
+			lastFileName,
+			shouldDisplayLoadMore,
+		})
 	} else {
-		ui.StatusTpl.Execute(w, args)
+		ui.StatusTpl.Execute(w, struct {
+			Path                  string
+			Breadcrumbs           []ui.Breadcrumb
+			Entries               interface{}
+			Limit                 int
+			LastFileName          string
+			ShouldDisplayLoadMore bool
+		}{
+			path,
+			ui.ToBreadcrumb(path),
+			entries,
+			limit,
+			lastFileName,
+			shouldDisplayLoadMore,
+		})
 	}
 }
