@@ -25,13 +25,14 @@ var (
 )
 
 type CopyOptions struct {
-	master      *string
-	include     *string
-	replication *string
-	collection  *string
-	ttl         *string
-	maxMB       *int
-	secretKey   *string
+	filerGrpcPort *int
+	master        *string
+	include       *string
+	replication   *string
+	collection    *string
+	ttl           *string
+	maxMB         *int
+	secretKey     *string
 
 	secret security.Secret
 }
@@ -45,6 +46,7 @@ func init() {
 	copy.collection = cmdCopy.Flag.String("collection", "", "optional collection name")
 	copy.ttl = cmdCopy.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
 	copy.maxMB = cmdCopy.Flag.Int("maxMB", 0, "split files larger than the limit")
+	copy.filerGrpcPort = cmdCopy.Flag.Int("filer.port.grpc", 0, "filer grpc server listen port, default to filer port + 10000")
 	copy.secretKey = cmdCopy.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 }
 
@@ -87,15 +89,33 @@ func runCopy(cmd *Command, args []string) bool {
 		urlPath = urlPath + "/"
 	}
 
+	if filerUrl.Port() == "" {
+		fmt.Printf("The filer port should be specified.\n")
+		return false
+	}
+
+	filerPort, parseErr := strconv.ParseUint(filerUrl.Port(), 10, 64)
+	if parseErr != nil {
+		fmt.Printf("The filer port parse error: %v\n", parseErr)
+		return false
+	}
+
+	filerGrpcPort := filerPort + 10000
+	if *copy.filerGrpcPort != 0 {
+		filerGrpcPort = uint64(*copy.filerGrpcPort)
+	}
+
+	filerGrpcAddress := fmt.Sprintf("%s:%d", filerUrl.Hostname(), filerGrpcPort)
+
 	for _, fileOrDir := range fileOrDirs {
-		if !doEachCopy(fileOrDir, filerUrl.Host, urlPath) {
+		if !doEachCopy(fileOrDir, filerUrl.Host, filerGrpcAddress, urlPath) {
 			return false
 		}
 	}
 	return true
 }
 
-func doEachCopy(fileOrDir string, host string, path string) bool {
+func doEachCopy(fileOrDir string, filerAddress, filerGrpcAddress string, path string) bool {
 	f, err := os.Open(fileOrDir)
 	if err != nil {
 		fmt.Printf("Failed to open file %s: %v\n", fileOrDir, err)
@@ -113,7 +133,7 @@ func doEachCopy(fileOrDir string, host string, path string) bool {
 	if mode.IsDir() {
 		files, _ := ioutil.ReadDir(fileOrDir)
 		for _, subFileOrDir := range files {
-			if !doEachCopy(fileOrDir+"/"+subFileOrDir.Name(), host, path+fi.Name()+"/") {
+			if !doEachCopy(fileOrDir+"/"+subFileOrDir.Name(), filerAddress, filerGrpcAddress, path+fi.Name()+"/") {
 				return false
 			}
 		}
@@ -135,13 +155,13 @@ func doEachCopy(fileOrDir string, host string, path string) bool {
 	}
 
 	if chunkCount == 1 {
-		return uploadFileAsOne(host, path, f, fi)
+		return uploadFileAsOne(filerAddress, filerGrpcAddress, path, f, fi)
 	}
 
-	return uploadFileInChunks(host, path, f, fi, chunkCount, chunkSize)
+	return uploadFileInChunks(filerAddress, filerGrpcAddress, path, f, fi, chunkCount, chunkSize)
 }
 
-func uploadFileAsOne(filerUrl string, urlFolder string, f *os.File, fi os.FileInfo) bool {
+func uploadFileAsOne(filerAddress, filerGrpcAddress string, urlFolder string, f *os.File, fi os.FileInfo) bool {
 
 	// upload the file content
 	fileName := filepath.Base(f.Name())
@@ -183,10 +203,10 @@ func uploadFileAsOne(filerUrl string, urlFolder string, f *os.File, fi os.FileIn
 			Mtime:  time.Now().UnixNano(),
 		})
 
-		fmt.Printf("copied %s => http://%s%s%s\n", fileName, filerUrl, urlFolder, fileName)
+		fmt.Printf("copied %s => http://%s%s%s\n", fileName, filerAddress, urlFolder, fileName)
 	}
 
-	if err := withFilerClient(filerUrl, func(client filer_pb.SeaweedFilerClient) error {
+	if err := withFilerClient(filerGrpcAddress, func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.CreateEntryRequest{
 			Directory: urlFolder,
 			Entry: &filer_pb.Entry{
@@ -209,14 +229,14 @@ func uploadFileAsOne(filerUrl string, urlFolder string, f *os.File, fi os.FileIn
 		}
 		return nil
 	}); err != nil {
-		fmt.Printf("upload data %v to http://%s%s%s: %v\n", fileName, filerUrl, urlFolder, fileName, err)
+		fmt.Printf("upload data %v to http://%s%s%s: %v\n", fileName, filerAddress, urlFolder, fileName, err)
 		return false
 	}
 
 	return true
 }
 
-func uploadFileInChunks(filerUrl string, urlFolder string, f *os.File, fi os.FileInfo, chunkCount int, chunkSize int64) bool {
+func uploadFileInChunks(filerAddress, filerGrpcAddress string, urlFolder string, f *os.File, fi os.FileInfo, chunkCount int, chunkSize int64) bool {
 
 	fileName := filepath.Base(f.Name())
 	mimeType := detectMimeType(f)
@@ -259,7 +279,7 @@ func uploadFileInChunks(filerUrl string, urlFolder string, f *os.File, fi os.Fil
 		fmt.Printf("uploaded %s-%d to %s [%d,%d)\n", fileName, i+1, targetUrl, i*chunkSize, i*chunkSize+int64(uploadResult.Size))
 	}
 
-	if err := withFilerClient(filerUrl, func(client filer_pb.SeaweedFilerClient) error {
+	if err := withFilerClient(filerGrpcAddress, func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.CreateEntryRequest{
 			Directory: urlFolder,
 			Entry: &filer_pb.Entry{
@@ -282,11 +302,11 @@ func uploadFileInChunks(filerUrl string, urlFolder string, f *os.File, fi os.Fil
 		}
 		return nil
 	}); err != nil {
-		fmt.Printf("upload data %v to http://%s%s%s: %v\n", fileName, filerUrl, urlFolder, fileName, err)
+		fmt.Printf("upload data %v to http://%s%s%s: %v\n", fileName, filerAddress, urlFolder, fileName, err)
 		return false
 	}
 
-	fmt.Printf("copied %s => http://%s%s%s\n", fileName, filerUrl, urlFolder, fileName)
+	fmt.Printf("copied %s => http://%s%s%s\n", fileName, filerAddress, urlFolder, fileName)
 
 	return true
 }

@@ -26,7 +26,7 @@ type File struct {
 	isOpen     bool
 }
 
-func (file *File) Attr(context context.Context, attr *fuse.Attr) error {
+func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
 	fullPath := filepath.Join(file.dir.Path, file.Name)
 
@@ -45,7 +45,7 @@ func (file *File) Attr(context context.Context, attr *fuse.Attr) error {
 					ParentDir: file.dir.Path,
 				}
 
-				resp, err := client.GetEntryAttributes(context, request)
+				resp, err := client.GetEntryAttributes(ctx, request)
 				if err != nil {
 					glog.V(0).Infof("file attr read file %v: %v", request, err)
 					return err
@@ -129,7 +129,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 
 func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 	// fsync works at OS level
-	// write the file chunks to the filer
+	// write the file chunks to the filerGrpcAddress
 	glog.V(3).Infof("%s/%s fsync file %+v", file.dir.Path, file.Name, req)
 
 	return nil

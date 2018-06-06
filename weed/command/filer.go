@@ -10,7 +10,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/soheilhy/cmux"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 	"strings"
@@ -24,6 +23,7 @@ type FilerOptions struct {
 	masters                 *string
 	ip                      *string
 	port                    *int
+	grpcPort                *int
 	publicPort              *int
 	collection              *string
 	defaultReplicaPlacement *string
@@ -39,6 +39,7 @@ func init() {
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this collection")
 	f.ip = cmdFiler.Flag.String("ip", "", "filer server http listen ip address")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
+	f.grpcPort = cmdFiler.Flag.Int("port.grpc", 0, "filer grpc server listen port, default to http port + 10000")
 	f.publicPort = cmdFiler.Flag.Int("port.public", 0, "port opened to public")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "000", "default replication type if not specified")
 	f.redirectOnRead = cmdFiler.Flag.Bool("redirectOnRead", false, "whether proxy or redirect to volume server during file GET request")
@@ -119,21 +120,22 @@ func (fo *FilerOptions) start() {
 		glog.Fatalf("Filer listener error: %v", e)
 	}
 
-	m := cmux.New(filerListener)
-	grpcL := m.Match(cmux.HTTP2HeaderField("content-type", "application/grpc"))
-	httpL := m.Match(cmux.Any())
-
-	// Create your protocol servers.
+	// starting grpc server
+	grpcPort := *f.grpcPort
+	if grpcPort == 0 {
+		grpcPort = *f.port + 10000
+	}
+	grpcL, err := util.NewListener(":"+strconv.Itoa(grpcPort), 0)
+	if err != nil {
+		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
+	}
 	grpcS := grpc.NewServer()
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
 	reflection.Register(grpcS)
+	go grpcS.Serve(grpcL)
 
 	httpS := &http.Server{Handler: defaultMux}
-
-	go grpcS.Serve(grpcL)
-	go httpS.Serve(httpL)
-
-	if err := m.Serve(); err != nil {
+	if err := httpS.Serve(filerListener); err != nil {
 		glog.Fatalf("Filer Fail to serve: %v", e)
 	}
 

@@ -133,7 +133,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context, buf []byte
 
 		return nil
 	}); err != nil {
-		return nil, fmt.Errorf("filer assign volume: %v", err)
+		return nil, fmt.Errorf("filerGrpcAddress assign volume: %v", err)
 	}
 
 	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)

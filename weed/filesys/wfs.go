@@ -9,16 +9,16 @@ import (
 )
 
 type WFS struct {
-	filer                     string
+	filerGrpcAddress          string
 	listDirectoryEntriesCache *ccache.Cache
 	collection                string
 	replication               string
 	chunkSizeLimit            int64
 }
 
-func NewSeaweedFileSystem(filer string, collection string, replication string, chunkSizeLimitMB int) *WFS {
+func NewSeaweedFileSystem(filerGrpcAddress string, collection string, replication string, chunkSizeLimitMB int) *WFS {
 	return &WFS{
-		filer:                     filer,
+		filerGrpcAddress:          filerGrpcAddress,
 		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(6000).ItemsToPrune(100)),
 		collection:                collection,
 		replication:               replication,
@@ -32,9 +32,9 @@ func (wfs *WFS) Root() (fs.Node, error) {
 
 func (wfs *WFS) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	grpcConnection, err := grpc.Dial(wfs.filer, grpc.WithInsecure())
+	grpcConnection, err := grpc.Dial(wfs.filerGrpcAddress, grpc.WithInsecure())
 	if err != nil {
-		return fmt.Errorf("fail to dial %s: %v", wfs.filer, err)
+		return fmt.Errorf("fail to dial %s: %v", wfs.filerGrpcAddress, err)
 	}
 	defer grpcConnection.Close()
 

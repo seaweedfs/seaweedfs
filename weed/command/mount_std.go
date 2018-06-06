@@ -11,6 +11,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"strings"
+	"strconv"
 )
 
 func runMount(cmd *Command, args []string) bool {
@@ -51,8 +53,27 @@ func runMount(cmd *Command, args []string) bool {
 		c.Close()
 	})
 
+	hostnameAndPort := strings.Split(*mountOptions.filer, ":")
+	if len(hostnameAndPort) != 2 {
+		fmt.Printf("The filer should have hostname:port format: %v\n", hostnameAndPort)
+		return false
+	}
+
+	filerPort, parseErr := strconv.ParseUint(hostnameAndPort[1], 10, 64)
+	if parseErr != nil {
+		fmt.Printf("The filer filer port parse error: %v\n", parseErr)
+		return false
+	}
+
+	filerGrpcPort := filerPort + 10000
+	if *mountOptions.filerGrpcPort != 0 {
+		filerGrpcPort = uint64(*copy.filerGrpcPort)
+	}
+
+	filerAddress := fmt.Sprintf("%s:%d", hostnameAndPort[0], filerGrpcPort)
+
 	err = fs.Serve(c, filesys.NewSeaweedFileSystem(
-		*mountOptions.filer, *mountOptions.collection, *mountOptions.replication, *mountOptions.chunkSizeLimitMB))
+		filerAddress, *mountOptions.collection, *mountOptions.replication, *mountOptions.chunkSizeLimitMB))
 	if err != nil {
 		fuse.Unmount(*mountOptions.dir)
 	}
