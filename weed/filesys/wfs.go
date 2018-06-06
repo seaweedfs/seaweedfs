@@ -91,7 +91,7 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (handle *FileHandle) 
 
 	wfs.handles = append(wfs.handles, handle)
 	handle.handle = uint64(len(wfs.handles) - 1)
-	println(fullpath, "new handle id", handle.handle)
+	glog.V(4).Infoln(fullpath, "new handle id", handle.handle)
 	wfs.pathToHandleIndex[fullpath] = int(handle.handle)
 
 	return
