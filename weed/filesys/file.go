@@ -26,12 +26,14 @@ type File struct {
 	isOpen     bool
 }
 
+func (file *File) fullpath() string {
+	return filepath.Join(file.dir.Path, file.Name)
+}
+
 func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
-	fullPath := filepath.Join(file.dir.Path, file.Name)
-
 	if file.attributes == nil || !file.isOpen {
-		item := file.wfs.listDirectoryEntriesCache.Get(fullPath)
+		item := file.wfs.listDirectoryEntriesCache.Get(file.fullpath())
 		if item != nil {
 			entry := item.Value().(*filer_pb.Entry)
 			file.Chunks = entry.Chunks
@@ -54,7 +56,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 				file.attributes = resp.Attributes
 				file.Chunks = resp.Chunks
 
-				glog.V(1).Infof("file attr %v %+v: %d", fullPath, file.attributes, filer2.TotalSize(file.Chunks))
+				glog.V(1).Infof("file attr %v %+v: %d", file.fullpath(), file.attributes, filer2.TotalSize(file.Chunks))
 
 				return nil
 			})
@@ -77,30 +79,26 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
 func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 
-	fullPath := filepath.Join(file.dir.Path, file.Name)
-
-	glog.V(3).Infof("%v file open %+v", fullPath, req)
+	glog.V(3).Infof("%v file open %+v", file.fullpath(), req)
 
 	file.isOpen = true
 
-	return &FileHandle{
-		f:          file,
-		dirtyPages: newDirtyPages(file),
-		RequestId:  req.Header.ID,
-		NodeId:     req.Header.Node,
-		Uid:        req.Uid,
-		Gid:        req.Gid,
-	}, nil
+	handle := file.wfs.AcquireHandle(file, req.Uid, req.Gid)
+
+	resp.Handle = fuse.HandleID(handle.handle)
+
+	glog.V(3).Infof("%v file open handle id = %d", file.fullpath(), handle.handle)
+
+	return handle, nil
 
 }
 
 func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
-	fullPath := filepath.Join(file.dir.Path, file.Name)
 
-	glog.V(3).Infof("%v file setattr %+v", fullPath, req)
+	glog.V(3).Infof("%v file setattr %+v, fh=%d", file.fullpath(), req, req.Handle)
 	if req.Valid.Size() {
 
-		glog.V(3).Infof("%v file setattr set size=%v", fullPath, req.Size)
+		glog.V(3).Infof("%v file setattr set size=%v", file.fullpath(), req.Size)
 		if req.Size == 0 {
 			// fmt.Printf("truncate %v \n", fullPath)
 			file.Chunks = nil

@@ -19,11 +19,22 @@ type FileHandle struct {
 	dirtyPages    *ContinuousDirtyPages
 	dirtyMetadata bool
 
+	handle uint64
+
 	f         *File
 	RequestId fuse.RequestID // unique ID for request
 	NodeId    fuse.NodeID    // file or directory the request is about
 	Uid       uint32         // user ID of process making request
 	Gid       uint32         // group ID of process making request
+}
+
+func newFileHandle(file *File, uid, gid uint32) *FileHandle {
+	return &FileHandle{
+		f:          file,
+		dirtyPages: newDirtyPages(file),
+		Uid:        uid,
+		Gid:        gid,
+	}
 }
 
 var _ = fs.Handle(&FileHandle{})
@@ -36,8 +47,9 @@ var _ = fs.HandleReleaser(&FileHandle{})
 
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 
-	glog.V(4).Infof("%v/%v read fh: [%d,%d)", fh.f.dir.Path, fh.f.Name, req.Offset, req.Offset+int64(req.Size))
+	glog.V(4).Infof("%s read fh %d: [%d,%d)", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size))
 
+	// this value should come from the filer instead of the old f
 	if len(fh.f.Chunks) == 0 {
 		glog.V(0).Infof("empty fh %v/%v", fh.f.dir.Path, fh.f.Name)
 		return fmt.Errorf("empty file %v/%v", fh.f.dir.Path, fh.f.Name)
@@ -123,7 +135,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 	// write the request to volume servers
 
-	glog.V(4).Infof("%+v/%v write fh: [%d,%d)", fh.f.dir.Path, fh.f.Name, req.Offset, req.Offset+int64(len(req.Data)))
+	glog.V(4).Infof("%+v/%v write fh %d: [%d,%d)", fh.f.dir.Path, fh.f.Name, fh.handle, req.Offset, req.Offset+int64(len(req.Data)))
 
 	chunks, err := fh.dirtyPages.AddPage(ctx, req.Offset, req.Data)
 	if err != nil {
@@ -148,7 +160,9 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 
-	glog.V(4).Infof("%+v/%v release fh", fh.f.dir.Path, fh.f.Name)
+	glog.V(4).Infof("%v release fh %d", fh.f.fullpath(), fh.handle)
+
+	fh.f.wfs.ReleaseHandle(fuse.HandleID(fh.handle))
 
 	fh.f.isOpen = false
 
@@ -160,7 +174,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	// fflush works at fh level
 	// send the data to the OS
-	glog.V(4).Infof("%s/%s fh flush %v", fh.f.dir.Path, fh.f.Name, req)
+	glog.V(4).Infof("%s fh %d flush %v", fh.f.fullpath(), fh.handle, req)
 
 	chunk, err := fh.dirtyPages.FlushToStorage(ctx)
 	if err != nil {

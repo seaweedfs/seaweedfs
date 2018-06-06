@@ -122,14 +122,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 		file := dir.newFile(req.Name, nil)
 		dir.NodeMap[req.Name] = file
 		file.isOpen = true
-		return file, &FileHandle{
-			f:          file,
-			dirtyPages: newDirtyPages(file),
-			RequestId:  req.Header.ID,
-			NodeId:     req.Header.Node,
-			Uid:        req.Uid,
-			Gid:        req.Gid,
-		}, nil
+		return file, dir.wfs.AcquireHandle(file, req.Uid, req.Gid), nil
 	}
 
 	return nil, nil, err
