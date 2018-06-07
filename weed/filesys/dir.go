@@ -39,6 +39,7 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 
 		attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
 		attr.Ctime = time.Unix(entry.Attributes.Crtime, 0)
+		attr.Mode = os.FileMode(entry.Attributes.FileMode)
 		attr.Gid = entry.Attributes.Gid
 		attr.Uid = entry.Attributes.Uid
 
@@ -259,79 +260,4 @@ func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 		return nil
 	})
 
-}
-
-func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirectory fs.Node) error {
-
-	newDir := newDirectory.(*Dir)
-
-	var entry *filer_pb.Entry
-	err := dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-
-		// find existing entry
-		{
-			request := &filer_pb.LookupDirectoryEntryRequest{
-				Directory: dir.Path,
-				Name:      req.OldName,
-			}
-
-			glog.V(4).Infof("find existing directory entry: %v", request)
-			resp, err := client.LookupDirectoryEntry(ctx, request)
-			if err != nil {
-				glog.V(0).Infof("renaming find %s/%s: %v", dir.Path, req.OldName, err)
-				return fuse.ENOENT
-			}
-
-			entry = resp.Entry
-
-			if entry.IsDirectory {
-				// do not support moving directory
-				return fuse.ENOTSUP
-			}
-
-			glog.V(4).Infof("found existing directory entry resp: %+v", resp)
-
-		}
-
-		// add to new directory
-		{
-			request := &filer_pb.CreateEntryRequest{
-				Directory: newDir.Path,
-				Entry: &filer_pb.Entry{
-					Name:        req.NewName,
-					IsDirectory: false,
-					Attributes:  entry.Attributes,
-					Chunks:      entry.Chunks,
-				},
-			}
-
-			glog.V(1).Infof("create new entry: %v", request)
-			if _, err := client.CreateEntry(ctx, request); err != nil {
-				glog.V(0).Infof("renaming create %s/%s: %v", newDir.Path, req.NewName, err)
-				return fuse.EIO
-			}
-		}
-
-		// delete old entry
-		{
-			request := &filer_pb.DeleteEntryRequest{
-				Directory:    dir.Path,
-				Name:         req.OldName,
-				IsDirectory:  false,
-				IsDeleteData: false,
-			}
-
-			glog.V(1).Infof("remove old entry: %v", request)
-			_, err := client.DeleteEntry(ctx, request)
-			if err != nil {
-				glog.V(0).Infof("renaming delete %s/%s: %v", dir.Path, req.OldName, err)
-				return fuse.EIO
-			}
-
-		}
-
-		return nil
-	})
-
-	return err
 }
