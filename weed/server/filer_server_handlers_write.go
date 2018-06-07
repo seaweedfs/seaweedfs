@@ -195,7 +195,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 // curl -X DELETE http://localhost:8888/path/to
 func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
-	err := fs.filer.DeleteEntryMetaAndData(filer2.FullPath(r.URL.Path))
+	err := fs.filer.DeleteEntryMetaAndData(filer2.FullPath(r.URL.Path), true)
 	if err != nil {
 		glog.V(4).Infoln("deleting", r.URL.Path, ":", err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)

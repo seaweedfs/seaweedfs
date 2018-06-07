@@ -24,7 +24,14 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 		Entry: &filer_pb.Entry{
 			Name:        req.Name,
 			IsDirectory: entry.IsDirectory(),
-			Chunks:      entry.Chunks,
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime:    entry.Attr.Mtime.Unix(),
+				Crtime:   entry.Attr.Crtime.Unix(),
+				FileMode: uint32(entry.Attr.Mode),
+				Uid:      entry.Attr.Uid,
+				Gid:      entry.Attr.Gid,
+			},
+			Chunks: entry.Chunks,
 		},
 	}, nil
 }
@@ -184,7 +191,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 }
 
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {
-	err = fs.filer.DeleteEntryMetaAndData(filer2.FullPath(filepath.Join(req.Directory, req.Name)))
+	err = fs.filer.DeleteEntryMetaAndData(filer2.FullPath(filepath.Join(req.Directory, req.Name)), req.IsDeleteData)
 	return &filer_pb.DeleteEntryResponse{}, err
 }
 

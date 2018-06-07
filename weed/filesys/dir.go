@@ -28,6 +28,7 @@ var _ = fs.NodeMkdirer(&Dir{})
 var _ = fs.NodeStringLookuper(&Dir{})
 var _ = fs.HandleReadDirAller(&Dir{})
 var _ = fs.NodeRemover(&Dir{})
+var _ = fs.NodeRenamer(&Dir{})
 
 func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 
@@ -251,9 +252,10 @@ func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 	return dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.DeleteEntryRequest{
-			Directory:   dir.Path,
-			Name:        req.Name,
-			IsDirectory: req.Dir,
+			Directory:    dir.Path,
+			Name:         req.Name,
+			IsDirectory:  req.Dir,
+			IsDeleteData: true,
 		}
 
 		glog.V(1).Infof("remove directory entry: %v", request)
@@ -267,4 +269,81 @@ func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 		return nil
 	})
 
+}
+
+func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirectory fs.Node) error {
+
+	dir.NodeMapLock.Lock()
+	defer dir.NodeMapLock.Unlock()
+
+	newDir := newDirectory.(*Dir)
+
+	var entry *filer_pb.Entry
+	err := dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		// find existing entry
+		{
+			request := &filer_pb.LookupDirectoryEntryRequest{
+				Directory: dir.Path,
+				Name:      req.OldName,
+			}
+
+			glog.V(4).Infof("find existing directory entry: %v", request)
+			resp, err := client.LookupDirectoryEntry(ctx, request)
+			if err != nil {
+				return err
+			}
+
+			entry = resp.Entry
+
+			if entry.IsDirectory {
+				// do not support moving directory
+				return fuse.ENOTSUP
+			}
+
+			glog.V(4).Infof("found existing directory entry resp: %+v", resp)
+
+		}
+
+		// add to new directory
+		{
+			request := &filer_pb.CreateEntryRequest{
+				Directory: newDir.Path,
+				Entry: &filer_pb.Entry{
+					Name:        req.NewName,
+					IsDirectory: false,
+					Attributes:  entry.Attributes,
+					Chunks:      entry.Chunks,
+				},
+			}
+
+			glog.V(1).Infof("create new entry: %v", request)
+			if _, err := client.CreateEntry(ctx, request); err != nil {
+				return fmt.Errorf("create new entry: %v", err)
+			}
+		}
+
+		// delete old entry
+		{
+			request := &filer_pb.DeleteEntryRequest{
+				Directory:    dir.Path,
+				Name:         req.OldName,
+				IsDirectory:  false,
+				IsDeleteData: false,
+			}
+
+			glog.V(1).Infof("remove old entry: %v", request)
+			_, err := client.DeleteEntry(ctx, request)
+			if err != nil {
+				return err
+			}
+
+			delete(dir.NodeMap, req.OldName)
+
+		}
+
+		return nil
+	})
+
+	return err
 }

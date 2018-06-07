@@ -123,7 +123,7 @@ func (f *Filer) FindEntry(p FullPath) (entry *Entry, err error) {
 	return f.store.FindEntry(p)
 }
 
-func (f *Filer) DeleteEntryMetaAndData(p FullPath) (err error) {
+func (f *Filer) DeleteEntryMetaAndData(p FullPath, shouldDeleteChunks bool) (err error) {
 	entry, err := f.FindEntry(p)
 	if err != nil {
 		return err
@@ -139,7 +139,9 @@ func (f *Filer) DeleteEntryMetaAndData(p FullPath) (err error) {
 		}
 	}
 
-	f.deleteChunks(entry)
+	if shouldDeleteChunks {
+		f.deleteChunks(entry)
+	}
 
 	return f.store.DeleteEntry(p)
 }
