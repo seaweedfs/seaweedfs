@@ -2,7 +2,6 @@ package filesys
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path"
 	"bazil.org/fuse"
@@ -121,7 +120,8 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 
 		glog.V(1).Infof("create: %v", request)
 		if _, err := client.CreateEntry(ctx, request); err != nil {
-			return fmt.Errorf("create file: %v", err)
+			glog.V(0).Infof("create %s/%s: %v", dir.Path, req.Name, err)
+			return fuse.EIO
 		}
 
 		return nil
@@ -157,8 +157,8 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 
 		glog.V(1).Infof("mkdir: %v", request)
 		if _, err := client.CreateEntry(ctx, request); err != nil {
-			glog.V(0).Infof("mkdir %v: %v", request, err)
-			return fmt.Errorf("make dir: %v", err)
+			glog.V(0).Infof("mkdir %s/%s: %v", dir.Path, req.Name, err)
+			return fuse.EIO
 		}
 
 		return nil
@@ -185,7 +185,8 @@ func (dir *Dir) Lookup(ctx context.Context, name string) (node fs.Node, err erro
 		glog.V(4).Infof("lookup directory entry: %v", request)
 		resp, err := client.LookupDirectoryEntry(ctx, request)
 		if err != nil {
-			return err
+			// glog.V(0).Infof("lookup %s/%s: %v", dir.Path, name, err)
+			return fuse.ENOENT
 		}
 
 		entry = resp.Entry
@@ -216,7 +217,8 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 		glog.V(4).Infof("read directory: %v", request)
 		resp, err := client.ListEntries(ctx, request)
 		if err != nil {
-			return err
+			glog.V(0).Infof("list %s: %v", dir.Path, err)
+			return fuse.EIO
 		}
 
 		for _, entry := range resp.Entries {
@@ -250,7 +252,8 @@ func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 		glog.V(1).Infof("remove directory entry: %v", request)
 		_, err := client.DeleteEntry(ctx, request)
 		if err != nil {
-			return err
+			glog.V(0).Infof("remove %s/%s: %v", dir.Path, req.Name, err)
+			return fuse.EIO
 		}
 
 		return nil
@@ -275,7 +278,8 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 			glog.V(4).Infof("find existing directory entry: %v", request)
 			resp, err := client.LookupDirectoryEntry(ctx, request)
 			if err != nil {
-				return err
+				glog.V(0).Infof("renaming find %s/%s: %v", dir.Path, req.OldName, err)
+				return fuse.ENOENT
 			}
 
 			entry = resp.Entry
@@ -303,7 +307,8 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 
 			glog.V(1).Infof("create new entry: %v", request)
 			if _, err := client.CreateEntry(ctx, request); err != nil {
-				return fmt.Errorf("create new entry: %v", err)
+				glog.V(0).Infof("renaming create %s/%s: %v", newDir.Path, req.NewName, err)
+				return fuse.EIO
 			}
 		}
 
@@ -319,7 +324,8 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 			glog.V(1).Infof("remove old entry: %v", request)
 			_, err := client.DeleteEntry(ctx, request)
 			if err != nil {
-				return err
+				glog.V(0).Infof("renaming delete %s/%s: %v", dir.Path, req.OldName, err)
+				return fuse.EIO
 			}
 
 		}
