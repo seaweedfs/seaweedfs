@@ -20,7 +20,7 @@ type Dir struct {
 var _ = fs.Node(&Dir{})
 var _ = fs.NodeCreater(&Dir{})
 var _ = fs.NodeMkdirer(&Dir{})
-var _ = fs.NodeStringLookuper(&Dir{})
+var _ = fs.NodeRequestLookuper(&Dir{})
 var _ = fs.HandleReadDirAller(&Dir{})
 var _ = fs.NodeRemover(&Dir{})
 var _ = fs.NodeRenamer(&Dir{})
@@ -173,14 +173,14 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 	return nil, err
 }
 
-func (dir *Dir) Lookup(ctx context.Context, name string) (node fs.Node, err error) {
+func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (node fs.Node, err error) {
 
 	var entry *filer_pb.Entry
 	err = dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir.Path,
-			Name:      name,
+			Name:      req.Name,
 		}
 
 		glog.V(4).Infof("lookup directory entry: %v", request)
@@ -197,10 +197,18 @@ func (dir *Dir) Lookup(ctx context.Context, name string) (node fs.Node, err erro
 
 	if entry != nil {
 		if entry.IsDirectory {
-			node = &Dir{Path: path.Join(dir.Path, name), wfs: dir.wfs}
+			node = &Dir{Path: path.Join(dir.Path, req.Name), wfs: dir.wfs}
 		} else {
-			node = dir.newFile(name, entry.Chunks)
+			node = dir.newFile(req.Name, entry.Chunks)
 		}
+
+		resp.EntryValid = time.Duration(0)
+		resp.Attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
+		resp.Attr.Ctime = time.Unix(entry.Attributes.Crtime, 0)
+		resp.Attr.Mode = os.FileMode(entry.Attributes.FileMode)
+		resp.Attr.Gid = entry.Attributes.Gid
+		resp.Attr.Uid = entry.Attributes.Uid
+
 		return node, nil
 	}
 
