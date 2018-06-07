@@ -34,7 +34,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
 	if file.attributes == nil || !file.isOpen {
 		item := file.wfs.listDirectoryEntriesCache.Get(file.fullpath())
-		if item != nil {
+		if item != nil && !item.Expired(){
 			entry := item.Value().(*filer_pb.Entry)
 			file.Chunks = entry.Chunks
 			file.attributes = entry.Attributes

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"sync"
-
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -16,10 +14,8 @@ import (
 )
 
 type Dir struct {
-	Path        string
-	NodeMap     map[string]fs.Node
-	NodeMapLock sync.Mutex
-	wfs         *WFS
+	Path string
+	wfs  *WFS
 }
 
 var _ = fs.Node(&Dir{})
@@ -35,6 +31,18 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 	if dir.Path == "/" {
 		attr.Valid = time.Second
 		attr.Mode = os.ModeDir | 0777
+		return nil
+	}
+
+	item := dir.wfs.listDirectoryEntriesCache.Get(dir.Path)
+	if item != nil && !item.Expired() {
+		entry := item.Value().(*filer_pb.Entry)
+
+		attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
+		attr.Ctime = time.Unix(entry.Attributes.Crtime, 0)
+		attr.Gid = entry.Attributes.Gid
+		attr.Uid = entry.Attributes.Uid
+
 		return nil
 	}
 
@@ -74,7 +82,7 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 	}
 
 	attr.Mtime = time.Unix(attributes.Mtime, 0)
-	attr.Ctime = time.Unix(attributes.Mtime, 0)
+	attr.Ctime = time.Unix(attributes.Crtime, 0)
 	attr.Gid = attributes.Gid
 	attr.Uid = attributes.Uid
 
@@ -121,7 +129,6 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 
 	if err == nil {
 		file := dir.newFile(req.Name, nil)
-		dir.NodeMap[req.Name] = file
 		file.isOpen = true
 		return file, dir.wfs.AcquireHandle(file, req.Uid, req.Gid), nil
 	}
@@ -130,8 +137,6 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 }
 
 func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
-	dir.NodeMapLock.Lock()
-	defer dir.NodeMapLock.Unlock()
 
 	err := dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
@@ -161,7 +166,6 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 
 	if err == nil {
 		node := &Dir{Path: path.Join(dir.Path, req.Name), wfs: dir.wfs}
-		dir.NodeMap[req.Name] = node
 		return node, nil
 	}
 
@@ -169,17 +173,6 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 }
 
 func (dir *Dir) Lookup(ctx context.Context, name string) (node fs.Node, err error) {
-
-	dir.NodeMapLock.Lock()
-	defer dir.NodeMapLock.Unlock()
-
-	if dir.NodeMap == nil {
-		dir.NodeMap = make(map[string]fs.Node)
-	}
-
-	if node, ok := dir.NodeMap[name]; ok {
-		return node, nil
-	}
 
 	var entry *filer_pb.Entry
 	err = dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
@@ -206,7 +199,6 @@ func (dir *Dir) Lookup(ctx context.Context, name string) (node fs.Node, err erro
 		} else {
 			node = dir.newFile(name, entry.Chunks)
 		}
-		dir.NodeMap[name] = node
 		return node, nil
 	}
 
@@ -246,9 +238,6 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 
-	dir.NodeMapLock.Lock()
-	defer dir.NodeMapLock.Unlock()
-
 	return dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.DeleteEntryRequest{
@@ -264,17 +253,12 @@ func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 			return err
 		}
 
-		delete(dir.NodeMap, req.Name)
-
 		return nil
 	})
 
 }
 
 func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirectory fs.Node) error {
-
-	dir.NodeMapLock.Lock()
-	defer dir.NodeMapLock.Unlock()
 
 	newDir := newDirectory.(*Dir)
 
@@ -337,8 +321,6 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 			if err != nil {
 				return err
 			}
-
-			delete(dir.NodeMap, req.OldName)
 
 		}
 
