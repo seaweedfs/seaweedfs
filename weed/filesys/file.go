@@ -38,7 +38,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 			entry := item.Value().(*filer_pb.Entry)
 			file.Chunks = entry.Chunks
 			file.attributes = entry.Attributes
-			glog.V(1).Infof("file attr read cached %v attributes", file.Name)
+			// glog.V(1).Infof("file attr read cached %v attributes", file.Name)
 		} else {
 			err := file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 

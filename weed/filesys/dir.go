@@ -57,10 +57,10 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 			ParentDir: parent,
 		}
 
-		glog.V(1).Infof("read dir attr: %v", request)
+		glog.V(1).Infof("read dir %s attr: %v", dir.Path, request)
 		resp, err := client.GetEntryAttributes(context, request)
 		if err != nil {
-			glog.V(0).Infof("read dir attr %v: %v", request, err)
+			glog.V(0).Infof("read dir %s attr %v: %v", dir.Path, request, err)
 			return err
 		}
 
@@ -226,8 +226,8 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 			} else {
 				dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_File}
 				ret = append(ret, dirent)
-				dir.wfs.listDirectoryEntriesCache.Set(dir.Path+"/"+entry.Name, entry, 300*time.Millisecond)
 			}
+			dir.wfs.listDirectoryEntriesCache.Set(dir.Path+"/"+entry.Name, entry, 300*time.Millisecond)
 		}
 
 		return nil
