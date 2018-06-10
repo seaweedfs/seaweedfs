@@ -24,14 +24,8 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 		Entry: &filer_pb.Entry{
 			Name:        req.Name,
 			IsDirectory: entry.IsDirectory(),
-			Attributes: &filer_pb.FuseAttributes{
-				Mtime:    entry.Attr.Mtime.Unix(),
-				Crtime:   entry.Attr.Crtime.Unix(),
-				FileMode: uint32(entry.Attr.Mode),
-				Uid:      entry.Attr.Uid,
-				Gid:      entry.Attr.Gid,
-			},
-			Chunks: entry.Chunks,
+			Attributes:  filer2.EntryAttributeToPb(entry),
+			Chunks:      entry.Chunks,
 		},
 	}, nil
 }
@@ -50,15 +44,7 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 			Name:        entry.Name(),
 			IsDirectory: entry.IsDirectory(),
 			Chunks:      entry.Chunks,
-			Attributes: &filer_pb.FuseAttributes{
-				FileSize: entry.Size(),
-				Mtime:    entry.Mtime.Unix(),
-				Crtime:   entry.Crtime.Unix(),
-				Gid:      entry.Gid,
-				Uid:      entry.Uid,
-				FileMode: uint32(entry.Mode),
-				Mime:     entry.Mime,
-			},
+			Attributes:  filer2.EntryAttributeToPb(entry),
 		})
 	}
 
@@ -67,23 +53,14 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 
 func (fs *FilerServer) GetEntryAttributes(ctx context.Context, req *filer_pb.GetEntryAttributesRequest) (*filer_pb.GetEntryAttributesResponse, error) {
 
-	attributes := &filer_pb.FuseAttributes{}
-
 	fullpath := filer2.NewFullPath(req.ParentDir, req.Name)
 
 	entry, err := fs.filer.FindEntry(fullpath)
 	if err != nil {
-		attributes.FileSize = 0
 		return nil, fmt.Errorf("FindEntry %s: %v", fullpath, err)
 	}
 
-	attributes.FileSize = entry.Size()
-	attributes.FileMode = uint32(entry.Mode)
-	attributes.Uid = entry.Uid
-	attributes.Gid = entry.Gid
-	attributes.Mtime = entry.Mtime.Unix()
-	attributes.Crtime = entry.Crtime.Unix()
-	attributes.Mime = entry.Mime
+	attributes := filer2.EntryAttributeToPb(entry)
 
 	glog.V(3).Infof("GetEntryAttributes %v size %d chunks %d: %+v", fullpath, attributes.FileSize, len(entry.Chunks), attributes)
 
@@ -123,15 +100,8 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (resp *filer_pb.CreateEntryResponse, err error) {
 	err = fs.filer.CreateEntry(&filer2.Entry{
 		FullPath: filer2.FullPath(filepath.Join(req.Directory, req.Entry.Name)),
-		Attr: filer2.Attr{
-			Mtime:  time.Unix(req.Entry.Attributes.Mtime, 0),
-			Crtime: time.Unix(req.Entry.Attributes.Mtime, 0),
-			Mode:   os.FileMode(req.Entry.Attributes.FileMode),
-			Uid:    req.Entry.Attributes.Uid,
-			Gid:    req.Entry.Attributes.Gid,
-			Mime:   req.Entry.Attributes.Mime,
-		},
-		Chunks: req.Entry.Chunks,
+		Attr:     filer2.PbToEntryAttribute(req.Entry.Attributes),
+		Chunks:   req.Entry.Chunks,
 	})
 
 	if err == nil {

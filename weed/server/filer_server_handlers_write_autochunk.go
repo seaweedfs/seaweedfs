@@ -13,6 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func (fs *FilerServer) autoChunk(w http.ResponseWriter, r *http.Request, replication string, collection string) bool {
@@ -158,9 +159,12 @@ func (fs *FilerServer) doAutoChunk(w http.ResponseWriter, r *http.Request, conte
 	entry := &filer2.Entry{
 		FullPath: filer2.FullPath(path),
 		Attr: filer2.Attr{
-			Mtime:  time.Now(),
-			Crtime: time.Now(),
-			Mode:   0660,
+			Mtime:       time.Now(),
+			Crtime:      time.Now(),
+			Mode:        0660,
+			Replication: replication,
+			Collection:  collection,
+			TtlSec:      int32(util.ParseInt(r.URL.Query().Get("ttl"), 0)),
 		},
 		Chunks: fileChunks,
 	}

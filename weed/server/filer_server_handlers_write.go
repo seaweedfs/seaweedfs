@@ -167,7 +167,12 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	entry := &filer2.Entry{
 		FullPath: filer2.FullPath(path),
 		Attr: filer2.Attr{
-			Mode: 0660,
+			Mtime:       time.Now(),
+			Crtime:      time.Now(),
+			Mode:        0660,
+			Replication: replication,
+			Collection:  collection,
+			TtlSec:      int32(util.ParseInt(r.URL.Query().Get("ttl"), 0)),
 		},
 		Chunks: []*filer_pb.FileChunk{{
 			FileId: fileId,

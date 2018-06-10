@@ -18,6 +18,7 @@ import (
 	"time"
 	"google.golang.org/grpc"
 	"context"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 var (
@@ -212,13 +213,16 @@ func uploadFileAsOne(filerAddress, filerGrpcAddress string, urlFolder string, f 
 			Entry: &filer_pb.Entry{
 				Name: fileName,
 				Attributes: &filer_pb.FuseAttributes{
-					Crtime:   time.Now().Unix(),
-					Mtime:    time.Now().Unix(),
-					Gid:      uint32(os.Getgid()),
-					Uid:      uint32(os.Getuid()),
-					FileSize: uint64(fi.Size()),
-					FileMode: uint32(fi.Mode()),
-					Mime:     mimeType,
+					Crtime:      time.Now().Unix(),
+					Mtime:       time.Now().Unix(),
+					Gid:         uint32(os.Getgid()),
+					Uid:         uint32(os.Getuid()),
+					FileSize:    uint64(fi.Size()),
+					FileMode:    uint32(fi.Mode()),
+					Mime:        mimeType,
+					Replication: *copy.replication,
+					Collection:  *copy.collection,
+					TtlSec:      int32(util.ParseInt(*copy.ttl, 0)),
 				},
 				Chunks: chunks,
 			},
@@ -285,13 +289,16 @@ func uploadFileInChunks(filerAddress, filerGrpcAddress string, urlFolder string,
 			Entry: &filer_pb.Entry{
 				Name: fileName,
 				Attributes: &filer_pb.FuseAttributes{
-					Crtime:   time.Now().Unix(),
-					Mtime:    time.Now().Unix(),
-					Gid:      uint32(os.Getgid()),
-					Uid:      uint32(os.Getuid()),
-					FileSize: uint64(fi.Size()),
-					FileMode: uint32(fi.Mode()),
-					Mime:     mimeType,
+					Crtime:      time.Now().Unix(),
+					Mtime:       time.Now().Unix(),
+					Gid:         uint32(os.Getgid()),
+					Uid:         uint32(os.Getuid()),
+					FileSize:    uint64(fi.Size()),
+					FileMode:    uint32(fi.Mode()),
+					Mime:        mimeType,
+					Replication: *copy.replication,
+					Collection:  *copy.collection,
+					TtlSec:      int32(util.ParseInt(*copy.ttl, 0)),
 				},
 				Chunks: chunks,
 			},
