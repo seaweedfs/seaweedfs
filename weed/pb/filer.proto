@@ -126,6 +126,7 @@ message AssignVolumeRequest {
     int32 count = 1;
     string collection = 2;
     string replication = 3;
+    int32 ttl_sec = 4;
 }
 
 message AssignVolumeResponse {

@@ -121,6 +121,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context, buf []byte
 			Count:       1,
 			Replication: pages.f.wfs.replication,
 			Collection:  pages.f.wfs.collection,
+			TtlSec:      pages.f.wfs.ttlSec,
 		}
 
 		resp, err := client.AssignVolume(ctx, request)

@@ -11,6 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"strconv"
 )
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -167,10 +168,16 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVolumeRequest) (resp *filer_pb.AssignVolumeResponse, err error) {
 
+	ttlStr := ""
+	if req.TtlSec > 0 {
+		ttlStr = strconv.Itoa(int(req.TtlSec))
+	}
+
 	assignResult, err := operation.Assign(fs.filer.GetMaster(), &operation.VolumeAssignRequest{
 		Count:       uint64(req.Count),
 		Replication: req.Replication,
 		Collection:  req.Collection,
+		Ttl:         ttlStr,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assign volume: %v", err)

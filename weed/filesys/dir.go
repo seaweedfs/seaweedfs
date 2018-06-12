@@ -10,6 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"path/filepath"
 	"time"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 )
 
 type Dir struct {
@@ -110,11 +111,14 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 				Name:        req.Name,
 				IsDirectory: req.Mode&os.ModeDir > 0,
 				Attributes: &filer_pb.FuseAttributes{
-					Mtime:    time.Now().Unix(),
-					Crtime:   time.Now().Unix(),
-					FileMode: uint32(req.Mode),
-					Uid:      req.Uid,
-					Gid:      req.Gid,
+					Mtime:       time.Now().Unix(),
+					Crtime:      time.Now().Unix(),
+					FileMode:    uint32(req.Mode),
+					Uid:         req.Uid,
+					Gid:         req.Gid,
+					Collection:  dir.wfs.collection,
+					Replication: dir.wfs.replication,
+					TtlSec:      dir.wfs.ttlSec,
 				},
 			},
 		}

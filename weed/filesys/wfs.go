@@ -16,6 +16,7 @@ type WFS struct {
 	listDirectoryEntriesCache *ccache.Cache
 	collection                string
 	replication               string
+	ttlSec                    int32
 	chunkSizeLimit            int64
 
 	// contains all open handles
@@ -24,12 +25,13 @@ type WFS struct {
 	pathToHandleLock  sync.Mutex
 }
 
-func NewSeaweedFileSystem(filerGrpcAddress string, collection string, replication string, chunkSizeLimitMB int) *WFS {
+func NewSeaweedFileSystem(filerGrpcAddress string, collection string, replication string, ttlSec int32, chunkSizeLimitMB int) *WFS {
 	return &WFS{
 		filerGrpcAddress:          filerGrpcAddress,
 		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(6000).ItemsToPrune(100)),
 		collection:                collection,
 		replication:               replication,
+		ttlSec:                    ttlSec,
 		chunkSizeLimit:            int64(chunkSizeLimitMB) * 1024 * 1024,
 		pathToHandleIndex:         make(map[string]int),
 	}
