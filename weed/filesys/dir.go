@@ -10,7 +10,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"path/filepath"
 	"time"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
 )
 
 type Dir struct {
