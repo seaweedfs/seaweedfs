@@ -75,7 +75,7 @@ func writeJsonError(w http.ResponseWriter, r *http.Request, httpStatus int, err 
 }
 
 func debug(params ...interface{}) {
-	glog.V(4).Infoln(params)
+	glog.V(4).Infoln(params...)
 }
 
 func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl string) {

@@ -30,7 +30,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 	entries, err := fs.filer.ListDirectoryEntries(filer2.FullPath(path), lastFileName, false, limit)
 
 	if err != nil {
-		glog.V(0).Infof("listDirectory %s %s $d: %s", path, lastFileName, limit, err)
+		glog.V(0).Infof("listDirectory %s %s %d: %s", path, lastFileName, limit, err)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
