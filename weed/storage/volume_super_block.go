@@ -42,7 +42,7 @@ func (s *SuperBlock) Bytes() []byte {
 func (v *Volume) maybeWriteSuperBlock() error {
 	stat, e := v.dataFile.Stat()
 	if e != nil {
-		glog.V(0).Infof("failed to stat datafile %s: %v", v.dataFile, e)
+		glog.V(0).Infof("failed to stat datafile %s: %v", v.dataFile.Name(), e)
 		return e
 	}
 	if stat.Size() == 0 {
