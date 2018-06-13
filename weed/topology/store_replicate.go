@@ -28,12 +28,10 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 	needToReplicate := !s.HasVolume(volumeId)
 	if err != nil {
 		errorStatus = "Failed to write to local disk (" + err.Error() + ")"
-	} else if ret > 0 {
-		needToReplicate = needToReplicate || s.GetVolume(volumeId).NeedToReplicate()
 	} else {
-		errorStatus = "Failed to write to local disk"
+		needToReplicate = needToReplicate || s.GetVolume(volumeId).NeedToReplicate()
 	}
-	if !needToReplicate && ret > 0 {
+	if !needToReplicate {
 		needToReplicate = s.GetVolume(volumeId).NeedToReplicate()
 	}
 	if needToReplicate { //send to other replica locations
