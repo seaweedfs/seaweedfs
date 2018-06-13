@@ -126,6 +126,7 @@ func (m *LevelDbNeedleMap) Delete(key uint64, offset uint32) error {
 }
 
 func (m *LevelDbNeedleMap) Close() {
+	m.indexFile.Close()
 	m.db.Close()
 }
 

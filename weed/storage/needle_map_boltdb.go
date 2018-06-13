@@ -164,6 +164,7 @@ func (m *BoltDbNeedleMap) Delete(key uint64, offset uint32) error {
 }
 
 func (m *BoltDbNeedleMap) Close() {
+	m.indexFile.Close()
 	m.db.Close()
 }
 
