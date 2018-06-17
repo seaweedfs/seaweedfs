@@ -104,13 +104,13 @@ func (f *Filer) CreateEntry(entry *Entry) error {
 		}
 	*/
 
-	if oldEntry, err := f.FindEntry(entry.FullPath); err == nil {
-		f.deleteChunks(oldEntry)
-	}
+	oldEntry, _ := f.FindEntry(entry.FullPath)
 
 	if err := f.store.InsertEntry(entry); err != nil {
 		return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
 	}
+
+	f.deleteChunks(oldEntry)
 
 	return nil
 }
