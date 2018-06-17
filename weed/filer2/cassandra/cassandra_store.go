@@ -5,7 +5,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/gocql/gocql"
-	"github.com/spf13/viper"
 )
 
 func init() {
@@ -21,10 +20,10 @@ func (store *CassandraStore) GetName() string {
 	return "cassandra"
 }
 
-func (store *CassandraStore) Initialize(viper *viper.Viper) (err error) {
+func (store *CassandraStore) Initialize(configuration filer2.Configuration) (err error) {
 	return store.initialize(
-		viper.GetString("keyspace"),
-		viper.GetStringSlice("hosts"),
+		configuration.GetString("keyspace"),
+		configuration.GetStringSlice("hosts"),
 	)
 }
 

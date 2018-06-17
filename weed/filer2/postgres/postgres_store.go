@@ -7,7 +7,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/filer2/abstract_sql"
 	_ "github.com/lib/pq"
-	"github.com/spf13/viper"
 )
 
 const (
@@ -26,16 +25,16 @@ func (store *PostgresStore) GetName() string {
 	return "postgres"
 }
 
-func (store *PostgresStore) Initialize(viper *viper.Viper) (err error) {
+func (store *PostgresStore) Initialize(configuration filer2.Configuration) (err error) {
 	return store.initialize(
-		viper.GetString("username"),
-		viper.GetString("password"),
-		viper.GetString("hostname"),
-		viper.GetInt("port"),
-		viper.GetString("database"),
-		viper.GetString("sslmode"),
-		viper.GetInt("connection_max_idle"),
-		viper.GetInt("connection_max_open"),
+		configuration.GetString("username"),
+		configuration.GetString("password"),
+		configuration.GetString("hostname"),
+		configuration.GetInt("port"),
+		configuration.GetString("database"),
+		configuration.GetString("sslmode"),
+		configuration.GetInt("connection_max_idle"),
+		configuration.GetInt("connection_max_open"),
 	)
 }
 

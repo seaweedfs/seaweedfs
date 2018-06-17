@@ -7,7 +7,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/filer2/abstract_sql"
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/spf13/viper"
 )
 
 const (
@@ -26,15 +25,15 @@ func (store *MysqlStore) GetName() string {
 	return "mysql"
 }
 
-func (store *MysqlStore) Initialize(viper *viper.Viper) (err error) {
+func (store *MysqlStore) Initialize(configuration filer2.Configuration) (err error) {
 	return store.initialize(
-		viper.GetString("username"),
-		viper.GetString("password"),
-		viper.GetString("hostname"),
-		viper.GetInt("port"),
-		viper.GetString("database"),
-		viper.GetInt("connection_max_idle"),
-		viper.GetInt("connection_max_open"),
+		configuration.GetString("username"),
+		configuration.GetString("password"),
+		configuration.GetString("hostname"),
+		configuration.GetInt("port"),
+		configuration.GetString("database"),
+		configuration.GetInt("connection_max_idle"),
+		configuration.GetInt("connection_max_open"),
 	)
 }
 

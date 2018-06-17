@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/google/btree"
-	"github.com/spf13/viper"
 	"strings"
 )
 
@@ -28,7 +27,7 @@ func (store *MemDbStore) GetName() string {
 	return "memory"
 }
 
-func (store *MemDbStore) Initialize(viper *viper.Viper) (err error) {
+func (store *MemDbStore) Initialize(configuration filer2.Configuration) (err error) {
 	store.tree = btree.New(8)
 	return nil
 }

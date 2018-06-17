@@ -2,12 +2,12 @@ package filer2
 
 import (
 	"errors"
-	"github.com/spf13/viper"
 )
 
 type FilerStore interface {
 	GetName() string
-	Initialize(viper *viper.Viper) error
+	// Initialize initializes the file store
+	Initialize(configuration Configuration) error
 	InsertEntry(*Entry) error
 	UpdateEntry(*Entry) (err error)
 	FindEntry(FullPath) (entry *Entry, err error)

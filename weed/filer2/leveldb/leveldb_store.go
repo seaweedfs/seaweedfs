@@ -7,7 +7,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	weed_util "github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/spf13/viper"
 	"github.com/syndtr/goleveldb/leveldb"
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
 )
@@ -28,8 +27,8 @@ func (store *LevelDBStore) GetName() string {
 	return "leveldb"
 }
 
-func (store *LevelDBStore) Initialize(viper *viper.Viper) (err error) {
-	dir := viper.GetString("dir")
+func (store *LevelDBStore) Initialize(configuration filer2.Configuration) (err error) {
+	dir := configuration.GetString("dir")
 	return store.initialize(dir)
 }
 

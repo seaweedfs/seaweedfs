@@ -5,7 +5,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/go-redis/redis"
-	"github.com/spf13/viper"
 	"sort"
 	"strings"
 )
@@ -26,11 +25,11 @@ func (store *RedisStore) GetName() string {
 	return "redis"
 }
 
-func (store *RedisStore) Initialize(viper *viper.Viper) (err error) {
+func (store *RedisStore) Initialize(configuration filer2.Configuration) (err error) {
 	return store.initialize(
-		viper.GetString("address"),
-		viper.GetString("password"),
-		viper.GetInt("database"),
+		configuration.GetString("address"),
+		configuration.GetString("password"),
+		configuration.GetInt("database"),
 	)
 }
 
