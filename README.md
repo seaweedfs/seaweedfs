@@ -296,7 +296,12 @@ SeaweedFS can also store extra large files by splitting them into manageable dat
 
 ### Compared to GlusterFS, Ceph ###
 
-The architectures are usually the same, with POSIX interface supported by storage system.
+The architectures are mostly the same. SeaweedFS aims to store and read files fast, with a simple and flat architecture. The main differences are
+
+* SeaweedFS optimizes for small files, ensuring O(1) disk seek operation, and can also handle large files.
+* SeaweedFS statically assign a volume id for a file. Locating file content becomes just a lookup of the volume id, which can be easily cached.
+* SeaweedFS Filer metadata store can be any well-known and proven data stores, e.g., Cassandra, Redis, MySql, PostGres, etc, and is easy to customized.
+* SeaweedFS Volume server also communicate directly with clients via HTTP, supporting range queries, direct uploads, etc.
 
 | System         | File Meta                       | File Content Read| POSIX  | REST API | Optimized for small files |
 | -------------  | ------------------------------- | ---------------- | ------ | -------- | ------------------------- |
@@ -304,12 +309,6 @@ The architectures are usually the same, with POSIX interface supported by storag
 | SeaweedFS Filer| Linearly Scalable, Customizable | O(1) disk seek   | FUSE   | Yes      | Yes                       |
 | GlusterFS      | hashing          |                  | FUSE, NFS          |          |                           |
 | Ceph           | hashing + rules  |                  | FUSE               | Yes      |                           |
-
-
-* SeaweedFS optimizes for small files, ensuring O(1) disk seek operation, and can also handle large files.
-* SeaweedFS Filer metadata store can be any well-known and proven data stores, e.g., Cassandra, Redis, MySql, PostGres, etc, and is easy to customized.
-* SeaweedFS Volume server also communicate directly with clients via HTTP.
-* SeaweedFS statically assign a volume id for a file. This volume id lookup can be cached.
 
 ### Compared to GlusterFS ###
 
@@ -351,7 +350,6 @@ step 2: also you may need to install Mercurial by following the instructions bel
 
 http://mercurial.selenic.com/downloads
 
-
 step 3: download, compile, and install the project by executing the following command
 
 go get github.com/chrislusf/seaweedfs/weed
@@ -369,10 +367,6 @@ When testing read performance on SeaweedFS, it basically becomes performance tes
 ### Solid State Disk
 
 To modify or delete small files, SSD must delete a whole block at a time, and move content in existing blocks to a new block. SSD is fast when brand new, but will get fragmented over time and you have to garbage collect, compacting blocks. SeaweedFS is friendly to SSD since it is append-only. Deletion and compaction are done on volume level in the background, not slowing reading and not causing fragmentation.
-
-## Not Planned
-
-POSIX support
 
 ## Benchmark
 
