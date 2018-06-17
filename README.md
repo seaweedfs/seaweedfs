@@ -75,6 +75,7 @@ SeaweedFS started by implementing [Facebook's Haystack design paper](http://www.
 * Servers in the same cluster can have different disk spaces, file systems, OS etc.
 * Adding/Removing servers does **not** cause any data re-balancing
 * Optional [filer server][Filer] provides "normal" directories and files via http
+* Optionally [mount filer][Mount] as a local directory to read and write
 * Optionally fix the orientation for jpeg pictures
 * Support Etag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/boltdb/btree mode tuning for memory/performance balance.
