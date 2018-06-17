@@ -287,39 +287,55 @@ Ceph hashing avoids SPOF, but makes it complicated when moving or adding servers
 
 ### Compared to HDFS ###
 
-HDFS uses the chunk approach for each file, and is ideal for streaming large files.
+HDFS uses the chunk approach for each file, and is ideal for storing large files.
 
 SeaweedFS is ideal for serving relatively smaller files quickly and concurrently.
 
 SeaweedFS can also store extra large files by splitting them into manageable data chunks, and store the file ids of the data chunks into a meta chunk. This is managed by "weed upload/download" tool, and the weed master or volume servers are agnostic about it.
 
-### Compared to MogileFS ###
 
-SeaweedFS has 2 components: directory server, storage nodes.
+### Compared to GlusterFS, Ceph ###
 
-MogileFS has 3 components: tracers, database, storage nodes.
+The architectures are usually the same, with POSIX interface supported by storage system.
 
-One more layer means slower access, more operation complexity, more failure possibility.
+| System         | File Meta                       | File Content Read| POSIX  | REST API | Optimized for small files |
+| -------------  | ------------------------------- | ---------------- | ------ | -------- | ------------------------- |
+| SeaweedFS      | lookup volume id, cacheable     | O(1) disk seek   |        | Yes      | Yes                       |
+| SeaweedFS Filer| Linearly Scalable, Customizable | O(1) disk seek   | FUSE   | Yes      | Yes                       |
+| GlusterFS      | hashing          |                  | FUSE, NFS          |          |                           |
+| Ceph           | hashing + rules  |                  | FUSE               | Yes      |                           |
+
+
+* SeaweedFS optimizes for small files, ensuring O(1) disk seek operation, and can also handle large files.
+* SeaweedFS Filer metadata store can be any well-known and proven data stores, e.g., Cassandra, Redis, MySql, PostGres, etc, and is easy to customized.
+* SeaweedFS Volume server also communicate directly with clients via HTTP.
+* SeaweedFS statically assign a volume id for a file. This volume id lookup can be cached.
 
 ### Compared to GlusterFS ###
 
-SeaweedFS is not POSIX compliant, and has a simple implementation.
+GlusterFS stores files, both directories and content, in configurable volumes called "bricks".
 
-GlusterFS is POSIX compliant, and is much more complex.
+GlusterFS hashes the path and filename into ids, and assigned to virtual volumes, and then mapped to "bricks".
 
-### Compared to MongoDB's GridFS ###
+### Compared to Ceph ###
 
-Mongo's GridFS splits files into chunks and manage chunks in the central MongoDB. For every read or write request, the database needs to query the metadata. It's OK if this is not yet a bottleneck, but for a lot of concurrent reads this unnecessary query could slow things down.
+Same as SeaweedFS, Ceph is also based on a object store RADOS. Ceph is rather complicated with mixed reviews.
 
-Since files are chunked(default to 256KB), there will be multiple metadata readings and multiple chunk readings, linear to the file size. One 2.56MB file would require at least 20 disk read requests.
+Ceph uses CRUSH hashing to automatically manage the data placement. SeaweedFS places data by assigned volumes.
 
-On the contrary, SeaweedFS uses large file volume of 32G size to store lots of files, and only manages file volumes in the master server. Each volume manages file metadata itself. So all file metadata is spread across the volume nodes, and just one disk read is needed.
+| SeaweedFS         | comparable to Ceph | advantage |
+| -------------  | ------------- | ---------------- |
+| Master  | MDS | simpler |
+| Volume  | OSD | optimized for small files |
+| Filer  | Ceph FS | linearly scalable, Customizable, O(1) or O(logN) |
+
 
 ## Dev plan ##
 
 More tools and documentation, on how to maintain and scale the system. For example, how to move volumes, automatically balancing data, how to grow volumes, how to check system status, etc.
+Other key features include: Erasure Encoding, support S3 API, JWT security.
 
-This is a super exciting project! And I need helpers!
+This is a super exciting project! And I need helpers and [support][https://www.patreon.com/seaweedfs]!
 
 
 ## Installation guide for users who are not familiar with golang
