@@ -80,7 +80,7 @@ SeaweedFS can work very well with just the object store. [[Filer]] is added late
 * Support Etag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/boltdb/btree mode tuning for memory/performance balance.
 
-[Filer]: https://github.com/chrislusf/seaweedfs/wiki/Filer
+[Filer]: https://github.com/chrislusf/seaweedfs/wiki/Directories-and-Files
 [Mount]: https://github.com/chrislusf/seaweedfs/wiki/Mount
 
 ## Example Usage
