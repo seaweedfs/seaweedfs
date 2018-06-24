@@ -5,7 +5,9 @@ import (
 	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/golang/protobuf/proto"
 )
 
 const (
@@ -25,9 +27,15 @@ type SuperBlock struct {
 	ReplicaPlacement *ReplicaPlacement
 	Ttl              *TTL
 	CompactRevision  uint16
+	Extra            *master_pb.SuperBlockExtra
+	extraSize        uint16
 }
 
 func (s *SuperBlock) BlockSize() int {
+	switch version {
+	case Version2:
+		return _SuperBlockSize + int(s.extraSize)
+	}
 	return _SuperBlockSize
 }
 
@@ -40,6 +48,22 @@ func (s *SuperBlock) Bytes() []byte {
 	header[1] = s.ReplicaPlacement.Byte()
 	s.Ttl.ToBytes(header[2:4])
 	util.Uint16toBytes(header[4:6], s.CompactRevision)
+
+	if s.Extra != nil {
+		extraData, err := proto.Marshal(s.Extra)
+		if err != nil {
+			glog.Fatalf("cannot marshal super block extra %+v: %v", s.Extra, err)
+		}
+		extraSize := len(extraData)
+		if extraSize > 256*256 {
+			glog.Fatalf("super block extra size is %d bigger than %d: %v", extraSize, 256*256)
+		}
+		s.extraSize = uint16(extraSize)
+		util.Uint16toBytes(header[6:8], s.extraSize)
+
+		header = append(header, extraData...)
+	}
+
 	return header
 }
 
@@ -69,16 +93,6 @@ func (v *Volume) readSuperBlock() (err error) {
 	return err
 }
 
-func parseSuperBlock(header []byte) (superBlock SuperBlock, err error) {
-	superBlock.version = Version(header[0])
-	if superBlock.ReplicaPlacement, err = NewReplicaPlacementFromByte(header[1]); err != nil {
-		err = fmt.Errorf("cannot read replica type: %s", err.Error())
-	}
-	superBlock.Ttl = LoadTTLFromBytes(header[2:4])
-	superBlock.CompactRevision = util.BytesToUint16(header[4:6])
-	return
-}
-
 // ReadSuperBlock reads from data file and load it into volume's super block
 func ReadSuperBlock(dataFile *os.File) (superBlock SuperBlock, err error) {
 	if _, err = dataFile.Seek(0, 0); err != nil {
@@ -90,5 +104,25 @@ func ReadSuperBlock(dataFile *os.File) (superBlock SuperBlock, err error) {
 		err = fmt.Errorf("cannot read volume %s super block: %v", dataFile.Name(), e)
 		return
 	}
-	return parseSuperBlock(header)
+	superBlock.version = Version(header[0])
+	if superBlock.ReplicaPlacement, err = NewReplicaPlacementFromByte(header[1]); err != nil {
+		err = fmt.Errorf("cannot read replica type: %s", err.Error())
+		return
+	}
+	superBlock.Ttl = LoadTTLFromBytes(header[2:4])
+	superBlock.CompactRevision = util.BytesToUint16(header[4:6])
+	superBlock.extraSize = util.BytesToUint16(header[6:8])
+
+	if superBlock.extraSize > 0 {
+		// read more
+		extraData := make([]byte, int(superBlock.extraSize))
+		superBlock.Extra = &master_pb.SuperBlockExtra{}
+		err = proto.Unmarshal(extraData, superBlock.Extra)
+		if err != nil {
+			err = fmt.Errorf("cannot read volume %s super block extra: %v", dataFile.Name(), e)
+			return
+		}
+	}
+
+	return
 }

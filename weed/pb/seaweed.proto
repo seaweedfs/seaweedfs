@@ -46,3 +46,6 @@ message VolumeInformationMessage {
 
 message Empty {
 }
+
+message SuperBlockExtra {
+}

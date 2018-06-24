@@ -1,10 +1,10 @@
 package storage
 
 import (
-	"testing"
-	"os"
 	"io/ioutil"
 	"math/rand"
+	"os"
+	"testing"
 )
 
 /*
