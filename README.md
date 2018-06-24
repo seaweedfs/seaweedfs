@@ -334,7 +334,7 @@ Ceph uses CRUSH hashing to automatically manage the data placement. SeaweedFS pl
 More tools and documentation, on how to maintain and scale the system. For example, how to move volumes, automatically balancing data, how to grow volumes, how to check system status, etc.
 Other key features include: Erasure Encoding, support S3 API, JWT security.
 
-This is a super exciting project! And I need helpers and [support][https://www.patreon.com/seaweedfs]!
+This is a super exciting project! And I need helpers and [support](https://www.patreon.com/seaweedfs)!
 
 
 ## Installation guide for users who are not familiar with golang
