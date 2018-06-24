@@ -69,8 +69,8 @@ func TestCompaction(t *testing.T) {
 		t.Fatalf("volume creation: %v", err)
 	}
 
-	beforeCommitFileCount := 10
-	afterCommitFileCount := 10
+	beforeCommitFileCount := 1000
+	afterCommitFileCount := 1000
 
 	infos := make([]*needleInfo, beforeCommitFileCount+afterCommitFileCount)
 
