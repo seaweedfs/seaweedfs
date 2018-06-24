@@ -55,8 +55,9 @@ func (s *SuperBlock) Bytes() []byte {
 			glog.Fatalf("cannot marshal super block extra %+v: %v", s.Extra, err)
 		}
 		extraSize := len(extraData)
-		if extraSize > 256*256 {
-			glog.Fatalf("super block extra size is %d bigger than %d: %v", extraSize, 256*256)
+		if extraSize > 256*256-2 {
+			// reserve a couple of bits for future extension
+			glog.Fatalf("super block extra size is %d bigger than %d: %v", extraSize, 256*256-2)
 		}
 		s.extraSize = uint16(extraSize)
 		util.Uint16toBytes(header[6:8], s.extraSize)
