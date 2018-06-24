@@ -32,7 +32,7 @@ type SuperBlock struct {
 }
 
 func (s *SuperBlock) BlockSize() int {
-	switch version {
+	switch s.version {
 	case Version2:
 		return _SuperBlockSize + int(s.extraSize)
 	}
@@ -120,7 +120,7 @@ func ReadSuperBlock(dataFile *os.File) (superBlock SuperBlock, err error) {
 		superBlock.Extra = &master_pb.SuperBlockExtra{}
 		err = proto.Unmarshal(extraData, superBlock.Extra)
 		if err != nil {
-			err = fmt.Errorf("cannot read volume %s super block extra: %v", dataFile.Name(), e)
+			err = fmt.Errorf("cannot read volume %s super block extra: %v", dataFile.Name(), err)
 			return
 		}
 	}
