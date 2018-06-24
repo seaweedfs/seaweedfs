@@ -162,7 +162,7 @@ func (n *Needle) ReadData(r *os.File, offset int64, size uint32, version Version
 	}
 	n.ParseNeedleHeader(bytes)
 	if n.Size != size {
-		return fmt.Errorf("File Entry Not Found. Needle %d Memory %d", n.Size, size)
+		return fmt.Errorf("File Entry Not Found. Needle id %d expected size %d Memory %d", n.Id, n.Size, size)
 	}
 	switch version {
 	case Version1:

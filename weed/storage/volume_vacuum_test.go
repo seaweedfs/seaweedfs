@@ -69,36 +69,21 @@ func TestCompaction(t *testing.T) {
 		t.Fatalf("volume creation: %v", err)
 	}
 
-	FILE_COUNT := 234
+	beforeCommitFileCount := 10
+	afterCommitFileCount := 10
 
-	infos := make([]*needleInfo, FILE_COUNT)
+	infos := make([]*needleInfo, beforeCommitFileCount+afterCommitFileCount)
 
-	for i := 1; i <= FILE_COUNT; i++ {
-		n := newRandomNeedle(uint64(i))
-		size, err := v.writeNeedle(n)
-		if err != nil {
-			t.Fatalf("write file %d: %v", i, err)
-		}
-		infos[i-1] = &needleInfo{
-			size: size,
-			crc:  n.Checksum,
-		}
-
-		println("written file", i, "checksum", n.Checksum.Value(), "size", size)
-
-		if rand.Float64() < 0.5 {
-			toBeDeleted := rand.Intn(i) + 1
-			oldNeedle := newEmptyNeedle(uint64(toBeDeleted))
-			v.deleteNeedle(oldNeedle)
-			println("deleted file", toBeDeleted)
-			infos[toBeDeleted-1] = &needleInfo{
-				size: 0,
-				crc:  n.Checksum,
-			}
-		}
+	for i := 1; i <= beforeCommitFileCount; i++ {
+		doSomeWritesDeletes(i, v, t, infos)
 	}
 
 	v.Compact(0)
+
+	for i := 1; i <= afterCommitFileCount; i++ {
+		doSomeWritesDeletes(i+beforeCommitFileCount, v, t, infos)
+	}
+
 	v.commitCompact()
 
 	v.Close()
@@ -108,7 +93,12 @@ func TestCompaction(t *testing.T) {
 		t.Fatalf("volume reloading: %v", err)
 	}
 
-	for i := 1; i <= FILE_COUNT; i++ {
+	for i := 1; i <= beforeCommitFileCount+afterCommitFileCount; i++ {
+
+		if infos[i-1] == nil {
+			t.Fatal("not found file", i)
+			continue
+		}
 
 		if infos[i-1].size == 0 {
 			continue
@@ -128,6 +118,28 @@ func TestCompaction(t *testing.T) {
 
 	}
 
+}
+func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
+	n := newRandomNeedle(uint64(i))
+	size, err := v.writeNeedle(n)
+	if err != nil {
+		t.Fatalf("write file %d: %v", i, err)
+	}
+	infos[i-1] = &needleInfo{
+		size: size,
+		crc:  n.Checksum,
+	}
+	println("written file", i, "checksum", n.Checksum.Value(), "size", size)
+	if rand.Float64() < 0.5 {
+		toBeDeleted := rand.Intn(i) + 1
+		oldNeedle := newEmptyNeedle(uint64(toBeDeleted))
+		v.deleteNeedle(oldNeedle)
+		println("deleted file", toBeDeleted)
+		infos[toBeDeleted-1] = &needleInfo{
+			size: 0,
+			crc:  n.Checksum,
+		}
+	}
 }
 
 type needleInfo struct {
