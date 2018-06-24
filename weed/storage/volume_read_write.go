@@ -189,7 +189,7 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 
 	version := v.Version()
 
-	offset := int64(SuperBlockSize)
+	offset := int64(v.SuperBlock.BlockSize())
 	n, rest, e := ReadNeedleHeader(v.dataFile, version, offset)
 	if e != nil {
 		err = fmt.Errorf("cannot read needle header: %v", e)

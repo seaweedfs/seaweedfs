@@ -48,11 +48,7 @@ func main() {
 	}
 	defer datFile.Close()
 
-	header := make([]byte, storage.SuperBlockSize)
-	if _, e := datFile.Read(header); e != nil {
-		glog.Fatalf("cannot read volume %s super block: %v", fileName+".dat", e)
-	}
-	superBlock, err := storage.ParseSuperBlock(header)
+	superBlock, err := storage.ReadSuperBlock(datFile)
 
 	if err != nil {
 		glog.Fatalf("cannot parse existing super block: %v", err)

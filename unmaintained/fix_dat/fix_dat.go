@@ -39,24 +39,26 @@ func main() {
 	}
 	indexFile, err := os.OpenFile(path.Join(*fixVolumePath, fileName+".idx"), os.O_RDONLY, 0644)
 	if err != nil {
-		glog.Fatalf("Read Volume Index [ERROR] %s\n", err)
+		glog.Fatalf("Read Volume Index %v", err)
 	}
 	defer indexFile.Close()
 	datFile, err := os.OpenFile(path.Join(*fixVolumePath, fileName+".dat"), os.O_RDONLY, 0644)
 	if err != nil {
-		glog.Fatalf("Read Volume Data [ERROR] %s\n", err)
+		glog.Fatalf("Read Volume Data %v", err)
 	}
 	defer datFile.Close()
 
 	newDatFile, err := os.Create(path.Join(*fixVolumePath, fileName+".dat_fixed"))
 	if err != nil {
-		glog.Fatalf("Write New Volume Data [ERROR] %s\n", err)
+		glog.Fatalf("Write New Volume Data %v", err)
 	}
 	defer newDatFile.Close()
 
-	header := make([]byte, storage.SuperBlockSize)
-	datFile.Read(header)
-	newDatFile.Write(header)
+	superBlock, err := storage.ReadSuperBlock(datFile)
+	if err != nil {
+		glog.Fatalf("Read Volume Data superblock %v", err)
+	}
+	newDatFile.Write(superBlock.Bytes())
 
 	iterateEntries(datFile, indexFile, func(n *storage.Needle, offset int64) {
 		fmt.Printf("file id=%d name=%s size=%d dataSize=%d\n", n.Id, string(n.Name), n.Size, n.DataSize)
@@ -74,8 +76,13 @@ func iterateEntries(datFile, idxFile *os.File, visitNeedle func(n *storage.Needl
 	readerOffset += int64(count)
 
 	// start to read dat file
-	offset := int64(storage.SuperBlockSize)
-	version := storage.Version2
+	superblock, err := storage.ReadSuperBlock(datFile)
+	if err != nil {
+		fmt.Printf("cannot read dat file super block: %v", err)
+		return
+	}
+	offset := int64(superblock.BlockSize())
+	version := superblock.Version()
 	n, rest, err := storage.ReadNeedleHeader(datFile, version, offset)
 	if err != nil {
 		fmt.Printf("cannot read needle header: %v", err)

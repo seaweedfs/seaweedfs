@@ -87,14 +87,7 @@ func (v *Volume) cleanupCompact() error {
 }
 
 func fetchCompactRevisionFromDatFile(file *os.File) (compactRevision uint16, err error) {
-	if _, err = file.Seek(0, 0); err != nil {
-		return 0, fmt.Errorf("cannot seek to the beginning of %s: %v", file.Name(), err)
-	}
-	header := make([]byte, SuperBlockSize)
-	if _, e := file.Read(header); e != nil {
-		return 0, fmt.Errorf("cannot read file %s 's super block: %v", file.Name(), e)
-	}
-	superBlock, err := ParseSuperBlock(header)
+	superBlock, err := ReadSuperBlock(file)
 	if err != nil {
 		return 0, err
 	}
@@ -242,7 +235,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 	defer idx.Close()
 
 	nm := NewBtreeNeedleMap(idx)
-	new_offset := int64(SuperBlockSize)
+	new_offset := int64(0)
 
 	now := uint64(time.Now().Unix())
 
@@ -250,6 +243,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 		func(superBlock SuperBlock) error {
 			superBlock.CompactRevision++
 			_, err = dst.Write(superBlock.Bytes())
+			new_offset = int64(superBlock.BlockSize())
 			return err
 		}, true, func(n *Needle, offset int64) error {
 			if n.HasTtl() && now >= n.LastModified+uint64(v.Ttl.Minutes()*60) {
@@ -297,7 +291,7 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 
 	v.SuperBlock.CompactRevision++
 	dst.Write(v.SuperBlock.Bytes())
-	new_offset := int64(SuperBlockSize)
+	new_offset := int64(v.SuperBlock.BlockSize())
 
 	WalkIndexFile(oldIndexFile, func(key uint64, offset, size uint32) error {
 		if offset == 0 || size == TombstoneFileSize {

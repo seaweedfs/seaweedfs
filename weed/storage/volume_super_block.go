@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	SuperBlockSize = 8
+	_SuperBlockSize = 8
 )
 
 /*
@@ -27,11 +27,15 @@ type SuperBlock struct {
 	CompactRevision  uint16
 }
 
+func (s *SuperBlock) BlockSize() int {
+	return _SuperBlockSize
+}
+
 func (s *SuperBlock) Version() Version {
 	return s.version
 }
 func (s *SuperBlock) Bytes() []byte {
-	header := make([]byte, SuperBlockSize)
+	header := make([]byte, _SuperBlockSize)
 	header[0] = byte(s.version)
 	header[1] = s.ReplicaPlacement.Byte()
 	s.Ttl.ToBytes(header[2:4])
@@ -59,18 +63,13 @@ func (v *Volume) maybeWriteSuperBlock() error {
 	}
 	return e
 }
+
 func (v *Volume) readSuperBlock() (err error) {
-	if _, err = v.dataFile.Seek(0, 0); err != nil {
-		return fmt.Errorf("cannot seek to the beginning of %s: %v", v.dataFile.Name(), err)
-	}
-	header := make([]byte, SuperBlockSize)
-	if _, e := v.dataFile.Read(header); e != nil {
-		return fmt.Errorf("cannot read volume %d super block: %v", v.Id, e)
-	}
-	v.SuperBlock, err = ParseSuperBlock(header)
+	v.SuperBlock, err = ReadSuperBlock(v.dataFile)
 	return err
 }
-func ParseSuperBlock(header []byte) (superBlock SuperBlock, err error) {
+
+func parseSuperBlock(header []byte) (superBlock SuperBlock, err error) {
 	superBlock.version = Version(header[0])
 	if superBlock.ReplicaPlacement, err = NewReplicaPlacementFromByte(header[1]); err != nil {
 		err = fmt.Errorf("cannot read replica type: %s", err.Error())
@@ -78,4 +77,18 @@ func ParseSuperBlock(header []byte) (superBlock SuperBlock, err error) {
 	superBlock.Ttl = LoadTTLFromBytes(header[2:4])
 	superBlock.CompactRevision = util.BytesToUint16(header[4:6])
 	return
+}
+
+// ReadSuperBlock reads from data file and load it into volume's super block
+func ReadSuperBlock(dataFile *os.File) (superBlock SuperBlock, err error) {
+	if _, err = dataFile.Seek(0, 0); err != nil {
+		err = fmt.Errorf("cannot seek to the beginning of %s: %v", dataFile.Name(), err)
+		return
+	}
+	header := make([]byte, _SuperBlockSize)
+	if _, e := dataFile.Read(header); e != nil {
+		err = fmt.Errorf("cannot read volume %s super block: %v", dataFile.Name(), e)
+		return
+	}
+	return parseSuperBlock(header)
 }
