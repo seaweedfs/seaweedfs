@@ -14,6 +14,14 @@ import (
 func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
 	var dn *topology.DataNode
 	t := ms.Topo
+
+	defer func() {
+		if dn != nil {
+			glog.V(0).Infof("unregister disconnected volume server %s:%d", dn.Ip, dn.Port)
+			t.UnRegisterDataNode(dn)
+		}
+	}()
+
 	for {
 		heartbeat, err := stream.Recv()
 		if err == nil {
@@ -59,10 +67,6 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 
 		} else {
-			if dn != nil {
-				glog.V(0).Infof("lost volume server %s:%d", dn.Ip, dn.Port)
-				t.UnRegisterDataNode(dn)
-			}
 			return err
 		}
 
@@ -78,6 +82,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 	}
 }
 
+// KeepConnected keep a stream gRPC call to the master. Used by filer to know the master is up.
 func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServer) error {
 	for {
 		_, err := stream.Recv()
