@@ -6,7 +6,6 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"google.golang.org/grpc/peer"
 )
@@ -50,21 +49,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				}
 			}
 
-			var volumeInfos []storage.VolumeInfo
-			for _, v := range heartbeat.Volumes {
-				if vi, err := storage.NewVolumeInfo(v); err == nil {
-					volumeInfos = append(volumeInfos, vi)
-				} else {
-					glog.V(0).Infof("Fail to convert joined volume information: %v", err)
-				}
-			}
-			deletedVolumes := dn.UpdateVolumes(volumeInfos)
-			for _, v := range volumeInfos {
-				t.RegisterVolumeLayout(v, dn)
-			}
-			for _, v := range deletedVolumes {
-				t.UnRegisterVolumeLayout(v, dn)
-			}
+			t.SyncDataNodeRegistration(heartbeat.Volumes, dn)
 
 		} else {
 			return err

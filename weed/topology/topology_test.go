@@ -4,7 +4,6 @@ import (
 	"testing"
 	"github.com/chrislusf/seaweedfs/weed/sequence"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 )
 
 func TestRemoveDataCenter(t *testing.T) {
@@ -44,20 +43,8 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 			}
 			volumeMessages = append(volumeMessages, volumeMessage)
 		}
-		var volumeInfos []storage.VolumeInfo
-		for _, v := range volumeMessages {
-			if vi, err := storage.NewVolumeInfo(v); err == nil {
-				volumeInfos = append(volumeInfos, vi)
-			}
-		}
 
-		deletedVolumes := dn.UpdateVolumes(volumeInfos)
-		for _, v := range volumeInfos {
-			topo.RegisterVolumeLayout(v, dn)
-		}
-		for _, v := range deletedVolumes {
-			topo.UnRegisterVolumeLayout(v, dn)
-		}
+		topo.SyncDataNodeRegistration(volumeMessages, dn)
 
 		assert(t, "activeVolumeCount1", topo.activeVolumeCount, volumeCount)
 		assert(t, "volumeCount", topo.volumeCount, volumeCount)
@@ -81,20 +68,7 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 			}
 			volumeMessages = append(volumeMessages, volumeMessage)
 		}
-		var volumeInfos []storage.VolumeInfo
-		for _, v := range volumeMessages {
-			if vi, err := storage.NewVolumeInfo(v); err == nil {
-				volumeInfos = append(volumeInfos, vi)
-			}
-		}
-
-		deletedVolumes := dn.UpdateVolumes(volumeInfos)
-		for _, v := range volumeInfos {
-			topo.RegisterVolumeLayout(v, dn)
-		}
-		for _, v := range deletedVolumes {
-			topo.UnRegisterVolumeLayout(v, dn)
-		}
+		topo.SyncDataNodeRegistration(volumeMessages, dn)
 
 		assert(t, "activeVolumeCount1", topo.activeVolumeCount, volumeCount)
 		assert(t, "volumeCount", topo.volumeCount, volumeCount)
