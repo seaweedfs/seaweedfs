@@ -10,6 +10,9 @@ import (
 )
 
 func (v *Volume) garbageLevel() float64 {
+	if v.ContentSize() == 0 {
+		return 0
+	}
 	return float64(v.nm.DeletedSize()) / float64(v.ContentSize())
 }
 
