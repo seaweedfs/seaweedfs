@@ -22,7 +22,7 @@ type topology struct {
 type Configuration struct {
 	XMLName     xml.Name `xml:"Configuration"`
 	Topo        topology `xml:"Topology"`
-	ip2location map[string]loc
+	ip2location map[string]loc // this is not used any more. leave it here for later.
 }
 
 func (c *Configuration) String() string {
