@@ -166,5 +166,5 @@ func exit() {
 }
 
 func debug(params ...interface{}) {
-	glog.V(4).Infoln(params)
+	glog.V(4).Infoln(params...)
 }
