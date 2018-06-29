@@ -66,7 +66,7 @@ func (c *CassandraStore) Get(fullFileName string) (fid string, err error) {
 		`select fids FROM seaweed_files WHERE path = ? LIMIT 1`,
 		fullFileName).Consistency(gocql.One).Scan(&output); err != nil {
 		if err != gocql.ErrNotFound {
-			glog.V(0).Infof("Failed to find file %s: %v", fullFileName, fid, err)
+			glog.V(0).Infof("Failed to find file %s: %v", fullFileName, err)
 			return "", filer.ErrNotFound
 		}
 	}

@@ -119,7 +119,7 @@ func (s *PostgresStore) ListFiles(dirPath string, lastFileName string, limit int
 func (s *PostgresStore) DeleteDirectory(dirPath string, recursive bool) (err error) {
 	err = s.deleteDirectory(dirPath, recursive)
 	if err != nil {
-		glog.V(0).Infof("Error in Postgres DeleteDir '%s' (recursive = '%t'): %s", err)
+		glog.V(0).Infof("Error in Postgres DeleteDir '%s' (recursive = '%t'): %v", dirPath, recursive, err)
 	}
 	return err
 }

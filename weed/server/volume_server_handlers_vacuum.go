@@ -22,7 +22,7 @@ func (vs *VolumeServer) vacuumVolumeCompactHandler(w http.ResponseWriter, r *htt
 	if r.FormValue("preallocate") != "" {
 		preallocate, err = strconv.ParseInt(r.FormValue("preallocate"), 10, 64)
 		if err != nil {
-			glog.V(0).Infoln("Failed to parse int64 preallocate = %s: %v", r.FormValue("preallocate"), err)
+			glog.V(0).Infof("Failed to parse int64 preallocate = %s: %v", r.FormValue("preallocate"), err)
 		}
 	}
 	err = vs.store.CompactVolume(r.FormValue("volume"), preallocate)

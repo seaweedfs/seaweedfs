@@ -79,7 +79,7 @@ func (fs *FilerServer) queryFileInfoByPath(w http.ResponseWriter, r *http.Reques
 	} else if fileId != "" && err == nil {
 		urlLocation, err = operation.LookupFileId(fs.getMasterNode(), fileId)
 		if err != nil {
-			glog.V(1).Infoln("operation LookupFileId %s failed, err is %s", fileId, err.Error())
+			glog.V(1).Infof("operation LookupFileId %s failed, err:%s", fileId, err)
 			w.WriteHeader(http.StatusNotFound)
 		}
 	} else if fileId == "" && err == filer.ErrNotFound {
@@ -193,7 +193,7 @@ func (fs *FilerServer) monolithicUploadAnalyzer(w http.ResponseWriter, r *http.R
 	*/
 	lastPos := strings.LastIndex(r.URL.Path, "/")
 	if lastPos == -1 || lastPos == 0 || lastPos == len(r.URL.Path)-1 {
-		glog.V(0).Infoln("URL Path [%s] is invalid, could not retrieve file name", r.URL.Path)
+		glog.V(0).Infof("URL Path [%s] is invalid, could not retrieve file name", r.URL.Path)
 		err = fmt.Errorf("URL Path is invalid")
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
