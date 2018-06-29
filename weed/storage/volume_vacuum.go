@@ -189,7 +189,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 			}
 
 			//updated needle
-			if incre_idx_entry.offset != 0 && incre_idx_entry.size != 0 {
+			if incre_idx_entry.offset != 0 && incre_idx_entry.size != 0 && incre_idx_entry.size != TombstoneFileSize {
 				//even the needle cache in memory is hit, the need_bytes is correct
 				var needle_bytes []byte
 				needle_bytes, err = ReadNeedleBlob(oldDatFile, int64(incre_idx_entry.offset)*NeedlePaddingSize, incre_idx_entry.size)
