@@ -48,4 +48,10 @@ message Empty {
 }
 
 message SuperBlockExtra {
+    message ErasureCoding {
+        uint32 data = 1;
+        uint32 parity = 2;
+        repeated uint32 volume_ids = 3;
+    }
+    ErasureCoding erasure_coding = 1;
 }
