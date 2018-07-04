@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"io"
 	"time"
-	"google.golang.org/grpc"
 	"context"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -340,7 +339,7 @@ func detectMimeType(f *os.File) string {
 
 func withFilerClient(filerAddress string, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	grpcConnection, err := grpc.Dial(filerAddress, grpc.WithInsecure())
+	grpcConnection, err := util.GrpcDial(filerAddress)
 	if err != nil {
 		return fmt.Errorf("fail to dial %s: %v", filerAddress, err)
 	}

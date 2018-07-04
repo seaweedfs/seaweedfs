@@ -8,7 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"golang.org/x/net/context"
-	"google.golang.org/grpc"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func (vs *VolumeServer) GetMaster() string {
@@ -38,7 +38,7 @@ func (vs *VolumeServer) heartbeat() {
 
 func (vs *VolumeServer) doHeartbeat(masterNode string, sleepInterval time.Duration) (newLeader string, err error) {
 
-	grpcConection, err := grpc.Dial(masterNode, grpc.WithInsecure())
+	grpcConection, err := util.GrpcDial(masterNode)
 	if err != nil {
 		return "", fmt.Errorf("fail to dial: %v", err)
 	}

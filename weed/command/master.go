@@ -14,7 +14,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
 	"github.com/soheilhy/cmux"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -103,7 +102,7 @@ func runMaster(cmd *Command, args []string) bool {
 	httpL := m.Match(cmux.Any())
 
 	// Create your protocol servers.
-	grpcS := grpc.NewServer()
+	grpcS := util.NewGrpcServer()
 	master_pb.RegisterSeaweedServer(grpcS, ms)
 	reflection.Register(grpcS)
 

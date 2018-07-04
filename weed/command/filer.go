@@ -10,7 +10,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 	"strings"
 )
@@ -129,7 +128,7 @@ func (fo *FilerOptions) start() {
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
-	grpcS := grpc.NewServer()
+	grpcS := util.NewGrpcServer()
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
 	reflection.Register(grpcS)
 	go grpcS.Serve(grpcL)

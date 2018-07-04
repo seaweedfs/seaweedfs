@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/karlseguin/ccache"
-	"google.golang.org/grpc"
 	"sync"
 	"bazil.org/fuse"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type WFS struct {
@@ -43,7 +43,7 @@ func (wfs *WFS) Root() (fs.Node, error) {
 
 func (wfs *WFS) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	grpcConnection, err := grpc.Dial(wfs.filerGrpcAddress, grpc.WithInsecure())
+	grpcConnection, err := util.GrpcDial(wfs.filerGrpcAddress)
 	if err != nil {
 		return fmt.Errorf("fail to dial %s: %v", wfs.filerGrpcAddress, err)
 	}

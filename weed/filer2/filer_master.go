@@ -7,7 +7,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"google.golang.org/grpc"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func (fs *Filer) GetMaster() string {
@@ -48,7 +48,7 @@ func (fs *Filer) KeepConnectedToMaster() {
 
 func withMasterClient(master string, fn func(client master_pb.SeaweedClient) error) error {
 
-	grpcConnection, err := grpc.Dial(master, grpc.WithInsecure())
+	grpcConnection, err := util.GrpcDial(master)
 	if err != nil {
 		return fmt.Errorf("fail to dial %s: %v", master, err)
 	}
