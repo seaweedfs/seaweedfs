@@ -135,7 +135,8 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
-	if ext == ".png" || ext == ".jpg" || ext == ".gif" {
+	var rs io.ReadSeeker
+	if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" {
 		width, height := 0, 0
 		if r.FormValue("width") != "" {
 			width, _ = strconv.Atoi(r.FormValue("width"))
@@ -143,10 +144,10 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		if r.FormValue("height") != "" {
 			height, _ = strconv.Atoi(r.FormValue("height"))
 		}
-		n.Data, _, _ = images.Resized(ext, n.Data, width, height, r.FormValue("mode"))
+		rs, _, _ = images.Resized(ext, bytes.NewReader(n.Data), width, height, r.FormValue("mode"))
 	}
 
-	if e := writeResponseContent(filename, mtype, bytes.NewReader(n.Data), w, r); e != nil {
+	if e := writeResponseContent(filename, mtype, rs, w, r); e != nil {
 		glog.V(2).Infoln("response write error:", e)
 	}
 }
@@ -164,6 +165,9 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string,
 	if fileName == "" && chunkManifest.Name != "" {
 		fileName = chunkManifest.Name
 	}
+
+	ext := path.Ext(fileName)
+
 	mType := ""
 	if chunkManifest.Mime != "" {
 		mt := chunkManifest.Mime
@@ -179,7 +183,18 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string,
 		Master:   vs.GetMaster(),
 	}
 	defer chunkedFileReader.Close()
-	if e := writeResponseContent(fileName, mType, chunkedFileReader, w, r); e != nil {
+	var rs io.ReadSeeker
+	if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" {
+		width, height := 0, 0
+		if r.FormValue("width") != "" {
+			width, _ = strconv.Atoi(r.FormValue("width"))
+		}
+		if r.FormValue("height") != "" {
+			height, _ = strconv.Atoi(r.FormValue("height"))
+		}
+		rs, _, _ = images.Resized(ext, chunkedFileReader, width, height, r.FormValue("mode"))
+	}
+	if e := writeResponseContent(fileName, mType, rs, w, r); e != nil {
 		glog.V(2).Infoln("response write error:", e)
 	}
 	return true
