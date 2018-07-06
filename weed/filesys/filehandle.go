@@ -18,6 +18,7 @@ type FileHandle struct {
 	// cache file has been written to
 	dirtyPages    *ContinuousDirtyPages
 	dirtyMetadata bool
+	contentType   string
 
 	handle uint64
 
@@ -145,7 +146,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 	resp.Size = len(req.Data)
 
 	if req.Offset == 0 {
-		fh.f.attributes.Mime = http.DetectContentType(req.Data)
+		fh.contentType = http.DetectContentType(req.Data)
 		fh.dirtyMetadata = true
 	}
 
@@ -196,6 +197,10 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	}
 
 	err = fh.f.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		if fh.f.attributes != nil {
+			fh.f.attributes.Mime = fh.contentType
+		}
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: fh.f.dir.Path,
