@@ -2,7 +2,6 @@ package weed_server
 
 import (
 	"net/http"
-	"strconv"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/cassandra"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/leveldb"
@@ -15,7 +14,6 @@ import (
 )
 
 type FilerServer struct {
-	port               string
 	masters            []string
 	collection         string
 	defaultReplication string
@@ -26,7 +24,7 @@ type FilerServer struct {
 	maxMB              int
 }
 
-func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, ip string, port int, masters []string, collection string,
+func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, masters []string, collection string,
 	replication string, redirectOnRead bool, disableDirListing bool,
 	maxMB int,
 	secret string,
@@ -38,7 +36,6 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, ip string, port int,
 		redirectOnRead:     redirectOnRead,
 		disableDirListing:  disableDirListing,
 		maxMB:              maxMB,
-		port:               ip + ":" + strconv.Itoa(port),
 	}
 
 	if len(masters) == 0 {

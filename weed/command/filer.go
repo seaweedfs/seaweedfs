@@ -87,7 +87,7 @@ func (fo *FilerOptions) start() {
 	masters := *f.masters
 
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux,
-		*fo.ip, *fo.port, strings.Split(masters, ","), *fo.collection,
+		strings.Split(masters, ","), *fo.collection,
 		*fo.defaultReplicaPlacement, *fo.redirectOnRead, *fo.disableDirListing,
 		*fo.maxMB,
 		*fo.secretKey,
