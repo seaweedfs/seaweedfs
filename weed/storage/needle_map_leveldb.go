@@ -31,11 +31,11 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File) (m *LevelDbNeedl
 		return
 	}
 	glog.V(1).Infof("Loading %s...", indexFile.Name())
-	nm, indexLoadError := LoadBtreeNeedleMap(indexFile)
+	mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile)
 	if indexLoadError != nil {
 		return nil, indexLoadError
 	}
-	m.mapMetric = nm.mapMetric
+	m.mapMetric = *mm
 	return
 }
 
