@@ -129,12 +129,12 @@ func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 		size: size,
 		crc:  n.Checksum,
 	}
-	println("written file", i, "checksum", n.Checksum.Value(), "size", size)
+	// println("written file", i, "checksum", n.Checksum.Value(), "size", size)
 	if rand.Float64() < 0.5 {
 		toBeDeleted := rand.Intn(i) + 1
 		oldNeedle := newEmptyNeedle(uint64(toBeDeleted))
 		v.deleteNeedle(oldNeedle)
-		println("deleted file", toBeDeleted)
+		// println("deleted file", toBeDeleted)
 		infos[toBeDeleted-1] = &needleInfo{
 			size: 0,
 			crc:  n.Checksum,

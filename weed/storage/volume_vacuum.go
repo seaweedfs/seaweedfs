@@ -133,7 +133,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 			return fmt.Errorf("readIndexEntry %s at offset %d failed: %v", oldIdxFileName, idx_offset, err)
 		}
 		key, offset, size := idxFileEntry(IdxEntry)
-		glog.V(0).Infof("key %d offset %d size %d", key, offset, size)
+		glog.V(4).Infof("key %d offset %d size %d", key, offset, size)
 		if _, found := incrementedHasUpdatedIndexEntry[key]; !found {
 			incrementedHasUpdatedIndexEntry[key] = keyField{
 				offset: offset,
@@ -193,7 +193,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		//updated needle
 		if incre_idx_entry.offset != 0 && incre_idx_entry.size != 0 && incre_idx_entry.size != TombstoneFileSize {
 			//even the needle cache in memory is hit, the need_bytes is correct
-			glog.V(0).Infof("file %d offset %d size %d", key, int64(incre_idx_entry.offset)*NeedlePaddingSize, incre_idx_entry.size)
+			glog.V(4).Infof("file %d offset %d size %d", key, int64(incre_idx_entry.offset)*NeedlePaddingSize, incre_idx_entry.size)
 			var needle_bytes []byte
 			needle_bytes, err = ReadNeedleBlob(oldDatFile, int64(incre_idx_entry.offset)*NeedlePaddingSize, incre_idx_entry.size)
 			if err != nil {
