@@ -30,6 +30,7 @@ type FilerOptions struct {
 	disableDirListing       *bool
 	maxMB                   *int
 	secretKey               *string
+	dirListingLimit         *int
 }
 
 func init() {
@@ -45,6 +46,7 @@ func init() {
 	f.disableDirListing = cmdFiler.Flag.Bool("disableDirListing", false, "turn off directory listing")
 	f.maxMB = cmdFiler.Flag.Int("maxMB", 32, "split files larger than the limit")
 	f.secretKey = cmdFiler.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
+	f.dirListingLimit = cmdFiler.Flag.Int("dirListLimit", 1000, "limit sub dir listing size")
 }
 
 var cmdFiler = &Command{
@@ -86,12 +88,16 @@ func (fo *FilerOptions) start() {
 
 	masters := *f.masters
 
-	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux,
-		strings.Split(masters, ","), *fo.collection,
-		*fo.defaultReplicaPlacement, *fo.redirectOnRead, *fo.disableDirListing,
-		*fo.maxMB,
-		*fo.secretKey,
-	)
+	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
+		Masters:            strings.Split(masters, ","),
+		Collection:         *fo.collection,
+		DefaultReplication: *fo.defaultReplicaPlacement,
+		RedirectOnRead:     *fo.redirectOnRead,
+		DisableDirListing:  *fo.disableDirListing,
+		MaxMB:              *fo.maxMB,
+		SecretKey:          *fo.secretKey,
+		DirListingLimit:    *fo.dirListingLimit,
+	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
 	}

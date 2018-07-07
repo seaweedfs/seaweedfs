@@ -65,11 +65,11 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	replication := query.Get("replication")
 	if replication == "" {
-		replication = fs.defaultReplication
+		replication = fs.option.DefaultReplication
 	}
 	collection := query.Get("collection")
 	if collection == "" {
-		collection = fs.collection
+		collection = fs.option.Collection
 	}
 
 	if autoChunked := fs.autoChunk(w, r, replication, collection); autoChunked {

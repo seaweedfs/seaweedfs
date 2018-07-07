@@ -13,36 +13,33 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
-type FilerServer struct {
-	masters            []string
-	collection         string
-	defaultReplication string
-	redirectOnRead     bool
-	disableDirListing  bool
-	secret             security.Secret
-	filer              *filer2.Filer
-	maxMB              int
+type FilerOption struct {
+	Masters            []string
+	Collection         string
+	DefaultReplication string
+	RedirectOnRead     bool
+	DisableDirListing  bool
+	MaxMB              int
+	SecretKey          string
+	DirListingLimit    int
 }
 
-func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, masters []string, collection string,
-	replication string, redirectOnRead bool, disableDirListing bool,
-	maxMB int,
-	secret string,
-) (fs *FilerServer, err error) {
+type FilerServer struct {
+	option *FilerOption
+	secret security.Secret
+	filer  *filer2.Filer
+}
+
+func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
 	fs = &FilerServer{
-		masters:            masters,
-		collection:         collection,
-		defaultReplication: replication,
-		redirectOnRead:     redirectOnRead,
-		disableDirListing:  disableDirListing,
-		maxMB:              maxMB,
+		option: option,
 	}
 
-	if len(masters) == 0 {
+	if len(option.Masters) == 0 {
 		glog.Fatal("master list is required!")
 	}
 
-	fs.filer = filer2.NewFiler(masters)
+	fs.filer = filer2.NewFiler(option.Masters)
 
 	go fs.filer.KeepConnectedToMaster()
 

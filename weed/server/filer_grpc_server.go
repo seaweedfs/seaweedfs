@@ -33,7 +33,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 
 func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntriesRequest) (*filer_pb.ListEntriesResponse, error) {
 
-	entries, err := fs.filer.ListDirectoryEntries(filer2.FullPath(req.Directory), "", false, 1000)
+	entries, err := fs.filer.ListDirectoryEntries(filer2.FullPath(req.Directory), "", false, fs.option.DirListingLimit)
 	if err != nil {
 		return nil, err
 	}

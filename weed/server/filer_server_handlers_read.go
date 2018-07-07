@@ -30,7 +30,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	}
 
 	if entry.IsDirectory() {
-		if fs.disableDirListing {
+		if fs.option.DisableDirListing {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
@@ -70,7 +70,7 @@ func (fs *FilerServer) handleSingleChunk(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	if fs.redirectOnRead {
+	if fs.option.RedirectOnRead {
 		http.Redirect(w, r, urlString, http.StatusFound)
 		return
 	}

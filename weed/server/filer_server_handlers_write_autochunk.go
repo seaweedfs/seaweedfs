@@ -27,8 +27,8 @@ func (fs *FilerServer) autoChunk(w http.ResponseWriter, r *http.Request, replica
 
 	parsedMaxMB, _ := strconv.ParseInt(query.Get("maxMB"), 10, 32)
 	maxMB := int32(parsedMaxMB)
-	if maxMB <= 0 && fs.maxMB > 0 {
-		maxMB = int32(fs.maxMB)
+	if maxMB <= 0 && fs.option.MaxMB > 0 {
+		maxMB = int32(fs.option.MaxMB)
 	}
 	if maxMB <= 0 {
 		glog.V(4).Infoln("AutoChunking not enabled")
