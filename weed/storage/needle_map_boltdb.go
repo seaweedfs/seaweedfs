@@ -8,6 +8,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -64,7 +65,7 @@ func generateBoltDbFile(dbFileName string, indexFile *os.File) error {
 		return err
 	}
 	defer db.Close()
-	return WalkIndexFile(indexFile, func(key uint64, offset, size uint32) error {
+	return WalkIndexFile(indexFile, func(key NeedleId, offset Offset, size uint32) error {
 		if offset > 0 && size != TombstoneFileSize {
 			boltDbWrite(db, key, offset, size)
 		} else {
@@ -74,10 +75,11 @@ func generateBoltDbFile(dbFileName string, indexFile *os.File) error {
 	})
 }
 
-func (m *BoltDbNeedleMap) Get(key uint64) (element *needle.NeedleValue, ok bool) {
-	var offset, size uint32
-	bytes := make([]byte, 8)
-	util.Uint64toBytes(bytes, key)
+func (m *BoltDbNeedleMap) Get(key NeedleId) (element *needle.NeedleValue, ok bool) {
+	var offset Offset
+	var size uint32
+	bytes := make([]byte, NeedleIdSize)
+	NeedleIdToBytes(bytes, key)
 	err := m.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(boltdbBucket)
 		if bucket == nil {
@@ -86,13 +88,13 @@ func (m *BoltDbNeedleMap) Get(key uint64) (element *needle.NeedleValue, ok bool)
 
 		data := bucket.Get(bytes)
 
-		if len(data) != 8 {
+		if len(data) != OffsetSize+SizeSize {
 			glog.V(0).Infof("wrong data length: %d", len(data))
 			return fmt.Errorf("wrong data length: %d", len(data))
 		}
 
-		offset = util.BytesToUint32(data[0:4])
-		size = util.BytesToUint32(data[4:8])
+		offset = BytesToOffset(data[0:OffsetSize])
+		size = util.BytesToUint32(data[OffsetSize:OffsetSize+SizeSize])
 
 		return nil
 	})
@@ -100,10 +102,10 @@ func (m *BoltDbNeedleMap) Get(key uint64) (element *needle.NeedleValue, ok bool)
 	if err != nil {
 		return nil, false
 	}
-	return &needle.NeedleValue{Key: needle.Key(key), Offset: offset, Size: size}, true
+	return &needle.NeedleValue{Key: NeedleId(key), Offset: offset, Size: size}, true
 }
 
-func (m *BoltDbNeedleMap) Put(key uint64, offset uint32, size uint32) error {
+func (m *BoltDbNeedleMap) Put(key NeedleId, offset Offset, size uint32) error {
 	var oldSize uint32
 	if oldNeedle, ok := m.Get(key); ok {
 		oldSize = oldNeedle.Size
@@ -117,27 +119,29 @@ func (m *BoltDbNeedleMap) Put(key uint64, offset uint32, size uint32) error {
 }
 
 func boltDbWrite(db *bolt.DB,
-	key uint64, offset uint32, size uint32) error {
-	bytes := make([]byte, 16)
-	util.Uint64toBytes(bytes[0:8], key)
-	util.Uint32toBytes(bytes[8:12], offset)
-	util.Uint32toBytes(bytes[12:16], size)
+	key NeedleId, offset Offset, size uint32) error {
+
+	bytes := make([]byte, NeedleIdSize+OffsetSize+SizeSize)
+	NeedleIdToBytes(bytes[0:NeedleIdSize], key)
+	OffsetToBytes(bytes[NeedleIdSize:NeedleIdSize+OffsetSize], offset)
+	util.Uint32toBytes(bytes[NeedleIdSize+OffsetSize:NeedleIdSize+OffsetSize+SizeSize], size)
+
 	return db.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists(boltdbBucket)
 		if err != nil {
 			return err
 		}
 
-		err = bucket.Put(bytes[0:8], bytes[8:16])
+		err = bucket.Put(bytes[0:NeedleIdSize], bytes[NeedleIdSize:NeedleIdSize+OffsetSize+SizeSize])
 		if err != nil {
 			return err
 		}
 		return nil
 	})
 }
-func boltDbDelete(db *bolt.DB, key uint64) error {
-	bytes := make([]byte, 8)
-	util.Uint64toBytes(bytes, key)
+func boltDbDelete(db *bolt.DB, key NeedleId) error {
+	bytes := make([]byte, NeedleIdSize)
+	NeedleIdToBytes(bytes, key)
 	return db.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists(boltdbBucket)
 		if err != nil {
@@ -152,7 +156,7 @@ func boltDbDelete(db *bolt.DB, key uint64) error {
 	})
 }
 
-func (m *BoltDbNeedleMap) Delete(key uint64, offset uint32) error {
+func (m *BoltDbNeedleMap) Delete(key NeedleId, offset Offset) error {
 	if oldNeedle, ok := m.Get(key); ok {
 		m.logDelete(oldNeedle.Size)
 	}

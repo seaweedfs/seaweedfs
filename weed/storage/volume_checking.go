@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"os"
 
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func getActualSize(size uint32) int64 {
-	padding := NeedlePaddingSize - ((NeedleHeaderSize + size + NeedleChecksumSize) % NeedlePaddingSize)
-	return NeedleHeaderSize + int64(size) + NeedleChecksumSize + int64(padding)
+	padding := NeedlePaddingSize - ((NeedleEntrySize + size + NeedleChecksumSize) % NeedlePaddingSize)
+	return NeedleEntrySize + int64(size) + NeedleChecksumSize + int64(padding)
 }
 
 func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) error {
@@ -22,10 +23,10 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) error {
 		return nil
 	}
 	var lastIdxEntry []byte
-	if lastIdxEntry, e = readIndexEntryAtOffset(indexFile, indexSize-NeedleIndexSize); e != nil {
+	if lastIdxEntry, e = readIndexEntryAtOffset(indexFile, indexSize-NeedleEntrySize); e != nil {
 		return fmt.Errorf("readLastIndexEntry %s failed: %v", indexFile.Name(), e)
 	}
-	key, offset, size := idxFileEntry(lastIdxEntry)
+	key, offset, size := IdxFileEntry(lastIdxEntry)
 	if offset == 0 || size == TombstoneFileSize {
 		return nil
 	}
@@ -38,7 +39,7 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) error {
 
 func verifyIndexFileIntegrity(indexFile *os.File) (indexSize int64, err error) {
 	if indexSize, err = util.GetFileSize(indexFile); err == nil {
-		if indexSize%NeedleIndexSize != 0 {
+		if indexSize%NeedleEntrySize != 0 {
 			err = fmt.Errorf("index file's size is %d bytes, maybe corrupted", indexSize)
 		}
 	}
@@ -50,12 +51,12 @@ func readIndexEntryAtOffset(indexFile *os.File, offset int64) (bytes []byte, err
 		err = fmt.Errorf("offset %d for index file is invalid", offset)
 		return
 	}
-	bytes = make([]byte, NeedleIndexSize)
+	bytes = make([]byte, NeedleEntrySize)
 	_, err = indexFile.ReadAt(bytes, offset)
 	return
 }
 
-func verifyNeedleIntegrity(datFile *os.File, v Version, offset int64, key uint64, size uint32) error {
+func verifyNeedleIntegrity(datFile *os.File, v Version, offset int64, key NeedleId, size uint32) error {
 	n := new(Needle)
 	err := n.ReadData(datFile, offset, size, v)
 	if err != nil {

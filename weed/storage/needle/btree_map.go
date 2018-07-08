@@ -2,6 +2,7 @@ package needle
 
 import (
 	"github.com/google/btree"
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 //This map assumes mostly inserting increasing keys
@@ -15,7 +16,7 @@ func NewBtreeMap() *BtreeMap {
 	}
 }
 
-func (cm *BtreeMap) Set(key Key, offset, size uint32) (oldOffset, oldSize uint32) {
+func (cm *BtreeMap) Set(key NeedleId, offset Offset, size uint32) (oldOffset Offset, oldSize uint32) {
 	found := cm.tree.ReplaceOrInsert(NeedleValue{key, offset, size})
 	if found != nil {
 		old := found.(NeedleValue)
@@ -24,7 +25,7 @@ func (cm *BtreeMap) Set(key Key, offset, size uint32) (oldOffset, oldSize uint32
 	return
 }
 
-func (cm *BtreeMap) Delete(key Key) (oldSize uint32) {
+func (cm *BtreeMap) Delete(key NeedleId) (oldSize uint32) {
 	found := cm.tree.Delete(NeedleValue{key, 0, 0})
 	if found != nil {
 		old := found.(NeedleValue)
@@ -32,7 +33,7 @@ func (cm *BtreeMap) Delete(key Key) (oldSize uint32) {
 	}
 	return
 }
-func (cm *BtreeMap) Get(key Key) (*NeedleValue, bool) {
+func (cm *BtreeMap) Get(key NeedleId) (*NeedleValue, bool) {
 	found := cm.tree.Get(NeedleValue{key, 0, 0})
 	if found != nil {
 		old := found.(NeedleValue)

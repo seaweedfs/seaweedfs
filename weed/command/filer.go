@@ -88,15 +88,17 @@ func (fo *FilerOptions) start() {
 
 	masters := *f.masters
 
+	println("*f.dirListingLimit", *f.dirListingLimit)
+
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
 		Masters:            strings.Split(masters, ","),
-		Collection:         *fo.collection,
-		DefaultReplication: *fo.defaultReplicaPlacement,
-		RedirectOnRead:     *fo.redirectOnRead,
-		DisableDirListing:  *fo.disableDirListing,
-		MaxMB:              *fo.maxMB,
-		SecretKey:          *fo.secretKey,
-		DirListingLimit:    *fo.dirListingLimit,
+		Collection:         *f.collection,
+		DefaultReplication: *f.defaultReplicaPlacement,
+		RedirectOnRead:     *f.redirectOnRead,
+		DisableDirListing:  *f.disableDirListing,
+		MaxMB:              *f.maxMB,
+		SecretKey:          *f.secretKey,
+		DirListingLimit:    *f.dirListingLimit,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

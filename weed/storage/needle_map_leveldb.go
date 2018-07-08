@@ -7,6 +7,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/syndtr/goleveldb/leveldb"
 )
@@ -62,7 +63,7 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 		return err
 	}
 	defer db.Close()
-	return WalkIndexFile(indexFile, func(key uint64, offset, size uint32) error {
+	return WalkIndexFile(indexFile, func(key NeedleId, offset Offset, size uint32) error {
 		if offset > 0 && size != TombstoneFileSize {
 			levelDbWrite(db, key, offset, size)
 		} else {
@@ -72,19 +73,19 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 	})
 }
 
-func (m *LevelDbNeedleMap) Get(key uint64) (element *needle.NeedleValue, ok bool) {
-	bytes := make([]byte, 8)
-	util.Uint64toBytes(bytes, key)
+func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle.NeedleValue, ok bool) {
+	bytes := make([]byte, NeedleIdSize)
+	NeedleIdToBytes(bytes[0:NeedleIdSize], key)
 	data, err := m.db.Get(bytes, nil)
-	if err != nil || len(data) != 8 {
+	if err != nil || len(data) != OffsetSize+SizeSize {
 		return nil, false
 	}
-	offset := util.BytesToUint32(data[0:4])
-	size := util.BytesToUint32(data[4:8])
-	return &needle.NeedleValue{Key: needle.Key(key), Offset: offset, Size: size}, true
+	offset := BytesToOffset(data[0:OffsetSize])
+	size := util.BytesToUint32(data[OffsetSize:OffsetSize+SizeSize])
+	return &needle.NeedleValue{Key: NeedleId(key), Offset: offset, Size: size}, true
 }
 
-func (m *LevelDbNeedleMap) Put(key uint64, offset uint32, size uint32) error {
+func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size uint32) error {
 	var oldSize uint32
 	if oldNeedle, ok := m.Get(key); ok {
 		oldSize = oldNeedle.Size
@@ -98,23 +99,25 @@ func (m *LevelDbNeedleMap) Put(key uint64, offset uint32, size uint32) error {
 }
 
 func levelDbWrite(db *leveldb.DB,
-	key uint64, offset uint32, size uint32) error {
-	bytes := make([]byte, 16)
-	util.Uint64toBytes(bytes[0:8], key)
-	util.Uint32toBytes(bytes[8:12], offset)
-	util.Uint32toBytes(bytes[12:16], size)
-	if err := db.Put(bytes[0:8], bytes[8:16], nil); err != nil {
+	key NeedleId, offset Offset, size uint32) error {
+
+	bytes := make([]byte, NeedleIdSize+OffsetSize+SizeSize)
+	NeedleIdToBytes(bytes[0:NeedleIdSize], key)
+	OffsetToBytes(bytes[NeedleIdSize:NeedleIdSize+OffsetSize], offset)
+	util.Uint32toBytes(bytes[NeedleIdSize+OffsetSize:NeedleIdSize+OffsetSize+SizeSize], size)
+
+	if err := db.Put(bytes[0:NeedleIdSize], bytes[NeedleIdSize:NeedleIdSize+OffsetSize+SizeSize], nil); err != nil {
 		return fmt.Errorf("failed to write leveldb: %v", err)
 	}
 	return nil
 }
-func levelDbDelete(db *leveldb.DB, key uint64) error {
-	bytes := make([]byte, 8)
-	util.Uint64toBytes(bytes, key)
+func levelDbDelete(db *leveldb.DB, key NeedleId) error {
+	bytes := make([]byte, NeedleIdSize)
+	NeedleIdToBytes(bytes, key)
 	return db.Delete(bytes, nil)
 }
 
-func (m *LevelDbNeedleMap) Delete(key uint64, offset uint32) error {
+func (m *LevelDbNeedleMap) Delete(key NeedleId, offset Offset) error {
 	if oldNeedle, ok := m.Get(key); ok {
 		m.logDelete(oldNeedle.Size)
 	}

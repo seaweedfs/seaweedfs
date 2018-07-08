@@ -1,8 +1,12 @@
 package needle
 
+import (
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+)
+
 type NeedleValueMap interface {
-	Set(key Key, offset, size uint32) (oldOffset, oldSize uint32)
-	Delete(key Key) uint32
-	Get(key Key) (*NeedleValue, bool)
+	Set(key NeedleId, offset Offset, size uint32) (oldOffset Offset, oldSize uint32)
+	Delete(key NeedleId) uint32
+	Get(key NeedleId) (*NeedleValue, bool)
 	Visit(visit func(NeedleValue) error) error
 }

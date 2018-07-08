@@ -5,15 +5,15 @@ import (
 	"os"
 	"github.com/willf/bloom"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"encoding/binary"
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 type mapMetric struct {
-	DeletionCounter     int    `json:"DeletionCounter"`
-	FileCounter         int    `json:"FileCounter"`
-	DeletionByteCounter uint64 `json:"DeletionByteCounter"`
-	FileByteCounter     uint64 `json:"FileByteCounter"`
-	MaximumFileKey      uint64 `json:"MaxFileKey"`
+	DeletionCounter     int      `json:"DeletionCounter"`
+	FileCounter         int      `json:"FileCounter"`
+	DeletionByteCounter uint64   `json:"DeletionByteCounter"`
+	FileByteCounter     uint64   `json:"FileByteCounter"`
+	MaximumFileKey      NeedleId `json:"MaxFileKey"`
 }
 
 func (mm *mapMetric) logDelete(deletedByteCount uint32) {
@@ -21,7 +21,7 @@ func (mm *mapMetric) logDelete(deletedByteCount uint32) {
 	mm.DeletionCounter++
 }
 
-func (mm *mapMetric) logPut(key uint64, oldSize uint32, newSize uint32) {
+func (mm *mapMetric) logPut(key NeedleId, oldSize uint32, newSize uint32) {
 	if key > mm.MaximumFileKey {
 		mm.MaximumFileKey = key
 	}
@@ -45,23 +45,22 @@ func (mm mapMetric) FileCount() int {
 func (mm mapMetric) DeletedCount() int {
 	return mm.DeletionCounter
 }
-func (mm mapMetric) MaxFileKey() uint64 {
+func (mm mapMetric) MaxFileKey() NeedleId {
 	return mm.MaximumFileKey
 }
 
 func newNeedleMapMetricFromIndexFile(r *os.File) (mm *mapMetric, err error) {
 	mm = &mapMetric{}
 	var bf *bloom.BloomFilter
-	buf := make([]byte, 8)
+	buf := make([]byte, NeedleIdSize)
 	err = reverseWalkIndexFile(r, func(entryCount int64) {
 		bf = bloom.NewWithEstimates(uint(entryCount), 0.001)
-	}, func(key uint64, offset, size uint32) error {
+	}, func(key NeedleId, offset Offset, size uint32) error {
 
 		if key > mm.MaximumFileKey {
 			mm.MaximumFileKey = key
 		}
-
-		binary.BigEndian.PutUint64(buf, key)
+		NeedleIdToBytes(buf, key)
 		if size != TombstoneFileSize {
 			mm.FileByteCounter += uint64(size)
 		}
@@ -82,23 +81,23 @@ func newNeedleMapMetricFromIndexFile(r *os.File) (mm *mapMetric, err error) {
 	return
 }
 
-func reverseWalkIndexFile(r *os.File, initFn func(entryCount int64), fn func(key uint64, offset, size uint32) error) error {
+func reverseWalkIndexFile(r *os.File, initFn func(entryCount int64), fn func(key NeedleId, offset Offset, size uint32) error) error {
 	fi, err := r.Stat()
 	if err != nil {
 		return fmt.Errorf("file %s stat error: %v", r.Name(), err)
 	}
 	fileSize := fi.Size()
-	if fileSize%NeedleIndexSize != 0 {
+	if fileSize%NeedleEntrySize != 0 {
 		return fmt.Errorf("unexpected file %s size: %d", r.Name(), fileSize)
 	}
 
-	initFn(fileSize / NeedleIndexSize)
+	initFn(fileSize / NeedleEntrySize)
 
-	bytes := make([]byte, NeedleIndexSize)
-	for readerOffset := fileSize - NeedleIndexSize; readerOffset >= 0; readerOffset -= NeedleIndexSize {
+	bytes := make([]byte, NeedleEntrySize)
+	for readerOffset := fileSize - NeedleEntrySize; readerOffset >= 0; readerOffset -= NeedleEntrySize {
 		count, e := r.ReadAt(bytes, readerOffset)
 		glog.V(3).Infoln("file", r.Name(), "readerOffset", readerOffset, "count", count, "e", e)
-		key, offset, size := idxFileEntry(bytes)
+		key, offset, size := IdxFileEntry(bytes)
 		if e = fn(key, offset, size); e != nil {
 			return e
 		}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 func init() {
@@ -54,11 +55,11 @@ func runFix(cmd *Command, args []string) bool {
 		}, false, func(n *storage.Needle, offset int64) error {
 			glog.V(2).Infof("key %d offset %d size %d disk_size %d gzip %v", n.Id, offset, n.Size, n.DiskSize(), n.IsGzipped())
 			if n.Size > 0 {
-				pe := nm.Put(n.Id, uint32(offset/storage.NeedlePaddingSize), n.Size)
+				pe := nm.Put(n.Id, types.Offset(offset/types.NeedlePaddingSize), n.Size)
 				glog.V(2).Infof("saved %d with error %v", n.Size, pe)
 			} else {
 				glog.V(2).Infof("skipping deleted file ...")
-				return nm.Delete(n.Id, uint32(offset/storage.NeedlePaddingSize))
+				return nm.Delete(n.Id, types.Offset(offset/types.NeedlePaddingSize))
 			}
 			return nil
 		})

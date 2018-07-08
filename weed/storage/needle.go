@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"math"
 	"mime"
 	"net/http"
 	"path"
@@ -15,15 +14,12 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/operation"
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 const (
-	NeedleHeaderSize      = 16 //should never change this
-	NeedlePaddingSize     = 8
-	NeedleChecksumSize    = 4
-	MaxPossibleVolumeSize = 4 * 1024 * 1024 * 1024 * 8
-	TombstoneFileSize     = math.MaxUint32
-	PairNamePrefix        = "Seaweed-"
+	NeedleChecksumSize = 4
+	PairNamePrefix     = "Seaweed-"
 )
 
 /*
@@ -31,18 +27,18 @@ const (
 * Needle file size is limited to 4GB for now.
  */
 type Needle struct {
-	Cookie uint32 `comment:"random number to mitigate brute force lookups"`
-	Id     uint64 `comment:"needle id"`
-	Size   uint32 `comment:"sum of DataSize,Data,NameSize,Name,MimeSize,Mime"`
+	Cookie Cookie   `comment:"random number to mitigate brute force lookups"`
+	Id     NeedleId `comment:"needle id"`
+	Size   uint32   `comment:"sum of DataSize,Data,NameSize,Name,MimeSize,Mime"`
 
 	DataSize     uint32 `comment:"Data size"` //version2
 	Data         []byte `comment:"The actual file data"`
-	Flags        byte   `comment:"boolean flags"` //version2
-	NameSize     uint8  //version2
+	Flags        byte   `comment:"boolean flags"`          //version2
+	NameSize     uint8                                     //version2
 	Name         []byte `comment:"maximum 256 characters"` //version2
-	MimeSize     uint8  //version2
+	MimeSize     uint8                                     //version2
 	Mime         []byte `comment:"maximum 256 characters"` //version2
-	PairsSize    uint16 //version2
+	PairsSize    uint16                                    //version2
 	Pairs        []byte `comment:"additional name value pairs, json format, maximum 64kB"`
 	LastModified uint64 //only store LastModifiedBytesLength bytes, which is 5 bytes to disk
 	Ttl          *TTL
@@ -213,7 +209,7 @@ func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
 	dotSep := strings.LastIndex(r.URL.Path, ".")
 	fid := r.URL.Path[commaSep+1:]
 	if dotSep > 0 {
-		fid = r.URL.Path[commaSep+1 : dotSep]
+		fid = r.URL.Path[commaSep+1: dotSep]
 	}
 
 	e = n.ParsePath(fid)
@@ -222,7 +218,7 @@ func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
 }
 func (n *Needle) ParsePath(fid string) (err error) {
 	length := len(fid)
-	if length <= 8 {
+	if length <= CookieSize*2 {
 		return fmt.Errorf("Invalid fid: %s", fid)
 	}
 	delta := ""
@@ -230,13 +226,13 @@ func (n *Needle) ParsePath(fid string) (err error) {
 	if deltaIndex > 0 {
 		fid, delta = fid[0:deltaIndex], fid[deltaIndex+1:]
 	}
-	n.Id, n.Cookie, err = ParseKeyHash(fid)
+	n.Id, n.Cookie, err = ParseNeedleIdCookie(fid)
 	if err != nil {
 		return err
 	}
 	if delta != "" {
 		if d, e := strconv.ParseUint(delta, 10, 64); e == nil {
-			n.Id += d
+			n.Id += NeedleId(d)
 		} else {
 			return e
 		}
@@ -244,21 +240,21 @@ func (n *Needle) ParsePath(fid string) (err error) {
 	return err
 }
 
-func ParseKeyHash(key_hash_string string) (uint64, uint32, error) {
-	if len(key_hash_string) <= 8 {
+func ParseNeedleIdCookie(key_hash_string string) (NeedleId, Cookie, error) {
+	if len(key_hash_string) <= CookieSize*2 {
 		return 0, 0, fmt.Errorf("KeyHash is too short.")
 	}
-	if len(key_hash_string) > 24 {
+	if len(key_hash_string) > (NeedleIdSize+CookieSize)*2 {
 		return 0, 0, fmt.Errorf("KeyHash is too long.")
 	}
-	split := len(key_hash_string) - 8
-	key, err := strconv.ParseUint(key_hash_string[:split], 16, 64)
+	split := len(key_hash_string) - CookieSize*2
+	needleId, err := ParseNeedleId(key_hash_string[:split])
 	if err != nil {
-		return 0, 0, fmt.Errorf("Parse key error: %v", err)
+		return 0, 0, fmt.Errorf("Parse needleId error: %v", err)
 	}
-	hash, err := strconv.ParseUint(key_hash_string[split:], 16, 32)
+	cookie, err := ParseCookie(key_hash_string[split:])
 	if err != nil {
-		return 0, 0, fmt.Errorf("Parse hash error: %v", err)
+		return 0, 0, fmt.Errorf("Parse cookie error: %v", err)
 	}
-	return key, uint32(hash), nil
+	return needleId, cookie, nil
 }

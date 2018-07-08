@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 // isFileUnchanged checks whether this needle to write is same as last one.
@@ -109,7 +110,7 @@ func (v *Volume) writeNeedle(n *Needle) (size uint32, err error) {
 
 	nv, ok := v.nm.Get(n.Id)
 	if !ok || int64(nv.Offset)*NeedlePaddingSize < offset {
-		if err = v.nm.Put(n.Id, uint32(offset/NeedlePaddingSize), n.Size); err != nil {
+		if err = v.nm.Put(n.Id, Offset(offset/NeedlePaddingSize), n.Size); err != nil {
 			glog.V(4).Infof("failed to save in needle map %d: %v", n.Id, err)
 		}
 	}
@@ -134,7 +135,7 @@ func (v *Volume) deleteNeedle(n *Needle) (uint32, error) {
 		if err != nil {
 			return size, err
 		}
-		if err := v.nm.Delete(n.Id, uint32(offset/NeedlePaddingSize)); err != nil {
+		if err := v.nm.Delete(n.Id, Offset(offset/NeedlePaddingSize)); err != nil {
 			return size, err
 		}
 		n.Data = nil
@@ -197,7 +198,7 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 	}
 	for n != nil {
 		if readNeedleBody {
-			if err = n.ReadNeedleBody(v.dataFile, version, offset+int64(NeedleHeaderSize), rest); err != nil {
+			if err = n.ReadNeedleBody(v.dataFile, version, offset+NeedleEntrySize, rest); err != nil {
 				glog.V(0).Infof("cannot read needle body: %v", err)
 				//err = fmt.Errorf("cannot read needle body: %v", err)
 				//return
@@ -207,9 +208,9 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 				// fixed in v0.69
 				// remove this whole "if" clause later, long after 0.69
 				oldRest, oldSize := rest, n.Size
-				padding := NeedlePaddingSize - ((n.Size + NeedleHeaderSize + NeedleChecksumSize) % NeedlePaddingSize)
+				padding := NeedlePaddingSize - ((n.Size + NeedleEntrySize + NeedleChecksumSize) % NeedlePaddingSize)
 				n.Size = 0
-				rest = n.Size + NeedleChecksumSize + padding
+				rest = int64(n.Size + NeedleChecksumSize + padding)
 				if rest%NeedlePaddingSize != 0 {
 					rest += (NeedlePaddingSize - rest%NeedlePaddingSize)
 				}
@@ -219,7 +220,7 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 		if err = visitNeedle(n, offset); err != nil {
 			glog.V(0).Infof("visit needle error: %v", err)
 		}
-		offset += int64(NeedleHeaderSize) + int64(rest)
+		offset += NeedleEntrySize + rest
 		glog.V(4).Infof("==> new entry offset %d", offset)
 		if n, rest, err = ReadNeedleHeader(v.dataFile, version, offset); err != nil {
 			if err == io.EOF {

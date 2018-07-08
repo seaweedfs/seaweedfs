@@ -7,6 +7,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 func (vs *VolumeServer) getVolumeSyncStatusHandler(w http.ResponseWriter, r *http.Request) {
@@ -50,13 +51,17 @@ func (vs *VolumeServer) getVolumeDataContentHandler(w http.ResponseWriter, r *ht
 	}
 	offset := uint32(util.ParseUint64(r.FormValue("offset"), 0))
 	size := uint32(util.ParseUint64(r.FormValue("size"), 0))
-	content, err := storage.ReadNeedleBlob(v.DataFile(), int64(offset)*storage.NeedlePaddingSize, size)
+	content, err := storage.ReadNeedleBlob(v.DataFile(), int64(offset)*types.NeedlePaddingSize, size)
 	if err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
 
-	id := util.ParseUint64(r.FormValue("id"), 0)
+	id, err := types.ParseNeedleId(r.FormValue("id"))
+	if err != nil {
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
 	n := new(storage.Needle)
 	n.ParseNeedleHeader(content)
 	if id != n.Id {

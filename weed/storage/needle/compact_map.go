@@ -2,27 +2,28 @@ package needle
 
 import (
 	"sync"
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 type CompactSection struct {
 	sync.RWMutex
 	values   []NeedleValue
-	overflow map[Key]NeedleValue
-	start    Key
-	end      Key
+	overflow map[NeedleId]NeedleValue
+	start    NeedleId
+	end      NeedleId
 	counter  int
 }
 
-func NewCompactSection(start Key) *CompactSection {
+func NewCompactSection(start NeedleId) *CompactSection {
 	return &CompactSection{
 		values:   make([]NeedleValue, batch),
-		overflow: make(map[Key]NeedleValue),
+		overflow: make(map[NeedleId]NeedleValue),
 		start:    start,
 	}
 }
 
 //return old entry size
-func (cs *CompactSection) Set(key Key, offset, size uint32) (oldOffset, oldSize uint32) {
+func (cs *CompactSection) Set(key NeedleId, offset Offset, size uint32) (oldOffset Offset, oldSize uint32) {
 	cs.Lock()
 	if key > cs.end {
 		cs.end = key
@@ -52,7 +53,7 @@ func (cs *CompactSection) Set(key Key, offset, size uint32) (oldOffset, oldSize 
 }
 
 //return old entry size
-func (cs *CompactSection) Delete(key Key) uint32 {
+func (cs *CompactSection) Delete(key NeedleId) uint32 {
 	cs.Lock()
 	ret := uint32(0)
 	if i := cs.binarySearchValues(key); i >= 0 {
@@ -68,7 +69,7 @@ func (cs *CompactSection) Delete(key Key) uint32 {
 	cs.Unlock()
 	return ret
 }
-func (cs *CompactSection) Get(key Key) (*NeedleValue, bool) {
+func (cs *CompactSection) Get(key NeedleId) (*NeedleValue, bool) {
 	cs.RLock()
 	if v, ok := cs.overflow[key]; ok {
 		cs.RUnlock()
@@ -81,7 +82,7 @@ func (cs *CompactSection) Get(key Key) (*NeedleValue, bool) {
 	cs.RUnlock()
 	return nil, false
 }
-func (cs *CompactSection) binarySearchValues(key Key) int {
+func (cs *CompactSection) binarySearchValues(key NeedleId) int {
 	l, h := 0, cs.counter-1
 	if h >= 0 && cs.values[h].Key < key {
 		return -2
@@ -112,7 +113,7 @@ func NewCompactMap() *CompactMap {
 	return &CompactMap{}
 }
 
-func (cm *CompactMap) Set(key Key, offset, size uint32) (oldOffset, oldSize uint32) {
+func (cm *CompactMap) Set(key NeedleId, offset Offset, size uint32) (oldOffset Offset, oldSize uint32) {
 	x := cm.binarySearchCompactSection(key)
 	if x < 0 {
 		//println(x, "creating", len(cm.list), "section, starting", key)
@@ -130,21 +131,21 @@ func (cm *CompactMap) Set(key Key, offset, size uint32) (oldOffset, oldSize uint
 	}
 	return cm.list[x].Set(key, offset, size)
 }
-func (cm *CompactMap) Delete(key Key) uint32 {
+func (cm *CompactMap) Delete(key NeedleId) uint32 {
 	x := cm.binarySearchCompactSection(key)
 	if x < 0 {
 		return uint32(0)
 	}
 	return cm.list[x].Delete(key)
 }
-func (cm *CompactMap) Get(key Key) (*NeedleValue, bool) {
+func (cm *CompactMap) Get(key NeedleId) (*NeedleValue, bool) {
 	x := cm.binarySearchCompactSection(key)
 	if x < 0 {
 		return nil, false
 	}
 	return cm.list[x].Get(key)
 }
-func (cm *CompactMap) binarySearchCompactSection(key Key) int {
+func (cm *CompactMap) binarySearchCompactSection(key NeedleId) int {
 	l, h := 0, len(cm.list)-1
 	if h < 0 {
 		return -5

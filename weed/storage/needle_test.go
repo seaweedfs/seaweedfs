@@ -26,7 +26,7 @@ func TestParseKeyHash(t *testing.T) {
 	}
 
 	for _, tc := range testcases {
-		if id, cookie, err := ParseKeyHash(tc.KeyHash); err != nil && !tc.Err {
+		if id, cookie, err := ParseNeedleIdCookie(tc.KeyHash); err != nil && !tc.Err {
 			t.Fatalf("Parse %s error: %v", tc.KeyHash, err)
 		} else if err == nil && tc.Err {
 			t.Fatalf("Parse %s expected error got nil", tc.KeyHash)
@@ -40,6 +40,6 @@ func BenchmarkParseKeyHash(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		ParseKeyHash("4ed44ed44ed44ed4c8116e41")
+		ParseNeedleIdCookie("4ed44ed44ed44ed4c8116e41")
 	}
 }

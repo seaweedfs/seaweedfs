@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -19,21 +20,17 @@ const (
 	NeedleMapBtree
 )
 
-const (
-	NeedleIndexSize = 16
-)
-
 type NeedleMapper interface {
-	Put(key uint64, offset uint32, size uint32) error
-	Get(key uint64) (element *needle.NeedleValue, ok bool)
-	Delete(key uint64, offset uint32) error
+	Put(key NeedleId, offset Offset, size uint32) error
+	Get(key NeedleId) (element *needle.NeedleValue, ok bool)
+	Delete(key NeedleId, offset Offset) error
 	Close()
 	Destroy() error
 	ContentSize() uint64
 	DeletedSize() uint64
 	FileCount() int
 	DeletedCount() int
-	MaxFileKey() uint64
+	MaxFileKey() NeedleId
 	IndexFileSize() uint64
 	IndexFileContent() ([]byte, error)
 	IndexFileName() string
@@ -58,17 +55,17 @@ func (nm *baseNeedleMapper) IndexFileName() string {
 	return nm.indexFile.Name()
 }
 
-func idxFileEntry(bytes []byte) (key uint64, offset uint32, size uint32) {
-	key = util.BytesToUint64(bytes[:8])
-	offset = util.BytesToUint32(bytes[8:12])
-	size = util.BytesToUint32(bytes[12:16])
+func IdxFileEntry(bytes []byte) (key NeedleId, offset Offset, size uint32) {
+	key = BytesToNeedleId(bytes[:NeedleIdSize])
+	offset = BytesToOffset(bytes[NeedleIdSize:NeedleIdSize+OffsetSize])
+	size = util.BytesToUint32(bytes[NeedleIdSize+OffsetSize:NeedleIdSize+OffsetSize+SizeSize])
 	return
 }
-func (nm *baseNeedleMapper) appendToIndexFile(key uint64, offset uint32, size uint32) error {
-	bytes := make([]byte, 16)
-	util.Uint64toBytes(bytes[0:8], key)
-	util.Uint32toBytes(bytes[8:12], offset)
-	util.Uint32toBytes(bytes[12:16], size)
+func (nm *baseNeedleMapper) appendToIndexFile(key NeedleId, offset Offset, size uint32) error {
+	bytes := make([]byte, NeedleIdSize+OffsetSize+SizeSize)
+	NeedleIdToBytes(bytes[0:NeedleIdSize], key)
+	OffsetToBytes(bytes[NeedleIdSize:NeedleIdSize+OffsetSize], offset)
+	util.Uint32toBytes(bytes[NeedleIdSize+OffsetSize:NeedleIdSize+OffsetSize+SizeSize], size)
 
 	nm.indexFileAccessLock.Lock()
 	defer nm.indexFileAccessLock.Unlock()

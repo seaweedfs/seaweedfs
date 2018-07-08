@@ -12,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -93,7 +94,7 @@ func (v *Volume) trySynchronizing(volumeServer string, masterMap *needle.Compact
 		if needleValue.Key == 0 {
 			return nil
 		}
-		if _, ok := slaveMap.Get(uint64(needleValue.Key)); ok {
+		if _, ok := slaveMap.Get(needleValue.Key); ok {
 			return nil // skip intersection
 		}
 		delta = append(delta, needleValue)
@@ -147,12 +148,12 @@ func fetchVolumeFileEntries(volumeServer string, vid VolumeId) (m *needle.Compac
 	}
 
 	total := 0
-	err = operation.GetVolumeIdxEntries(volumeServer, vid.String(), func(key uint64, offset, size uint32) {
+	err = operation.GetVolumeIdxEntries(volumeServer, vid.String(), func(key NeedleId, offset Offset, size uint32) {
 		// println("remote key", key, "offset", offset*NeedlePaddingSize, "size", size)
 		if offset > 0 && size != TombstoneFileSize {
-			m.Set(needle.Key(key), offset, size)
+			m.Set(NeedleId(key), offset, size)
 		} else {
-			m.Delete(needle.Key(key))
+			m.Delete(NeedleId(key))
 		}
 		total++
 	})
@@ -179,9 +180,9 @@ func (v *Volume) IndexFileContent() ([]byte, error) {
 }
 
 // removeNeedle removes one needle by needle key
-func (v *Volume) removeNeedle(key needle.Key) {
+func (v *Volume) removeNeedle(key NeedleId) {
 	n := new(Needle)
-	n.Id = uint64(key)
+	n.Id = key
 	v.deleteNeedle(n)
 }
 
@@ -208,7 +209,7 @@ func (v *Volume) fetchNeedle(volumeDataContentHandlerUrl string,
 			return fmt.Errorf("Appending volume %d error: %v", v.Id, err)
 		}
 		// println("add key", needleValue.Key, "offset", offset, "size", needleValue.Size)
-		v.nm.Put(uint64(needleValue.Key), uint32(offset/NeedlePaddingSize), needleValue.Size)
+		v.nm.Put(needleValue.Key, Offset(offset/NeedlePaddingSize), needleValue.Size)
 		return nil
 	})
 }

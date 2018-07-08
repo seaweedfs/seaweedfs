@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -122,17 +123,17 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 	}
 
 	type keyField struct {
-		offset uint32
+		offset Offset
 		size   uint32
 	}
-	incrementedHasUpdatedIndexEntry := make(map[uint64]keyField)
+	incrementedHasUpdatedIndexEntry := make(map[NeedleId]keyField)
 
-	for idx_offset := indexSize - NeedleIndexSize; uint64(idx_offset) >= v.lastCompactIndexOffset; idx_offset -= NeedleIndexSize {
+	for idx_offset := indexSize - NeedleEntrySize; uint64(idx_offset) >= v.lastCompactIndexOffset; idx_offset -= NeedleEntrySize {
 		var IdxEntry []byte
 		if IdxEntry, err = readIndexEntryAtOffset(oldIdxFile, idx_offset); err != nil {
 			return fmt.Errorf("readIndexEntry %s at offset %d failed: %v", oldIdxFileName, idx_offset, err)
 		}
-		key, offset, size := idxFileEntry(IdxEntry)
+		key, offset, size := IdxFileEntry(IdxEntry)
 		glog.V(4).Infof("key %d offset %d size %d", key, offset, size)
 		if _, found := incrementedHasUpdatedIndexEntry[key]; !found {
 			incrementedHasUpdatedIndexEntry[key] = keyField{
@@ -170,11 +171,11 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		return fmt.Errorf("oldDatFile %s 's compact revision is %d while newDatFile %s 's compact revision is %d", oldDatFileName, oldDatCompactRevision, newDatFileName, newDatCompactRevision)
 	}
 
-	idx_entry_bytes := make([]byte, 16)
+	idx_entry_bytes := make([]byte, NeedleIdSize+OffsetSize+SizeSize)
 	for key, incre_idx_entry := range incrementedHasUpdatedIndexEntry {
-		util.Uint64toBytes(idx_entry_bytes[0:8], key)
-		util.Uint32toBytes(idx_entry_bytes[8:12], incre_idx_entry.offset)
-		util.Uint32toBytes(idx_entry_bytes[12:16], incre_idx_entry.size)
+		NeedleIdToBytes(idx_entry_bytes[0:NeedleIdSize], key)
+		OffsetToBytes(idx_entry_bytes[NeedleIdSize:NeedleIdSize+OffsetSize], incre_idx_entry.offset)
+		util.Uint32toBytes(idx_entry_bytes[NeedleIdSize+OffsetSize:NeedleIdSize+OffsetSize+SizeSize], incre_idx_entry.size)
 
 		var offset int64
 		if offset, err = dst.Seek(0, 2); err != nil {
@@ -255,7 +256,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 			nv, ok := v.nm.Get(n.Id)
 			glog.V(4).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
 			if ok && int64(nv.Offset)*NeedlePaddingSize == offset && nv.Size > 0 {
-				if err = nm.Put(n.Id, uint32(new_offset/NeedlePaddingSize), n.Size); err != nil {
+				if err = nm.Put(n.Id, Offset(new_offset/NeedlePaddingSize), n.Size); err != nil {
 					return fmt.Errorf("cannot put needle: %s", err)
 				}
 				if _, _, err := n.Append(dst, v.Version()); err != nil {
@@ -296,7 +297,7 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 	dst.Write(v.SuperBlock.Bytes())
 	new_offset := int64(v.SuperBlock.BlockSize())
 
-	WalkIndexFile(oldIndexFile, func(key uint64, offset, size uint32) error {
+	WalkIndexFile(oldIndexFile, func(key NeedleId, offset Offset, size uint32) error {
 		if offset == 0 || size == TombstoneFileSize {
 			return nil
 		}
@@ -315,7 +316,7 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 
 		glog.V(4).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
 		if nv.Offset == offset && nv.Size > 0 {
-			if err = nm.Put(n.Id, uint32(new_offset/NeedlePaddingSize), n.Size); err != nil {
+			if err = nm.Put(n.Id, Offset(new_offset/NeedlePaddingSize), n.Size); err != nil {
 				return fmt.Errorf("cannot put needle: %s", err)
 			}
 			if _, _, err = n.Append(dst, v.Version()); err != nil {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 type SyncVolumeResponse struct {
@@ -37,14 +38,14 @@ func GetVolumeSyncStatus(server string, vid string) (*SyncVolumeResponse, error)
 	return &ret, nil
 }
 
-func GetVolumeIdxEntries(server string, vid string, eachEntryFn func(key uint64, offset, size uint32)) error {
+func GetVolumeIdxEntries(server string, vid string, eachEntryFn func(key NeedleId, offset Offset, size uint32)) error {
 	values := make(url.Values)
 	values.Add("volume", vid)
-	line := make([]byte, 16)
+	line := make([]byte, NeedleEntrySize)
 	err := util.GetBufferStream("http://"+server+"/admin/sync/index", values, line, func(bytes []byte) {
-		key := util.BytesToUint64(bytes[:8])
-		offset := util.BytesToUint32(bytes[8:12])
-		size := util.BytesToUint32(bytes[12:16])
+		key := BytesToNeedleId(line[:NeedleIdSize])
+		offset := BytesToOffset(line[NeedleIdSize:NeedleIdSize+OffsetSize])
+		size := util.BytesToUint32(line[NeedleIdSize+OffsetSize:NeedleIdSize+OffsetSize+SizeSize])
 		eachEntryFn(key, offset, size)
 	})
 	if err != nil {

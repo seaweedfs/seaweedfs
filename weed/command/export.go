@@ -14,6 +14,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 const (
@@ -157,7 +158,7 @@ func runExport(cmd *Command, args []string) bool {
 
 type nameParams struct {
 	Name string
-	Id   uint64
+	Id   types.NeedleId
 	Mime string
 	Key  string
 	Ext  string
