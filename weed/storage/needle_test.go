@@ -1,12 +1,15 @@
 package storage
 
-import "testing"
+import (
+	"testing"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
+)
 
 func TestParseKeyHash(t *testing.T) {
 	testcases := []struct {
 		KeyHash string
-		ID      uint64
-		Cookie  uint32
+		ID      types.NeedleId
+		Cookie  types.Cookie
 		Err     bool
 	}{
 		// normal

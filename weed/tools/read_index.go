@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 var (
@@ -21,8 +22,8 @@ func main() {
 	}
 	defer indexFile.Close()
 
-	storage.WalkIndexFile(indexFile, func(key uint64, offset, size uint32) error {
-		fmt.Printf("key %d, offset %d, size %d, nextOffset %d\n", key, offset*8, size, offset*8+size)
+	storage.WalkIndexFile(indexFile, func(key types.NeedleId, offset types.Offset, size uint32) error {
+		fmt.Printf("key %d, offset %d, size %d, nextOffset %d\n", key, offset*8, size, int64(offset)*types.NeedlePaddingSize+int64(size))
 		return nil
 	})
 }

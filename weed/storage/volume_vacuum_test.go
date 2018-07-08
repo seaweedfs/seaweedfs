@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"os"
 	"testing"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 /*
@@ -153,12 +154,12 @@ func newRandomNeedle(id uint64) *Needle {
 	rand.Read(n.Data)
 
 	n.Checksum = NewCRC(n.Data)
-	n.Id = id
+	n.Id = types.Uint64ToNeedleId(id)
 	return n
 }
 
 func newEmptyNeedle(id uint64) *Needle {
 	n := new(Needle)
-	n.Id = id
+	n.Id = types.Uint64ToNeedleId(id)
 	return n
 }

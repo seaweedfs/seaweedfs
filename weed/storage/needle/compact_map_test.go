@@ -22,7 +22,7 @@ func TestIssue52(t *testing.T) {
 func TestXYZ(t *testing.T) {
 	m := NewCompactMap()
 	for i := uint32(0); i < 100*batch; i += 2 {
-		m.Set(NeedleId(i), i, i)
+		m.Set(NeedleId(i), Offset(i), i)
 	}
 
 	for i := uint32(0); i < 100*batch; i += 37 {
@@ -30,7 +30,7 @@ func TestXYZ(t *testing.T) {
 	}
 
 	for i := uint32(0); i < 10*batch; i += 3 {
-		m.Set(NeedleId(i), i+11, i+5)
+		m.Set(NeedleId(i), Offset(i+11), i+5)
 	}
 
 	//	for i := uint32(0); i < 100; i++ {

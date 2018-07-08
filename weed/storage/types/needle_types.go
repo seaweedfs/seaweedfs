@@ -54,6 +54,10 @@ func OffsetToBytes(bytes []byte, offset Offset) {
 	util.Uint32toBytes(bytes, uint32(offset))
 }
 
+func Uint32ToOffset(offset uint32) (Offset) {
+	return Offset(offset)
+}
+
 func BytesToOffset(bytes []byte) (Offset) {
 	return Offset(util.BytesToUint32(bytes[0:4]))
 }
