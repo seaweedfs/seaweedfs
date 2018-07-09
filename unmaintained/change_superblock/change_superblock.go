@@ -87,7 +87,7 @@ func main() {
 
 	if hasChange {
 
-		header = superBlock.Bytes()
+		header := superBlock.Bytes()
 
 		if n, e := datFile.WriteAt(header, 0); n == 0 || e != nil {
 			glog.Fatalf("cannot write super block: %v", e)
