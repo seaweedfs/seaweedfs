@@ -110,6 +110,8 @@ func runServer(cmd *Command, args []string) bool {
 	master := *serverIp + ":" + strconv.Itoa(*masterPort)
 	filerOptions.ip = serverIp
 
+	filerOptions.dataCenter = serverDataCenter
+
 	if *filerOptions.defaultReplicaPlacement == "" {
 		*filerOptions.defaultReplicaPlacement = *masterDefaultReplicaPlacement
 	}

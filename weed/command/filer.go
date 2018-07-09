@@ -31,6 +31,7 @@ type FilerOptions struct {
 	maxMB                   *int
 	secretKey               *string
 	dirListingLimit         *int
+	dataCenter              *string
 }
 
 func init() {
@@ -47,6 +48,7 @@ func init() {
 	f.maxMB = cmdFiler.Flag.Int("maxMB", 32, "split files larger than the limit")
 	f.secretKey = cmdFiler.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 	f.dirListingLimit = cmdFiler.Flag.Int("dirListLimit", 1000, "limit sub dir listing size")
+	f.dataCenter = cmdFiler.Flag.String("dataCenter", "", "write to volumes in this data center")
 }
 
 var cmdFiler = &Command{
@@ -99,6 +101,7 @@ func (fo *FilerOptions) start() {
 		MaxMB:              *f.maxMB,
 		SecretKey:          *f.secretKey,
 		DirListingLimit:    *f.dirListingLimit,
+		DataCenter:         *f.dataCenter,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

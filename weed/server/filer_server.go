@@ -22,6 +22,7 @@ type FilerOption struct {
 	MaxMB              int
 	SecretKey          string
 	DirListingLimit    int
+	DataCenter         string
 }
 
 type FilerServer struct {

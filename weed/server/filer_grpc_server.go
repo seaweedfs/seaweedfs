@@ -178,6 +178,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 		Replication: req.Replication,
 		Collection:  req.Collection,
 		Ttl:         ttlStr,
+		DataCenter:  fs.option.DataCenter,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assign volume: %v", err)
