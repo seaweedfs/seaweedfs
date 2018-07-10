@@ -48,7 +48,7 @@ func init() {
 	f.maxMB = cmdFiler.Flag.Int("maxMB", 32, "split files larger than the limit")
 	f.secretKey = cmdFiler.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 	f.dirListingLimit = cmdFiler.Flag.Int("dirListLimit", 1000, "limit sub dir listing size")
-	f.dataCenter = cmdFiler.Flag.String("dataCenter", "", "write to volumes in this data center")
+	f.dataCenter = cmdFiler.Flag.String("dataCenter", "", "prefer to write to volumes in this data center")
 }
 
 var cmdFiler = &Command{
