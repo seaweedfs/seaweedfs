@@ -173,7 +173,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 		ttlStr = strconv.Itoa(int(req.TtlSec))
 	}
 
-	var backupRequest *operation.VolumeAssignRequest
+	var altRequest *operation.VolumeAssignRequest
 
 	assignRequest := &operation.VolumeAssignRequest{
 		Count:       uint64(req.Count),
@@ -183,7 +183,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 		DataCenter:  fs.option.DataCenter,
 	}
 	if fs.option.DataCenter != "" {
-		backupRequest = &operation.VolumeAssignRequest{
+		altRequest = &operation.VolumeAssignRequest{
 			Count:       uint64(req.Count),
 			Replication: req.Replication,
 			Collection:  req.Collection,
@@ -191,7 +191,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 			DataCenter:  "",
 		}
 	}
-	assignResult, err := operation.Assign(fs.filer.GetMaster(), assignRequest, backupRequest)
+	assignResult, err := operation.Assign(fs.filer.GetMaster(), assignRequest, altRequest)
 	if err != nil {
 		return nil, fmt.Errorf("assign volume: %v", err)
 	}

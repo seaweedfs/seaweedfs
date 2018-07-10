@@ -47,8 +47,19 @@ func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request,
 		Replication: replication,
 		Collection:  collection,
 		Ttl:         r.URL.Query().Get("ttl"),
+		DataCenter:  fs.option.DataCenter,
 	}
-	assignResult, ae := operation.Assign(fs.filer.GetMaster(), ar)
+	var altRequest *operation.VolumeAssignRequest
+	if fs.option.DataCenter != "" {
+		altRequest = &operation.VolumeAssignRequest{
+			Count:       1,
+			Replication: replication,
+			Collection:  collection,
+			Ttl:         r.URL.Query().Get("ttl"),
+			DataCenter:  "",
+		}
+	}
+	assignResult, ae := operation.Assign(fs.filer.GetMaster(), ar, altRequest)
 	if ae != nil {
 		glog.V(0).Infoln("failing to assign a file id", ae.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, ae)
