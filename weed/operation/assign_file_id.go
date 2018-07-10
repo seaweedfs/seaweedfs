@@ -2,7 +2,6 @@ package operation
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -29,40 +28,52 @@ type AssignResult struct {
 	Error     string `json:"error,omitempty"`
 }
 
-func Assign(server string, r *VolumeAssignRequest) (*AssignResult, error) {
-	values := make(url.Values)
-	values.Add("count", strconv.FormatUint(r.Count, 10))
-	if r.Replication != "" {
-		values.Add("replication", r.Replication)
-	}
-	if r.Collection != "" {
-		values.Add("collection", r.Collection)
-	}
-	if r.Ttl != "" {
-		values.Add("ttl", r.Ttl)
-	}
-	if r.DataCenter != "" {
-		values.Add("dataCenter", r.DataCenter)
-	}
-	if r.Rack != "" {
-		values.Add("rack", r.Rack)
-	}
-	if r.DataNode != "" {
-		values.Add("dataNode", r.DataNode)
-	}
+func Assign(server string, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {
+	var requests []*VolumeAssignRequest
+	requests = append(requests, primaryRequest)
+	requests = append(requests, alternativeRequests...)
 
-	jsonBlob, err := util.Post("http://"+server+"/dir/assign", values)
-	glog.V(2).Infof("assign result from %s : %s", server, string(jsonBlob))
-	if err != nil {
-		return nil, err
+	var lastError error
+	for i, request := range requests {
+		if request == nil {
+			continue
+		}
+		values := make(url.Values)
+		values.Add("count", strconv.FormatUint(request.Count, 10))
+		if request.Replication != "" {
+			values.Add("replication", request.Replication)
+		}
+		if request.Collection != "" {
+			values.Add("collection", request.Collection)
+		}
+		if request.Ttl != "" {
+			values.Add("ttl", request.Ttl)
+		}
+		if request.DataCenter != "" {
+			values.Add("dataCenter", request.DataCenter)
+		}
+		if request.Rack != "" {
+			values.Add("rack", request.Rack)
+		}
+		if request.DataNode != "" {
+			values.Add("dataNode", request.DataNode)
+		}
+
+		jsonBlob, err := util.Post("http://"+server+"/dir/assign", values)
+		glog.V(2).Infof("assign result from %s : %s", server, string(jsonBlob))
+		if err != nil {
+			return nil, err
+		}
+		var ret AssignResult
+		err = json.Unmarshal(jsonBlob, &ret)
+		if err != nil {
+			return nil, fmt.Errorf("/dir/assign result JSON unmarshal error:%v, json:%s", err, string(jsonBlob))
+		}
+		if ret.Count <= 0 {
+			lastError = fmt.Errorf("assign failure %d: %v", i+1, ret.Error)
+			continue
+		}
+		return &ret, nil
 	}
-	var ret AssignResult
-	err = json.Unmarshal(jsonBlob, &ret)
-	if err != nil {
-		return nil, fmt.Errorf("/dir/assign result JSON unmarshal error:%v, json:%s", err, string(jsonBlob))
-	}
-	if ret.Count <= 0 {
-		return nil, errors.New(ret.Error)
-	}
-	return &ret, nil
+	return nil, lastError
 }
