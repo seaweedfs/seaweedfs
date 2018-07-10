@@ -43,6 +43,8 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	if e != nil {
 		if !os.IsPermission(e) {
 			return fmt.Errorf("cannot load Volume Data %s.dat: %v", fileName, e)
+		} else {
+			return fmt.Errorf("load data file %s.dat: %v", fileName, e)
 		}
 	}
 
