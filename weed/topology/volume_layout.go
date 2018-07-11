@@ -107,6 +107,13 @@ func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool {
 		!v.ReadOnly
 }
 
+func (vl *VolumeLayout) isEmpty() bool {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+
+	return len(vl.vid2location) == 0
+}
+
 func (vl *VolumeLayout) Lookup(vid storage.VolumeId) []*DataNode {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
