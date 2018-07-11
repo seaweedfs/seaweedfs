@@ -1,11 +1,9 @@
 package topology
 
 import (
-	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/sequence"
 	"github.com/chrislusf/seaweedfs/weed/storage"
-	"github.com/kr/pretty"
 	"testing"
 )
 
@@ -113,10 +111,14 @@ func TestAddRemoveVolume(t *testing.T) {
 	dn.UpdateVolumes([]storage.VolumeInfo{v})
 	topo.RegisterVolumeLayout(v, dn)
 
-	fmt.Printf("added volume 1 \n%# v\n", pretty.Formatter(topo.ToMap()))
+	if _, hasCollection := topo.FindCollection(v.Collection); !hasCollection {
+		t.Errorf("collection %v should exist", v.Collection)
+	}
 
 	topo.UnRegisterVolumeLayout(v, dn)
 
-	fmt.Printf("removed volume 1 \n%# v\n", pretty.Formatter(topo.ToMap()))
+	if _, hasCollection := topo.FindCollection(v.Collection); hasCollection {
+		t.Errorf("collection %v should not exist", v.Collection)
+	}
 
 }
