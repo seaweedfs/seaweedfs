@@ -80,6 +80,8 @@ func (f *Filer) CreateEntry(entry *Entry) error {
 			if mkdirErr != nil {
 				return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
 			}
+		} else if !dirEntry.IsDirectory() {
+			return fmt.Errorf("%s is a file", dirPath)
 		}
 
 		// cache the directory entry
