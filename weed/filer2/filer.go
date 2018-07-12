@@ -139,6 +139,7 @@ func (f *Filer) DeleteEntryMetaAndData(p FullPath, shouldDeleteChunks bool) (err
 		if len(entries) > 0 {
 			return fmt.Errorf("folder %s is not empty", p)
 		}
+		f.cacheDelDirectory(string(p))
 	}
 
 	if shouldDeleteChunks {
@@ -153,6 +154,14 @@ func (f *Filer) ListDirectoryEntries(p FullPath, startFileName string, inclusive
 		p = p[0: len(p)-1]
 	}
 	return f.store.ListDirectoryEntries(p, startFileName, inclusive, limit)
+}
+
+func (f *Filer) cacheDelDirectory(dirpath string) {
+	if f.directoryCache == nil {
+		return 
+	}
+	f.directoryCache.Delete(dirpath)
+	return
 }
 
 func (f *Filer) cacheGetDirectory(dirpath string) *Entry {
