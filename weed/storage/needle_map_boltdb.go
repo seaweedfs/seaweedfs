@@ -10,6 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"errors"
 )
 
 type BoltDbNeedleMap struct {
@@ -19,6 +20,8 @@ type BoltDbNeedleMap struct {
 }
 
 var boltdbBucket = []byte("weed")
+
+var NotFound = errors.New("not found")
 
 // TODO avoid using btree to count deletions.
 func NewBoltDbNeedleMap(dbFileName string, indexFile *os.File) (m *BoltDbNeedleMap, err error) {
@@ -88,9 +91,13 @@ func (m *BoltDbNeedleMap) Get(key NeedleId) (element *needle.NeedleValue, ok boo
 
 		data := bucket.Get(bytes)
 
+		if len(data) == 0 {
+			return NotFound
+		}
+
 		if len(data) != OffsetSize+SizeSize {
-			glog.V(0).Infof("wrong data length: %d", len(data))
-			return fmt.Errorf("wrong data length: %d", len(data))
+			glog.V(0).Infof("key:%v has wrong data length: %d", key, len(data))
+			return fmt.Errorf("key:%v has wrong data length: %d", key, len(data))
 		}
 
 		offset = BytesToOffset(data[0:OffsetSize])
@@ -102,7 +109,7 @@ func (m *BoltDbNeedleMap) Get(key NeedleId) (element *needle.NeedleValue, ok boo
 	if err != nil {
 		return nil, false
 	}
-	return &needle.NeedleValue{Key: NeedleId(key), Offset: offset, Size: size}, true
+	return &needle.NeedleValue{Key: key, Offset: offset, Size: size}, true
 }
 
 func (m *BoltDbNeedleMap) Put(key NeedleId, offset Offset, size uint32) error {
