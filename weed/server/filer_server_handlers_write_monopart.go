@@ -73,7 +73,7 @@ func checkContentMD5(w http.ResponseWriter, r *http.Request) (err error) {
 	return
 }
 
-func (fs *FilerServer) monolithicUploadAnalyzer(w http.ResponseWriter, r *http.Request, replication, collection string) (fileId, urlLocation string, err error) {
+func (fs *FilerServer) monolithicUploadAnalyzer(w http.ResponseWriter, r *http.Request, replication, collection string, dataCenter string) (fileId, urlLocation string, err error) {
 	/*
 		Amazon S3 ref link:[http://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html]
 		There is a long way to provide a completely compatibility against all Amazon S3 API, I just made
@@ -104,7 +104,7 @@ func (fs *FilerServer) monolithicUploadAnalyzer(w http.ResponseWriter, r *http.R
 	path := r.URL.Path
 
 	if fileId, urlLocation, err = fs.queryFileInfoByPath(w, r, path); err == nil && fileId == "" {
-		fileId, urlLocation, err = fs.assignNewFileInfo(w, r, replication, collection)
+		fileId, urlLocation, err = fs.assignNewFileInfo(w, r, replication, collection, dataCenter)
 	}
 	return
 }

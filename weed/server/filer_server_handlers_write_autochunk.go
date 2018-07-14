@@ -16,7 +16,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (fs *FilerServer) autoChunk(w http.ResponseWriter, r *http.Request, replication string, collection string) bool {
+func (fs *FilerServer) autoChunk(w http.ResponseWriter, r *http.Request, replication string, collection string, dataCenter string) bool {
 	if r.Method != "POST" {
 		glog.V(4).Infoln("AutoChunking not supported for method", r.Method)
 		return false
@@ -52,7 +52,7 @@ func (fs *FilerServer) autoChunk(w http.ResponseWriter, r *http.Request, replica
 		return false
 	}
 
-	reply, err := fs.doAutoChunk(w, r, contentLength, chunkSize, replication, collection)
+	reply, err := fs.doAutoChunk(w, r, contentLength, chunkSize, replication, collection, dataCenter)
 	if err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 	} else if reply != nil {
@@ -61,7 +61,7 @@ func (fs *FilerServer) autoChunk(w http.ResponseWriter, r *http.Request, replica
 	return true
 }
 
-func (fs *FilerServer) doAutoChunk(w http.ResponseWriter, r *http.Request, contentLength int64, chunkSize int32, replication string, collection string) (filerResult *FilerPostResult, replyerr error) {
+func (fs *FilerServer) doAutoChunk(w http.ResponseWriter, r *http.Request, contentLength int64, chunkSize int32, replication string, collection string, dataCenter string) (filerResult *FilerPostResult, replyerr error) {
 
 	multipartReader, multipartReaderErr := r.MultipartReader()
 	if multipartReaderErr != nil {
@@ -104,7 +104,7 @@ func (fs *FilerServer) doAutoChunk(w http.ResponseWriter, r *http.Request, conte
 
 		if chunkBufOffset >= chunkSize || readFully || (chunkBufOffset > 0 && bytesRead == 0) {
 			writtenChunks = writtenChunks + 1
-			fileId, urlLocation, assignErr := fs.assignNewFileInfo(w, r, replication, collection)
+			fileId, urlLocation, assignErr := fs.assignNewFileInfo(w, r, replication, collection, dataCenter)
 			if assignErr != nil {
 				return nil, assignErr
 			}

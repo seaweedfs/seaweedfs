@@ -127,6 +127,7 @@ message AssignVolumeRequest {
     string collection = 2;
     string replication = 3;
     int32 ttl_sec = 4;
+    string data_center = 5;
 }
 
 message AssignVolumeResponse {

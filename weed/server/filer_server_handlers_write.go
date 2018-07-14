@@ -41,16 +41,16 @@ func (fs *FilerServer) queryFileInfoByPath(w http.ResponseWriter, r *http.Reques
 	return
 }
 
-func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request, replication, collection string) (fileId, urlLocation string, err error) {
+func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request, replication, collection string, dataCenter string) (fileId, urlLocation string, err error) {
 	ar := &operation.VolumeAssignRequest{
 		Count:       1,
 		Replication: replication,
 		Collection:  collection,
 		Ttl:         r.URL.Query().Get("ttl"),
-		DataCenter:  fs.option.DataCenter,
+		DataCenter:  dataCenter,
 	}
 	var altRequest *operation.VolumeAssignRequest
-	if fs.option.DataCenter != "" {
+	if dataCenter != "" {
 		altRequest = &operation.VolumeAssignRequest{
 			Count:       1,
 			Replication: replication,
@@ -82,8 +82,12 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	if collection == "" {
 		collection = fs.option.Collection
 	}
+	dataCenter := query.Get("dataCenter")
+	if dataCenter == "" {
+		dataCenter = fs.option.DataCenter
+	}
 
-	if autoChunked := fs.autoChunk(w, r, replication, collection); autoChunked {
+	if autoChunked := fs.autoChunk(w, r, replication, collection, dataCenter); autoChunked {
 		return
 	}
 
@@ -91,12 +95,12 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data; boundary=") {
-		fileId, urlLocation, err = fs.multipartUploadAnalyzer(w, r, replication, collection)
+		fileId, urlLocation, err = fs.multipartUploadAnalyzer(w, r, replication, collection, dataCenter)
 		if err != nil {
 			return
 		}
 	} else {
-		fileId, urlLocation, err = fs.monolithicUploadAnalyzer(w, r, replication, collection)
+		fileId, urlLocation, err = fs.monolithicUploadAnalyzer(w, r, replication, collection, dataCenter)
 		if err != nil {
 			return
 		}

@@ -10,7 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage"
 )
 
-func (fs *FilerServer) multipartUploadAnalyzer(w http.ResponseWriter, r *http.Request, replication, collection string) (fileId, urlLocation string, err error) {
+func (fs *FilerServer) multipartUploadAnalyzer(w http.ResponseWriter, r *http.Request, replication, collection string, dataCenter string) (fileId, urlLocation string, err error) {
 	//Default handle way for http multipart
 	if r.Method == "PUT" {
 		buf, _ := ioutil.ReadAll(r.Body)
@@ -33,7 +33,7 @@ func (fs *FilerServer) multipartUploadAnalyzer(w http.ResponseWriter, r *http.Re
 		}
 		fileId, urlLocation, err = fs.queryFileInfoByPath(w, r, path)
 	} else {
-		fileId, urlLocation, err = fs.assignNewFileInfo(w, r, replication, collection)
+		fileId, urlLocation, err = fs.assignNewFileInfo(w, r, replication, collection, dataCenter)
 	}
 	return
 }

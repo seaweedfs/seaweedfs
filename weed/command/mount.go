@@ -8,6 +8,7 @@ type MountOptions struct {
 	replication      *string
 	ttlSec           *int
 	chunkSizeLimitMB *int
+	dataCenter       *string
 }
 
 var (
@@ -23,6 +24,7 @@ func init() {
 	mountOptions.replication = cmdMount.Flag.String("replication", "000", "replication to create to files")
 	mountOptions.ttlSec = cmdMount.Flag.Int("ttl", 0, "file ttl in seconds")
 	mountOptions.chunkSizeLimitMB = cmdMount.Flag.Int("chunkSizeLimitMB", 16, "local write buffer size, also chunk large files")
+	mountOptions.dataCenter = cmdMount.Flag.String("dataCenter", "", "prefer to write to the data center")
 }
 
 var cmdMount = &Command{

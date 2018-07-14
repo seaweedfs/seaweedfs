@@ -175,14 +175,19 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 
 	var altRequest *operation.VolumeAssignRequest
 
+	dataCenter := req.DataCenter
+	if dataCenter!=""{
+		dataCenter = fs.option.DataCenter
+	}
+
 	assignRequest := &operation.VolumeAssignRequest{
 		Count:       uint64(req.Count),
 		Replication: req.Replication,
 		Collection:  req.Collection,
 		Ttl:         ttlStr,
-		DataCenter:  fs.option.DataCenter,
+		DataCenter:  dataCenter,
 	}
-	if fs.option.DataCenter != "" {
+	if dataCenter != "" {
 		altRequest = &operation.VolumeAssignRequest{
 			Count:       uint64(req.Count),
 			Replication: req.Replication,
