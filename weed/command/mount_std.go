@@ -73,7 +73,7 @@ func runMount(cmd *Command, args []string) bool {
 	filerAddress := fmt.Sprintf("%s:%d", hostnameAndPort[0], filerGrpcPort)
 
 	err = fs.Serve(c, filesys.NewSeaweedFileSystem(
-		filerAddress, *mountOptions.collection, *mountOptions.replication, int32(*mountOptions.ttlSec),
+		filerAddress, *mountOptions.filerMountRootPath, *mountOptions.collection, *mountOptions.replication, int32(*mountOptions.ttlSec),
 		*mountOptions.chunkSizeLimitMB, *mountOptions.dataCenter))
 	if err != nil {
 		fuse.Unmount(*mountOptions.dir)

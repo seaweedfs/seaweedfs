@@ -9,10 +9,12 @@ import (
 	"bazil.org/fuse"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"strings"
 )
 
 type WFS struct {
 	filerGrpcAddress          string
+	filerMountRootPath        string
 	listDirectoryEntriesCache *ccache.Cache
 	collection                string
 	replication               string
@@ -26,9 +28,13 @@ type WFS struct {
 	pathToHandleLock  sync.Mutex
 }
 
-func NewSeaweedFileSystem(filerGrpcAddress string, collection string, replication string, ttlSec int32, chunkSizeLimitMB int, dataCenter string) *WFS {
+func NewSeaweedFileSystem(filerGrpcAddress string, filerMountRootPath string, collection string, replication string, ttlSec int32, chunkSizeLimitMB int, dataCenter string) *WFS {
+	if filerMountRootPath != "/" && strings.HasSuffix(filerMountRootPath, "/") {
+		filerMountRootPath = filerMountRootPath[0:len(filerMountRootPath)-1]
+	}
 	return &WFS{
 		filerGrpcAddress:          filerGrpcAddress,
+		filerMountRootPath:        filerMountRootPath,
 		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(6000).ItemsToPrune(100)),
 		collection:                collection,
 		replication:               replication,
@@ -40,7 +46,7 @@ func NewSeaweedFileSystem(filerGrpcAddress string, collection string, replicatio
 }
 
 func (wfs *WFS) Root() (fs.Node, error) {
-	return &Dir{Path: "/", wfs: wfs}, nil
+	return &Dir{Path: wfs.filerMountRootPath, wfs: wfs}, nil
 }
 
 func (wfs *WFS) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
