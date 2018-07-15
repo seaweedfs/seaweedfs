@@ -217,7 +217,11 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 				glog.V(4).Infof("Adjusting n.Size %d=>0 rest:%d=>%d %+v", oldSize, oldRest, rest, n)
 			}
 		}
-		if err = visitNeedle(n, offset); err != nil {
+		err = visitNeedle(n, offset)
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
 			glog.V(0).Infof("visit needle error: %v", err)
 		}
 		offset += NeedleEntrySize + rest
