@@ -16,6 +16,7 @@ var Commands = []*Command{
 	cmdServer,
 	cmdMaster,
 	cmdFiler,
+	cmdS3,
 	cmdUpload,
 	cmdDownload,
 	cmdShell,
