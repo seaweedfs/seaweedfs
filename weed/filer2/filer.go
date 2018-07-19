@@ -125,7 +125,7 @@ func (f *Filer) FindEntry(p FullPath) (entry *Entry, err error) {
 	return f.store.FindEntry(p)
 }
 
-func (f *Filer) DeleteEntryMetaAndData(p FullPath, shouldDeleteChunks bool) (err error) {
+func (f *Filer) DeleteEntryMetaAndData(p FullPath, isRecursive bool, shouldDeleteChunks bool) (err error) {
 	entry, err := f.FindEntry(p)
 	if err != nil {
 		return err
@@ -136,8 +136,14 @@ func (f *Filer) DeleteEntryMetaAndData(p FullPath, shouldDeleteChunks bool) (err
 		if err != nil {
 			return fmt.Errorf("list folder %s: %v", p, err)
 		}
-		if len(entries) > 0 {
-			return fmt.Errorf("folder %s is not empty", p)
+		if isRecursive {
+			for _, sub := range entries {
+				f.DeleteEntryMetaAndData(sub.FullPath, isRecursive, shouldDeleteChunks)
+			}
+		} else {
+			if len(entries) > 0 {
+				return fmt.Errorf("folder %s is not empty", p)
+			}
 		}
 		f.cacheDelDirectory(string(p))
 	}
@@ -158,7 +164,7 @@ func (f *Filer) ListDirectoryEntries(p FullPath, startFileName string, inclusive
 
 func (f *Filer) cacheDelDirectory(dirpath string) {
 	if f.directoryCache == nil {
-		return 
+		return
 	}
 	f.directoryCache.Delete(dirpath)
 	return

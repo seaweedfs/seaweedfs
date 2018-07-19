@@ -31,11 +31,16 @@ func (fs *FilerServer) queryFileInfoByPath(w http.ResponseWriter, r *http.Reques
 		glog.V(0).Infoln("failing to find path in filer store", path, err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 	} else {
-		fileId = entry.Chunks[0].FileId
-		urlLocation, err = operation.LookupFileId(fs.filer.GetMaster(), fileId)
-		if err != nil {
-			glog.V(1).Infof("operation LookupFileId %s failed, err is %s", fileId, err.Error())
-			w.WriteHeader(http.StatusNotFound)
+		if len(entry.Chunks) == 0 {
+			glog.V(1).Infof("empty entry: %s", path)
+			w.WriteHeader(http.StatusNoContent)
+		}else{
+			fileId = entry.Chunks[0].FileId
+			urlLocation, err = operation.LookupFileId(fs.filer.GetMaster(), fileId)
+			if err != nil {
+				glog.V(1).Infof("operation LookupFileId %s failed, err is %s", fileId, err.Error())
+				w.WriteHeader(http.StatusNotFound)
+			}
 		}
 	}
 	return
@@ -101,7 +106,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		fileId, urlLocation, err = fs.monolithicUploadAnalyzer(w, r, replication, collection, dataCenter)
-		if err != nil {
+		if err != nil || fileId == "" {
 			return
 		}
 	}
@@ -215,7 +220,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 // curl -X DELETE http://localhost:8888/path/to
 func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
-	err := fs.filer.DeleteEntryMetaAndData(filer2.FullPath(r.URL.Path), true)
+	err := fs.filer.DeleteEntryMetaAndData(filer2.FullPath(r.URL.Path), false, true)
 	if err != nil {
 		glog.V(4).Infoln("deleting", r.URL.Path, ":", err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)

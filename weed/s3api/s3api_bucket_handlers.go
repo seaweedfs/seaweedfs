@@ -7,6 +7,13 @@ import (
 	"time"
 	"context"
 	"fmt"
+	"github.com/gorilla/mux"
+	"os"
+)
+
+var (
+	OS_UID = uint32(os.Getuid())
+	OS_GID = uint32(os.Getgid())
 )
 
 func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Request) {
@@ -15,7 +22,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	err := s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.ListEntriesRequest{
-			Directory: "/buckets",
+			Directory: s3a.option.BucketsPath,
 		}
 
 		glog.V(4).Infof("read directory: %v", request)
@@ -55,4 +62,77 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeSuccessResponseXML(w, encodeResponse(response))
+}
+
+func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
+
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+
+	err := s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		request := &filer_pb.CreateEntryRequest{
+			Directory: s3a.option.BucketsPath,
+			Entry: &filer_pb.Entry{
+				Name:        bucket,
+				IsDirectory: true,
+				Attributes: &filer_pb.FuseAttributes{
+					Mtime:    time.Now().Unix(),
+					Crtime:   time.Now().Unix(),
+					FileMode: uint32(0777 | os.ModeDir),
+					Uid:      OS_UID,
+					Gid:      OS_GID,
+				},
+			},
+		}
+
+		glog.V(1).Infof("create bucket: %v", request)
+		if _, err := client.CreateEntry(context.Background(), request); err != nil {
+			return fmt.Errorf("mkdir %s/%s: %v", s3a.option.BucketsPath, bucket, err)
+		}
+
+		// TODO create collection
+
+		return nil
+	})
+
+	if err != nil {
+		writeErrorResponse(w, ErrInternalError, r.URL)
+		return
+	}
+
+	writeSuccessResponseEmpty(w)
+}
+
+func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Request) {
+
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+
+	// TODO delete collection
+
+	err := s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		request := &filer_pb.DeleteEntryRequest{
+			Directory:    s3a.option.BucketsPath,
+			Name:         bucket,
+			IsDirectory:  true,
+			IsDeleteData: false,
+			IsRecursive:  true,
+		}
+
+		glog.V(1).Infof("delete bucket: %v", request)
+		if _, err := client.DeleteEntry(context.Background(), request); err != nil {
+			return fmt.Errorf("delete bucket %s/%s: %v", s3a.option.BucketsPath, bucket, err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		writeErrorResponse(w, ErrInternalError, r.URL)
+		return
+	}
+
+	writeResponse(w, http.StatusNoContent, nil, mimeNone)
 }

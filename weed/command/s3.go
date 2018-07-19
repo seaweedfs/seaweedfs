@@ -16,16 +16,18 @@ var (
 )
 
 type S3Options struct {
-	filer         *string
-	filerGrpcPort *int
-	port          *int
-	domainName    *string
+	filer            *string
+	filerGrpcPort    *int
+	filerBucketsPath *string
+	port             *int
+	domainName       *string
 }
 
 func init() {
 	cmdS3.Run = runS3 // break init cycle
 	s3options.filer = cmdS3.Flag.String("filer", "localhost:8888", "filer server address")
 	s3options.filerGrpcPort = cmdS3.Flag.Int("filer.grpcPort", 0, "filer server grpc port, default to filer http port plus 10000")
+	s3options.filerBucketsPath = cmdS3.Flag.String("filer.dir.buckets", "/s3buckets", "folder on filer to store all buckets")
 	s3options.port = cmdS3.Flag.Int("port", 8333, "s3options server http listen port")
 	s3options.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name, {bucket}.{domainName}")
 }
@@ -52,6 +54,7 @@ func runS3(cmd *Command, args []string) bool {
 		Filer:            *s3options.filer,
 		FilerGrpcAddress: filerGrpcAddress,
 		DomainName:       *s3options.domainName,
+		BucketsPath:      *s3options.filerBucketsPath,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)

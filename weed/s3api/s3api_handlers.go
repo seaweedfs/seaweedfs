@@ -89,3 +89,7 @@ func writeResponse(w http.ResponseWriter, statusCode int, response []byte, mType
 func writeSuccessResponseXML(w http.ResponseWriter, response []byte) {
 	writeResponse(w, http.StatusOK, response, mimeXML)
 }
+
+func writeSuccessResponseEmpty(w http.ResponseWriter) {
+	writeResponse(w, http.StatusOK, nil, mimeNone)
+}
