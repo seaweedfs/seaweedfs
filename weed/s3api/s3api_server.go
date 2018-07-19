@@ -46,6 +46,8 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods("PUT").HandlerFunc(s3a.PutBucketHandler)
 		// DeleteBucket
 		bucket.Methods("DELETE").HandlerFunc(s3a.DeleteBucketHandler)
+		// HeadBucket
+		bucket.Methods("HEAD").HandlerFunc(s3a.HeadBucketHandler)
 
 		/*
 			// HeadObject
@@ -78,8 +80,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 			bucket.Methods("GET").HandlerFunc(s3a.ListObjectsV2Handler).Queries("list-type", "2")
 			// ListObjectsV1 (Legacy)
 			bucket.Methods("GET").HandlerFunc(s3a.ListObjectsV1Handler)
-			// HeadBucket
-			bucket.Methods("HEAD").HandlerFunc(s3a.HeadBucketHandler)
 			// DeleteMultipleObjects
 			bucket.Methods("POST").HandlerFunc(s3a.DeleteMultipleObjectsHandler).Queries("delete", "")
 

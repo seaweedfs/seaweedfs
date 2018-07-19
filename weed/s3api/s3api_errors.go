@@ -32,6 +32,7 @@ const (
 	ErrBucketAlreadyExists
 	ErrBucketAlreadyOwnedByYou
 	ErrInvalidBucketName
+	ErrNoSuchBucket
 	ErrInternalError
 )
 
@@ -62,6 +63,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "InvalidBucketName",
 		Description:    "The specified bucket is not valid.",
 		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrNoSuchBucket: {
+		Code:           "NoSuchBucket",
+		Description:    "The specified bucket does not exist",
+		HTTPStatusCode: http.StatusNotFound,
 	},
 	ErrInternalError: {
 		Code:           "InternalError",
