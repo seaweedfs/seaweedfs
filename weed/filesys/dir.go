@@ -4,17 +4,20 @@ import (
 	"context"
 	"os"
 	"path"
+	"path/filepath"
+	"time"
+
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"path/filepath"
-	"time"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 )
 
 type Dir struct {
-	Path string
-	wfs  *WFS
+	Path       string
+	wfs        *WFS
+	attributes *filer_pb.FuseAttributes
 }
 
 var _ = fs.Node(&Dir{})
@@ -24,6 +27,7 @@ var _ = fs.NodeRequestLookuper(&Dir{})
 var _ = fs.HandleReadDirAller(&Dir{})
 var _ = fs.NodeRemover(&Dir{})
 var _ = fs.NodeRenamer(&Dir{})
+var _ = fs.NodeSetattrer(&Dir{})
 
 func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 
@@ -48,8 +52,6 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 
 	parent, name := filepath.Split(dir.Path)
 
-	var attributes *filer_pb.FuseAttributes
-
 	err := dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.GetEntryAttributesRequest{
@@ -64,7 +66,7 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 			return err
 		}
 
-		attributes = resp.Attributes
+		dir.attributes = resp.Attributes
 
 		return nil
 	})
@@ -76,26 +78,26 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 	// glog.V(1).Infof("dir %s: %v", dir.Path, attributes)
 	// glog.V(1).Infof("dir %s permission: %v", dir.Path, os.FileMode(attributes.FileMode))
 
-	attr.Mode = os.FileMode(attributes.FileMode) | os.ModeDir
-	if dir.Path == "/" && attributes.FileMode == 0 {
+	attr.Mode = os.FileMode(dir.attributes.FileMode) | os.ModeDir
+	if dir.Path == "/" && dir.attributes.FileMode == 0 {
 		attr.Valid = time.Second
 	}
 
-	attr.Mtime = time.Unix(attributes.Mtime, 0)
-	attr.Ctime = time.Unix(attributes.Crtime, 0)
-	attr.Gid = attributes.Gid
-	attr.Uid = attributes.Uid
+	attr.Mtime = time.Unix(dir.attributes.Mtime, 0)
+	attr.Ctime = time.Unix(dir.attributes.Crtime, 0)
+	attr.Gid = dir.attributes.Gid
+	attr.Uid = dir.attributes.Uid
 
 	return nil
 }
 
-func (dir *Dir) newFile(name string, chunks []*filer_pb.FileChunk) *File {
+func (dir *Dir) newFile(name string, chunks []*filer_pb.FileChunk, attr *filer_pb.FuseAttributes) *File {
 	return &File{
-		Name: name,
-		dir:  dir,
-		wfs:  dir.wfs,
-		// attributes: &filer_pb.FuseAttributes{},
-		Chunks: chunks,
+		Name:       name,
+		dir:        dir,
+		wfs:        dir.wfs,
+		attributes: attr,
+		Chunks:     chunks,
 	}
 }
 
@@ -132,7 +134,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	})
 
 	if err == nil {
-		file := dir.newFile(req.Name, nil)
+		file := dir.newFile(req.Name, nil, &filer_pb.FuseAttributes{})
 		file.isOpen = true
 		return file, dir.wfs.AcquireHandle(file, req.Uid, req.Gid), nil
 	}
@@ -200,9 +202,9 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 
 	if entry != nil {
 		if entry.IsDirectory {
-			node = &Dir{Path: path.Join(dir.Path, req.Name), wfs: dir.wfs}
+			node = &Dir{Path: path.Join(dir.Path, req.Name), wfs: dir.wfs, attributes: entry.Attributes}
 		} else {
-			node = dir.newFile(req.Name, entry.Chunks)
+			node = dir.newFile(req.Name, entry.Chunks, entry.Attributes)
 		}
 
 		resp.EntryValid = time.Duration(0)
@@ -265,6 +267,48 @@ func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 		_, err := client.DeleteEntry(ctx, request)
 		if err != nil {
 			glog.V(0).Infof("remove %s/%s: %v", dir.Path, req.Name, err)
+			return fuse.EIO
+		}
+
+		return nil
+	})
+
+}
+
+func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
+
+	glog.V(3).Infof("%v dir setattr %+v, fh=%d", dir.Path, req, req.Handle)
+	if req.Valid.Mode() {
+		dir.attributes.FileMode = uint32(req.Mode)
+	}
+
+	if req.Valid.Uid() {
+		dir.attributes.Uid = req.Uid
+	}
+
+	if req.Valid.Gid() {
+		dir.attributes.Gid = req.Gid
+	}
+
+	if req.Valid.Mtime() {
+		dir.attributes.Mtime = req.Mtime.Unix()
+	}
+
+	parentDir, name := filer2.FullPath(dir.Path).DirAndName()
+	return dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		request := &filer_pb.UpdateEntryRequest{
+			Directory: parentDir,
+			Entry: &filer_pb.Entry{
+				Name:       name,
+				Attributes: dir.attributes,
+			},
+		}
+
+		glog.V(1).Infof("set attr directory entry: %v", request)
+		_, err := client.UpdateEntry(ctx, request)
+		if err != nil {
+			glog.V(0).Infof("UpdateEntry %s: %v", dir.Path, err)
 			return fuse.EIO
 		}
 
