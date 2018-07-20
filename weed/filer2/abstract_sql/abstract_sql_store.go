@@ -64,7 +64,7 @@ func (store *AbstractSqlStore) FindEntry(fullpath filer2.FullPath) (*filer2.Entr
 	row := store.DB.QueryRow(store.SqlFind, hashToLong(dir), name, dir)
 	var data []byte
 	if err := row.Scan(&data); err != nil {
-		return nil, fmt.Errorf("read entry %s: %v", fullpath, err)
+		return nil, filer2.ErrNotFound
 	}
 
 	entry := &filer2.Entry{

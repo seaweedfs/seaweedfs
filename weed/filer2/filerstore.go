@@ -11,6 +11,7 @@ type FilerStore interface {
 	Initialize(configuration Configuration) error
 	InsertEntry(*Entry) error
 	UpdateEntry(*Entry) (err error)
+	// err == filer2.ErrNotFound if not found
 	FindEntry(FullPath) (entry *Entry, err error)
 	DeleteEntry(FullPath) (err error)
 	ListDirectoryEntries(dirPath FullPath, startFileName string, includeStartFile bool, limit int) ([]*Entry, error)

@@ -27,20 +27,26 @@ type FilerPostResult struct {
 
 func (fs *FilerServer) queryFileInfoByPath(w http.ResponseWriter, r *http.Request, path string) (fileId, urlLocation string, err error) {
 	var entry *filer2.Entry
-	if entry, err = fs.filer.FindEntry(filer2.FullPath(path)); err != nil {
+	entry, err = fs.filer.FindEntry(filer2.FullPath(path))
+	if err == filer2.ErrNotFound {
+		return "", "", nil
+	}
+
+	if err != nil {
 		glog.V(0).Infoln("failing to find path in filer store", path, err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+
+	if len(entry.Chunks) == 0 {
+		glog.V(1).Infof("empty entry: %s", path)
+		w.WriteHeader(http.StatusNoContent)
 	} else {
-		if len(entry.Chunks) == 0 {
-			glog.V(1).Infof("empty entry: %s", path)
-			w.WriteHeader(http.StatusNoContent)
-		}else{
-			fileId = entry.Chunks[0].FileId
-			urlLocation, err = operation.LookupFileId(fs.filer.GetMaster(), fileId)
-			if err != nil {
-				glog.V(1).Infof("operation LookupFileId %s failed, err is %s", fileId, err.Error())
-				w.WriteHeader(http.StatusNotFound)
-			}
+		fileId = entry.Chunks[0].FileId
+		urlLocation, err = operation.LookupFileId(fs.filer.GetMaster(), fileId)
+		if err != nil {
+			glog.V(1).Infof("operation LookupFileId %s failed, err is %s", fileId, err.Error())
+			w.WriteHeader(http.StatusNotFound)
 		}
 	}
 	return
