@@ -91,7 +91,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			return fmt.Errorf("mkdir %s/%s: %v", s3a.option.BucketsPath, bucket, err)
 		}
 
-		// TODO create collection
+		// lazily create collection
 
 		return nil
 	})
@@ -109,10 +109,21 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
-	// TODO delete collection
-
 	err := s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
+		ctx := context.Background()
+
+		// delete collection
+		deleteCollectionRequest := &filer_pb.DeleteCollectionRequest{
+			Collection: bucket,
+		}
+
+		glog.V(1).Infof("delete collection: %v", deleteCollectionRequest)
+		if _, err := client.DeleteCollection(ctx, deleteCollectionRequest); err != nil {
+			return fmt.Errorf("delete collection %%s: %v", bucket, err)
+		}
+
+		// delete bucket metadata
 		request := &filer_pb.DeleteEntryRequest{
 			Directory:    s3a.option.BucketsPath,
 			Name:         bucket,
@@ -122,7 +133,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		}
 
 		glog.V(1).Infof("delete bucket: %v", request)
-		if _, err := client.DeleteEntry(context.Background(), request); err != nil {
+		if _, err := client.DeleteEntry(ctx, request); err != nil {
 			return fmt.Errorf("delete bucket %s/%s: %v", s3a.option.BucketsPath, bucket, err)
 		}
 
