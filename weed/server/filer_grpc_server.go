@@ -215,7 +215,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 
 func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.DeleteCollectionRequest) (resp *filer_pb.DeleteCollectionResponse, err error) {
 
-	for _, master := range fs.masters {
+	for _, master := range fs.option.Masters {
 		_, err = util.Get(fmt.Sprintf("http://%s/col/delete?collection=%s", master, req.Collection))
 	}
 
