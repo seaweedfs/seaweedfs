@@ -120,7 +120,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 		glog.V(1).Infof("delete collection: %v", deleteCollectionRequest)
 		if _, err := client.DeleteCollection(ctx, deleteCollectionRequest); err != nil {
-			return fmt.Errorf("delete collection %%s: %v", bucket, err)
+			return fmt.Errorf("delete collection %s: %v", bucket, err)
 		}
 
 		// delete bucket metadata
