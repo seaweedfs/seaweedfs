@@ -10,6 +10,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/images"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"io/ioutil"
 )
 
 const (
@@ -57,7 +58,16 @@ func ParseUpload(r *http.Request) (
 		}
 	}
 
-	fileName, data, mimeType, isGzipped, isChunkedFile, e = parseMultipart(r)
+	isChunkedFile, _ = strconv.ParseBool(r.FormValue("cm"))
+
+	if r.Method == "POST" {
+		fileName, data, mimeType, isGzipped, e = parseMultipart(r, isChunkedFile)
+	} else {
+		isGzipped = false
+		mimeType = r.Header.Get("Content-Type")
+		fileName = ""
+		data, e = ioutil.ReadAll(r.Body)
+	}
 	if e != nil {
 		return
 	}

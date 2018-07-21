@@ -8,11 +8,10 @@ import (
 	"path"
 	"io/ioutil"
 	"strings"
-	"strconv"
 )
 
-func parseMultipart(r *http.Request) (
-	fileName string, data []byte, mimeType string, isGzipped bool, isChunkedFile bool, e error){
+func parseMultipart(r *http.Request, isChunkedFile bool) (
+	fileName string, data []byte, mimeType string, isGzipped bool, e error) {
 	form, fe := r.MultipartReader()
 	if fe != nil {
 		glog.V(0).Infoln("MultipartReader [ERROR]", fe)
@@ -63,8 +62,6 @@ func parseMultipart(r *http.Request) (
 			break
 		}
 	}
-
-	isChunkedFile, _ = strconv.ParseBool(r.FormValue("cm"))
 
 	if !isChunkedFile {
 
