@@ -31,8 +31,9 @@ const (
 	ErrBucketNotEmpty
 	ErrBucketAlreadyExists
 	ErrBucketAlreadyOwnedByYou
-	ErrInvalidBucketName
 	ErrNoSuchBucket
+	ErrInvalidBucketName
+	ErrInvalidDigest
 	ErrInternalError
 )
 
@@ -62,6 +63,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidBucketName: {
 		Code:           "InvalidBucketName",
 		Description:    "The specified bucket is not valid.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidDigest: {
+		Code:           "InvalidDigest",
+		Description:    "The Content-Md5 you specified is not valid.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrNoSuchBucket: {

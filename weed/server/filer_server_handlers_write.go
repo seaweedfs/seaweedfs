@@ -70,9 +70,10 @@ func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request,
 			DataCenter:  "",
 		}
 	}
+
 	assignResult, ae := operation.Assign(fs.filer.GetMaster(), ar, altRequest)
 	if ae != nil {
-		glog.V(0).Infoln("failing to assign a file id", ae.Error())
+		glog.Errorf("failing to assign a file id: %v", ae)
 		writeJsonError(w, r, http.StatusInternalServerError, ae)
 		err = ae
 		return
@@ -102,20 +103,24 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var fileId, urlLocation string
-	var err error
-
+	/*
+	var path string
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data; boundary=") {
-		fileId, urlLocation, err = fs.multipartUploadAnalyzer(w, r, replication, collection, dataCenter)
-		if err != nil {
-			return
-		}
+		path, err = fs.multipartUploadAnalyzer(w, r, replication, collection, dataCenter)
 	} else {
-		fileId, urlLocation, err = fs.monolithicUploadAnalyzer(w, r, replication, collection, dataCenter)
-		if err != nil || fileId == "" {
-			return
-		}
+		path, err = fs.monolithicUploadAnalyzer(w, r, replication, collection, dataCenter)
 	}
+	*/
+
+	fileId, urlLocation, err := fs.queryFileInfoByPath(w, r, r.URL.Path)
+	if fileId, urlLocation, err = fs.queryFileInfoByPath(w, r, r.URL.Path); err == nil && fileId == "" {
+		fileId, urlLocation, err = fs.assignNewFileInfo(w, r, replication, collection, dataCenter)
+	}
+	if err != nil || fileId == "" || urlLocation == "" {
+		return
+	}
+
+	glog.V(0).Infof("request header %+v, urlLocation: %v", r.Header, urlLocation)
 
 	u, _ := url.Parse(urlLocation)
 
@@ -142,7 +147,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, do_err := util.Do(request)
 	if do_err != nil {
-		glog.V(0).Infoln("failing to connect to volume server", r.RequestURI, do_err.Error())
+		glog.Errorf("failing to connect to volume server %s: %v, %+v", r.RequestURI, do_err, r.Method)
 		writeJsonError(w, r, http.StatusInternalServerError, do_err)
 		return
 	}

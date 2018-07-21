@@ -59,8 +59,9 @@ func Assign(server string, primaryRequest *VolumeAssignRequest, alternativeReque
 			values.Add("dataNode", request.DataNode)
 		}
 
-		jsonBlob, err := util.Post("http://"+server+"/dir/assign", values)
-		glog.V(2).Infof("assign result from %s : %s", server, string(jsonBlob))
+		postUrl := fmt.Sprintf("http://%s/dir/assign", server)
+		jsonBlob, err := util.Post(postUrl, values)
+		glog.V(2).Infof("assign %d result from %s %+v : %s", i, postUrl, values, string(jsonBlob))
 		if err != nil {
 			return nil, err
 		}

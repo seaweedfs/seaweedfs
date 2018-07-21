@@ -11,6 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"bytes"
 	"encoding/xml"
+	"encoding/base64"
 )
 
 type mimeType string
@@ -92,4 +93,15 @@ func writeSuccessResponseXML(w http.ResponseWriter, response []byte) {
 
 func writeSuccessResponseEmpty(w http.ResponseWriter) {
 	writeResponse(w, http.StatusOK, nil, mimeNone)
+}
+
+func validateContentMd5(h http.Header) ([]byte, error) {
+	md5B64, ok := h["Content-Md5"]
+	if ok {
+		if md5B64[0] == "" {
+			return nil, fmt.Errorf("Content-Md5 header set to empty value")
+		}
+		return base64.StdEncoding.DecodeString(md5B64[0])
+	}
+	return []byte{}, nil
 }

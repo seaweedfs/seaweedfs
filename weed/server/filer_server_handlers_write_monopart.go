@@ -73,15 +73,8 @@ func checkContentMD5(w http.ResponseWriter, r *http.Request) (err error) {
 	return
 }
 
-func (fs *FilerServer) monolithicUploadAnalyzer(w http.ResponseWriter, r *http.Request, replication, collection string, dataCenter string) (fileId, urlLocation string, err error) {
-	/*
-		Amazon S3 ref link:[http://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html]
-		There is a long way to provide a completely compatibility against all Amazon S3 API, I just made
-		a simple data stream adapter between S3 PUT API and seaweedfs's volume storage Write API
-		1. The request url format should be http://$host:$port/$bucketName/$objectName
-		2. bucketName will be mapped to seaweedfs's collection name
-		3. You could customize and make your enhancement.
-	*/
+func (fs *FilerServer) monolithicUploadAnalyzer(w http.ResponseWriter, r *http.Request, replication, collection string, dataCenter string) (path string, err error) {
+
 	lastPos := strings.LastIndex(r.URL.Path, "/")
 	if lastPos == -1 || lastPos == 0 || lastPos == len(r.URL.Path)-1 {
 		glog.V(0).Infof("URL Path [%s] is invalid, could not retrieve file name", r.URL.Path)
@@ -99,13 +92,8 @@ func (fs *FilerServer) monolithicUploadAnalyzer(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	secondPos := strings.Index(r.URL.Path[1:], "/") + 1
-	collection = r.URL.Path[1:secondPos]
-	path := r.URL.Path
+	path = r.URL.Path
 
-	if fileId, urlLocation, err = fs.queryFileInfoByPath(w, r, path); err == nil && fileId == "" {
-		fileId, urlLocation, err = fs.assignNewFileInfo(w, r, replication, collection, dataCenter)
-	}
 	return
 }
 
