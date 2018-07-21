@@ -34,7 +34,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
 	if file.attributes == nil || !file.isOpen {
 		item := file.wfs.listDirectoryEntriesCache.Get(file.fullpath())
-		if item != nil && !item.Expired(){
+		if item != nil && !item.Expired() {
 			entry := item.Value().(*filer_pb.Entry)
 			file.Chunks = entry.Chunks
 			file.attributes = entry.Attributes
@@ -121,7 +121,26 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		file.attributes.Mtime = req.Mtime.Unix()
 	}
 
-	return nil
+	return file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		request := &filer_pb.UpdateEntryRequest{
+			Directory: file.dir.Path,
+			Entry: &filer_pb.Entry{
+				Name:       file.Name,
+				Attributes: file.attributes,
+				Chunks:     file.Chunks,
+			},
+		}
+
+		glog.V(1).Infof("set attr file entry: %v", request)
+		_, err := client.UpdateEntry(ctx, request)
+		if err != nil {
+			glog.V(0).Infof("UpdateEntry file %s/%s: %v", file.dir.Path, file.Name, err)
+			return fuse.EIO
+		}
+
+		return nil
+	})
 
 }
 
