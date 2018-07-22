@@ -29,12 +29,12 @@ type Needle struct {
 
 	DataSize     uint32 `comment:"Data size"` //version2
 	Data         []byte `comment:"The actual file data"`
-	Flags        byte   `comment:"boolean flags"`          //version2
-	NameSize     uint8                                     //version2
+	Flags        byte   `comment:"boolean flags"` //version2
+	NameSize     uint8  //version2
 	Name         []byte `comment:"maximum 256 characters"` //version2
-	MimeSize     uint8                                     //version2
+	MimeSize     uint8  //version2
 	Mime         []byte `comment:"maximum 256 characters"` //version2
-	PairsSize    uint16                                    //version2
+	PairsSize    uint16 //version2
 	Pairs        []byte `comment:"additional name value pairs, json format, maximum 64kB"`
 	LastModified uint64 //only store LastModifiedBytesLength bytes, which is 5 bytes to disk
 	Ttl          *TTL
@@ -44,7 +44,7 @@ type Needle struct {
 }
 
 func (n *Needle) String() (str string) {
-	str = fmt.Sprintf("Cookie:%d, Id:%d, Size:%d, DataSize:%d, Name: %s, Mime: %s", n.Cookie, n.Id, n.Size, n.DataSize, n.Name, n.Mime)
+	str = fmt.Sprintf("%s Size:%d, DataSize:%d, Name:%s, Mime:%s", formatNeedleIdCookie(n.Id, n.Cookie), n.Size, n.DataSize, n.Name, n.Mime)
 	return
 }
 
@@ -134,7 +134,7 @@ func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
 	dotSep := strings.LastIndex(r.URL.Path, ".")
 	fid := r.URL.Path[commaSep+1:]
 	if dotSep > 0 {
-		fid = r.URL.Path[commaSep+1: dotSep]
+		fid = r.URL.Path[commaSep+1 : dotSep]
 	}
 
 	e = n.ParsePath(fid)
