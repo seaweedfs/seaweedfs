@@ -34,7 +34,7 @@ type WFS struct {
 
 func NewSeaweedFileSystem(option *Option) *WFS {
 	return &WFS{
-		option:                    option,
+		option: option,
 		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(6000).ItemsToPrune(100)),
 		pathToHandleIndex:         make(map[string]int),
 	}

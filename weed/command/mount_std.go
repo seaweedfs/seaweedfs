@@ -60,7 +60,7 @@ func runMount(cmd *Command, args []string) bool {
 
 	mountRoot := *mountOptions.filerMountRootPath
 	if mountRoot != "/" && strings.HasSuffix(mountRoot, "/") {
-		mountRoot = mountRoot[0: len(mountRoot)-1]
+		mountRoot = mountRoot[0 : len(mountRoot)-1]
 	}
 
 	err = fs.Serve(c, filesys.NewSeaweedFileSystem(&filesys.Option{

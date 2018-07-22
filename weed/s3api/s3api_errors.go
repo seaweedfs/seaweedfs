@@ -26,7 +26,7 @@ type ErrorCode int
 
 // Error codes, see full list at http://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
 const (
-	ErrNone                    ErrorCode = iota
+	ErrNone ErrorCode = iota
 	ErrMethodNotAllowed
 	ErrBucketNotEmpty
 	ErrBucketAlreadyExists

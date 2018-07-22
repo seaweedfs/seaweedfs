@@ -1,17 +1,17 @@
 package s3api
 
 import (
+	"context"
+	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/gorilla/mux"
 	"net/http"
 	"net/url"
-	"strconv"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"context"
-	"fmt"
 	"path/filepath"
+	"strconv"
 	"time"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
 )
 
 const (

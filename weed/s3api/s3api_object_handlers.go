@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/gorilla/mux"
+	"io"
 	"io/ioutil"
 	"net/http"
-	"io"
 )
 
 var (
