@@ -109,15 +109,6 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	/*
-		var path string
-		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data; boundary=") {
-			path, err = fs.multipartUploadAnalyzer(w, r, replication, collection, dataCenter)
-		} else {
-			path, err = fs.monolithicUploadAnalyzer(w, r, replication, collection, dataCenter)
-		}
-	*/
-
 	fileId, urlLocation, err := fs.queryFileInfoByPath(w, r, r.URL.Path)
 	if err == nil && fileId == "" {
 		fileId, urlLocation, err = fs.assignNewFileInfo(w, r, replication, collection, dataCenter)
@@ -140,6 +131,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	glog.V(4).Infoln("post to", u)
 
+	// send request to volume server
 	request := &http.Request{
 		Method:        r.Method,
 		URL:           u,
@@ -177,6 +169,8 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, http.StatusInternalServerError, errors.New(ret.Error))
 		return
 	}
+
+	// find correct final path
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") {
 		if ret.Name != "" {
@@ -190,6 +184,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// update metadata in filer store
 	glog.V(4).Infoln("saving", path, "=>", fileId)
 	entry := &filer2.Entry{
 		FullPath: filer2.FullPath(path),
@@ -216,6 +211,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// send back post result
 	reply := FilerPostResult{
 		Name:  ret.Name,
 		Size:  ret.Size,
