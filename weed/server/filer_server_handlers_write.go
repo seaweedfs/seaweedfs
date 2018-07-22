@@ -15,6 +15,12 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"os"
+)
+
+var (
+	OS_UID = uint32(os.Getuid())
+	OS_GID = uint32(os.Getgid())
 )
 
 type FilerPostResult struct {
@@ -104,16 +110,16 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	/*
-	var path string
-	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data; boundary=") {
-		path, err = fs.multipartUploadAnalyzer(w, r, replication, collection, dataCenter)
-	} else {
-		path, err = fs.monolithicUploadAnalyzer(w, r, replication, collection, dataCenter)
-	}
+		var path string
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data; boundary=") {
+			path, err = fs.multipartUploadAnalyzer(w, r, replication, collection, dataCenter)
+		} else {
+			path, err = fs.monolithicUploadAnalyzer(w, r, replication, collection, dataCenter)
+		}
 	*/
 
 	fileId, urlLocation, err := fs.queryFileInfoByPath(w, r, r.URL.Path)
-	if fileId, urlLocation, err = fs.queryFileInfoByPath(w, r, r.URL.Path); err == nil && fileId == "" {
+	if err == nil && fileId == "" {
 		fileId, urlLocation, err = fs.assignNewFileInfo(w, r, replication, collection, dataCenter)
 	}
 	if err != nil || fileId == "" || urlLocation == "" {
@@ -184,16 +190,6 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// also delete the old fid unless PUT operation
-	if r.Method != "PUT" {
-		if entry, err := fs.filer.FindEntry(filer2.FullPath(path)); err == nil {
-			oldFid := entry.Chunks[0].FileId
-			operation.DeleteFile(fs.filer.GetMaster(), oldFid, fs.jwt(oldFid))
-		} else if err != nil && err != filer2.ErrNotFound {
-			glog.V(0).Infof("error %v occur when finding %s in filer store", err, path)
-		}
-	}
-
 	glog.V(4).Infoln("saving", path, "=>", fileId)
 	entry := &filer2.Entry{
 		FullPath: filer2.FullPath(path),
@@ -201,13 +197,15 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 			Mtime:       time.Now(),
 			Crtime:      time.Now(),
 			Mode:        0660,
+			Uid:         OS_UID,
+			Gid:         OS_GID,
 			Replication: replication,
 			Collection:  collection,
 			TtlSec:      int32(util.ParseInt(r.URL.Query().Get("ttl"), 0)),
 		},
 		Chunks: []*filer_pb.FileChunk{{
 			FileId: fileId,
-			Size:   uint64(r.ContentLength),
+			Size:   uint64(ret.Size),
 			Mtime:  time.Now().UnixNano(),
 		}},
 	}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
@@ -143,15 +144,9 @@ func (fs *FilerServer) doAutoChunk(w http.ResponseWriter, r *http.Request, conte
 	}
 
 	path := r.URL.Path
-	// also delete the old fid unless PUT operation
-	if r.Method != "PUT" {
-		if entry, err := fs.filer.FindEntry(filer2.FullPath(path)); err == nil {
-			for _, chunk := range entry.Chunks {
-				oldFid := chunk.FileId
-				operation.DeleteFile(fs.filer.GetMaster(), oldFid, fs.jwt(oldFid))
-			}
-		} else if err != nil {
-			glog.V(0).Infof("error %v occur when finding %s in filer store", err, path)
+	if strings.HasSuffix(path, "/") {
+		if fileName != "" {
+			path += fileName
 		}
 	}
 
@@ -162,6 +157,8 @@ func (fs *FilerServer) doAutoChunk(w http.ResponseWriter, r *http.Request, conte
 			Mtime:       time.Now(),
 			Crtime:      time.Now(),
 			Mode:        0660,
+			Uid:         OS_UID,
+			Gid:         OS_GID,
 			Replication: replication,
 			Collection:  collection,
 			TtlSec:      int32(util.ParseInt(r.URL.Query().Get("ttl"), 0)),
