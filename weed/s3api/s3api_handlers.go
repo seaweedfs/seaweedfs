@@ -36,11 +36,6 @@ func encodeResponse(response interface{}) []byte {
 	return bytesBuffer.Bytes()
 }
 
-func newContext(r *http.Request, api string) context.Context {
-	vars := mux.Vars(r)
-	return context.WithValue(context.Background(), "bucket", vars["bucket"])
-}
-
 func (s3a *S3ApiServer) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
 	grpcConnection, err := util.GrpcDial(s3a.option.FilerGrpcAddress)
