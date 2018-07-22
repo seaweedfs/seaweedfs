@@ -95,7 +95,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	destUrl := fmt.Sprintf("http://%s%s%s",
 		s3a.option.Filer, s3a.option.BucketsPath, r.RequestURI)
 
-	s3a.proxyToFiler(w, r, destUrl)
+	s3a.proxyToFiler(w, r, destUrl, passThroghResponse)
 
 }
 
@@ -104,7 +104,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	destUrl := fmt.Sprintf("http://%s%s%s",
 		s3a.option.Filer, s3a.option.BucketsPath, r.RequestURI)
 
-	s3a.proxyToFiler(w, r, destUrl)
+	s3a.proxyToFiler(w, r, destUrl, passThroghResponse)
 
 }
 
@@ -113,11 +113,16 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	destUrl := fmt.Sprintf("http://%s%s%s",
 		s3a.option.Filer, s3a.option.BucketsPath, r.RequestURI)
 
-	s3a.proxyToFiler(w, r, destUrl)
+	s3a.proxyToFiler(w, r, destUrl, func(proxyResonse *http.Response, w http.ResponseWriter) {
+		for k, v := range proxyResonse.Header {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 
 }
 
-func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string) {
+func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, responseFn func(proxyResonse *http.Response, w http.ResponseWriter)) {
 
 	glog.V(2).Infof("s3 proxying %s to %s", r.Method, destUrl)
 
@@ -147,9 +152,12 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	}
 	defer resp.Body.Close()
 
-	for k, v := range resp.Header {
+	responseFn(resp, w)
+}
+func passThroghResponse(proxyResonse *http.Response, w http.ResponseWriter) {
+	for k, v := range proxyResonse.Header {
 		w.Header()[k] = v
 	}
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	w.WriteHeader(proxyResonse.StatusCode)
+	io.Copy(w, proxyResonse.Body)
 }
