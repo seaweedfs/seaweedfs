@@ -227,7 +227,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	err := fs.filer.DeleteEntryMetaAndData(filer2.FullPath(r.URL.Path), false, true)
 	if err != nil {
-		glog.V(4).Infoln("deleting", r.URL.Path, ":", err.Error())
+		glog.V(1).Infoln("deleting", r.URL.Path, ":", err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
