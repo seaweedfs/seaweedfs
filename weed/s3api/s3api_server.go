@@ -45,20 +45,23 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 		// PutObject
 		bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(s3a.PutObjectHandler)
-		// GetObject
-		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(s3a.GetObjectHandler)
-		// HeadObject
-		bucket.Methods("HEAD").Path("/{object:.+}").HandlerFunc(s3a.HeadObjectHandler)
-		// DeleteObject
-		bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(s3a.DeleteObjectHandler)
-
 		// PutBucket
 		bucket.Methods("PUT").HandlerFunc(s3a.PutBucketHandler)
-		// DeleteBucket
-		bucket.Methods("DELETE").HandlerFunc(s3a.DeleteBucketHandler)
+
+		// HeadObject
+		bucket.Methods("HEAD").Path("/{object:.+}").HandlerFunc(s3a.HeadObjectHandler)
 		// HeadBucket
 		bucket.Methods("HEAD").HandlerFunc(s3a.HeadBucketHandler)
 
+		// DeleteObject
+		bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(s3a.DeleteObjectHandler)
+		// DeleteBucket
+		bucket.Methods("DELETE").HandlerFunc(s3a.DeleteBucketHandler)
+
+		// GetObject
+		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(s3a.GetObjectHandler)
+		// ListObjectsV2
+		bucket.Methods("GET").HandlerFunc(s3a.ListObjectsV2Handler).Queries("list-type", "2")
 		// ListObjectsV1 (Legacy)
 		bucket.Methods("GET").HandlerFunc(s3a.ListObjectsV1Handler)
 
@@ -81,10 +84,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 			// ListMultipartUploads
 			bucket.Methods("GET").HandlerFunc(s3a.ListMultipartUploadsHandler).Queries("uploads", "")
-			// ListObjectsV2
-			bucket.Methods("GET").HandlerFunc(s3a.ListObjectsV2Handler).Queries("list-type", "2")
-			// ListObjectsV1 (Legacy)
-			bucket.Methods("GET").HandlerFunc(s3a.ListObjectsV1Handler)
 			// DeleteMultipleObjects
 			bucket.Methods("POST").HandlerFunc(s3a.DeleteMultipleObjectsHandler).Queries("delete", "")
 
