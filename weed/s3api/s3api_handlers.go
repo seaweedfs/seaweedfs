@@ -2,13 +2,11 @@ package s3api
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"encoding/xml"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/gorilla/mux"
 	"net/http"
 	"net/url"
 	"time"
