@@ -23,19 +23,13 @@ security settings:
 
 func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
-	case "GET":
-		stats.ReadRequest()
-		vs.GetOrHeadHandler(w, r)
-	case "HEAD":
+	case "GET", "HEAD":
 		stats.ReadRequest()
 		vs.GetOrHeadHandler(w, r)
 	case "DELETE":
 		stats.DeleteRequest()
 		vs.guard.WhiteList(vs.DeleteHandler)(w, r)
-	case "PUT":
-		stats.WriteRequest()
-		vs.guard.WhiteList(vs.PostHandler)(w, r)
-	case "POST":
+	case "PUT", "POST":
 		stats.WriteRequest()
 		vs.guard.WhiteList(vs.PostHandler)(w, r)
 	}
