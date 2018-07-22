@@ -35,7 +35,6 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 
 func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntriesRequest) (*filer_pb.ListEntriesResponse, error) {
 
-	println("directory:", req.Directory, "prefix", req.Prefix)
 	limit := int(req.Limit)
 	if limit == 0 {
 		limit = fs.option.DirListingLimit

@@ -90,8 +90,6 @@ func (fo *FilerOptions) start() {
 
 	masters := *f.masters
 
-	println("*f.dirListingLimit", *f.dirListingLimit)
-
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
 		Masters:            strings.Split(masters, ","),
 		Collection:         *f.collection,

@@ -121,8 +121,6 @@ func (fs *FilerServer) handleMultipleChunks(w http.ResponseWriter, r *http.Reque
 		w.Header().Set("Content-Type", mimeType)
 	}
 
-	println("mime type:", mimeType)
-
 	totalSize := int64(filer2.TotalSize(entry.Chunks))
 
 	rangeReq := r.Header.Get("Range")
