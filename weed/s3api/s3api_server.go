@@ -37,7 +37,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	apiRouter := router.PathPrefix("/").Subrouter()
 	var routers []*mux.Router
 	if s3a.option.DomainName != "" {
-		routers = append(routers, apiRouter.Host("{bucket:.+}."+s3a.option.DomainName).Subrouter())
+		routers = append(routers, apiRouter.Host("{bucket:.+}." + s3a.option.DomainName).Subrouter())
 	}
 	routers = append(routers, apiRouter.PathPrefix("/{bucket}").Subrouter())
 
@@ -45,6 +45,12 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 		// PutObject
 		bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(s3a.PutObjectHandler)
+		// GetObject
+		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(s3a.GetObjectHandler)
+		// HeadObject
+		bucket.Methods("HEAD").Path("/{object:.+}").HandlerFunc(s3a.HeadObjectHandler)
+		// DeleteObject
+		bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(s3a.DeleteObjectHandler)
 
 		// PutBucket
 		bucket.Methods("PUT").HandlerFunc(s3a.PutBucketHandler)
@@ -54,16 +60,8 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods("HEAD").HandlerFunc(s3a.HeadBucketHandler)
 
 		/*
-			// HeadObject
-			bucket.Methods("HEAD").Path("/{object:.+}").HandlerFunc(s3a.HeadObjectHandler)
-			// GetObject
-			bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(s3a.GetObjectHandler)
 			// CopyObject
 			bucket.Methods("PUT").Path("/{object:.+}").HeadersRegexp("X-Amz-Copy-Source", ".*?(\\/|%2F).*?").HandlerFunc(s3a.CopyObjectHandler)
-			// PutObject
-			bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(s3a.PutObjectHandler)
-			// DeleteObject
-			bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(s3a.DeleteObjectHandler)
 
 			// CopyObjectPart
 			bucket.Methods("PUT").Path("/{object:.+}").HeadersRegexp("X-Amz-Copy-Source", ".*?(\\/|%2F).*?").HandlerFunc(s3a.CopyObjectPartHandler).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")

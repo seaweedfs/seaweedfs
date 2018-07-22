@@ -232,5 +232,5 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJsonQuiet(w, r, http.StatusAccepted, map[string]string{"error": ""})
+	w.WriteHeader(http.StatusNoContent)
 }

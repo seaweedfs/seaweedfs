@@ -7,6 +7,7 @@ import (
 	"github.com/gorilla/mux"
 	"io/ioutil"
 	"net/http"
+	"io"
 )
 
 var (
@@ -87,4 +88,68 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	writeSuccessResponseEmpty(w)
+}
+
+func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
+
+	destUrl := fmt.Sprintf("http://%s%s%s",
+		s3a.option.Filer, s3a.option.BucketsPath, r.RequestURI)
+
+	s3a.proxyToFiler(w, r, destUrl)
+
+}
+
+func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request) {
+
+	destUrl := fmt.Sprintf("http://%s%s%s",
+		s3a.option.Filer, s3a.option.BucketsPath, r.RequestURI)
+
+	s3a.proxyToFiler(w, r, destUrl)
+
+}
+
+func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Request) {
+
+	destUrl := fmt.Sprintf("http://%s%s%s",
+		s3a.option.Filer, s3a.option.BucketsPath, r.RequestURI)
+
+	s3a.proxyToFiler(w, r, destUrl)
+
+}
+
+func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string) {
+
+	glog.V(2).Infof("s3 proxying %s to %s", r.Method, destUrl)
+
+	proxyReq, err := http.NewRequest(r.Method, destUrl, r.Body)
+
+	if err != nil {
+		glog.Errorf("NewRequest %s: %v", destUrl, err)
+		writeErrorResponse(w, ErrInternalError, r.URL)
+		return
+	}
+
+	proxyReq.Header.Set("Host", s3a.option.Filer)
+	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
+
+	for header, values := range r.Header {
+		for _, value := range values {
+			proxyReq.Header.Add(header, value)
+		}
+	}
+
+	resp, postErr := client.Do(proxyReq)
+
+	if postErr != nil {
+		glog.Errorf("post to filer: %v", postErr)
+		writeErrorResponse(w, ErrInternalError, r.URL)
+		return
+	}
+	defer resp.Body.Close()
+
+	for k, v := range resp.Header {
+		w.Header()[k] = v
+	}
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
