@@ -11,8 +11,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"strconv"
-	"strings"
 )
 
 func runMount(cmd *Command, args []string) bool {
@@ -73,23 +71,4 @@ func runMount(cmd *Command, args []string) bool {
 	}
 
 	return true
-}
-
-func parseFilerGrpcAddress(filer string, optionalGrpcPort int) (filerGrpcAddress string, err error) {
-	hostnameAndPort := strings.Split(filer, ":")
-	if len(hostnameAndPort) != 2 {
-		return "", fmt.Errorf("The filer should have hostname:port format: %v", hostnameAndPort)
-	}
-
-	filerPort, parseErr := strconv.ParseUint(hostnameAndPort[1], 10, 64)
-	if parseErr != nil {
-		return "", fmt.Errorf("The filer filer port parse error: %v", parseErr)
-	}
-
-	filerGrpcPort := int(filerPort) + 10000
-	if optionalGrpcPort != 0 {
-		filerGrpcPort = optionalGrpcPort
-	}
-
-	return fmt.Sprintf("%s:%d", hostnameAndPort[0], filerGrpcPort), nil
 }

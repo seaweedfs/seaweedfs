@@ -1,5 +1,11 @@
 package command
 
+import (
+	"strings"
+	"fmt"
+	"strconv"
+)
+
 type MountOptions struct {
 	filer              *string
 	filerGrpcPort      *int
@@ -45,4 +51,23 @@ var cmdMount = &Command{
   On OS X, it requires OSXFUSE (http://osxfuse.github.com/).
 
   `,
+}
+
+func parseFilerGrpcAddress(filer string, optionalGrpcPort int) (filerGrpcAddress string, err error) {
+	hostnameAndPort := strings.Split(filer, ":")
+	if len(hostnameAndPort) != 2 {
+		return "", fmt.Errorf("The filer should have hostname:port format: %v", hostnameAndPort)
+	}
+
+	filerPort, parseErr := strconv.ParseUint(hostnameAndPort[1], 10, 64)
+	if parseErr != nil {
+		return "", fmt.Errorf("The filer filer port parse error: %v", parseErr)
+	}
+
+	filerGrpcPort := int(filerPort) + 10000
+	if optionalGrpcPort != 0 {
+		filerGrpcPort = optionalGrpcPort
+	}
+
+	return fmt.Sprintf("%s:%d", hostnameAndPort[0], filerGrpcPort), nil
 }
