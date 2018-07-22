@@ -26,7 +26,7 @@ type ErrorCode int
 
 // Error codes, see full list at http://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
 const (
-	ErrNone ErrorCode = iota
+	ErrNone                    ErrorCode = iota
 	ErrMethodNotAllowed
 	ErrBucketNotEmpty
 	ErrBucketAlreadyExists
@@ -34,7 +34,9 @@ const (
 	ErrNoSuchBucket
 	ErrInvalidBucketName
 	ErrInvalidDigest
+	ErrInvalidMaxKeys
 	ErrInternalError
+	ErrNotImplemented
 )
 
 // error code to APIError structure, these fields carry respective
@@ -70,6 +72,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "The Content-Md5 you specified is not valid.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
+	ErrInvalidMaxKeys: {
+		Code:           "InvalidArgument",
+		Description:    "Argument maxKeys must be an integer between 0 and 2147483647",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
 	ErrNoSuchBucket: {
 		Code:           "NoSuchBucket",
 		Description:    "The specified bucket does not exist",
@@ -79,6 +86,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "InternalError",
 		Description:    "We encountered an internal error, please try again.",
 		HTTPStatusCode: http.StatusInternalServerError,
+	},
+	ErrNotImplemented: {
+		Code:           "NotImplemented",
+		Description:    "A header you provided implies functionality that is not implemented",
+		HTTPStatusCode: http.StatusNotImplemented,
 	},
 }
 

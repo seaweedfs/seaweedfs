@@ -11,6 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"strings"
 )
 
 func runMount(cmd *Command, args []string) bool {
@@ -57,9 +58,21 @@ func runMount(cmd *Command, args []string) bool {
 		return false
 	}
 
-	err = fs.Serve(c, filesys.NewSeaweedFileSystem(
-		filerGrpcAddress, *mountOptions.filerMountRootPath, *mountOptions.collection, *mountOptions.replication, int32(*mountOptions.ttlSec),
-		*mountOptions.chunkSizeLimitMB, *mountOptions.dataCenter))
+	mountRoot := *mountOptions.filerMountRootPath
+	if mountRoot != "/" && strings.HasSuffix(mountRoot, "/") {
+		mountRoot = mountRoot[0: len(mountRoot)-1]
+	}
+
+	err = fs.Serve(c, filesys.NewSeaweedFileSystem(&filesys.Option{
+		FilerGrpcAddress:   filerGrpcAddress,
+		FilerMountRootPath: mountRoot,
+		Collection:         *mountOptions.collection,
+		Replication:        *mountOptions.replication,
+		TtlSec:             int32(*mountOptions.ttlSec),
+		ChunkSizeLimit:     int64(*mountOptions.chunkSizeLimitMB) * 1024 * 1024,
+		DataCenter:         *mountOptions.dataCenter,
+		DirListingLimit:    *mountOptions.dirListingLimit,
+	}))
 	if err != nil {
 		fuse.Unmount(*mountOptions.dir)
 	}

@@ -117,9 +117,9 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 					FileMode:    uint32(req.Mode),
 					Uid:         req.Uid,
 					Gid:         req.Gid,
-					Collection:  dir.wfs.collection,
-					Replication: dir.wfs.replication,
-					TtlSec:      dir.wfs.ttlSec,
+					Collection:  dir.wfs.option.Collection,
+					Replication: dir.wfs.option.Replication,
+					TtlSec:      dir.wfs.option.TtlSec,
 				},
 			},
 		}
@@ -226,6 +226,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 		request := &filer_pb.ListEntriesRequest{
 			Directory: dir.Path,
+			Limit:     uint32(dir.wfs.option.DirListingLimit),
 		}
 
 		glog.V(4).Infof("read directory: %v", request)

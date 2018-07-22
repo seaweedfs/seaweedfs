@@ -48,6 +48,10 @@ message LookupDirectoryEntryResponse {
 
 message ListEntriesRequest {
     string directory = 1;
+    string prefix = 2;
+    string startFromFileName = 3;
+    bool inclusiveStartFrom = 4;
+    uint32 limit = 5;
 }
 
 message ListEntriesResponse {

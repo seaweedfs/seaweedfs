@@ -59,6 +59,9 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// HeadBucket
 		bucket.Methods("HEAD").HandlerFunc(s3a.HeadBucketHandler)
 
+		// ListObjectsV1 (Legacy)
+		bucket.Methods("GET").HandlerFunc(s3a.ListObjectsV1Handler)
+
 		/*
 			// CopyObject
 			bucket.Methods("PUT").Path("/{object:.+}").HeadersRegexp("X-Amz-Copy-Source", ".*?(\\/|%2F).*?").HandlerFunc(s3a.CopyObjectHandler)

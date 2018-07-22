@@ -13,6 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"strconv"
+	"strings"
 )
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -34,20 +35,45 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 
 func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntriesRequest) (*filer_pb.ListEntriesResponse, error) {
 
-	entries, err := fs.filer.ListDirectoryEntries(filer2.FullPath(req.Directory), "", false, fs.option.DirListingLimit)
-	if err != nil {
-		return nil, err
+	println("directory:", req.Directory, "prefix", req.Prefix)
+	limit := int(req.Limit)
+	if limit == 0 {
+		limit = fs.option.DirListingLimit
 	}
 
 	resp := &filer_pb.ListEntriesResponse{}
-	for _, entry := range entries {
+	lastFileName := req.StartFromFileName
+	includeLastFile := req.InclusiveStartFrom
+	for limit > 0 {
+		entries, err := fs.filer.ListDirectoryEntries(filer2.FullPath(req.Directory), lastFileName, includeLastFile, limit)
+		if err != nil {
+			return nil, err
+		}
+		if len(entries) == 0 {
+			return resp, nil
+		}
 
-		resp.Entries = append(resp.Entries, &filer_pb.Entry{
-			Name:        entry.Name(),
-			IsDirectory: entry.IsDirectory(),
-			Chunks:      entry.Chunks,
-			Attributes:  filer2.EntryAttributeToPb(entry),
-		})
+		includeLastFile = false
+
+		for _, entry := range entries {
+
+			lastFileName = entry.Name()
+
+			if req.Prefix != "" {
+				if !strings.HasPrefix(entry.Name(), req.Prefix) {
+					continue
+				}
+			}
+
+			resp.Entries = append(resp.Entries, &filer_pb.Entry{
+				Name:        entry.Name(),
+				IsDirectory: entry.IsDirectory(),
+				Chunks:      entry.Chunks,
+				Attributes:  filer2.EntryAttributeToPb(entry),
+			})
+			limit--
+		}
+
 	}
 
 	return resp, nil

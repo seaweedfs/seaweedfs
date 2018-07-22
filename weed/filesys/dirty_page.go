@@ -21,7 +21,7 @@ type ContinuousDirtyPages struct {
 
 func newDirtyPages(file *File) *ContinuousDirtyPages {
 	return &ContinuousDirtyPages{
-		Data: make([]byte, file.wfs.chunkSizeLimit),
+		Data: make([]byte, file.wfs.option.ChunkSizeLimit),
 		f:    file,
 	}
 }
@@ -119,10 +119,10 @@ func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context, buf []byte
 
 		request := &filer_pb.AssignVolumeRequest{
 			Count:       1,
-			Replication: pages.f.wfs.replication,
-			Collection:  pages.f.wfs.collection,
-			TtlSec:      pages.f.wfs.ttlSec,
-			DataCenter:  pages.f.wfs.dataCenter,
+			Replication: pages.f.wfs.option.Replication,
+			Collection:  pages.f.wfs.option.Collection,
+			TtlSec:      pages.f.wfs.option.TtlSec,
+			DataCenter:  pages.f.wfs.option.DataCenter,
 		}
 
 		resp, err := client.AssignVolume(ctx, request)
