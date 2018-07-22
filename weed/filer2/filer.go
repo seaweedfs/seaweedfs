@@ -4,12 +4,13 @@ import (
 	"fmt"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/karlseguin/ccache"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-	"github.com/chrislusf/seaweedfs/weed/operation"
 )
 
 type Filer struct {
@@ -112,7 +113,7 @@ func (f *Filer) CreateEntry(entry *Entry) error {
 		return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
 	}
 
-	f.deleteChunks(oldEntry)
+	f.deleteChunksIfNotNew(oldEntry, entry)
 
 	return nil
 }
@@ -125,7 +126,7 @@ func (f *Filer) FindEntry(p FullPath) (entry *Entry, err error) {
 	return f.store.FindEntry(p)
 }
 
-func (f *Filer) DeleteEntryMetaAndData(p FullPath, shouldDeleteChunks bool) (err error) {
+func (f *Filer) DeleteEntryMetaAndData(p FullPath, isRecursive bool, shouldDeleteChunks bool) (err error) {
 	entry, err := f.FindEntry(p)
 	if err != nil {
 		return err
@@ -136,14 +137,20 @@ func (f *Filer) DeleteEntryMetaAndData(p FullPath, shouldDeleteChunks bool) (err
 		if err != nil {
 			return fmt.Errorf("list folder %s: %v", p, err)
 		}
-		if len(entries) > 0 {
-			return fmt.Errorf("folder %s is not empty", p)
+		if isRecursive {
+			for _, sub := range entries {
+				f.DeleteEntryMetaAndData(sub.FullPath, isRecursive, shouldDeleteChunks)
+			}
+		} else {
+			if len(entries) > 0 {
+				return fmt.Errorf("folder %s is not empty", p)
+			}
 		}
 		f.cacheDelDirectory(string(p))
 	}
 
 	if shouldDeleteChunks {
-		f.deleteChunks(entry)
+		f.deleteChunks(entry.Chunks)
 	}
 
 	return f.store.DeleteEntry(p)
@@ -151,14 +158,14 @@ func (f *Filer) DeleteEntryMetaAndData(p FullPath, shouldDeleteChunks bool) (err
 
 func (f *Filer) ListDirectoryEntries(p FullPath, startFileName string, inclusive bool, limit int) ([]*Entry, error) {
 	if strings.HasSuffix(string(p), "/") && len(p) > 1 {
-		p = p[0: len(p)-1]
+		p = p[0 : len(p)-1]
 	}
 	return f.store.ListDirectoryEntries(p, startFileName, inclusive, limit)
 }
 
 func (f *Filer) cacheDelDirectory(dirpath string) {
 	if f.directoryCache == nil {
-		return 
+		return
 	}
 	f.directoryCache.Delete(dirpath)
 	return
@@ -189,14 +196,36 @@ func (f *Filer) cacheSetDirectory(dirpath string, dirEntry *Entry, level int) {
 	f.directoryCache.Set(dirpath, dirEntry, time.Duration(minutes)*time.Minute)
 }
 
-func (f *Filer) deleteChunks(entry *Entry) {
-
-	if entry == nil {
-		return
-	}
-	for _, chunk := range entry.Chunks {
+func (f *Filer) deleteChunks(chunks []*filer_pb.FileChunk) {
+	for _, chunk := range chunks {
 		if err := operation.DeleteFile(f.GetMaster(), chunk.FileId, ""); err != nil {
 			glog.V(0).Infof("deleting file %s: %v", chunk.FileId, err)
 		}
 	}
+}
+
+func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
+
+	if oldEntry == nil {
+		return
+	}
+	if newEntry == nil {
+		f.deleteChunks(oldEntry.Chunks)
+	}
+
+	var toDelete []*filer_pb.FileChunk
+
+	for _, oldChunk := range oldEntry.Chunks {
+		found := false
+		for _, newChunk := range newEntry.Chunks {
+			if oldChunk.FileId == newChunk.FileId {
+				found = true
+				break
+			}
+		}
+		if !found {
+			toDelete = append(toDelete, oldChunk)
+		}
+	}
+	f.deleteChunks(toDelete)
 }

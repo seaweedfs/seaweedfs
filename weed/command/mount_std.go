@@ -11,8 +11,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"strings"
 	"strconv"
+	"strings"
 )
 
 func runMount(cmd *Command, args []string) bool {
@@ -53,27 +53,14 @@ func runMount(cmd *Command, args []string) bool {
 		c.Close()
 	})
 
-	hostnameAndPort := strings.Split(*mountOptions.filer, ":")
-	if len(hostnameAndPort) != 2 {
-		fmt.Printf("The filer should have hostname:port format: %v\n", hostnameAndPort)
+	filerGrpcAddress, err := parseFilerGrpcAddress(*mountOptions.filer, *mountOptions.filerGrpcPort)
+	if err != nil {
+		glog.Fatal(err)
 		return false
 	}
-
-	filerPort, parseErr := strconv.ParseUint(hostnameAndPort[1], 10, 64)
-	if parseErr != nil {
-		fmt.Printf("The filer filer port parse error: %v\n", parseErr)
-		return false
-	}
-
-	filerGrpcPort := filerPort + 10000
-	if *mountOptions.filerGrpcPort != 0 {
-		filerGrpcPort = uint64(*copy.filerGrpcPort)
-	}
-
-	filerAddress := fmt.Sprintf("%s:%d", hostnameAndPort[0], filerGrpcPort)
 
 	err = fs.Serve(c, filesys.NewSeaweedFileSystem(
-		filerAddress, *mountOptions.filerMountRootPath, *mountOptions.collection, *mountOptions.replication, int32(*mountOptions.ttlSec),
+		filerGrpcAddress, *mountOptions.filerMountRootPath, *mountOptions.collection, *mountOptions.replication, int32(*mountOptions.ttlSec),
 		*mountOptions.chunkSizeLimitMB, *mountOptions.dataCenter))
 	if err != nil {
 		fuse.Unmount(*mountOptions.dir)
@@ -86,4 +73,23 @@ func runMount(cmd *Command, args []string) bool {
 	}
 
 	return true
+}
+
+func parseFilerGrpcAddress(filer string, optionalGrpcPort int) (filerGrpcAddress string, err error) {
+	hostnameAndPort := strings.Split(filer, ":")
+	if len(hostnameAndPort) != 2 {
+		return "", fmt.Errorf("The filer should have hostname:port format: %v", hostnameAndPort)
+	}
+
+	filerPort, parseErr := strconv.ParseUint(hostnameAndPort[1], 10, 64)
+	if parseErr != nil {
+		return "", fmt.Errorf("The filer filer port parse error: %v", parseErr)
+	}
+
+	filerGrpcPort := int(filerPort) + 10000
+	if optionalGrpcPort != 0 {
+		filerGrpcPort = optionalGrpcPort
+	}
+
+	return fmt.Sprintf("%s:%d", hostnameAndPort[0], filerGrpcPort), nil
 }

@@ -49,7 +49,7 @@ func (store *MemDbStore) UpdateEntry(entry *filer2.Entry) (err error) {
 func (store *MemDbStore) FindEntry(fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
 	item := store.tree.Get(entryItem{&filer2.Entry{FullPath: fullpath}})
 	if item == nil {
-		return nil, nil
+		return nil, filer2.ErrNotFound
 	}
 	entry = item.(entryItem).Entry
 	return entry, nil

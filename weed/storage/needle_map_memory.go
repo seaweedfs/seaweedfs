@@ -88,7 +88,7 @@ func WalkIndexFile(r *os.File, fn func(key NeedleId, offset Offset, size uint32)
 
 	for count > 0 && e == nil || e == io.EOF {
 		for i = 0; i+NeedleEntrySize <= count; i += NeedleEntrySize {
-			key, offset, size = IdxFileEntry(bytes[i: i+NeedleEntrySize])
+			key, offset, size = IdxFileEntry(bytes[i : i+NeedleEntrySize])
 			if e = fn(key, offset, size); e != nil {
 				return e
 			}

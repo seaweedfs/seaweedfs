@@ -20,11 +20,15 @@ func NewFileId(VolumeId VolumeId, key uint64, cookie uint32) *FileId {
 }
 
 func (n *FileId) String() string {
+	return n.VolumeId.String() + "," + formatNeedleIdCookie(n.Key, n.Cookie)
+}
+
+func formatNeedleIdCookie(key NeedleId, cookie Cookie) string {
 	bytes := make([]byte, NeedleIdSize+CookieSize)
-	NeedleIdToBytes(bytes[0:NeedleIdSize], n.Key)
-	CookieToBytes(bytes[NeedleIdSize:NeedleIdSize+CookieSize], n.Cookie)
+	NeedleIdToBytes(bytes[0:NeedleIdSize], key)
+	CookieToBytes(bytes[NeedleIdSize:NeedleIdSize+CookieSize], cookie)
 	nonzero_index := 0
 	for ; bytes[nonzero_index] == 0; nonzero_index++ {
 	}
-	return n.VolumeId.String() + "," + hex.EncodeToString(bytes[nonzero_index:])
+	return hex.EncodeToString(bytes[nonzero_index:])
 }

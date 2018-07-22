@@ -7,8 +7,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
-	"golang.org/x/net/context"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"golang.org/x/net/context"
 )
 
 func (vs *VolumeServer) GetMaster() string {

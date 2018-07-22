@@ -1,8 +1,8 @@
 package needle
 
 import (
-	"testing"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"testing"
 )
 
 func TestIssue52(t *testing.T) {

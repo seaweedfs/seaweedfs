@@ -1,10 +1,10 @@
 package types
 
 import (
-	"math"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"strconv"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/util"
+	"math"
+	"strconv"
 )
 
 type Offset uint32
@@ -23,11 +23,11 @@ const (
 func CookieToBytes(bytes []byte, cookie Cookie) {
 	util.Uint32toBytes(bytes, uint32(cookie))
 }
-func Uint32ToCookie(cookie uint32) (Cookie) {
+func Uint32ToCookie(cookie uint32) Cookie {
 	return Cookie(cookie)
 }
 
-func BytesToCookie(bytes []byte) (Cookie) {
+func BytesToCookie(bytes []byte) Cookie {
 	return Cookie(util.BytesToUint32(bytes[0:4]))
 }
 
@@ -43,10 +43,10 @@ func OffsetToBytes(bytes []byte, offset Offset) {
 	util.Uint32toBytes(bytes, uint32(offset))
 }
 
-func Uint32ToOffset(offset uint32) (Offset) {
+func Uint32ToOffset(offset uint32) Offset {
 	return Offset(offset)
 }
 
-func BytesToOffset(bytes []byte) (Offset) {
+func BytesToOffset(bytes []byte) Offset {
 	return Offset(util.BytesToUint32(bytes[0:4]))
 }

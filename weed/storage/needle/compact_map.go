@@ -1,8 +1,8 @@
 package needle
 
 import (
-	"sync"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"sync"
 )
 
 type CompactSection struct {

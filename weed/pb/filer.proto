@@ -30,6 +30,9 @@ service SeaweedFiler {
     rpc LookupVolume (LookupVolumeRequest) returns (LookupVolumeResponse) {
     }
 
+    rpc DeleteCollection (DeleteCollectionRequest) returns (DeleteCollectionResponse) {
+    }
+
 }
 
 //////////////////////////////////////////////////
@@ -117,6 +120,7 @@ message DeleteEntryRequest {
     string name = 2;
     bool is_directory = 3;
     bool is_delete_data = 4;
+    bool is_recursive = 5;
 }
 
 message DeleteEntryResponse {
@@ -151,4 +155,11 @@ message Location {
 }
 message LookupVolumeResponse {
     map<string, Locations> locations_map = 1;
+}
+
+message DeleteCollectionRequest {
+    string collection = 1;
+}
+
+message DeleteCollectionResponse {
 }

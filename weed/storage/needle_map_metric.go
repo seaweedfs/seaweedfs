@@ -2,10 +2,10 @@ package storage
 
 import (
 	"fmt"
-	"os"
-	"github.com/willf/bloom"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/willf/bloom"
+	"os"
 )
 
 type mapMetric struct {

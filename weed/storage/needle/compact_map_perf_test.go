@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func TestMemoryUsage(t *testing.T) {
@@ -30,9 +30,9 @@ func loadNewNeedleMap(file *os.File) {
 	}
 	for count > 0 && e == nil {
 		for i := 0; i < count; i += 16 {
-			key := BytesToNeedleId(bytes[i:i+NeedleIdSize])
-			offset := BytesToOffset(bytes[i+NeedleIdSize:i+NeedleIdSize+OffsetSize])
-			size := util.BytesToUint32(bytes[i+NeedleIdSize+OffsetSize:i+NeedleIdSize+OffsetSize+SizeSize])
+			key := BytesToNeedleId(bytes[i : i+NeedleIdSize])
+			offset := BytesToOffset(bytes[i+NeedleIdSize : i+NeedleIdSize+OffsetSize])
+			size := util.BytesToUint32(bytes[i+NeedleIdSize+OffsetSize : i+NeedleIdSize+OffsetSize+SizeSize])
 
 			if offset > 0 {
 				m.Set(NeedleId(key), offset, size)

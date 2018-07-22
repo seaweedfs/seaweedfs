@@ -15,6 +15,12 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"os"
+)
+
+var (
+	OS_UID = uint32(os.Getuid())
+	OS_GID = uint32(os.Getgid())
 )
 
 type FilerPostResult struct {
@@ -27,9 +33,20 @@ type FilerPostResult struct {
 
 func (fs *FilerServer) queryFileInfoByPath(w http.ResponseWriter, r *http.Request, path string) (fileId, urlLocation string, err error) {
 	var entry *filer2.Entry
-	if entry, err = fs.filer.FindEntry(filer2.FullPath(path)); err != nil {
+	entry, err = fs.filer.FindEntry(filer2.FullPath(path))
+	if err == filer2.ErrNotFound {
+		return "", "", nil
+	}
+
+	if err != nil {
 		glog.V(0).Infoln("failing to find path in filer store", path, err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+
+	if len(entry.Chunks) == 0 {
+		glog.V(1).Infof("empty entry: %s", path)
+		w.WriteHeader(http.StatusNoContent)
 	} else {
 		fileId = entry.Chunks[0].FileId
 		urlLocation, err = operation.LookupFileId(fs.filer.GetMaster(), fileId)
@@ -59,9 +76,10 @@ func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request,
 			DataCenter:  "",
 		}
 	}
+
 	assignResult, ae := operation.Assign(fs.filer.GetMaster(), ar, altRequest)
 	if ae != nil {
-		glog.V(0).Infoln("failing to assign a file id", ae.Error())
+		glog.Errorf("failing to assign a file id: %v", ae)
 		writeJsonError(w, r, http.StatusInternalServerError, ae)
 		err = ae
 		return
@@ -91,20 +109,15 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var fileId, urlLocation string
-	var err error
-
-	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data; boundary=") {
-		fileId, urlLocation, err = fs.multipartUploadAnalyzer(w, r, replication, collection, dataCenter)
-		if err != nil {
-			return
-		}
-	} else {
-		fileId, urlLocation, err = fs.monolithicUploadAnalyzer(w, r, replication, collection, dataCenter)
-		if err != nil {
-			return
-		}
+	fileId, urlLocation, err := fs.queryFileInfoByPath(w, r, r.URL.Path)
+	if err == nil && fileId == "" {
+		fileId, urlLocation, err = fs.assignNewFileInfo(w, r, replication, collection, dataCenter)
 	}
+	if err != nil || fileId == "" || urlLocation == "" {
+		return
+	}
+
+	glog.V(0).Infof("request header %+v, urlLocation: %v", r.Header, urlLocation)
 
 	u, _ := url.Parse(urlLocation)
 
@@ -118,6 +131,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	glog.V(4).Infoln("post to", u)
 
+	// send request to volume server
 	request := &http.Request{
 		Method:        r.Method,
 		URL:           u,
@@ -131,7 +145,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, do_err := util.Do(request)
 	if do_err != nil {
-		glog.V(0).Infoln("failing to connect to volume server", r.RequestURI, do_err.Error())
+		glog.Errorf("failing to connect to volume server %s: %v, %+v", r.RequestURI, do_err, r.Method)
 		writeJsonError(w, r, http.StatusInternalServerError, do_err)
 		return
 	}
@@ -155,6 +169,8 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, http.StatusInternalServerError, errors.New(ret.Error))
 		return
 	}
+
+	// find correct final path
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") {
 		if ret.Name != "" {
@@ -168,16 +184,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// also delete the old fid unless PUT operation
-	if r.Method != "PUT" {
-		if entry, err := fs.filer.FindEntry(filer2.FullPath(path)); err == nil {
-			oldFid := entry.Chunks[0].FileId
-			operation.DeleteFile(fs.filer.GetMaster(), oldFid, fs.jwt(oldFid))
-		} else if err != nil && err != filer2.ErrNotFound {
-			glog.V(0).Infof("error %v occur when finding %s in filer store", err, path)
-		}
-	}
-
+	// update metadata in filer store
 	glog.V(4).Infoln("saving", path, "=>", fileId)
 	entry := &filer2.Entry{
 		FullPath: filer2.FullPath(path),
@@ -185,13 +192,15 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 			Mtime:       time.Now(),
 			Crtime:      time.Now(),
 			Mode:        0660,
+			Uid:         OS_UID,
+			Gid:         OS_GID,
 			Replication: replication,
 			Collection:  collection,
 			TtlSec:      int32(util.ParseInt(r.URL.Query().Get("ttl"), 0)),
 		},
 		Chunks: []*filer_pb.FileChunk{{
 			FileId: fileId,
-			Size:   uint64(r.ContentLength),
+			Size:   uint64(ret.Size),
 			Mtime:  time.Now().UnixNano(),
 		}},
 	}
@@ -202,6 +211,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// send back post result
 	reply := FilerPostResult{
 		Name:  ret.Name,
 		Size:  ret.Size,
@@ -215,12 +225,12 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 // curl -X DELETE http://localhost:8888/path/to
 func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
-	err := fs.filer.DeleteEntryMetaAndData(filer2.FullPath(r.URL.Path), true)
+	err := fs.filer.DeleteEntryMetaAndData(filer2.FullPath(r.URL.Path), false, true)
 	if err != nil {
-		glog.V(4).Infoln("deleting", r.URL.Path, ":", err.Error())
+		glog.V(1).Infoln("deleting", r.URL.Path, ":", err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
 
-	writeJsonQuiet(w, r, http.StatusAccepted, map[string]string{"error": ""})
+	w.WriteHeader(http.StatusNoContent)
 }

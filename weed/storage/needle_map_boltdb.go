@@ -6,11 +6,11 @@ import (
 
 	"github.com/boltdb/bolt"
 
+	"errors"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"errors"
 )
 
 type BoltDbNeedleMap struct {
@@ -101,7 +101,7 @@ func (m *BoltDbNeedleMap) Get(key NeedleId) (element *needle.NeedleValue, ok boo
 		}
 
 		offset = BytesToOffset(data[0:OffsetSize])
-		size = util.BytesToUint32(data[OffsetSize:OffsetSize+SizeSize])
+		size = util.BytesToUint32(data[OffsetSize : OffsetSize+SizeSize])
 
 		return nil
 	})

@@ -1,8 +1,8 @@
 package needle
 
 import (
-	"github.com/google/btree"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/google/btree"
 )
 
 //This map assumes mostly inserting increasing keys

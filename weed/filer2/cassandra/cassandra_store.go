@@ -68,7 +68,7 @@ func (store *CassandraStore) FindEntry(fullpath filer2.FullPath) (entry *filer2.
 		"SELECT meta FROM filemeta WHERE directory=? AND name=?",
 		dir, name).Consistency(gocql.One).Scan(&data); err != nil {
 		if err != gocql.ErrNotFound {
-			return nil, fmt.Errorf("read entry %s: %v", fullpath, err)
+			return nil, filer2.ErrNotFound
 		}
 	}
 

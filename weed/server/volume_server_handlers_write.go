@@ -9,8 +9,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/topology"
-	"time"
 	"strconv"
+	"time"
 )
 
 func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
@@ -55,7 +55,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	volumeId, _ := storage.NewVolumeId(vid)
 	n.ParsePath(fid)
 
-	glog.V(2).Infoln("deleting", n)
+	glog.V(2).Infof("volume %s deleting %s", vid, n)
 
 	cookie := n.Cookie
 

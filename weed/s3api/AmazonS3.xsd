@@ -1,0 +1,692 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsd:schema
+  xmlns:tns="http://s3.amazonaws.com/doc/2006-03-01/"
+  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+  elementFormDefault="qualified"
+  targetNamespace="http://s3.amazonaws.com/doc/2006-03-01/">
+
+  <xsd:element name="CreateBucket">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="Bucket" type="xsd:string"/>
+        <xsd:element name="AccessControlList" type="tns:AccessControlList" minOccurs="0"/>
+        <xsd:element name="AWSAccessKeyId" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Timestamp" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="Signature" type="xsd:string" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:complexType name="MetadataEntry">
+    <xsd:sequence>
+      <xsd:element name="Name" type="xsd:string"/>
+      <xsd:element name="Value" type="xsd:string"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:element name="CreateBucketResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="CreateBucketReturn" type="tns:CreateBucketResult"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:complexType name="Status">
+    <xsd:sequence>
+      <xsd:element name="Code" type="xsd:int"/>
+      <xsd:element name="Description" type="xsd:string"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="Result">
+    <xsd:sequence>
+      <xsd:element name="Status" type="tns:Status"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="CreateBucketResult">
+    <xsd:sequence>
+      <xsd:element name="BucketName" type="xsd:string"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:element name="DeleteBucket">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="Bucket" type="xsd:string"/>
+        <xsd:element name="AWSAccessKeyId" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Timestamp" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="Signature" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Credential" type="xsd:string" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="DeleteBucketResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="DeleteBucketResponse" type="tns:Status"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:complexType name="BucketLoggingStatus">
+    <xsd:sequence>
+      <xsd:element name="LoggingEnabled" type="tns:LoggingSettings" minOccurs="0"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="LoggingSettings">
+    <xsd:sequence>
+      <xsd:element name="TargetBucket" type="xsd:string"/>
+      <xsd:element name="TargetPrefix" type="xsd:string"/>
+      <xsd:element name="TargetGrants" type="tns:AccessControlList" minOccurs="0"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:element name="GetBucketLoggingStatus">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="Bucket" type="xsd:string"/>
+        <xsd:element name="AWSAccessKeyId" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Timestamp" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="Signature" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Credential" type="xsd:string" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  
+  <xsd:element name="GetBucketLoggingStatusResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="GetBucketLoggingStatusResponse" type="tns:BucketLoggingStatus"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  
+  <xsd:element name="SetBucketLoggingStatus">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="Bucket" type="xsd:string"/>
+        <xsd:element name="AWSAccessKeyId" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Timestamp" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="Signature" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Credential" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="BucketLoggingStatus" type="tns:BucketLoggingStatus"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="SetBucketLoggingStatusResponse">
+    <xsd:complexType>
+      <xsd:sequence/>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="GetObjectAccessControlPolicy">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="Bucket" type="xsd:string"/>
+        <xsd:element name="Key" type="xsd:string"/>
+        <xsd:element name="AWSAccessKeyId" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Timestamp" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="Signature" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Credential" type="xsd:string" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="GetObjectAccessControlPolicyResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="GetObjectAccessControlPolicyResponse" type="tns:AccessControlPolicy"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="GetBucketAccessControlPolicy">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="Bucket" type="xsd:string"/>
+        <xsd:element name="AWSAccessKeyId" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Timestamp" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="Signature" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Credential" type="xsd:string" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="GetBucketAccessControlPolicyResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="GetBucketAccessControlPolicyResponse" type="tns:AccessControlPolicy"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:complexType abstract="true" name="Grantee"/>
+
+  <xsd:complexType name="User" abstract="true">
+    <xsd:complexContent>
+      <xsd:extension base="tns:Grantee"/>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <xsd:complexType name="AmazonCustomerByEmail">
+    <xsd:complexContent>
+      <xsd:extension base="tns:User">
+        <xsd:sequence>
+          <xsd:element name="EmailAddress" type="xsd:string"/>              
+        </xsd:sequence>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <xsd:complexType name="CanonicalUser">
+    <xsd:complexContent>
+      <xsd:extension base="tns:User">
+        <xsd:sequence>
+          <xsd:element name="ID" type="xsd:string"/>              
+          <xsd:element name="DisplayName" type="xsd:string" minOccurs="0"/>
+        </xsd:sequence>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <xsd:complexType name="Group">
+    <xsd:complexContent>
+      <xsd:extension base="tns:Grantee">
+        <xsd:sequence>
+          <xsd:element name="URI" type="xsd:string"/>
+        </xsd:sequence>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <xsd:simpleType name="Permission">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="READ"/>
+      <xsd:enumeration value="WRITE"/>
+      <xsd:enumeration value="READ_ACP"/>
+      <xsd:enumeration value="WRITE_ACP"/>
+      <xsd:enumeration value="FULL_CONTROL"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+
+  <xsd:simpleType name="StorageClass">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="STANDARD"/>
+      <xsd:enumeration value="REDUCED_REDUNDANCY"/>
+      <xsd:enumeration value="GLACIER"/>
+      <xsd:enumeration value="UNKNOWN"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+
+  <xsd:complexType name="Grant">
+    <xsd:sequence>
+      <xsd:element name="Grantee" type="tns:Grantee"/>
+      <xsd:element name="Permission" type="tns:Permission"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="AccessControlList">
+    <xsd:sequence>
+      <xsd:element name="Grant" type="tns:Grant" minOccurs="0" maxOccurs="100"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="CreateBucketConfiguration">
+    <xsd:sequence>
+      <xsd:element name="LocationConstraint" type="tns:LocationConstraint"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="LocationConstraint">
+    <xsd:simpleContent>
+      <xsd:extension base="xsd:string"/>
+    </xsd:simpleContent>
+  </xsd:complexType>
+
+  <xsd:complexType name="AccessControlPolicy">
+    <xsd:sequence>
+      <xsd:element name="Owner" type="tns:CanonicalUser"/>
+      <xsd:element name="AccessControlList" type="tns:AccessControlList"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:element name="SetObjectAccessControlPolicy">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="Bucket" type="xsd:string"/>
+        <xsd:element name="Key" type="xsd:string"/>
+        <xsd:element name="AccessControlList" type="tns:AccessControlList"/>
+        <xsd:element name="AWSAccessKeyId" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Timestamp" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="Signature" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Credential" type="xsd:string" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="SetObjectAccessControlPolicyResponse">
+    <xsd:complexType>
+      <xsd:sequence/>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="SetBucketAccessControlPolicy">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="Bucket" type="xsd:string"/>
+        <xsd:element name="AccessControlList" type="tns:AccessControlList" minOccurs="0"/>
+        <xsd:element name="AWSAccessKeyId" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Timestamp" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="Signature" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Credential" type="xsd:string" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="SetBucketAccessControlPolicyResponse">
+    <xsd:complexType>
+      <xsd:sequence/>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="GetObject">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="Bucket" type="xsd:string"/>
+        <xsd:element name="Key" type="xsd:string"/>
+        <xsd:element name="GetMetadata" type="xsd:boolean"/>
+        <xsd:element name="GetData" type="xsd:boolean"/>
+        <xsd:element name="InlineData" type="xsd:boolean"/>
+        <xsd:element name="AWSAccessKeyId" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Timestamp" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="Signature" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Credential" type="xsd:string" minOccurs="0"/>
+        
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="GetObjectResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="GetObjectResponse" type="tns:GetObjectResult"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:complexType name="GetObjectResult">
+    <xsd:complexContent>
+      <xsd:extension base="tns:Result">
+        <xsd:sequence>
+          <xsd:element name="Metadata" type="tns:MetadataEntry" minOccurs="0" maxOccurs="unbounded"/>
+          <xsd:element name="Data" type="xsd:base64Binary" nillable="true"/>
+          <xsd:element name="LastModified" type="xsd:dateTime"/>
+          <xsd:element name="ETag" type="xsd:string"/>
+        </xsd:sequence>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <xsd:element name="GetObjectExtended">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="Bucket" type="xsd:string"/>
+        <xsd:element name="Key" type="xsd:string"/>
+        <xsd:element name="GetMetadata" type="xsd:boolean"/>
+        <xsd:element name="GetData" type="xsd:boolean"/>
+        <xsd:element name="InlineData" type="xsd:boolean"/>
+        <xsd:element name="ByteRangeStart" type="xsd:long" minOccurs="0"/>
+        <xsd:element name="ByteRangeEnd" type="xsd:long" minOccurs="0"/>
+        <xsd:element name="IfModifiedSince" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="IfUnmodifiedSince" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="IfMatch" type="xsd:string" minOccurs="0" maxOccurs="100"/>
+        <xsd:element name="IfNoneMatch" type="xsd:string" minOccurs="0" maxOccurs="100"/>
+        <xsd:element name="ReturnCompleteObjectOnConditionFailure" type="xsd:boolean" minOccurs="0"/>
+        <xsd:element name="AWSAccessKeyId" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Timestamp" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="Signature" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Credential" type="xsd:string" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="GetObjectExtendedResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="GetObjectResponse" type="tns:GetObjectResult"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="PutObject">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="Bucket" type="xsd:string"/>
+        <xsd:element name="Key" type="xsd:string"/>
+        <xsd:element name="Metadata" type="tns:MetadataEntry" minOccurs="0" maxOccurs="100"/>
+        <xsd:element name="ContentLength" type="xsd:long"/>
+        <xsd:element name="AccessControlList" type="tns:AccessControlList" minOccurs="0"/>
+        <xsd:element name="StorageClass" type="tns:StorageClass" minOccurs="0"/>
+        <xsd:element name="AWSAccessKeyId" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Timestamp" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="Signature" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Credential" type="xsd:string" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="PutObjectResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="PutObjectResponse" type="tns:PutObjectResult"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:complexType name="PutObjectResult">
+    <xsd:sequence>
+      <xsd:element name="ETag" type="xsd:string"/>
+      <xsd:element name="LastModified" type="xsd:dateTime"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:element name="PutObjectInline">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="Bucket" type="xsd:string"/>
+        <xsd:element name="Key" type="xsd:string"/>
+        <xsd:element minOccurs="0" maxOccurs="100" name="Metadata" type="tns:MetadataEntry"/>
+        <xsd:element name="Data" type="xsd:base64Binary"/>
+        <xsd:element name="ContentLength" type="xsd:long"/>
+        <xsd:element name="AccessControlList" type="tns:AccessControlList" minOccurs="0"/>
+        <xsd:element name="StorageClass" type="tns:StorageClass" minOccurs="0"/>
+        <xsd:element name="AWSAccessKeyId" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Timestamp" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="Signature" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Credential" type="xsd:string" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="PutObjectInlineResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="PutObjectInlineResponse" type="tns:PutObjectResult"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="DeleteObject">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="Bucket" type="xsd:string"/>
+        <xsd:element name="Key" type="xsd:string"/>
+        <xsd:element name="AWSAccessKeyId" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Timestamp" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="Signature" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Credential" type="xsd:string" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="DeleteObjectResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="DeleteObjectResponse" type="tns:Status"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="ListBucket">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="Bucket" type="xsd:string"/>
+        <xsd:element name="Prefix" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Marker" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="MaxKeys" type="xsd:int" minOccurs="0"/>
+        <xsd:element name="Delimiter" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="AWSAccessKeyId" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Timestamp" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="Signature" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Credential" type="xsd:string" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="ListBucketResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="ListBucketResponse" type="tns:ListBucketResult"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="ListVersionsResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="ListVersionsResponse" type="tns:ListVersionsResult"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>  
+
+  <xsd:complexType name="ListEntry">
+    <xsd:sequence>
+      <xsd:element name="Key" type="xsd:string"/>
+      <xsd:element name="LastModified" type="xsd:dateTime"/>
+      <xsd:element name="ETag" type="xsd:string"/>
+      <xsd:element name="Size" type="xsd:long"/>
+      <xsd:element name="Owner" type="tns:CanonicalUser" minOccurs="0"/>
+      <xsd:element name="StorageClass" type="tns:StorageClass"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="VersionEntry">
+    <xsd:sequence>
+      <xsd:element name="Key" type="xsd:string"/>
+      <xsd:element name="VersionId" type="xsd:string"/>
+      <xsd:element name="IsLatest" type="xsd:boolean"/>
+      <xsd:element name="LastModified" type="xsd:dateTime"/>
+      <xsd:element name="ETag" type="xsd:string"/>
+      <xsd:element name="Size" type="xsd:long"/>
+      <xsd:element name="Owner" type="tns:CanonicalUser" minOccurs="0"/>
+      <xsd:element name="StorageClass" type="tns:StorageClass"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="DeleteMarkerEntry">
+    <xsd:sequence>
+      <xsd:element name="Key" type="xsd:string"/>
+      <xsd:element name="VersionId" type="xsd:string"/>
+      <xsd:element name="IsLatest" type="xsd:boolean"/>
+      <xsd:element name="LastModified" type="xsd:dateTime"/>
+      <xsd:element name="Owner" type="tns:CanonicalUser" minOccurs="0"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="PrefixEntry">
+    <xsd:sequence>
+      <xsd:element name="Prefix" type="xsd:string"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="ListBucketResult">
+    <xsd:sequence>
+      <xsd:element name="Metadata" type="tns:MetadataEntry" minOccurs="0" maxOccurs="unbounded"/>
+      <xsd:element name="Name" type="xsd:string"/>
+      <xsd:element name="Prefix" type="xsd:string"/>
+      <xsd:element name="Marker" type="xsd:string"/>
+      <xsd:element name="NextMarker" type="xsd:string" minOccurs="0"/>
+      <xsd:element name="MaxKeys" type="xsd:int"/>
+      <xsd:element name="Delimiter" type="xsd:string" minOccurs="0"/>
+      <xsd:element name="IsTruncated" type="xsd:boolean"/>
+      <xsd:element name="Contents" type="tns:ListEntry" minOccurs="0" maxOccurs="unbounded"/>
+      <xsd:element name="CommonPrefixes" type="tns:PrefixEntry" minOccurs="0" maxOccurs="unbounded"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="ListVersionsResult">
+    <xsd:sequence>
+      <xsd:element name="Metadata" type="tns:MetadataEntry" minOccurs="0" maxOccurs="unbounded"/>
+      <xsd:element name="Name" type="xsd:string"/>
+      <xsd:element name="Prefix" type="xsd:string"/>
+      <xsd:element name="KeyMarker" type="xsd:string"/>
+      <xsd:element name="VersionIdMarker" type="xsd:string"/>
+      <xsd:element name="NextKeyMarker" type="xsd:string" minOccurs="0"/>
+      <xsd:element name="NextVersionIdMarker" type="xsd:string" minOccurs="0"/>
+      <xsd:element name="MaxKeys" type="xsd:int"/>
+      <xsd:element name="Delimiter" type="xsd:string" minOccurs="0"/>
+      <xsd:element name="IsTruncated" type="xsd:boolean"/>
+      <xsd:choice minOccurs="0" maxOccurs="unbounded">
+          <xsd:element name="Version" type="tns:VersionEntry"/>
+          <xsd:element name="DeleteMarker" type="tns:DeleteMarkerEntry"/>
+      </xsd:choice>
+      <xsd:element name="CommonPrefixes" type="tns:PrefixEntry" minOccurs="0" maxOccurs="unbounded"/>
+    </xsd:sequence>
+  </xsd:complexType>  
+
+  <xsd:element name="ListAllMyBuckets">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="AWSAccessKeyId" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Timestamp" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="Signature" type="xsd:string" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="ListAllMyBucketsResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="ListAllMyBucketsResponse" type="tns:ListAllMyBucketsResult"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:complexType name="ListAllMyBucketsEntry">
+    <xsd:sequence>
+      <xsd:element name="Name" type="xsd:string"/>
+      <xsd:element name="CreationDate" type="xsd:dateTime"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="ListAllMyBucketsResult">
+    <xsd:sequence>
+      <xsd:element name="Owner" type="tns:CanonicalUser"/>
+      <xsd:element name="Buckets" type="tns:ListAllMyBucketsList"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="ListAllMyBucketsList">
+    <xsd:sequence>
+      <xsd:element name="Bucket" type="tns:ListAllMyBucketsEntry" minOccurs="0" maxOccurs="unbounded"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:element name="PostResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="Location" type="xsd:anyURI"/>
+        <xsd:element name="Bucket" type="xsd:string"/>
+        <xsd:element name="Key" type="xsd:string"/>
+        <xsd:element name="ETag" type="xsd:string"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:simpleType name="MetadataDirective">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="COPY"/>
+      <xsd:enumeration value="REPLACE"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+
+  <xsd:element name="CopyObject">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="SourceBucket" type="xsd:string"/>
+        <xsd:element name="SourceKey" type="xsd:string"/>
+        <xsd:element name="DestinationBucket" type="xsd:string"/>
+        <xsd:element name="DestinationKey" type="xsd:string"/>
+        <xsd:element name="MetadataDirective" type="tns:MetadataDirective" minOccurs="0"/>
+        <xsd:element name="Metadata" type="tns:MetadataEntry" minOccurs="0" maxOccurs="100"/>
+        <xsd:element name="AccessControlList" type="tns:AccessControlList" minOccurs="0"/>
+	<xsd:element name="CopySourceIfModifiedSince" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="CopySourceIfUnmodifiedSince" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="CopySourceIfMatch" type="xsd:string" minOccurs="0" maxOccurs="100"/>
+        <xsd:element name="CopySourceIfNoneMatch" type="xsd:string" minOccurs="0" maxOccurs="100"/>
+        <xsd:element name="StorageClass" type="tns:StorageClass" minOccurs="0"/>
+        <xsd:element name="AWSAccessKeyId" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Timestamp" type="xsd:dateTime" minOccurs="0"/>
+        <xsd:element name="Signature" type="xsd:string" minOccurs="0"/>
+        <xsd:element name="Credential" type="xsd:string" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:element name="CopyObjectResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="CopyObjectResult" type="tns:CopyObjectResult" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:complexType name="CopyObjectResult">
+    <xsd:sequence>
+      <xsd:element name="LastModified" type="xsd:dateTime"/>
+      <xsd:element name="ETag" type="xsd:string"/>      
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="RequestPaymentConfiguration">
+    <xsd:sequence>
+      <xsd:element name="Payer" type="tns:Payer" minOccurs="1" maxOccurs="1"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:simpleType name="Payer">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="BucketOwner"/>
+      <xsd:enumeration value="Requester"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  
+  <xsd:complexType name="VersioningConfiguration">
+    <xsd:sequence>
+      <xsd:element name="Status" type="tns:VersioningStatus" minOccurs="0"/>
+      <xsd:element name="MfaDelete" type="tns:MfaDeleteStatus" minOccurs="0"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:simpleType name="MfaDeleteStatus">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="Enabled"/>
+      <xsd:enumeration value="Disabled"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+
+  <xsd:simpleType name="VersioningStatus">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="Enabled"/>
+      <xsd:enumeration value="Suspended"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+
+  <xsd:complexType name="NotificationConfiguration">
+    <xsd:sequence>
+      <xsd:element name="TopicConfiguration" minOccurs="0" maxOccurs="unbounded" type="tns:TopicConfiguration"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="TopicConfiguration">
+    <xsd:sequence>
+      <xsd:element name="Topic" minOccurs="1" maxOccurs="1" type="xsd:string"/>
+      <xsd:element name="Event" minOccurs="1" maxOccurs="unbounded" type="xsd:string"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+</xsd:schema>
