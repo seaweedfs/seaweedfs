@@ -81,7 +81,7 @@ func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle.NeedleValue, ok bo
 		return nil, false
 	}
 	offset := BytesToOffset(data[0:OffsetSize])
-	size := util.BytesToUint32(data[OffsetSize:OffsetSize+SizeSize])
+	size := util.BytesToUint32(data[OffsetSize : OffsetSize+SizeSize])
 	return &needle.NeedleValue{Key: NeedleId(key), Offset: offset, Size: size}, true
 }
 

@@ -1,9 +1,9 @@
 package types
 
 import (
+	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"strconv"
-	"fmt"
 )
 
 type NeedleId uint64
@@ -21,11 +21,11 @@ func NeedleIdToUint64(needleId NeedleId) uint64 {
 	return uint64(needleId)
 }
 
-func Uint64ToNeedleId(needleId uint64) (NeedleId) {
+func Uint64ToNeedleId(needleId uint64) NeedleId {
 	return NeedleId(needleId)
 }
 
-func BytesToNeedleId(bytes []byte) (NeedleId) {
+func BytesToNeedleId(bytes []byte) NeedleId {
 	return NeedleId(util.BytesToUint64(bytes))
 }
 

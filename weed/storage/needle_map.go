@@ -57,8 +57,8 @@ func (nm *baseNeedleMapper) IndexFileName() string {
 
 func IdxFileEntry(bytes []byte) (key NeedleId, offset Offset, size uint32) {
 	key = BytesToNeedleId(bytes[:NeedleIdSize])
-	offset = BytesToOffset(bytes[NeedleIdSize:NeedleIdSize+OffsetSize])
-	size = util.BytesToUint32(bytes[NeedleIdSize+OffsetSize:NeedleIdSize+OffsetSize+SizeSize])
+	offset = BytesToOffset(bytes[NeedleIdSize : NeedleIdSize+OffsetSize])
+	size = util.BytesToUint32(bytes[NeedleIdSize+OffsetSize : NeedleIdSize+OffsetSize+SizeSize])
 	return
 }
 func (nm *baseNeedleMapper) appendToIndexFile(key NeedleId, offset Offset, size uint32) error {

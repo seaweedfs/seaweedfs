@@ -125,7 +125,7 @@ func runExport(cmd *Command, args []string) bool {
 		t := time.Now()
 		tarHeader = tar.Header{Mode: 0644,
 			ModTime: t, Uid: os.Getuid(), Gid: os.Getgid(),
-			Typeflag: tar.TypeReg,
+			Typeflag:   tar.TypeReg,
 			AccessTime: t, ChangeTime: t}
 	}
 

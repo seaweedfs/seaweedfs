@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"net/http"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/cassandra"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/leveldb"
@@ -9,8 +8,9 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/mysql"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/postgres"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/redis"
-	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"net/http"
 )
 
 type FilerOption struct {

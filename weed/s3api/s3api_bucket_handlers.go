@@ -1,14 +1,14 @@
 package s3api
 
 import (
-	"net/http"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"time"
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/gorilla/mux"
+	"net/http"
 	"os"
+	"time"
 )
 
 var (

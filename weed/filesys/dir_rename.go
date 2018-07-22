@@ -1,9 +1,9 @@
 package filesys
 
 import (
-	"context"
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
+	"context"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"path/filepath"

@@ -1,17 +1,17 @@
 package s3api
 
 import (
-	"net/http"
-	"net/url"
-	"fmt"
-	"time"
-	"github.com/gorilla/mux"
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/xml"
+	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"bytes"
-	"encoding/xml"
-	"encoding/base64"
+	"github.com/gorilla/mux"
+	"net/http"
+	"net/url"
+	"time"
 )
 
 type mimeType string

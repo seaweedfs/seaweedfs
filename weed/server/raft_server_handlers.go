@@ -1,8 +1,8 @@
 package weed_server
 
 import (
-	"net/http"
 	"github.com/chrislusf/seaweedfs/weed/operation"
+	"net/http"
 )
 
 func (s *RaftServer) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {

@@ -8,16 +8,16 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"path"
-	"net/http"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"strconv"
-	"io"
-	"time"
 	"context"
+	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"io"
+	"net/http"
+	"path"
+	"strconv"
+	"time"
 )
 
 var (
@@ -77,7 +77,7 @@ func runCopy(cmd *Command, args []string) bool {
 		return false
 	}
 	filerDestination := args[len(args)-1]
-	fileOrDirs := args[0: len(args)-1]
+	fileOrDirs := args[0 : len(args)-1]
 
 	filerUrl, err := url.Parse(filerDestination)
 	if err != nil {

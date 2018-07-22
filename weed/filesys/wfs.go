@@ -1,15 +1,15 @@
 package filesys
 
 import (
+	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/karlseguin/ccache"
-	"sync"
-	"bazil.org/fuse"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/karlseguin/ccache"
 	"strings"
+	"sync"
 )
 
 type WFS struct {
@@ -30,7 +30,7 @@ type WFS struct {
 
 func NewSeaweedFileSystem(filerGrpcAddress string, filerMountRootPath string, collection string, replication string, ttlSec int32, chunkSizeLimitMB int, dataCenter string) *WFS {
 	if filerMountRootPath != "/" && strings.HasSuffix(filerMountRootPath, "/") {
-		filerMountRootPath = filerMountRootPath[0:len(filerMountRootPath)-1]
+		filerMountRootPath = filerMountRootPath[0 : len(filerMountRootPath)-1]
 	}
 	return &WFS{
 		filerGrpcAddress:          filerGrpcAddress,

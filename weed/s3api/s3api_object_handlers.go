@@ -1,12 +1,12 @@
 package s3api
 
 import (
-	"net/http"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"encoding/json"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/gorilla/mux"
 	"io/ioutil"
-	"encoding/json"
+	"net/http"
 )
 
 var (

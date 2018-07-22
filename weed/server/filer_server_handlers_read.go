@@ -10,10 +10,10 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"strconv"
-	"mime/multipart"
 	"mime"
+	"mime/multipart"
 	"path"
+	"strconv"
 )
 
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {

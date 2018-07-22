@@ -1,11 +1,11 @@
 package storage
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io/ioutil"
 	"math/rand"
 	"os"
 	"testing"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 /*

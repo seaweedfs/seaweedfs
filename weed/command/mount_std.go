@@ -11,8 +11,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"strings"
 	"strconv"
+	"strings"
 )
 
 func runMount(cmd *Command, args []string) bool {
