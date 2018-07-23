@@ -9,13 +9,14 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/disintegration/imaging"
+	"io"
 )
 
-func Resized(ext string, data []byte, width, height int, mode string) (resized []byte, w int, h int) {
+func Resized(ext string, read io.ReadSeeker, width, height int, mode string) (resized io.ReadSeeker, w int, h int) {
 	if width == 0 && height == 0 {
-		return data, 0, 0
+		return read, 0, 0
 	}
-	srcImage, _, err := image.Decode(bytes.NewReader(data))
+	srcImage, _, err := image.Decode(read)
 	if err == nil {
 		bounds := srcImage.Bounds()
 		var dstImage *image.NRGBA
@@ -34,7 +35,7 @@ func Resized(ext string, data []byte, width, height int, mode string) (resized [
 				}
 			}
 		} else {
-			return data, bounds.Dx(), bounds.Dy()
+			return read, bounds.Dx(), bounds.Dy()
 		}
 		var buf bytes.Buffer
 		switch ext {
@@ -45,9 +46,9 @@ func Resized(ext string, data []byte, width, height int, mode string) (resized [
 		case ".gif":
 			gif.Encode(&buf, dstImage, nil)
 		}
-		return buf.Bytes(), dstImage.Bounds().Dx(), dstImage.Bounds().Dy()
+		return bytes.NewReader(buf.Bytes()), dstImage.Bounds().Dx(), dstImage.Bounds().Dy()
 	} else {
 		glog.Error(err)
 	}
-	return data, 0, 0
+	return read, 0, 0
 }
