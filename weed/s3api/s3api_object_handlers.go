@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"strings"
 )
 
 var (
@@ -91,6 +92,11 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
+
+	if strings.HasSuffix(r.URL.Path, "/") {
+		writeErrorResponse(w, ErrNotImplemented, r.URL)
+		return
+	}
 
 	destUrl := fmt.Sprintf("http://%s%s%s",
 		s3a.option.Filer, s3a.option.BucketsPath, r.RequestURI)

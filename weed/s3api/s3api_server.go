@@ -58,7 +58,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// DeleteBucket
 		bucket.Methods("DELETE").HandlerFunc(s3a.DeleteBucketHandler)
 
-		// GetObject
+		// GetObject, but directory listing is not supported
 		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(s3a.GetObjectHandler)
 		// ListObjectsV2
 		bucket.Methods("GET").HandlerFunc(s3a.ListObjectsV2Handler).Queries("list-type", "2")
