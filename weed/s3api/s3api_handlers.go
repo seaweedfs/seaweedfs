@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 type mimeType string
@@ -49,6 +50,7 @@ func (s3a *S3ApiServer) withFilerClient(fn func(filer_pb.SeaweedFilerClient) err
 
 // If none of the http routes match respond with MethodNotAllowed
 func notFoundHandler(w http.ResponseWriter, r *http.Request) {
+	glog.V(0).Infof("unsupported %s %s", r.Method, r.RequestURI)
 	writeErrorResponse(w, ErrMethodNotAllowed, r.URL)
 }
 
