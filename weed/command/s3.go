@@ -21,6 +21,8 @@ type S3Options struct {
 	filerBucketsPath *string
 	port             *int
 	domainName       *string
+	tlsPrivateKey    *string
+	tlsCertificate   *string
 }
 
 func init() {
@@ -30,6 +32,8 @@ func init() {
 	s3options.filerBucketsPath = cmdS3.Flag.String("filer.dir.buckets", "/buckets", "folder on filer to store all buckets")
 	s3options.port = cmdS3.Flag.Int("port", 8333, "s3options server http listen port")
 	s3options.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name, {bucket}.{domainName}")
+	s3options.tlsPrivateKey = cmdS3.Flag.String("key.file", "", "path to the TLS private key file")
+	s3options.tlsCertificate = cmdS3.Flag.String("cert.file", "", "path to the TLS certificate file")
 }
 
 var cmdS3 = &Command{
@@ -60,15 +64,24 @@ func runS3(cmd *Command, args []string) bool {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
 	}
 
-	glog.V(0).Infof("Start Seaweed S3 API Server %s at port %d", util.VERSION, *s3options.port)
-	s3ApiListener, e := util.NewListener(fmt.Sprintf(":%d", *s3options.port), time.Duration(10)*time.Second)
-	if e != nil {
-		glog.Fatalf("S3 API Server listener error: %v", e)
+	httpS := &http.Server{Handler: router}
+
+	listenAddress := fmt.Sprintf(":%d", *s3options.port)
+	s3ApiListener, err := util.NewListener(listenAddress, time.Duration(10)*time.Second)
+	if err != nil {
+		glog.Fatalf("S3 API Server listener on %s error: %v", listenAddress, err)
 	}
 
-	httpS := &http.Server{Handler: router}
-	if err := httpS.Serve(s3ApiListener); err != nil {
-		glog.Fatalf("S3 API Server Fail to serve: %v", e)
+	if *s3options.tlsPrivateKey != "" {
+		if err = httpS.ServeTLS(s3ApiListener, *s3options.tlsCertificate, *s3options.tlsPrivateKey); err != nil {
+			glog.Fatalf("S3 API Server Fail to serve: %v", err)
+		}
+		glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.VERSION, *s3options.port)
+	} else {
+		if err = httpS.Serve(s3ApiListener); err != nil {
+			glog.Fatalf("S3 API Server Fail to serve: %v", err)
+		}
+		glog.V(0).Infof("Start Seaweed S3 API Server %s at http port %d", util.VERSION, *s3options.port)
 	}
 
 	return true
