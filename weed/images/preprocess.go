@@ -1,10 +1,10 @@
 package images
 
 import (
-	"path/filepath"
-	"strings"
 	"bytes"
 	"io"
+	"path/filepath"
+	"strings"
 )
 
 /*

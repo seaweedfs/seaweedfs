@@ -5,12 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/xml"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"net/http"
 	"net/url"
 	"time"
-	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 type mimeType string
