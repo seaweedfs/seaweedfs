@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/aws"
 )
 
 const (
@@ -25,6 +27,8 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	// collect parameters
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
+
+	glog.V(4).Infof("read v2: %v", vars)
 
 	originalPrefix, marker, startAfter, delimiter, _, maxKeys := getListObjectsV2Args(r.URL.Query())
 
@@ -80,7 +84,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	writeSuccessResponseXML(w, encodeResponse(response))
 }
 
-func (s3a *S3ApiServer) listFilerEntries(bucket, originalPrefix string, maxKeys int, marker string) (response ListBucketResponse, err error) {
+func (s3a *S3ApiServer) listFilerEntries(bucket, originalPrefix string, maxKeys int, marker string) (response *s3.ListObjectsOutput, err error) {
 
 	// convert full path prefix into directory name and prefix for entry name
 	dir, prefix := filepath.Split(originalPrefix)
@@ -96,14 +100,13 @@ func (s3a *S3ApiServer) listFilerEntries(bucket, originalPrefix string, maxKeys 
 			InclusiveStartFrom: false,
 		}
 
-		glog.V(4).Infof("read directory: %v", request)
 		resp, err := client.ListEntries(context.Background(), request)
 		if err != nil {
 			return fmt.Errorf("list buckets: %v", err)
 		}
 
-		var contents []ListEntry
-		var commonPrefixes []PrefixEntry
+		var contents []*s3.Object
+		var commonPrefixes []*s3.CommonPrefix
 		var counter int
 		var lastEntryName string
 		var isTruncated bool
@@ -115,36 +118,37 @@ func (s3a *S3ApiServer) listFilerEntries(bucket, originalPrefix string, maxKeys 
 			}
 			lastEntryName = entry.Name
 			if entry.IsDirectory {
-				commonPrefixes = append(commonPrefixes, PrefixEntry{
-					Prefix: fmt.Sprintf("%s%s/", dir, entry.Name),
+				commonPrefixes = append(commonPrefixes, &s3.CommonPrefix{
+					Prefix: aws.String(fmt.Sprintf("%s%s/", dir, entry.Name)),
 				})
 			} else {
-				contents = append(contents, ListEntry{
-					Key:          fmt.Sprintf("%s%s", dir, entry.Name),
-					LastModified: time.Unix(entry.Attributes.Mtime, 0),
-					ETag:         "", // TODO add etag
-					Size:         int64(filer2.TotalSize(entry.Chunks)),
-					Owner: CanonicalUser{
-						ID: fmt.Sprintf("%d", entry.Attributes.Uid),
+				contents = append(contents, &s3.Object{
+					Key:          aws.String(fmt.Sprintf("%s%s", dir, entry.Name)),
+					LastModified: aws.Time(time.Unix(entry.Attributes.Mtime, 0)),
+					ETag:         aws.String("\"2345sgfwetrewrt\""), // TODO add etag
+					Size:         aws.Int64(int64(filer2.TotalSize(entry.Chunks))),
+					Owner: &s3.Owner{
+						ID:          aws.String("bcaf161ca5fb16fd081034f"),
+						DisplayName: aws.String("webfile"),
 					},
-					StorageClass: StorageClass("STANDARD"),
+					StorageClass: aws.String("STANDARD"),
 				})
 			}
 		}
 
-		response = ListBucketResponse{
-			ListBucketResponse: ListBucketResult{
-				Name:           bucket,
-				Prefix:         originalPrefix,
-				Marker:         marker,
-				NextMarker:     lastEntryName,
-				MaxKeys:        maxKeys,
-				Delimiter:      "/",
-				IsTruncated:    isTruncated,
-				Contents:       contents,
-				CommonPrefixes: commonPrefixes,
-			},
+		response = &s3.ListObjectsOutput{
+			Name:           aws.String(bucket),
+			Prefix:         aws.String(originalPrefix),
+			Marker:         aws.String(marker),
+			NextMarker:     aws.String(lastEntryName),
+			MaxKeys:        aws.Int64(int64(maxKeys)),
+			Delimiter:      aws.String("/"),
+			IsTruncated:    aws.Bool(isTruncated),
+			Contents:       contents,
+			CommonPrefixes: commonPrefixes,
 		}
+
+		glog.V(4).Infof("read directory: %v, found: %v", request, counter)
 
 		return nil
 	})
