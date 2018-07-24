@@ -136,6 +136,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	var rs io.ReadSeeker
+	rs = bytes.NewReader(n.Data)
 	if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" {
 		width, height := 0, 0
 		if r.FormValue("width") != "" {
@@ -144,7 +145,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		if r.FormValue("height") != "" {
 			height, _ = strconv.Atoi(r.FormValue("height"))
 		}
-		rs, _, _ = images.Resized(ext, bytes.NewReader(n.Data), width, height, r.FormValue("mode"))
+		rs, _, _ = images.Resized(ext, rs, width, height, r.FormValue("mode"))
 	}
 
 	if e := writeResponseContent(filename, mtype, rs, w, r); e != nil {
