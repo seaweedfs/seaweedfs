@@ -135,18 +135,8 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
-	var rs io.ReadSeeker
-	rs = bytes.NewReader(n.Data)
-	if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" {
-		width, height := 0, 0
-		if r.FormValue("width") != "" {
-			width, _ = strconv.Atoi(r.FormValue("width"))
-		}
-		if r.FormValue("height") != "" {
-			height, _ = strconv.Atoi(r.FormValue("height"))
-		}
-		rs, _, _ = images.Resized(ext, rs, width, height, r.FormValue("mode"))
-	}
+
+	rs := conditionallyResizeImages(rs,ext, r)
 
 	if e := writeResponseContent(filename, mtype, rs, w, r); e != nil {
 		glog.V(2).Infoln("response write error:", e)
@@ -184,8 +174,17 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string,
 		Master:   vs.GetMaster(),
 	}
 	defer chunkedFileReader.Close()
-	var rs io.ReadSeeker
-	rs = chunkedFileReader
+
+	rs := conditionallyResizeImages(chunkedFileReader, ext, r)
+
+	if e := writeResponseContent(fileName, mType, rs, w, r); e != nil {
+		glog.V(2).Infoln("response write error:", e)
+	}
+	return true
+}
+
+func conditionallyResizeImages(originalDataReaderSeeker io.ReadSeeker, ext string, r *http.Request) io.ReadSeeker {
+	rs := originalDataReaderSeeker
 	if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" {
 		width, height := 0, 0
 		if r.FormValue("width") != "" {
@@ -194,12 +193,9 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string,
 		if r.FormValue("height") != "" {
 			height, _ = strconv.Atoi(r.FormValue("height"))
 		}
-		rs, _, _ = images.Resized(ext, chunkedFileReader, width, height, r.FormValue("mode"))
+		rs, _, _ = images.Resized(ext, originalDataReaderSeeker, width, height, r.FormValue("mode"))
 	}
-	if e := writeResponseContent(fileName, mType, rs, w, r); e != nil {
-		glog.V(2).Infoln("response write error:", e)
-	}
-	return true
+	return rs
 }
 
 func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.ResponseWriter, r *http.Request) error {
