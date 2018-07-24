@@ -185,6 +185,7 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string,
 	}
 	defer chunkedFileReader.Close()
 	var rs io.ReadSeeker
+	rs = chunkedFileReader
 	if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" {
 		width, height := 0, 0
 		if r.FormValue("width") != "" {
