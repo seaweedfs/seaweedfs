@@ -8,9 +8,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func getActualSize(size uint32) int64 {
-	padding := NeedlePaddingSize - ((NeedleEntrySize + size + NeedleChecksumSize) % NeedlePaddingSize)
-	return NeedleEntrySize + int64(size) + NeedleChecksumSize + int64(padding)
+func getActualSize(size uint32, version Version) int64 {
+	return NeedleEntrySize + NeedleBodyLength(size, version)
 }
 
 func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) error {
