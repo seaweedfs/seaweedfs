@@ -196,7 +196,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 			//even the needle cache in memory is hit, the need_bytes is correct
 			glog.V(4).Infof("file %d offset %d size %d", key, int64(incre_idx_entry.offset)*NeedlePaddingSize, incre_idx_entry.size)
 			var needle_bytes []byte
-			needle_bytes, err = ReadNeedleBlob(oldDatFile, int64(incre_idx_entry.offset)*NeedlePaddingSize, incre_idx_entry.size)
+			needle_bytes, err = ReadNeedleBlob(oldDatFile, int64(incre_idx_entry.offset)*NeedlePaddingSize, incre_idx_entry.size, v.Version())
 			if err != nil {
 				return fmt.Errorf("ReadNeedleBlob %s key %d offset %d size %d failed: %v", oldDatFile.Name(), key, int64(incre_idx_entry.offset)*NeedlePaddingSize, incre_idx_entry.size, err)
 			}
@@ -243,8 +243,10 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 
 	now := uint64(time.Now().Unix())
 
+	var version Version
 	err = ScanVolumeFile(v.dir, v.Collection, v.Id, v.needleMapKind,
 		func(superBlock SuperBlock) error {
+			version = superBlock.Version()
 			superBlock.CompactRevision++
 			_, err = dst.Write(superBlock.Bytes())
 			new_offset = int64(superBlock.BlockSize())
@@ -262,7 +264,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 				if _, _, err := n.Append(dst, v.Version()); err != nil {
 					return fmt.Errorf("cannot append needle: %s", err)
 				}
-				new_offset += n.DiskSize()
+				new_offset += n.DiskSize(version)
 				glog.V(3).Infoln("saving key", n.Id, "volume offset", offset, "=>", new_offset, "data_size", n.Size)
 			}
 			return nil
@@ -322,7 +324,7 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 			if _, _, err = n.Append(dst, v.Version()); err != nil {
 				return fmt.Errorf("cannot append needle: %s", err)
 			}
-			new_offset += n.DiskSize()
+			new_offset += n.DiskSize(v.Version())
 			glog.V(3).Infoln("saving key", n.Id, "volume offset", offset, "=>", new_offset, "data_size", n.Size)
 		}
 		return nil

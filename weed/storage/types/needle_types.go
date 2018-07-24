@@ -14,6 +14,7 @@ const (
 	OffsetSize            = 4
 	SizeSize              = 4 // uint32 size
 	NeedleEntrySize       = NeedleIdSize + OffsetSize + SizeSize
+	TimestampSize         = 8 // int64 size
 	NeedlePaddingSize     = 8
 	MaxPossibleVolumeSize = 4 * 1024 * 1024 * 1024 * 8
 	TombstoneFileSize     = math.MaxUint32

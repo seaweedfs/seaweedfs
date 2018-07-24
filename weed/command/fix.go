@@ -47,13 +47,15 @@ func runFix(cmd *Command, args []string) bool {
 	nm := storage.NewBtreeNeedleMap(indexFile)
 	defer nm.Close()
 
+	var version storage.Version
 	vid := storage.VolumeId(*fixVolumeId)
 	err = storage.ScanVolumeFile(*fixVolumePath, *fixVolumeCollection, vid,
 		storage.NeedleMapInMemory,
 		func(superBlock storage.SuperBlock) error {
+			version = superBlock.Version()
 			return nil
 		}, false, func(n *storage.Needle, offset int64) error {
-			glog.V(2).Infof("key %d offset %d size %d disk_size %d gzip %v", n.Id, offset, n.Size, n.DiskSize(), n.IsGzipped())
+			glog.V(2).Infof("key %d offset %d size %d disk_size %d gzip %v", n.Id, offset, n.Size, n.DiskSize(version), n.IsGzipped())
 			if n.Size > 0 {
 				pe := nm.Put(n.Id, types.Offset(offset/types.NeedlePaddingSize), n.Size)
 				glog.V(2).Infof("saved %d with error %v", n.Size, pe)

@@ -203,19 +203,6 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 				//err = fmt.Errorf("cannot read needle body: %v", err)
 				//return
 			}
-			if n.DataSize >= n.Size {
-				// this should come from a bug reported on #87 and #93
-				// fixed in v0.69
-				// remove this whole "if" clause later, long after 0.69
-				oldRest, oldSize := rest, n.Size
-				padding := NeedlePaddingSize - ((n.Size + NeedleEntrySize + NeedleChecksumSize) % NeedlePaddingSize)
-				n.Size = 0
-				rest = int64(n.Size + NeedleChecksumSize + padding)
-				if rest%NeedlePaddingSize != 0 {
-					rest += (NeedlePaddingSize - rest%NeedlePaddingSize)
-				}
-				glog.V(4).Infof("Adjusting n.Size %d=>0 rest:%d=>%d %+v", oldSize, oldRest, rest, n)
-			}
 		}
 		err = visitNeedle(n, offset)
 		if err == io.EOF {

@@ -29,18 +29,19 @@ type Needle struct {
 
 	DataSize     uint32 `comment:"Data size"` //version2
 	Data         []byte `comment:"The actual file data"`
-	Flags        byte   `comment:"boolean flags"` //version2
-	NameSize     uint8  //version2
+	Flags        byte   `comment:"boolean flags"`          //version2
+	NameSize     uint8                                     //version2
 	Name         []byte `comment:"maximum 256 characters"` //version2
-	MimeSize     uint8  //version2
+	MimeSize     uint8                                     //version2
 	Mime         []byte `comment:"maximum 256 characters"` //version2
-	PairsSize    uint16 //version2
+	PairsSize    uint16                                    //version2
 	Pairs        []byte `comment:"additional name value pairs, json format, maximum 64kB"`
 	LastModified uint64 //only store LastModifiedBytesLength bytes, which is 5 bytes to disk
 	Ttl          *TTL
 
-	Checksum CRC    `comment:"CRC32 to check integrity"`
-	Padding  []byte `comment:"Aligned to 8 bytes"`
+	Checksum   CRC    `comment:"CRC32 to check integrity"`
+	AppendAtNs uint64 `comment:"append timestamp in nano seconds"` //version3
+	Padding    []byte `comment:"Aligned to 8 bytes"`
 }
 
 func (n *Needle) String() (str string) {
@@ -134,7 +135,7 @@ func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
 	dotSep := strings.LastIndex(r.URL.Path, ".")
 	fid := r.URL.Path[commaSep+1:]
 	if dotSep > 0 {
-		fid = r.URL.Path[commaSep+1 : dotSep]
+		fid = r.URL.Path[commaSep+1: dotSep]
 	}
 
 	e = n.ParsePath(fid)
