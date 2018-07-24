@@ -101,6 +101,7 @@ func (v *Volume) writeNeedle(n *Needle) (size uint32, err error) {
 		}
 	}
 
+	n.AppendAtNs = uint64(time.Now().UnixNano())
 	if size, _, err = n.Append(v.dataFile, v.Version()); err != nil {
 		if e := v.dataFile.Truncate(offset); e != nil {
 			err = fmt.Errorf("%s\ncannot truncate %s: %v", err, v.dataFile.Name(), e)
@@ -139,6 +140,7 @@ func (v *Volume) deleteNeedle(n *Needle) (uint32, error) {
 			return size, err
 		}
 		n.Data = nil
+		n.AppendAtNs = uint64(time.Now().UnixNano())
 		_, _, err = n.Append(v.dataFile, v.Version())
 		return size, err
 	}

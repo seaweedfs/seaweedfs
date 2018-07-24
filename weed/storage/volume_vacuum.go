@@ -207,6 +207,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 			fakeDelNeedle := new(Needle)
 			fakeDelNeedle.Id = key
 			fakeDelNeedle.Cookie = 0x12345678
+			fakeDelNeedle.AppendAtNs = uint64(time.Now().UnixNano())
 			_, _, err = fakeDelNeedle.Append(dst, v.Version())
 			if err != nil {
 				return fmt.Errorf("append deleted %d failed: %v", key, err)
