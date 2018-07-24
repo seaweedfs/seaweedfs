@@ -136,7 +136,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	rs := conditionallyResizeImages(rs,ext, r)
+	rs := conditionallyResizeImages(bytes.NewReader(n.Data), ext, r)
 
 	if e := writeResponseContent(filename, mtype, rs, w, r); e != nil {
 		glog.V(2).Infoln("response write error:", e)
