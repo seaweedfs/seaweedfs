@@ -39,8 +39,9 @@ type Needle struct {
 	LastModified uint64 //only store LastModifiedBytesLength bytes, which is 5 bytes to disk
 	Ttl          *TTL
 
-	Checksum CRC    `comment:"CRC32 to check integrity"`
-	Padding  []byte `comment:"Aligned to 8 bytes"`
+	Checksum   CRC    `comment:"CRC32 to check integrity"`
+	AppendAtNs uint64 `comment:"append timestamp in nano seconds"` //version3
+	Padding    []byte `comment:"Aligned to 8 bytes"`
 }
 
 func (n *Needle) String() (str string) {

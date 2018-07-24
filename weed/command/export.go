@@ -161,7 +161,7 @@ func runExport(cmd *Command, args []string) bool {
 		}, true, func(n *storage.Needle, offset int64) error {
 			nv, ok := needleMap.Get(n.Id)
 			glog.V(3).Infof("key %d offset %d size %d disk_size %d gzip %v ok %v nv %+v",
-				n.Id, offset, n.Size, n.DiskSize(), n.IsGzipped(), ok, nv)
+				n.Id, offset, n.Size, n.DiskSize(version), n.IsGzipped(), ok, nv)
 			if ok && nv.Size > 0 && int64(nv.Offset)*types.NeedlePaddingSize == offset {
 				if newerThanUnix >= 0 && n.HasLastModifiedDate() && n.LastModified < uint64(newerThanUnix) {
 					glog.V(3).Infof("Skipping this file, as it's old enough: LastModified %d vs %d",

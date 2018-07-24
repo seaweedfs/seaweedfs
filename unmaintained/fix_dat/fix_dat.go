@@ -106,8 +106,7 @@ func iterateEntries(datFile, idxFile *os.File, visitNeedle func(n *storage.Needl
 
 		fmt.Printf("key: %d offsetFromIndex %d n.Size %d sizeFromIndex:%d\n", key, offsetFromIndex, n.Size, sizeFromIndex)
 
-		padding := types.NeedlePaddingSize - ((sizeFromIndex + types.NeedleEntrySize + storage.NeedleChecksumSize) % types.NeedlePaddingSize)
-		rest = int64(sizeFromIndex + storage.NeedleChecksumSize + padding)
+		rest = storage.NeedleBodyLength(sizeFromIndex, version)
 
 		func() {
 			defer func() {
