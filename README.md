@@ -75,13 +75,15 @@ SeaweedFS can work very well with just the object store. [[Filer]] is added late
 * Servers in the same cluster can have different disk spaces, file systems, OS etc.
 * Adding/Removing servers does **not** cause any data re-balancing
 * Optional [filer server][Filer] provides "normal" directories and files via http
-* Optionally [mount filer][Mount] to read and write directly
+* Optional [mount filer][Mount] to read and write files directly as a local directory
+* Optional [Amazon S3 compatible API][AmazonS3API] to access files with S3 tooling.
 * Optionally fix the orientation for jpeg pictures
 * Support Etag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/boltdb/btree mode tuning for memory/performance balance.
 
 [Filer]: https://github.com/chrislusf/seaweedfs/wiki/Directories-and-Files
 [Mount]: https://github.com/chrislusf/seaweedfs/wiki/Mount
+[AmazonS3API]: https://github.com/chrislusf/seaweedfs/wiki/Amazon-S3-API
 
 ## Example Usage
 By default, the master node runs on port 9333, and the volume nodes run on port 8080.
