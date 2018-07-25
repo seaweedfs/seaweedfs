@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/willf/bloom"
 	"os"
@@ -91,16 +90,32 @@ func reverseWalkIndexFile(r *os.File, initFn func(entryCount int64), fn func(key
 		return fmt.Errorf("unexpected file %s size: %d", r.Name(), fileSize)
 	}
 
-	initFn(fileSize / NeedleEntrySize)
+	entryCount := fileSize / NeedleEntrySize
+	initFn(entryCount)
 
-	bytes := make([]byte, NeedleEntrySize)
-	for readerOffset := fileSize - NeedleEntrySize; readerOffset >= 0; readerOffset -= NeedleEntrySize {
-		count, e := r.ReadAt(bytes, readerOffset)
-		glog.V(3).Infoln("file", r.Name(), "readerOffset", readerOffset, "count", count, "e", e)
-		key, offset, size := IdxFileEntry(bytes)
-		if e = fn(key, offset, size); e != nil {
+	batchSize := int64(1024 * 4)
+
+	bytes := make([]byte, NeedleEntrySize*batchSize)
+	nextBatchSize := entryCount % batchSize
+	if nextBatchSize == 0 {
+		nextBatchSize = batchSize
+	}
+	remainingCount := entryCount - nextBatchSize
+
+	for remainingCount >= 0 {
+		_, e := r.ReadAt(bytes[:NeedleEntrySize*nextBatchSize], NeedleEntrySize*remainingCount)
+		// glog.V(0).Infoln("file", r.Name(), "readerOffset", NeedleEntrySize*remainingCount, "count", count, "e", e)
+		if e != nil {
 			return e
 		}
+		for i := int(nextBatchSize) - 1; i >= 0; i-- {
+			key, offset, size := IdxFileEntry(bytes[i*NeedleEntrySize:i*NeedleEntrySize+NeedleEntrySize])
+			if e = fn(key, offset, size); e != nil {
+				return e
+			}
+		}
+		nextBatchSize = batchSize
+		remainingCount -= nextBatchSize
 	}
 	return nil
 }
