@@ -223,9 +223,12 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // curl -X DELETE http://localhost:8888/path/to
+// curl -X DELETE http://localhost:8888/path/to?recursive=true
 func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
-	err := fs.filer.DeleteEntryMetaAndData(filer2.FullPath(r.URL.Path), false, true)
+	isRecursive := r.FormValue("recursive") == "true"
+
+	err := fs.filer.DeleteEntryMetaAndData(filer2.FullPath(r.URL.Path), isRecursive, true)
 	if err != nil {
 		glog.V(1).Infoln("deleting", r.URL.Path, ":", err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)
