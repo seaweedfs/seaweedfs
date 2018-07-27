@@ -83,6 +83,7 @@ func Head(url string) (http.Header, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer r.Body.Close()
 	if r.StatusCode >= 400 {
 		return nil, fmt.Errorf("%s: %s", url, r.Status)
 	}

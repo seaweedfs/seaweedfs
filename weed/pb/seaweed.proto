@@ -9,6 +9,8 @@ service Seaweed {
     }
     rpc KeepConnected (stream Empty) returns (stream Empty) {
     }
+    rpc ListenForTopoChange (stream Empty) returns (stream VolumeLocation) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -54,4 +56,10 @@ message SuperBlockExtra {
         repeated uint32 volume_ids = 3;
     }
     ErasureCoding erasure_coding = 1;
+}
+
+message VolumeLocation {
+    string url = 1;
+    string public_url = 2;
+    repeated uint32 vid = 3;
 }
