@@ -109,7 +109,7 @@ func reverseWalkIndexFile(r *os.File, initFn func(entryCount int64), fn func(key
 			return e
 		}
 		for i := int(nextBatchSize) - 1; i >= 0; i-- {
-			key, offset, size := IdxFileEntry(bytes[i*NeedleEntrySize:i*NeedleEntrySize+NeedleEntrySize])
+			key, offset, size := IdxFileEntry(bytes[i*NeedleEntrySize : i*NeedleEntrySize+NeedleEntrySize])
 			if e = fn(key, offset, size); e != nil {
 				return e
 			}

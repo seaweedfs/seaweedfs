@@ -59,10 +59,8 @@ func ParseUpload(r *http.Request) (
 		}
 	}
 
-	isChunkedFile, _ = strconv.ParseBool(r.FormValue("cm"))
-
 	if r.Method == "POST" {
-		fileName, data, mimeType, isGzipped, e = parseMultipart(r, isChunkedFile)
+		fileName, data, mimeType, isGzipped, isChunkedFile, e = parseMultipart(r)
 	} else {
 		isGzipped = false
 		mimeType = r.Header.Get("Content-Type")
