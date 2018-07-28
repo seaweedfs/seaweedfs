@@ -9,6 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"google.golang.org/grpc/peer"
 	"fmt"
+	"github.com/chrislusf/raft"
 )
 
 func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
@@ -105,12 +106,17 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 	}
 }
 
-// KeepConnected keep a stream gRPC call to the master. Used by filer to know the master is up.
+// KeepConnected keep a stream gRPC call to the master. Used by clients to know the master is up.
+// And clients gets the up-to-date list of volume locations
 func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServer) error {
 
 	req, err := stream.Recv()
 	if err != nil {
 		return err
+	}
+
+	if !ms.Topo.IsLeader() {
+		return raft.NotLeaderError
 	}
 
 	// remember client address
