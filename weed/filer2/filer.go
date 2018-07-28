@@ -18,13 +18,13 @@ import (
 type Filer struct {
 	store          FilerStore
 	directoryCache *ccache.Cache
-	masterClient   *wdclient.MasterClient
+	MasterClient   *wdclient.MasterClient
 }
 
 func NewFiler(masters []string) *Filer {
 	return &Filer{
 		directoryCache: ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
-		masterClient:   wdclient.NewMasterClient(context.Background(), "filer", masters),
+		MasterClient:   wdclient.NewMasterClient(context.Background(), "filer", masters),
 	}
 }
 
@@ -37,11 +37,11 @@ func (f *Filer) DisableDirectoryCache() {
 }
 
 func (fs *Filer) GetMaster() string {
-	return fs.masterClient.GetMaster()
+	return fs.MasterClient.GetMaster()
 }
 
 func (fs *Filer) KeepConnectedToMaster() {
-	fs.masterClient.KeepConnectedToMaster()
+	fs.MasterClient.KeepConnectedToMaster()
 }
 
 func (f *Filer) CreateEntry(entry *Entry) error {

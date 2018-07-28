@@ -15,6 +15,8 @@ type MasterClient struct {
 	name          string
 	currentMaster string
 	masters       []string
+
+	VidMap
 }
 
 func NewMasterClient(ctx context.Context, clientName string, masters []string) *MasterClient {
@@ -61,6 +63,16 @@ func (mc *MasterClient) tryAllMasters() {
 					return err
 				} else {
 					glog.V(0).Infof("volume location: %+v", volumeLocation)
+					loc := Location{
+						Url:       volumeLocation.Url,
+						PublicUrl: volumeLocation.PublicUrl,
+					}
+					for _, newVid := range volumeLocation.NewVids {
+						mc.AddLocation(newVid, loc)
+					}
+					for _, deletedVid := range volumeLocation.DeletedVids {
+						mc.DeleteLocation(deletedVid, loc)
+					}
 				}
 			}
 		})
