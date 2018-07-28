@@ -143,6 +143,12 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		ms.clientChansLock.Unlock()
 	}()
 
+	for _, message := range ms.Topo.ToVolumeLocations() {
+		if err := stream.Send(message); err != nil {
+			return err
+		}
+	}
+
 	go func() {
 		for {
 			_, err := stream.Recv()
