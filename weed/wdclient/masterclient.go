@@ -1,28 +1,44 @@
-package filer2
+package wdclient
 
 import (
 	"context"
+	"time"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"time"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
-func (fs *Filer) GetMaster() string {
-	return fs.currentMaster
+type MasterClient struct {
+	ctx           context.Context
+	name          string
+	currentMaster string
+	masters       []string
 }
 
-func (fs *Filer) KeepConnectedToMaster() {
-	glog.V(0).Infof("Filer bootstraps with masters %v", fs.masters)
+func NewMasterClient(ctx context.Context, clientName string, masters []string) *MasterClient {
+	return &MasterClient{
+		ctx:     ctx,
+		name:    clientName,
+		masters: masters,
+	}
+}
+
+func (mc *MasterClient) GetMaster() string {
+	return mc.currentMaster
+}
+
+func (mc *MasterClient) KeepConnectedToMaster() {
+	glog.V(0).Infof("%s bootstraps with masters %v", mc.name, mc.masters)
 	for {
-		fs.tryAllMasters()
+		mc.tryAllMasters()
 		time.Sleep(time.Second)
 	}
 }
 
-func (fs *Filer) tryAllMasters() {
-	for _, master := range fs.masters {
+func (mc *MasterClient) tryAllMasters() {
+	for _, master := range mc.masters {
 		glog.V(0).Infof("Connecting to %v", master)
 		withMasterClient(master, func(client master_pb.SeaweedClient) error {
 			stream, err := client.KeepConnected(context.Background())
@@ -32,9 +48,9 @@ func (fs *Filer) tryAllMasters() {
 			}
 
 			glog.V(0).Infof("Connected to %v", master)
-			fs.currentMaster = master
+			mc.currentMaster = master
 
-			if err = stream.Send(&master_pb.ClientListenRequest{Name: "filer"}); err != nil {
+			if err = stream.Send(&master_pb.ClientListenRequest{Name: mc.name}); err != nil {
 				glog.V(0).Infof("failed to send to %s: %v", master, err)
 				return err
 			}
@@ -48,7 +64,7 @@ func (fs *Filer) tryAllMasters() {
 				}
 			}
 		})
-		fs.currentMaster = ""
+		mc.currentMaster = ""
 	}
 }
 

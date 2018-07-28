@@ -11,20 +11,20 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"context"
 )
 
 type Filer struct {
-	masters        []string
 	store          FilerStore
 	directoryCache *ccache.Cache
-
-	currentMaster string
+	masterClient   *wdclient.MasterClient
 }
 
 func NewFiler(masters []string) *Filer {
 	return &Filer{
-		masters:        masters,
 		directoryCache: ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
+		masterClient:   wdclient.NewMasterClient(context.Background(), "filer", masters),
 	}
 }
 
@@ -34,6 +34,14 @@ func (f *Filer) SetStore(store FilerStore) {
 
 func (f *Filer) DisableDirectoryCache() {
 	f.directoryCache = nil
+}
+
+func (fs *Filer) GetMaster() string {
+	return fs.masterClient.GetMaster()
+}
+
+func (fs *Filer) KeepConnectedToMaster() {
+	fs.masterClient.KeepConnectedToMaster()
 }
 
 func (f *Filer) CreateEntry(entry *Entry) error {
