@@ -49,7 +49,7 @@ func (fs *FilerServer) queryFileInfoByPath(w http.ResponseWriter, r *http.Reques
 		w.WriteHeader(http.StatusNoContent)
 	} else {
 		fileId = entry.Chunks[0].FileId
-		urlLocation, err = operation.LookupFileId(fs.filer.GetMaster(), fileId)
+		urlLocation, err = fs.filer.MasterClient.LookupFileId(fileId)
 		if err != nil {
 			glog.V(1).Infof("operation LookupFileId %s failed, err is %s", fileId, err.Error())
 			w.WriteHeader(http.StatusNotFound)
@@ -176,7 +176,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		if ret.Name != "" {
 			path += ret.Name
 		} else {
-			operation.DeleteFile(fs.filer.GetMaster(), fileId, fs.jwt(fileId)) //clean up
+			fs.filer.DeleteFileByFileId(fileId)
 			glog.V(0).Infoln("Can not to write to folder", path, "without a file name!")
 			writeJsonError(w, r, http.StatusInternalServerError,
 				errors.New("Can not to write to folder "+path+" without a file name"))
@@ -205,7 +205,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		}},
 	}
 	if db_err := fs.filer.CreateEntry(entry); db_err != nil {
-		operation.DeleteFile(fs.filer.GetMaster(), fileId, fs.jwt(fileId)) //clean up
+		fs.filer.DeleteFileByFileId(fileId)
 		glog.V(0).Infof("failing to write %s to filer server : %v", path, db_err)
 		writeJsonError(w, r, http.StatusInternalServerError, db_err)
 		return

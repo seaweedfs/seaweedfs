@@ -8,7 +8,6 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"mime"
 	"mime/multipart"
@@ -63,7 +62,7 @@ func (fs *FilerServer) handleSingleChunk(w http.ResponseWriter, r *http.Request,
 
 	fileId := entry.Chunks[0].FileId
 
-	urlString, err := operation.LookupFileId(fs.filer.GetMaster(), fileId)
+	urlString, err := fs.filer.MasterClient.LookupFileId(fileId)
 	if err != nil {
 		glog.V(1).Infof("operation LookupFileId %s failed, err: %v", fileId, err)
 		w.WriteHeader(http.StatusNotFound)
@@ -223,7 +222,7 @@ func (fs *FilerServer) writeContent(w io.Writer, entry *filer2.Entry, offset int
 
 	for _, chunkView := range chunkViews {
 
-		urlString, err := operation.LookupFileId(fs.filer.GetMaster(), chunkView.FileId)
+		urlString, err := fs.filer.MasterClient.LookupFileId(chunkView.FileId)
 		if err != nil {
 			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
 			return err

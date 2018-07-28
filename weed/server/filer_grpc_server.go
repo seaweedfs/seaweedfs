@@ -176,11 +176,11 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	if err = fs.filer.UpdateEntry(newEntry); err == nil {
 		for _, garbage := range unusedChunks {
 			glog.V(0).Infof("deleting %s old chunk: %v, [%d, %d)", fullpath, garbage.FileId, garbage.Offset, garbage.Offset+int64(garbage.Size))
-			operation.DeleteFile(fs.filer.GetMaster(), garbage.FileId, fs.jwt(garbage.FileId))
+			fs.filer.DeleteFileByFileId(garbage.FileId)
 		}
 		for _, garbage := range garbages {
 			glog.V(0).Infof("deleting %s garbage chunk: %v, [%d, %d)", fullpath, garbage.FileId, garbage.Offset, garbage.Offset+int64(garbage.Size))
-			operation.DeleteFile(fs.filer.GetMaster(), garbage.FileId, fs.jwt(garbage.FileId))
+			fs.filer.DeleteFileByFileId(garbage.FileId)
 		}
 	}
 
