@@ -14,6 +14,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 )
 
 type MasterServer struct {
@@ -31,6 +32,10 @@ type MasterServer struct {
 	vgLock sync.Mutex
 
 	bounedLeaderChan chan int
+
+	// notifying clients
+	clientChansLock sync.RWMutex
+	clientChans     map[string]chan *master_pb.VolumeLocation
 }
 
 func NewMasterServer(r *mux.Router, port int, metaFolder string,
@@ -54,6 +59,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 		pulseSeconds:            pulseSeconds,
 		defaultReplicaPlacement: defaultReplicaPlacement,
 		garbageThreshold:        garbageThreshold,
+		clientChans:             make(map[string]chan *master_pb.VolumeLocation),
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
 	seq := sequence.NewMemorySequencer()
