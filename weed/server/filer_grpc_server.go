@@ -106,7 +106,7 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 	for _, vidString := range req.VolumeIds {
 		vid, err := strconv.Atoi(vidString)
 		if err != nil {
-			glog.V(1).Infof("Unknown volume id %s", vid)
+			glog.V(1).Infof("Unknown volume id %d", vid)
 			return nil, err
 		}
 		var locs []*filer_pb.Location
