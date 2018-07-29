@@ -1,30 +1,30 @@
 package filer2
 
 import (
+	"context"
 	"fmt"
-
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/karlseguin/ccache"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"github.com/karlseguin/ccache"
 )
 
 type Filer struct {
-	masters        []string
 	store          FilerStore
 	directoryCache *ccache.Cache
-
-	currentMaster string
+	MasterClient   *wdclient.MasterClient
 }
 
 func NewFiler(masters []string) *Filer {
 	return &Filer{
-		masters:        masters,
 		directoryCache: ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
+		MasterClient:   wdclient.NewMasterClient(context.Background(), "filer", masters),
 	}
 }
 
@@ -34,6 +34,14 @@ func (f *Filer) SetStore(store FilerStore) {
 
 func (f *Filer) DisableDirectoryCache() {
 	f.directoryCache = nil
+}
+
+func (fs *Filer) GetMaster() string {
+	return fs.MasterClient.GetMaster()
+}
+
+func (fs *Filer) KeepConnectedToMaster() {
+	fs.MasterClient.KeepConnectedToMaster()
 }
 
 func (f *Filer) CreateEntry(entry *Entry) error {
@@ -198,9 +206,17 @@ func (f *Filer) cacheSetDirectory(dirpath string, dirEntry *Entry, level int) {
 
 func (f *Filer) deleteChunks(chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
-		if err := operation.DeleteFile(f.GetMaster(), chunk.FileId, ""); err != nil {
-			glog.V(0).Infof("deleting file %s: %v", chunk.FileId, err)
-		}
+		f.DeleteFileByFileId(chunk.FileId)
+	}
+}
+
+func (f *Filer) DeleteFileByFileId(fileId string) {
+	fileUrlOnVolume, err := f.MasterClient.LookupFileId(fileId)
+	if err != nil {
+		glog.V(0).Infof("can not find file %s: %v", fileId, err)
+	}
+	if err := operation.DeleteFromVolumeServer(fileUrlOnVolume, ""); err != nil {
+		glog.V(0).Infof("deleting file %s: %v", fileId, err)
 	}
 }
 

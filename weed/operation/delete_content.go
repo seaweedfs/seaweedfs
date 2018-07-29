@@ -21,6 +21,14 @@ type DeleteResult struct {
 	Error  string `json:"error,omitempty"`
 }
 
+func DeleteFromVolumeServer(fileUrlOnVolume string, jwt security.EncodedJwt) error {
+	err := util.Delete(fileUrlOnVolume, jwt)
+	if err != nil {
+		return fmt.Errorf("Failed to delete %s:%v", fileUrlOnVolume, err)
+	}
+	return nil
+}
+
 func DeleteFile(master string, fileId string, jwt security.EncodedJwt) error {
 	fileUrl, err := LookupFileId(master, fileId)
 	if err != nil {

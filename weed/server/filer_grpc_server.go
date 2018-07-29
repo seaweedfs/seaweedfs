@@ -99,24 +99,24 @@ func (fs *FilerServer) GetEntryAttributes(ctx context.Context, req *filer_pb.Get
 
 func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
 
-	lookupResult, err := operation.LookupVolumeIds(fs.filer.GetMaster(), req.VolumeIds)
-	if err != nil {
-		return nil, err
-	}
-
 	resp := &filer_pb.LookupVolumeResponse{
 		LocationsMap: make(map[string]*filer_pb.Locations),
 	}
 
-	for vid, locations := range lookupResult {
+	for _, vidString := range req.VolumeIds {
+		vid, err := strconv.Atoi(vidString)
+		if err != nil {
+			glog.V(1).Infof("Unknown volume id %s", vid)
+			return nil, err
+		}
 		var locs []*filer_pb.Location
-		for _, loc := range locations.Locations {
+		for _, loc := range fs.filer.MasterClient.GetLocations(uint32(vid)) {
 			locs = append(locs, &filer_pb.Location{
 				Url:       loc.Url,
 				PublicUrl: loc.PublicUrl,
 			})
 		}
-		resp.LocationsMap[vid] = &filer_pb.Locations{
+		resp.LocationsMap[vidString] = &filer_pb.Locations{
 			Locations: locs,
 		}
 	}
@@ -176,11 +176,11 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	if err = fs.filer.UpdateEntry(newEntry); err == nil {
 		for _, garbage := range unusedChunks {
 			glog.V(0).Infof("deleting %s old chunk: %v, [%d, %d)", fullpath, garbage.FileId, garbage.Offset, garbage.Offset+int64(garbage.Size))
-			operation.DeleteFile(fs.filer.GetMaster(), garbage.FileId, fs.jwt(garbage.FileId))
+			fs.filer.DeleteFileByFileId(garbage.FileId)
 		}
 		for _, garbage := range garbages {
 			glog.V(0).Infof("deleting %s garbage chunk: %v, [%d, %d)", fullpath, garbage.FileId, garbage.Offset, garbage.Offset+int64(garbage.Size))
-			operation.DeleteFile(fs.filer.GetMaster(), garbage.FileId, fs.jwt(garbage.FileId))
+			fs.filer.DeleteFileByFileId(garbage.FileId)
 		}
 	}
 

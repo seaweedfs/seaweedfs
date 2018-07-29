@@ -1,5 +1,7 @@
 package topology
 
+import "github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+
 func (t *Topology) ToMap() interface{} {
 	m := make(map[string]interface{})
 	m["Max"] = t.GetMaxVolumeCount()
@@ -50,4 +52,25 @@ func (t *Topology) ToVolumeMap() interface{} {
 	}
 	m["DataCenters"] = dcs
 	return m
+}
+
+func (t *Topology) ToVolumeLocations() (volumeLocations []*master_pb.VolumeLocation) {
+	for _, c := range t.Children() {
+		dc := c.(*DataCenter)
+		for _, r := range dc.Children() {
+			rack := r.(*Rack)
+			for _, d := range rack.Children() {
+				dn := d.(*DataNode)
+				volumeLocation := &master_pb.VolumeLocation{
+					Url:       dn.Url(),
+					PublicUrl: dn.PublicUrl,
+				}
+				for _, v := range dn.GetVolumes() {
+					volumeLocation.NewVids = append(volumeLocation.NewVids, uint32(v.Id))
+				}
+				volumeLocations = append(volumeLocations, volumeLocation)
+			}
+		}
+	}
+	return
 }

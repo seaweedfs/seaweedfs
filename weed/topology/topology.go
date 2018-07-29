@@ -151,7 +151,7 @@ func (t *Topology) GetOrCreateDataCenter(dcName string) *DataCenter {
 	return dc
 }
 
-func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformationMessage, dn *DataNode) {
+func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformationMessage, dn *DataNode) (newVolumes, deletedVolumes []storage.VolumeInfo) {
 	var volumeInfos []storage.VolumeInfo
 	for _, v := range volumes {
 		if vi, err := storage.NewVolumeInfo(v); err == nil {
@@ -160,11 +160,12 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 			glog.V(0).Infof("Fail to convert joined volume information: %v", err)
 		}
 	}
-	deletedVolumes := dn.UpdateVolumes(volumeInfos)
+	newVolumes, deletedVolumes = dn.UpdateVolumes(volumeInfos)
 	for _, v := range volumeInfos {
 		t.RegisterVolumeLayout(v, dn)
 	}
 	for _, v := range deletedVolumes {
 		t.UnRegisterVolumeLayout(v, dn)
 	}
+	return
 }
