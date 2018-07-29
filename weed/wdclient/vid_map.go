@@ -1,13 +1,14 @@
 package wdclient
 
 import (
-	"sync"
-	"strings"
-	"math/rand"
 	"errors"
-	"strconv"
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"fmt"
+	"math/rand"
+	"strconv"
+	"strings"
+	"sync"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 type Location struct {

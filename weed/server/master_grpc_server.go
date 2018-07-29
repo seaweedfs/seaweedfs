@@ -1,15 +1,15 @@
 package weed_server
 
 import (
+	"fmt"
 	"net"
 	"strings"
 
+	"github.com/chrislusf/raft"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"google.golang.org/grpc/peer"
-	"fmt"
-	"github.com/chrislusf/raft"
 )
 
 func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {

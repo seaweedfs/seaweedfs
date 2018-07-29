@@ -2,12 +2,12 @@ package wdclient
 
 import (
 	"context"
-	"time"
 	"fmt"
+	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 type MasterClient struct {

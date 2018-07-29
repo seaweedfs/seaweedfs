@@ -1,18 +1,18 @@
 package filer2
 
 import (
+	"context"
 	"fmt"
-
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/karlseguin/ccache"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"context"
+	"github.com/karlseguin/ccache"
 )
 
 type Filer struct {
