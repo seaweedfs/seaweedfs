@@ -40,7 +40,7 @@ func (vc *VidMap) LookupFileId(fileId string) (fullUrl string, err error) {
 	if len(parts) != 2 {
 		return "", errors.New("Invalid fileId " + fileId)
 	}
-	serverUrl, lookupError := LookupVolumeServerUrl(parts[0])
+	serverUrl, lookupError := vc.LookupVolumeServerUrl(parts[0])
 	if lookupError != nil {
 		return "", lookupError
 	}
@@ -54,7 +54,7 @@ func (vc *VidMap) GetLocations(vid uint32) (locations []Location) {
 	return vc.vid2Locations[vid]
 }
 
-func (vc *VidMap) AddLocation(vid uint32, location Location) {
+func (vc *VidMap) addLocation(vid uint32, location Location) {
 	vc.Lock()
 	defer vc.Unlock()
 
@@ -74,7 +74,7 @@ func (vc *VidMap) AddLocation(vid uint32, location Location) {
 
 }
 
-func (vc *VidMap) DeleteLocation(vid uint32, location Location) {
+func (vc *VidMap) deleteLocation(vid uint32, location Location) {
 	vc.Lock()
 	defer vc.Unlock()
 

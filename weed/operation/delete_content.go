@@ -22,7 +22,7 @@ type DeleteResult struct {
 }
 
 func DeleteFromVolumeServer(fileUrlOnVolume string, jwt security.EncodedJwt) error {
-	err = util.Delete(fileUrlOnVolume, jwt)
+	err := util.Delete(fileUrlOnVolume, jwt)
 	if err != nil {
 		return fmt.Errorf("Failed to delete %s:%v", fileUrlOnVolume, err)
 	}

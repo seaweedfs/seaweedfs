@@ -68,10 +68,10 @@ func (mc *MasterClient) tryAllMasters() {
 						PublicUrl: volumeLocation.PublicUrl,
 					}
 					for _, newVid := range volumeLocation.NewVids {
-						mc.AddLocation(newVid, loc)
+						mc.addLocation(newVid, loc)
 					}
 					for _, deletedVid := range volumeLocation.DeletedVids {
-						mc.DeleteLocation(deletedVid, loc)
+						mc.deleteLocation(deletedVid, loc)
 					}
 				}
 			}
