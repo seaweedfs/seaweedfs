@@ -15,12 +15,18 @@ type Location struct {
 	PublicUrl string `json:"publicUrl,omitempty"`
 }
 
-type VidMap struct {
+type vidMap struct {
 	sync.RWMutex
 	vid2Locations map[uint32][]Location
 }
 
-func (vc *VidMap) LookupVolumeServerUrl(vid string) (serverUrl string, err error) {
+func newVidMap() vidMap {
+	return vidMap{
+		vid2Locations: make(map[uint32][]Location),
+	}
+}
+
+func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrl string, err error) {
 	id, err := strconv.Atoi(vid)
 	if err != nil {
 		glog.V(1).Infof("Unknown volume id %s", vid)
@@ -35,7 +41,7 @@ func (vc *VidMap) LookupVolumeServerUrl(vid string) (serverUrl string, err error
 	return locations[rand.Intn(len(locations))].Url, nil
 }
 
-func (vc *VidMap) LookupFileId(fileId string) (fullUrl string, err error) {
+func (vc *vidMap) LookupFileId(fileId string) (fullUrl string, err error) {
 	parts := strings.Split(fileId, ",")
 	if len(parts) != 2 {
 		return "", errors.New("Invalid fileId " + fileId)
@@ -47,14 +53,14 @@ func (vc *VidMap) LookupFileId(fileId string) (fullUrl string, err error) {
 	return "http://" + serverUrl + "/" + fileId, nil
 }
 
-func (vc *VidMap) GetLocations(vid uint32) (locations []Location) {
+func (vc *vidMap) GetLocations(vid uint32) (locations []Location) {
 	vc.RLock()
 	defer vc.RUnlock()
 
 	return vc.vid2Locations[vid]
 }
 
-func (vc *VidMap) addLocation(vid uint32, location Location) {
+func (vc *vidMap) addLocation(vid uint32, location Location) {
 	vc.Lock()
 	defer vc.Unlock()
 
@@ -74,7 +80,7 @@ func (vc *VidMap) addLocation(vid uint32, location Location) {
 
 }
 
-func (vc *VidMap) deleteLocation(vid uint32, location Location) {
+func (vc *vidMap) deleteLocation(vid uint32, location Location) {
 	vc.Lock()
 	defer vc.Unlock()
 

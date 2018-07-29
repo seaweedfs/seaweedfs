@@ -16,7 +16,7 @@ type MasterClient struct {
 	currentMaster string
 	masters       []string
 
-	VidMap
+	vidMap
 }
 
 func NewMasterClient(ctx context.Context, clientName string, masters []string) *MasterClient {
@@ -24,6 +24,7 @@ func NewMasterClient(ctx context.Context, clientName string, masters []string) *
 		ctx:     ctx,
 		name:    clientName,
 		masters: masters,
+		vidMap:  newVidMap(),
 	}
 }
 
