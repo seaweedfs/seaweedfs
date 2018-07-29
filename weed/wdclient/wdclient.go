@@ -5,15 +5,11 @@ import (
 )
 
 type SeaweedClient struct {
-	ctx        context.Context
-	Master     string
-	ClientName string
+	*MasterClient
 }
 
 func NewSeaweedClient(ctx context.Context, clientName string, masters []string) *SeaweedClient {
 	return &SeaweedClient{
-		ctx:        ctx,
-		ClientName: clientName,
-
+		MasterClient: NewMasterClient(ctx, clientName, masters),
 	}
 }
