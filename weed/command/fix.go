@@ -34,11 +34,12 @@ func runFix(cmd *Command, args []string) bool {
 		return false
 	}
 
-	fileName := strconv.Itoa(*fixVolumeId)
+	baseFileName := strconv.Itoa(*fixVolumeId)
 	if *fixVolumeCollection != "" {
-		fileName = *fixVolumeCollection + "_" + fileName
+		baseFileName = *fixVolumeCollection + "_" + baseFileName
 	}
-	indexFile, err := os.OpenFile(path.Join(*fixVolumePath, fileName+".idx"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	indexFileName := path.Join(*fixVolumePath, baseFileName+".idx")
+	indexFile, err := os.OpenFile(indexFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		glog.Fatalf("Create Volume Index [ERROR] %s\n", err)
 	}
@@ -67,6 +68,7 @@ func runFix(cmd *Command, args []string) bool {
 		})
 	if err != nil {
 		glog.Fatalf("Export Volume File [ERROR] %s\n", err)
+		os.Remove(indexFileName)
 	}
 
 	return true
