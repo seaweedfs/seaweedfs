@@ -91,7 +91,7 @@ func (v *Volume) trySynchronizing(volumeServer string, masterMap *needle.Compact
 	}
 	var delta []needle.NeedleValue
 	if err := masterMap.Visit(func(needleValue needle.NeedleValue) error {
-		if needleValue.Key == 0 {
+		if needleValue.Key == NeedleIdEmpty {
 			return nil
 		}
 		if _, ok := slaveMap.Get(needleValue.Key); ok {
@@ -103,7 +103,7 @@ func (v *Volume) trySynchronizing(volumeServer string, masterMap *needle.Compact
 		return fmt.Errorf("Add master entry: %v", err)
 	}
 	if err := slaveMap.m.Visit(func(needleValue needle.NeedleValue) error {
-		if needleValue.Key == 0 {
+		if needleValue.Key == NeedleIdEmpty {
 			return nil
 		}
 		if _, ok := masterMap.Get(needleValue.Key); ok {

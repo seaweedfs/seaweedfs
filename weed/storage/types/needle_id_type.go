@@ -1,3 +1,5 @@
+// +build !128BitNeedleId
+
 package types
 
 import (
@@ -10,6 +12,7 @@ type NeedleId uint64
 
 const (
 	NeedleIdSize = 8
+	NeedleIdEmpty = 0
 )
 
 func NeedleIdToBytes(bytes []byte, needleId NeedleId) {

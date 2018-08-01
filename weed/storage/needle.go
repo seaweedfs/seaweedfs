@@ -166,19 +166,19 @@ func (n *Needle) ParsePath(fid string) (err error) {
 
 func ParseNeedleIdCookie(key_hash_string string) (NeedleId, Cookie, error) {
 	if len(key_hash_string) <= CookieSize*2 {
-		return 0, 0, fmt.Errorf("KeyHash is too short.")
+		return NeedleIdEmpty, 0, fmt.Errorf("KeyHash is too short.")
 	}
 	if len(key_hash_string) > (NeedleIdSize+CookieSize)*2 {
-		return 0, 0, fmt.Errorf("KeyHash is too long.")
+		return NeedleIdEmpty, 0, fmt.Errorf("KeyHash is too long.")
 	}
 	split := len(key_hash_string) - CookieSize*2
 	needleId, err := ParseNeedleId(key_hash_string[:split])
 	if err != nil {
-		return 0, 0, fmt.Errorf("Parse needleId error: %v", err)
+		return NeedleIdEmpty, 0, fmt.Errorf("Parse needleId error: %v", err)
 	}
 	cookie, err := ParseCookie(key_hash_string[split:])
 	if err != nil {
-		return 0, 0, fmt.Errorf("Parse cookie error: %v", err)
+		return NeedleIdEmpty, 0, fmt.Errorf("Parse cookie error: %v", err)
 	}
 	return needleId, cookie, nil
 }
