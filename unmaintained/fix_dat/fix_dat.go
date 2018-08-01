@@ -62,7 +62,7 @@ func main() {
 	newDatFile.Write(superBlock.Bytes())
 
 	iterateEntries(datFile, indexFile, func(n *storage.Needle, offset int64) {
-		fmt.Printf("file id=%d name=%s size=%d dataSize=%d\n", n.Id, string(n.Name), n.Size, n.DataSize)
+		fmt.Printf("needle id=%v name=%s size=%d dataSize=%d\n", n.Id, string(n.Name), n.Size, n.DataSize)
 		s, _, e := n.Append(newDatFile, superBlock.Version())
 		fmt.Printf("size %d error %v\n", s, e)
 	})
