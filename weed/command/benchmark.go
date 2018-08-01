@@ -18,10 +18,12 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"context"
 )
 
 type BenchmarkOptions struct {
-	server           *string
+	masters          *string
 	concurrency      *int
 	numberOfFiles    *int
 	fileSize         *int
@@ -37,14 +39,15 @@ type BenchmarkOptions struct {
 }
 
 var (
-	b           BenchmarkOptions
-	sharedBytes []byte
+	b            BenchmarkOptions
+	sharedBytes  []byte
+	masterClient *wdclient.MasterClient
 )
 
 func init() {
 	cmdBenchmark.Run = runbenchmark // break init cycle
 	cmdBenchmark.IsDebug = cmdBenchmark.Flag.Bool("debug", false, "verbose debug information")
-	b.server = cmdBenchmark.Flag.String("server", "localhost:9333", "SeaweedFS master location")
+	b.masters = cmdBenchmark.Flag.String("master", "localhost:9333", "SeaweedFS master location")
 	b.concurrency = cmdBenchmark.Flag.Int("c", 16, "number of concurrent write or read processes")
 	b.fileSize = cmdBenchmark.Flag.Int("size", 1024, "simulated file size in bytes, with random(0~63) bytes padding")
 	b.numberOfFiles = cmdBenchmark.Flag.Int("n", 1024*1024, "number of files to write for each thread")
@@ -112,6 +115,10 @@ func runbenchmark(cmd *Command, args []string) bool {
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
 	}
+
+	masterClient = wdclient.NewMasterClient(context.Background(), "benchmark", strings.Split(*b.masters, ","))
+	go masterClient.KeepConnectedToMaster()
+	masterClient.WaitUntilConnected()
 
 	if *b.write {
 		bench_write()
@@ -211,9 +218,9 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 			Count:      1,
 			Collection: *b.collection,
 		}
-		if assignResult, err := operation.Assign(*b.server, ar); err == nil {
+		if assignResult, err := operation.Assign(masterClient.GetMaster(), ar); err == nil {
 			fp.Server, fp.Fid, fp.Collection = assignResult.Url, assignResult.Fid, *b.collection
-			if _, err := fp.Upload(0, *b.server, secret); err == nil {
+			if _, err := fp.Upload(0, masterClient.GetMaster(), secret); err == nil {
 				if random.Intn(100) < *b.deletePercentage {
 					s.total++
 					delayedDeleteChan <- &delayedFile{time.Now().Add(time.Second), fp}
@@ -241,7 +248,6 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 
 func readFiles(fileIdLineChan chan string, s *stat) {
 	defer wait.Done()
-	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	for fid := range fileIdLineChan {
 		if len(fid) == 0 {
@@ -253,17 +259,13 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 		if *cmdBenchmark.IsDebug {
 			fmt.Printf("reading file %s\n", fid)
 		}
-		parts := strings.SplitN(fid, ",", 2)
-		vid := parts[0]
 		start := time.Now()
-		ret, err := operation.Lookup(*b.server, vid)
-		if err != nil || len(ret.Locations) == 0 {
+		url, err := masterClient.LookupFileId(fid)
+		if err != nil {
 			s.failed++
-			println("!!!! volume id ", vid, " location not found!!!!!")
+			println("!!!! ", fid, " location not found!!!!!")
 			continue
 		}
-		server := ret.Locations[random.Intn(len(ret.Locations))].Url
-		url := "http://" + server + "/" + fid
 		if bytesRead, err := util.Get(url); err == nil {
 			s.completed++
 			s.transferred += int64(len(bytesRead))

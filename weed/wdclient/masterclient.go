@@ -8,6 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"math/rand"
 )
 
 type MasterClient struct {
@@ -32,6 +33,12 @@ func (mc *MasterClient) GetMaster() string {
 	return mc.currentMaster
 }
 
+func (mc *MasterClient) WaitUntilConnected() {
+	for mc.currentMaster == "" {
+		time.Sleep(time.Duration(rand.Int31n(200)) * time.Millisecond)
+	}
+}
+
 func (mc *MasterClient) KeepConnectedToMaster() {
 	glog.V(0).Infof("%s bootstraps with masters %v", mc.name, mc.masters)
 	for {
@@ -49,9 +56,6 @@ func (mc *MasterClient) tryAllMasters() {
 				glog.V(0).Infof("failed to keep connected to %s: %v", master, err)
 				return err
 			}
-
-			glog.V(0).Infof("Connected to %v", master)
-			mc.currentMaster = master
 
 			if err = stream.Send(&master_pb.ClientListenRequest{Name: mc.name}); err != nil {
 				glog.V(0).Infof("failed to send to %s: %v", master, err)
@@ -74,9 +78,17 @@ func (mc *MasterClient) tryAllMasters() {
 					for _, deletedVid := range volumeLocation.DeletedVids {
 						mc.deleteLocation(deletedVid, loc)
 					}
+
+					if mc.currentMaster == "" {
+						glog.V(0).Infof("Connected to %v", master)
+						mc.currentMaster = master
+					}
+
 				}
 			}
+
 		})
+
 		mc.currentMaster = ""
 	}
 }
