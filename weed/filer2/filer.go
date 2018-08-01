@@ -13,6 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"github.com/karlseguin/ccache"
+	"math"
 )
 
 type Filer struct {
@@ -141,7 +142,11 @@ func (f *Filer) DeleteEntryMetaAndData(p FullPath, isRecursive bool, shouldDelet
 	}
 
 	if entry.IsDirectory() {
-		entries, err := f.ListDirectoryEntries(p, "", false, 1)
+		limit := int(1)
+		if isRecursive {
+			limit = math.MaxInt32
+		}
+		entries, err := f.ListDirectoryEntries(p, "", false, limit)
 		if err != nil {
 			return fmt.Errorf("list folder %s: %v", p, err)
 		}
@@ -161,6 +166,10 @@ func (f *Filer) DeleteEntryMetaAndData(p FullPath, isRecursive bool, shouldDelet
 		f.deleteChunks(entry.Chunks)
 	}
 
+	if p == "/" {
+		return nil
+	}
+	glog.V(0).Infof("deleting entry %v", p)
 	return f.store.DeleteEntry(p)
 }
 
