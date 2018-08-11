@@ -2,9 +2,14 @@ package master_ui
 
 import (
 	"html/template"
+	"github.com/dustin/go-humanize"
 )
 
-var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
+var funcMap = template.FuncMap{
+	"humanizeBytes": humanize.Bytes,
+}
+
+var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOCTYPE html>
 <html>
 <head>
 	<title>SeaweedFS Filer</title>
@@ -54,7 +59,7 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
 					<td align="right">
 					{{if $entry.IsDirectory}}
 					{{else}}
-						{{ $entry.Size }} bytes
+						{{ $entry.Size | humanizeBytes }}
 						&nbsp;&nbsp;&nbsp;
 					{{end}}
 					</td>
