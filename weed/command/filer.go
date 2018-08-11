@@ -88,10 +88,8 @@ func (fo *FilerOptions) start() {
 		publicVolumeMux = http.NewServeMux()
 	}
 
-	masters := *f.masters
-
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
-		Masters:            strings.Split(masters, ","),
+		Masters:            strings.Split(*f.masters, ","),
 		Collection:         *f.collection,
 		DefaultReplication: *f.defaultReplicaPlacement,
 		RedirectOnRead:     *f.redirectOnRead,
