@@ -58,7 +58,7 @@ var (
 	serverDataCenter              = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
 	serverRack                    = cmdServer.Flag.String("rack", "", "current volume server's rack name")
 	serverWhiteListOption         = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	serverPeers                   = cmdServer.Flag.String("master.peers", "", "other master nodes in comma separated ip:masterPort list")
+	serverPeers                   = cmdServer.Flag.String("master.peers", "", "all master nodes in comma separated ip:masterPort list")
 	serverSecureKey               = cmdServer.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 	serverGarbageThreshold        = cmdServer.Flag.String("garbageThreshold", "0.3", "threshold to vacuum and reclaim spaces")
 	masterPort                    = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
@@ -191,11 +191,7 @@ func runServer(cmd *Command, args []string) bool {
 		go func() {
 			raftWaitForMaster.Wait()
 			time.Sleep(100 * time.Millisecond)
-			myAddress := *serverIp + ":" + strconv.Itoa(*masterPort)
-			var peers []string
-			if *serverPeers != "" {
-				peers = strings.Split(*serverPeers, ",")
-			}
+			myAddress, peers := checkPeers(*serverIp, *masterPort, *serverPeers)
 			raftServer := weed_server.NewRaftServer(r, peers, myAddress, *masterMetaFolder, ms.Topo, *volumePulse)
 			ms.SetRaftServer(raftServer)
 			volumeWait.Done()

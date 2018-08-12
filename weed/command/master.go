@@ -35,7 +35,7 @@ var (
 	masterIp                = cmdMaster.Flag.String("ip", "localhost", "master <ip>|<server> address")
 	masterBindIp            = cmdMaster.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	metaFolder              = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
-	masterPeers             = cmdMaster.Flag.String("peers", "", "other master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094")
+	masterPeers             = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094")
 	volumeSizeLimitMB       = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
 	volumePreallocate       = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
 	mpulse                  = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
@@ -86,11 +86,7 @@ func runMaster(cmd *Command, args []string) bool {
 
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		myMasterAddress := *masterIp + ":" + strconv.Itoa(*mport)
-		var peers []string
-		if *masterPeers != "" {
-			peers = strings.Split(*masterPeers, ",")
-		}
+		myMasterAddress, peers := checkPeers(*masterIp, *mport, *masterPeers)
 		raftServer := weed_server.NewRaftServer(r, peers, myMasterAddress, *metaFolder, ms.Topo, *mpulse)
 		ms.SetRaftServer(raftServer)
 	}()
@@ -116,4 +112,28 @@ func runMaster(cmd *Command, args []string) bool {
 	}
 
 	return true
+}
+
+func checkPeers(masterIp string, masterPort int, peers string) (masterAddress string, cleanedPeers []string) {
+	masterAddress = masterIp + ":" + strconv.Itoa(masterPort)
+	if peers != "" {
+		cleanedPeers = strings.Split(peers, ",")
+	}
+
+	hasSelf := false
+	for _, peer := range cleanedPeers {
+		if peer == masterAddress {
+			hasSelf = true
+			break
+		}
+	}
+
+	peerCount := len(cleanedPeers)
+	if !hasSelf {
+		peerCount += 1
+	}
+	if peerCount %2 == 0 {
+		glog.Fatalf("Only odd number of masters are supported!")
+	}
+	return
 }
