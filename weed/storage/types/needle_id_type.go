@@ -11,7 +11,7 @@ import (
 type NeedleId uint64
 
 const (
-	NeedleIdSize = 8
+	NeedleIdSize  = 8
 	NeedleIdEmpty = 0
 )
 

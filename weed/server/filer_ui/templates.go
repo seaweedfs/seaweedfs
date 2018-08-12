@@ -1,8 +1,8 @@
 package master_ui
 
 import (
-	"html/template"
 	"github.com/dustin/go-humanize"
+	"html/template"
 )
 
 var funcMap = template.FuncMap{

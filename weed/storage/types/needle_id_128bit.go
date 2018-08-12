@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	NeedleIdSize = 16
+	NeedleIdSize  = 16
 	NeedleIdEmpty = ""
 )
 

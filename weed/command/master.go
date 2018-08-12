@@ -132,7 +132,7 @@ func checkPeers(masterIp string, masterPort int, peers string) (masterAddress st
 	if !hasSelf {
 		peerCount += 1
 	}
-	if peerCount %2 == 0 {
+	if peerCount%2 == 0 {
 		glog.Fatalf("Only odd number of masters are supported!")
 	}
 	return

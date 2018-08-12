@@ -2,6 +2,7 @@ package command
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"math"
@@ -19,7 +20,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"context"
 )
 
 type BenchmarkOptions struct {
