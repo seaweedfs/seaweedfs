@@ -41,7 +41,7 @@ func LoadConfiguration() {
 		glog.Fatalf("Failed to load message_queue.toml file from current directory, or $HOME/.seaweedfs/, "+
 			"or /etc/seaweedfs/"+
 			"\n\nPlease follow this example and add a message_queue.toml file to "+
-			"current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/:\n"+MSG_QUEUE_TOML_EXAMPLE, err)
+			"current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/:\n"+MSG_QUEUE_TOML_EXAMPLE)
 	}
 
 	glog.V(0).Infof("Reading message queue configuration from %s", viper.ConfigFileUsed())
