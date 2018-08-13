@@ -65,6 +65,11 @@ message Entry {
     FuseAttributes attributes = 4;
 }
 
+message EventNotification {
+    Entry old_entry = 2;
+    Entry new_entry = 3;
+}
+
 message FileChunk {
     string file_id = 1;
     int64 offset = 2;

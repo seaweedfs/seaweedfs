@@ -63,3 +63,25 @@ func PbToEntryAttribute(attr *filer_pb.FuseAttributes) Attr {
 
 	return t
 }
+
+func EqualEntry(a, b *Entry) bool {
+	if a == b {
+		return true
+	}
+	if a == nil && b != nil || a != nil && b == nil {
+		return false
+	}
+	if !proto.Equal(EntryAttributeToPb(a), EntryAttributeToPb(b)) {
+		return false
+	}
+	if len(a.Chunks) != len(b.Chunks) {
+		return false
+	}
+
+	for i := 0; i < len(a.Chunks); i++ {
+		if !proto.Equal(a.Chunks[i], b.Chunks[i]) {
+			return false
+		}
+	}
+	return true
+}

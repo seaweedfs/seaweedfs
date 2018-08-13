@@ -32,6 +32,7 @@ type FilerOptions struct {
 	secretKey               *string
 	dirListingLimit         *int
 	dataCenter              *string
+	enableNotification      *bool
 }
 
 func init() {
@@ -49,6 +50,7 @@ func init() {
 	f.secretKey = cmdFiler.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 	f.dirListingLimit = cmdFiler.Flag.Int("dirListLimit", 1000, "limit sub dir listing size")
 	f.dataCenter = cmdFiler.Flag.String("dataCenter", "", "prefer to write to volumes in this data center")
+	f.enableNotification = cmdFiler.Flag.Bool("notify", false, "send file updates to the queue defined in message_queue.toml")
 }
 
 var cmdFiler = &Command{
@@ -90,14 +92,15 @@ func (fo *FilerOptions) start() {
 
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
 		Masters:            strings.Split(*f.masters, ","),
-		Collection:         *f.collection,
-		DefaultReplication: *f.defaultReplicaPlacement,
-		RedirectOnRead:     *f.redirectOnRead,
-		DisableDirListing:  *f.disableDirListing,
-		MaxMB:              *f.maxMB,
-		SecretKey:          *f.secretKey,
-		DirListingLimit:    *f.dirListingLimit,
-		DataCenter:         *f.dataCenter,
+		Collection:         *fo.collection,
+		DefaultReplication: *fo.defaultReplicaPlacement,
+		RedirectOnRead:     *fo.redirectOnRead,
+		DisableDirListing:  *fo.disableDirListing,
+		MaxMB:              *fo.maxMB,
+		SecretKey:          *fo.secretKey,
+		DirListingLimit:    *fo.dirListingLimit,
+		DataCenter:         *fo.dataCenter,
+		EnableNotification: *fo.enableNotification,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
@@ -127,9 +130,9 @@ func (fo *FilerOptions) start() {
 	}
 
 	// starting grpc server
-	grpcPort := *f.grpcPort
+	grpcPort := *fo.grpcPort
 	if grpcPort == 0 {
-		grpcPort = *f.port + 10000
+		grpcPort = *fo.port + 10000
 	}
 	grpcL, err := util.NewListener(":"+strconv.Itoa(grpcPort), 0)
 	if err != nil {

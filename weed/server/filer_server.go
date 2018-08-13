@@ -8,9 +8,12 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/mysql"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/postgres"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/redis"
+	_ "github.com/chrislusf/seaweedfs/weed/msgqueue/kafka"
+	_ "github.com/chrislusf/seaweedfs/weed/msgqueue/log"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"net/http"
+	"github.com/chrislusf/seaweedfs/weed/msgqueue"
 )
 
 type FilerOption struct {
@@ -23,6 +26,7 @@ type FilerOption struct {
 	SecretKey          string
 	DirListingLimit    int
 	DataCenter         string
+	EnableNotification bool
 }
 
 type FilerServer struct {
@@ -45,6 +49,10 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	go fs.filer.KeepConnectedToMaster()
 
 	fs.filer.LoadConfiguration()
+
+	if fs.option.EnableNotification {
+		msgqueue.LoadConfiguration()
+	}
 
 	defaultMux.HandleFunc("/favicon.ico", faviconHandler)
 	defaultMux.HandleFunc("/", fs.filerHandler)
