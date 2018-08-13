@@ -33,10 +33,10 @@ var (
 func LoadConfiguration() {
 
 	// find a filer store
-	viper.SetConfigName("message_queue")    // name of config file (without extension)
-	viper.AddConfigPath(".")                // optionally look for config in the working directory
-	viper.AddConfigPath("$HOME/.seaweedfs") // call multiple times to add many search paths
-	viper.AddConfigPath("/etc/seaweedfs/")  // path to look for the config file in
+	viper.SetConfigName("message_queue")         // name of config file (without extension)
+	viper.AddConfigPath(".")                     // optionally look for config in the working directory
+	viper.AddConfigPath("$HOME/.seaweedfs")      // call multiple times to add many search paths
+	viper.AddConfigPath("/etc/seaweedfs/")       // path to look for the config file in
 	if err := viper.ReadInConfig(); err != nil { // Handle errors reading the config file
 		glog.Fatalf("Failed to load message_queue.toml file from current directory, or $HOME/.seaweedfs/, "+
 			"or /etc/seaweedfs/"+

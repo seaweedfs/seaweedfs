@@ -1,10 +1,9 @@
 package kafka
 
 import (
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/msgqueue"
 	"github.com/golang/protobuf/proto"
-	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 func init() {
