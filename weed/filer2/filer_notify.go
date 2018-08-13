@@ -15,13 +15,17 @@ func (f *Filer) NotifyUpdateEvent(oldEntry, newEntry *Entry) {
 		return
 	}
 
-	msgqueue.Queue.SendMessage(
-		key,
-		&filer_pb.EventNotification{
-			OldEntry: toProtoEntry(oldEntry),
-			NewEntry: toProtoEntry(newEntry),
-		},
-	)
+	if msgqueue.Queue != nil {
+
+		msgqueue.Queue.SendMessage(
+			key,
+			&filer_pb.EventNotification{
+				OldEntry: toProtoEntry(oldEntry),
+				NewEntry: toProtoEntry(newEntry),
+			},
+		)
+
+	}
 
 }
 
