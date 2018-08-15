@@ -78,6 +78,12 @@ address  = "localhost:6379"
 password = ""
 db = 0
 
+[redis_cluster]
+enabled = false
+addresses = [
+    "localhost:6379",
+]
+
 `
 )
 
