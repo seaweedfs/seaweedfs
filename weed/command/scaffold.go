@@ -1,4 +1,50 @@
-# An example TOML config file for SeaweedFS filer store
+package command
+
+import (
+	"io/ioutil"
+	"path/filepath"
+)
+
+func init() {
+	cmdScaffold.Run = runScaffold // break init cycle
+}
+
+var cmdScaffold = &Command{
+	UsageLine: "scaffold [filer]",
+	Short:     "generate basic configuration files",
+	Long: `Generate filer.toml with all possible configurations for you to customize.
+
+  `,
+}
+
+var (
+	outputPath = cmdScaffold.Flag.String("output", "", "if not empty, save the configuration file to this directory")
+	config     = cmdScaffold.Flag.String("config", "filer", "the configuration file to generate")
+)
+
+func runScaffold(cmd *Command, args []string) bool {
+
+	content := ""
+	switch *config {
+	case "filer":
+		content = FILER_TOML_EXAMPLE
+	}
+	if content == "" {
+		println("need a valid -config option")
+		return false
+	}
+
+	if *outputPath != "" {
+		ioutil.WriteFile(filepath.Join(*outputPath, *config+".toml"), []byte(content), 0x755)
+	} else {
+		println(content)
+	}
+	return true
+}
+
+const (
+	FILER_TOML_EXAMPLE = `
+# A sample TOML config file for SeaweedFS filer store
 
 [memory]
 # local in memory, mostly for testing purpose
@@ -6,7 +52,7 @@ enabled = false
 
 [leveldb]
 # local on disk, mostly for simple single-machine setup, fairly scalable
-enabled = true
+enabled = false
 dir = "."					# directory to store level db files
 
 ####################################################
@@ -21,7 +67,7 @@ dir = "."					# directory to store level db files
 #   meta        BLOB,
 #   PRIMARY KEY (dirhash, name)
 # ) DEFAULT CHARSET=utf8;
-enabled = false
+enabled = true
 hostname = "localhost"
 port = 3306
 username = "root"
@@ -62,7 +108,7 @@ hosts=[
 ]
 
 [redis]
-enabled = false
+enabled = true
 address  = "localhost:6379"
 password = ""
 db = 0
@@ -72,6 +118,7 @@ enabled = false
 addresses = [
     "localhost:6379",
 ]
+
 
 ####################################################
 # notification
@@ -87,3 +134,5 @@ hosts = [
 ]
 topic = "seaweedfs_filer"
 
+`
+)

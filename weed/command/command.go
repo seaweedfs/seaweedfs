@@ -19,6 +19,7 @@ var Commands = []*Command{
 	cmdS3,
 	cmdUpload,
 	cmdDownload,
+	cmdScaffold,
 	cmdShell,
 	cmdVersion,
 	cmdVolume,
