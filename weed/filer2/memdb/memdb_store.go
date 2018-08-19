@@ -3,9 +3,9 @@ package memdb
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/google/btree"
 	"strings"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func init() {

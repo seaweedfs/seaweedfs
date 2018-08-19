@@ -1,8 +1,8 @@
 package msgqueue
 
 import (
-	"github.com/golang/protobuf/proto"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/golang/protobuf/proto"
 )
 
 type MessageQueue interface {

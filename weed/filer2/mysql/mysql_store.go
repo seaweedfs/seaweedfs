@@ -6,8 +6,8 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/filer2/abstract_sql"
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	_ "github.com/go-sql-driver/mysql"
 )
 
 const (

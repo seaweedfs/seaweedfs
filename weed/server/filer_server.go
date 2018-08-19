@@ -11,11 +11,11 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/postgres"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/redis"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/msgqueue"
 	_ "github.com/chrislusf/seaweedfs/weed/msgqueue/kafka"
 	_ "github.com/chrislusf/seaweedfs/weed/msgqueue/log"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/spf13/viper"
-	"github.com/chrislusf/seaweedfs/weed/msgqueue"
 )
 
 type FilerOption struct {

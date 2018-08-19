@@ -4,8 +4,8 @@ import (
 	"github.com/Shopify/sarama"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/msgqueue"
-	"github.com/golang/protobuf/proto"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/golang/protobuf/proto"
 )
 
 func init() {
