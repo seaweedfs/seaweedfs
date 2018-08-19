@@ -11,10 +11,11 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/postgres"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/redis"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/msgqueue"
 	_ "github.com/chrislusf/seaweedfs/weed/msgqueue/kafka"
 	_ "github.com/chrislusf/seaweedfs/weed/msgqueue/log"
 	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/spf13/viper"
+	"github.com/chrislusf/seaweedfs/weed/msgqueue"
 )
 
 type FilerOption struct {
@@ -27,7 +28,6 @@ type FilerOption struct {
 	SecretKey          string
 	DirListingLimit    int
 	DataCenter         string
-	EnableNotification bool
 }
 
 type FilerServer struct {
@@ -49,11 +49,12 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	go fs.filer.KeepConnectedToMaster()
 
-	fs.filer.LoadConfiguration()
+	loadConfiguration("filer", true)
+	v := viper.GetViper()
 
-	if fs.option.EnableNotification {
-		msgqueue.LoadConfiguration()
-	}
+	fs.filer.LoadConfiguration(v)
+
+	msgqueue.LoadConfiguration(v.Sub("notification"))
 
 	defaultMux.HandleFunc("/favicon.ico", faviconHandler)
 	defaultMux.HandleFunc("/", fs.filerHandler)
@@ -66,4 +67,27 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 func (fs *FilerServer) jwt(fileId string) security.EncodedJwt {
 	return security.GenJwt(fs.secret, fileId)
+}
+
+func loadConfiguration(configFileName string, required bool) {
+
+	// find a filer store
+	viper.SetConfigName(configFileName)     // name of config file (without extension)
+	viper.AddConfigPath(".")                // optionally look for config in the working directory
+	viper.AddConfigPath("$HOME/.seaweedfs") // call multiple times to add many search paths
+	viper.AddConfigPath("/etc/seaweedfs/")  // path to look for the config file in
+
+	glog.V(0).Infof("Reading %s.toml from %s", configFileName, viper.ConfigFileUsed())
+
+	if err := viper.ReadInConfig(); err != nil { // Handle errors reading the config file
+		glog.V(0).Infof("Reading %s: %v", configFileName, viper.ConfigFileUsed(), err)
+		if required {
+			glog.Fatalf("Failed to load %s.toml file from current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/"+
+				"\n\nPlease follow this example and add a filer.toml file to "+
+				"current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/:\n"+
+				"    https://github.com/chrislusf/seaweedfs/blob/master/weed/%s.toml\n",
+				configFileName, configFileName)
+		}
+	}
+
 }

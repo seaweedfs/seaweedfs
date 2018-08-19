@@ -27,7 +27,7 @@ func (store *LevelDBStore) GetName() string {
 	return "leveldb"
 }
 
-func (store *LevelDBStore) Initialize(configuration filer2.Configuration) (err error) {
+func (store *LevelDBStore) Initialize(configuration weed_util.Configuration) (err error) {
 	dir := configuration.GetString("dir")
 	return store.initialize(dir)
 }

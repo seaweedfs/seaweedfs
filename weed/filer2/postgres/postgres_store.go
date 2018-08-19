@@ -7,6 +7,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/filer2/abstract_sql"
 	_ "github.com/lib/pq"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 const (
@@ -25,7 +26,7 @@ func (store *PostgresStore) GetName() string {
 	return "postgres"
 }
 
-func (store *PostgresStore) Initialize(configuration filer2.Configuration) (err error) {
+func (store *PostgresStore) Initialize(configuration util.Configuration) (err error) {
 	return store.initialize(
 		configuration.GetString("username"),
 		configuration.GetString("password"),

@@ -5,6 +5,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/msgqueue"
 	"github.com/golang/protobuf/proto"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func init() {
@@ -20,7 +21,7 @@ func (k *KafkaQueue) GetName() string {
 	return "kafka"
 }
 
-func (k *KafkaQueue) Initialize(configuration msgqueue.Configuration) (err error) {
+func (k *KafkaQueue) Initialize(configuration util.Configuration) (err error) {
 	glog.V(0).Infof("filer.msgqueue.kafka.hosts: %v\n", configuration.GetStringSlice("hosts"))
 	glog.V(0).Infof("filer.msgqueue.kafka.topic: %v\n", configuration.GetString("topic"))
 	return k.initialize(

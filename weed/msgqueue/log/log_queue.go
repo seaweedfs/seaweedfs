@@ -4,6 +4,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/msgqueue"
 	"github.com/golang/protobuf/proto"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func init() {
@@ -17,7 +18,7 @@ func (k *LogQueue) GetName() string {
 	return "log"
 }
 
-func (k *LogQueue) Initialize(configuration msgqueue.Configuration) (err error) {
+func (k *LogQueue) Initialize(configuration util.Configuration) (err error) {
 	return nil
 }
 

@@ -3,6 +3,7 @@ package redis
 import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/go-redis/redis"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func init() {
@@ -17,7 +18,7 @@ func (store *RedisStore) GetName() string {
 	return "redis"
 }
 
-func (store *RedisStore) Initialize(configuration filer2.Configuration) (err error) {
+func (store *RedisStore) Initialize(configuration util.Configuration) (err error) {
 	return store.initialize(
 		configuration.GetString("address"),
 		configuration.GetString("password"),

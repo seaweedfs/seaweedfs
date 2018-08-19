@@ -7,6 +7,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/filer2/abstract_sql"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 const (
@@ -25,7 +26,7 @@ func (store *MysqlStore) GetName() string {
 	return "mysql"
 }
 
-func (store *MysqlStore) Initialize(configuration filer2.Configuration) (err error) {
+func (store *MysqlStore) Initialize(configuration util.Configuration) (err error) {
 	return store.initialize(
 		configuration.GetString("username"),
 		configuration.GetString("password"),

@@ -91,7 +91,6 @@ func init() {
 	filerOptions.disableDirListing = cmdServer.Flag.Bool("filer.disableDirListing", false, "turn off directory listing")
 	filerOptions.maxMB = cmdServer.Flag.Int("filer.maxMB", 32, "split files larger than the limit")
 	filerOptions.dirListingLimit = cmdServer.Flag.Int("filer.dirListLimit", 1000, "limit sub dir listing size")
-	filerOptions.enableNotification = cmdServer.Flag.Bool("filer.notify", false, "send file updates to the queue defined in message_queue.toml")
 }
 
 func runServer(cmd *Command, args []string) bool {

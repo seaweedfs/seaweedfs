@@ -5,6 +5,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/google/btree"
 	"strings"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func init() {
@@ -27,7 +28,7 @@ func (store *MemDbStore) GetName() string {
 	return "memory"
 }
 
-func (store *MemDbStore) Initialize(configuration filer2.Configuration) (err error) {
+func (store *MemDbStore) Initialize(configuration util.Configuration) (err error) {
 	store.tree = btree.New(8)
 	return nil
 }
