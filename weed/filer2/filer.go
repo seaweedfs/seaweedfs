@@ -174,7 +174,7 @@ func (f *Filer) DeleteEntryMetaAndData(p FullPath, isRecursive bool, shouldDelet
 	if p == "/" {
 		return nil
 	}
-	glog.V(0).Infof("deleting entry %v", p)
+	glog.V(3).Infof("deleting entry %v", p)
 
 	f.NotifyUpdateEvent(entry, nil)
 
