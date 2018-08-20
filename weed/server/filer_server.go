@@ -80,7 +80,7 @@ func loadConfiguration(configFileName string, required bool) {
 	glog.V(0).Infof("Reading %s.toml from %s", configFileName, viper.ConfigFileUsed())
 
 	if err := viper.ReadInConfig(); err != nil { // Handle errors reading the config file
-		glog.V(0).Infof("Reading %s: %v", configFileName, viper.ConfigFileUsed(), err)
+		glog.V(0).Infof("Reading %s: %v", viper.ConfigFileUsed(), err)
 		if required {
 			glog.Fatalf("Failed to load %s.toml file from current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/"+
 				"\n\nPlease follow this example and add a filer.toml file to "+
