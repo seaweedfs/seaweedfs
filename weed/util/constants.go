@@ -1,5 +1,5 @@
 package util
 
 const (
-	VERSION = "0.93 beta"
+	VERSION = "0.93"
 )
