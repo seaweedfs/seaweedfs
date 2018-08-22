@@ -23,14 +23,13 @@ var boltdbBucket = []byte("weed")
 
 var NotFound = errors.New("not found")
 
-// TODO avoid using btree to count deletions.
 func NewBoltDbNeedleMap(dbFileName string, indexFile *os.File) (m *BoltDbNeedleMap, err error) {
 	m = &BoltDbNeedleMap{dbFileName: dbFileName}
 	m.indexFile = indexFile
 	if !isBoltDbFresh(dbFileName, indexFile) {
-		glog.V(1).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
+		glog.V(0).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
 		generateBoltDbFile(dbFileName, indexFile)
-		glog.V(1).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
+		glog.V(0).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
 	}
 	glog.V(1).Infof("Opening %s...", dbFileName)
 	if m.db, err = bolt.Open(dbFileName, 0644, nil); err != nil {

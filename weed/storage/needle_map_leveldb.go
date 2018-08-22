@@ -18,14 +18,13 @@ type LevelDbNeedleMap struct {
 	baseNeedleMapper
 }
 
-// TODO avoid using btree to count deletions.
 func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File) (m *LevelDbNeedleMap, err error) {
 	m = &LevelDbNeedleMap{dbFileName: dbFileName}
 	m.indexFile = indexFile
 	if !isLevelDbFresh(dbFileName, indexFile) {
-		glog.V(1).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
+		glog.V(0).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
 		generateLevelDbFile(dbFileName, indexFile)
-		glog.V(1).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
+		glog.V(0).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
 	}
 	glog.V(1).Infof("Opening %s...", dbFileName)
 	if m.db, err = leveldb.OpenFile(dbFileName, nil); err != nil {
