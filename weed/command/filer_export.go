@@ -28,6 +28,7 @@ var cmdFilerExport = &Command{
 var (
 	// filerExportOutputFile  = cmdFilerExport.Flag.String("output", "", "the output file. If empty, only list out the directory tree")
 	filerExportSourceStore = cmdFilerExport.Flag.String("sourceStore", "", "the source store name in filer.toml")
+	filerExportTargetStore = cmdFilerExport.Flag.String("targetStore", "", "the target store name in filer.toml")
 )
 
 type statistics struct {
@@ -40,7 +41,7 @@ func runFilerExport(cmd *Command, args []string) bool {
 	weed_server.LoadConfiguration("filer", true)
 	config := viper.GetViper()
 
-	var sourceStore filer2.FilerStore
+	var sourceStore, targetStore filer2.FilerStore
 
 	for _, store := range filer2.Stores {
 		if store.GetName() == *filerExportSourceStore {
@@ -50,6 +51,19 @@ func runFilerExport(cmd *Command, args []string) bool {
 					store.GetName(), err)
 			} else {
 				sourceStore = store
+			}
+			break
+		}
+	}
+
+	for _, store := range filer2.Stores {
+		if store.GetName() == *filerExportTargetStore {
+			viperSub := config.Sub(store.GetName())
+			if err := store.Initialize(viperSub); err != nil {
+				glog.Fatalf("Failed to initialize store for %s: %+v",
+					store.GetName(), err)
+			} else {
+				targetStore = store
 			}
 			break
 		}
@@ -65,7 +79,18 @@ func runFilerExport(cmd *Command, args []string) bool {
 	}
 
 	stat := statistics{}
-	doTraverse(&stat, sourceStore, filer2.FullPath("/"), 0, printout)
+
+	var fn func(level int, entry *filer2.Entry) error
+
+	if targetStore == nil {
+		fn = printout
+	} else {
+		fn = func(level int, entry *filer2.Entry) error {
+			return targetStore.InsertEntry(entry)
+		}
+	}
+
+	doTraverse(&stat, sourceStore, filer2.FullPath("/"), 0, fn)
 
 	glog.Infof("processed %d directories, %d files", stat.directoryCount, stat.fileCount)
 
