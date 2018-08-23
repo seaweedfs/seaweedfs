@@ -116,7 +116,12 @@ db = 0
 [redis_cluster]
 enabled = false
 addresses = [
-    "localhost:6379",
+    "localhost:30001",
+    "localhost:30002",
+    "localhost:30003",
+    "localhost:30004",
+    "localhost:30005",
+    "localhost:30006",
 ]
 
 
