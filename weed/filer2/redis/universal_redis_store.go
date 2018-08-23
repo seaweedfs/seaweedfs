@@ -54,7 +54,7 @@ func (store *UniversalRedisStore) FindEntry(fullpath filer2.FullPath) (entry *fi
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("get %s : %v", entry.FullPath, err)
+		return nil, fmt.Errorf("get %s : %v", fullpath, err)
 	}
 
 	entry = &filer2.Entry{
