@@ -13,6 +13,10 @@ var (
 
 func LoadConfiguration(config *viper.Viper) {
 
+	if config == nil {
+		return
+	}
+
 	for _, store := range MessageQueues {
 		if config.GetBool(store.GetName() + ".enabled") {
 			viperSub := config.Sub(store.GetName())
