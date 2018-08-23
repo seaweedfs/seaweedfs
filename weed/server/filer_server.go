@@ -49,7 +49,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	go fs.filer.KeepConnectedToMaster()
 
-	loadConfiguration("filer", true)
+	LoadConfiguration("filer", true)
 	v := viper.GetViper()
 
 	fs.filer.LoadConfiguration(v)
@@ -69,7 +69,7 @@ func (fs *FilerServer) jwt(fileId string) security.EncodedJwt {
 	return security.GenJwt(fs.secret, fileId)
 }
 
-func loadConfiguration(configFileName string, required bool) {
+func LoadConfiguration(configFileName string, required bool) {
 
 	// find a filer store
 	viper.SetConfigName(configFileName)     // name of config file (without extension)
