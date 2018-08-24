@@ -33,11 +33,11 @@ func BytesToNeedleId(bytes []byte) NeedleId {
 }
 
 func (k NeedleId) String() string {
-	return strconv.FormatUint(uint64(k), 10)
+	return strconv.FormatUint(uint64(k), 16)
 }
 
 func ParseNeedleId(idString string) (NeedleId, error) {
-	key, err := strconv.ParseUint(idString, 10, 64)
+	key, err := strconv.ParseUint(idString, 16, 64)
 	if err != nil {
 		return 0, fmt.Errorf("needle id %s format error: %v", idString, err)
 	}
