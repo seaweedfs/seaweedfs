@@ -46,6 +46,10 @@ func (v *Volume) Destroy() (err error) {
 		return
 	}
 	err = v.nm.Destroy()
+	os.Remove(v.FileName() + ".cpd")
+	os.Remove(v.FileName() + ".cpx")
+	os.Remove(v.FileName() + ".ldb")
+	os.Remove(v.FileName() + ".bdb")
 	return
 }
 
