@@ -37,7 +37,7 @@ func (k NeedleId) String() string {
 }
 
 func ParseNeedleId(idString string) (NeedleId, error) {
-	key, err := strconv.ParseUint(idString, 16, 64)
+	key, err := strconv.ParseUint(idString, 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("needle id %s format error: %v", idString, err)
 	}
