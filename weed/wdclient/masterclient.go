@@ -67,7 +67,6 @@ func (mc *MasterClient) tryAllMasters() {
 					glog.V(0).Infof("failed to receive from %s: %v", master, err)
 					return err
 				} else {
-					glog.V(0).Infof("volume location: %+v", volumeLocation)
 					loc := Location{
 						Url:       volumeLocation.Url,
 						PublicUrl: volumeLocation.PublicUrl,

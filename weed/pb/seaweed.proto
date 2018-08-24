@@ -23,6 +23,9 @@ message Heartbeat {
     string rack = 7;
     uint32 admin_port = 8;
     repeated VolumeInformationMessage volumes = 9;
+    // delta volume ids
+    repeated uint32 new_vids = 10;
+    repeated uint32 deleted_vids = 11;
 }
 
 message HeartbeatResponse {

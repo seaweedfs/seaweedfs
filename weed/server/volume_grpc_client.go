@@ -89,6 +89,22 @@ func (vs *VolumeServer) doHeartbeat(masterNode string, sleepInterval time.Durati
 
 	for {
 		select {
+		case vid := <-vs.store.NewVolumeIdChan:
+			deltaBeat := &master_pb.Heartbeat{
+				NewVids: []uint32{uint32(vid)},
+			}
+			if err = stream.Send(deltaBeat); err != nil {
+				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterNode, err)
+				return "", err
+			}
+		case vid := <-vs.store.DeletedVolumeIdChan:
+			deltaBeat := &master_pb.Heartbeat{
+				DeletedVids: []uint32{uint32(vid)},
+			}
+			if err = stream.Send(deltaBeat); err != nil {
+				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterNode, err)
+				return "", err
+			}
 		case <-tickChan:
 			if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
 				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)

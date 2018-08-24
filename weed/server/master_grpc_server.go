@@ -72,17 +72,24 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 		}
 
-		newVolumes, deletedVolumes := t.SyncDataNodeRegistration(heartbeat.Volumes, dn)
-
 		message := &master_pb.VolumeLocation{
 			Url:       dn.Url(),
 			PublicUrl: dn.PublicUrl,
 		}
-		for _, v := range newVolumes {
-			message.NewVids = append(message.NewVids, uint32(v.Id))
-		}
-		for _, v := range deletedVolumes {
-			message.DeletedVids = append(message.DeletedVids, uint32(v.Id))
+		if len(heartbeat.NewVids) > 0 || len(heartbeat.DeletedVids) > 0 {
+			// process delta volume ids if exists for fast volume id updates
+			message.NewVids = append(message.NewVids, heartbeat.NewVids...)
+			message.DeletedVids = append(message.DeletedVids, heartbeat.DeletedVids...)
+		} else {
+			// process heartbeat.Volumes
+			newVolumes, deletedVolumes := t.SyncDataNodeRegistration(heartbeat.Volumes, dn)
+
+			for _, v := range newVolumes {
+				message.NewVids = append(message.NewVids, uint32(v.Id))
+			}
+			for _, v := range deletedVolumes {
+				message.DeletedVids = append(message.DeletedVids, uint32(v.Id))
+			}
 		}
 
 		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 {
@@ -169,6 +176,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		select {
 		case message := <-messageChan:
 			if err := stream.Send(message); err != nil {
+				glog.V(0).Infof("=> client %v: %+v", clientName, message)
 				return err
 			}
 		case <-stopChan:
