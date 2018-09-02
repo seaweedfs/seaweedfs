@@ -41,9 +41,15 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	rAuthType := getRequestAuthType(r)
+	dataReader := r.Body
+	if rAuthType == authTypeStreamingSigned{
+		dataReader = newSignV4ChunkedReader(r)
+	}
+
 	uploadUrl := fmt.Sprintf("http://%s%s/%s/%s?collection=%s",
 		s3a.option.Filer, s3a.option.BucketsPath, bucket, object, bucket)
-	proxyReq, err := http.NewRequest("PUT", uploadUrl, r.Body)
+	proxyReq, err := http.NewRequest("PUT", uploadUrl, dataReader)
 
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", uploadUrl, err)
