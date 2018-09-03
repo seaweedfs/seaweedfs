@@ -43,7 +43,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	rAuthType := getRequestAuthType(r)
 	dataReader := r.Body
-	if rAuthType == authTypeStreamingSigned{
+	if rAuthType == authTypeStreamingSigned {
 		dataReader = newSignV4ChunkedReader(r)
 	}
 

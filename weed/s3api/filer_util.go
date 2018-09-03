@@ -1,12 +1,13 @@
 package s3api
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"time"
-	"os"
-	"fmt"
-	"github.com/chrislusf/glog"
 	"context"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
 func (s3a *S3ApiServer) mkdir(parentDirectoryPath string, dirName string) error {

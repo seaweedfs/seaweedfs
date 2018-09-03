@@ -22,9 +22,9 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"github.com/dustin/go-humanize"
 	"io"
 	"net/http"
-	"github.com/dustin/go-humanize"
 )
 
 // Streaming AWS Signature Version '4' constants.
@@ -43,7 +43,7 @@ var errMalformedEncoding = errors.New("malformed chunked encoding")
 // newSignV4ChunkedReader returns a new s3ChunkedReader that translates the data read from r
 // out of HTTP "chunked" format before returning it.
 // The s3ChunkedReader returns io.EOF when the final 0-length chunk is read.
-func newSignV4ChunkedReader(req *http.Request) (io.ReadCloser) {
+func newSignV4ChunkedReader(req *http.Request) io.ReadCloser {
 	return &s3ChunkedReader{
 		reader: bufio.NewReader(req.Body),
 		state:  readChunkHeader,

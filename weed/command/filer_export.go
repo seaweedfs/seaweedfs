@@ -1,10 +1,10 @@
 package command
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/spf13/viper"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/spf13/viper"
 )
 
 func init() {

@@ -7,8 +7,8 @@ import (
 
 // AWS Signature Version '4' constants.
 const (
-	signV4Algorithm        = "AWS4-HMAC-SHA256"
-	signV2Algorithm        = "AWS"
+	signV4Algorithm = "AWS4-HMAC-SHA256"
+	signV2Algorithm = "AWS"
 )
 
 // Verify if request has JWT.
