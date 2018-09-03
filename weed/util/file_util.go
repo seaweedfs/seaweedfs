@@ -1,7 +1,6 @@
 package util
 
 import (
-	"bufio"
 	"errors"
 	"os"
 
@@ -22,19 +21,6 @@ func TestFolderWritable(folder string) (err error) {
 		return nil
 	}
 	return errors.New("Not writable!")
-}
-
-func Readln(r *bufio.Reader) ([]byte, error) {
-	var (
-		isPrefix = true
-		err      error
-		line, ln []byte
-	)
-	for isPrefix && err == nil {
-		line, isPrefix, err = r.ReadLine()
-		ln = append(ln, line...)
-	}
-	return ln, err
 }
 
 func GetFileSize(file *os.File) (size int64, err error) {
