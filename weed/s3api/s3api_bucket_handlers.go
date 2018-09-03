@@ -86,22 +86,10 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 			return fmt.Errorf("delete collection %s: %v", bucket, err)
 		}
 
-		// delete bucket metadata
-		request := &filer_pb.DeleteEntryRequest{
-			Directory:    s3a.option.BucketsPath,
-			Name:         bucket,
-			IsDirectory:  true,
-			IsDeleteData: false,
-			IsRecursive:  true,
-		}
-
-		glog.V(1).Infof("delete bucket: %v", request)
-		if _, err := client.DeleteEntry(ctx, request); err != nil {
-			return fmt.Errorf("delete bucket %s/%s: %v", s3a.option.BucketsPath, bucket, err)
-		}
-
 		return nil
 	})
+
+	err = s3a.rm(s3a.option.BucketsPath, bucket, true, false, true)
 
 	if err != nil {
 		writeErrorResponse(w, ErrInternalError, r.URL)

@@ -38,7 +38,7 @@ func (s3a *S3ApiServer) mkdir(parentDirectoryPath string, dirName string) error 
 
 func (s3a *S3ApiServer) list(parentDirectoryPath string) (entries []*filer_pb.Entry, err error) {
 
-	s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.ListEntriesRequest{
 			Directory: s3a.option.BucketsPath,
@@ -56,5 +56,29 @@ func (s3a *S3ApiServer) list(parentDirectoryPath string) (entries []*filer_pb.En
 	})
 
 	return
+
+}
+
+func (s3a *S3ApiServer) rm(parentDirectoryPath string, entryName string, isDirectory, isDeleteData, isRecursive bool) error {
+
+	return s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		ctx := context.Background()
+
+		request := &filer_pb.DeleteEntryRequest{
+			Directory:    parentDirectoryPath,
+			Name:         entryName,
+			IsDirectory:  isDirectory,
+			IsDeleteData: isDeleteData,
+			IsRecursive:  isRecursive,
+		}
+
+		glog.V(1).Infof("delete entry %v/%v: %v", parentDirectoryPath, entryName, request)
+		if _, err := client.DeleteEntry(ctx, request); err != nil {
+			return fmt.Errorf("delete entry %s/%s: %v", parentDirectoryPath, entryName, err)
+		}
+
+		return nil
+	})
 
 }
