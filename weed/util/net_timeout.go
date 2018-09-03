@@ -66,8 +66,11 @@ func (c *Conn) Write(b []byte) (count int, e error) {
 }
 
 func (c *Conn) Close() error {
-	stats.ConnectionClose()
-	return c.Conn.Close()
+	err := c.Conn.Close()
+	if err == nil {
+		stats.ConnectionClose()
+	}
+	return err
 }
 
 func NewListener(addr string, timeout time.Duration) (net.Listener, error) {
