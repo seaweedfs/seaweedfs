@@ -53,6 +53,21 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// HeadBucket
 		bucket.Methods("HEAD").HandlerFunc(s3a.HeadBucketHandler)
 
+		// PutObjectPart
+		bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(s3a.PutObjectPartHandler).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
+		// CompleteMultipartUpload
+		bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(s3a.CompleteMultipartUploadHandler).Queries("uploadId", "{uploadId:.*}")
+		// NewMultipartUpload
+		bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(s3a.NewMultipartUploadHandler).Queries("uploads", "")
+		// DeleteMultipleObjects
+		bucket.Methods("POST").HandlerFunc(s3a.DeleteMultipleObjectsHandler).Queries("delete", "")
+		// AbortMultipartUpload
+		bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(s3a.AbortMultipartUploadHandler).Queries("uploadId", "{uploadId:.*}")
+		// ListObjectParts
+		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(s3a.ListObjectPartsHandler).Queries("uploadId", "{uploadId:.*}")
+		// ListMultipartUploads
+		bucket.Methods("GET").HandlerFunc(s3a.ListMultipartUploadsHandler).Queries("uploads", "")
+
 		// DeleteObject
 		bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(s3a.DeleteObjectHandler)
 		// DeleteBucket
@@ -71,21 +86,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 			// CopyObjectPart
 			bucket.Methods("PUT").Path("/{object:.+}").HeadersRegexp("X-Amz-Copy-Source", ".*?(\\/|%2F).*?").HandlerFunc(s3a.CopyObjectPartHandler).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
-			// PutObjectPart
-			bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(s3a.PutObjectPartHandler).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
-			// ListObjectParts
-			bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(s3a.ListObjectPartsHandler).Queries("uploadId", "{uploadId:.*}")
-			// CompleteMultipartUpload
-			bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(s3a.CompleteMultipartUploadHandler).Queries("uploadId", "{uploadId:.*}")
-			// NewMultipartUpload
-			bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(s3a.NewMultipartUploadHandler).Queries("uploads", "")
-			// AbortMultipartUpload
-			bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(s3a.AbortMultipartUploadHandler).Queries("uploadId", "{uploadId:.*}")
-
-			// ListMultipartUploads
-			bucket.Methods("GET").HandlerFunc(s3a.ListMultipartUploadsHandler).Queries("uploads", "")
-			// DeleteMultipleObjects
-			bucket.Methods("POST").HandlerFunc(s3a.DeleteMultipleObjectsHandler).Queries("delete", "")
 
 			// not implemented
 			// GetBucketLocation
