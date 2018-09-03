@@ -20,46 +20,34 @@ var (
 func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Request) {
 
 	var response ListAllMyBucketsResponse
-	err := s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		request := &filer_pb.ListEntriesRequest{
-			Directory: s3a.option.BucketsPath,
-		}
-
-		glog.V(4).Infof("read directory: %v", request)
-		resp, err := client.ListEntries(context.Background(), request)
-		if err != nil {
-			return fmt.Errorf("list buckets: %v", err)
-		}
-
-		var buckets []ListAllMyBucketsEntry
-		for _, entry := range resp.Entries {
-			if entry.IsDirectory {
-				buckets = append(buckets, ListAllMyBucketsEntry{
-					Name:         entry.Name,
-					CreationDate: time.Unix(entry.Attributes.Crtime, 0),
-				})
-			}
-		}
-
-		response = ListAllMyBucketsResponse{
-			ListAllMyBucketsResponse: ListAllMyBucketsResult{
-				Owner: CanonicalUser{
-					ID:          "",
-					DisplayName: "",
-				},
-				Buckets: ListAllMyBucketsList{
-					Bucket: buckets,
-				},
-			},
-		}
-
-		return nil
-	})
+	entries, err := s3a.list(s3a.option.BucketsPath)
 
 	if err != nil {
 		writeErrorResponse(w, ErrInternalError, r.URL)
 		return
+	}
+
+	var buckets []ListAllMyBucketsEntry
+	for _, entry := range entries {
+		if entry.IsDirectory {
+			buckets = append(buckets, ListAllMyBucketsEntry{
+				Name:         entry.Name,
+				CreationDate: time.Unix(entry.Attributes.Crtime, 0),
+			})
+		}
+	}
+
+	response = ListAllMyBucketsResponse{
+		ListAllMyBucketsResponse: ListAllMyBucketsResult{
+			Owner: CanonicalUser{
+				ID:          "",
+				DisplayName: "",
+			},
+			Buckets: ListAllMyBucketsList{
+				Bucket: buckets,
+			},
+		},
 	}
 
 	writeSuccessResponseXML(w, encodeResponse(response))
@@ -70,34 +58,8 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
-	err := s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-
-		request := &filer_pb.CreateEntryRequest{
-			Directory: s3a.option.BucketsPath,
-			Entry: &filer_pb.Entry{
-				Name:        bucket,
-				IsDirectory: true,
-				Attributes: &filer_pb.FuseAttributes{
-					Mtime:    time.Now().Unix(),
-					Crtime:   time.Now().Unix(),
-					FileMode: uint32(0777 | os.ModeDir),
-					Uid:      OS_UID,
-					Gid:      OS_GID,
-				},
-			},
-		}
-
-		glog.V(1).Infof("create bucket: %v", request)
-		if _, err := client.CreateEntry(context.Background(), request); err != nil {
-			return fmt.Errorf("mkdir %s/%s: %v", s3a.option.BucketsPath, bucket, err)
-		}
-
-		// lazily create collection
-
-		return nil
-	})
-
-	if err != nil {
+	// create the folder for bucket, but lazily create actual collection
+	if err := s3a.mkdir(s3a.option.BucketsPath, bucket); err != nil {
 		writeErrorResponse(w, ErrInternalError, r.URL)
 		return
 	}
