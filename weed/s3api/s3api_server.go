@@ -37,7 +37,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	apiRouter := router.PathPrefix("/").Subrouter()
 	var routers []*mux.Router
 	if s3a.option.DomainName != "" {
-		routers = append(routers, apiRouter.Host("{bucket:.+}."+s3a.option.DomainName).Subrouter())
+		routers = append(routers, apiRouter.Host("{bucket:.+}."+ s3a.option.DomainName).Subrouter())
 	}
 	routers = append(routers, apiRouter.PathPrefix("/{bucket}").Subrouter())
 
@@ -59,8 +59,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(s3a.CompleteMultipartUploadHandler).Queries("uploadId", "{uploadId:.*}")
 		// NewMultipartUpload
 		bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(s3a.NewMultipartUploadHandler).Queries("uploads", "")
-		// DeleteMultipleObjects
-		bucket.Methods("POST").HandlerFunc(s3a.DeleteMultipleObjectsHandler).Queries("delete", "")
 		// AbortMultipartUpload
 		bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(s3a.AbortMultipartUploadHandler).Queries("uploadId", "{uploadId:.*}")
 		// ListObjectParts
@@ -80,6 +78,8 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// ListObjectsV1 (Legacy)
 		bucket.Methods("GET").HandlerFunc(s3a.ListObjectsV1Handler)
 
+		// DeleteMultipleObjects
+		bucket.Methods("POST").HandlerFunc(s3a.DeleteMultipleObjectsHandler).Queries("delete", "")
 		/*
 			// CopyObject
 			bucket.Methods("PUT").Path("/{object:.+}").HeadersRegexp("X-Amz-Copy-Source", ".*?(\\/|%2F).*?").HandlerFunc(s3a.CopyObjectHandler)

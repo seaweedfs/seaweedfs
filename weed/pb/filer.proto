@@ -63,6 +63,7 @@ message Entry {
     bool is_directory = 2;
     repeated FileChunk chunks = 3;
     FuseAttributes attributes = 4;
+    map<string, string> extended = 5;
 }
 
 message EventNotification {

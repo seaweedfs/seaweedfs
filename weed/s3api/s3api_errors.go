@@ -32,10 +32,17 @@ const (
 	ErrBucketAlreadyExists
 	ErrBucketAlreadyOwnedByYou
 	ErrNoSuchBucket
+	ErrNoSuchUpload
 	ErrInvalidBucketName
 	ErrInvalidDigest
 	ErrInvalidMaxKeys
+	ErrInvalidMaxUploads
+	ErrInvalidMaxParts
+	ErrInvalidPartNumberMarker
+	ErrInvalidPart
+	ErrInvalidPartOrder
 	ErrInternalError
+	ErrMalformedXML
 	ErrNotImplemented
 )
 
@@ -72,9 +79,24 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "The Content-Md5 you specified is not valid.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
+	ErrInvalidMaxUploads: {
+		Code:           "InvalidArgument",
+		Description:    "Argument max-uploads must be an integer between 0 and 2147483647",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
 	ErrInvalidMaxKeys: {
 		Code:           "InvalidArgument",
 		Description:    "Argument maxKeys must be an integer between 0 and 2147483647",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidMaxParts: {
+		Code:           "InvalidArgument",
+		Description:    "Argument max-parts must be an integer between 0 and 2147483647",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidPartNumberMarker: {
+		Code:           "InvalidArgument",
+		Description:    "Argument partNumberMarker must be an integer.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrNoSuchBucket: {
@@ -82,10 +104,30 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "The specified bucket does not exist",
 		HTTPStatusCode: http.StatusNotFound,
 	},
+	ErrNoSuchUpload: {
+		Code:           "NoSuchUpload",
+		Description:    "The specified multipart upload does not exist. The upload ID may be invalid, or the upload may have been aborted or completed.",
+		HTTPStatusCode: http.StatusNotFound,
+	},
 	ErrInternalError: {
 		Code:           "InternalError",
 		Description:    "We encountered an internal error, please try again.",
 		HTTPStatusCode: http.StatusInternalServerError,
+	},
+	ErrMalformedXML: {
+		Code:           "MalformedXML",
+		Description:    "The XML you provided was not well-formed or did not validate against our published schema.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidPart: {
+		Code:           "InvalidPart",
+		Description:    "One or more of the specified parts could not be found.  The part may not have been uploaded, or the specified entity tag may not match the part's entity tag.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidPartOrder: {
+		Code:           "InvalidPartOrder",
+		Description:    "The list of parts was not in ascending order. The parts list must be specified in order by part number.",
+		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrNotImplemented: {
 		Code:           "NotImplemented",
