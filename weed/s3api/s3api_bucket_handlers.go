@@ -59,7 +59,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	bucket := vars["bucket"]
 
 	// create the folder for bucket, but lazily create actual collection
-	if err := s3a.mkdir(s3a.option.BucketsPath, bucket); err != nil {
+	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, nil); err != nil {
 		writeErrorResponse(w, ErrInternalError, r.URL)
 		return
 	}
