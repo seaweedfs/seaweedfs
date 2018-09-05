@@ -139,7 +139,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context, buf []byte
 	}
 
 	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
-	bufReader := bytes.NewReader(pages.Data[:pages.Size])
+	bufReader := bytes.NewReader(buf)
 	uploadResult, err := operation.Upload(fileUrl, pages.f.Name, bufReader, false, "application/octet-stream", nil, "")
 	if err != nil {
 		glog.V(0).Infof("upload data %v to %s: %v", pages.f.Name, fileUrl, err)
