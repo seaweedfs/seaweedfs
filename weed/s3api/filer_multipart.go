@@ -14,9 +14,9 @@ func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInp
 
 	if err := s3a.mkdir(s3a.genUploadsFolder(*input.Bucket), uploadIdString, func(entry *filer_pb.Entry) {
 		if entry.Extended == nil {
-			entry.Extended = make(map[string]string)
+			entry.Extended = make(map[string][]byte)
 		}
-		entry.Extended["key"] = *input.Key
+		entry.Extended["key"] = []byte(*input.Key)
 	}); err != nil {
 		glog.Errorf("NewMultipartUpload error: %v", err)
 		return nil, ErrInternalError
@@ -57,7 +57,7 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 		if entry.Extended != nil {
 			key := entry.Extended["key"]
 			output.Uploads = append(output.Uploads, &s3.MultipartUpload{
-				Key:      aws.String(key),
+				Key:      aws.String(string(key)),
 				UploadId: aws.String(entry.Name),
 			})
 		}

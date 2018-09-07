@@ -63,7 +63,7 @@ message Entry {
     bool is_directory = 2;
     repeated FileChunk chunks = 3;
     FuseAttributes attributes = 4;
-    map<string, string> extended = 5;
+    map<string, bytes> extended = 5;
 }
 
 message EventNotification {
@@ -100,6 +100,7 @@ message GetEntryAttributesRequest {
 message GetEntryAttributesResponse {
     FuseAttributes attributes = 1;
     repeated FileChunk chunks = 2;
+    map<string, bytes> extended = 3;
 }
 
 message GetFileContentRequest {
