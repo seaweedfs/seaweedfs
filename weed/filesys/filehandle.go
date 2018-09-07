@@ -201,6 +201,8 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 		if fh.f.attributes != nil {
 			fh.f.attributes.Mime = fh.contentType
+			fh.f.attributes.Uid = req.Uid
+			fh.f.attributes.Gid = req.Gid
 		}
 
 		request := &filer_pb.UpdateEntryRequest{
