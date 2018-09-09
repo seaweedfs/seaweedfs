@@ -48,7 +48,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 	}
 
-	if v.version == Version(0) {
+	if v.ReplicaPlacement == nil {
 		e = v.readSuperBlock()
 	} else {
 		e = v.maybeWriteSuperBlock()
