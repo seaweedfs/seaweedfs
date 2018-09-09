@@ -2,17 +2,17 @@ package s3api
 
 import (
 	"fmt"
-	"time"
-	"strings"
-	"strconv"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
-	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/satori/go.uuid"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/satori/go.uuid"
 )
 
 func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInput) (output *s3.CreateMultipartUploadOutput, code ErrorCode) {

@@ -130,7 +130,6 @@ func (pages *ContinuousDirtyPages) saveExistingPagesToStorage(ctx context.Contex
 
 func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context, buf []byte, offset int64) (*filer_pb.FileChunk, error) {
 
-
 	var fileId, host string
 
 	if err := pages.f.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {

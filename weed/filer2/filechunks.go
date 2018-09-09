@@ -1,10 +1,10 @@
 package filer2
 
 import (
+	"fmt"
+	"hash/fnv"
 	"math"
 	"sort"
-	"hash/fnv"
-	"fmt"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )

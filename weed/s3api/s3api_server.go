@@ -37,7 +37,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	apiRouter := router.PathPrefix("/").Subrouter()
 	var routers []*mux.Router
 	if s3a.option.DomainName != "" {
-		routers = append(routers, apiRouter.Host("{bucket:.+}."+ s3a.option.DomainName).Subrouter())
+		routers = append(routers, apiRouter.Host("{bucket:.+}."+s3a.option.DomainName).Subrouter())
 	}
 	routers = append(routers, apiRouter.PathPrefix("/{bucket}").Subrouter())
 
