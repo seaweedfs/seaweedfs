@@ -119,6 +119,7 @@ func (fs *FilerServer) handleMultipleChunks(w http.ResponseWriter, r *http.Reque
 	if mimeType != "" {
 		w.Header().Set("Content-Type", mimeType)
 	}
+	setEtag(w, filer2.ETag(entry.Chunks))
 
 	totalSize := int64(filer2.TotalSize(entry.Chunks))
 

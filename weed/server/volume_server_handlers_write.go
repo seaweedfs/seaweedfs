@@ -44,8 +44,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		ret.Name = string(needle.Name)
 	}
 	ret.Size = size
-	etag := needle.Etag()
-	w.Header().Set("Etag", etag)
+	setEtag(w, needle.Etag())
 	writeJsonQuiet(w, r, httpStatus, ret)
 }
 
@@ -172,4 +171,10 @@ func (vs *VolumeServer) batchDeleteHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeJsonQuiet(w, r, http.StatusAccepted, ret)
+}
+
+func setEtag(w http.ResponseWriter, etag string) {
+	if etag != "" {
+		w.Header().Set("ETag", "\""+etag+"\"")
+	}
 }

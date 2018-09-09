@@ -3,6 +3,8 @@ package filer2
 import (
 	"math"
 	"sort"
+	"hash/fnv"
+	"fmt"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
@@ -15,6 +17,18 @@ func TotalSize(chunks []*filer_pb.FileChunk) (size uint64) {
 		}
 	}
 	return
+}
+
+func ETag(chunks []*filer_pb.FileChunk) (etag string) {
+	if len(chunks) == 1 {
+		return chunks[0].ETag
+	}
+
+	h := fnv.New32a()
+	for _, c := range chunks {
+		h.Write([]byte(c.ETag))
+	}
+	return fmt.Sprintf("%x", h.Sum32())
 }
 
 func CompactFileChunks(chunks []*filer_pb.FileChunk) (compacted, garbage []*filer_pb.FileChunk) {

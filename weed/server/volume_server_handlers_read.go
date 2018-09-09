@@ -88,12 +88,11 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
-	etag := n.Etag()
-	if inm := r.Header.Get("If-None-Match"); inm == etag {
+	if inm := r.Header.Get("If-None-Match"); inm == "\""+n.Etag()+"\"" {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	w.Header().Set("Etag", etag)
+	setEtag(w, n.Etag())
 
 	if n.HasPairs() {
 		pairMap := make(map[string]string)

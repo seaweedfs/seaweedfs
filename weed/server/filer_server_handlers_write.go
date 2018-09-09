@@ -150,6 +150,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+	etag := resp.Header.Get("ETag")
 	resp_body, ra_err := ioutil.ReadAll(resp.Body)
 	if ra_err != nil {
 		glog.V(0).Infoln("failing to upload to volume server", r.RequestURI, ra_err.Error())
@@ -202,6 +203,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 			FileId: fileId,
 			Size:   uint64(ret.Size),
 			Mtime:  time.Now().UnixNano(),
+			ETag:   etag,
 		}},
 	}
 	if db_err := fs.filer.CreateEntry(entry); db_err != nil {

@@ -143,6 +143,8 @@ func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// TODO handle encodingType
+
 	writeSuccessResponseXML(w, encodeResponse(response))
 }
 
