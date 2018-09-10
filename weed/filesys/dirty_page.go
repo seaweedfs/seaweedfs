@@ -66,10 +66,18 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 	if offset != pages.Offset+pages.Size {
 		// when this happens, debug shows the data overlapping with existing data is empty
 		// the data is not just append
-		return pages.flushAndSave(ctx, offset, data)
+		if offset == pages.Offset {
+			copy(pages.Data[pages.Size:], data[pages.Size:])
+		} else {
+			if pages.Size != 0 {
+				glog.V(0).Infof("possible error: pages [%d, %d) write [%d, %d)", pages.Offset, pages.Offset+pages.Size, offset, offset+int64(len(data)))
+			}
+			return pages.flushAndSave(ctx, offset, data)
+		}
+	} else {
+		copy(pages.Data[offset-pages.Offset:], data)
 	}
 
-	copy(pages.Data[offset-pages.Offset:], data)
 	pages.Size = max(pages.Size, offset+int64(len(data))-pages.Offset)
 
 	return
