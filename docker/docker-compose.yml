@@ -2,7 +2,7 @@ version: '2'
 
 services:
   master:
-    image: chrislusf/seaweedfs
+    build: .
     ports:
       - 9333:9333
     command: "master"
@@ -11,7 +11,7 @@ services:
         aliases:
           - seaweed_master
   volume:
-    image: chrislusf/seaweedfs
+    build: .
     ports:
       - 8080:8080
     command: 'volume -max=5 -mserver="master:9333" -port=8080'
@@ -21,3 +21,15 @@ services:
       default:
         aliases:
           - seaweed_volume
+  filer:
+    build: .
+    ports: 
+      - 8888:8888
+    command: 'filer -master="master:9333"'
+    depends_on:
+      - master
+      - volume 
+    networks:
+      default:
+        aliases:
+          - seaweed_filer
