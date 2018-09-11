@@ -44,7 +44,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 
 	entries, err := s3a.list(uploadDirectory, "", "", false, 0)
 	if err != nil {
-		glog.Errorf("completeMultipartUpload %s *s error: %v", *input.Bucket, *input.UploadId, err)
+		glog.Errorf("completeMultipartUpload %s %s error: %v", *input.Bucket, *input.UploadId, err)
 		return nil, ErrNoSuchUpload
 	}
 
@@ -148,7 +148,7 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *s3.Li
 	entries, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId,
 		"", fmt.Sprintf("%04d.part", *input.PartNumberMarker), false, int(*input.MaxParts))
 	if err != nil {
-		glog.Errorf("listObjectParts %s *s error: %v", *input.Bucket, *input.UploadId, err)
+		glog.Errorf("listObjectParts %s %s error: %v", *input.Bucket, *input.UploadId, err)
 		return nil, ErrNoSuchUpload
 	}
 
@@ -157,7 +157,7 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *s3.Li
 			partNumberString := entry.Name[:len(entry.Name)-len(".part")]
 			partNumber, err := strconv.Atoi(partNumberString)
 			if err != nil {
-				glog.Errorf("listObjectParts %s *s parse %s: %v", *input.Bucket, *input.UploadId, entry.Name, err)
+				glog.Errorf("listObjectParts %s %s parse %s: %v", *input.Bucket, *input.UploadId, entry.Name, err)
 				continue
 			}
 			output.Parts = append(output.Parts, &s3.Part{
