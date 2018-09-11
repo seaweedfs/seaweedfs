@@ -126,7 +126,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket, originalPrefix string, maxKeys 
 				contents = append(contents, &s3.Object{
 					Key:          aws.String(fmt.Sprintf("%s%s", dir, entry.Name)),
 					LastModified: aws.Time(time.Unix(entry.Attributes.Mtime, 0)),
-					ETag:         aws.String("\"2345sgfwetrewrt\""), // TODO add etag
+					ETag:         aws.String("\"" + filer2.ETag(entry.Chunks) + "\""),
 					Size:         aws.Int64(int64(filer2.TotalSize(entry.Chunks))),
 					Owner: &s3.Owner{
 						ID:          aws.String("bcaf161ca5fb16fd081034f"),

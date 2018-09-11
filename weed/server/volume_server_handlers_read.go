@@ -68,7 +68,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	count, e := vs.store.ReadVolumeNeedle(volumeId, n)
 	glog.V(4).Infoln("read bytes", count, "error", e)
 	if e != nil || count < 0 {
-		glog.V(0).Infoln("read error:", e, r.URL.Path)
+		glog.V(0).Infof("read %s error: %v", r.URL.Path, e)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -88,12 +88,11 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
-	etag := n.Etag()
-	if inm := r.Header.Get("If-None-Match"); inm == etag {
+	if inm := r.Header.Get("If-None-Match"); inm == "\""+n.Etag()+"\"" {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	w.Header().Set("Etag", etag)
+	setEtag(w, n.Etag())
 
 	if n.HasPairs() {
 		pairMap := make(map[string]string)

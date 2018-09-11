@@ -21,7 +21,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 	var response ListAllMyBucketsResponse
 
-	entries, err := s3a.list(s3a.option.BucketsPath)
+	entries, err := s3a.list(s3a.option.BucketsPath, "", "", false, 0)
 
 	if err != nil {
 		writeErrorResponse(w, ErrInternalError, r.URL)

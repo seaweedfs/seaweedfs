@@ -1,16 +1,16 @@
 package s3api
 
 import (
-	"net/http"
-	"github.com/gorilla/mux"
-	"fmt"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/aws"
-	"net/url"
-	"strconv"
-	"io/ioutil"
 	"encoding/xml"
+	"fmt"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/gorilla/mux"
+	"io/ioutil"
+	"net/http"
+	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -142,6 +142,8 @@ func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *ht
 		writeErrorResponse(w, errCode, r.URL)
 		return
 	}
+
+	// TODO handle encodingType
 
 	writeSuccessResponseXML(w, encodeResponse(response))
 }

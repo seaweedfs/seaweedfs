@@ -19,8 +19,9 @@ func loadVolumeWithoutIndex(dirname string, collection string, id VolumeId, need
 func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind NeedleMapType, preallocate int64) error {
 	var e error
 	fileName := v.FileName()
+	alreadyHasSuperBlock := false
 
-	if exists, canRead, canWrite, modifiedTime := checkFile(fileName + ".dat"); exists {
+	if exists, canRead, canWrite, modifiedTime, fileSize := checkFile(fileName + ".dat"); exists {
 		if !canRead {
 			return fmt.Errorf("cannot read Volume Data file %s.dat", fileName)
 		}
@@ -31,6 +32,9 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			glog.V(0).Infoln("opening " + fileName + ".dat in READONLY mode")
 			v.dataFile, e = os.Open(fileName + ".dat")
 			v.readOnly = true
+		}
+		if fileSize >= _SuperBlockSize {
+			alreadyHasSuperBlock = true
 		}
 	} else {
 		if createDatIfMissing {
@@ -48,7 +52,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 	}
 
-	if v.ReplicaPlacement == nil {
+	if alreadyHasSuperBlock {
 		e = v.readSuperBlock()
 	} else {
 		e = v.maybeWriteSuperBlock()
@@ -97,7 +101,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	return e
 }
 
-func checkFile(filename string) (exists, canRead, canWrite bool, modTime time.Time) {
+func checkFile(filename string) (exists, canRead, canWrite bool, modTime time.Time, fileSize int64) {
 	exists = true
 	fi, err := os.Stat(filename)
 	if os.IsNotExist(err) {
@@ -111,5 +115,6 @@ func checkFile(filename string) (exists, canRead, canWrite bool, modTime time.Ti
 		canWrite = true
 	}
 	modTime = fi.ModTime()
+	fileSize = fi.Size()
 	return
 }

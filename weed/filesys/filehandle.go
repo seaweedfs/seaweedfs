@@ -140,6 +140,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 	chunks, err := fh.dirtyPages.AddPage(ctx, req.Offset, req.Data)
 	if err != nil {
+		glog.Errorf("%+v/%v write fh %d: [%d,%d): %v", fh.f.dir.Path, fh.f.Name, fh.handle, req.Offset, req.Offset+int64(len(req.Data)), err)
 		return fmt.Errorf("write %s/%s at [%d,%d): %v", fh.f.dir.Path, fh.f.Name, req.Offset, req.Offset+int64(len(req.Data)), err)
 	}
 
@@ -179,7 +180,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 	chunk, err := fh.dirtyPages.FlushToStorage(ctx)
 	if err != nil {
-		glog.V(0).Infof("flush %s/%s to %s [%d,%d): %v", fh.f.dir.Path, fh.f.Name, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size), err)
+		glog.Errorf("flush %s/%s to %s [%d,%d): %v", fh.f.dir.Path, fh.f.Name, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size), err)
 		return fmt.Errorf("flush %s/%s to %s [%d,%d): %v", fh.f.dir.Path, fh.f.Name, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size), err)
 	}
 	if chunk != nil {
@@ -200,6 +201,8 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 		if fh.f.attributes != nil {
 			fh.f.attributes.Mime = fh.contentType
+			fh.f.attributes.Uid = req.Uid
+			fh.f.attributes.Gid = req.Gid
 		}
 
 		request := &filer_pb.UpdateEntryRequest{
