@@ -1,3 +1,3 @@
-[memory]
+[leveldb]
 enabled = true
 dir = "."

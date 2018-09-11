@@ -2,7 +2,8 @@ version: '2'
 
 services:
   master:
-    build: .
+    #image: chrislusf/seaweedfs # use a remote image
+    build: . # build our container from the local Dockerfile
     ports:
       - 9333:9333
     command: "master"
@@ -11,7 +12,8 @@ services:
         aliases:
           - seaweed_master
   volume:
-    build: .
+    #image: chrislusf/seaweedfs # use a remote image
+    build: . # build our container from the local Dockerfile
     ports:
       - 8080:8080
     command: 'volume -max=5 -mserver="master:9333" -port=8080'
@@ -22,7 +24,8 @@ services:
         aliases:
           - seaweed_volume
   filer:
-    build: .
+    #image: chrislusf/seaweedfs # use a remote image
+    build: . # build our container from the local Dockerfile
     ports: 
       - 8888:8888
     command: 'filer -master="master:9333"'
