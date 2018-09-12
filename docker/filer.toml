@@ -1,0 +1,3 @@
+[leveldb]
+enabled = true
+dir = "."

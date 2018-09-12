@@ -8,10 +8,12 @@ RUN apk add --no-cache --virtual build-dependencies --update wget curl ca-certif
     rm -rf /tmp/*
 
 EXPOSE 8080
+EXPOSE 8888
 EXPOSE 9333
 
 VOLUME /data
 
+COPY filer.toml /etc/seaweedfs/filer.toml
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
