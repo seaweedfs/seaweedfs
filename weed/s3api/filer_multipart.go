@@ -102,6 +102,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 		},
 	}
 
+	if err = s3a.rm(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true, false, true); err != nil {
+		glog.V(1).Infof("completeMultipartUpload cleanup %s upload %s: %v", *input.Bucket, *input.UploadId, err)
+	}
+
 	return
 }
 
@@ -155,6 +159,7 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 			})
 		}
 	}
+
 	return
 }
 
