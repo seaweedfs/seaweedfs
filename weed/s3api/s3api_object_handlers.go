@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,9 +10,8 @@ import (
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/gorilla/mux"
 	"github.com/chrislusf/seaweedfs/weed/server"
-	"crypto/md5"
+	"github.com/gorilla/mux"
 )
 
 var (
