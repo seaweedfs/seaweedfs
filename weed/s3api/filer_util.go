@@ -78,7 +78,7 @@ func (s3a *S3ApiServer) list(parentDirectoryPath, prefix, startFrom string, incl
 	err = s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.ListEntriesRequest{
-			Directory:          s3a.option.BucketsPath,
+			Directory:          parentDirectoryPath,
 			Prefix:             prefix,
 			StartFromFileName:  startFrom,
 			InclusiveStartFrom: inclusive,
@@ -135,7 +135,7 @@ func (s3a *S3ApiServer) exists(parentDirectoryPath string, entryName string, isD
 			Name:      entryName,
 		}
 
-		glog.V(1).Infof("exists entry %v/%v: %v", parentDirectoryPath, entryName, request)
+		glog.V(4).Infof("exists entry %v/%v: %v", parentDirectoryPath, entryName, request)
 		resp, err := client.LookupDirectoryEntry(ctx, request)
 		if err != nil {
 			return fmt.Errorf("exists entry %s/%s: %v", parentDirectoryPath, entryName, err)

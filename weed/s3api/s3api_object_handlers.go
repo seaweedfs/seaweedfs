@@ -3,12 +3,15 @@ package s3api
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/gorilla/mux"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"strings"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/gorilla/mux"
+	"github.com/chrislusf/seaweedfs/weed/server"
+	"crypto/md5"
 )
 
 var (
@@ -21,19 +24,13 @@ func init() {
 	}}
 }
 
-type UploadResult struct {
-	Name  string `json:"name,omitempty"`
-	Size  uint32 `json:"size,omitempty"`
-	Error string `json:"error,omitempty"`
-}
-
 func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	// http://docs.aws.amazon.com/AmazonS3/latest/dev/UploadingObjects.html
 
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
-	object := vars["object"]
+	object := getObject(vars)
 
 	_, err := validateContentMd5(r.Header)
 	if err != nil {
@@ -47,7 +44,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		dataReader = newSignV4ChunkedReader(r)
 	}
 
-	uploadUrl := fmt.Sprintf("http://%s%s/%s/%s?collection=%s",
+	uploadUrl := fmt.Sprintf("http://%s%s/%s%s?collection=%s",
 		s3a.option.Filer, s3a.option.BucketsPath, bucket, object, bucket)
 
 	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
@@ -147,7 +144,10 @@ func passThroghResponse(proxyResonse *http.Response, w http.ResponseWriter) {
 
 func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.ReadCloser) (etag string, code ErrorCode) {
 
-	proxyReq, err := http.NewRequest("PUT", uploadUrl, dataReader)
+	hash := md5.New()
+	var body io.Reader = io.TeeReader(dataReader, hash)
+
+	proxyReq, err := http.NewRequest("PUT", uploadUrl, body)
 
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", uploadUrl, err)
@@ -165,28 +165,30 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	resp, postErr := client.Do(proxyReq)
 
+	dataReader.Close()
+
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)
 		return "", ErrInternalError
 	}
 	defer resp.Body.Close()
 
-	etag = resp.Header.Get("ETag")
+	etag = fmt.Sprintf("%x", hash.Sum(nil))
 
 	resp_body, ra_err := ioutil.ReadAll(resp.Body)
 	if ra_err != nil {
 		glog.Errorf("upload to filer response read: %v", ra_err)
 		return etag, ErrInternalError
 	}
-	var ret UploadResult
+	var ret weed_server.FilerPostResult
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
 		glog.Errorf("failing to read upload to %s : %v", uploadUrl, string(resp_body))
-		return etag, ErrInternalError
+		return "", ErrInternalError
 	}
 	if ret.Error != "" {
 		glog.Errorf("upload to filer error: %v", ret.Error)
-		return etag, ErrInternalError
+		return "", ErrInternalError
 	}
 
 	return etag, ErrNone
@@ -194,6 +196,26 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 func setEtag(w http.ResponseWriter, etag string) {
 	if etag != "" {
-		w.Header().Set("ETag", "\""+etag+"\"")
+		if strings.HasPrefix(etag, "\"") {
+			w.Header().Set("ETag", etag)
+		} else {
+			w.Header().Set("ETag", "\""+etag+"\"")
+		}
 	}
+}
+
+func getObject(vars map[string]string) string {
+	object := vars["object"]
+	if !strings.HasPrefix(object, "/") {
+		object = "/" + object
+	}
+	return object
+}
+
+func getEtag(r *http.Request) (etag string) {
+	etag = r.Header.Get("ETag")
+	if strings.HasPrefix(etag, "\"") && strings.HasSuffix(etag, "\"") {
+		etag = etag[1 : len(etag)-1]
+	}
+	return
 }

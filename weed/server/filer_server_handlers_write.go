@@ -117,7 +117,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	glog.V(0).Infof("request header %+v, urlLocation: %v", r.Header, urlLocation)
+	glog.V(4).Infof("write %s to %v", r.URL.Path, urlLocation)
 
 	u, _ := url.Parse(urlLocation)
 
@@ -221,6 +221,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		Fid:   fileId,
 		Url:   urlLocation,
 	}
+	setEtag(w, etag)
 	writeJsonQuiet(w, r, http.StatusCreated, reply)
 }
 

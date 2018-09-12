@@ -1,15 +1,12 @@
 package s3api
 
 import (
-	"encoding/xml"
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gorilla/mux"
-	"io/ioutil"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -38,6 +35,8 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 		return
 	}
 
+	// println("NewMultipartUploadHandler", string(encodeResponse(response)))
+
 	writeSuccessResponseXML(w, encodeResponse(response))
 
 }
@@ -46,36 +45,18 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
-	object := vars["object"]
+	object := getObject(vars)
 
 	// Get upload id.
 	uploadID, _, _, _ := getObjectResources(r.URL.Query())
 
-	completeMultipartBytes, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		writeErrorResponse(w, ErrInternalError, r.URL)
-		return
-	}
-	completedMultipartUpload := &s3.CompletedMultipartUpload{}
-	if err = xml.Unmarshal(completeMultipartBytes, completedMultipartUpload); err != nil {
-		writeErrorResponse(w, ErrMalformedXML, r.URL)
-		return
-	}
-	if len(completedMultipartUpload.Parts) == 0 {
-		writeErrorResponse(w, ErrMalformedXML, r.URL)
-		return
-	}
-	if !sort.IsSorted(byCompletedPartNumber(completedMultipartUpload.Parts)) {
-		writeErrorResponse(w, ErrInvalidPartOrder, r.URL)
-		return
-	}
-
 	response, errCode := s3a.completeMultipartUpload(&s3.CompleteMultipartUploadInput{
-		Bucket:          aws.String(bucket),
-		Key:             aws.String(object),
-		MultipartUpload: completedMultipartUpload,
-		UploadId:        aws.String(uploadID),
+		Bucket:   aws.String(bucket),
+		Key:      aws.String(object),
+		UploadId: aws.String(uploadID),
 	})
+
+	// println("CompleteMultipartUploadHandler", string(encodeResponse(response)), errCode)
 
 	if errCode != ErrNone {
 		writeErrorResponse(w, errCode, r.URL)
@@ -90,7 +71,7 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
-	object := vars["object"]
+	object := getObject(vars)
 
 	// Get upload id.
 	uploadID, _, _, _ := getObjectResources(r.URL.Query())
@@ -105,6 +86,8 @@ func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *ht
 		writeErrorResponse(w, errCode, r.URL)
 		return
 	}
+
+	// println("AbortMultipartUploadHandler", string(encodeResponse(response)))
 
 	writeSuccessResponseXML(w, encodeResponse(response))
 
@@ -144,6 +127,7 @@ func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *ht
 	}
 
 	// TODO handle encodingType
+	// println("ListMultipartUploadsHandler", string(encodeResponse(response)))
 
 	writeSuccessResponseXML(w, encodeResponse(response))
 }
@@ -152,7 +136,7 @@ func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *ht
 func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
-	object := vars["object"]
+	object := getObject(vars)
 
 	uploadID, partNumberMarker, maxParts, _ := getObjectResources(r.URL.Query())
 	if partNumberMarker < 0 {
@@ -176,6 +160,8 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 		writeErrorResponse(w, errCode, r.URL)
 		return
 	}
+
+	// println("ListObjectPartsHandler", string(encodeResponse(response)))
 
 	writeSuccessResponseXML(w, encodeResponse(response))
 

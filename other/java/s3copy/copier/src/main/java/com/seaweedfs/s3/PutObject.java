@@ -18,7 +18,7 @@ import java.io.File;
 /**
  * Hello world!
  */
-public class S3Copy {
+public class PutObject {
     public static void main(String[] args) {
 
         AWSCredentials credentials = new BasicAWSCredentials("ANY-ACCESSKEYID", "ANY-SECRETACCESSKEY");

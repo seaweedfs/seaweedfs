@@ -7,7 +7,7 @@ import junit.framework.TestSuite;
 /**
  * Unit test for simple App.
  */
-public class S3CopyTest
+public class PutObjectTest
     extends TestCase
 {
     /**
@@ -15,7 +15,7 @@ public class S3CopyTest
      *
      * @param testName name of the test case
      */
-    public S3CopyTest(String testName )
+    public PutObjectTest(String testName )
     {
         super( testName );
     }
@@ -25,7 +25,7 @@ public class S3CopyTest
      */
     public static Test suite()
     {
-        return new TestSuite( S3CopyTest.class );
+        return new TestSuite( PutObjectTest.class );
     }
 
     /**

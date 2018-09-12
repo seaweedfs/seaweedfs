@@ -4,13 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"time"
+	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/topology"
-	"strconv"
-	"time"
 )
 
 func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
@@ -175,6 +176,10 @@ func (vs *VolumeServer) batchDeleteHandler(w http.ResponseWriter, r *http.Reques
 
 func setEtag(w http.ResponseWriter, etag string) {
 	if etag != "" {
-		w.Header().Set("ETag", "\""+etag+"\"")
+		if strings.HasPrefix(etag, "\"") {
+			w.Header().Set("ETag", etag)
+		} else {
+			w.Header().Set("ETag", "\""+etag+"\"")
+		}
 	}
 }
