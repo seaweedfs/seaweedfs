@@ -3,6 +3,7 @@ package filer2
 import (
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 func (f *Filer) NotifyUpdateEvent(oldEntry, newEntry *Entry) {
@@ -16,6 +17,8 @@ func (f *Filer) NotifyUpdateEvent(oldEntry, newEntry *Entry) {
 	}
 
 	if notification.Queue != nil {
+
+		glog.V(3).Infof("notifying entry update %v", key)
 
 		notification.Queue.SendMessage(
 			key,
