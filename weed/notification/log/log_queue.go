@@ -2,13 +2,13 @@ package kafka
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/msgqueue"
+	"github.com/chrislusf/seaweedfs/weed/notification"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
 )
 
 func init() {
-	msgqueue.MessageQueues = append(msgqueue.MessageQueues, &LogQueue{})
+	notification.MessageQueues = append(notification.MessageQueues, &LogQueue{})
 }
 
 type LogQueue struct {

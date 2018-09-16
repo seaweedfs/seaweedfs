@@ -1,7 +1,7 @@
 package filer2
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/msgqueue"
+	"github.com/chrislusf/seaweedfs/weed/notification"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -15,9 +15,9 @@ func (f *Filer) NotifyUpdateEvent(oldEntry, newEntry *Entry) {
 		return
 	}
 
-	if msgqueue.Queue != nil {
+	if notification.Queue != nil {
 
-		msgqueue.Queue.SendMessage(
+		notification.Queue.SendMessage(
 			key,
 			&filer_pb.EventNotification{
 				OldEntry: toProtoEntry(oldEntry),

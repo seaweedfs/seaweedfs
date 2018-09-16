@@ -1,4 +1,4 @@
-package msgqueue
+package notification
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/util"

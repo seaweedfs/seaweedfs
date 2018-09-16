@@ -11,9 +11,9 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/postgres"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/redis"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/msgqueue"
-	_ "github.com/chrislusf/seaweedfs/weed/msgqueue/kafka"
-	_ "github.com/chrislusf/seaweedfs/weed/msgqueue/log"
+	"github.com/chrislusf/seaweedfs/weed/notification"
+	_ "github.com/chrislusf/seaweedfs/weed/notification/kafka"
+	_ "github.com/chrislusf/seaweedfs/weed/notification/log"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/spf13/viper"
 )
@@ -54,7 +54,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	fs.filer.LoadConfiguration(v)
 
-	msgqueue.LoadConfiguration(v.Sub("notification"))
+	notification.LoadConfiguration(v.Sub("notification"))
 
 	defaultMux.HandleFunc("/favicon.ico", faviconHandler)
 	defaultMux.HandleFunc("/", fs.filerHandler)
