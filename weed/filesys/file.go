@@ -32,39 +32,8 @@ func (file *File) fullpath() string {
 
 func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
-	if file.attributes == nil || !file.isOpen {
-		item := file.wfs.listDirectoryEntriesCache.Get(file.fullpath())
-		if item != nil && !item.Expired() {
-			entry := item.Value().(*filer_pb.Entry)
-			file.Chunks = entry.Chunks
-			file.attributes = entry.Attributes
-			// glog.V(1).Infof("file attr read cached %v attributes", file.Name)
-		} else {
-			err := file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-
-				request := &filer_pb.GetEntryAttributesRequest{
-					Name:      file.Name,
-					ParentDir: file.dir.Path,
-				}
-
-				resp, err := client.GetEntryAttributes(ctx, request)
-				if err != nil {
-					glog.V(0).Infof("file attr read file %v: %v", request, err)
-					return err
-				}
-
-				file.attributes = resp.Attributes
-				file.Chunks = resp.Chunks
-
-				glog.V(1).Infof("file attr %v %+v: %d", file.fullpath(), file.attributes, filer2.TotalSize(file.Chunks))
-
-				return nil
-			})
-
-			if err != nil {
-				return err
-			}
-		}
+	if err := file.maybeLoadAttributes(ctx); err != nil {
+		return err
 	}
 
 	attr.Mode = os.FileMode(file.attributes.FileMode)
@@ -95,7 +64,15 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
-	glog.V(3).Infof("%v file setattr %+v, fh=%d", file.fullpath(), req, req.Handle)
+	if err := file.maybeLoadAttributes(ctx); err != nil {
+		return err
+	}
+
+	if file.isOpen {
+		return nil
+	}
+
+	glog.V(3).Infof("%v file setattr %+v, old:%+v", file.fullpath(), req, file.attributes)
 	if req.Valid.Size() {
 
 		glog.V(3).Infof("%v file setattr set size=%v", file.fullpath(), req.Size)
@@ -149,5 +126,43 @@ func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 	// write the file chunks to the filerGrpcAddress
 	glog.V(3).Infof("%s/%s fsync file %+v", file.dir.Path, file.Name, req)
 
+	return nil
+}
+
+func (file *File) maybeLoadAttributes(ctx context.Context) error {
+	if file.attributes == nil || !file.isOpen {
+		item := file.wfs.listDirectoryEntriesCache.Get(file.fullpath())
+		if item != nil && !item.Expired() {
+			entry := item.Value().(*filer_pb.Entry)
+			file.Chunks = entry.Chunks
+			file.attributes = entry.Attributes
+			// glog.V(1).Infof("file attr read cached %v attributes", file.Name)
+		} else {
+			err := file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+				request := &filer_pb.GetEntryAttributesRequest{
+					Name:      file.Name,
+					ParentDir: file.dir.Path,
+				}
+
+				resp, err := client.GetEntryAttributes(ctx, request)
+				if err != nil {
+					glog.V(0).Infof("file attr read file %v: %v", request, err)
+					return err
+				}
+
+				file.attributes = resp.Attributes
+				file.Chunks = resp.Chunks
+
+				glog.V(1).Infof("file attr %v %+v: %d", file.fullpath(), file.attributes, filer2.TotalSize(file.Chunks))
+
+				return nil
+			})
+
+			if err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
