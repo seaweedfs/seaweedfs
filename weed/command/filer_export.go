@@ -29,6 +29,7 @@ var (
 	// filerExportOutputFile  = cmdFilerExport.Flag.String("output", "", "the output file. If empty, only list out the directory tree")
 	filerExportSourceStore = cmdFilerExport.Flag.String("sourceStore", "", "the source store name in filer.toml")
 	filerExportTargetStore = cmdFilerExport.Flag.String("targetStore", "", "the target store name in filer.toml")
+	dirListLimit           = cmdFilerExport.Flag.Int("dirListLimit", 100000, "limit directory list size")
 )
 
 type statistics struct {
@@ -99,7 +100,7 @@ func runFilerExport(cmd *Command, args []string) bool {
 
 func doTraverse(stat *statistics, filerStore filer2.FilerStore, parentPath filer2.FullPath, level int, fn func(level int, entry *filer2.Entry) error) {
 
-	limit := 1000
+	limit := *dirListLimit
 	lastEntryName := ""
 	for {
 		entries, err := filerStore.ListDirectoryEntries(parentPath, lastEntryName, false, limit)
