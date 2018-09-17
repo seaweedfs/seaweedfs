@@ -44,7 +44,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 		}
 	}
 
-	replicator := replication.NewReplicator(config.Sub("sink.filer"))
+	replicator := replication.NewReplicator(config.Sub("source.filer"), config.Sub("sink.filer"))
 
 	for {
 		key, m, err := notificationInput.ReceiveMessage()

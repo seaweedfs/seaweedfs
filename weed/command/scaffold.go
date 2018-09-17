@@ -149,25 +149,19 @@ topic = "seaweedfs_filer"
 [source.filer]
 enabled = true
 grpcAddress = "localhost:18888"
-# id is to identify the notification source, avoid reprocessing the same events
-id = "filer1"
-# all files under this directory tree and not from this source.filer.id is replicated
-directory = "/"
+directory = "/buckets"    # all files under this directory tree are replicated
 
 [notification.kafka]
 enabled = true
 hosts = [
   "localhost:9092"
 ]
-topic = "seaweedfs_filer"
+topic = "seaweedfs_filer1_to_filer2"
 
 [sink.filer]
 enabled = true
 grpcAddress = "localhost:18888"
-# id is to identify the notification source, avoid reprocessing the same events
-id = "filer2"
-# all files under this directory tree and not from this source.filer.id is replicated
-directory = "/"
+directory = "/backup"    # all replicated files are under this directory tree
 
 `
 )

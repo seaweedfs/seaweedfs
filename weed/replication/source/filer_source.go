@@ -16,22 +16,19 @@ type ReplicationSource interface {
 
 type FilerSource struct {
 	grpcAddress string
-	id          string
-	dir         string
+	Dir         string
 }
 
 func (fs *FilerSource) Initialize(configuration util.Configuration) error {
 	return fs.initialize(
 		configuration.GetString("grpcAddress"),
-		configuration.GetString("id"),
 		configuration.GetString("directory"),
 	)
 }
 
-func (fs *FilerSource) initialize(grpcAddress string, id string, dir string) (err error) {
+func (fs *FilerSource) initialize(grpcAddress string, dir string) (err error) {
 	fs.grpcAddress = grpcAddress
-	fs.id = id
-	fs.dir = dir
+	fs.Dir = dir
 	return nil
 }
 
