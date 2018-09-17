@@ -54,15 +54,15 @@ func (fs *FilerSource) ReadPart(part string) (readCloser io.ReadCloser, err erro
 	})
 
 	if err != nil {
-		glog.V(1).Infof("replication lookup volume id: %v", vid, err)
-		return nil, fmt.Errorf("replicationlookup volume id %v: %v", vid, err)
+		glog.V(1).Infof("replication lookup volume id %s: %v", vid, err)
+		return nil, fmt.Errorf("replication lookup volume id %s: %v", vid, err)
 	}
 
 	locations := vid2Locations[vid]
 
 	if locations == nil || len(locations.Locations) == 0 {
-		glog.V(1).Infof("replication locate volume id: %v", vid, err)
-		return nil, fmt.Errorf("replication locate volume id %v: %v", vid, err)
+		glog.V(1).Infof("replication locate volume id %s: %v", vid, err)
+		return nil, fmt.Errorf("replication locate volume id %s: %v", vid, err)
 	}
 
 	fileUrl := fmt.Sprintf("http://%s/%s", locations.Locations[0].Url, part)

@@ -49,11 +49,11 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 	for {
 		key, m, err := notificationInput.ReceiveMessage()
 		if err != nil {
-			glog.Errorf("receive %s: +v", key, err)
+			glog.Errorf("receive %s: %+v", key, err)
 			continue
 		}
 		if err = replicator.Replicate(key, m); err != nil {
-			glog.Errorf("replicate %s: +v", key, err)
+			glog.Errorf("replicate %s: %+v", key, err)
 		}
 	}
 
