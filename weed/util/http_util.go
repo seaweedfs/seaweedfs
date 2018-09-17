@@ -129,11 +129,10 @@ func GetBufferStream(url string, values url.Values, allocatedBytes []byte, eachB
 	if r.StatusCode != 200 {
 		return fmt.Errorf("%s: %s", url, r.Status)
 	}
-	bufferSize := len(allocatedBytes)
 	for {
 		n, err := r.Body.Read(allocatedBytes)
-		if n == bufferSize {
-			eachBuffer(allocatedBytes)
+		if n > 0 {
+			eachBuffer(allocatedBytes[:n])
 		}
 		if err != nil {
 			if err == io.EOF {
