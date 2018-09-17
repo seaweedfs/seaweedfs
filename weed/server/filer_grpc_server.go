@@ -188,7 +188,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		}
 	}
 
-	fs.filer.NotifyUpdateEvent(entry, newEntry)
+	fs.filer.NotifyUpdateEvent(entry, newEntry, true)
 
 	return &filer_pb.UpdateEntryResponse{}, err
 }

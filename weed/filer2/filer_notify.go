@@ -6,7 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
-func (f *Filer) NotifyUpdateEvent(oldEntry, newEntry *Entry) {
+func (f *Filer) NotifyUpdateEvent(oldEntry, newEntry *Entry, deleteChunks bool) {
 	var key string
 	if oldEntry != nil {
 		key = string(oldEntry.FullPath)
@@ -23,13 +23,13 @@ func (f *Filer) NotifyUpdateEvent(oldEntry, newEntry *Entry) {
 		notification.Queue.SendMessage(
 			key,
 			&filer_pb.EventNotification{
-				OldEntry: toProtoEntry(oldEntry),
-				NewEntry: toProtoEntry(newEntry),
+				OldEntry:     toProtoEntry(oldEntry),
+				NewEntry:     toProtoEntry(newEntry),
+				DeleteChunks: deleteChunks,
 			},
 		)
 
 	}
-
 }
 
 func toProtoEntry(entry *Entry) *filer_pb.Entry {

@@ -67,8 +67,9 @@ message Entry {
 }
 
 message EventNotification {
-    Entry old_entry = 2;
-    Entry new_entry = 3;
+    Entry old_entry = 1;
+    Entry new_entry = 2;
+    bool delete_chunks = 3;
 }
 
 message FileChunk {
@@ -77,6 +78,7 @@ message FileChunk {
     uint64 size = 3;
     int64 mtime = 4;
     string e_tag = 5;
+    string source_file_id = 6;
 }
 
 message FuseAttributes {

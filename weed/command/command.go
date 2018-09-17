@@ -14,6 +14,7 @@ var Commands = []*Command{
 	cmdCopy,
 	cmdFix,
 	cmdFilerExport,
+	cmdFilerReplicate,
 	cmdServer,
 	cmdMaster,
 	cmdFiler,

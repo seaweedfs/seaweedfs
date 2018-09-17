@@ -19,7 +19,7 @@ var cmdScaffold = &Command{
 
 var (
 	outputPath = cmdScaffold.Flag.String("output", "", "if not empty, save the configuration file to this directory")
-	config     = cmdScaffold.Flag.String("config", "filer", "the configuration file to generate")
+	config     = cmdScaffold.Flag.String("config", "filer", "[filer|replication] the configuration file to generate")
 )
 
 func runScaffold(cmd *Command, args []string) bool {
@@ -28,6 +28,8 @@ func runScaffold(cmd *Command, args []string) bool {
 	switch *config {
 	case "filer":
 		content = FILER_TOML_EXAMPLE
+	case "replication":
+		content = REPLICATION_TOML_EXAMPLE
 	}
 	if content == "" {
 		println("need a valid -config option")
@@ -138,6 +140,34 @@ hosts = [
   "localhost:9092"
 ]
 topic = "seaweedfs_filer"
+
+`
+	REPLICATION_TOML_EXAMPLE = `
+# A sample TOML config file for replicating SeaweedFS filer store
+
+
+[source.filer]
+enabled = true
+grpcAddress = "localhost:18888"
+# id is to identify the notification source, avoid reprocessing the same events
+id = "filer1"
+# all files under this directory tree and not from this source.filer.id is replicated
+directory = "/"
+
+[notification.kafka]
+enabled = true
+hosts = [
+  "localhost:9092"
+]
+topic = "seaweedfs_filer"
+
+[sink.filer]
+enabled = true
+grpcAddress = "localhost:18888"
+# id is to identify the notification source, avoid reprocessing the same events
+id = "filer2"
+# all files under this directory tree and not from this source.filer.id is replicated
+directory = "/"
 
 `
 )

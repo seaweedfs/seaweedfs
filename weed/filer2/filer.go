@@ -91,7 +91,7 @@ func (f *Filer) CreateEntry(entry *Entry) error {
 				return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
 			}
 
-			f.NotifyUpdateEvent(nil, dirEntry)
+			f.NotifyUpdateEvent(nil, dirEntry, false)
 
 		} else if !dirEntry.IsDirectory() {
 			return fmt.Errorf("%s is a file", dirPath)
@@ -125,7 +125,7 @@ func (f *Filer) CreateEntry(entry *Entry) error {
 		return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
 	}
 
-	f.NotifyUpdateEvent(oldEntry, entry)
+	f.NotifyUpdateEvent(oldEntry, entry, true)
 
 	f.deleteChunksIfNotNew(oldEntry, entry)
 
@@ -176,7 +176,7 @@ func (f *Filer) DeleteEntryMetaAndData(p FullPath, isRecursive bool, shouldDelet
 	}
 	glog.V(3).Infof("deleting entry %v", p)
 
-	f.NotifyUpdateEvent(entry, nil)
+	f.NotifyUpdateEvent(entry, nil, shouldDeleteChunks)
 
 	return f.store.DeleteEntry(p)
 }
