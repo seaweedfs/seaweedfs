@@ -214,7 +214,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 }
 
 func (s3a *S3ApiServer) genUploadsFolder(bucket string) string {
-	return fmt.Sprintf("%s/%s/_uploads", s3a.option.BucketsPath, bucket)
+	return fmt.Sprintf("%s/%s/.uploads", s3a.option.BucketsPath, bucket)
 }
 
 // Parse bucket url queries for ?uploads
