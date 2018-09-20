@@ -37,6 +37,12 @@ func (k *KafkaInput) initialize(hosts []string, topic string) (err error) {
 	config := sarama.NewConfig()
 	config.Consumer.Return.Errors = true
 	k.consumer, err = sarama.NewConsumer(hosts, config)
+	if err != nil {
+		panic(err)
+	} else {
+		glog.V(0).Infof("connected to %v", hosts)
+	}
+
 	k.topic = topic
 	k.messageChan = make(chan *sarama.ConsumerMessage, 1)
 
