@@ -30,6 +30,8 @@ func NewReplicator(sourceConfig, sinkConfig util.Configuration) *Replicator {
 		}
 	}
 
+	sink.SetSourceFiler(source)
+
 	return &Replicator{
 		sink:   sink,
 		source: source,

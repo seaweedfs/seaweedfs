@@ -155,11 +155,12 @@ func GetUrlStream(url string, values url.Values, readFn func(io.Reader) error) e
 	return readFn(r.Body)
 }
 
-func DownloadUrl(fileUrl string) (filename string, rc io.ReadCloser, e error) {
+func DownloadFile(fileUrl string) (filename string, header http.Header, rc io.ReadCloser, e error) {
 	response, err := client.Get(fileUrl)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
+	header = response.Header
 	contentDisposition := response.Header["Content-Disposition"]
 	if len(contentDisposition) > 0 {
 		idx := strings.Index(contentDisposition[0], "filename=")

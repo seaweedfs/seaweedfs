@@ -55,7 +55,7 @@ func downloadToFile(server, fileId, saveDir string) error {
 	if lookupError != nil {
 		return lookupError
 	}
-	filename, rc, err := util.DownloadUrl(fileUrl)
+	filename, _, rc, err := util.DownloadFile(fileUrl)
 	if err != nil {
 		return err
 	}
@@ -108,7 +108,7 @@ func fetchContent(server string, fileId string) (filename string, content []byte
 		return "", nil, lookupError
 	}
 	var rc io.ReadCloser
-	if filename, rc, e = util.DownloadUrl(fileUrl); e != nil {
+	if filename, _, rc, e = util.DownloadFile(fileUrl); e != nil {
 		return "", nil, e
 	}
 	content, e = ioutil.ReadAll(rc)
