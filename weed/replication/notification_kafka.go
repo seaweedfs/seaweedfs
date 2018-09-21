@@ -1,17 +1,17 @@
 package replication
 
 import (
+	"fmt"
+
 	"github.com/Shopify/sarama"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
 func init() {
-	NotificationInputs = append(NotificationInputs, &KafkaInput{
-	})
+	NotificationInputs = append(NotificationInputs, &KafkaInput{})
 }
 
 type KafkaInput struct {

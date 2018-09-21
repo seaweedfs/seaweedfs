@@ -2,9 +2,9 @@ package notification
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/spf13/viper"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
+	"github.com/spf13/viper"
 )
 
 type MessageQueue interface {

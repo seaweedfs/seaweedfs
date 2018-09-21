@@ -1,8 +1,8 @@
 package replication
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type NotificationInput interface {

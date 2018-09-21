@@ -1,14 +1,15 @@
 package source
 
 import (
-	"io"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"strings"
 	"context"
+	"fmt"
+	"io"
 	"net/http"
+	"strings"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type ReplicationSource interface {
