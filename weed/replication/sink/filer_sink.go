@@ -15,21 +15,21 @@ type ReplicationSink interface {
 	DeleteEntry(key string, entry *filer_pb.Entry, deleteIncludeChunks bool) error
 	CreateEntry(key string, entry *filer_pb.Entry) error
 	UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) error
-	GetDirectory() string
+	GetSinkToDirectory() string
 	SetSourceFiler(s *source.FilerSource)
 }
 
 type FilerSink struct {
+	filerSource *source.FilerSource
 	grpcAddress string
 	dir         string
-	filerSource *source.FilerSource
 	replication string
 	collection  string
 	ttlSec      int32
 	dataCenter  string
 }
 
-func (fs *FilerSink) GetDirectory() string {
+func (fs *FilerSink) GetSinkToDirectory() string {
 	return fs.dir
 }
 
@@ -37,6 +37,9 @@ func (fs *FilerSink) Initialize(configuration util.Configuration) error {
 	return fs.initialize(
 		configuration.GetString("grpcAddress"),
 		configuration.GetString("directory"),
+		configuration.GetString("replication"),
+		configuration.GetString("collection"),
+		configuration.GetInt("ttlSec"),
 	)
 }
 
@@ -44,9 +47,13 @@ func (fs *FilerSink) SetSourceFiler(s *source.FilerSource) {
 	fs.filerSource = s
 }
 
-func (fs *FilerSink) initialize(grpcAddress string, dir string) (err error) {
+func (fs *FilerSink) initialize(grpcAddress string, dir string,
+	replication string, collection string, ttlSec int) (err error) {
 	fs.grpcAddress = grpcAddress
 	fs.dir = dir
+	fs.replication = replication
+	fs.collection = collection
+	fs.ttlSec = int32(ttlSec)
 	return nil
 }
 

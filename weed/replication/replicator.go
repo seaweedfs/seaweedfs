@@ -43,7 +43,7 @@ func (r *Replicator) Replicate(key string, message *filer_pb.EventNotification) 
 	if !strings.HasPrefix(key, r.source.Dir) {
 		return nil
 	}
-	key = r.sink.GetDirectory() + key[len(r.source.Dir):]
+	key = r.sink.GetSinkToDirectory() + key[len(r.source.Dir):]
 	if message.OldEntry != nil && message.NewEntry == nil {
 		return r.sink.DeleteEntry(key, message.OldEntry, message.DeleteChunks)
 	}

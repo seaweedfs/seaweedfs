@@ -162,6 +162,9 @@ topic = "seaweedfs_filer1_to_filer2"
 enabled = true
 grpcAddress = "localhost:18888"
 directory = "/backup"    # all replicated files are under this directory tree
+replication = ""
+collection = ""
+ttlSec = 0
 
 `
 )
