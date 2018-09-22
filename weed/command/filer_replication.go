@@ -52,7 +52,13 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 			glog.Errorf("receive %s: %+v", key, err)
 			continue
 		}
-		glog.V(1).Infof("processing file: %s", key)
+		if m.OldEntry!=nil&&m.NewEntry==nil{
+			glog.V(1).Infof("delete: %s", key)
+		}else if m.OldEntry==nil&&m.NewEntry!=nil{
+			glog.V(1).Infof("   add: %s", key)
+		}else{
+			glog.V(1).Infof("modify: %s", key)
+		}
 		if err = replicator.Replicate(key, m); err != nil {
 			glog.Errorf("replicate %s: %+v", key, err)
 		}

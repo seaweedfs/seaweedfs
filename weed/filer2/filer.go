@@ -121,8 +121,14 @@ func (f *Filer) CreateEntry(entry *Entry) error {
 
 	oldEntry, _ := f.FindEntry(entry.FullPath)
 
-	if err := f.store.InsertEntry(entry); err != nil {
-		return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
+	if oldEntry == nil {
+		if err := f.store.InsertEntry(entry); err != nil {
+			return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
+		}
+	} else {
+		if err := f.store.UpdateEntry(entry); err != nil {
+			return fmt.Errorf("update entry %s: %v", entry.FullPath, err)
+		}
 	}
 
 	f.NotifyUpdateEvent(oldEntry, entry, true)

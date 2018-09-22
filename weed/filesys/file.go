@@ -18,12 +18,11 @@ var _ = fs.NodeFsyncer(&File{})
 var _ = fs.NodeSetattrer(&File{})
 
 type File struct {
-	Chunks     []*filer_pb.FileChunk
-	Name       string
-	dir        *Dir
-	wfs        *WFS
-	attributes *filer_pb.FuseAttributes
-	isOpen     bool
+	Name   string
+	dir    *Dir
+	wfs    *WFS
+	entry  *filer_pb.Entry
+	isOpen bool
 }
 
 func (file *File) fullpath() string {
@@ -36,11 +35,11 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 		return err
 	}
 
-	attr.Mode = os.FileMode(file.attributes.FileMode)
-	attr.Size = filer2.TotalSize(file.Chunks)
-	attr.Mtime = time.Unix(file.attributes.Mtime, 0)
-	attr.Gid = file.attributes.Gid
-	attr.Uid = file.attributes.Uid
+	attr.Mode = os.FileMode(file.entry.Attributes.FileMode)
+	attr.Size = filer2.TotalSize(file.entry.Chunks)
+	attr.Mtime = time.Unix(file.entry.Attributes.Mtime, 0)
+	attr.Gid = file.entry.Attributes.Gid
+	attr.Uid = file.entry.Attributes.Uid
 
 	return nil
 
@@ -72,41 +71,37 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		return nil
 	}
 
-	glog.V(3).Infof("%v file setattr %+v, old:%+v", file.fullpath(), req, file.attributes)
+	glog.V(3).Infof("%v file setattr %+v, old:%+v", file.fullpath(), req, file.entry.Attributes)
 	if req.Valid.Size() {
 
 		glog.V(3).Infof("%v file setattr set size=%v", file.fullpath(), req.Size)
 		if req.Size == 0 {
 			// fmt.Printf("truncate %v \n", fullPath)
-			file.Chunks = nil
+			file.entry.Chunks = nil
 		}
-		file.attributes.FileSize = req.Size
+		file.entry.Attributes.FileSize = req.Size
 	}
 	if req.Valid.Mode() {
-		file.attributes.FileMode = uint32(req.Mode)
+		file.entry.Attributes.FileMode = uint32(req.Mode)
 	}
 
 	if req.Valid.Uid() {
-		file.attributes.Uid = req.Uid
+		file.entry.Attributes.Uid = req.Uid
 	}
 
 	if req.Valid.Gid() {
-		file.attributes.Gid = req.Gid
+		file.entry.Attributes.Gid = req.Gid
 	}
 
 	if req.Valid.Mtime() {
-		file.attributes.Mtime = req.Mtime.Unix()
+		file.entry.Attributes.Mtime = req.Mtime.Unix()
 	}
 
 	return file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: file.dir.Path,
-			Entry: &filer_pb.Entry{
-				Name:       file.Name,
-				Attributes: file.attributes,
-				Chunks:     file.Chunks,
-			},
+			Entry: file.entry,
 		}
 
 		glog.V(1).Infof("set attr file entry: %v", request)
@@ -130,31 +125,29 @@ func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 }
 
 func (file *File) maybeLoadAttributes(ctx context.Context) error {
-	if file.attributes == nil || !file.isOpen {
+	if file.entry == nil || !file.isOpen {
 		item := file.wfs.listDirectoryEntriesCache.Get(file.fullpath())
 		if item != nil && !item.Expired() {
 			entry := item.Value().(*filer_pb.Entry)
-			file.Chunks = entry.Chunks
-			file.attributes = entry.Attributes
+			file.entry = entry
 			// glog.V(1).Infof("file attr read cached %v attributes", file.Name)
 		} else {
 			err := file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-				request := &filer_pb.GetEntryAttributesRequest{
+				request := &filer_pb.LookupDirectoryEntryRequest{
 					Name:      file.Name,
-					ParentDir: file.dir.Path,
+					Directory: file.dir.Path,
 				}
 
-				resp, err := client.GetEntryAttributes(ctx, request)
+				resp, err := client.LookupDirectoryEntry(ctx, request)
 				if err != nil {
 					glog.V(0).Infof("file attr read file %v: %v", request, err)
 					return err
 				}
 
-				file.attributes = resp.Attributes
-				file.Chunks = resp.Chunks
+				file.entry = resp.Entry
 
-				glog.V(1).Infof("file attr %v %+v: %d", file.fullpath(), file.attributes, filer2.TotalSize(file.Chunks))
+				glog.V(1).Infof("file attr %v %+v: %d", file.fullpath(), file.entry.Attributes, filer2.TotalSize(file.entry.Chunks))
 
 				return nil
 			})

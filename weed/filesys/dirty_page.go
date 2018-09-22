@@ -66,7 +66,8 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 	if offset != pages.Offset+pages.Size {
 		// when this happens, debug shows the data overlapping with existing data is empty
 		// the data is not just append
-		if offset == pages.Offset {
+		if offset == pages.Offset && int(pages.Size) < len(data) {
+			// glog.V(2).Infof("pages[%d,%d) pages.Data len=%v, data len=%d, pages.Size=%d", pages.Offset, pages.Offset+pages.Size, len(pages.Data), len(data), pages.Size)
 			copy(pages.Data[pages.Size:], data[pages.Size:])
 		} else {
 			if pages.Size != 0 {

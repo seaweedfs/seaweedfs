@@ -17,10 +17,9 @@ import (
 type FileHandle struct {
 	// cache file has been written to
 	dirtyPages    *ContinuousDirtyPages
-	dirtyMetadata bool
 	contentType   string
-
-	handle uint64
+	dirtyMetadata bool
+	handle        uint64
 
 	f         *File
 	RequestId fuse.RequestID // unique ID for request
@@ -51,14 +50,14 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	glog.V(4).Infof("%s read fh %d: [%d,%d)", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size))
 
 	// this value should come from the filer instead of the old f
-	if len(fh.f.Chunks) == 0 {
+	if len(fh.f.entry.Chunks) == 0 {
 		glog.V(0).Infof("empty fh %v/%v", fh.f.dir.Path, fh.f.Name)
 		return fmt.Errorf("empty file %v/%v", fh.f.dir.Path, fh.f.Name)
 	}
 
 	buff := make([]byte, req.Size)
 
-	chunkViews := filer2.ViewFromChunks(fh.f.Chunks, req.Offset, req.Size)
+	chunkViews := filer2.ViewFromChunks(fh.f.entry.Chunks, req.Offset, req.Size)
 
 	var vids []string
 	for _, chunkView := range chunkViews {
@@ -152,7 +151,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 	}
 
 	for _, chunk := range chunks {
-		fh.f.Chunks = append(fh.f.Chunks, chunk)
+		fh.f.entry.Chunks = append(fh.f.entry.Chunks, chunk)
 		glog.V(1).Infof("uploaded %s/%s to %s [%d,%d)", fh.f.dir.Path, fh.f.Name, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
 		fh.dirtyMetadata = true
 	}
@@ -184,52 +183,36 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		return fmt.Errorf("flush %s/%s to %s [%d,%d): %v", fh.f.dir.Path, fh.f.Name, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size), err)
 	}
 	if chunk != nil {
-		fh.f.Chunks = append(fh.f.Chunks, chunk)
-		fh.dirtyMetadata = true
+		fh.f.entry.Chunks = append(fh.f.entry.Chunks, chunk)
 	}
 
 	if !fh.dirtyMetadata {
 		return nil
 	}
 
-	if len(fh.f.Chunks) == 0 {
-		glog.V(2).Infof("fh %s/%s flush skipping empty: %v", fh.f.dir.Path, fh.f.Name, req)
-		return nil
-	}
+	return fh.f.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-	err = fh.f.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-
-		if fh.f.attributes != nil {
-			fh.f.attributes.Mime = fh.contentType
-			fh.f.attributes.Uid = req.Uid
-			fh.f.attributes.Gid = req.Gid
+		if fh.f.entry.Attributes != nil {
+			fh.f.entry.Attributes.Mime = fh.contentType
+			fh.f.entry.Attributes.Uid = req.Uid
+			fh.f.entry.Attributes.Gid = req.Gid
 		}
 
-		request := &filer_pb.UpdateEntryRequest{
+		request := &filer_pb.CreateEntryRequest{
 			Directory: fh.f.dir.Path,
-			Entry: &filer_pb.Entry{
-				Name:       fh.f.Name,
-				Attributes: fh.f.attributes,
-				Chunks:     fh.f.Chunks,
-			},
+			Entry:     fh.f.entry,
 		}
 
-		glog.V(1).Infof("%s/%s set chunks: %v", fh.f.dir.Path, fh.f.Name, len(fh.f.Chunks))
-		for i, chunk := range fh.f.Chunks {
+		glog.V(1).Infof("%s/%s set chunks: %v", fh.f.dir.Path, fh.f.Name, len(fh.f.entry.Chunks))
+		for i, chunk := range fh.f.entry.Chunks {
 			glog.V(1).Infof("%s/%s chunks %d: %v [%d,%d)", fh.f.dir.Path, fh.f.Name, i, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}
-		if _, err := client.UpdateEntry(ctx, request); err != nil {
+		if _, err := client.CreateEntry(ctx, request); err != nil {
 			return fmt.Errorf("update fh: %v", err)
 		}
 
 		return nil
 	})
-
-	if err == nil {
-		fh.dirtyMetadata = false
-	}
-
-	return err
 }
 
 func volumeId(fileId string) string {

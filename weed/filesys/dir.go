@@ -91,55 +91,57 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 	return nil
 }
 
-func (dir *Dir) newFile(name string, chunks []*filer_pb.FileChunk, attr *filer_pb.FuseAttributes) *File {
+func (dir *Dir) newFile(name string, entry *filer_pb.Entry) *File {
 	return &File{
-		Name:       name,
-		dir:        dir,
-		wfs:        dir.wfs,
-		attributes: attr,
-		Chunks:     chunks,
+		Name:  name,
+		dir:   dir,
+		wfs:   dir.wfs,
+		entry: entry,
 	}
 }
 
 func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
 
-	err := dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-
-		request := &filer_pb.CreateEntryRequest{
-			Directory: dir.Path,
-			Entry: &filer_pb.Entry{
-				Name:        req.Name,
-				IsDirectory: req.Mode&os.ModeDir > 0,
-				Attributes: &filer_pb.FuseAttributes{
-					Mtime:       time.Now().Unix(),
-					Crtime:      time.Now().Unix(),
-					FileMode:    uint32(req.Mode),
-					Uid:         req.Uid,
-					Gid:         req.Gid,
-					Collection:  dir.wfs.option.Collection,
-					Replication: dir.wfs.option.Replication,
-					TtlSec:      dir.wfs.option.TtlSec,
-				},
+	request := &filer_pb.CreateEntryRequest{
+		Directory: dir.Path,
+		Entry: &filer_pb.Entry{
+			Name:        req.Name,
+			IsDirectory: req.Mode&os.ModeDir > 0,
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime:       time.Now().Unix(),
+				Crtime:      time.Now().Unix(),
+				FileMode:    uint32(req.Mode),
+				Uid:         req.Uid,
+				Gid:         req.Gid,
+				Collection:  dir.wfs.option.Collection,
+				Replication: dir.wfs.option.Replication,
+				TtlSec:      dir.wfs.option.TtlSec,
 			},
+		},
+	}
+	glog.V(1).Infof("create: %v", request)
+
+	if request.Entry.IsDirectory {
+		if err := dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+			if _, err := client.CreateEntry(ctx, request); err != nil {
+				glog.V(0).Infof("create %s/%s: %v", dir.Path, req.Name, err)
+				return fuse.EIO
+			}
+			return nil
+		}); err != nil {
+			return nil, nil, err
 		}
-
-		glog.V(1).Infof("create: %v", request)
-		if _, err := client.CreateEntry(ctx, request); err != nil {
-			glog.V(0).Infof("create %s/%s: %v", dir.Path, req.Name, err)
-			return fuse.EIO
-		}
-
-		return nil
-	})
-
-	if err == nil {
-		file := dir.newFile(req.Name, nil, &filer_pb.FuseAttributes{})
-		file.isOpen = true
-		return file, dir.wfs.AcquireHandle(file, req.Uid, req.Gid), nil
 	}
 
-	return nil, nil, err
+	file := dir.newFile(req.Name, request.Entry)
+	if !request.Entry.IsDirectory {
+		file.isOpen = true
+	}
+	fh := dir.wfs.AcquireHandle(file, req.Uid, req.Gid)
+	fh.dirtyMetadata = true
+	return file, fh, nil
+
 }
 
 func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
@@ -204,7 +206,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		if entry.IsDirectory {
 			node = &Dir{Path: path.Join(dir.Path, req.Name), wfs: dir.wfs, attributes: entry.Attributes}
 		} else {
-			node = dir.newFile(req.Name, entry.Chunks, entry.Attributes)
+			node = dir.newFile(req.Name, entry)
 		}
 
 		resp.EntryValid = time.Duration(0)
