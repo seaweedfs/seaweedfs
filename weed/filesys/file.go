@@ -101,7 +101,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: file.dir.Path,
-			Entry: file.entry,
+			Entry:     file.entry,
 		}
 
 		glog.V(1).Infof("set attr file entry: %v", request)
