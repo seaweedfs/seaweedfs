@@ -123,6 +123,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	m["fid"] = assignResult.Fid
 	m["fileUrl"] = assignResult.PublicUrl + "/" + assignResult.Fid
 	m["size"] = uploadResult.Size
+	m["eTag"] = uploadResult.ETag
 	writeJsonQuiet(w, r, http.StatusCreated, m)
 	return
 }

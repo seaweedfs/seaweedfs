@@ -22,6 +22,7 @@ type UploadResult struct {
 	Name  string `json:"name,omitempty"`
 	Size  uint32 `json:"size,omitempty"`
 	Error string `json:"error,omitempty"`
+	ETag  string `json:"error,omitempty"`
 }
 
 var (
@@ -90,6 +91,7 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 		return nil, post_err
 	}
 	defer resp.Body.Close()
+	etag := getEtag(resp)
 	resp_body, ra_err := ioutil.ReadAll(resp.Body)
 	if ra_err != nil {
 		return nil, ra_err
@@ -103,5 +105,14 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	if ret.Error != "" {
 		return nil, errors.New(ret.Error)
 	}
+	ret.ETag = etag
 	return &ret, nil
+}
+
+func getEtag(r *http.Response) (etag string) {
+	etag = r.Header.Get("ETag")
+	if strings.HasPrefix(etag, "\"") && strings.HasSuffix(etag, "\"") {
+		etag = etag[1 : len(etag)-1]
+	}
+	return
 }

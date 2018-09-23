@@ -187,6 +187,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context, buf []byte
 		Offset: offset,
 		Size:   uint64(len(buf)),
 		Mtime:  time.Now().UnixNano(),
+		ETag:   uploadResult.ETag,
 	}, nil
 
 }

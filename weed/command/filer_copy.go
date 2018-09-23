@@ -201,6 +201,7 @@ func uploadFileAsOne(filerAddress, filerGrpcAddress string, urlFolder string, f 
 			Offset: 0,
 			Size:   uint64(uploadResult.Size),
 			Mtime:  time.Now().UnixNano(),
+			ETag:   uploadResult.ETag,
 		})
 
 		fmt.Printf("copied %s => http://%s%s%s\n", fileName, filerAddress, urlFolder, fileName)
@@ -278,6 +279,7 @@ func uploadFileInChunks(filerAddress, filerGrpcAddress string, urlFolder string,
 			Offset: i * chunkSize,
 			Size:   uint64(uploadResult.Size),
 			Mtime:  time.Now().UnixNano(),
+			ETag:   uploadResult.ETag,
 		})
 		fmt.Printf("uploaded %s-%d to %s [%d,%d)\n", fileName, i+1, targetUrl, i*chunkSize, i*chunkSize+int64(uploadResult.Size))
 	}
