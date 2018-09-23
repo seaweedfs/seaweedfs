@@ -51,8 +51,8 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	// this value should come from the filer instead of the old f
 	if len(fh.f.entry.Chunks) == 0 {
-		glog.V(0).Infof("empty fh %v/%v", fh.f.dir.Path, fh.f.Name)
-		return fmt.Errorf("empty file %v/%v", fh.f.dir.Path, fh.f.Name)
+		glog.V(1).Infof("empty fh %v/%v", fh.f.dir.Path, fh.f.Name)
+		return nil
 	}
 
 	buff := make([]byte, req.Size)
