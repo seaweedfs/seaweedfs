@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -35,7 +36,7 @@ func (r *Replicator) Replicate(key string, message *filer_pb.EventNotification) 
 	if !strings.HasPrefix(key, r.source.Dir) {
 		return nil
 	}
-	key = r.sink.GetSinkToDirectory() + key[len(r.source.Dir):]
+	key = filepath.Join(r.sink.GetSinkToDirectory(), key[len(r.source.Dir):])
 	if message.OldEntry != nil && message.NewEntry == nil {
 		return r.sink.DeleteEntry(key, message.OldEntry, message.DeleteChunks)
 	}
