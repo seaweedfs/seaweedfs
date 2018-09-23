@@ -47,6 +47,11 @@ func runScaffold(cmd *Command, args []string) bool {
 const (
 	FILER_TOML_EXAMPLE = `
 # A sample TOML config file for SeaweedFS filer store
+# Used with "weed filer" or "weed server -filer"
+# Put this file to one of the location, with descending priority
+#    ./filer.toml
+#    $HOME/.seaweedfs/filer.toml
+#    /etc/seaweedfs/filer.toml
 
 [memory]
 # local in memory, mostly for testing purpose
@@ -143,8 +148,12 @@ topic = "seaweedfs_filer"
 
 `
 	REPLICATION_TOML_EXAMPLE = `
-# A sample TOML config file for replicating SeaweedFS filer store
-
+# A sample TOML config file for replicating SeaweedFS filer
+# Used with "weed filer.replicate"
+# Put this file to one of the location, with descending priority
+#    ./replication.toml
+#    $HOME/.seaweedfs/replication.toml
+#    /etc/seaweedfs/replication.toml
 
 [source.filer]
 enabled = true
