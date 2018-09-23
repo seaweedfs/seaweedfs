@@ -220,11 +220,3 @@ func getObject(vars map[string]string) string {
 	}
 	return object
 }
-
-func getEtag(r *http.Request) (etag string) {
-	etag = r.Header.Get("ETag")
-	if strings.HasPrefix(etag, "\"") && strings.HasSuffix(etag, "\"") {
-		etag = etag[1 : len(etag)-1]
-	}
-	return
-}
