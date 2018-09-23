@@ -71,7 +71,7 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 			copy(pages.Data[pages.Size:], data[pages.Size:])
 		} else {
 			if pages.Size != 0 {
-				glog.V(0).Infof("possible error: pages [%d, %d) write [%d, %d)", pages.Offset, pages.Offset+pages.Size, offset, offset+int64(len(data)))
+				glog.V(0).Infof("%s/%s add page: pages [%d, %d) write [%d, %d)", pages.f.dir.Path, pages.f.Name, pages.Offset, pages.Offset+pages.Size, offset, offset+int64(len(data)))
 			}
 			return pages.flushAndSave(ctx, offset, data)
 		}
