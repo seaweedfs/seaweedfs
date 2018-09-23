@@ -85,7 +85,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk) (fileId stri
 
 	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
 
-	glog.V(3).Infof("replicating %s to %s header:%+v", filename, fileUrl, header)
+	glog.V(4).Infof("replicating %s to %s header:%+v", filename, fileUrl, header)
 
 	uploadResult, err := operation.Upload(fileUrl, filename, readCloser,
 		"gzip" == header.Get("Content-Encoding"), header.Get("Content-Type"), nil, "")
