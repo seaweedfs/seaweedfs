@@ -125,10 +125,19 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 }
 
 func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (resp *filer_pb.CreateEntryResponse, err error) {
+
+	fullpath := filer2.FullPath(filepath.Join(req.Directory, req.Entry.Name))
+	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
+
+	for _, garbage := range garbages {
+		glog.V(0).Infof("deleting %s garbage chunk: %v, [%d, %d)", fullpath, garbage.FileId, garbage.Offset, garbage.Offset+int64(garbage.Size))
+		fs.filer.DeleteFileByFileId(garbage.FileId)
+	}
+
 	err = fs.filer.CreateEntry(&filer2.Entry{
-		FullPath: filer2.FullPath(filepath.Join(req.Directory, req.Entry.Name)),
+		FullPath: fullpath,
 		Attr:     filer2.PbToEntryAttribute(req.Entry.Attributes),
-		Chunks:   req.Entry.Chunks,
+		Chunks:   chunks,
 	})
 
 	if err == nil {
