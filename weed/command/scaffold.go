@@ -59,7 +59,7 @@ enabled = false
 
 [leveldb]
 # local on disk, mostly for simple single-machine setup, fairly scalable
-enabled = false
+enabled = true
 dir = "."					# directory to store level db files
 
 ####################################################
@@ -74,7 +74,7 @@ dir = "."					# directory to store level db files
 #   meta        BLOB,
 #   PRIMARY KEY (dirhash, name)
 # ) DEFAULT CHARSET=utf8;
-enabled = true
+enabled = false
 hostname = "localhost"
 port = 3306
 username = "root"
@@ -115,7 +115,7 @@ hosts=[
 ]
 
 [redis]
-enabled = true
+enabled = false
 address  = "localhost:6379"
 password = ""
 db = 0
@@ -137,7 +137,7 @@ addresses = [
 # sends filer updates for each file to an external message queue
 ####################################################
 [notification.log]
-enabled = true
+enabled = false
 
 [notification.kafka]
 enabled = false
