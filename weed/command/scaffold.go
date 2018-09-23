@@ -166,6 +166,8 @@ hosts = [
   "localhost:9092"
 ]
 topic = "seaweedfs_filer1_to_filer2"
+offsetFile = "./last.offset"
+offsetSaveIntervalSeconds = 10
 
 [sink.filer]
 enabled = true
