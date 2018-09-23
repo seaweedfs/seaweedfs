@@ -1,4 +1,4 @@
-package sink
+package filersink
 
 import (
 	"context"
@@ -10,14 +10,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
-
-type ReplicationSink interface {
-	DeleteEntry(key string, entry *filer_pb.Entry, deleteIncludeChunks bool) error
-	CreateEntry(key string, entry *filer_pb.Entry) error
-	UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) error
-	GetSinkToDirectory() string
-	SetSourceFiler(s *source.FilerSource)
-}
 
 type FilerSink struct {
 	filerSource *source.FilerSource

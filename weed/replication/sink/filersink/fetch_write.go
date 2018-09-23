@@ -1,4 +1,4 @@
-package sink
+package filersink
 
 import (
 	"context"

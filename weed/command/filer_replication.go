@@ -5,6 +5,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/replication"
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/spf13/viper"
+	"strings"
 )
 
 func init() {
@@ -41,6 +42,18 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 			glog.V(0).Infof("Configure notification input to %s", input.GetName())
 			notificationInput = input
 			break
+		}
+	}
+
+	// avoid recursive replication
+	if config.GetBool("notification.source.filer.enabled") && config.GetBool("notification.sink.filer.enabled") {
+		sourceConfig, sinkConfig := config.Sub("source.filer"), config.Sub("sink.filer")
+		if sourceConfig.GetString("grpcAddress") == sinkConfig.GetString("grpcAddress") {
+			fromDir := sourceConfig.GetString("directory")
+			toDir := sinkConfig.GetString("directory")
+			if strings.HasPrefix(toDir, fromDir) {
+				glog.Fatalf("recursive replication! source directory %s includes the sink directory %s", fromDir, toDir)
+			}
 		}
 	}
 

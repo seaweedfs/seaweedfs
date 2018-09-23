@@ -3,9 +3,9 @@ package replication
 import (
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
+	"github.com/chrislusf/seaweedfs/weed/replication/sink/filersink"
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -17,19 +17,11 @@ type Replicator struct {
 
 func NewReplicator(sourceConfig, sinkConfig util.Configuration) *Replicator {
 
-	sink := &sink.FilerSink{}
+	sink := &filersink.FilerSink{}
 	sink.Initialize(sinkConfig)
 
 	source := &source.FilerSource{}
 	source.Initialize(sourceConfig)
-
-	if sourceConfig.GetString("grpcAddress") == sinkConfig.GetString("grpcAddress") {
-		fromDir := sourceConfig.GetString("directory")
-		toDir := sinkConfig.GetString("directory")
-		if strings.HasPrefix(toDir, fromDir) {
-			glog.Fatalf("recursive replication! source directory %s includes the sink directory %s", fromDir, toDir)
-		}
-	}
 
 	sink.SetSourceFiler(source)
 
