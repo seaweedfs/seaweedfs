@@ -9,6 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/replication/sink/filersink"
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 type Replicator struct {
@@ -43,5 +44,18 @@ func (r *Replicator) Replicate(key string, message *filer_pb.EventNotification) 
 	if message.OldEntry == nil && message.NewEntry != nil {
 		return r.sink.CreateEntry(key, message.NewEntry)
 	}
-	return r.sink.UpdateEntry(key, message.OldEntry, message.NewEntry, message.DeleteChunks)
+	if existingEntry, err := r.sink.LookupEntry(key); err == nil {
+		if message.OldEntry == nil && message.NewEntry == nil {
+			glog.V(0).Infof("message %+v existingEntry: %+v", message, existingEntry)
+			return r.sink.DeleteEntry(key, existingEntry, true)
+		}
+		return r.sink.UpdateEntry(key, message.OldEntry, message.NewEntry, existingEntry, message.DeleteChunks)
+	}
+
+	glog.V(0).Infof("key:%s, message %+v", key, message)
+	if message.OldEntry == nil && message.NewEntry == nil {
+		return nil
+	}
+
+	return r.sink.CreateEntry(key, message.NewEntry)
 }

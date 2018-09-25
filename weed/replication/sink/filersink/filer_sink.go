@@ -121,14 +121,13 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 	})
 }
 
-func (fs *FilerSink) UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (err error) {
+func (fs *FilerSink) LookupEntry(key string) (entry *filer_pb.Entry, err error) {
 
 	ctx := context.Background()
 
 	dir, name := filer2.FullPath(key).DirAndName()
 
 	// read existing entry
-	var entry *filer_pb.Entry
 	err = fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
@@ -136,7 +135,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry,
 			Name:      name,
 		}
 
-		glog.V(4).Infof("lookup directory entry: %v", request)
+		glog.V(4).Infof("lookup entry: %v", request)
 		resp, err := client.LookupDirectoryEntry(ctx, request)
 		if err != nil {
 			glog.V(0).Infof("lookup %s: %v", key, err)
@@ -149,10 +148,21 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry,
 	})
 
 	if err != nil {
-		return fmt.Errorf("lookup when updating %s: %v", key, err)
+		return nil, fmt.Errorf("lookup %s: %v", key, err)
 	}
 
-	if filer2.ETag(newEntry.Chunks) == filer2.ETag(entry.Chunks) {
+	return entry, nil
+}
+
+func (fs *FilerSink) UpdateEntry(key string, oldEntry, newEntry, existingEntry *filer_pb.Entry, deleteIncludeChunks bool) (err error) {
+
+	ctx := context.Background()
+
+	dir, _ := filer2.FullPath(key).DirAndName()
+
+	glog.V(0).Infof("oldEntry %+v, newEntry %+v, existingEntry: %+v", oldEntry, newEntry, existingEntry)
+
+	if filer2.ETag(newEntry.Chunks) == filer2.ETag(existingEntry.Chunks) {
 		// skip if no change
 		// this usually happens when retrying the replication
 		glog.V(0).Infof("already replicated %s", key)
@@ -163,7 +173,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry,
 		// delete the chunks that are deleted from the source
 		if deleteIncludeChunks {
 			// remove the deleted chunks. Actual data deletion happens in filer UpdateEntry FindUnusedFileChunks
-			entry.Chunks = minusChunks(entry.Chunks, deletedChunks)
+			existingEntry.Chunks = minusChunks(existingEntry.Chunks, deletedChunks)
 		}
 
 		// replicate the chunks that are new in the source
@@ -171,7 +181,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry,
 		if err != nil {
 			return fmt.Errorf("replicte %s chunks error: %v", key, err)
 		}
-		entry.Chunks = append(entry.Chunks, replicatedChunks...)
+		existingEntry.Chunks = append(existingEntry.Chunks, replicatedChunks...)
 	}
 
 	// save updated meta data
@@ -179,11 +189,11 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry,
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: dir,
-			Entry:     entry,
+			Entry:     existingEntry,
 		}
 
 		if _, err := client.UpdateEntry(ctx, request); err != nil {
-			return fmt.Errorf("update entry %s: %v", key, err)
+			return fmt.Errorf("update existingEntry %s: %v", key, err)
 		}
 
 		return nil
