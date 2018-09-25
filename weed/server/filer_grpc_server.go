@@ -78,25 +78,6 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 	return resp, nil
 }
 
-func (fs *FilerServer) GetEntryAttributes(ctx context.Context, req *filer_pb.GetEntryAttributesRequest) (*filer_pb.GetEntryAttributesResponse, error) {
-
-	fullpath := filer2.NewFullPath(req.ParentDir, req.Name)
-
-	entry, err := fs.filer.FindEntry(fullpath)
-	if err != nil {
-		return nil, fmt.Errorf("FindEntry %s: %v", fullpath, err)
-	}
-
-	attributes := filer2.EntryAttributeToPb(entry)
-
-	glog.V(3).Infof("GetEntryAttributes %v size %d chunks %d: %+v", fullpath, attributes.FileSize, len(entry.Chunks), attributes)
-
-	return &filer_pb.GetEntryAttributesResponse{
-		Attributes: attributes,
-		Chunks:     entry.Chunks,
-	}, nil
-}
-
 func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
 
 	resp := &filer_pb.LookupVolumeResponse{

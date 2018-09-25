@@ -54,19 +54,21 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 
 	err := dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		request := &filer_pb.GetEntryAttributesRequest{
+		request := &filer_pb.LookupDirectoryEntryRequest{
+			Directory: parent,
 			Name:      name,
-			ParentDir: parent,
 		}
 
 		glog.V(1).Infof("read dir %s attr: %v", dir.Path, request)
-		resp, err := client.GetEntryAttributes(context, request)
+		resp, err := client.LookupDirectoryEntry(context, request)
 		if err != nil {
 			glog.V(0).Infof("read dir %s attr %v: %v", dir.Path, request, err)
 			return err
 		}
 
-		dir.attributes = resp.Attributes
+		if resp.Entry!=nil {
+			dir.attributes = resp.Entry.Attributes
+		}
 
 		return nil
 	})

@@ -12,9 +12,6 @@ service SeaweedFiler {
     rpc ListEntries (ListEntriesRequest) returns (ListEntriesResponse) {
     }
 
-    rpc GetEntryAttributes (GetEntryAttributesRequest) returns (GetEntryAttributesResponse) {
-    }
-
     rpc CreateEntry (CreateEntryRequest) returns (CreateEntryResponse) {
     }
 
@@ -92,26 +89,6 @@ message FuseAttributes {
     string replication = 8;
     string collection = 9;
     int32 ttl_sec = 10;
-}
-
-message GetEntryAttributesRequest {
-    string name = 1;
-    string parent_dir = 2;
-    string file_id = 3;
-}
-
-message GetEntryAttributesResponse {
-    FuseAttributes attributes = 1;
-    repeated FileChunk chunks = 2;
-    map<string, bytes> extended = 3;
-}
-
-message GetFileContentRequest {
-    string file_id = 1;
-}
-
-message GetFileContentResponse {
-    bytes content = 1;
 }
 
 message CreateEntryRequest {
