@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const blockSize = 512
+
 var _ = fs.Node(&File{})
 var _ = fs.NodeOpener(&File{})
 var _ = fs.NodeFsyncer(&File{})
@@ -40,6 +42,8 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Mtime = time.Unix(file.entry.Attributes.Mtime, 0)
 	attr.Gid = file.entry.Attributes.Gid
 	attr.Uid = file.entry.Attributes.Uid
+	attr.Blocks = attr.Size/blockSize + 1
+	attr.BlockSize = blockSize
 
 	return nil
 
