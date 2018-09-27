@@ -110,18 +110,18 @@ SeaweedFS uses HTTP REST operations to write, read, delete. The responses are in
 To upload a file: first, send a HTTP POST, PUT, or GET request to `/dir/assign` to get an `fid` and a volume server url:
 
 ```
-> curl -X POST http://localhost:9333/dir/assign
+> curl http://localhost:9333/dir/assign
 {"count":1,"fid":"3,01637037d6","url":"127.0.0.1:8080","publicUrl":"localhost:8080"}
 ```
 
-Second, to store the file content, send a HTTP multi-part PUT or POST request to `url + '/' + fid` from the response:
+Second, to store the file content, send a HTTP multi-part POST request to `url + '/' + fid` from the response:
 
 ```
-> curl -X PUT -F file=@/home/chris/myphoto.jpg http://127.0.0.1:8080/3,01637037d6
+> curl -F file=@/home/chris/myphoto.jpg http://127.0.0.1:8080/3,01637037d6
 {"size": 43234}
 ```
 
-To update, send another PUT or POST request with updated file content.
+To update, send another POST request with updated file content.
 
 For deletion, send an HTTP DELETE request to the same `url + '/' + fid` URL:
 
@@ -186,7 +186,7 @@ http://localhost:8080/3/01637037d6.jpg?height=200&width=200&mode=fill
 SeaweedFS applies the replication strategy at a volume level. So, when you are getting a file id, you can specify the replication strategy. For example:
 
 ```
-curl -X POST http://localhost:9333/dir/assign?replication=001
+curl http://localhost:9333/dir/assign?replication=001
 ```
 
 The replication parameter options are:
