@@ -69,6 +69,10 @@ func (v *Volume) commitCompact() error {
 
 	//glog.V(3).Infof("Pretending to be vacuuming...")
 	//time.Sleep(20 * time.Second)
+
+	os.RemoveAll(v.FileName() + ".ldb")
+	os.RemoveAll(v.FileName() + ".bdb")
+
 	glog.V(3).Infof("Loading Commit file...")
 	if e = v.load(true, false, v.needleMapKind, 0); e != nil {
 		return e
