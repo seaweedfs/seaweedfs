@@ -114,14 +114,14 @@ To upload a file: first, send a HTTP POST, PUT, or GET request to `/dir/assign` 
 {"count":1,"fid":"3,01637037d6","url":"127.0.0.1:8080","publicUrl":"localhost:8080"}
 ```
 
-Second, to store the file content, send a HTTP multi-part PUT or POST request to `url + '/' + fid` from the response:
+Second, to store the file content, send a HTTP multi-part POST request to `url + '/' + fid` from the response:
 
 ```
-> curl -X PUT -F file=@/home/chris/myphoto.jpg http://127.0.0.1:8080/3,01637037d6
+> curl -F file=@/home/chris/myphoto.jpg http://127.0.0.1:8080/3,01637037d6
 {"size": 43234}
 ```
 
-To update, send another PUT or POST request with updated file content.
+To update, send another POST request with updated file content.
 
 For deletion, send an HTTP DELETE request to the same `url + '/' + fid` URL:
 
