@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const blockSize = 32
+const blockSize = 512
 
 var _ = fs.Node(&File{})
 var _ = fs.NodeOpener(&File{})
