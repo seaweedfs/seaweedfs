@@ -126,7 +126,7 @@ func (vs *VolumeServer) batchDeleteHandler(w http.ResponseWriter, r *http.Reques
 		n := new(storage.Needle)
 		volumeId, _ := storage.NewVolumeId(vid)
 		n.ParsePath(id_cookie)
-		glog.V(4).Infoln("batch deleting", n)
+		// glog.V(4).Infoln("batch deleting", n)
 		cookie := n.Cookie
 		if _, err := vs.store.ReadVolumeNeedle(volumeId, n); err != nil {
 			ret = append(ret, operation.DeleteResult{
