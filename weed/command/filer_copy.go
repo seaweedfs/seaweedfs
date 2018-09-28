@@ -65,8 +65,7 @@ var cmdCopy = &Command{
   This can save volume server's gzipped processing and allow customizable gzip compression level.
   The file name will strip out ".gz" and stored. For example, "jquery.js.gz" will be stored as "jquery.js".
 
-  If "maxMB" is set to a positive number, files larger than it would be split into chunks and copyed separatedly.
-  The list of file ids of those chunks would be stored in an additional chunk, and this additional chunk's file id would be returned.
+  If "maxMB" is set to a positive number, files larger than it would be split into chunks.
 
   `,
 }
