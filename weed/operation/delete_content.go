@@ -12,6 +12,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 type DeleteResult struct {
@@ -32,7 +33,8 @@ func DeleteFromVolumeServer(fileUrlOnVolume string, jwt security.EncodedJwt) err
 func DeleteFile(master string, fileId string, jwt security.EncodedJwt) error {
 	fileUrl, err := LookupFileId(master, fileId)
 	if err != nil {
-		return fmt.Errorf("Failed to lookup %s:%v", fileId, err)
+		glog.V(0).Infof("Delete %s lookup: %v, master: %s", fileId, err, master)
+		return nil
 	}
 	err = util.Delete(fileUrl, jwt)
 	if err != nil {
