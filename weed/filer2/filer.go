@@ -88,10 +88,12 @@ func (f *Filer) CreateEntry(entry *Entry) error {
 			glog.V(2).Infof("create directory: %s %v", dirPath, dirEntry.Mode)
 			mkdirErr := f.store.InsertEntry(dirEntry)
 			if mkdirErr != nil {
-				return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
+				if _, err := f.FindEntry(FullPath(dirPath)); err == ErrNotFound {
+					return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
+				}
+			} else {
+				f.NotifyUpdateEvent(nil, dirEntry, false)
 			}
-
-			f.NotifyUpdateEvent(nil, dirEntry, false)
 
 		} else if !dirEntry.IsDirectory() {
 			return fmt.Errorf("%s is a file", dirPath)
