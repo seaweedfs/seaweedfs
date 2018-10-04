@@ -161,7 +161,7 @@ grpcAddress = "localhost:18888"
 directory = "/buckets"    # all files under this directory tree are replicated
 
 [notification.kafka]
-enabled = true
+enabled = false
 hosts = [
   "localhost:9092"
 ]
@@ -170,12 +170,22 @@ offsetFile = "./last.offset"
 offsetSaveIntervalSeconds = 10
 
 [sink.filer]
-enabled = true
+enabled = false
 grpcAddress = "localhost:18888"
 directory = "/backup"    # all replicated files are under this directory tree
 replication = ""
 collection = ""
 ttlSec = 0
+
+[sink.s3]
+# See https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/sessions.html
+# default loads credentials from the shared credentials file (~/.aws/credentials). 
+enabled = false
+aws_access_key_id     = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
+aws_secret_access_key = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
+region = "us-east-2"
+bucket = "your_bucket_name"    # an existing bucket
+directory = ""                 # destination directory (do not prefix or suffix with "/")
 
 `
 )

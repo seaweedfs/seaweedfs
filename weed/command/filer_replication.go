@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/spf13/viper"
 	"strings"
+	"github.com/chrislusf/seaweedfs/weed/replication/sink"
 )
 
 func init() {
@@ -57,7 +58,21 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 		}
 	}
 
-	replicator := replication.NewReplicator(config.Sub("source.filer"), config.Sub("sink.filer"))
+	var dataSink sink.ReplicationSink
+	for _, sk := range sink.Sinks {
+		if config.GetBool("sink." + sk.GetName() + ".enabled") {
+			viperSub := config.Sub("sink." + sk.GetName())
+			if err := sk.Initialize(viperSub); err != nil {
+				glog.Fatalf("Failed to initialize sink for %s: %+v",
+					sk.GetName(), err)
+			}
+			glog.V(0).Infof("Configure sink to %s", sk.GetName())
+			dataSink = sk
+			break
+		}
+	}
+
+	replicator := replication.NewReplicator(config.Sub("source.filer"), dataSink)
 
 	for {
 		key, m, err := notificationInput.ReceiveMessage()

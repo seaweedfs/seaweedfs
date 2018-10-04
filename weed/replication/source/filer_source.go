@@ -34,7 +34,7 @@ func (fs *FilerSource) initialize(grpcAddress string, dir string) (err error) {
 	return nil
 }
 
-func (fs *FilerSource) ReadPart(part string) (filename string, header http.Header, readCloser io.ReadCloser, err error) {
+func (fs *FilerSource) LookupFileId(part string) (fileUrl string, err error) {
 
 	vid2Locations := make(map[string]*filer_pb.Locations)
 
@@ -56,18 +56,28 @@ func (fs *FilerSource) ReadPart(part string) (filename string, header http.Heade
 	})
 
 	if err != nil {
-		glog.V(1).Infof("replication lookup volume id %s: %v", vid, err)
-		return "", nil, nil, fmt.Errorf("replication lookup volume id %s: %v", vid, err)
+		glog.V(1).Infof("LookupFileId volume id %s: %v", vid, err)
+		return "", fmt.Errorf("LookupFileId volume id %s: %v", vid, err)
 	}
 
 	locations := vid2Locations[vid]
 
 	if locations == nil || len(locations.Locations) == 0 {
-		glog.V(1).Infof("replication locate volume id %s: %v", vid, err)
-		return "", nil, nil, fmt.Errorf("replication locate volume id %s: %v", vid, err)
+		glog.V(1).Infof("LookupFileId locate volume id %s: %v", vid, err)
+		return "", fmt.Errorf("LookupFileId locate volume id %s: %v", vid, err)
 	}
 
-	fileUrl := fmt.Sprintf("http://%s/%s", locations.Locations[0].Url, part)
+	fileUrl = fmt.Sprintf("http://%s/%s", locations.Locations[0].Url, part)
+
+	return
+}
+
+func (fs *FilerSource) ReadPart(part string) (filename string, header http.Header, readCloser io.ReadCloser, err error) {
+
+	fileUrl, err := fs.LookupFileId(part)
+	if err != nil {
+		return "", nil, nil, err
+	}
 
 	filename, header, readCloser, err = util.DownloadFile(fileUrl)
 
