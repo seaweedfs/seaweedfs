@@ -17,7 +17,6 @@ import (
 )
 
 type S3Sink struct {
-	err         error
 	conn        s3iface.S3API
 	region      string
 	bucket      string
@@ -83,6 +82,10 @@ func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks b
 }
 
 func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
+
+	if entry.IsDirectory {
+		return nil
+	}
 
 	uploadId, err := s3sink.createMultipartUpload(key, entry)
 	if err != nil {
