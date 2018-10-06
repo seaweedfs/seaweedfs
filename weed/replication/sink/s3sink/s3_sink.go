@@ -2,6 +2,7 @@ package S3Sink
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
@@ -9,7 +10,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"sync"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
 	"github.com/aws/aws-sdk-go/aws"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	"cloud.google.com/go/storage"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -11,7 +12,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
-	"os"
 	"google.golang.org/api/option"
 )
 
