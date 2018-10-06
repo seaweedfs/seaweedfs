@@ -179,7 +179,7 @@ ttlSec = 0
 
 [sink.s3]
 # experimental
-# See https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/sessions.html
+# read credentials doc at https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/sessions.html
 # default loads credentials from the shared credentials file (~/.aws/credentials). 
 enabled = false
 aws_access_key_id     = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
@@ -189,13 +189,11 @@ bucket = "your_bucket_name"    # an existing bucket
 directory = ""                 # destination directory (do not prefix or suffix with "/")
 
 [sink.google_cloud_storage]
-# experimental
-# see https://cloud.google.com/docs/authentication/getting-started
+# read credentials doc at https://cloud.google.com/docs/authentication/getting-started
 enabled = false
 google_application_credentials = "/path/to/x.json" # path to json credential file
-projectId = "your_project_id"
-bucket = "your_bucket_name"    # an existing bucket
-directory = "/"                 # destination directory
+bucket = "your_bucket_seaweedfs"    # an existing bucket
+directory = "/"                     # destination directory
 
 `
 )

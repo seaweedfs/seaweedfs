@@ -17,7 +17,6 @@ import (
 
 type GcsSink struct {
 	client      *storage.Client
-	projectId   string
 	bucket      string
 	dir         string
 	filerSource *source.FilerSource
@@ -38,7 +37,6 @@ func (g *GcsSink) GetSinkToDirectory() string {
 func (g *GcsSink) Initialize(configuration util.Configuration) error {
 	return g.initialize(
 		configuration.GetString("google_application_credentials"),
-		configuration.GetString("projectId"),
 		configuration.GetString("bucket"),
 		configuration.GetString("directory"),
 	)
@@ -48,8 +46,7 @@ func (g *GcsSink) SetSourceFiler(s *source.FilerSource) {
 	g.filerSource = s
 }
 
-func (g *GcsSink) initialize(google_application_credentials, projectId, bucketName, dir string) (error) {
-	g.projectId = projectId
+func (g *GcsSink) initialize(google_application_credentials, bucketName, dir string) (error) {
 	g.bucket = bucketName
 	g.dir = dir
 
