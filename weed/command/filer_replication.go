@@ -1,12 +1,16 @@
 package command
 
 import (
+	"strings"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/replication"
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/spf13/viper"
-	"strings"
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
+	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/s3sink"
+	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/filersink"
+	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/gcssink"
 )
 
 func init() {
@@ -70,6 +74,14 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 			dataSink = sk
 			break
 		}
+	}
+
+	if dataSink == nil {
+		println("no data sink defined:")
+		for _, sk := range sink.Sinks {
+			println("    " + sk.GetName())
+		}
+		return true
 	}
 
 	replicator := replication.NewReplicator(config.Sub("source.filer"), dataSink)
