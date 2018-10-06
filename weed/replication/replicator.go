@@ -31,6 +31,7 @@ func NewReplicator(sourceConfig util.Configuration, dataSink sink.ReplicationSin
 
 func (r *Replicator) Replicate(key string, message *filer_pb.EventNotification) error {
 	if !strings.HasPrefix(key, r.source.Dir) {
+		glog.V(4).Infof("skipping %v outside of %v", key, r.source.Dir)
 		return nil
 	}
 	key = filepath.Join(r.sink.GetSinkToDirectory(), key[len(r.source.Dir):])
