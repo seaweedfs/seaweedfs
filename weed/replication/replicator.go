@@ -35,9 +35,11 @@ func (r *Replicator) Replicate(key string, message *filer_pb.EventNotification) 
 	}
 	key = filepath.Join(r.sink.GetSinkToDirectory(), key[len(r.source.Dir):])
 	if message.OldEntry != nil && message.NewEntry == nil {
+		glog.V(4).Infof("deleting %v", key)
 		return r.sink.DeleteEntry(key, message.OldEntry.IsDirectory, message.DeleteChunks)
 	}
 	if message.OldEntry == nil && message.NewEntry != nil {
+		glog.V(4).Infof("creating %v", key)
 		return r.sink.CreateEntry(key, message.NewEntry)
 	}
 	if message.OldEntry == nil && message.NewEntry == nil {
@@ -47,8 +49,10 @@ func (r *Replicator) Replicate(key string, message *filer_pb.EventNotification) 
 
 	foundExisting, err := r.sink.UpdateEntry(key, message.OldEntry, message.NewEntry, message.DeleteChunks)
 	if foundExisting {
+		glog.V(4).Infof("updated %v", key)
 		return err
 	}
 
+	glog.V(4).Infof("creating missing %v", key)
 	return r.sink.CreateEntry(key, message.NewEntry)
 }
