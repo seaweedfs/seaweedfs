@@ -1,3 +1,6 @@
+//go:generate statik -src=./static
+// install this first "go get github.com/rakyll/statik"
+
 package main
 
 import (

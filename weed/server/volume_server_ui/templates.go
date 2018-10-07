@@ -50,7 +50,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
     <div class="container">
       <div class="page-header">
 	    <h1>
-	      <img src="http://7viirv.com1.z0.glb.clouddn.com/seaweed50x50.png"></img>
+	      <img src="/seaweedfsstatic/seaweed50x50.png"></img>
           SeaweedFS <small>{{ .Version }}</small>
 	    </h1>
       </div>

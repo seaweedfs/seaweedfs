@@ -12,21 +12,24 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
+
+	_ "github.com/chrislusf/seaweedfs/weed/statik"
+	statik "github.com/rakyll/statik/fs"
 )
 
 var serverStats *stats.ServerStats
 var startTime = time.Now()
+var statikFS http.FileSystem
 
 func init() {
 	serverStats = stats.NewServerStats()
 	go serverStats.Start()
-
+	statikFS, _ = statik.New()
 }
 
 func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) (err error) {
@@ -191,14 +194,7 @@ func statsMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
 
-func faviconHandler(w http.ResponseWriter, r *http.Request) {
-	data, err := images.Asset("favicon/favicon.ico")
-	if err != nil {
-		glog.V(2).Infoln("favicon read error:", err)
-		return
-	}
-
-	if e := writeResponseContent("favicon.ico", "image/x-icon", bytes.NewReader(data), w, r); e != nil {
-		glog.V(2).Infoln("response write error:", e)
-	}
+func handleStaticResources(defaultMux *http.ServeMux) {
+	defaultMux.Handle("/favicon.ico", http.FileServer(statikFS))
+	defaultMux.Handle("/seaweedfsstatic/", http.StripPrefix("/seaweedfsstatic", http.FileServer(statikFS)))
 }

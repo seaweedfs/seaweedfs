@@ -43,6 +43,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 
 	vs.guard = security.NewGuard(whiteList, "")
 
+	handleStaticResources(adminMux)
 	adminMux.HandleFunc("/ui/index.html", vs.uiStatusHandler)
 	adminMux.HandleFunc("/status", vs.guard.WhiteList(vs.statusHandler))
 	adminMux.HandleFunc("/admin/assign_volume", vs.guard.WhiteList(vs.assignVolumeHandler))
@@ -64,7 +65,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	adminMux.HandleFunc("/", vs.privateStoreHandler)
 	if publicMux != adminMux {
 		// separated admin and public port
-		publicMux.HandleFunc("/favicon.ico", faviconHandler)
+		handleStaticResources(publicMux)
 		publicMux.HandleFunc("/", vs.publicReadOnlyHandler)
 	}
 

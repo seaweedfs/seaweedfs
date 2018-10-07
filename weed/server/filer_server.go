@@ -37,6 +37,7 @@ type FilerServer struct {
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
+
 	fs = &FilerServer{
 		option: option,
 	}
@@ -56,7 +57,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	notification.LoadConfiguration(v.Sub("notification"))
 
-	defaultMux.HandleFunc("/favicon.ico", faviconHandler)
+	handleStaticResources(defaultMux)
 	defaultMux.HandleFunc("/", fs.filerHandler)
 	if defaultMux != readonlyMux {
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
@@ -85,8 +86,8 @@ func LoadConfiguration(configFileName string, required bool) {
 			glog.Errorf("Failed to load %s.toml file from current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/"+
 				"\n\nPlease follow this example and add a filer.toml file to "+
 				"current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/:\n"+
-				"    https://github.com/chrislusf/seaweedfs/blob/master/weed/%s.toml\n" +
-				"\n\nOr use this command to generate the default toml file\n" +
+				"    https://github.com/chrislusf/seaweedfs/blob/master/weed/%s.toml\n"+
+				"\n\nOr use this command to generate the default toml file\n"+
 				"    weed scaffold -config=%s -output=.\n",
 				configFileName, configFileName, configFileName)
 		}
