@@ -29,7 +29,7 @@ func init() {
 }
 
 func (s3sink *S3Sink) GetName() string {
-	return "filer"
+	return "s3"
 }
 
 func (s3sink *S3Sink) GetSinkToDirectory() string {

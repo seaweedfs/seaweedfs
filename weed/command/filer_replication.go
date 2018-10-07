@@ -77,7 +77,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 	}
 
 	if dataSink == nil {
-		println("no data sink defined:")
+		println("no data sink configured:")
 		for _, sk := range sink.Sinks {
 			println("    " + sk.GetName())
 		}
