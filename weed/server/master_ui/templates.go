@@ -8,8 +8,7 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
 <html>
   <head>
     <title>SeaweedFS {{ .Version }}</title>
-	<link rel="icon" href="http://7viirv.com1.z0.glb.clouddn.com/seaweed_favicon.png" sizes="32x32" />  
-    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap.min.css">
+	<link rel="stylesheet" href="/seaweedfsstatic/bootstrap/3.3.1/css/bootstrap.min.css">
   </head>
   <body>
     <div class="container">

@@ -13,8 +13,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
 <html>
 <head>
 	<title>SeaweedFS Filer</title>
-	<link rel="icon" href="http://7viirv.com1.z0.glb.clouddn.com/seaweed_favicon.png" sizes="32x32" />
-	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap.min.css">
+	<link rel="stylesheet" href="/seaweedfsstatic/bootstrap/3.3.1/css/bootstrap.min.css">
 <style>
 #drop-area {
   border: 1px transparent;
@@ -69,7 +68,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
 				<tr>
 					<td>
 					{{if $entry.IsDirectory}}
-						<img src="https://www.w3.org/TR/WWWicn/folder.gif" width="20" height="23">
+						<img src="/seaweedfsstatic/images/folder.gif" width="20" height="23">
 						<a href={{ print $path  "/" $entry.Name  "/"}} >
 							{{ $entry.Name }}
 						</a>
