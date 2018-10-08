@@ -178,7 +178,6 @@ collection = ""
 ttlSec = 0
 
 [sink.s3]
-# experimental
 # read credentials doc at https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/sessions.html
 # default loads credentials from the shared credentials file (~/.aws/credentials). 
 enabled = false
