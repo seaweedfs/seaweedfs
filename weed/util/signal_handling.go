@@ -5,13 +5,16 @@ package util
 import (
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 )
 
-func OnInterrupt(fn func()) {
-	// deal with control+c,etc
-	signalChan := make(chan os.Signal, 1)
-	// controlling terminal close, daemon not exit
+var signalChan chan os.Signal
+var hooks = make([]func(), 0)
+var hookLock sync.Mutex
+
+func init() {
+	signalChan = make(chan os.Signal, 1)
 	signal.Ignore(syscall.SIGHUP)
 	signal.Notify(signalChan,
 		os.Interrupt,
@@ -24,8 +27,20 @@ func OnInterrupt(fn func()) {
 	)
 	go func() {
 		for _ = range signalChan {
-			fn()
+			for _, hook := range hooks {
+				hook()
+			}
 			os.Exit(0)
 		}
 	}()
+}
+
+func OnInterrupt(fn func()) {
+	// prevent reentry
+	hookLock.Lock()
+	defer hookLock.Unlock()
+
+	// deal with control+c,etc
+	// controlling terminal close, daemon not exit
+	hooks = append(hooks, fn)
 }
