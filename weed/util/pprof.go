@@ -14,7 +14,6 @@ func SetupProfiling(cpuProfile, memProfile string) {
 			glog.Fatal(err)
 		}
 		pprof.StartCPUProfile(f)
-		defer pprof.StopCPUProfile()
 		OnInterrupt(func() {
 			pprof.StopCPUProfile()
 		})
