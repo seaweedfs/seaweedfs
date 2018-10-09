@@ -194,5 +194,13 @@ google_application_credentials = "/path/to/x.json" # path to json credential fil
 bucket = "your_bucket_seaweedfs"    # an existing bucket
 directory = "/"                     # destination directory
 
+[sink.azure]
+# experimental
+enabled = false
+account_name = ""
+account_key  = ""
+container = "mycontainer"      # an existing container
+directory = ""                 # destination directory (do not prefix or suffix with "/")
+
 `
 )
