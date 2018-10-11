@@ -66,7 +66,7 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 			return err
 		}
 
-		if resp.Entry!=nil {
+		if resp.Entry != nil {
 			dir.attributes = resp.Entry.Attributes
 		}
 

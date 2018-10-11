@@ -7,11 +7,11 @@ import (
 	"os"
 
 	"cloud.google.com/go/storage"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/replication/sink"
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/replication/sink"
 	"google.golang.org/api/option"
 )
 
@@ -46,7 +46,7 @@ func (g *GcsSink) SetSourceFiler(s *source.FilerSource) {
 	g.filerSource = s
 }
 
-func (g *GcsSink) initialize(google_application_credentials, bucketName, dir string) (error) {
+func (g *GcsSink) initialize(google_application_credentials, bucketName, dir string) error {
 	g.bucket = bucketName
 	g.dir = dir
 

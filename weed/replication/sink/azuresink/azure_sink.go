@@ -1,17 +1,17 @@
 package azuresink
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/url"
-	"bytes"
 
+	"github.com/Azure/azure-storage-blob-go/2016-05-31/azblob"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/replication/sink"
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/replication/sink"
-	"github.com/Azure/azure-storage-blob-go/2016-05-31/azblob"
 )
 
 type AzureSink struct {
@@ -46,7 +46,7 @@ func (g *AzureSink) SetSourceFiler(s *source.FilerSource) {
 	g.filerSource = s
 }
 
-func (g *AzureSink) initialize(accountName, accountKey, container, dir string) (error) {
+func (g *AzureSink) initialize(accountName, accountKey, container, dir string) error {
 	g.container = container
 	g.dir = dir
 

@@ -1,17 +1,18 @@
 package command
 
 import (
+	"net/http"
 	"os"
 	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"strings"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"net/http"
-	"github.com/chrislusf/seaweedfs/weed/storage"
-	"github.com/chrislusf/seaweedfs/weed/server"
 	"time"
-	"runtime/pprof"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 var (

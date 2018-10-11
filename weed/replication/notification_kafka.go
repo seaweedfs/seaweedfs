@@ -1,17 +1,17 @@
 package replication
 
 import (
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"sync"
+	"time"
 
 	"github.com/Shopify/sarama"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
-	"io/ioutil"
-	"encoding/json"
-	"sync"
-	"time"
 )
 
 func init() {
