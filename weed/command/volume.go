@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"google.golang.org/grpc/reflection"
 )
 
 var (
@@ -176,6 +178,17 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		volumeServer.Shutdown()
 		pprof.StopCPUProfile()
 	})
+
+	// starting grpc server
+	grpcPort := *v.port + 10000
+	grpcL, err := util.NewListener(*v.bindIp+":"+strconv.Itoa(grpcPort), 0)
+	if err != nil {
+		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
+	}
+	grpcS := util.NewGrpcServer()
+	volume_server_pb.RegisterVolumeServerServer(grpcS, volumeServer)
+	reflection.Register(grpcS)
+	go grpcS.Serve(grpcL)
 
 	if e := http.Serve(listener, volumeMux); e != nil {
 		glog.Fatalf("Volume server fail to serve: %v", e)

@@ -7,8 +7,15 @@ RUN apk add --no-cache --virtual build-dependencies --update wget curl ca-certif
     apk del build-dependencies && \
     rm -rf /tmp/*
 
+# volume server gprc port
+EXPOSE 18080
+# volume server http port
 EXPOSE 8080
+# filer server gprc port
+EXPOSE 18888
+# filer server http port
 EXPOSE 8888
+# master server shared gprc+http port
 EXPOSE 9333
 
 VOLUME /data

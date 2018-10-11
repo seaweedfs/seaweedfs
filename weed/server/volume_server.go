@@ -1,10 +1,11 @@
 package weed_server
 
 import (
+	"net/http"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
-	"net/http"
 )
 
 type VolumeServer struct {
