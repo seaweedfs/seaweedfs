@@ -164,7 +164,7 @@ func runServer(cmd *Command, args []string) bool {
 		go func() {
 			time.Sleep(1 * time.Second)
 
-			filerOptions.start()
+			filerOptions.startFiler()
 
 		}()
 	}

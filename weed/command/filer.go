@@ -74,12 +74,12 @@ var cmdFiler = &Command{
 
 func runFiler(cmd *Command, args []string) bool {
 
-	f.start()
+	f.startFiler()
 
 	return true
 }
 
-func (fo *FilerOptions) start() {
+func (fo *FilerOptions) startFiler() {
 
 	defaultMux := http.NewServeMux()
 	publicVolumeMux := defaultMux
