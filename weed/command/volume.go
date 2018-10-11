@@ -1,17 +1,17 @@
 package command
 
 import (
-	"net/http"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"net/http"
+	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/server"
+	"time"
+	"runtime/pprof"
 )
 
 var (
@@ -81,9 +81,16 @@ func runVolume(cmd *Command, args []string) bool {
 	runtime.GOMAXPROCS(*v.maxCpu)
 	util.SetupProfiling(*v.cpuProfile, *v.memProfile)
 
+	v.startVolumeServer(*volumeFolders, *maxVolumeCounts, *volumeWhiteListOption)
+
+	return true
+}
+
+func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, volumeWhiteListOption string) {
+
 	//Set multiple folders and each folder's max volume count limit'
-	v.folders = strings.Split(*volumeFolders, ",")
-	maxCountStrings := strings.Split(*maxVolumeCounts, ",")
+	v.folders = strings.Split(volumeFolders, ",")
+	maxCountStrings := strings.Split(maxVolumeCounts, ",")
 	for _, maxString := range maxCountStrings {
 		if max, e := strconv.Atoi(maxString); e == nil {
 			v.folderMaxLimits = append(v.folderMaxLimits, max)
@@ -101,8 +108,8 @@ func runVolume(cmd *Command, args []string) bool {
 	}
 
 	//security related white list configuration
-	if *volumeWhiteListOption != "" {
-		v.whiteList = strings.Split(*volumeWhiteListOption, ",")
+	if volumeWhiteListOption != "" {
+		v.whiteList = strings.Split(volumeWhiteListOption, ",")
 	}
 
 	if *v.ip == "" {
@@ -166,10 +173,11 @@ func runVolume(cmd *Command, args []string) bool {
 
 	util.OnInterrupt(func() {
 		volumeServer.Shutdown()
+		pprof.StopCPUProfile()
 	})
 
 	if e := http.Serve(listener, volumeMux); e != nil {
 		glog.Fatalf("Volume server fail to serve: %v", e)
 	}
-	return true
+
 }
