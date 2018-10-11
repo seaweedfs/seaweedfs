@@ -3,6 +3,7 @@ package command
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -10,7 +11,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"google.golang.org/grpc/reflection"
-	"strings"
 )
 
 var (
