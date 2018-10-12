@@ -23,6 +23,10 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 
 	entry, err := fs.filer.FindEntry(filer2.FullPath(path))
 	if err != nil {
+		if path == "/" {
+			fs.listDirectoryHandler(w, r)
+			return
+		}
 		glog.V(1).Infof("Not found %s: %v", path, err)
 		w.WriteHeader(http.StatusNotFound)
 		return
