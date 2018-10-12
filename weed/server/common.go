@@ -20,6 +20,7 @@ import (
 
 	_ "github.com/chrislusf/seaweedfs/weed/statik"
 	statik "github.com/rakyll/statik/fs"
+	"github.com/gorilla/mux"
 )
 
 var serverStats *stats.ServerStats
@@ -197,4 +198,9 @@ func statsMemoryHandler(w http.ResponseWriter, r *http.Request) {
 func handleStaticResources(defaultMux *http.ServeMux) {
 	defaultMux.Handle("/favicon.ico", http.FileServer(statikFS))
 	defaultMux.Handle("/seaweedfsstatic/", http.StripPrefix("/seaweedfsstatic", http.FileServer(statikFS)))
+}
+
+func handleStaticResources2(r *mux.Router) {
+	r.Handle("/favicon.ico", http.FileServer(statikFS))
+	r.PathPrefix("/seaweedfsstatic/").Handler(http.StripPrefix("/seaweedfsstatic", http.FileServer(statikFS)))
 }
