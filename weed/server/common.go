@@ -132,17 +132,6 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	return
 }
 
-func deleteForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl string) {
-	r.ParseForm()
-	fids := r.Form["fid"]
-	ret, err := operation.DeleteFiles(masterUrl, fids)
-	if err != nil {
-		writeJsonError(w, r, http.StatusInternalServerError, err)
-		return
-	}
-	writeJsonQuiet(w, r, http.StatusAccepted, ret)
-}
-
 func parseURLPath(path string) (vid, fid, filename, ext string, isVolumeIdOnly bool) {
 	switch strings.Count(path, "/") {
 	case 3:

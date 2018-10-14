@@ -110,10 +110,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	fullpath := filer2.FullPath(filepath.Join(req.Directory, req.Entry.Name))
 	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
 
-	for _, garbage := range garbages {
-		glog.V(0).Infof("deleting %s garbage chunk: %v, [%d, %d)", fullpath, garbage.FileId, garbage.Offset, garbage.Offset+int64(garbage.Size))
-		fs.filer.DeleteFileByFileId(garbage.FileId)
-	}
+	fs.filer.DeleteChunks(garbages)
 
 	err = fs.filer.CreateEntry(&filer2.Entry{
 		FullPath: fullpath,
@@ -168,14 +165,8 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	}
 
 	if err = fs.filer.UpdateEntry(newEntry); err == nil {
-		for _, garbage := range unusedChunks {
-			glog.V(0).Infof("deleting %s old chunk: %v, [%d, %d)", fullpath, garbage.FileId, garbage.Offset, garbage.Offset+int64(garbage.Size))
-			fs.filer.DeleteFileByFileId(garbage.FileId)
-		}
-		for _, garbage := range garbages {
-			glog.V(0).Infof("deleting %s garbage chunk: %v, [%d, %d)", fullpath, garbage.FileId, garbage.Offset, garbage.Offset+int64(garbage.Size))
-			fs.filer.DeleteFileByFileId(garbage.FileId)
-		}
+		fs.filer.DeleteChunks(unusedChunks)
+		fs.filer.DeleteChunks(garbages)
 	}
 
 	fs.filer.NotifyUpdateEvent(entry, newEntry, true)

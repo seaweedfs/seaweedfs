@@ -10,8 +10,8 @@ import (
 
 	"sync"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 var (
@@ -70,16 +70,22 @@ func (cm *ChunkManifest) Marshal() ([]byte, error) {
 }
 
 func (cm *ChunkManifest) DeleteChunks(master string) error {
-	deleteError := 0
+	var fileIds []string
 	for _, ci := range cm.Chunks {
-		if e := DeleteFile(master, ci.Fid, ""); e != nil {
-			deleteError++
-			glog.V(0).Infof("Delete %s error: %v, master: %s", ci.Fid, e, master)
+		fileIds = append(fileIds, ci.Fid)
+	}
+	results, err := DeleteFiles(master, fileIds)
+	if err != nil {
+		glog.V(0).Infof("delete %+v: %v", fileIds, err)
+		return fmt.Errorf("chunk delete: %v", err)
+	}
+	for _, result := range results {
+		if result.Error != "" {
+			glog.V(0).Infof("delete file %+v: %v", result.FileId, result.Error)
+			return fmt.Errorf("chunk delete %v: %v", result.FileId, result.Error)
 		}
 	}
-	if deleteError > 0 {
-		return errors.New("Not all chunks deleted.")
-	}
+
 	return nil
 }
 

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"context"
 )
 
 type Location struct {
@@ -95,23 +97,40 @@ func LookupVolumeIds(server string, vids []string) (map[string]LookupResult, err
 	}
 
 	//only query unknown_vids
-	values := make(url.Values)
-	for _, vid := range unknown_vids {
-		values.Add("volumeId", vid)
-	}
-	jsonBlob, err := util.Post("http://"+server+"/vol/lookup", values)
+
+	err := withMasterServerClient(server, func(masterClient master_pb.SeaweedClient) error {
+		req := &master_pb.LookupVolumeRequest{
+			VolumeIds: unknown_vids,
+		}
+		resp, grpcErr := masterClient.LookupVolume(context.Background(), req)
+		if grpcErr != nil {
+			return grpcErr
+		}
+
+		//set newly checked vids to cache
+		for _, vidLocations := range resp.VolumeIdLocations {
+			var locations []Location
+			for _, loc := range vidLocations.Locations {
+				locations = append(locations, Location{
+					Url:       loc.Url,
+					PublicUrl: loc.PublicUrl,
+				})
+			}
+			if vidLocations.Error != "" {
+				vc.Set(vidLocations.VolumeId, locations, 10*time.Minute)
+			}
+			ret[vidLocations.VolumeId] = LookupResult{
+				VolumeId:  vidLocations.VolumeId,
+				Locations: locations,
+				Error:     vidLocations.Error,
+			}
+		}
+
+		return nil
+	})
+
 	if err != nil {
 		return nil, err
-	}
-	err = json.Unmarshal(jsonBlob, &ret)
-	if err != nil {
-		return nil, errors.New(err.Error() + " " + string(jsonBlob))
-	}
-
-	//set newly checked vids to cache
-	for _, vid := range unknown_vids {
-		locations := ret[vid].Locations
-		vc.Set(vid, locations, 10*time.Minute)
 	}
 
 	return ret, nil

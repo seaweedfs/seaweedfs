@@ -119,14 +119,6 @@ func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *
 	}
 }
 
-func (ms *MasterServer) deleteFromMasterServerHandler(w http.ResponseWriter, r *http.Request) {
-	if ms.Topo.IsLeader() {
-		deleteForClientHandler(w, r, ms.selfUrl(r))
-	} else {
-		deleteForClientHandler(w, r, ms.Topo.RaftServer.Leader())
-	}
-}
-
 func (ms *MasterServer) HasWritableVolume(option *topology.VolumeGrowOption) bool {
 	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl)
 	return vl.GetActiveVolumeCount(option) > 0

@@ -58,15 +58,6 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 	writeJsonQuiet(w, r, httpStatus, location)
 }
 
-// This can take batched volumeIds, &volumeId=x&volumeId=y&volumeId=z
-func (ms *MasterServer) volumeLookupHandler(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	vids := r.Form["volumeId"]
-	collection := r.FormValue("collection") //optional, but can be faster if too many collections
-	volumeLocations := ms.lookupVolumeId(vids, collection)
-	writeJsonQuiet(w, r, http.StatusOK, volumeLocations)
-}
-
 func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 	stats.AssignRequest()
 	requestedCount, e := strconv.ParseUint(r.FormValue("count"), 10, 64)

@@ -54,6 +54,19 @@ func (vc *vidMap) LookupFileId(fileId string) (fullUrl string, err error) {
 	return "http://" + serverUrl + "/" + fileId, nil
 }
 
+func (vc *vidMap) LookupVolumeServer(fileId string) (volumeServer string, err error) {
+	parts := strings.Split(fileId, ",")
+	if len(parts) != 2 {
+		return "", errors.New("Invalid fileId " + fileId)
+	}
+	serverUrl, lookupError := vc.LookupVolumeServerUrl(parts[0])
+	if lookupError != nil {
+		return "", lookupError
+	}
+	return serverUrl, nil
+}
+
+
 func (vc *vidMap) GetLocations(vid uint32) (locations []Location) {
 	vc.RLock()
 	defer vc.RUnlock()

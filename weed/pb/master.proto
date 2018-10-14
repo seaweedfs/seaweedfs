@@ -9,6 +9,8 @@ service Seaweed {
     }
     rpc KeepConnected (stream ClientListenRequest) returns (stream VolumeLocation) {
     }
+    rpc LookupVolume (LookupVolumeRequest) returns (LookupVolumeResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -68,4 +70,22 @@ message VolumeLocation {
     string public_url = 2;
     repeated uint32 new_vids = 3;
     repeated uint32 deleted_vids = 4;
+}
+
+message LookupVolumeRequest {
+    repeated string volume_ids = 1;
+    string collection = 2; // optional, a bit faster if provided.
+}
+message LookupVolumeResponse {
+    message VolumeIdLocation {
+        string volume_id = 1;
+        repeated Location locations = 2;
+        string error = 3;
+    }
+    repeated VolumeIdLocation volume_id_locations = 1;
+}
+
+message Location {
+    string url = 1;
+    string public_url = 2;
 }

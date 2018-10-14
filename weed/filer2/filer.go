@@ -176,7 +176,7 @@ func (f *Filer) DeleteEntryMetaAndData(p FullPath, isRecursive bool, shouldDelet
 	}
 
 	if shouldDeleteChunks {
-		f.deleteChunks(entry.Chunks)
+		f.DeleteChunks(entry.Chunks)
 	}
 
 	if p == "/" {
@@ -229,18 +229,18 @@ func (f *Filer) cacheSetDirectory(dirpath string, dirEntry *Entry, level int) {
 	f.directoryCache.Set(dirpath, dirEntry, time.Duration(minutes)*time.Minute)
 }
 
-func (f *Filer) deleteChunks(chunks []*filer_pb.FileChunk) {
+func (f *Filer) DeleteChunks(chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
 		f.DeleteFileByFileId(chunk.FileId)
 	}
 }
 
 func (f *Filer) DeleteFileByFileId(fileId string) {
-	fileUrlOnVolume, err := f.MasterClient.LookupFileId(fileId)
+	volumeServer, err := f.MasterClient.LookupVolumeServer(fileId)
 	if err != nil {
 		glog.V(0).Infof("can not find file %s: %v", fileId, err)
 	}
-	if err := operation.DeleteFromVolumeServer(fileUrlOnVolume, ""); err != nil {
+	if _, err := operation.DeleteFilesAtOneVolumeServer(volumeServer, []string{fileId}); err != nil {
 		glog.V(0).Infof("deleting file %s: %v", fileId, err)
 	}
 }
@@ -251,7 +251,7 @@ func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
 		return
 	}
 	if newEntry == nil {
-		f.deleteChunks(oldEntry.Chunks)
+		f.DeleteChunks(oldEntry.Chunks)
 	}
 
 	var toDelete []*filer_pb.FileChunk
@@ -268,5 +268,5 @@ func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
 			toDelete = append(toDelete, oldChunk)
 		}
 	}
-	f.deleteChunks(toDelete)
+	f.DeleteChunks(toDelete)
 }
