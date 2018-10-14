@@ -43,7 +43,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Gid = file.entry.Attributes.Gid
 	attr.Uid = file.entry.Attributes.Uid
 	attr.Blocks = attr.Size/blockSize + 1
-	attr.BlockSize = blockSize
+	attr.BlockSize = 1024 * 1024 * 16
 
 	return nil
 
