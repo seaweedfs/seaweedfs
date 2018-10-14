@@ -37,6 +37,9 @@ func (k *KafkaQueue) initialize(hosts []string, topic string) (err error) {
 	config.Producer.Return.Successes = true
 	config.Producer.Return.Errors = true
 	k.producer, err = sarama.NewAsyncProducer(hosts, config)
+	if err != nil {
+		return err
+	}
 	k.topic = topic
 	go k.handleSuccess()
 	go k.handleError()
