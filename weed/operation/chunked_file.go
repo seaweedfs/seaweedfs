@@ -10,8 +10,8 @@ import (
 
 	"sync"
 
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 var (

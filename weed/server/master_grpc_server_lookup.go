@@ -1,8 +1,9 @@
 package weed_server
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"context"
+
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 )
 
 func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupVolumeRequest) (*master_pb.LookupVolumeResponse, error) {

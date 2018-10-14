@@ -66,7 +66,6 @@ func (vc *vidMap) LookupVolumeServer(fileId string) (volumeServer string, err er
 	return serverUrl, nil
 }
 
-
 func (vc *vidMap) GetLocations(vid uint32) (locations []Location) {
 	vc.RLock()
 	defer vc.RUnlock()

@@ -19,8 +19,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 
 	_ "github.com/chrislusf/seaweedfs/weed/statik"
-	statik "github.com/rakyll/statik/fs"
 	"github.com/gorilla/mux"
+	statik "github.com/rakyll/statik/fs"
 )
 
 var serverStats *stats.ServerStats

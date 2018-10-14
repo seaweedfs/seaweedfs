@@ -1,6 +1,7 @@
 package operation
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,9 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"context"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type Location struct {

@@ -1,15 +1,14 @@
 package operation
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 
-	"net/http"
-
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"context"
-	"fmt"
 )
 
 type DeleteResult struct {
