@@ -37,9 +37,15 @@ func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Request) {
-	gcThreshold := r.FormValue("garbageThreshold")
-	if gcThreshold == "" {
-		gcThreshold = ms.garbageThreshold
+	gcString := r.FormValue("garbageThreshold")
+	gcThreshold := ms.garbageThreshold
+	if gcString != "" {
+		var err error
+		gcThreshold, err = strconv.ParseFloat(gcString, 32)
+		if err != nil {
+			glog.V(0).Infof("garbageThreshold %s is not a valid float number: %v", gcString, err)
+			return
+		}
 	}
 	glog.Infoln("garbageThreshold =", gcThreshold)
 	ms.Topo.Vacuum(gcThreshold, ms.preallocate)

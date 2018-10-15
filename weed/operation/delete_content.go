@@ -97,7 +97,7 @@ func DeleteFiles(master string, fileIds []string) ([]*volume_server_pb.DeleteRes
 // DeleteFilesAtOneVolumeServer deletes a list of files that is on one volume server via gRpc
 func DeleteFilesAtOneVolumeServer(volumeServer string, fileIds []string) (ret []*volume_server_pb.DeleteResult, err error) {
 
-	err = withVolumeServerClient(volumeServer, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+	err = WithVolumeServerClient(volumeServer, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
 		req := &volume_server_pb.BatchDeleteRequest{
 			FileIds: fileIds,

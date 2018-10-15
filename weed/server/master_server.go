@@ -24,7 +24,7 @@ type MasterServer struct {
 	preallocate             int64
 	pulseSeconds            int
 	defaultReplicaPlacement string
-	garbageThreshold        string
+	garbageThreshold        float64
 	guard                   *security.Guard
 
 	Topo   *topology.Topology
@@ -43,7 +43,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	preallocate bool,
 	pulseSeconds int,
 	defaultReplicaPlacement string,
-	garbageThreshold string,
+	garbageThreshold float64,
 	whiteList []string,
 	secureKey string,
 ) *MasterServer {

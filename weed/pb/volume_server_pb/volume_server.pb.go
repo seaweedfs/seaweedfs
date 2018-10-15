@@ -13,6 +13,14 @@ It has these top-level messages:
 	BatchDeleteResponse
 	DeleteResult
 	Empty
+	VacuumVolumeCheckRequest
+	VacuumVolumeCheckResponse
+	VacuumVolumeCompactRequest
+	VacuumVolumeCompactResponse
+	VacuumVolumeCommitRequest
+	VacuumVolumeCommitResponse
+	VacuumVolumeCleanupRequest
+	VacuumVolumeCleanupResponse
 */
 package volume_server_pb
 
@@ -116,11 +124,131 @@ func (m *Empty) String() string            { return proto.CompactTextString(m) }
 func (*Empty) ProtoMessage()               {}
 func (*Empty) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{3} }
 
+type VacuumVolumeCheckRequest struct {
+	VolumdId uint32 `protobuf:"varint,1,opt,name=volumd_id,json=volumdId" json:"volumd_id,omitempty"`
+}
+
+func (m *VacuumVolumeCheckRequest) Reset()                    { *m = VacuumVolumeCheckRequest{} }
+func (m *VacuumVolumeCheckRequest) String() string            { return proto.CompactTextString(m) }
+func (*VacuumVolumeCheckRequest) ProtoMessage()               {}
+func (*VacuumVolumeCheckRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{4} }
+
+func (m *VacuumVolumeCheckRequest) GetVolumdId() uint32 {
+	if m != nil {
+		return m.VolumdId
+	}
+	return 0
+}
+
+type VacuumVolumeCheckResponse struct {
+	GarbageRatio float64 `protobuf:"fixed64,1,opt,name=garbage_ratio,json=garbageRatio" json:"garbage_ratio,omitempty"`
+}
+
+func (m *VacuumVolumeCheckResponse) Reset()                    { *m = VacuumVolumeCheckResponse{} }
+func (m *VacuumVolumeCheckResponse) String() string            { return proto.CompactTextString(m) }
+func (*VacuumVolumeCheckResponse) ProtoMessage()               {}
+func (*VacuumVolumeCheckResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{5} }
+
+func (m *VacuumVolumeCheckResponse) GetGarbageRatio() float64 {
+	if m != nil {
+		return m.GarbageRatio
+	}
+	return 0
+}
+
+type VacuumVolumeCompactRequest struct {
+	VolumdId    uint32 `protobuf:"varint,1,opt,name=volumd_id,json=volumdId" json:"volumd_id,omitempty"`
+	Preallocate int64  `protobuf:"varint,2,opt,name=preallocate" json:"preallocate,omitempty"`
+}
+
+func (m *VacuumVolumeCompactRequest) Reset()                    { *m = VacuumVolumeCompactRequest{} }
+func (m *VacuumVolumeCompactRequest) String() string            { return proto.CompactTextString(m) }
+func (*VacuumVolumeCompactRequest) ProtoMessage()               {}
+func (*VacuumVolumeCompactRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{6} }
+
+func (m *VacuumVolumeCompactRequest) GetVolumdId() uint32 {
+	if m != nil {
+		return m.VolumdId
+	}
+	return 0
+}
+
+func (m *VacuumVolumeCompactRequest) GetPreallocate() int64 {
+	if m != nil {
+		return m.Preallocate
+	}
+	return 0
+}
+
+type VacuumVolumeCompactResponse struct {
+}
+
+func (m *VacuumVolumeCompactResponse) Reset()                    { *m = VacuumVolumeCompactResponse{} }
+func (m *VacuumVolumeCompactResponse) String() string            { return proto.CompactTextString(m) }
+func (*VacuumVolumeCompactResponse) ProtoMessage()               {}
+func (*VacuumVolumeCompactResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{7} }
+
+type VacuumVolumeCommitRequest struct {
+	VolumdId uint32 `protobuf:"varint,1,opt,name=volumd_id,json=volumdId" json:"volumd_id,omitempty"`
+}
+
+func (m *VacuumVolumeCommitRequest) Reset()                    { *m = VacuumVolumeCommitRequest{} }
+func (m *VacuumVolumeCommitRequest) String() string            { return proto.CompactTextString(m) }
+func (*VacuumVolumeCommitRequest) ProtoMessage()               {}
+func (*VacuumVolumeCommitRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{8} }
+
+func (m *VacuumVolumeCommitRequest) GetVolumdId() uint32 {
+	if m != nil {
+		return m.VolumdId
+	}
+	return 0
+}
+
+type VacuumVolumeCommitResponse struct {
+}
+
+func (m *VacuumVolumeCommitResponse) Reset()                    { *m = VacuumVolumeCommitResponse{} }
+func (m *VacuumVolumeCommitResponse) String() string            { return proto.CompactTextString(m) }
+func (*VacuumVolumeCommitResponse) ProtoMessage()               {}
+func (*VacuumVolumeCommitResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{9} }
+
+type VacuumVolumeCleanupRequest struct {
+	VolumdId uint32 `protobuf:"varint,1,opt,name=volumd_id,json=volumdId" json:"volumd_id,omitempty"`
+}
+
+func (m *VacuumVolumeCleanupRequest) Reset()                    { *m = VacuumVolumeCleanupRequest{} }
+func (m *VacuumVolumeCleanupRequest) String() string            { return proto.CompactTextString(m) }
+func (*VacuumVolumeCleanupRequest) ProtoMessage()               {}
+func (*VacuumVolumeCleanupRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{10} }
+
+func (m *VacuumVolumeCleanupRequest) GetVolumdId() uint32 {
+	if m != nil {
+		return m.VolumdId
+	}
+	return 0
+}
+
+type VacuumVolumeCleanupResponse struct {
+}
+
+func (m *VacuumVolumeCleanupResponse) Reset()                    { *m = VacuumVolumeCleanupResponse{} }
+func (m *VacuumVolumeCleanupResponse) String() string            { return proto.CompactTextString(m) }
+func (*VacuumVolumeCleanupResponse) ProtoMessage()               {}
+func (*VacuumVolumeCleanupResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{11} }
+
 func init() {
 	proto.RegisterType((*BatchDeleteRequest)(nil), "volume_server_pb.BatchDeleteRequest")
 	proto.RegisterType((*BatchDeleteResponse)(nil), "volume_server_pb.BatchDeleteResponse")
 	proto.RegisterType((*DeleteResult)(nil), "volume_server_pb.DeleteResult")
 	proto.RegisterType((*Empty)(nil), "volume_server_pb.Empty")
+	proto.RegisterType((*VacuumVolumeCheckRequest)(nil), "volume_server_pb.VacuumVolumeCheckRequest")
+	proto.RegisterType((*VacuumVolumeCheckResponse)(nil), "volume_server_pb.VacuumVolumeCheckResponse")
+	proto.RegisterType((*VacuumVolumeCompactRequest)(nil), "volume_server_pb.VacuumVolumeCompactRequest")
+	proto.RegisterType((*VacuumVolumeCompactResponse)(nil), "volume_server_pb.VacuumVolumeCompactResponse")
+	proto.RegisterType((*VacuumVolumeCommitRequest)(nil), "volume_server_pb.VacuumVolumeCommitRequest")
+	proto.RegisterType((*VacuumVolumeCommitResponse)(nil), "volume_server_pb.VacuumVolumeCommitResponse")
+	proto.RegisterType((*VacuumVolumeCleanupRequest)(nil), "volume_server_pb.VacuumVolumeCleanupRequest")
+	proto.RegisterType((*VacuumVolumeCleanupResponse)(nil), "volume_server_pb.VacuumVolumeCleanupResponse")
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -136,6 +264,10 @@ const _ = grpc.SupportPackageIsVersion4
 type VolumeServerClient interface {
 	// Experts only: takes multiple fid parameters. This function does not propagate deletes to replicas.
 	BatchDelete(ctx context.Context, in *BatchDeleteRequest, opts ...grpc.CallOption) (*BatchDeleteResponse, error)
+	VacuumVolumeCheck(ctx context.Context, in *VacuumVolumeCheckRequest, opts ...grpc.CallOption) (*VacuumVolumeCheckResponse, error)
+	VacuumVolumeCompact(ctx context.Context, in *VacuumVolumeCompactRequest, opts ...grpc.CallOption) (*VacuumVolumeCompactResponse, error)
+	VacuumVolumeCommit(ctx context.Context, in *VacuumVolumeCommitRequest, opts ...grpc.CallOption) (*VacuumVolumeCommitResponse, error)
+	VacuumVolumeCleanup(ctx context.Context, in *VacuumVolumeCleanupRequest, opts ...grpc.CallOption) (*VacuumVolumeCleanupResponse, error)
 }
 
 type volumeServerClient struct {
@@ -155,11 +287,51 @@ func (c *volumeServerClient) BatchDelete(ctx context.Context, in *BatchDeleteReq
 	return out, nil
 }
 
+func (c *volumeServerClient) VacuumVolumeCheck(ctx context.Context, in *VacuumVolumeCheckRequest, opts ...grpc.CallOption) (*VacuumVolumeCheckResponse, error) {
+	out := new(VacuumVolumeCheckResponse)
+	err := grpc.Invoke(ctx, "/volume_server_pb.VolumeServer/VacuumVolumeCheck", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) VacuumVolumeCompact(ctx context.Context, in *VacuumVolumeCompactRequest, opts ...grpc.CallOption) (*VacuumVolumeCompactResponse, error) {
+	out := new(VacuumVolumeCompactResponse)
+	err := grpc.Invoke(ctx, "/volume_server_pb.VolumeServer/VacuumVolumeCompact", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) VacuumVolumeCommit(ctx context.Context, in *VacuumVolumeCommitRequest, opts ...grpc.CallOption) (*VacuumVolumeCommitResponse, error) {
+	out := new(VacuumVolumeCommitResponse)
+	err := grpc.Invoke(ctx, "/volume_server_pb.VolumeServer/VacuumVolumeCommit", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) VacuumVolumeCleanup(ctx context.Context, in *VacuumVolumeCleanupRequest, opts ...grpc.CallOption) (*VacuumVolumeCleanupResponse, error) {
+	out := new(VacuumVolumeCleanupResponse)
+	err := grpc.Invoke(ctx, "/volume_server_pb.VolumeServer/VacuumVolumeCleanup", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Server API for VolumeServer service
 
 type VolumeServerServer interface {
 	// Experts only: takes multiple fid parameters. This function does not propagate deletes to replicas.
 	BatchDelete(context.Context, *BatchDeleteRequest) (*BatchDeleteResponse, error)
+	VacuumVolumeCheck(context.Context, *VacuumVolumeCheckRequest) (*VacuumVolumeCheckResponse, error)
+	VacuumVolumeCompact(context.Context, *VacuumVolumeCompactRequest) (*VacuumVolumeCompactResponse, error)
+	VacuumVolumeCommit(context.Context, *VacuumVolumeCommitRequest) (*VacuumVolumeCommitResponse, error)
+	VacuumVolumeCleanup(context.Context, *VacuumVolumeCleanupRequest) (*VacuumVolumeCleanupResponse, error)
 }
 
 func RegisterVolumeServerServer(s *grpc.Server, srv VolumeServerServer) {
@@ -184,6 +356,78 @@ func _VolumeServer_BatchDelete_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VolumeServer_VacuumVolumeCheck_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VacuumVolumeCheckRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).VacuumVolumeCheck(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/VacuumVolumeCheck",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).VacuumVolumeCheck(ctx, req.(*VacuumVolumeCheckRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_VacuumVolumeCompact_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VacuumVolumeCompactRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).VacuumVolumeCompact(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/VacuumVolumeCompact",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).VacuumVolumeCompact(ctx, req.(*VacuumVolumeCompactRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_VacuumVolumeCommit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VacuumVolumeCommitRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).VacuumVolumeCommit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/VacuumVolumeCommit",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).VacuumVolumeCommit(ctx, req.(*VacuumVolumeCommitRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_VacuumVolumeCleanup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VacuumVolumeCleanupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).VacuumVolumeCleanup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/VacuumVolumeCleanup",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).VacuumVolumeCleanup(ctx, req.(*VacuumVolumeCleanupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _VolumeServer_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "volume_server_pb.VolumeServer",
 	HandlerType: (*VolumeServerServer)(nil),
@@ -191,6 +435,22 @@ var _VolumeServer_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BatchDelete",
 			Handler:    _VolumeServer_BatchDelete_Handler,
+		},
+		{
+			MethodName: "VacuumVolumeCheck",
+			Handler:    _VolumeServer_VacuumVolumeCheck_Handler,
+		},
+		{
+			MethodName: "VacuumVolumeCompact",
+			Handler:    _VolumeServer_VacuumVolumeCompact_Handler,
+		},
+		{
+			MethodName: "VacuumVolumeCommit",
+			Handler:    _VolumeServer_VacuumVolumeCommit_Handler,
+		},
+		{
+			MethodName: "VacuumVolumeCleanup",
+			Handler:    _VolumeServer_VacuumVolumeCleanup_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -200,21 +460,34 @@ var _VolumeServer_serviceDesc = grpc.ServiceDesc{
 func init() { proto.RegisterFile("volume_server.proto", fileDescriptor0) }
 
 var fileDescriptor0 = []byte{
-	// 252 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x84, 0x50, 0xc1, 0x4a, 0xc3, 0x40,
-	0x10, 0x75, 0x6d, 0x93, 0xd8, 0x69, 0x05, 0x99, 0x8a, 0xae, 0x1e, 0x24, 0x2c, 0x0a, 0x39, 0x45,
-	0xa8, 0x17, 0xcf, 0xa2, 0x07, 0x4f, 0xc2, 0x0a, 0x9e, 0x84, 0xd0, 0xda, 0x11, 0x03, 0x5b, 0x37,
-	0xee, 0xec, 0x16, 0xf4, 0xeb, 0xc5, 0x4d, 0x95, 0xd6, 0x1c, 0x7a, 0x9b, 0x37, 0xf3, 0x1e, 0xef,
-	0xcd, 0x83, 0xf1, 0xd2, 0x9a, 0xb0, 0xa0, 0x8a, 0xc9, 0x2d, 0xc9, 0x95, 0x8d, 0xb3, 0xde, 0xe2,
-	0xc1, 0xc6, 0xb2, 0x6a, 0x66, 0xea, 0x12, 0xf0, 0x66, 0xea, 0x5f, 0xde, 0x6e, 0xc9, 0x90, 0x27,
-	0x4d, 0x1f, 0x81, 0xd8, 0xe3, 0x09, 0xec, 0xbd, 0xd6, 0x86, 0xaa, 0x7a, 0xce, 0x52, 0xe4, 0xbd,
-	0x62, 0xa0, 0xb3, 0x1f, 0x7c, 0x3f, 0x67, 0xf5, 0x00, 0xe3, 0x0d, 0x01, 0x37, 0xf6, 0x9d, 0x09,
-	0xaf, 0x21, 0x73, 0xc4, 0xc1, 0xf8, 0x56, 0x30, 0x9c, 0x9c, 0x95, 0xff, 0xbd, 0xca, 0x3f, 0x49,
-	0x30, 0x5e, 0xff, 0xd2, 0x55, 0x0d, 0xa3, 0xf5, 0x03, 0x1e, 0x43, 0xb6, 0xf2, 0x96, 0x22, 0x17,
-	0xc5, 0x40, 0xa7, 0xad, 0x35, 0x1e, 0x41, 0xca, 0x7e, 0xea, 0x03, 0xcb, 0xdd, 0x5c, 0x14, 0x89,
-	0x5e, 0x21, 0x3c, 0x84, 0x84, 0x9c, 0xb3, 0x4e, 0xf6, 0x22, 0xbd, 0x05, 0x88, 0xd0, 0xe7, 0xfa,
-	0x8b, 0x64, 0x3f, 0x17, 0xc5, 0xbe, 0x8e, 0xb3, 0xca, 0x20, 0xb9, 0x5b, 0x34, 0xfe, 0x73, 0x62,
-	0x60, 0xf4, 0x14, 0xd3, 0x3d, 0xc6, 0x70, 0xf8, 0x0c, 0xc3, 0xb5, 0xa7, 0xf0, 0xbc, 0x9b, 0xbd,
-	0x5b, 0xd2, 0xe9, 0xc5, 0x16, 0x56, 0xdb, 0x8c, 0xda, 0x99, 0xa5, 0xb1, 0xfc, 0xab, 0xef, 0x00,
-	0x00, 0x00, 0xff, 0xff, 0xd3, 0x09, 0x3b, 0x59, 0x93, 0x01, 0x00, 0x00,
+	// 454 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x8c, 0x54, 0x4b, 0x6f, 0xd3, 0x40,
+	0x10, 0xae, 0xc9, 0xab, 0x99, 0x24, 0x12, 0x4c, 0x10, 0xb8, 0x2e, 0x20, 0x6b, 0x01, 0x29, 0xa2,
+	0x25, 0x48, 0xe5, 0x40, 0xb9, 0x21, 0x1e, 0x87, 0x9e, 0x90, 0x16, 0xa9, 0x17, 0x90, 0xa2, 0x8d,
+	0x33, 0xb4, 0x16, 0x76, 0xd6, 0xdd, 0x5d, 0x57, 0x82, 0xbf, 0xc6, 0x9f, 0x43, 0xdd, 0x75, 0x42,
+	0x1c, 0x27, 0xb2, 0x6f, 0xde, 0xd9, 0xf9, 0x1e, 0xb3, 0xf3, 0xc9, 0x30, 0xbe, 0x95, 0x49, 0x9e,
+	0xd2, 0x4c, 0x93, 0xba, 0x25, 0x35, 0xcd, 0x94, 0x34, 0x12, 0xef, 0x97, 0x8a, 0xb3, 0x6c, 0xce,
+	0xde, 0x00, 0x7e, 0x14, 0x26, 0xba, 0xfe, 0x4c, 0x09, 0x19, 0xe2, 0x74, 0x93, 0x93, 0x36, 0x78,
+	0x04, 0x87, 0x3f, 0xe3, 0x84, 0x66, 0xf1, 0x42, 0xfb, 0x5e, 0xd8, 0x9a, 0xf4, 0x79, 0xef, 0xee,
+	0x7c, 0xb1, 0xd0, 0xec, 0x2b, 0x8c, 0x4b, 0x00, 0x9d, 0xc9, 0xa5, 0x26, 0x3c, 0x87, 0x9e, 0x22,
+	0x9d, 0x27, 0xc6, 0x01, 0x06, 0x67, 0xcf, 0xa6, 0xdb, 0x5a, 0xd3, 0x35, 0x24, 0x4f, 0x0c, 0x5f,
+	0xb5, 0xb3, 0x18, 0x86, 0x9b, 0x17, 0xf8, 0x18, 0x7a, 0x85, 0xb6, 0xef, 0x85, 0xde, 0xa4, 0xcf,
+	0xbb, 0x4e, 0x1a, 0x1f, 0x41, 0x57, 0x1b, 0x61, 0x72, 0xed, 0xdf, 0x0b, 0xbd, 0x49, 0x87, 0x17,
+	0x27, 0x7c, 0x08, 0x1d, 0x52, 0x4a, 0x2a, 0xbf, 0x65, 0xdb, 0xdd, 0x01, 0x11, 0xda, 0x3a, 0xfe,
+	0x43, 0x7e, 0x3b, 0xf4, 0x26, 0x23, 0x6e, 0xbf, 0x59, 0x0f, 0x3a, 0x5f, 0xd2, 0xcc, 0xfc, 0x66,
+	0xef, 0xc0, 0xbf, 0x14, 0x51, 0x9e, 0xa7, 0x97, 0xd6, 0xe3, 0xa7, 0x6b, 0x8a, 0x7e, 0xad, 0x66,
+	0x3f, 0x86, 0xbe, 0x75, 0xbe, 0x58, 0x39, 0x18, 0xf1, 0x43, 0x57, 0xb8, 0x58, 0xb0, 0x0f, 0x70,
+	0xb4, 0x03, 0x58, 0xbc, 0xc1, 0x73, 0x18, 0x5d, 0x09, 0x35, 0x17, 0x57, 0x34, 0x53, 0xc2, 0xc4,
+	0xd2, 0xa2, 0x3d, 0x3e, 0x2c, 0x8a, 0xfc, 0xae, 0xc6, 0xbe, 0x43, 0x50, 0x62, 0x90, 0x69, 0x26,
+	0x22, 0xd3, 0x44, 0x1c, 0x43, 0x18, 0x64, 0x8a, 0x44, 0x92, 0xc8, 0x48, 0x18, 0xb2, 0xaf, 0xd0,
+	0xe2, 0x9b, 0x25, 0xf6, 0x14, 0x8e, 0x77, 0x92, 0x3b, 0x83, 0xec, 0x7c, 0xcb, 0xbd, 0x4c, 0xd3,
+	0xb8, 0x91, 0x34, 0x7b, 0x52, 0x71, 0x6d, 0x91, 0x05, 0xef, 0xfb, 0xad, 0xdb, 0x84, 0xc4, 0x32,
+	0xcf, 0x1a, 0x11, 0x6f, 0x3b, 0x5e, 0x41, 0x1d, 0xf3, 0xd9, 0xdf, 0x36, 0x0c, 0xdd, 0xcd, 0x37,
+	0x1b, 0x23, 0xfc, 0x01, 0x83, 0x8d, 0xf8, 0xe1, 0x8b, 0x6a, 0xca, 0xaa, 0x71, 0x0e, 0x5e, 0xd6,
+	0x74, 0x15, 0x63, 0x1c, 0xe0, 0x12, 0x1e, 0x54, 0xd6, 0x8b, 0xaf, 0xaa, 0xe8, 0x7d, 0xe1, 0x09,
+	0x4e, 0x1a, 0xf5, 0xae, 0xf5, 0x0c, 0x8c, 0x77, 0xec, 0x0b, 0x4f, 0x6b, 0x58, 0x4a, 0x99, 0x09,
+	0x5e, 0x37, 0xec, 0x5e, 0xab, 0xde, 0x00, 0x56, 0x97, 0x89, 0x27, 0xb5, 0x34, 0xff, 0xc3, 0x12,
+	0x9c, 0x36, 0x6b, 0xde, 0x3b, 0xa8, 0x5b, 0x73, 0xed, 0xa0, 0xa5, 0x20, 0xd5, 0x0e, 0x5a, 0xce,
+	0x0e, 0x3b, 0x98, 0x77, 0xed, 0x5f, 0xef, 0xed, 0xbf, 0x00, 0x00, 0x00, 0xff, 0xff, 0x13, 0x2b,
+	0x80, 0x54, 0x0c, 0x05, 0x00, 0x00,
 }

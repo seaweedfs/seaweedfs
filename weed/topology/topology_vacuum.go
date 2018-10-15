@@ -1,28 +1,33 @@
 package topology
 
 import (
-	"encoding/json"
-	"errors"
-	"net/url"
+	"context"
 	"time"
 
-	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func batchVacuumVolumeCheck(vl *VolumeLayout, vid storage.VolumeId, locationlist *VolumeLocationList, garbageThreshold string) bool {
+func batchVacuumVolumeCheck(vl *VolumeLayout, vid storage.VolumeId, locationlist *VolumeLocationList, garbageThreshold float64) bool {
 	ch := make(chan bool, locationlist.Length())
 	for index, dn := range locationlist.list {
 		go func(index int, url string, vid storage.VolumeId) {
-			//glog.V(0).Infoln(index, "Check vacuuming", vid, "on", dn.Url())
-			if e, ret := vacuumVolume_Check(url, vid, garbageThreshold); e != nil {
-				//glog.V(0).Infoln(index, "Error when checking vacuuming", vid, "on", url, e)
-				ch <- false
-			} else {
-				//glog.V(0).Infoln(index, "Checked vacuuming", vid, "on", url, "needVacuum", ret)
-				ch <- ret
+			err := operation.WithVolumeServerClient(url, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+				resp, err := volumeServerClient.VacuumVolumeCheck(context.Background(), &volume_server_pb.VacuumVolumeCheckRequest{
+					VolumdId: uint32(vid),
+				})
+				if err != nil {
+					ch <- false
+					return err
+				}
+				isNeeded := resp.GarbageRatio > garbageThreshold
+				ch <- isNeeded
+				return nil
+			})
+			if err != nil {
+				glog.V(0).Infof("Checking vacuuming %d on %s: %v", vid, url, err)
 			}
 		}(index, dn.Url(), vid)
 	}
@@ -44,11 +49,17 @@ func batchVacuumVolumeCompact(vl *VolumeLayout, vid storage.VolumeId, locationli
 	for index, dn := range locationlist.list {
 		go func(index int, url string, vid storage.VolumeId) {
 			glog.V(0).Infoln(index, "Start vacuuming", vid, "on", url)
-			if e := vacuumVolume_Compact(url, vid, preallocate); e != nil {
-				glog.V(0).Infoln(index, "Error when vacuuming", vid, "on", url, e)
+			err := operation.WithVolumeServerClient(url, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+				_, err := volumeServerClient.VacuumVolumeCompact(context.Background(), &volume_server_pb.VacuumVolumeCompactRequest{
+					VolumdId: uint32(vid),
+				})
+				return err
+			})
+			if err != nil {
+				glog.Errorf("Error when vacuuming %d on %s: %v", vid, url, err)
 				ch <- false
 			} else {
-				glog.V(0).Infoln(index, "Complete vacuuming", vid, "on", url)
+				glog.V(0).Infof("Complete vacuuming %d on %s", vid, url)
 				ch <- true
 			}
 		}(index, dn.Url(), vid)
@@ -69,11 +80,17 @@ func batchVacuumVolumeCommit(vl *VolumeLayout, vid storage.VolumeId, locationlis
 	isCommitSuccess := true
 	for _, dn := range locationlist.list {
 		glog.V(0).Infoln("Start Commiting vacuum", vid, "on", dn.Url())
-		if e := vacuumVolume_Commit(dn.Url(), vid); e != nil {
-			glog.V(0).Infoln("Error when committing vacuum", vid, "on", dn.Url(), e)
+		err := operation.WithVolumeServerClient(dn.Url(), func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+			_, err := volumeServerClient.VacuumVolumeCommit(context.Background(), &volume_server_pb.VacuumVolumeCommitRequest{
+				VolumdId: uint32(vid),
+			})
+			return err
+		})
+		if err != nil {
+			glog.Errorf("Error when committing vacuum %d on %s: %v", vid, dn.Url(), err)
 			isCommitSuccess = false
 		} else {
-			glog.V(0).Infoln("Complete Commiting vacuum", vid, "on", dn.Url())
+			glog.V(0).Infof("Complete Commiting vacuum %d on %s", vid, dn.Url())
 		}
 		if isCommitSuccess {
 			vl.SetVolumeAvailable(dn, vid)
@@ -84,16 +101,22 @@ func batchVacuumVolumeCommit(vl *VolumeLayout, vid storage.VolumeId, locationlis
 func batchVacuumVolumeCleanup(vl *VolumeLayout, vid storage.VolumeId, locationlist *VolumeLocationList) {
 	for _, dn := range locationlist.list {
 		glog.V(0).Infoln("Start cleaning up", vid, "on", dn.Url())
-		if e := vacuumVolume_Cleanup(dn.Url(), vid); e != nil {
-			glog.V(0).Infoln("Error when cleaning up", vid, "on", dn.Url(), e)
+		err := operation.WithVolumeServerClient(dn.Url(), func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+			_, err := volumeServerClient.VacuumVolumeCleanup(context.Background(), &volume_server_pb.VacuumVolumeCleanupRequest{
+				VolumdId: uint32(vid),
+			})
+			return err
+		})
+		if err != nil {
+			glog.Errorf("Error when cleaning up vacuum %d on %s: %v", vid, dn.Url(), err)
 		} else {
-			glog.V(0).Infoln("Complete cleaning up", vid, "on", dn.Url())
+			glog.V(0).Infof("Complete cleaning up vacuum %d on %s", vid, dn.Url())
 		}
 	}
 }
 
-func (t *Topology) Vacuum(garbageThreshold string, preallocate int64) int {
-	glog.V(0).Infof("Start vacuum on demand with threshold:%s", garbageThreshold)
+func (t *Topology) Vacuum(garbageThreshold float64, preallocate int64) int {
+	glog.V(0).Infof("Start vacuum on demand with threshold: %f", garbageThreshold)
 	for _, col := range t.collectionMap.Items() {
 		c := col.(*Collection)
 		for _, vl := range c.storageType2VolumeLayout.Items() {
@@ -125,72 +148,4 @@ func (t *Topology) Vacuum(garbageThreshold string, preallocate int64) int {
 type VacuumVolumeResult struct {
 	Result bool
 	Error  string
-}
-
-func vacuumVolume_Check(urlLocation string, vid storage.VolumeId, garbageThreshold string) (error, bool) {
-	values := make(url.Values)
-	values.Add("volume", vid.String())
-	values.Add("garbageThreshold", garbageThreshold)
-	jsonBlob, err := util.Post("http://"+urlLocation+"/admin/vacuum/check", values)
-	if err != nil {
-		glog.V(0).Infoln("parameters:", values)
-		return err, false
-	}
-	var ret VacuumVolumeResult
-	if err := json.Unmarshal(jsonBlob, &ret); err != nil {
-		return err, false
-	}
-	if ret.Error != "" {
-		return errors.New(ret.Error), false
-	}
-	return nil, ret.Result
-}
-func vacuumVolume_Compact(urlLocation string, vid storage.VolumeId, preallocate int64) error {
-	values := make(url.Values)
-	values.Add("volume", vid.String())
-	values.Add("preallocate", fmt.Sprintf("%d", preallocate))
-	jsonBlob, err := util.Post("http://"+urlLocation+"/admin/vacuum/compact", values)
-	if err != nil {
-		return err
-	}
-	var ret VacuumVolumeResult
-	if err := json.Unmarshal(jsonBlob, &ret); err != nil {
-		return err
-	}
-	if ret.Error != "" {
-		return errors.New(ret.Error)
-	}
-	return nil
-}
-func vacuumVolume_Commit(urlLocation string, vid storage.VolumeId) error {
-	values := make(url.Values)
-	values.Add("volume", vid.String())
-	jsonBlob, err := util.Post("http://"+urlLocation+"/admin/vacuum/commit", values)
-	if err != nil {
-		return err
-	}
-	var ret VacuumVolumeResult
-	if err := json.Unmarshal(jsonBlob, &ret); err != nil {
-		return err
-	}
-	if ret.Error != "" {
-		return errors.New(ret.Error)
-	}
-	return nil
-}
-func vacuumVolume_Cleanup(urlLocation string, vid storage.VolumeId) error {
-	values := make(url.Values)
-	values.Add("volume", vid.String())
-	jsonBlob, err := util.Post("http://"+urlLocation+"/admin/vacuum/cleanup", values)
-	if err != nil {
-		return err
-	}
-	var ret VacuumVolumeResult
-	if err := json.Unmarshal(jsonBlob, &ret); err != nil {
-		return err
-	}
-	if ret.Error != "" {
-		return errors.New(ret.Error)
-	}
-	return nil
 }

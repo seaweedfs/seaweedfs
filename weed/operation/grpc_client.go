@@ -11,7 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func withVolumeServerClient(volumeServer string, fn func(volume_server_pb.VolumeServerClient) error) error {
+func WithVolumeServerClient(volumeServer string, fn func(volume_server_pb.VolumeServerClient) error) error {
 
 	grpcAddress, err := toVolumeServerGrpcAddress(volumeServer)
 	if err != nil {
