@@ -46,3 +46,35 @@ func (vs *VolumeServer) AssignVolume(ctx context.Context, req *volume_server_pb.
 	return resp, err
 
 }
+
+func (vs *VolumeServer) VolumeMount(ctx context.Context, req *volume_server_pb.VolumeMountRequest) (*volume_server_pb.VolumeMountResponse, error) {
+
+	resp := &volume_server_pb.VolumeMountResponse{}
+
+	err := vs.store.MountVolume(storage.VolumeId(req.VolumdId))
+
+	if err != nil {
+		glog.Errorf("volume mount %v: %v", req, err)
+	} else {
+		glog.V(2).Infof("volume mount %v", req)
+	}
+
+	return resp, err
+
+}
+
+func (vs *VolumeServer) VolumeUnmount(ctx context.Context, req *volume_server_pb.VolumeUnmountRequest) (*volume_server_pb.VolumeUnmountResponse, error) {
+
+	resp := &volume_server_pb.VolumeUnmountResponse{}
+
+	err := vs.store.UnmountVolume(storage.VolumeId(req.VolumdId))
+
+	if err != nil {
+		glog.Errorf("volume unmount %v: %v", req, err)
+	} else {
+		glog.V(2).Infof("volume unmount %v", req)
+	}
+
+	return resp, err
+
+}

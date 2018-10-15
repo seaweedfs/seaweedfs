@@ -23,6 +23,12 @@ service VolumeServer {
     }
     rpc VolumeSyncStatus (VolumeSyncStatusRequest) returns (VolumeSyncStatusResponse) {
     }
+
+    rpc VolumeMount (VolumeMountRequest) returns (VolumeMountResponse) {
+    }
+    rpc VolumeUnmount (VolumeUnmountRequest) returns (VolumeUnmountResponse) {
+    }
+
 }
 
 //////////////////////////////////////////////////
@@ -96,4 +102,16 @@ message VolumeSyncStatusResponse {
     uint64 tail_offset = 6;
     uint32 compact_revision = 7;
     uint64 idx_file_size = 8;
+}
+
+message VolumeMountRequest {
+    uint32 volumd_id = 1;
+}
+message VolumeMountResponse {
+}
+
+message VolumeUnmountRequest {
+    uint32 volumd_id = 1;
+}
+message VolumeUnmountResponse {
 }
