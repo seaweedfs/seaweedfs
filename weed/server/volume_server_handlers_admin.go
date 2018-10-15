@@ -45,16 +45,6 @@ func (vs *VolumeServer) assignVolumeHandler(w http.ResponseWriter, r *http.Reque
 		r.FormValue("volume"), r.FormValue("collection"), r.FormValue("replication"), err)
 }
 
-func (vs *VolumeServer) deleteCollectionHandler(w http.ResponseWriter, r *http.Request) {
-	err := vs.store.DeleteCollection(r.FormValue("collection"))
-	if err == nil {
-		writeJsonQuiet(w, r, http.StatusOK, map[string]string{"error": ""})
-	} else {
-		writeJsonError(w, r, http.StatusInternalServerError, err)
-	}
-	glog.V(2).Infof("deleting collection = %s, error = %v", r.FormValue("collection"), err)
-}
-
 func (vs *VolumeServer) statsDiskHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION

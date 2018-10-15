@@ -16,6 +16,8 @@ service VolumeServer {
     }
     rpc VacuumVolumeCleanup (VacuumVolumeCleanupRequest) returns (VacuumVolumeCleanupResponse) {
     }
+    rpc DeleteCollection (DeleteCollectionRequest) returns (DeleteCollectionResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -61,4 +63,10 @@ message VacuumVolumeCleanupRequest {
     uint32 volumd_id = 1;
 }
 message VacuumVolumeCleanupResponse {
+}
+
+message DeleteCollectionRequest {
+    string collection = 1;
+}
+message DeleteCollectionResponse {
 }

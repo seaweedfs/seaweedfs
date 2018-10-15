@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -8,6 +9,8 @@ import (
 	"strconv"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -20,7 +23,13 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	for _, server := range collection.ListVolumeServers() {
-		_, err := util.Get("http://" + server.Ip + ":" + strconv.Itoa(server.Port) + "/admin/delete_collection?collection=" + r.FormValue("collection"))
+		serverAddress := fmt.Sprintf("%s:%d", server.Ip, server.Port)
+		err := operation.WithVolumeServerClient(serverAddress, func(client volume_server_pb.VolumeServerClient) error {
+			_, deleteErr := client.DeleteCollection(context.Background(), &volume_server_pb.DeleteCollectionRequest{
+				Collection: collection.Name,
+			})
+			return deleteErr
+		})
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 			return
