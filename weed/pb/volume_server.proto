@@ -21,6 +21,8 @@ service VolumeServer {
     }
     rpc AssignVolume (AssignVolumeRequest) returns (AssignVolumeResponse) {
     }
+    rpc VolumeSyncStatus (VolumeSyncStatusRequest) returns (VolumeSyncStatusResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -82,4 +84,16 @@ message AssignVolumeRequest {
     string ttl = 5;
 }
 message AssignVolumeResponse {
+}
+
+message VolumeSyncStatusRequest {
+    uint32 volumd_id = 1;
+}
+message VolumeSyncStatusResponse {
+    uint32 volumd_id = 1;
+    string replication = 4;
+    string ttl = 5;
+    uint64 tail_offset = 6;
+    uint32 compact_revision = 7;
+    uint64 idx_file_size = 8;
 }

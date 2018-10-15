@@ -1,41 +1,24 @@
 package operation
 
 import (
-	"encoding/json"
-	"fmt"
+	"context"
 	"net/url"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-type SyncVolumeResponse struct {
-	Replication     string `json:"Replication,omitempty"`
-	Ttl             string `json:"Ttl,omitempty"`
-	TailOffset      uint64 `json:"TailOffset,omitempty"`
-	CompactRevision uint16 `json:"CompactRevision,omitempty"`
-	IdxFileSize     uint64 `json:"IdxFileSize,omitempty"`
-	Error           string `json:"error,omitempty"`
-}
+func GetVolumeSyncStatus(server string, vid uint32) (resp *volume_server_pb.VolumeSyncStatusResponse, err error) {
 
-func GetVolumeSyncStatus(server string, vid string) (*SyncVolumeResponse, error) {
-	values := make(url.Values)
-	values.Add("volume", vid)
-	jsonBlob, err := util.Post("http://"+server+"/admin/sync/status", values)
-	glog.V(2).Info("sync volume result :", string(jsonBlob))
-	if err != nil {
-		return nil, err
-	}
-	var ret SyncVolumeResponse
-	err = json.Unmarshal(jsonBlob, &ret)
-	if err != nil {
-		return nil, err
-	}
-	if ret.Error != "" {
-		return nil, fmt.Errorf("Volume %s get sync status error: %s", vid, ret.Error)
-	}
-	return &ret, nil
+	WithVolumeServerClient(server, func(client volume_server_pb.VolumeServerClient) error {
+		resp, err = client.VolumeSyncStatus(context.Background(), &volume_server_pb.VolumeSyncStatusRequest{
+			VolumdId: vid,
+		})
+		return nil
+	})
+
+	return
 }
 
 func GetVolumeIdxEntries(server string, vid string, eachEntryFn func(key NeedleId, offset Offset, size uint32)) error {

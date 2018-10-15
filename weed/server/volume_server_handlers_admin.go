@@ -2,11 +2,11 @@ package weed_server
 
 import (
 	"fmt"
-	"net/http"
-	"path/filepath"
-			"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"net/http"
+	"path/filepath"
 )
 
 func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {
@@ -29,6 +29,7 @@ func (vs *VolumeServer) statsDiskHandler(w http.ResponseWriter, r *http.Request)
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
 
+// TODO delete this when volume sync is all moved to grpc
 func (vs *VolumeServer) getVolume(volumeParameterName string, r *http.Request) (*storage.Volume, error) {
 	vid, err := vs.getVolumeId(volumeParameterName, r)
 	if err != nil {

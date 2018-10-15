@@ -11,6 +11,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -142,7 +143,7 @@ func (v *Volume) trySynchronizing(volumeServer string, masterMap *needle.Compact
 func fetchVolumeFileEntries(volumeServer string, vid VolumeId) (m *needle.CompactMap, lastOffset uint64, compactRevision uint16, err error) {
 	m = needle.NewCompactMap()
 
-	syncStatus, err := operation.GetVolumeSyncStatus(volumeServer, vid.String())
+	syncStatus, err := operation.GetVolumeSyncStatus(volumeServer, uint32(vid))
 	if err != nil {
 		return m, 0, 0, err
 	}
@@ -159,17 +160,17 @@ func fetchVolumeFileEntries(volumeServer string, vid VolumeId) (m *needle.Compac
 	})
 
 	glog.V(2).Infof("server %s volume %d, entries %d, last offset %d, revision %d", volumeServer, vid, total, syncStatus.TailOffset, syncStatus.CompactRevision)
-	return m, syncStatus.TailOffset, syncStatus.CompactRevision, err
+	return m, syncStatus.TailOffset, uint16(syncStatus.CompactRevision), err
 
 }
 
-func (v *Volume) GetVolumeSyncStatus() operation.SyncVolumeResponse {
-	var syncStatus = operation.SyncVolumeResponse{}
+func (v *Volume) GetVolumeSyncStatus() *volume_server_pb.VolumeSyncStatusResponse {
+	var syncStatus = &volume_server_pb.VolumeSyncStatusResponse{}
 	if stat, err := v.dataFile.Stat(); err == nil {
 		syncStatus.TailOffset = uint64(stat.Size())
 	}
 	syncStatus.IdxFileSize = v.nm.IndexFileSize()
-	syncStatus.CompactRevision = v.SuperBlock.CompactRevision
+	syncStatus.CompactRevision = uint32(v.SuperBlock.CompactRevision)
 	syncStatus.Ttl = v.SuperBlock.Ttl.String()
 	syncStatus.Replication = v.SuperBlock.ReplicaPlacement.String()
 	return syncStatus

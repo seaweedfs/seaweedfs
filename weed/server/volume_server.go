@@ -47,7 +47,6 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	handleStaticResources(adminMux)
 	adminMux.HandleFunc("/ui/index.html", vs.uiStatusHandler)
 	adminMux.HandleFunc("/status", vs.guard.WhiteList(vs.statusHandler))
-	adminMux.HandleFunc("/admin/sync/status", vs.guard.WhiteList(vs.getVolumeSyncStatusHandler))
 	adminMux.HandleFunc("/admin/sync/index", vs.guard.WhiteList(vs.getVolumeIndexContentHandler))
 	adminMux.HandleFunc("/admin/sync/data", vs.guard.WhiteList(vs.getVolumeDataContentHandler))
 	adminMux.HandleFunc("/admin/volume/mount", vs.guard.WhiteList(vs.getVolumeMountHandler))

@@ -3,9 +3,9 @@ package topology
 import (
 	"context"
 
-	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage"
 )
 
 type AllocateVolumeResult struct {

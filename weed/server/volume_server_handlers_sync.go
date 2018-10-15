@@ -4,26 +4,10 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
-
-func (vs *VolumeServer) getVolumeSyncStatusHandler(w http.ResponseWriter, r *http.Request) {
-	v, err := vs.getVolume("volume", r)
-	if v == nil {
-		writeJsonError(w, r, http.StatusBadRequest, err)
-		return
-	}
-	syncStat := v.GetVolumeSyncStatus()
-	if syncStat.Error != "" {
-		writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Get Volume %d status error: %s", v.Id, syncStat.Error))
-		glog.V(2).Infoln("getVolumeSyncStatusHandler volume =", r.FormValue("volume"), ", error =", err)
-	} else {
-		writeJsonQuiet(w, r, http.StatusOK, syncStat)
-	}
-}
 
 func (vs *VolumeServer) getVolumeIndexContentHandler(w http.ResponseWriter, r *http.Request) {
 	v, err := vs.getVolume("volume", r)
