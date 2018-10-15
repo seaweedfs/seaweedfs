@@ -17,7 +17,7 @@ func (vs *VolumeServer) VacuumVolumeCheck(ctx context.Context, req *volume_serve
 	resp.GarbageRatio = garbageRatio
 
 	if err != nil {
-		glog.V(3).Infof("check volume %d: %f", req.VolumdId, err)
+		glog.V(3).Infof("check volume %d: %v", req.VolumdId, err)
 	}
 
 	return resp, err
@@ -31,7 +31,7 @@ func (vs *VolumeServer) VacuumVolumeCompact(ctx context.Context, req *volume_ser
 	err := vs.store.CompactVolume(storage.VolumeId(req.VolumdId), req.Preallocate)
 
 	if err != nil {
-		glog.Errorf("compact volume %d: %f", req.VolumdId, err)
+		glog.Errorf("compact volume %d: %v", req.VolumdId, err)
 	} else {
 		glog.V(1).Infof("compact volume %d", req.VolumdId)
 	}
@@ -47,7 +47,7 @@ func (vs *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_serv
 	err := vs.store.CommitCompactVolume(storage.VolumeId(req.VolumdId))
 
 	if err != nil {
-		glog.Errorf("commit volume %d: %f", req.VolumdId, err)
+		glog.Errorf("commit volume %d: %v", req.VolumdId, err)
 	} else {
 		glog.V(1).Infof("commit volume %d", req.VolumdId)
 	}
@@ -63,7 +63,7 @@ func (vs *VolumeServer) VacuumVolumeCleanup(ctx context.Context, req *volume_ser
 	err := vs.store.CommitCleanupVolume(storage.VolumeId(req.VolumdId))
 
 	if err != nil {
-		glog.Errorf("cleanup volume %d: %f", req.VolumdId, err)
+		glog.Errorf("cleanup volume %d: %v", req.VolumdId, err)
 	} else {
 		glog.V(1).Infof("cleanup volume %d", req.VolumdId)
 	}
