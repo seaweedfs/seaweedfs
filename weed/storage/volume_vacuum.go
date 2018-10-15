@@ -270,7 +270,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 					return fmt.Errorf("cannot append needle: %s", err)
 				}
 				new_offset += n.DiskSize(version)
-				glog.V(3).Infoln("saving key", n.Id, "volume offset", offset, "=>", new_offset, "data_size", n.Size)
+				glog.V(4).Infoln("saving key", n.Id, "volume offset", offset, "=>", new_offset, "data_size", n.Size)
 			}
 			return nil
 		})
