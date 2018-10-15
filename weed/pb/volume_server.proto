@@ -16,7 +16,10 @@ service VolumeServer {
     }
     rpc VacuumVolumeCleanup (VacuumVolumeCleanupRequest) returns (VacuumVolumeCleanupResponse) {
     }
+
     rpc DeleteCollection (DeleteCollectionRequest) returns (DeleteCollectionResponse) {
+    }
+    rpc AssignVolume (AssignVolumeRequest) returns (AssignVolumeResponse) {
     }
 }
 
@@ -69,4 +72,14 @@ message DeleteCollectionRequest {
     string collection = 1;
 }
 message DeleteCollectionResponse {
+}
+
+message AssignVolumeRequest {
+    uint32 volumd_id = 1;
+    string collection = 2;
+    int64 preallocate = 3;
+    string replication = 4;
+    string ttl = 5;
+}
+message AssignVolumeResponse {
 }

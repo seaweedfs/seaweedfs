@@ -2,9 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
@@ -49,7 +46,7 @@ func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts
 	s.DeletedVolumeIdChan = make(chan VolumeId, 3)
 	return
 }
-func (s *Store) AddVolume(volumeListString string, collection string, needleMapKind NeedleMapType, replicaPlacement string, ttlString string, preallocate int64) error {
+func (s *Store) AddVolume(volumeId VolumeId, collection string, needleMapKind NeedleMapType, replicaPlacement string, ttlString string, preallocate int64) error {
 	rt, e := NewReplicaPlacementFromString(replicaPlacement)
 	if e != nil {
 		return e
@@ -58,31 +55,7 @@ func (s *Store) AddVolume(volumeListString string, collection string, needleMapK
 	if e != nil {
 		return e
 	}
-	for _, range_string := range strings.Split(volumeListString, ",") {
-		if strings.Index(range_string, "-") < 0 {
-			id_string := range_string
-			id, err := NewVolumeId(id_string)
-			if err != nil {
-				return fmt.Errorf("Volume Id %s is not a valid unsigned integer!", id_string)
-			}
-			e = s.addVolume(VolumeId(id), collection, needleMapKind, rt, ttl, preallocate)
-		} else {
-			pair := strings.Split(range_string, "-")
-			start, start_err := strconv.ParseUint(pair[0], 10, 64)
-			if start_err != nil {
-				return fmt.Errorf("Volume Start Id %s is not a valid unsigned integer!", pair[0])
-			}
-			end, end_err := strconv.ParseUint(pair[1], 10, 64)
-			if end_err != nil {
-				return fmt.Errorf("Volume End Id %s is not a valid unsigned integer!", pair[1])
-			}
-			for id := start; id <= end; id++ {
-				if err := s.addVolume(VolumeId(id), collection, needleMapKind, rt, ttl, preallocate); err != nil {
-					e = err
-				}
-			}
-		}
-	}
+	e = s.addVolume(volumeId, collection, needleMapKind, rt, ttl, preallocate)
 	return e
 }
 func (s *Store) DeleteCollection(collection string) (e error) {

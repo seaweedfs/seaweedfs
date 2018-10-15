@@ -23,8 +23,7 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	for _, server := range collection.ListVolumeServers() {
-		serverAddress := fmt.Sprintf("%s:%d", server.Ip, server.Port)
-		err := operation.WithVolumeServerClient(serverAddress, func(client volume_server_pb.VolumeServerClient) error {
+		err := operation.WithVolumeServerClient(server.Url(), func(client volume_server_pb.VolumeServerClient) error {
 			_, deleteErr := client.DeleteCollection(context.Background(), &volume_server_pb.DeleteCollectionRequest{
 				Collection: collection.Name,
 			})
