@@ -61,13 +61,3 @@ func (vs *VolumeServer) getVolumeUnmountHandler(w http.ResponseWriter, r *http.R
 	vs.store.UnmountVolume(vid)
 	writeJsonQuiet(w, r, http.StatusOK, "Volume unmounted")
 }
-
-func (vs *VolumeServer) getVolumeDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	vid, err := vs.getVolumeId("volume", r)
-	if err != nil {
-		writeJsonError(w, r, http.StatusNotFound, err)
-		return
-	}
-	vs.store.DeleteVolume(vid)
-	writeJsonQuiet(w, r, http.StatusOK, "Volume deleted")
-}
