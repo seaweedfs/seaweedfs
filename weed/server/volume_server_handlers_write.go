@@ -55,7 +55,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	volumeId, _ := storage.NewVolumeId(vid)
 	n.ParsePath(fid)
 
-	glog.V(2).Infof("volume %s deleting %s", vid, n)
+	// glog.V(2).Infof("volume %s deleting %s", vid, n)
 
 	cookie := n.Cookie
 
