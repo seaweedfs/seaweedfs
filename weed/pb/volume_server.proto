@@ -21,7 +21,12 @@ service VolumeServer {
     }
     rpc AssignVolume (AssignVolumeRequest) returns (AssignVolumeResponse) {
     }
+
     rpc VolumeSyncStatus (VolumeSyncStatusRequest) returns (VolumeSyncStatusResponse) {
+    }
+    rpc VolumeSyncIndex (VolumeSyncIndexRequest) returns (VolumeSyncIndexResponse) {
+    }
+    rpc VolumeSyncData (VolumeSyncDataRequest) returns (VolumeSyncDataResponse) {
     }
 
     rpc VolumeMount (VolumeMountRequest) returns (VolumeMountResponse) {
@@ -102,6 +107,24 @@ message VolumeSyncStatusResponse {
     uint64 tail_offset = 6;
     uint32 compact_revision = 7;
     uint64 idx_file_size = 8;
+}
+
+message VolumeSyncIndexRequest {
+    uint32 volumd_id = 1;
+}
+message VolumeSyncIndexResponse {
+    bytes index_file_content = 1;
+}
+
+message VolumeSyncDataRequest {
+    uint32 volumd_id = 1;
+    uint32 revision = 2;
+    uint32 offset = 3;
+    uint32 size = 4;
+    string needle_id = 5;
+}
+message VolumeSyncDataResponse {
+    bytes file_content = 1;
 }
 
 message VolumeMountRequest {

@@ -1,20 +1,16 @@
 package storage
 
 import (
+	"context"
 	"fmt"
-	"io"
-	"io/ioutil"
-	"net/url"
 	"os"
 	"sort"
-	"strconv"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 // The volume sync with a master volume via 2 steps:
@@ -122,7 +118,6 @@ func (v *Volume) trySynchronizing(volumeServer string, masterMap *needle.Compact
 
 	// make up the delta
 	fetchCount := 0
-	volumeDataContentHandlerUrl := "http://" + volumeServer + "/admin/sync/data"
 	for _, needleValue := range delta {
 		if needleValue.Size == 0 {
 			// remove file entry from local
@@ -130,7 +125,7 @@ func (v *Volume) trySynchronizing(volumeServer string, masterMap *needle.Compact
 			continue
 		}
 		// add master file entry to local data file
-		if err := v.fetchNeedle(volumeDataContentHandlerUrl, needleValue, compactRevision); err != nil {
+		if err := v.fetchNeedle(volumeServer, needleValue, compactRevision); err != nil {
 			glog.V(0).Infof("Fetch needle %v from %s: %v", needleValue, volumeServer, err)
 			return err
 		}
@@ -149,7 +144,7 @@ func fetchVolumeFileEntries(volumeServer string, vid VolumeId) (m *needle.Compac
 	}
 
 	total := 0
-	err = operation.GetVolumeIdxEntries(volumeServer, vid.String(), func(key NeedleId, offset Offset, size uint32) {
+	err = operation.GetVolumeIdxEntries(volumeServer, uint32(vid), func(key NeedleId, offset Offset, size uint32) {
 		// println("remote key", key, "offset", offset*NeedlePaddingSize, "size", size)
 		if offset > 0 && size != TombstoneFileSize {
 			m.Set(NeedleId(key), offset, size)
@@ -190,22 +185,21 @@ func (v *Volume) removeNeedle(key NeedleId) {
 // fetchNeedle fetches a remote volume needle by vid, id, offset
 // The compact revision is checked first in case the remote volume
 // is compacted and the offset is invalid any more.
-func (v *Volume) fetchNeedle(volumeDataContentHandlerUrl string,
-	needleValue needle.NeedleValue, compactRevision uint16) error {
-	// add master file entry to local data file
-	values := make(url.Values)
-	values.Add("revision", strconv.Itoa(int(compactRevision)))
-	values.Add("volume", v.Id.String())
-	values.Add("id", needleValue.Key.String())
-	values.Add("offset", strconv.FormatUint(uint64(needleValue.Offset), 10))
-	values.Add("size", strconv.FormatUint(uint64(needleValue.Size), 10))
-	glog.V(4).Infof("Fetch %+v", needleValue)
-	return util.GetUrlStream(volumeDataContentHandlerUrl, values, func(r io.Reader) error {
-		b, err := ioutil.ReadAll(r)
+func (v *Volume) fetchNeedle(volumeServer string, needleValue needle.NeedleValue, compactRevision uint16) error {
+
+	return operation.WithVolumeServerClient(volumeServer, func(client volume_server_pb.VolumeServerClient) error {
+		resp, err := client.VolumeSyncData(context.Background(), &volume_server_pb.VolumeSyncDataRequest{
+			VolumdId: uint32(v.Id),
+			Revision: uint32(compactRevision),
+			Offset:   uint32(needleValue.Offset),
+			Size:     uint32(needleValue.Size),
+			NeedleId: needleValue.Key.String(),
+		})
 		if err != nil {
-			return fmt.Errorf("Reading from %s error: %v", volumeDataContentHandlerUrl, err)
+			return err
 		}
-		offset, err := v.AppendBlob(b)
+
+		offset, err := v.AppendBlob(resp.FileContent)
 		if err != nil {
 			return fmt.Errorf("Appending volume %d error: %v", v.Id, err)
 		}
@@ -213,4 +207,5 @@ func (v *Volume) fetchNeedle(volumeDataContentHandlerUrl string,
 		v.nm.Put(needleValue.Key, Offset(offset/NeedlePaddingSize), needleValue.Size)
 		return nil
 	})
+
 }
