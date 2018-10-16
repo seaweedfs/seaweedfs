@@ -2,27 +2,18 @@ package stats
 
 import (
 	"runtime"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 )
 
-type MemStatus struct {
-	Goroutines int
-	All        uint64
-	Used       uint64
-	Free       uint64
-	Self       uint64
-	Heap       uint64
-	Stack      uint64
-}
-
-func MemStat() MemStatus {
-	mem := MemStatus{}
-	mem.Goroutines = runtime.NumGoroutine()
+func MemStat() *volume_server_pb.MemStatus {
+	mem := &volume_server_pb.MemStatus{}
+	mem.Goroutines = int32(runtime.NumGoroutine())
 	memStat := new(runtime.MemStats)
 	runtime.ReadMemStats(memStat)
 	mem.Self = memStat.Alloc
 	mem.Heap = memStat.HeapAlloc
 	mem.Stack = memStat.StackInuse
 
-	mem.fillInStatus()
+	fillInMemStatus(mem)
 	return mem
 }

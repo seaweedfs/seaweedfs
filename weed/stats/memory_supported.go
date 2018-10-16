@@ -4,9 +4,11 @@ package stats
 
 import (
 	"syscall"
+
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 )
 
-func (mem *MemStatus) fillInStatus() {
+func fillInMemStatus(mem *volume_server_pb.MemStatus) {
 	//system memory usage
 	sysInfo := new(syscall.Sysinfo_t)
 	err := syscall.Sysinfo(sysInfo)

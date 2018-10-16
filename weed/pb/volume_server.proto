@@ -34,6 +34,8 @@ service VolumeServer {
     rpc VolumeUnmount (VolumeUnmountRequest) returns (VolumeUnmountResponse) {
     }
 
+    // rpc VolumeUiPage (VolumeUiPageRequest) returns (VolumeUiPageResponse) {}
+
 }
 
 //////////////////////////////////////////////////
@@ -137,4 +139,26 @@ message VolumeUnmountRequest {
     uint32 volumd_id = 1;
 }
 message VolumeUnmountResponse {
+}
+
+message VolumeUiPageRequest {
+}
+message VolumeUiPageResponse {
+}
+
+message DiskStatus {
+    string dir = 1;
+    uint64 all = 2;
+    uint64 used = 3;
+    uint64 free = 4;
+}
+
+message MemStatus {
+    int32 goroutines = 1;
+    uint64 all = 2;
+    uint64 used = 3;
+    uint64 free = 4;
+    uint64 self = 5;
+    uint64 heap = 6;
+    uint64 stack = 7;
 }

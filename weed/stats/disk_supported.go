@@ -4,9 +4,11 @@ package stats
 
 import (
 	"syscall"
+
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 )
 
-func (disk *DiskStatus) fillInStatus() {
+func fillInDiskStatus(disk *volume_server_pb.DiskStatus) {
 	fs := syscall.Statfs_t{}
 	err := syscall.Statfs(disk.Dir, &fs)
 	if err != nil {

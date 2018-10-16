@@ -1,14 +1,9 @@
 package stats
 
-type DiskStatus struct {
-	Dir  string
-	All  uint64
-	Used uint64
-	Free uint64
-}
+import "github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 
-func NewDiskStatus(path string) (disk *DiskStatus) {
-	disk = &DiskStatus{Dir: path}
-	disk.fillInStatus()
+func NewDiskStatus(path string) (disk *volume_server_pb.DiskStatus) {
+	disk = &volume_server_pb.DiskStatus{Dir: path}
+	fillInDiskStatus(disk)
 	return
 }
