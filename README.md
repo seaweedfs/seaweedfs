@@ -78,7 +78,7 @@ SeaweedFS can work very well with just the object store. [[Filer]] is added late
 * Support Etag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/boltdb/btree mode tuning for memory/performance balance.
 ## Filer Features
-* [filer server][Filer] provides "normal" directories and files via http.
+* [filer server][Filer] provide "normal" directories and files via http.
 * [mount filer][Mount] to read and write files directly as a local directory via FUSE.
 * [Amazon S3 compatible API][AmazonS3API] to access files with S3 tooling.
 * [Async Backup To Cloud][BackupToCloud] can enjoy extreme fast local access and backup to Amazon S3, Google Cloud Storage, Azure.
@@ -337,7 +337,7 @@ Ceph uses CRUSH hashing to automatically manage the data placement. SeaweedFS pl
 ## Dev plan ##
 
 More tools and documentation, on how to maintain and scale the system. For example, how to move volumes, automatically balancing data, how to grow volumes, how to check system status, etc.
-Other key features include: Erasure Encoding, support S3 API, JWT security.
+Other key features include: Erasure Encoding, JWT security.
 
 This is a super exciting project! And I need helpers and [support](https://www.patreon.com/seaweedfs)!
 
