@@ -122,27 +122,39 @@ func (t *Topology) Vacuum(garbageThreshold float64, preallocate int64) int {
 		for _, vl := range c.storageType2VolumeLayout.Items() {
 			if vl != nil {
 				volumeLayout := vl.(*VolumeLayout)
-				for vid, locationlist := range volumeLayout.vid2location {
-
-					volumeLayout.accessLock.RLock()
-					isReadOnly, hasValue := volumeLayout.readonlyVolumes[vid]
-					volumeLayout.accessLock.RUnlock()
-
-					if hasValue && isReadOnly {
-						continue
-					}
-
-					glog.V(0).Infof("check vacuum on collection:%s volume:%d", c.Name, vid)
-					if batchVacuumVolumeCheck(volumeLayout, vid, locationlist, garbageThreshold) {
-						if batchVacuumVolumeCompact(volumeLayout, vid, locationlist, preallocate) {
-							batchVacuumVolumeCommit(volumeLayout, vid, locationlist)
-						}
-					}
-				}
+				vacuumOneVolumeLayout(volumeLayout, c, garbageThreshold, preallocate)
 			}
 		}
 	}
 	return 0
+}
+
+func vacuumOneVolumeLayout(volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, preallocate int64) {
+
+	volumeLayout.accessLock.RLock()
+	tmpMap := make(map[storage.VolumeId]*VolumeLocationList)
+	for vid, locationlist := range volumeLayout.vid2location {
+		tmpMap[vid] = locationlist
+	}
+	volumeLayout.accessLock.RUnlock()
+
+	for vid, locationlist := range tmpMap {
+
+		volumeLayout.accessLock.RLock()
+		isReadOnly, hasValue := volumeLayout.readonlyVolumes[vid]
+		volumeLayout.accessLock.RUnlock()
+
+		if hasValue && isReadOnly {
+			continue
+		}
+
+		glog.V(0).Infof("check vacuum on collection:%s volume:%d", c.Name, vid)
+		if batchVacuumVolumeCheck(volumeLayout, vid, locationlist, garbageThreshold) {
+			if batchVacuumVolumeCompact(volumeLayout, vid, locationlist, preallocate) {
+				batchVacuumVolumeCommit(volumeLayout, vid, locationlist)
+			}
+		}
+	}
 }
 
 type VacuumVolumeResult struct {
