@@ -78,7 +78,7 @@ SeaweedFS can work very well with just the object store. [[Filer]] is added late
 * Support Etag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/boltdb/btree mode tuning for memory/performance balance.
 ## Filer Features
-* [filer server][Filer] provides "normal" directories and files via http.
+* [filer server][Filer] provide "normal" directories and files via http.
 * [mount filer][Mount] to read and write files directly as a local directory via FUSE.
 * [Amazon S3 compatible API][AmazonS3API] to access files with S3 tooling.
 * [Async Backup To Cloud][BackupToCloud] can enjoy extreme fast local access and backup to Amazon S3, Google Cloud Storage, Azure.
@@ -280,15 +280,7 @@ All file meta information on volume server is readable from memory without disk 
 
 Most other distributed file systems seem more complicated than necessary.
 
-### Compared to Ceph ###
-
-Ceph can be setup similar to SeaweedFS as a key->blob store. It is much more complicated, with the need to support layers on top of it. [Here is a more detailed comparison](https://github.com/chrislusf/seaweedfs/issues/120)
-
 SeaweedFS is meant to be fast and simple, both during usage and during setup. If you do not understand how it works when you reach here, we failed! Please raise an issue with any questions or update this file with clarifications.
-
-SeaweedFS has a centralized master to look up free volumes, while Ceph uses hashing to locate its objects. Having a centralized master makes it easy to code and manage. HDFS/GFS has the single name node for years. SeaweedFS now support multiple master nodes.
-
-Ceph hashing avoids SPOF, but makes it complicated when moving or adding servers.
 
 ### Compared to HDFS ###
 
@@ -304,9 +296,9 @@ SeaweedFS can also store extra large files by splitting them into manageable dat
 The architectures are mostly the same. SeaweedFS aims to store and read files fast, with a simple and flat architecture. The main differences are
 
 * SeaweedFS optimizes for small files, ensuring O(1) disk seek operation, and can also handle large files.
-* SeaweedFS statically assign a volume id for a file. Locating file content becomes just a lookup of the volume id, which can be easily cached.
-* SeaweedFS Filer metadata store can be any well-known and proven data stores, e.g., Cassandra, Redis, MySql, PostGres, etc, and is easy to customized.
-* SeaweedFS Volume server also communicate directly with clients via HTTP, supporting range queries, direct uploads, etc.
+* SeaweedFS statically assigns a volume id for a file. Locating file content becomes just a lookup of the volume id, which can be easily cached.
+* SeaweedFS Filer metadata store can be any well-known and proven data stores, e.g., Cassandra, Redis, MySql, Postgres, etc, and is easy to customized.
+* SeaweedFS Volume server also communicates directly with clients via HTTP, supporting range queries, direct uploads, etc.
 
 | System         | File Meta                       | File Content Read| POSIX  | REST API | Optimized for small files |
 | -------------  | ------------------------------- | ---------------- | ------ | -------- | ------------------------- |
@@ -323,9 +315,17 @@ GlusterFS hashes the path and filename into ids, and assigned to virtual volumes
 
 ### Compared to Ceph ###
 
+Ceph can be setup similar to SeaweedFS as a key->blob store. It is much more complicated, with the need to support layers on top of it. [Here is a more detailed comparison](https://github.com/chrislusf/seaweedfs/issues/120)
+
+SeaweedFS has a centralized master group to look up free volumes, while Ceph uses hashing and metadata servers to locate its objects. Having a centralized master makes it easy to code and manage. 
+
 Same as SeaweedFS, Ceph is also based on a object store RADOS. Ceph is rather complicated with mixed reviews.
 
 Ceph uses CRUSH hashing to automatically manage the data placement. SeaweedFS places data by assigned volumes.
+
+SeaweedFS is optimized for small files. Small files are stored as one continuous block of content, with at most 8 unused bytes between files. Small file access is O(1) disk read.
+
+SeaweedFS Filer uses off-the-shelf stores, such as MySql, Postgres, Redis, Cassandra, to manage file directories. There are proven, scalable, and easier to manage.
 
 | SeaweedFS         | comparable to Ceph | advantage |
 | -------------  | ------------- | ---------------- |
@@ -337,7 +337,7 @@ Ceph uses CRUSH hashing to automatically manage the data placement. SeaweedFS pl
 ## Dev plan ##
 
 More tools and documentation, on how to maintain and scale the system. For example, how to move volumes, automatically balancing data, how to grow volumes, how to check system status, etc.
-Other key features include: Erasure Encoding, support S3 API, JWT security.
+Other key features include: Erasure Encoding, JWT security.
 
 This is a super exciting project! And I need helpers and [support](https://www.patreon.com/seaweedfs)!
 
