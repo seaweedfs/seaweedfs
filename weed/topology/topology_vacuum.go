@@ -152,12 +152,9 @@ func vacuumOneVolumeLayout(volumeLayout *VolumeLayout, c *Collection, garbageThr
 		if batchVacuumVolumeCheck(volumeLayout, vid, locationlist, garbageThreshold) {
 			if batchVacuumVolumeCompact(volumeLayout, vid, locationlist, preallocate) {
 				batchVacuumVolumeCommit(volumeLayout, vid, locationlist)
+			}else{
+				batchVacuumVolumeCleanup(volumeLayout, vid, locationlist)
 			}
 		}
 	}
-}
-
-type VacuumVolumeResult struct {
-	Result bool
-	Error  string
 }
