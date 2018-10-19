@@ -18,7 +18,7 @@ func (v *Volume) garbageLevel() float64 {
 }
 
 func (v *Volume) Compact(preallocate int64) error {
-	glog.V(3).Infof("Compacting ...")
+	glog.V(3).Infof("Compacting volume %d ...", v.Id)
 	//no need to lock for copy on write
 	//v.accessLock.Lock()
 	//defer v.accessLock.Unlock()
@@ -32,23 +32,23 @@ func (v *Volume) Compact(preallocate int64) error {
 }
 
 func (v *Volume) Compact2() error {
-	glog.V(3).Infof("Compact2 ...")
+	glog.V(3).Infof("Compact2 volume %d ...", v.Id)
 	filePath := v.FileName()
 	glog.V(3).Infof("creating copies for volume %d ...", v.Id)
 	return v.copyDataBasedOnIndexFile(filePath+".cpd", filePath+".cpx")
 }
 
 func (v *Volume) commitCompact() error {
-	glog.V(0).Infof("Committing vacuuming...")
+	glog.V(0).Infof("Committing volume %d vacuuming...", v.Id)
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
-	glog.V(3).Infof("Got Committing lock...")
+	glog.V(3).Infof("Got volume %d committing lock...", v.Id)
 	v.nm.Close()
 	_ = v.dataFile.Close()
 
 	var e error
 	if e = v.makeupDiff(v.FileName()+".cpd", v.FileName()+".cpx", v.FileName()+".dat", v.FileName()+".idx"); e != nil {
-		glog.V(0).Infof("makeupDiff in commitCompact failed %v", e)
+		glog.V(0).Infof("makeupDiff in commitCompact volume %d failed %v", v.Id, e)
 		e = os.Remove(v.FileName() + ".cpd")
 		if e != nil {
 			return e
@@ -73,7 +73,7 @@ func (v *Volume) commitCompact() error {
 	os.RemoveAll(v.FileName() + ".ldb")
 	os.RemoveAll(v.FileName() + ".bdb")
 
-	glog.V(3).Infof("Loading Commit file...")
+	glog.V(3).Infof("Loading volume %d commit file...", v.Id)
 	if e = v.load(true, false, v.needleMapKind, 0); e != nil {
 		return e
 	}
@@ -81,7 +81,7 @@ func (v *Volume) commitCompact() error {
 }
 
 func (v *Volume) cleanupCompact() error {
-	glog.V(0).Infof("Cleaning up vacuuming...")
+	glog.V(0).Infof("Cleaning up volume %d vacuuming...", v.Id)
 
 	e1 := os.Remove(v.FileName() + ".cpd")
 	e2 := os.Remove(v.FileName() + ".cpx")
