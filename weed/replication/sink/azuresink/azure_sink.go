@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"net/url"
 
-	"github.com/Azure/azure-storage-blob-go/2016-05-31/azblob"
+	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 type AzureSink struct {
@@ -51,7 +52,10 @@ func (g *AzureSink) initialize(accountName, accountKey, container, dir string) e
 	g.dir = dir
 
 	// Use your Storage account's name and key to create a credential object.
-	credential := azblob.NewSharedKeyCredential(accountName, accountKey)
+	credential, err := azblob.NewSharedKeyCredential(accountName, accountKey)
+	if err != nil {
+		glog.Fatalf("failed to create Azure credential with account name:%s key:%s", accountName, accountKey)
+	}
 
 	// Create a request pipeline that is used to process HTTP(S) requests and responses.
 	p := azblob.NewPipeline(credential, azblob.PipelineOptions{})
@@ -111,7 +115,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
 		var writeErr error
 		_, readErr := util.ReadUrlAsStream(fileUrl, chunk.Offset, int(chunk.Size), func(data []byte) {
-			_, writeErr = appendBlobURL.AppendBlock(ctx, bytes.NewReader(data), azblob.BlobAccessConditions{})
+			_, writeErr = appendBlobURL.AppendBlock(ctx, bytes.NewReader(data), azblob.AppendBlobAccessConditions{}, nil)
 		})
 
 		if readErr != nil {
