@@ -2,6 +2,7 @@ package stats
 
 import (
 	"runtime"
+
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 )
 
