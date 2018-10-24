@@ -195,11 +195,19 @@ bucket = "your_bucket_seaweedfs"    # an existing bucket
 directory = "/"                     # destination directory
 
 [sink.azure]
-# experimental
+# experimental, let me know if it works
 enabled = false
 account_name = ""
 account_key  = ""
 container = "mycontainer"      # an existing container
+directory = ""                 # destination directory (do not prefix or suffix with "/")
+
+[sink.backblaze]
+# experimental, let me know if it works
+enabled = false
+account_id = ""
+account_key  = ""
+bucket = "mybucket"            # an existing bucket
 directory = ""                 # destination directory (do not prefix or suffix with "/")
 
 `
