@@ -52,6 +52,11 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 		}
 	}
 
+	if notificationInput == nil {
+		println("Please follow 'weed scaffold -config=repliaction' to see example notification configurations.")
+		return true
+	}
+
 	// avoid recursive replication
 	if config.GetBool("notification.source.filer.enabled") && config.GetBool("notification.sink.filer.enabled") {
 		sourceConfig, sinkConfig := config.Sub("source.filer"), config.Sub("sink.filer")
