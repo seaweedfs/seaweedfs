@@ -34,7 +34,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ret := operation.UploadResult{}
-	size, errorStatus := topology.ReplicatedWrite(vs.GetMaster(),
+	_, errorStatus := topology.ReplicatedWrite(vs.GetMaster(),
 		vs.store, volumeId, needle, r)
 	httpStatus := http.StatusCreated
 	if errorStatus != "" {
@@ -44,7 +44,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	if needle.HasName() {
 		ret.Name = string(needle.Name)
 	}
-	ret.Size = size
+	ret.Size = needle.DataSize
 	setEtag(w, needle.Etag())
 	writeJsonQuiet(w, r, httpStatus, ret)
 }
