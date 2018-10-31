@@ -1,4 +1,4 @@
-package replication
+package sub
 
 import (
 	"encoding/json"

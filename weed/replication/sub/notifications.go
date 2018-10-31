@@ -1,4 +1,4 @@
-package replication
+package sub
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"

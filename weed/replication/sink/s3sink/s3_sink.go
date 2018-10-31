@@ -14,6 +14,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 type S3Sink struct {
@@ -37,6 +38,9 @@ func (s3sink *S3Sink) GetSinkToDirectory() string {
 }
 
 func (s3sink *S3Sink) Initialize(configuration util.Configuration) error {
+	glog.V(0).Infof("sink.s3.region: %v", configuration.GetString("region"))
+	glog.V(0).Infof("sink.s3.bucket: %v", configuration.GetString("bucket"))
+	glog.V(0).Infof("sink.s3.directory: %v", configuration.GetString("directory"))
 	return s3sink.initialize(
 		configuration.GetString("aws_access_key_id"),
 		configuration.GetString("aws_secret_access_key"),

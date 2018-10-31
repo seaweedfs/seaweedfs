@@ -13,6 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/kafka"
+	_ "github.com/chrislusf/seaweedfs/weed/notification/aws_sqs"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/log"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/spf13/viper"

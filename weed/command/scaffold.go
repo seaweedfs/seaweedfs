@@ -146,6 +146,14 @@ hosts = [
 ]
 topic = "seaweedfs_filer"
 
+[notification.aws_sqs]
+# experimental, let me know if it works
+enabled = false
+aws_access_key_id     = ""        # if empty, loads from the shared credentials file (~/.aws/credentials).
+aws_secret_access_key = ""        # if empty, loads from the shared credentials file (~/.aws/credentials).
+region = "us-east-2"
+sqs_queue_name = "my_filer_queue" # an existing queue name
+
 `
 	REPLICATION_TOML_EXAMPLE = `
 # A sample TOML config file for replicating SeaweedFS filer
@@ -168,6 +176,13 @@ hosts = [
 topic = "seaweedfs_filer1_to_filer2"
 offsetFile = "./last.offset"
 offsetSaveIntervalSeconds = 10
+
+[notification.aws_sqs]
+enabled = false
+aws_access_key_id     = ""        # if empty, loads from the shared credentials file (~/.aws/credentials).
+aws_secret_access_key = ""        # if empty, loads from the shared credentials file (~/.aws/credentials).
+region = "us-east-2"
+sqs_queue_name = "my_filer_queue" # an existing queue name
 
 [sink.filer]
 enabled = false
