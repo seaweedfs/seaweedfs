@@ -163,7 +163,11 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry,
 
 	glog.V(0).Infof("oldEntry %+v, newEntry %+v, existingEntry: %+v", oldEntry, newEntry, existingEntry)
 
-	if filer2.ETag(newEntry.Chunks) == filer2.ETag(existingEntry.Chunks) {
+	if existingEntry.Attributes.Mtime > newEntry.Attributes.Mtime {
+		// skip if already changed
+		// this usually happens when the messages are not ordered
+		glog.V(0).Infof("late updates %s", key)
+	} else if filer2.ETag(newEntry.Chunks) == filer2.ETag(existingEntry.Chunks) {
 		// skip if no change
 		// this usually happens when retrying the replication
 		glog.V(0).Infof("already replicated %s", key)
