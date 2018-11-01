@@ -35,7 +35,7 @@ func LoadConfiguration(config *viper.Viper) {
 					store.GetName(), err)
 			}
 			Queue = store
-			glog.V(0).Infof("Configure message queue for %s", store.GetName())
+			glog.V(0).Infof("Configure notification message queue for %s", store.GetName())
 			return
 		}
 	}

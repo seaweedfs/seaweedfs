@@ -19,7 +19,7 @@ var cmdScaffold = &Command{
 
 var (
 	outputPath = cmdScaffold.Flag.String("output", "", "if not empty, save the configuration file to this directory")
-	config     = cmdScaffold.Flag.String("config", "filer", "[filer|replication] the configuration file to generate")
+	config     = cmdScaffold.Flag.String("config", "filer", "[filer|notification|replication] the configuration file to generate")
 )
 
 func runScaffold(cmd *Command, args []string) bool {
@@ -28,6 +28,8 @@ func runScaffold(cmd *Command, args []string) bool {
 	switch *config {
 	case "filer":
 		content = FILER_TOML_EXAMPLE
+	case "notification":
+		content = NOTIFICATION_TOML_EXAMPLE
 	case "replication":
 		content = REPLICATION_TOML_EXAMPLE
 	}
@@ -37,7 +39,7 @@ func runScaffold(cmd *Command, args []string) bool {
 	}
 
 	if *outputPath != "" {
-		ioutil.WriteFile(filepath.Join(*outputPath, *config+".toml"), []byte(content), 0x755)
+		ioutil.WriteFile(filepath.Join(*outputPath, *config+".toml"), []byte(content), 0644)
 	} else {
 		println(content)
 	}
@@ -131,13 +133,24 @@ addresses = [
     "localhost:30006",
 ]
 
+`
+
+	NOTIFICATION_TOML_EXAMPLE = `
+# A sample TOML config file for SeaweedFS filer store
+# Used by both "weed filer" or "weed server -filer" and "weed filer.replicate"
+# Put this file to one of the location, with descending priority
+#    ./notification.toml
+#    $HOME/.seaweedfs/notification.toml
+#    /etc/seaweedfs/notification.toml
 
 ####################################################
 # notification
-# sends filer updates for each file to an external message queue
+# send and receive filer updates for each file to an external message queue
 ####################################################
 [notification.log]
+# this is only for debugging perpose and does not work with "weed filer.replicate"
 enabled = false
+
 
 [notification.kafka]
 enabled = false
@@ -145,6 +158,9 @@ hosts = [
   "localhost:9092"
 ]
 topic = "seaweedfs_filer"
+offsetFile = "./last.offset"
+offsetSaveIntervalSeconds = 10
+
 
 [notification.aws_sqs]
 # experimental, let me know if it works
@@ -154,7 +170,16 @@ aws_secret_access_key = ""        # if empty, loads from the shared credentials 
 region = "us-east-2"
 sqs_queue_name = "my_filer_queue" # an existing queue name
 
+
+[notification.google_pub_sub]
+# read credentials doc at https://cloud.google.com/docs/authentication/getting-started
+enabled = false
+google_application_credentials = "/path/to/x.json" # path to json credential file
+project_id = ""                       # an existing project id
+topic = "seaweedfs_filer_topic"       # a topic, auto created if does not exists
+
 `
+
 	REPLICATION_TOML_EXAMPLE = `
 # A sample TOML config file for replicating SeaweedFS filer
 # Used with "weed filer.replicate"
@@ -167,22 +192,6 @@ sqs_queue_name = "my_filer_queue" # an existing queue name
 enabled = true
 grpcAddress = "localhost:18888"
 directory = "/buckets"    # all files under this directory tree are replicated
-
-[notification.kafka]
-enabled = false
-hosts = [
-  "localhost:9092"
-]
-topic = "seaweedfs_filer1_to_filer2"
-offsetFile = "./last.offset"
-offsetSaveIntervalSeconds = 10
-
-[notification.aws_sqs]
-enabled = false
-aws_access_key_id     = ""        # if empty, loads from the shared credentials file (~/.aws/credentials).
-aws_secret_access_key = ""        # if empty, loads from the shared credentials file (~/.aws/credentials).
-region = "us-east-2"
-sqs_queue_name = "my_filer_queue" # an existing queue name
 
 [sink.filer]
 enabled = false

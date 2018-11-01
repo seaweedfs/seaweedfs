@@ -36,6 +36,7 @@ var cmdFilerReplicate = &Command{
 func runFilerReplicate(cmd *Command, args []string) bool {
 
 	weed_server.LoadConfiguration("replication", true)
+	weed_server.LoadConfiguration("notification", true)
 	config := viper.GetViper()
 
 	var notificationInput sub.NotificationInput
@@ -54,7 +55,8 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 	}
 
 	if notificationInput == nil {
-		println("Please follow 'weed scaffold -config=repliaction' to see example notification configurations.")
+		println("No notification is defined in notification.toml file.")
+		println("Please follow 'weed scaffold -config=notification' to see example notification configurations.")
 		return true
 	}
 
@@ -85,7 +87,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 	}
 
 	if dataSink == nil {
-		println("no data sink configured:")
+		println("no data sink configured in replication.toml:")
 		for _, sk := range sink.Sinks {
 			println("    " + sk.GetName())
 		}
