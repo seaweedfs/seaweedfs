@@ -1,16 +1,16 @@
 package google_pub_sub
 
 import (
+	"context"
 	"fmt"
 	"os"
 
+	"cloud.google.com/go/pubsub"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
 	"google.golang.org/api/option"
-	"context"
-	"cloud.google.com/go/pubsub"
 )
 
 func init() {

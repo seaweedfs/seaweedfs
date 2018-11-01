@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"os"
 
+	"cloud.google.com/go/pubsub"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
-	"cloud.google.com/go/pubsub"
 	"google.golang.org/api/option"
 )
 

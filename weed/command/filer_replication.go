@@ -11,9 +11,9 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/filersink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/gcssink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/s3sink"
+	"github.com/chrislusf/seaweedfs/weed/replication/sub"
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/spf13/viper"
-	"github.com/chrislusf/seaweedfs/weed/replication/sub"
 )
 
 func init() {
