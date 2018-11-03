@@ -43,3 +43,15 @@ func (entry *Entry) Timestamp() time.Time {
 		return entry.Mtime
 	}
 }
+
+func (entry *Entry) ToProtoEntry() *filer_pb.Entry {
+	if entry == nil {
+		return nil
+	}
+	return &filer_pb.Entry{
+		Name:        string(entry.FullPath),
+		IsDirectory: entry.IsDirectory(),
+		Attributes:  EntryAttributeToPb(entry),
+		Chunks:      entry.Chunks,
+	}
+}

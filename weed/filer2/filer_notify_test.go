@@ -32,8 +32,8 @@ func TestProtoMarshalText(t *testing.T) {
 	}
 
 	notification := &filer_pb.EventNotification{
-		OldEntry:     toProtoEntry(oldEntry),
-		NewEntry:     toProtoEntry(nil),
+		OldEntry:     oldEntry.ToProtoEntry(),
+		NewEntry:     nil,
 		DeleteChunks: true,
 	}
 

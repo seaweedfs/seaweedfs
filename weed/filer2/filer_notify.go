@@ -23,23 +23,11 @@ func (f *Filer) NotifyUpdateEvent(oldEntry, newEntry *Entry, deleteChunks bool) 
 		notification.Queue.SendMessage(
 			key,
 			&filer_pb.EventNotification{
-				OldEntry:     toProtoEntry(oldEntry),
-				NewEntry:     toProtoEntry(newEntry),
+				OldEntry:     oldEntry.ToProtoEntry(),
+				NewEntry:     newEntry.ToProtoEntry(),
 				DeleteChunks: deleteChunks,
 			},
 		)
 
-	}
-}
-
-func toProtoEntry(entry *Entry) *filer_pb.Entry {
-	if entry == nil {
-		return nil
-	}
-	return &filer_pb.Entry{
-		Name:        string(entry.FullPath),
-		IsDirectory: entry.IsDirectory(),
-		Attributes:  EntryAttributeToPb(entry),
-		Chunks:      entry.Chunks,
 	}
 }
