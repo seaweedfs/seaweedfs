@@ -116,7 +116,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 		if err = replicator.Replicate(key, m); err != nil {
 			glog.Errorf("replicate %s: %+v", key, err)
 		} else {
-			glog.V(4).Infof("replicated %s", key)
+			glog.V(1).Infof("replicated %s", key)
 		}
 	}
 

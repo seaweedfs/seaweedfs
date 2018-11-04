@@ -34,6 +34,7 @@ var (
 	// filerExportOutputFile  = cmdFilerExport.Flag.String("output", "", "the output file. If empty, only list out the directory tree")
 	filerExportSourceStore = cmdFilerExport.Flag.String("sourceStore", "", "the source store name in filer.toml")
 	filerExportTargetStore = cmdFilerExport.Flag.String("targetStore", "", "the target store name in filer.toml, or \"notification\" to export all files to message queue")
+	dir                    = cmdFilerExport.Flag.String("dir", "/", "only process files under this directory")
 	dirListLimit           = cmdFilerExport.Flag.Int("dirListLimit", 100000, "limit directory list size")
 	dryRun                 = cmdFilerExport.Flag.Bool("dryRun", false, "not actually moving data")
 )
@@ -127,7 +128,7 @@ func runFilerExport(cmd *Command, args []string) bool {
 		}
 	}
 
-	doTraverse(&stat, sourceStore, filer2.FullPath("/"), 0, fn)
+	doTraverse(&stat, sourceStore, filer2.FullPath(*dir), 0, fn)
 
 	glog.Infof("processed %d directories, %d files", stat.directoryCount, stat.fileCount)
 
