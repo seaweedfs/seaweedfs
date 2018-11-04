@@ -2,13 +2,13 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path"
 	"strconv"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
-	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
