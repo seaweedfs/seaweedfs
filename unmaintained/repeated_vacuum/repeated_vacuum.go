@@ -36,6 +36,8 @@ func main() {
 			log.Fatalf("upload: %v", err)
 		}
 
+		util.Delete(targetUrl, "")
+
 		util.Get(fmt.Sprintf("http://%s/vol/vacuum", *master))
 
 	}
