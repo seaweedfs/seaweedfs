@@ -37,6 +37,7 @@ func init() {
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
+// Upload sends a POST request to a volume server to upload the content
 func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
 	return upload_content(uploadUrl, func(w io.Writer) (err error) {
 		_, err = io.Copy(w, reader)
