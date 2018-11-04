@@ -44,7 +44,10 @@ func (v *Volume) commitCompact() error {
 	defer v.dataFileAccessLock.Unlock()
 	glog.V(3).Infof("Got volume %d committing lock...", v.Id)
 	v.nm.Close()
-	_ = v.dataFile.Close()
+	if err := v.dataFile.Close(); err != nil {
+		glog.V(0).Infof("fail to close volume %d", v.Id)
+	}
+	v.dataFile = nil
 
 	var e error
 	if e = v.makeupDiff(v.FileName()+".cpd", v.FileName()+".cpx", v.FileName()+".dat", v.FileName()+".idx"); e != nil {
@@ -60,10 +63,10 @@ func (v *Volume) commitCompact() error {
 	} else {
 		var e error
 		if e = os.Rename(v.FileName()+".cpd", v.FileName()+".dat"); e != nil {
-			return e
+			return fmt.Errorf("rename %s: %v", v.FileName()+".cpd", e)
 		}
 		if e = os.Rename(v.FileName()+".cpx", v.FileName()+".idx"); e != nil {
-			return e
+			return fmt.Errorf("rename %s: %v", v.FileName()+".cpx", e)
 		}
 	}
 

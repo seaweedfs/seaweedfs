@@ -193,6 +193,7 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 	if err = visitSuperBlock(v.SuperBlock); err != nil {
 		return fmt.Errorf("Failed to process volume %d super block: %v", id, err)
 	}
+	defer v.Close()
 
 	version := v.Version()
 

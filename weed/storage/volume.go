@@ -57,6 +57,13 @@ func (v *Volume) Version() Version {
 }
 
 func (v *Volume) Size() int64 {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+
+	if v.dataFile == nil {
+		return 0
+	}
+
 	stat, e := v.dataFile.Stat()
 	if e == nil {
 		return stat.Size()
@@ -69,8 +76,14 @@ func (v *Volume) Size() int64 {
 func (v *Volume) Close() {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
-	v.nm.Close()
-	_ = v.dataFile.Close()
+	if v.nm != nil {
+		v.nm.Close()
+		v.nm = nil
+	}
+	if v.dataFile != nil {
+		_ = v.dataFile.Close()
+		v.dataFile = nil
+	}
 }
 
 func (v *Volume) NeedToReplicate() bool {
