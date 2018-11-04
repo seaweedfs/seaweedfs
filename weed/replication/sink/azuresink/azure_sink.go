@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
@@ -71,6 +72,8 @@ func (g *AzureSink) initialize(accountName, accountKey, container, dir string) e
 
 func (g *AzureSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) error {
 
+	key = cleanKey(key)
+
 	if isDirectory {
 		key = key + "/"
 	}
@@ -87,6 +90,8 @@ func (g *AzureSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks boo
 }
 
 func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry) error {
+
+	key = cleanKey(key)
 
 	if entry.IsDirectory {
 		return nil
@@ -132,6 +137,14 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 }
 
 func (g *AzureSink) UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+	key = cleanKey(key)
 	// TODO improve efficiency
 	return false, nil
+}
+
+func cleanKey(key string) string {
+	if strings.HasPrefix(key, "/") {
+		key = key[1:]
+	}
+	return key
 }

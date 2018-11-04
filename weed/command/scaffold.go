@@ -209,7 +209,7 @@ aws_access_key_id     = ""     # if empty, loads from the shared credentials fil
 aws_secret_access_key = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
 region = "us-east-2"
 bucket = "your_bucket_name"    # an existing bucket
-directory = ""                 # destination directory (do not prefix or suffix with "/")
+directory = "/"                # destination directory
 
 [sink.google_cloud_storage]
 # read credentials doc at https://cloud.google.com/docs/authentication/getting-started
@@ -224,15 +224,14 @@ enabled = false
 account_name = ""
 account_key  = ""
 container = "mycontainer"      # an existing container
-directory = ""                 # destination directory (do not prefix or suffix with "/")
+directory = "/"                # destination directory
 
 [sink.backblaze]
-# experimental, let me know if it works
 enabled = false
-account_id = ""
-account_key  = ""
+b2_account_id = ""
+b2_master_application_key  = ""
 bucket = "mybucket"            # an existing bucket
-directory = ""                 # destination directory (do not prefix or suffix with "/")
+directory = "/"                # destination directory
 
 `
 )

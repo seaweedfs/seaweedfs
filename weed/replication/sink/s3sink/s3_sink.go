@@ -2,6 +2,7 @@ package S3Sink
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -77,6 +78,8 @@ func (s3sink *S3Sink) initialize(awsAccessKeyId, aswSecretAccessKey, region, buc
 
 func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) error {
 
+	key = cleanKey(key)
+
 	if isDirectory {
 		key = key + "/"
 	}
@@ -86,6 +89,8 @@ func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks b
 }
 
 func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
+
+	key = cleanKey(key)
 
 	if entry.IsDirectory {
 		return nil
@@ -125,6 +130,14 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
 }
 
 func (s3sink *S3Sink) UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+	key = cleanKey(key)
 	// TODO improve efficiency
 	return false, nil
+}
+
+func cleanKey(key string) string {
+	if strings.HasPrefix(key, "/") {
+		key = key[1:]
+	}
+	return key
 }
