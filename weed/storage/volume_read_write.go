@@ -40,7 +40,7 @@ func (v *Volume) Destroy() (err error) {
 		err = fmt.Errorf("%s is read-only", v.dataFile.Name())
 		return
 	}
-	v.Close()
+	defer v.Close()
 	err = os.Remove(v.dataFile.Name())
 	if err != nil {
 		return
