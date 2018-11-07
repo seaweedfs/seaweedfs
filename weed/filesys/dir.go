@@ -70,6 +70,8 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 			dir.attributes = resp.Entry.Attributes
 		}
 
+		dir.wfs.listDirectoryEntriesCache.Set(dir.Path, resp.Entry, 300*time.Millisecond)
+
 		return nil
 	})
 
@@ -185,24 +187,34 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (node fs.Node, err error) {
 
 	var entry *filer_pb.Entry
-	err = dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		request := &filer_pb.LookupDirectoryEntryRequest{
-			Directory: dir.Path,
-			Name:      req.Name,
-		}
+	item := dir.wfs.listDirectoryEntriesCache.Get(path.Join(dir.Path, req.Name))
+	if item != nil && !item.Expired() {
+		entry = item.Value().(*filer_pb.Entry)
+	}
 
-		glog.V(4).Infof("lookup directory entry: %v", request)
-		resp, err := client.LookupDirectoryEntry(ctx, request)
-		if err != nil {
-			// glog.V(0).Infof("lookup %s/%s: %v", dir.Path, name, err)
-			return fuse.ENOENT
-		}
+	if entry == nil {
+		err = dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		entry = resp.Entry
+			request := &filer_pb.LookupDirectoryEntryRequest{
+				Directory: dir.Path,
+				Name:      req.Name,
+			}
 
-		return nil
-	})
+			glog.V(4).Infof("lookup directory entry: %v", request)
+			resp, err := client.LookupDirectoryEntry(ctx, request)
+			if err != nil {
+				// glog.V(0).Infof("lookup %s/%s: %v", dir.Path, name, err)
+				return fuse.ENOENT
+			}
+
+			entry = resp.Entry
+
+			dir.wfs.listDirectoryEntriesCache.Set(path.Join(dir.Path, entry.Name), entry, 1000*time.Millisecond)
+
+			return nil
+		})
+	}
 
 	if entry != nil {
 		if entry.IsDirectory {
@@ -248,7 +260,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 				dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_File}
 				ret = append(ret, dirent)
 			}
-			dir.wfs.listDirectoryEntriesCache.Set(dir.Path+"/"+entry.Name, entry, 300*time.Millisecond)
+			dir.wfs.listDirectoryEntriesCache.Set(path.Join(dir.Path, entry.Name), entry, 300*time.Millisecond)
 		}
 
 		return nil
@@ -274,6 +286,8 @@ func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 			glog.V(0).Infof("remove %s/%s: %v", dir.Path, req.Name, err)
 			return fuse.EIO
 		}
+
+		dir.wfs.listDirectoryEntriesCache.Delete(path.Join(dir.Path, req.Name))
 
 		return nil
 	})
@@ -316,6 +330,8 @@ func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 			glog.V(0).Infof("UpdateEntry %s: %v", dir.Path, err)
 			return fuse.EIO
 		}
+
+		dir.wfs.listDirectoryEntriesCache.Delete(dir.Path)
 
 		return nil
 	})
