@@ -1,14 +1,16 @@
 package filesys
 
 import (
+	"fmt"
+	"sync"
+	"time"
+
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
-	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/karlseguin/ccache"
-	"sync"
 )
 
 type Option struct {
@@ -20,6 +22,7 @@ type Option struct {
 	ChunkSizeLimit     int64
 	DataCenter         string
 	DirListingLimit    int
+	EntryCacheTtl      time.Duration
 }
 
 type WFS struct {

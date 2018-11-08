@@ -70,7 +70,7 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 			dir.attributes = resp.Entry.Attributes
 		}
 
-		dir.wfs.listDirectoryEntriesCache.Set(dir.Path, resp.Entry, 300*time.Millisecond)
+		dir.wfs.listDirectoryEntriesCache.Set(dir.Path, resp.Entry, dir.wfs.option.EntryCacheTtl)
 
 		return nil
 	})
@@ -210,7 +210,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 
 			entry = resp.Entry
 
-			dir.wfs.listDirectoryEntriesCache.Set(path.Join(dir.Path, entry.Name), entry, 1000*time.Millisecond)
+			dir.wfs.listDirectoryEntriesCache.Set(path.Join(dir.Path, entry.Name), entry, dir.wfs.option.EntryCacheTtl)
 
 			return nil
 		})
@@ -252,6 +252,8 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 			return fuse.EIO
 		}
 
+		cacheTtl := estimatedCacheTtl(len(resp.Entries))
+
 		for _, entry := range resp.Entries {
 			if entry.IsDirectory {
 				dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_Dir}
@@ -260,7 +262,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 				dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_File}
 				ret = append(ret, dirent)
 			}
-			dir.wfs.listDirectoryEntriesCache.Set(path.Join(dir.Path, entry.Name), entry, 300*time.Millisecond)
+			dir.wfs.listDirectoryEntriesCache.Set(path.Join(dir.Path, entry.Name), entry, cacheTtl)
 		}
 
 		return nil
@@ -336,4 +338,25 @@ func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 		return nil
 	})
 
+}
+
+func estimatedCacheTtl(numEntries int) time.Duration {
+	if numEntries < 100 {
+		// 30 ms per entry
+		return 3 * time.Second
+	}
+	if numEntries < 1000 {
+		// 10 ms per entry
+		return 10 * time.Second
+	}
+	if numEntries < 10000 {
+		// 10 ms per entry
+		return 100 * time.Second
+	}
+	if numEntries < 100000 {
+		// 10 ms per entry
+		return 1000 * time.Second
+	}
+	// 2 ms per entry
+	return time.Duration(numEntries*2) * time.Millisecond
 }

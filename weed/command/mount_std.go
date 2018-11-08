@@ -5,13 +5,14 @@ package command
 import (
 	"fmt"
 	"runtime"
+	"strings"
+	"time"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"strings"
 )
 
 func runMount(cmd *Command, args []string) bool {
@@ -72,6 +73,7 @@ func runMount(cmd *Command, args []string) bool {
 		ChunkSizeLimit:     int64(*mountOptions.chunkSizeLimitMB) * 1024 * 1024,
 		DataCenter:         *mountOptions.dataCenter,
 		DirListingLimit:    *mountOptions.dirListingLimit,
+		EntryCacheTtl:      3 * time.Second,
 	}))
 	if err != nil {
 		fuse.Unmount(*mountOptions.dir)
