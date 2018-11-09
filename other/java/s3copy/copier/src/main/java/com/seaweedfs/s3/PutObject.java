@@ -79,6 +79,13 @@ public class PutObject {
             // test deletes
             s3Client.deleteObject(bucketName, stringObjKeyName);
 
+
+            // delete bucket
+            String tmpBucket = "tmpbucket";
+            s3Client.createBucket(tmpBucket);
+            s3Client.putObject(tmpBucket, stringObjKeyName, stringContent);
+            s3Client.deleteBucket(tmpBucket);
+
         } catch (AmazonServiceException e) {
             // The call was transmitted successfully, but Amazon S3 couldn't process
             // it, so it returned an error response.
