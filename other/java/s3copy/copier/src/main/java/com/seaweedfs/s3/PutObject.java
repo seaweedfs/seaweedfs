@@ -61,9 +61,8 @@ public class PutObject {
             request.setMetadata(metadata);
             s3Client.putObject(request);
 
+            // test reads
             S3Object written = s3Client.getObject(bucketName, stringObjKeyName);
-
-
             try {
                 String expected = IOUtils.toString(written.getObjectContent());
 
@@ -76,6 +75,9 @@ public class PutObject {
             } finally {
                 IOUtils.closeQuietly(written, log);
             }
+
+            // test deletes
+            s3Client.deleteObject(bucketName, stringObjKeyName);
 
         } catch (AmazonServiceException e) {
             // The call was transmitted successfully, but Amazon S3 couldn't process
