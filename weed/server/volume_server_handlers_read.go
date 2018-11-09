@@ -92,7 +92,11 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	setEtag(w, n.Etag())
+	if r.Header.Get("ETag-MD5") == "True" {
+		setEtag(w, n.MD5())
+	}else{
+		setEtag(w, n.Etag())
+	}
 
 	if n.HasPairs() {
 		pairMap := make(map[string]string)

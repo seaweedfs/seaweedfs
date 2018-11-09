@@ -63,6 +63,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
+	object := getObject(vars)
 
 	if strings.HasSuffix(r.URL.Path, "/") {
 		writeErrorResponse(w, ErrNotImplemented, r.URL)
@@ -70,7 +71,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	destUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer, s3a.option.BucketsPath, bucket, r.RequestURI)
+		s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
 
 	s3a.proxyToFiler(w, r, destUrl, passThroghResponse)
 
@@ -80,9 +81,10 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
+	object := getObject(vars)
 
 	destUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer, s3a.option.BucketsPath, bucket, r.RequestURI)
+		s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
 
 	s3a.proxyToFiler(w, r, destUrl, passThroghResponse)
 
@@ -92,9 +94,10 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
+	object := getObject(vars)
 
 	destUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer, s3a.option.BucketsPath, bucket, r.RequestURI)
+		s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
 
 	s3a.proxyToFiler(w, r, destUrl, func(proxyResonse *http.Response, w http.ResponseWriter) {
 		for k, v := range proxyResonse.Header {
@@ -125,6 +128,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 
 	proxyReq.Header.Set("Host", s3a.option.Filer)
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
+	proxyReq.Header.Set("Etag-MD5", "True")
 
 	for header, values := range r.Header {
 		for _, value := range values {
