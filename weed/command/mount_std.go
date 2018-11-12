@@ -39,7 +39,7 @@ func runMount(cmd *Command, args []string) bool {
 		fuse.AllowOther(),
 		fuse.AllowSUID(),
 		fuse.DefaultPermissions(),
-		fuse.MaxReadahead(1024*128), // TODO: not tested yet, possibly improving read performance
+		fuse.MaxReadahead(1024*128),
 		fuse.AsyncRead(),
 		fuse.WritebackCache(),
 	)
