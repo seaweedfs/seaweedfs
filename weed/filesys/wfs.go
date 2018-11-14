@@ -99,11 +99,12 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 	return
 }
 
-func (wfs *WFS) ReleaseHandle(handleId fuse.HandleID) {
+func (wfs *WFS) ReleaseHandle(fullpath string, handleId fuse.HandleID) {
 	wfs.pathToHandleLock.Lock()
 	defer wfs.pathToHandleLock.Unlock()
 
-	glog.V(4).Infoln("releasing handle id", handleId, "current handles lengh", len(wfs.handles))
+	glog.V(4).Infof("%s releasing handle id %dcurrent handles lengh %d", fullpath, handleId, len(wfs.handles))
+	delete(wfs.pathToHandleIndex, fullpath)
 	if int(handleId) < len(wfs.handles) {
 		wfs.handles[int(handleId)] = nil
 	}
