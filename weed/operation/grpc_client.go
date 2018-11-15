@@ -9,6 +9,13 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"sync"
+	"google.golang.org/grpc"
+	)
+
+var (
+	grpcClients     = make(map[string]*grpc.ClientConn)
+	grpcClientsLock sync.Mutex
 )
 
 func WithVolumeServerClient(volumeServer string, fn func(volume_server_pb.VolumeServerClient) error) error {
@@ -18,11 +25,23 @@ func WithVolumeServerClient(volumeServer string, fn func(volume_server_pb.Volume
 		return err
 	}
 
+	grpcClientsLock.Lock()
+
+	existingConnection, found := grpcClients[grpcAddress]
+	if found {
+		grpcClientsLock.Unlock()
+		client := volume_server_pb.NewVolumeServerClient(existingConnection)
+		return fn(client)
+	}
+
 	grpcConnection, err := util.GrpcDial(grpcAddress)
 	if err != nil {
+		grpcClientsLock.Unlock()
 		return fmt.Errorf("fail to dial %s: %v", grpcAddress, err)
 	}
-	defer grpcConnection.Close()
+
+	grpcClients[grpcAddress] = grpcConnection
+	grpcClientsLock.Unlock()
 
 	client := volume_server_pb.NewVolumeServerClient(grpcConnection)
 
@@ -41,11 +60,23 @@ func toVolumeServerGrpcAddress(volumeServer string) (grpcAddress string, err err
 
 func withMasterServerClient(masterServer string, fn func(masterClient master_pb.SeaweedClient) error) error {
 
+	grpcClientsLock.Lock()
+
+	existingConnection, found := grpcClients[masterServer]
+	if found {
+		grpcClientsLock.Unlock()
+		client := master_pb.NewSeaweedClient(existingConnection)
+		return fn(client)
+	}
+
 	grpcConnection, err := util.GrpcDial(masterServer)
 	if err != nil {
+		grpcClientsLock.Unlock()
 		return fmt.Errorf("fail to dial %s: %v", masterServer, err)
 	}
-	defer grpcConnection.Close()
+
+	grpcClients[masterServer] = grpcConnection
+	grpcClientsLock.Unlock()
 
 	client := master_pb.NewSeaweedClient(grpcConnection)
 

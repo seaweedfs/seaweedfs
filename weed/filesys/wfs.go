@@ -66,6 +66,7 @@ func (wfs *WFS) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) erro
 
 	grpcConnection, err := util.GrpcDial(wfs.option.FilerGrpcAddress)
 	if err != nil {
+		wfs.grpcClientsLock.Unlock()
 		return fmt.Errorf("fail to dial %s: %v", wfs.option.FilerGrpcAddress, err)
 	}
 
