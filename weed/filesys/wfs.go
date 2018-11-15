@@ -11,6 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/karlseguin/ccache"
+	"google.golang.org/grpc"
 )
 
 type Option struct {
@@ -33,6 +34,10 @@ type WFS struct {
 	handles           []*FileHandle
 	pathToHandleIndex map[string]int
 	pathToHandleLock  sync.Mutex
+
+	// cache grpc connections
+	grpcClients     map[string]*grpc.ClientConn
+	grpcClientsLock sync.Mutex
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {
@@ -40,6 +45,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		option:                    option,
 		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(int64(option.DirListingLimit) + 200).ItemsToPrune(100)),
 		pathToHandleIndex:         make(map[string]int),
+		grpcClients:               make(map[string]*grpc.ClientConn),
 	}
 }
 
@@ -49,11 +55,22 @@ func (wfs *WFS) Root() (fs.Node, error) {
 
 func (wfs *WFS) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
+	wfs.grpcClientsLock.Lock()
+
+	existingConnection, found := wfs.grpcClients[wfs.option.FilerGrpcAddress]
+	if found {
+		wfs.grpcClientsLock.Unlock()
+		client := filer_pb.NewSeaweedFilerClient(existingConnection)
+		return fn(client)
+	}
+
 	grpcConnection, err := util.GrpcDial(wfs.option.FilerGrpcAddress)
 	if err != nil {
 		return fmt.Errorf("fail to dial %s: %v", wfs.option.FilerGrpcAddress, err)
 	}
-	defer grpcConnection.Close()
+
+	wfs.grpcClients[wfs.option.FilerGrpcAddress] = grpcConnection
+	wfs.grpcClientsLock.Unlock()
 
 	client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 
