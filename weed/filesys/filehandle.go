@@ -37,6 +37,15 @@ func newFileHandle(file *File, uid, gid uint32) *FileHandle {
 	}
 }
 
+func (fh *FileHandle) InitializeToFile(file *File, uid, gid uint32) *FileHandle {
+	newHandle := &FileHandle{
+		f:          file,
+		dirtyPages: fh.dirtyPages.InitializeToFile(file),
+		Uid:        uid,
+		Gid:        gid,
+	}
+	return newHandle
+}
 var _ = fs.Handle(&FileHandle{})
 
 // var _ = fs.HandleReadAller(&FileHandle{})

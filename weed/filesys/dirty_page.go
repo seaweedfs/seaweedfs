@@ -28,6 +28,14 @@ func newDirtyPages(file *File) *ContinuousDirtyPages {
 	}
 }
 
+func (pages *ContinuousDirtyPages) InitializeToFile(file *File) *ContinuousDirtyPages {
+	if len(pages.Data) != int(file.wfs.option.ChunkSizeLimit) {
+		pages.Data = make([]byte, file.wfs.option.ChunkSizeLimit)
+	}
+	pages.f = file
+	return pages
+}
+
 func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, data []byte) (chunks []*filer_pb.FileChunk, err error) {
 
 	pages.lock.Lock()

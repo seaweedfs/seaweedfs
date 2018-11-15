@@ -28,6 +28,8 @@ func runMount(cmd *Command, args []string) bool {
 
 	fuse.Unmount(*mountOptions.dir)
 
+	util.SetupProfiling(*mountCpuProfile, *mountMemProfile)
+
 	c, err := fuse.Mount(
 		*mountOptions.dir,
 		fuse.VolumeName("SeaweedFS"),

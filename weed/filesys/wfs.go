@@ -72,15 +72,14 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 		return wfs.handles[index]
 	}
 
-	fileHandle = newFileHandle(file, uid, gid)
-
 	if found && wfs.handles[index] != nil {
 		glog.V(4).Infoln(fullpath, "reuse previous fileHandle id", index)
-		wfs.handles[index] = fileHandle
+		wfs.handles[index].InitializeToFile(file, uid, gid)
 		fileHandle.handle = uint64(index)
 		return
 	}
 
+	fileHandle = newFileHandle(file, uid, gid)
 	for i, h := range wfs.handles {
 		if h == nil {
 			wfs.handles[i] = fileHandle
