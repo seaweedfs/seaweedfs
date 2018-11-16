@@ -44,13 +44,13 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, actualSize i
 	}
 	switch version {
 	case Version1:
-		header := make([]byte, NeedleEntrySize)
+		header := make([]byte, NeedleEntrySize+NeedlePaddingSize)
 		CookieToBytes(header[0:CookieSize], n.Cookie)
 		NeedleIdToBytes(header[CookieSize:CookieSize+NeedleIdSize], n.Id)
 		n.Size = uint32(len(n.Data))
 		size = n.Size
 		util.Uint32toBytes(header[CookieSize+NeedleIdSize:CookieSize+NeedleIdSize+SizeSize], n.Size)
-		if _, err = w.Write(header); err != nil {
+		if _, err = w.Write(header[0:NeedleEntrySize]); err != nil {
 			return
 		}
 		if _, err = w.Write(n.Data); err != nil {
@@ -62,7 +62,7 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, actualSize i
 		_, err = w.Write(header[0 : NeedleChecksumSize+padding])
 		return
 	case Version2, Version3:
-		header := make([]byte, NeedleEntrySize+TimestampSize) // adding timestamp to reuse it and avoid extra allocation
+		header := make([]byte, NeedleEntrySize+NeedlePaddingSize) // adding timestamp to reuse it and avoid extra allocation
 		CookieToBytes(header[0:CookieSize], n.Cookie)
 		NeedleIdToBytes(header[CookieSize:CookieSize+NeedleIdSize], n.Id)
 		n.DataSize, n.NameSize, n.MimeSize = uint32(len(n.Data)), uint8(len(n.Name)), uint8(len(n.Mime))
@@ -261,11 +261,18 @@ func ReadNeedleHeader(r *os.File, version Version, offset int64) (n *Needle, bod
 }
 
 func PaddingLength(needleSize uint32, version Version) uint32 {
+	var paddingLength uint32
 	if version == Version3 {
 		// this is same value as version2, but just listed here for clarity
-		return NeedlePaddingSize - ((NeedleEntrySize + needleSize + NeedleChecksumSize + TimestampSize) % NeedlePaddingSize)
+		paddingLength = (NeedleEntrySize + needleSize + NeedleChecksumSize + TimestampSize) % NeedlePaddingSize
+	} else {
+		paddingLength = (NeedleEntrySize + needleSize + NeedleChecksumSize) % NeedlePaddingSize
 	}
-	return NeedlePaddingSize - ((NeedleEntrySize + needleSize + NeedleChecksumSize) % NeedlePaddingSize)
+	if paddingLength == 0 {
+		return 0
+	} else {
+		return NeedlePaddingSize - paddingLength
+	}
 }
 
 func NeedleBodyLength(needleSize uint32, version Version) int64 {
