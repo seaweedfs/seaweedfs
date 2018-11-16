@@ -13,12 +13,12 @@ type Cookie uint32
 const (
 	OffsetSize            = 4
 	SizeSize              = 4 // uint32 size
-	NeedleEntrySize       = NeedleIdSize + OffsetSize + SizeSize
 	TimestampSize         = 8 // int64 size
-	NeedlePaddingSize     = 8
-	MaxPossibleVolumeSize = 4 * 1024 * 1024 * 1024 * 8
+	NeedlePaddingSize     = 64
+	MaxPossibleVolumeSize = 4 * 1024 * 1024 * 1024 * NeedlePaddingSize
 	TombstoneFileSize     = math.MaxUint32
 	CookieSize            = 4
+	NeedleEntrySize       = CookieSize + NeedleIdSize + SizeSize
 )
 
 func CookieToBytes(bytes []byte, cookie Cookie) {

@@ -2,6 +2,18 @@ package sequence
 
 import (
 	"sync"
+	"time"
+)
+
+/**
+Prevent duplicate numbering caused by heartbeat failure
+*/
+const (
+	LenTimeStamp = 32
+	LenSequence  = 32 // Num of Sequence Bits
+
+	MaxSequence  = 1<<LenSequence - 1
+	MaxTimeStamp = 1<<LenTimeStamp - 1
 )
 
 // just for testing
@@ -11,7 +23,10 @@ type MemorySequencer struct {
 }
 
 func NewMemorySequencer() (m *MemorySequencer) {
-	m = &MemorySequencer{counter: 1}
+	nowStamp := uint64(time.Now().UnixNano() / 1e6)
+	m = &MemorySequencer{
+		counter:      (nowStamp&MaxTimeStamp)<<LenSequence | 1,
+		sequenceLock: sync.Mutex{}}
 	return
 }
 

@@ -36,7 +36,7 @@ var (
 	masterBindIp            = cmdMaster.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	metaFolder              = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
 	masterPeers             = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094")
-	volumeSizeLimitMB       = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
+	volumeSizeLimitMB       = cmdMaster.Flag.Uint("volumeSizeLimitMB", 256*1000, "Master stops directing writes to oversized volumes.")
 	volumePreallocate       = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
 	mpulse                  = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	defaultReplicaPlacement = cmdMaster.Flag.String("defaultReplication", "000", "Default replication type if not specified.")
@@ -64,8 +64,8 @@ func runMaster(cmd *Command, args []string) bool {
 	if *masterWhiteListOption != "" {
 		masterWhiteList = strings.Split(*masterWhiteListOption, ",")
 	}
-	if *volumeSizeLimitMB > 30*1000 {
-		glog.Fatalf("volumeSizeLimitMB should be smaller than 30000")
+	if *volumeSizeLimitMB > 256*1024 {
+		glog.Fatalf("volumeSizeLimitMB should be smaller than 256000")
 	}
 
 	r := mux.NewRouter()

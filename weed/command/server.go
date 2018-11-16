@@ -63,7 +63,7 @@ var (
 	serverGarbageThreshold        = cmdServer.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
 	masterPort                    = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
 	masterMetaFolder              = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
-	masterVolumeSizeLimitMB       = cmdServer.Flag.Uint("master.volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
+	masterVolumeSizeLimitMB       = cmdServer.Flag.Uint("master.volumeSizeLimitMB", 256*1000, "Master stops directing writes to oversized volumes.")
 	masterVolumePreallocate       = cmdServer.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
 	masterDefaultReplicaPlacement = cmdServer.Flag.String("master.defaultReplicaPlacement", "000", "Default replication type if not specified.")
 	volumeDataFolders             = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
@@ -134,8 +134,8 @@ func runServer(cmd *Command, args []string) bool {
 
 	folders := strings.Split(*volumeDataFolders, ",")
 
-	if *masterVolumeSizeLimitMB > 30*1000 {
-		glog.Fatalf("masterVolumeSizeLimitMB should be less than 30000")
+	if *masterVolumeSizeLimitMB > 256*1000 {
+		glog.Fatalf("masterVolumeSizeLimitMB should be less than 256000")
 	}
 
 	if *masterMetaFolder == "" {
