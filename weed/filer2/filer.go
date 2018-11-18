@@ -3,6 +3,7 @@ package filer2
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +14,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"github.com/karlseguin/ccache"
-	"math"
+	"github.com/chrislusf/seaweedfs/weed/storage"
 )
 
 type Filer struct {
@@ -240,7 +241,7 @@ func (f *Filer) DeleteFileByFileId(fileId string) {
 	if err != nil {
 		glog.V(0).Infof("can not find file %s: %v", fileId, err)
 	}
-	if _, err := operation.DeleteFilesAtOneVolumeServer(volumeServer, []string{fileId}); err != nil {
+	if _, err := operation.DeleteFilesAtOneVolumeServer(volumeServer, []string{fileId}); err != nil && err != storage.NotFound{
 		glog.V(0).Infof("deleting file %s: %v", fileId, err)
 	}
 }

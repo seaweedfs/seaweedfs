@@ -188,8 +188,8 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 	chunk, err := fh.dirtyPages.FlushToStorage(ctx)
 	if err != nil {
-		glog.Errorf("flush %s/%s to %s [%d,%d): %v", fh.f.dir.Path, fh.f.Name, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size), err)
-		return fmt.Errorf("flush %s/%s to %s [%d,%d): %v", fh.f.dir.Path, fh.f.Name, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size), err)
+		glog.Errorf("flush %s/%s: %v", fh.f.dir.Path, fh.f.Name, err)
+		return fmt.Errorf("flush %s/%s: %v", fh.f.dir.Path, fh.f.Name, err)
 	}
 	if chunk != nil {
 		fh.f.entry.Chunks = append(fh.f.entry.Chunks, chunk)

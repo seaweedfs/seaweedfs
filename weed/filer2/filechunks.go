@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sort"
+	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
@@ -45,6 +46,8 @@ func CompactFileChunks(chunks []*filer_pb.FileChunk) (compacted, garbage []*file
 			garbage = append(garbage, chunk)
 		}
 	}
+
+	cleanupIntervals(visibles)
 
 	return
 }
@@ -89,6 +92,8 @@ func ViewFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int) (views
 		}
 	}
 
+	cleanupIntervals(visibles)
+
 	return views
 
 }
@@ -100,6 +105,12 @@ func logPrintf(name string, visibles []*visibleInterval) {
 			log.Printf("%s:  => %+v", name, v)
 		}
 	*/
+}
+
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		return new(visibleInterval)
+	},
 }
 
 func mergeIntoVisibles(visibles []*visibleInterval, chunk *filer_pb.FileChunk) (newVisibles []*visibleInterval) {
@@ -153,6 +164,12 @@ func nonOverlappingVisibleIntervals(chunks []*filer_pb.FileChunk) (visibles []*v
 	return
 }
 
+func cleanupIntervals(visibles []*visibleInterval) {
+	for _, v := range visibles {
+		bufPool.Put(v)
+	}
+}
+
 // find non-overlapping visible intervals
 // visible interval map to one file chunk
 
@@ -164,7 +181,12 @@ type visibleInterval struct {
 }
 
 func newVisibleInterval(start, stop int64, fileId string, modifiedTime int64) *visibleInterval {
-	return &visibleInterval{start: start, stop: stop, fileId: fileId, modifiedTime: modifiedTime}
+	b := bufPool.Get().(*visibleInterval)
+	b.start = start
+	b.stop = stop
+	b.fileId = fileId
+	b.modifiedTime = modifiedTime
+	return b
 }
 
 func min(x, y int64) int64 {

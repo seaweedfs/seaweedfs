@@ -105,7 +105,7 @@ func DeleteFilesAtOneVolumeServer(volumeServer string, fileIds []string) (ret []
 
 		resp, err := volumeServerClient.BatchDelete(context.Background(), req)
 
-		fmt.Printf("deleted %v %v: %v\n", fileIds, err, resp)
+		// fmt.Printf("deleted %v %v: %v\n", fileIds, err, resp)
 
 		if err != nil {
 			return err
@@ -121,7 +121,7 @@ func DeleteFilesAtOneVolumeServer(volumeServer string, fileIds []string) (ret []
 	}
 
 	for _, result := range ret {
-		if result.Error != "" {
+		if result.Error != "" && result.Error != "Not Found" {
 			return nil, fmt.Errorf("delete fileId %s: %v", result.FileId, result.Error)
 		}
 	}
