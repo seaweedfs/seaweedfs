@@ -31,8 +31,10 @@ var _ = fs.NodeSetattrer(&Dir{})
 
 func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 
+	// https://github.com/bazil/fuse/issues/196
+	attr.Valid = time.Second
+
 	if dir.Path == "/" {
-		attr.Valid = time.Second
 		attr.Mode = os.ModeDir | 0777
 		return nil
 	}
@@ -83,9 +85,6 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 	// glog.V(1).Infof("dir %s permission: %v", dir.Path, os.FileMode(attributes.FileMode))
 
 	attr.Mode = os.FileMode(dir.attributes.FileMode) | os.ModeDir
-	if dir.Path == "/" && dir.attributes.FileMode == 0 {
-		attr.Valid = time.Second
-	}
 
 	attr.Mtime = time.Unix(dir.attributes.Mtime, 0)
 	attr.Ctime = time.Unix(dir.attributes.Crtime, 0)
