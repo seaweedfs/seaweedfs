@@ -47,8 +47,6 @@ func CompactFileChunks(chunks []*filer_pb.FileChunk) (compacted, garbage []*file
 		}
 	}
 
-	cleanupIntervals(visibles)
-
 	return
 }
 
@@ -92,8 +90,6 @@ func ViewFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int) (views
 		}
 	}
 
-	cleanupIntervals(visibles)
-
 	return views
 
 }
@@ -114,6 +110,23 @@ var bufPool = sync.Pool{
 }
 
 func mergeIntoVisibles(visibles []*visibleInterval, chunk *filer_pb.FileChunk) (newVisibles []*visibleInterval) {
+
+	newV := newVisibleInterval(
+		chunk.Offset,
+		chunk.Offset+int64(chunk.Size),
+		chunk.FileId,
+		chunk.Mtime,
+	)
+
+	length := len(visibles)
+	if length == 0 {
+		return append(visibles, newV)
+	}
+	last := visibles[length-1]
+	if last.stop <= chunk.Offset {
+		return append(visibles, newV)
+	}
+
 	for _, v := range visibles {
 		if v.start < chunk.Offset && chunk.Offset < v.stop {
 			newVisibles = append(newVisibles, newVisibleInterval(
@@ -136,12 +149,17 @@ func mergeIntoVisibles(visibles []*visibleInterval, chunk *filer_pb.FileChunk) (
 			newVisibles = append(newVisibles, v)
 		}
 	}
-	newVisibles = append(newVisibles, newVisibleInterval(
-		chunk.Offset,
-		chunk.Offset+int64(chunk.Size),
-		chunk.FileId,
-		chunk.Mtime,
-	))
+	newVisibles = append(newVisibles, newV)
+
+	for i := len(newVisibles) - 1; i > 0; i-- {
+		if newV.start < newVisibles[i-1].start {
+			newVisibles[i] = newVisibles[i-1]
+		} else {
+			newVisibles[i] = newV
+			break
+		}
+	}
+
 	return
 }
 
@@ -155,19 +173,9 @@ func nonOverlappingVisibleIntervals(chunks []*filer_pb.FileChunk) (visibles []*v
 		visibles = mergeIntoVisibles(visibles, chunk)
 	}
 
-	sort.Slice(visibles, func(i, j int) bool {
-		return visibles[i].start < visibles[j].start
-	})
-
 	logPrintf("visibles", visibles)
 
 	return
-}
-
-func cleanupIntervals(visibles []*visibleInterval) {
-	for _, v := range visibles {
-		bufPool.Put(v)
-	}
 }
 
 // find non-overlapping visible intervals
@@ -181,12 +189,12 @@ type visibleInterval struct {
 }
 
 func newVisibleInterval(start, stop int64, fileId string, modifiedTime int64) *visibleInterval {
-	b := bufPool.Get().(*visibleInterval)
-	b.start = start
-	b.stop = stop
-	b.fileId = fileId
-	b.modifiedTime = modifiedTime
-	return b
+	return &visibleInterval{
+		start:        start,
+		stop:         stop,
+		fileId:       fileId,
+		modifiedTime: modifiedTime,
+	}
 }
 
 func min(x, y int64) int64 {

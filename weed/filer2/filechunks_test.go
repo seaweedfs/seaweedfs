@@ -193,8 +193,6 @@ func TestIntervalMerging(t *testing.T) {
 			t.Fatalf("failed to compact test case %d, len %d expected %d", i, len(intervals), len(testcase.Expected))
 		}
 
-		cleanupIntervals(intervals)
-
 	}
 
 }
