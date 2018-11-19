@@ -317,3 +317,32 @@ func TestChunksReading(t *testing.T) {
 	}
 
 }
+
+func BenchmarkNonOverlappingVisibleIntervals(b *testing.B) {
+
+	chunks := []*filer_pb.FileChunk{
+		{Offset: 0, Size: 2097152, FileId: "7,0294cbb9892b", Mtime: 123},
+		{Offset: 0, Size: 3145728, FileId: "3,029565bf3092", Mtime: 130},
+		{Offset: 2097152, Size: 3145728, FileId: "6,029632f47ae2", Mtime: 140},
+		{Offset: 5242880, Size: 3145728, FileId: "2,029734c5aa10", Mtime: 150},
+		{Offset: 8388608, Size: 3145728, FileId: "5,02982f80de50", Mtime: 160},
+		{Offset: 11534336, Size: 2842193, FileId: "7,0299ad723803", Mtime: 170},
+	}
+
+	k := 1024
+
+	for n := 0; n < k; n++ {
+		chunks = append(chunks, &filer_pb.FileChunk{
+			Offset: int64(n*100), Size: 100, FileId: "7,0294cbb9892b", Mtime: int64(n),
+		})
+		chunks = append(chunks, &filer_pb.FileChunk{
+			Offset: int64(n*50), Size: 100, FileId: "7,0294cbb9892b", Mtime: int64(n+k),
+		})
+	}
+
+	// run the Fib function b.N times
+	for n := 0; n < b.N; n++ {
+		intervals := nonOverlappingVisibleIntervals(chunks)
+		cleanupIntervals(intervals)
+	}
+}
