@@ -96,10 +96,10 @@ func ViewFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int) (views
 
 func logPrintf(name string, visibles []*visibleInterval) {
 	/*
-		log.Printf("%s len %d", name, len(visibles))
-		for _, v := range visibles {
-			log.Printf("%s:  => %+v", name, v)
-		}
+	log.Printf("%s len %d", name, len(visibles))
+	for _, v := range visibles {
+		log.Printf("%s:  => %+v", name, v)
+	}
 	*/
 }
 
@@ -151,14 +151,17 @@ func mergeIntoVisibles(visibles, newVisibles []*visibleInterval, chunk *filer_pb
 	}
 	newVisibles = append(newVisibles, newV)
 
-	for i := len(newVisibles) - 1; i > 0; i-- {
-		if newV.start < newVisibles[i-1].start {
+	logPrintf("  append", newVisibles)
+
+	for i := len(newVisibles) - 1; i >= 0; i-- {
+		if i > 0 && newV.start < newVisibles[i-1].start {
 			newVisibles[i] = newVisibles[i-1]
 		} else {
 			newVisibles[i] = newV
 			break
 		}
 	}
+	logPrintf("  sorted", newVisibles)
 
 	return newVisibles
 }
@@ -175,9 +178,10 @@ func nonOverlappingVisibleIntervals(chunks []*filer_pb.FileChunk) (visibles []*v
 		t := visibles[:0]
 		visibles = newVislbles
 		newVislbles = t
-	}
 
-	logPrintf("visibles", visibles)
+		logPrintf("add", visibles)
+
+	}
 
 	return
 }
