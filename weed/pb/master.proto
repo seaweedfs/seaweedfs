@@ -11,6 +11,8 @@ service Seaweed {
     }
     rpc LookupVolume (LookupVolumeRequest) returns (LookupVolumeResponse) {
     }
+    rpc Assign (AssignRequest) returns (AssignResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -88,4 +90,21 @@ message LookupVolumeResponse {
 message Location {
     string url = 1;
     string public_url = 2;
+}
+
+message AssignRequest {
+    uint64 count = 1;
+    string replication = 2;
+    string collection = 3;
+    string ttl = 4;
+    string data_center = 5;
+    string rack = 6;
+    string data_node = 7;
+}
+message AssignResponse {
+    string fid = 1;
+    string url = 2;
+    string public_url = 3;
+    uint64 count = 4;
+    string error = 5;
 }

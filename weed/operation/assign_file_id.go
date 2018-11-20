@@ -1,13 +1,9 @@
 package operation
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/url"
-	"strconv"
-
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"context"
 )
 
 type VolumeAssignRequest struct {
@@ -29,52 +25,54 @@ type AssignResult struct {
 }
 
 func Assign(server string, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {
+
 	var requests []*VolumeAssignRequest
 	requests = append(requests, primaryRequest)
 	requests = append(requests, alternativeRequests...)
 
 	var lastError error
+	ret := &AssignResult{}
+
 	for i, request := range requests {
 		if request == nil {
 			continue
 		}
-		values := make(url.Values)
-		values.Add("count", strconv.FormatUint(request.Count, 10))
-		if request.Replication != "" {
-			values.Add("replication", request.Replication)
-		}
-		if request.Collection != "" {
-			values.Add("collection", request.Collection)
-		}
-		if request.Ttl != "" {
-			values.Add("ttl", request.Ttl)
-		}
-		if request.DataCenter != "" {
-			values.Add("dataCenter", request.DataCenter)
-		}
-		if request.Rack != "" {
-			values.Add("rack", request.Rack)
-		}
-		if request.DataNode != "" {
-			values.Add("dataNode", request.DataNode)
+
+		lastError = withMasterServerClient(server, func(masterClient master_pb.SeaweedClient) error {
+			req := &master_pb.AssignRequest{
+				Count:       primaryRequest.Count,
+				Replication: primaryRequest.Replication,
+				Collection:  primaryRequest.Collection,
+				Ttl:         primaryRequest.Ttl,
+				DataCenter:  primaryRequest.DataCenter,
+				Rack:        primaryRequest.Rack,
+				DataNode:    primaryRequest.DataNode,
+			}
+			resp, grpcErr := masterClient.Assign(context.Background(), req)
+			if grpcErr != nil {
+				return grpcErr
+			}
+
+			ret.Count = resp.Count
+			ret.Fid = resp.Fid
+			ret.Url = resp.Url
+			ret.PublicUrl = resp.PublicUrl
+			ret.Error = resp.Error
+
+			return nil
+
+		})
+
+		if lastError != nil {
+			continue
 		}
 
-		postUrl := fmt.Sprintf("http://%s/dir/assign", server)
-		jsonBlob, err := util.Post(postUrl, values)
-		glog.V(2).Infof("assign %d result from %s %+v : %s", i, postUrl, values, string(jsonBlob))
-		if err != nil {
-			return nil, err
-		}
-		var ret AssignResult
-		err = json.Unmarshal(jsonBlob, &ret)
-		if err != nil {
-			return nil, fmt.Errorf("/dir/assign result JSON unmarshal error:%v, json:%s", err, string(jsonBlob))
-		}
 		if ret.Count <= 0 {
 			lastError = fmt.Errorf("assign failure %d: %v", i+1, ret.Error)
 			continue
 		}
-		return &ret, nil
+
 	}
-	return nil, lastError
+
+	return ret, lastError
 }
