@@ -231,9 +231,11 @@ func (f *Filer) cacheSetDirectory(dirpath string, dirEntry *Entry, level int) {
 }
 
 func (f *Filer) DeleteChunks(chunks []*filer_pb.FileChunk) {
+	var fileIds []string
 	for _, chunk := range chunks {
-		f.DeleteFileByFileId(chunk.FileId)
+		fileIds = append(fileIds, chunk.FileId)
 	}
+	operation.DeleteFiles(f.GetMaster(), fileIds)
 }
 
 func (f *Filer) DeleteFileByFileId(fileId string) {
@@ -241,7 +243,7 @@ func (f *Filer) DeleteFileByFileId(fileId string) {
 	if err != nil {
 		glog.V(0).Infof("can not find file %s: %v", fileId, err)
 	}
-	if _, err := operation.DeleteFilesAtOneVolumeServer(volumeServer, []string{fileId}); err != nil && err != storage.NotFound{
+	if _, err := operation.DeleteFilesAtOneVolumeServer(volumeServer, []string{fileId}); err != nil && err != storage.NotFound {
 		glog.V(0).Infof("deleting file %s: %v", fileId, err)
 	}
 }
