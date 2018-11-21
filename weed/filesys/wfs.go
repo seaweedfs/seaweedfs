@@ -120,7 +120,7 @@ func (wfs *WFS) ReleaseHandle(fullpath string, handleId fuse.HandleID) {
 	wfs.pathToHandleLock.Lock()
 	defer wfs.pathToHandleLock.Unlock()
 
-	glog.V(4).Infof("%s releasing handle id %dcurrent handles lengh %d", fullpath, handleId, len(wfs.handles))
+	glog.V(4).Infof("%s releasing handle id %d current handles length %d", fullpath, handleId, len(wfs.handles))
 	delete(wfs.pathToHandleIndex, fullpath)
 	if int(handleId) < len(wfs.handles) {
 		wfs.handles[int(handleId)] = nil

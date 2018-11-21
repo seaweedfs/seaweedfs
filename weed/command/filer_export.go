@@ -169,6 +169,16 @@ func printout(level int, entry *filer2.Entry) error {
 			print("| ")
 		}
 	}
-	println(entry.FullPath.Name())
+	print(entry.FullPath.Name())
+	for _, chunk:=range entry.Chunks{
+		print("[")
+		print(chunk.FileId)
+		print(",")
+		print(chunk.Offset)
+		print(",")
+		print(chunk.Size)
+		print(")")
+	}
+	println()
 	return nil
 }
