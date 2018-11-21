@@ -66,6 +66,15 @@ func (vc *vidMap) LookupVolumeServer(fileId string) (volumeServer string, err er
 	return serverUrl, nil
 }
 
+func (vc *vidMap) GetVidLocations(vid string) (locations []Location) {
+	id, err := strconv.Atoi(vid)
+	if err != nil {
+		glog.V(1).Infof("Unknown volume id %s", vid)
+		return nil
+	}
+	return vc.GetLocations(uint32(id))
+}
+
 func (vc *vidMap) GetLocations(vid uint32) (locations []Location) {
 	vc.RLock()
 	defer vc.RUnlock()
