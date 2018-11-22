@@ -99,8 +99,16 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 
 	debug("assigning file id for", fname)
 	r.ParseForm()
+	count := uint64(1)
+	if r.FormValue("count") != "" {
+		count, pe = strconv.ParseUint(r.FormValue("count"), 10, 32)
+		if pe != nil {
+			writeJsonError(w, r, http.StatusBadRequest, pe)
+			return
+		}
+	}
 	ar := &operation.VolumeAssignRequest{
-		Count:       1,
+		Count:       count,
 		Replication: r.FormValue("replication"),
 		Collection:  r.FormValue("collection"),
 		Ttl:         r.FormValue("ttl"),
