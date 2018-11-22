@@ -52,10 +52,10 @@ func TestCompactFileChunks2(t *testing.T) {
 
 	compacted, garbage := CompactFileChunks(chunks)
 
-	if len(compacted) != 3 {
+	if len(compacted) != 4 {
 		t.Fatalf("unexpected compacted: %d", len(compacted))
 	}
-	if len(garbage) != 9 {
+	if len(garbage) != 8 {
 		t.Fatalf("unexpected garbage: %d", len(garbage))
 	}
 }
