@@ -166,6 +166,23 @@ func TestIntervalMerging(t *testing.T) {
 				{start: 11534336, stop: 14376529, fileId: "7,0299ad723803"},
 			},
 		},
+		// case 8: real bug
+		{
+			Chunks: []*filer_pb.FileChunk{
+				{Offset: 0, Size: 77824, FileId: "4,0b3df938e301", Mtime: 123},
+				{Offset: 471040, Size: 472225-471040, FileId: "6,0b3e0650019c", Mtime: 130},
+				{Offset: 77824, Size: 208896-77824, FileId: "4,0b3f0c7202f0", Mtime: 140},
+				{Offset: 208896, Size: 339968-208896, FileId: "2,0b4031a72689", Mtime: 150},
+				{Offset: 339968, Size: 471040-339968, FileId: "3,0b416a557362", Mtime: 160},
+			},
+			Expected: []*visibleInterval{
+				{start: 0, stop: 77824, fileId: "4,0b3df938e301"},
+				{start: 77824, stop: 208896, fileId: "4,0b3f0c7202f0"},
+				{start: 208896, stop: 339968, fileId: "2,0b4031a72689"},
+				{start: 339968, stop: 471040, fileId: "3,0b416a557362"},
+				{start: 471040, stop: 472225, fileId: "6,0b3e0650019c"},
+			},
+		},
 	}
 
 	for i, testcase := range testcases {
