@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"sync"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
@@ -20,6 +21,12 @@ type VolumeLayout struct {
 	oversizedVolumes map[storage.VolumeId]bool // set of oversized volumes
 	volumeSizeLimit  uint64
 	accessLock       sync.RWMutex
+}
+
+type VolumeLayoutStats struct {
+	TotalSize uint64
+	UsedSize  uint64
+	FileCount uint64
 }
 
 func NewVolumeLayout(rp *storage.ReplicaPlacement, ttl *storage.TTL, volumeSizeLimit uint64) *VolumeLayout {
@@ -264,4 +271,26 @@ func (vl *VolumeLayout) ToMap() map[string]interface{} {
 	m["writables"] = vl.writables
 	//m["locations"] = vl.vid2location
 	return m
+}
+
+func (vl *VolumeLayout) Stats() *VolumeLayoutStats {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+
+	ret := &VolumeLayoutStats{}
+
+	freshThreshold := time.Now().Unix() - 60
+
+	for vid, vll := range vl.vid2location {
+		size, fileCount := vll.Stats(vid, freshThreshold)
+		ret.FileCount += uint64(fileCount)
+		ret.UsedSize += size
+		if vl.readonlyVolumes[vid] {
+			ret.TotalSize += size
+		} else {
+			ret.TotalSize += vl.volumeSizeLimit
+		}
+	}
+
+	return ret
 }

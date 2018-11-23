@@ -13,6 +13,8 @@ service Seaweed {
     }
     rpc Assign (AssignRequest) returns (AssignResponse) {
     }
+    rpc Statistics (StatisticsRequest) returns (StatisticsResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -107,4 +109,18 @@ message AssignResponse {
     string public_url = 3;
     uint64 count = 4;
     string error = 5;
+}
+
+message StatisticsRequest {
+    string replication = 1;
+    string collection = 2;
+    string ttl = 3;
+}
+message StatisticsResponse {
+    string replication = 1;
+    string collection = 2;
+    string ttl = 3;
+    uint64 total_size = 4;
+    uint64 used_size = 5;
+    uint64 file_count = 6;
 }

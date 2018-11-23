@@ -84,3 +84,29 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		Count:     count,
 	}, nil
 }
+
+func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.StatisticsRequest) (*master_pb.StatisticsResponse, error) {
+
+	if req.Replication == "" {
+		req.Replication = ms.defaultReplicaPlacement
+	}
+	replicaPlacement, err := storage.NewReplicaPlacementFromString(req.Replication)
+	if err != nil {
+		return nil, err
+	}
+	ttl, err := storage.ReadTTL(req.Ttl)
+	if err != nil {
+		return nil, err
+	}
+
+	volumeLayout := ms.Topo.GetVolumeLayout(req.Collection, replicaPlacement, ttl)
+	stats := volumeLayout.Stats()
+
+	resp := &master_pb.StatisticsResponse{
+		TotalSize: stats.TotalSize,
+		UsedSize:  stats.UsedSize,
+		FileCount: stats.FileCount,
+	}
+
+	return resp, nil
+}

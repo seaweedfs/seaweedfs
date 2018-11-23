@@ -2,6 +2,8 @@ package topology
 
 import (
 	"fmt"
+
+	"github.com/chrislusf/seaweedfs/weed/storage"
 )
 
 type VolumeLocationList struct {
@@ -62,4 +64,16 @@ func (dnll *VolumeLocationList) Refresh(freshThreshHold int64) {
 		}
 		dnll.list = l
 	}
+}
+
+func (dnll *VolumeLocationList) Stats(vid storage.VolumeId, freshThreshHold int64) (size uint64, fileCount int) {
+	for _, dnl := range dnll.list {
+		if dnl.LastSeen < freshThreshHold {
+			vinfo, err := dnl.GetVolumesById(vid)
+			if err == nil {
+				return vinfo.Size - vinfo.DeletedByteCount, vinfo.FileCount - vinfo.DeleteCount
+			}
+		}
+	}
+	return 0, 0
 }

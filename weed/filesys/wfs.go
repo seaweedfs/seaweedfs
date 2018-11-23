@@ -43,6 +43,12 @@ type WFS struct {
 	// cache grpc connections
 	grpcClients     map[string]*grpc.ClientConn
 	grpcClientsLock sync.Mutex
+
+	stats statsCache
+}
+type statsCache struct {
+	filer_pb.StatisticsResponse
+	lastChecked int64 // unix time in seconds
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {
@@ -139,9 +145,40 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 
 	glog.V(4).Infof("reading fs stats: %+v", req)
 
-	totalDiskSize := uint64(0)
-	usedDiskSize := uint64(0)
-	actualFileCount := uint64(0)
+	if wfs.stats.lastChecked < time.Now().Unix()-20 {
+
+		err := wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+			request := &filer_pb.StatisticsRequest{
+				Collection:  wfs.option.Collection,
+				Replication: wfs.option.Replication,
+				Ttl:         fmt.Sprintf("%ds", wfs.option.TtlSec),
+			}
+
+			glog.V(4).Infof("reading filer stats: %+v", request)
+			resp, err := client.Statistics(ctx, request)
+			if err != nil {
+				glog.V(0).Infof("reading filer stats %v: %v", request, err)
+				return err
+			}
+			glog.V(4).Infof("read filer stats: %+v", resp)
+
+			wfs.stats.TotalSize = resp.TotalSize
+			wfs.stats.UsedSize = resp.UsedSize
+			wfs.stats.FileCount = resp.FileCount
+			wfs.stats.lastChecked = time.Now().Unix()
+
+			return nil
+		})
+		if err != nil {
+			glog.V(0).Infof("filer Statistics: %v", err)
+			return err
+		}
+	}
+
+	totalDiskSize := wfs.stats.TotalSize
+	usedDiskSize := wfs.stats.UsedSize
+	actualFileCount := wfs.stats.FileCount
 
 	// Compute the total number of available blocks
 	resp.Blocks = totalDiskSize / blockSize
