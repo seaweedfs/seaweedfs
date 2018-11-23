@@ -96,10 +96,10 @@ func ViewFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int) (views
 
 func logPrintf(name string, visibles []*visibleInterval) {
 	/*
-	log.Printf("%s len %d", name, len(visibles))
-	for _, v := range visibles {
-		log.Printf("%s:  => %+v", name, v)
-	}
+		log.Printf("%s len %d", name, len(visibles))
+		for _, v := range visibles {
+			log.Printf("%s:  => %+v", name, v)
+		}
 	*/
 }
 
@@ -109,7 +109,7 @@ var bufPool = sync.Pool{
 	},
 }
 
-func mergeIntoVisibles(visibles, newVisibles []*visibleInterval, chunk *filer_pb.FileChunk, ) ([]*visibleInterval) {
+func mergeIntoVisibles(visibles, newVisibles []*visibleInterval, chunk *filer_pb.FileChunk) []*visibleInterval {
 
 	newV := newVisibleInterval(
 		chunk.Offset,

@@ -42,7 +42,7 @@ func (v *Volume) Destroy() (err error) {
 	}
 	v.Close()
 	os.Remove(v.FileName() + ".dat")
-	if v.nm!=nil{
+	if v.nm != nil {
 		err = v.nm.Destroy()
 	}
 	os.Remove(v.FileName() + ".cpd")

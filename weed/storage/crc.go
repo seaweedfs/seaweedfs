@@ -1,11 +1,11 @@
 package storage
 
 import (
-	"fmt"
 	"crypto/md5"
+	"fmt"
 
-	"github.com/klauspost/crc32"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/klauspost/crc32"
 )
 
 var table = crc32.MakeTable(crc32.Castagnoli)

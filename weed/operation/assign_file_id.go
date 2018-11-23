@@ -1,9 +1,10 @@
 package operation
 
 import (
-	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"context"
+	"fmt"
+
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 )
 
 type VolumeAssignRequest struct {

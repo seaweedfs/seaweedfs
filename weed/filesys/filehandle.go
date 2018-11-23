@@ -46,6 +46,7 @@ func (fh *FileHandle) InitializeToFile(file *File, uid, gid uint32) *FileHandle 
 	}
 	return newHandle
 }
+
 var _ = fs.Handle(&FileHandle{})
 
 // var _ = fs.HandleReadAller(&FileHandle{})

@@ -94,7 +94,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 	if r.Header.Get("ETag-MD5") == "True" {
 		setEtag(w, n.MD5())
-	}else{
+	} else {
 		setEtag(w, n.Etag())
 	}
 

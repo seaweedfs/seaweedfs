@@ -171,7 +171,7 @@ func printout(level int, entry *filer2.Entry) error {
 		}
 	}
 	print(entry.FullPath.Name())
-	if *verboseFilerExport{
+	if *verboseFilerExport {
 		for _, chunk := range entry.Chunks {
 			print("[")
 			print(chunk.FileId)

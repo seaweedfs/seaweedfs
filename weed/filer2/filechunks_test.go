@@ -4,8 +4,8 @@ import (
 	"log"
 	"testing"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
 func TestCompactFileChunks(t *testing.T) {
@@ -27,7 +27,6 @@ func TestCompactFileChunks(t *testing.T) {
 
 }
 
-
 func TestCompactFileChunks2(t *testing.T) {
 
 	chunks := []*filer_pb.FileChunk{
@@ -43,10 +42,10 @@ func TestCompactFileChunks2(t *testing.T) {
 
 	for n := 0; n < k; n++ {
 		chunks = append(chunks, &filer_pb.FileChunk{
-			Offset: int64(n * 100), Size: 100, FileId: fmt.Sprintf("fileId%d",n), Mtime: int64(n),
+			Offset: int64(n * 100), Size: 100, FileId: fmt.Sprintf("fileId%d", n), Mtime: int64(n),
 		})
 		chunks = append(chunks, &filer_pb.FileChunk{
-			Offset: int64(n * 50), Size: 100, FileId: fmt.Sprintf("fileId%d",n+k), Mtime: int64(n + k),
+			Offset: int64(n * 50), Size: 100, FileId: fmt.Sprintf("fileId%d", n+k), Mtime: int64(n + k),
 		})
 	}
 
@@ -170,10 +169,10 @@ func TestIntervalMerging(t *testing.T) {
 		{
 			Chunks: []*filer_pb.FileChunk{
 				{Offset: 0, Size: 77824, FileId: "4,0b3df938e301", Mtime: 123},
-				{Offset: 471040, Size: 472225-471040, FileId: "6,0b3e0650019c", Mtime: 130},
-				{Offset: 77824, Size: 208896-77824, FileId: "4,0b3f0c7202f0", Mtime: 140},
-				{Offset: 208896, Size: 339968-208896, FileId: "2,0b4031a72689", Mtime: 150},
-				{Offset: 339968, Size: 471040-339968, FileId: "3,0b416a557362", Mtime: 160},
+				{Offset: 471040, Size: 472225 - 471040, FileId: "6,0b3e0650019c", Mtime: 130},
+				{Offset: 77824, Size: 208896 - 77824, FileId: "4,0b3f0c7202f0", Mtime: 140},
+				{Offset: 208896, Size: 339968 - 208896, FileId: "2,0b4031a72689", Mtime: 150},
+				{Offset: 339968, Size: 471040 - 339968, FileId: "3,0b416a557362", Mtime: 160},
 			},
 			Expected: []*visibleInterval{
 				{start: 0, stop: 77824, fileId: "4,0b3df938e301"},
@@ -372,10 +371,10 @@ func BenchmarkCompactFileChunks(b *testing.B) {
 
 	for n := 0; n < k; n++ {
 		chunks = append(chunks, &filer_pb.FileChunk{
-			Offset: int64(n * 100), Size: 100, FileId: fmt.Sprintf("fileId%d",n), Mtime: int64(n),
+			Offset: int64(n * 100), Size: 100, FileId: fmt.Sprintf("fileId%d", n), Mtime: int64(n),
 		})
 		chunks = append(chunks, &filer_pb.FileChunk{
-			Offset: int64(n * 50), Size: 100, FileId: fmt.Sprintf("fileId%d",n+k), Mtime: int64(n + k),
+			Offset: int64(n * 50), Size: 100, FileId: fmt.Sprintf("fileId%d", n+k), Mtime: int64(n + k),
 		})
 	}
 
