@@ -1,7 +1,9 @@
 package filesys
 
 import (
+	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -25,6 +27,9 @@ type Option struct {
 	DirListingLimit    int
 	EntryCacheTtl      time.Duration
 }
+
+var _ = fs.FS(&WFS{})
+var _ = fs.FSStatfser(&WFS{})
 
 type WFS struct {
 	option                    *Option
@@ -127,4 +132,35 @@ func (wfs *WFS) ReleaseHandle(fullpath string, handleId fuse.HandleID) {
 	}
 
 	return
+}
+
+// Statfs is called to obtain file system metadata. Implements fuse.FSStatfser
+func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.StatfsResponse) error {
+
+	glog.V(4).Infof("reading fs stats: %+v", req)
+
+	totalDiskSize := uint64(0)
+	usedDiskSize := uint64(0)
+	actualFileCount := uint64(0)
+
+	// Compute the total number of available blocks
+	resp.Blocks = totalDiskSize / blockSize
+
+	// Compute the number of used blocks
+	numblocks := uint64(usedDiskSize / blockSize)
+
+	// Report the number of free and available blocks for the block size
+	resp.Bfree = resp.Blocks - numblocks
+	resp.Bavail = resp.Blocks - numblocks
+	resp.Bsize = uint32(blockSize)
+
+	// Report the total number of possible files in the file system (and those free)
+	resp.Files = math.MaxInt64
+	resp.Ffree = math.MaxInt64 - actualFileCount
+
+	// Report the maximum length of a name and the minimum fragment size
+	resp.Namelen = 1024
+	resp.Frsize = uint32(blockSize)
+
+	return nil
 }
