@@ -34,6 +34,7 @@ func runMount(cmd *Command, args []string) bool {
 		*mountOptions.dir,
 		fuse.VolumeName("SeaweedFS"),
 		fuse.FSName("SeaweedFS"),
+		fuse.Subtype("SeaweedFS"),
 		fuse.NoAppleDouble(),
 		fuse.NoAppleXattr(),
 		fuse.ExclCreate(),
