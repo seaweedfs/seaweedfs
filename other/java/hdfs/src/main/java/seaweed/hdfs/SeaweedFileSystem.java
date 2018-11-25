@@ -3,9 +3,11 @@ package seaweed.hdfs;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileAlreadyExistsException;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.Progressable;
 
 import java.io.FileNotFoundException;
@@ -20,6 +22,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
 
     private URI uri;
     private Path workingDirectory = new Path("/");
+    private SeaweedFileSystemStore seaweedFileSystemStore;
 
     public URI getUri() {
         return uri;
@@ -48,6 +51,8 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
 
         setConf(conf);
         this.uri = uri;
+
+        seaweedFileSystemStore = new SeaweedFileSystemStore(host, port);
     }
 
     public FSDataInputStream open(Path path, int i) throws IOException {
@@ -66,12 +71,24 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         return false;
     }
 
-    public boolean delete(Path path, boolean b) throws IOException {
-        return false;
+    public boolean delete(Path path, boolean recursive) throws IOException {
+
+        path = qualify(path);
+
+        FileStatus fileStatus = getFileStatus(path);
+        if (fileStatus == null) {
+            return true;
+        }
+
+        return seaweedFileSystemStore.deleteEntries(path, fileStatus.isDirectory(), recursive);
+
     }
 
     public FileStatus[] listStatus(Path path) throws FileNotFoundException, IOException {
-        return new FileStatus[0];
+
+        path = qualify(path);
+
+        return seaweedFileSystemStore.listEntries(path);
     }
 
     public Path getWorkingDirectory() {
@@ -87,10 +104,34 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
     }
 
     public boolean mkdirs(Path path, FsPermission fsPermission) throws IOException {
-        return false;
+
+        path = qualify(path);
+
+        try {
+            FileStatus fileStatus = getFileStatus(path);
+
+            if (fileStatus.isDirectory()) {
+                return true;
+            } else {
+                throw new FileAlreadyExistsException("Path is a file: " + path);
+            }
+        } catch (FileNotFoundException e) {
+            UserGroupInformation currentUser = UserGroupInformation.getCurrentUser();
+            return seaweedFileSystemStore.createDirectory(path, currentUser,
+                fsPermission == null ? FsPermission.getDirDefault() : fsPermission,
+                FsPermission.getUMask(getConf()));
+        }
     }
 
     public FileStatus getFileStatus(Path path) throws IOException {
-        return null;
+
+        path = qualify(path);
+
+        return seaweedFileSystemStore.getFileStatus(path);
     }
+
+    Path qualify(Path path) {
+        return path.makeQualified(uri, workingDirectory);
+    }
+
 }

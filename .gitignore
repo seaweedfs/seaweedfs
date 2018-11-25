@@ -77,4 +77,5 @@ crashlytics-build.properties
 
 test_data
 build
+target
 *.class
