@@ -67,7 +67,31 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         return null;
     }
 
-    public boolean rename(Path path, Path path1) throws IOException {
+    public boolean rename(Path src, Path dst) throws IOException {
+
+        Path parentFolder = src.getParent();
+        if (parentFolder == null) {
+            return false;
+        }
+        if (src.equals(dst)){
+            return true;
+        }
+        FileStatus dstFileStatus = getFileStatus(dst);
+
+        String sourceFileName = src.getName();
+        Path adjustedDst = dst;
+
+        if (dstFileStatus != null) {
+            if (!dstFileStatus.isDirectory()) {
+                return false;
+            }
+            adjustedDst = new Path(dst, sourceFileName);
+        }
+
+        Path qualifiedSrcPath = qualify(src);
+        Path qualifiedDstPath = qualify(adjustedDst);
+
+        seaweedFileSystemStore.rename(qualifiedSrcPath, qualifiedDstPath);
         return false;
     }
 
