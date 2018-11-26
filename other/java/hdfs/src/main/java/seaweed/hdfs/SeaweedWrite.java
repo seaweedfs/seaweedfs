@@ -2,10 +2,10 @@ package seaweed.hdfs;
 
 import org.apache.hadoop.fs.Path;
 import org.apache.http.HttpResponse;
-import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.mime.HttpMultipartMode;
 import org.apache.http.entity.mime.MultipartEntityBuilder;
+import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClientBuilder;
 import seaweedfs.client.FilerGrpcClient;
 import seaweedfs.client.FilerProto;
@@ -60,7 +60,7 @@ public class SeaweedWrite {
                                           final byte[] bytes,
                                           final long bytesOffset, final long bytesLength) throws IOException {
 
-        HttpClient client = HttpClientBuilder.create().setUserAgent("hdfs-client").build();
+        CloseableHttpClient client = HttpClientBuilder.create().setUserAgent("hdfs-client").build();
 
         InputStream inputStream = new ByteArrayInputStream(bytes, (int) bytesOffset, (int) bytesLength);
 
@@ -71,14 +71,19 @@ public class SeaweedWrite {
             .addBinaryBody("upload", inputStream)
             .build());
 
-        HttpResponse response = client.execute(post);
+        try {
+            HttpResponse response = client.execute(post);
 
-        String etag = response.getLastHeader("ETag").getValue();
+            String etag = response.getLastHeader("ETag").getValue();
 
-        if (etag != null && etag.startsWith("\"") && etag.endsWith("\"")) {
-            etag = etag.substring(1, etag.length() - 1);
+            if (etag != null && etag.startsWith("\"") && etag.endsWith("\"")) {
+                etag = etag.substring(1, etag.length() - 1);
+            }
+
+            return etag;
+        } finally {
+            client.close();
         }
 
-        return etag;
     }
 }
