@@ -12,6 +12,7 @@ import org.apache.hadoop.util.Progressable;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.net.URI;
 
 public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
@@ -55,16 +56,31 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         seaweedFileSystemStore = new SeaweedFileSystemStore(host, port);
     }
 
-    public FSDataInputStream open(Path path, int i) throws IOException {
+    public FSDataInputStream open(Path path, int bufferSize) throws IOException {
         return null;
     }
 
-    public FSDataOutputStream create(Path path, FsPermission fsPermission, boolean b, int i, short i1, long l, Progressable progressable) throws IOException {
-        return null;
+    public FSDataOutputStream create(Path path, FsPermission permission, final boolean overwrite, final int bufferSize,
+                                     final short replication, final long blockSize, final Progressable progress) throws IOException {
+        path = qualify(path);
+
+        try {
+            String replicaPlacement = String.format("%03d", replication - 1);
+            OutputStream outputStream = seaweedFileSystemStore.createFile(path, overwrite, permission, replicaPlacement);
+            return new FSDataOutputStream(outputStream, statistics);
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
-    public FSDataOutputStream append(Path path, int i, Progressable progressable) throws IOException {
-        return null;
+    public FSDataOutputStream append(Path path, int bufferSize, Progressable progressable) throws IOException {
+        path = qualify(path);
+        try {
+            OutputStream outputStream = seaweedFileSystemStore.createFile(path, false, null, "");
+            return new FSDataOutputStream(outputStream, statistics);
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     public boolean rename(Path src, Path dst) throws IOException {
@@ -73,7 +89,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         if (parentFolder == null) {
             return false;
         }
-        if (src.equals(dst)){
+        if (src.equals(dst)) {
             return true;
         }
         FileStatus dstFileStatus = getFileStatus(dst);

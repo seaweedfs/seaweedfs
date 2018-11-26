@@ -4,6 +4,7 @@ package seaweed.hdfs;
 
 import com.google.common.base.Preconditions;
 import org.apache.hadoop.fs.FSExceptionMessages;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.StreamCapabilities;
 import org.apache.hadoop.fs.Syncable;
 import seaweedfs.client.FilerGrpcClient;
@@ -12,8 +13,6 @@ import seaweedfs.client.FilerProto;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentLinkedDeque;
@@ -26,12 +25,12 @@ import java.util.concurrent.TimeUnit;
 public class SeaweedOutputStream extends OutputStream implements Syncable, StreamCapabilities {
 
     private final FilerGrpcClient filerGrpcClient;
-    private final List<FilerProto.Entry> entries = new ArrayList<>();
-    private final String path;
+    private final Path path;
     private final int bufferSize;
     private final int maxConcurrentRequestCount;
     private final ThreadPoolExecutor threadExecutor;
     private final ExecutorCompletionService<Void> completionService;
+    private FilerProto.Entry.Builder entry;
     private long position;
     private boolean closed;
     private boolean supportFlush = true;
@@ -41,12 +40,12 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
     private byte[] buffer;
     private int bufferIndex;
     private ConcurrentLinkedDeque<WriteOperation> writeOperations;
+    private String replication = "000";
 
-    public SeaweedOutputStream(FilerGrpcClient filerGrpcClient,
-                               final String path,
-                               final long position,
-                               final int bufferSize) {
+    public SeaweedOutputStream(FilerGrpcClient filerGrpcClient, final Path path, FilerProto.Entry.Builder entry,
+                               final long position, final int bufferSize, final String replication) {
         this.filerGrpcClient = filerGrpcClient;
+        this.replication = replication;
         this.path = path;
         this.position = position;
         this.closed = false;
@@ -67,11 +66,14 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
             new LinkedBlockingQueue<Runnable>());
         this.completionService = new ExecutorCompletionService<>(this.threadExecutor);
 
+        this.entry = entry;
+
+
     }
 
     private synchronized void flushWrittenBytesToServiceInternal(final long offset) throws IOException {
         try {
-            SeaweedWrite.writeMeta(filerGrpcClient, path, entries);
+            SeaweedWrite.writeMeta(filerGrpcClient, path, entry);
         } catch (Exception ex) {
             throw new IOException(ex);
         }
@@ -221,8 +223,7 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
             @Override
             public Void call() throws Exception {
                 // originally: client.append(path, offset, bytes, 0, bytesLength);
-                FilerProto.Entry entry = SeaweedWrite.writeData(filerGrpcClient, offset, bytes, 0, bytesLength);
-                entries.add(entry);
+                SeaweedWrite.writeData(entry, replication, filerGrpcClient, offset, bytes, 0, bytesLength);
                 return null;
             }
         });

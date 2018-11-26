@@ -40,6 +40,11 @@
             <artifactId>hadoop-common</artifactId>
             <version>${hadoop.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpmime</artifactId>
+            <version>4.5.2</version>
+        </dependency>
     </dependencies>
 
 </project>

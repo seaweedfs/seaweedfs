@@ -9,6 +9,8 @@ import org.slf4j.LoggerFactory;
 import seaweedfs.client.FilerGrpcClient;
 import seaweedfs.client.FilerProto;
 
+import java.io.IOException;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -154,5 +156,44 @@ public class SeaweedFileSystemStore {
             .build());
 
         return true;
+    }
+
+    public OutputStream createFile(final Path path,
+                                   final boolean overwrite,
+                                   FsPermission permission,
+                                   String replication) throws IOException {
+
+        permission = permission == null ? FsPermission.getFileDefault() : permission;
+
+        LOG.debug("createFile path: {} overwrite: {} permission: {}",
+            path,
+            overwrite,
+            permission.toString());
+
+        UserGroupInformation userGroupInformation = UserGroupInformation.getCurrentUser();
+
+        FilerProto.Entry.Builder entry = FilerProto.Entry.newBuilder();
+        long writePosition = 0;
+        if (!overwrite) {
+            FilerProto.Entry existingEntry = lookupEntry(path);
+            if (existingEntry != null) {
+                entry.mergeFrom(existingEntry);
+            }
+            writePosition = existingEntry.getAttributes().getFileSize();
+            replication = existingEntry.getAttributes().getReplication();
+        }
+        if (entry == null) {
+            entry = FilerProto.Entry.newBuilder()
+                .setAttributes(FilerProto.FuseAttributes.newBuilder()
+                    .setFileMode(permission.toOctal())
+                    .setReplication(replication)
+                    .setCrtime(System.currentTimeMillis() / 1000L)
+                    .setUserName(userGroupInformation.getUserName())
+                    .addAllGroupName(Arrays.asList(userGroupInformation.getGroupNames()))
+                );
+        }
+
+        return new SeaweedOutputStream(filerGrpcClient, path, entry, writePosition, 16 * 1024 * 1024, replication);
+
     }
 }
