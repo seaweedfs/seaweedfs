@@ -7,9 +7,21 @@
     <groupId>seaweedfs</groupId>
     <artifactId>hadoop-client</artifactId>
     <version>1.0-SNAPSHOT</version>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <source>7</source>
+                    <target>7</target>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 
     <properties>
-        <hadoop.version>2.2.0</hadoop.version>
+        <hadoop.version>3.1.1</hadoop.version>
     </properties>
 
     <dependencies>
@@ -22,6 +34,11 @@
             <groupId>seaweedfs</groupId>
             <artifactId>client</artifactId>
             <version>1.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-common</artifactId>
+            <version>${hadoop.version}</version>
         </dependency>
     </dependencies>
 
