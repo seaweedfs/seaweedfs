@@ -57,6 +57,8 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
     }
 
     public FSDataInputStream open(Path path, int bufferSize) throws IOException {
+        path = qualify(path);
+
         return null;
     }
 

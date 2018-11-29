@@ -68,7 +68,6 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
 
         this.entry = entry;
 
-
     }
 
     private synchronized void flushWrittenBytesToServiceInternal(final long offset) throws IOException {
