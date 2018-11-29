@@ -132,13 +132,7 @@ func (f *Filer) CreateEntry(entry *Entry) error {
 			return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
 		}
 	} else {
-		if oldEntry.IsDirectory() && !entry.IsDirectory() {
-			return fmt.Errorf("existing %s is a directory", entry.FullPath)
-		}
-		if !oldEntry.IsDirectory() && entry.IsDirectory() {
-			return fmt.Errorf("existing %s is a file", entry.FullPath)
-		}
-		if err := f.store.UpdateEntry(entry); err != nil {
+		if err := f.UpdateEntry(oldEntry, entry); err != nil {
 			return fmt.Errorf("update entry %s: %v", entry.FullPath, err)
 		}
 	}
@@ -150,7 +144,15 @@ func (f *Filer) CreateEntry(entry *Entry) error {
 	return nil
 }
 
-func (f *Filer) UpdateEntry(entry *Entry) (err error) {
+func (f *Filer) UpdateEntry(oldEntry, entry *Entry) (err error) {
+	if oldEntry != nil {
+		if oldEntry.IsDirectory() && !entry.IsDirectory() {
+			return fmt.Errorf("existing %s is a directory", entry.FullPath)
+		}
+		if !oldEntry.IsDirectory() && entry.IsDirectory() {
+			return fmt.Errorf("existing %s is a file", entry.FullPath)
+		}
+	}
 	return f.store.UpdateEntry(entry)
 }
 

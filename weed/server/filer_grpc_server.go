@@ -165,7 +165,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		return &filer_pb.UpdateEntryResponse{}, err
 	}
 
-	if err = fs.filer.UpdateEntry(newEntry); err == nil {
+	if err = fs.filer.UpdateEntry(entry, newEntry); err == nil {
 		fs.filer.DeleteChunks(unusedChunks)
 		fs.filer.DeleteChunks(garbages)
 	}
