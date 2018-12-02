@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>seaweedfs</groupId>
-    <artifactId>hadoop-client</artifactId>
+    <artifactId>seaweedfs-hadoop-client</artifactId>
     <version>1.0-SNAPSHOT</version>
     <build>
         <plugins>
@@ -16,6 +16,35 @@
                     <source>7</source>
                     <target>7</target>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.2.1</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <transformers>
+                                <transformer
+                                        implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+                            <relocations>
+                                <relocation>
+                                    <pattern>com.google</pattern>
+                                    <shadedPattern>shaded.com.google</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>io.grpc.internal</pattern>
+                                    <shadedPattern>shaded.io.grpc.internal</shadedPattern>
+                                </relocation>
+                            </relocations>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
@@ -32,7 +61,7 @@
         </dependency>
         <dependency>
             <groupId>seaweedfs</groupId>
-            <artifactId>client</artifactId>
+            <artifactId>seaweedfs-client</artifactId>
             <version>1.0-SNAPSHOT</version>
         </dependency>
         <dependency>

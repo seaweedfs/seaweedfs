@@ -22,7 +22,8 @@ public class SeaweedFileSystemStore {
     private FilerGrpcClient filerGrpcClient;
 
     public SeaweedFileSystemStore(String host, int port) {
-        filerGrpcClient = new FilerGrpcClient(host, port);
+        int grpcPort = 10000 + port;
+        filerGrpcClient = new FilerGrpcClient(host, grpcPort);
     }
 
     public boolean createDirectory(final Path path, UserGroupInformation currentUser,

@@ -16,8 +16,8 @@ public class FilerGrpcClient {
     private final SeaweedFilerGrpc.SeaweedFilerFutureStub futureStub;
 
 
-    public FilerGrpcClient(String host, int port) {
-        this(ManagedChannelBuilder.forAddress(host, port).usePlaintext());
+    public FilerGrpcClient(String host, int grpcPort) {
+        this(ManagedChannelBuilder.forAddress(host, grpcPort).usePlaintext());
     }
 
     public FilerGrpcClient(ManagedChannelBuilder<?> channelBuilder) {

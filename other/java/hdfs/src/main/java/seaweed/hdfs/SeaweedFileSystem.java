@@ -18,8 +18,8 @@ import java.net.URI;
 public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
 
     public static final int FS_SEAWEED_DEFAULT_PORT = 8333;
-    public static final String FS_SEAWEED_HOST = "fs.seaweed.host";
-    public static final String FS_SEAWEED_HOST_PORT = "fs.seaweed.host.port";
+    public static final String FS_SEAWEED_FILER_HOST = "fs.seaweed.filer.host";
+    public static final String FS_SEAWEED_FILER_PORT = "fs.seaweed.filer.port";
 
     private URI uri;
     private Path workingDirectory = new Path("/");
@@ -30,7 +30,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
     }
 
     public String getScheme() {
-        return "seaweed";
+        return "seaweedfs";
     }
 
     @Override
@@ -39,16 +39,16 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
 
         // get host information from uri (overrides info in conf)
         String host = uri.getHost();
-        host = (host == null) ? conf.get(FS_SEAWEED_HOST, null) : host;
+        host = (host == null) ? conf.get(FS_SEAWEED_FILER_HOST, "localhost") : host;
         if (host == null) {
             throw new IOException("Invalid host specified");
         }
-        conf.set(FS_SEAWEED_HOST, host);
+        conf.set(FS_SEAWEED_FILER_HOST, host);
 
         // get port information from uri, (overrides info in conf)
         int port = uri.getPort();
         port = (port == -1) ? FS_SEAWEED_DEFAULT_PORT : port;
-        conf.setInt(FS_SEAWEED_HOST_PORT, port);
+        conf.setInt(FS_SEAWEED_FILER_PORT, port);
 
         setConf(conf);
         this.uri = uri;
