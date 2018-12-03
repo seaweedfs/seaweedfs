@@ -113,6 +113,10 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 
 	fs.filer.DeleteChunks(garbages)
 
+	if req.Entry.Attributes == nil {
+		return nil, fmt.Errorf("can not create entry with empty attributes")
+	}
+
 	err = fs.filer.CreateEntry(&filer2.Entry{
 		FullPath: fullpath,
 		Attr:     filer2.PbToEntryAttribute(req.Entry.Attributes),
