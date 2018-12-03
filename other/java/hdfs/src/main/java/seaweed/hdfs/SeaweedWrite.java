@@ -14,6 +14,8 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
+import static seaweed.hdfs.SeaweedFileSystemStore.getParentDirectory;
+
 public class SeaweedWrite {
 
     public static void writeData(FilerProto.Entry.Builder entry,
@@ -50,7 +52,7 @@ public class SeaweedWrite {
                                  final Path path, final FilerProto.Entry.Builder entry) {
         filerGrpcClient.getBlockingStub().createEntry(
             FilerProto.CreateEntryRequest.newBuilder()
-                .setDirectory(path.getParent().toUri().getPath())
+                .setDirectory(getParentDirectory(path))
                 .setEntry(entry)
                 .build()
         );

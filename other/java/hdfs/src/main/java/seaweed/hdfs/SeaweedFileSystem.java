@@ -17,7 +17,7 @@ import java.net.URI;
 
 public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
 
-    public static final int FS_SEAWEED_DEFAULT_PORT = 8333;
+    public static final int FS_SEAWEED_DEFAULT_PORT = 8888;
     public static final String FS_SEAWEED_FILER_HOST = "fs.seaweed.filer.host";
     public static final String FS_SEAWEED_FILER_PORT = "fs.seaweed.filer.port";
 
@@ -87,10 +87,10 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
 
     public boolean rename(Path src, Path dst) throws IOException {
 
-        Path parentFolder = src.getParent();
-        if (parentFolder == null) {
+        if (src.isRoot()) {
             return false;
         }
+
         if (src.equals(dst)) {
             return true;
         }
