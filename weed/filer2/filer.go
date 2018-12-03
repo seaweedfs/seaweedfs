@@ -171,7 +171,7 @@ func (f *Filer) FindEntry(p FullPath) (entry *Entry, err error) {
 			Attr: Attr{
 				Mtime:  now,
 				Crtime: now,
-				Mode:   os.ModeDir | 0777,
+				Mode:   os.ModeDir | 0755,
 				Uid:    OS_UID,
 				Gid:    OS_GID,
 			},
