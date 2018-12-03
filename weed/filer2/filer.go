@@ -14,6 +14,11 @@ import (
 	"github.com/karlseguin/ccache"
 )
 
+var (
+	OS_UID = uint32(os.Getuid())
+	OS_GID = uint32(os.Getgid())
+)
+
 type Filer struct {
 	store              FilerStore
 	directoryCache     *ccache.Cache
@@ -157,6 +162,21 @@ func (f *Filer) UpdateEntry(oldEntry, entry *Entry) (err error) {
 }
 
 func (f *Filer) FindEntry(p FullPath) (entry *Entry, err error) {
+
+	now := time.Now()
+
+	if string(p) == "/" {
+		return &Entry{
+			FullPath: p,
+			Attr: Attr{
+				Mtime:  now,
+				Crtime: now,
+				Mode:   os.ModeDir | 0777,
+				Uid:    OS_UID,
+				Gid:    OS_GID,
+			},
+		}, nil
+	}
 	return f.store.FindEntry(p)
 }
 
