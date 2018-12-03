@@ -56,6 +56,10 @@ func (fs *Filer) KeepConnectedToMaster() {
 
 func (f *Filer) CreateEntry(entry *Entry) error {
 
+	if string(entry.FullPath) == "/" {
+		return nil
+	}
+
 	dirParts := strings.Split(string(entry.FullPath), "/")
 
 	// fmt.Printf("directory parts: %+v\n", dirParts)
