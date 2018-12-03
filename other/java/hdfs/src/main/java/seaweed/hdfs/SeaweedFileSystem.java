@@ -9,8 +9,9 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.Progressable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.URI;
@@ -20,6 +21,8 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
     public static final int FS_SEAWEED_DEFAULT_PORT = 8888;
     public static final String FS_SEAWEED_FILER_HOST = "fs.seaweed.filer.host";
     public static final String FS_SEAWEED_FILER_PORT = "fs.seaweed.filer.port";
+
+    private static final Logger LOG = LoggerFactory.getLogger(SeaweedFileSystem.class);
 
     private URI uri;
     private Path workingDirectory = new Path("/");
@@ -57,6 +60,9 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
     }
 
     public FSDataInputStream open(Path path, int bufferSize) throws IOException {
+
+        LOG.debug("open path: {} bufferSize:{}", path, bufferSize);
+
         path = qualify(path);
 
         return null;
@@ -64,6 +70,9 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
 
     public FSDataOutputStream create(Path path, FsPermission permission, final boolean overwrite, final int bufferSize,
                                      final short replication, final long blockSize, final Progressable progress) throws IOException {
+
+        LOG.debug("create path: {} bufferSize:{} blockSize:{}", path, bufferSize, blockSize);
+
         path = qualify(path);
 
         try {
@@ -76,6 +85,9 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
     }
 
     public FSDataOutputStream append(Path path, int bufferSize, Progressable progressable) throws IOException {
+
+        LOG.debug("append path: {} bufferSize:{}", path, bufferSize);
+
         path = qualify(path);
         try {
             OutputStream outputStream = seaweedFileSystemStore.createFile(path, false, null, "");
@@ -85,7 +97,9 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         }
     }
 
-    public boolean rename(Path src, Path dst) throws IOException {
+    public boolean rename(Path src, Path dst) {
+
+        LOG.debug("rename path: {} => {}", src, dst);
 
         if (src.isRoot()) {
             return false;
@@ -110,14 +124,17 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         Path qualifiedDstPath = qualify(adjustedDst);
 
         seaweedFileSystemStore.rename(qualifiedSrcPath, qualifiedDstPath);
-        return false;
+        return true;
     }
 
-    public boolean delete(Path path, boolean recursive) throws IOException {
+    public boolean delete(Path path, boolean recursive) {
+
+        LOG.debug("delete path: {} recursive:{}", path, recursive);
 
         path = qualify(path);
 
         FileStatus fileStatus = getFileStatus(path);
+
         if (fileStatus == null) {
             return true;
         }
@@ -126,7 +143,9 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
 
     }
 
-    public FileStatus[] listStatus(Path path) throws FileNotFoundException, IOException {
+    public FileStatus[] listStatus(Path path) throws IOException {
+
+        LOG.debug("listStatus path: {}", path);
 
         path = qualify(path);
 
@@ -147,25 +166,31 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
 
     public boolean mkdirs(Path path, FsPermission fsPermission) throws IOException {
 
+        LOG.debug("mkdirs path: {}", path);
+
         path = qualify(path);
 
-        try {
-            FileStatus fileStatus = getFileStatus(path);
+        FileStatus fileStatus = getFileStatus(path);
 
-            if (fileStatus.isDirectory()) {
-                return true;
-            } else {
-                throw new FileAlreadyExistsException("Path is a file: " + path);
-            }
-        } catch (FileNotFoundException e) {
+        if (fileStatus == null) {
+
             UserGroupInformation currentUser = UserGroupInformation.getCurrentUser();
             return seaweedFileSystemStore.createDirectory(path, currentUser,
                 fsPermission == null ? FsPermission.getDirDefault() : fsPermission,
                 FsPermission.getUMask(getConf()));
+
+        }
+
+        if (fileStatus.isDirectory()) {
+            return true;
+        } else {
+            throw new FileAlreadyExistsException("Path is a file: " + path);
         }
     }
 
-    public FileStatus getFileStatus(Path path) throws IOException {
+    public FileStatus getFileStatus(Path path) {
+
+        LOG.debug("getFileStatus path: {}", path);
 
         path = qualify(path);
 

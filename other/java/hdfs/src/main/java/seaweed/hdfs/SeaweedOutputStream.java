@@ -7,6 +7,8 @@ import org.apache.hadoop.fs.FSExceptionMessages;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.StreamCapabilities;
 import org.apache.hadoop.fs.Syncable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import seaweedfs.client.FilerGrpcClient;
 import seaweedfs.client.FilerProto;
 
@@ -23,6 +25,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 public class SeaweedOutputStream extends OutputStream implements Syncable, StreamCapabilities {
+
+    private static final Logger LOG = LoggerFactory.getLogger(SeaweedOutputStream.class);
 
     private final FilerGrpcClient filerGrpcClient;
     private final Path path;
@@ -71,6 +75,9 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
     }
 
     private synchronized void flushWrittenBytesToServiceInternal(final long offset) throws IOException {
+
+        LOG.debug("SeaweedWrite.writeMeta path: {} entry:{}", path, entry);
+
         try {
             SeaweedWrite.writeMeta(filerGrpcClient, path, entry);
         } catch (Exception ex) {
@@ -186,6 +193,7 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
             return;
         }
 
+        LOG.debug("close path: {}", path);
         try {
             flushInternal();
             threadExecutor.shutdown();
@@ -293,6 +301,7 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
                 throw lastError;
             }
         }
+        LOG.debug("flushWrittenBytesToService: {} position:{}", path, position);
         flushWrittenBytesToServiceInternal(position);
     }
 

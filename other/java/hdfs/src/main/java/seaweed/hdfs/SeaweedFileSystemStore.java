@@ -9,7 +9,6 @@ import org.slf4j.LoggerFactory;
 import seaweedfs.client.FilerGrpcClient;
 import seaweedfs.client.FilerProto;
 
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayList;
@@ -27,7 +26,7 @@ public class SeaweedFileSystemStore {
         filerGrpcClient = new FilerGrpcClient(host, grpcPort);
     }
 
-    static String getParentDirectory(Path path) {
+    public static String getParentDirectory(Path path) {
         return path.isRoot() ? "/" : path.getParent().toUri().getPath();
     }
 
@@ -76,7 +75,7 @@ public class SeaweedFileSystemStore {
 
         for (FilerProto.Entry entry : entries) {
 
-            FileStatus fileStatus = getFileStatus(new Path(path, entry.getName()), entry);
+            FileStatus fileStatus = doGetFileStatus(new Path(path, entry.getName()), entry);
 
             fileStatuses.add(fileStatus);
         }
@@ -84,17 +83,23 @@ public class SeaweedFileSystemStore {
     }
 
     private List<FilerProto.Entry> lookupEntries(Path path) {
+
+        LOG.debug("listEntries path: {}", path);
+
         return filerGrpcClient.getBlockingStub().listEntries(FilerProto.ListEntriesRequest.newBuilder()
             .setDirectory(path.toUri().getPath())
             .setLimit(100000)
             .build()).getEntriesList();
     }
 
-    public FileStatus getFileStatus(final Path path) throws FileNotFoundException {
-        LOG.debug("getFileStatus path: {}", path);
+    public FileStatus getFileStatus(final Path path) {
+        LOG.debug("doGetFileStatus path: {}", path);
 
         FilerProto.Entry entry = lookupEntry(path);
-        FileStatus fileStatus = getFileStatus(path, entry);
+        if (entry == null) {
+            return null;
+        }
+        FileStatus fileStatus = doGetFileStatus(path, entry);
         return fileStatus;
     }
 
@@ -119,7 +124,7 @@ public class SeaweedFileSystemStore {
         return true;
     }
 
-    private FileStatus getFileStatus(Path path, FilerProto.Entry entry) {
+    private FileStatus doGetFileStatus(Path path, FilerProto.Entry entry) {
         FilerProto.FuseAttributes attributes = entry.getAttributes();
         long length = attributes.getFileSize();
         boolean isDir = entry.getIsDirectory();
@@ -134,7 +139,7 @@ public class SeaweedFileSystemStore {
             modification_time, access_time, permission, owner, group, null, path);
     }
 
-    private FilerProto.Entry lookupEntry(Path path) throws FileNotFoundException {
+    private FilerProto.Entry lookupEntry(Path path) {
 
         String directory = getParentDirectory(path);
 
@@ -146,19 +151,31 @@ public class SeaweedFileSystemStore {
                     .build());
             return response.getEntry();
         } catch (io.grpc.StatusRuntimeException e) {
-            throw new FileNotFoundException(e.getMessage());
+            return null;
         }
     }
 
-    public void rename(Path source, Path destination) throws FileNotFoundException {
+    public void rename(Path source, Path destination) {
+
+        LOG.debug("rename source: {} destination:{}", source, destination);
+
         if (source.isRoot()) {
             return;
         }
+        LOG.warn("rename lookupEntry source: {}", source);
         FilerProto.Entry entry = lookupEntry(source);
+        if (entry == null) {
+            LOG.warn("rename non-existing source: {}", source);
+            return;
+        }
+        LOG.warn("rename moveEntry source: {}", source);
         moveEntry(source.getParent(), entry, destination);
     }
 
     private boolean moveEntry(Path oldParent, FilerProto.Entry entry, Path destination) {
+
+        LOG.debug("moveEntry: {}/{}  => {}", oldParent, entry.getName(), destination);
+
         if (entry.getIsDirectory()) {
             Path entryPath = new Path(oldParent, entry.getName());
             List<FilerProto.Entry> entries = lookupEntries(entryPath);
@@ -170,8 +187,10 @@ public class SeaweedFileSystemStore {
             }
         }
 
+        FilerProto.Entry.Builder newEntry = entry.toBuilder().setName(destination.getName());
         filerGrpcClient.getBlockingStub().createEntry(FilerProto.CreateEntryRequest.newBuilder()
             .setDirectory(getParentDirectory(destination))
+            .setEntry(newEntry)
             .build());
 
         filerGrpcClient.getBlockingStub().deleteEntry(FilerProto.DeleteEntryRequest.newBuilder()
@@ -197,23 +216,28 @@ public class SeaweedFileSystemStore {
             permission.toString());
 
         UserGroupInformation userGroupInformation = UserGroupInformation.getCurrentUser();
+        long now = System.currentTimeMillis() / 1000L;
 
-        FilerProto.Entry.Builder entry = FilerProto.Entry.newBuilder();
+        FilerProto.Entry.Builder entry = null;
         long writePosition = 0;
         if (!overwrite) {
             FilerProto.Entry existingEntry = lookupEntry(path);
             if (existingEntry != null) {
                 entry.mergeFrom(existingEntry);
+                entry.getAttributesBuilder().setMtime(now);
             }
             writePosition = existingEntry.getAttributes().getFileSize();
             replication = existingEntry.getAttributes().getReplication();
         }
         if (entry == null) {
             entry = FilerProto.Entry.newBuilder()
+                .setName(path.getName())
+                .setIsDirectory(false)
                 .setAttributes(FilerProto.FuseAttributes.newBuilder()
                     .setFileMode(permissionToMode(permission, false))
                     .setReplication(replication)
-                    .setCrtime(System.currentTimeMillis() / 1000L)
+                    .setCrtime(now)
+                    .setMtime(now)
                     .setUserName(userGroupInformation.getUserName())
                     .addAllGroupName(Arrays.asList(userGroupInformation.getGroupNames()))
                 );
