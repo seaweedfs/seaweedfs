@@ -6,6 +6,8 @@ import com.google.common.base.Preconditions;
 import org.apache.hadoop.fs.FSExceptionMessages;
 import org.apache.hadoop.fs.FSInputStream;
 import org.apache.hadoop.fs.FileSystem.Statistics;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import seaweedfs.client.FilerGrpcClient;
 import seaweedfs.client.FilerProto;
 
@@ -14,6 +16,8 @@ import java.io.IOException;
 import java.util.List;
 
 public class SeaweedInputStream extends FSInputStream {
+
+    private static final Logger LOG = LoggerFactory.getLogger(SeaweedInputStream.class);
 
     private final FilerGrpcClient filerGrpcClient;
     private final Statistics statistics;
@@ -45,7 +49,7 @@ public class SeaweedInputStream extends FSInputStream {
         this.statistics = statistics;
         this.path = path;
         this.entry = entry;
-        this.contentLength = entry.getAttributes().getFileSize();
+        this.contentLength = SeaweedRead.totalSize(entry.getChunksList());
         this.bufferSize = bufferSize;
         this.readAheadQueueDepth = (readAheadQueueDepth >= 0) ? readAheadQueueDepth : Runtime.getRuntime().availableProcessors();
         this.readAheadEnabled = true;

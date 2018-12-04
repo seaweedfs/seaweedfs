@@ -1,6 +1,7 @@
 package seaweed.hdfs;
 
 import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -9,7 +10,9 @@ import org.slf4j.LoggerFactory;
 import seaweedfs.client.FilerGrpcClient;
 import seaweedfs.client.FilerProto;
 
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -35,7 +38,6 @@ public class SeaweedFileSystemStore {
         if (isDirectory) {
             p = p | 1 << 31;
         }
-        System.out.println(permission + " = " + p);
         return p;
     }
 
@@ -126,7 +128,7 @@ public class SeaweedFileSystemStore {
 
     private FileStatus doGetFileStatus(Path path, FilerProto.Entry entry) {
         FilerProto.FuseAttributes attributes = entry.getAttributes();
-        long length = attributes.getFileSize();
+        long length = SeaweedRead.totalSize(entry.getChunksList());
         boolean isDir = entry.getIsDirectory();
         int block_replication = 1;
         int blocksize = 512;
@@ -206,6 +208,7 @@ public class SeaweedFileSystemStore {
     public OutputStream createFile(final Path path,
                                    final boolean overwrite,
                                    FsPermission permission,
+                                   int bufferSize,
                                    String replication) throws IOException {
 
         permission = permission == null ? FsPermission.getFileDefault() : permission;
@@ -226,7 +229,7 @@ public class SeaweedFileSystemStore {
                 entry.mergeFrom(existingEntry);
                 entry.getAttributesBuilder().setMtime(now);
             }
-            writePosition = existingEntry.getAttributes().getFileSize();
+            writePosition = SeaweedRead.totalSize(existingEntry.getChunksList());
             replication = existingEntry.getAttributes().getReplication();
         }
         if (entry == null) {
@@ -243,7 +246,27 @@ public class SeaweedFileSystemStore {
                 );
         }
 
-        return new SeaweedOutputStream(filerGrpcClient, path, entry, writePosition, 16 * 1024 * 1024, replication);
+        return new SeaweedOutputStream(filerGrpcClient, path, entry, writePosition, bufferSize, replication);
 
+    }
+
+    public InputStream openFileForRead(final Path path, FileSystem.Statistics statistics,
+                                       int bufferSize) throws IOException {
+
+        LOG.debug("openFileForRead path:{} bufferSize:{}", path, bufferSize);
+
+        int readAheadQueueDepth = 2;
+        FilerProto.Entry entry = lookupEntry(path);
+
+        if (entry == null) {
+            throw new FileNotFoundException("read non-exist file " + path);
+        }
+
+        return new SeaweedInputStream(filerGrpcClient,
+            statistics,
+            path.toUri().getPath(),
+            entry,
+            bufferSize,
+            readAheadQueueDepth);
     }
 }

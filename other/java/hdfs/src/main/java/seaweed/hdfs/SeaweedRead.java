@@ -5,6 +5,8 @@ import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.HttpClientBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import seaweedfs.client.FilerGrpcClient;
 import seaweedfs.client.FilerProto;
 
@@ -16,6 +18,8 @@ import java.util.List;
 import java.util.Map;
 
 public class SeaweedRead {
+
+    private static final Logger LOG = LoggerFactory.getLogger(SeaweedRead.class);
 
     // returns bytesRead
     public static long read(FilerGrpcClient filerGrpcClient, List<VisibleInterval> visibleIntervals,
@@ -54,9 +58,11 @@ public class SeaweedRead {
                 HttpResponse response = client.execute(request);
                 HttpEntity entity = response.getEntity();
 
-                readCount += entity.getContent().read(buffer,
-                    (int) (chunkView.logicOffset - position),
-                    (int) (chunkView.logicOffset - position + chunkView.size));
+                int len = (int) (chunkView.logicOffset - position + chunkView.size);
+                entity.getContent().read(buffer, bufferOffset, len);
+
+                LOG.debug("* read chunkView:{} length:{} position:{} bufferLength:{}", chunkView, len, position, bufferLength);
+                readCount += len;
 
             } catch (IOException e) {
                 e.printStackTrace();
@@ -93,11 +99,17 @@ public class SeaweedRead {
         List<VisibleInterval> newVisibles = new ArrayList<>();
         List<VisibleInterval> visibles = new ArrayList<>();
         for (FilerProto.FileChunk chunk : chunks) {
+            List<VisibleInterval> t = newVisibles;
             newVisibles = mergeIntoVisibles(visibles, newVisibles, chunk);
-            visibles.clear();
-            List<VisibleInterval> t = visibles;
-            visibles = newVisibles;
-            newVisibles = t;
+            if (t != newVisibles) {
+                // visibles are changed in place
+            } else {
+                // newVisibles are modified
+                visibles.clear();
+                t = visibles;
+                visibles = newVisibles;
+                newVisibles = t;
+            }
         }
 
         return visibles;
@@ -166,6 +178,17 @@ public class SeaweedRead {
             return fileId.substring(0, commaIndex);
         }
         return fileId;
+    }
+
+    public static long totalSize(List<FilerProto.FileChunk> chunksList) {
+        long size = 0;
+        for (FilerProto.FileChunk chunk : chunksList) {
+            long t = chunk.getOffset() + chunk.getSize();
+            if (size < t) {
+                size = t;
+            }
+        }
+        return size;
     }
 
     public static class VisibleInterval {

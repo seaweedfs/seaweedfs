@@ -13,8 +13,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
+
+import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.IO_FILE_BUFFER_SIZE_KEY;
 
 public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
 
@@ -23,6 +26,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
     public static final String FS_SEAWEED_FILER_PORT = "fs.seaweed.filer.port";
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedFileSystem.class);
+    private static int BUFFER_SIZE = 16 * 1024 * 1024;
 
     private URI uri;
     private Path workingDirectory = new Path("/");
@@ -53,6 +57,8 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         port = (port == -1) ? FS_SEAWEED_DEFAULT_PORT : port;
         conf.setInt(FS_SEAWEED_FILER_PORT, port);
 
+        conf.setInt(IO_FILE_BUFFER_SIZE_KEY, BUFFER_SIZE);
+
         setConf(conf);
         this.uri = uri;
 
@@ -65,7 +71,12 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
 
         path = qualify(path);
 
-        return null;
+        try {
+            InputStream inputStream = seaweedFileSystemStore.openFileForRead(path, statistics, bufferSize);
+            return new FSDataInputStream(inputStream);
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     public FSDataOutputStream create(Path path, FsPermission permission, final boolean overwrite, final int bufferSize,
@@ -77,7 +88,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
 
         try {
             String replicaPlacement = String.format("%03d", replication - 1);
-            OutputStream outputStream = seaweedFileSystemStore.createFile(path, overwrite, permission, replicaPlacement);
+            OutputStream outputStream = seaweedFileSystemStore.createFile(path, overwrite, permission, bufferSize, replicaPlacement);
             return new FSDataOutputStream(outputStream, statistics);
         } catch (Exception ex) {
             return null;
@@ -90,7 +101,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
 
         path = qualify(path);
         try {
-            OutputStream outputStream = seaweedFileSystemStore.createFile(path, false, null, "");
+            OutputStream outputStream = seaweedFileSystemStore.createFile(path, false, null, bufferSize, "");
             return new FSDataOutputStream(outputStream, statistics);
         } catch (Exception ex) {
             return null;
