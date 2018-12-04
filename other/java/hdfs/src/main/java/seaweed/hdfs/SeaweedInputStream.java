@@ -55,6 +55,9 @@ public class SeaweedInputStream extends FSInputStream {
         this.readAheadEnabled = true;
 
         this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(entry.getChunksList());
+
+        LOG.debug("new path:{} entry:{} visibleIntervalList:{}", path, entry, visibleIntervalList);
+
     }
 
     public String getPath() {

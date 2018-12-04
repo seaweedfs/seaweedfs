@@ -225,10 +225,13 @@ public class SeaweedFileSystemStore {
         long writePosition = 0;
         if (!overwrite) {
             FilerProto.Entry existingEntry = lookupEntry(path);
+            LOG.debug("createFile merged entry path:{} existingEntry:{}", path, existingEntry);
             if (existingEntry != null) {
+                entry = FilerProto.Entry.newBuilder();
                 entry.mergeFrom(existingEntry);
                 entry.getAttributesBuilder().setMtime(now);
             }
+            LOG.debug("createFile merged entry path:{} entry:{} from:{}", path, entry, existingEntry);
             writePosition = SeaweedRead.totalSize(existingEntry.getChunksList());
             replication = existingEntry.getAttributes().getReplication();
         }

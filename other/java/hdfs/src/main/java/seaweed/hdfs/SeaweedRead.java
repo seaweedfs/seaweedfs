@@ -41,6 +41,7 @@ public class SeaweedRead {
 
         //TODO parallel this
         long readCount = 0;
+        int startOffset = bufferOffset;
         for (ChunkView chunkView : chunkViews) {
             FilerProto.Locations locations = vid2Locations.get(parseVolumeId(chunkView.fileId));
             if (locations.getLocationsCount() == 0) {
@@ -59,10 +60,11 @@ public class SeaweedRead {
                 HttpEntity entity = response.getEntity();
 
                 int len = (int) (chunkView.logicOffset - position + chunkView.size);
-                entity.getContent().read(buffer, bufferOffset, len);
+                int chunReadCount = entity.getContent().read(buffer, startOffset, len);
 
-                LOG.debug("* read chunkView:{} length:{} position:{} bufferLength:{}", chunkView, len, position, bufferLength);
+                LOG.debug("* read chunkView:{} startOffset:{} length:{} chunReadCount:{}", chunkView, startOffset, len, chunReadCount);
                 readCount += len;
+                startOffset += len;
 
             } catch (IOException e) {
                 e.printStackTrace();
@@ -72,17 +74,20 @@ public class SeaweedRead {
         return readCount;
     }
 
-    private static List<ChunkView> viewFromVisibles(List<VisibleInterval> visibleIntervals, long offset, long size) {
+    public static List<ChunkView> viewFromVisibles(List<VisibleInterval> visibleIntervals, long offset, long size) {
         List<ChunkView> views = new ArrayList<>();
 
         long stop = offset + size;
         for (VisibleInterval chunk : visibleIntervals) {
-            views.add(new ChunkView(
-                chunk.fileId,
-                offset - chunk.start,
-                Math.min(chunk.stop, stop) - offset,
-                offset
-            ));
+            if (chunk.start <= offset && offset < chunk.stop && offset < stop) {
+                views.add(new ChunkView(
+                    chunk.fileId,
+                    offset - chunk.start,
+                    Math.min(chunk.stop, stop) - offset,
+                    offset
+                ));
+                offset = Math.min(chunk.stop, stop);
+            }
         }
         return views;
     }
@@ -96,20 +101,10 @@ public class SeaweedRead {
             }
         });
 
-        List<VisibleInterval> newVisibles = new ArrayList<>();
         List<VisibleInterval> visibles = new ArrayList<>();
         for (FilerProto.FileChunk chunk : chunks) {
-            List<VisibleInterval> t = newVisibles;
-            newVisibles = mergeIntoVisibles(visibles, newVisibles, chunk);
-            if (t != newVisibles) {
-                // visibles are changed in place
-            } else {
-                // newVisibles are modified
-                visibles.clear();
-                t = visibles;
-                visibles = newVisibles;
-                newVisibles = t;
-            }
+            List<VisibleInterval> newVisibles = new ArrayList<>();
+            visibles = mergeIntoVisibles(visibles, newVisibles, chunk);
         }
 
         return visibles;
@@ -192,10 +187,10 @@ public class SeaweedRead {
     }
 
     public static class VisibleInterval {
-        long start;
-        long stop;
-        long modifiedTime;
-        String fileId;
+        public final long start;
+        public final long stop;
+        public final long modifiedTime;
+        public final String fileId;
 
         public VisibleInterval(long start, long stop, String fileId, long modifiedTime) {
             this.start = start;
@@ -203,19 +198,39 @@ public class SeaweedRead {
             this.modifiedTime = modifiedTime;
             this.fileId = fileId;
         }
+
+        @Override
+        public String toString() {
+            return "VisibleIntervalq{" +
+                "start=" + start +
+                ", stop=" + stop +
+                ", modifiedTime=" + modifiedTime +
+                ", fileId='" + fileId + '\'' +
+                '}';
+        }
     }
 
     public static class ChunkView {
-        String fileId;
-        long offset;
-        long size;
-        long logicOffset;
+        public final String fileId;
+        public final long offset;
+        public final long size;
+        public final long logicOffset;
 
         public ChunkView(String fileId, long offset, long size, long logicOffset) {
             this.fileId = fileId;
             this.offset = offset;
             this.size = size;
             this.logicOffset = logicOffset;
+        }
+
+        @Override
+        public String toString() {
+            return "ChunkView{" +
+                "fileId='" + fileId + '\'' +
+                ", offset=" + offset +
+                ", size=" + size +
+                ", logicOffset=" + logicOffset +
+                '}';
         }
     }
 
