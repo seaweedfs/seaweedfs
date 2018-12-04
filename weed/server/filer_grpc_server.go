@@ -162,6 +162,8 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		newEntry.Attr.Uid = req.Entry.Attributes.Uid
 		newEntry.Attr.Gid = req.Entry.Attributes.Gid
 		newEntry.Attr.Mime = req.Entry.Attributes.Mime
+		newEntry.Attr.UserName = req.Entry.Attributes.UserName
+		newEntry.Attr.GroupNames = req.Entry.Attributes.GroupName
 
 	}
 
