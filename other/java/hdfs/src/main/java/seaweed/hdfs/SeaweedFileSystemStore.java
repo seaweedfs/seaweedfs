@@ -297,7 +297,33 @@ public class SeaweedFileSystemStore {
 
         entryBuilder.setAttributes(attributesBuilder);
 
-        LOG.debug("setOwner path:{} entry:{}", path, entryBuilder, owner, group);
+        LOG.debug("setOwner path:{} entry:{}", path, entryBuilder);
+
+        filerGrpcClient.getBlockingStub().updateEntry(FilerProto.UpdateEntryRequest.newBuilder()
+            .setDirectory(getParentDirectory(path))
+            .setEntry(entryBuilder)
+            .build());
+
+    }
+
+    public void setPermission(Path path, FsPermission permission) {
+
+        LOG.debug("setPermission path:{} permission:{}", path, permission);
+
+        FilerProto.Entry entry = lookupEntry(path);
+        if (entry == null) {
+            LOG.debug("setPermission path:{} entry:{}", path, entry);
+            return;
+        }
+
+        FilerProto.Entry.Builder entryBuilder = entry.toBuilder();
+        FilerProto.FuseAttributes.Builder attributesBuilder = entry.getAttributes().toBuilder();
+
+        attributesBuilder.setFileMode(permissionToMode(permission, entry.getIsDirectory()));
+
+        entryBuilder.setAttributes(attributesBuilder);
+
+        LOG.debug("setPermission path:{} entry:{}", path, entryBuilder);
 
         filerGrpcClient.getBlockingStub().updateEntry(FilerProto.UpdateEntryRequest.newBuilder()
             .setDirectory(getParentDirectory(path))

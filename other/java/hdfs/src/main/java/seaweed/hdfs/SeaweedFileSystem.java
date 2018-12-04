@@ -233,7 +233,26 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         path = qualify(path);
 
         seaweedFileSystemStore.setOwner(path, owner, group);
+    }
 
+
+    /**
+     * Set permission of a path.
+     *
+     * @param path       The path
+     * @param permission Access permission
+     */
+    @Override
+    public void setPermission(Path path, final FsPermission permission) throws IOException {
+        LOG.debug("setPermission path: {}", path);
+
+        if (permission == null) {
+            throw new IllegalArgumentException("The permission can't be null");
+        }
+
+        path = qualify(path);
+
+        seaweedFileSystemStore.setPermission(path, permission);
     }
 
     Path qualify(Path path) {
