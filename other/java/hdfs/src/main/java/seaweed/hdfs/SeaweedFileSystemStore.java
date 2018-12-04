@@ -133,7 +133,7 @@ public class SeaweedFileSystemStore {
         boolean isDir = entry.getIsDirectory();
         int block_replication = 1;
         int blocksize = 512;
-        long modification_time = attributes.getMtime();
+        long modification_time = attributes.getMtime() * 1000; // milliseconds
         long access_time = 0;
         FsPermission permission = FsPermission.createImmutable((short) attributes.getFileMode());
         String owner = attributes.getUserName();
