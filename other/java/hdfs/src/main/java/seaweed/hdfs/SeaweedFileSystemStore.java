@@ -95,12 +95,13 @@ public class SeaweedFileSystemStore {
     }
 
     public FileStatus getFileStatus(final Path path) {
-        LOG.debug("doGetFileStatus path: {}", path);
 
         FilerProto.Entry entry = lookupEntry(path);
         if (entry == null) {
             return null;
         }
+        LOG.debug("doGetFileStatus path:{} entry:{}", path, entry);
+
         FileStatus fileStatus = doGetFileStatus(path, entry);
         return fileStatus;
     }
