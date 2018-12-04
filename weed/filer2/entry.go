@@ -17,6 +17,8 @@ type Attr struct {
 	Replication string      // replication
 	Collection  string      // collection name
 	TtlSec      int32       // ttl in seconds
+	UserName    string
+	GroupNames  []string
 }
 
 func (attr Attr) IsDirectory() bool {

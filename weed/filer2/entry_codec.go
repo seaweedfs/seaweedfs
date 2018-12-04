@@ -44,6 +44,8 @@ func EntryAttributeToPb(entry *Entry) *filer_pb.FuseAttributes {
 		Collection:  entry.Attr.Collection,
 		Replication: entry.Attr.Replication,
 		TtlSec:      entry.Attr.TtlSec,
+		UserName:    entry.Attr.UserName,
+		GroupName:   entry.Attr.GroupNames,
 	}
 }
 
@@ -60,6 +62,8 @@ func PbToEntryAttribute(attr *filer_pb.FuseAttributes) Attr {
 	t.Collection = attr.Collection
 	t.Replication = attr.Replication
 	t.TtlSec = attr.TtlSec
+	t.UserName = attr.UserName
+	t.GroupNames = attr.GroupName
 
 	return t
 }
