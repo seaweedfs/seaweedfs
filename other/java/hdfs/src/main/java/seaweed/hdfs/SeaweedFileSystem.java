@@ -218,6 +218,24 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         return seaweedFileSystemStore.getFileStatus(path);
     }
 
+    /**
+     * Set owner of a path (i.e. a file or a directory).
+     * The parameters owner and group cannot both be null.
+     *
+     * @param path  The path
+     * @param owner If it is null, the original username remains unchanged.
+     * @param group If it is null, the original groupname remains unchanged.
+     */
+    @Override
+    public void setOwner(Path path, final String owner, final String group)
+        throws IOException {
+        LOG.debug("setOwner path: {}", path);
+        path = qualify(path);
+
+        seaweedFileSystemStore.setOwner(path, owner, group);
+
+    }
+
     Path qualify(Path path) {
         return path.makeQualified(uri, workingDirectory);
     }

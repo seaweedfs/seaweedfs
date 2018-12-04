@@ -273,4 +273,36 @@ public class SeaweedFileSystemStore {
             bufferSize,
             readAheadQueueDepth);
     }
+
+    public void setOwner(Path path, String owner, String group) {
+
+        LOG.debug("setOwner path:{} owner:{} group:{}", path, owner, group);
+
+        FilerProto.Entry entry = lookupEntry(path);
+        if (entry == null) {
+            LOG.debug("setOwner path:{} entry:{}", path, entry);
+            return;
+        }
+
+        FilerProto.Entry.Builder entryBuilder = entry.toBuilder();
+        FilerProto.FuseAttributes.Builder attributesBuilder = entry.getAttributes().toBuilder();
+
+        if (owner != null) {
+            attributesBuilder.setUserName(owner);
+        }
+        if (group != null) {
+            attributesBuilder.clearGroupName();
+            attributesBuilder.addGroupName(group);
+        }
+
+        entryBuilder.setAttributes(attributesBuilder);
+
+        LOG.debug("setOwner path:{} entry:{}", path, entryBuilder, owner, group);
+
+        filerGrpcClient.getBlockingStub().updateEntry(FilerProto.UpdateEntryRequest.newBuilder()
+            .setDirectory(getParentDirectory(path))
+            .setEntry(entryBuilder)
+            .build());
+
+    }
 }
