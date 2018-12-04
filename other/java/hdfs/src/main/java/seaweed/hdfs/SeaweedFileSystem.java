@@ -65,6 +65,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         seaweedFileSystemStore = new SeaweedFileSystemStore(host, port);
     }
 
+    @Override
     public FSDataInputStream open(Path path, int bufferSize) throws IOException {
 
         LOG.debug("open path: {} bufferSize:{}", path, bufferSize);
@@ -79,6 +80,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         }
     }
 
+    @Override
     public FSDataOutputStream create(Path path, FsPermission permission, final boolean overwrite, final int bufferSize,
                                      final short replication, final long blockSize, final Progressable progress) throws IOException {
 
@@ -95,6 +97,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         }
     }
 
+    @Override
     public FSDataOutputStream append(Path path, int bufferSize, Progressable progressable) throws IOException {
 
         LOG.debug("append path: {} bufferSize:{}", path, bufferSize);
@@ -108,6 +111,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         }
     }
 
+    @Override
     public boolean rename(Path src, Path dst) {
 
         LOG.debug("rename path: {} => {}", src, dst);
@@ -138,6 +142,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         return true;
     }
 
+    @Override
     public boolean delete(Path path, boolean recursive) {
 
         LOG.debug("delete path: {} recursive:{}", path, recursive);
@@ -154,6 +159,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
 
     }
 
+    @Override
     public FileStatus[] listStatus(Path path) throws IOException {
 
         LOG.debug("listStatus path: {}", path);
@@ -163,10 +169,12 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         return seaweedFileSystemStore.listEntries(path);
     }
 
+    @Override
     public Path getWorkingDirectory() {
         return workingDirectory;
     }
 
+    @Override
     public void setWorkingDirectory(Path path) {
         if (path.isAbsolute()) {
             workingDirectory = path;
@@ -175,6 +183,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         }
     }
 
+    @Override
     public boolean mkdirs(Path path, FsPermission fsPermission) throws IOException {
 
         LOG.debug("mkdirs path: {}", path);
@@ -199,6 +208,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         }
     }
 
+    @Override
     public FileStatus getFileStatus(Path path) {
 
         LOG.debug("getFileStatus path: {}", path);
