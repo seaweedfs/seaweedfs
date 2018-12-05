@@ -191,12 +191,18 @@ topic = "seaweedfs_filer_topic"       # a topic, auto created if does not exists
 [source.filer]
 enabled = true
 grpcAddress = "localhost:18888"
-directory = "/buckets"    # all files under this directory tree are replicated
+# all files under this directory tree are replicated.
+# this is not a directory on your hard drive, but on your filer.
+# i.e., all files with this "prefix" are sent to notification message queue.
+directory = "/buckets"    
 
 [sink.filer]
 enabled = false
 grpcAddress = "localhost:18888"
-directory = "/backup"    # all replicated files are under this directory tree
+# all replicated files are under this directory tree
+# this is not a directory on your hard drive, but on your filer.     
+# i.e., all received files will be "prefixed" to this directory.
+directory = "/backup"    
 replication = ""
 collection = ""
 ttlSec = 0
