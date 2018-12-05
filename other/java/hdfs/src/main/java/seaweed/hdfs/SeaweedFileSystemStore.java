@@ -116,6 +116,13 @@ public class SeaweedFileSystemStore {
             return true;
         }
 
+        if (recursive && isDirectroy) {
+            List<FilerProto.Entry> entries = lookupEntries(path);
+            for (FilerProto.Entry entry : entries) {
+                deleteEntries(new Path(path, entry.getName()), entry.getIsDirectory(), recursive);
+            }
+        }
+
         FilerProto.DeleteEntryResponse response =
             filerGrpcClient.getBlockingStub().deleteEntry(FilerProto.DeleteEntryRequest.newBuilder()
                 .setDirectory(getParentDirectory(path))
