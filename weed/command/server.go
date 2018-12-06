@@ -144,6 +144,7 @@ func runServer(cmd *Command, args []string) bool {
 	if err := util.TestFolderWritable(*masterMetaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterMetaFolder, err)
 	}
+	filerOptions.defaultLevelDbDirectory = masterMetaFolder
 
 	if *serverWhiteListOption != "" {
 		serverWhiteList = strings.Split(*serverWhiteListOption, ",")

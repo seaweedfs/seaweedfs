@@ -31,7 +31,7 @@ func LoadConfiguration(config *viper.Viper) {
 		if config.GetBool(store.GetName() + ".enabled") {
 			viperSub := config.Sub(store.GetName())
 			if err := store.Initialize(viperSub); err != nil {
-				glog.Fatalf("Failed to initialize store for %s: %+v",
+				glog.Fatalf("Failed to initialize notification for %s: %+v",
 					store.GetName(), err)
 			}
 			Queue = store

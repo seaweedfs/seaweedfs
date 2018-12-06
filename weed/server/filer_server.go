@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"net/http"
+	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/cassandra"
@@ -30,6 +31,7 @@ type FilerOption struct {
 	SecretKey          string
 	DirListingLimit    int
 	DataCenter         string
+	DefaultLevelDbDir  string
 }
 
 type FilerServer struct {
@@ -52,9 +54,16 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	go fs.filer.KeepConnectedToMaster()
 
-	LoadConfiguration("filer", true)
-	LoadConfiguration("notification", false)
 	v := viper.GetViper()
+	if !LoadConfiguration("filer", false) {
+		v.Set("leveldb.enabled", true)
+		v.Set("leveldb.dir", option.DefaultLevelDbDir)
+		_, err := os.Stat(option.DefaultLevelDbDir)
+		if os.IsNotExist(err) {
+			os.MkdirAll(option.DefaultLevelDbDir, 0755)
+		}
+	}
+	LoadConfiguration("notification", false)
 
 	fs.filer.LoadConfiguration(v)
 
@@ -73,7 +82,7 @@ func (fs *FilerServer) jwt(fileId string) security.EncodedJwt {
 	return security.GenJwt(fs.secret, fileId)
 }
 
-func LoadConfiguration(configFileName string, required bool) {
+func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 
 	// find a filer store
 	viper.SetConfigName(configFileName)     // name of config file (without extension)
@@ -93,7 +102,11 @@ func LoadConfiguration(configFileName string, required bool) {
 				"\nOr use this command to generate the default toml file\n"+
 				"    weed scaffold -config=%s -output=.\n\n\n",
 				configFileName, configFileName, configFileName)
+		} else {
+			return false
 		}
 	}
+
+	return true
 
 }

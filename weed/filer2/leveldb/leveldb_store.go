@@ -33,11 +33,13 @@ func (store *LevelDBStore) Initialize(configuration weed_util.Configuration) (er
 }
 
 func (store *LevelDBStore) initialize(dir string) (err error) {
+	glog.Infof("filer store dir: %s", dir)
 	if err := weed_util.TestFolderWritable(dir); err != nil {
 		return fmt.Errorf("Check Level Folder %s Writable: %s", dir, err)
 	}
 
 	if store.db, err = leveldb.OpenFile(dir, nil); err != nil {
+		glog.Infof("filer store open dir %s: %v", dir, err)
 		return
 	}
 	return

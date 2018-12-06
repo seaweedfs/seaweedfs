@@ -32,6 +32,9 @@ type FilerOptions struct {
 	dirListingLimit         *int
 	dataCenter              *string
 	enableNotification      *bool
+
+	// default leveldb directory, used in "weed server" mode
+	defaultLevelDbDirectory *string
 }
 
 func init() {
@@ -88,6 +91,11 @@ func (fo *FilerOptions) startFiler() {
 		publicVolumeMux = http.NewServeMux()
 	}
 
+	defaultLevelDbDirectory := "./filerdb"
+	if fo.defaultLevelDbDirectory != nil {
+		defaultLevelDbDirectory = *fo.defaultLevelDbDirectory + "/filerdb"
+	}
+
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
 		Masters:            strings.Split(*f.masters, ","),
 		Collection:         *fo.collection,
@@ -98,6 +106,7 @@ func (fo *FilerOptions) startFiler() {
 		SecretKey:          *fo.secretKey,
 		DirListingLimit:    *fo.dirListingLimit,
 		DataCenter:         *fo.dataCenter,
+		DefaultLevelDbDir:  defaultLevelDbDirectory,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
