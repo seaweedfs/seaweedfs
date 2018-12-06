@@ -13,16 +13,7 @@ var (
 
 func (f *Filer) LoadConfiguration(config *viper.Viper) {
 
-	enabledStore := ""
-	for _, store := range Stores {
-		if config.GetBool(store.GetName() + ".enabled") {
-			if enabledStore == "" {
-				enabledStore = store.GetName()
-			} else {
-				glog.Fatalf("Filer store is enabled for both %s and %s", enabledStore, store.GetName())
-			}
-		}
-	}
+	validateOneEnabledStore(config)
 
 	for _, store := range Stores {
 		if config.GetBool(store.GetName() + ".enabled") {
@@ -44,4 +35,17 @@ func (f *Filer) LoadConfiguration(config *viper.Viper) {
 	}
 
 	os.Exit(-1)
+}
+
+func validateOneEnabledStore(config *viper.Viper) {
+	enabledStore := ""
+	for _, store := range Stores {
+		if config.GetBool(store.GetName() + ".enabled") {
+			if enabledStore == "" {
+				enabledStore = store.GetName()
+			} else {
+				glog.Fatalf("Filer store is enabled for both %s and %s", enabledStore, store.GetName())
+			}
+		}
+	}
 }

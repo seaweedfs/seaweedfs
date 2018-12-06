@@ -27,16 +27,7 @@ func LoadConfiguration(config *viper.Viper) {
 		return
 	}
 
-	enabledQueue := ""
-	for _, queue := range MessageQueues {
-		if config.GetBool(queue.GetName() + ".enabled") {
-			if enabledQueue == "" {
-				enabledQueue = queue.GetName()
-			} else {
-				glog.Fatalf("Notification message queue is enabled for both %s and %s", enabledQueue, queue.GetName())
-			}
-		}
-	}
+	validateOneEnabledQueue(config)
 
 	for _, queue := range MessageQueues {
 		if config.GetBool(queue.GetName() + ".enabled") {
@@ -51,4 +42,17 @@ func LoadConfiguration(config *viper.Viper) {
 		}
 	}
 
+}
+
+func validateOneEnabledQueue(config *viper.Viper) {
+	enabledQueue := ""
+	for _, queue := range MessageQueues {
+		if config.GetBool(queue.GetName() + ".enabled") {
+			if enabledQueue == "" {
+				enabledQueue = queue.GetName()
+			} else {
+				glog.Fatalf("Notification message queue is enabled for both %s and %s", enabledQueue, queue.GetName())
+			}
+		}
+	}
 }
