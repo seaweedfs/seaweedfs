@@ -1,9 +1,18 @@
 package seaweedfs.hdfs;
 
+import org.apache.http.Header;
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpHeaders;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClientBuilder;
+import org.apache.http.util.EntityUtils;
 import org.junit.Test;
 import seaweed.hdfs.SeaweedRead;
 import seaweedfs.client.FilerProto;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -63,4 +72,36 @@ public class SeaweedReadTest {
 
     }
 
+    // test gzipped content with range requests. Conclusion: not doing this.
+    public void testGzippedRangeRequest() throws IOException {
+
+        SeaweedRead.ChunkView chunkView = new SeaweedRead.ChunkView("2,621a042be6e39d", 0, 28, 0);
+        CloseableHttpClient client = HttpClientBuilder.create().build();
+        String targetUrl = String.format("http://%s/%s", "localhost:8080", chunkView.fileId);
+        HttpGet request = new HttpGet(targetUrl);
+        // request.removeHeaders(HttpHeaders.ACCEPT_ENCODING);
+        request.setHeader(HttpHeaders.ACCEPT_ENCODING, "");
+        request.setHeader(HttpHeaders.RANGE, String.format("bytes=%d-%d", chunkView.offset, chunkView.offset + chunkView.size));
+        System.out.println("request:");
+        for (Header header : request.getAllHeaders()) {
+            System.out.println(header.getName() + ": " + header.getValue());
+        }
+
+        int len = 29;
+        byte[] buffer = new byte[len];
+        CloseableHttpResponse response = null;
+        try {
+            response = client.execute(request);
+            HttpEntity entity = response.getEntity();
+            System.out.println("content length:" + entity.getContentLength());
+            System.out.println("is streaming:" + entity.isStreaming());
+            System.out.println(EntityUtils.toString(entity));
+        } finally {
+
+            if (response != null) {
+                response.close();
+            }
+        }
+
+    }
 }
