@@ -53,34 +53,42 @@ public class SeaweedRead {
                 return 0;
             }
 
-            HttpClient client = HttpClientBuilder.create().build();
-            HttpGet request = new HttpGet(
-                String.format("http://%s/%s", locations.getLocations(0).getUrl(), chunkView.fileId));
+            int len = readChunkView(position, buffer, startOffset, chunkView, locations);
 
-            if (!chunkView.isFullChunk){
-                request.setHeader(HttpHeaders.ACCEPT_ENCODING, "");
-                request.setHeader(HttpHeaders.RANGE,
-                    String.format("bytes=%d-%d", chunkView.offset, chunkView.offset + chunkView.size));
-            }
+            readCount += len;
+            startOffset += len;
 
-            try {
-                HttpResponse response = client.execute(request);
-                HttpEntity entity = response.getEntity();
-
-                int len = (int) (chunkView.logicOffset - position + chunkView.size);
-                OutputStream outputStream = new ByteBufferOutputStream(ByteBuffer.wrap(buffer, startOffset, len));
-                entity.writeTo(outputStream);
-                LOG.debug("* read chunkView:{} startOffset:{} length:{}", chunkView, startOffset, len);
-
-                readCount += len;
-                startOffset += len;
-
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
         }
 
         return readCount;
+    }
+
+    private static int readChunkView(long position, byte[] buffer, int startOffset, ChunkView chunkView, FilerProto.Locations locations) {
+        HttpClient client = HttpClientBuilder.create().build();
+        HttpGet request = new HttpGet(
+            String.format("http://%s/%s", locations.getLocations(0).getUrl(), chunkView.fileId));
+
+        if (!chunkView.isFullChunk) {
+            request.setHeader(HttpHeaders.ACCEPT_ENCODING, "");
+            request.setHeader(HttpHeaders.RANGE,
+                String.format("bytes=%d-%d", chunkView.offset, chunkView.offset + chunkView.size));
+        }
+
+        try {
+            HttpResponse response = client.execute(request);
+            HttpEntity entity = response.getEntity();
+
+            int len = (int) (chunkView.logicOffset - position + chunkView.size);
+            OutputStream outputStream = new ByteBufferOutputStream(ByteBuffer.wrap(buffer, startOffset, len));
+            entity.writeTo(outputStream);
+            LOG.debug("* read chunkView:{} startOffset:{} length:{}", chunkView, startOffset, len);
+
+            return len;
+
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return 0;
     }
 
     public static List<ChunkView> viewFromVisibles(List<VisibleInterval> visibleIntervals, long offset, long size) {
