@@ -1,6 +1,8 @@
 package seaweed.hdfs;
 
+import org.apache.hadoop.hdfs.util.ByteBufferOutputStream;
 import org.apache.http.HttpEntity;
+import org.apache.http.HttpHeaders;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpGet;
@@ -11,6 +13,8 @@ import seaweedfs.client.FilerGrpcClient;
 import seaweedfs.client.FilerProto;
 
 import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -52,7 +56,8 @@ public class SeaweedRead {
             HttpClient client = HttpClientBuilder.create().build();
             HttpGet request = new HttpGet(
                 String.format("http://%s/%s", locations.getLocations(0).getUrl(), chunkView.fileId));
-            request.setHeader("Range",
+            request.setHeader(HttpHeaders.ACCEPT_ENCODING, "");
+            request.setHeader(HttpHeaders.RANGE,
                 String.format("bytes=%d-%d", chunkView.offset, chunkView.offset + chunkView.size));
 
             try {
@@ -60,9 +65,10 @@ public class SeaweedRead {
                 HttpEntity entity = response.getEntity();
 
                 int len = (int) (chunkView.logicOffset - position + chunkView.size);
-                int chunReadCount = entity.getContent().read(buffer, startOffset, len);
+                OutputStream outputStream = new ByteBufferOutputStream(ByteBuffer.wrap(buffer, startOffset, len));
+                entity.writeTo(outputStream);
+                LOG.debug("* read chunkView:{} startOffset:{} length:{}", chunkView, startOffset, len);
 
-                LOG.debug("* read chunkView:{} startOffset:{} length:{} chunReadCount:{}", chunkView, startOffset, len, chunReadCount);
                 readCount += len;
                 startOffset += len;
 
