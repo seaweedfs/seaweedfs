@@ -25,27 +25,11 @@ func WithVolumeServerClient(volumeServer string, fn func(volume_server_pb.Volume
 		return err
 	}
 
-	grpcClientsLock.Lock()
-
-	existingConnection, found := grpcClients[grpcAddress]
-	if found {
-		grpcClientsLock.Unlock()
-		client := volume_server_pb.NewVolumeServerClient(existingConnection)
+	return util.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
+		client := volume_server_pb.NewVolumeServerClient(grpcConnection)
 		return fn(client)
-	}
+	}, grpcAddress)
 
-	grpcConnection, err := util.GrpcDial(grpcAddress)
-	if err != nil {
-		grpcClientsLock.Unlock()
-		return fmt.Errorf("fail to dial %s: %v", grpcAddress, err)
-	}
-
-	grpcClients[grpcAddress] = grpcConnection
-	grpcClientsLock.Unlock()
-
-	client := volume_server_pb.NewVolumeServerClient(grpcConnection)
-
-	return fn(client)
 }
 
 func toVolumeServerGrpcAddress(volumeServer string) (grpcAddress string, err error) {
@@ -60,25 +44,9 @@ func toVolumeServerGrpcAddress(volumeServer string) (grpcAddress string, err err
 
 func withMasterServerClient(masterServer string, fn func(masterClient master_pb.SeaweedClient) error) error {
 
-	grpcClientsLock.Lock()
-
-	existingConnection, found := grpcClients[masterServer]
-	if found {
-		grpcClientsLock.Unlock()
-		client := master_pb.NewSeaweedClient(existingConnection)
+	return util.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
+		client := master_pb.NewSeaweedClient(grpcConnection)
 		return fn(client)
-	}
+	}, masterServer)
 
-	grpcConnection, err := util.GrpcDial(masterServer)
-	if err != nil {
-		grpcClientsLock.Unlock()
-		return fmt.Errorf("fail to dial %s: %v", masterServer, err)
-	}
-
-	grpcClients[masterServer] = grpcConnection
-	grpcClientsLock.Unlock()
-
-	client := master_pb.NewSeaweedClient(grpcConnection)
-
-	return fn(client)
 }
