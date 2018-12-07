@@ -117,7 +117,8 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 				fmt.Sprintf("http://%s/%s", locations.Locations[0].Url, chunkView.FileId),
 				chunkView.Offset,
 				int(chunkView.Size),
-				buff[chunkView.LogicOffset-req.Offset:chunkView.LogicOffset-req.Offset+int64(chunkView.Size)])
+				buff[chunkView.LogicOffset-req.Offset:chunkView.LogicOffset-req.Offset+int64(chunkView.Size)],
+				!chunkView.IsFullChunk)
 
 			if err != nil {
 

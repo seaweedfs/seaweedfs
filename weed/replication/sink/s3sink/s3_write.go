@@ -161,6 +161,6 @@ func (s3sink *S3Sink) buildReadSeeker(chunk *filer2.ChunkView) (io.ReadSeeker, e
 		return nil, err
 	}
 	buf := make([]byte, chunk.Size)
-	util.ReadUrl(fileUrl, chunk.Offset, int(chunk.Size), buf)
+	util.ReadUrl(fileUrl, chunk.Offset, int(chunk.Size), buf, true)
 	return bytes.NewReader(buf), nil
 }

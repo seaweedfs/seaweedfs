@@ -70,6 +70,7 @@ type ChunkView struct {
 	Offset      int64
 	Size        uint64
 	LogicOffset int64
+	IsFullChunk bool
 }
 
 func ViewFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int) (views []*ChunkView) {
@@ -80,11 +81,13 @@ func ViewFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int) (views
 
 	for _, chunk := range visibles {
 		if chunk.start <= offset && offset < chunk.stop && offset < stop {
+			isFullChunk := chunk.isFullChunk && chunk.start == offset && chunk.stop <= stop
 			views = append(views, &ChunkView{
 				FileId:      chunk.fileId,
 				Offset:      offset - chunk.start, // offset is the data starting location in this file id
 				Size:        uint64(min(chunk.stop, stop) - offset),
 				LogicOffset: offset,
+				IsFullChunk: isFullChunk,
 			})
 			offset = min(chunk.stop, stop)
 		}
@@ -116,6 +119,7 @@ func mergeIntoVisibles(visibles, newVisibles []*visibleInterval, chunk *filer_pb
 		chunk.Offset+int64(chunk.Size),
 		chunk.FileId,
 		chunk.Mtime,
+		true,
 	)
 
 	length := len(visibles)
@@ -135,6 +139,7 @@ func mergeIntoVisibles(visibles, newVisibles []*visibleInterval, chunk *filer_pb
 				chunk.Offset,
 				v.fileId,
 				v.modifiedTime,
+				false,
 			))
 		}
 		chunkStop := chunk.Offset + int64(chunk.Size)
@@ -144,6 +149,7 @@ func mergeIntoVisibles(visibles, newVisibles []*visibleInterval, chunk *filer_pb
 				v.stop,
 				v.fileId,
 				v.modifiedTime,
+				false,
 			))
 		}
 		if chunkStop <= v.start || v.stop <= chunk.Offset {
@@ -195,14 +201,16 @@ type visibleInterval struct {
 	stop         int64
 	modifiedTime int64
 	fileId       string
+	isFullChunk  bool
 }
 
-func newVisibleInterval(start, stop int64, fileId string, modifiedTime int64) *visibleInterval {
+func newVisibleInterval(start, stop int64, fileId string, modifiedTime int64, isFullChunk bool) *visibleInterval {
 	return &visibleInterval{
 		start:        start,
 		stop:         stop,
 		fileId:       fileId,
 		modifiedTime: modifiedTime,
+		isFullChunk:  isFullChunk,
 	}
 }
 

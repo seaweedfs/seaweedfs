@@ -56,9 +56,12 @@ public class SeaweedRead {
             HttpClient client = HttpClientBuilder.create().build();
             HttpGet request = new HttpGet(
                 String.format("http://%s/%s", locations.getLocations(0).getUrl(), chunkView.fileId));
-            request.setHeader(HttpHeaders.ACCEPT_ENCODING, "");
-            request.setHeader(HttpHeaders.RANGE,
-                String.format("bytes=%d-%d", chunkView.offset, chunkView.offset + chunkView.size));
+
+            if (!chunkView.isFullChunk){
+                request.setHeader(HttpHeaders.ACCEPT_ENCODING, "");
+                request.setHeader(HttpHeaders.RANGE,
+                    String.format("bytes=%d-%d", chunkView.offset, chunkView.offset + chunkView.size));
+            }
 
             try {
                 HttpResponse response = client.execute(request);
@@ -86,11 +89,13 @@ public class SeaweedRead {
         long stop = offset + size;
         for (VisibleInterval chunk : visibleIntervals) {
             if (chunk.start <= offset && offset < chunk.stop && offset < stop) {
+                boolean isFullChunk = chunk.isFullChunk && chunk.start == offset && chunk.stop <= stop;
                 views.add(new ChunkView(
                     chunk.fileId,
                     offset - chunk.start,
                     Math.min(chunk.stop, stop) - offset,
-                    offset
+                    offset,
+                    isFullChunk
                 ));
                 offset = Math.min(chunk.stop, stop);
             }
@@ -123,7 +128,8 @@ public class SeaweedRead {
             chunk.getOffset(),
             chunk.getOffset() + chunk.getSize(),
             chunk.getFileId(),
-            chunk.getMtime()
+            chunk.getMtime(),
+            true
         );
 
         // easy cases to speed up
@@ -142,7 +148,8 @@ public class SeaweedRead {
                     v.start,
                     chunk.getOffset(),
                     v.fileId,
-                    v.modifiedTime
+                    v.modifiedTime,
+                    false
                 ));
             }
             long chunkStop = chunk.getOffset() + chunk.getSize();
@@ -151,7 +158,8 @@ public class SeaweedRead {
                     chunkStop,
                     v.stop,
                     v.fileId,
-                    v.modifiedTime
+                    v.modifiedTime,
+                    false
                 ));
             }
             if (chunkStop <= v.start || v.stop <= chunk.getOffset()) {
@@ -197,21 +205,24 @@ public class SeaweedRead {
         public final long stop;
         public final long modifiedTime;
         public final String fileId;
+        public final boolean isFullChunk;
 
-        public VisibleInterval(long start, long stop, String fileId, long modifiedTime) {
+        public VisibleInterval(long start, long stop, String fileId, long modifiedTime, boolean isFullChunk) {
             this.start = start;
             this.stop = stop;
             this.modifiedTime = modifiedTime;
             this.fileId = fileId;
+            this.isFullChunk = isFullChunk;
         }
 
         @Override
         public String toString() {
-            return "VisibleIntervalq{" +
+            return "VisibleInterval{" +
                 "start=" + start +
                 ", stop=" + stop +
                 ", modifiedTime=" + modifiedTime +
                 ", fileId='" + fileId + '\'' +
+                ", isFullChunk=" + isFullChunk +
                 '}';
         }
     }
@@ -221,12 +232,14 @@ public class SeaweedRead {
         public final long offset;
         public final long size;
         public final long logicOffset;
+        public final boolean isFullChunk;
 
-        public ChunkView(String fileId, long offset, long size, long logicOffset) {
+        public ChunkView(String fileId, long offset, long size, long logicOffset, boolean isFullChunk) {
             this.fileId = fileId;
             this.offset = offset;
             this.size = size;
             this.logicOffset = logicOffset;
+            this.isFullChunk = isFullChunk;
         }
 
         @Override
@@ -236,6 +249,7 @@ public class SeaweedRead {
                 ", offset=" + offset +
                 ", size=" + size +
                 ", logicOffset=" + logicOffset +
+                ", isFullChunk=" + isFullChunk +
                 '}';
         }
     }
