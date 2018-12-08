@@ -81,12 +81,14 @@ SeaweedFS can work very well with just the object store. [[Filer]] is added late
 * [filer server][Filer] provide "normal" directories and files via http.
 * [mount filer][Mount] to read and write files directly as a local directory via FUSE.
 * [Amazon S3 compatible API][AmazonS3API] to access files with S3 tooling.
+* [Hadoop Compatible File System][Hadoop] to access files from Hadoop/Spark/Flink/etc jobs.
 * [Async Backup To Cloud][BackupToCloud] can enjoy extreme fast local access and backup to Amazon S3, Google Cloud Storage, Azure, BackBlaze.
 
 [Filer]: https://github.com/chrislusf/seaweedfs/wiki/Directories-and-Files
 [Mount]: https://github.com/chrislusf/seaweedfs/wiki/Mount
 [AmazonS3API]: https://github.com/chrislusf/seaweedfs/wiki/Amazon-S3-API
 [BackupToCloud]: https://github.com/chrislusf/seaweedfs/wiki/Backup-to-Cloud
+[Hadoop]: https://github.com/chrislusf/seaweedfs/wiki/Hadoop-Compatible-File-System
 
 ## Example Usage
 By default, the master node runs on port 9333, and the volume nodes run on port 8080.
