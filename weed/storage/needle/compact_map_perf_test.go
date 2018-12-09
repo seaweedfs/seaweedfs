@@ -1,38 +1,50 @@
 package needle
 
 import (
+	"fmt"
+	"log"
+	"runtime"
 	"testing"
 	"os"
-	"log"
 
-	"github.com/chrislusf/seaweedfs/weed/util"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 /*
 
 To see the memory usage:
 
+go test -run TestMemoryUsage
+The TotalAlloc section shows the memory increase for each iteration.
+
 go test -run TestMemoryUsage -memprofile=mem.out
-go tool pprof needle.test mem.out
+go tool pprof --alloc_space needle.test mem.out
+
 
  */
 
 func TestMemoryUsage(t *testing.T) {
 
-	indexFile, ie := os.OpenFile("../../../test/sample.idx", os.O_RDWR|os.O_RDONLY, 0644)
-	if ie != nil {
-		log.Fatalln(ie)
-	}
-	loadNewNeedleMap(indexFile)
+	var maps []*CompactMap
 
-	indexFile.Close()
+	for i := 0; i < 10; i++ {
+		indexFile, ie := os.OpenFile("../../../test/sample.idx", os.O_RDWR|os.O_RDONLY, 0644)
+		if ie != nil {
+			log.Fatalln(ie)
+		}
+		maps = append(maps, loadNewNeedleMap(indexFile))
+
+		indexFile.Close()
+
+		PrintMemUsage()
+	}
 
 }
 
-func loadNewNeedleMap(file *os.File) {
+func loadNewNeedleMap(file *os.File) *CompactMap {
 	m := NewCompactMap()
-	bytes := make([]byte, NeedleEntrySize*1024)
+	bytes := make([]byte, NeedleEntrySize)
 	count, e := file.Read(bytes)
 	for count > 0 && e == nil {
 		for i := 0; i < count; i += NeedleEntrySize {
@@ -43,44 +55,26 @@ func loadNewNeedleMap(file *os.File) {
 			if offset > 0 {
 				m.Set(NeedleId(key), offset, size)
 			} else {
-				//delete(m, key)
+				m.Delete(key)
 			}
 		}
 
 		count, e = file.Read(bytes)
 	}
 
-	m.report()
+	return m
 
 }
 
-// report memory usage
-func (cm *CompactMap) report() {
-	overFlowCount := 0;
-	overwrittenByOverflow := 0;
-	entryCount := 0
-	compactSectionCount := 0
-	compactSectionEntryCount := 0
-	for _, cs := range cm.list {
-		compactSectionCount++
-		cs.RLock()
-		for range cs.overflow {
-			overFlowCount++
-			entryCount++
-		}
-		for _, v := range cs.values {
-			compactSectionEntryCount++
-			if _, found := cs.overflow[v.Key]; !found {
-				entryCount++
-			} else {
-				overwrittenByOverflow++
-			}
-		}
-		cs.RUnlock()
-	}
-	println("overFlowCount", overFlowCount)
-	println("overwrittenByOverflow", overwrittenByOverflow)
-	println("entryCount", entryCount)
-	println("compactSectionCount", compactSectionCount)
-	println("compactSectionEntryCount", compactSectionEntryCount)
+func PrintMemUsage() {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	// For info on each, see: https://golang.org/pkg/runtime/#MemStats
+	fmt.Printf("Alloc = %v MiB", bToMb(m.Alloc))
+	fmt.Printf("\tTotalAlloc = %v MiB", bToMb(m.TotalAlloc))
+	fmt.Printf("\tSys = %v MiB", bToMb(m.Sys))
+	fmt.Printf("\tNumGC = %v\n", m.NumGC)
+}
+func bToMb(b uint64) uint64 {
+	return b / 1024 / 1024
 }
