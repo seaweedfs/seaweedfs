@@ -5,10 +5,6 @@ import (
 	"github.com/google/btree"
 )
 
-const (
-	batch = 100000
-)
-
 type NeedleValue struct {
 	Key    NeedleId
 	Offset Offset `comment:"Volume offset"` //since aligned to 8 bytes, range is 4G*8=32G

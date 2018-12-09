@@ -5,6 +5,10 @@ import (
 	"sync"
 )
 
+const (
+	batch = 100000
+)
+
 type CompactSection struct {
 	sync.RWMutex
 	values   []NeedleValue
