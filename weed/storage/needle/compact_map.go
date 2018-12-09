@@ -2,6 +2,7 @@ package needle
 
 import (
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"sort"
 	"sync"
 )
 
@@ -12,16 +13,18 @@ const (
 type CompactSection struct {
 	sync.RWMutex
 	values   []NeedleValue
-	overflow map[NeedleId]NeedleValue
+	overflow Overflow
 	start    NeedleId
 	end      NeedleId
 	counter  int
 }
 
+type Overflow []NeedleValue
+
 func NewCompactSection(start NeedleId) *CompactSection {
 	return &CompactSection{
 		values:   make([]NeedleValue, batch),
-		overflow: make(map[NeedleId]NeedleValue),
+		overflow: Overflow(make([]NeedleValue, 0)),
 		start:    start,
 	}
 }
@@ -41,10 +44,10 @@ func (cs *CompactSection) Set(key NeedleId, offset Offset, size uint32) (oldOffs
 		needOverflow = needOverflow || cs.counter > 0 && cs.values[cs.counter-1].Key > key
 		if needOverflow {
 			//println("start", cs.start, "counter", cs.counter, "key", key)
-			if oldValue, found := cs.overflow[key]; found {
+			if oldValue, found := cs.overflow.findOverflowEntry(key); found {
 				oldOffset, oldSize = oldValue.Offset, oldValue.Size
 			}
-			cs.overflow[key] = NeedleValue{Key: key, Offset: offset, Size: size}
+			cs.overflow = cs.overflow.setOverflowEntry(NeedleValue{Key: key, Offset: offset, Size: size})
 		} else {
 			p := &cs.values[cs.counter]
 			p.Key, p.Offset, p.Size = key, offset, size
@@ -66,8 +69,8 @@ func (cs *CompactSection) Delete(key NeedleId) uint32 {
 			cs.values[i].Size = 0
 		}
 	}
-	if v, found := cs.overflow[key]; found {
-		delete(cs.overflow, key)
+	if v, found := cs.overflow.findOverflowEntry(key); found {
+		cs.overflow = cs.overflow.deleteOverflowEntry(key)
 		ret = v.Size
 	}
 	cs.Unlock()
@@ -75,7 +78,7 @@ func (cs *CompactSection) Delete(key NeedleId) uint32 {
 }
 func (cs *CompactSection) Get(key NeedleId) (*NeedleValue, bool) {
 	cs.RLock()
-	if v, ok := cs.overflow[key]; ok {
+	if v, ok := cs.overflow.findOverflowEntry(key); ok {
 		cs.RUnlock()
 		return &v, true
 	}
@@ -188,7 +191,7 @@ func (cm *CompactMap) Visit(visit func(NeedleValue) error) error {
 			}
 		}
 		for _, v := range cs.values {
-			if _, found := cs.overflow[v.Key]; !found {
+			if _, found := cs.overflow.findOverflowEntry(v.Key); !found {
 				if err := visit(v); err != nil {
 					cs.RUnlock()
 					return err
@@ -198,4 +201,44 @@ func (cm *CompactMap) Visit(visit func(NeedleValue) error) error {
 		cs.RUnlock()
 	}
 	return nil
+}
+
+func (o Overflow) deleteOverflowEntry(key NeedleId) Overflow {
+	length := len(o)
+	deleteCandidate := sort.Search(length, func(i int) bool {
+		return o[i].Key >= key
+	})
+	if deleteCandidate != length && o[deleteCandidate].Key == key {
+		for i := deleteCandidate; i < length-1; i++ {
+			o[i] = o[i+1]
+		}
+		o = o[0 : length-1]
+	}
+	return o
+}
+
+func (o Overflow) setOverflowEntry(needleValue NeedleValue) Overflow {
+	insertCandidate := sort.Search(len(o), func(i int) bool {
+		return o[i].Key >= needleValue.Key
+	})
+	if insertCandidate != len(o) && o[insertCandidate].Key == needleValue.Key {
+		o[insertCandidate] = needleValue
+	} else {
+		o = append(o, needleValue)
+		for i := len(o) - 1; i > insertCandidate; i-- {
+			o[i] = o[i-1]
+		}
+		o[insertCandidate] = needleValue
+	}
+	return o
+}
+
+func (o Overflow) findOverflowEntry(key NeedleId) (nv NeedleValue, found bool) {
+	foundCandidate := sort.Search(len(o), func(i int) bool {
+		return o[i].Key >= key
+	})
+	if foundCandidate != len(o) && o[foundCandidate].Key == key {
+		return o[foundCandidate], true
+	}
+	return nv, false
 }
