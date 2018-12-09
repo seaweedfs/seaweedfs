@@ -1,14 +1,22 @@
 package needle
 
 import (
-	"log"
-	"os"
 	"testing"
+	"os"
+	"log"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
+
+/*
+
+To see the memory usage:
+
+go test -run TestMemoryUsage -memprofile=mem.out
+go tool pprof needle.test mem.out
+
+ */
 
 func TestMemoryUsage(t *testing.T) {
 
@@ -18,18 +26,16 @@ func TestMemoryUsage(t *testing.T) {
 	}
 	loadNewNeedleMap(indexFile)
 
+	indexFile.Close()
+
 }
 
 func loadNewNeedleMap(file *os.File) {
 	m := NewCompactMap()
-	bytes := make([]byte, 16*1024)
+	bytes := make([]byte, NeedleEntrySize*1024)
 	count, e := file.Read(bytes)
-	if count > 0 {
-		fstat, _ := file.Stat()
-		glog.V(0).Infoln("Loading index file", fstat.Name(), "size", fstat.Size())
-	}
 	for count > 0 && e == nil {
-		for i := 0; i < count; i += 16 {
+		for i := 0; i < count; i += NeedleEntrySize {
 			key := BytesToNeedleId(bytes[i : i+NeedleIdSize])
 			offset := BytesToOffset(bytes[i+NeedleIdSize : i+NeedleIdSize+OffsetSize])
 			size := util.BytesToUint32(bytes[i+NeedleIdSize+OffsetSize : i+NeedleIdSize+OffsetSize+SizeSize])
@@ -43,4 +49,38 @@ func loadNewNeedleMap(file *os.File) {
 
 		count, e = file.Read(bytes)
 	}
+
+	m.report()
+
+}
+
+// report memory usage
+func (cm *CompactMap) report() {
+	overFlowCount := 0;
+	overwrittenByOverflow := 0;
+	entryCount := 0
+	compactSectionCount := 0
+	compactSectionEntryCount := 0
+	for _, cs := range cm.list {
+		compactSectionCount++
+		cs.RLock()
+		for range cs.overflow {
+			overFlowCount++
+			entryCount++
+		}
+		for _, v := range cs.values {
+			compactSectionEntryCount++
+			if _, found := cs.overflow[v.Key]; !found {
+				entryCount++
+			} else {
+				overwrittenByOverflow++
+			}
+		}
+		cs.RUnlock()
+	}
+	println("overFlowCount", overFlowCount)
+	println("overwrittenByOverflow", overwrittenByOverflow)
+	println("entryCount", entryCount)
+	println("compactSectionCount", compactSectionCount)
+	println("compactSectionEntryCount", compactSectionEntryCount)
 }

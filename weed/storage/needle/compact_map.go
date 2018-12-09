@@ -117,14 +117,16 @@ func (cm *CompactMap) Set(key NeedleId, offset Offset, size uint32) (oldOffset O
 	x := cm.binarySearchCompactSection(key)
 	if x < 0 {
 		//println(x, "creating", len(cm.list), "section, starting", key)
-		cm.list = append(cm.list, NewCompactSection(key))
+		cs := NewCompactSection(key)
+		cm.list = append(cm.list, cs)
 		x = len(cm.list) - 1
 		//keep compact section sorted by start
 		for x > 0 {
-			if cm.list[x-1].start > cm.list[x].start {
-				cm.list[x-1], cm.list[x] = cm.list[x], cm.list[x-1]
+			if cm.list[x-1].start > key {
+				cm.list[x] = cm.list[x-1]
 				x = x - 1
 			} else {
+				cm.list[x] = cs
 				break
 			}
 		}
