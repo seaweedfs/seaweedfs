@@ -3,9 +3,9 @@ package needle
 import (
 	"fmt"
 	"log"
+	"os"
 	"runtime"
 	"testing"
-	"os"
 
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -22,7 +22,7 @@ go test -run TestMemoryUsage -memprofile=mem.out
 go tool pprof --alloc_space needle.test mem.out
 
 
- */
+*/
 
 func TestMemoryUsage(t *testing.T) {
 
