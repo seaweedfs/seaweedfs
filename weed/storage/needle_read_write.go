@@ -67,7 +67,7 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, actualSize i
 		CookieToBytes(header[0:CookieSize], n.Cookie)
 		NeedleIdToBytes(header[CookieSize:CookieSize+NeedleIdSize], n.Id)
 		if len(n.Name) >= math.MaxUint8 {
-			n.NameSize = math.MaxInt8
+			n.NameSize = math.MaxUint8
 		} else {
 			n.NameSize = uint8(len(n.Name))
 		}
