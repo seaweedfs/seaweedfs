@@ -109,7 +109,6 @@ func (s3a *S3ApiServer) rm(parentDirectoryPath string, entryName string, isDirec
 		request := &filer_pb.DeleteEntryRequest{
 			Directory:    parentDirectoryPath,
 			Name:         entryName,
-			IsDirectory:  isDirectory,
 			IsDeleteData: isDeleteData,
 			IsRecursive:  isRecursive,
 		}

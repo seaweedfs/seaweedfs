@@ -84,7 +84,6 @@ func moveEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, oldParen
 		request := &filer_pb.DeleteEntryRequest{
 			Directory:    oldParent,
 			Name:         entry.Name,
-			IsDirectory:  entry.IsDirectory,
 			IsDeleteData: false,
 		}
 

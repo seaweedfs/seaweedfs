@@ -66,7 +66,6 @@ func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bo
 		request := &filer_pb.DeleteEntryRequest{
 			Directory:    dir,
 			Name:         name,
-			IsDirectory:  isDirectory,
 			IsDeleteData: deleteIncludeChunks,
 		}
 

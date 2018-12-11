@@ -277,7 +277,6 @@ func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 		request := &filer_pb.DeleteEntryRequest{
 			Directory:    dir.Path,
 			Name:         req.Name,
-			IsDirectory:  req.Dir,
 			IsDeleteData: true,
 		}
 
