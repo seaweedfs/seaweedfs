@@ -9,6 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"math"
 )
 
 const (
@@ -65,7 +66,12 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, actualSize i
 		header := make([]byte, NeedleEntrySize+TimestampSize) // adding timestamp to reuse it and avoid extra allocation
 		CookieToBytes(header[0:CookieSize], n.Cookie)
 		NeedleIdToBytes(header[CookieSize:CookieSize+NeedleIdSize], n.Id)
-		n.DataSize, n.NameSize, n.MimeSize = uint32(len(n.Data)), uint8(len(n.Name)), uint8(len(n.Mime))
+		if len(n.Name) >= math.MaxUint8 {
+			n.NameSize = math.MaxInt8
+		} else {
+			n.NameSize = uint8(len(n.Name))
+		}
+		n.DataSize, n.MimeSize = uint32(len(n.Data)), uint8(len(n.Mime))
 		if n.DataSize > 0 {
 			n.Size = 4 + n.DataSize + 1
 			if n.HasName() {
@@ -108,7 +114,7 @@ func (n *Needle) Append(w io.Writer, version Version) (size uint32, actualSize i
 				if _, err = w.Write(header[0:1]); err != nil {
 					return
 				}
-				if _, err = w.Write(n.Name); err != nil {
+				if _, err = w.Write(n.Name[:n.NameSize]); err != nil {
 					return
 				}
 			}
