@@ -239,29 +239,46 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 	err = dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		request := &filer_pb.ListEntriesRequest{
-			Directory: dir.Path,
-			Limit:     uint32(dir.wfs.option.DirListingLimit),
-		}
+		paginationLimit := 1024
+		remaining := dir.wfs.option.DirListingLimit
 
-		glog.V(4).Infof("read directory: %v", request)
-		resp, err := client.ListEntries(ctx, request)
-		if err != nil {
-			glog.V(0).Infof("list %s: %v", dir.Path, err)
-			return fuse.EIO
-		}
+		lastEntryName := ""
 
-		cacheTtl := estimatedCacheTtl(len(resp.Entries))
+		for remaining >= 0 {
 
-		for _, entry := range resp.Entries {
-			if entry.IsDirectory {
-				dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_Dir}
-				ret = append(ret, dirent)
-			} else {
-				dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_File}
-				ret = append(ret, dirent)
+			request := &filer_pb.ListEntriesRequest{
+				Directory:         dir.Path,
+				StartFromFileName: lastEntryName,
+				Limit:             uint32(paginationLimit),
 			}
-			dir.wfs.listDirectoryEntriesCache.Set(path.Join(dir.Path, entry.Name), entry, cacheTtl)
+
+			glog.V(4).Infof("read directory: %v", request)
+			resp, err := client.ListEntries(ctx, request)
+			if err != nil {
+				glog.V(0).Infof("list %s: %v", dir.Path, err)
+				return fuse.EIO
+			}
+
+			cacheTtl := estimatedCacheTtl(len(resp.Entries))
+
+			for _, entry := range resp.Entries {
+				if entry.IsDirectory {
+					dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_Dir}
+					ret = append(ret, dirent)
+				} else {
+					dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_File}
+					ret = append(ret, dirent)
+				}
+				dir.wfs.listDirectoryEntriesCache.Set(path.Join(dir.Path, entry.Name), entry, cacheTtl)
+				lastEntryName = entry.Name
+			}
+
+			remaining -= len(resp.Entries)
+
+			if len(resp.Entries) < paginationLimit {
+				break
+			}
+
 		}
 
 		return nil
@@ -351,10 +368,7 @@ func estimatedCacheTtl(numEntries int) time.Duration {
 		// 10 ms per entry
 		return 100 * time.Second
 	}
-	if numEntries < 100000 {
-		// 10 ms per entry
-		return 1000 * time.Second
-	}
+
 	// 2 ms per entry
 	return time.Duration(numEntries*2) * time.Millisecond
 }
