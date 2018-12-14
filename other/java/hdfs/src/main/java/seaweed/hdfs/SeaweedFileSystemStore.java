@@ -7,6 +7,7 @@ import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import seaweedfs.client.FilerClient;
 import seaweedfs.client.FilerGrpcClient;
 import seaweedfs.client.FilerProto;
 
@@ -23,10 +24,12 @@ public class SeaweedFileSystemStore {
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedFileSystemStore.class);
 
     private FilerGrpcClient filerGrpcClient;
+    private FilerClient filerClient;
 
     public SeaweedFileSystemStore(String host, int port) {
         int grpcPort = 10000 + port;
         filerGrpcClient = new FilerGrpcClient(host, grpcPort);
+        filerClient = new FilerClient(filerGrpcClient);
     }
 
     public static String getParentDirectory(Path path) {
@@ -49,23 +52,12 @@ public class SeaweedFileSystemStore {
             permission,
             umask);
 
-        long now = System.currentTimeMillis() / 1000L;
-
-        FilerProto.CreateEntryRequest.Builder request = FilerProto.CreateEntryRequest.newBuilder()
-            .setDirectory(getParentDirectory(path))
-            .setEntry(FilerProto.Entry.newBuilder()
-                .setName(path.getName())
-                .setIsDirectory(true)
-                .setAttributes(FilerProto.FuseAttributes.newBuilder()
-                    .setMtime(now)
-                    .setCrtime(now)
-                    .setFileMode(permissionToMode(permission, true))
-                    .setUserName(currentUser.getUserName())
-                    .addAllGroupName(Arrays.asList(currentUser.getGroupNames())))
-            );
-
-        FilerProto.CreateEntryResponse response = filerGrpcClient.getBlockingStub().createEntry(request.build());
-        return true;
+        return filerClient.mkdirs(
+            path.toUri().getPath(),
+            permissionToMode(permission, true),
+            currentUser.getUserName(),
+            currentUser.getGroupNames()
+        );
     }
 
     public FileStatus[] listEntries(final Path path) {
@@ -73,7 +65,7 @@ public class SeaweedFileSystemStore {
 
         List<FileStatus> fileStatuses = new ArrayList<FileStatus>();
 
-        List<FilerProto.Entry> entries = lookupEntries(path);
+        List<FilerProto.Entry> entries = filerClient.listEntries(path.toUri().getPath());
 
         for (FilerProto.Entry entry : entries) {
 
@@ -82,16 +74,6 @@ public class SeaweedFileSystemStore {
             fileStatuses.add(fileStatus);
         }
         return fileStatuses.toArray(new FileStatus[0]);
-    }
-
-    private List<FilerProto.Entry> lookupEntries(Path path) {
-
-        LOG.debug("listEntries path: {}", path);
-
-        return filerGrpcClient.getBlockingStub().listEntries(FilerProto.ListEntriesRequest.newBuilder()
-            .setDirectory(path.toUri().getPath())
-            .setLimit(100000)
-            .build()).getEntriesList();
     }
 
     public FileStatus getFileStatus(final Path path) {
@@ -106,32 +88,24 @@ public class SeaweedFileSystemStore {
         return fileStatus;
     }
 
-    public boolean deleteEntries(final Path path, boolean isDirectroy, boolean recursive) {
+    public boolean deleteEntries(final Path path, boolean isDirectory, boolean recursive) {
         LOG.debug("deleteEntries path: {} isDirectory {} recursive: {}",
             path,
-            String.valueOf(isDirectroy),
+            String.valueOf(isDirectory),
             String.valueOf(recursive));
 
         if (path.isRoot()) {
             return true;
         }
 
-        if (recursive && isDirectroy) {
-            List<FilerProto.Entry> entries = lookupEntries(path);
+        if (recursive && isDirectory) {
+            List<FilerProto.Entry> entries = filerClient.listEntries(path.toUri().getPath());
             for (FilerProto.Entry entry : entries) {
-                deleteEntries(new Path(path, entry.getName()), entry.getIsDirectory(), recursive);
+                deleteEntries(new Path(path, entry.getName()), entry.getIsDirectory(), true);
             }
         }
 
-        FilerProto.DeleteEntryResponse response =
-            filerGrpcClient.getBlockingStub().deleteEntry(FilerProto.DeleteEntryRequest.newBuilder()
-                .setDirectory(getParentDirectory(path))
-                .setName(path.getName())
-                .setIsDirectory(isDirectroy)
-                .setIsDeleteData(true)
-                .build());
-
-        return true;
+        return filerClient.deleteEntry(getParentDirectory(path), path.getName(), true, recursive);
     }
 
     private FileStatus doGetFileStatus(Path path, FilerProto.Entry entry) {
@@ -151,18 +125,8 @@ public class SeaweedFileSystemStore {
 
     private FilerProto.Entry lookupEntry(Path path) {
 
-        String directory = getParentDirectory(path);
+        return filerClient.lookupEntry(getParentDirectory(path), path.getName());
 
-        try {
-            FilerProto.LookupDirectoryEntryResponse response =
-                filerGrpcClient.getBlockingStub().lookupDirectoryEntry(FilerProto.LookupDirectoryEntryRequest.newBuilder()
-                    .setDirectory(directory)
-                    .setName(path.getName())
-                    .build());
-            return response.getEntry();
-        } catch (io.grpc.StatusRuntimeException e) {
-            return null;
-        }
     }
 
     public void rename(Path source, Path destination) {
@@ -186,9 +150,16 @@ public class SeaweedFileSystemStore {
 
         LOG.debug("moveEntry: {}/{}  => {}", oldParent, entry.getName(), destination);
 
+        FilerProto.Entry.Builder newEntry = entry.toBuilder().setName(destination.getName());
+        boolean isDirectoryCreated = filerClient.createEntry(getParentDirectory(destination), newEntry.build());
+
+        if (!isDirectoryCreated) {
+            return false;
+        }
+
         if (entry.getIsDirectory()) {
             Path entryPath = new Path(oldParent, entry.getName());
-            List<FilerProto.Entry> entries = lookupEntries(entryPath);
+            List<FilerProto.Entry> entries = filerClient.listEntries(entryPath.toUri().getPath());
             for (FilerProto.Entry ent : entries) {
                 boolean isSucess = moveEntry(entryPath, ent, new Path(destination, ent.getName()));
                 if (!isSucess) {
@@ -197,20 +168,9 @@ public class SeaweedFileSystemStore {
             }
         }
 
-        FilerProto.Entry.Builder newEntry = entry.toBuilder().setName(destination.getName());
-        filerGrpcClient.getBlockingStub().createEntry(FilerProto.CreateEntryRequest.newBuilder()
-            .setDirectory(getParentDirectory(destination))
-            .setEntry(newEntry)
-            .build());
+        return filerClient.deleteEntry(
+            oldParent.toUri().getPath(), entry.getName(), false, false);
 
-        filerGrpcClient.getBlockingStub().deleteEntry(FilerProto.DeleteEntryRequest.newBuilder()
-            .setDirectory(oldParent.toUri().getPath())
-            .setName(entry.getName())
-            .setIsDirectory(entry.getIsDirectory())
-            .setIsDeleteData(false)
-            .build());
-
-        return true;
     }
 
     public OutputStream createFile(final Path path,
@@ -253,6 +213,7 @@ public class SeaweedFileSystemStore {
                     .setCrtime(now)
                     .setMtime(now)
                     .setUserName(userGroupInformation.getUserName())
+                    .clearGroupName()
                     .addAllGroupName(Arrays.asList(userGroupInformation.getGroupNames()))
                 );
         }
@@ -306,10 +267,7 @@ public class SeaweedFileSystemStore {
 
         LOG.debug("setOwner path:{} entry:{}", path, entryBuilder);
 
-        filerGrpcClient.getBlockingStub().updateEntry(FilerProto.UpdateEntryRequest.newBuilder()
-            .setDirectory(getParentDirectory(path))
-            .setEntry(entryBuilder)
-            .build());
+        filerClient.updateEntry(getParentDirectory(path), entryBuilder.build());
 
     }
 
@@ -332,10 +290,7 @@ public class SeaweedFileSystemStore {
 
         LOG.debug("setPermission path:{} entry:{}", path, entryBuilder);
 
-        filerGrpcClient.getBlockingStub().updateEntry(FilerProto.UpdateEntryRequest.newBuilder()
-            .setDirectory(getParentDirectory(path))
-            .setEntry(entryBuilder)
-            .build());
+        filerClient.updateEntry(getParentDirectory(path), entryBuilder.build());
 
     }
 }

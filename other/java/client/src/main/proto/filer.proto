@@ -117,7 +117,7 @@ message UpdateEntryResponse {
 message DeleteEntryRequest {
     string directory = 1;
     string name = 2;
-    bool is_directory = 3;
+    // bool is_directory = 3;
     bool is_delete_data = 4;
     bool is_recursive = 5;
 }

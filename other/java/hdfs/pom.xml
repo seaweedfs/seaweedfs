@@ -6,7 +6,7 @@
 
     <groupId>com.github.chrislusf</groupId>
     <artifactId>seaweedfs-hadoop-client</artifactId>
-    <version>1.0</version>
+    <version>1.0.2</version>
 
     <parent>
         <groupId>org.sonatype.oss</groupId>
@@ -41,6 +41,18 @@
                             <goal>shade</goal>
                         </goals>
                         <configuration>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <exclude>org/slf4j/**</exclude>
+                                        <exclude>META-INF/maven/org.slf4j/**</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
                             <transformers>
                                 <transformer
                                         implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
@@ -53,6 +65,14 @@
                                 <relocation>
                                     <pattern>io.grpc.internal</pattern>
                                     <shadedPattern>shaded.io.grpc.internal</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>org.apache.commons</pattern>
+                                    <shadedPattern>shaded.org.apache.commons</shadedPattern>
+                                    <excludes>
+                                        <exclude>org.apache.hadoop</exclude>
+                                        <exclude>org.apache.log4j</exclude>
+                                    </excludes>
                                 </relocation>
                             </relocations>
                         </configuration>
@@ -126,7 +146,7 @@
         <dependency>
             <groupId>com.github.chrislusf</groupId>
             <artifactId>seaweedfs-client</artifactId>
-            <version>1.0</version>
+            <version>1.0.2</version>
         </dependency>
         <dependency>
             <groupId>org.apache.hadoop</groupId>
