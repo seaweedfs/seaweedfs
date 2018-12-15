@@ -78,19 +78,19 @@ func TestCompactMap(t *testing.T) {
 }
 
 func TestOverflow(t *testing.T) {
-	o := Overflow(make([]NeedleValue, 0))
+	o := Overflow(make([]SectionalNeedleValue, 0))
 
-	o = o.setOverflowEntry(NeedleValue{Key: 1, Offset: 12, Size: 12})
-	o = o.setOverflowEntry(NeedleValue{Key: 2, Offset: 12, Size: 12})
-	o = o.setOverflowEntry(NeedleValue{Key: 3, Offset: 12, Size: 12})
-	o = o.setOverflowEntry(NeedleValue{Key: 4, Offset: 12, Size: 12})
-	o = o.setOverflowEntry(NeedleValue{Key: 5, Offset: 12, Size: 12})
+	o = o.setOverflowEntry(SectionalNeedleValue{Key: 1, Offset: 12, Size: 12})
+	o = o.setOverflowEntry(SectionalNeedleValue{Key: 2, Offset: 12, Size: 12})
+	o = o.setOverflowEntry(SectionalNeedleValue{Key: 3, Offset: 12, Size: 12})
+	o = o.setOverflowEntry(SectionalNeedleValue{Key: 4, Offset: 12, Size: 12})
+	o = o.setOverflowEntry(SectionalNeedleValue{Key: 5, Offset: 12, Size: 12})
 
 	if o[2].Key != 3 {
 		t.Fatalf("expecting o[2] has key 3: %+v", o[2].Key)
 	}
 
-	o = o.setOverflowEntry(NeedleValue{Key: 3, Offset: 24, Size: 24})
+	o = o.setOverflowEntry(SectionalNeedleValue{Key: 3, Offset: 24, Size: 24})
 
 	if o[2].Key != 3 {
 		t.Fatalf("expecting o[2] has key 3: %+v", o[2].Key)
@@ -123,13 +123,13 @@ func TestOverflow(t *testing.T) {
 	}
 	println()
 
-	o = o.setOverflowEntry(NeedleValue{Key: 4, Offset: 44, Size: 44})
+	o = o.setOverflowEntry(SectionalNeedleValue{Key: 4, Offset: 44, Size: 44})
 	for i, x := range o {
 		println("overflow[", i, "]:", x.Key)
 	}
 	println()
 
-	o = o.setOverflowEntry(NeedleValue{Key: 1, Offset: 11, Size: 11})
+	o = o.setOverflowEntry(SectionalNeedleValue{Key: 1, Offset: 11, Size: 11})
 
 	for i, x := range o {
 		println("overflow[", i, "]:", x.Key)

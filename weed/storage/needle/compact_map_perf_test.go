@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	"testing"
+	"time"
 
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -28,6 +29,7 @@ func TestMemoryUsage(t *testing.T) {
 
 	var maps []*CompactMap
 
+	startTime := time.Now()
 	for i := 0; i < 10; i++ {
 		indexFile, ie := os.OpenFile("../../../test/sample.idx", os.O_RDWR|os.O_RDONLY, 0644)
 		if ie != nil {
@@ -38,6 +40,9 @@ func TestMemoryUsage(t *testing.T) {
 		indexFile.Close()
 
 		PrintMemUsage()
+		now := time.Now()
+		fmt.Printf("\tTaken = %v\n", now.Sub(startTime))
+		startTime = now
 	}
 
 }
@@ -67,13 +72,15 @@ func loadNewNeedleMap(file *os.File) *CompactMap {
 }
 
 func PrintMemUsage() {
+
+	runtime.GC()
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	// For info on each, see: https://golang.org/pkg/runtime/#MemStats
 	fmt.Printf("Alloc = %v MiB", bToMb(m.Alloc))
 	fmt.Printf("\tTotalAlloc = %v MiB", bToMb(m.TotalAlloc))
 	fmt.Printf("\tSys = %v MiB", bToMb(m.Sys))
-	fmt.Printf("\tNumGC = %v\n", m.NumGC)
+	fmt.Printf("\tNumGC = %v", m.NumGC)
 }
 func bToMb(b uint64) uint64 {
 	return b / 1024 / 1024
