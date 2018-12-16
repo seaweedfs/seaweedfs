@@ -38,3 +38,17 @@ services:
       default:
         aliases:
         - seaweed_filer
+  s3:
+    #image: chrislusf/seaweedfs # use a remote image
+    build: . # build our container from the local Dockerfile
+    ports:
+    - 8333:8333
+    command: 's3 -filer="filer:8888"'
+    depends_on:
+    - master
+    - volume
+    - filer
+    networks:
+      default:
+        aliases:
+        - seaweed_s3
