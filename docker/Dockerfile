@@ -17,6 +17,8 @@ EXPOSE 18888
 EXPOSE 8888
 # master server shared gprc+http port
 EXPOSE 9333
+# s3 server http port
+EXPOSE 8333
 
 VOLUME /data
 
