@@ -191,7 +191,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	crTime := time.Now()
 	if err == nil && existingEntry != nil {
 		if existingEntry.IsDirectory() {
-			path += ret.Name
+			path += "/" + ret.Name
 		} else {
 			crTime = existingEntry.Crtime
 		}
