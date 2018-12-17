@@ -126,7 +126,7 @@ func (fo *FilerOptions) startFiler() {
 		}()
 	}
 
-	glog.V(0).Infoln("Start Seaweed Filer", util.VERSION, "at port", strconv.Itoa(*fo.port))
+	glog.V(0).Infof("Start Seaweed Filer %s at %s:%d", util.VERSION, *fo.ip, *fo.port)
 	filerListener, e := util.NewListener(
 		":"+strconv.Itoa(*fo.port),
 		time.Duration(10)*time.Second,

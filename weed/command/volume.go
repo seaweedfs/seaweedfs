@@ -155,7 +155,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	)
 
 	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port)
-	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "at", listeningAddress)
+	glog.V(0).Infof("Start Seaweed volume server %s at %s", util.VERSION, listeningAddress)
 	listener, e := util.NewListener(listeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)

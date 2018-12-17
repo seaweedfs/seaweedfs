@@ -173,7 +173,7 @@ func runServer(cmd *Command, args []string) bool {
 			serverWhiteList, *serverSecureKey,
 		)
 
-		glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", *serverIp+":"+strconv.Itoa(*masterPort))
+		glog.V(0).Infof("Start Seaweed Master %s at %s:%d", util.VERSION, *serverIp, *masterPort)
 		masterListener, e := util.NewListener(*serverBindIp+":"+strconv.Itoa(*masterPort), 0)
 		if e != nil {
 			glog.Fatalf("Master startup error: %v", e)
