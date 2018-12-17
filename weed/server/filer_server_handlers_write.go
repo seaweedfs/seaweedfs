@@ -187,11 +187,20 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 	// update metadata in filer store
 	glog.V(4).Infoln("saving", path, "=>", fileId)
+	existingEntry, err := fs.filer.FindEntry(filer2.FullPath(path))
+	crTime := time.Now()
+	if err == nil && existingEntry != nil {
+		if existingEntry.IsDirectory() {
+			path += ret.Name
+		} else {
+			crTime = existingEntry.Crtime
+		}
+	}
 	entry := &filer2.Entry{
 		FullPath: filer2.FullPath(path),
 		Attr: filer2.Attr{
 			Mtime:       time.Now(),
-			Crtime:      time.Now(),
+			Crtime:      crTime,
 			Mode:        0660,
 			Uid:         OS_UID,
 			Gid:         OS_GID,
