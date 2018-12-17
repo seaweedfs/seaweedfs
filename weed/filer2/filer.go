@@ -195,20 +195,36 @@ func (f *Filer) DeleteEntryMetaAndData(p FullPath, isRecursive bool, shouldDelet
 		if isRecursive {
 			limit = math.MaxInt32
 		}
-		entries, err := f.ListDirectoryEntries(p, "", false, limit)
-		if err != nil {
-			return fmt.Errorf("list folder %s: %v", p, err)
-		}
-		if isRecursive {
-			for _, sub := range entries {
-				f.DeleteEntryMetaAndData(sub.FullPath, isRecursive, shouldDeleteChunks)
+		lastFileName := ""
+		includeLastFile := false
+		for limit > 0 {
+			entries, err := f.ListDirectoryEntries(p, lastFileName, includeLastFile, 1024)
+			if err != nil {
+				return fmt.Errorf("list folder %s: %v", p, err)
 			}
-		} else {
-			if len(entries) > 0 {
-				return fmt.Errorf("folder %s is not empty", p)
+			if len(entries) == 0 {
+				break
+			} else {
+				if isRecursive {
+					for _, sub := range entries {
+						lastFileName = sub.Name()
+						f.DeleteEntryMetaAndData(sub.FullPath, isRecursive, shouldDeleteChunks)
+						limit--
+						if limit <= 0 {
+							break
+						}
+					}
+				} else {
+					if len(entries) > 0 {
+						return fmt.Errorf("folder %s is not empty", p)
+					}
+				}
+				f.cacheDelDirectory(string(p))
+				if len(entries) < 1024 {
+					break
+				}
 			}
 		}
-		f.cacheDelDirectory(string(p))
 	}
 
 	if shouldDeleteChunks {

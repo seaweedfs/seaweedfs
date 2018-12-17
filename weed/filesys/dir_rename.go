@@ -7,6 +7,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"path/filepath"
+	"math"
 )
 
 func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirectory fs.Node) error {
@@ -40,21 +41,37 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 func moveEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, oldParent string, entry *filer_pb.Entry, newParent, newName string) error {
 	if entry.IsDirectory {
 		currentDirPath := filepath.Join(oldParent, entry.Name)
-		request := &filer_pb.ListEntriesRequest{
-			Directory: currentDirPath,
-		}
 
-		glog.V(4).Infof("read directory: %v", request)
-		resp, err := client.ListEntries(ctx, request)
-		if err != nil {
-			glog.V(0).Infof("list %s: %v", oldParent, err)
-			return fuse.EIO
-		}
-
-		for _, item := range resp.Entries {
-			err := moveEntry(ctx, client, currentDirPath, item, filepath.Join(newParent, newName), item.Name)
+		lastFileName := ""
+		includeLastFile := false
+		limit := math.MaxInt32
+		for limit > 0 {
+			request := &filer_pb.ListEntriesRequest{
+				Directory:          currentDirPath,
+				StartFromFileName:  lastFileName,
+				InclusiveStartFrom: includeLastFile,
+				Limit:              1024,
+			}
+			glog.V(4).Infof("read directory: %v", request)
+			resp, err := client.ListEntries(ctx, request)
 			if err != nil {
-				return err
+				glog.V(0).Infof("list %s: %v", oldParent, err)
+				return fuse.EIO
+			}
+			if len(resp.Entries) == 0 {
+				break
+			}
+
+			for _, item := range resp.Entries {
+				lastFileName = item.Name
+				err := moveEntry(ctx, client, currentDirPath, item, filepath.Join(newParent, newName), item.Name)
+				if err != nil {
+					return err
+				}
+				limit--
+			}
+			if len(resp.Entries) < 1024 {
+				break
 			}
 		}
 

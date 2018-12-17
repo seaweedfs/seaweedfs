@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 type FileHandle struct {
@@ -207,6 +208,9 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 			fh.f.entry.Attributes.Mime = fh.contentType
 			fh.f.entry.Attributes.Uid = req.Uid
 			fh.f.entry.Attributes.Gid = req.Gid
+			fh.f.entry.Attributes.Mtime = time.Now().Unix()
+			fh.f.entry.Attributes.Crtime = time.Now().Unix()
+			fh.f.entry.Attributes.FileMode = uint32(0770)
 		}
 
 		request := &filer_pb.CreateEntryRequest{

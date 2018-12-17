@@ -45,7 +45,7 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 	lastFileName := req.StartFromFileName
 	includeLastFile := req.InclusiveStartFrom
 	for limit > 0 {
-		entries, err := fs.filer.ListDirectoryEntries(filer2.FullPath(req.Directory), lastFileName, includeLastFile, limit)
+		entries, err := fs.filer.ListDirectoryEntries(filer2.FullPath(req.Directory), lastFileName, includeLastFile, 1024)
 		if err != nil {
 			return nil, err
 		}
@@ -72,6 +72,10 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 				Attributes:  filer2.EntryAttributeToPb(entry),
 			})
 			limit--
+		}
+
+		if len(resp.Entries) < 1024 {
+			break
 		}
 
 	}
