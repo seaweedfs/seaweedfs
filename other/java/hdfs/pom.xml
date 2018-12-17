@@ -4,9 +4,14 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <properties>
+        <seaweedfs.client.version>1.0.3</seaweedfs.client.version>
+        <hadoop.version>3.1.1</hadoop.version>
+    </properties>
+
     <groupId>com.github.chrislusf</groupId>
     <artifactId>seaweedfs-hadoop-client</artifactId>
-    <version>1.0.2</version>
+    <version>${seaweedfs.client.version}</version>
 
     <parent>
         <groupId>org.sonatype.oss</groupId>
@@ -133,10 +138,6 @@
         </plugins>
     </build>
 
-    <properties>
-        <hadoop.version>3.1.1</hadoop.version>
-    </properties>
-
     <dependencies>
         <dependency>
             <groupId>org.apache.hadoop</groupId>
@@ -146,7 +147,7 @@
         <dependency>
             <groupId>com.github.chrislusf</groupId>
             <artifactId>seaweedfs-client</artifactId>
-            <version>1.0.2</version>
+            <version>${seaweedfs.client.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.hadoop</groupId>

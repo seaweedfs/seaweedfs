@@ -310,9 +310,6 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
             getClass().getSimpleName() + " FileSystem implementation");
     }
 
-    /**
-     * See {@link FileContext#createSymlink(Path, Path, boolean)}.
-     */
     @Override
     public void createSymlink(final Path target, final Path link,
                               final boolean createParent) throws AccessControlException,
@@ -324,10 +321,6 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
             "Filesystem does not support symlinks!");
     }
 
-    /**
-     * See {@link AbstractFileSystem#supportsSymlinks()}.
-     */
-    @Override
     public boolean supportsSymlinks() {
         return false;
     }

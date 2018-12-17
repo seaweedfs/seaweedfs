@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -137,7 +138,23 @@ public class FilerClient {
     }
 
     public List<FilerProto.Entry> listEntries(String path) {
-        return listEntries(path, "", "", 100000);
+        List<FilerProto.Entry> results = new ArrayList<FilerProto.Entry>();
+        String lastFileName = "";
+        for (int limit = Integer.MAX_VALUE; limit > 0; ) {
+            List<FilerProto.Entry> t = listEntries(path, "", lastFileName, 1024);
+            if (t == null) {
+                break;
+            }
+            int nSize = t.size();
+            if (nSize > 0) {
+                limit -= nSize;
+                lastFileName = t.get(nSize - 1).getName();
+            }
+            if (t.size() < 1024) {
+                break;
+            }
+        }
+        return results;
     }
 
     public List<FilerProto.Entry> listEntries(String path, String entryPrefix, String lastEntryName, int limit) {
