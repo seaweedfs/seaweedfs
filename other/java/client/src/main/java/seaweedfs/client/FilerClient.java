@@ -38,7 +38,7 @@ public class FilerClient {
         String parent = pathObject.getParent().toString();
         String name = pathObject.getFileName().toString();
 
-        if ("/".equals(parent)) {
+        if ("/".equals(path)) {
             return true;
         }
 
