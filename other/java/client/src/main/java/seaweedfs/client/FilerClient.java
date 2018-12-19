@@ -150,6 +150,7 @@ public class FilerClient {
                 limit -= nSize;
                 lastFileName = t.get(nSize - 1).getName();
             }
+            results.addAll(t);
             if (t.size() < 1024) {
                 break;
             }
