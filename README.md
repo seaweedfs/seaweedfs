@@ -8,17 +8,17 @@
 
 <h2 align="center">Supporting SeaweedFS</h2>
 
-SeaweedFS is Apache-licensed open source project, independent project with its ongoing development made 
-possible entirely thanks to the support by these awesome [backers](https://github.com/chrislusf/seaweedfs/blob/master/backers.md). 
-If you'd like to grow SeaweedFS even stronger, please consider to 
-<a href="https://www.patreon.com/seaweedfs">Sponsor SeaweedFS via Patreon</a>.
+SeaweedFS is an independent Apache-licensed open source project with its ongoing development made 
+possible entirely thanks to the support of these awesome [backers](https://github.com/chrislusf/seaweedfs/blob/master/backers.md). 
+If you'd like to grow SeaweedFS even stronger, please consider joining our
+<a href="https://www.patreon.com/seaweedfs">sponsors on Patreon</a>.
 
 Platinum ($2500/month), Gold ($500/month): put your company logo on the SeaweedFS github page
 Generous Backer($50/month), Backer($10/month): put your name on the SeaweedFS backer page.
 
 Your support will be really appreciated by me and other supporters!
 
-<h3 align="center"><a href="https://www.patreon.com/seaweedfs">Sponsors SeaweedFS via Patreon</a></h3>
+<h3 align="center"><a href="https://www.patreon.com/seaweedfs">Sponsor SeaweedFS via Patreon</a></h3>
 
 <h4 align="center">Platinum</h4>
 
@@ -61,28 +61,29 @@ SeaweedFS is a simple and highly scalable distributed file system. There are two
 
 SeaweedFS started as an Object Store to handle small files efficiently. Instead of managing all file metadata in a central master, the central master only manages file volumes, and it lets these volume servers manage files and their metadata. This relieves concurrency pressure from the central master and spreads file metadata into volume servers, allowing faster file access (just one disk read operation).
 
-There is only a 40 bytes disk storage overhead for each file's metadata. It is so simple with O(1) disk read that you are welcome to challenge the performance with your actual use cases.
+There is only 40 bytes of disk storage overhead for each file's metadata. It is so simple with O(1) disk reads that you are welcome to challenge the performance with your actual use cases.
 
 SeaweedFS started by implementing [Facebook's Haystack design paper](http://www.usenix.org/event/osdi10/tech/full_papers/Beaver.pdf).
 
-SeaweedFS can work very well with just the object store. [[Filer]] is added later to support directories and POSIX attributes. Filer is a separate linearly-scalable stateless server with customizable metadata stores, e.g., MySql/Postgres/Redis/Cassandra/LevelDB.
+SeaweedFS can work very well with just the object store. [[Filer]] can then be added later to support directories and POSIX attributes. Filer is a separate linearly-scalable stateless server with customizable metadata stores, e.g., MySql/Postgres/Redis/Cassandra/LevelDB.
 
 ## Additional Features
-* Can choose no replication or different replication level, rack and data center aware
+* Can choose no replication or different replication levels, rack and data center aware
 * Automatic master servers failover - no single point of failure (SPOF)
 * Automatic Gzip compression depending on file mime type
-* Automatic compaction to reclaimed disk spaces after deletion or update
+* Automatic compaction to reclaim disk space after deletion or update
 * Servers in the same cluster can have different disk spaces, file systems, OS etc.
 * Adding/Removing servers does **not** cause any data re-balancing
 * Optionally fix the orientation for jpeg pictures
 * Support Etag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/boltdb/btree mode tuning for memory/performance balance.
+
 ## Filer Features
 * [filer server][Filer] provide "normal" directories and files via http.
 * [mount filer][Mount] to read and write files directly as a local directory via FUSE.
 * [Amazon S3 compatible API][AmazonS3API] to access files with S3 tooling.
 * [Hadoop Compatible File System][Hadoop] to access files from Hadoop/Spark/Flink/etc jobs.
-* [Async Backup To Cloud][BackupToCloud] can enjoy extreme fast local access and backup to Amazon S3, Google Cloud Storage, Azure, BackBlaze.
+* [Async Backup To Cloud][BackupToCloud] has extremely fast local access and backups to Amazon S3, Google Cloud Storage, Azure, BackBlaze.
 
 [Filer]: https://github.com/chrislusf/seaweedfs/wiki/Directories-and-Files
 [Mount]: https://github.com/chrislusf/seaweedfs/wiki/Mount
@@ -92,9 +93,9 @@ SeaweedFS can work very well with just the object store. [[Filer]] is added late
 
 ## Example Usage
 By default, the master node runs on port 9333, and the volume nodes run on port 8080.
-Here I will start one master node, and two volume nodes on port 8080 and 8081. Ideally, they should be started from different machines. I just use localhost as an example.
+Let's start one master node, and two volume nodes on port 8080 and 8081. Ideally, they should be started from different machines. We'll use localhost as an example.
 
-SeaweedFS uses HTTP REST operations to write, read, delete. The responses are in JSON or JSONP format.
+SeaweedFS uses HTTP REST operations to read, write, and delete. The responses are in JSON or JSONP format.
 
 ### Start Master Server
 
@@ -108,7 +109,6 @@ SeaweedFS uses HTTP REST operations to write, read, delete. The responses are in
 > weed volume -dir="/tmp/data1" -max=5  -mserver="localhost:9333" -port=8080 &
 > weed volume -dir="/tmp/data2" -max=10 -mserver="localhost:9333" -port=8081 &
 ```
-
 
 ### Write File ###
 
@@ -135,17 +135,17 @@ For deletion, send an HTTP DELETE request to the same `url + '/' + fid` URL:
 ```
 ### Save File Id ###
 
-Now you can save the `fid`, 3,01637037d6 in this case, to a database field.
+Now, you can save the `fid`, 3,01637037d6 in this case, to a database field.
 
 The number 3 at the start represents a volume id. After the comma, it's one file key, 01, and a file cookie, 637037d6.
 
 The volume id is an unsigned 32-bit integer. The file key is an unsigned 64-bit integer. The file cookie is an unsigned 32-bit integer, used to prevent URL guessing.
 
-The file key and file cookie are both coded in hex. You can store the <volume id, file key, file cookie> tuple in your own format, or simply store the `fid` as string.
+The file key and file cookie are both coded in hex. You can store the <volume id, file key, file cookie> tuple in your own format, or simply store the `fid` as a string.
 
-If stored as a string, in theory, you would need 8+1+16+8=33 bytes. A char(33) would be enough, if not more than enough, since most usage would not need 2^32 volumes.
+If stored as a string, in theory, you would need 8+1+16+8=33 bytes. A char(33) would be enough, if not more than enough, since most uses will not need 2^32 volumes.
 
-If space is really a concern, you can store the file id in your own format. You would need one 4-byte integer for volume id, 8-byte long number for file key, 4-byte integer for file cookie. So 16 bytes are more than enough.
+If space is really a concern, you can store the file id in your own format. You would need one 4-byte integer for volume id, 8-byte long number for file key, and a 4-byte integer for the file cookie. So 16 bytes are more than enough.
 
 ### Read File ###
 
@@ -213,7 +213,7 @@ You can also set the default replication strategy when starting the master serve
 
 ### Allocate File Key on specific data center ###
 
-Volume servers can start with a specific data center name:
+Volume servers can be started with a specific data center name:
 
 ```
  weed volume -dir=/tmp/1 -port=8080 -dataCenter=dc1
@@ -241,9 +241,9 @@ When requesting a file key, an optional "dataCenter" parameter can limit the ass
 
 Usually distributed file systems split each file into chunks, a central master keeps a mapping of filenames, chunk indices to chunk handles, and also which chunks each chunk server has.
 
-The main drawback is that the central master can't handle many small files efficiently, and since all read requests need to go through the chunk master, might not scale well for many concurrent users.
+The main drawback is that the central master can't handle many small files efficiently, and since all read requests need to go through the chunk master, so it might not scale well for many concurrent users.
 
-Instead of managing chunks, SeaweedFS manages data volumes in the master server. Each data volume is size 32GB, and can hold a lot of files. And each storage node can have many data volumes. So the master node only needs to store the metadata about the volumes, which is fairly small amount of data and is generally stable.
+Instead of managing chunks, SeaweedFS manages data volumes in the master server. Each data volume is 32GB in size, and can hold a lot of files. And each storage node can have many data volumes. So the master node only needs to store the metadata about the volumes, which is a fairly small amount of data and is generally stable.
 
 The actual file metadata is stored in each volume on volume servers. Since each volume server only manages metadata of files on its own disk, with only 16 bytes for each file, all file access can read file metadata just from memory and only needs one disk operation to actually read file data.
 
@@ -253,7 +253,7 @@ For comparison, consider that an xfs inode structure in Linux is 536 bytes.
 
 The architecture is fairly simple. The actual data is stored in volumes on storage nodes. One volume server can have multiple volumes, and can both support read and write access with basic authentication.
 
-All volumes are managed by a master server. The master server contains volume id to volume server mapping. This is fairly static information, and could be cached easily.
+All volumes are managed by a master server. The master server contains the volume id to volume server mapping. This is fairly static information, and can be easily cached.
 
 On each write request, the master server also generates a file key, which is a growing 64-bit unsigned integer. Since write requests are not generally as frequent as read requests, one master server should be able to handle the concurrency well.
 
@@ -261,28 +261,27 @@ On each write request, the master server also generates a file key, which is a g
 
 When a client sends a write request, the master server returns (volume id, file key, file cookie, volume node url) for the file. The client then contacts the volume node and POSTs the file content.
 
-When a client needs to read a file based on (volume id, file key, file cookie), it can ask the master server by the volume id for the (volume node url, volume node public url), or retrieve this from a cache. Then the client can GET the content, or just render the URL on web pages and let browsers fetch the content.
+When a client needs to read a file based on (volume id, file key, file cookie), it asks the master server by the volume id for the (volume node url, volume node public url), or retrieves this from a cache. Then the client can GET the content, or just render the URL on web pages and let browsers fetch the content.
 
 Please see the example for details on the write-read process.
 
 ### Storage Size ###
 
-In the current implementation, each volume can be 8x2^32 bytes (32GiB). This is because of we align content to 8 bytes. We can easily increase this to 64G, or 128G, or more, by changing 2 lines of code, at the cost of some wasted padding space due to alignment.
+In the current implementation, each volume can hold 32 gibibytes (32GiB or 8x2^32 bytes). This is because we align content to 8 bytes. We can easily increase this to 64GiB, or 128GiB, or more, by changing 2 lines of code, at the cost of some wasted padding space due to alignment.
 
-There can be 2^32 volumes. So total system size is 8 x 2^32 bytes x 2^32 = 8 x 4GiB x 4Gi = 128EiB (2^67 bytes, or 128 exbibytes).
+There can be 4 gibibytes (4GiB or 2^32 bytes) of volumes. So the total system size is 8 x 4GiB x 4GiB which is 128 exbibytes (128EiB or 2^67 bytes).
 
 Each individual file size is limited to the volume size.
 
 ### Saving memory ###
 
-All file meta information on volume server is readable from memory without disk access. Each file just takes an 16-byte map entry of <64bit key, 32bit offset, 32bit size>. Of course, each map entry has its own the space cost for the map. But usually the disk runs out before the memory does.
-
+All file meta information stored on an volume server is readable from memory without disk access. Each file takes just a 16-byte map entry of <64bit key, 32bit offset, 32bit size>. Of course, each map entry has its own space cost for the map. But usually the disk space runs out before the memory does.
 
 ## Compared to Other File Systems ##
 
 Most other distributed file systems seem more complicated than necessary.
 
-SeaweedFS is meant to be fast and simple, both during usage and during setup. If you do not understand how it works when you reach here, we failed! Please raise an issue with any questions or update this file with clarifications.
+SeaweedFS is meant to be fast and simple, in both setup and operation. If you do not understand how it works when you reach here, we've failed! Please raise an issue with any questions or update this file with clarifications.
 
 ### Compared to HDFS ###
 
@@ -321,7 +320,7 @@ Ceph can be setup similar to SeaweedFS as a key->blob store. It is much more com
 
 SeaweedFS has a centralized master group to look up free volumes, while Ceph uses hashing and metadata servers to locate its objects. Having a centralized master makes it easy to code and manage. 
 
-Same as SeaweedFS, Ceph is also based on a object store RADOS. Ceph is rather complicated with mixed reviews.
+Same as SeaweedFS, Ceph is also based on the object store RADOS. Ceph is rather complicated with mixed reviews.
 
 Ceph uses CRUSH hashing to automatically manage the data placement. SeaweedFS places data by assigned volumes.
 
@@ -341,31 +340,31 @@ SeaweedFS Filer uses off-the-shelf stores, such as MySql, Postgres, Redis, Cassa
 More tools and documentation, on how to maintain and scale the system. For example, how to move volumes, automatically balancing data, how to grow volumes, how to check system status, etc.
 Other key features include: Erasure Encoding, JWT security.
 
-This is a super exciting project! And I need helpers and [support](https://www.patreon.com/seaweedfs)!
+This is a super exciting project! And we need helpers and [support](https://www.patreon.com/seaweedfs)!
 
 
 ## Installation guide for users who are not familiar with golang
 
-step 1: install go on your machine and setup the environment by following the instructions from the following link:
+Step 1: install go on your machine and setup the environment by following the instructions ar:
 
 https://golang.org/doc/install
 
 make sure you set up your $GOPATH
 
 
-step 2: also you may need to install Mercurial by following the instructions below
+Step 2: also you may need to install Mercurial by following the instructions at:
 
 http://mercurial.selenic.com/downloads
 
-step 3: download, compile, and install the project by executing the following command
+Step 3: download, compile, and install the project by executing the following command
 
 ```bash
 go get github.com/chrislusf/seaweedfs/weed
 ```
 
-once this is done, you should see the executable "weed" under `$GOPATH/bin`
+Once this is done, you will find the executable "weed" in your `$GOPATH/bin` directory
 
-step 4: after you modify your code locally, you could start a local build by calling `go install` under 
+Step 4: after you modify your code locally, you could start a local build by calling `go install` under 
 
 ```
 $GOPATH/src/github.com/chrislusf/seaweedfs/weed
@@ -375,7 +374,7 @@ $GOPATH/src/github.com/chrislusf/seaweedfs/weed
 
 ### Hard Drive Performance ###
 
-When testing read performance on SeaweedFS, it basically becomes performance test for your hard drive's random read speed. Hard Drive usually get 100MB/s~200MB/s.
+When testing read performance on SeaweedFS, it basically becomes a performance test of your hard drive's random read speed. Hard drives usually get 100MB/s~200MB/s.
 
 ### Solid State Disk
 
