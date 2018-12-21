@@ -345,7 +345,7 @@ This is a super exciting project! And we need helpers and [support](https://www.
 
 ## Installation guide for users who are not familiar with golang
 
-Step 1: install go on your machine and setup the environment by following the instructions ar:
+Step 1: install go on your machine and setup the environment by following the instructions at:
 
 https://golang.org/doc/install
 
