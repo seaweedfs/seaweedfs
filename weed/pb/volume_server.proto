@@ -24,9 +24,9 @@ service VolumeServer {
 
     rpc VolumeSyncStatus (VolumeSyncStatusRequest) returns (VolumeSyncStatusResponse) {
     }
-    rpc VolumeSyncIndex (VolumeSyncIndexRequest) returns (VolumeSyncIndexResponse) {
+    rpc VolumeSyncIndex (VolumeSyncIndexRequest) returns (stream VolumeSyncIndexResponse) {
     }
-    rpc VolumeSyncData (VolumeSyncDataRequest) returns (VolumeSyncDataResponse) {
+    rpc VolumeSyncData (VolumeSyncDataRequest) returns (stream VolumeSyncDataResponse) {
     }
 
     rpc VolumeMount (VolumeMountRequest) returns (VolumeMountResponse) {
@@ -104,6 +104,7 @@ message VolumeSyncStatusRequest {
 }
 message VolumeSyncStatusResponse {
     uint32 volumd_id = 1;
+    string collection = 2;
     string replication = 4;
     string ttl = 5;
     uint64 tail_offset = 6;
