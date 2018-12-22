@@ -29,12 +29,12 @@ type Needle struct {
 
 	DataSize     uint32 `comment:"Data size"` //version2
 	Data         []byte `comment:"The actual file data"`
-	Flags        byte   `comment:"boolean flags"` //version2
-	NameSize     uint8  //version2
+	Flags        byte   `comment:"boolean flags"`          //version2
+	NameSize     uint8                                     //version2
 	Name         []byte `comment:"maximum 256 characters"` //version2
-	MimeSize     uint8  //version2
+	MimeSize     uint8                                     //version2
 	Mime         []byte `comment:"maximum 256 characters"` //version2
-	PairsSize    uint16 //version2
+	PairsSize    uint16                                    //version2
 	Pairs        []byte `comment:"additional name value pairs, json format, maximum 64kB"`
 	LastModified uint64 //only store LastModifiedBytesLength bytes, which is 5 bytes to disk
 	Ttl          *TTL
@@ -50,7 +50,7 @@ func (n *Needle) String() (str string) {
 }
 
 func ParseUpload(r *http.Request) (
-	fileName string, data []byte, mimeType string, pairMap map[string]string, isGzipped bool,
+	fileName string, data []byte, mimeType string, pairMap map[string]string, isGzipped bool, originalDataSize int,
 	modifiedTime uint64, ttl *TTL, isChunkedFile bool, e error) {
 	pairMap = make(map[string]string)
 	for k, v := range r.Header {
@@ -60,7 +60,7 @@ func ParseUpload(r *http.Request) (
 	}
 
 	if r.Method == "POST" {
-		fileName, data, mimeType, isGzipped, isChunkedFile, e = parseMultipart(r)
+		fileName, data, mimeType, isGzipped, originalDataSize, isChunkedFile, e = parseMultipart(r)
 	} else {
 		isGzipped = false
 		mimeType = r.Header.Get("Content-Type")
@@ -76,11 +76,11 @@ func ParseUpload(r *http.Request) (
 
 	return
 }
-func NewNeedle(r *http.Request, fixJpgOrientation bool) (n *Needle, e error) {
+func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool) (n *Needle, originalSize int, e error) {
 	var pairMap map[string]string
 	fname, mimeType, isGzipped, isChunkedFile := "", "", false, false
 	n = new(Needle)
-	fname, n.Data, mimeType, pairMap, isGzipped, n.LastModified, n.Ttl, isChunkedFile, e = ParseUpload(r)
+	fname, n.Data, mimeType, pairMap, isGzipped, originalSize, n.LastModified, n.Ttl, isChunkedFile, e = ParseUpload(r)
 	if e != nil {
 		return
 	}

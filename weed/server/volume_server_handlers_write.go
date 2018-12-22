@@ -27,7 +27,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, http.StatusBadRequest, ve)
 		return
 	}
-	needle, ne := storage.NewNeedle(r, vs.FixJpgOrientation)
+	needle, originalSize, ne := storage.CreateNeedleFromRequest(r, vs.FixJpgOrientation)
 	if ne != nil {
 		writeJsonError(w, r, http.StatusBadRequest, ne)
 		return
@@ -44,7 +44,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	if needle.HasName() {
 		ret.Name = string(needle.Name)
 	}
-	ret.Size = needle.DataSize
+	ret.Size = uint32(originalSize)
 	setEtag(w, needle.Etag())
 	writeJsonQuiet(w, r, httpStatus, ret)
 }

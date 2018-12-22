@@ -12,7 +12,7 @@ import (
 )
 
 func parseMultipart(r *http.Request) (
-	fileName string, data []byte, mimeType string, isGzipped, isChunkedFile bool, e error) {
+	fileName string, data []byte, mimeType string, isGzipped bool, originalDataSize int, isChunkedFile bool, e error) {
 	form, fe := r.MultipartReader()
 	if fe != nil {
 		glog.V(0).Infoln("MultipartReader [ERROR]", fe)
@@ -63,6 +63,8 @@ func parseMultipart(r *http.Request) (
 			break
 		}
 	}
+
+	originalDataSize = len(data)
 
 	isChunkedFile, _ = strconv.ParseBool(r.FormValue("cm"))
 
