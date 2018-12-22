@@ -105,24 +105,16 @@ func (cs *CompactSection) Get(key NeedleId) (*NeedleValue, bool) {
 	return nil, false
 }
 func (cs *CompactSection) binarySearchValues(key SectionalNeedleId) int {
-	l, h := 0, cs.counter-1
-	if h >= 0 && cs.values[h].Key < key {
+	x := sort.Search(cs.counter, func(i int) bool {
+		return cs.values[i].Key >= key
+	})
+	if x == cs.counter {
+		return -1
+	}
+	if cs.values[x].Key > key {
 		return -2
 	}
-	//println("looking for key", key)
-	for l <= h {
-		m := (l + h) / 2
-		//println("mid", m, "key", cs.values[m].Key, cs.values[m].Offset, cs.values[m].Size)
-		if cs.values[m].Key < key {
-			l = m + 1
-		} else if key < cs.values[m].Key {
-			h = m - 1
-		} else {
-			//println("found", m)
-			return m
-		}
-	}
-	return -1
+	return x
 }
 
 //This map assumes mostly inserting increasing keys
@@ -138,21 +130,24 @@ func NewCompactMap() *CompactMap {
 func (cm *CompactMap) Set(key NeedleId, offset Offset, size uint32) (oldOffset Offset, oldSize uint32) {
 	x := cm.binarySearchCompactSection(key)
 	if x < 0 || (key-cm.list[x].start) > SectionalNeedleIdLimit {
-		//println(x, "creating", len(cm.list), "section, starting", key)
+		// println(x, "adding to existing", len(cm.list), "sections, starting", key)
 		cs := NewCompactSection(key)
 		cm.list = append(cm.list, cs)
 		x = len(cm.list) - 1
 		//keep compact section sorted by start
-		for x > 0 {
-			if cm.list[x-1].start > key {
+		for x >= 0 {
+			if x > 0 && cm.list[x-1].start > key {
 				cm.list[x] = cm.list[x-1]
+				// println("shift", x, "start", cs.start, "to", x-1)
 				x = x - 1
 			} else {
 				cm.list[x] = cs
+				// println("cs", x, "start", cs.start)
 				break
 			}
 		}
 	}
+	// println(key, "set to section[", x, "].start", cm.list[x].start)
 	return cm.list[x].Set(key, offset, size)
 }
 func (cm *CompactMap) Delete(key NeedleId) uint32 {
@@ -170,29 +165,19 @@ func (cm *CompactMap) Get(key NeedleId) (*NeedleValue, bool) {
 	return cm.list[x].Get(key)
 }
 func (cm *CompactMap) binarySearchCompactSection(key NeedleId) int {
-	l, h := 0, len(cm.list)-1
-	if h < 0 {
-		return -5
+	if len(cm.list) == 0 {
+		return -1
 	}
-	if cm.list[h].start <= key {
-		if cm.list[h].counter < batch || key <= cm.list[h].end {
-			return h
-		}
-		return -4
+	x := sort.Search(len(cm.list), func(i int) bool {
+		return cm.list[i].start >= key
+	})
+	if len(cm.list) == x {
+		return -1
 	}
-	for l <= h {
-		m := (l + h) / 2
-		if key < cm.list[m].start {
-			h = m - 1
-		} else { // cm.list[m].start <= key
-			if cm.list[m+1].start <= key {
-				l = m + 1
-			} else {
-				return m
-			}
-		}
+	if cm.list[x].start == key {
+		return x
 	}
-	return -3
+	return x - 1
 }
 
 // Visit visits all entries or stop if any error when visiting
@@ -205,7 +190,10 @@ func (cm *CompactMap) Visit(visit func(NeedleValue) error) error {
 				return err
 			}
 		}
-		for _, v := range cs.values {
+		for i, v := range cs.values {
+			if i >= cs.counter {
+				break
+			}
 			if _, found := cs.overflow.findOverflowEntry(v.Key); !found {
 				if err := visit(v.toNeedleValue(cs)); err != nil {
 					cs.RUnlock()

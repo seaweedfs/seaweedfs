@@ -5,6 +5,25 @@ import (
 	"testing"
 )
 
+func TestOverflow2(t *testing.T) {
+	m := NewCompactMap()
+	m.Set(NeedleId(150088), 8, 3000073)
+	m.Set(NeedleId(150073), 8, 3000073)
+	m.Set(NeedleId(150089), 8, 3000073)
+	m.Set(NeedleId(150076), 8, 3000073)
+	m.Set(NeedleId(150124), 8, 3000073)
+	m.Set(NeedleId(150137), 8, 3000073)
+	m.Set(NeedleId(150147), 8, 3000073)
+	m.Set(NeedleId(150145), 8, 3000073)
+	m.Set(NeedleId(150158), 8, 3000073)
+	m.Set(NeedleId(150162), 8, 3000073)
+
+	m.Visit(func(value NeedleValue) error {
+		println("needle key:", value.Key)
+		return nil
+	})
+}
+
 func TestIssue52(t *testing.T) {
 	m := NewCompactMap()
 	m.Set(NeedleId(10002), 10002, 10002)
