@@ -4,10 +4,11 @@ import (
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"context"
+	"math"
+	"path/filepath"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"path/filepath"
-	"math"
 )
 
 func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirectory fs.Node) error {
