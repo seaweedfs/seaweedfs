@@ -165,19 +165,29 @@ func (cm *CompactMap) Get(key NeedleId) (*NeedleValue, bool) {
 	return cm.list[x].Get(key)
 }
 func (cm *CompactMap) binarySearchCompactSection(key NeedleId) int {
-	if len(cm.list) == 0 {
-		return -1
+	l, h := 0, len(cm.list)-1
+	if h < 0 {
+		return -5
 	}
-	x := sort.Search(len(cm.list), func(i int) bool {
-		return cm.list[i].start >= key
-	})
-	if len(cm.list) == x {
-		return -1
+	if cm.list[h].start <= key {
+		if cm.list[h].counter < batch || key <= cm.list[h].end {
+			return h
+		}
+		return -4
 	}
-	if cm.list[x].start == key {
-		return x
+	for l <= h {
+		m := (l + h) / 2
+		if key < cm.list[m].start {
+			h = m - 1
+		} else { // cm.list[m].start <= key
+			if cm.list[m+1].start <= key {
+				l = m + 1
+			} else {
+				return m
+			}
+		}
 	}
-	return x - 1
+	return -3
 }
 
 // Visit visits all entries or stop if any error when visiting
