@@ -18,7 +18,6 @@ type FilePart struct {
 	Reader      io.Reader
 	FileName    string
 	FileSize    int64
-	IsGzipped   bool
 	MimeType    string
 	ModTime     int64 //in seconds
 	Replication string
@@ -103,7 +102,6 @@ func newFilePart(fullPathFilename string) (ret FilePart, err error) {
 	ret.ModTime = fi.ModTime().UTC().Unix()
 	ret.FileSize = fi.Size()
 	ext := strings.ToLower(path.Ext(fullPathFilename))
-	ret.IsGzipped = ext == ".gz"
 	ret.FileName = fi.Name()
 	if ext != "" {
 		ret.MimeType = mime.TypeByExtension(ext)
@@ -193,7 +191,7 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 			cm.DeleteChunks(master)
 		}
 	} else {
-		ret, e := Upload(fileUrl, baseName, fi.Reader, fi.IsGzipped, fi.MimeType, nil, jwt)
+		ret, e := Upload(fileUrl, baseName, fi.Reader, false, fi.MimeType, nil, jwt)
 		if e != nil {
 			return 0, e
 		}
@@ -203,7 +201,7 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 }
 
 func upload_one_chunk(filename string, reader io.Reader, master,
-	fileUrl string, jwt security.EncodedJwt,
+fileUrl string, jwt security.EncodedJwt,
 ) (size uint32, e error) {
 	glog.V(4).Info("Uploading part ", filename, " to ", fileUrl, "...")
 	uploadResult, uploadError := Upload(fileUrl, filename, reader, false,

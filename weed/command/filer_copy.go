@@ -15,7 +15,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
 	"net/http"
-	"path"
 	"strconv"
 	"time"
 )
@@ -165,7 +164,6 @@ func uploadFileAsOne(filerAddress, filerGrpcAddress string, urlFolder string, f 
 	// upload the file content
 	fileName := filepath.Base(f.Name())
 	mimeType := detectMimeType(f)
-	isGzipped := isGzipped(fileName)
 
 	var chunks []*filer_pb.FileChunk
 
@@ -184,7 +182,7 @@ func uploadFileAsOne(filerAddress, filerGrpcAddress string, urlFolder string, f 
 
 		targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
 
-		uploadResult, err := operation.Upload(targetUrl, fileName, f, isGzipped, mimeType, nil, "")
+		uploadResult, err := operation.Upload(targetUrl, fileName, f, false, mimeType, nil, "")
 		if err != nil {
 			fmt.Printf("upload data %v to %s: %v\n", fileName, targetUrl, err)
 			return false
@@ -316,10 +314,6 @@ func uploadFileInChunks(filerAddress, filerGrpcAddress string, urlFolder string,
 	fmt.Printf("copied %s => http://%s%s%s\n", fileName, filerAddress, urlFolder, fileName)
 
 	return true
-}
-
-func isGzipped(filename string) bool {
-	return strings.ToLower(path.Ext(filename)) == ".gz"
 }
 
 func detectMimeType(f *os.File) string {

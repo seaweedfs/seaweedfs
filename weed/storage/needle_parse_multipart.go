@@ -83,21 +83,15 @@ func parseMultipart(r *http.Request) (
 		}
 
 		if part.Header.Get("Content-Encoding") == "gzip" {
+			if unzipped, e := operation.UnGzipData(data); e == nil {
+				originalDataSize = len(unzipped)
+			}
 			isGzipped = true
 		} else if operation.IsGzippable(ext, mtype) {
 			if data, e = operation.GzipData(data); e != nil {
 				return
 			}
 			isGzipped = true
-		}
-		if ext == ".gz" {
-			if strings.HasSuffix(fileName, ".css.gz") ||
-				strings.HasSuffix(fileName, ".html.gz") ||
-				strings.HasSuffix(fileName, ".txt.gz") ||
-				strings.HasSuffix(fileName, ".js.gz") {
-				fileName = fileName[:len(fileName)-3]
-				isGzipped = true
-			}
 		}
 	}
 
