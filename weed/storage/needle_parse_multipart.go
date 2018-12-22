@@ -87,7 +87,7 @@ func parseMultipart(r *http.Request) (
 				originalDataSize = len(unzipped)
 			}
 			isGzipped = true
-		} else if operation.IsGzippable(ext, mtype) {
+		} else if operation.IsGzippable(ext, mtype, data) {
 			if data, e = operation.GzipData(data); e != nil {
 				return
 			}

@@ -8,21 +8,41 @@ import (
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"golang.org/x/tools/godoc/util"
 )
 
 /*
 * Default more not to gzip since gzip can be done on client side.
  */
-func IsGzippable(ext, mtype string) bool {
+func IsGzippable(ext, mtype string, data []byte) bool {
+
+	// text
 	if strings.HasPrefix(mtype, "text/") {
 		return true
 	}
+
+	// images
+	switch ext {
+	case ".svg", ".bmp":
+		return true
+	}
+	if strings.HasPrefix(mtype, "image/") {
+		return false
+	}
+
+	// by file name extention
 	switch ext {
 	case ".zip", ".rar", ".gz", ".bz2", ".xz":
 		return false
 	case ".pdf", ".txt", ".html", ".htm", ".css", ".js", ".json":
 		return true
+	case ".php", ".java", ".go", ".rb", ".c", ".cpp", ".h", ".hpp":
+		return true
+	case ".png", ".jpg", ".jpeg", "":
+		return true
 	}
+
+	// by mime type
 	if strings.HasPrefix(mtype, "application/") {
 		if strings.HasSuffix(mtype, "xml") {
 			return true
@@ -31,7 +51,10 @@ func IsGzippable(ext, mtype string) bool {
 			return true
 		}
 	}
-	return false
+
+	isMostlyText := util.IsText(data)
+
+	return isMostlyText
 }
 
 func GzipData(input []byte) ([]byte, error) {
