@@ -80,7 +80,8 @@ func runCopy(cmd *Command, args []string) bool {
 	}
 	urlPath := filerUrl.Path
 	if !strings.HasSuffix(urlPath, "/") {
-		urlPath = urlPath + "/"
+		fmt.Printf("The last argument should be a folder and end with \"/\": %v\n", err)
+		return false
 	}
 
 	if filerUrl.Port() == "" {
