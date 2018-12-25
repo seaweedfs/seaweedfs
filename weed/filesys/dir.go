@@ -64,6 +64,9 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 		glog.V(1).Infof("read dir %s attr: %v", dir.Path, request)
 		resp, err := client.LookupDirectoryEntry(context, request)
 		if err != nil {
+			if err == filer2.ErrNotFound {
+				return nil
+			}
 			glog.V(0).Infof("read dir %s attr %v: %v", dir.Path, request, err)
 			return err
 		}
