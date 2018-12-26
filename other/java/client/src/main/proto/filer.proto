@@ -97,6 +97,7 @@ message FuseAttributes {
     int32 ttl_sec = 10;
     string user_name = 11; // for hdfs
     repeated string group_name = 12; // for hdfs
+    string symlink_target = 13;
 }
 
 message CreateEntryRequest {
