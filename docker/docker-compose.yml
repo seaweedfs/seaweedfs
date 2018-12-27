@@ -6,35 +6,25 @@ services:
     ports:
     - 9333:9333
     command: "master"
-    networks:
-      default:
-        aliases:
-        - seaweed_master
   volume:
     image: chrislusf/seaweedfs # use a remote image
     ports:
     - 8080:8080
     - 18080:18080
-    command: 'volume -max=5 -mserver="master:9333" -port=8080'
+    command: 'volume -max=15 -mserver="master:9333" -port=8080'
     depends_on:
     - master
-    networks:
-      default:
-        aliases:
-        - seaweed_volume
   filer:
     image: chrislusf/seaweedfs # use a remote image
     ports:
     - 8888:8888
     - 18888:18888
     command: 'filer -master="master:9333"'
+    tty: true
+    stdin_open: true
     depends_on:
     - master
     - volume
-    networks:
-      default:
-        aliases:
-        - seaweed_filer
   s3:
     image: chrislusf/seaweedfs # use a remote image
     ports:
@@ -44,7 +34,3 @@ services:
     - master
     - volume
     - filer
-    networks:
-      default:
-        aliases:
-        - seaweed_s3

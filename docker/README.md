@@ -5,7 +5,7 @@
 
 ```bash
 
-wget https://github.com/chrislusf/seaweedfs/blob/master/docker/docker-compose.yml
+wget https://raw.githubusercontent.com/chrislusf/seaweedfs/master/docker/docker-compose.yml
 
 docker-compose -f docker-compose.yml up
 
