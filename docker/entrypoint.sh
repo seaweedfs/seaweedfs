@@ -29,7 +29,8 @@ case "$1" in
   	;;
 
   'filer')
-  	ARGS="-ip `hostname -i`"
+  	exec mkdir /data/filerdb
+  	ARGS="-ip `hostname -i` "
   	if [ -n "$MASTER_PORT_9333_TCP_ADDR" ] ; then
 		ARGS="$ARGS -master=$MASTER_PORT_9333_TCP_ADDR:$MASTER_PORT_9333_TCP_PORT"
 	fi
