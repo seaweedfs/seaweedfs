@@ -213,7 +213,11 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 	for id := range idChan {
 		start := time.Now()
 		fileSize := int64(*b.fileSize + random.Intn(64))
-		fp := &operation.FilePart{Reader: &FakeReader{id: uint64(id), size: fileSize}, FileSize: fileSize}
+		fp := &operation.FilePart{
+			Reader:   &FakeReader{id: uint64(id), size: fileSize},
+			FileSize: fileSize,
+			MimeType: "image/bench", // prevent gzip benchmark content
+		}
 		ar := &operation.VolumeAssignRequest{
 			Count:      1,
 			Collection: *b.collection,
