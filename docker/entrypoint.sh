@@ -33,7 +33,7 @@ case "$1" in
   	if [ -n "$MASTER_PORT_9333_TCP_ADDR" ] ; then
 		ARGS="$ARGS -master=$MASTER_PORT_9333_TCP_ADDR:$MASTER_PORT_9333_TCP_PORT"
 	fi
-  	exec /bin/mkdir -p /data/filerdb; /usr/bin/weed $@ $ARGS
+  	exec /usr/bin/weed $@ $ARGS
 	;;
 
   's3')
