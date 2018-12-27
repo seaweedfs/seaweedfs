@@ -25,6 +25,5 @@ VOLUME /data
 COPY filer.toml /etc/seaweedfs/filer.toml
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
-RUN mkdir -p /data/filerdb
 
 ENTRYPOINT ["/entrypoint.sh"]
