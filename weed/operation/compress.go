@@ -38,8 +38,8 @@ func IsGzippable(ext, mtype string, data []byte) bool {
 		return true
 	case ".php", ".java", ".go", ".rb", ".c", ".cpp", ".h", ".hpp":
 		return true
-	case ".png", ".jpg", ".jpeg", "":
-		return true
+	case ".png", ".jpg", ".jpeg":
+		return false
 	}
 
 	// by mime type
