@@ -21,19 +21,23 @@ type ContinuousDirtyPages struct {
 	lock    sync.Mutex
 }
 
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		return new(bytes.Buffer)
+	},
+}
+
 func newDirtyPages(file *File) *ContinuousDirtyPages {
 	return &ContinuousDirtyPages{
-		Data: make([]byte, file.wfs.option.ChunkSizeLimit),
+		Data: nil,
 		f:    file,
 	}
 }
 
-func (pages *ContinuousDirtyPages) InitializeToFile(file *File) *ContinuousDirtyPages {
-	if len(pages.Data) != int(file.wfs.option.ChunkSizeLimit) {
-		pages.Data = make([]byte, file.wfs.option.ChunkSizeLimit)
+func (pages *ContinuousDirtyPages) releaseResource() {
+	if pages.Data != nil {
+		pages.f.wfs.bufPool.Put(pages.Data)
 	}
-	pages.f = file
-	return pages
 }
 
 func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, data []byte) (chunks []*filer_pb.FileChunk, err error) {
@@ -42,6 +46,10 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 	defer pages.lock.Unlock()
 
 	var chunk *filer_pb.FileChunk
+
+	if pages.Data == nil {
+		pages.Data = pages.f.wfs.bufPool.Get().([]byte)
+	}
 
 	if len(data) > len(pages.Data) {
 		// this is more than what buffer can hold.

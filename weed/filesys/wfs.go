@@ -39,6 +39,7 @@ type WFS struct {
 	handles           []*FileHandle
 	pathToHandleIndex map[string]int
 	pathToHandleLock  sync.Mutex
+	bufPool           sync.Pool
 
 	stats statsCache
 }
@@ -52,6 +53,11 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		option:                    option,
 		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(int64(option.DirListingLimit) + 200).ItemsToPrune(100)),
 		pathToHandleIndex:         make(map[string]int),
+		bufPool: sync.Pool{
+			New: func() interface{} {
+				return make([]byte, option.ChunkSizeLimit)
+			},
+		},
 	}
 }
 
@@ -76,15 +82,8 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 
 	index, found := wfs.pathToHandleIndex[fullpath]
 	if found && wfs.handles[index] != nil {
-		glog.V(4).Infoln(fullpath, "found fileHandle id", index)
+		glog.V(2).Infoln(fullpath, "found fileHandle id", index)
 		return wfs.handles[index]
-	}
-
-	if found && wfs.handles[index] != nil {
-		glog.V(4).Infoln(fullpath, "reuse previous fileHandle id", index)
-		wfs.handles[index].InitializeToFile(file, uid, gid)
-		fileHandle.handle = uint64(index)
-		return
 	}
 
 	fileHandle = newFileHandle(file, uid, gid)
@@ -100,7 +99,7 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 
 	wfs.handles = append(wfs.handles, fileHandle)
 	fileHandle.handle = uint64(len(wfs.handles) - 1)
-	glog.V(4).Infoln(fullpath, "new fileHandle id", fileHandle.handle)
+	glog.V(2).Infoln(fullpath, "new fileHandle id", fileHandle.handle)
 	wfs.pathToHandleIndex[fullpath] = int(fileHandle.handle)
 
 	return

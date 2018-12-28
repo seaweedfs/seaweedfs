@@ -38,16 +38,6 @@ func newFileHandle(file *File, uid, gid uint32) *FileHandle {
 	}
 }
 
-func (fh *FileHandle) InitializeToFile(file *File, uid, gid uint32) *FileHandle {
-	newHandle := &FileHandle{
-		f:          file,
-		dirtyPages: fh.dirtyPages.InitializeToFile(file),
-		Uid:        uid,
-		Gid:        gid,
-	}
-	return newHandle
-}
-
 var _ = fs.Handle(&FileHandle{})
 
 // var _ = fs.HandleReadAller(&FileHandle{})
@@ -174,6 +164,8 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 
 	glog.V(4).Infof("%v release fh %d", fh.f.fullpath(), fh.handle)
+
+	fh.dirtyPages.releaseResource()
 
 	fh.f.wfs.ReleaseHandle(fh.f.fullpath(), fuse.HandleID(fh.handle))
 
