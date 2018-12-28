@@ -26,7 +26,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 		glog.V(4).Infof("find existing directory entry: %v", request)
 		resp, err := client.LookupDirectoryEntry(ctx, request)
 		if err != nil {
-			glog.V(0).Infof("renaming find %s/%s: %v", dir.Path, req.OldName, err)
+			glog.V(3).Infof("renaming find %s/%s: %v", dir.Path, req.OldName, err)
 			return fuse.ENOENT
 		}
 

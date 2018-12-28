@@ -145,13 +145,13 @@ func (file *File) maybeLoadAttributes(ctx context.Context) error {
 
 				resp, err := client.LookupDirectoryEntry(ctx, request)
 				if err != nil {
-					glog.V(0).Infof("file attr read file %v: %v", request, err)
-					return err
+					glog.V(3).Infof("file attr read file %v: %v", request, err)
+					return fuse.ENOENT
 				}
 
 				file.entry = resp.Entry
 
-				glog.V(1).Infof("file attr %v %+v: %d", file.fullpath(), file.entry.Attributes, filer2.TotalSize(file.entry.Chunks))
+				glog.V(3).Infof("file attr %v %+v: %d", file.fullpath(), file.entry.Attributes, filer2.TotalSize(file.entry.Chunks))
 
 				file.wfs.listDirectoryEntriesCache.Set(file.fullpath(), file.entry, file.wfs.option.EntryCacheTtl)
 
