@@ -1,12 +1,10 @@
-package seaweed.hdfs;
+package seaweedfs.client;
 
+import org.junit.Assert;
 import org.junit.Test;
-import seaweedfs.client.FilerProto;
 
 import java.util.ArrayList;
 import java.util.List;
-
-import static org.junit.Assert.assertEquals;
 
 public class SeaweedReadTest {
 
@@ -31,33 +29,33 @@ public class SeaweedReadTest {
             System.out.println("visible:" + visibleInterval);
         }
 
-        assertEquals(visibleIntervals.size(), 2);
+        Assert.assertEquals(visibleIntervals.size(), 2);
 
         SeaweedRead.VisibleInterval visibleInterval = visibleIntervals.get(0);
-        assertEquals(visibleInterval.start, 0);
-        assertEquals(visibleInterval.stop, 100);
-        assertEquals(visibleInterval.modifiedTime, 1000);
-        assertEquals(visibleInterval.fileId, "aaa");
+        Assert.assertEquals(visibleInterval.start, 0);
+        Assert.assertEquals(visibleInterval.stop, 100);
+        Assert.assertEquals(visibleInterval.modifiedTime, 1000);
+        Assert.assertEquals(visibleInterval.fileId, "aaa");
 
         visibleInterval = visibleIntervals.get(1);
-        assertEquals(visibleInterval.start, 100);
-        assertEquals(visibleInterval.stop, 233);
-        assertEquals(visibleInterval.modifiedTime, 2000);
-        assertEquals(visibleInterval.fileId, "bbb");
+        Assert.assertEquals(visibleInterval.start, 100);
+        Assert.assertEquals(visibleInterval.stop, 233);
+        Assert.assertEquals(visibleInterval.modifiedTime, 2000);
+        Assert.assertEquals(visibleInterval.fileId, "bbb");
 
         List<SeaweedRead.ChunkView> chunkViews = SeaweedRead.viewFromVisibles(visibleIntervals, 0, 233);
 
         SeaweedRead.ChunkView chunkView = chunkViews.get(0);
-        assertEquals(chunkView.offset, 0);
-        assertEquals(chunkView.size, 100);
-        assertEquals(chunkView.logicOffset, 0);
-        assertEquals(chunkView.fileId, "aaa");
+        Assert.assertEquals(chunkView.offset, 0);
+        Assert.assertEquals(chunkView.size, 100);
+        Assert.assertEquals(chunkView.logicOffset, 0);
+        Assert.assertEquals(chunkView.fileId, "aaa");
 
         chunkView = chunkViews.get(1);
-        assertEquals(chunkView.offset, 0);
-        assertEquals(chunkView.size, 133);
-        assertEquals(chunkView.logicOffset, 100);
-        assertEquals(chunkView.fileId, "bbb");
+        Assert.assertEquals(chunkView.offset, 0);
+        Assert.assertEquals(chunkView.size, 133);
+        Assert.assertEquals(chunkView.logicOffset, 100);
+        Assert.assertEquals(chunkView.fileId, "bbb");
 
 
     }

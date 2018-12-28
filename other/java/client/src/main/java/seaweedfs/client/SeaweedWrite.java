@@ -1,4 +1,4 @@
-package seaweed.hdfs;
+package seaweedfs.client;
 
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpPost;
@@ -6,8 +6,6 @@ import org.apache.http.entity.mime.HttpMultipartMode;
 import org.apache.http.entity.mime.MultipartEntityBuilder;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClientBuilder;
-import seaweedfs.client.FilerGrpcClient;
-import seaweedfs.client.FilerProto;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;

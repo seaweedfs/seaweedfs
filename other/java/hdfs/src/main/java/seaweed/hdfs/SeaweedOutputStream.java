@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import seaweedfs.client.FilerGrpcClient;
 import seaweedfs.client.FilerProto;
+import seaweedfs.client.SeaweedWrite;
 
 import java.io.IOException;
 import java.io.InterruptedIOException;

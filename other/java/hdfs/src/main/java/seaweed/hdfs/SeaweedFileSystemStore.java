@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import seaweedfs.client.FilerClient;
 import seaweedfs.client.FilerGrpcClient;
 import seaweedfs.client.FilerProto;
+import seaweedfs.client.SeaweedRead;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
