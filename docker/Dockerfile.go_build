@@ -20,5 +20,6 @@ RUN mkdir -p /etc/seaweedfs
 RUN cp /go/src/github.com/chrislusf/seaweedfs/docker/filer.toml /etc/seaweedfs/filer.toml
 RUN cp /go/src/github.com/chrislusf/seaweedfs/docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+RUN cp /go/bin/weed /usr/bin/
 
 ENTRYPOINT ["/entrypoint.sh"]
