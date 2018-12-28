@@ -24,6 +24,8 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
+import static seaweed.hdfs.SeaweedFileSystemStore.getParentDirectory;
+
 public class SeaweedOutputStream extends OutputStream implements Syncable, StreamCapabilities {
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedOutputStream.class);
@@ -79,7 +81,7 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
         LOG.debug("SeaweedWrite.writeMeta path: {} entry:{}", path, entry);
 
         try {
-            SeaweedWrite.writeMeta(filerGrpcClient, path, entry);
+            SeaweedWrite.writeMeta(filerGrpcClient, getParentDirectory(path), entry);
         } catch (Exception ex) {
             throw new IOException(ex);
         }

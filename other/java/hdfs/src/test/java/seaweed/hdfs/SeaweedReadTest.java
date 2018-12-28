@@ -1,7 +1,6 @@
-package seaweedfs.hdfs;
+package seaweed.hdfs;
 
 import org.junit.Test;
-import seaweed.hdfs.SeaweedRead;
 import seaweedfs.client.FilerProto;
 
 import java.util.ArrayList;

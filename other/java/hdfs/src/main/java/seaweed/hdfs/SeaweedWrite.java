@@ -1,6 +1,5 @@
 package seaweed.hdfs;
 
-import org.apache.hadoop.fs.Path;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.mime.HttpMultipartMode;
@@ -13,8 +12,6 @@ import seaweedfs.client.FilerProto;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-
-import static seaweed.hdfs.SeaweedFileSystemStore.getParentDirectory;
 
 public class SeaweedWrite {
 
@@ -49,10 +46,10 @@ public class SeaweedWrite {
     }
 
     public static void writeMeta(final FilerGrpcClient filerGrpcClient,
-                                 final Path path, final FilerProto.Entry.Builder entry) {
+                                 final String parentDirectory, final FilerProto.Entry.Builder entry) {
         filerGrpcClient.getBlockingStub().createEntry(
             FilerProto.CreateEntryRequest.newBuilder()
-                .setDirectory(getParentDirectory(path))
+                .setDirectory(parentDirectory)
                 .setEntry(entry)
                 .build()
         );

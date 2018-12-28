@@ -1,14 +1,11 @@
 package seaweed.hdfs;
 
-import org.apache.hadoop.hdfs.util.ByteBufferOutputStream;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpHeaders;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.HttpClientBuilder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import seaweedfs.client.FilerGrpcClient;
 import seaweedfs.client.FilerProto;
 
@@ -23,7 +20,7 @@ import java.util.Map;
 
 public class SeaweedRead {
 
-    private static final Logger LOG = LoggerFactory.getLogger(SeaweedRead.class);
+    // private static final Logger LOG = LoggerFactory.getLogger(SeaweedRead.class);
 
     // returns bytesRead
     public static long read(FilerGrpcClient filerGrpcClient, List<VisibleInterval> visibleIntervals,
@@ -81,7 +78,7 @@ public class SeaweedRead {
             int len = (int) (chunkView.logicOffset - position + chunkView.size);
             OutputStream outputStream = new ByteBufferOutputStream(ByteBuffer.wrap(buffer, startOffset, len));
             entity.writeTo(outputStream);
-            LOG.debug("* read chunkView:{} startOffset:{} length:{}", chunkView, startOffset, len);
+            // LOG.debug("* read chunkView:{} startOffset:{} length:{}", chunkView, startOffset, len);
 
             return len;
 
