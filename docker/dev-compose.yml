@@ -1,0 +1,42 @@
+version: '2'
+
+services:
+  master:
+    build:
+      context: .
+      dockerfile: Dockerfile.go_build
+    ports:
+    - 9333:9333
+    command: "master"
+  volume:
+    build:
+      context: .
+      dockerfile: Dockerfile.go_build
+    ports:
+    - 8080:8080
+    - 18080:18080
+    command: 'volume -max=5 -mserver="master:9333" -port=8080'
+    depends_on:
+    - master
+  filer:
+    build:
+      context: .
+      dockerfile: Dockerfile.go_build
+    ports:
+    - 8888:8888
+    - 18888:18888
+    command: 'filer -master="master:9333"'
+    depends_on:
+    - master
+    - volume
+  s3:
+    build:
+      context: .
+      dockerfile: Dockerfile.go_build
+    ports:
+    - 8333:8333
+    command: 's3 -filer="filer:8888"'
+    depends_on:
+    - master
+    - volume
+    - filer

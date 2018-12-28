@@ -5,9 +5,9 @@
 
 ```bash
 
-wget https://raw.githubusercontent.com/chrislusf/seaweedfs/master/docker/docker-compose.yml
+wget https://raw.githubusercontent.com/chrislusf/seaweedfs/master/docker/seaweedfs-compose.yml
 
-docker-compose -f docker-compose.yml up
+docker-compose -f seaweedfs-compose.yml -p seaweedfs up
 
 ```
 
@@ -16,8 +16,6 @@ docker-compose -f docker-compose.yml up
 ```bash
 cd $GOPATH/src/github.com/chrislusf/seaweedfs/docker
 
-docker build - < Dockerfile.go_build
-
-docker-compose -f docker-compose.yml up
+docker-compose -f dev-compose.yml -p seaweedfs up
 
 ```
