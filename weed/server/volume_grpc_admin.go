@@ -78,3 +78,19 @@ func (vs *VolumeServer) VolumeUnmount(ctx context.Context, req *volume_server_pb
 	return resp, err
 
 }
+
+func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.VolumeDeleteRequest) (*volume_server_pb.VolumeDeleteResponse, error) {
+
+	resp := &volume_server_pb.VolumeDeleteResponse{}
+
+	err := vs.store.DeleteVolume(storage.VolumeId(req.VolumdId))
+
+	if err != nil {
+		glog.Errorf("volume delete %v: %v", req, err)
+	} else {
+		glog.V(2).Infof("volume delete %v", req)
+	}
+
+	return resp, err
+
+}

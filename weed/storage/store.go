@@ -254,3 +254,15 @@ func (s *Store) UnmountVolume(i VolumeId) error {
 
 	return fmt.Errorf("Volume %d not found on disk", i)
 }
+
+func (s *Store) DeleteVolume(i VolumeId) error {
+	for _, location := range s.Locations {
+		if error := location.deleteVolumeById(i); error == nil {
+			s.DeletedVolumeIdChan <- VolumeId(i)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("Volume %d not found on disk", i)
+}
+

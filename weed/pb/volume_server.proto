@@ -33,6 +33,8 @@ service VolumeServer {
     }
     rpc VolumeUnmount (VolumeUnmountRequest) returns (VolumeUnmountResponse) {
     }
+    rpc VolumeDelete (VolumeDeleteRequest) returns (VolumeDeleteResponse) {
+    }
 
     // rpc VolumeUiPage (VolumeUiPageRequest) returns (VolumeUiPageResponse) {}
 
@@ -140,6 +142,12 @@ message VolumeUnmountRequest {
     uint32 volumd_id = 1;
 }
 message VolumeUnmountResponse {
+}
+
+message VolumeDeleteRequest {
+    uint32 volumd_id = 1;
+}
+message VolumeDeleteResponse {
 }
 
 message VolumeUiPageRequest {
