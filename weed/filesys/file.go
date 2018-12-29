@@ -97,6 +97,10 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		file.entry.Attributes.Gid = req.Gid
 	}
 
+	if req.Valid.Crtime() {
+		file.entry.Attributes.Crtime = req.Crtime.Unix()
+	}
+
 	if req.Valid.Mtime() {
 		file.entry.Attributes.Mtime = req.Mtime.Unix()
 	}
