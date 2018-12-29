@@ -1,7 +1,7 @@
 hash: 2e3a065472829938d25e879451b6d1aa43e55270e1166a9c044803ef8a3b9eb1
 updated: 2018-06-28T22:01:35.910567-07:00
 imports:
-- name: bazil.org/fuse
+- name: github.com/seaweedfs/fuse
   version: 65cc252bf6691cb3c7014bcb2c8dc29de91e3a7e
   subpackages:
   - fs

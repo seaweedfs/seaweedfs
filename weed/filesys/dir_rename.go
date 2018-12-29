@@ -1,8 +1,8 @@
 package filesys
 
 import (
-	"bazil.org/fuse"
-	"bazil.org/fuse/fs"
+	"github.com/seaweedfs/fuse"
+	"github.com/seaweedfs/fuse/fs"
 	"context"
 	"math"
 	"path/filepath"

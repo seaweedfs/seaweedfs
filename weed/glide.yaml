@@ -1,6 +1,6 @@
 package: github.com/chrislusf/seaweedfs/weed
 import:
-- package: bazil.org/fuse
+- package: github.com/seaweedfs/fuse
   subpackages:
   - fs
 - package: github.com/boltdb/bolt
