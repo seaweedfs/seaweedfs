@@ -4,7 +4,10 @@ package command
 
 import (
 	"fmt"
+	"os"
+	"os/user"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +30,24 @@ func runMount(cmd *Command, args []string) bool {
 	}
 
 	fuse.Unmount(*mountOptions.dir)
+
+	// detect mount folder mode
+	mountMode := os.ModeDir | 0755
+	if fileInfo, err := os.Stat(*mountOptions.dir); err == nil {
+		mountMode = os.ModeDir | fileInfo.Mode()
+		println(*mountOptions.dir, "mount mode", mountMode)
+	}
+
+	// detect current user
+	uid, gid := uint32(0), uint32(0)
+	if u, err := user.Current(); err == nil {
+		if parsedId, pe := strconv.ParseUint(u.Uid, 10, 32); pe == nil {
+			uid = uint32(parsedId)
+		}
+		if parsedId, pe := strconv.ParseUint(u.Gid, 10, 32); pe == nil {
+			gid = uint32(parsedId)
+		}
+	}
 
 	util.SetupProfiling(*mountCpuProfile, *mountMemProfile)
 
@@ -77,6 +98,9 @@ func runMount(cmd *Command, args []string) bool {
 		DataCenter:         *mountOptions.dataCenter,
 		DirListingLimit:    *mountOptions.dirListingLimit,
 		EntryCacheTtl:      3 * time.Second,
+		MountUid:           uid,
+		MountGid:           gid,
+		MountMode:          mountMode,
 	}))
 	if err != nil {
 		fuse.Unmount(*mountOptions.dir)

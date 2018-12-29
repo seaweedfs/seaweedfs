@@ -34,8 +34,10 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 	// https://github.com/bazil/fuse/issues/196
 	attr.Valid = time.Second
 
-	if dir.Path == "/" {
-		attr.Mode = os.ModeDir | 0777
+	if dir.Path == dir.wfs.option.FilerMountRootPath {
+		attr.Uid = dir.wfs.option.MountUid
+		attr.Gid = dir.wfs.option.MountGid
+		attr.Mode = dir.wfs.option.MountMode
 		return nil
 	}
 

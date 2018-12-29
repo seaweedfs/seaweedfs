@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"sync"
 	"time"
 
@@ -26,6 +27,10 @@ type Option struct {
 	DataCenter         string
 	DirListingLimit    int
 	EntryCacheTtl      time.Duration
+
+	MountUid  uint32
+	MountGid  uint32
+	MountMode os.FileMode
 }
 
 var _ = fs.FS(&WFS{})
