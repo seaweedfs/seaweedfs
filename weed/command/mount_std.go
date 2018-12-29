@@ -59,6 +59,7 @@ func runMount(cmd *Command, args []string) bool {
 		fuse.NoAppleDouble(),
 		fuse.NoAppleXattr(),
 		fuse.NoBrowse(),
+		fuse.AutoXattr(),
 		fuse.ExclCreate(),
 		fuse.DaemonTimeout("3600"),
 		fuse.AllowOther(),
