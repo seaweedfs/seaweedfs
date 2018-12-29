@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/fuse"
-	"github.com/seaweedfs/fuse/fs"
 	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/fuse"
+	"github.com/seaweedfs/fuse/fs"
 )
 
 func runMount(cmd *Command, args []string) bool {
@@ -58,6 +58,7 @@ func runMount(cmd *Command, args []string) bool {
 		fuse.Subtype("SeaweedFS"),
 		fuse.NoAppleDouble(),
 		fuse.NoAppleXattr(),
+		fuse.NoBrowse(),
 		fuse.ExclCreate(),
 		fuse.DaemonTimeout("3600"),
 		fuse.AllowOther(),
