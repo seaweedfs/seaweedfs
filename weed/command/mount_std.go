@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"bazil.org/fuse"
-	"bazil.org/fuse/fs"
+	"github.com/seaweedfs/fuse"
+	"github.com/seaweedfs/fuse/fs"
 	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
