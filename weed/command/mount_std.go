@@ -35,7 +35,6 @@ func runMount(cmd *Command, args []string) bool {
 	mountMode := os.ModeDir | 0755
 	if fileInfo, err := os.Stat(*mountOptions.dir); err == nil {
 		mountMode = os.ModeDir | fileInfo.Mode()
-		println(*mountOptions.dir, "mount mode", mountMode)
 	}
 
 	// detect current user
