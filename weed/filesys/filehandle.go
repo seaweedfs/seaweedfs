@@ -1,14 +1,14 @@
 package filesys
 
 import (
-	"github.com/seaweedfs/fuse"
-	"github.com/seaweedfs/fuse/fs"
 	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/fuse"
+	"github.com/seaweedfs/fuse/fs"
 	"net/http"
 	"strings"
 	"sync"
@@ -58,7 +58,11 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	buff := make([]byte, req.Size)
 
-	chunkViews := filer2.ViewFromChunks(fh.f.entry.Chunks, req.Offset, req.Size)
+	if fh.f.entryViewCache == nil {
+		fh.f.entryViewCache = filer2.NonOverlappingVisibleIntervals(fh.f.entry.Chunks)
+	}
+
+	chunkViews := filer2.ViewFromVisibleIntervals(fh.f.entryViewCache, req.Offset, req.Size)
 
 	var vids []string
 	for _, chunkView := range chunkViews {
@@ -154,6 +158,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 	for _, chunk := range chunks {
 		fh.f.entry.Chunks = append(fh.f.entry.Chunks, chunk)
+		fh.f.entryViewCache = nil
 		glog.V(1).Infof("uploaded %s/%s to %s [%d,%d)", fh.f.dir.Path, fh.f.Name, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
 		fh.dirtyMetadata = true
 	}
@@ -188,6 +193,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	}
 	if chunk != nil {
 		fh.f.entry.Chunks = append(fh.f.entry.Chunks, chunk)
+		fh.f.entryViewCache = nil
 	}
 
 	if !fh.dirtyMetadata {

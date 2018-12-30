@@ -63,7 +63,7 @@ func TestIntervalMerging(t *testing.T) {
 
 	testcases := []struct {
 		Chunks   []*filer_pb.FileChunk
-		Expected []*visibleInterval
+		Expected []*VisibleInterval
 	}{
 		// case 0: normal
 		{
@@ -72,7 +72,7 @@ func TestIntervalMerging(t *testing.T) {
 				{Offset: 100, Size: 100, FileId: "asdf", Mtime: 134},
 				{Offset: 200, Size: 100, FileId: "fsad", Mtime: 353},
 			},
-			Expected: []*visibleInterval{
+			Expected: []*VisibleInterval{
 				{start: 0, stop: 100, fileId: "abc"},
 				{start: 100, stop: 200, fileId: "asdf"},
 				{start: 200, stop: 300, fileId: "fsad"},
@@ -84,7 +84,7 @@ func TestIntervalMerging(t *testing.T) {
 				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
 				{Offset: 0, Size: 200, FileId: "asdf", Mtime: 134},
 			},
-			Expected: []*visibleInterval{
+			Expected: []*VisibleInterval{
 				{start: 0, stop: 200, fileId: "asdf"},
 			},
 		},
@@ -94,7 +94,7 @@ func TestIntervalMerging(t *testing.T) {
 				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
 				{Offset: 0, Size: 50, FileId: "asdf", Mtime: 134},
 			},
-			Expected: []*visibleInterval{
+			Expected: []*VisibleInterval{
 				{start: 0, stop: 50, fileId: "asdf"},
 				{start: 50, stop: 100, fileId: "abc"},
 			},
@@ -106,7 +106,7 @@ func TestIntervalMerging(t *testing.T) {
 				{Offset: 0, Size: 200, FileId: "asdf", Mtime: 134},
 				{Offset: 50, Size: 250, FileId: "xxxx", Mtime: 154},
 			},
-			Expected: []*visibleInterval{
+			Expected: []*VisibleInterval{
 				{start: 0, stop: 50, fileId: "asdf"},
 				{start: 50, stop: 300, fileId: "xxxx"},
 			},
@@ -118,7 +118,7 @@ func TestIntervalMerging(t *testing.T) {
 				{Offset: 0, Size: 200, FileId: "asdf", Mtime: 134},
 				{Offset: 250, Size: 250, FileId: "xxxx", Mtime: 154},
 			},
-			Expected: []*visibleInterval{
+			Expected: []*VisibleInterval{
 				{start: 0, stop: 200, fileId: "asdf"},
 				{start: 250, stop: 500, fileId: "xxxx"},
 			},
@@ -131,7 +131,7 @@ func TestIntervalMerging(t *testing.T) {
 				{Offset: 70, Size: 150, FileId: "abc", Mtime: 143},
 				{Offset: 80, Size: 100, FileId: "xxxx", Mtime: 134},
 			},
-			Expected: []*visibleInterval{
+			Expected: []*VisibleInterval{
 				{start: 0, stop: 200, fileId: "asdf"},
 				{start: 200, stop: 220, fileId: "abc"},
 			},
@@ -143,7 +143,7 @@ func TestIntervalMerging(t *testing.T) {
 				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
 				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
 			},
-			Expected: []*visibleInterval{
+			Expected: []*VisibleInterval{
 				{start: 0, stop: 100, fileId: "abc"},
 			},
 		},
@@ -157,7 +157,7 @@ func TestIntervalMerging(t *testing.T) {
 				{Offset: 8388608, Size: 3145728, FileId: "5,02982f80de50", Mtime: 160},
 				{Offset: 11534336, Size: 2842193, FileId: "7,0299ad723803", Mtime: 170},
 			},
-			Expected: []*visibleInterval{
+			Expected: []*VisibleInterval{
 				{start: 0, stop: 2097152, fileId: "3,029565bf3092"},
 				{start: 2097152, stop: 5242880, fileId: "6,029632f47ae2"},
 				{start: 5242880, stop: 8388608, fileId: "2,029734c5aa10"},
@@ -174,7 +174,7 @@ func TestIntervalMerging(t *testing.T) {
 				{Offset: 208896, Size: 339968 - 208896, FileId: "2,0b4031a72689", Mtime: 150},
 				{Offset: 339968, Size: 471040 - 339968, FileId: "3,0b416a557362", Mtime: 160},
 			},
-			Expected: []*visibleInterval{
+			Expected: []*VisibleInterval{
 				{start: 0, stop: 77824, fileId: "4,0b3df938e301"},
 				{start: 77824, stop: 208896, fileId: "4,0b3f0c7202f0"},
 				{start: 208896, stop: 339968, fileId: "2,0b4031a72689"},
@@ -186,7 +186,7 @@ func TestIntervalMerging(t *testing.T) {
 
 	for i, testcase := range testcases {
 		log.Printf("++++++++++ merged test case %d ++++++++++++++++++++", i)
-		intervals := nonOverlappingVisibleIntervals(testcase.Chunks)
+		intervals := NonOverlappingVisibleIntervals(testcase.Chunks)
 		for x, interval := range intervals {
 			log.Printf("test case %d, interval %d, start=%d, stop=%d, fileId=%s",
 				i, x, interval.start, interval.stop, interval.fileId)

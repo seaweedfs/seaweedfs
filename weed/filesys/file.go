@@ -1,12 +1,12 @@
 package filesys
 
 import (
-	"github.com/seaweedfs/fuse"
-	"github.com/seaweedfs/fuse/fs"
 	"context"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/fuse"
+	"github.com/seaweedfs/fuse/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -20,11 +20,12 @@ var _ = fs.NodeFsyncer(&File{})
 var _ = fs.NodeSetattrer(&File{})
 
 type File struct {
-	Name   string
-	dir    *Dir
-	wfs    *WFS
-	entry  *filer_pb.Entry
-	isOpen bool
+	Name           string
+	dir            *Dir
+	wfs            *WFS
+	entry          *filer_pb.Entry
+	entryViewCache []*filer2.VisibleInterval
+	isOpen         bool
 }
 
 func (file *File) fullpath() string {
@@ -82,6 +83,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		if req.Size == 0 {
 			// fmt.Printf("truncate %v \n", fullPath)
 			file.entry.Chunks = nil
+			file.entryViewCache = nil
 		}
 		file.entry.Attributes.FileSize = req.Size
 	}
@@ -138,6 +140,7 @@ func (file *File) maybeLoadAttributes(ctx context.Context) error {
 		if item != nil && !item.Expired() {
 			entry := item.Value().(*filer_pb.Entry)
 			file.entry = entry
+			file.entryViewCache = nil
 			// glog.V(1).Infof("file attr read cached %v attributes", file.Name)
 		} else {
 			err := file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
@@ -154,6 +157,7 @@ func (file *File) maybeLoadAttributes(ctx context.Context) error {
 				}
 
 				file.entry = resp.Entry
+				file.entryViewCache = nil
 
 				glog.V(3).Infof("file attr %v %+v: %d", file.fullpath(), file.entry.Attributes, filer2.TotalSize(file.entry.Chunks))
 

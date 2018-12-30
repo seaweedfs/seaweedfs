@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/seaweedfs/fuse"
-	"github.com/seaweedfs/fuse/fs"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/fuse"
+	"github.com/seaweedfs/fuse/fs"
 )
 
 type Dir struct {
@@ -101,10 +101,11 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 
 func (dir *Dir) newFile(name string, entry *filer_pb.Entry) *File {
 	return &File{
-		Name:  name,
-		dir:   dir,
-		wfs:   dir.wfs,
-		entry: entry,
+		Name:           name,
+		dir:            dir,
+		wfs:            dir.wfs,
+		entry:          entry,
+		entryViewCache: nil,
 	}
 }
 
