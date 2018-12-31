@@ -24,7 +24,7 @@ type File struct {
 	dir            *Dir
 	wfs            *WFS
 	entry          *filer_pb.Entry
-	entryViewCache []*filer2.VisibleInterval
+	entryViewCache []filer2.VisibleInterval
 	isOpen         bool
 }
 

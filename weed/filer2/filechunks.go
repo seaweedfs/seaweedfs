@@ -81,7 +81,7 @@ func ViewFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int) (views
 
 }
 
-func ViewFromVisibleIntervals(visibles []*VisibleInterval, offset int64, size int) (views []*ChunkView) {
+func ViewFromVisibleIntervals(visibles []VisibleInterval, offset int64, size int) (views []*ChunkView) {
 
 	stop := offset + int64(size)
 
@@ -103,7 +103,7 @@ func ViewFromVisibleIntervals(visibles []*VisibleInterval, offset int64, size in
 
 }
 
-func logPrintf(name string, visibles []*VisibleInterval) {
+func logPrintf(name string, visibles []VisibleInterval) {
 	/*
 		log.Printf("%s len %d", name, len(visibles))
 		for _, v := range visibles {
@@ -118,7 +118,7 @@ var bufPool = sync.Pool{
 	},
 }
 
-func mergeIntoVisibles(visibles, newVisibles []*VisibleInterval, chunk *filer_pb.FileChunk) []*VisibleInterval {
+func mergeIntoVisibles(visibles, newVisibles []VisibleInterval, chunk *filer_pb.FileChunk) []VisibleInterval {
 
 	newV := newVisibleInterval(
 		chunk.Offset,
@@ -179,13 +179,13 @@ func mergeIntoVisibles(visibles, newVisibles []*VisibleInterval, chunk *filer_pb
 	return newVisibles
 }
 
-func NonOverlappingVisibleIntervals(chunks []*filer_pb.FileChunk) (visibles []*VisibleInterval) {
+func NonOverlappingVisibleIntervals(chunks []*filer_pb.FileChunk) (visibles []VisibleInterval) {
 
 	sort.Slice(chunks, func(i, j int) bool {
 		return chunks[i].Mtime < chunks[j].Mtime
 	})
 
-	var newVislbles []*VisibleInterval
+	var newVislbles []VisibleInterval
 	for _, chunk := range chunks {
 		newVislbles = mergeIntoVisibles(visibles, newVislbles, chunk)
 		t := visibles[:0]
@@ -210,8 +210,8 @@ type VisibleInterval struct {
 	isFullChunk  bool
 }
 
-func newVisibleInterval(start, stop int64, fileId string, modifiedTime int64, isFullChunk bool) *VisibleInterval {
-	return &VisibleInterval{
+func newVisibleInterval(start, stop int64, fileId string, modifiedTime int64, isFullChunk bool) VisibleInterval {
+	return VisibleInterval{
 		start:        start,
 		stop:         stop,
 		fileId:       fileId,
