@@ -74,7 +74,7 @@ func (v *Volume) AppendBlob(b []byte) (offset int64, err error) {
 	return
 }
 
-func (v *Volume) writeNeedle(n *Needle) (size uint32, err error) {
+func (v *Volume) writeNeedle(n *Needle) (offset Offset, size uint32, err error) {
 	glog.V(4).Infof("writing needle %s", NewFileIdFromNeedle(v.Id, n).String())
 	if v.readOnly {
 		err = fmt.Errorf("%s is read-only", v.dataFile.Name())
@@ -87,32 +87,15 @@ func (v *Volume) writeNeedle(n *Needle) (size uint32, err error) {
 		glog.V(4).Infof("needle is unchanged!")
 		return
 	}
-	var offset int64
-	if offset, err = v.dataFile.Seek(0, 2); err != nil {
-		glog.V(0).Infof("failed to seek the end of file: %v", err)
-		return
-	}
-
-	//ensure file writing starting from aligned positions
-	if offset%NeedlePaddingSize != 0 {
-		offset = offset + (NeedlePaddingSize - offset%NeedlePaddingSize)
-		if offset, err = v.dataFile.Seek(offset, 0); err != nil {
-			glog.V(0).Infof("failed to align in datafile %s: %v", v.dataFile.Name(), err)
-			return
-		}
-	}
 
 	n.AppendAtNs = uint64(time.Now().UnixNano())
-	if size, _, err = n.Append(v.dataFile, v.Version()); err != nil {
-		if e := v.dataFile.Truncate(offset); e != nil {
-			err = fmt.Errorf("%s\ncannot truncate %s: %v", err, v.dataFile.Name(), e)
-		}
+	if offset, size, _, err = n.Append(v.dataFile, v.Version()); err != nil {
 		return
 	}
 
 	nv, ok := v.nm.Get(n.Id)
-	if !ok || int64(nv.Offset)*NeedlePaddingSize < offset {
-		if err = v.nm.Put(n.Id, Offset(offset/NeedlePaddingSize), n.Size); err != nil {
+	if !ok || Offset(nv.Offset)*NeedlePaddingSize < offset {
+		if err = v.nm.Put(n.Id, offset/NeedlePaddingSize, n.Size); err != nil {
 			glog.V(4).Infof("failed to save in needle map %d: %v", n.Id, err)
 		}
 	}
@@ -133,16 +116,15 @@ func (v *Volume) deleteNeedle(n *Needle) (uint32, error) {
 	//fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
 	if ok && nv.Size != TombstoneFileSize {
 		size := nv.Size
-		offset, err := v.dataFile.Seek(0, 2)
+		n.Data = nil
+		n.AppendAtNs = uint64(time.Now().UnixNano())
+		offset, _, _, err := n.Append(v.dataFile, v.Version())
 		if err != nil {
 			return size, err
 		}
-		if err := v.nm.Delete(n.Id, Offset(offset/NeedlePaddingSize)); err != nil {
+		if err = v.nm.Delete(n.Id, offset/NeedlePaddingSize); err != nil {
 			return size, err
 		}
-		n.Data = nil
-		n.AppendAtNs = uint64(time.Now().UnixNano())
-		_, _, err = n.Append(v.dataFile, v.Version())
 		return size, err
 	}
 	return 0, nil

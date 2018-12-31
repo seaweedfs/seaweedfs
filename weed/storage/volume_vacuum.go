@@ -215,7 +215,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 			fakeDelNeedle.Id = key
 			fakeDelNeedle.Cookie = 0x12345678
 			fakeDelNeedle.AppendAtNs = uint64(time.Now().UnixNano())
-			_, _, err = fakeDelNeedle.Append(dst, v.Version())
+			_, _, _, err = fakeDelNeedle.Append(dst, v.Version())
 			if err != nil {
 				return fmt.Errorf("append deleted %d failed: %v", key, err)
 			}
@@ -269,7 +269,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 				if err = nm.Put(n.Id, Offset(new_offset/NeedlePaddingSize), n.Size); err != nil {
 					return fmt.Errorf("cannot put needle: %s", err)
 				}
-				if _, _, err := n.Append(dst, v.Version()); err != nil {
+				if _, _, _, err := n.Append(dst, v.Version()); err != nil {
 					return fmt.Errorf("cannot append needle: %s", err)
 				}
 				new_offset += n.DiskSize(version)
@@ -329,7 +329,7 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 			if err = nm.Put(n.Id, Offset(new_offset/NeedlePaddingSize), n.Size); err != nil {
 				return fmt.Errorf("cannot put needle: %s", err)
 			}
-			if _, _, err = n.Append(dst, v.Version()); err != nil {
+			if _, _, _, err = n.Append(dst, v.Version()); err != nil {
 				return fmt.Errorf("cannot append needle: %s", err)
 			}
 			new_offset += n.DiskSize(v.Version())
