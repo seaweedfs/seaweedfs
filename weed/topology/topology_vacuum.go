@@ -116,7 +116,7 @@ func batchVacuumVolumeCleanup(vl *VolumeLayout, vid storage.VolumeId, locationli
 }
 
 func (t *Topology) Vacuum(garbageThreshold float64, preallocate int64) int {
-	glog.V(0).Infof("Start vacuum on demand with threshold: %f", garbageThreshold)
+	glog.V(1).Infof("Start vacuum on demand with threshold: %f", garbageThreshold)
 	for _, col := range t.collectionMap.Items() {
 		c := col.(*Collection)
 		for _, vl := range c.storageType2VolumeLayout.Items() {
@@ -148,7 +148,7 @@ func vacuumOneVolumeLayout(volumeLayout *VolumeLayout, c *Collection, garbageThr
 			continue
 		}
 
-		glog.V(0).Infof("check vacuum on collection:%s volume:%d", c.Name, vid)
+		glog.V(2).Infof("check vacuum on collection:%s volume:%d", c.Name, vid)
 		if batchVacuumVolumeCheck(volumeLayout, vid, locationlist, garbageThreshold) {
 			if batchVacuumVolumeCompact(volumeLayout, vid, locationlist, preallocate) {
 				batchVacuumVolumeCommit(volumeLayout, vid, locationlist)
