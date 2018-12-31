@@ -303,11 +303,11 @@ func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 			IsDeleteData: true,
 		}
 
-		glog.V(1).Infof("remove directory entry: %v", request)
+		glog.V(3).Infof("remove directory entry: %v", request)
 		_, err := client.DeleteEntry(ctx, request)
 		if err != nil {
-			glog.V(0).Infof("remove %s/%s: %v", dir.Path, req.Name, err)
-			return fuse.EIO
+			glog.V(3).Infof("remove %s/%s: %v", dir.Path, req.Name, err)
+			return fuse.ENOENT
 		}
 
 		dir.wfs.listDirectoryEntriesCache.Delete(path.Join(dir.Path, req.Name))
