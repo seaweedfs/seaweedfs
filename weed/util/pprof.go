@@ -2,6 +2,7 @@ package util
 
 import (
 	"os"
+	"runtime"
 	"runtime/pprof"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -19,6 +20,7 @@ func SetupProfiling(cpuProfile, memProfile string) {
 		})
 	}
 	if memProfile != "" {
+		runtime.MemProfileRate = 1
 		f, err := os.Create(memProfile)
 		if err != nil {
 			glog.Fatal(err)
