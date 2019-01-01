@@ -8,12 +8,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/seaweedfs/fuse"
-	"github.com/seaweedfs/fuse/fs"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/karlseguin/ccache"
+	"github.com/seaweedfs/fuse"
+	"github.com/seaweedfs/fuse/fs"
 	"google.golang.org/grpc"
 )
 
@@ -46,6 +46,8 @@ type WFS struct {
 	pathToHandleLock  sync.Mutex
 	bufPool           sync.Pool
 
+	fileIdsDeletionChan chan []string
+
 	stats statsCache
 }
 type statsCache struct {
@@ -54,7 +56,7 @@ type statsCache struct {
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {
-	return &WFS{
+	wfs := &WFS{
 		option:                    option,
 		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(int64(option.DirListingLimit) + 200).ItemsToPrune(100)),
 		pathToHandleIndex:         make(map[string]int),
@@ -63,7 +65,12 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 				return make([]byte, option.ChunkSizeLimit)
 			},
 		},
+		fileIdsDeletionChan: make(chan []string, 32),
 	}
+
+	go wfs.loopProcessingDeletion()
+
+	return wfs
 }
 
 func (wfs *WFS) Root() (fs.Node, error) {

@@ -295,6 +295,66 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 
+	if !req.Dir {
+		return dir.removeOneFile(ctx, req)
+	}
+
+	return dir.removeFolder(ctx, req)
+
+}
+
+func (dir *Dir) removeOneFile(ctx context.Context, req *fuse.RemoveRequest) error {
+
+	var entry *filer_pb.Entry
+	err := dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		request := &filer_pb.LookupDirectoryEntryRequest{
+			Directory: dir.Path,
+			Name:      req.Name,
+		}
+
+		glog.V(4).Infof("lookup to-be-removed entry: %v", request)
+		resp, err := client.LookupDirectoryEntry(ctx, request)
+		if err != nil {
+			// glog.V(0).Infof("lookup %s/%s: %v", dir.Path, name, err)
+			return fuse.ENOENT
+		}
+
+		entry = resp.Entry
+
+		return nil
+	})
+
+	if err != nil {
+		return err
+	}
+
+	dir.wfs.asyncDeleteFileChunks(entry.Chunks)
+
+	return dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		request := &filer_pb.DeleteEntryRequest{
+			Directory:    dir.Path,
+			Name:         req.Name,
+			IsDeleteData: false,
+		}
+
+		glog.V(3).Infof("remove file: %v", request)
+		_, err := client.DeleteEntry(ctx, request)
+		if err != nil {
+			glog.V(3).Infof("remove file %s/%s: %v", dir.Path, req.Name, err)
+			return fuse.ENOENT
+		}
+
+		dir.wfs.listDirectoryEntriesCache.Delete(path.Join(dir.Path, req.Name))
+
+		return nil
+	})
+
+}
+
+func (dir *Dir) removeFolder(ctx context.Context, req *fuse.RemoveRequest) error {
+
 	return dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.DeleteEntryRequest{
