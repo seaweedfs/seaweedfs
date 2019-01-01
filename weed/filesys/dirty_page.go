@@ -34,7 +34,7 @@ func (pages *ContinuousDirtyPages) releaseResource() {
 		pages.f.wfs.bufPool.Put(pages.Data)
 		pages.Data = nil
 		atomic.AddInt32(&counter, -1)
-		glog.V(3).Infof("%s/%s releasing resource", pages.f.dir.Path, pages.f.Name, counter)
+		glog.V(3).Infof("%s/%s releasing resource %d", pages.f.dir.Path, pages.f.Name, counter)
 	}
 }
 
@@ -55,7 +55,7 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 	if pages.Data == nil {
 		pages.Data = pages.f.wfs.bufPool.Get().([]byte)
 		atomic.AddInt32(&counter, 1)
-		glog.V(3).Infof("%s/%s acquire resource", pages.f.dir.Path, pages.f.Name, counter)
+		glog.V(3).Infof("%s/%s acquire resource %d", pages.f.dir.Path, pages.f.Name, counter)
 	}
 
 	if offset < pages.Offset || offset >= pages.Offset+int64(len(pages.Data)) ||
