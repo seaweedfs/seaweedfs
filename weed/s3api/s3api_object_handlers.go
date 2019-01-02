@@ -73,7 +73,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	destUrl := fmt.Sprintf("http://%s%s/%s%s",
 		s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
 
-	s3a.proxyToFiler(w, r, destUrl, passThroghResponse)
+	s3a.proxyToFiler(w, r, destUrl, passThroughResponse)
 
 }
 
@@ -86,7 +86,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	destUrl := fmt.Sprintf("http://%s%s/%s%s",
 		s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
 
-	s3a.proxyToFiler(w, r, destUrl, passThroghResponse)
+	s3a.proxyToFiler(w, r, destUrl, passThroughResponse)
 
 }
 
@@ -147,7 +147,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 
 	responseFn(resp, w)
 }
-func passThroghResponse(proxyResonse *http.Response, w http.ResponseWriter) {
+func passThroughResponse(proxyResonse *http.Response, w http.ResponseWriter) {
 	for k, v := range proxyResonse.Header {
 		w.Header()[k] = v
 	}
