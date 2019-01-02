@@ -22,7 +22,7 @@ type UploadResult struct {
 	Name  string `json:"name,omitempty"`
 	Size  uint32 `json:"size,omitempty"`
 	Error string `json:"error,omitempty"`
-	ETag  string `json:"error,omitempty"`
+	ETag  string `json:"eTag,omitempty"`
 }
 
 var (
