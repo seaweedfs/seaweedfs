@@ -2,17 +2,17 @@ package weed_server
 
 import (
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"path"
+	"strconv"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"mime"
-	"mime/multipart"
-	"path"
-	"strconv"
 )
 
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
@@ -50,6 +50,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	w.Header().Set("Accept-Ranges", "bytes")
 	if r.Method == "HEAD" {
 		w.Header().Set("Content-Length", strconv.FormatInt(int64(filer2.TotalSize(entry.Chunks)), 10))
+		w.Header().Set("Last-Modified", entry.Attr.Mtime.Format(http.TimeFormat))
 		return
 	}
 
