@@ -66,6 +66,7 @@ func ParseUpload(r *http.Request) (
 		mimeType = r.Header.Get("Content-Type")
 		fileName = ""
 		data, e = ioutil.ReadAll(r.Body)
+		originalDataSize = len(data)
 	}
 	if e != nil {
 		return
