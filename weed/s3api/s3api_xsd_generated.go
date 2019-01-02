@@ -539,11 +539,6 @@ type ListAllMyBucketsResponse struct {
 	ListAllMyBucketsResponse ListAllMyBucketsResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListAllMyBucketsResponse"`
 }
 
-type ListAllMyBucketsResult struct {
-	Owner   CanonicalUser        `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Owner"`
-	Buckets ListAllMyBucketsList `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Buckets"`
-}
-
 type ListBucket struct {
 	Bucket         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
 	Prefix         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Prefix,omitempty"`

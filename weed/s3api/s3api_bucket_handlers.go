@@ -3,10 +3,13 @@ package s3api
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/gorilla/mux"
@@ -17,37 +20,38 @@ var (
 	OS_GID = uint32(os.Getgid())
 )
 
+type ListAllMyBucketsResult struct {
+	Buckets []*s3.Bucket `xml:"Buckets>Bucket"`
+	Owner   *s3.Owner
+}
+
 func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Request) {
 
-	var response ListAllMyBucketsResponse
+	var response ListAllMyBucketsResult
 
-	entries, err := s3a.list(s3a.option.BucketsPath, "", "", false, 0)
+	entries, err := s3a.list(s3a.option.BucketsPath, "", "", false, math.MaxInt32)
 
 	if err != nil {
 		writeErrorResponse(w, ErrInternalError, r.URL)
 		return
 	}
 
-	var buckets []ListAllMyBucketsEntry
+	var buckets []*s3.Bucket
 	for _, entry := range entries {
 		if entry.IsDirectory {
-			buckets = append(buckets, ListAllMyBucketsEntry{
-				Name:         entry.Name,
-				CreationDate: time.Unix(entry.Attributes.Crtime, 0),
+			buckets = append(buckets, &s3.Bucket{
+				Name:         aws.String(entry.Name),
+				CreationDate: aws.Time(time.Unix(entry.Attributes.Crtime, 0)),
 			})
 		}
 	}
 
-	response = ListAllMyBucketsResponse{
-		ListAllMyBucketsResponse: ListAllMyBucketsResult{
-			Owner: CanonicalUser{
-				ID:          "",
-				DisplayName: "",
-			},
-			Buckets: ListAllMyBucketsList{
-				Bucket: buckets,
-			},
+	response = ListAllMyBucketsResult{
+		Owner: &s3.Owner{
+			ID:          aws.String(""),
+			DisplayName: aws.String(""),
 		},
+		Buckets: buckets,
 	}
 
 	writeSuccessResponseXML(w, encodeResponse(response))

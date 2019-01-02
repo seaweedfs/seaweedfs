@@ -77,6 +77,7 @@ func writeResponse(w http.ResponseWriter, statusCode int, response []byte, mType
 	}
 	w.WriteHeader(statusCode)
 	if response != nil {
+		glog.V(4).Infof("status %d %s: %s", statusCode, mType, string(response))
 		w.Write(response)
 		w.(http.Flusher).Flush()
 	}
