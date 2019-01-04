@@ -18,7 +18,7 @@ func (wfs *WFS) loopProcessingDeletion() {
 			select {
 			case fids := <-wfs.fileIdsDeletionChan:
 				fileIds = append(fileIds, fids...)
-				if len(fileIds) >= 256 {
+				if len(fileIds) >= 1024 {
 					glog.V(1).Infof("deleting fileIds len=%d", len(fileIds))
 					deleteFileIds(context.Background(), client, fileIds)
 					fileIds = fileIds[:0]
