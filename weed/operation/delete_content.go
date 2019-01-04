@@ -71,7 +71,7 @@ func DeleteFilesWithLookupVolumeId(fileIds []string, lookupFunc func(vid []strin
 			ret = append(ret, &volume_server_pb.DeleteResult{
 				FileId: vid,
 				Status: http.StatusBadRequest,
-				Error:  err.Error()},
+				Error:  result.Error},
 			)
 			continue
 		}
