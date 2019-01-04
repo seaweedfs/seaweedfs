@@ -77,7 +77,7 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 			dir.attributes = resp.Entry.Attributes
 		}
 
-		dir.wfs.listDirectoryEntriesCache.Set(dir.Path, resp.Entry, dir.wfs.option.EntryCacheTtl)
+		// dir.wfs.listDirectoryEntriesCache.Set(dir.Path, resp.Entry, dir.wfs.option.EntryCacheTtl)
 
 		return nil
 	})
@@ -215,7 +215,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 
 			entry = resp.Entry
 
-			dir.wfs.listDirectoryEntriesCache.Set(path.Join(dir.Path, entry.Name), entry, dir.wfs.option.EntryCacheTtl)
+			// dir.wfs.listDirectoryEntriesCache.Set(path.Join(dir.Path, entry.Name), entry, dir.wfs.option.EntryCacheTtl)
 
 			return nil
 		})

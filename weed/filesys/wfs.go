@@ -58,7 +58,7 @@ type statsCache struct {
 func NewSeaweedFileSystem(option *Option) *WFS {
 	wfs := &WFS{
 		option:                    option,
-		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(int64(option.DirListingLimit) + 200).ItemsToPrune(100)),
+		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(1024*8).ItemsToPrune(100)),
 		pathToHandleIndex:         make(map[string]int),
 		bufPool: sync.Pool{
 			New: func() interface{} {
