@@ -173,3 +173,18 @@ func (file *File) maybeLoadAttributes(ctx context.Context) error {
 	}
 	return nil
 }
+
+func (file *File) addChunk(chunk *filer_pb.FileChunk) {
+	if chunk != nil {
+		file.addChunks([]*filer_pb.FileChunk{chunk})
+	}
+}
+
+func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
+	for _, chunk := range chunks {
+		file.entry.Chunks = append(file.entry.Chunks, chunk)
+		file.entryViewCache = nil
+		glog.V(4).Infof("uploaded %s/%s to %s [%d,%d)", file.dir.Path, file.Name, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
+	}
+	file.entryViewCache = filer2.NonOverlappingVisibleIntervals(file.entry.Chunks)
+}

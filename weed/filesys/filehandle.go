@@ -157,10 +157,9 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 		fh.dirtyMetadata = true
 	}
 
-	for _, chunk := range chunks {
-		fh.f.entry.Chunks = append(fh.f.entry.Chunks, chunk)
-		fh.f.entryViewCache = nil
-		glog.V(4).Infof("uploaded %s/%s to %s [%d,%d)", fh.f.dir.Path, fh.f.Name, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
+	fh.f.addChunks(chunks)
+
+	if len(chunks) > 0 {
 		fh.dirtyMetadata = true
 	}
 
@@ -190,10 +189,8 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		glog.Errorf("flush %s/%s: %v", fh.f.dir.Path, fh.f.Name, err)
 		return fmt.Errorf("flush %s/%s: %v", fh.f.dir.Path, fh.f.Name, err)
 	}
-	if chunk != nil {
-		fh.f.entry.Chunks = append(fh.f.entry.Chunks, chunk)
-		fh.f.entryViewCache = nil
-	}
+
+	fh.f.addChunk(chunk)
 
 	if !fh.dirtyMetadata {
 		return nil
@@ -222,7 +219,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 		chunks, garbages := filer2.CompactFileChunks(fh.f.entry.Chunks)
 		fh.f.entry.Chunks = chunks
-		fh.f.entryViewCache = nil
+		// fh.f.entryViewCache = nil
 		fh.f.wfs.asyncDeleteFileChunks(garbages)
 
 		if _, err := client.CreateEntry(ctx, request); err != nil {
