@@ -139,8 +139,7 @@ func (file *File) maybeLoadAttributes(ctx context.Context) error {
 		item := file.wfs.listDirectoryEntriesCache.Get(file.fullpath())
 		if item != nil && !item.Expired() {
 			entry := item.Value().(*filer_pb.Entry)
-			file.entry = entry
-			file.entryViewCache = nil
+			file.setEntry(entry)
 			// glog.V(1).Infof("file attr read cached %v attributes", file.Name)
 		} else {
 			err := file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
@@ -156,8 +155,7 @@ func (file *File) maybeLoadAttributes(ctx context.Context) error {
 					return fuse.ENOENT
 				}
 
-				file.entry = resp.Entry
-				file.entryViewCache = nil
+				file.setEntry(resp.Entry)
 
 				glog.V(3).Infof("file attr %v %+v: %d", file.fullpath(), file.entry.Attributes, filer2.TotalSize(file.entry.Chunks))
 
@@ -186,5 +184,10 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 		file.entryViewCache = nil
 		glog.V(4).Infof("uploaded %s/%s to %s [%d,%d)", file.dir.Path, file.Name, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
 	}
+	file.entryViewCache = filer2.NonOverlappingVisibleIntervals(file.entry.Chunks)
+}
+
+func (file *File) setEntry(entry *filer_pb.Entry) {
+	file.entry = entry
 	file.entryViewCache = filer2.NonOverlappingVisibleIntervals(file.entry.Chunks)
 }
