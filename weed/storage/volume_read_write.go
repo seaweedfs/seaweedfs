@@ -12,6 +12,8 @@ import (
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
+var ErrorNotFound = errors.New("not found")
+
 // isFileUnchanged checks whether this needle to write is same as last one.
 // It requires serialized access in the same volume.
 func (v *Volume) isFileUnchanged(n *Needle) bool {
@@ -134,7 +136,11 @@ func (v *Volume) deleteNeedle(n *Needle) (uint32, error) {
 func (v *Volume) readNeedle(n *Needle) (int, error) {
 	nv, ok := v.nm.Get(n.Id)
 	if !ok || nv.Offset == 0 {
-		return -1, errors.New("Not Found")
+		v.compactingWg.Wait()
+		nv, ok = v.nm.Get(n.Id)
+		if !ok || nv.Offset == 0 {
+			return -1, ErrorNotFound
+		}
 	}
 	if nv.Size == TombstoneFileSize {
 		return -1, errors.New("Already Deleted")
