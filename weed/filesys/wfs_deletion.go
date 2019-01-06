@@ -35,12 +35,24 @@ func (wfs *WFS) loopProcessingDeletion() {
 
 }
 
-func (wfs *WFS) asyncDeleteFileChunks(chunks []*filer_pb.FileChunk) {
-	if len(chunks) > 0 {
-		var fileIds []string
-		for _, chunk := range chunks {
-			fileIds = append(fileIds, chunk.FileId)
-		}
-		wfs.fileIdsDeletionChan <- fileIds
+func (wfs *WFS) deleteFileChunks(chunks []*filer_pb.FileChunk) {
+	if len(chunks) == 0 {
+		return
 	}
+
+	var fileIds []string
+	for _, chunk := range chunks {
+		fileIds = append(fileIds, chunk.FileId)
+	}
+
+	var async = false
+	if async {
+		wfs.fileIdsDeletionChan <- fileIds
+		return
+	}
+
+	wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		deleteFileIds(context.Background(), client, fileIds)
+		return nil
+	})
 }

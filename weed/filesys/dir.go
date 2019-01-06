@@ -329,7 +329,7 @@ func (dir *Dir) removeOneFile(ctx context.Context, req *fuse.RemoveRequest) erro
 		return err
 	}
 
-	dir.wfs.asyncDeleteFileChunks(entry.Chunks)
+	dir.wfs.deleteFileChunks(entry.Chunks)
 
 	return dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
