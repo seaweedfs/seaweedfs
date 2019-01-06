@@ -2,14 +2,16 @@ package filesys
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"sort"
+	"time"
+
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
-	"os"
-	"path/filepath"
-	"time"
 )
 
 const blockSize = 512
@@ -179,12 +181,20 @@ func (file *File) addChunk(chunk *filer_pb.FileChunk) {
 }
 
 func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
+
+	sort.Slice(chunks, func(i, j int) bool {
+		return chunks[i].Mtime < chunks[j].Mtime
+	})
+
+	var newVisibles []filer2.VisibleInterval
 	for _, chunk := range chunks {
-		file.entry.Chunks = append(file.entry.Chunks, chunk)
-		file.entryViewCache = nil
-		glog.V(4).Infof("uploaded %s/%s to %s [%d,%d)", file.dir.Path, file.Name, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
+		newVisibles = filer2.MergeIntoVisibles(file.entryViewCache, newVisibles, chunk)
+		t := file.entryViewCache[:0]
+		file.entryViewCache = newVisibles
+		newVisibles = t
 	}
-	file.entryViewCache = filer2.NonOverlappingVisibleIntervals(file.entry.Chunks)
+
+	file.entry.Chunks = append(file.entry.Chunks, chunks...)
 }
 
 func (file *File) setEntry(entry *filer_pb.Entry) {

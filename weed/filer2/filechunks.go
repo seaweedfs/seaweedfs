@@ -118,7 +118,7 @@ var bufPool = sync.Pool{
 	},
 }
 
-func mergeIntoVisibles(visibles, newVisibles []VisibleInterval, chunk *filer_pb.FileChunk) []VisibleInterval {
+func MergeIntoVisibles(visibles, newVisibles []VisibleInterval, chunk *filer_pb.FileChunk) []VisibleInterval {
 
 	newV := newVisibleInterval(
 		chunk.Offset,
@@ -185,12 +185,12 @@ func NonOverlappingVisibleIntervals(chunks []*filer_pb.FileChunk) (visibles []Vi
 		return chunks[i].Mtime < chunks[j].Mtime
 	})
 
-	var newVislbles []VisibleInterval
+	var newVisibles []VisibleInterval
 	for _, chunk := range chunks {
-		newVislbles = mergeIntoVisibles(visibles, newVislbles, chunk)
+		newVisibles = MergeIntoVisibles(visibles, newVisibles, chunk)
 		t := visibles[:0]
-		visibles = newVislbles
-		newVislbles = t
+		visibles = newVisibles
+		newVisibles = t
 
 		logPrintf("add", visibles)
 
