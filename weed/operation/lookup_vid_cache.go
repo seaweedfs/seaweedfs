@@ -9,6 +9,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
+var ErrorNotFound = errors.New("not found")
+
 type VidInfo struct {
 	Locations       []Location
 	NextRefreshTime time.Time
@@ -28,14 +30,14 @@ func (vc *VidCache) Get(vid string) ([]Location, error) {
 	defer vc.RUnlock()
 	if 0 < id && id <= len(vc.cache) {
 		if vc.cache[id-1].Locations == nil {
-			return nil, errors.New("Not Set")
+			return nil, errors.New("not set")
 		}
 		if vc.cache[id-1].NextRefreshTime.Before(time.Now()) {
-			return nil, errors.New("Expired")
+			return nil, errors.New("expired")
 		}
 		return vc.cache[id-1].Locations, nil
 	}
-	return nil, errors.New("Not Found")
+	return nil, ErrorNotFound
 }
 func (vc *VidCache) Set(vid string, locations []Location, duration time.Duration) {
 	id, err := strconv.Atoi(vid)

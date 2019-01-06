@@ -131,7 +131,7 @@ func DeleteFilesAtOneVolumeServer(volumeServer string, fileIds []string) (ret []
 	}
 
 	for _, result := range ret {
-		if result.Error != "" && result.Error != "Not Found" {
+		if result.Error != "" && result.Error != "not found" {
 			return nil, fmt.Errorf("delete fileId %s: %v", result.FileId, result.Error)
 		}
 	}

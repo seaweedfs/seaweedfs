@@ -143,7 +143,7 @@ func (v *Volume) readNeedle(n *Needle) (int, error) {
 		}
 	}
 	if nv.Size == TombstoneFileSize {
-		return -1, errors.New("Already Deleted")
+		return -1, errors.New("already deleted")
 	}
 	err := n.ReadData(v.dataFile, int64(nv.Offset)*NeedlePaddingSize, nv.Size, v.Version())
 	if err != nil {
@@ -163,7 +163,7 @@ func (v *Volume) readNeedle(n *Needle) (int, error) {
 	if uint64(time.Now().Unix()) < n.LastModified+uint64(ttlMinutes*60) {
 		return bytesRead, nil
 	}
-	return -1, errors.New("Not Found")
+	return -1, ErrorNotFound
 }
 
 func ScanVolumeFile(dirname string, collection string, id VolumeId,
