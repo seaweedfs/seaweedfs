@@ -110,7 +110,7 @@ func (vs *VolumeServer) doHeartbeat(masterNode string, sleepInterval time.Durati
 				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
 				return "", err
 			}
-		case <-doneChan:
+		case err = <-doneChan:
 			return
 		}
 	}
