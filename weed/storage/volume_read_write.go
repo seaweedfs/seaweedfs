@@ -145,6 +145,9 @@ func (v *Volume) readNeedle(n *Needle) (int, error) {
 	if nv.Size == TombstoneFileSize {
 		return -1, errors.New("already deleted")
 	}
+	if nv.Size == 0 {
+		return 0, nil
+	}
 	err := n.ReadData(v.dataFile, int64(nv.Offset)*NeedlePaddingSize, nv.Size, v.Version())
 	if err != nil {
 		return 0, err
