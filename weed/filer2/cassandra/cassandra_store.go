@@ -48,8 +48,8 @@ func (store *CassandraStore) InsertEntry(entry *filer2.Entry) (err error) {
 	}
 
 	if err := store.session.Query(
-		"INSERT INTO filemeta (directory,name,meta) VALUES(?,?,?)",
-		dir, name, meta).Exec(); err != nil {
+		"INSERT INTO filemeta (directory,name,meta) VALUES(?,?,?) USING TTL ? ",
+		dir, name, meta, entry.TtlSec).Exec(); err != nil {
 		return fmt.Errorf("insert %s: %s", entry.FullPath, err)
 	}
 
