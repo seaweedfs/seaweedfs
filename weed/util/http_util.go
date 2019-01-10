@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/security"
 )
@@ -24,7 +25,10 @@ func init() {
 	Transport = &http.Transport{
 		MaxIdleConnsPerHost: 1024,
 	}
-	client = &http.Client{Transport: Transport}
+	client = &http.Client{
+		Transport: Transport,
+		Timeout:   5 * time.Second,
+	}
 }
 
 func PostBytes(url string, body []byte) ([]byte, error) {
@@ -63,6 +67,8 @@ func Post(url string, values url.Values) ([]byte, error) {
 	return b, nil
 }
 
+//	github.com/chrislusf/seaweedfs/unmaintained/repeated_vacuum/repeated_vacuum.go
+//	may need increasing http.Client.Timeout
 func Get(url string) ([]byte, error) {
 	r, err := client.Get(url)
 	if err != nil {
