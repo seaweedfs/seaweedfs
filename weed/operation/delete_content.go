@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 )
@@ -108,12 +109,14 @@ func DeleteFilesWithLookupVolumeId(fileIds []string, lookupFunc func(vid []strin
 func DeleteFilesAtOneVolumeServer(volumeServer string, fileIds []string) (ret []*volume_server_pb.DeleteResult, err error) {
 
 	err = WithVolumeServerClient(volumeServer, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(5*time.Second))
+		defer cancel()
 
 		req := &volume_server_pb.BatchDeleteRequest{
 			FileIds: fileIds,
 		}
 
-		resp, err := volumeServerClient.BatchDelete(context.Background(), req)
+		resp, err := volumeServerClient.BatchDelete(ctx, req)
 
 		// fmt.Printf("deleted %v %v: %v\n", fileIds, err, resp)
 

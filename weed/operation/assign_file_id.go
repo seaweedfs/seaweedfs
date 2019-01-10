@@ -3,6 +3,7 @@ package operation
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 )
@@ -40,6 +41,9 @@ func Assign(server string, primaryRequest *VolumeAssignRequest, alternativeReque
 		}
 
 		lastError = withMasterServerClient(server, func(masterClient master_pb.SeaweedClient) error {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(5*time.Second))
+			defer cancel()
+
 			req := &master_pb.AssignRequest{
 				Count:       primaryRequest.Count,
 				Replication: primaryRequest.Replication,
@@ -49,7 +53,7 @@ func Assign(server string, primaryRequest *VolumeAssignRequest, alternativeReque
 				Rack:        primaryRequest.Rack,
 				DataNode:    primaryRequest.DataNode,
 			}
-			resp, grpcErr := masterClient.Assign(context.Background(), req)
+			resp, grpcErr := masterClient.Assign(ctx, req)
 			if grpcErr != nil {
 				return grpcErr
 			}

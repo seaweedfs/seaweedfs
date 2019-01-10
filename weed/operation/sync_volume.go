@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
@@ -13,7 +14,10 @@ import (
 func GetVolumeSyncStatus(server string, vid uint32) (resp *volume_server_pb.VolumeSyncStatusResponse, err error) {
 
 	WithVolumeServerClient(server, func(client volume_server_pb.VolumeServerClient) error {
-		resp, err = client.VolumeSyncStatus(context.Background(), &volume_server_pb.VolumeSyncStatusRequest{
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(5*time.Second))
+		defer cancel()
+
+		resp, err = client.VolumeSyncStatus(ctx, &volume_server_pb.VolumeSyncStatusRequest{
 			VolumdId: vid,
 		})
 		return nil
