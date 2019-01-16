@@ -10,8 +10,8 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 var (
@@ -63,7 +63,7 @@ func main() {
 
 	iterateEntries(datFile, indexFile, func(n *storage.Needle, offset int64) {
 		fmt.Printf("needle id=%v name=%s size=%d dataSize=%d\n", n.Id, string(n.Name), n.Size, n.DataSize)
-		s, _, e := n.Append(newDatFile, superBlock.Version())
+		_, s, _, e := n.Append(newDatFile, superBlock.Version())
 		fmt.Printf("size %d error %v\n", s, e)
 	})
 

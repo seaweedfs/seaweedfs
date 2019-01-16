@@ -169,16 +169,20 @@ func (v *Volume) readNeedle(n *Needle) (int, error) {
 	return -1, ErrorNotFound
 }
 
+type VolumeFileScanner interface {
+	VisitSuperBlock(SuperBlock) error
+	ReadNeedleBody() bool
+	VisitNeedle(n *Needle, offset int64) error
+}
+
 func ScanVolumeFile(dirname string, collection string, id VolumeId,
 	needleMapKind NeedleMapType,
-	visitSuperBlock func(SuperBlock) error,
-	readNeedleBody bool,
-	visitNeedle func(n *Needle, offset int64) error) (err error) {
+	volumeFileScanner VolumeFileScanner) (err error) {
 	var v *Volume
 	if v, err = loadVolumeWithoutIndex(dirname, collection, id, needleMapKind); err != nil {
 		return fmt.Errorf("Failed to load volume %d: %v", id, err)
 	}
-	if err = visitSuperBlock(v.SuperBlock); err != nil {
+	if err = volumeFileScanner.VisitSuperBlock(v.SuperBlock); err != nil {
 		return fmt.Errorf("Failed to process volume %d super block: %v", id, err)
 	}
 	defer v.Close()
@@ -192,14 +196,14 @@ func ScanVolumeFile(dirname string, collection string, id VolumeId,
 		return
 	}
 	for n != nil {
-		if readNeedleBody {
+		if volumeFileScanner.ReadNeedleBody() {
 			if err = n.ReadNeedleBody(v.dataFile, version, offset+NeedleEntrySize, rest); err != nil {
 				glog.V(0).Infof("cannot read needle body: %v", err)
 				//err = fmt.Errorf("cannot read needle body: %v", err)
 				//return
 			}
 		}
-		err = visitNeedle(n, offset)
+		err = volumeFileScanner.VisitNeedle(n, offset)
 		if err == io.EOF {
 			return nil
 		}
