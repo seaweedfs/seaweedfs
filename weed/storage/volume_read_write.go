@@ -76,7 +76,7 @@ func (v *Volume) AppendBlob(b []byte) (offset int64, err error) {
 	return
 }
 
-func (v *Volume) writeNeedle(n *Needle) (offset Offset, size uint32, err error) {
+func (v *Volume) writeNeedle(n *Needle) (offset uint64, size uint32, err error) {
 	glog.V(4).Infof("writing needle %s", NewFileIdFromNeedle(v.Id, n).String())
 	if v.readOnly {
 		err = fmt.Errorf("%s is read-only", v.dataFile.Name())
@@ -96,8 +96,8 @@ func (v *Volume) writeNeedle(n *Needle) (offset Offset, size uint32, err error) 
 	}
 
 	nv, ok := v.nm.Get(n.Id)
-	if !ok || Offset(nv.Offset)*NeedlePaddingSize < offset {
-		if err = v.nm.Put(n.Id, offset/NeedlePaddingSize, n.Size); err != nil {
+	if !ok || uint64(nv.Offset)*NeedlePaddingSize < offset {
+		if err = v.nm.Put(n.Id, Offset(offset/NeedlePaddingSize), n.Size); err != nil {
 			glog.V(4).Infof("failed to save in needle map %d: %v", n.Id, err)
 		}
 	}
@@ -124,7 +124,7 @@ func (v *Volume) deleteNeedle(n *Needle) (uint32, error) {
 		if err != nil {
 			return size, err
 		}
-		if err = v.nm.Delete(n.Id, offset/NeedlePaddingSize); err != nil {
+		if err = v.nm.Delete(n.Id, Offset(offset/NeedlePaddingSize)); err != nil {
 			return size, err
 		}
 		return size, err
