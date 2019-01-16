@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -27,8 +28,8 @@ func (n *Needle) DiskSize(version Version) int64 {
 	return getActualSize(n.Size, version)
 }
 
-func (n *Needle) Append(w *os.File, version Version) (offset Offset, size uint32, actualSize int64, err error) {
-	if end, e := w.Seek(0, 2); e == nil {
+func (n *Needle) Append(w *os.File, version Version) (offset uint64, size uint32, actualSize int64, err error) {
+	if end, e := w.Seek(0, io.SeekEnd); e == nil {
 		defer func(w *os.File, off int64) {
 			if err != nil {
 				if te := w.Truncate(end); te != nil {
@@ -36,7 +37,7 @@ func (n *Needle) Append(w *os.File, version Version) (offset Offset, size uint32
 				}
 			}
 		}(w, end)
-		offset = Offset(end)
+		offset = uint64(end)
 	} else {
 		err = fmt.Errorf("Cannot Read Current Volume Position: %v", e)
 		return
@@ -175,7 +176,7 @@ func (n *Needle) ReadData(r *os.File, offset int64, size uint32, version Version
 	}
 	n.ParseNeedleHeader(bytes)
 	if n.Size != size {
-		return fmt.Errorf("File Entry Not Found. Needle id %d expected size %d Memory %d", n.Id, n.Size, size)
+		return fmt.Errorf("File Entry Not Found. offset %d, Needle id %d expected size %d Memory %d", offset, n.Id, n.Size, size)
 	}
 	switch version {
 	case Version1:

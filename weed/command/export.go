@@ -84,6 +84,62 @@ func printNeedle(vid storage.VolumeId, n *storage.Needle, version storage.Versio
 	)
 }
 
+type VolumeFileScanner4Export struct {
+	version   storage.Version
+	counter   int
+	needleMap *storage.NeedleMap
+	vid       storage.VolumeId
+}
+
+func (scanner *VolumeFileScanner4Export) VisitSuperBlock(superBlock storage.SuperBlock) error {
+	scanner.version = superBlock.Version()
+	return nil
+
+}
+func (scanner *VolumeFileScanner4Export) ReadNeedleBody() bool {
+	return true
+}
+
+func (scanner *VolumeFileScanner4Export) VisitNeedle(n *storage.Needle, offset int64) error {
+	needleMap := scanner.needleMap
+	vid := scanner.vid
+
+	nv, ok := needleMap.Get(n.Id)
+	glog.V(3).Infof("key %d offset %d size %d disk_size %d gzip %v ok %v nv %+v",
+		n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsGzipped(), ok, nv)
+	if ok && nv.Size > 0 && int64(nv.Offset)*types.NeedlePaddingSize == offset {
+		if newerThanUnix >= 0 && n.HasLastModifiedDate() && n.LastModified < uint64(newerThanUnix) {
+			glog.V(3).Infof("Skipping this file, as it's old enough: LastModified %d vs %d",
+				n.LastModified, newerThanUnix)
+			return nil
+		}
+		scanner.counter++
+		if *limit > 0 && scanner.counter > *limit {
+			return io.EOF
+		}
+		if tarOutputFile != nil {
+			return writeFile(vid, n)
+		} else {
+			printNeedle(vid, n, scanner.version, false)
+			return nil
+		}
+	}
+	if !ok {
+		if *showDeleted && tarOutputFile == nil {
+			if n.DataSize > 0 {
+				printNeedle(vid, n, scanner.version, true)
+			} else {
+				n.Name = []byte("*tombstone")
+				printNeedle(vid, n, scanner.version, true)
+			}
+		}
+		glog.V(2).Infof("This seems deleted %d size %d", n.Id, n.Size)
+	} else {
+		glog.V(2).Infof("Skipping later-updated Id %d size %d", n.Id, n.Size)
+	}
+	return nil
+}
+
 func runExport(cmd *Command, args []string) bool {
 
 	var err error
@@ -145,55 +201,16 @@ func runExport(cmd *Command, args []string) bool {
 		glog.Fatalf("cannot load needle map from %s: %s", indexFile.Name(), err)
 	}
 
-	var version storage.Version
+	volumeFileScanner := &VolumeFileScanner4Export{
+		needleMap: needleMap,
+		vid:       vid,
+	}
 
 	if tarOutputFile == nil {
 		fmt.Printf("key\tname\tsize\tgzip\tmime\tmodified\tttl\tdeleted\n")
 	}
 
-	var counter = 0
-
-	err = storage.ScanVolumeFile(*export.dir, *export.collection, vid,
-		storage.NeedleMapInMemory,
-		func(superBlock storage.SuperBlock) error {
-			version = superBlock.Version()
-			return nil
-		}, true, func(n *storage.Needle, offset int64) error {
-			nv, ok := needleMap.Get(n.Id)
-			glog.V(3).Infof("key %d offset %d size %d disk_size %d gzip %v ok %v nv %+v",
-				n.Id, offset, n.Size, n.DiskSize(version), n.IsGzipped(), ok, nv)
-			if ok && nv.Size > 0 && int64(nv.Offset)*types.NeedlePaddingSize == offset {
-				if newerThanUnix >= 0 && n.HasLastModifiedDate() && n.LastModified < uint64(newerThanUnix) {
-					glog.V(3).Infof("Skipping this file, as it's old enough: LastModified %d vs %d",
-						n.LastModified, newerThanUnix)
-					return nil
-				}
-				counter++
-				if *limit > 0 && counter > *limit {
-					return io.EOF
-				}
-				if tarOutputFile != nil {
-					return writeFile(vid, n)
-				} else {
-					printNeedle(vid, n, version, false)
-					return nil
-				}
-			}
-			if !ok {
-				if *showDeleted && tarOutputFile == nil {
-					if n.DataSize > 0 {
-						printNeedle(vid, n, version, true)
-					} else {
-						n.Name = []byte("*tombstone")
-						printNeedle(vid, n, version, true)
-					}
-				}
-				glog.V(2).Infof("This seems deleted %d size %d", n.Id, n.Size)
-			} else {
-				glog.V(2).Infof("Skipping later-updated Id %d size %d", n.Id, n.Size)
-			}
-			return nil
-		})
+	err = storage.ScanVolumeFile(*export.dir, *export.collection, vid, storage.NeedleMapInMemory, volumeFileScanner)
 	if err != nil && err != io.EOF {
 		glog.Fatalf("Export Volume File [ERROR] %s\n", err)
 	}
