@@ -115,26 +115,26 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		Host:          r.Host,
 		ContentLength: r.ContentLength,
 	}
-	resp, do_err := util.Do(request)
-	if do_err != nil {
-		glog.Errorf("failing to connect to volume server %s: %v, %+v", r.RequestURI, do_err, r.Method)
-		writeJsonError(w, r, http.StatusInternalServerError, do_err)
+	resp, doErr := util.Do(request)
+	if doErr != nil {
+		glog.Errorf("failing to connect to volume server %s: %v, %+v", r.RequestURI, doErr, r.Method)
+		writeJsonError(w, r, http.StatusInternalServerError, doErr)
 		return
 	}
 	defer resp.Body.Close()
 	etag := resp.Header.Get("ETag")
-	resp_body, ra_err := ioutil.ReadAll(resp.Body)
-	if ra_err != nil {
-		glog.V(0).Infoln("failing to upload to volume server", r.RequestURI, ra_err.Error())
-		writeJsonError(w, r, http.StatusInternalServerError, ra_err)
+	respBody, raErr := ioutil.ReadAll(resp.Body)
+	if raErr != nil {
+		glog.V(0).Infoln("failing to upload to volume server", r.RequestURI, raErr.Error())
+		writeJsonError(w, r, http.StatusInternalServerError, raErr)
 		return
 	}
-	glog.V(4).Infoln("post result", string(resp_body))
+	glog.V(4).Infoln("post result", string(respBody))
 	var ret operation.UploadResult
-	unmarshal_err := json.Unmarshal(resp_body, &ret)
-	if unmarshal_err != nil {
-		glog.V(0).Infoln("failing to read upload resonse", r.RequestURI, string(resp_body))
-		writeJsonError(w, r, http.StatusInternalServerError, unmarshal_err)
+	unmarshalErr := json.Unmarshal(respBody, &ret)
+	if unmarshalErr != nil {
+		glog.V(0).Infoln("failing to read upload response", r.RequestURI, string(respBody))
+		writeJsonError(w, r, http.StatusInternalServerError, unmarshalErr)
 		return
 	}
 	if ret.Error != "" {
@@ -188,10 +188,10 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		}},
 	}
 	// glog.V(4).Infof("saving %s => %+v", path, entry)
-	if db_err := fs.filer.CreateEntry(entry); db_err != nil {
+	if dbErr := fs.filer.CreateEntry(entry); dbErr != nil {
 		fs.filer.DeleteFileByFileId(fileId)
-		glog.V(0).Infof("failing to write %s to filer server : %v", path, db_err)
-		writeJsonError(w, r, http.StatusInternalServerError, db_err)
+		glog.V(0).Infof("failing to write %s to filer server : %v", path, dbErr)
+		writeJsonError(w, r, http.StatusInternalServerError, dbErr)
 		return
 	}
 
