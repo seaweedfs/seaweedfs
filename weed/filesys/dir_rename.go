@@ -1,9 +1,9 @@
 package filesys
 
 import (
+	"context"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
-	"context"
 	"math"
 	"path/filepath"
 

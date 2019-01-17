@@ -77,13 +77,13 @@ func iterateEntries(datFile, idxFile *os.File, visitNeedle func(n *storage.Needl
 	readerOffset += int64(count)
 
 	// start to read dat file
-	superblock, err := storage.ReadSuperBlock(datFile)
+	superBlock, err := storage.ReadSuperBlock(datFile)
 	if err != nil {
 		fmt.Printf("cannot read dat file super block: %v", err)
 		return
 	}
-	offset := int64(superblock.BlockSize())
-	version := superblock.Version()
+	offset := int64(superBlock.BlockSize())
+	version := superBlock.Version()
 	n, rest, err := storage.ReadNeedleHeader(datFile, version, offset)
 	if err != nil {
 		fmt.Printf("cannot read needle header: %v", err)

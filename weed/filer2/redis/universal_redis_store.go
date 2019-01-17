@@ -25,7 +25,7 @@ func (store *UniversalRedisStore) InsertEntry(entry *filer2.Entry) (err error) {
 		return fmt.Errorf("encoding %s %+v: %v", entry.FullPath, entry.Attr, err)
 	}
 
-	_, err = store.Client.Set(string(entry.FullPath), value, time.Duration(entry.TtlSec) * time.Second).Result()
+	_, err = store.Client.Set(string(entry.FullPath), value, time.Duration(entry.TtlSec)*time.Second).Result()
 
 	if err != nil {
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)

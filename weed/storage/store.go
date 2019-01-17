@@ -163,7 +163,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				}
 				volumeMessages = append(volumeMessages, volumeMessage)
 			} else {
-				if v.exiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
+				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
 					location.deleteVolumeById(v.Id)
 					glog.V(0).Infoln("volume", v.Id, "is deleted.")
 				} else {
@@ -265,4 +265,3 @@ func (s *Store) DeleteVolume(i VolumeId) error {
 
 	return fmt.Errorf("Volume %d not found on disk", i)
 }
-
