@@ -22,11 +22,6 @@ security settings:
 */
 
 func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == "GET" && r.URL.Path == "/" { // for convenience to /ui/index.html
-		vs.uiStatusHandler(w, r)
-		return
-	}
-
 	switch r.Method {
 	case "GET", "HEAD":
 		stats.ReadRequest()
