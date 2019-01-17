@@ -38,7 +38,7 @@ var cmdBackup = &Command{
 	This will help to backup future new volumes.
 	
 	Usually backing up is just copying the .dat (and .idx) files.
-	But it's tricky to incremententally copy the differences.
+	But it's tricky to incrementally copy the differences.
 	
 	The complexity comes when there are multiple addition, deletion and compaction.
 	This tool will handle them correctly and efficiently, avoiding unnecessary data transporation.

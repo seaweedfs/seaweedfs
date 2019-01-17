@@ -55,8 +55,8 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	vl.vid2location[v.Id].Set(dn)
 	// glog.V(4).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
 	for _, dn := range vl.vid2location[v.Id].list {
-		if v_info, err := dn.GetVolumesById(v.Id); err == nil {
-			if v_info.ReadOnly {
+		if vInfo, err := dn.GetVolumesById(v.Id); err == nil {
+			if vInfo.ReadOnly {
 				glog.V(3).Infof("vid %d removed from writable", v.Id)
 				vl.removeFromWritable(v.Id)
 				vl.readonlyVolumes[v.Id] = true
@@ -145,13 +145,13 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (*s
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
 
-	len_writers := len(vl.writables)
-	if len_writers <= 0 {
+	lenWriters := len(vl.writables)
+	if lenWriters <= 0 {
 		glog.V(0).Infoln("No more writable volumes!")
 		return nil, 0, nil, errors.New("No more writable volumes!")
 	}
 	if option.DataCenter == "" {
-		vid := vl.writables[rand.Intn(len_writers)]
+		vid := vl.writables[rand.Intn(lenWriters)]
 		locationList := vl.vid2location[vid]
 		if locationList != nil {
 			return &vid, count, locationList, nil

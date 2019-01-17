@@ -136,12 +136,12 @@ func vacuumOneVolumeLayout(volumeLayout *VolumeLayout, c *Collection, garbageThr
 
 	volumeLayout.accessLock.RLock()
 	tmpMap := make(map[storage.VolumeId]*VolumeLocationList)
-	for vid, locationlist := range volumeLayout.vid2location {
-		tmpMap[vid] = locationlist
+	for vid, locationList := range volumeLayout.vid2location {
+		tmpMap[vid] = locationList
 	}
 	volumeLayout.accessLock.RUnlock()
 
-	for vid, locationlist := range tmpMap {
+	for vid, locationList := range tmpMap {
 
 		volumeLayout.accessLock.RLock()
 		isReadOnly, hasValue := volumeLayout.readonlyVolumes[vid]
@@ -152,11 +152,11 @@ func vacuumOneVolumeLayout(volumeLayout *VolumeLayout, c *Collection, garbageThr
 		}
 
 		glog.V(2).Infof("check vacuum on collection:%s volume:%d", c.Name, vid)
-		if batchVacuumVolumeCheck(volumeLayout, vid, locationlist, garbageThreshold) {
-			if batchVacuumVolumeCompact(volumeLayout, vid, locationlist, preallocate) {
-				batchVacuumVolumeCommit(volumeLayout, vid, locationlist)
+		if batchVacuumVolumeCheck(volumeLayout, vid, locationList, garbageThreshold) {
+			if batchVacuumVolumeCompact(volumeLayout, vid, locationList, preallocate) {
+				batchVacuumVolumeCommit(volumeLayout, vid, locationList)
 			} else {
-				batchVacuumVolumeCleanup(volumeLayout, vid, locationlist)
+				batchVacuumVolumeCleanup(volumeLayout, vid, locationList)
 			}
 		}
 	}

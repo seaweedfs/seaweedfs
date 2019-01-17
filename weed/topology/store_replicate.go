@@ -31,7 +31,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 		size = ret
 		return
 	}
-	
+
 	needToReplicate = needToReplicate || s.GetVolume(volumeId).NeedToReplicate()
 	if !needToReplicate {
 		needToReplicate = s.GetVolume(volumeId).NeedToReplicate()

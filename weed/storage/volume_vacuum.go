@@ -137,10 +137,10 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 	}
 	incrementedHasUpdatedIndexEntry := make(map[NeedleId]keyField)
 
-	for idx_offset := indexSize - NeedleEntrySize; uint64(idx_offset) >= v.lastCompactIndexOffset; idx_offset -= NeedleEntrySize {
+	for idxOffset := indexSize - NeedleEntrySize; uint64(idxOffset) >= v.lastCompactIndexOffset; idxOffset -= NeedleEntrySize {
 		var IdxEntry []byte
-		if IdxEntry, err = readIndexEntryAtOffset(oldIdxFile, idx_offset); err != nil {
-			return fmt.Errorf("readIndexEntry %s at offset %d failed: %v", oldIdxFileName, idx_offset, err)
+		if IdxEntry, err = readIndexEntryAtOffset(oldIdxFile, idxOffset); err != nil {
+			return fmt.Errorf("readIndexEntry %s at offset %d failed: %v", oldIdxFileName, idxOffset, err)
 		}
 		key, offset, size := IdxFileEntry(IdxEntry)
 		glog.V(4).Infof("key %d offset %d size %d", key, offset, size)

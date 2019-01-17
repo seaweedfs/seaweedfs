@@ -58,7 +58,7 @@ type statsCache struct {
 func NewSeaweedFileSystem(option *Option) *WFS {
 	wfs := &WFS{
 		option:                    option,
-		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(1024*8).ItemsToPrune(100)),
+		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(1024 * 8).ItemsToPrune(100)),
 		pathToHandleIndex:         make(map[string]int),
 		bufPool: sync.Pool{
 			New: func() interface{} {
@@ -174,11 +174,11 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 	resp.Blocks = totalDiskSize / blockSize
 
 	// Compute the number of used blocks
-	numblocks := uint64(usedDiskSize / blockSize)
+	numBlocks := uint64(usedDiskSize / blockSize)
 
 	// Report the number of free and available blocks for the block size
-	resp.Bfree = resp.Blocks - numblocks
-	resp.Bavail = resp.Blocks - numblocks
+	resp.Bfree = resp.Blocks - numBlocks
+	resp.Bavail = resp.Blocks - numBlocks
 	resp.Bsize = uint32(blockSize)
 
 	// Report the total number of possible files in the file system (and those free)

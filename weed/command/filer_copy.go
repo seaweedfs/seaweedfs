@@ -315,7 +315,7 @@ func uploadFileInChunks(filerAddress, filerGrpcAddress string, urlFolder string,
 
 func detectMimeType(f *os.File) string {
 	head := make([]byte, 512)
-	f.Seek(0, 0)
+	f.Seek(0, io.SeekStart)
 	n, err := f.Read(head)
 	if err == io.EOF {
 		return ""
@@ -324,7 +324,7 @@ func detectMimeType(f *os.File) string {
 		fmt.Printf("read head of %v: %v\n", f.Name(), err)
 		return "application/octet-stream"
 	}
-	f.Seek(0, 0)
+	f.Seek(0, io.SeekStart)
 	mimeType := http.DetectContentType(head[:n])
 	return mimeType
 }

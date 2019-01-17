@@ -103,7 +103,7 @@ func (n *NodeImpl) RandomlyPickNodes(numberOfNodes int, filterFirstNodeFn func(d
 	}
 	if !ret {
 		glog.V(2).Infoln(n.Id(), "failed to pick", numberOfNodes-1, "from rest", len(candidates), "node candidates")
-		err = errors.New("Not enough data node found!")
+		err = errors.New("No enough data node found!")
 	}
 	return
 }

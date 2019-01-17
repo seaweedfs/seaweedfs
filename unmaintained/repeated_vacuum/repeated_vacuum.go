@@ -29,7 +29,7 @@ func main() {
 		rand.Read(data)
 		reader := bytes.NewReader(data)
 
-		targetUrl := fmt.Sprintf("http://%s/%s", assignResult.Url,assignResult.Fid)
+		targetUrl := fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
 
 		_, err = operation.Upload(targetUrl, fmt.Sprintf("test%d", i), reader, false, "", nil, "")
 		if err != nil {

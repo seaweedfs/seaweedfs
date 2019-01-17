@@ -14,7 +14,7 @@ func init() {
 }
 
 var cmdFilerExport = &Command{
-	UsageLine: "filer.export -sourceStore=mysql -targetStroe=cassandra",
+	UsageLine: "filer.export -sourceStore=mysql -targetStore=cassandra",
 	Short:     "export meta data in filer store",
 	Long: `Iterate the file tree and export all metadata out
 
