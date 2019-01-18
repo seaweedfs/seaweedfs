@@ -34,8 +34,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ret := operation.UploadResult{}
-	_, errorStatus := topology.ReplicatedWrite(vs.GetMaster(),
-		vs.store, volumeId, needle, r)
+	_, errorStatus := topology.ReplicatedWrite(vs.GetMaster(), vs.store, volumeId, needle, r)
 	httpStatus := http.StatusCreated
 	if errorStatus != "" {
 		httpStatus = http.StatusInternalServerError
@@ -69,7 +68,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if n.Cookie != cookie {
-		glog.V(0).Infoln("delete", r.URL.Path, "with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
+		glog.V(0).Infoln("delete", r.URL.Path, "with unmatching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
 		writeJsonError(w, r, http.StatusBadRequest, errors.New("File Random Cookie does not match."))
 		return
 	}
