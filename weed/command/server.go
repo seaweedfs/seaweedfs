@@ -15,7 +15,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
-	"github.com/soheilhy/cmux"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -62,6 +61,7 @@ var (
 	serverSecureKey               = cmdServer.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 	serverGarbageThreshold        = cmdServer.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
 	masterPort                    = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
+	masterGrpcPort                = cmdServer.Flag.Int("master.port.grpc", 0, "master grpc server listen port, default to http port + 10000")
 	masterMetaFolder              = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
 	masterVolumeSizeLimitMB       = cmdServer.Flag.Uint("master.volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
 	masterVolumePreallocate       = cmdServer.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
@@ -180,6 +180,25 @@ func runServer(cmd *Command, args []string) bool {
 		}
 
 		go func() {
+			// starting grpc server
+			grpcPort := *masterGrpcPort
+			if grpcPort == 0 {
+				grpcPort = *masterPort + 10000
+			}
+			grpcL, err := util.NewListener(*serverIp+":"+strconv.Itoa(grpcPort), 0)
+			if err != nil {
+				glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
+			}
+			// Create your protocol servers.
+			grpcS := util.NewGrpcServer()
+			master_pb.RegisterSeaweedServer(grpcS, ms)
+			reflection.Register(grpcS)
+
+			glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.VERSION, *serverIp, grpcPort)
+			grpcS.Serve(grpcL)
+		}()
+
+		go func() {
 			raftWaitForMaster.Wait()
 			time.Sleep(100 * time.Millisecond)
 			myAddress, peers := checkPeers(*serverIp, *masterPort, *serverPeers)
@@ -190,23 +209,9 @@ func runServer(cmd *Command, args []string) bool {
 
 		raftWaitForMaster.Done()
 
-		// start grpc and http server
-		m := cmux.New(masterListener)
-
-		grpcL := m.Match(cmux.HTTP2HeaderField("content-type", "application/grpc"))
-		httpL := m.Match(cmux.Any())
-
-		// Create your protocol servers.
-		grpcS := util.NewGrpcServer()
-		master_pb.RegisterSeaweedServer(grpcS, ms)
-		reflection.Register(grpcS)
-
+		// start http server
 		httpS := &http.Server{Handler: r}
-
-		go grpcS.Serve(grpcL)
-		go httpS.Serve(httpL)
-
-		if err := m.Serve(); err != nil {
+		if err := httpS.Serve(masterListener); err != nil {
 			glog.Fatalf("master server failed to serve: %v", err)
 		}
 

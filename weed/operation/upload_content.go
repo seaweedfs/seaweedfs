@@ -13,7 +13,6 @@ import (
 	"net/textproto"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -31,10 +30,9 @@ var (
 )
 
 func init() {
-	client = &http.Client{
-		Transport: &http.Transport{MaxIdleConnsPerHost: 1024},
-		Timeout:   5 * time.Second,
-	}
+	client = &http.Client{Transport: &http.Transport{
+		MaxIdleConnsPerHost: 1024,
+	}}
 }
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")

@@ -2,6 +2,8 @@ package util
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,4 +65,23 @@ func WithCachedGrpcClient(fn func(*grpc.ClientConn) error, address string, opts 
 	}
 
 	return err
+}
+
+func ParseServerToGrpcAddress(server string, optionalGrpcPort int) (serverGrpcAddress string, err error) {
+	hostnameAndPort := strings.Split(server, ":")
+	if len(hostnameAndPort) != 2 {
+		return "", fmt.Errorf("The server should have hostname:port format: %v", hostnameAndPort)
+	}
+
+	filerPort, parseErr := strconv.ParseUint(hostnameAndPort[1], 10, 64)
+	if parseErr != nil {
+		return "", fmt.Errorf("The server port parse error: %v", parseErr)
+	}
+
+	filerGrpcPort := int(filerPort) + 10000
+	if optionalGrpcPort != 0 {
+		filerGrpcPort = optionalGrpcPort
+	}
+
+	return fmt.Sprintf("%s:%d", hostnameAndPort[0], filerGrpcPort), nil
 }

@@ -44,9 +44,14 @@ func toVolumeServerGrpcAddress(volumeServer string) (grpcAddress string, err err
 
 func withMasterServerClient(masterServer string, fn func(masterClient master_pb.SeaweedClient) error) error {
 
+	masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(masterServer, 0)
+	if parseErr != nil {
+		return fmt.Errorf("failed to parse master grpc %v", masterServer)
+	}
+
 	return util.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := master_pb.NewSeaweedClient(grpcConnection)
 		return fn(client)
-	}, masterServer)
+	}, masterGrpcAddress)
 
 }
