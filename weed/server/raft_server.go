@@ -42,7 +42,7 @@ func NewRaftServer(r *mux.Router, peers []string, httpAddr string, dataDir strin
 	raft.RegisterCommand(&topology.MaxVolumeIdCommand{})
 
 	var err error
-	transporter := raft.NewHTTPTransporter("/cluster", 0)
+	transporter := raft.NewHTTPTransporter("/cluster", time.Second)
 	transporter.Transport.MaxIdleConnsPerHost = 1024
 	glog.V(0).Infof("Starting RaftServer with %v", httpAddr)
 
