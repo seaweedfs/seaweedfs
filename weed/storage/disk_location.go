@@ -66,20 +66,20 @@ func (l *DiskLocation) loadExistingVolume(dir os.FileInfo, needleMapKind NeedleM
 func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapType, concurrentFlag bool) {
 	var concurrency int
 	if concurrentFlag {
-		//You could choose a better optimized concurency value after testing at your environment
+		//You could choose a better optimized concurrency value after testing at your environment
 		concurrency = 10
 	} else {
 		concurrency = 1
 	}
 
-	task_queue := make(chan os.FileInfo, 10*concurrency)
+	taskQueue := make(chan os.FileInfo, 10*concurrency)
 	go func() {
 		if dirs, err := ioutil.ReadDir(l.Directory); err == nil {
 			for _, dir := range dirs {
-				task_queue <- dir
+				taskQueue <- dir
 			}
 		}
-		close(task_queue)
+		close(taskQueue)
 	}()
 
 	var wg sync.WaitGroup
@@ -88,13 +88,12 @@ func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapType, con
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for dir := range task_queue {
+			for dir := range taskQueue {
 				l.loadExistingVolume(dir, needleMapKind, &mutex)
 			}
 		}()
 	}
 	wg.Wait()
-
 }
 
 func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
@@ -202,5 +201,4 @@ func (l *DiskLocation) Close() {
 	for _, v := range l.volumes {
 		v.Close()
 	}
-	return
 }

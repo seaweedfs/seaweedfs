@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	MAX_TTL_VOLUME_REMOVAL_DELAY = 10 // 10 minutes
+	MaxTtlVolumeRemovalDelay = 10 // 10 minutes
 )
 
 /*
@@ -19,7 +19,7 @@ type Store struct {
 	Port                int
 	PublicUrl           string
 	Locations           []*DiskLocation
-	dataCenter          string //optional informaton, overwriting master setting if exists
+	dataCenter          string //optional information, overwriting master setting if exists
 	rack                string //optional information, overwriting master setting if exists
 	connected           bool
 	VolumeSizeLimit     uint64 //read from the master
@@ -30,15 +30,16 @@ type Store struct {
 }
 
 func (s *Store) String() (str string) {
-	str = fmt.Sprintf("Ip:%s, Port:%d, PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d", s.Ip, s.Port, s.PublicUrl, s.dataCenter, s.rack, s.connected, s.VolumeSizeLimit)
+	str = fmt.Sprintf("Ip:%s, Port:%d, PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d",
+		s.Ip, s.Port, s.PublicUrl, s.dataCenter, s.rack, s.connected, s.VolumeSizeLimit)
 	return
 }
 
-func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int, needleMapKind NeedleMapType) (s *Store) {
+func NewStore(port int, ip, publicUrl string, dirNames []string, maxVolumeCounts []int, needleMapKind NeedleMapType) (s *Store) {
 	s = &Store{Port: port, Ip: ip, PublicUrl: publicUrl, NeedleMapType: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
-	for i := 0; i < len(dirnames); i++ {
-		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i])
+	for i := 0; i < len(dirNames); i++ {
+		location := NewDiskLocation(dirNames[i], maxVolumeCounts[i])
 		location.loadExistingVolumes(needleMapKind)
 		s.Locations = append(s.Locations, location)
 	}
@@ -46,7 +47,7 @@ func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts
 	s.DeletedVolumeIdChan = make(chan VolumeId, 3)
 	return
 }
-func (s *Store) AddVolume(volumeId VolumeId, collection string, needleMapKind NeedleMapType, replicaPlacement string, ttlString string, preallocate int64) error {
+func (s *Store) AddVolume(volumeId VolumeId, collection string, needleMapKind NeedleMapType, replicaPlacement, ttlString string, preallocate int64) error {
 	rt, e := NewReplicaPlacementFromString(replicaPlacement)
 	if e != nil {
 		return e
@@ -133,6 +134,7 @@ func (s *Store) Status() []*VolumeInfo {
 func (s *Store) SetDataCenter(dataCenter string) {
 	s.dataCenter = dataCenter
 }
+
 func (s *Store) SetRack(rack string) {
 	s.rack = rack
 }
@@ -163,7 +165,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				}
 				volumeMessages = append(volumeMessages, volumeMessage)
 			} else {
-				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
+				if v.expiredLongEnough(MaxTtlVolumeRemovalDelay) {
 					location.deleteVolumeById(v.Id)
 					glog.V(0).Infoln("volume", v.Id, "is deleted.")
 				} else {

@@ -17,29 +17,30 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func ReplicatedWrite(masterNode string, s *storage.Store,
+func ReplicatedWrite(masterNode string, store *storage.Store,
 	volumeId storage.VolumeId, needle *storage.Needle,
 	r *http.Request) (size uint32, errorStatus string) {
 
 	//check JWT
 	jwt := security.GetJwt(r)
 
-	ret, err := s.Write(volumeId, needle)
-	needToReplicate := !s.HasVolume(volumeId)
+	ret, err := store.Write(volumeId, needle)
+	needToReplicate := !store.HasVolume(volumeId)
 	if err != nil {
 		errorStatus = "Failed to write to local disk (" + err.Error() + ")"
 		size = ret
 		return
 	}
 
-	needToReplicate = needToReplicate || s.GetVolume(volumeId).NeedToReplicate()
+	volume := store.GetVolume(volumeId)
+	needToReplicate = needToReplicate || volume.NeedToReplicate()
 	if !needToReplicate {
-		needToReplicate = s.GetVolume(volumeId).NeedToReplicate()
+		needToReplicate = volume.NeedToReplicate()
 	}
 	if needToReplicate { //send to other replica locations
 		if r.FormValue("type") != "replicate" {
 
-			if err = distributedOperation(masterNode, s, volumeId, func(location operation.Location) error {
+			if err = distributedOperation(masterNode, store, volumeId, func(location operation.Location) error {
 				u := url.URL{
 					Scheme: "http",
 					Host:   location.Url,

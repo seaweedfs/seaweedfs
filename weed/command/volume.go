@@ -125,11 +125,11 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	if *v.publicUrl == "" {
 		*v.publicUrl = *v.ip + ":" + strconv.Itoa(*v.publicPort)
 	}
-	isSeperatedPublicPort := *v.publicPort != *v.port
+	isSeparatedPublicPort := *v.publicPort != *v.port
 
 	volumeMux := http.NewServeMux()
 	publicVolumeMux := volumeMux
-	if isSeperatedPublicPort {
+	if isSeparatedPublicPort {
 		publicVolumeMux = http.NewServeMux()
 	}
 
@@ -160,7 +160,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)
 	}
-	if isSeperatedPublicPort {
+	if isSeparatedPublicPort {
 		publicListeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.publicPort)
 		glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "public at", publicListeningAddress)
 		publicListener, e := util.NewListener(publicListeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
