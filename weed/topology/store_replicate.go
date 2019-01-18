@@ -135,7 +135,7 @@ type RemoteResult struct {
 func distributedOperation(masterNode string, store *storage.Store, volumeId storage.VolumeId, op func(location operation.Location) error) error {
 	if lookupResult, lookupErr := operation.Lookup(masterNode, volumeId.String()); lookupErr == nil {
 		length := 0
-		selfUrl := (store.Ip + ":" + strconv.Itoa(store.Port))
+		selfUrl := store.Ip + ":" + strconv.Itoa(store.Port)
 		results := make(chan RemoteResult)
 		for _, location := range lookupResult.Locations {
 			if location.Url != selfUrl {

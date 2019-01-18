@@ -2,12 +2,11 @@ package storage
 
 import (
 	"fmt"
-	"os"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
+	"os"
 )
 
 const (

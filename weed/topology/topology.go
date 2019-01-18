@@ -101,12 +101,12 @@ func (t *Topology) HasWritableVolume(option *VolumeGrowOption) bool {
 }
 
 func (t *Topology) PickForWrite(count uint64, option *VolumeGrowOption) (string, uint64, *DataNode, error) {
-	vid, count, datanodes, err := t.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl).PickForWrite(count, option)
-	if err != nil || datanodes.Length() == 0 {
+	vid, count, dataNodes, err := t.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl).PickForWrite(count, option)
+	if err != nil || dataNodes.Length() == 0 {
 		return "", 0, nil, errors.New("No writable volumes available!")
 	}
 	fileId, count := t.Sequence.NextFileId(count)
-	return storage.NewFileId(*vid, fileId, rand.Uint32()).String(), count, datanodes.Head(), nil
+	return storage.NewFileId(*vid, fileId, rand.Uint32()).String(), count, dataNodes.Head(), nil
 }
 
 func (t *Topology) GetVolumeLayout(collectionName string, rp *storage.ReplicaPlacement, ttl *storage.TTL) *VolumeLayout {

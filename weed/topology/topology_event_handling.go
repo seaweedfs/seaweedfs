@@ -20,7 +20,7 @@ func (t *Topology) StartRefreshWritableVolumes(garbageThreshold float64, preallo
 	}()
 	go func(garbageThreshold float64) {
 		c := time.Tick(15 * time.Minute)
-		for _ = range c {
+		for range c {
 			if t.IsLeader() {
 				t.Vacuum(garbageThreshold, preallocate)
 			}

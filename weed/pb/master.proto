@@ -51,6 +51,22 @@ message VolumeInformationMessage {
     uint32 replica_placement = 8;
     uint32 version = 9;
     uint32 ttl = 10;
+
+    uint64 memory_total = 11;
+    uint64 memory_free = 12;
+
+    uint64 disk_watermark = 13;
+    uint64 disk_total = 14;
+    uint64 disk_free = 15;
+    string disk_device = 16;
+    string disk_mount_point = 17;
+
+    double load1 = 18;
+    double load5 = 19;
+    double load15 = 20;
+
+    double process_cpu_usage = 21;
+    uint64 process_rss = 22;
 }
 
 message Empty {

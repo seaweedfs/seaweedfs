@@ -61,9 +61,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			dcName, rackName := t.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
 			dc := t.GetOrCreateDataCenter(dcName)
 			rack := dc.GetOrCreateRack(rackName)
-			dn = rack.GetOrCreateDataNode(heartbeat.Ip,
-				int(heartbeat.Port), heartbeat.PublicUrl,
-				int(heartbeat.MaxVolumeCount))
+			dn = rack.GetOrCreateDataNode(heartbeat.Ip, int(heartbeat.Port), heartbeat.PublicUrl, int(heartbeat.MaxVolumeCount))
 			glog.V(0).Infof("added volume server %v:%d", heartbeat.GetIp(), heartbeat.GetPort())
 			if err := stream.Send(&master_pb.HeartbeatResponse{
 				VolumeSizeLimit: uint64(ms.volumeSizeLimitMB) * 1024 * 1024,

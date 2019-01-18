@@ -18,6 +18,21 @@ type VolumeInfo struct {
 	DeleteCount      int
 	DeletedByteCount uint64
 	ReadOnly         bool
+
+	MemoryTotal uint64
+	MemoryFree  uint64
+
+	DiskWatermark uint64
+	DiskTotal     uint64
+	DiskFree      uint64
+
+	DiskDevice      string
+	DiskMountPoint  string
+	Load1           float64
+	Load5           float64
+	Load15          float64
+	ProcessCpuUsage float64
+	ProcessRss      uint64
 }
 
 func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err error) {
@@ -30,6 +45,20 @@ func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err er
 		DeletedByteCount: m.DeletedByteCount,
 		ReadOnly:         m.ReadOnly,
 		Version:          Version(m.Version),
+
+		MemoryTotal: m.MemoryTotal,
+		MemoryFree:  m.MemoryFree,
+
+		DiskWatermark:   m.DiskWatermark,
+		DiskTotal:       m.DiskTotal,
+		DiskFree:        m.DiskFree,
+		DiskDevice:      m.DiskDevice,
+		DiskMountPoint:  m.DiskMountPoint,
+		Load1:           m.Load1,
+		Load5:           m.Load5,
+		Load15:          m.Load15,
+		ProcessCpuUsage: m.ProcessCpuUsage,
+		ProcessRss:      m.ProcessRss,
 	}
 	rp, e := NewReplicaPlacementFromByte(byte(m.ReplicaPlacement))
 	if e != nil {

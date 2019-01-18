@@ -27,6 +27,8 @@ type Store struct {
 	NeedleMapType       NeedleMapType
 	NewVolumeIdChan     chan VolumeId
 	DeletedVolumeIdChan chan VolumeId
+
+	DiskWatermark uint64
 }
 
 func (s *Store) String() (str string) {
@@ -143,14 +145,23 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var volumeMessages []*master_pb.VolumeInformationMessage
 	maxVolumeCount := 0
 	var maxFileKey NeedleId
+
+	memTotal, memFree, _ := MemoryStat()
+	load1, load5, load15, _ := LoadStat()
+	_, processCpuUsage, proessRss, _ := ProcessStat()
+
 	for _, location := range s.Locations {
 		maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
 		location.Lock()
+
+		diskTotal, diskFree, diskDevice, diskMountPoint, _ := DiskStat(location.Directory)
+
 		for k, v := range location.volumes {
 			if maxFileKey < v.nm.MaxFileKey() {
 				maxFileKey = v.nm.MaxFileKey()
 			}
 			if !v.expired(s.VolumeSizeLimit) {
+
 				volumeMessage := &master_pb.VolumeInformationMessage{
 					Id:               uint32(k),
 					Size:             uint64(v.Size()),
@@ -162,6 +173,20 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 					ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
 					Version:          uint32(v.Version()),
 					Ttl:              v.Ttl.ToUint32(),
+
+					MemoryTotal: memTotal,
+					MemoryFree:  memFree,
+
+					DiskWatermark:   s.DiskWatermark,
+					DiskTotal:       diskTotal,
+					DiskFree:        diskFree,
+					DiskDevice:      diskDevice,
+					DiskMountPoint:  diskMountPoint,
+					Load1:           load1,
+					Load5:           load5,
+					Load15:          load15,
+					ProcessCpuUsage: processCpuUsage,
+					ProcessRss:      proessRss,
 				}
 				volumeMessages = append(volumeMessages, volumeMessage)
 			} else {
