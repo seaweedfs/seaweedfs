@@ -25,8 +25,8 @@ func NewGrpcServer() *grpc.Server {
 }
 
 func GrpcDial(address string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
-	opts = append(opts, grpc.WithBlock())
-	opts = append(opts, grpc.WithTimeout(time.Duration(5*time.Second)))
+	// opts = append(opts, grpc.WithBlock())
+	// opts = append(opts, grpc.WithTimeout(time.Duration(5*time.Second)))
 	opts = append(opts, grpc.WithInsecure())
 	opts = append(opts, grpc.WithKeepaliveParams(keepalive.ClientParameters{
 		Time:    30 * time.Second, // client ping server if no activity for this long
