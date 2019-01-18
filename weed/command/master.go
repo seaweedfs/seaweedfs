@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc/reflection"
 )
@@ -97,7 +97,7 @@ func runMaster(cmd *Command, args []string) bool {
 		if grpcPort == 0 {
 			grpcPort = *mport + 10000
 		}
-		grpcL, err := util.NewListener(*masterBindIp + ":"+strconv.Itoa(grpcPort), 0)
+		grpcL, err := util.NewListener(*masterBindIp+":"+strconv.Itoa(grpcPort), 0)
 		if err != nil {
 			glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 		}
