@@ -7,6 +7,7 @@ services:
       dockerfile: Dockerfile.go_build
     ports:
     - 9333:9333
+    - 19333:19333
     command: "master"
   volume:
     build:

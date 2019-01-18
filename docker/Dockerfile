@@ -15,7 +15,9 @@ EXPOSE 8080
 EXPOSE 18888
 # filer server http port
 EXPOSE 8888
-# master server shared gprc+http port
+# master server shared gprc port
+EXPOSE 19333
+# master server shared http port
 EXPOSE 9333
 # s3 server http port
 EXPOSE 8333

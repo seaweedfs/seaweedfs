@@ -5,6 +5,7 @@ services:
     image: chrislusf/seaweedfs # use a remote image
     ports:
     - 9333:9333
+    - 19333:19333
     command: "master"
   volume:
     image: chrislusf/seaweedfs # use a remote image
