@@ -49,8 +49,9 @@ func (mc *MasterClient) KeepConnectedToMaster() {
 
 func (mc *MasterClient) tryAllMasters() {
 	for _, master := range mc.masters {
-		glog.V(0).Infof("Connecting to %v", master)
-		withMasterClient(master, func(client master_pb.SeaweedClient) error {
+		glog.V(0).Infof("Connecting to master %v", master)
+		gprcErr := withMasterClient(master, func(client master_pb.SeaweedClient) error {
+
 			stream, err := client.KeepConnected(context.Background())
 			if err != nil {
 				glog.V(0).Infof("failed to keep connected to %s: %v", master, err)
@@ -88,13 +89,22 @@ func (mc *MasterClient) tryAllMasters() {
 
 		})
 
+		if gprcErr != nil {
+			glog.V(0).Infof("%s failed to connect with master %v: %v", mc.name, master, gprcErr)
+		}
+
 		mc.currentMaster = ""
 	}
 }
 
 func withMasterClient(master string, fn func(client master_pb.SeaweedClient) error) error {
 
-	grpcConnection, err := util.GrpcDial(master)
+	masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(master, 0)
+	if parseErr != nil {
+		return fmt.Errorf("failed to parse master grpc %v", master)
+	}
+
+	grpcConnection, err := util.GrpcDial(masterGrpcAddress)
 	if err != nil {
 		return fmt.Errorf("fail to dial %s: %v", master, err)
 	}

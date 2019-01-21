@@ -13,7 +13,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
-	"github.com/soheilhy/cmux"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -32,6 +31,7 @@ var cmdMaster = &Command{
 
 var (
 	mport                   = cmdMaster.Flag.Int("port", 9333, "http listen port")
+	mGrpcPort               = cmdMaster.Flag.Int("port.grpc", 0, "grpc server listen port, default to http port + 10000")
 	masterIp                = cmdMaster.Flag.String("ip", "localhost", "master <ip>|<server> address")
 	masterBindIp            = cmdMaster.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	metaFolder              = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
@@ -79,7 +79,7 @@ func runMaster(cmd *Command, args []string) bool {
 
 	glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", listeningAddress)
 
-	listener, e := util.NewListener(listeningAddress, 0)
+	masterListener, e := util.NewListener(listeningAddress, 0)
 	if e != nil {
 		glog.Fatalf("Master startup error: %v", e)
 	}
@@ -91,23 +91,28 @@ func runMaster(cmd *Command, args []string) bool {
 		ms.SetRaftServer(raftServer)
 	}()
 
-	// start grpc and http server
-	m := cmux.New(listener)
+	go func() {
+		// starting grpc server
+		grpcPort := *mGrpcPort
+		if grpcPort == 0 {
+			grpcPort = *mport + 10000
+		}
+		grpcL, err := util.NewListener(*masterBindIp+":"+strconv.Itoa(grpcPort), 0)
+		if err != nil {
+			glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
+		}
+		// Create your protocol servers.
+		grpcS := util.NewGrpcServer()
+		master_pb.RegisterSeaweedServer(grpcS, ms)
+		reflection.Register(grpcS)
 
-	grpcL := m.Match(cmux.HTTP2HeaderField("content-type", "application/grpc"))
-	httpL := m.Match(cmux.Any())
+		glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.VERSION, *masterBindIp, grpcPort)
+		grpcS.Serve(grpcL)
+	}()
 
-	// Create your protocol servers.
-	grpcS := util.NewGrpcServer()
-	master_pb.RegisterSeaweedServer(grpcS, ms)
-	reflection.Register(grpcS)
-
+	// start http server
 	httpS := &http.Server{Handler: r}
-
-	go grpcS.Serve(grpcL)
-	go httpS.Serve(httpL)
-
-	if err := m.Serve(); err != nil {
+	if err := httpS.Serve(masterListener); err != nil {
 		glog.Fatalf("master server failed to serve: %v", err)
 	}
 

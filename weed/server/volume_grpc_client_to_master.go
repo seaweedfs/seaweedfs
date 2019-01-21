@@ -27,7 +27,12 @@ func (vs *VolumeServer) heartbeat() {
 			if newLeader != "" {
 				master = newLeader
 			}
-			newLeader, err = vs.doHeartbeat(master, time.Duration(vs.pulseSeconds)*time.Second)
+			masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(master, 0)
+			if parseErr != nil {
+				glog.V(0).Infof("failed to parse master grpc %v", masterGrpcAddress)
+				continue
+			}
+			newLeader, err = vs.doHeartbeat(master, masterGrpcAddress, time.Duration(vs.pulseSeconds)*time.Second)
 			if err != nil {
 				glog.V(0).Infof("heartbeat error: %v", err)
 				time.Sleep(time.Duration(vs.pulseSeconds) * time.Second)
@@ -36,9 +41,9 @@ func (vs *VolumeServer) heartbeat() {
 	}
 }
 
-func (vs *VolumeServer) doHeartbeat(masterNode string, sleepInterval time.Duration) (newLeader string, err error) {
+func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, sleepInterval time.Duration) (newLeader string, err error) {
 
-	grpcConection, err := util.GrpcDial(masterNode)
+	grpcConection, err := util.GrpcDial(masterGrpcAddress)
 	if err != nil {
 		return "", fmt.Errorf("fail to dial %s : %v", masterNode, err)
 	}
