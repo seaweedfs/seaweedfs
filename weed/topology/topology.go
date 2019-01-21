@@ -33,7 +33,7 @@ type Topology struct {
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int) *Topology {
 	t := &Topology{}
 	t.id = NodeId(id)
-	t.nodeType = "Topology"
+	t.nodeType = NodeTypeTopology
 	t.NodeImpl.value = t
 	t.children = make(map[NodeId]Node)
 	t.collectionMap = util.NewConcurrentReadMap()

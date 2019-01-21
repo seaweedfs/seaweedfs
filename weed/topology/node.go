@@ -109,13 +109,13 @@ func (n *NodeImpl) RandomlyPickNodes(numberOfNodes int, filterFirstNodeFn func(d
 }
 
 func (n *NodeImpl) IsDataNode() bool {
-	return n.nodeType == "DataNode"
+	return n.nodeType == NodeTypeDataNode
 }
 func (n *NodeImpl) IsRack() bool {
-	return n.nodeType == "Rack"
+	return n.nodeType == NodeTypeRack
 }
 func (n *NodeImpl) IsDataCenter() bool {
-	return n.nodeType == "DataCenter"
+	return n.nodeType == NodeTypeDataCenter
 }
 func (n *NodeImpl) String() string {
 	if n.parent != nil {

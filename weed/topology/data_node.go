@@ -20,7 +20,7 @@ type DataNode struct {
 func NewDataNode(id string) *DataNode {
 	s := &DataNode{}
 	s.id = NodeId(id)
-	s.nodeType = "DataNode"
+	s.nodeType = NodeTypeDataNode
 	s.volumes = make(map[storage.VolumeId]storage.VolumeInfo)
 	s.NodeImpl.value = s
 	return s

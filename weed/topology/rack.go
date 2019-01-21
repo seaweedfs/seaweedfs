@@ -12,7 +12,7 @@ type Rack struct {
 func NewRack(id string) *Rack {
 	r := &Rack{}
 	r.id = NodeId(id)
-	r.nodeType = "Rack"
+	r.nodeType = NodeTypeRack
 	r.children = make(map[NodeId]Node)
 	r.NodeImpl.value = r
 	return r
