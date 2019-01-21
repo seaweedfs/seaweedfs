@@ -71,7 +71,14 @@ func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err er
 
 func (vi VolumeInfo) String() string {
 	return fmt.Sprintf("Id:%d, Size:%d, ReplicaPlacement:%s, Collection:%s, Version:%v, FileCount:%d, DeleteCount:%d, DeletedByteCount:%d, ReadOnly:%v",
-		vi.Id, vi.Size, vi.ReplicaPlacement, vi.Collection, vi.Version, vi.FileCount, vi.DeleteCount, vi.DeletedByteCount, vi.ReadOnly)
+		vi.Id, vi.Size, vi.ReplicaPlacement, vi.Collection, vi.Version, vi.FileCount, vi.DeleteCount, vi.DeletedByteCount, vi.IsReadOnly())
+}
+
+// IsReadOnly tells the current vi is readonly or not, including the following conditions:
+// 1. the data file is readonly;
+// 2. the disk free space is under the watermark;
+func (vi VolumeInfo) IsReadOnly() bool {
+	return vi.ReadOnly || vi.DiskWatermark > 0 && vi.DiskFree <= vi.DiskWatermark
 }
 
 /*VolumesInfo sorting*/

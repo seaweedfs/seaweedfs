@@ -56,7 +56,7 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	// glog.V(4).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
 	for _, dn := range vl.vid2location[v.Id].list {
 		if vInfo, err := dn.GetVolumesById(v.Id); err == nil {
-			if vInfo.ReadOnly {
+			if vInfo.IsReadOnly() {
 				glog.V(3).Infof("vid %d removed from writable", v.Id)
 				vl.removeFromWritable(v.Id)
 				vl.readonlyVolumes[v.Id] = true
@@ -111,7 +111,7 @@ func (vl *VolumeLayout) isOversized(v *storage.VolumeInfo) bool {
 func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool {
 	return !vl.isOversized(v) &&
 		v.Version == storage.CurrentVersion &&
-		!v.ReadOnly
+		!v.IsReadOnly()
 }
 
 func (vl *VolumeLayout) isEmpty() bool {
@@ -164,13 +164,11 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (*s
 	for _, v := range vl.writables {
 		volumeLocationList := vl.vid2location[v]
 		for _, dn := range volumeLocationList.list {
-			if dn.GetDataCenter().Id() == NodeId(option.DataCenter) {
-				if option.Rack != "" && dn.GetRack().Id() != NodeId(option.Rack) {
+			if option.MatchesDataCenter(dn) {
+				if !option.MatchesRackDataNode(dn) {
 					continue
 				}
-				if option.DataNode != "" && dn.Id() != NodeId(option.DataNode) {
-					continue
-				}
+
 				counter++
 				if rand.Intn(counter) < 1 {
 					vid, locationList = v, volumeLocationList
@@ -191,13 +189,11 @@ func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) int {
 	counter := 0
 	for _, v := range vl.writables {
 		for _, dn := range vl.vid2location[v].list {
-			if dn.GetDataCenter().Id() == NodeId(option.DataCenter) {
-				if option.Rack != "" && dn.GetRack().Id() != NodeId(option.Rack) {
+			if option.MatchesDataCenter(dn) {
+				if !option.MatchesRackDataNode(dn) {
 					continue
 				}
-				if option.DataNode != "" && dn.Id() != NodeId(option.DataNode) {
-					continue
-				}
+
 				counter++
 			}
 		}

@@ -38,7 +38,7 @@ func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) (isNew bool) {
 	if _, ok := dn.volumes[v.Id]; !ok {
 		dn.volumes[v.Id] = v
 		dn.UpAdjustVolumeCountDelta(1)
-		if !v.ReadOnly {
+		if !v.IsReadOnly() {
 			dn.UpAdjustActiveVolumeCountDelta(1)
 		}
 		dn.UpAdjustMaxVolumeId(v.Id)

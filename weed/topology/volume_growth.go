@@ -35,6 +35,16 @@ func (o *VolumeGrowOption) String() string {
 	return fmt.Sprintf("Collection:%s, ReplicaPlacement:%v, Ttl:%v, DataCenter:%s, Rack:%s, DataNode:%s", o.Collection, o.ReplicaPlacement, o.Ttl, o.DataCenter, o.Rack, o.DataNode)
 }
 
+func (o *VolumeGrowOption) MatchesDataCenter(dn *DataNode) bool {
+	return o.DataCenter == "" || dn.GetDataCenter().Id() == NodeId(o.DataCenter)
+}
+
+func (o *VolumeGrowOption) MatchesRackDataNode(dn *DataNode) bool {
+	matchesRack := o.Rack == "" || dn.GetRack().Id() == NodeId(o.Rack)
+	matchesDataNode := o.DataNode == "" || dn.Id() == NodeId(o.DataNode)
+	return matchesRack && matchesDataNode
+}
+
 func NewDefaultVolumeGrowth() *VolumeGrowth {
 	return &VolumeGrowth{}
 }
