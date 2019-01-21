@@ -50,20 +50,22 @@ var cmdServer = &Command{
 }
 
 var (
-	serverIp                      = cmdServer.Flag.String("ip", "localhost", "ip or server name")
-	serverBindIp                  = cmdServer.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
-	serverMaxCpu                  = cmdServer.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
-	serverTimeout                 = cmdServer.Flag.Int("idleTimeout", 30, "connection idle seconds")
-	serverDataCenter              = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
-	serverRack                    = cmdServer.Flag.String("rack", "", "current volume server's rack name")
-	serverWhiteListOption         = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	serverPeers                   = cmdServer.Flag.String("master.peers", "", "all master nodes in comma separated ip:masterPort list")
-	serverSecureKey               = cmdServer.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
-	serverGarbageThreshold        = cmdServer.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
-	masterPort                    = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
-	masterGrpcPort                = cmdServer.Flag.Int("master.port.grpc", 0, "master grpc server listen port, default to http port + 10000")
-	masterMetaFolder              = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
-	masterVolumeSizeLimitMB       = cmdServer.Flag.Uint("master.volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
+	serverIp                 = cmdServer.Flag.String("ip", "localhost", "ip or server name")
+	serverBindIp             = cmdServer.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
+	serverMaxCpu             = cmdServer.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
+	serverTimeout            = cmdServer.Flag.Int("idleTimeout", 30, "connection idle seconds")
+	serverDataCenter         = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
+	serverRack               = cmdServer.Flag.String("rack", "", "current volume server's rack name")
+	serverWhiteListOption    = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
+	serverPeers              = cmdServer.Flag.String("master.peers", "", "all master nodes in comma separated ip:masterPort list")
+	serverSecureKey          = cmdServer.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
+	serverGarbageThreshold   = cmdServer.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
+	masterPort               = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
+	masterGrpcPort           = cmdServer.Flag.Int("master.port.grpc", 0, "master grpc server listen port, default to http port + 10000")
+	masterMetaFolder         = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
+	masterVolumeSizeLimitMib = cmdServer.Flag.Uint("master.volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
+	masterVolumeSizeLimitArg = cmdMaster.Flag.String("master.volumeSizeLimit", "", "Master stops directing writes to oversized volumes. (eg: 30G, 20G)")
+
 	masterVolumePreallocate       = cmdServer.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
 	masterDefaultReplicaPlacement = cmdServer.Flag.String("master.defaultReplicaPlacement", "000", "Default replication type if not specified.")
 	volumeDataFolders             = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
@@ -134,9 +136,7 @@ func runServer(cmd *Command, args []string) bool {
 
 	folders := strings.Split(*volumeDataFolders, ",")
 
-	if *masterVolumeSizeLimitMB > 30*1000 {
-		glog.Fatalf("masterVolumeSizeLimitMB should be less than 30000")
-	}
+	volumeSizeLimit := util.ParseVolumeSizeLimit(*masterVolumeSizeLimitMib, *masterVolumeSizeLimitArg)
 
 	if *masterMetaFolder == "" {
 		*masterMetaFolder = folders[0]
@@ -168,7 +168,7 @@ func runServer(cmd *Command, args []string) bool {
 	go func() {
 		r := mux.NewRouter()
 		ms := weed_server.NewMasterServer(r, *masterPort, *masterMetaFolder,
-			*masterVolumeSizeLimitMB, *masterVolumePreallocate,
+			volumeSizeLimit, *masterVolumePreallocate,
 			*pulseSeconds, *masterDefaultReplicaPlacement, *serverGarbageThreshold,
 			serverWhiteList, *serverSecureKey,
 		)

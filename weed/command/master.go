@@ -37,6 +37,7 @@ var (
 	metaFolder              = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
 	masterPeers             = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094")
 	volumeSizeLimitMiB      = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes. (MiB)")
+	volumeSizeLimitArg      = cmdMaster.Flag.String("volumeSizeLimit", "", "Master stops directing writes to oversized volumes. (eg: 30G, 20G)")
 	volumePreallocate       = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
 	mpulse                  = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	defaultReplicaPlacement = cmdMaster.Flag.String("defaultReplication", "000", "Default replication type if not specified.")
@@ -64,13 +65,12 @@ func runMaster(cmd *Command, args []string) bool {
 	if *masterWhiteListOption != "" {
 		masterWhiteList = strings.Split(*masterWhiteListOption, ",")
 	}
-	if *volumeSizeLimitMiB > 30*1000 {
-		glog.Fatalf("volumeSizeLimitMB should be smaller than 30000")
-	}
+
+	volumeSizeLimit := util.ParseVolumeSizeLimit(*volumeSizeLimitMiB, *volumeSizeLimitArg)
 
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, *mport, *metaFolder,
-		*volumeSizeLimitMiB, *volumePreallocate,
+		volumeSizeLimit, *volumePreallocate,
 		*mpulse, *defaultReplicaPlacement, *garbageThreshold,
 		masterWhiteList, *masterSecureKey,
 	)

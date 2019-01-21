@@ -20,7 +20,7 @@ import (
 type MasterServer struct {
 	port                    int
 	metaFolder              string
-	volumeSizeLimitMiB      uint
+	volumeSizeLimit         uint64
 	preallocate             int64
 	pulseSeconds            int
 	defaultReplicaPlacement string
@@ -39,7 +39,7 @@ type MasterServer struct {
 }
 
 func NewMasterServer(r *mux.Router, port int, metaFolder string,
-	volumeSizeLimitMiB uint,
+	volumeSizeLimit uint64,
 	preallocate bool,
 	pulseSeconds int,
 	defaultReplicaPlacement string,
@@ -50,11 +50,11 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 
 	var preallocateSize int64
 	if preallocate {
-		preallocateSize = int64(volumeSizeLimitMiB) * (1 << 20)
+		preallocateSize = int64(volumeSizeLimit) * (1 << 20)
 	}
 	ms := &MasterServer{
 		port:                    port,
-		volumeSizeLimitMiB:      volumeSizeLimitMiB,
+		volumeSizeLimit:         volumeSizeLimit,
 		preallocate:             preallocateSize,
 		pulseSeconds:            pulseSeconds,
 		defaultReplicaPlacement: defaultReplicaPlacement,
@@ -63,9 +63,9 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
 	seq := sequence.NewMemorySequencer()
-	ms.Topo = topology.NewTopology("topo", seq, uint64(volumeSizeLimitMiB)*1024*1024, pulseSeconds)
+	ms.Topo = topology.NewTopology("topo", seq, uint64(volumeSizeLimit), pulseSeconds)
 	ms.vg = topology.NewDefaultVolumeGrowth()
-	glog.V(0).Infoln("Volume Size Limit is", volumeSizeLimitMiB, "MiB")
+	glog.V(0).Infoln("Volume Size Limit is", volumeSizeLimit)
 
 	ms.guard = security.NewGuard(whiteList, secureKey)
 
