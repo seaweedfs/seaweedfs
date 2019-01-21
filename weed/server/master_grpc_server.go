@@ -64,7 +64,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			dn = rack.GetOrCreateDataNode(heartbeat.Ip, int(heartbeat.Port), heartbeat.PublicUrl, int(heartbeat.MaxVolumeCount))
 			glog.V(0).Infof("added volume server %v:%d", heartbeat.GetIp(), heartbeat.GetPort())
 			if err := stream.Send(&master_pb.HeartbeatResponse{
-				VolumeSizeLimit: uint64(ms.volumeSizeLimitMB) * 1024 * 1024,
+				VolumeSizeLimit: uint64(ms.volumeSizeLimitMiB) * 1024 * 1024,
 				SecretKey:       string(ms.guard.SecretKey),
 			}); err != nil {
 				return err

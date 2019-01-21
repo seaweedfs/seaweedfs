@@ -74,7 +74,8 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 	if err == nil {
 		if count, err = strconv.Atoi(r.FormValue("count")); err == nil {
 			if ms.Topo.FreeSpace() < count*option.ReplicaPlacement.GetCopyCount() {
-				err = errors.New("Only " + strconv.Itoa(ms.Topo.FreeSpace()) + " volumes left! Not enough for " + strconv.Itoa(count*option.ReplicaPlacement.GetCopyCount()))
+				err = errors.New("Only " + strconv.Itoa(ms.Topo.FreeSpace()) + " volumes left! Not enough for " +
+					strconv.Itoa(count*option.ReplicaPlacement.GetCopyCount()))
 			} else {
 				count, err = ms.vg.GrowByCountAndType(count, option, ms.Topo)
 			}
@@ -106,11 +107,9 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 	collection := r.FormValue("collection")
 	machines := ms.Topo.Lookup(collection, volumeId)
 	if machines != nil && len(machines) > 0 {
-		var url string
+		url := util.NormalizeUrl(machines[rand.Intn(len(machines))].PublicUrl) + r.URL.Path
 		if r.URL.RawQuery != "" {
-			url = util.NormalizeUrl(machines[rand.Intn(len(machines))].PublicUrl) + r.URL.Path + "?" + r.URL.RawQuery
-		} else {
-			url = util.NormalizeUrl(machines[rand.Intn(len(machines))].PublicUrl) + r.URL.Path
+			url += "?" + r.URL.RawQuery
 		}
 		http.Redirect(w, r, url, http.StatusMovedPermanently)
 	} else {
@@ -143,10 +142,7 @@ func (ms *MasterServer) HasWritableVolume(option *topology.VolumeGrowOption) boo
 }
 
 func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGrowOption, error) {
-	replicationString := r.FormValue("replication")
-	if replicationString == "" {
-		replicationString = ms.defaultReplicaPlacement
-	}
+	replicationString := util.EmptyThen(r.FormValue("replication"), ms.defaultReplicaPlacement)
 	replicaPlacement, err := storage.NewReplicaPlacementFromString(replicationString)
 	if err != nil {
 		return nil, err
