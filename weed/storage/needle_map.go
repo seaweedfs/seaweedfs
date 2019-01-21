@@ -20,6 +20,19 @@ const (
 	NeedleMapBtree
 )
 
+func ParseVolumeNeedleMapKind(indexType string) NeedleMapType {
+	switch indexType {
+	case "leveldb":
+		return NeedleMapLevelDb
+	case "boltdb":
+		return NeedleMapBoltDb
+	case "btree":
+		return NeedleMapBtree
+	default:
+		return NeedleMapInMemory
+	}
+}
+
 type NeedleMapper interface {
 	Put(key NeedleId, offset Offset, size uint32) error
 	Get(key NeedleId) (element *needle.NeedleValue, ok bool)

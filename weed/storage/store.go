@@ -37,8 +37,9 @@ func (s *Store) String() (str string) {
 	return
 }
 
-func NewStore(port int, ip, publicUrl string, dirNames []string, maxVolumeCounts []int, needleMapKind NeedleMapType) (s *Store) {
-	s = &Store{Port: port, Ip: ip, PublicUrl: publicUrl, NeedleMapType: needleMapKind}
+func NewStore(port int, ip, publicUrl string, dirNames []string, maxVolumeCounts []int, needleMapKind NeedleMapType,
+	diskWaterMark uint64) (s *Store) {
+	s = &Store{Port: port, Ip: ip, PublicUrl: publicUrl, NeedleMapType: needleMapKind, DiskWatermark: diskWaterMark}
 	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirNames); i++ {
 		location := NewDiskLocation(dirNames[i], maxVolumeCounts[i])

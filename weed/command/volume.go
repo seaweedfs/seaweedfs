@@ -14,6 +14,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/dustin/go-humanize"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -41,6 +42,7 @@ type VolumeServerOptions struct {
 	readRedirect          *bool
 	cpuProfile            *string
 	memProfile            *string
+	diskWaterMark         *string
 }
 
 func init() {
@@ -61,6 +63,7 @@ func init() {
 	v.readRedirect = cmdVolume.Flag.Bool("read.redirect", true, "Redirect moved or non-local volumes.")
 	v.cpuProfile = cmdVolume.Flag.String("cpuprofile", "", "cpu profile output file")
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
+	v.diskWaterMark = cmdVolume.Flag.String("diskWaterMark", "10g", "disk watermark low to switch volume to read-only(eg 5G,100M,5GiB,100MiB)")
 }
 
 var cmdVolume = &Command{
@@ -133,17 +136,14 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		publicVolumeMux = http.NewServeMux()
 	}
 
-	volumeNeedleMapKind := storage.NeedleMapInMemory
-	switch *v.indexType {
-	case "leveldb":
-		volumeNeedleMapKind = storage.NeedleMapLevelDb
-	case "boltdb":
-		volumeNeedleMapKind = storage.NeedleMapBoltDb
-	case "btree":
-		volumeNeedleMapKind = storage.NeedleMapBtree
-	}
+	volumeNeedleMapKind := storage.ParseVolumeNeedleMapKind(*v.indexType)
 
 	masters := *v.masters
+
+	diskWaterMarkBytes, err := humanize.ParseBytes(*v.diskWaterMark)
+	if err != nil {
+		glog.Fatalf("Check diskWaterMark %s error:%v ", *v.diskWaterMark, err)
+	}
 
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.publicUrl,
@@ -151,8 +151,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		volumeNeedleMapKind,
 		strings.Split(masters, ","), *v.pulseSeconds, *v.dataCenter, *v.rack,
 		v.whiteList,
-		*v.fixJpgOrientation, *v.readRedirect,
-	)
+		*v.fixJpgOrientation, *v.readRedirect, diskWaterMarkBytes)
 
 	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port)
 	glog.V(0).Infof("Start Seaweed volume server %s at %s", util.VERSION, listeningAddress)

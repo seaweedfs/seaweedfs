@@ -92,7 +92,7 @@ func init() {
 	serverOptions.v.fixJpgOrientation = cmdServer.Flag.Bool("volume.images.fix.orientation", false, "Adjust jpg orientation when uploading.")
 	serverOptions.v.readRedirect = cmdServer.Flag.Bool("volume.read.redirect", true, "Redirect moved or non-local volumes.")
 	serverOptions.v.publicUrl = cmdServer.Flag.String("volume.publicUrl", "", "publicly accessible address")
-
+	serverOptions.v.diskWaterMark = cmdVolume.Flag.String("volume.diskWaterMark", "10GB", "disk watermark low to switch volume to read-only(eg 5G,100M,5GiB,100MiB)")
 }
 
 func runServer(cmd *Command, args []string) bool {
