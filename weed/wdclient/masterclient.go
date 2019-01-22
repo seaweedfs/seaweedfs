@@ -63,6 +63,11 @@ func (mc *MasterClient) tryAllMasters() {
 				return err
 			}
 
+			if mc.currentMaster == "" {
+				glog.V(0).Infof("Connected to %v", master)
+				mc.currentMaster = master
+			}
+
 			for {
 				if volumeLocation, err := stream.Recv(); err != nil {
 					glog.V(0).Infof("failed to receive from %s: %v", master, err)
@@ -78,12 +83,6 @@ func (mc *MasterClient) tryAllMasters() {
 					for _, deletedVid := range volumeLocation.DeletedVids {
 						mc.deleteLocation(deletedVid, loc)
 					}
-
-					if mc.currentMaster == "" {
-						glog.V(0).Infof("Connected to %v", master)
-						mc.currentMaster = master
-					}
-
 				}
 			}
 
