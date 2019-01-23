@@ -63,7 +63,7 @@ var (
 	masterGrpcPort           = cmdServer.Flag.Int("master.port.grpc", 0, "master grpc server listen port, default to http port + 10000")
 	masterMetaFolder         = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
 	masterVolumeSizeLimitMib = cmdServer.Flag.Uint("master.volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
-	masterVolumeSizeLimitArg = cmdMaster.Flag.String("master.volumeSizeLimit", "", "Master stops directing writes to oversized volumes. (eg: 30G, 20G)")
+	masterVolumeSizeLimitArg = cmdServer.Flag.String("master.volumeSizeLimit", "", "Master stops directing writes to oversized volumes. (eg: 30G, 20G)")
 
 	masterVolumePreallocate       = cmdServer.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
 	masterDefaultReplicaPlacement = cmdServer.Flag.String("master.defaultReplicaPlacement", "000", "Default replication type if not specified.")

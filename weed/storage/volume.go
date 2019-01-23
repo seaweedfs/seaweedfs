@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"github.com/shirou/gopsutil/disk"
 	"os"
 	"path"
 	"sync"
@@ -134,13 +133,4 @@ func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
 		return true
 	}
 	return false
-}
-
-func IsUnderDiskWaterLevel(path string, waterLevel uint64) (uint64, bool, error) {
-	stat, e := disk.Usage(path)
-	if e != nil {
-		return 0, true, e
-	}
-
-	return stat.Free, stat.Free < waterLevel, nil
 }

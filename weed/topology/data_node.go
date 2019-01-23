@@ -83,14 +83,14 @@ func (dn *DataNode) GetVolumes() (ret []storage.VolumeInfo) {
 	return ret
 }
 
-func (dn *DataNode) GetVolumesById(id storage.VolumeId) (storage.VolumeInfo, error) {
+func (dn *DataNode) GetVolumesById(id storage.VolumeId) (storage.VolumeInfo, bool) {
 	dn.RLock()
 	defer dn.RUnlock()
 	vInfo, ok := dn.volumes[id]
 	if ok {
-		return vInfo, nil
+		return vInfo, true
 	} else {
-		return storage.VolumeInfo{}, fmt.Errorf("volumeInfo not found")
+		return storage.VolumeInfo{}, false
 	}
 }
 

@@ -76,8 +76,8 @@ func (vll *VolumeLocationList) Refresh(freshThreshHold int64) {
 func (vll *VolumeLocationList) Stats(vid storage.VolumeId, freshThreshHold int64) (size uint64, fileCount int) {
 	for _, dnl := range vll.list {
 		if dnl.LastSeen < freshThreshHold {
-			vinfo, err := dnl.GetVolumesById(vid)
-			if err == nil {
+			vinfo, ok := dnl.GetVolumesById(vid)
+			if ok {
 				return vinfo.Size - vinfo.DeletedByteCount, vinfo.FileCount - vinfo.DeleteCount
 			}
 		}
@@ -87,11 +87,8 @@ func (vll *VolumeLocationList) Stats(vid storage.VolumeId, freshThreshHold int64
 
 func (vll *VolumeLocationList) HasReadOnly(id storage.VolumeId) (hasReadOnly, hasValue bool) {
 	for _, dn := range vll.list {
-		vi, err := dn.GetVolumesById(id)
-		if err == nil {
-			hasValue = true
-		}
-
+		var vi storage.VolumeInfo
+		vi, hasValue = dn.GetVolumesById(id)
 		if vi.IsReadOnly() {
 			hasReadOnly = true
 			break
