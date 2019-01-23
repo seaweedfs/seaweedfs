@@ -76,14 +76,11 @@ var cmdFiler = &Command{
 }
 
 func runFiler(cmd *Command, args []string) bool {
-
 	f.startFiler()
-
 	return true
 }
 
 func (fo *FilerOptions) startFiler() {
-
 	defaultMux := http.NewServeMux()
 	publicVolumeMux := defaultMux
 
@@ -96,7 +93,7 @@ func (fo *FilerOptions) startFiler() {
 		defaultLevelDbDirectory = *fo.defaultLevelDbDirectory + "/filerdb"
 	}
 
-	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
+	fs, nfsErr := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
 		Masters:            strings.Split(*f.masters, ","),
 		Collection:         *fo.collection,
 		DefaultReplication: *fo.defaultReplicaPlacement,
@@ -108,21 +105,19 @@ func (fo *FilerOptions) startFiler() {
 		DataCenter:         *fo.dataCenter,
 		DefaultLevelDbDir:  defaultLevelDbDirectory,
 	})
-	if nfs_err != nil {
-		glog.Fatalf("Filer startup error: %v", nfs_err)
-	}
+
+	util.LogFatalIfError(nfsErr, "Filer startup error: %v", nfsErr)
 
 	if *fo.publicPort != 0 {
 		publicListeningAddress := *fo.ip + ":" + strconv.Itoa(*fo.publicPort)
 		glog.V(0).Infoln("Start Seaweed filer server", util.VERSION, "public at", publicListeningAddress)
 		publicListener, e := util.NewListener(publicListeningAddress, 0)
-		if e != nil {
-			glog.Fatalf("Filer server public listener error on port %d:%v", *fo.publicPort, e)
-		}
+
+		util.LogFatalIfError(e, "Filer server public listener error on port %d:%v", *fo.publicPort, e)
+
 		go func() {
-			if e := http.Serve(publicListener, publicVolumeMux); e != nil {
-				glog.Fatalf("Volume server fail to serve public: %v", e)
-			}
+			e := http.Serve(publicListener, publicVolumeMux)
+			util.LogFatalIfError(e, "Volume server fail to serve public: %v", e)
 		}()
 	}
 
@@ -131,9 +126,7 @@ func (fo *FilerOptions) startFiler() {
 		":"+strconv.Itoa(*fo.port),
 		time.Duration(10)*time.Second,
 	)
-	if e != nil {
-		glog.Fatalf("Filer listener error: %v", e)
-	}
+	util.LogFatalIfError(e, "Filer listener error: %v", e)
 
 	// starting grpc server
 	grpcPort := *fo.grpcPort
@@ -141,17 +134,14 @@ func (fo *FilerOptions) startFiler() {
 		grpcPort = *fo.port + 10000
 	}
 	grpcL, err := util.NewListener(":"+strconv.Itoa(grpcPort), 0)
-	if err != nil {
-		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
-	}
+	util.LogFatalIfError(err, "failed to listen on grpc port %d: %v", grpcPort, err)
+
 	grpcS := util.NewGrpcServer()
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
 	reflection.Register(grpcS)
 	go grpcS.Serve(grpcL)
 
 	httpS := &http.Server{Handler: defaultMux}
-	if err := httpS.Serve(filerListener); err != nil {
-		glog.Fatalf("Filer Fail to serve: %v", e)
-	}
-
+	err = httpS.Serve(filerListener)
+	util.LogFatalIfError(err, "Filer Fail to serve: %v", err)
 }

@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"os"
 	"path"
 	"path/filepath"
@@ -171,9 +172,8 @@ func runExport(cmd *Command, args []string) bool {
 		if *output == "-" {
 			outputFile = os.Stdout
 		} else {
-			if outputFile, err = os.Create(*output); err != nil {
-				glog.Fatalf("cannot open output tar %s: %s", *output, err)
-			}
+			outputFile, err = os.Create(*output)
+			util.LogFatalIfError(err, "cannot open output tar %s: %s", *output, err)
 		}
 		defer outputFile.Close()
 		tarOutputFile = tar.NewWriter(outputFile)
@@ -191,15 +191,11 @@ func runExport(cmd *Command, args []string) bool {
 	}
 	vid := storage.VolumeId(*export.volumeId)
 	indexFile, err := os.OpenFile(path.Join(*export.dir, fileName+".idx"), os.O_RDONLY, 0644)
-	if err != nil {
-		glog.Fatalf("Create Volume Index [ERROR] %s\n", err)
-	}
+	util.LogFatalIfError(err, "Create Volume Index [ERROR] %s\n", err)
 	defer indexFile.Close()
 
 	needleMap, err := storage.LoadBtreeNeedleMap(indexFile)
-	if err != nil {
-		glog.Fatalf("cannot load needle map from %s: %s", indexFile.Name(), err)
-	}
+	util.LogFatalIfError(err, "cannot load needle map from %s: %s", indexFile.Name(), err)
 
 	volumeFileScanner := &VolumeFileScanner4Export{
 		needleMap: needleMap,
@@ -211,9 +207,8 @@ func runExport(cmd *Command, args []string) bool {
 	}
 
 	err = storage.ScanVolumeFile(*export.dir, *export.collection, vid, storage.NeedleMapInMemory, volumeFileScanner)
-	if err != nil && err != io.EOF {
-		glog.Fatalf("Export Volume File [ERROR] %s\n", err)
-	}
+	util.LogFatalIf(err != nil && err != io.EOF, "Export Volume File [ERROR] %s\n", err)
+
 	return true
 }
 

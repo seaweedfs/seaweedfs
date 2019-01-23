@@ -104,7 +104,7 @@ func (vg *VolumeGrowth) findAndGrow(topo *Topology, option *VolumeGrowOption) (i
 func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption) (servers []*DataNode, err error) {
 	//find main datacenter and other data centers
 	rp := option.ReplicaPlacement
-	mainDataCenter, otherDataCenters, dc_err := topo.RandomlyPickNodes(rp.DiffDataCenterCount+1, func(node Node) error {
+	mainDataCenter, otherDataCenters, dcErr := topo.RandomlyPickNodes(rp.DiffDataCenterCount+1, func(node Node) error {
 		if option.DataCenter != "" && node.IsDataCenter() && node.Id() != NodeId(option.DataCenter) {
 			return fmt.Errorf("Not matching preferred data center:%s", option.DataCenter)
 		}
@@ -131,8 +131,8 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		}
 		return nil
 	})
-	if dc_err != nil {
-		return nil, dc_err
+	if dcErr != nil {
+		return nil, dcErr
 	}
 
 	//find main rack and other racks
@@ -188,9 +188,9 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 			return servers, e
 		}
 	}
-	for _, datacenter := range otherDataCenters {
-		r := rand.Intn(datacenter.FreeSpace())
-		if server, e := datacenter.ReserveOneVolume(r); e == nil {
+	for _, dataCenter := range otherDataCenters {
+		r := rand.Intn(dataCenter.FreeSpace())
+		if server, e := dataCenter.ReserveOneVolume(r); e == nil {
 			servers = append(servers, server)
 		} else {
 			return servers, e

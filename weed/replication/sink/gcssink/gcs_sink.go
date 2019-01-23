@@ -7,7 +7,6 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
@@ -55,14 +54,10 @@ func (g *GcsSink) initialize(google_application_credentials, bucketName, dir str
 	if google_application_credentials == "" {
 		var found bool
 		google_application_credentials, found = os.LookupEnv("GOOGLE_APPLICATION_CREDENTIALS")
-		if !found {
-			glog.Fatalf("need to specific GOOGLE_APPLICATION_CREDENTIALS env variable or google_application_credentials in replication.toml")
-		}
+		util.LogFatalIf(!found, "need to specific GOOGLE_APPLICATION_CREDENTIALS env variable or google_application_credentials in replication.toml")
 	}
 	client, err := storage.NewClient(ctx, option.WithCredentialsFile(google_application_credentials))
-	if err != nil {
-		glog.Fatalf("Failed to create client: %v", err)
-	}
+	util.LogFatalIfError(err, "Failed to create client: %v", err)
 
 	g.client = client
 

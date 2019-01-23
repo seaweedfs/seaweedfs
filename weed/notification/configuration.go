@@ -32,10 +32,9 @@ func LoadConfiguration(config *viper.Viper) {
 	for _, queue := range MessageQueues {
 		if config.GetBool(queue.GetName() + ".enabled") {
 			viperSub := config.Sub(queue.GetName())
-			if err := queue.Initialize(viperSub); err != nil {
-				glog.Fatalf("Failed to initialize notification for %s: %+v",
-					queue.GetName(), err)
-			}
+			err := queue.Initialize(viperSub)
+			util.LogFatalIfError(err, "Failed to initialize notification for %s: %+v", queue.GetName(), err)
+
 			Queue = queue
 			glog.V(0).Infof("Configure notification message queue for %s", queue.GetName())
 			return
@@ -48,11 +47,8 @@ func validateOneEnabledQueue(config *viper.Viper) {
 	enabledQueue := ""
 	for _, queue := range MessageQueues {
 		if config.GetBool(queue.GetName() + ".enabled") {
-			if enabledQueue == "" {
-				enabledQueue = queue.GetName()
-			} else {
-				glog.Fatalf("Notification message queue is enabled for both %s and %s", enabledQueue, queue.GetName())
-			}
+			util.LogFatalIf(enabledQueue != "", "Notification message queue is enabled for both %s and %s", enabledQueue, queue.GetName())
+			enabledQueue = queue.GetName()
 		}
 	}
 }

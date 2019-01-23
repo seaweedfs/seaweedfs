@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/spf13/viper"
 )
 
@@ -55,12 +56,10 @@ func runFilerExport(cmd *Command, args []string) bool {
 	for _, store := range filer2.Stores {
 		if store.GetName() == *filerExportSourceStore || *filerExportSourceStore == "" && config.GetBool(store.GetName()+".enabled") {
 			viperSub := config.Sub(store.GetName())
-			if err := store.Initialize(viperSub); err != nil {
-				glog.Fatalf("Failed to initialize source store for %s: %+v",
-					store.GetName(), err)
-			} else {
-				sourceStore = store
-			}
+			err := store.Initialize(viperSub)
+			util.LogFatalIfError(err, "Failed to initialize source store for %s: %+v", store.GetName(), err)
+
+			sourceStore = store
 			break
 		}
 	}
@@ -68,12 +67,10 @@ func runFilerExport(cmd *Command, args []string) bool {
 	for _, store := range filer2.Stores {
 		if store.GetName() == *filerExportTargetStore {
 			viperSub := config.Sub(store.GetName())
-			if err := store.Initialize(viperSub); err != nil {
-				glog.Fatalf("Failed to initialize target store for %s: %+v",
-					store.GetName(), err)
-			} else {
-				targetStore = store
-			}
+			err := store.Initialize(viperSub)
+			util.LogFatalIfError(err, "Failed to Jinitialize target store for %s: %+v", store.GetName(), err)
+
+			targetStore = store
 			break
 		}
 	}

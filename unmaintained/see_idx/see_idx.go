@@ -3,11 +3,11 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"os"
 	"path"
 	"strconv"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
@@ -30,9 +30,7 @@ func main() {
 		fileName = *fixVolumeCollection + "_" + fileName
 	}
 	indexFile, err := os.OpenFile(path.Join(*fixVolumePath, fileName+".idx"), os.O_RDONLY, 0644)
-	if err != nil {
-		glog.Fatalf("Create Volume Index [ERROR] %s\n", err)
-	}
+	util.LogFatalIfError(err, "Create Volume Index [ERROR] %s\n", err)
 	defer indexFile.Close()
 
 	storage.WalkIndexFile(indexFile, func(key types.NeedleId, offset types.Offset, size uint32) error {

@@ -4,6 +4,7 @@ import (
 	"flag"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 var (
@@ -37,8 +38,5 @@ func main() {
 
 	scanner := &VolumeFileScanner4SeeDat{}
 	err := storage.ScanVolumeFile(*volumePath, *volumeCollection, vid, storage.NeedleMapInMemory, scanner)
-	if err != nil {
-		glog.Fatalf("Reading Volume File [ERROR] %s\n", err)
-	}
-
+	util.LogFatalIfError(err, "Reading Volume File [ERROR] %s\n", err)
 }

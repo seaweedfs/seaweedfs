@@ -37,10 +37,6 @@ func (t *Topology) StartRefreshWritableVolumes(garbageThreshold float64, preallo
 }
 func (t *Topology) SetVolumeCapacityFull(volumeInfo storage.VolumeInfo) bool {
 	vl := t.GetVolumeLayout(volumeInfo.Collection, volumeInfo.ReplicaPlacement, volumeInfo.Ttl)
-	if !vl.SetVolumeCapacityFull(volumeInfo.Id) {
-		return false
-	}
-
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
 
@@ -54,8 +50,6 @@ func (t *Topology) SetVolumeCapacityFull(volumeInfo storage.VolumeInfo) bool {
 func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 	for _, v := range dn.GetVolumes() {
 		glog.V(0).Infoln("Removing Volume", v.Id, "from the dead volume server", dn.Id())
-		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl)
-		vl.SetVolumeUnavailable(dn, v.Id)
 	}
 	dn.UpAdjustVolumeCountDelta(-dn.GetVolumeCount())
 	dn.UpAdjustActiveVolumeCountDelta(-dn.GetActiveVolumeCount())

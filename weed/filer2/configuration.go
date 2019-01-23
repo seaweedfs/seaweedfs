@@ -1,6 +1,7 @@
 package filer2
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -18,10 +19,9 @@ func (f *Filer) LoadConfiguration(config *viper.Viper) {
 	for _, store := range Stores {
 		if config.GetBool(store.GetName() + ".enabled") {
 			viperSub := config.Sub(store.GetName())
-			if err := store.Initialize(viperSub); err != nil {
-				glog.Fatalf("Failed to initialize store for %s: %+v",
-					store.GetName(), err)
-			}
+			err := store.Initialize(viperSub)
+			util.LogFatalIfError(err, "Failed to initialize store for %s: %+v", store.GetName(), err)
+
 			f.SetStore(store)
 			glog.V(0).Infof("Configure filer for %s", store.GetName())
 			return
@@ -41,11 +41,8 @@ func validateOneEnabledStore(config *viper.Viper) {
 	enabledStore := ""
 	for _, store := range Stores {
 		if config.GetBool(store.GetName() + ".enabled") {
-			if enabledStore == "" {
-				enabledStore = store.GetName()
-			} else {
-				glog.Fatalf("Filer store is enabled for both %s and %s", enabledStore, store.GetName())
-			}
+			util.LogFatalIf(enabledStore != "", "Filer store is enabled for both %s and %s", enabledStore, store.GetName())
+			enabledStore = store.GetName()
 		}
 	}
 }

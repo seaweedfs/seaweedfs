@@ -35,7 +35,7 @@ func batchVacuumVolumeCheck(vl *VolumeLayout, vid storage.VolumeId, locationlist
 		}(index, dn.Url(), vid)
 	}
 	isCheckSuccess := true
-	for _ = range locationlist.list {
+	for range locationlist.list {
 		select {
 		case canVacuum := <-ch:
 			isCheckSuccess = isCheckSuccess && canVacuum
@@ -47,7 +47,6 @@ func batchVacuumVolumeCheck(vl *VolumeLayout, vid storage.VolumeId, locationlist
 	return isCheckSuccess
 }
 func batchVacuumVolumeCompact(vl *VolumeLayout, vid storage.VolumeId, locationlist *VolumeLocationList, preallocate int64) bool {
-	vl.removeFromWritable(vid)
 	ch := make(chan bool, locationlist.Length())
 	for index, dn := range locationlist.list {
 		go func(index int, url string, vid storage.VolumeId) {
@@ -68,7 +67,7 @@ func batchVacuumVolumeCompact(vl *VolumeLayout, vid storage.VolumeId, locationli
 		}(index, dn.Url(), vid)
 	}
 	isVacuumSuccess := true
-	for _ = range locationlist.list {
+	for range locationlist.list {
 		select {
 		case canCommit := <-ch:
 			isVacuumSuccess = isVacuumSuccess && canCommit
@@ -82,7 +81,7 @@ func batchVacuumVolumeCompact(vl *VolumeLayout, vid storage.VolumeId, locationli
 func batchVacuumVolumeCommit(vl *VolumeLayout, vid storage.VolumeId, locationlist *VolumeLocationList) bool {
 	isCommitSuccess := true
 	for _, dn := range locationlist.list {
-		glog.V(0).Infoln("Start Commiting vacuum", vid, "on", dn.Url())
+		glog.V(0).Infoln("Start Committing vacuum", vid, "on", dn.Url())
 		err := operation.WithVolumeServerClient(dn.Url(), func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 			_, err := volumeServerClient.VacuumVolumeCommit(context.Background(), &volume_server_pb.VacuumVolumeCommitRequest{
 				VolumdId: uint32(vid),
@@ -93,7 +92,7 @@ func batchVacuumVolumeCommit(vl *VolumeLayout, vid storage.VolumeId, locationlis
 			glog.Errorf("Error when committing vacuum %d on %s: %v", vid, dn.Url(), err)
 			isCommitSuccess = false
 		} else {
-			glog.V(0).Infof("Complete Commiting vacuum %d on %s", vid, dn.Url())
+			glog.V(0).Infof("Complete Committing vacuum %d on %s", vid, dn.Url())
 		}
 		if isCommitSuccess {
 			vl.SetVolumeAvailable(dn, vid)
@@ -133,7 +132,6 @@ func (t *Topology) Vacuum(garbageThreshold float64, preallocate int64) int {
 }
 
 func vacuumOneVolumeLayout(volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, preallocate int64) {
-
 	volumeLayout.accessLock.RLock()
 	tmpMap := make(map[storage.VolumeId]*VolumeLocationList)
 	for vid, locationList := range volumeLayout.vid2location {
@@ -144,7 +142,7 @@ func vacuumOneVolumeLayout(volumeLayout *VolumeLayout, c *Collection, garbageThr
 	for vid, locationList := range tmpMap {
 
 		volumeLayout.accessLock.RLock()
-		isReadOnly, hasValue := volumeLayout.readonlyVolumes[vid]
+		isReadOnly, hasValue := locationList.HasReadOnly(vid)
 		volumeLayout.accessLock.RUnlock()
 
 		if hasValue && isReadOnly {

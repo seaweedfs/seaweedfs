@@ -8,7 +8,6 @@ import (
 	"path"
 	"strconv"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -39,26 +38,19 @@ func main() {
 		fileName = *fixVolumeCollection + "_" + fileName
 	}
 	indexFile, err := os.OpenFile(path.Join(*fixVolumePath, fileName+".idx"), os.O_RDONLY, 0644)
-	if err != nil {
-		glog.Fatalf("Read Volume Index %v", err)
-	}
+	util.LogFatalIfError(err, "Read Volume Index %v", err)
 	defer indexFile.Close()
+
 	datFile, err := os.OpenFile(path.Join(*fixVolumePath, fileName+".dat"), os.O_RDONLY, 0644)
-	if err != nil {
-		glog.Fatalf("Read Volume Data %v", err)
-	}
+	util.LogFatalIfError(err, "Read Volume Data %v", err)
 	defer datFile.Close()
 
 	newDatFile, err := os.Create(path.Join(*fixVolumePath, fileName+".dat_fixed"))
-	if err != nil {
-		glog.Fatalf("Write New Volume Data %v", err)
-	}
+	util.LogFatalIfError(err, "Write New Volume Data %v", err)
 	defer newDatFile.Close()
 
 	superBlock, err := storage.ReadSuperBlock(datFile)
-	if err != nil {
-		glog.Fatalf("Read Volume Data superblock %v", err)
-	}
+	util.LogFatalIfError(err, "Read Volume Data superblock %v", err)
 	newDatFile.Write(superBlock.Bytes())
 
 	iterateEntries(datFile, indexFile, func(n *storage.Needle, offset int64) {

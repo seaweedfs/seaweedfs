@@ -3,11 +3,11 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"os"
 	"path"
 	"strconv"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 )
 
@@ -43,16 +43,11 @@ func main() {
 		fileName = *fixVolumeCollection + "_" + fileName
 	}
 	datFile, err := os.OpenFile(path.Join(*fixVolumePath, fileName+".dat"), os.O_RDWR, 0644)
-	if err != nil {
-		glog.Fatalf("Open Volume Data File [ERROR]: %v", err)
-	}
+	util.LogFatalIfError(err, "Open Volume Data File [ERROR]: %v", err)
 	defer datFile.Close()
 
 	superBlock, err := storage.ReadSuperBlock(datFile)
-
-	if err != nil {
-		glog.Fatalf("cannot parse existing super block: %v", err)
-	}
+	util.LogFatalIfError(err, "cannot parse existing super block: %v", err)
 
 	fmt.Printf("Current Volume Replication: %s\n", superBlock.ReplicaPlacement)
 	fmt.Printf("Current Volume TTL: %s\n", superBlock.Ttl.String())
@@ -61,10 +56,7 @@ func main() {
 
 	if *targetReplica != "" {
 		replica, err := storage.NewReplicaPlacementFromString(*targetReplica)
-
-		if err != nil {
-			glog.Fatalf("cannot parse target replica %s: %v", *targetReplica, err)
-		}
+		util.LogFatalIfError(err, "cannot parse target replica %s: %v", *targetReplica, err)
 
 		fmt.Printf("Changing replication to: %s\n", replica)
 
@@ -74,10 +66,7 @@ func main() {
 
 	if *targetTTL != "" {
 		ttl, err := storage.ReadTTL(*targetTTL)
-
-		if err != nil {
-			glog.Fatalf("cannot parse target ttl %s: %v", *targetTTL, err)
-		}
+		util.LogFatalIfError(err, "cannot parse target ttl %s: %v", *targetTTL, err)
 
 		fmt.Printf("Changing ttl to: %s\n", ttl)
 
@@ -86,12 +75,10 @@ func main() {
 	}
 
 	if hasChange {
-
 		header := superBlock.Bytes()
 
-		if n, e := datFile.WriteAt(header, 0); n == 0 || e != nil {
-			glog.Fatalf("cannot write super block: %v", e)
-		}
+		n, e := datFile.WriteAt(header, 0)
+		util.LogFatalIf(n == 0 || e != nil, "cannot write super block: %v", e)
 
 		fmt.Println("Change Applied.")
 	}

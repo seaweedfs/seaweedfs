@@ -103,10 +103,7 @@ var (
 
 func runBenchmark(cmd *Command, args []string) bool {
 	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)
-	if *b.maxCpu < 1 {
-		*b.maxCpu = runtime.NumCPU()
-	}
-	runtime.GOMAXPROCS(*b.maxCpu)
+	util.GoMaxProcs(b.maxCpu)
 	if *b.cpuprofile != "" {
 		f, err := os.Create(*b.cpuprofile)
 		if err != nil {
@@ -283,9 +280,7 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 
 func writeFileIds(fileName string, fileIdLineChan chan string, finishChan chan bool) {
 	file, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		glog.Fatalf("File to create file %s: %s\n", fileName, err)
-	}
+	util.LogFatalIfError(err, "File to create file %s: %s\n", fileName, err)
 	defer file.Close()
 
 	for {
@@ -302,9 +297,7 @@ func writeFileIds(fileName string, fileIdLineChan chan string, finishChan chan b
 
 func readFileIds(fileName string, fileIdLineChan chan string) {
 	file, err := os.Open(fileName) // For read access.
-	if err != nil {
-		glog.Fatalf("File to read file %s: %s\n", fileName, err)
-	}
+	util.LogFatalIfError(err, "File to read file %s: %s\n", fileName, err)
 	defer file.Close()
 
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))

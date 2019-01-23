@@ -3,7 +3,6 @@ package command
 import (
 	"net/http"
 	"os"
-	"runtime"
 	"runtime/pprof"
 	"strconv"
 	"strings"
@@ -94,7 +93,7 @@ func init() {
 	serverOptions.v.fixJpgOrientation = cmdServer.Flag.Bool("volume.images.fix.orientation", false, "Adjust jpg orientation when uploading.")
 	serverOptions.v.readRedirect = cmdServer.Flag.Bool("volume.read.redirect", true, "Redirect moved or non-local volumes.")
 	serverOptions.v.publicUrl = cmdServer.Flag.String("volume.publicUrl", "", "publicly accessible address")
-	serverOptions.v.diskWaterMark = cmdVolume.Flag.String("volume.diskWaterMark", "10GB", "disk watermark low to switch volume to read-only(eg 5G,100M,5GiB,100MiB)")
+	serverOptions.v.diskWaterMark = cmdServer.Flag.String("volume.diskWaterMark", "10GB", "disk watermark low to switch volume to read-only(eg 5G,100M,5GiB,100MiB)")
 }
 
 func runServer(cmd *Command, args []string) bool {
@@ -129,10 +128,7 @@ func runServer(cmd *Command, args []string) bool {
 		*filerOptions.defaultReplicaPlacement = *masterDefaultReplicaPlacement
 	}
 
-	if *serverMaxCpu < 1 {
-		*serverMaxCpu = runtime.NumCPU()
-	}
-	runtime.GOMAXPROCS(*serverMaxCpu)
+	util.GoMaxProcs(serverMaxCpu)
 
 	folders := strings.Split(*volumeDataFolders, ",")
 
@@ -141,9 +137,9 @@ func runServer(cmd *Command, args []string) bool {
 	if *masterMetaFolder == "" {
 		*masterMetaFolder = folders[0]
 	}
-	if err := util.TestFolderWritable(*masterMetaFolder); err != nil {
-		glog.Fatalf("Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterMetaFolder, err)
-	}
+	err := util.TestFolderWritable(*masterMetaFolder)
+	util.LogFatalIfError(err, "Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterMetaFolder, err)
+
 	filerOptions.defaultLevelDbDirectory = masterMetaFolder
 
 	if *serverWhiteListOption != "" {
@@ -153,9 +149,7 @@ func runServer(cmd *Command, args []string) bool {
 	if *isStartingFiler {
 		go func() {
 			time.Sleep(1 * time.Second)
-
 			filerOptions.startFiler()
-
 		}()
 	}
 
@@ -175,9 +169,7 @@ func runServer(cmd *Command, args []string) bool {
 
 		glog.V(0).Infof("Start Seaweed Master %s at %s:%d", util.VERSION, *serverIp, *masterPort)
 		masterListener, e := util.NewListener(*serverBindIp+":"+strconv.Itoa(*masterPort), 0)
-		if e != nil {
-			glog.Fatalf("Master startup error: %v", e)
-		}
+		util.LogFatalIfError(e, "Master startup error: %v", e)
 
 		go func() {
 			// starting grpc server
@@ -186,9 +178,8 @@ func runServer(cmd *Command, args []string) bool {
 				grpcPort = *masterPort + 10000
 			}
 			grpcL, err := util.NewListener(*serverIp+":"+strconv.Itoa(grpcPort), 0)
-			if err != nil {
-				glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
-			}
+			util.LogFatalIfError(err, "master failed to listen on grpc port %d: %v", grpcPort, err)
+
 			// Create your protocol servers.
 			grpcS := util.NewGrpcServer()
 			master_pb.RegisterSeaweedServer(grpcS, ms)
@@ -211,10 +202,8 @@ func runServer(cmd *Command, args []string) bool {
 
 		// start http server
 		httpS := &http.Server{Handler: r}
-		if err := httpS.Serve(masterListener); err != nil {
-			glog.Fatalf("master server failed to serve: %v", err)
-		}
-
+		err := httpS.Serve(masterListener)
+		util.LogFatalIfError(err, "master server failed to serve: %v", err)
 	}()
 
 	volumeWait.Wait()

@@ -53,7 +53,7 @@ func SubmitFiles(master string, files []FilePart,
 	}
 	ret, err := Assign(master, ar)
 	if err != nil {
-		for index, _ := range files {
+		for index := range files {
 			results[index].Error = err.Error()
 		}
 		return results, err
@@ -166,7 +166,7 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 				}
 			}
 			fileUrl := "http://" + ret.Url + "/" + id
-			count, e := upload_one_chunk(
+			count, e := uploadOneChunk(
 				baseName+"-"+strconv.FormatInt(i+1, 10),
 				io.LimitReader(fi.Reader, chunkSize),
 				master, fileUrl,
@@ -185,7 +185,7 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 			)
 			retSize += count
 		}
-		err = upload_chunked_file_manifest(fileUrl, &cm, jwt)
+		err = uploadChunkedFileManifest(fileUrl, &cm, jwt)
 		if err != nil {
 			// delete all uploaded chunks
 			cm.DeleteChunks(master)
@@ -200,7 +200,7 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 	return
 }
 
-func upload_one_chunk(filename string, reader io.Reader, master,
+func uploadOneChunk(filename string, reader io.Reader, master,
 	fileUrl string, jwt security.EncodedJwt,
 ) (size uint32, e error) {
 	glog.V(4).Info("Uploading part ", filename, " to ", fileUrl, "...")
@@ -212,7 +212,7 @@ func upload_one_chunk(filename string, reader io.Reader, master,
 	return uploadResult.Size, nil
 }
 
-func upload_chunked_file_manifest(fileUrl string, manifest *ChunkManifest, jwt security.EncodedJwt) error {
+func uploadChunkedFileManifest(fileUrl string, manifest *ChunkManifest, jwt security.EncodedJwt) error {
 	buf, e := manifest.Marshal()
 	if e != nil {
 		return e

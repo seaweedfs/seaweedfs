@@ -1,6 +1,7 @@
 package command
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"os"
 	"path"
 	"strconv"
@@ -66,9 +67,7 @@ func runFix(cmd *Command, args []string) bool {
 	}
 	indexFileName := path.Join(*fixVolumePath, baseFileName+".idx")
 	indexFile, err := os.OpenFile(indexFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		glog.Fatalf("Create Volume Index [ERROR] %s\n", err)
-	}
+	util.LogFatalIfError(err, "Create Volume Index [ERROR] %s\n", err)
 	defer indexFile.Close()
 
 	nm := storage.NewBtreeNeedleMap(indexFile)
@@ -81,9 +80,9 @@ func runFix(cmd *Command, args []string) bool {
 
 	err = storage.ScanVolumeFile(*fixVolumePath, *fixVolumeCollection, vid, storage.NeedleMapInMemory, scanner)
 	if err != nil {
-		glog.Fatalf("Export Volume File [ERROR] %s\n", err)
 		os.Remove(indexFileName)
 	}
+	util.LogFatalIfError(err, "Export Volume File [ERROR] %s\n", err)
 
 	return true
 }

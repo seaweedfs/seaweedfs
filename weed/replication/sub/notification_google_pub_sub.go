@@ -44,41 +44,30 @@ func (k *GooglePubSubInput) initialize(google_application_credentials, projectId
 	if google_application_credentials == "" {
 		var found bool
 		google_application_credentials, found = os.LookupEnv("GOOGLE_APPLICATION_CREDENTIALS")
-		if !found {
-			glog.Fatalf("need to specific GOOGLE_APPLICATION_CREDENTIALS env variable or google_application_credentials in filer.toml")
-		}
+		util.LogFatalIf(!found, "need to specific GOOGLE_APPLICATION_CREDENTIALS env variable or google_application_credentials in filer.toml")
 	}
 
 	client, err := pubsub.NewClient(ctx, projectId, option.WithCredentialsFile(google_application_credentials))
-	if err != nil {
-		glog.Fatalf("Failed to create client: %v", err)
-	}
+	util.LogFatalIfError(err, "Failed to create client: %v", err)
 
 	k.topicName = topicName
 	topic := client.Topic(topicName)
-	if exists, err := topic.Exists(ctx); err == nil {
-		if !exists {
-			topic, err = client.CreateTopic(ctx, topicName)
-			if err != nil {
-				glog.Fatalf("Failed to create topic %s: %v", topicName, err)
-			}
-		}
-	} else {
-		glog.Fatalf("Failed to check topic %s: %v", topicName, err)
+	exists, err := topic.Exists(ctx)
+	util.LogFatalIfError(err, "Failed to check topic %s: %v", topicName, err)
+	if !exists {
+		topic, err = client.CreateTopic(ctx, topicName)
+		util.LogFatalIfError(err, "Failed to create topic %s: %v", topicName, err)
 	}
 
 	subscriptionName := "seaweedfs_sub"
 
 	k.sub = client.Subscription(subscriptionName)
-	if exists, err := k.sub.Exists(ctx); err == nil {
-		if !exists {
-			k.sub, err = client.CreateSubscription(ctx, subscriptionName, pubsub.SubscriptionConfig{Topic: topic})
-			if err != nil {
-				glog.Fatalf("Failed to create subscription %s: %v", subscriptionName, err)
-			}
-		}
-	} else {
-		glog.Fatalf("Failed to check subscription %s: %v", topicName, err)
+	exists, err = k.sub.Exists(ctx)
+	util.LogFatalIfError(err, "Failed to check subscription %s: %v", topicName, err)
+
+	if !exists {
+		k.sub, err = client.CreateSubscription(ctx, subscriptionName, pubsub.SubscriptionConfig{Topic: topic})
+		util.LogFatalIfError(err, "Failed to create subscription %s: %v", subscriptionName, err)
 	}
 
 	k.messageChan = make(chan *pubsub.Message, 1)

@@ -35,33 +35,25 @@ func (k *GooglePubSub) Initialize(configuration util.Configuration) (err error) 
 	)
 }
 
-func (k *GooglePubSub) initialize(google_application_credentials, projectId, topicName string) (err error) {
+func (k *GooglePubSub) initialize(googleApplicationCredentials, projectId, topicName string) (err error) {
 
 	ctx := context.Background()
 	// Creates a client.
-	if google_application_credentials == "" {
+	if googleApplicationCredentials == "" {
 		var found bool
-		google_application_credentials, found = os.LookupEnv("GOOGLE_APPLICATION_CREDENTIALS")
-		if !found {
-			glog.Fatalf("need to specific GOOGLE_APPLICATION_CREDENTIALS env variable or google_application_credentials in filer.toml")
-		}
+		googleApplicationCredentials, found = os.LookupEnv("GOOGLE_APPLICATION_CREDENTIALS")
+		util.LogFatalIf(!found, "need to specific GOOGLE_APPLICATION_CREDENTIALS env variable or google_application_credentials in filer.toml")
 	}
 
-	client, err := pubsub.NewClient(ctx, projectId, option.WithCredentialsFile(google_application_credentials))
-	if err != nil {
-		glog.Fatalf("Failed to create client: %v", err)
-	}
+	client, err := pubsub.NewClient(ctx, projectId, option.WithCredentialsFile(googleApplicationCredentials))
+	util.LogFatalIfError(err, "Failed to create client: %v", err)
 
 	k.topic = client.Topic(topicName)
-	if exists, err := k.topic.Exists(ctx); err == nil {
-		if !exists {
-			k.topic, err = client.CreateTopic(ctx, topicName)
-			if err != nil {
-				glog.Fatalf("Failed to create topic %s: %v", topicName, err)
-			}
-		}
-	} else {
-		glog.Fatalf("Failed to check topic %s: %v", topicName, err)
+	exists, err := k.topic.Exists(ctx)
+	util.LogFatalIfError(err, "Failed to check topic %s: %v", topicName, err)
+	if !exists {
+		k.topic, err = client.CreateTopic(ctx, topicName)
+		util.LogFatalIfError(err, "Failed to create topic %s: %v", topicName, err)
 	}
 
 	return nil

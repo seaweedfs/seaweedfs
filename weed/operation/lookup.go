@@ -33,9 +33,9 @@ var (
 )
 
 func Lookup(server string, vid string) (ret *LookupResult, err error) {
-	locations, cache_err := vc.Get(vid)
-	if cache_err != nil {
-		if ret, err = do_lookup(server, vid); err == nil {
+	locations, cacheErr := vc.Get(vid)
+	if cacheErr != nil {
+		if ret, err = doLookup(server, vid); err == nil {
 			vc.Set(vid, ret.Locations, 10*time.Minute)
 		}
 	} else {
@@ -44,7 +44,7 @@ func Lookup(server string, vid string) (ret *LookupResult, err error) {
 	return
 }
 
-func do_lookup(server string, vid string) (*LookupResult, error) {
+func doLookup(server string, vid string) (*LookupResult, error) {
 	values := make(url.Values)
 	values.Add("volumeId", vid)
 	jsonBlob, err := util.Post("http://"+server+"/dir/lookup", values)
@@ -80,7 +80,7 @@ func LookupFileId(server string, fileId string) (fullUrl string, err error) {
 // LookupVolumeIds find volume locations by cache and actual lookup
 func LookupVolumeIds(server string, vids []string) (map[string]LookupResult, error) {
 	ret := make(map[string]LookupResult)
-	var unknown_vids []string
+	var unknownVids []string
 
 	//check vid cache first
 	for _, vid := range vids {
@@ -88,11 +88,11 @@ func LookupVolumeIds(server string, vids []string) (map[string]LookupResult, err
 		if cache_err == nil {
 			ret[vid] = LookupResult{VolumeId: vid, Locations: locations}
 		} else {
-			unknown_vids = append(unknown_vids, vid)
+			unknownVids = append(unknownVids, vid)
 		}
 	}
 	//return success if all volume ids are known
-	if len(unknown_vids) == 0 {
+	if len(unknownVids) == 0 {
 		return ret, nil
 	}
 
@@ -103,7 +103,7 @@ func LookupVolumeIds(server string, vids []string) (map[string]LookupResult, err
 		defer cancel()
 
 		req := &master_pb.LookupVolumeRequest{
-			VolumeIds: unknown_vids,
+			VolumeIds: unknownVids,
 		}
 		resp, grpcErr := masterClient.LookupVolume(ctx, req)
 		if grpcErr != nil {

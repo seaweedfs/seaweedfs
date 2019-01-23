@@ -45,42 +45,34 @@ var cmdS3 = &Command{
 }
 
 func runS3(cmd *Command, args []string) bool {
-
 	filerGrpcAddress, err := parseFilerGrpcAddress(*s3options.filer, *s3options.filerGrpcPort)
-	if err != nil {
-		glog.Fatal(err)
-		return false
-	}
+	util.LogFatalIfError(err, "S3 API Server Fail to parseFilerGrpcAddress: %v", err)
 
 	router := mux.NewRouter().SkipClean(true)
 
-	_, s3ApiServer_err := s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
+	_, err = s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
 		Filer:            *s3options.filer,
 		FilerGrpcAddress: filerGrpcAddress,
 		DomainName:       *s3options.domainName,
 		BucketsPath:      *s3options.filerBucketsPath,
 	})
-	if s3ApiServer_err != nil {
-		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
-	}
+	util.LogFatalIfError(err, "S3 API Server startup error: %v", err)
 
 	httpS := &http.Server{Handler: router}
 
 	listenAddress := fmt.Sprintf(":%d", *s3options.port)
 	s3ApiListener, err := util.NewListener(listenAddress, time.Duration(10)*time.Second)
-	if err != nil {
-		glog.Fatalf("S3 API Server listener on %s error: %v", listenAddress, err)
-	}
+	util.LogFatalIfError(err, "S3 API Server listener on %s error: %v", listenAddress, err)
 
 	if *s3options.tlsPrivateKey != "" {
-		if err = httpS.ServeTLS(s3ApiListener, *s3options.tlsCertificate, *s3options.tlsPrivateKey); err != nil {
-			glog.Fatalf("S3 API Server Fail to serve: %v", err)
-		}
+		err = httpS.ServeTLS(s3ApiListener, *s3options.tlsCertificate, *s3options.tlsPrivateKey)
+		util.LogFatalIfError(err, "S3 API Server Fail to serve: %v", err)
+
 		glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.VERSION, *s3options.port)
 	} else {
-		if err = httpS.Serve(s3ApiListener); err != nil {
-			glog.Fatalf("S3 API Server Fail to serve: %v", err)
-		}
+		err = httpS.Serve(s3ApiListener)
+		util.LogFatalIfError(err, "S3 API Server Fail to serve: %v", err)
+
 		glog.V(0).Infof("Start Seaweed S3 API Server %s at http port %d", util.VERSION, *s3options.port)
 	}
 

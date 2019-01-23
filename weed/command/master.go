@@ -3,7 +3,6 @@ package command
 import (
 	"net/http"
 	"os"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -53,15 +52,12 @@ var (
 )
 
 func runMaster(cmd *Command, args []string) bool {
-	if *mMaxCpu < 1 {
-		*mMaxCpu = runtime.NumCPU()
-	}
-	runtime.GOMAXPROCS(*mMaxCpu)
+	util.GoMaxProcs(mMaxCpu)
 	util.SetupProfiling(*masterCpuProfile, *masterMemProfile)
 
-	if err := util.TestFolderWritable(*metaFolder); err != nil {
-		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *metaFolder, err)
-	}
+	err := util.TestFolderWritable(*metaFolder)
+	util.LogFatalIfError(err, "Check Meta Folder (-mdir) Writable %s : %s", *metaFolder, err)
+
 	if *masterWhiteListOption != "" {
 		masterWhiteList = strings.Split(*masterWhiteListOption, ",")
 	}
@@ -80,9 +76,7 @@ func runMaster(cmd *Command, args []string) bool {
 	glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", listeningAddress)
 
 	masterListener, e := util.NewListener(listeningAddress, 0)
-	if e != nil {
-		glog.Fatalf("Master startup error: %v", e)
-	}
+	util.LogFatalIfError(e, "Master startup error: %v", e)
 
 	go func() {
 		time.Sleep(100 * time.Millisecond)
@@ -97,24 +91,22 @@ func runMaster(cmd *Command, args []string) bool {
 		if grpcPort == 0 {
 			grpcPort = *mport + 10000
 		}
-		grpcL, err := util.NewListener(*masterBindIp+":"+strconv.Itoa(grpcPort), 0)
-		if err != nil {
-			glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
-		}
+		grpcListener, err := util.NewListener(*masterBindIp+":"+strconv.Itoa(grpcPort), 0)
+		util.LogFatalIfError(err, "master failed to listen on grpc port %d: %v", grpcPort, err)
+
 		// Create your protocol servers.
-		grpcS := util.NewGrpcServer()
-		master_pb.RegisterSeaweedServer(grpcS, ms)
-		reflection.Register(grpcS)
+		grpcServer := util.NewGrpcServer()
+		master_pb.RegisterSeaweedServer(grpcServer, ms)
+		reflection.Register(grpcServer)
 
 		glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.VERSION, *masterBindIp, grpcPort)
-		grpcS.Serve(grpcL)
+		grpcServer.Serve(grpcListener)
 	}()
 
 	// start http server
 	httpS := &http.Server{Handler: r}
-	if err := httpS.Serve(masterListener); err != nil {
-		glog.Fatalf("master server failed to serve: %v", err)
-	}
+	err = httpS.Serve(masterListener)
+	util.LogFatalIfError(err, "master server failed to serve: %v", err)
 
 	return true
 }
@@ -137,8 +129,8 @@ func checkPeers(masterIp string, masterPort int, peers string) (masterAddress st
 	if !hasSelf {
 		peerCount++
 	}
-	if peerCount%2 == 0 {
-		glog.Fatalf("Only odd number of masters are supported!")
-	}
+
+	util.LogFatalIf(peerCount%2 == 0, "Only odd number of masters are supported!")
+
 	return
 }

@@ -102,9 +102,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		// tell the volume servers about the leader
 		newLeader, err := t.Leader()
 		if err == nil {
-			if err := stream.Send(&master_pb.HeartbeatResponse{
-				Leader: newLeader,
-			}); err != nil {
+			if err := stream.Send(&master_pb.HeartbeatResponse{Leader: newLeader}); err != nil {
 				return err
 			}
 		}

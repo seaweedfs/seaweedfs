@@ -1,6 +1,7 @@
 package command
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -46,10 +47,9 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 	for _, input := range sub.NotificationInputs {
 		if config.GetBool("notification." + input.GetName() + ".enabled") {
 			viperSub := config.Sub("notification." + input.GetName())
-			if err := input.Initialize(viperSub); err != nil {
-				glog.Fatalf("Failed to initialize notification input for %s: %+v",
-					input.GetName(), err)
-			}
+			err := input.Initialize(viperSub)
+			util.LogFatalIfError(err, "Failed to initialize notification input for %s: %+v", input.GetName(), err)
+
 			glog.V(0).Infof("Configure notification input to %s", input.GetName())
 			notificationInput = input
 			break
@@ -68,9 +68,8 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 		if sourceConfig.GetString("grpcAddress") == sinkConfig.GetString("grpcAddress") {
 			fromDir := sourceConfig.GetString("directory")
 			toDir := sinkConfig.GetString("directory")
-			if strings.HasPrefix(toDir, fromDir) {
-				glog.Fatalf("recursive replication! source directory %s includes the sink directory %s", fromDir, toDir)
-			}
+			util.LogFatalIf(strings.HasPrefix(toDir, fromDir),
+				"recursive replication! source directory %s includes the sink directory %s", fromDir, toDir)
 		}
 	}
 
@@ -78,10 +77,9 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 	for _, sk := range sink.Sinks {
 		if config.GetBool("sink." + sk.GetName() + ".enabled") {
 			viperSub := config.Sub("sink." + sk.GetName())
-			if err := sk.Initialize(viperSub); err != nil {
-				glog.Fatalf("Failed to initialize sink for %s: %+v",
-					sk.GetName(), err)
-			}
+			err := sk.Initialize(viperSub)
+			util.LogFatalIfError(err, "Failed to initialize sink for %s: %+v", sk.GetName(), err)
+
 			glog.V(0).Infof("Configure sink to %s", sk.GetName())
 			dataSink = sk
 			break
@@ -129,11 +127,8 @@ func validateOneEnabledInput(config *viper.Viper) {
 	enabledInput := ""
 	for _, input := range sub.NotificationInputs {
 		if config.GetBool("notification." + input.GetName() + ".enabled") {
-			if enabledInput == "" {
-				enabledInput = input.GetName()
-			} else {
-				glog.Fatalf("Notification input is enabled for both %s and %s", enabledInput, input.GetName())
-			}
+			util.LogFatalIf(enabledInput != "", "Notification input is enabled for both %s and %s", enabledInput, input.GetName())
+			enabledInput = input.GetName()
 		}
 	}
 }

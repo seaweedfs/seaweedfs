@@ -19,7 +19,7 @@ type DeleteResult struct {
 	Error  string `json:"error,omitempty"`
 }
 
-func ParseFileId(fid string) (vid string, key_cookie string, err error) {
+func ParseFileId(fid string) (vid string, keyCookie string, err error) {
 	commaIndex := strings.Index(fid, ",")
 	if commaIndex <= 0 {
 		return "", "", errors.New("Wrong fid format.")
@@ -42,7 +42,7 @@ func DeleteFilesWithLookupVolumeId(fileIds []string, lookupFunc func(vid []strin
 
 	var ret []*volume_server_pb.DeleteResult
 
-	vid_to_fileIds := make(map[string][]string)
+	vidToFileids := make(map[string][]string)
 	var vids []string
 	for _, fileId := range fileIds {
 		vid, _, err := ParseFileId(fileId)
@@ -54,11 +54,11 @@ func DeleteFilesWithLookupVolumeId(fileIds []string, lookupFunc func(vid []strin
 			)
 			continue
 		}
-		if _, ok := vid_to_fileIds[vid]; !ok {
-			vid_to_fileIds[vid] = make([]string, 0)
+		if _, ok := vidToFileids[vid]; !ok {
+			vidToFileids[vid] = make([]string, 0)
 			vids = append(vids, vid)
 		}
-		vid_to_fileIds[vid] = append(vid_to_fileIds[vid], fileId)
+		vidToFileids[vid] = append(vidToFileids[vid], fileId)
 	}
 
 	lookupResults, err := lookupFunc(vids)
@@ -66,7 +66,7 @@ func DeleteFilesWithLookupVolumeId(fileIds []string, lookupFunc func(vid []strin
 		return ret, err
 	}
 
-	server_to_fileIds := make(map[string][]string)
+	serverToFileids := make(map[string][]string)
 	for vid, result := range lookupResults {
 		if result.Error != "" {
 			ret = append(ret, &volume_server_pb.DeleteResult{
@@ -77,17 +77,17 @@ func DeleteFilesWithLookupVolumeId(fileIds []string, lookupFunc func(vid []strin
 			continue
 		}
 		for _, location := range result.Locations {
-			if _, ok := server_to_fileIds[location.Url]; !ok {
-				server_to_fileIds[location.Url] = make([]string, 0)
+			if _, ok := serverToFileids[location.Url]; !ok {
+				serverToFileids[location.Url] = make([]string, 0)
 			}
-			server_to_fileIds[location.Url] = append(
-				server_to_fileIds[location.Url], vid_to_fileIds[vid]...)
+			serverToFileids[location.Url] = append(
+				serverToFileids[location.Url], vidToFileids[vid]...)
 		}
 	}
 
 	var wg sync.WaitGroup
 
-	for server, fidList := range server_to_fileIds {
+	for server, fidList := range serverToFileids {
 		wg.Add(1)
 		go func(server string, fidList []string) {
 			defer wg.Done()

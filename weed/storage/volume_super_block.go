@@ -50,14 +50,12 @@ func (s *SuperBlock) Bytes() []byte {
 
 	if s.Extra != nil {
 		extraData, err := proto.Marshal(s.Extra)
-		if err != nil {
-			glog.Fatalf("cannot marshal super block extra %+v: %v", s.Extra, err)
-		}
+		util.LogFatalIfError(err, "cannot marshal super block extra %+v: %v", s.Extra, err)
+
 		extraSize := len(extraData)
-		if extraSize > 256*256-2 {
-			// reserve a couple of bits for future extension
-			glog.Fatalf("super block extra size is %d bigger than %d", extraSize, 256*256-2)
-		}
+		// reserve a couple of bits for future extension
+		util.LogFatalIf(extraSize > 256*256-2, "super block extra size is %d bigger than %d", extraSize, 256*256-2)
+
 		s.extraSize = uint16(extraSize)
 		util.Uint16toBytes(header[6:8], s.extraSize)
 

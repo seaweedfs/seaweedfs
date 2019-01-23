@@ -138,7 +138,7 @@ func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *
 
 func (ms *MasterServer) HasWritableVolume(option *topology.VolumeGrowOption) bool {
 	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl)
-	return vl.GetActiveVolumeCount(option) > 0
+	return vl.GetWritableVolumeCount(option) > 0
 }
 
 func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGrowOption, error) {

@@ -97,7 +97,7 @@ func (t *Topology) NextVolumeId() storage.VolumeId {
 
 func (t *Topology) HasWritableVolume(option *VolumeGrowOption) bool {
 	vl := t.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl)
-	return vl.GetActiveVolumeCount(option) > 0
+	return vl.GetWritableVolumeCount(option) > 0
 }
 
 func (t *Topology) PickForWrite(count uint64, option *VolumeGrowOption) (string, uint64, *DataNode, error) {

@@ -3,7 +3,6 @@ package command
 import (
 	"net/http"
 	"os"
-	"runtime"
 	"runtime/pprof"
 	"strconv"
 	"strings"
@@ -81,10 +80,7 @@ var (
 )
 
 func runVolume(cmd *Command, args []string) bool {
-	if *v.maxCpu < 1 {
-		*v.maxCpu = runtime.NumCPU()
-	}
-	runtime.GOMAXPROCS(*v.maxCpu)
+	util.GoMaxProcs(v.maxCpu)
 	util.SetupProfiling(*v.cpuProfile, *v.memProfile)
 
 	v.startVolumeServer(*volumeFolders, *maxVolumeCounts, *volumeWhiteListOption)
@@ -98,19 +94,16 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	v.folders = strings.Split(volumeFolders, ",")
 	maxCountStrings := strings.Split(maxVolumeCounts, ",")
 	for _, maxString := range maxCountStrings {
-		if max, e := strconv.Atoi(maxString); e == nil {
-			v.folderMaxLimits = append(v.folderMaxLimits, max)
-		} else {
-			glog.Fatalf("The max specified in -max not a valid number %s", maxString)
-		}
+		max, e := strconv.Atoi(maxString)
+		util.LogFatalIfError(e, "The max specified in -max not a valid number %s", maxString)
+		v.folderMaxLimits = append(v.folderMaxLimits, max)
 	}
-	if len(v.folders) != len(v.folderMaxLimits) {
-		glog.Fatalf("%d directories by -dir, but only %d max is set by -max", len(v.folders), len(v.folderMaxLimits))
-	}
+	util.LogFatalIf(len(v.folders) != len(v.folderMaxLimits),
+		"%d directories by -dir, but only %d max is set by -max", len(v.folders), len(v.folderMaxLimits))
+
 	for _, folder := range v.folders {
-		if err := util.TestFolderWritable(folder); err != nil {
-			glog.Fatalf("Check Data Folder(-dir) Writable %s : %s", folder, err)
-		}
+		err := util.TestFolderWritable(folder)
+		util.LogFatalIfError(err, "Check Data Folder(-dir) Writable %s : %s", folder, err)
 	}
 
 	//security related white list configuration
@@ -141,9 +134,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	masters := *v.masters
 
 	diskWaterMarkBytes, err := humanize.ParseBytes(*v.diskWaterMark)
-	if err != nil {
-		glog.Fatalf("Check diskWaterMark %s error:%v ", *v.diskWaterMark, err)
-	}
+	util.LogFatalIfError(err, "Check diskWaterMark %s error:%v ", *v.diskWaterMark, err)
 
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.publicUrl,
@@ -156,20 +147,17 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port)
 	glog.V(0).Infof("Start Seaweed volume server %s at %s", util.VERSION, listeningAddress)
 	listener, e := util.NewListener(listeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
-	if e != nil {
-		glog.Fatalf("Volume server listener error:%v", e)
-	}
+	util.LogFatalIfError(e, "Volume server listener error:%v", e)
+
 	if isSeparatedPublicPort {
 		publicListeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.publicPort)
 		glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "public at", publicListeningAddress)
 		publicListener, e := util.NewListener(publicListeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
-		if e != nil {
-			glog.Fatalf("Volume server listener error:%v", e)
-		}
+		util.LogFatalIfError(e, "Volume server listener error:%v", e)
+
 		go func() {
-			if e := http.Serve(publicListener, publicVolumeMux); e != nil {
-				glog.Fatalf("Volume server fail to serve public: %v", e)
-			}
+			e := http.Serve(publicListener, publicVolumeMux)
+			util.LogFatalIfError(e, "Volume server fail to serve public: %v", e)
 		}()
 	}
 
@@ -180,17 +168,14 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	// starting grpc server
 	grpcPort := *v.port + 10000
-	grpcL, err := util.NewListener(*v.bindIp+":"+strconv.Itoa(grpcPort), 0)
-	if err != nil {
-		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
-	}
-	grpcS := util.NewGrpcServer()
-	volume_server_pb.RegisterVolumeServerServer(grpcS, volumeServer)
-	reflection.Register(grpcS)
-	go grpcS.Serve(grpcL)
+	grpcListener, err := util.NewListener(*v.bindIp+":"+strconv.Itoa(grpcPort), 0)
+	util.LogFatalIfError(err, "failed to listen on grpc port %d: %v", grpcPort, err)
 
-	if e := http.Serve(listener, volumeMux); e != nil {
-		glog.Fatalf("Volume server fail to serve: %v", e)
-	}
+	grpcServer := util.NewGrpcServer()
+	volume_server_pb.RegisterVolumeServerServer(grpcServer, volumeServer)
+	reflection.Register(grpcServer)
+	go grpcServer.Serve(grpcListener)
 
+	e = http.Serve(listener, volumeMux)
+	util.LogFatalIfError(e, "Volume server fail to serve: %v", e)
 }
