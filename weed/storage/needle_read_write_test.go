@@ -1,9 +1,7 @@
 package storage
 
 import (
-	"crypto/rand"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"io"
 	"io/ioutil"
 	"os"
 	"testing"
@@ -49,7 +47,7 @@ func TestAppend(t *testing.T) {
 	*/
 
 	fileSize := int64(4294967295) + 10000
-	io.CopyN(tempFile, rand.Reader, fileSize)
+	tempFile.Truncate(fileSize)
 	defer func() {
 		tempFile.Close()
 		os.Remove(tempFile.Name())
