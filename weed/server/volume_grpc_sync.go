@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/dustin/go-humanize"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
@@ -40,7 +41,7 @@ func (vs *VolumeServer) VolumeSyncIndex(req *volume_server_pb.VolumeSyncIndexReq
 		glog.V(2).Infof("sync volume %d index", req.VolumdId)
 	}
 
-	const blockSizeLimit = 1024 * 1024 * 2
+	const blockSizeLimit = 2 * humanize.MiByte
 	for i := 0; i < len(content); i += blockSizeLimit {
 		blockSize := len(content) - i
 		if blockSize > blockSizeLimit {
@@ -85,7 +86,7 @@ func (vs *VolumeServer) VolumeSyncData(req *volume_server_pb.VolumeSyncDataReque
 		glog.Errorf("sync volume %d data: %v", req.VolumdId, err)
 	}
 
-	const blockSizeLimit = 1024 * 1024 * 2
+	const blockSizeLimit = 2 * humanize.MiByte
 	for i := 0; i < len(content); i += blockSizeLimit {
 		blockSize := len(content) - i
 		if blockSize > blockSizeLimit {

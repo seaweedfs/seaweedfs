@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"github.com/dustin/go-humanize"
 	"io/ioutil"
 	"net/url"
 	"os"
@@ -143,7 +144,7 @@ func doEachCopy(fileOrDir string, filerAddress, filerGrpcAddress string, path st
 	}
 
 	// find the chunk count
-	chunkSize := int64(*copy.maxMB * 1024 * 1024)
+	chunkSize := int64(*copy.maxMB * humanize.MiByte)
 	chunkCount := 1
 	if chunkSize > 0 && fi.Size() > chunkSize {
 		chunkCount = int(fi.Size()/chunkSize) + 1

@@ -4,6 +4,7 @@ package command
 
 import (
 	"fmt"
+	"github.com/dustin/go-humanize"
 	"os"
 	"os/user"
 	"runtime"
@@ -24,7 +25,7 @@ func runMount(cmd *Command, args []string) bool {
 		fmt.Printf("Please specify the mount directory via \"-dir\"")
 		return false
 	}
-	if *mountOptions.chunkSizeLimitMB <= 0 {
+	if *mountOptions.chunkSizeLimitMiB <= 0 {
 		fmt.Printf("Please specify a reasonable buffer size.")
 		return false
 	}
@@ -95,7 +96,7 @@ func runMount(cmd *Command, args []string) bool {
 		Collection:         *mountOptions.collection,
 		Replication:        *mountOptions.replication,
 		TtlSec:             int32(*mountOptions.ttlSec),
-		ChunkSizeLimit:     int64(*mountOptions.chunkSizeLimitMB) * 1024 * 1024,
+		ChunkSizeLimit:     int64(*mountOptions.chunkSizeLimitMiB) * humanize.MiByte,
 		DataCenter:         *mountOptions.dataCenter,
 		DirListingLimit:    *mountOptions.dirListingLimit,
 		EntryCacheTtl:      3 * time.Second,

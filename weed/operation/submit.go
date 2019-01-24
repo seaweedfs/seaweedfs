@@ -2,6 +2,7 @@ package operation
 
 import (
 	"bytes"
+	"github.com/dustin/go-humanize"
 	"io"
 	"mime"
 	"net/url"
@@ -120,8 +121,8 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 		defer closer.Close()
 	}
 	baseName := path.Base(fi.FileName)
-	if maxMB > 0 && fi.FileSize > int64(maxMB*1024*1024) {
-		chunkSize := int64(maxMB * 1024 * 1024)
+	if maxMB > 0 && fi.FileSize > int64(maxMB*humanize.MiByte) {
+		chunkSize := int64(maxMB * humanize.MiByte)
 		chunks := fi.FileSize/chunkSize + 1
 		cm := ChunkManifest{
 			Name:   baseName,

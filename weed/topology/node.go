@@ -53,6 +53,13 @@ type NodeImpl struct {
 	value    interface{}
 }
 
+const (
+	NodeTypeTopology   = "Topology"
+	NodeTypeDataCenter = "DataCenter"
+	NodeTypeRack       = "Rack"
+	NodeTypeDataNode   = "DataNode"
+)
+
 // the first node must satisfy filterFirstNodeFn(), the rest nodes must have one free slot
 func (n *NodeImpl) RandomlyPickNodes(numberOfNodes int, filterFirstNodeFn func(dn Node) error) (firstNode Node, restNodes []Node, err error) {
 	candidates := make([]Node, 0, len(n.children))
@@ -109,13 +116,13 @@ func (n *NodeImpl) RandomlyPickNodes(numberOfNodes int, filterFirstNodeFn func(d
 }
 
 func (n *NodeImpl) IsDataNode() bool {
-	return n.nodeType == "DataNode"
+	return n.nodeType == NodeTypeDataNode
 }
 func (n *NodeImpl) IsRack() bool {
-	return n.nodeType == "Rack"
+	return n.nodeType == NodeTypeRack
 }
 func (n *NodeImpl) IsDataCenter() bool {
-	return n.nodeType == "DataCenter"
+	return n.nodeType == NodeTypeDataCenter
 }
 func (n *NodeImpl) String() string {
 	if n.parent != nil {

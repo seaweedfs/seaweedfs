@@ -7,7 +7,7 @@ type DataCenter struct {
 func NewDataCenter(id string) *DataCenter {
 	dc := &DataCenter{}
 	dc.id = NodeId(id)
-	dc.nodeType = "DataCenter"
+	dc.nodeType = NodeTypeDataCenter
 	dc.children = make(map[NodeId]Node)
 	dc.NodeImpl.value = dc
 	return dc

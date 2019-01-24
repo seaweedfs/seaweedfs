@@ -15,7 +15,7 @@ type MountOptions struct {
 	collection         *string
 	replication        *string
 	ttlSec             *int
-	chunkSizeLimitMB   *int
+	chunkSizeLimitMiB  *int
 	dataCenter         *string
 }
 
@@ -35,7 +35,7 @@ func init() {
 	mountOptions.collection = cmdMount.Flag.String("collection", "", "collection to create the files")
 	mountOptions.replication = cmdMount.Flag.String("replication", "", "replication(e.g. 000, 001) to create to files. If empty, let filer decide.")
 	mountOptions.ttlSec = cmdMount.Flag.Int("ttl", 0, "file ttl in seconds")
-	mountOptions.chunkSizeLimitMB = cmdMount.Flag.Int("chunkSizeLimitMB", 4, "local write buffer size, also chunk large files")
+	mountOptions.chunkSizeLimitMiB = cmdMount.Flag.Int("chunkSizeLimitMB", 4, "local write buffer size, also chunk large files")
 	mountOptions.dataCenter = cmdMount.Flag.String("dataCenter", "", "prefer to write to the data center")
 	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
 	mountMemProfile = cmdMount.Flag.String("memprofile", "", "memory profile output file")

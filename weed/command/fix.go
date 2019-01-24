@@ -81,8 +81,8 @@ func runFix(cmd *Command, args []string) bool {
 
 	err = storage.ScanVolumeFile(*fixVolumePath, *fixVolumeCollection, vid, storage.NeedleMapInMemory, scanner)
 	if err != nil {
-		glog.Fatalf("Export Volume File [ERROR] %s\n", err)
 		os.Remove(indexFileName)
+		glog.Fatalf("Export Volume File [ERROR] %s\n", err)
 	}
 
 	return true

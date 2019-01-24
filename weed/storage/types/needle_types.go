@@ -3,6 +3,7 @@ package types
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/dustin/go-humanize"
 	"math"
 	"strconv"
 )
@@ -16,7 +17,7 @@ const (
 	NeedleEntrySize       = NeedleIdSize + OffsetSize + SizeSize
 	TimestampSize         = 8 // int64 size
 	NeedlePaddingSize     = 8
-	MaxPossibleVolumeSize = 4 * 1024 * 1024 * 1024 * 8
+	MaxPossibleVolumeSize = 4 * humanize.GiByte * 8
 	TombstoneFileSize     = math.MaxUint32
 	CookieSize            = 4
 )

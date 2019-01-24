@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"bytes"
+	"github.com/dustin/go-humanize"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -37,7 +38,7 @@ func (fs *FilerServer) autoChunk(w http.ResponseWriter, r *http.Request, replica
 	}
 	glog.V(4).Infoln("AutoChunking level set to", maxMB, "(MB)")
 
-	chunkSize := 1024 * 1024 * maxMB
+	chunkSize := maxMB * humanize.MiByte
 
 	contentLength := int64(0)
 	if contentLengthHeader := r.Header["Content-Length"]; len(contentLengthHeader) == 1 {
@@ -82,7 +83,7 @@ func (fs *FilerServer) doAutoChunk(w http.ResponseWriter, r *http.Request, conte
 	var fileChunks []*filer_pb.FileChunk
 
 	totalBytesRead := int64(0)
-	tmpBufferSize := int32(1024 * 1024)
+	tmpBufferSize := int32(1 * humanize.MiByte)
 	tmpBuffer := bytes.NewBuffer(make([]byte, 0, tmpBufferSize))
 	chunkBuf := make([]byte, chunkSize+tmpBufferSize, chunkSize+tmpBufferSize) // chunk size plus a little overflow
 	chunkBufOffset := int32(0)

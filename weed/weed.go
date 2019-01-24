@@ -6,6 +6,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/dustin/go-humanize"
 	"io"
 	"math/rand"
 	"os"
@@ -37,7 +38,7 @@ func setExitStatus(n int) {
 }
 
 func main() {
-	glog.MaxSize = 1024 * 1024 * 32
+	glog.MaxSize = 32 * humanize.MiByte
 	rand.Seed(time.Now().UnixNano())
 	flag.Usage = usage
 	flag.Parse()

@@ -63,7 +63,8 @@ var (
 	masterPort                    = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
 	masterGrpcPort                = cmdServer.Flag.Int("master.port.grpc", 0, "master grpc server listen port, default to http port + 10000")
 	masterMetaFolder              = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
-	masterVolumeSizeLimitMB       = cmdServer.Flag.Uint("master.volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
+	masterVolumeSizeLimitMiB      = cmdServer.Flag.Uint("master.volumeSizeLimitMB", 30*1000, "Master stops directing writes to over-sized volumes.(Deprecated, please use master.volumeSizeLimit!)")
+	masterVolumeSizeLimitArg      = cmdServer.Flag.String("master.volumeSizeLimit", "30GB", "Master stops directing writes to over-sized volumes upper to 30GB.(eg, 30GB, 20GiB, 500MiB and etc)")
 	masterVolumePreallocate       = cmdServer.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
 	masterDefaultReplicaPlacement = cmdServer.Flag.String("master.defaultReplicaPlacement", "000", "Default replication type if not specified.")
 	volumeDataFolders             = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
@@ -134,9 +135,7 @@ func runServer(cmd *Command, args []string) bool {
 
 	folders := strings.Split(*volumeDataFolders, ",")
 
-	if *masterVolumeSizeLimitMB > 30*1000 {
-		glog.Fatalf("masterVolumeSizeLimitMB should be less than 30000")
-	}
+	masterVolumeSizeLimit := util.ParseVolumeSizeLimit(*masterVolumeSizeLimitMiB, *masterVolumeSizeLimitArg)
 
 	if *masterMetaFolder == "" {
 		*masterMetaFolder = folders[0]
@@ -168,7 +167,7 @@ func runServer(cmd *Command, args []string) bool {
 	go func() {
 		r := mux.NewRouter()
 		ms := weed_server.NewMasterServer(r, *masterPort, *masterMetaFolder,
-			*masterVolumeSizeLimitMB, *masterVolumePreallocate,
+			masterVolumeSizeLimit, *masterVolumePreallocate,
 			*pulseSeconds, *masterDefaultReplicaPlacement, *serverGarbageThreshold,
 			serverWhiteList, *serverSecureKey,
 		)

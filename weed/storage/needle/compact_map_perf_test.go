@@ -2,6 +2,7 @@ package needle
 
 import (
 	"fmt"
+	"github.com/dustin/go-humanize"
 	"log"
 	"os"
 	"runtime"
@@ -83,5 +84,5 @@ func PrintMemUsage() {
 	fmt.Printf("\tNumGC = %v", m.NumGC)
 }
 func bToMb(b uint64) uint64 {
-	return b / 1024 / 1024
+	return b / humanize.MiByte
 }
