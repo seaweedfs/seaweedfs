@@ -37,7 +37,7 @@ var (
 	metaFolder              = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
 	masterPeers             = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094")
 	volumeSizeLimitMiB      = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to over-sized volumes. (Deprecated, please use volumeSizeLimit!)")
-	volumeSizeLimitArg      = cmdMaster.Flag.String("volumeSizeLimit", "30000MB", "Master stops directing writes to over-sized volumes upper to 30000MB.(eg, 30GB, 20GiB, 500MiB and etc)")
+	volumeSizeLimitArg      = cmdMaster.Flag.String("volumeSizeLimit", "30000MiB", "Master stops directing writes to over-sized volumes upper to 30000MB.(eg, 30GB, 20GiB, 500MiB and etc)")
 	volumePreallocate       = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
 	mpulse                  = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	defaultReplicaPlacement = cmdMaster.Flag.String("defaultReplication", "000", "Default replication type if not specified.")
