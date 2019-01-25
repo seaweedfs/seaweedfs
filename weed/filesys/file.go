@@ -74,10 +74,6 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		return err
 	}
 
-	if file.isOpen {
-		return nil
-	}
-
 	glog.V(3).Infof("%v file setattr %+v, old:%+v", file.fullpath(), req, file.entry.Attributes)
 	if req.Valid.Size() {
 
