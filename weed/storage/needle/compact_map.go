@@ -76,9 +76,9 @@ func (cs *CompactSection) Delete(key NeedleId) uint32 {
 	cs.Lock()
 	ret := uint32(0)
 	if i := cs.binarySearchValues(skey); i >= 0 {
-		if cs.values[i].Size > 0 {
+		if cs.values[i].Size > 0 && cs.values[i].Size != TombstoneFileSize {
 			ret = cs.values[i].Size
-			cs.values[i].Size = 0
+			cs.values[i].Size = TombstoneFileSize
 		}
 	}
 	if v, found := cs.overflow.findOverflowEntry(skey); found {
