@@ -45,6 +45,7 @@ func NewRaftServer(r *mux.Router, peers []string, httpAddr string, dataDir strin
 	transporter := raft.NewHTTPTransporter("/cluster", time.Second)
 	transporter.Transport.MaxIdleConnsPerHost = 1024
 	transporter.Transport.IdleConnTimeout = time.Second
+	transporter.Transport.ResponseHeaderTimeout = time.Second
 	glog.V(0).Infof("Starting RaftServer with %v", httpAddr)
 
 	// Clear old cluster configurations if peers are changed
