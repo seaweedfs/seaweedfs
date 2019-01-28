@@ -14,7 +14,6 @@ import (
 	"github.com/chrislusf/raft"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/topology"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
 )
 
@@ -72,7 +71,6 @@ func NewRaftServer(r *mux.Router, peers []string, httpAddr string, dataDir strin
 	for _, peer := range s.peers {
 		s.raftServer.AddPeer(peer, "http://"+peer)
 	}
-	rand.Seed(util.HashBytesToInt64([]byte(httpAddr)))
 	time.Sleep(time.Duration(1000+rand.Int31n(3000)) * time.Millisecond)
 	if s.raftServer.IsLogEmpty() {
 		// Initialize the server by joining itself.
