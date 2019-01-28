@@ -50,6 +50,9 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 }
 
 func (t *Topology) IsLeader() bool {
+	if t.RaftServer!=nil {
+		return t.RaftServer.State() == raft.Leader
+	}
 	if leader, e := t.Leader(); e == nil {
 		return leader == t.RaftServer.Name()
 	}
