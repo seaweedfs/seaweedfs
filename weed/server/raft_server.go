@@ -3,7 +3,6 @@ package weed_server
 import (
 	"encoding/json"
 	"io/ioutil"
-	"math/rand"
 	"os"
 	"path"
 	"reflect"
@@ -71,8 +70,8 @@ func NewRaftServer(r *mux.Router, peers []string, httpAddr string, dataDir strin
 	for _, peer := range s.peers {
 		s.raftServer.AddPeer(peer, "http://"+peer)
 	}
-	time.Sleep(time.Duration(1000+rand.Int31n(3000)) * time.Millisecond)
-	if s.raftServer.IsLogEmpty() {
+
+	if s.raftServer.IsLogEmpty() && isTheFirstOne(httpAddr, s.peers) {
 		// Initialize the server by joining itself.
 		glog.V(0).Infoln("Initializing new cluster")
 
@@ -128,4 +127,12 @@ func isPeersChanged(dir string, self string, peers []string) (oldPeers []string,
 
 	return oldPeers, !reflect.DeepEqual(peers, oldPeers)
 
+}
+
+func isTheFirstOne(self string, peers []string) bool {
+	sort.Strings(peers)
+	if len(peers)<=0{
+		return true
+	}
+	return self == peers[0]
 }
