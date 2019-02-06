@@ -41,7 +41,7 @@ var cmdBackup = &Command{
 	But it's tricky to incrementally copy the differences.
 	
 	The complexity comes when there are multiple addition, deletion and compaction.
-	This tool will handle them correctly and efficiently, avoiding unnecessary data transporation.
+	This tool will handle them correctly and efficiently, avoiding unnecessary data transportation.
   `,
 }
 
