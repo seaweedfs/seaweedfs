@@ -158,5 +158,5 @@ func (g *Guard) checkJwt(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	glog.V(1).Infof("No permission from %s", r.RemoteAddr)
-	return fmt.Errorf("No write permisson from %s", r.RemoteAddr)
+	return fmt.Errorf("No write permission from %s", r.RemoteAddr)
 }

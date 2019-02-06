@@ -82,7 +82,7 @@ func batchVacuumVolumeCompact(vl *VolumeLayout, vid storage.VolumeId, locationli
 func batchVacuumVolumeCommit(vl *VolumeLayout, vid storage.VolumeId, locationlist *VolumeLocationList) bool {
 	isCommitSuccess := true
 	for _, dn := range locationlist.list {
-		glog.V(0).Infoln("Start Commiting vacuum", vid, "on", dn.Url())
+		glog.V(0).Infoln("Start Committing vacuum", vid, "on", dn.Url())
 		err := operation.WithVolumeServerClient(dn.Url(), func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 			_, err := volumeServerClient.VacuumVolumeCommit(context.Background(), &volume_server_pb.VacuumVolumeCommitRequest{
 				VolumdId: uint32(vid),
@@ -93,7 +93,7 @@ func batchVacuumVolumeCommit(vl *VolumeLayout, vid storage.VolumeId, locationlis
 			glog.Errorf("Error when committing vacuum %d on %s: %v", vid, dn.Url(), err)
 			isCommitSuccess = false
 		} else {
-			glog.V(0).Infof("Complete Commiting vacuum %d on %s", vid, dn.Url())
+			glog.V(0).Infof("Complete Committing vacuum %d on %s", vid, dn.Url())
 		}
 		if isCommitSuccess {
 			vl.SetVolumeAvailable(dn, vid)
