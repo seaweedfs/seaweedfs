@@ -30,7 +30,7 @@ func IsGzippable(ext, mtype string, data []byte) bool {
 		return false
 	}
 
-	// by file name extention
+	// by file name extension
 	switch ext {
 	case ".zip", ".rar", ".gz", ".bz2", ".xz":
 		return false
