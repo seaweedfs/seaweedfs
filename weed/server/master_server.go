@@ -98,6 +98,9 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 			glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "becomes leader.")
 		}
 	})
+	ms.Topo.RaftServer.AddEventListener(raft.StateChangeEventType, func(e raft.Event) {
+		glog.V(0).Infof("state change: %+v", e)
+	})
 	if ms.Topo.IsLeader() {
 		glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", "I am the leader!")
 	} else {
