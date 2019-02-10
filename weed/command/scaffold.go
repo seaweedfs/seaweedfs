@@ -19,7 +19,7 @@ var cmdScaffold = &Command{
 
 var (
 	outputPath = cmdScaffold.Flag.String("output", "", "if not empty, save the configuration file to this directory")
-	config     = cmdScaffold.Flag.String("config", "filer", "[filer|notification|replication] the configuration file to generate")
+	config     = cmdScaffold.Flag.String("config", "filer", "[filer|notification|replication|security] the configuration file to generate")
 )
 
 func runScaffold(cmd *Command, args []string) bool {
@@ -32,6 +32,8 @@ func runScaffold(cmd *Command, args []string) bool {
 		content = NOTIFICATION_TOML_EXAMPLE
 	case "replication":
 		content = REPLICATION_TOML_EXAMPLE
+	case "security":
+		content = SECURITY_TOML_EXAMPLE
 	}
 	if content == "" {
 		println("need a valid -config option")
@@ -238,6 +240,14 @@ b2_account_id = ""
 b2_master_application_key  = ""
 bucket = "mybucket"            # an existing bucket
 directory = "/"                # destination directory
+
+`
+
+	SECURITY_TOML_EXAMPLE = `
+# this file is read by master, volume server, and filer
+
+[jwt]
+signing_key = ""
 
 `
 )

@@ -28,7 +28,7 @@ var cmdFilerReplicate = &Command{
 	filer.replicate listens on filer notifications. If any file is updated, it will fetch the updated content,
 	and write to the other destination.
 
-	Run "weed scaffold -config replication" to generate a replication.toml file and customize the parameters.
+	Run "weed scaffold -config=replication" to generate a replication.toml file and customize the parameters.
 
   `,
 }
