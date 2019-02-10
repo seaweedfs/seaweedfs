@@ -11,7 +11,6 @@ import (
 	"context"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
 	"net/http"
@@ -31,9 +30,6 @@ type CopyOptions struct {
 	collection    *string
 	ttl           *string
 	maxMB         *int
-	secretKey     *string
-
-	secret security.Secret
 }
 
 func init() {
@@ -46,7 +42,6 @@ func init() {
 	copy.ttl = cmdCopy.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
 	copy.maxMB = cmdCopy.Flag.Int("maxMB", 0, "split files larger than the limit")
 	copy.filerGrpcPort = cmdCopy.Flag.Int("filer.port.grpc", 0, "filer grpc server listen port, default to filer port + 10000")
-	copy.secretKey = cmdCopy.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 }
 
 var cmdCopy = &Command{
@@ -66,7 +61,6 @@ var cmdCopy = &Command{
 }
 
 func runCopy(cmd *Command, args []string) bool {
-	copy.secret = security.Secret(*copy.secretKey)
 	if len(args) <= 1 {
 		return false
 	}

@@ -28,7 +28,6 @@ type FilerOptions struct {
 	redirectOnRead          *bool
 	disableDirListing       *bool
 	maxMB                   *int
-	secretKey               *string
 	dirListingLimit         *int
 	dataCenter              *string
 	enableNotification      *bool
@@ -49,7 +48,6 @@ func init() {
 	f.redirectOnRead = cmdFiler.Flag.Bool("redirectOnRead", false, "whether proxy or redirect to volume server during file GET request")
 	f.disableDirListing = cmdFiler.Flag.Bool("disableDirListing", false, "turn off directory listing")
 	f.maxMB = cmdFiler.Flag.Int("maxMB", 32, "split files larger than the limit")
-	f.secretKey = cmdFiler.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 	f.dirListingLimit = cmdFiler.Flag.Int("dirListLimit", 100000, "limit sub dir listing size")
 	f.dataCenter = cmdFiler.Flag.String("dataCenter", "", "prefer to write to volumes in this data center")
 }
@@ -103,7 +101,6 @@ func (fo *FilerOptions) startFiler() {
 		RedirectOnRead:     *fo.redirectOnRead,
 		DisableDirListing:  *fo.disableDirListing,
 		MaxMB:              *fo.maxMB,
-		SecretKey:          *fo.secretKey,
 		DirListingLimit:    *fo.dirListingLimit,
 		DataCenter:         *fo.dataCenter,
 		DefaultLevelDbDir:  defaultLevelDbDirectory,

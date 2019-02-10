@@ -6,7 +6,6 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"golang.org/x/net/context"
 )
@@ -72,9 +71,6 @@ func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, sleepI
 			}
 			if in.GetVolumeSizeLimit() != 0 {
 				vs.store.VolumeSizeLimit = in.GetVolumeSizeLimit()
-			}
-			if in.GetSecretKey() != "" {
-				vs.guard.SecretKey = security.Secret(in.GetSecretKey())
 			}
 			if in.GetLeader() != "" && masterNode != in.GetLeader() {
 				glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", in.GetLeader(), masterNode)

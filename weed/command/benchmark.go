@@ -17,7 +17,6 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
@@ -35,7 +34,6 @@ type BenchmarkOptions struct {
 	collection       *string
 	cpuprofile       *string
 	maxCpu           *int
-	secretKey        *string
 }
 
 var (
@@ -59,7 +57,6 @@ func init() {
 	b.collection = cmdBenchmark.Flag.String("collection", "benchmark", "write data to this collection")
 	b.cpuprofile = cmdBenchmark.Flag.String("cpuprofile", "", "cpu profile output file")
 	b.maxCpu = cmdBenchmark.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
-	b.secretKey = cmdBenchmark.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 	sharedBytes = make([]byte, 1024)
 }
 
@@ -188,7 +185,6 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 	defer wait.Done()
 	delayedDeleteChan := make(chan *delayedFile, 100)
 	var waitForDeletions sync.WaitGroup
-	secret := security.Secret(*b.secretKey)
 
 	for i := 0; i < 7; i++ {
 		waitForDeletions.Add(1)
@@ -198,8 +194,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 				if df.enterTime.After(time.Now()) {
 					time.Sleep(df.enterTime.Sub(time.Now()))
 				}
-				if e := util.Delete("http://"+df.fp.Server+"/"+df.fp.Fid,
-					security.GenJwt(secret, df.fp.Fid)); e == nil {
+				if e := util.Delete("http://"+df.fp.Server+"/"+df.fp.Fid, ""); e == nil {
 					s.completed++
 				} else {
 					s.failed++
@@ -224,7 +219,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 		}
 		if assignResult, err := operation.Assign(masterClient.GetMaster(), ar); err == nil {
 			fp.Server, fp.Fid, fp.Collection = assignResult.Url, assignResult.Fid, *b.collection
-			if _, err := fp.Upload(0, masterClient.GetMaster(), secret); err == nil {
+			if _, err := fp.Upload(0, masterClient.GetMaster(), ""); err == nil {
 				if random.Intn(100) < *b.deletePercentage {
 					s.total++
 					delayedDeleteChan <- &delayedFile{time.Now().Add(time.Second), fp}

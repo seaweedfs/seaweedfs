@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/security"
 )
 
 var (
@@ -23,7 +22,6 @@ type UploadOptions struct {
 	dataCenter  *string
 	ttl         *string
 	maxMB       *int
-	secretKey   *string
 }
 
 func init() {
@@ -37,7 +35,6 @@ func init() {
 	upload.dataCenter = cmdUpload.Flag.String("dataCenter", "", "optional data center name")
 	upload.ttl = cmdUpload.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
 	upload.maxMB = cmdUpload.Flag.Int("maxMB", 0, "split files larger than the limit")
-	upload.secretKey = cmdUpload.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 }
 
 var cmdUpload = &Command{
@@ -60,7 +57,6 @@ var cmdUpload = &Command{
 }
 
 func runUpload(cmd *Command, args []string) bool {
-	secret := security.Secret(*upload.secretKey)
 	if len(args) == 0 {
 		if *upload.dir == "" {
 			return false
@@ -79,7 +75,7 @@ func runUpload(cmd *Command, args []string) bool {
 					}
 					results, e := operation.SubmitFiles(*upload.master, parts,
 						*upload.replication, *upload.collection, *upload.dataCenter,
-						*upload.ttl, *upload.maxMB, secret)
+						*upload.ttl, *upload.maxMB)
 					bytes, _ := json.Marshal(results)
 					fmt.Println(string(bytes))
 					if e != nil {
@@ -98,7 +94,7 @@ func runUpload(cmd *Command, args []string) bool {
 		}
 		results, _ := operation.SubmitFiles(*upload.master, parts,
 			*upload.replication, *upload.collection, *upload.dataCenter,
-			*upload.ttl, *upload.maxMB, secret)
+			*upload.ttl, *upload.maxMB)
 		bytes, _ := json.Marshal(results)
 		fmt.Println(string(bytes))
 	}

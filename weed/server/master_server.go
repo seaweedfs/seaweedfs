@@ -45,7 +45,6 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	defaultReplicaPlacement string,
 	garbageThreshold float64,
 	whiteList []string,
-	secureKey string,
 ) *MasterServer {
 
 	var preallocateSize int64
@@ -67,7 +66,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", volumeSizeLimitMB, "MB")
 
-	ms.guard = security.NewGuard(whiteList, secureKey)
+	ms.guard = security.NewGuard(whiteList, signingKey)
 
 	handleStaticResources2(r)
 	r.HandleFunc("/", ms.uiStatusHandler)

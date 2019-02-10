@@ -11,10 +11,10 @@ import (
 )
 
 type EncodedJwt string
-type Secret string
+type SigningKey string
 
-func GenJwt(secret Secret, fileId string) EncodedJwt {
-	if secret == "" {
+func GenJwt(signingKey SigningKey, fileId string) EncodedJwt {
+	if signingKey == "" {
 		return ""
 	}
 
@@ -23,7 +23,7 @@ func GenJwt(secret Secret, fileId string) EncodedJwt {
 		ExpiresAt: time.Now().Add(time.Second * 10).Unix(),
 		Subject:   fileId,
 	}
-	encoded, e := t.SignedString(secret)
+	encoded, e := t.SignedString(signingKey)
 	if e != nil {
 		glog.V(0).Infof("Failed to sign claims: %v", t.Claims)
 		return ""
@@ -55,20 +55,20 @@ func GetJwt(r *http.Request) EncodedJwt {
 	return EncodedJwt(tokenStr)
 }
 
-func EncodeJwt(secret Secret, claims *jwt.StandardClaims) (EncodedJwt, error) {
-	if secret == "" {
+func EncodeJwt(signingKey SigningKey, claims *jwt.StandardClaims) (EncodedJwt, error) {
+	if signingKey == "" {
 		return "", nil
 	}
 
 	t := jwt.New(jwt.GetSigningMethod("HS256"))
 	t.Claims = claims
-	encoded, e := t.SignedString(secret)
+	encoded, e := t.SignedString(signingKey)
 	return EncodedJwt(encoded), e
 }
 
-func DecodeJwt(secret Secret, tokenString EncodedJwt) (token *jwt.Token, err error) {
+func DecodeJwt(signingKey SigningKey, tokenString EncodedJwt) (token *jwt.Token, err error) {
 	// check exp, nbf
 	return jwt.Parse(string(tokenString), func(token *jwt.Token) (interface{}, error) {
-		return secret, nil
+		return signingKey, nil
 	})
 }

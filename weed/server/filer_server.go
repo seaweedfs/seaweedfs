@@ -28,7 +28,6 @@ type FilerOption struct {
 	RedirectOnRead     bool
 	DisableDirListing  bool
 	MaxMB              int
-	SecretKey          string
 	DirListingLimit    int
 	DataCenter         string
 	DefaultLevelDbDir  string
@@ -36,7 +35,7 @@ type FilerOption struct {
 
 type FilerServer struct {
 	option *FilerOption
-	secret security.Secret
+	secret security.SigningKey
 	filer  *filer2.Filer
 }
 

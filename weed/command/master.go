@@ -47,7 +47,6 @@ var (
 	mMaxCpu               = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	garbageThreshold      = cmdMaster.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
 	masterWhiteListOption = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	masterSecureKey       = cmdMaster.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 	masterCpuProfile      = cmdMaster.Flag.String("cpuprofile", "", "cpu profile output file")
 	masterMemProfile      = cmdMaster.Flag.String("memprofile", "", "memory profile output file")
 
@@ -75,7 +74,7 @@ func runMaster(cmd *Command, args []string) bool {
 	ms := weed_server.NewMasterServer(r, *mport, *metaFolder,
 		*volumeSizeLimitMB, *volumePreallocate,
 		*mpulse, *defaultReplicaPlacement, *garbageThreshold,
-		masterWhiteList, *masterSecureKey,
+		masterWhiteList,
 	)
 
 	listeningAddress := *masterBindIp + ":" + strconv.Itoa(*mport)

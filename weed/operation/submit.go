@@ -37,9 +37,7 @@ type SubmitResult struct {
 }
 
 func SubmitFiles(master string, files []FilePart,
-	replication string, collection string, dataCenter string, ttl string, maxMB int,
-	secret security.Secret,
-) ([]SubmitResult, error) {
+	replication string, collection string, dataCenter string, ttl string, maxMB int) ([]SubmitResult, error) {
 	results := make([]SubmitResult, len(files))
 	for index, file := range files {
 		results[index].FileName = file.FileName
@@ -67,7 +65,7 @@ func SubmitFiles(master string, files []FilePart,
 		file.Replication = replication
 		file.Collection = collection
 		file.DataCenter = dataCenter
-		results[index].Size, err = file.Upload(maxMB, master, secret)
+		results[index].Size, err = file.Upload(maxMB, master, "")
 		if err != nil {
 			results[index].Error = err.Error()
 		}
@@ -110,8 +108,7 @@ func newFilePart(fullPathFilename string) (ret FilePart, err error) {
 	return ret, nil
 }
 
-func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (retSize uint32, err error) {
-	jwt := security.GenJwt(secret, fi.Fid)
+func (fi FilePart) Upload(maxMB int, master string, jwt security.EncodedJwt) (retSize uint32, err error) {
 	fileUrl := "http://" + fi.Server + "/" + fi.Fid
 	if fi.ModTime != 0 {
 		fileUrl += "?ts=" + strconv.Itoa(int(fi.ModTime))
@@ -201,7 +198,7 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 }
 
 func upload_one_chunk(filename string, reader io.Reader, master,
-	fileUrl string, jwt security.EncodedJwt,
+fileUrl string, jwt security.EncodedJwt,
 ) (size uint32, e error) {
 	glog.V(4).Info("Uploading part ", filename, " to ", fileUrl, "...")
 	uploadResult, uploadError := Upload(fileUrl, filename, reader, false,
