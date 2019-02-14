@@ -46,8 +46,6 @@ type WFS struct {
 	pathToHandleLock  sync.Mutex
 	bufPool           sync.Pool
 
-	fileIdsDeletionChan chan []string
-
 	stats statsCache
 }
 type statsCache struct {
@@ -65,10 +63,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 				return make([]byte, option.ChunkSizeLimit)
 			},
 		},
-		fileIdsDeletionChan: make(chan []string, 32),
 	}
-
-	go wfs.loopProcessingDeletion()
 
 	return wfs
 }
