@@ -15,6 +15,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
+	"github.com/spf13/viper"
 )
 
 type MasterServer struct {
@@ -46,6 +47,10 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	garbageThreshold float64,
 	whiteList []string,
 ) *MasterServer {
+
+	LoadConfiguration("security", false)
+	v := viper.GetViper()
+	signingKey := v.GetString("jwt.signing.key")
 
 	var preallocateSize int64
 	if preallocate {

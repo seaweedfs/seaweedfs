@@ -1,6 +1,7 @@
 package security
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -11,21 +12,28 @@ import (
 )
 
 type EncodedJwt string
-type SigningKey string
+type SigningKey []byte
+
+type SeaweedFileIdClaims struct {
+	Fid string `json:"fid"`
+	jwt.StandardClaims
+}
 
 func GenJwt(signingKey SigningKey, fileId string) EncodedJwt {
-	if signingKey == "" {
+	if len(signingKey) == 0 {
 		return ""
 	}
 
-	t := jwt.New(jwt.GetSigningMethod("HS256"))
-	t.Claims = &jwt.StandardClaims{
-		ExpiresAt: time.Now().Add(time.Second * 10).Unix(),
-		Subject:   fileId,
+	claims := SeaweedFileIdClaims{
+		fileId,
+		jwt.StandardClaims{
+			ExpiresAt: time.Now().Add(time.Second * 10).Unix(),
+		},
 	}
-	encoded, e := t.SignedString(signingKey)
+	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	encoded, e := t.SignedString([]byte(signingKey))
 	if e != nil {
-		glog.V(0).Infof("Failed to sign claims: %v", t.Claims)
+		glog.V(0).Infof("Failed to sign claims %+v: %v", t.Claims, e)
 		return ""
 	}
 	return EncodedJwt(encoded)
@@ -44,31 +52,15 @@ func GetJwt(r *http.Request) EncodedJwt {
 		}
 	}
 
-	// Get token from cookie
-	if tokenStr == "" {
-		cookie, err := r.Cookie("jwt")
-		if err == nil {
-			tokenStr = cookie.Value
-		}
-	}
-
 	return EncodedJwt(tokenStr)
-}
-
-func EncodeJwt(signingKey SigningKey, claims *jwt.StandardClaims) (EncodedJwt, error) {
-	if signingKey == "" {
-		return "", nil
-	}
-
-	t := jwt.New(jwt.GetSigningMethod("HS256"))
-	t.Claims = claims
-	encoded, e := t.SignedString(signingKey)
-	return EncodedJwt(encoded), e
 }
 
 func DecodeJwt(signingKey SigningKey, tokenString EncodedJwt) (token *jwt.Token, err error) {
 	// check exp, nbf
 	return jwt.Parse(string(tokenString), func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unknown token method")
+		}
 		return signingKey, nil
 	})
 }

@@ -10,7 +10,7 @@ func init() {
 }
 
 var cmdScaffold = &Command{
-	UsageLine: "scaffold [filer]",
+	UsageLine: "scaffold -config=[filer|notification|replication|security]",
 	Short:     "generate basic configuration files",
 	Long: `Generate filer.toml with all possible configurations for you to customize.
 
@@ -244,10 +244,14 @@ directory = "/"                # destination directory
 `
 
 	SECURITY_TOML_EXAMPLE = `
+# Put this file to one of the location, with descending priority
+#    ./security.toml
+#    $HOME/.seaweedfs/security.toml
+#    /etc/seaweedfs/security.toml
 # this file is read by master, volume server, and filer
 
-[jwt]
-signing_key = ""
+[jwt.signing]
+key = ""
 
 `
 )

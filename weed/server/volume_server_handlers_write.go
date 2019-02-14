@@ -20,13 +20,20 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, http.StatusBadRequest, e)
 		return
 	}
-	vid, _, _, _, _ := parseURLPath(r.URL.Path)
+
+	vid, fid, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, ve := storage.NewVolumeId(vid)
 	if ve != nil {
 		glog.V(0).Infoln("NewVolumeId error:", ve)
 		writeJsonError(w, r, http.StatusBadRequest, ve)
 		return
 	}
+
+	if !vs.maybeCheckJwtAuthorization(r, vid, fid) {
+		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
+		return
+	}
+
 	needle, originalSize, ne := storage.CreateNeedleFromRequest(r, vs.FixJpgOrientation)
 	if ne != nil {
 		writeJsonError(w, r, http.StatusBadRequest, ne)
@@ -55,6 +62,11 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	vid, fid, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, _ := storage.NewVolumeId(vid)
 	n.ParsePath(fid)
+
+	if !vs.maybeCheckJwtAuthorization(r, vid, fid) {
+		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
+		return
+	}
 
 	// glog.V(2).Infof("volume %s deleting %s", vid, n)
 
