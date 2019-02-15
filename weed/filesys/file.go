@@ -105,6 +105,10 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		file.entry.Attributes.Mtime = req.Mtime.Unix()
 	}
 
+	if file.isOpen {
+		return nil
+	}
+
 	return file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
