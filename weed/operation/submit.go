@@ -198,7 +198,7 @@ func (fi FilePart) Upload(maxMB int, master string, jwt security.EncodedJwt) (re
 }
 
 func upload_one_chunk(filename string, reader io.Reader, master,
-fileUrl string, jwt security.EncodedJwt,
+	fileUrl string, jwt security.EncodedJwt,
 ) (size uint32, e error) {
 	glog.V(4).Info("Uploading part ", filename, " to ", fileUrl, "...")
 	uploadResult, uploadError := Upload(fileUrl, filename, reader, false,
