@@ -6,6 +6,7 @@ import (
 
 	"github.com/chrislusf/raft"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 )
@@ -92,6 +93,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		Url:       dn.Url(),
 		PublicUrl: dn.PublicUrl,
 		Count:     count,
+		Auth:      string(security.GenJwt(ms.guard.SigningKey, fid)),
 	}, nil
 }
 

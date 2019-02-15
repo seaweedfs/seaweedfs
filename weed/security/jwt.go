@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -57,10 +56,10 @@ func GetJwt(r *http.Request) EncodedJwt {
 
 func DecodeJwt(signingKey SigningKey, tokenString EncodedJwt) (token *jwt.Token, err error) {
 	// check exp, nbf
-	return jwt.Parse(string(tokenString), func(token *jwt.Token) (interface{}, error) {
+	return jwt.ParseWithClaims(string(tokenString), &SeaweedFileIdClaims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unknown token method")
 		}
-		return signingKey, nil
+		return []byte(signingKey), nil
 	})
 }

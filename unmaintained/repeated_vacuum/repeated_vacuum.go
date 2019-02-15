@@ -31,12 +31,12 @@ func main() {
 
 		targetUrl := fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
 
-		_, err = operation.Upload(targetUrl, fmt.Sprintf("test%d", i), reader, false, "", nil, "")
+		_, err = operation.Upload(targetUrl, fmt.Sprintf("test%d", i), reader, false, "", nil, assignResult.Auth)
 		if err != nil {
 			log.Fatalf("upload: %v", err)
 		}
 
-		util.Delete(targetUrl, "")
+		util.Delete(targetUrl, assignResult.Auth)
 
 		util.Get(fmt.Sprintf("http://%s/vol/vacuum", *master))
 

@@ -108,6 +108,7 @@ message AssignResponse {
     string public_url = 3;
     uint64 count = 4;
     string error = 5;
+    string auth = 6;
 }
 
 message StatisticsRequest {

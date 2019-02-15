@@ -17,6 +17,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
@@ -40,6 +41,7 @@ var (
 	b            BenchmarkOptions
 	sharedBytes  []byte
 	masterClient *wdclient.MasterClient
+	isSecure     bool
 )
 
 func init() {
@@ -194,7 +196,11 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 				if df.enterTime.After(time.Now()) {
 					time.Sleep(df.enterTime.Sub(time.Now()))
 				}
-				if e := util.Delete("http://"+df.fp.Server+"/"+df.fp.Fid, ""); e == nil {
+				var jwtAuthorization security.EncodedJwt
+				if isSecure {
+					jwtAuthorization = operation.LookupJwt(masterClient.GetMaster(), df.fp.Fid)
+				}
+				if e := util.Delete(fmt.Sprintf("http://%s/%s", df.fp.Server, df.fp.Fid), jwtAuthorization); e == nil {
 					s.completed++
 				} else {
 					s.failed++
@@ -219,7 +225,10 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 		}
 		if assignResult, err := operation.Assign(masterClient.GetMaster(), ar); err == nil {
 			fp.Server, fp.Fid, fp.Collection = assignResult.Url, assignResult.Fid, *b.collection
-			if _, err := fp.Upload(0, masterClient.GetMaster(), ""); err == nil {
+			if !isSecure && assignResult.Auth != "" {
+				isSecure = true
+			}
+			if _, err := fp.Upload(0, masterClient.GetMaster(), assignResult.Auth); err == nil {
 				if random.Intn(100) < *b.deletePercentage {
 					s.total++
 					delayedDeleteChan <- &delayedFile{time.Now().Add(time.Second), fp}

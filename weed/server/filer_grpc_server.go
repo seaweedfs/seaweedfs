@@ -233,6 +233,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 		Count:     int32(assignResult.Count),
 		Url:       assignResult.Url,
 		PublicUrl: assignResult.PublicUrl,
+		Auth:      string(assignResult.Auth),
 	}, err
 }
 

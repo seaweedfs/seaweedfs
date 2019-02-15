@@ -173,7 +173,7 @@ func uploadFileAsOne(filerAddress, filerGrpcAddress string, urlFolder string, f 
 
 		targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
 
-		uploadResult, err := operation.Upload(targetUrl, fileName, f, false, mimeType, nil, "")
+		uploadResult, err := operation.Upload(targetUrl, fileName, f, false, mimeType, nil, assignResult.Auth)
 		if err != nil {
 			fmt.Printf("upload data %v to %s: %v\n", fileName, targetUrl, err)
 			return false
@@ -253,7 +253,7 @@ func uploadFileInChunks(filerAddress, filerGrpcAddress string, urlFolder string,
 		uploadResult, err := operation.Upload(targetUrl,
 			fileName+"-"+strconv.FormatInt(i+1, 10),
 			io.LimitReader(f, chunkSize),
-			false, "application/octet-stream", nil, "")
+			false, "application/octet-stream", nil, assignResult.Auth)
 		if err != nil {
 			fmt.Printf("upload data %v to %s: %v\n", fileName, targetUrl, err)
 			return false

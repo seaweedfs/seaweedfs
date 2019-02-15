@@ -65,7 +65,7 @@ func SubmitFiles(master string, files []FilePart,
 		file.Replication = replication
 		file.Collection = collection
 		file.DataCenter = dataCenter
-		results[index].Size, err = file.Upload(maxMB, master, "")
+		results[index].Size, err = file.Upload(maxMB, master, ret.Auth)
 		if err != nil {
 			results[index].Error = err.Error()
 		}
@@ -167,7 +167,7 @@ func (fi FilePart) Upload(maxMB int, master string, jwt security.EncodedJwt) (re
 				baseName+"-"+strconv.FormatInt(i+1, 10),
 				io.LimitReader(fi.Reader, chunkSize),
 				master, fileUrl,
-				jwt)
+				ret.Auth)
 			if e != nil {
 				// delete all uploaded chunks
 				cm.DeleteChunks(master)

@@ -58,9 +58,6 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	if isGzipped {
 		h.Set("Content-Encoding", "gzip")
 	}
-	if jwt != "" {
-		h.Set("Authorization", "BEARER "+string(jwt))
-	}
 
 	file_writer, cp_err := body_writer.CreatePart(h)
 	if cp_err != nil {
@@ -85,6 +82,9 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	req.Header.Set("Content-Type", content_type)
 	for k, v := range pairMap {
 		req.Header.Set(k, v)
+	}
+	if jwt != "" {
+		req.Header.Set("Authorization", "BEARER "+string(jwt))
 	}
 	resp, post_err := client.Do(req)
 	if post_err != nil {
