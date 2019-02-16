@@ -53,9 +53,6 @@ func (t *Topology) IsLeader() bool {
 	if t.RaftServer!=nil {
 		return t.RaftServer.State() == raft.Leader
 	}
-	if leader, e := t.Leader(); e == nil {
-		return leader == t.RaftServer.Name()
-	}
 	return false
 }
 
