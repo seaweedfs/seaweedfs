@@ -200,7 +200,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 				if isSecure {
 					jwtAuthorization = operation.LookupJwt(masterClient.GetMaster(), df.fp.Fid)
 				}
-				if e := util.Delete(fmt.Sprintf("http://%s/%s", df.fp.Server, df.fp.Fid), jwtAuthorization); e == nil {
+				if e := util.Delete(fmt.Sprintf("http://%s/%s", df.fp.Server, df.fp.Fid), string(jwtAuthorization)); e == nil {
 					s.completed++
 				} else {
 					s.failed++

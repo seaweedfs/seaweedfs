@@ -36,7 +36,7 @@ func main() {
 			log.Fatalf("upload: %v", err)
 		}
 
-		util.Delete(targetUrl, assignResult.Auth)
+		util.Delete(targetUrl, string(assignResult.Auth))
 
 		util.Get(fmt.Sprintf("http://%s/vol/vacuum", *master))
 
