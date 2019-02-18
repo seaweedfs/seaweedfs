@@ -250,7 +250,33 @@ directory = "/"                # destination directory
 #    /etc/seaweedfs/security.toml
 # this file is read by master, volume server, and filer
 
+# the jwt signing key is read by master and volume server
+# a jwt expires in 10 seconds
 [jwt.signing]
+key = ""
+
+# volume server also uses grpc that should be secured.
+
+# all grpc tls authentications are mutual 
+[grpc]
+ca = ""
+
+[grpc.volume]
+cert = ""
+key = ""
+
+[grpc.master]
+cert = ""
+key = ""
+
+[grpc.filer]
+cert = ""
+key = ""
+
+# use this for any place needs a grpc client
+# i.e., "weed backup|benchmark|filer.copy|filer.replicate|mount|s3|upload"
+[grpc.client]
+cert = ""
 key = ""
 
 `

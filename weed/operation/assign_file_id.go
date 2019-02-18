@@ -3,6 +3,7 @@ package operation
 import (
 	"context"
 	"fmt"
+	"google.golang.org/grpc"
 	"strings"
 	"time"
 
@@ -30,7 +31,7 @@ type AssignResult struct {
 	Auth      security.EncodedJwt `json:"auth,omitempty"`
 }
 
-func Assign(server string, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {
+func Assign(server string, grpcDialOption grpc.DialOption, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {
 
 	var requests []*VolumeAssignRequest
 	requests = append(requests, primaryRequest)
@@ -44,7 +45,7 @@ func Assign(server string, primaryRequest *VolumeAssignRequest, alternativeReque
 			continue
 		}
 
-		lastError = withMasterServerClient(server, func(masterClient master_pb.SeaweedClient) error {
+		lastError = withMasterServerClient(server, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(5*time.Second))
 			defer cancel()
 

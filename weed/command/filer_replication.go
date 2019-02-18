@@ -35,6 +35,7 @@ var cmdFilerReplicate = &Command{
 
 func runFilerReplicate(cmd *Command, args []string) bool {
 
+	weed_server.LoadConfiguration("security", false)
 	weed_server.LoadConfiguration("replication", true)
 	weed_server.LoadConfiguration("notification", true)
 	config := viper.GetViper()

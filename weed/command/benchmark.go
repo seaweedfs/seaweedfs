@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/spf13/viper"
+	"google.golang.org/grpc"
 	"io"
 	"math"
 	"math/rand"
@@ -35,6 +38,7 @@ type BenchmarkOptions struct {
 	collection       *string
 	cpuprofile       *string
 	maxCpu           *int
+	grpcDialOption   grpc.DialOption
 }
 
 var (
@@ -101,6 +105,10 @@ var (
 )
 
 func runBenchmark(cmd *Command, args []string) bool {
+
+	weed_server.LoadConfiguration("security", false)
+	b.grpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
+
 	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)
 	if *b.maxCpu < 1 {
 		*b.maxCpu = runtime.NumCPU()
@@ -115,7 +123,7 @@ func runBenchmark(cmd *Command, args []string) bool {
 		defer pprof.StopCPUProfile()
 	}
 
-	masterClient = wdclient.NewMasterClient(context.Background(), "benchmark", strings.Split(*b.masters, ","))
+	masterClient = wdclient.NewMasterClient(context.Background(), b.grpcDialOption, "client", strings.Split(*b.masters, ","))
 	go masterClient.KeepConnectedToMaster()
 	masterClient.WaitUntilConnected()
 
@@ -223,12 +231,12 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 			Count:      1,
 			Collection: *b.collection,
 		}
-		if assignResult, err := operation.Assign(masterClient.GetMaster(), ar); err == nil {
+		if assignResult, err := operation.Assign(masterClient.GetMaster(), b.grpcDialOption, ar); err == nil {
 			fp.Server, fp.Fid, fp.Collection = assignResult.Url, assignResult.Fid, *b.collection
 			if !isSecure && assignResult.Auth != "" {
 				isSecure = true
 			}
-			if _, err := fp.Upload(0, masterClient.GetMaster(), assignResult.Auth); err == nil {
+			if _, err := fp.Upload(0, masterClient.GetMaster(), assignResult.Auth, b.grpcDialOption); err == nil {
 				if random.Intn(100) < *b.deletePercentage {
 					s.total++
 					delayedDeleteChan <- &delayedFile{time.Now().Add(time.Second), fp}

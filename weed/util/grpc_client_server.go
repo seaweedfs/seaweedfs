@@ -38,7 +38,7 @@ func GrpcDial(address string, opts ...grpc.DialOption) (*grpc.ClientConn, error)
 	// opts = append(opts, grpc.WithTimeout(time.Duration(5*time.Second)))
 	var options []grpc.DialOption
 	options = append(options,
-		grpc.WithInsecure(),
+		// grpc.WithInsecure(),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:    30 * time.Second, // client ping server if no activity for this long
 			Timeout: 20 * time.Second,
@@ -48,7 +48,7 @@ func GrpcDial(address string, opts ...grpc.DialOption) (*grpc.ClientConn, error)
 			options = append(options, opt)
 		}
 	}
-	return grpc.Dial(address, opts...)
+	return grpc.Dial(address, options...)
 }
 
 func WithCachedGrpcClient(fn func(*grpc.ClientConn) error, address string, opts ...grpc.DialOption) error {

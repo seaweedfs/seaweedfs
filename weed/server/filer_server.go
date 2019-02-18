@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"google.golang.org/grpc"
 	"net/http"
 	"os"
 
@@ -34,22 +35,24 @@ type FilerOption struct {
 }
 
 type FilerServer struct {
-	option *FilerOption
-	secret security.SigningKey
-	filer  *filer2.Filer
+	option         *FilerOption
+	secret         security.SigningKey
+	filer          *filer2.Filer
+	grpcDialOption grpc.DialOption
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
 
 	fs = &FilerServer{
-		option: option,
+		option:         option,
+		grpcDialOption: security.LoadClientTLS(viper.Sub("grpc"), "filer"),
 	}
 
 	if len(option.Masters) == 0 {
 		glog.Fatal("master list is required!")
 	}
 
-	fs.filer = filer2.NewFiler(option.Masters)
+	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption)
 
 	go fs.filer.KeepConnectedToMaster()
 

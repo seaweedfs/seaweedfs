@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"google.golang.org/grpc"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -37,6 +38,8 @@ type MasterServer struct {
 	// notifying clients
 	clientChansLock sync.RWMutex
 	clientChans     map[string]chan *master_pb.VolumeLocation
+
+	grpcDialOpiton grpc.DialOption
 }
 
 func NewMasterServer(r *mux.Router, port int, metaFolder string,
@@ -48,7 +51,6 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	whiteList []string,
 ) *MasterServer {
 
-	LoadConfiguration("security", false)
 	v := viper.GetViper()
 	signingKey := v.GetString("jwt.signing.key")
 
@@ -64,6 +66,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 		defaultReplicaPlacement: defaultReplicaPlacement,
 		garbageThreshold:        garbageThreshold,
 		clientChans:             make(map[string]chan *master_pb.VolumeLocation),
+		grpcDialOpiton:          security.LoadClientTLS(v.Sub("grpc"), "master"),
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
 	seq := sequence.NewMemorySequencer()
@@ -89,7 +92,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	r.HandleFunc("/stats/memory", ms.guard.WhiteList(statsMemoryHandler))
 	r.HandleFunc("/{fileId}", ms.proxyToLeader(ms.redirectHandler))
 
-	ms.Topo.StartRefreshWritableVolumes(garbageThreshold, ms.preallocate)
+	ms.Topo.StartRefreshWritableVolumes(ms.grpcDialOpiton, garbageThreshold, ms.preallocate)
 
 	return ms
 }

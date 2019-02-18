@@ -3,6 +3,9 @@ package source
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/spf13/viper"
+	"google.golang.org/grpc"
 	"io"
 	"net/http"
 	"strings"
@@ -17,8 +20,9 @@ type ReplicationSource interface {
 }
 
 type FilerSource struct {
-	grpcAddress string
-	Dir         string
+	grpcAddress    string
+	grpcDialOption grpc.DialOption
+	Dir            string
 }
 
 func (fs *FilerSource) Initialize(configuration util.Configuration) error {
@@ -31,6 +35,7 @@ func (fs *FilerSource) Initialize(configuration util.Configuration) error {
 func (fs *FilerSource) initialize(grpcAddress string, dir string) (err error) {
 	fs.grpcAddress = grpcAddress
 	fs.Dir = dir
+	fs.grpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
 	return nil
 }
 
@@ -40,7 +45,7 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrl string, err error) {
 
 	vid := volumeId(part)
 
-	err = fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = fs.withFilerClient(fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 
 		glog.V(4).Infof("read lookup volume id locations: %v", vid)
 		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
@@ -84,9 +89,9 @@ func (fs *FilerSource) ReadPart(part string) (filename string, header http.Heade
 	return filename, header, readCloser, err
 }
 
-func (fs *FilerSource) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
+func (fs *FilerSource) withFilerClient(grpcDialOption grpc.DialOption, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	grpcConnection, err := util.GrpcDial(fs.grpcAddress)
+	grpcConnection, err := util.GrpcDial(fs.grpcAddress, grpcDialOption)
 	if err != nil {
 		return fmt.Errorf("fail to dial %s: %v", fs.grpcAddress, err)
 	}

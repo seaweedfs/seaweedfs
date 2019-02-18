@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"google.golang.org/grpc"
 	"net/http"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -10,13 +11,14 @@ import (
 )
 
 type VolumeServer struct {
-	MasterNodes   []string
-	currentMaster string
-	pulseSeconds  int
-	dataCenter    string
-	rack          string
-	store         *storage.Store
-	guard         *security.Guard
+	MasterNodes    []string
+	currentMaster  string
+	pulseSeconds   int
+	dataCenter     string
+	rack           string
+	store          *storage.Store
+	guard          *security.Guard
+	grpcDialOption grpc.DialOption
 
 	needleMapKind     storage.NeedleMapType
 	FixJpgOrientation bool
@@ -33,7 +35,6 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	fixJpgOrientation bool,
 	readRedirect bool) *VolumeServer {
 
-	LoadConfiguration("security", false)
 	v := viper.GetViper()
 	signingKey := v.GetString("jwt.signing.key")
 	enableUiAccess := v.GetBool("access.ui")
@@ -45,6 +46,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		needleMapKind:     needleMapKind,
 		FixJpgOrientation: fixJpgOrientation,
 		ReadRedirect:      readRedirect,
+		grpcDialOption:    security.LoadClientTLS(viper.Sub("grpc"), "volume"),
 	}
 	vs.MasterNodes = masterNodes
 	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts, vs.needleMapKind)

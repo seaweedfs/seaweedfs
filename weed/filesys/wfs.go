@@ -19,6 +19,7 @@ import (
 
 type Option struct {
 	FilerGrpcAddress   string
+	GrpcDialOption     grpc.DialOption
 	FilerMountRootPath string
 	Collection         string
 	Replication        string
@@ -77,7 +78,7 @@ func (wfs *WFS) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) erro
 	return util.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, wfs.option.FilerGrpcAddress)
+	}, wfs.option.FilerGrpcAddress, wfs.option.GrpcDialOption)
 
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
+	"google.golang.org/grpc"
 	"net/http"
 	"strings"
 	"sync"
@@ -230,7 +231,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	})
 }
 
-func deleteFileIds(ctx context.Context, client filer_pb.SeaweedFilerClient, fileIds []string) error {
+func deleteFileIds(ctx context.Context, grpcDialOption grpc.DialOption, client filer_pb.SeaweedFilerClient, fileIds []string) error {
 
 	var vids []string
 	for _, fileId := range fileIds {
@@ -267,7 +268,7 @@ func deleteFileIds(ctx context.Context, client filer_pb.SeaweedFilerClient, file
 		return m, err
 	}
 
-	_, err := operation.DeleteFilesWithLookupVolumeId(fileIds, lookupFunc)
+	_, err := operation.DeleteFilesWithLookupVolumeId(grpcDialOption, fileIds, lookupFunc)
 
 	return err
 }

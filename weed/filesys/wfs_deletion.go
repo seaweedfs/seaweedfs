@@ -16,7 +16,7 @@ func (wfs *WFS) deleteFileChunks(chunks []*filer_pb.FileChunk) {
 	}
 
 	wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		deleteFileIds(context.Background(), client, fileIds)
+		deleteFileIds(context.Background(), wfs.option.GrpcDialOption, client, fileIds)
 		return nil
 	})
 }

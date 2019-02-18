@@ -3,6 +3,7 @@ package filer2
 import (
 	"context"
 	"fmt"
+	"google.golang.org/grpc"
 	"math"
 	"os"
 	"path/filepath"
@@ -24,13 +25,15 @@ type Filer struct {
 	directoryCache     *ccache.Cache
 	MasterClient       *wdclient.MasterClient
 	fileIdDeletionChan chan string
+	GrpcDialOption     grpc.DialOption
 }
 
-func NewFiler(masters []string) *Filer {
+func NewFiler(masters []string, grpcDialOption grpc.DialOption) *Filer {
 	f := &Filer{
 		directoryCache:     ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
-		MasterClient:       wdclient.NewMasterClient(context.Background(), "filer", masters),
+		MasterClient:       wdclient.NewMasterClient(context.Background(), grpcDialOption, "filer", masters),
 		fileIdDeletionChan: make(chan string, 4096),
+		GrpcDialOption:     grpcDialOption,
 	}
 
 	go f.loopProcessingDeletion()

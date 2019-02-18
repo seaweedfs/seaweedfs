@@ -3,6 +3,9 @@ package command
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/spf13/viper"
 	"os"
 	"path/filepath"
 
@@ -57,6 +60,10 @@ var cmdUpload = &Command{
 }
 
 func runUpload(cmd *Command, args []string) bool {
+
+	weed_server.LoadConfiguration("security", false)
+	grpcDialOption := security.LoadClientTLS(viper.Sub("grpc"), "client")
+
 	if len(args) == 0 {
 		if *upload.dir == "" {
 			return false
@@ -73,7 +80,7 @@ func runUpload(cmd *Command, args []string) bool {
 					if e != nil {
 						return e
 					}
-					results, e := operation.SubmitFiles(*upload.master, parts,
+					results, e := operation.SubmitFiles(*upload.master, grpcDialOption, parts,
 						*upload.replication, *upload.collection, *upload.dataCenter,
 						*upload.ttl, *upload.maxMB)
 					bytes, _ := json.Marshal(results)
@@ -92,7 +99,7 @@ func runUpload(cmd *Command, args []string) bool {
 		if e != nil {
 			fmt.Println(e.Error())
 		}
-		results, _ := operation.SubmitFiles(*upload.master, parts,
+		results, _ := operation.SubmitFiles(*upload.master, grpcDialOption, parts,
 			*upload.replication, *upload.collection, *upload.dataCenter,
 			*upload.ttl, *upload.maxMB)
 		bytes, _ := json.Marshal(results)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc"
 	"math/rand"
 	"net/url"
 	"strings"
@@ -78,7 +79,7 @@ func LookupFileId(server string, fileId string) (fullUrl string, err error) {
 }
 
 // LookupVolumeIds find volume locations by cache and actual lookup
-func LookupVolumeIds(server string, vids []string) (map[string]LookupResult, error) {
+func LookupVolumeIds(server string, grpcDialOption grpc.DialOption, vids []string) (map[string]LookupResult, error) {
 	ret := make(map[string]LookupResult)
 	var unknown_vids []string
 
@@ -98,7 +99,7 @@ func LookupVolumeIds(server string, vids []string) (map[string]LookupResult, err
 
 	//only query unknown_vids
 
-	err := withMasterServerClient(server, func(masterClient master_pb.SeaweedClient) error {
+	err := withMasterServerClient(server, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(5*time.Second))
 		defer cancel()
 

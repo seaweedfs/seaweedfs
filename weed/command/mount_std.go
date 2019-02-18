@@ -4,6 +4,9 @@ package command
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/spf13/viper"
 	"os"
 	"os/user"
 	"runtime"
@@ -19,6 +22,9 @@ import (
 )
 
 func runMount(cmd *Command, args []string) bool {
+
+	weed_server.LoadConfiguration("security", false)
+
 	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)
 	if *mountOptions.dir == "" {
 		fmt.Printf("Please specify the mount directory via \"-dir\"")
@@ -91,6 +97,7 @@ func runMount(cmd *Command, args []string) bool {
 
 	err = fs.Serve(c, filesys.NewSeaweedFileSystem(&filesys.Option{
 		FilerGrpcAddress:   filerGrpcAddress,
+		GrpcDialOption:     security.LoadClientTLS(viper.Sub("grpc"), "client"),
 		FilerMountRootPath: mountRoot,
 		Collection:         *mountOptions.collection,
 		Replication:        *mountOptions.replication,

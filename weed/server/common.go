@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -81,7 +82,7 @@ func debug(params ...interface{}) {
 	glog.V(4).Infoln(params...)
 }
 
-func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl string) {
+func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl string, grpcDialOption grpc.DialOption) {
 	m := make(map[string]interface{})
 	if r.Method != "POST" {
 		writeJsonError(w, r, http.StatusMethodNotAllowed, errors.New("Only submit via POST!"))
@@ -111,7 +112,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 		Collection:  r.FormValue("collection"),
 		Ttl:         r.FormValue("ttl"),
 	}
-	assignResult, ae := operation.Assign(masterUrl, ar)
+	assignResult, ae := operation.Assign(masterUrl, grpcDialOption, ar)
 	if ae != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, ae)
 		return

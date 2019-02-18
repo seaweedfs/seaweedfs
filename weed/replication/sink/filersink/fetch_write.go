@@ -105,7 +105,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk) (fileId stri
 
 func (fs *FilerSink) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	grpcConnection, err := util.GrpcDial(fs.grpcAddress)
+	grpcConnection, err := util.GrpcDial(fs.grpcAddress, fs.grpcDialOption)
 	if err != nil {
 		return fmt.Errorf("fail to dial %s: %v", fs.grpcAddress, err)
 	}

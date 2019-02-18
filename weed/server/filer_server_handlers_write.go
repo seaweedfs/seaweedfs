@@ -51,7 +51,7 @@ func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request,
 		}
 	}
 
-	assignResult, ae := operation.Assign(fs.filer.GetMaster(), ar, altRequest)
+	assignResult, ae := operation.Assign(fs.filer.GetMaster(), fs.grpcDialOption, ar, altRequest)
 	if ae != nil {
 		glog.Errorf("failing to assign a file id: %v", ae)
 		writeJsonError(w, r, http.StatusInternalServerError, ae)

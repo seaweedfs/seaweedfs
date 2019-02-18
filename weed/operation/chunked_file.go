@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc"
 	"io"
 	"net/http"
 	"sort"
@@ -69,12 +70,12 @@ func (cm *ChunkManifest) Marshal() ([]byte, error) {
 	return json.Marshal(cm)
 }
 
-func (cm *ChunkManifest) DeleteChunks(master string) error {
+func (cm *ChunkManifest) DeleteChunks(master string, grpcDialOption grpc.DialOption) error {
 	var fileIds []string
 	for _, ci := range cm.Chunks {
 		fileIds = append(fileIds, ci.Fid)
 	}
-	results, err := DeleteFiles(master, fileIds)
+	results, err := DeleteFiles(master, grpcDialOption, fileIds)
 	if err != nil {
 		glog.V(0).Infof("delete %+v: %v", fileIds, err)
 		return fmt.Errorf("chunk delete: %v", err)

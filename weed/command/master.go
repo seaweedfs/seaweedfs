@@ -1,6 +1,8 @@
 package command
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/spf13/viper"
 	"net/http"
 	"os"
 	"runtime"
@@ -54,6 +56,9 @@ var (
 )
 
 func runMaster(cmd *Command, args []string) bool {
+
+	weed_server.LoadConfiguration("security", false)
+
 	if *mMaxCpu < 1 {
 		*mMaxCpu = runtime.NumCPU()
 	}
@@ -104,7 +109,7 @@ func runMaster(cmd *Command, args []string) bool {
 			glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 		}
 		// Create your protocol servers.
-		grpcS := util.NewGrpcServer()
+		grpcS := util.NewGrpcServer(security.LoadServerTLS(viper.Sub("grpc"), "master"))
 		master_pb.RegisterSeaweedServer(grpcS, ms)
 		reflection.Register(grpcS)
 

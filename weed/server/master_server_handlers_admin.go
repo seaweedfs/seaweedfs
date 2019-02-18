@@ -24,7 +24,7 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	for _, server := range collection.ListVolumeServers() {
-		err := operation.WithVolumeServerClient(server.Url(), func(client volume_server_pb.VolumeServerClient) error {
+		err := operation.WithVolumeServerClient(server.Url(), ms.grpcDialOpiton, func(client volume_server_pb.VolumeServerClient) error {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(5*time.Second))
 			defer cancel()
 
@@ -60,7 +60,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	glog.Infoln("garbageThreshold =", gcThreshold)
-	ms.Topo.Vacuum(gcThreshold, ms.preallocate)
+	ms.Topo.Vacuum(ms.grpcDialOpiton, gcThreshold, ms.preallocate)
 	ms.dirStatusHandler(w, r)
 }
 
@@ -76,7 +76,7 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 			if ms.Topo.FreeSpace() < count*option.ReplicaPlacement.GetCopyCount() {
 				err = errors.New("Only " + strconv.Itoa(ms.Topo.FreeSpace()) + " volumes left! Not enough for " + strconv.Itoa(count*option.ReplicaPlacement.GetCopyCount()))
 			} else {
-				count, err = ms.vg.GrowByCountAndType(count, option, ms.Topo)
+				count, err = ms.vg.GrowByCountAndType(ms.grpcDialOpiton, count, option, ms.Topo)
 			}
 		} else {
 			err = errors.New("parameter count is not found")
@@ -126,13 +126,13 @@ func (ms *MasterServer) selfUrl(r *http.Request) string {
 }
 func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *http.Request) {
 	if ms.Topo.IsLeader() {
-		submitForClientHandler(w, r, ms.selfUrl(r))
+		submitForClientHandler(w, r, ms.selfUrl(r), ms.grpcDialOpiton)
 	} else {
 		masterUrl, err := ms.Topo.Leader()
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 		} else {
-			submitForClientHandler(w, r, masterUrl)
+			submitForClientHandler(w, r, masterUrl, ms.grpcDialOpiton)
 		}
 	}
 }

@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/spf13/viper"
 	"log"
 	"math/rand"
 
@@ -19,8 +22,11 @@ var (
 func main() {
 	flag.Parse()
 
+	weed_server.LoadConfiguration("security", false)
+	grpcDialOption := security.LoadClientTLS(viper.Sub("grpc"), "client")
+
 	for i := 0; i < *repeat; i++ {
-		assignResult, err := operation.Assign(*master, &operation.VolumeAssignRequest{Count: 1})
+		assignResult, err := operation.Assign(*master, grpcDialOption, &operation.VolumeAssignRequest{Count: 1})
 		if err != nil {
 			log.Fatalf("assign: %v", err)
 		}

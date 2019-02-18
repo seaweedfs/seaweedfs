@@ -3,6 +3,9 @@ package filersink
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/spf13/viper"
+	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -13,13 +16,14 @@ import (
 )
 
 type FilerSink struct {
-	filerSource *source.FilerSource
-	grpcAddress string
-	dir         string
-	replication string
-	collection  string
-	ttlSec      int32
-	dataCenter  string
+	filerSource    *source.FilerSource
+	grpcAddress    string
+	dir            string
+	replication    string
+	collection     string
+	ttlSec         int32
+	dataCenter     string
+	grpcDialOption grpc.DialOption
 }
 
 func init() {
@@ -55,6 +59,7 @@ func (fs *FilerSink) initialize(grpcAddress string, dir string,
 	fs.replication = replication
 	fs.collection = collection
 	fs.ttlSec = int32(ttlSec)
+	fs.grpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
 	return nil
 }
 

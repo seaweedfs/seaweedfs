@@ -18,7 +18,7 @@ var (
 	grpcClientsLock sync.Mutex
 )
 
-func WithVolumeServerClient(volumeServer string, fn func(volume_server_pb.VolumeServerClient) error) error {
+func WithVolumeServerClient(volumeServer string, grpcDialOption grpc.DialOption, fn func(volume_server_pb.VolumeServerClient) error) error {
 
 	grpcAddress, err := toVolumeServerGrpcAddress(volumeServer)
 	if err != nil {
@@ -28,7 +28,7 @@ func WithVolumeServerClient(volumeServer string, fn func(volume_server_pb.Volume
 	return util.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := volume_server_pb.NewVolumeServerClient(grpcConnection)
 		return fn(client)
-	}, grpcAddress)
+	}, grpcAddress, grpcDialOption)
 
 }
 
@@ -42,7 +42,7 @@ func toVolumeServerGrpcAddress(volumeServer string) (grpcAddress string, err err
 	return fmt.Sprintf("%s:%d", volumeServer[0:sepIndex], port+10000), nil
 }
 
-func withMasterServerClient(masterServer string, fn func(masterClient master_pb.SeaweedClient) error) error {
+func withMasterServerClient(masterServer string, grpcDialOption grpc.DialOption, fn func(masterClient master_pb.SeaweedClient) error) error {
 
 	masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(masterServer, 0)
 	if parseErr != nil {
@@ -52,6 +52,6 @@ func withMasterServerClient(masterServer string, fn func(masterClient master_pb.
 	return util.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := master_pb.NewSeaweedClient(grpcConnection)
 		return fn(client)
-	}, masterGrpcAddress)
+	}, masterGrpcAddress, grpcDialOption)
 
 }

@@ -2,6 +2,7 @@ package topology
 
 import (
 	"context"
+	"google.golang.org/grpc"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -13,9 +14,9 @@ type AllocateVolumeResult struct {
 	Error string
 }
 
-func AllocateVolume(dn *DataNode, vid storage.VolumeId, option *VolumeGrowOption) error {
+func AllocateVolume(dn *DataNode, grpcDialOption grpc.DialOption, vid storage.VolumeId, option *VolumeGrowOption) error {
 
-	return operation.WithVolumeServerClient(dn.Url(), func(client volume_server_pb.VolumeServerClient) error {
+	return operation.WithVolumeServerClient(dn.Url(), grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(5*time.Second))
 		defer cancel()
 

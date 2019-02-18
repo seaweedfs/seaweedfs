@@ -37,7 +37,7 @@ func encodeResponse(response interface{}) []byte {
 
 func (s3a *S3ApiServer) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	grpcConnection, err := util.GrpcDial(s3a.option.FilerGrpcAddress)
+	grpcConnection, err := util.GrpcDial(s3a.option.FilerGrpcAddress, s3a.option.GrpcDialOption)
 	if err != nil {
 		return fmt.Errorf("fail to dial %s: %v", s3a.option.FilerGrpcAddress, err)
 	}

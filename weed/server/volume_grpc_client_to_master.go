@@ -2,6 +2,9 @@ package weed_server
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/spf13/viper"
+	"google.golang.org/grpc"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -19,6 +22,8 @@ func (vs *VolumeServer) heartbeat() {
 	vs.store.SetDataCenter(vs.dataCenter)
 	vs.store.SetRack(vs.rack)
 
+	grpcDialOption := security.LoadClientTLS(viper.Sub("grpc"), "volume")
+
 	var err error
 	var newLeader string
 	for {
@@ -31,7 +36,7 @@ func (vs *VolumeServer) heartbeat() {
 				glog.V(0).Infof("failed to parse master grpc %v", masterGrpcAddress)
 				continue
 			}
-			newLeader, err = vs.doHeartbeat(master, masterGrpcAddress, time.Duration(vs.pulseSeconds)*time.Second)
+			newLeader, err = vs.doHeartbeat(master, masterGrpcAddress, grpcDialOption, time.Duration(vs.pulseSeconds)*time.Second)
 			if err != nil {
 				glog.V(0).Infof("heartbeat error: %v", err)
 				time.Sleep(time.Duration(vs.pulseSeconds) * time.Second)
@@ -40,9 +45,9 @@ func (vs *VolumeServer) heartbeat() {
 	}
 }
 
-func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, sleepInterval time.Duration) (newLeader string, err error) {
+func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader string, err error) {
 
-	grpcConection, err := util.GrpcDial(masterGrpcAddress)
+	grpcConection, err := util.GrpcDial(masterGrpcAddress, grpcDialOption)
 	if err != nil {
 		return "", fmt.Errorf("fail to dial %s : %v", masterNode, err)
 	}

@@ -1,6 +1,9 @@
 package command
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/spf13/viper"
 	"net/http"
 	"time"
 
@@ -46,6 +49,8 @@ var cmdS3 = &Command{
 
 func runS3(cmd *Command, args []string) bool {
 
+	weed_server.LoadConfiguration("security", false)
+
 	filerGrpcAddress, err := parseFilerGrpcAddress(*s3options.filer, *s3options.filerGrpcPort)
 	if err != nil {
 		glog.Fatal(err)
@@ -59,6 +64,7 @@ func runS3(cmd *Command, args []string) bool {
 		FilerGrpcAddress: filerGrpcAddress,
 		DomainName:       *s3options.domainName,
 		BucketsPath:      *s3options.filerBucketsPath,
+		GrpcDialOption:   security.LoadClientTLS(viper.Sub("grpc"), "client"),
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)

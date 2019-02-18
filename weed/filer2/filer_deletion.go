@@ -38,13 +38,13 @@ func (f *Filer) loopProcessingDeletion() {
 			fileIds = append(fileIds, fid)
 			if len(fileIds) >= 4096 {
 				glog.V(1).Infof("deleting fileIds len=%d", len(fileIds))
-				operation.DeleteFilesWithLookupVolumeId(fileIds, lookupFunc)
+				operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, fileIds, lookupFunc)
 				fileIds = fileIds[:0]
 			}
 		case <-ticker.C:
 			if len(fileIds) > 0 {
 				glog.V(1).Infof("timed deletion fileIds len=%d", len(fileIds))
-				operation.DeleteFilesWithLookupVolumeId(fileIds, lookupFunc)
+				operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, fileIds, lookupFunc)
 				fileIds = fileIds[:0]
 			}
 		}

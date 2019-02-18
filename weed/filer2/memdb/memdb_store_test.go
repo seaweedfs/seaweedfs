@@ -6,7 +6,7 @@ import (
 )
 
 func TestCreateAndFind(t *testing.T) {
-	filer := filer2.NewFiler(nil)
+	filer := filer2.NewFiler(nil, nil)
 	store := &MemDbStore{}
 	store.Initialize(nil)
 	filer.SetStore(store)
@@ -43,7 +43,7 @@ func TestCreateAndFind(t *testing.T) {
 }
 
 func TestCreateFileAndList(t *testing.T) {
-	filer := filer2.NewFiler(nil)
+	filer := filer2.NewFiler(nil, nil)
 	store := &MemDbStore{}
 	store.Initialize(nil)
 	filer.SetStore(store)
