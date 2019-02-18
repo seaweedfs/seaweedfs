@@ -102,7 +102,7 @@ func ReplicatedDelete(masterNode string, store *storage.Store,
 	if needToReplicate { //send to other replica locations
 		if r.FormValue("type") != "replicate" {
 			if err = distributedOperation(masterNode, store, volumeId, func(location operation.Location) error {
-				return util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", jwt)
+				return util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", string(jwt))
 			}); err != nil {
 				ret = 0
 			}

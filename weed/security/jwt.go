@@ -1,9 +1,9 @@
 package security
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
-
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -11,21 +11,28 @@ import (
 )
 
 type EncodedJwt string
-type Secret string
+type SigningKey []byte
 
-func GenJwt(secret Secret, fileId string) EncodedJwt {
-	if secret == "" {
+type SeaweedFileIdClaims struct {
+	Fid string `json:"fid"`
+	jwt.StandardClaims
+}
+
+func GenJwt(signingKey SigningKey, fileId string) EncodedJwt {
+	if len(signingKey) == 0 {
 		return ""
 	}
 
-	t := jwt.New(jwt.GetSigningMethod("HS256"))
-	t.Claims = &jwt.StandardClaims{
-		ExpiresAt: time.Now().Add(time.Second * 10).Unix(),
-		Subject:   fileId,
+	claims := SeaweedFileIdClaims{
+		fileId,
+		jwt.StandardClaims{
+			ExpiresAt: time.Now().Add(time.Second * 10).Unix(),
+		},
 	}
-	encoded, e := t.SignedString(secret)
+	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	encoded, e := t.SignedString([]byte(signingKey))
 	if e != nil {
-		glog.V(0).Infof("Failed to sign claims: %v", t.Claims)
+		glog.V(0).Infof("Failed to sign claims %+v: %v", t.Claims, e)
 		return ""
 	}
 	return EncodedJwt(encoded)
@@ -44,31 +51,15 @@ func GetJwt(r *http.Request) EncodedJwt {
 		}
 	}
 
-	// Get token from cookie
-	if tokenStr == "" {
-		cookie, err := r.Cookie("jwt")
-		if err == nil {
-			tokenStr = cookie.Value
-		}
-	}
-
 	return EncodedJwt(tokenStr)
 }
 
-func EncodeJwt(secret Secret, claims *jwt.StandardClaims) (EncodedJwt, error) {
-	if secret == "" {
-		return "", nil
-	}
-
-	t := jwt.New(jwt.GetSigningMethod("HS256"))
-	t.Claims = claims
-	encoded, e := t.SignedString(secret)
-	return EncodedJwt(encoded), e
-}
-
-func DecodeJwt(secret Secret, tokenString EncodedJwt) (token *jwt.Token, err error) {
+func DecodeJwt(signingKey SigningKey, tokenString EncodedJwt) (token *jwt.Token, err error) {
 	// check exp, nbf
-	return jwt.Parse(string(tokenString), func(token *jwt.Token) (interface{}, error) {
-		return secret, nil
+	return jwt.ParseWithClaims(string(tokenString), &SeaweedFileIdClaims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unknown token method")
+		}
+		return []byte(signingKey), nil
 	})
 }

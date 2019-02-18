@@ -2,6 +2,7 @@ package topology
 
 import (
 	"fmt"
+	"google.golang.org/grpc"
 	"math/rand"
 	"sync"
 
@@ -55,19 +56,19 @@ func (vg *VolumeGrowth) findVolumeCount(copyCount int) (count int) {
 	return
 }
 
-func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, topo *Topology) (count int, err error) {
-	count, err = vg.GrowByCountAndType(vg.findVolumeCount(option.ReplicaPlacement.GetCopyCount()), option, topo)
+func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, grpcDialOption grpc.DialOption, topo *Topology) (count int, err error) {
+	count, err = vg.GrowByCountAndType(grpcDialOption, vg.findVolumeCount(option.ReplicaPlacement.GetCopyCount()), option, topo)
 	if count > 0 && count%option.ReplicaPlacement.GetCopyCount() == 0 {
 		return count, nil
 	}
 	return count, err
 }
-func (vg *VolumeGrowth) GrowByCountAndType(targetCount int, option *VolumeGrowOption, topo *Topology) (counter int, err error) {
+func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targetCount int, option *VolumeGrowOption, topo *Topology) (counter int, err error) {
 	vg.accessLock.Lock()
 	defer vg.accessLock.Unlock()
 
 	for i := 0; i < targetCount; i++ {
-		if c, e := vg.findAndGrow(topo, option); e == nil {
+		if c, e := vg.findAndGrow(grpcDialOption, topo, option); e == nil {
 			counter += c
 		} else {
 			return counter, e
@@ -76,13 +77,13 @@ func (vg *VolumeGrowth) GrowByCountAndType(targetCount int, option *VolumeGrowOp
 	return
 }
 
-func (vg *VolumeGrowth) findAndGrow(topo *Topology, option *VolumeGrowOption) (int, error) {
+func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topology, option *VolumeGrowOption) (int, error) {
 	servers, e := vg.findEmptySlotsForOneVolume(topo, option)
 	if e != nil {
 		return 0, e
 	}
 	vid := topo.NextVolumeId()
-	err := vg.grow(topo, vid, option, servers...)
+	err := vg.grow(grpcDialOption, topo, vid, option, servers...)
 	return len(servers), err
 }
 
@@ -189,9 +190,9 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 	return
 }
 
-func (vg *VolumeGrowth) grow(topo *Topology, vid storage.VolumeId, option *VolumeGrowOption, servers ...*DataNode) error {
+func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid storage.VolumeId, option *VolumeGrowOption, servers ...*DataNode) error {
 	for _, server := range servers {
-		if err := AllocateVolume(server, vid, option); err == nil {
+		if err := AllocateVolume(server, grpcDialOption, vid, option); err == nil {
 			vi := storage.VolumeInfo{
 				Id:               vid,
 				Size:             0,

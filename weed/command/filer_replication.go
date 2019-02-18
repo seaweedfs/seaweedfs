@@ -28,13 +28,14 @@ var cmdFilerReplicate = &Command{
 	filer.replicate listens on filer notifications. If any file is updated, it will fetch the updated content,
 	and write to the other destination.
 
-	Run "weed scaffold -config replication" to generate a replication.toml file and customize the parameters.
+	Run "weed scaffold -config=replication" to generate a replication.toml file and customize the parameters.
 
   `,
 }
 
 func runFilerReplicate(cmd *Command, args []string) bool {
 
+	weed_server.LoadConfiguration("security", false)
 	weed_server.LoadConfiguration("replication", true)
 	weed_server.LoadConfiguration("notification", true)
 	config := viper.GetViper()

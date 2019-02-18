@@ -220,7 +220,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 			DataCenter:  "",
 		}
 	}
-	assignResult, err := operation.Assign(fs.filer.GetMaster(), assignRequest, altRequest)
+	assignResult, err := operation.Assign(fs.filer.GetMaster(), fs.grpcDialOption, assignRequest, altRequest)
 	if err != nil {
 		return nil, fmt.Errorf("assign volume: %v", err)
 	}
@@ -233,6 +233,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 		Count:     int32(assignResult.Count),
 		Url:       assignResult.Url,
 		PublicUrl: assignResult.PublicUrl,
+		Auth:      string(assignResult.Auth),
 	}, err
 }
 
@@ -253,7 +254,7 @@ func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsR
 		Ttl:         req.Ttl,
 	}
 
-	output, err := operation.Statistics(fs.filer.GetMaster(), input)
+	output, err := operation.Statistics(fs.filer.GetMaster(), fs.grpcDialOption, input)
 	if err != nil {
 		return nil, err
 	}

@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"google.golang.org/grpc"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
+	"github.com/spf13/viper"
 )
 
 type MasterServer struct {
@@ -36,6 +38,8 @@ type MasterServer struct {
 	// notifying clients
 	clientChansLock sync.RWMutex
 	clientChans     map[string]chan *master_pb.VolumeLocation
+
+	grpcDialOpiton grpc.DialOption
 }
 
 func NewMasterServer(r *mux.Router, port int, metaFolder string,
@@ -45,8 +49,10 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	defaultReplicaPlacement string,
 	garbageThreshold float64,
 	whiteList []string,
-	secureKey string,
 ) *MasterServer {
+
+	v := viper.GetViper()
+	signingKey := v.GetString("jwt.signing.key")
 
 	var preallocateSize int64
 	if preallocate {
@@ -60,6 +66,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 		defaultReplicaPlacement: defaultReplicaPlacement,
 		garbageThreshold:        garbageThreshold,
 		clientChans:             make(map[string]chan *master_pb.VolumeLocation),
+		grpcDialOpiton:          security.LoadClientTLS(v.Sub("grpc"), "master"),
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
 	seq := sequence.NewMemorySequencer()
@@ -67,7 +74,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", volumeSizeLimitMB, "MB")
 
-	ms.guard = security.NewGuard(whiteList, secureKey)
+	ms.guard = security.NewGuard(whiteList, signingKey)
 
 	handleStaticResources2(r)
 	r.HandleFunc("/", ms.uiStatusHandler)
@@ -85,7 +92,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	r.HandleFunc("/stats/memory", ms.guard.WhiteList(statsMemoryHandler))
 	r.HandleFunc("/{fileId}", ms.proxyToLeader(ms.redirectHandler))
 
-	ms.Topo.StartRefreshWritableVolumes(garbageThreshold, ms.preallocate)
+	ms.Topo.StartRefreshWritableVolumes(ms.grpcDialOpiton, garbageThreshold, ms.preallocate)
 
 	return ms
 }

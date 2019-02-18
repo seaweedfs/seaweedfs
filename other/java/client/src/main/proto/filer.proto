@@ -139,6 +139,7 @@ message AssignVolumeResponse {
     string url = 2;
     string public_url = 3;
     int32 count = 4;
+    string auth = 5;
 }
 
 message LookupVolumeRequest {

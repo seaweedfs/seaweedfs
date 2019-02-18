@@ -2,6 +2,9 @@ package command
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/spf13/viper"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/storage"
@@ -46,6 +49,10 @@ var cmdBackup = &Command{
 }
 
 func runBackup(cmd *Command, args []string) bool {
+
+	weed_server.LoadConfiguration("security", false)
+	grpcDialOption := security.LoadClientTLS(viper.Sub("grpc"), "client")
+
 	if *s.volumeId == -1 {
 		return false
 	}
@@ -59,7 +66,7 @@ func runBackup(cmd *Command, args []string) bool {
 	}
 	volumeServer := lookup.Locations[0].Url
 
-	stats, err := operation.GetVolumeSyncStatus(volumeServer, uint32(vid))
+	stats, err := operation.GetVolumeSyncStatus(volumeServer, grpcDialOption, uint32(vid))
 	if err != nil {
 		fmt.Printf("Error get volume %d status: %v\n", vid, err)
 		return true
@@ -81,7 +88,7 @@ func runBackup(cmd *Command, args []string) bool {
 		return true
 	}
 
-	if err := v.Synchronize(volumeServer); err != nil {
+	if err := v.Synchronize(volumeServer, grpcDialOption); err != nil {
 		fmt.Printf("Error synchronizing volume %d: %v\n", vid, err)
 		return true
 	}

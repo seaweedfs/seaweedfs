@@ -3,9 +3,13 @@ package operation
 import (
 	"context"
 	"fmt"
+	"google.golang.org/grpc"
+	"strings"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type VolumeAssignRequest struct {
@@ -19,14 +23,15 @@ type VolumeAssignRequest struct {
 }
 
 type AssignResult struct {
-	Fid       string `json:"fid,omitempty"`
-	Url       string `json:"url,omitempty"`
-	PublicUrl string `json:"publicUrl,omitempty"`
-	Count     uint64 `json:"count,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Fid       string              `json:"fid,omitempty"`
+	Url       string              `json:"url,omitempty"`
+	PublicUrl string              `json:"publicUrl,omitempty"`
+	Count     uint64              `json:"count,omitempty"`
+	Error     string              `json:"error,omitempty"`
+	Auth      security.EncodedJwt `json:"auth,omitempty"`
 }
 
-func Assign(server string, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {
+func Assign(server string, grpcDialOption grpc.DialOption, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {
 
 	var requests []*VolumeAssignRequest
 	requests = append(requests, primaryRequest)
@@ -40,7 +45,7 @@ func Assign(server string, primaryRequest *VolumeAssignRequest, alternativeReque
 			continue
 		}
 
-		lastError = withMasterServerClient(server, func(masterClient master_pb.SeaweedClient) error {
+		lastError = withMasterServerClient(server, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(5*time.Second))
 			defer cancel()
 
@@ -63,6 +68,7 @@ func Assign(server string, primaryRequest *VolumeAssignRequest, alternativeReque
 			ret.Url = resp.Url
 			ret.PublicUrl = resp.PublicUrl
 			ret.Error = resp.Error
+			ret.Auth = security.EncodedJwt(resp.Auth)
 
 			return nil
 
@@ -80,4 +86,18 @@ func Assign(server string, primaryRequest *VolumeAssignRequest, alternativeReque
 	}
 
 	return ret, lastError
+}
+
+func LookupJwt(master string, fileId string) security.EncodedJwt {
+
+	tokenStr := ""
+
+	if h, e := util.Head(fmt.Sprintf("http://%s/dir/lookup?fileId=%s", master, fileId)); e == nil {
+		bearer := h.Get("Authorization")
+		if len(bearer) > 7 && strings.ToUpper(bearer[0:6]) == "BEARER" {
+			tokenStr = bearer[7:]
+		}
+	}
+
+	return security.EncodedJwt(tokenStr)
 }

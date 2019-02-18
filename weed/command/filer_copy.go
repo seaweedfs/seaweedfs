@@ -2,6 +2,10 @@ package command
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/spf13/viper"
+	"google.golang.org/grpc"
 	"io/ioutil"
 	"net/url"
 	"os"
@@ -11,7 +15,6 @@ import (
 	"context"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
 	"net/http"
@@ -24,16 +27,14 @@ var (
 )
 
 type CopyOptions struct {
-	filerGrpcPort *int
-	master        *string
-	include       *string
-	replication   *string
-	collection    *string
-	ttl           *string
-	maxMB         *int
-	secretKey     *string
-
-	secret security.Secret
+	filerGrpcPort  *int
+	master         *string
+	include        *string
+	replication    *string
+	collection     *string
+	ttl            *string
+	maxMB          *int
+	grpcDialOption grpc.DialOption
 }
 
 func init() {
@@ -46,7 +47,6 @@ func init() {
 	copy.ttl = cmdCopy.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
 	copy.maxMB = cmdCopy.Flag.Int("maxMB", 0, "split files larger than the limit")
 	copy.filerGrpcPort = cmdCopy.Flag.Int("filer.port.grpc", 0, "filer grpc server listen port, default to filer port + 10000")
-	copy.secretKey = cmdCopy.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 }
 
 var cmdCopy = &Command{
@@ -66,7 +66,9 @@ var cmdCopy = &Command{
 }
 
 func runCopy(cmd *Command, args []string) bool {
-	copy.secret = security.Secret(*copy.secretKey)
+
+	weed_server.LoadConfiguration("security", false)
+
 	if len(args) <= 1 {
 		return false
 	}
@@ -101,16 +103,17 @@ func runCopy(cmd *Command, args []string) bool {
 	}
 
 	filerGrpcAddress := fmt.Sprintf("%s:%d", filerUrl.Hostname(), filerGrpcPort)
+	copy.grpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
 
 	for _, fileOrDir := range fileOrDirs {
-		if !doEachCopy(fileOrDir, filerUrl.Host, filerGrpcAddress, urlPath) {
+		if !doEachCopy(fileOrDir, filerUrl.Host, filerGrpcAddress, copy.grpcDialOption, urlPath) {
 			return false
 		}
 	}
 	return true
 }
 
-func doEachCopy(fileOrDir string, filerAddress, filerGrpcAddress string, path string) bool {
+func doEachCopy(fileOrDir string, filerAddress, filerGrpcAddress string, grpcDialOption grpc.DialOption, path string) bool {
 	f, err := os.Open(fileOrDir)
 	if err != nil {
 		fmt.Printf("Failed to open file %s: %v\n", fileOrDir, err)
@@ -128,7 +131,7 @@ func doEachCopy(fileOrDir string, filerAddress, filerGrpcAddress string, path st
 	if mode.IsDir() {
 		files, _ := ioutil.ReadDir(fileOrDir)
 		for _, subFileOrDir := range files {
-			if !doEachCopy(fileOrDir+"/"+subFileOrDir.Name(), filerAddress, filerGrpcAddress, path+fi.Name()+"/") {
+			if !doEachCopy(fileOrDir+"/"+subFileOrDir.Name(), filerAddress, filerGrpcAddress, grpcDialOption, path+fi.Name()+"/") {
 				return false
 			}
 		}
@@ -150,13 +153,13 @@ func doEachCopy(fileOrDir string, filerAddress, filerGrpcAddress string, path st
 	}
 
 	if chunkCount == 1 {
-		return uploadFileAsOne(filerAddress, filerGrpcAddress, path, f, fi)
+		return uploadFileAsOne(filerAddress, filerGrpcAddress, grpcDialOption, path, f, fi)
 	}
 
-	return uploadFileInChunks(filerAddress, filerGrpcAddress, path, f, fi, chunkCount, chunkSize)
+	return uploadFileInChunks(filerAddress, filerGrpcAddress, grpcDialOption, path, f, fi, chunkCount, chunkSize)
 }
 
-func uploadFileAsOne(filerAddress, filerGrpcAddress string, urlFolder string, f *os.File, fi os.FileInfo) bool {
+func uploadFileAsOne(filerAddress, filerGrpcAddress string, grpcDialOption grpc.DialOption, urlFolder string, f *os.File, fi os.FileInfo) bool {
 
 	// upload the file content
 	fileName := filepath.Base(f.Name())
@@ -167,7 +170,7 @@ func uploadFileAsOne(filerAddress, filerGrpcAddress string, urlFolder string, f 
 	if fi.Size() > 0 {
 
 		// assign a volume
-		assignResult, err := operation.Assign(*copy.master, &operation.VolumeAssignRequest{
+		assignResult, err := operation.Assign(*copy.master, grpcDialOption, &operation.VolumeAssignRequest{
 			Count:       1,
 			Replication: *copy.replication,
 			Collection:  *copy.collection,
@@ -179,7 +182,7 @@ func uploadFileAsOne(filerAddress, filerGrpcAddress string, urlFolder string, f 
 
 		targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
 
-		uploadResult, err := operation.Upload(targetUrl, fileName, f, false, mimeType, nil, "")
+		uploadResult, err := operation.Upload(targetUrl, fileName, f, false, mimeType, nil, assignResult.Auth)
 		if err != nil {
 			fmt.Printf("upload data %v to %s: %v\n", fileName, targetUrl, err)
 			return false
@@ -201,7 +204,7 @@ func uploadFileAsOne(filerAddress, filerGrpcAddress string, urlFolder string, f 
 		fmt.Printf("copied %s => http://%s%s%s\n", fileName, filerAddress, urlFolder, fileName)
 	}
 
-	if err := withFilerClient(filerGrpcAddress, func(client filer_pb.SeaweedFilerClient) error {
+	if err := withFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.CreateEntryRequest{
 			Directory: urlFolder,
 			Entry: &filer_pb.Entry{
@@ -234,7 +237,7 @@ func uploadFileAsOne(filerAddress, filerGrpcAddress string, urlFolder string, f 
 	return true
 }
 
-func uploadFileInChunks(filerAddress, filerGrpcAddress string, urlFolder string, f *os.File, fi os.FileInfo, chunkCount int, chunkSize int64) bool {
+func uploadFileInChunks(filerAddress, filerGrpcAddress string, grpcDialOption grpc.DialOption, urlFolder string, f *os.File, fi os.FileInfo, chunkCount int, chunkSize int64) bool {
 
 	fileName := filepath.Base(f.Name())
 	mimeType := detectMimeType(f)
@@ -244,7 +247,7 @@ func uploadFileInChunks(filerAddress, filerGrpcAddress string, urlFolder string,
 	for i := int64(0); i < int64(chunkCount); i++ {
 
 		// assign a volume
-		assignResult, err := operation.Assign(*copy.master, &operation.VolumeAssignRequest{
+		assignResult, err := operation.Assign(*copy.master, grpcDialOption, &operation.VolumeAssignRequest{
 			Count:       1,
 			Replication: *copy.replication,
 			Collection:  *copy.collection,
@@ -259,7 +262,7 @@ func uploadFileInChunks(filerAddress, filerGrpcAddress string, urlFolder string,
 		uploadResult, err := operation.Upload(targetUrl,
 			fileName+"-"+strconv.FormatInt(i+1, 10),
 			io.LimitReader(f, chunkSize),
-			false, "application/octet-stream", nil, "")
+			false, "application/octet-stream", nil, assignResult.Auth)
 		if err != nil {
 			fmt.Printf("upload data %v to %s: %v\n", fileName, targetUrl, err)
 			return false
@@ -278,7 +281,7 @@ func uploadFileInChunks(filerAddress, filerGrpcAddress string, urlFolder string,
 		fmt.Printf("uploaded %s-%d to %s [%d,%d)\n", fileName, i+1, targetUrl, i*chunkSize, i*chunkSize+int64(uploadResult.Size))
 	}
 
-	if err := withFilerClient(filerGrpcAddress, func(client filer_pb.SeaweedFilerClient) error {
+	if err := withFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.CreateEntryRequest{
 			Directory: urlFolder,
 			Entry: &filer_pb.Entry{
@@ -329,9 +332,9 @@ func detectMimeType(f *os.File) string {
 	return mimeType
 }
 
-func withFilerClient(filerAddress string, fn func(filer_pb.SeaweedFilerClient) error) error {
+func withFilerClient(filerAddress string, grpcDialOption grpc.DialOption, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	grpcConnection, err := util.GrpcDial(filerAddress)
+	grpcConnection, err := util.GrpcDial(filerAddress, grpcDialOption)
 	if err != nil {
 		return fmt.Errorf("fail to dial %s: %v", filerAddress, err)
 	}

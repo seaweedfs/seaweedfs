@@ -10,7 +10,7 @@ func init() {
 }
 
 var cmdScaffold = &Command{
-	UsageLine: "scaffold [filer]",
+	UsageLine: "scaffold -config=[filer|notification|replication|security]",
 	Short:     "generate basic configuration files",
 	Long: `Generate filer.toml with all possible configurations for you to customize.
 
@@ -19,7 +19,7 @@ var cmdScaffold = &Command{
 
 var (
 	outputPath = cmdScaffold.Flag.String("output", "", "if not empty, save the configuration file to this directory")
-	config     = cmdScaffold.Flag.String("config", "filer", "[filer|notification|replication] the configuration file to generate")
+	config     = cmdScaffold.Flag.String("config", "filer", "[filer|notification|replication|security] the configuration file to generate")
 )
 
 func runScaffold(cmd *Command, args []string) bool {
@@ -32,6 +32,8 @@ func runScaffold(cmd *Command, args []string) bool {
 		content = NOTIFICATION_TOML_EXAMPLE
 	case "replication":
 		content = REPLICATION_TOML_EXAMPLE
+	case "security":
+		content = SECURITY_TOML_EXAMPLE
 	}
 	if content == "" {
 		println("need a valid -config option")
@@ -238,6 +240,44 @@ b2_account_id = ""
 b2_master_application_key  = ""
 bucket = "mybucket"            # an existing bucket
 directory = "/"                # destination directory
+
+`
+
+	SECURITY_TOML_EXAMPLE = `
+# Put this file to one of the location, with descending priority
+#    ./security.toml
+#    $HOME/.seaweedfs/security.toml
+#    /etc/seaweedfs/security.toml
+# this file is read by master, volume server, and filer
+
+# the jwt signing key is read by master and volume server
+# a jwt expires in 10 seconds
+[jwt.signing]
+key = ""
+
+# volume server also uses grpc that should be secured.
+
+# all grpc tls authentications are mutual 
+[grpc]
+ca = ""
+
+[grpc.volume]
+cert = ""
+key = ""
+
+[grpc.master]
+cert = ""
+key = ""
+
+[grpc.filer]
+cert = ""
+key = ""
+
+# use this for any place needs a grpc client
+# i.e., "weed backup|benchmark|filer.copy|filer.replicate|mount|s3|upload"
+[grpc.client]
+cert = ""
+key = ""
 
 `
 )

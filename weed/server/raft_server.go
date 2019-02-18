@@ -131,7 +131,7 @@ func isPeersChanged(dir string, self string, peers []string) (oldPeers []string,
 
 func isTheFirstOne(self string, peers []string) bool {
 	sort.Strings(peers)
-	if len(peers)<=0{
+	if len(peers) <= 0 {
 		return true
 	}
 	return self == peers[0]

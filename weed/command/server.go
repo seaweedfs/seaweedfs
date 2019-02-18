@@ -1,6 +1,8 @@
 package command
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/spf13/viper"
 	"net/http"
 	"os"
 	"runtime"
@@ -58,7 +60,6 @@ var (
 	serverRack                    = cmdServer.Flag.String("rack", "", "current volume server's rack name")
 	serverWhiteListOption         = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 	serverPeers                   = cmdServer.Flag.String("master.peers", "", "all master nodes in comma separated ip:masterPort list")
-	serverSecureKey               = cmdServer.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 	serverGarbageThreshold        = cmdServer.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
 	masterPort                    = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
 	masterGrpcPort                = cmdServer.Flag.Int("master.port.grpc", 0, "master grpc server listen port, default to http port + 10000")
@@ -96,7 +97,9 @@ func init() {
 }
 
 func runServer(cmd *Command, args []string) bool {
-	filerOptions.secretKey = serverSecureKey
+
+	weed_server.LoadConfiguration("security", false)
+
 	if *serverOptions.cpuprofile != "" {
 		f, err := os.Create(*serverOptions.cpuprofile)
 		if err != nil {
@@ -170,7 +173,7 @@ func runServer(cmd *Command, args []string) bool {
 		ms := weed_server.NewMasterServer(r, *masterPort, *masterMetaFolder,
 			*masterVolumeSizeLimitMB, *masterVolumePreallocate,
 			*pulseSeconds, *masterDefaultReplicaPlacement, *serverGarbageThreshold,
-			serverWhiteList, *serverSecureKey,
+			serverWhiteList,
 		)
 
 		glog.V(0).Infof("Start Seaweed Master %s at %s:%d", util.VERSION, *serverIp, *masterPort)
@@ -190,7 +193,8 @@ func runServer(cmd *Command, args []string) bool {
 				glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 			}
 			// Create your protocol servers.
-			grpcS := util.NewGrpcServer()
+			glog.V(0).Infof("grpc config %+v", viper.Sub("grpc"))
+			grpcS := util.NewGrpcServer(security.LoadServerTLS(viper.Sub("grpc"), "master"))
 			master_pb.RegisterSeaweedServer(grpcS, ms)
 			reflection.Register(grpcS)
 

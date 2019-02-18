@@ -36,7 +36,6 @@ message Heartbeat {
 
 message HeartbeatResponse {
     uint64 volumeSizeLimit = 1;
-    string secretKey = 2;
     string leader = 3;
 }
 
@@ -109,6 +108,7 @@ message AssignResponse {
     string public_url = 3;
     uint64 count = 4;
     string error = 5;
+    string auth = 6;
 }
 
 message StatisticsRequest {

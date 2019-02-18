@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -14,8 +15,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"os"
 )
 
 var (
@@ -31,7 +32,7 @@ type FilerPostResult struct {
 	Url   string `json:"url,omitempty"`
 }
 
-func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request, replication, collection string, dataCenter string) (fileId, urlLocation string, err error) {
+func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request, replication, collection string, dataCenter string) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
 	ar := &operation.VolumeAssignRequest{
 		Count:       1,
 		Replication: replication,
@@ -50,7 +51,7 @@ func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request,
 		}
 	}
 
-	assignResult, ae := operation.Assign(fs.filer.GetMaster(), ar, altRequest)
+	assignResult, ae := operation.Assign(fs.filer.GetMaster(), fs.grpcDialOption, ar, altRequest)
 	if ae != nil {
 		glog.Errorf("failing to assign a file id: %v", ae)
 		writeJsonError(w, r, http.StatusInternalServerError, ae)
@@ -59,6 +60,7 @@ func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request,
 	}
 	fileId = assignResult.Fid
 	urlLocation = "http://" + assignResult.Url + "/" + assignResult.Fid
+	auth = assignResult.Auth
 	return
 }
 
@@ -82,7 +84,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fileId, urlLocation, err := fs.assignNewFileInfo(w, r, replication, collection, dataCenter)
+	fileId, urlLocation, auth, err := fs.assignNewFileInfo(w, r, replication, collection, dataCenter)
 
 	if err != nil || fileId == "" || urlLocation == "" {
 		glog.V(0).Infof("fail to allocate volume for %s, collection:%s, datacenter:%s", r.URL.Path, collection, dataCenter)
@@ -114,6 +116,9 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		Body:          r.Body,
 		Host:          r.Host,
 		ContentLength: r.ContentLength,
+	}
+	if auth != "" {
+		request.Header.Set("Authorization", "BEARER "+string(auth))
 	}
 	resp, do_err := util.Do(request)
 	if do_err != nil {

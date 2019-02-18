@@ -19,6 +19,7 @@ import (
 
 type Option struct {
 	FilerGrpcAddress   string
+	GrpcDialOption     grpc.DialOption
 	FilerMountRootPath string
 	Collection         string
 	Replication        string
@@ -46,8 +47,6 @@ type WFS struct {
 	pathToHandleLock  sync.Mutex
 	bufPool           sync.Pool
 
-	fileIdsDeletionChan chan []string
-
 	stats statsCache
 }
 type statsCache struct {
@@ -65,10 +64,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 				return make([]byte, option.ChunkSizeLimit)
 			},
 		},
-		fileIdsDeletionChan: make(chan []string, 32),
 	}
-
-	go wfs.loopProcessingDeletion()
 
 	return wfs
 }
@@ -82,7 +78,7 @@ func (wfs *WFS) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) erro
 	return util.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, wfs.option.FilerGrpcAddress)
+	}, wfs.option.FilerGrpcAddress, wfs.option.GrpcDialOption)
 
 }
 

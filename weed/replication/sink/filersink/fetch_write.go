@@ -9,6 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -59,6 +60,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk) (fileId stri
 	defer readCloser.Close()
 
 	var host string
+	var auth security.EncodedJwt
 
 	if err := fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
@@ -76,7 +78,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk) (fileId stri
 			return err
 		}
 
-		fileId, host = resp.FileId, resp.Url
+		fileId, host, auth = resp.FileId, resp.Url, security.EncodedJwt(resp.Auth)
 
 		return nil
 	}); err != nil {
@@ -88,7 +90,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk) (fileId stri
 	glog.V(4).Infof("replicating %s to %s header:%+v", filename, fileUrl, header)
 
 	uploadResult, err := operation.Upload(fileUrl, filename, readCloser,
-		"gzip" == header.Get("Content-Encoding"), header.Get("Content-Type"), nil, "")
+		"gzip" == header.Get("Content-Encoding"), header.Get("Content-Type"), nil, auth)
 	if err != nil {
 		glog.V(0).Infof("upload data %v to %s: %v", filename, fileUrl, err)
 		return "", fmt.Errorf("upload data: %v", err)
@@ -103,7 +105,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk) (fileId stri
 
 func (fs *FilerSink) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	grpcConnection, err := util.GrpcDial(fs.grpcAddress)
+	grpcConnection, err := util.GrpcDial(fs.grpcAddress, fs.grpcDialOption)
 	if err != nil {
 		return fmt.Errorf("fail to dial %s: %v", fs.grpcAddress, err)
 	}

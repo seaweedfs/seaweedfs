@@ -8,6 +8,7 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/postgres"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/redis"
 	"github.com/gorilla/mux"
+	"google.golang.org/grpc"
 	"net/http"
 )
 
@@ -16,6 +17,7 @@ type S3ApiServerOption struct {
 	FilerGrpcAddress string
 	DomainName       string
 	BucketsPath      string
+	GrpcDialOption   grpc.DialOption
 }
 
 type S3ApiServer struct {

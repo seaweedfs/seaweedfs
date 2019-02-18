@@ -1,6 +1,8 @@
 package command
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/spf13/viper"
 	"net/http"
 	"os"
 	"runtime"
@@ -78,6 +80,9 @@ var (
 )
 
 func runVolume(cmd *Command, args []string) bool {
+
+	weed_server.LoadConfiguration("security", false)
+
 	if *v.maxCpu < 1 {
 		*v.maxCpu = runtime.NumCPU()
 	}
@@ -185,7 +190,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
-	grpcS := util.NewGrpcServer()
+	grpcS := util.NewGrpcServer(security.LoadServerTLS(viper.Sub("grpc"), "volume"))
 	volume_server_pb.RegisterVolumeServerServer(grpcS, volumeServer)
 	reflection.Register(grpcS)
 	go grpcS.Serve(grpcL)
