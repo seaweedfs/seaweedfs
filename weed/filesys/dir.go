@@ -379,6 +379,10 @@ func (dir *Dir) removeFolder(ctx context.Context, req *fuse.RemoveRequest) error
 
 func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
+	if dir.attributes == nil {
+		return nil
+	}
+
 	glog.V(3).Infof("%v dir setattr %+v, fh=%d", dir.Path, req, req.Handle)
 	if req.Valid.Mode() {
 		dir.attributes.FileMode = uint32(req.Mode)
