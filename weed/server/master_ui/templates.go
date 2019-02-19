@@ -41,7 +41,7 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
                 <td class="col-sm-2 field-label"><label>Other Masters:</label></td>
                 <td class="col-sm-10"><ul class="list-unstyled">
                 {{ range $k, $p := .Peers }}
-                  <li><a href="{{ $p.ConnectionString }}">{{ $p.Name }}</a></li>
+                  <li><a href="http://{{ $p.Name }}">{{ $p.Name }}</a></li>
                 {{ end }}
                 </ul></td>
               </tr>

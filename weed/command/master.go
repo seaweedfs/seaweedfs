@@ -1,21 +1,20 @@
 package command
 
 import (
+	"github.com/chrislusf/raft/protobuf"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/gorilla/mux"
 	"github.com/spf13/viper"
+	"google.golang.org/grpc/reflection"
 	"net/http"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
-
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/gorilla/mux"
-	"google.golang.org/grpc/reflection"
 )
 
 func init() {
@@ -36,7 +35,6 @@ var cmdMaster = &Command{
 
 var (
 	mport                   = cmdMaster.Flag.Int("port", 9333, "http listen port")
-	mGrpcPort               = cmdMaster.Flag.Int("port.grpc", 0, "grpc server listen port, default to http port + 10000")
 	masterIp                = cmdMaster.Flag.String("ip", "localhost", "master <ip>|<server> address")
 	masterBindIp            = cmdMaster.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	metaFolder              = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
@@ -92,18 +90,14 @@ func runMaster(cmd *Command, args []string) bool {
 	}
 
 	go func() {
-		time.Sleep(100 * time.Millisecond)
+		// start raftServer
 		myMasterAddress, peers := checkPeers(*masterIp, *mport, *masterPeers)
-		raftServer := weed_server.NewRaftServer(r, peers, myMasterAddress, *metaFolder, ms.Topo, *mpulse)
+		raftServer := weed_server.NewRaftServer(security.LoadClientTLS(viper.Sub("grpc"), "master"),
+			peers, myMasterAddress, *metaFolder, ms.Topo, *mpulse)
 		ms.SetRaftServer(raftServer)
-	}()
 
-	go func() {
 		// starting grpc server
-		grpcPort := *mGrpcPort
-		if grpcPort == 0 {
-			grpcPort = *mport + 10000
-		}
+		grpcPort := *mport + 10000
 		grpcL, err := util.NewListener(*masterBindIp+":"+strconv.Itoa(grpcPort), 0)
 		if err != nil {
 			glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
@@ -111,6 +105,7 @@ func runMaster(cmd *Command, args []string) bool {
 		// Create your protocol servers.
 		grpcS := util.NewGrpcServer(security.LoadServerTLS(viper.Sub("grpc"), "master"))
 		master_pb.RegisterSeaweedServer(grpcS, ms)
+		protobuf.RegisterRaftServer(grpcS, raftServer)
 		reflection.Register(grpcS)
 
 		glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.VERSION, *masterBindIp, grpcPort)

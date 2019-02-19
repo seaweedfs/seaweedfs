@@ -1,6 +1,7 @@
 package command
 
 import (
+	"github.com/chrislusf/raft/protobuf"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/spf13/viper"
 	"net/http"
@@ -62,7 +63,6 @@ var (
 	serverPeers                   = cmdServer.Flag.String("master.peers", "", "all master nodes in comma separated ip:masterPort list")
 	serverGarbageThreshold        = cmdServer.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
 	masterPort                    = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
-	masterGrpcPort                = cmdServer.Flag.Int("master.port.grpc", 0, "master grpc server listen port, default to http port + 10000")
 	masterMetaFolder              = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
 	masterVolumeSizeLimitMB       = cmdServer.Flag.Uint("master.volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
 	masterVolumePreallocate       = cmdServer.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
@@ -162,10 +162,8 @@ func runServer(cmd *Command, args []string) bool {
 		}()
 	}
 
-	var raftWaitForMaster sync.WaitGroup
 	var volumeWait sync.WaitGroup
 
-	raftWaitForMaster.Add(1)
 	volumeWait.Add(1)
 
 	go func() {
@@ -183,11 +181,14 @@ func runServer(cmd *Command, args []string) bool {
 		}
 
 		go func() {
+			// start raftServer
+			myMasterAddress, peers := checkPeers(*masterIp, *mport, *masterPeers)
+			raftServer := weed_server.NewRaftServer(security.LoadClientTLS(viper.Sub("grpc"), "master"),
+				peers, myMasterAddress, *metaFolder, ms.Topo, *mpulse)
+			ms.SetRaftServer(raftServer)
+
 			// starting grpc server
-			grpcPort := *masterGrpcPort
-			if grpcPort == 0 {
-				grpcPort = *masterPort + 10000
-			}
+			grpcPort := *masterPort + 10000
 			grpcL, err := util.NewListener(*serverIp+":"+strconv.Itoa(grpcPort), 0)
 			if err != nil {
 				glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
@@ -196,22 +197,14 @@ func runServer(cmd *Command, args []string) bool {
 			glog.V(0).Infof("grpc config %+v", viper.Sub("grpc"))
 			grpcS := util.NewGrpcServer(security.LoadServerTLS(viper.Sub("grpc"), "master"))
 			master_pb.RegisterSeaweedServer(grpcS, ms)
+			protobuf.RegisterRaftServer(grpcS, raftServer)
 			reflection.Register(grpcS)
 
 			glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.VERSION, *serverIp, grpcPort)
 			grpcS.Serve(grpcL)
 		}()
 
-		go func() {
-			raftWaitForMaster.Wait()
-			time.Sleep(100 * time.Millisecond)
-			myAddress, peers := checkPeers(*serverIp, *masterPort, *serverPeers)
-			raftServer := weed_server.NewRaftServer(r, peers, myAddress, *masterMetaFolder, ms.Topo, *pulseSeconds)
-			ms.SetRaftServer(raftServer)
-			volumeWait.Done()
-		}()
-
-		raftWaitForMaster.Done()
+		volumeWait.Done()
 
 		// start http server
 		httpS := &http.Server{Handler: r}
