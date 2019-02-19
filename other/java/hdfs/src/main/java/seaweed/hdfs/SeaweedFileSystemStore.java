@@ -12,6 +12,7 @@ import seaweedfs.client.FilerGrpcClient;
 import seaweedfs.client.FilerProto;
 import seaweedfs.client.SeaweedRead;
 
+import javax.net.ssl.SSLException;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -30,6 +31,13 @@ public class SeaweedFileSystemStore {
     public SeaweedFileSystemStore(String host, int port) {
         int grpcPort = 10000 + port;
         filerGrpcClient = new FilerGrpcClient(host, grpcPort);
+        filerClient = new FilerClient(filerGrpcClient);
+    }
+
+    public SeaweedFileSystemStore(String host, int port,
+                                  String caFile, String clientCertFile, String clientKeyFile) throws SSLException {
+        int grpcPort = 10000 + port;
+        filerGrpcClient = new FilerGrpcClient(host, grpcPort, caFile, clientCertFile, clientKeyFile);
         filerClient = new FilerClient(filerGrpcClient);
     }
 
