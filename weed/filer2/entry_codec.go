@@ -6,7 +6,7 @@ import (
 
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 )
 
 func (entry *Entry) EncodeAttributesAndChunks() ([]byte, error) {
