@@ -14,7 +14,7 @@ func (vs *VolumeServer) VolumeSyncStatus(ctx context.Context, req *volume_server
 
 	v := vs.store.GetVolume(storage.VolumeId(req.VolumdId))
 	if v == nil {
-		return nil, fmt.Errorf("Not Found Volume Id %d", req.VolumdId)
+		return nil, fmt.Errorf("not found volume id %d", req.VolumdId)
 	}
 
 	resp := v.GetVolumeSyncStatus()
@@ -29,7 +29,7 @@ func (vs *VolumeServer) VolumeSyncIndex(req *volume_server_pb.VolumeSyncIndexReq
 
 	v := vs.store.GetVolume(storage.VolumeId(req.VolumdId))
 	if v == nil {
-		return fmt.Errorf("Not Found Volume Id %d", req.VolumdId)
+		return fmt.Errorf("not found volume id %d", req.VolumdId)
 	}
 
 	content, err := v.IndexFileContent()
@@ -59,11 +59,11 @@ func (vs *VolumeServer) VolumeSyncData(req *volume_server_pb.VolumeSyncDataReque
 
 	v := vs.store.GetVolume(storage.VolumeId(req.VolumdId))
 	if v == nil {
-		return fmt.Errorf("Not Found Volume Id %d", req.VolumdId)
+		return fmt.Errorf("not found volume id %d", req.VolumdId)
 	}
 
 	if uint32(v.SuperBlock.CompactRevision) != req.Revision {
-		return fmt.Errorf("Requested Volume Revision is %d, but current revision is %d", req.Revision, v.SuperBlock.CompactRevision)
+		return fmt.Errorf("requested volume revision is %d, but current revision is %d", req.Revision, v.SuperBlock.CompactRevision)
 	}
 
 	content, err := storage.ReadNeedleBlob(v.DataFile(), int64(req.Offset)*types.NeedlePaddingSize, req.Size, v.Version())
@@ -78,7 +78,7 @@ func (vs *VolumeServer) VolumeSyncData(req *volume_server_pb.VolumeSyncDataReque
 	n := new(storage.Needle)
 	n.ParseNeedleHeader(content)
 	if id != n.Id {
-		return fmt.Errorf("Expected file entry id %d, but found %d", id, n.Id)
+		return fmt.Errorf("expected file entry id %d, but found %d", id, n.Id)
 	}
 
 	if err != nil {
