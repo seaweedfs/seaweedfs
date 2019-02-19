@@ -20,25 +20,26 @@ public class SeaweedWrite {
                                  final byte[] bytes,
                                  final long bytesOffset, final long bytesLength) throws IOException {
         FilerProto.AssignVolumeResponse response = filerGrpcClient.getBlockingStub().assignVolume(
-            FilerProto.AssignVolumeRequest.newBuilder()
-                .setCollection("")
-                .setReplication(replication)
-                .setDataCenter("")
-                .setReplication("")
-                .setTtlSec(0)
-                .build());
+                FilerProto.AssignVolumeRequest.newBuilder()
+                        .setCollection("")
+                        .setReplication(replication)
+                        .setDataCenter("")
+                        .setReplication("")
+                        .setTtlSec(0)
+                        .build());
         String fileId = response.getFileId();
         String url = response.getUrl();
+        String auth = response.getAuth();
         String targetUrl = String.format("http://%s/%s", url, fileId);
 
-        String etag = multipartUpload(targetUrl, bytes, bytesOffset, bytesLength);
+        String etag = multipartUpload(targetUrl, auth, bytes, bytesOffset, bytesLength);
 
         entry.addChunks(FilerProto.FileChunk.newBuilder()
-            .setFileId(fileId)
-            .setOffset(offset)
-            .setSize(bytesLength)
-            .setMtime(System.currentTimeMillis() / 10000L)
-            .setETag(etag)
+                .setFileId(fileId)
+                .setOffset(offset)
+                .setSize(bytesLength)
+                .setMtime(System.currentTimeMillis() / 10000L)
+                .setETag(etag)
         );
 
     }
@@ -46,14 +47,15 @@ public class SeaweedWrite {
     public static void writeMeta(final FilerGrpcClient filerGrpcClient,
                                  final String parentDirectory, final FilerProto.Entry.Builder entry) {
         filerGrpcClient.getBlockingStub().createEntry(
-            FilerProto.CreateEntryRequest.newBuilder()
-                .setDirectory(parentDirectory)
-                .setEntry(entry)
-                .build()
+                FilerProto.CreateEntryRequest.newBuilder()
+                        .setDirectory(parentDirectory)
+                        .setEntry(entry)
+                        .build()
         );
     }
 
     private static String multipartUpload(String targetUrl,
+                                          String auth,
                                           final byte[] bytes,
                                           final long bytesOffset, final long bytesLength) throws IOException {
 
@@ -62,11 +64,14 @@ public class SeaweedWrite {
         InputStream inputStream = new ByteArrayInputStream(bytes, (int) bytesOffset, (int) bytesLength);
 
         HttpPost post = new HttpPost(targetUrl);
+        if (auth != null && auth.length() != 0) {
+            post.addHeader("Authorization", "BEARER " + auth);
+        }
 
         post.setEntity(MultipartEntityBuilder.create()
-            .setMode(HttpMultipartMode.BROWSER_COMPATIBLE)
-            .addBinaryBody("upload", inputStream)
-            .build());
+                .setMode(HttpMultipartMode.BROWSER_COMPATIBLE)
+                .addBinaryBody("upload", inputStream)
+                .build());
 
         try {
             HttpResponse response = client.execute(post);
