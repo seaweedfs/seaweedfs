@@ -257,27 +257,28 @@ key = ""
 
 # volume server also uses grpc that should be secured.
 
-# all grpc tls authentications are mutual 
+# all grpc tls authentications are mutual
+# the values for the following ca, cert, and key are paths to the PERM files.
 [grpc]
 ca = ""
 
 [grpc.volume]
 cert = ""
-key = ""
+key  = ""
 
 [grpc.master]
 cert = ""
-key = ""
+key  = ""
 
 [grpc.filer]
 cert = ""
-key = ""
+key  = ""
 
 # use this for any place needs a grpc client
 # i.e., "weed backup|benchmark|filer.copy|filer.replicate|mount|s3|upload"
 [grpc.client]
 cert = ""
-key = ""
+key  = ""
 
 `
 )
