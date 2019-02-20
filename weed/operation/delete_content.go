@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"google.golang.org/grpc"
 	"net/http"
 	"strings"
 	"sync"
-	"time"
-
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 )
 
 type DeleteResult struct {
@@ -110,14 +108,12 @@ func DeleteFilesWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []str
 func DeleteFilesAtOneVolumeServer(volumeServer string, grpcDialOption grpc.DialOption, fileIds []string) (ret []*volume_server_pb.DeleteResult, err error) {
 
 	err = WithVolumeServerClient(volumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(5*time.Second))
-		defer cancel()
 
 		req := &volume_server_pb.BatchDeleteRequest{
 			FileIds: fileIds,
 		}
 
-		resp, err := volumeServerClient.BatchDelete(ctx, req)
+		resp, err := volumeServerClient.BatchDelete(context.Background(), req)
 
 		// fmt.Printf("deleted %v %v: %v\n", fileIds, err, resp)
 

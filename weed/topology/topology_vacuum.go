@@ -16,10 +16,7 @@ func batchVacuumVolumeCheck(grpcDialOption grpc.DialOption, vl *VolumeLayout, vi
 	for index, dn := range locationlist.list {
 		go func(index int, url string, vid storage.VolumeId) {
 			err := operation.WithVolumeServerClient(url, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-				ctx, cancel := context.WithTimeout(context.Background(), time.Duration(5*time.Second))
-				defer cancel()
-
-				resp, err := volumeServerClient.VacuumVolumeCheck(ctx, &volume_server_pb.VacuumVolumeCheckRequest{
+				resp, err := volumeServerClient.VacuumVolumeCheck(context.Background(), &volume_server_pb.VacuumVolumeCheckRequest{
 					VolumdId: uint32(vid),
 				})
 				if err != nil {

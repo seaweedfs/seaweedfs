@@ -3,22 +3,18 @@ package operation
 import (
 	"context"
 	"fmt"
-	"google.golang.org/grpc"
-	"io"
-	"time"
-
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"google.golang.org/grpc"
+	"io"
 )
 
 func GetVolumeSyncStatus(server string, grpcDialOption grpc.DialOption, vid uint32) (resp *volume_server_pb.VolumeSyncStatusResponse, err error) {
 
 	WithVolumeServerClient(server, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(5*time.Second))
-		defer cancel()
 
-		resp, err = client.VolumeSyncStatus(ctx, &volume_server_pb.VolumeSyncStatusRequest{
+		resp, err = client.VolumeSyncStatus(context.Background(), &volume_server_pb.VolumeSyncStatusRequest{
 			VolumdId: vid,
 		})
 		return nil
