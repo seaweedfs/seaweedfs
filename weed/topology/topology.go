@@ -88,11 +88,13 @@ func (t *Topology) Lookup(collection string, vid storage.VolumeId) []*DataNode {
 	return nil
 }
 
-func (t *Topology) NextVolumeId() storage.VolumeId {
+func (t *Topology) NextVolumeId() (storage.VolumeId, error) {
 	vid := t.GetMaxVolumeId()
 	next := vid.Next()
-	go t.RaftServer.Do(NewMaxVolumeIdCommand(next))
-	return next
+	if _, err := t.RaftServer.Do(NewMaxVolumeIdCommand(next)); err != nil {
+		return 0, err
+	}
+	return next, nil
 }
 
 func (t *Topology) HasWritableVolume(option *VolumeGrowOption) bool {

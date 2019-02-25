@@ -82,7 +82,10 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 	if e != nil {
 		return 0, e
 	}
-	vid := topo.NextVolumeId()
+	vid, raftErr := topo.NextVolumeId()
+	if raftErr != nil {
+		return 0, raftErr
+	}
 	err := vg.grow(grpcDialOption, topo, vid, option, servers...)
 	return len(servers), err
 }
