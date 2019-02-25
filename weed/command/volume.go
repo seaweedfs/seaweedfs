@@ -195,8 +195,15 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	reflection.Register(grpcS)
 	go grpcS.Serve(grpcL)
 
-	if e := http.Serve(listener, volumeMux); e != nil {
-		glog.Fatalf("Volume server fail to serve: %v", e)
+	if viper.GetString("https.volume.key") != "" {
+		if e := http.ServeTLS(listener, volumeMux,
+			viper.GetString("https.volume.cert"), viper.GetString("https.volume.key")); e != nil {
+			glog.Fatalf("Volume server fail to serve: %v", e)
+		}
+	} else {
+		if e := http.Serve(listener, volumeMux); e != nil {
+			glog.Fatalf("Volume server fail to serve: %v", e)
+		}
 	}
 
 }

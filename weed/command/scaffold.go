@@ -255,8 +255,6 @@ directory = "/"                # destination directory
 [jwt.signing]
 key = ""
 
-# volume server also uses grpc that should be secured.
-
 # all grpc tls authentications are mutual
 # the values for the following ca, cert, and key are paths to the PERM files.
 [grpc]
@@ -279,6 +277,17 @@ key  = ""
 [grpc.client]
 cert = ""
 key  = ""
+
+
+# volume server https options
+# Note: work in progress!
+#     this does not work with other clients, e.g., "weed filer|mount" etc, yet.
+[https.client]
+enabled = true
+[https.volume]
+cert = ""
+key  = ""
+
 
 `
 )
