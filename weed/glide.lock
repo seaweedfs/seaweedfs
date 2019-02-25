@@ -1,8 +1,8 @@
 hash: 306ab43df769fe8072733ba28c3d2b6308288f248ee65806ac7d0bfa3349ab73
-updated: 2019-02-20T09:08:30.870858-08:00
+updated: 2019-02-25T00:25:56.429024-08:00
 imports:
 - name: cloud.google.com/go
-  version: f775b69d59df4650962b3adf2bbdb7677445e381
+  version: e2c125ceac8b663cfcf4610477d4d67827377cb7
   subpackages:
   - compute/metadata
   - iam
@@ -15,7 +15,7 @@ imports:
   - pubsub/internal/distribution
   - storage
 - name: github.com/aws/aws-sdk-go
-  version: 112e8a372b3f46d410ed416decd09cc06a05e3b0
+  version: 5604f1add1ce6b18465fd50f7fe8de7561cc8a62
   subpackages:
   - aws
   - aws/awserr
@@ -64,7 +64,7 @@ imports:
 - name: github.com/boltdb/bolt
   version: fd01fc79c553a8e99d512a07e8e0c63d4a3ccfc5
 - name: github.com/chrislusf/raft
-  version: cc54ba4a4ef32c5ac0fcc61fc7cbbf901410d127
+  version: 10d6e2182d923e93ec0cc1aa1d556e5b1f8a39e7
   subpackages:
   - protobuf
 - name: github.com/DataDog/zstd
@@ -90,7 +90,7 @@ imports:
 - name: github.com/fsnotify/fsnotify
   version: ccc981bf80385c528a65fbfdd49bf2d8da22aa23
 - name: github.com/go-redis/redis
-  version: 35e2db2f14bb01d2a53b9e627b63239281c87927
+  version: bd542089bb6e776e6fced5038edac8a0f526aa53
   subpackages:
   - internal
   - internal/consistenthash
@@ -147,7 +147,7 @@ imports:
 - name: github.com/jmespath/go-jmespath
   version: c2b33e8439af944379acbdd9c3a5fe0bc44bd8a5
 - name: github.com/karlseguin/ccache
-  version: 3385784411ac24a8be403f7938890ec67ef6e0d6
+  version: ec06cd93a07565b373789b0078ba88fe697fddd9
 - name: github.com/klauspost/crc32
   version: bab58d77464aa9cf4e84200c3276da0831fe0c03
 - name: github.com/kurin/blazer
@@ -170,7 +170,7 @@ imports:
 - name: github.com/pelletier/go-toml
   version: 27c6b39a135b7dc87a14afb068809132fb7a9a8f
 - name: github.com/pierrec/lz4
-  version: 7f42fed96396aa858623e7e51628123cda496462
+  version: 062282ea0dcff40c9fb8525789eef9644b1fbd6e
   subpackages:
   - internal/xxh32
 - name: github.com/rakyll/statik
@@ -187,12 +187,12 @@ imports:
 - name: github.com/satori/go.uuid
   version: b2ce2384e17bbe0c6d34077efa39dbab3e09123b
 - name: github.com/seaweedfs/fuse
-  version: a476a0037a0b95d71f30356a7d047af484f37e5b
+  version: 1aae43e32cadcfa182fc60777f20fb02673e8f82
   subpackages:
   - fs
   - fuseutil
 - name: github.com/Shopify/sarama
-  version: 2dcf36cdd2017e60a9fcd9d530ab517cc1b6d854
+  version: 4602b5a8c6e826f9e0737865818dd43b2339a092
 - name: github.com/spaolacci/murmur3
   version: f09979ecbc725b9e6d41a297405f65e7e8804acc
 - name: github.com/spf13/afero
@@ -208,7 +208,7 @@ imports:
 - name: github.com/spf13/viper
   version: d104d259b3380cb653bb793756823c3c41b37b53
 - name: github.com/syndtr/goleveldb
-  version: 2f17a3356c6616cbfc4ae4c38147dc062a68fb0e
+  version: 9d007e481048296f09f59bd19bb7ae584563cd95
   subpackages:
   - leveldb
   - leveldb/cache
@@ -227,7 +227,7 @@ imports:
 - name: github.com/willf/bloom
   version: 54e3b963ee1652b06c4562cb9b6020ebc6e36e59
 - name: go.opencensus.io
-  version: 57c09932883846047fd542903575671cb6b75070
+  version: beafb2a85a579a4918ba259877a1625e9213a263
   subpackages:
   - exemplar
   - internal
@@ -244,7 +244,7 @@ imports:
   - trace/propagation
   - trace/tracestate
 - name: golang.org/x/image
-  version: ef4a1470e0dc5915f2f5fa04a28eeab72c6936a4
+  version: 31aff87c08e9a5e5d524279a564f96968336f886
   subpackages:
   - bmp
   - tiff
@@ -280,12 +280,12 @@ imports:
   - unicode/bidi
   - unicode/norm
 - name: golang.org/x/tools
-  version: e8c45e0433280218fb679d7bbad0f80fc9677353
+  version: 83362c3779f5f48611068d488a03ea7bbaddc81e
   subpackages:
   - godoc/util
   - godoc/vfs
 - name: google.golang.org/api
-  version: 2eba4b8eddaf7e8873ed5ba4d2b7c51b3c443bf7
+  version: 8a550ba84cafabe9b2262c41303f31e5a4626318
   subpackages:
   - gensupport
   - googleapi
@@ -310,7 +310,7 @@ imports:
   - googleapis/rpc/status
   - protobuf/field_mask
 - name: google.golang.org/grpc
-  version: 29c406a5bd0ed61c5752d00c6aabd9fa036ed328
+  version: 2773c7bbcf81cf358d3f0038b1469b2d44062acb
   subpackages:
   - balancer
   - balancer/base
