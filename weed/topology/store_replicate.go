@@ -47,6 +47,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 				}
 				q := url.Values{
 					"type": {"replicate"},
+					"ttl":  {needle.Ttl.String()},
 				}
 				if needle.LastModified > 0 {
 					q.Set("ts", strconv.FormatUint(needle.LastModified, 10))
