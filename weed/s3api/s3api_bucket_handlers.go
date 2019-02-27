@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
 	"math"
 	"net/http"
@@ -21,8 +22,9 @@ var (
 )
 
 type ListAllMyBucketsResult struct {
-	Buckets []*s3.Bucket `xml:"Buckets>Bucket"`
+	XMLName   xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListAllMyBucketsResult"`
 	Owner   *s3.Owner
+	Buckets []*s3.Bucket `xml:"Buckets>Bucket"`
 }
 
 func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Request) {
