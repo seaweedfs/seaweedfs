@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"encoding/xml"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 )
 
 type InitiateMultipartUploadResult struct {
+	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ InitiateMultipartUploadResult"`
 	s3.CreateMultipartUploadOutput
 }
 
@@ -34,7 +36,7 @@ func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInp
 	}
 
 	output = &InitiateMultipartUploadResult{
-		s3.CreateMultipartUploadOutput{
+		CreateMultipartUploadOutput: s3.CreateMultipartUploadOutput{
 			Bucket:   input.Bucket,
 			Key:      input.Key,
 			UploadId: aws.String(uploadIdString),
@@ -45,6 +47,7 @@ func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInp
 }
 
 type CompleteMultipartUploadResult struct {
+	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CompleteMultipartUploadResult"`
 	s3.CompleteMultipartUploadOutput
 }
 
@@ -95,7 +98,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	}
 
 	output = &CompleteMultipartUploadResult{
-		s3.CompleteMultipartUploadOutput{
+		CompleteMultipartUploadOutput: s3.CompleteMultipartUploadOutput{
 			Bucket: input.Bucket,
 			ETag:   aws.String("\"" + filer2.ETag(finalParts) + "\""),
 			Key:    input.Key,
@@ -128,13 +131,14 @@ func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput
 }
 
 type ListMultipartUploadsResult struct {
+	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListMultipartUploadsResult"`
 	s3.ListMultipartUploadsOutput
 }
 
 func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput) (output *ListMultipartUploadsResult, code ErrorCode) {
 
 	output = &ListMultipartUploadsResult{
-		s3.ListMultipartUploadsOutput{
+		ListMultipartUploadsOutput: s3.ListMultipartUploadsOutput{
 			Bucket:       input.Bucket,
 			Delimiter:    input.Delimiter,
 			EncodingType: input.EncodingType,
@@ -164,12 +168,13 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 }
 
 type ListPartsResult struct {
+	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListPartsResult"`
 	s3.ListPartsOutput
 }
 
 func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListPartsResult, code ErrorCode) {
 	output = &ListPartsResult{
-		s3.ListPartsOutput{
+		ListPartsOutput: s3.ListPartsOutput{
 			Bucket:           input.Bucket,
 			Key:              input.Key,
 			UploadId:         input.UploadId,

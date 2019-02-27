@@ -33,7 +33,6 @@ func TestListBucketsHandler(t *testing.T) {
 	}
 
 	encoded := string(encodeResponse(response))
-	println(encoded)
 	if encoded != expected {
 		t.Errorf("unexpected output: %s\nexpecting:%s", encoded, expected)
 	}
