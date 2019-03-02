@@ -49,6 +49,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	defaultReplicaPlacement string,
 	garbageThreshold float64,
 	whiteList []string,
+	httpReadOnly bool,
 ) *MasterServer {
 
 	v := viper.GetViper()
@@ -79,14 +80,16 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	handleStaticResources2(r)
 	r.HandleFunc("/", ms.uiStatusHandler)
 	r.HandleFunc("/ui/index.html", ms.uiStatusHandler)
-	r.HandleFunc("/dir/assign", ms.proxyToLeader(ms.guard.WhiteList(ms.dirAssignHandler)))
-	r.HandleFunc("/dir/lookup", ms.proxyToLeader(ms.guard.WhiteList(ms.dirLookupHandler)))
-	r.HandleFunc("/dir/status", ms.proxyToLeader(ms.guard.WhiteList(ms.dirStatusHandler)))
-	r.HandleFunc("/col/delete", ms.proxyToLeader(ms.guard.WhiteList(ms.collectionDeleteHandler)))
-	r.HandleFunc("/vol/grow", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeGrowHandler)))
-	r.HandleFunc("/vol/status", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeStatusHandler)))
-	r.HandleFunc("/vol/vacuum", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeVacuumHandler)))
-	r.HandleFunc("/submit", ms.guard.WhiteList(ms.submitFromMasterServerHandler))
+	if (!httpReadOnly) {
+		r.HandleFunc("/dir/assign", ms.proxyToLeader(ms.guard.WhiteList(ms.dirAssignHandler)))
+		r.HandleFunc("/dir/lookup", ms.proxyToLeader(ms.guard.WhiteList(ms.dirLookupHandler)))
+		r.HandleFunc("/dir/status", ms.proxyToLeader(ms.guard.WhiteList(ms.dirStatusHandler)))
+		r.HandleFunc("/col/delete", ms.proxyToLeader(ms.guard.WhiteList(ms.collectionDeleteHandler)))
+		r.HandleFunc("/vol/grow", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeGrowHandler)))
+		r.HandleFunc("/vol/status", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeStatusHandler)))
+		r.HandleFunc("/vol/vacuum", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeVacuumHandler)))
+		r.HandleFunc("/submit", ms.guard.WhiteList(ms.submitFromMasterServerHandler))
+	}
 	r.HandleFunc("/stats/health", ms.guard.WhiteList(statsHealthHandler))
 	r.HandleFunc("/stats/counter", ms.guard.WhiteList(statsCounterHandler))
 	r.HandleFunc("/stats/memory", ms.guard.WhiteList(statsMemoryHandler))
