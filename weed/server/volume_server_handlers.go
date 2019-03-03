@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -71,6 +72,9 @@ func (vs *VolumeServer) maybeCheckJwtAuthorization(r *http.Request, vid, fid str
 	}
 
 	if sc, ok := token.Claims.(*security.SeaweedFileIdClaims); ok {
+		if sepIndex := strings.LastIndex(fid, "_"); sepIndex > 0 {
+			fid = fid[:sepIndex]
+		}
 		return sc.Fid == vid+","+fid
 	}
 	glog.V(1).Infof("unexpected jwt from %s: %v", r.RemoteAddr, tokenStr)
