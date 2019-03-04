@@ -92,10 +92,10 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 	viper.AddConfigPath("$HOME/.seaweedfs") // call multiple times to add many search paths
 	viper.AddConfigPath("/etc/seaweedfs/")  // path to look for the config file in
 
-	glog.V(0).Infof("Reading %s.toml from %s", configFileName, viper.ConfigFileUsed())
+	glog.V(1).Infof("Reading %s.toml from %s", configFileName, viper.ConfigFileUsed())
 
 	if err := viper.MergeInConfig(); err != nil { // Handle errors reading the config file
-		glog.V(0).Infof("Reading %s: %v", viper.ConfigFileUsed(), err)
+		glog.V(1).Infof("Reading %s: %v", viper.ConfigFileUsed(), err)
 		if required {
 			glog.Fatalf("Failed to load %s.toml file from current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/"+
 				"\n\nPlease follow this example and add a filer.toml file to "+
