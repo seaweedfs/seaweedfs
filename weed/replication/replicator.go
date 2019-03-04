@@ -34,7 +34,7 @@ func (r *Replicator) Replicate(key string, message *filer_pb.EventNotification) 
 		glog.V(4).Infof("skipping %v outside of %v", key, r.source.Dir)
 		return nil
 	}
-	newKey := filepath.Join(r.sink.GetSinkToDirectory(), key[len(r.source.Dir):])
+	newKey := filepath.ToSlash(filepath.Join(r.sink.GetSinkToDirectory(), key[len(r.source.Dir):]))
 	glog.V(3).Infof("replicate %s => %s", key, newKey)
 	key = newKey
 	if message.OldEntry != nil && message.NewEntry == nil {

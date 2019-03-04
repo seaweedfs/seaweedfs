@@ -41,7 +41,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 
 func moveEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, oldParent string, entry *filer_pb.Entry, newParent, newName string) error {
 	if entry.IsDirectory {
-		currentDirPath := filepath.Join(oldParent, entry.Name)
+		currentDirPath := filepath.ToSlash(filepath.Join(oldParent, entry.Name))
 
 		lastFileName := ""
 		includeLastFile := false
@@ -65,7 +65,7 @@ func moveEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, oldParen
 
 			for _, item := range resp.Entries {
 				lastFileName = item.Name
-				err := moveEntry(ctx, client, currentDirPath, item, filepath.Join(newParent, newName), item.Name)
+				err := moveEntry(ctx, client, currentDirPath, item, filepath.ToSlash(filepath.Join(newParent, newName)), item.Name)
 				if err != nil {
 					return err
 				}

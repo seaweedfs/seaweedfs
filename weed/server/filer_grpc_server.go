@@ -19,7 +19,7 @@ import (
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 
-	entry, err := fs.filer.FindEntry(filer2.FullPath(filepath.Join(req.Directory, req.Name)))
+	entry, err := fs.filer.FindEntry(filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name))))
 	if err != nil {
 		return nil, fmt.Errorf("%s not found under %s: %v", req.Name, req.Directory, err)
 	}
@@ -112,7 +112,7 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 
 func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (resp *filer_pb.CreateEntryResponse, err error) {
 
-	fullpath := filer2.FullPath(filepath.Join(req.Directory, req.Entry.Name))
+	fullpath := filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name)))
 	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
 
 	fs.filer.DeleteChunks(garbages)
@@ -135,7 +135,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 
 func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 
-	fullpath := filepath.Join(req.Directory, req.Entry.Name)
+	fullpath := filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name))
 	entry, err := fs.filer.FindEntry(filer2.FullPath(fullpath))
 	if err != nil {
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("not found %s: %v", fullpath, err)
@@ -147,7 +147,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
 
 	newEntry := &filer2.Entry{
-		FullPath: filer2.FullPath(filepath.Join(req.Directory, req.Entry.Name)),
+		FullPath: filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name))),
 		Attr:     entry.Attr,
 		Chunks:   chunks,
 	}
@@ -186,7 +186,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 }
 
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {
-	err = fs.filer.DeleteEntryMetaAndData(filer2.FullPath(filepath.Join(req.Directory, req.Name)), req.IsRecursive, req.IsDeleteData)
+	err = fs.filer.DeleteEntryMetaAndData(filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name))), req.IsRecursive, req.IsDeleteData)
 	return &filer_pb.DeleteEntryResponse{}, err
 }
 

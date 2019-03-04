@@ -70,7 +70,7 @@ func (f *Filer) CreateEntry(entry *Entry) error {
 	var lastDirectoryEntry *Entry
 
 	for i := 1; i < len(dirParts); i++ {
-		dirPath := "/" + filepath.Join(dirParts[:i]...)
+		dirPath := "/" + filepath.ToSlash(filepath.Join(dirParts[:i]...))
 		// fmt.Printf("%d directory: %+v\n", i, dirPath)
 
 		// first check local cache
