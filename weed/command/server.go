@@ -187,6 +187,7 @@ func runServer(cmd *Command, args []string) bool {
 			raftServer := weed_server.NewRaftServer(security.LoadClientTLS(viper.Sub("grpc"), "master"),
 				peers, myMasterAddress, *masterMetaFolder, ms.Topo, *pulseSeconds)
 			ms.SetRaftServer(raftServer)
+			r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
 
 			// starting grpc server
 			grpcPort := *masterPort + 10000
