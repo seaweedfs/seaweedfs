@@ -183,9 +183,9 @@ func runServer(cmd *Command, args []string) bool {
 
 		go func() {
 			// start raftServer
-			myMasterAddress, peers := checkPeers(*masterIp, *mport, *masterPeers)
+			myMasterAddress, peers := checkPeers(*serverIp, *masterPort, *serverPeers)
 			raftServer := weed_server.NewRaftServer(security.LoadClientTLS(viper.Sub("grpc"), "master"),
-				peers, myMasterAddress, *metaFolder, ms.Topo, *mpulse)
+				peers, myMasterAddress, *masterMetaFolder, ms.Topo, *pulseSeconds)
 			ms.SetRaftServer(raftServer)
 
 			// starting grpc server
