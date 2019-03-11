@@ -56,8 +56,7 @@ func runMount(cmd *Command, args []string) bool {
 
 	util.SetupProfiling(*mountCpuProfile, *mountMemProfile)
 
-	c, err := fuse.Mount(
-		*mountOptions.dir,
+	options := []fuse.MountOption{
 		fuse.VolumeName("SeaweedFS"),
 		fuse.FSName("SeaweedFS"),
 		fuse.Subtype("SeaweedFS"),
@@ -67,13 +66,17 @@ func runMount(cmd *Command, args []string) bool {
 		fuse.AutoXattr(),
 		fuse.ExclCreate(),
 		fuse.DaemonTimeout("3600"),
-		fuse.AllowOther(),
 		fuse.AllowSUID(),
 		fuse.DefaultPermissions(),
-		fuse.MaxReadahead(1024*128),
+		fuse.MaxReadahead(1024 * 128),
 		fuse.AsyncRead(),
 		fuse.WritebackCache(),
-	)
+	}
+	if *mountOptions.allowOthers {
+		options = append(options, fuse.AllowOther())
+	}
+
+	c, err := fuse.Mount(*mountOptions.dir, options...)
 	if err != nil {
 		glog.Fatal(err)
 		return false
