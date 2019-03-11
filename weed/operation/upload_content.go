@@ -92,12 +92,6 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 		return nil, post_err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode < http.StatusOK ||
-		resp.StatusCode > http.StatusIMUsed {
-		return nil, errors.New(http.StatusText(resp.StatusCode))
-	}
-
 	etag := getEtag(resp)
 	resp_body, ra_err := ioutil.ReadAll(resp.Body)
 	if ra_err != nil {
