@@ -82,7 +82,7 @@ func PrintMemUsage(totalRowCount uint64) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	// For info on each, see: https://golang.org/pkg/runtime/#MemStats
-	fmt.Printf("Each %v Bytes", m.Alloc/totalRowCount)
+	fmt.Printf("Each %.2f Bytes", float64(m.TotalAlloc)/float64(totalRowCount))
 	fmt.Printf("\tAlloc = %v MiB", bToMb(m.Alloc))
 	fmt.Printf("\tTotalAlloc = %v MiB", bToMb(m.TotalAlloc))
 	fmt.Printf("\tSys = %v MiB", bToMb(m.Sys))
