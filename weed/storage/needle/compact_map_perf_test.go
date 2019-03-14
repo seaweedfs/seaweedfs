@@ -28,6 +28,7 @@ go tool pprof --alloc_space needle.test mem.out
 func TestMemoryUsage(t *testing.T) {
 
 	var maps []*CompactMap
+	totalRowCount := uint64(0)
 
 	startTime := time.Now()
 	for i := 0; i < 10; i++ {
@@ -35,11 +36,13 @@ func TestMemoryUsage(t *testing.T) {
 		if ie != nil {
 			log.Fatalln(ie)
 		}
-		maps = append(maps, loadNewNeedleMap(indexFile))
+		m, rowCount := loadNewNeedleMap(indexFile)
+		maps = append(maps, m)
+		totalRowCount += rowCount
 
 		indexFile.Close()
 
-		PrintMemUsage()
+		PrintMemUsage(totalRowCount)
 		now := time.Now()
 		fmt.Printf("\tTaken = %v\n", now.Sub(startTime))
 		startTime = now
@@ -47,12 +50,14 @@ func TestMemoryUsage(t *testing.T) {
 
 }
 
-func loadNewNeedleMap(file *os.File) *CompactMap {
+func loadNewNeedleMap(file *os.File) (*CompactMap, uint64) {
 	m := NewCompactMap()
 	bytes := make([]byte, NeedleEntrySize)
+	rowCount := uint64(0)
 	count, e := file.Read(bytes)
 	for count > 0 && e == nil {
 		for i := 0; i < count; i += NeedleEntrySize {
+			rowCount++
 			key := BytesToNeedleId(bytes[i : i+NeedleIdSize])
 			offset := BytesToOffset(bytes[i+NeedleIdSize : i+NeedleIdSize+OffsetSize])
 			size := util.BytesToUint32(bytes[i+NeedleIdSize+OffsetSize : i+NeedleIdSize+OffsetSize+SizeSize])
@@ -67,17 +72,18 @@ func loadNewNeedleMap(file *os.File) *CompactMap {
 		count, e = file.Read(bytes)
 	}
 
-	return m
+	return m, rowCount
 
 }
 
-func PrintMemUsage() {
+func PrintMemUsage(totalRowCount uint64) {
 
 	runtime.GC()
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	// For info on each, see: https://golang.org/pkg/runtime/#MemStats
-	fmt.Printf("Alloc = %v MiB", bToMb(m.Alloc))
+	fmt.Printf("Each %v Bytes", m.Alloc/totalRowCount)
+	fmt.Printf("\tAlloc = %v MiB", bToMb(m.Alloc))
 	fmt.Printf("\tTotalAlloc = %v MiB", bToMb(m.TotalAlloc))
 	fmt.Printf("\tSys = %v MiB", bToMb(m.Sys))
 	fmt.Printf("\tNumGC = %v", m.NumGC)
