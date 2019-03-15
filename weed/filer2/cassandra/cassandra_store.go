@@ -1,6 +1,7 @@
 package cassandra
 
 import (
+	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -39,7 +40,7 @@ func (store *CassandraStore) initialize(keyspace string, hosts []string) (err er
 	return
 }
 
-func (store *CassandraStore) InsertEntry(entry *filer2.Entry) (err error) {
+func (store *CassandraStore) InsertEntry(ctx context.Context, entry *filer2.Entry) (err error) {
 
 	dir, name := entry.FullPath.DirAndName()
 	meta, err := entry.EncodeAttributesAndChunks()
@@ -56,12 +57,12 @@ func (store *CassandraStore) InsertEntry(entry *filer2.Entry) (err error) {
 	return nil
 }
 
-func (store *CassandraStore) UpdateEntry(entry *filer2.Entry) (err error) {
+func (store *CassandraStore) UpdateEntry(ctx context.Context, entry *filer2.Entry) (err error) {
 
-	return store.InsertEntry(entry)
+	return store.InsertEntry(ctx, entry)
 }
 
-func (store *CassandraStore) FindEntry(fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
+func (store *CassandraStore) FindEntry(ctx context.Context, fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
 
 	dir, name := fullpath.DirAndName()
 	var data []byte
@@ -88,7 +89,7 @@ func (store *CassandraStore) FindEntry(fullpath filer2.FullPath) (entry *filer2.
 	return entry, nil
 }
 
-func (store *CassandraStore) DeleteEntry(fullpath filer2.FullPath) error {
+func (store *CassandraStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPath) error {
 
 	dir, name := fullpath.DirAndName()
 
@@ -101,7 +102,7 @@ func (store *CassandraStore) DeleteEntry(fullpath filer2.FullPath) error {
 	return nil
 }
 
-func (store *CassandraStore) ListDirectoryEntries(fullpath filer2.FullPath, startFileName string, inclusive bool,
+func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool,
 	limit int) (entries []*filer2.Entry, err error) {
 
 	cqlStr := "SELECT NAME, meta FROM filemeta WHERE directory=? AND name>? ORDER BY NAME ASC LIMIT ?"

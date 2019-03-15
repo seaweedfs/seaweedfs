@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -21,7 +22,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		path = path[:len(path)-1]
 	}
 
-	entry, err := fs.filer.FindEntry(filer2.FullPath(path))
+	entry, err := fs.filer.FindEntry(context.Background(), filer2.FullPath(path))
 	if err != nil {
 		if path == "/" {
 			fs.listDirectoryHandler(w, r)

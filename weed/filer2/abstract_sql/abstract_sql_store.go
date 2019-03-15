@@ -1,6 +1,7 @@
 package abstract_sql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -18,7 +19,7 @@ type AbstractSqlStore struct {
 	SqlListInclusive string
 }
 
-func (store *AbstractSqlStore) InsertEntry(entry *filer2.Entry) (err error) {
+func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer2.Entry) (err error) {
 
 	dir, name := entry.FullPath.DirAndName()
 	meta, err := entry.EncodeAttributesAndChunks()
@@ -38,7 +39,7 @@ func (store *AbstractSqlStore) InsertEntry(entry *filer2.Entry) (err error) {
 	return nil
 }
 
-func (store *AbstractSqlStore) UpdateEntry(entry *filer2.Entry) (err error) {
+func (store *AbstractSqlStore) UpdateEntry(ctx context.Context, entry *filer2.Entry) (err error) {
 
 	dir, name := entry.FullPath.DirAndName()
 	meta, err := entry.EncodeAttributesAndChunks()
@@ -58,7 +59,7 @@ func (store *AbstractSqlStore) UpdateEntry(entry *filer2.Entry) (err error) {
 	return nil
 }
 
-func (store *AbstractSqlStore) FindEntry(fullpath filer2.FullPath) (*filer2.Entry, error) {
+func (store *AbstractSqlStore) FindEntry(ctx context.Context, fullpath filer2.FullPath) (*filer2.Entry, error) {
 
 	dir, name := fullpath.DirAndName()
 	row := store.DB.QueryRow(store.SqlFind, hashToLong(dir), name, dir)
@@ -77,7 +78,7 @@ func (store *AbstractSqlStore) FindEntry(fullpath filer2.FullPath) (*filer2.Entr
 	return entry, nil
 }
 
-func (store *AbstractSqlStore) DeleteEntry(fullpath filer2.FullPath) error {
+func (store *AbstractSqlStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPath) error {
 
 	dir, name := fullpath.DirAndName()
 
@@ -94,7 +95,7 @@ func (store *AbstractSqlStore) DeleteEntry(fullpath filer2.FullPath) error {
 	return nil
 }
 
-func (store *AbstractSqlStore) ListDirectoryEntries(fullpath filer2.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
+func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
 
 	sqlText := store.SqlListExclusive
 	if inclusive {

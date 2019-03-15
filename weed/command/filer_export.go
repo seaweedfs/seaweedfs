@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/notification"
@@ -96,6 +97,8 @@ func runFilerExport(cmd *Command, args []string) bool {
 		return false
 	}
 
+	ctx := context.Background()
+
 	stat := statistics{}
 
 	var fn func(level int, entry *filer2.Entry) error
@@ -125,23 +128,23 @@ func runFilerExport(cmd *Command, args []string) bool {
 			if *dryRun {
 				return nil
 			}
-			return targetStore.InsertEntry(entry)
+			return targetStore.InsertEntry(ctx, entry)
 		}
 	}
 
-	doTraverse(&stat, sourceStore, filer2.FullPath(*dir), 0, fn)
+	doTraverse(ctx, &stat, sourceStore, filer2.FullPath(*dir), 0, fn)
 
 	glog.Infof("processed %d directories, %d files", stat.directoryCount, stat.fileCount)
 
 	return true
 }
 
-func doTraverse(stat *statistics, filerStore filer2.FilerStore, parentPath filer2.FullPath, level int, fn func(level int, entry *filer2.Entry) error) {
+func doTraverse(ctx context.Context, stat *statistics, filerStore filer2.FilerStore, parentPath filer2.FullPath, level int, fn func(level int, entry *filer2.Entry) error) {
 
 	limit := *dirListLimit
 	lastEntryName := ""
 	for {
-		entries, err := filerStore.ListDirectoryEntries(parentPath, lastEntryName, false, limit)
+		entries, err := filerStore.ListDirectoryEntries(ctx, parentPath, lastEntryName, false, limit)
 		if err != nil {
 			break
 		}
@@ -151,7 +154,7 @@ func doTraverse(stat *statistics, filerStore filer2.FilerStore, parentPath filer
 			}
 			if entry.IsDirectory() {
 				stat.directoryCount++
-				doTraverse(stat, filerStore, entry.FullPath, level+1, fn)
+				doTraverse(ctx, stat, filerStore, entry.FullPath, level+1, fn)
 			} else {
 				stat.fileCount++
 			}

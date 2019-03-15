@@ -2,6 +2,7 @@ package leveldb
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
@@ -45,7 +46,7 @@ func (store *LevelDBStore) initialize(dir string) (err error) {
 	return
 }
 
-func (store *LevelDBStore) InsertEntry(entry *filer2.Entry) (err error) {
+func (store *LevelDBStore) InsertEntry(ctx context.Context, entry *filer2.Entry) (err error) {
 	key := genKey(entry.DirAndName())
 
 	value, err := entry.EncodeAttributesAndChunks()
@@ -64,12 +65,12 @@ func (store *LevelDBStore) InsertEntry(entry *filer2.Entry) (err error) {
 	return nil
 }
 
-func (store *LevelDBStore) UpdateEntry(entry *filer2.Entry) (err error) {
+func (store *LevelDBStore) UpdateEntry(ctx context.Context, entry *filer2.Entry) (err error) {
 
-	return store.InsertEntry(entry)
+	return store.InsertEntry(ctx, entry)
 }
 
-func (store *LevelDBStore) FindEntry(fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
+func (store *LevelDBStore) FindEntry(ctx context.Context, fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
 	key := genKey(fullpath.DirAndName())
 
 	data, err := store.db.Get(key, nil)
@@ -94,7 +95,7 @@ func (store *LevelDBStore) FindEntry(fullpath filer2.FullPath) (entry *filer2.En
 	return entry, nil
 }
 
-func (store *LevelDBStore) DeleteEntry(fullpath filer2.FullPath) (err error) {
+func (store *LevelDBStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPath) (err error) {
 	key := genKey(fullpath.DirAndName())
 
 	err = store.db.Delete(key, nil)
@@ -105,7 +106,7 @@ func (store *LevelDBStore) DeleteEntry(fullpath filer2.FullPath) (err error) {
 	return nil
 }
 
-func (store *LevelDBStore) ListDirectoryEntries(fullpath filer2.FullPath, startFileName string, inclusive bool,
+func (store *LevelDBStore) ListDirectoryEntries(ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool,
 	limit int) (entries []*filer2.Entry, err error) {
 
 	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")

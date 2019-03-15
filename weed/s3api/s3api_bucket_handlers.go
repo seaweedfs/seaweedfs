@@ -22,7 +22,7 @@ var (
 )
 
 type ListAllMyBucketsResult struct {
-	XMLName   xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListAllMyBucketsResult"`
+	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListAllMyBucketsResult"`
 	Owner   *s3.Owner
 	Buckets []*s3.Bucket `xml:"Buckets>Bucket"`
 }

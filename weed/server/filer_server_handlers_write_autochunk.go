@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -18,7 +19,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (fs *FilerServer) autoChunk(w http.ResponseWriter, r *http.Request, replication string, collection string, dataCenter string) bool {
+func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, replication string, collection string, dataCenter string) bool {
 	if r.Method != "POST" {
 		glog.V(4).Infoln("AutoChunking not supported for method", r.Method)
 		return false
@@ -54,7 +55,7 @@ func (fs *FilerServer) autoChunk(w http.ResponseWriter, r *http.Request, replica
 		return false
 	}
 
-	reply, err := fs.doAutoChunk(w, r, contentLength, chunkSize, replication, collection, dataCenter)
+	reply, err := fs.doAutoChunk(ctx, w, r, contentLength, chunkSize, replication, collection, dataCenter)
 	if err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 	} else if reply != nil {
@@ -63,7 +64,7 @@ func (fs *FilerServer) autoChunk(w http.ResponseWriter, r *http.Request, replica
 	return true
 }
 
-func (fs *FilerServer) doAutoChunk(w http.ResponseWriter, r *http.Request, contentLength int64, chunkSize int32, replication string, collection string, dataCenter string) (filerResult *FilerPostResult, replyerr error) {
+func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, contentLength int64, chunkSize int32, replication string, collection string, dataCenter string) (filerResult *FilerPostResult, replyerr error) {
 
 	multipartReader, multipartReaderErr := r.MultipartReader()
 	if multipartReaderErr != nil {
@@ -166,7 +167,7 @@ func (fs *FilerServer) doAutoChunk(w http.ResponseWriter, r *http.Request, conte
 		},
 		Chunks: fileChunks,
 	}
-	if db_err := fs.filer.CreateEntry(entry); db_err != nil {
+	if db_err := fs.filer.CreateEntry(ctx, entry); db_err != nil {
 		replyerr = db_err
 		filerResult.Error = db_err.Error()
 		glog.V(0).Infof("failing to write %s to filer server : %v", path, db_err)

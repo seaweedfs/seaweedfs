@@ -67,6 +67,8 @@ func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request,
 
 func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
+	ctx := context.Background()
+
 	query := r.URL.Query()
 	replication := query.Get("replication")
 	if replication == "" {
@@ -81,7 +83,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		dataCenter = fs.option.DataCenter
 	}
 
-	if autoChunked := fs.autoChunk(w, r, replication, collection, dataCenter); autoChunked {
+	if autoChunked := fs.autoChunk(ctx, w, r, replication, collection, dataCenter); autoChunked {
 		return
 	}
 
@@ -164,7 +166,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// update metadata in filer store
-	existingEntry, err := fs.filer.FindEntry(filer2.FullPath(path))
+	existingEntry, err := fs.filer.FindEntry(ctx, filer2.FullPath(path))
 	crTime := time.Now()
 	if err == nil && existingEntry != nil {
 		// glog.V(4).Infof("existing %s => %+v", path, existingEntry)
@@ -194,7 +196,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		}},
 	}
 	// glog.V(4).Infof("saving %s => %+v", path, entry)
-	if db_err := fs.filer.CreateEntry(entry); db_err != nil {
+	if db_err := fs.filer.CreateEntry(ctx, entry); db_err != nil {
 		fs.filer.DeleteFileByFileId(fileId)
 		glog.V(0).Infof("failing to write %s to filer server : %v", path, db_err)
 		writeJsonError(w, r, http.StatusInternalServerError, db_err)

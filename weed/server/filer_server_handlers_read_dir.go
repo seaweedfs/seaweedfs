@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -27,7 +28,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 
 	lastFileName := r.FormValue("lastFileName")
 
-	entries, err := fs.filer.ListDirectoryEntries(filer2.FullPath(path), lastFileName, false, limit)
+	entries, err := fs.filer.ListDirectoryEntries(context.Background(), filer2.FullPath(path), lastFileName, false, limit)
 
 	if err != nil {
 		glog.V(0).Infof("listDirectory %s %s %d: %s", path, lastFileName, limit, err)

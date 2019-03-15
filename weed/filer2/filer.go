@@ -57,7 +57,7 @@ func (fs *Filer) KeepConnectedToMaster() {
 	fs.MasterClient.KeepConnectedToMaster()
 }
 
-func (f *Filer) CreateEntry(entry *Entry) error {
+func (f *Filer) CreateEntry(ctx context.Context, entry *Entry) error {
 
 	if string(entry.FullPath) == "/" {
 		return nil
@@ -79,7 +79,7 @@ func (f *Filer) CreateEntry(entry *Entry) error {
 		// not found, check the store directly
 		if dirEntry == nil {
 			glog.V(4).Infof("find uncached directory: %s", dirPath)
-			dirEntry, _ = f.FindEntry(FullPath(dirPath))
+			dirEntry, _ = f.FindEntry(ctx, FullPath(dirPath))
 		} else {
 			glog.V(4).Infof("found cached directory: %s", dirPath)
 		}
@@ -102,9 +102,9 @@ func (f *Filer) CreateEntry(entry *Entry) error {
 			}
 
 			glog.V(2).Infof("create directory: %s %v", dirPath, dirEntry.Mode)
-			mkdirErr := f.store.InsertEntry(dirEntry)
+			mkdirErr := f.store.InsertEntry(ctx, dirEntry)
 			if mkdirErr != nil {
-				if _, err := f.FindEntry(FullPath(dirPath)); err == ErrNotFound {
+				if _, err := f.FindEntry(ctx, FullPath(dirPath)); err == ErrNotFound {
 					return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
 				}
 			} else {
@@ -137,14 +137,14 @@ func (f *Filer) CreateEntry(entry *Entry) error {
 		}
 	*/
 
-	oldEntry, _ := f.FindEntry(entry.FullPath)
+	oldEntry, _ := f.FindEntry(ctx, entry.FullPath)
 
 	if oldEntry == nil {
-		if err := f.store.InsertEntry(entry); err != nil {
+		if err := f.store.InsertEntry(ctx, entry); err != nil {
 			return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
 		}
 	} else {
-		if err := f.UpdateEntry(oldEntry, entry); err != nil {
+		if err := f.UpdateEntry(ctx, oldEntry, entry); err != nil {
 			return fmt.Errorf("update entry %s: %v", entry.FullPath, err)
 		}
 	}
@@ -156,7 +156,7 @@ func (f *Filer) CreateEntry(entry *Entry) error {
 	return nil
 }
 
-func (f *Filer) UpdateEntry(oldEntry, entry *Entry) (err error) {
+func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err error) {
 	if oldEntry != nil {
 		if oldEntry.IsDirectory() && !entry.IsDirectory() {
 			return fmt.Errorf("existing %s is a directory", entry.FullPath)
@@ -165,10 +165,10 @@ func (f *Filer) UpdateEntry(oldEntry, entry *Entry) (err error) {
 			return fmt.Errorf("existing %s is a file", entry.FullPath)
 		}
 	}
-	return f.store.UpdateEntry(entry)
+	return f.store.UpdateEntry(ctx, entry)
 }
 
-func (f *Filer) FindEntry(p FullPath) (entry *Entry, err error) {
+func (f *Filer) FindEntry(ctx context.Context, p FullPath) (entry *Entry, err error) {
 
 	now := time.Now()
 
@@ -184,11 +184,11 @@ func (f *Filer) FindEntry(p FullPath) (entry *Entry, err error) {
 			},
 		}, nil
 	}
-	return f.store.FindEntry(p)
+	return f.store.FindEntry(ctx, p)
 }
 
 func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p FullPath, isRecursive bool, shouldDeleteChunks bool) (err error) {
-	entry, err := f.FindEntry(p)
+	entry, err := f.FindEntry(ctx, p)
 	if err != nil {
 		return err
 	}
@@ -201,7 +201,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p FullPath, isRecurs
 		lastFileName := ""
 		includeLastFile := false
 		for limit > 0 {
-			entries, err := f.ListDirectoryEntries(p, lastFileName, includeLastFile, 1024)
+			entries, err := f.ListDirectoryEntries(ctx, p, lastFileName, includeLastFile, 1024)
 			if err != nil {
 				return fmt.Errorf("list folder %s: %v", p, err)
 			}
@@ -241,14 +241,14 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p FullPath, isRecurs
 
 	f.NotifyUpdateEvent(entry, nil, shouldDeleteChunks)
 
-	return f.store.DeleteEntry(p)
+	return f.store.DeleteEntry(ctx, p)
 }
 
-func (f *Filer) ListDirectoryEntries(p FullPath, startFileName string, inclusive bool, limit int) ([]*Entry, error) {
+func (f *Filer) ListDirectoryEntries(ctx context.Context, p FullPath, startFileName string, inclusive bool, limit int) ([]*Entry, error) {
 	if strings.HasSuffix(string(p), "/") && len(p) > 1 {
 		p = p[0 : len(p)-1]
 	}
-	return f.store.ListDirectoryEntries(p, startFileName, inclusive, limit)
+	return f.store.ListDirectoryEntries(ctx, p, startFileName, inclusive, limit)
 }
 
 func (f *Filer) cacheDelDirectory(dirpath string) {

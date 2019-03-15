@@ -1,6 +1,7 @@
 package memdb
 
 import (
+	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -33,21 +34,21 @@ func (store *MemDbStore) Initialize(configuration util.Configuration) (err error
 	return nil
 }
 
-func (store *MemDbStore) InsertEntry(entry *filer2.Entry) (err error) {
+func (store *MemDbStore) InsertEntry(ctx context.Context, entry *filer2.Entry) (err error) {
 	// println("inserting", entry.FullPath)
 	store.tree.ReplaceOrInsert(entryItem{entry})
 	return nil
 }
 
-func (store *MemDbStore) UpdateEntry(entry *filer2.Entry) (err error) {
-	if _, err = store.FindEntry(entry.FullPath); err != nil {
+func (store *MemDbStore) UpdateEntry(ctx context.Context, entry *filer2.Entry) (err error) {
+	if _, err = store.FindEntry(ctx, entry.FullPath); err != nil {
 		return fmt.Errorf("no such file %s : %v", entry.FullPath, err)
 	}
 	store.tree.ReplaceOrInsert(entryItem{entry})
 	return nil
 }
 
-func (store *MemDbStore) FindEntry(fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
+func (store *MemDbStore) FindEntry(ctx context.Context, fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
 	item := store.tree.Get(entryItem{&filer2.Entry{FullPath: fullpath}})
 	if item == nil {
 		return nil, filer2.ErrNotFound
@@ -56,12 +57,12 @@ func (store *MemDbStore) FindEntry(fullpath filer2.FullPath) (entry *filer2.Entr
 	return entry, nil
 }
 
-func (store *MemDbStore) DeleteEntry(fullpath filer2.FullPath) (err error) {
+func (store *MemDbStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPath) (err error) {
 	store.tree.Delete(entryItem{&filer2.Entry{FullPath: fullpath}})
 	return nil
 }
 
-func (store *MemDbStore) ListDirectoryEntries(fullpath filer2.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
+func (store *MemDbStore) ListDirectoryEntries(ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
 
 	startFrom := string(fullpath)
 	if startFileName != "" {

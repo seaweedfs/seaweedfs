@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -18,7 +19,7 @@ type UniversalRedisStore struct {
 	Client redis.UniversalClient
 }
 
-func (store *UniversalRedisStore) InsertEntry(entry *filer2.Entry) (err error) {
+func (store *UniversalRedisStore) InsertEntry(ctx context.Context, entry *filer2.Entry) (err error) {
 
 	value, err := entry.EncodeAttributesAndChunks()
 	if err != nil {
@@ -42,12 +43,12 @@ func (store *UniversalRedisStore) InsertEntry(entry *filer2.Entry) (err error) {
 	return nil
 }
 
-func (store *UniversalRedisStore) UpdateEntry(entry *filer2.Entry) (err error) {
+func (store *UniversalRedisStore) UpdateEntry(ctx context.Context, entry *filer2.Entry) (err error) {
 
-	return store.InsertEntry(entry)
+	return store.InsertEntry(ctx, entry)
 }
 
-func (store *UniversalRedisStore) FindEntry(fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
+func (store *UniversalRedisStore) FindEntry(ctx context.Context, fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
 
 	data, err := store.Client.Get(string(fullpath)).Result()
 	if err == redis.Nil {
@@ -69,7 +70,7 @@ func (store *UniversalRedisStore) FindEntry(fullpath filer2.FullPath) (entry *fi
 	return entry, nil
 }
 
-func (store *UniversalRedisStore) DeleteEntry(fullpath filer2.FullPath) (err error) {
+func (store *UniversalRedisStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPath) (err error) {
 
 	_, err = store.Client.Del(string(fullpath)).Result()
 
@@ -88,7 +89,7 @@ func (store *UniversalRedisStore) DeleteEntry(fullpath filer2.FullPath) (err err
 	return nil
 }
 
-func (store *UniversalRedisStore) ListDirectoryEntries(fullpath filer2.FullPath, startFileName string, inclusive bool,
+func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool,
 	limit int) (entries []*filer2.Entry, err error) {
 
 	members, err := store.Client.SMembers(genDirectoryListKey(string(fullpath))).Result()
@@ -126,7 +127,7 @@ func (store *UniversalRedisStore) ListDirectoryEntries(fullpath filer2.FullPath,
 	// fetch entry meta
 	for _, fileName := range members {
 		path := filer2.NewFullPath(string(fullpath), fileName)
-		entry, err := store.FindEntry(path)
+		entry, err := store.FindEntry(ctx, path)
 		if err != nil {
 			glog.V(0).Infof("list %s : %v", path, err)
 		} else {

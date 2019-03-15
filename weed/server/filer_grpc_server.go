@@ -19,7 +19,7 @@ import (
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 
-	entry, err := fs.filer.FindEntry(filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name))))
+	entry, err := fs.filer.FindEntry(ctx, filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name))))
 	if err != nil {
 		return nil, fmt.Errorf("%s not found under %s: %v", req.Name, req.Directory, err)
 	}
@@ -45,7 +45,7 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 	lastFileName := req.StartFromFileName
 	includeLastFile := req.InclusiveStartFrom
 	for limit > 0 {
-		entries, err := fs.filer.ListDirectoryEntries(filer2.FullPath(req.Directory), lastFileName, includeLastFile, 1024)
+		entries, err := fs.filer.ListDirectoryEntries(ctx, filer2.FullPath(req.Directory), lastFileName, includeLastFile, 1024)
 		if err != nil {
 			return nil, err
 		}
@@ -121,7 +121,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		return nil, fmt.Errorf("can not create entry with empty attributes")
 	}
 
-	err = fs.filer.CreateEntry(&filer2.Entry{
+	err = fs.filer.CreateEntry(ctx, &filer2.Entry{
 		FullPath: fullpath,
 		Attr:     filer2.PbToEntryAttribute(req.Entry.Attributes),
 		Chunks:   chunks,
@@ -136,7 +136,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 
 	fullpath := filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name))
-	entry, err := fs.filer.FindEntry(filer2.FullPath(fullpath))
+	entry, err := fs.filer.FindEntry(ctx, filer2.FullPath(fullpath))
 	if err != nil {
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("not found %s: %v", fullpath, err)
 	}
@@ -175,7 +175,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		return &filer_pb.UpdateEntryResponse{}, err
 	}
 
-	if err = fs.filer.UpdateEntry(entry, newEntry); err == nil {
+	if err = fs.filer.UpdateEntry(ctx, entry, newEntry); err == nil {
 		fs.filer.DeleteChunks(unusedChunks)
 		fs.filer.DeleteChunks(garbages)
 	}
