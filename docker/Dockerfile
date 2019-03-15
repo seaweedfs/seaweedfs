@@ -25,6 +25,7 @@ EXPOSE 8333
 VOLUME /data
 
 COPY filer.toml /etc/seaweedfs/filer.toml
+RUN mkdir /data/filerdb
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
