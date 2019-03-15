@@ -115,6 +115,7 @@ func runServer(cmd *Command, args []string) bool {
 	}
 
 	master := *serverIp + ":" + strconv.Itoa(*masterPort)
+	filerOptions.masters = &master
 	filerOptions.ip = serverIp
 	serverOptions.v.ip = serverIp
 	serverOptions.v.bindIp = serverBindIp

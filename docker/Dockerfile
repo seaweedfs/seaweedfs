@@ -22,10 +22,11 @@ EXPOSE 9333
 # s3 server http port
 EXPOSE 8333
 
+RUN mkdir -p /data/filerdb
+
 VOLUME /data
 
 COPY filer.toml /etc/seaweedfs/filer.toml
-RUN mkdir /data/filerdb
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
