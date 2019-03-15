@@ -99,7 +99,7 @@ func (fo *FilerOptions) startFiler() {
 	}
 
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
-		Masters:            strings.Split(*f.masters, ","),
+		Masters:            strings.Split(*fo.masters, ","),
 		Collection:         *fo.collection,
 		DefaultReplication: *fo.defaultReplicaPlacement,
 		RedirectOnRead:     *fo.redirectOnRead,
