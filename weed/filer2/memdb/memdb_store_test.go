@@ -1,6 +1,7 @@
 package memdb
 
 import (
+	"context"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"testing"
 )
@@ -134,7 +135,7 @@ func TestCreateFileAndList(t *testing.T) {
 	}
 
 	// delete file and count
-	filer.DeleteEntryMetaAndData(file3Path, false, false)
+	filer.DeleteEntryMetaAndData(context.Background(), file3Path, false, false)
 	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"), "", false, 100)
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
