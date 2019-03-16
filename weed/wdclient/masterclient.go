@@ -43,7 +43,7 @@ func (mc *MasterClient) WaitUntilConnected() {
 }
 
 func (mc *MasterClient) KeepConnectedToMaster() {
-	glog.V(0).Infof("%s bootstraps with masters %v", mc.name, mc.masters)
+	glog.V(1).Infof("%s bootstraps with masters %v", mc.name, mc.masters)
 	for {
 		mc.tryAllMasters()
 		time.Sleep(time.Second)
@@ -52,7 +52,7 @@ func (mc *MasterClient) KeepConnectedToMaster() {
 
 func (mc *MasterClient) tryAllMasters() {
 	for _, master := range mc.masters {
-		glog.V(0).Infof("Connecting to master %v", master)
+		glog.V(1).Infof("Connecting to master %v", master)
 		gprcErr := withMasterClient(context.Background(), master, mc.grpcDialOption, func(ctx context.Context, client master_pb.SeaweedClient) error {
 
 			stream, err := client.KeepConnected(ctx)
@@ -67,7 +67,7 @@ func (mc *MasterClient) tryAllMasters() {
 			}
 
 			if mc.currentMaster == "" {
-				glog.V(0).Infof("Connected to %v", master)
+				glog.V(1).Infof("Connected to %v", master)
 				mc.currentMaster = master
 			}
 
