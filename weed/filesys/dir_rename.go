@@ -15,7 +15,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 
 	newDir := newDirectory.(*Dir)
 
-	return dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return dir.wfs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		// find existing entry
 		request := &filer_pb.LookupDirectoryEntryRequest{

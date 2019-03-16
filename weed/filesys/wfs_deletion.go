@@ -5,7 +5,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
-func (wfs *WFS) deleteFileChunks(chunks []*filer_pb.FileChunk) {
+func (wfs *WFS) deleteFileChunks(ctx context.Context, chunks []*filer_pb.FileChunk) {
 	if len(chunks) == 0 {
 		return
 	}
@@ -15,8 +15,8 @@ func (wfs *WFS) deleteFileChunks(chunks []*filer_pb.FileChunk) {
 		fileIds = append(fileIds, chunk.FileId)
 	}
 
-	wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		deleteFileIds(context.Background(), wfs.option.GrpcDialOption, client, fileIds)
+	wfs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+		deleteFileIds(ctx, wfs.option.GrpcDialOption, client, fileIds)
 		return nil
 	})
 }

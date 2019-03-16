@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 
@@ -29,7 +30,7 @@ func NewReplicator(sourceConfig util.Configuration, dataSink sink.ReplicationSin
 	}
 }
 
-func (r *Replicator) Replicate(key string, message *filer_pb.EventNotification) error {
+func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_pb.EventNotification) error {
 	if !strings.HasPrefix(key, r.source.Dir) {
 		glog.V(4).Infof("skipping %v outside of %v", key, r.source.Dir)
 		return nil
@@ -39,23 +40,23 @@ func (r *Replicator) Replicate(key string, message *filer_pb.EventNotification) 
 	key = newKey
 	if message.OldEntry != nil && message.NewEntry == nil {
 		glog.V(4).Infof("deleting %v", key)
-		return r.sink.DeleteEntry(key, message.OldEntry.IsDirectory, message.DeleteChunks)
+		return r.sink.DeleteEntry(ctx, key, message.OldEntry.IsDirectory, message.DeleteChunks)
 	}
 	if message.OldEntry == nil && message.NewEntry != nil {
 		glog.V(4).Infof("creating %v", key)
-		return r.sink.CreateEntry(key, message.NewEntry)
+		return r.sink.CreateEntry(ctx, key, message.NewEntry)
 	}
 	if message.OldEntry == nil && message.NewEntry == nil {
 		glog.V(0).Infof("weird message %+v", message)
 		return nil
 	}
 
-	foundExisting, err := r.sink.UpdateEntry(key, message.OldEntry, message.NewEntry, message.DeleteChunks)
+	foundExisting, err := r.sink.UpdateEntry(ctx, key, message.OldEntry, message.NewEntry, message.DeleteChunks)
 	if foundExisting {
 		glog.V(4).Infof("updated %v", key)
 		return err
 	}
 
 	glog.V(4).Infof("creating missing %v", key)
-	return r.sink.CreateEntry(key, message.NewEntry)
+	return r.sink.CreateEntry(ctx, key, message.NewEntry)
 }

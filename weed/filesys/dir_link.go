@@ -35,7 +35,7 @@ func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node,
 		},
 	}
 
-	err := dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := dir.wfs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 		if _, err := client.CreateEntry(ctx, request); err != nil {
 			glog.V(0).Infof("symlink %s/%s: %v", dir.Path, req.NewName, err)
 			return fuse.EIO

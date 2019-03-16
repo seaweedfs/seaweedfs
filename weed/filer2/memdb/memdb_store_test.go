@@ -50,6 +50,8 @@ func TestCreateFileAndList(t *testing.T) {
 	filer.SetStore(store)
 	filer.DisableDirectoryCache()
 
+	ctx := context.Background()
+
 	entry1 := &filer2.Entry{
 		FullPath: filer2.FullPath("/home/chris/this/is/one/file1.jpg"),
 		Attr: filer2.Attr{
@@ -68,11 +70,11 @@ func TestCreateFileAndList(t *testing.T) {
 		},
 	}
 
-	filer.CreateEntry(entry1)
-	filer.CreateEntry(entry2)
+	filer.CreateEntry(ctx, entry1)
+	filer.CreateEntry(ctx, entry2)
 
 	// checking the 2 files
-	entries, err := filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is/one/"), "", false, 100)
+	entries, err := filer.ListDirectoryEntries(ctx, filer2.FullPath("/home/chris/this/is/one/"), "", false, 100)
 
 	if err != nil {
 		t.Errorf("list entries: %v", err)
@@ -95,21 +97,21 @@ func TestCreateFileAndList(t *testing.T) {
 	}
 
 	// checking the offset
-	entries, err = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is/one/"), "file1.jpg", false, 100)
+	entries, err = filer.ListDirectoryEntries(ctx, filer2.FullPath("/home/chris/this/is/one/"), "file1.jpg", false, 100)
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
 		return
 	}
 
 	// checking one upper directory
-	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"), "", false, 100)
+	entries, _ = filer.ListDirectoryEntries(ctx, filer2.FullPath("/home/chris/this/is"), "", false, 100)
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
 		return
 	}
 
 	// checking root directory
-	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/"), "", false, 100)
+	entries, _ = filer.ListDirectoryEntries(ctx, filer2.FullPath("/"), "", false, 100)
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
 		return
@@ -125,18 +127,18 @@ func TestCreateFileAndList(t *testing.T) {
 			Gid:  5678,
 		},
 	}
-	filer.CreateEntry(entry3)
+	filer.CreateEntry(ctx, entry3)
 
 	// checking one upper directory
-	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"), "", false, 100)
+	entries, _ = filer.ListDirectoryEntries(ctx, filer2.FullPath("/home/chris/this/is"), "", false, 100)
 	if len(entries) != 2 {
 		t.Errorf("list entries count: %v", len(entries))
 		return
 	}
 
 	// delete file and count
-	filer.DeleteEntryMetaAndData(context.Background(), file3Path, false, false)
-	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is"), "", false, 100)
+	filer.DeleteEntryMetaAndData(ctx, file3Path, false, false)
+	entries, _ = filer.ListDirectoryEntries(ctx, filer2.FullPath("/home/chris/this/is"), "", false, 100)
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
 		return

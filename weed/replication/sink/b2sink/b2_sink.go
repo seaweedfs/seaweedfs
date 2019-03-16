@@ -58,15 +58,13 @@ func (g *B2Sink) initialize(accountId, accountKey, bucket, dir string) error {
 	return nil
 }
 
-func (g *B2Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) error {
+func (g *B2Sink) DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool) error {
 
 	key = cleanKey(key)
 
 	if isDirectory {
 		key = key + "/"
 	}
-
-	ctx := context.Background()
 
 	bucket, err := g.client.Bucket(ctx, g.bucket)
 	if err != nil {
@@ -79,7 +77,7 @@ func (g *B2Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) 
 
 }
 
-func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
+func (g *B2Sink) CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry) error {
 
 	key = cleanKey(key)
 
@@ -89,8 +87,6 @@ func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
 	totalSize := filer2.TotalSize(entry.Chunks)
 	chunkViews := filer2.ViewFromChunks(entry.Chunks, 0, int(totalSize))
-
-	ctx := context.Background()
 
 	bucket, err := g.client.Bucket(ctx, g.bucket)
 	if err != nil {
@@ -102,7 +98,7 @@ func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
 	for _, chunk := range chunkViews {
 
-		fileUrl, err := g.filerSource.LookupFileId(chunk.FileId)
+		fileUrl, err := g.filerSource.LookupFileId(ctx, chunk.FileId)
 		if err != nil {
 			return err
 		}
@@ -128,7 +124,7 @@ func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
 }
 
-func (g *B2Sink) UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (g *B2Sink) UpdateEntry(ctx context.Context, key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
 
 	key = cleanKey(key)
 

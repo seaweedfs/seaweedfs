@@ -63,8 +63,8 @@ func (fs *FilerSink) initialize(grpcAddress string, dir string,
 	return nil
 }
 
-func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) error {
-	return fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+func (fs *FilerSink) DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool) error {
+	return fs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		dir, name := filer2.FullPath(key).DirAndName()
 
@@ -75,7 +75,7 @@ func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bo
 		}
 
 		glog.V(1).Infof("delete entry: %v", request)
-		_, err := client.DeleteEntry(context.Background(), request)
+		_, err := client.DeleteEntry(ctx, request)
 		if err != nil {
 			glog.V(0).Infof("delete entry %s: %v", key, err)
 			return fmt.Errorf("delete entry %s: %v", key, err)
@@ -85,12 +85,11 @@ func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bo
 	})
 }
 
-func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry) error {
+func (fs *FilerSink) CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry) error {
 
-	return fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return fs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		dir, name := filer2.FullPath(key).DirAndName()
-		ctx := context.Background()
 
 		// look up existing entry
 		lookupRequest := &filer_pb.LookupDirectoryEntryRequest{
@@ -105,7 +104,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 			}
 		}
 
-		replicatedChunks, err := fs.replicateChunks(entry.Chunks)
+		replicatedChunks, err := fs.replicateChunks(ctx, entry.Chunks)
 
 		if err != nil {
 			glog.V(0).Infof("replicate entry chunks %s: %v", key, err)
@@ -134,15 +133,13 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 	})
 }
 
-func (fs *FilerSink) UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
-
-	ctx := context.Background()
+func (fs *FilerSink) UpdateEntry(ctx context.Context, key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
 
 	dir, name := filer2.FullPath(key).DirAndName()
 
 	// read existing entry
 	var existingEntry *filer_pb.Entry
-	err = fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = fs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
@@ -186,7 +183,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry,
 		}
 
 		// replicate the chunks that are new in the source
-		replicatedChunks, err := fs.replicateChunks(newChunks)
+		replicatedChunks, err := fs.replicateChunks(ctx, newChunks)
 		if err != nil {
 			return true, fmt.Errorf("replicte %s chunks error: %v", key, err)
 		}
@@ -194,7 +191,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry,
 	}
 
 	// save updated meta data
-	return true, fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return true, fs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: dir,

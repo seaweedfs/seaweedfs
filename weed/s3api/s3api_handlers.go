@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/xml"
 	"fmt"
@@ -35,9 +36,9 @@ func encodeResponse(response interface{}) []byte {
 	return bytesBuffer.Bytes()
 }
 
-func (s3a *S3ApiServer) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
+func (s3a *S3ApiServer) withFilerClient(ctx context.Context, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	grpcConnection, err := util.GrpcDial(s3a.option.FilerGrpcAddress, s3a.option.GrpcDialOption)
+	grpcConnection, err := util.GrpcDial(ctx, s3a.option.FilerGrpcAddress, s3a.option.GrpcDialOption)
 	if err != nil {
 		return fmt.Errorf("fail to dial %s: %v", s3a.option.FilerGrpcAddress, err)
 	}

@@ -1,6 +1,7 @@
 package S3Sink
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -76,7 +77,7 @@ func (s3sink *S3Sink) initialize(awsAccessKeyId, aswSecretAccessKey, region, buc
 	return nil
 }
 
-func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) error {
+func (s3sink *S3Sink) DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool) error {
 
 	key = cleanKey(key)
 
@@ -88,7 +89,7 @@ func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks b
 
 }
 
-func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
+func (s3sink *S3Sink) CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry) error {
 
 	key = cleanKey(key)
 
@@ -111,7 +112,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
 		wg.Add(1)
 		go func(chunk *filer2.ChunkView) {
 			defer wg.Done()
-			if part, uploadErr := s3sink.uploadPart(key, uploadId, partId, chunk); uploadErr != nil {
+			if part, uploadErr := s3sink.uploadPart(ctx, key, uploadId, partId, chunk); uploadErr != nil {
 				err = uploadErr
 			} else {
 				parts = append(parts, part)
@@ -125,11 +126,11 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
 		return err
 	}
 
-	return s3sink.completeMultipartUpload(key, uploadId, parts)
+	return s3sink.completeMultipartUpload(ctx, key, uploadId, parts)
 
 }
 
-func (s3sink *S3Sink) UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (s3sink *S3Sink) UpdateEntry(ctx context.Context, key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
 	key = cleanKey(key)
 	// TODO improve efficiency
 	return false, nil

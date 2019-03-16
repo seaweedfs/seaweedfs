@@ -36,7 +36,7 @@ func (vs *VolumeServer) heartbeat() {
 				glog.V(0).Infof("failed to parse master grpc %v", masterGrpcAddress)
 				continue
 			}
-			newLeader, err = vs.doHeartbeat(master, masterGrpcAddress, grpcDialOption, time.Duration(vs.pulseSeconds)*time.Second)
+			newLeader, err = vs.doHeartbeat(context.Background(), master, masterGrpcAddress, grpcDialOption, time.Duration(vs.pulseSeconds)*time.Second)
 			if err != nil {
 				glog.V(0).Infof("heartbeat error: %v", err)
 				time.Sleep(time.Duration(vs.pulseSeconds) * time.Second)
@@ -45,16 +45,16 @@ func (vs *VolumeServer) heartbeat() {
 	}
 }
 
-func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader string, err error) {
+func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcAddress string, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader string, err error) {
 
-	grpcConection, err := util.GrpcDial(masterGrpcAddress, grpcDialOption)
+	grpcConection, err := util.GrpcDial(ctx, masterGrpcAddress, grpcDialOption)
 	if err != nil {
 		return "", fmt.Errorf("fail to dial %s : %v", masterNode, err)
 	}
 	defer grpcConection.Close()
 
 	client := master_pb.NewSeaweedClient(grpcConection)
-	stream, err := client.SendHeartbeat(context.Background())
+	stream, err := client.SendHeartbeat(ctx)
 	if err != nil {
 		glog.V(0).Infof("SendHeartbeat to %s: %v", masterNode, err)
 		return "", err

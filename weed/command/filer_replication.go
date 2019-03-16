@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -116,7 +117,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 		} else {
 			glog.V(1).Infof("modify: %s", key)
 		}
-		if err = replicator.Replicate(key, m); err != nil {
+		if err = replicator.Replicate(context.Background(), key, m); err != nil {
 			glog.Errorf("replicate %s: %+v", key, err)
 		} else {
 			glog.V(1).Infof("replicated %s", key)

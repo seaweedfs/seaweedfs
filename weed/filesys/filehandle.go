@@ -73,7 +73,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	vid2Locations := make(map[string]*filer_pb.Locations)
 
-	err := fh.f.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := fh.f.wfs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		glog.V(4).Infof("read fh lookup volume id locations: %v", vids)
 		resp, err := client.LookupVolume(ctx, &filer_pb.LookupVolumeRequest{
@@ -197,7 +197,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		return nil
 	}
 
-	return fh.f.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return fh.f.wfs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		if fh.f.entry.Attributes != nil {
 			fh.f.entry.Attributes.Mime = fh.contentType
@@ -221,7 +221,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		chunks, garbages := filer2.CompactFileChunks(fh.f.entry.Chunks)
 		fh.f.entry.Chunks = chunks
 		// fh.f.entryViewCache = nil
-		fh.f.wfs.deleteFileChunks(garbages)
+		fh.f.wfs.deleteFileChunks(ctx, garbages)
 
 		if _, err := client.CreateEntry(ctx, request); err != nil {
 			return fmt.Errorf("update fh: %v", err)

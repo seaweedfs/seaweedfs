@@ -29,7 +29,7 @@ var _ = fs.NodeRemover(&Dir{})
 var _ = fs.NodeRenamer(&Dir{})
 var _ = fs.NodeSetattrer(&Dir{})
 
-func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
+func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 
 	// https://github.com/bazil/fuse/issues/196
 	attr.Valid = time.Second
@@ -56,7 +56,7 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 
 	parent, name := filepath.Split(dir.Path)
 
-	err := dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := dir.wfs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parent,
@@ -64,7 +64,7 @@ func (dir *Dir) Attr(context context.Context, attr *fuse.Attr) error {
 		}
 
 		glog.V(1).Infof("read dir %s attr: %v", dir.Path, request)
-		resp, err := client.LookupDirectoryEntry(context, request)
+		resp, err := client.LookupDirectoryEntry(ctx, request)
 		if err != nil {
 			if err == filer2.ErrNotFound {
 				return nil
@@ -132,7 +132,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	glog.V(1).Infof("create: %v", request)
 
 	if request.Entry.IsDirectory {
-		if err := dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		if err := dir.wfs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 			if _, err := client.CreateEntry(ctx, request); err != nil {
 				glog.V(0).Infof("create %s/%s: %v", dir.Path, req.Name, err)
 				return fuse.EIO
@@ -155,7 +155,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 
 func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
 
-	err := dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := dir.wfs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.CreateEntryRequest{
 			Directory: dir.Path,
@@ -199,7 +199,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 	}
 
 	if entry == nil {
-		err = dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		err = dir.wfs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 			request := &filer_pb.LookupDirectoryEntryRequest{
 				Directory: dir.Path,
@@ -243,7 +243,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 
 func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
-	err = dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = dir.wfs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		paginationLimit := 1024
 		remaining := dir.wfs.option.DirListingLimit
@@ -306,7 +306,7 @@ func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 func (dir *Dir) removeOneFile(ctx context.Context, req *fuse.RemoveRequest) error {
 
 	var entry *filer_pb.Entry
-	err := dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := dir.wfs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir.Path,
@@ -329,9 +329,9 @@ func (dir *Dir) removeOneFile(ctx context.Context, req *fuse.RemoveRequest) erro
 		return err
 	}
 
-	dir.wfs.deleteFileChunks(entry.Chunks)
+	dir.wfs.deleteFileChunks(ctx, entry.Chunks)
 
-	return dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return dir.wfs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.DeleteEntryRequest{
 			Directory:    dir.Path,
@@ -355,7 +355,7 @@ func (dir *Dir) removeOneFile(ctx context.Context, req *fuse.RemoveRequest) erro
 
 func (dir *Dir) removeFolder(ctx context.Context, req *fuse.RemoveRequest) error {
 
-	return dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return dir.wfs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.DeleteEntryRequest{
 			Directory:    dir.Path,
@@ -401,7 +401,7 @@ func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 	}
 
 	parentDir, name := filer2.FullPath(dir.Path).DirAndName()
-	return dir.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return dir.wfs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: parentDir,

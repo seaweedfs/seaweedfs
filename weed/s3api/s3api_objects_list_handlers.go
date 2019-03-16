@@ -44,7 +44,9 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		marker = startAfter
 	}
 
-	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker)
+	ctx := context.Background()
+
+	response, err := s3a.listFilerEntries(ctx, bucket, originalPrefix, maxKeys, marker)
 
 	if err != nil {
 		writeErrorResponse(w, ErrInternalError, r.URL)
@@ -62,6 +64,8 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
+	ctx := context.Background()
+
 	originalPrefix, marker, delimiter, maxKeys := getListObjectsV1Args(r.URL.Query())
 
 	if maxKeys < 0 {
@@ -73,7 +77,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker)
+	response, err := s3a.listFilerEntries(ctx, bucket, originalPrefix, maxKeys, marker)
 
 	if err != nil {
 		writeErrorResponse(w, ErrInternalError, r.URL)
@@ -83,13 +87,13 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	writeSuccessResponseXML(w, encodeResponse(response))
 }
 
-func (s3a *S3ApiServer) listFilerEntries(bucket, originalPrefix string, maxKeys int, marker string) (response ListBucketResult, err error) {
+func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket, originalPrefix string, maxKeys int, marker string) (response ListBucketResult, err error) {
 
 	// convert full path prefix into directory name and prefix for entry name
 	dir, prefix := filepath.Split(originalPrefix)
 
 	// check filer
-	err = s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = s3a.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.ListEntriesRequest{
 			Directory:          fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, dir),
@@ -99,7 +103,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket, originalPrefix string, maxKeys 
 			InclusiveStartFrom: false,
 		}
 
-		resp, err := client.ListEntries(context.Background(), request)
+		resp, err := client.ListEntries(ctx, request)
 		if err != nil {
 			return fmt.Errorf("list buckets: %v", err)
 		}

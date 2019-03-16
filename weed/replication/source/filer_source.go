@@ -39,16 +39,16 @@ func (fs *FilerSource) initialize(grpcAddress string, dir string) (err error) {
 	return nil
 }
 
-func (fs *FilerSource) LookupFileId(part string) (fileUrl string, err error) {
+func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrl string, err error) {
 
 	vid2Locations := make(map[string]*filer_pb.Locations)
 
 	vid := volumeId(part)
 
-	err = fs.withFilerClient(fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = fs.withFilerClient(ctx, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 
 		glog.V(4).Infof("read lookup volume id locations: %v", vid)
-		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
+		resp, err := client.LookupVolume(ctx, &filer_pb.LookupVolumeRequest{
 			VolumeIds: []string{vid},
 		})
 		if err != nil {
@@ -77,9 +77,9 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrl string, err error) {
 	return
 }
 
-func (fs *FilerSource) ReadPart(part string) (filename string, header http.Header, readCloser io.ReadCloser, err error) {
+func (fs *FilerSource) ReadPart(ctx context.Context, part string) (filename string, header http.Header, readCloser io.ReadCloser, err error) {
 
-	fileUrl, err := fs.LookupFileId(part)
+	fileUrl, err := fs.LookupFileId(ctx, part)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -89,9 +89,9 @@ func (fs *FilerSource) ReadPart(part string) (filename string, header http.Heade
 	return filename, header, readCloser, err
 }
 
-func (fs *FilerSource) withFilerClient(grpcDialOption grpc.DialOption, fn func(filer_pb.SeaweedFilerClient) error) error {
+func (fs *FilerSource) withFilerClient(ctx context.Context, grpcDialOption grpc.DialOption, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	grpcConnection, err := util.GrpcDial(fs.grpcAddress, grpcDialOption)
+	grpcConnection, err := util.GrpcDial(ctx, fs.grpcAddress, grpcDialOption)
 	if err != nil {
 		return fmt.Errorf("fail to dial %s: %v", fs.grpcAddress, err)
 	}
