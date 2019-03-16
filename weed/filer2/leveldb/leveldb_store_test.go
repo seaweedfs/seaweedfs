@@ -72,6 +72,8 @@ func TestEmptyRoot(t *testing.T) {
 	filer.SetStore(store)
 	filer.DisableDirectoryCache()
 
+	ctx := context.Background()
+
 	// checking one upper directory
 	entries, err := filer.ListDirectoryEntries(ctx, filer2.FullPath("/"), "", false, 100)
 	if err != nil {
