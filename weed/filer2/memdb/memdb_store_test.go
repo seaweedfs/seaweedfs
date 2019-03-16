@@ -13,6 +13,8 @@ func TestCreateAndFind(t *testing.T) {
 	filer.SetStore(store)
 	filer.DisableDirectoryCache()
 
+	ctx := context.Background()
+
 	fullpath := filer2.FullPath("/home/chris/this/is/one/file1.jpg")
 
 	entry1 := &filer2.Entry{
@@ -24,12 +26,12 @@ func TestCreateAndFind(t *testing.T) {
 		},
 	}
 
-	if err := filer.CreateEntry(entry1); err != nil {
+	if err := filer.CreateEntry(ctx, entry1); err != nil {
 		t.Errorf("create entry %v: %v", entry1.FullPath, err)
 		return
 	}
 
-	entry, err := filer.FindEntry(fullpath)
+	entry, err := filer.FindEntry(ctx, fullpath)
 
 	if err != nil {
 		t.Errorf("find entry: %v", err)

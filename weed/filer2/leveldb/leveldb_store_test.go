@@ -1,6 +1,7 @@
 package leveldb
 
 import (
+	"context"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"io/ioutil"
 	"os"
@@ -18,6 +19,8 @@ func TestCreateAndFind(t *testing.T) {
 
 	fullpath := filer2.FullPath("/home/chris/this/is/one/file1.jpg")
 
+	ctx := context.Background()
+
 	entry1 := &filer2.Entry{
 		FullPath: fullpath,
 		Attr: filer2.Attr{
@@ -27,12 +30,12 @@ func TestCreateAndFind(t *testing.T) {
 		},
 	}
 
-	if err := filer.CreateEntry(entry1); err != nil {
+	if err := filer.CreateEntry(ctx, entry1); err != nil {
 		t.Errorf("create entry %v: %v", entry1.FullPath, err)
 		return
 	}
 
-	entry, err := filer.FindEntry(fullpath)
+	entry, err := filer.FindEntry(ctx, fullpath)
 
 	if err != nil {
 		t.Errorf("find entry: %v", err)
@@ -45,14 +48,14 @@ func TestCreateAndFind(t *testing.T) {
 	}
 
 	// checking one upper directory
-	entries, _ := filer.ListDirectoryEntries(filer2.FullPath("/home/chris/this/is/one"), "", false, 100)
+	entries, _ := filer.ListDirectoryEntries(ctx, filer2.FullPath("/home/chris/this/is/one"), "", false, 100)
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
 		return
 	}
 
 	// checking one upper directory
-	entries, _ = filer.ListDirectoryEntries(filer2.FullPath("/"), "", false, 100)
+	entries, _ = filer.ListDirectoryEntries(ctx, filer2.FullPath("/"), "", false, 100)
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
 		return
@@ -70,7 +73,7 @@ func TestEmptyRoot(t *testing.T) {
 	filer.DisableDirectoryCache()
 
 	// checking one upper directory
-	entries, err := filer.ListDirectoryEntries(filer2.FullPath("/"), "", false, 100)
+	entries, err := filer.ListDirectoryEntries(ctx, filer2.FullPath("/"), "", false, 100)
 	if err != nil {
 		t.Errorf("list entries: %v", err)
 		return
