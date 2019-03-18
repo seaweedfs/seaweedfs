@@ -30,7 +30,7 @@ func (c *commandVolumeList) Do(args []string, commandEnv *commandEnv, writer io.
 		return err
 	}
 
-	writeTopologyInfo(writer,resp.TopologyInfo)
+	writeTopologyInfo(writer, resp.TopologyInfo)
 
 	return nil
 }

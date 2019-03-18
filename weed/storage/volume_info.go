@@ -60,7 +60,6 @@ func (vi VolumeInfo) ToVolumeInformationMessage() *master_pb.VolumeInformationMe
 	}
 }
 
-
 /*VolumesInfo sorting*/
 
 type volumeInfos []*VolumeInfo
