@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -43,7 +44,9 @@ func RunShell(options ShellOptions) {
 	for {
 		cmd, err := line.Prompt("> ")
 		if err != nil {
-			fmt.Printf("%v\n", err)
+			if err != io.EOF {
+				fmt.Printf("%v\n", err)
+			}
 			return
 		}
 

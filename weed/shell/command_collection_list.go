@@ -18,7 +18,7 @@ func (c *commandCollectionList) Name() string {
 }
 
 func (c *commandCollectionList) Help() string {
-	return "\t\t # list all collections"
+	return "# list all collections"
 }
 
 func (c *commandCollectionList) Do(args []string, commandEnv *commandEnv, writer io.Writer) error {
