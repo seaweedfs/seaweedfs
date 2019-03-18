@@ -2,6 +2,7 @@ package topology
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"strconv"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -127,4 +128,18 @@ func (dn *DataNode) ToMap() interface{} {
 	ret["Free"] = dn.FreeSpace()
 	ret["PublicUrl"] = dn.PublicUrl
 	return ret
+}
+
+func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
+	m := &master_pb.DataNodeInfo{
+		Id:                string(dn.Id()),
+		VolumeCount:       uint64(dn.GetVolumeCount()),
+		MaxVolumeCount:    uint64(dn.GetMaxVolumeCount()),
+		FreeVolumeCount:   uint64(dn.FreeSpace()),
+		ActiveVolumeCount: uint64(dn.GetActiveVolumeCount()),
+	}
+	for _, v := range dn.GetVolumes() {
+		m.VolumeInfos = append(m.VolumeInfos, v.ToVolumeInformationMessage())
+	}
+	return m
 }

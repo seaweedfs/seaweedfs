@@ -30,7 +30,7 @@ func (c *commandCollectionList) Do(args []string, commandEnv *commandEnv, writer
 	}
 
 	for _, c := range resp.Collections {
-		fmt.Fprintf(writer, "collection:\"%s\"\treplication:\"%s\"\tTTL:\"%s\"\n", c.GetName(), c.GetReplication(), c.GetTtl())
+		fmt.Fprintf(writer, "collection:\"%s\"\n", c.GetName())
 	}
 
 	fmt.Fprintf(writer, "Total %d collections.\n", len(resp.Collections))

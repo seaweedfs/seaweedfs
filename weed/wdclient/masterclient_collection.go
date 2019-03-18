@@ -21,3 +21,11 @@ func (mc *MasterClient) CollectionList(ctx context.Context) (resp *master_pb.Col
 	})
 	return
 }
+
+func (mc *MasterClient) VolumeList(ctx context.Context) (resp *master_pb.VolumeListResponse, err error) {
+	err = withMasterClient(ctx, mc.currentMaster, mc.grpcDialOption, func(ctx context.Context, client master_pb.SeaweedClient) error {
+		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+		return err
+	})
+	return
+}

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"os"
 	"path"
 	"sync"
@@ -133,4 +134,19 @@ func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
 		return true
 	}
 	return false
+}
+
+func (v *Volume) ToVolumeInformationMessage() *master_pb.VolumeInformationMessage {
+	return &master_pb.VolumeInformationMessage{
+		Id:               uint32(v.Id),
+		Size:             uint64(v.Size()),
+		Collection:       v.Collection,
+		FileCount:        uint64(v.nm.FileCount()),
+		DeleteCount:      uint64(v.nm.DeletedCount()),
+		DeletedByteCount: v.nm.DeletedSize(),
+		ReadOnly:         v.readOnly,
+		ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
+		Version:          uint32(v.Version()),
+		Ttl:              v.Ttl.ToUint32(),
+	}
 }

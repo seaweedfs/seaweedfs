@@ -144,24 +144,12 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	for _, location := range s.Locations {
 		maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
 		location.Lock()
-		for k, v := range location.volumes {
+		for _, v := range location.volumes {
 			if maxFileKey < v.nm.MaxFileKey() {
 				maxFileKey = v.nm.MaxFileKey()
 			}
 			if !v.expired(s.VolumeSizeLimit) {
-				volumeMessage := &master_pb.VolumeInformationMessage{
-					Id:               uint32(k),
-					Size:             uint64(v.Size()),
-					Collection:       v.Collection,
-					FileCount:        uint64(v.nm.FileCount()),
-					DeleteCount:      uint64(v.nm.DeletedCount()),
-					DeletedByteCount: v.nm.DeletedSize(),
-					ReadOnly:         v.readOnly,
-					ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
-					Version:          uint32(v.Version()),
-					Ttl:              v.Ttl.ToUint32(),
-				}
-				volumeMessages = append(volumeMessages, volumeMessage)
+				volumeMessages = append(volumeMessages, v.ToVolumeInformationMessage())
 			} else {
 				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
 					location.deleteVolumeById(v.Id)

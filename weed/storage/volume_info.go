@@ -45,6 +45,22 @@ func (vi VolumeInfo) String() string {
 		vi.Id, vi.Size, vi.ReplicaPlacement, vi.Collection, vi.Version, vi.FileCount, vi.DeleteCount, vi.DeletedByteCount, vi.ReadOnly)
 }
 
+func (vi VolumeInfo) ToVolumeInformationMessage() *master_pb.VolumeInformationMessage {
+	return &master_pb.VolumeInformationMessage{
+		Id:               uint32(vi.Id),
+		Size:             uint64(vi.Size),
+		Collection:       vi.Collection,
+		FileCount:        uint64(vi.FileCount),
+		DeleteCount:      uint64(vi.DeleteCount),
+		DeletedByteCount: vi.DeletedByteCount,
+		ReadOnly:         vi.ReadOnly,
+		ReplicaPlacement: uint32(vi.ReplicaPlacement.Byte()),
+		Version:          uint32(vi.Version),
+		Ttl:              vi.Ttl.ToUint32(),
+	}
+}
+
+
 /*VolumesInfo sorting*/
 
 type volumeInfos []*VolumeInfo

@@ -126,3 +126,16 @@ func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.Statistic
 
 	return resp, nil
 }
+
+func (ms *MasterServer) VolumeList(ctx context.Context, req *master_pb.VolumeListRequest) (*master_pb.VolumeListResponse, error) {
+
+	if !ms.Topo.IsLeader() {
+		return nil, raft.NotLeaderError
+	}
+
+	resp := &master_pb.VolumeListResponse{
+		TopologyInfo: ms.Topo.ToTopologyInfo(),
+	}
+
+	return resp, nil
+}

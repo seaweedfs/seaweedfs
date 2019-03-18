@@ -19,6 +19,8 @@ service Seaweed {
     }
     rpc CollectionDelete (CollectionDeleteRequest) returns (CollectionDeleteResponse) {
     }
+    rpc VolumeList (VolumeListRequest) returns (VolumeListResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -150,4 +152,45 @@ message CollectionDeleteRequest {
     string name = 1;
 }
 message CollectionDeleteResponse {
+}
+
+//
+// volume related
+//
+message DataNodeInfo {
+    string id = 1;
+    uint64 volume_count = 2;
+    uint64 max_volume_count = 3;
+    uint64 free_volume_count = 4;
+    uint64 active_volume_count = 5;
+    repeated VolumeInformationMessage volume_infos = 6;
+}
+message RackInfo {
+    string id = 1;
+    uint64 volume_count = 2;
+    uint64 max_volume_count = 3;
+    uint64 free_volume_count = 4;
+    uint64 active_volume_count = 5;
+    repeated DataNodeInfo data_node_infos = 6;
+}
+message DataCenterInfo {
+    string id = 1;
+    uint64 volume_count = 2;
+    uint64 max_volume_count = 3;
+    uint64 free_volume_count = 4;
+    uint64 active_volume_count = 5;
+    repeated RackInfo rack_infos = 6;
+}
+message TopologyInfo {
+    string id = 1;
+    uint64 volume_count = 2;
+    uint64 max_volume_count = 3;
+    uint64 free_volume_count = 4;
+    uint64 active_volume_count = 5;
+    repeated DataCenterInfo data_center_infos = 6;
+}
+message VolumeListRequest {
+}
+message VolumeListResponse {
+    TopologyInfo topology_info = 1;
 }
