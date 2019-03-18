@@ -283,6 +283,7 @@ func NeedleBodyLength(needleSize uint32, version Version) int64 {
 //n should be a needle already read the header
 //the input stream will read until next file entry
 func (n *Needle) ReadNeedleBody(r *os.File, version Version, offset int64, bodyLength int64) (err error) {
+
 	if bodyLength <= 0 {
 		return nil
 	}
@@ -301,6 +302,11 @@ func (n *Needle) ReadNeedleBody(r *os.File, version Version, offset int64, bodyL
 		}
 		n.readNeedleDataVersion2(bytes[0:n.Size])
 		n.Checksum = NewCRC(n.Data)
+
+		if version == Version3 {
+			tsOffset := n.Size+NeedleChecksumSize
+			n.AppendAtNs = util.BytesToUint64(bytes[tsOffset : tsOffset+TimestampSize])
+		}
 	default:
 		err = fmt.Errorf("Unsupported Version! (%d)", version)
 	}

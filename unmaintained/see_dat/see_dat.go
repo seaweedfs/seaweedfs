@@ -4,6 +4,7 @@ import (
 	"flag"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"time"
 )
 
 var (
@@ -22,11 +23,12 @@ func (scanner *VolumeFileScanner4SeeDat) VisitSuperBlock(superBlock storage.Supe
 
 }
 func (scanner *VolumeFileScanner4SeeDat) ReadNeedleBody() bool {
-	return false
+	return true
 }
 
 func (scanner *VolumeFileScanner4SeeDat) VisitNeedle(n *storage.Needle, offset int64) error {
-	glog.V(0).Infof("%d,%s%x offset %d size %d cookie %x", *volumeId, n.Id, n.Cookie, offset, n.Size, n.Cookie)
+	t := time.Unix(int64(n.AppendAtNs)/int64(time.Second), int64(n.AppendAtNs)%int64(time.Second))
+	glog.V(0).Infof("%d,%s%x offset %d size %d cookie %x appendedAt %v", *volumeId, n.Id, n.Cookie, offset, n.Size, n.Cookie, t)
 	return nil
 }
 
