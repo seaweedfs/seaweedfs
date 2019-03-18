@@ -56,6 +56,7 @@ message VolumeInformationMessage {
     uint32 replica_placement = 8;
     uint32 version = 9;
     uint32 ttl = 10;
+    uint32 compact_revision = 11;
 }
 
 message Empty {

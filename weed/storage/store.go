@@ -121,7 +121,9 @@ func (s *Store) Status() []*VolumeInfo {
 				DeleteCount:      v.nm.DeletedCount(),
 				DeletedByteCount: v.nm.DeletedSize(),
 				ReadOnly:         v.readOnly,
-				Ttl:              v.Ttl}
+				Ttl:              v.Ttl,
+				CompactRevision:  uint32(v.CompactRevision),
+			}
 			stats = append(stats, s)
 		}
 		location.RUnlock()

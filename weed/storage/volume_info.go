@@ -18,6 +18,7 @@ type VolumeInfo struct {
 	DeleteCount      int
 	DeletedByteCount uint64
 	ReadOnly         bool
+	CompactRevision  uint32
 }
 
 func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err error) {
@@ -30,6 +31,7 @@ func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err er
 		DeletedByteCount: m.DeletedByteCount,
 		ReadOnly:         m.ReadOnly,
 		Version:          Version(m.Version),
+		CompactRevision:  m.CompactRevision,
 	}
 	rp, e := NewReplicaPlacementFromByte(byte(m.ReplicaPlacement))
 	if e != nil {
@@ -57,6 +59,7 @@ func (vi VolumeInfo) ToVolumeInformationMessage() *master_pb.VolumeInformationMe
 		ReplicaPlacement: uint32(vi.ReplicaPlacement.Byte()),
 		Version:          uint32(vi.Version),
 		Ttl:              vi.Ttl.ToUint32(),
+		CompactRevision:  vi.CompactRevision,
 	}
 }
 
