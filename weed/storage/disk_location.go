@@ -63,14 +63,7 @@ func (l *DiskLocation) loadExistingVolume(dir os.FileInfo, needleMapKind NeedleM
 	}
 }
 
-func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapType, concurrentFlag bool) {
-	var concurrency int
-	if concurrentFlag {
-		//You could choose a better optimized concurency value after testing at your environment
-		concurrency = 10
-	} else {
-		concurrency = 1
-	}
+func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapType, concurrency int) {
 
 	task_queue := make(chan os.FileInfo, 10*concurrency)
 	go func() {
@@ -101,7 +94,7 @@ func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
 	l.Lock()
 	defer l.Unlock()
 
-	l.concurrentLoadingVolumes(needleMapKind, true)
+	l.concurrentLoadingVolumes(needleMapKind, 10)
 
 	glog.V(0).Infoln("Store started on dir:", l.Directory, "with", len(l.volumes), "volumes", "max", l.MaxVolumeCount)
 }
