@@ -238,7 +238,12 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 
 func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.DeleteCollectionRequest) (resp *filer_pb.DeleteCollectionResponse, err error) {
 
-	err = fs.filer.MasterClient.CollectionDelete(ctx, req.GetCollection())
+	err = fs.filer.MasterClient.WithClient(ctx, func(ctx context.Context, client master_pb.SeaweedClient) error {
+		_, err := client.CollectionDelete(ctx, &master_pb.CollectionDeleteRequest{
+			Name: req.GetCollection(),
+		})
+		return err
+	})
 
 	return &filer_pb.DeleteCollectionResponse{}, err
 }
