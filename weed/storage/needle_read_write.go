@@ -182,10 +182,10 @@ func (n *Needle) ReadData(r *os.File, offset int64, size uint32, version Version
 	case Version1:
 		n.Data = bytes[NeedleEntrySize : NeedleEntrySize+size]
 	case Version2, Version3:
-		n.readNeedleDataVersion2(bytes[NeedleEntrySize : NeedleEntrySize+int(n.Size)])
+		err = n.readNeedleDataVersion2(bytes[NeedleEntrySize : NeedleEntrySize+int(n.Size)])
 	}
-	if size == 0 {
-		return nil
+	if size == 0 || err != nil {
+		return err
 	}
 	checksum := util.BytesToUint32(bytes[NeedleEntrySize+size : NeedleEntrySize+size+NeedleChecksumSize])
 	newChecksum := NewCRC(n.Data)
@@ -206,15 +206,15 @@ func (n *Needle) ParseNeedleHeader(bytes []byte) {
 	n.Size = util.BytesToUint32(bytes[CookieSize+NeedleIdSize : NeedleEntrySize])
 }
 
-func (n *Needle) readNeedleDataVersion2(bytes []byte) {
+var ErrIndexOutOfRange = fmt.Errorf("index out of range")
+
+func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 	index, lenBytes := 0, len(bytes)
 	if index < lenBytes {
 		n.DataSize = util.BytesToUint32(bytes[index : index+4])
 		index = index + 4
-		if int(n.DataSize)+index > lenBytes {
-			// this if clause is due to bug #87 and #93, fixed in v0.69
-			// remove this clause later
-			return
+		if int(n.DataSize)+index >= lenBytes {
+			return ErrIndexOutOfRange
 		}
 		n.Data = bytes[index : index+int(n.DataSize)]
 		index = index + int(n.DataSize)
@@ -224,30 +224,49 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) {
 	if index < lenBytes && n.HasName() {
 		n.NameSize = uint8(bytes[index])
 		index = index + 1
+		if int(n.NameSize)+index >= lenBytes {
+			return ErrIndexOutOfRange
+		}
 		n.Name = bytes[index : index+int(n.NameSize)]
 		index = index + int(n.NameSize)
 	}
 	if index < lenBytes && n.HasMime() {
 		n.MimeSize = uint8(bytes[index])
 		index = index + 1
+		if int(n.MimeSize)+index >= lenBytes {
+			return ErrIndexOutOfRange
+		}
 		n.Mime = bytes[index : index+int(n.MimeSize)]
 		index = index + int(n.MimeSize)
 	}
 	if index < lenBytes && n.HasLastModifiedDate() {
+		if LastModifiedBytesLength+index >= lenBytes {
+			return ErrIndexOutOfRange
+		}
 		n.LastModified = util.BytesToUint64(bytes[index : index+LastModifiedBytesLength])
 		index = index + LastModifiedBytesLength
 	}
 	if index < lenBytes && n.HasTtl() {
+		if TtlBytesLength+index >= lenBytes {
+			return ErrIndexOutOfRange
+		}
 		n.Ttl = LoadTTLFromBytes(bytes[index : index+TtlBytesLength])
 		index = index + TtlBytesLength
 	}
 	if index < lenBytes && n.HasPairs() {
+		if 2+index >= lenBytes {
+			return ErrIndexOutOfRange
+		}
 		n.PairsSize = util.BytesToUint16(bytes[index : index+2])
 		index += 2
+		if int(n.PairsSize)+index >= lenBytes {
+			return ErrIndexOutOfRange
+		}
 		end := index + int(n.PairsSize)
 		n.Pairs = bytes[index:end]
 		index = end
 	}
+	return nil
 }
 
 func ReadNeedleHeader(r *os.File, version Version, offset int64) (n *Needle, bodyLength int64, err error) {
@@ -300,11 +319,11 @@ func (n *Needle) ReadNeedleBody(r *os.File, version Version, offset int64, bodyL
 		if _, err = r.ReadAt(bytes, offset); err != nil {
 			return
 		}
-		n.readNeedleDataVersion2(bytes[0:n.Size])
+		err = n.readNeedleDataVersion2(bytes[0:n.Size])
 		n.Checksum = NewCRC(n.Data)
 
 		if version == Version3 {
-			tsOffset := n.Size+NeedleChecksumSize
+			tsOffset := n.Size + NeedleChecksumSize
 			n.AppendAtNs = util.BytesToUint64(bytes[tsOffset : tsOffset+TimestampSize])
 		}
 	default:

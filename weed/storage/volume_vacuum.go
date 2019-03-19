@@ -335,7 +335,10 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 		}
 
 		n := new(Needle)
-		n.ReadData(v.dataFile, int64(offset)*NeedlePaddingSize, size, v.Version())
+		err :=n.ReadData(v.dataFile, int64(offset)*NeedlePaddingSize, size, v.Version())
+		if err != nil {
+			return nil
+		}
 
 		if n.HasTtl() && now >= n.LastModified+uint64(v.Ttl.Minutes()*60) {
 			return nil
