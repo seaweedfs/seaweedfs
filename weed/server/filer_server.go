@@ -1,9 +1,10 @@
 package weed_server
 
 import (
-	"google.golang.org/grpc"
 	"net/http"
 	"os"
+
+	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/cassandra"
@@ -15,6 +16,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/aws_sqs"
+	_ "github.com/chrislusf/seaweedfs/weed/notification/gocdk_pub_sub"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/google_pub_sub"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/kafka"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/log"
