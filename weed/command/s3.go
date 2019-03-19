@@ -51,7 +51,7 @@ func runS3(cmd *Command, args []string) bool {
 
 	weed_server.LoadConfiguration("security", false)
 
-	filerGrpcAddress, err := parseFilerGrpcAddress(*s3options.filer, *s3options.filerGrpcPort)
+	filerGrpcAddress, err := parseFilerGrpcAddress(*s3options.filer)
 	if err != nil {
 		glog.Fatal(err)
 		return false

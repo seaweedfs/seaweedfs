@@ -335,7 +335,7 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 		}
 
 		n := new(Needle)
-		err :=n.ReadData(v.dataFile, int64(offset)*NeedlePaddingSize, size, v.Version())
+		err := n.ReadData(v.dataFile, int64(offset)*NeedlePaddingSize, size, v.Version())
 		if err != nil {
 			return nil
 		}
