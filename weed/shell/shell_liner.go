@@ -36,6 +36,7 @@ func RunShell(options ShellOptions) {
 		env: make(map[string]string),
 		masterClient: wdclient.NewMasterClient(context.Background(),
 			options.GrpcDialOption, "shell", strings.Split(*options.Masters, ",")),
+		option: options,
 	}
 
 	go commandEnv.masterClient.KeepConnectedToMaster()

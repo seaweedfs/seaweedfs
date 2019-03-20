@@ -14,6 +14,7 @@ type ShellOptions struct {
 type commandEnv struct {
 	env          map[string]string
 	masterClient *wdclient.MasterClient
+	option       ShellOptions
 }
 
 type command interface {
