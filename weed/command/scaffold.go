@@ -180,6 +180,16 @@ google_application_credentials = "/path/to/x.json" # path to json credential fil
 project_id = ""                       # an existing project id
 topic = "seaweedfs_filer_topic"       # a topic, auto created if does not exists
 
+[notification.gocdk_pub_sub]
+# The Go Cloud Development Kit (https://gocloud.dev).
+# PubSub API (https://godoc.org/gocloud.dev/pubsub).
+# Supports AWS SNS/SQS, Azure Service Bus, Google PubSub, NATS and RabbitMQ.
+enabled = false
+# This URL will Dial the RabbitMQ server at the URL in the environment
+# variable RABBIT_SERVER_URL and open the exchange "myexchange".
+# The exchange must have already been created by some other means, like
+# the RabbitMQ management plugin.
+topic_url = "rabbit://myexchange"
 `
 
 	REPLICATION_TOML_EXAMPLE = `
