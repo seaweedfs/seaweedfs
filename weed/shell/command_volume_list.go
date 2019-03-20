@@ -25,7 +25,8 @@ func (c *commandVolumeList) Help() string {
 func (c *commandVolumeList) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
 
 	var resp *master_pb.VolumeListResponse
-	err = commandEnv.masterClient.WithClient(context.Background(), func(ctx context.Context, client master_pb.SeaweedClient) error {
+	ctx := context.Background()
+	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
 		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
 		return err
 	})

@@ -25,8 +25,8 @@ func (c *commandCollectionList) Help() string {
 func (c *commandCollectionList) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
 
 	var resp *master_pb.CollectionListResponse
-
-	err = commandEnv.masterClient.WithClient(context.Background(), func(ctx context.Context, client master_pb.SeaweedClient) error {
+	ctx := context.Background()
+	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
 		resp, err = client.CollectionList(ctx, &master_pb.CollectionListRequest{})
 		return err
 	})
