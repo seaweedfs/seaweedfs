@@ -206,15 +206,13 @@ func (n *Needle) ParseNeedleHeader(bytes []byte) {
 	n.Size = util.BytesToUint32(bytes[CookieSize+NeedleIdSize : NeedleEntrySize])
 }
 
-var ErrIndexOutOfRange = fmt.Errorf("index out of range")
-
 func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 	index, lenBytes := 0, len(bytes)
 	if index < lenBytes {
 		n.DataSize = util.BytesToUint32(bytes[index : index+4])
 		index = index + 4
-		if int(n.DataSize)+index >= lenBytes {
-			return ErrIndexOutOfRange
+		if int(n.DataSize)+index > lenBytes {
+			return fmt.Errorf("index out of range %d", 1)
 		}
 		n.Data = bytes[index : index+int(n.DataSize)]
 		index = index + int(n.DataSize)
@@ -224,8 +222,8 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 	if index < lenBytes && n.HasName() {
 		n.NameSize = uint8(bytes[index])
 		index = index + 1
-		if int(n.NameSize)+index >= lenBytes {
-			return ErrIndexOutOfRange
+		if int(n.NameSize)+index > lenBytes {
+			return fmt.Errorf("index out of range %d", 2)
 		}
 		n.Name = bytes[index : index+int(n.NameSize)]
 		index = index + int(n.NameSize)
@@ -233,34 +231,34 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 	if index < lenBytes && n.HasMime() {
 		n.MimeSize = uint8(bytes[index])
 		index = index + 1
-		if int(n.MimeSize)+index >= lenBytes {
-			return ErrIndexOutOfRange
+		if int(n.MimeSize)+index > lenBytes {
+			return fmt.Errorf("index out of range %d", 3)
 		}
 		n.Mime = bytes[index : index+int(n.MimeSize)]
 		index = index + int(n.MimeSize)
 	}
 	if index < lenBytes && n.HasLastModifiedDate() {
-		if LastModifiedBytesLength+index >= lenBytes {
-			return ErrIndexOutOfRange
+		if LastModifiedBytesLength+index > lenBytes {
+			return fmt.Errorf("index out of range %d", 4)
 		}
 		n.LastModified = util.BytesToUint64(bytes[index : index+LastModifiedBytesLength])
 		index = index + LastModifiedBytesLength
 	}
 	if index < lenBytes && n.HasTtl() {
-		if TtlBytesLength+index >= lenBytes {
-			return ErrIndexOutOfRange
+		if TtlBytesLength+index > lenBytes {
+			return fmt.Errorf("index out of range %d", 5)
 		}
 		n.Ttl = LoadTTLFromBytes(bytes[index : index+TtlBytesLength])
 		index = index + TtlBytesLength
 	}
 	if index < lenBytes && n.HasPairs() {
-		if 2+index >= lenBytes {
-			return ErrIndexOutOfRange
+		if 2+index > lenBytes {
+			return fmt.Errorf("index out of range %d", 6)
 		}
 		n.PairsSize = util.BytesToUint16(bytes[index : index+2])
 		index += 2
-		if int(n.PairsSize)+index >= lenBytes {
-			return ErrIndexOutOfRange
+		if int(n.PairsSize)+index > lenBytes {
+			return fmt.Errorf("index out of range %d", 7)
 		}
 		end := index + int(n.PairsSize)
 		n.Pairs = bytes[index:end]
