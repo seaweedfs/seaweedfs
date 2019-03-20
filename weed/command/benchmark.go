@@ -36,6 +36,7 @@ type BenchmarkOptions struct {
 	read             *bool
 	sequentialRead   *bool
 	collection       *string
+	replication      *string
 	cpuprofile       *string
 	maxCpu           *int
 	grpcDialOption   grpc.DialOption
@@ -61,6 +62,7 @@ func init() {
 	b.read = cmdBenchmark.Flag.Bool("read", true, "enable read")
 	b.sequentialRead = cmdBenchmark.Flag.Bool("readSequentially", false, "randomly read by ids from \"-list\" specified file")
 	b.collection = cmdBenchmark.Flag.String("collection", "benchmark", "write data to this collection")
+	b.replication = cmdBenchmark.Flag.String("replication", "000", "replication type")
 	b.cpuprofile = cmdBenchmark.Flag.String("cpuprofile", "", "cpu profile output file")
 	b.maxCpu = cmdBenchmark.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	sharedBytes = make([]byte, 1024)
@@ -228,8 +230,9 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 			MimeType: "image/bench", // prevent gzip benchmark content
 		}
 		ar := &operation.VolumeAssignRequest{
-			Count:      1,
-			Collection: *b.collection,
+			Count:       1,
+			Collection:  *b.collection,
+			Replication: *b.replication,
 		}
 		if assignResult, err := operation.Assign(masterClient.GetMaster(), b.grpcDialOption, ar); err == nil {
 			fp.Server, fp.Fid, fp.Collection = assignResult.Url, assignResult.Fid, *b.collection
