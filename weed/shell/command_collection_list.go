@@ -3,6 +3,7 @@ package shell
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"io"
 )
 
@@ -21,9 +22,14 @@ func (c *commandCollectionList) Help() string {
 	return "# list all collections"
 }
 
-func (c *commandCollectionList) Do(args []string, commandEnv *commandEnv, writer io.Writer) error {
+func (c *commandCollectionList) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
 
-	resp, err := commandEnv.masterClient.CollectionList(context.Background())
+	var resp *master_pb.CollectionListResponse
+	ctx := context.Background()
+	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
+		resp, err = client.CollectionList(ctx, &master_pb.CollectionListRequest{})
+		return err
+	})
 
 	if err != nil {
 		return err

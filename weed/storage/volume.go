@@ -148,5 +148,6 @@ func (v *Volume) ToVolumeInformationMessage() *master_pb.VolumeInformationMessag
 		ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
 		Version:          uint32(v.Version()),
 		Ttl:              v.Ttl.ToUint32(),
+		CompactRevision:  uint32(v.SuperBlock.CompactRevision),
 	}
 }

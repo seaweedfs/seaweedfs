@@ -8,7 +8,6 @@ import (
 
 type MountOptions struct {
 	filer              *string
-	filerGrpcPort      *int
 	filerMountRootPath *string
 	dir                *string
 	dirListingLimit    *int
@@ -29,7 +28,6 @@ var (
 func init() {
 	cmdMount.Run = runMount // break init cycle
 	mountOptions.filer = cmdMount.Flag.String("filer", "localhost:8888", "weed filer location")
-	mountOptions.filerGrpcPort = cmdMount.Flag.Int("filer.grpc.port", 0, "filer grpc server listen port, default to http port + 10000")
 	mountOptions.filerMountRootPath = cmdMount.Flag.String("filer.path", "/", "mount this remote path from filer server")
 	mountOptions.dir = cmdMount.Flag.String("dir", ".", "mount weed filer to this directory")
 	mountOptions.dirListingLimit = cmdMount.Flag.Int("dirListLimit", 100000, "limit directory listing size")
@@ -61,7 +59,7 @@ var cmdMount = &Command{
   `,
 }
 
-func parseFilerGrpcAddress(filer string, optionalGrpcPort int) (filerGrpcAddress string, err error) {
+func parseFilerGrpcAddress(filer string) (filerGrpcAddress string, err error) {
 	hostnameAndPort := strings.Split(filer, ":")
 	if len(hostnameAndPort) != 2 {
 		return "", fmt.Errorf("The filer should have hostname:port format: %v", hostnameAndPort)
@@ -73,9 +71,6 @@ func parseFilerGrpcAddress(filer string, optionalGrpcPort int) (filerGrpcAddress
 	}
 
 	filerGrpcPort := int(filerPort) + 10000
-	if optionalGrpcPort != 0 {
-		filerGrpcPort = optionalGrpcPort
-	}
 
 	return fmt.Sprintf("%s:%d", hostnameAndPort[0], filerGrpcPort), nil
 }

@@ -87,7 +87,7 @@ func runMount(cmd *Command, args []string) bool {
 		c.Close()
 	})
 
-	filerGrpcAddress, err := parseFilerGrpcAddress(*mountOptions.filer, *mountOptions.filerGrpcPort)
+	filerGrpcAddress, err := parseFilerGrpcAddress(*mountOptions.filer)
 	if err != nil {
 		glog.Fatal(err)
 		return false

@@ -42,7 +42,7 @@ func withMasterServerClient(masterServer string, grpcDialOption grpc.DialOption,
 
 	ctx := context.Background()
 
-	masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(masterServer, 0)
+	masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(masterServer)
 	if parseErr != nil {
 		return fmt.Errorf("failed to parse master grpc %v", masterServer)
 	}

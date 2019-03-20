@@ -22,16 +22,19 @@ func (c *commandVolumeList) Help() string {
 	return "# list all volumes"
 }
 
-func (c *commandVolumeList) Do(args []string, commandEnv *commandEnv, writer io.Writer) error {
+func (c *commandVolumeList) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
 
-	resp, err := commandEnv.masterClient.VolumeList(context.Background())
-
+	var resp *master_pb.VolumeListResponse
+	ctx := context.Background()
+	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
+		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+		return err
+	})
 	if err != nil {
 		return err
 	}
 
 	writeTopologyInfo(writer, resp.TopologyInfo)
-
 	return nil
 }
 

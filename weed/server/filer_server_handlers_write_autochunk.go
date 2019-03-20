@@ -19,7 +19,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, replication string, collection string, dataCenter string) bool {
+func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request,
+	replication string, collection string, dataCenter string) bool {
 	if r.Method != "POST" {
 		glog.V(4).Infoln("AutoChunking not supported for method", r.Method)
 		return false
@@ -64,7 +65,8 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 	return true
 }
 
-func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, contentLength int64, chunkSize int32, replication string, collection string, dataCenter string) (filerResult *FilerPostResult, replyerr error) {
+func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request,
+	contentLength int64, chunkSize int32, replication string, collection string, dataCenter string) (filerResult *FilerPostResult, replyerr error) {
 
 	multipartReader, multipartReaderErr := r.MultipartReader()
 	if multipartReaderErr != nil {
@@ -177,8 +179,8 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 	return
 }
 
-func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *http.Request, chunkBuf []byte, fileName string, contentType string, fileId string, auth security.EncodedJwt) (err error) {
-	err = nil
+func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *http.Request,
+	chunkBuf []byte, fileName string, contentType string, fileId string, auth security.EncodedJwt) (err error) {
 
 	ioReader := ioutil.NopCloser(bytes.NewBuffer(chunkBuf))
 	uploadResult, uploadError := operation.Upload(urlLocation, fileName, ioReader, false, contentType, nil, auth)

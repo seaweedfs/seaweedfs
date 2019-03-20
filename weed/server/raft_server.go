@@ -61,7 +61,7 @@ func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr st
 	s.raftServer.Start()
 
 	for _, peer := range s.peers {
-		s.raftServer.AddPeer(peer, util.ServerToGrpcAddress(peer, 19333))
+		s.raftServer.AddPeer(peer, util.ServerToGrpcAddress(peer))
 	}
 
 	s.GrpcServer = raft.NewGrpcServer(s.raftServer)
@@ -72,7 +72,7 @@ func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr st
 
 		_, err := s.raftServer.Do(&raft.DefaultJoinCommand{
 			Name:             s.raftServer.Name(),
-			ConnectionString: util.ServerToGrpcAddress(s.serverAddr, 19333),
+			ConnectionString: util.ServerToGrpcAddress(s.serverAddr),
 		})
 
 		if err != nil {

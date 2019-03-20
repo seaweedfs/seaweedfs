@@ -31,7 +31,7 @@ func (vs *VolumeServer) heartbeat() {
 			if newLeader != "" {
 				master = newLeader
 			}
-			masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(master, 0)
+			masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(master)
 			if parseErr != nil {
 				glog.V(0).Infof("failed to parse master grpc %v", masterGrpcAddress)
 				continue

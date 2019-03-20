@@ -81,7 +81,7 @@ func WithCachedGrpcClient(ctx context.Context, fn func(*grpc.ClientConn) error, 
 	return err
 }
 
-func ParseServerToGrpcAddress(server string, optionalGrpcPort int) (serverGrpcAddress string, err error) {
+func ParseServerToGrpcAddress(server string) (serverGrpcAddress string, err error) {
 	hostnameAndPort := strings.Split(server, ":")
 	if len(hostnameAndPort) != 2 {
 		return "", fmt.Errorf("server should have hostname:port format: %v", hostnameAndPort)
@@ -93,22 +93,19 @@ func ParseServerToGrpcAddress(server string, optionalGrpcPort int) (serverGrpcAd
 	}
 
 	grpcPort := int(port) + 10000
-	if optionalGrpcPort != 0 {
-		grpcPort = optionalGrpcPort
-	}
 
 	return fmt.Sprintf("%s:%d", hostnameAndPort[0], grpcPort), nil
 }
 
-func ServerToGrpcAddress(server string, defaultGrpcPort int) (serverGrpcAddress string) {
+func ServerToGrpcAddress(server string) (serverGrpcAddress string) {
 	hostnameAndPort := strings.Split(server, ":")
 	if len(hostnameAndPort) != 2 {
-		return fmt.Sprintf("%s:%d", server, defaultGrpcPort)
+		return fmt.Sprintf("unexpected server address: %s", server)
 	}
 
 	port, parseErr := strconv.ParseUint(hostnameAndPort[1], 10, 64)
 	if parseErr != nil {
-		return fmt.Sprintf("%s:%d", hostnameAndPort[0], defaultGrpcPort)
+		return fmt.Sprintf("failed to parse port for %s:%s", hostnameAndPort[0], hostnameAndPort[1])
 	}
 
 	grpcPort := int(port) + 10000

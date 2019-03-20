@@ -101,7 +101,7 @@ func (mc *MasterClient) tryAllMasters() {
 
 func withMasterClient(ctx context.Context, master string, grpcDialOption grpc.DialOption, fn func(ctx context.Context, client master_pb.SeaweedClient) error) error {
 
-	masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(master, 0)
+	masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(master)
 	if parseErr != nil {
 		return fmt.Errorf("failed to parse master grpc %v", master)
 	}
@@ -115,4 +115,10 @@ func withMasterClient(ctx context.Context, master string, grpcDialOption grpc.Di
 	client := master_pb.NewSeaweedClient(grpcConnection)
 
 	return fn(ctx, client)
+}
+
+func (mc *MasterClient) WithClient(ctx context.Context, fn func(client master_pb.SeaweedClient) error) error {
+	return withMasterClient(ctx, mc.currentMaster, mc.grpcDialOption, func(ctx context.Context, client master_pb.SeaweedClient) error {
+		return fn(client)
+	})
 }
