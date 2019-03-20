@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
@@ -19,11 +20,13 @@ type Location struct {
 type vidMap struct {
 	sync.RWMutex
 	vid2Locations map[uint32][]Location
+	r             *rand.Rand
 }
 
 func newVidMap() vidMap {
 	return vidMap{
 		vid2Locations: make(map[uint32][]Location),
+		r:             rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -39,7 +42,7 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrl string, err error
 		return "", fmt.Errorf("volume %d not found", id)
 	}
 
-	return locations[rand.Intn(len(locations))].Url, nil
+	return locations[vc.r.Intn(len(locations))].Url, nil
 }
 
 func (vc *vidMap) LookupFileId(fileId string) (fullUrl string, err error) {
