@@ -60,7 +60,7 @@ var (
 	serverDataCenter              = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
 	serverRack                    = cmdServer.Flag.String("rack", "", "current volume server's rack name")
 	serverWhiteListOption         = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	masterHttpReadOnly            = cmdServer.Flag.Bool("master.httpReadOnly", false, "disable http operations, only gRPC operations are allowed.")
+	serverDisableHttp             = cmdServer.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
 	serverPeers                   = cmdServer.Flag.String("master.peers", "", "all master nodes in comma separated ip:masterPort list")
 	serverGarbageThreshold        = cmdServer.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
 	masterPort                    = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
@@ -127,6 +127,7 @@ func runServer(cmd *Command, args []string) bool {
 	serverOptions.v.pulseSeconds = pulseSeconds
 
 	filerOptions.dataCenter = serverDataCenter
+	filerOptions.disableHttp = serverDisableHttp
 
 	if *filerOptions.defaultReplicaPlacement == "" {
 		*filerOptions.defaultReplicaPlacement = *masterDefaultReplicaPlacement
@@ -173,7 +174,7 @@ func runServer(cmd *Command, args []string) bool {
 		ms := weed_server.NewMasterServer(r, *masterPort, *masterMetaFolder,
 			*masterVolumeSizeLimitMB, *masterVolumePreallocate,
 			*pulseSeconds, *masterDefaultReplicaPlacement, *serverGarbageThreshold,
-			serverWhiteList, *masterHttpReadOnly,
+			serverWhiteList, *serverDisableHttp,
 		)
 
 		glog.V(0).Infof("Start Seaweed Master %s at %s:%d", util.VERSION, *serverIp, *masterPort)

@@ -33,6 +33,7 @@ type FilerOptions struct {
 	dirListingLimit         *int
 	dataCenter              *string
 	enableNotification      *bool
+	disableHttp             *bool
 
 	// default leveldb directory, used in "weed server" mode
 	defaultLevelDbDirectory *string
@@ -52,6 +53,7 @@ func init() {
 	f.maxMB = cmdFiler.Flag.Int("maxMB", 32, "split files larger than the limit")
 	f.dirListingLimit = cmdFiler.Flag.Int("dirListLimit", 100000, "limit sub dir listing size")
 	f.dataCenter = cmdFiler.Flag.String("dataCenter", "", "prefer to write to volumes in this data center")
+	f.disableHttp = cmdFiler.Flag.Bool("disableHttp", false, "disable http request, only gRpc operations are allowed")
 }
 
 var cmdFiler = &Command{
@@ -108,6 +110,7 @@ func (fo *FilerOptions) startFiler() {
 		DirListingLimit:    *fo.dirListingLimit,
 		DataCenter:         *fo.dataCenter,
 		DefaultLevelDbDir:  defaultLevelDbDirectory,
+		DisableHttp:        *fo.disableHttp,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

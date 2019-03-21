@@ -47,7 +47,7 @@ var (
 	mMaxCpu               = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	garbageThreshold      = cmdMaster.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
 	masterWhiteListOption = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	httpReadOnly          = cmdMaster.Flag.Bool("httpReadOnly", false, "disable http operations, only gRPC operations are allowed.")
+	disableHttp           = cmdMaster.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
 	masterCpuProfile      = cmdMaster.Flag.String("cpuprofile", "", "cpu profile output file")
 	masterMemProfile      = cmdMaster.Flag.String("memprofile", "", "memory profile output file")
 
@@ -79,7 +79,7 @@ func runMaster(cmd *Command, args []string) bool {
 		*volumeSizeLimitMB, *volumePreallocate,
 		*mpulse, *defaultReplicaPlacement, *garbageThreshold,
 		masterWhiteList,
-		*httpReadOnly,
+		*disableHttp,
 	)
 
 	listeningAddress := *masterBindIp + ":" + strconv.Itoa(*mport)

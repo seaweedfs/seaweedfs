@@ -34,6 +34,7 @@ type FilerOption struct {
 	DirListingLimit    int
 	DataCenter         string
 	DefaultLevelDbDir  string
+	DisableHttp        bool
 }
 
 type FilerServer struct {
@@ -74,7 +75,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	notification.LoadConfiguration(v.Sub("notification"))
 
 	handleStaticResources(defaultMux)
-	defaultMux.HandleFunc("/", fs.filerHandler)
+	if !option.DisableHttp {
+		defaultMux.HandleFunc("/", fs.filerHandler)
+	}
 	if defaultMux != readonlyMux {
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
