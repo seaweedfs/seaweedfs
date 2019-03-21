@@ -93,7 +93,9 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	r.HandleFunc("/stats/health", ms.guard.WhiteList(statsHealthHandler))
 	r.HandleFunc("/stats/counter", ms.guard.WhiteList(statsCounterHandler))
 	r.HandleFunc("/stats/memory", ms.guard.WhiteList(statsMemoryHandler))
-	r.HandleFunc("/{fileId}", ms.proxyToLeader(ms.redirectHandler))
+	if !httpReadOnly {
+		r.HandleFunc("/{fileId}", ms.proxyToLeader(ms.redirectHandler))
+	}
 
 	ms.Topo.StartRefreshWritableVolumes(ms.grpcDialOpiton, garbageThreshold, ms.preallocate)
 
