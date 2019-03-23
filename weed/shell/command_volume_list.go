@@ -19,7 +19,11 @@ func (c *commandVolumeList) Name() string {
 }
 
 func (c *commandVolumeList) Help() string {
-	return "# list all volumes"
+	return `list all volumes
+
+	This command list all volumes as a tree of dataCenter > rack > dataNode > volume.
+
+`
 }
 
 func (c *commandVolumeList) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {

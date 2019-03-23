@@ -92,7 +92,8 @@ func printGenericHelp() {
 		return strings.Compare(commands[i].Name(), commands[j].Name()) < 0
 	})
 	for _, c := range commands {
-		fmt.Printf("\t%s %s \n", c.Name(), c.Help())
+		helpTexts := strings.SplitN(c.Help(), "\n", 2)
+		fmt.Printf("  %-30s\t# %s \n", c.Name(), helpTexts[0])
 	}
 }
 
@@ -111,9 +112,7 @@ func printHelp(cmds []string) {
 
 		for _, c := range commands {
 			if c.Name() == cmd {
-				fmt.Println()
-				fmt.Printf("\t%s %s \n", c.Name(), c.Help())
-				fmt.Println()
+				fmt.Printf("  %s\t# %s\n", c.Name(), c.Help())
 			}
 		}
 	}

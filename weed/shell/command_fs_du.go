@@ -25,7 +25,12 @@ func (c *commandFsDu) Name() string {
 }
 
 func (c *commandFsDu) Help() string {
-	return "http://<filer_server>:<port>/dir[/file] # show disk usage"
+	return `show disk usage
+
+	fs.du http://<filer_server>:<port>/dir
+	fs.du http://<filer_server>:<port>/dir/file_name
+	fs.du http://<filer_server>:<port>/dir/file_prefix
+`
 }
 
 func (c *commandFsDu) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {

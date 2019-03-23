@@ -26,7 +26,12 @@ func (c *commandVolumeFixReplication) Name() string {
 func (c *commandVolumeFixReplication) Help() string {
 	return `add replicas to volumes that are missing replicas
 
-	-n do not take action
+	This command file all under-replicated volumes, and find volume servers with free slots.
+	If the free slots satisfy the replication requirement, the volume content is copied over and mounted.
+
+	volume.fix.replication -n # do not take action
+	volume.fix.replication    # actually copying the volume files and mount the volume
+
 `
 }
 

@@ -19,7 +19,7 @@ func (c *commandCollectionList) Name() string {
 }
 
 func (c *commandCollectionList) Help() string {
-	return "# list all collections"
+	return `list all collections`
 }
 
 func (c *commandCollectionList) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
