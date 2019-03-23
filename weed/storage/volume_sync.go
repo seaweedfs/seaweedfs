@@ -192,7 +192,7 @@ func (v *Volume) fetchNeedle(volumeServer string, grpcDialOption grpc.DialOption
 
 	return operation.WithVolumeServerClient(volumeServer, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		stream, err := client.VolumeSyncData(context.Background(), &volume_server_pb.VolumeSyncDataRequest{
-			VolumdId: uint32(v.Id),
+			VolumeId: uint32(v.Id),
 			Revision: uint32(compactRevision),
 			Offset:   uint32(needleValue.Offset),
 			Size:     uint32(needleValue.Size),

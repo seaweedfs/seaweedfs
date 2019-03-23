@@ -12,14 +12,14 @@ import (
 
 func (vs *VolumeServer) VolumeSyncStatus(ctx context.Context, req *volume_server_pb.VolumeSyncStatusRequest) (*volume_server_pb.VolumeSyncStatusResponse, error) {
 
-	v := vs.store.GetVolume(storage.VolumeId(req.VolumdId))
+	v := vs.store.GetVolume(storage.VolumeId(req.VolumeId))
 	if v == nil {
-		return nil, fmt.Errorf("not found volume id %d", req.VolumdId)
+		return nil, fmt.Errorf("not found volume id %d", req.VolumeId)
 	}
 
 	resp := v.GetVolumeSyncStatus()
 
-	glog.V(2).Infof("volume sync status %d", req.VolumdId)
+	glog.V(2).Infof("volume sync status %d", req.VolumeId)
 
 	return resp, nil
 
@@ -27,17 +27,17 @@ func (vs *VolumeServer) VolumeSyncStatus(ctx context.Context, req *volume_server
 
 func (vs *VolumeServer) VolumeSyncIndex(req *volume_server_pb.VolumeSyncIndexRequest, stream volume_server_pb.VolumeServer_VolumeSyncIndexServer) error {
 
-	v := vs.store.GetVolume(storage.VolumeId(req.VolumdId))
+	v := vs.store.GetVolume(storage.VolumeId(req.VolumeId))
 	if v == nil {
-		return fmt.Errorf("not found volume id %d", req.VolumdId)
+		return fmt.Errorf("not found volume id %d", req.VolumeId)
 	}
 
 	content, err := v.IndexFileContent()
 
 	if err != nil {
-		glog.Errorf("sync volume %d index: %v", req.VolumdId, err)
+		glog.Errorf("sync volume %d index: %v", req.VolumeId, err)
 	} else {
-		glog.V(2).Infof("sync volume %d index", req.VolumdId)
+		glog.V(2).Infof("sync volume %d index", req.VolumeId)
 	}
 
 	const blockSizeLimit = 1024 * 1024 * 2
@@ -57,9 +57,9 @@ func (vs *VolumeServer) VolumeSyncIndex(req *volume_server_pb.VolumeSyncIndexReq
 
 func (vs *VolumeServer) VolumeSyncData(req *volume_server_pb.VolumeSyncDataRequest, stream volume_server_pb.VolumeServer_VolumeSyncDataServer) error {
 
-	v := vs.store.GetVolume(storage.VolumeId(req.VolumdId))
+	v := vs.store.GetVolume(storage.VolumeId(req.VolumeId))
 	if v == nil {
-		return fmt.Errorf("not found volume id %d", req.VolumdId)
+		return fmt.Errorf("not found volume id %d", req.VolumeId)
 	}
 
 	if uint32(v.SuperBlock.CompactRevision) != req.Revision {
@@ -82,7 +82,7 @@ func (vs *VolumeServer) VolumeSyncData(req *volume_server_pb.VolumeSyncDataReque
 	}
 
 	if err != nil {
-		glog.Errorf("sync volume %d data: %v", req.VolumdId, err)
+		glog.Errorf("sync volume %d data: %v", req.VolumeId, err)
 	}
 
 	const blockSizeLimit = 1024 * 1024 * 2

@@ -5,6 +5,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"os"
 	"path"
+	"strconv"
 	"sync"
 	"time"
 
@@ -42,13 +43,17 @@ func (v *Volume) String() string {
 	return fmt.Sprintf("Id:%v, dir:%s, Collection:%s, dataFile:%v, nm:%v, readOnly:%v", v.Id, v.dir, v.Collection, v.dataFile, v.nm, v.readOnly)
 }
 
-func (v *Volume) FileName() (fileName string) {
-	if v.Collection == "" {
-		fileName = path.Join(v.dir, v.Id.String())
+func VolumeFileName(collection string, dir string, id int) (fileName string) {
+	idString := strconv.Itoa(id)
+	if collection == "" {
+		fileName = path.Join(dir, idString)
 	} else {
-		fileName = path.Join(v.dir, v.Collection+"_"+v.Id.String())
+		fileName = path.Join(dir, collection+"_"+idString)
 	}
 	return
+}
+func (v *Volume) FileName() (fileName string) {
+	return VolumeFileName(v.Collection, v.dir, int(v.Id))
 }
 func (v *Volume) DataFile() *os.File {
 	return v.dataFile

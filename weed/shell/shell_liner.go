@@ -71,7 +71,7 @@ func RunShell(options ShellOptions) {
 			} else {
 				for _, c := range commands {
 					if c.Name() == cmd {
-						if err := c.Do(args, commandEnv, os.Stderr); err != nil {
+						if err := c.Do(args, commandEnv, os.Stdout); err != nil {
 							fmt.Fprintf(os.Stderr, "error: %v\n", err)
 						}
 					}

@@ -12,12 +12,12 @@ func (vs *VolumeServer) VacuumVolumeCheck(ctx context.Context, req *volume_serve
 
 	resp := &volume_server_pb.VacuumVolumeCheckResponse{}
 
-	garbageRatio, err := vs.store.CheckCompactVolume(storage.VolumeId(req.VolumdId))
+	garbageRatio, err := vs.store.CheckCompactVolume(storage.VolumeId(req.VolumeId))
 
 	resp.GarbageRatio = garbageRatio
 
 	if err != nil {
-		glog.V(3).Infof("check volume %d: %v", req.VolumdId, err)
+		glog.V(3).Infof("check volume %d: %v", req.VolumeId, err)
 	}
 
 	return resp, err
@@ -28,12 +28,12 @@ func (vs *VolumeServer) VacuumVolumeCompact(ctx context.Context, req *volume_ser
 
 	resp := &volume_server_pb.VacuumVolumeCompactResponse{}
 
-	err := vs.store.CompactVolume(storage.VolumeId(req.VolumdId), req.Preallocate)
+	err := vs.store.CompactVolume(storage.VolumeId(req.VolumeId), req.Preallocate)
 
 	if err != nil {
-		glog.Errorf("compact volume %d: %v", req.VolumdId, err)
+		glog.Errorf("compact volume %d: %v", req.VolumeId, err)
 	} else {
-		glog.V(1).Infof("compact volume %d", req.VolumdId)
+		glog.V(1).Infof("compact volume %d", req.VolumeId)
 	}
 
 	return resp, err
@@ -44,12 +44,12 @@ func (vs *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_serv
 
 	resp := &volume_server_pb.VacuumVolumeCommitResponse{}
 
-	err := vs.store.CommitCompactVolume(storage.VolumeId(req.VolumdId))
+	err := vs.store.CommitCompactVolume(storage.VolumeId(req.VolumeId))
 
 	if err != nil {
-		glog.Errorf("commit volume %d: %v", req.VolumdId, err)
+		glog.Errorf("commit volume %d: %v", req.VolumeId, err)
 	} else {
-		glog.V(1).Infof("commit volume %d", req.VolumdId)
+		glog.V(1).Infof("commit volume %d", req.VolumeId)
 	}
 
 	return resp, err
@@ -60,12 +60,12 @@ func (vs *VolumeServer) VacuumVolumeCleanup(ctx context.Context, req *volume_ser
 
 	resp := &volume_server_pb.VacuumVolumeCleanupResponse{}
 
-	err := vs.store.CommitCleanupVolume(storage.VolumeId(req.VolumdId))
+	err := vs.store.CommitCleanupVolume(storage.VolumeId(req.VolumeId))
 
 	if err != nil {
-		glog.Errorf("cleanup volume %d: %v", req.VolumdId, err)
+		glog.Errorf("cleanup volume %d: %v", req.VolumeId, err)
 	} else {
-		glog.V(1).Infof("cleanup volume %d", req.VolumdId)
+		glog.V(1).Infof("cleanup volume %d", req.VolumeId)
 	}
 
 	return resp, err

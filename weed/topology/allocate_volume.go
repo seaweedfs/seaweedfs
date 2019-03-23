@@ -17,7 +17,7 @@ func AllocateVolume(dn *DataNode, grpcDialOption grpc.DialOption, vid storage.Vo
 	return operation.WithVolumeServerClient(dn.Url(), grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 
 		_, deleteErr := client.AssignVolume(context.Background(), &volume_server_pb.AssignVolumeRequest{
-			VolumdId:    uint32(vid),
+			VolumeId:    uint32(vid),
 			Collection:  option.Collection,
 			Replication: option.ReplicaPlacement.String(),
 			Ttl:         option.Ttl.String(),

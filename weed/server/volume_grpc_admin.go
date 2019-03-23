@@ -29,7 +29,7 @@ func (vs *VolumeServer) AssignVolume(ctx context.Context, req *volume_server_pb.
 	resp := &volume_server_pb.AssignVolumeResponse{}
 
 	err := vs.store.AddVolume(
-		storage.VolumeId(req.VolumdId),
+		storage.VolumeId(req.VolumeId),
 		req.Collection,
 		vs.needleMapKind,
 		req.Replication,
@@ -51,7 +51,7 @@ func (vs *VolumeServer) VolumeMount(ctx context.Context, req *volume_server_pb.V
 
 	resp := &volume_server_pb.VolumeMountResponse{}
 
-	err := vs.store.MountVolume(storage.VolumeId(req.VolumdId))
+	err := vs.store.MountVolume(storage.VolumeId(req.VolumeId))
 
 	if err != nil {
 		glog.Errorf("volume mount %v: %v", req, err)
@@ -67,7 +67,7 @@ func (vs *VolumeServer) VolumeUnmount(ctx context.Context, req *volume_server_pb
 
 	resp := &volume_server_pb.VolumeUnmountResponse{}
 
-	err := vs.store.UnmountVolume(storage.VolumeId(req.VolumdId))
+	err := vs.store.UnmountVolume(storage.VolumeId(req.VolumeId))
 
 	if err != nil {
 		glog.Errorf("volume unmount %v: %v", req, err)
@@ -83,7 +83,7 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 
 	resp := &volume_server_pb.VolumeDeleteResponse{}
 
-	err := vs.store.DeleteVolume(storage.VolumeId(req.VolumdId))
+	err := vs.store.DeleteVolume(storage.VolumeId(req.VolumeId))
 
 	if err != nil {
 		glog.Errorf("volume delete %v: %v", req, err)

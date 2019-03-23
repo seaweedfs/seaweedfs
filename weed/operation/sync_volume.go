@@ -15,7 +15,7 @@ func GetVolumeSyncStatus(server string, grpcDialOption grpc.DialOption, vid uint
 	WithVolumeServerClient(server, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 
 		resp, err = client.VolumeSyncStatus(context.Background(), &volume_server_pb.VolumeSyncStatusRequest{
-			VolumdId: vid,
+			VolumeId: vid,
 		})
 		return nil
 	})
@@ -27,7 +27,7 @@ func GetVolumeIdxEntries(server string, grpcDialOption grpc.DialOption, vid uint
 
 	return WithVolumeServerClient(server, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		stream, err := client.VolumeSyncIndex(context.Background(), &volume_server_pb.VolumeSyncIndexRequest{
-			VolumdId: vid,
+			VolumeId: vid,
 		})
 		if err != nil {
 			return err

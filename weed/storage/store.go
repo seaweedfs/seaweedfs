@@ -77,7 +77,7 @@ func (s *Store) findVolume(vid VolumeId) *Volume {
 	}
 	return nil
 }
-func (s *Store) findFreeLocation() (ret *DiskLocation) {
+func (s *Store) FindFreeLocation() (ret *DiskLocation) {
 	max := 0
 	for _, location := range s.Locations {
 		currentFreeCount := location.MaxVolumeCount - location.VolumesLen()
@@ -92,7 +92,7 @@ func (s *Store) addVolume(vid VolumeId, collection string, needleMapKind NeedleM
 	if s.findVolume(vid) != nil {
 		return fmt.Errorf("Volume Id %d already exists!", vid)
 	}
-	if location := s.findFreeLocation(); location != nil {
+	if location := s.FindFreeLocation(); location != nil {
 		glog.V(0).Infof("In dir %s adds volume:%v collection:%s replicaPlacement:%v ttl:%v",
 			location.Directory, vid, collection, replicaPlacement, ttl)
 		if volume, err := NewVolume(location.Directory, collection, vid, needleMapKind, replicaPlacement, ttl, preallocate); err == nil {
