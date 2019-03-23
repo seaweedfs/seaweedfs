@@ -32,6 +32,12 @@ func (c *commandVolumeFixReplication) Help() string {
 	volume.fix.replication -n # do not take action
 	volume.fix.replication    # actually copying the volume files and mount the volume
 
+	Note:
+		* each time this will only add back one replica for one volume id. If there are multiple replicas
+		  are missing, e.g. multiple volume servers are new, you may need to run this multiple times.
+		* do not run this too quick within seconds, since the new volume replica may take a few seconds 
+		  to register itself to the master.
+
 `
 }
 

@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"io"
 	"os"
+	"path"
 	"regexp"
 	"strings"
 
@@ -15,7 +16,7 @@ import (
 
 var (
 	line        *liner.State
-	historyPath = "/tmp/weed-shell"
+	historyPath = path.Join(os.TempDir(), "weed-shell")
 )
 
 func RunShell(options ShellOptions) {
@@ -26,9 +27,9 @@ func RunShell(options ShellOptions) {
 	line.SetCtrlCAborts(true)
 
 	setCompletionHandler()
-	loadHisotry()
+	loadHistory()
 
-	defer saveHisotry()
+	defer saveHistory()
 
 	reg, _ := regexp.Compile(`'.*?'|".*?"|\S+`)
 
@@ -129,14 +130,14 @@ func setCompletionHandler() {
 	})
 }
 
-func loadHisotry() {
+func loadHistory() {
 	if f, err := os.Open(historyPath); err == nil {
 		line.ReadHistory(f)
 		f.Close()
 	}
 }
 
-func saveHisotry() {
+func saveHistory() {
 	if f, err := os.Create(historyPath); err != nil {
 		fmt.Printf("Error writing history file: %v\n", err)
 	} else {
