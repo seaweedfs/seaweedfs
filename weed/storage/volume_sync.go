@@ -26,23 +26,17 @@ Assume the slave volume needs to follow the master volume.
 The master volume could be compacted, and could be many files ahead of
 slave volume.
 
+Step 0:
+If slave compact version is less than the master, do a local compaction.
+If the slave size is still less than the master, discard local copy and do a full copy.
+
 Step 1:
-The slave volume will ask the master volume for a snapshot
-of (existing file entries, last offset, number of compacted times).
-
-For each entry x in master existing file entries:
-  if x does not exist locally:
-    add x locally
-
-For each entry y in local slave existing file entries:
-  if y does not exist on master:
-    delete y locally
+The slave volume ask the master by the last modification time t.
+The master do a binary search in volume (use .idx as an array, and check the appendAtNs in .dat file),
+to find the first entry with appendAtNs > t.
 
 Step 2:
-After this, use the last offset and number of compacted times to request
-the master volume to send a new file, and keep looping. If the number of
-compacted times is changed, go back to step 1 (very likely this can be
-optimized more later).
+The master iterate following entries (including the first one) and send it to the follower.
 
 */
 
@@ -58,7 +52,7 @@ func (v *Volume) Synchronize(volumeServer string, grpcDialOption grpc.DialOption
 			if err = v.Compact(0); err != nil {
 				return fmt.Errorf("Compact Volume before synchronizing %v", err)
 			}
-			if err = v.commitCompact(); err != nil {
+			if err = v.CommitCompact(); err != nil {
 				return fmt.Errorf("Commit Compact before synchronizing %v", err)
 			}
 		}

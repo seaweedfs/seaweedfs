@@ -85,7 +85,7 @@ func TestCompaction(t *testing.T) {
 		doSomeWritesDeletes(i+beforeCommitFileCount, v, t, infos)
 	}
 
-	v.commitCompact()
+	v.CommitCompact()
 
 	v.Close()
 
