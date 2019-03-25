@@ -38,6 +38,7 @@ import:
   subpackages:
   - b2
 - package: github.com/lib/pq
+- package: github.com/peterh/liner
 - package: github.com/rakyll/statik
   subpackages:
   - fs
@@ -54,6 +55,14 @@ import:
   - leveldb
   - leveldb/util
 - package: github.com/willf/bloom
+- package: gocloud.dev
+  subpackages:
+  - pubsub
+  - pubsub/awssnssqs
+  - pubsub/azuresb
+  - pubsub/gcppubsub
+  - pubsub/natspubsub
+  - pubsub/rabbitpubsub
 - package: golang.org/x/net
   subpackages:
   - context
