@@ -11,6 +11,19 @@ import (
 	"os"
 )
 
+func (v *Volume) GetVolumeSyncStatus() *volume_server_pb.VolumeSyncStatusResponse {
+	var syncStatus = &volume_server_pb.VolumeSyncStatusResponse{}
+	if stat, err := v.dataFile.Stat(); err == nil {
+		syncStatus.TailOffset = uint64(stat.Size())
+	}
+	syncStatus.Collection = v.Collection
+	syncStatus.IdxFileSize = v.nm.IndexFileSize()
+	syncStatus.CompactRevision = uint32(v.SuperBlock.CompactRevision)
+	syncStatus.Ttl = v.SuperBlock.Ttl.String()
+	syncStatus.Replication = v.SuperBlock.ReplicaPlacement.String()
+	return syncStatus
+}
+
 // The volume sync with a master volume via 2 steps:
 // 1. The slave checks master side to find subscription checkpoint
 //	  to setup the replication.
@@ -41,7 +54,7 @@ update needle map when receiving new .dat bytes. But seems not necessary now.)
 
 */
 
-func (v *Volume) Follow(volumeServer string, grpcDialOption grpc.DialOption) (error) {
+func (v *Volume) Follow(volumeServer string, grpcDialOption grpc.DialOption) error {
 
 	ctx := context.Background()
 
@@ -88,7 +101,7 @@ func (v *Volume) Follow(volumeServer string, grpcDialOption grpc.DialOption) (er
 	}
 
 	// add to needle map
-	return ScanVolumeFileFrom(v.version, v.dataFile, startFromOffset, &VolumeFileScanner4GenIdx{v:v})
+	return ScanVolumeFileFrom(v.version, v.dataFile, startFromOffset, &VolumeFileScanner4GenIdx{v: v})
 
 }
 

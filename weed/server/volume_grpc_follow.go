@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io"
@@ -31,6 +32,19 @@ func (vs *VolumeServer) VolumeFollow(req *volume_server_pb.VolumeFollowRequest, 
 
 	buf := make([]byte, 1024*1024*2)
 	return sendFileContent(v.DataFile(), buf, startOffset, stopOffset, stream)
+
+}
+
+func (vs *VolumeServer) VolumeSyncStatus(ctx context.Context, req *volume_server_pb.VolumeSyncStatusRequest) (*volume_server_pb.VolumeSyncStatusResponse, error) {
+
+	v := vs.store.GetVolume(storage.VolumeId(req.VolumeId))
+	if v == nil {
+		return nil, fmt.Errorf("not found volume id %d", req.VolumeId)
+	}
+
+	resp := v.GetVolumeSyncStatus()
+
+	return resp, nil
 
 }
 

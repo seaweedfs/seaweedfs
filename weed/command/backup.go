@@ -98,7 +98,7 @@ func runBackup(cmd *Command, args []string) bool {
 			return true
 		}
 		v.SuperBlock.CompactRevision = uint16(stats.CompactRevision)
-		v.DataFile().WriteAt(v.SuperBlock.Bytes(),0)
+		v.DataFile().WriteAt(v.SuperBlock.Bytes(), 0)
 	}
 
 	if uint64(v.Size()) > stats.TailOffset {
