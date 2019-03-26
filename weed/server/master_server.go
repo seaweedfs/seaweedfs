@@ -79,7 +79,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 
 	if !disableHttp {
 		handleStaticResources2(r)
-		r.HandleFunc("/", ms.uiStatusHandler)
+		r.HandleFunc("/", ms.proxyToLeader(ms.uiStatusHandler))
 		r.HandleFunc("/ui/index.html", ms.uiStatusHandler)
 		r.HandleFunc("/dir/assign", ms.proxyToLeader(ms.guard.WhiteList(ms.dirAssignHandler)))
 		r.HandleFunc("/dir/lookup", ms.proxyToLeader(ms.guard.WhiteList(ms.dirLookupHandler)))
