@@ -42,10 +42,10 @@ func (c *commandFsDu) Do(args []string, commandEnv *commandEnv, writer io.Writer
 
 	dir, name := filer2.FullPath(path).DirAndName()
 	if strings.HasSuffix(path, "/") {
-		if path == "/"{
+		if path == "/" {
 			dir, name = "/", ""
-		}else{
-			dir, name = path[0 : len(path)-1], ""
+		} else {
+			dir, name = path[0:len(path)-1], ""
 		}
 	}
 

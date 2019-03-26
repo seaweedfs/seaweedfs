@@ -88,7 +88,32 @@ func runBackup(cmd *Command, args []string) bool {
 		return true
 	}
 
-	if err := v.Synchronize(volumeServer, grpcDialOption); err != nil {
+	if v.SuperBlock.CompactRevision < uint16(stats.CompactRevision) {
+		if err = v.Compact(0); err != nil {
+			fmt.Printf("Compact Volume before synchronizing %v\n", err)
+			return true
+		}
+		if err = v.CommitCompact(); err != nil {
+			fmt.Printf("Commit Compact before synchronizing %v\n", err)
+			return true
+		}
+		v.SuperBlock.CompactRevision = uint16(stats.CompactRevision)
+		v.DataFile().WriteAt(v.SuperBlock.Bytes(), 0)
+	}
+
+	if uint64(v.Size()) > stats.TailOffset {
+		// remove the old data
+		v.Destroy()
+		// recreate an empty volume
+		v, err = storage.NewVolume(*s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0)
+		if err != nil {
+			fmt.Printf("Error creating or reading from volume %d: %v\n", vid, err)
+			return true
+		}
+	}
+	defer v.Close()
+
+	if err := v.Follow(volumeServer, grpcDialOption); err != nil {
 		fmt.Printf("Error synchronizing volume %d: %v\n", vid, err)
 		return true
 	}

@@ -20,7 +20,7 @@ func (s *Store) CompactVolume(vid VolumeId, preallocate int64) error {
 }
 func (s *Store) CommitCompactVolume(vid VolumeId) error {
 	if v := s.findVolume(vid); v != nil {
-		return v.commitCompact()
+		return v.CommitCompact()
 	}
 	return fmt.Errorf("volume id %d is not found during commit compact", vid)
 }

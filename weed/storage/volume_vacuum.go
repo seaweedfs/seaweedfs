@@ -38,7 +38,7 @@ func (v *Volume) Compact2() error {
 	return v.copyDataBasedOnIndexFile(filePath+".cpd", filePath+".cpx")
 }
 
-func (v *Volume) commitCompact() error {
+func (v *Volume) CommitCompact() error {
 	glog.V(0).Infof("Committing volume %d vacuuming...", v.Id)
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
@@ -53,7 +53,7 @@ func (v *Volume) commitCompact() error {
 
 	var e error
 	if e = v.makeupDiff(v.FileName()+".cpd", v.FileName()+".cpx", v.FileName()+".dat", v.FileName()+".idx"); e != nil {
-		glog.V(0).Infof("makeupDiff in commitCompact volume %d failed %v", v.Id, e)
+		glog.V(0).Infof("makeupDiff in CommitCompact volume %d failed %v", v.Id, e)
 		e = os.Remove(v.FileName() + ".cpd")
 		if e != nil {
 			return e
@@ -261,7 +261,7 @@ func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *Needle, offset int64) er
 	}
 	nv, ok := scanner.v.nm.Get(n.Id)
 	glog.V(4).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
-	if ok && int64(nv.Offset)*NeedlePaddingSize == offset && nv.Size > 0 {
+	if ok && int64(nv.Offset)*NeedlePaddingSize == offset && nv.Size > 0 && nv.Size != TombstoneFileSize {
 		if err := scanner.nm.Put(n.Id, Offset(scanner.newOffset/NeedlePaddingSize), n.Size); err != nil {
 			return fmt.Errorf("cannot put needle: %s", err)
 		}
