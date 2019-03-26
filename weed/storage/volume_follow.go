@@ -87,9 +87,9 @@ func (v *Volume) Follow(volumeServer string, grpcDialOption grpc.DialOption) (er
 		return err
 	}
 
-	// TODO add to needle map
+	// add to needle map
+	return ScanVolumeFileFrom(v.version, v.dataFile, startFromOffset, &VolumeFileScanner4GenIdx{v:v})
 
-	return nil
 }
 
 func (v *Volume) findLastAppendAtNs() (uint64, error) {
@@ -138,9 +138,9 @@ func (v *Volume) readAppendAtNs(offset Offset) (uint64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("ReadNeedleHeader: %v", err)
 	}
-	err = n.ReadNeedleBody(v.dataFile, v.SuperBlock.version, int64(offset)*NeedlePaddingSize, bodyLength)
+	err = n.ReadNeedleBody(v.dataFile, v.SuperBlock.version, int64(offset)*NeedlePaddingSize+int64(NeedleEntrySize), bodyLength)
 	if err != nil {
-		return 0, fmt.Errorf("ReadNeedleBody offset %d: %v", int64(offset)*NeedlePaddingSize, err)
+		return 0, fmt.Errorf("ReadNeedleBody offset %d, bodyLength %d: %v", int64(offset)*NeedlePaddingSize, bodyLength, err)
 	}
 	return n.AppendAtNs, nil
 
@@ -217,4 +217,24 @@ func (v *Volume) readAppendAtNsForIndexEntry(indexFile *os.File, bytes []byte, m
 	}
 	_, offset, _ := IdxFileEntry(bytes)
 	return offset, nil
+}
+
+// generate the volume idx
+type VolumeFileScanner4GenIdx struct {
+	v *Volume
+}
+
+func (scanner *VolumeFileScanner4GenIdx) VisitSuperBlock(superBlock SuperBlock) error {
+	return nil
+
+}
+func (scanner *VolumeFileScanner4GenIdx) ReadNeedleBody() bool {
+	return false
+}
+
+func (scanner *VolumeFileScanner4GenIdx) VisitNeedle(n *Needle, offset int64) error {
+	if n.Size > 0 && n.Size != TombstoneFileSize {
+		return scanner.v.nm.Put(n.Id, Offset(offset/NeedlePaddingSize), n.Size)
+	}
+	return scanner.v.nm.Delete(n.Id, Offset(offset/NeedlePaddingSize))
 }
