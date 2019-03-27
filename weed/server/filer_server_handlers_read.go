@@ -111,13 +111,16 @@ func (fs *FilerServer) handleSingleChunk(w http.ResponseWriter, r *http.Request,
 	for k, v := range resp.Header {
 		w.Header()[k] = v
 	}
+	if entry.Attr.Mime != "" {
+		w.Header().Set("Content-Type", entry.Attr.Mime)
+	}
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
 
 func (fs *FilerServer) handleMultipleChunks(w http.ResponseWriter, r *http.Request, entry *filer2.Entry) {
 
-	mimeType := entry.Mime
+	mimeType := entry.Attr.Mime
 	if mimeType == "" {
 		if ext := path.Ext(entry.Name()); ext != "" {
 			mimeType = mime.TypeByExtension(ext)
