@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io/ioutil"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
+	filenamePath "path"
 	"strconv"
 	"strings"
 	"time"
@@ -194,6 +196,9 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 			Mtime:  time.Now().UnixNano(),
 			ETag:   etag,
 		}},
+	}
+	if ext := filenamePath.Ext(path); ext != "" {
+		entry.Attr.Mime = mime.TypeByExtension(ext)
 	}
 	// glog.V(4).Infof("saving %s => %+v", path, entry)
 	if db_err := fs.filer.CreateEntry(ctx, entry); db_err != nil {

@@ -8,10 +8,12 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/gabriel-vasile/mimetype"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
 	"google.golang.org/grpc"
-	"net/http"
+	"mime"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -154,7 +156,13 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 	resp.Size = len(req.Data)
 
 	if req.Offset == 0 {
-		fh.contentType = http.DetectContentType(req.Data)
+		// detect mime type
+		var possibleExt string
+		fh.contentType, possibleExt = mimetype.Detect(req.Data)
+		if ext := path.Ext(fh.f.Name); ext != possibleExt {
+			fh.contentType = mime.TypeByExtension(ext)
+		}
+
 		fh.dirtyMetadata = true
 	}
 
