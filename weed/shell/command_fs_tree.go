@@ -76,7 +76,7 @@ func treeTraverseDirectory(ctx context.Context, writer io.Writer, client filer_p
 		}
 
 		for i, entry := range resp.Entries {
-
+			// 0.1% wrong prefix here, but fixing it would need to paginate to the next batch first
 			isLast := paginatedCount < paginateSize && i == paginatedCount-1
 			fmt.Fprintf(writer, "%s%s\n", prefix.getPrefix(level, isLast), entry.Name)
 
