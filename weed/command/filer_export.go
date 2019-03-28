@@ -158,6 +158,7 @@ func doTraverse(ctx context.Context, stat *statistics, filerStore filer2.FilerSt
 			} else {
 				stat.fileCount++
 			}
+			lastEntryName = entry.Name()
 		}
 		if len(entries) < limit {
 			break
