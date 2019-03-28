@@ -24,11 +24,11 @@ func (c *commandFsLs) Name() string {
 }
 
 func (c *commandFsLs) Help() string {
-	return `[-l] [-a] list all files under a directory
+	return `list all files under a directory
 
-	fs.ls http://<filer_server>:<port>/dir/
-	fs.ls http://<filer_server>:<port>/dir/file_name
-	fs.ls http://<filer_server>:<port>/dir/file_prefix
+	fs.ls [-l] [-a] http://<filer_server>:<port>/dir/
+	fs.ls [-l] [-a] http://<filer_server>:<port>/dir/file_name
+	fs.ls [-l] [-a] http://<filer_server>:<port>/dir/file_prefix
 `
 }
 
