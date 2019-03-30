@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 	"io/ioutil"
@@ -35,6 +36,7 @@ type CopyOptions struct {
 	ttl            *string
 	maxMB          *int
 	grpcDialOption grpc.DialOption
+	masterClient   *wdclient.MasterClient
 }
 
 func init() {
@@ -105,6 +107,10 @@ func runCopy(cmd *Command, args []string) bool {
 	filerGrpcAddress := fmt.Sprintf("%s:%d", filerUrl.Hostname(), filerGrpcPort)
 	copy.grpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
 
+	copy.masterClient = wdclient.NewMasterClient(context.Background(), copy.grpcDialOption, "client", strings.Split(*copy.master, ","))
+	go copy.masterClient.KeepConnectedToMaster()
+	copy.masterClient.WaitUntilConnected()
+
 	for _, fileOrDir := range fileOrDirs {
 		if !doEachCopy(context.Background(), fileOrDir, filerUrl.Host, filerGrpcAddress, copy.grpcDialOption, urlPath) {
 			return false
@@ -170,7 +176,7 @@ func uploadFileAsOne(ctx context.Context, filerAddress, filerGrpcAddress string,
 	if fi.Size() > 0 {
 
 		// assign a volume
-		assignResult, err := operation.Assign(*copy.master, grpcDialOption, &operation.VolumeAssignRequest{
+		assignResult, err := operation.Assign(copy.masterClient.GetMaster(), grpcDialOption, &operation.VolumeAssignRequest{
 			Count:       1,
 			Replication: *copy.replication,
 			Collection:  *copy.collection,
@@ -247,7 +253,7 @@ func uploadFileInChunks(ctx context.Context, filerAddress, filerGrpcAddress stri
 	for i := int64(0); i < int64(chunkCount); i++ {
 
 		// assign a volume
-		assignResult, err := operation.Assign(*copy.master, grpcDialOption, &operation.VolumeAssignRequest{
+		assignResult, err := operation.Assign(copy.masterClient.GetMaster(), grpcDialOption, &operation.VolumeAssignRequest{
 			Count:       1,
 			Replication: *copy.replication,
 			Collection:  *copy.collection,
