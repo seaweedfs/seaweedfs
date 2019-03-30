@@ -40,13 +40,13 @@ type BenchmarkOptions struct {
 	cpuprofile       *string
 	maxCpu           *int
 	grpcDialOption   grpc.DialOption
+	masterClient     *wdclient.MasterClient
 }
 
 var (
-	b            BenchmarkOptions
-	sharedBytes  []byte
-	masterClient *wdclient.MasterClient
-	isSecure     bool
+	b           BenchmarkOptions
+	sharedBytes []byte
+	isSecure    bool
 )
 
 func init() {
@@ -125,9 +125,9 @@ func runBenchmark(cmd *Command, args []string) bool {
 		defer pprof.StopCPUProfile()
 	}
 
-	masterClient = wdclient.NewMasterClient(context.Background(), b.grpcDialOption, "client", strings.Split(*b.masters, ","))
-	go masterClient.KeepConnectedToMaster()
-	masterClient.WaitUntilConnected()
+	b.masterClient = wdclient.NewMasterClient(context.Background(), b.grpcDialOption, "client", strings.Split(*b.masters, ","))
+	go b.masterClient.KeepConnectedToMaster()
+	b.masterClient.WaitUntilConnected()
 
 	if *b.write {
 		benchWrite()
@@ -208,7 +208,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 				}
 				var jwtAuthorization security.EncodedJwt
 				if isSecure {
-					jwtAuthorization = operation.LookupJwt(masterClient.GetMaster(), df.fp.Fid)
+					jwtAuthorization = operation.LookupJwt(b.masterClient.GetMaster(), df.fp.Fid)
 				}
 				if e := util.Delete(fmt.Sprintf("http://%s/%s", df.fp.Server, df.fp.Fid), string(jwtAuthorization)); e == nil {
 					s.completed++
@@ -234,12 +234,12 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 			Collection:  *b.collection,
 			Replication: *b.replication,
 		}
-		if assignResult, err := operation.Assign(masterClient.GetMaster(), b.grpcDialOption, ar); err == nil {
+		if assignResult, err := operation.Assign(b.masterClient.GetMaster(), b.grpcDialOption, ar); err == nil {
 			fp.Server, fp.Fid, fp.Collection = assignResult.Url, assignResult.Fid, *b.collection
 			if !isSecure && assignResult.Auth != "" {
 				isSecure = true
 			}
-			if _, err := fp.Upload(0, masterClient.GetMaster(), assignResult.Auth, b.grpcDialOption); err == nil {
+			if _, err := fp.Upload(0, b.masterClient.GetMaster(), assignResult.Auth, b.grpcDialOption); err == nil {
 				if random.Intn(100) < *b.deletePercentage {
 					s.total++
 					delayedDeleteChan <- &delayedFile{time.Now().Add(time.Second), fp}
@@ -279,7 +279,7 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 			fmt.Printf("reading file %s\n", fid)
 		}
 		start := time.Now()
-		url, err := masterClient.LookupFileId(fid)
+		url, err := b.masterClient.LookupFileId(fid)
 		if err != nil {
 			s.failed++
 			println("!!!! ", fid, " location not found!!!!!")
