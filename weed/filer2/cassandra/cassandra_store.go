@@ -40,6 +40,16 @@ func (store *CassandraStore) initialize(keyspace string, hosts []string) (err er
 	return
 }
 
+func (store *CassandraStore) BeginTransaction(ctx context.Context) (context.Context, error){
+	return ctx, nil
+}
+func (store *CassandraStore) CommitTransaction(ctx context.Context) error{
+	return nil
+}
+func (store *CassandraStore) RollbackTransaction(ctx context.Context) error{
+	return nil
+}
+
 func (store *CassandraStore) InsertEntry(ctx context.Context, entry *filer2.Entry) (err error) {
 
 	dir, name := entry.FullPath.DirAndName()

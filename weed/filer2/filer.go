@@ -57,6 +57,18 @@ func (fs *Filer) KeepConnectedToMaster() {
 	fs.MasterClient.KeepConnectedToMaster()
 }
 
+func (f *Filer) BeginTransaction(ctx context.Context) (context.Context, error) {
+	return f.store.BeginTransaction(ctx)
+}
+
+func (f *Filer) CommitTransaction(ctx context.Context) error {
+	return f.store.CommitTransaction(ctx)
+}
+
+func (f *Filer) RollbackTransaction(ctx context.Context) error {
+	return f.store.RollbackTransaction(ctx)
+}
+
 func (f *Filer) CreateEntry(ctx context.Context, entry *Entry) error {
 
 	if string(entry.FullPath) == "/" {

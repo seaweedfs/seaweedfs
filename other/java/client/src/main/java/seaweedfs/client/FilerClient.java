@@ -51,9 +51,23 @@ public class FilerClient {
         }
 
         return createEntry(
-            parent,
-            newDirectoryEntry(name, mode, uid, gid, userName, groupNames).build()
+                parent,
+                newDirectoryEntry(name, mode, uid, gid, userName, groupNames).build()
         );
+
+    }
+
+    public boolean mv(String oldPath, String newPath) {
+
+        Path oldPathObject = Paths.get(oldPath);
+        String oldParent = oldPathObject.getParent().toString();
+        String oldName = oldPathObject.getFileName().toString();
+
+        Path newPathObject = Paths.get(newPath);
+        String newParent = newPathObject.getParent().toString();
+        String newName = newPathObject.getFileName().toString();
+
+        return atomicRenameEntry(oldParent, oldName, newParent, newName);
 
     }
 
@@ -64,10 +78,10 @@ public class FilerClient {
         String name = pathObject.getFileName().toString();
 
         return deleteEntry(
-            parent,
-            name,
-            true,
-            isRecursive);
+                parent,
+                name,
+                true,
+                isRecursive);
     }
 
     public boolean touch(String path, int mode) {
@@ -84,18 +98,18 @@ public class FilerClient {
         FilerProto.Entry entry = lookupEntry(parent, name);
         if (entry == null) {
             return createEntry(
-                parent,
-                newFileEntry(name, mode, uid, gid, userName, groupNames).build()
+                    parent,
+                    newFileEntry(name, mode, uid, gid, userName, groupNames).build()
             );
         }
         long now = System.currentTimeMillis() / 1000L;
         FilerProto.FuseAttributes.Builder attr = entry.getAttributes().toBuilder()
-            .setMtime(now)
-            .setUid(uid)
-            .setGid(gid)
-            .setUserName(userName)
-            .clearGroupName()
-            .addAllGroupName(Arrays.asList(groupNames));
+                .setMtime(now)
+                .setUid(uid)
+                .setGid(gid)
+                .setUserName(userName)
+                .clearGroupName()
+                .addAllGroupName(Arrays.asList(groupNames));
         return updateEntry(parent, entry.toBuilder().setAttributes(attr).build());
     }
 
@@ -105,17 +119,17 @@ public class FilerClient {
         long now = System.currentTimeMillis() / 1000L;
 
         return FilerProto.Entry.newBuilder()
-            .setName(name)
-            .setIsDirectory(true)
-            .setAttributes(FilerProto.FuseAttributes.newBuilder()
-                .setMtime(now)
-                .setCrtime(now)
-                .setUid(uid)
-                .setGid(gid)
-                .setFileMode(mode | 1 << 31)
-                .setUserName(userName)
-                .clearGroupName()
-                .addAllGroupName(Arrays.asList(groupNames)));
+                .setName(name)
+                .setIsDirectory(true)
+                .setAttributes(FilerProto.FuseAttributes.newBuilder()
+                        .setMtime(now)
+                        .setCrtime(now)
+                        .setUid(uid)
+                        .setGid(gid)
+                        .setFileMode(mode | 1 << 31)
+                        .setUserName(userName)
+                        .clearGroupName()
+                        .addAllGroupName(Arrays.asList(groupNames)));
     }
 
     public FilerProto.Entry.Builder newFileEntry(String name, int mode,
@@ -124,17 +138,17 @@ public class FilerClient {
         long now = System.currentTimeMillis() / 1000L;
 
         return FilerProto.Entry.newBuilder()
-            .setName(name)
-            .setIsDirectory(false)
-            .setAttributes(FilerProto.FuseAttributes.newBuilder()
-                .setMtime(now)
-                .setCrtime(now)
-                .setUid(uid)
-                .setGid(gid)
-                .setFileMode(mode)
-                .setUserName(userName)
-                .clearGroupName()
-                .addAllGroupName(Arrays.asList(groupNames)));
+                .setName(name)
+                .setIsDirectory(false)
+                .setAttributes(FilerProto.FuseAttributes.newBuilder()
+                        .setMtime(now)
+                        .setCrtime(now)
+                        .setUid(uid)
+                        .setGid(gid)
+                        .setFileMode(mode)
+                        .setUserName(userName)
+                        .clearGroupName()
+                        .addAllGroupName(Arrays.asList(groupNames)));
     }
 
     public List<FilerProto.Entry> listEntries(String path) {
@@ -160,20 +174,20 @@ public class FilerClient {
 
     public List<FilerProto.Entry> listEntries(String path, String entryPrefix, String lastEntryName, int limit) {
         return filerGrpcClient.getBlockingStub().listEntries(FilerProto.ListEntriesRequest.newBuilder()
-            .setDirectory(path)
-            .setPrefix(entryPrefix)
-            .setStartFromFileName(lastEntryName)
-            .setLimit(limit)
-            .build()).getEntriesList();
+                .setDirectory(path)
+                .setPrefix(entryPrefix)
+                .setStartFromFileName(lastEntryName)
+                .setLimit(limit)
+                .build()).getEntriesList();
     }
 
     public FilerProto.Entry lookupEntry(String directory, String entryName) {
         try {
             return filerGrpcClient.getBlockingStub().lookupDirectoryEntry(
-                FilerProto.LookupDirectoryEntryRequest.newBuilder()
-                    .setDirectory(directory)
-                    .setName(entryName)
-                    .build()).getEntry();
+                    FilerProto.LookupDirectoryEntryRequest.newBuilder()
+                            .setDirectory(directory)
+                            .setName(entryName)
+                            .build()).getEntry();
         } catch (Exception e) {
             LOG.warn("lookupEntry {}/{}: {}", directory, entryName, e);
             return null;
@@ -184,9 +198,9 @@ public class FilerClient {
     public boolean createEntry(String parent, FilerProto.Entry entry) {
         try {
             filerGrpcClient.getBlockingStub().createEntry(FilerProto.CreateEntryRequest.newBuilder()
-                .setDirectory(parent)
-                .setEntry(entry)
-                .build());
+                    .setDirectory(parent)
+                    .setEntry(entry)
+                    .build());
         } catch (Exception e) {
             LOG.warn("createEntry {}/{}: {}", parent, entry.getName(), e);
             return false;
@@ -197,9 +211,9 @@ public class FilerClient {
     public boolean updateEntry(String parent, FilerProto.Entry entry) {
         try {
             filerGrpcClient.getBlockingStub().updateEntry(FilerProto.UpdateEntryRequest.newBuilder()
-                .setDirectory(parent)
-                .setEntry(entry)
-                .build());
+                    .setDirectory(parent)
+                    .setEntry(entry)
+                    .build());
         } catch (Exception e) {
             LOG.warn("createEntry {}/{}: {}", parent, entry.getName(), e);
             return false;
@@ -210,13 +224,28 @@ public class FilerClient {
     public boolean deleteEntry(String parent, String entryName, boolean isDeleteFileChunk, boolean isRecursive) {
         try {
             filerGrpcClient.getBlockingStub().deleteEntry(FilerProto.DeleteEntryRequest.newBuilder()
-                .setDirectory(parent)
-                .setName(entryName)
-                .setIsDeleteData(isDeleteFileChunk)
-                .setIsRecursive(isRecursive)
-                .build());
+                    .setDirectory(parent)
+                    .setName(entryName)
+                    .setIsDeleteData(isDeleteFileChunk)
+                    .setIsRecursive(isRecursive)
+                    .build());
         } catch (Exception e) {
             LOG.warn("deleteEntry {}/{}: {}", parent, entryName, e);
+            return false;
+        }
+        return true;
+    }
+
+    public boolean atomicRenameEntry(String oldParent, String oldName, String newParent, String newName) {
+        try {
+            filerGrpcClient.getBlockingStub().atomicRenameEntry(FilerProto.AtomicRenameEntryRequest.newBuilder()
+                    .setOldDirectory(oldParent)
+                    .setOldName(oldName)
+                    .setNewDirectory(newParent)
+                    .setNewName(newName)
+                    .build());
+        } catch (Exception e) {
+            LOG.warn("atomicRenameEntry {}/{} => {}/{}: {}", oldParent, oldName, newParent, newName, e);
             return false;
         }
         return true;

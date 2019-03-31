@@ -19,6 +19,16 @@ type UniversalRedisStore struct {
 	Client redis.UniversalClient
 }
 
+func (store *UniversalRedisStore) BeginTransaction(ctx context.Context) (context.Context, error){
+	return ctx, nil
+}
+func (store *UniversalRedisStore) CommitTransaction(ctx context.Context) error{
+	return nil
+}
+func (store *UniversalRedisStore) RollbackTransaction(ctx context.Context) error{
+	return nil
+}
+
 func (store *UniversalRedisStore) InsertEntry(ctx context.Context, entry *filer2.Entry) (err error) {
 
 	value, err := entry.EncodeAttributesAndChunks()

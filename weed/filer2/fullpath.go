@@ -8,10 +8,7 @@ import (
 type FullPath string
 
 func NewFullPath(dir, name string) FullPath {
-	if strings.HasSuffix(dir, "/") {
-		return FullPath(dir + name)
-	}
-	return FullPath(dir + "/" + name)
+	return FullPath(dir).Child(name)
 }
 
 func (fp FullPath) DirAndName() (string, string) {
@@ -28,4 +25,12 @@ func (fp FullPath) DirAndName() (string, string) {
 func (fp FullPath) Name() string {
 	_, name := filepath.Split(string(fp))
 	return name
+}
+
+func (fp FullPath) Child(name string) FullPath {
+	dir := string(fp)
+	if strings.HasSuffix(dir, "/") {
+		return FullPath(dir + name)
+	}
+	return FullPath(dir + "/" + name)
 }

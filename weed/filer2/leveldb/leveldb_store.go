@@ -46,6 +46,16 @@ func (store *LevelDBStore) initialize(dir string) (err error) {
 	return
 }
 
+func (store *LevelDBStore) BeginTransaction(ctx context.Context) (context.Context, error){
+	return ctx, nil
+}
+func (store *LevelDBStore) CommitTransaction(ctx context.Context) error{
+	return nil
+}
+func (store *LevelDBStore) RollbackTransaction(ctx context.Context) error{
+	return nil
+}
+
 func (store *LevelDBStore) InsertEntry(ctx context.Context, entry *filer2.Entry) (err error) {
 	key := genKey(entry.DirAndName())
 

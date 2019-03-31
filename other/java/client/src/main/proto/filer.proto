@@ -24,6 +24,9 @@ service SeaweedFiler {
     rpc DeleteEntry (DeleteEntryRequest) returns (DeleteEntryResponse) {
     }
 
+    rpc AtomicRenameEntry (AtomicRenameEntryRequest) returns (AtomicRenameEntryResponse) {
+    }
+
     rpc AssignVolume (AssignVolumeRequest) returns (AssignVolumeResponse) {
     }
 
@@ -124,6 +127,16 @@ message DeleteEntryRequest {
 }
 
 message DeleteEntryResponse {
+}
+
+message AtomicRenameEntryRequest {
+    string old_directory = 1;
+    string old_name = 2;
+    string new_directory = 3;
+    string new_name = 4;
+}
+
+message AtomicRenameEntryResponse {
 }
 
 message AssignVolumeRequest {

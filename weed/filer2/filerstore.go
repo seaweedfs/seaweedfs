@@ -17,6 +17,10 @@ type FilerStore interface {
 	FindEntry(context.Context, FullPath) (entry *Entry, err error)
 	DeleteEntry(context.Context, FullPath) (err error)
 	ListDirectoryEntries(ctx context.Context, dirPath FullPath, startFileName string, includeStartFile bool, limit int) ([]*Entry, error)
+
+	BeginTransaction(ctx context.Context) (context.Context, error)
+	CommitTransaction(ctx context.Context) error
+	RollbackTransaction(ctx context.Context) error
 }
 
 var ErrNotFound = errors.New("filer: no entry is found in filer store")
