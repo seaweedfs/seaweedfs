@@ -200,8 +200,8 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		dataReader = newSignV4ChunkedReader(r)
 	}
 
-	uploadUrl := fmt.Sprintf("http://%s%s/%s/%04d.part",
-		s3a.option.Filer, s3a.genUploadsFolder(bucket), uploadID, partID-1)
+	uploadUrl := fmt.Sprintf("http://%s%s/%s/%04d.part?collection=%s",
+		s3a.option.Filer, s3a.genUploadsFolder(bucket), uploadID, partID-1, bucket)
 
 	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
 
