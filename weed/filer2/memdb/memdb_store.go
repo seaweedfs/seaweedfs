@@ -34,13 +34,13 @@ func (store *MemDbStore) Initialize(configuration util.Configuration) (err error
 	return nil
 }
 
-func (store *MemDbStore) BeginTransaction(ctx context.Context) (context.Context, error){
+func (store *MemDbStore) BeginTransaction(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }
-func (store *MemDbStore) CommitTransaction(ctx context.Context) error{
+func (store *MemDbStore) CommitTransaction(ctx context.Context) error {
 	return nil
 }
-func (store *MemDbStore) RollbackTransaction(ctx context.Context) error{
+func (store *MemDbStore) RollbackTransaction(ctx context.Context) error {
 	return nil
 }
 

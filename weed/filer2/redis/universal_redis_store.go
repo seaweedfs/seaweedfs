@@ -19,13 +19,13 @@ type UniversalRedisStore struct {
 	Client redis.UniversalClient
 }
 
-func (store *UniversalRedisStore) BeginTransaction(ctx context.Context) (context.Context, error){
+func (store *UniversalRedisStore) BeginTransaction(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }
-func (store *UniversalRedisStore) CommitTransaction(ctx context.Context) error{
+func (store *UniversalRedisStore) CommitTransaction(ctx context.Context) error {
 	return nil
 }
-func (store *UniversalRedisStore) RollbackTransaction(ctx context.Context) error{
+func (store *UniversalRedisStore) RollbackTransaction(ctx context.Context) error {
 	return nil
 }
 

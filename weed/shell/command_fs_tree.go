@@ -39,7 +39,7 @@ func (c *commandFsTree) Do(args []string, commandEnv *commandEnv, writer io.Writ
 		if path == "/" {
 			dir, name = "/", ""
 		} else {
-			dir, name = path[0 : len(path)-1], ""
+			dir, name = path[0:len(path)-1], ""
 		}
 	}
 
@@ -124,7 +124,7 @@ func (p *Prefix) getPrefix(level int, isLastChild bool) string {
 	}
 	if isLastChild {
 		sb.WriteString("└──")
-		p.removeMarker(level);
+		p.removeMarker(level)
 	} else {
 		sb.WriteString("├──")
 	}

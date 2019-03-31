@@ -54,7 +54,7 @@ func (c *commandFsLs) Do(args []string, commandEnv *commandEnv, writer io.Writer
 		if path == "/" {
 			dir, name = "/", ""
 		} else {
-			dir, name = path[0 : len(path)-1], ""
+			dir, name = path[0:len(path)-1], ""
 		}
 	}
 
