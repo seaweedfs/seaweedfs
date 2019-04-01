@@ -26,7 +26,10 @@ type TxOrDB interface {
 }
 
 func (store *AbstractSqlStore) BeginTransaction(ctx context.Context) (context.Context, error) {
-	tx, err := store.DB.BeginTx(ctx, nil)
+	tx, err := store.DB.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelReadCommitted,
+		ReadOnly:  false,
+	})
 	if err != nil {
 		return ctx, err
 	}
