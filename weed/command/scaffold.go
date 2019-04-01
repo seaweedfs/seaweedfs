@@ -72,9 +72,9 @@ dir = "."					# directory to store level db files
 
 [mysql]
 # CREATE TABLE IF NOT EXISTS filemeta (
-#   dirhash     BIGINT        COMMENT 'first 64 bits of MD5 hash value of directory field',
-#   name        VARCHAR(1000) COMMENT 'directory or file name',
-#   directory   VARCHAR(4096) COMMENT 'full path to parent directory',
+#   dirhash     BIGINT         COMMENT 'first 64 bits of MD5 hash value of directory field',
+#   name        VARCHAR(65535) COMMENT 'directory or file name',
+#   directory   VARCHAR(65535) COMMENT 'full path to parent directory',
 #   meta        BLOB,
 #   PRIMARY KEY (dirhash, name)
 # ) DEFAULT CHARSET=utf8;
@@ -90,8 +90,8 @@ connection_max_open = 100
 [postgres]
 # CREATE TABLE IF NOT EXISTS filemeta (
 #   dirhash     BIGINT,
-#   name        VARCHAR(1000),
-#   directory   VARCHAR(4096),
+#   name        VARCHAR(65535),
+#   directory   VARCHAR(65535),
 #   meta        bytea,
 #   PRIMARY KEY (dirhash, name)
 # );
