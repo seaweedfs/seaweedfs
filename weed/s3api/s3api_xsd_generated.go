@@ -966,10 +966,10 @@ func (b xsdBase64Binary) MarshalText() ([]byte, error) {
 type xsdDateTime time.Time
 
 func (t *xsdDateTime) UnmarshalText(text []byte) error {
-	return _unmarshalTime(text, (*time.Time)(t), "2006-01-02T15:04:05.999999999")
+	return _unmarshalTime(text, (*time.Time)(t), s3TimeFormat)
 }
 func (t xsdDateTime) MarshalText() ([]byte, error) {
-	return []byte((time.Time)(t).Format("2006-01-02T15:04:05.999999999")), nil
+	return []byte((time.Time)(t).Format(s3TimeFormat)), nil
 }
 func (t xsdDateTime) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	if (time.Time)(t).IsZero() {

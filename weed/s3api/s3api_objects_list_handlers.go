@@ -131,8 +131,8 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket, originalPr
 					ETag:         "\"" + filer2.ETag(entry.Chunks) + "\"",
 					Size:         int64(filer2.TotalSize(entry.Chunks)),
 					Owner: CanonicalUser{
-						ID:          "bcaf161ca5fb16fd081034f",
-						DisplayName: "webfile",
+						ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
+						DisplayName: entry.Attributes.UserName,
 					},
 					StorageClass: "STANDARD",
 				})
@@ -151,7 +151,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket, originalPr
 			CommonPrefixes: commonPrefixes,
 		}
 
-		glog.V(4).Infof("read directory: %v, found: %v", request, counter)
+		glog.V(4).Infof("read directory: %v, found: %v, %+v", request, counter, response)
 
 		return nil
 	})
