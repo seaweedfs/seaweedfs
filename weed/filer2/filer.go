@@ -217,29 +217,32 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p FullPath, isRecurs
 			if err != nil {
 				return fmt.Errorf("list folder %s: %v", p, err)
 			}
+
 			if len(entries) == 0 {
 				break
-			} else {
-				if isRecursive {
-					for _, sub := range entries {
-						lastFileName = sub.Name()
-						f.DeleteEntryMetaAndData(ctx, sub.FullPath, isRecursive, shouldDeleteChunks)
-						limit--
-						if limit <= 0 {
-							break
-						}
+			}
+
+			if isRecursive {
+				for _, sub := range entries {
+					lastFileName = sub.Name()
+					err = f.DeleteEntryMetaAndData(ctx, sub.FullPath, isRecursive, shouldDeleteChunks)
+					if err != nil {
+						return err
 					}
-				} else {
-					if len(entries) > 0 {
-						return fmt.Errorf("folder %s is not empty", p)
+					limit--
+					if limit <= 0 {
+						break
 					}
-				}
-				f.cacheDelDirectory(string(p))
-				if len(entries) < 1024 {
-					break
 				}
 			}
+
+			if len(entries) < 1024 {
+				break
+			}
 		}
+
+		f.cacheDelDirectory(string(p))
+
 	}
 
 	if shouldDeleteChunks {
@@ -264,6 +267,11 @@ func (f *Filer) ListDirectoryEntries(ctx context.Context, p FullPath, startFileN
 }
 
 func (f *Filer) cacheDelDirectory(dirpath string) {
+
+	if dirpath == "/" {
+		return
+	}
+
 	if f.directoryCache == nil {
 		return
 	}
@@ -272,6 +280,7 @@ func (f *Filer) cacheDelDirectory(dirpath string) {
 }
 
 func (f *Filer) cacheGetDirectory(dirpath string) *Entry {
+
 	if f.directoryCache == nil {
 		return nil
 	}
