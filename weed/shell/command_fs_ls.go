@@ -44,17 +44,29 @@ func (c *commandFsLs) Do(args []string, commandEnv *commandEnv, writer io.Writer
 		}
 	}
 
-	filerServer, filerPort, path, err := parseFilerUrl(args[len(args)-1])
+	input := ""
+	if len(args) > 0 {
+		input = args[len(args)-1]
+		if strings.HasPrefix(input, "-") {
+			input = ""
+		}
+	}
+
+	filerServer, filerPort, path, err := commandEnv.parseUrl(input)
 	if err != nil {
 		return err
 	}
+	if input == "" && !strings.HasSuffix(path, "/") {
+		path = path + "/"
+	}
 
 	dir, name := filer2.FullPath(path).DirAndName()
+	// println("path", path, "dir", dir, "name", name)
 	if strings.HasSuffix(path, "/") {
 		if path == "/" {
 			dir, name = "/", ""
 		} else {
-			dir, name = path[0:len(path)-1], ""
+			dir, name = path[0 : len(path)-1], ""
 		}
 	}
 

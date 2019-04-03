@@ -31,6 +31,10 @@ func runShell(command *Command, args []string) bool {
 	weed_server.LoadConfiguration("security", false)
 	shellOptions.GrpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
 
+	shellOptions.FilerHost = "localhost"
+	shellOptions.FilerPort = 8888
+	shellOptions.Directory = ""
+
 	shell.RunShell(shellOptions)
 
 	return true

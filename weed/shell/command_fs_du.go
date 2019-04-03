@@ -8,8 +8,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"io"
-	"net/url"
-	"strconv"
 	"strings"
 )
 
@@ -35,7 +33,7 @@ func (c *commandFsDu) Help() string {
 
 func (c *commandFsDu) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
 
-	filerServer, filerPort, path, err := parseFilerUrl(args[0])
+	filerServer, filerPort, path, err := commandEnv.parseUrl(args[0])
 	if err != nil {
 		return err
 	}
@@ -45,7 +43,7 @@ func (c *commandFsDu) Do(args []string, commandEnv *commandEnv, writer io.Writer
 		if path == "/" {
 			dir, name = "/", ""
 		} else {
-			dir, name = path[0:len(path)-1], ""
+			dir, name = path[0 : len(path)-1], ""
 		}
 	}
 
@@ -110,25 +108,6 @@ func paginateDirectory(ctx context.Context, writer io.Writer, client filer_pb.Se
 
 	return
 
-}
-
-func parseFilerUrl(entryPath string) (filerServer string, filerPort int64, path string, err error) {
-	if strings.HasPrefix(entryPath, "http") {
-		var u *url.URL
-		u, err = url.Parse(entryPath)
-		if err != nil {
-			return
-		}
-		filerServer = u.Hostname()
-		portString := u.Port()
-		if portString != "" {
-			filerPort, err = strconv.ParseInt(portString, 10, 32)
-		}
-		path = u.Path
-	} else {
-		err = fmt.Errorf("path should have full url http://<filer_server>:<port>/path/to/dirOrFile : %s", entryPath)
-	}
-	return
 }
 
 func (env *commandEnv) withFilerClient(ctx context.Context, filerServer string, filerPort int64, fn func(filer_pb.SeaweedFilerClient) error) error {
