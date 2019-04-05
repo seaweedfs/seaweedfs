@@ -47,8 +47,8 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 
 		topo.SyncDataNodeRegistration(volumeMessages, dn)
 
-		assert(t, "activeVolumeCount1", topo.activeVolumeCount, volumeCount)
-		assert(t, "volumeCount", topo.volumeCount, volumeCount)
+		assert(t, "activeVolumeCount1", int(topo.activeVolumeCount), volumeCount)
+		assert(t, "volumeCount", int(topo.volumeCount), volumeCount)
 	}
 
 	{
@@ -71,13 +71,13 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 		}
 		topo.SyncDataNodeRegistration(volumeMessages, dn)
 
-		assert(t, "activeVolumeCount1", topo.activeVolumeCount, volumeCount)
-		assert(t, "volumeCount", topo.volumeCount, volumeCount)
+		assert(t, "activeVolumeCount1", int(topo.activeVolumeCount), volumeCount)
+		assert(t, "volumeCount", int(topo.volumeCount), volumeCount)
 	}
 
 	topo.UnRegisterDataNode(dn)
 
-	assert(t, "activeVolumeCount2", topo.activeVolumeCount, 0)
+	assert(t, "activeVolumeCount2", int(topo.activeVolumeCount), 0)
 
 }
 
