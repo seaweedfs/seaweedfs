@@ -3,6 +3,7 @@ package util
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +18,10 @@ var (
 	grpcClients     = make(map[string]*grpc.ClientConn)
 	grpcClientsLock sync.Mutex
 )
+
+func init(){
+	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 100
+}
 
 func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 	var options []grpc.ServerOption
