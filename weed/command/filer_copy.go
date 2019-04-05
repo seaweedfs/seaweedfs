@@ -343,13 +343,9 @@ func detectMimeType(f *os.File) string {
 
 func withFilerClient(ctx context.Context, filerAddress string, grpcDialOption grpc.DialOption, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	grpcConnection, err := util.GrpcDial(ctx, filerAddress, grpcDialOption)
-	if err != nil {
-		return fmt.Errorf("fail to dial %s: %v", filerAddress, err)
-	}
-	defer grpcConnection.Close()
+	return util.WithCachedGrpcClient(ctx, func(clientConn *grpc.ClientConn) error {
+		client := filer_pb.NewSeaweedFilerClient(clientConn)
+		return fn(client)
+	}, filerAddress, grpcDialOption)
 
-	client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-
-	return fn(client)
 }
