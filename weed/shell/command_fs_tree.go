@@ -29,19 +29,12 @@ func (c *commandFsTree) Help() string {
 
 func (c *commandFsTree) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
 
-	filerServer, filerPort, path, err := parseFilerUrl(args[len(args)-1])
+	filerServer, filerPort, path, err := commandEnv.parseUrl(findInputDirectory(args))
 	if err != nil {
 		return err
 	}
 
 	dir, name := filer2.FullPath(path).DirAndName()
-	if strings.HasSuffix(path, "/") {
-		if path == "/" {
-			dir, name = "/", ""
-		} else {
-			dir, name = path[0:len(path)-1], ""
-		}
-	}
 
 	ctx := context.Background()
 

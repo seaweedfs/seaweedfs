@@ -8,7 +8,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"io"
-	"strings"
 )
 
 func init() {
@@ -33,21 +32,18 @@ func (c *commandFsDu) Help() string {
 
 func (c *commandFsDu) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
 
-	filerServer, filerPort, path, err := commandEnv.parseUrl(args[0])
+	filerServer, filerPort, path, err := commandEnv.parseUrl(findInputDirectory(args))
 	if err != nil {
 		return err
 	}
 
-	dir, name := filer2.FullPath(path).DirAndName()
-	if strings.HasSuffix(path, "/") {
-		if path == "/" {
-			dir, name = "/", ""
-		} else {
-			dir, name = path[0 : len(path)-1], ""
-		}
+	ctx := context.Background()
+
+	if commandEnv.isDirectory(ctx, filerServer, filerPort, path) {
+		path = path + "/"
 	}
 
-	ctx := context.Background()
+	dir, name := filer2.FullPath(path).DirAndName()
 
 	return commandEnv.withFilerClient(ctx, filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
 

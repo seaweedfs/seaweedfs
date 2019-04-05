@@ -1,7 +1,10 @@
 package shell
 
 import (
+	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 	"io"
@@ -46,6 +49,46 @@ func (ce *commandEnv) parseUrl(input string) (filerServer string, filerPort int6
 	return ce.option.FilerHost, ce.option.FilerPort, input, err
 }
 
+func (ce *commandEnv) isDirectory(ctx context.Context, filerServer string, filerPort int64, path string) bool {
+
+	return ce.checkDirectory(ctx,filerServer,filerPort,path) == nil
+
+}
+
+func (ce *commandEnv) checkDirectory(ctx context.Context, filerServer string, filerPort int64, path string) error {
+
+	dir, name := filer2.FullPath(path).DirAndName()
+
+	return ce.withFilerClient(ctx, filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
+
+		resp, listErr := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
+			Directory:          dir,
+			Prefix:             name,
+			StartFromFileName:  name,
+			InclusiveStartFrom: true,
+			Limit:              1,
+		})
+		if listErr != nil {
+			return listErr
+		}
+
+		if len(resp.Entries) == 0 {
+			return fmt.Errorf("entry not found")
+		}
+
+		if resp.Entries[0].Name != name {
+			return fmt.Errorf("not a valid directory, found %s", resp.Entries[0].Name)
+		}
+
+		if !resp.Entries[0].IsDirectory {
+			return fmt.Errorf("not a directory")
+		}
+
+		return nil
+	})
+
+}
+
 func parseFilerUrl(entryPath string) (filerServer string, filerPort int64, path string, err error) {
 	if strings.HasPrefix(entryPath, "http") {
 		var u *url.URL
@@ -63,4 +106,15 @@ func parseFilerUrl(entryPath string) (filerServer string, filerPort int64, path 
 		err = fmt.Errorf("path should have full url http://<filer_server>:<port>/path/to/dirOrFile : %s", entryPath)
 	}
 	return
+}
+
+func findInputDirectory(args []string) (input string) {
+	input = "."
+	if len(args) > 0 {
+		input = args[len(args)-1]
+		if strings.HasPrefix(input, "-") {
+			input = "."
+		}
+	}
+	return input
 }

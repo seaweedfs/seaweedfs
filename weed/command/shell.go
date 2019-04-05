@@ -33,7 +33,7 @@ func runShell(command *Command, args []string) bool {
 
 	shellOptions.FilerHost = "localhost"
 	shellOptions.FilerPort = 8888
-	shellOptions.Directory = ""
+	shellOptions.Directory = "/"
 
 	shell.RunShell(shellOptions)
 

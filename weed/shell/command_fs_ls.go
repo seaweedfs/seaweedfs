@@ -36,41 +36,33 @@ func (c *commandFsLs) Do(args []string, commandEnv *commandEnv, writer io.Writer
 
 	var isLongFormat, showHidden bool
 	for _, arg := range args {
-		switch arg {
-		case "-a":
-			showHidden = true
-		case "-l":
-			isLongFormat = true
+		if !strings.HasPrefix(arg, "-") {
+			break
+		}
+		for _, t := range arg {
+			switch t {
+			case 'a':
+				showHidden = true
+			case 'l':
+				isLongFormat = true
+			}
 		}
 	}
 
-	input := ""
-	if len(args) > 0 {
-		input = args[len(args)-1]
-		if strings.HasPrefix(input, "-") {
-			input = ""
-		}
-	}
+	input := findInputDirectory(args)
 
 	filerServer, filerPort, path, err := commandEnv.parseUrl(input)
 	if err != nil {
 		return err
 	}
-	if input == "" && !strings.HasSuffix(path, "/") {
+
+	ctx := context.Background()
+
+	if commandEnv.isDirectory(ctx, filerServer, filerPort, path) {
 		path = path + "/"
 	}
 
 	dir, name := filer2.FullPath(path).DirAndName()
-	// println("path", path, "dir", dir, "name", name)
-	if strings.HasSuffix(path, "/") {
-		if path == "/" {
-			dir, name = "/", ""
-		} else {
-			dir, name = path[0 : len(path)-1], ""
-		}
-	}
-
-	ctx := context.Background()
 
 	return commandEnv.withFilerClient(ctx, filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
 
