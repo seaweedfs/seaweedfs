@@ -1,25 +1,24 @@
 package command
 
 import (
+	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
+	"io"
 	"io/ioutil"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
-
-	"context"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"io"
-	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -123,6 +122,10 @@ func doEachCopy(ctx context.Context, fileOrDir string, filerAddress, filerGrpcAd
 	f, err := os.Open(fileOrDir)
 	if err != nil {
 		fmt.Printf("Failed to open file %s: %v\n", fileOrDir, err)
+		if _, ok := err.(*os.PathError); ok {
+			fmt.Printf("skipping %s\n", fileOrDir)
+			return true
+		}
 		return false
 	}
 	defer f.Close()
