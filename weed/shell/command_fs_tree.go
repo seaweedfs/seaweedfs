@@ -40,15 +40,22 @@ func (c *commandFsTree) Do(args []string, commandEnv *commandEnv, writer io.Writ
 
 	return commandEnv.withFilerClient(ctx, filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
 
-		return treeTraverseDirectory(ctx, writer, client, dir, name, 1000, newPrefix(), 0)
+		dirCount, fCount, terr := treeTraverseDirectory(ctx, writer, client, dir, name, newPrefix(), -1)
+
+		if terr == nil {
+			fmt.Fprintf(writer, "%d directories, %d files\n", dirCount, fCount)
+		}
+
+		return terr
 
 	})
 
 }
-func treeTraverseDirectory(ctx context.Context, writer io.Writer, client filer_pb.SeaweedFilerClient, dir, name string, paginateSize int, prefix *Prefix, level int) (err error) {
+func treeTraverseDirectory(ctx context.Context, writer io.Writer, client filer_pb.SeaweedFilerClient, dir, name string, prefix *Prefix, level int) (directoryCount, fileCount int64, err error) {
 
 	paginatedCount := -1
 	startFromFileName := ""
+	paginateSize := 1000
 
 	for paginatedCount == -1 || paginatedCount == paginateSize {
 		resp, listErr := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
@@ -69,17 +76,29 @@ func treeTraverseDirectory(ctx context.Context, writer io.Writer, client filer_p
 		}
 
 		for i, entry := range resp.Entries {
+
+			if level < 0 {
+				if entry.Name != name {
+					break
+				}
+			}
+
 			// 0.1% wrong prefix here, but fixing it would need to paginate to the next batch first
 			isLast := paginatedCount < paginateSize && i == paginatedCount-1
 			fmt.Fprintf(writer, "%s%s\n", prefix.getPrefix(level, isLast), entry.Name)
 
 			if entry.IsDirectory {
+				directoryCount++
 				subDir := fmt.Sprintf("%s/%s", dir, entry.Name)
 				if dir == "/" {
 					subDir = "/" + entry.Name
 				}
-				err = treeTraverseDirectory(ctx, writer, client, subDir, "", paginateSize, prefix, level+1)
+				dirCount, fCount, terr := treeTraverseDirectory(ctx, writer, client, subDir, "", prefix, level+1)
+				directoryCount += dirCount
+				fileCount += fCount
+				err = terr
 			} else {
+				fileCount++
 			}
 			startFromFileName = entry.Name
 
@@ -107,6 +126,9 @@ func (p *Prefix) removeMarker(marker int) {
 }
 func (p *Prefix) getPrefix(level int, isLastChild bool) string {
 	var sb strings.Builder
+	if level < 0 {
+		return ""
+	}
 	for i := 0; i < level; i++ {
 		if _, ok := p.markers[i]; ok {
 			sb.WriteString("│")
