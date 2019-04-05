@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
@@ -14,16 +15,16 @@ type NodeId string
 type Node interface {
 	Id() NodeId
 	String() string
-	FreeSpace() int
-	ReserveOneVolume(r int) (*DataNode, error)
-	UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int)
-	UpAdjustVolumeCountDelta(volumeCountDelta int)
-	UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int)
+	FreeSpace() int64
+	ReserveOneVolume(r int64) (*DataNode, error)
+	UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int64)
+	UpAdjustVolumeCountDelta(volumeCountDelta int64)
+	UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int64)
 	UpAdjustMaxVolumeId(vid storage.VolumeId)
 
-	GetVolumeCount() int
-	GetActiveVolumeCount() int
-	GetMaxVolumeCount() int
+	GetVolumeCount() int64
+	GetActiveVolumeCount() int64
+	GetMaxVolumeCount() int64
 	GetMaxVolumeId() storage.VolumeId
 	SetParent(Node)
 	LinkChildNode(node Node)
@@ -40,9 +41,9 @@ type Node interface {
 }
 type NodeImpl struct {
 	id                NodeId
-	volumeCount       int
-	activeVolumeCount int
-	maxVolumeCount    int
+	volumeCount       int64
+	activeVolumeCount int64
+	maxVolumeCount    int64
 	parent            Node
 	sync.RWMutex      // lock children
 	children          map[NodeId]Node
@@ -126,7 +127,7 @@ func (n *NodeImpl) String() string {
 func (n *NodeImpl) Id() NodeId {
 	return n.id
 }
-func (n *NodeImpl) FreeSpace() int {
+func (n *NodeImpl) FreeSpace() int64 {
 	return n.maxVolumeCount - n.volumeCount
 }
 func (n *NodeImpl) SetParent(node Node) {
@@ -146,7 +147,7 @@ func (n *NodeImpl) Parent() Node {
 func (n *NodeImpl) GetValue() interface{} {
 	return n.value
 }
-func (n *NodeImpl) ReserveOneVolume(r int) (assignedNode *DataNode, err error) {
+func (n *NodeImpl) ReserveOneVolume(r int64) (assignedNode *DataNode, err error) {
 	n.RLock()
 	defer n.RUnlock()
 	for _, node := range n.children {
@@ -171,20 +172,20 @@ func (n *NodeImpl) ReserveOneVolume(r int) (assignedNode *DataNode, err error) {
 	return nil, errors.New("No free volume slot found!")
 }
 
-func (n *NodeImpl) UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int) { //can be negative
-	n.maxVolumeCount += maxVolumeCountDelta
+func (n *NodeImpl) UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int64) { //can be negative
+	atomic.AddInt64(&n.maxVolumeCount, maxVolumeCountDelta)
 	if n.parent != nil {
 		n.parent.UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta)
 	}
 }
-func (n *NodeImpl) UpAdjustVolumeCountDelta(volumeCountDelta int) { //can be negative
-	n.volumeCount += volumeCountDelta
+func (n *NodeImpl) UpAdjustVolumeCountDelta(volumeCountDelta int64) { //can be negative
+	atomic.AddInt64(&n.volumeCount, volumeCountDelta)
 	if n.parent != nil {
 		n.parent.UpAdjustVolumeCountDelta(volumeCountDelta)
 	}
 }
-func (n *NodeImpl) UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int) { //can be negative
-	n.activeVolumeCount += activeVolumeCountDelta
+func (n *NodeImpl) UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int64) { //can be negative
+	atomic.AddInt64(&n.activeVolumeCount, activeVolumeCountDelta)
 	if n.parent != nil {
 		n.parent.UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta)
 	}
@@ -200,13 +201,13 @@ func (n *NodeImpl) UpAdjustMaxVolumeId(vid storage.VolumeId) { //can be negative
 func (n *NodeImpl) GetMaxVolumeId() storage.VolumeId {
 	return n.maxVolumeId
 }
-func (n *NodeImpl) GetVolumeCount() int {
+func (n *NodeImpl) GetVolumeCount() int64 {
 	return n.volumeCount
 }
-func (n *NodeImpl) GetActiveVolumeCount() int {
+func (n *NodeImpl) GetActiveVolumeCount() int64 {
 	return n.activeVolumeCount
 }
-func (n *NodeImpl) GetMaxVolumeCount() int {
+func (n *NodeImpl) GetMaxVolumeCount() int64 {
 	return n.maxVolumeCount
 }
 
