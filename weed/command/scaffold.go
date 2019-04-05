@@ -190,6 +190,7 @@ enabled = false
 # The exchange must have already been created by some other means, like
 # the RabbitMQ management plugin.
 topic_url = "rabbit://myexchange"
+sub_url = "rabbit://myqueue"
 `
 
 	REPLICATION_TOML_EXAMPLE = `
