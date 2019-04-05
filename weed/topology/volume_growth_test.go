@@ -101,7 +101,7 @@ func setup(topologyLayout string) *Topology {
 						Version: storage.CurrentVersion}
 					server.AddOrUpdateVolume(vi)
 				}
-				server.UpAdjustMaxVolumeCountDelta(int(serverMap["limit"].(float64)))
+				server.UpAdjustMaxVolumeCountDelta(int64(serverMap["limit"].(float64)))
 			}
 		}
 	}
