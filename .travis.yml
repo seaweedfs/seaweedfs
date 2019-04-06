@@ -10,9 +10,7 @@ before_install:
   - export PATH=/home/travis/gopath/bin:$PATH
 
 install:
-  - go env GOCACHE
-  - rm -rf `go env GOCACHE`
-  - rm -rf /home/travis/.gimme
+  - echo `go env GOCACHE`
   - go get -u ./weed/...
 
 script:
