@@ -11,7 +11,8 @@ before_install:
 
 install:
   - export GOCACHE="off"
-  - echo `go env GOCACHE`
+  - export CGO=0
+  - go env
   - go get -u ./weed/...
 
 script:
