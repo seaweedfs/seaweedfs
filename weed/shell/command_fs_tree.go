@@ -77,7 +77,7 @@ func treeTraverseDirectory(ctx context.Context, writer io.Writer, client filer_p
 
 		for i, entry := range resp.Entries {
 
-			if level < 0 {
+			if level < 0 && name != "" {
 				if entry.Name != name {
 					break
 				}
