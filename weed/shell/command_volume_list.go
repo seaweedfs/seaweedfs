@@ -42,30 +42,75 @@ func (c *commandVolumeList) Do(args []string, commandEnv *commandEnv, writer io.
 	return nil
 }
 
-func writeTopologyInfo(writer io.Writer, t *master_pb.TopologyInfo) {
+func writeTopologyInfo(writer io.Writer, t *master_pb.TopologyInfo) statistics{
 	fmt.Fprintf(writer, "Topology volume:%d/%d active:%d free:%d\n", t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount)
+	var s statistics
 	for _, dc := range t.DataCenterInfos {
-		writeDataCenterInfo(writer, dc)
+		s = s.plus(writeDataCenterInfo(writer, dc))
 	}
+	fmt.Fprintf(writer, "%+v \n", s)
+	return s
 }
-func writeDataCenterInfo(writer io.Writer, t *master_pb.DataCenterInfo) {
+func writeDataCenterInfo(writer io.Writer, t *master_pb.DataCenterInfo) statistics{
 	fmt.Fprintf(writer, "  DataCenter %s volume:%d/%d active:%d free:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount)
+	var s statistics
 	for _, r := range t.RackInfos {
-		writeRackInfo(writer, r)
+		s = s.plus(writeRackInfo(writer, r))
 	}
+	fmt.Fprintf(writer, "  DataCenter %s %+v \n", t.Id, s)
+	return s
 }
-func writeRackInfo(writer io.Writer, t *master_pb.RackInfo) {
+func writeRackInfo(writer io.Writer, t *master_pb.RackInfo) statistics{
 	fmt.Fprintf(writer, "    Rack %s volume:%d/%d active:%d free:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount)
+	var s statistics
 	for _, dn := range t.DataNodeInfos {
-		writeDataNodeInfo(writer, dn)
+		s = s.plus(writeDataNodeInfo(writer, dn))
 	}
+	fmt.Fprintf(writer, "    Rack %s %+v \n", t.Id, s)
+	return s
 }
-func writeDataNodeInfo(writer io.Writer, t *master_pb.DataNodeInfo) {
+func writeDataNodeInfo(writer io.Writer, t *master_pb.DataNodeInfo) statistics{
 	fmt.Fprintf(writer, "      DataNode %s volume:%d/%d active:%d free:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount)
+	var s statistics
 	for _, vi := range t.VolumeInfos {
-		writeVolumeInformationMessage(writer, vi)
+		s = s.plus(writeVolumeInformationMessage(writer, vi))
+	}
+	fmt.Fprintf(writer, "      DataNode %s %+v \n", t.Id, s)
+	return s
+}
+func writeVolumeInformationMessage(writer io.Writer, t *master_pb.VolumeInformationMessage) statistics {
+	fmt.Fprintf(writer, "        volume %+v \n", t)
+	return newStatiscis(t)
+}
+
+type statistics struct {
+	Size             uint64
+	FileCount        uint64
+	DeletedFileCount uint64
+	DeletedBytes     uint64
+}
+
+func newStatiscis(t *master_pb.VolumeInformationMessage) statistics {
+	return statistics{
+		Size:             t.Size,
+		FileCount:        t.FileCount,
+		DeletedFileCount: t.DeleteCount,
+		DeletedBytes:     t.DeletedByteCount,
 	}
 }
-func writeVolumeInformationMessage(writer io.Writer, t *master_pb.VolumeInformationMessage) {
-	fmt.Fprintf(writer, "        volume %+v \n", t)
+
+func (s statistics) plus(t statistics) statistics {
+	return statistics{
+		Size:             s.Size + t.Size,
+		FileCount:        s.FileCount + t.FileCount,
+		DeletedFileCount: s.DeletedFileCount + t.DeletedFileCount,
+		DeletedBytes:     s.DeletedBytes + t.DeletedBytes,
+	}
+}
+
+func (s statistics) String() string {
+	if s.DeletedFileCount>0 {
+		return fmt.Sprintf("total size:%d file_count:%d deleted_file:%d deleted_bytes:%d", s.Size, s.FileCount, s.DeletedFileCount, s.DeletedBytes)
+	}
+	return fmt.Sprintf("total size:%d file_count:%d", s.Size, s.FileCount)
 }
