@@ -1,19 +1,20 @@
 sudo: false
 language: go
 go:
-- 1.10.x
-- 1.11.x
-- 1.12.x
-- tip
+  - 1.10.x
+  - 1.11.x
+  - 1.12.x
+  - tip
 
 before_install:
-- export PATH=/home/travis/gopath/bin:$PATH
+  - export PATH=/home/travis/gopath/bin:$PATH
 
 install:
-- go get -u ./weed/...
+  - rm -rf `go env GOCACHE`
+  - go get -u ./weed/...
 
 script:
-- go test ./weed/...
+  - go test ./weed/...
 
 before_deploy:
   - make release
@@ -23,22 +24,22 @@ deploy:
   api_key:
     secure: ERL986+ncQ8lwAJUYDrQ8s2/FxF/cyNIwJIFCqspnWxQgGNNyokET9HapmlPSxjpFRF0q6L2WCg9OY3mSVRq4oI6hg1igOQ12KlLyN71XSJ3c8w0Ay5ho48TQ9l3f3Iu97mntBCe9l0R9pnT8wj1VI8YJxloXwUMG2yeTjA9aBI=
   file:
-  - build/linux_arm.tar.gz
-  - build/linux_arm64.tar.gz
-  - build/linux_386.tar.gz
-  - build/linux_amd64.tar.gz
-  - build/darwin_amd64.tar.gz
-  - build/windows_386.zip
-  - build/windows_amd64.zip
-  - build/freebsd_arm.tar.gz
-  - build/freebsd_amd64.tar.gz
-  - build/freebsd_386.tar.gz
-  - build/netbsd_arm.tar.gz
-  - build/netbsd_amd64.tar.gz
-  - build/netbsd_386.tar.gz
-  - build/openbsd_arm.tar.gz
-  - build/openbsd_amd64.tar.gz
-  - build/openbsd_386.tar.gz
+    - build/linux_arm.tar.gz
+    - build/linux_arm64.tar.gz
+    - build/linux_386.tar.gz
+    - build/linux_amd64.tar.gz
+    - build/darwin_amd64.tar.gz
+    - build/windows_386.zip
+    - build/windows_amd64.zip
+    - build/freebsd_arm.tar.gz
+    - build/freebsd_amd64.tar.gz
+    - build/freebsd_386.tar.gz
+    - build/netbsd_arm.tar.gz
+    - build/netbsd_amd64.tar.gz
+    - build/netbsd_386.tar.gz
+    - build/openbsd_arm.tar.gz
+    - build/openbsd_amd64.tar.gz
+    - build/openbsd_386.tar.gz
   on:
     tags: true
     repo: chrislusf/seaweedfs
