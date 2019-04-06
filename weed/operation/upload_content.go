@@ -2,6 +2,7 @@ package operation
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,10 +40,24 @@ var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
 // Upload sends a POST request to a volume server to upload the content
 func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
+	contentIsGzipped := isGzipped
+	shouldGzipNow := false
+	if !isGzipped {
+		if shouldBeZipped, iAmSure := IsGzippableFileType(filepath.Base(filename), mtype); iAmSure && shouldBeZipped {
+			shouldGzipNow = true
+			contentIsGzipped = true
+		}
+	}
 	return upload_content(uploadUrl, func(w io.Writer) (err error) {
-		_, err = io.Copy(w, reader)
+		if shouldGzipNow {
+			gzWriter := gzip.NewWriter(w)
+			_, err = io.Copy(gzWriter, reader)
+			gzWriter.Close()
+		} else {
+			_, err = io.Copy(w, reader)
+		}
 		return
-	}, filename, isGzipped, mtype, pairMap, jwt)
+	}, filename, contentIsGzipped, mtype, pairMap, jwt)
 }
 func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
 	body_buf := bytes.NewBufferString("")
