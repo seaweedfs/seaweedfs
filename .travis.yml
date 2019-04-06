@@ -11,7 +11,7 @@ before_install:
 
 install:
   - export GOCACHE="off"
-  - export CGO=0
+  - export CGO_ENABLED="0"
   - go env
   - go get -u ./weed/...
 
