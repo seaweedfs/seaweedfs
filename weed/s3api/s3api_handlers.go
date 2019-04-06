@@ -9,6 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"google.golang.org/grpc"
 	"net/http"
 	"net/url"
 	"time"
@@ -38,15 +39,11 @@ func encodeResponse(response interface{}) []byte {
 
 func (s3a *S3ApiServer) withFilerClient(ctx context.Context, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	grpcConnection, err := util.GrpcDial(ctx, s3a.option.FilerGrpcAddress, s3a.option.GrpcDialOption)
-	if err != nil {
-		return fmt.Errorf("fail to dial %s: %v", s3a.option.FilerGrpcAddress, err)
-	}
-	defer grpcConnection.Close()
+	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
+		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+		return fn(client)
+	}, s3a.option.FilerGrpcAddress, s3a.option.GrpcDialOption)
 
-	client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-
-	return fn(client)
 }
 
 // If none of the http routes match respond with MethodNotAllowed

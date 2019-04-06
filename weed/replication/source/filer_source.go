@@ -91,15 +91,11 @@ func (fs *FilerSource) ReadPart(ctx context.Context, part string) (filename stri
 
 func (fs *FilerSource) withFilerClient(ctx context.Context, grpcDialOption grpc.DialOption, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	grpcConnection, err := util.GrpcDial(ctx, fs.grpcAddress, grpcDialOption)
-	if err != nil {
-		return fmt.Errorf("fail to dial %s: %v", fs.grpcAddress, err)
-	}
-	defer grpcConnection.Close()
+	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
+		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+		return fn(client)
+	}, fs.grpcAddress, fs.grpcDialOption)
 
-	client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-
-	return fn(client)
 }
 
 func volumeId(fileId string) string {

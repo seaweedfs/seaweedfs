@@ -3,6 +3,7 @@ package filersink
 import (
 	"context"
 	"fmt"
+	"google.golang.org/grpc"
 	"strings"
 	"sync"
 
@@ -105,15 +106,11 @@ func (fs *FilerSink) fetchAndWrite(ctx context.Context, sourceChunk *filer_pb.Fi
 
 func (fs *FilerSink) withFilerClient(ctx context.Context, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	grpcConnection, err := util.GrpcDial(ctx, fs.grpcAddress, fs.grpcDialOption)
-	if err != nil {
-		return fmt.Errorf("fail to dial %s: %v", fs.grpcAddress, err)
-	}
-	defer grpcConnection.Close()
+	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
+		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+		return fn(client)
+	}, fs.grpcAddress, fs.grpcDialOption)
 
-	client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-
-	return fn(client)
 }
 
 func volumeId(fileId string) string {
