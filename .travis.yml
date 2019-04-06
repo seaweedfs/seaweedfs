@@ -4,7 +4,7 @@ go:
   - 1.10.x
   - 1.11.x
   - 1.12.x
-  - tip
+  # - tip
 
 before_install:
   - export PATH=/home/travis/gopath/bin:$PATH
@@ -44,4 +44,4 @@ deploy:
   on:
     tags: true
     repo: chrislusf/seaweedfs
-    go: tip
+    go: 1.12.x
