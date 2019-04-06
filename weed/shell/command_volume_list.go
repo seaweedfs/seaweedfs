@@ -42,7 +42,7 @@ func (c *commandVolumeList) Do(args []string, commandEnv *commandEnv, writer io.
 	return nil
 }
 
-func writeTopologyInfo(writer io.Writer, t *master_pb.TopologyInfo) statistics{
+func writeTopologyInfo(writer io.Writer, t *master_pb.TopologyInfo) statistics {
 	fmt.Fprintf(writer, "Topology volume:%d/%d active:%d free:%d\n", t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount)
 	var s statistics
 	for _, dc := range t.DataCenterInfos {
@@ -51,7 +51,7 @@ func writeTopologyInfo(writer io.Writer, t *master_pb.TopologyInfo) statistics{
 	fmt.Fprintf(writer, "%+v \n", s)
 	return s
 }
-func writeDataCenterInfo(writer io.Writer, t *master_pb.DataCenterInfo) statistics{
+func writeDataCenterInfo(writer io.Writer, t *master_pb.DataCenterInfo) statistics {
 	fmt.Fprintf(writer, "  DataCenter %s volume:%d/%d active:%d free:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount)
 	var s statistics
 	for _, r := range t.RackInfos {
@@ -60,7 +60,7 @@ func writeDataCenterInfo(writer io.Writer, t *master_pb.DataCenterInfo) statisti
 	fmt.Fprintf(writer, "  DataCenter %s %+v \n", t.Id, s)
 	return s
 }
-func writeRackInfo(writer io.Writer, t *master_pb.RackInfo) statistics{
+func writeRackInfo(writer io.Writer, t *master_pb.RackInfo) statistics {
 	fmt.Fprintf(writer, "    Rack %s volume:%d/%d active:%d free:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount)
 	var s statistics
 	for _, dn := range t.DataNodeInfos {
@@ -69,7 +69,7 @@ func writeRackInfo(writer io.Writer, t *master_pb.RackInfo) statistics{
 	fmt.Fprintf(writer, "    Rack %s %+v \n", t.Id, s)
 	return s
 }
-func writeDataNodeInfo(writer io.Writer, t *master_pb.DataNodeInfo) statistics{
+func writeDataNodeInfo(writer io.Writer, t *master_pb.DataNodeInfo) statistics {
 	fmt.Fprintf(writer, "      DataNode %s volume:%d/%d active:%d free:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount)
 	var s statistics
 	for _, vi := range t.VolumeInfos {
@@ -109,7 +109,7 @@ func (s statistics) plus(t statistics) statistics {
 }
 
 func (s statistics) String() string {
-	if s.DeletedFileCount>0 {
+	if s.DeletedFileCount > 0 {
 		return fmt.Sprintf("total size:%d file_count:%d deleted_file:%d deleted_bytes:%d", s.Size, s.FileCount, s.DeletedFileCount, s.DeletedBytes)
 	}
 	return fmt.Sprintf("total size:%d file_count:%d", s.Size, s.FileCount)
