@@ -2,6 +2,7 @@ package operation
 
 import (
 	"bytes"
+	"compress/flate"
 	"compress/gzip"
 	"encoding/json"
 	"errors"
@@ -50,7 +51,7 @@ func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool,
 	}
 	return upload_content(uploadUrl, func(w io.Writer) (err error) {
 		if shouldGzipNow {
-			gzWriter := gzip.NewWriter(w)
+			gzWriter, _ := gzip.NewWriterLevel(w, flate.BestSpeed)
 			_, err = io.Copy(gzWriter, reader)
 			gzWriter.Close()
 		} else {

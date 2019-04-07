@@ -72,7 +72,7 @@ func IsGzippableFileType(ext, mtype string) (shouldBeZipped, iAmSure bool) {
 
 func GzipData(input []byte) ([]byte, error) {
 	buf := new(bytes.Buffer)
-	w, _ := gzip.NewWriterLevel(buf, flate.BestCompression)
+	w, _ := gzip.NewWriterLevel(buf, flate.BestSpeed)
 	if _, err := w.Write(input); err != nil {
 		glog.V(2).Infoln("error compressing data:", err)
 		return nil, err
