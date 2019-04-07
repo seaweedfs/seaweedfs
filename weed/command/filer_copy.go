@@ -114,6 +114,10 @@ func runCopy(cmd *Command, args []string) bool {
 	go copy.masterClient.KeepConnectedToMaster()
 	copy.masterClient.WaitUntilConnected()
 
+	if *cmdCopy.IsDebug {
+		util.SetupProfiling("filer.copy.cpu.pprof", "filer.copy.mem.pprof")
+	}
+
 	fileCopyTaskChan := make(chan FileCopyTask, *copy.concurrency)
 
 	ctx := context.Background()
