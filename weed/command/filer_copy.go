@@ -170,11 +170,15 @@ func genFileCopyTask(fileOrDir string, destPath string, fileCopyTaskChan chan Fi
 		return nil
 	}
 
+	uid, gid := util.GetFileUidGid(fi)
+
 	fileCopyTaskChan <- FileCopyTask{
 		sourceLocation:     fileOrDir,
 		destinationUrlPath: destPath,
 		fileSize:           fi.Size(),
 		fileMode:           fi.Mode(),
+		uid:                uid,
+		gid:                gid,
 	}
 
 	return nil
@@ -200,6 +204,8 @@ type FileCopyTask struct {
 	destinationUrlPath string
 	fileSize           int64
 	fileMode           os.FileMode
+	uid                uint32
+	gid                uint32
 }
 
 func (worker *FileCopyWorker) doEachCopy(ctx context.Context, task FileCopyTask) error {
@@ -287,8 +293,8 @@ func (worker *FileCopyWorker) uploadFileAsOne(ctx context.Context, task FileCopy
 				Attributes: &filer_pb.FuseAttributes{
 					Crtime:      time.Now().Unix(),
 					Mtime:       time.Now().Unix(),
-					Gid:         uint32(os.Getgid()),
-					Uid:         uint32(os.Getuid()),
+					Gid:         task.gid,
+					Uid:         task.uid,
 					FileSize:    uint64(task.fileSize),
 					FileMode:    uint32(task.fileMode),
 					Mime:        mimeType,
@@ -361,8 +367,8 @@ func (worker *FileCopyWorker) uploadFileInChunks(ctx context.Context, task FileC
 				Attributes: &filer_pb.FuseAttributes{
 					Crtime:      time.Now().Unix(),
 					Mtime:       time.Now().Unix(),
-					Gid:         uint32(os.Getgid()),
-					Uid:         uint32(os.Getuid()),
+					Gid:         task.gid,
+					Uid:         task.uid,
 					FileSize:    uint64(task.fileSize),
 					FileMode:    uint32(task.fileMode),
 					Mime:        mimeType,
