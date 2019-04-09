@@ -29,9 +29,12 @@ deploy:
     - build/linux_arm64.tar.gz
     - build/linux_386.tar.gz
     - build/linux_amd64.tar.gz
+    - build/linux_amd64_large_disk.tar.gz
     - build/darwin_amd64.tar.gz
+    - build/darwin_amd64_large_disk.tar.gz
     - build/windows_386.zip
     - build/windows_amd64.zip
+    - build/windows_amd64_large_disk.zip
     - build/freebsd_arm.tar.gz
     - build/freebsd_amd64.tar.gz
     - build/freebsd_386.tar.gz
