@@ -58,7 +58,7 @@ func init() {
 	v.maxCpu = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	v.dataCenter = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	v.rack = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
-	v.indexType = cmdVolume.Flag.String("index", "memory", "Choose [memory|leveldb|boltdb|btree] mode for memory~performance balance.")
+	v.indexType = cmdVolume.Flag.String("index", "memory", "Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance.")
 	v.fixJpgOrientation = cmdVolume.Flag.Bool("images.fix.orientation", false, "Adjust jpg orientation when uploading.")
 	v.readRedirect = cmdVolume.Flag.Bool("read.redirect", true, "Redirect moved or non-local volumes.")
 	v.cpuProfile = cmdVolume.Flag.String("cpuprofile", "", "cpu profile output file")
@@ -142,10 +142,10 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	switch *v.indexType {
 	case "leveldb":
 		volumeNeedleMapKind = storage.NeedleMapLevelDb
-	case "boltdb":
+	case "leveldbMedium":
 		volumeNeedleMapKind = storage.NeedleMapBoltDb
-	case "btree":
-		volumeNeedleMapKind = storage.NeedleMapBtree
+	case "leveldbLarge":
+		volumeNeedleMapKind = storage.NeedleMapBoltDb
 	}
 
 	masters := *v.masters

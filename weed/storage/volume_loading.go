@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"github.com/syndtr/goleveldb/leveldb/opt"
 	"os"
 	"time"
 
@@ -82,18 +83,30 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			}
 		case NeedleMapLevelDb:
 			glog.V(0).Infoln("loading leveldb", fileName+".ldb")
-			if v.nm, e = NewLevelDbNeedleMap(fileName+".ldb", indexFile); e != nil {
+			opts := &opt.Options{
+				BlockCacheCapacity: 2 * 1024 * 1024, // default value is 8MiB
+				WriteBuffer:        1 * 1024 * 1024, // default value is 4MiB
+			}
+			if v.nm, e = NewLevelDbNeedleMap(fileName+".ldb", indexFile, opts); e != nil {
 				glog.V(0).Infof("loading leveldb %s error: %v", fileName+".ldb", e)
 			}
-		case NeedleMapBoltDb:
-			glog.V(0).Infoln("loading boltdb", fileName+".bdb")
-			if v.nm, e = NewBoltDbNeedleMap(fileName+".bdb", indexFile); e != nil {
-				glog.V(0).Infof("loading boltdb %s error: %v", fileName+".bdb", e)
+		case NeedleMapLevelDbMedium:
+			glog.V(0).Infoln("loading leveldb medium", fileName+".ldb")
+			opts := &opt.Options{
+				BlockCacheCapacity: 4 * 1024 * 1024, // default value is 8MiB
+				WriteBuffer:        2 * 1024 * 1024, // default value is 4MiB
 			}
-		case NeedleMapBtree:
-			glog.V(0).Infoln("loading index", fileName+".idx", "to btree readonly", v.readOnly)
-			if v.nm, e = LoadBtreeNeedleMap(indexFile); e != nil {
-				glog.V(0).Infof("loading index %s to btree error: %v", fileName+".idx", e)
+			if v.nm, e = NewLevelDbNeedleMap(fileName+".ldb", indexFile, opts); e != nil {
+				glog.V(0).Infof("loading leveldb %s error: %v", fileName+".ldb", e)
+			}
+		case NeedleMapLevelDbLarge:
+			glog.V(0).Infoln("loading leveldb large", fileName+".ldb")
+			opts := &opt.Options{
+				BlockCacheCapacity: 8 * 1024 * 1024, // default value is 8MiB
+				WriteBuffer:        4 * 1024 * 1024, // default value is 4MiB
+			}
+			if v.nm, e = NewLevelDbNeedleMap(fileName+".ldb", indexFile, opts); e != nil {
+				glog.V(0).Infof("loading leveldb %s error: %v", fileName+".ldb", e)
 			}
 		}
 	}

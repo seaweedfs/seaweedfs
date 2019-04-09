@@ -19,7 +19,7 @@ type LevelDbNeedleMap struct {
 	baseNeedleMapper
 }
 
-func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File) (m *LevelDbNeedleMap, err error) {
+func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Options) (m *LevelDbNeedleMap, err error) {
 	m = &LevelDbNeedleMap{dbFileName: dbFileName}
 	m.indexFile = indexFile
 	if !isLevelDbFresh(dbFileName, indexFile) {
@@ -28,9 +28,8 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File) (m *LevelDbNeedl
 		glog.V(0).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
 	}
 	glog.V(1).Infof("Opening %s...", dbFileName)
-	if m.db, err = leveldb.OpenFile(dbFileName, &opt.Options{
-		BlockCacheCapacity: -1, // default value is 8MiB
-	}); err != nil {
+
+	if m.db, err = leveldb.OpenFile(dbFileName, opts); err != nil {
 		return
 	}
 	glog.V(1).Infof("Loading %s...", indexFile.Name())
