@@ -98,60 +98,60 @@ func TestCompactMap(t *testing.T) {
 }
 
 func TestOverflow(t *testing.T) {
-	o := Overflow(make([]SectionalNeedleValue, 0))
+	cs := NewCompactSection(1)
 
-	o = o.setOverflowEntry(SectionalNeedleValue{Key: 1, Offset: ToOffset(12), Size: 12})
-	o = o.setOverflowEntry(SectionalNeedleValue{Key: 2, Offset: ToOffset(12), Size: 12})
-	o = o.setOverflowEntry(SectionalNeedleValue{Key: 3, Offset: ToOffset(12), Size: 12})
-	o = o.setOverflowEntry(SectionalNeedleValue{Key: 4, Offset: ToOffset(12), Size: 12})
-	o = o.setOverflowEntry(SectionalNeedleValue{Key: 5, Offset: ToOffset(12), Size: 12})
+	cs.setOverflowEntry(1, ToOffset(12), 12)
+	cs.setOverflowEntry(2, ToOffset(12), 12)
+	cs.setOverflowEntry(3, ToOffset(12), 12)
+	cs.setOverflowEntry(4, ToOffset(12), 12)
+	cs.setOverflowEntry(5, ToOffset(12), 12)
 
-	if o[2].Key != 3 {
-		t.Fatalf("expecting o[2] has key 3: %+v", o[2].Key)
+	if cs.overflow[2].Key != 3 {
+		t.Fatalf("expecting o[2] has key 3: %+v", cs.overflow[2].Key)
 	}
 
-	o = o.setOverflowEntry(SectionalNeedleValue{Key: 3, Offset: ToOffset(24), Size: 24})
+	cs.setOverflowEntry(3, ToOffset(24), 24)
 
-	if o[2].Key != 3 {
-		t.Fatalf("expecting o[2] has key 3: %+v", o[2].Key)
+	if cs.overflow[2].Key != 3 {
+		t.Fatalf("expecting o[2] has key 3: %+v", cs.overflow[2].Key)
 	}
 
-	if o[2].Size != 24 {
-		t.Fatalf("expecting o[2] has size 24: %+v", o[2].Size)
+	if cs.overflow[2].Size != 24 {
+		t.Fatalf("expecting o[2] has size 24: %+v", cs.overflow[2].Size)
 	}
 
-	o = o.deleteOverflowEntry(4)
+	cs.deleteOverflowEntry(4)
 
-	if len(o) != 4 {
-		t.Fatalf("expecting 4 entries now: %+v", o)
+	if len(cs.overflow) != 4 {
+		t.Fatalf("expecting 4 entries now: %+v", cs.overflow)
 	}
 
-	x, _ := o.findOverflowEntry(5)
+	_, x, _ := cs.findOverflowEntry(5)
 	if x.Key != 5 {
 		t.Fatalf("expecting entry 5 now: %+v", x)
 	}
 
-	for i, x := range o {
+	for i, x := range cs.overflow {
 		println("overflow[", i, "]:", x.Key)
 	}
 	println()
 
-	o = o.deleteOverflowEntry(1)
+	cs.deleteOverflowEntry(1)
 
-	for i, x := range o {
+	for i, x := range cs.overflow {
 		println("overflow[", i, "]:", x.Key)
 	}
 	println()
 
-	o = o.setOverflowEntry(SectionalNeedleValue{Key: 4, Offset: ToOffset(44), Size: 44})
-	for i, x := range o {
+	cs.setOverflowEntry(4, ToOffset(44), 44)
+	for i, x := range cs.overflow {
 		println("overflow[", i, "]:", x.Key)
 	}
 	println()
 
-	o = o.setOverflowEntry(SectionalNeedleValue{Key: 1, Offset: ToOffset(11), Size: 11})
+	cs.setOverflowEntry(1, ToOffset(11), 11)
 
-	for i, x := range o {
+	for i, x := range cs.overflow {
 		println("overflow[", i, "]:", x.Key)
 	}
 	println()

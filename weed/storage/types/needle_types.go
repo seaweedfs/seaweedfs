@@ -8,8 +8,15 @@ import (
 )
 
 type Offset struct {
-	// b5 byte // unused
-	// b4 byte // unused
+	OffsetHigher
+	OffsetLower
+}
+
+type OffsetHigher struct {
+	// b4 byte
+}
+
+type OffsetLower struct {
 	b3 byte
 	b2 byte
 	b1 byte
@@ -19,9 +26,9 @@ type Offset struct {
 type Cookie uint32
 
 const (
-	OffsetSize            = 4
+	OffsetSize            = 4 // + 1
 	SizeSize              = 4 // uint32 size
-	NeedleEntrySize       = NeedleIdSize + OffsetSize + SizeSize
+	NeedleEntrySize       = CookieSize + NeedleIdSize + SizeSize
 	TimestampSize         = 8 // int64 size
 	NeedlePaddingSize     = 8
 	MaxPossibleVolumeSize = 4 * 1024 * 1024 * 1024 * 8
@@ -55,21 +62,26 @@ func OffsetToBytes(bytes []byte, offset Offset) {
 	bytes[0] = offset.b3
 }
 
+// only for testing, will be removed later.
 func Uint32ToOffset(offset uint32) Offset {
 	return Offset{
-		b0: byte(offset),
-		b1: byte(offset >> 8),
-		b2: byte(offset >> 16),
-		b3: byte(offset >> 24),
+		OffsetLower: OffsetLower{
+			b0: byte(offset),
+			b1: byte(offset >> 8),
+			b2: byte(offset >> 16),
+			b3: byte(offset >> 24),
+		},
 	}
 }
 
 func BytesToOffset(bytes []byte) Offset {
 	return Offset{
-		b0: bytes[3],
-		b1: bytes[2],
-		b2: bytes[1],
-		b3: bytes[0],
+		OffsetLower: OffsetLower{
+			b0: bytes[3],
+			b1: bytes[2],
+			b2: bytes[1],
+			b3: bytes[0],
+		},
 	}
 }
 
