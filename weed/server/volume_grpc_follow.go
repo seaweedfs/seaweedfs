@@ -3,7 +3,6 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io"
 	"os"
 
@@ -28,7 +27,7 @@ func (vs *VolumeServer) VolumeFollow(req *volume_server_pb.VolumeFollowRequest, 
 		return nil
 	}
 
-	startOffset := int64(foundOffset) * int64(types.NeedlePaddingSize)
+	startOffset := foundOffset.ToAcutalOffset()
 
 	buf := make([]byte, 1024*1024*2)
 	return sendFileContent(v.DataFile(), buf, startOffset, stopOffset, stream)

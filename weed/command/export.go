@@ -107,7 +107,7 @@ func (scanner *VolumeFileScanner4Export) VisitNeedle(n *storage.Needle, offset i
 	nv, ok := needleMap.Get(n.Id)
 	glog.V(3).Infof("key %d offset %d size %d disk_size %d gzip %v ok %v nv %+v",
 		n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsGzipped(), ok, nv)
-	if ok && nv.Size > 0 && nv.Size != types.TombstoneFileSize && int64(nv.Offset)*types.NeedlePaddingSize == offset {
+	if ok && nv.Size > 0 && nv.Size != types.TombstoneFileSize && nv.Offset.ToAcutalOffset() == offset {
 		if newerThanUnix >= 0 && n.HasLastModifiedDate() && n.LastModified < uint64(newerThanUnix) {
 			glog.V(3).Infof("Skipping this file, as it's old enough: LastModified %d vs %d",
 				n.LastModified, newerThanUnix)

@@ -68,7 +68,7 @@ func generateBoltDbFile(dbFileName string, indexFile *os.File) error {
 	}
 	defer db.Close()
 	return WalkIndexFile(indexFile, func(key NeedleId, offset Offset, size uint32) error {
-		if offset > 0 && size != TombstoneFileSize {
+		if !offset.IsZero() && size != TombstoneFileSize {
 			boltDbWrite(db, key, offset, size)
 		} else {
 			boltDbDelete(db, key)

@@ -26,7 +26,7 @@ func (cm *BtreeMap) Set(key NeedleId, offset Offset, size uint32) (oldOffset Off
 }
 
 func (cm *BtreeMap) Delete(key NeedleId) (oldSize uint32) {
-	found := cm.tree.Delete(NeedleValue{key, 0, 0})
+	found := cm.tree.Delete(NeedleValue{key, Offset{}, 0})
 	if found != nil {
 		old := found.(NeedleValue)
 		return old.Size
@@ -34,7 +34,7 @@ func (cm *BtreeMap) Delete(key NeedleId) (oldSize uint32) {
 	return
 }
 func (cm *BtreeMap) Get(key NeedleId) (*NeedleValue, bool) {
-	found := cm.tree.Get(NeedleValue{key, 0, 0})
+	found := cm.tree.Get(NeedleValue{key, Offset{}, 0})
 	if found != nil {
 		old := found.(NeedleValue)
 		return &old, true

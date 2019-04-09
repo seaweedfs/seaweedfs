@@ -21,9 +21,9 @@ func (v *Volume) isFileUnchanged(n *Needle) bool {
 		return false
 	}
 	nv, ok := v.nm.Get(n.Id)
-	if ok && nv.Offset > 0 {
+	if ok && !nv.Offset.IsZero() {
 		oldNeedle := new(Needle)
-		err := oldNeedle.ReadData(v.dataFile, int64(nv.Offset)*NeedlePaddingSize, nv.Size, v.Version())
+		err := oldNeedle.ReadData(v.dataFile, nv.Offset.ToAcutalOffset(), nv.Size, v.Version())
 		if err != nil {
 			glog.V(0).Infof("Failed to check updated file %v", err)
 			return false
@@ -96,8 +96,8 @@ func (v *Volume) writeNeedle(n *Needle) (offset uint64, size uint32, err error) 
 	}
 
 	nv, ok := v.nm.Get(n.Id)
-	if !ok || uint64(nv.Offset)*NeedlePaddingSize < offset {
-		if err = v.nm.Put(n.Id, Offset(offset/NeedlePaddingSize), n.Size); err != nil {
+	if !ok || uint64(nv.Offset.ToAcutalOffset()) < offset {
+		if err = v.nm.Put(n.Id, ToOffset(int64(offset)), n.Size); err != nil {
 			glog.V(4).Infof("failed to save in needle map %d: %v", n.Id, err)
 		}
 	}
@@ -124,7 +124,7 @@ func (v *Volume) deleteNeedle(n *Needle) (uint32, error) {
 		if err != nil {
 			return size, err
 		}
-		if err = v.nm.Delete(n.Id, Offset(offset/NeedlePaddingSize)); err != nil {
+		if err = v.nm.Delete(n.Id, ToOffset(int64(offset))); err != nil {
 			return size, err
 		}
 		return size, err
@@ -135,10 +135,10 @@ func (v *Volume) deleteNeedle(n *Needle) (uint32, error) {
 // read fills in Needle content by looking up n.Id from NeedleMapper
 func (v *Volume) readNeedle(n *Needle) (int, error) {
 	nv, ok := v.nm.Get(n.Id)
-	if !ok || nv.Offset == 0 {
+	if !ok || nv.Offset.IsZero() {
 		v.compactingWg.Wait()
 		nv, ok = v.nm.Get(n.Id)
-		if !ok || nv.Offset == 0 {
+		if !ok || nv.Offset.IsZero() {
 			return -1, ErrorNotFound
 		}
 	}
@@ -148,7 +148,7 @@ func (v *Volume) readNeedle(n *Needle) (int, error) {
 	if nv.Size == 0 {
 		return 0, nil
 	}
-	err := n.ReadData(v.dataFile, int64(nv.Offset)*NeedlePaddingSize, nv.Size, v.Version())
+	err := n.ReadData(v.dataFile, nv.Offset.ToAcutalOffset(), nv.Size, v.Version())
 	if err != nil {
 		return 0, err
 	}

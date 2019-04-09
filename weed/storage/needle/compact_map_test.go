@@ -1,22 +1,23 @@
 package needle
 
 import (
+	"fmt"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"testing"
 )
 
 func TestOverflow2(t *testing.T) {
 	m := NewCompactMap()
-	m.Set(NeedleId(150088), 8, 3000073)
-	m.Set(NeedleId(150073), 8, 3000073)
-	m.Set(NeedleId(150089), 8, 3000073)
-	m.Set(NeedleId(150076), 8, 3000073)
-	m.Set(NeedleId(150124), 8, 3000073)
-	m.Set(NeedleId(150137), 8, 3000073)
-	m.Set(NeedleId(150147), 8, 3000073)
-	m.Set(NeedleId(150145), 8, 3000073)
-	m.Set(NeedleId(150158), 8, 3000073)
-	m.Set(NeedleId(150162), 8, 3000073)
+	m.Set(NeedleId(150088), ToOffset(8), 3000073)
+	m.Set(NeedleId(150073), ToOffset(8), 3000073)
+	m.Set(NeedleId(150089), ToOffset(8), 3000073)
+	m.Set(NeedleId(150076), ToOffset(8), 3000073)
+	m.Set(NeedleId(150124), ToOffset(8), 3000073)
+	m.Set(NeedleId(150137), ToOffset(8), 3000073)
+	m.Set(NeedleId(150147), ToOffset(8), 3000073)
+	m.Set(NeedleId(150145), ToOffset(8), 3000073)
+	m.Set(NeedleId(150158), ToOffset(8), 3000073)
+	m.Set(NeedleId(150162), ToOffset(8), 3000073)
 
 	m.Visit(func(value NeedleValue) error {
 		println("needle key:", value.Key)
@@ -26,13 +27,13 @@ func TestOverflow2(t *testing.T) {
 
 func TestIssue52(t *testing.T) {
 	m := NewCompactMap()
-	m.Set(NeedleId(10002), 10002, 10002)
+	m.Set(NeedleId(10002), ToOffset(10002), 10002)
 	if element, ok := m.Get(NeedleId(10002)); ok {
-		println("key", 10002, "ok", ok, element.Key, element.Offset, element.Size)
+		fmt.Printf("key %d ok %v %d, %v, %d\n", 10002, ok, element.Key, element.Offset, element.Size)
 	}
-	m.Set(NeedleId(10001), 10001, 10001)
+	m.Set(NeedleId(10001), ToOffset(10001), 10001)
 	if element, ok := m.Get(NeedleId(10002)); ok {
-		println("key", 10002, "ok", ok, element.Key, element.Offset, element.Size)
+		fmt.Printf("key %d ok %v %d, %v, %d\n", 10002, ok, element.Key, element.Offset, element.Size)
 	} else {
 		t.Fatal("key 10002 missing after setting 10001")
 	}
@@ -41,7 +42,7 @@ func TestIssue52(t *testing.T) {
 func TestCompactMap(t *testing.T) {
 	m := NewCompactMap()
 	for i := uint32(0); i < 100*batch; i += 2 {
-		m.Set(NeedleId(i), Offset(i), i)
+		m.Set(NeedleId(i), ToOffset(int64(i)), i)
 	}
 
 	for i := uint32(0); i < 100*batch; i += 37 {
@@ -49,7 +50,7 @@ func TestCompactMap(t *testing.T) {
 	}
 
 	for i := uint32(0); i < 10*batch; i += 3 {
-		m.Set(NeedleId(i), Offset(i+11), i+5)
+		m.Set(NeedleId(i), ToOffset(int64(i+11)), i+5)
 	}
 
 	//	for i := uint32(0); i < 100; i++ {
@@ -99,17 +100,17 @@ func TestCompactMap(t *testing.T) {
 func TestOverflow(t *testing.T) {
 	o := Overflow(make([]SectionalNeedleValue, 0))
 
-	o = o.setOverflowEntry(SectionalNeedleValue{Key: 1, Offset: 12, Size: 12})
-	o = o.setOverflowEntry(SectionalNeedleValue{Key: 2, Offset: 12, Size: 12})
-	o = o.setOverflowEntry(SectionalNeedleValue{Key: 3, Offset: 12, Size: 12})
-	o = o.setOverflowEntry(SectionalNeedleValue{Key: 4, Offset: 12, Size: 12})
-	o = o.setOverflowEntry(SectionalNeedleValue{Key: 5, Offset: 12, Size: 12})
+	o = o.setOverflowEntry(SectionalNeedleValue{Key: 1, Offset: ToOffset(12), Size: 12})
+	o = o.setOverflowEntry(SectionalNeedleValue{Key: 2, Offset: ToOffset(12), Size: 12})
+	o = o.setOverflowEntry(SectionalNeedleValue{Key: 3, Offset: ToOffset(12), Size: 12})
+	o = o.setOverflowEntry(SectionalNeedleValue{Key: 4, Offset: ToOffset(12), Size: 12})
+	o = o.setOverflowEntry(SectionalNeedleValue{Key: 5, Offset: ToOffset(12), Size: 12})
 
 	if o[2].Key != 3 {
 		t.Fatalf("expecting o[2] has key 3: %+v", o[2].Key)
 	}
 
-	o = o.setOverflowEntry(SectionalNeedleValue{Key: 3, Offset: 24, Size: 24})
+	o = o.setOverflowEntry(SectionalNeedleValue{Key: 3, Offset: ToOffset(24), Size: 24})
 
 	if o[2].Key != 3 {
 		t.Fatalf("expecting o[2] has key 3: %+v", o[2].Key)
@@ -142,13 +143,13 @@ func TestOverflow(t *testing.T) {
 	}
 	println()
 
-	o = o.setOverflowEntry(SectionalNeedleValue{Key: 4, Offset: 44, Size: 44})
+	o = o.setOverflowEntry(SectionalNeedleValue{Key: 4, Offset: ToOffset(44), Size: 44})
 	for i, x := range o {
 		println("overflow[", i, "]:", x.Key)
 	}
 	println()
 
-	o = o.setOverflowEntry(SectionalNeedleValue{Key: 1, Offset: 11, Size: 11})
+	o = o.setOverflowEntry(SectionalNeedleValue{Key: 1, Offset: ToOffset(11), Size: 11})
 
 	for i, x := range o {
 		println("overflow[", i, "]:", x.Key)

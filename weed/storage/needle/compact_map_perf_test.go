@@ -62,7 +62,7 @@ func loadNewNeedleMap(file *os.File) (*CompactMap, uint64) {
 			offset := BytesToOffset(bytes[i+NeedleIdSize : i+NeedleIdSize+OffsetSize])
 			size := util.BytesToUint32(bytes[i+NeedleIdSize+OffsetSize : i+NeedleIdSize+OffsetSize+SizeSize])
 
-			if offset > 0 {
+			if !offset.IsZero() {
 				m.Set(NeedleId(key), offset, size)
 			} else {
 				m.Delete(key)

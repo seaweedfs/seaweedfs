@@ -201,13 +201,13 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		}
 
 		//updated needle
-		if increIdxEntry.offset != 0 && increIdxEntry.size != 0 && increIdxEntry.size != TombstoneFileSize {
+		if !increIdxEntry.offset.IsZero() && increIdxEntry.size != 0 && increIdxEntry.size != TombstoneFileSize {
 			//even the needle cache in memory is hit, the need_bytes is correct
-			glog.V(4).Infof("file %d offset %d size %d", key, int64(increIdxEntry.offset)*NeedlePaddingSize, increIdxEntry.size)
+			glog.V(4).Infof("file %d offset %d size %d", key, increIdxEntry.offset.ToAcutalOffset(), increIdxEntry.size)
 			var needleBytes []byte
-			needleBytes, err = ReadNeedleBlob(oldDatFile, int64(increIdxEntry.offset)*NeedlePaddingSize, increIdxEntry.size, v.Version())
+			needleBytes, err = ReadNeedleBlob(oldDatFile, increIdxEntry.offset.ToAcutalOffset(), increIdxEntry.size, v.Version())
 			if err != nil {
-				return fmt.Errorf("ReadNeedleBlob %s key %d offset %d size %d failed: %v", oldDatFile.Name(), key, int64(increIdxEntry.offset)*NeedlePaddingSize, increIdxEntry.size, err)
+				return fmt.Errorf("ReadNeedleBlob %s key %d offset %d size %d failed: %v", oldDatFile.Name(), key, increIdxEntry.offset.ToAcutalOffset(), increIdxEntry.size, err)
 			}
 			dst.Write(needleBytes)
 			util.Uint32toBytes(idxEntryBytes[8:12], uint32(offset/NeedlePaddingSize))
@@ -261,8 +261,8 @@ func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *Needle, offset int64) er
 	}
 	nv, ok := scanner.v.nm.Get(n.Id)
 	glog.V(4).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
-	if ok && int64(nv.Offset)*NeedlePaddingSize == offset && nv.Size > 0 && nv.Size != TombstoneFileSize {
-		if err := scanner.nm.Put(n.Id, Offset(scanner.newOffset/NeedlePaddingSize), n.Size); err != nil {
+	if ok && nv.Offset.ToAcutalOffset() == offset && nv.Size > 0 && nv.Size != TombstoneFileSize {
+		if err := scanner.nm.Put(n.Id, ToOffset(scanner.newOffset), n.Size); err != nil {
 			return fmt.Errorf("cannot put needle: %s", err)
 		}
 		if _, _, _, err := n.Append(scanner.dst, scanner.v.Version()); err != nil {
@@ -325,7 +325,7 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 	newOffset := int64(v.SuperBlock.BlockSize())
 
 	WalkIndexFile(oldIndexFile, func(key NeedleId, offset Offset, size uint32) error {
-		if offset == 0 || size == TombstoneFileSize {
+		if offset.IsZero() || size == TombstoneFileSize {
 			return nil
 		}
 
@@ -335,7 +335,7 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 		}
 
 		n := new(Needle)
-		err := n.ReadData(v.dataFile, int64(offset)*NeedlePaddingSize, size, v.Version())
+		err := n.ReadData(v.dataFile, offset.ToAcutalOffset(), size, v.Version())
 		if err != nil {
 			return nil
 		}
@@ -346,7 +346,7 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 
 		glog.V(4).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
 		if nv.Offset == offset && nv.Size > 0 {
-			if err = nm.Put(n.Id, Offset(newOffset/NeedlePaddingSize), n.Size); err != nil {
+			if err = nm.Put(n.Id, ToOffset(newOffset), n.Size); err != nil {
 				return fmt.Errorf("cannot put needle: %s", err)
 			}
 			if _, _, _, err = n.Append(dst, v.Version()); err != nil {
