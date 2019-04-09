@@ -143,9 +143,9 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	case "leveldb":
 		volumeNeedleMapKind = storage.NeedleMapLevelDb
 	case "leveldbMedium":
-		volumeNeedleMapKind = storage.NeedleMapBoltDb
+		volumeNeedleMapKind = storage.NeedleMapLevelDbMedium
 	case "leveldbLarge":
-		volumeNeedleMapKind = storage.NeedleMapBoltDb
+		volumeNeedleMapKind = storage.NeedleMapLevelDbLarge
 	}
 
 	masters := *v.masters
