@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/syndtr/goleveldb/leveldb/opt"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -39,7 +40,9 @@ func (store *LevelDBStore) initialize(dir string) (err error) {
 		return fmt.Errorf("Check Level Folder %s Writable: %s", dir, err)
 	}
 
-	if store.db, err = leveldb.OpenFile(dir, nil); err != nil {
+	if store.db, err = leveldb.OpenFile(dir, &opt.Options{
+		BlockCacheCapacity: -1, // default value is 8MiB
+	}); err != nil {
 		glog.Infof("filer store open dir %s: %v", dir, err)
 		return
 	}
