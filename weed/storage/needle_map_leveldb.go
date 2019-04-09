@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"github.com/syndtr/goleveldb/leveldb/opt"
 	"os"
 	"path/filepath"
 
@@ -27,7 +28,9 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File) (m *LevelDbNeedl
 		glog.V(0).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
 	}
 	glog.V(1).Infof("Opening %s...", dbFileName)
-	if m.db, err = leveldb.OpenFile(dbFileName, nil); err != nil {
+	if m.db, err = leveldb.OpenFile(dbFileName, &opt.Options{
+		BlockCacheCapacity: -1, // default value is 8MiB
+	}); err != nil {
 		return
 	}
 	glog.V(1).Infof("Loading %s...", indexFile.Name())
