@@ -17,13 +17,13 @@ import:
   - service/s3
   - service/s3/s3iface
   - service/sqs
-- package: github.com/boltdb/bolt
 - package: github.com/chrislusf/raft
   subpackages:
   - protobuf
 - package: github.com/dgrijalva/jwt-go
 - package: github.com/disintegration/imaging
 - package: github.com/dustin/go-humanize
+- package: github.com/gabriel-vasile/mimetype
 - package: github.com/go-redis/redis
 - package: github.com/go-sql-driver/mysql
 - package: github.com/gocql/gocql
@@ -53,6 +53,7 @@ import:
 - package: github.com/syndtr/goleveldb
   subpackages:
   - leveldb
+  - leveldb/opt
   - leveldb/util
 - package: github.com/willf/bloom
 - package: gocloud.dev
