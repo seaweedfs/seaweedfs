@@ -656,6 +656,7 @@ type ReadVolumeFileStatusResponse struct {
 	IdxFileSize      uint64 `protobuf:"varint,3,opt,name=idx_file_size,json=idxFileSize" json:"idx_file_size,omitempty"`
 	DatFileTimestamp uint64 `protobuf:"varint,4,opt,name=dat_file_timestamp,json=datFileTimestamp" json:"dat_file_timestamp,omitempty"`
 	DatFileSize      uint64 `protobuf:"varint,5,opt,name=dat_file_size,json=datFileSize" json:"dat_file_size,omitempty"`
+	FileCount        uint64 `protobuf:"varint,6,opt,name=file_count,json=fileCount" json:"file_count,omitempty"`
 }
 
 func (m *ReadVolumeFileStatusResponse) Reset()                    { *m = ReadVolumeFileStatusResponse{} }
@@ -694,6 +695,13 @@ func (m *ReadVolumeFileStatusResponse) GetDatFileTimestamp() uint64 {
 func (m *ReadVolumeFileStatusResponse) GetDatFileSize() uint64 {
 	if m != nil {
 		return m.DatFileSize
+	}
+	return 0
+}
+
+func (m *ReadVolumeFileStatusResponse) GetFileCount() uint64 {
+	if m != nil {
+		return m.FileCount
 	}
 	return 0
 }

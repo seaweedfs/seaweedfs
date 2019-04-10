@@ -171,6 +171,7 @@ message ReadVolumeFileStatusResponse {
     uint64 idx_file_size = 3;
     uint64 dat_file_timestamp = 4;
     uint64 dat_file_size = 5;
+    uint64 file_count = 6;
 }
 
 message DiskStatus {
