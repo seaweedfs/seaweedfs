@@ -19,7 +19,7 @@ var (
 	grpcClientsLock sync.Mutex
 )
 
-func init(){
+func init() {
 	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 100
 }
 
@@ -81,6 +81,7 @@ func WithCachedGrpcClient(ctx context.Context, fn func(*grpc.ClientConn) error, 
 		grpcClientsLock.Lock()
 		delete(grpcClients, address)
 		grpcClientsLock.Unlock()
+		grpcConnection.Close()
 	}
 
 	return err
