@@ -153,7 +153,7 @@ func (vs *VolumeServer) ReadVolumeFileStatus(ctx context.Context, req *volume_se
 	resp.IdxFileSize = v.IndexFileSize()
 	resp.DatFileTimestamp = v.LastModifiedTime()
 	resp.IdxFileTimestamp = v.LastModifiedTime()
-	resp.FileCount = uint64(v.FileCount())
+	resp.FileCount = v.FileCount()
 	return resp, nil
 }
 

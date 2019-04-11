@@ -94,8 +94,8 @@ func (v *Volume)LastModifiedTime() uint64 {
 	return v.lastModifiedTime
 }
 
-func (v *Volume)FileCount() uint {
-	return uint(v.nm.FileCount())
+func (v *Volume)FileCount() uint64 {
+	return uint64(v.nm.FileCount())
 }
 
 // Close cleanly shuts down this volume
