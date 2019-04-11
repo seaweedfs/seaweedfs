@@ -52,7 +52,7 @@ Your support will be really appreciated by me and other supporters!
 - [SeaweedFS on Slack](https://join.slack.com/t/seaweedfs/shared_invite/enQtMzI4MTMwMjU2MzA3LTc4MmVlYmFlNjBmZTgzZmJlYmI1MDE1YzkyNWYyZjkwZDFiM2RlMDdjNjVlNjdjYzc4NGFhZGIyYzEyMzJkYTA)
 - [SeaweedFS Mailing List](https://groups.google.com/d/forum/seaweedfs)
 - [Wiki Documentation](https://github.com/chrislusf/seaweedfs/wiki)
-
+- [SeaweedFS Introduction Slides](https://www.slideshare.net/chrislusf/seaweedfs-introduction)
 
 ## Introduction
 
