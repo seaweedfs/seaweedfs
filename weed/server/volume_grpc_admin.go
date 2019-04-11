@@ -24,9 +24,9 @@ func (vs *VolumeServer) DeleteCollection(ctx context.Context, req *volume_server
 
 }
 
-func (vs *VolumeServer) AssignVolume(ctx context.Context, req *volume_server_pb.AssignVolumeRequest) (*volume_server_pb.AssignVolumeResponse, error) {
+func (vs *VolumeServer) AllocateVolume(ctx context.Context, req *volume_server_pb.AllocateVolumeRequest) (*volume_server_pb.AllocateVolumeResponse, error) {
 
-	resp := &volume_server_pb.AssignVolumeResponse{}
+	resp := &volume_server_pb.AllocateVolumeResponse{}
 
 	err := vs.store.AddVolume(
 		storage.VolumeId(req.VolumeId),
