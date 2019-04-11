@@ -33,16 +33,16 @@ var cmdBackup = &Command{
 	UsageLine: "backup -dir=. -volumeId=234 -server=localhost:9333",
 	Short:     "incrementally backup a volume to local folder",
 	Long: `Incrementally backup volume data.
-	
+
 	It is expected that you use this inside a script, to loop through
 	all possible volume ids that needs to be backup to local folder.
-	
+
 	The volume id does not need to exist locally or even remotely.
 	This will help to backup future new volumes.
-	
+
 	Usually backing up is just copying the .dat (and .idx) files.
 	But it's tricky to incrementally copy the differences.
-	
+
 	The complexity comes when there are multiple addition, deletion and compaction.
 	This tool will handle them correctly and efficiently, avoiding unnecessary data transportation.
   `,
