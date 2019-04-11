@@ -121,7 +121,7 @@ func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse
 }
 
 func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName string) error {
-	glog.V(4).Infof("writing to ", fileName)
+	glog.V(4).Infof("writing to %s", fileName)
 	dst, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return nil
