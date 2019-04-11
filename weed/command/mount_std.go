@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 	"os"
 	"os/user"
+	"path"
 	"runtime"
 	"strconv"
 	"strings"
@@ -43,6 +44,8 @@ func runMount(cmd *Command, args []string) bool {
 		mountMode = os.ModeDir | fileInfo.Mode()
 	}
 
+	mountName := path.Base(*mountOptions.dir)
+
 	// detect current user
 	uid, gid := uint32(0), uint32(0)
 	if u, err := user.Current(); err == nil {
@@ -57,7 +60,7 @@ func runMount(cmd *Command, args []string) bool {
 	util.SetupProfiling(*mountCpuProfile, *mountMemProfile)
 
 	options := []fuse.MountOption{
-		fuse.VolumeName("SeaweedFS"),
+		fuse.VolumeName(mountName),
 		fuse.FSName("SeaweedFS"),
 		fuse.Subtype("SeaweedFS"),
 		fuse.NoAppleDouble(),
