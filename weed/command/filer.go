@@ -46,7 +46,7 @@ func init() {
 	f.ip = cmdFiler.Flag.String("ip", "", "filer server http listen ip address")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
 	f.grpcPort = cmdFiler.Flag.Int("port.grpc", 0, "filer grpc server listen port, default to http port + 10000")
-	f.publicPort = cmdFiler.Flag.Int("port.public", 0, "port opened to public")
+	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "000", "default replication type if not specified")
 	f.redirectOnRead = cmdFiler.Flag.Bool("redirectOnRead", false, "whether proxy or redirect to volume server during file GET request")
 	f.disableDirListing = cmdFiler.Flag.Bool("disableDirListing", false, "turn off directory listing")
