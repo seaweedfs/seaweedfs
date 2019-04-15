@@ -2,6 +2,8 @@ package storage
 
 import (
 	"fmt"
+	"sync/atomic"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
@@ -22,7 +24,7 @@ type Store struct {
 	dataCenter          string //optional informaton, overwriting master setting if exists
 	rack                string //optional information, overwriting master setting if exists
 	connected           bool
-	VolumeSizeLimit     uint64 //read from the master
+	volumeSizeLimit     uint64 //read from the master
 	Client              master_pb.Seaweed_SendHeartbeatClient
 	NeedleMapType       NeedleMapType
 	NewVolumeIdChan     chan VolumeId
@@ -30,7 +32,7 @@ type Store struct {
 }
 
 func (s *Store) String() (str string) {
-	str = fmt.Sprintf("Ip:%s, Port:%d, PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d", s.Ip, s.Port, s.PublicUrl, s.dataCenter, s.rack, s.connected, s.VolumeSizeLimit)
+	str = fmt.Sprintf("Ip:%s, Port:%d, PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d", s.Ip, s.Port, s.PublicUrl, s.dataCenter, s.rack, s.connected, s.GetVolumeSizeLimit())
 	return
 }
 
@@ -150,7 +152,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			if maxFileKey < v.nm.MaxFileKey() {
 				maxFileKey = v.nm.MaxFileKey()
 			}
-			if !v.expired(s.VolumeSizeLimit) {
+			if !v.expired(s.GetVolumeSizeLimit()) {
 				volumeMessages = append(volumeMessages, v.ToVolumeInformationMessage())
 			} else {
 				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
@@ -192,7 +194,7 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 		if MaxPossibleVolumeSize >= v.ContentSize()+uint64(size) {
 			_, size, err = v.writeNeedle(n)
 		} else {
-			err = fmt.Errorf("Volume Size Limit %d Exceeded! Current size is %d", s.VolumeSizeLimit, v.ContentSize())
+			err = fmt.Errorf("Volume Size Limit %d Exceeded! Current size is %d", s.GetVolumeSizeLimit(), v.ContentSize())
 		}
 		return
 	}
@@ -254,4 +256,12 @@ func (s *Store) DeleteVolume(i VolumeId) error {
 	}
 
 	return fmt.Errorf("Volume %d not found on disk", i)
+}
+
+func (s *Store) SetVolumeSizeLimit(x uint64) {
+	atomic.StoreUint64(&s.volumeSizeLimit, x)
+}
+
+func (s *Store) GetVolumeSizeLimit() uint64 {
+	return atomic.LoadUint64(&s.volumeSizeLimit)
 }

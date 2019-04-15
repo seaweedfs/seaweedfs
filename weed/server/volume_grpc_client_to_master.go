@@ -2,10 +2,11 @@ package weed_server
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
-	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -75,7 +76,7 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 				return
 			}
 			if in.GetVolumeSizeLimit() != 0 {
-				vs.store.VolumeSizeLimit = in.GetVolumeSizeLimit()
+				vs.store.SetVolumeSizeLimit(in.GetVolumeSizeLimit())
 			}
 			if in.GetLeader() != "" && masterNode != in.GetLeader() {
 				glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", in.GetLeader(), masterNode)

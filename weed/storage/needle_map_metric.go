@@ -2,51 +2,64 @@ package storage
 
 import (
 	"fmt"
+	"os"
+	"sync/atomic"
+
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/willf/bloom"
-	"os"
 )
 
 type mapMetric struct {
-	DeletionCounter     int      `json:"DeletionCounter"`
-	FileCounter         int      `json:"FileCounter"`
-	DeletionByteCounter uint64   `json:"DeletionByteCounter"`
-	FileByteCounter     uint64   `json:"FileByteCounter"`
-	MaximumFileKey      NeedleId `json:"MaxFileKey"`
+	DeletionCounter     uint32 `json:"DeletionCounter"`
+	FileCounter         uint32 `json:"FileCounter"`
+	DeletionByteCounter uint64 `json:"DeletionByteCounter"`
+	FileByteCounter     uint64 `json:"FileByteCounter"`
+	MaximumFileKey      uint64 `json:"MaxFileKey"`
 }
 
 func (mm *mapMetric) logDelete(deletedByteCount uint32) {
-	mm.DeletionByteCounter = mm.DeletionByteCounter + uint64(deletedByteCount)
-	mm.DeletionCounter++
+	mm.LogDeletionCounter(deletedByteCount)
 }
 
 func (mm *mapMetric) logPut(key NeedleId, oldSize uint32, newSize uint32) {
-	if key > mm.MaximumFileKey {
-		mm.MaximumFileKey = key
+	mm.MaybeSetMaxFileKey(key)
+	mm.LogFileCounter(newSize)
+	if oldSize > 0 && oldSize != TombstoneFileSize {
+		mm.LogDeletionCounter(oldSize)
 	}
-	mm.FileCounter++
-	mm.FileByteCounter = mm.FileByteCounter + uint64(newSize)
+}
+func (mm mapMetric) LogFileCounter(newSize uint32) {
+	atomic.AddUint32(&mm.FileCounter, 1)
+	atomic.AddUint64(&mm.FileByteCounter, uint64(newSize))
+}
+func (mm mapMetric) LogDeletionCounter(oldSize uint32) {
 	if oldSize > 0 {
-		mm.DeletionCounter++
-		mm.DeletionByteCounter = mm.DeletionByteCounter + uint64(oldSize)
+		atomic.AddUint32(&mm.DeletionCounter, 1)
+		atomic.AddUint64(&mm.DeletionByteCounter, uint64(oldSize))
+	}
+}
+func (mm mapMetric) ContentSize() uint64 {
+	return atomic.LoadUint64(&mm.FileByteCounter)
+}
+func (mm mapMetric) DeletedSize() uint64 {
+	return atomic.LoadUint64(&mm.DeletionByteCounter)
+}
+func (mm mapMetric) FileCount() int {
+	return int(atomic.LoadUint32(&mm.FileCounter))
+}
+func (mm mapMetric) DeletedCount() int {
+	return int(atomic.LoadUint32(&mm.DeletionCounter))
+}
+func (mm mapMetric) MaxFileKey() NeedleId {
+	t := uint64(mm.MaximumFileKey)
+	return NeedleId(t)
+}
+func (mm mapMetric) MaybeSetMaxFileKey(key NeedleId) {
+	if key > mm.MaxFileKey() {
+		atomic.StoreUint64(&mm.MaximumFileKey, uint64(key))
 	}
 }
 
-func (mm mapMetric) ContentSize() uint64 {
-	return mm.FileByteCounter
-}
-func (mm mapMetric) DeletedSize() uint64 {
-	return mm.DeletionByteCounter
-}
-func (mm mapMetric) FileCount() int {
-	return mm.FileCounter
-}
-func (mm mapMetric) DeletedCount() int {
-	return mm.DeletionCounter
-}
-func (mm mapMetric) MaxFileKey() NeedleId {
-	return mm.MaximumFileKey
-}
 
 func newNeedleMapMetricFromIndexFile(r *os.File) (mm *mapMetric, err error) {
 	mm = &mapMetric{}
@@ -56,9 +69,7 @@ func newNeedleMapMetricFromIndexFile(r *os.File) (mm *mapMetric, err error) {
 		bf = bloom.NewWithEstimates(uint(entryCount), 0.001)
 	}, func(key NeedleId, offset Offset, size uint32) error {
 
-		if key > mm.MaximumFileKey {
-			mm.MaximumFileKey = key
-		}
+		mm.MaybeSetMaxFileKey(key)
 		NeedleIdToBytes(buf, key)
 		if size != TombstoneFileSize {
 			mm.FileByteCounter += uint64(size)
