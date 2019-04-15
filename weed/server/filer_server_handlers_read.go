@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"io"
+	"io/ioutil"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -107,7 +108,10 @@ func (fs *FilerServer) handleSingleChunk(w http.ResponseWriter, r *http.Request,
 		writeJsonError(w, r, http.StatusInternalServerError, do_err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		io.Copy(ioutil.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 	for k, v := range resp.Header {
 		w.Header()[k] = v
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"google.golang.org/grpc"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"sort"
 
@@ -103,7 +104,10 @@ func readChunkNeedle(fileUrl string, w io.Writer, offset int64) (written int64, 
 	if err != nil {
 		return written, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		io.Copy(ioutil.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 
 	switch resp.StatusCode {
 	case http.StatusRequestedRangeNotSatisfiable:

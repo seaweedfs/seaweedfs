@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/ioutil"
 	"mime"
 	"net/http"
@@ -131,7 +132,10 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, http.StatusInternalServerError, do_err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		io.Copy(ioutil.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 	etag := resp.Header.Get("ETag")
 	resp_body, ra_err := ioutil.ReadAll(resp.Body)
 	if ra_err != nil {
