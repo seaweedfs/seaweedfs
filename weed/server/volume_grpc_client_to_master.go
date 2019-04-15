@@ -41,6 +41,7 @@ func (vs *VolumeServer) heartbeat() {
 			if err != nil {
 				glog.V(0).Infof("heartbeat error: %v", err)
 				time.Sleep(time.Duration(vs.pulseSeconds) * time.Second)
+				newLeader = ""
 			}
 		}
 	}
