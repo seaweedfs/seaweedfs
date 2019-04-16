@@ -21,11 +21,11 @@ func (v *Volume) isFileUnchanged(n *Needle) bool {
 		return false
 	}
 	nv, ok := v.nm.Get(n.Id)
-	if ok && !nv.Offset.IsZero() {
+	if ok && !nv.Offset.IsZero() && nv.Size != TombstoneFileSize {
 		oldNeedle := new(Needle)
 		err := oldNeedle.ReadData(v.dataFile, nv.Offset.ToAcutalOffset(), nv.Size, v.Version())
 		if err != nil {
-			glog.V(0).Infof("Failed to check updated file %v", err)
+			glog.V(0).Infof("Failed to check updated file at offset %d size %d: %v", nv.Offset.ToAcutalOffset(), nv.Size, err)
 			return false
 		}
 		if oldNeedle.Checksum == n.Checksum && bytes.Equal(oldNeedle.Data, n.Data) {
