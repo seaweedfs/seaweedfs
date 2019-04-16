@@ -206,7 +206,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// glog.V(4).Infof("saving %s => %+v", path, entry)
 	if db_err := fs.filer.CreateEntry(ctx, entry); db_err != nil {
-		fs.filer.DeleteFileByFileId(fileId)
+		fs.filer.DeleteChunks(entry.FullPath, entry.Chunks)
 		glog.V(0).Infof("failing to write %s to filer server : %v", path, db_err)
 		writeJsonError(w, r, http.StatusInternalServerError, db_err)
 		return

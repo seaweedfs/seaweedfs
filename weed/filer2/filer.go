@@ -246,7 +246,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p FullPath, isRecurs
 	}
 
 	if shouldDeleteChunks {
-		f.DeleteChunks(entry.Chunks)
+		f.DeleteChunks(p, entry.Chunks)
 	}
 
 	if p == "/" {

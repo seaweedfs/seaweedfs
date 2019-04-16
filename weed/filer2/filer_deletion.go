@@ -51,7 +51,7 @@ func (f *Filer) loopProcessingDeletion() {
 	}
 }
 
-func (f *Filer) DeleteChunks(chunks []*filer_pb.FileChunk) {
+func (f *Filer) DeleteChunks(fullpath FullPath, chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
 		f.fileIdDeletionChan <- chunk.FileId
 	}
@@ -67,7 +67,7 @@ func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
 		return
 	}
 	if newEntry == nil {
-		f.DeleteChunks(oldEntry.Chunks)
+		f.DeleteChunks(oldEntry.FullPath, oldEntry.Chunks)
 	}
 
 	var toDelete []*filer_pb.FileChunk
@@ -84,5 +84,5 @@ func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
 			toDelete = append(toDelete, oldChunk)
 		}
 	}
-	f.DeleteChunks(toDelete)
+	f.DeleteChunks(oldEntry.FullPath, toDelete)
 }
