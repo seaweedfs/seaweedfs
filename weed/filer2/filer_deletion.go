@@ -57,6 +57,8 @@ func (f *Filer) DeleteChunks(fullpath FullPath, chunks []*filer_pb.FileChunk) {
 	}
 }
 
+// DeleteFileByFileId direct delete by file id.
+// Only used when the fileId is not being managed by snapshots.
 func (f *Filer) DeleteFileByFileId(fileId string) {
 	f.fileIdDeletionChan <- fileId
 }
