@@ -13,7 +13,6 @@ var Commands = []*Command{
 	cmdCompact,
 	cmdCopy,
 	cmdFix,
-	cmdFilerExport,
 	cmdFilerReplicate,
 	cmdServer,
 	cmdMaster,
