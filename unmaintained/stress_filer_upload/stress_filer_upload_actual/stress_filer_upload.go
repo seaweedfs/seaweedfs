@@ -142,6 +142,7 @@ func uploadFileToFiler(client *http.Client, filename, destination string) (size 
 		if err != nil {
 			return 0, fmt.Errorf("read http POST %s response: %v", uri, err)
 		}
+		io.Copy(ioutil.Discard, resp.Body)
 		resp.Body.Close()
 	}
 

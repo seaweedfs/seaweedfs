@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"log"
+	"math/rand"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -17,6 +20,7 @@ var (
 	size        = flag.Int("size", 1024, "file size")
 	concurrency = flag.Int("c", 4, "concurrent number of uploads")
 	times       = flag.Int("n", 1024, "repeated number of times")
+	fileCount   = flag.Int("fileCount", 1, "number of files to write")
 	destination = flag.String("to", "http://localhost:8888/", "destination directory on filer")
 
 	statsChan = make(chan stat, 8)
@@ -37,24 +41,32 @@ func main() {
 	for x := 0; x < *concurrency; x++ {
 		wg.Add(1)
 
-		client := &http.Client{}
-
-		go func() {
+		go func(x int) {
 			defer wg.Done()
+
+			client := &http.Client{Transport: &http.Transport{
+				MaxConnsPerHost:     1024,
+				MaxIdleConnsPerHost: 1024,
+			}}
+			r := rand.New(rand.NewSource(time.Now().UnixNano() + int64(x)))
+
 			for t := 0; t < *times; t++ {
-				if size, err := uploadFileToFiler(client, data, fmt.Sprintf("file%d", t), *destination); err == nil {
-					statsChan <- stat{
-						size: size,
+				for f := 0; f < *fileCount; f++ {
+					fn := r.Intn(*fileCount)
+					if size, err := uploadFileToFiler(client, data, fmt.Sprintf("file%04d", fn), *destination); err == nil {
+						statsChan <- stat{
+							size: size,
+						}
+					} else {
+						log.Fatalf("client %d upload %d times: %v", x, t, err)
 					}
-				}else {
-					log.Fatalf("upload: %v", err)
 				}
 			}
-		}()
+		}(x)
 	}
 
 	go func() {
-		ticker := time.NewTicker(500 * time.Millisecond)
+		ticker := time.NewTicker(1000 * time.Millisecond)
 
 		var lastTime time.Time
 		var counter, size int64
@@ -105,6 +117,7 @@ func uploadFileToFiler(client *http.Client, data []byte, filename, destination s
 
 	request, err := http.NewRequest("POST", uri, body)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
+	// request.Close = true  // can not use this, which do not reuse http connection, impacting filer->volume also.
 
 	resp, err := client.Do(request)
 	if err != nil {
@@ -115,6 +128,7 @@ func uploadFileToFiler(client *http.Client, data []byte, filename, destination s
 		if err != nil {
 			return 0, fmt.Errorf("read http POST %s response: %v", uri, err)
 		}
+		io.Copy(ioutil.Discard, resp.Body)
 		resp.Body.Close()
 	}
 
