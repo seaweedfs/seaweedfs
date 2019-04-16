@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -24,12 +25,17 @@ func (c *commandFsMetaSave) Name() string {
 }
 
 func (c *commandFsMetaSave) Help() string {
-	return `recursively save directory and file meta data to a local file
+	return `save all directory and file meta data to a local file for metadata backup.
 
-	fs.meta.save	# save current meta data from current directory
+	fs.meta.save /             # save from the root
+	fs.meta.save /path/to/save # save from the directory /path/to/save
+	fs.meta.save .             # save from current directory
+	fs.meta.save               # save from current directory
 
-	The meta data will be saved into a local <filer_host>_<port>.meta file.
-	These meta data can be later loaded by fs.meta.load command.
+	The meta data will be saved into a local <filer_host>-<port>-<time>.meta file.
+	These meta data can be later loaded by fs.meta.load command, 
+
+	This assumes there are no deletions, so this is different from taking a snapshot.
 
 `
 }
@@ -45,7 +51,9 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *commandEnv, writer io.
 
 	return commandEnv.withFilerClient(ctx, filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
 
-		fileName := fmt.Sprintf("%s-%d.meta", filerServer, filerPort)
+		t := time.Now()
+		fileName := fmt.Sprintf("%s-%d-%4d%02d%02d-%02d%02d%02d.meta",
+			filerServer, filerPort, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 
 		dst, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {

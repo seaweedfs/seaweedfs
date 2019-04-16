@@ -26,7 +26,7 @@ func (c *commandFsMetaLoad) Name() string {
 func (c *commandFsMetaLoad) Help() string {
 	return `load saved filer meta data to restore the directory and file structure
 
-	fs.meta.load <filer_host>_<port>.meta
+	fs.meta.load <filer_host>-<port>-<time>.meta
 
 `
 }
