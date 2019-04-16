@@ -65,7 +65,7 @@ func Post(url string, values url.Values) ([]byte, error) {
 	return b, nil
 }
 
-//	github.com/chrislusf/seaweedfs/unmaintained/repeated_vacuum/repeated_vacuum.go
+//	github.com//unmaintained/repeated_vacuum/repeated_vacuum.go
 //	may need increasing http.Client.Timeout
 func Get(url string) ([]byte, error) {
 	r, err := client.Get(url)

@@ -3,14 +3,14 @@ package aws_sqs
 import (
 	"fmt"
 
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/notification"
+	"github.com/HZ89/seaweedfs/weed/util"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/notification"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
 )
 
@@ -75,7 +75,7 @@ func (k *AwsSqsPub) SendMessage(key string, message proto.Message) (err error) {
 	_, err = k.svc.SendMessage(&sqs.SendMessageInput{
 		DelaySeconds: aws.Int64(10),
 		MessageAttributes: map[string]*sqs.MessageAttributeValue{
-			"key": &sqs.MessageAttributeValue{
+			"key": {
 				DataType:    aws.String("String"),
 				StringValue: aws.String(key),
 			},

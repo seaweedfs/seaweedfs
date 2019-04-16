@@ -6,21 +6,21 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/cassandra"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/leveldb"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/memdb"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/mysql"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/postgres"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/redis"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/notification"
-	_ "github.com/chrislusf/seaweedfs/weed/notification/aws_sqs"
-	_ "github.com/chrislusf/seaweedfs/weed/notification/gocdk_pub_sub"
-	_ "github.com/chrislusf/seaweedfs/weed/notification/google_pub_sub"
-	_ "github.com/chrislusf/seaweedfs/weed/notification/kafka"
-	_ "github.com/chrislusf/seaweedfs/weed/notification/log"
-	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/HZ89/seaweedfs/weed/filer2"
+	_ "github.com/HZ89/seaweedfs/weed/filer2/cassandra"
+	_ "github.com/HZ89/seaweedfs/weed/filer2/leveldb"
+	_ "github.com/HZ89/seaweedfs/weed/filer2/memdb"
+	_ "github.com/HZ89/seaweedfs/weed/filer2/mysql"
+	_ "github.com/HZ89/seaweedfs/weed/filer2/postgres"
+	_ "github.com/HZ89/seaweedfs/weed/filer2/redis"
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/notification"
+	_ "github.com/HZ89/seaweedfs/weed/notification/aws_sqs"
+	_ "github.com/HZ89/seaweedfs/weed/notification/gocdk_pub_sub"
+	_ "github.com/HZ89/seaweedfs/weed/notification/google_pub_sub"
+	_ "github.com/HZ89/seaweedfs/weed/notification/kafka"
+	_ "github.com/HZ89/seaweedfs/weed/notification/log"
+	"github.com/HZ89/seaweedfs/weed/security"
 	"github.com/spf13/viper"
 )
 
@@ -105,7 +105,7 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 			glog.Fatalf("Failed to load %s.toml file from current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/"+
 				"\n\nPlease follow this example and add a filer.toml file to "+
 				"current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/:\n"+
-				"    https://github.com/chrislusf/seaweedfs/blob/master/weed/%s.toml\n"+
+				"    https://github.com//blob/master/weed/%s.toml\n"+
 				"\nOr use this command to generate the default toml file\n"+
 				"    weed scaffold -config=%s -output=.\n\n\n",
 				configFileName, configFileName, configFileName)

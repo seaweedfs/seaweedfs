@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/server"
 	"github.com/gorilla/mux"
 )
 
@@ -158,7 +158,7 @@ func passThroughResponse(proxyResonse *http.Response, w http.ResponseWriter) {
 func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.ReadCloser) (etag string, code ErrorCode) {
 
 	hash := md5.New()
-	var body io.Reader = io.TeeReader(dataReader, hash)
+	var body = io.TeeReader(dataReader, hash)
 
 	proxyReq, err := http.NewRequest("PUT", uploadUrl, body)
 

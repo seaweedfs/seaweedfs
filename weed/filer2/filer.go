@@ -3,15 +3,16 @@ package filer2
 import (
 	"context"
 	"fmt"
-	"google.golang.org/grpc"
 	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"google.golang.org/grpc"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/wdclient"
 	"github.com/karlseguin/ccache"
 )
 

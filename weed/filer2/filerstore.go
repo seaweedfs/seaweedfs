@@ -3,7 +3,8 @@ package filer2
 import (
 	"context"
 	"errors"
-	"github.com/chrislusf/seaweedfs/weed/util"
+
+	"github.com/HZ89/seaweedfs/weed/util"
 )
 
 type FilerStore interface {

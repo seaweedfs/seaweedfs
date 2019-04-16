@@ -3,14 +3,14 @@ package sub
 import (
 	"fmt"
 
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/pb/filer_pb"
+	"github.com/HZ89/seaweedfs/weed/util"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
 )
 

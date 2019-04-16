@@ -4,15 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage"
-	"github.com/chrislusf/seaweedfs/weed/topology"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"math/rand"
 	"net/http"
 	"strconv"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/operation"
+	"github.com/HZ89/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/HZ89/seaweedfs/weed/storage"
+	"github.com/HZ89/seaweedfs/weed/topology"
+	"github.com/HZ89/seaweedfs/weed/util"
 )
 
 func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {

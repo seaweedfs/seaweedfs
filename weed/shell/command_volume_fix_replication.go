@@ -3,13 +3,14 @@ package shell
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 	"io"
 	"math/rand"
 	"sort"
+
+	"github.com/HZ89/seaweedfs/weed/operation"
+	"github.com/HZ89/seaweedfs/weed/pb/master_pb"
+	"github.com/HZ89/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/HZ89/seaweedfs/weed/storage"
 )
 
 func init() {

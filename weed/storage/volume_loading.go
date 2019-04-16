@@ -2,11 +2,12 @@ package storage
 
 import (
 	"fmt"
-	"github.com/syndtr/goleveldb/leveldb/opt"
 	"os"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/syndtr/goleveldb/leveldb/opt"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
 )
 
 func loadVolumeWithoutIndex(dirname string, collection string, id VolumeId, needleMapKind NeedleMapType) (v *Volume, e error) {

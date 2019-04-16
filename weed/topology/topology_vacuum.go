@@ -2,13 +2,14 @@ package topology
 
 import (
 	"context"
-	"google.golang.org/grpc"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"google.golang.org/grpc"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/operation"
+	"github.com/HZ89/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/HZ89/seaweedfs/weed/storage"
 )
 
 func batchVacuumVolumeCheck(grpcDialOption grpc.DialOption, vl *VolumeLayout, vid storage.VolumeId, locationlist *VolumeLocationList, garbageThreshold float64) bool {
@@ -33,7 +34,7 @@ func batchVacuumVolumeCheck(grpcDialOption grpc.DialOption, vl *VolumeLayout, vi
 		}(index, dn.Url(), vid)
 	}
 	isCheckSuccess := true
-	for _ = range locationlist.list {
+	for range locationlist.list {
 		select {
 		case canVacuum := <-ch:
 			isCheckSuccess = isCheckSuccess && canVacuum
@@ -66,7 +67,7 @@ func batchVacuumVolumeCompact(grpcDialOption grpc.DialOption, vl *VolumeLayout, 
 		}(index, dn.Url(), vid)
 	}
 	isVacuumSuccess := true
-	for _ = range locationlist.list {
+	for range locationlist.list {
 		select {
 		case canCommit := <-ch:
 			isVacuumSuccess = isVacuumSuccess && canCommit

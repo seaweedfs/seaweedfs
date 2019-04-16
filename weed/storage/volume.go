@@ -2,14 +2,15 @@ package storage
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"os"
 	"path"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/pb/master_pb"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
 )
 
 type Volume struct {
@@ -79,22 +80,22 @@ func (v *Volume) Size() int64 {
 	return 0 // -1 causes integer overflow and the volume to become unwritable.
 }
 
-func (v *Volume)IndexFileSize() uint64 {
+func (v *Volume) IndexFileSize() uint64 {
 	return v.nm.IndexFileSize()
 }
 
-func (v *Volume)DataFileSize() uint64 {
+func (v *Volume) DataFileSize() uint64 {
 	return uint64(v.Size())
 }
 
 /**
 unix time in seconds
- */
-func (v *Volume)LastModifiedTime() uint64 {
+*/
+func (v *Volume) LastModifiedTime() uint64 {
 	return v.lastModifiedTime
 }
 
-func (v *Volume)FileCount() uint64 {
+func (v *Volume) FileCount() uint64 {
 	return uint64(v.nm.FileCount())
 }
 

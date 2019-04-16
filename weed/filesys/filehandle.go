@@ -3,20 +3,21 @@ package filesys
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/gabriel-vasile/mimetype"
-	"github.com/seaweedfs/fuse"
-	"github.com/seaweedfs/fuse/fs"
-	"google.golang.org/grpc"
 	"mime"
 	"path"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/HZ89/seaweedfs/weed/filer2"
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/operation"
+	"github.com/HZ89/seaweedfs/weed/pb/filer_pb"
+	"github.com/HZ89/seaweedfs/weed/util"
+	"github.com/gabriel-vasile/mimetype"
+	"github.com/seaweedfs/fuse"
+	"github.com/seaweedfs/fuse/fs"
+	"google.golang.org/grpc"
 )
 
 type FileHandle struct {

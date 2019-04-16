@@ -6,8 +6,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/HZ89/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/HZ89/seaweedfs/weed/storage"
 )
 
 func (vs *VolumeServer) VolumeFollow(req *volume_server_pb.VolumeFollowRequest, stream volume_server_pb.VolumeServer_VolumeFollowServer) error {

@@ -3,12 +3,12 @@ package storage
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"google.golang.org/grpc"
 	"io"
 	"os"
+
+	"github.com/HZ89/seaweedfs/weed/operation"
+	"github.com/HZ89/seaweedfs/weed/pb/volume_server_pb"
+	"google.golang.org/grpc"
 )
 
 func (v *Volume) GetVolumeSyncStatus() *volume_server_pb.VolumeSyncStatusResponse {

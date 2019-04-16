@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/spf13/viper"
 	"log"
 	"math/rand"
 
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/HZ89/seaweedfs/weed/security"
+	"github.com/HZ89/seaweedfs/weed/server"
+	"github.com/spf13/viper"
+
+	"github.com/HZ89/seaweedfs/weed/operation"
+	"github.com/HZ89/seaweedfs/weed/util"
 )
 
 var (

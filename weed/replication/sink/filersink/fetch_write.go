@@ -3,15 +3,16 @@ package filersink
 import (
 	"context"
 	"fmt"
-	"google.golang.org/grpc"
 	"strings"
 	"sync"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"google.golang.org/grpc"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/operation"
+	"github.com/HZ89/seaweedfs/weed/pb/filer_pb"
+	"github.com/HZ89/seaweedfs/weed/security"
+	"github.com/HZ89/seaweedfs/weed/util"
 )
 
 func (fs *FilerSink) replicateChunks(ctx context.Context, sourceChunks []*filer_pb.FileChunk) (replicatedChunks []*filer_pb.FileChunk, err error) {

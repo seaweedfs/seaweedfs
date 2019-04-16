@@ -3,14 +3,6 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"github.com/spf13/viper"
-	"google.golang.org/grpc"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -21,6 +13,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/HZ89/seaweedfs/weed/operation"
+	"github.com/HZ89/seaweedfs/weed/pb/filer_pb"
+	"github.com/HZ89/seaweedfs/weed/security"
+	"github.com/HZ89/seaweedfs/weed/server"
+	"github.com/HZ89/seaweedfs/weed/util"
+	"github.com/HZ89/seaweedfs/weed/wdclient"
+	"github.com/spf13/viper"
+	"google.golang.org/grpc"
 )
 
 var (

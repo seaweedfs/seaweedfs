@@ -5,7 +5,7 @@ package stats
 import (
 	"syscall"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/HZ89/seaweedfs/weed/pb/volume_server_pb"
 )
 
 func fillInMemStatus(mem *volume_server_pb.MemStatus) {

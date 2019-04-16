@@ -1,14 +1,13 @@
 package storage
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"strings"
 	"sync"
 
-	"fmt"
-
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/glog"
 )
 
 type DiskLocation struct {

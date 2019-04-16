@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"google.golang.org/grpc"
 	"math/rand"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"google.golang.org/grpc"
+
+	"github.com/HZ89/seaweedfs/weed/pb/master_pb"
+	"github.com/HZ89/seaweedfs/weed/util"
 )
 
 type Location struct {

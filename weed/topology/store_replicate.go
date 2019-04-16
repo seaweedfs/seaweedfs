@@ -10,11 +10,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/storage"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/operation"
+	"github.com/HZ89/seaweedfs/weed/security"
+	"github.com/HZ89/seaweedfs/weed/storage"
+	"github.com/HZ89/seaweedfs/weed/util"
 )
 
 func ReplicatedWrite(masterNode string, s *storage.Store,
@@ -135,7 +135,7 @@ type RemoteResult struct {
 func distributedOperation(masterNode string, store *storage.Store, volumeId storage.VolumeId, op func(location operation.Location) error) error {
 	if lookupResult, lookupErr := operation.Lookup(masterNode, volumeId.String()); lookupErr == nil {
 		length := 0
-		selfUrl := (store.Ip + ":" + strconv.Itoa(store.Port))
+		selfUrl := store.Ip + ":" + strconv.Itoa(store.Port)
 		results := make(chan RemoteResult)
 		for _, location := range lookupResult.Locations {
 			if location.Url != selfUrl {

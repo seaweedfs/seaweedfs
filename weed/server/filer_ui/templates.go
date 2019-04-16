@@ -1,8 +1,9 @@
 package master_ui
 
 import (
-	"github.com/dustin/go-humanize"
 	"html/template"
+
+	"github.com/dustin/go-humanize"
 )
 
 var funcMap = template.FuncMap{
@@ -43,7 +44,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
 	<div class="container">
 		<div class="page-header">
 			<h1>
-				<a href="https://github.com/chrislusf/seaweedfs"><img src="/seaweedfsstatic/seaweed50x50.png"></img></a>
+				<a href="https://github.com/"><img src="/seaweedfsstatic/seaweed50x50.png"></img></a>
 				SeaweedFS Filer
 			</h1>
 		</div>

@@ -6,10 +6,10 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
-
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/disintegration/imaging"
 	"io"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/disintegration/imaging"
 )
 
 func Resized(ext string, read io.ReadSeeker, width, height int, mode string) (resized io.ReadSeeker, w int, h int) {

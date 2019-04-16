@@ -3,14 +3,13 @@ package storage
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/images"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"io/ioutil"
+	"github.com/HZ89/seaweedfs/weed/images"
 )
 
 const (

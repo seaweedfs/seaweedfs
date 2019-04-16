@@ -3,15 +3,16 @@ package shell
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"google.golang.org/grpc"
 	"io"
 	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/HZ89/seaweedfs/weed/filer2"
+	"github.com/HZ89/seaweedfs/weed/pb/filer_pb"
+	"github.com/HZ89/seaweedfs/weed/wdclient"
+	"google.golang.org/grpc"
 )
 
 type ShellOptions struct {
@@ -51,7 +52,7 @@ func (ce *commandEnv) parseUrl(input string) (filerServer string, filerPort int6
 
 func (ce *commandEnv) isDirectory(ctx context.Context, filerServer string, filerPort int64, path string) bool {
 
-	return ce.checkDirectory(ctx,filerServer,filerPort,path) == nil
+	return ce.checkDirectory(ctx, filerServer, filerPort, path) == nil
 
 }
 

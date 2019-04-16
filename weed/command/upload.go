@@ -3,13 +3,14 @@ package command
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/spf13/viper"
 	"os"
 	"path/filepath"
 
-	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/HZ89/seaweedfs/weed/security"
+	"github.com/HZ89/seaweedfs/weed/server"
+	"github.com/spf13/viper"
+
+	"github.com/HZ89/seaweedfs/weed/operation"
 )
 
 var (

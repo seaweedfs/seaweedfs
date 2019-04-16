@@ -4,12 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"math"
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/util"
 )
 
 const (

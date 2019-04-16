@@ -4,9 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/spf13/viper"
-	"google.golang.org/grpc"
 	"io"
 	"math"
 	"math/rand"
@@ -18,11 +15,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"github.com/HZ89/seaweedfs/weed/server"
+	"github.com/spf13/viper"
+	"google.golang.org/grpc"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/operation"
+	"github.com/HZ89/seaweedfs/weed/security"
+	"github.com/HZ89/seaweedfs/weed/util"
+	"github.com/HZ89/seaweedfs/weed/wdclient"
 )
 
 type BenchmarkOptions struct {

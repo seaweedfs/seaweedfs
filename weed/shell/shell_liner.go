@@ -3,15 +3,16 @@ package shell
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"io"
 	"os"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 
+	"github.com/HZ89/seaweedfs/weed/wdclient"
+
 	"github.com/peterh/liner"
-	"sort"
 )
 
 var (

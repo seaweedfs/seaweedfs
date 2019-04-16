@@ -1,9 +1,9 @@
 package command
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/chrislusf/seaweedfs/weed/shell"
+	"github.com/HZ89/seaweedfs/weed/security"
+	"github.com/HZ89/seaweedfs/weed/server"
+	"github.com/HZ89/seaweedfs/weed/shell"
 	"github.com/spf13/viper"
 )
 
@@ -23,8 +23,6 @@ var cmdShell = &Command{
 
   `,
 }
-
-var ()
 
 func runShell(command *Command, args []string) bool {
 

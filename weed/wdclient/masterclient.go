@@ -6,9 +6,9 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/pb/master_pb"
+	"github.com/HZ89/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
 

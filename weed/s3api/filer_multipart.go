@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/HZ89/seaweedfs/weed/filer2"
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/pb/filer_pb"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/satori/go.uuid"
+	"github.com/satori/uuid"
 )
 
 type InitiateMultipartUploadResult struct {
@@ -23,7 +23,7 @@ type InitiateMultipartUploadResult struct {
 }
 
 func (s3a *S3ApiServer) createMultipartUpload(ctx context.Context, input *s3.CreateMultipartUploadInput) (output *InitiateMultipartUploadResult, code ErrorCode) {
-	uploadId, _ := uuid.NewV4()
+	uploadId := uuid.NewV4()
 	uploadIdString := uploadId.String()
 
 	if err := s3a.mkdir(ctx, s3a.genUploadsFolder(*input.Bucket), uploadIdString, func(entry *filer_pb.Entry) {

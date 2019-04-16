@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -12,10 +13,9 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"io"
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/storage"
+	"github.com/HZ89/seaweedfs/weed/storage/types"
 )
 
 const (

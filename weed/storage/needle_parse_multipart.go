@@ -1,14 +1,15 @@
 package storage
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
 	"io/ioutil"
 	"mime"
 	"net/http"
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/operation"
 )
 
 func parseMultipart(r *http.Request) (

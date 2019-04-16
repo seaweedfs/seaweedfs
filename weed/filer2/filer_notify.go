@@ -1,9 +1,9 @@
 package filer2
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/notification"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/notification"
+	"github.com/HZ89/seaweedfs/weed/pb/filer_pb"
 )
 
 func (f *Filer) NotifyUpdateEvent(oldEntry, newEntry *Entry, deleteChunks bool) {

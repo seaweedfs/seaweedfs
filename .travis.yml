@@ -12,10 +12,10 @@ before_install:
 install:
   - export CGO_ENABLED="0"
   - go env
-  - go get -u ./weed/...
+  - go get -u ./...
 
 script:
-  - go test ./weed/...
+  - go test ./...
 
 before_deploy:
   - make release
@@ -46,5 +46,5 @@ deploy:
     - build/openbsd_386.tar.gz
   on:
     tags: true
-    repo: chrislusf/seaweedfs
+    repo: HZ89/seaweedfs
     go: 1.12.x

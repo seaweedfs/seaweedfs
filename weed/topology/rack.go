@@ -1,9 +1,10 @@
 package topology
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"strconv"
 	"time"
+
+	"github.com/HZ89/seaweedfs/weed/pb/master_pb"
 )
 
 type Rack struct {

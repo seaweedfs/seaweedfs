@@ -2,9 +2,10 @@ package main
 
 import (
 	"flag"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 	"time"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/storage"
 )
 
 var (

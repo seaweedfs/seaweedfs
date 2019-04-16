@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/glog"
 )
 
 type Location struct {

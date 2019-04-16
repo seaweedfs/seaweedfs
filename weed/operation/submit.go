@@ -2,7 +2,6 @@ package operation
 
 import (
 	"bytes"
-	"google.golang.org/grpc"
 	"io"
 	"mime"
 	"net/url"
@@ -11,8 +10,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/security"
+	"google.golang.org/grpc"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/security"
 )
 
 type FilePart struct {
@@ -52,7 +53,7 @@ func SubmitFiles(master string, grpcDialOption grpc.DialOption, files []FilePart
 	}
 	ret, err := Assign(master, grpcDialOption, ar)
 	if err != nil {
-		for index, _ := range files {
+		for index := range files {
 			results[index].Error = err.Error()
 		}
 		return results, err

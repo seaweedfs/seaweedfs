@@ -1,12 +1,13 @@
 package topology
 
 import (
-	"google.golang.org/grpc"
 	"math/rand"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"google.golang.org/grpc"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/storage"
 )
 
 func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, garbageThreshold float64, preallocate int64) {
@@ -21,7 +22,7 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 	}()
 	go func(garbageThreshold float64) {
 		c := time.Tick(15 * time.Minute)
-		for _ = range c {
+		for range c {
 			if t.IsLeader() {
 				t.Vacuum(grpcDialOption, garbageThreshold, preallocate)
 			}

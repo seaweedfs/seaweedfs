@@ -16,8 +16,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/security"
 )
 
 type UploadResult struct {

@@ -1,16 +1,17 @@
 package command
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/spf13/viper"
+	"fmt"
 	"net/http"
 	"time"
 
-	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/s3api"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/HZ89/seaweedfs/weed/security"
+	"github.com/HZ89/seaweedfs/weed/server"
+	"github.com/spf13/viper"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/s3api"
+	"github.com/HZ89/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
 )
 

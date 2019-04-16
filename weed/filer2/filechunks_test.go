@@ -1,11 +1,11 @@
 package filer2
 
 import (
+	"fmt"
 	"log"
 	"testing"
 
-	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/HZ89/seaweedfs/weed/pb/filer_pb"
 )
 
 func TestCompactFileChunks(t *testing.T) {

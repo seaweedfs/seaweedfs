@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/HZ89/seaweedfs/weed/pb/filer_pb"
 	"github.com/golang/protobuf/proto"
 )
 
@@ -20,7 +20,7 @@ func TestProtoMarshalText(t *testing.T) {
 			TtlSec: 25,
 		},
 		Chunks: []*filer_pb.FileChunk{
-			&filer_pb.FileChunk{
+			{
 				FileId:       "234,2423423422",
 				Offset:       234234,
 				Size:         234,

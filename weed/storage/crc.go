@@ -4,7 +4,7 @@ import (
 	"crypto/md5"
 	"fmt"
 
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/HZ89/seaweedfs/weed/util"
 	"github.com/klauspost/crc32"
 )
 

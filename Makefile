@@ -1,18 +1,19 @@
+BASEOUTPUT = _output/
 BINARY = weed/weed
-package = github.com/chrislusf/seaweedfs/weed
+package = github.com/HZ89/seaweedfs
 
 GO_FLAGS = #-v
-SOURCE_DIR = ./weed/
+SOURCE_DIR = .
 
 appname := weed
 
 sources := $(wildcard *.go)
 
-build = CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) go build -ldflags "-extldflags -static" -o build/$(appname)$(3) $(SOURCE_DIR)
+build = CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) go build -ldflags "-extldflags -static" -o $(BASEOUTPUT)build/$(appname)$(3) $(SOURCE_DIR)
 tar = cd build && tar -cvzf $(1)_$(2).tar.gz $(appname)$(3) && rm $(appname)$(3)
 zip = cd build && zip $(1)_$(2).zip $(appname)$(3) && rm $(appname)$(3)
 
-build_large = CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) go build -tags 5BytesOffset -ldflags "-extldflags -static" -o build/$(appname)$(3) $(SOURCE_DIR)
+build_large = CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) go build -tags 5BytesOffset -ldflags "-extldflags -static" -o $(BASEOUTPUT)build/$(appname)$(3) $(SOURCE_DIR)
 tar_large = cd build && tar -cvzf $(1)_$(2)_large_disk.tar.gz $(appname)$(3) && rm $(appname)$(3)
 zip_large = cd build && zip $(1)_$(2)_large_disk.zip $(appname)$(3) && rm $(appname)$(3)
 
@@ -22,18 +23,19 @@ all: build
 
 clean:
 	go clean -i $(GO_FLAGS) $(SOURCE_DIR)
-	rm -f $(BINARY)
+	rm -f $(BASEOUTPUT)
 	rm -rf build/
 
 deps:
-	go get $(GO_FLAGS) -d $(SOURCE_DIR)
+	go mod tidy
 
 build: deps
-	go build $(GO_FLAGS) -o $(BINARY) $(SOURCE_DIR)
+	mkdir -p $(BASEOUTPUT)weed
+	go build $(GO_FLAGS) -o $(BASEOUTPUT)$(BINARY) $(SOURCE_DIR)
 
 linux: deps
-	mkdir -p linux
-	GOOS=linux GOARCH=amd64 go build $(GO_FLAGS) -o linux/$(BINARY) $(SOURCE_DIR)
+	mkdir -p $(BASEOUTPUT)linux
+	GOOS=linux GOARCH=amd64 go build $(GO_FLAGS) -o $(BASEOUTPUT)linux/$(BINARY) $(SOURCE_DIR)
 
 release: deps windows_build darwin_build linux_build bsd_build 5_byte_linux_build 5_byte_darwin_build 5_byte_windows_build
 

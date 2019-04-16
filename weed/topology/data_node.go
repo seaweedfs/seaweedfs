@@ -2,11 +2,12 @@ package topology
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"strconv"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/HZ89/seaweedfs/weed/pb/master_pb"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/storage"
 )
 
 type DataNode struct {

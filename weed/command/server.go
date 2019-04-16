@@ -1,9 +1,6 @@
 package command
 
 import (
-	"github.com/chrislusf/raft/protobuf"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/spf13/viper"
 	"net/http"
 	"os"
 	"runtime"
@@ -13,10 +10,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/HZ89/seaweedfs/weed/security"
+	"github.com/chrislusf/raft/protobuf"
+	"github.com/spf13/viper"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/pb/master_pb"
+	"github.com/HZ89/seaweedfs/weed/server"
+	"github.com/HZ89/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc/reflection"
 )

@@ -3,10 +3,11 @@ package weed_server
 import (
 	"context"
 	"fmt"
+
+	"github.com/HZ89/seaweedfs/weed/operation"
+	"github.com/HZ89/seaweedfs/weed/pb/master_pb"
+	"github.com/HZ89/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/raft"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 )
 
 func (ms *MasterServer) CollectionList(ctx context.Context, req *master_pb.CollectionListRequest) (*master_pb.CollectionListResponse, error) {

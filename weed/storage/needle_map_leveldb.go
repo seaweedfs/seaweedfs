@@ -2,14 +2,14 @@ package storage
 
 import (
 	"fmt"
-	"github.com/syndtr/goleveldb/leveldb/opt"
 	"os"
 	"path/filepath"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/syndtr/goleveldb/leveldb/opt"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/storage/needle"
+	"github.com/HZ89/seaweedfs/weed/util"
 	"github.com/syndtr/goleveldb/leveldb"
 )
 

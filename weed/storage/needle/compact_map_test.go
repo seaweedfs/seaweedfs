@@ -2,7 +2,6 @@ package needle
 
 import (
 	"fmt"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"testing"
 )
 

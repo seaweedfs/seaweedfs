@@ -1,11 +1,11 @@
 package storage
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io/ioutil"
 	"math/rand"
 	"testing"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
 )
 
 func TestFastLoadingNeedleMapMetrics(t *testing.T) {

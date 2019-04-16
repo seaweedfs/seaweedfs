@@ -2,7 +2,6 @@ package storage
 
 import (
 	"encoding/hex"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 type FileId struct {

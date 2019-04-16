@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	jwt "github.com/dgrijalva/jwt-go"
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/dgrijalva/jwt-go"
 )
 
 type EncodedJwt string

@@ -1,15 +1,16 @@
 package s3api
 
 import (
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/cassandra"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/leveldb"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/memdb"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/mysql"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/postgres"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/redis"
+	"net/http"
+
+	_ "github.com/HZ89/seaweedfs/weed/filer2/cassandra"
+	_ "github.com/HZ89/seaweedfs/weed/filer2/leveldb"
+	_ "github.com/HZ89/seaweedfs/weed/filer2/memdb"
+	_ "github.com/HZ89/seaweedfs/weed/filer2/mysql"
+	_ "github.com/HZ89/seaweedfs/weed/filer2/postgres"
+	_ "github.com/HZ89/seaweedfs/weed/filer2/redis"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc"
-	"net/http"
 )
 
 type S3ApiServerOption struct {

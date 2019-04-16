@@ -5,9 +5,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	weed_util "github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/HZ89/seaweedfs/weed/filer2"
+	"github.com/HZ89/seaweedfs/weed/glog"
+	weed_util "github.com/HZ89/seaweedfs/weed/util"
 	"github.com/syndtr/goleveldb/leveldb"
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
 )

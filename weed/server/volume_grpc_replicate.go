@@ -3,12 +3,13 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 	"io"
 	"os"
+
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/operation"
+	"github.com/HZ89/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/HZ89/seaweedfs/weed/storage"
 )
 
 func (vs *VolumeServer) ReplicateVolume(ctx context.Context, req *volume_server_pb.ReplicateVolumeRequest) (*volume_server_pb.ReplicateVolumeResponse, error) {
@@ -82,7 +83,7 @@ func (vs *VolumeServer) ReplicateVolume(ctx context.Context, req *volume_server_
 		return nil, err
 	}
 
-	if err = checkCopyFiles(volFileInfoResp, idxFileName, datFileName); err != nil {  // added by panyc16
+	if err = checkCopyFiles(volFileInfoResp, idxFileName, datFileName); err != nil { // added by panyc16
 		return nil, err
 	}
 
@@ -96,9 +97,9 @@ func (vs *VolumeServer) ReplicateVolume(ctx context.Context, req *volume_server_
 }
 
 /**
-	only check the the differ of the file size
-	todo: maybe should check the received count and deleted count of the volume
- */
+only check the the differ of the file size
+todo: maybe should check the received count and deleted count of the volume
+*/
 func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse, idxFileName, datFileName string) error {
 	stat, err := os.Stat(idxFileName)
 	if err != nil {

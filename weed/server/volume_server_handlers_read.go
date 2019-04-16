@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -12,13 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"encoding/json"
-
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/images"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/storage"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/images"
+	"github.com/HZ89/seaweedfs/weed/operation"
+	"github.com/HZ89/seaweedfs/weed/storage"
+	"github.com/HZ89/seaweedfs/weed/util"
 )
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")

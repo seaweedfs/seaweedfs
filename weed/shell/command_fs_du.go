@@ -3,11 +3,12 @@ package shell
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"google.golang.org/grpc"
 	"io"
+
+	"github.com/HZ89/seaweedfs/weed/filer2"
+	"github.com/HZ89/seaweedfs/weed/pb/filer_pb"
+	"github.com/HZ89/seaweedfs/weed/util"
+	"google.golang.org/grpc"
 )
 
 func init() {

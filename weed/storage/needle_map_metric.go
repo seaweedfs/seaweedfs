@@ -5,7 +5,7 @@ import (
 	"os"
 	"sync/atomic"
 
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	. "github.com/HZ89/seaweedfs/weed/storage/types"
 	"github.com/willf/bloom"
 )
 
@@ -59,7 +59,6 @@ func (mm mapMetric) MaybeSetMaxFileKey(key NeedleId) {
 		atomic.StoreUint64(&mm.MaximumFileKey, uint64(key))
 	}
 }
-
 
 func newNeedleMapMetricFromIndexFile(r *os.File) (mm *mapMetric, err error) {
 	mm = &mapMetric{}

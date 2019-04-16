@@ -1,10 +1,11 @@
 package topology
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/sequence"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 	"testing"
+
+	"github.com/HZ89/seaweedfs/weed/pb/master_pb"
+	"github.com/HZ89/seaweedfs/weed/sequence"
+	"github.com/HZ89/seaweedfs/weed/storage"
 )
 
 func TestRemoveDataCenter(t *testing.T) {

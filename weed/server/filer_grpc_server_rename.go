@@ -3,10 +3,11 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"path/filepath"
+
+	"github.com/HZ89/seaweedfs/weed/filer2"
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/pb/filer_pb"
 )
 
 func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.AtomicRenameEntryRequest) (*filer_pb.AtomicRenameEntryResponse, error) {
@@ -88,7 +89,7 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, oldParent filer
 	return nil
 }
 
-func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent filer2.FullPath, entry *filer2.Entry, newParent filer2.FullPath, newName string, events *MoveEvents) (error) {
+func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent filer2.FullPath, entry *filer2.Entry, newParent filer2.FullPath, newName string, events *MoveEvents) error {
 
 	oldPath, newPath := oldParent.Child(entry.Name()), newParent.Child(newName)
 

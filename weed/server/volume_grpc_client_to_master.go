@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/HZ89/seaweedfs/weed/security"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/pb/master_pb"
+	"github.com/HZ89/seaweedfs/weed/util"
 	"golang.org/x/net/context"
 )
 

@@ -4,9 +4,6 @@ package command
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/spf13/viper"
 	"os"
 	"os/user"
 	"path"
@@ -15,9 +12,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filesys"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/HZ89/seaweedfs/weed/security"
+	"github.com/HZ89/seaweedfs/weed/server"
+	"github.com/spf13/viper"
+
+	"github.com/HZ89/seaweedfs/weed/filesys"
+	"github.com/HZ89/seaweedfs/weed/glog"
+	"github.com/HZ89/seaweedfs/weed/util"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
 )
