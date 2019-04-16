@@ -44,7 +44,7 @@ func withMasterServerClient(masterServer string, grpcDialOption grpc.DialOption,
 
 	masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(masterServer)
 	if parseErr != nil {
-		return fmt.Errorf("failed to parse master grpc %v", masterServer)
+		return fmt.Errorf("failed to parse master grpc %v: %v", masterServer, parseErr)
 	}
 
 	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {

@@ -34,7 +34,7 @@ func (vs *VolumeServer) heartbeat() {
 			}
 			masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(master)
 			if parseErr != nil {
-				glog.V(0).Infof("failed to parse master grpc %v", masterGrpcAddress)
+				glog.V(0).Infof("failed to parse master grpc %v: %v", masterGrpcAddress, parseErr)
 				continue
 			}
 			newLeader, err = vs.doHeartbeat(context.Background(), master, masterGrpcAddress, grpcDialOption, time.Duration(vs.pulseSeconds)*time.Second)

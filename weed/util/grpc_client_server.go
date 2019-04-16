@@ -88,19 +88,19 @@ func WithCachedGrpcClient(ctx context.Context, fn func(*grpc.ClientConn) error, 
 }
 
 func ParseServerToGrpcAddress(server string) (serverGrpcAddress string, err error) {
-	hostnameAndPort := strings.Split(server, ":")
-	if len(hostnameAndPort) != 2 {
-		return "", fmt.Errorf("server should have hostname:port format: %v", hostnameAndPort)
+	colonIndex := strings.LastIndex(server, ":")
+	if colonIndex < 0 {
+		return "", fmt.Errorf("server should have hostname:port format: %v", server)
 	}
 
-	port, parseErr := strconv.ParseUint(hostnameAndPort[1], 10, 64)
+	port, parseErr := strconv.ParseUint(server[colonIndex+1:], 10, 64)
 	if parseErr != nil {
 		return "", fmt.Errorf("server port parse error: %v", parseErr)
 	}
 
 	grpcPort := int(port) + 10000
 
-	return fmt.Sprintf("%s:%d", hostnameAndPort[0], grpcPort), nil
+	return fmt.Sprintf("%s:%d", server[:colonIndex], grpcPort), nil
 }
 
 func ServerToGrpcAddress(server string) (serverGrpcAddress string) {
