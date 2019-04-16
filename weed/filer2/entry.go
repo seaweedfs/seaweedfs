@@ -52,9 +52,20 @@ func (entry *Entry) ToProtoEntry() *filer_pb.Entry {
 		return nil
 	}
 	return &filer_pb.Entry{
-		Name:        string(entry.FullPath),
+		Name:        entry.FullPath.Name(),
 		IsDirectory: entry.IsDirectory(),
 		Attributes:  EntryAttributeToPb(entry),
 		Chunks:      entry.Chunks,
+	}
+}
+
+func (entry *Entry) ToProtoFullEntry() *filer_pb.FullEntry {
+	if entry == nil {
+		return nil
+	}
+	dir, _ := entry.FullPath.DirAndName()
+	return &filer_pb.FullEntry{
+		Dir:   dir,
+		Entry: entry.ToProtoEntry(),
 	}
 }

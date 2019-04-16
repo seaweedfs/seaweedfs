@@ -130,7 +130,7 @@ func (s3sink *S3Sink) CreateEntry(ctx context.Context, key string, entry *filer_
 
 }
 
-func (s3sink *S3Sink) UpdateEntry(ctx context.Context, key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (s3sink *S3Sink) UpdateEntry(ctx context.Context, key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
 	key = cleanKey(key)
 	// TODO improve efficiency
 	return false, nil

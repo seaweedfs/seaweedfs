@@ -2,6 +2,7 @@ package replication
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -51,10 +52,15 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 		return nil
 	}
 
-	foundExisting, err := r.sink.UpdateEntry(ctx, key, message.OldEntry, message.NewEntry, message.DeleteChunks)
+	foundExisting, err := r.sink.UpdateEntry(ctx, key, message.OldEntry, message.NewParentPath, message.NewEntry, message.DeleteChunks)
 	if foundExisting {
 		glog.V(4).Infof("updated %v", key)
 		return err
+	}
+
+	err = r.sink.DeleteEntry(ctx, key, message.OldEntry.IsDirectory, false)
+	if err != nil {
+		return fmt.Errorf("delete old entry %v: %v", key, err)
 	}
 
 	glog.V(4).Infof("creating missing %v", key)

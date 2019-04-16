@@ -72,10 +72,16 @@ message Entry {
     map<string, bytes> extended = 5;
 }
 
+message FullEntry {
+    string dir = 1;
+    Entry entry = 2;
+}
+
 message EventNotification {
     Entry old_entry = 1;
     Entry new_entry = 2;
     bool delete_chunks = 3;
+    string new_parent_path = 4;
 }
 
 message FileChunk {

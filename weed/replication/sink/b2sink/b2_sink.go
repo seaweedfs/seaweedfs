@@ -124,7 +124,7 @@ func (g *B2Sink) CreateEntry(ctx context.Context, key string, entry *filer_pb.En
 
 }
 
-func (g *B2Sink) UpdateEntry(ctx context.Context, key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (g *B2Sink) UpdateEntry(ctx context.Context, key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
 
 	key = cleanKey(key)
 

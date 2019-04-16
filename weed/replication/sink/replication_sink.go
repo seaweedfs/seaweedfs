@@ -12,7 +12,7 @@ type ReplicationSink interface {
 	Initialize(configuration util.Configuration) error
 	DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool) error
 	CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry) error
-	UpdateEntry(ctx context.Context, key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error)
+	UpdateEntry(ctx context.Context, key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error)
 	GetSinkToDirectory() string
 	SetSourceFiler(s *source.FilerSource)
 }

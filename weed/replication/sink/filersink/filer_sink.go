@@ -133,7 +133,7 @@ func (fs *FilerSink) CreateEntry(ctx context.Context, key string, entry *filer_p
 	})
 }
 
-func (fs *FilerSink) UpdateEntry(ctx context.Context, key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (fs *FilerSink) UpdateEntry(ctx context.Context, key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
 
 	dir, name := filer2.FullPath(key).DirAndName()
 
@@ -194,7 +194,7 @@ func (fs *FilerSink) UpdateEntry(ctx context.Context, key string, oldEntry, newE
 	return true, fs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
-			Directory: dir,
+			Directory: newParentPath,
 			Entry:     existingEntry,
 		}
 

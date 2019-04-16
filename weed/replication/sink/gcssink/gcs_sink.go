@@ -119,7 +119,7 @@ func (g *GcsSink) CreateEntry(ctx context.Context, key string, entry *filer_pb.E
 
 }
 
-func (g *GcsSink) UpdateEntry(ctx context.Context, key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (g *GcsSink) UpdateEntry(ctx context.Context, key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
 	// TODO improve efficiency
 	return false, nil
 }
