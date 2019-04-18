@@ -88,7 +88,7 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, oldParent filer
 	return nil
 }
 
-func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent filer2.FullPath, entry *filer2.Entry, newParent filer2.FullPath, newName string, events *MoveEvents) (error) {
+func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent filer2.FullPath, entry *filer2.Entry, newParent filer2.FullPath, newName string, events *MoveEvents) error {
 
 	oldPath, newPath := oldParent.Child(entry.Name()), newParent.Child(newName)
 

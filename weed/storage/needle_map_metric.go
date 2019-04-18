@@ -60,7 +60,6 @@ func (mm mapMetric) MaybeSetMaxFileKey(key NeedleId) {
 	}
 }
 
-
 func newNeedleMapMetricFromIndexFile(r *os.File) (mm *mapMetric, err error) {
 	mm = &mapMetric{}
 	var bf *bloom.BloomFilter

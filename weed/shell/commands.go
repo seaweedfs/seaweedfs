@@ -51,7 +51,7 @@ func (ce *commandEnv) parseUrl(input string) (filerServer string, filerPort int6
 
 func (ce *commandEnv) isDirectory(ctx context.Context, filerServer string, filerPort int64, path string) bool {
 
-	return ce.checkDirectory(ctx,filerServer,filerPort,path) == nil
+	return ce.checkDirectory(ctx, filerServer, filerPort, path) == nil
 
 }
 

@@ -56,7 +56,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *commandEnv, writer io.
 
 		for {
 			if n, err := dst.Read(sizeBuf); n != 4 {
-				if err == io.EOF{
+				if err == io.EOF {
 					return nil
 				}
 				return err

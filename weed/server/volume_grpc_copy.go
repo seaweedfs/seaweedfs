@@ -83,7 +83,7 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 		return nil, err
 	}
 
-	if err = checkCopyFiles(volFileInfoResp, idxFileName, datFileName); err != nil {  // added by panyc16
+	if err = checkCopyFiles(volFileInfoResp, idxFileName, datFileName); err != nil { // added by panyc16
 		return nil, err
 	}
 
@@ -97,9 +97,9 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 }
 
 /**
-	only check the the differ of the file size
-	todo: maybe should check the received count and deleted count of the volume
- */
+only check the the differ of the file size
+todo: maybe should check the received count and deleted count of the volume
+*/
 func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse, idxFileName, datFileName string) error {
 	stat, err := os.Stat(idxFileName)
 	if err != nil {

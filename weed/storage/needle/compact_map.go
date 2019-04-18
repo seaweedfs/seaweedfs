@@ -279,10 +279,10 @@ func toNeedleValue(snve SectionalNeedleValueExtra, snv SectionalNeedleValue, cs 
 
 func (nv NeedleValue) toSectionalNeedleValue(cs *CompactSection) (SectionalNeedleValue, SectionalNeedleValueExtra) {
 	return SectionalNeedleValue{
-		SectionalNeedleId(nv.Key - cs.start),
-		nv.Offset.OffsetLower,
-		nv.Size,
-	}, SectionalNeedleValueExtra{
-		nv.Offset.OffsetHigher,
-	}
+			SectionalNeedleId(nv.Key - cs.start),
+			nv.Offset.OffsetLower,
+			nv.Size,
+		}, SectionalNeedleValueExtra{
+			nv.Offset.OffsetHigher,
+		}
 }

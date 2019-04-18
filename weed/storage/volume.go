@@ -79,22 +79,22 @@ func (v *Volume) Size() int64 {
 	return 0 // -1 causes integer overflow and the volume to become unwritable.
 }
 
-func (v *Volume)IndexFileSize() uint64 {
+func (v *Volume) IndexFileSize() uint64 {
 	return v.nm.IndexFileSize()
 }
 
-func (v *Volume)DataFileSize() uint64 {
+func (v *Volume) DataFileSize() uint64 {
 	return uint64(v.Size())
 }
 
 /**
 unix time in seconds
- */
-func (v *Volume)LastModifiedTime() uint64 {
+*/
+func (v *Volume) LastModifiedTime() uint64 {
 	return v.lastModifiedTime
 }
 
-func (v *Volume)FileCount() uint64 {
+func (v *Volume) FileCount() uint64 {
 	return uint64(v.nm.FileCount())
 }
 
