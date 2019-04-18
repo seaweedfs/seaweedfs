@@ -11,7 +11,8 @@ import (
 	"os"
 )
 
-func (vs *VolumeServer) ReplicateVolume(ctx context.Context, req *volume_server_pb.ReplicateVolumeRequest) (*volume_server_pb.ReplicateVolumeResponse, error) {
+// VolumeCopy copy the .idx .dat files, and mount the volume
+func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.VolumeCopyRequest) (*volume_server_pb.VolumeCopyResponse, error) {
 
 	v := vs.store.GetVolume(storage.VolumeId(req.VolumeId))
 	if v != nil {
@@ -92,7 +93,7 @@ func (vs *VolumeServer) ReplicateVolume(ctx context.Context, req *volume_server_
 		return nil, fmt.Errorf("failed to mount volume %d: %v", req.VolumeId, err)
 	}
 
-	return &volume_server_pb.ReplicateVolumeResponse{}, err
+	return &volume_server_pb.VolumeCopyResponse{}, err
 }
 
 /**

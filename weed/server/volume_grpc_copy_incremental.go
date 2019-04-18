@@ -10,7 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage"
 )
 
-func (vs *VolumeServer) VolumeFollow(req *volume_server_pb.VolumeFollowRequest, stream volume_server_pb.VolumeServer_VolumeFollowServer) error {
+func (vs *VolumeServer) VolumeIncrementalCopy(req *volume_server_pb.VolumeIncrementalCopyRequest, stream volume_server_pb.VolumeServer_VolumeIncrementalCopyServer) error {
 
 	v := vs.store.GetVolume(storage.VolumeId(req.VolumeId))
 	if v == nil {
@@ -47,12 +47,12 @@ func (vs *VolumeServer) VolumeSyncStatus(ctx context.Context, req *volume_server
 
 }
 
-func sendFileContent(datFile *os.File, buf []byte, startOffset, stopOffset int64, stream volume_server_pb.VolumeServer_VolumeFollowServer) error {
+func sendFileContent(datFile *os.File, buf []byte, startOffset, stopOffset int64, stream volume_server_pb.VolumeServer_VolumeIncrementalCopyServer) error {
 	var blockSizeLimit = int64(len(buf))
 	for i := int64(0); i < stopOffset-startOffset; i += blockSizeLimit {
 		n, readErr := datFile.ReadAt(buf, startOffset+i)
 		if readErr == nil || readErr == io.EOF {
-			resp := &volume_server_pb.VolumeFollowResponse{}
+			resp := &volume_server_pb.VolumeIncrementalCopyResponse{}
 			resp.FileContent = buf[:int64(n)]
 			sendErr := stream.Send(resp)
 			if sendErr != nil {

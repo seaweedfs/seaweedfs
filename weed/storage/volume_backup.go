@@ -54,7 +54,7 @@ update needle map when receiving new .dat bytes. But seems not necessary now.)
 
 */
 
-func (v *Volume) Follow(volumeServer string, grpcDialOption grpc.DialOption) error {
+func (v *Volume) IncrementalBackup(volumeServer string, grpcDialOption grpc.DialOption) error {
 
 	ctx := context.Background()
 
@@ -66,7 +66,7 @@ func (v *Volume) Follow(volumeServer string, grpcDialOption grpc.DialOption) err
 
 	err = operation.WithVolumeServerClient(volumeServer, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 
-		stream, err := client.VolumeFollow(ctx, &volume_server_pb.VolumeFollowRequest{
+		stream, err := client.VolumeIncrementalCopy(ctx, &volume_server_pb.VolumeIncrementalCopyRequest{
 			VolumeId: uint32(v.Id),
 			Since:    appendAtNs,
 		})

@@ -117,7 +117,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *commandEnv, 
 				}
 
 				err := operation.WithVolumeServerClient(dst.dataNode.Id, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-					_, replicateErr := volumeServerClient.ReplicateVolume(ctx, &volume_server_pb.ReplicateVolumeRequest{
+					_, replicateErr := volumeServerClient.VolumeCopy(ctx, &volume_server_pb.VolumeCopyRequest{
 						VolumeId:       volumeInfo.Id,
 						Collection:     volumeInfo.Collection,
 						SourceDataNode: sourceNode.dataNode.Id,

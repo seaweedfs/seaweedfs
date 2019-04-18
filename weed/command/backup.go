@@ -113,7 +113,7 @@ func runBackup(cmd *Command, args []string) bool {
 	}
 	defer v.Close()
 
-	if err := v.Follow(volumeServer, grpcDialOption); err != nil {
+	if err := v.IncrementalBackup(volumeServer, grpcDialOption); err != nil {
 		fmt.Printf("Error synchronizing volume %d: %v\n", vid, err)
 		return true
 	}
