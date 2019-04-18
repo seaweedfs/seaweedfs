@@ -42,7 +42,7 @@ service VolumeServer {
     rpc CopyFile (CopyFileRequest) returns (stream CopyFileResponse) {
     }
 
-    rpc VolumeStreamFollow (VolumeStreamFollowRequest) returns (stream VolumeStreamFollowResponse) {
+    rpc VolumeTail (VolumeTailRequest) returns (stream VolumeTailResponse) {
     }
 
 }
@@ -166,12 +166,12 @@ message CopyFileResponse {
     bytes file_content = 1;
 }
 
-message VolumeStreamFollowRequest {
+message VolumeTailRequest {
     uint32 volume_id = 1;
     uint64 since_ns = 2;
     uint32 drainingSeconds = 3;
 }
-message VolumeStreamFollowResponse {
+message VolumeTailResponse {
     bytes needle_header = 1;
     bytes needle_body = 2;
 }
