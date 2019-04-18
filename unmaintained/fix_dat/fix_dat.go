@@ -84,7 +84,7 @@ func iterateEntries(datFile, idxFile *os.File, visitNeedle func(n *storage.Needl
 	}
 	offset := int64(superBlock.BlockSize())
 	version := superBlock.Version()
-	n, rest, err := storage.ReadNeedleHeader(datFile, version, offset)
+	n, _, rest, err := storage.ReadNeedleHeader(datFile, version, offset)
 	if err != nil {
 		fmt.Printf("cannot read needle header: %v", err)
 		return
@@ -114,7 +114,7 @@ func iterateEntries(datFile, idxFile *os.File, visitNeedle func(n *storage.Needl
 					fmt.Println("Recovered in f", r)
 				}
 			}()
-			if err = n.ReadNeedleBody(datFile, version, offset+int64(types.NeedleEntrySize), rest); err != nil {
+			if _, err = n.ReadNeedleBody(datFile, version, offset+int64(types.NeedleEntrySize), rest); err != nil {
 				fmt.Printf("cannot read needle body: offset %d body %d %v\n", offset, rest, err)
 			}
 		}()
@@ -126,7 +126,7 @@ func iterateEntries(datFile, idxFile *os.File, visitNeedle func(n *storage.Needl
 
 		offset += types.NeedleEntrySize + rest
 		//fmt.Printf("==> new entry offset %d\n", offset)
-		if n, rest, err = storage.ReadNeedleHeader(datFile, version, offset); err != nil {
+		if n, _, rest, err = storage.ReadNeedleHeader(datFile, version, offset); err != nil {
 			if err == io.EOF {
 				return
 			}

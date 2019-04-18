@@ -18,9 +18,9 @@ func (vs *VolumeServer) VolumeIncrementalCopy(req *volume_server_pb.VolumeIncrem
 	}
 
 	stopOffset := v.Size()
-	foundOffset, isLastOne, err := v.BinarySearchByAppendAtNs(req.Since)
+	foundOffset, isLastOne, err := v.BinarySearchByAppendAtNs(req.SinceNs)
 	if err != nil {
-		return fmt.Errorf("fail to locate by appendAtNs %d: %s", req.Since, err)
+		return fmt.Errorf("fail to locate by appendAtNs %d: %s", req.SinceNs, err)
 	}
 
 	if isLastOne {

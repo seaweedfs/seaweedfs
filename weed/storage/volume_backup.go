@@ -68,7 +68,7 @@ func (v *Volume) IncrementalBackup(volumeServer string, grpcDialOption grpc.Dial
 
 		stream, err := client.VolumeIncrementalCopy(ctx, &volume_server_pb.VolumeIncrementalCopyRequest{
 			VolumeId: uint32(v.Id),
-			Since:    appendAtNs,
+			SinceNs:  appendAtNs,
 		})
 		if err != nil {
 			return err
@@ -147,11 +147,11 @@ func (v *Volume) locateLastAppendEntry() (Offset, error) {
 
 func (v *Volume) readAppendAtNs(offset Offset) (uint64, error) {
 
-	n, bodyLength, err := ReadNeedleHeader(v.dataFile, v.SuperBlock.version, offset.ToAcutalOffset())
+	n, _, bodyLength, err := ReadNeedleHeader(v.dataFile, v.SuperBlock.version, offset.ToAcutalOffset())
 	if err != nil {
 		return 0, fmt.Errorf("ReadNeedleHeader: %v", err)
 	}
-	err = n.ReadNeedleBody(v.dataFile, v.SuperBlock.version, offset.ToAcutalOffset()+int64(NeedleEntrySize), bodyLength)
+	_, err = n.ReadNeedleBody(v.dataFile, v.SuperBlock.version, offset.ToAcutalOffset()+int64(NeedleEntrySize), bodyLength)
 	if err != nil {
 		return 0, fmt.Errorf("ReadNeedleBody offset %d, bodyLength %d: %v", offset.ToAcutalOffset(), bodyLength, err)
 	}

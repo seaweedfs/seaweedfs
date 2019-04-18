@@ -42,6 +42,9 @@ service VolumeServer {
     rpc CopyFile (CopyFileRequest) returns (stream CopyFileResponse) {
     }
 
+    rpc VolumeStreamFollow (VolumeStreamFollowRequest) returns (stream VolumeStreamFollowResponse) {
+    }
+
 }
 
 //////////////////////////////////////////////////
@@ -120,7 +123,7 @@ message VolumeSyncStatusResponse {
 
 message VolumeIncrementalCopyRequest {
     uint32 volume_id = 1;
-    uint64 since = 2;
+    uint64 since_ns = 2;
 }
 message VolumeIncrementalCopyResponse {
     bytes file_content = 1;
@@ -161,6 +164,16 @@ message CopyFileRequest {
 }
 message CopyFileResponse {
     bytes file_content = 1;
+}
+
+message VolumeStreamFollowRequest {
+    uint32 volume_id = 1;
+    uint64 since_ns = 2;
+    uint32 drainingSeconds = 3;
+}
+message VolumeStreamFollowResponse {
+    bytes needle_header = 1;
+    bytes needle_body = 2;
 }
 
 message ReadVolumeFileStatusRequest {

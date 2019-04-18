@@ -267,14 +267,14 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 	return nil
 }
 
-func ReadNeedleHeader(r *os.File, version Version, offset int64) (n *Needle, bodyLength int64, err error) {
+func ReadNeedleHeader(r *os.File, version Version, offset int64) (n *Needle, bytes []byte, bodyLength int64, err error) {
 	n = new(Needle)
 	if version == Version1 || version == Version2 || version == Version3 {
-		bytes := make([]byte, NeedleEntrySize)
+		bytes = make([]byte, NeedleEntrySize)
 		var count int
 		count, err = r.ReadAt(bytes, offset)
 		if count <= 0 || err != nil {
-			return nil, 0, err
+			return nil, bytes, 0, err
 		}
 		n.ParseNeedleHeader(bytes)
 		bodyLength = NeedleBodyLength(n.Size, version)
@@ -299,21 +299,21 @@ func NeedleBodyLength(needleSize uint32, version Version) int64 {
 
 //n should be a needle already read the header
 //the input stream will read until next file entry
-func (n *Needle) ReadNeedleBody(r *os.File, version Version, offset int64, bodyLength int64) (err error) {
+func (n *Needle) ReadNeedleBody(r *os.File, version Version, offset int64, bodyLength int64) (bytes []byte, err error) {
 
 	if bodyLength <= 0 {
-		return nil
+		return nil, nil
 	}
 	switch version {
 	case Version1:
-		bytes := make([]byte, bodyLength)
+		bytes = make([]byte, bodyLength)
 		if _, err = r.ReadAt(bytes, offset); err != nil {
 			return
 		}
 		n.Data = bytes[:n.Size]
 		n.Checksum = NewCRC(n.Data)
 	case Version2, Version3:
-		bytes := make([]byte, bodyLength)
+		bytes = make([]byte, bodyLength)
 		if _, err = r.ReadAt(bytes, offset); err != nil {
 			return
 		}
