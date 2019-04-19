@@ -27,8 +27,9 @@ type Volume struct {
 
 	SuperBlock
 
-	dataFileAccessLock sync.Mutex
-	lastModifiedTime   uint64 //unix time in seconds
+	dataFileAccessLock    sync.Mutex
+	lastModifiedTsSeconds uint64 //unix time in seconds
+	lastAppendAtNs        uint64 //unix time in nanoseconds
 
 	lastCompactIndexOffset uint64
 	lastCompactRevision    uint16
@@ -66,35 +67,24 @@ func (v *Volume) Version() needle.Version {
 	return v.SuperBlock.Version()
 }
 
-func (v *Volume) Size() int64 {
+func (v *Volume) FileStat() (datSize uint64, idxSize uint64, modTime time.Time) {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
 	if v.dataFile == nil {
-		return 0
+		return
 	}
 
 	stat, e := v.dataFile.Stat()
 	if e == nil {
-		return stat.Size()
+		return uint64(stat.Size()), v.nm.IndexFileSize(), stat.ModTime()
 	}
 	glog.V(0).Infof("Failed to read file size %s %v", v.dataFile.Name(), e)
-	return 0 // -1 causes integer overflow and the volume to become unwritable.
+	return // -1 causes integer overflow and the volume to become unwritable.
 }
 
 func (v *Volume) IndexFileSize() uint64 {
 	return v.nm.IndexFileSize()
-}
-
-func (v *Volume) DataFileSize() uint64 {
-	return uint64(v.Size())
-}
-
-/**
-unix time in seconds
-*/
-func (v *Volume) LastModifiedTime() uint64 {
-	return v.lastModifiedTime
 }
 
 func (v *Volume) FileCount() uint64 {
@@ -138,8 +128,8 @@ func (v *Volume) expired(volumeSizeLimit uint64) bool {
 	if v.Ttl == nil || v.Ttl.Minutes() == 0 {
 		return false
 	}
-	glog.V(1).Infof("now:%v lastModified:%v", time.Now().Unix(), v.lastModifiedTime)
-	livedMinutes := (time.Now().Unix() - int64(v.lastModifiedTime)) / 60
+	glog.V(1).Infof("now:%v lastModified:%v", time.Now().Unix(), v.lastModifiedTsSeconds)
+	livedMinutes := (time.Now().Unix() - int64(v.lastModifiedTsSeconds)) / 60
 	glog.V(1).Infof("ttl:%v lived:%v", v.Ttl, livedMinutes)
 	if int64(v.Ttl.Minutes()) < livedMinutes {
 		return true
@@ -157,16 +147,17 @@ func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
 		removalDelay = maxDelayMinutes
 	}
 
-	if uint64(v.Ttl.Minutes()+removalDelay)*60+v.lastModifiedTime < uint64(time.Now().Unix()) {
+	if uint64(v.Ttl.Minutes()+removalDelay)*60+v.lastModifiedTsSeconds < uint64(time.Now().Unix()) {
 		return true
 	}
 	return false
 }
 
 func (v *Volume) ToVolumeInformationMessage() *master_pb.VolumeInformationMessage {
+	size, _, _ := v.FileStat()
 	return &master_pb.VolumeInformationMessage{
 		Id:               uint32(v.Id),
-		Size:             uint64(v.Size()),
+		Size:             size,
 		Collection:       v.Collection,
 		FileCount:        uint64(v.nm.FileCount()),
 		DeleteCount:      uint64(v.nm.DeletedCount()),

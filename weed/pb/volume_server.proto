@@ -155,6 +155,7 @@ message VolumeCopyRequest {
     string source_data_node = 5;
 }
 message VolumeCopyResponse {
+    uint64 last_append_at_ns = 1;
 }
 
 message CopyFileRequest {
@@ -182,9 +183,9 @@ message ReadVolumeFileStatusRequest {
 }
 message ReadVolumeFileStatusResponse {
     uint32 volume_id = 1;
-    uint64 idx_file_timestamp = 2;
+    uint64 idx_file_timestamp_seconds = 2;
     uint64 idx_file_size = 3;
-    uint64 dat_file_timestamp = 4;
+    uint64 dat_file_timestamp_seconds = 4;
     uint64 dat_file_size = 5;
     uint64 file_count = 6;
 }

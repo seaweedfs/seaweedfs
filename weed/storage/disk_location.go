@@ -54,8 +54,9 @@ func (l *DiskLocation) loadExistingVolume(dir os.FileInfo, needleMapKind NeedleM
 					mutex.Lock()
 					l.volumes[vid] = v
 					mutex.Unlock()
+					size, _, _ := v.FileStat()
 					glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s",
-						l.Directory+"/"+name, v.ReplicaPlacement, v.Version(), v.Size(), v.Ttl.String())
+						l.Directory+"/"+name, v.ReplicaPlacement, v.Version(), size, v.Ttl.String())
 				} else {
 					glog.V(0).Infof("new volume %s error %s", name, e)
 				}

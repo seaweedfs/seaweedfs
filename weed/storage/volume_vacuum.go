@@ -138,7 +138,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 	}
 	incrementedHasUpdatedIndexEntry := make(map[NeedleId]keyField)
 
-	for idxOffset := indexSize - NeedleEntrySize; uint64(idxOffset) >= v.lastCompactIndexOffset; idxOffset -= NeedleEntrySize {
+	for idxOffset := indexSize - NeedleMapEntrySize; uint64(idxOffset) >= v.lastCompactIndexOffset; idxOffset -= NeedleMapEntrySize {
 		var IdxEntry []byte
 		if IdxEntry, err = readIndexEntryAtOffset(oldIdxFile, idxOffset); err != nil {
 			return fmt.Errorf("readIndexEntry %s at offset %d failed: %v", oldIdxFileName, idxOffset, err)

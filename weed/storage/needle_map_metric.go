@@ -96,16 +96,16 @@ func reverseWalkIndexFile(r *os.File, initFn func(entryCount int64), fn func(key
 		return fmt.Errorf("file %s stat error: %v", r.Name(), err)
 	}
 	fileSize := fi.Size()
-	if fileSize%NeedleEntrySize != 0 {
+	if fileSize%NeedleMapEntrySize != 0 {
 		return fmt.Errorf("unexpected file %s size: %d", r.Name(), fileSize)
 	}
 
-	entryCount := fileSize / NeedleEntrySize
+	entryCount := fileSize / NeedleMapEntrySize
 	initFn(entryCount)
 
 	batchSize := int64(1024 * 4)
 
-	bytes := make([]byte, NeedleEntrySize*batchSize)
+	bytes := make([]byte, NeedleMapEntrySize*batchSize)
 	nextBatchSize := entryCount % batchSize
 	if nextBatchSize == 0 {
 		nextBatchSize = batchSize
@@ -113,13 +113,13 @@ func reverseWalkIndexFile(r *os.File, initFn func(entryCount int64), fn func(key
 	remainingCount := entryCount - nextBatchSize
 
 	for remainingCount >= 0 {
-		_, e := r.ReadAt(bytes[:NeedleEntrySize*nextBatchSize], NeedleEntrySize*remainingCount)
-		// glog.V(0).Infoln("file", r.Name(), "readerOffset", NeedleEntrySize*remainingCount, "count", count, "e", e)
+		_, e := r.ReadAt(bytes[:NeedleMapEntrySize*nextBatchSize], NeedleMapEntrySize*remainingCount)
+		// glog.V(0).Infoln("file", r.Name(), "readerOffset", NeedleMapEntrySize*remainingCount, "count", count, "e", e)
 		if e != nil {
 			return e
 		}
 		for i := int(nextBatchSize) - 1; i >= 0; i-- {
-			key, offset, size := IdxFileEntry(bytes[i*NeedleEntrySize : i*NeedleEntrySize+NeedleEntrySize])
+			key, offset, size := IdxFileEntry(bytes[i*NeedleMapEntrySize : i*NeedleMapEntrySize+NeedleMapEntrySize])
 			if e = fn(key, offset, size); e != nil {
 				return e
 			}

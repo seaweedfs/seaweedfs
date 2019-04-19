@@ -19,7 +19,7 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) error {
 		return nil
 	}
 	var lastIdxEntry []byte
-	if lastIdxEntry, e = readIndexEntryAtOffset(indexFile, indexSize-NeedleEntrySize); e != nil {
+	if lastIdxEntry, e = readIndexEntryAtOffset(indexFile, indexSize-NeedleMapEntrySize); e != nil {
 		return fmt.Errorf("readLastIndexEntry %s failed: %v", indexFile.Name(), e)
 	}
 	key, offset, size := IdxFileEntry(lastIdxEntry)
@@ -35,7 +35,7 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) error {
 
 func verifyIndexFileIntegrity(indexFile *os.File) (indexSize int64, err error) {
 	if indexSize, err = util.GetFileSize(indexFile); err == nil {
-		if indexSize%NeedleEntrySize != 0 {
+		if indexSize%NeedleMapEntrySize != 0 {
 			err = fmt.Errorf("index file's size is %d bytes, maybe corrupted", indexSize)
 		}
 	}
@@ -47,7 +47,7 @@ func readIndexEntryAtOffset(indexFile *os.File, offset int64) (bytes []byte, err
 		err = fmt.Errorf("offset %d for index file is invalid", offset)
 		return
 	}
-	bytes = make([]byte, NeedleEntrySize)
+	bytes = make([]byte, NeedleMapEntrySize)
 	_, err = indexFile.ReadAt(bytes, offset)
 	return
 }

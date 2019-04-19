@@ -3,15 +3,15 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-
-	"io"
-	"os"
 )
 
 // VolumeCopy copy the .idx .dat files, and mount the volume
@@ -96,7 +96,9 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 		return nil, fmt.Errorf("failed to mount volume %d: %v", req.VolumeId, err)
 	}
 
-	return &volume_server_pb.VolumeCopyResponse{}, err
+	return &volume_server_pb.VolumeCopyResponse{
+		LastAppendAtNs:volFileInfoResp.DatFileTimestampSeconds*uint64(time.Second),
+	}, err
 }
 
 /**
@@ -153,10 +155,11 @@ func (vs *VolumeServer) ReadVolumeFileStatus(ctx context.Context, req *volume_se
 	}
 
 	resp.VolumeId = req.VolumeId
-	resp.DatFileSize = v.DataFileSize()
-	resp.IdxFileSize = v.IndexFileSize()
-	resp.DatFileTimestamp = v.LastModifiedTime()
-	resp.IdxFileTimestamp = v.LastModifiedTime()
+	datSize, idxSize, modTime := v.FileStat()
+	resp.DatFileSize = datSize
+	resp.IdxFileSize = idxSize
+	resp.DatFileTimestampSeconds = uint64(modTime.Unix())
+	resp.IdxFileTimestampSeconds = uint64(modTime.Unix())
 	resp.FileCount = v.FileCount()
 	return resp, nil
 }

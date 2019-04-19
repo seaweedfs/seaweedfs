@@ -52,11 +52,11 @@ func TestMemoryUsage(t *testing.T) {
 
 func loadNewNeedleMap(file *os.File) (*CompactMap, uint64) {
 	m := NewCompactMap()
-	bytes := make([]byte, NeedleEntrySize)
+	bytes := make([]byte, NeedleMapEntrySize)
 	rowCount := uint64(0)
 	count, e := file.Read(bytes)
 	for count > 0 && e == nil {
-		for i := 0; i < count; i += NeedleEntrySize {
+		for i := 0; i < count; i += NeedleMapEntrySize {
 			rowCount++
 			key := BytesToNeedleId(bytes[i : i+NeedleIdSize])
 			offset := BytesToOffset(bytes[i+NeedleIdSize : i+NeedleIdSize+OffsetSize])

@@ -22,12 +22,13 @@ type OffsetLower struct {
 type Cookie uint32
 
 const (
-	SizeSize          = 4 // uint32 size
-	NeedleEntrySize   = CookieSize + NeedleIdSize + SizeSize
-	TimestampSize     = 8 // int64 size
-	NeedlePaddingSize = 8
-	TombstoneFileSize = math.MaxUint32
-	CookieSize        = 4
+	SizeSize           = 4 // uint32 size
+	NeedleHeaderSize   = CookieSize + NeedleIdSize + SizeSize
+	NeedleMapEntrySize = NeedleIdSize + OffsetSize + SizeSize
+	TimestampSize      = 8 // int64 size
+	NeedlePaddingSize  = 8
+	TombstoneFileSize  = math.MaxUint32
+	CookieSize         = 4
 )
 
 func CookieToBytes(bytes []byte, cookie Cookie) {

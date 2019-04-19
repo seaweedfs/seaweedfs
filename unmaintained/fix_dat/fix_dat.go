@@ -115,7 +115,7 @@ func iterateEntries(datFile, idxFile *os.File, visitNeedle func(n *needle.Needle
 					fmt.Println("Recovered in f", r)
 				}
 			}()
-			if _, err = n.ReadNeedleBody(datFile, version, offset+int64(types.NeedleEntrySize), rest); err != nil {
+			if _, err = n.ReadNeedleBody(datFile, version, offset+int64(types.NeedleHeaderSize), rest); err != nil {
 				fmt.Printf("cannot read needle body: offset %d body %d %v\n", offset, rest, err)
 			}
 		}()
@@ -125,7 +125,7 @@ func iterateEntries(datFile, idxFile *os.File, visitNeedle func(n *needle.Needle
 		}
 		visitNeedle(n, offset)
 
-		offset += types.NeedleEntrySize + rest
+		offset += types.NeedleHeaderSize + rest
 		//fmt.Printf("==> new entry offset %d\n", offset)
 		if n, _, rest, err = needle.ReadNeedleHeader(datFile, version, offset); err != nil {
 			if err == io.EOF {

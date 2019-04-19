@@ -103,7 +103,9 @@ func runBackup(cmd *Command, args []string) bool {
 		v.DataFile().WriteAt(v.SuperBlock.Bytes(), 0)
 	}
 
-	if uint64(v.Size()) > stats.TailOffset {
+	datSize, _, _ := v.FileStat()
+
+	if datSize > stats.TailOffset {
 		// remove the old data
 		v.Destroy()
 		// recreate an empty volume

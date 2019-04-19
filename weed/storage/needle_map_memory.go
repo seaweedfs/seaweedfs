@@ -73,7 +73,7 @@ func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
 // stops with the error returned by the fn function
 func WalkIndexFile(r *os.File, fn func(key NeedleId, offset Offset, size uint32) error) error {
 	var readerOffset int64
-	bytes := make([]byte, NeedleEntrySize*RowsToRead)
+	bytes := make([]byte, NeedleMapEntrySize*RowsToRead)
 	count, e := r.ReadAt(bytes, readerOffset)
 	glog.V(3).Infoln("file", r.Name(), "readerOffset", readerOffset, "count", count, "e", e)
 	readerOffset += int64(count)
@@ -85,8 +85,8 @@ func WalkIndexFile(r *os.File, fn func(key NeedleId, offset Offset, size uint32)
 	)
 
 	for count > 0 && e == nil || e == io.EOF {
-		for i = 0; i+NeedleEntrySize <= count; i += NeedleEntrySize {
-			key, offset, size = IdxFileEntry(bytes[i : i+NeedleEntrySize])
+		for i = 0; i+NeedleMapEntrySize <= count; i += NeedleMapEntrySize {
+			key, offset, size = IdxFileEntry(bytes[i : i+NeedleMapEntrySize])
 			if e = fn(key, offset, size); e != nil {
 				return e
 			}

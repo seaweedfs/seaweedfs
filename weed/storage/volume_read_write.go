@@ -95,6 +95,7 @@ func (v *Volume) writeNeedle(n *needle.Needle) (offset uint64, size uint32, err 
 	if offset, size, _, err = n.Append(v.dataFile, v.Version()); err != nil {
 		return
 	}
+	v.lastAppendAtNs = n.AppendAtNs
 
 	nv, ok := v.nm.Get(n.Id)
 	if !ok || uint64(nv.Offset.ToAcutalOffset()) < offset {
@@ -102,8 +103,8 @@ func (v *Volume) writeNeedle(n *needle.Needle) (offset uint64, size uint32, err 
 			glog.V(4).Infof("failed to save in needle map %d: %v", n.Id, err)
 		}
 	}
-	if v.lastModifiedTime < n.LastModified {
-		v.lastModifiedTime = n.LastModified
+	if v.lastModifiedTsSeconds < n.LastModified {
+		v.lastModifiedTsSeconds = n.LastModified
 	}
 	return
 }
@@ -125,6 +126,7 @@ func (v *Volume) deleteNeedle(n *needle.Needle) (uint32, error) {
 		if err != nil {
 			return size, err
 		}
+		v.lastAppendAtNs = n.AppendAtNs
 		if err = v.nm.Delete(n.Id, ToOffset(int64(offset))); err != nil {
 			return size, err
 		}
@@ -205,7 +207,7 @@ func ScanVolumeFileFrom(version needle.Version, dataFile *os.File, offset int64,
 	}
 	for n != nil {
 		if volumeFileScanner.ReadNeedleBody() {
-			if _, err = n.ReadNeedleBody(dataFile, version, offset+NeedleEntrySize, rest); err != nil {
+			if _, err = n.ReadNeedleBody(dataFile, version, offset+NeedleHeaderSize, rest); err != nil {
 				glog.V(0).Infof("cannot read needle body: %v", err)
 				//err = fmt.Errorf("cannot read needle body: %v", err)
 				//return
@@ -218,7 +220,7 @@ func ScanVolumeFileFrom(version needle.Version, dataFile *os.File, offset int64,
 		if err != nil {
 			glog.V(0).Infof("visit needle error: %v", err)
 		}
-		offset += NeedleEntrySize + rest
+		offset += NeedleHeaderSize + rest
 		glog.V(4).Infof("==> new entry offset %d", offset)
 		if n, _, rest, err = needle.ReadNeedleHeader(dataFile, version, offset); err != nil {
 			if err == io.EOF {
@@ -241,7 +243,7 @@ func ScanVolumeFileNeedleFrom(version needle.Version, dataFile *os.File, offset 
 	}
 	for n != nil {
 		var needleBody []byte
-		if needleBody, err = n.ReadNeedleBody(dataFile, version, offset+NeedleEntrySize, rest); err != nil {
+		if needleBody, err = n.ReadNeedleBody(dataFile, version, offset+NeedleHeaderSize, rest); err != nil {
 			glog.V(0).Infof("cannot read needle body: %v", err)
 			//err = fmt.Errorf("cannot read needle body: %v", err)
 			//return
@@ -251,7 +253,7 @@ func ScanVolumeFileNeedleFrom(version needle.Version, dataFile *os.File, offset 
 			glog.V(0).Infof("visit needle error: %v", err)
 			return
 		}
-		offset += NeedleEntrySize + rest
+		offset += NeedleHeaderSize + rest
 		glog.V(4).Infof("==> new entry offset %d", offset)
 		if n, nh, rest, err = needle.ReadNeedleHeader(dataFile, version, offset); err != nil {
 			if err == io.EOF {
