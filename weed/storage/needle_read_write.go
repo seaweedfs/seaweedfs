@@ -304,28 +304,35 @@ func (n *Needle) ReadNeedleBody(r *os.File, version Version, offset int64, bodyL
 	if bodyLength <= 0 {
 		return nil, nil
 	}
+	bytes = make([]byte, bodyLength)
+	if _, err = r.ReadAt(bytes, offset); err != nil {
+		return
+	}
+
+	err = n.ReadNeedleBodyBytes(bytes, version)
+
+	return
+}
+
+func (n *Needle) ReadNeedleBodyBytes(needleBody []byte, version Version) (err error) {
+
+	if len(needleBody) <= 0 {
+		return nil
+	}
 	switch version {
 	case Version1:
-		bytes = make([]byte, bodyLength)
-		if _, err = r.ReadAt(bytes, offset); err != nil {
-			return
-		}
-		n.Data = bytes[:n.Size]
+		n.Data = needleBody[:n.Size]
 		n.Checksum = NewCRC(n.Data)
 	case Version2, Version3:
-		bytes = make([]byte, bodyLength)
-		if _, err = r.ReadAt(bytes, offset); err != nil {
-			return
-		}
-		err = n.readNeedleDataVersion2(bytes[0:n.Size])
+		err = n.readNeedleDataVersion2(needleBody[0:n.Size])
 		n.Checksum = NewCRC(n.Data)
 
 		if version == Version3 {
 			tsOffset := n.Size + NeedleChecksumSize
-			n.AppendAtNs = util.BytesToUint64(bytes[tsOffset : tsOffset+TimestampSize])
+			n.AppendAtNs = util.BytesToUint64(needleBody[tsOffset : tsOffset+TimestampSize])
 		}
 	default:
-		err = fmt.Errorf("Unsupported Version! (%d)", version)
+		err = fmt.Errorf("unsupported version %d!", version)
 	}
 	return
 }

@@ -30,6 +30,7 @@ func (vs *VolumeServer) VolumeTail(req *volume_server_pb.VolumeTailRequest, stre
 		time.Sleep(2 * time.Second)
 
 		if req.DrainingSeconds == 0 {
+			lastTimestampNs = lastProcessedTimestampNs
 			continue
 		}
 		if lastProcessedTimestampNs == lastTimestampNs {
@@ -59,18 +60,31 @@ func sendNeedlesSince(stream volume_server_pb.VolumeServer_VolumeTailServer, v *
 
 	if isLastOne {
 		// need to heart beat to the client to ensure the connection health
-		sendErr := stream.Send(&volume_server_pb.VolumeTailResponse{})
+		sendErr := stream.Send(&volume_server_pb.VolumeTailResponse{IsLastChunk: true})
 		return lastTimestampNs, sendErr
 	}
 
 	err = storage.ScanVolumeFileNeedleFrom(v.Version(), v.DataFile(), foundOffset.ToAcutalOffset(), func(needleHeader, needleBody []byte, needleAppendAtNs uint64) error {
 
-		sendErr := stream.Send(&volume_server_pb.VolumeTailResponse{
-			NeedleHeader: needleHeader,
-			NeedleBody:   needleBody,
-		})
-		if sendErr != nil {
-			return sendErr
+		blockSizeLimit := 1024 * 1024 * 2
+		isLastChunk := false
+
+		// need to send body by chunks
+		for i := 0; i < len(needleBody); i += blockSizeLimit {
+			stopOffset := i + blockSizeLimit
+			if stopOffset >= len(needleBody) {
+				isLastChunk = true
+				stopOffset = len(needleBody)
+			}
+
+			sendErr := stream.Send(&volume_server_pb.VolumeTailResponse{
+				NeedleHeader: needleHeader,
+				NeedleBody:   needleBody[i:stopOffset],
+				IsLastChunk:  isLastChunk,
+			})
+			if sendErr != nil {
+				return sendErr
+			}
 		}
 
 		lastProcessedTimestampNs = needleAppendAtNs

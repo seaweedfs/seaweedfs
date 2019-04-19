@@ -10,6 +10,7 @@ import (
 	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/spf13/viper"
+	"golang.org/x/tools/godoc/util"
 
 	"io"
 	"log"
@@ -19,6 +20,7 @@ var (
 	master         = flag.String("master", "localhost:9333", "master server host and port")
 	volumeId       = flag.Int("volumeId", -1, "a volume id")
 	timeoutSeconds = flag.Int("timeoutSeconds", 0, "disconnect if no activity after these seconds")
+	showTextFile   = flag.Bool("showTextFile", false, "display textual file content")
 )
 
 func main() {
@@ -59,7 +61,51 @@ func main() {
 				}
 			}
 
-			println("header:", len(resp.NeedleHeader), "body:", len(resp.NeedleBody))
+			needleHeader := resp.NeedleHeader
+			needleBody := resp.NeedleBody
+
+			if len(needleHeader) == 0 {
+				continue
+			}
+
+			for !resp.IsLastChunk {
+				resp, recvErr = stream.Recv()
+				if recvErr != nil {
+					if recvErr == io.EOF {
+						break
+					} else {
+						return recvErr
+					}
+				}
+				needleBody = append(needleBody, resp.NeedleBody...)
+			}
+
+			n := new(storage.Needle)
+			n.ParseNeedleHeader(needleHeader)
+			n.ReadNeedleBodyBytes(needleBody, storage.CurrentVersion)
+
+			if n.Size == 0 {
+				println("-", n.String())
+				continue
+			} else {
+				println("+", n.String())
+			}
+
+			if *showTextFile {
+
+				data := n.Data
+				if n.IsGzipped() {
+					if data, err = operation.UnGzipData(data); err != nil {
+						continue
+					}
+				}
+				if util.IsText(data) {
+					println(string(data))
+				}
+
+				println("-", n.String(), "compressed", n.IsGzipped(), "original size", len(data))
+			}
+
 		}
 
 		return nil
@@ -69,6 +115,5 @@ func main() {
 	if err != nil {
 		log.Printf("Error VolumeTail volume %d: %v", vid, err)
 	}
-
 
 }
