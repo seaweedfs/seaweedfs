@@ -27,7 +27,7 @@ func (v *Volume) Compact(preallocate int64) error {
 
 	filePath := v.FileName()
 	v.lastCompactIndexOffset = v.nm.IndexFileSize()
-	v.lastCompactRevision = v.SuperBlock.CompactRevision
+	v.lastCompactRevision = v.SuperBlock.CompactionRevision
 	glog.V(3).Infof("creating copies for volume %d ,last offset %d...", v.Id, v.lastCompactIndexOffset)
 	return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx", preallocate)
 }
@@ -105,7 +105,7 @@ func fetchCompactRevisionFromDatFile(file *os.File) (compactRevision uint16, err
 	if err != nil {
 		return 0, err
 	}
-	return superBlock.CompactRevision, nil
+	return superBlock.CompactionRevision, nil
 }
 
 func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldIdxFileName string) (err error) {
@@ -246,7 +246,7 @@ type VolumeFileScanner4Vacuum struct {
 
 func (scanner *VolumeFileScanner4Vacuum) VisitSuperBlock(superBlock SuperBlock) error {
 	scanner.version = superBlock.Version()
-	superBlock.CompactRevision++
+	superBlock.CompactionRevision++
 	_, err := scanner.dst.Write(superBlock.Bytes())
 	scanner.newOffset = int64(superBlock.BlockSize())
 	return err
@@ -321,7 +321,7 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 	nm := NewBtreeNeedleMap(idx)
 	now := uint64(time.Now().Unix())
 
-	v.SuperBlock.CompactRevision++
+	v.SuperBlock.CompactionRevision++
 	dst.Write(v.SuperBlock.Bytes())
 	newOffset := int64(v.SuperBlock.BlockSize())
 

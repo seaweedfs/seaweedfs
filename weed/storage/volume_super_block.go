@@ -24,12 +24,12 @@ const (
 * Rest bytes: Reserved
  */
 type SuperBlock struct {
-	version          needle.Version
-	ReplicaPlacement *ReplicaPlacement
-	Ttl              *needle.TTL
-	CompactRevision  uint16
-	Extra            *master_pb.SuperBlockExtra
-	extraSize        uint16
+	version            needle.Version
+	ReplicaPlacement   *ReplicaPlacement
+	Ttl                *needle.TTL
+	CompactionRevision uint16
+	Extra              *master_pb.SuperBlockExtra
+	extraSize          uint16
 }
 
 func (s *SuperBlock) BlockSize() int {
@@ -48,7 +48,7 @@ func (s *SuperBlock) Bytes() []byte {
 	header[0] = byte(s.version)
 	header[1] = s.ReplicaPlacement.Byte()
 	s.Ttl.ToBytes(header[2:4])
-	util.Uint16toBytes(header[4:6], s.CompactRevision)
+	util.Uint16toBytes(header[4:6], s.CompactionRevision)
 
 	if s.Extra != nil {
 		extraData, err := proto.Marshal(s.Extra)
@@ -112,7 +112,7 @@ func ReadSuperBlock(dataFile *os.File) (superBlock SuperBlock, err error) {
 		return
 	}
 	superBlock.Ttl = needle.LoadTTLFromBytes(header[2:4])
-	superBlock.CompactRevision = util.BytesToUint16(header[4:6])
+	superBlock.CompactionRevision = util.BytesToUint16(header[4:6])
 	superBlock.extraSize = util.BytesToUint16(header[6:8])
 
 	if superBlock.extraSize > 0 {

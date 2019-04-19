@@ -125,7 +125,7 @@ func (s *Store) Status() []*VolumeInfo {
 				DeletedByteCount: v.nm.DeletedSize(),
 				ReadOnly:         v.readOnly,
 				Ttl:              v.Ttl,
-				CompactRevision:  uint32(v.CompactRevision),
+				CompactRevision:  uint32(v.CompactionRevision),
 			}
 			stats = append(stats, s)
 		}

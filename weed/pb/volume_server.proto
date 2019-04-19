@@ -162,6 +162,8 @@ message CopyFileRequest {
     uint32 volume_id = 1;
     bool is_idx_file = 2;
     bool is_dat_file = 3;
+    uint32 compaction_revision = 4;
+    uint64 stop_offset = 5;
 }
 message CopyFileResponse {
     bytes file_content = 1;
@@ -188,6 +190,7 @@ message ReadVolumeFileStatusResponse {
     uint64 dat_file_timestamp_seconds = 4;
     uint64 dat_file_size = 5;
     uint64 file_count = 6;
+    uint32 compaction_revision = 7;
 }
 
 message DiskStatus {

@@ -90,7 +90,7 @@ func runBackup(cmd *Command, args []string) bool {
 		return true
 	}
 
-	if v.SuperBlock.CompactRevision < uint16(stats.CompactRevision) {
+	if v.SuperBlock.CompactionRevision < uint16(stats.CompactRevision) {
 		if err = v.Compact(0); err != nil {
 			fmt.Printf("Compact Volume before synchronizing %v\n", err)
 			return true
@@ -99,7 +99,7 @@ func runBackup(cmd *Command, args []string) bool {
 			fmt.Printf("Commit Compact before synchronizing %v\n", err)
 			return true
 		}
-		v.SuperBlock.CompactRevision = uint16(stats.CompactRevision)
+		v.SuperBlock.CompactionRevision = uint16(stats.CompactRevision)
 		v.DataFile().WriteAt(v.SuperBlock.Bytes(), 0)
 	}
 
