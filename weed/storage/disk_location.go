@@ -57,9 +57,11 @@ func (l *DiskLocation) loadExistingVolume(dir os.FileInfo, needleMapKind NeedleM
 					size, _, _ := v.FileStat()
 					glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s",
 						l.Directory+"/"+name, v.ReplicaPlacement, v.Version(), size, v.Ttl.String())
+					// println("volume", vid, "last append at", v.lastAppendAtNs)
 				} else {
 					glog.V(0).Infof("new volume %s error %s", name, e)
 				}
+
 			}
 		}
 	}

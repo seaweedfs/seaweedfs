@@ -185,15 +185,17 @@ func (n *Needle) ReadData(r *os.File, offset int64, size uint32, version Version
 	case Version2, Version3:
 		err = n.readNeedleDataVersion2(bytes[NeedleHeaderSize : NeedleHeaderSize+int(n.Size)])
 	}
-	if size == 0 || err != nil {
+	if err != nil && err != io.EOF{
 		return err
 	}
-	checksum := util.BytesToUint32(bytes[NeedleHeaderSize+size : NeedleHeaderSize+size+NeedleChecksumSize])
-	newChecksum := NewCRC(n.Data)
-	if checksum != newChecksum.Value() {
-		return errors.New("CRC error! Data On Disk Corrupted")
+	if size > 0 {
+		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+size : NeedleHeaderSize+size+NeedleChecksumSize])
+		newChecksum := NewCRC(n.Data)
+		if checksum != newChecksum.Value() {
+			return errors.New("CRC error! Data On Disk Corrupted")
+		}
+		n.Checksum = newChecksum
 	}
-	n.Checksum = newChecksum
 	if version == Version3 {
 		tsOffset := NeedleHeaderSize + size + NeedleChecksumSize
 		n.AppendAtNs = util.BytesToUint64(bytes[tsOffset : tsOffset+TimestampSize])

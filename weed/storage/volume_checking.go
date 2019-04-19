@@ -9,28 +9,29 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) error {
+func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uint64, e error) {
 	var indexSize int64
-	var e error
 	if indexSize, e = verifyIndexFileIntegrity(indexFile); e != nil {
-		return fmt.Errorf("verifyIndexFileIntegrity %s failed: %v", indexFile.Name(), e)
+		return 0, fmt.Errorf("verifyIndexFileIntegrity %s failed: %v", indexFile.Name(), e)
 	}
 	if indexSize == 0 {
-		return nil
+		return 0,nil
 	}
 	var lastIdxEntry []byte
 	if lastIdxEntry, e = readIndexEntryAtOffset(indexFile, indexSize-NeedleMapEntrySize); e != nil {
-		return fmt.Errorf("readLastIndexEntry %s failed: %v", indexFile.Name(), e)
+		return 0, fmt.Errorf("readLastIndexEntry %s failed: %v", indexFile.Name(), e)
 	}
 	key, offset, size := IdxFileEntry(lastIdxEntry)
-	if offset.IsZero() || size == TombstoneFileSize {
-		return nil
+	if offset.IsZero() {
+		return 0,nil
 	}
-	if e = verifyNeedleIntegrity(v.dataFile, v.Version(), offset.ToAcutalOffset(), key, size); e != nil {
-		return fmt.Errorf("verifyNeedleIntegrity %s failed: %v", indexFile.Name(), e)
+	if size == TombstoneFileSize {
+		size = 0
 	}
-
-	return nil
+	if lastAppendAtNs, e = verifyNeedleIntegrity(v.dataFile, v.Version(), offset.ToAcutalOffset(), key, size); e != nil {
+		return lastAppendAtNs, fmt.Errorf("verifyNeedleIntegrity %s failed: %v", indexFile.Name(), e)
+	}
+	return
 }
 
 func verifyIndexFileIntegrity(indexFile *os.File) (indexSize int64, err error) {
@@ -52,14 +53,13 @@ func readIndexEntryAtOffset(indexFile *os.File, offset int64) (bytes []byte, err
 	return
 }
 
-func verifyNeedleIntegrity(datFile *os.File, v needle.Version, offset int64, key NeedleId, size uint32) error {
+func verifyNeedleIntegrity(datFile *os.File, v needle.Version, offset int64, key NeedleId, size uint32) (lastAppendAtNs uint64, err error) {
 	n := new(needle.Needle)
-	err := n.ReadData(datFile, offset, size, v)
-	if err != nil {
-		return err
+	if err = n.ReadData(datFile, offset, size, v); err != nil {
+		return n.AppendAtNs, err
 	}
 	if n.Id != key {
-		return fmt.Errorf("index key %#x does not match needle's Id %#x", key, n.Id)
+		return n.AppendAtNs, fmt.Errorf("index key %#x does not match needle's Id %#x", key, n.Id)
 	}
-	return nil
+	return n.AppendAtNs, err
 }
