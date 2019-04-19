@@ -73,11 +73,12 @@ dir = "."					# directory to store level db files
 [mysql]
 # CREATE TABLE IF NOT EXISTS filemeta (
 #   dirhash     BIGINT         COMMENT 'first 64 bits of MD5 hash value of directory field',
-#   name        VARCHAR(65535) COMMENT 'directory or file name',
-#   directory   VARCHAR(65535) COMMENT 'full path to parent directory',
+#   name        VARCHAR(1000)  COMMENT 'directory or file name',
+#   directory   TEXT           COMMENT 'full path to parent directory',
 #   meta        BLOB,
 #   PRIMARY KEY (dirhash, name)
 # ) DEFAULT CHARSET=utf8;
+
 enabled = false
 hostname = "localhost"
 port = 3306
