@@ -7,6 +7,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/sequence"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 var topologyLayout = `
@@ -96,9 +97,9 @@ func setup(topologyLayout string) *Topology {
 				for _, v := range serverMap["volumes"].([]interface{}) {
 					m := v.(map[string]interface{})
 					vi := storage.VolumeInfo{
-						Id:      storage.VolumeId(int64(m["id"].(float64))),
+						Id:      needle.VolumeId(int64(m["id"].(float64))),
 						Size:    uint64(m["size"].(float64)),
-						Version: storage.CurrentVersion}
+						Version: needle.CurrentVersion}
 					server.AddOrUpdateVolume(vi)
 				}
 				server.UpAdjustMaxVolumeCountDelta(int64(serverMap["limit"].(float64)))

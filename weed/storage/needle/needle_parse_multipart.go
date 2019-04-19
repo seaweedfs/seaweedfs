@@ -1,8 +1,9 @@
-package storage
+package needle
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/util"
+
 	"io"
 	"io/ioutil"
 	"mime"
@@ -90,12 +91,12 @@ func parseMultipart(r *http.Request) (
 		}
 
 		if part.Header.Get("Content-Encoding") == "gzip" {
-			if unzipped, e := operation.UnGzipData(data); e == nil {
+			if unzipped, e := util.UnGzipData(data); e == nil {
 				originalDataSize = len(unzipped)
 			}
 			isGzipped = true
-		} else if operation.IsGzippable(ext, mtype, data) {
-			if compressedData, err := operation.GzipData(data); err == nil {
+		} else if util.IsGzippable(ext, mtype, data) {
+			if compressedData, err := util.GzipData(data); err == nil {
 				if len(data) > len(compressedData) {
 					data = compressedData
 					isGzipped = true

@@ -1,10 +1,11 @@
-package storage
+package needle
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io/ioutil"
 	"os"
 	"testing"
+
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 func TestAppend(t *testing.T) {

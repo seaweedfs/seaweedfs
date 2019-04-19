@@ -1,18 +1,18 @@
-package storage
+package operation
 
 import (
 	"context"
 	"fmt"
 	"io"
 
-	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"google.golang.org/grpc"
 )
 
-func TailVolume(master string, grpcDialOption grpc.DialOption, vid VolumeId, sinceNs uint64, timeoutSeconds int, fn func(n *Needle) error) error {
+func TailVolume(master string, grpcDialOption grpc.DialOption, vid needle.VolumeId, sinceNs uint64, timeoutSeconds int, fn func(n *needle.Needle) error) error {
 	// find volume location, replication, ttl info
-	lookup, err := operation.Lookup(master, vid.String())
+	lookup, err := Lookup(master, vid.String())
 	if err != nil {
 		return fmt.Errorf("look up volume %d: %v", vid, err)
 	}
@@ -22,7 +22,7 @@ func TailVolume(master string, grpcDialOption grpc.DialOption, vid VolumeId, sin
 
 	volumeServer := lookup.Locations[0].Url
 
-	return operation.WithVolumeServerClient(volumeServer, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+	return WithVolumeServerClient(volumeServer, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 
 		stream, err := client.VolumeTail(context.Background(), &volume_server_pb.VolumeTailRequest{
 			VolumeId:        uint32(vid),
@@ -62,9 +62,9 @@ func TailVolume(master string, grpcDialOption grpc.DialOption, vid VolumeId, sin
 				needleBody = append(needleBody, resp.NeedleBody...)
 			}
 
-			n := new(Needle)
+			n := new(needle.Needle)
 			n.ParseNeedleHeader(needleHeader)
-			n.ReadNeedleBodyBytes(needleBody, CurrentVersion)
+			n.ReadNeedleBodyBytes(needleBody, needle.CurrentVersion)
 
 			err = fn(n)
 

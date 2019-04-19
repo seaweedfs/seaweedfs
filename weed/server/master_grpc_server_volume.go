@@ -8,6 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 )
 
@@ -55,7 +56,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	if err != nil {
 		return nil, err
 	}
-	ttl, err := storage.ReadTTL(req.Ttl)
+	ttl, err := needle.ReadTTL(req.Ttl)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +111,7 @@ func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.Statistic
 	if err != nil {
 		return nil, err
 	}
-	ttl, err := storage.ReadTTL(req.Ttl)
+	ttl, err := needle.ReadTTL(req.Ttl)
 	if err != nil {
 		return nil, err
 	}

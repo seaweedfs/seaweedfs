@@ -1,4 +1,4 @@
-package needle
+package needle_map
 
 import (
 	"fmt"

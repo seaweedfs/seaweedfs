@@ -2,14 +2,16 @@ package storage
 
 import (
 	"fmt"
-	"github.com/syndtr/goleveldb/leveldb/opt"
 	"os"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/syndtr/goleveldb/leveldb/opt"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
-func loadVolumeWithoutIndex(dirname string, collection string, id VolumeId, needleMapKind NeedleMapType) (v *Volume, e error) {
+func loadVolumeWithoutIndex(dirname string, collection string, id needle.VolumeId, needleMapKind NeedleMapType) (v *Volume, e error) {
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
 	v.SuperBlock = SuperBlock{}
 	v.needleMapKind = needleMapKind

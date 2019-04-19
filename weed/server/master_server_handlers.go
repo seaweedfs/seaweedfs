@@ -9,7 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 func (ms *MasterServer) lookupVolumeId(vids []string, collection string) (volumeLocations map[string]operation.LookupResult) {
@@ -22,7 +22,7 @@ func (ms *MasterServer) lookupVolumeId(vids []string, collection string) (volume
 		if _, ok := volumeLocations[vid]; ok {
 			continue
 		}
-		volumeId, err := storage.NewVolumeId(vid)
+		volumeId, err := needle.NewVolumeId(vid)
 		if err == nil {
 			machines := ms.Topo.Lookup(collection, volumeId)
 			if machines != nil {

@@ -10,7 +10,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 )
 
@@ -22,7 +22,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	vid, fid, _, _, _ := parseURLPath(r.URL.Path)
-	volumeId, ve := storage.NewVolumeId(vid)
+	volumeId, ve := needle.NewVolumeId(vid)
 	if ve != nil {
 		glog.V(0).Infoln("NewVolumeId error:", ve)
 		writeJsonError(w, r, http.StatusBadRequest, ve)
@@ -34,7 +34,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	needle, originalSize, ne := storage.CreateNeedleFromRequest(r, vs.FixJpgOrientation)
+	needle, originalSize, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation)
 	if ne != nil {
 		writeJsonError(w, r, http.StatusBadRequest, ne)
 		return
@@ -57,9 +57,9 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
-	n := new(storage.Needle)
+	n := new(needle.Needle)
 	vid, fid, _, _, _ := parseURLPath(r.URL.Path)
-	volumeId, _ := storage.NewVolumeId(vid)
+	volumeId, _ := needle.NewVolumeId(vid)
 	n.ParsePath(fid)
 
 	if !vs.maybeCheckJwtAuthorization(r, vid, fid) {

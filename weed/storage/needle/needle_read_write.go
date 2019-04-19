@@ -1,4 +1,4 @@
-package storage
+package needle
 
 import (
 	"errors"
@@ -6,10 +6,11 @@ import (
 	"io"
 	"os"
 
+	"math"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"math"
 )
 
 const (
@@ -383,3 +384,8 @@ func (n *Needle) HasPairs() bool {
 func (n *Needle) SetHasPairs() {
 	n.Flags = n.Flags | FlagHasPairs
 }
+
+func getActualSize(size uint32, version Version) int64 {
+	return NeedleEntrySize + NeedleBodyLength(size, version)
+}
+

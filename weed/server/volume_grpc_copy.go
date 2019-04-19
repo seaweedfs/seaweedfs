@@ -3,10 +3,13 @@ package weed_server
 import (
 	"context"
 	"fmt"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+
 	"io"
 	"os"
 )
@@ -14,10 +17,10 @@ import (
 // VolumeCopy copy the .idx .dat files, and mount the volume
 func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.VolumeCopyRequest) (*volume_server_pb.VolumeCopyResponse, error) {
 
-	v := vs.store.GetVolume(storage.VolumeId(req.VolumeId))
+	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v != nil {
 		// unmount the volume
-		err := vs.store.UnmountVolume(storage.VolumeId(req.VolumeId))
+		err := vs.store.UnmountVolume(needle.VolumeId(req.VolumeId))
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmount volume %d: %v", req.VolumeId, err)
 		}
@@ -88,7 +91,7 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 	}
 
 	// mount the volume
-	err = vs.store.MountVolume(storage.VolumeId(req.VolumeId))
+	err = vs.store.MountVolume(needle.VolumeId(req.VolumeId))
 	if err != nil {
 		return nil, fmt.Errorf("failed to mount volume %d: %v", req.VolumeId, err)
 	}
@@ -144,7 +147,7 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 
 func (vs *VolumeServer) ReadVolumeFileStatus(ctx context.Context, req *volume_server_pb.ReadVolumeFileStatusRequest) (*volume_server_pb.ReadVolumeFileStatusResponse, error) {
 	resp := &volume_server_pb.ReadVolumeFileStatusResponse{}
-	v := vs.store.GetVolume(storage.VolumeId(req.VolumeId))
+	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
 		return nil, fmt.Errorf("not found volume id %d", req.VolumeId)
 	}
@@ -160,7 +163,7 @@ func (vs *VolumeServer) ReadVolumeFileStatus(ctx context.Context, req *volume_se
 
 func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream volume_server_pb.VolumeServer_CopyFileServer) error {
 
-	v := vs.store.GetVolume(storage.VolumeId(req.VolumeId))
+	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
 		return fmt.Errorf("not found volume id %d", req.VolumeId)
 	}

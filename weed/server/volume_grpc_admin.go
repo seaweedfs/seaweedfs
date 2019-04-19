@@ -5,7 +5,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 func (vs *VolumeServer) DeleteCollection(ctx context.Context, req *volume_server_pb.DeleteCollectionRequest) (*volume_server_pb.DeleteCollectionResponse, error) {
@@ -29,7 +29,7 @@ func (vs *VolumeServer) AllocateVolume(ctx context.Context, req *volume_server_p
 	resp := &volume_server_pb.AllocateVolumeResponse{}
 
 	err := vs.store.AddVolume(
-		storage.VolumeId(req.VolumeId),
+		needle.VolumeId(req.VolumeId),
 		req.Collection,
 		vs.needleMapKind,
 		req.Replication,
@@ -51,7 +51,7 @@ func (vs *VolumeServer) VolumeMount(ctx context.Context, req *volume_server_pb.V
 
 	resp := &volume_server_pb.VolumeMountResponse{}
 
-	err := vs.store.MountVolume(storage.VolumeId(req.VolumeId))
+	err := vs.store.MountVolume(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
 		glog.Errorf("volume mount %v: %v", req, err)
@@ -67,7 +67,7 @@ func (vs *VolumeServer) VolumeUnmount(ctx context.Context, req *volume_server_pb
 
 	resp := &volume_server_pb.VolumeUnmountResponse{}
 
-	err := vs.store.UnmountVolume(storage.VolumeId(req.VolumeId))
+	err := vs.store.UnmountVolume(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
 		glog.Errorf("volume unmount %v: %v", req, err)
@@ -83,7 +83,7 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 
 	resp := &volume_server_pb.VolumeDeleteResponse{}
 
-	err := vs.store.DeleteVolume(storage.VolumeId(req.VolumeId))
+	err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
 		glog.Errorf("volume delete %v: %v", req, err)

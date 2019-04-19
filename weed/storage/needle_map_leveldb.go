@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/syndtr/goleveldb/leveldb"
@@ -74,7 +74,7 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 	})
 }
 
-func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle.NeedleValue, ok bool) {
+func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, ok bool) {
 	bytes := make([]byte, NeedleIdSize)
 	NeedleIdToBytes(bytes[0:NeedleIdSize], key)
 	data, err := m.db.Get(bytes, nil)
@@ -83,7 +83,7 @@ func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle.NeedleValue, ok bo
 	}
 	offset := BytesToOffset(data[0:OffsetSize])
 	size := util.BytesToUint32(data[OffsetSize : OffsetSize+SizeSize])
-	return &needle.NeedleValue{Key: NeedleId(key), Offset: offset, Size: size}, true
+	return &needle_map.NeedleValue{Key: NeedleId(key), Offset: offset, Size: size}, true
 }
 
 func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size uint32) error {

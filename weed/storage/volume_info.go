@@ -5,15 +5,16 @@ import (
 	"sort"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 type VolumeInfo struct {
-	Id               VolumeId
+	Id               needle.VolumeId
 	Size             uint64
 	ReplicaPlacement *ReplicaPlacement
-	Ttl              *TTL
+	Ttl              *needle.TTL
 	Collection       string
-	Version          Version
+	Version          needle.Version
 	FileCount        int
 	DeleteCount      int
 	DeletedByteCount uint64
@@ -23,14 +24,14 @@ type VolumeInfo struct {
 
 func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err error) {
 	vi = VolumeInfo{
-		Id:               VolumeId(m.Id),
+		Id:               needle.VolumeId(m.Id),
 		Size:             m.Size,
 		Collection:       m.Collection,
 		FileCount:        int(m.FileCount),
 		DeleteCount:      int(m.DeleteCount),
 		DeletedByteCount: m.DeletedByteCount,
 		ReadOnly:         m.ReadOnly,
-		Version:          Version(m.Version),
+		Version:          needle.Version(m.Version),
 		CompactRevision:  m.CompactRevision,
 	}
 	rp, e := NewReplicaPlacementFromByte(byte(m.ReplicaPlacement))
@@ -38,7 +39,7 @@ func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err er
 		return vi, e
 	}
 	vi.ReplicaPlacement = rp
-	vi.Ttl = LoadTTLFromUint32(m.Ttl)
+	vi.Ttl = needle.LoadTTLFromUint32(m.Ttl)
 	return vi, nil
 }
 

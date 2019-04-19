@@ -1,8 +1,9 @@
-package storage
+package needle
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"testing"
+
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 func TestParseKeyHash(t *testing.T) {

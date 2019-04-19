@@ -2,9 +2,11 @@ package topology
 
 import (
 	"fmt"
-	"google.golang.org/grpc"
 	"math/rand"
 	"sync"
+
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
@@ -21,7 +23,7 @@ This package is created to resolve these replica placement issues:
 type VolumeGrowOption struct {
 	Collection       string
 	ReplicaPlacement *storage.ReplicaPlacement
-	Ttl              *storage.TTL
+	Ttl              *needle.TTL
 	Prealloacte      int64
 	DataCenter       string
 	Rack             string
@@ -193,7 +195,7 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 	return
 }
 
-func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid storage.VolumeId, option *VolumeGrowOption, servers ...*DataNode) error {
+func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid needle.VolumeId, option *VolumeGrowOption, servers ...*DataNode) error {
 	for _, server := range servers {
 		if err := AllocateVolume(server, grpcDialOption, vid, option); err == nil {
 			vi := storage.VolumeInfo{
@@ -202,7 +204,7 @@ func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid
 				Collection:       option.Collection,
 				ReplicaPlacement: option.ReplicaPlacement,
 				Ttl:              option.Ttl,
-				Version:          storage.CurrentVersion,
+				Version:          needle.CurrentVersion,
 			}
 			server.AddOrUpdateVolume(vi)
 			topo.RegisterVolumeLayout(vi, server)

@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"google.golang.org/grpc"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"sort"
+
+	"google.golang.org/grpc"
 
 	"sync"
 
@@ -55,7 +56,7 @@ func (s ChunkList) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 func LoadChunkManifest(buffer []byte, isGzipped bool) (*ChunkManifest, error) {
 	if isGzipped {
 		var err error
-		if buffer, err = UnGzipData(buffer); err != nil {
+		if buffer, err = util.UnGzipData(buffer); err != nil {
 			return nil, err
 		}
 	}

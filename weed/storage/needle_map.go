@@ -6,7 +6,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -22,7 +22,7 @@ const (
 
 type NeedleMapper interface {
 	Put(key NeedleId, offset Offset, size uint32) error
-	Get(key NeedleId) (element *needle.NeedleValue, ok bool)
+	Get(key NeedleId) (element *needle_map.NeedleValue, ok bool)
 	Delete(key NeedleId, offset Offset) error
 	Close()
 	Destroy() error

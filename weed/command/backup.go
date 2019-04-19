@@ -2,8 +2,10 @@ package command
 
 import (
 	"fmt"
+
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/spf13/viper"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -56,7 +58,7 @@ func runBackup(cmd *Command, args []string) bool {
 	if *s.volumeId == -1 {
 		return false
 	}
-	vid := storage.VolumeId(*s.volumeId)
+	vid := needle.VolumeId(*s.volumeId)
 
 	// find volume location, replication, ttl info
 	lookup, err := operation.Lookup(*s.master, vid.String())
@@ -71,7 +73,7 @@ func runBackup(cmd *Command, args []string) bool {
 		fmt.Printf("Error get volume %d status: %v\n", vid, err)
 		return true
 	}
-	ttl, err := storage.ReadTTL(stats.Ttl)
+	ttl, err := needle.ReadTTL(stats.Ttl)
 	if err != nil {
 		fmt.Printf("Error get volume %d ttl %s: %v\n", vid, stats.Ttl, err)
 		return true

@@ -2,7 +2,10 @@ package topology
 
 import (
 	"fmt"
+
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+
 	"strconv"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -11,7 +14,7 @@ import (
 
 type DataNode struct {
 	NodeImpl
-	volumes   map[storage.VolumeId]storage.VolumeInfo
+	volumes   map[needle.VolumeId]storage.VolumeInfo
 	Ip        string
 	Port      int
 	PublicUrl string
@@ -22,7 +25,7 @@ func NewDataNode(id string) *DataNode {
 	s := &DataNode{}
 	s.id = NodeId(id)
 	s.nodeType = "DataNode"
-	s.volumes = make(map[storage.VolumeId]storage.VolumeInfo)
+	s.volumes = make(map[needle.VolumeId]storage.VolumeInfo)
 	s.NodeImpl.value = s
 	return s
 }
@@ -51,7 +54,7 @@ func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) (isNew bool) {
 }
 
 func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolumes, deletedVolumes []storage.VolumeInfo) {
-	actualVolumeMap := make(map[storage.VolumeId]storage.VolumeInfo)
+	actualVolumeMap := make(map[needle.VolumeId]storage.VolumeInfo)
 	for _, v := range actualVolumes {
 		actualVolumeMap[v.Id] = v
 	}
@@ -84,7 +87,7 @@ func (dn *DataNode) GetVolumes() (ret []storage.VolumeInfo) {
 	return ret
 }
 
-func (dn *DataNode) GetVolumesById(id storage.VolumeId) (storage.VolumeInfo, error) {
+func (dn *DataNode) GetVolumesById(id needle.VolumeId) (storage.VolumeInfo, error) {
 	dn.RLock()
 	defer dn.RUnlock()
 	vInfo, ok := dn.volumes[id]

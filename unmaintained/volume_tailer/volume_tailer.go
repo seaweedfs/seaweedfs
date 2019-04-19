@@ -8,7 +8,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	weed_server "github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	util2 "github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/spf13/viper"
 	"golang.org/x/tools/godoc/util"
 )
@@ -27,7 +28,7 @@ func main() {
 	weed_server.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(viper.Sub("grpc"), "client")
 
-	vid := storage.VolumeId(*volumeId)
+	vid := needle.VolumeId(*volumeId)
 
 	var sinceTimeNs int64
 	if *rewindDuration == 0 {
@@ -38,7 +39,7 @@ func main() {
 		sinceTimeNs = time.Now().Add(-*rewindDuration).UnixNano()
 	}
 
-	err := storage.TailVolume(*master, grpcDialOption, vid, uint64(sinceTimeNs), *timeoutSeconds, func(n *storage.Needle) (err error) {
+	err := operation.TailVolume(*master, grpcDialOption, vid, uint64(sinceTimeNs), *timeoutSeconds, func(n *needle.Needle) (err error) {
 		if n.Size == 0 {
 			println("-", n.String())
 			return nil
@@ -50,7 +51,7 @@ func main() {
 
 			data := n.Data
 			if n.IsGzipped() {
-				if data, err = operation.UnGzipData(data); err != nil {
+				if data, err = util2.UnGzipData(data); err != nil {
 					return err
 				}
 			}

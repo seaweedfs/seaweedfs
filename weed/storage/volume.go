@@ -2,7 +2,10 @@ package storage
 
 import (
 	"fmt"
+
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+
 	"os"
 	"path"
 	"strconv"
@@ -13,7 +16,7 @@ import (
 )
 
 type Volume struct {
-	Id            VolumeId
+	Id            needle.VolumeId
 	dir           string
 	Collection    string
 	dataFile      *os.File
@@ -31,7 +34,7 @@ type Volume struct {
 	lastCompactRevision    uint16
 }
 
-func NewVolume(dirname string, collection string, id VolumeId, needleMapKind NeedleMapType, replicaPlacement *ReplicaPlacement, ttl *TTL, preallocate int64) (v *Volume, e error) {
+func NewVolume(dirname string, collection string, id needle.VolumeId, needleMapKind NeedleMapType, replicaPlacement *ReplicaPlacement, ttl *needle.TTL, preallocate int64) (v *Volume, e error) {
 	// if replicaPlacement is nil, the superblock will be loaded from disk
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
 	v.SuperBlock = SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
@@ -59,7 +62,7 @@ func (v *Volume) DataFile() *os.File {
 	return v.dataFile
 }
 
-func (v *Volume) Version() Version {
+func (v *Volume) Version() needle.Version {
 	return v.SuperBlock.Version()
 }
 

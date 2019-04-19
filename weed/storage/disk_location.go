@@ -9,22 +9,23 @@ import (
 	"fmt"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 type DiskLocation struct {
 	Directory      string
 	MaxVolumeCount int
-	volumes        map[VolumeId]*Volume
+	volumes        map[needle.VolumeId]*Volume
 	sync.RWMutex
 }
 
 func NewDiskLocation(dir string, maxVolumeCount int) *DiskLocation {
 	location := &DiskLocation{Directory: dir, MaxVolumeCount: maxVolumeCount}
-	location.volumes = make(map[VolumeId]*Volume)
+	location.volumes = make(map[needle.VolumeId]*Volume)
 	return location
 }
 
-func (l *DiskLocation) volumeIdFromPath(dir os.FileInfo) (VolumeId, string, error) {
+func (l *DiskLocation) volumeIdFromPath(dir os.FileInfo) (needle.VolumeId, string, error) {
 	name := dir.Name()
 	if !dir.IsDir() && strings.HasSuffix(name, ".dat") {
 		collection := ""
@@ -33,7 +34,7 @@ func (l *DiskLocation) volumeIdFromPath(dir os.FileInfo) (VolumeId, string, erro
 		if i > 0 {
 			collection, base = base[0:i], base[i+1:]
 		}
-		vol, err := NewVolumeId(base)
+		vol, err := needle.NewVolumeId(base)
 		return vol, collection, err
 	}
 
@@ -114,7 +115,7 @@ func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e er
 	return
 }
 
-func (l *DiskLocation) deleteVolumeById(vid VolumeId) (e error) {
+func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId) (e error) {
 	v, ok := l.volumes[vid]
 	if !ok {
 		return
@@ -127,7 +128,7 @@ func (l *DiskLocation) deleteVolumeById(vid VolumeId) (e error) {
 	return
 }
 
-func (l *DiskLocation) LoadVolume(vid VolumeId, needleMapKind NeedleMapType) bool {
+func (l *DiskLocation) LoadVolume(vid needle.VolumeId, needleMapKind NeedleMapType) bool {
 	if dirs, err := ioutil.ReadDir(l.Directory); err == nil {
 		for _, dir := range dirs {
 			volId, _, err := l.volumeIdFromPath(dir)
@@ -142,7 +143,7 @@ func (l *DiskLocation) LoadVolume(vid VolumeId, needleMapKind NeedleMapType) boo
 	return false
 }
 
-func (l *DiskLocation) DeleteVolume(vid VolumeId) error {
+func (l *DiskLocation) DeleteVolume(vid needle.VolumeId) error {
 	l.Lock()
 	defer l.Unlock()
 
@@ -153,7 +154,7 @@ func (l *DiskLocation) DeleteVolume(vid VolumeId) error {
 	return l.deleteVolumeById(vid)
 }
 
-func (l *DiskLocation) UnloadVolume(vid VolumeId) error {
+func (l *DiskLocation) UnloadVolume(vid needle.VolumeId) error {
 	l.Lock()
 	defer l.Unlock()
 
@@ -166,14 +167,14 @@ func (l *DiskLocation) UnloadVolume(vid VolumeId) error {
 	return nil
 }
 
-func (l *DiskLocation) SetVolume(vid VolumeId, volume *Volume) {
+func (l *DiskLocation) SetVolume(vid needle.VolumeId, volume *Volume) {
 	l.Lock()
 	defer l.Unlock()
 
 	l.volumes[vid] = volume
 }
 
-func (l *DiskLocation) FindVolume(vid VolumeId) (*Volume, bool) {
+func (l *DiskLocation) FindVolume(vid needle.VolumeId) (*Volume, bool) {
 	l.RLock()
 	defer l.RUnlock()
 

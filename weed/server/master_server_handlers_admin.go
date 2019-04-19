@@ -4,15 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
+	"net/http"
+	"strconv"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"math/rand"
-	"net/http"
-	"strconv"
 )
 
 func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +95,7 @@ func (ms *MasterServer) volumeStatusHandler(w http.ResponseWriter, r *http.Reque
 
 func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) {
 	vid, _, _, _, _ := parseURLPath(r.URL.Path)
-	volumeId, err := storage.NewVolumeId(vid)
+	volumeId, err := needle.NewVolumeId(vid)
 	if err != nil {
 		debug("parsing error:", err, r.URL.Path)
 		return
@@ -146,7 +148,7 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 	if err != nil {
 		return nil, err
 	}
-	ttl, err := storage.ReadTTL(r.FormValue("ttl"))
+	ttl, err := needle.ReadTTL(r.FormValue("ttl"))
 	if err != nil {
 		return nil, err
 	}

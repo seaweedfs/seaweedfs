@@ -4,13 +4,10 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
-
-func getActualSize(size uint32, version Version) int64 {
-	return NeedleEntrySize + NeedleBodyLength(size, version)
-}
 
 func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) error {
 	var indexSize int64
@@ -55,8 +52,8 @@ func readIndexEntryAtOffset(indexFile *os.File, offset int64) (bytes []byte, err
 	return
 }
 
-func verifyNeedleIntegrity(datFile *os.File, v Version, offset int64, key NeedleId, size uint32) error {
-	n := new(Needle)
+func verifyNeedleIntegrity(datFile *os.File, v needle.Version, offset int64, key NeedleId, size uint32) error {
+	n := new(needle.Needle)
 	err := n.ReadData(datFile, offset, size, v)
 	if err != nil {
 		return err

@@ -1,11 +1,13 @@
 package storage
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io/ioutil"
 	"math/rand"
 	"os"
 	"testing"
+
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 /*
@@ -65,7 +67,7 @@ func TestCompaction(t *testing.T) {
 	}
 	defer os.RemoveAll(dir) // clean up
 
-	v, err := NewVolume(dir, "", 1, NeedleMapInMemory, &ReplicaPlacement{}, &TTL{}, 0)
+	v, err := NewVolume(dir, "", 1, NeedleMapInMemory, &ReplicaPlacement{}, &needle.TTL{}, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
@@ -145,21 +147,21 @@ func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 
 type needleInfo struct {
 	size uint32
-	crc  CRC
+	crc  needle.CRC
 }
 
-func newRandomNeedle(id uint64) *Needle {
-	n := new(Needle)
+func newRandomNeedle(id uint64) *needle.Needle {
+	n := new(needle.Needle)
 	n.Data = make([]byte, rand.Intn(1024))
 	rand.Read(n.Data)
 
-	n.Checksum = NewCRC(n.Data)
+	n.Checksum = needle.NewCRC(n.Data)
 	n.Id = types.Uint64ToNeedleId(id)
 	return n
 }
 
-func newEmptyNeedle(id uint64) *Needle {
-	n := new(Needle)
+func newEmptyNeedle(id uint64) *needle.Needle {
+	n := new(needle.Needle)
 	n.Id = types.Uint64ToNeedleId(id)
 	return n
 }

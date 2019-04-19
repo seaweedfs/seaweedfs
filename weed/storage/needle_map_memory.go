@@ -5,19 +5,19 @@ import (
 	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 type NeedleMap struct {
-	m needle.NeedleValueMap
+	m needle_map.NeedleValueMap
 
 	baseNeedleMapper
 }
 
 func NewCompactNeedleMap(file *os.File) *NeedleMap {
 	nm := &NeedleMap{
-		m: needle.NewCompactMap(),
+		m: needle_map.NewCompactMap(),
 	}
 	nm.indexFile = file
 	return nm
@@ -25,7 +25,7 @@ func NewCompactNeedleMap(file *os.File) *NeedleMap {
 
 func NewBtreeNeedleMap(file *os.File) *NeedleMap {
 	nm := &NeedleMap{
-		m: needle.NewBtreeMap(),
+		m: needle_map.NewBtreeMap(),
 	}
 	nm.indexFile = file
 	return nm
@@ -106,7 +106,7 @@ func (nm *NeedleMap) Put(key NeedleId, offset Offset, size uint32) error {
 	nm.logPut(key, oldSize, size)
 	return nm.appendToIndexFile(key, offset, size)
 }
-func (nm *NeedleMap) Get(key NeedleId) (element *needle.NeedleValue, ok bool) {
+func (nm *NeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, ok bool) {
 	element, ok = nm.m.Get(NeedleId(key))
 	return
 }

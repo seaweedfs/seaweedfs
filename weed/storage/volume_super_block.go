@@ -6,6 +6,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
 )
@@ -23,9 +24,9 @@ const (
 * Rest bytes: Reserved
  */
 type SuperBlock struct {
-	version          Version
+	version          needle.Version
 	ReplicaPlacement *ReplicaPlacement
-	Ttl              *TTL
+	Ttl              *needle.TTL
 	CompactRevision  uint16
 	Extra            *master_pb.SuperBlockExtra
 	extraSize        uint16
@@ -33,13 +34,13 @@ type SuperBlock struct {
 
 func (s *SuperBlock) BlockSize() int {
 	switch s.version {
-	case Version2, Version3:
+	case needle.Version2, needle.Version3:
 		return _SuperBlockSize + int(s.extraSize)
 	}
 	return _SuperBlockSize
 }
 
-func (s *SuperBlock) Version() Version {
+func (s *SuperBlock) Version() needle.Version {
 	return s.version
 }
 func (s *SuperBlock) Bytes() []byte {
@@ -75,7 +76,7 @@ func (v *Volume) maybeWriteSuperBlock() error {
 		return e
 	}
 	if stat.Size() == 0 {
-		v.SuperBlock.version = CurrentVersion
+		v.SuperBlock.version = needle.CurrentVersion
 		_, e = v.dataFile.Write(v.SuperBlock.Bytes())
 		if e != nil && os.IsPermission(e) {
 			//read-only, but zero length - recreate it!
@@ -105,12 +106,12 @@ func ReadSuperBlock(dataFile *os.File) (superBlock SuperBlock, err error) {
 		err = fmt.Errorf("cannot read volume %s super block: %v", dataFile.Name(), e)
 		return
 	}
-	superBlock.version = Version(header[0])
+	superBlock.version = needle.Version(header[0])
 	if superBlock.ReplicaPlacement, err = NewReplicaPlacementFromByte(header[1]); err != nil {
 		err = fmt.Errorf("cannot read replica type: %s", err.Error())
 		return
 	}
-	superBlock.Ttl = LoadTTLFromBytes(header[2:4])
+	superBlock.Ttl = needle.LoadTTLFromBytes(header[2:4])
 	superBlock.CompactRevision = util.BytesToUint16(header[4:6])
 	superBlock.extraSize = util.BytesToUint16(header[6:8])
 

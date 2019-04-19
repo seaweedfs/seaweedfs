@@ -2,8 +2,11 @@ package main
 
 import (
 	"flag"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+
 	"time"
 )
 
@@ -14,7 +17,7 @@ var (
 )
 
 type VolumeFileScanner4SeeDat struct {
-	version storage.Version
+	version needle.Version
 }
 
 func (scanner *VolumeFileScanner4SeeDat) VisitSuperBlock(superBlock storage.SuperBlock) error {
@@ -26,7 +29,7 @@ func (scanner *VolumeFileScanner4SeeDat) ReadNeedleBody() bool {
 	return true
 }
 
-func (scanner *VolumeFileScanner4SeeDat) VisitNeedle(n *storage.Needle, offset int64) error {
+func (scanner *VolumeFileScanner4SeeDat) VisitNeedle(n *needle.Needle, offset int64) error {
 	t := time.Unix(int64(n.AppendAtNs)/int64(time.Second), int64(n.AppendAtNs)%int64(time.Second))
 	glog.V(0).Infof("%d,%s%x offset %d size %d cookie %x appendedAt %v", *volumeId, n.Id, n.Cookie, offset, n.Size, n.Cookie, t)
 	return nil
@@ -35,7 +38,7 @@ func (scanner *VolumeFileScanner4SeeDat) VisitNeedle(n *storage.Needle, offset i
 func main() {
 	flag.Parse()
 
-	vid := storage.VolumeId(*volumeId)
+	vid := needle.VolumeId(*volumeId)
 
 	scanner := &VolumeFileScanner4SeeDat{}
 	err := storage.ScanVolumeFile(*volumePath, *volumeCollection, vid, storage.NeedleMapInMemory, scanner)

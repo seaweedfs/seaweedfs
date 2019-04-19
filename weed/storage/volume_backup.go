@@ -3,12 +3,14 @@ package storage
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"google.golang.org/grpc"
 	"io"
 	"os"
+
+	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"google.golang.org/grpc"
 )
 
 func (v *Volume) GetVolumeSyncStatus() *volume_server_pb.VolumeSyncStatusResponse {
@@ -147,7 +149,7 @@ func (v *Volume) locateLastAppendEntry() (Offset, error) {
 
 func (v *Volume) readAppendAtNs(offset Offset) (uint64, error) {
 
-	n, _, bodyLength, err := ReadNeedleHeader(v.dataFile, v.SuperBlock.version, offset.ToAcutalOffset())
+	n, _, bodyLength, err := needle.ReadNeedleHeader(v.dataFile, v.SuperBlock.version, offset.ToAcutalOffset())
 	if err != nil {
 		return 0, fmt.Errorf("ReadNeedleHeader: %v", err)
 	}
@@ -245,7 +247,7 @@ func (scanner *VolumeFileScanner4GenIdx) ReadNeedleBody() bool {
 	return false
 }
 
-func (scanner *VolumeFileScanner4GenIdx) VisitNeedle(n *Needle, offset int64) error {
+func (scanner *VolumeFileScanner4GenIdx) VisitNeedle(n *needle.Needle, offset int64) error {
 	if n.Size > 0 && n.Size != TombstoneFileSize {
 		return scanner.v.nm.Put(n.Id, ToOffset(offset), n.Size)
 	}

@@ -3,14 +3,14 @@ package topology
 import (
 	"github.com/chrislusf/raft"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 type MaxVolumeIdCommand struct {
-	MaxVolumeId storage.VolumeId `json:"maxVolumeId"`
+	MaxVolumeId needle.VolumeId `json:"maxVolumeId"`
 }
 
-func NewMaxVolumeIdCommand(value storage.VolumeId) *MaxVolumeIdCommand {
+func NewMaxVolumeIdCommand(value needle.VolumeId) *MaxVolumeIdCommand {
 	return &MaxVolumeIdCommand{
 		MaxVolumeId: value,
 	}

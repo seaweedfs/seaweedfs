@@ -7,12 +7,12 @@ import (
 	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 func (vs *VolumeServer) VolumeIncrementalCopy(req *volume_server_pb.VolumeIncrementalCopyRequest, stream volume_server_pb.VolumeServer_VolumeIncrementalCopyServer) error {
 
-	v := vs.store.GetVolume(storage.VolumeId(req.VolumeId))
+	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
 		return fmt.Errorf("not found volume id %d", req.VolumeId)
 	}
@@ -36,7 +36,7 @@ func (vs *VolumeServer) VolumeIncrementalCopy(req *volume_server_pb.VolumeIncrem
 
 func (vs *VolumeServer) VolumeSyncStatus(ctx context.Context, req *volume_server_pb.VolumeSyncStatusRequest) (*volume_server_pb.VolumeSyncStatusResponse, error) {
 
-	v := vs.store.GetVolume(storage.VolumeId(req.VolumeId))
+	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
 		return nil, fmt.Errorf("not found volume id %d", req.VolumeId)
 	}

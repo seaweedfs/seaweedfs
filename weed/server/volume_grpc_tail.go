@@ -7,11 +7,12 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 func (vs *VolumeServer) VolumeTail(req *volume_server_pb.VolumeTailRequest, stream volume_server_pb.VolumeServer_VolumeTailServer) error {
 
-	v := vs.store.GetVolume(storage.VolumeId(req.VolumeId))
+	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
 		return fmt.Errorf("not found volume id %d", req.VolumeId)
 	}

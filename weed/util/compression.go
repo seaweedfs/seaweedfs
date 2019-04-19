@@ -1,4 +1,4 @@
-package operation
+package util
 
 import (
 	"bytes"
@@ -11,10 +11,33 @@ import (
 	"golang.org/x/tools/godoc/util"
 )
 
+func GzipData(input []byte) ([]byte, error) {
+	buf := new(bytes.Buffer)
+	w, _ := gzip.NewWriterLevel(buf, flate.BestSpeed)
+	if _, err := w.Write(input); err != nil {
+		glog.V(2).Infoln("error compressing data:", err)
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		glog.V(2).Infoln("error closing compressed data:", err)
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+func UnGzipData(input []byte) ([]byte, error) {
+	buf := bytes.NewBuffer(input)
+	r, _ := gzip.NewReader(buf)
+	defer r.Close()
+	output, err := ioutil.ReadAll(r)
+	if err != nil {
+		glog.V(2).Infoln("error uncompressing data:", err)
+	}
+	return output, err
+}
+
 /*
 * Default more not to gzip since gzip can be done on client side.
- */
-func IsGzippable(ext, mtype string, data []byte) bool {
+ */func IsGzippable(ext, mtype string, data []byte) bool {
 
 	shouldBeZipped, iAmSure := IsGzippableFileType(ext, mtype)
 	if iAmSure {
@@ -28,8 +51,7 @@ func IsGzippable(ext, mtype string, data []byte) bool {
 
 /*
 * Default more not to gzip since gzip can be done on client side.
- */
-func IsGzippableFileType(ext, mtype string) (shouldBeZipped, iAmSure bool) {
+ */func IsGzippableFileType(ext, mtype string) (shouldBeZipped, iAmSure bool) {
 
 	// text
 	if strings.HasPrefix(mtype, "text/") {
@@ -70,26 +92,3 @@ func IsGzippableFileType(ext, mtype string) (shouldBeZipped, iAmSure bool) {
 	return false, false
 }
 
-func GzipData(input []byte) ([]byte, error) {
-	buf := new(bytes.Buffer)
-	w, _ := gzip.NewWriterLevel(buf, flate.BestSpeed)
-	if _, err := w.Write(input); err != nil {
-		glog.V(2).Infoln("error compressing data:", err)
-		return nil, err
-	}
-	if err := w.Close(); err != nil {
-		glog.V(2).Infoln("error closing compressed data:", err)
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-func UnGzipData(input []byte) ([]byte, error) {
-	buf := bytes.NewBuffer(input)
-	r, _ := gzip.NewReader(buf)
-	defer r.Close()
-	output, err := ioutil.ReadAll(r)
-	if err != nil {
-		glog.V(2).Infoln("error uncompressing data:", err)
-	}
-	return output, err
-}

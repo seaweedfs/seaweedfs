@@ -5,17 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"google.golang.org/grpc"
 	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 
 	_ "github.com/chrislusf/seaweedfs/weed/statik"
@@ -90,7 +91,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	}
 
 	debug("parsing upload file...")
-	fname, data, mimeType, pairMap, isGzipped, originalDataSize, lastModified, _, _, pe := storage.ParseUpload(r)
+	fname, data, mimeType, pairMap, isGzipped, originalDataSize, lastModified, _, _, pe := needle.ParseUpload(r)
 	if pe != nil {
 		writeJsonError(w, r, http.StatusBadRequest, pe)
 		return

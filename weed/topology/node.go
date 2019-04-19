@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 type NodeId string
@@ -20,12 +20,12 @@ type Node interface {
 	UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int64)
 	UpAdjustVolumeCountDelta(volumeCountDelta int64)
 	UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int64)
-	UpAdjustMaxVolumeId(vid storage.VolumeId)
+	UpAdjustMaxVolumeId(vid needle.VolumeId)
 
 	GetVolumeCount() int64
 	GetActiveVolumeCount() int64
 	GetMaxVolumeCount() int64
-	GetMaxVolumeId() storage.VolumeId
+	GetMaxVolumeId() needle.VolumeId
 	SetParent(Node)
 	LinkChildNode(node Node)
 	UnlinkChildNode(nodeId NodeId)
@@ -46,8 +46,8 @@ type NodeImpl struct {
 	maxVolumeCount    int64
 	parent            Node
 	sync.RWMutex      // lock children
-	children          map[NodeId]Node
-	maxVolumeId       storage.VolumeId
+	children    map[NodeId]Node
+	maxVolumeId needle.VolumeId
 
 	//for rack, data center, topology
 	nodeType string
@@ -190,7 +190,7 @@ func (n *NodeImpl) UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int64) 
 		n.parent.UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta)
 	}
 }
-func (n *NodeImpl) UpAdjustMaxVolumeId(vid storage.VolumeId) { //can be negative
+func (n *NodeImpl) UpAdjustMaxVolumeId(vid needle.VolumeId) { //can be negative
 	if n.maxVolumeId < vid {
 		n.maxVolumeId = vid
 		if n.parent != nil {
@@ -198,7 +198,7 @@ func (n *NodeImpl) UpAdjustMaxVolumeId(vid storage.VolumeId) { //can be negative
 		}
 	}
 }
-func (n *NodeImpl) GetMaxVolumeId() storage.VolumeId {
+func (n *NodeImpl) GetMaxVolumeId() needle.VolumeId {
 	return n.maxVolumeId
 }
 func (n *NodeImpl) GetVolumeCount() int64 {

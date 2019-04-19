@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -205,7 +206,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 			//even the needle cache in memory is hit, the need_bytes is correct
 			glog.V(4).Infof("file %d offset %d size %d", key, increIdxEntry.offset.ToAcutalOffset(), increIdxEntry.size)
 			var needleBytes []byte
-			needleBytes, err = ReadNeedleBlob(oldDatFile, increIdxEntry.offset.ToAcutalOffset(), increIdxEntry.size, v.Version())
+			needleBytes, err = needle.ReadNeedleBlob(oldDatFile, increIdxEntry.offset.ToAcutalOffset(), increIdxEntry.size, v.Version())
 			if err != nil {
 				return fmt.Errorf("ReadNeedleBlob %s key %d offset %d size %d failed: %v", oldDatFile.Name(), key, increIdxEntry.offset.ToAcutalOffset(), increIdxEntry.size, err)
 			}
@@ -213,7 +214,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 			util.Uint32toBytes(idxEntryBytes[8:12], uint32(offset/NeedlePaddingSize))
 		} else { //deleted needle
 			//fakeDelNeedle 's default Data field is nil
-			fakeDelNeedle := new(Needle)
+			fakeDelNeedle := new(needle.Needle)
 			fakeDelNeedle.Id = key
 			fakeDelNeedle.Cookie = 0x12345678
 			fakeDelNeedle.AppendAtNs = uint64(time.Now().UnixNano())
@@ -235,7 +236,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 }
 
 type VolumeFileScanner4Vacuum struct {
-	version   Version
+	version   needle.Version
 	v         *Volume
 	dst       *os.File
 	nm        *NeedleMap
@@ -255,7 +256,7 @@ func (scanner *VolumeFileScanner4Vacuum) ReadNeedleBody() bool {
 	return true
 }
 
-func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *Needle, offset int64) error {
+func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset int64) error {
 	if n.HasTtl() && scanner.now >= n.LastModified+uint64(scanner.v.Ttl.Minutes()*60) {
 		return nil
 	}
@@ -334,7 +335,7 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 			return nil
 		}
 
-		n := new(Needle)
+		n := new(needle.Needle)
 		err := n.ReadData(v.dataFile, offset.ToAcutalOffset(), size, v.Version())
 		if err != nil {
 			return nil

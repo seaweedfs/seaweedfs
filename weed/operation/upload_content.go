@@ -18,6 +18,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type UploadResult struct {
@@ -59,7 +60,7 @@ func doUpload(uploadUrl string, filename string, reader io.Reader, isGzipped boo
 	contentIsGzipped := isGzipped
 	shouldGzipNow := false
 	if !isGzipped {
-		if shouldBeZipped, iAmSure := IsGzippableFileType(filepath.Base(filename), mtype); iAmSure && shouldBeZipped {
+		if shouldBeZipped, iAmSure := util.IsGzippableFileType(filepath.Base(filename), mtype); iAmSure && shouldBeZipped {
 			shouldGzipNow = true
 			contentIsGzipped = true
 		}

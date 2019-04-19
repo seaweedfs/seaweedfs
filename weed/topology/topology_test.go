@@ -4,6 +4,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/sequence"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+
 	"testing"
 )
 
@@ -96,16 +98,16 @@ func TestAddRemoveVolume(t *testing.T) {
 	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, "127.0.0.1", 25)
 
 	v := storage.VolumeInfo{
-		Id:               storage.VolumeId(1),
+		Id:               needle.VolumeId(1),
 		Size:             100,
 		Collection:       "xcollection",
 		FileCount:        123,
 		DeleteCount:      23,
 		DeletedByteCount: 45,
 		ReadOnly:         false,
-		Version:          storage.CurrentVersion,
+		Version:          needle.CurrentVersion,
 		ReplicaPlacement: &storage.ReplicaPlacement{},
-		Ttl:              storage.EMPTY_TTL,
+		Ttl:              needle.EMPTY_TTL,
 	}
 
 	dn.UpdateVolumes([]storage.VolumeInfo{v})

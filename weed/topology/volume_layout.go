@@ -9,16 +9,17 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 // mapping from volume to its locations, inverted from server to volume
 type VolumeLayout struct {
 	rp               *storage.ReplicaPlacement
-	ttl              *storage.TTL
-	vid2location     map[storage.VolumeId]*VolumeLocationList
-	writables        []storage.VolumeId        // transient array of writable volume id
-	readonlyVolumes  map[storage.VolumeId]bool // transient set of readonly volumes
-	oversizedVolumes map[storage.VolumeId]bool // set of oversized volumes
+	ttl              *needle.TTL
+	vid2location     map[needle.VolumeId]*VolumeLocationList
+	writables        []needle.VolumeId        // transient array of writable volume id
+	readonlyVolumes  map[needle.VolumeId]bool // transient set of readonly volumes
+	oversizedVolumes map[needle.VolumeId]bool // set of oversized volumes
 	volumeSizeLimit  uint64
 	accessLock       sync.RWMutex
 }
@@ -29,14 +30,14 @@ type VolumeLayoutStats struct {
 	FileCount uint64
 }
 
-func NewVolumeLayout(rp *storage.ReplicaPlacement, ttl *storage.TTL, volumeSizeLimit uint64) *VolumeLayout {
+func NewVolumeLayout(rp *storage.ReplicaPlacement, ttl *needle.TTL, volumeSizeLimit uint64) *VolumeLayout {
 	return &VolumeLayout{
 		rp:               rp,
 		ttl:              ttl,
-		vid2location:     make(map[storage.VolumeId]*VolumeLocationList),
-		writables:        *new([]storage.VolumeId),
-		readonlyVolumes:  make(map[storage.VolumeId]bool),
-		oversizedVolumes: make(map[storage.VolumeId]bool),
+		vid2location:     make(map[needle.VolumeId]*VolumeLocationList),
+		writables:        *new([]needle.VolumeId),
+		readonlyVolumes:  make(map[needle.VolumeId]bool),
+		oversizedVolumes: make(map[needle.VolumeId]bool),
 		volumeSizeLimit:  volumeSizeLimit,
 	}
 }
@@ -95,7 +96,7 @@ func (vl *VolumeLayout) UnRegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	delete(vl.vid2location, v.Id)
 }
 
-func (vl *VolumeLayout) addToWritable(vid storage.VolumeId) {
+func (vl *VolumeLayout) addToWritable(vid needle.VolumeId) {
 	for _, id := range vl.writables {
 		if vid == id {
 			return
@@ -110,7 +111,7 @@ func (vl *VolumeLayout) isOversized(v *storage.VolumeInfo) bool {
 
 func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool {
 	return !vl.isOversized(v) &&
-		v.Version == storage.CurrentVersion &&
+		v.Version == needle.CurrentVersion &&
 		!v.ReadOnly
 }
 
@@ -121,7 +122,7 @@ func (vl *VolumeLayout) isEmpty() bool {
 	return len(vl.vid2location) == 0
 }
 
-func (vl *VolumeLayout) Lookup(vid storage.VolumeId) []*DataNode {
+func (vl *VolumeLayout) Lookup(vid needle.VolumeId) []*DataNode {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
 
@@ -141,7 +142,7 @@ func (vl *VolumeLayout) ListVolumeServers() (nodes []*DataNode) {
 	return
 }
 
-func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (*storage.VolumeId, uint64, *VolumeLocationList, error) {
+func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (*needle.VolumeId, uint64, *VolumeLocationList, error) {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
 
@@ -158,7 +159,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (*s
 		}
 		return nil, 0, nil, errors.New("Strangely vid " + vid.String() + " is on no machine!")
 	}
-	var vid storage.VolumeId
+	var vid needle.VolumeId
 	var locationList *VolumeLocationList
 	counter := 0
 	for _, v := range vl.writables {
@@ -205,7 +206,7 @@ func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) int {
 	return counter
 }
 
-func (vl *VolumeLayout) removeFromWritable(vid storage.VolumeId) bool {
+func (vl *VolumeLayout) removeFromWritable(vid needle.VolumeId) bool {
 	toDeleteIndex := -1
 	for k, id := range vl.writables {
 		if id == vid {
@@ -220,7 +221,7 @@ func (vl *VolumeLayout) removeFromWritable(vid storage.VolumeId) bool {
 	}
 	return false
 }
-func (vl *VolumeLayout) setVolumeWritable(vid storage.VolumeId) bool {
+func (vl *VolumeLayout) setVolumeWritable(vid needle.VolumeId) bool {
 	for _, v := range vl.writables {
 		if v == vid {
 			return false
@@ -231,7 +232,7 @@ func (vl *VolumeLayout) setVolumeWritable(vid storage.VolumeId) bool {
 	return true
 }
 
-func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid storage.VolumeId) bool {
+func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) bool {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
@@ -245,7 +246,7 @@ func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid storage.VolumeId)
 	}
 	return false
 }
-func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid storage.VolumeId) bool {
+func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId) bool {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
@@ -256,7 +257,7 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid storage.VolumeId) b
 	return false
 }
 
-func (vl *VolumeLayout) SetVolumeCapacityFull(vid storage.VolumeId) bool {
+func (vl *VolumeLayout) SetVolumeCapacityFull(vid needle.VolumeId) bool {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 

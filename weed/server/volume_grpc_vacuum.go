@@ -5,14 +5,14 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 func (vs *VolumeServer) VacuumVolumeCheck(ctx context.Context, req *volume_server_pb.VacuumVolumeCheckRequest) (*volume_server_pb.VacuumVolumeCheckResponse, error) {
 
 	resp := &volume_server_pb.VacuumVolumeCheckResponse{}
 
-	garbageRatio, err := vs.store.CheckCompactVolume(storage.VolumeId(req.VolumeId))
+	garbageRatio, err := vs.store.CheckCompactVolume(needle.VolumeId(req.VolumeId))
 
 	resp.GarbageRatio = garbageRatio
 
@@ -28,7 +28,7 @@ func (vs *VolumeServer) VacuumVolumeCompact(ctx context.Context, req *volume_ser
 
 	resp := &volume_server_pb.VacuumVolumeCompactResponse{}
 
-	err := vs.store.CompactVolume(storage.VolumeId(req.VolumeId), req.Preallocate)
+	err := vs.store.CompactVolume(needle.VolumeId(req.VolumeId), req.Preallocate)
 
 	if err != nil {
 		glog.Errorf("compact volume %d: %v", req.VolumeId, err)
@@ -44,7 +44,7 @@ func (vs *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_serv
 
 	resp := &volume_server_pb.VacuumVolumeCommitResponse{}
 
-	err := vs.store.CommitCompactVolume(storage.VolumeId(req.VolumeId))
+	err := vs.store.CommitCompactVolume(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
 		glog.Errorf("commit volume %d: %v", req.VolumeId, err)
@@ -60,7 +60,7 @@ func (vs *VolumeServer) VacuumVolumeCleanup(ctx context.Context, req *volume_ser
 
 	resp := &volume_server_pb.VacuumVolumeCleanupResponse{}
 
-	err := vs.store.CommitCleanupVolume(storage.VolumeId(req.VolumeId))
+	err := vs.store.CommitCleanupVolume(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
 		glog.Errorf("cleanup volume %d: %v", req.VolumeId, err)

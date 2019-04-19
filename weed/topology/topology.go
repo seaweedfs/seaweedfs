@@ -9,6 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/sequence"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -72,7 +73,7 @@ func (t *Topology) Leader() (string, error) {
 	return l, nil
 }
 
-func (t *Topology) Lookup(collection string, vid storage.VolumeId) []*DataNode {
+func (t *Topology) Lookup(collection string, vid needle.VolumeId) []*DataNode {
 	//maybe an issue if lots of collections?
 	if collection == "" {
 		for _, c := range t.collectionMap.Items() {
@@ -88,7 +89,7 @@ func (t *Topology) Lookup(collection string, vid storage.VolumeId) []*DataNode {
 	return nil
 }
 
-func (t *Topology) NextVolumeId() (storage.VolumeId, error) {
+func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	vid := t.GetMaxVolumeId()
 	next := vid.Next()
 	if _, err := t.RaftServer.Do(NewMaxVolumeIdCommand(next)); err != nil {
@@ -108,10 +109,10 @@ func (t *Topology) PickForWrite(count uint64, option *VolumeGrowOption) (string,
 		return "", 0, nil, errors.New("No writable volumes available!")
 	}
 	fileId, count := t.Sequence.NextFileId(count)
-	return storage.NewFileId(*vid, fileId, rand.Uint32()).String(), count, datanodes.Head(), nil
+	return needle.NewFileId(*vid, fileId, rand.Uint32()).String(), count, datanodes.Head(), nil
 }
 
-func (t *Topology) GetVolumeLayout(collectionName string, rp *storage.ReplicaPlacement, ttl *storage.TTL) *VolumeLayout {
+func (t *Topology) GetVolumeLayout(collectionName string, rp *storage.ReplicaPlacement, ttl *needle.TTL) *VolumeLayout {
 	return t.collectionMap.Get(collectionName, func() interface{} {
 		return NewCollection(collectionName, t.volumeSizeLimit)
 	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl)

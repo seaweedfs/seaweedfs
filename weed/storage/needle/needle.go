@@ -1,4 +1,4 @@
-package storage
+package needle
 
 import (
 	"encoding/json"
@@ -8,9 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"io/ioutil"
+
 	"github.com/chrislusf/seaweedfs/weed/images"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"io/ioutil"
 )
 
 const (
@@ -187,3 +188,4 @@ func ParseNeedleIdCookie(key_hash_string string) (NeedleId, Cookie, error) {
 func (n *Needle) LastModifiedString() string {
 	return time.Unix(int64(n.LastModified), 0).Format("2006-01-02T15:04:05")
 }
+

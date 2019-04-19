@@ -14,17 +14,18 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func ReplicatedWrite(masterNode string, s *storage.Store,
-	volumeId storage.VolumeId, needle *storage.Needle,
+	volumeId needle.VolumeId, n *needle.Needle,
 	r *http.Request) (size uint32, errorStatus string) {
 
 	//check JWT
 	jwt := security.GetJwt(r)
 
-	ret, err := s.Write(volumeId, needle)
+	ret, err := s.Write(volumeId, n)
 	needToReplicate := !s.HasVolume(volumeId)
 	if err != nil {
 		errorStatus = "Failed to write to local disk (" + err.Error() + ")"
@@ -47,30 +48,30 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 				}
 				q := url.Values{
 					"type": {"replicate"},
-					"ttl":  {needle.Ttl.String()},
+					"ttl":  {n.Ttl.String()},
 				}
-				if needle.LastModified > 0 {
-					q.Set("ts", strconv.FormatUint(needle.LastModified, 10))
+				if n.LastModified > 0 {
+					q.Set("ts", strconv.FormatUint(n.LastModified, 10))
 				}
-				if needle.IsChunkedManifest() {
+				if n.IsChunkedManifest() {
 					q.Set("cm", "true")
 				}
 				u.RawQuery = q.Encode()
 
 				pairMap := make(map[string]string)
-				if needle.HasPairs() {
+				if n.HasPairs() {
 					tmpMap := make(map[string]string)
-					err := json.Unmarshal(needle.Pairs, &tmpMap)
+					err := json.Unmarshal(n.Pairs, &tmpMap)
 					if err != nil {
 						glog.V(0).Infoln("Unmarshal pairs error:", err)
 					}
 					for k, v := range tmpMap {
-						pairMap[storage.PairNamePrefix+k] = v
+						pairMap[needle.PairNamePrefix+k] = v
 					}
 				}
 
 				_, err := operation.Upload(u.String(),
-					string(needle.Name), bytes.NewReader(needle.Data), needle.IsGzipped(), string(needle.Mime),
+					string(n.Name), bytes.NewReader(n.Data), n.IsGzipped(), string(n.Mime),
 					pairMap, jwt)
 				return err
 			}); err != nil {
@@ -84,7 +85,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 }
 
 func ReplicatedDelete(masterNode string, store *storage.Store,
-	volumeId storage.VolumeId, n *storage.Needle,
+	volumeId needle.VolumeId, n *needle.Needle,
 	r *http.Request) (uint32, error) {
 
 	//check JWT
@@ -132,7 +133,7 @@ type RemoteResult struct {
 	Error error
 }
 
-func distributedOperation(masterNode string, store *storage.Store, volumeId storage.VolumeId, op func(location operation.Location) error) error {
+func distributedOperation(masterNode string, store *storage.Store, volumeId needle.VolumeId, op func(location operation.Location) error) error {
 	if lookupResult, lookupErr := operation.Lookup(masterNode, volumeId.String()); lookupErr == nil {
 		length := 0
 		selfUrl := (store.Ip + ":" + strconv.Itoa(store.Port))
