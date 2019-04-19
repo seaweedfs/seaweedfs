@@ -39,8 +39,23 @@ func init() {
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
-// Upload sends a POST request to a volume server to upload the content
+// Upload sends a POST request to a volume server to upload the content with adjustable compression level
+func UploadWithLocalCompressionLevel(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt, compressionLevel int) (*UploadResult, error) {
+	if compressionLevel < 1 {
+		compressionLevel = 1
+	}
+	if compressionLevel > 9 {
+		compressionLevel = 9
+	}
+	return doUpload(uploadUrl, filename, reader, isGzipped, mtype, pairMap, compressionLevel, jwt)
+}
+
+// Upload sends a POST request to a volume server to upload the content with fast compression
 func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
+	return doUpload(uploadUrl, filename, reader, isGzipped, mtype, pairMap, flate.BestSpeed, jwt)
+}
+
+func doUpload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, compression int, jwt security.EncodedJwt) (*UploadResult, error) {
 	contentIsGzipped := isGzipped
 	shouldGzipNow := false
 	if !isGzipped {
@@ -51,7 +66,7 @@ func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool,
 	}
 	return upload_content(uploadUrl, func(w io.Writer) (err error) {
 		if shouldGzipNow {
-			gzWriter, _ := gzip.NewWriterLevel(w, flate.BestSpeed)
+			gzWriter, _ := gzip.NewWriterLevel(w, compression)
 			_, err = io.Copy(gzWriter, reader)
 			gzWriter.Close()
 		} else {
@@ -60,6 +75,7 @@ func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool,
 		return
 	}, filename, contentIsGzipped, mtype, pairMap, jwt)
 }
+
 func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
 	body_buf := bytes.NewBufferString("")
 	body_writer := multipart.NewWriter(body_buf)

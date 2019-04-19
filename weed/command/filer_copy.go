@@ -29,16 +29,17 @@ var (
 )
 
 type CopyOptions struct {
-	filerGrpcPort  *int
-	master         *string
-	include        *string
-	replication    *string
-	collection     *string
-	ttl            *string
-	maxMB          *int
-	grpcDialOption grpc.DialOption
-	masterClient   *wdclient.MasterClient
-	concurrency    *int
+	filerGrpcPort    *int
+	master           *string
+	include          *string
+	replication      *string
+	collection       *string
+	ttl              *string
+	maxMB            *int
+	grpcDialOption   grpc.DialOption
+	masterClient     *wdclient.MasterClient
+	concurrency      *int
+	compressionLevel *int
 }
 
 func init() {
@@ -52,6 +53,7 @@ func init() {
 	copy.maxMB = cmdCopy.Flag.Int("maxMB", 32, "split files larger than the limit")
 	copy.filerGrpcPort = cmdCopy.Flag.Int("filer.port.grpc", 0, "filer grpc server listen port, default to filer port + 10000")
 	copy.concurrency = cmdCopy.Flag.Int("c", 8, "concurrent file copy goroutines")
+	copy.compressionLevel = cmdCopy.Flag.Int("compressionLevel", 9, "local file compression level 1 ~ 9")
 }
 
 var cmdCopy = &Command{
@@ -265,7 +267,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(ctx context.Context, task FileCopy
 
 		targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
 
-		uploadResult, err := operation.Upload(targetUrl, fileName, f, false, mimeType, nil, assignResult.Auth)
+		uploadResult, err := operation.UploadWithLocalCompressionLevel(targetUrl, fileName, f, false, mimeType, nil, assignResult.Auth, *worker.options.compressionLevel)
 		if err != nil {
 			return fmt.Errorf("upload data %v to %s: %v\n", fileName, targetUrl, err)
 		}
