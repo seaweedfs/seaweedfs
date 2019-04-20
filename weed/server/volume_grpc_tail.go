@@ -22,7 +22,7 @@ func (vs *VolumeServer) VolumeTailSender(req *volume_server_pb.VolumeTailSenderR
 	defer glog.V(1).Infof("tailing volume %d finished", v.Id)
 
 	lastTimestampNs := req.SinceNs
-	drainingSeconds := req.DrainingSeconds
+	drainingSeconds := req.IdleTimeoutSeconds
 
 	for {
 		lastProcessedTimestampNs, err := sendNeedlesSince(stream, v, lastTimestampNs)
@@ -32,7 +32,7 @@ func (vs *VolumeServer) VolumeTailSender(req *volume_server_pb.VolumeTailSenderR
 		}
 		time.Sleep(2 * time.Second)
 
-		if req.DrainingSeconds == 0 {
+		if req.IdleTimeoutSeconds == 0 {
 			lastTimestampNs = lastProcessedTimestampNs
 			continue
 		}
@@ -44,7 +44,7 @@ func (vs *VolumeServer) VolumeTailSender(req *volume_server_pb.VolumeTailSenderR
 			glog.V(1).Infof("tailing volume %d drains requests with %d seconds remaining", v.Id, drainingSeconds)
 		} else {
 			lastTimestampNs = lastProcessedTimestampNs
-			drainingSeconds = req.DrainingSeconds
+			drainingSeconds = req.IdleTimeoutSeconds
 			glog.V(1).Infof("tailing volume %d resets draining wait time to %d seconds", v.Id, drainingSeconds)
 		}
 
@@ -110,7 +110,7 @@ func (vs *VolumeServer) VolumeTailReceiver(ctx context.Context, req *volume_serv
 
 	defer glog.V(1).Infof("receive tailing volume %d finished", v.Id)
 
-	return resp, operation.TailVolumeFromServer(req.SourceVolumeServer, vs.grpcDialOption, v.Id, req.SinceNs, int(req.DrainingSeconds), func(n *needle.Needle) error {
+	return resp, operation.TailVolumeFromSource(req.SourceVolumeServer, vs.grpcDialOption, v.Id, req.SinceNs, int(req.IdleTimeoutSeconds), func(n *needle.Needle) error {
 		_, err := vs.store.Write(v.Id, n)
 		return err
 	})

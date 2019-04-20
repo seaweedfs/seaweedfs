@@ -174,7 +174,7 @@ message CopyFileResponse {
 message VolumeTailSenderRequest {
     uint32 volume_id = 1;
     uint64 since_ns = 2;
-    uint32 drainingSeconds = 3;
+    uint32 idle_timeout_seconds = 3;
 }
 message VolumeTailSenderResponse {
     bytes needle_header = 1;
@@ -185,7 +185,7 @@ message VolumeTailSenderResponse {
 message VolumeTailReceiverRequest {
     uint32 volume_id = 1;
     uint64 since_ns = 2;
-    uint32 drainingSeconds = 3;
+    uint32 idle_timeout_seconds = 3;
     string source_volume_server = 4;
 }
 message VolumeTailReceiverResponse {
