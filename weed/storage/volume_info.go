@@ -43,6 +43,20 @@ func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err er
 	return vi, nil
 }
 
+func NewVolumeInfoFromShort(m *master_pb.VolumeShortInformationMessage) (vi VolumeInfo, err error) {
+	vi = VolumeInfo{
+		Id:               needle.VolumeId(m.Id),
+		Collection:       m.Collection,
+	}
+	rp, e := NewReplicaPlacementFromByte(byte(m.ReplicaPlacement))
+	if e != nil {
+		return vi, e
+	}
+	vi.ReplicaPlacement = rp
+	vi.Ttl = needle.LoadTTLFromUint32(m.Ttl)
+	return vi, nil
+}
+
 func (vi VolumeInfo) String() string {
 	return fmt.Sprintf("Id:%d, Size:%d, ReplicaPlacement:%s, Collection:%s, Version:%v, FileCount:%d, DeleteCount:%d, DeletedByteCount:%d, ReadOnly:%v",
 		vi.Id, vi.Size, vi.ReplicaPlacement, vi.Collection, vi.Version, vi.FileCount, vi.DeleteCount, vi.DeletedByteCount, vi.ReadOnly)

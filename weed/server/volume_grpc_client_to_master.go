@@ -97,23 +97,30 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 
 	for {
 		select {
-		case vid := <-vs.store.NewVolumeIdChan:
+		case volumeMessage := <-vs.store.NewVolumesChan:
 			deltaBeat := &master_pb.Heartbeat{
-				NewVids: []uint32{uint32(vid)},
+				NewVolumes:[]*master_pb.VolumeShortInformationMessage{
+					&volumeMessage,
+				},
 			}
+			glog.V(1).Infof("volume server %s:%d adds volume %d", vs.store.Ip, vs.store.Port, volumeMessage.Id)
 			if err = stream.Send(deltaBeat); err != nil {
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterNode, err)
 				return "", err
 			}
-		case vid := <-vs.store.DeletedVolumeIdChan:
+		case volumeMessage := <-vs.store.DeletedVolumesChan:
 			deltaBeat := &master_pb.Heartbeat{
-				DeletedVids: []uint32{uint32(vid)},
+				DeletedVolumes:[]*master_pb.VolumeShortInformationMessage{
+					&volumeMessage,
+				},
 			}
+			glog.V(1).Infof("volume server %s:%d deletes volume %d", vs.store.Ip, vs.store.Port, volumeMessage.Id)
 			if err = stream.Send(deltaBeat); err != nil {
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterNode, err)
 				return "", err
 			}
 		case <-tickChan:
+			glog.V(1).Infof("volume server %s:%d heartbeat", vs.store.Ip, vs.store.Port)
 			if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
 				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
 				return "", err

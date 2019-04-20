@@ -19,19 +19,13 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v != nil {
-		// unmount the volume
-		err := vs.store.UnmountVolume(needle.VolumeId(req.VolumeId))
-		if err != nil {
-			return nil, fmt.Errorf("failed to unmount volume %d: %v", req.VolumeId, err)
-		}
+		return nil, fmt.Errorf("volume %d already exists", req.VolumeId)
 	}
 
 	location := vs.store.FindFreeLocation()
 	if location == nil {
 		return nil, fmt.Errorf("no space left")
 	}
-
-	volumeFileName := storage.VolumeFileName(req.Collection, location.Directory, int(req.VolumeId))
 
 	// the master will not start compaction for read-only volumes, so it is safe to just copy files directly
 	// copy .dat and .idx files
@@ -40,8 +34,7 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 	//   send .dat file
 	//   confirm size and timestamp
 	var volFileInfoResp *volume_server_pb.ReadVolumeFileStatusResponse
-	datFileName := volumeFileName + ".dat"
-	idxFileName := volumeFileName + ".idx"
+	var volumeFileName, idxFileName, datFileName string
 	err := operation.WithVolumeServerClient(req.SourceDataNode, vs.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		var err error
 		volFileInfoResp, err = client.ReadVolumeFileStatus(ctx,
@@ -51,6 +44,8 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 		if nil != err {
 			return fmt.Errorf("read volume file status failed, %v", err)
 		}
+
+		volumeFileName = storage.VolumeFileName(volFileInfoResp.Collection, location.Directory, int(req.VolumeId))
 
 		// println("source:", volFileInfoResp.String())
 
@@ -64,6 +59,7 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 			return fmt.Errorf("failed to start copying volume %d idx file: %v", req.VolumeId, err)
 		}
 
+		idxFileName = volumeFileName + ".idx"
 		err = writeToFile(copyFileClient, idxFileName)
 		if err != nil {
 			return fmt.Errorf("failed to copy volume %d idx file: %v", req.VolumeId, err)
@@ -79,6 +75,7 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 			return fmt.Errorf("failed to start copying volume %d dat file: %v", req.VolumeId, err)
 		}
 
+		datFileName = volumeFileName + ".dat"
 		err = writeToFile(copyFileClient, datFileName)
 		if err != nil {
 			return fmt.Errorf("failed to copy volume %d dat file: %v", req.VolumeId, err)
@@ -86,9 +83,13 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 
 		return nil
 	})
-	if err != nil {
-		os.Remove(idxFileName)
-		os.Remove(datFileName)
+	if err != nil && volumeFileName != "" {
+		if idxFileName != "" {
+			os.Remove(idxFileName)
+		}
+		if datFileName != "" {
+			os.Remove(datFileName)
+		}
 		return nil, err
 	}
 
@@ -168,6 +169,7 @@ func (vs *VolumeServer) ReadVolumeFileStatus(ctx context.Context, req *volume_se
 	resp.IdxFileTimestampSeconds = uint64(modTime.Unix())
 	resp.FileCount = v.FileCount()
 	resp.CompactionRevision = uint32(v.CompactionRevision)
+	resp.Collection = v.Collection
 	return resp, nil
 }
 

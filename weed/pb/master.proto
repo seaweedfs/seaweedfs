@@ -35,9 +35,9 @@ message Heartbeat {
     string rack = 7;
     uint32 admin_port = 8;
     repeated VolumeInformationMessage volumes = 9;
-    // delta volume ids
-    repeated uint32 new_vids = 10;
-    repeated uint32 deleted_vids = 11;
+    // delta volumes
+    repeated VolumeShortInformationMessage new_volumes = 10;
+    repeated VolumeShortInformationMessage deleted_volumes = 11;
 }
 
 message HeartbeatResponse {
@@ -57,6 +57,13 @@ message VolumeInformationMessage {
     uint32 version = 9;
     uint32 ttl = 10;
     uint32 compact_revision = 11;
+}
+
+message VolumeShortInformationMessage {
+    uint32 id = 1;
+    string collection = 3;
+    uint32 replica_placement = 8;
+    uint32 ttl = 10;
 }
 
 message Empty {

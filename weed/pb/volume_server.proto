@@ -42,7 +42,9 @@ service VolumeServer {
     rpc CopyFile (CopyFileRequest) returns (stream CopyFileResponse) {
     }
 
-    rpc VolumeTail (VolumeTailRequest) returns (stream VolumeTailResponse) {
+    rpc VolumeTailSender (VolumeTailSenderRequest) returns (stream VolumeTailSenderResponse) {
+    }
+    rpc VolumeTailReceiver (VolumeTailReceiverRequest) returns (VolumeTailReceiverResponse) {
     }
 
 }
@@ -169,15 +171,24 @@ message CopyFileResponse {
     bytes file_content = 1;
 }
 
-message VolumeTailRequest {
+message VolumeTailSenderRequest {
     uint32 volume_id = 1;
     uint64 since_ns = 2;
     uint32 drainingSeconds = 3;
 }
-message VolumeTailResponse {
+message VolumeTailSenderResponse {
     bytes needle_header = 1;
     bytes needle_body = 2;
     bool is_last_chunk = 3;
+}
+
+message VolumeTailReceiverRequest {
+    uint32 volume_id = 1;
+    uint64 since_ns = 2;
+    uint32 drainingSeconds = 3;
+    string source_volume_server = 4;
+}
+message VolumeTailReceiverResponse {
 }
 
 message ReadVolumeFileStatusRequest {
@@ -191,6 +202,7 @@ message ReadVolumeFileStatusResponse {
     uint64 dat_file_size = 5;
     uint64 file_count = 6;
     uint32 compaction_revision = 7;
+    string collection = 8;
 }
 
 message DiskStatus {

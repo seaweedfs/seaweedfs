@@ -171,11 +171,35 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		}
 	}
 	newVolumes, deletedVolumes = dn.UpdateVolumes(volumeInfos)
-	for _, v := range volumeInfos {
+	for _, v := range newVolumes {
 		t.RegisterVolumeLayout(v, dn)
 	}
 	for _, v := range deletedVolumes {
 		t.UnRegisterVolumeLayout(v, dn)
 	}
+	return
+}
+
+func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolumes []*master_pb.VolumeShortInformationMessage, dn *DataNode) {
+	var newVis, oldVis []storage.VolumeInfo
+	for _, v := range newVolumes {
+		vi, err := storage.NewVolumeInfoFromShort(v)
+		if err != nil {
+			glog.V(0).Infof("NewVolumeInfoFromShort %v: %v", v, err)
+			continue
+		}
+		newVis = append(newVis, vi)
+		t.RegisterVolumeLayout(vi, dn)
+	}
+	for _, v := range deletedVolumes {
+		vi, err := storage.NewVolumeInfoFromShort(v)
+		if err != nil {
+			glog.V(0).Infof("NewVolumeInfoFromShort %v: %v", v, err)
+			continue
+		}
+		oldVis = append(oldVis, vi)
+		t.UnRegisterVolumeLayout(vi, dn)
+	}
+	dn.DeltaUpdateVolumes(newVis, oldVis)
 	return
 }

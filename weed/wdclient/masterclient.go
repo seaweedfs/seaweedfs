@@ -52,28 +52,28 @@ func (mc *MasterClient) KeepConnectedToMaster() {
 
 func (mc *MasterClient) tryAllMasters() {
 	for _, master := range mc.masters {
-		glog.V(1).Infof("Connecting to master %v", master)
+		glog.V(1).Infof("%s Connecting to master %v", mc.name, master)
 		gprcErr := withMasterClient(context.Background(), master, mc.grpcDialOption, func(ctx context.Context, client master_pb.SeaweedClient) error {
 
 			stream, err := client.KeepConnected(ctx)
 			if err != nil {
-				glog.V(0).Infof("failed to keep connected to %s: %v", master, err)
+				glog.V(0).Infof("%s failed to keep connected to %s: %v", mc.name, master, err)
 				return err
 			}
 
 			if err = stream.Send(&master_pb.ClientListenRequest{Name: mc.name}); err != nil {
-				glog.V(0).Infof("failed to send to %s: %v", master, err)
+				glog.V(0).Infof("%s failed to send to %s: %v", mc.name, master, err)
 				return err
 			}
 
 			if mc.currentMaster == "" {
-				glog.V(1).Infof("Connected to %v", master)
+				glog.V(1).Infof("%s Connected to %v", mc.name, master)
 				mc.currentMaster = master
 			}
 
 			for {
 				if volumeLocation, err := stream.Recv(); err != nil {
-					glog.V(0).Infof("failed to receive from %s: %v", master, err)
+					glog.V(0).Infof("%s failed to receive from %s: %v", mc.name, master, err)
 					return err
 				} else {
 					loc := Location{
@@ -81,9 +81,11 @@ func (mc *MasterClient) tryAllMasters() {
 						PublicUrl: volumeLocation.PublicUrl,
 					}
 					for _, newVid := range volumeLocation.NewVids {
+						glog.V(0).Infof("%s: %s adds volume %d", mc.name, loc.Url, newVid)
 						mc.addLocation(newVid, loc)
 					}
 					for _, deletedVid := range volumeLocation.DeletedVids {
+						glog.V(0).Infof("%s: %s removes volume %d", mc.name, loc.Url, deletedVid)
 						mc.deleteLocation(deletedVid, loc)
 					}
 				}

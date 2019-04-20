@@ -65,7 +65,7 @@ func main() {
 	})
 
 	if err != nil {
-		log.Printf("Error VolumeTail volume %d: %v", vid, err)
+		log.Printf("Error VolumeTailSender volume %d: %v", vid, err)
 	}
 
 }

@@ -78,6 +78,20 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 	return
 }
 
+func (dn *DataNode) DeltaUpdateVolumes(newlVolumes, deletedVolumes []storage.VolumeInfo) {
+	dn.Lock()
+	for _, v := range deletedVolumes {
+		delete(dn.volumes, v.Id)
+		dn.UpAdjustVolumeCountDelta(-1)
+		dn.UpAdjustActiveVolumeCountDelta(-1)
+	}
+	dn.Unlock()
+	for _, v := range newlVolumes {
+		dn.AddOrUpdateVolume(v)
+	}
+	return
+}
+
 func (dn *DataNode) GetVolumes() (ret []storage.VolumeInfo) {
 	dn.RLock()
 	for _, v := range dn.volumes {

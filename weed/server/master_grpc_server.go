@@ -72,29 +72,39 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 		}
 
+		glog.V(1).Infof("master received heartbeat %s", heartbeat.String())
 		message := &master_pb.VolumeLocation{
 			Url:       dn.Url(),
 			PublicUrl: dn.PublicUrl,
 		}
-		if len(heartbeat.NewVids) > 0 || len(heartbeat.DeletedVids) > 0 {
+		if len(heartbeat.NewVolumes) > 0 || len(heartbeat.DeletedVolumes) > 0 {
 			// process delta volume ids if exists for fast volume id updates
-			message.NewVids = append(message.NewVids, heartbeat.NewVids...)
-			message.DeletedVids = append(message.DeletedVids, heartbeat.DeletedVids...)
+			for _, volInfo := range heartbeat.NewVolumes{
+				message.NewVids = append(message.NewVids, volInfo.Id)
+			}
+			for _, volInfo := range heartbeat.DeletedVolumes{
+				message.DeletedVids = append(message.DeletedVids, volInfo.Id)
+			}
+			// update master internal volume layouts
+			t.IncrementalSyncDataNodeRegistration(heartbeat.NewVolumes, heartbeat.DeletedVolumes, dn)
 		} else {
 			// process heartbeat.Volumes
 			newVolumes, deletedVolumes := t.SyncDataNodeRegistration(heartbeat.Volumes, dn)
 
 			for _, v := range newVolumes {
+				glog.V(0).Infof("master see new volume %d from %s", uint32(v.Id),  dn.Url())
 				message.NewVids = append(message.NewVids, uint32(v.Id))
 			}
 			for _, v := range deletedVolumes {
+				glog.V(0).Infof("master see deleted volume %d from %s", uint32(v.Id), dn.Url())
 				message.DeletedVids = append(message.DeletedVids, uint32(v.Id))
 			}
 		}
 
 		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 {
 			ms.clientChansLock.RLock()
-			for _, ch := range ms.clientChans {
+			for host, ch := range ms.clientChans {
+				glog.V(0).Infof("master send to %s: %s", host, message.String())
 				ch <- message
 			}
 			ms.clientChansLock.RUnlock()
