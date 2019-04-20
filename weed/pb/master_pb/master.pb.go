@@ -38,13 +38,13 @@ It has these top-level messages:
 */
 package master_pb
 
-import proto "github.com/golang/protobuf/proto"
-import fmt "fmt"
-import math "math"
+import "github.com/golang/protobuf/proto"
+import "fmt"
+import "math"
 
 import (
-	context "golang.org/x/net/context"
-	grpc "google.golang.org/grpc"
+	"golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -793,6 +793,8 @@ type DataNodeInfo struct {
 	FreeVolumeCount   uint64                      `protobuf:"varint,4,opt,name=free_volume_count,json=freeVolumeCount" json:"free_volume_count,omitempty"`
 	ActiveVolumeCount uint64                      `protobuf:"varint,5,opt,name=active_volume_count,json=activeVolumeCount" json:"active_volume_count,omitempty"`
 	VolumeInfos       []*VolumeInformationMessage `protobuf:"bytes,6,rep,name=volume_infos,json=volumeInfos" json:"volume_infos,omitempty"`
+	Url               string                      `protobuf:"bytes,7,opt,name=url" json:"url,omitempty"`
+	PublicUrl         string                      `protobuf:"bytes,8,opt,name=public_url,json=publicUrl" json:"public_url,omitempty"`
 }
 
 func (m *DataNodeInfo) Reset()                    { *m = DataNodeInfo{} }
@@ -840,6 +842,20 @@ func (m *DataNodeInfo) GetVolumeInfos() []*VolumeInformationMessage {
 		return m.VolumeInfos
 	}
 	return nil
+}
+
+func (m *DataNodeInfo) GetUrl() string {
+	if m != nil {
+		return m.Url
+	}
+	return ""
+}
+
+func (m *DataNodeInfo) GetPublicUrl() string {
+	if m != nil {
+		return m.PublicUrl
+	}
+	return ""
 }
 
 type RackInfo struct {
@@ -955,12 +971,13 @@ func (m *DataCenterInfo) GetRackInfos() []*RackInfo {
 }
 
 type TopologyInfo struct {
-	Id                string            `protobuf:"bytes,1,opt,name=id" json:"id,omitempty"`
-	VolumeCount       uint64            `protobuf:"varint,2,opt,name=volume_count,json=volumeCount" json:"volume_count,omitempty"`
-	MaxVolumeCount    uint64            `protobuf:"varint,3,opt,name=max_volume_count,json=maxVolumeCount" json:"max_volume_count,omitempty"`
-	FreeVolumeCount   uint64            `protobuf:"varint,4,opt,name=free_volume_count,json=freeVolumeCount" json:"free_volume_count,omitempty"`
-	ActiveVolumeCount uint64            `protobuf:"varint,5,opt,name=active_volume_count,json=activeVolumeCount" json:"active_volume_count,omitempty"`
-	DataCenterInfos   []*DataCenterInfo `protobuf:"bytes,6,rep,name=data_center_infos,json=dataCenterInfos" json:"data_center_infos,omitempty"`
+	Id                   string            `protobuf:"bytes,1,opt,name=id" json:"id,omitempty"`
+	VolumeCount          uint64            `protobuf:"varint,2,opt,name=volume_count,json=volumeCount" json:"volume_count,omitempty"`
+	MaxVolumeCount       uint64            `protobuf:"varint,3,opt,name=max_volume_count,json=maxVolumeCount" json:"max_volume_count,omitempty"`
+	FreeVolumeCount      uint64            `protobuf:"varint,4,opt,name=free_volume_count,json=freeVolumeCount" json:"free_volume_count,omitempty"`
+	ActiveVolumeCount    uint64            `protobuf:"varint,5,opt,name=active_volume_count,json=activeVolumeCount" json:"active_volume_count,omitempty"`
+	DataCenterInfos      []*DataCenterInfo `protobuf:"bytes,6,rep,name=data_center_infos,json=dataCenterInfos" json:"data_center_infos,omitempty"`
+	VolumeSizeLimitBytes uint64            `protobuf:"varint,7,opt,name=volume_size_limit_bytes,json=volumeSizeLimitBytes" json:"volume_size_limit_bytes,omitempty"`
 }
 
 func (m *TopologyInfo) Reset()                    { *m = TopologyInfo{} }
@@ -1008,6 +1025,13 @@ func (m *TopologyInfo) GetDataCenterInfos() []*DataCenterInfo {
 		return m.DataCenterInfos
 	}
 	return nil
+}
+
+func (m *TopologyInfo) GetVolumeSizeLimitBytes() uint64 {
+	if m != nil {
+		return m.VolumeSizeLimitBytes
+	}
+	return 0
 }
 
 type VolumeListRequest struct {

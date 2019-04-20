@@ -92,7 +92,7 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 		return nil, err
 	}
 
-	if err = checkCopyFiles(volFileInfoResp, idxFileName, datFileName); err != nil { // added by panyc16
+	if err = checkCopyFiles(volFileInfoResp, idxFileName, datFileName); err != nil {
 		return nil, err
 	}
 

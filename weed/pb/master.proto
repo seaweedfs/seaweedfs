@@ -165,6 +165,8 @@ message DataNodeInfo {
     uint64 free_volume_count = 4;
     uint64 active_volume_count = 5;
     repeated VolumeInformationMessage volume_infos = 6;
+    string url = 7;
+    string public_url = 8;
 }
 message RackInfo {
     string id = 1;
@@ -189,6 +191,7 @@ message TopologyInfo {
     uint64 free_volume_count = 4;
     uint64 active_volume_count = 5;
     repeated DataCenterInfo data_center_infos = 6;
+    uint64 volume_size_limit_bytes = 7;
 }
 message VolumeListRequest {
 }
