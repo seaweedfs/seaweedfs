@@ -192,7 +192,7 @@ func (s *Store) Close() {
 	}
 }
 
-func (s *Store) Write(i needle.VolumeId, n *needle.Needle) (size uint32, err error) {
+func (s *Store) Write(i needle.VolumeId, n *needle.Needle) (size uint32, isUnchanged bool, err error) {
 	if v := s.findVolume(i); v != nil {
 		if v.readOnly {
 			err = fmt.Errorf("Volume %d is read only", i)
@@ -200,7 +200,7 @@ func (s *Store) Write(i needle.VolumeId, n *needle.Needle) (size uint32, err err
 		}
 		// TODO: count needle size ahead
 		if MaxPossibleVolumeSize >= v.ContentSize()+uint64(size) {
-			_, size, err = v.writeNeedle(n)
+			_, size, isUnchanged, err = v.writeNeedle(n)
 		} else {
 			err = fmt.Errorf("Volume Size Limit %d Exceeded! Current size is %d", s.GetVolumeSizeLimit(), v.ContentSize())
 		}

@@ -124,7 +124,7 @@ func TestCompaction(t *testing.T) {
 }
 func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 	n := newRandomNeedle(uint64(i))
-	_, size, err := v.writeNeedle(n)
+	_, size, _, err := v.writeNeedle(n)
 	if err != nil {
 		t.Fatalf("write file %d: %v", i, err)
 	}

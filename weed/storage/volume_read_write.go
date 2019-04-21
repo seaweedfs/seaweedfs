@@ -77,7 +77,7 @@ func (v *Volume) AppendBlob(b []byte) (offset int64, err error) {
 	return
 }
 
-func (v *Volume) writeNeedle(n *needle.Needle) (offset uint64, size uint32, err error) {
+func (v *Volume) writeNeedle(n *needle.Needle) (offset uint64, size uint32, isUnchanged bool, err error) {
 	glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	if v.readOnly {
 		err = fmt.Errorf("%s is read-only", v.dataFile.Name())
@@ -87,7 +87,7 @@ func (v *Volume) writeNeedle(n *needle.Needle) (offset uint64, size uint32, err 
 	defer v.dataFileAccessLock.Unlock()
 	if v.isFileUnchanged(n) {
 		size = n.DataSize
-		glog.V(4).Infof("needle is unchanged!")
+		isUnchanged = true
 		return
 	}
 

@@ -20,19 +20,18 @@ import (
 
 func ReplicatedWrite(masterNode string, s *storage.Store,
 	volumeId needle.VolumeId, n *needle.Needle,
-	r *http.Request) (size uint32, errorStatus string) {
+	r *http.Request) (size uint32, isUnchanged bool, err error) {
 
 	//check JWT
 	jwt := security.GetJwt(r)
 
-	ret, err := s.Write(volumeId, n)
-	needToReplicate := !s.HasVolume(volumeId)
+	size, isUnchanged, err = s.Write(volumeId, n)
 	if err != nil {
-		errorStatus = "Failed to write to local disk (" + err.Error() + ")"
-		size = ret
+		err = fmt.Errorf("failed to write to local disk: %v", err)
 		return
 	}
 
+	needToReplicate := !s.HasVolume(volumeId)
 	needToReplicate = needToReplicate || s.GetVolume(volumeId).NeedToReplicate()
 	if !needToReplicate {
 		needToReplicate = s.GetVolume(volumeId).NeedToReplicate()
@@ -75,12 +74,11 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 					pairMap, jwt)
 				return err
 			}); err != nil {
-				ret = 0
-				errorStatus = fmt.Sprintf("Failed to write to replicas for volume %d: %v", volumeId, err)
+				size = 0
+				err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
 			}
 		}
 	}
-	size = ret
 	return
 }
 
