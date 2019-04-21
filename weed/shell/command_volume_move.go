@@ -118,9 +118,9 @@ func tailVolume(ctx context.Context, grpcDialOption grpc.DialOption, volumeId ne
 
 func deleteVolume(ctx context.Context, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer string) (err error) {
 	return operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-		_, unmountErr := volumeServerClient.VolumeDelete(ctx, &volume_server_pb.VolumeDeleteRequest{
+		_, deleteErr := volumeServerClient.VolumeDelete(ctx, &volume_server_pb.VolumeDeleteRequest{
 			VolumeId: uint32(volumeId),
 		})
-		return unmountErr
+		return deleteErr
 	})
 }
