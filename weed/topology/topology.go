@@ -189,7 +189,6 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 			continue
 		}
 		newVis = append(newVis, vi)
-		t.RegisterVolumeLayout(vi, dn)
 	}
 	for _, v := range deletedVolumes {
 		vi, err := storage.NewVolumeInfoFromShort(v)
@@ -198,8 +197,15 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 			continue
 		}
 		oldVis = append(oldVis, vi)
-		t.UnRegisterVolumeLayout(vi, dn)
 	}
 	dn.DeltaUpdateVolumes(newVis, oldVis)
+
+	for _, vi := range newVis {
+		t.RegisterVolumeLayout(vi, dn)
+	}
+	for _, vi := range oldVis {
+		t.UnRegisterVolumeLayout(vi, dn)
+	}
+
 	return
 }

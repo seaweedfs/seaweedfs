@@ -41,7 +41,7 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 				DeletedByteCount: 34524,
 				ReadOnly:         false,
 				ReplicaPlacement: uint32(0),
-				Version:          uint32(1),
+				Version:          uint32(needle.CurrentVersion),
 				Ttl:              0,
 			}
 			volumeMessages = append(volumeMessages, volumeMessage)
@@ -66,15 +66,63 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 				DeletedByteCount: 345240,
 				ReadOnly:         false,
 				ReplicaPlacement: uint32(0),
-				Version:          uint32(1),
+				Version:          uint32(needle.CurrentVersion),
 				Ttl:              0,
 			}
 			volumeMessages = append(volumeMessages, volumeMessage)
 		}
 		topo.SyncDataNodeRegistration(volumeMessages, dn)
 
+		//rp, _ := storage.NewReplicaPlacementFromString("000")
+		//layout := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL)
+		//assert(t, "writables", len(layout.writables), volumeCount)
+
 		assert(t, "activeVolumeCount1", int(topo.activeVolumeCount), volumeCount)
 		assert(t, "volumeCount", int(topo.volumeCount), volumeCount)
+	}
+
+	{
+		volumeCount := 6
+		newVolumeShortMessage := &master_pb.VolumeShortInformationMessage{
+			Id:               uint32(3),
+			Collection:       "",
+			ReplicaPlacement: uint32(0),
+			Version:          uint32(needle.CurrentVersion),
+			Ttl:              0,
+		}
+		topo.IncrementalSyncDataNodeRegistration(
+			[]*master_pb.VolumeShortInformationMessage{newVolumeShortMessage},
+			nil,
+			dn)
+		rp, _ := storage.NewReplicaPlacementFromString("000")
+		layout := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL)
+		assert(t, "writables after repeated add", len(layout.writables), volumeCount)
+
+		assert(t, "activeVolumeCount1", int(topo.activeVolumeCount), volumeCount)
+		assert(t, "volumeCount", int(topo.volumeCount), volumeCount)
+
+		topo.IncrementalSyncDataNodeRegistration(
+			nil,
+			[]*master_pb.VolumeShortInformationMessage{newVolumeShortMessage},
+			dn)
+		assert(t, "writables after deletion", len(layout.writables), volumeCount-1)
+		assert(t, "activeVolumeCount1", int(topo.activeVolumeCount), volumeCount-1)
+		assert(t, "volumeCount", int(topo.volumeCount), volumeCount-1)
+
+		topo.IncrementalSyncDataNodeRegistration(
+			[]*master_pb.VolumeShortInformationMessage{newVolumeShortMessage},
+			nil,
+			dn)
+
+		for vid, _ := range layout.vid2location{
+			println("after add volume id", vid)
+		}
+		for _, vid := range layout.writables{
+			println("after add writable volume id", vid)
+		}
+
+		assert(t, "writables after add back", len(layout.writables), volumeCount)
+
 	}
 
 	topo.UnRegisterDataNode(dn)
@@ -111,6 +159,7 @@ func TestAddRemoveVolume(t *testing.T) {
 	}
 
 	dn.UpdateVolumes([]storage.VolumeInfo{v})
+	topo.RegisterVolumeLayout(v, dn)
 	topo.RegisterVolumeLayout(v, dn)
 
 	if _, hasCollection := topo.FindCollection(v.Collection); !hasCollection {

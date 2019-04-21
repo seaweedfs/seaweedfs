@@ -105,6 +105,7 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 				Id:               uint32(vid),
 				Collection:       collection,
 				ReplicaPlacement: uint32(replicaPlacement.Byte()),
+				Version:          uint32(volume.Version()),
 				Ttl:              ttl.ToUint32(),
 			}
 			return nil
@@ -241,6 +242,7 @@ func (s *Store) MountVolume(i needle.VolumeId) error {
 				Id:               uint32(v.Id),
 				Collection:       v.Collection,
 				ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
+				Version:          uint32(v.Version()),
 				Ttl:              v.Ttl.ToUint32(),
 			}
 			return nil
@@ -259,6 +261,7 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 		Id:               uint32(v.Id),
 		Collection:       v.Collection,
 		ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
+		Version:          uint32(v.Version()),
 		Ttl:              v.Ttl.ToUint32(),
 	}
 	for _, location := range s.Locations {
@@ -281,6 +284,7 @@ func (s *Store) DeleteVolume(i needle.VolumeId) error {
 		Id:               uint32(v.Id),
 		Collection:       v.Collection,
 		ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
+		Version:          uint32(v.Version()),
 		Ttl:              v.Ttl.ToUint32(),
 	}
 	for _, location := range s.Locations {

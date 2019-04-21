@@ -63,6 +63,7 @@ message VolumeShortInformationMessage {
     uint32 id = 1;
     string collection = 3;
     uint32 replica_placement = 8;
+    uint32 version = 9;
     uint32 ttl = 10;
 }
 

@@ -50,7 +50,7 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
-	if _, ok := vl.vid2location[v.Id]; !ok {
+	if _, ok := vl.vid2location[v.Id]; !ok || vl.vid2location[v.Id] == nil {
 		vl.vid2location[v.Id] = NewVolumeLocationList()
 	}
 	vl.vid2location[v.Id].Set(dn)
@@ -58,7 +58,7 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	for _, dn := range vl.vid2location[v.Id].list {
 		if vInfo, err := dn.GetVolumesById(v.Id); err == nil {
 			if vInfo.ReadOnly {
-				glog.V(3).Infof("vid %d removed from writable", v.Id)
+				glog.V(1).Infof("vid %d removed from writable", v.Id)
 				vl.removeFromWritable(v.Id)
 				vl.readonlyVolumes[v.Id] = true
 				return
@@ -66,7 +66,7 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 				delete(vl.readonlyVolumes, v.Id)
 			}
 		} else {
-			glog.V(3).Infof("vid %d removed from writable", v.Id)
+			glog.V(1).Infof("vid %d removed from writable", v.Id)
 			vl.removeFromWritable(v.Id)
 			delete(vl.readonlyVolumes, v.Id)
 			return
@@ -93,7 +93,8 @@ func (vl *VolumeLayout) UnRegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	defer vl.accessLock.Unlock()
 
 	vl.removeFromWritable(v.Id)
-	delete(vl.vid2location, v.Id)
+	delete(vl.vid2location, v.Id) // somehow this line does not work as expected
+	// vl.vid2location[v.Id] = nil
 }
 
 func (vl *VolumeLayout) addToWritable(vid needle.VolumeId) {
