@@ -25,7 +25,7 @@ func (c *commandVolumeMove) Name() string {
 }
 
 func (c *commandVolumeMove) Help() string {
-	return `move a live volume from one volume server to another volume server
+	return `<experimental> move a live volume from one volume server to another volume server
 
 	volume.move <source volume server host:port> <target volume server host:port> <volume id>
 
