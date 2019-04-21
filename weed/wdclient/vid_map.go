@@ -117,6 +117,7 @@ func (vc *vidMap) deleteLocation(vid uint32, location Location) {
 	for i, loc := range locations {
 		if loc.Url == location.Url {
 			vc.vid2Locations[vid] = append(locations[0:i], locations[i+1:]...)
+			break
 		}
 	}
 
