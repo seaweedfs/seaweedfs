@@ -2,6 +2,7 @@ package topology
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
 
 	"github.com/chrislusf/raft"
@@ -105,8 +106,11 @@ func (t *Topology) HasWritableVolume(option *VolumeGrowOption) bool {
 
 func (t *Topology) PickForWrite(count uint64, option *VolumeGrowOption) (string, uint64, *DataNode, error) {
 	vid, count, datanodes, err := t.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl).PickForWrite(count, option)
-	if err != nil || datanodes.Length() == 0 {
-		return "", 0, nil, errors.New("No writable volumes available!")
+	if err != nil {
+		return "", 0, nil, fmt.Errorf("failed to find writable volumes for collectio:%s replication:%s ttl:%s error: %v", option.Collection, option.ReplicaPlacement.String(), option.Ttl.String(), err)
+	}
+	if datanodes.Length() == 0 {
+		return "", 0, nil, fmt.Errorf("no writable volumes available for for collectio:%s replication:%s ttl:%s", option.Collection, option.ReplicaPlacement.String(), option.Ttl.String())
 	}
 	fileId, count := t.Sequence.NextFileId(count)
 	return needle.NewFileId(*vid, fileId, rand.Uint32()).String(), count, datanodes.Head(), nil

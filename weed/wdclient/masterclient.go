@@ -81,11 +81,11 @@ func (mc *MasterClient) tryAllMasters() {
 						PublicUrl: volumeLocation.PublicUrl,
 					}
 					for _, newVid := range volumeLocation.NewVids {
-						glog.V(0).Infof("%s: %s adds volume %d", mc.name, loc.Url, newVid)
+						glog.V(1).Infof("%s: %s adds volume %d", mc.name, loc.Url, newVid)
 						mc.addLocation(newVid, loc)
 					}
 					for _, deletedVid := range volumeLocation.DeletedVids {
-						glog.V(0).Infof("%s: %s removes volume %d", mc.name, loc.Url, deletedVid)
+						glog.V(1).Infof("%s: %s removes volume %d", mc.name, loc.Url, deletedVid)
 						mc.deleteLocation(deletedVid, loc)
 					}
 				}

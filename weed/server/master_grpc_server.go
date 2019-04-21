@@ -72,7 +72,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 		}
 
-		glog.V(1).Infof("master received heartbeat %s", heartbeat.String())
+		glog.V(2).Infof("master received heartbeat %s", heartbeat.String())
 		message := &master_pb.VolumeLocation{
 			Url:       dn.Url(),
 			PublicUrl: dn.PublicUrl,

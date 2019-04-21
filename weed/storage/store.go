@@ -100,7 +100,7 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 			location.Directory, vid, collection, replicaPlacement, ttl)
 		if volume, err := NewVolume(location.Directory, collection, vid, needleMapKind, replicaPlacement, ttl, preallocate); err == nil {
 			location.SetVolume(vid, volume)
-			glog.V(0).Info("add volume", vid)
+			glog.V(0).Infof("add volume %d", vid)
 			s.NewVolumesChan <- master_pb.VolumeShortInformationMessage{
 				Id:               uint32(vid),
 				Collection:       collection,
@@ -207,7 +207,7 @@ func (s *Store) Write(i needle.VolumeId, n *needle.Needle) (size uint32, err err
 		return
 	}
 	glog.V(0).Infoln("volume", i, "not found!")
-	err = fmt.Errorf("Volume %d not found!", i)
+	err = fmt.Errorf("volume %d not found on %s:%d", i, s.Ip, s.Port)
 	return
 }
 
