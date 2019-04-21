@@ -29,7 +29,7 @@ func (v *Volume) isFileUnchanged(n *needle.Needle) bool {
 			glog.V(0).Infof("Failed to check updated file at offset %d size %d: %v", nv.Offset.ToAcutalOffset(), nv.Size, err)
 			return false
 		}
-		if oldNeedle.Checksum == n.Checksum && bytes.Equal(oldNeedle.Data, n.Data) {
+		if oldNeedle.Cookie == n.Cookie && oldNeedle.Checksum == n.Checksum && bytes.Equal(oldNeedle.Data, n.Data) {
 			n.DataSize = oldNeedle.DataSize
 			return true
 		}
