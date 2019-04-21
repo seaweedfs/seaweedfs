@@ -32,9 +32,9 @@ func (c *commandVolumeCopy) Help() string {
 
 func (c *commandVolumeCopy) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
 
-	if len(args) != 2 {
+	if len(args) != 3 {
 		fmt.Fprintf(writer, "received args: %+v\n", args)
-		return fmt.Errorf("need 2 args of <source volume server host:port> <target volume server host:port> <volume id>")
+		return fmt.Errorf("need 3 args of <source volume server host:port> <target volume server host:port> <volume id>")
 	}
 	sourceVolumeServer, targetVolumeServer, volumeIdString := args[0], args[1], args[2]
 
