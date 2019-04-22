@@ -28,33 +28,33 @@ func (mm *mapMetric) logPut(key NeedleId, oldSize uint32, newSize uint32) {
 		mm.LogDeletionCounter(oldSize)
 	}
 }
-func (mm mapMetric) LogFileCounter(newSize uint32) {
+func (mm *mapMetric) LogFileCounter(newSize uint32) {
 	atomic.AddUint32(&mm.FileCounter, 1)
 	atomic.AddUint64(&mm.FileByteCounter, uint64(newSize))
 }
-func (mm mapMetric) LogDeletionCounter(oldSize uint32) {
+func (mm *mapMetric) LogDeletionCounter(oldSize uint32) {
 	if oldSize > 0 {
 		atomic.AddUint32(&mm.DeletionCounter, 1)
 		atomic.AddUint64(&mm.DeletionByteCounter, uint64(oldSize))
 	}
 }
-func (mm mapMetric) ContentSize() uint64 {
+func (mm *mapMetric) ContentSize() uint64 {
 	return atomic.LoadUint64(&mm.FileByteCounter)
 }
-func (mm mapMetric) DeletedSize() uint64 {
+func (mm *mapMetric) DeletedSize() uint64 {
 	return atomic.LoadUint64(&mm.DeletionByteCounter)
 }
-func (mm mapMetric) FileCount() int {
+func (mm *mapMetric) FileCount() int {
 	return int(atomic.LoadUint32(&mm.FileCounter))
 }
-func (mm mapMetric) DeletedCount() int {
+func (mm *mapMetric) DeletedCount() int {
 	return int(atomic.LoadUint32(&mm.DeletionCounter))
 }
-func (mm mapMetric) MaxFileKey() NeedleId {
+func (mm *mapMetric) MaxFileKey() NeedleId {
 	t := uint64(mm.MaximumFileKey)
 	return NeedleId(t)
 }
-func (mm mapMetric) MaybeSetMaxFileKey(key NeedleId) {
+func (mm *mapMetric) MaybeSetMaxFileKey(key NeedleId) {
 	if key > mm.MaxFileKey() {
 		atomic.StoreUint64(&mm.MaximumFileKey, uint64(key))
 	}
