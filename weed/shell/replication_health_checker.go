@@ -18,8 +18,8 @@ import (
 )
 
 func init() {
-	//commands = append(commands, &commandReplicationHealthChecker{})
-	//commands = append(commands, &commandReplicationHealthRepair{})
+	commands = append(commands, &commandReplicationHealthChecker{})
+	commands = append(commands, &commandReplicationHealthRepair{})
 }
 
 type commandReplicationHealthChecker struct {
@@ -34,7 +34,24 @@ func (c *commandReplicationHealthChecker) Name() string {
 }
 
 func (c *commandReplicationHealthChecker) Help() string {
-	return `
+	return `check all replications of a volume, and find the volumes whose content is different in replications
+
+	This command-line will check all volumes in the topology, and find all unhealthy volumes whose content
+	are inconsistent in replications, finally, output the error volume IDs.
+	It will compare the file size, file count(the count of modify and update requests with the volume from
+	user client), and compaction version of every replication of a volume. 
+	It will check these properties twice, 1st, based on the volume information in the topology, 2nd, based on
+	the replication information in volume server.
+	When one of these properties is different, the volume replication is unhealthy.
+
+	volume.check.replication  # check unhealthy replication of a volume and output the volume IDs
+
+	Note:
+		* this command will list unhealthy volumes at this moment, so we can execute this command repeatedly,
+		  and get the intersection of all the results.
+		* do not run this too quick within seconds, it will aggravate the master load
+		* repair the unhealthy replication by the command-line : volume.check.replication
+
 `
 }
 
@@ -42,9 +59,29 @@ func (c *commandReplicationHealthChecker) Do(args []string, commandEnv *commandE
 	c.writer = writer
 	c.commandEnv = commandEnv
 	c.args = args
-	c.checker = NewReplicationHealthChecker(context.Background(), commandEnv.option.GrpcDialOption)
-	return nil
+	ctx := context.Background()
+	c.checker = NewReplicationHealthChecker(ctx, commandEnv.option.GrpcDialOption)
+
+	var resp *master_pb.VolumeListResponse
+	if err := c.commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
+		var err error
+		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+		return err
+	}); err != nil {
+		return err
+	}
+
+	errVids, err := c.checker.Check(resp.TopologyInfo)
+	if err == nil {
+		if len(errVids) <= 0 {
+			fmt.Fprintf(writer, "all volume replications are healthy\n")
+		} else {
+			fmt.Fprintf(writer, "the unhealthy replication volume id : %v\n", errVids)
+		}
+	}
+	return err
 }
+
 type commandReplicationHealthRepair struct {
 	args       []string
 	commandEnv *commandEnv
@@ -57,7 +94,19 @@ func (c *commandReplicationHealthRepair) Name() string {
 }
 
 func (c *commandReplicationHealthRepair) Help() string {
-	return `
+	return `repair the error replication, make all replications of the volume new and consistent
+
+	This command-line will compare the properties(including file size, file count, compaction version etc.)
+	of replication file in volume server again, if the replications are inconsistent, it will find a integrated
+	replication who has most file count, and overwrite the unhealthy replication with the integrated replication.
+
+	volume.repair.replication -v=volumeId # automatically repair the unhealthy replications of the volume
+	volume.repair.replication -h=localhost:8081 -v=volumeId # overwrite the replication file at localhost:8081
+
+	Note:
+		* each time this will only repair unhealthy replication for one volume id.
+		* find the unhealthy replication volume use command-line : volume.check.replication
+
 `
 }
 
@@ -88,11 +137,9 @@ func (c *commandReplicationHealthRepair) Do(args []string, commandEnv *commandEn
 	// repair them
 	successVids, failedVids, err := c.repair.Repair(resp.TopologyInfo, eVids)
 	if err != nil {
-		str := fmt.Sprintf("repair volume:%v replication failed.\n", failedVids)
-		writer.Write([]byte(str))
+		fmt.Fprintf(writer, "repair volume:%v replication failed.\n", failedVids)
 	} else {
-		str := fmt.Sprintf("repair volue:%v replication success.\n", successVids)
-		writer.Write([]byte(str))
+		fmt.Fprintf(writer, "repair volue:%v replication success.\n", successVids)
 	}
 	return nil
 }
@@ -256,7 +303,7 @@ func getVolumeFileStatus(grpcDialOption grpc.DialOption, ctx context.Context, vi
 	wg.Add(len(volumeUrls))
 	getFileStatFunc := func(url string, volumeId uint32) {
 		defer wg.Done()
-		glog.V(4).Infof("volumeId:%v, location:%v", volumeId, url)
+		glog.V(0).Infof("volumeId:%v, location:%v", volumeId, url)
 		err := operation.WithVolumeServerClient(url, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 			req := &volume_server_pb.ReadVolumeFileStatusRequest{
 				VolumeId: uint32(volumeId),

@@ -1,13 +1,20 @@
+// +build windows
+
 package shell
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/sequence"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/topology"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"google.golang.org/grpc"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -123,51 +130,51 @@ func TestReplicationHealthChecker_GetErrorReplications(t *testing.T) {
 		t.Errorf("failed.")
 	}
 
-	//checker := NewReplicationHealthChecker(context.Background(), grpc.EmptyDialOption{})
-	//errVids, err := checker.Check(topoInfo)
-	//if err != nil {
-	//	t.Error(err)
-	//	return
-	//} else {
-	//	fmt.Printf("error vids : %v\n", errVids)
-	//}
+	checker := NewReplicationHealthChecker(context.Background(), grpc.EmptyDialOption{})
+	errVids, err := checker.Check(topoInfo)
+	if err != nil {
+		t.Error(err)
+		return
+	} else {
+		fmt.Printf("error vids : %v\n", errVids)
+	}
 }
 
 // this UT need mock or real seaweedfs service
-//func TestReplicationHealthChecker_GetErrorReplications2(t *testing.T) {
-//	masters := "localhost:9633,localhost:9733,localhost:9833"
-//	ctx := context.Background()
-//	masterClient := wdclient.NewMasterClient(ctx, grpc.WithInsecure(), "shell", strings.Split(masters, ","))
-//	go masterClient.KeepConnectedToMaster()
-//	masterClient.WaitUntilConnected()
-//
-//	var resp *master_pb.VolumeListResponse
-//	if err := masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
-//		var err error
-//		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
-//		return err
-//	}); err != nil {
-//		t.Error(err)
-//	}
-//
-//	//respBytes, err := json.Marshal(resp)
-//	//if err != nil {
-//	//	t.Error(err)
-//	//}
-//	//t.Log(string(respBytes[:]))
-//
-//	checker := NewReplicationHealthChecker(ctx, grpc.WithInsecure())
-//	errVids, err := checker.Check(resp.TopologyInfo)
-//	if err != nil {
-//		t.Error(err)
-//		return
-//	}
-//	fmt.Printf("error vids : %v\n", errVids)
-//
-//	repair := NewReplicationHealthRepair(ctx, grpc.WithInsecure())
-//	success, failed, err := repair.Repair(resp.TopologyInfo, errVids)
-//	if err != nil {
-//		t.Error(err)
-//	}
-//	fmt.Printf("success:%v, failed:%v", success, failed)
-//}
+func TestReplicationHealthChecker_GetErrorReplications2(t *testing.T) {
+	masters := "localhost:9633,localhost:9733,localhost:9833"
+	ctx := context.Background()
+	masterClient := wdclient.NewMasterClient(ctx, grpc.WithInsecure(), "shell", strings.Split(masters, ","))
+	go masterClient.KeepConnectedToMaster()
+	masterClient.WaitUntilConnected()
+
+	var resp *master_pb.VolumeListResponse
+	if err := masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
+		var err error
+		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+		return err
+	}); err != nil {
+		t.Error(err)
+	}
+
+	//respBytes, err := json.Marshal(resp)
+	//if err != nil {
+	//	t.Error(err)
+	//}
+	//t.Log(string(respBytes[:]))
+
+	checker := NewReplicationHealthChecker(ctx, grpc.WithInsecure())
+	errVids, err := checker.Check(resp.TopologyInfo)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	fmt.Printf("error vids : %v\n", errVids)
+
+	repair := NewReplicationHealthRepair(ctx, grpc.WithInsecure())
+	success, failed, err := repair.Repair(resp.TopologyInfo, errVids)
+	if err != nil {
+		t.Error(err)
+	}
+	fmt.Printf("success:%v, failed:%v", success, failed)
+}

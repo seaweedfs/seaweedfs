@@ -140,6 +140,8 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 		MaxVolumeCount:    uint64(dn.GetMaxVolumeCount()),
 		FreeVolumeCount:   uint64(dn.FreeSpace()),
 		ActiveVolumeCount: uint64(dn.GetActiveVolumeCount()),
+		Url:               dn.Url(),
+		PublicUrl:         dn.PublicUrl,
 	}
 	for _, v := range dn.GetVolumes() {
 		m.VolumeInfos = append(m.VolumeInfos, v.ToVolumeInformationMessage())
