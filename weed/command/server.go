@@ -4,6 +4,7 @@ import (
 	"github.com/chrislusf/raft/protobuf"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/spf13/viper"
+	"fmt"
 	"net/http"
 	"os"
 	"runtime"
@@ -29,6 +30,7 @@ type ServerOptions struct {
 var (
 	serverOptions ServerOptions
 	filerOptions  FilerOptions
+	s3Options     S3Options
 )
 
 func init() {
@@ -48,6 +50,8 @@ var cmdServer = &Command{
 
   Optionally, one filer server can be started. Logically, filer servers should not be in a cluster.
   They run with meta data on disk, not shared. So each filer server is different.
+
+  Also optionally, one S3 gateway can be started.
 
   `,
 }
@@ -72,6 +76,7 @@ var (
 	volumeMaxDataVolumeCounts     = cmdServer.Flag.String("volume.max", "7", "maximum numbers of volumes, count[,count]...")
 	pulseSeconds                  = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	isStartingFiler               = cmdServer.Flag.Bool("filer", false, "whether to start filer")
+	isStartingS3                  = cmdServer.Flag.Bool("s3", false, "whether to start S3 gateway")
 
 	serverWhiteList []string
 )
@@ -94,6 +99,12 @@ func init() {
 	serverOptions.v.readRedirect = cmdServer.Flag.Bool("volume.read.redirect", true, "Redirect moved or non-local volumes.")
 	serverOptions.v.publicUrl = cmdServer.Flag.String("volume.publicUrl", "", "publicly accessible address")
 
+	s3Options.filerBucketsPath = cmdServer.Flag.String("s3.filer.dir.buckets", "/buckets", "folder on filer to store all buckets")
+	s3Options.port = cmdServer.Flag.Int("s3.port", 8333, "s3 server http listen port")
+	s3Options.domainName = cmdServer.Flag.String("s3.domainName", "", "suffix of the host name, {bucket}.{domainName}")
+	s3Options.tlsPrivateKey = cmdServer.Flag.String("s3.key.file", "", "path to the TLS private key file")
+	s3Options.tlsCertificate = cmdServer.Flag.String("s3.cert.file", "", "path to the TLS certificate file")
+
 }
 
 func runServer(cmd *Command, args []string) bool {
@@ -113,6 +124,10 @@ func runServer(cmd *Command, args []string) bool {
 		*isStartingFiler = true
 	}
 
+	if *isStartingS3 {
+		*isStartingFiler = true
+	}
+
 	master := *serverIp + ":" + strconv.Itoa(*masterPort)
 	filerOptions.masters = &master
 	filerOptions.ip = serverIp
@@ -127,6 +142,9 @@ func runServer(cmd *Command, args []string) bool {
 
 	filerOptions.dataCenter = serverDataCenter
 	filerOptions.disableHttp = serverDisableHttp
+
+	filerAddress := fmt.Sprintf("%s:%d", *serverIp, *filerOptions.port)
+	s3Options.filer = &filerAddress
 
 	if *filerOptions.defaultReplicaPlacement == "" {
 		*filerOptions.defaultReplicaPlacement = *masterDefaultReplicaPlacement
@@ -160,6 +178,15 @@ func runServer(cmd *Command, args []string) bool {
 			time.Sleep(1 * time.Second)
 
 			filerOptions.startFiler()
+
+		}()
+	}
+
+	if *isStartingS3 {
+		go func() {
+			time.Sleep(2 * time.Second)
+
+			s3Options.startS3Server()
 
 		}()
 	}
