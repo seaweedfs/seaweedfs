@@ -18,6 +18,7 @@ const (
  * A VolumeServer contains one Store
  */
 type Store struct {
+	volumeSizeLimit    uint64 //read from the master
 	Ip                 string
 	Port               int
 	PublicUrl          string
@@ -25,7 +26,6 @@ type Store struct {
 	dataCenter         string //optional informaton, overwriting master setting if exists
 	rack               string //optional information, overwriting master setting if exists
 	connected          bool
-	volumeSizeLimit    uint64 //read from the master
 	Client             master_pb.Seaweed_SendHeartbeatClient
 	NeedleMapType      NeedleMapType
 	NewVolumesChan     chan master_pb.VolumeShortInformationMessage
