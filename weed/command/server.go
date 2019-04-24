@@ -39,19 +39,16 @@ func init() {
 
 var cmdServer = &Command{
 	UsageLine: "server -port=8080 -dir=/tmp -volume.max=5 -ip=server_name",
-	Short:     "start a server, including volume server, and automatically elect a master server",
+	Short:     "start a master server, a volume server, and optionally a filer and a S3 gateway",
 	Long: `start both a volume server to provide storage spaces
   and a master server to provide volume=>location mapping service and sequence number of file ids
 
   This is provided as a convenient way to start both volume server and master server.
-  The servers are exactly the same as starting them separately.
+  The servers acts exactly the same as starting them separately.
+  So other volume servers can connect to this master server also.
 
-  So other volume servers can use this embedded master server also.
-
-  Optionally, one filer server can be started. Logically, filer servers should not be in a cluster.
-  They run with meta data on disk, not shared. So each filer server is different.
-
-  Also optionally, one S3 gateway can be started.
+  Optionally, a filer server can be started.
+  Also optionally, a S3 gateway can be started.
 
   `,
 }
