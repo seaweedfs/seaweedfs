@@ -63,7 +63,7 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 			Name:      name,
 		}
 
-		glog.V(1).Infof("read dir %s attr: %v", dir.Path, request)
+		glog.V(1).Infof("read dir %s request: %v", dir.Path, request)
 		resp, err := client.LookupDirectoryEntry(ctx, request)
 		if err != nil {
 			if err == filer2.ErrNotFound {
@@ -76,6 +76,7 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 		if resp.Entry != nil {
 			dir.attributes = resp.Entry.Attributes
 		}
+		glog.V(2).Infof("read dir %s attr: %v", dir.Path, dir.attributes)
 
 		// dir.wfs.listDirectoryEntriesCache.Set(dir.Path, resp.Entry, dir.wfs.option.EntryCacheTtl)
 
@@ -83,11 +84,11 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 	})
 
 	if err != nil {
+		glog.V(2).Infof("read dir %s attr: %v, error: %v", dir.Path, dir.attributes, err)
 		return err
 	}
 
-	// glog.V(1).Infof("dir %s: %v", dir.Path, attributes)
-	// glog.V(1).Infof("dir %s permission: %v", dir.Path, os.FileMode(attributes.FileMode))
+	glog.V(2).Infof("dir %s: %v perm: %v", dir.Path, attributes, os.FileMode(attributes.FileMode))
 
 	attr.Mode = os.FileMode(dir.attributes.FileMode) | os.ModeDir
 
