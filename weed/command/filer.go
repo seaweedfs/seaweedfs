@@ -23,7 +23,6 @@ type FilerOptions struct {
 	masters                 *string
 	ip                      *string
 	port                    *int
-	grpcPort                *int
 	publicPort              *int
 	collection              *string
 	defaultReplicaPlacement *string
@@ -45,7 +44,6 @@ func init() {
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this collection")
 	f.ip = cmdFiler.Flag.String("ip", "", "filer server http listen ip address")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
-	f.grpcPort = cmdFiler.Flag.Int("port.grpc", 0, "filer grpc server listen port, default to http port + 10000")
 	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "000", "default replication type if not specified")
 	f.redirectOnRead = cmdFiler.Flag.Bool("redirectOnRead", false, "whether proxy or redirect to volume server during file GET request")
@@ -140,10 +138,7 @@ func (fo *FilerOptions) startFiler() {
 	}
 
 	// starting grpc server
-	grpcPort := *fo.grpcPort
-	if grpcPort == 0 {
-		grpcPort = *fo.port + 10000
-	}
+	grpcPort := *fo.port + 10000
 	grpcL, err := util.NewListener(":"+strconv.Itoa(grpcPort), 0)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
