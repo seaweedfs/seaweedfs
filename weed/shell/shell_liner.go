@@ -70,12 +70,17 @@ func RunShell(options ShellOptions) {
 			} else if cmd == "exit" || cmd == "quit" {
 				return
 			} else {
+				foundCommand := false
 				for _, c := range commands {
 					if c.Name() == cmd {
 						if err := c.Do(args, commandEnv, os.Stdout); err != nil {
 							fmt.Fprintf(os.Stderr, "error: %v\n", err)
 						}
+						foundCommand = true
 					}
+				}
+				if !foundCommand {
+					fmt.Fprintf(os.Stderr, "unknown command: %v\n", cmd)
 				}
 			}
 
