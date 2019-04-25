@@ -54,7 +54,27 @@ Your support will be really appreciated by me and other supporters!
 - [Wiki Documentation](https://github.com/chrislusf/seaweedfs/wiki)
 - [SeaweedFS Introduction Slides](https://www.slideshare.net/chrislusf/seaweedfs-introduction)
 
-## Introduction
+Table of Contents
+=================
+
+* [Introduction](#introduction)
+* [Features](#features)
+    * [Additional Features](#additional-features)
+    * [Filer Features](#filer-features)
+* [Example Usage](#example-usage)
+* [Architecture](#architecture)
+* [Compared to Other File Systems](#compared-to-other-file-systems)
+    * [Compared to HDFS](#compared-to-hdfs)
+    * [Compared to GlusterFS, Ceph](#compared-to-glusterfs-ceph)
+    * [Compared to GlusterFS](#compared-to-glusterfs)
+    * [Compared to Ceph](#compared-to-ceph)
+* [Dev Plan](#dev-plan)
+* [Installation Guide](#installation-guide)
+* [Disk Related Topics](#disk-related-topics)
+* [Benchmark](#Benchmark)
+* [License](#license)
+
+## Introduction ##
 
 SeaweedFS is a simple and highly scalable distributed file system. There are two objectives:
 
@@ -69,18 +89,26 @@ SeaweedFS started by implementing [Facebook's Haystack design paper](http://www.
 
 SeaweedFS can work very well with just the object store. [[Filer]] can then be added later to support directories and POSIX attributes. Filer is a separate linearly-scalable stateless server with customizable metadata stores, e.g., MySql/Postgres/Redis/Cassandra/LevelDB.
 
-## Additional Features
-* Can choose no replication or different replication levels, rack and data center aware
-* Automatic master servers failover - no single point of failure (SPOF)
-* Automatic Gzip compression depending on file mime type
-* Automatic compaction to reclaim disk space after deletion or update
+[Back to TOC](#table-of-contents)
+
+## Features ##
+
+[Back to TOC](#table-of-contents)
+
+## Additional Features ##
+* Can choose no replication or different replication levels, rack and data center aware.
+* Automatic master servers failover - no single point of failure (SPOF).
+* Automatic Gzip compression depending on file mime type.
+* Automatic compaction to reclaim disk space after deletion or update.
 * Servers in the same cluster can have different disk spaces, file systems, OS etc.
-* Adding/Removing servers does **not** cause any data re-balancing
-* Optionally fix the orientation for jpeg pictures
+* Adding/Removing servers does **not** cause any data re-balancing.
+* Optionally fix the orientation for jpeg pictures.
 * Support ETag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/boltdb/btree mode tuning for memory/performance balance.
 
-## Filer Features
+[Back to TOC](#table-of-contents)
+
+## Filer Features ##
 * [filer server][Filer] provide "normal" directories and files via http.
 * [mount filer][Mount] to read and write files directly as a local directory via FUSE.
 * [Amazon S3 compatible API][AmazonS3API] to access files with S3 tooling.
@@ -93,13 +121,16 @@ SeaweedFS can work very well with just the object store. [[Filer]] can then be a
 [BackupToCloud]: https://github.com/chrislusf/seaweedfs/wiki/Backup-to-Cloud
 [Hadoop]: https://github.com/chrislusf/seaweedfs/wiki/Hadoop-Compatible-File-System
 
-## Example Usage
+[Back to TOC](#table-of-contents)
+
+## Example Usage ##
+
 By default, the master node runs on port 9333, and the volume nodes run on port 8080.
 Let's start one master node, and two volume nodes on port 8080 and 8081. Ideally, they should be started from different machines. We'll use localhost as an example.
 
 SeaweedFS uses HTTP REST operations to read, write, and delete. The responses are in JSON or JSONP format.
 
-### Start Master Server
+### Start Master Server ###
 
 ```
 > ./weed master
@@ -135,6 +166,7 @@ For deletion, send an HTTP DELETE request to the same `url + '/' + fid` URL:
 ```
 > curl -X DELETE http://127.0.0.1:8080/3,01637037d6
 ```
+
 ### Save File Id ###
 
 Now, you can save the `fid`, 3,01637037d6 in this case, to a database field.
@@ -213,7 +245,7 @@ More details about replication can be found [on the wiki][Replication].
 
 You can also set the default replication strategy when starting the master server.
 
-### Allocate File Key on specific data center ###
+### Allocate File Key on Specific Data Center ###
 
 Volume servers can be started with a specific data center name:
 
@@ -238,6 +270,8 @@ When requesting a file key, an optional "dataCenter" parameter can limit the ass
 [feat-2]: https://github.com/chrislusf/seaweedfs/wiki/Optimization#insert-with-your-own-keys
 [feat-3]: https://github.com/chrislusf/seaweedfs/wiki/Optimization#upload-large-files
 [feat-4]: https://github.com/chrislusf/seaweedfs/wiki/Optimization#collection-as-a-simple-name-space
+
+[Back to TOC](#table-of-contents)
 
 ## Architecture ##
 
@@ -279,11 +313,15 @@ Each individual file size is limited to the volume size.
 
 All file meta information stored on an volume server is readable from memory without disk access. Each file takes just a 16-byte map entry of <64bit key, 32bit offset, 32bit size>. Of course, each map entry has its own space cost for the map. But usually the disk space runs out before the memory does.
 
+[Back to TOC](#table-of-contents)
+
 ## Compared to Other File Systems ##
 
 Most other distributed file systems seem more complicated than necessary.
 
 SeaweedFS is meant to be fast and simple, in both setup and operation. If you do not understand how it works when you reach here, we've failed! Please raise an issue with any questions or update this file with clarifications.
+
+[Back to TOC](#table-of-contents)
 
 ### Compared to HDFS ###
 
@@ -293,6 +331,7 @@ SeaweedFS is ideal for serving relatively smaller files quickly and concurrently
 
 SeaweedFS can also store extra large files by splitting them into manageable data chunks, and store the file ids of the data chunks into a meta chunk. This is managed by "weed upload/download" tool, and the weed master or volume servers are agnostic about it.
 
+[Back to TOC](#table-of-contents)
 
 ### Compared to GlusterFS, Ceph ###
 
@@ -310,11 +349,15 @@ The architectures are mostly the same. SeaweedFS aims to store and read files fa
 | GlusterFS      | hashing          |                  | FUSE, NFS          |          |                           |
 | Ceph           | hashing + rules  |                  | FUSE               | Yes      |                           |
 
+[Back to TOC](#table-of-contents)
+
 ### Compared to GlusterFS ###
 
 GlusterFS stores files, both directories and content, in configurable volumes called "bricks".
 
 GlusterFS hashes the path and filename into ids, and assigned to virtual volumes, and then mapped to "bricks".
+
+[Back to TOC](#table-of-contents)
 
 ### Compared to Ceph ###
 
@@ -336,16 +379,20 @@ SeaweedFS Filer uses off-the-shelf stores, such as MySql, Postgres, Redis, Cassa
 | Volume  | OSD | optimized for small files |
 | Filer  | Ceph FS | linearly scalable, Customizable, O(1) or O(logN) |
 
+[Back to TOC](#table-of-contents)
 
-## Dev plan ##
+## Dev Plan ##
 
 More tools and documentation, on how to maintain and scale the system. For example, how to move volumes, automatically balancing data, how to grow volumes, how to check system status, etc.
 Other key features include: Erasure Encoding, JWT security.
 
 This is a super exciting project! And we need helpers and [support](https://www.patreon.com/seaweedfs)!
 
+[Back to TOC](#table-of-contents)
 
-## Installation guide for users who are not familiar with golang
+## Installation Guide ##
+
+> Installation guide for users who are not familiar with golang
 
 Step 1: install go on your machine and setup the environment by following the instructions at:
 
@@ -372,17 +419,21 @@ Step 4: after you modify your code locally, you could start a local build by cal
 $GOPATH/src/github.com/chrislusf/seaweedfs/weed
 ```
 
-## Disk Related topics ##
+[Back to TOC](#table-of-contents)
+
+## Disk Related Topics ##
 
 ### Hard Drive Performance ###
 
 When testing read performance on SeaweedFS, it basically becomes a performance test of your hard drive's random read speed. Hard drives usually get 100MB/s~200MB/s.
 
-### Solid State Disk
+### Solid State Disk ###
 
 To modify or delete small files, SSD must delete a whole block at a time, and move content in existing blocks to a new block. SSD is fast when brand new, but will get fragmented over time and you have to garbage collect, compacting blocks. SeaweedFS is friendly to SSD since it is append-only. Deletion and compaction are done on volume level in the background, not slowing reading and not causing fragmentation.
 
-## Benchmark
+[Back to TOC](#table-of-contents)
+
+## Benchmark ##
 
 My Own Unscientific Single Machine Results on Mac Book with Solid State Disk, CPU: 1 Intel Core i7 2.6GHz.
 
@@ -435,8 +486,9 @@ Percentage of the requests served within a certain time (ms)
   100%     20.7 ms
 ```
 
+[Back to TOC](#table-of-contents)
 
-## License
+## License ##
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -450,7 +502,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
+[Back to TOC](#table-of-contents)
 
-## Stargazers over time
+## Stargazers over time ##
 
 [![Stargazers over time](https://starcharts.herokuapp.com/chrislusf/seaweedfs.svg)](https://starcharts.herokuapp.com/chrislusf/seaweedfs)
