@@ -125,7 +125,7 @@ Second, to store the file content, send a HTTP multi-part POST request to `url +
 
 ```
 > curl -F file=@/home/chris/myphoto.jpg http://127.0.0.1:8080/3,01637037d6
-{"size": 43234}
+{"name":"myphoto.jpg","size":43234,"eTag":"1cc0118e"}
 ```
 
 To update, send another POST request with updated file content.
@@ -157,7 +157,7 @@ First look up the volume server's URLs by the file's volumeId:
 
 ```
 > curl http://localhost:9333/dir/lookup?volumeId=3
-{"locations":[{"publicUrl":"localhost:8080","url":"localhost:8080"}]}
+{"volumeId":"3","locations":[{"publicUrl":"localhost:8080","url":"localhost:8080"}]}
 ```
 
 Since (usually) there are not too many volume servers, and volumes don't move often, you can cache the results most of the time. Depending on the replication type, one volume can have multiple replica locations. Just randomly pick one location to read.
