@@ -10,8 +10,8 @@
 
 <h2 align="center">Supporting SeaweedFS</h2>
 
-SeaweedFS is an independent Apache-licensed open source project with its ongoing development made 
-possible entirely thanks to the support of these awesome [backers](https://github.com/chrislusf/seaweedfs/blob/master/backers.md). 
+SeaweedFS is an independent Apache-licensed open source project with its ongoing development made
+possible entirely thanks to the support of these awesome [backers](https://github.com/chrislusf/seaweedfs/blob/master/backers.md).
 If you'd like to grow SeaweedFS even stronger, please consider joining our
 <a href="https://www.patreon.com/seaweedfs">sponsors on Patreon</a>.
 
@@ -77,7 +77,7 @@ SeaweedFS can work very well with just the object store. [[Filer]] can then be a
 * Servers in the same cluster can have different disk spaces, file systems, OS etc.
 * Adding/Removing servers does **not** cause any data re-balancing
 * Optionally fix the orientation for jpeg pictures
-* Support Etag, Accept-Range, Last-Modified, etc.
+* Support ETag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/boltdb/btree mode tuning for memory/performance balance.
 
 ## Filer Features
@@ -366,7 +366,7 @@ go get github.com/chrislusf/seaweedfs/weed
 
 Once this is done, you will find the executable "weed" in your `$GOPATH/bin` directory
 
-Step 4: after you modify your code locally, you could start a local build by calling `go install` under 
+Step 4: after you modify your code locally, you could start a local build by calling `go install` under
 
 ```
 $GOPATH/src/github.com/chrislusf/seaweedfs/weed
