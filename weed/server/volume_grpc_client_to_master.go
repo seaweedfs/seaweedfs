@@ -120,7 +120,7 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 				return "", err
 			}
 		case <-tickChan:
-			glog.V(2).Infof("volume server %s:%d heartbeat", vs.store.Ip, vs.store.Port)
+			glog.V(4).Infof("volume server %s:%d heartbeat", vs.store.Ip, vs.store.Port)
 			if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
 				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
 				return "", err

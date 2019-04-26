@@ -53,6 +53,7 @@ func (f *Filer) loopProcessingDeletion() {
 
 func (f *Filer) DeleteChunks(fullpath FullPath, chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
+		glog.V(3).Infof("deleting %s chunk %s", fullpath, chunk.String())
 		f.fileIdDeletionChan <- chunk.FileId
 	}
 }
