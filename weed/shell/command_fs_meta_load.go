@@ -33,6 +33,11 @@ func (c *commandFsMetaLoad) Help() string {
 
 func (c *commandFsMetaLoad) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
 
+	if len(args) == 0 {
+		fmt.Fprintf(writer, "missing a metadata file\n")
+		return nil
+	}
+
 	filerServer, filerPort, path, err := commandEnv.parseUrl(findInputDirectory(nil))
 	if err != nil {
 		return err
