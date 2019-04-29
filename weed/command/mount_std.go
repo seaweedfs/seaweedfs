@@ -74,6 +74,7 @@ func runMount(cmd *Command, args []string) bool {
 		fuse.MaxReadahead(1024 * 128),
 		fuse.AsyncRead(),
 		fuse.WritebackCache(),
+		fuse.AllowNonEmptyMount(),
 	}
 	if *mountOptions.allowOthers {
 		options = append(options, fuse.AllowOther())
