@@ -28,7 +28,7 @@ func main() {
 
 	err = walkMetaFile(dst)
 	if err != nil {
-		log.Fatalf("failed to open %s: %v", *metaFile, err)
+		log.Fatalf("failed to visit %s: %v", *metaFile, err)
 	}
 
 }
