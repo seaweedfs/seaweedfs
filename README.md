@@ -363,7 +363,7 @@ GlusterFS hashes the path and filename into ids, and assigned to virtual volumes
 
 Ceph can be setup similar to SeaweedFS as a key->blob store. It is much more complicated, with the need to support layers on top of it. [Here is a more detailed comparison](https://github.com/chrislusf/seaweedfs/issues/120)
 
-SeaweedFS has a centralized master group to look up free volumes, while Ceph uses hashing and metadata servers to locate its objects. Having a centralized master makes it easy to code and manage. 
+SeaweedFS has a centralized master group to look up free volumes, while Ceph uses hashing and metadata servers to locate its objects. Having a centralized master makes it easy to code and manage.
 
 Same as SeaweedFS, Ceph is also based on the object store RADOS. Ceph is rather complicated with mixed reviews.
 
@@ -387,6 +387,12 @@ More tools and documentation, on how to maintain and scale the system. For examp
 Other key features include: Erasure Encoding, JWT security.
 
 This is a super exciting project! And we need helpers and [support](https://www.patreon.com/seaweedfs)!
+
+BTW, We suggest run the code style check script `util/gostd` before you push your branch to remote, it will make SeaweedFS easy to review, maintain and develop:
+
+```
+$ ./util/gostd
+```
 
 [Back to TOC](#table-of-contents)
 
