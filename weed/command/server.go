@@ -1,10 +1,10 @@
 package command
 
 import (
+	"fmt"
 	"github.com/chrislusf/raft/protobuf"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/spf13/viper"
-	"fmt"
 	"net/http"
 	"os"
 	"runtime"

@@ -114,10 +114,10 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 			nil,
 			dn)
 
-		for vid, _ := range layout.vid2location{
+		for vid, _ := range layout.vid2location {
 			println("after add volume id", vid)
 		}
-		for _, vid := range layout.writables{
+		for _, vid := range layout.writables {
 			println("after add writable volume id", vid)
 		}
 

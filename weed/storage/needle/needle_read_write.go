@@ -185,7 +185,7 @@ func (n *Needle) ReadData(r *os.File, offset int64, size uint32, version Version
 	case Version2, Version3:
 		err = n.readNeedleDataVersion2(bytes[NeedleHeaderSize : NeedleHeaderSize+int(n.Size)])
 	}
-	if err != nil && err != io.EOF{
+	if err != nil && err != io.EOF {
 		return err
 	}
 	if size > 0 {
@@ -390,4 +390,3 @@ func (n *Needle) SetHasPairs() {
 func getActualSize(size uint32, version Version) int64 {
 	return NeedleHeaderSize + NeedleBodyLength(size, version)
 }
-

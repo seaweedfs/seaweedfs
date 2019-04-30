@@ -79,10 +79,10 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 		if len(heartbeat.NewVolumes) > 0 || len(heartbeat.DeletedVolumes) > 0 {
 			// process delta volume ids if exists for fast volume id updates
-			for _, volInfo := range heartbeat.NewVolumes{
+			for _, volInfo := range heartbeat.NewVolumes {
 				message.NewVids = append(message.NewVids, volInfo.Id)
 			}
-			for _, volInfo := range heartbeat.DeletedVolumes{
+			for _, volInfo := range heartbeat.DeletedVolumes {
 				message.DeletedVids = append(message.DeletedVids, volInfo.Id)
 			}
 			// update master internal volume layouts
@@ -92,7 +92,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			newVolumes, deletedVolumes := t.SyncDataNodeRegistration(heartbeat.Volumes, dn)
 
 			for _, v := range newVolumes {
-				glog.V(0).Infof("master see new volume %d from %s", uint32(v.Id),  dn.Url())
+				glog.V(0).Infof("master see new volume %d from %s", uint32(v.Id), dn.Url())
 				message.NewVids = append(message.NewVids, uint32(v.Id))
 			}
 			for _, v := range deletedVolumes {
