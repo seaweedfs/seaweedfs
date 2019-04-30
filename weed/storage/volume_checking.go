@@ -15,7 +15,7 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uin
 		return 0, fmt.Errorf("verifyIndexFileIntegrity %s failed: %v", indexFile.Name(), e)
 	}
 	if indexSize == 0 {
-		return 0,nil
+		return 0, nil
 	}
 	var lastIdxEntry []byte
 	if lastIdxEntry, e = readIndexEntryAtOffset(indexFile, indexSize-NeedleMapEntrySize); e != nil {
@@ -23,7 +23,7 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uin
 	}
 	key, offset, size := IdxFileEntry(lastIdxEntry)
 	if offset.IsZero() {
-		return 0,nil
+		return 0, nil
 	}
 	if size == TombstoneFileSize {
 		size = 0

@@ -99,7 +99,7 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 		select {
 		case volumeMessage := <-vs.store.NewVolumesChan:
 			deltaBeat := &master_pb.Heartbeat{
-				NewVolumes:[]*master_pb.VolumeShortInformationMessage{
+				NewVolumes: []*master_pb.VolumeShortInformationMessage{
 					&volumeMessage,
 				},
 			}
@@ -110,7 +110,7 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 			}
 		case volumeMessage := <-vs.store.DeletedVolumesChan:
 			deltaBeat := &master_pb.Heartbeat{
-				DeletedVolumes:[]*master_pb.VolumeShortInformationMessage{
+				DeletedVolumes: []*master_pb.VolumeShortInformationMessage{
 					&volumeMessage,
 				},
 			}

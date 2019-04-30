@@ -3,11 +3,11 @@ package needle
 import "testing"
 
 func TestNewVolumeId(t *testing.T) {
-	if _,err := NewVolumeId("1"); err != nil {
+	if _, err := NewVolumeId("1"); err != nil {
 		t.Error(err)
 	}
 
-	if _, err := NewVolumeId("a");err != nil {
+	if _, err := NewVolumeId("a"); err != nil {
 		t.Logf("a is not legal volume id, %v", err)
 	}
 }

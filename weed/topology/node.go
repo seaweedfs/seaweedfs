@@ -46,8 +46,8 @@ type NodeImpl struct {
 	maxVolumeCount    int64
 	parent            Node
 	sync.RWMutex      // lock children
-	children    map[NodeId]Node
-	maxVolumeId needle.VolumeId
+	children          map[NodeId]Node
+	maxVolumeId       needle.VolumeId
 
 	//for rack, data center, topology
 	nodeType string
