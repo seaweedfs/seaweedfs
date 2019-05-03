@@ -114,6 +114,7 @@ SeaweedFS can work very well with just the object store. [[Filer]] can then be a
 * [Amazon S3 compatible API][AmazonS3API] to access files with S3 tooling.
 * [Hadoop Compatible File System][Hadoop] to access files from Hadoop/Spark/Flink/etc jobs.
 * [Async Backup To Cloud][BackupToCloud] has extremely fast local access and backups to Amazon S3, Google Cloud Storage, Azure, BackBlaze.
+* [WebDAV][WebDAV] access as a mapped drive on Mac and Windows, or from mobile devices.
 
 [Filer]: https://github.com/chrislusf/seaweedfs/wiki/Directories-and-Files
 [Mount]: https://github.com/chrislusf/seaweedfs/wiki/Mount
