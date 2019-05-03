@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"golang.org/x/net/webdav"
@@ -63,13 +65,13 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 					if u, err := url.Parse(r.Header.Get("Destination")); err == nil {
 						dst = u.Path
 					}
-					glog.Infof("%-18s %s %s %v",
+					glog.V(3).Infof("%-18s %s %s %v",
 						r.Method,
 						r.URL.Path,
 						dst,
 						err)
 				default:
-					glog.Infof("%-18s %s %v",
+					glog.V(3).Infof("%-18s %s %v",
 						r.Method,
 						r.URL.Path,
 						err)
@@ -398,17 +400,86 @@ func (fs *WebDavFileSystem) Stat(ctx context.Context, name string) (os.FileInfo,
 	return fs.stat(ctx, name)
 }
 
-func (f *WebDavFile) Write(p []byte) (int, error) {
+func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 	glog.V(2).Infof("WebDavFileSystem.Write %v", f.name)
 
 	var err error
-	// _, err := f.fs.db.Exec(`update filesystem set content = substr(content, 1, ?) || ? where name = ?`, f.off*2, hex.EncodeToString(p), f.name)
+	ctx := context.Background()
+	if f.entry == nil {
+		f.entry, err = filer2.GetEntry(ctx, f.fs, f.name)
+	}
+
 	if err != nil {
 		return 0, err
 	}
-	//f.off += int64(len(p))
-	return len(p), err
+
+	var fileId, host string
+	var auth security.EncodedJwt
+
+	if err = f.fs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+
+		request := &filer_pb.AssignVolumeRequest{
+			Count:       1,
+			Replication: "000",
+			Collection:  f.fs.option.Collection,
+		}
+
+		resp, err := client.AssignVolume(ctx, request)
+		if err != nil {
+			glog.V(0).Infof("assign volume failure %v: %v", request, err)
+			return err
+		}
+
+		fileId, host, auth = resp.FileId, resp.Url, security.EncodedJwt(resp.Auth)
+
+		return nil
+	}); err != nil {
+		return 0, fmt.Errorf("filerGrpcAddress assign volume: %v", err)
+	}
+
+	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
+	bufReader := bytes.NewReader(buf)
+	uploadResult, err := operation.Upload(fileUrl, f.name, bufReader, false, "application/octet-stream", nil, auth)
+	if err != nil {
+		glog.V(0).Infof("upload data %v to %s: %v", f.name, fileUrl, err)
+		return 0, fmt.Errorf("upload data: %v", err)
+	}
+	if uploadResult.Error != "" {
+		glog.V(0).Infof("upload failure %v to %s: %v", f.name, fileUrl, err)
+		return 0, fmt.Errorf("upload result: %v", uploadResult.Error)
+	}
+
+	chunk := &filer_pb.FileChunk{
+		FileId: fileId,
+		Offset: f.off,
+		Size:   uint64(len(buf)),
+		Mtime:  time.Now().UnixNano(),
+		ETag:   uploadResult.ETag,
+	}
+
+	f.entry.Chunks = append(f.entry.Chunks, chunk)
+	dir, _ := filer2.FullPath(f.name).DirAndName()
+
+	err = f.fs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+		f.entry.Attributes.Mtime = time.Now().Unix()
+
+		request := &filer_pb.UpdateEntryRequest{
+			Directory: dir,
+			Entry:     f.entry,
+		}
+
+		if _, err := client.UpdateEntry(ctx, request); err != nil {
+			return fmt.Errorf("update %s: %v", f.name, err)
+		}
+
+		return nil
+	})
+
+	if err !=nil {
+		f.off += int64(len(buf))
+	}
+	return len(buf), err
 }
 
 func (f *WebDavFile) Close() error {

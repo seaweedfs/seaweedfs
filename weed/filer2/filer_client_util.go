@@ -102,13 +102,13 @@ func GetEntry(ctx context.Context, filerClient FilerClient, fullFilePath string)
 			Name:      name,
 		}
 
-		glog.V(1).Infof("read %s request: %v", fullFilePath, request)
+		glog.V(3).Infof("read %s request: %v", fullFilePath, request)
 		resp, err := client.LookupDirectoryEntry(ctx, request)
 		if err != nil {
 			if err == ErrNotFound {
 				return nil
 			}
-			glog.V(0).Infof("read %s attr %v: %v", fullFilePath, request, err)
+			glog.V(3).Infof("read %s attr %v: %v", fullFilePath, request, err)
 			return err
 		}
 
@@ -138,7 +138,7 @@ func ReadDirAllEntries(ctx context.Context, filerClient FilerClient, fullDirPath
 				Limit:             uint32(paginationLimit),
 			}
 
-			glog.V(4).Infof("read directory: %v", request)
+			glog.V(3).Infof("read directory: %v", request)
 			resp, err := client.ListEntries(ctx, request)
 			if err != nil {
 				return fmt.Errorf("list %s: %v", fullDirPath, err)
