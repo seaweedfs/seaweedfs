@@ -12,7 +12,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 
 	newDir := newDirectory.(*Dir)
 
-	return dir.wfs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	return dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AtomicRenameEntryRequest{
 			OldDirectory: dir.Path,

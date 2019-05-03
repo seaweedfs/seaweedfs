@@ -3,6 +3,8 @@ package command
 import (
 	"fmt"
 	"net/http"
+	"os/user"
+	"strconv"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -19,6 +21,7 @@ var (
 type WebDavOption struct {
 	filer          *string
 	port           *int
+	collection     *string
 	tlsPrivateKey  *string
 	tlsCertificate *string
 }
@@ -27,6 +30,7 @@ func init() {
 	cmdWebDav.Run = runWebDav // break init cycle
 	webDavStandaloneOptions.filer = cmdWebDav.Flag.String("filer", "localhost:8888", "filer server address")
 	webDavStandaloneOptions.port = cmdWebDav.Flag.Int("port", 7333, "webdav server http listen port")
+	webDavStandaloneOptions.collection = cmdWebDav.Flag.String("collection", "", "collection to create the files")
 	webDavStandaloneOptions.tlsPrivateKey = cmdWebDav.Flag.String("key.file", "", "path to the TLS private key file")
 	webDavStandaloneOptions.tlsCertificate = cmdWebDav.Flag.String("cert.file", "", "path to the TLS certificate file")
 }
@@ -57,10 +61,24 @@ func (wo *WebDavOption) startWebDav() bool {
 		return false
 	}
 
+	// detect current user
+	uid, gid := uint32(0), uint32(0)
+	if u, err := user.Current(); err == nil {
+		if parsedId, pe := strconv.ParseUint(u.Uid, 10, 32); pe == nil {
+			uid = uint32(parsedId)
+		}
+		if parsedId, pe := strconv.ParseUint(u.Gid, 10, 32); pe == nil {
+			gid = uint32(parsedId)
+		}
+	}
+
 	ws, webdavServer_err := weed_server.NewWebDavServer(&weed_server.WebDavOption{
 		Filer:            *wo.filer,
 		FilerGrpcAddress: filerGrpcAddress,
 		GrpcDialOption:   security.LoadClientTLS(viper.Sub("grpc"), "client"),
+		Collection:       *wo.collection,
+		Uid:              uid,
+		Gid:              gid,
 	})
 	if webdavServer_err != nil {
 		glog.Fatalf("WebDav Server startup error: %v", webdavServer_err)

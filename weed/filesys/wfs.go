@@ -73,7 +73,7 @@ func (wfs *WFS) Root() (fs.Node, error) {
 	return &Dir{Path: wfs.option.FilerMountRootPath, wfs: wfs}, nil
 }
 
-func (wfs *WFS) withFilerClient(ctx context.Context, fn func(filer_pb.SeaweedFilerClient) error) error {
+func (wfs *WFS) WithFilerClient(ctx context.Context, fn func(filer_pb.SeaweedFilerClient) error) error {
 
 	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
@@ -133,7 +133,7 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 
 	if wfs.stats.lastChecked < time.Now().Unix()-20 {
 
-		err := wfs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+		err := wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 			request := &filer_pb.StatisticsRequest{
 				Collection:  wfs.option.Collection,
