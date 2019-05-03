@@ -106,7 +106,7 @@ func GetEntry(ctx context.Context, filerClient FilerClient, fullFilePath string)
 		resp, err := client.LookupDirectoryEntry(ctx, request)
 		if err != nil {
 			if err == ErrNotFound || strings.Contains(err.Error(), ErrNotFound.Error()) {
-				return ErrNotFound
+				return nil
 			}
 			glog.V(3).Infof("read %s attr %v: %v", fullFilePath, request, err)
 			return err

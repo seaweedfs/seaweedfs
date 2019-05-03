@@ -323,9 +323,13 @@ func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string)
 	if err != nil {
 		return os.ErrExist
 	}
-	if of.IsDir() && !strings.HasSuffix(oldName, "/") {
-		oldName += "/"
-		newName += "/"
+	if of.IsDir() {
+		if strings.HasSuffix(oldName, "/") {
+			oldName = strings.TrimRight(oldName, "/")
+		}
+		if strings.HasSuffix(newName, "/") {
+			newName = strings.TrimRight(newName, "/")
+		}
 	}
 
 	_, err = fs.stat(ctx, newName)
@@ -363,10 +367,10 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 
 	var fi FileInfo
 	entry, err := filer2.GetEntry(ctx, fs, fullFilePath)
+	if entry == nil {
+		return nil, os.ErrNotExist
+	}
 	if err != nil {
-		if err == filer2.ErrNotFound {
-			return nil, os.ErrNotExist
-		}
 		return nil, err
 	}
 	fi.size = int64(filer2.TotalSize(entry.GetChunks()))
@@ -401,6 +405,9 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 		f.entry, err = filer2.GetEntry(ctx, f.fs, f.name)
 	}
 
+	if f.entry == nil {
+		return 0, err
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -492,6 +499,9 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 
 	if f.entry == nil {
 		f.entry, err = filer2.GetEntry(ctx, f.fs, f.name)
+	}
+	if f.entry == nil {
+		return 0, err
 	}
 	if err != nil {
 		return 0, err

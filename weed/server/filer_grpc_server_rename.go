@@ -11,6 +11,8 @@ import (
 
 func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.AtomicRenameEntryRequest) (*filer_pb.AtomicRenameEntryResponse, error) {
 
+	glog.V(1).Infof("AtomicRenameEntry %v", req)
+
 	ctx, err := fs.filer.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
