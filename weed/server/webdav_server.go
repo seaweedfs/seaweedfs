@@ -161,42 +161,30 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 		return os.ErrExist
 	}
 
-	base := "/"
-	for _, elem := range strings.Split(strings.Trim(fullDirPath, "/"), "/") {
-		base += elem + "/"
-		_, err = fs.stat(ctx, base)
-		if err != os.ErrNotExist {
-			return err
-		}
-		err = fs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
-			dir, name := filer2.FullPath(base).DirAndName()
-			request := &filer_pb.CreateEntryRequest{
-				Directory: dir,
-				Entry: &filer_pb.Entry{
-					Name:        name,
-					IsDirectory: true,
-					Attributes: &filer_pb.FuseAttributes{
-						Mtime:    time.Now().Unix(),
-						Crtime:   time.Now().Unix(),
-						FileMode: uint32(perm),
-						Uid:      fs.option.Uid,
-						Gid:      fs.option.Gid,
-					},
+	return fs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+		dir, name := filer2.FullPath(fullDirPath).DirAndName()
+		request := &filer_pb.CreateEntryRequest{
+			Directory: dir,
+			Entry: &filer_pb.Entry{
+				Name:        name,
+				IsDirectory: true,
+				Attributes: &filer_pb.FuseAttributes{
+					Mtime:    time.Now().Unix(),
+					Crtime:   time.Now().Unix(),
+					FileMode: uint32(perm | os.ModeDir),
+					Uid:      fs.option.Uid,
+					Gid:      fs.option.Gid,
 				},
-			}
-
-			glog.V(1).Infof("mkdir: %v", request)
-			if _, err := client.CreateEntry(ctx, request); err != nil {
-				return fmt.Errorf("mkdir %s/%s: %v", dir, name, err)
-			}
-
-			return nil
-		})
-		if err != nil {
-			return err
+			},
 		}
-	}
-	return nil
+
+		glog.V(1).Infof("mkdir: %v", request)
+		if _, err := client.CreateEntry(ctx, request); err != nil {
+			return fmt.Errorf("mkdir %s/%s: %v", dir, name, err)
+		}
+
+		return nil
+	})
 }
 
 func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, flag int, perm os.FileMode) (webdav.File, error) {
@@ -376,6 +364,9 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 	var fi FileInfo
 	entry, err := filer2.GetEntry(ctx, fs, fullFilePath)
 	if err != nil {
+		if err == filer2.ErrNotFound {
+			return nil, os.ErrNotExist
+		}
 		return nil, err
 	}
 	fi.size = int64(filer2.TotalSize(entry.GetChunks()))
@@ -476,7 +467,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 		return nil
 	})
 
-	if err !=nil {
+	if err != nil {
 		f.off += int64(len(buf))
 	}
 	return len(buf), err
@@ -551,7 +542,6 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 		glog.V(4).Infof("entry: %v", fi.name)
 		ret = append(ret, &fi)
 	})
-
 
 	old := f.off
 	if old >= int64(len(ret)) {
