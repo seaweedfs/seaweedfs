@@ -5,8 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -53,30 +51,6 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 		Handler: &webdav.Handler{
 			FileSystem: fs,
 			LockSystem: webdav.NewMemLS(),
-			Logger: func(r *http.Request, err error) {
-				litmus := r.Header.Get("X-Litmus")
-				if len(litmus) > 19 {
-					litmus = litmus[:16] + "..."
-				}
-
-				switch r.Method {
-				case "COPY", "MOVE":
-					dst := ""
-					if u, err := url.Parse(r.Header.Get("Destination")); err == nil {
-						dst = u.Path
-					}
-					glog.V(3).Infof("%-18s %s %s %v",
-						r.Method,
-						r.URL.Path,
-						dst,
-						err)
-				default:
-					glog.V(3).Infof("%-18s %s %v",
-						r.Method,
-						r.URL.Path,
-						err)
-				}
-			},
 		},
 	}
 
