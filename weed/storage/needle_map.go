@@ -37,10 +37,10 @@ type NeedleMapper interface {
 }
 
 type baseNeedleMapper struct {
+	mapMetric
+
 	indexFile           *os.File
 	indexFileAccessLock sync.Mutex
-
-	mapMetric
 }
 
 func (nm *baseNeedleMapper) IndexFileSize() uint64 {

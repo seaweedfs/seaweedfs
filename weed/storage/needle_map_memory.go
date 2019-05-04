@@ -10,9 +10,8 @@ import (
 )
 
 type NeedleMap struct {
-	m needle_map.NeedleValueMap
-
 	baseNeedleMapper
+	m needle_map.NeedleValueMap
 }
 
 func NewCompactNeedleMap(file *os.File) *NeedleMap {
