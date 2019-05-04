@@ -41,14 +41,15 @@ https://github.com/pkieltyka/jwtauth/blob/master/jwtauth.go
 
 */
 type Guard struct {
-	whiteList  []string
-	SigningKey SigningKey
+	whiteList       []string
+	SigningKey      SigningKey
+	ExpiresAfterSec int
 
 	isActive bool
 }
 
-func NewGuard(whiteList []string, signingKey string) *Guard {
-	g := &Guard{whiteList: whiteList, SigningKey: SigningKey(signingKey)}
+func NewGuard(whiteList []string, signingKey string, expiresAfterSec int) *Guard {
+	g := &Guard{whiteList: whiteList, SigningKey: SigningKey(signingKey), ExpiresAfterSec:expiresAfterSec}
 	g.isActive = len(g.whiteList) != 0 || len(g.SigningKey) != 0
 	return g
 }

@@ -110,7 +110,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func (ms *MasterServer) maybeAddJwtAuthorization(w http.ResponseWriter, fileId string) {
-	encodedJwt := security.GenJwt(ms.guard.SigningKey, fileId)
+	encodedJwt := security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fileId)
 	if encodedJwt == "" {
 		return
 	}

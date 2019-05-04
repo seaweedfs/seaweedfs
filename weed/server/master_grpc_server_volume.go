@@ -94,7 +94,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		Url:       dn.Url(),
 		PublicUrl: dn.PublicUrl,
 		Count:     count,
-		Auth:      string(security.GenJwt(ms.guard.SigningKey, fid)),
+		Auth:      string(security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
 	}, nil
 }
 

@@ -40,6 +40,8 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 
 	v := viper.GetViper()
 	signingKey := v.GetString("jwt.signing.key")
+	v.SetDefault("jwt.signing.expires_after_seconds", 10)
+	expiresAfterSec := v.GetInt("jwt.signing.expires_after_seconds")
 	enableUiAccess := v.GetBool("access.ui")
 
 	vs := &VolumeServer{
@@ -55,7 +57,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	vs.MasterNodes = masterNodes
 	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts, vs.needleMapKind)
 
-	vs.guard = security.NewGuard(whiteList, signingKey)
+	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec)
 
 	handleStaticResources(adminMux)
 	if signingKey == "" || enableUiAccess {

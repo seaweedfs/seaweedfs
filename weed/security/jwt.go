@@ -18,16 +18,17 @@ type SeaweedFileIdClaims struct {
 	jwt.StandardClaims
 }
 
-func GenJwt(signingKey SigningKey, fileId string) EncodedJwt {
+func GenJwt(signingKey SigningKey, expiresAfterSec int, fileId string) EncodedJwt {
 	if len(signingKey) == 0 {
 		return ""
 	}
 
 	claims := SeaweedFileIdClaims{
 		fileId,
-		jwt.StandardClaims{
-			ExpiresAt: time.Now().Add(time.Second * 10).Unix(),
-		},
+		jwt.StandardClaims{},
+	}
+	if expiresAfterSec > 0 {
+		claims.ExpiresAt = time.Now().Add(time.Second * time.Duration(expiresAfterSec)).Unix()
 	}
 	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	encoded, e := t.SignedString([]byte(signingKey))

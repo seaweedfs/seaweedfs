@@ -54,6 +54,8 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 
 	v := viper.GetViper()
 	signingKey := v.GetString("jwt.signing.key")
+	v.SetDefault("jwt.signing.expires_after_seconds", 10)
+	expiresAfterSec := v.GetInt("jwt.signing.expires_after_seconds")
 
 	var preallocateSize int64
 	if preallocate {
@@ -75,7 +77,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", volumeSizeLimitMB, "MB")
 
-	ms.guard = security.NewGuard(whiteList, signingKey)
+	ms.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec)
 
 	if !disableHttp {
 		handleStaticResources2(r)

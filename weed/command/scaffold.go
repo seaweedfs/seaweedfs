@@ -262,10 +262,11 @@ directory = "/"                # destination directory
 #    /etc/seaweedfs/security.toml
 # this file is read by master, volume server, and filer
 
-# the jwt signing key is read by master and volume server
-# a jwt expires in 10 seconds
+# the jwt signing key is read by master and volume server.
+# a jwt defaults to expire after 10 seconds.
 [jwt.signing]
 key = ""
+expires_after_seconds = 10           # seconds
 
 # all grpc tls authentications are mutual
 # the values for the following ca, cert, and key are paths to the PERM files.
