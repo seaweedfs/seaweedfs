@@ -43,6 +43,7 @@ type VolumeServerOptions struct {
 	readRedirect          *bool
 	cpuProfile            *string
 	memProfile            *string
+	compactionMBPerSecond *int
 }
 
 func init() {
@@ -63,6 +64,7 @@ func init() {
 	v.readRedirect = cmdVolume.Flag.Bool("read.redirect", true, "Redirect moved or non-local volumes.")
 	v.cpuProfile = cmdVolume.Flag.String("cpuprofile", "", "cpu profile output file")
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
+	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit compaction speed in mega bytes per second")
 }
 
 var cmdVolume = &Command{
@@ -157,6 +159,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		strings.Split(masters, ","), *v.pulseSeconds, *v.dataCenter, *v.rack,
 		v.whiteList,
 		*v.fixJpgOrientation, *v.readRedirect,
+		*v.compactionMBPerSecond,
 	)
 
 	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port)

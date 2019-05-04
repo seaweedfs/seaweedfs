@@ -43,7 +43,7 @@ func runCompact(cmd *Command, args []string) bool {
 		glog.Fatalf("Load Volume [ERROR] %s\n", err)
 	}
 	if *compactMethod == 0 {
-		if err = v.Compact(preallocate); err != nil {
+		if err = v.Compact(preallocate, 0); err != nil {
 			glog.Fatalf("Compact Volume [ERROR] %s\n", err)
 		}
 	} else {

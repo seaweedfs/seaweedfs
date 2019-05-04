@@ -20,9 +20,10 @@ type VolumeServer struct {
 	guard          *security.Guard
 	grpcDialOption grpc.DialOption
 
-	needleMapKind     storage.NeedleMapType
-	FixJpgOrientation bool
-	ReadRedirect      bool
+	needleMapKind           storage.NeedleMapType
+	FixJpgOrientation       bool
+	ReadRedirect            bool
+	compactionBytePerSecond int64
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
@@ -33,20 +34,23 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	dataCenter string, rack string,
 	whiteList []string,
 	fixJpgOrientation bool,
-	readRedirect bool) *VolumeServer {
+	readRedirect bool,
+	compactionMBPerSecond int,
+) *VolumeServer {
 
 	v := viper.GetViper()
 	signingKey := v.GetString("jwt.signing.key")
 	enableUiAccess := v.GetBool("access.ui")
 
 	vs := &VolumeServer{
-		pulseSeconds:      pulseSeconds,
-		dataCenter:        dataCenter,
-		rack:              rack,
-		needleMapKind:     needleMapKind,
-		FixJpgOrientation: fixJpgOrientation,
-		ReadRedirect:      readRedirect,
-		grpcDialOption:    security.LoadClientTLS(viper.Sub("grpc"), "volume"),
+		pulseSeconds:            pulseSeconds,
+		dataCenter:              dataCenter,
+		rack:                    rack,
+		needleMapKind:           needleMapKind,
+		FixJpgOrientation:       fixJpgOrientation,
+		ReadRedirect:            readRedirect,
+		grpcDialOption:          security.LoadClientTLS(viper.Sub("grpc"), "volume"),
+		compactionBytePerSecond: int64(compactionMBPerSecond) * 1024 * 1024,
 	}
 	vs.MasterNodes = masterNodes
 	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts, vs.needleMapKind)
