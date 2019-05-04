@@ -83,7 +83,3 @@ func (vs *VolumeServer) Shutdown() {
 	vs.store.Close()
 	glog.V(0).Infoln("Shut down successfully!")
 }
-
-func (vs *VolumeServer) jwt(fileId string) security.EncodedJwt {
-	return security.GenJwt(vs.guard.SigningKey, fileId)
-}

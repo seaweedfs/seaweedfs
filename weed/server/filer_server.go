@@ -85,10 +85,6 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	return fs, nil
 }
 
-func (fs *FilerServer) jwt(fileId string) security.EncodedJwt {
-	return security.GenJwt(fs.secret, fileId)
-}
-
 func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 
 	// find a filer store
