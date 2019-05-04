@@ -96,6 +96,9 @@ func runMaster(cmd *Command, args []string) bool {
 		myMasterAddress, peers := checkPeers(*masterIp, *mport, *masterPeers)
 		raftServer := weed_server.NewRaftServer(security.LoadClientTLS(viper.Sub("grpc"), "master"),
 			peers, myMasterAddress, *metaFolder, ms.Topo, *mpulse)
+		if raftServer == nil {
+			glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717", *metaFolder)
+		}
 		ms.SetRaftServer(raftServer)
 		r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
 
