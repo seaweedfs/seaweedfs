@@ -14,9 +14,9 @@ import (
 )
 
 type LevelDbNeedleMap struct {
+	baseNeedleMapper
 	dbFileName string
 	db         *leveldb.DB
-	baseNeedleMapper
 }
 
 func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Options) (m *LevelDbNeedleMap, err error) {
