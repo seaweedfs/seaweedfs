@@ -64,7 +64,7 @@ func init() {
 	v.readRedirect = cmdVolume.Flag.Bool("read.redirect", true, "Redirect moved or non-local volumes.")
 	v.cpuProfile = cmdVolume.Flag.String("cpuprofile", "", "cpu profile output file")
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
-	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit compaction speed in mega bytes per second")
+	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
 }
 
 var cmdVolume = &Command{

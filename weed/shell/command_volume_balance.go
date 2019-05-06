@@ -64,7 +64,7 @@ func (c *commandVolumeBalance) Help() string {
 func (c *commandVolumeBalance) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
 
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	collection := balanceCommand.String("c", "ALL", "collection name. use \"ALL\" for all collections")
+	collection := balanceCommand.String("c", "EACH_COLLECTION", "collection name, or use \"ALL_COLLECTIONS\" across collections, \"EACH_COLLECTION\" for each collection")
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
 	applyBalancing := balanceCommand.Bool("f", false, "apply the balancing plan.")
 	if err = balanceCommand.Parse(args); err != nil {
@@ -86,7 +86,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *commandEnv, writer 
 		if len(volumeServers) < 2 {
 			continue
 		}
-		if *collection == "ALL" {
+		if *collection == "EACH_COLLECTION" {
 			collections, err := ListCollectionNames(commandEnv)
 			if err != nil {
 				return err
@@ -96,6 +96,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *commandEnv, writer 
 					return err
 				}
 			}
+		} else if *collection == "ALL" {
 			if err = balanceVolumeServers(commandEnv, volumeServers, resp.VolumeSizeLimitMb*1024*1024, "ALL", *applyBalancing); err != nil {
 				return err
 			}
