@@ -202,4 +202,5 @@ message VolumeListRequest {
 }
 message VolumeListResponse {
     TopologyInfo topology_info = 1;
+    uint64 volume_size_limit_mb = 2;
 }
