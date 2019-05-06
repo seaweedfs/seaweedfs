@@ -22,6 +22,7 @@ Your support will be really appreciated by me and other supporters!
 
 <h3 align="center"><a href="https://www.patreon.com/seaweedfs">Sponsor SeaweedFS via Patreon</a></h3>
 
+<!--
 <h4 align="center">Platinum</h4>
 
 <p align="center">
@@ -44,6 +45,8 @@ Your support will be really appreciated by me and other supporters!
     <tr></tr>
   </tbody>
 </table>
+
+-->
 
 ---
 
