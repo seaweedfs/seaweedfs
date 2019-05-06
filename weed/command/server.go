@@ -217,7 +217,7 @@ func runServer(cmd *Command, args []string) bool {
 
 			// starting grpc server
 			grpcPort := *masterPort + 10000
-			grpcL, err := util.NewListener(*serverIp+":"+strconv.Itoa(grpcPort), 0)
+			grpcL, err := util.NewListener(*serverBindIp+":"+strconv.Itoa(grpcPort), 0)
 			if err != nil {
 				glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 			}
