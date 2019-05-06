@@ -24,22 +24,33 @@ func (c *commandCollectionList) Help() string {
 
 func (c *commandCollectionList) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
 
+	collections, err := ListCollectionNames(commandEnv)
+
+	if err != nil {
+		return err
+	}
+
+	for _, c := range collections {
+		fmt.Fprintf(writer, "collection:\"%s\"\n", c)
+	}
+
+	fmt.Fprintf(writer, "Total %d collections.\n", len(collections))
+
+	return nil
+}
+
+func ListCollectionNames(commandEnv *commandEnv) (collections []string, err error) {
 	var resp *master_pb.CollectionListResponse
 	ctx := context.Background()
 	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
 		resp, err = client.CollectionList(ctx, &master_pb.CollectionListRequest{})
 		return err
 	})
-
 	if err != nil {
-		return err
+		return
 	}
-
 	for _, c := range resp.Collections {
-		fmt.Fprintf(writer, "collection:\"%s\"\n", c.GetName())
+		collections = append(collections, c.Name)
 	}
-
-	fmt.Fprintf(writer, "Total %d collections.\n", len(resp.Collections))
-
-	return nil
+	return
 }
