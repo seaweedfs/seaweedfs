@@ -12,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 // VolumeCopy copy the .idx .dat files, and mount the volume
@@ -60,7 +61,7 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 		}
 
 		idxFileName = volumeFileName + ".idx"
-		err = writeToFile(copyFileClient, idxFileName)
+		err = writeToFile(copyFileClient, idxFileName, util.NewWriteThrottler(vs.compactionBytePerSecond))
 		if err != nil {
 			return fmt.Errorf("failed to copy volume %d idx file: %v", req.VolumeId, err)
 		}
@@ -76,7 +77,7 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 		}
 
 		datFileName = volumeFileName + ".dat"
-		err = writeToFile(copyFileClient, datFileName)
+		err = writeToFile(copyFileClient, datFileName, util.NewWriteThrottler(vs.compactionBytePerSecond))
 		if err != nil {
 			return fmt.Errorf("failed to copy volume %d dat file: %v", req.VolumeId, err)
 		}
@@ -133,7 +134,7 @@ func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse
 	return nil
 }
 
-func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName string) error {
+func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName string, wt *util.WriteThrottler) error {
 	glog.V(4).Infof("writing to %s", fileName)
 	dst, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
@@ -150,6 +151,7 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 			return fmt.Errorf("receiving %s: %v", fileName, receiveErr)
 		}
 		dst.Write(resp.FileContent)
+		wt.MaybeSlowdown(int64(len(resp.FileContent)))
 	}
 	return nil
 }
