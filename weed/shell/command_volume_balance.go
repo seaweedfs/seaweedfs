@@ -31,16 +31,20 @@ func (c *commandVolumeBalance) Help() string {
 
 	Algorithm:
 	For each type of volume server (different max volume count limit){
-		balanceWritableVolumes()
-		balanceReadOnlyVolumes()
+		for each collection {
+			balanceWritableVolumes()
+			balanceReadOnlyVolumes()
+		}
+		for all volumes {
+			balanceWritableVolumes()
+			balanceReadOnlyVolumes()
+		}
 	}
 
 	func balanceWritableVolumes(){
 		idealWritableVolumes = totalWritableVolumes / numVolumeServers
 		for {
-			sort all volume servers ordered by{
-				local writable volumes
-			}
+			sort all volume servers ordered by the number of local writable volumes
 			pick the volume server A with the lowest number of writable volumes x
 			pick the volume server B with the highest number of writable volumes y
 			if y > idealWritableVolumes and x +1 <= idealWritableVolumes {
@@ -61,6 +65,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *commandEnv, writer 
 
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	collection := balanceCommand.String("c", "ALL", "collection name. use \"ALL\" for all collections")
+	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
 	applyBalancing := balanceCommand.Bool("f", false, "apply the balancing plan.")
 	if err = balanceCommand.Parse(args); err != nil {
 		return nil
@@ -76,7 +81,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *commandEnv, writer 
 		return err
 	}
 
-	typeToNodes := collectVolumeServersByType(resp.TopologyInfo)
+	typeToNodes := collectVolumeServersByType(resp.TopologyInfo, *dc)
 	for _, volumeServers := range typeToNodes {
 		if len(volumeServers) < 2 {
 			continue
@@ -145,9 +150,12 @@ func balanceVolumeServers(commandEnv *commandEnv, dataNodeInfos []*master_pb.Dat
 	return nil
 }
 
-func collectVolumeServersByType(t *master_pb.TopologyInfo) (typeToNodes map[uint64][]*master_pb.DataNodeInfo) {
+func collectVolumeServersByType(t *master_pb.TopologyInfo, selectedDataCenter string) (typeToNodes map[uint64][]*master_pb.DataNodeInfo) {
 	typeToNodes = make(map[uint64][]*master_pb.DataNodeInfo)
 	for _, dc := range t.DataCenterInfos {
+		if selectedDataCenter != "" && dc.Id != selectedDataCenter {
+			continue
+		}
 		for _, r := range dc.RackInfos {
 			for _, dn := range r.DataNodeInfos {
 				typeToNodes[dn.MaxVolumeCount] = append(typeToNodes[dn.MaxVolumeCount], dn)
