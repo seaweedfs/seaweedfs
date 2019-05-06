@@ -108,6 +108,7 @@ SeaweedFS can work very well with just the object store. [[Filer]] can then be a
 * Optionally fix the orientation for jpeg pictures.
 * Support ETag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/boltdb/btree mode tuning for memory/performance balance.
+* Support rebalancing the writable and readonly volumes.
 
 [Back to TOC](#table-of-contents)
 
