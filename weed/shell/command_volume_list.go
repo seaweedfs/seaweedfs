@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"io"
+	"sort"
 )
 
 func init() {
@@ -38,12 +39,15 @@ func (c *commandVolumeList) Do(args []string, commandEnv *commandEnv, writer io.
 		return err
 	}
 
-	writeTopologyInfo(writer, resp.TopologyInfo)
+	writeTopologyInfo(writer, resp.TopologyInfo, resp.VolumeSizeLimitMb)
 	return nil
 }
 
-func writeTopologyInfo(writer io.Writer, t *master_pb.TopologyInfo) statistics {
-	fmt.Fprintf(writer, "Topology volume:%d/%d active:%d free:%d\n", t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount)
+func writeTopologyInfo(writer io.Writer, t *master_pb.TopologyInfo, volumeSizeLimitMb uint64) statistics {
+	fmt.Fprintf(writer, "Topology volume:%d/%d active:%d free:%d volumeSizeLimit:%d MB\n", t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount, volumeSizeLimitMb)
+	sort.Slice(t.DataCenterInfos, func(i, j int) bool {
+		return t.DataCenterInfos[i].Id < t.DataCenterInfos[j].Id
+	})
 	var s statistics
 	for _, dc := range t.DataCenterInfos {
 		s = s.plus(writeDataCenterInfo(writer, dc))
@@ -54,6 +58,9 @@ func writeTopologyInfo(writer io.Writer, t *master_pb.TopologyInfo) statistics {
 func writeDataCenterInfo(writer io.Writer, t *master_pb.DataCenterInfo) statistics {
 	fmt.Fprintf(writer, "  DataCenter %s volume:%d/%d active:%d free:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount)
 	var s statistics
+	sort.Slice(t.RackInfos, func(i, j int) bool {
+		return t.RackInfos[i].Id < t.RackInfos[j].Id
+	})
 	for _, r := range t.RackInfos {
 		s = s.plus(writeRackInfo(writer, r))
 	}
@@ -63,6 +70,9 @@ func writeDataCenterInfo(writer io.Writer, t *master_pb.DataCenterInfo) statisti
 func writeRackInfo(writer io.Writer, t *master_pb.RackInfo) statistics {
 	fmt.Fprintf(writer, "    Rack %s volume:%d/%d active:%d free:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount)
 	var s statistics
+	sort.Slice(t.DataNodeInfos, func(i, j int) bool {
+		return t.DataNodeInfos[i].Id < t.DataNodeInfos[j].Id
+	})
 	for _, dn := range t.DataNodeInfos {
 		s = s.plus(writeDataNodeInfo(writer, dn))
 	}
@@ -72,6 +82,9 @@ func writeRackInfo(writer io.Writer, t *master_pb.RackInfo) statistics {
 func writeDataNodeInfo(writer io.Writer, t *master_pb.DataNodeInfo) statistics {
 	fmt.Fprintf(writer, "      DataNode %s volume:%d/%d active:%d free:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount)
 	var s statistics
+	sort.Slice(t.VolumeInfos, func(i, j int) bool {
+		return t.VolumeInfos[i].Id < t.VolumeInfos[j].Id
+	})
 	for _, vi := range t.VolumeInfos {
 		s = s.plus(writeVolumeInformationMessage(writer, vi))
 	}
