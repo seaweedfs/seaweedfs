@@ -27,15 +27,12 @@ func (c *commandVolumeBalance) Name() string {
 func (c *commandVolumeBalance) Help() string {
 	return `balance all volumes among volume servers
 
-	volume.balance [-c collectionName] [-f]
+	volume.balance [-c ALL|EACH_COLLECTION|<collection_name>] [-f] [-dataCenter=<data_center_name>]
 
 	Algorithm:
+
 	For each type of volume server (different max volume count limit){
 		for each collection {
-			balanceWritableVolumes()
-			balanceReadOnlyVolumes()
-		}
-		for all volumes {
 			balanceWritableVolumes()
 			balanceReadOnlyVolumes()
 		}
