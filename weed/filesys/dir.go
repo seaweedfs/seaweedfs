@@ -34,9 +34,7 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Valid = time.Second
 
 	if dir.Path == dir.wfs.option.FilerMountRootPath {
-		attr.Uid = dir.wfs.option.MountUid
-		attr.Gid = dir.wfs.option.MountGid
-		attr.Mode = dir.wfs.option.MountMode
+		dir.setRootDirAttributes(attr)
 		return nil
 	}
 
@@ -70,6 +68,16 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Uid = dir.attributes.Uid
 
 	return nil
+}
+
+func (dir *Dir) setRootDirAttributes(attr *fuse.Attr) {
+	attr.Uid = dir.wfs.option.MountUid
+	attr.Gid = dir.wfs.option.MountGid
+	attr.Mode = dir.wfs.option.MountMode
+	attr.Crtime = dir.wfs.option.MountCtime
+	attr.Ctime = dir.wfs.option.MountCtime
+	attr.Mtime = dir.wfs.option.MountMtime
+	attr.Atime = dir.wfs.option.MountMtime
 }
 
 func (dir *Dir) newFile(name string, entry *filer_pb.Entry) *File {

@@ -32,6 +32,8 @@ type Option struct {
 	MountUid  uint32
 	MountGid  uint32
 	MountMode os.FileMode
+	MountCtime time.Time
+	MountMtime time.Time
 }
 
 var _ = fs.FS(&WFS{})
