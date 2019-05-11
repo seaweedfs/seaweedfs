@@ -14,6 +14,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/jacobsa/daemonize"
 	"github.com/spf13/viper"
 
 	"github.com/chrislusf/seaweedfs/weed/filesys"
@@ -107,6 +108,7 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 	c, err := fuse.Mount(dir, options...)
 	if err != nil {
 		glog.Fatal(err)
+		daemonize.SignalOutcome(err)
 		return false
 	}
 
@@ -118,6 +120,7 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 	filerGrpcAddress, err := parseFilerGrpcAddress(filer)
 	if err != nil {
 		glog.Fatal(err)
+		daemonize.SignalOutcome(err)
 		return false
 	}
 
@@ -125,6 +128,8 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 	if mountRoot != "/" && strings.HasSuffix(mountRoot, "/") {
 		mountRoot = mountRoot[0 : len(mountRoot)-1]
 	}
+
+	daemonize.SignalOutcome(nil)
 
 	err = fs.Serve(c, filesys.NewSeaweedFileSystem(&filesys.Option{
 		FilerGrpcAddress:   filerGrpcAddress,
@@ -151,6 +156,7 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 	<-c.Ready
 	if err := c.MountError; err != nil {
 		glog.Fatal(err)
+		daemonize.SignalOutcome(err)
 	}
 
 	return true
