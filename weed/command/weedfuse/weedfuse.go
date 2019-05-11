@@ -13,19 +13,44 @@ import (
 )
 
 var (
-	options      = flag.String("o", "", "comma separated options rw,uid=xxx,gid=xxx")
-	isForeground = flag.Bool("foreground", false, "starts as a daemon")
+	fuseCommand  = flag.NewFlagSet("weedfuse", flag.ContinueOnError)
+	options      = fuseCommand.String("o", "", "comma separated options rw,uid=xxx,gid=xxx")
+	isForeground = fuseCommand.Bool("foreground", false, "starts as a daemon")
 )
 
 func main() {
 
-	flag.Parse()
+	err := fuseCommand.Parse(os.Args[1:])
+	if err != nil {
+		glog.Fatal(err)
+	}
+	fmt.Printf("options: %v\n", *options)
 
-	device := flag.Arg(0)
-	mountPoint := flag.Arg(1)
+	// seems this value is always empty, need to parse it differently
+	optionsString := *options
+	prev := ""
+	for i, arg := range os.Args {
+		fmt.Printf("args[%d]: %v\n", i, arg)
+		if prev == "-o" {
+			optionsString = arg
+		}
+		prev = arg
+	}
+
+	device := fuseCommand.Arg(0)
+	mountPoint := fuseCommand.Arg(1)
 
 	fmt.Printf("source: %v\n", device)
 	fmt.Printf("target: %v\n", mountPoint)
+
+	nouser := true
+	for _, option := range strings.Split(optionsString, ",") {
+		fmt.Printf("option: %v\n", option)
+		switch option {
+		case "user":
+			nouser = false
+		}
+	}
 
 	maybeSetupPath()
 
@@ -39,7 +64,7 @@ func main() {
 
 	command.RunMount(
 		filer, "/"+filerPath, mountPoint, "", "000", "",
-		4, true, 0, 1000000)
+		4, !nouser, 0, 1000000)
 
 }
 
