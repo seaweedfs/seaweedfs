@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -79,7 +80,7 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 			if in.GetVolumeSizeLimit() != 0 {
 				vs.store.SetVolumeSizeLimit(in.GetVolumeSizeLimit())
 			}
-			if in.GetLeader() != "" && masterNode != in.GetLeader() {
+			if in.GetLeader() != "" && masterNode != in.GetLeader() && !isSameIP(in.GetLeader(), masterNode) {
 				glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", in.GetLeader(), masterNode)
 				newLeader = in.GetLeader()
 				doneChan <- nil
@@ -129,4 +130,17 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 			return
 		}
 	}
+}
+
+func isSameIP(ip string, host string) bool {
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return false
+	}
+	for _, t := range ips {
+		if ip == t.String() {
+			return true
+		}
+	}
+	return false
 }
