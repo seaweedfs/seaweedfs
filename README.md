@@ -15,9 +15,6 @@ possible entirely thanks to the support of these awesome [backers](https://githu
 If you'd like to grow SeaweedFS even stronger, please consider joining our
 <a href="https://www.patreon.com/seaweedfs">sponsors on Patreon</a>.
 
-Platinum ($2500/month), Gold ($500/month): put your company logo on the SeaweedFS github page
-Generous Backer($50/month), Backer($10/month): put your name on the SeaweedFS backer page.
-
 Your support will be really appreciated by me and other supporters!
 
 <h3 align="center"><a href="https://www.patreon.com/seaweedfs">Sponsor SeaweedFS via Patreon</a></h3>
