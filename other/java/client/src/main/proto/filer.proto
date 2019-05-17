@@ -85,12 +85,20 @@ message EventNotification {
 }
 
 message FileChunk {
-    string file_id = 1;
+    string file_id = 1; // to be deprecated
     int64 offset = 2;
     uint64 size = 3;
     int64 mtime = 4;
     string e_tag = 5;
-    string source_file_id = 6;
+    string source_file_id = 6; // to be deprecated
+    FileId fid = 7;
+    FileId source_fid = 8;
+}
+
+message FileId {
+    uint32 volume_id = 1;
+    uint64 file_key = 2;
+    fixed32 cookie = 3;
 }
 
 message FuseAttributes {

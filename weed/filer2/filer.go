@@ -21,7 +21,7 @@ var (
 )
 
 type Filer struct {
-	store              FilerStore
+	store              *FilerStoreWrapper
 	directoryCache     *ccache.Cache
 	MasterClient       *wdclient.MasterClient
 	fileIdDeletionChan chan string
@@ -42,7 +42,7 @@ func NewFiler(masters []string, grpcDialOption grpc.DialOption) *Filer {
 }
 
 func (f *Filer) SetStore(store FilerStore) {
-	f.store = store
+	f.store = NewFilerStoreWrapper(store)
 }
 
 func (f *Filer) DisableDirectoryCache() {

@@ -173,21 +173,27 @@ public class FilerClient {
     }
 
     public List<FilerProto.Entry> listEntries(String path, String entryPrefix, String lastEntryName, int limit) {
-        return filerGrpcClient.getBlockingStub().listEntries(FilerProto.ListEntriesRequest.newBuilder()
+        List<FilerProto.Entry> entries = filerGrpcClient.getBlockingStub().listEntries(FilerProto.ListEntriesRequest.newBuilder()
                 .setDirectory(path)
                 .setPrefix(entryPrefix)
                 .setStartFromFileName(lastEntryName)
                 .setLimit(limit)
                 .build()).getEntriesList();
+        List<FilerProto.Entry> fixedEntries = new ArrayList<>(entries.size());
+        for (FilerProto.Entry entry : entries) {
+            fixedEntries.add(fixEntryAfterReading(entry));
+        }
+        return fixedEntries;
     }
 
     public FilerProto.Entry lookupEntry(String directory, String entryName) {
         try {
-            return filerGrpcClient.getBlockingStub().lookupDirectoryEntry(
+            FilerProto.Entry entry = filerGrpcClient.getBlockingStub().lookupDirectoryEntry(
                     FilerProto.LookupDirectoryEntryRequest.newBuilder()
                             .setDirectory(directory)
                             .setName(entryName)
                             .build()).getEntry();
+            return fixEntryAfterReading(entry);
         } catch (Exception e) {
             LOG.warn("lookupEntry {}/{}: {}", directory, entryName, e);
             return null;
@@ -249,6 +255,26 @@ public class FilerClient {
             return false;
         }
         return true;
+    }
+
+    private FilerProto.Entry fixEntryAfterReading(FilerProto.Entry entry) {
+        if (entry.getChunksList().size() <= 0) {
+            return entry;
+        }
+        String fileId = entry.getChunks(0).getFileId();
+        if (fileId != null && fileId.length() != 0) {
+            return entry;
+        }
+        FilerProto.Entry.Builder entryBuilder = entry.toBuilder();
+        entryBuilder.clearChunks();
+        for (FilerProto.FileChunk chunk : entry.getChunksList()) {
+            FilerProto.FileChunk.Builder chunkBuilder = chunk.toBuilder();
+            FilerProto.FileId fid = chunk.getFid();
+            fileId = String.format("%d,%d%x", fid.getVolumeId(), fid.getFileKey(), fid.getCookie());
+            chunkBuilder.setFileId(fileId);
+            entryBuilder.addChunks(chunkBuilder);
+        }
+        return entryBuilder.build();
     }
 
 }
