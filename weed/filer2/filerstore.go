@@ -56,6 +56,9 @@ func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) err
 
 func (fsw *FilerStoreWrapper) FindEntry(ctx context.Context, fp FullPath) (entry *Entry, err error) {
 	entry, err = fsw.actualStore.FindEntry(ctx, fp)
+	if err != nil {
+		return nil, err
+	}
 	filer_pb.AfterEntryDeserialization(entry.Chunks)
 	return
 }
