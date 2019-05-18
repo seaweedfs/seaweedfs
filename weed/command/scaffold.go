@@ -63,6 +63,12 @@ enabled = false
 
 [leveldb]
 # local on disk, mostly for simple single-machine setup, fairly scalable
+enabled = false
+dir = "."					# directory to store level db files
+
+[leveldb2]
+# local on disk, mostly for simple single-machine setup, fairly scalable
+# faster than previous leveldb, recommended.
 enabled = true
 dir = "."					# directory to store level db files
 
@@ -75,7 +81,7 @@ dir = "."					# directory to store level db files
 #   dirhash     BIGINT         COMMENT 'first 64 bits of MD5 hash value of directory field',
 #   name        VARCHAR(1000)  COMMENT 'directory or file name',
 #   directory   TEXT           COMMENT 'full path to parent directory',
-#   meta        BLOB,
+#   meta        LONGBLOB,
 #   PRIMARY KEY (dirhash, name)
 # ) DEFAULT CHARSET=utf8;
 

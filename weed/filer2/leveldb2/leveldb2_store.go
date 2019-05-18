@@ -3,7 +3,9 @@ package leveldb
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"fmt"
+	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -13,29 +15,27 @@ import (
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
 )
 
-const (
-	DIR_FILE_SEPARATOR = byte(0x00)
-)
-
 func init() {
-	filer2.Stores = append(filer2.Stores, &LevelDBStore{})
+	filer2.Stores = append(filer2.Stores, &LevelDB2Store{})
 }
 
-type LevelDBStore struct {
+// known theoretically 128 bit MD5 collision of 2 directories.
+// (but really? please show some real examples)
+type LevelDB2Store struct {
 	db *leveldb.DB
 }
 
-func (store *LevelDBStore) GetName() string {
-	return "leveldb"
+func (store *LevelDB2Store) GetName() string {
+	return "leveldb2"
 }
 
-func (store *LevelDBStore) Initialize(configuration weed_util.Configuration) (err error) {
+func (store *LevelDB2Store) Initialize(configuration weed_util.Configuration) (err error) {
 	dir := configuration.GetString("dir")
 	return store.initialize(dir)
 }
 
-func (store *LevelDBStore) initialize(dir string) (err error) {
-	glog.Infof("filer store dir: %s", dir)
+func (store *LevelDB2Store) initialize(dir string) (err error) {
+	glog.Infof("filer store leveldb2 dir: %s", dir)
 	if err := weed_util.TestFolderWritable(dir); err != nil {
 		return fmt.Errorf("Check Level Folder %s Writable: %s", dir, err)
 	}
@@ -53,17 +53,17 @@ func (store *LevelDBStore) initialize(dir string) (err error) {
 	return
 }
 
-func (store *LevelDBStore) BeginTransaction(ctx context.Context) (context.Context, error) {
+func (store *LevelDB2Store) BeginTransaction(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }
-func (store *LevelDBStore) CommitTransaction(ctx context.Context) error {
+func (store *LevelDB2Store) CommitTransaction(ctx context.Context) error {
 	return nil
 }
-func (store *LevelDBStore) RollbackTransaction(ctx context.Context) error {
+func (store *LevelDB2Store) RollbackTransaction(ctx context.Context) error {
 	return nil
 }
 
-func (store *LevelDBStore) InsertEntry(ctx context.Context, entry *filer2.Entry) (err error) {
+func (store *LevelDB2Store) InsertEntry(ctx context.Context, entry *filer2.Entry) (err error) {
 	key := genKey(entry.DirAndName())
 
 	value, err := entry.EncodeAttributesAndChunks()
@@ -82,12 +82,12 @@ func (store *LevelDBStore) InsertEntry(ctx context.Context, entry *filer2.Entry)
 	return nil
 }
 
-func (store *LevelDBStore) UpdateEntry(ctx context.Context, entry *filer2.Entry) (err error) {
+func (store *LevelDB2Store) UpdateEntry(ctx context.Context, entry *filer2.Entry) (err error) {
 
 	return store.InsertEntry(ctx, entry)
 }
 
-func (store *LevelDBStore) FindEntry(ctx context.Context, fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
+func (store *LevelDB2Store) FindEntry(ctx context.Context, fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
 	key := genKey(fullpath.DirAndName())
 
 	data, err := store.db.Get(key, nil)
@@ -112,7 +112,7 @@ func (store *LevelDBStore) FindEntry(ctx context.Context, fullpath filer2.FullPa
 	return entry, nil
 }
 
-func (store *LevelDBStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPath) (err error) {
+func (store *LevelDB2Store) DeleteEntry(ctx context.Context, fullpath filer2.FullPath) (err error) {
 	key := genKey(fullpath.DirAndName())
 
 	err = store.db.Delete(key, nil)
@@ -123,7 +123,7 @@ func (store *LevelDBStore) DeleteEntry(ctx context.Context, fullpath filer2.Full
 	return nil
 }
 
-func (store *LevelDBStore) ListDirectoryEntries(ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool,
+func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool,
 	limit int) (entries []*filer2.Entry, err error) {
 
 	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
@@ -161,15 +161,13 @@ func (store *LevelDBStore) ListDirectoryEntries(ctx context.Context, fullpath fi
 }
 
 func genKey(dirPath, fileName string) (key []byte) {
-	key = []byte(dirPath)
-	key = append(key, DIR_FILE_SEPARATOR)
+	key = hashToBytes(dirPath)
 	key = append(key, []byte(fileName)...)
 	return key
 }
 
 func genDirectoryKeyPrefix(fullpath filer2.FullPath, startFileName string) (keyPrefix []byte) {
-	keyPrefix = []byte(string(fullpath))
-	keyPrefix = append(keyPrefix, DIR_FILE_SEPARATOR)
+	keyPrefix = hashToBytes(string(fullpath))
 	if len(startFileName) > 0 {
 		keyPrefix = append(keyPrefix, []byte(startFileName)...)
 	}
@@ -178,11 +176,15 @@ func genDirectoryKeyPrefix(fullpath filer2.FullPath, startFileName string) (keyP
 
 func getNameFromKey(key []byte) string {
 
-	sepIndex := len(key) - 1
-	for sepIndex >= 0 && key[sepIndex] != DIR_FILE_SEPARATOR {
-		sepIndex--
-	}
+	return string(key[8:])
 
-	return string(key[sepIndex+1:])
+}
 
+func hashToBytes(dir string) []byte {
+	h := md5.New()
+	io.WriteString(h, dir)
+
+	b := h.Sum(nil)
+
+	return b
 }
