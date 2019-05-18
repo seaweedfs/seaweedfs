@@ -86,8 +86,9 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		case NeedleMapLevelDb:
 			glog.V(0).Infoln("loading leveldb", fileName+".ldb")
 			opts := &opt.Options{
-				BlockCacheCapacity: 2 * 1024 * 1024, // default value is 8MiB
-				WriteBuffer:        1 * 1024 * 1024, // default value is 4MiB
+				BlockCacheCapacity:            2 * 1024 * 1024, // default value is 8MiB
+				WriteBuffer:                   1 * 1024 * 1024, // default value is 4MiB
+				CompactionTableSizeMultiplier: 10,              // default value is 1
 			}
 			if v.nm, e = NewLevelDbNeedleMap(fileName+".ldb", indexFile, opts); e != nil {
 				glog.V(0).Infof("loading leveldb %s error: %v", fileName+".ldb", e)
@@ -95,8 +96,9 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		case NeedleMapLevelDbMedium:
 			glog.V(0).Infoln("loading leveldb medium", fileName+".ldb")
 			opts := &opt.Options{
-				BlockCacheCapacity: 4 * 1024 * 1024, // default value is 8MiB
-				WriteBuffer:        2 * 1024 * 1024, // default value is 4MiB
+				BlockCacheCapacity:            4 * 1024 * 1024, // default value is 8MiB
+				WriteBuffer:                   2 * 1024 * 1024, // default value is 4MiB
+				CompactionTableSizeMultiplier: 10,              // default value is 1
 			}
 			if v.nm, e = NewLevelDbNeedleMap(fileName+".ldb", indexFile, opts); e != nil {
 				glog.V(0).Infof("loading leveldb %s error: %v", fileName+".ldb", e)
@@ -104,8 +106,9 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		case NeedleMapLevelDbLarge:
 			glog.V(0).Infoln("loading leveldb large", fileName+".ldb")
 			opts := &opt.Options{
-				BlockCacheCapacity: 8 * 1024 * 1024, // default value is 8MiB
-				WriteBuffer:        4 * 1024 * 1024, // default value is 4MiB
+				BlockCacheCapacity:            8 * 1024 * 1024, // default value is 8MiB
+				WriteBuffer:                   4 * 1024 * 1024, // default value is 4MiB
+				CompactionTableSizeMultiplier: 10,              // default value is 1
 			}
 			if v.nm, e = NewLevelDbNeedleMap(fileName+".ldb", indexFile, opts); e != nil {
 				glog.V(0).Infof("loading leveldb %s error: %v", fileName+".ldb", e)
