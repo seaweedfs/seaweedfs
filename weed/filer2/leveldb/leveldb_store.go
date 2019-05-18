@@ -43,7 +43,7 @@ func (store *LevelDBStore) initialize(dir string) (err error) {
 	opts := &opt.Options{
 		BlockCacheCapacity:            32 * 1024 * 1024, // default value is 8MiB
 		WriteBuffer:                   16 * 1024 * 1024, // default value is 4MiB
-		CompactionTableSizeMultiplier: 4,
+		CompactionTableSizeMultiplier: 10,
 	}
 
 	if store.db, err = leveldb.OpenFile(dir, opts); err != nil {
