@@ -34,10 +34,14 @@ func encodeData(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize i
 	return nil
 }
 
-func openEcFiles(baseFileName string) (files []*os.File, err error){
+func openEcFiles(baseFileName string, forRead bool) (files []*os.File, err error){
 	for i := 0; i< DataShardsCount+ParityShardsCount; i++{
 		fname := fmt.Sprintf("%s.ec%02d", baseFileName, i+1)
-		f, err := os.OpenFile(fname, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
+		openOption := os.O_TRUNC|os.O_CREATE|os.O_WRONLY
+		if forRead {
+			openOption = os.O_RDONLY
+		}
+		f, err := os.OpenFile(fname, openOption, 0644)
 		if err != nil {
 			return files, fmt.Errorf("failed to open file %s: %v", fname, err)
 		}
