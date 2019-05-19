@@ -3,6 +3,7 @@ package erasure_coding
 import (
 	"bytes"
 	"fmt"
+	"math/rand"
 	"os"
 	"testing"
 
@@ -196,9 +197,88 @@ func readDatFile(datFile *os.File, offset types.Offset, size uint32) ([]byte, er
 	return data, nil
 }
 
-func readEcFile(datSize int64, ecFiles []*os.File, offset types.Offset, size uint32) ([]byte, error) {
+func readEcFile(datSize int64, ecFiles []*os.File, offset types.Offset, size uint32) (data []byte, err error) {
 
-	return nil, nil
+	intervals := locateData(largeBlockSize, smallBlockSize, datSize, offset.ToAcutalOffset(), size)
+
+	nLargeBlockRows := int(datSize / (largeBlockSize * DataShardsCount))
+
+	for i, interval := range intervals {
+		if d, e := readOneInterval(interval, ecFiles, nLargeBlockRows); e != nil {
+			return nil, e
+		} else {
+			if i == 0 {
+				data = d
+			} else {
+				data = append(data, d...)
+			}
+		}
+	}
+
+	return data, nil
+}
+
+func readOneInterval(interval Interval, ecFiles []*os.File, nLargeBlockRows int) (data []byte, err error) {
+	ecFileOffset := interval.innerBlockOffset
+	rowIndex := interval.blockIndex / DataShardsCount
+	if interval.isLargeBlock {
+		ecFileOffset += int64(rowIndex) * largeBlockSize
+	} else {
+		ecFileOffset += int64(nLargeBlockRows)*largeBlockSize + int64(rowIndex)*smallBlockSize
+	}
+
+	ecFileIndex := interval.blockIndex % DataShardsCount
+
+	data = make([]byte, interval.size)
+	err = readFromFile(ecFiles[ecFileIndex], data, ecFileOffset)
+	{ // do some ec testing
+		ecData, err := readFromOtherEcFiles(ecFiles, ecFileIndex, ecFileOffset, interval.size)
+		if err != nil {
+			return nil, fmt.Errorf("ec reconstruct error: %v", err)
+		}
+		if bytes.Compare(data, ecData) != 0 {
+			return nil, fmt.Errorf("ec compare error")
+		}
+	}
+	return
+}
+
+func readFromOtherEcFiles(ecFiles []*os.File, ecFileIndex int, ecFileOffset int64, size uint32) (data []byte, err error) {
+	enc, err := reedsolomon.New(DataShardsCount, ParityShardsCount)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create encoder: %v", err)
+	}
+
+	bufs := make([][]byte, DataShardsCount+ParityShardsCount)
+	for i := 0; i < DataShardsCount; {
+		n := int(rand.Int31n(DataShardsCount+ParityShardsCount))
+		if n == ecFileIndex || bufs[n] != nil {
+			continue
+		}
+		bufs[n] = make([]byte, size)
+		i++
+	}
+
+	for i, buf := range bufs {
+		if buf == nil {
+			continue
+		}
+		err = readFromFile(ecFiles[i], buf, ecFileOffset)
+		if err != nil {
+			return
+		}
+	}
+
+	if err = enc.ReconstructData(bufs); err != nil {
+		return nil, err
+	}
+
+	return bufs[ecFileIndex], nil
+}
+
+func readFromFile(file *os.File, data []byte, ecFileOffset int64) (err error) {
+	_, err = file.ReadAt(data, ecFileOffset)
+	return
 }
 
 func TestLocateData(t *testing.T) {
@@ -210,7 +290,7 @@ func TestLocateData(t *testing.T) {
 		t.Errorf("unexpected interval %+v", intervals[0])
 	}
 
-	intervals = locateData(largeBlockSize, smallBlockSize, DataShardsCount*largeBlockSize+1, DataShardsCount*largeBlockSize/2+100, DataShardsCount*largeBlockSize+1 - DataShardsCount*largeBlockSize/2-100)
+	intervals = locateData(largeBlockSize, smallBlockSize, DataShardsCount*largeBlockSize+1, DataShardsCount*largeBlockSize/2+100, DataShardsCount*largeBlockSize+1-DataShardsCount*largeBlockSize/2-100)
 	fmt.Printf("%+v\n", intervals)
 }
 
