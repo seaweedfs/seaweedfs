@@ -43,7 +43,7 @@ func (cm *BtreeMap) Get(key NeedleId) (*NeedleValue, bool) {
 }
 
 // Visit visits all entries or stop if any error when visiting
-func (cm *BtreeMap) Visit(visit func(NeedleValue) error) (ret error) {
+func (cm *BtreeMap) AscendingVisit(visit func(NeedleValue) error) (ret error) {
 	cm.tree.Ascend(func(item btree.Item) bool {
 		needle := item.(NeedleValue)
 		ret = visit(needle)

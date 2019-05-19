@@ -62,10 +62,7 @@ func IdxFileEntry(bytes []byte) (key NeedleId, offset Offset, size uint32) {
 	return
 }
 func (nm *baseNeedleMapper) appendToIndexFile(key NeedleId, offset Offset, size uint32) error {
-	bytes := make([]byte, NeedleIdSize+OffsetSize+SizeSize)
-	NeedleIdToBytes(bytes[0:NeedleIdSize], key)
-	OffsetToBytes(bytes[NeedleIdSize:NeedleIdSize+OffsetSize], offset)
-	util.Uint32toBytes(bytes[NeedleIdSize+OffsetSize:NeedleIdSize+OffsetSize+SizeSize], size)
+	bytes := needle_map.ToBytes(key, offset, size)
 
 	nm.indexFileAccessLock.Lock()
 	defer nm.indexFileAccessLock.Unlock()
@@ -76,6 +73,7 @@ func (nm *baseNeedleMapper) appendToIndexFile(key NeedleId, offset Offset, size 
 	_, err := nm.indexFile.Write(bytes)
 	return err
 }
+
 func (nm *baseNeedleMapper) IndexFileContent() ([]byte, error) {
 	nm.indexFileAccessLock.Lock()
 	defer nm.indexFileAccessLock.Unlock()

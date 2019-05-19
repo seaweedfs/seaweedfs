@@ -19,7 +19,7 @@ func TestOverflow2(t *testing.T) {
 	m.Set(NeedleId(150158), ToOffset(8), 3000073)
 	m.Set(NeedleId(150162), ToOffset(8), 3000073)
 
-	m.Visit(func(value NeedleValue) error {
+	m.AscendingVisit(func(value NeedleValue) error {
 		println("needle key:", value.Key)
 		return nil
 	})

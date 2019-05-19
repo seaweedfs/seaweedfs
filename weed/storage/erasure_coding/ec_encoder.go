@@ -1,9 +1,11 @@
 package erasure_coding
 
 import (
+	"fmt"
 	"io"
 	"os"
 
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/klauspost/reedsolomon"
 )
 
@@ -14,7 +16,46 @@ const (
 	ErasureCodingSmallBlockSize = 1024 * 1024        // 1MB
 )
 
-func encodeData(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize int64, buffers [][]byte) error {
+func encodeData(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize int64, buffers [][]byte, outputs []*os.File) error {
+
+	bufferSize := int64(len(buffers[0]))
+	batchCount := blockSize/bufferSize
+	if blockSize%bufferSize!=0 {
+		glog.Fatalf("unexpected block size %d buffer size %d", blockSize, bufferSize)
+	}
+
+	for b := int64(0); b < batchCount; b++ {
+		err := encodeDataOneBatch(file, enc, startOffset+b*bufferSize, blockSize, buffers, outputs)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func openEcFiles(baseFileName string) (files []*os.File, err error){
+	for i := 0; i< DataShardsCount+ParityShardsCount; i++{
+		fname := fmt.Sprintf("%s.ec%02d", baseFileName, i+1)
+		f, err := os.OpenFile(fname, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return files, fmt.Errorf("failed to open file %s: %v", fname, err)
+		}
+		files = append(files, f)
+	}
+	return
+}
+
+func closeEcFiles(files []*os.File){
+	for _, f := range files{
+		if f != nil {
+			f.Close()
+		}
+	}
+}
+
+
+func encodeDataOneBatch(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize int64, buffers [][]byte, outputs []*os.File) error {
 
 	// read data into buffers
 	for i := 0; i < DataShardsCount; i++ {
@@ -34,6 +75,13 @@ func encodeData(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize i
 	err := enc.Encode(buffers)
 	if err != nil {
 		return err
+	}
+
+	for i := 0; i < DataShardsCount+ParityShardsCount; i++ {
+		_, err := outputs[i].Write(buffers[i])
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

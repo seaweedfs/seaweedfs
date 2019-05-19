@@ -244,24 +244,37 @@ func (cm *CompactMap) binarySearchCompactSection(key NeedleId) int {
 }
 
 // Visit visits all entries or stop if any error when visiting
-func (cm *CompactMap) Visit(visit func(NeedleValue) error) error {
+func (cm *CompactMap) AscendingVisit(visit func(NeedleValue) error) error {
 	for _, cs := range cm.list {
 		cs.RLock()
-		for i, v := range cs.overflow {
-			if err := visit(toNeedleValue(cs.overflowExtra[i], v, cs)); err != nil {
+		var i, j int
+		for i, j = 0, 0; i < len(cs.overflow) && j < len(cs.values) && j<cs.counter; {
+			if cs.overflow[i].Key < cs.values[j].Key {
+				if err := visit(toNeedleValue(cs.overflowExtra[i], cs.overflow[i], cs)); err != nil {
+					cs.RUnlock()
+					return err
+				}
+				i++
+			}else if cs.overflow[i].Key == cs.values[j].Key {
+				j++
+			}else{
+				if err := visit(toNeedleValue(cs.valuesExtra[j], cs.values[j], cs)); err != nil {
+					cs.RUnlock()
+					return err
+				}
+				j++
+			}
+		}
+		for ;i < len(cs.overflow);i++{
+			if err := visit(toNeedleValue(cs.overflowExtra[i], cs.overflow[i], cs)); err != nil {
 				cs.RUnlock()
 				return err
 			}
 		}
-		for i, v := range cs.values {
-			if i >= cs.counter {
-				break
-			}
-			if _, _, found := cs.findOverflowEntry(v.Key); !found {
-				if err := visit(toNeedleValue(cs.valuesExtra[i], v, cs)); err != nil {
-					cs.RUnlock()
-					return err
-				}
+		for ; j < len(cs.values)&& j<cs.counter;j++{
+			if err := visit(toNeedleValue(cs.valuesExtra[j], cs.values[j], cs)); err != nil {
+				cs.RUnlock()
+				return err
 			}
 		}
 		cs.RUnlock()
@@ -279,10 +292,10 @@ func toNeedleValue(snve SectionalNeedleValueExtra, snv SectionalNeedleValue, cs 
 
 func (nv NeedleValue) toSectionalNeedleValue(cs *CompactSection) (SectionalNeedleValue, SectionalNeedleValueExtra) {
 	return SectionalNeedleValue{
-			SectionalNeedleId(nv.Key - cs.start),
-			nv.Offset.OffsetLower,
-			nv.Size,
-		}, SectionalNeedleValueExtra{
-			nv.Offset.OffsetHigher,
-		}
+		SectionalNeedleId(nv.Key - cs.start),
+		nv.Offset.OffsetLower,
+		nv.Size,
+	}, SectionalNeedleValueExtra{
+		nv.Offset.OffsetHigher,
+	}
 }
