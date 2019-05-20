@@ -37,6 +37,8 @@ func TestEncodingDecoding(t *testing.T) {
 		t.Logf("writeSortedEcxFiles: %v", err)
 	}
 
+	removeGeneratedFiles(baseFileName)
+
 }
 
 func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64) error {
@@ -251,7 +253,7 @@ func readFromOtherEcFiles(ecFiles []*os.File, ecFileIndex int, ecFileOffset int6
 
 	bufs := make([][]byte, DataShardsCount+ParityShardsCount)
 	for i := 0; i < DataShardsCount; {
-		n := int(rand.Int31n(DataShardsCount+ParityShardsCount))
+		n := int(rand.Int31n(DataShardsCount + ParityShardsCount))
 		if n == ecFileIndex || bufs[n] != nil {
 			continue
 		}
@@ -279,6 +281,14 @@ func readFromOtherEcFiles(ecFiles []*os.File, ecFileIndex int, ecFileOffset int6
 func readFromFile(file *os.File, data []byte, ecFileOffset int64) (err error) {
 	_, err = file.ReadAt(data, ecFileOffset)
 	return
+}
+
+func removeGeneratedFiles(baseFileName string) {
+	for i := 0; i < DataShardsCount+ParityShardsCount; i++ {
+		fname := fmt.Sprintf("%s.ec%02d", baseFileName, i+1)
+		os.Remove(fname)
+	}
+	os.Remove(baseFileName+".ecx")
 }
 
 func TestLocateData(t *testing.T) {
