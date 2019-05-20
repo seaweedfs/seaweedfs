@@ -47,6 +47,13 @@ service VolumeServer {
     rpc VolumeTailReceiver (VolumeTailReceiverRequest) returns (VolumeTailReceiverResponse) {
     }
 
+    // erasure coding
+    rpc VolumeEcGenerateSlices (VolumeEcGenerateSlicesRequest) returns (VolumeEcGenerateSlicesResponse) {
+    }
+    rpc VolumeEcCopy (VolumeEcCopyRequest) returns (VolumeEcCopyResponse) {
+    }
+
+
 }
 
 //////////////////////////////////////////////////
@@ -188,6 +195,21 @@ message VolumeTailReceiverRequest {
     string source_volume_server = 4;
 }
 message VolumeTailReceiverResponse {
+}
+
+message VolumeEcGenerateSlicesRequest {
+    uint32 volume_id = 1;
+}
+message VolumeEcGenerateSlicesResponse {
+}
+
+message VolumeEcCopyRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+    repeated uint32 ec_indexes = 3;
+    string source_data_node = 5;
+}
+message VolumeEcCopyResponse {
 }
 
 message ReadVolumeFileStatusRequest {
