@@ -162,10 +162,9 @@ message VolumeCopyResponse {
 
 message CopyFileRequest {
     uint32 volume_id = 1;
-    bool is_idx_file = 2;
-    bool is_dat_file = 3;
-    uint32 compaction_revision = 4;
-    uint64 stop_offset = 5;
+    string ext = 2;
+    uint32 compaction_revision = 3;
+    uint64 stop_offset = 4;
 }
 message CopyFileResponse {
     bytes file_content = 1;
