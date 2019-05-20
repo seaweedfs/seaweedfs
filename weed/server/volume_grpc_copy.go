@@ -52,7 +52,7 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 
 		copyFileClient, err := client.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
 			VolumeId:           req.VolumeId,
-			IsIdxFile:          true,
+			Ext:                ".idx",
 			CompactionRevision: volFileInfoResp.CompactionRevision,
 			StopOffset:         volFileInfoResp.IdxFileSize,
 		})
@@ -68,7 +68,7 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 
 		copyFileClient, err = client.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
 			VolumeId:           req.VolumeId,
-			IsDatFile:          true,
+			Ext:                ".dat",
 			CompactionRevision: volFileInfoResp.CompactionRevision,
 			StopOffset:         volFileInfoResp.DatFileSize,
 		})
@@ -189,12 +189,7 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 	bytesToRead := int64(req.StopOffset)
 
 	const BufferSize = 1024 * 1024 * 2
-	var fileName = v.FileName()
-	if req.IsDatFile {
-		fileName += ".dat"
-	} else if req.IsIdxFile {
-		fileName += ".idx"
-	}
+	var fileName = v.FileName() + req.Ext
 	file, err := os.Open(fileName)
 	if err != nil {
 		return err
