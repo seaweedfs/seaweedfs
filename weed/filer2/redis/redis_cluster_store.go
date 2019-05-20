@@ -21,12 +21,14 @@ func (store *RedisClusterStore) GetName() string {
 func (store *RedisClusterStore) Initialize(configuration util.Configuration) (err error) {
 	return store.initialize(
 		configuration.GetStringSlice("addresses"),
+		configuration.GetString("password"),
 	)
 }
 
-func (store *RedisClusterStore) initialize(addresses []string) (err error) {
+func (store *RedisClusterStore) initialize(addresses []string, password string) (err error) {
 	store.Client = redis.NewClusterClient(&redis.ClusterOptions{
-		Addrs: addresses,
+		Addrs:    addresses,
+		Password: password,
 	})
 	return
 }

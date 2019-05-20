@@ -141,6 +141,7 @@ addresses = [
     "localhost:30005",
     "localhost:30006",
 ]
+password = ""
 
 `
 
