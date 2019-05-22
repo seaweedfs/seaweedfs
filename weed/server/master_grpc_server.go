@@ -87,7 +87,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 			// update master internal volume layouts
 			t.IncrementalSyncDataNodeRegistration(heartbeat.NewVolumes, heartbeat.DeletedVolumes, dn)
-		} else {
+		} else if len(heartbeat.Volumes) > 0 {
 			// process heartbeat.Volumes
 			newVolumes, deletedVolumes := t.SyncDataNodeRegistration(heartbeat.Volumes, dn)
 
@@ -99,6 +99,8 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				glog.V(0).Infof("master see deleted volume %d from %s", uint32(v.Id), dn.Url())
 				message.DeletedVids = append(message.DeletedVids, uint32(v.Id))
 			}
+		} else if len(heartbeat.EcShards) > 0 {
+			glog.V(0).Infof("master recieved ec shards from %s: %+v", dn.Url(), heartbeat.EcShards)
 		}
 
 		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 {

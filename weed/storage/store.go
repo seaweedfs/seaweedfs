@@ -30,6 +30,8 @@ type Store struct {
 	NeedleMapType      NeedleMapType
 	NewVolumesChan     chan master_pb.VolumeShortInformationMessage
 	DeletedVolumesChan chan master_pb.VolumeShortInformationMessage
+	NewEcShardsChan     chan master_pb.VolumeEcShardInformationMessage
+	DeletedEcShardsChan chan master_pb.VolumeEcShardInformationMessage
 }
 
 func (s *Store) String() (str string) {
@@ -47,6 +49,10 @@ func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts
 	}
 	s.NewVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
 	s.DeletedVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
+
+	s.NewEcShardsChan = make(chan master_pb.VolumeEcShardInformationMessage, 3)
+	s.DeletedEcShardsChan = make(chan master_pb.VolumeEcShardInformationMessage, 3)
+
 	return
 }
 func (s *Store) AddVolume(volumeId needle.VolumeId, collection string, needleMapKind NeedleMapType, replicaPlacement string, ttlString string, preallocate int64) error {
@@ -186,6 +192,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	}
 
 }
+
 func (s *Store) Close() {
 	for _, location := range s.Locations {
 		location.Close()

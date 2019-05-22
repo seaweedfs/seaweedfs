@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	idx2 "github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -143,7 +144,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		if IdxEntry, err = readIndexEntryAtOffset(oldIdxFile, idxOffset); err != nil {
 			return fmt.Errorf("readIndexEntry %s at offset %d failed: %v", oldIdxFileName, idxOffset, err)
 		}
-		key, offset, size := IdxFileEntry(IdxEntry)
+		key, offset, size := idx2.IdxFileEntry(IdxEntry)
 		glog.V(4).Infof("key %d offset %d size %d", key, offset, size)
 		if _, found := incrementedHasUpdatedIndexEntry[key]; !found {
 			incrementedHasUpdatedIndexEntry[key] = keyField{
@@ -329,7 +330,7 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 	dst.Write(v.SuperBlock.Bytes())
 	newOffset := int64(v.SuperBlock.BlockSize())
 
-	WalkIndexFile(oldIndexFile, func(key NeedleId, offset Offset, size uint32) error {
+	idx2.WalkIndexFile(oldIndexFile, func(key NeedleId, offset Offset, size uint32) error {
 		if offset.IsZero() || size == TombstoneFileSize {
 			return nil
 		}

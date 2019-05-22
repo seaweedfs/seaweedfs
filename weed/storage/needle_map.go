@@ -8,7 +8,6 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type NeedleMapType int
@@ -55,12 +54,6 @@ func (nm *baseNeedleMapper) IndexFileName() string {
 	return nm.indexFile.Name()
 }
 
-func IdxFileEntry(bytes []byte) (key NeedleId, offset Offset, size uint32) {
-	key = BytesToNeedleId(bytes[:NeedleIdSize])
-	offset = BytesToOffset(bytes[NeedleIdSize : NeedleIdSize+OffsetSize])
-	size = util.BytesToUint32(bytes[NeedleIdSize+OffsetSize : NeedleIdSize+OffsetSize+SizeSize])
-	return
-}
 func (nm *baseNeedleMapper) appendToIndexFile(key NeedleId, offset Offset, size uint32) error {
 	bytes := needle_map.ToBytes(key, offset, size)
 

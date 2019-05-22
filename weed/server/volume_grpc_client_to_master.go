@@ -94,7 +94,13 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 		return "", err
 	}
 
-	tickChan := time.Tick(sleepInterval)
+	if err = stream.Send(vs.store.CollectErasureCodingHeartbeat()); err != nil {
+		glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
+		return "", err
+	}
+
+	volumeTickChan := time.Tick(sleepInterval)
+	ecShardTickChan := time.Tick(17 * sleepInterval)
 
 	for {
 		select {
@@ -105,6 +111,17 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 				},
 			}
 			glog.V(1).Infof("volume server %s:%d adds volume %d", vs.store.Ip, vs.store.Port, volumeMessage.Id)
+			if err = stream.Send(deltaBeat); err != nil {
+				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterNode, err)
+				return "", err
+			}
+		case ecShardMessage := <-vs.store.NewEcShardsChan:
+			deltaBeat := &master_pb.Heartbeat{
+				NewEcShards: []*master_pb.VolumeEcShardInformationMessage{
+					&ecShardMessage,
+				},
+			}
+			glog.V(1).Infof("volume server %s:%d adds ec shard %d:%d", vs.store.Ip, vs.store.Port, ecShardMessage.Id, ecShardMessage.EcIndex)
 			if err = stream.Send(deltaBeat); err != nil {
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterNode, err)
 				return "", err
@@ -120,9 +137,26 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterNode, err)
 				return "", err
 			}
-		case <-tickChan:
+		case ecShardMessage := <-vs.store.DeletedEcShardsChan:
+			deltaBeat := &master_pb.Heartbeat{
+				DeletedEcShards: []*master_pb.VolumeEcShardInformationMessage{
+					&ecShardMessage,
+				},
+			}
+			glog.V(1).Infof("volume server %s:%d deletes ec shard %d:%d", vs.store.Ip, vs.store.Port, ecShardMessage.Id, ecShardMessage.EcIndex)
+			if err = stream.Send(deltaBeat); err != nil {
+				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterNode, err)
+				return "", err
+			}
+		case <-volumeTickChan:
 			glog.V(4).Infof("volume server %s:%d heartbeat", vs.store.Ip, vs.store.Port)
 			if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
+				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
+				return "", err
+			}
+		case <-ecShardTickChan:
+			glog.V(4).Infof("volume server %s:%d ec heartbeat", vs.store.Ip, vs.store.Port)
+			if err = stream.Send(vs.store.CollectErasureCodingHeartbeat()); err != nil {
 				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
 				return "", err
 			}

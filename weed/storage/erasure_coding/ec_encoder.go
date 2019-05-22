@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/klauspost/reedsolomon"
@@ -190,7 +190,7 @@ func readCompactMap(baseFileName string) (*needle_map.CompactMap, error) {
 	defer indexFile.Close()
 
 	cm := needle_map.NewCompactMap()
-	err = storage.WalkIndexFile(indexFile, func(key types.NeedleId, offset types.Offset, size uint32) error {
+	err = idx.WalkIndexFile(indexFile, func(key types.NeedleId, offset types.Offset, size uint32) error {
 		if !offset.IsZero() && size != types.TombstoneFileSize {
 			cm.Set(key, offset, size)
 		} else {

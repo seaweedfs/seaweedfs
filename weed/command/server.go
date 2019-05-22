@@ -222,7 +222,7 @@ func runServer(cmd *Command, args []string) bool {
 				glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 			}
 			// Create your protocol servers.
-			glog.V(0).Infof("grpc config %+v", viper.Sub("grpc"))
+			glog.V(1).Infof("grpc config %+v", viper.Sub("grpc"))
 			grpcS := util.NewGrpcServer(security.LoadServerTLS(viper.Sub("grpc"), "master"))
 			master_pb.RegisterSeaweedServer(grpcS, ms)
 			protobuf.RegisterRaftServer(grpcS, raftServer)

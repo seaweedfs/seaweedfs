@@ -2,9 +2,11 @@ package storage
 
 import (
 	"fmt"
-	"github.com/syndtr/goleveldb/leveldb/opt"
 	"os"
 	"path/filepath"
+
+	"github.com/chrislusf/seaweedfs/weed/storage/idx"
+	"github.com/syndtr/goleveldb/leveldb/opt"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
@@ -64,7 +66,7 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 		return err
 	}
 	defer db.Close()
-	return WalkIndexFile(indexFile, func(key NeedleId, offset Offset, size uint32) error {
+	return idx.WalkIndexFile(indexFile, func(key NeedleId, offset Offset, size uint32) error {
 		if !offset.IsZero() && size != TombstoneFileSize {
 			levelDbWrite(db, key, offset, size)
 		} else {

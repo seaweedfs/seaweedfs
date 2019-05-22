@@ -1,10 +1,10 @@
 package storage
 
 import (
-	"io"
 	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
@@ -30,10 +30,6 @@ func NewBtreeNeedleMap(file *os.File) *NeedleMap {
 	return nm
 }
 
-const (
-	RowsToRead = 1024
-)
-
 func LoadCompactNeedleMap(file *os.File) (*NeedleMap, error) {
 	nm := NewCompactNeedleMap(file)
 	return doLoading(file, nm)
@@ -45,7 +41,7 @@ func LoadBtreeNeedleMap(file *os.File) (*NeedleMap, error) {
 }
 
 func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
-	e := WalkIndexFile(file, func(key NeedleId, offset Offset, size uint32) error {
+	e := idx.WalkIndexFile(file, func(key NeedleId, offset Offset, size uint32) error {
 		nm.MaybeSetMaxFileKey(key)
 		if !offset.IsZero() && size != TombstoneFileSize {
 			nm.FileCounter++
@@ -66,38 +62,6 @@ func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
 	})
 	glog.V(1).Infof("max file key: %d for file: %s", nm.MaxFileKey(), file.Name())
 	return nm, e
-}
-
-// walks through the index file, calls fn function with each key, offset, size
-// stops with the error returned by the fn function
-func WalkIndexFile(r *os.File, fn func(key NeedleId, offset Offset, size uint32) error) error {
-	var readerOffset int64
-	bytes := make([]byte, NeedleMapEntrySize*RowsToRead)
-	count, e := r.ReadAt(bytes, readerOffset)
-	glog.V(3).Infoln("file", r.Name(), "readerOffset", readerOffset, "count", count, "e", e)
-	readerOffset += int64(count)
-	var (
-		key    NeedleId
-		offset Offset
-		size   uint32
-		i      int
-	)
-
-	for count > 0 && e == nil || e == io.EOF {
-		for i = 0; i+NeedleMapEntrySize <= count; i += NeedleMapEntrySize {
-			key, offset, size = IdxFileEntry(bytes[i : i+NeedleMapEntrySize])
-			if e = fn(key, offset, size); e != nil {
-				return e
-			}
-		}
-		if e == io.EOF {
-			return nil
-		}
-		count, e = r.ReadAt(bytes, readerOffset)
-		glog.V(3).Infoln("file", r.Name(), "readerOffset", readerOffset, "count", count, "e", e)
-		readerOffset += int64(count)
-	}
-	return e
 }
 
 func (nm *NeedleMap) Put(key NeedleId, offset Offset, size uint32) error {

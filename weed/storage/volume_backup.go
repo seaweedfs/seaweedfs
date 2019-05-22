@@ -8,6 +8,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"google.golang.org/grpc"
@@ -142,7 +143,7 @@ func (v *Volume) locateLastAppendEntry() (Offset, error) {
 	if n != NeedleMapEntrySize {
 		return Offset{}, fmt.Errorf("file %s read error: %v", indexFile.Name(), e)
 	}
-	_, offset, _ := IdxFileEntry(bytes)
+	_, offset, _ := idx.IdxFileEntry(bytes)
 
 	return offset, nil
 }
@@ -230,7 +231,7 @@ func (v *Volume) readAppendAtNsForIndexEntry(indexFile *os.File, bytes []byte, m
 	if _, readErr := indexFile.ReadAt(bytes, m*NeedleMapEntrySize); readErr != nil && readErr != io.EOF {
 		return Offset{}, readErr
 	}
-	_, offset, _ := IdxFileEntry(bytes)
+	_, offset, _ := idx.IdxFileEntry(bytes)
 	return offset, nil
 }
 

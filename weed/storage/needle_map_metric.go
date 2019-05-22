@@ -5,6 +5,7 @@ import (
 	"os"
 	"sync/atomic"
 
+	"github.com/chrislusf/seaweedfs/weed/storage/idx"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/willf/bloom"
 )
@@ -119,7 +120,7 @@ func reverseWalkIndexFile(r *os.File, initFn func(entryCount int64), fn func(key
 			return e
 		}
 		for i := int(nextBatchSize) - 1; i >= 0; i-- {
-			key, offset, size := IdxFileEntry(bytes[i*NeedleMapEntrySize : i*NeedleMapEntrySize+NeedleMapEntrySize])
+			key, offset, size := idx.IdxFileEntry(bytes[i*NeedleMapEntrySize : i*NeedleMapEntrySize+NeedleMapEntrySize])
 			if e = fn(key, offset, size); e != nil {
 				return e
 			}
