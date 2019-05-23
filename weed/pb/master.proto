@@ -186,6 +186,7 @@ message DataNodeInfo {
     uint64 free_volume_count = 4;
     uint64 active_volume_count = 5;
     repeated VolumeInformationMessage volume_infos = 6;
+    repeated VolumeEcShardInformationMessage ec_shard_infos = 7;
 }
 message RackInfo {
     string id = 1;

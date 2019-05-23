@@ -10,9 +10,11 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
+type ShardId uint8
+
 type EcVolumeShard struct {
 	VolumeId   needle.VolumeId
-	ShardId    uint8
+	ShardId    ShardId
 	Collection string
 	dir        string
 	ecdFile    *os.File
@@ -22,7 +24,7 @@ type EcVolumeShards []*EcVolumeShard
 
 func NewEcVolumeShard(dirname string, collection string, id needle.VolumeId, shardId int) (v *EcVolumeShard, e error) {
 
-	v = &EcVolumeShard{dir: dirname, Collection: collection, VolumeId: id, ShardId: uint8(shardId)}
+	v = &EcVolumeShard{dir: dirname, Collection: collection, VolumeId: id, ShardId: ShardId(shardId)}
 
 	baseFileName := v.FileName()
 	if v.ecxFile, e = os.OpenFile(baseFileName+".ecx", os.O_RDONLY, 0644); e != nil {

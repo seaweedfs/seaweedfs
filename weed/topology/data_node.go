@@ -2,8 +2,10 @@ package topology
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 
 	"strconv"
@@ -14,11 +16,13 @@ import (
 
 type DataNode struct {
 	NodeImpl
-	volumes   map[needle.VolumeId]storage.VolumeInfo
-	Ip        string
-	Port      int
-	PublicUrl string
-	LastSeen  int64 // unix time in seconds
+	volumes      map[needle.VolumeId]storage.VolumeInfo
+	Ip           string
+	Port         int
+	PublicUrl    string
+	LastSeen     int64 // unix time in seconds
+	ecShards     map[needle.VolumeId]erasure_coding.EcVolumeInfo
+	ecShardsLock sync.RWMutex
 }
 
 func NewDataNode(id string) *DataNode {
@@ -26,6 +30,7 @@ func NewDataNode(id string) *DataNode {
 	s.id = NodeId(id)
 	s.nodeType = "DataNode"
 	s.volumes = make(map[needle.VolumeId]storage.VolumeInfo)
+	s.ecShards = make(map[needle.VolumeId]erasure_coding.EcVolumeInfo)
 	s.NodeImpl.value = s
 	return s
 }
@@ -157,6 +162,9 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 	}
 	for _, v := range dn.GetVolumes() {
 		m.VolumeInfos = append(m.VolumeInfos, v.ToVolumeInformationMessage())
+	}
+	for _, ecv := range dn.GetEcShards() {
+		m.EcShardInfos = append(m.EcShardInfos, ecv.ToVolumeEcShardInformationMessage()...)
 	}
 	return m
 }
