@@ -12,6 +12,13 @@ type EcVolumeInfo struct {
 	shardIds   uint16 // use bits to indicate the shard id
 }
 
+func NewEcVolumeInfo(collection string, vid needle.VolumeId) *EcVolumeInfo {
+	return &EcVolumeInfo{
+		Collection: collection,
+		VolumeId:   vid,
+	}
+}
+
 func (ecInfo *EcVolumeInfo) AddShardId(id ShardId) {
 	ecInfo.shardIds |= (1 << id)
 }

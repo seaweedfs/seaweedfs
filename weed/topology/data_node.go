@@ -21,7 +21,7 @@ type DataNode struct {
 	Port         int
 	PublicUrl    string
 	LastSeen     int64 // unix time in seconds
-	ecShards     map[needle.VolumeId]erasure_coding.EcVolumeInfo
+	ecShards     map[needle.VolumeId]*erasure_coding.EcVolumeInfo
 	ecShardsLock sync.RWMutex
 }
 
@@ -30,7 +30,7 @@ func NewDataNode(id string) *DataNode {
 	s.id = NodeId(id)
 	s.nodeType = "DataNode"
 	s.volumes = make(map[needle.VolumeId]storage.VolumeInfo)
-	s.ecShards = make(map[needle.VolumeId]erasure_coding.EcVolumeInfo)
+	s.ecShards = make(map[needle.VolumeId]*erasure_coding.EcVolumeInfo)
 	s.NodeImpl.value = s
 	return s
 }
