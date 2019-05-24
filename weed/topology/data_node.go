@@ -164,7 +164,7 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 		m.VolumeInfos = append(m.VolumeInfos, v.ToVolumeInformationMessage())
 	}
 	for _, ecv := range dn.GetEcShards() {
-		m.EcShardInfos = append(m.EcShardInfos, ecv.ToVolumeEcShardInformationMessage()...)
+		m.EcShardInfos = append(m.EcShardInfos, ecv.ToVolumeEcShardInformationMessage())
 	}
 	return m
 }

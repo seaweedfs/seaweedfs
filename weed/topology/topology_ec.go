@@ -1,9 +1,6 @@
 package topology
 
 import (
-	"math"
-	"sort"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
@@ -20,18 +17,12 @@ type EcShardLocations struct {
 func (t *Topology) SyncDataNodeEcShards(shardInfos []*master_pb.VolumeEcShardInformationMessage, dn *DataNode) (newShards, deletedShards []*erasure_coding.EcVolumeInfo) {
 	// convert into in memory struct storage.VolumeInfo
 	var shards []*erasure_coding.EcVolumeInfo
-	sort.Slice(shardInfos, func(i, j int) bool {
-		return shardInfos[i].Id < shardInfos[j].Id
-	})
-	prevVolumeId := uint32(math.MaxUint32)
-	var ecVolumeInfo *erasure_coding.EcVolumeInfo
 	for _, shardInfo := range shardInfos {
-		if shardInfo.Id != prevVolumeId {
-			ecVolumeInfo = erasure_coding.NewEcVolumeInfo(shardInfo.Collection, needle.VolumeId(shardInfo.Id))
-			shards = append(shards, ecVolumeInfo)
-		}
-		prevVolumeId = shardInfo.Id
-		ecVolumeInfo.AddShardId(erasure_coding.ShardId(shardInfo.EcIndex))
+		shards = append(shards,
+			erasure_coding.NewEcVolumeInfo(
+				shardInfo.Collection,
+				needle.VolumeId(shardInfo.Id),
+				erasure_coding.ShardBits(shardInfo.EcIndexBits)))
 	}
 	// find out the delta volumes
 	newShards, deletedShards = dn.UpdateEcShards(shards)

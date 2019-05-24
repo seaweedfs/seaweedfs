@@ -9,7 +9,7 @@ func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 	for _, location := range s.Locations {
 		location.ecShardsLock.RLock()
 		for _, ecShards := range location.ecShards {
-			ecShardMessages = append(ecShardMessages, ecShards.ToVolumeInformationMessage()...)
+			ecShardMessages = append(ecShardMessages, ecShards.ToVolumeEcShardInformationMessage()...)
 		}
 		location.ecShardsLock.RUnlock()
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
+
 	"io"
 	"sort"
 )
@@ -89,7 +91,7 @@ func writeDataNodeInfo(writer io.Writer, t *master_pb.DataNodeInfo) statistics {
 		s = s.plus(writeVolumeInformationMessage(writer, vi))
 	}
 	for _, ecShardInfo := range t.EcShardInfos {
-		fmt.Fprintf(writer, "        ec %+v \n", ecShardInfo)
+		fmt.Fprintf(writer, "        ec volume id:%v collection:%v shards:%v\n", ecShardInfo.Id, ecShardInfo.Collection, erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIds())
 	}
 	fmt.Fprintf(writer, "      DataNode %s %+v \n", t.Id, s)
 	return s

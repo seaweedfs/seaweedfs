@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 
@@ -121,7 +122,8 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 					&ecShardMessage,
 				},
 			}
-			glog.V(1).Infof("volume server %s:%d adds ec shard %d:%d", vs.store.Ip, vs.store.Port, ecShardMessage.Id, ecShardMessage.EcIndex)
+			glog.V(1).Infof("volume server %s:%d adds ec shard %d:%d", vs.store.Ip, vs.store.Port, ecShardMessage.Id,
+				erasure_coding.ShardBits(ecShardMessage.EcIndexBits).ShardIds())
 			if err = stream.Send(deltaBeat); err != nil {
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterNode, err)
 				return "", err
@@ -143,7 +145,8 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 					&ecShardMessage,
 				},
 			}
-			glog.V(1).Infof("volume server %s:%d deletes ec shard %d:%d", vs.store.Ip, vs.store.Port, ecShardMessage.Id, ecShardMessage.EcIndex)
+			glog.V(1).Infof("volume server %s:%d deletes ec shard %d:%d", vs.store.Ip, vs.store.Port, ecShardMessage.Id,
+				erasure_coding.ShardBits(ecShardMessage.EcIndexBits).ShardIds())
 			if err = stream.Send(deltaBeat); err != nil {
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterNode, err)
 				return "", err

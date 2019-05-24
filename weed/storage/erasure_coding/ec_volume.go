@@ -2,8 +2,10 @@ package erasure_coding
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -44,6 +46,10 @@ func (shards *EcVolumeShards) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) boo
 		}
 	}
 	*shards = append(*shards, ecVolumeShard)
+	sort.Slice(shards, func(i, j int) bool {
+		return (*shards)[i].VolumeId < (*shards)[j].VolumeId ||
+			(*shards)[i].VolumeId == (*shards)[j].VolumeId && (*shards)[i].ShardId < (*shards)[j].ShardId
+	})
 	return true
 }
 
@@ -68,14 +74,19 @@ func (shards *EcVolumeShards) Close() {
 	}
 }
 
-func (shards *EcVolumeShards) ToVolumeInformationMessage() (messages []*master_pb.VolumeEcShardInformationMessage) {
+func (shards *EcVolumeShards) ToVolumeEcShardInformationMessage() (messages []*master_pb.VolumeEcShardInformationMessage) {
+	prevVolumeId := needle.VolumeId(math.MaxUint32)
+	var m *master_pb.VolumeEcShardInformationMessage
 	for _, s := range *shards {
-		m := &master_pb.VolumeEcShardInformationMessage{
-			Id:         uint32(s.VolumeId),
-			Collection: s.Collection,
-			EcIndex:    uint32(s.ShardId),
+		if s.VolumeId != prevVolumeId {
+			m = &master_pb.VolumeEcShardInformationMessage{
+				Id:         uint32(s.VolumeId),
+				Collection: s.Collection,
+			}
+			messages = append(messages, m)
 		}
-		messages = append(messages, m)
+		prevVolumeId = s.VolumeId
+		m.EcIndexBits = uint32(ShardBits(m.EcIndexBits).AddShardId(s.ShardId))
 	}
 	return
 }
