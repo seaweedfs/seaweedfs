@@ -105,6 +105,16 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		if len(heartbeat.EcShards) > 0 {
 			glog.V(0).Infof("master recieved ec shards from %s: %+v", dn.Url(), heartbeat.EcShards)
+			newShards, deletedShards := t.SyncDataNodeEcShards(heartbeat.EcShards, dn)
+
+			//TODO broadcast the ec vid
+			if len(newShards)>0{
+
+			}
+			if len(deletedShards)>0{
+
+			}
+
 		}
 
 		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 {
