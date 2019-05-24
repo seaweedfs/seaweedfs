@@ -94,7 +94,7 @@ func encodeData(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize i
 
 func openEcFiles(baseFileName string, forRead bool) (files []*os.File, err error) {
 	for i := 0; i < DataShardsCount+ParityShardsCount; i++ {
-		fname := baseFileName + ToExt(i+1)
+		fname := baseFileName + ToExt(i)
 		openOption := os.O_TRUNC | os.O_CREATE | os.O_WRONLY
 		if forRead {
 			openOption = os.O_RDONLY

@@ -1,6 +1,8 @@
 package erasure_coding
 
 import (
+	"fmt"
+
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
@@ -60,4 +62,8 @@ func (ecInfo *EcVolumeInfo) ToVolumeEcShardInformationMessage() (ret []*master_p
 
 	}
 	return
+}
+
+func (ecInfo *EcVolumeInfo) String() string {
+	return fmt.Sprintf("id:%d shard:%v collection:%v", ecInfo.VolumeId, ecInfo.ShardIds(), ecInfo.Collection)
 }

@@ -88,6 +88,9 @@ func writeDataNodeInfo(writer io.Writer, t *master_pb.DataNodeInfo) statistics {
 	for _, vi := range t.VolumeInfos {
 		s = s.plus(writeVolumeInformationMessage(writer, vi))
 	}
+	for _, ecShardInfo := range t.EcShardInfos {
+		fmt.Fprintf(writer, "        ec %+v \n", ecShardInfo)
+	}
 	fmt.Fprintf(writer, "      DataNode %s %+v \n", t.Id, s)
 	return s
 }

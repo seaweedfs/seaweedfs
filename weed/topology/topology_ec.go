@@ -30,6 +30,7 @@ func (t *Topology) SyncDataNodeEcShards(shardInfos []*master_pb.VolumeEcShardInf
 			ecVolumeInfo = erasure_coding.NewEcVolumeInfo(shardInfo.Collection, needle.VolumeId(shardInfo.Id))
 			shards = append(shards, ecVolumeInfo)
 		}
+		prevVolumeId = shardInfo.Id
 		ecVolumeInfo.AddShardId(erasure_coding.ShardId(shardInfo.EcIndex))
 	}
 	// find out the delta volumes
