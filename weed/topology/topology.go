@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"sync"
 
 	"github.com/chrislusf/raft"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -17,7 +18,9 @@ import (
 type Topology struct {
 	NodeImpl
 
-	collectionMap *util.ConcurrentReadMap
+	collectionMap  *util.ConcurrentReadMap
+	ecShardMap     map[needle.VolumeId]*EcShardLocations
+	ecShardMapLock sync.RWMutex
 
 	pulse int64
 
@@ -39,6 +42,7 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 	t.NodeImpl.value = t
 	t.children = make(map[NodeId]Node)
 	t.collectionMap = util.NewConcurrentReadMap()
+	t.ecShardMap = make(map[needle.VolumeId]*EcShardLocations)
 	t.pulse = int64(pulse)
 	t.volumeSizeLimit = volumeSizeLimit
 
