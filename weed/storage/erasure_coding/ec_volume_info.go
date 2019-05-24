@@ -40,6 +40,16 @@ func (ecInfo *EcVolumeInfo) ShardIds() (ret []ShardId) {
 	return
 }
 
+func (ecInfo *EcVolumeInfo) Minus(other *EcVolumeInfo) (*EcVolumeInfo) {
+	ret := &EcVolumeInfo{
+		VolumeId:   ecInfo.VolumeId,
+		Collection: ecInfo.Collection,
+		shardIds:   ecInfo.shardIds &^ other.shardIds,
+	}
+
+	return ret
+}
+
 func (ecInfo *EcVolumeInfo) ToVolumeEcShardInformationMessage() (ret []*master_pb.VolumeEcShardInformationMessage) {
 	for _, shard := range ecInfo.ShardIds() {
 		ret = append(ret, &master_pb.VolumeEcShardInformationMessage{
