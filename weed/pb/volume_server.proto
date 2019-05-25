@@ -48,9 +48,11 @@ service VolumeServer {
     }
 
     // erasure coding
-    rpc VolumeEcGenerateSlices (VolumeEcGenerateSlicesRequest) returns (VolumeEcGenerateSlicesResponse) {
+    rpc VolumeEcShardsGenerate (VolumeEcShardsGenerateRequest) returns (VolumeEcShardsGenerateResponse) {
     }
-    rpc VolumeEcCopy (VolumeEcCopyRequest) returns (VolumeEcCopyResponse) {
+    rpc VolumeEcShardsCopy (VolumeEcShardsCopyRequest) returns (VolumeEcShardsCopyResponse) {
+    }
+    rpc VolumeEcShardsDelete (VolumeEcShardsDeleteRequest) returns (VolumeEcShardsDeleteResponse) {
     }
 
 
@@ -197,19 +199,28 @@ message VolumeTailReceiverRequest {
 message VolumeTailReceiverResponse {
 }
 
-message VolumeEcGenerateSlicesRequest {
+message VolumeEcShardsGenerateRequest {
     uint32 volume_id = 1;
+    string collection = 2;
 }
-message VolumeEcGenerateSlicesResponse {
+message VolumeEcShardsGenerateResponse {
 }
 
-message VolumeEcCopyRequest {
+message VolumeEcShardsCopyRequest {
     uint32 volume_id = 1;
     string collection = 2;
     repeated uint32 ec_indexes = 3;
     string source_data_node = 5;
 }
-message VolumeEcCopyResponse {
+message VolumeEcShardsCopyResponse {
+}
+
+message VolumeEcShardsDeleteRequest {
+    uint32 volume_id = 1;
+    bool should_delete_ecx = 2;
+    repeated uint32 ec_indexes = 3;
+}
+message VolumeEcShardsDeleteResponse {
 }
 
 message ReadVolumeFileStatusRequest {
