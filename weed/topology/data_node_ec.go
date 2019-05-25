@@ -30,11 +30,11 @@ func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) 
 		} else {
 			// found, but maybe the actual shard could be missing
 			a := actualEcShards.Minus(ecShards)
-			if len(a.ShardIds()) > 0 {
+			if a.ShardIdCount() > 0 {
 				newShards = append(newShards, a)
 			}
 			d := ecShards.Minus(actualEcShards)
-			if len(d.ShardIds()) > 0 {
+			if d.ShardIdCount() > 0 {
 				deletedShards = append(deletedShards, d)
 			}
 		}

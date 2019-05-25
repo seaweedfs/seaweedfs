@@ -7,11 +7,9 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
-const shardCount = erasure_coding.DataShardsCount + erasure_coding.ParityShardsCount
-
 type EcShardLocations struct {
 	Collection string
-	locations  [shardCount][]*DataNode
+	locations  [erasure_coding.TotalShardsCount][]*DataNode
 }
 
 func (t *Topology) SyncDataNodeEcShards(shardInfos []*master_pb.VolumeEcShardInformationMessage, dn *DataNode) (newShards, deletedShards []*erasure_coding.EcVolumeInfo) {

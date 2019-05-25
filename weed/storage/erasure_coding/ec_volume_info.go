@@ -36,6 +36,10 @@ func (ecInfo *EcVolumeInfo) ShardIds() (ret []ShardId) {
 	return ecInfo.ShardBits.ShardIds()
 }
 
+func (ecInfo *EcVolumeInfo) ShardIdCount() (count int) {
+	return ecInfo.ShardBits.ShardIdCount()
+}
+
 func (ecInfo *EcVolumeInfo) Minus(other *EcVolumeInfo) (*EcVolumeInfo) {
 	ret := &EcVolumeInfo{
 		VolumeId:   ecInfo.VolumeId,
@@ -69,10 +73,17 @@ func (b ShardBits) HasShardId(id ShardId) bool {
 }
 
 func (b ShardBits) ShardIds() (ret []ShardId) {
-	for i := ShardId(0); i < DataShardsCount+ParityShardsCount; i++ {
+	for i := ShardId(0); i < TotalShardsCount; i++ {
 		if b.HasShardId(i) {
 			ret = append(ret, i)
 		}
+	}
+	return
+}
+
+func (b ShardBits) ShardIdCount() (count int) {
+	for count = 0; b > 0; count++ {
+		b &= b - 1
 	}
 	return
 }

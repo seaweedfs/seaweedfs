@@ -153,9 +153,9 @@ func readFromOtherEcFiles(ecFiles []*os.File, ecFileIndex int, ecFileOffset int6
 		return nil, fmt.Errorf("failed to create encoder: %v", err)
 	}
 
-	bufs := make([][]byte, DataShardsCount+ParityShardsCount)
+	bufs := make([][]byte, TotalShardsCount)
 	for i := 0; i < DataShardsCount; {
-		n := int(rand.Int31n(DataShardsCount + ParityShardsCount))
+		n := int(rand.Int31n(TotalShardsCount))
 		if n == ecFileIndex || bufs[n] != nil {
 			continue
 		}

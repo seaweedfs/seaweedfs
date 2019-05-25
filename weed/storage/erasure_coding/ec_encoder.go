@@ -15,6 +15,7 @@ import (
 const (
 	DataShardsCount             = 10
 	ParityShardsCount           = 4
+	TotalShardsCount            = DataShardsCount + ParityShardsCount
 	ErasureCodingLargeBlockSize = 1024 * 1024 * 1024 // 1GB
 	ErasureCodingSmallBlockSize = 1024 * 1024        // 1MB
 )
@@ -93,7 +94,7 @@ func encodeData(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize i
 }
 
 func openEcFiles(baseFileName string, forRead bool) (files []*os.File, err error) {
-	for i := 0; i < DataShardsCount+ParityShardsCount; i++ {
+	for i := 0; i < TotalShardsCount; i++ {
 		fname := baseFileName + ToExt(i)
 		openOption := os.O_TRUNC | os.O_CREATE | os.O_WRONLY
 		if forRead {
@@ -138,7 +139,7 @@ func encodeDataOneBatch(file *os.File, enc reedsolomon.Encoder, startOffset, blo
 		return err
 	}
 
-	for i := 0; i < DataShardsCount+ParityShardsCount; i++ {
+	for i := 0; i < TotalShardsCount; i++ {
 		_, err := outputs[i].Write(buffers[i])
 		if err != nil {
 			return err
@@ -154,7 +155,7 @@ func encodeDatFile(remainingSize int64, err error, baseFileName string, bufferSi
 	if err != nil {
 		return fmt.Errorf("failed to create encoder: %v", err)
 	}
-	buffers := make([][]byte, DataShardsCount+ParityShardsCount)
+	buffers := make([][]byte, TotalShardsCount)
 	outputs, err := openEcFiles(baseFileName, false)
 	defer closeEcFiles(outputs)
 	if err != nil {
