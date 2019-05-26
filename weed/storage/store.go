@@ -202,7 +202,7 @@ func (s *Store) Close() {
 func (s *Store) Write(i needle.VolumeId, n *needle.Needle) (size uint32, isUnchanged bool, err error) {
 	if v := s.findVolume(i); v != nil {
 		if v.readOnly {
-			err = fmt.Errorf("Volume %d is read only", i)
+			err = fmt.Errorf("volume %d is read only", i)
 			return
 		}
 		// TODO: count needle size ahead
@@ -229,7 +229,7 @@ func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle) (int, erro
 	if v := s.findVolume(i); v != nil {
 		return v.readNeedle(n)
 	}
-	return 0, fmt.Errorf("Volume %d not found!", i)
+	return 0, fmt.Errorf("volume %d not found", i)
 }
 func (s *Store) GetVolume(i needle.VolumeId) *Volume {
 	return s.findVolume(i)
@@ -256,7 +256,7 @@ func (s *Store) MountVolume(i needle.VolumeId) error {
 		}
 	}
 
-	return fmt.Errorf("Volume %d not found on disk", i)
+	return fmt.Errorf("volume %d not found on disk", i)
 }
 
 func (s *Store) UnmountVolume(i needle.VolumeId) error {
@@ -280,7 +280,7 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 		}
 	}
 
-	return fmt.Errorf("Volume %d not found on disk", i)
+	return fmt.Errorf("volume %d not found on disk", i)
 }
 
 func (s *Store) DeleteVolume(i needle.VolumeId) error {
@@ -303,7 +303,7 @@ func (s *Store) DeleteVolume(i needle.VolumeId) error {
 		}
 	}
 
-	return fmt.Errorf("Volume %d not found on disk", i)
+	return fmt.Errorf("volume %d not found on disk", i)
 }
 
 func (s *Store) SetVolumeSizeLimit(x uint64) {
