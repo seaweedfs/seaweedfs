@@ -68,6 +68,9 @@ func (t *Topology) ToVolumeLocations() (volumeLocations []*master_pb.VolumeLocat
 				for _, v := range dn.GetVolumes() {
 					volumeLocation.NewVids = append(volumeLocation.NewVids, uint32(v.Id))
 				}
+				for _, s := range dn.GetEcShards() {
+					volumeLocation.NewVids = append(volumeLocation.NewVids, uint32(s.VolumeId))
+				}
 				volumeLocations = append(volumeLocations, volumeLocation)
 			}
 		}
