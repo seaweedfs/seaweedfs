@@ -54,6 +54,10 @@ service VolumeServer {
     }
     rpc VolumeEcShardsDelete (VolumeEcShardsDeleteRequest) returns (VolumeEcShardsDeleteResponse) {
     }
+    rpc VolumeEcShardsMount (VolumeEcShardsMountRequest) returns (VolumeEcShardsMountResponse) {
+    }
+    rpc VolumeEcShardsUnmount (VolumeEcShardsUnmountRequest) returns (VolumeEcShardsUnmountResponse) {
+    }
 
 
 }
@@ -221,6 +225,21 @@ message VolumeEcShardsDeleteRequest {
     repeated uint32 ec_indexes = 3;
 }
 message VolumeEcShardsDeleteResponse {
+}
+
+message VolumeEcShardsMountRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+    repeated uint32 ec_indexes = 3;
+}
+message VolumeEcShardsMountResponse {
+}
+
+message VolumeEcShardsUnmountRequest {
+    uint32 volume_id = 1;
+    repeated uint32 ec_indexes = 3;
+}
+message VolumeEcShardsUnmountResponse {
 }
 
 message ReadVolumeFileStatusRequest {

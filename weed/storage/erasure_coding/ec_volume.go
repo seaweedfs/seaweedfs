@@ -24,16 +24,16 @@ type EcVolumeShard struct {
 }
 type EcVolumeShards []*EcVolumeShard
 
-func NewEcVolumeShard(dirname string, collection string, id needle.VolumeId, shardId int) (v *EcVolumeShard, e error) {
+func NewEcVolumeShard(dirname string, collection string, id needle.VolumeId, shardId ShardId) (v *EcVolumeShard, e error) {
 
-	v = &EcVolumeShard{dir: dirname, Collection: collection, VolumeId: id, ShardId: ShardId(shardId)}
+	v = &EcVolumeShard{dir: dirname, Collection: collection, VolumeId: id, ShardId: shardId}
 
 	baseFileName := v.FileName()
 	if v.ecxFile, e = os.OpenFile(baseFileName+".ecx", os.O_RDONLY, 0644); e != nil {
 		return nil, fmt.Errorf("cannot read ec volume index %s.ecx: %v", baseFileName, e)
 	}
-	if v.ecdFile, e = os.OpenFile(baseFileName+ToExt(shardId), os.O_RDONLY, 0644); e != nil {
-		return nil, fmt.Errorf("cannot read ec volume shard %s.%s: %v", baseFileName, ToExt(shardId), e)
+	if v.ecdFile, e = os.OpenFile(baseFileName+ToExt(int(shardId)), os.O_RDONLY, 0644); e != nil {
+		return nil, fmt.Errorf("cannot read ec volume shard %s.%s: %v", baseFileName, ToExt(int(shardId)), e)
 	}
 
 	return

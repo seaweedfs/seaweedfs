@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage"
@@ -107,4 +108,42 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 	}
 
 	return &volume_server_pb.VolumeEcShardsDeleteResponse{}, nil
+}
+
+func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_server_pb.VolumeEcShardsMountRequest) (*volume_server_pb.VolumeEcShardsMountResponse, error) {
+
+	for _, shardId := range req.EcIndexes {
+		err := vs.store.MountEcShards(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId))
+
+		if err != nil {
+			glog.Errorf("ec shard mount %v: %v", req, err)
+		} else {
+			glog.V(2).Infof("ec shard mount %v", req)
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("mount %d.%d: %v", req.VolumeId, shardId, err)
+		}
+	}
+
+	return &volume_server_pb.VolumeEcShardsMountResponse{}, nil
+}
+
+func (vs *VolumeServer) VolumeEcShardsUnmount(ctx context.Context, req *volume_server_pb.VolumeEcShardsUnmountRequest) (*volume_server_pb.VolumeEcShardsUnmountResponse, error) {
+
+	for _, shardId := range req.EcIndexes {
+		err := vs.store.UnmountEcShards(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId))
+
+		if err != nil {
+			glog.Errorf("ec shard unmount %v: %v", req, err)
+		} else {
+			glog.V(2).Infof("ec shard unmount %v", req)
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("unmount %d.%d: %v", req.VolumeId, shardId, err)
+		}
+	}
+
+	return &volume_server_pb.VolumeEcShardsUnmountResponse{}, nil
 }

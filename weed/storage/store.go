@@ -271,6 +271,7 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 		Version:          uint32(v.Version()),
 		Ttl:              v.Ttl.ToUint32(),
 	}
+
 	for _, location := range s.Locations {
 		if err := location.UnloadVolume(i); err == nil {
 			glog.V(0).Infof("UnmountVolume %d", i)

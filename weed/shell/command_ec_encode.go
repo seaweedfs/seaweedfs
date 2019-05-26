@@ -196,23 +196,36 @@ func oneServerCopyEcShardsFromSource(ctx context.Context, grpcDialOption grpc.Di
 	targetServer *master_pb.DataNodeInfo, startFromShardId uint32, shardCount uint32,
 	volumeId needle.VolumeId, collection string, existingLocation wdclient.Location) (copiedShardIds []uint32, err error) {
 
-	if targetServer.Id == existingLocation.Url {
-		return nil, nil
-	}
-
 	for shardId := startFromShardId; shardId < startFromShardId+shardCount; shardId++ {
-		fmt.Printf("copy %d.%d %s => %s\n", volumeId, shardId, existingLocation.Url, targetServer.Id)
+		fmt.Printf("allocate %d.%d %s => %s\n", volumeId, shardId, existingLocation.Url, targetServer.Id)
 		copiedShardIds = append(copiedShardIds, shardId)
 	}
 
 	err = operation.WithVolumeServerClient(targetServer.Id, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-		_, copyErr := volumeServerClient.VolumeEcShardsCopy(ctx, &volume_server_pb.VolumeEcShardsCopyRequest{
-			VolumeId:       uint32(volumeId),
-			Collection:     collection,
-			EcIndexes:      copiedShardIds,
-			SourceDataNode: existingLocation.Url,
+
+		if targetServer.Id != existingLocation.Url {
+
+			_, copyErr := volumeServerClient.VolumeEcShardsCopy(ctx, &volume_server_pb.VolumeEcShardsCopyRequest{
+				VolumeId:       uint32(volumeId),
+				Collection:     collection,
+				EcIndexes:      copiedShardIds,
+				SourceDataNode: existingLocation.Url,
+			})
+			if copyErr != nil {
+				return copyErr
+			}
+		}
+
+		_, mountErr := volumeServerClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
+			VolumeId:   uint32(volumeId),
+			Collection: collection,
+			EcIndexes:  copiedShardIds,
 		})
-		return copyErr
+		if mountErr != nil {
+			return mountErr
+		}
+
+		return nil
 	})
 
 	if err != nil {
