@@ -31,6 +31,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			for _, v := range dn.GetVolumes() {
 				message.DeletedVids = append(message.DeletedVids, uint32(v.Id))
 			}
+			for _, s := range dn.GetEcShards() {
+				message.DeletedVids = append(message.DeletedVids, uint32(s.VolumeId))
+			}
 
 			if len(message.DeletedVids) > 0 {
 				ms.clientChansLock.RLock()
