@@ -9,6 +9,7 @@ import (
 	"github.com/chrislusf/raft"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"google.golang.org/grpc/peer"
 )
@@ -108,18 +109,32 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 			// update master internal volume layouts
 			t.IncrementalSyncDataNodeEcShards(heartbeat.NewEcShards, heartbeat.DeletedEcShards, dn)
+
+			for _, s := range heartbeat.NewEcShards {
+				message.NewVids = append(message.NewVids, s.Id)
+			}
+			for _, s := range heartbeat.DeletedEcShards {
+				if dn.HasVolumesById(needle.VolumeId(s.Id)) {
+					continue
+				}
+				message.DeletedVids = append(message.DeletedVids, s.Id)
+			}
+
 		}
 
 		if len(heartbeat.EcShards) > 0 {
 			glog.V(0).Infof("master recieved ec shards from %s: %+v", dn.Url(), heartbeat.EcShards)
 			newShards, deletedShards := t.SyncDataNodeEcShards(heartbeat.EcShards, dn)
 
-			//TODO broadcast the ec vid
-			if len(newShards)>0{
-
+			// broadcast the ec vid changes to master clients
+			for _, s := range newShards {
+				message.NewVids = append(message.NewVids, uint32(s.VolumeId))
 			}
-			if len(deletedShards)>0{
-
+			for _, s := range deletedShards {
+				if dn.HasVolumesById(s.VolumeId) {
+					continue
+				}
+				message.DeletedVids = append(message.DeletedVids, uint32(s.VolumeId))
 			}
 
 		}

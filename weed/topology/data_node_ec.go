@@ -92,3 +92,29 @@ func (dn *DataNode) DeleteEcShard(s *erasure_coding.EcVolumeInfo) {
 	}
 
 }
+
+func (dn *DataNode) HasVolumesById(id needle.VolumeId) (hasVolumeId bool) {
+
+	// check whether normal volumes has this volume id
+	dn.RLock()
+	_, ok := dn.volumes[id]
+	if ok {
+		hasVolumeId = true
+	}
+	dn.RUnlock()
+
+	if hasVolumeId {
+		return
+	}
+
+	// check whether ec shards has this volume id
+	dn.ecShardsLock.RLock()
+	_, ok = dn.ecShards[id]
+	if ok {
+		hasVolumeId = true
+	}
+	dn.ecShardsLock.RUnlock()
+
+	return
+
+}
