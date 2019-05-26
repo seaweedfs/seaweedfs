@@ -91,3 +91,7 @@ func (b ShardBits) ShardIdCount() (count int) {
 func (b ShardBits) Minus(other ShardBits) (ShardBits) {
 	return b &^ other
 }
+
+func (b ShardBits) Plus(other ShardBits) (ShardBits) {
+	return b | other
+}

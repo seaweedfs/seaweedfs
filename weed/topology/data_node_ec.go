@@ -55,3 +55,40 @@ func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) 
 
 	return
 }
+
+func (dn *DataNode) DeltaUpdateEcShards(newShards, deletedShards []*erasure_coding.EcVolumeInfo) {
+
+	for _, newShard := range newShards {
+		dn.AddOrUpdateEcShard(newShard)
+	}
+
+	for _, deletedShard := range deletedShards {
+		dn.DeleteEcShard(deletedShard)
+	}
+
+}
+
+func (dn *DataNode) AddOrUpdateEcShard(s *erasure_coding.EcVolumeInfo) {
+	dn.ecShardsLock.Lock()
+	defer dn.ecShardsLock.Unlock()
+
+	if existing, ok := dn.ecShards[s.VolumeId]; !ok {
+		dn.ecShards[s.VolumeId] = s
+	} else {
+		existing.ShardBits = existing.ShardBits.Plus(s.ShardBits)
+	}
+
+}
+
+func (dn *DataNode) DeleteEcShard(s *erasure_coding.EcVolumeInfo) {
+	dn.ecShardsLock.Lock()
+	defer dn.ecShardsLock.Unlock()
+
+	if existing, ok := dn.ecShards[s.VolumeId]; ok {
+		existing.ShardBits = existing.ShardBits.Minus(s.ShardBits)
+		if existing.ShardBits.ShardIdCount() == 0 {
+			delete(dn.ecShards, s.VolumeId)
+		}
+	}
+
+}

@@ -33,6 +33,35 @@ func (t *Topology) SyncDataNodeEcShards(shardInfos []*master_pb.VolumeEcShardInf
 	return
 }
 
+func (t *Topology) IncrementalSyncDataNodeEcShards(newEcShards, deletedEcShards []*master_pb.VolumeEcShardInformationMessage, dn *DataNode) {
+	// convert into in memory struct storage.VolumeInfo
+	var newShards, deletedShards []*erasure_coding.EcVolumeInfo
+	for _, shardInfo := range newEcShards {
+		newShards = append(newShards,
+			erasure_coding.NewEcVolumeInfo(
+				shardInfo.Collection,
+				needle.VolumeId(shardInfo.Id),
+				erasure_coding.ShardBits(shardInfo.EcIndexBits)))
+	}
+	for _, shardInfo := range deletedEcShards {
+		deletedShards = append(deletedShards,
+			erasure_coding.NewEcVolumeInfo(
+				shardInfo.Collection,
+				needle.VolumeId(shardInfo.Id),
+				erasure_coding.ShardBits(shardInfo.EcIndexBits)))
+	}
+
+	dn.DeltaUpdateEcShards(newShards, deletedShards)
+
+	for _, v := range newShards {
+		t.RegisterEcShards(v, dn)
+	}
+	for _, v := range deletedShards {
+		t.UnRegisterEcShards(v, dn)
+	}
+	return
+}
+
 func NewEcShardLocations(collection string) *EcShardLocations {
 	return &EcShardLocations{
 		Collection: collection,

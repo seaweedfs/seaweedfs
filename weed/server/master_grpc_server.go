@@ -103,6 +103,13 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 		}
 
+		if len(heartbeat.NewEcShards) > 0 || len(heartbeat.DeletedEcShards) > 0 {
+			// TODO send out the delta
+
+			// update master internal volume layouts
+			t.IncrementalSyncDataNodeEcShards(heartbeat.NewEcShards, heartbeat.DeletedEcShards, dn)
+		}
+
 		if len(heartbeat.EcShards) > 0 {
 			glog.V(0).Infof("master recieved ec shards from %s: %+v", dn.Url(), heartbeat.EcShards)
 			newShards, deletedShards := t.SyncDataNodeEcShards(heartbeat.EcShards, dn)
