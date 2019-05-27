@@ -105,3 +105,9 @@ func (shard *EcVolumeShard) findNeedleFromEcx(needleId types.NeedleId) (offset t
 	err = fmt.Errorf("needle id %d not found", needleId)
 	return
 }
+
+func (shard *EcVolumeShard) ReadAt(buf []byte, offset int64) (int, error) {
+
+	return shard.ecdFile.ReadAt(buf, offset)
+
+}

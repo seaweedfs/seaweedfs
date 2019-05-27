@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"os"
 
@@ -71,8 +72,8 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		}
 
 		// copy ec data slices
-		for _, ecIndex := range req.EcIndexes {
-			if err := vs.doCopyFile(ctx, client, req.VolumeId, math.MaxUint32, math.MaxInt64, baseFileName, erasure_coding.ToExt(int(ecIndex))); err != nil {
+		for _, shardId := range req.ShardIds {
+			if err := vs.doCopyFile(ctx, client, req.VolumeId, math.MaxUint32, math.MaxInt64, baseFileName, erasure_coding.ToExt(int(shardId))); err != nil {
 				return err
 			}
 		}
@@ -95,8 +96,8 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 	}
 	baseFileName := v.FileName()
 
-	for _, shardIndex := range req.EcIndexes {
-		if err := os.Remove(baseFileName + erasure_coding.ToExt(int(shardIndex))); err != nil {
+	for _, shardId := range req.ShardIds {
+		if err := os.Remove(baseFileName + erasure_coding.ToExt(int(shardId))); err != nil {
 			return nil, err
 		}
 	}
@@ -112,7 +113,7 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 
 func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_server_pb.VolumeEcShardsMountRequest) (*volume_server_pb.VolumeEcShardsMountResponse, error) {
 
-	for _, shardId := range req.EcIndexes {
+	for _, shardId := range req.ShardIds {
 		err := vs.store.MountEcShards(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId))
 
 		if err != nil {
@@ -131,7 +132,7 @@ func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_ser
 
 func (vs *VolumeServer) VolumeEcShardsUnmount(ctx context.Context, req *volume_server_pb.VolumeEcShardsUnmountRequest) (*volume_server_pb.VolumeEcShardsUnmountResponse, error) {
 
-	for _, shardId := range req.EcIndexes {
+	for _, shardId := range req.ShardIds {
 		err := vs.store.UnmountEcShards(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId))
 
 		if err != nil {
@@ -146,4 +147,50 @@ func (vs *VolumeServer) VolumeEcShardsUnmount(ctx context.Context, req *volume_s
 	}
 
 	return &volume_server_pb.VolumeEcShardsUnmountResponse{}, nil
+}
+
+func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardReadRequest, stream volume_server_pb.VolumeServer_VolumeEcShardReadServer) error {
+
+	ecShards, found := vs.store.HasEcShard(needle.VolumeId(req.VolumeId))
+	if !found {
+		return fmt.Errorf("not found ec volume id %d", req.VolumeId)
+	}
+	ecShard, found := ecShards.FindEcVolumeShard(erasure_coding.ShardId(req.ShardId))
+	if !found {
+		return fmt.Errorf("not found ec shard %d.%d", req.VolumeId, req.ShardId)
+	}
+
+	buffer := make([]byte, BufferSizeLimit)
+	startOffset, bytesToRead := req.Offset, req.Size
+
+	for bytesToRead > 0 {
+		bytesread, err := ecShard.ReadAt(buffer, startOffset)
+
+		// println(fileName, "read", bytesread, "bytes, with target", bytesToRead)
+
+		if err != nil {
+			if err != io.EOF {
+				return err
+			}
+			// println(fileName, "read", bytesread, "bytes, with target", bytesToRead, "err", err.Error())
+			break
+		}
+
+		if int64(bytesread) > bytesToRead {
+			bytesread = int(bytesToRead)
+		}
+		err = stream.Send(&volume_server_pb.VolumeEcShardReadResponse{
+			Data: buffer[:bytesread],
+		})
+		if err != nil {
+			// println("sending", bytesread, "bytes err", err.Error())
+			return err
+		}
+
+		bytesToRead -= int64(bytesread)
+
+	}
+
+	return nil
+
 }

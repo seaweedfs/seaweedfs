@@ -69,12 +69,11 @@ func sendNeedlesSince(stream volume_server_pb.VolumeServer_VolumeTailSenderServe
 
 	err = storage.ScanVolumeFileNeedleFrom(v.Version(), v.DataFile(), foundOffset.ToAcutalOffset(), func(needleHeader, needleBody []byte, needleAppendAtNs uint64) error {
 
-		blockSizeLimit := 1024 * 1024 * 2
 		isLastChunk := false
 
 		// need to send body by chunks
-		for i := 0; i < len(needleBody); i += blockSizeLimit {
-			stopOffset := i + blockSizeLimit
+		for i := 0; i < len(needleBody); i += BufferSizeLimit {
+			stopOffset := i + BufferSizeLimit
 			if stopOffset >= len(needleBody) {
 				isLastChunk = true
 				stopOffset = len(needleBody)

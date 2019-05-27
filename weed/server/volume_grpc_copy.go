@@ -16,6 +16,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
+const BufferSizeLimit = 1024 * 1024 * 2
+
 // VolumeCopy copy the .idx .dat files, and mount the volume
 func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.VolumeCopyRequest) (*volume_server_pb.VolumeCopyResponse, error) {
 
@@ -190,7 +192,6 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 
 	bytesToRead := int64(req.StopOffset)
 
-	const BufferSize = 1024 * 1024 * 2
 	var fileName = v.FileName() + req.Ext
 	file, err := os.Open(fileName)
 	if err != nil {
@@ -198,7 +199,7 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 	}
 	defer file.Close()
 
-	buffer := make([]byte, BufferSize)
+	buffer := make([]byte, BufferSizeLimit)
 
 	for bytesToRead > 0 {
 		bytesread, err := file.Read(buffer)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 type EcVolumeShards []*EcVolumeShard
@@ -71,19 +72,17 @@ func (shards *EcVolumeShards) ToVolumeEcShardInformationMessage() (messages []*m
 	return
 }
 
-func (shards *EcVolumeShards) ReadEcShardNeedle(n *needle.Needle) (int, error) {
+func (shards *EcVolumeShards) LocateEcShardNeedle(n *needle.Needle) (offset types.Offset, size uint32, intervals []Interval, err error) {
 
 	shard := (*shards)[0]
 	// find the needle from ecx file
-	offset, size, err := shard.findNeedleFromEcx(n.Id)
+	offset, size, err = shard.findNeedleFromEcx(n.Id)
 	if err != nil {
-		return 0, err
+		return types.Offset{}, 0, nil, err
 	}
 
 	// calculate the locations in the ec shards
-	intervals := LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, shard.ecxFileSize, offset.ToAcutalOffset(), size)
+	intervals = LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, shard.ecxFileSize, offset.ToAcutalOffset(), size)
 
-	// TODO read the intervals
-
-	return len(intervals), nil
+	return
 }

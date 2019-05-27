@@ -69,3 +69,15 @@ func locateOffsetWithinBlocks(blockLength int64, offset int64) (blockIndex int, 
 	innerBlockOffset = offset % blockLength
 	return
 }
+
+func (interval Interval) ToShardIdAndOffset(largeBlockSize, smallBlockSize int64) (ShardId, int64) {
+	ecFileOffset := interval.InnerBlockOffset
+	rowIndex := interval.BlockIndex / DataShardsCount
+	if interval.IsLargeBlock {
+		ecFileOffset += int64(rowIndex) * largeBlockSize
+	} else {
+		ecFileOffset += int64(interval.LargeBlockRowsCount)*largeBlockSize + int64(rowIndex)*smallBlockSize
+	}
+	ecFileIndex := interval.BlockIndex % DataShardsCount
+	return ShardId(ecFileIndex), ecFileOffset
+}

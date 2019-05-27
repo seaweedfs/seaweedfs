@@ -105,10 +105,8 @@ func readEcFile(datSize int64, ecFiles []*os.File, offset types.Offset, size uin
 
 	intervals := LocateData(largeBlockSize, smallBlockSize, datSize, offset.ToAcutalOffset(), size)
 
-	nLargeBlockRows := int(datSize / (largeBlockSize * DataShardsCount))
-
 	for i, interval := range intervals {
-		if d, e := readOneInterval(interval, ecFiles, nLargeBlockRows); e != nil {
+		if d, e := readOneInterval(interval, ecFiles); e != nil {
 			return nil, e
 		} else {
 			if i == 0 {
@@ -122,21 +120,14 @@ func readEcFile(datSize int64, ecFiles []*os.File, offset types.Offset, size uin
 	return data, nil
 }
 
-func readOneInterval(interval Interval, ecFiles []*os.File, nLargeBlockRows int) (data []byte, err error) {
-	ecFileOffset := interval.InnerBlockOffset
-	rowIndex := interval.BlockIndex / DataShardsCount
-	if interval.IsLargeBlock {
-		ecFileOffset += int64(rowIndex) * largeBlockSize
-	} else {
-		ecFileOffset += int64(nLargeBlockRows)*largeBlockSize + int64(rowIndex)*smallBlockSize
-	}
+func readOneInterval(interval Interval, ecFiles []*os.File) (data []byte, err error) {
 
-	ecFileIndex := interval.BlockIndex % DataShardsCount
+	ecFileOffset, ecFileIndex := interval.ToShardIdAndOffset(largeBlockSize, smallBlockSize)
 
 	data = make([]byte, interval.Size)
 	err = readFromFile(ecFiles[ecFileIndex], data, ecFileOffset)
 	{ // do some ec testing
-		ecData, err := readFromOtherEcFiles(ecFiles, ecFileIndex, ecFileOffset, interval.Size)
+		ecData, err := readFromOtherEcFiles(ecFiles, int(ecFileIndex), ecFileOffset, interval.Size)
 		if err != nil {
 			return nil, fmt.Errorf("ec reconstruct error: %v", err)
 		}
@@ -198,7 +189,7 @@ func TestLocateData(t *testing.T) {
 	if len(intervals) != 1 {
 		t.Errorf("unexpected interval size %d", len(intervals))
 	}
-	if !intervals[0].sameAs(Interval{0, 0, 1, false}) {
+	if !intervals[0].sameAs(Interval{0, 0, 1, false, 1}) {
 		t.Errorf("unexpected interval %+v", intervals[0])
 	}
 

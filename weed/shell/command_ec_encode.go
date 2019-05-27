@@ -208,7 +208,7 @@ func oneServerCopyEcShardsFromSource(ctx context.Context, grpcDialOption grpc.Di
 			_, copyErr := volumeServerClient.VolumeEcShardsCopy(ctx, &volume_server_pb.VolumeEcShardsCopyRequest{
 				VolumeId:       uint32(volumeId),
 				Collection:     collection,
-				EcIndexes:      copiedShardIds,
+				ShardIds:      copiedShardIds,
 				SourceDataNode: existingLocation.Url,
 			})
 			if copyErr != nil {
@@ -219,7 +219,7 @@ func oneServerCopyEcShardsFromSource(ctx context.Context, grpcDialOption grpc.Di
 		_, mountErr := volumeServerClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
 			VolumeId:   uint32(volumeId),
 			Collection: collection,
-			EcIndexes:  copiedShardIds,
+			ShardIds:  copiedShardIds,
 		})
 		if mountErr != nil {
 			return mountErr
@@ -243,7 +243,7 @@ func sourceServerDeleteEcShards(ctx context.Context, grpcDialOption grpc.DialOpt
 	return operation.WithVolumeServerClient(sourceLocation.Url, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, deleteErr := volumeServerClient.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
 			VolumeId:        uint32(volumeId),
-			EcIndexes:       toBeDeletedShardIds,
+			ShardIds:       toBeDeletedShardIds,
 			ShouldDeleteEcx: shouldDeleteEcx,
 		})
 		return deleteErr

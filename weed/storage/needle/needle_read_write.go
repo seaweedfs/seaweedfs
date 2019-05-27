@@ -170,11 +170,8 @@ func ReadNeedleBlob(r *os.File, offset int64, size uint32, version Version) (dat
 	return dataSlice, err
 }
 
-func (n *Needle) ReadData(r *os.File, offset int64, size uint32, version Version) (err error) {
-	bytes, err := ReadNeedleBlob(r, offset, size, version)
-	if err != nil {
-		return err
-	}
+// ReadBytes hydrates the needle from the bytes buffer, with only n.Id is set.
+func (n *Needle) ReadBytes(bytes []byte, offset int64, size uint32, version Version) (err error) {
 	n.ParseNeedleHeader(bytes)
 	if n.Size != size {
 		return fmt.Errorf("File Entry Not Found. offset %d, Needle id %d expected size %d Memory %d", offset, n.Id, n.Size, size)
@@ -201,6 +198,15 @@ func (n *Needle) ReadData(r *os.File, offset int64, size uint32, version Version
 		n.AppendAtNs = util.BytesToUint64(bytes[tsOffset : tsOffset+TimestampSize])
 	}
 	return nil
+}
+
+// ReadData hydrates the needle from the file, with only n.Id is set.
+func (n *Needle) ReadData(r *os.File, offset int64, size uint32, version Version) (err error) {
+	bytes, err := ReadNeedleBlob(r, offset, size, version)
+	if err != nil {
+		return err
+	}
+	return n.ReadBytes(bytes, offset, size, version)
 }
 
 func (n *Needle) ParseNeedleHeader(bytes []byte) {
