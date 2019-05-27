@@ -40,7 +40,9 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	glog.V(4).Infoln("volume", volumeId, "reading", n)
-	if !vs.store.HasVolume(volumeId) {
+	hasVolume := vs.store.HasVolume(volumeId)
+	_, hasEcShard := vs.store.HasEcShard(volumeId)
+	if !hasVolume && !hasEcShard {
 		if !vs.ReadRedirect {
 			glog.V(2).Infoln("volume is not local:", err, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -65,10 +67,15 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	cookie := n.Cookie
-	count, e := vs.store.ReadVolumeNeedle(volumeId, n)
-	glog.V(4).Infoln("read bytes", count, "error", e)
-	if e != nil || count < 0 {
-		glog.V(0).Infof("read %s error: %v", r.URL.Path, e)
+	var count int
+	if hasVolume {
+		count, err = vs.store.ReadVolumeNeedle(volumeId, n)
+	} else if hasEcShard {
+		count, err = vs.store.ReadEcShardNeedle(volumeId, n)
+	}
+	glog.V(4).Infoln("read bytes", count, "error", err)
+	if err != nil || count < 0 {
+		glog.V(0).Infof("read %s error: %v", r.URL.Path, err)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}

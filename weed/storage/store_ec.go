@@ -33,9 +33,9 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 			var shardBits erasure_coding.ShardBits
 
 			s.NewEcShardsChan <- master_pb.VolumeEcShardInformationMessage{
-				Id:               uint32(vid),
-				Collection:       collection,
-				EcIndexBits:      uint32(shardBits.AddShardId(shardId)),
+				Id:          uint32(vid),
+				Collection:  collection,
+				EcIndexBits: uint32(shardBits.AddShardId(shardId)),
 			}
 			return nil
 		}
@@ -53,9 +53,9 @@ func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.Shar
 
 	var shardBits erasure_coding.ShardBits
 	message := master_pb.VolumeEcShardInformationMessage{
-		Id:               uint32(vid),
-		Collection:       ecShard.Collection,
-		EcIndexBits:      uint32(shardBits.AddShardId(shardId)),
+		Id:          uint32(vid),
+		Collection:  ecShard.Collection,
+		EcIndexBits: uint32(shardBits.AddShardId(shardId)),
 	}
 
 	for _, location := range s.Locations {
@@ -69,11 +69,29 @@ func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.Shar
 	return fmt.Errorf("UnmountEcShards %d.%d not found on disk", vid, shardId)
 }
 
-func (s *Store) findEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) (*erasure_coding.EcVolumeShard, bool)  {
+func (s *Store) findEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) (*erasure_coding.EcVolumeShard, bool) {
 	for _, location := range s.Locations {
 		if v, found := location.FindEcShard(vid, shardId); found {
 			return v, found
 		}
 	}
 	return nil, false
+}
+
+func (s *Store) HasEcShard(vid needle.VolumeId) (erasure_coding.EcVolumeShards, bool) {
+	for _, location := range s.Locations {
+		if s, found := location.HasEcShard(vid); found {
+			return s, true
+		}
+	}
+	return nil, false
+}
+
+func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle) (int, error) {
+	for _, location := range s.Locations {
+		if ecShards, found := location.HasEcShard(vid); found {
+			return ecShards.ReadEcShardNeedle(n)
+		}
+	}
+	return 0, fmt.Errorf("ec shard %d not found", vid)
 }

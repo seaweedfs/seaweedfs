@@ -1,43 +1,14 @@
 package erasure_coding
 
 import (
-	"fmt"
 	"math"
-	"os"
-	"path"
 	"sort"
-	"strconv"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
-type ShardId uint8
-
-type EcVolumeShard struct {
-	VolumeId   needle.VolumeId
-	ShardId    ShardId
-	Collection string
-	dir        string
-	ecdFile    *os.File
-	ecxFile    *os.File
-}
 type EcVolumeShards []*EcVolumeShard
-
-func NewEcVolumeShard(dirname string, collection string, id needle.VolumeId, shardId ShardId) (v *EcVolumeShard, e error) {
-
-	v = &EcVolumeShard{dir: dirname, Collection: collection, VolumeId: id, ShardId: shardId}
-
-	baseFileName := v.FileName()
-	if v.ecxFile, e = os.OpenFile(baseFileName+".ecx", os.O_RDONLY, 0644); e != nil {
-		return nil, fmt.Errorf("cannot read ec volume index %s.ecx: %v", baseFileName, e)
-	}
-	if v.ecdFile, e = os.OpenFile(baseFileName+ToExt(int(shardId)), os.O_RDONLY, 0644); e != nil {
-		return nil, fmt.Errorf("cannot read ec volume shard %s.%s: %v", baseFileName, ToExt(int(shardId)), e)
-	}
-
-	return
-}
 
 func (shards *EcVolumeShards) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) bool {
 	for _, s := range *shards {
@@ -68,6 +39,15 @@ func (shards *EcVolumeShards) DeleteEcVolumeShard(ecVolumeShard *EcVolumeShard) 
 	return true
 }
 
+func (shards *EcVolumeShards) FindEcVolumeShard(shardId ShardId) (ecVolumeShard *EcVolumeShard, found bool) {
+	for _, s := range *shards {
+		if s.ShardId == shardId {
+			return s, true
+		}
+	}
+	return nil, false
+}
+
 func (shards *EcVolumeShards) Close() {
 	for _, s := range *shards {
 		s.Close()
@@ -91,31 +71,19 @@ func (shards *EcVolumeShards) ToVolumeEcShardInformationMessage() (messages []*m
 	return
 }
 
-func (v *EcVolumeShard) String() string {
-	return fmt.Sprintf("ec shard %v:%v, dir:%s, Collection:%s", v.VolumeId, v.ShardId, v.dir, v.Collection)
-}
+func (shards *EcVolumeShards) ReadEcShardNeedle(n *needle.Needle) (int, error) {
 
-func (v *EcVolumeShard) FileName() (fileName string) {
-	return EcShardFileName(v.Collection, v.dir, int(v.VolumeId))
-}
+	shard := (*shards)[0]
+	// find the needle from ecx file
+	offset, size, err := shard.findNeedleFromEcx(n.Id)
+	if err != nil {
+		return 0, err
+	}
 
-func EcShardFileName(collection string, dir string, id int) (fileName string) {
-	idString := strconv.Itoa(id)
-	if collection == "" {
-		fileName = path.Join(dir, idString)
-	} else {
-		fileName = path.Join(dir, collection+"_"+idString)
-	}
-	return
-}
+	// calculate the locations in the ec shards
+	intervals := LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, shard.ecxFileSize, offset.ToAcutalOffset(), size)
 
-func (v *EcVolumeShard) Close() {
-	if v.ecdFile != nil {
-		_ = v.ecdFile.Close()
-		v.ecdFile = nil
-	}
-	if v.ecxFile != nil {
-		_ = v.ecxFile.Close()
-		v.ecxFile = nil
-	}
+	// TODO read the intervals
+
+	return len(intervals), nil
 }

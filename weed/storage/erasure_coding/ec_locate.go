@@ -1,22 +1,25 @@
 package erasure_coding
 
 type Interval struct {
-	blockIndex       int
-	innerBlockOffset int64
-	size             uint32
-	isLargeBlock     bool
+	BlockIndex          int
+	InnerBlockOffset    int64
+	Size                uint32
+	IsLargeBlock        bool
+	LargeBlockRowsCount int
 }
 
-func locateData(largeBlockLength, smallBlockLength int64, datSize int64, offset int64, size uint32) (intervals []Interval) {
+func LocateData(largeBlockLength, smallBlockLength int64, datSize int64, offset int64, size uint32) (intervals []Interval) {
 	blockIndex, isLargeBlock, innerBlockOffset := locateOffset(largeBlockLength, smallBlockLength, datSize, offset)
 
-	nLargeBlockRows := int(datSize / (largeBlockLength * DataShardsCount))
+	// adding DataShardsCount*smallBlockLength to ensure we can derive the number of large block size from a shard size
+	nLargeBlockRows := int((datSize + DataShardsCount*smallBlockLength) / (largeBlockLength * DataShardsCount))
 
 	for size > 0 {
 		interval := Interval{
-			blockIndex:       blockIndex,
-			innerBlockOffset: innerBlockOffset,
-			isLargeBlock:     isLargeBlock,
+			BlockIndex:          blockIndex,
+			InnerBlockOffset:    innerBlockOffset,
+			IsLargeBlock:        isLargeBlock,
+			LargeBlockRowsCount: nLargeBlockRows,
 		}
 
 		blockRemaining := largeBlockLength - innerBlockOffset
@@ -25,14 +28,14 @@ func locateData(largeBlockLength, smallBlockLength int64, datSize int64, offset 
 		}
 
 		if int64(size) <= blockRemaining {
-			interval.size = size
+			interval.Size = size
 			intervals = append(intervals, interval)
 			return
 		}
-		interval.size = uint32(blockRemaining)
+		interval.Size = uint32(blockRemaining)
 		intervals = append(intervals, interval)
 
-		size -= interval.size
+		size -= interval.Size
 		blockIndex += 1
 		if isLargeBlock && blockIndex == nLargeBlockRows*DataShardsCount {
 			isLargeBlock = false

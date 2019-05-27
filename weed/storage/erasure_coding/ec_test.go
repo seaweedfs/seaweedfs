@@ -103,7 +103,7 @@ func readDatFile(datFile *os.File, offset types.Offset, size uint32) ([]byte, er
 
 func readEcFile(datSize int64, ecFiles []*os.File, offset types.Offset, size uint32) (data []byte, err error) {
 
-	intervals := locateData(largeBlockSize, smallBlockSize, datSize, offset.ToAcutalOffset(), size)
+	intervals := LocateData(largeBlockSize, smallBlockSize, datSize, offset.ToAcutalOffset(), size)
 
 	nLargeBlockRows := int(datSize / (largeBlockSize * DataShardsCount))
 
@@ -123,20 +123,20 @@ func readEcFile(datSize int64, ecFiles []*os.File, offset types.Offset, size uin
 }
 
 func readOneInterval(interval Interval, ecFiles []*os.File, nLargeBlockRows int) (data []byte, err error) {
-	ecFileOffset := interval.innerBlockOffset
-	rowIndex := interval.blockIndex / DataShardsCount
-	if interval.isLargeBlock {
+	ecFileOffset := interval.InnerBlockOffset
+	rowIndex := interval.BlockIndex / DataShardsCount
+	if interval.IsLargeBlock {
 		ecFileOffset += int64(rowIndex) * largeBlockSize
 	} else {
 		ecFileOffset += int64(nLargeBlockRows)*largeBlockSize + int64(rowIndex)*smallBlockSize
 	}
 
-	ecFileIndex := interval.blockIndex % DataShardsCount
+	ecFileIndex := interval.BlockIndex % DataShardsCount
 
-	data = make([]byte, interval.size)
+	data = make([]byte, interval.Size)
 	err = readFromFile(ecFiles[ecFileIndex], data, ecFileOffset)
 	{ // do some ec testing
-		ecData, err := readFromOtherEcFiles(ecFiles, ecFileIndex, ecFileOffset, interval.size)
+		ecData, err := readFromOtherEcFiles(ecFiles, ecFileIndex, ecFileOffset, interval.Size)
 		if err != nil {
 			return nil, fmt.Errorf("ec reconstruct error: %v", err)
 		}
@@ -194,7 +194,7 @@ func removeGeneratedFiles(baseFileName string) {
 }
 
 func TestLocateData(t *testing.T) {
-	intervals := locateData(largeBlockSize, smallBlockSize, DataShardsCount*largeBlockSize+1, DataShardsCount*largeBlockSize, 1)
+	intervals := LocateData(largeBlockSize, smallBlockSize, DataShardsCount*largeBlockSize+1, DataShardsCount*largeBlockSize, 1)
 	if len(intervals) != 1 {
 		t.Errorf("unexpected interval size %d", len(intervals))
 	}
@@ -202,13 +202,13 @@ func TestLocateData(t *testing.T) {
 		t.Errorf("unexpected interval %+v", intervals[0])
 	}
 
-	intervals = locateData(largeBlockSize, smallBlockSize, DataShardsCount*largeBlockSize+1, DataShardsCount*largeBlockSize/2+100, DataShardsCount*largeBlockSize+1-DataShardsCount*largeBlockSize/2-100)
+	intervals = LocateData(largeBlockSize, smallBlockSize, DataShardsCount*largeBlockSize+1, DataShardsCount*largeBlockSize/2+100, DataShardsCount*largeBlockSize+1-DataShardsCount*largeBlockSize/2-100)
 	fmt.Printf("%+v\n", intervals)
 }
 
 func (this Interval) sameAs(that Interval) bool {
-	return this.isLargeBlock == that.isLargeBlock &&
-		this.innerBlockOffset == that.innerBlockOffset &&
-		this.blockIndex == that.blockIndex &&
-		this.size == that.size
+	return this.IsLargeBlock == that.IsLargeBlock &&
+		this.InnerBlockOffset == that.InnerBlockOffset &&
+		this.BlockIndex == that.BlockIndex &&
+		this.Size == that.Size
 }

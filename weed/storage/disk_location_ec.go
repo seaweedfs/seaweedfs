@@ -16,6 +16,17 @@ var (
 	re = regexp.MustCompile("\\.ec[0-9][0-9]")
 )
 
+func (l *DiskLocation) HasEcShard(vid needle.VolumeId) (erasure_coding.EcVolumeShards, bool) {
+	l.ecShardsLock.RLock()
+	defer l.ecShardsLock.RUnlock()
+
+	ecShards, ok := l.ecShards[vid]
+	if ok {
+		return ecShards, true
+	}
+	return nil, false
+}
+
 func (l *DiskLocation) FindEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) (*erasure_coding.EcVolumeShard, bool) {
 	l.ecShardsLock.RLock()
 	defer l.ecShardsLock.RUnlock()

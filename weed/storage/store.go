@@ -18,18 +18,17 @@ const (
  * A VolumeServer contains one Store
  */
 type Store struct {
-	volumeSizeLimit    uint64 //read from the master
-	Ip                 string
-	Port               int
-	PublicUrl          string
-	Locations          []*DiskLocation
-	dataCenter         string //optional informaton, overwriting master setting if exists
-	rack               string //optional information, overwriting master setting if exists
-	connected          bool
-	Client             master_pb.Seaweed_SendHeartbeatClient
-	NeedleMapType      NeedleMapType
-	NewVolumesChan     chan master_pb.VolumeShortInformationMessage
-	DeletedVolumesChan chan master_pb.VolumeShortInformationMessage
+	volumeSizeLimit     uint64 //read from the master
+	Ip                  string
+	Port                int
+	PublicUrl           string
+	Locations           []*DiskLocation
+	dataCenter          string //optional informaton, overwriting master setting if exists
+	rack                string //optional information, overwriting master setting if exists
+	connected           bool
+	NeedleMapType       NeedleMapType
+	NewVolumesChan      chan master_pb.VolumeShortInformationMessage
+	DeletedVolumesChan  chan master_pb.VolumeShortInformationMessage
 	NewEcShardsChan     chan master_pb.VolumeEcShardInformationMessage
 	DeletedEcShardsChan chan master_pb.VolumeEcShardInformationMessage
 }

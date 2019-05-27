@@ -66,9 +66,6 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 	glog.V(0).Infof("Heartbeat to: %v", masterNode)
 	vs.currentMaster = masterNode
 
-	vs.store.Client = stream
-	defer func() { vs.store.Client = nil }()
-
 	doneChan := make(chan error, 1)
 
 	go func() {
