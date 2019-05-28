@@ -43,7 +43,7 @@ func Assign(server string, grpcDialOption grpc.DialOption, primaryRequest *Volum
 			continue
 		}
 
-		lastError = withMasterServerClient(server, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+		lastError = WithMasterServerClient(server, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
 			req := &master_pb.AssignRequest{
 				Count:       primaryRequest.Count,

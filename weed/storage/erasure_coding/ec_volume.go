@@ -5,6 +5,8 @@ import (
 	"math"
 	"os"
 	"sort"
+	"sync"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/idx"
@@ -13,12 +15,15 @@ import (
 )
 
 type EcVolume struct {
-	Shards      []*EcVolumeShard
-	VolumeId    needle.VolumeId
-	Collection  string
-	dir         string
-	ecxFile     *os.File
-	ecxFileSize int64
+	VolumeId                  needle.VolumeId
+	Collection                string
+	dir                       string
+	ecxFile                   *os.File
+	ecxFileSize               int64
+	Shards                    []*EcVolumeShard
+	ShardLocations            map[ShardId][]string
+	ShardLocationsRefreshTime time.Time
+	ShardLocationsLock        sync.RWMutex
 }
 
 func NewEcVolume(dir string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {

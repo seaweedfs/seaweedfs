@@ -39,13 +39,13 @@ func (vs *VolumeServer) heartbeat() {
 				glog.V(0).Infof("failed to parse master grpc %v: %v", masterGrpcAddress, parseErr)
 				continue
 			}
-			vs.store.MasterGrpcAddress = masterGrpcAddress
+			vs.store.MasterAddress = master
 			newLeader, err = vs.doHeartbeat(context.Background(), master, masterGrpcAddress, grpcDialOption, time.Duration(vs.pulseSeconds)*time.Second)
 			if err != nil {
 				glog.V(0).Infof("heartbeat error: %v", err)
 				time.Sleep(time.Duration(vs.pulseSeconds) * time.Second)
 				newLeader = ""
-				vs.store.MasterGrpcAddress = ""
+				vs.store.MasterAddress = ""
 			}
 		}
 	}

@@ -19,7 +19,7 @@ const (
  * A VolumeServer contains one Store
  */
 type Store struct {
-	MasterGrpcAddress   string
+	MasterAddress       string
 	grpcDialOption      grpc.DialOption
 	volumeSizeLimit     uint64 //read from the master
 	Ip                  string
