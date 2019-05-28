@@ -26,7 +26,7 @@ const (
 )
 
 func (n *Needle) DiskSize(version Version) int64 {
-	return getActualSize(n.Size, version)
+	return GetActualSize(n.Size, version)
 }
 
 func (n *Needle) Append(w *os.File, version Version) (offset uint64, size uint32, actualSize int64, err error) {
@@ -159,13 +159,13 @@ func (n *Needle) Append(w *os.File, version Version) (offset uint64, size uint32
 			_, err = w.Write(header[0 : NeedleChecksumSize+TimestampSize+padding])
 		}
 
-		return offset, n.DataSize, getActualSize(n.Size, version), err
+		return offset, n.DataSize, GetActualSize(n.Size, version), err
 	}
 	return 0, 0, 0, fmt.Errorf("Unsupported Version! (%d)", version)
 }
 
 func ReadNeedleBlob(r *os.File, offset int64, size uint32, version Version) (dataSlice []byte, err error) {
-	dataSlice = make([]byte, int(getActualSize(size, version)))
+	dataSlice = make([]byte, int(GetActualSize(size, version)))
 	_, err = r.ReadAt(dataSlice, offset)
 	return dataSlice, err
 }
@@ -393,6 +393,6 @@ func (n *Needle) SetHasPairs() {
 	n.Flags = n.Flags | FlagHasPairs
 }
 
-func getActualSize(size uint32, version Version) int64 {
+func GetActualSize(size uint32, version Version) int64 {
 	return NeedleHeaderSize + NeedleBodyLength(size, version)
 }

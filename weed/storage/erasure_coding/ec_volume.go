@@ -41,6 +41,8 @@ func NewEcVolume(dir string, collection string, vid needle.VolumeId) (ev *EcVolu
 	}
 	ev.ecxFileSize = ecxFi.Size()
 
+	ev.ShardLocations = make(map[ShardId][]string)
+
 	return
 }
 
@@ -51,7 +53,7 @@ func (ev *EcVolume) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) bool {
 		}
 	}
 	ev.Shards = append(ev.Shards, ecVolumeShard)
-	sort.Slice(ev, func(i, j int) bool {
+	sort.Slice(ev.Shards, func(i, j int) bool {
 		return ev.Shards[i].VolumeId < ev.Shards[j].VolumeId ||
 			ev.Shards[i].VolumeId == ev.Shards[j].VolumeId && ev.Shards[i].ShardId < ev.Shards[j].ShardId
 	})
