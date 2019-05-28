@@ -151,11 +151,11 @@ func (vs *VolumeServer) VolumeEcShardsUnmount(ctx context.Context, req *volume_s
 
 func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardReadRequest, stream volume_server_pb.VolumeServer_VolumeEcShardReadServer) error {
 
-	ecShards, found := vs.store.HasEcShard(needle.VolumeId(req.VolumeId))
+	ecVolume, found := vs.store.FindEcVolume(needle.VolumeId(req.VolumeId))
 	if !found {
 		return fmt.Errorf("not found ec volume id %d", req.VolumeId)
 	}
-	ecShard, found := ecShards.FindEcVolumeShard(erasure_coding.ShardId(req.ShardId))
+	ecShard, found := ecVolume.FindEcVolumeShard(erasure_coding.ShardId(req.ShardId))
 	if !found {
 		return fmt.Errorf("not found ec shard %d.%d", req.VolumeId, req.ShardId)
 	}

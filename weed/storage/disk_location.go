@@ -20,14 +20,14 @@ type DiskLocation struct {
 	sync.RWMutex
 
 	// erasure coding
-	ecShards     map[needle.VolumeId]erasure_coding.EcVolumeShards
-	ecShardsLock sync.RWMutex
+	ecVolumes     map[needle.VolumeId]*erasure_coding.EcVolume
+	ecVolumesLock sync.RWMutex
 }
 
 func NewDiskLocation(dir string, maxVolumeCount int) *DiskLocation {
 	location := &DiskLocation{Directory: dir, MaxVolumeCount: maxVolumeCount}
 	location.volumes = make(map[needle.VolumeId]*Volume)
-	location.ecShards = make(map[needle.VolumeId]erasure_coding.EcVolumeShards)
+	location.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
 	return location
 }
 
@@ -109,7 +109,7 @@ func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
 	glog.V(0).Infof("Store started on dir: %s with %d volumes max %d", l.Directory, len(l.volumes), l.MaxVolumeCount)
 
 	l.loadAllEcShards()
-	glog.V(0).Infof("Store started on dir: %s with %d ec shards", l.Directory, len(l.ecShards))
+	glog.V(0).Infof("Store started on dir: %s with %d ec shards", l.Directory, len(l.ecVolumes))
 
 }
 
@@ -208,11 +208,11 @@ func (l *DiskLocation) Close() {
 	}
 	l.Unlock()
 
-	l.ecShardsLock.Lock()
-	for _, shards := range l.ecShards {
+	l.ecVolumesLock.Lock()
+	for _, shards := range l.ecVolumes {
 		shards.Close()
 	}
-	l.ecShardsLock.Unlock()
+	l.ecVolumesLock.Unlock()
 
 	return
 }

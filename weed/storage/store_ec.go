@@ -16,11 +16,11 @@ import (
 func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 	var ecShardMessages []*master_pb.VolumeEcShardInformationMessage
 	for _, location := range s.Locations {
-		location.ecShardsLock.RLock()
-		for _, ecShards := range location.ecShards {
+		location.ecVolumesLock.RLock()
+		for _, ecShards := range location.ecVolumes {
 			ecShardMessages = append(ecShardMessages, ecShards.ToVolumeEcShardInformationMessage()...)
 		}
-		location.ecShardsLock.RUnlock()
+		location.ecVolumesLock.RUnlock()
 	}
 
 	return &master_pb.Heartbeat{
@@ -82,9 +82,9 @@ func (s *Store) findEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId)
 	return nil, false
 }
 
-func (s *Store) HasEcShard(vid needle.VolumeId) (erasure_coding.EcVolumeShards, bool) {
+func (s *Store) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, bool) {
 	for _, location := range s.Locations {
-		if s, found := location.HasEcShard(vid); found {
+		if s, found := location.FindEcVolume(vid); found {
 			return s, true
 		}
 	}
@@ -93,14 +93,14 @@ func (s *Store) HasEcShard(vid needle.VolumeId) (erasure_coding.EcVolumeShards, 
 
 func (s *Store) ReadEcShardNeedle(ctx context.Context, vid needle.VolumeId, n *needle.Needle) (int, error) {
 	for _, location := range s.Locations {
-		if localEcShards, found := location.HasEcShard(vid); found {
+		if localEcVolume, found := location.FindEcVolume(vid); found {
 
-			offset, size, intervals, err := localEcShards.LocateEcShardNeedle(n)
+			offset, size, intervals, err := localEcVolume.LocateEcShardNeedle(n)
 			if err != nil {
 				return 0, err
 			}
 
-			bytes, err := s.readEcShardIntervals(ctx, vid, localEcShards, intervals)
+			bytes, err := s.readEcShardIntervals(ctx, vid, localEcVolume, intervals)
 			if err != nil {
 				return 0, fmt.Errorf("ReadEcShardIntervals: %v", err)
 			}
@@ -118,14 +118,14 @@ func (s *Store) ReadEcShardNeedle(ctx context.Context, vid needle.VolumeId, n *n
 	return 0, fmt.Errorf("ec shard %d not found", vid)
 }
 
-func (s *Store) readEcShardIntervals(ctx context.Context, vid needle.VolumeId, localEcShards erasure_coding.EcVolumeShards, intervals []erasure_coding.Interval) (data []byte, err error) {
+func (s *Store) readEcShardIntervals(ctx context.Context, vid needle.VolumeId, ecVolume *erasure_coding.EcVolume, intervals []erasure_coding.Interval) (data []byte, err error) {
 	shardLocations, err := s.cachedLookupEcShardLocations(ctx, vid)
 	if err != nil {
 		return nil, fmt.Errorf("failed to locate shard via master grpc %s: %v", s.MasterGrpcAddress, err)
 	}
 
 	for i, interval := range intervals {
-		if d, e := s.readOneEcShardInterval(ctx, vid, localEcShards, shardLocations, interval); e != nil {
+		if d, e := s.readOneEcShardInterval(ctx, vid, ecVolume, shardLocations, interval); e != nil {
 			return nil, e
 		} else {
 			if i == 0 {
@@ -138,10 +138,10 @@ func (s *Store) readEcShardIntervals(ctx context.Context, vid needle.VolumeId, l
 	return
 }
 
-func (s *Store) readOneEcShardInterval(ctx context.Context, vid needle.VolumeId, localEcShards erasure_coding.EcVolumeShards, shardLocations map[erasure_coding.ShardId]string, interval erasure_coding.Interval) (data []byte, err error) {
+func (s *Store) readOneEcShardInterval(ctx context.Context, vid needle.VolumeId, ecVolume *erasure_coding.EcVolume, shardLocations map[erasure_coding.ShardId]string, interval erasure_coding.Interval) (data []byte, err error) {
 	shardId, actualOffset := interval.ToShardIdAndOffset(erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize)
 	data = make([]byte, interval.Size)
-	if shard, found := localEcShards.FindEcVolumeShard(shardId); found {
+	if shard, found := ecVolume.FindEcVolumeShard(shardId); found {
 		if _, err = shard.ReadAt(data, actualOffset); err != nil {
 			return
 		}

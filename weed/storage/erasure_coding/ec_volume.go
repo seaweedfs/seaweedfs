@@ -9,26 +9,28 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
-type EcVolumeShards []*EcVolumeShard
+type EcVolume struct {
+	Shards []*EcVolumeShard
+}
 
-func (shards *EcVolumeShards) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) bool {
-	for _, s := range *shards {
+func (ev *EcVolume) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) bool {
+	for _, s := range ev.Shards {
 		if s.ShardId == ecVolumeShard.ShardId {
 			return false
 		}
 	}
-	*shards = append(*shards, ecVolumeShard)
-	sort.Slice(shards, func(i, j int) bool {
-		return (*shards)[i].VolumeId < (*shards)[j].VolumeId ||
-			(*shards)[i].VolumeId == (*shards)[j].VolumeId && (*shards)[i].ShardId < (*shards)[j].ShardId
+	ev.Shards = append(ev.Shards, ecVolumeShard)
+	sort.Slice(ev, func(i, j int) bool {
+		return ev.Shards[i].VolumeId < ev.Shards[j].VolumeId ||
+			ev.Shards[i].VolumeId == ev.Shards[j].VolumeId && ev.Shards[i].ShardId < ev.Shards[j].ShardId
 	})
 	return true
 }
 
-func (shards *EcVolumeShards) DeleteEcVolumeShard(ecVolumeShard *EcVolumeShard) bool {
+func (ev *EcVolume) DeleteEcVolumeShard(shardId ShardId) bool {
 	foundPosition := -1
-	for i, s := range *shards {
-		if s.ShardId == ecVolumeShard.ShardId {
+	for i, s := range ev.Shards {
+		if s.ShardId == shardId {
 			foundPosition = i
 		}
 	}
@@ -36,12 +38,12 @@ func (shards *EcVolumeShards) DeleteEcVolumeShard(ecVolumeShard *EcVolumeShard) 
 		return false
 	}
 
-	*shards = append((*shards)[:foundPosition], (*shards)[foundPosition+1:]...)
+	ev.Shards = append(ev.Shards[:foundPosition], ev.Shards[foundPosition+1:]...)
 	return true
 }
 
-func (shards *EcVolumeShards) FindEcVolumeShard(shardId ShardId) (ecVolumeShard *EcVolumeShard, found bool) {
-	for _, s := range *shards {
+func (ev *EcVolume) FindEcVolumeShard(shardId ShardId) (ecVolumeShard *EcVolumeShard, found bool) {
+	for _, s := range ev.Shards {
 		if s.ShardId == shardId {
 			return s, true
 		}
@@ -49,16 +51,16 @@ func (shards *EcVolumeShards) FindEcVolumeShard(shardId ShardId) (ecVolumeShard 
 	return nil, false
 }
 
-func (shards *EcVolumeShards) Close() {
-	for _, s := range *shards {
+func (ev *EcVolume) Close() {
+	for _, s := range ev.Shards {
 		s.Close()
 	}
 }
 
-func (shards *EcVolumeShards) ToVolumeEcShardInformationMessage() (messages []*master_pb.VolumeEcShardInformationMessage) {
+func (ev *EcVolume) ToVolumeEcShardInformationMessage() (messages []*master_pb.VolumeEcShardInformationMessage) {
 	prevVolumeId := needle.VolumeId(math.MaxUint32)
 	var m *master_pb.VolumeEcShardInformationMessage
-	for _, s := range *shards {
+	for _, s := range ev.Shards {
 		if s.VolumeId != prevVolumeId {
 			m = &master_pb.VolumeEcShardInformationMessage{
 				Id:         uint32(s.VolumeId),
@@ -72,9 +74,9 @@ func (shards *EcVolumeShards) ToVolumeEcShardInformationMessage() (messages []*m
 	return
 }
 
-func (shards *EcVolumeShards) LocateEcShardNeedle(n *needle.Needle) (offset types.Offset, size uint32, intervals []Interval, err error) {
+func (ev *EcVolume) LocateEcShardNeedle(n *needle.Needle) (offset types.Offset, size uint32, intervals []Interval, err error) {
 
-	shard := (*shards)[0]
+	shard := ev.Shards[0]
 	// find the needle from ecx file
 	offset, size, err = shard.findNeedleFromEcx(n.Id)
 	if err != nil {

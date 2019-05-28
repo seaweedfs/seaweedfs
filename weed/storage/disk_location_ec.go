@@ -16,26 +16,26 @@ var (
 	re = regexp.MustCompile("\\.ec[0-9][0-9]")
 )
 
-func (l *DiskLocation) HasEcShard(vid needle.VolumeId) (erasure_coding.EcVolumeShards, bool) {
-	l.ecShardsLock.RLock()
-	defer l.ecShardsLock.RUnlock()
+func (l *DiskLocation) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, bool) {
+	l.ecVolumesLock.RLock()
+	defer l.ecVolumesLock.RUnlock()
 
-	ecShards, ok := l.ecShards[vid]
+	ecVolume, ok := l.ecVolumes[vid]
 	if ok {
-		return ecShards, true
+		return ecVolume, true
 	}
 	return nil, false
 }
 
 func (l *DiskLocation) FindEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) (*erasure_coding.EcVolumeShard, bool) {
-	l.ecShardsLock.RLock()
-	defer l.ecShardsLock.RUnlock()
+	l.ecVolumesLock.RLock()
+	defer l.ecVolumesLock.RUnlock()
 
-	ecShards, ok := l.ecShards[vid]
+	ecVolume, ok := l.ecVolumes[vid]
 	if !ok {
 		return nil, false
 	}
-	for _, ecShard := range ecShards {
+	for _, ecShard := range ecVolume.Shards {
 		if ecShard.ShardId == shardId {
 			return ecShard, true
 		}
@@ -49,39 +49,28 @@ func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shard
 	if err != nil {
 		return fmt.Errorf("failed to create ec shard %d.%d: %v", vid, shardId, err)
 	}
-	l.ecShardsLock.Lock()
-	l.ecShards[vid] = append(l.ecShards[vid], ecVolumeShard)
-	l.ecShardsLock.Unlock()
+	l.ecVolumesLock.Lock()
+	l.ecVolumes[vid].AddEcVolumeShard(ecVolumeShard)
+	l.ecVolumesLock.Unlock()
 
 	return nil
 }
 
 func (l *DiskLocation) UnloadEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) bool {
 
-	l.ecShardsLock.Lock()
-	defer l.ecShardsLock.Unlock()
+	l.ecVolumesLock.Lock()
+	defer l.ecVolumesLock.Unlock()
 
-	vidShards, found := l.ecShards[vid]
+	ecVolume, found := l.ecVolumes[vid]
 	if !found {
 		return false
 	}
-	shardIndex := -1
-	for i, shard := range vidShards {
-		if shard.ShardId == shardId {
-			shardIndex = i
-			break
+	if deleted := ecVolume.DeleteEcVolumeShard(shardId); deleted {
+		if len(ecVolume.Shards) == 0 {
+			delete(l.ecVolumes, vid)
 		}
-	}
-	if shardIndex < 0 {
-		return false
-	}
-
-	if len(vidShards) == 1 {
-		delete(l.ecShards, vid)
 		return true
 	}
-
-	l.ecShards[vid] = append(vidShards[:shardIndex], vidShards[shardIndex+1:]...)
 
 	return true
 }
