@@ -6,9 +6,7 @@ import (
 	"path"
 	"strconv"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 type ShardId uint8
@@ -20,8 +18,6 @@ type EcVolumeShard struct {
 	dir         string
 	ecdFile     *os.File
 	ecdFileSize int64
-	ecxFile     *os.File
-	ecxFileSize int64
 }
 
 func NewEcVolumeShard(dirname string, collection string, id needle.VolumeId, shardId ShardId) (v *EcVolumeShard, e error) {
@@ -29,16 +25,6 @@ func NewEcVolumeShard(dirname string, collection string, id needle.VolumeId, sha
 	v = &EcVolumeShard{dir: dirname, Collection: collection, VolumeId: id, ShardId: shardId}
 
 	baseFileName := v.FileName()
-
-	// open ecx file
-	if v.ecxFile, e = os.OpenFile(baseFileName+".ecx", os.O_RDONLY, 0644); e != nil {
-		return nil, fmt.Errorf("cannot read ec volume index %s.ecx: %v", baseFileName, e)
-	}
-	ecxFi, statErr := v.ecxFile.Stat()
-	if statErr != nil {
-		return nil, fmt.Errorf("can not stat ec volume index %s.ecx: %v", baseFileName, statErr)
-	}
-	v.ecxFileSize = ecxFi.Size()
 
 	// open ecd file
 	if v.ecdFile, e = os.OpenFile(baseFileName+ToExt(int(shardId)), os.O_RDONLY, 0644); e != nil {
@@ -76,34 +62,6 @@ func (shard *EcVolumeShard) Close() {
 		_ = shard.ecdFile.Close()
 		shard.ecdFile = nil
 	}
-	if shard.ecxFile != nil {
-		_ = shard.ecxFile.Close()
-		shard.ecxFile = nil
-	}
-}
-
-func (shard *EcVolumeShard) findNeedleFromEcx(needleId types.NeedleId) (offset types.Offset, size uint32, err error) {
-	var key types.NeedleId
-	buf := make([]byte, types.NeedleMapEntrySize)
-	l, h := int64(0), shard.ecxFileSize/types.NeedleMapEntrySize
-	for l < h {
-		m := (l + h) / 2
-		if _, err := shard.ecxFile.ReadAt(buf, m*types.NeedleMapEntrySize); err != nil {
-			return types.Offset{}, 0, err
-		}
-		key, offset, size = idx.IdxFileEntry(buf)
-		if key == needleId {
-			return
-		}
-		if key < needleId {
-			l = m + 1
-		} else {
-			h = m
-		}
-	}
-
-	err = fmt.Errorf("needle id %d not found", needleId)
-	return
 }
 
 func (shard *EcVolumeShard) ReadAt(buf []byte, offset int64) (int, error) {

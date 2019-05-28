@@ -1,16 +1,42 @@
 package erasure_coding
 
 import (
+	"fmt"
 	"math"
+	"os"
 	"sort"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 type EcVolume struct {
-	Shards []*EcVolumeShard
+	Shards      []*EcVolumeShard
+	VolumeId    needle.VolumeId
+	Collection  string
+	dir         string
+	ecxFile     *os.File
+	ecxFileSize int64
+}
+
+func NewEcVolume(dir string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
+	ev = &EcVolume{dir: dir, Collection: collection, VolumeId: vid}
+
+	baseFileName := EcShardFileName(collection, dir, int(vid))
+
+	// open ecx file
+	if ev.ecxFile, err = os.OpenFile(baseFileName+".ecx", os.O_RDONLY, 0644); err != nil {
+		return nil, fmt.Errorf("cannot read ec volume index %s.ecx: %v", baseFileName, err)
+	}
+	ecxFi, statErr := ev.ecxFile.Stat()
+	if statErr != nil {
+		return nil, fmt.Errorf("can not stat ec volume index %s.ecx: %v", baseFileName, statErr)
+	}
+	ev.ecxFileSize = ecxFi.Size()
+
+	return
 }
 
 func (ev *EcVolume) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) bool {
@@ -55,6 +81,10 @@ func (ev *EcVolume) Close() {
 	for _, s := range ev.Shards {
 		s.Close()
 	}
+	if ev.ecxFile != nil {
+		_ = ev.ecxFile.Close()
+		ev.ecxFile = nil
+	}
 }
 
 func (ev *EcVolume) ToVolumeEcShardInformationMessage() (messages []*master_pb.VolumeEcShardInformationMessage) {
@@ -76,15 +106,40 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage() (messages []*master_pb.V
 
 func (ev *EcVolume) LocateEcShardNeedle(n *needle.Needle) (offset types.Offset, size uint32, intervals []Interval, err error) {
 
-	shard := ev.Shards[0]
 	// find the needle from ecx file
-	offset, size, err = shard.findNeedleFromEcx(n.Id)
+	offset, size, err = ev.findNeedleFromEcx(n.Id)
 	if err != nil {
 		return types.Offset{}, 0, nil, err
 	}
 
-	// calculate the locations in the ec shards
-	intervals = LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, shard.ecxFileSize, offset.ToAcutalOffset(), size)
+	shard := ev.Shards[0]
 
+	// calculate the locations in the ec shards
+	intervals = LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, DataShardsCount*shard.ecdFileSize, offset.ToAcutalOffset(), size)
+
+	return
+}
+
+func (ev *EcVolume) findNeedleFromEcx(needleId types.NeedleId) (offset types.Offset, size uint32, err error) {
+	var key types.NeedleId
+	buf := make([]byte, types.NeedleMapEntrySize)
+	l, h := int64(0), ev.ecxFileSize/types.NeedleMapEntrySize
+	for l < h {
+		m := (l + h) / 2
+		if _, err := ev.ecxFile.ReadAt(buf, m*types.NeedleMapEntrySize); err != nil {
+			return types.Offset{}, 0, err
+		}
+		key, offset, size = idx.IdxFileEntry(buf)
+		if key == needleId {
+			return
+		}
+		if key < needleId {
+			l = m + 1
+		} else {
+			h = m
+		}
+	}
+
+	err = fmt.Errorf("needle id %d not found", needleId)
 	return
 }
