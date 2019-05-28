@@ -29,7 +29,7 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		Counters     *stats.ServerStats
 	}{
 		util.VERSION,
-		vs.MasterNodes,
+		vs.SeedMasterNodes,
 		vs.store.Status(),
 		ds,
 		infos,

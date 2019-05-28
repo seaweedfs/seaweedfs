@@ -11,14 +11,14 @@ import (
 )
 
 type VolumeServer struct {
-	MasterNodes    []string
-	currentMaster  string
-	pulseSeconds   int
-	dataCenter     string
-	rack           string
-	store          *storage.Store
-	guard          *security.Guard
-	grpcDialOption grpc.DialOption
+	SeedMasterNodes []string
+	currentMaster   string
+	pulseSeconds    int
+	dataCenter      string
+	rack            string
+	store           *storage.Store
+	guard           *security.Guard
+	grpcDialOption  grpc.DialOption
 
 	needleMapKind           storage.NeedleMapType
 	FixJpgOrientation       bool
@@ -54,8 +54,8 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		grpcDialOption:          security.LoadClientTLS(viper.Sub("grpc"), "volume"),
 		compactionBytePerSecond: int64(compactionMBPerSecond) * 1024 * 1024,
 	}
-	vs.MasterNodes = masterNodes
-	vs.store = storage.NewStore(port, ip, publicUrl, folders, maxCounts, vs.needleMapKind)
+	vs.SeedMasterNodes = masterNodes
+	vs.store = storage.NewStore(vs.grpcDialOption, port, ip, publicUrl, folders, maxCounts, vs.needleMapKind)
 
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec)
 

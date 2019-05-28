@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -71,7 +72,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	if hasVolume {
 		count, err = vs.store.ReadVolumeNeedle(volumeId, n)
 	} else if hasEcShard {
-		count, err = vs.store.ReadEcShardNeedle(volumeId, n)
+		count, err = vs.store.ReadEcShardNeedle(context.Background(), volumeId, n)
 	}
 	glog.V(4).Infoln("read bytes", count, "error", err)
 	if err != nil || count < 0 {

@@ -8,6 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -18,6 +19,8 @@ const (
  * A VolumeServer contains one Store
  */
 type Store struct {
+	MasterGrpcAddress   string
+	grpcDialOption      grpc.DialOption
 	volumeSizeLimit     uint64 //read from the master
 	Ip                  string
 	Port                int
@@ -38,8 +41,8 @@ func (s *Store) String() (str string) {
 	return
 }
 
-func NewStore(port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int, needleMapKind NeedleMapType) (s *Store) {
-	s = &Store{Port: port, Ip: ip, PublicUrl: publicUrl, NeedleMapType: needleMapKind}
+func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int, needleMapKind NeedleMapType) (s *Store) {
+	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, PublicUrl: publicUrl, NeedleMapType: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirnames); i++ {
 		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i])

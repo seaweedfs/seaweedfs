@@ -21,7 +21,7 @@ func (vs *VolumeServer) GetMaster() string {
 }
 func (vs *VolumeServer) heartbeat() {
 
-	glog.V(0).Infof("Volume server start with masters: %v", vs.MasterNodes)
+	glog.V(0).Infof("Volume server start with seed master nodes: %v", vs.SeedMasterNodes)
 	vs.store.SetDataCenter(vs.dataCenter)
 	vs.store.SetRack(vs.rack)
 
@@ -30,7 +30,7 @@ func (vs *VolumeServer) heartbeat() {
 	var err error
 	var newLeader string
 	for {
-		for _, master := range vs.MasterNodes {
+		for _, master := range vs.SeedMasterNodes {
 			if newLeader != "" {
 				master = newLeader
 			}
@@ -39,11 +39,13 @@ func (vs *VolumeServer) heartbeat() {
 				glog.V(0).Infof("failed to parse master grpc %v: %v", masterGrpcAddress, parseErr)
 				continue
 			}
+			vs.store.MasterGrpcAddress = masterGrpcAddress
 			newLeader, err = vs.doHeartbeat(context.Background(), master, masterGrpcAddress, grpcDialOption, time.Duration(vs.pulseSeconds)*time.Second)
 			if err != nil {
 				glog.V(0).Infof("heartbeat error: %v", err)
 				time.Sleep(time.Duration(vs.pulseSeconds) * time.Second)
 				newLeader = ""
+				vs.store.MasterGrpcAddress = ""
 			}
 		}
 	}
