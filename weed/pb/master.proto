@@ -21,6 +21,8 @@ service Seaweed {
     }
     rpc VolumeList (VolumeListRequest) returns (VolumeListResponse) {
     }
+    rpc LookupEcVolume (LookupEcVolumeRequest) returns (LookupEcVolumeResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -217,4 +219,16 @@ message VolumeListRequest {
 message VolumeListResponse {
     TopologyInfo topology_info = 1;
     uint64 volume_size_limit_mb = 2;
+}
+
+message LookupEcVolumeRequest {
+    uint32 volume_id = 1;
+}
+message LookupEcVolumeResponse {
+    uint32 volume_id = 1;
+    message EcShardIdLocation {
+        uint32 shard_id = 1;
+        repeated Location locations = 2;
+    }
+    repeated EcShardIdLocation shard_id_locations = 2;
 }

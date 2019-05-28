@@ -141,3 +141,36 @@ func (ms *MasterServer) VolumeList(ctx context.Context, req *master_pb.VolumeLis
 
 	return resp, nil
 }
+
+func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.LookupEcVolumeRequest) (*master_pb.LookupEcVolumeResponse, error) {
+
+	if !ms.Topo.IsLeader() {
+		return nil, raft.NotLeaderError
+	}
+
+	resp := &master_pb.LookupEcVolumeResponse{}
+
+	ecLocations, found := ms.Topo.LookupEcShards(needle.VolumeId(req.VolumeId))
+
+	if !found {
+		return resp, fmt.Errorf("ec volume %d not found", req.VolumeId)
+	}
+
+	resp.VolumeId = req.VolumeId
+
+	for shardId, shardLocations := range ecLocations.Locations {
+		var locations []*master_pb.Location
+		for _, dn := range shardLocations {
+			locations = append(locations, &master_pb.Location{
+				Url:       string(dn.Id()),
+				PublicUrl: dn.PublicUrl,
+			})
+		}
+		resp.ShardIdLocations = append(resp.ShardIdLocations, &master_pb.LookupEcVolumeResponse_EcShardIdLocation{
+			ShardId:   uint32(shardId),
+			Locations: locations,
+		})
+	}
+
+	return resp, nil
+}

@@ -172,6 +172,24 @@ func (s *Store) cachedLookupEcShardLocations(ctx context.Context, ecVolume *eras
 	defer ecVolume.ShardLocationsLock.Unlock()
 
 	err = operation.WithMasterServerClient(s.MasterAddress, s.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+		req := &master_pb.LookupEcVolumeRequest{
+			VolumeId: uint32(ecVolume.VolumeId),
+		}
+		resp, err := masterClient.LookupEcVolume(ctx, req)
+		if err != nil {
+			return fmt.Errorf("lookup ec volume %d: %v", ecVolume.VolumeId, err)
+		}
+
+		ecVolume.ShardLocationsLock.Lock()
+		for _, shardIdLocations := range resp.ShardIdLocations {
+			shardId := erasure_coding.ShardId(shardIdLocations.ShardId)
+			ecVolume.ShardLocations[shardId] = nil
+			for _, loc := range shardIdLocations.Locations {
+				ecVolume.ShardLocations[shardId] = append(ecVolume.ShardLocations[shardId], loc.Url)
+			}
+		}
+		ecVolume.ShardLocationsLock.Unlock()
+
 		return nil
 	})
 	return
