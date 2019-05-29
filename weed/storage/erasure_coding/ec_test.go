@@ -178,7 +178,7 @@ func readFromFile(file *os.File, data []byte, ecFileOffset int64) (err error) {
 
 func removeGeneratedFiles(baseFileName string) {
 	for i := 0; i < DataShardsCount+ParityShardsCount; i++ {
-		fname := fmt.Sprintf("%s.ec%02d", baseFileName, i+1)
+		fname := fmt.Sprintf("%s.ec%02d", baseFileName, i)
 		os.Remove(fname)
 	}
 	os.Remove(baseFileName + ".ecx")
