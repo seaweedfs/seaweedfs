@@ -96,19 +96,20 @@ func (s *Store) ReadEcShardNeedle(ctx context.Context, vid needle.VolumeId, n *n
 	for _, location := range s.Locations {
 		if localEcVolume, found := location.FindEcVolume(vid); found {
 
-			offset, size, intervals, err := localEcVolume.LocateEcShardNeedle(n)
+			// TODO need to read the version
+			version := needle.CurrentVersion
+
+			offset, size, intervals, err := localEcVolume.LocateEcShardNeedle(n, version)
 			if err != nil {
 				return 0, err
 			}
 
 			glog.V(4).Infof("read ec volume %d offset %d size %d intervals:%+v", vid, offset.ToAcutalOffset(), size, intervals)
 
-			// TODO need to read the version
-			version := needle.CurrentVersion
-
-			// TODO the interval size should be the actual size
-
-			bytes, err := s.readEcShardIntervals(ctx, vid, localEcVolume, version, intervals)
+			if len(intervals) > 1 {
+				glog.V(4).Infof("ReadEcShardNeedle needle id %s intervals:%+v", n.String(), intervals)
+			}
+			bytes, err := s.readEcShardIntervals(ctx, vid, localEcVolume, intervals)
 			if err != nil {
 				return 0, fmt.Errorf("ReadEcShardIntervals: %v", err)
 			}
@@ -124,14 +125,14 @@ func (s *Store) ReadEcShardNeedle(ctx context.Context, vid needle.VolumeId, n *n
 	return 0, fmt.Errorf("ec shard %d not found", vid)
 }
 
-func (s *Store) readEcShardIntervals(ctx context.Context, vid needle.VolumeId, ecVolume *erasure_coding.EcVolume, version needle.Version, intervals []erasure_coding.Interval) (data []byte, err error) {
+func (s *Store) readEcShardIntervals(ctx context.Context, vid needle.VolumeId, ecVolume *erasure_coding.EcVolume, intervals []erasure_coding.Interval) (data []byte, err error) {
 
 	if err = s.cachedLookupEcShardLocations(ctx, ecVolume); err != nil {
 		return nil, fmt.Errorf("failed to locate shard via master grpc %s: %v", s.MasterAddress, err)
 	}
 
 	for i, interval := range intervals {
-		if d, e := s.readOneEcShardInterval(ctx, ecVolume, version, interval); e != nil {
+		if d, e := s.readOneEcShardInterval(ctx, ecVolume, interval); e != nil {
 			return nil, e
 		} else {
 			if i == 0 {
@@ -144,11 +145,10 @@ func (s *Store) readEcShardIntervals(ctx context.Context, vid needle.VolumeId, e
 	return
 }
 
-func (s *Store) readOneEcShardInterval(ctx context.Context, ecVolume *erasure_coding.EcVolume, version needle.Version, interval erasure_coding.Interval) (data []byte, err error) {
+func (s *Store) readOneEcShardInterval(ctx context.Context, ecVolume *erasure_coding.EcVolume, interval erasure_coding.Interval) (data []byte, err error) {
 	shardId, actualOffset := interval.ToShardIdAndOffset(erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize)
-	data = make([]byte, int(needle.GetActualSize(interval.Size, version)))
+	data = make([]byte, interval.Size)
 	if shard, found := ecVolume.FindEcVolumeShard(shardId); found {
-		glog.V(3).Infof("read local ec shard %d.%d", ecVolume.VolumeId, shardId)
 		if _, err = shard.ReadAt(data, actualOffset); err != nil {
 			glog.V(0).Infof("read local ec shard %d.%d: %v", ecVolume.VolumeId, shardId, err)
 			return
@@ -160,7 +160,7 @@ func (s *Store) readOneEcShardInterval(ctx context.Context, ecVolume *erasure_co
 		if !found || len(sourceDataNodes) == 0 {
 			return nil, fmt.Errorf("failed to find ec shard %d.%d", ecVolume.VolumeId, shardId)
 		}
-		glog.V(3).Infof("read remote ec shard %d.%d from %s", ecVolume.VolumeId, shardId, sourceDataNodes[0])
+		glog.V(4).Infof("read remote ec shard %d.%d from %s", ecVolume.VolumeId, shardId, sourceDataNodes[0])
 		_, err = s.readOneRemoteEcShardInterval(ctx, sourceDataNodes[0], ecVolume.VolumeId, shardId, data, actualOffset)
 		if err != nil {
 			glog.V(1).Infof("failed to read from %s for ec shard %d.%d : %v", sourceDataNodes[0], ecVolume.VolumeId, shardId, err)
@@ -195,6 +195,7 @@ func (s *Store) cachedLookupEcShardLocations(ctx context.Context, ecVolume *eras
 				ecVolume.ShardLocations[shardId] = append(ecVolume.ShardLocations[shardId], loc.Url)
 			}
 		}
+		ecVolume.ShardLocationsRefreshTime = time.Now()
 		ecVolume.ShardLocationsLock.Unlock()
 
 		return nil

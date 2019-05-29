@@ -11,7 +11,7 @@ func TestLoadingEcShards(t *testing.T) {
 		t.Errorf("load all ec shards: %v", err)
 	}
 
-	if len(dl.ecVolumes)!=1 {
+	if len(dl.ecVolumes) != 1 {
 		t.Errorf("loading err")
 	}
 }

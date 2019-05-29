@@ -248,16 +248,16 @@ func (cm *CompactMap) AscendingVisit(visit func(NeedleValue) error) error {
 	for _, cs := range cm.list {
 		cs.RLock()
 		var i, j int
-		for i, j = 0, 0; i < len(cs.overflow) && j < len(cs.values) && j<cs.counter; {
+		for i, j = 0, 0; i < len(cs.overflow) && j < len(cs.values) && j < cs.counter; {
 			if cs.overflow[i].Key < cs.values[j].Key {
 				if err := visit(toNeedleValue(cs.overflowExtra[i], cs.overflow[i], cs)); err != nil {
 					cs.RUnlock()
 					return err
 				}
 				i++
-			}else if cs.overflow[i].Key == cs.values[j].Key {
+			} else if cs.overflow[i].Key == cs.values[j].Key {
 				j++
-			}else{
+			} else {
 				if err := visit(toNeedleValue(cs.valuesExtra[j], cs.values[j], cs)); err != nil {
 					cs.RUnlock()
 					return err
@@ -265,13 +265,13 @@ func (cm *CompactMap) AscendingVisit(visit func(NeedleValue) error) error {
 				j++
 			}
 		}
-		for ;i < len(cs.overflow);i++{
+		for ; i < len(cs.overflow); i++ {
 			if err := visit(toNeedleValue(cs.overflowExtra[i], cs.overflow[i], cs)); err != nil {
 				cs.RUnlock()
 				return err
 			}
 		}
-		for ; j < len(cs.values)&& j<cs.counter;j++{
+		for ; j < len(cs.values) && j < cs.counter; j++ {
 			if err := visit(toNeedleValue(cs.valuesExtra[j], cs.values[j], cs)); err != nil {
 				cs.RUnlock()
 				return err
@@ -292,10 +292,10 @@ func toNeedleValue(snve SectionalNeedleValueExtra, snv SectionalNeedleValue, cs 
 
 func (nv NeedleValue) toSectionalNeedleValue(cs *CompactSection) (SectionalNeedleValue, SectionalNeedleValueExtra) {
 	return SectionalNeedleValue{
-		SectionalNeedleId(nv.Key - cs.start),
-		nv.Offset.OffsetLower,
-		nv.Size,
-	}, SectionalNeedleValueExtra{
-		nv.Offset.OffsetHigher,
-	}
+			SectionalNeedleId(nv.Key - cs.start),
+			nv.Offset.OffsetLower,
+			nv.Size,
+		}, SectionalNeedleValueExtra{
+			nv.Offset.OffsetHigher,
+		}
 }

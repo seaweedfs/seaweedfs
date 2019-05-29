@@ -8,8 +8,8 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/command"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/kardianos/osext"
 	"github.com/jacobsa/daemonize"
+	"github.com/kardianos/osext"
 )
 
 var (

@@ -49,7 +49,7 @@ type Guard struct {
 }
 
 func NewGuard(whiteList []string, signingKey string, expiresAfterSec int) *Guard {
-	g := &Guard{whiteList: whiteList, SigningKey: SigningKey(signingKey), ExpiresAfterSec:expiresAfterSec}
+	g := &Guard{whiteList: whiteList, SigningKey: SigningKey(signingKey), ExpiresAfterSec: expiresAfterSec}
 	g.isActive = len(g.whiteList) != 0 || len(g.SigningKey) != 0
 	return g
 }

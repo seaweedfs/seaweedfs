@@ -51,4 +51,3 @@ func IdxFileEntry(bytes []byte) (key types.NeedleId, offset types.Offset, size u
 const (
 	RowsToRead = 1024
 )
-

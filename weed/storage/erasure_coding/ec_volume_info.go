@@ -40,7 +40,7 @@ func (ecInfo *EcVolumeInfo) ShardIdCount() (count int) {
 	return ecInfo.ShardBits.ShardIdCount()
 }
 
-func (ecInfo *EcVolumeInfo) Minus(other *EcVolumeInfo) (*EcVolumeInfo) {
+func (ecInfo *EcVolumeInfo) Minus(other *EcVolumeInfo) *EcVolumeInfo {
 	ret := &EcVolumeInfo{
 		VolumeId:   ecInfo.VolumeId,
 		Collection: ecInfo.Collection,
@@ -88,10 +88,10 @@ func (b ShardBits) ShardIdCount() (count int) {
 	return
 }
 
-func (b ShardBits) Minus(other ShardBits) (ShardBits) {
+func (b ShardBits) Minus(other ShardBits) ShardBits {
 	return b &^ other
 }
 
-func (b ShardBits) Plus(other ShardBits) (ShardBits) {
+func (b ShardBits) Plus(other ShardBits) ShardBits {
 	return b | other
 }

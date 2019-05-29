@@ -160,34 +160,41 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 		return fmt.Errorf("not found ec shard %d.%d", req.VolumeId, req.ShardId)
 	}
 
-	buffer := make([]byte, BufferSizeLimit)
+	bufSize := req.Size
+	if bufSize > BufferSizeLimit {
+		bufSize = BufferSizeLimit
+	}
+	buffer := make([]byte, bufSize)
+
 	startOffset, bytesToRead := req.Offset, req.Size
 
 	for bytesToRead > 0 {
 		bytesread, err := ecShard.ReadAt(buffer, startOffset)
 
 		// println(fileName, "read", bytesread, "bytes, with target", bytesToRead)
+		if bytesread > 0 {
+
+			if int64(bytesread) > bytesToRead {
+				bytesread = int(bytesToRead)
+			}
+			err = stream.Send(&volume_server_pb.VolumeEcShardReadResponse{
+				Data: buffer[:bytesread],
+			})
+			if err != nil {
+				// println("sending", bytesread, "bytes err", err.Error())
+				return err
+			}
+
+			bytesToRead -= int64(bytesread)
+
+		}
 
 		if err != nil {
 			if err != io.EOF {
 				return err
 			}
-			// println(fileName, "read", bytesread, "bytes, with target", bytesToRead, "err", err.Error())
-			break
+			return nil
 		}
-
-		if int64(bytesread) > bytesToRead {
-			bytesread = int(bytesToRead)
-		}
-		err = stream.Send(&volume_server_pb.VolumeEcShardReadResponse{
-			Data: buffer[:bytesread],
-		})
-		if err != nil {
-			// println("sending", bytesread, "bytes err", err.Error())
-			return err
-		}
-
-		bytesToRead -= int64(bytesread)
 
 	}
 

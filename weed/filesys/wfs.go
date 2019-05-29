@@ -29,9 +29,9 @@ type Option struct {
 	DirListingLimit    int
 	EntryCacheTtl      time.Duration
 
-	MountUid  uint32
-	MountGid  uint32
-	MountMode os.FileMode
+	MountUid   uint32
+	MountGid   uint32
+	MountMode  os.FileMode
 	MountCtime time.Time
 	MountMtime time.Time
 }

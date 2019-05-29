@@ -30,9 +30,9 @@ type FilerStoreWrapper struct {
 	actualStore FilerStore
 }
 
-func NewFilerStoreWrapper(store FilerStore) *FilerStoreWrapper{
+func NewFilerStoreWrapper(store FilerStore) *FilerStoreWrapper {
 	return &FilerStoreWrapper{
-		actualStore:store,
+		actualStore: store,
 	}
 }
 

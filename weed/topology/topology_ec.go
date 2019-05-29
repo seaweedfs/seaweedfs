@@ -123,7 +123,7 @@ func (t *Topology) UnRegisterEcShards(ecShardInfos *erasure_coding.EcVolumeInfo,
 	}
 }
 
-func (t *Topology) LookupEcShards(vid needle.VolumeId)(locations *EcShardLocations, found bool) {
+func (t *Topology) LookupEcShards(vid needle.VolumeId) (locations *EcShardLocations, found bool) {
 	t.ecShardMapLock.RLock()
 	defer t.ecShardMapLock.RUnlock()
 

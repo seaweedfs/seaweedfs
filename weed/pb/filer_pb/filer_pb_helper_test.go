@@ -15,4 +15,3 @@ func TestFileIdSize(t *testing.T) {
 	println(len(fileIdStr))
 	println(len(bytes))
 }
-
