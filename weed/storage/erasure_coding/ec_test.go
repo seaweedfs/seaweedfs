@@ -122,7 +122,7 @@ func readEcFile(datSize int64, ecFiles []*os.File, offset types.Offset, size uin
 
 func readOneInterval(interval Interval, ecFiles []*os.File) (data []byte, err error) {
 
-	ecFileOffset, ecFileIndex := interval.ToShardIdAndOffset(largeBlockSize, smallBlockSize)
+	ecFileIndex, ecFileOffset := interval.ToShardIdAndOffset(largeBlockSize, smallBlockSize)
 
 	data = make([]byte, interval.Size)
 	err = readFromFile(ecFiles[ecFileIndex], data, ecFileOffset)
