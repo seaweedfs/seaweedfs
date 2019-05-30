@@ -83,7 +83,7 @@ func (c *commandEcBalance) Do(args []string, commandEnv *commandEnv, writer io.W
 		}
 
 		if *collection == "EACH_COLLECTION" {
-			collections, err := ListCollectionNames(commandEnv)
+			collections, err := ListCollectionNames(commandEnv, false, true)
 			if err != nil {
 				return err
 			}

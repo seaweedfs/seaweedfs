@@ -84,7 +84,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *commandEnv, writer 
 			continue
 		}
 		if *collection == "EACH_COLLECTION" {
-			collections, err := ListCollectionNames(commandEnv)
+			collections, err := ListCollectionNames(commandEnv, true, false)
 			if err != nil {
 				return err
 			}

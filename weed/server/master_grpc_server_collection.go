@@ -16,7 +16,7 @@ func (ms *MasterServer) CollectionList(ctx context.Context, req *master_pb.Colle
 	}
 
 	resp := &master_pb.CollectionListResponse{}
-	collections := ms.Topo.ListCollections()
+	collections := ms.Topo.ListCollections(req.IncludeNormalVolumes, req.IncludeEcVolumes)
 	for _, c := range collections {
 		resp.Collections = append(resp.Collections, &master_pb.Collection{
 			Name: c,

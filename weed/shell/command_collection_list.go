@@ -24,7 +24,7 @@ func (c *commandCollectionList) Help() string {
 
 func (c *commandCollectionList) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
 
-	collections, err := ListCollectionNames(commandEnv)
+	collections, err := ListCollectionNames(commandEnv, true, true)
 
 	if err != nil {
 		return err
@@ -39,11 +39,14 @@ func (c *commandCollectionList) Do(args []string, commandEnv *commandEnv, writer
 	return nil
 }
 
-func ListCollectionNames(commandEnv *commandEnv) (collections []string, err error) {
+func ListCollectionNames(commandEnv *commandEnv, includeNormalVolumes, includeEcVolumes bool) (collections []string, err error) {
 	var resp *master_pb.CollectionListResponse
 	ctx := context.Background()
 	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
-		resp, err = client.CollectionList(ctx, &master_pb.CollectionListRequest{})
+		resp, err = client.CollectionList(ctx, &master_pb.CollectionListRequest{
+			IncludeNormalVolumes: includeNormalVolumes,
+			IncludeEcVolumes:     includeEcVolumes,
+		})
 		return err
 	})
 	if err != nil {

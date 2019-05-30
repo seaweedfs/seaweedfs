@@ -167,6 +167,8 @@ message Collection {
     string name = 1;
 }
 message CollectionListRequest {
+    bool include_normal_volumes = 1;
+    bool include_ec_volumes = 2;
 }
 message CollectionListResponse {
     repeated Collection collections = 1;
