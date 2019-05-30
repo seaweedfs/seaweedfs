@@ -19,7 +19,7 @@ func (ms *MasterServer) CollectionList(ctx context.Context, req *master_pb.Colle
 	collections := ms.Topo.ListCollections()
 	for _, c := range collections {
 		resp.Collections = append(resp.Collections, &master_pb.Collection{
-			Name: c.Name,
+			Name: c,
 		})
 	}
 

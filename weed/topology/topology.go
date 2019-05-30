@@ -126,9 +126,21 @@ func (t *Topology) GetVolumeLayout(collectionName string, rp *storage.ReplicaPla
 	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl)
 }
 
-func (t *Topology) ListCollections() (ret []*Collection) {
+func (t *Topology) ListCollections() (ret []string) {
+
+	mapOfCollections := make(map[string]bool)
 	for _, c := range t.collectionMap.Items() {
-		ret = append(ret, c.(*Collection))
+		mapOfCollections[c.(*Collection).Name] = true
+	}
+
+	t.ecShardMapLock.RLock()
+	for _, ecVolumeLocation := range t.ecShardMap {
+		mapOfCollections[ecVolumeLocation.Collection] = true
+	}
+	t.ecShardMapLock.RUnlock()
+
+	for k, _ := range mapOfCollections {
+		ret = append(ret, k)
 	}
 	return ret
 }
