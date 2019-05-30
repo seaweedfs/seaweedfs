@@ -97,40 +97,24 @@ func generateEcShards(ctx context.Context, grpcDialOption grpc.DialOption, volum
 
 func balanceEcShards(ctx context.Context, commandEnv *commandEnv, volumeId needle.VolumeId, collection string, existingLocations []wdclient.Location) (err error) {
 
-	// list all possible locations
-	var resp *master_pb.VolumeListResponse
-	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
-		return err
-	})
+	allEcNodes, totalFreeEcSlots, err := collectEcNodes(ctx, commandEnv)
 	if err != nil {
 		return err
 	}
 
-	// find out all volume servers with one volume slot left.
-	var allDataNodes []*master_pb.DataNodeInfo
-	var totalFreeEcSlots uint32
-	eachDataNode(resp.TopologyInfo, func(dn *master_pb.DataNodeInfo) {
-		if freeEcSlots := countFreeShardSlots(dn); freeEcSlots > 0 {
-			allDataNodes = append(allDataNodes, dn)
-			totalFreeEcSlots += freeEcSlots
-		}
-	})
 	if totalFreeEcSlots < erasure_coding.TotalShardsCount {
 		return fmt.Errorf("not enough free ec shard slots. only %d left", totalFreeEcSlots)
 	}
-	sort.Slice(allDataNodes, func(i, j int) bool {
-		return countFreeShardSlots(allDataNodes[j]) < countFreeShardSlots(allDataNodes[i])
-	})
-	if len(allDataNodes) > erasure_coding.TotalShardsCount {
-		allDataNodes = allDataNodes[:erasure_coding.TotalShardsCount]
+	allocatedDataNodes := allEcNodes
+	if len(allocatedDataNodes) > erasure_coding.TotalShardsCount {
+		allocatedDataNodes = allocatedDataNodes[:erasure_coding.TotalShardsCount]
 	}
 
 	// calculate how many shards to allocate for these servers
-	allocated := balancedEcDistribution(allDataNodes)
+	allocated := balancedEcDistribution(allocatedDataNodes)
 
 	// ask the data nodes to copy from the source volume server
-	copiedShardIds, err := parallelCopyEcShardsFromSource(ctx, commandEnv.option.GrpcDialOption, allDataNodes, allocated, volumeId, collection, existingLocations[0])
+	copiedShardIds, err := parallelCopyEcShardsFromSource(ctx, commandEnv.option.GrpcDialOption, allocatedDataNodes, allocated, volumeId, collection, existingLocations[0])
 	if err != nil {
 		return nil
 	}
@@ -154,7 +138,7 @@ func balanceEcShards(ctx context.Context, commandEnv *commandEnv, volumeId needl
 }
 
 func parallelCopyEcShardsFromSource(ctx context.Context, grpcDialOption grpc.DialOption,
-	targetServers []*master_pb.DataNodeInfo, allocated []uint32,
+	targetServers []*EcNode, allocated []int,
 	volumeId needle.VolumeId, collection string, existingLocation wdclient.Location) (actuallyCopied []uint32, err error) {
 
 	// parallelize
@@ -167,7 +151,7 @@ func parallelCopyEcShardsFromSource(ctx context.Context, grpcDialOption grpc.Dia
 		}
 
 		wg.Add(1)
-		go func(server *master_pb.DataNodeInfo, startFromShardId uint32, shardCount uint32) {
+		go func(server *EcNode, startFromShardId uint32, shardCount int) {
 			defer wg.Done()
 			copiedShardIds, copyErr := oneServerCopyEcShardsFromSource(ctx, grpcDialOption, server,
 				startFromShardId, shardCount, volumeId, collection, existingLocation)
@@ -175,9 +159,10 @@ func parallelCopyEcShardsFromSource(ctx context.Context, grpcDialOption grpc.Dia
 				err = copyErr
 			} else {
 				shardIdChan <- copiedShardIds
+				server.freeEcSlot -= len(copiedShardIds)
 			}
 		}(server, startFromShardId, allocated[i])
-		startFromShardId += allocated[i]
+		startFromShardId += uint32(allocated[i])
 	}
 	wg.Wait()
 	close(shardIdChan)
@@ -194,18 +179,18 @@ func parallelCopyEcShardsFromSource(ctx context.Context, grpcDialOption grpc.Dia
 }
 
 func oneServerCopyEcShardsFromSource(ctx context.Context, grpcDialOption grpc.DialOption,
-	targetServer *master_pb.DataNodeInfo, startFromShardId uint32, shardCount uint32,
+	targetServer *EcNode, startFromShardId uint32, shardCount int,
 	volumeId needle.VolumeId, collection string, existingLocation wdclient.Location) (copiedShardIds []uint32, err error) {
 
 	var shardIdsToCopy []uint32
-	for shardId := startFromShardId; shardId < startFromShardId+shardCount; shardId++ {
-		fmt.Printf("allocate %d.%d %s => %s\n", volumeId, shardId, existingLocation.Url, targetServer.Id)
+	for shardId := startFromShardId; shardId < startFromShardId+uint32(shardCount); shardId++ {
+		fmt.Printf("allocate %d.%d %s => %s\n", volumeId, shardId, existingLocation.Url, targetServer.info.Id)
 		shardIdsToCopy = append(shardIdsToCopy, shardId)
 	}
 
-	err = operation.WithVolumeServerClient(targetServer.Id, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+	err = operation.WithVolumeServerClient(targetServer.info.Id, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
-		if targetServer.Id != existingLocation.Url {
+		if targetServer.info.Id != existingLocation.Url {
 
 			_, copyErr := volumeServerClient.VolumeEcShardsCopy(ctx, &volume_server_pb.VolumeEcShardsCopyRequest{
 				VolumeId:       uint32(volumeId),
@@ -227,7 +212,7 @@ func oneServerCopyEcShardsFromSource(ctx context.Context, grpcDialOption grpc.Di
 			return mountErr
 		}
 
-		if targetServer.Id != existingLocation.Url {
+		if targetServer.info.Id != existingLocation.Url {
 			copiedShardIds = shardIdsToCopy
 			glog.V(0).Infof("%s ec volume %d deletes shards %+v", existingLocation.Url, volumeId, copiedShardIds)
 		}
@@ -258,11 +243,11 @@ func sourceServerDeleteEcShards(ctx context.Context, grpcDialOption grpc.DialOpt
 
 }
 
-func balancedEcDistribution(servers []*master_pb.DataNodeInfo) (allocated []uint32) {
-	freeSlots := make([]uint32, len(servers))
-	allocated = make([]uint32, len(servers))
+func balancedEcDistribution(servers []*EcNode) (allocated []int) {
+	freeSlots := make([]int, len(servers))
+	allocated = make([]int, len(servers))
 	for i, server := range servers {
-		freeSlots[i] = countFreeShardSlots(server)
+		freeSlots[i] = countFreeShardSlots(server.info)
 	}
 	allocatedCount := 0
 	for allocatedCount < erasure_coding.TotalShardsCount {
@@ -290,14 +275,53 @@ func eachDataNode(topo *master_pb.TopologyInfo, fn func(*master_pb.DataNodeInfo)
 	}
 }
 
-func countShards(ecShardInfos []*master_pb.VolumeEcShardInformationMessage) (count uint32) {
+func countShards(ecShardInfos []*master_pb.VolumeEcShardInformationMessage) (count int) {
 	for _, ecShardInfo := range ecShardInfos {
 		shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
-		count += uint32(shardBits.ShardIdCount())
+		count += shardBits.ShardIdCount()
 	}
 	return
 }
 
-func countFreeShardSlots(dn *master_pb.DataNodeInfo) (count uint32) {
-	return uint32(dn.FreeVolumeCount)*10 - countShards(dn.EcShardInfos)
+func countFreeShardSlots(dn *master_pb.DataNodeInfo) (count int) {
+	return int(dn.FreeVolumeCount)*10 - countShards(dn.EcShardInfos)
+}
+
+type EcNode struct {
+	info       *master_pb.DataNodeInfo
+	freeEcSlot int
+}
+
+func sortEcNodes(ecNodes []*EcNode) {
+	sort.Slice(ecNodes, func(i, j int) bool {
+		return ecNodes[i].freeEcSlot > ecNodes[j].freeEcSlot
+	})
+}
+
+func collectEcNodes(ctx context.Context, commandEnv *commandEnv) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {
+
+	// list all possible locations
+	var resp *master_pb.VolumeListResponse
+	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
+		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+		return err
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// find out all volume servers with one slot left.
+	eachDataNode(resp.TopologyInfo, func(dn *master_pb.DataNodeInfo) {
+		if freeEcSlots := countFreeShardSlots(dn); freeEcSlots > 0 {
+			ecNodes = append(ecNodes, &EcNode{
+				info:       dn,
+				freeEcSlot: int(freeEcSlots),
+			})
+			totalFreeEcSlots += freeEcSlots
+		}
+	})
+
+	sortEcNodes(ecNodes)
+
+	return
 }
