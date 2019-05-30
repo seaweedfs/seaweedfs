@@ -131,3 +131,43 @@ func (t *Topology) LookupEcShards(vid needle.VolumeId) (locations *EcShardLocati
 
 	return
 }
+
+func (t *Topology) ListEcServersByCollection(collection string) (dataNodes []string) {
+	t.ecShardMapLock.RLock()
+	defer t.ecShardMapLock.RUnlock()
+
+	dateNodeMap := make(map[string]bool)
+	for _, ecVolumeLocation := range t.ecShardMap {
+		if ecVolumeLocation.Collection == collection {
+			for _, locations := range ecVolumeLocation.Locations{
+				for _, loc := range locations {
+					dateNodeMap[string(loc.Id())] = true
+				}
+			}
+		}
+	}
+
+	for k, _ := range dateNodeMap {
+		dataNodes = append(dataNodes, k)
+	}
+
+	return
+}
+
+func (t *Topology) DeleteEcCollection(collection string) {
+	t.ecShardMapLock.Lock()
+	defer t.ecShardMapLock.Unlock()
+
+	var vids []needle.VolumeId
+	for vid, ecVolumeLocation := range t.ecShardMap {
+		if ecVolumeLocation.Collection == collection {
+			vids = append(vids, vid)
+		}
+	}
+
+	for _, vid := range vids {
+		delete(t.ecShardMap, vid)
+	}
+
+	return
+}

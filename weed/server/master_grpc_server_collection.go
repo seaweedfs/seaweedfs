@@ -2,7 +2,7 @@ package weed_server
 
 import (
 	"context"
-	"fmt"
+
 	"github.com/chrislusf/raft"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -34,23 +34,61 @@ func (ms *MasterServer) CollectionDelete(ctx context.Context, req *master_pb.Col
 
 	resp := &master_pb.CollectionDeleteResponse{}
 
-	collection, ok := ms.Topo.FindCollection(req.GetName())
+	err := ms.doDeleteNormalCollection(req.Name)
+
+	if err != nil {
+		return nil, err
+	}
+
+	err = ms.doDeleteEcCollection(req.Name)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+func (ms *MasterServer) doDeleteNormalCollection(collectionName string) error {
+
+	collection, ok := ms.Topo.FindCollection(collectionName)
 	if !ok {
-		return resp, fmt.Errorf("collection not found: %v", req.GetName())
+		return nil
 	}
 
 	for _, server := range collection.ListVolumeServers() {
 		err := operation.WithVolumeServerClient(server.Url(), ms.grpcDialOpiton, func(client volume_server_pb.VolumeServerClient) error {
 			_, deleteErr := client.DeleteCollection(context.Background(), &volume_server_pb.DeleteCollectionRequest{
-				Collection: collection.Name,
+				Collection: collectionName,
 			})
 			return deleteErr
 		})
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
-	ms.Topo.DeleteCollection(req.GetName())
+	ms.Topo.DeleteCollection(collectionName)
 
-	return resp, nil
+	return nil
+}
+
+func (ms *MasterServer) doDeleteEcCollection(collectionName string) error {
+
+	listOfEcServers := ms.Topo.ListEcServersByCollection(collectionName)
+
+	for _, server := range listOfEcServers {
+		err := operation.WithVolumeServerClient(server, ms.grpcDialOpiton, func(client volume_server_pb.VolumeServerClient) error {
+			_, deleteErr := client.DeleteCollection(context.Background(), &volume_server_pb.DeleteCollectionRequest{
+				Collection: collectionName,
+			})
+			return deleteErr
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	ms.Topo.DeleteEcCollection(collectionName)
+
+	return nil
 }
