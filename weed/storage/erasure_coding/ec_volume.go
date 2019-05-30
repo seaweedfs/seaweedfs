@@ -94,6 +94,17 @@ func (ev *EcVolume) Close() {
 	}
 }
 
+func (ev *EcVolume) Destroy() {
+
+	ev.Close()
+
+	baseFileName := EcShardFileName(ev.Collection, ev.dir, int(ev.VolumeId))
+	for _, s := range ev.Shards {
+		s.Destroy()
+	}
+	os.Remove(baseFileName + ".ecx")
+}
+
 func (ev *EcVolume) ToVolumeEcShardInformationMessage() (messages []*master_pb.VolumeEcShardInformationMessage) {
 	prevVolumeId := needle.VolumeId(math.MaxUint32)
 	var m *master_pb.VolumeEcShardInformationMessage

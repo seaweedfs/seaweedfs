@@ -148,3 +148,13 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 	}
 	return nil
 }
+
+func (l *DiskLocation) deleteEcVolumeById(vid needle.VolumeId) (e error) {
+	ecVolume, ok := l.ecVolumes[vid]
+	if !ok {
+		return
+	}
+	ecVolume.Destroy()
+	delete(l.ecVolumes, vid)
+	return
+}

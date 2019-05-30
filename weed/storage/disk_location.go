@@ -114,17 +114,31 @@ func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
 }
 
 func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e error) {
-	l.Lock()
-	defer l.Unlock()
 
+	l.Lock()
 	for k, v := range l.volumes {
 		if v.Collection == collection {
 			e = l.deleteVolumeById(k)
 			if e != nil {
+				l.Unlock()
 				return
 			}
 		}
 	}
+	l.Unlock()
+
+	l.ecVolumesLock.Lock()
+	for k, v := range l.ecVolumes {
+		if v.Collection == collection {
+			e = l.deleteEcVolumeById(k)
+			if e != nil {
+				l.ecVolumesLock.Unlock()
+				return
+			}
+		}
+	}
+	l.ecVolumesLock.Unlock()
+
 	return
 }
 
