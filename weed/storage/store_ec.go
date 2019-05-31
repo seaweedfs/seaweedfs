@@ -98,8 +98,13 @@ func (s *Store) ReadEcShardNeedle(ctx context.Context, vid needle.VolumeId, n *n
 	for _, location := range s.Locations {
 		if localEcVolume, found := location.FindEcVolume(vid); found {
 
-			// TODO need to read the version
-			version := needle.CurrentVersion
+			// read the volume version
+			for localEcVolume.Version == 0 {
+				err := s.readEcVolumeVersion(ctx, vid, localEcVolume)
+				time.Sleep(1357 * time.Millisecond)
+				glog.V(0).Infof("ReadEcShardNeedle vid %d version:%v: %v", vid, localEcVolume.Version, err)
+			}
+			version := localEcVolume.Version
 
 			offset, size, intervals, err := localEcVolume.LocateEcShardNeedle(n, version)
 			if err != nil {
@@ -125,6 +130,22 @@ func (s *Store) ReadEcShardNeedle(ctx context.Context, vid needle.VolumeId, n *n
 		}
 	}
 	return 0, fmt.Errorf("ec shard %d not found", vid)
+}
+
+func (s *Store) readEcVolumeVersion(ctx context.Context, vid needle.VolumeId, ecVolume *erasure_coding.EcVolume) (err error) {
+
+	interval := erasure_coding.Interval{
+		BlockIndex:          0,
+		InnerBlockOffset:    0,
+		Size:                _SuperBlockSize,
+		IsLargeBlock:        true, // it could be large block, but ok in this place
+		LargeBlockRowsCount: 0,
+	}
+	data, err := s.readEcShardIntervals(ctx, vid, ecVolume, []erasure_coding.Interval{interval})
+	if err == nil {
+		ecVolume.Version = needle.Version(data[0])
+	}
+	return
 }
 
 func (s *Store) readEcShardIntervals(ctx context.Context, vid needle.VolumeId, ecVolume *erasure_coding.EcVolume, intervals []erasure_coding.Interval) (data []byte, err error) {
@@ -203,6 +224,9 @@ func (s *Store) cachedLookupEcShardLocations(ctx context.Context, ecVolume *eras
 		resp, err := masterClient.LookupEcVolume(ctx, req)
 		if err != nil {
 			return fmt.Errorf("lookup ec volume %d: %v", ecVolume.VolumeId, err)
+		}
+		if len(resp.ShardIdLocations) < erasure_coding.DataShardsCount {
+			return fmt.Errorf("only %d shards found but %d required", len(resp.ShardIdLocations), erasure_coding.DataShardsCount)
 		}
 
 		ecVolume.ShardLocationsLock.Lock()

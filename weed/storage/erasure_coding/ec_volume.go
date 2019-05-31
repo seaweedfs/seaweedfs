@@ -24,6 +24,7 @@ type EcVolume struct {
 	ShardLocations            map[ShardId][]string
 	ShardLocationsRefreshTime time.Time
 	ShardLocationsLock        sync.RWMutex
+	Version                   needle.Version
 }
 
 func NewEcVolume(dir string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
