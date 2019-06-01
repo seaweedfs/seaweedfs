@@ -56,7 +56,7 @@ func (c *commandEcBalance) Help() string {
 func (c *commandEcBalance) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
 
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	collection := balanceCommand.String("c", "EACH_COLLECTION", "collection name, or use \"EACH_COLLECTION\" for each collection")
+	collection := balanceCommand.String("c", "EACH_COLLECTION", "collection name, or \"EACH_COLLECTION\" for each collection")
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
 	applyBalancing := balanceCommand.Bool("f", false, "apply the balancing plan")
 	if err = balanceCommand.Parse(args); err != nil {
