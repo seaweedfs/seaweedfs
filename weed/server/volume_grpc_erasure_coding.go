@@ -142,7 +142,7 @@ func (vs *VolumeServer) doDeleteMountedShards(ctx context.Context, req *volume_s
 	}
 
 	if len(ecv.Shards) == 0 {
-		ecv.Destroy()
+		vs.store.DestroyEcVolume(needle.VolumeId(req.VolumeId))
 	}
 
 	return nil

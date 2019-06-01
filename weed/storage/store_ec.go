@@ -94,6 +94,12 @@ func (s *Store) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, boo
 	return nil, false
 }
 
+func (s *Store) DestroyEcVolume(vid needle.VolumeId) {
+	for _, location := range s.Locations {
+		location.DestroyEcVolume(vid)
+	}
+}
+
 func (s *Store) ReadEcShardNeedle(ctx context.Context, vid needle.VolumeId, n *needle.Needle) (int, error) {
 	for _, location := range s.Locations {
 		if localEcVolume, found := location.FindEcVolume(vid); found {

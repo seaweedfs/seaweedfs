@@ -27,6 +27,17 @@ func (l *DiskLocation) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolu
 	return nil, false
 }
 
+func (l *DiskLocation) DestroyEcVolume(vid needle.VolumeId) {
+	l.ecVolumesLock.Lock()
+	defer l.ecVolumesLock.Unlock()
+
+	ecVolume, found := l.ecVolumes[vid]
+	if found {
+		ecVolume.Destroy()
+		delete(l.ecVolumes,vid)
+	}
+}
+
 func (l *DiskLocation) FindEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) (*erasure_coding.EcVolumeShard, bool) {
 	l.ecVolumesLock.RLock()
 	defer l.ecVolumesLock.RUnlock()
