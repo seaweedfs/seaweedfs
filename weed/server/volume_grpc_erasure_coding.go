@@ -90,25 +90,62 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 // VolumeEcShardsDelete local delete the .ecx and some ec data slices if not needed, assuming current server has the source volume
 func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_server_pb.VolumeEcShardsDeleteRequest) (*volume_server_pb.VolumeEcShardsDeleteResponse, error) {
 
+	foundExistingVolume, err := vs.doDeleteUnmountedShards(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	if !foundExistingVolume {
+		err = vs.doDeleteMountedShards(ctx, req)
+	}
+
+	return &volume_server_pb.VolumeEcShardsDeleteResponse{}, err
+}
+
+// VolumeEcShardsDelete local delete the .ecx and some ec data slices if not needed, assuming current server has the source volume
+func (vs *VolumeServer) doDeleteUnmountedShards(ctx context.Context, req *volume_server_pb.VolumeEcShardsDeleteRequest) (foundVolume bool, err error) {
+
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
-		return nil, fmt.Errorf("volume %d not found", req.VolumeId)
+		return false, nil
 	}
+
 	baseFileName := v.FileName()
 
 	for _, shardId := range req.ShardIds {
 		if err := os.Remove(baseFileName + erasure_coding.ToExt(int(shardId))); err != nil {
-			return nil, err
+			return true, err
 		}
 	}
 
 	if req.ShouldDeleteEcx {
 		if err := os.Remove(baseFileName + ".ecx"); err != nil {
-			return nil, err
+			return true, err
 		}
 	}
 
-	return &volume_server_pb.VolumeEcShardsDeleteResponse{}, nil
+	return true, nil
+}
+
+// VolumeEcShardsDelete local delete the .ecx and some ec data slices if not needed, assuming current server has the source volume
+func (vs *VolumeServer) doDeleteMountedShards(ctx context.Context, req *volume_server_pb.VolumeEcShardsDeleteRequest) (error) {
+
+	ecv, found := vs.store.FindEcVolume(needle.VolumeId(req.VolumeId))
+	if !found {
+		return fmt.Errorf("volume %d not found", req.VolumeId)
+	}
+
+	for _, shardId := range req.ShardIds {
+		if shard, found := ecv.DeleteEcVolumeShard(erasure_coding.ShardId(shardId)); found {
+			shard.Destroy()
+		}
+	}
+
+	if len(ecv.Shards) == 0 {
+		ecv.Destroy()
+	}
+
+	return nil
 }
 
 func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_server_pb.VolumeEcShardsMountRequest) (*volume_server_pb.VolumeEcShardsMountResponse, error) {

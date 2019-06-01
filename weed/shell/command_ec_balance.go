@@ -159,7 +159,7 @@ func balanceEcVolumes(commandEnv *commandEnv, collection string, applyBalancing 
 
 		if isOverLimit {
 
-			if err := spreadShardsIntoMoreDataNodes(ctx, commandEnv, averageShardsPerEcNode, vid, locations, possibleDestinationEcNodes, applyBalancing); err != nil {
+			if err := spreadShardsIntoMoreDataNodes(ctx, commandEnv, averageShardsPerEcNode, collection, vid, locations, possibleDestinationEcNodes, applyBalancing); err != nil {
 				return err
 			}
 
@@ -170,7 +170,7 @@ func balanceEcVolumes(commandEnv *commandEnv, collection string, applyBalancing 
 	return nil
 }
 
-func spreadShardsIntoMoreDataNodes(ctx context.Context, commandEnv *commandEnv, averageShardsPerEcNode int, vid needle.VolumeId, existingLocations, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
+func spreadShardsIntoMoreDataNodes(ctx context.Context, commandEnv *commandEnv, averageShardsPerEcNode int, collection string, vid needle.VolumeId, existingLocations, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
 
 	for _, ecNode := range existingLocations {
 
@@ -185,7 +185,7 @@ func spreadShardsIntoMoreDataNodes(ctx context.Context, commandEnv *commandEnv, 
 
 			fmt.Printf("%s has %d overlimit, moving ec shard %d.%d\n", ecNode.info.Id, overLimitCount, vid, shardId)
 
-			err := pickOneEcNodeAndMoveOneShard(ctx, commandEnv, averageShardsPerEcNode, ecNode, vid, shardId, possibleDestinationEcNodes, applyBalancing)
+			err := pickOneEcNodeAndMoveOneShard(ctx, commandEnv, averageShardsPerEcNode, ecNode, collection, vid, shardId, possibleDestinationEcNodes, applyBalancing)
 			if err != nil {
 				return err
 			}
@@ -197,7 +197,7 @@ func spreadShardsIntoMoreDataNodes(ctx context.Context, commandEnv *commandEnv, 
 	return nil
 }
 
-func pickOneEcNodeAndMoveOneShard(ctx context.Context, commandEnv *commandEnv, averageShardsPerEcNode int, existingLocation *EcNode, vid needle.VolumeId, shardId erasure_coding.ShardId, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
+func pickOneEcNodeAndMoveOneShard(ctx context.Context, commandEnv *commandEnv, averageShardsPerEcNode int, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
 
 	sortEcNodes(possibleDestinationEcNodes)
 
@@ -215,7 +215,7 @@ func pickOneEcNodeAndMoveOneShard(ctx context.Context, commandEnv *commandEnv, a
 
 		fmt.Printf("%s moves ec shard %d.%d to %s\n", existingLocation.info.Id, vid, shardId, destEcNode.info.Id)
 
-		err := moveOneShardToEcNode(ctx, commandEnv, existingLocation, vid, shardId, destEcNode, applyBalancing)
+		err := moveOneShardToEcNode(ctx, commandEnv, existingLocation, collection, vid, shardId, destEcNode, applyBalancing)
 		if err != nil {
 			return err
 		}
@@ -227,10 +227,23 @@ func pickOneEcNodeAndMoveOneShard(ctx context.Context, commandEnv *commandEnv, a
 	return nil
 }
 
-func moveOneShardToEcNode(ctx context.Context, commandEnv *commandEnv, existingLocation *EcNode, vid needle.VolumeId, shardId erasure_coding.ShardId, destinationEcNode *EcNode, applyBalancing bool) error {
+func moveOneShardToEcNode(ctx context.Context, commandEnv *commandEnv, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, destinationEcNode *EcNode, applyBalancing bool) error {
 
 	fmt.Printf("moved ec shard %d.%d %s => %s\n", vid, shardId, existingLocation.info.Id, destinationEcNode.info.Id)
-	return nil
+
+	if !applyBalancing {
+		return nil
+	}
+
+	// ask destination node to copy shard and the ecx file from source node, and mount it
+	copiedShardIds, err := oneServerCopyEcShardsFromSource(ctx, commandEnv.option.GrpcDialOption, destinationEcNode, uint32(shardId), 1, vid, collection, existingLocation.info.Id)
+	if err != nil {
+		return err
+	}
+
+	// ask source node to delete the shard, and maybe the ecx file
+	return sourceServerDeleteEcShards(ctx, commandEnv.option.GrpcDialOption, vid, existingLocation.info.Id, copiedShardIds)
+
 }
 
 func findEcVolumeShards(ecNode *EcNode, vid needle.VolumeId) erasure_coding.ShardBits {

@@ -61,7 +61,7 @@ func (ev *EcVolume) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) bool {
 	return true
 }
 
-func (ev *EcVolume) DeleteEcVolumeShard(shardId ShardId) bool {
+func (ev *EcVolume) DeleteEcVolumeShard(shardId ShardId) (ecVolumeShard *EcVolumeShard, deleted bool) {
 	foundPosition := -1
 	for i, s := range ev.Shards {
 		if s.ShardId == shardId {
@@ -69,11 +69,13 @@ func (ev *EcVolume) DeleteEcVolumeShard(shardId ShardId) bool {
 		}
 	}
 	if foundPosition < 0 {
-		return false
+		return nil, false
 	}
 
+	ecVolumeShard = ev.Shards[foundPosition]
+
 	ev.Shards = append(ev.Shards[:foundPosition], ev.Shards[foundPosition+1:]...)
-	return true
+	return ecVolumeShard, true
 }
 
 func (ev *EcVolume) FindEcVolumeShard(shardId ShardId) (ecVolumeShard *EcVolumeShard, found bool) {
@@ -99,11 +101,16 @@ func (ev *EcVolume) Destroy() {
 
 	ev.Close()
 
-	baseFileName := EcShardFileName(ev.Collection, ev.dir, int(ev.VolumeId))
 	for _, s := range ev.Shards {
 		s.Destroy()
 	}
-	os.Remove(baseFileName + ".ecx")
+	os.Remove(ev.FileName() + ".ecx")
+}
+
+func (ev *EcVolume) FileName() string {
+
+	return EcShardFileName(ev.Collection, ev.dir, int(ev.VolumeId))
+
 }
 
 func (ev *EcVolume) ToVolumeEcShardInformationMessage() (messages []*master_pb.VolumeEcShardInformationMessage) {
