@@ -7,6 +7,7 @@ import (
 	"io"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -54,6 +55,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *commandEnv, writer io.Wr
 	encodeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := encodeCommand.Int("volumeId", 0, "the volume id")
 	collection := encodeCommand.String("collection", "", "the collection name")
+	quietPeriod := encodeCommand.Duration("quietFor", time.Hour, "select volumes without no writes for this period")
 	if err = encodeCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -67,7 +69,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *commandEnv, writer io.Wr
 	}
 
 	// apply to all volumes in the collection
-	volumeIds, err := collectVolumeByCollection(ctx, commandEnv, *collection)
+	volumeIds, err := collectVolumeForEcEncode(ctx, commandEnv, *collection, *quietPeriod)
 	if err != nil {
 		return err
 	}
@@ -347,7 +349,7 @@ func collectEcNodes(ctx context.Context, commandEnv *commandEnv) (ecNodes []*EcN
 	return
 }
 
-func collectVolumeByCollection(ctx context.Context, commandEnv *commandEnv, selectedCollection string) (vids []needle.VolumeId, err error) {
+func collectVolumeForEcEncode(ctx context.Context, commandEnv *commandEnv, selectedCollection string, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
 
 	var resp *master_pb.VolumeListResponse
 	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
@@ -358,12 +360,15 @@ func collectVolumeByCollection(ctx context.Context, commandEnv *commandEnv, sele
 		return
 	}
 
+	quietSeconds := int64((quietPeriod * time.Second).Seconds())
+	nowUnixSeconds := time.Now().Unix()
+
 	vidMap := make(map[uint32]bool)
 	for _, dc := range resp.TopologyInfo.DataCenterInfos {
 		for _, r := range dc.RackInfos {
 			for _, dn := range r.DataNodeInfos {
 				for _, v := range dn.VolumeInfos {
-					if v.Collection == selectedCollection {
+					if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds {
 						vidMap[v.Id] = true
 					}
 				}

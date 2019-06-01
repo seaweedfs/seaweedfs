@@ -66,6 +66,7 @@ message VolumeInformationMessage {
     uint32 version = 9;
     uint32 ttl = 10;
     uint32 compact_revision = 11;
+    int64 modified_at_second = 12;
 }
 
 message VolumeShortInformationMessage {

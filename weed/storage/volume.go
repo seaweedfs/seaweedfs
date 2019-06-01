@@ -154,7 +154,7 @@ func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
 }
 
 func (v *Volume) ToVolumeInformationMessage() *master_pb.VolumeInformationMessage {
-	size, _, _ := v.FileStat()
+	size, _, modTime := v.FileStat()
 	return &master_pb.VolumeInformationMessage{
 		Id:               uint32(v.Id),
 		Size:             size,
@@ -167,5 +167,6 @@ func (v *Volume) ToVolumeInformationMessage() *master_pb.VolumeInformationMessag
 		Version:          uint32(v.Version()),
 		Ttl:              v.Ttl.ToUint32(),
 		CompactRevision:  uint32(v.SuperBlock.CompactionRevision),
+		ModifiedAtSecond: modTime.Unix(),
 	}
 }
