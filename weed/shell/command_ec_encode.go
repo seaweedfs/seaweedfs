@@ -97,7 +97,7 @@ func doEcEncode(ctx context.Context, commandEnv *commandEnv, collection string, 
 	// balance the ec shards to current cluster
 	err = spreadEcShards(ctx, commandEnv, vid, collection, locations)
 	if err != nil {
-		return fmt.Errorf("spread ec shards for volume %d to %s: %v", vid, locations[0].Url, err)
+		return fmt.Errorf("spread ec shards for volume %d from %s: %v", vid, locations[0].Url, err)
 	}
 
 	return nil

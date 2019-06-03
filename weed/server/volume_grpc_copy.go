@@ -6,12 +6,14 @@ import (
 	"io"
 	"math"
 	"os"
+	"path"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -199,11 +201,16 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 		}
 		fileName = v.FileName() + req.Ext
 	} else {
-		ecv, found := vs.store.FindEcVolume(needle.VolumeId(req.VolumeId))
-		if !found {
-			return fmt.Errorf("not found ec volume id %d", req.VolumeId)
+		baseFileName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId)) + req.Ext
+		for _, location := range vs.store.Locations {
+			tName := path.Join(location.Directory, baseFileName)
+			if util.FileExists(tName){
+				fileName = tName
+			}
 		}
-		fileName = ecv.FileName() + req.Ext
+		if fileName == "" {
+			return fmt.Errorf("CopyFile not found ec volume id %d", req.VolumeId)
+		}
 	}
 
 	bytesToRead := int64(req.StopOffset)

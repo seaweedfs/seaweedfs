@@ -62,7 +62,7 @@ func oneServerCopyAndMountEcShardsFromSource(ctx context.Context, grpcDialOption
 				SourceDataNode: existingLocation,
 			})
 			if copyErr != nil {
-				return copyErr
+				return fmt.Errorf("copy %d.%v %s => %s : %v\n", volumeId, shardIdsToCopy, existingLocation, targetServer.info.Id, copyErr)
 			}
 		}
 
@@ -73,7 +73,7 @@ func oneServerCopyAndMountEcShardsFromSource(ctx context.Context, grpcDialOption
 			ShardIds:   shardIdsToCopy,
 		})
 		if mountErr != nil {
-			return mountErr
+			return fmt.Errorf("mount %d.%v on %s : %v\n", volumeId, shardIdsToCopy, targetServer.info.Id, mountErr)
 		}
 
 		if targetServer.info.Id != existingLocation {

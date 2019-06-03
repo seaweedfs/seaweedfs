@@ -200,7 +200,7 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 
 	ecVolume, found := vs.store.FindEcVolume(needle.VolumeId(req.VolumeId))
 	if !found {
-		return fmt.Errorf("not found ec volume id %d", req.VolumeId)
+		return fmt.Errorf("VolumeEcShardRead not found ec volume id %d", req.VolumeId)
 	}
 	ecShard, found := ecVolume.FindEcVolumeShard(erasure_coding.ShardId(req.ShardId))
 	if !found {
