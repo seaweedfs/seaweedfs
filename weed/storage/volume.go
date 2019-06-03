@@ -47,7 +47,7 @@ func (v *Volume) String() string {
 	return fmt.Sprintf("Id:%v, dir:%s, Collection:%s, dataFile:%v, nm:%v, readOnly:%v", v.Id, v.dir, v.Collection, v.dataFile, v.nm, v.readOnly)
 }
 
-func VolumeFileName(collection string, dir string, id int) (fileName string) {
+func VolumeFileName(dir string, collection string, id int) (fileName string) {
 	idString := strconv.Itoa(id)
 	if collection == "" {
 		fileName = path.Join(dir, idString)
@@ -57,7 +57,7 @@ func VolumeFileName(collection string, dir string, id int) (fileName string) {
 	return
 }
 func (v *Volume) FileName() (fileName string) {
-	return VolumeFileName(v.Collection, v.dir, int(v.Id))
+	return VolumeFileName(v.dir, v.Collection, int(v.Id))
 }
 func (v *Volume) DataFile() *os.File {
 	return v.dataFile

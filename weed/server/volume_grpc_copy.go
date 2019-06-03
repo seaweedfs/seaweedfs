@@ -53,11 +53,11 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 
 		// println("source:", volFileInfoResp.String())
 		// copy ecx file
-		if err := vs.doCopyFile(ctx, client, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.IdxFileSize, volumeFileName, ".idx"); err != nil {
+		if err := vs.doCopyFile(ctx, client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.IdxFileSize, volumeFileName, ".idx"); err != nil {
 			return err
 		}
 
-		if err := vs.doCopyFile(ctx, client, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, volumeFileName, ".dat"); err != nil {
+		if err := vs.doCopyFile(ctx, client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, volumeFileName, ".dat"); err != nil {
 			return err
 		}
 
@@ -92,7 +92,7 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 	}, err
 }
 
-func (vs *VolumeServer) doCopyFile(ctx context.Context, client volume_server_pb.VolumeServerClient, vid uint32,
+func (vs *VolumeServer) doCopyFile(ctx context.Context, client volume_server_pb.VolumeServerClient, isEcVolume bool, collection string, vid uint32,
 	compactRevision uint32, stopOffset uint64, baseFileName, ext string) error {
 
 	copyFileClient, err := client.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
@@ -100,6 +100,8 @@ func (vs *VolumeServer) doCopyFile(ctx context.Context, client volume_server_pb.
 		Ext:                ext,
 		CompactionRevision: compactRevision,
 		StopOffset:         stopOffset,
+		Collection:         collection,
+		IsEcVolume:         isEcVolume,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to start copying volume %d %s file: %v", vid, ext, err)
@@ -107,7 +109,7 @@ func (vs *VolumeServer) doCopyFile(ctx context.Context, client volume_server_pb.
 
 	err = writeToFile(copyFileClient, baseFileName+ext, util.NewWriteThrottler(vs.compactionBytePerSecond))
 	if err != nil {
-		return fmt.Errorf("failed to copy volume %d %s file: %v", vid, ext, err)
+		return fmt.Errorf("failed to copy %s file: %v", baseFileName+ext, err)
 	}
 
 	return nil
@@ -185,18 +187,27 @@ func (vs *VolumeServer) ReadVolumeFileStatus(ctx context.Context, req *volume_se
 // The copying still stop at req.StopOffset, but you can set it to math.MaxUint64 in order to read all data.
 func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream volume_server_pb.VolumeServer_CopyFileServer) error {
 
-	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
-	if v == nil {
-		return fmt.Errorf("not found volume id %d", req.VolumeId)
-	}
+	var fileName string
+	if !req.IsEcVolume {
+		v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
+		if v == nil {
+			return fmt.Errorf("not found volume id %d", req.VolumeId)
+		}
 
-	if uint32(v.CompactionRevision) != req.CompactionRevision && req.CompactionRevision != math.MaxUint32 {
-		return fmt.Errorf("volume %d is compacted", req.VolumeId)
+		if uint32(v.CompactionRevision) != req.CompactionRevision && req.CompactionRevision != math.MaxUint32 {
+			return fmt.Errorf("volume %d is compacted", req.VolumeId)
+		}
+		fileName = v.FileName() + req.Ext
+	} else {
+		ecv, found := vs.store.FindEcVolume(needle.VolumeId(req.VolumeId))
+		if !found {
+			return fmt.Errorf("not found ec volume id %d", req.VolumeId)
+		}
+		fileName = ecv.FileName() + req.Ext
 	}
 
 	bytesToRead := int64(req.StopOffset)
 
-	var fileName = v.FileName() + req.Ext
 	file, err := os.Open(fileName)
 	if err != nil {
 		return err
@@ -234,4 +245,8 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 	}
 
 	return nil
+}
+
+func (vs *VolumeServer) findVolumeOrEcVolumeLocation(volumeId needle.VolumeId) {
+
 }

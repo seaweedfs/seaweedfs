@@ -57,6 +57,14 @@ func EcShardFileName(collection string, dir string, id int) (fileName string) {
 	return
 }
 
+func EcShardBaseFileName(collection string, id int) (baseFileName string) {
+	baseFileName = strconv.Itoa(id)
+	if collection != "" {
+		baseFileName = collection+"_"+baseFileName
+	}
+	return
+}
+
 func (shard *EcVolumeShard) Close() {
 	if shard.ecdFile != nil {
 		_ = shard.ecdFile.Close()

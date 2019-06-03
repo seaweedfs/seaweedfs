@@ -50,6 +50,8 @@ service VolumeServer {
     // erasure coding
     rpc VolumeEcShardsGenerate (VolumeEcShardsGenerateRequest) returns (VolumeEcShardsGenerateResponse) {
     }
+    rpc VolumeEcShardsRebuild (VolumeEcShardsRebuildRequest) returns (VolumeEcShardsRebuildResponse) {
+    }
     rpc VolumeEcShardsCopy (VolumeEcShardsCopyRequest) returns (VolumeEcShardsCopyResponse) {
     }
     rpc VolumeEcShardsDelete (VolumeEcShardsDeleteRequest) returns (VolumeEcShardsDeleteResponse) {
@@ -60,7 +62,6 @@ service VolumeServer {
     }
     rpc VolumeEcShardRead (VolumeEcShardReadRequest) returns (stream VolumeEcShardReadResponse) {
     }
-
 
 }
 
@@ -180,6 +181,8 @@ message CopyFileRequest {
     string ext = 2;
     uint32 compaction_revision = 3;
     uint64 stop_offset = 4;
+    string collection = 5;
+    bool is_ec_volume = 6;
 }
 message CopyFileResponse {
     bytes file_content = 1;
@@ -212,10 +215,19 @@ message VolumeEcShardsGenerateRequest {
 message VolumeEcShardsGenerateResponse {
 }
 
+message VolumeEcShardsRebuildRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+}
+message VolumeEcShardsRebuildResponse {
+    repeated uint32 rebuilt_shard_ids = 1;
+}
+
 message VolumeEcShardsCopyRequest {
     uint32 volume_id = 1;
     string collection = 2;
     repeated uint32 shard_ids = 3;
+    bool copy_ecx_file = 4;
     string source_data_node = 5;
 }
 message VolumeEcShardsCopyResponse {
@@ -223,7 +235,7 @@ message VolumeEcShardsCopyResponse {
 
 message VolumeEcShardsDeleteRequest {
     uint32 volume_id = 1;
-    bool should_delete_ecx = 2;
+    string collection = 2;
     repeated uint32 shard_ids = 3;
 }
 message VolumeEcShardsDeleteResponse {

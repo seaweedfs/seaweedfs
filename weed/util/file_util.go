@@ -30,3 +30,13 @@ func GetFileSize(file *os.File) (size int64, err error) {
 	}
 	return
 }
+
+func FileExists(filename string) bool {
+
+	_, err := os.Stat(filename)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return true
+
+}
