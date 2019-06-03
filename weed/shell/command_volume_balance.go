@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"sort"
 	"time"
@@ -186,7 +187,7 @@ func balanceSelectedVolume(commandEnv *commandEnv, nodes []*Node, sortCandidates
 		selectedVolumeCount += len(dn.selectedVolumes)
 	}
 
-	idealSelectedVolumes := selectedVolumeCount / len(nodes)
+	idealSelectedVolumes := int(math.Ceil(float64(selectedVolumeCount) / float64(len(nodes))))
 
 	hasMove := true
 

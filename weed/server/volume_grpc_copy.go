@@ -49,7 +49,7 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 			return fmt.Errorf("read volume file status failed, %v", err)
 		}
 
-		volumeFileName = storage.VolumeFileName(volFileInfoResp.Collection, location.Directory, int(req.VolumeId))
+		volumeFileName = storage.VolumeFileName(location.Directory, volFileInfoResp.Collection, int(req.VolumeId))
 
 		// println("source:", volFileInfoResp.String())
 		// copy ecx file
@@ -63,6 +63,10 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 
 		return nil
 	})
+
+	idxFileName = volumeFileName + ".idx"
+	datFileName = volumeFileName + ".dat"
+
 	if err != nil && volumeFileName != "" {
 		if idxFileName != "" {
 			os.Remove(idxFileName)
@@ -117,11 +121,11 @@ todo: maybe should check the received count and deleted count of the volume
 func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse, idxFileName, datFileName string) error {
 	stat, err := os.Stat(idxFileName)
 	if err != nil {
-		return fmt.Errorf("get idx file info failed, %v", err)
+		return fmt.Errorf("stat idx file %s failed, %v", idxFileName, err)
 	}
 	if originFileInf.IdxFileSize != uint64(stat.Size()) {
-		return fmt.Errorf("the idx file size [%v] is not same as origin file size [%v]",
-			stat.Size(), originFileInf.IdxFileSize)
+		return fmt.Errorf("idx file %s size [%v] is not same as origin file size [%v]",
+			idxFileName, stat.Size(), originFileInf.IdxFileSize)
 	}
 
 	stat, err = os.Stat(datFileName)
