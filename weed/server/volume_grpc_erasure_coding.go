@@ -68,6 +68,7 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	for _, location := range vs.store.Locations {
 		if util.FileExists(path.Join(location.Directory, baseFileName+".ecx")) {
 			// write .ec01 ~ .ec14 files
+			baseFileName = path.Join(location.Directory, baseFileName)
 			if generatedShardIds, err := erasure_coding.RebuildEcFiles(baseFileName); err != nil {
 				return nil, fmt.Errorf("RebuildEcFiles %s: %v", baseFileName, err)
 			} else {

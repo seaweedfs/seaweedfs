@@ -249,18 +249,16 @@ func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*o
 				if n == 0 {
 					return nil
 				}
-				if inputBufferDataSize != 0 {
+				if inputBufferDataSize == 0 {
 					inputBufferDataSize = n
 				}
 				if inputBufferDataSize != n {
-					return fmt.Errorf("ec shard size need to be the same")
+					return fmt.Errorf("ec shard size expected %d actual %d", inputBufferDataSize, n)
 				}
 			} else {
 				buffers[i] = nil
 			}
 		}
-
-		fmt.Printf("reconstructing [%d,%d)\n", startOffset, startOffset+int64(inputBufferDataSize))
 
 		// encode the data
 		err = enc.Reconstruct(buffers)
