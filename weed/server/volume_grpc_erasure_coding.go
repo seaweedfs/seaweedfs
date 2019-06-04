@@ -126,8 +126,20 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 
 	baseFilename := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId))
 
-	for _, shardId := range req.ShardIds {
-		os.Remove(baseFilename + erasure_coding.ToExt(int(shardId)))
+	found := false
+	for _, location := range vs.store.Locations {
+		if util.FileExists(path.Join(location.Directory, baseFilename+".ecx")) {
+			found = true
+			baseFilename = path.Join(location.Directory, baseFilename)
+			for _, shardId := range req.ShardIds {
+				os.Remove(baseFilename + erasure_coding.ToExt(int(shardId)))
+			}
+			break
+		}
+	}
+
+	if !found {
+		return nil, nil
 	}
 
 	// check whether to delete the ecx file also
