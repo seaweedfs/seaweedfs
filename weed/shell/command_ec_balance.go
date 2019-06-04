@@ -186,18 +186,20 @@ func doDeduplicateEcShards(ctx context.Context, commandEnv *commandEnv, collecti
 			continue
 		}
 		sortEcNodes(ecNodes)
-		fmt.Printf("ec shard %d.%d has %d copies, removing from %+v\n", vid, shardId, len(ecNodes), ecNodes[1:])
+		fmt.Printf("ec shard %d.%d has %d copies, keeping %v\n", vid, shardId, len(ecNodes), ecNodes[0].info.Id)
 		if !applyBalancing {
 			continue
 		}
+
+		duplicatedShardIds := []uint32{uint32(shardId)}
 		for _, ecNode := range ecNodes[1:] {
-			duplicatedShardIds := []uint32{uint32(shardId)}
 			if err := unmountEcShards(ctx, commandEnv.option.GrpcDialOption, vid, ecNode.info.Id, duplicatedShardIds); err != nil {
 				return err
 			}
 			if err := sourceServerDeleteEcShards(ctx, commandEnv.option.GrpcDialOption, collection, vid, ecNode.info.Id, duplicatedShardIds); err != nil {
 				return err
 			}
+			ecNode.freeEcSlot++
 		}
 	}
 	return nil
