@@ -256,6 +256,7 @@ func pickOneEcNodeAndMoveOneShard(ctx context.Context, commandEnv *commandEnv, a
 		}
 
 		destEcNode.freeEcSlot--
+		existingLocation.freeEcSlot++
 		return nil
 	}
 
