@@ -31,6 +31,9 @@ func (c *commandEcEncode) Name() string {
 func (c *commandEcEncode) Help() string {
 	return `apply erasure coding to a volume
 
+	ec.encode [-collection=""] [-fullPercent=95] [-quietFor=1h]
+	ec.encode [-collection=""] [-volumeId=<volume_id>]
+
 	This command will:
 	1. freeze one volume
 	2. apply erasure coding to the volume
@@ -53,6 +56,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *commandEnv, writer io.Wr
 	encodeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := encodeCommand.Int("volumeId", 0, "the volume id")
 	collection := encodeCommand.String("collection", "", "the collection name")
+	fullPercentage := encodeCommand.Float64("fullPercent", 95, "the volume reaches the percentage of max volume size")
 	quietPeriod := encodeCommand.Duration("quietFor", time.Hour, "select volumes without no writes for this period")
 	if err = encodeCommand.Parse(args); err != nil {
 		return nil
@@ -67,7 +71,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *commandEnv, writer io.Wr
 	}
 
 	// apply to all volumes in the collection
-	volumeIds, err := collectVolumeIdsForEcEncode(ctx, commandEnv, *collection, *quietPeriod)
+	volumeIds, err := collectVolumeIdsForEcEncode(ctx, commandEnv, *collection, *fullPercentage, *quietPeriod)
 	if err != nil {
 		return err
 	}
@@ -224,7 +228,7 @@ func balancedEcDistribution(servers []*EcNode) (allocated []int) {
 	return allocated
 }
 
-func collectVolumeIdsForEcEncode(ctx context.Context, commandEnv *commandEnv, selectedCollection string, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
+func collectVolumeIdsForEcEncode(ctx context.Context, commandEnv *commandEnv, selectedCollection string, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
 
 	var resp *master_pb.VolumeListResponse
 	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
@@ -246,7 +250,9 @@ func collectVolumeIdsForEcEncode(ctx context.Context, commandEnv *commandEnv, se
 			for _, dn := range r.DataNodeInfos {
 				for _, v := range dn.VolumeInfos {
 					if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds {
-						vidMap[v.Id] = true
+						if float64(v.Size) > fullPercentage/100*float64(resp.VolumeSizeLimitMb)*1024*1024 {
+							vidMap[v.Id] = true
+						}
 					}
 				}
 			}
