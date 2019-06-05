@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
@@ -60,7 +61,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	go fs.filer.KeepConnectedToMaster()
 
 	v := viper.GetViper()
-	if !LoadConfiguration("filer", false) {
+	if !util.LoadConfiguration("filer", false) {
 		v.Set("leveldb.enabled", true)
 		v.Set("leveldb.dir", option.DefaultLevelDbDir)
 		_, err := os.Stat(option.DefaultLevelDbDir)
@@ -68,7 +69,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 			os.MkdirAll(option.DefaultLevelDbDir, 0755)
 		}
 	}
-	LoadConfiguration("notification", false)
+	util.LoadConfiguration("notification", false)
 
 	fs.filer.LoadConfiguration(v)
 
@@ -85,31 +86,3 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	return fs, nil
 }
 
-func LoadConfiguration(configFileName string, required bool) (loaded bool) {
-
-	// find a filer store
-	viper.SetConfigName(configFileName)     // name of config file (without extension)
-	viper.AddConfigPath(".")                // optionally look for config in the working directory
-	viper.AddConfigPath("$HOME/.seaweedfs") // call multiple times to add many search paths
-	viper.AddConfigPath("/etc/seaweedfs/")  // path to look for the config file in
-
-	glog.V(1).Infof("Reading %s.toml from %s", configFileName, viper.ConfigFileUsed())
-
-	if err := viper.MergeInConfig(); err != nil { // Handle errors reading the config file
-		glog.V(0).Infof("Reading %s: %v", viper.ConfigFileUsed(), err)
-		if required {
-			glog.Fatalf("Failed to load %s.toml file from current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/"+
-				"\n\nPlease follow this example and add a filer.toml file to "+
-				"current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/:\n"+
-				"    https://github.com/chrislusf/seaweedfs/blob/master/weed/%s.toml\n"+
-				"\nOr use this command to generate the default toml file\n"+
-				"    weed scaffold -config=%s -output=.\n\n\n",
-				configFileName, configFileName, configFileName)
-		} else {
-			return false
-		}
-	}
-
-	return true
-
-}

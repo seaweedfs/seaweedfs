@@ -10,7 +10,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandFsTree{})
+	Commands = append(Commands, &commandFsTree{})
 }
 
 type commandFsTree struct {
@@ -27,7 +27,7 @@ func (c *commandFsTree) Help() string {
 `
 }
 
-func (c *commandFsTree) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandFsTree) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	filerServer, filerPort, path, err := commandEnv.parseUrl(findInputDirectory(args))
 	if err != nil {

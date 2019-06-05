@@ -13,7 +13,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandFsMetaLoad{})
+	Commands = append(Commands, &commandFsMetaLoad{})
 }
 
 type commandFsMetaLoad struct {
@@ -31,7 +31,7 @@ func (c *commandFsMetaLoad) Help() string {
 `
 }
 
-func (c *commandFsMetaLoad) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	if len(args) == 0 {
 		fmt.Fprintf(writer, "missing a metadata file\n")

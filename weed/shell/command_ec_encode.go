@@ -18,7 +18,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandEcEncode{})
+	Commands = append(Commands, &commandEcEncode{})
 }
 
 type commandEcEncode struct {
@@ -51,7 +51,7 @@ func (c *commandEcEncode) Help() string {
 `
 }
 
-func (c *commandEcEncode) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	encodeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := encodeCommand.Int("volumeId", 0, "the volume id")
@@ -85,9 +85,9 @@ func (c *commandEcEncode) Do(args []string, commandEnv *commandEnv, writer io.Wr
 	return nil
 }
 
-func doEcEncode(ctx context.Context, commandEnv *commandEnv, collection string, vid needle.VolumeId) (err error) {
+func doEcEncode(ctx context.Context, commandEnv *CommandEnv, collection string, vid needle.VolumeId) (err error) {
 	// find volume location
-	locations := commandEnv.masterClient.GetLocations(uint32(vid))
+	locations := commandEnv.MasterClient.GetLocations(uint32(vid))
 	if len(locations) == 0 {
 		return fmt.Errorf("volume %d not found", vid)
 	}
@@ -121,7 +121,7 @@ func generateEcShards(ctx context.Context, grpcDialOption grpc.DialOption, volum
 
 }
 
-func spreadEcShards(ctx context.Context, commandEnv *commandEnv, volumeId needle.VolumeId, collection string, existingLocations []wdclient.Location) (err error) {
+func spreadEcShards(ctx context.Context, commandEnv *CommandEnv, volumeId needle.VolumeId, collection string, existingLocations []wdclient.Location) (err error) {
 
 	allEcNodes, totalFreeEcSlots, err := collectEcNodes(ctx, commandEnv)
 	if err != nil {
@@ -228,10 +228,10 @@ func balancedEcDistribution(servers []*EcNode) (allocated []int) {
 	return allocated
 }
 
-func collectVolumeIdsForEcEncode(ctx context.Context, commandEnv *commandEnv, selectedCollection string, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
+func collectVolumeIdsForEcEncode(ctx context.Context, commandEnv *CommandEnv, selectedCollection string, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
 
 	var resp *master_pb.VolumeListResponse
-	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
 		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
 		return err
 	})

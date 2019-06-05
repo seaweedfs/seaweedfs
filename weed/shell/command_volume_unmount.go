@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandVolumeUnmount{})
+	Commands = append(Commands, &commandVolumeUnmount{})
 }
 
 type commandVolumeUnmount struct {
@@ -32,7 +32,7 @@ func (c *commandVolumeUnmount) Help() string {
 `
 }
 
-func (c *commandVolumeUnmount) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandVolumeUnmount) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	if len(args) != 2 {
 		fmt.Fprintf(writer, "received args: %+v\n", args)

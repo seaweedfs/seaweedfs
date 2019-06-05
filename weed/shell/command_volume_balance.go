@@ -15,7 +15,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandVolumeBalance{})
+	Commands = append(Commands, &commandVolumeBalance{})
 }
 
 type commandVolumeBalance struct {
@@ -59,7 +59,7 @@ func (c *commandVolumeBalance) Help() string {
 `
 }
 
-func (c *commandVolumeBalance) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	collection := balanceCommand.String("collection", "EACH_COLLECTION", "collection name, or use \"ALL_COLLECTIONS\" across collections, \"EACH_COLLECTION\" for each collection")
@@ -71,7 +71,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *commandEnv, writer 
 
 	var resp *master_pb.VolumeListResponse
 	ctx := context.Background()
-	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
 		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
 		return err
 	})
@@ -108,7 +108,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *commandEnv, writer 
 	return nil
 }
 
-func balanceVolumeServers(commandEnv *commandEnv, dataNodeInfos []*master_pb.DataNodeInfo, volumeSizeLimit uint64, collection string, applyBalancing bool) error {
+func balanceVolumeServers(commandEnv *CommandEnv, dataNodeInfos []*master_pb.DataNodeInfo, volumeSizeLimit uint64, collection string, applyBalancing bool) error {
 	var nodes []*Node
 	for _, dn := range dataNodeInfos {
 		nodes = append(nodes, &Node{
@@ -181,7 +181,7 @@ func sortReadOnlyVolumes(volumes []*master_pb.VolumeInformationMessage) {
 	})
 }
 
-func balanceSelectedVolume(commandEnv *commandEnv, nodes []*Node, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage), applyBalancing bool) error {
+func balanceSelectedVolume(commandEnv *CommandEnv, nodes []*Node, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage), applyBalancing bool) error {
 	selectedVolumeCount := 0
 	for _, dn := range nodes {
 		selectedVolumeCount += len(dn.selectedVolumes)
@@ -223,7 +223,7 @@ func balanceSelectedVolume(commandEnv *commandEnv, nodes []*Node, sortCandidates
 	return nil
 }
 
-func moveVolume(commandEnv *commandEnv, v *master_pb.VolumeInformationMessage, fullNode *Node, emptyNode *Node, applyBalancing bool) error {
+func moveVolume(commandEnv *CommandEnv, v *master_pb.VolumeInformationMessage, fullNode *Node, emptyNode *Node, applyBalancing bool) error {
 	collectionPrefix := v.Collection + "_"
 	if v.Collection == "" {
 		collectionPrefix = ""

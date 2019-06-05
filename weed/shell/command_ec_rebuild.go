@@ -14,7 +14,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandEcRebuild{})
+	Commands = append(Commands, &commandEcRebuild{})
 }
 
 type commandEcRebuild struct {
@@ -54,7 +54,7 @@ func (c *commandEcRebuild) Help() string {
 `
 }
 
-func (c *commandEcRebuild) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	fixCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	collection := fixCommand.String("collection", "EACH_COLLECTION", "collection name, or \"EACH_COLLECTION\" for each collection")
@@ -90,7 +90,7 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *commandEnv, writer io.W
 	return nil
 }
 
-func rebuildEcVolumes(commandEnv *commandEnv, allEcNodes []*EcNode, collection string, writer io.Writer, applyChanges bool) error {
+func rebuildEcVolumes(commandEnv *CommandEnv, allEcNodes []*EcNode, collection string, writer io.Writer, applyChanges bool) error {
 
 	ctx := context.Background()
 
@@ -125,7 +125,7 @@ func rebuildEcVolumes(commandEnv *commandEnv, allEcNodes []*EcNode, collection s
 	return nil
 }
 
-func rebuildOneEcVolume(ctx context.Context, commandEnv *commandEnv, rebuilder *EcNode, collection string, volumeId needle.VolumeId, locations EcShardLocations, writer io.Writer, applyChanges bool) error {
+func rebuildOneEcVolume(ctx context.Context, commandEnv *CommandEnv, rebuilder *EcNode, collection string, volumeId needle.VolumeId, locations EcShardLocations, writer io.Writer, applyChanges bool) error {
 
 	fmt.Printf("rebuildOneEcVolume %s %d\n", collection, volumeId)
 
@@ -182,7 +182,7 @@ func generateMissingShards(ctx context.Context, grpcDialOption grpc.DialOption,
 	return
 }
 
-func prepareDataToRecover(ctx context.Context, commandEnv *commandEnv, rebuilder *EcNode, collection string, volumeId needle.VolumeId, locations EcShardLocations, writer io.Writer, applyBalancing bool) (copiedShardIds []uint32, localShardIds []uint32, err error) {
+func prepareDataToRecover(ctx context.Context, commandEnv *CommandEnv, rebuilder *EcNode, collection string, volumeId needle.VolumeId, locations EcShardLocations, writer io.Writer, applyBalancing bool) (copiedShardIds []uint32, localShardIds []uint32, err error) {
 
 	needEcxFile := true
 	var localShardBits erasure_coding.ShardBits

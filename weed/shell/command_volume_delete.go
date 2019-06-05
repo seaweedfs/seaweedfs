@@ -9,7 +9,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandVolumeDelete{})
+	Commands = append(Commands, &commandVolumeDelete{})
 }
 
 type commandVolumeDelete struct {
@@ -29,7 +29,7 @@ func (c *commandVolumeDelete) Help() string {
 `
 }
 
-func (c *commandVolumeDelete) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandVolumeDelete) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	if len(args) != 2 {
 		fmt.Fprintf(writer, "received args: %+v\n", args)

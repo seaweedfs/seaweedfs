@@ -1,13 +1,14 @@
 package command
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/spf13/viper"
 	"net/http"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/spf13/viper"
+
 	"fmt"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/s3api"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -47,7 +48,7 @@ var cmdS3 = &Command{
 
 func runS3(cmd *Command, args []string) bool {
 
-	weed_server.LoadConfiguration("security", false)
+	util.LoadConfiguration("security", false)
 
 	return s3StandaloneOptions.startS3Server()
 

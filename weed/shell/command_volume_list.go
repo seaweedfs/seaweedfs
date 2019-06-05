@@ -11,7 +11,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandVolumeList{})
+	Commands = append(Commands, &commandVolumeList{})
 }
 
 type commandVolumeList struct {
@@ -29,11 +29,11 @@ func (c *commandVolumeList) Help() string {
 `
 }
 
-func (c *commandVolumeList) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	var resp *master_pb.VolumeListResponse
 	ctx := context.Background()
-	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
 		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
 		return err
 	})

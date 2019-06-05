@@ -8,7 +8,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandCollectionList{})
+	Commands = append(Commands, &commandCollectionList{})
 }
 
 type commandCollectionList struct {
@@ -22,7 +22,7 @@ func (c *commandCollectionList) Help() string {
 	return `list all collections`
 }
 
-func (c *commandCollectionList) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandCollectionList) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	collections, err := ListCollectionNames(commandEnv, true, true)
 
@@ -39,10 +39,10 @@ func (c *commandCollectionList) Do(args []string, commandEnv *commandEnv, writer
 	return nil
 }
 
-func ListCollectionNames(commandEnv *commandEnv, includeNormalVolumes, includeEcVolumes bool) (collections []string, err error) {
+func ListCollectionNames(commandEnv *CommandEnv, includeNormalVolumes, includeEcVolumes bool) (collections []string, err error) {
 	var resp *master_pb.CollectionListResponse
 	ctx := context.Background()
-	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
 		resp, err = client.CollectionList(ctx, &master_pb.CollectionListRequest{
 			IncludeNormalVolumes: includeNormalVolumes,
 			IncludeEcVolumes:     includeEcVolumes,

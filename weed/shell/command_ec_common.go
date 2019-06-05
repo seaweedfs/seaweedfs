@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-func moveMountedShardToEcNode(ctx context.Context, commandEnv *commandEnv, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, destinationEcNode *EcNode, applyBalancing bool) error {
+func moveMountedShardToEcNode(ctx context.Context, commandEnv *CommandEnv, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, destinationEcNode *EcNode, applyBalancing bool) error {
 
 	fmt.Printf("moved ec shard %d.%d %s => %s\n", vid, shardId, existingLocation.info.Id, destinationEcNode.info.Id)
 
@@ -124,11 +124,11 @@ type EcNode struct {
 	freeEcSlot int
 }
 
-func collectEcNodes(ctx context.Context, commandEnv *commandEnv) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {
+func collectEcNodes(ctx context.Context, commandEnv *CommandEnv) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {
 
 	// list all possible locations
 	var resp *master_pb.VolumeListResponse
-	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
 		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
 		return err
 	})

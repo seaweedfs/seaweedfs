@@ -6,7 +6,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandFsPwd{})
+	Commands = append(Commands, &commandFsPwd{})
 }
 
 type commandFsPwd struct {
@@ -20,7 +20,7 @@ func (c *commandFsPwd) Help() string {
 	return `print out current directory`
 }
 
-func (c *commandFsPwd) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandFsPwd) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	fmt.Fprintf(writer, "http://%s:%d%s\n",
 		commandEnv.option.FilerHost,

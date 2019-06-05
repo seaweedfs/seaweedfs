@@ -2,9 +2,6 @@ package command
 
 import (
 	"fmt"
-	"github.com/chrislusf/raft/protobuf"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/spf13/viper"
 	"net/http"
 	"os"
 	"runtime"
@@ -13,6 +10,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/chrislusf/raft/protobuf"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/spf13/viper"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -107,7 +108,8 @@ func init() {
 
 func runServer(cmd *Command, args []string) bool {
 
-	weed_server.LoadConfiguration("security", false)
+	util.LoadConfiguration("security", false)
+	util.LoadConfiguration("master", false)
 
 	if *serverOptions.cpuprofile != "" {
 		f, err := os.Create(*serverOptions.cpuprofile)

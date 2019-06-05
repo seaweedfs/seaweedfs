@@ -8,12 +8,12 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	weed_server "github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/spf13/viper"
 )
 
 func init() {
-	commands = append(commands, &commandFsMetaNotify{})
+	Commands = append(Commands, &commandFsMetaNotify{})
 }
 
 type commandFsMetaNotify struct {
@@ -33,14 +33,14 @@ func (c *commandFsMetaNotify) Help() string {
 `
 }
 
-func (c *commandFsMetaNotify) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandFsMetaNotify) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	filerServer, filerPort, path, err := commandEnv.parseUrl(findInputDirectory(args))
 	if err != nil {
 		return err
 	}
 
-	weed_server.LoadConfiguration("notification", true)
+	util.LoadConfiguration("notification", true)
 	v := viper.GetViper()
 	notification.LoadConfiguration(v.Sub("notification"))
 

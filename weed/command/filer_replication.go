@@ -13,7 +13,7 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/gcssink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/s3sink"
 	"github.com/chrislusf/seaweedfs/weed/replication/sub"
-	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/spf13/viper"
 )
 
@@ -36,9 +36,9 @@ var cmdFilerReplicate = &Command{
 
 func runFilerReplicate(cmd *Command, args []string) bool {
 
-	weed_server.LoadConfiguration("security", false)
-	weed_server.LoadConfiguration("replication", true)
-	weed_server.LoadConfiguration("notification", true)
+	util.LoadConfiguration("security", false)
+	util.LoadConfiguration("replication", true)
+	util.LoadConfiguration("notification", true)
 	config := viper.GetViper()
 
 	var notificationInput sub.NotificationInput

@@ -3,15 +3,16 @@ package shell
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"google.golang.org/grpc"
 	"io"
 	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"google.golang.org/grpc"
 )
 
 type ShellOptions struct {
@@ -23,23 +24,33 @@ type ShellOptions struct {
 	Directory string
 }
 
-type commandEnv struct {
+type CommandEnv struct {
 	env          map[string]string
-	masterClient *wdclient.MasterClient
+	MasterClient *wdclient.MasterClient
 	option       ShellOptions
 }
 
 type command interface {
 	Name() string
 	Help() string
-	Do([]string, *commandEnv, io.Writer) error
+	Do([]string, *CommandEnv, io.Writer) error
 }
 
 var (
-	commands = []command{}
+	Commands = []command{}
 )
 
-func (ce *commandEnv) parseUrl(input string) (filerServer string, filerPort int64, path string, err error) {
+
+func NewCommandEnv(options ShellOptions) *CommandEnv {
+	return &CommandEnv{
+		env: make(map[string]string),
+		MasterClient: wdclient.NewMasterClient(context.Background(),
+			options.GrpcDialOption, "shell", strings.Split(*options.Masters, ",")),
+		option: options,
+	}
+}
+
+func (ce *CommandEnv) parseUrl(input string) (filerServer string, filerPort int64, path string, err error) {
 	if strings.HasPrefix(input, "http") {
 		return parseFilerUrl(input)
 	}
@@ -49,13 +60,13 @@ func (ce *commandEnv) parseUrl(input string) (filerServer string, filerPort int6
 	return ce.option.FilerHost, ce.option.FilerPort, input, err
 }
 
-func (ce *commandEnv) isDirectory(ctx context.Context, filerServer string, filerPort int64, path string) bool {
+func (ce *CommandEnv) isDirectory(ctx context.Context, filerServer string, filerPort int64, path string) bool {
 
 	return ce.checkDirectory(ctx, filerServer, filerPort, path) == nil
 
 }
 
-func (ce *commandEnv) checkDirectory(ctx context.Context, filerServer string, filerPort int64, path string) error {
+func (ce *CommandEnv) checkDirectory(ctx context.Context, filerServer string, filerPort int64, path string) error {
 
 	dir, name := filer2.FullPath(path).DirAndName()
 

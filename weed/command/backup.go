@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/spf13/viper"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -52,7 +52,7 @@ var cmdBackup = &Command{
 
 func runBackup(cmd *Command, args []string) bool {
 
-	weed_server.LoadConfiguration("security", false)
+	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(viper.Sub("grpc"), "client")
 
 	if *s.volumeId == -1 {

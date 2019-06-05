@@ -2,11 +2,17 @@ package weed_server
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/shell"
 	"google.golang.org/grpc"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/chrislusf/raft"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -99,6 +105,8 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 
 	ms.Topo.StartRefreshWritableVolumes(ms.grpcDialOpiton, garbageThreshold, ms.preallocate)
 
+	ms.startAdminScripts()
+
 	return ms
 }
 
@@ -152,4 +160,63 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 			//writeJsonError(w, r, errors.New(ms.Topo.RaftServer.Name()+" does not know Leader yet:"+ms.Topo.RaftServer.Leader()))
 		}
 	}
+}
+
+func (ms *MasterServer) startAdminScripts() {
+	v := viper.GetViper()
+	adminScripts := v.GetString("master.maintenance.scripts")
+
+	glog.V(0).Infof("adminScripts:\n%v", adminScripts)
+	if adminScripts == "" {
+		return
+	}
+
+	scriptLines := strings.Split(adminScripts, "\n")
+
+	masterAddress := "localhost:" + strconv.Itoa(ms.port)
+
+	var shellOptions shell.ShellOptions
+	shellOptions.GrpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "master")
+	shellOptions.Masters = &masterAddress
+	shellOptions.FilerHost = "localhost"
+	shellOptions.FilerPort = 8888
+	shellOptions.Directory = "/"
+
+	commandEnv := shell.NewCommandEnv(shellOptions)
+
+
+	reg, _ := regexp.Compile(`'.*?'|".*?"|\S+`)
+
+	go commandEnv.MasterClient.KeepConnectedToMaster()
+
+	go func() {
+		commandEnv.MasterClient.WaitUntilConnected()
+
+		c := time.Tick(17 * time.Second)
+		for _ = range c {
+			if ms.Topo.IsLeader() {
+				for _, line := range scriptLines {
+
+					cmds := reg.FindAllString(line, -1)
+					if len(cmds) == 0 {
+						continue
+					}
+					args := make([]string, len(cmds[1:]))
+					for i := range args {
+						args[i] = strings.Trim(string(cmds[1+i]), "\"'")
+					}
+					cmd := strings.ToLower(cmds[0])
+
+					for _, c := range shell.Commands {
+						if c.Name() == cmd {
+							glog.V(0).Infof("executing: %s %v", cmd, args)
+							if err := c.Do(args, commandEnv, os.Stdout); err != nil {
+								glog.V(0).Infof("error: %v", err)
+							}
+						}
+					}
+				}
+			}
+		}
+	}()
 }

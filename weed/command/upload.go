@@ -3,11 +3,12 @@ package command
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/spf13/viper"
 	"os"
 	"path/filepath"
+
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/spf13/viper"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
 )
@@ -61,7 +62,7 @@ var cmdUpload = &Command{
 
 func runUpload(cmd *Command, args []string) bool {
 
-	weed_server.LoadConfiguration("security", false)
+	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(viper.Sub("grpc"), "client")
 
 	if len(args) == 0 {

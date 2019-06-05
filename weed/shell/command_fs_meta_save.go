@@ -14,7 +14,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandFsMetaSave{})
+	Commands = append(Commands, &commandFsMetaSave{})
 }
 
 type commandFsMetaSave struct {
@@ -40,7 +40,7 @@ func (c *commandFsMetaSave) Help() string {
 `
 }
 
-func (c *commandFsMetaSave) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	filerServer, filerPort, path, err := commandEnv.parseUrl(findInputDirectory(args))
 	if err != nil {

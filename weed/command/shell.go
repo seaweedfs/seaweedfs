@@ -2,8 +2,8 @@ package command
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/shell"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/spf13/viper"
 )
 
@@ -28,7 +28,7 @@ var ()
 
 func runShell(command *Command, args []string) bool {
 
-	weed_server.LoadConfiguration("security", false)
+	util.LoadConfiguration("security", false)
 	shellOptions.GrpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
 
 	shellOptions.FilerHost = "localhost"

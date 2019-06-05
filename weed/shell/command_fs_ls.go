@@ -13,7 +13,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandFsLs{})
+	Commands = append(Commands, &commandFsLs{})
 }
 
 type commandFsLs struct {
@@ -35,7 +35,7 @@ func (c *commandFsLs) Help() string {
 `
 }
 
-func (c *commandFsLs) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandFsLs) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	var isLongFormat, showHidden bool
 	for _, arg := range args {

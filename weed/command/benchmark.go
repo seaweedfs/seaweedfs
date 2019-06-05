@@ -4,9 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/spf13/viper"
-	"google.golang.org/grpc"
 	"io"
 	"math"
 	"math/rand"
@@ -17,6 +14,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/spf13/viper"
+	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -108,7 +108,7 @@ var (
 
 func runBenchmark(cmd *Command, args []string) bool {
 
-	weed_server.LoadConfiguration("security", false)
+	util.LoadConfiguration("security", false)
 	b.grpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
 
 	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)

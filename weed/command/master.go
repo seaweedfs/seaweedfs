@@ -1,6 +1,12 @@
 package command
 
 import (
+	"net/http"
+	"os"
+	"runtime"
+	"strconv"
+	"strings"
+
 	"github.com/chrislusf/raft/protobuf"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -10,11 +16,6 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc/reflection"
-	"net/http"
-	"os"
-	"runtime"
-	"strconv"
-	"strings"
 )
 
 func init() {
@@ -56,7 +57,8 @@ var (
 
 func runMaster(cmd *Command, args []string) bool {
 
-	weed_server.LoadConfiguration("security", false)
+	util.LoadConfiguration("security", false)
+	util.LoadConfiguration("master", false)
 
 	if *mMaxCpu < 1 {
 		*mMaxCpu = runtime.NumCPU()

@@ -8,11 +8,10 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 )
 
 func init() {
-	commands = append(commands, &commandFsCat{})
+	Commands = append(Commands, &commandFsCat{})
 }
 
 type commandFsCat struct {
@@ -34,7 +33,7 @@ func (c *commandFsCat) Help() string {
 `
 }
 
-func (c *commandFsCat) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandFsCat) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	input := findInputDirectory(args)
 
@@ -62,7 +61,7 @@ func (c *commandFsCat) Do(args []string, commandEnv *commandEnv, writer io.Write
 			return err
 		}
 
-		return weed_server.StreamContent(commandEnv.masterClient, writer, respLookupEntry.Entry.Chunks, 0, math.MaxInt32)
+		return filer2.StreamContent(commandEnv.MasterClient, writer, respLookupEntry.Entry.Chunks, 0, math.MaxInt32)
 
 	})
 

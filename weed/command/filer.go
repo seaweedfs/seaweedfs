@@ -1,12 +1,13 @@
 package command
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/spf13/viper"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/spf13/viper"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -77,7 +78,7 @@ var cmdFiler = &Command{
 
 func runFiler(cmd *Command, args []string) bool {
 
-	weed_server.LoadConfiguration("security", false)
+	util.LoadConfiguration("security", false)
 
 	f.startFiler()
 

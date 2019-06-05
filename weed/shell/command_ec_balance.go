@@ -13,7 +13,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandEcBalance{})
+	Commands = append(Commands, &commandEcBalance{})
 }
 
 type commandEcBalance struct {
@@ -53,7 +53,7 @@ func (c *commandEcBalance) Help() string {
 `
 }
 
-func (c *commandEcBalance) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	collection := balanceCommand.String("collection", "EACH_COLLECTION", "collection name, or \"EACH_COLLECTION\" for each collection")
@@ -65,7 +65,7 @@ func (c *commandEcBalance) Do(args []string, commandEnv *commandEnv, writer io.W
 
 	var resp *master_pb.VolumeListResponse
 	ctx := context.Background()
-	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
 		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
 		return err
 	})
@@ -104,7 +104,7 @@ func (c *commandEcBalance) Do(args []string, commandEnv *commandEnv, writer io.W
 	return nil
 }
 
-func balanceEcVolumes(commandEnv *commandEnv, collection string, applyBalancing bool) error {
+func balanceEcVolumes(commandEnv *CommandEnv, collection string, applyBalancing bool) error {
 
 	ctx := context.Background()
 
@@ -142,7 +142,7 @@ func balanceEcVolumes(commandEnv *commandEnv, collection string, applyBalancing 
 	return nil
 }
 
-func doBalanceEcShards(ctx context.Context, commandEnv *commandEnv, collection string, vid needle.VolumeId, locations []*EcNode, allEcNodes []*EcNode, applyBalancing bool) error {
+func doBalanceEcShards(ctx context.Context, commandEnv *CommandEnv, collection string, vid needle.VolumeId, locations []*EcNode, allEcNodes []*EcNode, applyBalancing bool) error {
 	// collect all ec nodes with at least one free slot
 	var possibleDestinationEcNodes []*EcNode
 	for _, ecNode := range allEcNodes {
@@ -171,7 +171,7 @@ func doBalanceEcShards(ctx context.Context, commandEnv *commandEnv, collection s
 	return nil
 }
 
-func doDeduplicateEcShards(ctx context.Context, commandEnv *commandEnv, collection string, vid needle.VolumeId, locations []*EcNode, applyBalancing bool) error {
+func doDeduplicateEcShards(ctx context.Context, commandEnv *CommandEnv, collection string, vid needle.VolumeId, locations []*EcNode, applyBalancing bool) error {
 
 	// check whether this volume has ecNodes that are over average
 	shardToLocations := make([][]*EcNode, erasure_coding.TotalShardsCount)
@@ -205,7 +205,7 @@ func doDeduplicateEcShards(ctx context.Context, commandEnv *commandEnv, collecti
 	return nil
 }
 
-func spreadShardsIntoMoreDataNodes(ctx context.Context, commandEnv *commandEnv, averageShardsPerEcNode int, collection string, vid needle.VolumeId, existingLocations, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
+func spreadShardsIntoMoreDataNodes(ctx context.Context, commandEnv *CommandEnv, averageShardsPerEcNode int, collection string, vid needle.VolumeId, existingLocations, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
 
 	for _, ecNode := range existingLocations {
 
@@ -232,7 +232,7 @@ func spreadShardsIntoMoreDataNodes(ctx context.Context, commandEnv *commandEnv, 
 	return nil
 }
 
-func pickOneEcNodeAndMoveOneShard(ctx context.Context, commandEnv *commandEnv, averageShardsPerEcNode int, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
+func pickOneEcNodeAndMoveOneShard(ctx context.Context, commandEnv *CommandEnv, averageShardsPerEcNode int, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
 
 	sortEcNodes(possibleDestinationEcNodes)
 

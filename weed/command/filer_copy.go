@@ -3,14 +3,6 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"github.com/spf13/viper"
-	"google.golang.org/grpc"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -21,6 +13,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"github.com/spf13/viper"
+	"google.golang.org/grpc"
 )
 
 var (
@@ -74,7 +74,7 @@ var cmdCopy = &Command{
 
 func runCopy(cmd *Command, args []string) bool {
 
-	weed_server.LoadConfiguration("security", false)
+	util.LoadConfiguration("security", false)
 
 	if len(args) <= 1 {
 		return false

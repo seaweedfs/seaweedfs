@@ -8,7 +8,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandCollectionDelete{})
+	Commands = append(Commands, &commandCollectionDelete{})
 }
 
 type commandCollectionDelete struct {
@@ -26,7 +26,7 @@ func (c *commandCollectionDelete) Help() string {
 `
 }
 
-func (c *commandCollectionDelete) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandCollectionDelete) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	if len(args) == 0 {
 		return nil
@@ -35,7 +35,7 @@ func (c *commandCollectionDelete) Do(args []string, commandEnv *commandEnv, writ
 	collectionName := args[0]
 
 	ctx := context.Background()
-	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
 		_, err = client.CollectionDelete(ctx, &master_pb.CollectionDeleteRequest{
 			Name: collectionName,
 		})

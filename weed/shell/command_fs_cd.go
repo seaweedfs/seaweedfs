@@ -6,7 +6,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandFsCd{})
+	Commands = append(Commands, &commandFsCd{})
 }
 
 type commandFsCd struct {
@@ -29,7 +29,7 @@ func (c *commandFsCd) Help() string {
 `
 }
 
-func (c *commandFsCd) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandFsCd) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	input := findInputDirectory(args)
 

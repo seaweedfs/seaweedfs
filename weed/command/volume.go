@@ -1,8 +1,6 @@
 package command
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/spf13/viper"
 	"net/http"
 	"os"
 	"runtime"
@@ -10,6 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/spf13/viper"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
@@ -83,7 +84,7 @@ var (
 
 func runVolume(cmd *Command, args []string) bool {
 
-	weed_server.LoadConfiguration("security", false)
+	util.LoadConfiguration("security", false)
 
 	if *v.maxCpu < 1 {
 		*v.maxCpu = runtime.NumCPU()

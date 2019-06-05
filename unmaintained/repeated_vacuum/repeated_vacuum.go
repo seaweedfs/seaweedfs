@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/spf13/viper"
 	"log"
 	"math/rand"
+
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/spf13/viper"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -22,7 +22,7 @@ var (
 func main() {
 	flag.Parse()
 
-	weed_server.LoadConfiguration("security", false)
+	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(viper.Sub("grpc"), "client")
 
 	for i := 0; i < *repeat; i++ {

@@ -13,7 +13,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandVolumeFixReplication{})
+	Commands = append(Commands, &commandVolumeFixReplication{})
 }
 
 type commandVolumeFixReplication struct {
@@ -41,7 +41,7 @@ func (c *commandVolumeFixReplication) Help() string {
 `
 }
 
-func (c *commandVolumeFixReplication) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	takeAction := true
 	if len(args) > 0 && args[0] == "-n" {
@@ -50,7 +50,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *commandEnv, 
 
 	var resp *master_pb.VolumeListResponse
 	ctx := context.Background()
-	err = commandEnv.masterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
 		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
 		return err
 	})

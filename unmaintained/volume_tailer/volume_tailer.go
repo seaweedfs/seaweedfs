@@ -7,7 +7,6 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/security"
-	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	util2 "github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/spf13/viper"
@@ -25,7 +24,7 @@ var (
 func main() {
 	flag.Parse()
 
-	weed_server.LoadConfiguration("security", false)
+	util2.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(viper.Sub("grpc"), "client")
 
 	vid := needle.VolumeId(*volumeId)

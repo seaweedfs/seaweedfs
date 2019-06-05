@@ -11,7 +11,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandFsDu{})
+	Commands = append(Commands, &commandFsDu{})
 }
 
 type commandFsDu struct {
@@ -30,7 +30,7 @@ func (c *commandFsDu) Help() string {
 `
 }
 
-func (c *commandFsDu) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandFsDu) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	filerServer, filerPort, path, err := commandEnv.parseUrl(findInputDirectory(args))
 	if err != nil {
@@ -106,7 +106,7 @@ func paginateDirectory(ctx context.Context, writer io.Writer, client filer_pb.Se
 
 }
 
-func (env *commandEnv) withFilerClient(ctx context.Context, filerServer string, filerPort int64, fn func(filer_pb.SeaweedFilerClient) error) error {
+func (env *CommandEnv) withFilerClient(ctx context.Context, filerServer string, filerPort int64, fn func(filer_pb.SeaweedFilerClient) error) error {
 
 	filerGrpcAddress := fmt.Sprintf("%s:%d", filerServer, filerPort+10000)
 	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {

@@ -10,7 +10,7 @@ func init() {
 }
 
 var cmdScaffold = &Command{
-	UsageLine: "scaffold -config=[filer|notification|replication|security]",
+	UsageLine: "scaffold -config=[filer|notification|replication|security|master]",
 	Short:     "generate basic configuration files",
 	Long: `Generate filer.toml with all possible configurations for you to customize.
 
@@ -19,7 +19,7 @@ var cmdScaffold = &Command{
 
 var (
 	outputPath = cmdScaffold.Flag.String("output", "", "if not empty, save the configuration file to this directory")
-	config     = cmdScaffold.Flag.String("config", "filer", "[filer|notification|replication|security] the configuration file to generate")
+	config     = cmdScaffold.Flag.String("config", "filer", "[filer|notification|replication|security|master] the configuration file to generate")
 )
 
 func runScaffold(cmd *Command, args []string) bool {
@@ -34,6 +34,8 @@ func runScaffold(cmd *Command, args []string) bool {
 		content = REPLICATION_TOML_EXAMPLE
 	case "security":
 		content = SECURITY_TOML_EXAMPLE
+	case "master":
+		content = MASTER_TOML_EXAMPLE
 	}
 	if content == "" {
 		println("need a valid -config option")
@@ -308,6 +310,23 @@ enabled = true
 cert = ""
 key  = ""
 
+
+`
+
+	MASTER_TOML_EXAMPLE = `
+# Put this file to one of the location, with descending priority
+#    ./master.toml
+#    $HOME/.seaweedfs/master.toml
+#    /etc/seaweedfs/master.toml
+# this file is read by master
+
+[master.maintenance]
+scripts = """
+  ec.encode -fullPercent=95 -quietFor=1h
+  ec.rebuild -force
+  ec.balance -force
+  volume.balance -force
+"""
 
 `
 )

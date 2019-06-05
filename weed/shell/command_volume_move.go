@@ -14,7 +14,7 @@ import (
 )
 
 func init() {
-	commands = append(commands, &commandVolumeMove{})
+	Commands = append(Commands, &commandVolumeMove{})
 }
 
 type commandVolumeMove struct {
@@ -42,7 +42,7 @@ func (c *commandVolumeMove) Help() string {
 `
 }
 
-func (c *commandVolumeMove) Do(args []string, commandEnv *commandEnv, writer io.Writer) (err error) {
+func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	if len(args) != 3 {
 		fmt.Fprintf(writer, "received args: %+v\n", args)

@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/jacobsa/daemonize"
 	"github.com/spf13/viper"
 
@@ -45,7 +44,7 @@ func runMount(cmd *Command, args []string) bool {
 func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCenter string, chunkSizeLimitMB int,
 	allowOthers bool, ttlSec int, dirListingLimit int) bool {
 
-	weed_server.LoadConfiguration("security", false)
+	util.LoadConfiguration("security", false)
 
 	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)
 	if dir == "" {

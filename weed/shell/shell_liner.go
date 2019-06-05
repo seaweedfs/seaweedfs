@@ -1,17 +1,16 @@
 package shell
 
 import (
-	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"io"
 	"os"
 	"path"
 	"regexp"
 	"strings"
 
-	"github.com/peterh/liner"
 	"sort"
+
+	"github.com/peterh/liner"
 )
 
 var (
@@ -33,15 +32,10 @@ func RunShell(options ShellOptions) {
 
 	reg, _ := regexp.Compile(`'.*?'|".*?"|\S+`)
 
-	commandEnv := &commandEnv{
-		env: make(map[string]string),
-		masterClient: wdclient.NewMasterClient(context.Background(),
-			options.GrpcDialOption, "shell", strings.Split(*options.Masters, ",")),
-		option: options,
-	}
+	commandEnv := NewCommandEnv(options)
 
-	go commandEnv.masterClient.KeepConnectedToMaster()
-	commandEnv.masterClient.WaitUntilConnected()
+	go commandEnv.MasterClient.KeepConnectedToMaster()
+	commandEnv.MasterClient.WaitUntilConnected()
 
 	for {
 		cmd, err := line.Prompt("> ")
@@ -71,7 +65,7 @@ func RunShell(options ShellOptions) {
 				return
 			} else {
 				foundCommand := false
-				for _, c := range commands {
+				for _, c := range Commands {
 					if c.Name() == cmd {
 						if err := c.Do(args, commandEnv, os.Stdout); err != nil {
 							fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -94,10 +88,10 @@ func printGenericHelp() {
 `
 	fmt.Print(msg)
 
-	sort.Slice(commands, func(i, j int) bool {
-		return strings.Compare(commands[i].Name(), commands[j].Name()) < 0
+	sort.Slice(Commands, func(i, j int) bool {
+		return strings.Compare(Commands[i].Name(), Commands[j].Name()) < 0
 	})
-	for _, c := range commands {
+	for _, c := range Commands {
 		helpTexts := strings.SplitN(c.Help(), "\n", 2)
 		fmt.Printf("  %-30s\t# %s \n", c.Name(), helpTexts[0])
 	}
@@ -112,11 +106,11 @@ func printHelp(cmds []string) {
 	} else {
 		cmd := strings.ToLower(args[0])
 
-		sort.Slice(commands, func(i, j int) bool {
-			return strings.Compare(commands[i].Name(), commands[j].Name()) < 0
+		sort.Slice(Commands, func(i, j int) bool {
+			return strings.Compare(Commands[i].Name(), Commands[j].Name()) < 0
 		})
 
-		for _, c := range commands {
+		for _, c := range Commands {
 			if c.Name() == cmd {
 				fmt.Printf("  %s\t# %s\n", c.Name(), c.Help())
 			}
@@ -126,7 +120,7 @@ func printHelp(cmds []string) {
 
 func setCompletionHandler() {
 	line.SetCompleter(func(line string) (c []string) {
-		for _, i := range commands {
+		for _, i := range Commands {
 			if strings.HasPrefix(i.Name(), strings.ToLower(line)) {
 				c = append(c, i.Name())
 			}
