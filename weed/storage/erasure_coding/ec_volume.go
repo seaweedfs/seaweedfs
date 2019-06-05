@@ -20,6 +20,7 @@ type EcVolume struct {
 	dir                       string
 	ecxFile                   *os.File
 	ecxFileSize               int64
+	ecxCreatedAt              time.Time
 	Shards                    []*EcVolumeShard
 	ShardLocations            map[ShardId][]string
 	ShardLocationsRefreshTime time.Time
@@ -41,6 +42,7 @@ func NewEcVolume(dir string, collection string, vid needle.VolumeId) (ev *EcVolu
 		return nil, fmt.Errorf("can not stat ec volume index %s.ecx: %v", baseFileName, statErr)
 	}
 	ev.ecxFileSize = ecxFi.Size()
+	ev.ecxCreatedAt = ecxFi.ModTime()
 
 	ev.ShardLocations = make(map[ShardId][]string)
 
@@ -111,6 +113,24 @@ func (ev *EcVolume) FileName() string {
 
 	return EcShardFileName(ev.Collection, ev.dir, int(ev.VolumeId))
 
+}
+
+func (ev *EcVolume) ShardSize() int64 {
+	if len(ev.Shards) > 0 {
+		return ev.Shards[0].Size()
+	}
+	return 0
+}
+
+func (ev *EcVolume) CreatedAt() time.Time {
+	return ev.ecxCreatedAt
+}
+
+func (ev *EcVolume) ShardIdList() (shardIds []ShardId) {
+	for _, s := range ev.Shards {
+		shardIds = append(shardIds, s.ShardId)
+	}
+	return
 }
 
 func (ev *EcVolume) ToVolumeEcShardInformationMessage() (messages []*master_pb.VolumeEcShardInformationMessage) {

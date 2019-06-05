@@ -24,6 +24,7 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		Version      string
 		Masters      []string
 		Volumes      interface{}
+		EcVolumes    interface{}
 		DiskStatuses interface{}
 		Stats        interface{}
 		Counters     *stats.ServerStats
@@ -31,6 +32,7 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		util.VERSION,
 		vs.SeedMasterNodes,
 		vs.store.Status(),
+		vs.store.EcVolumes(),
 		ds,
 		infos,
 		serverStats,

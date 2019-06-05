@@ -14,6 +14,17 @@ func (dn *DataNode) GetEcShards() (ret []*erasure_coding.EcVolumeInfo) {
 	return ret
 }
 
+func (dn *DataNode) GetEcShardsCount() (count int) {
+	dn.RLock()
+	defer dn.RUnlock()
+
+	for _, ecVolumeInfo := range dn.ecShards {
+		count += ecVolumeInfo.ShardBits.ShardIdCount()
+	}
+
+	return count
+}
+
 func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) (newShards, deletedShards []*erasure_coding.EcVolumeInfo) {
 	// prepare the new ec shard map
 	actualEcShardMap := make(map[needle.VolumeId]*erasure_coding.EcVolumeInfo)

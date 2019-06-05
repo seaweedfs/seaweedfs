@@ -39,6 +39,10 @@ func NewEcVolumeShard(dirname string, collection string, id needle.VolumeId, sha
 	return
 }
 
+func (shard *EcVolumeShard) Size() int64 {
+	return shard.ecdFileSize
+}
+
 func (shard *EcVolumeShard) String() string {
 	return fmt.Sprintf("ec shard %v:%v, dir:%s, Collection:%s", shard.VolumeId, shard.ShardId, shard.dir, shard.Collection)
 }

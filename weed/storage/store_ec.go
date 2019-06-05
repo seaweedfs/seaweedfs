@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"sync"
 	"time"
 
@@ -364,4 +365,18 @@ func (s *Store) recoverOneRemoteEcShardInterval(ctx context.Context, ecVolume *e
 	copy(buf, bufs[shardIdToRecover])
 
 	return len(buf), nil
+}
+
+func (s *Store) EcVolumes() (ecVolumes []*erasure_coding.EcVolume) {
+	for _, location := range s.Locations {
+		location.ecVolumesLock.RLock()
+		for _, v := range location.ecVolumes {
+			ecVolumes = append(ecVolumes, v)
+		}
+		location.ecVolumesLock.RUnlock()
+	}
+	sort.Slice(ecVolumes, func(i, j int) bool {
+		return ecVolumes[i].VolumeId > ecVolumes[j].VolumeId
+	})
+	return ecVolumes
 }
