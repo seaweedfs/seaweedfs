@@ -22,26 +22,31 @@ func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) 
 	}
 
 	// found out the newShards and deletedShards
+	var newShardCount, deletedShardCount int
 	dn.ecShardsLock.RLock()
 	for vid, ecShards := range dn.ecShards {
 		if actualEcShards, ok := actualEcShardMap[vid]; !ok {
 			// dn registered ec shards not found in the new set of ec shards
 			deletedShards = append(deletedShards, ecShards)
+			deletedShardCount += ecShards.ShardIdCount()
 		} else {
 			// found, but maybe the actual shard could be missing
 			a := actualEcShards.Minus(ecShards)
 			if a.ShardIdCount() > 0 {
 				newShards = append(newShards, a)
+				newShardCount += a.ShardIdCount()
 			}
 			d := ecShards.Minus(actualEcShards)
 			if d.ShardIdCount() > 0 {
 				deletedShards = append(deletedShards, d)
+				deletedShardCount += d.ShardIdCount()
 			}
 		}
 	}
 	for _, ecShards := range actualShards {
 		if _, found := dn.ecShards[ecShards.VolumeId]; !found {
 			newShards = append(newShards, ecShards)
+			newShardCount += ecShards.ShardIdCount()
 		}
 	}
 	dn.ecShardsLock.RUnlock()
@@ -50,7 +55,7 @@ func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) 
 		// if changed, set to the new ec shard map
 		dn.ecShardsLock.Lock()
 		dn.ecShards = actualEcShardMap
-		dn.UpAdjustEcShardCountDelta(int64(len(newShards) - len(deletedShards)))
+		dn.UpAdjustEcShardCountDelta(int64(newShardCount - deletedShardCount))
 		dn.ecShardsLock.Unlock()
 	}
 
