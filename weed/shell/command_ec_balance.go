@@ -26,7 +26,7 @@ func (c *commandEcBalance) Name() string {
 func (c *commandEcBalance) Help() string {
 	return `balance all ec shards among volume servers
 
-	ec.balance [-c EACH_COLLECTION|<collection_name>] [-f] [-dataCenter <data_center>]
+	ec.balance [-c EACH_COLLECTION|<collection_name>] [-force] [-dataCenter <data_center>]
 
 	Algorithm:
 

@@ -27,7 +27,7 @@ func (c *commandEcRebuild) Name() string {
 func (c *commandEcRebuild) Help() string {
 	return `find and rebuild missing ec shards among volume servers
 
-	ec.rebuild [-c EACH_COLLECTION|<collection_name>] [-f]
+	ec.rebuild [-c EACH_COLLECTION|<collection_name>] [-force]
 
 	Algorithm:
 
