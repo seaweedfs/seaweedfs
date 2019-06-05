@@ -34,7 +34,7 @@ func (l *DiskLocation) DestroyEcVolume(vid needle.VolumeId) {
 	ecVolume, found := l.ecVolumes[vid]
 	if found {
 		ecVolume.Destroy()
-		delete(l.ecVolumes,vid)
+		delete(l.ecVolumes, vid)
 	}
 }
 

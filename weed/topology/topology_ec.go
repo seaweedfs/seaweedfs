@@ -139,7 +139,7 @@ func (t *Topology) ListEcServersByCollection(collection string) (dataNodes []str
 	dateNodeMap := make(map[string]bool)
 	for _, ecVolumeLocation := range t.ecShardMap {
 		if ecVolumeLocation.Collection == collection {
-			for _, locations := range ecVolumeLocation.Locations{
+			for _, locations := range ecVolumeLocation.Locations {
 				for _, loc := range locations {
 					dateNodeMap[string(loc.Id())] = true
 				}

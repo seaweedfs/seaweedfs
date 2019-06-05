@@ -64,7 +64,7 @@ func EcShardFileName(collection string, dir string, id int) (fileName string) {
 func EcShardBaseFileName(collection string, id int) (baseFileName string) {
 	baseFileName = strconv.Itoa(id)
 	if collection != "" {
-		baseFileName = collection+"_"+baseFileName
+		baseFileName = collection + "_" + baseFileName
 	}
 	return
 }
