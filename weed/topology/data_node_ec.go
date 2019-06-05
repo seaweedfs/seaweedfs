@@ -14,17 +14,6 @@ func (dn *DataNode) GetEcShards() (ret []*erasure_coding.EcVolumeInfo) {
 	return ret
 }
 
-func (dn *DataNode) GetEcShardsCount() (count int) {
-	dn.RLock()
-	defer dn.RUnlock()
-
-	for _, ecVolumeInfo := range dn.ecShards {
-		count += ecVolumeInfo.ShardBits.ShardIdCount()
-	}
-
-	return count
-}
-
 func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) (newShards, deletedShards []*erasure_coding.EcVolumeInfo) {
 	// prepare the new ec shard map
 	actualEcShardMap := make(map[needle.VolumeId]*erasure_coding.EcVolumeInfo)
@@ -61,6 +50,7 @@ func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) 
 		// if changed, set to the new ec shard map
 		dn.ecShardsLock.Lock()
 		dn.ecShards = actualEcShardMap
+		dn.UpAdjustEcShardCountDelta(int64(len(newShards) - len(deletedShards)))
 		dn.ecShardsLock.Unlock()
 	}
 
@@ -83,11 +73,17 @@ func (dn *DataNode) AddOrUpdateEcShard(s *erasure_coding.EcVolumeInfo) {
 	dn.ecShardsLock.Lock()
 	defer dn.ecShardsLock.Unlock()
 
+	delta := 0
 	if existing, ok := dn.ecShards[s.VolumeId]; !ok {
 		dn.ecShards[s.VolumeId] = s
+		delta = s.ShardBits.ShardIdCount()
 	} else {
+		oldCount := existing.ShardBits.ShardIdCount()
 		existing.ShardBits = existing.ShardBits.Plus(s.ShardBits)
+		delta = existing.ShardBits.ShardIdCount() - oldCount
 	}
+
+	dn.UpAdjustEcShardCountDelta(int64(delta))
 
 }
 
@@ -96,7 +92,10 @@ func (dn *DataNode) DeleteEcShard(s *erasure_coding.EcVolumeInfo) {
 	defer dn.ecShardsLock.Unlock()
 
 	if existing, ok := dn.ecShards[s.VolumeId]; ok {
+		oldCount := existing.ShardBits.ShardIdCount()
 		existing.ShardBits = existing.ShardBits.Minus(s.ShardBits)
+		delta := existing.ShardBits.ShardIdCount() - oldCount
+		dn.UpAdjustEcShardCountDelta(int64(delta))
 		if existing.ShardBits.ShardIdCount() == 0 {
 			delete(dn.ecShards, s.VolumeId)
 		}

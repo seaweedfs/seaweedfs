@@ -146,7 +146,7 @@ func (dn *DataNode) ToMap() interface{} {
 	ret := make(map[string]interface{})
 	ret["Url"] = dn.Url()
 	ret["Volumes"] = dn.GetVolumeCount()
-	ret["EcShards"] = dn.GetEcShardsCount()
+	ret["EcShards"] = dn.GetEcShardCount()
 	ret["Max"] = dn.GetMaxVolumeCount()
 	ret["Free"] = dn.FreeSpace()
 	ret["PublicUrl"] = dn.PublicUrl
