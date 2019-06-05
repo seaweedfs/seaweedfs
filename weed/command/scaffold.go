@@ -321,6 +321,7 @@ key  = ""
 # this file is read by master
 
 [master.maintenance]
+# periodically run these scripts are the same as running them from 'weed shell'
 scripts = """
   ec.encode -fullPercent=95 -quietFor=1h
   ec.rebuild -force
