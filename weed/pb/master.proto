@@ -40,12 +40,14 @@ message Heartbeat {
     // delta volumes
     repeated VolumeShortInformationMessage new_volumes = 10;
     repeated VolumeShortInformationMessage deleted_volumes = 11;
+    bool has_no_volumes = 12;
 
     // erasure coding
     repeated VolumeEcShardInformationMessage ec_shards = 16;
     // delta erasure coding shards
     repeated VolumeEcShardInformationMessage new_ec_shards = 17;
     repeated VolumeEcShardInformationMessage deleted_ec_shards = 18;
+    bool has_no_ec_shards = 19;
 
 }
 

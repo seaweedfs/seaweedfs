@@ -191,6 +191,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		DataCenter:     s.dataCenter,
 		Rack:           s.rack,
 		Volumes:        volumeMessages,
+		HasNoVolumes:   len(volumeMessages) == 0,
 	}
 
 }

@@ -93,7 +93,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			t.IncrementalSyncDataNodeRegistration(heartbeat.NewVolumes, heartbeat.DeletedVolumes, dn)
 		}
 
-		if len(heartbeat.Volumes) > 0 {
+		if len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes {
 			// process heartbeat.Volumes
 			newVolumes, deletedVolumes := t.SyncDataNodeRegistration(heartbeat.Volumes, dn)
 
@@ -124,7 +124,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		}
 
-		if len(heartbeat.EcShards) > 0 {
+		if len(heartbeat.EcShards) > 0 || heartbeat.HasNoEcShards {
 			glog.V(1).Infof("master recieved ec shards from %s: %+v", dn.Url(), heartbeat.EcShards)
 			newShards, deletedShards := t.SyncDataNodeEcShards(heartbeat.EcShards, dn)
 
