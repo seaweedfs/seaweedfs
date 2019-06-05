@@ -184,7 +184,6 @@ func (ms *MasterServer) startAdminScripts() {
 
 	commandEnv := shell.NewCommandEnv(shellOptions)
 
-
 	reg, _ := regexp.Compile(`'.*?'|".*?"|\S+`)
 
 	go commandEnv.MasterClient.KeepConnectedToMaster()
@@ -192,7 +191,7 @@ func (ms *MasterServer) startAdminScripts() {
 	go func() {
 		commandEnv.MasterClient.WaitUntilConnected()
 
-		c := time.Tick(17 * time.Second)
+		c := time.Tick(17 * time.Minute)
 		for _ = range c {
 			if ms.Topo.IsLeader() {
 				for _, line := range scriptLines {
