@@ -67,7 +67,9 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 	if location.Error != "" {
 		httpStatus = http.StatusNotFound
 	} else {
-		ms.maybeAddJwtAuthorization(w, fileId)
+		forRead := r.FormValue("read")
+		isRead := forRead == "yes"
+		ms.maybeAddJwtAuthorization(w, fileId, !isRead)
 	}
 	writeJsonQuiet(w, r, httpStatus, location)
 }
@@ -102,17 +104,23 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 	}
 	fid, count, dn, err := ms.Topo.PickForWrite(requestedCount, option)
 	if err == nil {
-		ms.maybeAddJwtAuthorization(w, fid)
+		ms.maybeAddJwtAuthorization(w, fid, true)
 		writeJsonQuiet(w, r, http.StatusOK, operation.AssignResult{Fid: fid, Url: dn.Url(), PublicUrl: dn.PublicUrl, Count: count})
 	} else {
 		writeJsonQuiet(w, r, http.StatusNotAcceptable, operation.AssignResult{Error: err.Error()})
 	}
 }
 
-func (ms *MasterServer) maybeAddJwtAuthorization(w http.ResponseWriter, fileId string) {
-	encodedJwt := security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fileId)
+func (ms *MasterServer) maybeAddJwtAuthorization(w http.ResponseWriter, fileId string, isWrite bool) {
+	var encodedJwt security.EncodedJwt
+	if isWrite {
+		encodedJwt = security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fileId)
+	} else {
+		encodedJwt = security.GenJwt(ms.guard.ReadSigningKey, ms.guard.ReadExpiresAfterSec, fileId)
+	}
 	if encodedJwt == "" {
 		return
 	}
+
 	w.Header().Set("Authorization", "BEARER "+string(encodedJwt))
 }

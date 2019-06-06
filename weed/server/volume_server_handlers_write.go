@@ -29,7 +29,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !vs.maybeCheckJwtAuthorization(r, vid, fid) {
+	if !vs.maybeCheckJwtAuthorization(r, vid, fid, true) {
 		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
 		return
 	}
@@ -65,7 +65,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	volumeId, _ := needle.NewVolumeId(vid)
 	n.ParsePath(fid)
 
-	if !vs.maybeCheckJwtAuthorization(r, vid, fid) {
+	if !vs.maybeCheckJwtAuthorization(r, vid, fid, true) {
 		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
 		return
 	}

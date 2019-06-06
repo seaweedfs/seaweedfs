@@ -44,6 +44,10 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	expiresAfterSec := v.GetInt("jwt.signing.expires_after_seconds")
 	enableUiAccess := v.GetBool("access.ui")
 
+	readSigningKey := v.GetString("jwt.signing.read.key")
+	v.SetDefault("jwt.signing.read.expires_after_seconds", 60)
+	readExpiresAfterSec := v.GetInt("jwt.signing.read.expires_after_seconds")
+
 	vs := &VolumeServer{
 		pulseSeconds:            pulseSeconds,
 		dataCenter:              dataCenter,
@@ -57,7 +61,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	vs.SeedMasterNodes = masterNodes
 	vs.store = storage.NewStore(vs.grpcDialOption, port, ip, publicUrl, folders, maxCounts, vs.needleMapKind)
 
-	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec)
+	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources(adminMux)
 	if signingKey == "" || enableUiAccess {

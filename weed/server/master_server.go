@@ -63,6 +63,10 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	v.SetDefault("jwt.signing.expires_after_seconds", 10)
 	expiresAfterSec := v.GetInt("jwt.signing.expires_after_seconds")
 
+	readSigningKey := v.GetString("jwt.signing.read.key")
+	v.SetDefault("jwt.signing.read.expires_after_seconds", 60)
+	readExpiresAfterSec := v.GetInt("jwt.signing.read.expires_after_seconds")
+
 	var preallocateSize int64
 	if preallocate {
 		preallocateSize = int64(volumeSizeLimitMB) * (1 << 20)
@@ -83,7 +87,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", volumeSizeLimitMB, "MB")
 
-	ms.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec)
+	ms.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	if !disableHttp {
 		handleStaticResources2(r)

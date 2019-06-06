@@ -277,8 +277,14 @@ directory = "/"                # destination directory
 key = ""
 expires_after_seconds = 10           # seconds
 
+# jwt for read is only supported with master+volume setup. Filer does not support this mode.
+[jwt.signing.read]
+key = ""
+expires_after_seconds = 10           # seconds
+
 # all grpc tls authentications are mutual
 # the values for the following ca, cert, and key are paths to the PERM files.
+# the host name is not checked, so the PERM files can be shared.
 [grpc]
 ca = ""
 

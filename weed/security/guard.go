@@ -41,21 +41,29 @@ https://github.com/pkieltyka/jwtauth/blob/master/jwtauth.go
 
 */
 type Guard struct {
-	whiteList       []string
-	SigningKey      SigningKey
-	ExpiresAfterSec int
+	whiteList           []string
+	SigningKey          SigningKey
+	ExpiresAfterSec     int
+	ReadSigningKey      SigningKey
+	ReadExpiresAfterSec int
 
-	isActive bool
+	isWriteActive bool
 }
 
-func NewGuard(whiteList []string, signingKey string, expiresAfterSec int) *Guard {
-	g := &Guard{whiteList: whiteList, SigningKey: SigningKey(signingKey), ExpiresAfterSec: expiresAfterSec}
-	g.isActive = len(g.whiteList) != 0 || len(g.SigningKey) != 0
+func NewGuard(whiteList []string, signingKey string, expiresAfterSec int, readSigningKey string, readExpiresAfterSec int) *Guard {
+	g := &Guard{
+		whiteList:           whiteList,
+		SigningKey:          SigningKey(signingKey),
+		ExpiresAfterSec:     expiresAfterSec,
+		ReadSigningKey:      SigningKey(readSigningKey),
+		ReadExpiresAfterSec: readExpiresAfterSec,
+	}
+	g.isWriteActive = len(g.whiteList) != 0 || len(g.SigningKey) != 0
 	return g
 }
 
 func (g *Guard) WhiteList(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
-	if !g.isActive {
+	if !g.isWriteActive {
 		//if no security needed, just skip all checking
 		return f
 	}

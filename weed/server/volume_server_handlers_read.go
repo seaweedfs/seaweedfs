@@ -3,6 +3,7 @@ package weed_server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -27,6 +28,12 @@ var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
 	n := new(needle.Needle)
 	vid, fid, filename, ext, _ := parseURLPath(r.URL.Path)
+
+	if !vs.maybeCheckJwtAuthorization(r, vid, fid, false) {
+		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
+		return
+	}
+
 	volumeId, err := needle.NewVolumeId(vid)
 	if err != nil {
 		glog.V(2).Infoln("parsing error:", err, r.URL.Path)

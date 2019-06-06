@@ -49,10 +49,22 @@ func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Req
 	}
 }
 
-func (vs *VolumeServer) maybeCheckJwtAuthorization(r *http.Request, vid, fid string) bool {
+func (vs *VolumeServer) maybeCheckJwtAuthorization(r *http.Request, vid, fid string, isWrite bool) bool {
 
-	if len(vs.guard.SigningKey) == 0 {
-		return true
+	var signingKey security.SigningKey
+
+	if isWrite {
+		if len(vs.guard.SigningKey) == 0 {
+			return true
+		} else {
+			signingKey = vs.guard.SigningKey
+		}
+	}else {
+		if len(vs.guard.ReadSigningKey) == 0 {
+			return true
+		} else {
+			signingKey = vs.guard.ReadSigningKey
+		}
 	}
 
 	tokenStr := security.GetJwt(r)
@@ -61,7 +73,7 @@ func (vs *VolumeServer) maybeCheckJwtAuthorization(r *http.Request, vid, fid str
 		return false
 	}
 
-	token, err := security.DecodeJwt(vs.guard.SigningKey, tokenStr)
+	token, err := security.DecodeJwt(signingKey, tokenStr)
 	if err != nil {
 		glog.V(1).Infof("jwt verification error from %s: %v", r.RemoteAddr, err)
 		return false
