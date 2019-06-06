@@ -163,6 +163,8 @@ func rebuildOneEcVolume(ctx context.Context, commandEnv *CommandEnv, rebuilder *
 		return err
 	}
 
+	addEcVolumeShards(rebuilder, volumeId, generatedShardIds)
+
 	return nil
 }
 

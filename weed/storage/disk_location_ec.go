@@ -87,8 +87,8 @@ func (l *DiskLocation) UnloadEcShard(vid needle.VolumeId, shardId erasure_coding
 	if _, deleted := ecVolume.DeleteEcVolumeShard(shardId); deleted {
 		if len(ecVolume.Shards) == 0 {
 			delete(l.ecVolumes, vid)
+			ecVolume.Close()
 		}
-		ecVolume.Close()
 		return true
 	}
 

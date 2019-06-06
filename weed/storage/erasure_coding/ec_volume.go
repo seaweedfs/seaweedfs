@@ -155,7 +155,7 @@ func (ev *EcVolume) LocateEcShardNeedle(n *needle.Needle, version needle.Version
 	// find the needle from ecx file
 	offset, size, err = ev.findNeedleFromEcx(n.Id)
 	if err != nil {
-		return types.Offset{}, 0, nil, err
+		return types.Offset{}, 0, nil, fmt.Errorf("findNeedleFromEcx: %v", err)
 	}
 
 	shard := ev.Shards[0]
@@ -173,7 +173,7 @@ func (ev *EcVolume) findNeedleFromEcx(needleId types.NeedleId) (offset types.Off
 	for l < h {
 		m := (l + h) / 2
 		if _, err := ev.ecxFile.ReadAt(buf, m*types.NeedleMapEntrySize); err != nil {
-			return types.Offset{}, 0, err
+			return types.Offset{}, 0, fmt.Errorf("ecx file %d read at %d: %v", ev.ecxFileSize, m*types.NeedleMapEntrySize, err)
 		}
 		key, offset, size = idx.IdxFileEntry(buf)
 		if key == needleId {

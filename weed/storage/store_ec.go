@@ -118,7 +118,7 @@ func (s *Store) ReadEcShardNeedle(ctx context.Context, vid needle.VolumeId, n *n
 
 			offset, size, intervals, err := localEcVolume.LocateEcShardNeedle(n, version)
 			if err != nil {
-				return 0, err
+				return 0, fmt.Errorf("locate in local ec volume: %v", err)
 			}
 
 			glog.V(4).Infof("read ec volume %d offset %d size %d intervals:%+v", vid, offset.ToAcutalOffset(), size, intervals)

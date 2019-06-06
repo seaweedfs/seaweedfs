@@ -35,7 +35,14 @@ func moveMountedShardToEcNode(ctx context.Context, commandEnv *CommandEnv, exist
 	}
 
 	// ask source node to delete the shard, and maybe the ecx file
-	return sourceServerDeleteEcShards(ctx, commandEnv.option.GrpcDialOption, collection, vid, existingLocation.info.Id, copiedShardIds)
+	err = sourceServerDeleteEcShards(ctx, commandEnv.option.GrpcDialOption, collection, vid, existingLocation.info.Id, copiedShardIds)
+	if err != nil {
+		return err
+	}
+
+	deleteEcVolumeShards(existingLocation, vid, copiedShardIds)
+
+	return nil
 
 }
 

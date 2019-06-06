@@ -223,8 +223,8 @@ func (l *DiskLocation) Close() {
 	l.Unlock()
 
 	l.ecVolumesLock.Lock()
-	for _, shards := range l.ecVolumes {
-		shards.Close()
+	for _, ecVolume := range l.ecVolumes {
+		ecVolume.Close()
 	}
 	l.ecVolumesLock.Unlock()
 

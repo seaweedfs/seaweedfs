@@ -199,6 +199,7 @@ func doDeduplicateEcShards(ctx context.Context, commandEnv *CommandEnv, collecti
 			if err := sourceServerDeleteEcShards(ctx, commandEnv.option.GrpcDialOption, collection, vid, ecNode.info.Id, duplicatedShardIds); err != nil {
 				return err
 			}
+			deleteEcVolumeShards(ecNode, vid, duplicatedShardIds)
 			ecNode.freeEcSlot++
 		}
 	}
@@ -272,4 +273,28 @@ func findEcVolumeShards(ecNode *EcNode, vid needle.VolumeId) erasure_coding.Shar
 	}
 
 	return 0
+}
+
+func addEcVolumeShards(ecNode *EcNode, vid needle.VolumeId, shardIds []uint32){
+
+	for _, shardInfo := range ecNode.info.EcShardInfos {
+		if needle.VolumeId(shardInfo.Id) == vid {
+			for _, shardId := range shardIds{
+				shardInfo.EcIndexBits = uint32(erasure_coding.ShardBits(shardInfo.EcIndexBits).AddShardId(erasure_coding.ShardId(shardId)))
+			}
+		}
+	}
+
+}
+
+func deleteEcVolumeShards(ecNode *EcNode, vid needle.VolumeId, shardIds []uint32){
+
+	for _, shardInfo := range ecNode.info.EcShardInfos {
+		if needle.VolumeId(shardInfo.Id) == vid {
+			for _, shardId := range shardIds{
+				shardInfo.EcIndexBits = uint32(erasure_coding.ShardBits(shardInfo.EcIndexBits).RemoveShardId(erasure_coding.ShardId(shardId)))
+			}
+		}
+	}
+
 }

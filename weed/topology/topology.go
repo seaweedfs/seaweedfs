@@ -78,7 +78,7 @@ func (t *Topology) Leader() (string, error) {
 	return l, nil
 }
 
-func (t *Topology) Lookup(collection string, vid needle.VolumeId) []*DataNode {
+func (t *Topology) Lookup(collection string, vid needle.VolumeId) (dataNodes []*DataNode) {
 	//maybe an issue if lots of collections?
 	if collection == "" {
 		for _, c := range t.collectionMap.Items() {
@@ -91,6 +91,14 @@ func (t *Topology) Lookup(collection string, vid needle.VolumeId) []*DataNode {
 			return c.(*Collection).Lookup(vid)
 		}
 	}
+
+	if locations, found := t.LookupEcShards(vid); found {
+		for _, loc := range locations.Locations {
+			dataNodes = append(dataNodes, loc...)
+		}
+		return dataNodes
+	}
+
 	return nil
 }
 
