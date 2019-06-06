@@ -169,6 +169,8 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 func (ms *MasterServer) startAdminScripts() {
 	v := viper.GetViper()
 	adminScripts := v.GetString("master.maintenance.scripts")
+	v.SetDefault("master.maintenance.sleep_minutes", 17)
+	sleepMinutes := v.GetInt("master.maintenance.sleep_minutes")
 
 	glog.V(0).Infof("adminScripts:\n%v", adminScripts)
 	if adminScripts == "" {
@@ -195,7 +197,7 @@ func (ms *MasterServer) startAdminScripts() {
 	go func() {
 		commandEnv.MasterClient.WaitUntilConnected()
 
-		c := time.Tick(17 * time.Minute)
+		c := time.Tick(time.Duration(sleepMinutes) * time.Minute)
 		for _ = range c {
 			if ms.Topo.IsLeader() {
 				for _, line := range scriptLines {

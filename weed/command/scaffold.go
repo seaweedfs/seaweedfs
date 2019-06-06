@@ -334,6 +334,7 @@ scripts = """
   ec.balance -force
   volume.balance -force
 """
+sleep_minutes = 17          # sleep minutes between each script execution
 
 `
 )
