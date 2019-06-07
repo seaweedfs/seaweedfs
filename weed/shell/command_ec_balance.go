@@ -145,25 +145,29 @@ func balanceEcVolumes(commandEnv *CommandEnv, collection string, applyBalancing 
 func doBalanceEcShards(ctx context.Context, commandEnv *CommandEnv, collection string, vid needle.VolumeId, locations []*EcNode, allEcNodes []*EcNode, applyBalancing bool) error {
 	// collect all ec nodes with at least one free slot
 	var possibleDestinationEcNodes []*EcNode
+	possibleDataCenters := make(map[string]int)
+	possibleRacks := make(map[string]int)
 	for _, ecNode := range allEcNodes {
 		if ecNode.freeEcSlot > 0 {
 			possibleDestinationEcNodes = append(possibleDestinationEcNodes, ecNode)
+			possibleDataCenters[ecNode.dc] += ecNode.freeEcSlot
+			possibleRacks[ecNode.dc+"/"+ecNode.rack] += ecNode.freeEcSlot
 		}
 	}
 	// calculate average number of shards an ec node should have for one volume
 	averageShardsPerEcNode := int(math.Ceil(float64(erasure_coding.TotalShardsCount) / float64(len(possibleDestinationEcNodes))))
-	fmt.Printf("vid %d averageShardsPerEcNode %+v\n", vid, averageShardsPerEcNode)
+	fmt.Printf("vid %d averageShards Per EcNode:%d\n", vid, averageShardsPerEcNode)
 	// check whether this volume has ecNodes that are over average
-	isOverLimit := false
+	isOverPerNodeAverage := false
 	for _, ecNode := range locations {
 		shardBits := findEcVolumeShards(ecNode, vid)
 		if shardBits.ShardIdCount() > averageShardsPerEcNode {
-			isOverLimit = true
-			fmt.Printf("vid %d %s has %d shards, isOverLimit %+v\n", vid, ecNode.info.Id, shardBits.ShardIdCount(), isOverLimit)
+			isOverPerNodeAverage = true
+			fmt.Printf("vid %d %s has %d shards, isOverPerNodeAverage %+v\n", vid, ecNode.info.Id, shardBits.ShardIdCount(), isOverPerNodeAverage)
 			break
 		}
 	}
-	if isOverLimit {
+	if isOverPerNodeAverage {
 		if err := spreadShardsIntoMoreDataNodes(ctx, commandEnv, averageShardsPerEcNode, collection, vid, locations, possibleDestinationEcNodes, applyBalancing); err != nil {
 			return err
 		}
@@ -275,11 +279,11 @@ func findEcVolumeShards(ecNode *EcNode, vid needle.VolumeId) erasure_coding.Shar
 	return 0
 }
 
-func addEcVolumeShards(ecNode *EcNode, vid needle.VolumeId, shardIds []uint32){
+func addEcVolumeShards(ecNode *EcNode, vid needle.VolumeId, shardIds []uint32) {
 
 	for _, shardInfo := range ecNode.info.EcShardInfos {
 		if needle.VolumeId(shardInfo.Id) == vid {
-			for _, shardId := range shardIds{
+			for _, shardId := range shardIds {
 				shardInfo.EcIndexBits = uint32(erasure_coding.ShardBits(shardInfo.EcIndexBits).AddShardId(erasure_coding.ShardId(shardId)))
 			}
 		}
@@ -287,11 +291,11 @@ func addEcVolumeShards(ecNode *EcNode, vid needle.VolumeId, shardIds []uint32){
 
 }
 
-func deleteEcVolumeShards(ecNode *EcNode, vid needle.VolumeId, shardIds []uint32){
+func deleteEcVolumeShards(ecNode *EcNode, vid needle.VolumeId, shardIds []uint32) {
 
 	for _, shardInfo := range ecNode.info.EcShardInfos {
 		if needle.VolumeId(shardInfo.Id) == vid {
-			for _, shardId := range shardIds{
+			for _, shardId := range shardIds {
 				shardInfo.EcIndexBits = uint32(erasure_coding.ShardBits(shardInfo.EcIndexBits).RemoveShardId(erasure_coding.ShardId(shardId)))
 			}
 		}

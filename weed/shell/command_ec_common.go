@@ -98,11 +98,11 @@ func oneServerCopyAndMountEcShardsFromSource(ctx context.Context, grpcDialOption
 	return
 }
 
-func eachDataNode(topo *master_pb.TopologyInfo, fn func(*master_pb.DataNodeInfo)) {
+func eachDataNode(topo *master_pb.TopologyInfo, fn func(dc, rack string, dn *master_pb.DataNodeInfo)) {
 	for _, dc := range topo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
 			for _, dn := range rack.DataNodeInfos {
-				fn(dn)
+				fn(dc.Id, rack.Id, dn)
 			}
 		}
 	}
@@ -128,6 +128,8 @@ func countFreeShardSlots(dn *master_pb.DataNodeInfo) (count int) {
 
 type EcNode struct {
 	info       *master_pb.DataNodeInfo
+	dc         string
+	rack       string
 	freeEcSlot int
 }
 
@@ -144,10 +146,12 @@ func collectEcNodes(ctx context.Context, commandEnv *CommandEnv) (ecNodes []*EcN
 	}
 
 	// find out all volume servers with one slot left.
-	eachDataNode(resp.TopologyInfo, func(dn *master_pb.DataNodeInfo) {
+	eachDataNode(resp.TopologyInfo, func(dc, rack string, dn *master_pb.DataNodeInfo) {
 		if freeEcSlots := countFreeShardSlots(dn); freeEcSlots > 0 {
 			ecNodes = append(ecNodes, &EcNode{
 				info:       dn,
+				dc:         dc,
+				rack:       rack,
 				freeEcSlot: int(freeEcSlots),
 			})
 			totalFreeEcSlots += freeEcSlots
