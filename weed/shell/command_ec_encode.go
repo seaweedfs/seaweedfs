@@ -123,7 +123,7 @@ func generateEcShards(ctx context.Context, grpcDialOption grpc.DialOption, volum
 
 func spreadEcShards(ctx context.Context, commandEnv *CommandEnv, volumeId needle.VolumeId, collection string, existingLocations []wdclient.Location) (err error) {
 
-	allEcNodes, totalFreeEcSlots, err := collectEcNodes(ctx, commandEnv)
+	allEcNodes, totalFreeEcSlots, err := collectEcNodes(ctx, commandEnv, "")
 	if err != nil {
 		return err
 	}
@@ -191,7 +191,7 @@ func parallelCopyEcShardsFromSource(ctx context.Context, grpcDialOption grpc.Dia
 				err = copyErr
 			} else {
 				shardIdChan <- copiedShardIds
-				server.freeEcSlot -= len(copiedShardIds)
+				server.addEcVolumeShards(volumeId, collection, copiedShardIds)
 			}
 		}(server, startFromShardId, allocated[i])
 		startFromShardId += uint32(allocated[i])

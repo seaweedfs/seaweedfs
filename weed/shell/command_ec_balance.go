@@ -5,9 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"math"
+	"sort"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
@@ -24,27 +23,72 @@ func (c *commandEcBalance) Name() string {
 }
 
 func (c *commandEcBalance) Help() string {
-	return `balance all ec shards among volume servers
+	return `balance all ec shards among all racks and volume servers
 
 	ec.balance [-c EACH_COLLECTION|<collection_name>] [-force] [-dataCenter <data_center>]
 
 	Algorithm:
 
 	For each type of volume server (different max volume count limit){
-		for each collection {
-			balanceEcVolumes()
+		for each collection:
+			balanceEcVolumes(collectionName)
+		for each rack:
+			balanceEcRack(rack)
+	}
+
+	func balanceEcVolumes(collectionName){
+		for each volume:
+			doDeduplicateEcShards(volumeId)
+
+		tracks rack~shardCount mapping
+		for each volume:
+			doBalanceEcShardsAcrossRacks(volumeId)
+
+		for each volume:
+			doBalanceEcShardsWithinRacks(volumeId)
+	}
+
+	// spread ec shards into more racks
+	func doBalanceEcShardsAcrossRacks(volumeId){
+		tracks rack~volumeIdShardCount mapping
+		averageShardsPerEcRack = totalShardNumber / numRacks  // totalShardNumber is 14 for now, later could varies for each dc
+		ecShardsToMove = select overflown ec shards from racks with ec shard counts > averageShardsPerEcRack
+		for each ecShardsToMove {
+			destRack = pickOneRack(rack~shardCount, rack~volumeIdShardCount, averageShardsPerEcRack)
+			destVolumeServers = volume servers on the destRack
+			pickOneEcNodeAndMoveOneShard(destVolumeServers)
 		}
 	}
 
-	func balanceEcVolumes(){
-		idealWritableVolumes = totalWritableVolumes / numVolumeServers
-		for {
-			sort all volume servers ordered by the number of local writable volumes
-			pick the volume server A with the lowest number of writable volumes x
-			pick the volume server B with the highest number of writable volumes y
-			if y > idealWritableVolumes and x +1 <= idealWritableVolumes {
-				if B has a writable volume id v that A does not have {
-					move writable volume v from A to B
+	func doBalanceEcShardsWithinRacks(volumeId){
+		racks = collect all racks that the volume id is on
+		for rack, shards := range racks
+			doBalanceEcShardsWithinOneRack(volumeId, shards, rack)
+	}
+
+	// move ec shards 
+	func doBalanceEcShardsWithinOneRack(volumeId, shards, rackId){
+		tracks volumeServer~volumeIdShardCount mapping
+		averageShardCount = len(shards) / numVolumeServers
+		volumeServersOverAverage = volume servers with volumeId's ec shard counts > averageShardsPerEcRack
+		ecShardsToMove = select overflown ec shards from volumeServersOverAverage
+		for each ecShardsToMove {
+			destVolumeServer = pickOneVolumeServer(volumeServer~shardCount, volumeServer~volumeIdShardCount, averageShardCount)
+			pickOneEcNodeAndMoveOneShard(destVolumeServers)
+		}
+	}
+
+	// move ec shards while keeping shard distribution for the same volume unchanged or more even
+	func balanceEcRack(rack){
+		averageShardCount = total shards / numVolumeServers
+		for hasMovedOneEcShard {
+			sort all volume servers ordered by the number of local ec shards
+			pick the volume server A with the lowest number of ec shards x
+			pick the volume server B with the highest number of ec shards y
+			if y > averageShardCount and x +1 <= averageShardCount {
+				if B has a ec shard with volume id v that A does not have {
+					move one ec shard v from B to A
+					hasMovedOneEcShard = true
 				}
 			}
 		}
@@ -63,55 +107,10 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return nil
 	}
 
-	var resp *master_pb.VolumeListResponse
 	ctx := context.Background()
-	err = commandEnv.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
-		return err
-	})
-	if err != nil {
-		return err
-	}
-
-	typeToNodes := collectVolumeServersByType(resp.TopologyInfo, *dc)
-	for _, volumeServers := range typeToNodes {
-
-		fmt.Printf("balanceEcVolumes servers %d\n", len(volumeServers))
-
-		if len(volumeServers) < 2 {
-			continue
-		}
-
-		if *collection == "EACH_COLLECTION" {
-			collections, err := ListCollectionNames(commandEnv, false, true)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("balanceEcVolumes collections %+v\n", len(collections))
-			for _, c := range collections {
-				fmt.Printf("balanceEcVolumes collection %+v\n", c)
-				if err = balanceEcVolumes(commandEnv, c, *applyBalancing); err != nil {
-					return err
-				}
-			}
-		} else {
-			if err = balanceEcVolumes(commandEnv, *collection, *applyBalancing); err != nil {
-				return err
-			}
-		}
-
-	}
-	return nil
-}
-
-func balanceEcVolumes(commandEnv *CommandEnv, collection string, applyBalancing bool) error {
-
-	ctx := context.Background()
-
-	fmt.Printf("balanceEcVolumes %s\n", collection)
 
 	// collect all ec nodes
-	allEcNodes, totalFreeEcSlots, err := collectEcNodes(ctx, commandEnv)
+	allEcNodes, totalFreeEcSlots, err := collectEcNodes(ctx, commandEnv, *dc)
 	if err != nil {
 		return err
 	}
@@ -119,56 +118,75 @@ func balanceEcVolumes(commandEnv *CommandEnv, collection string, applyBalancing 
 		return fmt.Errorf("no free ec shard slots. only %d left", totalFreeEcSlots)
 	}
 
-	// vid => []ecNode
-	vidLocations := make(map[needle.VolumeId][]*EcNode)
-	for _, ecNode := range allEcNodes {
-		for _, shardInfo := range ecNode.info.EcShardInfos {
-			vidLocations[needle.VolumeId(shardInfo.Id)] = append(vidLocations[needle.VolumeId(shardInfo.Id)], ecNode)
+	racks := collectRacks(allEcNodes)
+
+	if *collection == "EACH_COLLECTION" {
+		collections, err := ListCollectionNames(commandEnv, false, true)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("balanceEcVolumes collections %+v\n", len(collections))
+		for _, c := range collections {
+			fmt.Printf("balanceEcVolumes collection %+v\n", c)
+			if err = balanceEcVolumes(commandEnv, c, allEcNodes, racks, *applyBalancing); err != nil {
+				return err
+			}
+		}
+	} else {
+		if err = balanceEcVolumes(commandEnv, *collection, allEcNodes, racks, *applyBalancing); err != nil {
+			return err
 		}
 	}
 
-	for vid, locations := range vidLocations {
-
-		if err := doDeduplicateEcShards(ctx, commandEnv, collection, vid, locations, applyBalancing); err != nil {
-			return err
-		}
-
-		if err := doBalanceEcShards(ctx, commandEnv, collection, vid, locations, allEcNodes, applyBalancing); err != nil {
-			return err
-		}
-
+	if err := balanceEcRacks(ctx, commandEnv, racks, *applyBalancing); err != nil {
+		return fmt.Errorf("balance ec racks: %v", err)
 	}
 
 	return nil
 }
 
-func doBalanceEcShards(ctx context.Context, commandEnv *CommandEnv, collection string, vid needle.VolumeId, locations []*EcNode, allEcNodes []*EcNode, applyBalancing bool) error {
-	// collect all ec nodes with at least one free slot
-	var possibleDestinationEcNodes []*EcNode
-	possibleDataCenters := make(map[string]int)
-	possibleRacks := make(map[string]int)
+func collectRacks(allEcNodes []*EcNode) map[RackId]*EcRack {
+	// collect racks info
+	racks := make(map[RackId]*EcRack)
 	for _, ecNode := range allEcNodes {
-		if ecNode.freeEcSlot > 0 {
-			possibleDestinationEcNodes = append(possibleDestinationEcNodes, ecNode)
-			possibleDataCenters[ecNode.dc] += ecNode.freeEcSlot
-			possibleRacks[ecNode.dc+"/"+ecNode.rack] += ecNode.freeEcSlot
+		if racks[ecNode.rack] == nil {
+			racks[ecNode.rack] = &EcRack{
+				ecNodes: make(map[EcNodeId]*EcNode),
+			}
 		}
+		racks[ecNode.rack].ecNodes[EcNodeId(ecNode.info.Id)] = ecNode
+		racks[ecNode.rack].freeEcSlot += ecNode.freeEcSlot
 	}
-	// calculate average number of shards an ec node should have for one volume
-	averageShardsPerEcNode := int(math.Ceil(float64(erasure_coding.TotalShardsCount) / float64(len(possibleDestinationEcNodes))))
-	fmt.Printf("vid %d averageShards Per EcNode:%d\n", vid, averageShardsPerEcNode)
-	// check whether this volume has ecNodes that are over average
-	isOverPerNodeAverage := false
-	for _, ecNode := range locations {
-		shardBits := findEcVolumeShards(ecNode, vid)
-		if shardBits.ShardIdCount() > averageShardsPerEcNode {
-			isOverPerNodeAverage = true
-			fmt.Printf("vid %d %s has %d shards, isOverPerNodeAverage %+v\n", vid, ecNode.info.Id, shardBits.ShardIdCount(), isOverPerNodeAverage)
-			break
-		}
+	return racks
+}
+
+func balanceEcVolumes(commandEnv *CommandEnv, collection string, allEcNodes []*EcNode, racks map[RackId]*EcRack, applyBalancing bool) error {
+
+	ctx := context.Background()
+
+	fmt.Printf("balanceEcVolumes %s\n", collection)
+
+	if err := deleteDuplicatedEcShards(ctx, commandEnv, allEcNodes, collection, applyBalancing); err != nil {
+		return fmt.Errorf("delete duplicated collection %s ec shards: %v", collection, err)
 	}
-	if isOverPerNodeAverage {
-		if err := spreadShardsIntoMoreDataNodes(ctx, commandEnv, averageShardsPerEcNode, collection, vid, locations, possibleDestinationEcNodes, applyBalancing); err != nil {
+
+	if err := balanceEcShardsAcrossRacks(ctx, commandEnv, allEcNodes, racks, collection, applyBalancing); err != nil {
+		return fmt.Errorf("balance across racks collection %s ec shards: %v", collection, err)
+	}
+
+	if err := balanceEcShardsWithinRacks(ctx, commandEnv, allEcNodes, racks, collection, applyBalancing); err != nil {
+		return fmt.Errorf("balance across racks collection %s ec shards: %v", collection, err)
+	}
+
+	return nil
+}
+
+func deleteDuplicatedEcShards(ctx context.Context, commandEnv *CommandEnv, allEcNodes []*EcNode, collection string, applyBalancing bool) error {
+	// vid => []ecNode
+	vidLocations := collectVolumeIdToEcNodes(allEcNodes)
+	// deduplicate ec shards
+	for vid, locations := range vidLocations {
+		if err := doDeduplicateEcShards(ctx, commandEnv, collection, vid, locations, applyBalancing); err != nil {
 			return err
 		}
 	}
@@ -203,14 +221,120 @@ func doDeduplicateEcShards(ctx context.Context, commandEnv *CommandEnv, collecti
 			if err := sourceServerDeleteEcShards(ctx, commandEnv.option.GrpcDialOption, collection, vid, ecNode.info.Id, duplicatedShardIds); err != nil {
 				return err
 			}
-			deleteEcVolumeShards(ecNode, vid, duplicatedShardIds)
-			ecNode.freeEcSlot++
+			ecNode.deleteEcVolumeShards(vid, duplicatedShardIds)
 		}
 	}
 	return nil
 }
 
-func spreadShardsIntoMoreDataNodes(ctx context.Context, commandEnv *CommandEnv, averageShardsPerEcNode int, collection string, vid needle.VolumeId, existingLocations, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
+func balanceEcShardsAcrossRacks(ctx context.Context, commandEnv *CommandEnv, allEcNodes []*EcNode, racks map[RackId]*EcRack, collection string, applyBalancing bool) error {
+	// collect vid => []ecNode, since previous steps can change the locations
+	vidLocations := collectVolumeIdToEcNodes(allEcNodes)
+	// spread the ec shards evenly
+	for vid, locations := range vidLocations {
+		if err := doBalanceEcShardsAcrossRacks(ctx, commandEnv, collection, vid, locations, racks, applyBalancing); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func doBalanceEcShardsAcrossRacks(ctx context.Context, commandEnv *CommandEnv, collection string, vid needle.VolumeId, locations []*EcNode, racks map[RackId]*EcRack, applyBalancing bool) error {
+
+	// calculate average number of shards an ec rack should have for one volume
+	averageShardsPerEcRack := ceilDivide(erasure_coding.TotalShardsCount, len(racks))
+
+	// see the volume's shards are in how many racks, and how many in each rack
+	rackToShardCount := groupByCount(locations, func(ecNode *EcNode) (id string, count int) {
+		shardBits := findEcVolumeShards(ecNode, vid)
+		return string(ecNode.rack), shardBits.ShardIdCount()
+	})
+	rackEcNodesWithVid := groupBy(locations, func(ecNode *EcNode) string {
+		return string(ecNode.rack)
+	})
+
+	// ecShardsToMove = select overflown ec shards from racks with ec shard counts > averageShardsPerEcRack
+	ecShardsToMove := make(map[erasure_coding.ShardId]*EcNode)
+	for rackId, count := range rackToShardCount {
+		if count > averageShardsPerEcRack {
+			possibleEcNodes := rackEcNodesWithVid[rackId]
+			for shardId, ecNode := range pickNEcShardsToMoveFrom(possibleEcNodes, vid, count-averageShardsPerEcRack) {
+				ecShardsToMove[shardId] = ecNode
+			}
+		}
+	}
+
+	for shardId, ecNode := range ecShardsToMove {
+		rackId := pickOneRack(racks, rackToShardCount, averageShardsPerEcRack)
+		var possibleDestinationEcNodes []*EcNode
+		for _, n := range racks[rackId].ecNodes {
+			possibleDestinationEcNodes = append(possibleDestinationEcNodes, n)
+		}
+		err := pickOneEcNodeAndMoveOneShard(ctx, commandEnv, averageShardsPerEcRack, ecNode, collection, vid, shardId, possibleDestinationEcNodes, applyBalancing)
+		if err != nil {
+			return err
+		}
+		rackToShardCount[string(rackId)] += 1
+		rackToShardCount[string(ecNode.rack)] -= 1
+		racks[rackId].freeEcSlot -= 1
+		racks[ecNode.rack].freeEcSlot += 1
+	}
+
+	return nil
+}
+
+func pickOneRack(rackToEcNodes map[RackId]*EcRack, rackToShardCount map[string]int, averageShardsPerEcRack int) RackId {
+
+	// TODO later may need to add some randomness
+
+	for rackId, rack := range rackToEcNodes {
+		if rackToShardCount[string(rackId)] >= averageShardsPerEcRack {
+			continue
+		}
+
+		if rack.freeEcSlot <= 0 {
+			continue
+		}
+
+		return rackId
+	}
+
+	return ""
+}
+
+func balanceEcShardsWithinRacks(ctx context.Context, commandEnv *CommandEnv, allEcNodes []*EcNode, racks map[RackId]*EcRack, collection string, applyBalancing bool) error {
+	// collect vid => []ecNode, since previous steps can change the locations
+	vidLocations := collectVolumeIdToEcNodes(allEcNodes)
+
+	// spread the ec shards evenly
+	for vid, locations := range vidLocations {
+
+		// see the volume's shards are in how many racks, and how many in each rack
+		rackToShardCount := groupByCount(locations, func(ecNode *EcNode) (id string, count int) {
+			shardBits := findEcVolumeShards(ecNode, vid)
+			return string(ecNode.rack), shardBits.ShardIdCount()
+		})
+		rackEcNodesWithVid := groupBy(locations, func(ecNode *EcNode) string {
+			return string(ecNode.rack)
+		})
+
+		for rackId, _ := range rackToShardCount {
+
+			var possibleDestinationEcNodes []*EcNode
+			for _, n := range racks[RackId(rackId)].ecNodes {
+				possibleDestinationEcNodes = append(possibleDestinationEcNodes, n)
+			}
+			sourceEcNodes := rackEcNodesWithVid[rackId]
+			averageShardsPerEcNode := ceilDivide(rackToShardCount[rackId], len(possibleDestinationEcNodes))
+			if err := doBalanceEcShardsWithinOneRack(ctx, commandEnv, averageShardsPerEcNode, collection, vid, sourceEcNodes, possibleDestinationEcNodes, applyBalancing); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func doBalanceEcShardsWithinOneRack(ctx context.Context, commandEnv *CommandEnv, averageShardsPerEcNode int, collection string, vid needle.VolumeId, existingLocations, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
 
 	for _, ecNode := range existingLocations {
 
@@ -237,9 +361,85 @@ func spreadShardsIntoMoreDataNodes(ctx context.Context, commandEnv *CommandEnv, 
 	return nil
 }
 
-func pickOneEcNodeAndMoveOneShard(ctx context.Context, commandEnv *CommandEnv, averageShardsPerEcNode int, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
+func balanceEcRacks(ctx context.Context, commandEnv *CommandEnv, racks map[RackId]*EcRack, applyBalancing bool) error {
+
+	// balance one rack for all ec shards
+	for _, ecRack := range racks {
+		if err := doBalanceEcRack(ctx, commandEnv, ecRack, applyBalancing); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func doBalanceEcRack(ctx context.Context, commandEnv *CommandEnv, ecRack *EcRack, applyBalancing bool) error {
+
+	if len(ecRack.ecNodes) <= 1 {
+		return nil
+	}
+
+	var rackEcNodes []*EcNode
+	for _, node := range ecRack.ecNodes {
+		rackEcNodes = append(rackEcNodes, node)
+	}
+
+	ecNodeIdToShardCount := groupByCount(rackEcNodes, func(node *EcNode) (id string, count int) {
+		for _, ecShardInfo := range node.info.EcShardInfos {
+			count += erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIdCount()
+		}
+		return node.info.Id, count
+	})
+
+	var totalShardCount int
+	for _, count := range ecNodeIdToShardCount {
+		totalShardCount += count
+	}
+
+	averageShardCount := ceilDivide(totalShardCount, len(rackEcNodes))
+
+	hasMove := true
+	for hasMove {
+		hasMove = false
+		sort.Slice(rackEcNodes, func(i, j int) bool {
+			return rackEcNodes[i].freeEcSlot > rackEcNodes[j].freeEcSlot
+		})
+		emptyNode, fullNode := rackEcNodes[0], rackEcNodes[len(rackEcNodes)-1]
+		emptyNodeShardCount, fullNodeShardCount := ecNodeIdToShardCount[emptyNode.info.Id], ecNodeIdToShardCount[fullNode.info.Id]
+		if fullNodeShardCount > averageShardCount && emptyNodeShardCount+1 <= averageShardCount {
+
+			emptyNodeIds := make(map[uint32]bool)
+			for _, shards := range emptyNode.info.EcShardInfos {
+				emptyNodeIds[shards.Id] = true
+			}
+			for _, shards := range fullNode.info.EcShardInfos {
+				if _, found := emptyNodeIds[shards.Id]; !found {
+					for _, shardId := range erasure_coding.ShardBits(shards.EcIndexBits).ShardIds() {
+
+						fmt.Printf("%s moves ec shards %d.%d to %s\n", fullNode.info.Id, shards.Id, shardId, emptyNode.info.Id)
+
+						err := moveMountedShardToEcNode(ctx, commandEnv, fullNode, shards.Collection, needle.VolumeId(shards.Id), shardId, emptyNode, applyBalancing)
+						if err != nil {
+							return err
+						}
+
+						ecNodeIdToShardCount[emptyNode.info.Id]++
+						ecNodeIdToShardCount[fullNode.info.Id]--
+						hasMove = true
+						break
+					}
+					break
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func pickOneEcNodeAndMoveOneShard(ctx context.Context, commandEnv *CommandEnv, expectedTotalEcShards int, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
 
 	sortEcNodes(possibleDestinationEcNodes)
+	averageShardsPerEcNode := ceilDivide(expectedTotalEcShards, len(possibleDestinationEcNodes))
 
 	for _, destEcNode := range possibleDestinationEcNodes {
 		if destEcNode.info.Id == existingLocation.info.Id {
@@ -260,45 +460,58 @@ func pickOneEcNodeAndMoveOneShard(ctx context.Context, commandEnv *CommandEnv, a
 			return err
 		}
 
-		destEcNode.freeEcSlot--
-		existingLocation.freeEcSlot++
 		return nil
 	}
 
 	return nil
 }
 
-func findEcVolumeShards(ecNode *EcNode, vid needle.VolumeId) erasure_coding.ShardBits {
-
-	for _, shardInfo := range ecNode.info.EcShardInfos {
-		if needle.VolumeId(shardInfo.Id) == vid {
-			return erasure_coding.ShardBits(shardInfo.EcIndexBits)
+func pickNEcShardsToMoveFrom(ecNodes []*EcNode, vid needle.VolumeId, n int) (map[erasure_coding.ShardId]*EcNode) {
+	picked := make(map[erasure_coding.ShardId]*EcNode)
+	var candidateEcNodes []*CandidateEcNode
+	for _, ecNode := range ecNodes {
+		shardBits := findEcVolumeShards(ecNode, vid)
+		if shardBits.ShardIdCount() > 0 {
+			candidateEcNodes = append(candidateEcNodes, &CandidateEcNode{
+				ecNode:     ecNode,
+				shardCount: shardBits.ShardIdCount(),
+			})
 		}
 	}
-
-	return 0
-}
-
-func addEcVolumeShards(ecNode *EcNode, vid needle.VolumeId, shardIds []uint32) {
-
-	for _, shardInfo := range ecNode.info.EcShardInfos {
-		if needle.VolumeId(shardInfo.Id) == vid {
-			for _, shardId := range shardIds {
-				shardInfo.EcIndexBits = uint32(erasure_coding.ShardBits(shardInfo.EcIndexBits).AddShardId(erasure_coding.ShardId(shardId)))
+	sort.Slice(candidateEcNodes, func(i, j int) bool {
+		return candidateEcNodes[i].shardCount > candidateEcNodes[j].shardCount
+	})
+	for i := 0; i < n; i++ {
+		selectedEcNodeIndex := -1
+		for i, candidateEcNode := range candidateEcNodes {
+			shardBits := findEcVolumeShards(candidateEcNode.ecNode, vid)
+			if shardBits > 0 {
+				selectedEcNodeIndex = i
+				for _, shardId := range shardBits.ShardIds() {
+					candidateEcNode.shardCount--
+					picked[shardId] = candidateEcNode.ecNode
+					candidateEcNode.ecNode.deleteEcVolumeShards(vid, []uint32{uint32(shardId)})
+					break
+				}
+				break
 			}
 		}
-	}
+		if selectedEcNodeIndex >= 0 {
+			ensureSortedEcNodes(candidateEcNodes, selectedEcNodeIndex, func(i, j int) bool {
+				return candidateEcNodes[i].shardCount > candidateEcNodes[j].shardCount
+			})
+		}
 
+	}
+	return picked
 }
 
-func deleteEcVolumeShards(ecNode *EcNode, vid needle.VolumeId, shardIds []uint32) {
-
-	for _, shardInfo := range ecNode.info.EcShardInfos {
-		if needle.VolumeId(shardInfo.Id) == vid {
-			for _, shardId := range shardIds {
-				shardInfo.EcIndexBits = uint32(erasure_coding.ShardBits(shardInfo.EcIndexBits).RemoveShardId(erasure_coding.ShardId(shardId)))
-			}
+func collectVolumeIdToEcNodes(allEcNodes []*EcNode) map[needle.VolumeId][]*EcNode {
+	vidLocations := make(map[needle.VolumeId][]*EcNode)
+	for _, ecNode := range allEcNodes {
+		for _, shardInfo := range ecNode.info.EcShardInfos {
+			vidLocations[needle.VolumeId(shardInfo.Id)] = append(vidLocations[needle.VolumeId(shardInfo.Id)], ecNode)
 		}
 	}
-
+	return vidLocations
 }

@@ -64,7 +64,7 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 	}
 
 	// collect all ec nodes
-	allEcNodes, _, err := collectEcNodes(context.Background(), commandEnv)
+	allEcNodes, _, err := collectEcNodes(context.Background(), commandEnv, "")
 	if err != nil {
 		return err
 	}
@@ -155,7 +155,6 @@ func rebuildOneEcVolume(ctx context.Context, commandEnv *CommandEnv, rebuilder *
 	if err != nil {
 		return err
 	}
-	rebuilder.freeEcSlot -= len(generatedShardIds)
 
 	// mount the generated shards
 	err = mountEcShards(ctx, commandEnv.option.GrpcDialOption, collection, volumeId, rebuilder.info.Id, generatedShardIds)
@@ -163,7 +162,7 @@ func rebuildOneEcVolume(ctx context.Context, commandEnv *CommandEnv, rebuilder *
 		return err
 	}
 
-	addEcVolumeShards(rebuilder, volumeId, generatedShardIds)
+	rebuilder.addEcVolumeShards(volumeId, collection, generatedShardIds)
 
 	return nil
 }

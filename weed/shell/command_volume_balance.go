@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"sort"
 	"time"
@@ -41,7 +40,7 @@ func (c *commandVolumeBalance) Help() string {
 
 	func balanceWritableVolumes(){
 		idealWritableVolumes = totalWritableVolumes / numVolumeServers
-		for {
+		for hasMovedOneVolume {
 			sort all volume servers ordered by the number of local writable volumes
 			pick the volume server A with the lowest number of writable volumes x
 			pick the volume server B with the highest number of writable volumes y
@@ -187,13 +186,14 @@ func balanceSelectedVolume(commandEnv *CommandEnv, nodes []*Node, sortCandidates
 		selectedVolumeCount += len(dn.selectedVolumes)
 	}
 
-	idealSelectedVolumes := int(math.Ceil(float64(selectedVolumeCount) / float64(len(nodes))))
+	idealSelectedVolumes := ceilDivide(selectedVolumeCount, len(nodes))
 
 	hasMove := true
 
 	for hasMove {
 		hasMove = false
 		sort.Slice(nodes, func(i, j int) bool {
+			// TODO sort by free volume slots???
 			return len(nodes[i].selectedVolumes) < len(nodes[j].selectedVolumes)
 		})
 		emptyNode, fullNode := nodes[0], nodes[len(nodes)-1]
