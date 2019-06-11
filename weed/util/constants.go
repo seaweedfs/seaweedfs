@@ -5,5 +5,5 @@ import (
 )
 
 var (
-	VERSION = fmt.Sprintf("%s %d.%d", sizeLimit, 1, 34)
+	VERSION = fmt.Sprintf("%s %d.%d", sizeLimit, 1, 35)
 )
