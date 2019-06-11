@@ -234,4 +234,3 @@ func (fs *FilerServer) writeContent(w io.Writer, entry *filer2.Entry, offset int
 	return filer2.StreamContent(fs.filer.MasterClient, w, entry.Chunks, offset, size)
 
 }
-

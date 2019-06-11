@@ -466,7 +466,7 @@ func pickOneEcNodeAndMoveOneShard(ctx context.Context, commandEnv *CommandEnv, e
 	return nil
 }
 
-func pickNEcShardsToMoveFrom(ecNodes []*EcNode, vid needle.VolumeId, n int) (map[erasure_coding.ShardId]*EcNode) {
+func pickNEcShardsToMoveFrom(ecNodes []*EcNode, vid needle.VolumeId, n int) map[erasure_coding.ShardId]*EcNode {
 	picked := make(map[erasure_coding.ShardId]*EcNode)
 	var candidateEcNodes []*CandidateEcNode
 	for _, ecNode := range ecNodes {

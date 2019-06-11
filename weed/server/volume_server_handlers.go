@@ -59,7 +59,7 @@ func (vs *VolumeServer) maybeCheckJwtAuthorization(r *http.Request, vid, fid str
 		} else {
 			signingKey = vs.guard.SigningKey
 		}
-	}else {
+	} else {
 		if len(vs.guard.ReadSigningKey) == 0 {
 			return true
 		} else {

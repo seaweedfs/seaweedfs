@@ -85,4 +85,3 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	return fs, nil
 }
-

@@ -40,7 +40,6 @@ var (
 	Commands = []command{}
 )
 
-
 func NewCommandEnv(options ShellOptions) *CommandEnv {
 	return &CommandEnv{
 		env: make(map[string]string),
