@@ -24,8 +24,10 @@ import (
 )
 
 type ServerOptions struct {
-	cpuprofile *string
-	v          VolumeServerOptions
+	cpuprofile         *string
+	metricsAddress     *string
+	metricsIntervalSec *int
+	v                  VolumeServerOptions
 }
 
 var (
@@ -81,6 +83,8 @@ var (
 
 func init() {
 	serverOptions.cpuprofile = cmdServer.Flag.String("cpuprofile", "", "cpu profile output file")
+	serverOptions.metricsAddress = cmdServer.Flag.String("metrics.address", "", "Prometheus gateway address")
+	serverOptions.metricsIntervalSec = cmdServer.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
 	filerOptions.collection = cmdServer.Flag.String("filer.collection", "", "all data will be stored in this collection")
 	filerOptions.port = cmdServer.Flag.Int("filer.port", 8888, "filer server http listen port")
 	filerOptions.publicPort = cmdServer.Flag.Int("filer.port.public", 0, "filer server public http listen port")
@@ -142,6 +146,9 @@ func runServer(cmd *Command, args []string) bool {
 
 	filerOptions.dataCenter = serverDataCenter
 	filerOptions.disableHttp = serverDisableHttp
+
+	filerOptions.metricsAddress = serverOptions.metricsAddress
+	filerOptions.metricsIntervalSec = serverOptions.metricsIntervalSec
 
 	filerAddress := fmt.Sprintf("%s:%d", *serverIp, *filerOptions.port)
 	s3Options.filer = &filerAddress

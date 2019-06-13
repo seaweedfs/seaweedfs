@@ -11,6 +11,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -18,6 +19,11 @@ import (
 )
 
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
+
+	filerRequestCounter.WithLabelValues("get").Inc()
+	start := time.Now()
+	defer func() { filerRequestHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
+
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") && len(path) > 1 {
 		path = path[:len(path)-1]
@@ -30,6 +36,8 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		glog.V(1).Infof("Not found %s: %v", path, err)
+
+		filerRequestCounter.WithLabelValues("read.notfound").Inc()
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -45,6 +53,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 
 	if len(entry.Chunks) == 0 {
 		glog.V(1).Infof("no file chunks for %s, attr=%+v", path, entry.Attr)
+		filerRequestCounter.WithLabelValues("read.nocontent").Inc()
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

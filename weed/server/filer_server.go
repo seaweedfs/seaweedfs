@@ -3,8 +3,11 @@ package weed_server
 import (
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/push"
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
@@ -36,6 +39,8 @@ type FilerOption struct {
 	DataCenter         string
 	DefaultLevelDbDir  string
 	DisableHttp        bool
+	MetricsAddress     string
+	MetricsIntervalSec int
 }
 
 type FilerServer struct {
@@ -83,5 +88,29 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
 
+	startPushingMetric(option.MetricsAddress, option.MetricsIntervalSec)
+
 	return fs, nil
+}
+
+func startPushingMetric(addr string, intervalSeconds int) {
+	if intervalSeconds == 0 || addr == "" {
+		glog.V(0).Info("disable metrics reporting")
+		return
+	}
+	glog.V(0).Infof("push metrics to %s every %d seconds", addr, intervalSeconds)
+	go loopPushMetrics(addr, intervalSeconds)
+}
+
+func loopPushMetrics(addr string, intervalSeconds int) {
+
+	pusher := push.New(addr, "filer").Gatherer(prometheus.DefaultGatherer)
+
+	for {
+		err := pusher.Push()
+		if err != nil {
+			glog.V(0).Infof("could not push metrics to prometheus push gateway %s: %v", addr, err)
+		}
+		time.Sleep(time.Duration(intervalSeconds) * time.Second)
+	}
 }
