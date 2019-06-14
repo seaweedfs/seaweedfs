@@ -1,6 +1,12 @@
 package weed_server
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/push"
+)
 
 var (
 	filerGather        = prometheus.NewRegistry()
@@ -31,7 +37,7 @@ var (
 			Help:      "Counter of filer requests.",
 		}, []string{"type"})
 
-	volumeServerHistogram = prometheus.NewHistogramVec(
+	volumeServerRequestHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "SeaweedFS",
 			Subsystem: "volumeServer",
@@ -39,6 +45,15 @@ var (
 			Help:      "Bucketed histogram of filer request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"type"})
+
+	volumeServerVolumeCounter = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "volumeServer",
+			Name:      "volumes",
+			Help:      "Number of volumes.",
+		})
+
 )
 
 func init() {
@@ -47,6 +62,28 @@ func init() {
 	filerGather.MustRegister(filerRequestHistogram)
 
 	volumeServerGather.MustRegister(volumeServerRequestCounter)
-	volumeServerGather.MustRegister(volumeServerHistogram)
+	volumeServerGather.MustRegister(volumeServerRequestHistogram)
 
+}
+
+func startPushingMetric(name string, gatherer *prometheus.Registry, addr string, intervalSeconds int) {
+	if intervalSeconds == 0 || addr == "" {
+		glog.V(0).Info("disable metrics reporting")
+		return
+	}
+	glog.V(0).Infof("push metrics to %s every %d seconds", addr, intervalSeconds)
+	go loopPushMetrics(name, gatherer, addr, intervalSeconds)
+}
+
+func loopPushMetrics(name string, gatherer *prometheus.Registry, addr string, intervalSeconds int) {
+
+	pusher := push.New(addr, name).Gatherer(gatherer)
+
+	for {
+		err := pusher.Push()
+		if err != nil {
+			glog.V(0).Infof("could not push metrics to prometheus push gateway %s: %v", addr, err)
+		}
+		time.Sleep(time.Duration(intervalSeconds) * time.Second)
+	}
 }

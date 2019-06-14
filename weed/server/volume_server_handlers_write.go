@@ -18,7 +18,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 	volumeServerRequestCounter.WithLabelValues("post").Inc()
 	start := time.Now()
-	defer func() { volumeServerHistogram.WithLabelValues("post").Observe(time.Since(start).Seconds()) }()
+	defer func() { volumeServerRequestHistogram.WithLabelValues("post").Observe(time.Since(start).Seconds()) }()
 
 	if e := r.ParseForm(); e != nil {
 		glog.V(0).Infoln("form parse error:", e)
@@ -68,7 +68,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	volumeServerRequestCounter.WithLabelValues("delete").Inc()
 	start := time.Now()
-	defer func() { volumeServerHistogram.WithLabelValues("delete").Observe(time.Since(start).Seconds()) }()
+	defer func() { volumeServerRequestHistogram.WithLabelValues("delete").Observe(time.Since(start).Seconds()) }()
 
 	n := new(needle.Needle)
 	vid, fid, _, _, _ := parseURLPath(r.URL.Path)

@@ -29,7 +29,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 
 	volumeServerRequestCounter.WithLabelValues("get").Inc()
 	start := time.Now()
-	defer func() { volumeServerHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
+	defer func() { volumeServerRequestHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
 
 	n := new(needle.Needle)
 	vid, fid, filename, ext, _ := parseURLPath(r.URL.Path)
