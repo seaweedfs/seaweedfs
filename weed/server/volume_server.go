@@ -38,8 +38,8 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	fixJpgOrientation bool,
 	readRedirect bool,
 	compactionMBPerSecond int,
-	metricsAddress          string,
-	metricsIntervalSec      int,
+	metricsAddress string,
+	metricsIntervalSec int,
 ) *VolumeServer {
 
 	v := viper.GetViper()
