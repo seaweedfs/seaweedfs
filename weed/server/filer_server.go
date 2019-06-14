@@ -88,23 +88,23 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
 
-	startPushingMetric(option.MetricsAddress, option.MetricsIntervalSec)
+	startPushingMetric("filer", filerGather, option.MetricsAddress, option.MetricsIntervalSec)
 
 	return fs, nil
 }
 
-func startPushingMetric(addr string, intervalSeconds int) {
+func startPushingMetric(name string, gatherer *prometheus.Registry, addr string, intervalSeconds int) {
 	if intervalSeconds == 0 || addr == "" {
 		glog.V(0).Info("disable metrics reporting")
 		return
 	}
 	glog.V(0).Infof("push metrics to %s every %d seconds", addr, intervalSeconds)
-	go loopPushMetrics(addr, intervalSeconds)
+	go loopPushMetrics(name, gatherer, addr, intervalSeconds)
 }
 
-func loopPushMetrics(addr string, intervalSeconds int) {
+func loopPushMetrics(name string, gatherer *prometheus.Registry, addr string, intervalSeconds int) {
 
-	pusher := push.New(addr, "filer").Gatherer(prometheus.DefaultGatherer)
+	pusher := push.New(addr, name).Gatherer(gatherer)
 
 	for {
 		err := pusher.Push()

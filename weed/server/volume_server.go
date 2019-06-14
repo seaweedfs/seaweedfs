@@ -24,6 +24,8 @@ type VolumeServer struct {
 	FixJpgOrientation       bool
 	ReadRedirect            bool
 	compactionBytePerSecond int64
+	MetricsAddress          string
+	MetricsIntervalSec      int
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
@@ -36,6 +38,8 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	fixJpgOrientation bool,
 	readRedirect bool,
 	compactionMBPerSecond int,
+	metricsAddress          string,
+	metricsIntervalSec      int,
 ) *VolumeServer {
 
 	v := viper.GetViper()
@@ -80,6 +84,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	}
 
 	go vs.heartbeat()
+	startPushingMetric("volumeServer", volumeServerGather, metricsAddress, metricsIntervalSec)
 
 	return vs
 }

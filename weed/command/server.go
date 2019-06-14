@@ -149,6 +149,8 @@ func runServer(cmd *Command, args []string) bool {
 
 	filerOptions.metricsAddress = serverOptions.metricsAddress
 	filerOptions.metricsIntervalSec = serverOptions.metricsIntervalSec
+	serverOptions.v.metricsAddress = serverOptions.metricsAddress
+	serverOptions.v.metricsIntervalSec = serverOptions.metricsIntervalSec
 
 	filerAddress := fmt.Sprintf("%s:%d", *serverIp, *filerOptions.port)
 	s3Options.filer = &filerAddress
