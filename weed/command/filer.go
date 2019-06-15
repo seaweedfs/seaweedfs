@@ -116,6 +116,7 @@ func (fo *FilerOptions) startFiler() {
 		DisableHttp:        *fo.disableHttp,
 		MetricsAddress:     *fo.metricsAddress,
 		MetricsIntervalSec: *fo.metricsIntervalSec,
+		Port:               *fo.port,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

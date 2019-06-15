@@ -1,4 +1,4 @@
-package weed_server
+package stats
 
 import (
 	"time"
@@ -9,10 +9,10 @@ import (
 )
 
 var (
-	filerGather        = prometheus.NewRegistry()
-	volumeServerGather = prometheus.NewRegistry()
+	FilerGather        = prometheus.NewRegistry()
+	VolumeServerGather = prometheus.NewRegistry()
 
-	filerRequestCounter = prometheus.NewCounterVec(
+	FilerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "SeaweedFS",
 			Subsystem: "filer",
@@ -20,7 +20,7 @@ var (
 			Help:      "Counter of filer requests.",
 		}, []string{"type"})
 
-	filerRequestHistogram = prometheus.NewHistogramVec(
+	FilerRequestHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "SeaweedFS",
 			Subsystem: "filer",
@@ -29,7 +29,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"type"})
 
-	volumeServerRequestCounter = prometheus.NewCounterVec(
+	VolumeServerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "SeaweedFS",
 			Subsystem: "volumeServer",
@@ -37,7 +37,7 @@ var (
 			Help:      "Counter of filer requests.",
 		}, []string{"type"})
 
-	volumeServerRequestHistogram = prometheus.NewHistogramVec(
+	VolumeServerRequestHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "SeaweedFS",
 			Subsystem: "volumeServer",
@@ -46,38 +46,38 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"type"})
 
-	volumeServerVolumeCounter = prometheus.NewGauge(
+	VolumeServerVolumeCounter = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "SeaweedFS",
 			Subsystem: "volumeServer",
 			Name:      "volumes",
 			Help:      "Number of volumes.",
 		})
-
 )
 
 func init() {
 
-	filerGather.MustRegister(filerRequestCounter)
-	filerGather.MustRegister(filerRequestHistogram)
+	FilerGather.MustRegister(FilerRequestCounter)
+	FilerGather.MustRegister(FilerRequestHistogram)
 
-	volumeServerGather.MustRegister(volumeServerRequestCounter)
-	volumeServerGather.MustRegister(volumeServerRequestHistogram)
+	VolumeServerGather.MustRegister(VolumeServerRequestCounter)
+	VolumeServerGather.MustRegister(VolumeServerRequestHistogram)
+	VolumeServerGather.MustRegister(VolumeServerVolumeCounter)
 
 }
 
-func startPushingMetric(name string, gatherer *prometheus.Registry, addr string, intervalSeconds int) {
+func StartPushingMetric(name, instance string, gatherer *prometheus.Registry, addr string, intervalSeconds int) {
 	if intervalSeconds == 0 || addr == "" {
 		glog.V(0).Info("disable metrics reporting")
 		return
 	}
 	glog.V(0).Infof("push metrics to %s every %d seconds", addr, intervalSeconds)
-	go loopPushMetrics(name, gatherer, addr, intervalSeconds)
+	go loopPushMetrics(name, instance, gatherer, addr, intervalSeconds)
 }
 
-func loopPushMetrics(name string, gatherer *prometheus.Registry, addr string, intervalSeconds int) {
+func loopPushMetrics(name, instance string, gatherer *prometheus.Registry, addr string, intervalSeconds int) {
 
-	pusher := push.New(addr, name).Gatherer(gatherer)
+	pusher := push.New(addr, name).Gatherer(gatherer).Grouping("instance", instance)
 
 	for {
 		err := pusher.Push()

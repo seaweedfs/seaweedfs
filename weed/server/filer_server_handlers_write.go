@@ -20,6 +20,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -70,9 +71,9 @@ func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request,
 
 func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
-	filerRequestCounter.WithLabelValues("post").Inc()
+	stats.FilerRequestCounter.WithLabelValues("post").Inc()
 	start := time.Now()
-	defer func() { filerRequestHistogram.WithLabelValues("post").Observe(time.Since(start).Seconds()) }()
+	defer func() { stats.FilerRequestHistogram.WithLabelValues("post").Observe(time.Since(start).Seconds()) }()
 
 	ctx := context.Background()
 
@@ -232,9 +233,9 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 // curl -X DELETE http://localhost:8888/path/to?recursive=true
 func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
-	filerRequestCounter.WithLabelValues("delete").Inc()
+	stats.FilerRequestCounter.WithLabelValues("delete").Inc()
 	start := time.Now()
-	defer func() { filerRequestHistogram.WithLabelValues("delete").Observe(time.Since(start).Seconds()) }()
+	defer func() { stats.FilerRequestHistogram.WithLabelValues("delete").Observe(time.Since(start).Seconds()) }()
 
 	isRecursive := r.FormValue("recursive") == "true"
 

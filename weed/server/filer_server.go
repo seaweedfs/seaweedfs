@@ -1,9 +1,11 @@
 package weed_server
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 
@@ -38,6 +40,7 @@ type FilerOption struct {
 	DisableHttp        bool
 	MetricsAddress     string
 	MetricsIntervalSec int
+	Port               int
 }
 
 type FilerServer struct {
@@ -85,8 +88,15 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
 
-	startPushingMetric("filer", filerGather, option.MetricsAddress, option.MetricsIntervalSec)
+	stats.StartPushingMetric("filer", sourceName(option.Port), stats.FilerGather, option.MetricsAddress, option.MetricsIntervalSec)
 
 	return fs, nil
 }
 
+func sourceName(port int) string {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "unknown"
+	}
+	return fmt.Sprintf("%s_%d", hostname, port)
+}
