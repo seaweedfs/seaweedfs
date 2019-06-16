@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 
 	"os"
@@ -102,6 +103,7 @@ func (v *Volume) Close() {
 	if v.dataFile != nil {
 		_ = v.dataFile.Close()
 		v.dataFile = nil
+		stats.VolumeServerVolumeCounter.Dec()
 	}
 }
 

@@ -55,6 +55,14 @@ var (
 			Name:      "volumes",
 			Help:      "Number of volumes.",
 		})
+
+	VolumeServerEcShardCounter = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "volumeServer",
+			Name:      "ecShards",
+			Help:      "Number of EC shards.",
+		})
 )
 
 func init() {
@@ -65,6 +73,7 @@ func init() {
 	VolumeServerGather.MustRegister(VolumeServerRequestCounter)
 	VolumeServerGather.MustRegister(VolumeServerRequestHistogram)
 	VolumeServerGather.MustRegister(VolumeServerVolumeCounter)
+	VolumeServerGather.MustRegister(VolumeServerEcShardCounter)
 
 }
 

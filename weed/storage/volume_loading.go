@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
@@ -115,6 +116,8 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			}
 		}
 	}
+
+	stats.VolumeServerVolumeCounter.Inc()
 
 	return e
 }

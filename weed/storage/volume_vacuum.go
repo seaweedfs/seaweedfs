@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	idx2 "github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
@@ -52,6 +53,7 @@ func (v *Volume) CommitCompact() error {
 		glog.V(0).Infof("fail to close volume %d", v.Id)
 	}
 	v.dataFile = nil
+	stats.VolumeServerVolumeCounter.Dec()
 
 	var e error
 	if e = v.makeupDiff(v.FileName()+".cpd", v.FileName()+".cpx", v.FileName()+".dat", v.FileName()+".idx"); e != nil {

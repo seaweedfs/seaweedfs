@@ -6,6 +6,7 @@ import (
 	"path"
 	"strconv"
 
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
@@ -35,6 +36,8 @@ func NewEcVolumeShard(dirname string, collection string, id needle.VolumeId, sha
 		return nil, fmt.Errorf("can not stat ec volume shard %s.%s: %v", baseFileName, ToExt(int(shardId)), statErr)
 	}
 	v.ecdFileSize = ecdFi.Size()
+
+	stats.VolumeServerEcShardCounter.Inc()
 
 	return
 }
@@ -78,6 +81,7 @@ func (shard *EcVolumeShard) Close() {
 
 func (shard *EcVolumeShard) Destroy() {
 	os.Remove(shard.FileName() + ToExt(int(shard.ShardId)))
+	stats.VolumeServerEcShardCounter.Dec()
 }
 
 func (shard *EcVolumeShard) ReadAt(buf []byte, offset int64) (int, error) {
