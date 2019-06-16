@@ -12,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/klauspost/reedsolomon"
@@ -19,13 +20,20 @@ import (
 
 func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 	var ecShardMessages []*master_pb.VolumeEcShardInformationMessage
+	var totalEcShardSize int64
 	for _, location := range s.Locations {
 		location.ecVolumesLock.RLock()
 		for _, ecShards := range location.ecVolumes {
 			ecShardMessages = append(ecShardMessages, ecShards.ToVolumeEcShardInformationMessage()...)
+
+			for _, ecShard := range ecShards.Shards {
+				totalEcShardSize += ecShard.Size()
+			}
 		}
 		location.ecVolumesLock.RUnlock()
 	}
+
+	stats.VolumeServerEcShardSizeGauge.Set(float64(totalEcShardSize))
 
 	return &master_pb.Heartbeat{
 		EcShards:      ecShardMessages,

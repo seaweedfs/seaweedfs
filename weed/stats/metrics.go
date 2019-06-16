@@ -63,6 +63,20 @@ var (
 			Name:      "ecShards",
 			Help:      "Number of EC shards.",
 		})
+	VolumeServerVolumeSizeGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "volumeServer",
+			Name:      "totalVolumeSize",
+			Help:      "Actual disk size used by volumes.",
+		})
+	VolumeServerEcShardSizeGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "volumeServer",
+			Name:      "totalEcShardSize",
+			Help:      "Actual disk size used by ec shards.",
+		})
 )
 
 func init() {
@@ -74,6 +88,8 @@ func init() {
 	VolumeServerGather.MustRegister(VolumeServerRequestHistogram)
 	VolumeServerGather.MustRegister(VolumeServerVolumeCounter)
 	VolumeServerGather.MustRegister(VolumeServerEcShardCounter)
+	VolumeServerGather.MustRegister(VolumeServerVolumeSizeGauge)
+	VolumeServerGather.MustRegister(VolumeServerEcShardSizeGauge)
 
 }
 

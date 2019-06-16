@@ -6,6 +6,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"google.golang.org/grpc"
@@ -161,6 +162,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var volumeMessages []*master_pb.VolumeInformationMessage
 	maxVolumeCount := 0
 	var maxFileKey NeedleId
+	var totalVolumeSize uint64
 	for _, location := range s.Locations {
 		maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
 		location.Lock()
@@ -178,9 +180,12 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 					glog.V(0).Infoln("volume", v.Id, "is expired.")
 				}
 			}
+			fileSize, _, _ := v.FileStat()
+			totalVolumeSize += fileSize
 		}
 		location.Unlock()
 	}
+	stats.VolumeServerVolumeSizeGauge.Set(float64(totalVolumeSize))
 
 	return &master_pb.Heartbeat{
 		Ip:             s.Ip,
