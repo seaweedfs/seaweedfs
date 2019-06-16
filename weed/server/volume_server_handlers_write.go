@@ -19,7 +19,9 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 	stats.VolumeServerRequestCounter.WithLabelValues("post").Inc()
 	start := time.Now()
-	defer func() { stats.VolumeServerRequestHistogram.WithLabelValues("post").Observe(time.Since(start).Seconds()) }()
+	defer func() {
+		stats.VolumeServerRequestHistogram.WithLabelValues("post").Observe(time.Since(start).Seconds())
+	}()
 
 	if e := r.ParseForm(); e != nil {
 		glog.V(0).Infoln("form parse error:", e)
@@ -69,7 +71,9 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	stats.VolumeServerRequestCounter.WithLabelValues("delete").Inc()
 	start := time.Now()
-	defer func() { stats.VolumeServerRequestHistogram.WithLabelValues("delete").Observe(time.Since(start).Seconds()) }()
+	defer func() {
+		stats.VolumeServerRequestHistogram.WithLabelValues("delete").Observe(time.Since(start).Seconds())
+	}()
 
 	n := new(needle.Needle)
 	vid, fid, _, _, _ := parseURLPath(r.URL.Path)

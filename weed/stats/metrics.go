@@ -1,6 +1,8 @@
 package stats
 
 import (
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -86,4 +88,12 @@ func loopPushMetrics(name, instance string, gatherer *prometheus.Registry, addr 
 		}
 		time.Sleep(time.Duration(intervalSeconds) * time.Second)
 	}
+}
+
+func SourceName(port int) string {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "unknown"
+	}
+	return fmt.Sprintf("%s_%d", hostname, port)
 }

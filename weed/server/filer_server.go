@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 
@@ -88,15 +87,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
 
-	stats.StartPushingMetric("filer", sourceName(option.Port), stats.FilerGather, option.MetricsAddress, option.MetricsIntervalSec)
+	stats.StartPushingMetric("filer", stats.SourceName(option.Port), stats.FilerGather, option.MetricsAddress, option.MetricsIntervalSec)
 
 	return fs, nil
-}
-
-func sourceName(port int) string {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return "unknown"
-	}
-	return fmt.Sprintf("%s_%d", hostname, port)
 }
