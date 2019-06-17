@@ -162,7 +162,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var volumeMessages []*master_pb.VolumeInformationMessage
 	maxVolumeCount := 0
 	var maxFileKey NeedleId
-	var totalVolumeSize uint64
+	collectionVolumeSize := make(map[string]uint64)
 	for _, location := range s.Locations {
 		maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
 		location.Lock()
@@ -181,11 +181,14 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				}
 			}
 			fileSize, _, _ := v.FileStat()
-			totalVolumeSize += fileSize
+			collectionVolumeSize[v.Collection] += fileSize
 		}
 		location.Unlock()
 	}
-	stats.VolumeServerVolumeSizeGauge.Set(float64(totalVolumeSize))
+
+	for col, size := range collectionVolumeSize {
+		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "normal").Set(float64(size))
+	}
 
 	return &master_pb.Heartbeat{
 		Ip:             s.Ip,

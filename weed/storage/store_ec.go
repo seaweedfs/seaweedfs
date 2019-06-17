@@ -20,20 +20,22 @@ import (
 
 func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 	var ecShardMessages []*master_pb.VolumeEcShardInformationMessage
-	var totalEcShardSize int64
+	collectionEcShardSize := make(map[string]int64)
 	for _, location := range s.Locations {
 		location.ecVolumesLock.RLock()
 		for _, ecShards := range location.ecVolumes {
 			ecShardMessages = append(ecShardMessages, ecShards.ToVolumeEcShardInformationMessage()...)
 
 			for _, ecShard := range ecShards.Shards {
-				totalEcShardSize += ecShard.Size()
+				collectionEcShardSize[ecShards.Collection] += ecShard.Size()
 			}
 		}
 		location.ecVolumesLock.RUnlock()
 	}
 
-	stats.VolumeServerEcShardSizeGauge.Set(float64(totalEcShardSize))
+	for col, size := range collectionEcShardSize {
+		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "ec").Set(float64(size))
+	}
 
 	return &master_pb.Heartbeat{
 		EcShards:      ecShardMessages,
