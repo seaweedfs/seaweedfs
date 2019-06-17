@@ -113,5 +113,5 @@ func SourceName(port int) string {
 	if err != nil {
 		return "unknown"
 	}
-	return fmt.Sprintf("%s_%d", hostname, port)
+	return fmt.Sprintf("%s:%d", hostname, port)
 }
