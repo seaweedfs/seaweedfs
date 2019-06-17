@@ -86,25 +86,29 @@ func init() {
 
 }
 
-func StartPushingMetric(name, instance string, gatherer *prometheus.Registry, addr string, intervalSeconds int) {
-	if intervalSeconds == 0 || addr == "" {
-		glog.V(0).Info("disable metrics reporting")
-		return
-	}
-	glog.V(0).Infof("push metrics to %s every %d seconds", addr, intervalSeconds)
-	go loopPushMetrics(name, instance, gatherer, addr, intervalSeconds)
-}
+func LoopPushingMetric(name, instance string, gatherer *prometheus.Registry, fnGetMetricsDest func() (addr string, intervalSeconds int)) {
 
-func loopPushMetrics(name, instance string, gatherer *prometheus.Registry, addr string, intervalSeconds int) {
-
+	addr, intervalSeconds := fnGetMetricsDest()
 	pusher := push.New(addr, name).Gatherer(gatherer).Grouping("instance", instance)
+	currentAddr := addr
 
 	for {
-		err := pusher.Push()
-		if err != nil {
-			glog.V(0).Infof("could not push metrics to prometheus push gateway %s: %v", addr, err)
+		if currentAddr != "" {
+			err := pusher.Push()
+			if err != nil {
+				glog.V(0).Infof("could not push metrics to prometheus push gateway %s: %v", addr, err)
+			}
+		}
+		if intervalSeconds <= 0 {
+			intervalSeconds = 15
 		}
 		time.Sleep(time.Duration(intervalSeconds) * time.Second)
+		addr, intervalSeconds = fnGetMetricsDest()
+		if currentAddr != addr {
+			pusher = push.New(addr, name).Gatherer(gatherer).Grouping("instance", instance)
+			currentAddr = addr
+		}
+
 	}
 }
 

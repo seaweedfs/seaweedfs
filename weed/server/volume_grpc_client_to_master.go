@@ -86,6 +86,10 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 				doneChan <- nil
 				return
 			}
+			if in.GetMetricsAddress() != "" && vs.MetricsAddress != in.GetMetricsAddress() {
+				vs.MetricsAddress = in.GetMetricsAddress()
+				vs.MetricsIntervalSec = int(in.GetMetricsIntervalSeconds())
+			}
 		}
 	}()
 

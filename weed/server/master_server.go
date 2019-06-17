@@ -34,6 +34,8 @@ type MasterServer struct {
 	defaultReplicaPlacement string
 	garbageThreshold        float64
 	guard                   *security.Guard
+	metricsAddress          string
+	metricsIntervalSec      int
 
 	Topo   *topology.Topology
 	vg     *topology.VolumeGrowth
@@ -56,6 +58,8 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	garbageThreshold float64,
 	whiteList []string,
 	disableHttp bool,
+	metricsAddress string,
+	metricsIntervalSec int,
 ) *MasterServer {
 
 	v := viper.GetViper()
@@ -80,6 +84,8 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 		garbageThreshold:        garbageThreshold,
 		clientChans:             make(map[string]chan *master_pb.VolumeLocation),
 		grpcDialOpiton:          security.LoadClientTLS(v.Sub("grpc"), "master"),
+		metricsAddress:          metricsAddress,
+		metricsIntervalSec:      metricsIntervalSec,
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
 	seq := sequence.NewMemorySequencer()

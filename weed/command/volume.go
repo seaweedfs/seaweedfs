@@ -45,8 +45,6 @@ type VolumeServerOptions struct {
 	cpuProfile            *string
 	memProfile            *string
 	compactionMBPerSecond *int
-	metricsAddress        *string
-	metricsIntervalSec    *int
 }
 
 func init() {
@@ -68,8 +66,6 @@ func init() {
 	v.cpuProfile = cmdVolume.Flag.String("cpuprofile", "", "cpu profile output file")
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
 	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
-	v.metricsAddress = cmdVolume.Flag.String("metrics.address", "", "Prometheus gateway address")
-	v.metricsIntervalSec = cmdVolume.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
 }
 
 var cmdVolume = &Command{
@@ -165,8 +161,6 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		v.whiteList,
 		*v.fixJpgOrientation, *v.readRedirect,
 		*v.compactionMBPerSecond,
-		*v.metricsAddress,
-		*v.metricsIntervalSec,
 	)
 
 	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port)

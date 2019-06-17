@@ -41,8 +41,6 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	fixJpgOrientation bool,
 	readRedirect bool,
 	compactionMBPerSecond int,
-	metricsAddress string,
-	metricsIntervalSec int,
 ) *VolumeServer {
 
 	v := viper.GetViper()
@@ -88,7 +86,10 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 
 	go vs.heartbeat()
 	hostAddress := fmt.Sprintf("%s:%d", ip, port)
-	stats.StartPushingMetric("volumeServer", hostAddress, stats.VolumeServerGather, metricsAddress, metricsIntervalSec)
+	go stats.LoopPushingMetric("volumeServer", hostAddress, stats.VolumeServerGather,
+		func() (addr string, intervalSeconds int) {
+			return vs.MetricsAddress, vs.MetricsIntervalSec
+		})
 
 	return vs
 }

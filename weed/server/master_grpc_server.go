@@ -156,7 +156,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			return err
 		}
 		if err := stream.Send(&master_pb.HeartbeatResponse{
-			Leader: newLeader,
+			Leader:                 newLeader,
+			MetricsAddress:         ms.metricsAddress,
+			MetricsIntervalSeconds: uint32(ms.metricsIntervalSec),
 		}); err != nil {
 			return err
 		}

@@ -45,12 +45,14 @@ var (
 	mpulse                  = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	defaultReplicaPlacement = cmdMaster.Flag.String("defaultReplication", "000", "Default replication type if not specified.")
 	// mTimeout                = cmdMaster.Flag.Int("idleTimeout", 30, "connection idle seconds")
-	mMaxCpu               = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
-	garbageThreshold      = cmdMaster.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
-	masterWhiteListOption = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	disableHttp           = cmdMaster.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
-	masterCpuProfile      = cmdMaster.Flag.String("cpuprofile", "", "cpu profile output file")
-	masterMemProfile      = cmdMaster.Flag.String("memprofile", "", "memory profile output file")
+	mMaxCpu                  = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
+	garbageThreshold         = cmdMaster.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
+	masterWhiteListOption    = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
+	disableHttp              = cmdMaster.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
+	masterCpuProfile         = cmdMaster.Flag.String("cpuprofile", "", "cpu profile output file")
+	masterMemProfile         = cmdMaster.Flag.String("memprofile", "", "memory profile output file")
+	masterMetricsAddress     = cmdMaster.Flag.String("metrics.address", "", "Prometheus gateway address")
+	masterMetricsIntervalSec = cmdMaster.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
 
 	masterWhiteList []string
 )
@@ -82,6 +84,7 @@ func runMaster(cmd *Command, args []string) bool {
 		*mpulse, *defaultReplicaPlacement, *garbageThreshold,
 		masterWhiteList,
 		*disableHttp,
+		*masterMetricsAddress, *masterMetricsIntervalSec,
 	)
 
 	listeningAddress := *masterBindIp + ":" + strconv.Itoa(*mport)

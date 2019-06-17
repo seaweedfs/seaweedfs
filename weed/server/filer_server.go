@@ -87,7 +87,10 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
 
-	stats.StartPushingMetric("filer", stats.SourceName(option.Port), stats.FilerGather, option.MetricsAddress, option.MetricsIntervalSec)
+	go stats.LoopPushingMetric("filer", stats.SourceName(option.Port), stats.FilerGather,
+		func() (addr string, intervalSeconds int) {
+			return option.MetricsAddress, option.MetricsIntervalSec
+		})
 
 	return fs, nil
 }
