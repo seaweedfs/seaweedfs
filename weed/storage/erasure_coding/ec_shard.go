@@ -37,7 +37,7 @@ func NewEcVolumeShard(dirname string, collection string, id needle.VolumeId, sha
 	}
 	v.ecdFileSize = ecdFi.Size()
 
-	stats.VolumeServerEcShardCounter.Inc()
+	stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "ec_shards").Inc()
 
 	return
 }
@@ -81,7 +81,7 @@ func (shard *EcVolumeShard) Close() {
 
 func (shard *EcVolumeShard) Destroy() {
 	os.Remove(shard.FileName() + ToExt(int(shard.ShardId)))
-	stats.VolumeServerEcShardCounter.Dec()
+	stats.VolumeServerVolumeCounter.WithLabelValues(shard.Collection, "ec_shards").Inc()
 }
 
 func (shard *EcVolumeShard) ReadAt(buf []byte, offset int64) (int, error) {

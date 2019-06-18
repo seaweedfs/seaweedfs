@@ -49,6 +49,7 @@ func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, di
 		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i])
 		location.loadExistingVolumes(needleMapKind)
 		s.Locations = append(s.Locations, location)
+		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
 	}
 	s.NewVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
 	s.DeletedVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)

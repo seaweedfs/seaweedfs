@@ -103,7 +103,7 @@ func (v *Volume) Close() {
 	if v.dataFile != nil {
 		_ = v.dataFile.Close()
 		v.dataFile = nil
-		stats.VolumeServerVolumeCounter.Dec()
+		stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume").Dec()
 	}
 }
 

@@ -117,7 +117,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 	}
 
-	stats.VolumeServerVolumeCounter.Inc()
+	stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume").Inc()
 
 	return e
 }

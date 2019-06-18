@@ -48,20 +48,20 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"type"})
 
-	VolumeServerVolumeCounter = prometheus.NewGauge(
+	VolumeServerVolumeCounter = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "SeaweedFS",
 			Subsystem: "volumeServer",
 			Name:      "volumes",
-			Help:      "Number of volumes.",
-		})
+			Help:      "Number of volumes or shards.",
+		}, []string{"collection", "type"})
 
-	VolumeServerEcShardCounter = prometheus.NewGauge(
+	VolumeServerMaxVolumeCounter = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "SeaweedFS",
 			Subsystem: "volumeServer",
-			Name:      "ec_shards",
-			Help:      "Number of EC shards.",
+			Name:      "volumes",
+			Help:      "Maximum number of volumes.",
 		})
 
 	VolumeServerDiskSizeGauge = prometheus.NewGaugeVec(
@@ -81,7 +81,7 @@ func init() {
 	VolumeServerGather.MustRegister(VolumeServerRequestCounter)
 	VolumeServerGather.MustRegister(VolumeServerRequestHistogram)
 	VolumeServerGather.MustRegister(VolumeServerVolumeCounter)
-	VolumeServerGather.MustRegister(VolumeServerEcShardCounter)
+	VolumeServerGather.MustRegister(VolumeServerMaxVolumeCounter)
 	VolumeServerGather.MustRegister(VolumeServerDiskSizeGauge)
 
 }
