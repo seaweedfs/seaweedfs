@@ -60,7 +60,7 @@ var (
 		prometheus.GaugeOpts{
 			Namespace: "SeaweedFS",
 			Subsystem: "volumeServer",
-			Name:      "volumes",
+			Name:      "max_volumes",
 			Help:      "Maximum number of volumes.",
 		})
 
