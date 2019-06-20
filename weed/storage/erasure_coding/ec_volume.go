@@ -169,10 +169,10 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage() (messages []*master_pb.V
 	return
 }
 
-func (ev *EcVolume) LocateEcShardNeedle(n *needle.Needle, version needle.Version) (offset types.Offset, size uint32, intervals []Interval, err error) {
+func (ev *EcVolume) LocateEcShardNeedle(needleId types.NeedleId, version needle.Version) (offset types.Offset, size uint32, intervals []Interval, err error) {
 
 	// find the needle from ecx file
-	offset, size, err = ev.findNeedleFromEcx(n.Id)
+	offset, size, err = ev.findNeedleFromEcx(needleId)
 	if err != nil {
 		return types.Offset{}, 0, nil, fmt.Errorf("findNeedleFromEcx: %v", err)
 	}

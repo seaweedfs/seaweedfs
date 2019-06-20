@@ -24,7 +24,7 @@ var (
 	}
 )
 
-func (ev *EcVolume) deleteNeedleFromEcx(needleId types.NeedleId) (err error) {
+func (ev *EcVolume) DeleteNeedleFromEcx(needleId types.NeedleId) (err error) {
 
 	_, _, err = searchNeedleFromEcx(ev.ecxFile, ev.ecxFileSize, needleId, markNeedleDeleted)
 

@@ -16,6 +16,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -273,4 +274,31 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 
 	return nil
 
+}
+
+func (vs *VolumeServer) VolumeEcBlobDelete(ctx context.Context, req *volume_server_pb.VolumeEcBlobDeleteRequest) (*volume_server_pb.VolumeEcBlobDeleteResponse, error) {
+
+	resp := &volume_server_pb.VolumeEcBlobDeleteResponse{}
+
+	for _, location := range vs.store.Locations {
+		if localEcVolume, found := location.FindEcVolume(needle.VolumeId(req.VolumeId)); found {
+
+			_, size, _, err := localEcVolume.LocateEcShardNeedle(types.NeedleId(req.FileKey), needle.Version(req.Version))
+			if err != nil {
+				return nil, fmt.Errorf("locate in local ec volume: %v", err)
+			}
+			if size == types.TombstoneFileSize {
+				return resp, nil
+			}
+
+			err = localEcVolume.DeleteNeedleFromEcx(types.NeedleId(req.FileKey))
+			if err != nil {
+				return nil, err
+			}
+
+			break
+		}
+	}
+
+	return resp, nil
 }
