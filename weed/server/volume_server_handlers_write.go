@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -89,6 +90,14 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	cookie := n.Cookie
 
+	ecVolume, hasEcVolume := vs.store.FindEcVolume(volumeId)
+
+	if hasEcVolume {
+		count, err := vs.store.DeleteEcShardNeedle(context.Background(), ecVolume, n, cookie);
+		writeDeleteResult(err, count, w, r)
+		return
+	}
+
 	_, ok := vs.store.ReadVolumeNeedle(volumeId, n)
 	if ok != nil {
 		m := make(map[string]uint32)
@@ -129,6 +138,11 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	_, err := topology.ReplicatedDelete(vs.GetMaster(), vs.store, volumeId, n, r)
 
+	writeDeleteResult(err, count, w, r)
+
+}
+
+func writeDeleteResult(err error, count int64, w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		m := make(map[string]int64)
 		m["size"] = count
@@ -136,7 +150,6 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Deletion Failed: %v", err))
 	}
-
 }
 
 func setEtag(w http.ResponseWriter, etag string) {
