@@ -145,9 +145,9 @@ func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse
 
 func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName string, wt *util.WriteThrottler, isAppend bool) error {
 	glog.V(4).Infof("writing to %s", fileName)
-	flags := os.O_WRONLY|os.O_CREATE|os.O_TRUNC
+	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 	if isAppend {
-		flags = os.O_WRONLY|os.O_CREATE
+		flags = os.O_WRONLY | os.O_CREATE
 	}
 	dst, err := os.OpenFile(fileName, flags, 0644)
 	if err != nil {
