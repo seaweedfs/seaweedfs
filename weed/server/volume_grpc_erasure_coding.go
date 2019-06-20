@@ -74,6 +74,11 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 			} else {
 				rebuiltShardIds = generatedShardIds
 			}
+
+			if err := erasure_coding.RebuildEcxFile(baseFileName); err != nil {
+				return nil, fmt.Errorf("RebuildEcxFile %s: %v", baseFileName, err)
+			}
+
 			break
 		}
 	}
@@ -97,7 +102,7 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 
 		// copy ec data slices
 		for _, shardId := range req.ShardIds {
-			if err := vs.doCopyFile(ctx, client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, baseFileName, erasure_coding.ToExt(int(shardId))); err != nil {
+			if err := vs.doCopyFile(ctx, client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, baseFileName, erasure_coding.ToExt(int(shardId)), false); err != nil {
 				return err
 			}
 		}
@@ -107,7 +112,12 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		}
 
 		// copy ecx file
-		if err := vs.doCopyFile(ctx, client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, baseFileName, ".ecx"); err != nil {
+		if err := vs.doCopyFile(ctx, client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, baseFileName, ".ecx", false); err != nil {
+			return err
+		}
+
+		// copy ecj file
+		if err := vs.doCopyFile(ctx, client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, baseFileName, ".ecj", true); err != nil {
 			return err
 		}
 
@@ -164,6 +174,9 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 
 	if hasEcxFile && existingShardCount == 0 {
 		if err := os.Remove(baseFilename + ".ecx"); err != nil {
+			return nil, err
+		}
+		if err := os.Remove(baseFilename + ".ecj"); err != nil {
 			return nil, err
 		}
 	}

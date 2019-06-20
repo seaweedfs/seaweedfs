@@ -32,7 +32,7 @@ func WriteSortedEcxFile(baseFileName string) (e error) {
 
 	ecxFile, err := os.OpenFile(baseFileName+".ecx", os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to open dat file: %v", err)
+		return fmt.Errorf("failed to open ecx file: %v", err)
 	}
 	defer ecxFile.Close()
 
@@ -43,7 +43,7 @@ func WriteSortedEcxFile(baseFileName string) (e error) {
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to open dat file: %v", err)
+		return fmt.Errorf("failed to visit ecx file: %v", err)
 	}
 
 	return nil
@@ -202,7 +202,7 @@ func encodeDatFile(remainingSize int64, err error, baseFileName string, bufferSi
 	outputs, err := openEcFiles(baseFileName, false)
 	defer closeEcFiles(outputs)
 	if err != nil {
-		return fmt.Errorf("failed to open dat file: %v", err)
+		return fmt.Errorf("failed to open ec files %s: %v", baseFileName, err)
 	}
 
 	for remainingSize > largeBlockSize*DataShardsCount {

@@ -15,6 +15,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/klauspost/reedsolomon"
 )
 
@@ -129,6 +130,9 @@ func (s *Store) ReadEcShardNeedle(ctx context.Context, vid needle.VolumeId, n *n
 			offset, size, intervals, err := localEcVolume.LocateEcShardNeedle(n, version)
 			if err != nil {
 				return 0, fmt.Errorf("locate in local ec volume: %v", err)
+			}
+			if size == types.TombstoneFileSize {
+				return 0, fmt.Errorf("entry %s is deleted", n.Id)
 			}
 
 			glog.V(4).Infof("read ec volume %d offset %d size %d intervals:%+v", vid, offset.ToAcutalOffset(), size, intervals)

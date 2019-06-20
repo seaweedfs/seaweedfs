@@ -55,11 +55,11 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 
 		// println("source:", volFileInfoResp.String())
 		// copy ecx file
-		if err := vs.doCopyFile(ctx, client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.IdxFileSize, volumeFileName, ".idx"); err != nil {
+		if err := vs.doCopyFile(ctx, client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.IdxFileSize, volumeFileName, ".idx", false); err != nil {
 			return err
 		}
 
-		if err := vs.doCopyFile(ctx, client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, volumeFileName, ".dat"); err != nil {
+		if err := vs.doCopyFile(ctx, client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, volumeFileName, ".dat", false); err != nil {
 			return err
 		}
 
@@ -95,7 +95,7 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 }
 
 func (vs *VolumeServer) doCopyFile(ctx context.Context, client volume_server_pb.VolumeServerClient, isEcVolume bool, collection string, vid uint32,
-	compactRevision uint32, stopOffset uint64, baseFileName, ext string) error {
+	compactRevision uint32, stopOffset uint64, baseFileName, ext string, isAppend bool) error {
 
 	copyFileClient, err := client.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
 		VolumeId:           vid,
@@ -109,7 +109,7 @@ func (vs *VolumeServer) doCopyFile(ctx context.Context, client volume_server_pb.
 		return fmt.Errorf("failed to start copying volume %d %s file: %v", vid, ext, err)
 	}
 
-	err = writeToFile(copyFileClient, baseFileName+ext, util.NewWriteThrottler(vs.compactionBytePerSecond))
+	err = writeToFile(copyFileClient, baseFileName+ext, util.NewWriteThrottler(vs.compactionBytePerSecond), isAppend)
 	if err != nil {
 		return fmt.Errorf("failed to copy %s file: %v", baseFileName+ext, err)
 	}
@@ -143,9 +143,13 @@ func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse
 	return nil
 }
 
-func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName string, wt *util.WriteThrottler) error {
+func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName string, wt *util.WriteThrottler, isAppend bool) error {
 	glog.V(4).Infof("writing to %s", fileName)
-	dst, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	flags := os.O_WRONLY|os.O_CREATE|os.O_TRUNC
+	if isAppend {
+		flags = os.O_WRONLY|os.O_CREATE
+	}
+	dst, err := os.OpenFile(fileName, flags, 0644)
 	if err != nil {
 		return nil
 	}
