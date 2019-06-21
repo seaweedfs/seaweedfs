@@ -9,12 +9,10 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
-	"google.golang.org/grpc"
 )
 
 type FileHandle struct {
@@ -172,44 +170,3 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	})
 }
 
-func deleteFileIds(ctx context.Context, grpcDialOption grpc.DialOption, client filer_pb.SeaweedFilerClient, fileIds []string) error {
-
-	var vids []string
-	for _, fileId := range fileIds {
-		vids = append(vids, filer2.VolumeId(fileId))
-	}
-
-	lookupFunc := func(vids []string) (map[string]operation.LookupResult, error) {
-
-		m := make(map[string]operation.LookupResult)
-
-		glog.V(4).Infof("remove file lookup volume id locations: %v", vids)
-		resp, err := client.LookupVolume(ctx, &filer_pb.LookupVolumeRequest{
-			VolumeIds: vids,
-		})
-		if err != nil {
-			return m, err
-		}
-
-		for _, vid := range vids {
-			lr := operation.LookupResult{
-				VolumeId:  vid,
-				Locations: nil,
-			}
-			locations := resp.LocationsMap[vid]
-			for _, loc := range locations.Locations {
-				lr.Locations = append(lr.Locations, operation.Location{
-					Url:       loc.Url,
-					PublicUrl: loc.PublicUrl,
-				})
-			}
-			m[vid] = lr
-		}
-
-		return m, err
-	}
-
-	_, err := operation.DeleteFilesWithLookupVolumeId(grpcDialOption, fileIds, lookupFunc)
-
-	return err
-}
