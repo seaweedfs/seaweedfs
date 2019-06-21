@@ -85,7 +85,7 @@ func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, o
 	}
 	offset := BytesToOffset(data[0:OffsetSize])
 	size := util.BytesToUint32(data[OffsetSize : OffsetSize+SizeSize])
-	return &needle_map.NeedleValue{Key: NeedleId(key), Offset: offset, Size: size}, true
+	return &needle_map.NeedleValue{Key: key, Offset: offset, Size: size}, true
 }
 
 func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size uint32) error {

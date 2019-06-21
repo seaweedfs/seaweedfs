@@ -158,7 +158,7 @@ func (n *Needle) ParsePath(fid string) (err error) {
 	}
 	if delta != "" {
 		if d, e := strconv.ParseUint(delta, 10, 64); e == nil {
-			n.Id += NeedleId(d)
+			n.Id += Uint64ToNeedleId(d)
 		} else {
 			return e
 		}

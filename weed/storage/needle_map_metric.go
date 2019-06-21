@@ -53,7 +53,7 @@ func (mm *mapMetric) DeletedCount() int {
 }
 func (mm *mapMetric) MaxFileKey() NeedleId {
 	t := uint64(mm.MaximumFileKey)
-	return NeedleId(t)
+	return Uint64ToNeedleId(t)
 }
 func (mm *mapMetric) MaybeSetMaxFileKey(key NeedleId) {
 	if key > mm.MaxFileKey() {

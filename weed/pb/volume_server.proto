@@ -264,9 +264,11 @@ message VolumeEcShardReadRequest {
     uint32 shard_id = 2;
     int64 offset = 3;
     int64 size = 4;
+    uint64 file_key = 5;
 }
 message VolumeEcShardReadResponse {
     bytes data = 1;
+    bool is_deleted = 2;
 }
 
 message VolumeEcBlobDeleteRequest {

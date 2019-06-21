@@ -234,6 +234,15 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 		return fmt.Errorf("not found ec shard %d.%d", req.VolumeId, req.ShardId)
 	}
 
+	if req.FileKey != 0 {
+		_, size, _ := ecVolume.FindNeedleFromEcx(types.Uint64ToNeedleId(req.FileKey))
+		if size == types.TombstoneFileSize {
+			return stream.Send(&volume_server_pb.VolumeEcShardReadResponse{
+				IsDeleted: true,
+			})
+		}
+	}
+
 	bufSize := req.Size
 	if bufSize > BufferSizeLimit {
 		bufSize = BufferSizeLimit
