@@ -156,10 +156,10 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 			Entry:     fh.f.entry,
 		}
 
-		//glog.V(1).Infof("%s/%s set chunks: %v", fh.f.dir.Path, fh.f.Name, len(fh.f.entry.Chunks))
-		//for i, chunk := range fh.f.entry.Chunks {
-		//	glog.V(4).Infof("%s/%s chunks %d: %v [%d,%d)", fh.f.dir.Path, fh.f.Name, i, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
-		//}
+		glog.V(3).Infof("%s/%s set chunks: %v", fh.f.dir.Path, fh.f.Name, len(fh.f.entry.Chunks))
+		for i, chunk := range fh.f.entry.Chunks {
+			glog.V(3).Infof("%s/%s chunks %d: %v [%d,%d)", fh.f.dir.Path, fh.f.Name, i, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
+		}
 
 		chunks, garbages := filer2.CompactFileChunks(fh.f.entry.Chunks)
 		fh.f.entry.Chunks = chunks
@@ -171,6 +171,9 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		}
 
 		fh.f.wfs.deleteFileChunks(ctx, garbages)
+		for i, chunk := range garbages {
+			glog.V(3).Infof("garbage %s/%s chunks %d: %v [%d,%d)", fh.f.dir.Path, fh.f.Name, i, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
+		}
 
 		return nil
 	})
