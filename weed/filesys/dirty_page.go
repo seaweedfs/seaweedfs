@@ -110,7 +110,7 @@ func (pages *ContinuousDirtyPages) flushAndSave(ctx context.Context, offset int6
 	// flush existing
 	if chunk, err = pages.saveExistingPagesToStorage(ctx); err == nil {
 		if chunk != nil {
-			glog.V(4).Infof("%s/%s flush existing [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
+			glog.V(4).Infof("%s/%s flush existing [%d,%d) to %s", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size), chunk.FileId)
 			chunks = append(chunks, chunk)
 		}
 	} else {
@@ -123,7 +123,7 @@ func (pages *ContinuousDirtyPages) flushAndSave(ctx context.Context, offset int6
 	// flush the new page
 	if chunk, err = pages.saveToStorage(ctx, data, offset); err == nil {
 		if chunk != nil {
-			glog.V(4).Infof("%s/%s flush big request [%d,%d)", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size))
+			glog.V(4).Infof("%s/%s flush big request [%d,%d) to %s", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size), chunk.FileId)
 			chunks = append(chunks, chunk)
 		}
 	} else {
