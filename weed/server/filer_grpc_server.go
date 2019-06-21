@@ -114,8 +114,6 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	fullpath := filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name)))
 	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
 
-	fs.filer.DeleteChunks(fullpath, garbages)
-
 	if req.Entry.Attributes == nil {
 		return nil, fmt.Errorf("can not create entry with empty attributes")
 	}
@@ -127,6 +125,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	})
 
 	if err == nil {
+		fs.filer.DeleteChunks(fullpath, garbages)
 	}
 
 	return &filer_pb.CreateEntryResponse{}, err
