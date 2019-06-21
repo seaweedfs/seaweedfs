@@ -194,6 +194,8 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 		newVisibles = t
 	}
 
+	glog.V(3).Infof("%s existing %d chunks adds %d more", file.fullpath(), len(file.entry.Chunks), len(chunks))
+
 	file.entry.Chunks = append(file.entry.Chunks, chunks...)
 }
 
