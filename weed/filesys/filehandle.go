@@ -68,6 +68,10 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	resp.Data = buff[:totalRead]
 
+	if err != nil {
+		glog.Errorf("file handle read %s: %v", fh.f.fullpath(), err)
+	}
+
 	return err
 }
 
@@ -162,6 +166,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		// fh.f.entryViewCache = nil
 
 		if _, err := client.CreateEntry(ctx, request); err != nil {
+			glog.Errorf("update fh: %v", err)
 			return fmt.Errorf("update fh: %v", err)
 		}
 

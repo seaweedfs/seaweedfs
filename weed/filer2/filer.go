@@ -153,10 +153,12 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry) error {
 
 	if oldEntry == nil {
 		if err := f.store.InsertEntry(ctx, entry); err != nil {
+			glog.Errorf("insert entry %s: %v", entry.FullPath, err)
 			return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
 		}
 	} else {
 		if err := f.UpdateEntry(ctx, oldEntry, entry); err != nil {
+			glog.Errorf("update entry %s: %v", entry.FullPath, err)
 			return fmt.Errorf("update entry %s: %v", entry.FullPath, err)
 		}
 	}
@@ -171,9 +173,11 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry) error {
 func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err error) {
 	if oldEntry != nil {
 		if oldEntry.IsDirectory() && !entry.IsDirectory() {
+			glog.Errorf("existing %s is a directory", entry.FullPath)
 			return fmt.Errorf("existing %s is a directory", entry.FullPath)
 		}
 		if !oldEntry.IsDirectory() && entry.IsDirectory() {
+			glog.Errorf("existing %s is a file", entry.FullPath)
 			return fmt.Errorf("existing %s is a file", entry.FullPath)
 		}
 	}
@@ -215,6 +219,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p FullPath, isRecurs
 		for limit > 0 {
 			entries, err := f.ListDirectoryEntries(ctx, p, lastFileName, includeLastFile, 1024)
 			if err != nil {
+				glog.Errorf("list folder %s: %v", p, err)
 				return fmt.Errorf("list folder %s: %v", p, err)
 			}
 
