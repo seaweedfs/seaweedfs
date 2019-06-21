@@ -160,11 +160,12 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		chunks, garbages := filer2.CompactFileChunks(fh.f.entry.Chunks)
 		fh.f.entry.Chunks = chunks
 		// fh.f.entryViewCache = nil
-		fh.f.wfs.deleteFileChunks(ctx, garbages)
 
 		if _, err := client.CreateEntry(ctx, request); err != nil {
 			return fmt.Errorf("update fh: %v", err)
 		}
+
+		fh.f.wfs.deleteFileChunks(ctx, garbages)
 
 		return nil
 	})
