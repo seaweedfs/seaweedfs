@@ -21,6 +21,10 @@ func (fid *FileId) toFileId() string {
 	return needle.NewFileId(needle.VolumeId(fid.VolumeId), fid.FileKey, fid.Cookie).String()
 }
 
+func (fid *FileId) Equals(that *FileId) bool {
+	return fid.FileKey == that.FileKey && fid.VolumeId == that.VolumeId && fid.Cookie == that.Cookie
+}
+
 func BeforeEntrySerialization(chunks []*FileChunk) {
 
 	for _, chunk := range chunks {

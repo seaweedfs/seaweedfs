@@ -78,7 +78,7 @@ func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
 	for _, oldChunk := range oldEntry.Chunks {
 		found := false
 		for _, newChunk := range newEntry.Chunks {
-			if oldChunk.FileId == newChunk.FileId {
+			if oldChunk.Fid.Equals(newChunk.Fid) {
 				found = true
 				break
 			}
