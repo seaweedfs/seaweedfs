@@ -74,16 +74,13 @@ func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
 	}
 
 	var toDelete []*filer_pb.FileChunk
+	newChunkIds := make(map[string]bool)
+	for _, newChunk := range newEntry.Chunks {
+		newChunkIds[newChunk.GetFileIdString()] = true
+	}
 
 	for _, oldChunk := range oldEntry.Chunks {
-		found := false
-		for _, newChunk := range newEntry.Chunks {
-			if filer_pb.ChunkEquals(oldChunk, newChunk) {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if _, found := newChunkIds[oldChunk.GetFileIdString()]; !found {
 			toDelete = append(toDelete, oldChunk)
 		}
 	}
