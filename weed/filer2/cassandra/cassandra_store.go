@@ -85,7 +85,7 @@ func (store *CassandraStore) FindEntry(ctx context.Context, fullpath filer2.Full
 	}
 
 	if len(data) == 0 {
-		return nil, fmt.Errorf("not found: %s", fullpath)
+		return nil, filer2.ErrNotFound
 	}
 
 	entry = &filer2.Entry{
