@@ -245,19 +245,15 @@ func collectVolumeIdsForEcEncode(ctx context.Context, commandEnv *CommandEnv, se
 	fmt.Printf("ec encode volumes quiet for: %d seconds\n", quietSeconds)
 
 	vidMap := make(map[uint32]bool)
-	for _, dc := range resp.TopologyInfo.DataCenterInfos {
-		for _, r := range dc.RackInfos {
-			for _, dn := range r.DataNodeInfos {
-				for _, v := range dn.VolumeInfos {
-					if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds {
-						if float64(v.Size) > fullPercentage/100*float64(resp.VolumeSizeLimitMb)*1024*1024 {
-							vidMap[v.Id] = true
-						}
-					}
+	eachDataNode(resp.TopologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
+		for _, v := range dn.VolumeInfos {
+			if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds {
+				if float64(v.Size) > fullPercentage/100*float64(resp.VolumeSizeLimitMb)*1024*1024 {
+					vidMap[v.Id] = true
 				}
 			}
 		}
-	}
+	})
 
 	for vid, _ := range vidMap {
 		vids = append(vids, needle.VolumeId(vid))
