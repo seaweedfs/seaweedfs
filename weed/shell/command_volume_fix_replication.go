@@ -64,7 +64,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	replicatedVolumeInfo := make(map[uint32]*master_pb.VolumeInformationMessage)
 	var allLocations []location
 	eachDataNode(resp.TopologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
-		loc := newLocation(dc.Id, rack.Id, dn)
+		loc := newLocation(dc, string(rack), dn)
 		for _, v := range dn.VolumeInfos {
 			if v.ReplicaPlacement > 0 {
 				replicatedVolumeLocations[v.Id] = append(replicatedVolumeLocations[v.Id], loc)

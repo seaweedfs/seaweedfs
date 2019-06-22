@@ -4,7 +4,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
-func toFileId(fileIdStr string) (*FileId, error) {
+func toFileIdObject(fileIdStr string) (*FileId, error) {
 	t, err := needle.ParseFileIdFromString(fileIdStr)
 	if err != nil {
 		return nil, err
@@ -17,18 +17,29 @@ func toFileId(fileIdStr string) (*FileId, error) {
 
 }
 
-func (fid *FileId) toFileId() string {
+func (fid *FileId) toFileIdString() string {
 	return needle.NewFileId(needle.VolumeId(fid.VolumeId), fid.FileKey, fid.Cookie).String()
 }
 
 func ChunkEquals(this, that *FileChunk) bool {
 	if this.Fid == nil{
-		this.Fid, _ = toFileId(this.FileId)
+		this.Fid, _ = toFileIdObject(this.FileId)
 	}
 	if that.Fid == nil{
-		that.Fid, _ = toFileId(that.FileId)
+		that.Fid, _ = toFileIdObject(that.FileId)
 	}
 	return this.Fid.FileKey == that.Fid.FileKey && this.Fid.VolumeId == that.Fid.VolumeId && this.Fid.Cookie == that.Fid.Cookie
+}
+
+func (c *FileChunk) GetFileIdString() string {
+	if c.FileId != "" {
+		return c.FileId
+	}
+	if c.Fid != nil {
+		c.FileId = c.Fid.toFileIdString()
+		return c.FileId
+	}
+	return ""
 }
 
 func BeforeEntrySerialization(chunks []*FileChunk) {
@@ -36,14 +47,14 @@ func BeforeEntrySerialization(chunks []*FileChunk) {
 	for _, chunk := range chunks {
 
 		if chunk.FileId != "" {
-			if fid, err := toFileId(chunk.FileId); err == nil {
+			if fid, err := toFileIdObject(chunk.FileId); err == nil {
 				chunk.Fid = fid
 				chunk.FileId = ""
 			}
 		}
 
 		if chunk.SourceFileId != "" {
-			if fid, err := toFileId(chunk.SourceFileId); err == nil {
+			if fid, err := toFileIdObject(chunk.SourceFileId); err == nil {
 				chunk.SourceFid = fid
 				chunk.SourceFileId = ""
 			}
@@ -57,11 +68,11 @@ func AfterEntryDeserialization(chunks []*FileChunk) {
 	for _, chunk := range chunks {
 
 		if chunk.Fid != nil && chunk.FileId == "" {
-			chunk.FileId = chunk.Fid.toFileId()
+			chunk.FileId = chunk.Fid.toFileIdString()
 		}
 
 		if chunk.SourceFid != nil && chunk.SourceFileId == "" {
-			chunk.SourceFileId = chunk.SourceFid.toFileId()
+			chunk.SourceFileId = chunk.SourceFid.toFileIdString()
 		}
 
 	}
