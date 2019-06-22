@@ -31,6 +31,23 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"type"})
 
+	FilerStoreCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "filerStore",
+			Name:      "request_total",
+			Help:      "Counter of filer store requests.",
+		}, []string{"store", "type"})
+
+	FilerStoreHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "filerStore",
+			Name:      "request_seconds",
+			Help:      "Bucketed histogram of filer store request processing time.",
+			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
+		}, []string{"store", "type"})
+
 	VolumeServerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "SeaweedFS",
@@ -77,6 +94,8 @@ func init() {
 
 	FilerGather.MustRegister(FilerRequestCounter)
 	FilerGather.MustRegister(FilerRequestHistogram)
+	FilerGather.MustRegister(FilerStoreCounter)
+	FilerGather.MustRegister(FilerStoreHistogram)
 
 	VolumeServerGather.MustRegister(VolumeServerRequestCounter)
 	VolumeServerGather.MustRegister(VolumeServerRequestHistogram)
