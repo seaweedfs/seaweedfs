@@ -242,11 +242,11 @@ func (s *Store) cachedLookupEcShardLocations(ctx context.Context, ecVolume *eras
 
 	shardCount := len(ecVolume.ShardLocations)
 	if shardCount < erasure_coding.DataShardsCount &&
-		ecVolume.ShardLocationsRefreshTime.Add(11 * time.Second).After(time.Now()) ||
+		ecVolume.ShardLocationsRefreshTime.Add(11*time.Second).After(time.Now()) ||
 		shardCount == erasure_coding.TotalShardsCount &&
-			ecVolume.ShardLocationsRefreshTime.Add(37 * time.Minute).After(time.Now()) ||
+			ecVolume.ShardLocationsRefreshTime.Add(37*time.Minute).After(time.Now()) ||
 		shardCount >= erasure_coding.DataShardsCount &&
-			ecVolume.ShardLocationsRefreshTime.Add(7 * time.Minute).After(time.Now()) {
+			ecVolume.ShardLocationsRefreshTime.Add(7*time.Minute).After(time.Now()) {
 		// still fresh
 		return nil
 	}
