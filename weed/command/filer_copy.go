@@ -29,29 +29,26 @@ var (
 )
 
 type CopyOptions struct {
-	filerGrpcPort    *int
-	master           *string
 	include          *string
 	replication      *string
 	collection       *string
 	ttl              *string
 	maxMB            *int
-	grpcDialOption   grpc.DialOption
 	masterClient     *wdclient.MasterClient
 	concurrency      *int
 	compressionLevel *int
+	grpcDialOption   grpc.DialOption
+	masters          []string
 }
 
 func init() {
 	cmdCopy.Run = runCopy // break init cycle
 	cmdCopy.IsDebug = cmdCopy.Flag.Bool("debug", false, "verbose debug information")
-	copy.master = cmdCopy.Flag.String("master", "localhost:9333", "SeaweedFS master location")
 	copy.include = cmdCopy.Flag.String("include", "", "pattens of files to copy, e.g., *.pdf, *.html, ab?d.txt, works together with -dir")
 	copy.replication = cmdCopy.Flag.String("replication", "", "replication type")
 	copy.collection = cmdCopy.Flag.String("collection", "", "optional collection name")
 	copy.ttl = cmdCopy.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
-	copy.maxMB = cmdCopy.Flag.Int("maxMB", 32, "split files larger than the limit")
-	copy.filerGrpcPort = cmdCopy.Flag.Int("filer.port.grpc", 0, "filer grpc server listen port, default to filer port + 10000")
+	copy.maxMB = cmdCopy.Flag.Int("maxMB", 0, "split files larger than the limit")
 	copy.concurrency = cmdCopy.Flag.Int("c", 8, "concurrent file copy goroutines")
 	copy.compressionLevel = cmdCopy.Flag.Int("compressionLevel", 9, "local file compression level 1 ~ 9")
 }
@@ -105,14 +102,28 @@ func runCopy(cmd *Command, args []string) bool {
 	}
 
 	filerGrpcPort := filerPort + 10000
-	if *copy.filerGrpcPort != 0 {
-		filerGrpcPort = uint64(*copy.filerGrpcPort)
-	}
-
 	filerGrpcAddress := fmt.Sprintf("%s:%d", filerUrl.Hostname(), filerGrpcPort)
 	copy.grpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
 
-	copy.masterClient = wdclient.NewMasterClient(context.Background(), copy.grpcDialOption, "client", strings.Split(*copy.master, ","))
+	ctx := context.Background()
+
+	masters, collection, replication, maxMB, err := readFilerConfiguration(ctx, copy.grpcDialOption, filerGrpcAddress)
+	if err != nil {
+		fmt.Printf("read from filer %s: %v\n", filerGrpcAddress, err)
+		return false
+	}
+	if *copy.collection == "" {
+		*copy.collection = collection
+	}
+	if *copy.replication == "" {
+		*copy.replication = replication
+	}
+	if *copy.maxMB == 0 {
+		*copy.maxMB = int(maxMB)
+	}
+	copy.masters = masters
+
+	copy.masterClient = wdclient.NewMasterClient(ctx, copy.grpcDialOption, "client", copy.masters)
 	go copy.masterClient.KeepConnectedToMaster()
 	copy.masterClient.WaitUntilConnected()
 
@@ -121,8 +132,6 @@ func runCopy(cmd *Command, args []string) bool {
 	}
 
 	fileCopyTaskChan := make(chan FileCopyTask, *copy.concurrency)
-
-	ctx := context.Background()
 
 	go func() {
 		defer close(fileCopyTaskChan)
@@ -151,6 +160,18 @@ func runCopy(cmd *Command, args []string) bool {
 	waitGroup.Wait()
 
 	return true
+}
+
+func readFilerConfiguration(ctx context.Context, grpcDialOption grpc.DialOption, filerGrpcAddress string) (masters []string, collection, replication string, maxMB uint32, err error) {
+	err = withFilerClient(ctx, filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
+		}
+		masters, collection, replication, maxMB = resp.Masters, resp.Collection, resp.Replication, resp.MaxMb
+		return nil
+	})
+	return
 }
 
 func genFileCopyTask(fileOrDir string, destPath string, fileCopyTaskChan chan FileCopyTask) error {
@@ -262,7 +283,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(ctx context.Context, task FileCopy
 			Ttl:         *worker.options.ttl,
 		})
 		if err != nil {
-			fmt.Printf("Failed to assign from %s: %v\n", *worker.options.master, err)
+			fmt.Printf("Failed to assign from %v: %v\n", worker.options.masters, err)
 		}
 
 		targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
@@ -336,7 +357,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(ctx context.Context, task FileC
 			Ttl:         *worker.options.ttl,
 		})
 		if err != nil {
-			fmt.Printf("Failed to assign from %s: %v\n", *worker.options.master, err)
+			fmt.Printf("Failed to assign from %v: %v\n", worker.options.masters, err)
 		}
 
 		targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid

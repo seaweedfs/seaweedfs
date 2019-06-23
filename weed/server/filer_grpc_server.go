@@ -266,3 +266,13 @@ func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsR
 		FileCount: output.FileCount,
 	}, nil
 }
+
+func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.GetFilerConfigurationRequest) (resp *filer_pb.GetFilerConfigurationResponse, err error) {
+
+	return &filer_pb.GetFilerConfigurationResponse{
+		Masters:     fs.option.Masters,
+		Collection:  fs.option.Collection,
+		Replication: fs.option.DefaultReplication,
+		MaxMb:       uint32(fs.option.MaxMB),
+	}, nil
+}
