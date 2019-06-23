@@ -71,7 +71,9 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 
 	stats.FilerRequestCounter.WithLabelValues("postAutoChunk").Inc()
 	start := time.Now()
-	defer func() { stats.FilerRequestHistogram.WithLabelValues("postAutoChunk").Observe(time.Since(start).Seconds()) }()
+	defer func() {
+		stats.FilerRequestHistogram.WithLabelValues("postAutoChunk").Observe(time.Since(start).Seconds())
+	}()
 
 	multipartReader, multipartReaderErr := r.MultipartReader()
 	if multipartReaderErr != nil {
@@ -190,7 +192,9 @@ func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *ht
 
 	stats.FilerRequestCounter.WithLabelValues("postAutoChunkUpload").Inc()
 	start := time.Now()
-	defer func() { stats.FilerRequestHistogram.WithLabelValues("postAutoChunkUpload").Observe(time.Since(start).Seconds()) }()
+	defer func() {
+		stats.FilerRequestHistogram.WithLabelValues("postAutoChunkUpload").Observe(time.Since(start).Seconds())
+	}()
 
 	ioReader := ioutil.NopCloser(bytes.NewBuffer(chunkBuf))
 	uploadResult, uploadError := operation.Upload(urlLocation, fileName, ioReader, false, contentType, nil, auth)

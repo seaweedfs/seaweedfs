@@ -149,7 +149,9 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 
 	stats.FilerRequestCounter.WithLabelValues("postStoreWrite").Inc()
 	start := time.Now()
-	defer func() { stats.FilerRequestHistogram.WithLabelValues("postStoreWrite").Observe(time.Since(start).Seconds()) }()
+	defer func() {
+		stats.FilerRequestHistogram.WithLabelValues("postStoreWrite").Observe(time.Since(start).Seconds())
+	}()
 
 	path := r.URL.Path
 	existingEntry, err := fs.filer.FindEntry(ctx, filer2.FullPath(path))
