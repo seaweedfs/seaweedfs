@@ -18,8 +18,43 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
+var (
+	m MasterOptions
+)
+
+type MasterOptions struct {
+	port               *int
+	ip                 *string
+	ipBind             *string
+	metaFolder         *string
+	peers              *string
+	volumeSizeLimitMB  *uint
+	volumePreallocate  *bool
+	pulseSeconds       *int
+	defaultReplication *string
+	garbageThreshold   *float64
+	whiteList          *string
+	disableHttp        *bool
+	metricsAddress     *string
+	metricsIntervalSec *int
+}
+
 func init() {
 	cmdMaster.Run = runMaster // break init cycle
+	m.port = cmdMaster.Flag.Int("port", 9333, "http listen port")
+	m.ip = cmdMaster.Flag.String("ip", "localhost", "master <ip>|<server> address")
+	m.ipBind = cmdMaster.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
+	m.metaFolder = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
+	m.peers = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094")
+	m.volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
+	m.volumePreallocate = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
+	m.pulseSeconds = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
+	m.defaultReplication = cmdMaster.Flag.String("defaultReplication", "000", "Default replication type if not specified.")
+	m.garbageThreshold = cmdMaster.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
+	m.whiteList = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
+	m.disableHttp = cmdMaster.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
+	m.metricsAddress = cmdMaster.Flag.String("metrics.address", "", "Prometheus gateway address")
+	m.metricsIntervalSec = cmdMaster.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
 }
 
 var cmdMaster = &Command{
@@ -35,24 +70,8 @@ var cmdMaster = &Command{
 }
 
 var (
-	mport                   = cmdMaster.Flag.Int("port", 9333, "http listen port")
-	masterIp                = cmdMaster.Flag.String("ip", "localhost", "master <ip>|<server> address")
-	masterBindIp            = cmdMaster.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
-	metaFolder              = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
-	masterPeers             = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094")
-	volumeSizeLimitMB       = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
-	volumePreallocate       = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
-	mpulse                  = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
-	defaultReplicaPlacement = cmdMaster.Flag.String("defaultReplication", "000", "Default replication type if not specified.")
-	// mTimeout                = cmdMaster.Flag.Int("idleTimeout", 30, "connection idle seconds")
-	mMaxCpu                  = cmdMaster.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
-	garbageThreshold         = cmdMaster.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
-	masterWhiteListOption    = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	disableHttp              = cmdMaster.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
-	masterCpuProfile         = cmdMaster.Flag.String("cpuprofile", "", "cpu profile output file")
-	masterMemProfile         = cmdMaster.Flag.String("memprofile", "", "memory profile output file")
-	masterMetricsAddress     = cmdMaster.Flag.String("metrics.address", "", "Prometheus gateway address")
-	masterMetricsIntervalSec = cmdMaster.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
+	masterCpuProfile = cmdMaster.Flag.String("cpuprofile", "", "cpu profile output file")
+	masterMemProfile = cmdMaster.Flag.String("memprofile", "", "memory profile output file")
 
 	masterWhiteList []string
 )
@@ -62,32 +81,23 @@ func runMaster(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 	util.LoadConfiguration("master", false)
 
-	if *mMaxCpu < 1 {
-		*mMaxCpu = runtime.NumCPU()
-	}
-	runtime.GOMAXPROCS(*mMaxCpu)
+	runtime.GOMAXPROCS(runtime.NumCPU())
 	util.SetupProfiling(*masterCpuProfile, *masterMemProfile)
 
-	if err := util.TestFolderWritable(*metaFolder); err != nil {
-		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *metaFolder, err)
+	if err := util.TestFolderWritable(*m.metaFolder); err != nil {
+		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *m.metaFolder, err)
 	}
-	if *masterWhiteListOption != "" {
-		masterWhiteList = strings.Split(*masterWhiteListOption, ",")
+	if *m.whiteList != "" {
+		masterWhiteList = strings.Split(*m.whiteList, ",")
 	}
-	if *volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
+	if *m.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
 		glog.Fatalf("volumeSizeLimitMB should be smaller than 30000")
 	}
 
 	r := mux.NewRouter()
-	ms := weed_server.NewMasterServer(r, *mport, *metaFolder,
-		*volumeSizeLimitMB, *volumePreallocate,
-		*mpulse, *defaultReplicaPlacement, *garbageThreshold,
-		masterWhiteList,
-		*disableHttp,
-		*masterMetricsAddress, *masterMetricsIntervalSec,
-	)
+	ms := weed_server.NewMasterServer(r, m.toMasterOption(masterWhiteList))
 
-	listeningAddress := *masterBindIp + ":" + strconv.Itoa(*mport)
+	listeningAddress := *m.ipBind + ":" + strconv.Itoa(*m.port)
 
 	glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", listeningAddress)
 
@@ -98,18 +108,18 @@ func runMaster(cmd *Command, args []string) bool {
 
 	go func() {
 		// start raftServer
-		myMasterAddress, peers := checkPeers(*masterIp, *mport, *masterPeers)
+		myMasterAddress, peers := checkPeers(*m.ip, *m.port, *m.peers)
 		raftServer := weed_server.NewRaftServer(security.LoadClientTLS(viper.Sub("grpc"), "master"),
-			peers, myMasterAddress, *metaFolder, ms.Topo, *mpulse)
+			peers, myMasterAddress, *m.metaFolder, ms.Topo, *m.pulseSeconds)
 		if raftServer == nil {
-			glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717", *metaFolder)
+			glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717", *m.metaFolder)
 		}
 		ms.SetRaftServer(raftServer)
 		r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
 
 		// starting grpc server
-		grpcPort := *mport + 10000
-		grpcL, err := util.NewListener(*masterBindIp+":"+strconv.Itoa(grpcPort), 0)
+		grpcPort := *m.port + 10000
+		grpcL, err := util.NewListener(*m.ipBind+":"+strconv.Itoa(grpcPort), 0)
 		if err != nil {
 			glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 		}
@@ -119,7 +129,7 @@ func runMaster(cmd *Command, args []string) bool {
 		protobuf.RegisterRaftServer(grpcS, raftServer)
 		reflection.Register(grpcS)
 
-		glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.VERSION, *masterBindIp, grpcPort)
+		glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.VERSION, *m.ipBind, grpcPort)
 		grpcS.Serve(grpcL)
 	}()
 
@@ -154,4 +164,20 @@ func checkPeers(masterIp string, masterPort int, peers string) (masterAddress st
 		glog.Fatalf("Only odd number of masters are supported!")
 	}
 	return
+}
+
+func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {
+	return &weed_server.MasterOption{
+		Port:                    *m.port,
+		MetaFolder:              *m.metaFolder,
+		VolumeSizeLimitMB:       *m.volumeSizeLimitMB,
+		VolumePreallocate:       *m.volumePreallocate,
+		PulseSeconds:            *m.pulseSeconds,
+		DefaultReplicaPlacement: *m.defaultReplication,
+		GarbageThreshold:        *m.garbageThreshold,
+		WhiteList:               whiteList,
+		DisableHttp:             *m.disableHttp,
+		MetricsAddress:          *m.metricsAddress,
+		MetricsIntervalSec:      *m.metricsIntervalSec,
+	}
 }

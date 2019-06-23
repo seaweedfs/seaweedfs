@@ -47,7 +47,7 @@ func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request)
 
 func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Request) {
 	gcString := r.FormValue("garbageThreshold")
-	gcThreshold := ms.garbageThreshold
+	gcThreshold := ms.option.GarbageThreshold
 	if gcString != "" {
 		var err error
 		gcThreshold, err = strconv.ParseFloat(gcString, 32)
@@ -57,7 +57,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	glog.Infoln("garbageThreshold =", gcThreshold)
-	ms.Topo.Vacuum(ms.grpcDialOpiton, gcThreshold, ms.preallocate)
+	ms.Topo.Vacuum(ms.grpcDialOpiton, gcThreshold, ms.preallocateSize)
 	ms.dirStatusHandler(w, r)
 }
 
@@ -119,7 +119,7 @@ func (ms *MasterServer) selfUrl(r *http.Request) string {
 	if r.Host != "" {
 		return r.Host
 	}
-	return "localhost:" + strconv.Itoa(ms.port)
+	return "localhost:" + strconv.Itoa(ms.option.Port)
 }
 func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *http.Request) {
 	if ms.Topo.IsLeader() {
@@ -142,7 +142,7 @@ func (ms *MasterServer) HasWritableVolume(option *topology.VolumeGrowOption) boo
 func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGrowOption, error) {
 	replicationString := r.FormValue("replication")
 	if replicationString == "" {
-		replicationString = ms.defaultReplicaPlacement
+		replicationString = ms.option.DefaultReplicaPlacement
 	}
 	replicaPlacement, err := storage.NewReplicaPlacementFromString(replicationString)
 	if err != nil {
@@ -152,7 +152,7 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 	if err != nil {
 		return nil, err
 	}
-	preallocate := ms.preallocate
+	preallocate := ms.preallocateSize
 	if r.FormValue("preallocate") != "" {
 		preallocate, err = strconv.ParseInt(r.FormValue("preallocate"), 10, 64)
 		if err != nil {

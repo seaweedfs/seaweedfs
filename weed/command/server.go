@@ -30,6 +30,7 @@ type ServerOptions struct {
 
 var (
 	serverOptions ServerOptions
+	masterOptions MasterOptions
 	filerOptions  FilerOptions
 	s3Options     S3Options
 )
@@ -57,21 +58,13 @@ var cmdServer = &Command{
 var (
 	serverIp                      = cmdServer.Flag.String("ip", "localhost", "ip or server name")
 	serverBindIp                  = cmdServer.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
-	serverMaxCpu                  = cmdServer.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	serverTimeout                 = cmdServer.Flag.Int("idleTimeout", 30, "connection idle seconds")
 	serverDataCenter              = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
 	serverRack                    = cmdServer.Flag.String("rack", "", "current volume server's rack name")
 	serverWhiteListOption         = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 	serverDisableHttp             = cmdServer.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
-	serverPeers                   = cmdServer.Flag.String("master.peers", "", "all master nodes in comma separated ip:masterPort list")
-	serverGarbageThreshold        = cmdServer.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
 	serverMetricsAddress          = cmdServer.Flag.String("metrics.address", "", "Prometheus gateway address")
 	serverMetricsIntervalSec      = cmdServer.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
-	masterPort                    = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
-	masterMetaFolder              = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
-	masterVolumeSizeLimitMB       = cmdServer.Flag.Uint("master.volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
-	masterVolumePreallocate       = cmdServer.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
-	masterDefaultReplicaPlacement = cmdServer.Flag.String("master.defaultReplicaPlacement", "000", "Default replication type if not specified.")
 	volumeDataFolders             = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	volumeMaxDataVolumeCounts     = cmdServer.Flag.String("volume.max", "7", "maximum numbers of volumes, count[,count]...")
 	pulseSeconds                  = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
@@ -83,6 +76,16 @@ var (
 
 func init() {
 	serverOptions.cpuprofile = cmdServer.Flag.String("cpuprofile", "", "cpu profile output file")
+
+	masterOptions.port = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
+	masterOptions.metaFolder = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
+	masterOptions.peers = cmdServer.Flag.String("master.peers", "", "all master nodes in comma separated ip:masterPort list")
+	masterOptions.volumeSizeLimitMB = cmdServer.Flag.Uint("master.volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
+	masterOptions.volumePreallocate = cmdServer.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
+	masterOptions.pulseSeconds = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
+	masterOptions.defaultReplication = cmdServer.Flag.String("master.defaultReplication", "000", "Default replication type if not specified.")
+	masterOptions.garbageThreshold = cmdServer.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
+
 	filerOptions.collection = cmdServer.Flag.String("filer.collection", "", "all data will be stored in this collection")
 	filerOptions.port = cmdServer.Flag.Int("filer.port", 8888, "filer server http listen port")
 	filerOptions.publicPort = cmdServer.Flag.Int("filer.port.public", 0, "filer server public http listen port")
@@ -130,49 +133,52 @@ func runServer(cmd *Command, args []string) bool {
 		*isStartingFiler = true
 	}
 
-	master := *serverIp + ":" + strconv.Itoa(*masterPort)
+	master := *serverIp + ":" + strconv.Itoa(*masterOptions.port)
+	masterOptions.ip = serverIp
+	masterOptions.ipBind = serverBindIp
 	filerOptions.masters = &master
 	filerOptions.ip = serverBindIp
 	serverOptions.v.ip = serverIp
 	serverOptions.v.bindIp = serverBindIp
 	serverOptions.v.masters = &master
 	serverOptions.v.idleConnectionTimeout = serverTimeout
-	serverOptions.v.maxCpu = serverMaxCpu
 	serverOptions.v.dataCenter = serverDataCenter
 	serverOptions.v.rack = serverRack
 	serverOptions.v.pulseSeconds = pulseSeconds
 
+	masterOptions.whiteList = serverWhiteListOption
+
 	filerOptions.dataCenter = serverDataCenter
 	filerOptions.disableHttp = serverDisableHttp
+	masterOptions.disableHttp = serverDisableHttp
 
 	filerOptions.metricsAddress = serverMetricsAddress
 	filerOptions.metricsIntervalSec = serverMetricsIntervalSec
+	masterOptions.metricsAddress = serverMetricsAddress
+	masterOptions.metricsIntervalSec = serverMetricsIntervalSec
 
 	filerAddress := fmt.Sprintf("%s:%d", *serverIp, *filerOptions.port)
 	s3Options.filer = &filerAddress
 
 	if *filerOptions.defaultReplicaPlacement == "" {
-		*filerOptions.defaultReplicaPlacement = *masterDefaultReplicaPlacement
+		*filerOptions.defaultReplicaPlacement = *masterOptions.defaultReplication
 	}
 
-	if *serverMaxCpu < 1 {
-		*serverMaxCpu = runtime.NumCPU()
-	}
-	runtime.GOMAXPROCS(*serverMaxCpu)
+	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	folders := strings.Split(*volumeDataFolders, ",")
 
-	if *masterVolumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
+	if *masterOptions.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
 		glog.Fatalf("masterVolumeSizeLimitMB should be less than 30000")
 	}
 
-	if *masterMetaFolder == "" {
-		*masterMetaFolder = folders[0]
+	if *masterOptions.metaFolder == "" {
+		*masterOptions.metaFolder = folders[0]
 	}
-	if err := util.TestFolderWritable(*masterMetaFolder); err != nil {
-		glog.Fatalf("Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterMetaFolder, err)
+	if err := util.TestFolderWritable(*masterOptions.metaFolder); err != nil {
+		glog.Fatalf("Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterOptions.metaFolder, err)
 	}
-	filerOptions.defaultLevelDbDirectory = masterMetaFolder
+	filerOptions.defaultLevelDbDirectory = masterOptions.metaFolder
 
 	if *serverWhiteListOption != "" {
 		serverWhiteList = strings.Split(*serverWhiteListOption, ",")
@@ -202,29 +208,24 @@ func runServer(cmd *Command, args []string) bool {
 
 	go func() {
 		r := mux.NewRouter()
-		ms := weed_server.NewMasterServer(r, *masterPort, *masterMetaFolder,
-			*masterVolumeSizeLimitMB, *masterVolumePreallocate,
-			*pulseSeconds, *masterDefaultReplicaPlacement, *serverGarbageThreshold,
-			serverWhiteList, *serverDisableHttp,
-			*serverMetricsAddress, *serverMetricsIntervalSec,
-		)
+		ms := weed_server.NewMasterServer(r, masterOptions.toMasterOption(serverWhiteList))
 
-		glog.V(0).Infof("Start Seaweed Master %s at %s:%d", util.VERSION, *serverIp, *masterPort)
-		masterListener, e := util.NewListener(*serverBindIp+":"+strconv.Itoa(*masterPort), 0)
+		glog.V(0).Infof("Start Seaweed Master %s at %s:%d", util.VERSION, *serverIp, *masterOptions.port)
+		masterListener, e := util.NewListener(*serverBindIp+":"+strconv.Itoa(*masterOptions.port), 0)
 		if e != nil {
 			glog.Fatalf("Master startup error: %v", e)
 		}
 
 		go func() {
 			// start raftServer
-			myMasterAddress, peers := checkPeers(*serverIp, *masterPort, *serverPeers)
+			myMasterAddress, peers := checkPeers(*serverIp, *masterOptions.port, *masterOptions.peers)
 			raftServer := weed_server.NewRaftServer(security.LoadClientTLS(viper.Sub("grpc"), "master"),
-				peers, myMasterAddress, *masterMetaFolder, ms.Topo, *pulseSeconds)
+				peers, myMasterAddress, *masterOptions.metaFolder, ms.Topo, *masterOptions.pulseSeconds)
 			ms.SetRaftServer(raftServer)
 			r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
 
 			// starting grpc server
-			grpcPort := *masterPort + 10000
+			grpcPort := *masterOptions.port + 10000
 			grpcL, err := util.NewListener(*serverBindIp+":"+strconv.Itoa(grpcPort), 0)
 			if err != nil {
 				glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)

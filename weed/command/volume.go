@@ -35,7 +35,6 @@ type VolumeServerOptions struct {
 	masters               *string
 	pulseSeconds          *int
 	idleConnectionTimeout *int
-	maxCpu                *int
 	dataCenter            *string
 	rack                  *string
 	whiteList             []string
@@ -57,7 +56,6 @@ func init() {
 	v.masters = cmdVolume.Flag.String("mserver", "localhost:9333", "comma-separated master servers")
 	v.pulseSeconds = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
 	v.idleConnectionTimeout = cmdVolume.Flag.Int("idleTimeout", 30, "connection idle seconds")
-	v.maxCpu = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	v.dataCenter = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	v.rack = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
 	v.indexType = cmdVolume.Flag.String("index", "memory", "Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance.")
@@ -86,10 +84,7 @@ func runVolume(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
 
-	if *v.maxCpu < 1 {
-		*v.maxCpu = runtime.NumCPU()
-	}
-	runtime.GOMAXPROCS(*v.maxCpu)
+	runtime.GOMAXPROCS(runtime.NumCPU())
 	util.SetupProfiling(*v.cpuProfile, *v.memProfile)
 
 	v.startVolumeServer(*volumeFolders, *maxVolumeCounts, *volumeWhiteListOption)

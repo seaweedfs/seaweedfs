@@ -25,17 +25,25 @@ import (
 	"github.com/spf13/viper"
 )
 
+type MasterOption struct {
+	Port                    int
+	MetaFolder              string
+	VolumeSizeLimitMB       uint
+	VolumePreallocate       bool
+	PulseSeconds            int
+	DefaultReplicaPlacement string
+	GarbageThreshold        float64
+	WhiteList               []string
+	DisableHttp             bool
+	MetricsAddress          string
+	MetricsIntervalSec      int
+}
+
 type MasterServer struct {
-	port                    int
-	metaFolder              string
-	volumeSizeLimitMB       uint
-	preallocate             int64
-	pulseSeconds            int
-	defaultReplicaPlacement string
-	garbageThreshold        float64
-	guard                   *security.Guard
-	metricsAddress          string
-	metricsIntervalSec      int
+	option *MasterOption
+	guard  *security.Guard
+
+	preallocateSize int64
 
 	Topo   *topology.Topology
 	vg     *topology.VolumeGrowth
@@ -50,17 +58,7 @@ type MasterServer struct {
 	grpcDialOpiton grpc.DialOption
 }
 
-func NewMasterServer(r *mux.Router, port int, metaFolder string,
-	volumeSizeLimitMB uint,
-	preallocate bool,
-	pulseSeconds int,
-	defaultReplicaPlacement string,
-	garbageThreshold float64,
-	whiteList []string,
-	disableHttp bool,
-	metricsAddress string,
-	metricsIntervalSec int,
-) *MasterServer {
+func NewMasterServer(r *mux.Router, option *MasterOption) *MasterServer {
 
 	v := viper.GetViper()
 	signingKey := v.GetString("jwt.signing.key")
@@ -72,30 +70,24 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 	readExpiresAfterSec := v.GetInt("jwt.signing.read.expires_after_seconds")
 
 	var preallocateSize int64
-	if preallocate {
-		preallocateSize = int64(volumeSizeLimitMB) * (1 << 20)
+	if option.VolumePreallocate {
+		preallocateSize = int64(option.VolumeSizeLimitMB) * (1 << 20)
 	}
 	ms := &MasterServer{
-		port:                    port,
-		volumeSizeLimitMB:       volumeSizeLimitMB,
-		preallocate:             preallocateSize,
-		pulseSeconds:            pulseSeconds,
-		defaultReplicaPlacement: defaultReplicaPlacement,
-		garbageThreshold:        garbageThreshold,
-		clientChans:             make(map[string]chan *master_pb.VolumeLocation),
-		grpcDialOpiton:          security.LoadClientTLS(v.Sub("grpc"), "master"),
-		metricsAddress:          metricsAddress,
-		metricsIntervalSec:      metricsIntervalSec,
+		option:          option,
+		preallocateSize: preallocateSize,
+		clientChans:     make(map[string]chan *master_pb.VolumeLocation),
+		grpcDialOpiton:  security.LoadClientTLS(v.Sub("grpc"), "master"),
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
 	seq := sequence.NewMemorySequencer()
-	ms.Topo = topology.NewTopology("topo", seq, uint64(volumeSizeLimitMB)*1024*1024, pulseSeconds)
+	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, ms.option.PulseSeconds)
 	ms.vg = topology.NewDefaultVolumeGrowth()
-	glog.V(0).Infoln("Volume Size Limit is", volumeSizeLimitMB, "MB")
+	glog.V(0).Infoln("Volume Size Limit is", ms.option.VolumeSizeLimitMB, "MB")
 
-	ms.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
+	ms.guard = security.NewGuard(ms.option.WhiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
-	if !disableHttp {
+	if !ms.option.DisableHttp {
 		handleStaticResources2(r)
 		r.HandleFunc("/", ms.proxyToLeader(ms.uiStatusHandler))
 		r.HandleFunc("/ui/index.html", ms.uiStatusHandler)
@@ -113,7 +105,7 @@ func NewMasterServer(r *mux.Router, port int, metaFolder string,
 		r.HandleFunc("/{fileId}", ms.proxyToLeader(ms.redirectHandler))
 	}
 
-	ms.Topo.StartRefreshWritableVolumes(ms.grpcDialOpiton, garbageThreshold, ms.preallocate)
+	ms.Topo.StartRefreshWritableVolumes(ms.grpcDialOpiton, ms.option.GarbageThreshold, ms.preallocateSize)
 
 	ms.startAdminScripts()
 
@@ -185,7 +177,7 @@ func (ms *MasterServer) startAdminScripts() {
 
 	scriptLines := strings.Split(adminScripts, "\n")
 
-	masterAddress := "localhost:" + strconv.Itoa(ms.port)
+	masterAddress := "localhost:" + strconv.Itoa(ms.option.Port)
 
 	var shellOptions shell.ShellOptions
 	shellOptions.GrpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "master")

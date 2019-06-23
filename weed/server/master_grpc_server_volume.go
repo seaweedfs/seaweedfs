@@ -50,7 +50,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	}
 
 	if req.Replication == "" {
-		req.Replication = ms.defaultReplicaPlacement
+		req.Replication = ms.option.DefaultReplicaPlacement
 	}
 	replicaPlacement, err := storage.NewReplicaPlacementFromString(req.Replication)
 	if err != nil {
@@ -65,7 +65,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		Collection:       req.Collection,
 		ReplicaPlacement: replicaPlacement,
 		Ttl:              ttl,
-		Prealloacte:      ms.preallocate,
+		Prealloacte:      ms.preallocateSize,
 		DataCenter:       req.DataCenter,
 		Rack:             req.Rack,
 		DataNode:         req.DataNode,
@@ -105,7 +105,7 @@ func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.Statistic
 	}
 
 	if req.Replication == "" {
-		req.Replication = ms.defaultReplicaPlacement
+		req.Replication = ms.option.DefaultReplicaPlacement
 	}
 	replicaPlacement, err := storage.NewReplicaPlacementFromString(req.Replication)
 	if err != nil {
@@ -136,7 +136,7 @@ func (ms *MasterServer) VolumeList(ctx context.Context, req *master_pb.VolumeLis
 
 	resp := &master_pb.VolumeListResponse{
 		TopologyInfo:      ms.Topo.ToTopologyInfo(),
-		VolumeSizeLimitMb: uint64(ms.volumeSizeLimitMB),
+		VolumeSizeLimitMb: uint64(ms.option.VolumeSizeLimitMB),
 	}
 
 	return resp, nil
