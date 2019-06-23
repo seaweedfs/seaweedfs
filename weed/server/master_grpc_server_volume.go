@@ -174,3 +174,13 @@ func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.Looku
 
 	return resp, nil
 }
+
+func (ms *MasterServer) GetMasterConfiguration(ctx context.Context, req *master_pb.GetMasterConfigurationRequest) (*master_pb.GetMasterConfigurationResponse, error) {
+
+	resp := &master_pb.GetMasterConfigurationResponse{
+		MetricsAddress:         ms.option.MetricsAddress,
+		MetricsIntervalSeconds: uint32(ms.option.MetricsIntervalSec),
+	}
+
+	return resp, nil
+}

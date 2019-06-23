@@ -1,9 +1,14 @@
 package weed_server
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"os"
+	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"google.golang.org/grpc"
@@ -37,8 +42,6 @@ type FilerOption struct {
 	DataCenter         string
 	DefaultLevelDbDir  string
 	DisableHttp        bool
-	MetricsAddress     string
-	MetricsIntervalSec int
 	Port               int
 }
 
@@ -87,10 +90,41 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
 
-	go stats.LoopPushingMetric("filer", stats.SourceName(option.Port), stats.FilerGather,
-		func() (addr string, intervalSeconds int) {
-			return option.MetricsAddress, option.MetricsIntervalSec
-		})
+	maybeStartMetrics(fs, option)
 
 	return fs, nil
+}
+
+func maybeStartMetrics(fs *FilerServer, option *FilerOption) {
+	isConnected := false
+	var metricsAddress string
+	var metricsIntervalSec int
+	var readErr error
+	for !isConnected {
+		metricsAddress, metricsIntervalSec, readErr = readFilerConfiguration(fs.grpcDialOption, option.Masters[0])
+		if readErr == nil {
+			isConnected = true
+		}else{
+			time.Sleep(7 * time.Second)
+		}
+	}
+	if metricsAddress == "" && metricsIntervalSec <= 0 {
+		return
+	}
+	go stats.LoopPushingMetric("filer", stats.SourceName(option.Port), stats.FilerGather,
+		func() (addr string, intervalSeconds int) {
+			return metricsAddress, metricsIntervalSec
+		})
+}
+
+func readFilerConfiguration(grpcDialOption grpc.DialOption, masterGrpcAddress string) (metricsAddress string, metricsIntervalSec int, err error) {
+	err = operation.WithMasterServerClient(masterGrpcAddress, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+		resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+		if err != nil {
+			return fmt.Errorf("get master %s configuration: %v", masterGrpcAddress, err)
+		}
+		metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSeconds)
+		return nil
+	})
+	return
 }

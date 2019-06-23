@@ -34,8 +34,6 @@ type FilerOptions struct {
 	dataCenter              *string
 	enableNotification      *bool
 	disableHttp             *bool
-	metricsAddress          *string
-	metricsIntervalSec      *int
 
 	// default leveldb directory, used in "weed server" mode
 	defaultLevelDbDirectory *string
@@ -55,8 +53,6 @@ func init() {
 	f.dirListingLimit = cmdFiler.Flag.Int("dirListLimit", 100000, "limit sub dir listing size")
 	f.dataCenter = cmdFiler.Flag.String("dataCenter", "", "prefer to write to volumes in this data center")
 	f.disableHttp = cmdFiler.Flag.Bool("disableHttp", false, "disable http request, only gRpc operations are allowed")
-	f.metricsAddress = cmdFiler.Flag.String("metrics.address", "", "Prometheus gateway address")
-	f.metricsIntervalSec = cmdFiler.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
 }
 
 var cmdFiler = &Command{
@@ -114,8 +110,6 @@ func (fo *FilerOptions) startFiler() {
 		DataCenter:         *fo.dataCenter,
 		DefaultLevelDbDir:  defaultLevelDbDirectory,
 		DisableHttp:        *fo.disableHttp,
-		MetricsAddress:     *fo.metricsAddress,
-		MetricsIntervalSec: *fo.metricsIntervalSec,
 		Port:               *fo.port,
 	})
 	if nfs_err != nil {

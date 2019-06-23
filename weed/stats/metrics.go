@@ -107,6 +107,10 @@ func init() {
 
 func LoopPushingMetric(name, instance string, gatherer *prometheus.Registry, fnGetMetricsDest func() (addr string, intervalSeconds int)) {
 
+	if fnGetMetricsDest == nil {
+		return
+	}
+
 	addr, intervalSeconds := fnGetMetricsDest()
 	pusher := push.New(addr, name).Gatherer(gatherer).Grouping("instance", instance)
 	currentAddr := addr

@@ -63,8 +63,6 @@ var (
 	serverRack                    = cmdServer.Flag.String("rack", "", "current volume server's rack name")
 	serverWhiteListOption         = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 	serverDisableHttp             = cmdServer.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
-	serverMetricsAddress          = cmdServer.Flag.String("metrics.address", "", "Prometheus gateway address")
-	serverMetricsIntervalSec      = cmdServer.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
 	volumeDataFolders             = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	volumeMaxDataVolumeCounts     = cmdServer.Flag.String("volume.max", "7", "maximum numbers of volumes, count[,count]...")
 	pulseSeconds                  = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
@@ -84,6 +82,8 @@ func init() {
 	masterOptions.volumePreallocate = cmdServer.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
 	masterOptions.defaultReplication = cmdServer.Flag.String("master.defaultReplication", "000", "Default replication type if not specified.")
 	masterOptions.garbageThreshold = cmdServer.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
+	masterOptions.metricsAddress          = cmdServer.Flag.String("metrics.address", "", "Prometheus gateway address")
+	masterOptions.metricsIntervalSec     = cmdServer.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
 
 	filerOptions.collection = cmdServer.Flag.String("filer.collection", "", "all data will be stored in this collection")
 	filerOptions.port = cmdServer.Flag.Int("filer.port", 8888, "filer server http listen port")
@@ -152,11 +152,6 @@ func runServer(cmd *Command, args []string) bool {
 	filerOptions.dataCenter = serverDataCenter
 	filerOptions.disableHttp = serverDisableHttp
 	masterOptions.disableHttp = serverDisableHttp
-
-	filerOptions.metricsAddress = serverMetricsAddress
-	filerOptions.metricsIntervalSec = serverMetricsIntervalSec
-	masterOptions.metricsAddress = serverMetricsAddress
-	masterOptions.metricsIntervalSec = serverMetricsIntervalSec
 
 	filerAddress := fmt.Sprintf("%s:%d", *serverIp, *filerOptions.port)
 	s3Options.filer = &filerAddress
