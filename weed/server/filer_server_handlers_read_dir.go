@@ -9,6 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	ui "github.com/chrislusf/seaweedfs/weed/server/filer_ui"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 )
 
 // listDirectoryHandler lists directories and folers under a directory
@@ -16,6 +17,9 @@ import (
 // sub directories are listed on the first page, when "lastFileName"
 // is empty.
 func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Request) {
+
+	stats.FilerRequestCounter.WithLabelValues("list").Inc()
+
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") && len(path) > 1 {
 		path = path[:len(path)-1]

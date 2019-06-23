@@ -61,6 +61,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 
 	w.Header().Set("Accept-Ranges", "bytes")
 	if r.Method == "HEAD" {
+		stats.FilerRequestCounter.WithLabelValues("head").Inc()
 		w.Header().Set("Content-Length", strconv.FormatInt(int64(filer2.TotalSize(entry.Chunks)), 10))
 		w.Header().Set("Last-Modified", entry.Attr.Mtime.Format(http.TimeFormat))
 		setEtag(w, filer2.ETag(entry.Chunks))
@@ -88,6 +89,7 @@ func (fs *FilerServer) handleSingleChunk(w http.ResponseWriter, r *http.Request,
 	}
 
 	if fs.option.RedirectOnRead {
+		stats.FilerRequestCounter.WithLabelValues("redirect").Inc()
 		http.Redirect(w, r, urlString, http.StatusFound)
 		return
 	}

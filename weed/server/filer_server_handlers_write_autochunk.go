@@ -16,6 +16,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -67,6 +68,10 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 
 func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request,
 	contentLength int64, chunkSize int32, replication string, collection string, dataCenter string) (filerResult *FilerPostResult, replyerr error) {
+
+	stats.FilerRequestCounter.WithLabelValues("postAutoChunk").Inc()
+	start := time.Now()
+	defer func() { stats.FilerRequestHistogram.WithLabelValues("postAutoChunk").Observe(time.Since(start).Seconds()) }()
 
 	multipartReader, multipartReaderErr := r.MultipartReader()
 	if multipartReaderErr != nil {
@@ -169,11 +174,11 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 		},
 		Chunks: fileChunks,
 	}
-	if db_err := fs.filer.CreateEntry(ctx, entry); db_err != nil {
+	if dbErr := fs.filer.CreateEntry(ctx, entry); dbErr != nil {
 		fs.filer.DeleteChunks(entry.FullPath, entry.Chunks)
-		replyerr = db_err
-		filerResult.Error = db_err.Error()
-		glog.V(0).Infof("failing to write %s to filer server : %v", path, db_err)
+		replyerr = dbErr
+		filerResult.Error = dbErr.Error()
+		glog.V(0).Infof("failing to write %s to filer server : %v", path, dbErr)
 		return
 	}
 
@@ -182,6 +187,10 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 
 func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *http.Request,
 	chunkBuf []byte, fileName string, contentType string, fileId string, auth security.EncodedJwt) (err error) {
+
+	stats.FilerRequestCounter.WithLabelValues("postAutoChunkUpload").Inc()
+	start := time.Now()
+	defer func() { stats.FilerRequestHistogram.WithLabelValues("postAutoChunkUpload").Observe(time.Since(start).Seconds()) }()
 
 	ioReader := ioutil.NopCloser(bytes.NewBuffer(chunkBuf))
 	uploadResult, uploadError := operation.Upload(urlLocation, fileName, ioReader, false, contentType, nil, auth)
