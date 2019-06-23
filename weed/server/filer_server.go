@@ -104,7 +104,7 @@ func maybeStartMetrics(fs *FilerServer, option *FilerOption) {
 		metricsAddress, metricsIntervalSec, readErr = readFilerConfiguration(fs.grpcDialOption, option.Masters[0])
 		if readErr == nil {
 			isConnected = true
-		}else{
+		} else {
 			time.Sleep(7 * time.Second)
 		}
 	}

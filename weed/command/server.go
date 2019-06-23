@@ -56,18 +56,18 @@ var cmdServer = &Command{
 }
 
 var (
-	serverIp                      = cmdServer.Flag.String("ip", "localhost", "ip or server name")
-	serverBindIp                  = cmdServer.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
-	serverTimeout                 = cmdServer.Flag.Int("idleTimeout", 30, "connection idle seconds")
-	serverDataCenter              = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
-	serverRack                    = cmdServer.Flag.String("rack", "", "current volume server's rack name")
-	serverWhiteListOption         = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	serverDisableHttp             = cmdServer.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
-	volumeDataFolders             = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
-	volumeMaxDataVolumeCounts     = cmdServer.Flag.String("volume.max", "7", "maximum numbers of volumes, count[,count]...")
-	pulseSeconds                  = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
-	isStartingFiler               = cmdServer.Flag.Bool("filer", false, "whether to start filer")
-	isStartingS3                  = cmdServer.Flag.Bool("s3", false, "whether to start S3 gateway")
+	serverIp                  = cmdServer.Flag.String("ip", "localhost", "ip or server name")
+	serverBindIp              = cmdServer.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
+	serverTimeout             = cmdServer.Flag.Int("idleTimeout", 30, "connection idle seconds")
+	serverDataCenter          = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
+	serverRack                = cmdServer.Flag.String("rack", "", "current volume server's rack name")
+	serverWhiteListOption     = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
+	serverDisableHttp         = cmdServer.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
+	volumeDataFolders         = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
+	volumeMaxDataVolumeCounts = cmdServer.Flag.String("volume.max", "7", "maximum numbers of volumes, count[,count]...")
+	pulseSeconds              = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
+	isStartingFiler           = cmdServer.Flag.Bool("filer", false, "whether to start filer")
+	isStartingS3              = cmdServer.Flag.Bool("s3", false, "whether to start S3 gateway")
 
 	serverWhiteList []string
 )
@@ -82,8 +82,8 @@ func init() {
 	masterOptions.volumePreallocate = cmdServer.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
 	masterOptions.defaultReplication = cmdServer.Flag.String("master.defaultReplication", "000", "Default replication type if not specified.")
 	masterOptions.garbageThreshold = cmdServer.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
-	masterOptions.metricsAddress          = cmdServer.Flag.String("metrics.address", "", "Prometheus gateway address")
-	masterOptions.metricsIntervalSec     = cmdServer.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
+	masterOptions.metricsAddress = cmdServer.Flag.String("metrics.address", "", "Prometheus gateway address")
+	masterOptions.metricsIntervalSec = cmdServer.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
 
 	filerOptions.collection = cmdServer.Flag.String("filer.collection", "", "all data will be stored in this collection")
 	filerOptions.port = cmdServer.Flag.Int("filer.port", 8888, "filer server http listen port")
