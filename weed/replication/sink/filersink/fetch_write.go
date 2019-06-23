@@ -39,7 +39,7 @@ func (fs *FilerSink) replicateOneChunk(ctx context.Context, sourceChunk *filer_p
 
 	fileId, err := fs.fetchAndWrite(ctx, sourceChunk)
 	if err != nil {
-		return nil, fmt.Errorf("copy %s: %v", sourceChunk.FileId, err)
+		return nil, fmt.Errorf("copy %s: %v", sourceChunk.GetFileIdString(), err)
 	}
 
 	return &filer_pb.FileChunk{
@@ -48,15 +48,15 @@ func (fs *FilerSink) replicateOneChunk(ctx context.Context, sourceChunk *filer_p
 		Size:         sourceChunk.Size,
 		Mtime:        sourceChunk.Mtime,
 		ETag:         sourceChunk.ETag,
-		SourceFileId: sourceChunk.FileId,
+		SourceFileId: sourceChunk.GetFileIdString(),
 	}, nil
 }
 
 func (fs *FilerSink) fetchAndWrite(ctx context.Context, sourceChunk *filer_pb.FileChunk) (fileId string, err error) {
 
-	filename, header, readCloser, err := fs.filerSource.ReadPart(ctx, sourceChunk.FileId)
+	filename, header, readCloser, err := fs.filerSource.ReadPart(ctx, sourceChunk.GetFileIdString())
 	if err != nil {
-		return "", fmt.Errorf("read part %s: %v", sourceChunk.FileId, err)
+		return "", fmt.Errorf("read part %s: %v", sourceChunk.GetFileIdString(), err)
 	}
 	defer readCloser.Close()
 

@@ -69,7 +69,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(ctx context.Context, input *s3.C
 		if strings.HasSuffix(entry.Name, ".part") && !entry.IsDirectory {
 			for _, chunk := range entry.Chunks {
 				p := &filer_pb.FileChunk{
-					FileId: chunk.FileId,
+					FileId: chunk.GetFileIdString(),
 					Offset: offset,
 					Size:   chunk.Size,
 					Mtime:  chunk.Mtime,

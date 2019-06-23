@@ -179,7 +179,7 @@ func (fs *FilerSink) UpdateEntry(ctx context.Context, key string, oldEntry *file
 		// delete the chunks that are deleted from the source
 		if deleteIncludeChunks {
 			// remove the deleted chunks. Actual data deletion happens in filer UpdateEntry FindUnusedFileChunks
-			existingEntry.Chunks = minusChunks(existingEntry.Chunks, deletedChunks)
+			existingEntry.Chunks = filer2.MinusChunks(existingEntry.Chunks, deletedChunks)
 		}
 
 		// replicate the chunks that are new in the source
@@ -207,23 +207,7 @@ func (fs *FilerSink) UpdateEntry(ctx context.Context, key string, oldEntry *file
 
 }
 func compareChunks(oldEntry, newEntry *filer_pb.Entry) (deletedChunks, newChunks []*filer_pb.FileChunk) {
-	deletedChunks = minusChunks(oldEntry.Chunks, newEntry.Chunks)
-	newChunks = minusChunks(newEntry.Chunks, oldEntry.Chunks)
-	return
-}
-
-func minusChunks(as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk) {
-	for _, a := range as {
-		found := false
-		for _, b := range bs {
-			if a.FileId == b.FileId {
-				found = true
-				break
-			}
-		}
-		if !found {
-			delta = append(delta, a)
-		}
-	}
+	deletedChunks = filer2.MinusChunks(oldEntry.Chunks, newEntry.Chunks)
+	newChunks = filer2.MinusChunks(newEntry.Chunks, oldEntry.Chunks)
 	return
 }

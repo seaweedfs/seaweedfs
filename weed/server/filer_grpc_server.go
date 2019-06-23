@@ -140,7 +140,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	}
 
 	// remove old chunks if not included in the new ones
-	unusedChunks := filer2.FindUnusedFileChunks(entry.Chunks, req.Entry.Chunks)
+	unusedChunks := filer2.MinusChunks(entry.Chunks, req.Entry.Chunks)
 
 	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
 

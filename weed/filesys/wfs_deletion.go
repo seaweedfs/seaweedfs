@@ -17,7 +17,7 @@ func (wfs *WFS) deleteFileChunks(ctx context.Context, chunks []*filer_pb.FileChu
 
 	var fileIds []string
 	for _, chunk := range chunks {
-		fileIds = append(fileIds, chunk.FileId)
+		fileIds = append(fileIds, chunk.GetFileIdString())
 	}
 
 	wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {

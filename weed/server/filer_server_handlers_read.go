@@ -78,7 +78,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 
 func (fs *FilerServer) handleSingleChunk(w http.ResponseWriter, r *http.Request, entry *filer2.Entry) {
 
-	fileId := entry.Chunks[0].FileId
+	fileId := entry.Chunks[0].GetFileIdString()
 
 	urlString, err := fs.filer.MasterClient.LookupFileId(fileId)
 	if err != nil {
