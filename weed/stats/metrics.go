@@ -53,7 +53,7 @@ var (
 			Namespace: "SeaweedFS",
 			Subsystem: "volumeServer",
 			Name:      "request_total",
-			Help:      "Counter of filer requests.",
+			Help:      "Counter of volume server requests.",
 		}, []string{"type"})
 
 	VolumeServerRequestHistogram = prometheus.NewHistogramVec(
@@ -61,7 +61,7 @@ var (
 			Namespace: "SeaweedFS",
 			Subsystem: "volumeServer",
 			Name:      "request_seconds",
-			Help:      "Bucketed histogram of filer request processing time.",
+			Help:      "Bucketed histogram of volume server request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"type"})
 
