@@ -11,7 +11,6 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -20,10 +19,6 @@ import (
 )
 
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
-
-	stats.FilerRequestCounter.WithLabelValues("get").Inc()
-	start := time.Now()
-	defer func() { stats.FilerRequestHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
 
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") && len(path) > 1 {
@@ -61,7 +56,6 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 
 	w.Header().Set("Accept-Ranges", "bytes")
 	if r.Method == "HEAD" {
-		stats.FilerRequestCounter.WithLabelValues("head").Inc()
 		w.Header().Set("Content-Length", strconv.FormatInt(int64(filer2.TotalSize(entry.Chunks)), 10))
 		w.Header().Set("Last-Modified", entry.Attr.Mtime.Format(http.TimeFormat))
 		setEtag(w, filer2.ETag(entry.Chunks))

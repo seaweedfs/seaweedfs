@@ -77,10 +77,6 @@ func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request,
 
 func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
-	stats.FilerRequestCounter.WithLabelValues("post").Inc()
-	start := time.Now()
-	defer func() { stats.FilerRequestHistogram.WithLabelValues("post").Observe(time.Since(start).Seconds()) }()
-
 	ctx := context.Background()
 
 	query := r.URL.Query()
@@ -274,10 +270,6 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 // curl -X DELETE http://localhost:8888/path/to
 // curl -X DELETE http://localhost:8888/path/to?recursive=true
 func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
-
-	stats.FilerRequestCounter.WithLabelValues("delete").Inc()
-	start := time.Now()
-	defer func() { stats.FilerRequestHistogram.WithLabelValues("delete").Observe(time.Since(start).Seconds()) }()
 
 	isRecursive := r.FormValue("recursive") == "true"
 
