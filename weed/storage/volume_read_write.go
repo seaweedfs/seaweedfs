@@ -91,6 +91,11 @@ func (v *Volume) writeNeedle(n *needle.Needle) (offset uint64, size uint32, isUn
 		return
 	}
 
+	if n.Ttl == needle.EMPTY_TTL && v.Ttl != needle.EMPTY_TTL {
+		n.SetHasTtl()
+		n.Ttl = v.Ttl
+	}
+
 	n.AppendAtNs = uint64(time.Now().UnixNano())
 	if offset, size, _, err = n.Append(v.dataFile, v.Version()); err != nil {
 		return

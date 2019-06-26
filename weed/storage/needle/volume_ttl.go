@@ -48,6 +48,9 @@ func ReadTTL(ttlString string) (*TTL, error) {
 
 // read stored bytes to a ttl
 func LoadTTLFromBytes(input []byte) (t *TTL) {
+	if input[0] == 0 && input[1] == 0 {
+		return EMPTY_TTL
+	}
 	return &TTL{Count: input[0], Unit: input[1]}
 }
 
