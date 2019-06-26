@@ -21,7 +21,6 @@ import (
 )
 
 var IsDebug *bool
-var server *string
 
 var commands = command.Commands
 
