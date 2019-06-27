@@ -92,6 +92,12 @@ func doEcEncode(ctx context.Context, commandEnv *CommandEnv, collection string, 
 		return fmt.Errorf("volume %d not found", vid)
 	}
 
+	// mark the volume as readonly
+	err = markVolumeReadonly(ctx, commandEnv.option.GrpcDialOption, needle.VolumeId(vid), locations)
+	if err != nil {
+		return fmt.Errorf("generate ec shards for volume %d on %s: %v", vid, locations[0].Url, err)
+	}
+
 	// generate ec shards
 	err = generateEcShards(ctx, commandEnv.option.GrpcDialOption, needle.VolumeId(vid), collection, locations[0].Url)
 	if err != nil {
@@ -102,6 +108,26 @@ func doEcEncode(ctx context.Context, commandEnv *CommandEnv, collection string, 
 	err = spreadEcShards(ctx, commandEnv, vid, collection, locations)
 	if err != nil {
 		return fmt.Errorf("spread ec shards for volume %d from %s: %v", vid, locations[0].Url, err)
+	}
+
+	return nil
+}
+
+func markVolumeReadonly(ctx context.Context, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, locations []wdclient.Location) error {
+
+	for _, location := range locations {
+
+		err := operation.WithVolumeServerClient(location.Url, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+			_, markErr := volumeServerClient.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{
+				VolumeId:   uint32(volumeId),
+			})
+			return markErr
+		})
+
+		if err != nil {
+			return err
+		}
+
 	}
 
 	return nil

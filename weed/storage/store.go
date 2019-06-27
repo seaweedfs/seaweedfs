@@ -252,6 +252,15 @@ func (s *Store) HasVolume(i needle.VolumeId) bool {
 	return v != nil
 }
 
+func (s *Store) MarkVolumeReadonly(i needle.VolumeId) error{
+	v := s.findVolume(i)
+	if v == nil {
+		return fmt.Errorf("volume %d not found", i)
+	}
+	v.readOnly = true
+	return nil
+}
+
 func (s *Store) MountVolume(i needle.VolumeId) error {
 	for _, location := range s.Locations {
 		if found := location.LoadVolume(i, s.NeedleMapType); found == true {

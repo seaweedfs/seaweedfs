@@ -94,3 +94,19 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 	return resp, err
 
 }
+
+func (vs *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_server_pb.VolumeMarkReadonlyRequest) (*volume_server_pb.VolumeMarkReadonlyResponse, error) {
+
+	resp := &volume_server_pb.VolumeMarkReadonlyResponse{}
+
+	err := vs.store.MarkVolumeReadonly(needle.VolumeId(req.VolumeId))
+
+	if err != nil {
+		glog.Errorf("volume mark readonly %v: %v", req, err)
+	} else {
+		glog.V(2).Infof("volume mark readonly %v", req)
+	}
+
+	return resp, err
+
+}

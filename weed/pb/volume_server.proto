@@ -33,6 +33,8 @@ service VolumeServer {
     }
     rpc VolumeDelete (VolumeDeleteRequest) returns (VolumeDeleteResponse) {
     }
+    rpc VolumeMarkReadonly (VolumeMarkReadonlyRequest) returns (VolumeMarkReadonlyResponse) {
+    }
 
     // copy the .idx .dat files, and mount this volume
     rpc VolumeCopy (VolumeCopyRequest) returns (VolumeCopyResponse) {
@@ -166,6 +168,12 @@ message VolumeDeleteRequest {
     uint32 volume_id = 1;
 }
 message VolumeDeleteResponse {
+}
+
+message VolumeMarkReadonlyRequest {
+    uint32 volume_id = 1;
+}
+message VolumeMarkReadonlyResponse {
 }
 
 message VolumeCopyRequest {
