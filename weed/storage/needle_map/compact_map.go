@@ -1,9 +1,10 @@
 package needle_map
 
 import (
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"sort"
 	"sync"
+
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 const (
@@ -81,7 +82,7 @@ func (cs *CompactSection) Set(key NeedleId, offset Offset, size uint32) (oldOffs
 
 func (cs *CompactSection) setOverflowEntry(skey SectionalNeedleId, offset Offset, size uint32) {
 	needleValue := SectionalNeedleValue{Key: skey, OffsetLower: offset.OffsetLower, Size: size}
-	needleValueExtra := SectionalNeedleValueExtra{OffsetHigher: OffsetHigher{}}
+	needleValueExtra := SectionalNeedleValueExtra{OffsetHigher: offset.OffsetHigher}
 	insertCandidate := sort.Search(len(cs.overflow), func(i int) bool {
 		return cs.overflow[i].Key >= needleValue.Key
 	})
