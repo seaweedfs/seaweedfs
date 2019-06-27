@@ -252,7 +252,7 @@ func (s *Store) HasVolume(i needle.VolumeId) bool {
 	return v != nil
 }
 
-func (s *Store) MarkVolumeReadonly(i needle.VolumeId) error{
+func (s *Store) MarkVolumeReadonly(i needle.VolumeId) error {
 	v := s.findVolume(i)
 	if v == nil {
 		return fmt.Errorf("volume %d not found", i)

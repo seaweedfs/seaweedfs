@@ -119,7 +119,7 @@ func markVolumeReadonly(ctx context.Context, grpcDialOption grpc.DialOption, vol
 
 		err := operation.WithVolumeServerClient(location.Url, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 			_, markErr := volumeServerClient.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{
-				VolumeId:   uint32(volumeId),
+				VolumeId: uint32(volumeId),
 			})
 			return markErr
 		})
