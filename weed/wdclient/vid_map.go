@@ -37,12 +37,7 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrl string, err error
 		return "", err
 	}
 
-	locations := vc.GetLocations(uint32(id))
-	if len(locations) == 0 {
-		return "", fmt.Errorf("volume %d not found", id)
-	}
-
-	return locations[vc.r.Intn(len(locations))].Url, nil
+	return vc.GetRandomLocation(uint32(id))
 }
 
 func (vc *vidMap) LookupFileId(fileId string) (fullUrl string, err error) {
@@ -83,6 +78,18 @@ func (vc *vidMap) GetLocations(vid uint32) (locations []Location) {
 	defer vc.RUnlock()
 
 	return vc.vid2Locations[vid]
+}
+
+func (vc *vidMap) GetRandomLocation(vid uint32) (serverUrl string, err error) {
+	vc.RLock()
+	defer vc.RUnlock()
+
+	locations := vc.vid2Locations[vid]
+	if len(locations) == 0 {
+		return "", fmt.Errorf("volume %d not found", id)
+	}
+
+	return locations[vc.r.Intn(len(locations))].Url, nil
 }
 
 func (vc *vidMap) addLocation(vid uint32, location Location) {
