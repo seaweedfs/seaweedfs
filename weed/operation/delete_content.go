@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"google.golang.org/grpc"
 	"net/http"
@@ -84,8 +85,8 @@ func DeleteFilesWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []str
 		}
 	}
 
+	resultChan := make(chan []*volume_server_pb.DeleteResult, len(server_to_fileIds))
 	var wg sync.WaitGroup
-
 	for server, fidList := range server_to_fileIds {
 		wg.Add(1)
 		go func(server string, fidList []string) {
@@ -94,12 +95,19 @@ func DeleteFilesWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []str
 			if deleteResults, deleteErr := DeleteFilesAtOneVolumeServer(server, grpcDialOption, fidList); deleteErr != nil {
 				err = deleteErr
 			} else {
-				ret = append(ret, deleteResults...)
+				resultChan <- deleteResults
 			}
 
 		}(server, fidList)
 	}
 	wg.Wait()
+	close(resultChan)
+
+	for result := range resultChan {
+		ret = append(ret, result...)
+	}
+
+	glog.V(0).Infof("deleted %d items", len(ret))
 
 	return ret, err
 }
