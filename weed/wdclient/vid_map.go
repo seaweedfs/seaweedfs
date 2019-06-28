@@ -86,7 +86,7 @@ func (vc *vidMap) GetRandomLocation(vid uint32) (serverUrl string, err error) {
 
 	locations := vc.vid2Locations[vid]
 	if len(locations) == 0 {
-		return "", fmt.Errorf("volume %d not found", id)
+		return "", fmt.Errorf("volume %d not found", vid)
 	}
 
 	return locations[vc.r.Intn(len(locations))].Url, nil
