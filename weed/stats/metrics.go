@@ -96,6 +96,7 @@ func init() {
 	FilerGather.MustRegister(FilerRequestHistogram)
 	FilerGather.MustRegister(FilerStoreCounter)
 	FilerGather.MustRegister(FilerStoreHistogram)
+	FilerGather.MustRegister(prometheus.NewGoCollector())
 
 	VolumeServerGather.MustRegister(VolumeServerRequestCounter)
 	VolumeServerGather.MustRegister(VolumeServerRequestHistogram)
