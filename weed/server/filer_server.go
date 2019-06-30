@@ -16,6 +16,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/cassandra"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/leveldb"
+	_ "github.com/chrislusf/seaweedfs/weed/filer2/leveldb2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/memdb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/mysql"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/postgres"
@@ -69,8 +70,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	v := viper.GetViper()
 	if !util.LoadConfiguration("filer", false) {
-		v.Set("leveldb.enabled", true)
-		v.Set("leveldb.dir", option.DefaultLevelDbDir)
+		v.Set("leveldb2.enabled", true)
+		v.Set("leveldb2.dir", option.DefaultLevelDbDir)
 		_, err := os.Stat(option.DefaultLevelDbDir)
 		if os.IsNotExist(err) {
 			os.MkdirAll(option.DefaultLevelDbDir, 0755)

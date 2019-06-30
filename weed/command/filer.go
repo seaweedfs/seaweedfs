@@ -94,9 +94,9 @@ func (fo *FilerOptions) startFiler() {
 		publicVolumeMux = http.NewServeMux()
 	}
 
-	defaultLevelDbDirectory := "./filerdb"
+	defaultLevelDbDirectory := "./filerldb2"
 	if fo.defaultLevelDbDirectory != nil {
-		defaultLevelDbDirectory = *fo.defaultLevelDbDirectory + "/filerdb"
+		defaultLevelDbDirectory = *fo.defaultLevelDbDirectory + "/filerldb2"
 	}
 
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{

@@ -33,7 +33,7 @@ EXPOSE 9333
 # s3 server http port
 EXPOSE 8333
 
-RUN mkdir -p /data/filerdb
+RUN mkdir -p /data/filerldb2
 
 VOLUME /data
 
