@@ -241,6 +241,4 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 			return nil
 		}
 	}
-
-	return nil
 }

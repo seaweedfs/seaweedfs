@@ -164,7 +164,7 @@ func runServer(cmd *Command, args []string) bool {
 
 	folders := strings.Split(*volumeDataFolders, ",")
 
-	if *masterOptions.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
+	if *masterOptions.volumeSizeLimitMB > util.VolumeSizeLimitMB*1000 {
 		glog.Fatalf("masterVolumeSizeLimitMB should be less than 30000")
 	}
 

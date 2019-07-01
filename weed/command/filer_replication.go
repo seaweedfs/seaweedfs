@@ -123,8 +123,6 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 			glog.V(1).Infof("replicated %s", key)
 		}
 	}
-
-	return true
 }
 
 func validateOneEnabledInput(config *viper.Viper) {

@@ -90,7 +90,7 @@ func runMaster(cmd *Command, args []string) bool {
 	if *m.whiteList != "" {
 		masterWhiteList = strings.Split(*m.whiteList, ",")
 	}
-	if *m.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
+	if *m.volumeSizeLimitMB > util.VolumeSizeLimitMB*1000 {
 		glog.Fatalf("volumeSizeLimitMB should be smaller than 30000")
 	}
 
