@@ -10,9 +10,11 @@ before_install:
   - export PATH=/home/travis/gopath/bin:$PATH
 
 install:
+  - curl https://glide.sh/get | sh
   - export CGO_ENABLED="0"
   - go env
   - go get -u ./weed/...
+  - cd weed; glide install
 
 script:
   - go test ./weed/...
