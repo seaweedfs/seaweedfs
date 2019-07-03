@@ -49,9 +49,9 @@ func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
 	for d := 0 ; d < dbCount; d++ {
 		dbFolder := fmt.Sprintf("%s/%02d", dir, d)
 		os.MkdirAll(dbFolder, 0755)
-		db, err := leveldb.OpenFile(dbFolder, opts)
-		if err != nil {
-			glog.Errorf("filer store open dir %s: %v", dbFolder, err)
+		db, dbErr := leveldb.OpenFile(dbFolder, opts)
+		if dbErr != nil {
+			glog.Errorf("filer store open dir %s: %v", dbFolder, dbErr)
 			return
 		}
 		store.dbs = append(store.dbs, db)
