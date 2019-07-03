@@ -117,7 +117,7 @@ func (store *LevelDB2Store) FindEntry(ctx context.Context, fullpath filer2.FullP
 		return entry, fmt.Errorf("decode %s : %v", entry.FullPath, err)
 	}
 
-	println("read", entry.FullPath, "chunks", len(entry.Chunks), "data", len(data), string(data))
+	// println("read", entry.FullPath, "chunks", len(entry.Chunks), "data", len(data), string(data))
 
 	return entry, nil
 }
@@ -160,7 +160,7 @@ func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, fullpath f
 			FullPath: filer2.NewFullPath(string(fullpath), fileName),
 		}
 
-		println("list", entry.FullPath, "chunks", len(entry.Chunks))
+		// println("list", entry.FullPath, "chunks", len(entry.Chunks))
 
 		if decodeErr := entry.DecodeAttributesAndChunks(iter.Value()); decodeErr != nil {
 			err = decodeErr
