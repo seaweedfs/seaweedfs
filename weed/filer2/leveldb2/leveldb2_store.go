@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -19,10 +20,9 @@ func init() {
 	filer2.Stores = append(filer2.Stores, &LevelDB2Store{})
 }
 
-// known theoretically 128 bit MD5 collision of 2 directories.
-// (but really? please show some real examples)
 type LevelDB2Store struct {
-	db *leveldb.DB
+	dbs []*leveldb.DB
+	dbCount int
 }
 
 func (store *LevelDB2Store) GetName() string {
@@ -31,10 +31,10 @@ func (store *LevelDB2Store) GetName() string {
 
 func (store *LevelDB2Store) Initialize(configuration weed_util.Configuration) (err error) {
 	dir := configuration.GetString("dir")
-	return store.initialize(dir)
+	return store.initialize(dir, 8)
 }
 
-func (store *LevelDB2Store) initialize(dir string) (err error) {
+func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
 	glog.Infof("filer store leveldb2 dir: %s", dir)
 	if err := weed_util.TestFolderWritable(dir); err != nil {
 		return fmt.Errorf("Check Level Folder %s Writable: %s", dir, err)
@@ -43,13 +43,21 @@ func (store *LevelDB2Store) initialize(dir string) (err error) {
 	opts := &opt.Options{
 		BlockCacheCapacity:            32 * 1024 * 1024, // default value is 8MiB
 		WriteBuffer:                   16 * 1024 * 1024, // default value is 4MiB
-		CompactionTableSizeMultiplier: 10,
+		CompactionTableSizeMultiplier: 4,
 	}
 
-	if store.db, err = leveldb.OpenFile(dir, opts); err != nil {
-		glog.Infof("filer store open dir %s: %v", dir, err)
-		return
+	for d := 0 ; d < dbCount; d++ {
+		dbFolder := fmt.Sprintf("%s/%02d", dir, d)
+		os.MkdirAll(dbFolder, 0755)
+		db, err := leveldb.OpenFile(dbFolder, opts)
+		if err != nil {
+			glog.Errorf("filer store open dir %s: %v", dbFolder, err)
+			return
+		}
+		store.dbs = append(store.dbs, db)
 	}
+	store.dbCount = dbCount
+
 	return
 }
 
@@ -64,14 +72,15 @@ func (store *LevelDB2Store) RollbackTransaction(ctx context.Context) error {
 }
 
 func (store *LevelDB2Store) InsertEntry(ctx context.Context, entry *filer2.Entry) (err error) {
-	key := genKey(entry.DirAndName())
+	dir, name := entry.DirAndName()
+	key, partitionId := genKey(dir, name, store.dbCount)
 
 	value, err := entry.EncodeAttributesAndChunks()
 	if err != nil {
 		return fmt.Errorf("encoding %s %+v: %v", entry.FullPath, entry.Attr, err)
 	}
 
-	err = store.db.Put(key, value, nil)
+	err = store.dbs[partitionId].Put(key, value, nil)
 
 	if err != nil {
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
@@ -88,9 +97,10 @@ func (store *LevelDB2Store) UpdateEntry(ctx context.Context, entry *filer2.Entry
 }
 
 func (store *LevelDB2Store) FindEntry(ctx context.Context, fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
-	key := genKey(fullpath.DirAndName())
+	dir, name := fullpath.DirAndName()
+	key, partitionId := genKey(dir, name, store.dbCount)
 
-	data, err := store.db.Get(key, nil)
+	data, err := store.dbs[partitionId].Get(key, nil)
 
 	if err == leveldb.ErrNotFound {
 		return nil, filer2.ErrNotFound
@@ -107,15 +117,16 @@ func (store *LevelDB2Store) FindEntry(ctx context.Context, fullpath filer2.FullP
 		return entry, fmt.Errorf("decode %s : %v", entry.FullPath, err)
 	}
 
-	// println("read", entry.FullPath, "chunks", len(entry.Chunks), "data", len(data), string(data))
+	println("read", entry.FullPath, "chunks", len(entry.Chunks), "data", len(data), string(data))
 
 	return entry, nil
 }
 
 func (store *LevelDB2Store) DeleteEntry(ctx context.Context, fullpath filer2.FullPath) (err error) {
-	key := genKey(fullpath.DirAndName())
+	dir, name := fullpath.DirAndName()
+	key, partitionId := genKey(dir, name, store.dbCount)
 
-	err = store.db.Delete(key, nil)
+	err = store.dbs[partitionId].Delete(key, nil)
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
@@ -126,9 +137,9 @@ func (store *LevelDB2Store) DeleteEntry(ctx context.Context, fullpath filer2.Ful
 func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool,
 	limit int) (entries []*filer2.Entry, err error) {
 
-	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
+	directoryPrefix, partitionId := genDirectoryKeyPrefix(fullpath, "", store.dbCount)
 
-	iter := store.db.NewIterator(&leveldb_util.Range{Start: genDirectoryKeyPrefix(fullpath, startFileName)}, nil)
+	iter := store.dbs[partitionId].NewIterator(&leveldb_util.Range{Start: directoryPrefix}, nil)
 	for iter.Next() {
 		key := iter.Key()
 		if !bytes.HasPrefix(key, directoryPrefix) {
@@ -148,6 +159,9 @@ func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, fullpath f
 		entry := &filer2.Entry{
 			FullPath: filer2.NewFullPath(string(fullpath), fileName),
 		}
+
+		println("list", entry.FullPath, "chunks", len(entry.Chunks))
+
 		if decodeErr := entry.DecodeAttributesAndChunks(iter.Value()); decodeErr != nil {
 			err = decodeErr
 			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
@@ -160,31 +174,34 @@ func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, fullpath f
 	return entries, err
 }
 
-func genKey(dirPath, fileName string) (key []byte) {
-	key = hashToBytes(dirPath)
+func genKey(dirPath, fileName string, dbCount int) (key []byte, partitionId int) {
+	key, partitionId = hashToBytes(dirPath, dbCount)
 	key = append(key, []byte(fileName)...)
-	return key
+	return key, partitionId
 }
 
-func genDirectoryKeyPrefix(fullpath filer2.FullPath, startFileName string) (keyPrefix []byte) {
-	keyPrefix = hashToBytes(string(fullpath))
+func genDirectoryKeyPrefix(fullpath filer2.FullPath, startFileName string, dbCount int) (keyPrefix []byte, partitionId int) {
+	keyPrefix, partitionId = hashToBytes(string(fullpath), dbCount)
 	if len(startFileName) > 0 {
 		keyPrefix = append(keyPrefix, []byte(startFileName)...)
 	}
-	return keyPrefix
+	return keyPrefix, partitionId
 }
 
 func getNameFromKey(key []byte) string {
 
-	return string(key[8:])
+	return string(key[md5.Size:])
 
 }
 
-func hashToBytes(dir string) []byte {
+// hash directory, and use last byte for partitioning
+func hashToBytes(dir string, dbCount int) ([]byte, int) {
 	h := md5.New()
 	io.WriteString(h, dir)
 
 	b := h.Sum(nil)
 
-	return b
+	x := b[len(b)-1]
+
+	return b, int(x)%dbCount
 }
