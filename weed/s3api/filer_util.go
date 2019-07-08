@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -142,4 +143,12 @@ func (s3a *S3ApiServer) exists(ctx context.Context, parentDirectoryPath string, 
 	})
 
 	return
+}
+
+func objectKey(key *string) *string {
+	if strings.HasPrefix(*key, "/") {
+		t := (*key)[1:]
+		return &t
+	}
+	return key
 }

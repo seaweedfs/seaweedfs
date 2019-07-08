@@ -39,7 +39,7 @@ func (s3a *S3ApiServer) createMultipartUpload(ctx context.Context, input *s3.Cre
 	output = &InitiateMultipartUploadResult{
 		CreateMultipartUploadOutput: s3.CreateMultipartUploadOutput{
 			Bucket:   input.Bucket,
-			Key:      input.Key,
+			Key:      objectKey(input.Key),
 			UploadId: aws.String(uploadIdString),
 		},
 	}
@@ -102,7 +102,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(ctx context.Context, input *s3.C
 		CompleteMultipartUploadOutput: s3.CompleteMultipartUploadOutput{
 			Bucket: input.Bucket,
 			ETag:   aws.String("\"" + filer2.ETag(finalParts) + "\""),
-			Key:    input.Key,
+			Key:    objectKey(input.Key),
 		},
 	}
 
@@ -159,7 +159,7 @@ func (s3a *S3ApiServer) listMultipartUploads(ctx context.Context, input *s3.List
 		if entry.Extended != nil {
 			key := entry.Extended["key"]
 			output.Uploads = append(output.Uploads, &s3.MultipartUpload{
-				Key:      aws.String(string(key)),
+				Key:      objectKey(aws.String(string(key))),
 				UploadId: aws.String(entry.Name),
 			})
 		}
@@ -177,7 +177,7 @@ func (s3a *S3ApiServer) listObjectParts(ctx context.Context, input *s3.ListParts
 	output = &ListPartsResult{
 		ListPartsOutput: s3.ListPartsOutput{
 			Bucket:           input.Bucket,
-			Key:              input.Key,
+			Key:              objectKey(input.Key),
 			UploadId:         input.UploadId,
 			MaxParts:         input.MaxParts,         // the maximum number of parts to return.
 			PartNumberMarker: input.PartNumberMarker, // the part number starts after this, exclusive

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
@@ -91,6 +92,9 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket, originalPr
 
 	// convert full path prefix into directory name and prefix for entry name
 	dir, prefix := filepath.Split(originalPrefix)
+	if strings.HasPrefix(dir, "/") {
+		dir = dir[1:]
+	}
 
 	// check filer
 	err = s3a.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {

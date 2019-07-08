@@ -28,7 +28,7 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 
 	response, errCode := s3a.createMultipartUpload(context.Background(), &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(bucket),
-		Key:    aws.String(object),
+		Key:    objectKey(aws.String(object)),
 	})
 
 	if errCode != ErrNone {
@@ -53,7 +53,7 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 
 	response, errCode := s3a.completeMultipartUpload(context.Background(), &s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(bucket),
-		Key:      aws.String(object),
+		Key:      objectKey(aws.String(object)),
 		UploadId: aws.String(uploadID),
 	})
 
@@ -79,7 +79,7 @@ func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *ht
 
 	response, errCode := s3a.abortMultipartUpload(context.Background(), &s3.AbortMultipartUploadInput{
 		Bucket:   aws.String(bucket),
-		Key:      aws.String(object),
+		Key:      objectKey(aws.String(object)),
 		UploadId: aws.String(uploadID),
 	})
 
@@ -151,7 +151,7 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 
 	response, errCode := s3a.listObjectParts(context.Background(), &s3.ListPartsInput{
 		Bucket:           aws.String(bucket),
-		Key:              aws.String(object),
+		Key:              objectKey(aws.String(object)),
 		MaxParts:         aws.Int64(int64(maxParts)),
 		PartNumberMarker: aws.Int64(int64(partNumberMarker)),
 		UploadId:         aws.String(uploadID),
