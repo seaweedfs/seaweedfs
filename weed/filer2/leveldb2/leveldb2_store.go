@@ -138,8 +138,9 @@ func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, fullpath f
 	limit int) (entries []*filer2.Entry, err error) {
 
 	directoryPrefix, partitionId := genDirectoryKeyPrefix(fullpath, "", store.dbCount)
+	lastFileStart, _ := genDirectoryKeyPrefix(fullpath, startFileName, store.dbCount)
 
-	iter := store.dbs[partitionId].NewIterator(&leveldb_util.Range{Start: directoryPrefix}, nil)
+	iter := store.dbs[partitionId].NewIterator(&leveldb_util.Range{Start: lastFileStart}, nil)
 	for iter.Next() {
 		key := iter.Key()
 		if !bytes.HasPrefix(key, directoryPrefix) {
