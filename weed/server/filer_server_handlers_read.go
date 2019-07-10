@@ -21,7 +21,8 @@ import (
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
 
 	path := r.URL.Path
-	if strings.HasSuffix(path, "/") && len(path) > 1 {
+	isForDirectory := strings.HasSuffix(path, "/")
+	if isForDirectory && len(path) > 1 {
 		path = path[:len(path)-1]
 	}
 
@@ -44,6 +45,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		fs.listDirectoryHandler(w, r)
+		return
+	}
+
+	if isForDirectory {
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
