@@ -150,15 +150,15 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 	}()
 
 	path := r.URL.Path
+	if strings.HasSuffix(path, "/") {
+		if ret.Name != "" {
+			path += ret.Name
+		}
+	}
 	existingEntry, err := fs.filer.FindEntry(ctx, filer2.FullPath(path))
 	crTime := time.Now()
 	if err == nil && existingEntry != nil {
-		// glog.V(4).Infof("existing %s => %+v", path, existingEntry)
-		if existingEntry.IsDirectory() {
-			path += "/" + ret.Name
-		} else {
-			crTime = existingEntry.Crtime
-		}
+		crTime = existingEntry.Crtime
 	}
 	entry := &filer2.Entry{
 		FullPath: filer2.FullPath(path),
