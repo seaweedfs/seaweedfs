@@ -96,6 +96,11 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent filer2.FullP
 
 	glog.V(1).Infof("moving entry %s => %s", oldPath, newPath)
 
+	if oldPath == newPath {
+		glog.V(1).Infof("skip moving entry %s => %s", oldPath, newPath)
+		return nil
+	}
+
 	// add to new directory
 	newEntry := &filer2.Entry{
 		FullPath: newPath,
