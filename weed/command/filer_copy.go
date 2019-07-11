@@ -48,7 +48,7 @@ func init() {
 	copy.replication = cmdCopy.Flag.String("replication", "", "replication type")
 	copy.collection = cmdCopy.Flag.String("collection", "", "optional collection name")
 	copy.ttl = cmdCopy.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
-	copy.maxMB = cmdCopy.Flag.Int("maxMB", 0, "split files larger than the limit")
+	copy.maxMB = cmdCopy.Flag.Int("maxMB", 32, "split files larger than the limit")
 	copy.concurrency = cmdCopy.Flag.Int("c", 8, "concurrent file copy goroutines")
 	copy.compressionLevel = cmdCopy.Flag.Int("compressionLevel", 9, "local file compression level 1 ~ 9")
 }
