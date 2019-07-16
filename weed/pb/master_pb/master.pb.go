@@ -12,6 +12,8 @@ It has these top-level messages:
 	Heartbeat
 	HeartbeatResponse
 	VolumeInformationMessage
+	VolumeShortInformationMessage
+	VolumeEcShardInformationMessage
 	Empty
 	SuperBlockExtra
 	ClientListenRequest
@@ -23,6 +25,22 @@ It has these top-level messages:
 	AssignResponse
 	StatisticsRequest
 	StatisticsResponse
+	StorageType
+	Collection
+	CollectionListRequest
+	CollectionListResponse
+	CollectionDeleteRequest
+	CollectionDeleteResponse
+	DataNodeInfo
+	RackInfo
+	DataCenterInfo
+	TopologyInfo
+	VolumeListRequest
+	VolumeListResponse
+	LookupEcVolumeRequest
+	LookupEcVolumeResponse
+	GetMasterConfigurationRequest
+	GetMasterConfigurationResponse
 */
 package master_pb
 
@@ -56,9 +74,16 @@ type Heartbeat struct {
 	Rack           string                      `protobuf:"bytes,7,opt,name=rack" json:"rack,omitempty"`
 	AdminPort      uint32                      `protobuf:"varint,8,opt,name=admin_port,json=adminPort" json:"admin_port,omitempty"`
 	Volumes        []*VolumeInformationMessage `protobuf:"bytes,9,rep,name=volumes" json:"volumes,omitempty"`
-	// delta volume ids
-	NewVids     []uint32 `protobuf:"varint,10,rep,packed,name=new_vids,json=newVids" json:"new_vids,omitempty"`
-	DeletedVids []uint32 `protobuf:"varint,11,rep,packed,name=deleted_vids,json=deletedVids" json:"deleted_vids,omitempty"`
+	// delta volumes
+	NewVolumes     []*VolumeShortInformationMessage `protobuf:"bytes,10,rep,name=new_volumes,json=newVolumes" json:"new_volumes,omitempty"`
+	DeletedVolumes []*VolumeShortInformationMessage `protobuf:"bytes,11,rep,name=deleted_volumes,json=deletedVolumes" json:"deleted_volumes,omitempty"`
+	HasNoVolumes   bool                             `protobuf:"varint,12,opt,name=has_no_volumes,json=hasNoVolumes" json:"has_no_volumes,omitempty"`
+	// erasure coding
+	EcShards []*VolumeEcShardInformationMessage `protobuf:"bytes,16,rep,name=ec_shards,json=ecShards" json:"ec_shards,omitempty"`
+	// delta erasure coding shards
+	NewEcShards     []*VolumeEcShardInformationMessage `protobuf:"bytes,17,rep,name=new_ec_shards,json=newEcShards" json:"new_ec_shards,omitempty"`
+	DeletedEcShards []*VolumeEcShardInformationMessage `protobuf:"bytes,18,rep,name=deleted_ec_shards,json=deletedEcShards" json:"deleted_ec_shards,omitempty"`
+	HasNoEcShards   bool                               `protobuf:"varint,19,opt,name=has_no_ec_shards,json=hasNoEcShards" json:"has_no_ec_shards,omitempty"`
 }
 
 func (m *Heartbeat) Reset()                    { *m = Heartbeat{} }
@@ -129,24 +154,60 @@ func (m *Heartbeat) GetVolumes() []*VolumeInformationMessage {
 	return nil
 }
 
-func (m *Heartbeat) GetNewVids() []uint32 {
+func (m *Heartbeat) GetNewVolumes() []*VolumeShortInformationMessage {
 	if m != nil {
-		return m.NewVids
+		return m.NewVolumes
 	}
 	return nil
 }
 
-func (m *Heartbeat) GetDeletedVids() []uint32 {
+func (m *Heartbeat) GetDeletedVolumes() []*VolumeShortInformationMessage {
 	if m != nil {
-		return m.DeletedVids
+		return m.DeletedVolumes
 	}
 	return nil
+}
+
+func (m *Heartbeat) GetHasNoVolumes() bool {
+	if m != nil {
+		return m.HasNoVolumes
+	}
+	return false
+}
+
+func (m *Heartbeat) GetEcShards() []*VolumeEcShardInformationMessage {
+	if m != nil {
+		return m.EcShards
+	}
+	return nil
+}
+
+func (m *Heartbeat) GetNewEcShards() []*VolumeEcShardInformationMessage {
+	if m != nil {
+		return m.NewEcShards
+	}
+	return nil
+}
+
+func (m *Heartbeat) GetDeletedEcShards() []*VolumeEcShardInformationMessage {
+	if m != nil {
+		return m.DeletedEcShards
+	}
+	return nil
+}
+
+func (m *Heartbeat) GetHasNoEcShards() bool {
+	if m != nil {
+		return m.HasNoEcShards
+	}
+	return false
 }
 
 type HeartbeatResponse struct {
-	VolumeSizeLimit uint64 `protobuf:"varint,1,opt,name=volumeSizeLimit" json:"volumeSizeLimit,omitempty"`
-	SecretKey       string `protobuf:"bytes,2,opt,name=secretKey" json:"secretKey,omitempty"`
-	Leader          string `protobuf:"bytes,3,opt,name=leader" json:"leader,omitempty"`
+	VolumeSizeLimit        uint64 `protobuf:"varint,1,opt,name=volume_size_limit,json=volumeSizeLimit" json:"volume_size_limit,omitempty"`
+	Leader                 string `protobuf:"bytes,2,opt,name=leader" json:"leader,omitempty"`
+	MetricsAddress         string `protobuf:"bytes,3,opt,name=metrics_address,json=metricsAddress" json:"metrics_address,omitempty"`
+	MetricsIntervalSeconds uint32 `protobuf:"varint,4,opt,name=metrics_interval_seconds,json=metricsIntervalSeconds" json:"metrics_interval_seconds,omitempty"`
 }
 
 func (m *HeartbeatResponse) Reset()                    { *m = HeartbeatResponse{} }
@@ -161,18 +222,25 @@ func (m *HeartbeatResponse) GetVolumeSizeLimit() uint64 {
 	return 0
 }
 
-func (m *HeartbeatResponse) GetSecretKey() string {
-	if m != nil {
-		return m.SecretKey
-	}
-	return ""
-}
-
 func (m *HeartbeatResponse) GetLeader() string {
 	if m != nil {
 		return m.Leader
 	}
 	return ""
+}
+
+func (m *HeartbeatResponse) GetMetricsAddress() string {
+	if m != nil {
+		return m.MetricsAddress
+	}
+	return ""
+}
+
+func (m *HeartbeatResponse) GetMetricsIntervalSeconds() uint32 {
+	if m != nil {
+		return m.MetricsIntervalSeconds
+	}
+	return 0
 }
 
 type VolumeInformationMessage struct {
@@ -186,6 +254,8 @@ type VolumeInformationMessage struct {
 	ReplicaPlacement uint32 `protobuf:"varint,8,opt,name=replica_placement,json=replicaPlacement" json:"replica_placement,omitempty"`
 	Version          uint32 `protobuf:"varint,9,opt,name=version" json:"version,omitempty"`
 	Ttl              uint32 `protobuf:"varint,10,opt,name=ttl" json:"ttl,omitempty"`
+	CompactRevision  uint32 `protobuf:"varint,11,opt,name=compact_revision,json=compactRevision" json:"compact_revision,omitempty"`
+	ModifiedAtSecond int64  `protobuf:"varint,12,opt,name=modified_at_second,json=modifiedAtSecond" json:"modified_at_second,omitempty"`
 }
 
 func (m *VolumeInformationMessage) Reset()                    { *m = VolumeInformationMessage{} }
@@ -263,13 +333,107 @@ func (m *VolumeInformationMessage) GetTtl() uint32 {
 	return 0
 }
 
+func (m *VolumeInformationMessage) GetCompactRevision() uint32 {
+	if m != nil {
+		return m.CompactRevision
+	}
+	return 0
+}
+
+func (m *VolumeInformationMessage) GetModifiedAtSecond() int64 {
+	if m != nil {
+		return m.ModifiedAtSecond
+	}
+	return 0
+}
+
+type VolumeShortInformationMessage struct {
+	Id               uint32 `protobuf:"varint,1,opt,name=id" json:"id,omitempty"`
+	Collection       string `protobuf:"bytes,3,opt,name=collection" json:"collection,omitempty"`
+	ReplicaPlacement uint32 `protobuf:"varint,8,opt,name=replica_placement,json=replicaPlacement" json:"replica_placement,omitempty"`
+	Version          uint32 `protobuf:"varint,9,opt,name=version" json:"version,omitempty"`
+	Ttl              uint32 `protobuf:"varint,10,opt,name=ttl" json:"ttl,omitempty"`
+}
+
+func (m *VolumeShortInformationMessage) Reset()                    { *m = VolumeShortInformationMessage{} }
+func (m *VolumeShortInformationMessage) String() string            { return proto.CompactTextString(m) }
+func (*VolumeShortInformationMessage) ProtoMessage()               {}
+func (*VolumeShortInformationMessage) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{3} }
+
+func (m *VolumeShortInformationMessage) GetId() uint32 {
+	if m != nil {
+		return m.Id
+	}
+	return 0
+}
+
+func (m *VolumeShortInformationMessage) GetCollection() string {
+	if m != nil {
+		return m.Collection
+	}
+	return ""
+}
+
+func (m *VolumeShortInformationMessage) GetReplicaPlacement() uint32 {
+	if m != nil {
+		return m.ReplicaPlacement
+	}
+	return 0
+}
+
+func (m *VolumeShortInformationMessage) GetVersion() uint32 {
+	if m != nil {
+		return m.Version
+	}
+	return 0
+}
+
+func (m *VolumeShortInformationMessage) GetTtl() uint32 {
+	if m != nil {
+		return m.Ttl
+	}
+	return 0
+}
+
+type VolumeEcShardInformationMessage struct {
+	Id          uint32 `protobuf:"varint,1,opt,name=id" json:"id,omitempty"`
+	Collection  string `protobuf:"bytes,2,opt,name=collection" json:"collection,omitempty"`
+	EcIndexBits uint32 `protobuf:"varint,3,opt,name=ec_index_bits,json=ecIndexBits" json:"ec_index_bits,omitempty"`
+}
+
+func (m *VolumeEcShardInformationMessage) Reset()                    { *m = VolumeEcShardInformationMessage{} }
+func (m *VolumeEcShardInformationMessage) String() string            { return proto.CompactTextString(m) }
+func (*VolumeEcShardInformationMessage) ProtoMessage()               {}
+func (*VolumeEcShardInformationMessage) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{4} }
+
+func (m *VolumeEcShardInformationMessage) GetId() uint32 {
+	if m != nil {
+		return m.Id
+	}
+	return 0
+}
+
+func (m *VolumeEcShardInformationMessage) GetCollection() string {
+	if m != nil {
+		return m.Collection
+	}
+	return ""
+}
+
+func (m *VolumeEcShardInformationMessage) GetEcIndexBits() uint32 {
+	if m != nil {
+		return m.EcIndexBits
+	}
+	return 0
+}
+
 type Empty struct {
 }
 
 func (m *Empty) Reset()                    { *m = Empty{} }
 func (m *Empty) String() string            { return proto.CompactTextString(m) }
 func (*Empty) ProtoMessage()               {}
-func (*Empty) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{3} }
+func (*Empty) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{5} }
 
 type SuperBlockExtra struct {
 	ErasureCoding *SuperBlockExtra_ErasureCoding `protobuf:"bytes,1,opt,name=erasure_coding,json=erasureCoding" json:"erasure_coding,omitempty"`
@@ -278,7 +442,7 @@ type SuperBlockExtra struct {
 func (m *SuperBlockExtra) Reset()                    { *m = SuperBlockExtra{} }
 func (m *SuperBlockExtra) String() string            { return proto.CompactTextString(m) }
 func (*SuperBlockExtra) ProtoMessage()               {}
-func (*SuperBlockExtra) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{4} }
+func (*SuperBlockExtra) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{6} }
 
 func (m *SuperBlockExtra) GetErasureCoding() *SuperBlockExtra_ErasureCoding {
 	if m != nil {
@@ -297,7 +461,7 @@ func (m *SuperBlockExtra_ErasureCoding) Reset()         { *m = SuperBlockExtra_E
 func (m *SuperBlockExtra_ErasureCoding) String() string { return proto.CompactTextString(m) }
 func (*SuperBlockExtra_ErasureCoding) ProtoMessage()    {}
 func (*SuperBlockExtra_ErasureCoding) Descriptor() ([]byte, []int) {
-	return fileDescriptor0, []int{4, 0}
+	return fileDescriptor0, []int{6, 0}
 }
 
 func (m *SuperBlockExtra_ErasureCoding) GetData() uint32 {
@@ -328,7 +492,7 @@ type ClientListenRequest struct {
 func (m *ClientListenRequest) Reset()                    { *m = ClientListenRequest{} }
 func (m *ClientListenRequest) String() string            { return proto.CompactTextString(m) }
 func (*ClientListenRequest) ProtoMessage()               {}
-func (*ClientListenRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{5} }
+func (*ClientListenRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{7} }
 
 func (m *ClientListenRequest) GetName() string {
 	if m != nil {
@@ -347,7 +511,7 @@ type VolumeLocation struct {
 func (m *VolumeLocation) Reset()                    { *m = VolumeLocation{} }
 func (m *VolumeLocation) String() string            { return proto.CompactTextString(m) }
 func (*VolumeLocation) ProtoMessage()               {}
-func (*VolumeLocation) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{6} }
+func (*VolumeLocation) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{8} }
 
 func (m *VolumeLocation) GetUrl() string {
 	if m != nil {
@@ -385,7 +549,7 @@ type LookupVolumeRequest struct {
 func (m *LookupVolumeRequest) Reset()                    { *m = LookupVolumeRequest{} }
 func (m *LookupVolumeRequest) String() string            { return proto.CompactTextString(m) }
 func (*LookupVolumeRequest) ProtoMessage()               {}
-func (*LookupVolumeRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{7} }
+func (*LookupVolumeRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{9} }
 
 func (m *LookupVolumeRequest) GetVolumeIds() []string {
 	if m != nil {
@@ -408,7 +572,7 @@ type LookupVolumeResponse struct {
 func (m *LookupVolumeResponse) Reset()                    { *m = LookupVolumeResponse{} }
 func (m *LookupVolumeResponse) String() string            { return proto.CompactTextString(m) }
 func (*LookupVolumeResponse) ProtoMessage()               {}
-func (*LookupVolumeResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{8} }
+func (*LookupVolumeResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{10} }
 
 func (m *LookupVolumeResponse) GetVolumeIdLocations() []*LookupVolumeResponse_VolumeIdLocation {
 	if m != nil {
@@ -427,7 +591,7 @@ func (m *LookupVolumeResponse_VolumeIdLocation) Reset()         { *m = LookupVol
 func (m *LookupVolumeResponse_VolumeIdLocation) String() string { return proto.CompactTextString(m) }
 func (*LookupVolumeResponse_VolumeIdLocation) ProtoMessage()    {}
 func (*LookupVolumeResponse_VolumeIdLocation) Descriptor() ([]byte, []int) {
-	return fileDescriptor0, []int{8, 0}
+	return fileDescriptor0, []int{10, 0}
 }
 
 func (m *LookupVolumeResponse_VolumeIdLocation) GetVolumeId() string {
@@ -459,7 +623,7 @@ type Location struct {
 func (m *Location) Reset()                    { *m = Location{} }
 func (m *Location) String() string            { return proto.CompactTextString(m) }
 func (*Location) ProtoMessage()               {}
-func (*Location) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{9} }
+func (*Location) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{11} }
 
 func (m *Location) GetUrl() string {
 	if m != nil {
@@ -488,7 +652,7 @@ type AssignRequest struct {
 func (m *AssignRequest) Reset()                    { *m = AssignRequest{} }
 func (m *AssignRequest) String() string            { return proto.CompactTextString(m) }
 func (*AssignRequest) ProtoMessage()               {}
-func (*AssignRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{10} }
+func (*AssignRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{12} }
 
 func (m *AssignRequest) GetCount() uint64 {
 	if m != nil {
@@ -545,12 +709,13 @@ type AssignResponse struct {
 	PublicUrl string `protobuf:"bytes,3,opt,name=public_url,json=publicUrl" json:"public_url,omitempty"`
 	Count     uint64 `protobuf:"varint,4,opt,name=count" json:"count,omitempty"`
 	Error     string `protobuf:"bytes,5,opt,name=error" json:"error,omitempty"`
+	Auth      string `protobuf:"bytes,6,opt,name=auth" json:"auth,omitempty"`
 }
 
 func (m *AssignResponse) Reset()                    { *m = AssignResponse{} }
 func (m *AssignResponse) String() string            { return proto.CompactTextString(m) }
 func (*AssignResponse) ProtoMessage()               {}
-func (*AssignResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{11} }
+func (*AssignResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{13} }
 
 func (m *AssignResponse) GetFid() string {
 	if m != nil {
@@ -587,6 +752,13 @@ func (m *AssignResponse) GetError() string {
 	return ""
 }
 
+func (m *AssignResponse) GetAuth() string {
+	if m != nil {
+		return m.Auth
+	}
+	return ""
+}
+
 type StatisticsRequest struct {
 	Replication string `protobuf:"bytes,1,opt,name=replication" json:"replication,omitempty"`
 	Collection  string `protobuf:"bytes,2,opt,name=collection" json:"collection,omitempty"`
@@ -596,7 +768,7 @@ type StatisticsRequest struct {
 func (m *StatisticsRequest) Reset()                    { *m = StatisticsRequest{} }
 func (m *StatisticsRequest) String() string            { return proto.CompactTextString(m) }
 func (*StatisticsRequest) ProtoMessage()               {}
-func (*StatisticsRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{12} }
+func (*StatisticsRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{14} }
 
 func (m *StatisticsRequest) GetReplication() string {
 	if m != nil {
@@ -631,7 +803,7 @@ type StatisticsResponse struct {
 func (m *StatisticsResponse) Reset()                    { *m = StatisticsResponse{} }
 func (m *StatisticsResponse) String() string            { return proto.CompactTextString(m) }
 func (*StatisticsResponse) ProtoMessage()               {}
-func (*StatisticsResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{13} }
+func (*StatisticsResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{15} }
 
 func (m *StatisticsResponse) GetReplication() string {
 	if m != nil {
@@ -675,10 +847,483 @@ func (m *StatisticsResponse) GetFileCount() uint64 {
 	return 0
 }
 
+type StorageType struct {
+	Replication string `protobuf:"bytes,1,opt,name=replication" json:"replication,omitempty"`
+	Ttl         string `protobuf:"bytes,2,opt,name=ttl" json:"ttl,omitempty"`
+}
+
+func (m *StorageType) Reset()                    { *m = StorageType{} }
+func (m *StorageType) String() string            { return proto.CompactTextString(m) }
+func (*StorageType) ProtoMessage()               {}
+func (*StorageType) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{16} }
+
+func (m *StorageType) GetReplication() string {
+	if m != nil {
+		return m.Replication
+	}
+	return ""
+}
+
+func (m *StorageType) GetTtl() string {
+	if m != nil {
+		return m.Ttl
+	}
+	return ""
+}
+
+type Collection struct {
+	Name string `protobuf:"bytes,1,opt,name=name" json:"name,omitempty"`
+}
+
+func (m *Collection) Reset()                    { *m = Collection{} }
+func (m *Collection) String() string            { return proto.CompactTextString(m) }
+func (*Collection) ProtoMessage()               {}
+func (*Collection) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{17} }
+
+func (m *Collection) GetName() string {
+	if m != nil {
+		return m.Name
+	}
+	return ""
+}
+
+type CollectionListRequest struct {
+	IncludeNormalVolumes bool `protobuf:"varint,1,opt,name=include_normal_volumes,json=includeNormalVolumes" json:"include_normal_volumes,omitempty"`
+	IncludeEcVolumes     bool `protobuf:"varint,2,opt,name=include_ec_volumes,json=includeEcVolumes" json:"include_ec_volumes,omitempty"`
+}
+
+func (m *CollectionListRequest) Reset()                    { *m = CollectionListRequest{} }
+func (m *CollectionListRequest) String() string            { return proto.CompactTextString(m) }
+func (*CollectionListRequest) ProtoMessage()               {}
+func (*CollectionListRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{18} }
+
+func (m *CollectionListRequest) GetIncludeNormalVolumes() bool {
+	if m != nil {
+		return m.IncludeNormalVolumes
+	}
+	return false
+}
+
+func (m *CollectionListRequest) GetIncludeEcVolumes() bool {
+	if m != nil {
+		return m.IncludeEcVolumes
+	}
+	return false
+}
+
+type CollectionListResponse struct {
+	Collections []*Collection `protobuf:"bytes,1,rep,name=collections" json:"collections,omitempty"`
+}
+
+func (m *CollectionListResponse) Reset()                    { *m = CollectionListResponse{} }
+func (m *CollectionListResponse) String() string            { return proto.CompactTextString(m) }
+func (*CollectionListResponse) ProtoMessage()               {}
+func (*CollectionListResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{19} }
+
+func (m *CollectionListResponse) GetCollections() []*Collection {
+	if m != nil {
+		return m.Collections
+	}
+	return nil
+}
+
+type CollectionDeleteRequest struct {
+	Name string `protobuf:"bytes,1,opt,name=name" json:"name,omitempty"`
+}
+
+func (m *CollectionDeleteRequest) Reset()                    { *m = CollectionDeleteRequest{} }
+func (m *CollectionDeleteRequest) String() string            { return proto.CompactTextString(m) }
+func (*CollectionDeleteRequest) ProtoMessage()               {}
+func (*CollectionDeleteRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{20} }
+
+func (m *CollectionDeleteRequest) GetName() string {
+	if m != nil {
+		return m.Name
+	}
+	return ""
+}
+
+type CollectionDeleteResponse struct {
+}
+
+func (m *CollectionDeleteResponse) Reset()                    { *m = CollectionDeleteResponse{} }
+func (m *CollectionDeleteResponse) String() string            { return proto.CompactTextString(m) }
+func (*CollectionDeleteResponse) ProtoMessage()               {}
+func (*CollectionDeleteResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{21} }
+
+//
+// volume related
+//
+type DataNodeInfo struct {
+	Id                string                             `protobuf:"bytes,1,opt,name=id" json:"id,omitempty"`
+	VolumeCount       uint64                             `protobuf:"varint,2,opt,name=volume_count,json=volumeCount" json:"volume_count,omitempty"`
+	MaxVolumeCount    uint64                             `protobuf:"varint,3,opt,name=max_volume_count,json=maxVolumeCount" json:"max_volume_count,omitempty"`
+	FreeVolumeCount   uint64                             `protobuf:"varint,4,opt,name=free_volume_count,json=freeVolumeCount" json:"free_volume_count,omitempty"`
+	ActiveVolumeCount uint64                             `protobuf:"varint,5,opt,name=active_volume_count,json=activeVolumeCount" json:"active_volume_count,omitempty"`
+	VolumeInfos       []*VolumeInformationMessage        `protobuf:"bytes,6,rep,name=volume_infos,json=volumeInfos" json:"volume_infos,omitempty"`
+	EcShardInfos      []*VolumeEcShardInformationMessage `protobuf:"bytes,7,rep,name=ec_shard_infos,json=ecShardInfos" json:"ec_shard_infos,omitempty"`
+}
+
+func (m *DataNodeInfo) Reset()                    { *m = DataNodeInfo{} }
+func (m *DataNodeInfo) String() string            { return proto.CompactTextString(m) }
+func (*DataNodeInfo) ProtoMessage()               {}
+func (*DataNodeInfo) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{22} }
+
+func (m *DataNodeInfo) GetId() string {
+	if m != nil {
+		return m.Id
+	}
+	return ""
+}
+
+func (m *DataNodeInfo) GetVolumeCount() uint64 {
+	if m != nil {
+		return m.VolumeCount
+	}
+	return 0
+}
+
+func (m *DataNodeInfo) GetMaxVolumeCount() uint64 {
+	if m != nil {
+		return m.MaxVolumeCount
+	}
+	return 0
+}
+
+func (m *DataNodeInfo) GetFreeVolumeCount() uint64 {
+	if m != nil {
+		return m.FreeVolumeCount
+	}
+	return 0
+}
+
+func (m *DataNodeInfo) GetActiveVolumeCount() uint64 {
+	if m != nil {
+		return m.ActiveVolumeCount
+	}
+	return 0
+}
+
+func (m *DataNodeInfo) GetVolumeInfos() []*VolumeInformationMessage {
+	if m != nil {
+		return m.VolumeInfos
+	}
+	return nil
+}
+
+func (m *DataNodeInfo) GetEcShardInfos() []*VolumeEcShardInformationMessage {
+	if m != nil {
+		return m.EcShardInfos
+	}
+	return nil
+}
+
+type RackInfo struct {
+	Id                string          `protobuf:"bytes,1,opt,name=id" json:"id,omitempty"`
+	VolumeCount       uint64          `protobuf:"varint,2,opt,name=volume_count,json=volumeCount" json:"volume_count,omitempty"`
+	MaxVolumeCount    uint64          `protobuf:"varint,3,opt,name=max_volume_count,json=maxVolumeCount" json:"max_volume_count,omitempty"`
+	FreeVolumeCount   uint64          `protobuf:"varint,4,opt,name=free_volume_count,json=freeVolumeCount" json:"free_volume_count,omitempty"`
+	ActiveVolumeCount uint64          `protobuf:"varint,5,opt,name=active_volume_count,json=activeVolumeCount" json:"active_volume_count,omitempty"`
+	DataNodeInfos     []*DataNodeInfo `protobuf:"bytes,6,rep,name=data_node_infos,json=dataNodeInfos" json:"data_node_infos,omitempty"`
+}
+
+func (m *RackInfo) Reset()                    { *m = RackInfo{} }
+func (m *RackInfo) String() string            { return proto.CompactTextString(m) }
+func (*RackInfo) ProtoMessage()               {}
+func (*RackInfo) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{23} }
+
+func (m *RackInfo) GetId() string {
+	if m != nil {
+		return m.Id
+	}
+	return ""
+}
+
+func (m *RackInfo) GetVolumeCount() uint64 {
+	if m != nil {
+		return m.VolumeCount
+	}
+	return 0
+}
+
+func (m *RackInfo) GetMaxVolumeCount() uint64 {
+	if m != nil {
+		return m.MaxVolumeCount
+	}
+	return 0
+}
+
+func (m *RackInfo) GetFreeVolumeCount() uint64 {
+	if m != nil {
+		return m.FreeVolumeCount
+	}
+	return 0
+}
+
+func (m *RackInfo) GetActiveVolumeCount() uint64 {
+	if m != nil {
+		return m.ActiveVolumeCount
+	}
+	return 0
+}
+
+func (m *RackInfo) GetDataNodeInfos() []*DataNodeInfo {
+	if m != nil {
+		return m.DataNodeInfos
+	}
+	return nil
+}
+
+type DataCenterInfo struct {
+	Id                string      `protobuf:"bytes,1,opt,name=id" json:"id,omitempty"`
+	VolumeCount       uint64      `protobuf:"varint,2,opt,name=volume_count,json=volumeCount" json:"volume_count,omitempty"`
+	MaxVolumeCount    uint64      `protobuf:"varint,3,opt,name=max_volume_count,json=maxVolumeCount" json:"max_volume_count,omitempty"`
+	FreeVolumeCount   uint64      `protobuf:"varint,4,opt,name=free_volume_count,json=freeVolumeCount" json:"free_volume_count,omitempty"`
+	ActiveVolumeCount uint64      `protobuf:"varint,5,opt,name=active_volume_count,json=activeVolumeCount" json:"active_volume_count,omitempty"`
+	RackInfos         []*RackInfo `protobuf:"bytes,6,rep,name=rack_infos,json=rackInfos" json:"rack_infos,omitempty"`
+}
+
+func (m *DataCenterInfo) Reset()                    { *m = DataCenterInfo{} }
+func (m *DataCenterInfo) String() string            { return proto.CompactTextString(m) }
+func (*DataCenterInfo) ProtoMessage()               {}
+func (*DataCenterInfo) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{24} }
+
+func (m *DataCenterInfo) GetId() string {
+	if m != nil {
+		return m.Id
+	}
+	return ""
+}
+
+func (m *DataCenterInfo) GetVolumeCount() uint64 {
+	if m != nil {
+		return m.VolumeCount
+	}
+	return 0
+}
+
+func (m *DataCenterInfo) GetMaxVolumeCount() uint64 {
+	if m != nil {
+		return m.MaxVolumeCount
+	}
+	return 0
+}
+
+func (m *DataCenterInfo) GetFreeVolumeCount() uint64 {
+	if m != nil {
+		return m.FreeVolumeCount
+	}
+	return 0
+}
+
+func (m *DataCenterInfo) GetActiveVolumeCount() uint64 {
+	if m != nil {
+		return m.ActiveVolumeCount
+	}
+	return 0
+}
+
+func (m *DataCenterInfo) GetRackInfos() []*RackInfo {
+	if m != nil {
+		return m.RackInfos
+	}
+	return nil
+}
+
+type TopologyInfo struct {
+	Id                string            `protobuf:"bytes,1,opt,name=id" json:"id,omitempty"`
+	VolumeCount       uint64            `protobuf:"varint,2,opt,name=volume_count,json=volumeCount" json:"volume_count,omitempty"`
+	MaxVolumeCount    uint64            `protobuf:"varint,3,opt,name=max_volume_count,json=maxVolumeCount" json:"max_volume_count,omitempty"`
+	FreeVolumeCount   uint64            `protobuf:"varint,4,opt,name=free_volume_count,json=freeVolumeCount" json:"free_volume_count,omitempty"`
+	ActiveVolumeCount uint64            `protobuf:"varint,5,opt,name=active_volume_count,json=activeVolumeCount" json:"active_volume_count,omitempty"`
+	DataCenterInfos   []*DataCenterInfo `protobuf:"bytes,6,rep,name=data_center_infos,json=dataCenterInfos" json:"data_center_infos,omitempty"`
+}
+
+func (m *TopologyInfo) Reset()                    { *m = TopologyInfo{} }
+func (m *TopologyInfo) String() string            { return proto.CompactTextString(m) }
+func (*TopologyInfo) ProtoMessage()               {}
+func (*TopologyInfo) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{25} }
+
+func (m *TopologyInfo) GetId() string {
+	if m != nil {
+		return m.Id
+	}
+	return ""
+}
+
+func (m *TopologyInfo) GetVolumeCount() uint64 {
+	if m != nil {
+		return m.VolumeCount
+	}
+	return 0
+}
+
+func (m *TopologyInfo) GetMaxVolumeCount() uint64 {
+	if m != nil {
+		return m.MaxVolumeCount
+	}
+	return 0
+}
+
+func (m *TopologyInfo) GetFreeVolumeCount() uint64 {
+	if m != nil {
+		return m.FreeVolumeCount
+	}
+	return 0
+}
+
+func (m *TopologyInfo) GetActiveVolumeCount() uint64 {
+	if m != nil {
+		return m.ActiveVolumeCount
+	}
+	return 0
+}
+
+func (m *TopologyInfo) GetDataCenterInfos() []*DataCenterInfo {
+	if m != nil {
+		return m.DataCenterInfos
+	}
+	return nil
+}
+
+type VolumeListRequest struct {
+}
+
+func (m *VolumeListRequest) Reset()                    { *m = VolumeListRequest{} }
+func (m *VolumeListRequest) String() string            { return proto.CompactTextString(m) }
+func (*VolumeListRequest) ProtoMessage()               {}
+func (*VolumeListRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{26} }
+
+type VolumeListResponse struct {
+	TopologyInfo      *TopologyInfo `protobuf:"bytes,1,opt,name=topology_info,json=topologyInfo" json:"topology_info,omitempty"`
+	VolumeSizeLimitMb uint64        `protobuf:"varint,2,opt,name=volume_size_limit_mb,json=volumeSizeLimitMb" json:"volume_size_limit_mb,omitempty"`
+}
+
+func (m *VolumeListResponse) Reset()                    { *m = VolumeListResponse{} }
+func (m *VolumeListResponse) String() string            { return proto.CompactTextString(m) }
+func (*VolumeListResponse) ProtoMessage()               {}
+func (*VolumeListResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{27} }
+
+func (m *VolumeListResponse) GetTopologyInfo() *TopologyInfo {
+	if m != nil {
+		return m.TopologyInfo
+	}
+	return nil
+}
+
+func (m *VolumeListResponse) GetVolumeSizeLimitMb() uint64 {
+	if m != nil {
+		return m.VolumeSizeLimitMb
+	}
+	return 0
+}
+
+type LookupEcVolumeRequest struct {
+	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+}
+
+func (m *LookupEcVolumeRequest) Reset()                    { *m = LookupEcVolumeRequest{} }
+func (m *LookupEcVolumeRequest) String() string            { return proto.CompactTextString(m) }
+func (*LookupEcVolumeRequest) ProtoMessage()               {}
+func (*LookupEcVolumeRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{28} }
+
+func (m *LookupEcVolumeRequest) GetVolumeId() uint32 {
+	if m != nil {
+		return m.VolumeId
+	}
+	return 0
+}
+
+type LookupEcVolumeResponse struct {
+	VolumeId         uint32                                      `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	ShardIdLocations []*LookupEcVolumeResponse_EcShardIdLocation `protobuf:"bytes,2,rep,name=shard_id_locations,json=shardIdLocations" json:"shard_id_locations,omitempty"`
+}
+
+func (m *LookupEcVolumeResponse) Reset()                    { *m = LookupEcVolumeResponse{} }
+func (m *LookupEcVolumeResponse) String() string            { return proto.CompactTextString(m) }
+func (*LookupEcVolumeResponse) ProtoMessage()               {}
+func (*LookupEcVolumeResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{29} }
+
+func (m *LookupEcVolumeResponse) GetVolumeId() uint32 {
+	if m != nil {
+		return m.VolumeId
+	}
+	return 0
+}
+
+func (m *LookupEcVolumeResponse) GetShardIdLocations() []*LookupEcVolumeResponse_EcShardIdLocation {
+	if m != nil {
+		return m.ShardIdLocations
+	}
+	return nil
+}
+
+type LookupEcVolumeResponse_EcShardIdLocation struct {
+	ShardId   uint32      `protobuf:"varint,1,opt,name=shard_id,json=shardId" json:"shard_id,omitempty"`
+	Locations []*Location `protobuf:"bytes,2,rep,name=locations" json:"locations,omitempty"`
+}
+
+func (m *LookupEcVolumeResponse_EcShardIdLocation) Reset() {
+	*m = LookupEcVolumeResponse_EcShardIdLocation{}
+}
+func (m *LookupEcVolumeResponse_EcShardIdLocation) String() string { return proto.CompactTextString(m) }
+func (*LookupEcVolumeResponse_EcShardIdLocation) ProtoMessage()    {}
+func (*LookupEcVolumeResponse_EcShardIdLocation) Descriptor() ([]byte, []int) {
+	return fileDescriptor0, []int{29, 0}
+}
+
+func (m *LookupEcVolumeResponse_EcShardIdLocation) GetShardId() uint32 {
+	if m != nil {
+		return m.ShardId
+	}
+	return 0
+}
+
+func (m *LookupEcVolumeResponse_EcShardIdLocation) GetLocations() []*Location {
+	if m != nil {
+		return m.Locations
+	}
+	return nil
+}
+
+type GetMasterConfigurationRequest struct {
+}
+
+func (m *GetMasterConfigurationRequest) Reset()                    { *m = GetMasterConfigurationRequest{} }
+func (m *GetMasterConfigurationRequest) String() string            { return proto.CompactTextString(m) }
+func (*GetMasterConfigurationRequest) ProtoMessage()               {}
+func (*GetMasterConfigurationRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{30} }
+
+type GetMasterConfigurationResponse struct {
+	MetricsAddress         string `protobuf:"bytes,1,opt,name=metrics_address,json=metricsAddress" json:"metrics_address,omitempty"`
+	MetricsIntervalSeconds uint32 `protobuf:"varint,2,opt,name=metrics_interval_seconds,json=metricsIntervalSeconds" json:"metrics_interval_seconds,omitempty"`
+}
+
+func (m *GetMasterConfigurationResponse) Reset()                    { *m = GetMasterConfigurationResponse{} }
+func (m *GetMasterConfigurationResponse) String() string            { return proto.CompactTextString(m) }
+func (*GetMasterConfigurationResponse) ProtoMessage()               {}
+func (*GetMasterConfigurationResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{31} }
+
+func (m *GetMasterConfigurationResponse) GetMetricsAddress() string {
+	if m != nil {
+		return m.MetricsAddress
+	}
+	return ""
+}
+
+func (m *GetMasterConfigurationResponse) GetMetricsIntervalSeconds() uint32 {
+	if m != nil {
+		return m.MetricsIntervalSeconds
+	}
+	return 0
+}
+
 func init() {
 	proto.RegisterType((*Heartbeat)(nil), "master_pb.Heartbeat")
 	proto.RegisterType((*HeartbeatResponse)(nil), "master_pb.HeartbeatResponse")
 	proto.RegisterType((*VolumeInformationMessage)(nil), "master_pb.VolumeInformationMessage")
+	proto.RegisterType((*VolumeShortInformationMessage)(nil), "master_pb.VolumeShortInformationMessage")
+	proto.RegisterType((*VolumeEcShardInformationMessage)(nil), "master_pb.VolumeEcShardInformationMessage")
 	proto.RegisterType((*Empty)(nil), "master_pb.Empty")
 	proto.RegisterType((*SuperBlockExtra)(nil), "master_pb.SuperBlockExtra")
 	proto.RegisterType((*SuperBlockExtra_ErasureCoding)(nil), "master_pb.SuperBlockExtra.ErasureCoding")
@@ -692,6 +1337,23 @@ func init() {
 	proto.RegisterType((*AssignResponse)(nil), "master_pb.AssignResponse")
 	proto.RegisterType((*StatisticsRequest)(nil), "master_pb.StatisticsRequest")
 	proto.RegisterType((*StatisticsResponse)(nil), "master_pb.StatisticsResponse")
+	proto.RegisterType((*StorageType)(nil), "master_pb.StorageType")
+	proto.RegisterType((*Collection)(nil), "master_pb.Collection")
+	proto.RegisterType((*CollectionListRequest)(nil), "master_pb.CollectionListRequest")
+	proto.RegisterType((*CollectionListResponse)(nil), "master_pb.CollectionListResponse")
+	proto.RegisterType((*CollectionDeleteRequest)(nil), "master_pb.CollectionDeleteRequest")
+	proto.RegisterType((*CollectionDeleteResponse)(nil), "master_pb.CollectionDeleteResponse")
+	proto.RegisterType((*DataNodeInfo)(nil), "master_pb.DataNodeInfo")
+	proto.RegisterType((*RackInfo)(nil), "master_pb.RackInfo")
+	proto.RegisterType((*DataCenterInfo)(nil), "master_pb.DataCenterInfo")
+	proto.RegisterType((*TopologyInfo)(nil), "master_pb.TopologyInfo")
+	proto.RegisterType((*VolumeListRequest)(nil), "master_pb.VolumeListRequest")
+	proto.RegisterType((*VolumeListResponse)(nil), "master_pb.VolumeListResponse")
+	proto.RegisterType((*LookupEcVolumeRequest)(nil), "master_pb.LookupEcVolumeRequest")
+	proto.RegisterType((*LookupEcVolumeResponse)(nil), "master_pb.LookupEcVolumeResponse")
+	proto.RegisterType((*LookupEcVolumeResponse_EcShardIdLocation)(nil), "master_pb.LookupEcVolumeResponse.EcShardIdLocation")
+	proto.RegisterType((*GetMasterConfigurationRequest)(nil), "master_pb.GetMasterConfigurationRequest")
+	proto.RegisterType((*GetMasterConfigurationResponse)(nil), "master_pb.GetMasterConfigurationResponse")
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -710,6 +1372,11 @@ type SeaweedClient interface {
 	LookupVolume(ctx context.Context, in *LookupVolumeRequest, opts ...grpc.CallOption) (*LookupVolumeResponse, error)
 	Assign(ctx context.Context, in *AssignRequest, opts ...grpc.CallOption) (*AssignResponse, error)
 	Statistics(ctx context.Context, in *StatisticsRequest, opts ...grpc.CallOption) (*StatisticsResponse, error)
+	CollectionList(ctx context.Context, in *CollectionListRequest, opts ...grpc.CallOption) (*CollectionListResponse, error)
+	CollectionDelete(ctx context.Context, in *CollectionDeleteRequest, opts ...grpc.CallOption) (*CollectionDeleteResponse, error)
+	VolumeList(ctx context.Context, in *VolumeListRequest, opts ...grpc.CallOption) (*VolumeListResponse, error)
+	LookupEcVolume(ctx context.Context, in *LookupEcVolumeRequest, opts ...grpc.CallOption) (*LookupEcVolumeResponse, error)
+	GetMasterConfiguration(ctx context.Context, in *GetMasterConfigurationRequest, opts ...grpc.CallOption) (*GetMasterConfigurationResponse, error)
 }
 
 type seaweedClient struct {
@@ -809,6 +1476,51 @@ func (c *seaweedClient) Statistics(ctx context.Context, in *StatisticsRequest, o
 	return out, nil
 }
 
+func (c *seaweedClient) CollectionList(ctx context.Context, in *CollectionListRequest, opts ...grpc.CallOption) (*CollectionListResponse, error) {
+	out := new(CollectionListResponse)
+	err := grpc.Invoke(ctx, "/master_pb.Seaweed/CollectionList", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedClient) CollectionDelete(ctx context.Context, in *CollectionDeleteRequest, opts ...grpc.CallOption) (*CollectionDeleteResponse, error) {
+	out := new(CollectionDeleteResponse)
+	err := grpc.Invoke(ctx, "/master_pb.Seaweed/CollectionDelete", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedClient) VolumeList(ctx context.Context, in *VolumeListRequest, opts ...grpc.CallOption) (*VolumeListResponse, error) {
+	out := new(VolumeListResponse)
+	err := grpc.Invoke(ctx, "/master_pb.Seaweed/VolumeList", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedClient) LookupEcVolume(ctx context.Context, in *LookupEcVolumeRequest, opts ...grpc.CallOption) (*LookupEcVolumeResponse, error) {
+	out := new(LookupEcVolumeResponse)
+	err := grpc.Invoke(ctx, "/master_pb.Seaweed/LookupEcVolume", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedClient) GetMasterConfiguration(ctx context.Context, in *GetMasterConfigurationRequest, opts ...grpc.CallOption) (*GetMasterConfigurationResponse, error) {
+	out := new(GetMasterConfigurationResponse)
+	err := grpc.Invoke(ctx, "/master_pb.Seaweed/GetMasterConfiguration", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Server API for Seaweed service
 
 type SeaweedServer interface {
@@ -817,6 +1529,11 @@ type SeaweedServer interface {
 	LookupVolume(context.Context, *LookupVolumeRequest) (*LookupVolumeResponse, error)
 	Assign(context.Context, *AssignRequest) (*AssignResponse, error)
 	Statistics(context.Context, *StatisticsRequest) (*StatisticsResponse, error)
+	CollectionList(context.Context, *CollectionListRequest) (*CollectionListResponse, error)
+	CollectionDelete(context.Context, *CollectionDeleteRequest) (*CollectionDeleteResponse, error)
+	VolumeList(context.Context, *VolumeListRequest) (*VolumeListResponse, error)
+	LookupEcVolume(context.Context, *LookupEcVolumeRequest) (*LookupEcVolumeResponse, error)
+	GetMasterConfiguration(context.Context, *GetMasterConfigurationRequest) (*GetMasterConfigurationResponse, error)
 }
 
 func RegisterSeaweedServer(s *grpc.Server, srv SeaweedServer) {
@@ -929,6 +1646,96 @@ func _Seaweed_Statistics_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Seaweed_CollectionList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CollectionListRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).CollectionList(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/master_pb.Seaweed/CollectionList",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).CollectionList(ctx, req.(*CollectionListRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Seaweed_CollectionDelete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CollectionDeleteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).CollectionDelete(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/master_pb.Seaweed/CollectionDelete",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).CollectionDelete(ctx, req.(*CollectionDeleteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Seaweed_VolumeList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VolumeListRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).VolumeList(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/master_pb.Seaweed/VolumeList",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).VolumeList(ctx, req.(*VolumeListRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Seaweed_LookupEcVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LookupEcVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).LookupEcVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/master_pb.Seaweed/LookupEcVolume",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).LookupEcVolume(ctx, req.(*LookupEcVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Seaweed_GetMasterConfiguration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetMasterConfigurationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).GetMasterConfiguration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/master_pb.Seaweed/GetMasterConfiguration",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).GetMasterConfiguration(ctx, req.(*GetMasterConfigurationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _Seaweed_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "master_pb.Seaweed",
 	HandlerType: (*SeaweedServer)(nil),
@@ -944,6 +1751,26 @@ var _Seaweed_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Statistics",
 			Handler:    _Seaweed_Statistics_Handler,
+		},
+		{
+			MethodName: "CollectionList",
+			Handler:    _Seaweed_CollectionList_Handler,
+		},
+		{
+			MethodName: "CollectionDelete",
+			Handler:    _Seaweed_CollectionDelete_Handler,
+		},
+		{
+			MethodName: "VolumeList",
+			Handler:    _Seaweed_VolumeList_Handler,
+		},
+		{
+			MethodName: "LookupEcVolume",
+			Handler:    _Seaweed_LookupEcVolume_Handler,
+		},
+		{
+			MethodName: "GetMasterConfiguration",
+			Handler:    _Seaweed_GetMasterConfiguration_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
@@ -966,71 +1793,123 @@ var _Seaweed_serviceDesc = grpc.ServiceDesc{
 func init() { proto.RegisterFile("master.proto", fileDescriptor0) }
 
 var fileDescriptor0 = []byte{
-	// 1055 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0xb4, 0x56, 0x4b, 0x6f, 0xe4, 0x44,
-	0x10, 0x5e, 0x7b, 0x9e, 0xae, 0xd9, 0xc9, 0x4e, 0x3a, 0x11, 0xf2, 0xce, 0xbe, 0x06, 0x73, 0x19,
-	0x04, 0x8a, 0x96, 0x70, 0x44, 0x08, 0xb1, 0xd1, 0x22, 0xa2, 0x04, 0x36, 0x38, 0xb0, 0x07, 0x2e,
-	0xa6, 0x63, 0x57, 0xa2, 0x56, 0xfc, 0xa2, 0xbb, 0x27, 0x99, 0xd9, 0x0b, 0x47, 0xfe, 0x15, 0x17,
-	0xb8, 0xf1, 0x53, 0xb8, 0xf1, 0x0b, 0x50, 0x3f, 0xec, 0xf1, 0x38, 0x09, 0x91, 0x90, 0xb8, 0xb5,
-	0xbf, 0xae, 0xee, 0xaa, 0xfe, 0xbe, 0x7a, 0x18, 0x1e, 0x66, 0x54, 0x48, 0xe4, 0x7b, 0x25, 0x2f,
-	0x64, 0x41, 0x3c, 0xf3, 0x15, 0x95, 0x67, 0xc1, 0x5f, 0x2e, 0x78, 0x5f, 0x23, 0xe5, 0xf2, 0x0c,
-	0xa9, 0x24, 0x5b, 0xe0, 0xb2, 0xd2, 0x77, 0x66, 0xce, 0xdc, 0x0b, 0x5d, 0x56, 0x12, 0x02, 0xdd,
-	0xb2, 0xe0, 0xd2, 0x77, 0x67, 0xce, 0x7c, 0x1c, 0xea, 0x35, 0x79, 0x06, 0x50, 0x2e, 0xce, 0x52,
-	0x16, 0x47, 0x0b, 0x9e, 0xfa, 0x1d, 0x6d, 0xeb, 0x19, 0xe4, 0x07, 0x9e, 0x92, 0x39, 0x4c, 0x32,
-	0xba, 0x8c, 0xae, 0x8a, 0x74, 0x91, 0x61, 0x14, 0x17, 0x8b, 0x5c, 0xfa, 0x5d, 0x7d, 0x7c, 0x2b,
-	0xa3, 0xcb, 0xb7, 0x1a, 0x3e, 0x50, 0x28, 0x99, 0xa9, 0xa8, 0x96, 0xd1, 0x39, 0x4b, 0x31, 0xba,
-	0xc4, 0x95, 0xdf, 0x9b, 0x39, 0xf3, 0x6e, 0x08, 0x19, 0x5d, 0x7e, 0xc5, 0x52, 0x3c, 0xc2, 0x15,
-	0x79, 0x01, 0xa3, 0x84, 0x4a, 0x1a, 0xc5, 0x98, 0x4b, 0xe4, 0x7e, 0x5f, 0xfb, 0x02, 0x05, 0x1d,
-	0x68, 0x44, 0xc5, 0xc7, 0x69, 0x7c, 0xe9, 0x0f, 0xf4, 0x8e, 0x5e, 0xab, 0xf8, 0x68, 0x92, 0xb1,
-	0x3c, 0xd2, 0x91, 0x0f, 0xb5, 0x6b, 0x4f, 0x23, 0x27, 0x2a, 0xfc, 0xcf, 0x61, 0x60, 0x62, 0x13,
-	0xbe, 0x37, 0xeb, 0xcc, 0x47, 0xfb, 0x1f, 0xec, 0xd5, 0x6c, 0xec, 0x99, 0xf0, 0x0e, 0xf3, 0xf3,
-	0x82, 0x67, 0x54, 0xb2, 0x22, 0xff, 0x06, 0x85, 0xa0, 0x17, 0x18, 0x56, 0x67, 0xc8, 0x63, 0x18,
-	0xe6, 0x78, 0x1d, 0x5d, 0xb1, 0x44, 0xf8, 0x30, 0xeb, 0xcc, 0xc7, 0xe1, 0x20, 0xc7, 0xeb, 0xb7,
-	0x2c, 0x11, 0xe4, 0x7d, 0x78, 0x98, 0x60, 0x8a, 0x12, 0x13, 0xb3, 0x3d, 0xd2, 0xdb, 0x23, 0x8b,
-	0x29, 0x93, 0x40, 0xc0, 0x76, 0x4d, 0x76, 0x88, 0xa2, 0x2c, 0x72, 0x81, 0x64, 0x0e, 0x8f, 0xcc,
-	0xed, 0xa7, 0xec, 0x1d, 0x1e, 0xb3, 0x8c, 0x49, 0xad, 0x40, 0x37, 0x6c, 0xc3, 0xe4, 0x29, 0x78,
-	0x02, 0x63, 0x8e, 0xf2, 0x08, 0x57, 0x5a, 0x13, 0x2f, 0x5c, 0x03, 0xe4, 0x3d, 0xe8, 0xa7, 0x48,
-	0x13, 0xe4, 0x56, 0x14, 0xfb, 0x15, 0xfc, 0xe1, 0x82, 0x7f, 0xd7, 0xc3, 0xb4, 0xe2, 0x89, 0xf6,
-	0x37, 0x0e, 0x5d, 0x96, 0x28, 0x46, 0x05, 0x7b, 0x87, 0xfa, 0xf6, 0x6e, 0xa8, 0xd7, 0xe4, 0x39,
-	0x40, 0x5c, 0xa4, 0x29, 0xc6, 0xea, 0xa0, 0xbd, 0xbc, 0x81, 0x28, 0xc6, 0xb5, 0x88, 0x6b, 0xb1,
-	0xbb, 0xa1, 0xa7, 0x10, 0xa3, 0x73, 0xcd, 0x8b, 0x35, 0x30, 0x3a, 0x5b, 0x5e, 0x8c, 0xc9, 0xc7,
-	0x40, 0x2a, 0xea, 0xce, 0x56, 0xb5, 0x61, 0x5f, 0x1b, 0x4e, 0xec, 0xce, 0xab, 0x55, 0x65, 0xfd,
-	0x04, 0x3c, 0x8e, 0x34, 0x89, 0x8a, 0x3c, 0x5d, 0x69, 0xe9, 0x87, 0xe1, 0x50, 0x01, 0x6f, 0xf2,
-	0x74, 0x45, 0x3e, 0x82, 0x6d, 0x8e, 0x65, 0xca, 0x62, 0x1a, 0x95, 0x29, 0x8d, 0x31, 0xc3, 0xbc,
-	0xca, 0x82, 0x89, 0xdd, 0x38, 0xa9, 0x70, 0xe2, 0xc3, 0xe0, 0x0a, 0xb9, 0x50, 0xcf, 0xf2, 0xb4,
-	0x49, 0xf5, 0x49, 0x26, 0xd0, 0x91, 0x32, 0xf5, 0x41, 0xa3, 0x6a, 0x19, 0x0c, 0xa0, 0xf7, 0x3a,
-	0x2b, 0xe5, 0x2a, 0xf8, 0xcd, 0x81, 0x47, 0xa7, 0x8b, 0x12, 0xf9, 0xab, 0xb4, 0x88, 0x2f, 0x5f,
-	0x2f, 0x25, 0xa7, 0xe4, 0x0d, 0x6c, 0x21, 0xa7, 0x62, 0xc1, 0x55, 0xec, 0x09, 0xcb, 0x2f, 0x34,
-	0xa5, 0xa3, 0xfd, 0x79, 0x23, 0xb9, 0x5a, 0x67, 0xf6, 0x5e, 0x9b, 0x03, 0x07, 0xda, 0x3e, 0x1c,
-	0x63, 0xf3, 0x73, 0xfa, 0x23, 0x8c, 0x37, 0xf6, 0x95, 0x30, 0x2a, 0xf1, 0xad, 0x54, 0x7a, 0xad,
-	0x14, 0x2f, 0x29, 0x67, 0x72, 0x65, 0x0b, 0xd4, 0x7e, 0x29, 0x41, 0x6c, 0xfd, 0xa9, 0x3c, 0xec,
-	0xe8, 0x3c, 0xf4, 0x0c, 0x72, 0x98, 0x88, 0xe0, 0x43, 0xd8, 0x39, 0x48, 0x19, 0xe6, 0xf2, 0x98,
-	0x09, 0x89, 0x79, 0x88, 0x3f, 0x2f, 0x50, 0x48, 0xe5, 0x21, 0xa7, 0x19, 0xda, 0xf2, 0xd7, 0xeb,
-	0xe0, 0x17, 0xd8, 0x32, 0xa9, 0x73, 0x5c, 0xc4, 0x3a, 0x6f, 0x14, 0x31, 0xaa, 0xee, 0x8d, 0x91,
-	0x5a, 0xb6, 0x1a, 0x82, 0xdb, 0x6e, 0x08, 0xcd, 0x8a, 0xe9, 0xfc, 0x7b, 0xc5, 0x74, 0x6f, 0x56,
-	0xcc, 0xf7, 0xb0, 0x73, 0x5c, 0x14, 0x97, 0x8b, 0xd2, 0x84, 0x51, 0xc5, 0xba, 0xf9, 0x42, 0x67,
-	0xd6, 0x51, 0x3e, 0xeb, 0x17, 0xb6, 0x32, 0xd6, 0x6d, 0x67, 0x6c, 0xf0, 0xb7, 0x03, 0xbb, 0x9b,
-	0xd7, 0xda, 0x5a, 0xfc, 0x09, 0x76, 0xea, 0x7b, 0xa3, 0xd4, 0xbe, 0xd9, 0x38, 0x18, 0xed, 0xbf,
-	0x6c, 0x88, 0x79, 0xdb, 0xe9, 0xaa, 0x7d, 0x24, 0x15, 0x59, 0xe1, 0xf6, 0x55, 0x0b, 0x11, 0xd3,
-	0x25, 0x4c, 0xda, 0x66, 0x2a, 0xa1, 0x6b, 0xaf, 0x96, 0xd9, 0x61, 0x75, 0x92, 0x7c, 0x02, 0xde,
-	0x3a, 0x10, 0x57, 0x07, 0xb2, 0xb3, 0x11, 0x88, 0xf5, 0xb5, 0xb6, 0x22, 0xbb, 0xd0, 0x43, 0xce,
-	0x8b, 0xaa, 0x11, 0x98, 0x8f, 0xe0, 0x33, 0x18, 0xfe, 0x67, 0x15, 0x83, 0x3f, 0x1d, 0x18, 0x7f,
-	0x29, 0x04, 0xbb, 0xa8, 0xd3, 0x65, 0x17, 0x7a, 0xa6, 0x4c, 0x4d, 0xb3, 0x32, 0x1f, 0x64, 0x06,
-	0x23, 0x5b, 0x65, 0x0d, 0xea, 0x9b, 0xd0, 0xbd, 0xdd, 0xc4, 0x56, 0x5e, 0xd7, 0x84, 0x26, 0x65,
-	0xda, 0x1e, 0x03, 0xbd, 0x3b, 0xc7, 0x40, 0xbf, 0x31, 0x06, 0x9e, 0x80, 0xa7, 0x0f, 0xe5, 0x45,
-	0x82, 0x76, 0x3e, 0x0c, 0x15, 0xf0, 0x6d, 0x91, 0xe8, 0xb4, 0xae, 0x1e, 0x63, 0x85, 0x9f, 0x40,
-	0xe7, 0xbc, 0x26, 0x5f, 0x2d, 0x2b, 0x8a, 0xdc, 0xbb, 0x28, 0xba, 0x31, 0xf9, 0x6a, 0x42, 0xba,
-	0x4d, 0x42, 0x6a, 0x2d, 0x7a, 0x4d, 0x2d, 0x2e, 0x60, 0xfb, 0x54, 0x52, 0xc9, 0x84, 0x64, 0xb1,
-	0xa8, 0x18, 0x6d, 0x71, 0xe7, 0xdc, 0xc7, 0x9d, 0x7b, 0x17, 0x77, 0x9d, 0x9a, 0xbb, 0xe0, 0x77,
-	0x07, 0x48, 0xd3, 0x93, 0x7d, 0xee, 0xff, 0xe0, 0x4a, 0xd1, 0x23, 0x0b, 0x49, 0xd3, 0x48, 0x0f,
-	0x10, 0x3b, 0x06, 0x34, 0xa2, 0x26, 0x98, 0x12, 0x64, 0x21, 0x30, 0x31, 0xbb, 0x66, 0x06, 0x0c,
-	0x15, 0xa0, 0x37, 0x37, 0x47, 0x48, 0xbf, 0x35, 0x42, 0xf6, 0x7f, 0xed, 0xc0, 0xe0, 0x14, 0xe9,
-	0x35, 0x62, 0x42, 0x0e, 0x61, 0x7c, 0x8a, 0x79, 0xb2, 0xfe, 0x69, 0xd9, 0x6d, 0x54, 0x43, 0x8d,
-	0x4e, 0x9f, 0xde, 0x86, 0x56, 0xef, 0x0f, 0x1e, 0xcc, 0x9d, 0x97, 0x0e, 0x39, 0x81, 0xf1, 0x11,
-	0x62, 0x79, 0x50, 0xe4, 0x39, 0xc6, 0x12, 0x13, 0xf2, 0xbc, 0x71, 0xe8, 0x96, 0x16, 0x39, 0x7d,
-	0x7c, 0xe3, 0x5f, 0xa1, 0xaa, 0x28, 0x7b, 0xe3, 0x77, 0xf0, 0xb0, 0xd9, 0x19, 0x36, 0x2e, 0xbc,
-	0xa5, 0x8f, 0x4d, 0x5f, 0xdc, 0xd3, 0x52, 0x82, 0x07, 0xe4, 0x0b, 0xe8, 0x9b, 0x5c, 0x25, 0x7e,
-	0xc3, 0x78, 0xa3, 0x16, 0x37, 0xe2, 0xda, 0x4c, 0xec, 0xe0, 0x01, 0x39, 0x02, 0x58, 0x67, 0x00,
-	0x69, 0xf2, 0x72, 0x23, 0x05, 0xa7, 0xcf, 0xee, 0xd8, 0xad, 0x2e, 0x3b, 0xeb, 0xeb, 0x3f, 0xc8,
-	0x4f, 0xff, 0x09, 0x00, 0x00, 0xff, 0xff, 0xc7, 0x9f, 0x0a, 0x25, 0x51, 0x0a, 0x00, 0x00,
+	// 1888 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0xd4, 0x58, 0xcd, 0x6f, 0x1c, 0x49,
+	0x15, 0x4f, 0xcf, 0x8c, 0xc7, 0x33, 0x6f, 0x3e, 0x3c, 0x53, 0x76, 0xbc, 0x93, 0x59, 0x92, 0x4c,
+	0x7a, 0x91, 0xd6, 0x09, 0x8b, 0x59, 0xb2, 0x2b, 0x81, 0x04, 0x68, 0x95, 0x38, 0xde, 0xc5, 0xca,
+	0xc7, 0x3a, 0x3d, 0x21, 0x48, 0x48, 0xa8, 0xa9, 0xe9, 0x2e, 0xdb, 0x25, 0xf7, 0x74, 0x37, 0x5d,
+	0x35, 0x8e, 0x67, 0x39, 0x70, 0x80, 0x1b, 0x12, 0x17, 0xce, 0xdc, 0xf9, 0x1b, 0x38, 0x70, 0xe1,
+	0xc8, 0x9d, 0x3b, 0xff, 0x02, 0x57, 0x84, 0xb4, 0xaa, 0xaf, 0xee, 0xea, 0x99, 0xb1, 0x1d, 0xaf,
+	0xb4, 0x87, 0xdc, 0xaa, 0xdf, 0x7b, 0xf5, 0xde, 0xab, 0xdf, 0xab, 0xf7, 0x51, 0x0d, 0xed, 0x29,
+	0x66, 0x9c, 0x64, 0xbb, 0x69, 0x96, 0xf0, 0x04, 0x35, 0xd5, 0x97, 0x9f, 0x4e, 0xdc, 0x3f, 0xd5,
+	0xa1, 0xf9, 0x73, 0x82, 0x33, 0x3e, 0x21, 0x98, 0xa3, 0x2e, 0x54, 0x68, 0x3a, 0x70, 0x46, 0xce,
+	0x4e, 0xd3, 0xab, 0xd0, 0x14, 0x21, 0xa8, 0xa5, 0x49, 0xc6, 0x07, 0x95, 0x91, 0xb3, 0xd3, 0xf1,
+	0xe4, 0x1a, 0xdd, 0x06, 0x48, 0x67, 0x93, 0x88, 0x06, 0xfe, 0x2c, 0x8b, 0x06, 0x55, 0x29, 0xdb,
+	0x54, 0x94, 0x5f, 0x64, 0x11, 0xda, 0x81, 0xde, 0x14, 0x9f, 0xfb, 0x67, 0x49, 0x34, 0x9b, 0x12,
+	0x3f, 0x48, 0x66, 0x31, 0x1f, 0xd4, 0xe4, 0xf6, 0xee, 0x14, 0x9f, 0xbf, 0x96, 0xe4, 0x3d, 0x41,
+	0x45, 0x23, 0xe1, 0xd5, 0xb9, 0x7f, 0x44, 0x23, 0xe2, 0x9f, 0x92, 0xf9, 0x60, 0x6d, 0xe4, 0xec,
+	0xd4, 0x3c, 0x98, 0xe2, 0xf3, 0xcf, 0x69, 0x44, 0x9e, 0x92, 0x39, 0xba, 0x0b, 0xad, 0x10, 0x73,
+	0xec, 0x07, 0x24, 0xe6, 0x24, 0x1b, 0xd4, 0xa5, 0x2d, 0x10, 0xa4, 0x3d, 0x49, 0x11, 0xfe, 0x65,
+	0x38, 0x38, 0x1d, 0xac, 0x4b, 0x8e, 0x5c, 0x0b, 0xff, 0x70, 0x38, 0xa5, 0xb1, 0x2f, 0x3d, 0x6f,
+	0x48, 0xd3, 0x4d, 0x49, 0x39, 0x14, 0xee, 0xff, 0x0c, 0xd6, 0x95, 0x6f, 0x6c, 0xd0, 0x1c, 0x55,
+	0x77, 0x5a, 0x0f, 0x3f, 0xd8, 0xcd, 0xd1, 0xd8, 0x55, 0xee, 0x1d, 0xc4, 0x47, 0x49, 0x36, 0xc5,
+	0x9c, 0x26, 0xf1, 0x73, 0xc2, 0x18, 0x3e, 0x26, 0x9e, 0xd9, 0x83, 0x0e, 0xa0, 0x15, 0x93, 0x37,
+	0xbe, 0x51, 0x01, 0x52, 0xc5, 0xce, 0x92, 0x8a, 0xf1, 0x49, 0x92, 0xf1, 0x15, 0x7a, 0x20, 0x26,
+	0x6f, 0x5e, 0x6b, 0x55, 0x2f, 0x61, 0x23, 0x24, 0x11, 0xe1, 0x24, 0xcc, 0xd5, 0xb5, 0xae, 0xa9,
+	0xae, 0xab, 0x15, 0x18, 0x95, 0xdf, 0x85, 0xee, 0x09, 0x66, 0x7e, 0x9c, 0xe4, 0x1a, 0xdb, 0x23,
+	0x67, 0xa7, 0xe1, 0xb5, 0x4f, 0x30, 0x7b, 0x91, 0x18, 0xa9, 0x2f, 0xa0, 0x49, 0x02, 0x9f, 0x9d,
+	0xe0, 0x2c, 0x64, 0x83, 0x9e, 0x34, 0xf9, 0x60, 0xc9, 0xe4, 0x7e, 0x30, 0x16, 0x02, 0x2b, 0x8c,
+	0x36, 0x88, 0x62, 0x31, 0xf4, 0x02, 0x3a, 0x02, 0x8c, 0x42, 0x59, 0xff, 0xda, 0xca, 0x04, 0x9a,
+	0xfb, 0x46, 0xdf, 0x6b, 0xe8, 0x1b, 0x44, 0x0a, 0x9d, 0xe8, 0xda, 0x3a, 0x0d, 0xac, 0xb9, 0xde,
+	0x0f, 0xa1, 0xa7, 0x61, 0x29, 0xd4, 0x6e, 0x4a, 0x60, 0x3a, 0x12, 0x18, 0x23, 0xe8, 0xfe, 0xdd,
+	0x81, 0x7e, 0x9e, 0x0d, 0x1e, 0x61, 0x69, 0x12, 0x33, 0x82, 0x1e, 0x40, 0x5f, 0x5f, 0x67, 0x46,
+	0xbf, 0x22, 0x7e, 0x44, 0xa7, 0x94, 0xcb, 0x24, 0xa9, 0x79, 0x1b, 0x8a, 0x31, 0xa6, 0x5f, 0x91,
+	0x67, 0x82, 0x8c, 0xb6, 0xa1, 0x1e, 0x11, 0x1c, 0x92, 0x4c, 0xe6, 0x4c, 0xd3, 0xd3, 0x5f, 0xe8,
+	0x43, 0xd8, 0x98, 0x12, 0x9e, 0xd1, 0x80, 0xf9, 0x38, 0x0c, 0x33, 0xc2, 0x98, 0x4e, 0x9d, 0xae,
+	0x26, 0x3f, 0x52, 0x54, 0xf4, 0x63, 0x18, 0x18, 0x41, 0x2a, 0xee, 0xf8, 0x19, 0x8e, 0x7c, 0x46,
+	0x82, 0x24, 0x0e, 0x99, 0xce, 0xa3, 0x6d, 0xcd, 0x3f, 0xd0, 0xec, 0xb1, 0xe2, 0xba, 0x7f, 0xad,
+	0xc2, 0xe0, 0xa2, 0x0b, 0x2c, 0x33, 0x3b, 0x94, 0x4e, 0x77, 0xbc, 0x0a, 0x0d, 0x45, 0xe6, 0x88,
+	0xc3, 0x48, 0x2f, 0x6b, 0x9e, 0x5c, 0xa3, 0x3b, 0x00, 0x41, 0x12, 0x45, 0x24, 0x10, 0x1b, 0xb5,
+	0x7b, 0x16, 0x45, 0x64, 0x96, 0x4c, 0xd6, 0x22, 0xa9, 0x6b, 0x5e, 0x53, 0x50, 0x54, 0x3e, 0xdf,
+	0x83, 0xb6, 0x02, 0x5e, 0x0b, 0xa8, 0x7c, 0x6e, 0x29, 0x9a, 0x12, 0xf9, 0x08, 0x90, 0x09, 0xf0,
+	0x64, 0x9e, 0x0b, 0xd6, 0xa5, 0x60, 0x4f, 0x73, 0x1e, 0xcf, 0x8d, 0xf4, 0xfb, 0xd0, 0xcc, 0x08,
+	0x0e, 0xfd, 0x24, 0x8e, 0xe6, 0x32, 0xc5, 0x1b, 0x5e, 0x43, 0x10, 0xbe, 0x8c, 0xa3, 0x39, 0xfa,
+	0x1e, 0xf4, 0x33, 0x92, 0x46, 0x34, 0xc0, 0x7e, 0x1a, 0xe1, 0x80, 0x4c, 0x49, 0x6c, 0xb2, 0xbd,
+	0xa7, 0x19, 0x87, 0x86, 0x8e, 0x06, 0xb0, 0x7e, 0x46, 0x32, 0x26, 0x8e, 0xd5, 0x94, 0x22, 0xe6,
+	0x13, 0xf5, 0xa0, 0xca, 0x79, 0x34, 0x00, 0x49, 0x15, 0x4b, 0x74, 0x1f, 0x7a, 0x41, 0x32, 0x4d,
+	0x71, 0xc0, 0xfd, 0x8c, 0x9c, 0x51, 0xb9, 0xa9, 0x25, 0xd9, 0x1b, 0x9a, 0xee, 0x69, 0xb2, 0x38,
+	0xce, 0x34, 0x09, 0xe9, 0x11, 0x25, 0xa1, 0x8f, 0xb9, 0x0e, 0x93, 0x4c, 0xb9, 0xaa, 0xd7, 0x33,
+	0x9c, 0x47, 0x5c, 0x05, 0xc8, 0xfd, 0x9b, 0x03, 0xb7, 0x2f, 0x4d, 0xe7, 0xa5, 0x20, 0x5d, 0x15,
+	0x90, 0x6f, 0x0b, 0x03, 0x77, 0x06, 0x77, 0xaf, 0x48, 0xb2, 0x2b, 0x7c, 0xad, 0x2c, 0xf9, 0xea,
+	0x42, 0x87, 0x04, 0x3e, 0x8d, 0x43, 0x72, 0xee, 0x4f, 0x28, 0x57, 0xd7, 0xbf, 0xe3, 0xb5, 0x48,
+	0x70, 0x20, 0x68, 0x8f, 0x29, 0x67, 0xee, 0x3a, 0xac, 0xed, 0x4f, 0x53, 0x3e, 0x77, 0xff, 0xe1,
+	0xc0, 0xc6, 0x78, 0x96, 0x92, 0xec, 0x71, 0x94, 0x04, 0xa7, 0xfb, 0xe7, 0x3c, 0xc3, 0xe8, 0x4b,
+	0xe8, 0x92, 0x0c, 0xb3, 0x59, 0x26, 0xae, 0x4d, 0x48, 0xe3, 0x63, 0x69, 0xbc, 0x5c, 0x2d, 0x17,
+	0xf6, 0xec, 0xee, 0xab, 0x0d, 0x7b, 0x52, 0xde, 0xeb, 0x10, 0xfb, 0x73, 0xf8, 0x2b, 0xe8, 0x94,
+	0xf8, 0x22, 0x27, 0x44, 0x6f, 0xd1, 0x87, 0x92, 0x6b, 0x91, 0xcf, 0x29, 0xce, 0x28, 0x9f, 0xeb,
+	0x1e, 0xa8, 0xbf, 0x44, 0x2e, 0xe8, 0x9a, 0x40, 0x43, 0x71, 0x96, 0xaa, 0xe8, 0x32, 0x8a, 0x72,
+	0x10, 0x32, 0xf7, 0x3e, 0x6c, 0xee, 0x45, 0x94, 0xc4, 0xfc, 0x19, 0x65, 0x9c, 0xc4, 0x1e, 0xf9,
+	0xed, 0x8c, 0x30, 0x2e, 0x2c, 0xc4, 0x78, 0x4a, 0x74, 0x87, 0x95, 0x6b, 0xf7, 0xf7, 0xd0, 0x55,
+	0x58, 0x3f, 0x4b, 0x02, 0x89, 0xb0, 0x88, 0x87, 0x68, 0xad, 0x4a, 0x48, 0x2c, 0x17, 0x7a, 0x6e,
+	0x65, 0xb1, 0xe7, 0xde, 0x82, 0x86, 0x6c, 0x4a, 0x85, 0x2b, 0xeb, 0xa2, 0xcf, 0xd0, 0x90, 0x15,
+	0x49, 0x19, 0x2a, 0x76, 0x4d, 0xb2, 0x5b, 0xa6, 0x6f, 0xd0, 0x90, 0xb9, 0xaf, 0x60, 0xf3, 0x59,
+	0x92, 0x9c, 0xce, 0x52, 0xe5, 0x86, 0xf1, 0xb5, 0x7c, 0x42, 0x67, 0x54, 0x15, 0x36, 0xf3, 0x13,
+	0x5e, 0x15, 0x6f, 0xf7, 0xbf, 0x0e, 0x6c, 0x95, 0xd5, 0xea, 0x6a, 0xfa, 0x1b, 0xd8, 0xcc, 0xf5,
+	0xfa, 0x91, 0x3e, 0xb3, 0x32, 0xd0, 0x7a, 0xf8, 0xb1, 0x15, 0xcc, 0x55, 0xbb, 0x4d, 0x87, 0x0e,
+	0x0d, 0x58, 0x5e, 0xff, 0x6c, 0x81, 0xc2, 0x86, 0xe7, 0xd0, 0x5b, 0x14, 0x13, 0xb5, 0x24, 0xb7,
+	0xaa, 0x91, 0x6d, 0x98, 0x9d, 0xe8, 0x87, 0xd0, 0x2c, 0x1c, 0xa9, 0x48, 0x47, 0x36, 0x4b, 0x8e,
+	0x68, 0x5b, 0x85, 0x14, 0xda, 0x82, 0x35, 0x92, 0x65, 0x49, 0xa6, 0xb3, 0x52, 0x7d, 0xb8, 0x3f,
+	0x81, 0xc6, 0x37, 0x8e, 0xa2, 0xfb, 0x2f, 0x07, 0x3a, 0x8f, 0x18, 0xa3, 0xc7, 0xf9, 0x75, 0xd9,
+	0x82, 0x35, 0x55, 0x21, 0x55, 0xb3, 0x51, 0x1f, 0x68, 0x04, 0x2d, 0x9d, 0xdc, 0x16, 0xf4, 0x36,
+	0xe9, 0xca, 0xba, 0xa1, 0x13, 0xbe, 0xa6, 0x5c, 0x13, 0x45, 0x6f, 0x61, 0xd2, 0x5a, 0xbb, 0x70,
+	0xd2, 0xaa, 0x5b, 0x93, 0xd6, 0xfb, 0xd0, 0x94, 0x9b, 0xe2, 0x24, 0x24, 0x7a, 0x04, 0x6b, 0x08,
+	0xc2, 0x8b, 0x24, 0x24, 0xee, 0x5f, 0x1c, 0xe8, 0x9a, 0xd3, 0xe8, 0xc8, 0xf7, 0xa0, 0x7a, 0x94,
+	0xa3, 0x2f, 0x96, 0x06, 0xa3, 0xca, 0x45, 0x18, 0x2d, 0x4d, 0x97, 0x39, 0x22, 0x35, 0x1b, 0x91,
+	0x3c, 0x18, 0x6b, 0x56, 0x30, 0x84, 0xcb, 0x78, 0xc6, 0x4f, 0x8c, 0xcb, 0x62, 0xed, 0x1e, 0x43,
+	0x7f, 0xcc, 0x31, 0xa7, 0x8c, 0xd3, 0x80, 0x19, 0x98, 0x17, 0x00, 0x75, 0xae, 0x02, 0xb4, 0x72,
+	0x11, 0xa0, 0xd5, 0x1c, 0x50, 0xf7, 0x9f, 0x0e, 0x20, 0xdb, 0x92, 0x86, 0xe0, 0x5b, 0x30, 0x25,
+	0x20, 0xe3, 0x09, 0x17, 0x63, 0x82, 0x68, 0xe8, 0xba, 0x2d, 0x4b, 0x8a, 0x18, 0x4b, 0x44, 0x94,
+	0x66, 0x8c, 0x84, 0x8a, 0xab, 0x7a, 0x72, 0x43, 0x10, 0x24, 0xb3, 0xdc, 0xd2, 0xeb, 0x0b, 0x2d,
+	0xdd, 0x7d, 0x04, 0xad, 0x31, 0x4f, 0x32, 0x7c, 0x4c, 0x5e, 0xcd, 0xd3, 0xb7, 0xf1, 0x5e, 0x7b,
+	0x57, 0x29, 0x80, 0x18, 0x01, 0xec, 0x15, 0xde, 0xaf, 0x2a, 0x80, 0xbf, 0x83, 0x9b, 0x85, 0x84,
+	0xa8, 0x97, 0x26, 0x2e, 0x9f, 0xc2, 0x36, 0x8d, 0x83, 0x68, 0x16, 0x12, 0x3f, 0x16, 0xed, 0x27,
+	0xca, 0xa7, 0x5a, 0x47, 0x0e, 0x03, 0x5b, 0x9a, 0xfb, 0x42, 0x32, 0xcd, 0x74, 0xfb, 0x11, 0x20,
+	0xb3, 0x8b, 0x04, 0xf9, 0x8e, 0x8a, 0xdc, 0xd1, 0xd3, 0x9c, 0xfd, 0x40, 0x4b, 0xbb, 0x2f, 0x61,
+	0x7b, 0xd1, 0xb8, 0x0e, 0xd5, 0x8f, 0xa0, 0x55, 0xc0, 0x6e, 0xea, 0xd3, 0x4d, 0xab, 0x2c, 0x14,
+	0xfb, 0x3c, 0x5b, 0xd2, 0xfd, 0x3e, 0xbc, 0x57, 0xb0, 0x9e, 0xc8, 0x42, 0x7b, 0x59, 0xfd, 0x1f,
+	0xc2, 0x60, 0x59, 0x5c, 0xf9, 0xe0, 0xfe, 0xa7, 0x02, 0xed, 0x27, 0x3a, 0xa3, 0x44, 0x0f, 0xb6,
+	0xba, 0x6e, 0x53, 0x76, 0xdd, 0x7b, 0xd0, 0x2e, 0xbd, 0xb4, 0xd4, 0x38, 0xd7, 0x3a, 0xb3, 0x9e,
+	0x59, 0xab, 0x1e, 0x64, 0x55, 0x29, 0xb6, 0xf8, 0x20, 0x7b, 0x00, 0xfd, 0xa3, 0x8c, 0x90, 0xe5,
+	0xb7, 0x5b, 0xcd, 0xdb, 0x10, 0x0c, 0x5b, 0x76, 0x17, 0x36, 0x71, 0xc0, 0xe9, 0xd9, 0x82, 0xb4,
+	0xba, 0x5f, 0x7d, 0xc5, 0xb2, 0xe5, 0x3f, 0xcf, 0x1d, 0xa5, 0xf1, 0x51, 0xc2, 0x06, 0xf5, 0xb7,
+	0x7f, 0x7b, 0xe9, 0xd3, 0x08, 0x0e, 0x43, 0x87, 0xd0, 0x35, 0x33, 0xbc, 0xd6, 0xb4, 0x7e, 0xed,
+	0xf7, 0x41, 0x9b, 0x14, 0x2c, 0xe6, 0xfe, 0xb1, 0x02, 0x0d, 0x0f, 0x07, 0xa7, 0xef, 0x36, 0xbe,
+	0x9f, 0xc1, 0x46, 0x5e, 0x8b, 0x4b, 0x10, 0xbf, 0x67, 0x01, 0x63, 0x5f, 0x25, 0xaf, 0x13, 0x5a,
+	0x5f, 0xcc, 0xfd, 0xbf, 0x03, 0xdd, 0x27, 0x79, 0xbd, 0x7f, 0xb7, 0xc1, 0x78, 0x08, 0x20, 0x1a,
+	0x54, 0x09, 0x07, 0xbb, 0xa1, 0x9b, 0x70, 0x7b, 0xcd, 0x4c, 0xaf, 0x98, 0xfb, 0xe7, 0x0a, 0xb4,
+	0x5f, 0x25, 0x69, 0x12, 0x25, 0xc7, 0xf3, 0x77, 0xfb, 0xf4, 0xfb, 0xd0, 0xb7, 0x7a, 0x79, 0x09,
+	0x84, 0x5b, 0x0b, 0x97, 0xa1, 0x08, 0xb6, 0xb7, 0x11, 0x96, 0xbe, 0x99, 0xbb, 0x09, 0x7d, 0x3d,
+	0x97, 0x16, 0x25, 0xd9, 0xfd, 0x83, 0x03, 0xc8, 0xa6, 0xea, 0x5a, 0xf9, 0x53, 0xe8, 0x70, 0x8d,
+	0x9d, 0xb4, 0xa7, 0x47, 0x73, 0xfb, 0xee, 0xd9, 0xd8, 0x7a, 0x6d, 0x6e, 0x23, 0xfd, 0x03, 0xd8,
+	0x5a, 0x7a, 0x5f, 0xfb, 0xd3, 0x89, 0x46, 0xb8, 0xbf, 0xf0, 0xc4, 0x7e, 0x3e, 0x71, 0x3f, 0x85,
+	0x9b, 0x6a, 0x38, 0x34, 0x75, 0xdc, 0xd4, 0xd7, 0xa5, 0x29, 0xaf, 0x53, 0x4c, 0x79, 0xee, 0xff,
+	0x1c, 0xd8, 0x5e, 0xdc, 0xa6, 0xfd, 0xbf, 0x6c, 0x1f, 0xc2, 0x80, 0x74, 0xbd, 0xb1, 0xe7, 0x55,
+	0x35, 0x26, 0x7e, 0xb2, 0x34, 0xaf, 0x2e, 0xea, 0xde, 0x35, 0x75, 0xa8, 0x18, 0x59, 0x7b, 0xac,
+	0x4c, 0x60, 0x43, 0x0c, 0xfd, 0x25, 0x31, 0x31, 0xd5, 0x1b, 0xbb, 0xda, 0xa7, 0x75, 0xbd, 0xf1,
+	0x1b, 0x0c, 0xac, 0xee, 0x5d, 0xb8, 0xfd, 0x05, 0xe1, 0xcf, 0xa5, 0xcc, 0x5e, 0x12, 0x1f, 0xd1,
+	0xe3, 0x59, 0xa6, 0x84, 0x8a, 0xd0, 0xde, 0xb9, 0x48, 0x42, 0xc3, 0xb4, 0xe2, 0x27, 0x86, 0x73,
+	0xed, 0x9f, 0x18, 0x95, 0xcb, 0x7e, 0x62, 0x3c, 0xfc, 0x77, 0x1d, 0xd6, 0xc7, 0x04, 0xbf, 0x21,
+	0x24, 0x44, 0x07, 0xd0, 0x19, 0x93, 0x38, 0x2c, 0x7e, 0x4f, 0x6e, 0x59, 0x67, 0xcc, 0xa9, 0xc3,
+	0xef, 0xac, 0xa2, 0xe6, 0x2d, 0xf4, 0xc6, 0x8e, 0xf3, 0xb1, 0x83, 0x0e, 0xa1, 0xf3, 0x94, 0x90,
+	0x74, 0x2f, 0x89, 0x63, 0x12, 0x70, 0x12, 0xa2, 0x3b, 0x76, 0x23, 0x5f, 0x7e, 0xa9, 0x0d, 0x6f,
+	0x2d, 0xf5, 0x13, 0x03, 0xaa, 0xd6, 0xf8, 0x12, 0xda, 0xf6, 0x03, 0xa5, 0xa4, 0x70, 0xc5, 0x73,
+	0x6a, 0x78, 0xf7, 0x8a, 0x97, 0x8d, 0x7b, 0x03, 0x7d, 0x06, 0x75, 0x35, 0x31, 0xa3, 0x81, 0x25,
+	0x5c, 0x7a, 0x12, 0x94, 0xfc, 0x2a, 0x8f, 0xd7, 0xee, 0x0d, 0xf4, 0x14, 0xa0, 0x98, 0x39, 0x91,
+	0x8d, 0xcb, 0xd2, 0xd0, 0x3b, 0xbc, 0x7d, 0x01, 0x37, 0x57, 0xf6, 0x4b, 0xe8, 0x96, 0x27, 0x23,
+	0x34, 0x5a, 0x39, 0xfc, 0x58, 0xe5, 0x61, 0x78, 0xef, 0x12, 0x89, 0x5c, 0xf1, 0xaf, 0xa1, 0xb7,
+	0x38, 0xf0, 0x20, 0x77, 0xe5, 0xc6, 0xd2, 0xf0, 0x34, 0xfc, 0xe0, 0x52, 0x19, 0x1b, 0x84, 0xa2,
+	0x42, 0x95, 0x40, 0x58, 0x2a, 0x67, 0x25, 0x10, 0x96, 0xcb, 0x9a, 0x02, 0xa1, 0x9c, 0xd6, 0x25,
+	0x10, 0x56, 0x16, 0xa1, 0x12, 0x08, 0xab, 0x6b, 0x82, 0x7b, 0x03, 0x25, 0xb0, 0xbd, 0x3a, 0xd9,
+	0x90, 0xfd, 0x3f, 0xe3, 0xd2, 0x8c, 0x1d, 0xde, 0x7f, 0x0b, 0x49, 0x63, 0x70, 0x52, 0x97, 0xbf,
+	0xfe, 0x3f, 0xf9, 0x3a, 0x00, 0x00, 0xff, 0xff, 0x28, 0x1f, 0x4c, 0x0e, 0x0a, 0x18, 0x00, 0x00,
 }

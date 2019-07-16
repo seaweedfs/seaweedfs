@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
@@ -19,11 +20,13 @@ type Location struct {
 type vidMap struct {
 	sync.RWMutex
 	vid2Locations map[uint32][]Location
+	r             *rand.Rand
 }
 
 func newVidMap() vidMap {
 	return vidMap{
 		vid2Locations: make(map[uint32][]Location),
+		r:             rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -34,12 +37,7 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrl string, err error
 		return "", err
 	}
 
-	locations := vc.GetLocations(uint32(id))
-	if len(locations) == 0 {
-		return "", fmt.Errorf("volume %d not found", id)
-	}
-
-	return locations[rand.Intn(len(locations))].Url, nil
+	return vc.GetRandomLocation(uint32(id))
 }
 
 func (vc *vidMap) LookupFileId(fileId string) (fullUrl string, err error) {
@@ -82,6 +80,18 @@ func (vc *vidMap) GetLocations(vid uint32) (locations []Location) {
 	return vc.vid2Locations[vid]
 }
 
+func (vc *vidMap) GetRandomLocation(vid uint32) (serverUrl string, err error) {
+	vc.RLock()
+	defer vc.RUnlock()
+
+	locations := vc.vid2Locations[vid]
+	if len(locations) == 0 {
+		return "", fmt.Errorf("volume %d not found", vid)
+	}
+
+	return locations[vc.r.Intn(len(locations))].Url, nil
+}
+
 func (vc *vidMap) addLocation(vid uint32, location Location) {
 	vc.Lock()
 	defer vc.Unlock()
@@ -114,6 +124,7 @@ func (vc *vidMap) deleteLocation(vid uint32, location Location) {
 	for i, loc := range locations {
 		if loc.Url == location.Url {
 			vc.vid2Locations[vid] = append(locations[0:i], locations[i+1:]...)
+			break
 		}
 	}
 

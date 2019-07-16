@@ -2,6 +2,8 @@ package weed_server
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -17,16 +19,28 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
-	n := new(storage.Needle)
+
+	stats.VolumeServerRequestCounter.WithLabelValues("get").Inc()
+	start := time.Now()
+	defer func() { stats.VolumeServerRequestHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
+
+	n := new(needle.Needle)
 	vid, fid, filename, ext, _ := parseURLPath(r.URL.Path)
-	volumeId, err := storage.NewVolumeId(vid)
+
+	if !vs.maybeCheckJwtAuthorization(r, vid, fid, false) {
+		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
+		return
+	}
+
+	volumeId, err := needle.NewVolumeId(vid)
 	if err != nil {
 		glog.V(2).Infoln("parsing error:", err, r.URL.Path)
 		w.WriteHeader(http.StatusBadRequest)
@@ -40,7 +54,9 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	glog.V(4).Infoln("volume", volumeId, "reading", n)
-	if !vs.store.HasVolume(volumeId) {
+	hasVolume := vs.store.HasVolume(volumeId)
+	_, hasEcVolume := vs.store.FindEcVolume(volumeId)
+	if !hasVolume && !hasEcVolume {
 		if !vs.ReadRedirect {
 			glog.V(2).Infoln("volume is not local:", err, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -65,10 +81,15 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	cookie := n.Cookie
-	count, e := vs.store.ReadVolumeNeedle(volumeId, n)
-	glog.V(4).Infoln("read bytes", count, "error", e)
-	if e != nil || count < 0 {
-		glog.V(0).Infof("read %s error: %v", r.URL.Path, e)
+	var count int
+	if hasVolume {
+		count, err = vs.store.ReadVolumeNeedle(volumeId, n)
+	} else if hasEcVolume {
+		count, err = vs.store.ReadEcShardNeedle(context.Background(), volumeId, n)
+	}
+	glog.V(4).Infoln("read bytes", count, "error", err)
+	if err != nil || count < 0 {
+		glog.V(0).Infof("read %s isNormalVolume %v error: %v", r.URL.Path, hasVolume, err)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -132,7 +153,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 				w.Header().Set("Content-Encoding", "gzip")
 			} else {
-				if n.Data, err = operation.UnGzipData(n.Data); err != nil {
+				if n.Data, err = util.UnGzipData(n.Data); err != nil {
 					glog.V(0).Infoln("ungzip error:", err, r.URL.Path)
 				}
 			}
@@ -146,7 +167,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func (vs *VolumeServer) tryHandleChunkedFile(n *storage.Needle, fileName string, w http.ResponseWriter, r *http.Request) (processed bool) {
+func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, w http.ResponseWriter, r *http.Request) (processed bool) {
 	if !n.IsChunkedManifest() || r.URL.Query().Get("cm") == "false" {
 		return false
 	}

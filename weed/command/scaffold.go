@@ -10,7 +10,7 @@ func init() {
 }
 
 var cmdScaffold = &Command{
-	UsageLine: "scaffold [filer]",
+	UsageLine: "scaffold -config=[filer|notification|replication|security|master]",
 	Short:     "generate basic configuration files",
 	Long: `Generate filer.toml with all possible configurations for you to customize.
 
@@ -19,7 +19,7 @@ var cmdScaffold = &Command{
 
 var (
 	outputPath = cmdScaffold.Flag.String("output", "", "if not empty, save the configuration file to this directory")
-	config     = cmdScaffold.Flag.String("config", "filer", "[filer|notification|replication] the configuration file to generate")
+	config     = cmdScaffold.Flag.String("config", "filer", "[filer|notification|replication|security|master] the configuration file to generate")
 )
 
 func runScaffold(cmd *Command, args []string) bool {
@@ -32,6 +32,10 @@ func runScaffold(cmd *Command, args []string) bool {
 		content = NOTIFICATION_TOML_EXAMPLE
 	case "replication":
 		content = REPLICATION_TOML_EXAMPLE
+	case "security":
+		content = SECURITY_TOML_EXAMPLE
+	case "master":
+		content = MASTER_TOML_EXAMPLE
 	}
 	if content == "" {
 		println("need a valid -config option")
@@ -61,6 +65,12 @@ enabled = false
 
 [leveldb]
 # local on disk, mostly for simple single-machine setup, fairly scalable
+enabled = false
+dir = "."					# directory to store level db files
+
+[leveldb2]
+# local on disk, mostly for simple single-machine setup, fairly scalable
+# faster than previous leveldb, recommended.
 enabled = true
 dir = "."					# directory to store level db files
 
@@ -70,12 +80,13 @@ dir = "."					# directory to store level db files
 
 [mysql]
 # CREATE TABLE IF NOT EXISTS filemeta (
-#   dirhash     BIGINT        COMMENT 'first 64 bits of MD5 hash value of directory field',
-#   name        VARCHAR(1000) COMMENT 'directory or file name',
-#   directory   VARCHAR(4096) COMMENT 'full path to parent directory',
-#   meta        BLOB,
+#   dirhash     BIGINT         COMMENT 'first 64 bits of MD5 hash value of directory field',
+#   name        VARCHAR(1000)  COMMENT 'directory or file name',
+#   directory   TEXT           COMMENT 'full path to parent directory',
+#   meta        LONGBLOB,
 #   PRIMARY KEY (dirhash, name)
 # ) DEFAULT CHARSET=utf8;
+
 enabled = false
 hostname = "localhost"
 port = 3306
@@ -88,8 +99,8 @@ connection_max_open = 100
 [postgres]
 # CREATE TABLE IF NOT EXISTS filemeta (
 #   dirhash     BIGINT,
-#   name        VARCHAR(1000),
-#   directory   VARCHAR(4096),
+#   name        VARCHAR(65535),
+#   directory   VARCHAR(65535),
 #   meta        bytea,
 #   PRIMARY KEY (dirhash, name)
 # );
@@ -132,6 +143,7 @@ addresses = [
     "localhost:30005",
     "localhost:30006",
 ]
+password = ""
 
 `
 
@@ -178,6 +190,17 @@ google_application_credentials = "/path/to/x.json" # path to json credential fil
 project_id = ""                       # an existing project id
 topic = "seaweedfs_filer_topic"       # a topic, auto created if does not exists
 
+[notification.gocdk_pub_sub]
+# The Go Cloud Development Kit (https://gocloud.dev).
+# PubSub API (https://godoc.org/gocloud.dev/pubsub).
+# Supports AWS SNS/SQS, Azure Service Bus, Google PubSub, NATS and RabbitMQ.
+enabled = false
+# This URL will Dial the RabbitMQ server at the URL in the environment
+# variable RABBIT_SERVER_URL and open the exchange "myexchange".
+# The exchange must have already been created by some other means, like
+# the RabbitMQ management plugin.
+topic_url = "rabbit://myexchange"
+sub_url = "rabbit://myqueue"
 `
 
 	REPLICATION_TOML_EXAMPLE = `
@@ -238,6 +261,80 @@ b2_account_id = ""
 b2_master_application_key  = ""
 bucket = "mybucket"            # an existing bucket
 directory = "/"                # destination directory
+
+`
+
+	SECURITY_TOML_EXAMPLE = `
+# Put this file to one of the location, with descending priority
+#    ./security.toml
+#    $HOME/.seaweedfs/security.toml
+#    /etc/seaweedfs/security.toml
+# this file is read by master, volume server, and filer
+
+# the jwt signing key is read by master and volume server.
+# a jwt defaults to expire after 10 seconds.
+[jwt.signing]
+key = ""
+expires_after_seconds = 10           # seconds
+
+# jwt for read is only supported with master+volume setup. Filer does not support this mode.
+[jwt.signing.read]
+key = ""
+expires_after_seconds = 10           # seconds
+
+# all grpc tls authentications are mutual
+# the values for the following ca, cert, and key are paths to the PERM files.
+# the host name is not checked, so the PERM files can be shared.
+[grpc]
+ca = ""
+
+[grpc.volume]
+cert = ""
+key  = ""
+
+[grpc.master]
+cert = ""
+key  = ""
+
+[grpc.filer]
+cert = ""
+key  = ""
+
+# use this for any place needs a grpc client
+# i.e., "weed backup|benchmark|filer.copy|filer.replicate|mount|s3|upload"
+[grpc.client]
+cert = ""
+key  = ""
+
+
+# volume server https options
+# Note: work in progress!
+#     this does not work with other clients, e.g., "weed filer|mount" etc, yet.
+[https.client]
+enabled = true
+[https.volume]
+cert = ""
+key  = ""
+
+
+`
+
+	MASTER_TOML_EXAMPLE = `
+# Put this file to one of the location, with descending priority
+#    ./master.toml
+#    $HOME/.seaweedfs/master.toml
+#    /etc/seaweedfs/master.toml
+# this file is read by master
+
+[master.maintenance]
+# periodically run these scripts are the same as running them from 'weed shell'
+scripts = """
+  ec.encode -fullPercent=95 -quietFor=1h
+  ec.rebuild -force
+  ec.balance -force
+  volume.balance -force
+"""
+sleep_minutes = 17          # sleep minutes between each script execution
 
 `
 )

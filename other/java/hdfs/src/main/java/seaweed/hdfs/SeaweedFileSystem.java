@@ -34,6 +34,9 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
     public static final int FS_SEAWEED_DEFAULT_PORT = 8888;
     public static final String FS_SEAWEED_FILER_HOST = "fs.seaweed.filer.host";
     public static final String FS_SEAWEED_FILER_PORT = "fs.seaweed.filer.port";
+    public static final String FS_SEAWEED_GRPC_CA = "fs.seaweed.ca";
+    public static final String FS_SEAWEED_GRPC_CLIENT_KEY = "fs.seaweed.client.key";
+    public static final String FS_SEAWEED_GRPC_CLIENT_CERT = "fs.seaweed.client.cert";
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedFileSystem.class);
     private static int BUFFER_SIZE = 16 * 1024 * 1024;
@@ -72,7 +75,17 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         setConf(conf);
         this.uri = uri;
 
-        seaweedFileSystemStore = new SeaweedFileSystemStore(host, port);
+        if (conf.get(FS_SEAWEED_GRPC_CA) != null && conf.getTrimmed(FS_SEAWEED_GRPC_CA).length() != 0
+                && conf.get(FS_SEAWEED_GRPC_CLIENT_CERT) != null && conf.getTrimmed(FS_SEAWEED_GRPC_CLIENT_CERT).length() != 0
+                && conf.get(FS_SEAWEED_GRPC_CLIENT_KEY) != null && conf.getTrimmed(FS_SEAWEED_GRPC_CLIENT_KEY).length() != 0) {
+            seaweedFileSystemStore = new SeaweedFileSystemStore(host, port,
+                    conf.get(FS_SEAWEED_GRPC_CA),
+                    conf.get(FS_SEAWEED_GRPC_CLIENT_CERT),
+                    conf.get(FS_SEAWEED_GRPC_CLIENT_KEY));
+        } else {
+            seaweedFileSystemStore = new SeaweedFileSystemStore(host, port);
+        }
+
     }
 
     @Override
@@ -206,8 +219,8 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
 
             UserGroupInformation currentUser = UserGroupInformation.getCurrentUser();
             return seaweedFileSystemStore.createDirectory(path, currentUser,
-                fsPermission == null ? FsPermission.getDirDefault() : fsPermission,
-                FsPermission.getUMask(getConf()));
+                    fsPermission == null ? FsPermission.getDirDefault() : fsPermission,
+                    FsPermission.getUMask(getConf()));
 
         }
 
@@ -238,7 +251,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
      */
     @Override
     public void setOwner(Path path, final String owner, final String group)
-        throws IOException {
+            throws IOException {
         LOG.debug("setOwner path: {}", path);
         path = qualify(path);
 
@@ -271,54 +284,55 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
 
     /**
      * Concat existing files together.
-     * @param trg the path to the target destination.
+     *
+     * @param trg   the path to the target destination.
      * @param psrcs the paths to the sources to use for the concatenation.
-     * @throws IOException IO failure
+     * @throws IOException                   IO failure
      * @throws UnsupportedOperationException if the operation is unsupported
-     *         (default).
+     *                                       (default).
      */
     @Override
-    public void concat(final Path trg, final Path [] psrcs) throws IOException {
+    public void concat(final Path trg, final Path[] psrcs) throws IOException {
         throw new UnsupportedOperationException("Not implemented by the " +
-            getClass().getSimpleName() + " FileSystem implementation");
+                getClass().getSimpleName() + " FileSystem implementation");
     }
 
     /**
      * Truncate the file in the indicated path to the indicated size.
      * <ul>
-     *   <li>Fails if path is a directory.</li>
-     *   <li>Fails if path does not exist.</li>
-     *   <li>Fails if path is not closed.</li>
-     *   <li>Fails if new size is greater than current size.</li>
+     * <li>Fails if path is a directory.</li>
+     * <li>Fails if path does not exist.</li>
+     * <li>Fails if path is not closed.</li>
+     * <li>Fails if new size is greater than current size.</li>
      * </ul>
-     * @param f The path to the file to be truncated
-     * @param newLength The size the file is to be truncated to
      *
+     * @param f         The path to the file to be truncated
+     * @param newLength The size the file is to be truncated to
      * @return <code>true</code> if the file has been truncated to the desired
      * <code>newLength</code> and is immediately available to be reused for
      * write operations such as <code>append</code>, or
      * <code>false</code> if a background process of adjusting the length of
      * the last block has been started, and clients should wait for it to
      * complete before proceeding with further file updates.
-     * @throws IOException IO failure
+     * @throws IOException                   IO failure
      * @throws UnsupportedOperationException if the operation is unsupported
-     *         (default).
+     *                                       (default).
      */
     @Override
     public boolean truncate(Path f, long newLength) throws IOException {
         throw new UnsupportedOperationException("Not implemented by the " +
-            getClass().getSimpleName() + " FileSystem implementation");
+                getClass().getSimpleName() + " FileSystem implementation");
     }
 
     @Override
     public void createSymlink(final Path target, final Path link,
                               final boolean createParent) throws AccessControlException,
-        FileAlreadyExistsException, FileNotFoundException,
-        ParentNotDirectoryException, UnsupportedFileSystemException,
-        IOException {
+            FileAlreadyExistsException, FileNotFoundException,
+            ParentNotDirectoryException, UnsupportedFileSystemException,
+            IOException {
         // Supporting filesystems should override this method
         throw new UnsupportedOperationException(
-            "Filesystem does not support symlinks!");
+                "Filesystem does not support symlinks!");
     }
 
     public boolean supportsSymlinks() {
@@ -327,48 +341,51 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
 
     /**
      * Create a snapshot.
-     * @param path The directory where snapshots will be taken.
+     *
+     * @param path         The directory where snapshots will be taken.
      * @param snapshotName The name of the snapshot
      * @return the snapshot path.
-     * @throws IOException IO failure
+     * @throws IOException                   IO failure
      * @throws UnsupportedOperationException if the operation is unsupported
      */
     @Override
     public Path createSnapshot(Path path, String snapshotName)
-        throws IOException {
+            throws IOException {
         throw new UnsupportedOperationException(getClass().getSimpleName()
-            + " doesn't support createSnapshot");
+                + " doesn't support createSnapshot");
     }
 
     /**
      * Rename a snapshot.
-     * @param path The directory path where the snapshot was taken
+     *
+     * @param path            The directory path where the snapshot was taken
      * @param snapshotOldName Old name of the snapshot
      * @param snapshotNewName New name of the snapshot
-     * @throws IOException IO failure
+     * @throws IOException                   IO failure
      * @throws UnsupportedOperationException if the operation is unsupported
-     *         (default outcome).
+     *                                       (default outcome).
      */
     @Override
     public void renameSnapshot(Path path, String snapshotOldName,
                                String snapshotNewName) throws IOException {
         throw new UnsupportedOperationException(getClass().getSimpleName()
-            + " doesn't support renameSnapshot");
+                + " doesn't support renameSnapshot");
     }
 
     /**
      * Delete a snapshot of a directory.
-     * @param path  The directory that the to-be-deleted snapshot belongs to
+     *
+     * @param path         The directory that the to-be-deleted snapshot belongs to
      * @param snapshotName The name of the snapshot
-     * @throws IOException IO failure
+     * @throws IOException                   IO failure
      * @throws UnsupportedOperationException if the operation is unsupported
-     *         (default outcome).
+     *                                       (default outcome).
      */
     @Override
     public void deleteSnapshot(Path path, String snapshotName)
-        throws IOException {
+            throws IOException {
         throw new UnsupportedOperationException(getClass().getSimpleName()
-            + " doesn't support deleteSnapshot");
+                + " doesn't support deleteSnapshot");
     }
 
     /**
@@ -377,49 +394,49 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
      * ACL entries that are not specified in this call are retained without
      * changes.  (Modifications are merged into the current ACL.)
      *
-     * @param path Path to modify
+     * @param path    Path to modify
      * @param aclSpec List&lt;AclEntry&gt; describing modifications
-     * @throws IOException if an ACL could not be modified
+     * @throws IOException                   if an ACL could not be modified
      * @throws UnsupportedOperationException if the operation is unsupported
-     *         (default outcome).
+     *                                       (default outcome).
      */
     @Override
     public void modifyAclEntries(Path path, List<AclEntry> aclSpec)
-        throws IOException {
+            throws IOException {
         throw new UnsupportedOperationException(getClass().getSimpleName()
-            + " doesn't support modifyAclEntries");
+                + " doesn't support modifyAclEntries");
     }
 
     /**
      * Removes ACL entries from files and directories.  Other ACL entries are
      * retained.
      *
-     * @param path Path to modify
+     * @param path    Path to modify
      * @param aclSpec List describing entries to remove
-     * @throws IOException if an ACL could not be modified
+     * @throws IOException                   if an ACL could not be modified
      * @throws UnsupportedOperationException if the operation is unsupported
-     *         (default outcome).
+     *                                       (default outcome).
      */
     @Override
     public void removeAclEntries(Path path, List<AclEntry> aclSpec)
-        throws IOException {
+            throws IOException {
         throw new UnsupportedOperationException(getClass().getSimpleName()
-            + " doesn't support removeAclEntries");
+                + " doesn't support removeAclEntries");
     }
 
     /**
      * Removes all default ACL entries from files and directories.
      *
      * @param path Path to modify
-     * @throws IOException if an ACL could not be modified
+     * @throws IOException                   if an ACL could not be modified
      * @throws UnsupportedOperationException if the operation is unsupported
-     *         (default outcome).
+     *                                       (default outcome).
      */
     @Override
     public void removeDefaultAcl(Path path)
-        throws IOException {
+            throws IOException {
         throw new UnsupportedOperationException(getClass().getSimpleName()
-            + " doesn't support removeDefaultAcl");
+                + " doesn't support removeDefaultAcl");
     }
 
     /**
@@ -428,32 +445,32 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
      * bits.
      *
      * @param path Path to modify
-     * @throws IOException if an ACL could not be removed
+     * @throws IOException                   if an ACL could not be removed
      * @throws UnsupportedOperationException if the operation is unsupported
-     *         (default outcome).
+     *                                       (default outcome).
      */
     @Override
     public void removeAcl(Path path)
-        throws IOException {
+            throws IOException {
         throw new UnsupportedOperationException(getClass().getSimpleName()
-            + " doesn't support removeAcl");
+                + " doesn't support removeAcl");
     }
 
     /**
      * Fully replaces ACL of files and directories, discarding all existing
      * entries.
      *
-     * @param path Path to modify
+     * @param path    Path to modify
      * @param aclSpec List describing modifications, which must include entries
-     *   for user, group, and others for compatibility with permission bits.
-     * @throws IOException if an ACL could not be modified
+     *                for user, group, and others for compatibility with permission bits.
+     * @throws IOException                   if an ACL could not be modified
      * @throws UnsupportedOperationException if the operation is unsupported
-     *         (default outcome).
+     *                                       (default outcome).
      */
     @Override
     public void setAcl(Path path, List<AclEntry> aclSpec) throws IOException {
         throw new UnsupportedOperationException(getClass().getSimpleName()
-            + " doesn't support setAcl");
+                + " doesn't support setAcl");
     }
 
     /**
@@ -461,14 +478,14 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
      *
      * @param path Path to get
      * @return AclStatus describing the ACL of the file or directory
-     * @throws IOException if an ACL could not be read
+     * @throws IOException                   if an ACL could not be read
      * @throws UnsupportedOperationException if the operation is unsupported
-     *         (default outcome).
+     *                                       (default outcome).
      */
     @Override
     public AclStatus getAclStatus(Path path) throws IOException {
         throw new UnsupportedOperationException(getClass().getSimpleName()
-            + " doesn't support getAclStatus");
+                + " doesn't support getAclStatus");
     }
 
     /**
@@ -478,19 +495,19 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
      * <p>
      * Refer to the HDFS extended attributes user documentation for details.
      *
-     * @param path Path to modify
-     * @param name xattr name.
+     * @param path  Path to modify
+     * @param name  xattr name.
      * @param value xattr value.
-     * @param flag xattr set flag
-     * @throws IOException IO failure
+     * @param flag  xattr set flag
+     * @throws IOException                   IO failure
      * @throws UnsupportedOperationException if the operation is unsupported
-     *         (default outcome).
+     *                                       (default outcome).
      */
     @Override
     public void setXAttr(Path path, String name, byte[] value,
                          EnumSet<XAttrSetFlag> flag) throws IOException {
         throw new UnsupportedOperationException(getClass().getSimpleName()
-            + " doesn't support setXAttr");
+                + " doesn't support setXAttr");
     }
 
     /**
@@ -503,14 +520,14 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
      * @param path Path to get extended attribute
      * @param name xattr name.
      * @return byte[] xattr value.
-     * @throws IOException IO failure
+     * @throws IOException                   IO failure
      * @throws UnsupportedOperationException if the operation is unsupported
-     *         (default outcome).
+     *                                       (default outcome).
      */
     @Override
     public byte[] getXAttr(Path path, String name) throws IOException {
         throw new UnsupportedOperationException(getClass().getSimpleName()
-            + " doesn't support getXAttr");
+                + " doesn't support getXAttr");
     }
 
     /**
@@ -522,14 +539,14 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
      *
      * @param path Path to get extended attributes
      * @return Map describing the XAttrs of the file or directory
-     * @throws IOException IO failure
+     * @throws IOException                   IO failure
      * @throws UnsupportedOperationException if the operation is unsupported
-     *         (default outcome).
+     *                                       (default outcome).
      */
     @Override
     public Map<String, byte[]> getXAttrs(Path path) throws IOException {
         throw new UnsupportedOperationException(getClass().getSimpleName()
-            + " doesn't support getXAttrs");
+                + " doesn't support getXAttrs");
     }
 
     /**
@@ -539,18 +556,18 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
      * <p>
      * Refer to the HDFS extended attributes user documentation for details.
      *
-     * @param path Path to get extended attributes
+     * @param path  Path to get extended attributes
      * @param names XAttr names.
      * @return Map describing the XAttrs of the file or directory
-     * @throws IOException IO failure
+     * @throws IOException                   IO failure
      * @throws UnsupportedOperationException if the operation is unsupported
-     *         (default outcome).
+     *                                       (default outcome).
      */
     @Override
     public Map<String, byte[]> getXAttrs(Path path, List<String> names)
-        throws IOException {
+            throws IOException {
         throw new UnsupportedOperationException(getClass().getSimpleName()
-            + " doesn't support getXAttrs");
+                + " doesn't support getXAttrs");
     }
 
     /**
@@ -562,14 +579,14 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
      *
      * @param path Path to get extended attributes
      * @return List{@literal <String>} of the XAttr names of the file or directory
-     * @throws IOException IO failure
+     * @throws IOException                   IO failure
      * @throws UnsupportedOperationException if the operation is unsupported
-     *         (default outcome).
+     *                                       (default outcome).
      */
     @Override
     public List<String> listXAttrs(Path path) throws IOException {
         throw new UnsupportedOperationException(getClass().getSimpleName()
-            + " doesn't support listXAttrs");
+                + " doesn't support listXAttrs");
     }
 
     /**
@@ -581,14 +598,14 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
      *
      * @param path Path to remove extended attribute
      * @param name xattr name
-     * @throws IOException IO failure
+     * @throws IOException                   IO failure
      * @throws UnsupportedOperationException if the operation is unsupported
-     *         (default outcome).
+     *                                       (default outcome).
      */
     @Override
     public void removeXAttr(Path path, String name) throws IOException {
         throw new UnsupportedOperationException(getClass().getSimpleName()
-            + " doesn't support removeXAttr");
+                + " doesn't support removeXAttr");
     }
 
 }

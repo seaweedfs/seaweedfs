@@ -41,39 +41,34 @@ https://github.com/pkieltyka/jwtauth/blob/master/jwtauth.go
 
 */
 type Guard struct {
-	whiteList []string
-	SecretKey Secret
+	whiteList           []string
+	SigningKey          SigningKey
+	ExpiresAfterSec     int
+	ReadSigningKey      SigningKey
+	ReadExpiresAfterSec int
 
-	isActive bool
+	isWriteActive bool
 }
 
-func NewGuard(whiteList []string, secretKey string) *Guard {
-	g := &Guard{whiteList: whiteList, SecretKey: Secret(secretKey)}
-	g.isActive = len(g.whiteList) != 0 || len(g.SecretKey) != 0
+func NewGuard(whiteList []string, signingKey string, expiresAfterSec int, readSigningKey string, readExpiresAfterSec int) *Guard {
+	g := &Guard{
+		whiteList:           whiteList,
+		SigningKey:          SigningKey(signingKey),
+		ExpiresAfterSec:     expiresAfterSec,
+		ReadSigningKey:      SigningKey(readSigningKey),
+		ReadExpiresAfterSec: readExpiresAfterSec,
+	}
+	g.isWriteActive = len(g.whiteList) != 0 || len(g.SigningKey) != 0
 	return g
 }
 
 func (g *Guard) WhiteList(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
-	if !g.isActive {
-		//if no security needed, just skip all checkings
+	if !g.isWriteActive {
+		//if no security needed, just skip all checking
 		return f
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := g.checkWhiteList(w, r); err != nil {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		f(w, r)
-	}
-}
-
-func (g *Guard) Secure(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
-	if !g.isActive {
-		//if no security needed, just skip all checkings
-		return f
-	}
-	return func(w http.ResponseWriter, r *http.Request) {
-		if err := g.checkJwt(w, r); err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -129,34 +124,4 @@ func (g *Guard) checkWhiteList(w http.ResponseWriter, r *http.Request) error {
 
 	glog.V(0).Infof("Not in whitelist: %s", r.RemoteAddr)
 	return fmt.Errorf("Not in whitelis: %s", r.RemoteAddr)
-}
-
-func (g *Guard) checkJwt(w http.ResponseWriter, r *http.Request) error {
-	if g.checkWhiteList(w, r) == nil {
-		return nil
-	}
-
-	if len(g.SecretKey) == 0 {
-		return nil
-	}
-
-	tokenStr := GetJwt(r)
-
-	if tokenStr == "" {
-		return ErrUnauthorized
-	}
-
-	// Verify the token
-	token, err := DecodeJwt(g.SecretKey, tokenStr)
-	if err != nil {
-		glog.V(1).Infof("Token verification error from %s: %v", r.RemoteAddr, err)
-		return ErrUnauthorized
-	}
-	if !token.Valid {
-		glog.V(1).Infof("Token invliad from %s: %v", r.RemoteAddr, tokenStr)
-		return ErrUnauthorized
-	}
-
-	glog.V(1).Infof("No permission from %s", r.RemoteAddr)
-	return fmt.Errorf("No write permisson from %s", r.RemoteAddr)
 }

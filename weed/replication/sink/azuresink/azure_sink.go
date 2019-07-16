@@ -70,15 +70,13 @@ func (g *AzureSink) initialize(accountName, accountKey, container, dir string) e
 	return nil
 }
 
-func (g *AzureSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) error {
+func (g *AzureSink) DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool) error {
 
 	key = cleanKey(key)
 
 	if isDirectory {
 		key = key + "/"
 	}
-
-	ctx := context.Background()
 
 	if _, err := g.containerURL.NewBlobURL(key).Delete(ctx,
 		azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{}); err != nil {
@@ -89,7 +87,7 @@ func (g *AzureSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks boo
 
 }
 
-func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry) error {
+func (g *AzureSink) CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry) error {
 
 	key = cleanKey(key)
 
@@ -99,8 +97,6 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
 	totalSize := filer2.TotalSize(entry.Chunks)
 	chunkViews := filer2.ViewFromChunks(entry.Chunks, 0, int(totalSize))
-
-	ctx := context.Background()
 
 	// Create a URL that references a to-be-created blob in your
 	// Azure Storage account's container.
@@ -113,7 +109,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
 	for _, chunk := range chunkViews {
 
-		fileUrl, err := g.filerSource.LookupFileId(chunk.FileId)
+		fileUrl, err := g.filerSource.LookupFileId(ctx, chunk.FileId)
 		if err != nil {
 			return err
 		}
@@ -136,7 +132,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
 }
 
-func (g *AzureSink) UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (g *AzureSink) UpdateEntry(ctx context.Context, key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
 	key = cleanKey(key)
 	// TODO improve efficiency
 	return false, nil

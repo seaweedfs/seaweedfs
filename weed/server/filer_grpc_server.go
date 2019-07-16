@@ -14,12 +14,11 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 
-	entry, err := fs.filer.FindEntry(filer2.FullPath(filepath.Join(req.Directory, req.Name)))
+	entry, err := fs.filer.FindEntry(ctx, filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name))))
 	if err != nil {
 		return nil, fmt.Errorf("%s not found under %s: %v", req.Name, req.Directory, err)
 	}
@@ -45,7 +44,7 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 	lastFileName := req.StartFromFileName
 	includeLastFile := req.InclusiveStartFrom
 	for limit > 0 {
-		entries, err := fs.filer.ListDirectoryEntries(filer2.FullPath(req.Directory), lastFileName, includeLastFile, 1024)
+		entries, err := fs.filer.ListDirectoryEntries(ctx, filer2.FullPath(req.Directory), lastFileName, includeLastFile, 1024)
 		if err != nil {
 			return nil, err
 		}
@@ -112,22 +111,21 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 
 func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (resp *filer_pb.CreateEntryResponse, err error) {
 
-	fullpath := filer2.FullPath(filepath.Join(req.Directory, req.Entry.Name))
+	fullpath := filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name)))
 	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
-
-	fs.filer.DeleteChunks(garbages)
 
 	if req.Entry.Attributes == nil {
 		return nil, fmt.Errorf("can not create entry with empty attributes")
 	}
 
-	err = fs.filer.CreateEntry(&filer2.Entry{
+	err = fs.filer.CreateEntry(ctx, &filer2.Entry{
 		FullPath: fullpath,
 		Attr:     filer2.PbToEntryAttribute(req.Entry.Attributes),
 		Chunks:   chunks,
 	})
 
 	if err == nil {
+		fs.filer.DeleteChunks(fullpath, garbages)
 	}
 
 	return &filer_pb.CreateEntryResponse{}, err
@@ -135,19 +133,19 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 
 func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 
-	fullpath := filepath.Join(req.Directory, req.Entry.Name)
-	entry, err := fs.filer.FindEntry(filer2.FullPath(fullpath))
+	fullpath := filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name))
+	entry, err := fs.filer.FindEntry(ctx, filer2.FullPath(fullpath))
 	if err != nil {
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("not found %s: %v", fullpath, err)
 	}
 
 	// remove old chunks if not included in the new ones
-	unusedChunks := filer2.FindUnusedFileChunks(entry.Chunks, req.Entry.Chunks)
+	unusedChunks := filer2.MinusChunks(entry.Chunks, req.Entry.Chunks)
 
 	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
 
 	newEntry := &filer2.Entry{
-		FullPath: filer2.FullPath(filepath.Join(req.Directory, req.Entry.Name)),
+		FullPath: filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name))),
 		Attr:     entry.Attr,
 		Chunks:   chunks,
 	}
@@ -175,9 +173,9 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		return &filer_pb.UpdateEntryResponse{}, err
 	}
 
-	if err = fs.filer.UpdateEntry(entry, newEntry); err == nil {
-		fs.filer.DeleteChunks(unusedChunks)
-		fs.filer.DeleteChunks(garbages)
+	if err = fs.filer.UpdateEntry(ctx, entry, newEntry); err == nil {
+		fs.filer.DeleteChunks(entry.FullPath, unusedChunks)
+		fs.filer.DeleteChunks(entry.FullPath, garbages)
 	}
 
 	fs.filer.NotifyUpdateEvent(entry, newEntry, true)
@@ -186,7 +184,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 }
 
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {
-	err = fs.filer.DeleteEntryMetaAndData(filer2.FullPath(filepath.Join(req.Directory, req.Name)), req.IsRecursive, req.IsDeleteData)
+	err = fs.filer.DeleteEntryMetaAndData(ctx, filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name))), req.IsRecursive, req.IsDeleteData)
 	return &filer_pb.DeleteEntryResponse{}, err
 }
 
@@ -220,7 +218,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 			DataCenter:  "",
 		}
 	}
-	assignResult, err := operation.Assign(fs.filer.GetMaster(), assignRequest, altRequest)
+	assignResult, err := operation.Assign(fs.filer.GetMaster(), fs.grpcDialOption, assignRequest, altRequest)
 	if err != nil {
 		return nil, fmt.Errorf("assign volume: %v", err)
 	}
@@ -233,14 +231,18 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 		Count:     int32(assignResult.Count),
 		Url:       assignResult.Url,
 		PublicUrl: assignResult.PublicUrl,
+		Auth:      string(assignResult.Auth),
 	}, err
 }
 
 func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.DeleteCollectionRequest) (resp *filer_pb.DeleteCollectionResponse, err error) {
 
-	for _, master := range fs.option.Masters {
-		_, err = util.Get(fmt.Sprintf("http://%s/col/delete?collection=%s", master, req.Collection))
-	}
+	err = fs.filer.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
+		_, err := client.CollectionDelete(ctx, &master_pb.CollectionDeleteRequest{
+			Name: req.GetCollection(),
+		})
+		return err
+	})
 
 	return &filer_pb.DeleteCollectionResponse{}, err
 }
@@ -253,7 +255,7 @@ func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsR
 		Ttl:         req.Ttl,
 	}
 
-	output, err := operation.Statistics(fs.filer.GetMaster(), input)
+	output, err := operation.Statistics(fs.filer.GetMaster(), fs.grpcDialOption, input)
 	if err != nil {
 		return nil, err
 	}
@@ -262,5 +264,15 @@ func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsR
 		TotalSize: output.TotalSize,
 		UsedSize:  output.UsedSize,
 		FileCount: output.FileCount,
+	}, nil
+}
+
+func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.GetFilerConfigurationRequest) (resp *filer_pb.GetFilerConfigurationResponse, err error) {
+
+	return &filer_pb.GetFilerConfigurationResponse{
+		Masters:     fs.option.Masters,
+		Collection:  fs.option.Collection,
+		Replication: fs.option.DefaultReplication,
+		MaxMb:       uint32(fs.option.MaxMB),
 	}, nil
 }

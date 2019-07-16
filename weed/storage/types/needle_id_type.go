@@ -1,5 +1,3 @@
-// +build !128BitNeedleId
-
 package types
 
 import (

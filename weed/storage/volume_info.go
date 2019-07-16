@@ -5,44 +5,81 @@ import (
 	"sort"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 type VolumeInfo struct {
-	Id               VolumeId
+	Id               needle.VolumeId
 	Size             uint64
 	ReplicaPlacement *ReplicaPlacement
-	Ttl              *TTL
+	Ttl              *needle.TTL
 	Collection       string
-	Version          Version
+	Version          needle.Version
 	FileCount        int
 	DeleteCount      int
 	DeletedByteCount uint64
 	ReadOnly         bool
+	CompactRevision  uint32
+	ModifiedAtSecond int64
 }
 
 func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err error) {
 	vi = VolumeInfo{
-		Id:               VolumeId(m.Id),
+		Id:               needle.VolumeId(m.Id),
 		Size:             m.Size,
 		Collection:       m.Collection,
 		FileCount:        int(m.FileCount),
 		DeleteCount:      int(m.DeleteCount),
 		DeletedByteCount: m.DeletedByteCount,
 		ReadOnly:         m.ReadOnly,
-		Version:          Version(m.Version),
+		Version:          needle.Version(m.Version),
+		CompactRevision:  m.CompactRevision,
+		ModifiedAtSecond: m.ModifiedAtSecond,
 	}
 	rp, e := NewReplicaPlacementFromByte(byte(m.ReplicaPlacement))
 	if e != nil {
 		return vi, e
 	}
 	vi.ReplicaPlacement = rp
-	vi.Ttl = LoadTTLFromUint32(m.Ttl)
+	vi.Ttl = needle.LoadTTLFromUint32(m.Ttl)
+	return vi, nil
+}
+
+func NewVolumeInfoFromShort(m *master_pb.VolumeShortInformationMessage) (vi VolumeInfo, err error) {
+	vi = VolumeInfo{
+		Id:         needle.VolumeId(m.Id),
+		Collection: m.Collection,
+		Version:    needle.Version(m.Version),
+	}
+	rp, e := NewReplicaPlacementFromByte(byte(m.ReplicaPlacement))
+	if e != nil {
+		return vi, e
+	}
+	vi.ReplicaPlacement = rp
+	vi.Ttl = needle.LoadTTLFromUint32(m.Ttl)
 	return vi, nil
 }
 
 func (vi VolumeInfo) String() string {
 	return fmt.Sprintf("Id:%d, Size:%d, ReplicaPlacement:%s, Collection:%s, Version:%v, FileCount:%d, DeleteCount:%d, DeletedByteCount:%d, ReadOnly:%v",
 		vi.Id, vi.Size, vi.ReplicaPlacement, vi.Collection, vi.Version, vi.FileCount, vi.DeleteCount, vi.DeletedByteCount, vi.ReadOnly)
+}
+
+func (vi VolumeInfo) ToVolumeInformationMessage() *master_pb.VolumeInformationMessage {
+	return &master_pb.VolumeInformationMessage{
+		Id:               uint32(vi.Id),
+		Size:             uint64(vi.Size),
+		Collection:       vi.Collection,
+		FileCount:        uint64(vi.FileCount),
+		DeleteCount:      uint64(vi.DeleteCount),
+		DeletedByteCount: vi.DeletedByteCount,
+		ReadOnly:         vi.ReadOnly,
+		ReplicaPlacement: uint32(vi.ReplicaPlacement.Byte()),
+		Version:          uint32(vi.Version),
+		Ttl:              vi.Ttl.ToUint32(),
+		CompactRevision:  vi.CompactRevision,
+		ModifiedAtSecond: vi.ModifiedAtSecond,
+	}
 }
 
 /*VolumesInfo sorting*/

@@ -13,7 +13,6 @@ var Commands = []*Command{
 	cmdCompact,
 	cmdCopy,
 	cmdFix,
-	cmdFilerExport,
 	cmdFilerReplicate,
 	cmdServer,
 	cmdMaster,
@@ -27,6 +26,7 @@ var Commands = []*Command{
 	cmdVolume,
 	cmdExport,
 	cmdMount,
+	cmdWebDav,
 }
 
 type Command struct {

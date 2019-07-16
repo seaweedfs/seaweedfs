@@ -14,24 +14,24 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func ReplicatedWrite(masterNode string, s *storage.Store,
-	volumeId storage.VolumeId, needle *storage.Needle,
-	r *http.Request) (size uint32, errorStatus string) {
+	volumeId needle.VolumeId, n *needle.Needle,
+	r *http.Request) (size uint32, isUnchanged bool, err error) {
 
 	//check JWT
 	jwt := security.GetJwt(r)
 
-	ret, err := s.Write(volumeId, needle)
-	needToReplicate := !s.HasVolume(volumeId)
+	size, isUnchanged, err = s.Write(volumeId, n)
 	if err != nil {
-		errorStatus = "Failed to write to local disk (" + err.Error() + ")"
-		size = ret
+		err = fmt.Errorf("failed to write to local disk: %v", err)
 		return
 	}
 
+	needToReplicate := !s.HasVolume(volumeId)
 	needToReplicate = needToReplicate || s.GetVolume(volumeId).NeedToReplicate()
 	if !needToReplicate {
 		needToReplicate = s.GetVolume(volumeId).NeedToReplicate()
@@ -47,43 +47,43 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 				}
 				q := url.Values{
 					"type": {"replicate"},
+					"ttl":  {n.Ttl.String()},
 				}
-				if needle.LastModified > 0 {
-					q.Set("ts", strconv.FormatUint(needle.LastModified, 10))
+				if n.LastModified > 0 {
+					q.Set("ts", strconv.FormatUint(n.LastModified, 10))
 				}
-				if needle.IsChunkedManifest() {
+				if n.IsChunkedManifest() {
 					q.Set("cm", "true")
 				}
 				u.RawQuery = q.Encode()
 
 				pairMap := make(map[string]string)
-				if needle.HasPairs() {
+				if n.HasPairs() {
 					tmpMap := make(map[string]string)
-					err := json.Unmarshal(needle.Pairs, &tmpMap)
+					err := json.Unmarshal(n.Pairs, &tmpMap)
 					if err != nil {
 						glog.V(0).Infoln("Unmarshal pairs error:", err)
 					}
 					for k, v := range tmpMap {
-						pairMap[storage.PairNamePrefix+k] = v
+						pairMap[needle.PairNamePrefix+k] = v
 					}
 				}
 
 				_, err := operation.Upload(u.String(),
-					string(needle.Name), bytes.NewReader(needle.Data), needle.IsGzipped(), string(needle.Mime),
+					string(n.Name), bytes.NewReader(n.Data), n.IsGzipped(), string(n.Mime),
 					pairMap, jwt)
 				return err
 			}); err != nil {
-				ret = 0
-				errorStatus = fmt.Sprintf("Failed to write to replicas for volume %d: %v", volumeId, err)
+				size = 0
+				err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
 			}
 		}
 	}
-	size = ret
 	return
 }
 
 func ReplicatedDelete(masterNode string, store *storage.Store,
-	volumeId storage.VolumeId, n *storage.Needle,
+	volumeId needle.VolumeId, n *needle.Needle,
 	r *http.Request) (uint32, error) {
 
 	//check JWT
@@ -102,7 +102,7 @@ func ReplicatedDelete(masterNode string, store *storage.Store,
 	if needToReplicate { //send to other replica locations
 		if r.FormValue("type") != "replicate" {
 			if err = distributedOperation(masterNode, store, volumeId, func(location operation.Location) error {
-				return util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", jwt)
+				return util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", string(jwt))
 			}); err != nil {
 				ret = 0
 			}
@@ -131,7 +131,7 @@ type RemoteResult struct {
 	Error error
 }
 
-func distributedOperation(masterNode string, store *storage.Store, volumeId storage.VolumeId, op func(location operation.Location) error) error {
+func distributedOperation(masterNode string, store *storage.Store, volumeId needle.VolumeId, op func(location operation.Location) error) error {
 	if lookupResult, lookupErr := operation.Lookup(masterNode, volumeId.String()); lookupErr == nil {
 		length := 0
 		selfUrl := (store.Ip + ":" + strconv.Itoa(store.Port))

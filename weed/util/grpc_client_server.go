@@ -1,7 +1,9 @@
 package util
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,28 +19,45 @@ var (
 	grpcClientsLock sync.Mutex
 )
 
-func NewGrpcServer() *grpc.Server {
-	return grpc.NewServer(grpc.KeepaliveParams(keepalive.ServerParameters{
+func init() {
+	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 1024
+}
+
+func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
+	var options []grpc.ServerOption
+	options = append(options, grpc.KeepaliveParams(keepalive.ServerParameters{
 		Time:    10 * time.Second, // wait time before ping if no activity
 		Timeout: 20 * time.Second, // ping timeout
 	}), grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 		MinTime: 60 * time.Second, // min time a client should wait before sending a ping
 	}))
+	for _, opt := range opts {
+		if opt != nil {
+			options = append(options, opt)
+		}
+	}
+	return grpc.NewServer(options...)
 }
 
-func GrpcDial(address string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+func GrpcDial(ctx context.Context, address string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	// opts = append(opts, grpc.WithBlock())
 	// opts = append(opts, grpc.WithTimeout(time.Duration(5*time.Second)))
-	opts = append(opts, grpc.WithInsecure())
-	opts = append(opts, grpc.WithKeepaliveParams(keepalive.ClientParameters{
-		Time:    30 * time.Second, // client ping server if no activity for this long
-		Timeout: 20 * time.Second,
-	}))
-
-	return grpc.Dial(address, opts...)
+	var options []grpc.DialOption
+	options = append(options,
+		// grpc.WithInsecure(),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:    30 * time.Second, // client ping server if no activity for this long
+			Timeout: 20 * time.Second,
+		}))
+	for _, opt := range opts {
+		if opt != nil {
+			options = append(options, opt)
+		}
+	}
+	return grpc.DialContext(ctx, address, options...)
 }
 
-func WithCachedGrpcClient(fn func(*grpc.ClientConn) error, address string, opts ...grpc.DialOption) error {
+func WithCachedGrpcClient(ctx context.Context, fn func(*grpc.ClientConn) error, address string, opts ...grpc.DialOption) error {
 
 	grpcClientsLock.Lock()
 
@@ -48,7 +67,7 @@ func WithCachedGrpcClient(fn func(*grpc.ClientConn) error, address string, opts 
 		return fn(existingConnection)
 	}
 
-	grpcConnection, err := GrpcDial(address, opts...)
+	grpcConnection, err := GrpcDial(ctx, address, opts...)
 	if err != nil {
 		grpcClientsLock.Unlock()
 		return fmt.Errorf("fail to dial %s: %v", address, err)
@@ -62,26 +81,40 @@ func WithCachedGrpcClient(fn func(*grpc.ClientConn) error, address string, opts 
 		grpcClientsLock.Lock()
 		delete(grpcClients, address)
 		grpcClientsLock.Unlock()
+		grpcConnection.Close()
 	}
 
 	return err
 }
 
-func ParseServerToGrpcAddress(server string, optionalGrpcPort int) (serverGrpcAddress string, err error) {
+func ParseServerToGrpcAddress(server string) (serverGrpcAddress string, err error) {
+	colonIndex := strings.LastIndex(server, ":")
+	if colonIndex < 0 {
+		return "", fmt.Errorf("server should have hostname:port format: %v", server)
+	}
+
+	port, parseErr := strconv.ParseUint(server[colonIndex+1:], 10, 64)
+	if parseErr != nil {
+		return "", fmt.Errorf("server port parse error: %v", parseErr)
+	}
+
+	grpcPort := int(port) + 10000
+
+	return fmt.Sprintf("%s:%d", server[:colonIndex], grpcPort), nil
+}
+
+func ServerToGrpcAddress(server string) (serverGrpcAddress string) {
 	hostnameAndPort := strings.Split(server, ":")
 	if len(hostnameAndPort) != 2 {
-		return "", fmt.Errorf("The server should have hostname:port format: %v", hostnameAndPort)
+		return fmt.Sprintf("unexpected server address: %s", server)
 	}
 
-	filerPort, parseErr := strconv.ParseUint(hostnameAndPort[1], 10, 64)
+	port, parseErr := strconv.ParseUint(hostnameAndPort[1], 10, 64)
 	if parseErr != nil {
-		return "", fmt.Errorf("The server port parse error: %v", parseErr)
+		return fmt.Sprintf("failed to parse port for %s:%s", hostnameAndPort[0], hostnameAndPort[1])
 	}
 
-	filerGrpcPort := int(filerPort) + 10000
-	if optionalGrpcPort != 0 {
-		filerGrpcPort = optionalGrpcPort
-	}
+	grpcPort := int(port) + 10000
 
-	return fmt.Sprintf("%s:%d", hostnameAndPort[0], filerGrpcPort), nil
+	return fmt.Sprintf("%s:%d", hostnameAndPort[0], grpcPort)
 }

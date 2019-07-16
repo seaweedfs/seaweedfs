@@ -1,23 +1,22 @@
 package storage
 
 import (
-	"io"
 	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/idx"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 type NeedleMap struct {
-	m needle.NeedleValueMap
-
 	baseNeedleMapper
+	m needle_map.NeedleValueMap
 }
 
 func NewCompactNeedleMap(file *os.File) *NeedleMap {
 	nm := &NeedleMap{
-		m: needle.NewCompactMap(),
+		m: needle_map.NewCompactMap(),
 	}
 	nm.indexFile = file
 	return nm
@@ -25,15 +24,11 @@ func NewCompactNeedleMap(file *os.File) *NeedleMap {
 
 func NewBtreeNeedleMap(file *os.File) *NeedleMap {
 	nm := &NeedleMap{
-		m: needle.NewBtreeMap(),
+		m: needle_map.NewBtreeMap(),
 	}
 	nm.indexFile = file
 	return nm
 }
-
-const (
-	RowsToRead = 1024
-)
 
 func LoadCompactNeedleMap(file *os.File) (*NeedleMap, error) {
 	nm := NewCompactNeedleMap(file)
@@ -46,16 +41,14 @@ func LoadBtreeNeedleMap(file *os.File) (*NeedleMap, error) {
 }
 
 func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
-	e := WalkIndexFile(file, func(key NeedleId, offset Offset, size uint32) error {
-		if key > nm.MaximumFileKey {
-			nm.MaximumFileKey = key
-		}
-		if offset > 0 && size != TombstoneFileSize {
+	e := idx.WalkIndexFile(file, func(key NeedleId, offset Offset, size uint32) error {
+		nm.MaybeSetMaxFileKey(key)
+		if !offset.IsZero() && size != TombstoneFileSize {
 			nm.FileCounter++
 			nm.FileByteCounter = nm.FileByteCounter + uint64(size)
 			oldOffset, oldSize := nm.m.Set(NeedleId(key), offset, size)
 			// glog.V(3).Infoln("reading key", key, "offset", offset*NeedlePaddingSize, "size", size, "oldSize", oldSize)
-			if oldOffset > 0 && oldSize != TombstoneFileSize {
+			if !oldOffset.IsZero() && oldSize != TombstoneFileSize {
 				nm.DeletionCounter++
 				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 			}
@@ -67,40 +60,8 @@ func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
 		}
 		return nil
 	})
-	glog.V(1).Infof("max file key: %d for file: %s", nm.MaximumFileKey, file.Name())
+	glog.V(1).Infof("max file key: %d for file: %s", nm.MaxFileKey(), file.Name())
 	return nm, e
-}
-
-// walks through the index file, calls fn function with each key, offset, size
-// stops with the error returned by the fn function
-func WalkIndexFile(r *os.File, fn func(key NeedleId, offset Offset, size uint32) error) error {
-	var readerOffset int64
-	bytes := make([]byte, NeedleEntrySize*RowsToRead)
-	count, e := r.ReadAt(bytes, readerOffset)
-	glog.V(3).Infoln("file", r.Name(), "readerOffset", readerOffset, "count", count, "e", e)
-	readerOffset += int64(count)
-	var (
-		key    NeedleId
-		offset Offset
-		size   uint32
-		i      int
-	)
-
-	for count > 0 && e == nil || e == io.EOF {
-		for i = 0; i+NeedleEntrySize <= count; i += NeedleEntrySize {
-			key, offset, size = IdxFileEntry(bytes[i : i+NeedleEntrySize])
-			if e = fn(key, offset, size); e != nil {
-				return e
-			}
-		}
-		if e == io.EOF {
-			return nil
-		}
-		count, e = r.ReadAt(bytes, readerOffset)
-		glog.V(3).Infoln("file", r.Name(), "readerOffset", readerOffset, "count", count, "e", e)
-		readerOffset += int64(count)
-	}
-	return e
 }
 
 func (nm *NeedleMap) Put(key NeedleId, offset Offset, size uint32) error {
@@ -108,7 +69,7 @@ func (nm *NeedleMap) Put(key NeedleId, offset Offset, size uint32) error {
 	nm.logPut(key, oldSize, size)
 	return nm.appendToIndexFile(key, offset, size)
 }
-func (nm *NeedleMap) Get(key NeedleId) (element *needle.NeedleValue, ok bool) {
+func (nm *NeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, ok bool) {
 	element, ok = nm.m.Get(NeedleId(key))
 	return
 }

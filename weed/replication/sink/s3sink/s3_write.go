@@ -2,6 +2,7 @@ package S3Sink
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 
@@ -81,7 +82,7 @@ func (s3sink *S3Sink) abortMultipartUpload(key, uploadId string) error {
 }
 
 // To complete multipart upload
-func (s3sink *S3Sink) completeMultipartUpload(key, uploadId string, parts []*s3.CompletedPart) error {
+func (s3sink *S3Sink) completeMultipartUpload(ctx context.Context, key, uploadId string, parts []*s3.CompletedPart) error {
 	input := &s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(s3sink.bucket),
 		Key:      aws.String(key),
@@ -102,10 +103,10 @@ func (s3sink *S3Sink) completeMultipartUpload(key, uploadId string, parts []*s3.
 }
 
 // To upload a part
-func (s3sink *S3Sink) uploadPart(key, uploadId string, partId int, chunk *filer2.ChunkView) (*s3.CompletedPart, error) {
+func (s3sink *S3Sink) uploadPart(ctx context.Context, key, uploadId string, partId int, chunk *filer2.ChunkView) (*s3.CompletedPart, error) {
 	var readSeeker io.ReadSeeker
 
-	readSeeker, err := s3sink.buildReadSeeker(chunk)
+	readSeeker, err := s3sink.buildReadSeeker(ctx, chunk)
 	if err != nil {
 		glog.Errorf("[%s] uploadPart %s %d read: %v", s3sink.bucket, key, partId, err)
 		return nil, fmt.Errorf("[%s] uploadPart %s %d read: %v", s3sink.bucket, key, partId, err)
@@ -155,8 +156,8 @@ func (s3sink *S3Sink) uploadPartCopy(key, uploadId string, partId int64, copySou
 	return err
 }
 
-func (s3sink *S3Sink) buildReadSeeker(chunk *filer2.ChunkView) (io.ReadSeeker, error) {
-	fileUrl, err := s3sink.filerSource.LookupFileId(chunk.FileId)
+func (s3sink *S3Sink) buildReadSeeker(ctx context.Context, chunk *filer2.ChunkView) (io.ReadSeeker, error) {
+	fileUrl, err := s3sink.filerSource.LookupFileId(ctx, chunk.FileId)
 	if err != nil {
 		return nil, err
 	}

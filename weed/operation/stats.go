@@ -2,18 +2,16 @@ package operation
 
 import (
 	"context"
-	"time"
+	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 )
 
-func Statistics(server string, req *master_pb.StatisticsRequest) (resp *master_pb.StatisticsResponse, err error) {
+func Statistics(server string, grpcDialOption grpc.DialOption, req *master_pb.StatisticsRequest) (resp *master_pb.StatisticsResponse, err error) {
 
-	err = withMasterServerClient(server, func(masterClient master_pb.SeaweedClient) error {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(5*time.Second))
-		defer cancel()
+	err = WithMasterServerClient(server, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
-		grpcResponse, grpcErr := masterClient.Statistics(ctx, req)
+		grpcResponse, grpcErr := masterClient.Statistics(context.Background(), req)
 		if grpcErr != nil {
 			return grpcErr
 		}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
 )
@@ -23,23 +24,23 @@ const (
 * Rest bytes: Reserved
  */
 type SuperBlock struct {
-	version          Version
-	ReplicaPlacement *ReplicaPlacement
-	Ttl              *TTL
-	CompactRevision  uint16
-	Extra            *master_pb.SuperBlockExtra
-	extraSize        uint16
+	version            needle.Version
+	ReplicaPlacement   *ReplicaPlacement
+	Ttl                *needle.TTL
+	CompactionRevision uint16
+	Extra              *master_pb.SuperBlockExtra
+	extraSize          uint16
 }
 
 func (s *SuperBlock) BlockSize() int {
 	switch s.version {
-	case Version2, Version3:
+	case needle.Version2, needle.Version3:
 		return _SuperBlockSize + int(s.extraSize)
 	}
 	return _SuperBlockSize
 }
 
-func (s *SuperBlock) Version() Version {
+func (s *SuperBlock) Version() needle.Version {
 	return s.version
 }
 func (s *SuperBlock) Bytes() []byte {
@@ -47,7 +48,7 @@ func (s *SuperBlock) Bytes() []byte {
 	header[0] = byte(s.version)
 	header[1] = s.ReplicaPlacement.Byte()
 	s.Ttl.ToBytes(header[2:4])
-	util.Uint16toBytes(header[4:6], s.CompactRevision)
+	util.Uint16toBytes(header[4:6], s.CompactionRevision)
 
 	if s.Extra != nil {
 		extraData, err := proto.Marshal(s.Extra)
@@ -75,7 +76,7 @@ func (v *Volume) maybeWriteSuperBlock() error {
 		return e
 	}
 	if stat.Size() == 0 {
-		v.SuperBlock.version = CurrentVersion
+		v.SuperBlock.version = needle.CurrentVersion
 		_, e = v.dataFile.Write(v.SuperBlock.Bytes())
 		if e != nil && os.IsPermission(e) {
 			//read-only, but zero length - recreate it!
@@ -105,13 +106,13 @@ func ReadSuperBlock(dataFile *os.File) (superBlock SuperBlock, err error) {
 		err = fmt.Errorf("cannot read volume %s super block: %v", dataFile.Name(), e)
 		return
 	}
-	superBlock.version = Version(header[0])
+	superBlock.version = needle.Version(header[0])
 	if superBlock.ReplicaPlacement, err = NewReplicaPlacementFromByte(header[1]); err != nil {
 		err = fmt.Errorf("cannot read replica type: %s", err.Error())
 		return
 	}
-	superBlock.Ttl = LoadTTLFromBytes(header[2:4])
-	superBlock.CompactRevision = util.BytesToUint16(header[4:6])
+	superBlock.Ttl = needle.LoadTTLFromBytes(header[2:4])
+	superBlock.CompactionRevision = util.BytesToUint16(header[4:6])
 	superBlock.extraSize = util.BytesToUint16(header[6:8])
 
 	if superBlock.extraSize > 0 {

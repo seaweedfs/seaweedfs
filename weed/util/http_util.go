@@ -12,8 +12,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"github.com/chrislusf/seaweedfs/weed/security"
 )
 
 var (
@@ -97,7 +95,7 @@ func Head(url string) (http.Header, error) {
 	return r.Header, nil
 }
 
-func Delete(url string, jwt security.EncodedJwt) error {
+func Delete(url string, jwt string) error {
 	req, err := http.NewRequest("DELETE", url, nil)
 	if jwt != "" {
 		req.Header.Set("Authorization", "BEARER "+string(jwt))

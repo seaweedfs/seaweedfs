@@ -9,6 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/spf13/viper"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/server"
@@ -32,7 +35,6 @@ type VolumeServerOptions struct {
 	masters               *string
 	pulseSeconds          *int
 	idleConnectionTimeout *int
-	maxCpu                *int
 	dataCenter            *string
 	rack                  *string
 	whiteList             []string
@@ -41,6 +43,7 @@ type VolumeServerOptions struct {
 	readRedirect          *bool
 	cpuProfile            *string
 	memProfile            *string
+	compactionMBPerSecond *int
 }
 
 func init() {
@@ -53,14 +56,14 @@ func init() {
 	v.masters = cmdVolume.Flag.String("mserver", "localhost:9333", "comma-separated master servers")
 	v.pulseSeconds = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
 	v.idleConnectionTimeout = cmdVolume.Flag.Int("idleTimeout", 30, "connection idle seconds")
-	v.maxCpu = cmdVolume.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	v.dataCenter = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	v.rack = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
-	v.indexType = cmdVolume.Flag.String("index", "memory", "Choose [memory|leveldb|boltdb|btree] mode for memory~performance balance.")
+	v.indexType = cmdVolume.Flag.String("index", "memory", "Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance.")
 	v.fixJpgOrientation = cmdVolume.Flag.Bool("images.fix.orientation", false, "Adjust jpg orientation when uploading.")
 	v.readRedirect = cmdVolume.Flag.Bool("read.redirect", true, "Redirect moved or non-local volumes.")
 	v.cpuProfile = cmdVolume.Flag.String("cpuprofile", "", "cpu profile output file")
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
+	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
 }
 
 var cmdVolume = &Command{
@@ -78,10 +81,10 @@ var (
 )
 
 func runVolume(cmd *Command, args []string) bool {
-	if *v.maxCpu < 1 {
-		*v.maxCpu = runtime.NumCPU()
-	}
-	runtime.GOMAXPROCS(*v.maxCpu)
+
+	util.LoadConfiguration("security", false)
+
+	runtime.GOMAXPROCS(runtime.NumCPU())
 	util.SetupProfiling(*v.cpuProfile, *v.memProfile)
 
 	v.startVolumeServer(*volumeFolders, *maxVolumeCounts, *volumeWhiteListOption)
@@ -137,10 +140,10 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	switch *v.indexType {
 	case "leveldb":
 		volumeNeedleMapKind = storage.NeedleMapLevelDb
-	case "boltdb":
-		volumeNeedleMapKind = storage.NeedleMapBoltDb
-	case "btree":
-		volumeNeedleMapKind = storage.NeedleMapBtree
+	case "leveldbMedium":
+		volumeNeedleMapKind = storage.NeedleMapLevelDbMedium
+	case "leveldbLarge":
+		volumeNeedleMapKind = storage.NeedleMapLevelDbLarge
 	}
 
 	masters := *v.masters
@@ -152,6 +155,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		strings.Split(masters, ","), *v.pulseSeconds, *v.dataCenter, *v.rack,
 		v.whiteList,
 		*v.fixJpgOrientation, *v.readRedirect,
+		*v.compactionMBPerSecond,
 	)
 
 	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port)
@@ -185,13 +189,20 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
-	grpcS := util.NewGrpcServer()
+	grpcS := util.NewGrpcServer(security.LoadServerTLS(viper.Sub("grpc"), "volume"))
 	volume_server_pb.RegisterVolumeServerServer(grpcS, volumeServer)
 	reflection.Register(grpcS)
 	go grpcS.Serve(grpcL)
 
-	if e := http.Serve(listener, volumeMux); e != nil {
-		glog.Fatalf("Volume server fail to serve: %v", e)
+	if viper.GetString("https.volume.key") != "" {
+		if e := http.ServeTLS(listener, volumeMux,
+			viper.GetString("https.volume.cert"), viper.GetString("https.volume.key")); e != nil {
+			glog.Fatalf("Volume server fail to serve: %v", e)
+		}
+	} else {
+		if e := http.Serve(listener, volumeMux); e != nil {
+			glog.Fatalf("Volume server fail to serve: %v", e)
+		}
 	}
 
 }

@@ -4,6 +4,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/sequence"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+
 	"testing"
 )
 
@@ -39,7 +41,7 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 				DeletedByteCount: 34524,
 				ReadOnly:         false,
 				ReplicaPlacement: uint32(0),
-				Version:          uint32(1),
+				Version:          uint32(needle.CurrentVersion),
 				Ttl:              0,
 			}
 			volumeMessages = append(volumeMessages, volumeMessage)
@@ -47,8 +49,8 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 
 		topo.SyncDataNodeRegistration(volumeMessages, dn)
 
-		assert(t, "activeVolumeCount1", topo.activeVolumeCount, volumeCount)
-		assert(t, "volumeCount", topo.volumeCount, volumeCount)
+		assert(t, "activeVolumeCount1", int(topo.activeVolumeCount), volumeCount)
+		assert(t, "volumeCount", int(topo.volumeCount), volumeCount)
 	}
 
 	{
@@ -64,20 +66,68 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 				DeletedByteCount: 345240,
 				ReadOnly:         false,
 				ReplicaPlacement: uint32(0),
-				Version:          uint32(1),
+				Version:          uint32(needle.CurrentVersion),
 				Ttl:              0,
 			}
 			volumeMessages = append(volumeMessages, volumeMessage)
 		}
 		topo.SyncDataNodeRegistration(volumeMessages, dn)
 
-		assert(t, "activeVolumeCount1", topo.activeVolumeCount, volumeCount)
-		assert(t, "volumeCount", topo.volumeCount, volumeCount)
+		//rp, _ := storage.NewReplicaPlacementFromString("000")
+		//layout := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL)
+		//assert(t, "writables", len(layout.writables), volumeCount)
+
+		assert(t, "activeVolumeCount1", int(topo.activeVolumeCount), volumeCount)
+		assert(t, "volumeCount", int(topo.volumeCount), volumeCount)
+	}
+
+	{
+		volumeCount := 6
+		newVolumeShortMessage := &master_pb.VolumeShortInformationMessage{
+			Id:               uint32(3),
+			Collection:       "",
+			ReplicaPlacement: uint32(0),
+			Version:          uint32(needle.CurrentVersion),
+			Ttl:              0,
+		}
+		topo.IncrementalSyncDataNodeRegistration(
+			[]*master_pb.VolumeShortInformationMessage{newVolumeShortMessage},
+			nil,
+			dn)
+		rp, _ := storage.NewReplicaPlacementFromString("000")
+		layout := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL)
+		assert(t, "writables after repeated add", len(layout.writables), volumeCount)
+
+		assert(t, "activeVolumeCount1", int(topo.activeVolumeCount), volumeCount)
+		assert(t, "volumeCount", int(topo.volumeCount), volumeCount)
+
+		topo.IncrementalSyncDataNodeRegistration(
+			nil,
+			[]*master_pb.VolumeShortInformationMessage{newVolumeShortMessage},
+			dn)
+		assert(t, "writables after deletion", len(layout.writables), volumeCount-1)
+		assert(t, "activeVolumeCount1", int(topo.activeVolumeCount), volumeCount-1)
+		assert(t, "volumeCount", int(topo.volumeCount), volumeCount-1)
+
+		topo.IncrementalSyncDataNodeRegistration(
+			[]*master_pb.VolumeShortInformationMessage{newVolumeShortMessage},
+			nil,
+			dn)
+
+		for vid, _ := range layout.vid2location {
+			println("after add volume id", vid)
+		}
+		for _, vid := range layout.writables {
+			println("after add writable volume id", vid)
+		}
+
+		assert(t, "writables after add back", len(layout.writables), volumeCount)
+
 	}
 
 	topo.UnRegisterDataNode(dn)
 
-	assert(t, "activeVolumeCount2", topo.activeVolumeCount, 0)
+	assert(t, "activeVolumeCount2", int(topo.activeVolumeCount), 0)
 
 }
 
@@ -96,19 +146,20 @@ func TestAddRemoveVolume(t *testing.T) {
 	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, "127.0.0.1", 25)
 
 	v := storage.VolumeInfo{
-		Id:               storage.VolumeId(1),
+		Id:               needle.VolumeId(1),
 		Size:             100,
 		Collection:       "xcollection",
 		FileCount:        123,
 		DeleteCount:      23,
 		DeletedByteCount: 45,
 		ReadOnly:         false,
-		Version:          storage.CurrentVersion,
+		Version:          needle.CurrentVersion,
 		ReplicaPlacement: &storage.ReplicaPlacement{},
-		Ttl:              storage.EMPTY_TTL,
+		Ttl:              needle.EMPTY_TTL,
 	}
 
 	dn.UpdateVolumes([]storage.VolumeInfo{v})
+	topo.RegisterVolumeLayout(v, dn)
 	topo.RegisterVolumeLayout(v, dn)
 
 	if _, hasCollection := topo.FindCollection(v.Collection); !hasCollection {

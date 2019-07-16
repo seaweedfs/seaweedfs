@@ -7,18 +7,28 @@ import (
 	"strconv"
 )
 
-type Offset uint32
+type Offset struct {
+	OffsetHigher
+	OffsetLower
+}
+
+type OffsetLower struct {
+	b3 byte
+	b2 byte
+	b1 byte
+	b0 byte // the smaller byte
+}
+
 type Cookie uint32
 
 const (
-	OffsetSize            = 4
-	SizeSize              = 4 // uint32 size
-	NeedleEntrySize       = NeedleIdSize + OffsetSize + SizeSize
-	TimestampSize         = 8 // int64 size
-	NeedlePaddingSize     = 8
-	MaxPossibleVolumeSize = 4 * 1024 * 1024 * 1024 * 8
-	TombstoneFileSize     = math.MaxUint32
-	CookieSize            = 4
+	SizeSize           = 4 // uint32 size
+	NeedleHeaderSize   = CookieSize + NeedleIdSize + SizeSize
+	NeedleMapEntrySize = NeedleIdSize + OffsetSize + SizeSize
+	TimestampSize      = 8 // int64 size
+	NeedlePaddingSize  = 8
+	TombstoneFileSize  = math.MaxUint32
+	CookieSize         = 4
 )
 
 func CookieToBytes(bytes []byte, cookie Cookie) {
@@ -38,16 +48,4 @@ func ParseCookie(cookieString string) (Cookie, error) {
 		return 0, fmt.Errorf("needle cookie %s format error: %v", cookieString, err)
 	}
 	return Cookie(cookie), nil
-}
-
-func OffsetToBytes(bytes []byte, offset Offset) {
-	util.Uint32toBytes(bytes, uint32(offset))
-}
-
-func Uint32ToOffset(offset uint32) Offset {
-	return Offset(offset)
-}
-
-func BytesToOffset(bytes []byte) Offset {
-	return Offset(util.BytesToUint32(bytes[0:4]))
 }

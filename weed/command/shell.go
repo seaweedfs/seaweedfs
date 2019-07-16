@@ -1,21 +1,25 @@
 package command
 
 import (
-	"bufio"
-	"fmt"
-	"os"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/shell"
+	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/spf13/viper"
+)
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+var (
+	shellOptions shell.ShellOptions
 )
 
 func init() {
 	cmdShell.Run = runShell // break init cycle
+	shellOptions.Masters = cmdShell.Flag.String("master", "localhost:9333", "comma-separated master servers")
 }
 
 var cmdShell = &Command{
 	UsageLine: "shell",
-	Short:     "run interactive commands, now just echo",
-	Long: `run interactive commands.
+	Short:     "run interactive administrative commands",
+	Long: `run interactive administrative commands.
 
   `,
 }
@@ -23,39 +27,16 @@ var cmdShell = &Command{
 var ()
 
 func runShell(command *Command, args []string) bool {
-	r := bufio.NewReader(os.Stdin)
-	o := bufio.NewWriter(os.Stdout)
-	e := bufio.NewWriter(os.Stderr)
-	prompt := func() {
-		var err error
-		if _, err = o.WriteString("> "); err != nil {
-			glog.V(0).Infoln("error writing to stdout:", err)
-		}
-		if err = o.Flush(); err != nil {
-			glog.V(0).Infoln("error flushing stdout:", err)
-		}
-	}
-	readLine := func() string {
-		ret, err := r.ReadString('\n')
-		if err != nil {
-			fmt.Fprint(e, err)
-			os.Exit(1)
-		}
-		return ret
-	}
-	execCmd := func(cmd string) int {
-		if cmd != "" {
-			if _, err := o.WriteString(cmd); err != nil {
-				glog.V(0).Infoln("error writing to stdout:", err)
-			}
-		}
-		return 0
-	}
 
-	cmd := ""
-	for {
-		prompt()
-		cmd = readLine()
-		execCmd(cmd)
-	}
+	util.LoadConfiguration("security", false)
+	shellOptions.GrpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
+
+	shellOptions.FilerHost = "localhost"
+	shellOptions.FilerPort = 8888
+	shellOptions.Directory = "/"
+
+	shell.RunShell(shellOptions)
+
+	return true
+
 }

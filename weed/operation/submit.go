@@ -2,6 +2,7 @@ package operation
 
 import (
 	"bytes"
+	"google.golang.org/grpc"
 	"io"
 	"mime"
 	"net/url"
@@ -36,10 +37,8 @@ type SubmitResult struct {
 	Error    string `json:"error,omitempty"`
 }
 
-func SubmitFiles(master string, files []FilePart,
-	replication string, collection string, dataCenter string, ttl string, maxMB int,
-	secret security.Secret,
-) ([]SubmitResult, error) {
+func SubmitFiles(master string, grpcDialOption grpc.DialOption, files []FilePart,
+	replication string, collection string, dataCenter string, ttl string, maxMB int) ([]SubmitResult, error) {
 	results := make([]SubmitResult, len(files))
 	for index, file := range files {
 		results[index].FileName = file.FileName
@@ -51,7 +50,7 @@ func SubmitFiles(master string, files []FilePart,
 		DataCenter:  dataCenter,
 		Ttl:         ttl,
 	}
-	ret, err := Assign(master, ar)
+	ret, err := Assign(master, grpcDialOption, ar)
 	if err != nil {
 		for index, _ := range files {
 			results[index].Error = err.Error()
@@ -67,7 +66,7 @@ func SubmitFiles(master string, files []FilePart,
 		file.Replication = replication
 		file.Collection = collection
 		file.DataCenter = dataCenter
-		results[index].Size, err = file.Upload(maxMB, master, secret)
+		results[index].Size, err = file.Upload(maxMB, master, ret.Auth, grpcDialOption)
 		if err != nil {
 			results[index].Error = err.Error()
 		}
@@ -110,8 +109,7 @@ func newFilePart(fullPathFilename string) (ret FilePart, err error) {
 	return ret, nil
 }
 
-func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (retSize uint32, err error) {
-	jwt := security.GenJwt(secret, fi.Fid)
+func (fi FilePart) Upload(maxMB int, master string, jwt security.EncodedJwt, grpcDialOption grpc.DialOption) (retSize uint32, err error) {
 	fileUrl := "http://" + fi.Server + "/" + fi.Fid
 	if fi.ModTime != 0 {
 		fileUrl += "?ts=" + strconv.Itoa(int(fi.ModTime))
@@ -139,7 +137,7 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 				Collection:  fi.Collection,
 				Ttl:         fi.Ttl,
 			}
-			ret, err = Assign(master, ar)
+			ret, err = Assign(master, grpcDialOption, ar)
 			if err != nil {
 				return
 			}
@@ -152,10 +150,10 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 					Collection:  fi.Collection,
 					Ttl:         fi.Ttl,
 				}
-				ret, err = Assign(master, ar)
+				ret, err = Assign(master, grpcDialOption, ar)
 				if err != nil {
 					// delete all uploaded chunks
-					cm.DeleteChunks(master)
+					cm.DeleteChunks(master, grpcDialOption)
 					return
 				}
 				id = ret.Fid
@@ -170,10 +168,10 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 				baseName+"-"+strconv.FormatInt(i+1, 10),
 				io.LimitReader(fi.Reader, chunkSize),
 				master, fileUrl,
-				jwt)
+				ret.Auth)
 			if e != nil {
 				// delete all uploaded chunks
-				cm.DeleteChunks(master)
+				cm.DeleteChunks(master, grpcDialOption)
 				return 0, e
 			}
 			cm.Chunks = append(cm.Chunks,
@@ -188,7 +186,7 @@ func (fi FilePart) Upload(maxMB int, master string, secret security.Secret) (ret
 		err = upload_chunked_file_manifest(fileUrl, &cm, jwt)
 		if err != nil {
 			// delete all uploaded chunks
-			cm.DeleteChunks(master)
+			cm.DeleteChunks(master, grpcDialOption)
 		}
 	} else {
 		ret, e := Upload(fileUrl, baseName, fi.Reader, false, fi.MimeType, nil, jwt)

@@ -1,44 +1,117 @@
 package: github.com/chrislusf/seaweedfs/weed
 import:
-- package: github.com/seaweedfs/fuse
+- package: cloud.google.com/go
+  version: ^0.40.0
   subpackages:
-  - fs
-- package: github.com/boltdb/bolt
-  version: ^1.3.1
+  - pubsub
+  - storage
+- package: github.com/Azure/azure-storage-blob-go
+  version: ^0.7.0
+  subpackages:
+  - azblob
+- package: github.com/Shopify/sarama
+  version: ^1.22.1
+- package: github.com/aws/aws-sdk-go
+  version: ^1.20.12
+  subpackages:
+  - aws
+  - aws/awserr
+  - aws/credentials
+  - aws/session
+  - service/s3
+  - service/s3/s3iface
+  - service/sqs
 - package: github.com/chrislusf/raft
+  subpackages:
+  - protobuf
 - package: github.com/dgrijalva/jwt-go
   version: ^3.2.0
 - package: github.com/disintegration/imaging
-  version: ^1.4.1
+  version: ^1.6.0
+- package: github.com/dustin/go-humanize
+  version: ^1.0.0
+- package: github.com/gabriel-vasile/mimetype
+  version: ^0.3.14
 - package: github.com/go-redis/redis
-  version: ^6.10.2
+  version: ^6.15.3
 - package: github.com/go-sql-driver/mysql
-  version: ^1.3.0
+  version: ^1.4.1
 - package: github.com/gocql/gocql
 - package: github.com/golang/protobuf
-  version: ^1.0.0
+  version: ^1.3.1
   subpackages:
   - proto
 - package: github.com/google/btree
+  version: ^1.0.0
 - package: github.com/gorilla/mux
-  version: ^1.6.1
+  version: ^1.7.3
+- package: github.com/jacobsa/daemonize
+- package: github.com/kardianos/osext
+- package: github.com/karlseguin/ccache
+  version: ^2.0.3
 - package: github.com/klauspost/crc32
-  version: ^1.1.0
+  version: ^1.2.0
+- package: github.com/klauspost/reedsolomon
+  version: ^1.9.2
+- package: github.com/kurin/blazer
+  version: ^0.5.3
+  subpackages:
+  - b2
 - package: github.com/lib/pq
+  version: ^1.1.1
+- package: github.com/peterh/liner
+  version: ^1.1.0
+- package: github.com/prometheus/client_golang
+  version: ^1.0.0
+  subpackages:
+  - prometheus
+  - prometheus/push
+- package: github.com/rakyll/statik
+  version: ^0.1.6
+  subpackages:
+  - fs
 - package: github.com/rwcarlsen/goexif
   subpackages:
   - exif
-- package: github.com/soheilhy/cmux
-  version: ^0.1.4
+- package: github.com/satori/go.uuid
+  version: ^1.2.0
+- package: github.com/seaweedfs/fuse
+  subpackages:
+  - fs
+- package: github.com/spf13/viper
+  version: ^1.4.0
 - package: github.com/syndtr/goleveldb
+  version: ^1.0.0
   subpackages:
   - leveldb
+  - leveldb/opt
   - leveldb/util
+- package: github.com/willf/bloom
+  version: ^2.0.3
+- package: gocloud.dev
+  version: ^0.15.0
+  subpackages:
+  - pubsub
+  - pubsub/awssnssqs
+  - pubsub/azuresb
+  - pubsub/gcppubsub
+  - pubsub/natspubsub
+  - pubsub/rabbitpubsub
 - package: golang.org/x/net
   subpackages:
   - context
-- package: google.golang.org/grpc
-  version: ^1.11.3
+  - webdav
+- package: golang.org/x/tools
   subpackages:
+  - godoc/util
+- package: google.golang.org/api
+  version: ^0.7.0
+  subpackages:
+  - option
+- package: google.golang.org/grpc
+  version: ^1.21.1
+  subpackages:
+  - credentials
+  - keepalive
   - peer
   - reflection

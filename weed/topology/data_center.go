@@ -1,5 +1,7 @@
 package topology
 
+import "github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+
 type DataCenter struct {
 	NodeImpl
 }
@@ -36,5 +38,20 @@ func (dc *DataCenter) ToMap() interface{} {
 		racks = append(racks, rack.ToMap())
 	}
 	m["Racks"] = racks
+	return m
+}
+
+func (dc *DataCenter) ToDataCenterInfo() *master_pb.DataCenterInfo {
+	m := &master_pb.DataCenterInfo{
+		Id:                string(dc.Id()),
+		VolumeCount:       uint64(dc.GetVolumeCount()),
+		MaxVolumeCount:    uint64(dc.GetMaxVolumeCount()),
+		FreeVolumeCount:   uint64(dc.FreeSpace()),
+		ActiveVolumeCount: uint64(dc.GetActiveVolumeCount()),
+	}
+	for _, c := range dc.Children() {
+		rack := c.(*Rack)
+		m.RackInfos = append(m.RackInfos, rack.ToRackInfo())
+	}
 	return m
 }

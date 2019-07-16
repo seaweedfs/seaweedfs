@@ -19,6 +19,7 @@ import (
 
 type Option struct {
 	FilerGrpcAddress   string
+	GrpcDialOption     grpc.DialOption
 	FilerMountRootPath string
 	Collection         string
 	Replication        string
@@ -28,9 +29,11 @@ type Option struct {
 	DirListingLimit    int
 	EntryCacheTtl      time.Duration
 
-	MountUid  uint32
-	MountGid  uint32
-	MountMode os.FileMode
+	MountUid   uint32
+	MountGid   uint32
+	MountMode  os.FileMode
+	MountCtime time.Time
+	MountMtime time.Time
 }
 
 var _ = fs.FS(&WFS{})
@@ -45,8 +48,6 @@ type WFS struct {
 	pathToHandleIndex map[string]int
 	pathToHandleLock  sync.Mutex
 	bufPool           sync.Pool
-
-	fileIdsDeletionChan chan []string
 
 	stats statsCache
 }
@@ -65,10 +66,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 				return make([]byte, option.ChunkSizeLimit)
 			},
 		},
-		fileIdsDeletionChan: make(chan []string, 32),
 	}
-
-	go wfs.loopProcessingDeletion()
 
 	return wfs
 }
@@ -77,12 +75,12 @@ func (wfs *WFS) Root() (fs.Node, error) {
 	return &Dir{Path: wfs.option.FilerMountRootPath, wfs: wfs}, nil
 }
 
-func (wfs *WFS) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
+func (wfs *WFS) WithFilerClient(ctx context.Context, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return util.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
+	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, wfs.option.FilerGrpcAddress)
+	}, wfs.option.FilerGrpcAddress, wfs.option.GrpcDialOption)
 
 }
 
@@ -137,7 +135,7 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 
 	if wfs.stats.lastChecked < time.Now().Unix()-20 {
 
-		err := wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		err := wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 			request := &filer_pb.StatisticsRequest{
 				Collection:  wfs.option.Collection,

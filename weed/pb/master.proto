@@ -15,6 +15,16 @@ service Seaweed {
     }
     rpc Statistics (StatisticsRequest) returns (StatisticsResponse) {
     }
+    rpc CollectionList (CollectionListRequest) returns (CollectionListResponse) {
+    }
+    rpc CollectionDelete (CollectionDeleteRequest) returns (CollectionDeleteResponse) {
+    }
+    rpc VolumeList (VolumeListRequest) returns (VolumeListResponse) {
+    }
+    rpc LookupEcVolume (LookupEcVolumeRequest) returns (LookupEcVolumeResponse) {
+    }
+    rpc GetMasterConfiguration (GetMasterConfigurationRequest) returns (GetMasterConfigurationResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -29,15 +39,25 @@ message Heartbeat {
     string rack = 7;
     uint32 admin_port = 8;
     repeated VolumeInformationMessage volumes = 9;
-    // delta volume ids
-    repeated uint32 new_vids = 10;
-    repeated uint32 deleted_vids = 11;
+    // delta volumes
+    repeated VolumeShortInformationMessage new_volumes = 10;
+    repeated VolumeShortInformationMessage deleted_volumes = 11;
+    bool has_no_volumes = 12;
+
+    // erasure coding
+    repeated VolumeEcShardInformationMessage ec_shards = 16;
+    // delta erasure coding shards
+    repeated VolumeEcShardInformationMessage new_ec_shards = 17;
+    repeated VolumeEcShardInformationMessage deleted_ec_shards = 18;
+    bool has_no_ec_shards = 19;
+
 }
 
 message HeartbeatResponse {
-    uint64 volumeSizeLimit = 1;
-    string secretKey = 2;
-    string leader = 3;
+    uint64 volume_size_limit = 1;
+    string leader = 2;
+    string metrics_address = 3;
+    uint32 metrics_interval_seconds = 4;
 }
 
 message VolumeInformationMessage {
@@ -51,6 +71,22 @@ message VolumeInformationMessage {
     uint32 replica_placement = 8;
     uint32 version = 9;
     uint32 ttl = 10;
+    uint32 compact_revision = 11;
+    int64 modified_at_second = 12;
+}
+
+message VolumeShortInformationMessage {
+    uint32 id = 1;
+    string collection = 3;
+    uint32 replica_placement = 8;
+    uint32 version = 9;
+    uint32 ttl = 10;
+}
+
+message VolumeEcShardInformationMessage {
+    uint32 id = 1;
+    string collection = 2;
+    uint32 ec_index_bits = 3;
 }
 
 message Empty {
@@ -109,6 +145,7 @@ message AssignResponse {
     string public_url = 3;
     uint64 count = 4;
     string error = 5;
+    string auth = 6;
 }
 
 message StatisticsRequest {
@@ -123,4 +160,91 @@ message StatisticsResponse {
     uint64 total_size = 4;
     uint64 used_size = 5;
     uint64 file_count = 6;
+}
+
+//
+// collection related
+//
+
+message StorageType {
+    string replication = 1;
+    string ttl = 2;
+}
+message Collection {
+    string name = 1;
+}
+message CollectionListRequest {
+    bool include_normal_volumes = 1;
+    bool include_ec_volumes = 2;
+}
+message CollectionListResponse {
+    repeated Collection collections = 1;
+}
+
+message CollectionDeleteRequest {
+    string name = 1;
+}
+message CollectionDeleteResponse {
+}
+
+//
+// volume related
+//
+message DataNodeInfo {
+    string id = 1;
+    uint64 volume_count = 2;
+    uint64 max_volume_count = 3;
+    uint64 free_volume_count = 4;
+    uint64 active_volume_count = 5;
+    repeated VolumeInformationMessage volume_infos = 6;
+    repeated VolumeEcShardInformationMessage ec_shard_infos = 7;
+}
+message RackInfo {
+    string id = 1;
+    uint64 volume_count = 2;
+    uint64 max_volume_count = 3;
+    uint64 free_volume_count = 4;
+    uint64 active_volume_count = 5;
+    repeated DataNodeInfo data_node_infos = 6;
+}
+message DataCenterInfo {
+    string id = 1;
+    uint64 volume_count = 2;
+    uint64 max_volume_count = 3;
+    uint64 free_volume_count = 4;
+    uint64 active_volume_count = 5;
+    repeated RackInfo rack_infos = 6;
+}
+message TopologyInfo {
+    string id = 1;
+    uint64 volume_count = 2;
+    uint64 max_volume_count = 3;
+    uint64 free_volume_count = 4;
+    uint64 active_volume_count = 5;
+    repeated DataCenterInfo data_center_infos = 6;
+}
+message VolumeListRequest {
+}
+message VolumeListResponse {
+    TopologyInfo topology_info = 1;
+    uint64 volume_size_limit_mb = 2;
+}
+
+message LookupEcVolumeRequest {
+    uint32 volume_id = 1;
+}
+message LookupEcVolumeResponse {
+    uint32 volume_id = 1;
+    message EcShardIdLocation {
+        uint32 shard_id = 1;
+        repeated Location locations = 2;
+    }
+    repeated EcShardIdLocation shard_id_locations = 2;
+}
+
+message GetMasterConfigurationRequest {
+}
+message GetMasterConfigurationResponse {
+    string metrics_address = 1;
+    uint32 metrics_interval_seconds = 2;
 }

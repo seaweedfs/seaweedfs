@@ -74,10 +74,6 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		return err
 	}
 
-	if file.isOpen {
-		return nil
-	}
-
 	glog.V(3).Infof("%v file setattr %+v, old:%+v", file.fullpath(), req, file.entry.Attributes)
 	if req.Valid.Size() {
 
@@ -109,7 +105,11 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		file.entry.Attributes.Mtime = req.Mtime.Unix()
 	}
 
-	return file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	if file.isOpen {
+		return nil
+	}
+
+	return file.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: file.dir.Path,
@@ -144,7 +144,7 @@ func (file *File) maybeLoadAttributes(ctx context.Context) error {
 			file.setEntry(entry)
 			// glog.V(1).Infof("file attr read cached %v attributes", file.Name)
 		} else {
-			err := file.wfs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+			err := file.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 				request := &filer_pb.LookupDirectoryEntryRequest{
 					Name:      file.Name,
@@ -193,6 +193,8 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 		file.entryViewCache = newVisibles
 		newVisibles = t
 	}
+
+	glog.V(3).Infof("%s existing %d chunks adds %d more", file.fullpath(), len(file.entry.Chunks), len(chunks))
 
 	file.entry.Chunks = append(file.entry.Chunks, chunks...)
 }

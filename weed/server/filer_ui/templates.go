@@ -162,7 +162,7 @@ function uploadFile(file, i) {
   var url = window.location.href
   var xhr = new XMLHttpRequest()
   var formData = new FormData()
-  xhr.open('POST', url, true)
+  xhr.open('POST', url, false)
 
   formData.append('file', file)
   xhr.send(formData)

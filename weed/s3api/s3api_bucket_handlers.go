@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
 	"math"
 	"net/http"
@@ -21,15 +22,16 @@ var (
 )
 
 type ListAllMyBucketsResult struct {
-	Buckets []*s3.Bucket `xml:"Buckets>Bucket"`
+	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListAllMyBucketsResult"`
 	Owner   *s3.Owner
+	Buckets []*s3.Bucket `xml:"Buckets>Bucket"`
 }
 
 func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Request) {
 
 	var response ListAllMyBucketsResult
 
-	entries, err := s3a.list(s3a.option.BucketsPath, "", "", false, math.MaxInt32)
+	entries, err := s3a.list(context.Background(), s3a.option.BucketsPath, "", "", false, math.MaxInt32)
 
 	if err != nil {
 		writeErrorResponse(w, ErrInternalError, r.URL)
@@ -63,7 +65,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	bucket := vars["bucket"]
 
 	// create the folder for bucket, but lazily create actual collection
-	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, nil); err != nil {
+	if err := s3a.mkdir(context.Background(), s3a.option.BucketsPath, bucket, nil); err != nil {
 		writeErrorResponse(w, ErrInternalError, r.URL)
 		return
 	}
@@ -76,9 +78,8 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
-	err := s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-
-		ctx := context.Background()
+	ctx := context.Background()
+	err := s3a.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		// delete collection
 		deleteCollectionRequest := &filer_pb.DeleteCollectionRequest{
@@ -93,7 +94,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		return nil
 	})
 
-	err = s3a.rm(s3a.option.BucketsPath, bucket, true, false, true)
+	err = s3a.rm(ctx, s3a.option.BucketsPath, bucket, true, false, true)
 
 	if err != nil {
 		writeErrorResponse(w, ErrInternalError, r.URL)
@@ -108,7 +109,9 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
-	err := s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	ctx := context.Background()
+
+	err := s3a.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: s3a.option.BucketsPath,
@@ -116,7 +119,7 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 		}
 
 		glog.V(1).Infof("lookup bucket: %v", request)
-		if _, err := client.LookupDirectoryEntry(context.Background(), request); err != nil {
+		if _, err := client.LookupDirectoryEntry(ctx, request); err != nil {
 			return fmt.Errorf("lookup bucket %s/%s: %v", s3a.option.BucketsPath, bucket, err)
 		}
 

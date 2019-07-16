@@ -15,6 +15,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spf13/viper"
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -33,15 +36,17 @@ type BenchmarkOptions struct {
 	read             *bool
 	sequentialRead   *bool
 	collection       *string
+	replication      *string
 	cpuprofile       *string
 	maxCpu           *int
-	secretKey        *string
+	grpcDialOption   grpc.DialOption
+	masterClient     *wdclient.MasterClient
 }
 
 var (
-	b            BenchmarkOptions
-	sharedBytes  []byte
-	masterClient *wdclient.MasterClient
+	b           BenchmarkOptions
+	sharedBytes []byte
+	isSecure    bool
 )
 
 func init() {
@@ -57,9 +62,9 @@ func init() {
 	b.read = cmdBenchmark.Flag.Bool("read", true, "enable read")
 	b.sequentialRead = cmdBenchmark.Flag.Bool("readSequentially", false, "randomly read by ids from \"-list\" specified file")
 	b.collection = cmdBenchmark.Flag.String("collection", "benchmark", "write data to this collection")
+	b.replication = cmdBenchmark.Flag.String("replication", "000", "replication type")
 	b.cpuprofile = cmdBenchmark.Flag.String("cpuprofile", "", "cpu profile output file")
 	b.maxCpu = cmdBenchmark.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
-	b.secretKey = cmdBenchmark.Flag.String("secure.secret", "", "secret to encrypt Json Web Token(JWT)")
 	sharedBytes = make([]byte, 1024)
 }
 
@@ -102,6 +107,10 @@ var (
 )
 
 func runBenchmark(cmd *Command, args []string) bool {
+
+	util.LoadConfiguration("security", false)
+	b.grpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
+
 	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)
 	if *b.maxCpu < 1 {
 		*b.maxCpu = runtime.NumCPU()
@@ -116,9 +125,9 @@ func runBenchmark(cmd *Command, args []string) bool {
 		defer pprof.StopCPUProfile()
 	}
 
-	masterClient = wdclient.NewMasterClient(context.Background(), "benchmark", strings.Split(*b.masters, ","))
-	go masterClient.KeepConnectedToMaster()
-	masterClient.WaitUntilConnected()
+	b.masterClient = wdclient.NewMasterClient(context.Background(), b.grpcDialOption, "client", strings.Split(*b.masters, ","))
+	go b.masterClient.KeepConnectedToMaster()
+	b.masterClient.WaitUntilConnected()
 
 	if *b.write {
 		benchWrite()
@@ -188,7 +197,6 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 	defer wait.Done()
 	delayedDeleteChan := make(chan *delayedFile, 100)
 	var waitForDeletions sync.WaitGroup
-	secret := security.Secret(*b.secretKey)
 
 	for i := 0; i < 7; i++ {
 		waitForDeletions.Add(1)
@@ -198,8 +206,11 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 				if df.enterTime.After(time.Now()) {
 					time.Sleep(df.enterTime.Sub(time.Now()))
 				}
-				if e := util.Delete("http://"+df.fp.Server+"/"+df.fp.Fid,
-					security.GenJwt(secret, df.fp.Fid)); e == nil {
+				var jwtAuthorization security.EncodedJwt
+				if isSecure {
+					jwtAuthorization = operation.LookupJwt(b.masterClient.GetMaster(), df.fp.Fid)
+				}
+				if e := util.Delete(fmt.Sprintf("http://%s/%s", df.fp.Server, df.fp.Fid), string(jwtAuthorization)); e == nil {
 					s.completed++
 				} else {
 					s.failed++
@@ -219,12 +230,16 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 			MimeType: "image/bench", // prevent gzip benchmark content
 		}
 		ar := &operation.VolumeAssignRequest{
-			Count:      1,
-			Collection: *b.collection,
+			Count:       1,
+			Collection:  *b.collection,
+			Replication: *b.replication,
 		}
-		if assignResult, err := operation.Assign(masterClient.GetMaster(), ar); err == nil {
+		if assignResult, err := operation.Assign(b.masterClient.GetMaster(), b.grpcDialOption, ar); err == nil {
 			fp.Server, fp.Fid, fp.Collection = assignResult.Url, assignResult.Fid, *b.collection
-			if _, err := fp.Upload(0, masterClient.GetMaster(), secret); err == nil {
+			if !isSecure && assignResult.Auth != "" {
+				isSecure = true
+			}
+			if _, err := fp.Upload(0, b.masterClient.GetMaster(), assignResult.Auth, b.grpcDialOption); err == nil {
 				if random.Intn(100) < *b.deletePercentage {
 					s.total++
 					delayedDeleteChan <- &delayedFile{time.Now().Add(time.Second), fp}
@@ -264,7 +279,7 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 			fmt.Printf("reading file %s\n", fid)
 		}
 		start := time.Now()
-		url, err := masterClient.LookupFileId(fid)
+		url, err := b.masterClient.LookupFileId(fid)
 		if err != nil {
 			s.failed++
 			println("!!!! ", fid, " location not found!!!!!")

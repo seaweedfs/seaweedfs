@@ -2,6 +2,8 @@ package operation
 
 import (
 	"bytes"
+	"compress/flate"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type UploadResult struct {
@@ -37,13 +40,43 @@ func init() {
 
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
-// Upload sends a POST request to a volume server to upload the content
-func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
-	return upload_content(uploadUrl, func(w io.Writer) (err error) {
-		_, err = io.Copy(w, reader)
-		return
-	}, filename, isGzipped, mtype, pairMap, jwt)
+// Upload sends a POST request to a volume server to upload the content with adjustable compression level
+func UploadWithLocalCompressionLevel(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt, compressionLevel int) (*UploadResult, error) {
+	if compressionLevel < 1 {
+		compressionLevel = 1
+	}
+	if compressionLevel > 9 {
+		compressionLevel = 9
+	}
+	return doUpload(uploadUrl, filename, reader, isGzipped, mtype, pairMap, compressionLevel, jwt)
 }
+
+// Upload sends a POST request to a volume server to upload the content with fast compression
+func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
+	return doUpload(uploadUrl, filename, reader, isGzipped, mtype, pairMap, flate.BestSpeed, jwt)
+}
+
+func doUpload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, compression int, jwt security.EncodedJwt) (*UploadResult, error) {
+	contentIsGzipped := isGzipped
+	shouldGzipNow := false
+	if !isGzipped {
+		if shouldBeZipped, iAmSure := util.IsGzippableFileType(filepath.Base(filename), mtype); iAmSure && shouldBeZipped {
+			shouldGzipNow = true
+			contentIsGzipped = true
+		}
+	}
+	return upload_content(uploadUrl, func(w io.Writer) (err error) {
+		if shouldGzipNow {
+			gzWriter, _ := gzip.NewWriterLevel(w, compression)
+			_, err = io.Copy(gzWriter, reader)
+			gzWriter.Close()
+		} else {
+			_, err = io.Copy(w, reader)
+		}
+		return
+	}, filename, contentIsGzipped, mtype, pairMap, jwt)
+}
+
 func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
 	body_buf := bytes.NewBufferString("")
 	body_writer := multipart.NewWriter(body_buf)
@@ -57,9 +90,6 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	}
 	if isGzipped {
 		h.Set("Content-Encoding", "gzip")
-	}
-	if jwt != "" {
-		h.Set("Authorization", "BEARER "+string(jwt))
 	}
 
 	file_writer, cp_err := body_writer.CreatePart(h)
@@ -86,18 +116,15 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	for k, v := range pairMap {
 		req.Header.Set(k, v)
 	}
+	if jwt != "" {
+		req.Header.Set("Authorization", "BEARER "+string(jwt))
+	}
 	resp, post_err := client.Do(req)
 	if post_err != nil {
 		glog.V(0).Infoln("failing to upload to", uploadUrl, post_err.Error())
 		return nil, post_err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode < http.StatusOK ||
-		resp.StatusCode > http.StatusIMUsed {
-		return nil, errors.New(http.StatusText(resp.StatusCode))
-	}
-
 	etag := getEtag(resp)
 	resp_body, ra_err := ioutil.ReadAll(resp.Body)
 	if ra_err != nil {

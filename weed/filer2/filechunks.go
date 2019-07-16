@@ -40,7 +40,7 @@ func CompactFileChunks(chunks []*filer_pb.FileChunk) (compacted, garbage []*file
 		fileIds[interval.fileId] = true
 	}
 	for _, chunk := range chunks {
-		if found := fileIds[chunk.FileId]; found {
+		if _, found := fileIds[chunk.GetFileIdString()]; found {
 			compacted = append(compacted, chunk)
 		} else {
 			garbage = append(garbage, chunk)
@@ -50,15 +50,15 @@ func CompactFileChunks(chunks []*filer_pb.FileChunk) (compacted, garbage []*file
 	return
 }
 
-func FindUnusedFileChunks(oldChunks, newChunks []*filer_pb.FileChunk) (unused []*filer_pb.FileChunk) {
+func MinusChunks(as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk) {
 
 	fileIds := make(map[string]bool)
-	for _, interval := range newChunks {
-		fileIds[interval.FileId] = true
+	for _, interval := range bs {
+		fileIds[interval.GetFileIdString()] = true
 	}
-	for _, chunk := range oldChunks {
-		if found := fileIds[chunk.FileId]; !found {
-			unused = append(unused, chunk)
+	for _, chunk := range as {
+		if _, found := fileIds[chunk.GetFileIdString()]; !found {
+			delta = append(delta, chunk)
 		}
 	}
 
@@ -123,7 +123,7 @@ func MergeIntoVisibles(visibles, newVisibles []VisibleInterval, chunk *filer_pb.
 	newV := newVisibleInterval(
 		chunk.Offset,
 		chunk.Offset+int64(chunk.Size),
-		chunk.FileId,
+		chunk.GetFileIdString(),
 		chunk.Mtime,
 		true,
 	)

@@ -128,6 +128,32 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
         </table>
       </div>
 
+      <div class="row">
+        <h2>Erasure Coding Shards</h2>
+        <table class="table table-striped">
+          <thead>
+            <tr>
+              <th>Id</th>
+              <th>Collection</th>
+              <th>Shard Size</th>
+              <th>Shards</th>
+              <th>CreatedAt</th>
+            </tr>
+          </thead>
+          <tbody>
+          {{ range .EcVolumes }}
+            <tr>
+              <td><code>{{ .VolumeId }}</code></td>
+              <td>{{ .Collection }}</td>
+              <td>{{ .ShardSize }} Bytes</td>
+              <td>{{ .ShardIdList }}</td>
+              <td>{{ .CreatedAt.Format "02 Jan 06 15:04 -0700" }}</td>
+            </tr>
+          {{ end }}
+          </tbody>
+        </table>
+      </div>
+
     </div>
   </body>
 </html>

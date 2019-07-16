@@ -38,25 +38,28 @@ func (f *Filer) loopProcessingDeletion() {
 			fileIds = append(fileIds, fid)
 			if len(fileIds) >= 4096 {
 				glog.V(1).Infof("deleting fileIds len=%d", len(fileIds))
-				operation.DeleteFilesWithLookupVolumeId(fileIds, lookupFunc)
+				operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, fileIds, lookupFunc)
 				fileIds = fileIds[:0]
 			}
 		case <-ticker.C:
 			if len(fileIds) > 0 {
 				glog.V(1).Infof("timed deletion fileIds len=%d", len(fileIds))
-				operation.DeleteFilesWithLookupVolumeId(fileIds, lookupFunc)
+				operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, fileIds, lookupFunc)
 				fileIds = fileIds[:0]
 			}
 		}
 	}
 }
 
-func (f *Filer) DeleteChunks(chunks []*filer_pb.FileChunk) {
+func (f *Filer) DeleteChunks(fullpath FullPath, chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
-		f.fileIdDeletionChan <- chunk.FileId
+		glog.V(3).Infof("deleting %s chunk %s", fullpath, chunk.String())
+		f.fileIdDeletionChan <- chunk.GetFileIdString()
 	}
 }
 
+// DeleteFileByFileId direct delete by file id.
+// Only used when the fileId is not being managed by snapshots.
 func (f *Filer) DeleteFileByFileId(fileId string) {
 	f.fileIdDeletionChan <- fileId
 }
@@ -67,22 +70,19 @@ func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
 		return
 	}
 	if newEntry == nil {
-		f.DeleteChunks(oldEntry.Chunks)
+		f.DeleteChunks(oldEntry.FullPath, oldEntry.Chunks)
 	}
 
 	var toDelete []*filer_pb.FileChunk
+	newChunkIds := make(map[string]bool)
+	for _, newChunk := range newEntry.Chunks {
+		newChunkIds[newChunk.GetFileIdString()] = true
+	}
 
 	for _, oldChunk := range oldEntry.Chunks {
-		found := false
-		for _, newChunk := range newEntry.Chunks {
-			if oldChunk.FileId == newChunk.FileId {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if _, found := newChunkIds[oldChunk.GetFileIdString()]; !found {
 			toDelete = append(toDelete, oldChunk)
 		}
 	}
-	f.DeleteChunks(toDelete)
+	f.DeleteChunks(oldEntry.FullPath, toDelete)
 }

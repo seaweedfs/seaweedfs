@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -12,7 +13,7 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/gcssink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/s3sink"
 	"github.com/chrislusf/seaweedfs/weed/replication/sub"
-	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/spf13/viper"
 )
 
@@ -28,15 +29,16 @@ var cmdFilerReplicate = &Command{
 	filer.replicate listens on filer notifications. If any file is updated, it will fetch the updated content,
 	and write to the other destination.
 
-	Run "weed scaffold -config replication" to generate a replication.toml file and customize the parameters.
+	Run "weed scaffold -config=replication" to generate a replication.toml file and customize the parameters.
 
   `,
 }
 
 func runFilerReplicate(cmd *Command, args []string) bool {
 
-	weed_server.LoadConfiguration("replication", true)
-	weed_server.LoadConfiguration("notification", true)
+	util.LoadConfiguration("security", false)
+	util.LoadConfiguration("replication", true)
+	util.LoadConfiguration("notification", true)
 	config := viper.GetViper()
 
 	var notificationInput sub.NotificationInput
@@ -115,7 +117,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 		} else {
 			glog.V(1).Infof("modify: %s", key)
 		}
-		if err = replicator.Replicate(key, m); err != nil {
+		if err = replicator.Replicate(context.Background(), key, m); err != nil {
 			glog.Errorf("replicate %s: %+v", key, err)
 		} else {
 			glog.V(1).Infof("replicated %s", key)

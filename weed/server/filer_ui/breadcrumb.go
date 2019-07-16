@@ -16,7 +16,7 @@ func ToBreadcrumb(fullpath string) (crumbs []Breadcrumb) {
 	for i := 0; i < len(parts); i++ {
 		crumbs = append(crumbs, Breadcrumb{
 			Name: parts[i] + "/",
-			Link: "/" + filepath.Join(parts[0:i+1]...),
+			Link: "/" + filepath.ToSlash(filepath.Join(parts[0:i+1]...)),
 		})
 	}
 

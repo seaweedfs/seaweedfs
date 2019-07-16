@@ -24,6 +24,9 @@ service SeaweedFiler {
     rpc DeleteEntry (DeleteEntryRequest) returns (DeleteEntryResponse) {
     }
 
+    rpc AtomicRenameEntry (AtomicRenameEntryRequest) returns (AtomicRenameEntryResponse) {
+    }
+
     rpc AssignVolume (AssignVolumeRequest) returns (AssignVolumeResponse) {
     }
 
@@ -34,6 +37,9 @@ service SeaweedFiler {
     }
 
     rpc Statistics (StatisticsRequest) returns (StatisticsResponse) {
+    }
+
+    rpc GetFilerConfiguration (GetFilerConfigurationRequest) returns (GetFilerConfigurationResponse) {
     }
 
 }
@@ -69,19 +75,33 @@ message Entry {
     map<string, bytes> extended = 5;
 }
 
+message FullEntry {
+    string dir = 1;
+    Entry entry = 2;
+}
+
 message EventNotification {
     Entry old_entry = 1;
     Entry new_entry = 2;
     bool delete_chunks = 3;
+    string new_parent_path = 4;
 }
 
 message FileChunk {
-    string file_id = 1;
+    string file_id = 1; // to be deprecated
     int64 offset = 2;
     uint64 size = 3;
     int64 mtime = 4;
     string e_tag = 5;
-    string source_file_id = 6;
+    string source_file_id = 6; // to be deprecated
+    FileId fid = 7;
+    FileId source_fid = 8;
+}
+
+message FileId {
+    uint32 volume_id = 1;
+    uint64 file_key = 2;
+    fixed32 cookie = 3;
 }
 
 message FuseAttributes {
@@ -126,6 +146,16 @@ message DeleteEntryRequest {
 message DeleteEntryResponse {
 }
 
+message AtomicRenameEntryRequest {
+    string old_directory = 1;
+    string old_name = 2;
+    string new_directory = 3;
+    string new_name = 4;
+}
+
+message AtomicRenameEntryResponse {
+}
+
 message AssignVolumeRequest {
     int32 count = 1;
     string collection = 2;
@@ -139,6 +169,7 @@ message AssignVolumeResponse {
     string url = 2;
     string public_url = 3;
     int32 count = 4;
+    string auth = 5;
 }
 
 message LookupVolumeRequest {
@@ -176,4 +207,13 @@ message StatisticsResponse {
     uint64 total_size = 4;
     uint64 used_size = 5;
     uint64 file_count = 6;
+}
+
+message GetFilerConfigurationRequest {
+}
+message GetFilerConfigurationResponse {
+    repeated string masters = 1;
+    string replication = 2;
+    string collection = 3;
+    uint32 max_mb = 4;
 }

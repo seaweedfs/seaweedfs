@@ -9,6 +9,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 var (
@@ -73,7 +74,7 @@ func main() {
 	}
 
 	if *targetTTL != "" {
-		ttl, err := storage.ReadTTL(*targetTTL)
+		ttl, err := needle.ReadTTL(*targetTTL)
 
 		if err != nil {
 			glog.Fatalf("cannot parse target ttl %s: %v", *targetTTL, err)

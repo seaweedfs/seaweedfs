@@ -5,20 +5,23 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/chrislusf/seaweedfs/weed/storage/idx"
+	"github.com/syndtr/goleveldb/leveldb/opt"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/syndtr/goleveldb/leveldb"
 )
 
 type LevelDbNeedleMap struct {
+	baseNeedleMapper
 	dbFileName string
 	db         *leveldb.DB
-	baseNeedleMapper
 }
 
-func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File) (m *LevelDbNeedleMap, err error) {
+func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Options) (m *LevelDbNeedleMap, err error) {
 	m = &LevelDbNeedleMap{dbFileName: dbFileName}
 	m.indexFile = indexFile
 	if !isLevelDbFresh(dbFileName, indexFile) {
@@ -27,7 +30,8 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File) (m *LevelDbNeedl
 		glog.V(0).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
 	}
 	glog.V(1).Infof("Opening %s...", dbFileName)
-	if m.db, err = leveldb.OpenFile(dbFileName, nil); err != nil {
+
+	if m.db, err = leveldb.OpenFile(dbFileName, opts); err != nil {
 		return
 	}
 	glog.V(1).Infof("Loading %s...", indexFile.Name())
@@ -62,8 +66,8 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 		return err
 	}
 	defer db.Close()
-	return WalkIndexFile(indexFile, func(key NeedleId, offset Offset, size uint32) error {
-		if offset > 0 && size != TombstoneFileSize {
+	return idx.WalkIndexFile(indexFile, func(key NeedleId, offset Offset, size uint32) error {
+		if !offset.IsZero() && size != TombstoneFileSize {
 			levelDbWrite(db, key, offset, size)
 		} else {
 			levelDbDelete(db, key)
@@ -72,7 +76,7 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 	})
 }
 
-func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle.NeedleValue, ok bool) {
+func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, ok bool) {
 	bytes := make([]byte, NeedleIdSize)
 	NeedleIdToBytes(bytes[0:NeedleIdSize], key)
 	data, err := m.db.Get(bytes, nil)
@@ -81,7 +85,7 @@ func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle.NeedleValue, ok bo
 	}
 	offset := BytesToOffset(data[0:OffsetSize])
 	size := util.BytesToUint32(data[OffsetSize : OffsetSize+SizeSize])
-	return &needle.NeedleValue{Key: NeedleId(key), Offset: offset, Size: size}, true
+	return &needle_map.NeedleValue{Key: key, Offset: offset, Size: size}, true
 }
 
 func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size uint32) error {

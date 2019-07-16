@@ -23,22 +23,46 @@ It has these top-level messages:
 	VacuumVolumeCleanupResponse
 	DeleteCollectionRequest
 	DeleteCollectionResponse
-	AssignVolumeRequest
-	AssignVolumeResponse
+	AllocateVolumeRequest
+	AllocateVolumeResponse
 	VolumeSyncStatusRequest
 	VolumeSyncStatusResponse
-	VolumeSyncIndexRequest
-	VolumeSyncIndexResponse
-	VolumeSyncDataRequest
-	VolumeSyncDataResponse
+	VolumeIncrementalCopyRequest
+	VolumeIncrementalCopyResponse
 	VolumeMountRequest
 	VolumeMountResponse
 	VolumeUnmountRequest
 	VolumeUnmountResponse
 	VolumeDeleteRequest
 	VolumeDeleteResponse
-	VolumeUiPageRequest
-	VolumeUiPageResponse
+	VolumeMarkReadonlyRequest
+	VolumeMarkReadonlyResponse
+	VolumeCopyRequest
+	VolumeCopyResponse
+	CopyFileRequest
+	CopyFileResponse
+	VolumeTailSenderRequest
+	VolumeTailSenderResponse
+	VolumeTailReceiverRequest
+	VolumeTailReceiverResponse
+	VolumeEcShardsGenerateRequest
+	VolumeEcShardsGenerateResponse
+	VolumeEcShardsRebuildRequest
+	VolumeEcShardsRebuildResponse
+	VolumeEcShardsCopyRequest
+	VolumeEcShardsCopyResponse
+	VolumeEcShardsDeleteRequest
+	VolumeEcShardsDeleteResponse
+	VolumeEcShardsMountRequest
+	VolumeEcShardsMountResponse
+	VolumeEcShardsUnmountRequest
+	VolumeEcShardsUnmountResponse
+	VolumeEcShardReadRequest
+	VolumeEcShardReadResponse
+	VolumeEcBlobDeleteRequest
+	VolumeEcBlobDeleteResponse
+	ReadVolumeFileStatusRequest
+	ReadVolumeFileStatusResponse
 	DiskStatus
 	MemStatus
 */
@@ -97,10 +121,11 @@ func (m *BatchDeleteResponse) GetResults() []*DeleteResult {
 }
 
 type DeleteResult struct {
-	FileId string `protobuf:"bytes,1,opt,name=file_id,json=fileId" json:"file_id,omitempty"`
-	Status int32  `protobuf:"varint,2,opt,name=status" json:"status,omitempty"`
-	Error  string `protobuf:"bytes,3,opt,name=error" json:"error,omitempty"`
-	Size   uint32 `protobuf:"varint,4,opt,name=size" json:"size,omitempty"`
+	FileId  string `protobuf:"bytes,1,opt,name=file_id,json=fileId" json:"file_id,omitempty"`
+	Status  int32  `protobuf:"varint,2,opt,name=status" json:"status,omitempty"`
+	Error   string `protobuf:"bytes,3,opt,name=error" json:"error,omitempty"`
+	Size    uint32 `protobuf:"varint,4,opt,name=size" json:"size,omitempty"`
+	Version uint32 `protobuf:"varint,5,opt,name=version" json:"version,omitempty"`
 }
 
 func (m *DeleteResult) Reset()                    { *m = DeleteResult{} }
@@ -136,6 +161,13 @@ func (m *DeleteResult) GetSize() uint32 {
 	return 0
 }
 
+func (m *DeleteResult) GetVersion() uint32 {
+	if m != nil {
+		return m.Version
+	}
+	return 0
+}
+
 type Empty struct {
 }
 
@@ -145,7 +177,7 @@ func (*Empty) ProtoMessage()               {}
 func (*Empty) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{3} }
 
 type VacuumVolumeCheckRequest struct {
-	VolumdId uint32 `protobuf:"varint,1,opt,name=volumd_id,json=volumdId" json:"volumd_id,omitempty"`
+	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
 }
 
 func (m *VacuumVolumeCheckRequest) Reset()                    { *m = VacuumVolumeCheckRequest{} }
@@ -153,9 +185,9 @@ func (m *VacuumVolumeCheckRequest) String() string            { return proto.Com
 func (*VacuumVolumeCheckRequest) ProtoMessage()               {}
 func (*VacuumVolumeCheckRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{4} }
 
-func (m *VacuumVolumeCheckRequest) GetVolumdId() uint32 {
+func (m *VacuumVolumeCheckRequest) GetVolumeId() uint32 {
 	if m != nil {
-		return m.VolumdId
+		return m.VolumeId
 	}
 	return 0
 }
@@ -177,7 +209,7 @@ func (m *VacuumVolumeCheckResponse) GetGarbageRatio() float64 {
 }
 
 type VacuumVolumeCompactRequest struct {
-	VolumdId    uint32 `protobuf:"varint,1,opt,name=volumd_id,json=volumdId" json:"volumd_id,omitempty"`
+	VolumeId    uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
 	Preallocate int64  `protobuf:"varint,2,opt,name=preallocate" json:"preallocate,omitempty"`
 }
 
@@ -186,9 +218,9 @@ func (m *VacuumVolumeCompactRequest) String() string            { return proto.C
 func (*VacuumVolumeCompactRequest) ProtoMessage()               {}
 func (*VacuumVolumeCompactRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{6} }
 
-func (m *VacuumVolumeCompactRequest) GetVolumdId() uint32 {
+func (m *VacuumVolumeCompactRequest) GetVolumeId() uint32 {
 	if m != nil {
-		return m.VolumdId
+		return m.VolumeId
 	}
 	return 0
 }
@@ -209,7 +241,7 @@ func (*VacuumVolumeCompactResponse) ProtoMessage()               {}
 func (*VacuumVolumeCompactResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{7} }
 
 type VacuumVolumeCommitRequest struct {
-	VolumdId uint32 `protobuf:"varint,1,opt,name=volumd_id,json=volumdId" json:"volumd_id,omitempty"`
+	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
 }
 
 func (m *VacuumVolumeCommitRequest) Reset()                    { *m = VacuumVolumeCommitRequest{} }
@@ -217,9 +249,9 @@ func (m *VacuumVolumeCommitRequest) String() string            { return proto.Co
 func (*VacuumVolumeCommitRequest) ProtoMessage()               {}
 func (*VacuumVolumeCommitRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{8} }
 
-func (m *VacuumVolumeCommitRequest) GetVolumdId() uint32 {
+func (m *VacuumVolumeCommitRequest) GetVolumeId() uint32 {
 	if m != nil {
-		return m.VolumdId
+		return m.VolumeId
 	}
 	return 0
 }
@@ -233,7 +265,7 @@ func (*VacuumVolumeCommitResponse) ProtoMessage()               {}
 func (*VacuumVolumeCommitResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{9} }
 
 type VacuumVolumeCleanupRequest struct {
-	VolumdId uint32 `protobuf:"varint,1,opt,name=volumd_id,json=volumdId" json:"volumd_id,omitempty"`
+	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
 }
 
 func (m *VacuumVolumeCleanupRequest) Reset()                    { *m = VacuumVolumeCleanupRequest{} }
@@ -241,9 +273,9 @@ func (m *VacuumVolumeCleanupRequest) String() string            { return proto.C
 func (*VacuumVolumeCleanupRequest) ProtoMessage()               {}
 func (*VacuumVolumeCleanupRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{10} }
 
-func (m *VacuumVolumeCleanupRequest) GetVolumdId() uint32 {
+func (m *VacuumVolumeCleanupRequest) GetVolumeId() uint32 {
 	if m != nil {
-		return m.VolumdId
+		return m.VolumeId
 	}
 	return 0
 }
@@ -280,64 +312,64 @@ func (m *DeleteCollectionResponse) String() string            { return proto.Com
 func (*DeleteCollectionResponse) ProtoMessage()               {}
 func (*DeleteCollectionResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{13} }
 
-type AssignVolumeRequest struct {
-	VolumdId    uint32 `protobuf:"varint,1,opt,name=volumd_id,json=volumdId" json:"volumd_id,omitempty"`
+type AllocateVolumeRequest struct {
+	VolumeId    uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
 	Collection  string `protobuf:"bytes,2,opt,name=collection" json:"collection,omitempty"`
 	Preallocate int64  `protobuf:"varint,3,opt,name=preallocate" json:"preallocate,omitempty"`
 	Replication string `protobuf:"bytes,4,opt,name=replication" json:"replication,omitempty"`
 	Ttl         string `protobuf:"bytes,5,opt,name=ttl" json:"ttl,omitempty"`
 }
 
-func (m *AssignVolumeRequest) Reset()                    { *m = AssignVolumeRequest{} }
-func (m *AssignVolumeRequest) String() string            { return proto.CompactTextString(m) }
-func (*AssignVolumeRequest) ProtoMessage()               {}
-func (*AssignVolumeRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{14} }
+func (m *AllocateVolumeRequest) Reset()                    { *m = AllocateVolumeRequest{} }
+func (m *AllocateVolumeRequest) String() string            { return proto.CompactTextString(m) }
+func (*AllocateVolumeRequest) ProtoMessage()               {}
+func (*AllocateVolumeRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{14} }
 
-func (m *AssignVolumeRequest) GetVolumdId() uint32 {
+func (m *AllocateVolumeRequest) GetVolumeId() uint32 {
 	if m != nil {
-		return m.VolumdId
+		return m.VolumeId
 	}
 	return 0
 }
 
-func (m *AssignVolumeRequest) GetCollection() string {
+func (m *AllocateVolumeRequest) GetCollection() string {
 	if m != nil {
 		return m.Collection
 	}
 	return ""
 }
 
-func (m *AssignVolumeRequest) GetPreallocate() int64 {
+func (m *AllocateVolumeRequest) GetPreallocate() int64 {
 	if m != nil {
 		return m.Preallocate
 	}
 	return 0
 }
 
-func (m *AssignVolumeRequest) GetReplication() string {
+func (m *AllocateVolumeRequest) GetReplication() string {
 	if m != nil {
 		return m.Replication
 	}
 	return ""
 }
 
-func (m *AssignVolumeRequest) GetTtl() string {
+func (m *AllocateVolumeRequest) GetTtl() string {
 	if m != nil {
 		return m.Ttl
 	}
 	return ""
 }
 
-type AssignVolumeResponse struct {
+type AllocateVolumeResponse struct {
 }
 
-func (m *AssignVolumeResponse) Reset()                    { *m = AssignVolumeResponse{} }
-func (m *AssignVolumeResponse) String() string            { return proto.CompactTextString(m) }
-func (*AssignVolumeResponse) ProtoMessage()               {}
-func (*AssignVolumeResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{15} }
+func (m *AllocateVolumeResponse) Reset()                    { *m = AllocateVolumeResponse{} }
+func (m *AllocateVolumeResponse) String() string            { return proto.CompactTextString(m) }
+func (*AllocateVolumeResponse) ProtoMessage()               {}
+func (*AllocateVolumeResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{15} }
 
 type VolumeSyncStatusRequest struct {
-	VolumdId uint32 `protobuf:"varint,1,opt,name=volumd_id,json=volumdId" json:"volumd_id,omitempty"`
+	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
 }
 
 func (m *VolumeSyncStatusRequest) Reset()                    { *m = VolumeSyncStatusRequest{} }
@@ -345,15 +377,15 @@ func (m *VolumeSyncStatusRequest) String() string            { return proto.Comp
 func (*VolumeSyncStatusRequest) ProtoMessage()               {}
 func (*VolumeSyncStatusRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{16} }
 
-func (m *VolumeSyncStatusRequest) GetVolumdId() uint32 {
+func (m *VolumeSyncStatusRequest) GetVolumeId() uint32 {
 	if m != nil {
-		return m.VolumdId
+		return m.VolumeId
 	}
 	return 0
 }
 
 type VolumeSyncStatusResponse struct {
-	VolumdId        uint32 `protobuf:"varint,1,opt,name=volumd_id,json=volumdId" json:"volumd_id,omitempty"`
+	VolumeId        uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
 	Collection      string `protobuf:"bytes,2,opt,name=collection" json:"collection,omitempty"`
 	Replication     string `protobuf:"bytes,4,opt,name=replication" json:"replication,omitempty"`
 	Ttl             string `protobuf:"bytes,5,opt,name=ttl" json:"ttl,omitempty"`
@@ -367,9 +399,9 @@ func (m *VolumeSyncStatusResponse) String() string            { return proto.Com
 func (*VolumeSyncStatusResponse) ProtoMessage()               {}
 func (*VolumeSyncStatusResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{17} }
 
-func (m *VolumeSyncStatusResponse) GetVolumdId() uint32 {
+func (m *VolumeSyncStatusResponse) GetVolumeId() uint32 {
 	if m != nil {
-		return m.VolumdId
+		return m.VolumeId
 	}
 	return 0
 }
@@ -416,96 +448,40 @@ func (m *VolumeSyncStatusResponse) GetIdxFileSize() uint64 {
 	return 0
 }
 
-type VolumeSyncIndexRequest struct {
-	VolumdId uint32 `protobuf:"varint,1,opt,name=volumd_id,json=volumdId" json:"volumd_id,omitempty"`
+type VolumeIncrementalCopyRequest struct {
+	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	SinceNs  uint64 `protobuf:"varint,2,opt,name=since_ns,json=sinceNs" json:"since_ns,omitempty"`
 }
 
-func (m *VolumeSyncIndexRequest) Reset()                    { *m = VolumeSyncIndexRequest{} }
-func (m *VolumeSyncIndexRequest) String() string            { return proto.CompactTextString(m) }
-func (*VolumeSyncIndexRequest) ProtoMessage()               {}
-func (*VolumeSyncIndexRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{18} }
+func (m *VolumeIncrementalCopyRequest) Reset()                    { *m = VolumeIncrementalCopyRequest{} }
+func (m *VolumeIncrementalCopyRequest) String() string            { return proto.CompactTextString(m) }
+func (*VolumeIncrementalCopyRequest) ProtoMessage()               {}
+func (*VolumeIncrementalCopyRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{18} }
 
-func (m *VolumeSyncIndexRequest) GetVolumdId() uint32 {
+func (m *VolumeIncrementalCopyRequest) GetVolumeId() uint32 {
 	if m != nil {
-		return m.VolumdId
+		return m.VolumeId
 	}
 	return 0
 }
 
-type VolumeSyncIndexResponse struct {
-	IndexFileContent []byte `protobuf:"bytes,1,opt,name=index_file_content,json=indexFileContent,proto3" json:"index_file_content,omitempty"`
-}
-
-func (m *VolumeSyncIndexResponse) Reset()                    { *m = VolumeSyncIndexResponse{} }
-func (m *VolumeSyncIndexResponse) String() string            { return proto.CompactTextString(m) }
-func (*VolumeSyncIndexResponse) ProtoMessage()               {}
-func (*VolumeSyncIndexResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{19} }
-
-func (m *VolumeSyncIndexResponse) GetIndexFileContent() []byte {
+func (m *VolumeIncrementalCopyRequest) GetSinceNs() uint64 {
 	if m != nil {
-		return m.IndexFileContent
-	}
-	return nil
-}
-
-type VolumeSyncDataRequest struct {
-	VolumdId uint32 `protobuf:"varint,1,opt,name=volumd_id,json=volumdId" json:"volumd_id,omitempty"`
-	Revision uint32 `protobuf:"varint,2,opt,name=revision" json:"revision,omitempty"`
-	Offset   uint32 `protobuf:"varint,3,opt,name=offset" json:"offset,omitempty"`
-	Size     uint32 `protobuf:"varint,4,opt,name=size" json:"size,omitempty"`
-	NeedleId string `protobuf:"bytes,5,opt,name=needle_id,json=needleId" json:"needle_id,omitempty"`
-}
-
-func (m *VolumeSyncDataRequest) Reset()                    { *m = VolumeSyncDataRequest{} }
-func (m *VolumeSyncDataRequest) String() string            { return proto.CompactTextString(m) }
-func (*VolumeSyncDataRequest) ProtoMessage()               {}
-func (*VolumeSyncDataRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{20} }
-
-func (m *VolumeSyncDataRequest) GetVolumdId() uint32 {
-	if m != nil {
-		return m.VolumdId
+		return m.SinceNs
 	}
 	return 0
 }
 
-func (m *VolumeSyncDataRequest) GetRevision() uint32 {
-	if m != nil {
-		return m.Revision
-	}
-	return 0
-}
-
-func (m *VolumeSyncDataRequest) GetOffset() uint32 {
-	if m != nil {
-		return m.Offset
-	}
-	return 0
-}
-
-func (m *VolumeSyncDataRequest) GetSize() uint32 {
-	if m != nil {
-		return m.Size
-	}
-	return 0
-}
-
-func (m *VolumeSyncDataRequest) GetNeedleId() string {
-	if m != nil {
-		return m.NeedleId
-	}
-	return ""
-}
-
-type VolumeSyncDataResponse struct {
+type VolumeIncrementalCopyResponse struct {
 	FileContent []byte `protobuf:"bytes,1,opt,name=file_content,json=fileContent,proto3" json:"file_content,omitempty"`
 }
 
-func (m *VolumeSyncDataResponse) Reset()                    { *m = VolumeSyncDataResponse{} }
-func (m *VolumeSyncDataResponse) String() string            { return proto.CompactTextString(m) }
-func (*VolumeSyncDataResponse) ProtoMessage()               {}
-func (*VolumeSyncDataResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{21} }
+func (m *VolumeIncrementalCopyResponse) Reset()                    { *m = VolumeIncrementalCopyResponse{} }
+func (m *VolumeIncrementalCopyResponse) String() string            { return proto.CompactTextString(m) }
+func (*VolumeIncrementalCopyResponse) ProtoMessage()               {}
+func (*VolumeIncrementalCopyResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{19} }
 
-func (m *VolumeSyncDataResponse) GetFileContent() []byte {
+func (m *VolumeIncrementalCopyResponse) GetFileContent() []byte {
 	if m != nil {
 		return m.FileContent
 	}
@@ -513,17 +489,17 @@ func (m *VolumeSyncDataResponse) GetFileContent() []byte {
 }
 
 type VolumeMountRequest struct {
-	VolumdId uint32 `protobuf:"varint,1,opt,name=volumd_id,json=volumdId" json:"volumd_id,omitempty"`
+	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
 }
 
 func (m *VolumeMountRequest) Reset()                    { *m = VolumeMountRequest{} }
 func (m *VolumeMountRequest) String() string            { return proto.CompactTextString(m) }
 func (*VolumeMountRequest) ProtoMessage()               {}
-func (*VolumeMountRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{22} }
+func (*VolumeMountRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{20} }
 
-func (m *VolumeMountRequest) GetVolumdId() uint32 {
+func (m *VolumeMountRequest) GetVolumeId() uint32 {
 	if m != nil {
-		return m.VolumdId
+		return m.VolumeId
 	}
 	return 0
 }
@@ -534,20 +510,20 @@ type VolumeMountResponse struct {
 func (m *VolumeMountResponse) Reset()                    { *m = VolumeMountResponse{} }
 func (m *VolumeMountResponse) String() string            { return proto.CompactTextString(m) }
 func (*VolumeMountResponse) ProtoMessage()               {}
-func (*VolumeMountResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{23} }
+func (*VolumeMountResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{21} }
 
 type VolumeUnmountRequest struct {
-	VolumdId uint32 `protobuf:"varint,1,opt,name=volumd_id,json=volumdId" json:"volumd_id,omitempty"`
+	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
 }
 
 func (m *VolumeUnmountRequest) Reset()                    { *m = VolumeUnmountRequest{} }
 func (m *VolumeUnmountRequest) String() string            { return proto.CompactTextString(m) }
 func (*VolumeUnmountRequest) ProtoMessage()               {}
-func (*VolumeUnmountRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{24} }
+func (*VolumeUnmountRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{22} }
 
-func (m *VolumeUnmountRequest) GetVolumdId() uint32 {
+func (m *VolumeUnmountRequest) GetVolumeId() uint32 {
 	if m != nil {
-		return m.VolumdId
+		return m.VolumeId
 	}
 	return 0
 }
@@ -558,20 +534,20 @@ type VolumeUnmountResponse struct {
 func (m *VolumeUnmountResponse) Reset()                    { *m = VolumeUnmountResponse{} }
 func (m *VolumeUnmountResponse) String() string            { return proto.CompactTextString(m) }
 func (*VolumeUnmountResponse) ProtoMessage()               {}
-func (*VolumeUnmountResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{25} }
+func (*VolumeUnmountResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{23} }
 
 type VolumeDeleteRequest struct {
-	VolumdId uint32 `protobuf:"varint,1,opt,name=volumd_id,json=volumdId" json:"volumd_id,omitempty"`
+	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
 }
 
 func (m *VolumeDeleteRequest) Reset()                    { *m = VolumeDeleteRequest{} }
 func (m *VolumeDeleteRequest) String() string            { return proto.CompactTextString(m) }
 func (*VolumeDeleteRequest) ProtoMessage()               {}
-func (*VolumeDeleteRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{26} }
+func (*VolumeDeleteRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{24} }
 
-func (m *VolumeDeleteRequest) GetVolumdId() uint32 {
+func (m *VolumeDeleteRequest) GetVolumeId() uint32 {
 	if m != nil {
-		return m.VolumdId
+		return m.VolumeId
 	}
 	return 0
 }
@@ -582,23 +558,727 @@ type VolumeDeleteResponse struct {
 func (m *VolumeDeleteResponse) Reset()                    { *m = VolumeDeleteResponse{} }
 func (m *VolumeDeleteResponse) String() string            { return proto.CompactTextString(m) }
 func (*VolumeDeleteResponse) ProtoMessage()               {}
-func (*VolumeDeleteResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{27} }
+func (*VolumeDeleteResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{25} }
 
-type VolumeUiPageRequest struct {
+type VolumeMarkReadonlyRequest struct {
+	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
 }
 
-func (m *VolumeUiPageRequest) Reset()                    { *m = VolumeUiPageRequest{} }
-func (m *VolumeUiPageRequest) String() string            { return proto.CompactTextString(m) }
-func (*VolumeUiPageRequest) ProtoMessage()               {}
-func (*VolumeUiPageRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{28} }
+func (m *VolumeMarkReadonlyRequest) Reset()                    { *m = VolumeMarkReadonlyRequest{} }
+func (m *VolumeMarkReadonlyRequest) String() string            { return proto.CompactTextString(m) }
+func (*VolumeMarkReadonlyRequest) ProtoMessage()               {}
+func (*VolumeMarkReadonlyRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{26} }
 
-type VolumeUiPageResponse struct {
+func (m *VolumeMarkReadonlyRequest) GetVolumeId() uint32 {
+	if m != nil {
+		return m.VolumeId
+	}
+	return 0
 }
 
-func (m *VolumeUiPageResponse) Reset()                    { *m = VolumeUiPageResponse{} }
-func (m *VolumeUiPageResponse) String() string            { return proto.CompactTextString(m) }
-func (*VolumeUiPageResponse) ProtoMessage()               {}
-func (*VolumeUiPageResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{29} }
+type VolumeMarkReadonlyResponse struct {
+}
+
+func (m *VolumeMarkReadonlyResponse) Reset()                    { *m = VolumeMarkReadonlyResponse{} }
+func (m *VolumeMarkReadonlyResponse) String() string            { return proto.CompactTextString(m) }
+func (*VolumeMarkReadonlyResponse) ProtoMessage()               {}
+func (*VolumeMarkReadonlyResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{27} }
+
+type VolumeCopyRequest struct {
+	VolumeId       uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	Collection     string `protobuf:"bytes,2,opt,name=collection" json:"collection,omitempty"`
+	Replication    string `protobuf:"bytes,3,opt,name=replication" json:"replication,omitempty"`
+	Ttl            string `protobuf:"bytes,4,opt,name=ttl" json:"ttl,omitempty"`
+	SourceDataNode string `protobuf:"bytes,5,opt,name=source_data_node,json=sourceDataNode" json:"source_data_node,omitempty"`
+}
+
+func (m *VolumeCopyRequest) Reset()                    { *m = VolumeCopyRequest{} }
+func (m *VolumeCopyRequest) String() string            { return proto.CompactTextString(m) }
+func (*VolumeCopyRequest) ProtoMessage()               {}
+func (*VolumeCopyRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{28} }
+
+func (m *VolumeCopyRequest) GetVolumeId() uint32 {
+	if m != nil {
+		return m.VolumeId
+	}
+	return 0
+}
+
+func (m *VolumeCopyRequest) GetCollection() string {
+	if m != nil {
+		return m.Collection
+	}
+	return ""
+}
+
+func (m *VolumeCopyRequest) GetReplication() string {
+	if m != nil {
+		return m.Replication
+	}
+	return ""
+}
+
+func (m *VolumeCopyRequest) GetTtl() string {
+	if m != nil {
+		return m.Ttl
+	}
+	return ""
+}
+
+func (m *VolumeCopyRequest) GetSourceDataNode() string {
+	if m != nil {
+		return m.SourceDataNode
+	}
+	return ""
+}
+
+type VolumeCopyResponse struct {
+	LastAppendAtNs uint64 `protobuf:"varint,1,opt,name=last_append_at_ns,json=lastAppendAtNs" json:"last_append_at_ns,omitempty"`
+}
+
+func (m *VolumeCopyResponse) Reset()                    { *m = VolumeCopyResponse{} }
+func (m *VolumeCopyResponse) String() string            { return proto.CompactTextString(m) }
+func (*VolumeCopyResponse) ProtoMessage()               {}
+func (*VolumeCopyResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{29} }
+
+func (m *VolumeCopyResponse) GetLastAppendAtNs() uint64 {
+	if m != nil {
+		return m.LastAppendAtNs
+	}
+	return 0
+}
+
+type CopyFileRequest struct {
+	VolumeId           uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	Ext                string `protobuf:"bytes,2,opt,name=ext" json:"ext,omitempty"`
+	CompactionRevision uint32 `protobuf:"varint,3,opt,name=compaction_revision,json=compactionRevision" json:"compaction_revision,omitempty"`
+	StopOffset         uint64 `protobuf:"varint,4,opt,name=stop_offset,json=stopOffset" json:"stop_offset,omitempty"`
+	Collection         string `protobuf:"bytes,5,opt,name=collection" json:"collection,omitempty"`
+	IsEcVolume         bool   `protobuf:"varint,6,opt,name=is_ec_volume,json=isEcVolume" json:"is_ec_volume,omitempty"`
+}
+
+func (m *CopyFileRequest) Reset()                    { *m = CopyFileRequest{} }
+func (m *CopyFileRequest) String() string            { return proto.CompactTextString(m) }
+func (*CopyFileRequest) ProtoMessage()               {}
+func (*CopyFileRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{30} }
+
+func (m *CopyFileRequest) GetVolumeId() uint32 {
+	if m != nil {
+		return m.VolumeId
+	}
+	return 0
+}
+
+func (m *CopyFileRequest) GetExt() string {
+	if m != nil {
+		return m.Ext
+	}
+	return ""
+}
+
+func (m *CopyFileRequest) GetCompactionRevision() uint32 {
+	if m != nil {
+		return m.CompactionRevision
+	}
+	return 0
+}
+
+func (m *CopyFileRequest) GetStopOffset() uint64 {
+	if m != nil {
+		return m.StopOffset
+	}
+	return 0
+}
+
+func (m *CopyFileRequest) GetCollection() string {
+	if m != nil {
+		return m.Collection
+	}
+	return ""
+}
+
+func (m *CopyFileRequest) GetIsEcVolume() bool {
+	if m != nil {
+		return m.IsEcVolume
+	}
+	return false
+}
+
+type CopyFileResponse struct {
+	FileContent []byte `protobuf:"bytes,1,opt,name=file_content,json=fileContent,proto3" json:"file_content,omitempty"`
+}
+
+func (m *CopyFileResponse) Reset()                    { *m = CopyFileResponse{} }
+func (m *CopyFileResponse) String() string            { return proto.CompactTextString(m) }
+func (*CopyFileResponse) ProtoMessage()               {}
+func (*CopyFileResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{31} }
+
+func (m *CopyFileResponse) GetFileContent() []byte {
+	if m != nil {
+		return m.FileContent
+	}
+	return nil
+}
+
+type VolumeTailSenderRequest struct {
+	VolumeId           uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	SinceNs            uint64 `protobuf:"varint,2,opt,name=since_ns,json=sinceNs" json:"since_ns,omitempty"`
+	IdleTimeoutSeconds uint32 `protobuf:"varint,3,opt,name=idle_timeout_seconds,json=idleTimeoutSeconds" json:"idle_timeout_seconds,omitempty"`
+}
+
+func (m *VolumeTailSenderRequest) Reset()                    { *m = VolumeTailSenderRequest{} }
+func (m *VolumeTailSenderRequest) String() string            { return proto.CompactTextString(m) }
+func (*VolumeTailSenderRequest) ProtoMessage()               {}
+func (*VolumeTailSenderRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{32} }
+
+func (m *VolumeTailSenderRequest) GetVolumeId() uint32 {
+	if m != nil {
+		return m.VolumeId
+	}
+	return 0
+}
+
+func (m *VolumeTailSenderRequest) GetSinceNs() uint64 {
+	if m != nil {
+		return m.SinceNs
+	}
+	return 0
+}
+
+func (m *VolumeTailSenderRequest) GetIdleTimeoutSeconds() uint32 {
+	if m != nil {
+		return m.IdleTimeoutSeconds
+	}
+	return 0
+}
+
+type VolumeTailSenderResponse struct {
+	NeedleHeader []byte `protobuf:"bytes,1,opt,name=needle_header,json=needleHeader,proto3" json:"needle_header,omitempty"`
+	NeedleBody   []byte `protobuf:"bytes,2,opt,name=needle_body,json=needleBody,proto3" json:"needle_body,omitempty"`
+	IsLastChunk  bool   `protobuf:"varint,3,opt,name=is_last_chunk,json=isLastChunk" json:"is_last_chunk,omitempty"`
+}
+
+func (m *VolumeTailSenderResponse) Reset()                    { *m = VolumeTailSenderResponse{} }
+func (m *VolumeTailSenderResponse) String() string            { return proto.CompactTextString(m) }
+func (*VolumeTailSenderResponse) ProtoMessage()               {}
+func (*VolumeTailSenderResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{33} }
+
+func (m *VolumeTailSenderResponse) GetNeedleHeader() []byte {
+	if m != nil {
+		return m.NeedleHeader
+	}
+	return nil
+}
+
+func (m *VolumeTailSenderResponse) GetNeedleBody() []byte {
+	if m != nil {
+		return m.NeedleBody
+	}
+	return nil
+}
+
+func (m *VolumeTailSenderResponse) GetIsLastChunk() bool {
+	if m != nil {
+		return m.IsLastChunk
+	}
+	return false
+}
+
+type VolumeTailReceiverRequest struct {
+	VolumeId           uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	SinceNs            uint64 `protobuf:"varint,2,opt,name=since_ns,json=sinceNs" json:"since_ns,omitempty"`
+	IdleTimeoutSeconds uint32 `protobuf:"varint,3,opt,name=idle_timeout_seconds,json=idleTimeoutSeconds" json:"idle_timeout_seconds,omitempty"`
+	SourceVolumeServer string `protobuf:"bytes,4,opt,name=source_volume_server,json=sourceVolumeServer" json:"source_volume_server,omitempty"`
+}
+
+func (m *VolumeTailReceiverRequest) Reset()                    { *m = VolumeTailReceiverRequest{} }
+func (m *VolumeTailReceiverRequest) String() string            { return proto.CompactTextString(m) }
+func (*VolumeTailReceiverRequest) ProtoMessage()               {}
+func (*VolumeTailReceiverRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{34} }
+
+func (m *VolumeTailReceiverRequest) GetVolumeId() uint32 {
+	if m != nil {
+		return m.VolumeId
+	}
+	return 0
+}
+
+func (m *VolumeTailReceiverRequest) GetSinceNs() uint64 {
+	if m != nil {
+		return m.SinceNs
+	}
+	return 0
+}
+
+func (m *VolumeTailReceiverRequest) GetIdleTimeoutSeconds() uint32 {
+	if m != nil {
+		return m.IdleTimeoutSeconds
+	}
+	return 0
+}
+
+func (m *VolumeTailReceiverRequest) GetSourceVolumeServer() string {
+	if m != nil {
+		return m.SourceVolumeServer
+	}
+	return ""
+}
+
+type VolumeTailReceiverResponse struct {
+}
+
+func (m *VolumeTailReceiverResponse) Reset()                    { *m = VolumeTailReceiverResponse{} }
+func (m *VolumeTailReceiverResponse) String() string            { return proto.CompactTextString(m) }
+func (*VolumeTailReceiverResponse) ProtoMessage()               {}
+func (*VolumeTailReceiverResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{35} }
+
+type VolumeEcShardsGenerateRequest struct {
+	VolumeId   uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	Collection string `protobuf:"bytes,2,opt,name=collection" json:"collection,omitempty"`
+}
+
+func (m *VolumeEcShardsGenerateRequest) Reset()                    { *m = VolumeEcShardsGenerateRequest{} }
+func (m *VolumeEcShardsGenerateRequest) String() string            { return proto.CompactTextString(m) }
+func (*VolumeEcShardsGenerateRequest) ProtoMessage()               {}
+func (*VolumeEcShardsGenerateRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{36} }
+
+func (m *VolumeEcShardsGenerateRequest) GetVolumeId() uint32 {
+	if m != nil {
+		return m.VolumeId
+	}
+	return 0
+}
+
+func (m *VolumeEcShardsGenerateRequest) GetCollection() string {
+	if m != nil {
+		return m.Collection
+	}
+	return ""
+}
+
+type VolumeEcShardsGenerateResponse struct {
+}
+
+func (m *VolumeEcShardsGenerateResponse) Reset()                    { *m = VolumeEcShardsGenerateResponse{} }
+func (m *VolumeEcShardsGenerateResponse) String() string            { return proto.CompactTextString(m) }
+func (*VolumeEcShardsGenerateResponse) ProtoMessage()               {}
+func (*VolumeEcShardsGenerateResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{37} }
+
+type VolumeEcShardsRebuildRequest struct {
+	VolumeId   uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	Collection string `protobuf:"bytes,2,opt,name=collection" json:"collection,omitempty"`
+}
+
+func (m *VolumeEcShardsRebuildRequest) Reset()                    { *m = VolumeEcShardsRebuildRequest{} }
+func (m *VolumeEcShardsRebuildRequest) String() string            { return proto.CompactTextString(m) }
+func (*VolumeEcShardsRebuildRequest) ProtoMessage()               {}
+func (*VolumeEcShardsRebuildRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{38} }
+
+func (m *VolumeEcShardsRebuildRequest) GetVolumeId() uint32 {
+	if m != nil {
+		return m.VolumeId
+	}
+	return 0
+}
+
+func (m *VolumeEcShardsRebuildRequest) GetCollection() string {
+	if m != nil {
+		return m.Collection
+	}
+	return ""
+}
+
+type VolumeEcShardsRebuildResponse struct {
+	RebuiltShardIds []uint32 `protobuf:"varint,1,rep,packed,name=rebuilt_shard_ids,json=rebuiltShardIds" json:"rebuilt_shard_ids,omitempty"`
+}
+
+func (m *VolumeEcShardsRebuildResponse) Reset()                    { *m = VolumeEcShardsRebuildResponse{} }
+func (m *VolumeEcShardsRebuildResponse) String() string            { return proto.CompactTextString(m) }
+func (*VolumeEcShardsRebuildResponse) ProtoMessage()               {}
+func (*VolumeEcShardsRebuildResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{39} }
+
+func (m *VolumeEcShardsRebuildResponse) GetRebuiltShardIds() []uint32 {
+	if m != nil {
+		return m.RebuiltShardIds
+	}
+	return nil
+}
+
+type VolumeEcShardsCopyRequest struct {
+	VolumeId       uint32   `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	Collection     string   `protobuf:"bytes,2,opt,name=collection" json:"collection,omitempty"`
+	ShardIds       []uint32 `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds" json:"shard_ids,omitempty"`
+	CopyEcxFile    bool     `protobuf:"varint,4,opt,name=copy_ecx_file,json=copyEcxFile" json:"copy_ecx_file,omitempty"`
+	SourceDataNode string   `protobuf:"bytes,5,opt,name=source_data_node,json=sourceDataNode" json:"source_data_node,omitempty"`
+}
+
+func (m *VolumeEcShardsCopyRequest) Reset()                    { *m = VolumeEcShardsCopyRequest{} }
+func (m *VolumeEcShardsCopyRequest) String() string            { return proto.CompactTextString(m) }
+func (*VolumeEcShardsCopyRequest) ProtoMessage()               {}
+func (*VolumeEcShardsCopyRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{40} }
+
+func (m *VolumeEcShardsCopyRequest) GetVolumeId() uint32 {
+	if m != nil {
+		return m.VolumeId
+	}
+	return 0
+}
+
+func (m *VolumeEcShardsCopyRequest) GetCollection() string {
+	if m != nil {
+		return m.Collection
+	}
+	return ""
+}
+
+func (m *VolumeEcShardsCopyRequest) GetShardIds() []uint32 {
+	if m != nil {
+		return m.ShardIds
+	}
+	return nil
+}
+
+func (m *VolumeEcShardsCopyRequest) GetCopyEcxFile() bool {
+	if m != nil {
+		return m.CopyEcxFile
+	}
+	return false
+}
+
+func (m *VolumeEcShardsCopyRequest) GetSourceDataNode() string {
+	if m != nil {
+		return m.SourceDataNode
+	}
+	return ""
+}
+
+type VolumeEcShardsCopyResponse struct {
+}
+
+func (m *VolumeEcShardsCopyResponse) Reset()                    { *m = VolumeEcShardsCopyResponse{} }
+func (m *VolumeEcShardsCopyResponse) String() string            { return proto.CompactTextString(m) }
+func (*VolumeEcShardsCopyResponse) ProtoMessage()               {}
+func (*VolumeEcShardsCopyResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{41} }
+
+type VolumeEcShardsDeleteRequest struct {
+	VolumeId   uint32   `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	Collection string   `protobuf:"bytes,2,opt,name=collection" json:"collection,omitempty"`
+	ShardIds   []uint32 `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds" json:"shard_ids,omitempty"`
+}
+
+func (m *VolumeEcShardsDeleteRequest) Reset()                    { *m = VolumeEcShardsDeleteRequest{} }
+func (m *VolumeEcShardsDeleteRequest) String() string            { return proto.CompactTextString(m) }
+func (*VolumeEcShardsDeleteRequest) ProtoMessage()               {}
+func (*VolumeEcShardsDeleteRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{42} }
+
+func (m *VolumeEcShardsDeleteRequest) GetVolumeId() uint32 {
+	if m != nil {
+		return m.VolumeId
+	}
+	return 0
+}
+
+func (m *VolumeEcShardsDeleteRequest) GetCollection() string {
+	if m != nil {
+		return m.Collection
+	}
+	return ""
+}
+
+func (m *VolumeEcShardsDeleteRequest) GetShardIds() []uint32 {
+	if m != nil {
+		return m.ShardIds
+	}
+	return nil
+}
+
+type VolumeEcShardsDeleteResponse struct {
+}
+
+func (m *VolumeEcShardsDeleteResponse) Reset()                    { *m = VolumeEcShardsDeleteResponse{} }
+func (m *VolumeEcShardsDeleteResponse) String() string            { return proto.CompactTextString(m) }
+func (*VolumeEcShardsDeleteResponse) ProtoMessage()               {}
+func (*VolumeEcShardsDeleteResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{43} }
+
+type VolumeEcShardsMountRequest struct {
+	VolumeId   uint32   `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	Collection string   `protobuf:"bytes,2,opt,name=collection" json:"collection,omitempty"`
+	ShardIds   []uint32 `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds" json:"shard_ids,omitempty"`
+}
+
+func (m *VolumeEcShardsMountRequest) Reset()                    { *m = VolumeEcShardsMountRequest{} }
+func (m *VolumeEcShardsMountRequest) String() string            { return proto.CompactTextString(m) }
+func (*VolumeEcShardsMountRequest) ProtoMessage()               {}
+func (*VolumeEcShardsMountRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{44} }
+
+func (m *VolumeEcShardsMountRequest) GetVolumeId() uint32 {
+	if m != nil {
+		return m.VolumeId
+	}
+	return 0
+}
+
+func (m *VolumeEcShardsMountRequest) GetCollection() string {
+	if m != nil {
+		return m.Collection
+	}
+	return ""
+}
+
+func (m *VolumeEcShardsMountRequest) GetShardIds() []uint32 {
+	if m != nil {
+		return m.ShardIds
+	}
+	return nil
+}
+
+type VolumeEcShardsMountResponse struct {
+}
+
+func (m *VolumeEcShardsMountResponse) Reset()                    { *m = VolumeEcShardsMountResponse{} }
+func (m *VolumeEcShardsMountResponse) String() string            { return proto.CompactTextString(m) }
+func (*VolumeEcShardsMountResponse) ProtoMessage()               {}
+func (*VolumeEcShardsMountResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{45} }
+
+type VolumeEcShardsUnmountRequest struct {
+	VolumeId uint32   `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	ShardIds []uint32 `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds" json:"shard_ids,omitempty"`
+}
+
+func (m *VolumeEcShardsUnmountRequest) Reset()                    { *m = VolumeEcShardsUnmountRequest{} }
+func (m *VolumeEcShardsUnmountRequest) String() string            { return proto.CompactTextString(m) }
+func (*VolumeEcShardsUnmountRequest) ProtoMessage()               {}
+func (*VolumeEcShardsUnmountRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{46} }
+
+func (m *VolumeEcShardsUnmountRequest) GetVolumeId() uint32 {
+	if m != nil {
+		return m.VolumeId
+	}
+	return 0
+}
+
+func (m *VolumeEcShardsUnmountRequest) GetShardIds() []uint32 {
+	if m != nil {
+		return m.ShardIds
+	}
+	return nil
+}
+
+type VolumeEcShardsUnmountResponse struct {
+}
+
+func (m *VolumeEcShardsUnmountResponse) Reset()                    { *m = VolumeEcShardsUnmountResponse{} }
+func (m *VolumeEcShardsUnmountResponse) String() string            { return proto.CompactTextString(m) }
+func (*VolumeEcShardsUnmountResponse) ProtoMessage()               {}
+func (*VolumeEcShardsUnmountResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{47} }
+
+type VolumeEcShardReadRequest struct {
+	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	ShardId  uint32 `protobuf:"varint,2,opt,name=shard_id,json=shardId" json:"shard_id,omitempty"`
+	Offset   int64  `protobuf:"varint,3,opt,name=offset" json:"offset,omitempty"`
+	Size     int64  `protobuf:"varint,4,opt,name=size" json:"size,omitempty"`
+	FileKey  uint64 `protobuf:"varint,5,opt,name=file_key,json=fileKey" json:"file_key,omitempty"`
+}
+
+func (m *VolumeEcShardReadRequest) Reset()                    { *m = VolumeEcShardReadRequest{} }
+func (m *VolumeEcShardReadRequest) String() string            { return proto.CompactTextString(m) }
+func (*VolumeEcShardReadRequest) ProtoMessage()               {}
+func (*VolumeEcShardReadRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{48} }
+
+func (m *VolumeEcShardReadRequest) GetVolumeId() uint32 {
+	if m != nil {
+		return m.VolumeId
+	}
+	return 0
+}
+
+func (m *VolumeEcShardReadRequest) GetShardId() uint32 {
+	if m != nil {
+		return m.ShardId
+	}
+	return 0
+}
+
+func (m *VolumeEcShardReadRequest) GetOffset() int64 {
+	if m != nil {
+		return m.Offset
+	}
+	return 0
+}
+
+func (m *VolumeEcShardReadRequest) GetSize() int64 {
+	if m != nil {
+		return m.Size
+	}
+	return 0
+}
+
+func (m *VolumeEcShardReadRequest) GetFileKey() uint64 {
+	if m != nil {
+		return m.FileKey
+	}
+	return 0
+}
+
+type VolumeEcShardReadResponse struct {
+	Data      []byte `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	IsDeleted bool   `protobuf:"varint,2,opt,name=is_deleted,json=isDeleted" json:"is_deleted,omitempty"`
+}
+
+func (m *VolumeEcShardReadResponse) Reset()                    { *m = VolumeEcShardReadResponse{} }
+func (m *VolumeEcShardReadResponse) String() string            { return proto.CompactTextString(m) }
+func (*VolumeEcShardReadResponse) ProtoMessage()               {}
+func (*VolumeEcShardReadResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{49} }
+
+func (m *VolumeEcShardReadResponse) GetData() []byte {
+	if m != nil {
+		return m.Data
+	}
+	return nil
+}
+
+func (m *VolumeEcShardReadResponse) GetIsDeleted() bool {
+	if m != nil {
+		return m.IsDeleted
+	}
+	return false
+}
+
+type VolumeEcBlobDeleteRequest struct {
+	VolumeId   uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	Collection string `protobuf:"bytes,2,opt,name=collection" json:"collection,omitempty"`
+	FileKey    uint64 `protobuf:"varint,3,opt,name=file_key,json=fileKey" json:"file_key,omitempty"`
+	Version    uint32 `protobuf:"varint,4,opt,name=version" json:"version,omitempty"`
+}
+
+func (m *VolumeEcBlobDeleteRequest) Reset()                    { *m = VolumeEcBlobDeleteRequest{} }
+func (m *VolumeEcBlobDeleteRequest) String() string            { return proto.CompactTextString(m) }
+func (*VolumeEcBlobDeleteRequest) ProtoMessage()               {}
+func (*VolumeEcBlobDeleteRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{50} }
+
+func (m *VolumeEcBlobDeleteRequest) GetVolumeId() uint32 {
+	if m != nil {
+		return m.VolumeId
+	}
+	return 0
+}
+
+func (m *VolumeEcBlobDeleteRequest) GetCollection() string {
+	if m != nil {
+		return m.Collection
+	}
+	return ""
+}
+
+func (m *VolumeEcBlobDeleteRequest) GetFileKey() uint64 {
+	if m != nil {
+		return m.FileKey
+	}
+	return 0
+}
+
+func (m *VolumeEcBlobDeleteRequest) GetVersion() uint32 {
+	if m != nil {
+		return m.Version
+	}
+	return 0
+}
+
+type VolumeEcBlobDeleteResponse struct {
+}
+
+func (m *VolumeEcBlobDeleteResponse) Reset()                    { *m = VolumeEcBlobDeleteResponse{} }
+func (m *VolumeEcBlobDeleteResponse) String() string            { return proto.CompactTextString(m) }
+func (*VolumeEcBlobDeleteResponse) ProtoMessage()               {}
+func (*VolumeEcBlobDeleteResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{51} }
+
+type ReadVolumeFileStatusRequest struct {
+	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+}
+
+func (m *ReadVolumeFileStatusRequest) Reset()                    { *m = ReadVolumeFileStatusRequest{} }
+func (m *ReadVolumeFileStatusRequest) String() string            { return proto.CompactTextString(m) }
+func (*ReadVolumeFileStatusRequest) ProtoMessage()               {}
+func (*ReadVolumeFileStatusRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{52} }
+
+func (m *ReadVolumeFileStatusRequest) GetVolumeId() uint32 {
+	if m != nil {
+		return m.VolumeId
+	}
+	return 0
+}
+
+type ReadVolumeFileStatusResponse struct {
+	VolumeId                uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	IdxFileTimestampSeconds uint64 `protobuf:"varint,2,opt,name=idx_file_timestamp_seconds,json=idxFileTimestampSeconds" json:"idx_file_timestamp_seconds,omitempty"`
+	IdxFileSize             uint64 `protobuf:"varint,3,opt,name=idx_file_size,json=idxFileSize" json:"idx_file_size,omitempty"`
+	DatFileTimestampSeconds uint64 `protobuf:"varint,4,opt,name=dat_file_timestamp_seconds,json=datFileTimestampSeconds" json:"dat_file_timestamp_seconds,omitempty"`
+	DatFileSize             uint64 `protobuf:"varint,5,opt,name=dat_file_size,json=datFileSize" json:"dat_file_size,omitempty"`
+	FileCount               uint64 `protobuf:"varint,6,opt,name=file_count,json=fileCount" json:"file_count,omitempty"`
+	CompactionRevision      uint32 `protobuf:"varint,7,opt,name=compaction_revision,json=compactionRevision" json:"compaction_revision,omitempty"`
+	Collection              string `protobuf:"bytes,8,opt,name=collection" json:"collection,omitempty"`
+}
+
+func (m *ReadVolumeFileStatusResponse) Reset()                    { *m = ReadVolumeFileStatusResponse{} }
+func (m *ReadVolumeFileStatusResponse) String() string            { return proto.CompactTextString(m) }
+func (*ReadVolumeFileStatusResponse) ProtoMessage()               {}
+func (*ReadVolumeFileStatusResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{53} }
+
+func (m *ReadVolumeFileStatusResponse) GetVolumeId() uint32 {
+	if m != nil {
+		return m.VolumeId
+	}
+	return 0
+}
+
+func (m *ReadVolumeFileStatusResponse) GetIdxFileTimestampSeconds() uint64 {
+	if m != nil {
+		return m.IdxFileTimestampSeconds
+	}
+	return 0
+}
+
+func (m *ReadVolumeFileStatusResponse) GetIdxFileSize() uint64 {
+	if m != nil {
+		return m.IdxFileSize
+	}
+	return 0
+}
+
+func (m *ReadVolumeFileStatusResponse) GetDatFileTimestampSeconds() uint64 {
+	if m != nil {
+		return m.DatFileTimestampSeconds
+	}
+	return 0
+}
+
+func (m *ReadVolumeFileStatusResponse) GetDatFileSize() uint64 {
+	if m != nil {
+		return m.DatFileSize
+	}
+	return 0
+}
+
+func (m *ReadVolumeFileStatusResponse) GetFileCount() uint64 {
+	if m != nil {
+		return m.FileCount
+	}
+	return 0
+}
+
+func (m *ReadVolumeFileStatusResponse) GetCompactionRevision() uint32 {
+	if m != nil {
+		return m.CompactionRevision
+	}
+	return 0
+}
+
+func (m *ReadVolumeFileStatusResponse) GetCollection() string {
+	if m != nil {
+		return m.Collection
+	}
+	return ""
+}
 
 type DiskStatus struct {
 	Dir  string `protobuf:"bytes,1,opt,name=dir" json:"dir,omitempty"`
@@ -610,7 +1290,7 @@ type DiskStatus struct {
 func (m *DiskStatus) Reset()                    { *m = DiskStatus{} }
 func (m *DiskStatus) String() string            { return proto.CompactTextString(m) }
 func (*DiskStatus) ProtoMessage()               {}
-func (*DiskStatus) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{30} }
+func (*DiskStatus) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{54} }
 
 func (m *DiskStatus) GetDir() string {
 	if m != nil {
@@ -653,7 +1333,7 @@ type MemStatus struct {
 func (m *MemStatus) Reset()                    { *m = MemStatus{} }
 func (m *MemStatus) String() string            { return proto.CompactTextString(m) }
 func (*MemStatus) ProtoMessage()               {}
-func (*MemStatus) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{31} }
+func (*MemStatus) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{55} }
 
 func (m *MemStatus) GetGoroutines() int32 {
 	if m != nil {
@@ -719,22 +1399,46 @@ func init() {
 	proto.RegisterType((*VacuumVolumeCleanupResponse)(nil), "volume_server_pb.VacuumVolumeCleanupResponse")
 	proto.RegisterType((*DeleteCollectionRequest)(nil), "volume_server_pb.DeleteCollectionRequest")
 	proto.RegisterType((*DeleteCollectionResponse)(nil), "volume_server_pb.DeleteCollectionResponse")
-	proto.RegisterType((*AssignVolumeRequest)(nil), "volume_server_pb.AssignVolumeRequest")
-	proto.RegisterType((*AssignVolumeResponse)(nil), "volume_server_pb.AssignVolumeResponse")
+	proto.RegisterType((*AllocateVolumeRequest)(nil), "volume_server_pb.AllocateVolumeRequest")
+	proto.RegisterType((*AllocateVolumeResponse)(nil), "volume_server_pb.AllocateVolumeResponse")
 	proto.RegisterType((*VolumeSyncStatusRequest)(nil), "volume_server_pb.VolumeSyncStatusRequest")
 	proto.RegisterType((*VolumeSyncStatusResponse)(nil), "volume_server_pb.VolumeSyncStatusResponse")
-	proto.RegisterType((*VolumeSyncIndexRequest)(nil), "volume_server_pb.VolumeSyncIndexRequest")
-	proto.RegisterType((*VolumeSyncIndexResponse)(nil), "volume_server_pb.VolumeSyncIndexResponse")
-	proto.RegisterType((*VolumeSyncDataRequest)(nil), "volume_server_pb.VolumeSyncDataRequest")
-	proto.RegisterType((*VolumeSyncDataResponse)(nil), "volume_server_pb.VolumeSyncDataResponse")
+	proto.RegisterType((*VolumeIncrementalCopyRequest)(nil), "volume_server_pb.VolumeIncrementalCopyRequest")
+	proto.RegisterType((*VolumeIncrementalCopyResponse)(nil), "volume_server_pb.VolumeIncrementalCopyResponse")
 	proto.RegisterType((*VolumeMountRequest)(nil), "volume_server_pb.VolumeMountRequest")
 	proto.RegisterType((*VolumeMountResponse)(nil), "volume_server_pb.VolumeMountResponse")
 	proto.RegisterType((*VolumeUnmountRequest)(nil), "volume_server_pb.VolumeUnmountRequest")
 	proto.RegisterType((*VolumeUnmountResponse)(nil), "volume_server_pb.VolumeUnmountResponse")
 	proto.RegisterType((*VolumeDeleteRequest)(nil), "volume_server_pb.VolumeDeleteRequest")
 	proto.RegisterType((*VolumeDeleteResponse)(nil), "volume_server_pb.VolumeDeleteResponse")
-	proto.RegisterType((*VolumeUiPageRequest)(nil), "volume_server_pb.VolumeUiPageRequest")
-	proto.RegisterType((*VolumeUiPageResponse)(nil), "volume_server_pb.VolumeUiPageResponse")
+	proto.RegisterType((*VolumeMarkReadonlyRequest)(nil), "volume_server_pb.VolumeMarkReadonlyRequest")
+	proto.RegisterType((*VolumeMarkReadonlyResponse)(nil), "volume_server_pb.VolumeMarkReadonlyResponse")
+	proto.RegisterType((*VolumeCopyRequest)(nil), "volume_server_pb.VolumeCopyRequest")
+	proto.RegisterType((*VolumeCopyResponse)(nil), "volume_server_pb.VolumeCopyResponse")
+	proto.RegisterType((*CopyFileRequest)(nil), "volume_server_pb.CopyFileRequest")
+	proto.RegisterType((*CopyFileResponse)(nil), "volume_server_pb.CopyFileResponse")
+	proto.RegisterType((*VolumeTailSenderRequest)(nil), "volume_server_pb.VolumeTailSenderRequest")
+	proto.RegisterType((*VolumeTailSenderResponse)(nil), "volume_server_pb.VolumeTailSenderResponse")
+	proto.RegisterType((*VolumeTailReceiverRequest)(nil), "volume_server_pb.VolumeTailReceiverRequest")
+	proto.RegisterType((*VolumeTailReceiverResponse)(nil), "volume_server_pb.VolumeTailReceiverResponse")
+	proto.RegisterType((*VolumeEcShardsGenerateRequest)(nil), "volume_server_pb.VolumeEcShardsGenerateRequest")
+	proto.RegisterType((*VolumeEcShardsGenerateResponse)(nil), "volume_server_pb.VolumeEcShardsGenerateResponse")
+	proto.RegisterType((*VolumeEcShardsRebuildRequest)(nil), "volume_server_pb.VolumeEcShardsRebuildRequest")
+	proto.RegisterType((*VolumeEcShardsRebuildResponse)(nil), "volume_server_pb.VolumeEcShardsRebuildResponse")
+	proto.RegisterType((*VolumeEcShardsCopyRequest)(nil), "volume_server_pb.VolumeEcShardsCopyRequest")
+	proto.RegisterType((*VolumeEcShardsCopyResponse)(nil), "volume_server_pb.VolumeEcShardsCopyResponse")
+	proto.RegisterType((*VolumeEcShardsDeleteRequest)(nil), "volume_server_pb.VolumeEcShardsDeleteRequest")
+	proto.RegisterType((*VolumeEcShardsDeleteResponse)(nil), "volume_server_pb.VolumeEcShardsDeleteResponse")
+	proto.RegisterType((*VolumeEcShardsMountRequest)(nil), "volume_server_pb.VolumeEcShardsMountRequest")
+	proto.RegisterType((*VolumeEcShardsMountResponse)(nil), "volume_server_pb.VolumeEcShardsMountResponse")
+	proto.RegisterType((*VolumeEcShardsUnmountRequest)(nil), "volume_server_pb.VolumeEcShardsUnmountRequest")
+	proto.RegisterType((*VolumeEcShardsUnmountResponse)(nil), "volume_server_pb.VolumeEcShardsUnmountResponse")
+	proto.RegisterType((*VolumeEcShardReadRequest)(nil), "volume_server_pb.VolumeEcShardReadRequest")
+	proto.RegisterType((*VolumeEcShardReadResponse)(nil), "volume_server_pb.VolumeEcShardReadResponse")
+	proto.RegisterType((*VolumeEcBlobDeleteRequest)(nil), "volume_server_pb.VolumeEcBlobDeleteRequest")
+	proto.RegisterType((*VolumeEcBlobDeleteResponse)(nil), "volume_server_pb.VolumeEcBlobDeleteResponse")
+	proto.RegisterType((*ReadVolumeFileStatusRequest)(nil), "volume_server_pb.ReadVolumeFileStatusRequest")
+	proto.RegisterType((*ReadVolumeFileStatusResponse)(nil), "volume_server_pb.ReadVolumeFileStatusResponse")
 	proto.RegisterType((*DiskStatus)(nil), "volume_server_pb.DiskStatus")
 	proto.RegisterType((*MemStatus)(nil), "volume_server_pb.MemStatus")
 }
@@ -757,13 +1461,28 @@ type VolumeServerClient interface {
 	VacuumVolumeCommit(ctx context.Context, in *VacuumVolumeCommitRequest, opts ...grpc.CallOption) (*VacuumVolumeCommitResponse, error)
 	VacuumVolumeCleanup(ctx context.Context, in *VacuumVolumeCleanupRequest, opts ...grpc.CallOption) (*VacuumVolumeCleanupResponse, error)
 	DeleteCollection(ctx context.Context, in *DeleteCollectionRequest, opts ...grpc.CallOption) (*DeleteCollectionResponse, error)
-	AssignVolume(ctx context.Context, in *AssignVolumeRequest, opts ...grpc.CallOption) (*AssignVolumeResponse, error)
+	AllocateVolume(ctx context.Context, in *AllocateVolumeRequest, opts ...grpc.CallOption) (*AllocateVolumeResponse, error)
 	VolumeSyncStatus(ctx context.Context, in *VolumeSyncStatusRequest, opts ...grpc.CallOption) (*VolumeSyncStatusResponse, error)
-	VolumeSyncIndex(ctx context.Context, in *VolumeSyncIndexRequest, opts ...grpc.CallOption) (VolumeServer_VolumeSyncIndexClient, error)
-	VolumeSyncData(ctx context.Context, in *VolumeSyncDataRequest, opts ...grpc.CallOption) (VolumeServer_VolumeSyncDataClient, error)
+	VolumeIncrementalCopy(ctx context.Context, in *VolumeIncrementalCopyRequest, opts ...grpc.CallOption) (VolumeServer_VolumeIncrementalCopyClient, error)
 	VolumeMount(ctx context.Context, in *VolumeMountRequest, opts ...grpc.CallOption) (*VolumeMountResponse, error)
 	VolumeUnmount(ctx context.Context, in *VolumeUnmountRequest, opts ...grpc.CallOption) (*VolumeUnmountResponse, error)
 	VolumeDelete(ctx context.Context, in *VolumeDeleteRequest, opts ...grpc.CallOption) (*VolumeDeleteResponse, error)
+	VolumeMarkReadonly(ctx context.Context, in *VolumeMarkReadonlyRequest, opts ...grpc.CallOption) (*VolumeMarkReadonlyResponse, error)
+	// copy the .idx .dat files, and mount this volume
+	VolumeCopy(ctx context.Context, in *VolumeCopyRequest, opts ...grpc.CallOption) (*VolumeCopyResponse, error)
+	ReadVolumeFileStatus(ctx context.Context, in *ReadVolumeFileStatusRequest, opts ...grpc.CallOption) (*ReadVolumeFileStatusResponse, error)
+	CopyFile(ctx context.Context, in *CopyFileRequest, opts ...grpc.CallOption) (VolumeServer_CopyFileClient, error)
+	VolumeTailSender(ctx context.Context, in *VolumeTailSenderRequest, opts ...grpc.CallOption) (VolumeServer_VolumeTailSenderClient, error)
+	VolumeTailReceiver(ctx context.Context, in *VolumeTailReceiverRequest, opts ...grpc.CallOption) (*VolumeTailReceiverResponse, error)
+	// erasure coding
+	VolumeEcShardsGenerate(ctx context.Context, in *VolumeEcShardsGenerateRequest, opts ...grpc.CallOption) (*VolumeEcShardsGenerateResponse, error)
+	VolumeEcShardsRebuild(ctx context.Context, in *VolumeEcShardsRebuildRequest, opts ...grpc.CallOption) (*VolumeEcShardsRebuildResponse, error)
+	VolumeEcShardsCopy(ctx context.Context, in *VolumeEcShardsCopyRequest, opts ...grpc.CallOption) (*VolumeEcShardsCopyResponse, error)
+	VolumeEcShardsDelete(ctx context.Context, in *VolumeEcShardsDeleteRequest, opts ...grpc.CallOption) (*VolumeEcShardsDeleteResponse, error)
+	VolumeEcShardsMount(ctx context.Context, in *VolumeEcShardsMountRequest, opts ...grpc.CallOption) (*VolumeEcShardsMountResponse, error)
+	VolumeEcShardsUnmount(ctx context.Context, in *VolumeEcShardsUnmountRequest, opts ...grpc.CallOption) (*VolumeEcShardsUnmountResponse, error)
+	VolumeEcShardRead(ctx context.Context, in *VolumeEcShardReadRequest, opts ...grpc.CallOption) (VolumeServer_VolumeEcShardReadClient, error)
+	VolumeEcBlobDelete(ctx context.Context, in *VolumeEcBlobDeleteRequest, opts ...grpc.CallOption) (*VolumeEcBlobDeleteResponse, error)
 }
 
 type volumeServerClient struct {
@@ -828,9 +1547,9 @@ func (c *volumeServerClient) DeleteCollection(ctx context.Context, in *DeleteCol
 	return out, nil
 }
 
-func (c *volumeServerClient) AssignVolume(ctx context.Context, in *AssignVolumeRequest, opts ...grpc.CallOption) (*AssignVolumeResponse, error) {
-	out := new(AssignVolumeResponse)
-	err := grpc.Invoke(ctx, "/volume_server_pb.VolumeServer/AssignVolume", in, out, c.cc, opts...)
+func (c *volumeServerClient) AllocateVolume(ctx context.Context, in *AllocateVolumeRequest, opts ...grpc.CallOption) (*AllocateVolumeResponse, error) {
+	out := new(AllocateVolumeResponse)
+	err := grpc.Invoke(ctx, "/volume_server_pb.VolumeServer/AllocateVolume", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -846,12 +1565,12 @@ func (c *volumeServerClient) VolumeSyncStatus(ctx context.Context, in *VolumeSyn
 	return out, nil
 }
 
-func (c *volumeServerClient) VolumeSyncIndex(ctx context.Context, in *VolumeSyncIndexRequest, opts ...grpc.CallOption) (VolumeServer_VolumeSyncIndexClient, error) {
-	stream, err := grpc.NewClientStream(ctx, &_VolumeServer_serviceDesc.Streams[0], c.cc, "/volume_server_pb.VolumeServer/VolumeSyncIndex", opts...)
+func (c *volumeServerClient) VolumeIncrementalCopy(ctx context.Context, in *VolumeIncrementalCopyRequest, opts ...grpc.CallOption) (VolumeServer_VolumeIncrementalCopyClient, error) {
+	stream, err := grpc.NewClientStream(ctx, &_VolumeServer_serviceDesc.Streams[0], c.cc, "/volume_server_pb.VolumeServer/VolumeIncrementalCopy", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &volumeServerVolumeSyncIndexClient{stream}
+	x := &volumeServerVolumeIncrementalCopyClient{stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -861,49 +1580,17 @@ func (c *volumeServerClient) VolumeSyncIndex(ctx context.Context, in *VolumeSync
 	return x, nil
 }
 
-type VolumeServer_VolumeSyncIndexClient interface {
-	Recv() (*VolumeSyncIndexResponse, error)
+type VolumeServer_VolumeIncrementalCopyClient interface {
+	Recv() (*VolumeIncrementalCopyResponse, error)
 	grpc.ClientStream
 }
 
-type volumeServerVolumeSyncIndexClient struct {
+type volumeServerVolumeIncrementalCopyClient struct {
 	grpc.ClientStream
 }
 
-func (x *volumeServerVolumeSyncIndexClient) Recv() (*VolumeSyncIndexResponse, error) {
-	m := new(VolumeSyncIndexResponse)
-	if err := x.ClientStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-func (c *volumeServerClient) VolumeSyncData(ctx context.Context, in *VolumeSyncDataRequest, opts ...grpc.CallOption) (VolumeServer_VolumeSyncDataClient, error) {
-	stream, err := grpc.NewClientStream(ctx, &_VolumeServer_serviceDesc.Streams[1], c.cc, "/volume_server_pb.VolumeServer/VolumeSyncData", opts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &volumeServerVolumeSyncDataClient{stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-type VolumeServer_VolumeSyncDataClient interface {
-	Recv() (*VolumeSyncDataResponse, error)
-	grpc.ClientStream
-}
-
-type volumeServerVolumeSyncDataClient struct {
-	grpc.ClientStream
-}
-
-func (x *volumeServerVolumeSyncDataClient) Recv() (*VolumeSyncDataResponse, error) {
-	m := new(VolumeSyncDataResponse)
+func (x *volumeServerVolumeIncrementalCopyClient) Recv() (*VolumeIncrementalCopyResponse, error) {
+	m := new(VolumeIncrementalCopyResponse)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -937,6 +1624,201 @@ func (c *volumeServerClient) VolumeDelete(ctx context.Context, in *VolumeDeleteR
 	return out, nil
 }
 
+func (c *volumeServerClient) VolumeMarkReadonly(ctx context.Context, in *VolumeMarkReadonlyRequest, opts ...grpc.CallOption) (*VolumeMarkReadonlyResponse, error) {
+	out := new(VolumeMarkReadonlyResponse)
+	err := grpc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeMarkReadonly", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) VolumeCopy(ctx context.Context, in *VolumeCopyRequest, opts ...grpc.CallOption) (*VolumeCopyResponse, error) {
+	out := new(VolumeCopyResponse)
+	err := grpc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeCopy", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) ReadVolumeFileStatus(ctx context.Context, in *ReadVolumeFileStatusRequest, opts ...grpc.CallOption) (*ReadVolumeFileStatusResponse, error) {
+	out := new(ReadVolumeFileStatusResponse)
+	err := grpc.Invoke(ctx, "/volume_server_pb.VolumeServer/ReadVolumeFileStatus", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) CopyFile(ctx context.Context, in *CopyFileRequest, opts ...grpc.CallOption) (VolumeServer_CopyFileClient, error) {
+	stream, err := grpc.NewClientStream(ctx, &_VolumeServer_serviceDesc.Streams[1], c.cc, "/volume_server_pb.VolumeServer/CopyFile", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &volumeServerCopyFileClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type VolumeServer_CopyFileClient interface {
+	Recv() (*CopyFileResponse, error)
+	grpc.ClientStream
+}
+
+type volumeServerCopyFileClient struct {
+	grpc.ClientStream
+}
+
+func (x *volumeServerCopyFileClient) Recv() (*CopyFileResponse, error) {
+	m := new(CopyFileResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (c *volumeServerClient) VolumeTailSender(ctx context.Context, in *VolumeTailSenderRequest, opts ...grpc.CallOption) (VolumeServer_VolumeTailSenderClient, error) {
+	stream, err := grpc.NewClientStream(ctx, &_VolumeServer_serviceDesc.Streams[2], c.cc, "/volume_server_pb.VolumeServer/VolumeTailSender", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &volumeServerVolumeTailSenderClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type VolumeServer_VolumeTailSenderClient interface {
+	Recv() (*VolumeTailSenderResponse, error)
+	grpc.ClientStream
+}
+
+type volumeServerVolumeTailSenderClient struct {
+	grpc.ClientStream
+}
+
+func (x *volumeServerVolumeTailSenderClient) Recv() (*VolumeTailSenderResponse, error) {
+	m := new(VolumeTailSenderResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (c *volumeServerClient) VolumeTailReceiver(ctx context.Context, in *VolumeTailReceiverRequest, opts ...grpc.CallOption) (*VolumeTailReceiverResponse, error) {
+	out := new(VolumeTailReceiverResponse)
+	err := grpc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeTailReceiver", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) VolumeEcShardsGenerate(ctx context.Context, in *VolumeEcShardsGenerateRequest, opts ...grpc.CallOption) (*VolumeEcShardsGenerateResponse, error) {
+	out := new(VolumeEcShardsGenerateResponse)
+	err := grpc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeEcShardsGenerate", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) VolumeEcShardsRebuild(ctx context.Context, in *VolumeEcShardsRebuildRequest, opts ...grpc.CallOption) (*VolumeEcShardsRebuildResponse, error) {
+	out := new(VolumeEcShardsRebuildResponse)
+	err := grpc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeEcShardsRebuild", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) VolumeEcShardsCopy(ctx context.Context, in *VolumeEcShardsCopyRequest, opts ...grpc.CallOption) (*VolumeEcShardsCopyResponse, error) {
+	out := new(VolumeEcShardsCopyResponse)
+	err := grpc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeEcShardsCopy", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) VolumeEcShardsDelete(ctx context.Context, in *VolumeEcShardsDeleteRequest, opts ...grpc.CallOption) (*VolumeEcShardsDeleteResponse, error) {
+	out := new(VolumeEcShardsDeleteResponse)
+	err := grpc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeEcShardsDelete", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) VolumeEcShardsMount(ctx context.Context, in *VolumeEcShardsMountRequest, opts ...grpc.CallOption) (*VolumeEcShardsMountResponse, error) {
+	out := new(VolumeEcShardsMountResponse)
+	err := grpc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeEcShardsMount", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) VolumeEcShardsUnmount(ctx context.Context, in *VolumeEcShardsUnmountRequest, opts ...grpc.CallOption) (*VolumeEcShardsUnmountResponse, error) {
+	out := new(VolumeEcShardsUnmountResponse)
+	err := grpc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeEcShardsUnmount", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) VolumeEcShardRead(ctx context.Context, in *VolumeEcShardReadRequest, opts ...grpc.CallOption) (VolumeServer_VolumeEcShardReadClient, error) {
+	stream, err := grpc.NewClientStream(ctx, &_VolumeServer_serviceDesc.Streams[3], c.cc, "/volume_server_pb.VolumeServer/VolumeEcShardRead", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &volumeServerVolumeEcShardReadClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type VolumeServer_VolumeEcShardReadClient interface {
+	Recv() (*VolumeEcShardReadResponse, error)
+	grpc.ClientStream
+}
+
+type volumeServerVolumeEcShardReadClient struct {
+	grpc.ClientStream
+}
+
+func (x *volumeServerVolumeEcShardReadClient) Recv() (*VolumeEcShardReadResponse, error) {
+	m := new(VolumeEcShardReadResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (c *volumeServerClient) VolumeEcBlobDelete(ctx context.Context, in *VolumeEcBlobDeleteRequest, opts ...grpc.CallOption) (*VolumeEcBlobDeleteResponse, error) {
+	out := new(VolumeEcBlobDeleteResponse)
+	err := grpc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeEcBlobDelete", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Server API for VolumeServer service
 
 type VolumeServerServer interface {
@@ -947,13 +1829,28 @@ type VolumeServerServer interface {
 	VacuumVolumeCommit(context.Context, *VacuumVolumeCommitRequest) (*VacuumVolumeCommitResponse, error)
 	VacuumVolumeCleanup(context.Context, *VacuumVolumeCleanupRequest) (*VacuumVolumeCleanupResponse, error)
 	DeleteCollection(context.Context, *DeleteCollectionRequest) (*DeleteCollectionResponse, error)
-	AssignVolume(context.Context, *AssignVolumeRequest) (*AssignVolumeResponse, error)
+	AllocateVolume(context.Context, *AllocateVolumeRequest) (*AllocateVolumeResponse, error)
 	VolumeSyncStatus(context.Context, *VolumeSyncStatusRequest) (*VolumeSyncStatusResponse, error)
-	VolumeSyncIndex(*VolumeSyncIndexRequest, VolumeServer_VolumeSyncIndexServer) error
-	VolumeSyncData(*VolumeSyncDataRequest, VolumeServer_VolumeSyncDataServer) error
+	VolumeIncrementalCopy(*VolumeIncrementalCopyRequest, VolumeServer_VolumeIncrementalCopyServer) error
 	VolumeMount(context.Context, *VolumeMountRequest) (*VolumeMountResponse, error)
 	VolumeUnmount(context.Context, *VolumeUnmountRequest) (*VolumeUnmountResponse, error)
 	VolumeDelete(context.Context, *VolumeDeleteRequest) (*VolumeDeleteResponse, error)
+	VolumeMarkReadonly(context.Context, *VolumeMarkReadonlyRequest) (*VolumeMarkReadonlyResponse, error)
+	// copy the .idx .dat files, and mount this volume
+	VolumeCopy(context.Context, *VolumeCopyRequest) (*VolumeCopyResponse, error)
+	ReadVolumeFileStatus(context.Context, *ReadVolumeFileStatusRequest) (*ReadVolumeFileStatusResponse, error)
+	CopyFile(*CopyFileRequest, VolumeServer_CopyFileServer) error
+	VolumeTailSender(*VolumeTailSenderRequest, VolumeServer_VolumeTailSenderServer) error
+	VolumeTailReceiver(context.Context, *VolumeTailReceiverRequest) (*VolumeTailReceiverResponse, error)
+	// erasure coding
+	VolumeEcShardsGenerate(context.Context, *VolumeEcShardsGenerateRequest) (*VolumeEcShardsGenerateResponse, error)
+	VolumeEcShardsRebuild(context.Context, *VolumeEcShardsRebuildRequest) (*VolumeEcShardsRebuildResponse, error)
+	VolumeEcShardsCopy(context.Context, *VolumeEcShardsCopyRequest) (*VolumeEcShardsCopyResponse, error)
+	VolumeEcShardsDelete(context.Context, *VolumeEcShardsDeleteRequest) (*VolumeEcShardsDeleteResponse, error)
+	VolumeEcShardsMount(context.Context, *VolumeEcShardsMountRequest) (*VolumeEcShardsMountResponse, error)
+	VolumeEcShardsUnmount(context.Context, *VolumeEcShardsUnmountRequest) (*VolumeEcShardsUnmountResponse, error)
+	VolumeEcShardRead(*VolumeEcShardReadRequest, VolumeServer_VolumeEcShardReadServer) error
+	VolumeEcBlobDelete(context.Context, *VolumeEcBlobDeleteRequest) (*VolumeEcBlobDeleteResponse, error)
 }
 
 func RegisterVolumeServerServer(s *grpc.Server, srv VolumeServerServer) {
@@ -1068,20 +1965,20 @@ func _VolumeServer_DeleteCollection_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
-func _VolumeServer_AssignVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(AssignVolumeRequest)
+func _VolumeServer_AllocateVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AllocateVolumeRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(VolumeServerServer).AssignVolume(ctx, in)
+		return srv.(VolumeServerServer).AllocateVolume(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/volume_server_pb.VolumeServer/AssignVolume",
+		FullMethod: "/volume_server_pb.VolumeServer/AllocateVolume",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(VolumeServerServer).AssignVolume(ctx, req.(*AssignVolumeRequest))
+		return srv.(VolumeServerServer).AllocateVolume(ctx, req.(*AllocateVolumeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1104,45 +2001,24 @@ func _VolumeServer_VolumeSyncStatus_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
-func _VolumeServer_VolumeSyncIndex_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(VolumeSyncIndexRequest)
+func _VolumeServer_VolumeIncrementalCopy_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(VolumeIncrementalCopyRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(VolumeServerServer).VolumeSyncIndex(m, &volumeServerVolumeSyncIndexServer{stream})
+	return srv.(VolumeServerServer).VolumeIncrementalCopy(m, &volumeServerVolumeIncrementalCopyServer{stream})
 }
 
-type VolumeServer_VolumeSyncIndexServer interface {
-	Send(*VolumeSyncIndexResponse) error
+type VolumeServer_VolumeIncrementalCopyServer interface {
+	Send(*VolumeIncrementalCopyResponse) error
 	grpc.ServerStream
 }
 
-type volumeServerVolumeSyncIndexServer struct {
+type volumeServerVolumeIncrementalCopyServer struct {
 	grpc.ServerStream
 }
 
-func (x *volumeServerVolumeSyncIndexServer) Send(m *VolumeSyncIndexResponse) error {
-	return x.ServerStream.SendMsg(m)
-}
-
-func _VolumeServer_VolumeSyncData_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(VolumeSyncDataRequest)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(VolumeServerServer).VolumeSyncData(m, &volumeServerVolumeSyncDataServer{stream})
-}
-
-type VolumeServer_VolumeSyncDataServer interface {
-	Send(*VolumeSyncDataResponse) error
-	grpc.ServerStream
-}
-
-type volumeServerVolumeSyncDataServer struct {
-	grpc.ServerStream
-}
-
-func (x *volumeServerVolumeSyncDataServer) Send(m *VolumeSyncDataResponse) error {
+func (x *volumeServerVolumeIncrementalCopyServer) Send(m *VolumeIncrementalCopyResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
@@ -1200,6 +2076,267 @@ func _VolumeServer_VolumeDelete_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VolumeServer_VolumeMarkReadonly_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VolumeMarkReadonlyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).VolumeMarkReadonly(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeMarkReadonly",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).VolumeMarkReadonly(ctx, req.(*VolumeMarkReadonlyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_VolumeCopy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VolumeCopyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).VolumeCopy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeCopy",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).VolumeCopy(ctx, req.(*VolumeCopyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_ReadVolumeFileStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReadVolumeFileStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).ReadVolumeFileStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/ReadVolumeFileStatus",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).ReadVolumeFileStatus(ctx, req.(*ReadVolumeFileStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_CopyFile_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(CopyFileRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(VolumeServerServer).CopyFile(m, &volumeServerCopyFileServer{stream})
+}
+
+type VolumeServer_CopyFileServer interface {
+	Send(*CopyFileResponse) error
+	grpc.ServerStream
+}
+
+type volumeServerCopyFileServer struct {
+	grpc.ServerStream
+}
+
+func (x *volumeServerCopyFileServer) Send(m *CopyFileResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func _VolumeServer_VolumeTailSender_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(VolumeTailSenderRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(VolumeServerServer).VolumeTailSender(m, &volumeServerVolumeTailSenderServer{stream})
+}
+
+type VolumeServer_VolumeTailSenderServer interface {
+	Send(*VolumeTailSenderResponse) error
+	grpc.ServerStream
+}
+
+type volumeServerVolumeTailSenderServer struct {
+	grpc.ServerStream
+}
+
+func (x *volumeServerVolumeTailSenderServer) Send(m *VolumeTailSenderResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func _VolumeServer_VolumeTailReceiver_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VolumeTailReceiverRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).VolumeTailReceiver(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeTailReceiver",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).VolumeTailReceiver(ctx, req.(*VolumeTailReceiverRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_VolumeEcShardsGenerate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VolumeEcShardsGenerateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).VolumeEcShardsGenerate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeEcShardsGenerate",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).VolumeEcShardsGenerate(ctx, req.(*VolumeEcShardsGenerateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_VolumeEcShardsRebuild_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VolumeEcShardsRebuildRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).VolumeEcShardsRebuild(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeEcShardsRebuild",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).VolumeEcShardsRebuild(ctx, req.(*VolumeEcShardsRebuildRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_VolumeEcShardsCopy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VolumeEcShardsCopyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).VolumeEcShardsCopy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeEcShardsCopy",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).VolumeEcShardsCopy(ctx, req.(*VolumeEcShardsCopyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_VolumeEcShardsDelete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VolumeEcShardsDeleteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).VolumeEcShardsDelete(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeEcShardsDelete",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).VolumeEcShardsDelete(ctx, req.(*VolumeEcShardsDeleteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_VolumeEcShardsMount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VolumeEcShardsMountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).VolumeEcShardsMount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeEcShardsMount",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).VolumeEcShardsMount(ctx, req.(*VolumeEcShardsMountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_VolumeEcShardsUnmount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VolumeEcShardsUnmountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).VolumeEcShardsUnmount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeEcShardsUnmount",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).VolumeEcShardsUnmount(ctx, req.(*VolumeEcShardsUnmountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_VolumeEcShardRead_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(VolumeEcShardReadRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(VolumeServerServer).VolumeEcShardRead(m, &volumeServerVolumeEcShardReadServer{stream})
+}
+
+type VolumeServer_VolumeEcShardReadServer interface {
+	Send(*VolumeEcShardReadResponse) error
+	grpc.ServerStream
+}
+
+type volumeServerVolumeEcShardReadServer struct {
+	grpc.ServerStream
+}
+
+func (x *volumeServerVolumeEcShardReadServer) Send(m *VolumeEcShardReadResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func _VolumeServer_VolumeEcBlobDelete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VolumeEcBlobDeleteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).VolumeEcBlobDelete(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeEcBlobDelete",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).VolumeEcBlobDelete(ctx, req.(*VolumeEcBlobDeleteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _VolumeServer_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "volume_server_pb.VolumeServer",
 	HandlerType: (*VolumeServerServer)(nil),
@@ -1229,8 +2366,8 @@ var _VolumeServer_serviceDesc = grpc.ServiceDesc{
 			Handler:    _VolumeServer_DeleteCollection_Handler,
 		},
 		{
-			MethodName: "AssignVolume",
-			Handler:    _VolumeServer_AssignVolume_Handler,
+			MethodName: "AllocateVolume",
+			Handler:    _VolumeServer_AllocateVolume_Handler,
 		},
 		{
 			MethodName: "VolumeSyncStatus",
@@ -1248,16 +2385,70 @@ var _VolumeServer_serviceDesc = grpc.ServiceDesc{
 			MethodName: "VolumeDelete",
 			Handler:    _VolumeServer_VolumeDelete_Handler,
 		},
+		{
+			MethodName: "VolumeMarkReadonly",
+			Handler:    _VolumeServer_VolumeMarkReadonly_Handler,
+		},
+		{
+			MethodName: "VolumeCopy",
+			Handler:    _VolumeServer_VolumeCopy_Handler,
+		},
+		{
+			MethodName: "ReadVolumeFileStatus",
+			Handler:    _VolumeServer_ReadVolumeFileStatus_Handler,
+		},
+		{
+			MethodName: "VolumeTailReceiver",
+			Handler:    _VolumeServer_VolumeTailReceiver_Handler,
+		},
+		{
+			MethodName: "VolumeEcShardsGenerate",
+			Handler:    _VolumeServer_VolumeEcShardsGenerate_Handler,
+		},
+		{
+			MethodName: "VolumeEcShardsRebuild",
+			Handler:    _VolumeServer_VolumeEcShardsRebuild_Handler,
+		},
+		{
+			MethodName: "VolumeEcShardsCopy",
+			Handler:    _VolumeServer_VolumeEcShardsCopy_Handler,
+		},
+		{
+			MethodName: "VolumeEcShardsDelete",
+			Handler:    _VolumeServer_VolumeEcShardsDelete_Handler,
+		},
+		{
+			MethodName: "VolumeEcShardsMount",
+			Handler:    _VolumeServer_VolumeEcShardsMount_Handler,
+		},
+		{
+			MethodName: "VolumeEcShardsUnmount",
+			Handler:    _VolumeServer_VolumeEcShardsUnmount_Handler,
+		},
+		{
+			MethodName: "VolumeEcBlobDelete",
+			Handler:    _VolumeServer_VolumeEcBlobDelete_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "VolumeSyncIndex",
-			Handler:       _VolumeServer_VolumeSyncIndex_Handler,
+			StreamName:    "VolumeIncrementalCopy",
+			Handler:       _VolumeServer_VolumeIncrementalCopy_Handler,
 			ServerStreams: true,
 		},
 		{
-			StreamName:    "VolumeSyncData",
-			Handler:       _VolumeServer_VolumeSyncData_Handler,
+			StreamName:    "CopyFile",
+			Handler:       _VolumeServer_CopyFile_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "VolumeTailSender",
+			Handler:       _VolumeServer_VolumeTailSender_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "VolumeEcShardRead",
+			Handler:       _VolumeServer_VolumeEcShardRead_Handler,
 			ServerStreams: true,
 		},
 	},
@@ -1267,71 +2458,126 @@ var _VolumeServer_serviceDesc = grpc.ServiceDesc{
 func init() { proto.RegisterFile("volume_server.proto", fileDescriptor0) }
 
 var fileDescriptor0 = []byte{
-	// 1044 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0xa4, 0x57, 0xdd, 0x72, 0xdb, 0x44,
-	0x14, 0x8e, 0x6a, 0x3b, 0x76, 0x8e, 0x6d, 0x6a, 0xd6, 0x69, 0xa2, 0xaa, 0x10, 0x8c, 0x80, 0xd4,
-	0x69, 0x43, 0x80, 0x74, 0x80, 0x32, 0xdc, 0x00, 0x09, 0x30, 0xb9, 0xe8, 0x94, 0xd9, 0x4c, 0x3b,
-	0xcc, 0xd0, 0x19, 0x8f, 0x22, 0xad, 0x9d, 0x25, 0xb2, 0xe4, 0x6a, 0x57, 0x99, 0x94, 0x37, 0xe1,
-	0x9a, 0x1b, 0x9e, 0x8e, 0x17, 0xe0, 0x86, 0xd9, 0x1f, 0xd9, 0xfa, 0x73, 0x24, 0xe0, 0x6e, 0xf7,
-	0xec, 0x39, 0xdf, 0xf9, 0xd9, 0xa3, 0xf3, 0xad, 0x60, 0x78, 0x1d, 0xfa, 0xf1, 0x9c, 0x4c, 0x18,
-	0x89, 0xae, 0x49, 0x74, 0xb4, 0x88, 0x42, 0x1e, 0xa2, 0x41, 0x46, 0x38, 0x59, 0x5c, 0xd8, 0x9f,
-	0x00, 0xfa, 0xce, 0xe1, 0xee, 0xe5, 0x29, 0xf1, 0x09, 0x27, 0x98, 0xbc, 0x8e, 0x09, 0xe3, 0xe8,
-	0x3e, 0x74, 0xa6, 0xd4, 0x27, 0x13, 0xea, 0x31, 0xd3, 0x18, 0x35, 0xc6, 0x5b, 0xb8, 0x2d, 0xf6,
-	0x67, 0x1e, 0xb3, 0x9f, 0xc3, 0x30, 0x63, 0xc0, 0x16, 0x61, 0xc0, 0x08, 0x7a, 0x0a, 0xed, 0x88,
-	0xb0, 0xd8, 0xe7, 0xca, 0xa0, 0x7b, 0xbc, 0x77, 0x94, 0xf7, 0x75, 0xb4, 0x34, 0x89, 0x7d, 0x8e,
-	0x13, 0x75, 0x9b, 0x42, 0x2f, 0x7d, 0x80, 0x76, 0xa1, 0xad, 0x7d, 0x9b, 0xc6, 0xc8, 0x18, 0x6f,
-	0xe1, 0x4d, 0xe5, 0x1a, 0xed, 0xc0, 0x26, 0xe3, 0x0e, 0x8f, 0x99, 0x79, 0x67, 0x64, 0x8c, 0x5b,
-	0x58, 0xef, 0xd0, 0x36, 0xb4, 0x48, 0x14, 0x85, 0x91, 0xd9, 0x90, 0xea, 0x6a, 0x83, 0x10, 0x34,
-	0x19, 0xfd, 0x8d, 0x98, 0xcd, 0x91, 0x31, 0xee, 0x63, 0xb9, 0xb6, 0xdb, 0xd0, 0xfa, 0x7e, 0xbe,
-	0xe0, 0x6f, 0xec, 0x2f, 0xc1, 0x7c, 0xe9, 0xb8, 0x71, 0x3c, 0x7f, 0x29, 0x63, 0x3c, 0xb9, 0x24,
-	0xee, 0x55, 0x92, 0xfb, 0x03, 0xd8, 0x92, 0x91, 0x7b, 0x49, 0x04, 0x7d, 0xdc, 0x51, 0x82, 0x33,
-	0xcf, 0xfe, 0x06, 0xee, 0x97, 0x18, 0xea, 0x1a, 0x7c, 0x00, 0xfd, 0x99, 0x13, 0x5d, 0x38, 0x33,
-	0x32, 0x89, 0x1c, 0x4e, 0x43, 0x69, 0x6d, 0xe0, 0x9e, 0x16, 0x62, 0x21, 0xb3, 0x7f, 0x01, 0x2b,
-	0x83, 0x10, 0xce, 0x17, 0x8e, 0xcb, 0xeb, 0x38, 0x47, 0x23, 0xe8, 0x2e, 0x22, 0xe2, 0xf8, 0x7e,
-	0xe8, 0x3a, 0x9c, 0xc8, 0x2a, 0x34, 0x70, 0x5a, 0x64, 0xbf, 0x0b, 0x0f, 0x4a, 0xc1, 0x55, 0x80,
-	0xf6, 0xd3, 0x5c, 0xf4, 0xe1, 0x7c, 0x4e, 0x6b, 0xb9, 0xb6, 0xdf, 0x29, 0x44, 0x2d, 0x2d, 0x35,
-	0xee, 0x57, 0xb9, 0x53, 0x9f, 0x38, 0x41, 0xbc, 0xa8, 0x05, 0x9c, 0x8f, 0x38, 0x31, 0x5d, 0x22,
-	0xef, 0xaa, 0xe6, 0x38, 0x09, 0x7d, 0x9f, 0xb8, 0x9c, 0x86, 0x41, 0x02, 0xbb, 0x07, 0xe0, 0x2e,
-	0x85, 0xba, 0x55, 0x52, 0x12, 0xdb, 0x02, 0xb3, 0x68, 0xaa, 0x61, 0xff, 0x34, 0x60, 0xf8, 0x2d,
-	0x63, 0x74, 0x16, 0x28, 0xb7, 0xb5, 0xca, 0x9f, 0x75, 0x78, 0x27, 0xef, 0x30, 0x7f, 0x3d, 0x8d,
-	0xc2, 0xf5, 0x08, 0x8d, 0x88, 0x2c, 0x7c, 0xea, 0x3a, 0x12, 0xa2, 0x29, 0x21, 0xd2, 0x22, 0x34,
-	0x80, 0x06, 0xe7, 0xbe, 0xd9, 0x92, 0x27, 0x62, 0x69, 0xef, 0xc0, 0x76, 0x36, 0x52, 0x9d, 0xc2,
-	0x17, 0xb0, 0xab, 0x24, 0xe7, 0x6f, 0x02, 0xf7, 0x5c, 0x7e, 0x09, 0xb5, 0x0a, 0xfe, 0xb7, 0x01,
-	0x66, 0xd1, 0x50, 0x77, 0xf0, 0xff, 0xcd, 0xff, 0xdf, 0x66, 0x87, 0xde, 0x83, 0x2e, 0x77, 0xa8,
-	0x3f, 0x09, 0xa7, 0x53, 0x46, 0xb8, 0xb9, 0x39, 0x32, 0xc6, 0x4d, 0x0c, 0x42, 0xf4, 0x5c, 0x4a,
-	0xd0, 0x01, 0x0c, 0x5c, 0xd5, 0xc5, 0x93, 0x88, 0x5c, 0x53, 0x26, 0x90, 0xdb, 0x32, 0xb0, 0xbb,
-	0x6e, 0xd2, 0xdd, 0x4a, 0x8c, 0x6c, 0xe8, 0x53, 0xef, 0x66, 0x22, 0x87, 0x87, 0xfc, 0xf4, 0x3b,
-	0x12, 0xad, 0x4b, 0xbd, 0x9b, 0x1f, 0xa8, 0x4f, 0xce, 0xc5, 0x04, 0xf8, 0x1c, 0x76, 0x56, 0xc9,
-	0x9f, 0x05, 0x1e, 0xb9, 0xa9, 0x55, 0xb4, 0x1f, 0xd3, 0xc5, 0xd6, 0x66, 0xba, 0x64, 0x87, 0x80,
-	0xa8, 0x10, 0x28, 0xbf, 0x6e, 0x18, 0x70, 0x12, 0x70, 0x09, 0xd0, 0xc3, 0x03, 0x79, 0x22, 0x9c,
-	0x9f, 0x28, 0xb9, 0xfd, 0xbb, 0x01, 0xf7, 0x56, 0x48, 0xa7, 0x0e, 0x77, 0x6a, 0xb5, 0x9e, 0x05,
-	0x9d, 0x65, 0xf6, 0x77, 0xd4, 0x59, 0xb2, 0x17, 0x63, 0x51, 0x57, 0xaf, 0x21, 0x4f, 0xf4, 0xae,
-	0x6c, 0x00, 0x0a, 0x27, 0x01, 0x21, 0x9e, 0x9a, 0xae, 0xea, 0x1a, 0x3a, 0x4a, 0x70, 0xe6, 0xd9,
-	0x5f, 0xa7, 0x6b, 0xa3, 0x42, 0xd3, 0x39, 0xbe, 0x0f, 0xbd, 0x92, 0xec, 0xba, 0xd3, 0x54, 0x62,
-	0x9f, 0x01, 0x52, 0xc6, 0xcf, 0xc2, 0x38, 0xa8, 0x37, 0x53, 0xee, 0xc1, 0x30, 0x63, 0xa2, 0x1b,
-	0xfb, 0x09, 0x6c, 0x2b, 0xf1, 0x8b, 0x60, 0x5e, 0x1b, 0x6b, 0x37, 0x29, 0xeb, 0xd2, 0x48, 0xa3,
-	0x1d, 0x27, 0x4e, 0xb2, 0x04, 0x77, 0x2b, 0xd8, 0x4e, 0x12, 0x41, 0x96, 0xe3, 0x56, 0x01, 0xbf,
-	0xa0, 0x3f, 0x89, 0x79, 0xae, 0xb0, 0x56, 0xea, 0x89, 0x58, 0xab, 0xff, 0x0c, 0x70, 0x4a, 0xd9,
-	0x95, 0xfa, 0xc4, 0x44, 0xef, 0x7b, 0x34, 0xd2, 0x73, 0x4a, 0x2c, 0x85, 0xc4, 0xf1, 0x7d, 0x79,
-	0x9f, 0x4d, 0x2c, 0x96, 0xe2, 0xca, 0x62, 0x46, 0x3c, 0x79, 0x91, 0x4d, 0x2c, 0xd7, 0x42, 0x36,
-	0x8d, 0x88, 0xba, 0xc6, 0x26, 0x96, 0x6b, 0xfb, 0x0f, 0x03, 0xb6, 0x9e, 0x91, 0xb9, 0x46, 0xde,
-	0x03, 0x98, 0x85, 0x51, 0x18, 0x73, 0x1a, 0x10, 0x26, 0x1d, 0xb4, 0x70, 0x4a, 0xf2, 0xdf, 0xfd,
-	0xc8, 0x16, 0x22, 0xfe, 0x54, 0x76, 0x4a, 0x13, 0xcb, 0xb5, 0x90, 0x5d, 0x12, 0x67, 0xa1, 0x3f,
-	0x55, 0xb9, 0x16, 0x0c, 0xcc, 0xb8, 0xe3, 0x5e, 0xc9, 0x2f, 0xb3, 0x89, 0xd5, 0xe6, 0xf8, 0x2f,
-	0x80, 0x9e, 0x6e, 0x28, 0xf9, 0x04, 0x40, 0xaf, 0xa0, 0x9b, 0x7a, 0x3a, 0xa0, 0x0f, 0x8b, 0x2f,
-	0x84, 0xe2, 0x53, 0xc4, 0xfa, 0xa8, 0x42, 0x4b, 0x17, 0x7b, 0x03, 0x05, 0xf0, 0x76, 0x81, 0x9a,
-	0xd1, 0xa3, 0xa2, 0xf5, 0x3a, 0xe2, 0xb7, 0x1e, 0xd7, 0xd2, 0x5d, 0xfa, 0xe3, 0x30, 0x2c, 0xe1,
-	0x5a, 0x74, 0x58, 0x81, 0x92, 0xe1, 0x7b, 0xeb, 0xe3, 0x9a, 0xda, 0x4b, 0xaf, 0xaf, 0x01, 0x15,
-	0x89, 0x18, 0x3d, 0xae, 0x84, 0x59, 0x11, 0xbd, 0x75, 0x58, 0x4f, 0x79, 0x6d, 0xa2, 0x8a, 0xa2,
-	0x2b, 0x13, 0xcd, 0x3c, 0x02, 0x2a, 0x13, 0xcd, 0xf1, 0xfe, 0x06, 0xba, 0x82, 0x41, 0x9e, 0xbe,
-	0xd1, 0xc1, 0xba, 0x37, 0x65, 0xe1, 0x75, 0x60, 0x3d, 0xaa, 0xa3, 0xba, 0x74, 0x36, 0x81, 0x5e,
-	0x9a, 0x64, 0x51, 0x49, 0xd3, 0x95, 0x3c, 0x17, 0xac, 0xfd, 0x2a, 0xb5, 0x74, 0x36, 0x79, 0xd2,
-	0x2d, 0xcb, 0x66, 0x0d, 0xa3, 0x97, 0x65, 0xb3, 0x8e, 0xc3, 0xed, 0x0d, 0xf4, 0x2b, 0xdc, 0xcd,
-	0xb1, 0x15, 0x1a, 0xdf, 0x06, 0x90, 0xe6, 0x41, 0xeb, 0xa0, 0x86, 0x66, 0xe2, 0xe9, 0x53, 0x03,
-	0xcd, 0xe0, 0xad, 0x2c, 0x69, 0xa0, 0x87, 0xb7, 0x01, 0xa4, 0x18, 0xcf, 0x1a, 0x57, 0x2b, 0xa6,
-	0x1c, 0xbd, 0x82, 0x6e, 0x8a, 0x2d, 0xca, 0x86, 0x47, 0x91, 0x7f, 0xca, 0x86, 0x47, 0x19, 0xe5,
-	0x6c, 0xa0, 0x0b, 0xe8, 0x67, 0xf8, 0x03, 0xed, 0xaf, 0xb3, 0xcc, 0xb2, 0x92, 0xf5, 0xb0, 0x52,
-	0x2f, 0xdd, 0x64, 0x69, 0x5a, 0x41, 0x6b, 0x83, 0xcb, 0x0e, 0xc0, 0xfd, 0x2a, 0xb5, 0xc4, 0xc1,
-	0xc5, 0xa6, 0xfc, 0xc9, 0x7b, 0xf2, 0x4f, 0x00, 0x00, 0x00, 0xff, 0xff, 0xdb, 0x3c, 0x6d, 0xd7,
-	0xfb, 0x0d, 0x00, 0x00,
+	// 1924 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0xc4, 0x19, 0xcb, 0x72, 0xdc, 0xc6,
+	0x91, 0xd0, 0x2e, 0xb9, 0xbb, 0xbd, 0x4b, 0x89, 0x1c, 0x52, 0xe4, 0x0a, 0x14, 0x29, 0x1a, 0x76,
+	0x6c, 0x8a, 0xb2, 0x49, 0x45, 0xae, 0x24, 0x4e, 0x72, 0x48, 0x44, 0x8a, 0x49, 0x54, 0x8e, 0xe9,
+	0x2a, 0x50, 0x56, 0x39, 0x65, 0x57, 0xa1, 0x86, 0xc0, 0x50, 0x44, 0x11, 0x0b, 0x40, 0x98, 0x01,
+	0xa5, 0x55, 0x25, 0x27, 0xe5, 0x9a, 0x0f, 0xc8, 0x39, 0xb7, 0x1c, 0x72, 0xcd, 0x07, 0xe4, 0x17,
+	0x72, 0xcb, 0x37, 0xe4, 0x0b, 0x72, 0x49, 0xcd, 0x03, 0x58, 0x3c, 0x77, 0xc1, 0x90, 0x55, 0xb9,
+	0x61, 0x7b, 0xfa, 0x3d, 0xdd, 0x3d, 0xdd, 0xbd, 0xb0, 0x72, 0x19, 0x78, 0xf1, 0x88, 0x58, 0x94,
+	0x44, 0x97, 0x24, 0xda, 0x0b, 0xa3, 0x80, 0x05, 0x68, 0x29, 0x07, 0xb4, 0xc2, 0x53, 0x63, 0x1f,
+	0xd0, 0x01, 0x66, 0xf6, 0xf9, 0x33, 0xe2, 0x11, 0x46, 0x4c, 0xf2, 0x3a, 0x26, 0x94, 0xa1, 0x7b,
+	0xd0, 0x3d, 0x73, 0x3d, 0x62, 0xb9, 0x0e, 0x1d, 0x6a, 0xdb, 0xad, 0x9d, 0x9e, 0xd9, 0xe1, 0xbf,
+	0x9f, 0x3b, 0xd4, 0xf8, 0x1a, 0x56, 0x72, 0x04, 0x34, 0x0c, 0x7c, 0x4a, 0xd0, 0x17, 0xd0, 0x89,
+	0x08, 0x8d, 0x3d, 0x26, 0x09, 0xfa, 0x4f, 0xb6, 0xf6, 0x8a, 0xb2, 0xf6, 0x52, 0x92, 0xd8, 0x63,
+	0x66, 0x82, 0x6e, 0xbc, 0xd7, 0x60, 0x90, 0x3d, 0x41, 0xeb, 0xd0, 0x51, 0xc2, 0x87, 0xda, 0xb6,
+	0xb6, 0xd3, 0x33, 0x17, 0xa4, 0x6c, 0xb4, 0x06, 0x0b, 0x94, 0x61, 0x16, 0xd3, 0xe1, 0xad, 0x6d,
+	0x6d, 0x67, 0xde, 0x54, 0xbf, 0xd0, 0x2a, 0xcc, 0x93, 0x28, 0x0a, 0xa2, 0x61, 0x4b, 0xa0, 0xcb,
+	0x1f, 0x08, 0x41, 0x9b, 0xba, 0xef, 0xc8, 0xb0, 0xbd, 0xad, 0xed, 0x2c, 0x9a, 0xe2, 0x1b, 0x0d,
+	0xa1, 0x73, 0x49, 0x22, 0xea, 0x06, 0xfe, 0x70, 0x5e, 0x80, 0x93, 0x9f, 0x46, 0x07, 0xe6, 0x8f,
+	0x46, 0x21, 0x1b, 0x1b, 0x3f, 0x81, 0xe1, 0x4b, 0x6c, 0xc7, 0xf1, 0xe8, 0xa5, 0x50, 0xff, 0xf0,
+	0x9c, 0xd8, 0x17, 0x89, 0x5b, 0x36, 0xa0, 0xa7, 0x8c, 0x52, 0xba, 0x2d, 0x9a, 0x5d, 0x09, 0x78,
+	0xee, 0x18, 0xbf, 0x84, 0x7b, 0x15, 0x84, 0xca, 0x3d, 0x1f, 0xc2, 0xe2, 0x2b, 0x1c, 0x9d, 0xe2,
+	0x57, 0xc4, 0x8a, 0x30, 0x73, 0x03, 0x41, 0xad, 0x99, 0x03, 0x05, 0x34, 0x39, 0xcc, 0xf8, 0x0e,
+	0xf4, 0x1c, 0x87, 0x60, 0x14, 0x62, 0x9b, 0x35, 0x11, 0x8e, 0xb6, 0xa1, 0x1f, 0x46, 0x04, 0x7b,
+	0x5e, 0x60, 0x63, 0x46, 0x84, 0x7f, 0x5a, 0x66, 0x16, 0x64, 0x6c, 0xc2, 0x46, 0x25, 0x73, 0xa9,
+	0xa0, 0xf1, 0x45, 0x41, 0xfb, 0x60, 0x34, 0x72, 0x1b, 0x89, 0x36, 0xee, 0x97, 0xb4, 0x16, 0x94,
+	0x8a, 0xef, 0x4f, 0x0b, 0xa7, 0x1e, 0xc1, 0x7e, 0x1c, 0x36, 0x62, 0x5c, 0xd4, 0x38, 0x21, 0x4d,
+	0x39, 0xaf, 0xcb, 0xb0, 0x39, 0x0c, 0x3c, 0x8f, 0xd8, 0xcc, 0x0d, 0xfc, 0x84, 0xed, 0x16, 0x80,
+	0x9d, 0x02, 0x55, 0x10, 0x65, 0x20, 0x86, 0x0e, 0xc3, 0x32, 0xa9, 0x62, 0xfb, 0x57, 0x0d, 0xee,
+	0x3e, 0x55, 0x4e, 0x93, 0x82, 0x1b, 0x5d, 0x40, 0x5e, 0xe4, 0xad, 0xa2, 0xc8, 0xe2, 0x05, 0xb5,
+	0x4a, 0x17, 0xc4, 0x31, 0x22, 0x12, 0x7a, 0xae, 0x8d, 0x05, 0x8b, 0xb6, 0x60, 0x91, 0x05, 0xa1,
+	0x25, 0x68, 0x31, 0xe6, 0x89, 0xc8, 0xed, 0x99, 0xfc, 0xd3, 0x18, 0xc2, 0x5a, 0x51, 0x57, 0x65,
+	0xc6, 0x8f, 0x61, 0x5d, 0x42, 0x4e, 0xc6, 0xbe, 0x7d, 0x22, 0xf2, 0xa4, 0x91, 0xd3, 0xff, 0xa3,
+	0xc1, 0xb0, 0x4c, 0xa8, 0xa2, 0xf8, 0xba, 0x1e, 0xb8, 0xaa, 0x7d, 0xe8, 0x01, 0xf4, 0x19, 0x76,
+	0x3d, 0x2b, 0x38, 0x3b, 0xa3, 0x84, 0x0d, 0x17, 0xb6, 0xb5, 0x9d, 0xb6, 0x09, 0x1c, 0xf4, 0xb5,
+	0x80, 0xa0, 0x87, 0xb0, 0x64, 0xcb, 0x48, 0xb6, 0x22, 0x72, 0xe9, 0x8a, 0xcc, 0xee, 0x08, 0xc5,
+	0xee, 0xd8, 0x49, 0x84, 0x4b, 0x30, 0x32, 0x60, 0xd1, 0x75, 0xde, 0x5a, 0xa2, 0xb4, 0x88, 0xc2,
+	0xd0, 0x15, 0xdc, 0xfa, 0xae, 0xf3, 0xf6, 0x57, 0xae, 0x47, 0x4e, 0xdc, 0x77, 0xc4, 0x78, 0x09,
+	0xf7, 0xa5, 0xf1, 0xcf, 0x7d, 0x3b, 0x22, 0x23, 0xe2, 0x33, 0xec, 0x1d, 0x06, 0xe1, 0xb8, 0x51,
+	0x08, 0xdc, 0x83, 0x2e, 0x75, 0x7d, 0x9b, 0x58, 0xbe, 0x2c, 0x50, 0x6d, 0xb3, 0x23, 0x7e, 0x1f,
+	0x53, 0xe3, 0x00, 0x36, 0x6b, 0xf8, 0x2a, 0xcf, 0x7e, 0x00, 0x03, 0xa1, 0x98, 0x1d, 0xf8, 0x8c,
+	0xf8, 0x4c, 0xf0, 0x1e, 0x98, 0x7d, 0x0e, 0x3b, 0x94, 0x20, 0xe3, 0x87, 0x80, 0x24, 0x8f, 0xaf,
+	0x82, 0xd8, 0x6f, 0x96, 0x9a, 0x77, 0x61, 0x25, 0x47, 0xa2, 0x62, 0xe3, 0x73, 0x58, 0x95, 0xe0,
+	0x6f, 0xfc, 0x51, 0x63, 0x5e, 0xeb, 0x70, 0xb7, 0x40, 0xa4, 0xb8, 0x3d, 0x49, 0x84, 0xe4, 0x9f,
+	0x90, 0xa9, 0xcc, 0xd6, 0x12, 0x0d, 0xf2, 0xaf, 0x88, 0xa8, 0x42, 0x52, 0x61, 0x1c, 0x5d, 0x98,
+	0x04, 0x3b, 0x81, 0xef, 0x8d, 0x1b, 0x57, 0xa1, 0x0a, 0x4a, 0xc5, 0xf7, 0x6f, 0x1a, 0x2c, 0x27,
+	0xe5, 0xa9, 0xe1, 0x6d, 0x5e, 0x31, 0x9c, 0x5b, 0xb5, 0xe1, 0xdc, 0x9e, 0x84, 0xf3, 0x0e, 0x2c,
+	0xd1, 0x20, 0x8e, 0x6c, 0x62, 0x39, 0x98, 0x61, 0xcb, 0x0f, 0x1c, 0xa2, 0xa2, 0xfd, 0xb6, 0x84,
+	0x3f, 0xc3, 0x0c, 0x1f, 0x07, 0x0e, 0x31, 0x7e, 0x91, 0x5c, 0x76, 0x2e, 0x4a, 0x1e, 0xc2, 0xb2,
+	0x87, 0x29, 0xb3, 0x70, 0x18, 0x12, 0xdf, 0xb1, 0x30, 0xe3, 0xa1, 0xa6, 0x89, 0x50, 0xbb, 0xcd,
+	0x0f, 0x9e, 0x0a, 0xf8, 0x53, 0x76, 0x4c, 0x8d, 0x7f, 0x6a, 0x70, 0x87, 0xd3, 0xf2, 0xd0, 0x6e,
+	0x64, 0xef, 0x12, 0xb4, 0xc8, 0x5b, 0xa6, 0x0c, 0xe5, 0x9f, 0x68, 0x1f, 0x56, 0x54, 0x0e, 0xb9,
+	0x81, 0x3f, 0x49, 0xaf, 0x96, 0x20, 0x44, 0x93, 0xa3, 0x34, 0xc3, 0x1e, 0x40, 0x9f, 0xb2, 0x20,
+	0x4c, 0xb2, 0xb5, 0x2d, 0xb3, 0x95, 0x83, 0x54, 0xb6, 0xe6, 0x7d, 0x3a, 0x5f, 0xe1, 0xd3, 0x81,
+	0x4b, 0x2d, 0x62, 0x5b, 0x52, 0x2b, 0x91, 0xef, 0x5d, 0x13, 0x5c, 0x7a, 0x64, 0x4b, 0x6f, 0x18,
+	0x3f, 0x82, 0xa5, 0x89, 0x55, 0xcd, 0x73, 0xe7, 0xbd, 0x96, 0x94, 0xc3, 0x17, 0xd8, 0xf5, 0x4e,
+	0x88, 0xef, 0x90, 0xe8, 0x9a, 0x39, 0x8d, 0x1e, 0xc3, 0xaa, 0xeb, 0x78, 0xc4, 0x62, 0xee, 0x88,
+	0x04, 0x31, 0xb3, 0x28, 0xb1, 0x03, 0xdf, 0xa1, 0x89, 0x7f, 0xf8, 0xd9, 0x0b, 0x79, 0x74, 0x22,
+	0x4f, 0x8c, 0x3f, 0xa6, 0xb5, 0x35, 0xab, 0xc5, 0xa4, 0x43, 0xf0, 0x09, 0xe1, 0x0c, 0xcf, 0x09,
+	0x76, 0x48, 0xa4, 0xcc, 0x18, 0x48, 0xe0, 0x6f, 0x04, 0x8c, 0x7b, 0x58, 0x21, 0x9d, 0x06, 0xce,
+	0x58, 0x68, 0x34, 0x30, 0x41, 0x82, 0x0e, 0x02, 0x67, 0x2c, 0x8a, 0x1c, 0xb5, 0x44, 0x90, 0xd8,
+	0xe7, 0xb1, 0x7f, 0x21, 0xb4, 0xe9, 0x9a, 0x7d, 0x97, 0xfe, 0x16, 0x53, 0x76, 0xc8, 0x41, 0xc6,
+	0xdf, 0xb5, 0x24, 0xcb, 0xb8, 0x1a, 0x26, 0xb1, 0x89, 0x7b, 0xf9, 0x7f, 0x70, 0x07, 0xa7, 0x50,
+	0xd9, 0x90, 0xeb, 0x14, 0x55, 0xc2, 0x20, 0x79, 0xa6, 0xde, 0x22, 0x71, 0x32, 0x49, 0xf2, 0xbc,
+	0xe2, 0x2a, 0xc9, 0xbf, 0x4f, 0x8a, 0xec, 0x91, 0x7d, 0x72, 0x8e, 0x23, 0x87, 0xfe, 0x9a, 0xf8,
+	0x24, 0xc2, 0xec, 0x46, 0x1e, 0x70, 0x63, 0x1b, 0xb6, 0xea, 0xb8, 0x2b, 0xf9, 0xdf, 0x25, 0x8f,
+	0x47, 0x82, 0x61, 0x92, 0xd3, 0xd8, 0xf5, 0x9c, 0x1b, 0x11, 0xff, 0x65, 0xd1, 0xb8, 0x94, 0xb9,
+	0x8a, 0x9f, 0x5d, 0x58, 0x8e, 0x04, 0x88, 0x59, 0x94, 0x23, 0xa4, 0xbd, 0xfb, 0xa2, 0x79, 0x47,
+	0x1d, 0x08, 0x42, 0xde, 0xc3, 0xff, 0x23, 0x8d, 0x80, 0x84, 0xdb, 0x8d, 0x95, 0xc5, 0x0d, 0xe8,
+	0x4d, 0xc4, 0xb7, 0x84, 0xf8, 0x2e, 0x55, 0x72, 0x79, 0x74, 0xda, 0x41, 0x38, 0xb6, 0x88, 0x2d,
+	0xdf, 0x61, 0x71, 0xd5, 0x5d, 0xb3, 0xcf, 0x81, 0x47, 0xb6, 0x78, 0x86, 0xaf, 0x50, 0x23, 0xd3,
+	0x68, 0xc8, 0x1b, 0xa1, 0x6e, 0xe3, 0x0d, 0x6c, 0xe4, 0x4f, 0x9b, 0x3f, 0x4f, 0xd7, 0x32, 0xd2,
+	0xd8, 0x2a, 0x86, 0x41, 0xe1, 0x8d, 0xbb, 0x2c, 0xaa, 0xdd, 0xf8, 0x3d, 0xbf, 0x9e, 0x5e, 0x9b,
+	0x45, 0x87, 0xe4, 0x9b, 0x82, 0x6f, 0x8b, 0x6a, 0x5f, 0xa1, 0x39, 0x98, 0x2e, 0xf8, 0x41, 0x31,
+	0x74, 0x8b, 0x1d, 0xc4, 0x9f, 0xd3, 0xba, 0xa8, 0x30, 0xf8, 0xfb, 0xdd, 0xb8, 0x1e, 0x29, 0xb9,
+	0xc2, 0x1d, 0x8b, 0x66, 0x47, 0x89, 0xe5, 0xc3, 0xa2, 0x7a, 0x87, 0x64, 0xaf, 0xad, 0x7e, 0xe5,
+	0xc6, 0xc2, 0x96, 0x1a, 0x0b, 0x93, 0x71, 0xf7, 0x82, 0x8c, 0x45, 0xac, 0xb5, 0xe5, 0xb8, 0xfb,
+	0x25, 0x19, 0x1b, 0xc7, 0x85, 0x4c, 0x91, 0xaa, 0xa9, 0x9c, 0x43, 0xd0, 0xe6, 0x41, 0xaa, 0x4a,
+	0xb5, 0xf8, 0x46, 0x9b, 0x00, 0x2e, 0xb5, 0x1c, 0x71, 0xe7, 0x52, 0xa9, 0xae, 0xd9, 0x73, 0x55,
+	0x10, 0x38, 0xc6, 0x9f, 0x32, 0xa9, 0x77, 0xe0, 0x05, 0xa7, 0x37, 0x18, 0x95, 0x59, 0x2b, 0x5a,
+	0x39, 0x2b, 0xb2, 0x73, 0x6f, 0x3b, 0x3f, 0xf7, 0x66, 0x92, 0x28, 0xab, 0x8e, 0xba, 0x99, 0x9f,
+	0xc1, 0x06, 0x37, 0x58, 0x62, 0x88, 0x2e, 0xb9, 0xf9, 0x24, 0xf1, 0xef, 0x5b, 0x70, 0xbf, 0x9a,
+	0xb8, 0xc9, 0x34, 0xf1, 0x73, 0xd0, 0xd3, 0x6e, 0x9d, 0x3f, 0x29, 0x94, 0xe1, 0x51, 0x98, 0x3e,
+	0x2a, 0xf2, 0xed, 0x59, 0x57, 0xad, 0xfb, 0x8b, 0xe4, 0x3c, 0x79, 0x59, 0x4a, 0xad, 0x7e, 0xab,
+	0xd4, 0xea, 0x73, 0x01, 0x0e, 0x66, 0x75, 0x02, 0x64, 0xef, 0xb2, 0xee, 0x60, 0x56, 0x27, 0x20,
+	0x25, 0x16, 0x02, 0x64, 0xd4, 0xf4, 0x15, 0xbe, 0x10, 0xb0, 0x09, 0xa0, 0xda, 0x92, 0xd8, 0x4f,
+	0x46, 0x97, 0x9e, 0x6c, 0x4a, 0x62, 0xbf, 0xb6, 0xbb, 0xea, 0xd4, 0x76, 0x57, 0xf9, 0xeb, 0xef,
+	0x96, 0x5e, 0x88, 0x6f, 0x01, 0x9e, 0xb9, 0xf4, 0x42, 0x3a, 0x99, 0xb7, 0x73, 0x8e, 0x1b, 0xa9,
+	0xd9, 0x97, 0x7f, 0x72, 0x08, 0xf6, 0x3c, 0xe5, 0x3a, 0xfe, 0xc9, 0xc3, 0x37, 0xa6, 0xc4, 0x51,
+	0xde, 0x11, 0xdf, 0x1c, 0x76, 0x16, 0x11, 0xa2, 0x1c, 0x20, 0xbe, 0x8d, 0xbf, 0x68, 0xd0, 0xfb,
+	0x8a, 0x8c, 0x14, 0xe7, 0x2d, 0x80, 0x57, 0x41, 0x14, 0xc4, 0xcc, 0xf5, 0x89, 0xec, 0x3e, 0xe7,
+	0xcd, 0x0c, 0xe4, 0x7f, 0x97, 0x23, 0x52, 0x93, 0x78, 0x67, 0xca, 0x99, 0xe2, 0x9b, 0xc3, 0xce,
+	0x09, 0x0e, 0x95, 0xff, 0xc4, 0x37, 0x5a, 0x85, 0x79, 0xca, 0xb0, 0x7d, 0x21, 0x9c, 0xd5, 0x36,
+	0xe5, 0x8f, 0x27, 0xff, 0x5a, 0x83, 0x41, 0xb6, 0x5b, 0x40, 0xdf, 0x43, 0x3f, 0xb3, 0xa9, 0x42,
+	0x1f, 0x95, 0x17, 0x52, 0xe5, 0xcd, 0x97, 0xfe, 0x83, 0x19, 0x58, 0x2a, 0x31, 0xe6, 0x90, 0x0f,
+	0xcb, 0xa5, 0x75, 0x0f, 0xda, 0x2d, 0x53, 0xd7, 0x2d, 0x93, 0xf4, 0x47, 0x8d, 0x70, 0x53, 0x79,
+	0x0c, 0x56, 0x2a, 0xf6, 0x37, 0xe8, 0xd3, 0x19, 0x5c, 0x72, 0x3b, 0x24, 0xfd, 0xb3, 0x86, 0xd8,
+	0xa9, 0xd4, 0xd7, 0x80, 0xca, 0xcb, 0x1d, 0xf4, 0x68, 0x26, 0x9b, 0xc9, 0xf2, 0x48, 0xff, 0xb4,
+	0x19, 0x72, 0xad, 0xa1, 0x72, 0xed, 0x33, 0xd3, 0xd0, 0xdc, 0x62, 0x69, 0xa6, 0xa1, 0x85, 0x5d,
+	0xd2, 0x1c, 0xba, 0x80, 0xa5, 0xe2, 0x4a, 0x08, 0x3d, 0xac, 0x5b, 0x61, 0x96, 0x36, 0x4e, 0xfa,
+	0x6e, 0x13, 0xd4, 0x54, 0x18, 0x81, 0xdb, 0xf9, 0xb5, 0x0d, 0xfa, 0xa4, 0x4c, 0x5f, 0xb9, 0x84,
+	0xd2, 0x77, 0x66, 0x23, 0x66, 0x6d, 0x2a, 0xae, 0x72, 0xaa, 0x6c, 0xaa, 0xd9, 0x13, 0x55, 0xd9,
+	0x54, 0xb7, 0x19, 0x32, 0xe6, 0xd0, 0xef, 0x93, 0xfd, 0x40, 0x61, 0xc5, 0x81, 0xf6, 0xea, 0xd8,
+	0x54, 0xef, 0x58, 0xf4, 0xfd, 0xc6, 0xf8, 0x89, 0xec, 0xc7, 0x1a, 0xcf, 0xf5, 0xcc, 0xa6, 0xa3,
+	0x2a, 0xd7, 0xcb, 0xbb, 0x93, 0xaa, 0x5c, 0xaf, 0x5a, 0x97, 0xcc, 0xa1, 0x53, 0x58, 0xcc, 0xed,
+	0x3e, 0xd0, 0xc7, 0x75, 0x94, 0xf9, 0xa6, 0x49, 0xff, 0x64, 0x26, 0x5e, 0x2a, 0xc3, 0x4a, 0xaa,
+	0x97, 0x2a, 0x57, 0xb5, 0xca, 0xe5, 0xeb, 0xd5, 0xc7, 0xb3, 0xd0, 0x72, 0xa9, 0x5c, 0xda, 0x90,
+	0x54, 0xa6, 0x72, 0xdd, 0x06, 0xa6, 0x32, 0x95, 0xeb, 0x97, 0x2e, 0x73, 0xe8, 0x77, 0x00, 0x93,
+	0x2d, 0x06, 0xfa, 0xb0, 0x8e, 0x3a, 0x7b, 0xfb, 0x1f, 0x4d, 0x47, 0x4a, 0x59, 0xbf, 0x81, 0xd5,
+	0xaa, 0xe6, 0x02, 0x55, 0x24, 0xfe, 0x94, 0x0e, 0x46, 0xdf, 0x6b, 0x8a, 0x9e, 0x0a, 0xfe, 0x06,
+	0xba, 0xc9, 0x06, 0x02, 0x7d, 0x50, 0xa6, 0x2e, 0xec, 0x5c, 0x74, 0x63, 0x1a, 0x4a, 0x26, 0x80,
+	0x47, 0x49, 0xae, 0x4e, 0x56, 0x03, 0xf5, 0xb9, 0x5a, 0x5a, 0x62, 0xd4, 0xe7, 0x6a, 0x79, 0xd3,
+	0x20, 0xc4, 0xa5, 0xc1, 0x90, 0x9d, 0xa4, 0xeb, 0x83, 0xa1, 0x62, 0x51, 0x50, 0x1f, 0x0c, 0x95,
+	0xc3, 0xf9, 0x1c, 0xfa, 0x03, 0xac, 0x55, 0x0f, 0xd0, 0xa8, 0x36, 0xe3, 0x6b, 0x06, 0x79, 0xfd,
+	0x71, 0x73, 0x82, 0x54, 0xfc, 0xbb, 0xa4, 0x3e, 0x15, 0x06, 0xe8, 0xfa, 0xfa, 0x54, 0x3d, 0xc6,
+	0xeb, 0xfb, 0x8d, 0xf1, 0xcb, 0xa9, 0x97, 0x9d, 0x54, 0xeb, 0xbd, 0x5d, 0x31, 0x94, 0xd7, 0x7b,
+	0xbb, 0x72, 0xf8, 0x15, 0xf9, 0x51, 0x35, 0x85, 0x56, 0xe5, 0xc7, 0x94, 0x31, 0x59, 0xdf, 0x6b,
+	0x8a, 0x9e, 0x7b, 0xbe, 0xcb, 0x63, 0x26, 0x9a, 0xa9, 0x7f, 0xae, 0x32, 0x7f, 0xd6, 0x10, 0xbb,
+	0xfe, 0x76, 0x93, 0x4a, 0x3d, 0xd3, 0x80, 0x42, 0xc5, 0xde, 0x6f, 0x8c, 0x9f, 0xca, 0x0e, 0x93,
+	0xdd, 0x72, 0x66, 0x44, 0x44, 0xbb, 0x33, 0xf8, 0x64, 0x46, 0x5c, 0xfd, 0x51, 0x23, 0xdc, 0xaa,
+	0xec, 0xcd, 0x0e, 0x6d, 0xd3, 0xe2, 0xa9, 0x34, 0x69, 0x4e, 0x8b, 0xa7, 0x8a, 0x39, 0x70, 0xee,
+	0x74, 0x41, 0xfc, 0x81, 0xfc, 0xf9, 0x7f, 0x03, 0x00, 0x00, 0xff, 0xff, 0xc8, 0x44, 0x1a, 0xc5,
+	0x57, 0x1e, 0x00, 0x00,
 }

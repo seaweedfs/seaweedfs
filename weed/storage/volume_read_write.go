@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
@@ -16,19 +17,19 @@ var ErrorNotFound = errors.New("not found")
 
 // isFileUnchanged checks whether this needle to write is same as last one.
 // It requires serialized access in the same volume.
-func (v *Volume) isFileUnchanged(n *Needle) bool {
+func (v *Volume) isFileUnchanged(n *needle.Needle) bool {
 	if v.Ttl.String() != "" {
 		return false
 	}
 	nv, ok := v.nm.Get(n.Id)
-	if ok && nv.Offset > 0 {
-		oldNeedle := new(Needle)
-		err := oldNeedle.ReadData(v.dataFile, int64(nv.Offset)*NeedlePaddingSize, nv.Size, v.Version())
+	if ok && !nv.Offset.IsZero() && nv.Size != TombstoneFileSize {
+		oldNeedle := new(needle.Needle)
+		err := oldNeedle.ReadData(v.dataFile, nv.Offset.ToAcutalOffset(), nv.Size, v.Version())
 		if err != nil {
-			glog.V(0).Infof("Failed to check updated file %v", err)
+			glog.V(0).Infof("Failed to check updated file at offset %d size %d: %v", nv.Offset.ToAcutalOffset(), nv.Size, err)
 			return false
 		}
-		if oldNeedle.Checksum == n.Checksum && bytes.Equal(oldNeedle.Data, n.Data) {
+		if oldNeedle.Cookie == n.Cookie && oldNeedle.Checksum == n.Checksum && bytes.Equal(oldNeedle.Data, n.Data) {
 			n.DataSize = oldNeedle.DataSize
 			return true
 		}
@@ -76,8 +77,8 @@ func (v *Volume) AppendBlob(b []byte) (offset int64, err error) {
 	return
 }
 
-func (v *Volume) writeNeedle(n *Needle) (offset uint64, size uint32, err error) {
-	glog.V(4).Infof("writing needle %s", NewFileIdFromNeedle(v.Id, n).String())
+func (v *Volume) writeNeedle(n *needle.Needle) (offset uint64, size uint32, isUnchanged bool, err error) {
+	glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	if v.readOnly {
 		err = fmt.Errorf("%s is read-only", v.dataFile.Name())
 		return
@@ -86,29 +87,35 @@ func (v *Volume) writeNeedle(n *Needle) (offset uint64, size uint32, err error) 
 	defer v.dataFileAccessLock.Unlock()
 	if v.isFileUnchanged(n) {
 		size = n.DataSize
-		glog.V(4).Infof("needle is unchanged!")
+		isUnchanged = true
 		return
+	}
+
+	if n.Ttl == needle.EMPTY_TTL && v.Ttl != needle.EMPTY_TTL {
+		n.SetHasTtl()
+		n.Ttl = v.Ttl
 	}
 
 	n.AppendAtNs = uint64(time.Now().UnixNano())
 	if offset, size, _, err = n.Append(v.dataFile, v.Version()); err != nil {
 		return
 	}
+	v.lastAppendAtNs = n.AppendAtNs
 
 	nv, ok := v.nm.Get(n.Id)
-	if !ok || uint64(nv.Offset)*NeedlePaddingSize < offset {
-		if err = v.nm.Put(n.Id, Offset(offset/NeedlePaddingSize), n.Size); err != nil {
+	if !ok || uint64(nv.Offset.ToAcutalOffset()) < offset {
+		if err = v.nm.Put(n.Id, ToOffset(int64(offset)), n.Size); err != nil {
 			glog.V(4).Infof("failed to save in needle map %d: %v", n.Id, err)
 		}
 	}
-	if v.lastModifiedTime < n.LastModified {
-		v.lastModifiedTime = n.LastModified
+	if v.lastModifiedTsSeconds < n.LastModified {
+		v.lastModifiedTsSeconds = n.LastModified
 	}
 	return
 }
 
-func (v *Volume) deleteNeedle(n *Needle) (uint32, error) {
-	glog.V(4).Infof("delete needle %s", NewFileIdFromNeedle(v.Id, n).String())
+func (v *Volume) deleteNeedle(n *needle.Needle) (uint32, error) {
+	glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	if v.readOnly {
 		return 0, fmt.Errorf("%s is read-only", v.dataFile.Name())
 	}
@@ -124,7 +131,8 @@ func (v *Volume) deleteNeedle(n *Needle) (uint32, error) {
 		if err != nil {
 			return size, err
 		}
-		if err = v.nm.Delete(n.Id, Offset(offset/NeedlePaddingSize)); err != nil {
+		v.lastAppendAtNs = n.AppendAtNs
+		if err = v.nm.Delete(n.Id, ToOffset(int64(offset))); err != nil {
 			return size, err
 		}
 		return size, err
@@ -133,12 +141,12 @@ func (v *Volume) deleteNeedle(n *Needle) (uint32, error) {
 }
 
 // read fills in Needle content by looking up n.Id from NeedleMapper
-func (v *Volume) readNeedle(n *Needle) (int, error) {
+func (v *Volume) readNeedle(n *needle.Needle) (int, error) {
 	nv, ok := v.nm.Get(n.Id)
-	if !ok || nv.Offset == 0 {
+	if !ok || nv.Offset.IsZero() {
 		v.compactingWg.Wait()
 		nv, ok = v.nm.Get(n.Id)
-		if !ok || nv.Offset == 0 {
+		if !ok || nv.Offset.IsZero() {
 			return -1, ErrorNotFound
 		}
 	}
@@ -148,7 +156,7 @@ func (v *Volume) readNeedle(n *Needle) (int, error) {
 	if nv.Size == 0 {
 		return 0, nil
 	}
-	err := n.ReadData(v.dataFile, int64(nv.Offset)*NeedlePaddingSize, nv.Size, v.Version())
+	err := n.ReadData(v.dataFile, nv.Offset.ToAcutalOffset(), nv.Size, v.Version())
 	if err != nil {
 		return 0, err
 	}
@@ -172,54 +180,93 @@ func (v *Volume) readNeedle(n *Needle) (int, error) {
 type VolumeFileScanner interface {
 	VisitSuperBlock(SuperBlock) error
 	ReadNeedleBody() bool
-	VisitNeedle(n *Needle, offset int64) error
+	VisitNeedle(n *needle.Needle, offset int64) error
 }
 
-func ScanVolumeFile(dirname string, collection string, id VolumeId,
+func ScanVolumeFile(dirname string, collection string, id needle.VolumeId,
 	needleMapKind NeedleMapType,
 	volumeFileScanner VolumeFileScanner) (err error) {
 	var v *Volume
 	if v, err = loadVolumeWithoutIndex(dirname, collection, id, needleMapKind); err != nil {
-		return fmt.Errorf("Failed to load volume %d: %v", id, err)
+		return fmt.Errorf("failed to load volume %d: %v", id, err)
 	}
 	if err = volumeFileScanner.VisitSuperBlock(v.SuperBlock); err != nil {
-		return fmt.Errorf("Failed to process volume %d super block: %v", id, err)
+		return fmt.Errorf("failed to process volume %d super block: %v", id, err)
 	}
 	defer v.Close()
 
 	version := v.Version()
 
 	offset := int64(v.SuperBlock.BlockSize())
-	n, rest, e := ReadNeedleHeader(v.dataFile, version, offset)
+
+	return ScanVolumeFileFrom(version, v.dataFile, offset, volumeFileScanner)
+}
+
+func ScanVolumeFileFrom(version needle.Version, dataFile *os.File, offset int64, volumeFileScanner VolumeFileScanner) (err error) {
+	n, _, rest, e := needle.ReadNeedleHeader(dataFile, version, offset)
 	if e != nil {
-		err = fmt.Errorf("cannot read needle header: %v", e)
-		return
+		if e == io.EOF {
+			return nil
+		}
+		return fmt.Errorf("cannot read %s at offset %d: %v", dataFile.Name(), offset, e)
 	}
 	for n != nil {
 		if volumeFileScanner.ReadNeedleBody() {
-			if err = n.ReadNeedleBody(v.dataFile, version, offset+NeedleEntrySize, rest); err != nil {
+			if _, err = n.ReadNeedleBody(dataFile, version, offset+NeedleHeaderSize, rest); err != nil {
 				glog.V(0).Infof("cannot read needle body: %v", err)
 				//err = fmt.Errorf("cannot read needle body: %v", err)
 				//return
 			}
 		}
-		err = volumeFileScanner.VisitNeedle(n, offset)
+		err := volumeFileScanner.VisitNeedle(n, offset)
 		if err == io.EOF {
 			return nil
 		}
 		if err != nil {
 			glog.V(0).Infof("visit needle error: %v", err)
 		}
-		offset += NeedleEntrySize + rest
+		offset += NeedleHeaderSize + rest
 		glog.V(4).Infof("==> new entry offset %d", offset)
-		if n, rest, err = ReadNeedleHeader(v.dataFile, version, offset); err != nil {
+		if n, _, rest, err = needle.ReadNeedleHeader(dataFile, version, offset); err != nil {
 			if err == io.EOF {
 				return nil
 			}
-			return fmt.Errorf("cannot read needle header: %v", err)
+			return fmt.Errorf("cannot read needle header at offset %d: %v", offset, err)
 		}
 		glog.V(4).Infof("new entry needle size:%d rest:%d", n.Size, rest)
 	}
+	return nil
+}
 
-	return
+func ScanVolumeFileNeedleFrom(version needle.Version, dataFile *os.File, offset int64, fn func(needleHeader, needleBody []byte, needleAppendAtNs uint64) error) (err error) {
+	n, nh, rest, e := needle.ReadNeedleHeader(dataFile, version, offset)
+	if e != nil {
+		if e == io.EOF {
+			return nil
+		}
+		return fmt.Errorf("cannot read %s at offset %d: %v", dataFile.Name(), offset, e)
+	}
+	for n != nil {
+		var needleBody []byte
+		if needleBody, err = n.ReadNeedleBody(dataFile, version, offset+NeedleHeaderSize, rest); err != nil {
+			glog.V(0).Infof("cannot read needle body: %v", err)
+			//err = fmt.Errorf("cannot read needle body: %v", err)
+			//return
+		}
+		err = fn(nh, needleBody, n.AppendAtNs)
+		if err != nil {
+			glog.V(0).Infof("visit needle error: %v", err)
+			return
+		}
+		offset += NeedleHeaderSize + rest
+		glog.V(4).Infof("==> new entry offset %d", offset)
+		if n, nh, rest, err = needle.ReadNeedleHeader(dataFile, version, offset); err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return fmt.Errorf("cannot read needle header at offset %d: %v", offset, err)
+		}
+		glog.V(4).Infof("new entry needle size:%d rest:%d", n.Size, rest)
+	}
+	return nil
 }
