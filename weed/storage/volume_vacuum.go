@@ -53,7 +53,7 @@ func (v *Volume) CommitCompact() error {
 		glog.V(0).Infof("fail to close volume %d", v.Id)
 	}
 	v.dataFile = nil
-	stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume").Inc()
+	stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume").Dec()
 
 	var e error
 	if e = v.makeupDiff(v.FileName()+".cpd", v.FileName()+".cpx", v.FileName()+".dat", v.FileName()+".idx"); e != nil {
