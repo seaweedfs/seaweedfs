@@ -24,7 +24,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/aws_sqs"
-	// _ "github.com/chrislusf/seaweedfs/weed/notification/gocdk_pub_sub"
+	_ "github.com/chrislusf/seaweedfs/weed/notification/gocdk_pub_sub"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/google_pub_sub"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/kafka"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/log"
