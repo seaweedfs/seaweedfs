@@ -58,7 +58,7 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 			break
 		}
 		n.LastModified = now
-		if size, err := vs.store.Delete(volumeId, n); err != nil {
+		if size, err := vs.store.DeleteVolumeNeedle(volumeId, n); err != nil {
 			resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
 				FileId: fid,
 				Status: http.StatusInternalServerError,

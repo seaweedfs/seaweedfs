@@ -52,8 +52,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			return err
 		}
 
+		t.Sequence.SetMax(heartbeat.MaxFileKey)
+
 		if dn == nil {
-			t.Sequence.SetMax(heartbeat.MaxFileKey)
 			if heartbeat.Ip == "" {
 				if pr, ok := peer.FromContext(stream.Context()); ok {
 					if pr.Addr != net.Addr(nil) {
