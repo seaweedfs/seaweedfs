@@ -96,13 +96,29 @@ func (v *Volume) writeNeedle(n *needle.Needle) (offset uint64, size uint32, isUn
 		n.Ttl = v.Ttl
 	}
 
+	// check whether existing needle cookie matches
+	nv, ok := v.nm.Get(n.Id)
+	if ok {
+		existingNeedle, _, _, existingNeedleReadErr := needle.ReadNeedleHeader(v.dataFile, v.Version(), nv.Offset.ToAcutalOffset())
+		if existingNeedleReadErr != nil {
+			err = fmt.Errorf("reading existing needle: %v", existingNeedleReadErr)
+			return
+		}
+		if existingNeedle.Cookie != n.Cookie {
+			glog.V(0).Infof("write cookie mismatch: existing %x, new %x", existingNeedle.Cookie, n.Cookie)
+			err = fmt.Errorf("mismatching cookie %x", n.Cookie)
+			return
+		}
+	}
+
+	// append to dat file
 	n.AppendAtNs = uint64(time.Now().UnixNano())
 	if offset, size, _, err = n.Append(v.dataFile, v.Version()); err != nil {
 		return
 	}
 	v.lastAppendAtNs = n.AppendAtNs
 
-	nv, ok := v.nm.Get(n.Id)
+	// add to needle map
 	if !ok || uint64(nv.Offset.ToAcutalOffset()) < offset {
 		if err = v.nm.Put(n.Id, ToOffset(int64(offset)), n.Size); err != nil {
 			glog.V(4).Infof("failed to save in needle map %d: %v", n.Id, err)
