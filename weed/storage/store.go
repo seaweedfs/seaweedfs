@@ -211,7 +211,7 @@ func (s *Store) Close() {
 	}
 }
 
-func (s *Store) Write(i needle.VolumeId, n *needle.Needle) (size uint32, isUnchanged bool, err error) {
+func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (size uint32, isUnchanged bool, err error) {
 	if v := s.findVolume(i); v != nil {
 		if v.readOnly {
 			err = fmt.Errorf("volume %d is read only", i)
@@ -230,7 +230,7 @@ func (s *Store) Write(i needle.VolumeId, n *needle.Needle) (size uint32, isUncha
 	return
 }
 
-func (s *Store) Delete(i needle.VolumeId, n *needle.Needle) (uint32, error) {
+func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (uint32, error) {
 	if v := s.findVolume(i); v != nil && !v.readOnly {
 		return v.deleteNeedle(n)
 	}

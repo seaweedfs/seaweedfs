@@ -25,7 +25,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 	//check JWT
 	jwt := security.GetJwt(r)
 
-	size, isUnchanged, err = s.Write(volumeId, n)
+	size, isUnchanged, err = s.WriteVolumeNeedle(volumeId, n)
 	if err != nil {
 		err = fmt.Errorf("failed to write to local disk: %v", err)
 		return
@@ -89,7 +89,7 @@ func ReplicatedDelete(masterNode string, store *storage.Store,
 	//check JWT
 	jwt := security.GetJwt(r)
 
-	ret, err := store.Delete(volumeId, n)
+	ret, err := store.DeleteVolumeNeedle(volumeId, n)
 	if err != nil {
 		glog.V(0).Infoln("delete error:", err)
 		return ret, err
