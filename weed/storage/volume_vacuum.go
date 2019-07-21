@@ -46,8 +46,6 @@ func (v *Volume) CommitCompact() error {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 	glog.V(3).Infof("Got volume %d committing lock...", v.Id)
-	v.compactingWg.Add(1)
-	defer v.compactingWg.Done()
 	v.nm.Close()
 	if err := v.dataFile.Close(); err != nil {
 		glog.V(0).Infof("fail to close volume %d", v.Id)

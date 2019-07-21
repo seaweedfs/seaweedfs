@@ -22,7 +22,6 @@ type Volume struct {
 	Collection    string
 	dataFile      *os.File
 	nm            NeedleMapper
-	compactingWg  sync.WaitGroup
 	needleMapKind NeedleMapType
 	readOnly      bool
 
