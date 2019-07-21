@@ -217,11 +217,10 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (size uin
 			err = fmt.Errorf("volume %d is read only", i)
 			return
 		}
-		// TODO: count needle size ahead
-		if MaxPossibleVolumeSize >= v.ContentSize()+uint64(size) {
+		if MaxPossibleVolumeSize >= v.ContentSize()+uint64(needle.GetActualSize(size, v.version)) {
 			_, size, isUnchanged, err = v.writeNeedle(n)
 		} else {
-			err = fmt.Errorf("Volume Size Limit %d Exceeded! Current size is %d", s.GetVolumeSizeLimit(), v.ContentSize())
+			err = fmt.Errorf("volume size limit %d exceeded! current size is %d", s.GetVolumeSizeLimit(), v.ContentSize())
 		}
 		return
 	}
@@ -231,10 +230,17 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (size uin
 }
 
 func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (uint32, error) {
-	if v := s.findVolume(i); v != nil && !v.readOnly {
-		return v.deleteNeedle(n)
+	if v := s.findVolume(i); v != nil {
+		if v.readOnly {
+			return 0, fmt.Errorf("volume %d is read only", i)
+		}
+		if MaxPossibleVolumeSize >= v.ContentSize()+uint64(needle.GetActualSize(0, v.version)) {
+			return v.deleteNeedle(n)
+		} else {
+			return 0, fmt.Errorf("volume size limit %d exceeded! current size is %d", s.GetVolumeSizeLimit(), v.ContentSize())
+		}
 	}
-	return 0, nil
+	return 0, fmt.Errorf("volume %d not found on %s:%d", i, s.Ip, s.Port)
 }
 
 func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle) (int, error) {
