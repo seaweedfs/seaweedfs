@@ -46,7 +46,10 @@ func batchVacuumVolumeCheck(grpcDialOption grpc.DialOption, vl *VolumeLayout, vi
 	return isCheckSuccess
 }
 func batchVacuumVolumeCompact(grpcDialOption grpc.DialOption, vl *VolumeLayout, vid needle.VolumeId, locationlist *VolumeLocationList, preallocate int64) bool {
+	vl.accessLock.Lock()
 	vl.removeFromWritable(vid)
+	vl.accessLock.Unlock()
+
 	ch := make(chan bool, locationlist.Length())
 	for index, dn := range locationlist.list {
 		go func(index int, url string, vid needle.VolumeId) {
