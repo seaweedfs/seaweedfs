@@ -101,13 +101,9 @@ func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size uint32) error {
 	return levelDbWrite(m.db, key, offset, size)
 }
 
-func levelDbWrite(db *leveldb.DB,
-	key NeedleId, offset Offset, size uint32) error {
+func levelDbWrite(db *leveldb.DB, key NeedleId, offset Offset, size uint32) error {
 
-	bytes := make([]byte, NeedleIdSize+OffsetSize+SizeSize)
-	NeedleIdToBytes(bytes[0:NeedleIdSize], key)
-	OffsetToBytes(bytes[NeedleIdSize:NeedleIdSize+OffsetSize], offset)
-	util.Uint32toBytes(bytes[NeedleIdSize+OffsetSize:NeedleIdSize+OffsetSize+SizeSize], size)
+	bytes := needle_map.ToBytes(key, offset, size)
 
 	if err := db.Put(bytes[0:NeedleIdSize], bytes[NeedleIdSize:NeedleIdSize+OffsetSize+SizeSize], nil); err != nil {
 		return fmt.Errorf("failed to write leveldb: %v", err)

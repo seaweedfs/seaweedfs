@@ -9,6 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	idx2 "github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -182,11 +183,9 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		return fmt.Errorf("oldDatFile %s 's compact revision is %d while newDatFile %s 's compact revision is %d", oldDatFileName, oldDatCompactRevision, newDatFileName, newDatCompactRevision)
 	}
 
-	idxEntryBytes := make([]byte, NeedleIdSize+OffsetSize+SizeSize)
 	for key, increIdxEntry := range incrementedHasUpdatedIndexEntry {
-		NeedleIdToBytes(idxEntryBytes[0:NeedleIdSize], key)
-		OffsetToBytes(idxEntryBytes[NeedleIdSize:NeedleIdSize+OffsetSize], increIdxEntry.offset)
-		util.Uint32toBytes(idxEntryBytes[NeedleIdSize+OffsetSize:NeedleIdSize+OffsetSize+SizeSize], increIdxEntry.size)
+
+		idxEntryBytes := needle_map.ToBytes(key, increIdxEntry.offset, increIdxEntry.size)
 
 		var offset int64
 		if offset, err = dst.Seek(0, 2); err != nil {
