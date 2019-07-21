@@ -53,30 +53,6 @@ func (v *Volume) Destroy() (err error) {
 	return
 }
 
-// AppendBlob append a blob to end of the data file, used in replication
-func (v *Volume) AppendBlob(b []byte) (offset int64, err error) {
-	if v.readOnly {
-		err = fmt.Errorf("%s is read-only", v.dataFile.Name())
-		return
-	}
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
-	if offset, err = v.dataFile.Seek(0, 2); err != nil {
-		glog.V(0).Infof("failed to seek the end of file: %v", err)
-		return
-	}
-	//ensure file writing starting from aligned positions
-	if offset%NeedlePaddingSize != 0 {
-		offset = offset + (NeedlePaddingSize - offset%NeedlePaddingSize)
-		if offset, err = v.dataFile.Seek(offset, 0); err != nil {
-			glog.V(0).Infof("failed to align in datafile %s: %v", v.dataFile.Name(), err)
-			return
-		}
-	}
-	_, err = v.dataFile.Write(b)
-	return
-}
-
 func (v *Volume) writeNeedle(n *needle.Needle) (offset uint64, size uint32, isUnchanged bool, err error) {
 	glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	if v.readOnly {
