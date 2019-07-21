@@ -195,8 +195,8 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		//ensure file writing starting from aligned positions
 		if offset%NeedlePaddingSize != 0 {
 			offset = offset + (NeedlePaddingSize - offset%NeedlePaddingSize)
-			if offset, err = v.dataFile.Seek(offset, 0); err != nil {
-				glog.V(0).Infof("failed to align in datafile %s: %v", v.dataFile.Name(), err)
+			if offset, err = dst.Seek(offset, 0); err != nil {
+				glog.V(0).Infof("failed to align in datafile %s: %v", dst.Name(), err)
 				return
 			}
 		}
