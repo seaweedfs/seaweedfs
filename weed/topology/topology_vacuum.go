@@ -2,6 +2,7 @@ package topology
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -121,6 +122,16 @@ func batchVacuumVolumeCleanup(grpcDialOption grpc.DialOption, vl *VolumeLayout, 
 }
 
 func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float64, preallocate int64) int {
+
+	// if there is vacuum going on, return immediately
+	swapped := atomic.CompareAndSwapInt64(&t.vacuumLockCounter, 0, 1)
+	if !swapped {
+		return 0
+	}
+	defer atomic.StoreInt64(&t.vacuumLockCounter, 0)
+
+	// now only one vacuum process going on
+
 	glog.V(1).Infof("Start vacuum on demand with threshold: %f", garbageThreshold)
 	for _, col := range t.collectionMap.Items() {
 		c := col.(*Collection)

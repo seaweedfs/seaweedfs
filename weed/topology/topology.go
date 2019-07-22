@@ -16,6 +16,7 @@ import (
 )
 
 type Topology struct {
+	vacuumLockCounter int64
 	NodeImpl
 
 	collectionMap  *util.ConcurrentReadMap
@@ -33,6 +34,7 @@ type Topology struct {
 	Configuration *Configuration
 
 	RaftServer raft.Server
+
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int) *Topology {
