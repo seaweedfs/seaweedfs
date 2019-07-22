@@ -1,4 +1,4 @@
-package main
+package load_test_leveldb
 
 import (
 	"crypto/md5"
