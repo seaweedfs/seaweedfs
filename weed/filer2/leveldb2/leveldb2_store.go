@@ -21,7 +21,7 @@ func init() {
 }
 
 type LevelDB2Store struct {
-	dbs []*leveldb.DB
+	dbs     []*leveldb.DB
 	dbCount int
 }
 
@@ -46,7 +46,7 @@ func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
 		CompactionTableSizeMultiplier: 4,
 	}
 
-	for d := 0 ; d < dbCount; d++ {
+	for d := 0; d < dbCount; d++ {
 		dbFolder := fmt.Sprintf("%s/%02d", dir, d)
 		os.MkdirAll(dbFolder, 0755)
 		db, dbErr := leveldb.OpenFile(dbFolder, opts)
@@ -204,5 +204,5 @@ func hashToBytes(dir string, dbCount int) ([]byte, int) {
 
 	x := b[len(b)-1]
 
-	return b, int(x)%dbCount
+	return b, int(x) % dbCount
 }
