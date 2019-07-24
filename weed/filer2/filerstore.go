@@ -34,6 +34,9 @@ type FilerStoreWrapper struct {
 }
 
 func NewFilerStoreWrapper(store FilerStore) *FilerStoreWrapper {
+	if innerStore, ok := store.(*FilerStoreWrapper); ok {
+		return innerStore
+	}
 	return &FilerStoreWrapper{
 		actualStore: store,
 	}
