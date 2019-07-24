@@ -148,7 +148,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 			fh.f.entry.Attributes.Gid = req.Gid
 			fh.f.entry.Attributes.Mtime = time.Now().Unix()
 			fh.f.entry.Attributes.Crtime = time.Now().Unix()
-			fh.f.entry.Attributes.FileMode = uint32(0770)
+			fh.f.entry.Attributes.FileMode = uint32(0777 &^ fh.f.wfs.option.Umask)
 		}
 
 		request := &filer_pb.CreateEntryRequest{

@@ -27,6 +27,12 @@ func runMount(cmd *Command, args []string) bool {
 
 	util.SetupProfiling(*mountCpuProfile, *mountMemProfile)
 
+	umask, umaskErr := strconv.ParseUint(*mountOptions.umaskString, 8, 64)
+	if umaskErr != nil {
+		fmt.Printf("can not parse umask %s", *mountOptions.umaskString)
+		return false
+	}
+
 	return RunMount(
 		*mountOptions.filer,
 		*mountOptions.filerMountRootPath,
@@ -38,11 +44,12 @@ func runMount(cmd *Command, args []string) bool {
 		*mountOptions.allowOthers,
 		*mountOptions.ttlSec,
 		*mountOptions.dirListingLimit,
+		os.FileMode(umask),
 	)
 }
 
 func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCenter string, chunkSizeLimitMB int,
-	allowOthers bool, ttlSec int, dirListingLimit int) bool {
+	allowOthers bool, ttlSec int, dirListingLimit int, umask os.FileMode) bool {
 
 	util.LoadConfiguration("security", false)
 
@@ -146,6 +153,7 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 		MountMode:          mountMode,
 		MountCtime:         fileInfo.ModTime(),
 		MountMtime:         time.Now(),
+		Umask:              umask,
 	}))
 	if err != nil {
 		fuse.Unmount(dir)

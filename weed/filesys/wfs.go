@@ -28,6 +28,7 @@ type Option struct {
 	DataCenter         string
 	DirListingLimit    int
 	EntryCacheTtl      time.Duration
+	Umask              os.FileMode
 
 	MountUid   uint32
 	MountGid   uint32

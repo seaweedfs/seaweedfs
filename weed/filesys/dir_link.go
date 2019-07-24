@@ -27,7 +27,7 @@ func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node,
 			Attributes: &filer_pb.FuseAttributes{
 				Mtime:         time.Now().Unix(),
 				Crtime:        time.Now().Unix(),
-				FileMode:      uint32(os.FileMode(0755) | os.ModeSymlink),
+				FileMode:      uint32((os.FileMode(0777) | os.ModeSymlink) &^ dir.wfs.option.Umask),
 				Uid:           req.Uid,
 				Gid:           req.Gid,
 				SymlinkTarget: req.Target,
