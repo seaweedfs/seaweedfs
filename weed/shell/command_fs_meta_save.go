@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -27,10 +28,11 @@ func (c *commandFsMetaSave) Name() string {
 func (c *commandFsMetaSave) Help() string {
 	return `save all directory and file meta data to a local file for metadata backup.
 
-	fs.meta.save /             # save from the root
-	fs.meta.save /path/to/save # save from the directory /path/to/save
-	fs.meta.save .             # save from current directory
-	fs.meta.save               # save from current directory
+	fs.meta.save /               # save from the root
+	fs.meta.save -v -o t.meta /  # save from the root, output to t.meta file.
+	fs.meta.save /path/to/save   # save from the directory /path/to/save
+	fs.meta.save .               # save from current directory
+	fs.meta.save                 # save from current directory
 
 	The meta data will be saved into a local <filer_host>-<port>-<time>.meta file.
 	These meta data can be later loaded by fs.meta.load command, 
@@ -42,7 +44,14 @@ func (c *commandFsMetaSave) Help() string {
 
 func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	filerServer, filerPort, path, err := commandEnv.parseUrl(findInputDirectory(args))
+	fsMetaSaveCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	verbose := fsMetaSaveCommand.Bool("v", false, "print out each processed files")
+	outputFileName := fsMetaSaveCommand.String("o", "", "output the meta data to this file")
+	if err = fsMetaSaveCommand.Parse(args); err != nil {
+		return nil
+	}
+
+	filerServer, filerPort, path, err := commandEnv.parseUrl(findInputDirectory(fsMetaSaveCommand.Args()))
 	if err != nil {
 		return err
 	}
@@ -52,8 +61,11 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	return commandEnv.withFilerClient(ctx, filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
 
 		t := time.Now()
-		fileName := fmt.Sprintf("%s-%d-%4d%02d%02d-%02d%02d%02d.meta",
-			filerServer, filerPort, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
+		fileName := *outputFileName
+		if fileName == "" {
+			fileName = fmt.Sprintf("%s-%d-%4d%02d%02d-%02d%02d%02d.meta",
+				filerServer, filerPort, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
+		}
 
 		dst, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
@@ -88,7 +100,9 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 				fileCount++
 			}
 
-			println(parentPath.Child(entry.Name))
+			if *verbose {
+				println(parentPath.Child(entry.Name))
+			}
 
 			return nil
 
