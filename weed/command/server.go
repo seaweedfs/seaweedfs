@@ -2,25 +2,15 @@ package command
 
 import (
 	"fmt"
-	"net/http"
 	"os"
 	"runtime"
 	"runtime/pprof"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/chrislusf/raft/protobuf"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/spf13/viper"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/gorilla/mux"
-	"google.golang.org/grpc/reflection"
 )
 
 type ServerOptions struct {
@@ -198,59 +188,12 @@ func runServer(cmd *Command, args []string) bool {
 		}()
 	}
 
-	var volumeWait sync.WaitGroup
+	// start volume server
+	{
+		go serverOptions.v.startVolumeServer(*volumeDataFolders, *volumeMaxDataVolumeCounts, *serverWhiteListOption)
+	}
 
-	volumeWait.Add(1)
-
-	go func() {
-		r := mux.NewRouter()
-		ms := weed_server.NewMasterServer(r, masterOptions.toMasterOption(serverWhiteList))
-
-		glog.V(0).Infof("Start Seaweed Master %s at %s:%d", util.VERSION, *serverIp, *masterOptions.port)
-		masterListener, e := util.NewListener(*serverBindIp+":"+strconv.Itoa(*masterOptions.port), 0)
-		if e != nil {
-			glog.Fatalf("Master startup error: %v", e)
-		}
-
-		go func() {
-			// start raftServer
-			myMasterAddress, peers := checkPeers(*serverIp, *masterOptions.port, *masterOptions.peers)
-			raftServer := weed_server.NewRaftServer(security.LoadClientTLS(viper.Sub("grpc"), "master"),
-				peers, myMasterAddress, *masterOptions.metaFolder, ms.Topo, *masterOptions.pulseSeconds)
-			ms.SetRaftServer(raftServer)
-			r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
-
-			// starting grpc server
-			grpcPort := *masterOptions.port + 10000
-			grpcL, err := util.NewListener(*serverBindIp+":"+strconv.Itoa(grpcPort), 0)
-			if err != nil {
-				glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
-			}
-			// Create your protocol servers.
-			glog.V(1).Infof("grpc config %+v", viper.Sub("grpc"))
-			grpcS := util.NewGrpcServer(security.LoadServerTLS(viper.Sub("grpc"), "master"))
-			master_pb.RegisterSeaweedServer(grpcS, ms)
-			protobuf.RegisterRaftServer(grpcS, raftServer)
-			reflection.Register(grpcS)
-
-			glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.VERSION, *serverIp, grpcPort)
-			grpcS.Serve(grpcL)
-		}()
-
-		volumeWait.Done()
-
-		// start http server
-		httpS := &http.Server{Handler: r}
-		if err := httpS.Serve(masterListener); err != nil {
-			glog.Fatalf("master server failed to serve: %v", err)
-		}
-
-	}()
-
-	volumeWait.Wait()
-	time.Sleep(100 * time.Millisecond)
-
-	serverOptions.v.startVolumeServer(*volumeDataFolders, *volumeMaxDataVolumeCounts, *serverWhiteListOption)
+	startMaster(masterOptions, serverWhiteList)
 
 	return true
 }

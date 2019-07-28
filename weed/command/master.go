@@ -72,8 +72,6 @@ var cmdMaster = &Command{
 var (
 	masterCpuProfile = cmdMaster.Flag.String("cpuprofile", "", "cpu profile output file")
 	masterMemProfile = cmdMaster.Flag.String("memprofile", "", "memory profile output file")
-
-	masterWhiteList []string
 )
 
 func runMaster(cmd *Command, args []string) bool {
@@ -87,6 +85,8 @@ func runMaster(cmd *Command, args []string) bool {
 	if err := util.TestFolderWritable(*m.metaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *m.metaFolder, err)
 	}
+
+	var masterWhiteList []string
 	if *m.whiteList != "" {
 		masterWhiteList = strings.Split(*m.whiteList, ",")
 	}
@@ -94,52 +94,48 @@ func runMaster(cmd *Command, args []string) bool {
 		glog.Fatalf("volumeSizeLimitMB should be smaller than 30000")
 	}
 
+	startMaster(m, masterWhiteList)
+
+	return true
+}
+
+func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	r := mux.NewRouter()
-	ms := weed_server.NewMasterServer(r, m.toMasterOption(masterWhiteList))
-
-	listeningAddress := *m.ipBind + ":" + strconv.Itoa(*m.port)
-
-	glog.V(0).Infoln("Start Seaweed Master", util.VERSION, "at", listeningAddress)
-
+	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList))
+	listeningAddress := *masterOption.ipBind + ":" + strconv.Itoa(*masterOption.port)
+	glog.V(0).Infof("Start Seaweed Master %s at %s", util.VERSION, listeningAddress)
 	masterListener, e := util.NewListener(listeningAddress, 0)
 	if e != nil {
 		glog.Fatalf("Master startup error: %v", e)
 	}
-
-	go func() {
-		// start raftServer
-		myMasterAddress, peers := checkPeers(*m.ip, *m.port, *m.peers)
-		raftServer := weed_server.NewRaftServer(security.LoadClientTLS(viper.Sub("grpc"), "master"),
-			peers, myMasterAddress, *m.metaFolder, ms.Topo, *m.pulseSeconds)
-		if raftServer == nil {
-			glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717", *m.metaFolder)
-		}
-		ms.SetRaftServer(raftServer)
-		r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
-
-		// starting grpc server
-		grpcPort := *m.port + 10000
-		grpcL, err := util.NewListener(*m.ipBind+":"+strconv.Itoa(grpcPort), 0)
-		if err != nil {
-			glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
-		}
-		// Create your protocol servers.
-		grpcS := util.NewGrpcServer(security.LoadServerTLS(viper.Sub("grpc"), "master"))
-		master_pb.RegisterSeaweedServer(grpcS, ms)
-		protobuf.RegisterRaftServer(grpcS, raftServer)
-		reflection.Register(grpcS)
-
-		glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.VERSION, *m.ipBind, grpcPort)
-		grpcS.Serve(grpcL)
-	}()
+	// start raftServer
+	myMasterAddress, peers := checkPeers(*masterOption.ip, *masterOption.port, *masterOption.peers)
+	raftServer := weed_server.NewRaftServer(security.LoadClientTLS(viper.Sub("grpc"), "master"),
+		peers, myMasterAddress, *masterOption.metaFolder, ms.Topo, *masterOption.pulseSeconds)
+	if raftServer == nil {
+		glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717", *masterOption.metaFolder)
+	}
+	ms.SetRaftServer(raftServer)
+	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
+	// starting grpc server
+	grpcPort := *masterOption.port + 10000
+	grpcL, err := util.NewListener(*masterOption.ipBind+":"+strconv.Itoa(grpcPort), 0)
+	if err != nil {
+		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
+	}
+	// Create your protocol servers.
+	grpcS := util.NewGrpcServer(security.LoadServerTLS(viper.Sub("grpc"), "master"))
+	master_pb.RegisterSeaweedServer(grpcS, ms)
+	protobuf.RegisterRaftServer(grpcS, raftServer)
+	reflection.Register(grpcS)
+	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.VERSION, *masterOption.ipBind, grpcPort)
+	go grpcS.Serve(grpcL)
 
 	// start http server
 	httpS := &http.Server{Handler: r}
-	if err := httpS.Serve(masterListener); err != nil {
-		glog.Fatalf("master server failed to serve: %v", err)
-	}
+	go httpS.Serve(masterListener)
 
-	return true
+	select {}
 }
 
 func checkPeers(masterIp string, masterPort int, peers string) (masterAddress string, cleanedPeers []string) {
