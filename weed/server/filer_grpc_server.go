@@ -95,7 +95,11 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 			return nil, err
 		}
 		var locs []*filer_pb.Location
-		for _, loc := range fs.filer.MasterClient.GetLocations(uint32(vid)) {
+		locations, found := fs.filer.MasterClient.GetLocations(uint32(vid))
+		if !found {
+			continue
+		}
+		for _, loc := range locations {
 			locs = append(locs, &filer_pb.Location{
 				Url:       loc.Url,
 				PublicUrl: loc.PublicUrl,

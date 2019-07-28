@@ -95,23 +95,19 @@ func (ms *MasterServer) volumeStatusHandler(w http.ResponseWriter, r *http.Reque
 
 func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) {
 	vid, _, _, _, _ := parseURLPath(r.URL.Path)
-	volumeId, err := needle.NewVolumeId(vid)
-	if err != nil {
-		debug("parsing error:", err, r.URL.Path)
-		return
-	}
 	collection := r.FormValue("collection")
-	machines := ms.Topo.Lookup(collection, volumeId)
-	if machines != nil && len(machines) > 0 {
+	location := ms.findVolumeLocation(collection, vid)
+	if location.Error == "" {
+		loc := location.Locations[rand.Intn(len(location.Locations))]
 		var url string
 		if r.URL.RawQuery != "" {
-			url = util.NormalizeUrl(machines[rand.Intn(len(machines))].PublicUrl) + r.URL.Path + "?" + r.URL.RawQuery
+			url = util.NormalizeUrl(loc.PublicUrl) + r.URL.Path + "?" + r.URL.RawQuery
 		} else {
-			url = util.NormalizeUrl(machines[rand.Intn(len(machines))].PublicUrl) + r.URL.Path
+			url = util.NormalizeUrl(loc.PublicUrl) + r.URL.Path
 		}
 		http.Redirect(w, r, url, http.StatusMovedPermanently)
 	} else {
-		writeJsonError(w, r, http.StatusNotFound, fmt.Errorf("volume id %d or collection %s not found", volumeId, collection))
+		writeJsonError(w, r, http.StatusNotFound, fmt.Errorf("volume id %s not found: %s", vid, location.Error))
 	}
 }
 

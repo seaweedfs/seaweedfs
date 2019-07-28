@@ -5,7 +5,6 @@ import (
 	"os"
 	"runtime"
 	"runtime/pprof"
-	"strconv"
 	"strings"
 	"time"
 
@@ -122,14 +121,13 @@ func runServer(cmd *Command, args []string) bool {
 		*isStartingFiler = true
 	}
 
-	master := *serverIp + ":" + strconv.Itoa(*masterOptions.port)
 	masterOptions.ip = serverIp
 	masterOptions.ipBind = serverBindIp
-	filerOptions.masters = &master
+	filerOptions.masters = masterOptions.peers
 	filerOptions.ip = serverBindIp
 	serverOptions.v.ip = serverIp
 	serverOptions.v.bindIp = serverBindIp
-	serverOptions.v.masters = &master
+	serverOptions.v.masters = masterOptions.peers
 	serverOptions.v.idleConnectionTimeout = serverTimeout
 	serverOptions.v.dataCenter = serverDataCenter
 	serverOptions.v.rack = serverRack

@@ -100,8 +100,11 @@ func runMaster(cmd *Command, args []string) bool {
 }
 
 func startMaster(masterOption MasterOptions, masterWhiteList []string) {
+
+	myMasterAddress, peers := checkPeers(*masterOption.ip, *masterOption.port, *masterOption.peers)
+
 	r := mux.NewRouter()
-	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList))
+	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), peers)
 	listeningAddress := *masterOption.ipBind + ":" + strconv.Itoa(*masterOption.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", util.VERSION, listeningAddress)
 	masterListener, e := util.NewListener(listeningAddress, 0)
@@ -109,7 +112,6 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		glog.Fatalf("Master startup error: %v", e)
 	}
 	// start raftServer
-	myMasterAddress, peers := checkPeers(*masterOption.ip, *masterOption.port, *masterOption.peers)
 	raftServer := weed_server.NewRaftServer(security.LoadClientTLS(viper.Sub("grpc"), "master"),
 		peers, myMasterAddress, *masterOption.metaFolder, ms.Topo, *masterOption.pulseSeconds)
 	if raftServer == nil {
@@ -130,6 +132,8 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	reflection.Register(grpcS)
 	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.VERSION, *masterOption.ipBind, grpcPort)
 	go grpcS.Serve(grpcL)
+
+	go ms.MasterClient.KeepConnectedToMaster()
 
 	// start http server
 	httpS := &http.Server{Handler: r}
@@ -152,11 +156,10 @@ func checkPeers(masterIp string, masterPort int, peers string) (masterAddress st
 		}
 	}
 
-	peerCount := len(cleanedPeers)
 	if !hasSelf {
-		peerCount += 1
+		cleanedPeers = append(cleanedPeers, masterAddress)
 	}
-	if peerCount%2 == 0 {
+	if len(cleanedPeers)%2 == 0 {
 		glog.Fatalf("Only odd number of masters are supported!")
 	}
 	return

@@ -1,8 +1,10 @@
 package weed_server
 
 import (
+	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/shell"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 	"net/http"
 	"net/http/httputil"
@@ -56,9 +58,11 @@ type MasterServer struct {
 	clientChans     map[string]chan *master_pb.VolumeLocation
 
 	grpcDialOpiton grpc.DialOption
+
+	MasterClient *wdclient.MasterClient
 }
 
-func NewMasterServer(r *mux.Router, option *MasterOption) *MasterServer {
+func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *MasterServer {
 
 	v := viper.GetViper()
 	signingKey := v.GetString("jwt.signing.key")
@@ -73,11 +77,14 @@ func NewMasterServer(r *mux.Router, option *MasterOption) *MasterServer {
 	if option.VolumePreallocate {
 		preallocateSize = int64(option.VolumeSizeLimitMB) * (1 << 20)
 	}
+
+	grpcDialOption := security.LoadClientTLS(v.Sub("grpc"), "master")
 	ms := &MasterServer{
 		option:          option,
 		preallocateSize: preallocateSize,
 		clientChans:     make(map[string]chan *master_pb.VolumeLocation),
-		grpcDialOpiton:  security.LoadClientTLS(v.Sub("grpc"), "master"),
+		grpcDialOpiton:  grpcDialOption,
+		MasterClient:    wdclient.NewMasterClient(context.Background(), grpcDialOption, "master", peers),
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
 	seq := sequence.NewMemorySequencer()
@@ -92,7 +99,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption) *MasterServer {
 		r.HandleFunc("/", ms.proxyToLeader(ms.uiStatusHandler))
 		r.HandleFunc("/ui/index.html", ms.uiStatusHandler)
 		r.HandleFunc("/dir/assign", ms.proxyToLeader(ms.guard.WhiteList(ms.dirAssignHandler)))
-		r.HandleFunc("/dir/lookup", ms.proxyToLeader(ms.guard.WhiteList(ms.dirLookupHandler)))
+		r.HandleFunc("/dir/lookup", ms.guard.WhiteList(ms.dirLookupHandler))
 		r.HandleFunc("/dir/status", ms.proxyToLeader(ms.guard.WhiteList(ms.dirStatusHandler)))
 		r.HandleFunc("/col/delete", ms.proxyToLeader(ms.guard.WhiteList(ms.collectionDeleteHandler)))
 		r.HandleFunc("/vol/grow", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeGrowHandler)))
@@ -102,7 +109,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption) *MasterServer {
 		r.HandleFunc("/stats/health", ms.guard.WhiteList(statsHealthHandler))
 		r.HandleFunc("/stats/counter", ms.guard.WhiteList(statsCounterHandler))
 		r.HandleFunc("/stats/memory", ms.guard.WhiteList(statsMemoryHandler))
-		r.HandleFunc("/{fileId}", ms.proxyToLeader(ms.redirectHandler))
+		r.HandleFunc("/{fileId}", ms.redirectHandler)
 	}
 
 	ms.Topo.StartRefreshWritableVolumes(ms.grpcDialOpiton, ms.option.GarbageThreshold, ms.preallocateSize)

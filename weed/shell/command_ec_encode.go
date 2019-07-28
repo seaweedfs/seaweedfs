@@ -87,8 +87,8 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 
 func doEcEncode(ctx context.Context, commandEnv *CommandEnv, collection string, vid needle.VolumeId) (err error) {
 	// find volume location
-	locations := commandEnv.MasterClient.GetLocations(uint32(vid))
-	if len(locations) == 0 {
+	locations, found := commandEnv.MasterClient.GetLocations(uint32(vid))
+	if !found {
 		return fmt.Errorf("volume %d not found", vid)
 	}
 
