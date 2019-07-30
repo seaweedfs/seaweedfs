@@ -12,6 +12,7 @@ require (
 	github.com/disintegration/imaging v1.6.0
 	github.com/dustin/go-humanize v1.0.0
 	github.com/gabriel-vasile/mimetype v0.3.15
+	github.com/go-logfmt/logfmt v0.4.0 // indirect
 	github.com/go-redis/redis v6.15.2+incompatible
 	github.com/go-sql-driver/mysql v1.4.1
 	github.com/gocql/gocql v0.0.0-20190717234527-2ba2dd7440dc
@@ -39,6 +40,7 @@ require (
 	github.com/willf/bitset v1.1.10 // indirect
 	github.com/willf/bloom v2.0.3+incompatible
 	github.com/wsxiaoys/terminal v0.0.0-20160513160801-0940f3fc43a0 // indirect
+	go.etcd.io/etcd v3.3.13+incompatible
 	gocloud.dev v0.15.0
 	gocloud.dev/pubsub/natspubsub v0.15.0
 	gocloud.dev/pubsub/rabbitpubsub v0.15.0
