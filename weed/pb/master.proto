@@ -7,7 +7,7 @@ package master_pb;
 service Seaweed {
     rpc SendHeartbeat (stream Heartbeat) returns (stream HeartbeatResponse) {
     }
-    rpc KeepConnected (stream ClientListenRequest) returns (stream VolumeLocation) {
+    rpc KeepConnected (stream KeepConnectedRequest) returns (stream VolumeLocation) {
     }
     rpc LookupVolume (LookupVolumeRequest) returns (LookupVolumeResponse) {
     }
@@ -101,7 +101,7 @@ message SuperBlockExtra {
     ErasureCoding erasure_coding = 1;
 }
 
-message ClientListenRequest {
+message KeepConnectedRequest {
     string name = 1;
 }
 
@@ -110,6 +110,7 @@ message VolumeLocation {
     string public_url = 2;
     repeated uint32 new_vids = 3;
     repeated uint32 deleted_vids = 4;
+    string leader = 5; // optional when leader is not itself
 }
 
 message LookupVolumeRequest {
