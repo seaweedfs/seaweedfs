@@ -249,7 +249,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedServer) error {
 	leader, err := ms.Topo.Leader()
 	if err != nil {
-		glog.Error("topo leader: %v", err)
+		glog.Errorf("topo leader: %v", err)
 		return raft.NotLeaderError
 	}
 	if err := stream.Send(&master_pb.VolumeLocation{
