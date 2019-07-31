@@ -1,7 +1,6 @@
 sudo: false
 language: go
 go:
-  - 1.10.x
   - 1.11.x
   - 1.12.x
   # - tip
@@ -12,10 +11,9 @@ before_install:
 install:
   - export CGO_ENABLED="0"
   - go env
-  - go get -u ./weed/...
 
 script:
-  - go test ./weed/...
+  - env GO111MODULE=on go test ./weed/...
 
 before_deploy:
   - make release
