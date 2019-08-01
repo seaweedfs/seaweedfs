@@ -145,6 +145,11 @@ addresses = [
 ]
 password = ""
 
+[etcd]
+enabled = false
+servers = "localhost:2379"
+timeout = "3s"
+
 `
 
 	NOTIFICATION_TOML_EXAMPLE = `
@@ -217,22 +222,22 @@ grpcAddress = "localhost:18888"
 # all files under this directory tree are replicated.
 # this is not a directory on your hard drive, but on your filer.
 # i.e., all files with this "prefix" are sent to notification message queue.
-directory = "/buckets"    
+directory = "/buckets"
 
 [sink.filer]
 enabled = false
 grpcAddress = "localhost:18888"
 # all replicated files are under this directory tree
-# this is not a directory on your hard drive, but on your filer.     
+# this is not a directory on your hard drive, but on your filer.
 # i.e., all received files will be "prefixed" to this directory.
-directory = "/backup"    
+directory = "/backup"
 replication = ""
 collection = ""
 ttlSec = 0
 
 [sink.s3]
 # read credentials doc at https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/sessions.html
-# default loads credentials from the shared credentials file (~/.aws/credentials). 
+# default loads credentials from the shared credentials file (~/.aws/credentials).
 enabled = false
 aws_access_key_id     = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
 aws_secret_access_key = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
