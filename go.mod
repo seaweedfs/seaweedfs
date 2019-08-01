@@ -39,6 +39,7 @@ require (
 	github.com/willf/bitset v1.1.10 // indirect
 	github.com/willf/bloom v2.0.3+incompatible
 	github.com/wsxiaoys/terminal v0.0.0-20160513160801-0940f3fc43a0 // indirect
+	go.etcd.io/etcd v3.3.13+incompatible
 	gocloud.dev v0.15.0
 	gocloud.dev/pubsub/natspubsub v0.15.0
 	gocloud.dev/pubsub/rabbitpubsub v0.15.0
