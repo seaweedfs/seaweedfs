@@ -78,7 +78,7 @@ dir = "."					# directory to store level db files
 # multiple filers on shared storage, fairly scalable
 ####################################################
 
-[mysql]
+[mysql]  # or tidb
 # CREATE TABLE IF NOT EXISTS filemeta (
 #   dirhash     BIGINT         COMMENT 'first 64 bits of MD5 hash value of directory field',
 #   name        VARCHAR(1000)  COMMENT 'directory or file name',
@@ -96,7 +96,7 @@ database = ""              # create or use an existing database
 connection_max_idle = 2
 connection_max_open = 100
 
-[postgres]
+[postgres] # or cockroachdb
 # CREATE TABLE IF NOT EXISTS filemeta (
 #   dirhash     BIGINT,
 #   name        VARCHAR(65535),
