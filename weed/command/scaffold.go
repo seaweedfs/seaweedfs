@@ -131,7 +131,7 @@ hosts=[
 enabled = false
 address  = "localhost:6379"
 password = ""
-db = 0
+database = 0
 
 [redis_cluster]
 enabled = false
