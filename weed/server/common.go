@@ -48,10 +48,16 @@ func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj inter
 	if callback == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(httpStatus)
+		if httpStatus == http.StatusNotModified {
+			return
+		}
 		_, err = w.Write(bytes)
 	} else {
 		w.Header().Set("Content-Type", "application/javascript")
 		w.WriteHeader(httpStatus)
+		if httpStatus == http.StatusNotModified {
+			return
+		}
 		if _, err = w.Write([]uint8(callback)); err != nil {
 			return
 		}
