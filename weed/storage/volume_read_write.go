@@ -43,6 +43,10 @@ func (v *Volume) Destroy() (err error) {
 		err = fmt.Errorf("%s is read-only", v.dataFile.Name())
 		return
 	}
+	if v.isCompacting {
+		err = fmt.Errorf("volume %d is compacting", v.Id)
+		return
+	}
 	v.Close()
 	os.Remove(v.FileName() + ".dat")
 	os.Remove(v.FileName() + ".idx")

@@ -27,6 +27,10 @@ func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error
 	//v.accessLock.Lock()
 	//defer v.accessLock.Unlock()
 	//glog.V(3).Infof("Got Compaction lock...")
+	v.isCompacting = true
+	defer func() {
+		v.isCompacting = false
+	}()
 
 	filePath := v.FileName()
 	v.lastCompactIndexOffset = v.nm.IndexFileSize()
@@ -37,6 +41,12 @@ func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error
 
 func (v *Volume) Compact2() error {
 	glog.V(3).Infof("Compact2 volume %d ...", v.Id)
+
+	v.isCompacting = true
+	defer func() {
+		v.isCompacting = false
+	}()
+
 	filePath := v.FileName()
 	glog.V(3).Infof("creating copies for volume %d ...", v.Id)
 	return v.copyDataBasedOnIndexFile(filePath+".cpd", filePath+".cpx")
@@ -44,8 +54,15 @@ func (v *Volume) Compact2() error {
 
 func (v *Volume) CommitCompact() error {
 	glog.V(0).Infof("Committing volume %d vacuuming...", v.Id)
+
+	v.isCompacting = true
+	defer func() {
+		v.isCompacting = false
+	}()
+
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+
 	glog.V(3).Infof("Got volume %d committing lock...", v.Id)
 	v.nm.Close()
 	if err := v.dataFile.Close(); err != nil {
