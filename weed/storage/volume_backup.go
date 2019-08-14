@@ -15,12 +15,15 @@ import (
 )
 
 func (v *Volume) GetVolumeSyncStatus() *volume_server_pb.VolumeSyncStatusResponse {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+
 	var syncStatus = &volume_server_pb.VolumeSyncStatusResponse{}
 	if stat, err := v.dataFile.Stat(); err == nil {
 		syncStatus.TailOffset = uint64(stat.Size())
 	}
 	syncStatus.Collection = v.Collection
-	syncStatus.IdxFileSize = v.nm.IndexFileSize()
+	syncStatus.IdxFileSize = v.IndexFileSize()
 	syncStatus.CompactRevision = uint32(v.SuperBlock.CompactionRevision)
 	syncStatus.Ttl = v.SuperBlock.Ttl.String()
 	syncStatus.Replication = v.SuperBlock.ReplicaPlacement.String()

@@ -137,9 +137,9 @@ func (s *Store) Status() []*VolumeInfo {
 				Collection:       v.Collection,
 				ReplicaPlacement: v.ReplicaPlacement,
 				Version:          v.Version(),
-				FileCount:        v.nm.FileCount(),
-				DeleteCount:      v.nm.DeletedCount(),
-				DeletedByteCount: v.nm.DeletedSize(),
+				FileCount:        int(v.FileCount()),
+				DeleteCount:      int(v.DeletedCount()),
+				DeletedByteCount: v.DeletedSize(),
 				ReadOnly:         v.readOnly,
 				Ttl:              v.Ttl,
 				CompactRevision:  uint32(v.CompactionRevision),
@@ -168,8 +168,8 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
 		location.Lock()
 		for _, v := range location.volumes {
-			if maxFileKey < v.nm.MaxFileKey() {
-				maxFileKey = v.nm.MaxFileKey()
+			if maxFileKey < v.MaxFileKey() {
+				maxFileKey = v.MaxFileKey()
 			}
 			if !v.expired(s.GetVolumeSizeLimit()) {
 				volumeMessages = append(volumeMessages, v.ToVolumeInformationMessage())
