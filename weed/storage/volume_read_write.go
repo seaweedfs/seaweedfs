@@ -21,6 +21,7 @@ func (v *Volume) isFileUnchanged(n *needle.Needle) bool {
 	if v.Ttl.String() != "" {
 		return false
 	}
+
 	nv, ok := v.nm.Get(n.Id)
 	if ok && !nv.Offset.IsZero() && nv.Size != TombstoneFileSize {
 		oldNeedle := new(needle.Needle)
@@ -138,6 +139,9 @@ func (v *Volume) deleteNeedle(n *needle.Needle) (uint32, error) {
 
 // read fills in Needle content by looking up n.Id from NeedleMapper
 func (v *Volume) readNeedle(n *needle.Needle) (int, error) {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+
 	nv, ok := v.nm.Get(n.Id)
 	if !ok || nv.Offset.IsZero() {
 		return -1, ErrorNotFound

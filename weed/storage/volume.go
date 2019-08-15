@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 
 	"os"
 	"path"
@@ -85,12 +86,52 @@ func (v *Volume) FileStat() (datSize uint64, idxSize uint64, modTime time.Time) 
 	return // -1 causes integer overflow and the volume to become unwritable.
 }
 
-func (v *Volume) IndexFileSize() uint64 {
-	return v.nm.IndexFileSize()
+func (v *Volume) ContentSize() uint64 {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	return v.nm.ContentSize()
+}
+
+func (v *Volume) DeletedSize() uint64 {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	return v.nm.DeletedSize()
 }
 
 func (v *Volume) FileCount() uint64 {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
 	return uint64(v.nm.FileCount())
+}
+
+func (v *Volume) DeletedCount() uint64 {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	return uint64(v.nm.DeletedCount())
+}
+
+func (v *Volume) MaxFileKey() types.NeedleId {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	return v.nm.MaxFileKey()
+}
+
+func (v *Volume) IndexFileSize() uint64 {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	return v.nm.IndexFileSize()
+}
+
+func (v *Volume) IndexFileContent() ([]byte, error) {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	return v.nm.IndexFileContent()
+}
+
+func (v *Volume) IndexFileName() string {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	return v.nm.IndexFileName()
 }
 
 // Close cleanly shuts down this volume
@@ -110,10 +151,6 @@ func (v *Volume) Close() {
 
 func (v *Volume) NeedToReplicate() bool {
 	return v.ReplicaPlacement.GetCopyCount() > 1
-}
-
-func (v *Volume) ContentSize() uint64 {
-	return v.nm.ContentSize()
 }
 
 // volume is expired if modified time + volume ttl < now
@@ -158,13 +195,14 @@ func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
 
 func (v *Volume) ToVolumeInformationMessage() *master_pb.VolumeInformationMessage {
 	size, _, modTime := v.FileStat()
+
 	return &master_pb.VolumeInformationMessage{
 		Id:               uint32(v.Id),
 		Size:             size,
 		Collection:       v.Collection,
-		FileCount:        uint64(v.nm.FileCount()),
-		DeleteCount:      uint64(v.nm.DeletedCount()),
-		DeletedByteCount: v.nm.DeletedSize(),
+		FileCount:        uint64(v.FileCount()),
+		DeleteCount:      uint64(v.DeletedCount()),
+		DeletedByteCount: v.DeletedSize(),
 		ReadOnly:         v.readOnly,
 		ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
 		Version:          uint32(v.Version()),

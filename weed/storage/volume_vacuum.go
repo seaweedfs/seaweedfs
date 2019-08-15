@@ -18,7 +18,7 @@ func (v *Volume) garbageLevel() float64 {
 	if v.ContentSize() == 0 {
 		return 0
 	}
-	return float64(v.nm.DeletedSize()) / float64(v.ContentSize())
+	return float64(v.DeletedSize()) / float64(v.ContentSize())
 }
 
 func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error {
@@ -33,7 +33,7 @@ func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error
 	}()
 
 	filePath := v.FileName()
-	v.lastCompactIndexOffset = v.nm.IndexFileSize()
+	v.lastCompactIndexOffset = v.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactionRevision
 	glog.V(3).Infof("creating copies for volume %d ,last offset %d...", v.Id, v.lastCompactIndexOffset)
 	return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx", preallocate, compactionBytePerSecond)
