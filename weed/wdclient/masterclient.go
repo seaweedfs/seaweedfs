@@ -60,6 +60,7 @@ func (mc *MasterClient) tryAllMasters() {
 		}
 
 		mc.currentMaster = ""
+		mc.vidMap = newVidMap()
 	}
 }
 
