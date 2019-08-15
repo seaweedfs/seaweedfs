@@ -23,7 +23,7 @@ func (v *Volume) GetVolumeSyncStatus() *volume_server_pb.VolumeSyncStatusRespons
 		syncStatus.TailOffset = uint64(stat.Size())
 	}
 	syncStatus.Collection = v.Collection
-	syncStatus.IdxFileSize = v.IndexFileSize()
+	syncStatus.IdxFileSize = v.nm.IndexFileSize()
 	syncStatus.CompactRevision = uint32(v.SuperBlock.CompactionRevision)
 	syncStatus.Ttl = v.SuperBlock.Ttl.String()
 	syncStatus.Replication = v.SuperBlock.ReplicaPlacement.String()
