@@ -17,10 +17,12 @@ var (
 )
 
 type BackupOptions struct {
-	master     *string
-	collection *string
-	dir        *string
-	volumeId   *int
+	master      *string
+	collection  *string
+	dir         *string
+	volumeId    *int
+	ttl         *string
+	replication *string
 }
 
 func init() {
@@ -29,6 +31,15 @@ func init() {
 	s.collection = cmdBackup.Flag.String("collection", "", "collection name")
 	s.dir = cmdBackup.Flag.String("dir", ".", "directory to store volume data files")
 	s.volumeId = cmdBackup.Flag.Int("volumeId", -1, "a volume id. The volume .dat and .idx files should already exist in the dir.")
+	s.ttl = cmdBackup.Flag.String("ttl", "", `backup volume's time to live, format: 
+				3m: 3 minutes
+				4h: 4 hours
+				5d: 5 days
+				6w: 6 weeks
+				7M: 7 months
+				8y: 8 years
+				default is the same with origin`)
+	s.replication = cmdBackup.Flag.String("replication", "", "backup volume's replication, default is the same with origin")
 }
 
 var cmdBackup = &Command{
@@ -73,17 +84,34 @@ func runBackup(cmd *Command, args []string) bool {
 		fmt.Printf("Error get volume %d status: %v\n", vid, err)
 		return true
 	}
-	ttl, err := needle.ReadTTL(stats.Ttl)
-	if err != nil {
-		fmt.Printf("Error get volume %d ttl %s: %v\n", vid, stats.Ttl, err)
-		return true
+	var ttl *needle.TTL
+	if *s.ttl != "" {
+		ttl, err = needle.ReadTTL(*s.ttl)
+		if err != nil {
+			fmt.Printf("Error generate volume %d ttl %s: %v\n", vid, *s.ttl, err)
+			return true
+		}
+	} else {
+		ttl, err = needle.ReadTTL(stats.Ttl)
+		if err != nil {
+			fmt.Printf("Error get volume %d ttl %s: %v\n", vid, stats.Ttl, err)
+			return true
+		}
 	}
-	replication, err := storage.NewReplicaPlacementFromString(stats.Replication)
-	if err != nil {
-		fmt.Printf("Error get volume %d replication %s : %v\n", vid, stats.Replication, err)
-		return true
+	var replication *storage.ReplicaPlacement
+	if *s.replication != "" {
+		replication, err = storage.NewReplicaPlacementFromString(*s.replication)
+		if err != nil {
+			fmt.Printf("Error generate volume %d replication %s : %v\n", vid, *s.replication, err)
+			return true
+		}
+	} else {
+		replication, err = storage.NewReplicaPlacementFromString(stats.Replication)
+		if err != nil {
+			fmt.Printf("Error get volume %d replication %s : %v\n", vid, stats.Replication, err)
+			return true
+		}
 	}
-
 	v, err := storage.NewVolume(*s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0)
 	if err != nil {
 		fmt.Printf("Error creating or reading from volume %d: %v\n", vid, err)
