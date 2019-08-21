@@ -31,12 +31,12 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 		if canWrite {
 			v.dataFile, e = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
-			v.lastModifiedTsSeconds = uint64(modifiedTime.Unix())
 		} else {
 			glog.V(0).Infoln("opening " + fileName + ".dat in READONLY mode")
 			v.dataFile, e = os.Open(fileName + ".dat")
 			v.readOnly = true
 		}
+		v.lastModifiedTsSeconds = uint64(modifiedTime.Unix())
 		if fileSize >= _SuperBlockSize {
 			alreadyHasSuperBlock = true
 		}
