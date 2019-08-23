@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -35,6 +36,10 @@ type Store struct {
 	DeletedVolumesChan  chan master_pb.VolumeShortInformationMessage
 	NewEcShardsChan     chan master_pb.VolumeEcShardInformationMessage
 	DeletedEcShardsChan chan master_pb.VolumeEcShardInformationMessage
+
+	fsyncThreshold   int
+	writtenFileCount int
+	fsyncLock        sync.Mutex
 }
 
 func (s *Store) String() (str string) {
@@ -42,7 +47,7 @@ func (s *Store) String() (str string) {
 	return
 }
 
-func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int, needleMapKind NeedleMapType) (s *Store) {
+func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int, needleMapKind NeedleMapType, fsyncThreshold int) (s *Store) {
 	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, PublicUrl: publicUrl, NeedleMapType: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirnames); i++ {
@@ -56,6 +61,8 @@ func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, di
 
 	s.NewEcShardsChan = make(chan master_pb.VolumeEcShardInformationMessage, 3)
 	s.DeletedEcShardsChan = make(chan master_pb.VolumeEcShardInformationMessage, 3)
+
+	s.fsyncThreshold = fsyncThreshold
 
 	return
 }
@@ -219,6 +226,15 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (size uin
 		}
 		if MaxPossibleVolumeSize >= v.ContentSize()+uint64(needle.GetActualSize(size, v.version)) {
 			_, size, isUnchanged, err = v.writeNeedle(n)
+			if s.fsyncThreshold != 0 {
+				s.fsyncLock.Lock()
+				s.writtenFileCount++
+				if s.writtenFileCount > s.fsyncThreshold {
+					v.dataFile.Sync()
+					s.writtenFileCount = 0
+				}
+				s.fsyncLock.Unlock()
+			}
 		} else {
 			err = fmt.Errorf("volume size limit %d exceeded! current size is %d", s.GetVolumeSizeLimit(), v.ContentSize())
 		}

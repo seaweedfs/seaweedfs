@@ -14,7 +14,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/server"
+	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"google.golang.org/grpc/reflection"
@@ -44,6 +44,7 @@ type VolumeServerOptions struct {
 	cpuProfile            *string
 	memProfile            *string
 	compactionMBPerSecond *int
+	fsyncThreshold        *int
 }
 
 func init() {
@@ -64,6 +65,7 @@ func init() {
 	v.cpuProfile = cmdVolume.Flag.String("cpuprofile", "", "cpu profile output file")
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
 	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
+	v.fsyncThreshold = cmdVolume.Flag.Int("fsyncThreshold", 0, "call fsync when have written fsyncThreshold objects, set to 0 will not call fsync")
 }
 
 var cmdVolume = &Command{
@@ -156,6 +158,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		v.whiteList,
 		*v.fixJpgOrientation, *v.readRedirect,
 		*v.compactionMBPerSecond,
+		*v.fsyncThreshold,
 	)
 
 	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port)

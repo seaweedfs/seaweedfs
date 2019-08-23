@@ -29,6 +29,7 @@ type VolumeServer struct {
 	compactionBytePerSecond int64
 	MetricsAddress          string
 	MetricsIntervalSec      int
+	fsyncThreshold          int
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
@@ -41,6 +42,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	fixJpgOrientation bool,
 	readRedirect bool,
 	compactionMBPerSecond int,
+	fsyncThreshold int,
 ) *VolumeServer {
 
 	v := viper.GetViper()
@@ -62,9 +64,10 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		ReadRedirect:            readRedirect,
 		grpcDialOption:          security.LoadClientTLS(viper.Sub("grpc"), "volume"),
 		compactionBytePerSecond: int64(compactionMBPerSecond) * 1024 * 1024,
+		fsyncThreshold:          fsyncThreshold,
 	}
 	vs.SeedMasterNodes = masterNodes
-	vs.store = storage.NewStore(vs.grpcDialOption, port, ip, publicUrl, folders, maxCounts, vs.needleMapKind)
+	vs.store = storage.NewStore(vs.grpcDialOption, port, ip, publicUrl, folders, maxCounts, vs.needleMapKind, vs.fsyncThreshold)
 
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
