@@ -1,6 +1,6 @@
 // +build windows
 
-package storage
+package memory_map
 
 import (
 	"reflect"
@@ -13,19 +13,20 @@ import (
 type DWORD = uint32
 type WORD = uint16
 
-type memory_buffer struct {
+type MemoryBuffer struct {
 	aligned_length uint64
 	length         uint64
 	aligned_ptr    uintptr
 	ptr            uintptr
-	buffer         []byte
+	Buffer         []byte
 }
 
-type memory_map struct {
+type MemoryMap struct {
 	file_handle            windows.Handle
 	file_memory_map_handle windows.Handle
-	write_map_views        []memory_buffer
+	write_map_views        []MemoryBuffer
 	max_length             uint64
+	End_Of_File            int64
 	//	read_map_views  []memory_buffer
 }
 
@@ -33,13 +34,15 @@ var (
 	procGetSystemInfo = syscall.NewLazyDLL("kernel32.dll").NewProc("GetSystemInfo")
 )
 
+var FileMemoryMap = make(map[string]MemoryMap)
+
 var system_info, err = getSystemInfo()
 
 var chunk_size = uint64(system_info.dwAllocationGranularity) * 512
 
-func CreateMemoryMap(hFile windows.Handle, maxlength uint64) memory_map {
+func CreateMemoryMap(hFile windows.Handle, maxlength uint64) MemoryMap {
 
-	mem_map := memory_map{}
+	mem_map := MemoryMap{}
 	maxlength_high := uint32(maxlength >> 32)
 	maxlength_low := uint32(maxlength & 0xFFFFFFFF)
 	file_memory_map_handle, err := windows.CreateFileMapping(hFile, nil, windows.PAGE_READWRITE, maxlength_high, maxlength_low, nil)
@@ -48,12 +51,13 @@ func CreateMemoryMap(hFile windows.Handle, maxlength uint64) memory_map {
 		mem_map.file_handle = hFile
 		mem_map.file_memory_map_handle = file_memory_map_handle
 		mem_map.max_length = maxlength
+		mem_map.End_Of_File = -1
 	}
 
 	return mem_map
 }
 
-func DeleteFileAndMemoryMap(mem_map memory_map) {
+func DeleteFileAndMemoryMap(mem_map MemoryMap) {
 	windows.CloseHandle(mem_map.file_memory_map_handle)
 	windows.CloseHandle(mem_map.file_handle)
 
@@ -72,7 +76,7 @@ func min(x, y uint64) uint64 {
 	return y
 }
 
-func WriteMemory(mem_map memory_map, offset uint64, length uint64, data []byte) {
+func WriteMemory(mem_map MemoryMap, offset uint64, length uint64, data []byte) {
 
 	for {
 		if ((offset+length)/chunk_size)+1 > uint64(len(mem_map.write_map_views)) {
@@ -89,7 +93,7 @@ func WriteMemory(mem_map memory_map, offset uint64, length uint64, data []byte) 
 
 	for {
 		write_end := min(remaining_length, chunk_size)
-		copy(mem_map.write_map_views[slice_index].buffer[slice_offset:write_end], data[data_offset:])
+		copy(mem_map.write_map_views[slice_index].Buffer[slice_offset:write_end], data[data_offset:])
 		remaining_length -= (write_end - slice_offset)
 		data_offset += (write_end - slice_offset)
 
@@ -100,23 +104,27 @@ func WriteMemory(mem_map memory_map, offset uint64, length uint64, data []byte) 
 			break
 		}
 	}
+
+	if mem_map.End_Of_File < int64(offset+length) {
+		mem_map.End_Of_File = int64(offset + length)
+	}
 }
 
-func ReadMemory(mem_map memory_map, offset uint64, length uint64) (memory_buffer, error) {
+func ReadMemory(mem_map MemoryMap, offset uint64, length uint64) (MemoryBuffer, error) {
 	return allocate(mem_map.file_memory_map_handle, offset, length, false)
 }
 
-func ReleaseMemory(mem_buffer memory_buffer) {
+func ReleaseMemory(mem_buffer MemoryBuffer) {
 	windows.UnmapViewOfFile(mem_buffer.aligned_ptr)
 
 	mem_buffer.ptr = 0
 	mem_buffer.aligned_ptr = 0
 	mem_buffer.length = 0
 	mem_buffer.aligned_length = 0
-	mem_buffer.buffer = nil
+	mem_buffer.Buffer = nil
 }
 
-func allocateChunk(mem_map memory_map) {
+func allocateChunk(mem_map MemoryMap) {
 
 	start := uint64(len(mem_map.write_map_views)-1) * chunk_size
 	mem_buffer, err := allocate(mem_map.file_memory_map_handle, start, chunk_size, true)
@@ -126,9 +134,9 @@ func allocateChunk(mem_map memory_map) {
 	}
 }
 
-func allocate(hMapFile windows.Handle, offset uint64, length uint64, write bool) (memory_buffer, error) {
+func allocate(hMapFile windows.Handle, offset uint64, length uint64, write bool) (MemoryBuffer, error) {
 
-	mem_buffer := memory_buffer{}
+	mem_buffer := MemoryBuffer{}
 
 	dwSysGran := system_info.dwAllocationGranularity
 
@@ -160,7 +168,7 @@ func allocate(hMapFile windows.Handle, offset uint64, length uint64, write bool)
 	mem_buffer.ptr = addr_ptr + uintptr(diff)
 	mem_buffer.length = length
 
-	slice_header := (*reflect.SliceHeader)(unsafe.Pointer(&mem_buffer.buffer))
+	slice_header := (*reflect.SliceHeader)(unsafe.Pointer(&mem_buffer.Buffer))
 	slice_header.Data = addr_ptr + uintptr(diff)
 	slice_header.Len = int(length)
 	slice_header.Cap = int(length)
