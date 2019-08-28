@@ -20,7 +20,7 @@ type MemoryBuffer struct {
 }
 
 type MemoryMap struct {
-	file_handle            *os.File
+	File                   *os.File
 	file_memory_map_handle uintptr
 	write_map_views        []MemoryBuffer
 	max_length             uint64
@@ -48,7 +48,7 @@ func CreateMemoryMap(file *os.File, maxlength uint64) MemoryMap {
 	file_memory_map_handle, err := windows.CreateFileMapping(windows.Handle(file.Fd()), nil, windows.PAGE_READWRITE, maxlength_high, maxlength_low, nil)
 
 	if err != nil {
-		mem_map.file_handle = file
+		mem_map.File = file
 		mem_map.file_memory_map_handle = uintptr(file_memory_map_handle)
 		mem_map.max_length = maxlength
 		mem_map.End_Of_File = -1
@@ -59,7 +59,7 @@ func CreateMemoryMap(file *os.File, maxlength uint64) MemoryMap {
 
 func DeleteFileAndMemoryMap(mem_map MemoryMap) {
 	windows.CloseHandle(windows.Handle(mem_map.file_memory_map_handle))
-	windows.CloseHandle(windows.Handle(mem_map.file_handle.Fd()))
+	windows.CloseHandle(windows.Handle(mem_map.File.Fd()))
 
 	for _, view := range mem_map.write_map_views {
 		ReleaseMemory(view)

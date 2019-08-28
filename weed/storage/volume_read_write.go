@@ -52,6 +52,7 @@ func (v *Volume) Destroy() (err error) {
 	mem_map, exists := memory_map.FileMemoryMap[v.FileName()]
 	if exists {
 		memory_map.DeleteFileAndMemoryMap(mem_map)
+		delete(memory_map.FileMemoryMap, v.FileName())
 	}
 
 	v.Close()
