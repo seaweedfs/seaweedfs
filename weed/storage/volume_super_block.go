@@ -6,11 +6,11 @@ import (
 
 	"github.com/joeslay/seaweedfs/weed/storage/memory_map"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
+	"github.com/joeslay/seaweedfs/weed/glog"
+	"github.com/joeslay/seaweedfs/weed/pb/master_pb"
+	"github.com/joeslay/seaweedfs/weed/storage/needle"
+	"github.com/joeslay/seaweedfs/weed/util"
 )
 
 const (
@@ -73,11 +73,11 @@ func (s *SuperBlock) Bytes() []byte {
 
 func (v *Volume) maybeWriteSuperBlock() error {
 
-	mem_map, exists := memory_map.FileMemoryMap[v.FileName()]
+	mem_map, exists := memory_map.FileMemoryMap[v.dataFile.Name()]
 	if exists {
 		if mem_map.End_Of_File == -1 {
 			v.SuperBlock.version = needle.CurrentVersion
-			memory_map.WriteMemory(mem_map, 0, uint64(len(v.SuperBlock.Bytes())), v.SuperBlock.Bytes())
+			mem_map.WriteMemory(0, uint64(len(v.SuperBlock.Bytes())), v.SuperBlock.Bytes())
 		}
 		return nil
 	} else {
@@ -113,13 +113,13 @@ func ReadSuperBlock(dataFile *os.File) (superBlock SuperBlock, err error) {
 	header := make([]byte, _SuperBlockSize)
 	mem_map, exists := memory_map.FileMemoryMap[dataFile.Name()]
 	if exists {
-		mem_buffer, e := memory_map.ReadMemory(mem_map, 0, _SuperBlockSize)
+		mem_buffer, e := mem_map.ReadMemory(0, _SuperBlockSize)
 		if err != nil {
 			err = fmt.Errorf("cannot read volume %s super block: %v", dataFile.Name(), e)
 			return
 		}
 		copy(header, mem_buffer.Buffer)
-		memory_map.ReleaseMemory(mem_buffer)
+		mem_buffer.ReleaseMemory()
 	} else {
 		if _, err = dataFile.Seek(0, 0); err != nil {
 			err = fmt.Errorf("cannot seek to the beginning of %s: %v", dataFile.Name(), err)

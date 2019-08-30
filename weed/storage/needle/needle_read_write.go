@@ -8,10 +8,10 @@ import (
 
 	"math"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/joeslay/seaweedfs/weed/glog"
 	"github.com/joeslay/seaweedfs/weed/storage/memory_map"
+	. "github.com/joeslay/seaweedfs/weed/storage/types"
+	"github.com/joeslay/seaweedfs/weed/util"
 )
 
 const (
@@ -152,7 +152,7 @@ func (n *Needle) Append(w *os.File, version Version) (offset uint64, size uint32
 
 	if err == nil {
 		if exists {
-			memory_map.WriteMemory(mem_map, offset, uint64(len(bytesToWrite)), bytesToWrite)
+			mem_map.WriteMemory(offset, uint64(len(bytesToWrite)), bytesToWrite)
 		} else {
 			_, err = w.Write(bytesToWrite)
 		}
@@ -168,9 +168,9 @@ func ReadNeedleBlob(r *os.File, offset int64, size uint32, version Version) (dat
 
 	mem_map, exists := memory_map.FileMemoryMap[r.Name()]
 	if exists {
-		mem_buffer, err := memory_map.ReadMemory(mem_map, uint64(offset), uint64(dataSize))
+		mem_buffer, err := mem_map.ReadMemory(uint64(offset), uint64(dataSize))
 		copy(dataSlice, mem_buffer.Buffer)
-		memory_map.ReleaseMemory(mem_buffer)
+		mem_buffer.ReleaseMemory()
 		return dataSlice, err
 	} else {
 		_, err = r.ReadAt(dataSlice, offset)
@@ -291,9 +291,9 @@ func ReadNeedleHeader(r *os.File, version Version, offset int64) (n *Needle, byt
 
 		mem_map, exists := memory_map.FileMemoryMap[r.Name()]
 		if exists {
-			mem_buffer, err := memory_map.ReadMemory(mem_map, uint64(offset), NeedleHeaderSize)
+			mem_buffer, err := mem_map.ReadMemory(uint64(offset), NeedleHeaderSize)
 			copy(bytes, mem_buffer.Buffer)
-			memory_map.ReleaseMemory(mem_buffer)
+			mem_buffer.ReleaseMemory()
 
 			if err != nil {
 				return nil, bytes, 0, err

@@ -8,10 +8,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/joeslay/seaweedfs/weed/glog"
 	"github.com/joeslay/seaweedfs/weed/storage/memory_map"
+	"github.com/joeslay/seaweedfs/weed/storage/needle"
+	. "github.com/joeslay/seaweedfs/weed/storage/types"
 )
 
 var ErrorNotFound = errors.New("not found")
@@ -51,7 +51,7 @@ func (v *Volume) Destroy() (err error) {
 	}
 	mem_map, exists := memory_map.FileMemoryMap[v.FileName()]
 	if exists {
-		memory_map.DeleteFileAndMemoryMap(mem_map)
+		mem_map.DeleteFileAndMemoryMap()
 		delete(memory_map.FileMemoryMap, v.FileName())
 	}
 
