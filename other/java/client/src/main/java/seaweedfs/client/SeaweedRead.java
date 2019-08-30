@@ -86,7 +86,7 @@ public class SeaweedRead {
         return 0;
     }
 
-    public static List<ChunkView> viewFromVisibles(List<VisibleInterval> visibleIntervals, long offset, long size) {
+    protected static List<ChunkView> viewFromVisibles(List<VisibleInterval> visibleIntervals, long offset, long size) {
         List<ChunkView> views = new ArrayList<>();
 
         long stop = offset + size;
