@@ -34,9 +34,6 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
     public static final int FS_SEAWEED_DEFAULT_PORT = 8888;
     public static final String FS_SEAWEED_FILER_HOST = "fs.seaweed.filer.host";
     public static final String FS_SEAWEED_FILER_PORT = "fs.seaweed.filer.port";
-    public static final String FS_SEAWEED_GRPC_CA = "fs.seaweed.ca";
-    public static final String FS_SEAWEED_GRPC_CLIENT_KEY = "fs.seaweed.client.key";
-    public static final String FS_SEAWEED_GRPC_CLIENT_CERT = "fs.seaweed.client.cert";
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedFileSystem.class);
     private static int BUFFER_SIZE = 16 * 1024 * 1024;
@@ -75,16 +72,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
         setConf(conf);
         this.uri = uri;
 
-        if (conf.get(FS_SEAWEED_GRPC_CA) != null && conf.getTrimmed(FS_SEAWEED_GRPC_CA).length() != 0
-                && conf.get(FS_SEAWEED_GRPC_CLIENT_CERT) != null && conf.getTrimmed(FS_SEAWEED_GRPC_CLIENT_CERT).length() != 0
-                && conf.get(FS_SEAWEED_GRPC_CLIENT_KEY) != null && conf.getTrimmed(FS_SEAWEED_GRPC_CLIENT_KEY).length() != 0) {
-            seaweedFileSystemStore = new SeaweedFileSystemStore(host, port,
-                    conf.get(FS_SEAWEED_GRPC_CA),
-                    conf.get(FS_SEAWEED_GRPC_CLIENT_CERT),
-                    conf.get(FS_SEAWEED_GRPC_CLIENT_KEY));
-        } else {
-            seaweedFileSystemStore = new SeaweedFileSystemStore(host, port);
-        }
+        seaweedFileSystemStore = new SeaweedFileSystemStore(host, port);
 
     }
 
