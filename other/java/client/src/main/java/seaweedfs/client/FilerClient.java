@@ -34,13 +34,12 @@ public class FilerClient {
 
     public boolean mkdirs(String path, int mode, int uid, int gid, String userName, String[] groupNames) {
 
-        Path pathObject = Paths.get(path);
-        String parent = pathObject.getParent().toString();
-        String name = pathObject.getFileName().toString();
-
         if ("/".equals(path)) {
             return true;
         }
+        Path pathObject = Paths.get(path);
+        String parent = pathObject.getParent().toString();
+        String name = pathObject.getFileName().toString();
 
         mkdirs(parent, mode, uid, gid, userName, groupNames);
 
