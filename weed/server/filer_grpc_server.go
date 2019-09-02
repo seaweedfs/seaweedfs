@@ -20,7 +20,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 
 	entry, err := fs.filer.FindEntry(ctx, filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name))))
 	if err != nil {
-		return nil, fmt.Errorf("%s not found under %s: %v", req.Name, req.Directory, err)
+		return nil, err
 	}
 
 	return &filer_pb.LookupDirectoryEntryResponse{

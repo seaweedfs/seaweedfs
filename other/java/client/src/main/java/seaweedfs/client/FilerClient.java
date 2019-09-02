@@ -194,6 +194,9 @@ public class FilerClient {
                             .build()).getEntry();
             return fixEntryAfterReading(entry);
         } catch (Exception e) {
+            if (e.getMessage().indexOf("filer: no entry is found in filer store")>0){
+                return null;
+            }
             LOG.warn("lookupEntry {}/{}: {}", directory, entryName, e);
             return null;
         }
