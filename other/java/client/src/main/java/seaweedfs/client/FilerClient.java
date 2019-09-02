@@ -34,13 +34,12 @@ public class FilerClient {
 
     public boolean mkdirs(String path, int mode, int uid, int gid, String userName, String[] groupNames) {
 
-        Path pathObject = Paths.get(path);
-        String parent = pathObject.getParent().toString();
-        String name = pathObject.getFileName().toString();
-
         if ("/".equals(path)) {
             return true;
         }
+        Path pathObject = Paths.get(path);
+        String parent = pathObject.getParent().toString();
+        String name = pathObject.getFileName().toString();
 
         mkdirs(parent, mode, uid, gid, userName, groupNames);
 
@@ -195,6 +194,9 @@ public class FilerClient {
                             .build()).getEntry();
             return fixEntryAfterReading(entry);
         } catch (Exception e) {
+            if (e.getMessage().indexOf("filer: no entry is found in filer store")>0){
+                return null;
+            }
             LOG.warn("lookupEntry {}/{}: {}", directory, entryName, e);
             return null;
         }
