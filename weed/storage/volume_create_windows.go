@@ -20,7 +20,7 @@ func createVolumeFile(fileName string, preallocate int64) (*os.File, error) {
 		memory_map.FileMemoryMap[fileName] = new(memory_map.MemoryMap)
 
 		new_mem_map := memory_map.FileMemoryMap[fileName]
-		new_mem_map.CreateMemoryMap(file, 1024*1024*1024*4)
+		new_mem_map.CreateMemoryMap(file, 1024*1024*1024*2)
 
 		if preallocate > 0 {
 			glog.V(0).Infof("Preallocated disk space for %s is not supported", fileName)
