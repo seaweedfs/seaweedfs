@@ -1,8 +1,8 @@
 package erasure_coding
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/joeslay/seaweedfs/weed/pb/master_pb"
+	"github.com/joeslay/seaweedfs/weed/storage/needle"
 )
 
 // data structure used in master

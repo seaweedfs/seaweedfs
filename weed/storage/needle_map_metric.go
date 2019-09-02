@@ -5,8 +5,8 @@ import (
 	"os"
 	"sync/atomic"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/idx"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/joeslay/seaweedfs/weed/storage/idx"
+	. "github.com/joeslay/seaweedfs/weed/storage/types"
 	"github.com/willf/bloom"
 )
 

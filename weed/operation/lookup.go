@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/joeslay/seaweedfs/weed/pb/master_pb"
+	"github.com/joeslay/seaweedfs/weed/util"
 )
 
 type Location struct {

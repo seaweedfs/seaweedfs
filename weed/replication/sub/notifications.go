@@ -1,8 +1,8 @@
 package sub
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/joeslay/seaweedfs/weed/pb/filer_pb"
+	"github.com/joeslay/seaweedfs/weed/util"
 )
 
 type NotificationInput interface {

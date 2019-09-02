@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/joeslay/seaweedfs/weed/glog"
+	"github.com/joeslay/seaweedfs/weed/security"
+	"github.com/joeslay/seaweedfs/weed/server"
+	"github.com/joeslay/seaweedfs/weed/util"
 	"github.com/spf13/viper"
 )
 

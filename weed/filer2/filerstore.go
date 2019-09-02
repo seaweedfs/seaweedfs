@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/joeslay/seaweedfs/weed/pb/filer_pb"
+	"github.com/joeslay/seaweedfs/weed/stats"
+	"github.com/joeslay/seaweedfs/weed/util"
 )
 
 type FilerStore interface {

@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/joeslay/seaweedfs/weed/stats"
 )
 
 func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {

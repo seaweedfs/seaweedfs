@@ -5,11 +5,11 @@ import (
 	"math/rand"
 	"sync"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/joeslay/seaweedfs/weed/storage/needle"
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/joeslay/seaweedfs/weed/glog"
+	"github.com/joeslay/seaweedfs/weed/storage"
 )
 
 /*

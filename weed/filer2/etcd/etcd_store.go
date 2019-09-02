@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	weed_util "github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/joeslay/seaweedfs/weed/filer2"
+	"github.com/joeslay/seaweedfs/weed/glog"
+	weed_util "github.com/joeslay/seaweedfs/weed/util"
 	"go.etcd.io/etcd/clientv3"
 )
 

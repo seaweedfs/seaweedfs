@@ -10,8 +10,8 @@ import (
 
 	"io/ioutil"
 
-	"github.com/chrislusf/seaweedfs/weed/images"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/joeslay/seaweedfs/weed/images"
+	. "github.com/joeslay/seaweedfs/weed/storage/types"
 )
 
 const (

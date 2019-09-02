@@ -1,7 +1,7 @@
 package util
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/joeslay/seaweedfs/weed/glog"
 	"github.com/spf13/viper"
 )
 

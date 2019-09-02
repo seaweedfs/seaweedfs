@@ -2,8 +2,8 @@ package topology
 
 import (
 	"github.com/chrislusf/raft"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/joeslay/seaweedfs/weed/glog"
+	"github.com/joeslay/seaweedfs/weed/storage/needle"
 )
 
 type MaxVolumeIdCommand struct {

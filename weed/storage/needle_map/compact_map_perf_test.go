@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	. "github.com/joeslay/seaweedfs/weed/storage/types"
+	"github.com/joeslay/seaweedfs/weed/util"
 )
 
 /*

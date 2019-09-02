@@ -18,11 +18,11 @@ import (
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"github.com/joeslay/seaweedfs/weed/glog"
+	"github.com/joeslay/seaweedfs/weed/operation"
+	"github.com/joeslay/seaweedfs/weed/security"
+	"github.com/joeslay/seaweedfs/weed/util"
+	"github.com/joeslay/seaweedfs/weed/wdclient"
 )
 
 type BenchmarkOptions struct {

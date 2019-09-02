@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/joeslay/seaweedfs/weed/filer2"
+	"github.com/joeslay/seaweedfs/weed/glog"
 )
 
 type AbstractSqlStore struct {

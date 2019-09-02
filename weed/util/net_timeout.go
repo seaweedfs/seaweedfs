@@ -4,7 +4,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/joeslay/seaweedfs/weed/stats"
 )
 
 // Listener wraps a net.Listener, and gives a place to store the timeout

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/joeslay/seaweedfs/weed/storage/needle"
 )
 
 func init() {

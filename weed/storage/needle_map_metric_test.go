@@ -1,8 +1,8 @@
 package storage
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/joeslay/seaweedfs/weed/glog"
+	. "github.com/joeslay/seaweedfs/weed/storage/types"
 	"io/ioutil"
 	"math/rand"
 	"testing"

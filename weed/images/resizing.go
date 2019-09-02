@@ -7,7 +7,7 @@ import (
 	"image/jpeg"
 	"image/png"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/joeslay/seaweedfs/weed/glog"
 	"github.com/disintegration/imaging"
 	"io"
 )

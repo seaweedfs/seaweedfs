@@ -4,11 +4,11 @@ import (
 	"context"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/replication/sink"
-	"github.com/chrislusf/seaweedfs/weed/replication/source"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/joeslay/seaweedfs/weed/filer2"
+	"github.com/joeslay/seaweedfs/weed/pb/filer_pb"
+	"github.com/joeslay/seaweedfs/weed/replication/sink"
+	"github.com/joeslay/seaweedfs/weed/replication/source"
+	"github.com/joeslay/seaweedfs/weed/util"
 	"github.com/kurin/blazer/b2"
 )
 

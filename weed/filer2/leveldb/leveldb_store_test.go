@@ -2,7 +2,7 @@ package leveldb
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/joeslay/seaweedfs/weed/filer2"
 	"io/ioutil"
 	"os"
 	"testing"

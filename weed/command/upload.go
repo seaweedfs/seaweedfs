@@ -6,11 +6,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/joeslay/seaweedfs/weed/security"
+	"github.com/joeslay/seaweedfs/weed/util"
 	"github.com/spf13/viper"
 
-	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/joeslay/seaweedfs/weed/operation"
 )
 
 var (

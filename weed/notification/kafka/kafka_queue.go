@@ -2,9 +2,9 @@ package kafka
 
 import (
 	"github.com/Shopify/sarama"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/notification"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/joeslay/seaweedfs/weed/glog"
+	"github.com/joeslay/seaweedfs/weed/notification"
+	"github.com/joeslay/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
 )
 

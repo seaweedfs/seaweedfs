@@ -5,11 +5,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/joeslay/seaweedfs/weed/stats"
+	"github.com/joeslay/seaweedfs/weed/storage/needle"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/joeslay/seaweedfs/weed/glog"
 )
 
 func loadVolumeWithoutIndex(dirname string, collection string, id needle.VolumeId, needleMapKind NeedleMapType) (v *Volume, e error) {

@@ -6,8 +6,8 @@ import (
 	"os"
 	"sync"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/joeslay/seaweedfs/weed/storage/needle_map"
+	. "github.com/joeslay/seaweedfs/weed/storage/types"
 )
 
 type NeedleMapType int

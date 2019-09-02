@@ -3,10 +3,10 @@ package filer2
 import (
 	"io"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"github.com/joeslay/seaweedfs/weed/glog"
+	"github.com/joeslay/seaweedfs/weed/pb/filer_pb"
+	"github.com/joeslay/seaweedfs/weed/util"
+	"github.com/joeslay/seaweedfs/weed/wdclient"
 )
 
 func StreamContent(masterClient *wdclient.MasterClient, w io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int) error {

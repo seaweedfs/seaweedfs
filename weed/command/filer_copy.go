@@ -14,11 +14,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"github.com/joeslay/seaweedfs/weed/operation"
+	"github.com/joeslay/seaweedfs/weed/pb/filer_pb"
+	"github.com/joeslay/seaweedfs/weed/security"
+	"github.com/joeslay/seaweedfs/weed/util"
+	"github.com/joeslay/seaweedfs/weed/wdclient"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 )

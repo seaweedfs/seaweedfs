@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/joeslay/seaweedfs/weed/glog"
+	"github.com/joeslay/seaweedfs/weed/pb/master_pb"
+	"github.com/joeslay/seaweedfs/weed/stats"
+	"github.com/joeslay/seaweedfs/weed/storage/needle"
+	. "github.com/joeslay/seaweedfs/weed/storage/types"
 	"google.golang.org/grpc"
 )
 
