@@ -28,6 +28,7 @@ type VolumeGrowOption struct {
 	DataCenter       string
 	Rack             string
 	DataNode         string
+	InMemory         bool
 }
 
 type VolumeGrowth struct {

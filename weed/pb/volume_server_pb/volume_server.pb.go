@@ -214,7 +214,6 @@ func (m *VacuumVolumeCheckResponse) GetGarbageRatio() float64 {
 type VacuumVolumeCompactRequest struct {
 	VolumeId    uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
 	Preallocate int64  `protobuf:"varint,2,opt,name=preallocate" json:"preallocate,omitempty"`
-	InMemory    bool   `protobuf:"varint,2,opt,name=inmemory" json:"inmemory,omitempty"`
 }
 
 func (m *VacuumVolumeCompactRequest) Reset()                    { *m = VacuumVolumeCompactRequest{} }
@@ -234,13 +233,6 @@ func (m *VacuumVolumeCompactRequest) GetPreallocate() int64 {
 		return m.Preallocate
 	}
 	return 0
-}
-
-func (m *VacuumVolumeCompactRequest) GetInMemory() bool {
-	if m != nil {
-		return m.InMemory
-	}
-	return false
 }
 
 type VacuumVolumeCompactResponse struct {
