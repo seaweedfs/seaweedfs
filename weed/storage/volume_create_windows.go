@@ -14,7 +14,6 @@ import (
 
 func createVolumeFile(fileName string, preallocate int64, useMemoryMap bool) (*os.File, error) {
 
-	useMemoryMap = true
 	mMap, exists := memory_map.FileMemoryMap[fileName]
 	if !exists {
 		file, e := os_overloads.OpenFile(fileName, windows.O_RDWR|windows.O_CREAT, 0644, useMemoryMap)
