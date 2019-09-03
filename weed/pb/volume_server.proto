@@ -99,7 +99,6 @@ message VacuumVolumeCheckResponse {
 message VacuumVolumeCompactRequest {
     uint32 volume_id = 1;
     int64 preallocate = 2;
-    bool inmemory = 3;
 }
 message VacuumVolumeCompactResponse {
 }
