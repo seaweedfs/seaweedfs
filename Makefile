@@ -27,8 +27,8 @@ clean:
 
 deps:
 	go get $(GO_FLAGS) -d $(SOURCE_DIR)
-	rm -rf $GOPATH/src/github.com/coreos/etcd/vendor/golang.org/x/net/trace
-	rm -rf $GOPATH/src/go.etcd.io/etcd/vendor/golang.org/x/net/trace
+	rm -rf /home/travis/gopath/src/github.com/coreos/etcd/vendor/golang.org/x/net/trace
+	rm -rf /home/travis/gopath/src/go.etcd.io/etcd/vendor/golang.org/x/net/trace
 
 build: deps
 	go build $(GO_FLAGS) -o $(BINARY) $(SOURCE_DIR)
