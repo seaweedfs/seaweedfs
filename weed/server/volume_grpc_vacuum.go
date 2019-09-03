@@ -28,7 +28,7 @@ func (vs *VolumeServer) VacuumVolumeCompact(ctx context.Context, req *volume_ser
 
 	resp := &volume_server_pb.VacuumVolumeCompactResponse{}
 
-	err := vs.store.CompactVolume(needle.VolumeId(req.VolumeId), req.Preallocate, vs.compactionBytePerSecond)
+	err := vs.store.CompactVolume(needle.VolumeId(req.VolumeId), req.Preallocate, vs.compactionBytePerSecond, req.InMemory)
 
 	if err != nil {
 		glog.Errorf("compact volume %d: %v", req.VolumeId, err)

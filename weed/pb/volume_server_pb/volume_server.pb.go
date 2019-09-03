@@ -68,12 +68,15 @@ It has these top-level messages:
 */
 package volume_server_pb
 
-import proto "github.com/golang/protobuf/proto"
-import fmt "fmt"
-import math "math"
-
 import (
+	fmt "fmt"
+
+	proto "github.com/golang/protobuf/proto"
+
+	math "math"
+
 	context "golang.org/x/net/context"
+
 	grpc "google.golang.org/grpc"
 )
 
@@ -211,6 +214,7 @@ func (m *VacuumVolumeCheckResponse) GetGarbageRatio() float64 {
 type VacuumVolumeCompactRequest struct {
 	VolumeId    uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
 	Preallocate int64  `protobuf:"varint,2,opt,name=preallocate" json:"preallocate,omitempty"`
+	InMemory    bool   `protobuf:"varint,2,opt,name=inmemory" json:"inmemory,omitempty"`
 }
 
 func (m *VacuumVolumeCompactRequest) Reset()                    { *m = VacuumVolumeCompactRequest{} }
@@ -230,6 +234,13 @@ func (m *VacuumVolumeCompactRequest) GetPreallocate() int64 {
 		return m.Preallocate
 	}
 	return 0
+}
+
+func (m *VacuumVolumeCompactRequest) GetInMemory() bool {
+	if m != nil {
+		return m.InMemory
+	}
+	return false
 }
 
 type VacuumVolumeCompactResponse struct {
@@ -318,6 +329,7 @@ type AllocateVolumeRequest struct {
 	Preallocate int64  `protobuf:"varint,3,opt,name=preallocate" json:"preallocate,omitempty"`
 	Replication string `protobuf:"bytes,4,opt,name=replication" json:"replication,omitempty"`
 	Ttl         string `protobuf:"bytes,5,opt,name=ttl" json:"ttl,omitempty"`
+	InMemory    bool   `protobuf:"varint,6,opt,name=inmemory" json:"inmemory,omitempty"`
 }
 
 func (m *AllocateVolumeRequest) Reset()                    { *m = AllocateVolumeRequest{} }
@@ -358,6 +370,13 @@ func (m *AllocateVolumeRequest) GetTtl() string {
 		return m.Ttl
 	}
 	return ""
+}
+
+func (m *AllocateVolumeRequest) GetInMemory() bool {
+	if m != nil {
+		return m.InMemory
+	}
+	return false
 }
 
 type AllocateVolumeResponse struct {

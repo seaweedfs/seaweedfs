@@ -112,14 +112,14 @@ func runBackup(cmd *Command, args []string) bool {
 			return true
 		}
 	}
-	v, err := storage.NewVolume(*s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0)
+	v, err := storage.NewVolume(*s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, false)
 	if err != nil {
 		fmt.Printf("Error creating or reading from volume %d: %v\n", vid, err)
 		return true
 	}
 
 	if v.SuperBlock.CompactionRevision < uint16(stats.CompactRevision) {
-		if err = v.Compact(0, 0); err != nil {
+		if err = v.Compact(0, 0, false); err != nil {
 			fmt.Printf("Compact Volume before synchronizing %v\n", err)
 			return true
 		}
@@ -137,7 +137,7 @@ func runBackup(cmd *Command, args []string) bool {
 		// remove the old data
 		v.Destroy()
 		// recreate an empty volume
-		v, err = storage.NewVolume(*s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0)
+		v, err = storage.NewVolume(*s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, false)
 		if err != nil {
 			fmt.Printf("Error creating or reading from volume %d: %v\n", vid, err)
 			return true

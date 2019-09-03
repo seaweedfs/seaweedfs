@@ -22,7 +22,7 @@ func (v *Volume) garbageLevel() float64 {
 	return float64(v.DeletedSize()) / float64(v.ContentSize())
 }
 
-func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error {
+func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64, in_memory bool) error {
 
 	_, exists := memory_map.FileMemoryMap[v.dataFile.Name()]
 	if !exists { //it makes no sense to compact in memory
@@ -40,7 +40,7 @@ func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error
 		v.lastCompactIndexOffset = v.IndexFileSize()
 		v.lastCompactRevision = v.SuperBlock.CompactionRevision
 		glog.V(3).Infof("creating copies for volume %d ,last offset %d...", v.Id, v.lastCompactIndexOffset)
-		return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx", preallocate, compactionBytePerSecond)
+		return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx", preallocate, compactionBytePerSecond, in_memory)
 	} else {
 		return nil
 	}
@@ -114,7 +114,7 @@ func (v *Volume) CommitCompact() error {
 		os.RemoveAll(v.FileName() + ".bdb")
 
 		glog.V(3).Infof("Loading volume %d commit file...", v.Id)
-		if e = v.load(true, false, v.needleMapKind, 0); e != nil {
+		if e = v.load(true, false, v.needleMapKind, 0, false); e != nil {
 			return e
 		}
 	}
@@ -311,11 +311,11 @@ func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset in
 	return nil
 }
 
-func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, preallocate int64, compactionBytePerSecond int64) (err error) {
+func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, preallocate int64, compactionBytePerSecond int64, in_memory bool) (err error) {
 	var (
 		dst, idx *os.File
 	)
-	if dst, err = createVolumeFile(dstName, preallocate); err != nil {
+	if dst, err = createVolumeFile(dstName, preallocate, in_memory); err != nil {
 		return
 	}
 	defer dst.Close()

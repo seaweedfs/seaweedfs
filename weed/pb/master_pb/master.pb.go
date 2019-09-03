@@ -44,12 +44,15 @@ It has these top-level messages:
 */
 package master_pb
 
-import proto "github.com/golang/protobuf/proto"
-import fmt "fmt"
-import math "math"
-
 import (
+	fmt "fmt"
+
+	proto "github.com/golang/protobuf/proto"
+
+	math "math"
+
 	context "golang.org/x/net/context"
+
 	grpc "google.golang.org/grpc"
 )
 
@@ -655,6 +658,7 @@ type AssignRequest struct {
 	DataCenter  string `protobuf:"bytes,5,opt,name=data_center,json=dataCenter" json:"data_center,omitempty"`
 	Rack        string `protobuf:"bytes,6,opt,name=rack" json:"rack,omitempty"`
 	DataNode    string `protobuf:"bytes,7,opt,name=data_node,json=dataNode" json:"data_node,omitempty"`
+	InMemory    bool   `protobuf:"bytes,4,opt,name=inmemory" json:"inmemory,omitempty"`
 }
 
 func (m *AssignRequest) Reset()                    { *m = AssignRequest{} }
@@ -709,6 +713,13 @@ func (m *AssignRequest) GetDataNode() string {
 		return m.DataNode
 	}
 	return ""
+}
+
+func (m *AssignRequest) GetInMemory() bool {
+	if m != nil {
+		return m.InMemory
+	}
+	return false
 }
 
 type AssignResponse struct {

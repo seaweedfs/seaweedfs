@@ -16,11 +16,11 @@ func loadVolumeWithoutIndex(dirname string, collection string, id needle.VolumeI
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
 	v.SuperBlock = SuperBlock{}
 	v.needleMapKind = needleMapKind
-	e = v.load(false, false, needleMapKind, 0)
+	e = v.load(false, false, needleMapKind, 0, false)
 	return
 }
 
-func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind NeedleMapType, preallocate int64) error {
+func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind NeedleMapType, preallocate int64, in_memory bool) error {
 	var e error
 	fileName := v.FileName()
 	alreadyHasSuperBlock := false
@@ -42,7 +42,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 	} else {
 		if createDatIfMissing {
-			v.dataFile, e = createVolumeFile(fileName+".dat", preallocate)
+			v.dataFile, e = createVolumeFile(fileName+".dat", preallocate, in_memory)
 		} else {
 			return fmt.Errorf("Volume Data file %s.dat does not exist.", fileName)
 		}

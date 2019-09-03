@@ -12,15 +12,17 @@ import (
 	"github.com/joeslay/seaweedfs/weed/os_overloads"
 )
 
-func createVolumeFile(fileName string, preallocate int64) (*os.File, error) {
+func createVolumeFile(fileName string, preallocate int64, in_memory bool) (*os.File, error) {
 
 	mem_map, exists := memory_map.FileMemoryMap[fileName]
 	if !exists {
-		file, e := os_overloads.OpenFile(fileName, windows.O_RDWR|windows.O_CREAT, 0644, true)
-		memory_map.FileMemoryMap[fileName] = new(memory_map.MemoryMap)
+		file, e := os_overloads.OpenFile(fileName, windows.O_RDWR|windows.O_CREAT, 0644, in_memory)
+		if in_memory {
+			memory_map.FileMemoryMap[fileName] = new(memory_map.MemoryMap)
 
-		new_mem_map := memory_map.FileMemoryMap[fileName]
-		new_mem_map.CreateMemoryMap(file, 1024*1024*1024*2)
+			new_mem_map := memory_map.FileMemoryMap[fileName]
+			new_mem_map.CreateMemoryMap(file, 1024*1024*1024*2)
+		}
 
 		if preallocate > 0 {
 			glog.V(0).Infof("Preallocated disk space for %s is not supported", fileName)
