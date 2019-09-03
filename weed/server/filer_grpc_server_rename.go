@@ -73,11 +73,11 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, oldParent filer
 			return err
 		}
 
-		println("found", len(entries), "entries under", currentDirPath)
+		// println("found", len(entries), "entries under", currentDirPath)
 
 		for _, item := range entries {
 			lastFileName = item.Name()
-			println("processing", lastFileName)
+			// println("processing", lastFileName)
 			err := fs.moveEntry(ctx, currentDirPath, item, newDirPath, item.Name(), events)
 			if err != nil {
 				return err
