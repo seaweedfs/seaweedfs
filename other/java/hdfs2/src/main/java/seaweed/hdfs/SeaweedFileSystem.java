@@ -1,14 +1,7 @@
 package seaweed.hdfs;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FSDataOutputStream;
-import org.apache.hadoop.fs.FileAlreadyExistsException;
-import org.apache.hadoop.fs.FileStatus;
-import org.apache.hadoop.fs.ParentNotDirectoryException;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.UnsupportedFileSystemException;
-import org.apache.hadoop.fs.XAttrSetFlag;
+import org.apache.hadoop.fs.*;
 import org.apache.hadoop.fs.permission.AclEntry;
 import org.apache.hadoop.fs.permission.AclStatus;
 import org.apache.hadoop.fs.permission.FsPermission;
@@ -87,6 +80,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
             InputStream inputStream = seaweedFileSystemStore.openFileForRead(path, statistics, bufferSize);
             return new FSDataInputStream(inputStream);
         } catch (Exception ex) {
+            LOG.warn("open path: {} bufferSize:{}", path, bufferSize, ex);
             return null;
         }
     }
@@ -104,8 +98,34 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
             OutputStream outputStream = seaweedFileSystemStore.createFile(path, overwrite, permission, bufferSize, replicaPlacement);
             return new FSDataOutputStream(outputStream, statistics);
         } catch (Exception ex) {
+            LOG.warn("create path: {} bufferSize:{} blockSize:{}", path, bufferSize, blockSize, ex);
             return null;
         }
+    }
+
+    /**
+     * {@inheritDoc}
+     * @throws FileNotFoundException if the parent directory is not present -or
+     * is not a directory.
+     */
+    @Override
+    public FSDataOutputStream createNonRecursive(Path path,
+                                                 FsPermission permission,
+                                                 EnumSet<CreateFlag> flags,
+                                                 int bufferSize,
+                                                 short replication,
+                                                 long blockSize,
+                                                 Progressable progress) throws IOException {
+        Path parent = path.getParent();
+        if (parent != null) {
+            // expect this to raise an exception if there is no parent
+            if (!getFileStatus(parent).isDirectory()) {
+                throw new FileAlreadyExistsException("Not a directory: " + parent);
+            }
+        }
+        return create(path, permission,
+                flags.contains(CreateFlag.OVERWRITE), bufferSize,
+                replication, blockSize, progress);
     }
 
     @Override
@@ -118,6 +138,7 @@ public class SeaweedFileSystem extends org.apache.hadoop.fs.FileSystem {
             OutputStream outputStream = seaweedFileSystemStore.createFile(path, false, null, bufferSize, "");
             return new FSDataOutputStream(outputStream, statistics);
         } catch (Exception ex) {
+            LOG.warn("append path: {} bufferSize:{}", path, bufferSize, ex);
             return null;
         }
     }
