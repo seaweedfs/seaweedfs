@@ -40,31 +40,31 @@ var system_info, err = getSystemInfo()
 
 var chunk_size = uint64(system_info.dwAllocationGranularity) * 512
 
-func (mem_map *MemoryMap) CreateMemoryMap(file *os.File, maxlength uint64) {
+func (mMap *MemoryMap) CreateMemoryMap(file *os.File, maxlength uint64) {
 
 	maxlength_high := uint32(maxlength >> 32)
 	maxlength_low := uint32(maxlength & 0xFFFFFFFF)
 	file_memory_map_handle, err := windows.CreateFileMapping(windows.Handle(file.Fd()), nil, windows.PAGE_READWRITE, maxlength_high, maxlength_low, nil)
 
 	if err == nil {
-		mem_map.File = file
-		mem_map.file_memory_map_handle = uintptr(file_memory_map_handle)
-		mem_map.write_map_views = make([]MemoryBuffer, 0, maxlength/chunk_size)
-		mem_map.max_length = maxlength
-		mem_map.End_Of_File = -1
+		mMap.File = file
+		mMap.file_memory_map_handle = uintptr(file_memory_map_handle)
+		mMap.write_map_views = make([]MemoryBuffer, 0, maxlength/chunk_size)
+		mMap.max_length = maxlength
+		mMap.End_Of_File = -1
 	}
 }
 
-func (mem_map *MemoryMap) DeleteFileAndMemoryMap() {
-	windows.CloseHandle(windows.Handle(mem_map.file_memory_map_handle))
-	windows.CloseHandle(windows.Handle(mem_map.File.Fd()))
+func (mMap *MemoryMap) DeleteFileAndMemoryMap() {
+	windows.CloseHandle(windows.Handle(mMap.file_memory_map_handle))
+	windows.CloseHandle(windows.Handle(mMap.File.Fd()))
 
-	for _, view := range mem_map.write_map_views {
+	for _, view := range mMap.write_map_views {
 		view.ReleaseMemory()
 	}
 
-	mem_map.write_map_views = nil
-	mem_map.max_length = 0
+	mMap.write_map_views = nil
+	mMap.max_length = 0
 }
 
 func min(x, y uint64) uint64 {
@@ -74,11 +74,11 @@ func min(x, y uint64) uint64 {
 	return y
 }
 
-func (mem_map *MemoryMap) WriteMemory(offset uint64, length uint64, data []byte) {
+func (mMap *MemoryMap) WriteMemory(offset uint64, length uint64, data []byte) {
 
 	for {
-		if ((offset+length)/chunk_size)+1 > uint64(len(mem_map.write_map_views)) {
-			allocateChunk(mem_map)
+		if ((offset+length)/chunk_size)+1 > uint64(len(mMap.write_map_views)) {
+			allocateChunk(mMap)
 		} else {
 			break
 		}
@@ -91,7 +91,7 @@ func (mem_map *MemoryMap) WriteMemory(offset uint64, length uint64, data []byte)
 
 	for {
 		write_end := min((remaining_length + slice_offset), chunk_size)
-		copy(mem_map.write_map_views[slice_index].Buffer[slice_offset:write_end], data[data_offset:])
+		copy(mMap.write_map_views[slice_index].Buffer[slice_offset:write_end], data[data_offset:])
 		remaining_length -= (write_end - slice_offset)
 		data_offset += (write_end - slice_offset)
 
@@ -103,13 +103,13 @@ func (mem_map *MemoryMap) WriteMemory(offset uint64, length uint64, data []byte)
 		}
 	}
 
-	if mem_map.End_Of_File < int64(offset+length-1) {
-		mem_map.End_Of_File = int64(offset + length - 1)
+	if mMap.End_Of_File < int64(offset+length-1) {
+		mMap.End_Of_File = int64(offset + length - 1)
 	}
 }
 
-func (mem_map *MemoryMap) ReadMemory(offset uint64, length uint64) (MemoryBuffer, error) {
-	return allocate(windows.Handle(mem_map.file_memory_map_handle), offset, length, false)
+func (mMap *MemoryMap) ReadMemory(offset uint64, length uint64) (MemoryBuffer, error) {
+	return allocate(windows.Handle(mMap.file_memory_map_handle), offset, length, false)
 }
 
 func (mem_buffer *MemoryBuffer) ReleaseMemory() {
@@ -122,13 +122,13 @@ func (mem_buffer *MemoryBuffer) ReleaseMemory() {
 	mem_buffer.Buffer = nil
 }
 
-func allocateChunk(mem_map *MemoryMap) {
+func allocateChunk(mMap *MemoryMap) {
 
-	start := uint64(len(mem_map.write_map_views)) * chunk_size
-	mem_buffer, err := allocate(windows.Handle(mem_map.file_memory_map_handle), start, chunk_size, true)
+	start := uint64(len(mMap.write_map_views)) * chunk_size
+	mem_buffer, err := allocate(windows.Handle(mMap.file_memory_map_handle), start, chunk_size, true)
 
 	if err == nil {
-		mem_map.write_map_views = append(mem_map.write_map_views, mem_buffer)
+		mMap.write_map_views = append(mMap.write_map_views, mem_buffer)
 	}
 }
 

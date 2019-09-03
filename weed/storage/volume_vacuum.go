@@ -8,7 +8,6 @@ import (
 	"github.com/joeslay/seaweedfs/weed/glog"
 	"github.com/joeslay/seaweedfs/weed/stats"
 	idx2 "github.com/joeslay/seaweedfs/weed/storage/idx"
-	"github.com/joeslay/seaweedfs/weed/storage/memory_map"
 	"github.com/joeslay/seaweedfs/weed/storage/needle"
 	"github.com/joeslay/seaweedfs/weed/storage/needle_map"
 	. "github.com/joeslay/seaweedfs/weed/storage/types"
@@ -22,10 +21,9 @@ func (v *Volume) garbageLevel() float64 {
 	return float64(v.DeletedSize()) / float64(v.ContentSize())
 }
 
-func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64, in_memory bool) error {
+func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error {
 
-	_, exists := memory_map.FileMemoryMap[v.dataFile.Name()]
-	if !exists { //it makes no sense to compact in memory
+	if !v.MemoryMapped { //it makes no sense to compact in memory
 		glog.V(3).Infof("Compacting volume %d ...", v.Id)
 		//no need to lock for copy on write
 		//v.accessLock.Lock()
@@ -40,16 +38,15 @@ func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64, in_me
 		v.lastCompactIndexOffset = v.IndexFileSize()
 		v.lastCompactRevision = v.SuperBlock.CompactionRevision
 		glog.V(3).Infof("creating copies for volume %d ,last offset %d...", v.Id, v.lastCompactIndexOffset)
-		return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx", preallocate, compactionBytePerSecond, in_memory)
+		return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx", preallocate, compactionBytePerSecond)
 	} else {
 		return nil
 	}
 }
 
 func (v *Volume) Compact2() error {
-	_, exists := memory_map.FileMemoryMap[v.dataFile.Name()]
-	if !exists { //it makes no sense to compact in memory
 
+	if !v.MemoryMapped { //it makes no sense to compact in memory
 		glog.V(3).Infof("Compact2 volume %d ...", v.Id)
 
 		v.isCompacting = true
@@ -66,8 +63,7 @@ func (v *Volume) Compact2() error {
 }
 
 func (v *Volume) CommitCompact() error {
-	_, exists := memory_map.FileMemoryMap[v.dataFile.Name()]
-	if !exists { //it makes no sense to compact in memory
+	if !v.MemoryMapped { //it makes no sense to compact in memory
 		glog.V(0).Infof("Committing volume %d vacuuming...", v.Id)
 
 		v.isCompacting = true
@@ -114,7 +110,7 @@ func (v *Volume) CommitCompact() error {
 		os.RemoveAll(v.FileName() + ".bdb")
 
 		glog.V(3).Infof("Loading volume %d commit file...", v.Id)
-		if e = v.load(true, false, v.needleMapKind, 0, false); e != nil {
+		if e = v.load(true, false, v.needleMapKind, 0); e != nil {
 			return e
 		}
 	}
@@ -311,11 +307,11 @@ func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset in
 	return nil
 }
 
-func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, preallocate int64, compactionBytePerSecond int64, in_memory bool) (err error) {
+func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, preallocate int64, compactionBytePerSecond int64) (err error) {
 	var (
 		dst, idx *os.File
 	)
-	if dst, err = createVolumeFile(dstName, preallocate, in_memory); err != nil {
+	if dst, err = createVolumeFile(dstName, preallocate, v.MemoryMapped); err != nil {
 		return
 	}
 	defer dst.Close()

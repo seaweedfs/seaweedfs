@@ -129,7 +129,7 @@ func (n *Needle) prepareWriteBuffer(version Version) ([]byte, uint32, int64, err
 
 func (n *Needle) Append(w *os.File, version Version) (offset uint64, size uint32, actualSize int64, err error) {
 
-	mem_map, exists := memory_map.FileMemoryMap[w.Name()]
+	mMap, exists := memory_map.FileMemoryMap[w.Name()]
 	if !exists {
 		if end, e := w.Seek(0, io.SeekEnd); e == nil {
 			defer func(w *os.File, off int64) {
@@ -145,14 +145,14 @@ func (n *Needle) Append(w *os.File, version Version) (offset uint64, size uint32
 			return
 		}
 	} else {
-		offset = uint64(mem_map.End_Of_File + 1)
+		offset = uint64(mMap.End_Of_File + 1)
 	}
 
 	bytesToWrite, size, actualSize, err := n.prepareWriteBuffer(version)
 
 	if err == nil {
 		if exists {
-			mem_map.WriteMemory(offset, uint64(len(bytesToWrite)), bytesToWrite)
+			mMap.WriteMemory(offset, uint64(len(bytesToWrite)), bytesToWrite)
 		} else {
 			_, err = w.Write(bytesToWrite)
 		}
@@ -166,11 +166,11 @@ func ReadNeedleBlob(r *os.File, offset int64, size uint32, version Version) (dat
 	dataSize := GetActualSize(size, version)
 	dataSlice = make([]byte, dataSize)
 
-	mem_map, exists := memory_map.FileMemoryMap[r.Name()]
+	mMap, exists := memory_map.FileMemoryMap[r.Name()]
 	if exists {
-		mem_buffer, err := mem_map.ReadMemory(uint64(offset), uint64(dataSize))
-		copy(dataSlice, mem_buffer.Buffer)
-		mem_buffer.ReleaseMemory()
+		mBuffer, err := mMap.ReadMemory(uint64(offset), uint64(dataSize))
+		copy(dataSlice, mBuffer.Buffer)
+		mBuffer.ReleaseMemory()
 		return dataSlice, err
 	} else {
 		_, err = r.ReadAt(dataSlice, offset)
@@ -289,9 +289,9 @@ func ReadNeedleHeader(r *os.File, version Version, offset int64) (n *Needle, byt
 	if version == Version1 || version == Version2 || version == Version3 {
 		bytes = make([]byte, NeedleHeaderSize)
 
-		mem_map, exists := memory_map.FileMemoryMap[r.Name()]
+		mMap, exists := memory_map.FileMemoryMap[r.Name()]
 		if exists {
-			mem_buffer, err := mem_map.ReadMemory(uint64(offset), NeedleHeaderSize)
+			mem_buffer, err := mMap.ReadMemory(uint64(offset), NeedleHeaderSize)
 			copy(bytes, mem_buffer.Buffer)
 			mem_buffer.ReleaseMemory()
 

@@ -49,9 +49,9 @@ func (v *Volume) Destroy() (err error) {
 		err = fmt.Errorf("volume %d is compacting", v.Id)
 		return
 	}
-	mem_map, exists := memory_map.FileMemoryMap[v.dataFile.Name()]
+	mMap, exists := memory_map.FileMemoryMap[v.dataFile.Name()]
 	if exists {
-		mem_map.DeleteFileAndMemoryMap()
+		mMap.DeleteFileAndMemoryMap()
 		delete(memory_map.FileMemoryMap, v.dataFile.Name())
 	}
 

@@ -26,7 +26,6 @@ var (
 	compactVolumeId          = cmdCompact.Flag.Int("volumeId", -1, "a volume id. The volume should already exist in the dir.")
 	compactMethod            = cmdCompact.Flag.Int("method", 0, "option to choose which compact method. use 0 or 1.")
 	compactVolumePreallocate = cmdCompact.Flag.Int64("preallocateMB", 0, "preallocate volume disk space")
-	compactVolumeInMemory    = cmdCompact.Flag.Bool("volumeInMemory", false, "create the volume in memory")
 )
 
 func runCompact(cmd *Command, args []string) bool {
@@ -36,16 +35,15 @@ func runCompact(cmd *Command, args []string) bool {
 	}
 
 	preallocate := *compactVolumePreallocate * (1 << 20)
-	inMemory := *compactVolumeInMemory
 
 	vid := needle.VolumeId(*compactVolumeId)
 	v, err := storage.NewVolume(*compactVolumePath, *compactVolumeCollection, vid,
-		storage.NeedleMapInMemory, nil, nil, preallocate, inMemory)
+		storage.NeedleMapInMemory, nil, nil, preallocate, false)
 	if err != nil {
 		glog.Fatalf("Load Volume [ERROR] %s\n", err)
 	}
 	if *compactMethod == 0 {
-		if err = v.Compact(preallocate, 0, inMemory); err != nil {
+		if err = v.Compact(preallocate, 0); err != nil {
 			glog.Fatalf("Compact Volume [ERROR] %s\n", err)
 		}
 	} else {

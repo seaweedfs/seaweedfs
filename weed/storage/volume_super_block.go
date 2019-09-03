@@ -73,11 +73,11 @@ func (s *SuperBlock) Bytes() []byte {
 
 func (v *Volume) maybeWriteSuperBlock() error {
 
-	mem_map, exists := memory_map.FileMemoryMap[v.dataFile.Name()]
+	mMap, exists := memory_map.FileMemoryMap[v.dataFile.Name()]
 	if exists {
-		if mem_map.End_Of_File == -1 {
+		if mMap.End_Of_File == -1 {
 			v.SuperBlock.version = needle.CurrentVersion
-			mem_map.WriteMemory(0, uint64(len(v.SuperBlock.Bytes())), v.SuperBlock.Bytes())
+			mMap.WriteMemory(0, uint64(len(v.SuperBlock.Bytes())), v.SuperBlock.Bytes())
 		}
 		return nil
 	} else {
@@ -111,9 +111,9 @@ func (v *Volume) readSuperBlock() (err error) {
 func ReadSuperBlock(dataFile *os.File) (superBlock SuperBlock, err error) {
 
 	header := make([]byte, _SuperBlockSize)
-	mem_map, exists := memory_map.FileMemoryMap[dataFile.Name()]
+	mMap, exists := memory_map.FileMemoryMap[dataFile.Name()]
 	if exists {
-		mem_buffer, e := mem_map.ReadMemory(0, _SuperBlockSize)
+		mem_buffer, e := mMap.ReadMemory(0, _SuperBlockSize)
 		if err != nil {
 			err = fmt.Errorf("cannot read volume %s super block: %v", dataFile.Name(), e)
 			return
