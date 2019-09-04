@@ -145,7 +145,7 @@ func (n *Needle) Append(w *os.File, version Version) (offset uint64, size uint32
 			return
 		}
 	} else {
-		offset = uint64(mMap.End_Of_File + 1)
+		offset = uint64(mMap.End_of_file + 1)
 	}
 
 	bytesToWrite, size, actualSize, err := n.prepareWriteBuffer(version)

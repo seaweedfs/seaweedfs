@@ -24,7 +24,7 @@ type MemoryMap struct {
 	file_memory_map_handle uintptr
 	write_map_views        []MemoryBuffer
 	max_length             uint64
-	End_Of_File            int64
+	End_of_file            int64
 }
 
 var FileMemoryMap = make(map[string]*MemoryMap)
@@ -51,7 +51,7 @@ func (mMap *MemoryMap) CreateMemoryMap(file *os.File, maxlength uint64) {
 		mMap.file_memory_map_handle = uintptr(file_memory_map_handle)
 		mMap.write_map_views = make([]MemoryBuffer, 0, maxlength/chunk_size)
 		mMap.max_length = maxlength
-		mMap.End_Of_File = -1
+		mMap.End_of_file = -1
 	}
 }
 
@@ -103,8 +103,8 @@ func (mMap *MemoryMap) WriteMemory(offset uint64, length uint64, data []byte) {
 		}
 	}
 
-	if mMap.End_Of_File < int64(offset+length-1) {
-		mMap.End_Of_File = int64(offset + length - 1)
+	if mMap.End_of_file < int64(offset+length-1) {
+		mMap.End_of_file = int64(offset + length - 1)
 	}
 }
 

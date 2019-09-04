@@ -75,7 +75,7 @@ func (v *Volume) maybeWriteSuperBlock() error {
 
 	mMap, exists := memory_map.FileMemoryMap[v.dataFile.Name()]
 	if exists {
-		if mMap.End_Of_File == -1 {
+		if mMap.End_of_file == -1 {
 			v.SuperBlock.version = needle.CurrentVersion
 			mMap.WriteMemory(0, uint64(len(v.SuperBlock.Bytes())), v.SuperBlock.Bytes())
 		}
