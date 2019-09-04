@@ -137,7 +137,7 @@ public class SeaweedFileSystemStore {
         if (source.isRoot()) {
             return;
         }
-        LOG.warn("rename lookupEntry source: {}", source);
+        LOG.warn("rename source: {} destination:{}", source, destination);
         FilerProto.Entry entry = lookupEntry(source);
         if (entry == null) {
             LOG.warn("rename non-existing source: {}", source);
@@ -171,10 +171,10 @@ public class SeaweedFileSystemStore {
                 entry = FilerProto.Entry.newBuilder();
                 entry.mergeFrom(existingEntry);
                 entry.getAttributesBuilder().setMtime(now);
+                LOG.debug("createFile merged entry path:{} entry:{} from:{}", path, entry, existingEntry);
+                writePosition = SeaweedRead.totalSize(existingEntry.getChunksList());
+                replication = existingEntry.getAttributes().getReplication();
             }
-            LOG.debug("createFile merged entry path:{} entry:{} from:{}", path, entry, existingEntry);
-            writePosition = SeaweedRead.totalSize(existingEntry.getChunksList());
-            replication = existingEntry.getAttributes().getReplication();
         }
         if (entry == null) {
             entry = FilerProto.Entry.newBuilder()
@@ -266,4 +266,5 @@ public class SeaweedFileSystemStore {
         filerClient.updateEntry(getParentDirectory(path), entryBuilder.build());
 
     }
+
 }
