@@ -148,6 +148,11 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 	if err != nil {
 		return nil, err
 	}
+	memoryMapMaxSizeMB, err := needle.ReadMemoryMapMaxSizeMB(r.FormValue("memorymapmaxsizemb"))
+	if err != nil {
+		return nil, err
+	}
+
 	preallocate := ms.preallocateSize
 	if r.FormValue("preallocate") != "" {
 		preallocate, err = strconv.ParseInt(r.FormValue("preallocate"), 10, 64)
@@ -156,13 +161,14 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 		}
 	}
 	volumeGrowOption := &topology.VolumeGrowOption{
-		Collection:       r.FormValue("collection"),
-		ReplicaPlacement: replicaPlacement,
-		Ttl:              ttl,
-		Prealloacte:      preallocate,
-		DataCenter:       r.FormValue("dataCenter"),
-		Rack:             r.FormValue("rack"),
-		DataNode:         r.FormValue("dataNode"),
+		Collection:         r.FormValue("collection"),
+		ReplicaPlacement:   replicaPlacement,
+		Ttl:                ttl,
+		Prealloacte:        preallocate,
+		DataCenter:         r.FormValue("dataCenter"),
+		Rack:               r.FormValue("rack"),
+		DataNode:           r.FormValue("dataNode"),
+		MemoryMapMaxSizeMB: memoryMapMaxSizeMB,
 	}
 	return volumeGrowOption, nil
 }

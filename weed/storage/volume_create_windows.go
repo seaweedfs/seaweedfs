@@ -12,12 +12,12 @@ import (
 	"github.com/joeslay/seaweedfs/weed/os_overloads"
 )
 
-func createVolumeFile(fileName string, preallocate int64, useMemoryMap bool) (*os.File, error) {
+func createVolumeFile(fileName string, preallocate int64, useMemoryMap uint32) (*os.File, error) {
 
 	mMap, exists := memory_map.FileMemoryMap[fileName]
 	if !exists {
-		file, e := os_overloads.OpenFile(fileName, windows.O_RDWR|windows.O_CREAT, 0644, useMemoryMap)
-		if useMemoryMap {
+		file, e := os_overloads.OpenFile(fileName, windows.O_RDWR|windows.O_CREAT, 0644, useMemoryMap > 0)
+		if useMemoryMap > 0 {
 			memory_map.FileMemoryMap[fileName] = new(memory_map.MemoryMap)
 
 			new_mMap := memory_map.FileMemoryMap[fileName]

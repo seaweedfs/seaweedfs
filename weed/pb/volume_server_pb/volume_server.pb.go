@@ -316,12 +316,12 @@ func (*DeleteCollectionResponse) ProtoMessage()               {}
 func (*DeleteCollectionResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{13} }
 
 type AllocateVolumeRequest struct {
-	VolumeId    uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
-	Collection  string `protobuf:"bytes,2,opt,name=collection" json:"collection,omitempty"`
-	Preallocate int64  `protobuf:"varint,3,opt,name=preallocate" json:"preallocate,omitempty"`
-	Replication string `protobuf:"bytes,4,opt,name=replication" json:"replication,omitempty"`
-	Ttl         string `protobuf:"bytes,5,opt,name=ttl" json:"ttl,omitempty"`
-	InMemory    bool   `protobuf:"varint,6,opt,name=inmemory" json:"inmemory,omitempty"`
+	VolumeId           uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	Collection         string `protobuf:"bytes,2,opt,name=collection" json:"collection,omitempty"`
+	Preallocate        int64  `protobuf:"varint,3,opt,name=preallocate" json:"preallocate,omitempty"`
+	Replication        string `protobuf:"bytes,4,opt,name=replication" json:"replication,omitempty"`
+	Ttl                string `protobuf:"bytes,5,opt,name=ttl" json:"ttl,omitempty"`
+	MemoryMapMaxSizeMB uint32 `protobuf:"varint,6,opt,name=memorymapmaxsizemb" json:"memorymapmaxsizemb,omitempty"`
 }
 
 func (m *AllocateVolumeRequest) Reset()                    { *m = AllocateVolumeRequest{} }
@@ -364,11 +364,11 @@ func (m *AllocateVolumeRequest) GetTtl() string {
 	return ""
 }
 
-func (m *AllocateVolumeRequest) GetInMemory() bool {
+func (m *AllocateVolumeRequest) GetMemoryMapMaxSizeMB() uint32 {
 	if m != nil {
-		return m.InMemory
+		return m.MemoryMapMaxSizeMB
 	}
-	return false
+	return 0
 }
 
 type AllocateVolumeResponse struct {
@@ -1978,6 +1978,19 @@ func _VolumeServer_DeleteCollection_Handler(srv interface{}, ctx context.Context
 
 func _VolumeServer_AllocateVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AllocateVolumeRequest)
+
+	if in.MemoryMapMaxSizeMB > 0 {
+		test := 6
+		test += 5
+	}
+	if in.MemoryMapMaxSizeMB == 77 {
+		test := 7
+		test += 656
+	}
+	if in.Ttl != "" {
+		test := 2345
+		test += 567
+	}
 	if err := dec(in); err != nil {
 		return nil, err
 	}
