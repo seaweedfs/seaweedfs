@@ -18,14 +18,14 @@ import (
 )
 
 type Volume struct {
-	Id            needle.VolumeId
-	dir           string
-	Collection    string
-	dataFile      *os.File
-	nm            NeedleMapper
-	needleMapKind NeedleMapType
-	readOnly      bool
-	MemoryMapped  uint32
+	Id                 needle.VolumeId
+	dir                string
+	Collection         string
+	dataFile           *os.File
+	nm                 NeedleMapper
+	needleMapKind      NeedleMapType
+	readOnly           bool
+	MemoryMapMaxSizeMB uint32
 
 	SuperBlock
 
@@ -39,9 +39,9 @@ type Volume struct {
 	isCompacting bool
 }
 
-func NewVolume(dirname string, collection string, id needle.VolumeId, needleMapKind NeedleMapType, replicaPlacement *ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapped uint32) (v *Volume, e error) {
+func NewVolume(dirname string, collection string, id needle.VolumeId, needleMapKind NeedleMapType, replicaPlacement *ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMB uint32) (v *Volume, e error) {
 	// if replicaPlacement is nil, the superblock will be loaded from disk
-	v = &Volume{dir: dirname, Collection: collection, Id: id, MemoryMapped: memoryMapped}
+	v = &Volume{dir: dirname, Collection: collection, Id: id, MemoryMapMaxSizeMB: memoryMapMaxSizeMB}
 	v.SuperBlock = SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
 	v.needleMapKind = needleMapKind
 	e = v.load(true, true, needleMapKind, preallocate)

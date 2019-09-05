@@ -23,7 +23,7 @@ func (v *Volume) garbageLevel() float64 {
 
 func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error {
 
-	if v.MemoryMapped > 0 { //it makes no sense to compact in memory
+	if v.MemoryMapMaxSizeMB > 0 { //it makes no sense to compact in memory
 		glog.V(3).Infof("Compacting volume %d ...", v.Id)
 		//no need to lock for copy on write
 		//v.accessLock.Lock()
@@ -46,7 +46,7 @@ func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error
 
 func (v *Volume) Compact2() error {
 
-	if v.MemoryMapped > 0 { //it makes no sense to compact in memory
+	if v.MemoryMapMaxSizeMB > 0 { //it makes no sense to compact in memory
 		glog.V(3).Infof("Compact2 volume %d ...", v.Id)
 
 		v.isCompacting = true
@@ -63,7 +63,7 @@ func (v *Volume) Compact2() error {
 }
 
 func (v *Volume) CommitCompact() error {
-	if v.MemoryMapped>0 { //it makes no sense to compact in memory
+	if v.MemoryMapMaxSizeMB > 0 { //it makes no sense to compact in memory
 		glog.V(0).Infof("Committing volume %d vacuuming...", v.Id)
 
 		v.isCompacting = true
@@ -311,7 +311,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 	var (
 		dst, idx *os.File
 	)
-	if dst, err = createVolumeFile(dstName, preallocate, v.MemoryMapped); err != nil {
+	if dst, err = createVolumeFile(dstName, preallocate, v.MemoryMapMaxSizeMB); err != nil {
 		return
 	}
 	defer dst.Close()
