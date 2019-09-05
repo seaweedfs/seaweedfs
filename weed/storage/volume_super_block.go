@@ -113,13 +113,13 @@ func ReadSuperBlock(dataFile *os.File) (superBlock SuperBlock, err error) {
 	header := make([]byte, _SuperBlockSize)
 	mMap, exists := memory_map.FileMemoryMap[dataFile.Name()]
 	if exists {
-		mem_buffer, e := mMap.ReadMemory(0, _SuperBlockSize)
+		mBuffer, e := mMap.ReadMemory(0, _SuperBlockSize)
 		if err != nil {
 			err = fmt.Errorf("cannot read volume %s super block: %v", dataFile.Name(), e)
 			return
 		}
-		copy(header, mem_buffer.Buffer)
-		mem_buffer.ReleaseMemory()
+		copy(header, mBuffer.Buffer)
+		mBuffer.ReleaseMemory()
 	} else {
 		if _, err = dataFile.Seek(0, 0); err != nil {
 			err = fmt.Errorf("cannot seek to the beginning of %s: %v", dataFile.Name(), err)

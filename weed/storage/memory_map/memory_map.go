@@ -33,10 +33,10 @@ func (mMap *MemoryMap) ReadMemory(offset uint64, length uint64) (MemoryBuffer, e
 	return MemoryBuffer{}, fmt.Errorf("Memory Map not implemented for this platform")
 }
 
-func (mem_buffer *MemoryBuffer) ReleaseMemory() {
+func (mBuffer *MemoryBuffer) ReleaseMemory() {
 
 }
 
-func (mMap *MemoryMap) DeleteFileAndMemoryMap() {
+func (mBuffer *MemoryMap) DeleteFileAndMemoryMap() {
 
 }

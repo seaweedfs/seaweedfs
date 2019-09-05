@@ -119,29 +119,29 @@ func (mMap *MemoryMap) ReadMemory(offset uint64, length uint64) (MemoryBuffer, e
 	return allocate(windows.Handle(mMap.file_memory_map_handle), offset, length, false)
 }
 
-func (mem_buffer *MemoryBuffer) ReleaseMemory() {
-	windows.UnmapViewOfFile(mem_buffer.aligned_ptr)
+func (mBuffer *MemoryBuffer) ReleaseMemory() {
+	windows.UnmapViewOfFile(mBuffer.aligned_ptr)
 
-	mem_buffer.ptr = 0
-	mem_buffer.aligned_ptr = 0
-	mem_buffer.length = 0
-	mem_buffer.aligned_length = 0
-	mem_buffer.Buffer = nil
+	mBuffer.ptr = 0
+	mBuffer.aligned_ptr = 0
+	mBuffer.length = 0
+	mBuffer.aligned_length = 0
+	mBuffer.Buffer = nil
 }
 
 func allocateChunk(mMap *MemoryMap) {
 
 	start := uint64(len(mMap.write_map_views)) * chunk_size
-	mem_buffer, err := allocate(windows.Handle(mMap.file_memory_map_handle), start, chunk_size, true)
+	mBuffer, err := allocate(windows.Handle(mMap.file_memory_map_handle), start, chunk_size, true)
 
 	if err == nil {
-		mMap.write_map_views = append(mMap.write_map_views, mem_buffer)
+		mMap.write_map_views = append(mMap.write_map_views, mBuffer)
 	}
 }
 
 func allocate(hMapFile windows.Handle, offset uint64, length uint64, write bool) (MemoryBuffer, error) {
 
-	mem_buffer := MemoryBuffer{}
+	mBuffer := MemoryBuffer{}
 
 	dwSysGran := system_info.dwAllocationGranularity
 
@@ -165,20 +165,20 @@ func allocate(hMapFile windows.Handle, offset uint64, length uint64, write bool)
 		uintptr(aligned_length))
 
 	if addr_ptr == 0 {
-		return mem_buffer, errno
+		return mBuffer, errno
 	}
 
-	mem_buffer.aligned_ptr = addr_ptr
-	mem_buffer.aligned_length = aligned_length
-	mem_buffer.ptr = addr_ptr + uintptr(diff)
-	mem_buffer.length = length
+	mBuffer.aligned_ptr = addr_ptr
+	mBuffer.aligned_length = aligned_length
+	mBuffer.ptr = addr_ptr + uintptr(diff)
+	mBuffer.length = length
 
-	slice_header := (*reflect.SliceHeader)(unsafe.Pointer(&mem_buffer.Buffer))
+	slice_header := (*reflect.SliceHeader)(unsafe.Pointer(&mBuffer.Buffer))
 	slice_header.Data = addr_ptr + uintptr(diff)
 	slice_header.Len = int(length)
 	slice_header.Cap = int(length)
 
-	return mem_buffer, nil
+	return mBuffer, nil
 }
 
 // typedef struct _SYSTEM_INFO {

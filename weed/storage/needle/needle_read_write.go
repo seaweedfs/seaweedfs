@@ -291,9 +291,9 @@ func ReadNeedleHeader(r *os.File, version Version, offset int64) (n *Needle, byt
 
 		mMap, exists := memory_map.FileMemoryMap[r.Name()]
 		if exists {
-			mem_buffer, err := mMap.ReadMemory(uint64(offset), NeedleHeaderSize)
-			copy(bytes, mem_buffer.Buffer)
-			mem_buffer.ReleaseMemory()
+			mBuffer, err := mMap.ReadMemory(uint64(offset), NeedleHeaderSize)
+			copy(bytes, mBuffer.Buffer)
+			mBuffer.ReleaseMemory()
 
 			if err != nil {
 				return nil, bytes, 0, err
