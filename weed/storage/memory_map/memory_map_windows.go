@@ -38,19 +38,26 @@ var (
 
 var system_info, err = getSystemInfo()
 
-var chunk_size = uint64(system_info.dwAllocationGranularity) * 512
+var chunk_size = uint64(system_info.dwAllocationGranularity) * 256
 
 func (mMap *MemoryMap) CreateMemoryMap(file *os.File, maxlength uint64) {
 
-	maxlength_high := uint32(maxlength >> 32)
-	maxlength_low := uint32(maxlength & 0xFFFFFFFF)
+	chunks := (maxlength / chunk_size)
+	if chunks*chunk_size < maxlength {
+		chunks = chunks + 1
+	}
+
+	alignedMaxLength := chunks * chunk_size
+
+	maxlength_high := uint32(alignedMaxLength >> 32)
+	maxlength_low := uint32(alignedMaxLength & 0xFFFFFFFF)
 	file_memory_map_handle, err := windows.CreateFileMapping(windows.Handle(file.Fd()), nil, windows.PAGE_READWRITE, maxlength_high, maxlength_low, nil)
 
 	if err == nil {
 		mMap.File = file
 		mMap.file_memory_map_handle = uintptr(file_memory_map_handle)
-		mMap.write_map_views = make([]MemoryBuffer, 0, maxlength/chunk_size)
-		mMap.max_length = maxlength
+		mMap.write_map_views = make([]MemoryBuffer, 0, alignedMaxLength/chunk_size)
+		mMap.max_length = alignedMaxLength
 		mMap.End_of_file = -1
 	}
 }
