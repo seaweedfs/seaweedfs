@@ -1979,18 +1979,6 @@ func _VolumeServer_DeleteCollection_Handler(srv interface{}, ctx context.Context
 func _VolumeServer_AllocateVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AllocateVolumeRequest)
 
-	if in.MemoryMapMaxSizeMB > 0 {
-		test := 6
-		test += 5
-	}
-	if in.MemoryMapMaxSizeMB == 77 {
-		test := 7
-		test += 656
-	}
-	if in.Ttl != "" {
-		test := 2345
-		test += 567
-	}
 	if err := dec(in); err != nil {
 		return nil, err
 	}
