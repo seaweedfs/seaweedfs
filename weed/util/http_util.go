@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
 
 var (
@@ -25,7 +24,6 @@ func init() {
 	}
 	client = &http.Client{
 		Transport: Transport,
-		Timeout:   5 * time.Second,
 	}
 }
 
