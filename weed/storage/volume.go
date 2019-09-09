@@ -89,48 +89,72 @@ func (v *Volume) FileStat() (datSize uint64, idxSize uint64, modTime time.Time) 
 func (v *Volume) ContentSize() uint64 {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+	if v.nm == nil {
+		return 0
+	}
 	return v.nm.ContentSize()
 }
 
 func (v *Volume) DeletedSize() uint64 {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+	if v.nm == nil {
+		return 0
+	}
 	return v.nm.DeletedSize()
 }
 
 func (v *Volume) FileCount() uint64 {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+	if v.nm == nil {
+		return 0
+	}
 	return uint64(v.nm.FileCount())
 }
 
 func (v *Volume) DeletedCount() uint64 {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+	if v.nm == nil {
+		return 0
+	}
 	return uint64(v.nm.DeletedCount())
 }
 
 func (v *Volume) MaxFileKey() types.NeedleId {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+	if v.nm == nil {
+		return 0
+	}
 	return v.nm.MaxFileKey()
 }
 
 func (v *Volume) IndexFileSize() uint64 {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+	if v.nm == nil {
+		return 0
+	}
 	return v.nm.IndexFileSize()
 }
 
 func (v *Volume) IndexFileContent() ([]byte, error) {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+	if v.nm == nil {
+		return nil, nil
+	}
 	return v.nm.IndexFileContent()
 }
 
 func (v *Volume) IndexFileName() string {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+	if v.nm == nil {
+		return ""
+	}
 	return v.nm.IndexFileName()
 }
 
