@@ -140,24 +140,6 @@ func (v *Volume) IndexFileSize() uint64 {
 	return v.nm.IndexFileSize()
 }
 
-func (v *Volume) IndexFileContent() ([]byte, error) {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
-	if v.nm == nil {
-		return nil, nil
-	}
-	return v.nm.IndexFileContent()
-}
-
-func (v *Volume) IndexFileName() string {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
-	if v.nm == nil {
-		return ""
-	}
-	return v.nm.IndexFileName()
-}
-
 // Close cleanly shuts down this volume
 func (v *Volume) Close() {
 	v.dataFileAccessLock.Lock()
