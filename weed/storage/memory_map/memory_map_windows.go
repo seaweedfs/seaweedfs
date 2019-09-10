@@ -5,7 +5,6 @@ package memory_map
 import (
 	"os"
 	"reflect"
-	"runtime"
 	"syscall"
 	"unsafe"
 
@@ -68,7 +67,6 @@ func (mMap *MemoryMap) CreateMemoryMap(file *os.File, maxLength uint64) {
 		mMap.write_map_views = make([]MemoryBuffer, 0, alignedMaxLength/chunkSize)
 		mMap.max_length = alignedMaxLength
 		mMap.End_of_file = -1
-		runtime.SetFinalizer(mMap, mMap.DeleteFileAndMemoryMap)
 	}
 }
 
