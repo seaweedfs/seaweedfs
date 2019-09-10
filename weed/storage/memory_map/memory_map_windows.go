@@ -5,6 +5,7 @@ package memory_map
 import (
 	"os"
 	"reflect"
+	"runtime"
 	"syscall"
 	"unsafe"
 
@@ -33,32 +34,41 @@ type DWORD = uint32
 type WORD = uint16
 
 var (
-	procGetSystemInfo = syscall.NewLazyDLL("kernel32.dll").NewProc("GetSystemInfo")
+	modkernel32 = syscall.NewLazyDLL("kernel32.dll")
+
+	procGetSystemInfo            = modkernel32.NewProc("GetSystemInfo")
+	procGetProcessWorkingSetSize = modkernel32.NewProc("GetProcessWorkingSetSize")
+	procSetProcessWorkingSetSize = modkernel32.NewProc("SetProcessWorkingSetSize")
 )
 
-var system_info, err = getSystemInfo()
+var currentProcess, _ = windows.GetCurrentProcess()
+var currentMinWorkingSet uint64 = 0
+var currentMaxWorkingSet uint64 = 0
+var _ = getProcessWorkingSetSize(uintptr(currentProcess), &currentMinWorkingSet, &currentMaxWorkingSet)
 
-var chunk_size = uint64(system_info.dwAllocationGranularity) * 256
+var systemInfo, _ = getSystemInfo()
+var chunkSize = uint64(systemInfo.dwAllocationGranularity) * 256
 
-func (mMap *MemoryMap) CreateMemoryMap(file *os.File, maxlength uint64) {
+func (mMap *MemoryMap) CreateMemoryMap(file *os.File, maxLength uint64) {
 
-	chunks := (maxlength / chunk_size)
-	if chunks*chunk_size < maxlength {
+	chunks := (maxLength / chunkSize)
+	if chunks*chunkSize < maxLength {
 		chunks = chunks + 1
 	}
 
-	alignedMaxLength := chunks * chunk_size
+	alignedMaxLength := chunks * chunkSize
 
-	maxlength_high := uint32(alignedMaxLength >> 32)
-	maxlength_low := uint32(alignedMaxLength & 0xFFFFFFFF)
-	file_memory_map_handle, err := windows.CreateFileMapping(windows.Handle(file.Fd()), nil, windows.PAGE_READWRITE, maxlength_high, maxlength_low, nil)
+	maxLength_high := uint32(alignedMaxLength >> 32)
+	maxLength_low := uint32(alignedMaxLength & 0xFFFFFFFF)
+	file_memory_map_handle, err := windows.CreateFileMapping(windows.Handle(file.Fd()), nil, windows.PAGE_READWRITE, maxLength_high, maxLength_low, nil)
 
 	if err == nil {
 		mMap.File = file
 		mMap.file_memory_map_handle = uintptr(file_memory_map_handle)
-		mMap.write_map_views = make([]MemoryBuffer, 0, alignedMaxLength/chunk_size)
+		mMap.write_map_views = make([]MemoryBuffer, 0, alignedMaxLength/chunkSize)
 		mMap.max_length = alignedMaxLength
 		mMap.End_of_file = -1
+		runtime.SetFinalizer(mMap, mMap.DeleteFileAndMemoryMap)
 	}
 }
 
@@ -84,7 +94,7 @@ func min(x, y uint64) uint64 {
 func (mMap *MemoryMap) WriteMemory(offset uint64, length uint64, data []byte) {
 
 	for {
-		if ((offset+length)/chunk_size)+1 > uint64(len(mMap.write_map_views)) {
+		if ((offset+length)/chunkSize)+1 > uint64(len(mMap.write_map_views)) {
 			allocateChunk(mMap)
 		} else {
 			break
@@ -92,19 +102,19 @@ func (mMap *MemoryMap) WriteMemory(offset uint64, length uint64, data []byte) {
 	}
 
 	remaining_length := length
-	slice_index := offset / chunk_size
-	slice_offset := offset - (slice_index * chunk_size)
-	data_offset := uint64(0)
+	sliceIndex := offset / chunkSize
+	sliceOffset := offset - (sliceIndex * chunkSize)
+	dataOffset := uint64(0)
 
 	for {
-		write_end := min((remaining_length + slice_offset), chunk_size)
-		copy(mMap.write_map_views[slice_index].Buffer[slice_offset:write_end], data[data_offset:])
-		remaining_length -= (write_end - slice_offset)
-		data_offset += (write_end - slice_offset)
+		writeEnd := min((remaining_length + sliceOffset), chunkSize)
+		copy(mMap.write_map_views[sliceIndex].Buffer[sliceOffset:writeEnd], data[dataOffset:])
+		remaining_length -= (writeEnd - sliceOffset)
+		dataOffset += (writeEnd - sliceOffset)
 
 		if remaining_length > 0 {
-			slice_index += 1
-			slice_offset = 0
+			sliceIndex += 1
+			sliceOffset = 0
 		} else {
 			break
 		}
@@ -120,7 +130,14 @@ func (mMap *MemoryMap) ReadMemory(offset uint64, length uint64) (MemoryBuffer, e
 }
 
 func (mBuffer *MemoryBuffer) ReleaseMemory() {
+
+	currentMinWorkingSet = currentMinWorkingSet - mBuffer.aligned_length
+	currentMaxWorkingSet = currentMaxWorkingSet - mBuffer.aligned_length
+
+	windows.VirtualUnlock(mBuffer.aligned_ptr, uintptr(mBuffer.aligned_length))
 	windows.UnmapViewOfFile(mBuffer.aligned_ptr)
+
+	var _ = setProcessWorkingSetSize(uintptr(currentProcess), uintptr(currentMinWorkingSet), uintptr(currentMaxWorkingSet))
 
 	mBuffer.ptr = 0
 	mBuffer.aligned_ptr = 0
@@ -131,11 +148,12 @@ func (mBuffer *MemoryBuffer) ReleaseMemory() {
 
 func allocateChunk(mMap *MemoryMap) {
 
-	start := uint64(len(mMap.write_map_views)) * chunk_size
-	mBuffer, err := allocate(windows.Handle(mMap.file_memory_map_handle), start, chunk_size, true)
+	start := uint64(len(mMap.write_map_views)) * chunkSize
+	mBuffer, err := allocate(windows.Handle(mMap.file_memory_map_handle), start, chunkSize, true)
 
 	if err == nil {
 		mMap.write_map_views = append(mMap.write_map_views, mBuffer)
+		windows.VirtualLock(mBuffer.aligned_ptr, uintptr(mBuffer.aligned_length))
 	}
 }
 
@@ -143,7 +161,7 @@ func allocate(hMapFile windows.Handle, offset uint64, length uint64, write bool)
 
 	mBuffer := MemoryBuffer{}
 
-	dwSysGran := system_info.dwAllocationGranularity
+	dwSysGran := systemInfo.dwAllocationGranularity
 
 	start := (offset / uint64(dwSysGran)) * uint64(dwSysGran)
 	diff := offset - start
@@ -157,6 +175,11 @@ func allocate(hMapFile windows.Handle, offset uint64, length uint64, write bool)
 	if write {
 		access = windows.FILE_MAP_WRITE
 	}
+
+	currentMinWorkingSet = currentMinWorkingSet + aligned_length
+	currentMaxWorkingSet = currentMaxWorkingSet + aligned_length
+
+	var _ = setProcessWorkingSetSize(uintptr(currentProcess), uintptr(currentMinWorkingSet), uintptr(currentMaxWorkingSet))
 
 	addr_ptr, errno := windows.MapViewOfFile(hMapFile,
 		uint32(access), // read/write permission
@@ -226,4 +249,36 @@ func getSystemInfo() (_SYSTEM_INFO, error) {
 		return si, err
 	}
 	return si, nil
+}
+
+// BOOL GetProcessWorkingSetSize(
+//   HANDLE  hProcess,
+//   PSIZE_T lpMinimumWorkingSetSize,
+//   PSIZE_T lpMaximumWorkingSetSize
+// );
+
+func getProcessWorkingSetSize(process uintptr, dwMinWorkingSet *uint64, dwMaxWorkingSet *uint64) error {
+	r1, _, err := syscall.Syscall(procGetProcessWorkingSetSize.Addr(), 3, process, uintptr(unsafe.Pointer(dwMinWorkingSet)), uintptr(unsafe.Pointer(dwMaxWorkingSet)))
+	if r1 == 0 {
+		if err != syscall.Errno(0) {
+			return err
+		}
+	}
+	return nil
+}
+
+// BOOL SetProcessWorkingSetSize(
+//   HANDLE hProcess,
+//   SIZE_T dwMinimumWorkingSetSize,
+//   SIZE_T dwMaximumWorkingSetSize
+// );
+
+func setProcessWorkingSetSize(process uintptr, dwMinWorkingSet uintptr, dwMaxWorkingSet uintptr) error {
+	r1, _, err := syscall.Syscall(procSetProcessWorkingSetSize.Addr(), 3, process, (dwMinWorkingSet), (dwMaxWorkingSet))
+	if r1 == 0 {
+		if err != syscall.Errno(0) {
+			return err
+		}
+	}
+	return nil
 }
