@@ -40,10 +40,6 @@ func (v *Volume) isFileUnchanged(n *needle.Needle) bool {
 
 // Destroy removes everything related to this volume
 func (v *Volume) Destroy() (err error) {
-	if v.readOnly {
-		err = fmt.Errorf("%s is read-only", v.dataFile.Name())
-		return
-	}
 	if v.isCompacting {
 		err = fmt.Errorf("volume %d is compacting", v.Id)
 		return
