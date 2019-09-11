@@ -71,6 +71,8 @@ func (mMap *MemoryMap) CreateMemoryMap(file *os.File, maxLength uint64) {
 }
 
 func (mMap *MemoryMap) DeleteFileAndMemoryMap() {
+	//First we close the file handles first to delete the file,
+	//Then we unmap the memory to ensure the unmapping process doesn't write the data to disk
 	windows.CloseHandle(windows.Handle(mMap.file_memory_map_handle))
 	windows.CloseHandle(windows.Handle(mMap.File.Fd()))
 
@@ -145,7 +147,6 @@ func (mBuffer *MemoryBuffer) ReleaseMemory() {
 }
 
 func allocateChunk(mMap *MemoryMap) {
-
 	start := uint64(len(mMap.write_map_views)) * chunkSize
 	mBuffer, err := allocate(windows.Handle(mMap.file_memory_map_handle), start, chunkSize, true)
 
@@ -159,6 +160,7 @@ func allocate(hMapFile windows.Handle, offset uint64, length uint64, write bool)
 
 	mBuffer := MemoryBuffer{}
 
+	//align memory allocations to the minium virtal memory allocation size
 	dwSysGran := systemInfo.dwAllocationGranularity
 
 	start := (offset / uint64(dwSysGran)) * uint64(dwSysGran)
@@ -177,6 +179,8 @@ func allocate(hMapFile windows.Handle, offset uint64, length uint64, write bool)
 	currentMinWorkingSet = currentMinWorkingSet + aligned_length
 	currentMaxWorkingSet = currentMaxWorkingSet + aligned_length
 
+	// increase the process working set size to hint to windows memory manager to
+	// prioritise keeping this memory mapped in physical memory over other standby memory
 	var _ = setProcessWorkingSetSize(uintptr(currentProcess), uintptr(currentMinWorkingSet), uintptr(currentMaxWorkingSet))
 
 	addr_ptr, errno := windows.MapViewOfFile(hMapFile,
@@ -254,6 +258,7 @@ func getSystemInfo() (_SYSTEM_INFO, error) {
 //   PSIZE_T lpMinimumWorkingSetSize,
 //   PSIZE_T lpMaximumWorkingSetSize
 // );
+// https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getprocessworkingsetsize
 
 func getProcessWorkingSetSize(process uintptr, dwMinWorkingSet *uint64, dwMaxWorkingSet *uint64) error {
 	r1, _, err := syscall.Syscall(procGetProcessWorkingSetSize.Addr(), 3, process, uintptr(unsafe.Pointer(dwMinWorkingSet)), uintptr(unsafe.Pointer(dwMaxWorkingSet)))
@@ -270,6 +275,7 @@ func getProcessWorkingSetSize(process uintptr, dwMinWorkingSet *uint64, dwMaxWor
 //   SIZE_T dwMinimumWorkingSetSize,
 //   SIZE_T dwMaximumWorkingSetSize
 // );
+// https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setprocessworkingsetsize
 
 func setProcessWorkingSetSize(process uintptr, dwMinWorkingSet uintptr, dwMaxWorkingSet uintptr) error {
 	r1, _, err := syscall.Syscall(procSetProcessWorkingSetSize.Addr(), 3, process, (dwMinWorkingSet), (dwMaxWorkingSet))
