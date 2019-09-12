@@ -70,7 +70,7 @@ public class FilerClient {
 
     }
 
-    public boolean rm(String path, boolean isRecursive) {
+    public boolean rm(String path, boolean isRecursive, boolean ignoreRecusiveError) {
 
         Path pathObject = Paths.get(path);
         String parent = pathObject.getParent().toString();
@@ -80,7 +80,8 @@ public class FilerClient {
                 parent,
                 name,
                 true,
-                isRecursive);
+                isRecursive,
+                ignoreRecusiveError);
     }
 
     public boolean touch(String path, int mode) {
@@ -229,13 +230,14 @@ public class FilerClient {
         return true;
     }
 
-    public boolean deleteEntry(String parent, String entryName, boolean isDeleteFileChunk, boolean isRecursive) {
+    public boolean deleteEntry(String parent, String entryName, boolean isDeleteFileChunk, boolean isRecursive, boolean ignoreRecusiveError) {
         try {
             filerGrpcClient.getBlockingStub().deleteEntry(FilerProto.DeleteEntryRequest.newBuilder()
                     .setDirectory(parent)
                     .setName(entryName)
                     .setIsDeleteData(isDeleteFileChunk)
                     .setIsRecursive(isRecursive)
+                    .setIgnoreRecursiveError(ignoreRecusiveError)
                     .build());
         } catch (Exception e) {
             LOG.warn("deleteEntry {}/{}: {}", parent, entryName, e);

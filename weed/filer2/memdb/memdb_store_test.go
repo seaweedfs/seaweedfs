@@ -139,7 +139,7 @@ func TestCreateFileAndList(t *testing.T) {
 	}
 
 	// delete file and count
-	filer.DeleteEntryMetaAndData(ctx, file3Path, false, false)
+	filer.DeleteEntryMetaAndData(ctx, file3Path, false, false, false)
 	entries, _ = filer.ListDirectoryEntries(ctx, filer2.FullPath("/home/chris/this/is"), "", false, 100)
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))

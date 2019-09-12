@@ -106,7 +106,7 @@ public class SeaweedFileSystemStore {
             }
         }
 
-        return filerClient.deleteEntry(getParentDirectory(path), path.getName(), true, recursive);
+        return filerClient.deleteEntry(getParentDirectory(path), path.getName(), true, recursive, true);
     }
 
     private FileStatus doGetFileStatus(Path path, FilerProto.Entry entry) {
