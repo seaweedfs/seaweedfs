@@ -141,6 +141,7 @@ message DeleteEntryRequest {
     // bool is_directory = 3;
     bool is_delete_data = 4;
     bool is_recursive = 5;
+    bool ignore_recursive_error = 6;
 }
 
 message DeleteEntryResponse {

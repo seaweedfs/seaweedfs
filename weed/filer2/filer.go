@@ -203,7 +203,7 @@ func (f *Filer) FindEntry(ctx context.Context, p FullPath) (entry *Entry, err er
 	return f.store.FindEntry(ctx, p)
 }
 
-func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p FullPath, isRecursive bool, shouldDeleteChunks bool) (err error) {
+func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p FullPath, isRecursive bool, ignoreRecursiveError, shouldDeleteChunks bool) (err error) {
 	entry, err := f.FindEntry(ctx, p)
 	if err != nil {
 		return err
@@ -230,8 +230,8 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p FullPath, isRecurs
 			if isRecursive {
 				for _, sub := range entries {
 					lastFileName = sub.Name()
-					err = f.DeleteEntryMetaAndData(ctx, sub.FullPath, isRecursive, shouldDeleteChunks)
-					if err != nil {
+					err = f.DeleteEntryMetaAndData(ctx, sub.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks)
+					if err != nil && !ignoreRecursiveError {
 						return err
 					}
 					limit--
