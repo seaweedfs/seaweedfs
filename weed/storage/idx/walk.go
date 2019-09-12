@@ -4,9 +4,9 @@ import (
 	"io"
 	"os"
 
-	"github.com/joeslay/seaweedfs/weed/glog"
-	"github.com/joeslay/seaweedfs/weed/storage/types"
-	"github.com/joeslay/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 // walks through the index file, calls fn function with each key, offset, size

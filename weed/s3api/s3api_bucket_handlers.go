@@ -11,8 +11,8 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/joeslay/seaweedfs/weed/glog"
-	"github.com/joeslay/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/gorilla/mux"
 )
 

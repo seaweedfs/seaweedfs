@@ -6,10 +6,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/joeslay/seaweedfs/weed/operation"
-	"github.com/joeslay/seaweedfs/weed/security"
-	"github.com/joeslay/seaweedfs/weed/stats"
-	"github.com/joeslay/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 func (ms *MasterServer) lookupVolumeId(vids []string, collection string) (volumeLocations map[string]operation.LookupResult) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"google.golang.org/grpc"
 
-	"github.com/joeslay/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 )
 
 func Statistics(server string, grpcDialOption grpc.DialOption, req *master_pb.StatisticsRequest) (resp *master_pb.StatisticsResponse, err error) {

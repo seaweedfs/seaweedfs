@@ -11,12 +11,12 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
-	"github.com/joeslay/seaweedfs/weed/filer2"
-	"github.com/joeslay/seaweedfs/weed/glog"
-	"github.com/joeslay/seaweedfs/weed/pb/filer_pb"
-	"github.com/joeslay/seaweedfs/weed/replication/sink"
-	"github.com/joeslay/seaweedfs/weed/replication/source"
-	"github.com/joeslay/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/replication/sink"
+	"github.com/chrislusf/seaweedfs/weed/replication/source"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type S3Sink struct {

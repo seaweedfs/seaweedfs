@@ -5,13 +5,13 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/joeslay/seaweedfs/weed/storage/idx"
+	"github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
-	"github.com/joeslay/seaweedfs/weed/glog"
-	"github.com/joeslay/seaweedfs/weed/storage/needle_map"
-	. "github.com/joeslay/seaweedfs/weed/storage/types"
-	"github.com/joeslay/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/syndtr/goleveldb/leveldb"
 )
 

@@ -6,7 +6,7 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/joeslay/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 func createVolumeFile(fileName string, preallocate int64, useMemoryMap uint32) (file *os.File, e error) {

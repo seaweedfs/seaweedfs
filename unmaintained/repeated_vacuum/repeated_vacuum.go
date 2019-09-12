@@ -7,11 +7,11 @@ import (
 	"log"
 	"math/rand"
 
-	"github.com/joeslay/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/spf13/viper"
 
-	"github.com/joeslay/seaweedfs/weed/operation"
-	"github.com/joeslay/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 var (

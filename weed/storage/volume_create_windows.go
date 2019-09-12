@@ -5,11 +5,11 @@ package storage
 import (
 	"os"
 
-	"github.com/joeslay/seaweedfs/weed/storage/memory_map"
+	"github.com/chrislusf/seaweedfs/weed/storage/memory_map"
 	"golang.org/x/sys/windows"
 
-	"github.com/joeslay/seaweedfs/weed/glog"
-	"github.com/joeslay/seaweedfs/weed/os_overloads"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/os_overloads"
 )
 
 func createVolumeFile(fileName string, preallocate int64, memoryMapSizeMB uint32) (*os.File, error) {

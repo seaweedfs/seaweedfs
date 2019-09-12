@@ -8,9 +8,9 @@ import (
 	"io"
 	"os"
 
-	"github.com/joeslay/seaweedfs/weed/filer2"
-	"github.com/joeslay/seaweedfs/weed/glog"
-	weed_util "github.com/joeslay/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	weed_util "github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"

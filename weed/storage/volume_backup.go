@@ -6,11 +6,11 @@ import (
 	"io"
 	"os"
 
-	"github.com/joeslay/seaweedfs/weed/operation"
-	"github.com/joeslay/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/joeslay/seaweedfs/weed/storage/idx"
-	"github.com/joeslay/seaweedfs/weed/storage/needle"
-	. "github.com/joeslay/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/idx"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"google.golang.org/grpc"
 )
 

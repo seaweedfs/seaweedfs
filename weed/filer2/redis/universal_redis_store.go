@@ -3,8 +3,8 @@ package redis
 import (
 	"context"
 	"fmt"
-	"github.com/joeslay/seaweedfs/weed/filer2"
-	"github.com/joeslay/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/go-redis/redis"
 	"sort"
 	"strings"

@@ -11,13 +11,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joeslay/seaweedfs/weed/filer2"
-	"github.com/joeslay/seaweedfs/weed/glog"
-	"github.com/joeslay/seaweedfs/weed/operation"
-	"github.com/joeslay/seaweedfs/weed/pb/filer_pb"
-	"github.com/joeslay/seaweedfs/weed/security"
-	"github.com/joeslay/seaweedfs/weed/stats"
-	"github.com/joeslay/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request,

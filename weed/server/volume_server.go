@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/joeslay/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"google.golang.org/grpc"
 
-	"github.com/joeslay/seaweedfs/weed/glog"
-	"github.com/joeslay/seaweedfs/weed/security"
-	"github.com/joeslay/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/spf13/viper"
 )
 

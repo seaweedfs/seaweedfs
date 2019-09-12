@@ -1,7 +1,7 @@
 package filer_pb
 
 import (
-	"github.com/joeslay/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 func toFileIdObject(fileIdStr string) (*FileId, error) {

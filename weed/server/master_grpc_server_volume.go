@@ -5,11 +5,11 @@ import (
 	"fmt"
 
 	"github.com/chrislusf/raft"
-	"github.com/joeslay/seaweedfs/weed/pb/master_pb"
-	"github.com/joeslay/seaweedfs/weed/security"
-	"github.com/joeslay/seaweedfs/weed/storage"
-	"github.com/joeslay/seaweedfs/weed/storage/needle"
-	"github.com/joeslay/seaweedfs/weed/topology"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/topology"
 )
 
 func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupVolumeRequest) (*master_pb.LookupVolumeResponse, error) {

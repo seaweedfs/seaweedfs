@@ -1,9 +1,9 @@
 package command
 
 import (
-	"github.com/joeslay/seaweedfs/weed/security"
-	"github.com/joeslay/seaweedfs/weed/shell"
-	"github.com/joeslay/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/shell"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/spf13/viper"
 )
 

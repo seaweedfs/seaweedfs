@@ -7,7 +7,7 @@ import (
 	"io/ioutil"
 	"strings"
 
-	"github.com/joeslay/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"golang.org/x/tools/godoc/util"
 )
 

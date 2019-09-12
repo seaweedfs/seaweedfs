@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joeslay/seaweedfs/weed/glog"
-	"github.com/joeslay/seaweedfs/weed/wdclient"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"github.com/karlseguin/ccache"
 )
 

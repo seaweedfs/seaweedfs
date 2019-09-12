@@ -7,9 +7,9 @@ import (
 	"path"
 	"strconv"
 
-	"github.com/joeslay/seaweedfs/weed/glog"
-	"github.com/joeslay/seaweedfs/weed/storage/idx"
-	"github.com/joeslay/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/storage/idx"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 var (

@@ -4,9 +4,9 @@ import (
 	"net/http"
 
 	"github.com/chrislusf/raft"
-	ui "github.com/joeslay/seaweedfs/weed/server/master_ui"
-	"github.com/joeslay/seaweedfs/weed/stats"
-	"github.com/joeslay/seaweedfs/weed/util"
+	ui "github.com/chrislusf/seaweedfs/weed/server/master_ui"
+	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) {

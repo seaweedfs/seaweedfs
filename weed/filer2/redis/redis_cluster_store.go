@@ -1,8 +1,8 @@
 package redis
 
 import (
-	"github.com/joeslay/seaweedfs/weed/filer2"
-	"github.com/joeslay/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/go-redis/redis"
 )
 

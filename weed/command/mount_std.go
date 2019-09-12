@@ -12,13 +12,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joeslay/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/jacobsa/daemonize"
 	"github.com/spf13/viper"
 
-	"github.com/joeslay/seaweedfs/weed/filesys"
-	"github.com/joeslay/seaweedfs/weed/glog"
-	"github.com/joeslay/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/filesys"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
 )

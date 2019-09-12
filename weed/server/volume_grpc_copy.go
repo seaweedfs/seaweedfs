@@ -9,13 +9,13 @@ import (
 	"path"
 	"time"
 
-	"github.com/joeslay/seaweedfs/weed/glog"
-	"github.com/joeslay/seaweedfs/weed/operation"
-	"github.com/joeslay/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/joeslay/seaweedfs/weed/storage"
-	"github.com/joeslay/seaweedfs/weed/storage/erasure_coding"
-	"github.com/joeslay/seaweedfs/weed/storage/needle"
-	"github.com/joeslay/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 const BufferSizeLimit = 1024 * 1024 * 2

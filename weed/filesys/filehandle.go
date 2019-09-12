@@ -7,9 +7,9 @@ import (
 	"path"
 	"time"
 
-	"github.com/joeslay/seaweedfs/weed/filer2"
-	"github.com/joeslay/seaweedfs/weed/glog"
-	"github.com/joeslay/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"

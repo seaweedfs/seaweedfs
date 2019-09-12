@@ -7,8 +7,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/joeslay/seaweedfs/weed/storage/needle_map"
-	"github.com/joeslay/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/klauspost/reedsolomon"
 )
 

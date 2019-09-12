@@ -4,7 +4,7 @@ import (
 	"sort"
 	"sync"
 
-	. "github.com/joeslay/seaweedfs/weed/storage/types"
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 const (

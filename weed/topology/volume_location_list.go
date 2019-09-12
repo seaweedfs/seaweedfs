@@ -3,7 +3,7 @@ package topology
 import (
 	"fmt"
 
-	"github.com/joeslay/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 type VolumeLocationList struct {

@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/joeslay/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 var (

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"os"
 
-	"github.com/joeslay/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 func TestFolderWritable(folder string) (err error) {
