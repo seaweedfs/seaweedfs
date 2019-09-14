@@ -3,11 +3,11 @@ package wdclient
 import (
 	"errors"
 	"fmt"
-	"math/rand"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
+	"sync/atomic"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
@@ -20,14 +20,25 @@ type Location struct {
 type vidMap struct {
 	sync.RWMutex
 	vid2Locations map[uint32][]Location
-	r             *rand.Rand
+
+	cursor int64
 }
 
 func newVidMap() vidMap {
 	return vidMap{
 		vid2Locations: make(map[uint32][]Location),
-		r:             rand.New(rand.NewSource(time.Now().UnixNano())),
+		cursor:        -1,
 	}
+}
+
+func (vc *vidMap) getLocationIndex(length int64) (int64, error) {
+	if length <= 0 {
+		return 0, fmt.Errorf("invalid length: %d", length)
+	}
+	if atomic.LoadInt64(&vc.cursor) == math.MaxInt64 {
+		atomic.CompareAndSwapInt64(&vc.cursor, math.MaxInt64, -1)
+	}
+	return atomic.AddInt64(&vc.cursor, 1) % length, nil
 }
 
 func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrl string, err error) {
@@ -94,7 +105,12 @@ func (vc *vidMap) GetRandomLocation(vid uint32) (serverUrl string, err error) {
 		return "", fmt.Errorf("volume %d not found", vid)
 	}
 
-	return locations[vc.r.Intn(len(locations))].Url, nil
+	index, err := vc.getLocationIndex(int64(len(locations)))
+	if err != nil {
+		return "", fmt.Errorf("volume %d. %v", vid, err)
+	}
+
+	return locations[index].Url, nil
 }
 
 func (vc *vidMap) addLocation(vid uint32, location Location) {
