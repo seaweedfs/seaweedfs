@@ -2,14 +2,13 @@ package wdclient
 
 import (
 	"fmt"
-	"math"
 	"testing"
 )
 
 func TestLocationIndex(t *testing.T) {
 	vm := vidMap{}
 	// test must be failed
-	mustFailed := func(length int64) {
+	mustFailed := func(length int) {
 		_, err := vm.getLocationIndex(length)
 		if err == nil {
 			t.Errorf("length %d must be failed", length)
@@ -22,11 +21,11 @@ func TestLocationIndex(t *testing.T) {
 	mustFailed(-1)
 	mustFailed(0)
 
-	mustOk := func(length, cursor, expect int64) {
+	mustOk := func(length, cursor, expect int) {
 		if length <= 0 {
 			t.Fatal("please don't do this")
 		}
-		vm.cursor = cursor
+		vm.cursor = int32(cursor)
 		got, err := vm.getLocationIndex(length)
 		if err != nil {
 			t.Errorf("length: %d, why? %v\n", length, err)
@@ -38,17 +37,17 @@ func TestLocationIndex(t *testing.T) {
 		}
 	}
 
-	for i := int64(-1); i < 100; i++ {
+	for i := -1; i < 100; i++ {
 		mustOk(7, i, (i+1)%7)
 	}
 
 	// when cursor reaches MaxInt64
-	mustOk(7, math.MaxInt64, 0)
+	mustOk(7, maxCursorIndex, 0)
 
 	// test with constructor
 	vm = newVidMap()
-	length := int64(7)
-	for i := int64(0); i < 100; i++ {
+	length := 7
+	for i := 0; i < 100; i++ {
 		got, err := vm.getLocationIndex(length)
 		if err != nil {
 			t.Errorf("length: %d, why? %v\n", length, err)
@@ -63,7 +62,7 @@ func TestLocationIndex(t *testing.T) {
 func BenchmarkLocationIndex(b *testing.B) {
 	b.SetParallelism(8)
 	vm := vidMap{
-		cursor: math.MaxInt64 - 10000,
+		cursor: maxCursorIndex - 4000,
 	}
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {

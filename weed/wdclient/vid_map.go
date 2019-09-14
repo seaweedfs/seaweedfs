@@ -3,13 +3,16 @@ package wdclient
 import (
 	"errors"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+)
+
+const (
+	maxCursorIndex = 4096
 )
 
 type Location struct {
@@ -21,7 +24,7 @@ type vidMap struct {
 	sync.RWMutex
 	vid2Locations map[uint32][]Location
 
-	cursor int64
+	cursor int32
 }
 
 func newVidMap() vidMap {
@@ -31,14 +34,14 @@ func newVidMap() vidMap {
 	}
 }
 
-func (vc *vidMap) getLocationIndex(length int64) (int64, error) {
+func (vc *vidMap) getLocationIndex(length int) (int, error) {
 	if length <= 0 {
 		return 0, fmt.Errorf("invalid length: %d", length)
 	}
-	if atomic.LoadInt64(&vc.cursor) == math.MaxInt64 {
-		atomic.CompareAndSwapInt64(&vc.cursor, math.MaxInt64, -1)
+	if atomic.LoadInt32(&vc.cursor) == maxCursorIndex {
+		atomic.CompareAndSwapInt32(&vc.cursor, maxCursorIndex, -1)
 	}
-	return atomic.AddInt64(&vc.cursor, 1) % length, nil
+	return int(atomic.AddInt32(&vc.cursor, 1)) % length, nil
 }
 
 func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrl string, err error) {
@@ -105,9 +108,9 @@ func (vc *vidMap) GetRandomLocation(vid uint32) (serverUrl string, err error) {
 		return "", fmt.Errorf("volume %d not found", vid)
 	}
 
-	index, err := vc.getLocationIndex(int64(len(locations)))
+	index, err := vc.getLocationIndex(len(locations))
 	if err != nil {
-		return "", fmt.Errorf("volume %d. %v", vid, err)
+		return "", fmt.Errorf("volume %d: %v", vid, err)
 	}
 
 	return locations[index].Url, nil
