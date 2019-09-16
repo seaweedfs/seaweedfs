@@ -37,6 +37,7 @@ func (s3a *S3ApiServer) mkdir(ctx context.Context, parentDirectoryPath string, d
 
 		glog.V(1).Infof("mkdir: %v", request)
 		if _, err := client.CreateEntry(ctx, request); err != nil {
+			glog.V(0).Infof("mkdir %v: %v", request, err)
 			return fmt.Errorf("mkdir %s/%s: %v", parentDirectoryPath, dirName, err)
 		}
 
@@ -67,6 +68,7 @@ func (s3a *S3ApiServer) mkFile(ctx context.Context, parentDirectoryPath string, 
 
 		glog.V(1).Infof("create file: %s/%s", parentDirectoryPath, fileName)
 		if _, err := client.CreateEntry(ctx, request); err != nil {
+			glog.V(0).Infof("create file %v:%v", request, err)
 			return fmt.Errorf("create file %s/%s: %v", parentDirectoryPath, fileName, err)
 		}
 
@@ -115,6 +117,7 @@ func (s3a *S3ApiServer) rm(ctx context.Context, parentDirectoryPath string, entr
 
 		glog.V(1).Infof("delete entry %v/%v: %v", parentDirectoryPath, entryName, request)
 		if _, err := client.DeleteEntry(ctx, request); err != nil {
+			glog.V(0).Infof("delete entry %v: %v", request, err)
 			return fmt.Errorf("delete entry %s/%s: %v", parentDirectoryPath, entryName, err)
 		}
 
@@ -135,6 +138,7 @@ func (s3a *S3ApiServer) exists(ctx context.Context, parentDirectoryPath string, 
 		glog.V(4).Infof("exists entry %v/%v: %v", parentDirectoryPath, entryName, request)
 		resp, err := client.LookupDirectoryEntry(ctx, request)
 		if err != nil {
+			glog.V(0).Infof("exists entry %v: %v", request, err)
 			return fmt.Errorf("exists entry %s/%s: %v", parentDirectoryPath, entryName, err)
 		}
 
