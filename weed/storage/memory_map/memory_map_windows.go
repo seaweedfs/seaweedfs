@@ -137,7 +137,7 @@ func (mBuffer *MemoryBuffer) ReleaseMemory() {
 	windows.VirtualUnlock(mBuffer.aligned_ptr, uintptr(mBuffer.aligned_length))
 	windows.UnmapViewOfFile(mBuffer.aligned_ptr)
 
-	var _ = setProcessWorkingSetSize(uintptr(currentProcess), uintptr(currentMinWorkingSet), uintptr(currentMaxWorkingSet))
+	var _ = setProcessWorkingSetSize(uintptr(currentProcess), currentMinWorkingSet, currentMaxWorkingSet)
 
 	mBuffer.ptr = 0
 	mBuffer.aligned_ptr = 0
@@ -181,7 +181,7 @@ func allocate(hMapFile windows.Handle, offset uint64, length uint64, write bool)
 
 	// increase the process working set size to hint to windows memory manager to
 	// prioritise keeping this memory mapped in physical memory over other standby memory
-	var _ = setProcessWorkingSetSize(uintptr(currentProcess), uintptr(currentMinWorkingSet), uintptr(currentMaxWorkingSet))
+	var _ = setProcessWorkingSetSize(uintptr(currentProcess), currentMinWorkingSet, currentMaxWorkingSet)
 
 	addr_ptr, errno := windows.MapViewOfFile(hMapFile,
 		uint32(access), // read/write permission
@@ -277,8 +277,8 @@ func getProcessWorkingSetSize(process uintptr, dwMinWorkingSet *uint64, dwMaxWor
 // );
 // https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setprocessworkingsetsize
 
-func setProcessWorkingSetSize(process uintptr, dwMinWorkingSet uintptr, dwMaxWorkingSet uintptr) error {
-	r1, _, err := syscall.Syscall(procSetProcessWorkingSetSize.Addr(), 3, process, (dwMinWorkingSet), (dwMaxWorkingSet))
+func setProcessWorkingSetSize(process uintptr, dwMinWorkingSet uint64, dwMaxWorkingSet uint64) error {
+	r1, _, err := syscall.Syscall(procSetProcessWorkingSetSize.Addr(), 3, process, uintptr(dwMinWorkingSet), uintptr(dwMaxWorkingSet))
 	if r1 == 0 {
 		if err != syscall.Errno(0) {
 			return err
