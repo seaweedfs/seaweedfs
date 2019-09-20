@@ -29,6 +29,7 @@ type MemoryMap struct {
 
 var FileMemoryMap = make(map[string]*MemoryMap)
 
+type DWORDLONG = uint64
 type DWORD = uint32
 type WORD = uint16
 
@@ -36,6 +37,7 @@ var (
 	modkernel32 = syscall.NewLazyDLL("kernel32.dll")
 
 	procGetSystemInfo            = modkernel32.NewProc("GetSystemInfo")
+	procGlobalMemoryStatusEx     = modkernel32.NewProc("GlobalMemoryStatusEx")
 	procGetProcessWorkingSetSize = modkernel32.NewProc("GetProcessWorkingSetSize")
 	procSetProcessWorkingSetSize = modkernel32.NewProc("SetProcessWorkingSetSize")
 )
@@ -47,6 +49,9 @@ var _ = getProcessWorkingSetSize(uintptr(currentProcess), &currentMinWorkingSet,
 
 var systemInfo, _ = getSystemInfo()
 var chunkSize = uint64(systemInfo.dwAllocationGranularity) * 256
+
+var memoryStatusEx, _ = globalMemoryStatusEx()
+var maxMemoryLimitBytes = uint64(float64(memoryStatusEx.ullTotalPhys) * 0.8)
 
 func (mMap *MemoryMap) CreateMemoryMap(file *os.File, maxLength uint64) {
 
@@ -131,13 +136,15 @@ func (mMap *MemoryMap) ReadMemory(offset uint64, length uint64) (MemoryBuffer, e
 
 func (mBuffer *MemoryBuffer) ReleaseMemory() {
 
-	currentMinWorkingSet = currentMinWorkingSet - mBuffer.aligned_length
-	currentMaxWorkingSet = currentMaxWorkingSet - mBuffer.aligned_length
-
 	windows.VirtualUnlock(mBuffer.aligned_ptr, uintptr(mBuffer.aligned_length))
 	windows.UnmapViewOfFile(mBuffer.aligned_ptr)
 
-	var _ = setProcessWorkingSetSize(uintptr(currentProcess), currentMinWorkingSet, currentMaxWorkingSet)
+	currentMinWorkingSet = currentMinWorkingSet - mBuffer.aligned_length
+	currentMaxWorkingSet = currentMaxWorkingSet - mBuffer.aligned_length
+
+	if currentMinWorkingSet < maxMemoryLimitBytes {
+		var _ = setProcessWorkingSetSize(uintptr(currentProcess), currentMinWorkingSet, currentMaxWorkingSet)
+	}
 
 	mBuffer.ptr = 0
 	mBuffer.aligned_ptr = 0
@@ -152,7 +159,6 @@ func allocateChunk(mMap *MemoryMap) {
 
 	if err == nil {
 		mMap.write_map_views = append(mMap.write_map_views, mBuffer)
-		windows.VirtualLock(mBuffer.aligned_ptr, uintptr(mBuffer.aligned_length))
 	}
 }
 
@@ -179,9 +185,11 @@ func allocate(hMapFile windows.Handle, offset uint64, length uint64, write bool)
 	currentMinWorkingSet = currentMinWorkingSet + aligned_length
 	currentMaxWorkingSet = currentMaxWorkingSet + aligned_length
 
-	// increase the process working set size to hint to windows memory manager to
-	// prioritise keeping this memory mapped in physical memory over other standby memory
-	var _ = setProcessWorkingSetSize(uintptr(currentProcess), currentMinWorkingSet, currentMaxWorkingSet)
+	if currentMinWorkingSet < maxMemoryLimitBytes {
+		// increase the process working set size to hint to windows memory manager to
+		// prioritise keeping this memory mapped in physical memory over other standby memory
+		var _ = setProcessWorkingSetSize(uintptr(currentProcess), currentMinWorkingSet, currentMaxWorkingSet)
+	}
 
 	addr_ptr, errno := windows.MapViewOfFile(hMapFile,
 		uint32(access), // read/write permission
@@ -191,6 +199,10 @@ func allocate(hMapFile windows.Handle, offset uint64, length uint64, write bool)
 
 	if addr_ptr == 0 {
 		return mBuffer, errno
+	}
+
+	if currentMinWorkingSet < maxMemoryLimitBytes {
+		windows.VirtualLock(mBuffer.aligned_ptr, uintptr(mBuffer.aligned_length))
 	}
 
 	mBuffer.aligned_ptr = addr_ptr
@@ -204,6 +216,47 @@ func allocate(hMapFile windows.Handle, offset uint64, length uint64, write bool)
 	slice_header.Cap = int(length)
 
 	return mBuffer, nil
+}
+
+//typedef struct _MEMORYSTATUSEX {
+//	DWORD     dwLength;
+//	DWORD     dwMemoryLoad;
+//	DWORDLONG ullTotalPhys;
+//	DWORDLONG ullAvailPhys;
+//	DWORDLONG ullTotalPageFile;
+//	DWORDLONG ullAvailPageFile;
+//	DWORDLONG ullTotalVirtual;
+//	DWORDLONG ullAvailVirtual;
+//	DWORDLONG ullAvailExtendedVirtual;
+//  } MEMORYSTATUSEX, *LPMEMORYSTATUSEX;
+//https://docs.microsoft.com/en-gb/windows/win32/api/sysinfoapi/ns-sysinfoapi-memorystatusex
+
+type _MEMORYSTATUSEX struct {
+	dwLength                DWORD
+	dwMemoryLoad            DWORD
+	ullTotalPhys            DWORDLONG
+	ullAvailPhys            DWORDLONG
+	ullTotalPageFile        DWORDLONG
+	ullAvailPageFile        DWORDLONG
+	ullTotalVirtual         DWORDLONG
+	ullAvailVirtual         DWORDLONG
+	ullAvailExtendedVirtual DWORDLONG
+}
+
+// BOOL GlobalMemoryStatusEx(
+//  LPMEMORYSTATUSEX lpBuffer
+// );
+// https://docs.microsoft.com/en-gb/windows/win32/api/sysinfoapi/nf-sysinfoapi-globalmemorystatusex
+func globalMemoryStatusEx() (_MEMORYSTATUSEX, error) {
+	var mem_status _MEMORYSTATUSEX
+
+	mem_status.dwLength = uint32(unsafe.Sizeof(mem_status))
+	_, _, err := procGlobalMemoryStatusEx.Call(uintptr(unsafe.Pointer(&mem_status)))
+
+	if err != syscall.Errno(0) {
+		return mem_status, err
+	}
+	return mem_status, nil
 }
 
 // typedef struct _SYSTEM_INFO {
@@ -224,7 +277,7 @@ func allocate(hMapFile windows.Handle, offset uint64, length uint64, write bool)
 //   WORD      wProcessorLevel;
 //   WORD      wProcessorRevision;
 // } SYSTEM_INFO;
-// https://msdn.microsoft.com/en-us/library/ms724958(v=vs.85).aspx
+// https://docs.microsoft.com/en-gb/windows/win32/api/sysinfoapi/ns-sysinfoapi-system_info
 type _SYSTEM_INFO struct {
 	dwOemId                     DWORD
 	dwPageSize                  DWORD
@@ -241,12 +294,10 @@ type _SYSTEM_INFO struct {
 // void WINAPI GetSystemInfo(
 //   _Out_ LPSYSTEM_INFO lpSystemInfo
 // );
-// https://msdn.microsoft.com/en-us/library/ms724381(VS.85).aspx
+// https://docs.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsysteminfo
 func getSystemInfo() (_SYSTEM_INFO, error) {
 	var si _SYSTEM_INFO
-	_, _, err := procGetSystemInfo.Call(
-		uintptr(unsafe.Pointer(&si)),
-	)
+	_, _, err := procGetSystemInfo.Call(uintptr(unsafe.Pointer(&si)))
 	if err != syscall.Errno(0) {
 		return si, err
 	}
