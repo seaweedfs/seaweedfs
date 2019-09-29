@@ -2,12 +2,11 @@ package main
 
 import (
 	"flag"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-
-	"time"
 )
 
 var (
@@ -45,5 +44,4 @@ func main() {
 	if err != nil {
 		glog.Fatalf("Reading Volume File [ERROR] %s\n", err)
 	}
-
 }

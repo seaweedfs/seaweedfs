@@ -48,7 +48,7 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 	collection := r.FormValue("collection") //optional, but can be faster if too many collections
 	location := ms.findVolumeLocation(collection, vid)
 	httpStatus := http.StatusOK
-	if location.Error != "" {
+	if location.Error != "" || location.Locations == nil {
 		httpStatus = http.StatusNotFound
 	} else {
 		forRead := r.FormValue("read")
@@ -60,7 +60,7 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 
 // findVolumeLocation finds the volume location from master topo if it is leader,
 // or from master client if not leader
-func (ms *MasterServer) findVolumeLocation(collection string, vid string) operation.LookupResult {
+func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.LookupResult {
 	var locations []operation.Location
 	var err error
 	if ms.Topo.IsLeader() {
