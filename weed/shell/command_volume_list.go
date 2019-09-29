@@ -98,7 +98,7 @@ func writeDataNodeInfo(writer io.Writer, t *master_pb.DataNodeInfo) statistics {
 }
 func writeVolumeInformationMessage(writer io.Writer, t *master_pb.VolumeInformationMessage) statistics {
 	fmt.Fprintf(writer, "        volume %+v \n", t)
-	return newStatiscis(t)
+	return newStatistics(t)
 }
 
 type statistics struct {
@@ -108,7 +108,7 @@ type statistics struct {
 	DeletedBytes     uint64
 }
 
-func newStatiscis(t *master_pb.VolumeInformationMessage) statistics {
+func newStatistics(t *master_pb.VolumeInformationMessage) statistics {
 	return statistics{
 		Size:             t.Size,
 		FileCount:        t.FileCount,
