@@ -125,9 +125,11 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket, originalPr
 			}
 			lastEntryName = entry.Name
 			if entry.IsDirectory {
-				commonPrefixes = append(commonPrefixes, PrefixEntry{
-					Prefix: fmt.Sprintf("%s%s/", dir, entry.Name),
-				})
+				if entry.Name != ".uploads" {
+					commonPrefixes = append(commonPrefixes, PrefixEntry{
+						Prefix: fmt.Sprintf("%s%s/", dir, entry.Name),
+					})
+				}
 			} else {
 				contents = append(contents, ListEntry{
 					Key:          fmt.Sprintf("%s%s", dir, entry.Name),
