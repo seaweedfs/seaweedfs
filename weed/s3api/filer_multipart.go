@@ -91,6 +91,11 @@ func (s3a *S3ApiServer) completeMultipartUpload(ctx context.Context, input *s3.C
 	}
 	dirName = fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, *input.Bucket, dirName)
 
+	// remove suffix '/'
+	if strings.HasSuffix(dirName, "/") {
+		dirName = dirName[:len(dirName)-1]
+	}
+
 	err = s3a.mkFile(ctx, dirName, entryName, finalParts)
 
 	if err != nil {

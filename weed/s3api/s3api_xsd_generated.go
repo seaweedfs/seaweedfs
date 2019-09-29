@@ -675,7 +675,7 @@ type PostResponse struct {
 }
 
 type PrefixEntry struct {
-	Prefix string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Prefix"`
+	Prefix string `xml:"Prefix"`
 }
 
 type PutObject struct {
