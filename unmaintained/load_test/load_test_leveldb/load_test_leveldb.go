@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	dir = flag.String("dir", "./t", "directory to store level db files")
+	dir     = flag.String("dir", "./t", "directory to store level db files")
 	useHash = flag.Bool("isHash", false, "hash the path as the key")
 	dbCount = flag.Int("dbCount", 1, "the number of leveldb")
 )
@@ -36,7 +36,7 @@ func main() {
 
 	var dbs []*leveldb.DB
 	var chans []chan string
-	for d := 0 ; d < *dbCount; d++ {
+	for d := 0; d < *dbCount; d++ {
 		dbFolder := fmt.Sprintf("%s/%02d", *dir, d)
 		os.MkdirAll(dbFolder, 0755)
 		db, err := leveldb.OpenFile(dbFolder, opts)
@@ -49,9 +49,9 @@ func main() {
 	}
 
 	var wg sync.WaitGroup
-	for d := 0 ; d < *dbCount; d++ {
+	for d := 0; d < *dbCount; d++ {
 		wg.Add(1)
-		go func(d int){
+		go func(d int) {
 			defer wg.Done()
 
 			ch := chans[d]
@@ -60,13 +60,12 @@ func main() {
 			for p := range ch {
 				if *useHash {
 					insertAsHash(db, p)
-				}else{
+				} else {
 					insertAsFullPath(db, p)
 				}
 			}
 		}(d)
 	}
-
 
 	counter := int64(0)
 	lastResetTime := time.Now()
@@ -101,7 +100,7 @@ func main() {
 		}
 	}
 
-	for d := 0 ; d < *dbCount; d++ {
+	for d := 0; d < *dbCount; d++ {
 		close(chans[d])
 	}
 
