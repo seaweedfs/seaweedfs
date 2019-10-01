@@ -48,7 +48,7 @@ var currentMaxWorkingSet uint64 = 0
 var _ = getProcessWorkingSetSize(uintptr(currentProcess), &currentMinWorkingSet, &currentMaxWorkingSet)
 
 var systemInfo, _ = getSystemInfo()
-var chunkSize = uint64(systemInfo.dwAllocationGranularity) * 256
+var chunkSize = uint64(systemInfo.dwAllocationGranularity) * 128
 
 var memoryStatusEx, _ = globalMemoryStatusEx()
 var maxMemoryLimitBytes = uint64(float64(memoryStatusEx.ullTotalPhys) * 0.8)
@@ -82,7 +82,7 @@ func (mMap *MemoryMap) DeleteFileAndMemoryMap() {
 	windows.CloseHandle(windows.Handle(mMap.File.Fd()))
 
 	for _, view := range mMap.write_map_views {
-		view.ReleaseMemory()
+		view.releaseMemory()
 	}
 
 	mMap.write_map_views = nil
@@ -130,17 +130,21 @@ func (mMap *MemoryMap) WriteMemory(offset uint64, length uint64, data []byte) {
 	}
 }
 
-func (mMap *MemoryMap) ReadMemory(offset uint64, length uint64) (MemoryBuffer, error) {
-	return allocate(windows.Handle(mMap.file_memory_map_handle), offset, length, false)
+func (mMap *MemoryMap) ReadMemory(offset uint64, length uint64) (dataSlice []byte, err error) {
+	dataSlice = make([]byte, length)
+	mBuffer, err := allocate(windows.Handle(mMap.file_memory_map_handle), offset, length, false)
+	copy(dataSlice, mBuffer.Buffer)
+	mBuffer.releaseMemory()
+	return dataSlice, err
 }
 
-func (mBuffer *MemoryBuffer) ReleaseMemory() {
+func (mBuffer *MemoryBuffer) releaseMemory() {
 
 	windows.VirtualUnlock(mBuffer.aligned_ptr, uintptr(mBuffer.aligned_length))
 	windows.UnmapViewOfFile(mBuffer.aligned_ptr)
 
-	currentMinWorkingSet = currentMinWorkingSet - mBuffer.aligned_length
-	currentMaxWorkingSet = currentMaxWorkingSet - mBuffer.aligned_length
+	currentMinWorkingSet -= mBuffer.aligned_length
+	currentMaxWorkingSet -= mBuffer.aligned_length
 
 	if currentMinWorkingSet < maxMemoryLimitBytes {
 		var _ = setProcessWorkingSetSize(uintptr(currentProcess), currentMinWorkingSet, currentMaxWorkingSet)
@@ -182,8 +186,8 @@ func allocate(hMapFile windows.Handle, offset uint64, length uint64, write bool)
 		access = windows.FILE_MAP_WRITE
 	}
 
-	currentMinWorkingSet = currentMinWorkingSet + aligned_length
-	currentMaxWorkingSet = currentMaxWorkingSet + aligned_length
+	currentMinWorkingSet += aligned_length
+	currentMaxWorkingSet += aligned_length
 
 	if currentMinWorkingSet < maxMemoryLimitBytes {
 		// increase the process working set size to hint to windows memory manager to

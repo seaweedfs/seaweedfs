@@ -164,13 +164,11 @@ func (n *Needle) Append(w *os.File, version Version) (offset uint64, size uint32
 func ReadNeedleBlob(r *os.File, offset int64, size uint32, version Version) (dataSlice []byte, err error) {
 
 	dataSize := GetActualSize(size, version)
-	dataSlice = make([]byte, dataSize)
+	dataSlice = make([]byte, int(dataSize))
 
 	mMap, exists := memory_map.FileMemoryMap[r.Name()]
 	if exists {
-		mBuffer, err := mMap.ReadMemory(uint64(offset), uint64(dataSize))
-		copy(dataSlice, mBuffer.Buffer)
-		mBuffer.ReleaseMemory()
+		dataSlice, err := mMap.ReadMemory(uint64(offset), uint64(dataSize))
 		return dataSlice, err
 	} else {
 		_, err = r.ReadAt(dataSlice, offset)
@@ -291,10 +289,7 @@ func ReadNeedleHeader(r *os.File, version Version, offset int64) (n *Needle, byt
 
 		mMap, exists := memory_map.FileMemoryMap[r.Name()]
 		if exists {
-			mBuffer, err := mMap.ReadMemory(uint64(offset), NeedleHeaderSize)
-			copy(bytes, mBuffer.Buffer)
-			mBuffer.ReleaseMemory()
-
+			bytes, err = mMap.ReadMemory(uint64(offset), NeedleHeaderSize)
 			if err != nil {
 				return nil, bytes, 0, err
 			}
