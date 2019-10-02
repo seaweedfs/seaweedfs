@@ -257,7 +257,3 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 
 	return nil
 }
-
-func (vs *VolumeServer) findVolumeOrEcVolumeLocation(volumeId needle.VolumeId) {
-
-}

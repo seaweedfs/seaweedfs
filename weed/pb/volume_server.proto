@@ -67,6 +67,10 @@ service VolumeServer {
     rpc VolumeEcBlobDelete (VolumeEcBlobDeleteRequest) returns (VolumeEcBlobDeleteResponse) {
     }
 
+    // query
+    rpc Query (QueryRequest) returns (stream QueriedStripe) {
+    }
+
 }
 
 //////////////////////////////////////////////////
@@ -317,4 +321,56 @@ message MemStatus {
     uint64 self = 5;
     uint64 heap = 6;
     uint64 stack = 7;
+}
+
+message QueryRequest {
+    string select_expression = 1;
+    repeated string from_file_ids = 2;
+    string where_expression = 3;
+
+    message InputSerialization {
+        // NONE | GZIP | BZIP2
+        string compression_type = 1;
+        message CSVInput {
+            string file_header_info = 1;  // Valid values: NONE | USE | IGNORE
+            string record_delimiter = 2;  // Default: \n
+            string field_delimiter = 3;   // Default: ,
+            string quote_charactoer = 4;  // Default: "
+            string quote_escape_character = 5; // Default: "
+            string comments = 6;          // Default: #
+            // If true, records might contain record delimiters within quote characters
+            bool   allow_quoted_record_delimiter = 7; // default False.
+        }
+        message JSONInput {
+            string type = 1;              // Valid values: DOCUMENT | LINES
+        }
+        message ParquetInput {
+        }
+
+        CSVInput csv_input = 2;
+        JSONInput json_input = 3;
+        ParquetInput parquet_input = 4;
+    }
+    InputSerialization input_serialization = 4;
+
+    message OutputSerialization {
+        message CSVOutput {
+            string quote_fields = 1;  // Valid values: ALWAYS | ASNEEDED
+            string record_delimiter = 2;  // Default: \n
+            string field_delimiter = 3;   // Default: ,
+            string quote_charactoer = 4;  // Default: "
+            string quote_escape_character = 5; // Default: "
+        }
+        message JSONOutput {
+            string record_delimiter = 1;
+        }
+
+        CSVOutput csv_output = 2;
+        JSONOutput json_output = 3;
+    }
+
+    OutputSerialization output_serialization = 5;
+}
+message QueriedStripe {
+    repeated bytes records = 1;
 }
