@@ -4,6 +4,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/chrislusf/seaweedfs/weed/query/json"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/tidwall/gjson"
 )
@@ -41,20 +42,28 @@ func (vs *VolumeServer) Query(req *volume_server_pb.QueryRequest, stream volume_
 
 		if req.InputSerialization.JsonInput!=nil{
 
-			err = stream.Send(&volume_server_pb.QueriedStripe{
+			stripe := &volume_server_pb.QueriedStripe{
 				Records:nil,
-			})
-			if err != nil {
-				// println("sending", bytesread, "bytes err", err.Error())
-				return err
+			}
+
+			filter := json.Query{
+				Field: req.Filter.Field,
+				Op: req.Filter.Operand,
+				Value:req.Filter.Value,
 			}
 			gjson.ForEachLine(string(n.Data), func(line gjson.Result) bool{
-				println(line.String())
+				passedFilter, values := json.QueryJson(line.Raw, req.Selections, filter)
+				if !passedFilter {
+					return true
+				}
+				stripe.Records = json.ToJson(stripe.Records, req.Selections, values)
 				return true
 			})
+			err = stream.Send(stripe)
+			if err != nil {
+				return err
+			}
 		}
-
-
 
 	}
 

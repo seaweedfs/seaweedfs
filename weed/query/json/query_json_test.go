@@ -58,7 +58,7 @@ func TestGjson(t *testing.T) {
 	projections := []string{"quiz","fruit"}
 
 	gjson.ForEachLine(data, func(line gjson.Result) bool{
-		println(line.String())
+		println(line.Raw)
 		println("+++++++++++")
 		results := gjson.GetMany(line.Raw, projections...)
 		for _, result := range results {
@@ -71,3 +71,66 @@ func TestGjson(t *testing.T) {
 
 
 }
+
+func TestJsonQueryRow(t *testing.T) {
+
+	data := `
+	{
+		"fruit": "Bl\"ue",
+		"size": 6,
+		"quiz": "green"
+	}
+
+`
+	selections := []string{"fruit", "size"}
+
+	isFiltered, values := QueryJson(data, selections, Query{
+		Field: "quiz",
+		Op:    "=",
+		Value: "green",
+	})
+
+	if !isFiltered {
+		t.Errorf("should have been filtered")
+	}
+
+	if values == nil {
+		t.Errorf("values should have been returned")
+	}
+
+	buf := ToJson(nil, selections, values)
+	println(string(buf))
+
+}
+
+func TestJsonQueryNumber(t *testing.T) {
+
+	data := `
+	{
+		"fruit": "Bl\"ue",
+		"size": 6,
+		"quiz": "green"
+	}
+
+`
+	selections := []string{"fruit", "quiz"}
+
+	isFiltered, values := QueryJson(data, selections, Query{
+		Field: "size",
+		Op:    ">=",
+		Value: "6",
+	})
+
+	if !isFiltered {
+		t.Errorf("should have been filtered")
+	}
+
+	if values == nil {
+		t.Errorf("values should have been returned")
+	}
+
+	buf := ToJson(nil, selections, values)
+	println(string(buf))
+
+}
+

@@ -324,9 +324,14 @@ message MemStatus {
 }
 
 message QueryRequest {
-    string select_expression = 1;
+    repeated string selections = 1;
     repeated string from_file_ids = 2;
-    string where_expression = 3;
+    message Filter {
+        string field = 1;
+        string operand = 2;
+        string value = 3;
+    }
+    Filter filter = 3;
 
     message InputSerialization {
         // NONE | GZIP | BZIP2
@@ -372,5 +377,5 @@ message QueryRequest {
     OutputSerialization output_serialization = 5;
 }
 message QueriedStripe {
-    repeated bytes records = 1;
+    bytes records = 1;
 }
