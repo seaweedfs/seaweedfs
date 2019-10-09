@@ -70,7 +70,7 @@ func (s *SuperBlock) Bytes() []byte {
 }
 
 func (s *SuperBlock) Initialized() bool {
-	return s.ReplicaPlacement == nil || s.Ttl == nil
+	return s.ReplicaPlacement != nil && s.Ttl != nil
 }
 
 func (v *Volume) maybeWriteSuperBlock() error {
