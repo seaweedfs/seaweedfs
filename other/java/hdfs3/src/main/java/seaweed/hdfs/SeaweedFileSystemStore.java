@@ -137,7 +137,7 @@ public class SeaweedFileSystemStore {
         if (source.isRoot()) {
             return;
         }
-        LOG.warn("rename source: {} destination:{}", source, destination);
+        LOG.info("rename source: {} destination:{}", source, destination);
         FilerProto.Entry entry = lookupEntry(source);
         if (entry == null) {
             LOG.warn("rename non-existing source: {}", source);

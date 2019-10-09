@@ -16,8 +16,8 @@ public class SeaweedFilerTest {
         filerClient.mkdirs("/new_folder", 0755);
         filerClient.touch("/new_folder/new_empty_file", 0755);
         filerClient.touch("/new_folder/new_empty_file2", 0755);
-        filerClient.rm("/new_folder/new_empty_file", false);
-        filerClient.rm("/new_folder", true);
+        filerClient.rm("/new_folder/new_empty_file", false, true);
+        filerClient.rm("/new_folder", true, true);
 
     }
 }
