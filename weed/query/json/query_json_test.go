@@ -55,9 +55,9 @@ func TestGjson(t *testing.T) {
 
 `
 
-	projections := []string{"quiz","fruit"}
+	projections := []string{"quiz", "fruit"}
 
-	gjson.ForEachLine(data, func(line gjson.Result) bool{
+	gjson.ForEachLine(data, func(line gjson.Result) bool {
 		println(line.Raw)
 		println("+++++++++++")
 		results := gjson.GetMany(line.Raw, projections...)
@@ -67,8 +67,6 @@ func TestGjson(t *testing.T) {
 		println("-----------")
 		return true
 	})
-
-
 
 }
 
@@ -133,4 +131,3 @@ func TestJsonQueryNumber(t *testing.T) {
 	println(string(buf))
 
 }
-

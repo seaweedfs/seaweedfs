@@ -19,7 +19,6 @@ type Value struct {
 	val []byte
 }
 
-
 // NewValue builds a Value using typ and val. If the value and typ
 // don't match, it returns an error.
 func NewValue(typ Type, val []byte) (v Value, err error) {
@@ -61,7 +60,6 @@ func MakeTrusted(typ Type, val []byte) Value {
 
 	return Value{typ: typ, val: val}
 }
-
 
 // NewInt64 builds an Int64 Value.
 func NewInt64(v int64) Value {

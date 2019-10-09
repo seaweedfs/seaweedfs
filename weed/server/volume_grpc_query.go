@@ -34,24 +34,22 @@ func (vs *VolumeServer) Query(req *volume_server_pb.QueryRequest, stream volume_
 			return err
 		}
 
-		if req.InputSerialization.CsvInput!=nil{
-
-
+		if req.InputSerialization.CsvInput != nil {
 
 		}
 
-		if req.InputSerialization.JsonInput!=nil{
+		if req.InputSerialization.JsonInput != nil {
 
 			stripe := &volume_server_pb.QueriedStripe{
-				Records:nil,
+				Records: nil,
 			}
 
 			filter := json.Query{
 				Field: req.Filter.Field,
-				Op: req.Filter.Operand,
-				Value:req.Filter.Value,
+				Op:    req.Filter.Operand,
+				Value: req.Filter.Value,
 			}
-			gjson.ForEachLine(string(n.Data), func(line gjson.Result) bool{
+			gjson.ForEachLine(string(n.Data), func(line gjson.Result) bool {
 				passedFilter, values := json.QueryJson(line.Raw, req.Selections, filter)
 				if !passedFilter {
 					return true

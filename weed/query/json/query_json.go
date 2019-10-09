@@ -26,7 +26,7 @@ func QueryJson(jsonLine string, projections []string, query Query) (passedFilter
 	return false, nil
 }
 
-func filterJson(jsonLine string, query Query) bool{
+func filterJson(jsonLine string, query Query) bool {
 
 	value := gjson.Get(jsonLine, query.Field)
 

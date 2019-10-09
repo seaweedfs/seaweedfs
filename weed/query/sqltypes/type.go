@@ -73,30 +73,29 @@ func IsTemporal(t Type) bool {
 // Vitess data types. These are idiomatically
 // named synonyms for the Type values.
 const (
-	Null       = Type_NULL_TYPE
-	Int8       = Type_INT8
-	Uint8      = Type_UINT8
-	Int16      = Type_INT16
-	Uint16     = Type_UINT16
-	Int32      = Type_INT32
-	Uint32     = Type_UINT32
-	Int64      = Type_INT64
-	Uint64     = Type_UINT64
-	Float32    = Type_FLOAT32
-	Float64    = Type_FLOAT64
-	Timestamp  = Type_TIMESTAMP
-	Date       = Type_DATE
-	Time       = Type_TIME
-	Datetime   = Type_DATETIME
-	Year       = Type_YEAR
-	Decimal    = Type_DECIMAL
-	Text       = Type_TEXT
-	Blob       = Type_BLOB
-	VarChar    = Type_VARCHAR
-	VarBinary  = Type_VARBINARY
-	Char       = Type_CHAR
-	Binary     = Type_BINARY
-	Bit        = Type_BIT
-	TypeJSON   = Type_JSON
+	Null      = Type_NULL_TYPE
+	Int8      = Type_INT8
+	Uint8     = Type_UINT8
+	Int16     = Type_INT16
+	Uint16    = Type_UINT16
+	Int32     = Type_INT32
+	Uint32    = Type_UINT32
+	Int64     = Type_INT64
+	Uint64    = Type_UINT64
+	Float32   = Type_FLOAT32
+	Float64   = Type_FLOAT64
+	Timestamp = Type_TIMESTAMP
+	Date      = Type_DATE
+	Time      = Type_TIME
+	Datetime  = Type_DATETIME
+	Year      = Type_YEAR
+	Decimal   = Type_DECIMAL
+	Text      = Type_TEXT
+	Blob      = Type_BLOB
+	VarChar   = Type_VARCHAR
+	VarBinary = Type_VARBINARY
+	Char      = Type_CHAR
+	Binary    = Type_BINARY
+	Bit       = Type_BIT
+	TypeJSON  = Type_JSON
 )
-
