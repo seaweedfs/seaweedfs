@@ -69,6 +69,10 @@ func (s *SuperBlock) Bytes() []byte {
 	return header
 }
 
+func (s *SuperBlock) Initialized() bool {
+	return s.ReplicaPlacement == nil || s.Ttl == nil
+}
+
 func (v *Volume) maybeWriteSuperBlock() error {
 	stat, e := v.dataFile.Stat()
 	if e != nil {

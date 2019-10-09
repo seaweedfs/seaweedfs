@@ -59,6 +59,9 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	if alreadyHasSuperBlock {
 		e = v.readSuperBlock()
 	} else {
+		if !v.SuperBlock.Initialized() {
+			return fmt.Errorf("volume %s.dat not initialized", fileName)
+		}
 		e = v.maybeWriteSuperBlock()
 	}
 	if e == nil && alsoLoadIndex {
