@@ -61,6 +61,10 @@
                     <exclude>org.apache.log4j</exclude>
                   </excludes>
                 </relocation>
+                <relocation>
+                  <pattern>org.apache.http</pattern>
+                  <shadedPattern>shaded.org.apache.http</shadedPattern>
+                </relocation>
               </relocations>
             </configuration>
           </execution>
@@ -123,7 +127,7 @@
     </snapshotRepository>
   </distributionManagement>
   <properties>
-    <seaweedfs.client.version>1.2.2</seaweedfs.client.version>
+    <seaweedfs.client.version>1.2.3</seaweedfs.client.version>
     <hadoop.version>3.1.1</hadoop.version>
   </properties>
 </project>
