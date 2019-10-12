@@ -7,6 +7,7 @@ import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.DefaultHttpClient;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
@@ -19,7 +20,7 @@ public class SeaweedRead {
     // returns bytesRead
     public static long read(FilerGrpcClient filerGrpcClient, List<VisibleInterval> visibleIntervals,
                             final long position, final byte[] buffer, final int bufferOffset,
-                            final int bufferLength) {
+                            final int bufferLength) throws IOException {
 
         List<ChunkView> chunkViews = viewFromVisibles(visibleIntervals, position, bufferLength);
 
@@ -54,7 +55,7 @@ public class SeaweedRead {
         return readCount;
     }
 
-    private static int readChunkView(long position, byte[] buffer, int startOffset, ChunkView chunkView, FilerProto.Locations locations) {
+    private static int readChunkView(long position, byte[] buffer, int startOffset, ChunkView chunkView, FilerProto.Locations locations) throws IOException {
         HttpClient client = new DefaultHttpClient();
         HttpGet request = new HttpGet(
             String.format("http://%s/%s", locations.getLocations(0).getUrl(), chunkView.fileId));
@@ -76,10 +77,12 @@ public class SeaweedRead {
 
             return len;
 
-        } catch (IOException e) {
-            e.printStackTrace();
+        } finally {
+            if (client instanceof Closeable) {
+                Closeable t = (Closeable) client;
+                t.close();
+            }
         }
-        return 0;
     }
 
     protected static List<ChunkView> viewFromVisibles(List<VisibleInterval> visibleIntervals, long offset, long size) {

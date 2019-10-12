@@ -1,13 +1,14 @@
 package seaweedfs.client;
 
 import org.apache.http.HttpResponse;
+import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.mime.HttpMultipartMode;
 import org.apache.http.entity.mime.MultipartEntityBuilder;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClientBuilder;
+import org.apache.http.impl.client.DefaultHttpClient;
 
 import java.io.ByteArrayInputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 
@@ -59,7 +60,7 @@ public class SeaweedWrite {
                                           final byte[] bytes,
                                           final long bytesOffset, final long bytesLength) throws IOException {
 
-        CloseableHttpClient client = HttpClientBuilder.create().setUserAgent("hdfs-client").build();
+        HttpClient client = new DefaultHttpClient();
 
         InputStream inputStream = new ByteArrayInputStream(bytes, (int) bytesOffset, (int) bytesLength);
 
@@ -84,7 +85,10 @@ public class SeaweedWrite {
 
             return etag;
         } finally {
-            client.close();
+            if (client instanceof Closeable) {
+                Closeable t = (Closeable) client;
+                t.close();
+            }
         }
 
     }
