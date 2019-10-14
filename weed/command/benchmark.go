@@ -69,7 +69,7 @@ func init() {
 }
 
 var cmdBenchmark = &Command{
-	UsageLine: "benchmark -server=localhost:9333 -c=10 -n=100000",
+	UsageLine: "benchmark -master=localhost:9333 -c=10 -n=100000",
 	Short:     "benchmark on writing millions of files and read out",
 	Long: `benchmark on an empty SeaweedFS file system.
 
