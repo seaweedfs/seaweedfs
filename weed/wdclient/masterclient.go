@@ -79,10 +79,8 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 			return err
 		}
 
-		if mc.currentMaster == "" {
-			glog.V(1).Infof("%s Connected to %v", mc.name, master)
-			mc.currentMaster = master
-		}
+		glog.V(1).Infof("%s Connected to %v", mc.name, master)
+		mc.currentMaster = master
 
 		for {
 			volumeLocation, err := stream.Recv()

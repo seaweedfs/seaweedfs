@@ -71,6 +71,10 @@ func (s *SuperBlock) Bytes() []byte {
 	return header
 }
 
+func (s *SuperBlock) Initialized() bool {
+	return s.ReplicaPlacement != nil && s.Ttl != nil
+}
+
 func (v *Volume) maybeWriteSuperBlock() error {
 
 	mMap, exists := memory_map.FileMemoryMap[v.dataFile.Name()]
