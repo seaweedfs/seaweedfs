@@ -33,6 +33,7 @@ require (
 	github.com/seaweedfs/fuse v0.0.0-20190510212405-310228904eff
 	github.com/spf13/viper v1.4.0
 	github.com/syndtr/goleveldb v1.0.0
+	github.com/tidwall/pretty v1.0.0 // indirect
 	github.com/willf/bloom v2.0.3+incompatible
 	go.etcd.io/etcd v3.3.15+incompatible
 	gocloud.dev v0.16.0
