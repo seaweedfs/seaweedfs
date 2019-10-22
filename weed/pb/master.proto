@@ -139,7 +139,7 @@ message AssignRequest {
     string data_center = 5;
     string rack = 6;
     string data_node = 7;
-    uint32 MemoryMapMaxSizeMB = 8;
+    uint32 memory_map_max_size_mb = 8;
 }
 message AssignResponse {
     string fid = 1;

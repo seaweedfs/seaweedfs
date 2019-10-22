@@ -28,7 +28,7 @@ type VolumeGrowOption struct {
 	DataCenter         string
 	Rack               string
 	DataNode           string
-	MemoryMapMaxSizeMB uint32
+	MemoryMapMaxSizeMb uint32
 }
 
 type VolumeGrowth struct {

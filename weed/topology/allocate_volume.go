@@ -23,7 +23,7 @@ func AllocateVolume(dn *DataNode, grpcDialOption grpc.DialOption, vid needle.Vol
 			Replication:        option.ReplicaPlacement.String(),
 			Ttl:                option.Ttl.String(),
 			Preallocate:        option.Prealloacte,
-			MemoryMapMaxSizeMB: option.MemoryMapMaxSizeMB,
+			MemoryMapMaxSizeMb: option.MemoryMapMaxSizeMb,
 		})
 		return deleteErr
 	})

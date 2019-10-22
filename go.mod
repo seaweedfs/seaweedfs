@@ -1,6 +1,6 @@
 module github.com/chrislusf/seaweedfs
-go 1.12
 
+go 1.12
 
 require (
 	cloud.google.com/go v0.44.3
@@ -106,7 +106,7 @@ require (
 	golang.org/x/image v0.0.0-20190829233526-b3c06291d021 // indirect
 	golang.org/x/mobile v0.0.0-20190830201351-c6da95954960 // indirect
 	golang.org/x/net v0.0.0-20190827160401-ba9fcec4b297
-	golang.org/x/sys v0.0.0-20190830142957-1e83adbbebd0 // indirect
+	golang.org/x/sys v0.0.0-20190830142957-1e83adbbebd0
 	golang.org/x/tools v0.0.0-20190830223141-573d9926052a
 	google.golang.org/api v0.9.0
 	google.golang.org/appengine v1.6.2 // indirect

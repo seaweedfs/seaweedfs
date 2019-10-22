@@ -147,7 +147,7 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 	if err != nil {
 		return nil, err
 	}
-	memoryMapMaxSizeMB, err := needle.ReadMemoryMapMaxSizeMB(r.FormValue("memorymapmaxsizemb"))
+	memoryMapMaxSizeMb, err := needle.ReadMemoryMapMaxSizeMb(r.FormValue("memoryMapMaxSizeMb"))
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +167,7 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 		DataCenter:         r.FormValue("dataCenter"),
 		Rack:               r.FormValue("rack"),
 		DataNode:           r.FormValue("dataNode"),
-		MemoryMapMaxSizeMB: memoryMapMaxSizeMB,
+		MemoryMapMaxSizeMb: memoryMapMaxSizeMb,
 	}
 	return volumeGrowOption, nil
 }

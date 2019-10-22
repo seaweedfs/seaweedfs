@@ -35,7 +35,7 @@ func (vs *VolumeServer) AllocateVolume(ctx context.Context, req *volume_server_p
 		req.Replication,
 		req.Ttl,
 		req.Preallocate,
-		req.MemoryMapMaxSizeMB,
+		req.MemoryMapMaxSizeMb,
 	)
 
 	if err != nil {

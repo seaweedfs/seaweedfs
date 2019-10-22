@@ -69,7 +69,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		DataCenter:         req.DataCenter,
 		Rack:               req.Rack,
 		DataNode:           req.DataNode,
-		MemoryMapMaxSizeMB: req.MemoryMapMaxSizeMB,
+		MemoryMapMaxSizeMb: req.MemoryMapMaxSizeMb,
 	}
 
 	if !ms.Topo.HasWritableVolume(option) {
