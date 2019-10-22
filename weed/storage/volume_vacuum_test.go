@@ -68,7 +68,7 @@ func TestCompaction(t *testing.T) {
 	}
 	defer os.RemoveAll(dir) // clean up
 
-	v, err := NewVolume(dir, "", 1, NeedleMapInMemory, &ReplicaPlacement{}, &needle.TTL{}, 0)
+	v, err := NewVolume(dir, "", 1, NeedleMapInMemory, &ReplicaPlacement{}, &needle.TTL{}, 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestCompaction(t *testing.T) {
 
 	v.Close()
 
-	v, err = NewVolume(dir, "", 1, NeedleMapInMemory, nil, nil, 0)
+	v, err = NewVolume(dir, "", 1, NeedleMapInMemory, nil, nil, 0, 0)
 	if err != nil {
 		t.Fatalf("volume reloading: %v", err)
 	}

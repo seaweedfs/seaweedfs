@@ -60,7 +60,7 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 			_, found := l.volumes[vid]
 			l.RUnlock()
 			if !found {
-				if v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil, nil, 0); e == nil {
+				if v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil, nil, 0, 0); e == nil {
 					l.Lock()
 					l.volumes[vid] = v
 					l.Unlock()

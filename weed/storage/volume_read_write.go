@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/storage/memory_map"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
@@ -44,6 +45,12 @@ func (v *Volume) Destroy() (err error) {
 		err = fmt.Errorf("volume %d is compacting", v.Id)
 		return
 	}
+	mMap, exists := memory_map.FileMemoryMap[v.dataFile.Name()]
+	if exists {
+		mMap.DeleteFileAndMemoryMap()
+		delete(memory_map.FileMemoryMap, v.dataFile.Name())
+	}
+
 	v.Close()
 	os.Remove(v.FileName() + ".dat")
 	os.Remove(v.FileName() + ".idx")

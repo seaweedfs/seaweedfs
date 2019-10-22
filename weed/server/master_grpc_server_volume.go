@@ -62,13 +62,14 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	}
 
 	option := &topology.VolumeGrowOption{
-		Collection:       req.Collection,
-		ReplicaPlacement: replicaPlacement,
-		Ttl:              ttl,
-		Prealloacte:      ms.preallocateSize,
-		DataCenter:       req.DataCenter,
-		Rack:             req.Rack,
-		DataNode:         req.DataNode,
+		Collection:         req.Collection,
+		ReplicaPlacement:   replicaPlacement,
+		Ttl:                ttl,
+		Prealloacte:        ms.preallocateSize,
+		DataCenter:         req.DataCenter,
+		Rack:               req.Rack,
+		DataNode:           req.DataNode,
+		MemoryMapMaxSizeMB: req.MemoryMapMaxSizeMB,
 	}
 
 	if !ms.Topo.HasWritableVolume(option) {

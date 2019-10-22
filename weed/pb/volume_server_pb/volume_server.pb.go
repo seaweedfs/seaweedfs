@@ -70,12 +70,15 @@ It has these top-level messages:
 */
 package volume_server_pb
 
-import proto "github.com/golang/protobuf/proto"
-import fmt "fmt"
-import math "math"
-
 import (
+	fmt "fmt"
+
+	proto "github.com/golang/protobuf/proto"
+
+	math "math"
+
 	context "golang.org/x/net/context"
+
 	grpc "google.golang.org/grpc"
 )
 
@@ -315,11 +318,12 @@ func (*DeleteCollectionResponse) ProtoMessage()               {}
 func (*DeleteCollectionResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{13} }
 
 type AllocateVolumeRequest struct {
-	VolumeId    uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
-	Collection  string `protobuf:"bytes,2,opt,name=collection" json:"collection,omitempty"`
-	Preallocate int64  `protobuf:"varint,3,opt,name=preallocate" json:"preallocate,omitempty"`
-	Replication string `protobuf:"bytes,4,opt,name=replication" json:"replication,omitempty"`
-	Ttl         string `protobuf:"bytes,5,opt,name=ttl" json:"ttl,omitempty"`
+	VolumeId           uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	Collection         string `protobuf:"bytes,2,opt,name=collection" json:"collection,omitempty"`
+	Preallocate        int64  `protobuf:"varint,3,opt,name=preallocate" json:"preallocate,omitempty"`
+	Replication        string `protobuf:"bytes,4,opt,name=replication" json:"replication,omitempty"`
+	Ttl                string `protobuf:"bytes,5,opt,name=ttl" json:"ttl,omitempty"`
+	MemoryMapMaxSizeMB uint32 `protobuf:"varint,6,opt,name=memorymapmaxsizemb" json:"memorymapmaxsizemb,omitempty"`
 }
 
 func (m *AllocateVolumeRequest) Reset()                    { *m = AllocateVolumeRequest{} }
@@ -360,6 +364,13 @@ func (m *AllocateVolumeRequest) GetTtl() string {
 		return m.Ttl
 	}
 	return ""
+}
+
+func (m *AllocateVolumeRequest) GetMemoryMapMaxSizeMB() uint32 {
+	if m != nil {
+		return m.MemoryMapMaxSizeMB
+	}
+	return 0
 }
 
 type AllocateVolumeResponse struct {
@@ -2359,6 +2370,7 @@ func _VolumeServer_DeleteCollection_Handler(srv interface{}, ctx context.Context
 
 func _VolumeServer_AllocateVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AllocateVolumeRequest)
+
 	if err := dec(in); err != nil {
 		return nil, err
 	}

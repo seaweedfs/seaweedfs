@@ -44,12 +44,15 @@ It has these top-level messages:
 */
 package master_pb
 
-import proto "github.com/golang/protobuf/proto"
-import fmt "fmt"
-import math "math"
-
 import (
+	fmt "fmt"
+
+	proto "github.com/golang/protobuf/proto"
+
+	math "math"
+
 	context "golang.org/x/net/context"
+
 	grpc "google.golang.org/grpc"
 )
 
@@ -648,13 +651,14 @@ func (m *Location) GetPublicUrl() string {
 }
 
 type AssignRequest struct {
-	Count       uint64 `protobuf:"varint,1,opt,name=count" json:"count,omitempty"`
-	Replication string `protobuf:"bytes,2,opt,name=replication" json:"replication,omitempty"`
-	Collection  string `protobuf:"bytes,3,opt,name=collection" json:"collection,omitempty"`
-	Ttl         string `protobuf:"bytes,4,opt,name=ttl" json:"ttl,omitempty"`
-	DataCenter  string `protobuf:"bytes,5,opt,name=data_center,json=dataCenter" json:"data_center,omitempty"`
-	Rack        string `protobuf:"bytes,6,opt,name=rack" json:"rack,omitempty"`
-	DataNode    string `protobuf:"bytes,7,opt,name=data_node,json=dataNode" json:"data_node,omitempty"`
+	Count              uint64 `protobuf:"varint,1,opt,name=count" json:"count,omitempty"`
+	Replication        string `protobuf:"bytes,2,opt,name=replication" json:"replication,omitempty"`
+	Collection         string `protobuf:"bytes,3,opt,name=collection" json:"collection,omitempty"`
+	Ttl                string `protobuf:"bytes,4,opt,name=ttl" json:"ttl,omitempty"`
+	DataCenter         string `protobuf:"bytes,5,opt,name=data_center,json=dataCenter" json:"data_center,omitempty"`
+	Rack               string `protobuf:"bytes,6,opt,name=rack" json:"rack,omitempty"`
+	DataNode           string `protobuf:"bytes,7,opt,name=data_node,json=dataNode" json:"data_node,omitempty"`
+	MemoryMapMaxSizeMB uint32 `protobuf:"varint,8,opt,name=memorymapmaxsizemb" json:"memorymapmaxsizemb,omitempty"`
 }
 
 func (m *AssignRequest) Reset()                    { *m = AssignRequest{} }
@@ -709,6 +713,13 @@ func (m *AssignRequest) GetDataNode() string {
 		return m.DataNode
 	}
 	return ""
+}
+
+func (m *AssignRequest) GetMemoryMapMaxSizeMB() uint32 {
+	if m != nil {
+		return m.MemoryMapMaxSizeMB
+	}
+	return 0
 }
 
 type AssignResponse struct {

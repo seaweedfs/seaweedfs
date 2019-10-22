@@ -21,13 +21,14 @@ This package is created to resolve these replica placement issues:
 */
 
 type VolumeGrowOption struct {
-	Collection       string
-	ReplicaPlacement *storage.ReplicaPlacement
-	Ttl              *needle.TTL
-	Prealloacte      int64
-	DataCenter       string
-	Rack             string
-	DataNode         string
+	Collection         string
+	ReplicaPlacement   *storage.ReplicaPlacement
+	Ttl                *needle.TTL
+	Prealloacte        int64
+	DataCenter         string
+	Rack               string
+	DataNode           string
+	MemoryMapMaxSizeMB uint32
 }
 
 type VolumeGrowth struct {
