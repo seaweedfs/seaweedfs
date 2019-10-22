@@ -228,7 +228,7 @@ func ScanVolumeFileFrom(version needle.Version, dataFile *os.File, offset int64,
 		}
 		offset += NeedleHeaderSize + rest
 		glog.V(4).Infof("==> new entry offset %d", offset)
-		if n, _, rest, err = needle.ReadNeedleHeader(dataFile, version, offset); err != nil {
+		if n, nh, rest, err = needle.ReadNeedleHeader(dataFile, version, offset); err != nil {
 			if err == io.EOF {
 				return nil
 			}
