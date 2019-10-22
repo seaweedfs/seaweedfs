@@ -2,7 +2,6 @@ package weed_server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -68,17 +67,17 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 		writeJsonError(w, r, http.StatusNotAcceptable, err)
 		return
 	}
-	if err == nil {
-		if count, err = strconv.Atoi(r.FormValue("count")); err == nil {
-			if ms.Topo.FreeSpace() < int64(count*option.ReplicaPlacement.GetCopyCount()) {
-				err = fmt.Errorf("only %d volumes left, not enough for %d", ms.Topo.FreeSpace(), count*option.ReplicaPlacement.GetCopyCount())
-			} else {
-				count, err = ms.vg.GrowByCountAndType(ms.grpcDialOpiton, count, option, ms.Topo)
-			}
+
+	if count, err = strconv.Atoi(r.FormValue("count")); err == nil {
+		if ms.Topo.FreeSpace() < int64(count*option.ReplicaPlacement.GetCopyCount()) {
+			err = fmt.Errorf("only %d volumes left, not enough for %d", ms.Topo.FreeSpace(), count*option.ReplicaPlacement.GetCopyCount())
 		} else {
-			err = errors.New("parameter count is not found")
+			count, err = ms.vg.GrowByCountAndType(ms.grpcDialOpiton, count, option, ms.Topo)
 		}
+	} else {
+		err = fmt.Errorf("can not parse parameter count %s", r.FormValue("count"))
 	}
+
 	if err != nil {
 		writeJsonError(w, r, http.StatusNotAcceptable, err)
 	} else {
