@@ -11,24 +11,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-type MemoryBuffer struct {
-	aligned_length uint64
-	length         uint64
-	aligned_ptr    uintptr
-	ptr            uintptr
-	Buffer         []byte
-}
-
-type MemoryMap struct {
-	File                   *os.File
-	file_memory_map_handle uintptr
-	write_map_views        []MemoryBuffer
-	max_length             uint64
-	End_of_file            int64
-}
-
-var FileMemoryMap = make(map[string]*MemoryMap)
-
 type DWORDLONG = uint64
 type DWORD = uint32
 type WORD = uint16

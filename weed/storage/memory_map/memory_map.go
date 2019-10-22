@@ -1,10 +1,8 @@
-// +build !windows
-
 package memory_map
 
 import (
-	"fmt"
 	"os"
+	"strconv"
 )
 
 type MemoryBuffer struct {
@@ -25,18 +23,10 @@ type MemoryMap struct {
 
 var FileMemoryMap = make(map[string]*MemoryMap)
 
-func (mMap *MemoryMap) CreateMemoryMap(file *os.File, maxLength uint64) {
-}
-
-func (mMap *MemoryMap) WriteMemory(offset uint64, length uint64, data []byte) {
-
-}
-
-func (mMap *MemoryMap) ReadMemory(offset uint64, length uint64) ([]byte, error) {
-	dataSlice := []byte{}
-	return dataSlice, fmt.Errorf("Memory Map not implemented for this platform")
-}
-
-func (mBuffer *MemoryMap) DeleteFileAndMemoryMap() {
-
+func ReadMemoryMapMaxSizeMb(memoryMapMaxSizeMbString string) (uint32, error) {
+	if memoryMapMaxSizeMbString == "" {
+		return 0, nil
+	}
+	memoryMapMaxSize64, err := strconv.ParseUint(memoryMapMaxSizeMbString, 10, 32)
+	return uint32(memoryMapMaxSize64), err
 }

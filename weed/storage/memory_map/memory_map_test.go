@@ -1,4 +1,4 @@
-package needle
+package memory_map
 
 import "testing"
 
