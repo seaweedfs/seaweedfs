@@ -43,7 +43,7 @@ func (scanner *VolumeFileScanner4Fix) ReadNeedleBody() bool {
 	return false
 }
 
-func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64) error {
+func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 	glog.V(2).Infof("key %d offset %d size %d disk_size %d gzip %v", n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsGzipped())
 	if n.Size > 0 && n.Size != types.TombstoneFileSize {
 		pe := scanner.nm.Put(n.Id, types.ToOffset(offset), n.Size)

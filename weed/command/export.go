@@ -102,7 +102,7 @@ func (scanner *VolumeFileScanner4Export) ReadNeedleBody() bool {
 	return true
 }
 
-func (scanner *VolumeFileScanner4Export) VisitNeedle(n *needle.Needle, offset int64) error {
+func (scanner *VolumeFileScanner4Export) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 	needleMap := scanner.needleMap
 	vid := scanner.vid
 

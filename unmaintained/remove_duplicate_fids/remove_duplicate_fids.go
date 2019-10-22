@@ -40,7 +40,7 @@ func (scanner *VolumeFileScanner4SeeDat) ReadNeedleBody() bool {
 	return true
 }
 
-func (scanner *VolumeFileScanner4SeeDat) VisitNeedle(n *needle.Needle, offset int64) error {
+func (scanner *VolumeFileScanner4SeeDat) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 
 	if scanner.dat == nil {
 		newDatFile, err := os.Create(filepath.Join(*volumePath, "dat_fixed"))

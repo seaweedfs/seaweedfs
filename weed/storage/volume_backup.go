@@ -251,7 +251,7 @@ func (scanner *VolumeFileScanner4GenIdx) ReadNeedleBody() bool {
 	return false
 }
 
-func (scanner *VolumeFileScanner4GenIdx) VisitNeedle(n *needle.Needle, offset int64) error {
+func (scanner *VolumeFileScanner4GenIdx) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 	if n.Size > 0 && n.Size != TombstoneFileSize {
 		return scanner.v.nm.Put(n.Id, ToOffset(offset), n.Size)
 	}

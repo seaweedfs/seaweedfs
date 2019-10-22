@@ -286,7 +286,7 @@ func (scanner *VolumeFileScanner4Vacuum) ReadNeedleBody() bool {
 	return true
 }
 
-func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset int64) error {
+func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 	if n.HasTtl() && scanner.now >= n.LastModified+uint64(scanner.v.Ttl.Minutes()*60) {
 		return nil
 	}
