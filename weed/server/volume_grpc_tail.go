@@ -68,7 +68,7 @@ func sendNeedlesSince(stream volume_server_pb.VolumeServer_VolumeTailSenderServe
 	}
 
 	scanner := &VolumeFileScanner4Tailing{
-		stream:stream,
+		stream: stream,
 	}
 
 	err = storage.ScanVolumeFileFrom(v.Version(), v.DataFile(), foundOffset.ToAcutalOffset(), scanner)
@@ -97,7 +97,7 @@ func (vs *VolumeServer) VolumeTailReceiver(ctx context.Context, req *volume_serv
 
 // generate the volume idx
 type VolumeFileScanner4Tailing struct {
-	stream volume_server_pb.VolumeServer_VolumeTailSenderServer
+	stream                   volume_server_pb.VolumeServer_VolumeTailSenderServer
 	lastProcessedTimestampNs uint64
 }
 
