@@ -6,11 +6,11 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/storage/memory_map"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/golang/protobuf/proto"
 )
 
 const (
