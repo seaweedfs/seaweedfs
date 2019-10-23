@@ -150,6 +150,11 @@ enabled = false
 servers = "localhost:2379"
 timeout = "3s"
 
+[tikv]
+enabled = false
+pdAddress = "192.168.199.113:2379"
+
+
 `
 
 	NOTIFICATION_TOML_EXAMPLE = `
