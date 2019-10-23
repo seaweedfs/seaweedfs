@@ -104,7 +104,7 @@ func (store *TikvStore) FindEntry(ctx context.Context, fullpath filer2.FullPath)
 	dir, name := fullpath.DirAndName()
 	key := genKey(dir, name)
 
-	data, err := store.getTx(ctx).Get(key)
+	data, err := store.getTx(ctx).Get(ctx, key)
 
 	if err == kv.ErrNotExist {
 		return nil, filer2.ErrNotFound
