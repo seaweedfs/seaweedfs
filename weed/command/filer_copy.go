@@ -400,13 +400,19 @@ func (worker *FileCopyWorker) uploadFileInChunks(ctx context.Context, task FileC
 	wg.Wait()
 	close(chunksChan)
 
-	if uploadError != nil {
-		return uploadError
-	}
 
 	var chunks []*filer_pb.FileChunk
 	for chunk := range chunksChan {
 		chunks = append(chunks, chunk)
+	}
+
+	if uploadError != nil {
+		var fileIds []string
+		for _, chunk := range chunks {
+			fileIds = append(fileIds, chunk.FileId)
+		}
+		operation.DeleteFiles(worker.options.masterClient.GetMaster(), worker.options.grpcDialOption, fileIds)
+		return uploadError
 	}
 
 	if err := withFilerClient(ctx, worker.filerGrpcAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
