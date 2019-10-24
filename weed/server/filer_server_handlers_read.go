@@ -32,10 +32,15 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 			fs.listDirectoryHandler(w, r)
 			return
 		}
-		glog.V(1).Infof("Not found %s: %v", path, err)
-
-		stats.FilerRequestCounter.WithLabelValues("read.notfound").Inc()
-		w.WriteHeader(http.StatusNotFound)
+		if err == filer2.ErrNotFound {
+			glog.V(1).Infof("Not found %s: %v", path, err)
+			stats.FilerRequestCounter.WithLabelValues("read.notfound").Inc()
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			glog.V(0).Infof("Internal %s: %v", path, err)
+			stats.FilerRequestCounter.WithLabelValues("read.internalerror").Inc()
+			w.WriteHeader(http.StatusInternalServerError)
+		}
 		return
 	}
 
