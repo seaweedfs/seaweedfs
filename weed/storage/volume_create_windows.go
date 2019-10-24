@@ -9,7 +9,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/os_overloads"
+	"github.com/chrislusf/seaweedfs/weed/storage/memory_map/os_overloads"
 )
 
 func createVolumeFile(fileName string, preallocate int64, memoryMapSizeMB uint32) (*os.File, error) {
