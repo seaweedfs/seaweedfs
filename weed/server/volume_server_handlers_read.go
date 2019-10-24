@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -66,7 +67,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		glog.V(2).Infoln("volume", volumeId, "found on", lookupResult, "error", err)
 		if err == nil && len(lookupResult.Locations) > 0 {
 			u, _ := url.Parse(util.NormalizeUrl(lookupResult.Locations[0].PublicUrl))
-			u.Path = r.URL.Path
+			u.Path = fmt.Sprintf("%s/%s,%s", u.Path, vid, fid)
 			arg := url.Values{}
 			if c := r.FormValue("collection"); c != "" {
 				arg.Set("collection", c)
