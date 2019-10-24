@@ -20,7 +20,7 @@ func init() {
 }
 
 type TikvStore struct {
-	store  kv.Storage
+	store kv.Storage
 }
 
 func (store *TikvStore) GetName() string {
@@ -206,7 +206,7 @@ func getNameFromKey(key []byte) string {
 }
 
 // hash directory
-func hashToBytes(dir string) ([]byte) {
+func hashToBytes(dir string) []byte {
 	h := md5.New()
 	io.WriteString(h, dir)
 
