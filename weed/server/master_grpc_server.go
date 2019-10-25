@@ -49,6 +49,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 	for {
 		heartbeat, err := stream.Recv()
 		if err != nil {
+			if dn != nil {
+				glog.Warningf("SendHeartbeat.Recv server %s:%d : %v", dn.Ip, dn.Port, err)
+			} else {
+				glog.Warningf("SendHeartbeat.Recv: %v", dn.Ip, dn.Port, err)
+			}
 			return err
 		}
 
@@ -73,6 +78,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			if err := stream.Send(&master_pb.HeartbeatResponse{
 				VolumeSizeLimit: uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
 			}); err != nil {
+				glog.Warningf("SendHeartbeat.Send volume size to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
 			}
 		}
@@ -154,6 +160,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		// tell the volume servers about the leader
 		newLeader, err := t.Leader()
 		if err != nil {
+			glog.Warningf("SendHeartbeat find leader: %v", err)
 			return err
 		}
 		if err := stream.Send(&master_pb.HeartbeatResponse{
@@ -161,6 +168,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			MetricsAddress:         ms.option.MetricsAddress,
 			MetricsIntervalSeconds: uint32(ms.option.MetricsIntervalSec),
 		}); err != nil {
+			glog.Warningf("SendHeartbeat.Send response to to %s:%d %v", dn.Ip, dn.Port, err)
 			return err
 		}
 	}
