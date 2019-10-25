@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/memory_map"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend/memory_map"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
