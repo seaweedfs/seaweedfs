@@ -400,7 +400,6 @@ func (worker *FileCopyWorker) uploadFileInChunks(ctx context.Context, task FileC
 	wg.Wait()
 	close(chunksChan)
 
-
 	var chunks []*filer_pb.FileChunk
 	for chunk := range chunksChan {
 		chunks = append(chunks, chunk)

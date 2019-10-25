@@ -13,9 +13,8 @@ import (
 )
 
 var (
-	shellOptions          shell.ShellOptions
+	shellOptions         shell.ShellOptions
 	shellInitialFilerUrl *string
-
 )
 
 func init() {
@@ -32,12 +31,10 @@ var cmdShell = &Command{
   `,
 }
 
-
 func runShell(command *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
 	shellOptions.GrpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
-
 
 	var filerPwdErr error
 	shellOptions.FilerHost, shellOptions.FilerPort, shellOptions.Directory, filerPwdErr = parseFilerUrl(*shellInitialFilerUrl)

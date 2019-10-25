@@ -16,8 +16,8 @@ import (
 )
 
 type ShellOptions struct {
-	Masters         *string
-	GrpcDialOption  grpc.DialOption
+	Masters        *string
+	GrpcDialOption grpc.DialOption
 	// shell transient context
 	FilerHost string
 	FilerPort int64
