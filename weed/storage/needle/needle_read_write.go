@@ -154,7 +154,7 @@ func (n *Needle) Append(w *os.File, version Version) (offset uint64, size uint32
 		if exists {
 			mMap.WriteMemory(offset, uint64(len(bytesToWrite)), bytesToWrite)
 		} else {
-			_, err = w.Write(bytesToWrite)
+			_, err = w.WriteAt(bytesToWrite, int64(offset))
 		}
 	}
 

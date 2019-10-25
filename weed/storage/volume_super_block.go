@@ -92,7 +92,7 @@ func (v *Volume) maybeWriteSuperBlock() error {
 		}
 		if stat.Size() == 0 {
 			v.SuperBlock.version = needle.CurrentVersion
-			_, e = v.dataFile.Write(v.SuperBlock.Bytes())
+			_, e = v.dataFile.WriteAt(v.SuperBlock.Bytes(), 0)
 			if e != nil && os.IsPermission(e) {
 				//read-only, but zero length - recreate it!
 				if v.dataFile, e = os.Create(v.dataFile.Name()); e == nil {
@@ -123,11 +123,7 @@ func ReadSuperBlock(dataFile *os.File) (superBlock SuperBlock, err error) {
 			return
 		}
 	} else {
-		if _, err = dataFile.Seek(0, 0); err != nil {
-			err = fmt.Errorf("cannot seek to the beginning of %s: %v", dataFile.Name(), err)
-			return
-		}
-		if _, e := dataFile.Read(header); e != nil {
+		if _, e := dataFile.ReadAt(header, 0); e != nil {
 			err = fmt.Errorf("cannot read volume %s super block: %v", dataFile.Name(), e)
 			return
 		}
