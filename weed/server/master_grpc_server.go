@@ -52,7 +52,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			if dn != nil {
 				glog.Warningf("SendHeartbeat.Recv server %s:%d : %v", dn.Ip, dn.Port, err)
 			} else {
-				glog.Warningf("SendHeartbeat.Recv: %v", dn.Ip, dn.Port, err)
+				glog.Warningf("SendHeartbeat.Recv: %v", err)
 			}
 			return err
 		}
