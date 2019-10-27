@@ -1,4 +1,4 @@
-// +build linux darwin
+// +build linux darwin freebsd
 
 package command
 
@@ -107,6 +107,9 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 		fuse.WritebackCache(),
 		fuse.AllowNonEmptyMount(),
 	}
+
+	options = append(options, osSpecificMountOptions()...)
+
 	if allowOthers {
 		options = append(options, fuse.AllowOther())
 	}
