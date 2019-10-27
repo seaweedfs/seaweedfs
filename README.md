@@ -416,10 +416,14 @@ Step 2: also you may need to install Mercurial by following the instructions at:
 
 http://mercurial.selenic.com/downloads
 
+Try Step 2 if the `go install` does not work out.
+
 Step 3: download, compile, and install the project by executing the following command
 
 ```bash
-go get github.com/chrislusf/seaweedfs/weed
+export GO111MODULE=on
+# optional: export GOPROXY=https://goproxy.iogoproxy.io
+go get -u github.com/chrislusf/seaweedfs/weed
 ```
 
 Once this is done, you will find the executable "weed" in your `$GOPATH/bin` directory
