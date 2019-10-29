@@ -128,7 +128,7 @@ func runBackup(cmd *Command, args []string) bool {
 			return true
 		}
 		v.SuperBlock.CompactionRevision = uint16(stats.CompactRevision)
-		v.DataFile().WriteAt(v.SuperBlock.Bytes(), 0)
+		v.DataBackend.WriteAt(v.SuperBlock.Bytes(), 0)
 	}
 
 	datSize, _, _ := v.FileStat()

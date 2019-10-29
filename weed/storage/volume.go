@@ -5,10 +5,10 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 
-	"os"
 	"path"
 	"strconv"
 	"sync"
@@ -21,7 +21,7 @@ type Volume struct {
 	Id                 needle.VolumeId
 	dir                string
 	Collection         string
-	dataFile           *os.File
+	DataBackend        backend.DataStorageBackend
 	nm                 NeedleMapper
 	needleMapKind      NeedleMapType
 	readOnly           bool
@@ -48,7 +48,7 @@ func NewVolume(dirname string, collection string, id needle.VolumeId, needleMapK
 	return
 }
 func (v *Volume) String() string {
-	return fmt.Sprintf("Id:%v, dir:%s, Collection:%s, dataFile:%v, nm:%v, readOnly:%v", v.Id, v.dir, v.Collection, v.dataFile, v.nm, v.readOnly)
+	return fmt.Sprintf("Id:%v, dir:%s, Collection:%s, dataFile:%v, nm:%v, readOnly:%v", v.Id, v.dir, v.Collection, v.DataBackend, v.nm, v.readOnly)
 }
 
 func VolumeFileName(dir string, collection string, id int) (fileName string) {
@@ -63,9 +63,6 @@ func VolumeFileName(dir string, collection string, id int) (fileName string) {
 func (v *Volume) FileName() (fileName string) {
 	return VolumeFileName(v.dir, v.Collection, int(v.Id))
 }
-func (v *Volume) DataFile() *os.File {
-	return v.dataFile
-}
 
 func (v *Volume) Version() needle.Version {
 	return v.SuperBlock.Version()
@@ -75,15 +72,15 @@ func (v *Volume) FileStat() (datSize uint64, idxSize uint64, modTime time.Time) 
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
-	if v.dataFile == nil {
+	if v.DataBackend == nil {
 		return
 	}
 
-	stat, e := v.dataFile.Stat()
+	datFileSize, modTime, e := v.DataBackend.GetStat()
 	if e == nil {
-		return uint64(stat.Size()), v.nm.IndexFileSize(), stat.ModTime()
+		return uint64(datFileSize), v.nm.IndexFileSize(), modTime
 	}
-	glog.V(0).Infof("Failed to read file size %s %v", v.dataFile.Name(), e)
+	glog.V(0).Infof("Failed to read file size %s %v", v.DataBackend.String(), e)
 	return // -1 causes integer overflow and the volume to become unwritable.
 }
 
@@ -149,9 +146,9 @@ func (v *Volume) Close() {
 		v.nm.Close()
 		v.nm = nil
 	}
-	if v.dataFile != nil {
-		_ = v.dataFile.Close()
-		v.dataFile = nil
+	if v.DataBackend != nil {
+		_ = v.DataBackend.Close()
+		v.DataBackend = nil
 		stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume").Dec()
 	}
 }

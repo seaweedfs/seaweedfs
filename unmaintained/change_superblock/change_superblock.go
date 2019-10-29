@@ -9,6 +9,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
@@ -47,9 +48,10 @@ func main() {
 	if err != nil {
 		glog.Fatalf("Open Volume Data File [ERROR]: %v", err)
 	}
-	defer datFile.Close()
+	datBackend := backend.NewDiskFile(*fixVolumePath, datFile)
+	defer datBackend.Close()
 
-	superBlock, err := storage.ReadSuperBlock(datFile)
+	superBlock, err := storage.ReadSuperBlock(datBackend)
 
 	if err != nil {
 		glog.Fatalf("cannot parse existing super block: %v", err)

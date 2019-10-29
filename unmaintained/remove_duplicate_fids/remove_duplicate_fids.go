@@ -8,6 +8,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
@@ -28,6 +29,7 @@ type VolumeFileScanner4SeeDat struct {
 	dir    string
 	hashes map[string]bool
 	dat    *os.File
+	datBackend backend.DataStorageBackend
 }
 
 func (scanner *VolumeFileScanner4SeeDat) VisitSuperBlock(superBlock storage.SuperBlock) error {
@@ -42,13 +44,14 @@ func (scanner *VolumeFileScanner4SeeDat) ReadNeedleBody() bool {
 
 func (scanner *VolumeFileScanner4SeeDat) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 
-	if scanner.dat == nil {
-		newDatFile, err := os.Create(filepath.Join(*volumePath, "dat_fixed"))
+	if scanner.datBackend == nil {
+		newFileName := filepath.Join(*volumePath, "dat_fixed")
+		newDatFile, err := os.Create(newFileName)
 		if err != nil {
 			glog.Fatalf("Write New Volume Data %v", err)
 		}
-		scanner.dat = newDatFile
-		scanner.dat.Write(scanner.block.Bytes())
+		scanner.datBackend = backend.NewDiskFile(newFileName, newDatFile)
+		scanner.datBackend.WriteAt(scanner.block.Bytes(), 0)
 	}
 
 	checksum := Checksum(n)
@@ -59,7 +62,7 @@ func (scanner *VolumeFileScanner4SeeDat) VisitNeedle(n *needle.Needle, offset in
 	}
 	scanner.hashes[checksum] = true
 
-	_, s, _, e := n.Append(scanner.dat, scanner.version)
+	_, s, _, e := n.Append(scanner.datBackend, scanner.version)
 	fmt.Printf("size %d error %v\n", s, e)
 
 	return nil

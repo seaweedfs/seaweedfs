@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
@@ -24,16 +25,18 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	var e error
 	fileName := v.FileName()
 	alreadyHasSuperBlock := false
+	var dataFile *os.File
 
+	// open dat file
 	if exists, canRead, canWrite, modifiedTime, fileSize := checkFile(fileName + ".dat"); exists {
 		if !canRead {
 			return fmt.Errorf("cannot read Volume Data file %s.dat", fileName)
 		}
 		if canWrite {
-			v.dataFile, e = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
+			dataFile, e = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
 		} else {
 			glog.V(0).Infoln("opening " + fileName + ".dat in READONLY mode")
-			v.dataFile, e = os.Open(fileName + ".dat")
+			dataFile, e = os.Open(fileName + ".dat")
 			v.readOnly = true
 		}
 		v.lastModifiedTsSeconds = uint64(modifiedTime.Unix())
@@ -42,11 +45,12 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 	} else {
 		if createDatIfMissing {
-			v.dataFile, e = createVolumeFile(fileName+".dat", preallocate, v.MemoryMapMaxSizeMb)
+			dataFile, e = createVolumeFile(fileName+".dat", preallocate, v.MemoryMapMaxSizeMb)
 		} else {
 			return fmt.Errorf("Volume Data file %s.dat does not exist.", fileName)
 		}
 	}
+	v.DataBackend = backend.NewDiskFile(fileName+".dat", dataFile)
 
 	if e != nil {
 		if !os.IsPermission(e) {
