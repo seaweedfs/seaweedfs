@@ -15,12 +15,12 @@ func NewMemorySequencer() (m *MemorySequencer) {
 	return
 }
 
-func (m *MemorySequencer) NextFileId(count uint64) (uint64, uint64) {
+func (m *MemorySequencer) NextFileId(count uint64) uint64 {
 	m.sequenceLock.Lock()
 	defer m.sequenceLock.Unlock()
 	ret := m.counter
-	m.counter += uint64(count)
-	return ret, count
+	m.counter += count
+	return ret
 }
 
 func (m *MemorySequencer) SetMax(seenValue uint64) {

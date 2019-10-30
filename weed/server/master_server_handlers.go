@@ -65,11 +65,17 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 	var err error
 	if ms.Topo.IsLeader() {
 		volumeId, newVolumeIdErr := needle.NewVolumeId(vid)
-		machines := ms.Topo.Lookup(collection, volumeId)
-		for _, loc := range machines {
-			locations = append(locations, operation.Location{Url: loc.Url(), PublicUrl: loc.PublicUrl})
+		if newVolumeIdErr != nil {
+			err = fmt.Errorf("Unknown volume id %s", vid)
+		} else {
+			machines := ms.Topo.Lookup(collection, volumeId)
+			for _, loc := range machines {
+				locations = append(locations, operation.Location{Url: loc.Url(), PublicUrl: loc.PublicUrl})
+			}
+			if locations == nil {
+				err = fmt.Errorf("volume id %s not found", vid)
+			}
 		}
-		err = newVolumeIdErr
 	} else {
 		machines, getVidLocationsErr := ms.MasterClient.GetVidLocations(vid)
 		for _, loc := range machines {
