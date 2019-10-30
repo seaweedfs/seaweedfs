@@ -3,9 +3,6 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/shell"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"google.golang.org/grpc"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -21,10 +18,13 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/sequence"
+	"github.com/chrislusf/seaweedfs/weed/shell"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"github.com/gorilla/mux"
 	"github.com/spf13/viper"
+	"google.golang.org/grpc"
 )
 
 type MasterOption struct {
@@ -57,7 +57,7 @@ type MasterServer struct {
 	clientChansLock sync.RWMutex
 	clientChans     map[string]chan *master_pb.VolumeLocation
 
-	grpcDialOpiton grpc.DialOption
+	grpcDialOption grpc.DialOption
 
 	MasterClient *wdclient.MasterClient
 }
@@ -83,7 +83,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 		option:          option,
 		preallocateSize: preallocateSize,
 		clientChans:     make(map[string]chan *master_pb.VolumeLocation),
-		grpcDialOpiton:  grpcDialOption,
+		grpcDialOption:  grpcDialOption,
 		MasterClient:    wdclient.NewMasterClient(context.Background(), grpcDialOption, "master", peers),
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
@@ -112,7 +112,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 		r.HandleFunc("/{fileId}", ms.redirectHandler)
 	}
 
-	ms.Topo.StartRefreshWritableVolumes(ms.grpcDialOpiton, ms.option.GarbageThreshold, ms.preallocateSize)
+	ms.Topo.StartRefreshWritableVolumes(ms.grpcDialOption, ms.option.GarbageThreshold, ms.preallocateSize)
 
 	ms.startAdminScripts()
 

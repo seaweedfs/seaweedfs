@@ -1,7 +1,6 @@
 package command
 
 import (
-
 	"github.com/seaweedfs/fuse"
 )
 
