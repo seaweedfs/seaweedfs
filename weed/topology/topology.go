@@ -125,7 +125,7 @@ func (t *Topology) PickForWrite(count uint64, option *VolumeGrowOption) (string,
 	if datanodes.Length() == 0 {
 		return "", 0, nil, fmt.Errorf("no writable volumes available for collection:%s replication:%s ttl:%s", option.Collection, option.ReplicaPlacement.String(), option.Ttl.String())
 	}
-	fileId, count := t.Sequence.NextFileId(count)
+	fileId := t.Sequence.NextFileId(count)
 	return needle.NewFileId(*vid, fileId, rand.Uint32()).String(), count, datanodes.Head(), nil
 }
 
