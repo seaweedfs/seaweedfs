@@ -25,7 +25,7 @@ type RaftServer struct {
 	*raft.GrpcServer
 }
 
-func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr string, dataDir string, topo *topology.Topology, pulseSeconds int) *RaftServer {
+func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr, dataDir string, topo *topology.Topology, pulseSeconds int) *RaftServer {
 	s := &RaftServer{
 		peers:      peers,
 		serverAddr: serverAddr,

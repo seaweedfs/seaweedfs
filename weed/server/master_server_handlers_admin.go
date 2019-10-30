@@ -24,7 +24,7 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	for _, server := range collection.ListVolumeServers() {
-		err := operation.WithVolumeServerClient(server.Url(), ms.grpcDialOpiton, func(client volume_server_pb.VolumeServerClient) error {
+		err := operation.WithVolumeServerClient(server.Url(), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 			_, deleteErr := client.DeleteCollection(context.Background(), &volume_server_pb.DeleteCollectionRequest{
 				Collection: collection.Name,
 			})
@@ -57,7 +57,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	glog.Infoln("garbageThreshold =", gcThreshold)
-	ms.Topo.Vacuum(ms.grpcDialOpiton, gcThreshold, ms.preallocateSize)
+	ms.Topo.Vacuum(ms.grpcDialOption, gcThreshold, ms.preallocateSize)
 	ms.dirStatusHandler(w, r)
 }
 
@@ -73,7 +73,7 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 		if ms.Topo.FreeSpace() < int64(count*option.ReplicaPlacement.GetCopyCount()) {
 			err = fmt.Errorf("only %d volumes left, not enough for %d", ms.Topo.FreeSpace(), count*option.ReplicaPlacement.GetCopyCount())
 		} else {
-			count, err = ms.vg.GrowByCountAndType(ms.grpcDialOpiton, count, option, ms.Topo)
+			count, err = ms.vg.GrowByCountAndType(ms.grpcDialOption, count, option, ms.Topo)
 		}
 	} else {
 		err = fmt.Errorf("can not parse parameter count %s", r.FormValue("count"))
@@ -119,13 +119,13 @@ func (ms *MasterServer) selfUrl(r *http.Request) string {
 }
 func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *http.Request) {
 	if ms.Topo.IsLeader() {
-		submitForClientHandler(w, r, ms.selfUrl(r), ms.grpcDialOpiton)
+		submitForClientHandler(w, r, ms.selfUrl(r), ms.grpcDialOption)
 	} else {
 		masterUrl, err := ms.Topo.Leader()
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 		} else {
-			submitForClientHandler(w, r, masterUrl, ms.grpcDialOpiton)
+			submitForClientHandler(w, r, masterUrl, ms.grpcDialOption)
 		}
 	}
 }

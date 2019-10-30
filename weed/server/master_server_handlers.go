@@ -108,7 +108,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		ms.vgLock.Lock()
 		defer ms.vgLock.Unlock()
 		if !ms.Topo.HasWritableVolume(option) {
-			if _, err = ms.vg.AutomaticGrowByType(option, ms.grpcDialOpiton, ms.Topo); err != nil {
+			if _, err = ms.vg.AutomaticGrowByType(option, ms.grpcDialOption, ms.Topo); err != nil {
 				writeJsonError(w, r, http.StatusInternalServerError,
 					fmt.Errorf("Cannot grow volume group! %v", err))
 				return
