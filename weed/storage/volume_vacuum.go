@@ -314,7 +314,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 	var (
 		dst, idx *os.File
 	)
-	if dst, err = createVolumeFile(dstName, preallocate, v.MemoryMapMaxSizeMb); err != nil {
+	if dst, err = createVolumeFile(dstName, preallocate, 0); err != nil {
 		return
 	}
 	defer dst.Close()
