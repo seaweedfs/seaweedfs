@@ -101,14 +101,14 @@ func (s *Store) FindFreeLocation() (ret *DiskLocation) {
 	}
 	return ret
 }
-func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind NeedleMapType, replicaPlacement *ReplicaPlacement, ttl *needle.TTL, preallocate int64, MemoryMapMaxSizeMb uint32) error {
+func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind NeedleMapType, replicaPlacement *ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32) error {
 	if s.findVolume(vid) != nil {
 		return fmt.Errorf("Volume Id %d already exists!", vid)
 	}
 	if location := s.FindFreeLocation(); location != nil {
 		glog.V(0).Infof("In dir %s adds volume:%v collection:%s replicaPlacement:%v ttl:%v",
 			location.Directory, vid, collection, replicaPlacement, ttl)
-		if volume, err := NewVolume(location.Directory, collection, vid, needleMapKind, replicaPlacement, ttl, preallocate, MemoryMapMaxSizeMb); err == nil {
+		if volume, err := NewVolume(location.Directory, collection, vid, needleMapKind, replicaPlacement, ttl, preallocate, memoryMapMaxSizeMb); err == nil {
 			location.SetVolume(vid, volume)
 			glog.V(0).Infof("add volume %d", vid)
 			s.NewVolumesChan <- master_pb.VolumeShortInformationMessage{
