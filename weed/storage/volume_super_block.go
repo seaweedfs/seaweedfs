@@ -98,7 +98,7 @@ func (v *Volume) maybeWriteSuperBlock() error {
 				//read-only, but zero length - recreate it!
 				var dataFile *os.File
 				if dataFile, e = os.Create(v.DataBackend.String()); e == nil {
-					v.DataBackend = backend.NewDiskFile(v.DataBackend.String(), dataFile)
+					v.DataBackend = backend.NewDiskFile(dataFile)
 					if _, e = v.DataBackend.WriteAt(v.SuperBlock.Bytes(), 0); e == nil {
 						v.readOnly = false
 					}

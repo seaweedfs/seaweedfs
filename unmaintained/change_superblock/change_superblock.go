@@ -48,7 +48,7 @@ func main() {
 	if err != nil {
 		glog.Fatalf("Open Volume Data File [ERROR]: %v", err)
 	}
-	datBackend := backend.NewDiskFile(*fixVolumePath, datFile)
+	datBackend := backend.NewDiskFile(datFile)
 	defer datBackend.Close()
 
 	superBlock, err := storage.ReadSuperBlock(datBackend)

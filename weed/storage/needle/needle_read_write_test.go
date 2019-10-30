@@ -55,7 +55,7 @@ func TestAppend(t *testing.T) {
 		os.Remove(tempFile.Name())
 	}()
 
-	datBackend := backend.NewDiskFile(tempFile.Name(), tempFile)
+	datBackend := backend.NewDiskFile(tempFile)
 	defer datBackend.Close()
 
 	offset, _, _, _ := n.Append(datBackend, CurrentVersion)

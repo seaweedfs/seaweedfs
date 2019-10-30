@@ -50,7 +50,7 @@ func main() {
 	if err != nil {
 		glog.Fatalf("Read Volume Data %v", err)
 	}
-	datBackend := backend.NewDiskFile(datFileName, datFile)
+	datBackend := backend.NewDiskFile(datFile)
 	defer datBackend.Close()
 
 	newDatFile, err := os.Create(path.Join(*fixVolumePath, fileName+".dat_fixed"))

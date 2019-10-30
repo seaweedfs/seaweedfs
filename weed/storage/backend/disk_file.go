@@ -14,9 +14,9 @@ type DiskFile struct {
 	fullFilePath string
 }
 
-func NewDiskFile(fullFilePath string, f *os.File) *DiskFile {
+func NewDiskFile(f *os.File) *DiskFile {
 	return &DiskFile{
-		fullFilePath: fullFilePath,
+		fullFilePath: f.Name(),
 		File:         f,
 	}
 }

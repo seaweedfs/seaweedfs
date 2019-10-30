@@ -50,7 +50,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			return fmt.Errorf("Volume Data file %s.dat does not exist.", fileName)
 		}
 	}
-	v.DataBackend = backend.NewDiskFile(fileName+".dat", dataFile)
+	v.DataBackend = backend.NewDiskFile(dataFile)
 
 	if e != nil {
 		if !os.IsPermission(e) {

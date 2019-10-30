@@ -147,7 +147,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 	defer oldIdxFile.Close()
 
 	oldDatFile, err := os.Open(oldDatFileName)
-	oldDatBackend := backend.NewDiskFile(oldDatFileName, oldDatFile)
+	oldDatBackend := backend.NewDiskFile(oldDatFile)
 	defer oldDatBackend.Close()
 
 	if indexSize, err = verifyIndexFileIntegrity(oldIdxFile); err != nil {
@@ -198,7 +198,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 	if dst, err = os.OpenFile(newDatFileName, os.O_RDWR, 0644); err != nil {
 		return fmt.Errorf("open dat file %s failed: %v", newDatFileName, err)
 	}
-	dstDatBackend := backend.NewDiskFile(newDatFileName, dst)
+	dstDatBackend := backend.NewDiskFile(dst)
 	defer dstDatBackend.Close()
 
 	if idx, err = os.OpenFile(newIdxFileName, os.O_RDWR, 0644); err != nil {
@@ -328,7 +328,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 		v:              v,
 		now:            uint64(time.Now().Unix()),
 		nm:             NewBtreeNeedleMap(idx),
-		dstBackend:     backend.NewDiskFile(dstName, dst),
+		dstBackend:     backend.NewDiskFile(dst),
 		writeThrottler: util.NewWriteThrottler(compactionBytePerSecond),
 	}
 	err = ScanVolumeFile(v.dir, v.Collection, v.Id, v.needleMapKind, scanner)
@@ -342,7 +342,7 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 	if dst, err = os.OpenFile(dstName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644); err != nil {
 		return
 	}
-	dstDatBackend := backend.NewDiskFile(dstName, dst)
+	dstDatBackend := backend.NewDiskFile(dst)
 	defer dstDatBackend.Close()
 
 	if idx, err = os.OpenFile(idxName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644); err != nil {

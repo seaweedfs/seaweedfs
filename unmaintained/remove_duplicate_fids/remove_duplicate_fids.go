@@ -50,7 +50,7 @@ func (scanner *VolumeFileScanner4SeeDat) VisitNeedle(n *needle.Needle, offset in
 		if err != nil {
 			glog.Fatalf("Write New Volume Data %v", err)
 		}
-		scanner.datBackend = backend.NewDiskFile(newFileName, newDatFile)
+		scanner.datBackend = backend.NewDiskFile(newDatFile)
 		scanner.datBackend.WriteAt(scanner.block.Bytes(), 0)
 	}
 
