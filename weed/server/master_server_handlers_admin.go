@@ -57,6 +57,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 		gcThreshold, err = strconv.ParseFloat(gcString, 32)
 		if err != nil {
 			glog.V(0).Infof("garbageThreshold %s is not a valid float number: %v", gcString, err)
+			writeJsonError(w, r, http.StatusNotAcceptable, fmt.Errorf("garbageThreshold %s is not a valid float number", gcString))
 			return
 		}
 	}
