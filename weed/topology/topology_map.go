@@ -23,7 +23,7 @@ func (t *Topology) ToMap() interface{} {
 			}
 		}
 	}
-	m["layouts"] = layouts
+	m["Layouts"] = layouts
 	return m
 }
 

@@ -18,9 +18,10 @@ import (
 )
 
 func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	collection, ok := ms.Topo.FindCollection(r.FormValue("collection"))
+	collectionName := r.FormValue("collection")
+	collection, ok := ms.Topo.FindCollection(collectionName)
 	if !ok {
-		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("collection %s does not exist", r.FormValue("collection")))
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("collection %s does not exist", collectionName))
 		return
 	}
 	for _, server := range collection.ListVolumeServers() {
@@ -35,7 +36,10 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 			return
 		}
 	}
-	ms.Topo.DeleteCollection(r.FormValue("collection"))
+	ms.Topo.DeleteCollection(collectionName)
+
+	w.WriteHeader(http.StatusNoContent)
+	return
 }
 
 func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request) {
