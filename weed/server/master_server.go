@@ -39,6 +39,9 @@ type MasterOption struct {
 	DisableHttp             bool
 	MetricsAddress          string
 	MetricsIntervalSec      int
+
+	sequencerType string
+	etcdUrls      string
 }
 
 type MasterServer struct {
@@ -87,7 +90,11 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 		MasterClient:    wdclient.NewMasterClient(context.Background(), grpcDialOption, "master", peers),
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
-	seq := sequence.NewMemorySequencer()
+
+	seq := ms.createSequencer(option)
+	if nil == seq {
+		glog.Fatalf("create sequencer failed.")
+	}
 	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, ms.option.PulseSeconds)
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", ms.option.VolumeSizeLimitMB, "MB")
@@ -229,4 +236,23 @@ func (ms *MasterServer) startAdminScripts() {
 			}
 		}
 	}()
+}
+
+func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer {
+	var seq sequence.Sequencer
+	glog.V(0).Infof("sequencer type [%s]", option.sequencerType)
+	switch strings.ToLower(option.sequencerType) {
+	case "memory":
+		seq = sequence.NewMemorySequencer()
+	case "etcd":
+		var err error
+		seq, err = sequence.NewEtcdSequencer(option.etcdUrls, option.MetaFolder)
+		if err != nil {
+			glog.Error(err)
+			seq = nil
+		}
+	default:
+		seq = sequence.NewMemorySequencer()
+	}
+	return seq
 }

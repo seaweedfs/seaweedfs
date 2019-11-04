@@ -37,6 +37,9 @@ type MasterOptions struct {
 	disableHttp        *bool
 	metricsAddress     *string
 	metricsIntervalSec *int
+
+	sequencerType *string
+	etcdUrls      *string
 }
 
 func init() {
@@ -55,6 +58,9 @@ func init() {
 	m.disableHttp = cmdMaster.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
 	m.metricsAddress = cmdMaster.Flag.String("metrics.address", "", "Prometheus gateway address")
 	m.metricsIntervalSec = cmdMaster.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
+	m.sequencerType = cmdMaster.Flag.String("sequencerType", "memory", "Choose [memory|etcd] type for store the file sequence")
+	m.etcdUrls = cmdMaster.Flag.String("etcdUrls", "",
+		"when sequencerType=etcd, set etcdUrls for etcd cluster that store file sequence, example : http://127.0.0.1:2379,http://127.0.0.1:2389")
 }
 
 var cmdMaster = &Command{
