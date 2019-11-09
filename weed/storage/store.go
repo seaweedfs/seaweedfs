@@ -187,7 +187,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		location.RUnlock()
 
 		if len(deleteVids) > 0 {
-                        // delete expired volumes.
+			// delete expired volumes.
 			location.Lock()
 			for _, vid := range deleteVids {
 				location.deleteVolumeById(vid)
