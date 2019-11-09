@@ -8,7 +8,6 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
-	"github.com/chrislusf/seaweedfs/weed/storage/backend/memory_map"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -128,33 +127,24 @@ func (n *Needle) prepareWriteBuffer(version Version) ([]byte, uint32, int64, err
 
 func (n *Needle) Append(w backend.DataStorageBackend, version Version) (offset uint64, size uint32, actualSize int64, err error) {
 
-	mMap, exists := memory_map.FileMemoryMap[w.String()]
-	if !exists {
-		if end, _, e := w.GetStat(); e == nil {
-			defer func(w backend.DataStorageBackend, off int64) {
-				if err != nil {
-					if te := w.Truncate(end); te != nil {
-						glog.V(0).Infof("Failed to truncate %s back to %d with error: %v", w.String(), end, te)
-					}
+	if end, _, e := w.GetStat(); e == nil {
+		defer func(w backend.DataStorageBackend, off int64) {
+			if err != nil {
+				if te := w.Truncate(end); te != nil {
+					glog.V(0).Infof("Failed to truncate %s back to %d with error: %v", w.String(), end, te)
 				}
-			}(w, end)
-			offset = uint64(end)
-		} else {
-			err = fmt.Errorf("Cannot Read Current Volume Position: %v", e)
-			return
-		}
+			}
+		}(w, end)
+		offset = uint64(end)
 	} else {
-		offset = uint64(mMap.End_of_file + 1)
+		err = fmt.Errorf("Cannot Read Current Volume Position: %v", e)
+		return
 	}
 
 	bytesToWrite, size, actualSize, err := n.prepareWriteBuffer(version)
 
 	if err == nil {
-		if exists {
-			mMap.WriteMemory(offset, uint64(len(bytesToWrite)), bytesToWrite)
-		} else {
-			_, err = w.WriteAt(bytesToWrite, int64(offset))
-		}
+		_, err = w.WriteAt(bytesToWrite, int64(offset))
 	}
 
 	return offset, size, actualSize, err
@@ -165,14 +155,9 @@ func ReadNeedleBlob(r backend.DataStorageBackend, offset int64, size uint32, ver
 	dataSize := GetActualSize(size, version)
 	dataSlice = make([]byte, int(dataSize))
 
-	mMap, exists := memory_map.FileMemoryMap[r.String()]
-	if exists {
-		dataSlice, err := mMap.ReadMemory(uint64(offset), uint64(dataSize))
-		return dataSlice, err
-	} else {
-		_, err = r.ReadAt(dataSlice, offset)
-		return dataSlice, err
-	}
+	_, err = r.ReadAt(dataSlice, offset)
+	return dataSlice, err
+
 }
 
 // ReadBytes hydrates the needle from the bytes buffer, with only n.Id is set.
@@ -286,19 +271,12 @@ func ReadNeedleHeader(r backend.DataStorageBackend, version Version, offset int6
 	if version == Version1 || version == Version2 || version == Version3 {
 		bytes = make([]byte, NeedleHeaderSize)
 
-		mMap, exists := memory_map.FileMemoryMap[r.String()]
-		if exists {
-			bytes, err = mMap.ReadMemory(uint64(offset), NeedleHeaderSize)
-			if err != nil {
-				return nil, bytes, 0, err
-			}
-		} else {
-			var count int
-			count, err = r.ReadAt(bytes, offset)
-			if count <= 0 || err != nil {
-				return nil, bytes, 0, err
-			}
+		var count int
+		count, err = r.ReadAt(bytes, offset)
+		if count <= 0 || err != nil {
+			return nil, bytes, 0, err
 		}
+
 		n.ParseNeedleHeader(bytes)
 		bodyLength = NeedleBodyLength(n.Size, version)
 	}

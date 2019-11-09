@@ -4,11 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/backend"
-	"github.com/chrislusf/seaweedfs/weed/storage/backend/memory_map"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
@@ -78,35 +76,26 @@ func (s *SuperBlock) Initialized() bool {
 
 func (v *Volume) maybeWriteSuperBlock() error {
 
-	mMap, exists := memory_map.FileMemoryMap[v.DataBackend.String()]
-	if exists {
-		if mMap.End_of_file == -1 {
-			v.SuperBlock.version = needle.CurrentVersion
-			mMap.WriteMemory(0, uint64(len(v.SuperBlock.Bytes())), v.SuperBlock.Bytes())
-		}
-		return nil
-	} else {
-		datSize, _, e := v.DataBackend.GetStat()
-		if e != nil {
-			glog.V(0).Infof("failed to stat datafile %s: %v", v.DataBackend.String(), e)
-			return e
-		}
-		if datSize == 0 {
-			v.SuperBlock.version = needle.CurrentVersion
-			_, e = v.DataBackend.WriteAt(v.SuperBlock.Bytes(), 0)
-			if e != nil && os.IsPermission(e) {
-				//read-only, but zero length - recreate it!
-				var dataFile *os.File
-				if dataFile, e = os.Create(v.DataBackend.String()); e == nil {
-					v.DataBackend = backend.NewDiskFile(dataFile)
-					if _, e = v.DataBackend.WriteAt(v.SuperBlock.Bytes(), 0); e == nil {
-						v.readOnly = false
-					}
+	datSize, _, e := v.DataBackend.GetStat()
+	if e != nil {
+		glog.V(0).Infof("failed to stat datafile %s: %v", v.DataBackend.String(), e)
+		return e
+	}
+	if datSize == 0 {
+		v.SuperBlock.version = needle.CurrentVersion
+		_, e = v.DataBackend.WriteAt(v.SuperBlock.Bytes(), 0)
+		if e != nil && os.IsPermission(e) {
+			//read-only, but zero length - recreate it!
+			var dataFile *os.File
+			if dataFile, e = os.Create(v.DataBackend.String()); e == nil {
+				v.DataBackend = backend.NewDiskFile(dataFile)
+				if _, e = v.DataBackend.WriteAt(v.SuperBlock.Bytes(), 0); e == nil {
+					v.readOnly = false
 				}
 			}
 		}
-		return e
 	}
+	return e
 }
 
 func (v *Volume) readSuperBlock() (err error) {
@@ -118,18 +107,9 @@ func (v *Volume) readSuperBlock() (err error) {
 func ReadSuperBlock(datBackend backend.DataStorageBackend) (superBlock SuperBlock, err error) {
 
 	header := make([]byte, _SuperBlockSize)
-	mMap, exists := memory_map.FileMemoryMap[datBackend.String()]
-	if exists {
-		header, err = mMap.ReadMemory(0, _SuperBlockSize)
-		if err != nil {
-			err = fmt.Errorf("cannot read volume %s super block: %v", datBackend.String(), err)
-			return
-		}
-	} else {
-		if _, e := datBackend.ReadAt(header, 0); e != nil {
-			err = fmt.Errorf("cannot read volume %s super block: %v", datBackend.String(), e)
-			return
-		}
+	if _, e := datBackend.ReadAt(header, 0); e != nil {
+		err = fmt.Errorf("cannot read volume %s super block: %v", datBackend.String(), e)
+		return
 	}
 
 	superBlock.version = needle.Version(header[0])

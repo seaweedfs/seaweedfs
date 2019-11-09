@@ -312,7 +312,8 @@ func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset in
 
 func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, preallocate int64, compactionBytePerSecond int64) (err error) {
 	var (
-		dst, idx *os.File
+		dst backend.DataStorageBackend
+		idx *os.File
 	)
 	if dst, err = createVolumeFile(dstName, preallocate, 0); err != nil {
 		return
@@ -328,7 +329,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 		v:              v,
 		now:            uint64(time.Now().Unix()),
 		nm:             NewBtreeNeedleMap(idx),
-		dstBackend:     backend.NewDiskFile(dst),
+		dstBackend:     dst,
 		writeThrottler: util.NewWriteThrottler(compactionBytePerSecond),
 	}
 	err = ScanVolumeFile(v.dir, v.Collection, v.Id, v.needleMapKind, scanner)

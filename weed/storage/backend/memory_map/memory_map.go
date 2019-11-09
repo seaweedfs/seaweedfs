@@ -21,8 +21,6 @@ type MemoryMap struct {
 	End_of_file            int64
 }
 
-var FileMemoryMap = make(map[string]*MemoryMap)
-
 func ReadMemoryMapMaxSizeMb(memoryMapMaxSizeMbString string) (uint32, error) {
 	if memoryMapMaxSizeMbString == "" {
 		return 0, nil

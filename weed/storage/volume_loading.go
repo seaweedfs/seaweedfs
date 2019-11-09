@@ -25,13 +25,13 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	var e error
 	fileName := v.FileName()
 	alreadyHasSuperBlock := false
-	var dataFile *os.File
 
 	// open dat file
 	if exists, canRead, canWrite, modifiedTime, fileSize := checkFile(fileName + ".dat"); exists {
 		if !canRead {
 			return fmt.Errorf("cannot read Volume Data file %s.dat", fileName)
 		}
+		var dataFile *os.File
 		if canWrite {
 			dataFile, e = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
 		} else {
@@ -43,14 +43,14 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		if fileSize >= _SuperBlockSize {
 			alreadyHasSuperBlock = true
 		}
+		v.DataBackend = backend.NewDiskFile(dataFile)
 	} else {
 		if createDatIfMissing {
-			dataFile, e = createVolumeFile(fileName+".dat", preallocate, v.MemoryMapMaxSizeMb)
+			v.DataBackend, e = createVolumeFile(fileName+".dat", preallocate, v.MemoryMapMaxSizeMb)
 		} else {
 			return fmt.Errorf("Volume Data file %s.dat does not exist.", fileName)
 		}
 	}
-	v.DataBackend = backend.NewDiskFile(dataFile)
 
 	if e != nil {
 		if !os.IsPermission(e) {
