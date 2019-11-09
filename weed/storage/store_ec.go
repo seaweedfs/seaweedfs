@@ -288,7 +288,7 @@ func (s *Store) readRemoteEcShardInterval(ctx context.Context, sourceDataNodes [
 	}
 
 	for _, sourceDataNode := range sourceDataNodes {
-		glog.V(4).Infof("read remote ec shard %d.%d from %s", vid, shardId, sourceDataNode)
+		glog.V(3).Infof("read remote ec shard %d.%d from %s", vid, shardId, sourceDataNode)
 		n, is_deleted, err = s.doReadRemoteEcShardInterval(ctx, sourceDataNode, needleId, vid, shardId, buf, offset)
 		if err == nil {
 			return
@@ -340,7 +340,7 @@ func (s *Store) doReadRemoteEcShardInterval(ctx context.Context, sourceDataNode 
 }
 
 func (s *Store) recoverOneRemoteEcShardInterval(ctx context.Context, needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, shardIdToRecover erasure_coding.ShardId, buf []byte, offset int64) (n int, is_deleted bool, err error) {
-	glog.V(4).Infof("recover ec shard %d.%d from other locations", ecVolume.VolumeId, shardIdToRecover)
+	glog.V(3).Infof("recover ec shard %d.%d from other locations", ecVolume.VolumeId, shardIdToRecover)
 
 	enc, err := reedsolomon.New(erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	if err != nil {

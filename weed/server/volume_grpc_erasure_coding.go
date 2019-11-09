@@ -252,9 +252,14 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 	startOffset, bytesToRead := req.Offset, req.Size
 
 	for bytesToRead > 0 {
-		bytesread, err := ecShard.ReadAt(buffer, startOffset)
+		// min of bytesToRead and bufSize
+		bufferSize := bufSize
+		if bufferSize > bytesToRead {
+			bufferSize = bytesToRead
+		}
+		bytesread, err := ecShard.ReadAt(buffer[0:bufferSize], startOffset)
 
-		// println(fileName, "read", bytesread, "bytes, with target", bytesToRead)
+		// println("read", ecShard.FileName(), "startOffset", startOffset, bytesread, "bytes, with target", bufferSize)
 		if bytesread > 0 {
 
 			if int64(bytesread) > bytesToRead {
@@ -268,6 +273,7 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 				return err
 			}
 
+			startOffset += int64(bytesread)
 			bytesToRead -= int64(bytesread)
 
 		}
