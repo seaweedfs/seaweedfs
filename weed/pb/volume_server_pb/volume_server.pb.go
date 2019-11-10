@@ -320,7 +320,7 @@ type AllocateVolumeRequest struct {
 	Preallocate        int64  `protobuf:"varint,3,opt,name=preallocate" json:"preallocate,omitempty"`
 	Replication        string `protobuf:"bytes,4,opt,name=replication" json:"replication,omitempty"`
 	Ttl                string `protobuf:"bytes,5,opt,name=ttl" json:"ttl,omitempty"`
-	MemoryMapMaxSizeMb uint32 `protobuf:"varint,6,opt,name=memory_map_max_size_mb,json=MemoryMapMaxSizeMb" json:"memory_map_max_size_mb,omitempty"`
+	MemoryMapMaxSizeMb uint32 `protobuf:"varint,6,opt,name=memory_map_max_size_mb,json=memoryMapMaxSizeMb" json:"memory_map_max_size_mb,omitempty"`
 }
 
 func (m *AllocateVolumeRequest) Reset()                    { *m = AllocateVolumeRequest{} }
