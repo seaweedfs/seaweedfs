@@ -100,6 +100,11 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		requestedCount = 1
 	}
 
+	writableVolumeCount, e := strconv.Atoi(r.FormValue("writableVolumeCount"))
+	if e != nil {
+		writableVolumeCount = 0
+	}
+
 	option, err := ms.getVolumeGrowOption(r)
 	if err != nil {
 		writeJsonQuiet(w, r, http.StatusNotAcceptable, operation.AssignResult{Error: err.Error()})
@@ -114,7 +119,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		ms.vgLock.Lock()
 		defer ms.vgLock.Unlock()
 		if !ms.Topo.HasWritableVolume(option) {
-			if _, err = ms.vg.AutomaticGrowByType(option, ms.grpcDialOption, ms.Topo); err != nil {
+			if _, err = ms.vg.AutomaticGrowByType(option, ms.grpcDialOption, ms.Topo, writableVolumeCount); err != nil {
 				writeJsonError(w, r, http.StatusInternalServerError,
 					fmt.Errorf("Cannot grow volume group! %v", err))
 				return
