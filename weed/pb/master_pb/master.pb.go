@@ -648,14 +648,15 @@ func (m *Location) GetPublicUrl() string {
 }
 
 type AssignRequest struct {
-	Count              uint64 `protobuf:"varint,1,opt,name=count" json:"count,omitempty"`
-	Replication        string `protobuf:"bytes,2,opt,name=replication" json:"replication,omitempty"`
-	Collection         string `protobuf:"bytes,3,opt,name=collection" json:"collection,omitempty"`
-	Ttl                string `protobuf:"bytes,4,opt,name=ttl" json:"ttl,omitempty"`
-	DataCenter         string `protobuf:"bytes,5,opt,name=data_center,json=dataCenter" json:"data_center,omitempty"`
-	Rack               string `protobuf:"bytes,6,opt,name=rack" json:"rack,omitempty"`
-	DataNode           string `protobuf:"bytes,7,opt,name=data_node,json=dataNode" json:"data_node,omitempty"`
-	MemoryMapMaxSizeMb uint32 `protobuf:"varint,8,opt,name=memory_map_max_size_mb,json=MemoryMapMaxSizeMb" json:"memory_map_max_size_mb,omitempty"`
+	Count               uint64 `protobuf:"varint,1,opt,name=count" json:"count,omitempty"`
+	Replication         string `protobuf:"bytes,2,opt,name=replication" json:"replication,omitempty"`
+	Collection          string `protobuf:"bytes,3,opt,name=collection" json:"collection,omitempty"`
+	Ttl                 string `protobuf:"bytes,4,opt,name=ttl" json:"ttl,omitempty"`
+	DataCenter          string `protobuf:"bytes,5,opt,name=data_center,json=dataCenter" json:"data_center,omitempty"`
+	Rack                string `protobuf:"bytes,6,opt,name=rack" json:"rack,omitempty"`
+	DataNode            string `protobuf:"bytes,7,opt,name=data_node,json=dataNode" json:"data_node,omitempty"`
+	MemoryMapMaxSizeMb  uint32 `protobuf:"varint,8,opt,name=memory_map_max_size_mb,json=MemoryMapMaxSizeMb" json:"memory_map_max_size_mb,omitempty"`
+	WritableVolumeCount uint32 `protobuf:"varint,9,opt,name=writable_volume_count" json:"writable_volume_count,omitempty"`
 }
 
 func (m *AssignRequest) Reset()                    { *m = AssignRequest{} }

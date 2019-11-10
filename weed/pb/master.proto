@@ -140,6 +140,7 @@ message AssignRequest {
     string rack = 6;
     string data_node = 7;
     uint32 memory_map_max_size_mb = 8;
+    uint32 WritableVolumeCount = 9;
 }
 message AssignResponse {
     string fid = 1;
