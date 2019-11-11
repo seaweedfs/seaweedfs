@@ -28,9 +28,9 @@ import (
 )
 
 const (
-	MasterPrefix      = "master.maintenance."
-	SequencerType     = MasterPrefix + "sequencer_type"
-	SequencerEtcdUrls = MasterPrefix + "sequencer_etcd_urls"
+	MasterPrefix      = "master.maintenance"
+	SequencerType     = MasterPrefix + ".sequencer_type"
+	SequencerEtcdUrls = MasterPrefix + ".sequencer_etcd_urls"
 )
 
 type MasterOption struct {
@@ -244,14 +244,14 @@ func (ms *MasterServer) startAdminScripts() {
 func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer {
 	var seq sequence.Sequencer
 	seqType := strings.ToLower(util.Config().GetString(SequencerType))
-	glog.V(0).Infof("sequencer type [%s]", seqType)
+	glog.V(0).Infof("[%s] : [%s]", SequencerType, seqType)
 	switch strings.ToLower(seqType) {
 	case "memory":
 		seq = sequence.NewMemorySequencer()
 	case "etcd":
 		var err error
 		urls := util.Config().GetString(SequencerEtcdUrls)
-		glog.V(4).Infof("ETCD urls : %s", urls)
+		glog.V(0).Infof("[%s] : [%s]", SequencerEtcdUrls, urls)
 		seq, err = sequence.NewEtcdSequencer(urls, option.MetaFolder)
 		if err != nil {
 			glog.Error(err)

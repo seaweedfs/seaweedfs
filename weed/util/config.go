@@ -1,6 +1,8 @@
 package util
 
 import (
+	"fmt"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/spf13/viper"
 )
@@ -46,9 +48,13 @@ func Config() Configuration {
 	return viper.GetViper()
 }
 
-func SubConfig(subKey string) Configuration {
+func SubConfig(subKey string) (Configuration, error) {
 	if subKey != "" {
-		return viper.GetViper().Sub(subKey)
+		sub := viper.GetViper().Sub(subKey)
+		if sub == nil {
+			return nil, fmt.Errorf("sub config [%s] not exist", subKey)
+		}
+		return sub, nil
 	}
-	return  viper.GetViper()
+	return  viper.GetViper(), nil
 }

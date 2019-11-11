@@ -78,7 +78,6 @@ func runMaster(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
 	util.LoadConfiguration("master", false)
-	glog.V(0).Infof("%v", viper.GetViper().GetString("master.maintenance.scripts"))
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	util.SetupProfiling(*masterCpuProfile, *masterMemProfile)
