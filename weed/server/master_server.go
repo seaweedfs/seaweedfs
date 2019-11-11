@@ -27,6 +27,12 @@ import (
 	"google.golang.org/grpc"
 )
 
+const (
+	MasterPrefix      = "master.maintenance"
+	SequencerType     = MasterPrefix + ".sequencer_type"
+	SequencerEtcdUrls = MasterPrefix + ".sequencer_etcd_urls"
+)
+
 type MasterOption struct {
 	Port                    int
 	MetaFolder              string
@@ -87,7 +93,11 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 		MasterClient:    wdclient.NewMasterClient(context.Background(), grpcDialOption, "master", peers),
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
-	seq := sequence.NewMemorySequencer()
+
+	seq := ms.createSequencer(option)
+	if nil == seq {
+		glog.Fatalf("create sequencer failed.")
+	}
 	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, ms.option.PulseSeconds)
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", ms.option.VolumeSizeLimitMB, "MB")
@@ -165,8 +175,8 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 			proxy.Transport = util.Transport
 			proxy.ServeHTTP(w, r)
 		} else {
-			//drop it to the floor
-			//writeJsonError(w, r, errors.New(ms.Topo.RaftServer.Name()+" does not know Leader yet:"+ms.Topo.RaftServer.Leader()))
+			// drop it to the floor
+			// writeJsonError(w, r, errors.New(ms.Topo.RaftServer.Name()+" does not know Leader yet:"+ms.Topo.RaftServer.Leader()))
 		}
 	}
 }
@@ -229,4 +239,26 @@ func (ms *MasterServer) startAdminScripts() {
 			}
 		}
 	}()
+}
+
+func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer {
+	var seq sequence.Sequencer
+	seqType := strings.ToLower(util.Config().GetString(SequencerType))
+	glog.V(0).Infof("[%s] : [%s]", SequencerType, seqType)
+	switch strings.ToLower(seqType) {
+	case "memory":
+		seq = sequence.NewMemorySequencer()
+	case "etcd":
+		var err error
+		urls := util.Config().GetString(SequencerEtcdUrls)
+		glog.V(0).Infof("[%s] : [%s]", SequencerEtcdUrls, urls)
+		seq, err = sequence.NewEtcdSequencer(urls, option.MetaFolder)
+		if err != nil {
+			glog.Error(err)
+			seq = nil
+		}
+	default:
+		seq = sequence.NewMemorySequencer()
+	}
+	return seq
 }
