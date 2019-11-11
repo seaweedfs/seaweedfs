@@ -27,6 +27,12 @@ import (
 	"google.golang.org/grpc"
 )
 
+const (
+	MasterPrefix      = "master.maintenance."
+	SequencerType     = MasterPrefix + "sequencer_type"
+	SequencerEtcdUrls = MasterPrefix + "sequencer_etcd_urls"
+)
+
 type MasterOption struct {
 	Port                    int
 	MetaFolder              string
@@ -39,9 +45,6 @@ type MasterOption struct {
 	DisableHttp             bool
 	MetricsAddress          string
 	MetricsIntervalSec      int
-
-	sequencerType string
-	etcdUrls      string
 }
 
 type MasterServer struct {
@@ -172,8 +175,8 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 			proxy.Transport = util.Transport
 			proxy.ServeHTTP(w, r)
 		} else {
-			//drop it to the floor
-			//writeJsonError(w, r, errors.New(ms.Topo.RaftServer.Name()+" does not know Leader yet:"+ms.Topo.RaftServer.Leader()))
+			// drop it to the floor
+			// writeJsonError(w, r, errors.New(ms.Topo.RaftServer.Name()+" does not know Leader yet:"+ms.Topo.RaftServer.Leader()))
 		}
 	}
 }
@@ -240,13 +243,16 @@ func (ms *MasterServer) startAdminScripts() {
 
 func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer {
 	var seq sequence.Sequencer
-	glog.V(0).Infof("sequencer type [%s]", option.sequencerType)
-	switch strings.ToLower(option.sequencerType) {
+	seqType := strings.ToLower(util.Config().GetString(SequencerType))
+	glog.V(0).Infof("sequencer type [%s]", seqType)
+	switch strings.ToLower(seqType) {
 	case "memory":
 		seq = sequence.NewMemorySequencer()
 	case "etcd":
 		var err error
-		seq, err = sequence.NewEtcdSequencer(option.etcdUrls, option.MetaFolder)
+		urls := util.Config().GetString(SequencerEtcdUrls)
+		glog.V(4).Infof("ETCD urls : %s", urls)
+		seq, err = sequence.NewEtcdSequencer(urls, option.MetaFolder)
 		if err != nil {
 			glog.Error(err)
 			seq = nil

@@ -40,5 +40,15 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 	}
 
 	return true
+}
 
+func Config() Configuration {
+	return viper.GetViper()
+}
+
+func SubConfig(subKey string) Configuration {
+	if subKey != "" {
+		return viper.GetViper().Sub(subKey)
+	}
+	return  viper.GetViper()
 }
