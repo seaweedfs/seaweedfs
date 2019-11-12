@@ -2,9 +2,6 @@ package command
 
 import (
 	"fmt"
-	"net/url"
-	"strconv"
-	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/shell"
@@ -37,7 +34,7 @@ func runShell(command *Command, args []string) bool {
 	shellOptions.GrpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
 
 	var filerPwdErr error
-	shellOptions.FilerHost, shellOptions.FilerPort, shellOptions.Directory, filerPwdErr = parseFilerUrl(*shellInitialFilerUrl)
+	shellOptions.FilerHost, shellOptions.FilerPort, shellOptions.Directory, filerPwdErr = util.ParseFilerUrl(*shellInitialFilerUrl)
 	if filerPwdErr != nil {
 		fmt.Printf("failed to parse url filer.url=%s : %v\n", *shellInitialFilerUrl, filerPwdErr)
 		return false
@@ -47,23 +44,4 @@ func runShell(command *Command, args []string) bool {
 
 	return true
 
-}
-
-func parseFilerUrl(entryPath string) (filerServer string, filerPort int64, path string, err error) {
-	if !strings.HasPrefix(entryPath, "http://") && !strings.HasPrefix(entryPath, "https://") {
-		entryPath = "http://" + entryPath
-	}
-
-	var u *url.URL
-	u, err = url.Parse(entryPath)
-	if err != nil {
-		return
-	}
-	filerServer = u.Hostname()
-	portString := u.Port()
-	if portString != "" {
-		filerPort, err = strconv.ParseInt(portString, 10, 32)
-	}
-	path = u.Path
-	return
 }

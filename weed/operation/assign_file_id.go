@@ -47,13 +47,13 @@ func Assign(server string, grpcDialOption grpc.DialOption, primaryRequest *Volum
 		lastError = WithMasterServerClient(server, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
 			req := &master_pb.AssignRequest{
-				Count:       primaryRequest.Count,
-				Replication: primaryRequest.Replication,
-				Collection:  primaryRequest.Collection,
-				Ttl:         primaryRequest.Ttl,
-				DataCenter:  primaryRequest.DataCenter,
-				Rack:        primaryRequest.Rack,
-				DataNode:    primaryRequest.DataNode,
+				Count:               primaryRequest.Count,
+				Replication:         primaryRequest.Replication,
+				Collection:          primaryRequest.Collection,
+				Ttl:                 primaryRequest.Ttl,
+				DataCenter:          primaryRequest.DataCenter,
+				Rack:                primaryRequest.Rack,
+				DataNode:            primaryRequest.DataNode,
 				WritableVolumeCount: primaryRequest.WritableVolumeCount,
 			}
 			resp, grpcErr := masterClient.Assign(context.Background(), req)
