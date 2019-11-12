@@ -111,7 +111,7 @@ func rebuildEcVolumes(commandEnv *CommandEnv, allEcNodes []*EcNode, collection s
 			return fmt.Errorf("ec volume %d is unrepairable with %d shards\n", vid, shardCount)
 		}
 
-		sortEcNodes(allEcNodes)
+		sortEcNodesByFreeslotsDecending(allEcNodes)
 
 		if allEcNodes[0].freeEcSlot < erasure_coding.TotalShardsCount {
 			return fmt.Errorf("disk space is not enough")

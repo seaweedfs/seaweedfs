@@ -207,7 +207,7 @@ func doDeduplicateEcShards(ctx context.Context, commandEnv *CommandEnv, collecti
 		if len(ecNodes) <= 1 {
 			continue
 		}
-		sortEcNodes(ecNodes)
+		sortEcNodesByFreeslotsAscending(ecNodes)
 		fmt.Printf("ec shard %d.%d has %d copies, keeping %v\n", vid, shardId, len(ecNodes), ecNodes[0].info.Id)
 		if !applyBalancing {
 			continue
@@ -442,7 +442,7 @@ func doBalanceEcRack(ctx context.Context, commandEnv *CommandEnv, ecRack *EcRack
 
 func pickOneEcNodeAndMoveOneShard(ctx context.Context, commandEnv *CommandEnv, expectedTotalEcShards int, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
 
-	sortEcNodes(possibleDestinationEcNodes)
+	sortEcNodesByFreeslotsDecending(possibleDestinationEcNodes)
 	averageShardsPerEcNode := ceilDivide(expectedTotalEcShards, len(possibleDestinationEcNodes))
 
 	for _, destEcNode := range possibleDestinationEcNodes {

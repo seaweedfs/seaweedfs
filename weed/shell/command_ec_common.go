@@ -112,9 +112,15 @@ func eachDataNode(topo *master_pb.TopologyInfo, fn func(dc string, rack RackId, 
 	}
 }
 
-func sortEcNodes(ecNodes []*EcNode) {
+func sortEcNodesByFreeslotsDecending(ecNodes []*EcNode) {
 	sort.Slice(ecNodes, func(i, j int) bool {
 		return ecNodes[i].freeEcSlot > ecNodes[j].freeEcSlot
+	})
+}
+
+func sortEcNodesByFreeslotsAscending(ecNodes []*EcNode) {
+	sort.Slice(ecNodes, func(i, j int) bool {
+		return ecNodes[i].freeEcSlot < ecNodes[j].freeEcSlot
 	})
 }
 
@@ -202,7 +208,7 @@ func collectEcNodes(ctx context.Context, commandEnv *CommandEnv, selectedDataCen
 		totalFreeEcSlots += freeEcSlots
 	})
 
-	sortEcNodes(ecNodes)
+	sortEcNodesByFreeslotsDecending(ecNodes)
 
 	return
 }
