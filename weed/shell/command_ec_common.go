@@ -156,7 +156,7 @@ func countShards(ecShardInfos []*master_pb.VolumeEcShardInformationMessage) (cou
 }
 
 func countFreeShardSlots(dn *master_pb.DataNodeInfo) (count int) {
-	return int(dn.FreeVolumeCount)*erasure_coding.DataShardsCount - countShards(dn.EcShardInfos)
+	return int(dn.MaxVolumeCount-dn.ActiveVolumeCount)*erasure_coding.DataShardsCount - countShards(dn.EcShardInfos)
 }
 
 type RackId string
@@ -191,15 +191,15 @@ func collectEcNodes(ctx context.Context, commandEnv *CommandEnv, selectedDataCen
 		if selectedDataCenter != "" && selectedDataCenter != dc {
 			return
 		}
-		if freeEcSlots := countFreeShardSlots(dn); freeEcSlots > 0 {
-			ecNodes = append(ecNodes, &EcNode{
-				info:       dn,
-				dc:         dc,
-				rack:       rack,
-				freeEcSlot: int(freeEcSlots),
-			})
-			totalFreeEcSlots += freeEcSlots
-		}
+
+		freeEcSlots := countFreeShardSlots(dn)
+		ecNodes = append(ecNodes, &EcNode{
+			info:       dn,
+			dc:         dc,
+			rack:       rack,
+			freeEcSlot: int(freeEcSlots),
+		})
+		totalFreeEcSlots += freeEcSlots
 	})
 
 	sortEcNodes(ecNodes)
