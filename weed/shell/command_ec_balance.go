@@ -266,6 +266,10 @@ func doBalanceEcShardsAcrossRacks(ctx context.Context, commandEnv *CommandEnv, c
 
 	for shardId, ecNode := range ecShardsToMove {
 		rackId := pickOneRack(racks, rackToShardCount, averageShardsPerEcRack)
+		if rackId == "" {
+			fmt.Printf("ec shard %d.%d at %s can not find a destination rack\n", vid, shardId, ecNode.info.Id)
+			continue
+		}
 		var possibleDestinationEcNodes []*EcNode
 		for _, n := range racks[rackId].ecNodes {
 			possibleDestinationEcNodes = append(possibleDestinationEcNodes, n)

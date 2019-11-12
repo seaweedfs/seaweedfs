@@ -156,7 +156,7 @@ func countShards(ecShardInfos []*master_pb.VolumeEcShardInformationMessage) (cou
 }
 
 func countFreeShardSlots(dn *master_pb.DataNodeInfo) (count int) {
-	return int(dn.FreeVolumeCount)*10 - countShards(dn.EcShardInfos)
+	return int(dn.FreeVolumeCount)*erasure_coding.DataShardsCount - countShards(dn.EcShardInfos)
 }
 
 type RackId string
