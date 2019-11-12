@@ -440,10 +440,9 @@ func doBalanceEcRack(ctx context.Context, commandEnv *CommandEnv, ecRack *EcRack
 	return nil
 }
 
-func pickOneEcNodeAndMoveOneShard(ctx context.Context, commandEnv *CommandEnv, expectedTotalEcShards int, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
+func pickOneEcNodeAndMoveOneShard(ctx context.Context, commandEnv *CommandEnv, averageShardsPerEcNode int, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
 
 	sortEcNodesByFreeslotsDecending(possibleDestinationEcNodes)
-	averageShardsPerEcNode := ceilDivide(expectedTotalEcShards, len(possibleDestinationEcNodes))
 
 	for _, destEcNode := range possibleDestinationEcNodes {
 		if destEcNode.info.Id == existingLocation.info.Id {
