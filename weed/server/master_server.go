@@ -182,15 +182,20 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 }
 
 func (ms *MasterServer) startAdminScripts() {
+	var err error
+
 	v := viper.GetViper()
 	adminScripts := v.GetString("master.maintenance.scripts")
-	v.SetDefault("master.maintenance.sleep_minutes", 17)
-	sleepMinutes := v.GetInt("master.maintenance.sleep_minutes")
-
 	glog.V(0).Infof("adminScripts:\n%v", adminScripts)
 	if adminScripts == "" {
 		return
 	}
+
+	v.SetDefault("master.maintenance.sleep_minutes", 17)
+	sleepMinutes := v.GetInt("master.maintenance.sleep_minutes")
+
+	v.SetDefault("master.maintenance.filer_url", "http://localhost:8888/")
+	filerURL := v.GetString("master.maintenance.filer_url")
 
 	scriptLines := strings.Split(adminScripts, "\n")
 
@@ -199,9 +204,12 @@ func (ms *MasterServer) startAdminScripts() {
 	var shellOptions shell.ShellOptions
 	shellOptions.GrpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "master")
 	shellOptions.Masters = &masterAddress
-	shellOptions.FilerHost = "localhost"
-	shellOptions.FilerPort = 8888
-	shellOptions.Directory = "/"
+
+	shellOptions.FilerHost, shellOptions.FilerPort, shellOptions.Directory, err = util.ParseFilerUrl(filerURL)
+	if err != nil {
+		glog.V(0).Infof("failed to parse master.maintenance.filer_url=%s : %v\n", filerURL, err)
+		return
+	}
 
 	commandEnv := shell.NewCommandEnv(shellOptions)
 

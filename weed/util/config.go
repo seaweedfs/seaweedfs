@@ -45,4 +45,3 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 func Config() Configuration {
 	return viper.GetViper()
 }
-

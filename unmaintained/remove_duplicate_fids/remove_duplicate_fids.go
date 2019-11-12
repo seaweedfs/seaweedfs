@@ -26,9 +26,9 @@ type VolumeFileScanner4SeeDat struct {
 	version needle.Version
 	block   storage.SuperBlock
 
-	dir    string
-	hashes map[string]bool
-	dat    *os.File
+	dir        string
+	hashes     map[string]bool
+	dat        *os.File
 	datBackend backend.DataStorageBackend
 }
 

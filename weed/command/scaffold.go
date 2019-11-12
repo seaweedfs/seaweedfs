@@ -346,6 +346,8 @@ scripts = """
 """
 sleep_minutes = 17          # sleep minutes between each script execution
 
+filer_url = "http://localhost:8888/"
+
 sequencer_type = memory     # Choose [memory|etcd] type for storing the file id sequence
 
 # when sequencer.type = etcd, set listen client urls of etcd cluster that store file id sequence

@@ -17,14 +17,14 @@ type MemoryMappedFile struct {
 
 func NewMemoryMappedFile(f *os.File, memoryMapSizeMB uint32) *MemoryMappedFile {
 	mmf := &MemoryMappedFile{
-		mm : new(MemoryMap),
+		mm: new(MemoryMap),
 	}
 	mmf.mm.CreateMemoryMap(f, 1024*1024*uint64(memoryMapSizeMB))
 	return mmf
 }
 
 func (mmf *MemoryMappedFile) ReadAt(p []byte, off int64) (n int, err error) {
-	readBytes, e :=  mmf.mm.ReadMemory(uint64(off), uint64(len(p)))
+	readBytes, e := mmf.mm.ReadMemory(uint64(off), uint64(len(p)))
 	if e != nil {
 		return 0, e
 	}
