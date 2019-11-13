@@ -50,7 +50,7 @@ func (mmf *MemoryMappedFile) Close() error {
 func (mmf *MemoryMappedFile) GetStat() (datSize int64, modTime time.Time, err error) {
 	stat, e := mmf.mm.File.Stat()
 	if e == nil {
-		return stat.Size(), stat.ModTime(), nil
+		return mmf.mm.End_of_file+1, stat.ModTime(), nil
 	}
 	return 0, time.Time{}, err
 }
