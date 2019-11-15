@@ -28,9 +28,8 @@ import (
 )
 
 const (
-	MasterPrefix      = "master.maintenance"
-	SequencerType     = MasterPrefix + ".sequencer_type"
-	SequencerEtcdUrls = MasterPrefix + ".sequencer_etcd_urls"
+	SequencerType     = "master.sequencer.type"
+	SequencerEtcdUrls = "master.sequencer.sequencer_etcd_urls"
 )
 
 type MasterOption struct {
@@ -194,8 +193,8 @@ func (ms *MasterServer) startAdminScripts() {
 	v.SetDefault("master.maintenance.sleep_minutes", 17)
 	sleepMinutes := v.GetInt("master.maintenance.sleep_minutes")
 
-	v.SetDefault("master.maintenance.filer_url", "http://localhost:8888/")
-	filerURL := v.GetString("master.maintenance.filer_url")
+	v.SetDefault("master.filer.default_filer_url", "http://localhost:8888/")
+	filerURL := v.GetString("master.filer.default_filer_url")
 
 	scriptLines := strings.Split(adminScripts, "\n")
 
@@ -207,7 +206,7 @@ func (ms *MasterServer) startAdminScripts() {
 
 	shellOptions.FilerHost, shellOptions.FilerPort, shellOptions.Directory, err = util.ParseFilerUrl(filerURL)
 	if err != nil {
-		glog.V(0).Infof("failed to parse master.maintenance.filer_url=%s : %v\n", filerURL, err)
+		glog.V(0).Infof("failed to parse master.filer.default_filer_urll=%s : %v\n", filerURL, err)
 		return
 	}
 
@@ -251,14 +250,13 @@ func (ms *MasterServer) startAdminScripts() {
 
 func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer {
 	var seq sequence.Sequencer
-	seqType := strings.ToLower(util.Config().GetString(SequencerType))
-	glog.V(0).Infof("[%s] : [%s]", SequencerType, seqType)
+	v := viper.GetViper()
+	seqType := strings.ToLower(v.GetString(SequencerType))
+	glog.V(1).Infof("[%s] : [%s]", SequencerType, seqType)
 	switch strings.ToLower(seqType) {
-	case "memory":
-		seq = sequence.NewMemorySequencer()
 	case "etcd":
 		var err error
-		urls := util.Config().GetString(SequencerEtcdUrls)
+		urls := v.GetString(SequencerEtcdUrls)
 		glog.V(0).Infof("[%s] : [%s]", SequencerEtcdUrls, urls)
 		seq, err = sequence.NewEtcdSequencer(urls, option.MetaFolder)
 		if err != nil {

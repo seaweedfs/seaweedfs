@@ -41,7 +41,3 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 
 	return true
 }
-
-func Config() Configuration {
-	return viper.GetViper()
-}

@@ -346,10 +346,11 @@ scripts = """
 """
 sleep_minutes = 17          # sleep minutes between each script execution
 
-filer_url = "http://localhost:8888/"
+[master.filer]
+default_filer_url = "http://localhost:8888/"
 
-sequencer_type = memory     # Choose [memory|etcd] type for storing the file id sequence
-
+[master.sequencer]
+type = memory     # Choose [memory|etcd] type for storing the file id sequence
 # when sequencer.type = etcd, set listen client urls of etcd cluster that store file id sequence
 # example : http://127.0.0.1:2379,http://127.0.0.1:2389
 sequencer_etcd_urls = http://127.0.0.1:2379
