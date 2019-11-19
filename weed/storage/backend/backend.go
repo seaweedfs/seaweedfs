@@ -13,3 +13,7 @@ type DataStorageBackend interface {
 	GetStat() (datSize int64, modTime time.Time, err error)
 	String() string
 }
+
+var (
+	StorageBackends []DataStorageBackend
+)
