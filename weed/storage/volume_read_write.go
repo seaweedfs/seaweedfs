@@ -50,8 +50,8 @@ func (v *Volume) Destroy() (err error) {
 	os.Remove(v.FileName() + ".idx")
 	os.Remove(v.FileName() + ".cpd")
 	os.Remove(v.FileName() + ".cpx")
-	os.Remove(v.FileName() + ".ldb")
-	os.Remove(v.FileName() + ".bdb")
+	os.RemoveAll(v.FileName() + ".ldb")
+	os.RemoveAll(v.FileName() + ".bdb")
 	return
 }
 
