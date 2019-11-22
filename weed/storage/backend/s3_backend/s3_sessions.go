@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	s3Sessions = make(map[string]s3iface.S3API)
+	s3Sessions   = make(map[string]s3iface.S3API)
 	sessionsLock sync.RWMutex
 )
 
@@ -45,7 +45,7 @@ func createSession(awsAccessKeyId, awsSecretAccessKey, region string) (s3iface.S
 		return nil, fmt.Errorf("create aws session in region %s: %v", region, err)
 	}
 
-	t:= s3.New(sess)
+	t := s3.New(sess)
 
 	s3Sessions[region] = t
 
