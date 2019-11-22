@@ -40,11 +40,16 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 		limit = fs.option.DirListingLimit
 	}
 
+	paginationLimit := 1024
+	if limit < paginationLimit {
+		paginationLimit = limit
+	}
+
 	resp := &filer_pb.ListEntriesResponse{}
 	lastFileName := req.StartFromFileName
 	includeLastFile := req.InclusiveStartFrom
 	for limit > 0 {
-		entries, err := fs.filer.ListDirectoryEntries(ctx, filer2.FullPath(req.Directory), lastFileName, includeLastFile, 1024)
+		entries, err := fs.filer.ListDirectoryEntries(ctx, filer2.FullPath(req.Directory), lastFileName, includeLastFile, paginationLimit)
 		if err != nil {
 			return nil, err
 		}
@@ -71,9 +76,12 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 				Attributes:  filer2.EntryAttributeToPb(entry),
 			})
 			limit--
+			if limit == 0 {
+				return resp, nil
+			}
 		}
 
-		if len(resp.Entries) < 1024 {
+		if len(entries) < paginationLimit {
 			break
 		}
 
