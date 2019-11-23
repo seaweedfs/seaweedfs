@@ -1,4 +1,5 @@
-// +build !386 !arm
+// +build !386
+// +build !arm
 
 package tikv
 
