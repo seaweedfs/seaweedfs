@@ -1,3 +1,5 @@
+// +build !386 !arm
+
 package tikv
 
 import (
