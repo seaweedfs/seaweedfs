@@ -79,6 +79,8 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(s3a.GetObjectHandler)
 		// ListObjectsV1 (Legacy)
 		bucket.Methods("GET").HandlerFunc(s3a.ListObjectsV1Handler)
+		// SelectObjectContent
+		bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(s3a.SelectObjectContent).Queries("select", "", "select-type", "2")
 
 		// DeleteMultipleObjects
 		bucket.Methods("POST").HandlerFunc(s3a.DeleteMultipleObjectsHandler).Queries("delete", "")
