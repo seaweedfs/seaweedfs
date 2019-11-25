@@ -118,10 +118,15 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 }
 
 func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, responseFn func(proxyResonse *http.Response, w http.ResponseWriter)) {
+	var method string
+	method = r.Method
 
-	glog.V(2).Infof("s3 proxying %s to %s", r.Method, destUrl)
+	if r.URL.RawQuery == "select&select-type=2" {
+		method = "GET"
+	}
+	glog.V(2).Infof("s3 proxying %s to %s", method, destUrl)
 
-	proxyReq, err := http.NewRequest(r.Method, destUrl, r.Body)
+	proxyReq, err := http.NewRequest(method, destUrl, r.Body)
 
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", destUrl, err)
@@ -237,13 +242,13 @@ func (s3a *S3ApiServer) SelectObjectContent(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		if serr, ok := err.(s3select.SelectError); ok {
 			encodedErrorResponse := encodeResponse(cmd.APIErrorResponse{
-				Code: serr.ErrorCode(),
-				Message: serr.ErrorMessage(),
+				Code:       serr.ErrorCode(),
+				Message:    serr.ErrorMessage(),
 				BucketName: bucket,
-				Key: object,
-				Resource: r.URL.Path,
-				RequestID: w.Header().Get(xhttp.AmzRequestID),
-				HostID: "",
+				Key:        object,
+				Resource:   r.URL.Path,
+				RequestID:  w.Header().Get(xhttp.AmzRequestID),
+				HostID:     "",
 			})
 			writeResponse(w, serr.HTTPStatusCode(), encodedErrorResponse, "application/xml")
 		} else {
@@ -285,40 +290,5 @@ func (s3a *S3ApiServer) SelectObjectContent(w http.ResponseWriter, r *http.Reque
 		s3Select.Evaluate(w)
 		s3Select.Close()
 	}
-	s3a.proxyToFilerS3Select(w, r, destUrl, passThroughResponseSelectObjectContent)
-}
-
-func (s3a *S3ApiServer) proxyToFilerS3Select(w http.ResponseWriter, r *http.Request, destUrl string,
-	responseFn func(proxyResonse *http.Response, w http.ResponseWriter)) {
-
-	glog.V(2).Infof("s3 proxying %s to %s", "GET", destUrl)
-
-	proxyReq, err := http.NewRequest("GET", destUrl, nil)
-
-	if err != nil {
-		glog.Errorf("NewRequest %s: %v", destUrl, err)
-		writeErrorResponse(w, ErrInternalError, r.URL)
-		return
-	}
-
-	proxyReq.Header.Set("Host", s3a.option.Filer)
-	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
-	proxyReq.Header.Set("Etag-MD5", "True")
-
-	for header, values := range r.Header {
-		for _, value := range values {
-			proxyReq.Header.Add(header, value)
-		}
-	}
-
-	resp, postErr := client.Do(proxyReq)
-
-	if postErr != nil {
-		glog.Errorf("post to filer: %v", postErr)
-		writeErrorResponse(w, ErrInternalError, r.URL)
-		return
-	}
-	defer resp.Body.Close()
-
-	responseFn(resp, w)
+	s3a.proxyToFiler(w, r, destUrl, passThroughResponseSelectObjectContent)
 }
