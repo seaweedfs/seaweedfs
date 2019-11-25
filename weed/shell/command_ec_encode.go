@@ -95,7 +95,7 @@ func doEcEncode(ctx context.Context, commandEnv *CommandEnv, collection string, 
 	// mark the volume as readonly
 	err = markVolumeReadonly(ctx, commandEnv.option.GrpcDialOption, needle.VolumeId(vid), locations)
 	if err != nil {
-		return fmt.Errorf("generate ec shards for volume %d on %s: %v", vid, locations[0].Url, err)
+		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
 	}
 
 	// generate ec shards
