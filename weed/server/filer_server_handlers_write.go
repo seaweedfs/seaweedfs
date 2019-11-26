@@ -149,6 +149,16 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 		stats.FilerRequestHistogram.WithLabelValues("postStoreWrite").Observe(time.Since(start).Seconds())
 	}()
 
+	modeStr := r.URL.Query().Get("mode")
+	if modeStr == "" {
+		modeStr = "0660"
+	}
+	mode, err := strconv.ParseUint(modeStr, 8, 32)
+	if err != nil {
+		glog.Errorf("Invalid mode format: %s, use 0660 by default", modeStr)
+		mode = 0660
+	}
+
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") {
 		if ret.Name != "" {
@@ -165,7 +175,7 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 		Attr: filer2.Attr{
 			Mtime:       time.Now(),
 			Crtime:      crTime,
-			Mode:        0660,
+			Mode:        os.FileMode(mode),
 			Uid:         OS_UID,
 			Gid:         OS_GID,
 			Replication: replication,
