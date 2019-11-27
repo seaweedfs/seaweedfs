@@ -64,12 +64,12 @@ var cmdMount = &Command{
 func parseFilerGrpcAddress(filer string) (filerGrpcAddress string, err error) {
 	hostnameAndPort := strings.Split(filer, ":")
 	if len(hostnameAndPort) != 2 {
-		return "", fmt.Errorf("The filer should have hostname:port format: %v", hostnameAndPort)
+		return "", fmt.Errorf("filer should have hostname:port format: %v", hostnameAndPort)
 	}
 
 	filerPort, parseErr := strconv.ParseUint(hostnameAndPort[1], 10, 64)
 	if parseErr != nil {
-		return "", fmt.Errorf("The filer filer port parse error: %v", parseErr)
+		return "", fmt.Errorf("filer port parse error: %v", parseErr)
 	}
 
 	filerGrpcPort := int(filerPort) + 10000
