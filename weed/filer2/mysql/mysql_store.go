@@ -35,10 +35,12 @@ func (store *MysqlStore) Initialize(configuration util.Configuration) (err error
 		configuration.GetString("database"),
 		configuration.GetInt("connection_max_idle"),
 		configuration.GetInt("connection_max_open"),
+		configuration.GetBool("interpolateParams"),
 	)
 }
 
-func (store *MysqlStore) initialize(user, password, hostname string, port int, database string, maxIdle, maxOpen int) (err error) {
+func (store *MysqlStore) initialize(user, password, hostname string, port int, database string, maxIdle, maxOpen int,
+	interpolateParams bool) (err error) {
 
 	store.SqlInsert = "INSERT INTO filemeta (dirhash,name,directory,meta) VALUES(?,?,?,?)"
 	store.SqlUpdate = "UPDATE filemeta SET meta=? WHERE dirhash=? AND name=? AND directory=?"
@@ -48,6 +50,10 @@ func (store *MysqlStore) initialize(user, password, hostname string, port int, d
 	store.SqlListInclusive = "SELECT NAME, meta FROM filemeta WHERE dirhash=? AND name>=? AND directory=? ORDER BY NAME ASC LIMIT ?"
 
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, user, password, hostname, port, database)
+	if interpolateParams {
+		sqlUrl += "&interpolateParams=true"
+	}
+
 	var dbErr error
 	store.DB, dbErr = sql.Open("mysql", sqlUrl)
 	if dbErr != nil {

@@ -95,6 +95,7 @@ password = ""
 database = ""              # create or use an existing database
 connection_max_idle = 2
 connection_max_open = 100
+interpolateParams = false
 
 [postgres] # or cockroachdb
 # CREATE TABLE IF NOT EXISTS filemeta (
