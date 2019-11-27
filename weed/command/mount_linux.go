@@ -1,6 +1,8 @@
 package command
 
 import (
+	"strings"
+
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/seaweedfs/fuse"
 )
