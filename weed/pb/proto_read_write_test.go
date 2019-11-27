@@ -18,7 +18,7 @@ func TestJsonpMarshalUnmarshal(t *testing.T) {
 
 	m := jsonpb.Marshaler{
 		EmitDefaults: true,
-		Indent: "  ",
+		Indent:       "  ",
 	}
 
 	if text, err := m.MarshalToString(tv); err != nil {
@@ -39,6 +39,5 @@ func TestJsonpMarshalUnmarshal(t *testing.T) {
 	}
 
 	fmt.Printf("unmarshalled: %+v\n", tv1)
-
 
 }

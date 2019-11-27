@@ -82,11 +82,11 @@ func doVolumeTier(ctx context.Context, commandEnv *CommandEnv, collection string
 
 	// mark the volume as readonly
 	/*
-	err = markVolumeReadonly(ctx, commandEnv.option.GrpcDialOption, needle.VolumeId(vid), locations)
-	if err != nil {
-		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
-	}
-	 */
+		err = markVolumeReadonly(ctx, commandEnv.option.GrpcDialOption, needle.VolumeId(vid), locations)
+		if err != nil {
+			return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
+		}
+	*/
 
 	// copy the .dat file to remote tier
 	err = copyDatToRemoteTier(ctx, commandEnv.option.GrpcDialOption, needle.VolumeId(vid), collection, locations[0].Url, dest)
