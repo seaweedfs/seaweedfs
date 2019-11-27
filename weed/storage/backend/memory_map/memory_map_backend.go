@@ -58,3 +58,7 @@ func (mmf *MemoryMappedFile) GetStat() (datSize int64, modTime time.Time, err er
 func (mmf *MemoryMappedFile) String() string {
 	return mmf.mm.File.Name()
 }
+
+func (mmf *MemoryMappedFile) Instantiate(src *os.File) error {
+	panic("should not implement Instantiate for MemoryMappedFile")
+}

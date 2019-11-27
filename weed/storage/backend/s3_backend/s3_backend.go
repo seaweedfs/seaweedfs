@@ -2,6 +2,7 @@ package s3_backend
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -25,7 +26,6 @@ type S3Backend struct {
 	conn   s3iface.S3API
 	region string
 	bucket string
-	dir    string
 	vid    needle.VolumeId
 	key    string
 }
@@ -84,11 +84,11 @@ func (s3backend *S3Backend) GetName() string {
 	return "s3"
 }
 
-func (s3backend *S3Backend) GetSinkToDirectory() string {
-	return s3backend.dir
+func (s3backend S3Backend) Instantiate(src *os.File) error {
+	panic("implement me")
 }
 
-func (s3backend *S3Backend) Initialize(configuration util.Configuration, vid needle.VolumeId) error {
+func (s3backend *S3Backend) Initialize(configuration util.Configuration, prefix string, vid needle.VolumeId) error {
 	glog.V(0).Infof("storage.backend.s3.region: %v", configuration.GetString("region"))
 	glog.V(0).Infof("storage.backend.s3.bucket: %v", configuration.GetString("bucket"))
 	glog.V(0).Infof("storage.backend.s3.directory: %v", configuration.GetString("directory"))
@@ -98,20 +98,19 @@ func (s3backend *S3Backend) Initialize(configuration util.Configuration, vid nee
 		configuration.GetString("aws_secret_access_key"),
 		configuration.GetString("region"),
 		configuration.GetString("bucket"),
-		configuration.GetString("directory"),
+		prefix,
 		vid,
 	)
 }
 
-func (s3backend *S3Backend) initialize(awsAccessKeyId, awsSecretAccessKey, region, bucket, dir string,
-	vid needle.VolumeId) (err error) {
+func (s3backend *S3Backend) initialize(awsAccessKeyId, awsSecretAccessKey, region, bucket string,
+	prefix string, vid needle.VolumeId) (err error) {
 	s3backend.region = region
 	s3backend.bucket = bucket
-	s3backend.dir = dir
 	s3backend.conn, err = createSession(awsAccessKeyId, awsSecretAccessKey, region)
 
 	s3backend.vid = vid
-	s3backend.key = fmt.Sprintf("%s/%d.dat", dir, vid)
+	s3backend.key = fmt.Sprintf("%s_%d.dat", prefix, vid)
 	if strings.HasPrefix(s3backend.key, "/") {
 		s3backend.key = s3backend.key[1:]
 	}

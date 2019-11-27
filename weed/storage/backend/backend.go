@@ -2,6 +2,7 @@ package backend
 
 import (
 	"io"
+	"os"
 	"time"
 )
 
@@ -12,6 +13,7 @@ type DataStorageBackend interface {
 	io.Closer
 	GetStat() (datSize int64, modTime time.Time, err error)
 	String() string
+	Instantiate(src *os.File) error
 }
 
 var (

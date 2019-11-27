@@ -67,6 +67,10 @@ service VolumeServer {
     rpc VolumeEcBlobDelete (VolumeEcBlobDeleteRequest) returns (VolumeEcBlobDeleteResponse) {
     }
 
+    // tiered storage
+    rpc VolumeTierCopyDatToRemote (VolumeTierCopyDatToRemoteRequest) returns (VolumeTierCopyDatToRemoteResponse) {
+    }
+
     // query
     rpc Query (QueryRequest) returns (stream QueriedStripe) {
     }
@@ -324,6 +328,22 @@ message MemStatus {
     uint64 stack = 7;
 }
 
+// tired storage on volume servers
+message TieredVolume {
+    string backend_type = 1;
+    string backend_name = 2;
+    uint64 version = 3;
+}
+
+message VolumeTierCopyDatToRemoteRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+    string destination = 3;
+}
+message VolumeTierCopyDatToRemoteResponse {
+}
+
+// select on volume servers
 message QueryRequest {
     repeated string selections = 1;
     repeated string from_file_ids = 2;
