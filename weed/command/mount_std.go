@@ -12,15 +12,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/jacobsa/daemonize"
-	"github.com/spf13/viper"
-
 	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/jacobsa/daemonize"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
+	"github.com/spf13/viper"
 )
 
 func runMount(cmd *Command, args []string) bool {
@@ -88,12 +87,18 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 		}
 	}
 
+	// Ensure target mount point availability
+	if isValid := checkMountPointAvailable(dir); !isValid {
+		glog.Fatalf("Expected mount to still be active, target mount point: %s, please check!", dir)
+		return false
+	}
+
 	mountName := path.Base(dir)
 
 	options := []fuse.MountOption{
 		fuse.VolumeName(mountName),
-		fuse.FSName("SeaweedFS"),
-		fuse.Subtype("SeaweedFS"),
+		fuse.FSName(filer + ":" + filerMountRootPath),
+		fuse.Subtype("seaweedfs"),
 		fuse.NoAppleDouble(),
 		fuse.NoAppleXattr(),
 		fuse.NoBrowse(),
