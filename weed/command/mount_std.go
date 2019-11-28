@@ -87,6 +87,7 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 		}
 	}
 
+	// Ensure target mount point availability
 	if isValid := checkMountPointAvailable(dir); !isValid {
 		glog.Fatalf("Expected mount to still be active, target mount point: %s, please check!", dir)
 		return false
