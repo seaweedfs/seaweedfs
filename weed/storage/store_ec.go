@@ -120,8 +120,13 @@ func (s *Store) ReadEcShardNeedle(ctx context.Context, vid needle.VolumeId, n *n
 		if localEcVolume, found := location.FindEcVolume(vid); found {
 
 			// read the volume version
+			readCounter := 0
 			for localEcVolume.Version == 0 {
 				err := s.readEcVolumeVersion(ctx, vid, localEcVolume)
+				readCounter++
+				if readCounter > 10 && err != nil {
+					return 0, fmt.Errorf("fail to read ec volume %d: %v", vid, err)
+				}
 				time.Sleep(1357 * time.Millisecond)
 				glog.V(0).Infof("ReadEcShardNeedle vid %d version:%v: %v", vid, localEcVolume.Version, err)
 			}
