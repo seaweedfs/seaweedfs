@@ -9,6 +9,7 @@ import (
 	"github.com/chrislusf/raft"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"google.golang.org/grpc/peer"
@@ -79,6 +80,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				VolumeSizeLimit:        uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
 				MetricsAddress:         ms.option.MetricsAddress,
 				MetricsIntervalSeconds: uint32(ms.option.MetricsIntervalSec),
+				StorageBackends:        backend.ToPbStorageBackends(),
 			}); err != nil {
 				glog.Warningf("SendHeartbeat.Send volume size to %s:%d %v", dn.Ip, dn.Port, err)
 				return err

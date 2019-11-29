@@ -364,7 +364,6 @@ sequencer_etcd_urls = "http://127.0.0.1:2379"
 	aws_secret_access_key = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
 	region = "us-east-2"
 	bucket = "your_bucket_name"    # an existing bucket
-	directory = "/"                # destination directory
 
 `
 )

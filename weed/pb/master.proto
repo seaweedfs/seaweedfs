@@ -58,6 +58,7 @@ message HeartbeatResponse {
     string leader = 2;
     string metrics_address = 3;
     uint32 metrics_interval_seconds = 4;
+    repeated StorageBackend storage_backends = 5;
 }
 
 message VolumeInformationMessage {
@@ -87,6 +88,12 @@ message VolumeEcShardInformationMessage {
     uint32 id = 1;
     string collection = 2;
     uint32 ec_index_bits = 3;
+}
+
+message StorageBackend {
+    string type = 1;
+    string id = 2;
+    map<string, string> properties = 3;
 }
 
 message Empty {

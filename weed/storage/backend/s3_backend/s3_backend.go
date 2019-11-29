@@ -10,7 +10,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func init() {
@@ -23,33 +22,39 @@ type S3BackendFactory struct {
 func (factory *S3BackendFactory) StorageType() backend.StorageType {
 	return backend.StorageType("s3")
 }
-func (factory *S3BackendFactory) BuildStorage(configuration util.Configuration, id string) (backend.BackendStorage, error) {
+func (factory *S3BackendFactory) BuildStorage(configuration backend.StringProperties, id string) (backend.BackendStorage, error) {
 	return newS3BackendStorage(configuration, id)
 }
 
 type S3BackendStorage struct {
-	id     string
-	conn   s3iface.S3API
-	region string
-	bucket string
+	id                    string
+	aws_access_key_id     string
+	aws_secret_access_key string
+	region                string
+	bucket                string
+	conn                  s3iface.S3API
 }
 
-func newS3BackendStorage(configuration util.Configuration, id string) (s *S3BackendStorage, err error) {
+func newS3BackendStorage(configuration backend.StringProperties, id string) (s *S3BackendStorage, err error) {
 	s = &S3BackendStorage{}
 	s.id = id
-	s.conn, err = createSession(
-		configuration.GetString("aws_access_key_id"),
-		configuration.GetString("aws_secret_access_key"),
-		configuration.GetString("region"))
+	s.aws_access_key_id = configuration.GetString("aws_access_key_id")
+	s.aws_secret_access_key = configuration.GetString("aws_secret_access_key")
 	s.region = configuration.GetString("region")
 	s.bucket = configuration.GetString("bucket")
+	s.conn, err = createSession(s.aws_access_key_id, s.aws_secret_access_key, s.region)
 
-	glog.V(0).Infof("created s3 backend storage %s for region %s bucket %s", s.Name(), s.region, s.bucket)
+	glog.V(0).Infof("created backend storage s3.%s for region %s bucket %s", s.id, s.region, s.bucket)
 	return
 }
 
-func (s *S3BackendStorage) Name() string {
-	return "s3." + s.id
+func (s *S3BackendStorage) ToProperties() map[string]string {
+	m := make(map[string]string)
+	m["aws_access_key_id"] = s.aws_access_key_id
+	m["aws_secret_access_key"] = s.aws_secret_access_key
+	m["region"] = s.region
+	m["bucket"] = s.bucket
+	return m
 }
 
 func (s *S3BackendStorage) NewStorageFile(key string) backend.BackendStorageFile {
