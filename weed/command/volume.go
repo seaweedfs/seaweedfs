@@ -186,22 +186,26 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 			if err := publicHttpDown.Stop(); err != nil {
 				glog.Warningf("stop the public http server failed, %v", err)
 			}
-			glog.V(0).Infof("graceful stop public http server, elapsed [%d]", time.Now().Sub(startTime).Milliseconds())
+			delta := time.Now().Sub(startTime).Nanoseconds() / 1e6
+			glog.V(0).Infof("stop public http server, elapsed %dms", delta)
 		}
 
 		startTime = time.Now()
 		if err := clusterHttpServer.Stop(); err != nil {
 			glog.Warningf("stop the cluster http server failed, %v", err)
 		}
-		glog.V(0).Infof("graceful stop cluster http server, elapsed [%d]", time.Now().Sub(startTime).Milliseconds())
+		delta := time.Now().Sub(startTime).Nanoseconds() / 1e6
+		glog.V(0).Infof("graceful stop cluster http server, elapsed [%d]", delta)
 
 		startTime = time.Now()
 		grpcS.GracefulStop()
-		glog.V(0).Infof("graceful stop gRPC, elapsed [%d]", time.Now().Sub(startTime).Milliseconds())
+		delta = time.Now().Sub(startTime).Nanoseconds() / 1e6
+		glog.V(0).Infof("graceful stop gRPC, elapsed [%d]", delta)
 
 		startTime = time.Now()
 		volumeServer.Shutdown()
-		glog.V(0).Infof("stop volume server, elapsed [%d]", time.Now().Sub(startTime).Milliseconds())
+		delta = time.Now().Sub(startTime).Nanoseconds() / 1e6
+		glog.V(0).Infof("stop volume server, elapsed [%d]", delta)
 
 		pprof.StopCPUProfile()
 
