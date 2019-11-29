@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	_ backend.DataStorageBackend = &MemoryMappedFile{}
+	_ backend.BackendStorageFile = &MemoryMappedFile{}
 )
 
 type MemoryMappedFile struct {

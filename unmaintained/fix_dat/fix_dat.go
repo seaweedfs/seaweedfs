@@ -73,7 +73,7 @@ func main() {
 
 }
 
-func iterateEntries(datBackend backend.DataStorageBackend, idxFile *os.File, visitNeedle func(n *needle.Needle, offset int64)) {
+func iterateEntries(datBackend backend.BackendStorageFile, idxFile *os.File, visitNeedle func(n *needle.Needle, offset int64)) {
 	// start to read index file
 	var readerOffset int64
 	bytes := make([]byte, 16)

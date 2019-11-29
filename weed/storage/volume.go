@@ -21,7 +21,7 @@ type Volume struct {
 	Id                 needle.VolumeId
 	dir                string
 	Collection         string
-	DataBackend        backend.DataStorageBackend
+	DataBackend        backend.BackendStorageFile
 	nm                 NeedleMapper
 	needleMapKind      NeedleMapType
 	readOnly           bool

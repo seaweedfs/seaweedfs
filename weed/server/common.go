@@ -14,6 +14,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"google.golang.org/grpc"
 
+	_ "github.com/chrislusf/seaweedfs/weed/storage/backend/s3_backend"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/stats"

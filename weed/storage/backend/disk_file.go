@@ -6,7 +6,7 @@ import (
 )
 
 var (
-	_ DataStorageBackend = &DiskFile{}
+	_ BackendStorageFile = &DiskFile{}
 )
 
 type DiskFile struct {

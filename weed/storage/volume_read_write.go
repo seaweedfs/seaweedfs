@@ -195,7 +195,7 @@ func ScanVolumeFile(dirname string, collection string, id needle.VolumeId,
 	return ScanVolumeFileFrom(version, v.DataBackend, offset, volumeFileScanner)
 }
 
-func ScanVolumeFileFrom(version needle.Version, datBackend backend.DataStorageBackend, offset int64, volumeFileScanner VolumeFileScanner) (err error) {
+func ScanVolumeFileFrom(version needle.Version, datBackend backend.BackendStorageFile, offset int64, volumeFileScanner VolumeFileScanner) (err error) {
 	n, nh, rest, e := needle.ReadNeedleHeader(datBackend, version, offset)
 	if e != nil {
 		if e == io.EOF {

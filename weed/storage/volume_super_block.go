@@ -104,7 +104,7 @@ func (v *Volume) readSuperBlock() (err error) {
 }
 
 // ReadSuperBlock reads from data file and load it into volume's super block
-func ReadSuperBlock(datBackend backend.DataStorageBackend) (superBlock SuperBlock, err error) {
+func ReadSuperBlock(datBackend backend.BackendStorageFile) (superBlock SuperBlock, err error) {
 
 	header := make([]byte, _SuperBlockSize)
 	if _, e := datBackend.ReadAt(header, 0); e != nil {

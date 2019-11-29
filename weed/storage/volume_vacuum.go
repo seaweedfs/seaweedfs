@@ -132,7 +132,7 @@ func (v *Volume) cleanupCompact() error {
 	return nil
 }
 
-func fetchCompactRevisionFromDatFile(datBackend backend.DataStorageBackend) (compactRevision uint16, err error) {
+func fetchCompactRevisionFromDatFile(datBackend backend.BackendStorageFile) (compactRevision uint16, err error) {
 	superBlock, err := ReadSuperBlock(datBackend)
 	if err != nil {
 		return 0, err
@@ -270,7 +270,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 type VolumeFileScanner4Vacuum struct {
 	version        needle.Version
 	v              *Volume
-	dstBackend     backend.DataStorageBackend
+	dstBackend     backend.BackendStorageFile
 	nm             *NeedleMap
 	newOffset      int64
 	now            uint64
@@ -312,7 +312,7 @@ func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset in
 
 func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, preallocate int64, compactionBytePerSecond int64) (err error) {
 	var (
-		dst backend.DataStorageBackend
+		dst backend.BackendStorageFile
 		idx *os.File
 	)
 	if dst, err = createVolumeFile(dstName, preallocate, 0); err != nil {

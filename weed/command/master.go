@@ -12,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
 	"github.com/spf13/viper"
@@ -100,6 +101,8 @@ func runMaster(cmd *Command, args []string) bool {
 }
 
 func startMaster(masterOption MasterOptions, masterWhiteList []string) {
+
+	backend.LoadConfiguration(viper.GetViper())
 
 	myMasterAddress, peers := checkPeers(*masterOption.ip, *masterOption.port, *masterOption.peers)
 

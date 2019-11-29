@@ -29,7 +29,7 @@ type VolumeFileScanner4SeeDat struct {
 	dir        string
 	hashes     map[string]bool
 	dat        *os.File
-	datBackend backend.DataStorageBackend
+	datBackend backend.BackendStorageFile
 }
 
 func (scanner *VolumeFileScanner4SeeDat) VisitSuperBlock(superBlock storage.SuperBlock) error {
