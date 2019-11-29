@@ -17,6 +17,8 @@ require (
 	github.com/disintegration/imaging v1.6.1
 	github.com/dustin/go-humanize v1.0.0
 	github.com/eapache/go-resiliency v1.2.0 // indirect
+	github.com/facebookgo/clock v0.0.0-20150410010913-600d898af40a
+	github.com/facebookgo/stats v0.0.0-20151006221625-1b76add642e4
 	github.com/frankban/quicktest v1.7.2 // indirect
 	github.com/gabriel-vasile/mimetype v0.3.17
 	github.com/go-redis/redis v6.15.2+incompatible
