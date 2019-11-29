@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 func TestReadingTomlConfiguration(t *testing.T) {
