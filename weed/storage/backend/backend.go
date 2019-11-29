@@ -54,6 +54,9 @@ func LoadConfiguration(config *viper.Viper) {
 				glog.Fatalf("fail to create backend storage %s.%s", backendTypeName, backendStorageId)
 			}
 			BackendStorages[backendTypeName+"."+backendStorageId] = backendStorage
+			if backendStorageId == "default" {
+				BackendStorages[backendTypeName] = backendStorage
+			}
 		}
 	}
 

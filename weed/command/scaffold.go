@@ -359,7 +359,7 @@ sequencer_etcd_urls = "http://127.0.0.1:2379"
 
 [storage.backend]
 	[storage.backend.s3.default]
-	enabled = true
+	enabled = false
 	aws_access_key_id     = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
 	aws_secret_access_key = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
 	region = "us-east-2"
