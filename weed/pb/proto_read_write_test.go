@@ -10,10 +10,10 @@ import (
 
 func TestJsonpMarshalUnmarshal(t *testing.T) {
 
-	tv := &volume_server_pb.TieredVolume{
+	tv := &volume_server_pb.RemoteFile{
 		BackendType: "aws",
-		BackendName: "",
-		Version:     12,
+		BackendId: "",
+		FileSize:     12,
 	}
 
 	m := jsonpb.Marshaler{
@@ -29,11 +29,11 @@ func TestJsonpMarshalUnmarshal(t *testing.T) {
 
 	rawJson := `{
 		"backendType":"aws",
-		"backendName":"temp",
-		"version":12
+		"backendId":"temp",
+		"FileSize":12
 	}`
 
-	tv1 := &volume_server_pb.TieredVolume{}
+	tv1 := &volume_server_pb.RemoteFile{}
 	if err := jsonpb.UnmarshalString(rawJson, tv1); err != nil {
 		fmt.Printf("unmarshal error: %v\n", err)
 	}
