@@ -78,7 +78,7 @@ func (s *S3BackendStorage) CopyFile(f *os.File, fn func(progressed int64, percen
 	randomUuid, _ := uuid.NewRandom()
 	key = randomUuid.String()
 
-	glog.V(1).Infof("copying dat file of", f.Name(), "to remote s3", s.id, "as", key)
+	glog.V(1).Infof("copying dat file of %s to remote s3.%s as %s", f.Name(), s.id, key)
 
 	size, err = uploadToS3(s.conn, f.Name(), s.bucket, key, fn)
 
