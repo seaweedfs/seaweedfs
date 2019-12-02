@@ -35,7 +35,7 @@ func TestJsonpMarshalUnmarshal(t *testing.T) {
 
 	tv1 := &volume_server_pb.TieredVolume{}
 	if err := jsonpb.UnmarshalString(rawJson, tv1); err != nil {
-		fmt.Printf("unmarshal eror: %v\n", err)
+		fmt.Printf("unmarshal error: %v\n", err)
 	}
 
 	fmt.Printf("unmarshalled: %+v\n", tv1)
