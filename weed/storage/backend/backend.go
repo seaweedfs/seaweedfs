@@ -8,6 +8,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/spf13/viper"
 )
 
@@ -23,7 +24,8 @@ type BackendStorageFile interface {
 
 type BackendStorage interface {
 	ToProperties() map[string]string
-	NewStorageFile(key string) BackendStorageFile
+	NewStorageFile(key string, tierInfo *volume_server_pb.VolumeTierInfo) BackendStorageFile
+	CopyFile(f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error)
 }
 
 type StringProperties interface {
@@ -46,13 +48,13 @@ func LoadConfiguration(config *viper.Viper) {
 
 	backendSub := config.Sub(StorageBackendPrefix)
 
-	for backendTypeName, _ := range config.GetStringMap(StorageBackendPrefix) {
+	for backendTypeName := range config.GetStringMap(StorageBackendPrefix) {
 		backendStorageFactory, found := BackendStorageFactories[StorageType(backendTypeName)]
 		if !found {
 			glog.Fatalf("backend storage type %s not found", backendTypeName)
 		}
 		backendTypeSub := backendSub.Sub(backendTypeName)
-		for backendStorageId, _ := range backendSub.GetStringMap(backendTypeName) {
+		for backendStorageId := range backendSub.GetStringMap(backendTypeName) {
 			if !backendTypeSub.GetBool(backendStorageId + ".enabled") {
 				continue
 			}
@@ -105,17 +107,28 @@ func (p *Properties) GetString(key string) string {
 
 func ToPbStorageBackends() (backends []*master_pb.StorageBackend) {
 	for sName, s := range BackendStorages {
-		parts := strings.Split(sName, ".")
-		if len(parts) != 2 {
+		sType, sId := BackendNameToTypeId(sName)
+		if sType == "" {
 			continue
 		}
-
-		sType, sId := parts[0], parts[1]
 		backends = append(backends, &master_pb.StorageBackend{
 			Type:       sType,
 			Id:         sId,
 			Properties: s.ToProperties(),
 		})
 	}
+	return
+}
+
+func BackendNameToTypeId(backendName string) (backendType, backendId string) {
+	parts := strings.Split(backendName, ".")
+	if len(parts) == 1 {
+		return backendName, "default"
+	}
+	if len(parts) != 2 {
+		return
+	}
+
+	backendType, backendId = parts[0], parts[1]
 	return
 }

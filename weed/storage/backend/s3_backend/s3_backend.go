@@ -2,6 +2,7 @@ package s3_backend
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -9,7 +10,9 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
+	"github.com/google/uuid"
 )
 
 func init() {
@@ -57,7 +60,7 @@ func (s *S3BackendStorage) ToProperties() map[string]string {
 	return m
 }
 
-func (s *S3BackendStorage) NewStorageFile(key string) backend.BackendStorageFile {
+func (s *S3BackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb.VolumeTierInfo) backend.BackendStorageFile {
 	if strings.HasPrefix(key, "/") {
 		key = key[1:]
 	}
@@ -65,18 +68,35 @@ func (s *S3BackendStorage) NewStorageFile(key string) backend.BackendStorageFile
 	f := &S3BackendStorageFile{
 		backendStorage: s,
 		key:            key,
+		tierInfo:       tierInfo,
 	}
 
 	return f
 }
 
+func (s *S3BackendStorage) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
+	randomUuid, _ := uuid.NewRandom()
+	key = randomUuid.String()
+
+	glog.V(1).Infof("copying dat file of", f.Name(), "to remote s3", s.id, "as", key)
+
+	size, err = uploadToS3(s.conn, f.Name(), s.bucket, key, fn)
+
+	return
+}
+
 type S3BackendStorageFile struct {
 	backendStorage *S3BackendStorage
 	key            string
+	tierInfo       *volume_server_pb.VolumeTierInfo
 }
 
 func (s3backendStorageFile S3BackendStorageFile) ReadAt(p []byte, off int64) (n int, err error) {
+
 	bytesRange := fmt.Sprintf("bytes=%d-%d", off, off+int64(len(p))-1)
+
+	// glog.V(0).Infof("read %s %s", s3backendStorageFile.key, bytesRange)
+
 	getObjectOutput, getObjectErr := s3backendStorageFile.backendStorage.conn.GetObject(&s3.GetObjectInput{
 		Bucket: &s3backendStorageFile.backendStorage.bucket,
 		Key:    &s3backendStorageFile.key,
@@ -84,13 +104,26 @@ func (s3backendStorageFile S3BackendStorageFile) ReadAt(p []byte, off int64) (n 
 	})
 
 	if getObjectErr != nil {
-		return 0, fmt.Errorf("bucket %s GetObject %s: %v",
-			s3backendStorageFile.backendStorage.bucket, s3backendStorageFile.key, getObjectErr)
+		return 0, fmt.Errorf("bucket %s GetObject %s: %v", s3backendStorageFile.backendStorage.bucket, s3backendStorageFile.key, getObjectErr)
 	}
 	defer getObjectOutput.Body.Close()
 
-	return getObjectOutput.Body.Read(p)
+	glog.V(4).Infof("read %s %s", s3backendStorageFile.key, bytesRange)
+	glog.V(4).Infof("content range: %s, contentLength: %d", *getObjectOutput.ContentRange, *getObjectOutput.ContentLength)
 
+	for {
+		if n, err = getObjectOutput.Body.Read(p); err == nil && n < len(p) {
+			p = p[n:]
+		} else {
+			break
+		}
+	}
+
+	if err == io.EOF {
+		err = nil
+	}
+
+	return
 }
 
 func (s3backendStorageFile S3BackendStorageFile) WriteAt(p []byte, off int64) (n int, err error) {
@@ -107,18 +140,15 @@ func (s3backendStorageFile S3BackendStorageFile) Close() error {
 
 func (s3backendStorageFile S3BackendStorageFile) GetStat() (datSize int64, modTime time.Time, err error) {
 
-	headObjectOutput, headObjectErr := s3backendStorageFile.backendStorage.conn.HeadObject(&s3.HeadObjectInput{
-		Bucket: &s3backendStorageFile.backendStorage.bucket,
-		Key:    &s3backendStorageFile.key,
-	})
+	files := s3backendStorageFile.tierInfo.GetFiles()
 
-	if headObjectErr != nil {
-		return 0, time.Now(), fmt.Errorf("bucket %s HeadObject %s: %v",
-			s3backendStorageFile.backendStorage.bucket, s3backendStorageFile.key, headObjectErr)
+	if len(files)==0 {
+		err = fmt.Errorf("remote file info not found")
+		return
 	}
 
-	datSize = int64(*headObjectOutput.ContentLength)
-	modTime = *headObjectOutput.LastModified
+	datSize = int64(files[0].FileSize)
+	modTime = time.Unix(int64(files[0].ModifiedTime),0)
 
 	return
 }
