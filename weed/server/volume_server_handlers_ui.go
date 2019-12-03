@@ -31,7 +31,7 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 	}{
 		util.VERSION,
 		vs.SeedMasterNodes,
-		vs.store.Status(),
+		vs.store.VolumeInfos(),
 		vs.store.EcVolumes(),
 		ds,
 		infos,

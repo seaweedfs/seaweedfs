@@ -126,10 +126,10 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 	return fmt.Errorf("No more free space left")
 }
 
-func (s *Store) Status() []*VolumeInfo {
+func (s *Store) VolumeInfos() []*VolumeInfo {
 	var stats []*VolumeInfo
 	for _, location := range s.Locations {
-		location.RLock()
+		location.volumesLock.RLock()
 		for k, v := range location.volumes {
 			s := &VolumeInfo{
 				Id:               needle.VolumeId(k),
@@ -146,7 +146,7 @@ func (s *Store) Status() []*VolumeInfo {
 			}
 			stats = append(stats, s)
 		}
-		location.RUnlock()
+		location.volumesLock.RUnlock()
 	}
 	sortVolumeInfos(stats)
 	return stats
@@ -167,7 +167,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	for _, location := range s.Locations {
 		var deleteVids []needle.VolumeId
 		maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
-		location.RLock()
+		location.volumesLock.RLock()
 		for _, v := range location.volumes {
 			if maxFileKey < v.MaxFileKey() {
 				maxFileKey = v.MaxFileKey()
@@ -184,16 +184,16 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			fileSize, _, _ := v.FileStat()
 			collectionVolumeSize[v.Collection] += fileSize
 		}
-		location.RUnlock()
+		location.volumesLock.RUnlock()
 
 		if len(deleteVids) > 0 {
 			// delete expired volumes.
-			location.Lock()
+			location.volumesLock.Lock()
 			for _, vid := range deleteVids {
 				location.deleteVolumeById(vid)
 				glog.V(0).Infoln("volume", vid, "is deleted.")
 			}
-			location.Unlock()
+			location.volumesLock.Unlock()
 		}
 	}
 

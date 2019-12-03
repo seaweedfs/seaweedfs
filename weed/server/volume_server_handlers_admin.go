@@ -12,7 +12,7 @@ import (
 func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
-	m["Volumes"] = vs.store.Status()
+	m["Volumes"] = vs.store.VolumeInfos()
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
 
