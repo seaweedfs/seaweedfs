@@ -12,8 +12,8 @@ func TestJsonpMarshalUnmarshal(t *testing.T) {
 
 	tv := &volume_server_pb.RemoteFile{
 		BackendType: "aws",
-		BackendId: "",
-		FileSize:     12,
+		BackendId:   "",
+		FileSize:    12,
 	}
 
 	m := jsonpb.Marshaler{

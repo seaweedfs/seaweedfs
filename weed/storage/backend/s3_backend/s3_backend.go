@@ -142,13 +142,13 @@ func (s3backendStorageFile S3BackendStorageFile) GetStat() (datSize int64, modTi
 
 	files := s3backendStorageFile.tierInfo.GetFiles()
 
-	if len(files)==0 {
+	if len(files) == 0 {
 		err = fmt.Errorf("remote file info not found")
 		return
 	}
 
 	datSize = int64(files[0].FileSize)
-	modTime = time.Unix(int64(files[0].ModifiedTime),0)
+	modTime = time.Unix(int64(files[0].ModifiedTime), 0)
 
 	return
 }

@@ -135,7 +135,7 @@ func copyDatToRemoteTier(ctx context.Context, grpcDialOption grpc.DialOption, wr
 				}
 			}
 
-			processingSpeed := float64(resp.Processed - lastProcessed)/1024.0/1024.0
+			processingSpeed := float64(resp.Processed-lastProcessed) / 1024.0 / 1024.0
 
 			fmt.Fprintf(writer, "copied %.2f%%, %d bytes, %.2fMB/s\n", resp.ProcessedPercentage, resp.Processed, processingSpeed)
 

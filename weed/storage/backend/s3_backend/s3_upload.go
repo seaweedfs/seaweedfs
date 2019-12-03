@@ -12,7 +12,7 @@ import (
 )
 
 func uploadToS3(sess s3iface.S3API, filename string, destBucket string, destKey string,
-	fn func(progressed int64, percentage float32)error) (fileSize int64, err error) {
+	fn func(progressed int64, percentage float32) error) (fileSize int64, err error) {
 
 	//open the file
 	f, err := os.Open(filename)
@@ -40,10 +40,10 @@ func uploadToS3(sess s3iface.S3API, filename string, destBucket string, destKey 
 	})
 
 	fileReader := &s3UploadProgressedReader{
-		fp: f,
-		size:fileSize,
-		read:-fileSize,
-		fn:fn,
+		fp:   f,
+		size: fileSize,
+		read: -fileSize,
+		fn:   fn,
 	}
 
 	// Upload the file to S3.
@@ -71,8 +71,9 @@ type s3UploadProgressedReader struct {
 	fp   *os.File
 	size int64
 	read int64
-	fn func(progressed int64, percentage float32)error
+	fn   func(progressed int64, percentage float32) error
 }
+
 func (r *s3UploadProgressedReader) Read(p []byte) (int, error) {
 	return r.fp.Read(p)
 }
@@ -95,7 +96,6 @@ func (r *s3UploadProgressedReader) ReadAt(p []byte, off int64) (int, error) {
 
 	return n, err
 }
-
 
 func (r *s3UploadProgressedReader) Seek(offset int64, whence int) (int64, error) {
 	return r.fp.Seek(offset, whence)
