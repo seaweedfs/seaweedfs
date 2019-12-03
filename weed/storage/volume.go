@@ -203,7 +203,7 @@ func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
 func (v *Volume) ToVolumeInformationMessage() *master_pb.VolumeInformationMessage {
 	size, _, modTime := v.FileStat()
 
-	return &master_pb.VolumeInformationMessage{
+	volumInfo := &master_pb.VolumeInformationMessage{
 		Id:               uint32(v.Id),
 		Size:             size,
 		Collection:       v.Collection,
@@ -217,4 +217,15 @@ func (v *Volume) ToVolumeInformationMessage() *master_pb.VolumeInformationMessag
 		CompactRevision:  uint32(v.SuperBlock.CompactionRevision),
 		ModifiedAtSecond: modTime.Unix(),
 	}
+
+	volumInfo.RemoteStorageName, volumInfo.RemoteStorageKey = v.RemoteStorageNameKey()
+
+	return volumInfo
+}
+
+func (v *Volume) RemoteStorageNameKey() (storageName, storageKey string) {
+	if len(v.volumeTierInfo.GetFiles()) == 0 {
+		return
+	}
+	return v.volumeTierInfo.GetFiles()[0].BackendName(), v.volumeTierInfo.GetFiles()[0].GetKey()
 }

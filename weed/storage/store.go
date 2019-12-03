@@ -144,6 +144,7 @@ func (s *Store) VolumeInfos() []*VolumeInfo {
 				Ttl:              v.Ttl,
 				CompactRevision:  uint32(v.CompactionRevision),
 			}
+			s.RemoteStorageName, s.RemoteStorageKey = v.RemoteStorageNameKey()
 			stats = append(stats, s)
 		}
 		location.volumesLock.RUnlock()

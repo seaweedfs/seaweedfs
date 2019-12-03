@@ -129,6 +129,36 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
       </div>
 
       <div class="row">
+        <h2>Remote Volumes</h2>
+        <table class="table table-striped">
+          <thead>
+            <tr>
+              <th>Id</th>
+              <th>Collection</th>
+              <th>Size</th>
+              <th>Files</th>
+              <th>Trash</th>
+              <th>Remote</th>
+              <th>Key</th>
+            </tr>
+          </thead>
+          <tbody>
+          {{ range .RemoteVolumes }}
+            <tr>
+              <td><code>{{ .Id }}</code></td>
+              <td>{{ .Collection }}</td>
+              <td>{{ .Size }} Bytes</td>
+              <td>{{ .FileCount }}</td>
+              <td>{{ .DeleteCount }} / {{.DeletedByteCount}} Bytes</td>
+              <td>{{ .RemoteStorageName }}</td>
+              <td>{{ .RemoteStorageKey }}</td>
+            </tr>
+          {{ end }}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="row">
         <h2>Erasure Coding Shards</h2>
         <table class="table table-striped">
           <thead>

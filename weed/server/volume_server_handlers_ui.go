@@ -8,6 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	ui "github.com/chrislusf/seaweedfs/weed/server/volume_server_ui"
 	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -20,19 +21,30 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 			ds = append(ds, stats.NewDiskStatus(dir))
 		}
 	}
+	volumeInfos := vs.store.VolumeInfos()
+	var normalVolumeInfos, remoteVolumeInfos []*storage.VolumeInfo
+	for _, vinfo := range volumeInfos {
+		if vinfo.RemoteStorageName == "" {
+			normalVolumeInfos = append(normalVolumeInfos, vinfo)
+		} else {
+			remoteVolumeInfos = append(remoteVolumeInfos, vinfo)
+		}
+	}
 	args := struct {
-		Version      string
-		Masters      []string
-		Volumes      interface{}
-		EcVolumes    interface{}
-		DiskStatuses interface{}
-		Stats        interface{}
-		Counters     *stats.ServerStats
+		Version       string
+		Masters       []string
+		Volumes       interface{}
+		EcVolumes     interface{}
+		RemoteVolumes interface{}
+		DiskStatuses  interface{}
+		Stats         interface{}
+		Counters      *stats.ServerStats
 	}{
 		util.VERSION,
 		vs.SeedMasterNodes,
-		vs.store.VolumeInfos(),
+		normalVolumeInfos,
 		vs.store.EcVolumes(),
+		remoteVolumeInfos,
 		ds,
 		infos,
 		serverStats,
