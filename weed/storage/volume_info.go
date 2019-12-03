@@ -27,16 +27,18 @@ type VolumeInfo struct {
 
 func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err error) {
 	vi = VolumeInfo{
-		Id:               needle.VolumeId(m.Id),
-		Size:             m.Size,
-		Collection:       m.Collection,
-		FileCount:        int(m.FileCount),
-		DeleteCount:      int(m.DeleteCount),
-		DeletedByteCount: m.DeletedByteCount,
-		ReadOnly:         m.ReadOnly,
-		Version:          needle.Version(m.Version),
-		CompactRevision:  m.CompactRevision,
-		ModifiedAtSecond: m.ModifiedAtSecond,
+		Id:                needle.VolumeId(m.Id),
+		Size:              m.Size,
+		Collection:        m.Collection,
+		FileCount:         int(m.FileCount),
+		DeleteCount:       int(m.DeleteCount),
+		DeletedByteCount:  m.DeletedByteCount,
+		ReadOnly:          m.ReadOnly,
+		Version:           needle.Version(m.Version),
+		CompactRevision:   m.CompactRevision,
+		ModifiedAtSecond:  m.ModifiedAtSecond,
+		RemoteStorageName: m.RemoteStorageName,
+		RemoteStorageKey:  m.RemoteStorageKey,
 	}
 	rp, e := NewReplicaPlacementFromByte(byte(m.ReplicaPlacement))
 	if e != nil {
@@ -69,18 +71,20 @@ func (vi VolumeInfo) String() string {
 
 func (vi VolumeInfo) ToVolumeInformationMessage() *master_pb.VolumeInformationMessage {
 	return &master_pb.VolumeInformationMessage{
-		Id:               uint32(vi.Id),
-		Size:             uint64(vi.Size),
-		Collection:       vi.Collection,
-		FileCount:        uint64(vi.FileCount),
-		DeleteCount:      uint64(vi.DeleteCount),
-		DeletedByteCount: vi.DeletedByteCount,
-		ReadOnly:         vi.ReadOnly,
-		ReplicaPlacement: uint32(vi.ReplicaPlacement.Byte()),
-		Version:          uint32(vi.Version),
-		Ttl:              vi.Ttl.ToUint32(),
-		CompactRevision:  vi.CompactRevision,
-		ModifiedAtSecond: vi.ModifiedAtSecond,
+		Id:                uint32(vi.Id),
+		Size:              uint64(vi.Size),
+		Collection:        vi.Collection,
+		FileCount:         uint64(vi.FileCount),
+		DeleteCount:       uint64(vi.DeleteCount),
+		DeletedByteCount:  vi.DeletedByteCount,
+		ReadOnly:          vi.ReadOnly,
+		ReplicaPlacement:  uint32(vi.ReplicaPlacement.Byte()),
+		Version:           uint32(vi.Version),
+		Ttl:               vi.Ttl.ToUint32(),
+		CompactRevision:   vi.CompactRevision,
+		ModifiedAtSecond:  vi.ModifiedAtSecond,
+		RemoteStorageName: vi.RemoteStorageName,
+		RemoteStorageKey:  vi.RemoteStorageKey,
 	}
 }
 
