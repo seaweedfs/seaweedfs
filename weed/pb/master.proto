@@ -210,6 +210,7 @@ message DataNodeInfo {
     uint64 active_volume_count = 5;
     repeated VolumeInformationMessage volume_infos = 6;
     repeated VolumeEcShardInformationMessage ec_shard_infos = 7;
+    uint64 remote_volume_count = 8;
 }
 message RackInfo {
     string id = 1;
@@ -218,6 +219,7 @@ message RackInfo {
     uint64 free_volume_count = 4;
     uint64 active_volume_count = 5;
     repeated DataNodeInfo data_node_infos = 6;
+    uint64 remote_volume_count = 7;
 }
 message DataCenterInfo {
     string id = 1;
@@ -226,6 +228,7 @@ message DataCenterInfo {
     uint64 free_volume_count = 4;
     uint64 active_volume_count = 5;
     repeated RackInfo rack_infos = 6;
+    uint64 remote_volume_count = 7;
 }
 message TopologyInfo {
     string id = 1;
@@ -234,6 +237,7 @@ message TopologyInfo {
     uint64 free_volume_count = 4;
     uint64 active_volume_count = 5;
     repeated DataCenterInfo data_center_infos = 6;
+    uint64 remote_volume_count = 7;
 }
 message VolumeListRequest {
 }

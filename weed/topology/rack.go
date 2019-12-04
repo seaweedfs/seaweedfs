@@ -67,6 +67,7 @@ func (r *Rack) ToRackInfo() *master_pb.RackInfo {
 		MaxVolumeCount:    uint64(r.GetMaxVolumeCount()),
 		FreeVolumeCount:   uint64(r.FreeSpace()),
 		ActiveVolumeCount: uint64(r.GetActiveVolumeCount()),
+		RemoteVolumeCount: uint64(r.GetRemoteVolumeCount()),
 	}
 	for _, c := range r.Children() {
 		dn := c.(*DataNode)

@@ -24,10 +24,10 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 	volumeInfos := vs.store.VolumeInfos()
 	var normalVolumeInfos, remoteVolumeInfos []*storage.VolumeInfo
 	for _, vinfo := range volumeInfos {
-		if vinfo.RemoteStorageName == "" {
-			normalVolumeInfos = append(normalVolumeInfos, vinfo)
-		} else {
+		if vinfo.IsRemote() {
 			remoteVolumeInfos = append(remoteVolumeInfos, vinfo)
+		} else {
+			normalVolumeInfos = append(normalVolumeInfos, vinfo)
 		}
 	}
 	args := struct {

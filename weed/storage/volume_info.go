@@ -64,6 +64,10 @@ func NewVolumeInfoFromShort(m *master_pb.VolumeShortInformationMessage) (vi Volu
 	return vi, nil
 }
 
+func (vi VolumeInfo) IsRemote() bool {
+	return vi.RemoteStorageName != ""
+}
+
 func (vi VolumeInfo) String() string {
 	return fmt.Sprintf("Id:%d, Size:%d, ReplicaPlacement:%s, Collection:%s, Version:%v, FileCount:%d, DeleteCount:%d, DeletedByteCount:%d, ReadOnly:%v",
 		vi.Id, vi.Size, vi.ReplicaPlacement, vi.Collection, vi.Version, vi.FileCount, vi.DeleteCount, vi.DeletedByteCount, vi.ReadOnly)
