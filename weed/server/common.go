@@ -114,6 +114,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	}
 	ar := &operation.VolumeAssignRequest{
 		Count:       count,
+		DataCenter:  r.FormValue("dataCenter"),
 		Replication: r.FormValue("replication"),
 		Collection:  r.FormValue("collection"),
 		Ttl:         r.FormValue("ttl"),
