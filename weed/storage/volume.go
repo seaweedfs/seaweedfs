@@ -30,7 +30,7 @@ type Volume struct {
 
 	SuperBlock
 
-	dataFileAccessLock    sync.Mutex
+	dataFileAccessLock    sync.RWMutex
 	lastModifiedTsSeconds uint64 //unix time in seconds
 	lastAppendAtNs        uint64 //unix time in nanoseconds
 
@@ -72,8 +72,8 @@ func (v *Volume) Version() needle.Version {
 }
 
 func (v *Volume) FileStat() (datSize uint64, idxSize uint64, modTime time.Time) {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
 
 	if v.DataBackend == nil {
 		return
@@ -88,8 +88,8 @@ func (v *Volume) FileStat() (datSize uint64, idxSize uint64, modTime time.Time) 
 }
 
 func (v *Volume) ContentSize() uint64 {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
 	if v.nm == nil {
 		return 0
 	}
@@ -97,8 +97,8 @@ func (v *Volume) ContentSize() uint64 {
 }
 
 func (v *Volume) DeletedSize() uint64 {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
 	if v.nm == nil {
 		return 0
 	}
@@ -106,8 +106,8 @@ func (v *Volume) DeletedSize() uint64 {
 }
 
 func (v *Volume) FileCount() uint64 {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
 	if v.nm == nil {
 		return 0
 	}
@@ -115,8 +115,8 @@ func (v *Volume) FileCount() uint64 {
 }
 
 func (v *Volume) DeletedCount() uint64 {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
 	if v.nm == nil {
 		return 0
 	}
@@ -124,8 +124,8 @@ func (v *Volume) DeletedCount() uint64 {
 }
 
 func (v *Volume) MaxFileKey() types.NeedleId {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
 	if v.nm == nil {
 		return 0
 	}
@@ -133,8 +133,8 @@ func (v *Volume) MaxFileKey() types.NeedleId {
 }
 
 func (v *Volume) IndexFileSize() uint64 {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
 	if v.nm == nil {
 		return 0
 	}

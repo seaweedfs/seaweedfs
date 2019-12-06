@@ -15,8 +15,8 @@ import (
 )
 
 func (v *Volume) GetVolumeSyncStatus() *volume_server_pb.VolumeSyncStatusResponse {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
 
 	var syncStatus = &volume_server_pb.VolumeSyncStatusResponse{}
 	if datSize, _, err := v.DataBackend.GetStat(); err == nil {

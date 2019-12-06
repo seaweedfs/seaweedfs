@@ -136,8 +136,8 @@ func (v *Volume) deleteNeedle(n *needle.Needle) (uint32, error) {
 
 // read fills in Needle content by looking up n.Id from NeedleMapper
 func (v *Volume) readNeedle(n *needle.Needle) (int, error) {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
 
 	nv, ok := v.nm.Get(n.Id)
 	if !ok || nv.Offset.IsZero() {
