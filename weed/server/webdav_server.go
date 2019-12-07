@@ -444,7 +444,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 		return nil
 	})
 
-	if err != nil {
+	if err == nil {
 		glog.V(3).Infof("WebDavFileSystem.Write %v: written [%d,%d)", f.name, f.off, f.off+int64(len(buf)))
 		f.off += int64(len(buf))
 	}
