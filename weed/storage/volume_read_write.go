@@ -48,6 +48,7 @@ func (v *Volume) Destroy() (err error) {
 	v.Close()
 	os.Remove(v.FileName() + ".dat")
 	os.Remove(v.FileName() + ".idx")
+	os.Remove(v.FileName() + ".tier")
 	os.Remove(v.FileName() + ".cpd")
 	os.Remove(v.FileName() + ".cpx")
 	os.RemoveAll(v.FileName() + ".ldb")
