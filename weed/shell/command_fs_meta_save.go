@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/golang/protobuf/proto"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/golang/protobuf/proto"
 )
 
 func init() {
@@ -75,9 +78,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 
 		var dirCount, fileCount uint64
 
-		sizeBuf := make([]byte, 4)
-
-		err = doTraverse(ctx, writer, client, filer2.FullPath(path), func(parentPath filer2.FullPath, entry *filer_pb.Entry) error {
+		err = doTraverseBFS(ctx, writer, client, filer2.FullPath(path), func(parentPath filer2.FullPath, entry *filer_pb.Entry) error {
 
 			protoMessage := &filer_pb.FullEntry{
 				Dir:   string(parentPath),
@@ -89,15 +90,16 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 				return fmt.Errorf("marshall error: %v", err)
 			}
 
+			sizeBuf := make([]byte, 4)
 			util.Uint32toBytes(sizeBuf, uint32(len(bytes)))
 
 			dst.Write(sizeBuf)
 			dst.Write(bytes)
 
 			if entry.IsDirectory {
-				dirCount++
+				atomic.AddUint64(&dirCount, 1)
 			} else {
-				fileCount++
+				atomic.AddUint64(&fileCount, 1)
 			}
 
 			if *verbose {
@@ -118,7 +120,45 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	})
 
 }
-func doTraverse(ctx context.Context, writer io.Writer, client filer_pb.SeaweedFilerClient, parentPath filer2.FullPath, fn func(parentPath filer2.FullPath, entry *filer_pb.Entry) error) (err error) {
+func doTraverseBFS(ctx context.Context, writer io.Writer, client filer_pb.SeaweedFilerClient,
+	parentPath filer2.FullPath, fn func(parentPath filer2.FullPath, entry *filer_pb.Entry) error) (err error) {
+
+	K := 5
+
+	var jobQueueWg sync.WaitGroup
+	queue := util.NewQueue()
+	jobQueueWg.Add(1)
+	queue.Enqueue(parentPath)
+	var isTerminating bool
+
+	for i := 0; i < K; i++ {
+		go func() {
+			for {
+				if isTerminating {
+					break
+				}
+				t := queue.Dequeue()
+				if t == nil {
+					time.Sleep(329 * time.Millisecond)
+					continue
+				}
+				dir := t.(filer2.FullPath)
+				processErr := processOneDirectory(ctx, writer, client, dir, queue, &jobQueueWg, fn)
+				if processErr != nil {
+					err = processErr
+				}
+				jobQueueWg.Done()
+			}
+		}()
+	}
+	jobQueueWg.Wait()
+	isTerminating = true
+	return
+}
+
+func processOneDirectory(ctx context.Context, writer io.Writer, client filer_pb.SeaweedFilerClient,
+	parentPath filer2.FullPath, queue *util.Queue, jobQueueWg *sync.WaitGroup,
+	fn func(parentPath filer2.FullPath, entry *filer_pb.Entry) error) (err error) {
 
 	paginatedCount := -1
 	startFromFileName := ""
@@ -150,12 +190,10 @@ func doTraverse(ctx context.Context, writer io.Writer, client filer_pb.SeaweedFi
 				if parentPath == "/" {
 					subDir = "/" + entry.Name
 				}
-				if err = doTraverse(ctx, writer, client, filer2.FullPath(subDir), fn); err != nil {
-					return err
-				}
+				jobQueueWg.Add(1)
+				queue.Enqueue(filer2.FullPath(subDir))
 			}
 			startFromFileName = entry.Name
-
 		}
 	}
 
