@@ -12,8 +12,10 @@ func init() {
 
 var cmdCompact = &Command{
 	UsageLine: "compact -dir=/tmp -volumeId=234",
-	Short:     "run weed tool compact on volume file",
-	Long: `Force an compaction to remove deleted files from volume files.
+	Short:     "run weed tool compact on volume file. be careful not to run this command on a volume file still in use",
+	Long: `Force an compaction to remove deleted files from volume files. be careful 
+  not to run this command on a volume file still in use, it may lead to data
+  corruption and compacted file out of date.
   The compacted .dat file is stored as .cpd file.
   The compacted .idx file is stored as .cpx file.
 
