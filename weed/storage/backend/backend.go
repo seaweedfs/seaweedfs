@@ -18,7 +18,7 @@ type BackendStorageFile interface {
 	Truncate(off int64) error
 	io.Closer
 	GetStat() (datSize int64, modTime time.Time, err error)
-	String() string
+	Name() string
 }
 
 type BackendStorage interface {

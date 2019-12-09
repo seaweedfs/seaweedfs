@@ -64,7 +64,7 @@ func (vs *VolumeServer) VolumeTierCopyDatToRemote(req *volume_server_pb.VolumeTi
 	// copy the data file
 	key, size, err := backendStorage.CopyFile(diskFile.File, fn)
 	if err != nil {
-		return fmt.Errorf("backend %s copy file %s: %v", req.DestinationBackendName, diskFile.String(), err)
+		return fmt.Errorf("backend %s copy file %s: %v", req.DestinationBackendName, diskFile.Name(), err)
 	}
 
 	// save the remote file to volume tier info

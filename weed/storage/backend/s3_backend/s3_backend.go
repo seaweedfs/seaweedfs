@@ -153,7 +153,6 @@ func (s3backendStorageFile S3BackendStorageFile) GetStat() (datSize int64, modTi
 	return
 }
 
-func (s3backendStorageFile S3BackendStorageFile) String() string {
+func (s3backendStorageFile S3BackendStorageFile) Name() string {
 	return s3backendStorageFile.key
 }
-

@@ -131,7 +131,7 @@ func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset u
 		defer func(w backend.BackendStorageFile, off int64) {
 			if err != nil {
 				if te := w.Truncate(end); te != nil {
-					glog.V(0).Infof("Failed to truncate %s back to %d with error: %v", w.String(), end, te)
+					glog.V(0).Infof("Failed to truncate %s back to %d with error: %v", w.Name(), end, te)
 				}
 			}
 		}(w, end)

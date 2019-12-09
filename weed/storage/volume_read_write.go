@@ -59,7 +59,7 @@ func (v *Volume) Destroy() (err error) {
 func (v *Volume) writeNeedle(n *needle.Needle) (offset uint64, size uint32, isUnchanged bool, err error) {
 	glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	if v.readOnly {
-		err = fmt.Errorf("%s is read-only", v.DataBackend.String())
+		err = fmt.Errorf("%s is read-only", v.DataBackend.Name())
 		return
 	}
 	v.dataFileAccessLock.Lock()
@@ -112,7 +112,7 @@ func (v *Volume) writeNeedle(n *needle.Needle) (offset uint64, size uint32, isUn
 func (v *Volume) deleteNeedle(n *needle.Needle) (uint32, error) {
 	glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	if v.readOnly {
-		return 0, fmt.Errorf("%s is read-only", v.DataBackend.String())
+		return 0, fmt.Errorf("%s is read-only", v.DataBackend.Name())
 	}
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
@@ -202,7 +202,7 @@ func ScanVolumeFileFrom(version needle.Version, datBackend backend.BackendStorag
 		if e == io.EOF {
 			return nil
 		}
-		return fmt.Errorf("cannot read %s at offset %d: %v", datBackend.String(), offset, e)
+		return fmt.Errorf("cannot read %s at offset %d: %v", datBackend.Name(), offset, e)
 	}
 	for n != nil {
 		var needleBody []byte

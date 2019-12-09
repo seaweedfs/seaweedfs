@@ -45,10 +45,6 @@ func (df *DiskFile) GetStat() (datSize int64, modTime time.Time, err error) {
 	return 0, time.Time{}, err
 }
 
-func (df *DiskFile) String() string {
+func (df *DiskFile) Name() string {
 	return df.fullFilePath
-}
-
-func (df *DiskFile) Instantiate(src *os.File) error {
-	panic("should not implement Instantiate for DiskFile")
 }

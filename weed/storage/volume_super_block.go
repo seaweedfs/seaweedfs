@@ -78,7 +78,7 @@ func (v *Volume) maybeWriteSuperBlock() error {
 
 	datSize, _, e := v.DataBackend.GetStat()
 	if e != nil {
-		glog.V(0).Infof("failed to stat datafile %s: %v", v.DataBackend.String(), e)
+		glog.V(0).Infof("failed to stat datafile %s: %v", v.DataBackend.Name(), e)
 		return e
 	}
 	if datSize == 0 {
@@ -87,7 +87,7 @@ func (v *Volume) maybeWriteSuperBlock() error {
 		if e != nil && os.IsPermission(e) {
 			//read-only, but zero length - recreate it!
 			var dataFile *os.File
-			if dataFile, e = os.Create(v.DataBackend.String()); e == nil {
+			if dataFile, e = os.Create(v.DataBackend.Name()); e == nil {
 				v.DataBackend = backend.NewDiskFile(dataFile)
 				if _, e = v.DataBackend.WriteAt(v.SuperBlock.Bytes(), 0); e == nil {
 					v.readOnly = false
@@ -108,7 +108,7 @@ func ReadSuperBlock(datBackend backend.BackendStorageFile) (superBlock SuperBloc
 
 	header := make([]byte, _SuperBlockSize)
 	if _, e := datBackend.ReadAt(header, 0); e != nil {
-		err = fmt.Errorf("cannot read volume %s super block: %v", datBackend.String(), e)
+		err = fmt.Errorf("cannot read volume %s super block: %v", datBackend.Name(), e)
 		return
 	}
 
@@ -127,7 +127,7 @@ func ReadSuperBlock(datBackend backend.BackendStorageFile) (superBlock SuperBloc
 		superBlock.Extra = &master_pb.SuperBlockExtra{}
 		err = proto.Unmarshal(extraData, superBlock.Extra)
 		if err != nil {
-			err = fmt.Errorf("cannot read volume %s super block extra: %v", datBackend.String(), err)
+			err = fmt.Errorf("cannot read volume %s super block extra: %v", datBackend.Name(), err)
 			return
 		}
 	}

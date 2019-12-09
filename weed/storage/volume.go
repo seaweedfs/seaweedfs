@@ -83,7 +83,7 @@ func (v *Volume) FileStat() (datSize uint64, idxSize uint64, modTime time.Time) 
 	if e == nil {
 		return uint64(datFileSize), v.nm.IndexFileSize(), modTime
 	}
-	glog.V(0).Infof("Failed to read file size %s %v", v.DataBackend.String(), e)
+	glog.V(0).Infof("Failed to read file size %s %v", v.DataBackend.Name(), e)
 	return // -1 causes integer overflow and the volume to become unwritable.
 }
 
