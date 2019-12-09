@@ -19,7 +19,6 @@ type BackendStorageFile interface {
 	io.Closer
 	GetStat() (datSize int64, modTime time.Time, err error)
 	String() string
-	Instantiate(src *os.File) error
 }
 
 type BackendStorage interface {

@@ -157,10 +157,3 @@ func (s3backendStorageFile S3BackendStorageFile) String() string {
 	return s3backendStorageFile.key
 }
 
-func (s3backendStorageFile *S3BackendStorageFile) GetName() string {
-	return "s3"
-}
-
-func (s3backendStorageFile S3BackendStorageFile) Instantiate(src *os.File) error {
-	panic("implement me")
-}
