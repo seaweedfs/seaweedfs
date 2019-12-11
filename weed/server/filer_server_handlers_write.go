@@ -280,12 +280,14 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 // curl -X DELETE http://localhost:8888/path/to
 // curl -X DELETE http://localhost:8888/path/to?recursive=true
 // curl -X DELETE http://localhost:8888/path/to?recursive=true&ignoreRecursiveError=true
+// curl -X DELETE http://localhost:8888/path/to?recursive=true&shouldDeleteChunks=false&shouldDeleteChunks=false
 func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	isRecursive := r.FormValue("recursive") == "true"
 	ignoreRecursiveError := r.FormValue("ignoreRecursiveError") == "true"
+	shouldDeleteChunks := !(r.FormValue("shouldDeleteChunks") == "false")
 
-	err := fs.filer.DeleteEntryMetaAndData(context.Background(), filer2.FullPath(r.URL.Path), isRecursive, ignoreRecursiveError, true)
+	err := fs.filer.DeleteEntryMetaAndData(context.Background(), filer2.FullPath(r.URL.Path), isRecursive, ignoreRecursiveError, shouldDeleteChunks)
 	if err != nil {
 		glog.V(1).Infoln("deleting", r.URL.Path, ":", err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)
