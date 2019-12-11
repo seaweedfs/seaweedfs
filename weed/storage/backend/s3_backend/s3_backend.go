@@ -127,11 +127,11 @@ func (s3backendStorageFile S3BackendStorageFile) ReadAt(p []byte, off int64) (n 
 }
 
 func (s3backendStorageFile S3BackendStorageFile) WriteAt(p []byte, off int64) (n int, err error) {
-	panic("implement me")
+	panic("not implemented")
 }
 
 func (s3backendStorageFile S3BackendStorageFile) Truncate(off int64) error {
-	panic("implement me")
+	panic("not implemented")
 }
 
 func (s3backendStorageFile S3BackendStorageFile) Close() error {
