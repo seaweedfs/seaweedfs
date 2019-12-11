@@ -12,14 +12,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jacobsa/daemonize"
+	"github.com/spf13/viper"
+
 	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/jacobsa/daemonize"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
-	"github.com/spf13/viper"
 )
 
 func runMount(cmd *Command, args []string) bool {
@@ -121,9 +122,9 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 
 	c, err := fuse.Mount(dir, options...)
 	if err != nil {
-		glog.Fatal(err)
+		glog.V(0).Infof("mount: %v", err)
 		daemonize.SignalOutcome(err)
-		return false
+		return true
 	}
 
 	util.OnInterrupt(func() {
@@ -133,9 +134,9 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 
 	filerGrpcAddress, err := parseFilerGrpcAddress(filer)
 	if err != nil {
-		glog.Fatal(err)
+		glog.V(0).Infof("parseFilerGrpcAddress: %v", err)
 		daemonize.SignalOutcome(err)
-		return false
+		return true
 	}
 
 	mountRoot := filerMountRootPath
@@ -170,8 +171,9 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 	// check if the mount process has an error to report
 	<-c.Ready
 	if err := c.MountError; err != nil {
-		glog.Fatal(err)
+		glog.V(0).Infof("mount process: %v", err)
 		daemonize.SignalOutcome(err)
+		return true
 	}
 
 	return true
