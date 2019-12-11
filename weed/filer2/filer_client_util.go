@@ -112,11 +112,12 @@ func GetEntry(ctx context.Context, filerClient FilerClient, fullFilePath string)
 			return err
 		}
 
-		if resp.Entry != nil {
-			entry = resp.Entry
+		if resp.Entry == nil {
 			glog.V(3).Infof("read %s entry: %v", fullFilePath, entry)
+			return nil
 		}
 
+		entry = resp.Entry
 		return nil
 	})
 

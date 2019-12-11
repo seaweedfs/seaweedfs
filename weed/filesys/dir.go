@@ -56,6 +56,9 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 		glog.V(2).Infof("read dir %s attr: %v, error: %v", dir.Path, dir.attributes, err)
 		return err
 	}
+	if entry == nil {
+		return fuse.ENOENT
+	}
 	dir.attributes = entry.Attributes
 
 	glog.V(2).Infof("dir %s: %v perm: %v", dir.Path, dir.attributes, os.FileMode(dir.attributes.FileMode))
