@@ -40,7 +40,7 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 		limit = fs.option.DirListingLimit
 	}
 
-	paginationLimit := 1024
+	paginationLimit := 1024 * 256
 	if limit < paginationLimit {
 		paginationLimit = limit
 	}

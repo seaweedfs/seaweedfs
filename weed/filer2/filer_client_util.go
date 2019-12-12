@@ -128,7 +128,7 @@ func ReadDirAllEntries(ctx context.Context, filerClient FilerClient, fullDirPath
 
 	err = filerClient.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
-		paginationLimit := 1024
+		paginationLimit := 1024 * 256
 
 		lastEntryName := ""
 

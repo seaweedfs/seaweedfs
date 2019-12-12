@@ -214,7 +214,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 	err = dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
-		paginationLimit := 1024
+		paginationLimit := 1024 * 256
 		remaining := dir.wfs.option.DirListingLimit
 
 		lastEntryName := ""
