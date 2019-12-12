@@ -21,18 +21,18 @@ type commandVolumeTier struct {
 }
 
 func (c *commandVolumeTier) Name() string {
-	return "volume.tier"
+	return "volume.tier.upload"
 }
 
 func (c *commandVolumeTier) Help() string {
 	return `move the dat file of a volume to a remote tier
 
-	volume.tier [-collection=""] [-fullPercent=95] [-quietFor=1h]
-	volume.tier [-collection=""] -volumeId=<volume_id> -dest=<storage_backend> [-keepLocalDatFile]
+	volume.tier.upload [-collection=""] [-fullPercent=95] [-quietFor=1h]
+	volume.tier.upload [-collection=""] -volumeId=<volume_id> -dest=<storage_backend> [-keepLocalDatFile]
 
 	e.g.:
-	volume.tier -volumeId=7 -dest=s3
-	volume.tier -volumeId=7 -dest=s3.default
+	volume.tier.upload -volumeId=7 -dest=s3
+	volume.tier.upload -volumeId=7 -dest=s3.default
 
 	The <storage_backend> is defined in master.toml.
 	For example, "s3.default" in [storage.backend.s3.default]
