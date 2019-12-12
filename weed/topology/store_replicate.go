@@ -175,6 +175,6 @@ func getWritableRemoteReplications(s *storage.Store, volumeId needle.VolumeId, m
 			return
 		}
 	}
-	
+
 	return
 }
