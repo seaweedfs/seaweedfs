@@ -50,7 +50,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
 		<div class="row">
 			<div>
 			{{ range $entry := .Breadcrumbs }}
-				<a href={{ $entry.Link }} >
+				<a href="{{ $entry.Link }}" >
 					{{ $entry.Name }}
 				</a>
 			{{ end }}
