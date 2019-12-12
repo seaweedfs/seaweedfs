@@ -214,7 +214,6 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 	err = dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
-		paginationLimit := 1024 * 256
 		remaining := dir.wfs.option.DirListingLimit
 
 		lastEntryName := ""
@@ -224,7 +223,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 			request := &filer_pb.ListEntriesRequest{
 				Directory:         dir.Path,
 				StartFromFileName: lastEntryName,
-				Limit:             uint32(paginationLimit),
+				Limit:             filer2.PaginationSize,
 			}
 
 			glog.V(4).Infof("read directory: %v", request)
@@ -250,7 +249,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 			remaining -= len(resp.Entries)
 
-			if len(resp.Entries) < paginationLimit {
+			if len(resp.Entries) < filer2.PaginationSize {
 				break
 			}
 

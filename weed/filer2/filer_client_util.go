@@ -128,8 +128,6 @@ func ReadDirAllEntries(ctx context.Context, filerClient FilerClient, fullDirPath
 
 	err = filerClient.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
-		paginationLimit := 1024 * 256
-
 		lastEntryName := ""
 
 		for {
@@ -137,7 +135,7 @@ func ReadDirAllEntries(ctx context.Context, filerClient FilerClient, fullDirPath
 			request := &filer_pb.ListEntriesRequest{
 				Directory:         fullDirPath,
 				StartFromFileName: lastEntryName,
-				Limit:             uint32(paginationLimit),
+				Limit:             PaginationSize,
 			}
 
 			glog.V(3).Infof("read directory: %v", request)
@@ -151,7 +149,7 @@ func ReadDirAllEntries(ctx context.Context, filerClient FilerClient, fullDirPath
 				lastEntryName = entry.Name
 			}
 
-			if len(resp.Entries) < paginationLimit {
+			if len(resp.Entries) < PaginationSize {
 				break
 			}
 
