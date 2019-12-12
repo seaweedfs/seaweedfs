@@ -91,7 +91,7 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 
 			// maybe the leader is changed
 			if volumeLocation.Leader != "" {
-				glog.V(1).Infof("redirected to leader %v", volumeLocation.Leader)
+				glog.V(0).Infof("redirected to leader %v", volumeLocation.Leader)
 				nextHintedLeader = volumeLocation.Leader
 				return nil
 			}
