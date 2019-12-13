@@ -227,7 +227,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 	glog.V(3).Infof("dir ReadDirAll %s", dir.Path)
 
-	cacheTtl := 10 * time.Minute
+	cacheTtl := 5 * time.Minute
 
 	readErr := filer2.ReadDirAllEntries(ctx, dir.wfs, dir.Path, "", func(entry *filer_pb.Entry, isLast bool) {
 		if entry.IsDirectory {
