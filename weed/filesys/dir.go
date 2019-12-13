@@ -337,6 +337,8 @@ func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 		dir.attributes.Mtime = req.Mtime.Unix()
 	}
 
+	dir.wfs.listDirectoryEntriesCache.Delete(dir.Path)
+
 	parentDir, name := filer2.FullPath(dir.Path).DirAndName()
 	return dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -354,8 +356,6 @@ func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 			glog.V(0).Infof("UpdateEntry %s: %v", dir.Path, err)
 			return fuse.EIO
 		}
-
-		dir.wfs.listDirectoryEntriesCache.Delete(dir.Path)
 
 		return nil
 	})

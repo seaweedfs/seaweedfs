@@ -111,6 +111,8 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		return nil
 	}
 
+	file.wfs.listDirectoryEntriesCache.Delete(file.fullpath())
+
 	return file.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
