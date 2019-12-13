@@ -141,11 +141,14 @@ func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 func (file *File) maybeLoadAttributes(ctx context.Context) error {
 	if file.entry == nil || !file.isOpen {
 		item := file.wfs.listDirectoryEntriesCache.Get(file.fullpath())
+		var entry *filer_pb.Entry
 		if item != nil && !item.Expired() {
+			entry = item.Value().(*filer_pb.Entry)
+		}
+		if entry != nil {
 
 			glog.V(4).Infof("file read attr cache hit %s", file.fullpath())
 
-			entry := item.Value().(*filer_pb.Entry)
 			file.setEntry(entry)
 			// glog.V(1).Infof("file attr read cached %v attributes", file.Name)
 		} else {

@@ -41,10 +41,12 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 	}
 
 	item := dir.wfs.listDirectoryEntriesCache.Get(dir.Path)
+	var entry *filer_pb.Entry
 	if item != nil && !item.Expired() {
+		entry = item.Value().(*filer_pb.Entry)
+	}
 
-		glog.V(4).Infof("dir Attr cache hit %s", dir.Path)
-
+	if entry != nil {
 		entry := item.Value().(*filer_pb.Entry)
 
 		attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
