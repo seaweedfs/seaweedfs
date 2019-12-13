@@ -200,7 +200,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		if err != nil {
 			return nil, err
 		}
-		dir.wfs.listDirectoryEntriesCache.Set(fullFilePath, entry, 5*time.Second)
+		dir.wfs.listDirectoryEntriesCache.Set(fullFilePath, entry, 5*time.Minute)
 	} else {
 		glog.V(4).Infof("dir Lookup cache hit %s", fullFilePath)
 	}
@@ -268,6 +268,8 @@ func (dir *Dir) removeOneFile(ctx context.Context, req *fuse.RemoveRequest) erro
 
 	dir.wfs.deleteFileChunks(ctx, entry.Chunks)
 
+	dir.wfs.listDirectoryEntriesCache.Delete(path.Join(dir.Path, req.Name))
+
 	return dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.DeleteEntryRequest{
@@ -283,14 +285,14 @@ func (dir *Dir) removeOneFile(ctx context.Context, req *fuse.RemoveRequest) erro
 			return fuse.ENOENT
 		}
 
-		dir.wfs.listDirectoryEntriesCache.Delete(path.Join(dir.Path, req.Name))
-
 		return nil
 	})
 
 }
 
 func (dir *Dir) removeFolder(ctx context.Context, req *fuse.RemoveRequest) error {
+
+	dir.wfs.listDirectoryEntriesCache.Delete(path.Join(dir.Path, req.Name))
 
 	return dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -306,8 +308,6 @@ func (dir *Dir) removeFolder(ctx context.Context, req *fuse.RemoveRequest) error
 			glog.V(3).Infof("remove %s/%s: %v", dir.Path, req.Name, err)
 			return fuse.ENOENT
 		}
-
-		dir.wfs.listDirectoryEntriesCache.Delete(path.Join(dir.Path, req.Name))
 
 		return nil
 	})
