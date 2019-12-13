@@ -18,7 +18,6 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/etcd"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/leveldb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/leveldb2"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/memdb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/mysql"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/postgres"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/redis"

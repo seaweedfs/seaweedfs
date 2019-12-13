@@ -20,6 +20,7 @@ type FilerStore interface {
 	// err == filer2.ErrNotFound if not found
 	FindEntry(context.Context, FullPath) (entry *Entry, err error)
 	DeleteEntry(context.Context, FullPath) (err error)
+	DeleteFolderChildren(context.Context, FullPath) (err error)
 	ListDirectoryEntries(ctx context.Context, dirPath FullPath, startFileName string, includeStartFile bool, limit int) ([]*Entry, error)
 
 	BeginTransaction(ctx context.Context) (context.Context, error)
@@ -95,6 +96,16 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp FullPath) (err
 	}()
 
 	return fsw.actualStore.DeleteEntry(ctx, fp)
+}
+
+func (fsw *FilerStoreWrapper) DeleteFolderChildren(ctx context.Context, fp FullPath) (err error) {
+	stats.FilerStoreCounter.WithLabelValues(fsw.actualStore.GetName(), "deleteFolderChildren").Inc()
+	start := time.Now()
+	defer func() {
+		stats.FilerStoreHistogram.WithLabelValues(fsw.actualStore.GetName(), "deleteFolderChildren").Observe(time.Since(start).Seconds())
+	}()
+
+	return fsw.actualStore.DeleteFolderChildren(ctx, fp)
 }
 
 func (fsw *FilerStoreWrapper) ListDirectoryEntries(ctx context.Context, dirPath FullPath, startFileName string, includeStartFile bool, limit int) ([]*Entry, error) {

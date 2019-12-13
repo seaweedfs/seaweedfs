@@ -140,7 +140,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	})
 
 	if err == nil {
-		fs.filer.DeleteChunks(fullpath, garbages)
+		fs.filer.DeleteChunks(garbages)
 	}
 
 	return &filer_pb.CreateEntryResponse{}, err
@@ -189,8 +189,8 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	}
 
 	if err = fs.filer.UpdateEntry(ctx, entry, newEntry); err == nil {
-		fs.filer.DeleteChunks(entry.FullPath, unusedChunks)
-		fs.filer.DeleteChunks(entry.FullPath, garbages)
+		fs.filer.DeleteChunks(unusedChunks)
+		fs.filer.DeleteChunks(garbages)
 	}
 
 	fs.filer.NotifyUpdateEvent(entry, newEntry, true)

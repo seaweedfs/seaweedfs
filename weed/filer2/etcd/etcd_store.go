@@ -123,6 +123,16 @@ func (store *EtcdStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPat
 	return nil
 }
 
+func (store *EtcdStore) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) (err error) {
+	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
+
+	if _, err := store.client.Delete(ctx, string(directoryPrefix), clientv3.WithPrefix()); err != nil {
+		return fmt.Errorf("deleteFolderChildren %s : %v", fullpath, err)
+	}
+
+	return nil
+}
+
 func (store *EtcdStore) ListDirectoryEntries(
 	ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool, limit int,
 ) (entries []*filer2.Entry, err error) {

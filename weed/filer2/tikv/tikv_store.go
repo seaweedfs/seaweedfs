@@ -141,6 +141,38 @@ func (store *TikvStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPat
 	return nil
 }
 
+func (store *TikvStore) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) (err error) {
+
+	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
+
+	tx := store.getTx(ctx)
+
+	iter, err := tx.Iter(directoryPrefix, nil)
+	if err != nil {
+		return fmt.Errorf("deleteFolderChildren %s: %v", fullpath, err)
+	}
+	defer iter.Close()
+	for iter.Valid() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, directoryPrefix) {
+			break
+		}
+		fileName := getNameFromKey(key)
+		if fileName == "" {
+			iter.Next()
+			continue
+		}
+
+		if err = tx.Delete(genKey(string(fullpath), fileName)); err != nil {
+			return fmt.Errorf("delete %s : %v", fullpath, err)
+		}
+
+		iter.Next()
+	}
+
+	return nil
+}
+
 func (store *TikvStore) ListDirectoryEntries(ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool,
 	limit int) (entries []*filer2.Entry, err error) {
 

@@ -177,7 +177,7 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 		Chunks: fileChunks,
 	}
 	if dbErr := fs.filer.CreateEntry(ctx, entry); dbErr != nil {
-		fs.filer.DeleteChunks(entry.FullPath, entry.Chunks)
+		fs.filer.DeleteChunks(entry.Chunks)
 		replyerr = dbErr
 		filerResult.Error = dbErr.Error()
 		glog.V(0).Infof("failing to write %s to filer server : %v", path, dbErr)

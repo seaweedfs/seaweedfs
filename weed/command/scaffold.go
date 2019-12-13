@@ -59,15 +59,6 @@ const (
 #    $HOME/.seaweedfs/filer.toml
 #    /etc/seaweedfs/filer.toml
 
-[memory]
-# local in memory, mostly for testing purpose
-enabled = false
-
-[leveldb]
-# local on disk, mostly for simple single-machine setup, fairly scalable
-enabled = false
-dir = "."					# directory to store level db files
-
 [leveldb2]
 # local on disk, mostly for simple single-machine setup, fairly scalable
 # faster than previous leveldb, recommended.

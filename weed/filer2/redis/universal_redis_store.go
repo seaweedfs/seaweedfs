@@ -99,6 +99,24 @@ func (store *UniversalRedisStore) DeleteEntry(ctx context.Context, fullpath file
 	return nil
 }
 
+func (store *UniversalRedisStore) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) (err error) {
+
+	members, err := store.Client.SMembers(genDirectoryListKey(string(fullpath))).Result()
+	if err != nil {
+		return fmt.Errorf("delete folder %s : %v", fullpath, err)
+	}
+
+	for _, fileName := range members {
+		path := filer2.NewFullPath(string(fullpath), fileName)
+		_, err = store.Client.Del(string(path)).Result()
+		if err != nil {
+			return fmt.Errorf("delete %s in parent dir: %v", fullpath, err)
+		}
+	}
+
+	return nil
+}
+
 func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool,
 	limit int) (entries []*filer2.Entry, err error) {
 

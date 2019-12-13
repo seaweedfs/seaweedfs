@@ -3,7 +3,6 @@ package filer2
 import (
 	"context"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -205,67 +204,6 @@ func (f *Filer) FindEntry(ctx context.Context, p FullPath) (entry *Entry, err er
 		}, nil
 	}
 	return f.store.FindEntry(ctx, p)
-}
-
-func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p FullPath, isRecursive bool, ignoreRecursiveError, shouldDeleteChunks bool) (err error) {
-	entry, err := f.FindEntry(ctx, p)
-	if err != nil {
-		return err
-	}
-
-	if entry.IsDirectory() {
-		limit := int(1)
-		if isRecursive {
-			limit = math.MaxInt32
-		}
-		lastFileName := ""
-		includeLastFile := false
-		for limit > 0 {
-			entries, err := f.ListDirectoryEntries(ctx, p, lastFileName, includeLastFile, PaginationSize)
-			if err != nil {
-				glog.Errorf("list folder %s: %v", p, err)
-				return fmt.Errorf("list folder %s: %v", p, err)
-			}
-
-			if len(entries) == 0 {
-				break
-			}
-
-			if isRecursive {
-				for _, sub := range entries {
-					lastFileName = sub.Name()
-					err = f.DeleteEntryMetaAndData(ctx, sub.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks)
-					if err != nil && !ignoreRecursiveError {
-						return err
-					}
-					limit--
-					if limit <= 0 {
-						break
-					}
-				}
-			}
-
-			if len(entries) < PaginationSize {
-				break
-			}
-		}
-
-		f.cacheDelDirectory(string(p))
-
-	}
-
-	if shouldDeleteChunks {
-		f.DeleteChunks(p, entry.Chunks)
-	}
-
-	if p == "/" {
-		return nil
-	}
-	glog.V(3).Infof("deleting entry %v", p)
-
-	f.NotifyUpdateEvent(entry, nil, shouldDeleteChunks)
-
-	return f.store.DeleteEntry(ctx, p)
 }
 
 func (f *Filer) ListDirectoryEntries(ctx context.Context, p FullPath, startFileName string, inclusive bool, limit int) ([]*Entry, error) {
