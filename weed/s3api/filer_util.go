@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -89,13 +90,25 @@ func (s3a *S3ApiServer) list(ctx context.Context, parentDirectoryPath, prefix, s
 		}
 
 		glog.V(4).Infof("read directory: %v", request)
-		resp, err := client.ListEntries(ctx, request)
+		stream, err := client.ListEntries(ctx, request)
 		if err != nil {
 			glog.V(0).Infof("read directory %v: %v", request, err)
 			return fmt.Errorf("list dir %v: %v", parentDirectoryPath, err)
 		}
 
-		entries = resp.Entries
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				if recvErr == io.EOF {
+					break
+				} else {
+					return recvErr
+				}
+			}
+
+			entries = append(entries, resp.Entry)
+
+		}
 
 		return nil
 	})

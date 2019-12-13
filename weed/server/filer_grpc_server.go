@@ -33,7 +33,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 	}, nil
 }
 
-func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntriesRequest) (*filer_pb.ListEntriesResponse, error) {
+func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {
 
 	limit := int(req.Limit)
 	if limit == 0 {
@@ -45,16 +45,15 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 		paginationLimit = limit
 	}
 
-	resp := &filer_pb.ListEntriesResponse{}
 	lastFileName := req.StartFromFileName
 	includeLastFile := req.InclusiveStartFrom
 	for limit > 0 {
-		entries, err := fs.filer.ListDirectoryEntries(ctx, filer2.FullPath(req.Directory), lastFileName, includeLastFile, paginationLimit)
+		entries, err := fs.filer.ListDirectoryEntries(stream.Context(), filer2.FullPath(req.Directory), lastFileName, includeLastFile, paginationLimit)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(entries) == 0 {
-			return resp, nil
+			return nil
 		}
 
 		includeLastFile = false
@@ -69,15 +68,19 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 				}
 			}
 
-			resp.Entries = append(resp.Entries, &filer_pb.Entry{
-				Name:        entry.Name(),
-				IsDirectory: entry.IsDirectory(),
-				Chunks:      entry.Chunks,
-				Attributes:  filer2.EntryAttributeToPb(entry),
-			})
+			if err := stream.Send(&filer_pb.ListEntriesResponse{
+				Entry: &filer_pb.Entry{
+					Name:        entry.Name(),
+					IsDirectory: entry.IsDirectory(),
+					Chunks:      entry.Chunks,
+					Attributes:  filer2.EntryAttributeToPb(entry),
+				},
+			}); err != nil {
+				return err
+			}
 			limit--
 			if limit == 0 {
-				return resp, nil
+				return nil
 			}
 		}
 
@@ -87,7 +90,7 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 
 	}
 
-	return resp, nil
+	return nil
 }
 
 func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {

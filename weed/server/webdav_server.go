@@ -512,7 +512,7 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 		dir = dir[:len(dir)-1]
 	}
 
-	err = filer2.ReadDirAllEntries(ctx, f.fs, dir, func(entry *filer_pb.Entry) {
+	err = filer2.ReadDirAllEntries(ctx, f.fs, dir, "", func(entry *filer_pb.Entry, isLast bool) {
 		fi := FileInfo{
 			size:          int64(filer2.TotalSize(entry.GetChunks())),
 			name:          entry.Name,

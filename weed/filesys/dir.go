@@ -212,51 +212,23 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 
 func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
-	err = dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	cacheTtl := 3 * time.Second
 
-		remaining := dir.wfs.option.DirListingLimit
-
-		lastEntryName := ""
-
-		for remaining >= 0 {
-
-			request := &filer_pb.ListEntriesRequest{
-				Directory:         dir.Path,
-				StartFromFileName: lastEntryName,
-				Limit:             filer2.PaginationSize,
-			}
-
-			glog.V(4).Infof("read directory: %v", request)
-			resp, err := client.ListEntries(ctx, request)
-			if err != nil {
-				glog.V(0).Infof("list %s: %v", dir.Path, err)
-				return fuse.EIO
-			}
-
-			cacheTtl := estimatedCacheTtl(len(resp.Entries))
-
-			for _, entry := range resp.Entries {
-				if entry.IsDirectory {
-					dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_Dir}
-					ret = append(ret, dirent)
-				} else {
-					dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_File}
-					ret = append(ret, dirent)
-				}
-				dir.wfs.listDirectoryEntriesCache.Set(path.Join(dir.Path, entry.Name), entry, cacheTtl)
-				lastEntryName = entry.Name
-			}
-
-			remaining -= len(resp.Entries)
-
-			if len(resp.Entries) < filer2.PaginationSize {
-				break
-			}
-
+	readErr := filer2.ReadDirAllEntries(ctx, dir.wfs, dir.Path, "", func(entry *filer_pb.Entry, isLast bool) {
+		if entry.IsDirectory {
+			dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_Dir}
+			ret = append(ret, dirent)
+		} else {
+			dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_File}
+			ret = append(ret, dirent)
 		}
-
-		return nil
+		cacheTtl = cacheTtl + 2 * time.Millisecond
+		dir.wfs.listDirectoryEntriesCache.Set(path.Join(dir.Path, entry.Name), entry, cacheTtl)
 	})
+	if readErr != nil {
+		glog.V(0).Infof("list %s: %v", dir.Path, err)
+		return ret, fuse.EIO
+	}
 
 	return ret, err
 }
@@ -372,22 +344,4 @@ func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 		return nil
 	})
 
-}
-
-func estimatedCacheTtl(numEntries int) time.Duration {
-	if numEntries < 100 {
-		// 30 ms per entry
-		return 3 * time.Second
-	}
-	if numEntries < 1000 {
-		// 10 ms per entry
-		return 10 * time.Second
-	}
-	if numEntries < 10000 {
-		// 10 ms per entry
-		return 100 * time.Second
-	}
-
-	// 2 ms per entry
-	return time.Duration(numEntries*2) * time.Millisecond
 }
