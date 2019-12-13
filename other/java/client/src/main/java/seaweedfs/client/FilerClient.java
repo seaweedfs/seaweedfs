@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.List;
 
 public class FilerClient {
@@ -173,17 +174,18 @@ public class FilerClient {
     }
 
     public List<FilerProto.Entry> listEntries(String path, String entryPrefix, String lastEntryName, int limit) {
-        List<FilerProto.Entry> entries = filerGrpcClient.getBlockingStub().listEntries(FilerProto.ListEntriesRequest.newBuilder()
+        Iterator<FilerProto.ListEntriesResponse> iter = filerGrpcClient.getBlockingStub().listEntries(FilerProto.ListEntriesRequest.newBuilder()
                 .setDirectory(path)
                 .setPrefix(entryPrefix)
                 .setStartFromFileName(lastEntryName)
                 .setLimit(limit)
-                .build()).getEntriesList();
-        List<FilerProto.Entry> fixedEntries = new ArrayList<>(entries.size());
-        for (FilerProto.Entry entry : entries) {
-            fixedEntries.add(fixEntryAfterReading(entry));
+                .build());
+        List<FilerProto.Entry> entries = new ArrayList<>();
+        while (iter.hasNext()){
+            FilerProto.ListEntriesResponse resp = iter.next();
+            entries.add(fixEntryAfterReading(resp.getEntry()));
         }
-        return fixedEntries;
+        return entries;
     }
 
     public FilerProto.Entry lookupEntry(String directory, String entryName) {
