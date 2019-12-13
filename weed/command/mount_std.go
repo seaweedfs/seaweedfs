@@ -49,7 +49,7 @@ func runMount(cmd *Command, args []string) bool {
 }
 
 func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCenter string, chunkSizeLimitMB int,
-	allowOthers bool, ttlSec int, dirListingLimit int, umask os.FileMode) bool {
+	allowOthers bool, ttlSec int, dirListingLimit int64, umask os.FileMode) bool {
 
 	util.LoadConfiguration("security", false)
 

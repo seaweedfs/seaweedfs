@@ -30,6 +30,8 @@ var _ = fs.NodeSetattrer(&Dir{})
 
 func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 
+	glog.V(3).Infof("dir Attr %s", dir.Path)
+
 	// https://github.com/bazil/fuse/issues/196
 	attr.Valid = time.Second
 
@@ -40,6 +42,9 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 
 	item := dir.wfs.listDirectoryEntriesCache.Get(dir.Path)
 	if item != nil && !item.Expired() {
+
+		glog.V(4).Infof("dir Attr cache hit %s", dir.Path)
+
 		entry := item.Value().(*filer_pb.Entry)
 
 		attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
@@ -50,6 +55,8 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 
 		return nil
 	}
+
+	glog.V(3).Infof("dir Attr cache miss %s", dir.Path)
 
 	entry, err := filer2.GetEntry(ctx, dir.wfs, dir.Path)
 	if err != nil {
@@ -175,6 +182,8 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (node fs.Node, err error) {
 
+	glog.V(4).Infof("dir Lookup %s: %s", dir.Path, req.Name)
+
 	var entry *filer_pb.Entry
 	fullFilePath := path.Join(dir.Path, req.Name)
 
@@ -184,10 +193,14 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 	}
 
 	if entry == nil {
+		glog.V(3).Infof("dir Lookup cache miss %s", fullFilePath)
 		entry, err = filer2.GetEntry(ctx, dir.wfs, fullFilePath)
 		if err != nil {
 			return nil, err
 		}
+		dir.wfs.listDirectoryEntriesCache.Set(fullFilePath, entry, 5*time.Second)
+	} else {
+		glog.V(4).Infof("dir Lookup cache hit %s", fullFilePath)
 	}
 
 	if entry != nil {
@@ -212,7 +225,9 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 
 func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
-	cacheTtl := 3 * time.Second
+	glog.V(3).Infof("dir ReadDirAll %s", dir.Path)
+
+	cacheTtl := 10 * time.Minute
 
 	readErr := filer2.ReadDirAllEntries(ctx, dir.wfs, dir.Path, "", func(entry *filer_pb.Entry, isLast bool) {
 		if entry.IsDirectory {
@@ -222,7 +237,6 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 			dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_File}
 			ret = append(ret, dirent)
 		}
-		cacheTtl = cacheTtl + 2 * time.Millisecond
 		dir.wfs.listDirectoryEntriesCache.Set(path.Join(dir.Path, entry.Name), entry, cacheTtl)
 	})
 	if readErr != nil {

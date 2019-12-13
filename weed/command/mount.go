@@ -10,7 +10,7 @@ type MountOptions struct {
 	filer              *string
 	filerMountRootPath *string
 	dir                *string
-	dirListingLimit    *int
+	dirListingLimit    *int64
 	collection         *string
 	replication        *string
 	ttlSec             *int
@@ -31,7 +31,7 @@ func init() {
 	mountOptions.filer = cmdMount.Flag.String("filer", "localhost:8888", "weed filer location")
 	mountOptions.filerMountRootPath = cmdMount.Flag.String("filer.path", "/", "mount this remote path from filer server")
 	mountOptions.dir = cmdMount.Flag.String("dir", ".", "mount weed filer to this directory")
-	mountOptions.dirListingLimit = cmdMount.Flag.Int("dirListLimit", 100000, "limit directory listing size")
+	mountOptions.dirListingLimit = cmdMount.Flag.Int64("dirListLimit", 1000000, "limit directory listing size")
 	mountOptions.collection = cmdMount.Flag.String("collection", "", "collection to create the files")
 	mountOptions.replication = cmdMount.Flag.String("replication", "", "replication(e.g. 000, 001) to create to files. If empty, let filer decide.")
 	mountOptions.ttlSec = cmdMount.Flag.Int("ttl", 0, "file ttl in seconds")

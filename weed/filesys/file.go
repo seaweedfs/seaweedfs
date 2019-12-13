@@ -36,6 +36,8 @@ func (file *File) fullpath() string {
 
 func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
+	glog.V(4).Infof("file Attr %s", file.fullpath())
+
 	if err := file.maybeLoadAttributes(ctx); err != nil {
 		return err
 	}
@@ -54,7 +56,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
 func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 
-	glog.V(3).Infof("%v file open %+v", file.fullpath(), req)
+	glog.V(4).Infof("file %v open %+v", file.fullpath(), req)
 
 	file.isOpen = true
 
@@ -140,10 +142,16 @@ func (file *File) maybeLoadAttributes(ctx context.Context) error {
 	if file.entry == nil || !file.isOpen {
 		item := file.wfs.listDirectoryEntriesCache.Get(file.fullpath())
 		if item != nil && !item.Expired() {
+
+			glog.V(4).Infof("file read attr cache hit %s", file.fullpath())
+
 			entry := item.Value().(*filer_pb.Entry)
 			file.setEntry(entry)
 			// glog.V(1).Infof("file attr read cached %v attributes", file.Name)
 		} else {
+
+			glog.V(3).Infof("file read attr cache miss %s", file.fullpath())
+
 			err := file.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 				request := &filer_pb.LookupDirectoryEntryRequest{
