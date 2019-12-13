@@ -43,13 +43,13 @@ func runMount(cmd *Command, args []string) bool {
 		*mountOptions.chunkSizeLimitMB,
 		*mountOptions.allowOthers,
 		*mountOptions.ttlSec,
-		*mountOptions.dirListingLimit,
+		*mountOptions.dirListCacheLimit,
 		os.FileMode(umask),
 	)
 }
 
 func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCenter string, chunkSizeLimitMB int,
-	allowOthers bool, ttlSec int, dirListingLimit int64, umask os.FileMode) bool {
+	allowOthers bool, ttlSec int, dirListCacheLimit int64, umask os.FileMode) bool {
 
 	util.LoadConfiguration("security", false)
 
@@ -155,7 +155,7 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 		TtlSec:             int32(ttlSec),
 		ChunkSizeLimit:     int64(chunkSizeLimitMB) * 1024 * 1024,
 		DataCenter:         dataCenter,
-		DirListingLimit:    dirListingLimit,
+		DirListCacheLimit:  dirListCacheLimit,
 		EntryCacheTtl:      3 * time.Second,
 		MountUid:           uid,
 		MountGid:           gid,

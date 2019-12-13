@@ -27,7 +27,7 @@ type Option struct {
 	TtlSec             int32
 	ChunkSizeLimit     int64
 	DataCenter         string
-	DirListingLimit    int64
+	DirListCacheLimit  int64
 	EntryCacheTtl      time.Duration
 	Umask              os.FileMode
 
@@ -61,7 +61,7 @@ type statsCache struct {
 func NewSeaweedFileSystem(option *Option) *WFS {
 	wfs := &WFS{
 		option:                    option,
-		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(option.DirListingLimit * 3).ItemsToPrune(100)),
+		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(option.DirListCacheLimit * 3).ItemsToPrune(100)),
 		pathToHandleIndex:         make(map[string]int),
 		bufPool: sync.Pool{
 			New: func() interface{} {
