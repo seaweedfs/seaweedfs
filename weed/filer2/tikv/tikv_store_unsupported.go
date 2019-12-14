@@ -55,6 +55,10 @@ func (store *TikvStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPat
 	return fmt.Errorf("not implemented for 32 bit computers")
 }
 
+func (store *TikvStore) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) (err error) {
+	return fmt.Errorf("not implemented for 32 bit computers")
+}
+
 func (store *TikvStore) ListDirectoryEntries(ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool,
 	limit int) (entries []*filer2.Entry, err error) {
 	return nil, fmt.Errorf("not implemented for 32 bit computers")
