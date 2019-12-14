@@ -101,9 +101,10 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 		fh.dirtyMetadata = true
 	}
 
-	fh.f.addChunks(chunks)
-
 	if len(chunks) > 0 {
+
+		fh.f.addChunks(chunks)
+
 		fh.dirtyMetadata = true
 	}
 
