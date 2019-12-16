@@ -78,20 +78,19 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
 						</a>
 					{{end}}
 					</td>
-					<td align="right">
+					<td align="right" nowrap>
 					{{if $entry.IsDirectory}}
 					{{else}}
-						{{ $entry.Mime }}
+						{{ $entry.Mime }}&nbsp;
 					{{end}}
 					</td>
-					<td align="right">
+					<td align="right" nowrap>
 					{{if $entry.IsDirectory}}
 					{{else}}
-						{{ $entry.Size | humanizeBytes }}
-						&nbsp;&nbsp;&nbsp;
+						{{ $entry.Size | humanizeBytes }}&nbsp;
 					{{end}}
 					</td>
-					<td>
+					<td nowrap>
 						{{ $entry.Timestamp.Format "2006-01-02 15:04" }}
 					</td>
 				</tr>
