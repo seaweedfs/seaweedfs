@@ -408,7 +408,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
 	bufReader := bytes.NewReader(buf)
-	uploadResult, err := operation.Upload(fileUrl, f.name, bufReader, false, "application/octet-stream", nil, auth)
+	uploadResult, err := operation.Upload(fileUrl, f.name, bufReader, false, "", nil, auth)
 	if err != nil {
 		glog.V(0).Infof("upload data %v to %s: %v", f.name, fileUrl, err)
 		return 0, fmt.Errorf("upload data: %v", err)

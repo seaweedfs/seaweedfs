@@ -28,7 +28,7 @@ func init() {
 }
 
 func PostBytes(url string, body []byte) ([]byte, error) {
-	r, err := client.Post(url, "application/octet-stream", bytes.NewReader(body))
+	r, err := client.Post(url, "", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("Post to %s: %v", url, err)
 	}

@@ -378,7 +378,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(ctx context.Context, task FileC
 			uploadResult, err := operation.Upload(targetUrl,
 				fileName+"-"+strconv.FormatInt(i+1, 10),
 				io.NewSectionReader(f, i*chunkSize, chunkSize),
-				false, "application/octet-stream", nil, assignResult.Auth)
+				false, "", nil, assignResult.Auth)
 			if err != nil {
 				uploadError = fmt.Errorf("upload data %v to %s: %v\n", fileName, targetUrl, err)
 				return
