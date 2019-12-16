@@ -16,7 +16,7 @@ import (
 type Dir struct {
 	Path       string
 	wfs        *WFS
-	attributes *filer_pb.FuseAttributes
+	entry      *filer_pb.Entry
 }
 
 var _ = fs.Node(&Dir{})
@@ -27,6 +27,10 @@ var _ = fs.HandleReadDirAller(&Dir{})
 var _ = fs.NodeRemover(&Dir{})
 var _ = fs.NodeRenamer(&Dir{})
 var _ = fs.NodeSetattrer(&Dir{})
+var _ = fs.NodeGetxattrer(&Dir{})
+var _ = fs.NodeSetxattrer(&Dir{})
+var _ = fs.NodeRemovexattrer(&Dir{})
+var _ = fs.NodeListxattrer(&Dir{})
 
 func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 
@@ -40,46 +44,28 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 		return nil
 	}
 
-	item := dir.wfs.listDirectoryEntriesCache.Get(dir.Path)
-	var entry *filer_pb.Entry
-	if item != nil && !item.Expired() {
-		entry = item.Value().(*filer_pb.Entry)
-	}
-
-	if entry != nil {
-		entry := item.Value().(*filer_pb.Entry)
-
-		attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
-		attr.Ctime = time.Unix(entry.Attributes.Crtime, 0)
-		attr.Mode = os.FileMode(entry.Attributes.FileMode)
-		attr.Gid = entry.Attributes.Gid
-		attr.Uid = entry.Attributes.Uid
-
-		return nil
-	}
-
-	glog.V(3).Infof("dir Attr cache miss %s", dir.Path)
-
-	entry, err := filer2.GetEntry(ctx, dir.wfs, dir.Path)
-	if err != nil {
-		glog.V(2).Infof("read dir %s attr: %v, error: %v", dir.Path, dir.attributes, err)
+	if err := dir.maybeLoadEntry(ctx); err != nil {
 		return err
 	}
-	if entry == nil {
-		return fuse.ENOENT
-	}
-	dir.attributes = entry.Attributes
 
-	glog.V(2).Infof("dir %s: %v perm: %v", dir.Path, dir.attributes, os.FileMode(dir.attributes.FileMode))
-
-	attr.Mode = os.FileMode(dir.attributes.FileMode) | os.ModeDir
-
-	attr.Mtime = time.Unix(dir.attributes.Mtime, 0)
-	attr.Ctime = time.Unix(dir.attributes.Crtime, 0)
-	attr.Gid = dir.attributes.Gid
-	attr.Uid = dir.attributes.Uid
+	attr.Mode = os.FileMode(dir.entry.Attributes.FileMode) | os.ModeDir
+	attr.Mtime = time.Unix(dir.entry.Attributes.Mtime, 0)
+	attr.Ctime = time.Unix(dir.entry.Attributes.Crtime, 0)
+	attr.Gid = dir.entry.Attributes.Gid
+	attr.Uid = dir.entry.Attributes.Uid
 
 	return nil
+}
+
+func (dir *Dir) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp *fuse.GetxattrResponse) error {
+
+	glog.V(4).Infof("dir Getxattr %s", dir.Path)
+
+	if err := dir.maybeLoadEntry(ctx); err != nil {
+		return err
+	}
+
+	return getxattr(dir.entry, req, resp)
 }
 
 func (dir *Dir) setRootDirAttributes(attr *fuse.Attr) {
@@ -207,7 +193,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 
 	if entry != nil {
 		if entry.IsDirectory {
-			node = &Dir{Path: path.Join(dir.Path, req.Name), wfs: dir.wfs, attributes: entry.Attributes}
+			node = &Dir{Path: path.Join(dir.Path, req.Name), wfs: dir.wfs, entry: entry}
 		} else {
 			node = dir.newFile(req.Name, entry)
 		}
@@ -316,48 +302,111 @@ func (dir *Dir) removeFolder(ctx context.Context, req *fuse.RemoveRequest) error
 
 func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
-	if dir.attributes == nil {
-		return nil
+	if err := dir.maybeLoadEntry(ctx); err != nil {
+		return err
 	}
 
 	glog.V(3).Infof("%v dir setattr %+v, fh=%d", dir.Path, req, req.Handle)
 	if req.Valid.Mode() {
-		dir.attributes.FileMode = uint32(req.Mode)
+		dir.entry.Attributes.FileMode = uint32(req.Mode)
 	}
 
 	if req.Valid.Uid() {
-		dir.attributes.Uid = req.Uid
+		dir.entry.Attributes.Uid = req.Uid
 	}
 
 	if req.Valid.Gid() {
-		dir.attributes.Gid = req.Gid
+		dir.entry.Attributes.Gid = req.Gid
 	}
 
 	if req.Valid.Mtime() {
-		dir.attributes.Mtime = req.Mtime.Unix()
+		dir.entry.Attributes.Mtime = req.Mtime.Unix()
 	}
 
 	dir.wfs.listDirectoryEntriesCache.Delete(dir.Path)
 
+	return dir.saveEntry(ctx)
+
+}
+
+func (dir *Dir) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
+
+	glog.V(4).Infof("dir Setxattr %s: %s", dir.Path, req.Name)
+
+	if err := dir.maybeLoadEntry(ctx); err != nil {
+		return err
+	}
+
+	if err := setxattr(dir.entry, req); err != nil {
+		return err
+	}
+
+	return dir.saveEntry(ctx)
+
+}
+
+func (dir *Dir) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest) error {
+
+	glog.V(4).Infof("dir Removexattr %s: %s", dir.Path, req.Name)
+
+	if err := dir.maybeLoadEntry(ctx); err != nil {
+		return err
+	}
+
+	if err := removexattr(dir.entry, req); err != nil {
+		return err
+	}
+
+	return dir.saveEntry(ctx)
+
+}
+
+func (dir *Dir) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, resp *fuse.ListxattrResponse) error {
+
+	glog.V(4).Infof("dir Listxattr %s: %s", dir.Path)
+
+	if err := dir.maybeLoadEntry(ctx); err != nil {
+		return err
+	}
+
+	if err := listxattr(dir.entry, req, resp); err != nil {
+		return err
+	}
+
+	return dir.saveEntry(ctx)
+
+}
+
+func (dir *Dir) maybeLoadEntry(ctx context.Context) error {
+	if dir.entry == nil {
+		parentDirPath, name := filer2.FullPath(dir.Path).DirAndName()
+		entry, err := dir.wfs.maybeLoadEntry(ctx, parentDirPath, name)
+		dir.entry = entry
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (dir *Dir) saveEntry(ctx context.Context) error {
+
 	parentDir, name := filer2.FullPath(dir.Path).DirAndName()
+
 	return dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: parentDir,
-			Entry: &filer_pb.Entry{
-				Name:       name,
-				Attributes: dir.attributes,
-			},
+			Entry:     dir.entry,
 		}
 
-		glog.V(1).Infof("set attr directory entry: %v", request)
+		glog.V(1).Infof("save dir entry: %v", request)
 		_, err := client.UpdateEntry(ctx, request)
 		if err != nil {
-			glog.V(0).Infof("UpdateEntry %s: %v", dir.Path, err)
+			glog.V(0).Infof("UpdateEntry dir %s/%s: %v", parentDir, name, err)
 			return fuse.EIO
 		}
 
 		return nil
 	})
-
 }

@@ -51,7 +51,7 @@ func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node,
 
 func (file *File) Readlink(ctx context.Context, req *fuse.ReadlinkRequest) (string, error) {
 
-	if err := file.maybeLoadAttributes(ctx); err != nil {
+	if err := file.maybeLoadEntry(ctx); err != nil {
 		return "", err
 	}
 
