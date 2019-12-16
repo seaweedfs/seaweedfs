@@ -363,7 +363,7 @@ func (dir *Dir) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest) e
 
 func (dir *Dir) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, resp *fuse.ListxattrResponse) error {
 
-	glog.V(4).Infof("dir Listxattr %s: %s", dir.Path)
+	glog.V(4).Infof("dir Listxattr %s", dir.Path)
 
 	if err := dir.maybeLoadEntry(ctx); err != nil {
 		return err

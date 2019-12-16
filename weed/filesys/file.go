@@ -166,7 +166,7 @@ func (file *File) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest)
 
 func (file *File) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, resp *fuse.ListxattrResponse) error {
 
-	glog.V(4).Infof("file Listxattr %s: %s", file.fullpath())
+	glog.V(4).Infof("file Listxattr %s", file.fullpath())
 
 	if err := file.maybeLoadEntry(ctx); err != nil {
 		return err
