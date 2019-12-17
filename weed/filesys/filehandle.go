@@ -92,9 +92,9 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 	if req.Offset == 0 {
 		// detect mime type
-		var possibleExt string
-		fh.contentType, possibleExt = mimetype.Detect(req.Data)
-		if ext := path.Ext(fh.f.Name); ext != possibleExt {
+		detectedMIME := mimetype.Detect(req.Data)
+		fh.contentType = detectedMIME.String()
+		if ext := path.Ext(fh.f.Name); ext != detectedMIME.Extension() {
 			fh.contentType = mime.TypeByExtension(ext)
 		}
 

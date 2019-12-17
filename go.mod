@@ -20,7 +20,7 @@ require (
 	github.com/facebookgo/clock v0.0.0-20150410010913-600d898af40a
 	github.com/facebookgo/stats v0.0.0-20151006221625-1b76add642e4
 	github.com/frankban/quicktest v1.7.2 // indirect
-	github.com/gabriel-vasile/mimetype v0.3.17
+	github.com/gabriel-vasile/mimetype v1.0.0
 	github.com/go-redis/redis v6.15.2+incompatible
 	github.com/go-sql-driver/mysql v1.4.1
 	github.com/gocql/gocql v0.0.0-20190829130954-e163eff7a8c6
