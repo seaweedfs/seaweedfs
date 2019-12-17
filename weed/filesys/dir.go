@@ -186,7 +186,9 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		if err != nil {
 			return nil, err
 		}
-		dir.wfs.listDirectoryEntriesCache.Set(fullFilePath, entry, 5*time.Minute)
+		if entry != nil {
+			dir.wfs.listDirectoryEntriesCache.Set(fullFilePath, entry, 5*time.Minute)
+		}
 	} else {
 		glog.V(4).Infof("dir Lookup cache hit %s", fullFilePath)
 	}
