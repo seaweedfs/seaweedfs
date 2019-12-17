@@ -381,13 +381,13 @@ func (dir *Dir) maybeLoadEntry(ctx context.Context) error {
 	if dir.entry == nil {
 		parentDirPath, name := filer2.FullPath(dir.Path).DirAndName()
 		entry, err := dir.wfs.maybeLoadEntry(ctx, parentDirPath, name)
-		dir.entry = entry
 		if err != nil {
 			return err
 		}
-		if dir.entry == nil {
+		if entry == nil {
 			return fuse.ENOENT
 		}
+		dir.entry = entry
 	}
 	return nil
 }
