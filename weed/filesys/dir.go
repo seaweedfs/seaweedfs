@@ -385,6 +385,9 @@ func (dir *Dir) maybeLoadEntry(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if dir.entry == nil {
+			return fuse.ENOENT
+		}
 	}
 	return nil
 }
