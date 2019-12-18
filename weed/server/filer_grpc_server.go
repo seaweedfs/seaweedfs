@@ -162,6 +162,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	newEntry := &filer2.Entry{
 		FullPath: filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name))),
 		Attr:     entry.Attr,
+		Extended: entry.Extended,
 		Chunks:   chunks,
 	}
 
