@@ -27,6 +27,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	alreadyHasSuperBlock := false
 
 	if v.maybeLoadVolumeTierInfo() {
+		v.readOnly = true
 		// open remote file
 		alreadyHasSuperBlock = true
 	} else if exists, canRead, canWrite, modifiedTime, fileSize := checkFile(fileName + ".dat"); exists {
