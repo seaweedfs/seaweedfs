@@ -107,7 +107,7 @@ func eq(a, b map[string][]byte) bool {
 	}
 
 	for k, v := range a {
-		if w, ok := b[k]; !ok || bytes.Equal(v, w) {
+		if w, ok := b[k]; !ok || !bytes.Equal(v, w) {
 			return false
 		}
 	}
