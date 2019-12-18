@@ -22,13 +22,17 @@ func (store *RedisClusterStore) Initialize(configuration util.Configuration) (er
 	return store.initialize(
 		configuration.GetStringSlice("addresses"),
 		configuration.GetString("password"),
+		configuration.GetBool("connection_use_read_only"),
+		configuration.GetBool("connection_route_by_latency"),
 	)
 }
 
-func (store *RedisClusterStore) initialize(addresses []string, password string) (err error) {
+func (store *RedisClusterStore) initialize(addresses []string, password string, readOnly, routeByLatency bool) (err error) {
 	store.Client = redis.NewClusterClient(&redis.ClusterOptions{
-		Addrs:    addresses,
-		Password: password,
+		Addrs:          addresses,
+		Password:       password,
+		ReadOnly:       readOnly,
+		RouteByLatency: routeByLatency,
 	})
 	return
 }
