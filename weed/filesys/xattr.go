@@ -26,7 +26,11 @@ func getxattr(entry *filer_pb.Entry, req *fuse.GetxattrRequest, resp *fuse.Getxa
 		if req.Position+size >= uint32(len(data)) {
 			size = uint32(len(data)) - req.Position
 		}
-		resp.Xattr = data[req.Position : req.Position+size]
+		if size == 0 {
+			resp.Xattr = data[req.Position:]
+		} else {
+			resp.Xattr = data[req.Position : req.Position+size]
+		}
 	}
 
 	return nil
@@ -93,7 +97,11 @@ func listxattr(entry *filer_pb.Entry, req *fuse.ListxattrRequest, resp *fuse.Lis
 		size = uint32(len(resp.Xattr)) - req.Position
 	}
 
-	resp.Xattr = resp.Xattr[req.Position : req.Position+size]
+	if size == 0 {
+		resp.Xattr = resp.Xattr[req.Position:]
+	} else {
+		resp.Xattr = resp.Xattr[req.Position : req.Position+size]
+	}
 
 	return nil
 
