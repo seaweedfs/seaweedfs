@@ -29,6 +29,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 			IsDirectory: entry.IsDirectory(),
 			Attributes:  filer2.EntryAttributeToPb(entry),
 			Chunks:      entry.Chunks,
+			Extended:    entry.Extended,
 		},
 	}, nil
 }
@@ -74,6 +75,7 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 					IsDirectory: entry.IsDirectory(),
 					Chunks:      entry.Chunks,
 					Attributes:  filer2.EntryAttributeToPb(entry),
+					Extended:    entry.Extended,
 				},
 			}); err != nil {
 				return err
@@ -162,13 +164,14 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	newEntry := &filer2.Entry{
 		FullPath: filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name))),
 		Attr:     entry.Attr,
-		Extended: entry.Extended,
+		Extended: req.Entry.Extended,
 		Chunks:   chunks,
 	}
 
-	glog.V(3).Infof("updating %s: %+v, chunks %d: %v => %+v, chunks %d: %v",
+	glog.V(3).Infof("updating %s: %+v, chunks %d: %v => %+v, chunks %d: %v, extended: %v => %v",
 		fullpath, entry.Attr, len(entry.Chunks), entry.Chunks,
-		req.Entry.Attributes, len(req.Entry.Chunks), req.Entry.Chunks)
+		req.Entry.Attributes, len(req.Entry.Chunks), req.Entry.Chunks,
+		entry.Extended, req.Entry.Extended)
 
 	if req.Entry.Attributes != nil {
 		if req.Entry.Attributes.Mtime != 0 {
