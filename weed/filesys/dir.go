@@ -343,6 +343,8 @@ func (dir *Dir) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
 		return err
 	}
 
+	dir.wfs.listDirectoryEntriesCache.Delete(dir.Path)
+
 	return dir.saveEntry(ctx)
 
 }
@@ -358,6 +360,8 @@ func (dir *Dir) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest) e
 	if err := removexattr(dir.entry, req); err != nil {
 		return err
 	}
+
+	dir.wfs.listDirectoryEntriesCache.Delete(dir.Path)
 
 	return dir.saveEntry(ctx)
 
@@ -375,7 +379,7 @@ func (dir *Dir) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, resp 
 		return err
 	}
 
-	return dir.saveEntry(ctx)
+	return nil
 
 }
 
