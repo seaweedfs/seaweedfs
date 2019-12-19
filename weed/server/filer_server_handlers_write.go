@@ -290,7 +290,11 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	err := fs.filer.DeleteEntryMetaAndData(context.Background(), filer2.FullPath(r.URL.Path), isRecursive, ignoreRecursiveError, !skipChunkDeletion)
 	if err != nil {
 		glog.V(1).Infoln("deleting", r.URL.Path, ":", err.Error())
-		writeJsonError(w, r, http.StatusInternalServerError, err)
+		httpStatus := http.StatusInternalServerError
+		if err == filer2.ErrNotFound {
+			httpStatus = http.StatusNotFound
+		}
+		writeJsonError(w, r, httpStatus, err)
 		return
 	}
 
