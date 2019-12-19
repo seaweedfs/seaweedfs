@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"google.golang.org/grpc"
 )
 
 const (
@@ -140,7 +141,7 @@ func (s *Store) VolumeInfos() []*VolumeInfo {
 				FileCount:        int(v.FileCount()),
 				DeleteCount:      int(v.DeletedCount()),
 				DeletedByteCount: v.DeletedSize(),
-				ReadOnly:         v.readOnly,
+				ReadOnly:         v.noWriteOrDelete || v.noWriteCanDelete,
 				Ttl:              v.Ttl,
 				CompactRevision:  uint32(v.CompactionRevision),
 			}
@@ -224,7 +225,7 @@ func (s *Store) Close() {
 
 func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (size uint32, isUnchanged bool, err error) {
 	if v := s.findVolume(i); v != nil {
-		if v.readOnly {
+		if v.noWriteOrDelete || v.noWriteCanDelete {
 			err = fmt.Errorf("volume %d is read only", i)
 			return
 		}
@@ -242,7 +243,7 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (size uin
 
 func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (uint32, error) {
 	if v := s.findVolume(i); v != nil {
-		if v.readOnly {
+		if v.noWriteOrDelete {
 			return 0, fmt.Errorf("volume %d is read only", i)
 		}
 		if MaxPossibleVolumeSize >= v.ContentSize()+uint64(needle.GetActualSize(0, v.version)) {
@@ -274,7 +275,7 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId) error {
 	if v == nil {
 		return fmt.Errorf("volume %d not found", i)
 	}
-	v.readOnly = true
+	v.noWriteOrDelete = true
 	return nil
 }
 

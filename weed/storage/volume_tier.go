@@ -57,7 +57,8 @@ func (v *Volume) maybeLoadVolumeTierInfo() bool {
 	glog.V(0).Infof("volume %d is tiered to %s as %s and read only", v.Id,
 		v.volumeTierInfo.Files[0].BackendName(), v.volumeTierInfo.Files[0].Key)
 
-	v.readOnly = true
+	v.noWriteCanDelete = true
+	v.noWriteOrDelete = false
 
 	glog.V(0).Infof("loading volume %d from remote %v", v.Id, v.volumeTierInfo.Files)
 	v.LoadRemoteFile()

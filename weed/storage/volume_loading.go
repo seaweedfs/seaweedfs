@@ -27,7 +27,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	alreadyHasSuperBlock := false
 
 	if v.maybeLoadVolumeTierInfo() {
-		v.readOnly = true
+		v.noWriteCanDelete = true
 		// open remote file
 		alreadyHasSuperBlock = true
 	} else if exists, canRead, canWrite, modifiedTime, fileSize := checkFile(fileName + ".dat"); exists {
@@ -41,7 +41,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		} else {
 			glog.V(0).Infoln("opening " + fileName + ".dat in READONLY mode")
 			dataFile, e = os.Open(fileName + ".dat")
-			v.readOnly = true
+			v.noWriteOrDelete = true
 		}
 		v.lastModifiedTsSeconds = uint64(modifiedTime.Unix())
 		if fileSize >= _SuperBlockSize {
@@ -74,7 +74,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	}
 	if e == nil && alsoLoadIndex {
 		var indexFile *os.File
-		if v.readOnly {
+		if v.noWriteOrDelete {
 			glog.V(1).Infoln("open to read file", fileName+".idx")
 			if indexFile, e = os.OpenFile(fileName+".idx", os.O_RDONLY, 0644); e != nil {
 				return fmt.Errorf("cannot read Volume Index %s.idx: %v", fileName, e)
@@ -86,11 +86,11 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			}
 		}
 		if v.lastAppendAtNs, e = CheckVolumeDataIntegrity(v, indexFile); e != nil {
-			v.readOnly = true
+			v.noWriteOrDelete = true
 			glog.V(0).Infof("volumeDataIntegrityChecking failed %v", e)
 		}
 
-		if v.readOnly {
+		if v.noWriteOrDelete || v.noWriteCanDelete {
 			if v.nm, e = NewSortedFileNeedleMap(fileName, indexFile); e != nil {
 				glog.V(0).Infof("loading sorted db %s error: %v", fileName+".sdb", e)
 			}

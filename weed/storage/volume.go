@@ -2,6 +2,10 @@ package storage
 
 import (
 	"fmt"
+	"path"
+	"strconv"
+	"sync"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
@@ -9,11 +13,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
-
-	"path"
-	"strconv"
-	"sync"
-	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
@@ -25,7 +24,8 @@ type Volume struct {
 	DataBackend        backend.BackendStorageFile
 	nm                 NeedleMapper
 	needleMapKind      NeedleMapType
-	readOnly           bool
+	noWriteOrDelete    bool // if readonly, either noWriteOrDelete or noWriteCanDelete
+	noWriteCanDelete   bool // if readonly, either noWriteOrDelete or noWriteCanDelete
 	MemoryMapMaxSizeMb uint32
 
 	SuperBlock
@@ -51,7 +51,7 @@ func NewVolume(dirname string, collection string, id needle.VolumeId, needleMapK
 	return
 }
 func (v *Volume) String() string {
-	return fmt.Sprintf("Id:%v, dir:%s, Collection:%s, dataFile:%v, nm:%v, readOnly:%v", v.Id, v.dir, v.Collection, v.DataBackend, v.nm, v.readOnly)
+	return fmt.Sprintf("Id:%v, dir:%s, Collection:%s, dataFile:%v, nm:%v, noWrite:%v canDelete:%v", v.Id, v.dir, v.Collection, v.DataBackend, v.nm, v.noWriteOrDelete || v.noWriteCanDelete, v.noWriteCanDelete)
 }
 
 func VolumeFileName(dir string, collection string, id int) (fileName string) {
@@ -210,7 +210,7 @@ func (v *Volume) ToVolumeInformationMessage() *master_pb.VolumeInformationMessag
 		FileCount:        uint64(v.FileCount()),
 		DeleteCount:      uint64(v.DeletedCount()),
 		DeletedByteCount: v.DeletedSize(),
-		ReadOnly:         v.readOnly,
+		ReadOnly:         v.noWriteOrDelete,
 		ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
 		Version:          uint32(v.Version()),
 		Ttl:              v.Ttl.ToUint32(),
