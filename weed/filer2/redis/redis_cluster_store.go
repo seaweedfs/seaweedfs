@@ -20,9 +20,6 @@ func (store *RedisClusterStore) GetName() string {
 
 func (store *RedisClusterStore) Initialize(configuration util.Configuration) (err error) {
 
-	configuration.SetDefault("useReadOnly", false)
-	configuration.SetDefault("routeByLatency", false)
-
 	return store.initialize(
 		configuration.GetStringSlice("addresses"),
 		configuration.GetString("password"),

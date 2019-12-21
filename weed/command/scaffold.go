@@ -136,8 +136,8 @@ addresses = [
     "localhost:30006",
 ]
 password = ""
-readOnly = true
-routeByLatency = true
+readOnly = false
+routeByLatency = false
 
 [etcd]
 enabled = false
