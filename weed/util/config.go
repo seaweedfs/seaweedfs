@@ -10,6 +10,7 @@ type Configuration interface {
 	GetBool(key string) bool
 	GetInt(key string) int
 	GetStringSlice(key string) []string
+	SetDefault(key string, value interface{})
 }
 
 func LoadConfiguration(configFileName string, required bool) (loaded bool) {
