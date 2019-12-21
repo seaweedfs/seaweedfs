@@ -22,8 +22,8 @@ func (store *RedisClusterStore) Initialize(configuration util.Configuration) (er
 	return store.initialize(
 		configuration.GetStringSlice("addresses"),
 		configuration.GetString("password"),
-		configuration.GetBool("connection_use_read_only"),
-		configuration.GetBool("connection_route_by_latency"),
+		configuration.GetBool("useReadOnly"),
+		configuration.GetBool("routeByLatency"),
 	)
 }
 
