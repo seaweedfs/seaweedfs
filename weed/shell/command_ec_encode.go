@@ -8,13 +8,14 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"google.golang.org/grpc"
 )
 
 func init() {
@@ -281,7 +282,7 @@ func collectVolumeIdsForEcEncode(ctx context.Context, commandEnv *CommandEnv, se
 		}
 	})
 
-	for vid, _ := range vidMap {
+	for vid := range vidMap {
 		vids = append(vids, needle.VolumeId(vid))
 	}
 
