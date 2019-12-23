@@ -19,7 +19,7 @@ type SortedFileNeedleMap struct {
 func NewSortedFileNeedleMap(baseFileName string, indexFile *os.File) (m *SortedFileNeedleMap, err error) {
 	m = &SortedFileNeedleMap{baseFileName: baseFileName}
 	m.indexFile = indexFile
-	fileName := baseFileName+".sdb"
+	fileName := baseFileName + ".sdb"
 	if !isSortedFileFresh(fileName, indexFile) {
 		glog.V(0).Infof("Start to Generate %s from %s", fileName, indexFile.Name())
 		erasure_coding.WriteSortedFileFromIdx(baseFileName, ".sdb")

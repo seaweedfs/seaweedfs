@@ -45,7 +45,6 @@ func (c *commandFsDu) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 		path = path + "/"
 	}
 
-
 	var blockCount, byteCount uint64
 	dir, name := filer2.FullPath(path).DirAndName()
 	blockCount, byteCount, err = duTraverseDirectory(ctx, writer, commandEnv.getFilerClient(filerServer, filerPort), dir, name)

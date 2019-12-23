@@ -168,7 +168,7 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 			continue
 		}
 		for _, fileInfo := range fileInfos {
-			if fileInfo.Name() == bName+".ecx" || fileInfo.Name() == bName+".ecj"{
+			if fileInfo.Name() == bName+".ecx" || fileInfo.Name() == bName+".ecj" {
 				hasEcxFile = true
 				continue
 			}

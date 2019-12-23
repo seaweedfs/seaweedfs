@@ -14,9 +14,9 @@ import (
 )
 
 type Dir struct {
-	Path       string
-	wfs        *WFS
-	entry      *filer_pb.Entry
+	Path  string
+	wfs   *WFS
+	entry *filer_pb.Entry
 }
 
 var _ = fs.Node(&Dir{})
