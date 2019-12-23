@@ -8,6 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/sequence"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 )
 
 var topologyLayout = `
@@ -113,7 +114,7 @@ func setup(topologyLayout string) *Topology {
 func TestFindEmptySlotsForOneVolume(t *testing.T) {
 	topo := setup(topologyLayout)
 	vg := NewDefaultVolumeGrowth()
-	rp, _ := storage.NewReplicaPlacementFromString("002")
+	rp, _ := super_block.NewReplicaPlacementFromString("002")
 	volumeGrowOption := &VolumeGrowOption{
 		Collection:       "",
 		ReplicaPlacement: rp,

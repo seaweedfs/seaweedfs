@@ -11,6 +11,7 @@ import (
 	idx2 "github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -133,7 +134,7 @@ func (v *Volume) cleanupCompact() error {
 }
 
 func fetchCompactRevisionFromDatFile(datBackend backend.BackendStorageFile) (compactRevision uint16, err error) {
-	superBlock, err := ReadSuperBlock(datBackend)
+	superBlock, err := super_block.ReadSuperBlock(datBackend)
 	if err != nil {
 		return 0, err
 	}
@@ -277,8 +278,8 @@ type VolumeFileScanner4Vacuum struct {
 	writeThrottler *util.WriteThrottler
 }
 
-func (scanner *VolumeFileScanner4Vacuum) VisitSuperBlock(superBlock SuperBlock) error {
-	scanner.version = superBlock.Version()
+func (scanner *VolumeFileScanner4Vacuum) VisitSuperBlock(superBlock super_block.SuperBlock) error {
+	scanner.version = superBlock.Version
 	superBlock.CompactionRevision++
 	_, err := scanner.dstBackend.WriteAt(superBlock.Bytes(), 0)
 	scanner.newOffset = int64(superBlock.BlockSize())

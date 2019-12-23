@@ -12,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -28,7 +29,7 @@ type Volume struct {
 	noWriteCanDelete   bool // if readonly, either noWriteOrDelete or noWriteCanDelete
 	MemoryMapMaxSizeMb uint32
 
-	SuperBlock
+	super_block.SuperBlock
 
 	dataFileAccessLock    sync.RWMutex
 	lastModifiedTsSeconds uint64 //unix time in seconds
@@ -42,10 +43,10 @@ type Volume struct {
 	volumeTierInfo *volume_server_pb.VolumeTierInfo
 }
 
-func NewVolume(dirname string, collection string, id needle.VolumeId, needleMapKind NeedleMapType, replicaPlacement *ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32) (v *Volume, e error) {
+func NewVolume(dirname string, collection string, id needle.VolumeId, needleMapKind NeedleMapType, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32) (v *Volume, e error) {
 	// if replicaPlacement is nil, the superblock will be loaded from disk
 	v = &Volume{dir: dirname, Collection: collection, Id: id, MemoryMapMaxSizeMb: memoryMapMaxSizeMb}
-	v.SuperBlock = SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
+	v.SuperBlock = super_block.SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
 	v.needleMapKind = needleMapKind
 	e = v.load(true, true, needleMapKind, preallocate)
 	return
@@ -68,7 +69,7 @@ func (v *Volume) FileName() (fileName string) {
 }
 
 func (v *Volume) Version() needle.Version {
-	return v.SuperBlock.Version()
+	return v.SuperBlock.Version
 }
 
 func (v *Volume) FileStat() (datSize uint64, idxSize uint64, modTime time.Time) {

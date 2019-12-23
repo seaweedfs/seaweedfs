@@ -6,6 +6,8 @@ import (
 	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -22,7 +24,7 @@ This package is created to resolve these replica placement issues:
 
 type VolumeGrowOption struct {
 	Collection         string
-	ReplicaPlacement   *storage.ReplicaPlacement
+	ReplicaPlacement   *super_block.ReplicaPlacement
 	Ttl                *needle.TTL
 	Prealloacte        int64
 	DataCenter         string

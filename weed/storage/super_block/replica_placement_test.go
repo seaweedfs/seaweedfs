@@ -1,4 +1,4 @@
-package storage
+package super_block
 
 import (
 	"testing"

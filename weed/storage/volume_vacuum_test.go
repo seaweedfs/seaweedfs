@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
@@ -46,7 +47,7 @@ func TestMakeDiff(t *testing.T) {
 	v := new(Volume)
 	//lastCompactIndexOffset value is the index file size before step 4
 	v.lastCompactIndexOffset = 96
-	v.SuperBlock.version = 0x2
+	v.SuperBlock.Version = 0x2
 	/*
 		err := v.makeupDiff(
 			"/yourpath/1.cpd",
@@ -68,7 +69,7 @@ func TestCompaction(t *testing.T) {
 	}
 	defer os.RemoveAll(dir) // clean up
 
-	v, err := NewVolume(dir, "", 1, NeedleMapInMemory, &ReplicaPlacement{}, &needle.TTL{}, 0, 0)
+	v, err := NewVolume(dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}

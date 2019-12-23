@@ -6,12 +6,13 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 )
 
 type VolumeInfo struct {
 	Id                needle.VolumeId
 	Size              uint64
-	ReplicaPlacement  *ReplicaPlacement
+	ReplicaPlacement  *super_block.ReplicaPlacement
 	Ttl               *needle.TTL
 	Collection        string
 	Version           needle.Version
@@ -40,7 +41,7 @@ func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err er
 		RemoteStorageName: m.RemoteStorageName,
 		RemoteStorageKey:  m.RemoteStorageKey,
 	}
-	rp, e := NewReplicaPlacementFromByte(byte(m.ReplicaPlacement))
+	rp, e := super_block.NewReplicaPlacementFromByte(byte(m.ReplicaPlacement))
 	if e != nil {
 		return vi, e
 	}
@@ -55,7 +56,7 @@ func NewVolumeInfoFromShort(m *master_pb.VolumeShortInformationMessage) (vi Volu
 		Collection: m.Collection,
 		Version:    needle.Version(m.Version),
 	}
-	rp, e := NewReplicaPlacementFromByte(byte(m.ReplicaPlacement))
+	rp, e := super_block.NewReplicaPlacementFromByte(byte(m.ReplicaPlacement))
 	if e != nil {
 		return vi, e
 	}

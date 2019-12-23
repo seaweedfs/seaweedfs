@@ -11,11 +11,12 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 )
 
 func loadVolumeWithoutIndex(dirname string, collection string, id needle.VolumeId, needleMapKind NeedleMapType) (v *Volume, err error) {
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
-	v.SuperBlock = SuperBlock{}
+	v.SuperBlock = super_block.SuperBlock{}
 	v.needleMapKind = needleMapKind
 	err = v.load(false, false, needleMapKind, 0)
 	return
@@ -43,7 +44,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			v.noWriteOrDelete = true
 		}
 		v.lastModifiedTsSeconds = uint64(modifiedTime.Unix())
-		if fileSize >= _SuperBlockSize {
+		if fileSize >= super_block.SuperBlockSize {
 			alreadyHasSuperBlock = true
 		}
 		v.DataBackend = backend.NewDiskFile(dataFile)

@@ -9,9 +9,9 @@ import (
 	"strconv"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -59,7 +59,7 @@ func main() {
 	}
 	defer newDatFile.Close()
 
-	superBlock, err := storage.ReadSuperBlock(datBackend)
+	superBlock, err := super_block.ReadSuperBlock(datBackend)
 	if err != nil {
 		glog.Fatalf("Read Volume Data superblock %v", err)
 	}
@@ -81,7 +81,7 @@ func iterateEntries(datBackend backend.BackendStorageFile, idxFile *os.File, vis
 	readerOffset += int64(count)
 
 	// start to read dat file
-	superBlock, err := storage.ReadSuperBlock(datBackend)
+	superBlock, err := super_block.ReadSuperBlock(datBackend)
 	if err != nil {
 		fmt.Printf("cannot read dat file super block: %v", err)
 		return

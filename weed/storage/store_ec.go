@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/klauspost/reedsolomon"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -15,8 +17,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/klauspost/reedsolomon"
 )
 
 func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
@@ -169,7 +171,7 @@ func (s *Store) readEcVolumeVersion(ctx context.Context, vid needle.VolumeId, ec
 	interval := erasure_coding.Interval{
 		BlockIndex:          0,
 		InnerBlockOffset:    0,
-		Size:                _SuperBlockSize,
+		Size:                super_block.SuperBlockSize,
 		IsLargeBlock:        true, // it could be large block, but ok in this place
 		LargeBlockRowsCount: 0,
 	}

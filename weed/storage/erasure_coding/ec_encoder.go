@@ -49,7 +49,7 @@ func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 	return nil
 }
 
-// WriteEcFiles generates .ec01 ~ .ec14 files
+// WriteEcFiles generates .ec00 ~ .ec13 files
 func WriteEcFiles(baseFileName string) error {
 	return generateEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize)
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
@@ -165,7 +166,7 @@ func (v *Volume) readNeedle(n *needle.Needle) (int, error) {
 }
 
 type VolumeFileScanner interface {
-	VisitSuperBlock(SuperBlock) error
+	VisitSuperBlock(super_block.SuperBlock) error
 	ReadNeedleBody() bool
 	VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error
 }

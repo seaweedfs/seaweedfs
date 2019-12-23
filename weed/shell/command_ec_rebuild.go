@@ -215,6 +215,7 @@ func prepareDataToRecover(ctx context.Context, commandEnv *CommandEnv, rebuilder
 					Collection:     collection,
 					ShardIds:       []uint32{uint32(shardId)},
 					CopyEcxFile:    needEcxFile,
+					CopyEcjFile:    needEcxFile,
 					SourceDataNode: ecNodes[0].info.Id,
 				})
 				return copyErr

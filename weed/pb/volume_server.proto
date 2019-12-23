@@ -66,6 +66,8 @@ service VolumeServer {
     }
     rpc VolumeEcBlobDelete (VolumeEcBlobDeleteRequest) returns (VolumeEcBlobDeleteResponse) {
     }
+    rpc VolumeEcShardsToVolume (VolumeEcShardsToVolumeRequest) returns (VolumeEcShardsToVolumeResponse) {
+    }
 
     // tiered storage
     rpc VolumeTierCopyDatToRemote (VolumeTierCopyDatToRemoteRequest) returns (stream VolumeTierCopyDatToRemoteResponse) {
@@ -203,6 +205,7 @@ message CopyFileRequest {
     uint64 stop_offset = 4;
     string collection = 5;
     bool is_ec_volume = 6;
+    bool ignore_source_file_not_found = 7;
 }
 message CopyFileResponse {
     bytes file_content = 1;
@@ -249,6 +252,7 @@ message VolumeEcShardsCopyRequest {
     repeated uint32 shard_ids = 3;
     bool copy_ecx_file = 4;
     string source_data_node = 5;
+    bool copy_ecj_file = 6;
 }
 message VolumeEcShardsCopyResponse {
 }
@@ -295,6 +299,13 @@ message VolumeEcBlobDeleteRequest {
     uint32 version = 4;
 }
 message VolumeEcBlobDeleteResponse {
+}
+
+message VolumeEcShardsToVolumeRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+}
+message VolumeEcShardsToVolumeResponse {
 }
 
 message ReadVolumeFileStatusRequest {
