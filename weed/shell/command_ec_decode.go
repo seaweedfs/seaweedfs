@@ -149,8 +149,9 @@ func collectEcShards(ctx context.Context, commandEnv *CommandEnv, nodeToEcIndexB
 	maxShardCount := 0
 	var exisitngEcIndexBits erasure_coding.ShardBits
 	for loc, ecIndexBits := range nodeToEcIndexBits {
-		if ecIndexBits.ShardIdCount() > maxShardCount {
-			maxShardCount = ecIndexBits.ShardIdCount()
+		toBeCopiedShardCount := ecIndexBits.MinusParityShards().ShardIdCount()
+		if toBeCopiedShardCount > maxShardCount {
+			maxShardCount = toBeCopiedShardCount
 			targetNodeLocation = loc
 			exisitngEcIndexBits = ecIndexBits
 		}
