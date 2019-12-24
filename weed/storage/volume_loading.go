@@ -75,7 +75,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	if err == nil && alsoLoadIndex {
 		var indexFile *os.File
 		if v.noWriteOrDelete {
-			glog.V(1).Infoln("open to read file", fileName+".idx")
+			glog.V(0).Infoln("open to read file", fileName+".idx")
 			if indexFile, err = os.OpenFile(fileName+".idx", os.O_RDONLY, 0644); err != nil {
 				return fmt.Errorf("cannot read Volume Index %s.idx: %v", fileName, err)
 			}

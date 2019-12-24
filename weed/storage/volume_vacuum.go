@@ -20,9 +20,19 @@ func (v *Volume) garbageLevel() float64 {
 	if v.ContentSize() == 0 {
 		return 0
 	}
-	return float64(v.DeletedSize()) / float64(v.ContentSize())
+	deletedSize := v.DeletedSize()
+	fileSize := v.ContentSize()
+	if v.DeletedCount() > 0 && v.DeletedSize() == 0 {
+		// this happens for .sdx converted back to normal .idx
+		// where deleted entry size is missing
+		datFileSize, _, _ := v.FileStat()
+		deletedSize = datFileSize - fileSize - super_block.SuperBlockSize
+		fileSize = datFileSize
+	}
+	return float64(deletedSize) / float64(fileSize)
 }
 
+// compact a volume based on deletions in .dat files
 func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error {
 
 	if v.MemoryMapMaxSizeMb != 0 { //it makes no sense to compact in memory
@@ -45,7 +55,8 @@ func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error
 	return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx", preallocate, compactionBytePerSecond)
 }
 
-func (v *Volume) Compact2() error {
+// compact a volume based on deletions in .idx files
+func (v *Volume) Compact2(preallocate int64) error {
 
 	if v.MemoryMapMaxSizeMb != 0 { //it makes no sense to compact in memory
 		return nil
@@ -58,8 +69,10 @@ func (v *Volume) Compact2() error {
 	}()
 
 	filePath := v.FileName()
+	v.lastCompactIndexOffset = v.IndexFileSize()
+	v.lastCompactRevision = v.SuperBlock.CompactionRevision
 	glog.V(3).Infof("creating copies for volume %d ...", v.Id)
-	return v.copyDataBasedOnIndexFile(filePath+".cpd", filePath+".cpx")
+	return v.copyDataBasedOnIndexFile(filePath+".cpd", filePath+".cpx", preallocate)
 }
 
 func (v *Volume) CommitCompact() error {
@@ -140,6 +153,7 @@ func fetchCompactRevisionFromDatFile(datBackend backend.BackendStorageFile) (com
 	return superBlock.CompactionRevision, nil
 }
 
+// if old .dat and .idx files are updated, this func tries to apply the same changes to new files accordingly
 func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldIdxFileName string) (err error) {
 	var indexSize int64
 
@@ -150,6 +164,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 	oldDatBackend := backend.NewDiskFile(oldDatFile)
 	defer oldDatBackend.Close()
 
+	// skip if the old .idx file has not changed
 	if indexSize, err = verifyIndexFileIntegrity(oldIdxFile); err != nil {
 		return fmt.Errorf("verifyIndexFileIntegrity %s failed: %v", oldIdxFileName, err)
 	}
@@ -157,6 +172,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		return nil
 	}
 
+	// fail if the old .dat file has changed to a new revision
 	oldDatCompactRevision, err := fetchCompactRevisionFromDatFile(oldDatBackend)
 	if err != nil {
 		return fmt.Errorf("fetchCompactRevisionFromDatFile src %s failed: %v", oldDatFile.Name(), err)
@@ -337,14 +353,14 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 	return
 }
 
-func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
+func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string, preallocate int64) (err error) {
 	var (
-		dst, oldIndexFile *os.File
+		dstDatBackend backend.BackendStorageFile
+		oldIndexFile  *os.File
 	)
-	if dst, err = os.OpenFile(dstName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644); err != nil {
+	if dstDatBackend, err = createVolumeFile(dstName, preallocate, 0); err != nil {
 		return
 	}
-	dstDatBackend := backend.NewDiskFile(dst)
 	defer dstDatBackend.Close()
 
 	if oldIndexFile, err = os.OpenFile(v.FileName()+".idx", os.O_RDONLY, 0644); err != nil {
@@ -357,7 +373,7 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string) (err error) {
 	now := uint64(time.Now().Unix())
 
 	v.SuperBlock.CompactionRevision++
-	dst.Write(v.SuperBlock.Bytes())
+	dstDatBackend.WriteAt(v.SuperBlock.Bytes(), 0)
 	newOffset := int64(v.SuperBlock.BlockSize())
 
 	idx2.WalkIndexFile(oldIndexFile, func(key NeedleId, offset Offset, size uint32) error {
