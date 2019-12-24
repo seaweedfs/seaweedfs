@@ -92,7 +92,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 
 		if v.noWriteOrDelete || v.noWriteCanDelete {
 			if v.nm, err = NewSortedFileNeedleMap(fileName, indexFile); err != nil {
-				glog.V(0).Infof("loading sorted db %s error: %v", fileName+".sdb", err)
+				glog.V(0).Infof("loading sorted db %s error: %v", fileName+".sdx", err)
 			}
 		} else {
 			switch needleMapKind {

@@ -19,15 +19,15 @@ type SortedFileNeedleMap struct {
 func NewSortedFileNeedleMap(baseFileName string, indexFile *os.File) (m *SortedFileNeedleMap, err error) {
 	m = &SortedFileNeedleMap{baseFileName: baseFileName}
 	m.indexFile = indexFile
-	fileName := baseFileName + ".sdb"
+	fileName := baseFileName + ".sdx"
 	if !isSortedFileFresh(fileName, indexFile) {
 		glog.V(0).Infof("Start to Generate %s from %s", fileName, indexFile.Name())
-		erasure_coding.WriteSortedFileFromIdx(baseFileName, ".sdb")
+		erasure_coding.WriteSortedFileFromIdx(baseFileName, ".sdx")
 		glog.V(0).Infof("Finished Generating %s from %s", fileName, indexFile.Name())
 	}
 	glog.V(1).Infof("Opening %s...", fileName)
 
-	if m.dbFile, err = os.Open(baseFileName + ".sdb"); err != nil {
+	if m.dbFile, err = os.Open(baseFileName + ".sdx"); err != nil {
 		return
 	}
 	dbStat, _ := m.dbFile.Stat()
@@ -101,5 +101,5 @@ func (m *SortedFileNeedleMap) Close() {
 func (m *SortedFileNeedleMap) Destroy() error {
 	m.Close()
 	os.Remove(m.indexFile.Name())
-	return os.Remove(m.baseFileName + ".sdb")
+	return os.Remove(m.baseFileName + ".sdx")
 }
