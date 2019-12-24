@@ -169,3 +169,17 @@ func (l *DiskLocation) deleteEcVolumeById(vid needle.VolumeId) (e error) {
 	delete(l.ecVolumes, vid)
 	return
 }
+
+func (l *DiskLocation) unmountEcVolumeByCollection(collectionName string) map[needle.VolumeId]*erasure_coding.EcVolume {
+	deltaVols := make(map[needle.VolumeId]*erasure_coding.EcVolume, 0)
+	for k, v := range l.ecVolumes {
+		if v.Collection == collectionName {
+			deltaVols[k] = v
+		}
+	}
+
+	for k, _ := range deltaVols {
+		delete(l.ecVolumes, k)
+	}
+	return deltaVols
+}

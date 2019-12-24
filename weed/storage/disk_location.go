@@ -71,7 +71,6 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 				} else {
 					glog.V(0).Infof("new volume %s error %s", name, e)
 				}
-
 			}
 		}
 	}
@@ -116,28 +115,46 @@ func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
 func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e error) {
 
 	l.volumesLock.Lock()
-	for k, v := range l.volumes {
-		if v.Collection == collection {
-			e = l.deleteVolumeById(k)
-			if e != nil {
-				l.volumesLock.Unlock()
-				return
-			}
-		}
-	}
+	delVolsMap := l.unmountVolumeByCollection(collection)
 	l.volumesLock.Unlock()
 
 	l.ecVolumesLock.Lock()
-	for k, v := range l.ecVolumes {
-		if v.Collection == collection {
-			e = l.deleteEcVolumeById(k)
-			if e != nil {
-				l.ecVolumesLock.Unlock()
-				return
+	delEcVolsMap := l.unmountEcVolumeByCollection(collection)
+	l.ecVolumesLock.Unlock()
+
+	errChain := make(chan error, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		for _, v := range delVolsMap {
+			if err := v.Destroy(); err != nil {
+				errChain <- err
 			}
 		}
+		wg.Done()
+	}()
+
+	go func() {
+		for _, v := range delEcVolsMap {
+			v.Destroy()
+		}
+		wg.Done()
+	}()
+
+	go func() {
+		wg.Wait()
+		close(errChain)
+	}()
+
+	errBuilder := strings.Builder{}
+	for err := range errChain {
+		errBuilder.WriteString(err.Error())
+		errBuilder.WriteString("; ")
 	}
-	l.ecVolumesLock.Unlock()
+	if errBuilder.Len() > 0 {
+		e = fmt.Errorf(errBuilder.String())
+	}
+
 
 	return
 }
@@ -191,6 +208,20 @@ func (l *DiskLocation) UnloadVolume(vid needle.VolumeId) error {
 	v.Close()
 	delete(l.volumes, vid)
 	return nil
+}
+
+func (l *DiskLocation) unmountVolumeByCollection(collectionName string) map[needle.VolumeId]*Volume {
+	deltaVols := make(map[needle.VolumeId]*Volume, 0)
+	for k, v := range l.volumes {
+		if v.Collection == collectionName && !v.isCompacting {
+			deltaVols[k] = v
+		}
+	}
+
+	for k, _ := range deltaVols {
+		delete(l.volumes, k)
+	}
+	return deltaVols
 }
 
 func (l *DiskLocation) SetVolume(vid needle.VolumeId, volume *Volume) {
