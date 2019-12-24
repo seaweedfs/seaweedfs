@@ -107,10 +107,11 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
             <tr>
               <th>Id</th>
               <th>Collection</th>
-              <th>Size</th>
+              <th>Data Size</th>
               <th>Files</th>
               <th>Trash</th>
               <th>TTL</th>
+              <th>ReadOnly</th>
             </tr>
           </thead>
           <tbody>
@@ -122,6 +123,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
               <td>{{ .FileCount }}</td>
               <td>{{ .DeleteCount }} / {{.DeletedByteCount}} Bytes</td>
               <td>{{ .Ttl }}</td>
+              <td>{{ .ReadOnly }}</td>
             </tr>
           {{ end }}
           </tbody>
