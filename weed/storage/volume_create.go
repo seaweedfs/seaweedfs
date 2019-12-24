@@ -11,8 +11,11 @@ import (
 
 func createVolumeFile(fileName string, preallocate int64, memoryMapSizeMB uint32) (backend.BackendStorageFile, error) {
 	file, e := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	if e != nil {
+		return nil, e
+	}
 	if preallocate > 0 {
 		glog.V(0).Infof("Preallocated disk space for %s is not supported", fileName)
 	}
-	return backend.NewDiskFile(file), e
+	return backend.NewDiskFile(file), nil
 }
