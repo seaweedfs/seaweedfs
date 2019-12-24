@@ -16,6 +16,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
@@ -89,7 +90,7 @@ func printNeedle(vid needle.VolumeId, n *needle.Needle, version needle.Version, 
 type VolumeFileScanner4Export struct {
 	version   needle.Version
 	counter   int
-	needleMap *storage.NeedleMap
+	needleMap *needle_map.MemDb
 	vid       needle.VolumeId
 }
 
@@ -192,15 +193,10 @@ func runExport(cmd *Command, args []string) bool {
 		fileName = *export.collection + "_" + fileName
 	}
 	vid := needle.VolumeId(*export.volumeId)
-	indexFile, err := os.OpenFile(path.Join(*export.dir, fileName+".idx"), os.O_RDONLY, 0644)
-	if err != nil {
-		glog.Fatalf("Create Volume Index [ERROR] %s\n", err)
-	}
-	defer indexFile.Close()
 
-	needleMap, err := storage.LoadBtreeNeedleMap(indexFile)
-	if err != nil {
-		glog.Fatalf("cannot load needle map from %s: %s", indexFile.Name(), err)
+	needleMap := needle_map.NewMemDb()
+	if err := needleMap.LoadFromIdx(path.Join(*export.dir, fileName+".idx")); err != nil {
+		glog.Fatalf("cannot load needle map from %s.idx: %s", fileName, err)
 	}
 
 	volumeFileScanner := &VolumeFileScanner4Export{

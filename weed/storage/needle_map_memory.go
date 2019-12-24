@@ -22,21 +22,8 @@ func NewCompactNeedleMap(file *os.File) *NeedleMap {
 	return nm
 }
 
-func NewBtreeNeedleMap(file *os.File) *NeedleMap {
-	nm := &NeedleMap{
-		m: needle_map.NewBtreeMap(),
-	}
-	nm.indexFile = file
-	return nm
-}
-
 func LoadCompactNeedleMap(file *os.File) (*NeedleMap, error) {
 	nm := NewCompactNeedleMap(file)
-	return doLoading(file, nm)
-}
-
-func LoadBtreeNeedleMap(file *os.File) (*NeedleMap, error) {
-	nm := NewBtreeNeedleMap(file)
 	return doLoading(file, nm)
 }
 
