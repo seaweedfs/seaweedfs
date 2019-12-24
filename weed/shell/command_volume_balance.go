@@ -79,8 +79,10 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	}
 
 	typeToNodes := collectVolumeServersByType(resp.TopologyInfo, *dc)
-	for _, volumeServers := range typeToNodes {
+
+	for maxVolumeCount, volumeServers := range typeToNodes {
 		if len(volumeServers) < 2 {
+			fmt.Printf("only 1 node is configured max %d volumes, skipping balancing\n", maxVolumeCount)
 			continue
 		}
 		if *collection == "EACH_COLLECTION" {
@@ -93,8 +95,8 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 					return err
 				}
 			}
-		} else if *collection == "ALL" {
-			if err = balanceVolumeServers(commandEnv, volumeServers, resp.VolumeSizeLimitMb*1024*1024, "ALL", *applyBalancing); err != nil {
+		} else if *collection == "ALL_COLLECTIONS" {
+			if err = balanceVolumeServers(commandEnv, volumeServers, resp.VolumeSizeLimitMb*1024*1024, "ALL_COLLECTIONS", *applyBalancing); err != nil {
 				return err
 			}
 		} else {
@@ -108,6 +110,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 }
 
 func balanceVolumeServers(commandEnv *CommandEnv, dataNodeInfos []*master_pb.DataNodeInfo, volumeSizeLimit uint64, collection string, applyBalancing bool) error {
+
 	var nodes []*Node
 	for _, dn := range dataNodeInfos {
 		nodes = append(nodes, &Node{
@@ -118,7 +121,7 @@ func balanceVolumeServers(commandEnv *CommandEnv, dataNodeInfos []*master_pb.Dat
 	// balance writable volumes
 	for _, n := range nodes {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
-			if collection != "ALL" {
+			if collection != "ALL_COLLECTIONS" {
 				if v.Collection != collection {
 					return false
 				}
@@ -133,7 +136,7 @@ func balanceVolumeServers(commandEnv *CommandEnv, dataNodeInfos []*master_pb.Dat
 	// balance readable volumes
 	for _, n := range nodes {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
-			if collection != "ALL" {
+			if collection != "ALL_COLLECTIONS" {
 				if v.Collection != collection {
 					return false
 				}
