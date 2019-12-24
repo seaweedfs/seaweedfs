@@ -104,3 +104,10 @@ func (b ShardBits) Minus(other ShardBits) ShardBits {
 func (b ShardBits) Plus(other ShardBits) ShardBits {
 	return b | other
 }
+
+func (b ShardBits) MinusParityShards() ShardBits {
+	for i := DataShardsCount; i < TotalShardsCount; i++ {
+		b = b.RemoveShardId(ShardId(i))
+	}
+	return b
+}

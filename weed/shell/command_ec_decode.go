@@ -164,7 +164,7 @@ func collectEcShards(ctx context.Context, commandEnv *CommandEnv, nodeToEcIndexB
 			continue
 		}
 
-		needToCopyEcIndexBits := ecIndexBits.Minus(exisitngEcIndexBits)
+		needToCopyEcIndexBits := ecIndexBits.Minus(exisitngEcIndexBits).MinusParityShards()
 		if needToCopyEcIndexBits.ShardIdCount() == 0 {
 			continue
 		}
