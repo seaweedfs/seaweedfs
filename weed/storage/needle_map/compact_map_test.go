@@ -9,11 +9,11 @@ import (
 func TestOverflow2(t *testing.T) {
 	m := NewCompactMap()
 	_, oldSize := m.Set(NeedleId(150088), ToOffset(8), 3000073)
-	if oldSize!=0{
+	if oldSize != 0 {
 		t.Fatalf("expecting no previous data")
 	}
 	_, oldSize = m.Set(NeedleId(150088), ToOffset(8), 3000073)
-	if oldSize!=3000073{
+	if oldSize != 3000073 {
 		t.Fatalf("expecting previous data size is %d, not %d", 3000073, oldSize)
 	}
 	m.Set(NeedleId(150073), ToOffset(8), 3000073)

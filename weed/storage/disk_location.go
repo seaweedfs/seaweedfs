@@ -155,7 +155,6 @@ func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e er
 		e = fmt.Errorf(errBuilder.String())
 	}
 
-
 	return
 }
 
