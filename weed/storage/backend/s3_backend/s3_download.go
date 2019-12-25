@@ -42,7 +42,7 @@ func downloadFromS3(sess s3iface.S3API, destFileName string, sourceBucket string
 	}
 
 	// Download the file from S3.
-	fileSize, err = downloader.Download(fileWriter,&s3.GetObjectInput{
+	fileSize, err = downloader.Download(fileWriter, &s3.GetObjectInput{
 		Bucket: aws.String(sourceBucket),
 		Key:    aws.String(sourceKey),
 	})

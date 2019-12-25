@@ -109,8 +109,8 @@ func doVolumeTierDownload(ctx context.Context, commandEnv *CommandEnv, writer io
 		// copy the .dat file from remote tier to local
 		err = downloadDatFromRemoteTier(ctx, commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, loc.Url)
 		if err != nil {
-		return fmt.Errorf("download dat file for volume %d to %s: %v", vid, loc.Url, err)
-	}
+			return fmt.Errorf("download dat file for volume %d to %s: %v", vid, loc.Url, err)
+		}
 	}
 
 	return nil
@@ -120,8 +120,8 @@ func downloadDatFromRemoteTier(ctx context.Context, grpcDialOption grpc.DialOpti
 
 	err := operation.WithVolumeServerClient(targetVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		stream, downloadErr := volumeServerClient.VolumeTierMoveDatFromRemote(ctx, &volume_server_pb.VolumeTierMoveDatFromRemoteRequest{
-			VolumeId:               uint32(volumeId),
-			Collection:             collection,
+			VolumeId:   uint32(volumeId),
+			Collection: collection,
 		})
 
 		var lastProcessed int64
