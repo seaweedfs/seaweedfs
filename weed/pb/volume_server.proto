@@ -70,7 +70,9 @@ service VolumeServer {
     }
 
     // tiered storage
-    rpc VolumeTierCopyDatToRemote (VolumeTierCopyDatToRemoteRequest) returns (stream VolumeTierCopyDatToRemoteResponse) {
+    rpc VolumeTierMoveDatToRemote (VolumeTierMoveDatToRemoteRequest) returns (stream VolumeTierMoveDatToRemoteResponse) {
+    }
+    rpc VolumeTierMoveDatFromRemote (VolumeTierMoveDatFromRemoteRequest) returns (stream VolumeTierMoveDatFromRemoteResponse) {
     }
 
     // query
@@ -352,13 +354,23 @@ message VolumeTierInfo {
     repeated RemoteFile files = 1;
 }
 
-message VolumeTierCopyDatToRemoteRequest {
+message VolumeTierMoveDatToRemoteRequest {
     uint32 volume_id = 1;
     string collection = 2;
     string destination_backend_name = 3;
     bool keep_local_dat_file = 4;
 }
-message VolumeTierCopyDatToRemoteResponse {
+message VolumeTierMoveDatToRemoteResponse {
+    int64 processed = 1;
+    float processedPercentage = 2;
+}
+
+message VolumeTierMoveDatFromRemoteRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+    bool keep_remote_dat_file = 3;
+}
+message VolumeTierMoveDatFromRemoteResponse {
     int64 processed = 1;
     float processedPercentage = 2;
 }

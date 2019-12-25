@@ -7,24 +7,25 @@ import (
 	"io"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"google.golang.org/grpc"
 )
 
 func init() {
-	Commands = append(Commands, &commandVolumeTier{})
+	Commands = append(Commands, &commandVolumeTierUpload{})
 }
 
-type commandVolumeTier struct {
+type commandVolumeTierUpload struct {
 }
 
-func (c *commandVolumeTier) Name() string {
+func (c *commandVolumeTierUpload) Name() string {
 	return "volume.tier.upload"
 }
 
-func (c *commandVolumeTier) Help() string {
+func (c *commandVolumeTierUpload) Help() string {
 	return `move the dat file of a volume to a remote tier
 
 	volume.tier.upload [-collection=""] [-fullPercent=95] [-quietFor=1h]
@@ -53,7 +54,7 @@ func (c *commandVolumeTier) Help() string {
 `
 }
 
-func (c *commandVolumeTier) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
+func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	tierCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := tierCommand.Int("volumeId", 0, "the volume id")
@@ -71,7 +72,7 @@ func (c *commandVolumeTier) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	// volumeId is provided
 	if vid != 0 {
-		return doVolumeTier(ctx, commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile)
+		return doVolumeTierUpload(ctx, commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile)
 	}
 
 	// apply to all volumes in the collection
@@ -80,9 +81,9 @@ func (c *commandVolumeTier) Do(args []string, commandEnv *CommandEnv, writer io.
 	if err != nil {
 		return err
 	}
-	fmt.Printf("tiering volumes: %v\n", volumeIds)
+	fmt.Printf("tier upload volumes: %v\n", volumeIds)
 	for _, vid := range volumeIds {
-		if err = doVolumeTier(ctx, commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile); err != nil {
+		if err = doVolumeTierUpload(ctx, commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile); err != nil {
 			return err
 		}
 	}
@@ -90,23 +91,20 @@ func (c *commandVolumeTier) Do(args []string, commandEnv *CommandEnv, writer io.
 	return nil
 }
 
-func doVolumeTier(ctx context.Context, commandEnv *CommandEnv, writer io.Writer, collection string, vid needle.VolumeId, dest string, keepLocalDatFile bool) (err error) {
+func doVolumeTierUpload(ctx context.Context, commandEnv *CommandEnv, writer io.Writer, collection string, vid needle.VolumeId, dest string, keepLocalDatFile bool) (err error) {
 	// find volume location
 	locations, found := commandEnv.MasterClient.GetLocations(uint32(vid))
 	if !found {
 		return fmt.Errorf("volume %d not found", vid)
 	}
 
-	// mark the volume as readonly
-	/*
-		err = markVolumeReadonly(ctx, commandEnv.option.GrpcDialOption, needle.VolumeId(vid), locations)
-		if err != nil {
-			return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
-		}
-	*/
+	err = markVolumeReadonly(ctx, commandEnv.option.GrpcDialOption, needle.VolumeId(vid), locations)
+	if err != nil {
+		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
+	}
 
 	// copy the .dat file to remote tier
-	err = copyDatToRemoteTier(ctx, commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, locations[0].Url, dest, keepLocalDatFile)
+	err = uploadDatToRemoteTier(ctx, commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, locations[0].Url, dest, keepLocalDatFile)
 	if err != nil {
 		return fmt.Errorf("copy dat file for volume %d on %s to %s: %v", vid, locations[0].Url, dest, err)
 	}
@@ -114,10 +112,10 @@ func doVolumeTier(ctx context.Context, commandEnv *CommandEnv, writer io.Writer,
 	return nil
 }
 
-func copyDatToRemoteTier(ctx context.Context, grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, sourceVolumeServer string, dest string, keepLocalDatFile bool) error {
+func uploadDatToRemoteTier(ctx context.Context, grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, sourceVolumeServer string, dest string, keepLocalDatFile bool) error {
 
 	err := operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-		stream, copyErr := volumeServerClient.VolumeTierCopyDatToRemote(ctx, &volume_server_pb.VolumeTierCopyDatToRemoteRequest{
+		stream, copyErr := volumeServerClient.VolumeTierMoveDatToRemote(ctx, &volume_server_pb.VolumeTierMoveDatToRemoteRequest{
 			VolumeId:               uint32(volumeId),
 			Collection:             collection,
 			DestinationBackendName: dest,

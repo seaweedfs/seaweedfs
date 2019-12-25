@@ -25,6 +25,8 @@ type BackendStorage interface {
 	ToProperties() map[string]string
 	NewStorageFile(key string, tierInfo *volume_server_pb.VolumeTierInfo) BackendStorageFile
 	CopyFile(f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error)
+	DownloadFile(fileName string, key string, fn func(progressed int64, percentage float32) error) (size int64, err error)
+	DeleteFile(key string) (err error)
 }
 
 type StringProperties interface {
@@ -41,6 +43,7 @@ var (
 	BackendStorages         = make(map[string]BackendStorage)
 )
 
+// used by master to load remote storage configurations
 func LoadConfiguration(config *viper.Viper) {
 
 	StorageBackendPrefix := "storage.backend"
@@ -70,6 +73,7 @@ func LoadConfiguration(config *viper.Viper) {
 
 }
 
+// used by volume server to receive remote storage configurations from master
 func LoadFromPbStorageBackends(storageBackends []*master_pb.StorageBackend) {
 
 	for _, storageBackend := range storageBackends {

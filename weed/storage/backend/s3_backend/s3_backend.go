@@ -9,10 +9,11 @@ import (
 
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
+	"github.com/google/uuid"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
-	"github.com/google/uuid"
 )
 
 func init() {
@@ -81,6 +82,24 @@ func (s *S3BackendStorage) CopyFile(f *os.File, fn func(progressed int64, percen
 	glog.V(1).Infof("copying dat file of %s to remote s3.%s as %s", f.Name(), s.id, key)
 
 	size, err = uploadToS3(s.conn, f.Name(), s.bucket, key, fn)
+
+	return
+}
+
+func (s *S3BackendStorage) DownloadFile(fileName string, key string, fn func(progressed int64, percentage float32) error) (size int64, err error) {
+
+	glog.V(1).Infof("download dat file of %s from remote s3.%s as %s", fileName, s.id, key)
+
+	size, err = downloadFromS3(s.conn, fileName, s.bucket, key, fn)
+
+	return
+}
+
+func (s *S3BackendStorage) DeleteFile(key string) (err error) {
+
+	glog.V(1).Infof("delete dat file %s from remote", key)
+
+	err = deleteFromS3(s.conn, s.bucket, key)
 
 	return
 }

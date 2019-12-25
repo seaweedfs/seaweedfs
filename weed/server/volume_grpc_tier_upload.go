@@ -10,8 +10,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
-// VolumeTierCopyDatToRemote copy dat file to a remote tier
-func (vs *VolumeServer) VolumeTierCopyDatToRemote(req *volume_server_pb.VolumeTierCopyDatToRemoteRequest, stream volume_server_pb.VolumeServer_VolumeTierCopyDatToRemoteServer) error {
+// VolumeTierMoveDatToRemote copy dat file to a remote tier
+func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTierMoveDatToRemoteRequest, stream volume_server_pb.VolumeServer_VolumeTierMoveDatToRemoteServer) error {
 
 	// find existing volume
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
@@ -56,7 +56,7 @@ func (vs *VolumeServer) VolumeTierCopyDatToRemote(req *volume_server_pb.VolumeTi
 			return nil
 		}
 		startTime = now
-		return stream.Send(&volume_server_pb.VolumeTierCopyDatToRemoteResponse{
+		return stream.Send(&volume_server_pb.VolumeTierMoveDatToRemoteResponse{
 			Processed:           progressed,
 			ProcessedPercentage: percentage,
 		})
