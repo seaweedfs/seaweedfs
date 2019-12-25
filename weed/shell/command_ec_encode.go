@@ -93,6 +93,8 @@ func doEcEncode(ctx context.Context, commandEnv *CommandEnv, collection string, 
 		return fmt.Errorf("volume %d not found", vid)
 	}
 
+	// fmt.Printf("found ec %d shards on %v\n", vid, locations)
+
 	// mark the volume as readonly
 	err = markVolumeReadonly(ctx, commandEnv.option.GrpcDialOption, needle.VolumeId(vid), locations)
 	if err != nil {
@@ -164,10 +166,10 @@ func spreadEcShards(ctx context.Context, commandEnv *CommandEnv, volumeId needle
 	}
 
 	// calculate how many shards to allocate for these servers
-	allocated := balancedEcDistribution(allocatedDataNodes)
+	allocatedEcIds := balancedEcDistribution(allocatedDataNodes)
 
 	// ask the data nodes to copy from the source volume server
-	copiedShardIds, err := parallelCopyEcShardsFromSource(ctx, commandEnv.option.GrpcDialOption, allocatedDataNodes, allocated, volumeId, collection, existingLocations[0])
+	copiedShardIds, err := parallelCopyEcShardsFromSource(ctx, commandEnv.option.GrpcDialOption, allocatedDataNodes, allocatedEcIds, volumeId, collection, existingLocations[0])
 	if err != nil {
 		return err
 	}
@@ -197,31 +199,29 @@ func spreadEcShards(ctx context.Context, commandEnv *CommandEnv, volumeId needle
 }
 
 func parallelCopyEcShardsFromSource(ctx context.Context, grpcDialOption grpc.DialOption,
-	targetServers []*EcNode, allocated []int,
+	targetServers []*EcNode, allocatedEcIds [][]uint32,
 	volumeId needle.VolumeId, collection string, existingLocation wdclient.Location) (actuallyCopied []uint32, err error) {
 
 	// parallelize
 	shardIdChan := make(chan []uint32, len(targetServers))
 	var wg sync.WaitGroup
-	startFromShardId := uint32(0)
 	for i, server := range targetServers {
-		if allocated[i] <= 0 {
+		if len(allocatedEcIds[i]) <= 0 {
 			continue
 		}
 
 		wg.Add(1)
-		go func(server *EcNode, startFromShardId uint32, shardCount int) {
+		go func(server *EcNode, allocatedEcShardIds []uint32) {
 			defer wg.Done()
 			copiedShardIds, copyErr := oneServerCopyAndMountEcShardsFromSource(ctx, grpcDialOption, server,
-				startFromShardId, shardCount, volumeId, collection, existingLocation.Url)
+				allocatedEcShardIds, volumeId, collection, existingLocation.Url)
 			if copyErr != nil {
 				err = copyErr
 			} else {
 				shardIdChan <- copiedShardIds
 				server.addEcVolumeShards(volumeId, collection, copiedShardIds)
 			}
-		}(server, startFromShardId, allocated[i])
-		startFromShardId += uint32(allocated[i])
+		}(server, allocatedEcIds[i])
 	}
 	wg.Wait()
 	close(shardIdChan)
@@ -237,18 +237,18 @@ func parallelCopyEcShardsFromSource(ctx context.Context, grpcDialOption grpc.Dia
 	return
 }
 
-func balancedEcDistribution(servers []*EcNode) (allocated []int) {
-	allocated = make([]int, len(servers))
-	allocatedCount := 0
-	for allocatedCount < erasure_coding.TotalShardsCount {
-		for i, server := range servers {
-			if server.freeEcSlot-allocated[i] > 0 {
-				allocated[i] += 1
-				allocatedCount += 1
-			}
-			if allocatedCount >= erasure_coding.TotalShardsCount {
-				break
-			}
+func balancedEcDistribution(servers []*EcNode) (allocated [][]uint32) {
+	allocated = make([][]uint32, len(servers))
+	allocatedShardIdIndex := uint32(0)
+	serverIndex := 0
+	for allocatedShardIdIndex < erasure_coding.TotalShardsCount {
+		if servers[serverIndex].freeEcSlot > 0 {
+			allocated[serverIndex] = append(allocated[serverIndex], allocatedShardIdIndex)
+			allocatedShardIdIndex++
+		}
+		serverIndex++
+		if serverIndex >= len(servers) {
+			serverIndex = 0
 		}
 	}
 

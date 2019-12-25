@@ -22,7 +22,7 @@ func moveMountedShardToEcNode(ctx context.Context, commandEnv *CommandEnv, exist
 	if applyBalancing {
 
 		// ask destination node to copy shard and the ecx file from source node, and mount it
-		copiedShardIds, err = oneServerCopyAndMountEcShardsFromSource(ctx, commandEnv.option.GrpcDialOption, destinationEcNode, uint32(shardId), 1, vid, collection, existingLocation.info.Id)
+		copiedShardIds, err = oneServerCopyAndMountEcShardsFromSource(ctx, commandEnv.option.GrpcDialOption, destinationEcNode, []uint32{uint32(shardId)}, vid, collection, existingLocation.info.Id)
 		if err != nil {
 			return err
 		}
@@ -51,13 +51,9 @@ func moveMountedShardToEcNode(ctx context.Context, commandEnv *CommandEnv, exist
 }
 
 func oneServerCopyAndMountEcShardsFromSource(ctx context.Context, grpcDialOption grpc.DialOption,
-	targetServer *EcNode, startFromShardId uint32, shardCount int,
+	targetServer *EcNode, shardIdsToCopy []uint32,
 	volumeId needle.VolumeId, collection string, existingLocation string) (copiedShardIds []uint32, err error) {
 
-	var shardIdsToCopy []uint32
-	for shardId := startFromShardId; shardId < startFromShardId+uint32(shardCount); shardId++ {
-		shardIdsToCopy = append(shardIdsToCopy, shardId)
-	}
 	fmt.Printf("allocate %d.%v %s => %s\n", volumeId, shardIdsToCopy, existingLocation, targetServer.info.Id)
 
 	err = operation.WithVolumeServerClient(targetServer.info.Id, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
