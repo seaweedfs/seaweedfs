@@ -225,6 +225,9 @@ func (v *Volume) ToVolumeInformationMessage() *master_pb.VolumeInformationMessag
 }
 
 func (v *Volume) RemoteStorageNameKey() (storageName, storageKey string) {
+	if v.volumeTierInfo == nil {
+		return
+	}
 	if len(v.volumeTierInfo.GetFiles()) == 0 {
 		return
 	}

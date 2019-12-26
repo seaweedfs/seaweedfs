@@ -46,6 +46,12 @@ func (v *Volume) Destroy() (err error) {
 		err = fmt.Errorf("volume %d is compacting", v.Id)
 		return
 	}
+	storageName, storageKey := v.RemoteStorageNameKey()
+	if v.HasRemoteFile() && storageName != "" && storageKey != "" {
+		if backendStorage, found := backend.BackendStorages[storageName]; found {
+			backendStorage.DeleteFile(storageKey)
+		}
+	}
 	v.Close()
 	os.Remove(v.FileName() + ".dat")
 	os.Remove(v.FileName() + ".idx")

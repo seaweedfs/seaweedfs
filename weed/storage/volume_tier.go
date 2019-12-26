@@ -66,6 +66,14 @@ func (v *Volume) maybeLoadVolumeTierInfo() bool {
 	return true
 }
 
+func (v *Volume) HasRemoteFile() bool {
+	if v.DataBackend == nil {
+		return false
+	}
+	_, ok := v.DataBackend.(*backend.DiskFile)
+	return !ok
+}
+
 func (v *Volume) LoadRemoteFile() error {
 	tierFile := v.volumeTierInfo.GetFiles()[0]
 	backendStorage := backend.BackendStorages[tierFile.BackendName()]
