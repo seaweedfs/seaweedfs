@@ -235,8 +235,16 @@ func ReadUrl(fileUrl string, offset int64, size int, buf []byte, isReadRange boo
 		if err != nil {
 			return n, err
 		}
+		if n == int64(len(buf)) {
+			break
+		}
 	}
-
+	// drains the response body to avoid memory leak
+	data, err := ioutil.ReadAll(reader)
+	if len(data) != 0 {
+		err = fmt.Errorf("buffer size is too small. remains %d", len(data))
+	}
+	return n, err
 }
 
 func ReadUrlAsStream(fileUrl string, offset int64, size int, fn func(data []byte)) (int64, error) {
