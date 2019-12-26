@@ -187,9 +187,12 @@ func NormalizeUrl(url string) string {
 	return "http://" + url
 }
 
-func ReadUrl(fileUrl string, offset int64, size int, buf []byte, isReadRange bool) (n int64, e error) {
+func ReadUrl(fileUrl string, offset int64, size int, buf []byte, isReadRange bool) (int64, error) {
 
-	req, _ := http.NewRequest("GET", fileUrl, nil)
+	req, err := http.NewRequest("GET", fileUrl, nil)
+	if err != nil {
+		return 0, err
+	}
 	if isReadRange {
 		req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)))
 	} else {
@@ -215,28 +218,33 @@ func ReadUrl(fileUrl string, offset int64, size int, buf []byte, isReadRange boo
 		reader = r.Body
 	}
 
-	var i, m int
+	var (
+		i, m int
+		n    int64
+	)
 
+	// refers to https://github.com/golang/go/blob/master/src/bytes/buffer.go#L199
+	// commit id c170b14c2c1cfb2fd853a37add92a82fd6eb4318
 	for {
 		m, err = reader.Read(buf[i:])
-		if m == 0 {
-			return
-		}
 		i += m
 		n += int64(m)
 		if err == io.EOF {
 			return n, nil
 		}
-		if e != nil {
-			return n, e
+		if err != nil {
+			return n, err
 		}
 	}
 
 }
 
-func ReadUrlAsStream(fileUrl string, offset int64, size int, fn func(data []byte)) (n int64, e error) {
+func ReadUrlAsStream(fileUrl string, offset int64, size int, fn func(data []byte)) (int64, error) {
 
-	req, _ := http.NewRequest("GET", fileUrl, nil)
+	req, err := http.NewRequest("GET", fileUrl, nil)
+	if err != nil {
+		return 0, err
+	}
 	req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)))
 
 	r, err := client.Do(req)
@@ -248,21 +256,21 @@ func ReadUrlAsStream(fileUrl string, offset int64, size int, fn func(data []byte
 		return 0, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
 
-	var m int
+	var (
+		m int
+		n int64
+	)
 	buf := make([]byte, 64*1024)
 
 	for {
 		m, err = r.Body.Read(buf)
-		if m == 0 {
-			return
-		}
 		fn(buf[:m])
 		n += int64(m)
 		if err == io.EOF {
 			return n, nil
 		}
-		if e != nil {
-			return n, e
+		if err != nil {
+			return n, err
 		}
 	}
 
