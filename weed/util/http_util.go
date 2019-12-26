@@ -240,7 +240,7 @@ func ReadUrl(fileUrl string, offset int64, size int, buf []byte, isReadRange boo
 		}
 	}
 	// drains the response body to avoid memory leak
-	data, err := ioutil.ReadAll(reader)
+	data, _ := ioutil.ReadAll(reader)
 	if len(data) != 0 {
 		err = fmt.Errorf("buffer size is too small. remains %d", len(data))
 	}
