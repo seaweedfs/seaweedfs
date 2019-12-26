@@ -8,10 +8,12 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 func uploadToS3(sess s3iface.S3API, filename string, destBucket string, destKey string,
+	attributes map[string]string,
 	fn func(progressed int64, percentage float32) error) (fileSize int64, err error) {
 
 	//open the file
@@ -46,6 +48,15 @@ func uploadToS3(sess s3iface.S3API, filename string, destBucket string, destKey 
 		fn:   fn,
 	}
 
+	// process tagging
+	tags := ""
+	for k, v := range attributes {
+		if len(tags) > 0 {
+			tags = tags + "&"
+		}
+		tags = tags + k + "=" + v
+	}
+
 	// Upload the file to S3.
 	var result *s3manager.UploadOutput
 	result, err = uploader.Upload(&s3manager.UploadInput{
@@ -55,6 +66,7 @@ func uploadToS3(sess s3iface.S3API, filename string, destBucket string, destKey 
 		ACL:                  aws.String("private"),
 		ServerSideEncryption: aws.String("AES256"),
 		StorageClass:         aws.String("STANDARD_IA"),
+		Tagging:              aws.String(tags),
 	})
 
 	//in case it fails to upload

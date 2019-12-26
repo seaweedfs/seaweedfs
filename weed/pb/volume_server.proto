@@ -349,6 +349,7 @@ message RemoteFile {
     uint64 offset = 4;
     uint64 file_size = 5;
     uint64 modified_time = 6;
+    string extenstion = 7;
 }
 message VolumeTierInfo {
     repeated RemoteFile files = 1;

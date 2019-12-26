@@ -61,8 +61,14 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 			ProcessedPercentage: percentage,
 		})
 	}
+
+	// remember the file original source
+	attributes := make(map[string]string)
+	attributes["volumeId"] = v.Id.String()
+	attributes["collection"] = v.Collection
+	attributes["ext"] = ".dat"
 	// copy the data file
-	key, size, err := backendStorage.CopyFile(diskFile.File, fn)
+	key, size, err := backendStorage.CopyFile(diskFile.File, attributes, fn)
 	if err != nil {
 		return fmt.Errorf("backend %s copy file %s: %v", req.DestinationBackendName, diskFile.Name(), err)
 	}
@@ -75,6 +81,7 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 		Offset:       0,
 		FileSize:     uint64(size),
 		ModifiedTime: uint64(time.Now().Unix()),
+		Extenstion:   ".dat",
 	})
 
 	if err := v.SaveVolumeTierInfo(); err != nil {
