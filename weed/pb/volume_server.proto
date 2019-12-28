@@ -255,6 +255,7 @@ message VolumeEcShardsCopyRequest {
     bool copy_ecx_file = 4;
     string source_data_node = 5;
     bool copy_ecj_file = 6;
+    bool copy_vif_file = 7;
 }
 message VolumeEcShardsCopyResponse {
 }

@@ -67,6 +67,7 @@ func oneServerCopyAndMountEcShardsFromSource(ctx context.Context, grpcDialOption
 				ShardIds:       shardIdsToCopy,
 				CopyEcxFile:    true,
 				CopyEcjFile:    true,
+				CopyVifFile:    true,
 				SourceDataNode: existingLocation,
 			})
 			if copyErr != nil {

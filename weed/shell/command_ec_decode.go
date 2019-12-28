@@ -180,6 +180,7 @@ func collectEcShards(ctx context.Context, commandEnv *CommandEnv, nodeToEcIndexB
 				ShardIds:       needToCopyEcIndexBits.ToUint32Slice(),
 				CopyEcxFile:    false,
 				CopyEcjFile:    true,
+				CopyVifFile:    true,
 				SourceDataNode: loc,
 			})
 			if copyErr != nil {

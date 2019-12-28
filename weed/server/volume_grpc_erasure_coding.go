@@ -13,6 +13,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
@@ -56,6 +57,12 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	if err := erasure_coding.WriteEcFiles(baseFileName); err != nil {
 		return nil, fmt.Errorf("WriteEcFiles %s: %v", baseFileName, err)
 	}
+
+	// write .vif files
+	if err := pb.SaveVolumeInfo(baseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(v.Version())}); err != nil {
+		return nil, fmt.Errorf("WriteEcFiles %s: %v", baseFileName, err)
+	}
+
 
 	return &volume_server_pb.VolumeEcShardsGenerateResponse{}, nil
 }
@@ -124,6 +131,14 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 				return err
 			}
 		}
+
+		if req.CopyVifFile {
+			// copy vif file
+			if err := vs.doCopyFile(ctx, client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, baseFileName, ".vif", false, true); err != nil {
+				return err
+			}
+		}
+
 		return nil
 	})
 	if err != nil {
@@ -183,6 +198,9 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 			return nil, err
 		}
 		if err := os.Remove(baseFilename + ".ecj"); err != nil {
+			return nil, err
+		}
+		if err := os.Remove(baseFilename + ".vif"); err != nil {
 			return nil, err
 		}
 	}
