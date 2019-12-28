@@ -81,7 +81,7 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 		Offset:       0,
 		FileSize:     uint64(size),
 		ModifiedTime: uint64(time.Now().Unix()),
-		Extenstion:   ".dat",
+		Extension:   ".dat",
 	})
 
 	if err := v.SaveVolumeTierInfo(); err != nil {
