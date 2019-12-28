@@ -7,10 +7,11 @@ import (
 
 	_ "github.com/chrislusf/seaweedfs/weed/storage/backend/s3_backend"
 
+	"github.com/golang/protobuf/jsonpb"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
-	"github.com/golang/protobuf/jsonpb"
 )
 
 func (v *Volume) GetVolumeInfo() *volume_server_pb.VolumeInfo {
@@ -57,21 +58,13 @@ func (v *Volume) maybeLoadVolumeInfo() bool {
 	glog.V(0).Infof("volume %d is tiered to %s as %s and read only", v.Id,
 		v.volumeInfo.Files[0].BackendName(), v.volumeInfo.Files[0].Key)
 
-	v.noWriteCanDelete = true
-	v.noWriteOrDelete = false
-
-	glog.V(0).Infof("loading volume %d from remote %v", v.Id, v.volumeInfo.Files)
-	v.LoadRemoteFile()
+	v.hasRemoteFile = true
 
 	return true
 }
 
 func (v *Volume) HasRemoteFile() bool {
-	if v.DataBackend == nil {
-		return false
-	}
-	_, ok := v.DataBackend.(*backend.DiskFile)
-	return !ok
+	return v.hasRemoteFile
 }
 
 func (v *Volume) LoadRemoteFile() error {

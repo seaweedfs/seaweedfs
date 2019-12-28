@@ -26,9 +26,13 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	fileName := v.FileName()
 	alreadyHasSuperBlock := false
 
-	if v.maybeLoadVolumeInfo() {
+	v.maybeLoadVolumeInfo()
+
+	if v.HasRemoteFile() {
 		v.noWriteCanDelete = true
-		// open remote file
+		v.noWriteOrDelete = false
+		glog.V(0).Infof("loading volume %d from remote %v", v.Id, v.volumeInfo.Files)
+		v.LoadRemoteFile()
 		alreadyHasSuperBlock = true
 	} else if exists, canRead, canWrite, modifiedTime, fileSize := checkFile(fileName + ".dat"); exists {
 		// open dat file

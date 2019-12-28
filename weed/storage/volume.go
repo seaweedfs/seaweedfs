@@ -27,6 +27,7 @@ type Volume struct {
 	needleMapKind      NeedleMapType
 	noWriteOrDelete    bool // if readonly, either noWriteOrDelete or noWriteCanDelete
 	noWriteCanDelete   bool // if readonly, either noWriteOrDelete or noWriteCanDelete
+	hasRemoteFile      bool // if the volume has a remote file
 	MemoryMapMaxSizeMb uint32
 
 	super_block.SuperBlock
