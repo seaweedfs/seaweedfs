@@ -73,8 +73,8 @@ func (vs *VolumeServer) VolumeTierMoveDatFromRemote(req *volume_server_pb.Volume
 	}
 
 	// forget remote file
-	v.GetVolumeTierInfo().Files = v.GetVolumeTierInfo().Files[1:]
-	if err := v.SaveVolumeTierInfo(); err != nil {
+	v.GetVolumeInfo().Files = v.GetVolumeInfo().Files[1:]
+	if err := v.SaveVolumeInfo(); err != nil {
 		return fmt.Errorf("volume %d fail to save remote file info: %v", v.Id, err)
 	}
 

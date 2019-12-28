@@ -26,7 +26,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	fileName := v.FileName()
 	alreadyHasSuperBlock := false
 
-	if v.maybeLoadVolumeTierInfo() {
+	if v.maybeLoadVolumeInfo() {
 		v.noWriteCanDelete = true
 		// open remote file
 		alreadyHasSuperBlock = true

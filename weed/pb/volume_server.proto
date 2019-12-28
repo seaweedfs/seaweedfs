@@ -351,7 +351,7 @@ message RemoteFile {
     uint64 modified_time = 6;
     string extension = 7;
 }
-message VolumeTierInfo {
+message VolumeInfo {
     repeated RemoteFile files = 1;
 }
 

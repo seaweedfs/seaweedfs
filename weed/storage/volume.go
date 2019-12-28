@@ -40,7 +40,7 @@ type Volume struct {
 
 	isCompacting bool
 
-	volumeTierInfo *volume_server_pb.VolumeTierInfo
+	volumeInfo *volume_server_pb.VolumeInfo
 }
 
 func NewVolume(dirname string, collection string, id needle.VolumeId, needleMapKind NeedleMapType, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32) (v *Volume, e error) {
@@ -225,11 +225,11 @@ func (v *Volume) ToVolumeInformationMessage() *master_pb.VolumeInformationMessag
 }
 
 func (v *Volume) RemoteStorageNameKey() (storageName, storageKey string) {
-	if v.volumeTierInfo == nil {
+	if v.volumeInfo == nil {
 		return
 	}
-	if len(v.volumeTierInfo.GetFiles()) == 0 {
+	if len(v.volumeInfo.GetFiles()) == 0 {
 		return
 	}
-	return v.volumeTierInfo.GetFiles()[0].BackendName(), v.volumeTierInfo.GetFiles()[0].GetKey()
+	return v.volumeInfo.GetFiles()[0].BackendName(), v.volumeInfo.GetFiles()[0].GetKey()
 }

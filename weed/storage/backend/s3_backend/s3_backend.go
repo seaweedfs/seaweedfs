@@ -61,7 +61,7 @@ func (s *S3BackendStorage) ToProperties() map[string]string {
 	return m
 }
 
-func (s *S3BackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb.VolumeTierInfo) backend.BackendStorageFile {
+func (s *S3BackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb.VolumeInfo) backend.BackendStorageFile {
 	if strings.HasPrefix(key, "/") {
 		key = key[1:]
 	}
@@ -107,7 +107,7 @@ func (s *S3BackendStorage) DeleteFile(key string) (err error) {
 type S3BackendStorageFile struct {
 	backendStorage *S3BackendStorage
 	key            string
-	tierInfo       *volume_server_pb.VolumeTierInfo
+	tierInfo       *volume_server_pb.VolumeInfo
 }
 
 func (s3backendStorageFile S3BackendStorageFile) ReadAt(p []byte, off int64) (n int, err error) {
