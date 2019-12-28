@@ -214,6 +214,9 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 			}
 		}
 		if fileName == "" {
+			if req.IgnoreSourceFileNotFound {
+				return nil
+			}
 			return fmt.Errorf("CopyFile not found ec volume id %d", req.VolumeId)
 		}
 	}
