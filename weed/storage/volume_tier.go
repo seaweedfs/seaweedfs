@@ -21,7 +21,7 @@ func (v *Volume) maybeLoadVolumeTierInfo() bool {
 
 	v.volumeTierInfo = &volume_server_pb.VolumeTierInfo{}
 
-	tierFileName := v.FileName() + ".tier"
+	tierFileName := v.FileName() + ".vif"
 
 	if exists, canRead, _, _, _ := checkFile(tierFileName); !exists || !canRead {
 		if !exists {
@@ -88,7 +88,7 @@ func (v *Volume) LoadRemoteFile() error {
 
 func (v *Volume) SaveVolumeTierInfo() error {
 
-	tierFileName := v.FileName() + ".tier"
+	tierFileName := v.FileName() + ".vif"
 
 	if exists, _, canWrite, _, _ := checkFile(tierFileName); exists && !canWrite {
 		return fmt.Errorf("%s not writable", tierFileName)
