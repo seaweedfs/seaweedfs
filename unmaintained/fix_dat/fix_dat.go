@@ -67,7 +67,7 @@ func main() {
 
 	iterateEntries(datBackend, indexFile, func(n *needle.Needle, offset int64) {
 		fmt.Printf("needle id=%v name=%s size=%d dataSize=%d\n", n.Id, string(n.Name), n.Size, n.DataSize)
-		_, s, _, e := n.Append(datBackend, superBlock.Version())
+		_, s, _, e := n.Append(datBackend, superBlock.Version)
 		fmt.Printf("size %d error %v\n", s, e)
 	})
 
@@ -87,7 +87,7 @@ func iterateEntries(datBackend backend.BackendStorageFile, idxFile *os.File, vis
 		return
 	}
 	offset := int64(superBlock.BlockSize())
-	version := superBlock.Version()
+	version := superBlock.Version
 	n, _, rest, err := needle.ReadNeedleHeader(datBackend, version, offset)
 	if err != nil {
 		fmt.Printf("cannot read needle header: %v", err)

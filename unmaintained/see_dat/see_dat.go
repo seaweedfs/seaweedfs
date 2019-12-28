@@ -21,7 +21,7 @@ type VolumeFileScanner4SeeDat struct {
 }
 
 func (scanner *VolumeFileScanner4SeeDat) VisitSuperBlock(superBlock super_block.SuperBlock) error {
-	scanner.version = superBlock.Version()
+	scanner.version = superBlock.Version
 	return nil
 
 }
