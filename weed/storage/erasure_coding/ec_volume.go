@@ -126,6 +126,7 @@ func (ev *EcVolume) Destroy() {
 	}
 	os.Remove(ev.FileName() + ".ecx")
 	os.Remove(ev.FileName() + ".ecj")
+	os.Remove(ev.FileName() + ".vif")
 }
 
 func (ev *EcVolume) FileName() string {

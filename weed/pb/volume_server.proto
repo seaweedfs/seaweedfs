@@ -353,6 +353,7 @@ message RemoteFile {
 }
 message VolumeInfo {
     repeated RemoteFile files = 1;
+    uint32 version = 2;
 }
 
 message VolumeTierMoveDatToRemoteRequest {

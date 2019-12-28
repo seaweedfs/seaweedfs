@@ -3,7 +3,6 @@ package storage
 import (
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func loadVolumeWithoutIndex(dirname string, collection string, id needle.VolumeId, needleMapKind NeedleMapType) (v *Volume, err error) {
@@ -34,7 +34,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		glog.V(0).Infof("loading volume %d from remote %v", v.Id, v.volumeInfo.Files)
 		v.LoadRemoteFile()
 		alreadyHasSuperBlock = true
-	} else if exists, canRead, canWrite, modifiedTime, fileSize := checkFile(fileName + ".dat"); exists {
+	} else if exists, canRead, canWrite, modifiedTime, fileSize := util.CheckFile(fileName + ".dat"); exists {
 		// open dat file
 		if !canRead {
 			return fmt.Errorf("cannot read Volume Data file %s.dat", fileName)
@@ -144,20 +144,3 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	return err
 }
 
-func checkFile(filename string) (exists, canRead, canWrite bool, modTime time.Time, fileSize int64) {
-	exists = true
-	fi, err := os.Stat(filename)
-	if os.IsNotExist(err) {
-		exists = false
-		return
-	}
-	if fi.Mode()&0400 != 0 {
-		canRead = true
-	}
-	if fi.Mode()&0200 != 0 {
-		canWrite = true
-	}
-	modTime = fi.ModTime()
-	fileSize = fi.Size()
-	return
-}

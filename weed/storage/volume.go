@@ -70,6 +70,9 @@ func (v *Volume) FileName() (fileName string) {
 }
 
 func (v *Volume) Version() needle.Version {
+	if v.volumeInfo.Version != 0 {
+		v.SuperBlock.Version = needle.Version(v.volumeInfo.Version)
+	}
 	return v.SuperBlock.Version
 }
 
