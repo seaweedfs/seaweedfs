@@ -52,10 +52,8 @@ func MaybeLoadVolumeInfo(fileName string) (*volume_server_pb.VolumeInfo, bool) {
 
 func SaveVolumeInfo(fileName string, volumeInfo *volume_server_pb.VolumeInfo) error {
 
-	tierFileName := fileName + ".vif"
-
-	if exists, _, canWrite, _, _ := util.CheckFile(tierFileName); exists && !canWrite {
-		return fmt.Errorf("%s not writable", tierFileName)
+	if exists, _, canWrite, _, _ := util.CheckFile(fileName); exists && !canWrite {
+		return fmt.Errorf("%s not writable", fileName)
 	}
 
 	m := jsonpb.Marshaler{
@@ -68,9 +66,9 @@ func SaveVolumeInfo(fileName string, volumeInfo *volume_server_pb.VolumeInfo) er
 		return fmt.Errorf("marshal to %s: %v", fileName, marshalErr)
 	}
 
-	writeErr := ioutil.WriteFile(tierFileName, []byte(text), 0755)
+	writeErr := ioutil.WriteFile(fileName, []byte(text), 0755)
 	if writeErr != nil {
-		return fmt.Errorf("fail to write %s : %v", tierFileName, writeErr)
+		return fmt.Errorf("fail to write %s : %v", fileName, writeErr)
 	}
 
 	return nil
