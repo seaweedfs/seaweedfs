@@ -26,7 +26,9 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	fileName := v.FileName()
 	alreadyHasSuperBlock := false
 
-	v.maybeLoadVolumeInfo()
+	if !v.maybeLoadVolumeInfo() {
+		v.SaveVolumeInfo()
+	}
 
 	if v.HasRemoteFile() {
 		v.noWriteCanDelete = true

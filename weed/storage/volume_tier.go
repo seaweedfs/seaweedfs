@@ -12,9 +12,7 @@ func (v *Volume) GetVolumeInfo() *volume_server_pb.VolumeInfo {
 	return v.volumeInfo
 }
 
-func (v *Volume) maybeLoadVolumeInfo() {
-
-	var found bool
+func (v *Volume) maybeLoadVolumeInfo() (found bool){
 
 	v.volumeInfo, found = pb.MaybeLoadVolumeInfo(v.FileName() + ".vif")
 
@@ -23,6 +21,8 @@ func (v *Volume) maybeLoadVolumeInfo() {
 			v.volumeInfo.Files[0].BackendName(), v.volumeInfo.Files[0].Key)
 		v.hasRemoteFile = true
 	}
+
+	return
 
 }
 
