@@ -63,7 +63,6 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 		return nil, fmt.Errorf("WriteEcFiles %s: %v", baseFileName, err)
 	}
 
-
 	return &volume_server_pb.VolumeEcShardsGenerateResponse{}, nil
 }
 

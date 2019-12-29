@@ -12,9 +12,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-
 )
-
 
 // MaybeLoadVolumeInfo load the file data as *volume_server_pb.VolumeInfo, the returned volumeInfo will not be nil
 func MaybeLoadVolumeInfo(fileName string) (*volume_server_pb.VolumeInfo, bool) {

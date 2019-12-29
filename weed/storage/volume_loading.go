@@ -143,4 +143,3 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 
 	return err
 }
-
