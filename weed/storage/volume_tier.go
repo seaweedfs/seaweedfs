@@ -12,7 +12,7 @@ func (v *Volume) GetVolumeInfo() *volume_server_pb.VolumeInfo {
 	return v.volumeInfo
 }
 
-func (v *Volume) maybeLoadVolumeInfo() (found bool){
+func (v *Volume) maybeLoadVolumeInfo() (found bool) {
 
 	v.volumeInfo, found = pb.MaybeLoadVolumeInfo(v.FileName() + ".vif")
 
