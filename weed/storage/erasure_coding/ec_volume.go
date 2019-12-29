@@ -11,6 +11,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
@@ -61,6 +62,8 @@ func NewEcVolume(dir string, collection string, vid needle.VolumeId) (ev *EcVolu
 	ev.Version = needle.Version3
 	if volumeInfo, found := pb.MaybeLoadVolumeInfo(baseFileName + ".vif"); found {
 		ev.Version = needle.Version(volumeInfo.Version)
+	} else {
+		pb.SaveVolumeInfo(baseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(ev.Version)})
 	}
 
 	ev.ShardLocations = make(map[ShardId][]string)
