@@ -9,8 +9,9 @@ import (
 	"strconv"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -44,11 +45,13 @@ func main() {
 		glog.Fatalf("Read Volume Index %v", err)
 	}
 	defer indexFile.Close()
-	datFile, err := os.OpenFile(path.Join(*fixVolumePath, fileName+".dat"), os.O_RDONLY, 0644)
+	datFileName := path.Join(*fixVolumePath, fileName+".dat")
+	datFile, err := os.OpenFile(datFileName, os.O_RDONLY, 0644)
 	if err != nil {
 		glog.Fatalf("Read Volume Data %v", err)
 	}
-	defer datFile.Close()
+	datBackend := backend.NewDiskFile(datFile)
+	defer datBackend.Close()
 
 	newDatFile, err := os.Create(path.Join(*fixVolumePath, fileName+".dat_fixed"))
 	if err != nil {
@@ -56,21 +59,21 @@ func main() {
 	}
 	defer newDatFile.Close()
 
-	superBlock, err := storage.ReadSuperBlock(datFile)
+	superBlock, err := super_block.ReadSuperBlock(datBackend)
 	if err != nil {
 		glog.Fatalf("Read Volume Data superblock %v", err)
 	}
 	newDatFile.Write(superBlock.Bytes())
 
-	iterateEntries(datFile, indexFile, func(n *needle.Needle, offset int64) {
+	iterateEntries(datBackend, indexFile, func(n *needle.Needle, offset int64) {
 		fmt.Printf("needle id=%v name=%s size=%d dataSize=%d\n", n.Id, string(n.Name), n.Size, n.DataSize)
-		_, s, _, e := n.Append(newDatFile, superBlock.Version())
+		_, s, _, e := n.Append(datBackend, superBlock.Version)
 		fmt.Printf("size %d error %v\n", s, e)
 	})
 
 }
 
-func iterateEntries(datFile, idxFile *os.File, visitNeedle func(n *needle.Needle, offset int64)) {
+func iterateEntries(datBackend backend.BackendStorageFile, idxFile *os.File, visitNeedle func(n *needle.Needle, offset int64)) {
 	// start to read index file
 	var readerOffset int64
 	bytes := make([]byte, 16)
@@ -78,14 +81,14 @@ func iterateEntries(datFile, idxFile *os.File, visitNeedle func(n *needle.Needle
 	readerOffset += int64(count)
 
 	// start to read dat file
-	superBlock, err := storage.ReadSuperBlock(datFile)
+	superBlock, err := super_block.ReadSuperBlock(datBackend)
 	if err != nil {
 		fmt.Printf("cannot read dat file super block: %v", err)
 		return
 	}
 	offset := int64(superBlock.BlockSize())
-	version := superBlock.Version()
-	n, _, rest, err := needle.ReadNeedleHeader(datFile, version, offset)
+	version := superBlock.Version
+	n, _, rest, err := needle.ReadNeedleHeader(datBackend, version, offset)
 	if err != nil {
 		fmt.Printf("cannot read needle header: %v", err)
 		return
@@ -115,7 +118,7 @@ func iterateEntries(datFile, idxFile *os.File, visitNeedle func(n *needle.Needle
 					fmt.Println("Recovered in f", r)
 				}
 			}()
-			if _, err = n.ReadNeedleBody(datFile, version, offset+int64(types.NeedleHeaderSize), rest); err != nil {
+			if _, err = n.ReadNeedleBody(datBackend, version, offset+int64(types.NeedleHeaderSize), rest); err != nil {
 				fmt.Printf("cannot read needle body: offset %d body %d %v\n", offset, rest, err)
 			}
 		}()
@@ -127,7 +130,7 @@ func iterateEntries(datFile, idxFile *os.File, visitNeedle func(n *needle.Needle
 
 		offset += types.NeedleHeaderSize + rest
 		//fmt.Printf("==> new entry offset %d\n", offset)
-		if n, _, rest, err = needle.ReadNeedleHeader(datFile, version, offset); err != nil {
+		if n, _, rest, err = needle.ReadNeedleHeader(datBackend, version, offset); err != nil {
 			if err == io.EOF {
 				return
 			}

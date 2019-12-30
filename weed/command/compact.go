@@ -17,6 +17,9 @@ var cmdCompact = &Command{
   The compacted .dat file is stored as .cpd file.
   The compacted .idx file is stored as .cpx file.
 
+  For method=0, it compacts based on the .dat file, works if .idx file is corrupted.
+  For method=1, it compacts based on the .idx file, works if deletion happened but not written to .dat files.
+
   `,
 }
 
@@ -38,7 +41,7 @@ func runCompact(cmd *Command, args []string) bool {
 
 	vid := needle.VolumeId(*compactVolumeId)
 	v, err := storage.NewVolume(*compactVolumePath, *compactVolumeCollection, vid,
-		storage.NeedleMapInMemory, nil, nil, preallocate)
+		storage.NeedleMapInMemory, nil, nil, preallocate, 0)
 	if err != nil {
 		glog.Fatalf("Load Volume [ERROR] %s\n", err)
 	}
@@ -47,7 +50,7 @@ func runCompact(cmd *Command, args []string) bool {
 			glog.Fatalf("Compact Volume [ERROR] %s\n", err)
 		}
 	} else {
-		if err = v.Compact2(); err != nil {
+		if err = v.Compact2(preallocate); err != nil {
 			glog.Fatalf("Compact Volume [ERROR] %s\n", err)
 		}
 	}

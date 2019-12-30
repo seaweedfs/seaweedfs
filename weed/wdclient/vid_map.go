@@ -3,13 +3,16 @@ package wdclient
 import (
 	"errors"
 	"fmt"
-	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
+	"sync/atomic"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+)
+
+const (
+	maxCursorIndex = 4096
 )
 
 type Location struct {
@@ -20,14 +23,25 @@ type Location struct {
 type vidMap struct {
 	sync.RWMutex
 	vid2Locations map[uint32][]Location
-	r             *rand.Rand
+
+	cursor int32
 }
 
 func newVidMap() vidMap {
 	return vidMap{
 		vid2Locations: make(map[uint32][]Location),
-		r:             rand.New(rand.NewSource(time.Now().UnixNano())),
+		cursor:        -1,
 	}
+}
+
+func (vc *vidMap) getLocationIndex(length int) (int, error) {
+	if length <= 0 {
+		return 0, fmt.Errorf("invalid length: %d", length)
+	}
+	if atomic.LoadInt32(&vc.cursor) == maxCursorIndex {
+		atomic.CompareAndSwapInt32(&vc.cursor, maxCursorIndex, -1)
+	}
+	return int(atomic.AddInt32(&vc.cursor, 1)) % length, nil
 }
 
 func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrl string, err error) {
@@ -64,20 +78,25 @@ func (vc *vidMap) LookupVolumeServer(fileId string) (volumeServer string, err er
 	return serverUrl, nil
 }
 
-func (vc *vidMap) GetVidLocations(vid string) (locations []Location) {
+func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) {
 	id, err := strconv.Atoi(vid)
 	if err != nil {
 		glog.V(1).Infof("Unknown volume id %s", vid)
-		return nil
+		return nil, fmt.Errorf("Unknown volume id %s", vid)
 	}
-	return vc.GetLocations(uint32(id))
+	foundLocations, found := vc.GetLocations(uint32(id))
+	if found {
+		return foundLocations, nil
+	}
+	return nil, fmt.Errorf("volume id %s not found", vid)
 }
 
-func (vc *vidMap) GetLocations(vid uint32) (locations []Location) {
+func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
 	vc.RLock()
 	defer vc.RUnlock()
 
-	return vc.vid2Locations[vid]
+	locations, found = vc.vid2Locations[vid]
+	return
 }
 
 func (vc *vidMap) GetRandomLocation(vid uint32) (serverUrl string, err error) {
@@ -89,7 +108,12 @@ func (vc *vidMap) GetRandomLocation(vid uint32) (serverUrl string, err error) {
 		return "", fmt.Errorf("volume %d not found", vid)
 	}
 
-	return locations[vc.r.Intn(len(locations))].Url, nil
+	index, err := vc.getLocationIndex(len(locations))
+	if err != nil {
+		return "", fmt.Errorf("volume %d: %v", vid, err)
+	}
+
+	return locations[index].Url, nil
 }
 
 func (vc *vidMap) addLocation(vid uint32, location Location) {

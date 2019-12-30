@@ -6,6 +6,8 @@ import (
 	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -21,13 +23,14 @@ This package is created to resolve these replica placement issues:
 */
 
 type VolumeGrowOption struct {
-	Collection       string
-	ReplicaPlacement *storage.ReplicaPlacement
-	Ttl              *needle.TTL
-	Prealloacte      int64
-	DataCenter       string
-	Rack             string
-	DataNode         string
+	Collection         string
+	ReplicaPlacement   *super_block.ReplicaPlacement
+	Ttl                *needle.TTL
+	Prealloacte        int64
+	DataCenter         string
+	Rack               string
+	DataNode           string
+	MemoryMapMaxSizeMb uint32
 }
 
 type VolumeGrowth struct {
@@ -58,8 +61,11 @@ func (vg *VolumeGrowth) findVolumeCount(copyCount int) (count int) {
 	return
 }
 
-func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, grpcDialOption grpc.DialOption, topo *Topology) (count int, err error) {
-	count, err = vg.GrowByCountAndType(grpcDialOption, vg.findVolumeCount(option.ReplicaPlacement.GetCopyCount()), option, topo)
+func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, grpcDialOption grpc.DialOption, topo *Topology, targetCount int) (count int, err error) {
+	if targetCount == 0 {
+		targetCount = vg.findVolumeCount(option.ReplicaPlacement.GetCopyCount())
+	}
+	count, err = vg.GrowByCountAndType(grpcDialOption, targetCount, option, topo)
 	if count > 0 && count%option.ReplicaPlacement.GetCopyCount() == 0 {
 		return count, nil
 	}

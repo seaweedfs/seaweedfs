@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/klauspost/reedsolomon"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -16,7 +18,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/klauspost/reedsolomon"
 )
 
 func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
@@ -119,15 +120,7 @@ func (s *Store) ReadEcShardNeedle(ctx context.Context, vid needle.VolumeId, n *n
 	for _, location := range s.Locations {
 		if localEcVolume, found := location.FindEcVolume(vid); found {
 
-			// read the volume version
-			for localEcVolume.Version == 0 {
-				err := s.readEcVolumeVersion(ctx, vid, localEcVolume)
-				time.Sleep(1357 * time.Millisecond)
-				glog.V(0).Infof("ReadEcShardNeedle vid %d version:%v: %v", vid, localEcVolume.Version, err)
-			}
-			version := localEcVolume.Version
-
-			offset, size, intervals, err := localEcVolume.LocateEcShardNeedle(n.Id, version)
+			offset, size, intervals, err := localEcVolume.LocateEcShardNeedle(n.Id, localEcVolume.Version)
 			if err != nil {
 				return 0, fmt.Errorf("locate in local ec volume: %v", err)
 			}
@@ -148,7 +141,7 @@ func (s *Store) ReadEcShardNeedle(ctx context.Context, vid needle.VolumeId, n *n
 				return 0, fmt.Errorf("ec entry %s is deleted", n.Id)
 			}
 
-			err = n.ReadBytes(bytes, offset.ToAcutalOffset(), size, version)
+			err = n.ReadBytes(bytes, offset.ToAcutalOffset(), size, localEcVolume.Version)
 			if err != nil {
 				return 0, fmt.Errorf("readbytes: %v", err)
 			}
@@ -157,22 +150,6 @@ func (s *Store) ReadEcShardNeedle(ctx context.Context, vid needle.VolumeId, n *n
 		}
 	}
 	return 0, fmt.Errorf("ec shard %d not found", vid)
-}
-
-func (s *Store) readEcVolumeVersion(ctx context.Context, vid needle.VolumeId, ecVolume *erasure_coding.EcVolume) (err error) {
-
-	interval := erasure_coding.Interval{
-		BlockIndex:          0,
-		InnerBlockOffset:    0,
-		Size:                _SuperBlockSize,
-		IsLargeBlock:        true, // it could be large block, but ok in this place
-		LargeBlockRowsCount: 0,
-	}
-	data, _, err := s.readEcShardIntervals(ctx, vid, 0, ecVolume, []erasure_coding.Interval{interval})
-	if err == nil {
-		ecVolume.Version = needle.Version(data[0])
-	}
-	return
 }
 
 func (s *Store) readEcShardIntervals(ctx context.Context, vid needle.VolumeId, needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, intervals []erasure_coding.Interval) (data []byte, is_deleted bool, err error) {
@@ -288,7 +265,7 @@ func (s *Store) readRemoteEcShardInterval(ctx context.Context, sourceDataNodes [
 	}
 
 	for _, sourceDataNode := range sourceDataNodes {
-		glog.V(4).Infof("read remote ec shard %d.%d from %s", vid, shardId, sourceDataNode)
+		glog.V(3).Infof("read remote ec shard %d.%d from %s", vid, shardId, sourceDataNode)
 		n, is_deleted, err = s.doReadRemoteEcShardInterval(ctx, sourceDataNode, needleId, vid, shardId, buf, offset)
 		if err == nil {
 			return
@@ -340,7 +317,7 @@ func (s *Store) doReadRemoteEcShardInterval(ctx context.Context, sourceDataNode 
 }
 
 func (s *Store) recoverOneRemoteEcShardInterval(ctx context.Context, needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, shardIdToRecover erasure_coding.ShardId, buf []byte, offset int64) (n int, is_deleted bool, err error) {
-	glog.V(4).Infof("recover ec shard %d.%d from other locations", ecVolume.VolumeId, shardIdToRecover)
+	glog.V(3).Infof("recover ec shard %d.%d from other locations", ecVolume.VolumeId, shardIdToRecover)
 
 	enc, err := reedsolomon.New(erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	if err != nil {

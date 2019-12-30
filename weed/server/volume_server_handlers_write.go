@@ -51,10 +51,14 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 	ret := operation.UploadResult{}
 	_, isUnchanged, writeError := topology.ReplicatedWrite(vs.GetMaster(), vs.store, volumeId, needle, r)
-	httpStatus := http.StatusCreated
-	if isUnchanged {
-		httpStatus = http.StatusNotModified
+
+	// http 304 status code does not allow body
+	if writeError == nil && isUnchanged {
+		w.WriteHeader(http.StatusNotModified)
+		return
 	}
+
+	httpStatus := http.StatusCreated
 	if writeError != nil {
 		httpStatus = http.StatusInternalServerError
 		ret.Error = writeError.Error()

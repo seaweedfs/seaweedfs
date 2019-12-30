@@ -8,13 +8,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/karlseguin/ccache"
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/karlseguin/ccache"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
-	"google.golang.org/grpc"
 )
 
 type Option struct {
@@ -26,8 +27,9 @@ type Option struct {
 	TtlSec             int32
 	ChunkSizeLimit     int64
 	DataCenter         string
-	DirListingLimit    int
+	DirListCacheLimit  int64
 	EntryCacheTtl      time.Duration
+	Umask              os.FileMode
 
 	MountUid   uint32
 	MountGid   uint32
@@ -59,7 +61,7 @@ type statsCache struct {
 func NewSeaweedFileSystem(option *Option) *WFS {
 	wfs := &WFS{
 		option:                    option,
-		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(1024 * 8).ItemsToPrune(100)),
+		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(option.DirListCacheLimit * 3).ItemsToPrune(100)),
 		pathToHandleIndex:         make(map[string]int),
 		bufPool: sync.Pool{
 			New: func() interface{} {

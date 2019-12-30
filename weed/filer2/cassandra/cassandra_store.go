@@ -112,6 +112,17 @@ func (store *CassandraStore) DeleteEntry(ctx context.Context, fullpath filer2.Fu
 	return nil
 }
 
+func (store *CassandraStore) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) error {
+
+	if err := store.session.Query(
+		"DELETE FROM filemeta WHERE directory=?",
+		fullpath).Exec(); err != nil {
+		return fmt.Errorf("delete %s : %v", fullpath, err)
+	}
+
+	return nil
+}
+
 func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool,
 	limit int) (entries []*filer2.Entry, err error) {
 

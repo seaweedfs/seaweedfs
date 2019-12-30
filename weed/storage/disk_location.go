@@ -17,7 +17,7 @@ type DiskLocation struct {
 	Directory      string
 	MaxVolumeCount int
 	volumes        map[needle.VolumeId]*Volume
-	sync.RWMutex
+	volumesLock    sync.RWMutex
 
 	// erasure coding
 	ecVolumes     map[needle.VolumeId]*erasure_coding.EcVolume
@@ -33,8 +33,8 @@ func NewDiskLocation(dir string, maxVolumeCount int) *DiskLocation {
 
 func (l *DiskLocation) volumeIdFromPath(dir os.FileInfo) (needle.VolumeId, string, error) {
 	name := dir.Name()
-	if !dir.IsDir() && strings.HasSuffix(name, ".dat") {
-		base := name[:len(name)-len(".dat")]
+	if !dir.IsDir() && strings.HasSuffix(name, ".idx") {
+		base := name[:len(name)-len(".idx")]
 		collection, volumeId, err := parseCollectionVolumeId(base)
 		return volumeId, collection, err
 	}
@@ -53,17 +53,17 @@ func parseCollectionVolumeId(base string) (collection string, vid needle.VolumeI
 
 func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind NeedleMapType) {
 	name := fileInfo.Name()
-	if !fileInfo.IsDir() && strings.HasSuffix(name, ".dat") {
+	if !fileInfo.IsDir() && strings.HasSuffix(name, ".idx") {
 		vid, collection, err := l.volumeIdFromPath(fileInfo)
 		if err == nil {
-			l.RLock()
+			l.volumesLock.RLock()
 			_, found := l.volumes[vid]
-			l.RUnlock()
+			l.volumesLock.RUnlock()
 			if !found {
-				if v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil, nil, 0); e == nil {
-					l.Lock()
+				if v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil, nil, 0, 0); e == nil {
+					l.volumesLock.Lock()
 					l.volumes[vid] = v
-					l.Unlock()
+					l.volumesLock.Unlock()
 					size, _, _ := v.FileStat()
 					glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s",
 						l.Directory+"/"+name, v.ReplicaPlacement, v.Version(), size, v.Ttl.String())
@@ -71,7 +71,6 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 				} else {
 					glog.V(0).Infof("new volume %s error %s", name, e)
 				}
-
 			}
 		}
 	}
@@ -115,29 +114,46 @@ func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
 
 func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e error) {
 
-	l.Lock()
-	for k, v := range l.volumes {
-		if v.Collection == collection {
-			e = l.deleteVolumeById(k)
-			if e != nil {
-				l.Unlock()
-				return
-			}
-		}
-	}
-	l.Unlock()
+	l.volumesLock.Lock()
+	delVolsMap := l.unmountVolumeByCollection(collection)
+	l.volumesLock.Unlock()
 
 	l.ecVolumesLock.Lock()
-	for k, v := range l.ecVolumes {
-		if v.Collection == collection {
-			e = l.deleteEcVolumeById(k)
-			if e != nil {
-				l.ecVolumesLock.Unlock()
-				return
+	delEcVolsMap := l.unmountEcVolumeByCollection(collection)
+	l.ecVolumesLock.Unlock()
+
+	errChain := make(chan error, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		for _, v := range delVolsMap {
+			if err := v.Destroy(); err != nil {
+				errChain <- err
 			}
 		}
+		wg.Done()
+	}()
+
+	go func() {
+		for _, v := range delEcVolsMap {
+			v.Destroy()
+		}
+		wg.Done()
+	}()
+
+	go func() {
+		wg.Wait()
+		close(errChain)
+	}()
+
+	errBuilder := strings.Builder{}
+	for err := range errChain {
+		errBuilder.WriteString(err.Error())
+		errBuilder.WriteString("; ")
 	}
-	l.ecVolumesLock.Unlock()
+	if errBuilder.Len() > 0 {
+		e = fmt.Errorf(errBuilder.String())
+	}
 
 	return
 }
@@ -170,8 +186,8 @@ func (l *DiskLocation) LoadVolume(vid needle.VolumeId, needleMapKind NeedleMapTy
 }
 
 func (l *DiskLocation) DeleteVolume(vid needle.VolumeId) error {
-	l.Lock()
-	defer l.Unlock()
+	l.volumesLock.Lock()
+	defer l.volumesLock.Unlock()
 
 	_, ok := l.volumes[vid]
 	if !ok {
@@ -181,8 +197,8 @@ func (l *DiskLocation) DeleteVolume(vid needle.VolumeId) error {
 }
 
 func (l *DiskLocation) UnloadVolume(vid needle.VolumeId) error {
-	l.Lock()
-	defer l.Unlock()
+	l.volumesLock.Lock()
+	defer l.volumesLock.Unlock()
 
 	v, ok := l.volumes[vid]
 	if !ok {
@@ -193,34 +209,48 @@ func (l *DiskLocation) UnloadVolume(vid needle.VolumeId) error {
 	return nil
 }
 
+func (l *DiskLocation) unmountVolumeByCollection(collectionName string) map[needle.VolumeId]*Volume {
+	deltaVols := make(map[needle.VolumeId]*Volume, 0)
+	for k, v := range l.volumes {
+		if v.Collection == collectionName && !v.isCompacting {
+			deltaVols[k] = v
+		}
+	}
+
+	for k, _ := range deltaVols {
+		delete(l.volumes, k)
+	}
+	return deltaVols
+}
+
 func (l *DiskLocation) SetVolume(vid needle.VolumeId, volume *Volume) {
-	l.Lock()
-	defer l.Unlock()
+	l.volumesLock.Lock()
+	defer l.volumesLock.Unlock()
 
 	l.volumes[vid] = volume
 }
 
 func (l *DiskLocation) FindVolume(vid needle.VolumeId) (*Volume, bool) {
-	l.RLock()
-	defer l.RUnlock()
+	l.volumesLock.RLock()
+	defer l.volumesLock.RUnlock()
 
 	v, ok := l.volumes[vid]
 	return v, ok
 }
 
 func (l *DiskLocation) VolumesLen() int {
-	l.RLock()
-	defer l.RUnlock()
+	l.volumesLock.RLock()
+	defer l.volumesLock.RUnlock()
 
 	return len(l.volumes)
 }
 
 func (l *DiskLocation) Close() {
-	l.Lock()
+	l.volumesLock.Lock()
 	for _, v := range l.volumes {
 		v.Close()
 	}
-	l.Unlock()
+	l.volumesLock.Unlock()
 
 	l.ecVolumesLock.Lock()
 	for _, ecVolume := range l.ecVolumes {

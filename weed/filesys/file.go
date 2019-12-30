@@ -20,6 +20,10 @@ var _ = fs.Node(&File{})
 var _ = fs.NodeOpener(&File{})
 var _ = fs.NodeFsyncer(&File{})
 var _ = fs.NodeSetattrer(&File{})
+var _ = fs.NodeGetxattrer(&File{})
+var _ = fs.NodeSetxattrer(&File{})
+var _ = fs.NodeRemovexattrer(&File{})
+var _ = fs.NodeListxattrer(&File{})
 
 type File struct {
 	Name           string
@@ -36,7 +40,9 @@ func (file *File) fullpath() string {
 
 func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
-	if err := file.maybeLoadAttributes(ctx); err != nil {
+	glog.V(4).Infof("file Attr %s", file.fullpath())
+
+	if err := file.maybeLoadEntry(ctx); err != nil {
 		return err
 	}
 
@@ -52,9 +58,20 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
 }
 
+func (file *File) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp *fuse.GetxattrResponse) error {
+
+	glog.V(4).Infof("file Getxattr %s", file.fullpath())
+
+	if err := file.maybeLoadEntry(ctx); err != nil {
+		return err
+	}
+
+	return getxattr(file.entry, req, resp)
+}
+
 func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 
-	glog.V(3).Infof("%v file open %+v", file.fullpath(), req)
+	glog.V(4).Infof("file %v open %+v", file.fullpath(), req)
 
 	file.isOpen = true
 
@@ -70,7 +87,7 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
-	if err := file.maybeLoadAttributes(ctx); err != nil {
+	if err := file.maybeLoadEntry(ctx); err != nil {
 		return err
 	}
 
@@ -109,22 +126,61 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		return nil
 	}
 
-	return file.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	file.wfs.listDirectoryEntriesCache.Delete(file.fullpath())
 
-		request := &filer_pb.UpdateEntryRequest{
-			Directory: file.dir.Path,
-			Entry:     file.entry,
-		}
+	return file.saveEntry(ctx)
 
-		glog.V(1).Infof("set attr file entry: %v", request)
-		_, err := client.UpdateEntry(ctx, request)
-		if err != nil {
-			glog.V(0).Infof("UpdateEntry file %s/%s: %v", file.dir.Path, file.Name, err)
-			return fuse.EIO
-		}
+}
 
-		return nil
-	})
+func (file *File) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
+
+	glog.V(4).Infof("file Setxattr %s: %s", file.fullpath(), req.Name)
+
+	if err := file.maybeLoadEntry(ctx); err != nil {
+		return err
+	}
+
+	if err := setxattr(file.entry, req); err != nil {
+		return err
+	}
+
+	file.wfs.listDirectoryEntriesCache.Delete(file.fullpath())
+
+	return file.saveEntry(ctx)
+
+}
+
+func (file *File) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest) error {
+
+	glog.V(4).Infof("file Removexattr %s: %s", file.fullpath(), req.Name)
+
+	if err := file.maybeLoadEntry(ctx); err != nil {
+		return err
+	}
+
+	if err := removexattr(file.entry, req); err != nil {
+		return err
+	}
+
+	file.wfs.listDirectoryEntriesCache.Delete(file.fullpath())
+
+	return file.saveEntry(ctx)
+
+}
+
+func (file *File) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, resp *fuse.ListxattrResponse) error {
+
+	glog.V(4).Infof("file Listxattr %s", file.fullpath())
+
+	if err := file.maybeLoadEntry(ctx); err != nil {
+		return err
+	}
+
+	if err := listxattr(file.entry, req, resp); err != nil {
+		return err
+	}
+
+	return nil
 
 }
 
@@ -136,39 +192,14 @@ func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 	return nil
 }
 
-func (file *File) maybeLoadAttributes(ctx context.Context) error {
+func (file *File) maybeLoadEntry(ctx context.Context) error {
 	if file.entry == nil || !file.isOpen {
-		item := file.wfs.listDirectoryEntriesCache.Get(file.fullpath())
-		if item != nil && !item.Expired() {
-			entry := item.Value().(*filer_pb.Entry)
+		entry, err := file.wfs.maybeLoadEntry(ctx, file.dir.Path, file.Name)
+		if err != nil {
+			return err
+		}
+		if entry != nil {
 			file.setEntry(entry)
-			// glog.V(1).Infof("file attr read cached %v attributes", file.Name)
-		} else {
-			err := file.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
-
-				request := &filer_pb.LookupDirectoryEntryRequest{
-					Name:      file.Name,
-					Directory: file.dir.Path,
-				}
-
-				resp, err := client.LookupDirectoryEntry(ctx, request)
-				if err != nil {
-					glog.V(3).Infof("file attr read file %v: %v", request, err)
-					return fuse.ENOENT
-				}
-
-				file.setEntry(resp.Entry)
-
-				glog.V(3).Infof("file attr %v %+v: %d", file.fullpath(), file.entry.Attributes, filer2.TotalSize(file.entry.Chunks))
-
-				// file.wfs.listDirectoryEntriesCache.Set(file.fullpath(), file.entry, file.wfs.option.EntryCacheTtl)
-
-				return nil
-			})
-
-			if err != nil {
-				return err
-			}
 		}
 	}
 	return nil
@@ -202,4 +233,23 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 func (file *File) setEntry(entry *filer_pb.Entry) {
 	file.entry = entry
 	file.entryViewCache = filer2.NonOverlappingVisibleIntervals(file.entry.Chunks)
+}
+
+func (file *File) saveEntry(ctx context.Context) error {
+	return file.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+
+		request := &filer_pb.UpdateEntryRequest{
+			Directory: file.dir.Path,
+			Entry:     file.entry,
+		}
+
+		glog.V(1).Infof("save file entry: %v", request)
+		_, err := client.UpdateEntry(ctx, request)
+		if err != nil {
+			glog.V(0).Infof("UpdateEntry file %s/%s: %v", file.dir.Path, file.Name, err)
+			return fuse.EIO
+		}
+
+		return nil
+	})
 }

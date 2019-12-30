@@ -107,10 +107,11 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
             <tr>
               <th>Id</th>
               <th>Collection</th>
-              <th>Size</th>
+              <th>Data Size</th>
               <th>Files</th>
               <th>Trash</th>
               <th>TTL</th>
+              <th>ReadOnly</th>
             </tr>
           </thead>
           <tbody>
@@ -122,6 +123,37 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
               <td>{{ .FileCount }}</td>
               <td>{{ .DeleteCount }} / {{.DeletedByteCount}} Bytes</td>
               <td>{{ .Ttl }}</td>
+              <td>{{ .ReadOnly }}</td>
+            </tr>
+          {{ end }}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="row">
+        <h2>Remote Volumes</h2>
+        <table class="table table-striped">
+          <thead>
+            <tr>
+              <th>Id</th>
+              <th>Collection</th>
+              <th>Size</th>
+              <th>Files</th>
+              <th>Trash</th>
+              <th>Remote</th>
+              <th>Key</th>
+            </tr>
+          </thead>
+          <tbody>
+          {{ range .RemoteVolumes }}
+            <tr>
+              <td><code>{{ .Id }}</code></td>
+              <td>{{ .Collection }}</td>
+              <td>{{ .Size }} Bytes</td>
+              <td>{{ .FileCount }}</td>
+              <td>{{ .DeleteCount }} / {{.DeletedByteCount}} Bytes</td>
+              <td>{{ .RemoteStorageName }}</td>
+              <td>{{ .RemoteStorageKey }}</td>
             </tr>
           {{ end }}
           </tbody>

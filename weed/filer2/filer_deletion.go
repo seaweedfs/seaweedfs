@@ -15,7 +15,7 @@ func (f *Filer) loopProcessingDeletion() {
 	lookupFunc := func(vids []string) (map[string]operation.LookupResult, error) {
 		m := make(map[string]operation.LookupResult)
 		for _, vid := range vids {
-			locs := f.MasterClient.GetVidLocations(vid)
+			locs, _ := f.MasterClient.GetVidLocations(vid)
 			var locations []operation.Location
 			for _, loc := range locs {
 				locations = append(locations, operation.Location{
@@ -51,9 +51,8 @@ func (f *Filer) loopProcessingDeletion() {
 	}
 }
 
-func (f *Filer) DeleteChunks(fullpath FullPath, chunks []*filer_pb.FileChunk) {
+func (f *Filer) DeleteChunks(chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
-		glog.V(3).Infof("deleting %s chunk %s", fullpath, chunk.String())
 		f.fileIdDeletionChan <- chunk.GetFileIdString()
 	}
 }
@@ -70,7 +69,7 @@ func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
 		return
 	}
 	if newEntry == nil {
-		f.DeleteChunks(oldEntry.FullPath, oldEntry.Chunks)
+		f.DeleteChunks(oldEntry.Chunks)
 	}
 
 	var toDelete []*filer_pb.FileChunk
@@ -84,5 +83,5 @@ func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
 			toDelete = append(toDelete, oldChunk)
 		}
 	}
-	f.DeleteChunks(oldEntry.FullPath, toDelete)
+	f.DeleteChunks(toDelete)
 }

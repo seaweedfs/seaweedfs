@@ -8,12 +8,13 @@ import (
 	"io"
 	"os"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	weed_util "github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
+
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	weed_util "github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func init() {
@@ -21,7 +22,7 @@ func init() {
 }
 
 type LevelDB2Store struct {
-	dbs []*leveldb.DB
+	dbs     []*leveldb.DB
 	dbCount int
 }
 
@@ -46,7 +47,7 @@ func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
 		CompactionTableSizeMultiplier: 4,
 	}
 
-	for d := 0 ; d < dbCount; d++ {
+	for d := 0; d < dbCount; d++ {
 		dbFolder := fmt.Sprintf("%s/%02d", dir, d)
 		os.MkdirAll(dbFolder, 0755)
 		db, dbErr := leveldb.OpenFile(dbFolder, opts)
@@ -134,6 +135,34 @@ func (store *LevelDB2Store) DeleteEntry(ctx context.Context, fullpath filer2.Ful
 	return nil
 }
 
+func (store *LevelDB2Store) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) (err error) {
+	directoryPrefix, partitionId := genDirectoryKeyPrefix(fullpath, "", store.dbCount)
+
+	batch := new(leveldb.Batch)
+
+	iter := store.dbs[partitionId].NewIterator(&leveldb_util.Range{Start: directoryPrefix}, nil)
+	for iter.Next() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, directoryPrefix) {
+			break
+		}
+		fileName := getNameFromKey(key)
+		if fileName == "" {
+			continue
+		}
+		batch.Delete(append(directoryPrefix, []byte(fileName)...))
+	}
+	iter.Release()
+
+	err = store.dbs[partitionId].Write(batch, nil)
+
+	if err != nil {
+		return fmt.Errorf("delete %s : %v", fullpath, err)
+	}
+
+	return nil
+}
+
 func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool,
 	limit int) (entries []*filer2.Entry, err error) {
 
@@ -204,5 +233,5 @@ func hashToBytes(dir string, dbCount int) ([]byte, int) {
 
 	x := b[len(b)-1]
 
-	return b, int(x)%dbCount
+	return b, int(x) % dbCount
 }

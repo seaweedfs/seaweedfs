@@ -20,7 +20,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 
 	entry, err := fs.filer.FindEntry(ctx, filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name))))
 	if err != nil {
-		return nil, fmt.Errorf("%s not found under %s: %v", req.Name, req.Directory, err)
+		return nil, err
 	}
 
 	return &filer_pb.LookupDirectoryEntryResponse{
@@ -29,27 +29,32 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 			IsDirectory: entry.IsDirectory(),
 			Attributes:  filer2.EntryAttributeToPb(entry),
 			Chunks:      entry.Chunks,
+			Extended:    entry.Extended,
 		},
 	}, nil
 }
 
-func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntriesRequest) (*filer_pb.ListEntriesResponse, error) {
+func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {
 
 	limit := int(req.Limit)
 	if limit == 0 {
 		limit = fs.option.DirListingLimit
 	}
 
-	resp := &filer_pb.ListEntriesResponse{}
+	paginationLimit := filer2.PaginationSize
+	if limit < paginationLimit {
+		paginationLimit = limit
+	}
+
 	lastFileName := req.StartFromFileName
 	includeLastFile := req.InclusiveStartFrom
 	for limit > 0 {
-		entries, err := fs.filer.ListDirectoryEntries(ctx, filer2.FullPath(req.Directory), lastFileName, includeLastFile, 1024)
+		entries, err := fs.filer.ListDirectoryEntries(stream.Context(), filer2.FullPath(req.Directory), lastFileName, includeLastFile, paginationLimit)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(entries) == 0 {
-			return resp, nil
+			return nil
 		}
 
 		includeLastFile = false
@@ -64,22 +69,30 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 				}
 			}
 
-			resp.Entries = append(resp.Entries, &filer_pb.Entry{
-				Name:        entry.Name(),
-				IsDirectory: entry.IsDirectory(),
-				Chunks:      entry.Chunks,
-				Attributes:  filer2.EntryAttributeToPb(entry),
-			})
+			if err := stream.Send(&filer_pb.ListEntriesResponse{
+				Entry: &filer_pb.Entry{
+					Name:        entry.Name(),
+					IsDirectory: entry.IsDirectory(),
+					Chunks:      entry.Chunks,
+					Attributes:  filer2.EntryAttributeToPb(entry),
+					Extended:    entry.Extended,
+				},
+			}); err != nil {
+				return err
+			}
 			limit--
+			if limit == 0 {
+				return nil
+			}
 		}
 
-		if len(resp.Entries) < 1024 {
+		if len(entries) < paginationLimit {
 			break
 		}
 
 	}
 
-	return resp, nil
+	return nil
 }
 
 func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
@@ -95,7 +108,11 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 			return nil, err
 		}
 		var locs []*filer_pb.Location
-		for _, loc := range fs.filer.MasterClient.GetLocations(uint32(vid)) {
+		locations, found := fs.filer.MasterClient.GetLocations(uint32(vid))
+		if !found {
+			continue
+		}
+		for _, loc := range locations {
 			locs = append(locs, &filer_pb.Location{
 				Url:       loc.Url,
 				PublicUrl: loc.PublicUrl,
@@ -125,7 +142,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	})
 
 	if err == nil {
-		fs.filer.DeleteChunks(fullpath, garbages)
+		fs.filer.DeleteChunks(garbages)
 	}
 
 	return &filer_pb.CreateEntryResponse{}, err
@@ -147,12 +164,14 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	newEntry := &filer2.Entry{
 		FullPath: filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name))),
 		Attr:     entry.Attr,
+		Extended: req.Entry.Extended,
 		Chunks:   chunks,
 	}
 
-	glog.V(3).Infof("updating %s: %+v, chunks %d: %v => %+v, chunks %d: %v",
+	glog.V(3).Infof("updating %s: %+v, chunks %d: %v => %+v, chunks %d: %v, extended: %v => %v",
 		fullpath, entry.Attr, len(entry.Chunks), entry.Chunks,
-		req.Entry.Attributes, len(req.Entry.Chunks), req.Entry.Chunks)
+		req.Entry.Attributes, len(req.Entry.Chunks), req.Entry.Chunks,
+		entry.Extended, req.Entry.Extended)
 
 	if req.Entry.Attributes != nil {
 		if req.Entry.Attributes.Mtime != 0 {
@@ -174,8 +193,8 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	}
 
 	if err = fs.filer.UpdateEntry(ctx, entry, newEntry); err == nil {
-		fs.filer.DeleteChunks(entry.FullPath, unusedChunks)
-		fs.filer.DeleteChunks(entry.FullPath, garbages)
+		fs.filer.DeleteChunks(unusedChunks)
+		fs.filer.DeleteChunks(garbages)
 	}
 
 	fs.filer.NotifyUpdateEvent(entry, newEntry, true)
@@ -184,7 +203,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 }
 
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {
-	err = fs.filer.DeleteEntryMetaAndData(ctx, filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name))), req.IsRecursive, req.IsDeleteData)
+	err = fs.filer.DeleteEntryMetaAndData(ctx, filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name))), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData)
 	return &filer_pb.DeleteEntryResponse{}, err
 }
 

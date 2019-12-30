@@ -9,6 +9,7 @@ import (
 	"github.com/chrislusf/raft"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"google.golang.org/grpc/peer"
@@ -49,6 +50,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 	for {
 		heartbeat, err := stream.Recv()
 		if err != nil {
+			if dn != nil {
+				glog.Warningf("SendHeartbeat.Recv server %s:%d : %v", dn.Ip, dn.Port, err)
+			} else {
+				glog.Warningf("SendHeartbeat.Recv: %v", err)
+			}
 			return err
 		}
 
@@ -71,8 +77,12 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				int64(heartbeat.MaxVolumeCount))
 			glog.V(0).Infof("added volume server %v:%d", heartbeat.GetIp(), heartbeat.GetPort())
 			if err := stream.Send(&master_pb.HeartbeatResponse{
-				VolumeSizeLimit: uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
+				VolumeSizeLimit:        uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
+				MetricsAddress:         ms.option.MetricsAddress,
+				MetricsIntervalSeconds: uint32(ms.option.MetricsIntervalSec),
+				StorageBackends:        backend.ToPbStorageBackends(),
 			}); err != nil {
+				glog.Warningf("SendHeartbeat.Send volume size to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
 			}
 		}
@@ -154,13 +164,13 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		// tell the volume servers about the leader
 		newLeader, err := t.Leader()
 		if err != nil {
+			glog.Warningf("SendHeartbeat find leader: %v", err)
 			return err
 		}
 		if err := stream.Send(&master_pb.HeartbeatResponse{
-			Leader:                 newLeader,
-			MetricsAddress:         ms.option.MetricsAddress,
-			MetricsIntervalSeconds: uint32(ms.option.MetricsIntervalSec),
+			Leader: newLeader,
 		}); err != nil {
+			glog.Warningf("SendHeartbeat.Send response to to %s:%d %v", dn.Ip, dn.Port, err)
 			return err
 		}
 	}
@@ -176,7 +186,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	}
 
 	if !ms.Topo.IsLeader() {
-		return raft.NotLeaderError
+		return ms.informNewLeader(stream)
 	}
 
 	// remember client address
@@ -236,12 +246,26 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 			}
 		case <-ticker.C:
 			if !ms.Topo.IsLeader() {
-				return raft.NotLeaderError
+				return ms.informNewLeader(stream)
 			}
 		case <-stopChan:
 			return nil
 		}
 	}
 
+	return nil
+}
+
+func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedServer) error {
+	leader, err := ms.Topo.Leader()
+	if err != nil {
+		glog.Errorf("topo leader: %v", err)
+		return raft.NotLeaderError
+	}
+	if err := stream.Send(&master_pb.VolumeLocation{
+		Leader: leader,
+	}); err != nil {
+		return err
+	}
 	return nil
 }

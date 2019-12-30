@@ -10,16 +10,18 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/webdav"
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"golang.org/x/net/webdav"
-	"google.golang.org/grpc"
+
+	"github.com/spf13/viper"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/spf13/viper"
 )
 
 type WebDavOption struct {
@@ -163,7 +165,7 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 
 func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, flag int, perm os.FileMode) (webdav.File, error) {
 
-	glog.V(2).Infof("WebDavFileSystem.OpenFile %v", fullFilePath)
+	glog.V(2).Infof("WebDavFileSystem.OpenFile %v %x", fullFilePath, flag)
 
 	var err error
 	if fullFilePath, err = clearName(fullFilePath); err != nil {
@@ -173,12 +175,6 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 	if flag&os.O_CREATE != 0 {
 		// file should not have / suffix.
 		if strings.HasSuffix(fullFilePath, "/") {
-			return nil, os.ErrInvalid
-		}
-		// based directory should be exists.
-		dir, _ := path.Split(fullFilePath)
-		_, err := fs.stat(ctx, dir)
-		if err != nil {
 			return nil, os.ErrInvalid
 		}
 		_, err = fs.stat(ctx, fullFilePath)
@@ -412,7 +408,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
 	bufReader := bytes.NewReader(buf)
-	uploadResult, err := operation.Upload(fileUrl, f.name, bufReader, false, "application/octet-stream", nil, auth)
+	uploadResult, err := operation.Upload(fileUrl, f.name, bufReader, false, "", nil, auth)
 	if err != nil {
 		glog.V(0).Infof("upload data %v to %s: %v", f.name, fileUrl, err)
 		return 0, fmt.Errorf("upload data: %v", err)
@@ -448,9 +444,11 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 		return nil
 	})
 
-	if err != nil {
+	if err == nil {
+		glog.V(3).Infof("WebDavFileSystem.Write %v: written [%d,%d)", f.name, f.off, f.off+int64(len(buf)))
 		f.off += int64(len(buf))
 	}
+
 	return len(buf), err
 }
 
@@ -494,10 +492,13 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	}
 	readSize = int(totalRead)
 
+	glog.V(3).Infof("WebDavFileSystem.Read %v: [%d,%d)", f.name, f.off, f.off+totalRead)
+
 	f.off += totalRead
 	if readSize == 0 {
 		return 0, io.EOF
 	}
+
 	return
 }
 
@@ -511,7 +512,7 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 		dir = dir[:len(dir)-1]
 	}
 
-	err = filer2.ReadDirAllEntries(ctx, f.fs, dir, func(entry *filer_pb.Entry) {
+	err = filer2.ReadDirAllEntries(ctx, f.fs, dir, "", func(entry *filer_pb.Entry, isLast bool) {
 		fi := FileInfo{
 			size:          int64(filer2.TotalSize(entry.GetChunks())),
 			name:          entry.Name,

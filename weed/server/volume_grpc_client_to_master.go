@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
@@ -89,6 +90,9 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 			if in.GetMetricsAddress() != "" && vs.MetricsAddress != in.GetMetricsAddress() {
 				vs.MetricsAddress = in.GetMetricsAddress()
 				vs.MetricsIntervalSec = int(in.GetMetricsIntervalSeconds())
+			}
+			if len(in.StorageBackends) > 0 {
+				backend.LoadFromPbStorageBackends(in.StorageBackends)
 			}
 		}
 	}()

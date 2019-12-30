@@ -10,6 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 )
 
 func (vs *VolumeServer) VolumeTailSender(req *volume_server_pb.VolumeTailSenderRequest, stream volume_server_pb.VolumeServer_VolumeTailSenderServer) error {
@@ -67,34 +68,13 @@ func sendNeedlesSince(stream volume_server_pb.VolumeServer_VolumeTailSenderServe
 		return lastTimestampNs, sendErr
 	}
 
-	err = storage.ScanVolumeFileNeedleFrom(v.Version(), v.DataFile(), foundOffset.ToAcutalOffset(), func(needleHeader, needleBody []byte, needleAppendAtNs uint64) error {
+	scanner := &VolumeFileScanner4Tailing{
+		stream: stream,
+	}
 
-		isLastChunk := false
+	err = storage.ScanVolumeFileFrom(v.Version(), v.DataBackend, foundOffset.ToAcutalOffset(), scanner)
 
-		// need to send body by chunks
-		for i := 0; i < len(needleBody); i += BufferSizeLimit {
-			stopOffset := i + BufferSizeLimit
-			if stopOffset >= len(needleBody) {
-				isLastChunk = true
-				stopOffset = len(needleBody)
-			}
-
-			sendErr := stream.Send(&volume_server_pb.VolumeTailSenderResponse{
-				NeedleHeader: needleHeader,
-				NeedleBody:   needleBody[i:stopOffset],
-				IsLastChunk:  isLastChunk,
-			})
-			if sendErr != nil {
-				return sendErr
-			}
-		}
-
-		lastProcessedTimestampNs = needleAppendAtNs
-		return nil
-
-	})
-
-	return
+	return scanner.lastProcessedTimestampNs, err
 
 }
 
@@ -114,4 +94,43 @@ func (vs *VolumeServer) VolumeTailReceiver(ctx context.Context, req *volume_serv
 		return err
 	})
 
+}
+
+// generate the volume idx
+type VolumeFileScanner4Tailing struct {
+	stream                   volume_server_pb.VolumeServer_VolumeTailSenderServer
+	lastProcessedTimestampNs uint64
+}
+
+func (scanner *VolumeFileScanner4Tailing) VisitSuperBlock(superBlock super_block.SuperBlock) error {
+	return nil
+
+}
+func (scanner *VolumeFileScanner4Tailing) ReadNeedleBody() bool {
+	return true
+}
+
+func (scanner *VolumeFileScanner4Tailing) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
+	isLastChunk := false
+
+	// need to send body by chunks
+	for i := 0; i < len(needleBody); i += BufferSizeLimit {
+		stopOffset := i + BufferSizeLimit
+		if stopOffset >= len(needleBody) {
+			isLastChunk = true
+			stopOffset = len(needleBody)
+		}
+
+		sendErr := scanner.stream.Send(&volume_server_pb.VolumeTailSenderResponse{
+			NeedleHeader: needleHeader,
+			NeedleBody:   needleBody[i:stopOffset],
+			IsLastChunk:  isLastChunk,
+		})
+		if sendErr != nil {
+			return sendErr
+		}
+	}
+
+	scanner.lastProcessedTimestampNs = n.AppendAtNs
+	return nil
 }

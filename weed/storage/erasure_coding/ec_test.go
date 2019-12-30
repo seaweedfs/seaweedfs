@@ -26,14 +26,14 @@ func TestEncodingDecoding(t *testing.T) {
 		t.Logf("generateEcFiles: %v", err)
 	}
 
-	err = WriteSortedEcxFile(baseFileName)
+	err = WriteSortedFileFromIdx(baseFileName, ".ecx")
 	if err != nil {
-		t.Logf("WriteSortedEcxFile: %v", err)
+		t.Logf("WriteSortedFileFromIdx: %v", err)
 	}
 
 	err = validateFiles(baseFileName)
 	if err != nil {
-		t.Logf("WriteSortedEcxFile: %v", err)
+		t.Logf("WriteSortedFileFromIdx: %v", err)
 	}
 
 	removeGeneratedFiles(baseFileName)

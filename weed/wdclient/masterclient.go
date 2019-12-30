@@ -51,54 +51,71 @@ func (mc *MasterClient) KeepConnectedToMaster() {
 }
 
 func (mc *MasterClient) tryAllMasters() {
+	nextHintedLeader := ""
 	for _, master := range mc.masters {
-		glog.V(1).Infof("%s Connecting to master %v", mc.name, master)
-		gprcErr := withMasterClient(context.Background(), master, mc.grpcDialOption, func(ctx context.Context, client master_pb.SeaweedClient) error {
 
-			stream, err := client.KeepConnected(ctx)
-			if err != nil {
-				glog.V(0).Infof("%s failed to keep connected to %s: %v", mc.name, master, err)
-				return err
-			}
-
-			if err = stream.Send(&master_pb.ClientListenRequest{Name: mc.name}); err != nil {
-				glog.V(0).Infof("%s failed to send to %s: %v", mc.name, master, err)
-				return err
-			}
-
-			if mc.currentMaster == "" {
-				glog.V(1).Infof("%s Connected to %v", mc.name, master)
-				mc.currentMaster = master
-			}
-
-			for {
-				if volumeLocation, err := stream.Recv(); err != nil {
-					glog.V(0).Infof("%s failed to receive from %s: %v", mc.name, master, err)
-					return err
-				} else {
-					loc := Location{
-						Url:       volumeLocation.Url,
-						PublicUrl: volumeLocation.PublicUrl,
-					}
-					for _, newVid := range volumeLocation.NewVids {
-						glog.V(1).Infof("%s: %s adds volume %d", mc.name, loc.Url, newVid)
-						mc.addLocation(newVid, loc)
-					}
-					for _, deletedVid := range volumeLocation.DeletedVids {
-						glog.V(1).Infof("%s: %s removes volume %d", mc.name, loc.Url, deletedVid)
-						mc.deleteLocation(deletedVid, loc)
-					}
-				}
-			}
-
-		})
-
-		if gprcErr != nil {
-			glog.V(0).Infof("%s failed to connect with master %v: %v", mc.name, master, gprcErr)
+		nextHintedLeader = mc.tryConnectToMaster(master)
+		for nextHintedLeader != "" {
+			nextHintedLeader = mc.tryConnectToMaster(nextHintedLeader)
 		}
 
 		mc.currentMaster = ""
+		mc.vidMap = newVidMap()
 	}
+}
+
+func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader string) {
+	glog.V(1).Infof("%s Connecting to master %v", mc.name, master)
+	gprcErr := withMasterClient(context.Background(), master, mc.grpcDialOption, func(ctx context.Context, client master_pb.SeaweedClient) error {
+
+		stream, err := client.KeepConnected(ctx)
+		if err != nil {
+			glog.V(0).Infof("%s failed to keep connected to %s: %v", mc.name, master, err)
+			return err
+		}
+
+		if err = stream.Send(&master_pb.KeepConnectedRequest{Name: mc.name}); err != nil {
+			glog.V(0).Infof("%s failed to send to %s: %v", mc.name, master, err)
+			return err
+		}
+
+		glog.V(1).Infof("%s Connected to %v", mc.name, master)
+		mc.currentMaster = master
+
+		for {
+			volumeLocation, err := stream.Recv()
+			if err != nil {
+				glog.V(0).Infof("%s failed to receive from %s: %v", mc.name, master, err)
+				return err
+			}
+
+			// maybe the leader is changed
+			if volumeLocation.Leader != "" {
+				glog.V(0).Infof("redirected to leader %v", volumeLocation.Leader)
+				nextHintedLeader = volumeLocation.Leader
+				return nil
+			}
+
+			// process new volume location
+			loc := Location{
+				Url:       volumeLocation.Url,
+				PublicUrl: volumeLocation.PublicUrl,
+			}
+			for _, newVid := range volumeLocation.NewVids {
+				glog.V(1).Infof("%s: %s adds volume %d", mc.name, loc.Url, newVid)
+				mc.addLocation(newVid, loc)
+			}
+			for _, deletedVid := range volumeLocation.DeletedVids {
+				glog.V(1).Infof("%s: %s removes volume %d", mc.name, loc.Url, deletedVid)
+				mc.deleteLocation(deletedVid, loc)
+			}
+		}
+
+	})
+	if gprcErr != nil {
+		glog.V(0).Infof("%s failed to connect with master %v: %v", mc.name, master, gprcErr)
+	}
+	return
 }
 
 func withMasterClient(ctx context.Context, master string, grpcDialOption grpc.DialOption, fn func(ctx context.Context, client master_pb.SeaweedClient) error) error {

@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -12,11 +13,11 @@ import (
 	"text/template"
 	"time"
 
-	"io"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
@@ -89,12 +90,12 @@ func printNeedle(vid needle.VolumeId, n *needle.Needle, version needle.Version, 
 type VolumeFileScanner4Export struct {
 	version   needle.Version
 	counter   int
-	needleMap *storage.NeedleMap
+	needleMap *needle_map.MemDb
 	vid       needle.VolumeId
 }
 
-func (scanner *VolumeFileScanner4Export) VisitSuperBlock(superBlock storage.SuperBlock) error {
-	scanner.version = superBlock.Version()
+func (scanner *VolumeFileScanner4Export) VisitSuperBlock(superBlock super_block.SuperBlock) error {
+	scanner.version = superBlock.Version
 	return nil
 
 }
@@ -102,7 +103,7 @@ func (scanner *VolumeFileScanner4Export) ReadNeedleBody() bool {
 	return true
 }
 
-func (scanner *VolumeFileScanner4Export) VisitNeedle(n *needle.Needle, offset int64) error {
+func (scanner *VolumeFileScanner4Export) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 	needleMap := scanner.needleMap
 	vid := scanner.vid
 
@@ -192,15 +193,10 @@ func runExport(cmd *Command, args []string) bool {
 		fileName = *export.collection + "_" + fileName
 	}
 	vid := needle.VolumeId(*export.volumeId)
-	indexFile, err := os.OpenFile(path.Join(*export.dir, fileName+".idx"), os.O_RDONLY, 0644)
-	if err != nil {
-		glog.Fatalf("Create Volume Index [ERROR] %s\n", err)
-	}
-	defer indexFile.Close()
 
-	needleMap, err := storage.LoadBtreeNeedleMap(indexFile)
-	if err != nil {
-		glog.Fatalf("cannot load needle map from %s: %s", indexFile.Name(), err)
+	needleMap := needle_map.NewMemDb()
+	if err := needleMap.LoadFromIdx(path.Join(*export.dir, fileName+".idx")); err != nil {
+		glog.Fatalf("cannot load needle map from %s.idx: %s", fileName, err)
 	}
 
 	volumeFileScanner := &VolumeFileScanner4Export{

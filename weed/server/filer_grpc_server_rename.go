@@ -73,11 +73,11 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, oldParent filer
 			return err
 		}
 
-		println("found", len(entries), "entries under", currentDirPath)
+		// println("found", len(entries), "entries under", currentDirPath)
 
 		for _, item := range entries {
 			lastFileName = item.Name()
-			println("processing", lastFileName)
+			// println("processing", lastFileName)
 			err := fs.moveEntry(ctx, currentDirPath, item, newDirPath, item.Name(), events)
 			if err != nil {
 				return err
@@ -113,7 +113,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent filer2.FullP
 	}
 
 	// delete old entry
-	deleteErr := fs.filer.DeleteEntryMetaAndData(ctx, oldPath, false, false)
+	deleteErr := fs.filer.DeleteEntryMetaAndData(ctx, oldPath, false, false, false)
 	if deleteErr != nil {
 		return deleteErr
 	}

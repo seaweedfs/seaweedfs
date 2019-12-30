@@ -1,10 +1,9 @@
 sudo: false
 language: go
 go:
-  - 1.10.x
   - 1.11.x
   - 1.12.x
-  # - tip
+  - 1.13.x
 
 before_install:
   - export PATH=/home/travis/gopath/bin:$PATH
@@ -12,10 +11,9 @@ before_install:
 install:
   - export CGO_ENABLED="0"
   - go env
-  - go get -u ./weed/...
 
 script:
-  - go test ./weed/...
+  - env GO111MODULE=on go test ./weed/...
 
 before_deploy:
   - make release
@@ -47,4 +45,4 @@ deploy:
   on:
     tags: true
     repo: chrislusf/seaweedfs
-    go: 1.12.x
+    go: 1.13.x

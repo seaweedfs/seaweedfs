@@ -20,6 +20,7 @@ type Node interface {
 	ReserveOneVolume(r int64) (*DataNode, error)
 	UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int64)
 	UpAdjustVolumeCountDelta(volumeCountDelta int64)
+	UpAdjustRemoteVolumeCountDelta(remoteVolumeCountDelta int64)
 	UpAdjustEcShardCountDelta(ecShardCountDelta int64)
 	UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int64)
 	UpAdjustMaxVolumeId(vid needle.VolumeId)
@@ -27,6 +28,7 @@ type Node interface {
 	GetVolumeCount() int64
 	GetEcShardCount() int64
 	GetActiveVolumeCount() int64
+	GetRemoteVolumeCount() int64
 	GetMaxVolumeCount() int64
 	GetMaxVolumeId() needle.VolumeId
 	SetParent(Node)
@@ -44,6 +46,7 @@ type Node interface {
 }
 type NodeImpl struct {
 	volumeCount       int64
+	remoteVolumeCount int64
 	activeVolumeCount int64
 	ecShardCount      int64
 	maxVolumeCount    int64
@@ -132,10 +135,11 @@ func (n *NodeImpl) Id() NodeId {
 	return n.id
 }
 func (n *NodeImpl) FreeSpace() int64 {
+	freeVolumeSlotCount := n.maxVolumeCount + n.remoteVolumeCount - n.volumeCount
 	if n.ecShardCount > 0 {
-		return n.maxVolumeCount - n.volumeCount - n.ecShardCount/erasure_coding.DataShardsCount - 1
+		freeVolumeSlotCount = freeVolumeSlotCount - n.ecShardCount/erasure_coding.DataShardsCount - 1
 	}
-	return n.maxVolumeCount - n.volumeCount
+	return freeVolumeSlotCount
 }
 func (n *NodeImpl) SetParent(node Node) {
 	n.parent = node
@@ -191,6 +195,12 @@ func (n *NodeImpl) UpAdjustVolumeCountDelta(volumeCountDelta int64) { //can be n
 		n.parent.UpAdjustVolumeCountDelta(volumeCountDelta)
 	}
 }
+func (n *NodeImpl) UpAdjustRemoteVolumeCountDelta(remoteVolumeCountDelta int64) { //can be negative
+	atomic.AddInt64(&n.remoteVolumeCount, remoteVolumeCountDelta)
+	if n.parent != nil {
+		n.parent.UpAdjustRemoteVolumeCountDelta(remoteVolumeCountDelta)
+	}
+}
 func (n *NodeImpl) UpAdjustEcShardCountDelta(ecShardCountDelta int64) { //can be negative
 	atomic.AddInt64(&n.ecShardCount, ecShardCountDelta)
 	if n.parent != nil {
@@ -220,6 +230,9 @@ func (n *NodeImpl) GetVolumeCount() int64 {
 func (n *NodeImpl) GetEcShardCount() int64 {
 	return n.ecShardCount
 }
+func (n *NodeImpl) GetRemoteVolumeCount() int64 {
+	return n.remoteVolumeCount
+}
 func (n *NodeImpl) GetActiveVolumeCount() int64 {
 	return n.activeVolumeCount
 }
@@ -235,6 +248,7 @@ func (n *NodeImpl) LinkChildNode(node Node) {
 		n.UpAdjustMaxVolumeCountDelta(node.GetMaxVolumeCount())
 		n.UpAdjustMaxVolumeId(node.GetMaxVolumeId())
 		n.UpAdjustVolumeCountDelta(node.GetVolumeCount())
+		n.UpAdjustRemoteVolumeCountDelta(node.GetRemoteVolumeCount())
 		n.UpAdjustEcShardCountDelta(node.GetEcShardCount())
 		n.UpAdjustActiveVolumeCountDelta(node.GetActiveVolumeCount())
 		node.SetParent(n)
@@ -250,6 +264,7 @@ func (n *NodeImpl) UnlinkChildNode(nodeId NodeId) {
 		node.SetParent(nil)
 		delete(n.children, node.Id())
 		n.UpAdjustVolumeCountDelta(-node.GetVolumeCount())
+		n.UpAdjustRemoteVolumeCountDelta(-node.GetRemoteVolumeCount())
 		n.UpAdjustEcShardCountDelta(-node.GetEcShardCount())
 		n.UpAdjustActiveVolumeCountDelta(-node.GetActiveVolumeCount())
 		n.UpAdjustMaxVolumeCountDelta(-node.GetMaxVolumeCount())

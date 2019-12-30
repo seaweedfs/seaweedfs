@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.List;
 
 public class FilerClient {
@@ -34,13 +35,12 @@ public class FilerClient {
 
     public boolean mkdirs(String path, int mode, int uid, int gid, String userName, String[] groupNames) {
 
-        Path pathObject = Paths.get(path);
-        String parent = pathObject.getParent().toString();
-        String name = pathObject.getFileName().toString();
-
         if ("/".equals(path)) {
             return true;
         }
+        Path pathObject = Paths.get(path);
+        String parent = pathObject.getParent().toString();
+        String name = pathObject.getFileName().toString();
 
         mkdirs(parent, mode, uid, gid, userName, groupNames);
 
@@ -71,7 +71,7 @@ public class FilerClient {
 
     }
 
-    public boolean rm(String path, boolean isRecursive) {
+    public boolean rm(String path, boolean isRecursive, boolean ignoreRecusiveError) {
 
         Path pathObject = Paths.get(path);
         String parent = pathObject.getParent().toString();
@@ -81,7 +81,8 @@ public class FilerClient {
                 parent,
                 name,
                 true,
-                isRecursive);
+                isRecursive,
+                ignoreRecusiveError);
     }
 
     public boolean touch(String path, int mode) {
@@ -173,17 +174,18 @@ public class FilerClient {
     }
 
     public List<FilerProto.Entry> listEntries(String path, String entryPrefix, String lastEntryName, int limit) {
-        List<FilerProto.Entry> entries = filerGrpcClient.getBlockingStub().listEntries(FilerProto.ListEntriesRequest.newBuilder()
+        Iterator<FilerProto.ListEntriesResponse> iter = filerGrpcClient.getBlockingStub().listEntries(FilerProto.ListEntriesRequest.newBuilder()
                 .setDirectory(path)
                 .setPrefix(entryPrefix)
                 .setStartFromFileName(lastEntryName)
                 .setLimit(limit)
-                .build()).getEntriesList();
-        List<FilerProto.Entry> fixedEntries = new ArrayList<>(entries.size());
-        for (FilerProto.Entry entry : entries) {
-            fixedEntries.add(fixEntryAfterReading(entry));
+                .build());
+        List<FilerProto.Entry> entries = new ArrayList<>();
+        while (iter.hasNext()){
+            FilerProto.ListEntriesResponse resp = iter.next();
+            entries.add(fixEntryAfterReading(resp.getEntry()));
         }
-        return fixedEntries;
+        return entries;
     }
 
     public FilerProto.Entry lookupEntry(String directory, String entryName) {
@@ -195,6 +197,9 @@ public class FilerClient {
                             .build()).getEntry();
             return fixEntryAfterReading(entry);
         } catch (Exception e) {
+            if (e.getMessage().indexOf("filer: no entry is found in filer store")>0){
+                return null;
+            }
             LOG.warn("lookupEntry {}/{}: {}", directory, entryName, e);
             return null;
         }
@@ -227,13 +232,14 @@ public class FilerClient {
         return true;
     }
 
-    public boolean deleteEntry(String parent, String entryName, boolean isDeleteFileChunk, boolean isRecursive) {
+    public boolean deleteEntry(String parent, String entryName, boolean isDeleteFileChunk, boolean isRecursive, boolean ignoreRecusiveError) {
         try {
             filerGrpcClient.getBlockingStub().deleteEntry(FilerProto.DeleteEntryRequest.newBuilder()
                     .setDirectory(parent)
                     .setName(entryName)
                     .setIsDeleteData(isDeleteFileChunk)
                     .setIsRecursive(isRecursive)
+                    .setIgnoreRecursiveError(ignoreRecusiveError)
                     .build());
         } catch (Exception e) {
             LOG.warn("deleteEntry {}/{}: {}", parent, entryName, e);

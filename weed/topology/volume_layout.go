@@ -10,11 +10,12 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 )
 
 // mapping from volume to its locations, inverted from server to volume
 type VolumeLayout struct {
-	rp               *storage.ReplicaPlacement
+	rp               *super_block.ReplicaPlacement
 	ttl              *needle.TTL
 	vid2location     map[needle.VolumeId]*VolumeLocationList
 	writables        []needle.VolumeId        // transient array of writable volume id
@@ -30,7 +31,7 @@ type VolumeLayoutStats struct {
 	FileCount uint64
 }
 
-func NewVolumeLayout(rp *storage.ReplicaPlacement, ttl *needle.TTL, volumeSizeLimit uint64) *VolumeLayout {
+func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, volumeSizeLimit uint64) *VolumeLayout {
 	return &VolumeLayout{
 		rp:               rp,
 		ttl:              ttl,

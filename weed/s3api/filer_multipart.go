@@ -14,7 +14,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/satori/go.uuid"
+	"github.com/google/uuid"
 )
 
 type InitiateMultipartUploadResult struct {
@@ -23,7 +23,7 @@ type InitiateMultipartUploadResult struct {
 }
 
 func (s3a *S3ApiServer) createMultipartUpload(ctx context.Context, input *s3.CreateMultipartUploadInput) (output *InitiateMultipartUploadResult, code ErrorCode) {
-	uploadId, _ := uuid.NewV4()
+	uploadId, _ := uuid.NewRandom()
 	uploadIdString := uploadId.String()
 
 	if err := s3a.mkdir(ctx, s3a.genUploadsFolder(*input.Bucket), uploadIdString, func(entry *filer_pb.Entry) {
@@ -91,6 +91,11 @@ func (s3a *S3ApiServer) completeMultipartUpload(ctx context.Context, input *s3.C
 	}
 	dirName = fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, *input.Bucket, dirName)
 
+	// remove suffix '/'
+	if strings.HasSuffix(dirName, "/") {
+		dirName = dirName[:len(dirName)-1]
+	}
+
 	err = s3a.mkFile(ctx, dirName, entryName, finalParts)
 
 	if err != nil {
@@ -101,9 +106,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(ctx context.Context, input *s3.C
 	output = &CompleteMultipartUploadResult{
 		CompleteMultipartUploadOutput: s3.CompleteMultipartUploadOutput{
 			Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer, dirName, entryName)),
-			Bucket: input.Bucket,
-			ETag:   aws.String("\"" + filer2.ETag(finalParts) + "\""),
-			Key:    objectKey(input.Key),
+			Bucket:   input.Bucket,
+			ETag:     aws.String("\"" + filer2.ETag(finalParts) + "\""),
+			Key:      objectKey(input.Key),
 		},
 	}
 

@@ -107,7 +107,7 @@ func DeleteFilesWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []str
 		ret = append(ret, result...)
 	}
 
-	glog.V(0).Infof("deleted %d items", len(ret))
+	glog.V(1).Infof("deleted %d items", len(ret))
 
 	return ret, err
 }

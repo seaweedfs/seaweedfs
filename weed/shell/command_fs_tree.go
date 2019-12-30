@@ -3,10 +3,11 @@ package shell
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"io"
 	"strings"
+
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
 func init() {
@@ -38,75 +39,45 @@ func (c *commandFsTree) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 
 	ctx := context.Background()
 
-	return commandEnv.withFilerClient(ctx, filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
+	dirCount, fCount, terr := treeTraverseDirectory(ctx, writer, commandEnv.getFilerClient(filerServer, filerPort), dir, name, newPrefix(), -1)
 
-		dirCount, fCount, terr := treeTraverseDirectory(ctx, writer, client, dir, name, newPrefix(), -1)
-
-		if terr == nil {
-			fmt.Fprintf(writer, "%d directories, %d files\n", dirCount, fCount)
-		}
-
-		return terr
-
-	})
-
-}
-func treeTraverseDirectory(ctx context.Context, writer io.Writer, client filer_pb.SeaweedFilerClient, dir, name string, prefix *Prefix, level int) (directoryCount, fileCount int64, err error) {
-
-	paginatedCount := -1
-	startFromFileName := ""
-	paginateSize := 1000
-
-	for paginatedCount == -1 || paginatedCount == paginateSize {
-		resp, listErr := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
-			Directory:          dir,
-			Prefix:             name,
-			StartFromFileName:  startFromFileName,
-			InclusiveStartFrom: false,
-			Limit:              uint32(paginateSize),
-		})
-		if listErr != nil {
-			err = listErr
-			return
-		}
-
-		paginatedCount = len(resp.Entries)
-		if paginatedCount > 0 {
-			prefix.addMarker(level)
-		}
-
-		for i, entry := range resp.Entries {
-
-			if level < 0 && name != "" {
-				if entry.Name != name {
-					break
-				}
-			}
-
-			// 0.1% wrong prefix here, but fixing it would need to paginate to the next batch first
-			isLast := paginatedCount < paginateSize && i == paginatedCount-1
-			fmt.Fprintf(writer, "%s%s\n", prefix.getPrefix(level, isLast), entry.Name)
-
-			if entry.IsDirectory {
-				directoryCount++
-				subDir := fmt.Sprintf("%s/%s", dir, entry.Name)
-				if dir == "/" {
-					subDir = "/" + entry.Name
-				}
-				dirCount, fCount, terr := treeTraverseDirectory(ctx, writer, client, subDir, "", prefix, level+1)
-				directoryCount += dirCount
-				fileCount += fCount
-				err = terr
-			} else {
-				fileCount++
-			}
-			startFromFileName = entry.Name
-
-		}
+	if terr == nil {
+		fmt.Fprintf(writer, "%d directories, %d files\n", dirCount, fCount)
 	}
 
-	return
+	return terr
 
+}
+
+func treeTraverseDirectory(ctx context.Context, writer io.Writer, filerClient filer2.FilerClient, dir, name string, prefix *Prefix, level int) (directoryCount, fileCount int64, err error) {
+
+	prefix.addMarker(level)
+
+	err = filer2.ReadDirAllEntries(ctx, filerClient, dir, name, func(entry *filer_pb.Entry, isLast bool) {
+		if level < 0 && name != "" {
+			if entry.Name != name {
+				return
+			}
+		}
+
+		fmt.Fprintf(writer, "%s%s\n", prefix.getPrefix(level, isLast), entry.Name)
+
+		if entry.IsDirectory {
+			directoryCount++
+			subDir := fmt.Sprintf("%s/%s", dir, entry.Name)
+			if dir == "/" {
+				subDir = "/" + entry.Name
+			}
+			dirCount, fCount, terr := treeTraverseDirectory(ctx, writer, filerClient, subDir, "", prefix, level+1)
+			directoryCount += dirCount
+			fileCount += fCount
+			err = terr
+		} else {
+			fileCount++
+		}
+
+	})
+	return
 }
 
 type Prefix struct {

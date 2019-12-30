@@ -3,6 +3,8 @@ package filer2
 import (
 	"context"
 	"fmt"
+	"io"
+	"math"
 	"strings"
 	"sync"
 
@@ -112,47 +114,54 @@ func GetEntry(ctx context.Context, filerClient FilerClient, fullFilePath string)
 			return err
 		}
 
-		if resp.Entry != nil {
-			entry = resp.Entry
+		if resp.Entry == nil {
+			glog.V(3).Infof("read %s entry: %v", fullFilePath, entry)
+			return nil
 		}
 
+		entry = resp.Entry
 		return nil
 	})
 
 	return
 }
 
-func ReadDirAllEntries(ctx context.Context, filerClient FilerClient, fullDirPath string, fn func(entry *filer_pb.Entry)) (err error) {
+func ReadDirAllEntries(ctx context.Context, filerClient FilerClient, fullDirPath, prefix string, fn func(entry *filer_pb.Entry, isLast bool)) (err error) {
 
 	err = filerClient.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
-		paginationLimit := 1024
-
 		lastEntryName := ""
 
+		request := &filer_pb.ListEntriesRequest{
+			Directory:         fullDirPath,
+			Prefix:            prefix,
+			StartFromFileName: lastEntryName,
+			Limit:             math.MaxUint32,
+		}
+
+		glog.V(3).Infof("read directory: %v", request)
+		stream, err := client.ListEntries(ctx, request)
+		if err != nil {
+			return fmt.Errorf("list %s: %v", fullDirPath, err)
+		}
+
+		var prevEntry *filer_pb.Entry
 		for {
-
-			request := &filer_pb.ListEntriesRequest{
-				Directory:         fullDirPath,
-				StartFromFileName: lastEntryName,
-				Limit:             uint32(paginationLimit),
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				if recvErr == io.EOF {
+					if prevEntry != nil {
+						fn(prevEntry, true)
+					}
+					break
+				} else {
+					return recvErr
+				}
 			}
-
-			glog.V(3).Infof("read directory: %v", request)
-			resp, err := client.ListEntries(ctx, request)
-			if err != nil {
-				return fmt.Errorf("list %s: %v", fullDirPath, err)
+			if prevEntry != nil {
+				fn(prevEntry, false)
 			}
-
-			for _, entry := range resp.Entries {
-				fn(entry)
-				lastEntryName = entry.Name
-			}
-
-			if len(resp.Entries) < paginationLimit {
-				break
-			}
-
+			prevEntry = resp.Entry
 		}
 
 		return nil

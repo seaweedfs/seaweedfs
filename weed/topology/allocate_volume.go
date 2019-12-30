@@ -18,11 +18,12 @@ func AllocateVolume(dn *DataNode, grpcDialOption grpc.DialOption, vid needle.Vol
 	return operation.WithVolumeServerClient(dn.Url(), grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 
 		_, deleteErr := client.AllocateVolume(context.Background(), &volume_server_pb.AllocateVolumeRequest{
-			VolumeId:    uint32(vid),
-			Collection:  option.Collection,
-			Replication: option.ReplicaPlacement.String(),
-			Ttl:         option.Ttl.String(),
-			Preallocate: option.Prealloacte,
+			VolumeId:           uint32(vid),
+			Collection:         option.Collection,
+			Replication:        option.ReplicaPlacement.String(),
+			Ttl:                option.Ttl.String(),
+			Preallocate:        option.Prealloacte,
+			MemoryMapMaxSizeMb: option.MemoryMapMaxSizeMb,
 		})
 		return deleteErr
 	})

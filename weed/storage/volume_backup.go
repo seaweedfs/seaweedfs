@@ -6,18 +6,23 @@ import (
 	"io"
 	"os"
 
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"google.golang.org/grpc"
 )
 
 func (v *Volume) GetVolumeSyncStatus() *volume_server_pb.VolumeSyncStatusResponse {
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
+
 	var syncStatus = &volume_server_pb.VolumeSyncStatusResponse{}
-	if stat, err := v.dataFile.Stat(); err == nil {
-		syncStatus.TailOffset = uint64(stat.Size())
+	if datSize, _, err := v.DataBackend.GetStat(); err == nil {
+		syncStatus.TailOffset = uint64(datSize)
 	}
 	syncStatus.Collection = v.Collection
 	syncStatus.IdxFileSize = v.nm.IndexFileSize()
@@ -67,6 +72,8 @@ func (v *Volume) IncrementalBackup(volumeServer string, grpcDialOption grpc.Dial
 		return err
 	}
 
+	writeOffset := int64(startFromOffset)
+
 	err = operation.WithVolumeServerClient(volumeServer, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 
 		stream, err := client.VolumeIncrementalCopy(ctx, &volume_server_pb.VolumeIncrementalCopyRequest{
@@ -76,8 +83,6 @@ func (v *Volume) IncrementalBackup(volumeServer string, grpcDialOption grpc.Dial
 		if err != nil {
 			return err
 		}
-
-		v.dataFile.Seek(int64(startFromOffset), io.SeekStart)
 
 		for {
 			resp, recvErr := stream.Recv()
@@ -89,10 +94,11 @@ func (v *Volume) IncrementalBackup(volumeServer string, grpcDialOption grpc.Dial
 				}
 			}
 
-			_, writeErr := v.dataFile.Write(resp.FileContent)
+			n, writeErr := v.DataBackend.WriteAt(resp.FileContent, writeOffset)
 			if writeErr != nil {
 				return writeErr
 			}
+			writeOffset += int64(n)
 		}
 
 		return nil
@@ -104,7 +110,7 @@ func (v *Volume) IncrementalBackup(volumeServer string, grpcDialOption grpc.Dial
 	}
 
 	// add to needle map
-	return ScanVolumeFileFrom(v.version, v.dataFile, int64(startFromOffset), &VolumeFileScanner4GenIdx{v: v})
+	return ScanVolumeFileFrom(v.Version(), v.DataBackend, int64(startFromOffset), &VolumeFileScanner4GenIdx{v: v})
 
 }
 
@@ -150,11 +156,11 @@ func (v *Volume) locateLastAppendEntry() (Offset, error) {
 
 func (v *Volume) readAppendAtNs(offset Offset) (uint64, error) {
 
-	n, _, bodyLength, err := needle.ReadNeedleHeader(v.dataFile, v.SuperBlock.version, offset.ToAcutalOffset())
+	n, _, bodyLength, err := needle.ReadNeedleHeader(v.DataBackend, v.SuperBlock.Version, offset.ToAcutalOffset())
 	if err != nil {
 		return 0, fmt.Errorf("ReadNeedleHeader: %v", err)
 	}
-	_, err = n.ReadNeedleBody(v.dataFile, v.SuperBlock.version, offset.ToAcutalOffset()+int64(NeedleHeaderSize), bodyLength)
+	_, err = n.ReadNeedleBody(v.DataBackend, v.SuperBlock.Version, offset.ToAcutalOffset()+int64(NeedleHeaderSize), bodyLength)
 	if err != nil {
 		return 0, fmt.Errorf("ReadNeedleBody offset %d, bodyLength %d: %v", offset.ToAcutalOffset(), bodyLength, err)
 	}
@@ -240,7 +246,7 @@ type VolumeFileScanner4GenIdx struct {
 	v *Volume
 }
 
-func (scanner *VolumeFileScanner4GenIdx) VisitSuperBlock(superBlock SuperBlock) error {
+func (scanner *VolumeFileScanner4GenIdx) VisitSuperBlock(superBlock super_block.SuperBlock) error {
 	return nil
 
 }
@@ -248,7 +254,7 @@ func (scanner *VolumeFileScanner4GenIdx) ReadNeedleBody() bool {
 	return false
 }
 
-func (scanner *VolumeFileScanner4GenIdx) VisitNeedle(n *needle.Needle, offset int64) error {
+func (scanner *VolumeFileScanner4GenIdx) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 	if n.Size > 0 && n.Size != TombstoneFileSize {
 		return scanner.v.nm.Put(n.Id, ToOffset(offset), n.Size)
 	}

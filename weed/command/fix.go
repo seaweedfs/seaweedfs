@@ -8,6 +8,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
@@ -31,11 +33,11 @@ var (
 
 type VolumeFileScanner4Fix struct {
 	version needle.Version
-	nm      *storage.NeedleMap
+	nm      *needle_map.MemDb
 }
 
-func (scanner *VolumeFileScanner4Fix) VisitSuperBlock(superBlock storage.SuperBlock) error {
-	scanner.version = superBlock.Version()
+func (scanner *VolumeFileScanner4Fix) VisitSuperBlock(superBlock super_block.SuperBlock) error {
+	scanner.version = superBlock.Version
 	return nil
 
 }
@@ -43,14 +45,14 @@ func (scanner *VolumeFileScanner4Fix) ReadNeedleBody() bool {
 	return false
 }
 
-func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64) error {
+func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 	glog.V(2).Infof("key %d offset %d size %d disk_size %d gzip %v", n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsGzipped())
 	if n.Size > 0 && n.Size != types.TombstoneFileSize {
-		pe := scanner.nm.Put(n.Id, types.ToOffset(offset), n.Size)
+		pe := scanner.nm.Set(n.Id, types.ToOffset(offset), n.Size)
 		glog.V(2).Infof("saved %d with error %v", n.Size, pe)
 	} else {
 		glog.V(2).Infof("skipping deleted file ...")
-		return scanner.nm.Delete(n.Id, types.ToOffset(offset))
+		return scanner.nm.Delete(n.Id)
 	}
 	return nil
 }
@@ -72,8 +74,7 @@ func runFix(cmd *Command, args []string) bool {
 	}
 	defer indexFile.Close()
 
-	nm := storage.NewBtreeNeedleMap(indexFile)
-	defer nm.Close()
+	nm := needle_map.NewMemDb()
 
 	vid := needle.VolumeId(*fixVolumeId)
 	scanner := &VolumeFileScanner4Fix{

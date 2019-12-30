@@ -49,11 +49,9 @@ func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 
 	ctx := context.Background()
 
-
 	sourceDir, sourceName := filer2.FullPath(sourcePath).DirAndName()
 
 	destinationDir, destinationName := filer2.FullPath(destinationPath).DirAndName()
-
 
 	return commandEnv.withFilerClient(ctx, filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -76,7 +74,6 @@ func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 			targetDir = destinationDir
 			targetName = destinationName
 		}
-
 
 		request := &filer_pb.AtomicRenameEntryRequest{
 			OldDirectory: sourceDir,

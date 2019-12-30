@@ -21,16 +21,16 @@ const (
 	ErasureCodingSmallBlockSize = 1024 * 1024        // 1MB
 )
 
-// WriteSortedEcxFile generates .ecx file from existing .idx file
+// WriteSortedFileFromIdx generates .ecx file from existing .idx file
 // all keys are sorted in ascending order
-func WriteSortedEcxFile(baseFileName string) (e error) {
+func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 
 	cm, err := readCompactMap(baseFileName)
 	if err != nil {
 		return fmt.Errorf("readCompactMap: %v", err)
 	}
 
-	ecxFile, err := os.OpenFile(baseFileName+".ecx", os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
+	ecxFile, err := os.OpenFile(baseFileName+ext, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open ecx file: %v", err)
 	}
@@ -43,13 +43,13 @@ func WriteSortedEcxFile(baseFileName string) (e error) {
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to visit ecx file: %v", err)
+		return fmt.Errorf("failed to visit idx file: %v", err)
 	}
 
 	return nil
 }
 
-// WriteEcFiles generates .ec01 ~ .ec14 files
+// WriteEcFiles generates .ec00 ~ .ec13 files
 func WriteEcFiles(baseFileName string) error {
 	return generateEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize)
 }

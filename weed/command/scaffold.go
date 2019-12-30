@@ -59,15 +59,6 @@ const (
 #    $HOME/.seaweedfs/filer.toml
 #    /etc/seaweedfs/filer.toml
 
-[memory]
-# local in memory, mostly for testing purpose
-enabled = false
-
-[leveldb]
-# local on disk, mostly for simple single-machine setup, fairly scalable
-enabled = false
-dir = "."					# directory to store level db files
-
 [leveldb2]
 # local on disk, mostly for simple single-machine setup, fairly scalable
 # faster than previous leveldb, recommended.
@@ -78,7 +69,7 @@ dir = "."					# directory to store level db files
 # multiple filers on shared storage, fairly scalable
 ####################################################
 
-[mysql]
+[mysql]  # or tidb
 # CREATE TABLE IF NOT EXISTS filemeta (
 #   dirhash     BIGINT         COMMENT 'first 64 bits of MD5 hash value of directory field',
 #   name        VARCHAR(1000)  COMMENT 'directory or file name',
@@ -95,8 +86,9 @@ password = ""
 database = ""              # create or use an existing database
 connection_max_idle = 2
 connection_max_open = 100
+interpolateParams = false
 
-[postgres]
+[postgres] # or cockroachdb
 # CREATE TABLE IF NOT EXISTS filemeta (
 #   dirhash     BIGINT,
 #   name        VARCHAR(65535),
@@ -131,7 +123,7 @@ hosts=[
 enabled = false
 address  = "localhost:6379"
 password = ""
-db = 0
+database = 0
 
 [redis_cluster]
 enabled = false
@@ -144,6 +136,20 @@ addresses = [
     "localhost:30006",
 ]
 password = ""
+// allows reads from slave servers or the master, but all writes still go to the master
+readOnly = true
+// automatically use the closest Redis server for reads
+routeByLatency = true
+
+[etcd]
+enabled = false
+servers = "localhost:2379"
+timeout = "3s"
+
+[tikv]
+enabled = false
+pdAddress = "192.168.199.113:2379"
+
 
 `
 
@@ -217,22 +223,22 @@ grpcAddress = "localhost:18888"
 # all files under this directory tree are replicated.
 # this is not a directory on your hard drive, but on your filer.
 # i.e., all files with this "prefix" are sent to notification message queue.
-directory = "/buckets"    
+directory = "/buckets"
 
 [sink.filer]
 enabled = false
 grpcAddress = "localhost:18888"
 # all replicated files are under this directory tree
-# this is not a directory on your hard drive, but on your filer.     
+# this is not a directory on your hard drive, but on your filer.
 # i.e., all received files will be "prefixed" to this directory.
-directory = "/backup"    
+directory = "/backup"
 replication = ""
 collection = ""
 ttlSec = 0
 
 [sink.s3]
 # read credentials doc at https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/sessions.html
-# default loads credentials from the shared credentials file (~/.aws/credentials). 
+# default loads credentials from the shared credentials file (~/.aws/credentials).
 enabled = false
 aws_access_key_id     = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
 aws_secret_access_key = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
@@ -335,6 +341,24 @@ scripts = """
   volume.balance -force
 """
 sleep_minutes = 17          # sleep minutes between each script execution
+
+[master.filer]
+default_filer_url = "http://localhost:8888/"
+
+[master.sequencer]
+type = "memory"     # Choose [memory|etcd] type for storing the file id sequence
+# when sequencer.type = etcd, set listen client urls of etcd cluster that store file id sequence
+# example : http://127.0.0.1:2379,http://127.0.0.1:2389
+sequencer_etcd_urls = "http://127.0.0.1:2379"
+
+
+[storage.backend]
+	[storage.backend.s3.default]
+	enabled = false
+	aws_access_key_id     = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
+	aws_secret_access_key = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
+	region = "us-east-2"
+	bucket = "your_bucket_name"    # an existing bucket
 
 `
 )

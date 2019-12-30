@@ -18,7 +18,10 @@ https://github.com/chrislusf/seaweedfs/issues/1008
 A clear and concise description of what the bug is.
 
 **System Setup**
-List the command line to start "weed master", "weed volume", "weed filer", "weed s3", "weed mount".
+- List the command line to start "weed master", "weed volume", "weed filer", "weed s3", "weed mount".
+- OS version
+- output of `weed version`
+- if using filer, show the content of `filer.toml`
 
 **Expected behavior**
 A clear and concise description of what you expected to happen.

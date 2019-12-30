@@ -55,11 +55,11 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 
 		// println("source:", volFileInfoResp.String())
 		// copy ecx file
-		if err := vs.doCopyFile(ctx, client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.IdxFileSize, volumeFileName, ".idx", false); err != nil {
+		if err := vs.doCopyFile(ctx, client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.IdxFileSize, volumeFileName, ".idx", false, false); err != nil {
 			return err
 		}
 
-		if err := vs.doCopyFile(ctx, client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, volumeFileName, ".dat", false); err != nil {
+		if err := vs.doCopyFile(ctx, client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, volumeFileName, ".dat", false, true); err != nil {
 			return err
 		}
 
@@ -95,15 +95,16 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 }
 
 func (vs *VolumeServer) doCopyFile(ctx context.Context, client volume_server_pb.VolumeServerClient, isEcVolume bool, collection string, vid uint32,
-	compactRevision uint32, stopOffset uint64, baseFileName, ext string, isAppend bool) error {
+	compactRevision uint32, stopOffset uint64, baseFileName, ext string, isAppend bool, ignoreSourceFileNotFound bool) error {
 
 	copyFileClient, err := client.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
-		VolumeId:           vid,
-		Ext:                ext,
-		CompactionRevision: compactRevision,
-		StopOffset:         stopOffset,
-		Collection:         collection,
-		IsEcVolume:         isEcVolume,
+		VolumeId:                 vid,
+		Ext:                      ext,
+		CompactionRevision:       compactRevision,
+		StopOffset:               stopOffset,
+		Collection:               collection,
+		IsEcVolume:               isEcVolume,
+		IgnoreSourceFileNotFound: ignoreSourceFileNotFound,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to start copying volume %d %s file: %v", vid, ext, err)
@@ -213,6 +214,9 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 			}
 		}
 		if fileName == "" {
+			if req.IgnoreSourceFileNotFound {
+				return nil
+			}
 			return fmt.Errorf("CopyFile not found ec volume id %d", req.VolumeId)
 		}
 	}
@@ -221,6 +225,9 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 
 	file, err := os.Open(fileName)
 	if err != nil {
+		if req.IgnoreSourceFileNotFound && err == os.ErrNotExist {
+			return nil
+		}
 		return err
 	}
 	defer file.Close()
@@ -256,8 +263,4 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 	}
 
 	return nil
-}
-
-func (vs *VolumeServer) findVolumeOrEcVolumeLocation(volumeId needle.VolumeId) {
-
 }

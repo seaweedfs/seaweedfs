@@ -22,7 +22,7 @@ func moveMountedShardToEcNode(ctx context.Context, commandEnv *CommandEnv, exist
 	if applyBalancing {
 
 		// ask destination node to copy shard and the ecx file from source node, and mount it
-		copiedShardIds, err = oneServerCopyAndMountEcShardsFromSource(ctx, commandEnv.option.GrpcDialOption, destinationEcNode, uint32(shardId), 1, vid, collection, existingLocation.info.Id)
+		copiedShardIds, err = oneServerCopyAndMountEcShardsFromSource(ctx, commandEnv.option.GrpcDialOption, destinationEcNode, []uint32{uint32(shardId)}, vid, collection, existingLocation.info.Id)
 		if err != nil {
 			return err
 		}
@@ -51,13 +51,9 @@ func moveMountedShardToEcNode(ctx context.Context, commandEnv *CommandEnv, exist
 }
 
 func oneServerCopyAndMountEcShardsFromSource(ctx context.Context, grpcDialOption grpc.DialOption,
-	targetServer *EcNode, startFromShardId uint32, shardCount int,
+	targetServer *EcNode, shardIdsToCopy []uint32,
 	volumeId needle.VolumeId, collection string, existingLocation string) (copiedShardIds []uint32, err error) {
 
-	var shardIdsToCopy []uint32
-	for shardId := startFromShardId; shardId < startFromShardId+uint32(shardCount); shardId++ {
-		shardIdsToCopy = append(shardIdsToCopy, shardId)
-	}
 	fmt.Printf("allocate %d.%v %s => %s\n", volumeId, shardIdsToCopy, existingLocation, targetServer.info.Id)
 
 	err = operation.WithVolumeServerClient(targetServer.info.Id, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
@@ -70,6 +66,8 @@ func oneServerCopyAndMountEcShardsFromSource(ctx context.Context, grpcDialOption
 				Collection:     collection,
 				ShardIds:       shardIdsToCopy,
 				CopyEcxFile:    true,
+				CopyEcjFile:    true,
+				CopyVifFile:    true,
 				SourceDataNode: existingLocation,
 			})
 			if copyErr != nil {
@@ -112,9 +110,15 @@ func eachDataNode(topo *master_pb.TopologyInfo, fn func(dc string, rack RackId, 
 	}
 }
 
-func sortEcNodes(ecNodes []*EcNode) {
+func sortEcNodesByFreeslotsDecending(ecNodes []*EcNode) {
 	sort.Slice(ecNodes, func(i, j int) bool {
 		return ecNodes[i].freeEcSlot > ecNodes[j].freeEcSlot
+	})
+}
+
+func sortEcNodesByFreeslotsAscending(ecNodes []*EcNode) {
+	sort.Slice(ecNodes, func(i, j int) bool {
+		return ecNodes[i].freeEcSlot < ecNodes[j].freeEcSlot
 	})
 }
 
@@ -156,7 +160,7 @@ func countShards(ecShardInfos []*master_pb.VolumeEcShardInformationMessage) (cou
 }
 
 func countFreeShardSlots(dn *master_pb.DataNodeInfo) (count int) {
-	return int(dn.FreeVolumeCount)*10 - countShards(dn.EcShardInfos)
+	return int(dn.MaxVolumeCount-dn.ActiveVolumeCount)*erasure_coding.DataShardsCount - countShards(dn.EcShardInfos)
 }
 
 type RackId string
@@ -191,18 +195,18 @@ func collectEcNodes(ctx context.Context, commandEnv *CommandEnv, selectedDataCen
 		if selectedDataCenter != "" && selectedDataCenter != dc {
 			return
 		}
-		if freeEcSlots := countFreeShardSlots(dn); freeEcSlots > 0 {
-			ecNodes = append(ecNodes, &EcNode{
-				info:       dn,
-				dc:         dc,
-				rack:       rack,
-				freeEcSlot: int(freeEcSlots),
-			})
-			totalFreeEcSlots += freeEcSlots
-		}
+
+		freeEcSlots := countFreeShardSlots(dn)
+		ecNodes = append(ecNodes, &EcNode{
+			info:       dn,
+			dc:         dc,
+			rack:       rack,
+			freeEcSlot: int(freeEcSlots),
+		})
+		totalFreeEcSlots += freeEcSlots
 	})
 
-	sortEcNodes(ecNodes)
+	sortEcNodesByFreeslotsDecending(ecNodes)
 
 	return
 }

@@ -11,17 +11,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 
-	_ "github.com/chrislusf/seaweedfs/weed/statik"
 	"github.com/gorilla/mux"
 	statik "github.com/rakyll/statik/fs"
+
+	_ "github.com/chrislusf/seaweedfs/weed/statik"
 )
 
 var serverStats *stats.ServerStats
@@ -48,10 +49,16 @@ func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj inter
 	if callback == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(httpStatus)
+		if httpStatus == http.StatusNotModified {
+			return
+		}
 		_, err = w.Write(bytes)
 	} else {
 		w.Header().Set("Content-Type", "application/javascript")
 		w.WriteHeader(httpStatus)
+		if httpStatus == http.StatusNotModified {
+			return
+		}
 		if _, err = w.Write([]uint8(callback)); err != nil {
 			return
 		}
@@ -109,6 +116,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	}
 	ar := &operation.VolumeAssignRequest{
 		Count:       count,
+		DataCenter:  r.FormValue("dataCenter"),
 		Replication: r.FormValue("replication"),
 		Collection:  r.FormValue("collection"),
 		Ttl:         r.FormValue("ttl"),

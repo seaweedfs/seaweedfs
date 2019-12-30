@@ -92,18 +92,19 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 	if req.Offset == 0 {
 		// detect mime type
-		var possibleExt string
-		fh.contentType, possibleExt = mimetype.Detect(req.Data)
-		if ext := path.Ext(fh.f.Name); ext != possibleExt {
+		detectedMIME := mimetype.Detect(req.Data)
+		fh.contentType = detectedMIME.String()
+		if ext := path.Ext(fh.f.Name); ext != detectedMIME.Extension() {
 			fh.contentType = mime.TypeByExtension(ext)
 		}
 
 		fh.dirtyMetadata = true
 	}
 
-	fh.f.addChunks(chunks)
-
 	if len(chunks) > 0 {
+
+		fh.f.addChunks(chunks)
+
 		fh.dirtyMetadata = true
 	}
 
@@ -148,7 +149,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 			fh.f.entry.Attributes.Gid = req.Gid
 			fh.f.entry.Attributes.Mtime = time.Now().Unix()
 			fh.f.entry.Attributes.Crtime = time.Now().Unix()
-			fh.f.entry.Attributes.FileMode = uint32(0770)
+			fh.f.entry.Attributes.FileMode = uint32(0777 &^ fh.f.wfs.option.Umask)
 		}
 
 		request := &filer_pb.CreateEntryRequest{

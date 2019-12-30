@@ -19,10 +19,16 @@ type mapMetric struct {
 }
 
 func (mm *mapMetric) logDelete(deletedByteCount uint32) {
+	if mm == nil {
+		return
+	}
 	mm.LogDeletionCounter(deletedByteCount)
 }
 
 func (mm *mapMetric) logPut(key NeedleId, oldSize uint32, newSize uint32) {
+	if mm == nil {
+		return
+	}
 	mm.MaybeSetMaxFileKey(key)
 	mm.LogFileCounter(newSize)
 	if oldSize > 0 && oldSize != TombstoneFileSize {
@@ -30,32 +36,56 @@ func (mm *mapMetric) logPut(key NeedleId, oldSize uint32, newSize uint32) {
 	}
 }
 func (mm *mapMetric) LogFileCounter(newSize uint32) {
+	if mm == nil {
+		return
+	}
 	atomic.AddUint32(&mm.FileCounter, 1)
 	atomic.AddUint64(&mm.FileByteCounter, uint64(newSize))
 }
 func (mm *mapMetric) LogDeletionCounter(oldSize uint32) {
+	if mm == nil {
+		return
+	}
 	if oldSize > 0 {
 		atomic.AddUint32(&mm.DeletionCounter, 1)
 		atomic.AddUint64(&mm.DeletionByteCounter, uint64(oldSize))
 	}
 }
 func (mm *mapMetric) ContentSize() uint64 {
+	if mm == nil {
+		return 0
+	}
 	return atomic.LoadUint64(&mm.FileByteCounter)
 }
 func (mm *mapMetric) DeletedSize() uint64 {
+	if mm == nil {
+		return 0
+	}
 	return atomic.LoadUint64(&mm.DeletionByteCounter)
 }
 func (mm *mapMetric) FileCount() int {
+	if mm == nil {
+		return 0
+	}
 	return int(atomic.LoadUint32(&mm.FileCounter))
 }
 func (mm *mapMetric) DeletedCount() int {
+	if mm == nil {
+		return 0
+	}
 	return int(atomic.LoadUint32(&mm.DeletionCounter))
 }
 func (mm *mapMetric) MaxFileKey() NeedleId {
+	if mm == nil {
+		return 0
+	}
 	t := uint64(mm.MaximumFileKey)
 	return Uint64ToNeedleId(t)
 }
 func (mm *mapMetric) MaybeSetMaxFileKey(key NeedleId) {
+	if mm == nil {
+		return
+	}
 	if key > mm.MaxFileKey() {
 		atomic.StoreUint64(&mm.MaximumFileKey, uint64(key))
 	}

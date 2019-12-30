@@ -12,7 +12,7 @@ service SeaweedFiler {
     rpc LookupDirectoryEntry (LookupDirectoryEntryRequest) returns (LookupDirectoryEntryResponse) {
     }
 
-    rpc ListEntries (ListEntriesRequest) returns (ListEntriesResponse) {
+    rpc ListEntries (ListEntriesRequest) returns (stream ListEntriesResponse) {
     }
 
     rpc CreateEntry (CreateEntryRequest) returns (CreateEntryResponse) {
@@ -64,7 +64,7 @@ message ListEntriesRequest {
 }
 
 message ListEntriesResponse {
-    repeated Entry entries = 1;
+    Entry entry = 1;
 }
 
 message Entry {
@@ -141,6 +141,7 @@ message DeleteEntryRequest {
     // bool is_directory = 3;
     bool is_delete_data = 4;
     bool is_recursive = 5;
+    bool ignore_recursive_error = 6;
 }
 
 message DeleteEntryResponse {

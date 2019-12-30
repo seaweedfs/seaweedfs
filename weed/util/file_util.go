@@ -3,6 +3,7 @@ package util
 import (
 	"errors"
 	"os"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
@@ -39,4 +40,22 @@ func FileExists(filename string) bool {
 	}
 	return true
 
+}
+
+func CheckFile(filename string) (exists, canRead, canWrite bool, modTime time.Time, fileSize int64) {
+	exists = true
+	fi, err := os.Stat(filename)
+	if os.IsNotExist(err) {
+		exists = false
+		return
+	}
+	if fi.Mode()&0400 != 0 {
+		canRead = true
+	}
+	if fi.Mode()&0200 != 0 {
+		canWrite = true
+	}
+	modTime = fi.ModTime()
+	fileSize = fi.Size()
+	return
 }

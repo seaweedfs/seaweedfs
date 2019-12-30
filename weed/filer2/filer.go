@@ -3,17 +3,20 @@ package filer2
 import (
 	"context"
 	"fmt"
-	"google.golang.org/grpc"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"google.golang.org/grpc"
+
+	"github.com/karlseguin/ccache"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"github.com/karlseguin/ccache"
 )
+
+const PaginationSize = 1024 * 256
 
 var (
 	OS_UID = uint32(os.Getuid())
@@ -32,7 +35,7 @@ func NewFiler(masters []string, grpcDialOption grpc.DialOption) *Filer {
 	f := &Filer{
 		directoryCache:     ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
 		MasterClient:       wdclient.NewMasterClient(context.Background(), grpcDialOption, "filer", masters),
-		fileIdDeletionChan: make(chan string, 4096),
+		fileIdDeletionChan: make(chan string, PaginationSize),
 		GrpcDialOption:     grpcDialOption,
 	}
 
@@ -201,67 +204,6 @@ func (f *Filer) FindEntry(ctx context.Context, p FullPath) (entry *Entry, err er
 		}, nil
 	}
 	return f.store.FindEntry(ctx, p)
-}
-
-func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p FullPath, isRecursive bool, shouldDeleteChunks bool) (err error) {
-	entry, err := f.FindEntry(ctx, p)
-	if err != nil {
-		return err
-	}
-
-	if entry.IsDirectory() {
-		limit := int(1)
-		if isRecursive {
-			limit = math.MaxInt32
-		}
-		lastFileName := ""
-		includeLastFile := false
-		for limit > 0 {
-			entries, err := f.ListDirectoryEntries(ctx, p, lastFileName, includeLastFile, 1024)
-			if err != nil {
-				glog.Errorf("list folder %s: %v", p, err)
-				return fmt.Errorf("list folder %s: %v", p, err)
-			}
-
-			if len(entries) == 0 {
-				break
-			}
-
-			if isRecursive {
-				for _, sub := range entries {
-					lastFileName = sub.Name()
-					err = f.DeleteEntryMetaAndData(ctx, sub.FullPath, isRecursive, shouldDeleteChunks)
-					if err != nil {
-						return err
-					}
-					limit--
-					if limit <= 0 {
-						break
-					}
-				}
-			}
-
-			if len(entries) < 1024 {
-				break
-			}
-		}
-
-		f.cacheDelDirectory(string(p))
-
-	}
-
-	if shouldDeleteChunks {
-		f.DeleteChunks(p, entry.Chunks)
-	}
-
-	if p == "/" {
-		return nil
-	}
-	glog.V(3).Infof("deleting entry %v", p)
-
-	f.NotifyUpdateEvent(entry, nil, shouldDeleteChunks)
-
-	return f.store.DeleteEntry(ctx, p)
 }
 
 func (f *Filer) ListDirectoryEntries(ctx context.Context, p FullPath, startFileName string, inclusive bool, limit int) ([]*Entry, error) {

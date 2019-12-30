@@ -2,39 +2,46 @@ package seaweedfs.client;
 
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
-import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NegotiationType;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContext;
-import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.SSLException;
-import java.io.File;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Logger;
 
 public class FilerGrpcClient {
 
-    private static final Logger logger = Logger.getLogger(FilerGrpcClient.class.getName());
+    private static final Logger logger = LoggerFactory.getLogger(FilerGrpcClient.class);
 
     private final ManagedChannel channel;
     private final SeaweedFilerGrpc.SeaweedFilerBlockingStub blockingStub;
     private final SeaweedFilerGrpc.SeaweedFilerStub asyncStub;
     private final SeaweedFilerGrpc.SeaweedFilerFutureStub futureStub;
 
+    static SslContext sslContext;
 
-    public FilerGrpcClient(String host, int grpcPort) {
-        this(ManagedChannelBuilder.forAddress(host, grpcPort).usePlaintext());
+    static {
+        try {
+            sslContext = FilerSslContext.loadSslContext();
+        } catch (SSLException e) {
+            logger.warn("failed to load ssl context", e);
+        }
     }
 
-    public FilerGrpcClient(String host, int grpcPort,
-                           String caFilePath,
-                           String clientCertFilePath,
-                           String clientPrivateKeyFilePath) throws SSLException {
+    public FilerGrpcClient(String host, int grpcPort) {
+        this(host, grpcPort, sslContext);
+    }
 
-        this(NettyChannelBuilder.forAddress(host, grpcPort)
-                .negotiationType(NegotiationType.TLS)
-                .sslContext(buildSslContext(caFilePath,clientCertFilePath,clientPrivateKeyFilePath)));
+    public FilerGrpcClient(String host, int grpcPort, SslContext sslContext) {
+
+        this(sslContext == null ?
+                ManagedChannelBuilder.forAddress(host, grpcPort).usePlaintext() :
+                NettyChannelBuilder.forAddress(host, grpcPort)
+                        .negotiationType(NegotiationType.TLS)
+                        .sslContext(sslContext));
+
     }
 
     public FilerGrpcClient(ManagedChannelBuilder<?> channelBuilder) {
@@ -58,19 +65,6 @@ public class FilerGrpcClient {
 
     public SeaweedFilerGrpc.SeaweedFilerFutureStub getFutureStub() {
         return futureStub;
-    }
-
-    private static SslContext buildSslContext(String trustCertCollectionFilePath,
-                                              String clientCertChainFilePath,
-                                              String clientPrivateKeyFilePath) throws SSLException {
-        SslContextBuilder builder = GrpcSslContexts.forClient();
-        if (trustCertCollectionFilePath != null) {
-            builder.trustManager(new File(trustCertCollectionFilePath));
-        }
-        if (clientCertChainFilePath != null && clientPrivateKeyFilePath != null) {
-            builder.keyManager(new File(clientCertChainFilePath), new File(clientPrivateKeyFilePath));
-        }
-        return builder.build();
     }
 
 }

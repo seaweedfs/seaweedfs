@@ -22,21 +22,8 @@ func NewCompactNeedleMap(file *os.File) *NeedleMap {
 	return nm
 }
 
-func NewBtreeNeedleMap(file *os.File) *NeedleMap {
-	nm := &NeedleMap{
-		m: needle_map.NewBtreeMap(),
-	}
-	nm.indexFile = file
-	return nm
-}
-
 func LoadCompactNeedleMap(file *os.File) (*NeedleMap, error) {
 	nm := NewCompactNeedleMap(file)
-	return doLoading(file, nm)
-}
-
-func LoadBtreeNeedleMap(file *os.File) (*NeedleMap, error) {
-	nm := NewBtreeNeedleMap(file)
 	return doLoading(file, nm)
 }
 
@@ -47,14 +34,12 @@ func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
 			nm.FileCounter++
 			nm.FileByteCounter = nm.FileByteCounter + uint64(size)
 			oldOffset, oldSize := nm.m.Set(NeedleId(key), offset, size)
-			// glog.V(3).Infoln("reading key", key, "offset", offset*NeedlePaddingSize, "size", size, "oldSize", oldSize)
 			if !oldOffset.IsZero() && oldSize != TombstoneFileSize {
 				nm.DeletionCounter++
 				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 			}
 		} else {
 			oldSize := nm.m.Delete(NeedleId(key))
-			// glog.V(3).Infoln("removing key", key, "offset", offset*NeedlePaddingSize, "size", size, "oldSize", oldSize)
 			nm.DeletionCounter++
 			nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 		}

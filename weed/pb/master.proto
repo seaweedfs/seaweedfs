@@ -7,7 +7,7 @@ package master_pb;
 service Seaweed {
     rpc SendHeartbeat (stream Heartbeat) returns (stream HeartbeatResponse) {
     }
-    rpc KeepConnected (stream ClientListenRequest) returns (stream VolumeLocation) {
+    rpc KeepConnected (stream KeepConnectedRequest) returns (stream VolumeLocation) {
     }
     rpc LookupVolume (LookupVolumeRequest) returns (LookupVolumeResponse) {
     }
@@ -58,6 +58,7 @@ message HeartbeatResponse {
     string leader = 2;
     string metrics_address = 3;
     uint32 metrics_interval_seconds = 4;
+    repeated StorageBackend storage_backends = 5;
 }
 
 message VolumeInformationMessage {
@@ -73,6 +74,8 @@ message VolumeInformationMessage {
     uint32 ttl = 10;
     uint32 compact_revision = 11;
     int64 modified_at_second = 12;
+    string remote_storage_name = 13;
+    string remote_storage_key = 14;
 }
 
 message VolumeShortInformationMessage {
@@ -89,6 +92,12 @@ message VolumeEcShardInformationMessage {
     uint32 ec_index_bits = 3;
 }
 
+message StorageBackend {
+    string type = 1;
+    string id = 2;
+    map<string, string> properties = 3;
+}
+
 message Empty {
 }
 
@@ -101,7 +110,7 @@ message SuperBlockExtra {
     ErasureCoding erasure_coding = 1;
 }
 
-message ClientListenRequest {
+message KeepConnectedRequest {
     string name = 1;
 }
 
@@ -110,6 +119,7 @@ message VolumeLocation {
     string public_url = 2;
     repeated uint32 new_vids = 3;
     repeated uint32 deleted_vids = 4;
+    string leader = 5; // optional when leader is not itself
 }
 
 message LookupVolumeRequest {
@@ -138,6 +148,8 @@ message AssignRequest {
     string data_center = 5;
     string rack = 6;
     string data_node = 7;
+    uint32 memory_map_max_size_mb = 8;
+    uint32 Writable_volume_count = 9;
 }
 message AssignResponse {
     string fid = 1;
@@ -198,6 +210,7 @@ message DataNodeInfo {
     uint64 active_volume_count = 5;
     repeated VolumeInformationMessage volume_infos = 6;
     repeated VolumeEcShardInformationMessage ec_shard_infos = 7;
+    uint64 remote_volume_count = 8;
 }
 message RackInfo {
     string id = 1;
@@ -206,6 +219,7 @@ message RackInfo {
     uint64 free_volume_count = 4;
     uint64 active_volume_count = 5;
     repeated DataNodeInfo data_node_infos = 6;
+    uint64 remote_volume_count = 7;
 }
 message DataCenterInfo {
     string id = 1;
@@ -214,6 +228,7 @@ message DataCenterInfo {
     uint64 free_volume_count = 4;
     uint64 active_volume_count = 5;
     repeated RackInfo rack_infos = 6;
+    uint64 remote_volume_count = 7;
 }
 message TopologyInfo {
     string id = 1;
@@ -222,6 +237,7 @@ message TopologyInfo {
     uint64 free_volume_count = 4;
     uint64 active_volume_count = 5;
     repeated DataCenterInfo data_center_infos = 6;
+    uint64 remote_volume_count = 7;
 }
 message VolumeListRequest {
 }

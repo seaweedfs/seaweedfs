@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/spf13/viper"
+
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/spf13/viper"
 )
 
 func init() {
@@ -46,33 +47,33 @@ func (c *commandFsMetaNotify) Do(args []string, commandEnv *CommandEnv, writer i
 
 	ctx := context.Background()
 
-	return commandEnv.withFilerClient(ctx, filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
+	var dirCount, fileCount uint64
 
-		var dirCount, fileCount uint64
+	err = doTraverseBFS(ctx, writer, commandEnv.getFilerClient(filerServer, filerPort), filer2.FullPath(path), func(parentPath filer2.FullPath, entry *filer_pb.Entry) {
 
-		err = doTraverse(ctx, writer, client, filer2.FullPath(path), func(parentPath filer2.FullPath, entry *filer_pb.Entry) error {
-
-			if entry.IsDirectory {
-				dirCount++
-			} else {
-				fileCount++
-			}
-
-			return notification.Queue.SendMessage(
-				string(parentPath.Child(entry.Name)),
-				&filer_pb.EventNotification{
-					NewEntry: entry,
-				},
-			)
-
-		})
-
-		if err == nil {
-			fmt.Fprintf(writer, "\ntotal notified %d directories, %d files\n", dirCount, fileCount)
+		if entry.IsDirectory {
+			dirCount++
+		} else {
+			fileCount++
 		}
 
-		return err
+		notifyErr := notification.Queue.SendMessage(
+			string(parentPath.Child(entry.Name)),
+			&filer_pb.EventNotification{
+				NewEntry: entry,
+			},
+		)
+
+		if notifyErr != nil {
+			fmt.Fprintf(writer, "fail to notify new entry event for %s: %v\n", parentPath.Child(entry.Name), notifyErr)
+		}
 
 	})
+
+	if err == nil {
+		fmt.Fprintf(writer, "\ntotal notified %d directories, %d files\n", dirCount, fileCount)
+	}
+
+	return err
 
 }

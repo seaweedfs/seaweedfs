@@ -10,13 +10,14 @@ import (
 )
 
 type AbstractSqlStore struct {
-	DB               *sql.DB
-	SqlInsert        string
-	SqlUpdate        string
-	SqlFind          string
-	SqlDelete        string
-	SqlListExclusive string
-	SqlListInclusive string
+	DB                      *sql.DB
+	SqlInsert               string
+	SqlUpdate               string
+	SqlFind                 string
+	SqlDelete               string
+	SqlDeleteFolderChildren string
+	SqlListExclusive        string
+	SqlListInclusive        string
 }
 
 type TxOrDB interface {
@@ -127,6 +128,21 @@ func (store *AbstractSqlStore) DeleteEntry(ctx context.Context, fullpath filer2.
 	_, err = res.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("delete %s but no rows affected: %s", fullpath, err)
+	}
+
+	return nil
+}
+
+func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) error {
+
+	res, err := store.getTxOrDB(ctx).ExecContext(ctx, store.SqlDeleteFolderChildren, hashToLong(string(fullpath)), fullpath)
+	if err != nil {
+		return fmt.Errorf("deleteFolderChildren %s: %s", fullpath, err)
+	}
+
+	_, err = res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("deleteFolderChildren %s but no rows affected: %s", fullpath, err)
 	}
 
 	return nil

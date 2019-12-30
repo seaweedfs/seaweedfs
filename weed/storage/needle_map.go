@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"sync"
 
@@ -31,8 +30,6 @@ type NeedleMapper interface {
 	DeletedCount() int
 	MaxFileKey() NeedleId
 	IndexFileSize() uint64
-	IndexFileContent() ([]byte, error)
-	IndexFileName() string
 }
 
 type baseNeedleMapper struct {
@@ -50,10 +47,6 @@ func (nm *baseNeedleMapper) IndexFileSize() uint64 {
 	return 0
 }
 
-func (nm *baseNeedleMapper) IndexFileName() string {
-	return nm.indexFile.Name()
-}
-
 func (nm *baseNeedleMapper) appendToIndexFile(key NeedleId, offset Offset, size uint32) error {
 	bytes := needle_map.ToBytes(key, offset, size)
 
@@ -65,10 +58,4 @@ func (nm *baseNeedleMapper) appendToIndexFile(key NeedleId, offset Offset, size 
 	}
 	_, err := nm.indexFile.Write(bytes)
 	return err
-}
-
-func (nm *baseNeedleMapper) IndexFileContent() ([]byte, error) {
-	nm.indexFileAccessLock.Lock()
-	defer nm.indexFileAccessLock.Unlock()
-	return ioutil.ReadFile(nm.indexFile.Name())
 }

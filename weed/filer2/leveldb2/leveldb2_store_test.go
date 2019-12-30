@@ -13,7 +13,7 @@ func TestCreateAndFind(t *testing.T) {
 	dir, _ := ioutil.TempDir("", "seaweedfs_filer_test")
 	defer os.RemoveAll(dir)
 	store := &LevelDB2Store{}
-	store.initialize(dir,2)
+	store.initialize(dir, 2)
 	filer.SetStore(store)
 	filer.DisableDirectoryCache()
 
@@ -68,7 +68,7 @@ func TestEmptyRoot(t *testing.T) {
 	dir, _ := ioutil.TempDir("", "seaweedfs_filer_test2")
 	defer os.RemoveAll(dir)
 	store := &LevelDB2Store{}
-	store.initialize(dir,2)
+	store.initialize(dir, 2)
 	filer.SetStore(store)
 	filer.DisableDirectoryCache()
 
