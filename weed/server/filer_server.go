@@ -7,11 +7,14 @@ import (
 	"os"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"google.golang.org/grpc"
+
+	"github.com/spf13/viper"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/cassandra"
@@ -30,7 +33,6 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/notification/kafka"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/log"
 	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/spf13/viper"
 )
 
 type FilerOption struct {
@@ -45,6 +47,7 @@ type FilerOption struct {
 	DefaultLevelDbDir  string
 	DisableHttp        bool
 	Port               int
+	recursiveDelete    bool
 }
 
 type FilerServer struct {
@@ -80,6 +83,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	}
 	util.LoadConfiguration("notification", false)
 
+	fs.option.recursiveDelete = v.GetBool("filer.options.recursive_delete")
 	fs.filer.LoadConfiguration(v)
 
 	notification.LoadConfiguration(v.Sub("notification"))

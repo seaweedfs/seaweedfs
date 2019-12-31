@@ -284,6 +284,11 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	isRecursive := r.FormValue("recursive") == "true"
+	if !isRecursive && fs.option.recursiveDelete {
+		if r.FormValue("recursive") != "false" {
+			isRecursive = true
+		}
+	}
 	ignoreRecursiveError := r.FormValue("ignoreRecursiveError") == "true"
 	skipChunkDeletion := r.FormValue("skipChunkDeletion") == "true"
 

@@ -59,15 +59,24 @@ const (
 #    $HOME/.seaweedfs/filer.toml
 #    /etc/seaweedfs/filer.toml
 
+####################################################
+# Customizable filer server options
+####################################################
+[filer.options]
+# with http DELETE, by default the filer would check whether a folder is empty.
+# recursive_delete will delete all sub folders and files, similar to "rm -Rf"
+recursive_delete = false
+
+
+####################################################
+# The following are filer store options
+####################################################
+
 [leveldb2]
 # local on disk, mostly for simple single-machine setup, fairly scalable
 # faster than previous leveldb, recommended.
 enabled = true
 dir = "."					# directory to store level db files
-
-####################################################
-# multiple filers on shared storage, fairly scalable
-####################################################
 
 [mysql]  # or tidb
 # CREATE TABLE IF NOT EXISTS filemeta (
