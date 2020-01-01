@@ -2,6 +2,7 @@ FROM golang:latest
 RUN go get github.com/chrislusf/seaweedfs/weed
 RUN rm -rf /go/src/github.com/coreos/etcd/vendor/golang.org/x/net/trace
 RUN rm -rf /go/src/go.etcd.io/etcd/vendor/golang.org/x/net/trace
+RUN go get github.com/chrislusf/seaweedfs/weed
 
 # volume server gprc port
 EXPOSE 18080
