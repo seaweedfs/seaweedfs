@@ -26,7 +26,7 @@ func (c *commandVolumeTierDownload) Name() string {
 }
 
 func (c *commandVolumeTierDownload) Help() string {
-	return `move the dat file of a volume to a remote tier
+	return `download the dat file of a volume from a remote tier
 
 	volume.tier.download [-collection=""]
 	volume.tier.download [-collection=""] -volumeId=<volume_id>

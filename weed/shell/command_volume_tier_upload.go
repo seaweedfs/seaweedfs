@@ -26,7 +26,7 @@ func (c *commandVolumeTierUpload) Name() string {
 }
 
 func (c *commandVolumeTierUpload) Help() string {
-	return `move the dat file of a volume to a remote tier
+	return `upload the dat file of a volume to a remote tier
 
 	volume.tier.upload [-collection=""] [-fullPercent=95] [-quietFor=1h]
 	volume.tier.upload [-collection=""] -volumeId=<volume_id> -dest=<storage_backend> [-keepLocalDatFile]
