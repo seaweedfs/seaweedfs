@@ -108,7 +108,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 * Support ETag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/readonly mode tuning for memory/performance balance.
 * Support rebalancing the writable and readonly volumes.
-* [Transparent cloud integration](Cloud-Tier): store warm data on cloud storage.
+* [Transparent cloud integration][CloudTier]: store warm data on cloud storage.
 * [Erasure Coding for warm storage][ErasureCoding]  Rack-Aware 10.4 erasure coding reduces storage cost and increases availability.
 
 [Back to TOC](#table-of-contents)
@@ -128,6 +128,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 [Hadoop]: https://github.com/chrislusf/seaweedfs/wiki/Hadoop-Compatible-File-System
 [WebDAV]: https://github.com/chrislusf/seaweedfs/wiki/WebDAV
 [ErasureCoding]: https://github.com/chrislusf/seaweedfs/wiki/Erasure-coding-for-warm-storage
+[CloudTier]: https://github.com/chrislusf/seaweedfs/wiki/Cloud-Tier
 
 [Back to TOC](#table-of-contents)
 
