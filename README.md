@@ -106,8 +106,9 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 * Adding/Removing servers does **not** cause any data re-balancing.
 * Optionally fix the orientation for jpeg pictures.
 * Support ETag, Accept-Range, Last-Modified, etc.
-* Support in-memory/leveldb/boltdb/btree mode tuning for memory/performance balance.
+* Support in-memory/leveldb/readonly mode tuning for memory/performance balance.
 * Support rebalancing the writable and readonly volumes.
+* [Transparent cloud integration](Cloud-Tier): store warm data on cloud storage.
 
 [Back to TOC](#table-of-contents)
 
