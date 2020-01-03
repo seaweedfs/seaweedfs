@@ -104,7 +104,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 * Support ETag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/readonly mode tuning for memory/performance balance.
 * Support rebalancing the writable and readonly volumes.
-* [Transparent cloud integration][CloudTier]: store warm data on cloud storage.
+* [Transparent cloud integration][CloudTier]: unlimited capacity via tiered cloud storage for warm data.
 * [Erasure Coding for warm storage][ErasureCoding]  Rack-Aware 10.4 erasure coding reduces storage cost and increases availability.
 
 [Back to TOC](#table-of-contents)
@@ -318,11 +318,13 @@ Each individual file size is limited to the volume size.
 
 All file meta information stored on an volume server is readable from memory without disk access. Each file takes just a 16-byte map entry of <64bit key, 32bit offset, 32bit size>. Of course, each map entry has its own space cost for the map. But usually the disk space runs out before the memory does.
 
-### Extensible to the cloud ###
+### Tiered Storage to the cloud ###
 
-The local volume servers are much faster, while cloud storage has elastic capacity and more cost-efficient (usually free to upload, but relatively costly to access). SeaweedFS can take advantage of both local and cloud storage.
+The local volume servers are much faster, while cloud storages have elastic capacity and are actually more cost-efficient if not accessed often (usually free to upload, but relatively costly to access). With the append-only structure and O(1) access time, SeaweedFS can take advantage of both local and cloud storage by offloading the warm data to the cloud.
 
 Usually hot data are fresh and warm data are old. SeaweedFS puts the newly created volumes on local servers, and optionally upload the older volumes on the cloud. If the older data are accessed less often, this literally gives you unlimited capacity with limited local servers, and still fast for new data. 
+
+With the O(1) access time, the network latency cost is kept at minimum. 
 
 If the hot~warm data is split as 20~80, with 20 servers, you can achieve storage capacity of 100 servers. That's a cost saving of 80%! Or you can repurpose the 80 servers to store new data also, and get 5X storage throughput.
 
