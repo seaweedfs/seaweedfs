@@ -4,13 +4,15 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/chrislusf/seaweedfs/weed/stats"
 	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/stats"
+
+	"github.com/spf13/viper"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
-	"github.com/spf13/viper"
 )
 
 type VolumeServer struct {
@@ -29,6 +31,7 @@ type VolumeServer struct {
 	compactionBytePerSecond int64
 	MetricsAddress          string
 	MetricsIntervalSec      int
+	fileSizeLimitBytes      int64
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
@@ -41,6 +44,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	fixJpgOrientation bool,
 	readRedirect bool,
 	compactionMBPerSecond int,
+	fileSizeLimitMB int,
 ) *VolumeServer {
 
 	v := viper.GetViper()
@@ -62,6 +66,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		ReadRedirect:            readRedirect,
 		grpcDialOption:          security.LoadClientTLS(viper.Sub("grpc"), "volume"),
 		compactionBytePerSecond: int64(compactionMBPerSecond) * 1024 * 1024,
+		fileSizeLimitBytes:      int64(fileSizeLimitMB) * 1024 * 1024,
 	}
 	vs.SeedMasterNodes = masterNodes
 	vs.store = storage.NewStore(vs.grpcDialOption, port, ip, publicUrl, folders, maxCounts, vs.needleMapKind)

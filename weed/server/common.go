@@ -98,7 +98,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	}
 
 	debug("parsing upload file...")
-	fname, data, mimeType, pairMap, isGzipped, originalDataSize, lastModified, _, _, pe := needle.ParseUpload(r)
+	fname, data, mimeType, pairMap, isGzipped, originalDataSize, lastModified, _, _, pe := needle.ParseUpload(r, 256*1024*1024)
 	if pe != nil {
 		writeJsonError(w, r, http.StatusBadRequest, pe)
 		return

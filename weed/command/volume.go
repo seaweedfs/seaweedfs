@@ -10,17 +10,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util/httpdown"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/util/httpdown"
+
+	"google.golang.org/grpc/reflection"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"google.golang.org/grpc/reflection"
 )
 
 var (
@@ -47,6 +49,7 @@ type VolumeServerOptions struct {
 	cpuProfile            *string
 	memProfile            *string
 	compactionMBPerSecond *int
+	fileSizeLimitMB       *int
 }
 
 func init() {
@@ -67,6 +70,7 @@ func init() {
 	v.cpuProfile = cmdVolume.Flag.String("cpuprofile", "", "cpu profile output file")
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
 	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
+	v.fileSizeLimitMB = cmdVolume.Flag.Int("fileSizeLimitMB", 256, "limit file size to avoid out of memory")
 }
 
 var cmdVolume = &Command{
@@ -158,6 +162,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		v.whiteList,
 		*v.fixJpgOrientation, *v.readRedirect,
 		*v.compactionMBPerSecond,
+		*v.fileSizeLimitMB,
 	)
 
 	// starting grpc server

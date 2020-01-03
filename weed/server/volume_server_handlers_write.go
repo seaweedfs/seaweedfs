@@ -43,7 +43,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	needle, originalSize, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation)
+	needle, originalSize, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation, vs.fileSizeLimitBytes)
 	if ne != nil {
 		writeJsonError(w, r, http.StatusBadRequest, ne)
 		return

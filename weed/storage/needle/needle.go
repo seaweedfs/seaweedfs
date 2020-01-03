@@ -3,12 +3,12 @@ package needle
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-
-	"io/ioutil"
 
 	"github.com/chrislusf/seaweedfs/weed/images"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
@@ -50,7 +50,7 @@ func (n *Needle) String() (str string) {
 	return
 }
 
-func ParseUpload(r *http.Request) (
+func ParseUpload(r *http.Request, sizeLimit int64) (
 	fileName string, data []byte, mimeType string, pairMap map[string]string, isGzipped bool, originalDataSize int,
 	modifiedTime uint64, ttl *TTL, isChunkedFile bool, e error) {
 	pairMap = make(map[string]string)
@@ -61,13 +61,17 @@ func ParseUpload(r *http.Request) (
 	}
 
 	if r.Method == "POST" {
-		fileName, data, mimeType, isGzipped, originalDataSize, isChunkedFile, e = parseMultipart(r)
+		fileName, data, mimeType, isGzipped, originalDataSize, isChunkedFile, e = parseMultipart(r, sizeLimit)
 	} else {
 		isGzipped = false
 		mimeType = r.Header.Get("Content-Type")
 		fileName = ""
-		data, e = ioutil.ReadAll(r.Body)
+		data, e = ioutil.ReadAll(io.LimitReader(r.Body, sizeLimit+1))
 		originalDataSize = len(data)
+		if e == io.EOF || int64(originalDataSize) == sizeLimit+1 {
+			io.Copy(ioutil.Discard, r.Body)
+		}
+		r.Body.Close()
 	}
 	if e != nil {
 		return
@@ -78,11 +82,11 @@ func ParseUpload(r *http.Request) (
 
 	return
 }
-func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool) (n *Needle, originalSize int, e error) {
+func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit int64) (n *Needle, originalSize int, e error) {
 	var pairMap map[string]string
 	fname, mimeType, isGzipped, isChunkedFile := "", "", false, false
 	n = new(Needle)
-	fname, n.Data, mimeType, pairMap, isGzipped, originalSize, n.LastModified, n.Ttl, isChunkedFile, e = ParseUpload(r)
+	fname, n.Data, mimeType, pairMap, isGzipped, originalSize, n.LastModified, n.Ttl, isChunkedFile, e = ParseUpload(r, sizeLimit)
 	if e != nil {
 		return
 	}
