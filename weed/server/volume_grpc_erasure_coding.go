@@ -173,6 +173,7 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 
 	// check whether to delete the .ecx and .ecj file also
 	hasEcxFile := false
+	hasIdxFile := false
 	existingShardCount := 0
 
 	bName := filepath.Base(baseFilename)
@@ -184,6 +185,10 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 		for _, fileInfo := range fileInfos {
 			if fileInfo.Name() == bName+".ecx" || fileInfo.Name() == bName+".ecj" {
 				hasEcxFile = true
+				continue
+			}
+			if fileInfo.Name() == bName+".idx" {
+				hasIdxFile = true
 				continue
 			}
 			if strings.HasPrefix(fileInfo.Name(), bName+".ec") {
@@ -199,6 +204,10 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 		if err := os.Remove(baseFilename + ".ecj"); err != nil {
 			return nil, err
 		}
+	}
+	if !hasIdxFile {
+		// .vif is used for ec volumes and normal volumes
+		os.Remove(baseFilename + ".vif")
 	}
 
 	return &volume_server_pb.VolumeEcShardsDeleteResponse{}, nil
