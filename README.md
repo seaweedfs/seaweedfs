@@ -93,10 +93,6 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 
 [Back to TOC](#table-of-contents)
 
-## Features ##
-
-[Back to TOC](#table-of-contents)
-
 ## Additional Features ##
 * Can choose no replication or different replication levels, rack and data center aware.
 * Automatic master servers failover - no single point of failure (SPOF).
