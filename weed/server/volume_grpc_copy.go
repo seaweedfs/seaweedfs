@@ -20,7 +20,7 @@ import (
 
 const BufferSizeLimit = 1024 * 1024 * 2
 
-// VolumeCopy copy the .idx .dat files, and mount the volume
+// VolumeCopy copy the .idx .dat .vif files, and mount the volume
 func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.VolumeCopyRequest) (*volume_server_pb.VolumeCopyResponse, error) {
 
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
@@ -63,6 +63,10 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 			return err
 		}
 
+		if err := vs.doCopyFile(ctx, client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, volumeFileName, ".vif", false, true); err != nil {
+			return err
+		}
+
 		return nil
 	})
 
@@ -70,12 +74,9 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 	datFileName = volumeFileName + ".dat"
 
 	if err != nil && volumeFileName != "" {
-		if idxFileName != "" {
-			os.Remove(idxFileName)
-		}
-		if datFileName != "" {
-			os.Remove(datFileName)
-		}
+		os.Remove(idxFileName)
+		os.Remove(datFileName)
+		os.Remove(volumeFileName + ".vif")
 		return nil, err
 	}
 
