@@ -68,11 +68,6 @@ func runFix(cmd *Command, args []string) bool {
 		baseFileName = *fixVolumeCollection + "_" + baseFileName
 	}
 	indexFileName := path.Join(*fixVolumePath, baseFileName+".idx")
-	indexFile, err := os.OpenFile(indexFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		glog.Fatalf("Create Volume Index [ERROR] %s\n", err)
-	}
-	defer indexFile.Close()
 
 	nm := needle_map.NewMemDb()
 
@@ -81,9 +76,13 @@ func runFix(cmd *Command, args []string) bool {
 		nm: nm,
 	}
 
-	err = storage.ScanVolumeFile(*fixVolumePath, *fixVolumeCollection, vid, storage.NeedleMapInMemory, scanner)
-	if err != nil {
-		glog.Fatalf("Export Volume File [ERROR] %s\n", err)
+	if err = storage.ScanVolumeFile(*fixVolumePath, *fixVolumeCollection, vid, storage.NeedleMapInMemory, scanner); err != nil {
+		glog.Fatalf("scan .dat File: %v", err)
+		os.Remove(indexFileName)
+	}
+
+	if err := nm.SaveToIdx(indexFileName); err != nil {
+		glog.Fatalf("save to .idx File: %v", err)
 		os.Remove(indexFileName)
 	}
 
