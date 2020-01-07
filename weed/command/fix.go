@@ -76,7 +76,7 @@ func runFix(cmd *Command, args []string) bool {
 		nm: nm,
 	}
 
-	if err = storage.ScanVolumeFile(*fixVolumePath, *fixVolumeCollection, vid, storage.NeedleMapInMemory, scanner); err != nil {
+	if err := storage.ScanVolumeFile(*fixVolumePath, *fixVolumeCollection, vid, storage.NeedleMapInMemory, scanner); err != nil {
 		glog.Fatalf("scan .dat File: %v", err)
 		os.Remove(indexFileName)
 	}
