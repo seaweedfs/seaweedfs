@@ -356,19 +356,17 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string, preallocate int64) (err error) {
 	var (
 		dstDatBackend backend.BackendStorageFile
-		oldIndexFile  *os.File
 	)
 	if dstDatBackend, err = createVolumeFile(dstName, preallocate, 0); err != nil {
 		return
 	}
 	defer dstDatBackend.Close()
 
-	if oldIndexFile, err = os.OpenFile(v.FileName()+".idx", os.O_RDONLY, 0644); err != nil {
+	oldNm := needle_map.NewMemDb()
+	newNm := needle_map.NewMemDb()
+	if err = oldNm.LoadFromIdx(v.FileName()+".idx"); err != nil {
 		return
 	}
-	defer oldIndexFile.Close()
-
-	nm := needle_map.NewMemDb()
 
 	now := uint64(time.Now().Unix())
 
@@ -376,13 +374,11 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string, preallocate i
 	dstDatBackend.WriteAt(v.SuperBlock.Bytes(), 0)
 	newOffset := int64(v.SuperBlock.BlockSize())
 
-	idx2.WalkIndexFile(oldIndexFile, func(key NeedleId, offset Offset, size uint32) error {
-		if offset.IsZero() || size == TombstoneFileSize {
-			return nil
-		}
+	oldNm.AscendingVisit(func(value needle_map.NeedleValue) error {
 
-		nv, ok := v.nm.Get(key)
-		if !ok {
+		offset, size := value.Offset, value.Size
+
+		if offset.IsZero() || size == TombstoneFileSize {
 			return nil
 		}
 
@@ -396,21 +392,19 @@ func (v *Volume) copyDataBasedOnIndexFile(dstName, idxName string, preallocate i
 			return nil
 		}
 
-		glog.V(4).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
-		if nv.Offset == offset && nv.Size > 0 {
-			if err = nm.Set(n.Id, ToOffset(newOffset), n.Size); err != nil {
-				return fmt.Errorf("cannot put needle: %s", err)
-			}
-			if _, _, _, err = n.Append(dstDatBackend, v.Version()); err != nil {
-				return fmt.Errorf("cannot append needle: %s", err)
-			}
-			newOffset += n.DiskSize(v.Version())
-			glog.V(3).Infoln("saving key", n.Id, "volume offset", offset, "=>", newOffset, "data_size", n.Size)
+		if err = newNm.Set(n.Id, ToOffset(newOffset), n.Size); err != nil {
+			return fmt.Errorf("cannot put needle: %s", err)
 		}
+		if _, _, _, err = n.Append(dstDatBackend, v.Version()); err != nil {
+			return fmt.Errorf("cannot append needle: %s", err)
+		}
+		newOffset += n.DiskSize(v.Version())
+		glog.V(3).Infoln("saving key", n.Id, "volume offset", offset, "=>", newOffset, "data_size", n.Size)
+
 		return nil
 	})
 
-	nm.SaveToIdx(idxName)
+	newNm.SaveToIdx(idxName)
 
 	return
 }
