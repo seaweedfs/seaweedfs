@@ -26,9 +26,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	fileName := v.FileName()
 	alreadyHasSuperBlock := false
 
-	if !v.maybeLoadVolumeInfo() {
-		v.SaveVolumeInfo()
-	}
+	hasVolumeInfoFile := v.maybeLoadVolumeInfo() && v.volumeInfo.Version != 0
 
 	if v.HasRemoteFile() {
 		v.noWriteCanDelete = true
@@ -139,6 +137,11 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				}
 			}
 		}
+	}
+
+	if !hasVolumeInfoFile {
+		v.volumeInfo.Version = uint32(v.SuperBlock.Version)
+		v.SaveVolumeInfo()
 	}
 
 	stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume").Inc()
