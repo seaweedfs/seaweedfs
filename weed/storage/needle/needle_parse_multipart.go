@@ -42,8 +42,6 @@ func parseMultipart(r *http.Request, sizeLimit int64) (
 		fileName = path.Base(fileName)
 	}
 
-	println("reading part", sizeLimit)
-
 	data, e = ioutil.ReadAll(io.LimitReader(part, sizeLimit+1))
 	if e != nil {
 		glog.V(0).Infoln("Reading Content [ERROR]", e)
