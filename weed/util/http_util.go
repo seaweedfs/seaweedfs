@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 var (
@@ -210,7 +212,8 @@ func ReadUrl(fileUrl string, offset int64, size int, buf []byte, isReadRange boo
 	}
 
 	var reader io.ReadCloser
-	switch r.Header.Get("Content-Encoding") {
+	contentEncoding := r.Header.Get("Content-Encoding")
+	switch contentEncoding {
 	case "gzip":
 		reader, err = gzip.NewReader(r.Body)
 		defer reader.Close()
@@ -242,7 +245,7 @@ func ReadUrl(fileUrl string, offset int64, size int, buf []byte, isReadRange boo
 	// drains the response body to avoid memory leak
 	data, _ := ioutil.ReadAll(reader)
 	if len(data) != 0 {
-		err = fmt.Errorf("buffer size is too small. remains %d", len(data))
+		glog.V(1).Infof("%s reader has remaining %d bytes", contentEncoding, len(data))
 	}
 	return n, err
 }
