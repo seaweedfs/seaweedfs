@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"google.golang.org/grpc"
 	"net/http"
 	"strings"
 	"sync"
+
+	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 )
 
 type DeleteResult struct {
@@ -94,7 +96,7 @@ func DeleteFilesWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []str
 
 			if deleteResults, deleteErr := DeleteFilesAtOneVolumeServer(server, grpcDialOption, fidList); deleteErr != nil {
 				err = deleteErr
-			} else {
+			} else if deleteResults != nil {
 				resultChan <- deleteResults
 			}
 
