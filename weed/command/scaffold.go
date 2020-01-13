@@ -145,9 +145,9 @@ addresses = [
     "localhost:30006",
 ]
 password = ""
-// allows reads from slave servers or the master, but all writes still go to the master
+# allows reads from slave servers or the master, but all writes still go to the master
 readOnly = true
-// automatically use the closest Redis server for reads
+# automatically use the closest Redis server for reads
 routeByLatency = true
 
 [etcd]
