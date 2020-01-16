@@ -3,6 +3,8 @@ package filesys
 import (
 	"context"
 	"fmt"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
@@ -11,6 +13,7 @@ import (
 func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirectory fs.Node) error {
 
 	newDir := newDirectory.(*Dir)
+	glog.V(4).Infof("dir Rename %s/%s => %s/%s", dir.Path, req.OldName, newDir.Path, req.NewName)
 
 	return dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
