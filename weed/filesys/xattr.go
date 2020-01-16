@@ -125,15 +125,13 @@ func (wfs *WFS) maybeLoadEntry(ctx context.Context, dir, name string) (entry *fi
 		}
 
 		resp, err := client.LookupDirectoryEntry(ctx, request)
-		if err != nil {
+		if err != nil || resp == nil || resp.Entry == nil {
 			glog.V(3).Infof("file attr read file %v: %v", request, err)
 			return fuse.ENOENT
 		}
 
 		entry = resp.Entry
-		if entry != nil {
-			wfs.listDirectoryEntriesCache.Set(fullpath, entry, wfs.option.EntryCacheTtl)
-		}
+		wfs.listDirectoryEntriesCache.Set(fullpath, entry, wfs.option.EntryCacheTtl)
 
 		return nil
 	})

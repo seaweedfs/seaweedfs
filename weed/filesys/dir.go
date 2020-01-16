@@ -184,7 +184,8 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		glog.V(3).Infof("dir Lookup cache miss %s", fullFilePath)
 		entry, err = filer2.GetEntry(ctx, dir.wfs, fullFilePath)
 		if err != nil {
-			return nil, err
+			glog.V(1).Infof("dir GetEntry %s: %v", fullFilePath, err)
+			return nil, fuse.ENOENT
 		}
 		if entry != nil {
 			dir.wfs.listDirectoryEntriesCache.Set(fullFilePath, entry, 5*time.Minute)
@@ -389,9 +390,6 @@ func (dir *Dir) maybeLoadEntry(ctx context.Context) error {
 		entry, err := dir.wfs.maybeLoadEntry(ctx, parentDirPath, name)
 		if err != nil {
 			return err
-		}
-		if entry == nil {
-			return fuse.ENOENT
 		}
 		dir.entry = entry
 	}
