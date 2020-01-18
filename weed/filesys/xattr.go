@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/fuse"
@@ -115,7 +116,7 @@ func (wfs *WFS) maybeLoadEntry(ctx context.Context, dir, name string) (entry *fi
 		entry = item.Value().(*filer_pb.Entry)
 		return
 	}
-	glog.V(3).Infof("read entry cache miss %s", fullpath)
+	// glog.V(3).Infof("read entry cache miss %s", fullpath)
 
 	err = wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -126,6 +127,10 @@ func (wfs *WFS) maybeLoadEntry(ctx context.Context, dir, name string) (entry *fi
 
 		resp, err := client.LookupDirectoryEntry(ctx, request)
 		if err != nil || resp == nil || resp.Entry == nil {
+			if err == filer2.ErrNotFound {
+				glog.V(3).Infof("file attr read not found file %v: %v", request, err)
+				return fuse.ENOENT
+			}
 			glog.V(3).Infof("file attr read file %v: %v", request, err)
 			return fuse.ENOENT
 		}

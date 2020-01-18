@@ -69,6 +69,8 @@ func (dir *Dir) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp *f
 }
 
 func (dir *Dir) setRootDirAttributes(attr *fuse.Attr) {
+	attr.Inode = 1
+	attr.Valid = time.Hour
 	attr.Uid = dir.wfs.option.MountUid
 	attr.Gid = dir.wfs.option.MountGid
 	attr.Mode = dir.wfs.option.MountMode
@@ -76,6 +78,7 @@ func (dir *Dir) setRootDirAttributes(attr *fuse.Attr) {
 	attr.Ctime = dir.wfs.option.MountCtime
 	attr.Mtime = dir.wfs.option.MountMtime
 	attr.Atime = dir.wfs.option.MountMtime
+	attr.BlockSize = 1024 * 1024
 }
 
 func (dir *Dir) newFile(name string, entry *filer_pb.Entry) *File {
@@ -202,6 +205,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		}
 
 		resp.EntryValid = time.Duration(0)
+		resp.Attr.Valid = time.Duration(0)
 		resp.Attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
 		resp.Attr.Ctime = time.Unix(entry.Attributes.Crtime, 0)
 		resp.Attr.Mode = os.FileMode(entry.Attributes.FileMode)
@@ -211,6 +215,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		return node, nil
 	}
 
+	glog.V(1).Infof("not found dir GetEntry %s: %v", fullFilePath, err)
 	return nil, fuse.ENOENT
 }
 
@@ -270,7 +275,7 @@ func (dir *Dir) removeOneFile(ctx context.Context, req *fuse.RemoveRequest) erro
 		glog.V(3).Infof("remove file: %v", request)
 		_, err := client.DeleteEntry(ctx, request)
 		if err != nil {
-			glog.V(3).Infof("remove file %s/%s: %v", dir.Path, req.Name, err)
+			glog.V(3).Infof("not found remove file %s/%s: %v", dir.Path, req.Name, err)
 			return fuse.ENOENT
 		}
 
@@ -294,7 +299,7 @@ func (dir *Dir) removeFolder(ctx context.Context, req *fuse.RemoveRequest) error
 		glog.V(3).Infof("remove directory entry: %v", request)
 		_, err := client.DeleteEntry(ctx, request)
 		if err != nil {
-			glog.V(3).Infof("remove %s/%s: %v", dir.Path, req.Name, err)
+			glog.V(3).Infof("not found remove %s/%s: %v", dir.Path, req.Name, err)
 			return fuse.ENOENT
 		}
 
