@@ -182,7 +182,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 	glog.V(4).Infof("dir Lookup %s: %s", dir.Path, req.Name)
 
 	var entry *filer_pb.Entry
-	fullFilePath := path.Join(dir.Path, req.Name)
+	fullFilePath := string(filer2.NewFullPath(dir.Path, req.Name))
 
 	item := dir.wfs.listDirectoryEntriesCache.Get(fullFilePath)
 	if item != nil && !item.Expired() {
@@ -233,7 +233,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 	cacheTtl := 5 * time.Minute
 
 	readErr := filer2.ReadDirAllEntries(ctx, dir.wfs, dir.Path, "", func(entry *filer_pb.Entry, isLast bool) {
-		fullpath := path.Join(dir.Path, entry.Name)
+		fullpath := string(filer2.NewFullPath(dir.Path, entry.Name))
 		inode := uint64(util.HashStringToLong(fullpath))
 		if entry.IsDirectory {
 			dirent := fuse.Dirent{Inode: inode, Name: entry.Name, Type: fuse.DT_Dir}
@@ -295,7 +295,7 @@ func (dir *Dir) removeOneFile(ctx context.Context, req *fuse.RemoveRequest) erro
 
 func (dir *Dir) removeFolder(ctx context.Context, req *fuse.RemoveRequest) error {
 
-	dir.wfs.listDirectoryEntriesCache.Delete(path.Join(dir.Path, req.Name))
+	dir.wfs.listDirectoryEntriesCache.Delete(string(filer2.NewFullPath(dir.Path, req.Name)))
 
 	return dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 

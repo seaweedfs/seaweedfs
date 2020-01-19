@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/fuse"
@@ -15,7 +16,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 	newDir := newDirectory.(*Dir)
 	glog.V(4).Infof("dir Rename %s/%s => %s/%s", dir.Path, req.OldName, newDir.Path, req.NewName)
 
-	return dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	err := dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AtomicRenameEntryRequest{
 			OldDirectory: dir.Path,
@@ -33,4 +34,12 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 
 	})
 
+	if err == nil {
+		oldpath := string(filer2.NewFullPath(dir.Path, req.OldName))
+		newpath := string(filer2.NewFullPath(newDir.Path, req.NewName))
+		dir.wfs.listDirectoryEntriesCache.Delete(oldpath)
+		dir.wfs.listDirectoryEntriesCache.Delete(newpath)
+	}
+
+ 	return err
 }

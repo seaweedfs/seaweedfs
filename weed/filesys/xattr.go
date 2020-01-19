@@ -2,7 +2,6 @@ package filesys
 
 import (
 	"context"
-	"path/filepath"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -110,7 +109,7 @@ func listxattr(entry *filer_pb.Entry, req *fuse.ListxattrRequest, resp *fuse.Lis
 
 func (wfs *WFS) maybeLoadEntry(ctx context.Context, dir, name string) (entry *filer_pb.Entry, err error) {
 
-	fullpath := filepath.Join(dir, name)
+	fullpath := string(filer2.NewFullPath(dir, name))
 	item := wfs.listDirectoryEntriesCache.Get(fullpath)
 	if item != nil && !item.Expired() {
 		entry = item.Value().(*filer_pb.Entry)
