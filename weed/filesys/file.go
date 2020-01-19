@@ -10,6 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
 )
@@ -40,12 +41,13 @@ func (file *File) fullpath() string {
 
 func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
-	glog.V(4).Infof("file Attr %s", file.fullpath())
+	glog.V(4).Infof("file Attr %s, open:%v, existing attr: %+v", file.fullpath(), file.isOpen, attr)
 
 	if err := file.maybeLoadEntry(ctx); err != nil {
 		return err
 	}
 
+	attr.Inode = uint64(util.HashStringToLong(file.fullpath()))
 	attr.Mode = os.FileMode(file.entry.Attributes.FileMode)
 	attr.Size = filer2.TotalSize(file.entry.Chunks)
 	attr.Mtime = time.Unix(file.entry.Attributes.Mtime, 0)

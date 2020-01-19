@@ -9,6 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
 )
@@ -34,25 +35,30 @@ var _ = fs.NodeListxattrer(&Dir{})
 
 func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 
-	glog.V(3).Infof("dir Attr %s", dir.Path)
+	glog.V(3).Infof("dir Attr %s, existing attr: %+v", dir.Path, attr)
 
 	// https://github.com/bazil/fuse/issues/196
 	attr.Valid = time.Second
 
 	if dir.Path == dir.wfs.option.FilerMountRootPath {
 		dir.setRootDirAttributes(attr)
+		glog.V(3).Infof("root dir Attr %s, attr: %+v", dir.Path, attr)
 		return nil
 	}
 
 	if err := dir.maybeLoadEntry(ctx); err != nil {
+		glog.V(3).Infof("dir Attr %s,err: %+v", dir.Path, err)
 		return err
 	}
 
+	attr.Inode = uint64(util.HashStringToLong(dir.Path))
 	attr.Mode = os.FileMode(dir.entry.Attributes.FileMode) | os.ModeDir
 	attr.Mtime = time.Unix(dir.entry.Attributes.Mtime, 0)
 	attr.Ctime = time.Unix(dir.entry.Attributes.Crtime, 0)
 	attr.Gid = dir.entry.Attributes.Gid
 	attr.Uid = dir.entry.Attributes.Uid
+
+	glog.V(3).Infof("dir Attr %s, attr: %+v", dir.Path, attr)
 
 	return nil
 }
@@ -69,7 +75,7 @@ func (dir *Dir) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp *f
 }
 
 func (dir *Dir) setRootDirAttributes(attr *fuse.Attr) {
-	attr.Inode = 1
+	attr.Inode = uint64(util.HashStringToLong(dir.Path))
 	attr.Valid = time.Hour
 	attr.Uid = dir.wfs.option.MountUid
 	attr.Gid = dir.wfs.option.MountGid
@@ -204,8 +210,9 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 			node = dir.newFile(req.Name, entry)
 		}
 
-		resp.EntryValid = time.Duration(0)
-		resp.Attr.Valid = time.Duration(0)
+		resp.EntryValid = time.Second
+		resp.Attr.Inode = uint64(util.HashStringToLong(fullFilePath))
+		resp.Attr.Valid = time.Second
 		resp.Attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
 		resp.Attr.Ctime = time.Unix(entry.Attributes.Crtime, 0)
 		resp.Attr.Mode = os.FileMode(entry.Attributes.FileMode)
@@ -226,14 +233,16 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 	cacheTtl := 5 * time.Minute
 
 	readErr := filer2.ReadDirAllEntries(ctx, dir.wfs, dir.Path, "", func(entry *filer_pb.Entry, isLast bool) {
+		fullpath := path.Join(dir.Path, entry.Name)
+		inode := uint64(util.HashStringToLong(fullpath))
 		if entry.IsDirectory {
-			dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_Dir}
+			dirent := fuse.Dirent{Inode: inode, Name: entry.Name, Type: fuse.DT_Dir}
 			ret = append(ret, dirent)
 		} else {
-			dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_File}
+			dirent := fuse.Dirent{Inode: inode, Name: entry.Name, Type: fuse.DT_File}
 			ret = append(ret, dirent)
 		}
-		dir.wfs.listDirectoryEntriesCache.Set(path.Join(dir.Path, entry.Name), entry, cacheTtl)
+		dir.wfs.listDirectoryEntriesCache.Set(fullpath, entry, cacheTtl)
 	})
 	if readErr != nil {
 		glog.V(0).Infof("list %s: %v", dir.Path, err)
