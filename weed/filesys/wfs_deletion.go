@@ -50,7 +50,10 @@ func deleteFileIds(ctx context.Context, grpcDialOption grpc.DialOption, client f
 				VolumeId:  vid,
 				Locations: nil,
 			}
-			locations := resp.LocationsMap[vid]
+			locations, found := resp.LocationsMap[vid]
+			if !found {
+				continue
+			}
 			for _, loc := range locations.Locations {
 				lr.Locations = append(lr.Locations, operation.Location{
 					Url:       loc.Url,
