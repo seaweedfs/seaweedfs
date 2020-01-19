@@ -50,6 +50,10 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Inode = uint64(util.HashStringToLong(file.fullpath()))
 	attr.Mode = os.FileMode(file.entry.Attributes.FileMode)
 	attr.Size = filer2.TotalSize(file.entry.Chunks)
+	if file.isOpen {
+		attr.Size = file.entry.Attributes.FileSize
+	}
+	attr.Crtime = time.Unix(file.entry.Attributes.Crtime, 0)
 	attr.Mtime = time.Unix(file.entry.Attributes.Mtime, 0)
 	attr.Gid = file.entry.Attributes.Gid
 	attr.Uid = file.entry.Attributes.Uid
