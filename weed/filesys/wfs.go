@@ -11,6 +11,7 @@ import (
 	"github.com/karlseguin/ccache"
 	"google.golang.org/grpc"
 
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -47,7 +48,7 @@ type WFS struct {
 
 	// contains all open handles
 	handles           []*FileHandle
-	pathToHandleIndex map[string]int
+	pathToHandleIndex map[filer2.FullPath]int
 	pathToHandleLock  sync.Mutex
 	bufPool           sync.Pool
 
@@ -62,7 +63,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	wfs := &WFS{
 		option:                    option,
 		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(option.DirListCacheLimit * 3).ItemsToPrune(100)),
-		pathToHandleIndex:         make(map[string]int),
+		pathToHandleIndex:         make(map[filer2.FullPath]int),
 		bufPool: sync.Pool{
 			New: func() interface{} {
 				return make([]byte, option.ChunkSizeLimit)
@@ -117,7 +118,7 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 	return
 }
 
-func (wfs *WFS) ReleaseHandle(fullpath string, handleId fuse.HandleID) {
+func (wfs *WFS) ReleaseHandle(fullpath filer2.FullPath, handleId fuse.HandleID) {
 	wfs.pathToHandleLock.Lock()
 	defer wfs.pathToHandleLock.Unlock()
 
@@ -190,4 +191,22 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 	resp.Frsize = uint32(blockSize)
 
 	return nil
+}
+
+func (wfs *WFS) cacheGet(path filer2.FullPath) *filer_pb.Entry {
+	item := wfs.listDirectoryEntriesCache.Get(string(path))
+	if item != nil && !item.Expired() {
+		return item.Value().(*filer_pb.Entry)
+	}
+	return nil
+}
+func (wfs *WFS) cacheSet(path filer2.FullPath, entry *filer_pb.Entry, ttl time.Duration) {
+	if entry == nil {
+		wfs.listDirectoryEntriesCache.Delete(string(path))
+	}else{
+		wfs.listDirectoryEntriesCache.Set(string(path), entry, ttl)
+	}
+}
+func (wfs *WFS) cacheDelete(path filer2.FullPath) {
+	wfs.listDirectoryEntriesCache.Delete(string(path))
 }

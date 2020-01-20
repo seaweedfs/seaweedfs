@@ -3,14 +3,12 @@ package filesys
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"sort"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
 )
@@ -35,19 +33,22 @@ type File struct {
 	isOpen         bool
 }
 
-func (file *File) fullpath() string {
-	return filepath.Join(file.dir.Path, file.Name)
+func (file *File) fullpath() filer2.FullPath {
+	return filer2.NewFullPath(file.dir.Path, file.Name)
 }
 
 func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
 	glog.V(4).Infof("file Attr %s, open:%v, existing attr: %+v", file.fullpath(), file.isOpen, attr)
 
-	if err := file.maybeLoadEntry(ctx); err != nil {
-		return err
+	if !file.isOpen {
+		if err := file.maybeLoadEntry(ctx); err != nil {
+			return err
+		}
 	}
 
-	attr.Inode = uint64(util.HashStringToLong(file.fullpath()))
+	attr.Inode = file.fullpath().AsInode()
+	attr.Valid = time.Second
 	attr.Mode = os.FileMode(file.entry.Attributes.FileMode)
 	attr.Size = filer2.TotalSize(file.entry.Chunks)
 	if file.isOpen {
@@ -132,7 +133,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		return nil
 	}
 
-	file.wfs.listDirectoryEntriesCache.Delete(file.fullpath())
+	file.wfs.cacheDelete(file.fullpath())
 
 	return file.saveEntry(ctx)
 
@@ -150,7 +151,7 @@ func (file *File) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error
 		return err
 	}
 
-	file.wfs.listDirectoryEntriesCache.Delete(file.fullpath())
+	file.wfs.cacheDelete(file.fullpath())
 
 	return file.saveEntry(ctx)
 
@@ -168,7 +169,7 @@ func (file *File) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest)
 		return err
 	}
 
-	file.wfs.listDirectoryEntriesCache.Delete(file.fullpath())
+	file.wfs.cacheDelete(file.fullpath())
 
 	return file.saveEntry(ctx)
 

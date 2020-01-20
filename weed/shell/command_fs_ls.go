@@ -69,7 +69,7 @@ func (c *commandFsLs) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 	dir, name := filer2.FullPath(path).DirAndName()
 	entryCount := 0
 
-	err = filer2.ReadDirAllEntries(ctx, commandEnv.getFilerClient(filerServer, filerPort), dir, name, func(entry *filer_pb.Entry, isLast bool) {
+	err = filer2.ReadDirAllEntries(ctx, commandEnv.getFilerClient(filerServer, filerPort), filer2.FullPath(dir), name, func(entry *filer_pb.Entry, isLast bool) {
 
 		if !showHidden && strings.HasPrefix(entry.Name, ".") {
 			return

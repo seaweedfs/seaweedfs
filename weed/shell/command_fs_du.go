@@ -59,7 +59,7 @@ func (c *commandFsDu) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 
 func duTraverseDirectory(ctx context.Context, writer io.Writer, filerClient filer2.FilerClient, dir, name string) (blockCount uint64, byteCount uint64, err error) {
 
-	err = filer2.ReadDirAllEntries(ctx, filerClient, dir, name, func(entry *filer_pb.Entry, isLast bool) {
+	err = filer2.ReadDirAllEntries(ctx, filerClient, filer2.FullPath(dir), name, func(entry *filer_pb.Entry, isLast bool) {
 		if entry.IsDirectory {
 			subDir := fmt.Sprintf("%s/%s", dir, entry.Name)
 			if dir == "/" {

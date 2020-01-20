@@ -9,7 +9,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
 )
@@ -51,7 +50,7 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 		return err
 	}
 
-	attr.Inode = uint64(util.HashStringToLong(dir.Path))
+	attr.Inode = filer2.FullPath(dir.Path).AsInode()
 	attr.Mode = os.FileMode(dir.entry.Attributes.FileMode) | os.ModeDir
 	attr.Mtime = time.Unix(dir.entry.Attributes.Mtime, 0)
 	attr.Ctime = time.Unix(dir.entry.Attributes.Crtime, 0)
@@ -75,7 +74,7 @@ func (dir *Dir) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp *f
 }
 
 func (dir *Dir) setRootDirAttributes(attr *fuse.Attr) {
-	attr.Inode = uint64(util.HashStringToLong(dir.Path))
+	attr.Inode = 1 // filer2.FullPath(dir.Path).AsInode()
 	attr.Valid = time.Hour
 	attr.Uid = dir.wfs.option.MountUid
 	attr.Gid = dir.wfs.option.MountGid
@@ -181,13 +180,8 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 
 	glog.V(4).Infof("dir Lookup %s: %s", dir.Path, req.Name)
 
-	var entry *filer_pb.Entry
-	fullFilePath := string(filer2.NewFullPath(dir.Path, req.Name))
-
-	item := dir.wfs.listDirectoryEntriesCache.Get(fullFilePath)
-	if item != nil && !item.Expired() {
-		entry = item.Value().(*filer_pb.Entry)
-	}
+	fullFilePath := filer2.NewFullPath(dir.Path, req.Name)
+	entry := dir.wfs.cacheGet(fullFilePath)
 
 	if entry == nil {
 		glog.V(3).Infof("dir Lookup cache miss %s", fullFilePath)
@@ -196,22 +190,20 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 			glog.V(1).Infof("dir GetEntry %s: %v", fullFilePath, err)
 			return nil, fuse.ENOENT
 		}
-		if entry != nil {
-			dir.wfs.listDirectoryEntriesCache.Set(fullFilePath, entry, 5*time.Minute)
-		}
+		dir.wfs.cacheSet(fullFilePath, entry, 5*time.Minute)
 	} else {
 		glog.V(4).Infof("dir Lookup cache hit %s", fullFilePath)
 	}
 
 	if entry != nil {
 		if entry.IsDirectory {
-			node = &Dir{Path: path.Join(dir.Path, req.Name), wfs: dir.wfs, entry: entry}
+			node = &Dir{Path: string(fullFilePath), wfs: dir.wfs, entry: entry}
 		} else {
 			node = dir.newFile(req.Name, entry)
 		}
 
 		resp.EntryValid = time.Second
-		resp.Attr.Inode = uint64(util.HashStringToLong(fullFilePath))
+		resp.Attr.Inode = fullFilePath.AsInode()
 		resp.Attr.Valid = time.Second
 		resp.Attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
 		resp.Attr.Ctime = time.Unix(entry.Attributes.Crtime, 0)
@@ -232,9 +224,9 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 	cacheTtl := 5 * time.Minute
 
-	readErr := filer2.ReadDirAllEntries(ctx, dir.wfs, dir.Path, "", func(entry *filer_pb.Entry, isLast bool) {
-		fullpath := string(filer2.NewFullPath(dir.Path, entry.Name))
-		inode := uint64(util.HashStringToLong(fullpath))
+	readErr := filer2.ReadDirAllEntries(ctx, dir.wfs, filer2.FullPath(dir.Path), "", func(entry *filer_pb.Entry, isLast bool) {
+		fullpath := filer2.NewFullPath(dir.Path, entry.Name)
+		inode := fullpath.AsInode()
 		if entry.IsDirectory {
 			dirent := fuse.Dirent{Inode: inode, Name: entry.Name, Type: fuse.DT_Dir}
 			ret = append(ret, dirent)
@@ -242,7 +234,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 			dirent := fuse.Dirent{Inode: inode, Name: entry.Name, Type: fuse.DT_File}
 			ret = append(ret, dirent)
 		}
-		dir.wfs.listDirectoryEntriesCache.Set(fullpath, entry, cacheTtl)
+		dir.wfs.cacheSet(fullpath, entry, cacheTtl)
 	})
 	if readErr != nil {
 		glog.V(0).Infof("list %s: %v", dir.Path, err)
@@ -264,14 +256,15 @@ func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 
 func (dir *Dir) removeOneFile(ctx context.Context, req *fuse.RemoveRequest) error {
 
-	entry, err := filer2.GetEntry(ctx, dir.wfs, path.Join(dir.Path, req.Name))
+	filePath := filer2.NewFullPath(dir.Path, req.Name)
+	entry, err := filer2.GetEntry(ctx, dir.wfs, filePath)
 	if err != nil {
 		return err
 	}
 
 	dir.wfs.deleteFileChunks(ctx, entry.Chunks)
 
-	dir.wfs.listDirectoryEntriesCache.Delete(path.Join(dir.Path, req.Name))
+	dir.wfs.cacheDelete(filePath)
 
 	return dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -295,7 +288,7 @@ func (dir *Dir) removeOneFile(ctx context.Context, req *fuse.RemoveRequest) erro
 
 func (dir *Dir) removeFolder(ctx context.Context, req *fuse.RemoveRequest) error {
 
-	dir.wfs.listDirectoryEntriesCache.Delete(string(filer2.NewFullPath(dir.Path, req.Name)))
+	dir.wfs.cacheDelete(filer2.NewFullPath(dir.Path, req.Name))
 
 	return dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -340,7 +333,7 @@ func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 		dir.entry.Attributes.Mtime = req.Mtime.Unix()
 	}
 
-	dir.wfs.listDirectoryEntriesCache.Delete(dir.Path)
+	dir.wfs.cacheDelete(filer2.FullPath(dir.Path))
 
 	return dir.saveEntry(ctx)
 
@@ -358,7 +351,7 @@ func (dir *Dir) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
 		return err
 	}
 
-	dir.wfs.listDirectoryEntriesCache.Delete(dir.Path)
+	dir.wfs.cacheDelete(filer2.FullPath(dir.Path))
 
 	return dir.saveEntry(ctx)
 
@@ -376,7 +369,7 @@ func (dir *Dir) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest) e
 		return err
 	}
 
-	dir.wfs.listDirectoryEntriesCache.Delete(dir.Path)
+	dir.wfs.cacheDelete(filer2.FullPath(dir.Path))
 
 	return dir.saveEntry(ctx)
 

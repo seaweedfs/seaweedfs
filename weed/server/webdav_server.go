@@ -335,8 +335,10 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 		return nil, err
 	}
 
+	fullpath := filer2.FullPath(fullFilePath)
+
 	var fi FileInfo
-	entry, err := filer2.GetEntry(ctx, fs, fullFilePath)
+	entry, err := filer2.GetEntry(ctx, fs, fullpath)
 	if entry == nil {
 		return nil, os.ErrNotExist
 	}
@@ -344,14 +346,12 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 		return nil, err
 	}
 	fi.size = int64(filer2.TotalSize(entry.GetChunks()))
-	fi.name = fullFilePath
+	fi.name = string(fullpath)
 	fi.mode = os.FileMode(entry.Attributes.FileMode)
 	fi.modifiledTime = time.Unix(entry.Attributes.Mtime, 0)
 	fi.isDirectory = entry.IsDirectory
 
-	_, fi.name = path.Split(path.Clean(fi.name))
-	if fi.name == "" {
-		fi.name = "/"
+	if fi.name == "/" {
 		fi.modifiledTime = time.Now()
 		fi.isDirectory = true
 	}
@@ -372,7 +372,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 	var err error
 	ctx := context.Background()
 	if f.entry == nil {
-		f.entry, err = filer2.GetEntry(ctx, f.fs, f.name)
+		f.entry, err = filer2.GetEntry(ctx, f.fs, filer2.FullPath(f.name))
 	}
 
 	if f.entry == nil {
@@ -470,7 +470,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	ctx := context.Background()
 
 	if f.entry == nil {
-		f.entry, err = filer2.GetEntry(ctx, f.fs, f.name)
+		f.entry, err = filer2.GetEntry(ctx, f.fs, filer2.FullPath(f.name))
 	}
 	if f.entry == nil {
 		return 0, err
@@ -486,7 +486,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	}
 	chunkViews := filer2.ViewFromVisibleIntervals(f.entryViewCache, f.off, len(p))
 
-	totalRead, err := filer2.ReadIntoBuffer(ctx, f.fs, f.name, p, chunkViews, f.off)
+	totalRead, err := filer2.ReadIntoBuffer(ctx, f.fs, filer2.FullPath(f.name), p, chunkViews, f.off)
 	if err != nil {
 		return 0, err
 	}
@@ -507,12 +507,9 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 	glog.V(2).Infof("WebDavFileSystem.Readdir %v count %d", f.name, count)
 	ctx := context.Background()
 
-	dir := f.name
-	if dir != "/" && strings.HasSuffix(dir, "/") {
-		dir = dir[:len(dir)-1]
-	}
+	dir, _ := filer2.FullPath(f.name).DirAndName()
 
-	err = filer2.ReadDirAllEntries(ctx, f.fs, dir, "", func(entry *filer_pb.Entry, isLast bool) {
+	err = filer2.ReadDirAllEntries(ctx, f.fs, filer2.FullPath(dir), "", func(entry *filer_pb.Entry, isLast bool) {
 		fi := FileInfo{
 			size:          int64(filer2.TotalSize(entry.GetChunks())),
 			name:          entry.Name,

@@ -2,6 +2,7 @@ package filesys
 
 import (
 	"context"
+	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -109,13 +110,12 @@ func listxattr(entry *filer_pb.Entry, req *fuse.ListxattrRequest, resp *fuse.Lis
 
 func (wfs *WFS) maybeLoadEntry(ctx context.Context, dir, name string) (entry *filer_pb.Entry, err error) {
 
-	fullpath := string(filer2.NewFullPath(dir, name))
-	item := wfs.listDirectoryEntriesCache.Get(fullpath)
-	if item != nil && !item.Expired() {
-		entry = item.Value().(*filer_pb.Entry)
+	fullpath := filer2.NewFullPath(dir, name)
+	entry = wfs.cacheGet(fullpath)
+	if entry != nil {
 		return
 	}
-	// glog.V(3).Infof("read entry cache miss %s", fullpath)
+	glog.V(3).Infof("read entry cache miss %s", fullpath)
 
 	err = wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -126,16 +126,16 @@ func (wfs *WFS) maybeLoadEntry(ctx context.Context, dir, name string) (entry *fi
 
 		resp, err := client.LookupDirectoryEntry(ctx, request)
 		if err != nil || resp == nil || resp.Entry == nil {
-			if err == filer2.ErrNotFound {
+			if err == filer2.ErrNotFound || strings.Contains(err.Error(), filer2.ErrNotFound.Error()) {
 				glog.V(3).Infof("file attr read not found file %v: %v", request, err)
 				return fuse.ENOENT
 			}
 			glog.V(3).Infof("file attr read file %v: %v", request, err)
-			return fuse.ENOENT
+			return fuse.EIO
 		}
 
 		entry = resp.Entry
-		wfs.listDirectoryEntriesCache.Set(fullpath, entry, wfs.option.EntryCacheTtl)
+		wfs.cacheSet(fullpath, entry, wfs.option.EntryCacheTtl)
 
 		return nil
 	})
