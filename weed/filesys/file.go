@@ -102,9 +102,18 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 	if req.Valid.Size() {
 
 		glog.V(3).Infof("%v file setattr set size=%v", file.fullpath(), req.Size)
-		if req.Size == 0 {
+		if req.Size < filer2.TotalSize(file.entry.Chunks) {
 			// fmt.Printf("truncate %v \n", fullPath)
-			file.entry.Chunks = nil
+			var chunks []*filer_pb.FileChunk
+			for _, chunk := range file.entry.Chunks {
+				if uint64(chunk.Offset)+chunk.Size > req.Size {
+					chunk.Size = req.Size - uint64(chunk.Offset)
+				}
+				if chunk.Size > 0 {
+					chunks = append(chunks, chunk)
+				}
+			}
+			file.entry.Chunks = chunks
 			file.entryViewCache = nil
 		}
 		file.entry.Attributes.FileSize = req.Size
