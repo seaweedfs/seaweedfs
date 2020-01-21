@@ -46,13 +46,18 @@ type WFS struct {
 	option                    *Option
 	listDirectoryEntriesCache *ccache.Cache
 
-	// contains all open handles
-	handles           []*FileHandle
-	pathToHandleIndex map[filer2.FullPath]int
-	pathToHandleLock  sync.Mutex
-	bufPool           sync.Pool
+	// contains all open handles, protected by handlesLock
+	handlesLock sync.Mutex
+	handles     []*FileHandle
+
+	bufPool sync.Pool
 
 	stats statsCache
+
+	// nodes, protected by nodesLock
+	nodesLock sync.Mutex
+	nodes     map[uint64]fs.Node
+	root      fs.Node
 }
 type statsCache struct {
 	filer_pb.StatisticsResponse
@@ -63,19 +68,21 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	wfs := &WFS{
 		option:                    option,
 		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(option.DirListCacheLimit * 3).ItemsToPrune(100)),
-		pathToHandleIndex:         make(map[filer2.FullPath]int),
 		bufPool: sync.Pool{
 			New: func() interface{} {
 				return make([]byte, option.ChunkSizeLimit)
 			},
 		},
+		nodes: make(map[uint64]fs.Node),
 	}
+
+	wfs.root = &Dir{Path: wfs.option.FilerMountRootPath, wfs: wfs}
 
 	return wfs
 }
 
 func (wfs *WFS) Root() (fs.Node, error) {
-	return &Dir{Path: wfs.option.FilerMountRootPath, wfs: wfs}, nil
+	return wfs.root, nil
 }
 
 func (wfs *WFS) WithFilerClient(ctx context.Context, fn func(filer_pb.SeaweedFilerClient) error) error {
@@ -88,42 +95,35 @@ func (wfs *WFS) WithFilerClient(ctx context.Context, fn func(filer_pb.SeaweedFil
 }
 
 func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHandle) {
-	wfs.pathToHandleLock.Lock()
-	defer wfs.pathToHandleLock.Unlock()
 
 	fullpath := file.fullpath()
+	glog.V(4).Infof("%s AcquireHandle uid=%d gid=%d", fullpath, uid, gid)
 
-	index, found := wfs.pathToHandleIndex[fullpath]
-	if found && wfs.handles[index] != nil {
-		glog.V(2).Infoln(fullpath, "found fileHandle id", index)
-		return wfs.handles[index]
-	}
+	wfs.handlesLock.Lock()
+	defer wfs.handlesLock.Unlock()
 
 	fileHandle = newFileHandle(file, uid, gid)
 	for i, h := range wfs.handles {
 		if h == nil {
 			wfs.handles[i] = fileHandle
 			fileHandle.handle = uint64(i)
-			wfs.pathToHandleIndex[fullpath] = i
-			glog.V(4).Infoln(fullpath, "reuse fileHandle id", fileHandle.handle)
+			glog.V(4).Infof( "%s reuse fh %d", fullpath,fileHandle.handle)
 			return
 		}
 	}
 
 	wfs.handles = append(wfs.handles, fileHandle)
 	fileHandle.handle = uint64(len(wfs.handles) - 1)
-	glog.V(2).Infoln(fullpath, "new fileHandle id", fileHandle.handle)
-	wfs.pathToHandleIndex[fullpath] = int(fileHandle.handle)
+	glog.V(4).Infof( "%s new fh %d", fullpath,fileHandle.handle)
 
 	return
 }
 
 func (wfs *WFS) ReleaseHandle(fullpath filer2.FullPath, handleId fuse.HandleID) {
-	wfs.pathToHandleLock.Lock()
-	defer wfs.pathToHandleLock.Unlock()
+	wfs.handlesLock.Lock()
+	defer wfs.handlesLock.Unlock()
 
-	glog.V(4).Infof("%s releasing handle id %d current handles length %d", fullpath, handleId, len(wfs.handles))
-	delete(wfs.pathToHandleIndex, fullpath)
+	glog.V(4).Infof("%s ReleaseHandle id %d current handles length %d", fullpath, handleId, len(wfs.handles))
 	if int(handleId) < len(wfs.handles) {
 		wfs.handles[int(handleId)] = nil
 	}
@@ -203,10 +203,33 @@ func (wfs *WFS) cacheGet(path filer2.FullPath) *filer_pb.Entry {
 func (wfs *WFS) cacheSet(path filer2.FullPath, entry *filer_pb.Entry, ttl time.Duration) {
 	if entry == nil {
 		wfs.listDirectoryEntriesCache.Delete(string(path))
-	}else{
+	} else {
 		wfs.listDirectoryEntriesCache.Set(string(path), entry, ttl)
 	}
 }
 func (wfs *WFS) cacheDelete(path filer2.FullPath) {
 	wfs.listDirectoryEntriesCache.Delete(string(path))
+}
+
+func (wfs *WFS) getNode(fullpath filer2.FullPath, fn func() fs.Node) fs.Node {
+	wfs.nodesLock.Lock()
+	defer wfs.nodesLock.Unlock()
+
+	node, found := wfs.nodes[fullpath.AsInode()]
+	if found {
+		return node
+	}
+	node = fn()
+	if node != nil {
+		wfs.nodes[fullpath.AsInode()] = node
+	}
+	return node
+}
+
+func (wfs *WFS) forgetNode(fullpath filer2.FullPath) {
+	wfs.nodesLock.Lock()
+	defer wfs.nodesLock.Unlock()
+
+	delete(wfs.nodes, fullpath.AsInode())
+
 }

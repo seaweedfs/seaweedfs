@@ -65,7 +65,7 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 		// or buffer is full if adding new data,
 		// flush current buffer and add new data
 
-		// println("offset", offset, "size", len(data), "existing offset", pages.Offset, "size", pages.Size)
+		glog.V(4).Infof("offset=%d, size=%d, existing pages offset=%d, pages size=%d, data=%d", offset, len(data), pages.Offset, pages.Size, len(pages.Data))
 
 		if chunk, err = pages.saveExistingPagesToStorage(ctx); err == nil {
 			if chunk != nil {
@@ -77,6 +77,7 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 			return
 		}
 		pages.Offset = offset
+		glog.V(4).Infof("copy data0: offset=%d, size=%d, existing pages offset=%d, pages size=%d, data=%d", offset, len(data), pages.Offset, pages.Size, len(pages.Data))
 		copy(pages.Data, data)
 		pages.Size = int64(len(data))
 		return
@@ -86,7 +87,7 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 		// when this happens, debug shows the data overlapping with existing data is empty
 		// the data is not just append
 		if offset == pages.Offset && int(pages.Size) < len(data) {
-			// glog.V(2).Infof("pages[%d,%d) pages.Data len=%v, data len=%d, pages.Size=%d", pages.Offset, pages.Offset+pages.Size, len(pages.Data), len(data), pages.Size)
+			glog.V(4).Infof("copy data1: offset=%d, size=%d, existing pages offset=%d, pages size=%d, data=%d", offset, len(data), pages.Offset, pages.Size, len(pages.Data))
 			copy(pages.Data[pages.Size:], data[pages.Size:])
 		} else {
 			if pages.Size != 0 {
@@ -95,6 +96,7 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 			return pages.flushAndSave(ctx, offset, data)
 		}
 	} else {
+		glog.V(4).Infof("copy data2: offset=%d, size=%d, existing pages offset=%d, pages size=%d, data=%d", offset, len(data), pages.Offset, pages.Size, len(pages.Data))
 		copy(pages.Data[offset-pages.Offset:], data)
 	}
 
@@ -158,6 +160,8 @@ func (pages *ContinuousDirtyPages) saveExistingPagesToStorage(ctx context.Contex
 	if pages.Size == 0 {
 		return nil, nil
 	}
+
+	glog.V(0).Infof("%s/%s saveExistingPagesToStorage [%d,%d): Data len=%d", pages.f.dir.Path, pages.f.Name, pages.Offset, pages.Size, len(pages.Data))
 
 	return pages.saveToStorage(ctx, pages.Data[:pages.Size], pages.Offset)
 }

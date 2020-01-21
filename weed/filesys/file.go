@@ -23,6 +23,7 @@ var _ = fs.NodeGetxattrer(&File{})
 var _ = fs.NodeSetxattrer(&File{})
 var _ = fs.NodeRemovexattrer(&File{})
 var _ = fs.NodeListxattrer(&File{})
+var _ = fs.NodeForgetter(&File{})
 
 type File struct {
 	Name           string
@@ -94,11 +95,12 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
+	glog.V(3).Infof("%v file setattr %+v, old:%+v", file.fullpath(), req, file.entry.Attributes)
+
 	if err := file.maybeLoadEntry(ctx); err != nil {
 		return err
 	}
 
-	glog.V(3).Infof("%v file setattr %+v, old:%+v", file.fullpath(), req, file.entry.Attributes)
 	if req.Valid.Size() {
 
 		glog.V(3).Infof("%v file setattr set size=%v", file.fullpath(), req.Size)
@@ -206,6 +208,13 @@ func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 	glog.V(3).Infof("%s/%s fsync file %+v", file.dir.Path, file.Name, req)
 
 	return nil
+}
+
+func (file *File) Forget() {
+	glog.V(3).Infof("Forget file %s/%s", file.dir.Path, file.Name)
+
+	file.wfs.forgetNode(filer2.NewFullPath(file.dir.Path, file.Name))
+
 }
 
 func (file *File) maybeLoadEntry(ctx context.Context) error {
