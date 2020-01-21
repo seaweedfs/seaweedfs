@@ -403,7 +403,7 @@ func (dir *Dir) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, resp 
 }
 
 func (dir *Dir) Forget() {
-	glog.V(3).Infof("Forget dir %s/%s", dir.Path)
+	glog.V(3).Infof("Forget dir %s", dir.Path)
 
 	dir.wfs.forgetNode(filer2.FullPath(dir.Path))
 }
