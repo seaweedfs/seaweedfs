@@ -246,7 +246,6 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 			dirent := fuse.Dirent{Inode: inode, Name: entry.Name, Type: fuse.DT_File}
 			ret = append(ret, dirent)
 		}
-		glog.V(4).Infof("dir ReadDirAll : %s %+v", fullpath, entry)
 		dir.wfs.cacheSet(fullpath, entry, cacheTtl)
 	})
 	if readErr != nil {

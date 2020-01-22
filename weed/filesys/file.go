@@ -68,7 +68,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
 func (file *File) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp *fuse.GetxattrResponse) error {
 
-	glog.V(4).Infof("file Getxattr %s", file.fullpath())
+	// glog.V(4).Infof("file Getxattr %s", file.fullpath())
 
 	if err := file.maybeLoadEntry(ctx); err != nil {
 		return err
