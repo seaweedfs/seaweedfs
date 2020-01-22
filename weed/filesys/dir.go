@@ -146,9 +146,8 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	}
 
 	file := node.(*File)
-	file.isOpen = true
+	file.isOpen++
 	fh := dir.wfs.AcquireHandle(file, req.Uid, req.Gid)
-	fh.dirtyMetadata = true
 	return file, fh, nil
 
 }

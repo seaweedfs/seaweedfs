@@ -222,3 +222,26 @@ func max(x, y int64) int64 {
 	}
 	return y
 }
+func min(x, y int64) int64 {
+	if x < y {
+		return x
+	}
+	return y
+}
+
+func (pages *ContinuousDirtyPages) ReadDirtyData(ctx context.Context, data []byte, startOffset int64) (offset int64, size int, err error) {
+	bufSize := int64(len(data))
+	if startOffset+bufSize < pages.Offset {
+		return
+	}
+	if startOffset >= pages.Offset+pages.Size {
+		return
+	}
+
+	offset = max(pages.Offset, startOffset)
+	stopOffset := min(pages.Offset+pages.Size, startOffset+bufSize)
+	size = int(stopOffset - offset)
+	copy(data[offset-startOffset:], pages.Data[offset-pages.Offset:stopOffset-pages.Offset])
+
+	return
+}

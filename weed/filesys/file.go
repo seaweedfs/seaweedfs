@@ -31,7 +31,7 @@ type File struct {
 	wfs            *WFS
 	entry          *filer_pb.Entry
 	entryViewCache []filer2.VisibleInterval
-	isOpen         bool
+	isOpen         int
 }
 
 func (file *File) fullpath() filer2.FullPath {
@@ -42,7 +42,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
 	glog.V(4).Infof("file Attr %s, open:%v, existing attr: %+v", file.fullpath(), file.isOpen, attr)
 
-	if !file.isOpen {
+	if file.isOpen <=0 {
 		if err := file.maybeLoadEntry(ctx); err != nil {
 			return err
 		}
@@ -52,7 +52,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Valid = time.Second
 	attr.Mode = os.FileMode(file.entry.Attributes.FileMode)
 	attr.Size = filer2.TotalSize(file.entry.Chunks)
-	if file.isOpen {
+	if file.isOpen > 0 {
 		attr.Size = file.entry.Attributes.FileSize
 	}
 	attr.Crtime = time.Unix(file.entry.Attributes.Crtime, 0)
@@ -81,7 +81,7 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 	glog.V(4).Infof("file %v open %+v", file.fullpath(), req)
 
-	file.isOpen = true
+	file.isOpen++
 
 	handle := file.wfs.AcquireHandle(file, req.Uid, req.Gid)
 
@@ -140,7 +140,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		file.entry.Attributes.Mtime = req.Mtime.Unix()
 	}
 
-	if file.isOpen {
+	if file.isOpen > 0 {
 		return nil
 	}
 
@@ -218,7 +218,7 @@ func (file *File) Forget() {
 }
 
 func (file *File) maybeLoadEntry(ctx context.Context) error {
-	if file.entry == nil || !file.isOpen {
+	if file.entry == nil || file.isOpen <= 0{
 		entry, err := file.wfs.maybeLoadEntry(ctx, file.dir.Path, file.Name)
 		if err != nil {
 			return err

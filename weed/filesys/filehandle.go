@@ -7,10 +7,11 @@ import (
 	"path"
 	"time"
 
+	"github.com/gabriel-vasile/mimetype"
+
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/gabriel-vasile/mimetype"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
 )
@@ -50,21 +51,15 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	glog.V(4).Infof("%s read fh %d: [%d,%d)", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size))
 
-	// this value should come from the filer instead of the old f
-	if len(fh.f.entry.Chunks) == 0 {
-		glog.V(1).Infof("empty fh %v/%v", fh.f.dir.Path, fh.f.Name)
-		return nil
-	}
-
 	buff := make([]byte, req.Size)
 
-	if fh.f.entryViewCache == nil {
-		fh.f.entryViewCache = filer2.NonOverlappingVisibleIntervals(fh.f.entry.Chunks)
+	totalRead, err := fh.readFromChunks(ctx, buff, req.Offset)
+	if err == nil {
+		dirtyOffset, dirtySize, dirtyReadErr := fh.readFromDirtyPages(ctx, buff, req.Offset)
+		if dirtyReadErr == nil && totalRead+req.Offset < dirtyOffset+int64(dirtySize) {
+			totalRead = dirtyOffset + int64(dirtySize) - req.Offset
+		}
 	}
-
-	chunkViews := filer2.ViewFromVisibleIntervals(fh.f.entryViewCache, req.Offset, req.Size)
-
-	totalRead, err := filer2.ReadIntoBuffer(ctx, fh.f.wfs, fh.f.fullpath(), buff, chunkViews, req.Offset)
 
 	resp.Data = buff[:totalRead]
 
@@ -73,6 +68,33 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	}
 
 	return err
+}
+
+func (fh *FileHandle) readFromDirtyPages(ctx context.Context, buff []byte, startOffset int64) (offset int64, size int, err error) {
+	return fh.dirtyPages.ReadDirtyData(ctx, buff, startOffset)
+}
+
+func (fh *FileHandle) readFromChunks(ctx context.Context, buff []byte, offset int64) (int64, error) {
+
+	// this value should come from the filer instead of the old f
+	if len(fh.f.entry.Chunks) == 0 {
+		glog.V(1).Infof("empty fh %v/%v", fh.f.dir.Path, fh.f.Name)
+		return 0, nil
+	}
+
+	if fh.f.entryViewCache == nil {
+		fh.f.entryViewCache = filer2.NonOverlappingVisibleIntervals(fh.f.entry.Chunks)
+	}
+
+	chunkViews := filer2.ViewFromVisibleIntervals(fh.f.entryViewCache, offset, len(buff))
+
+	totalRead, err := filer2.ReadIntoBuffer(ctx, fh.f.wfs, fh.f.fullpath(), buff, chunkViews, offset)
+
+	if err != nil {
+		glog.Errorf("file handle read %s: %v", fh.f.fullpath(), err)
+	}
+
+	return totalRead, err
 }
 
 // Write to the file handle
@@ -115,11 +137,12 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 
 	glog.V(4).Infof("%v release fh %d", fh.f.fullpath(), fh.handle)
 
-	fh.dirtyPages.releaseResource()
+	fh.f.isOpen--
 
-	fh.f.wfs.ReleaseHandle(fh.f.fullpath(), fuse.HandleID(fh.handle))
-
-	fh.f.isOpen = false
+	if fh.f.isOpen <= 0 {
+		fh.dirtyPages.releaseResource()
+		fh.f.wfs.ReleaseHandle(fh.f.fullpath(), fuse.HandleID(fh.handle))
+	}
 
 	return nil
 }
@@ -141,7 +164,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		return nil
 	}
 
-	return fh.f.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	err = fh.f.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		if fh.f.entry.Attributes != nil {
 			fh.f.entry.Attributes.Mime = fh.contentType
@@ -178,4 +201,10 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 		return nil
 	})
+
+	if err == nil {
+		fh.dirtyMetadata = false
+	}
+
+	return err
 }
