@@ -72,7 +72,7 @@ func (f *Filer) RollbackTransaction(ctx context.Context) error {
 	return f.store.RollbackTransaction(ctx)
 }
 
-func (f *Filer) CreateEntry(ctx context.Context, entry *Entry) error {
+func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) error {
 
 	if string(entry.FullPath) == "/" {
 		return nil
@@ -160,6 +160,9 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry) error {
 			return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
 		}
 	} else {
+		if o_excl {
+			return fmt.Errorf("EEXIST: entry %s already exists", entry.FullPath)
+		}
 		if err := f.UpdateEntry(ctx, oldEntry, entry); err != nil {
 			glog.Errorf("update entry %s: %v", entry.FullPath, err)
 			return fmt.Errorf("update entry %s: %v", entry.FullPath, err)

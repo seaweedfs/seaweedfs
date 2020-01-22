@@ -3,6 +3,7 @@ package filesys
 import (
 	"context"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
@@ -123,26 +124,29 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 				TtlSec:      dir.wfs.option.TtlSec,
 			},
 		},
+		OExcl: req.Flags&fuse.OpenExclusive != 0,
 	}
-	glog.V(1).Infof("create: %v", request)
+	glog.V(1).Infof("create: %v", req.String())
 
-	if request.Entry.IsDirectory {
-		if err := dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
-			if _, err := client.CreateEntry(ctx, request); err != nil {
-				glog.V(0).Infof("create %s/%s: %v", dir.Path, req.Name, err)
-				return fuse.EIO
+	if err := dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+		if _, err := client.CreateEntry(ctx, request); err != nil {
+			glog.V(0).Infof("create %s/%s: %v", dir.Path, req.Name, err)
+			if strings.Contains(err.Error(), "EEXIST") {
+				return fuse.EEXIST
 			}
-			return nil
-		}); err != nil {
-			return nil, nil, err
+			return fuse.EIO
 		}
+		return nil
+	}); err != nil {
+		return nil, nil, err
+	}
+	node := dir.newFile(req.Name, request.Entry)
+	if request.Entry.IsDirectory {
+		return node, nil, nil
 	}
 
-	node := dir.newFile(req.Name, request.Entry)
 	file := node.(*File)
-	if !request.Entry.IsDirectory {
-		file.isOpen = true
-	}
+	file.isOpen = true
 	fh := dir.wfs.AcquireHandle(file, req.Uid, req.Gid)
 	fh.dirtyMetadata = true
 	return file, fh, nil

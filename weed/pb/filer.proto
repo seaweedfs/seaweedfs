@@ -123,6 +123,7 @@ message FuseAttributes {
 message CreateEntryRequest {
     string directory = 1;
     Entry entry = 2;
+    bool o_excl = 3;
 }
 
 message CreateEntryResponse {

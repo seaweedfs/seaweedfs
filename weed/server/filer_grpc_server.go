@@ -139,7 +139,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		FullPath: fullpath,
 		Attr:     filer2.PbToEntryAttribute(req.Entry.Attributes),
 		Chunks:   chunks,
-	})
+	}, req.OExcl)
 
 	if err == nil {
 		fs.filer.DeleteChunks(garbages)

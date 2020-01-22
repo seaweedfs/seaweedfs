@@ -193,7 +193,7 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 		entry.Attr.Mime = mime.TypeByExtension(ext)
 	}
 	// glog.V(4).Infof("saving %s => %+v", path, entry)
-	if dbErr := fs.filer.CreateEntry(ctx, entry); dbErr != nil {
+	if dbErr := fs.filer.CreateEntry(ctx, entry, false); dbErr != nil {
 		fs.filer.DeleteChunks(entry.Chunks)
 		glog.V(0).Infof("failing to write %s to filer server : %v", path, dbErr)
 		writeJsonError(w, r, http.StatusInternalServerError, dbErr)
