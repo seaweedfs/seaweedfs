@@ -231,6 +231,10 @@ func min(x, y int64) int64 {
 
 func (pages *ContinuousDirtyPages) ReadDirtyData(ctx context.Context, data []byte, startOffset int64) (offset int64, size int, err error) {
 	bufSize := int64(len(data))
+
+	pages.lock.Lock()
+	defer pages.lock.Unlock()
+
 	if startOffset+bufSize < pages.Offset {
 		return
 	}
