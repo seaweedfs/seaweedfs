@@ -55,8 +55,8 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	totalRead, err := fh.readFromChunks(ctx, buff, req.Offset)
 	if err == nil {
-		dirtyOffset, dirtySize, dirtyReadErr := fh.readFromDirtyPages(ctx, buff, req.Offset)
-		if dirtyReadErr == nil && totalRead+req.Offset < dirtyOffset+int64(dirtySize) {
+		dirtyOffset, dirtySize := fh.readFromDirtyPages(ctx, buff, req.Offset)
+		if totalRead+req.Offset < dirtyOffset+int64(dirtySize) {
 			totalRead = dirtyOffset + int64(dirtySize) - req.Offset
 		}
 	}
@@ -70,7 +70,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	return err
 }
 
-func (fh *FileHandle) readFromDirtyPages(ctx context.Context, buff []byte, startOffset int64) (offset int64, size int, err error) {
+func (fh *FileHandle) readFromDirtyPages(ctx context.Context, buff []byte, startOffset int64) (offset int64, size int) {
 	return fh.dirtyPages.ReadDirtyData(ctx, buff, startOffset)
 }
 
@@ -101,8 +101,6 @@ func (fh *FileHandle) readFromChunks(ctx context.Context, buff []byte, offset in
 func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
 
 	// write the request to volume servers
-
-	glog.V(4).Infof("%+v/%v write fh %d: [%d,%d)", fh.f.dir.Path, fh.f.Name, fh.handle, req.Offset, req.Offset+int64(len(req.Data)))
 
 	chunks, err := fh.dirtyPages.AddPage(ctx, req.Offset, req.Data)
 	if err != nil {
@@ -152,13 +150,16 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	// send the data to the OS
 	glog.V(4).Infof("%s fh %d flush %v", fh.f.fullpath(), fh.handle, req)
 
-	chunk, err := fh.dirtyPages.FlushToStorage(ctx)
+	chunks, err := fh.dirtyPages.FlushToStorage(ctx)
 	if err != nil {
 		glog.Errorf("flush %s/%s: %v", fh.f.dir.Path, fh.f.Name, err)
 		return fmt.Errorf("flush %s/%s: %v", fh.f.dir.Path, fh.f.Name, err)
 	}
 
-	fh.f.addChunk(chunk)
+	fh.f.addChunks(chunks)
+	if len(chunks) > 0 {
+		fh.dirtyMetadata = true
+	}
 
 	if !fh.dirtyMetadata {
 		return nil

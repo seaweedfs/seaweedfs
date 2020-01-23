@@ -230,12 +230,6 @@ func (file *File) maybeLoadEntry(ctx context.Context) error {
 	return nil
 }
 
-func (file *File) addChunk(chunk *filer_pb.FileChunk) {
-	if chunk != nil {
-		file.addChunks([]*filer_pb.FileChunk{chunk})
-	}
-}
-
 func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 
 	sort.Slice(chunks, func(i, j int) bool {
