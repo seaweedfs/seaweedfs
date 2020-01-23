@@ -196,7 +196,7 @@ func ReadUrl(fileUrl string, offset int64, size int, buf []byte, isReadRange boo
 		return 0, err
 	}
 	if isReadRange {
-		req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)))
+		req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)-1))
 	} else {
 		req.Header.Set("Accept-Encoding", "gzip")
 	}
@@ -256,7 +256,7 @@ func ReadUrlAsStream(fileUrl string, offset int64, size int, fn func(data []byte
 	if err != nil {
 		return 0, err
 	}
-	req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)))
+	req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)-1))
 
 	r, err := client.Do(req)
 	if err != nil {
