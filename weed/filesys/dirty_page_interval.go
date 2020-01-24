@@ -47,9 +47,7 @@ func (list *IntervalLinkedList) ReadData(buf []byte, start, stop int64) {
 
 		nodeStart, nodeStop := max(start, t.Offset), min(stop, t.Offset+t.Size)
 		if nodeStart < nodeStop {
-			glog.V(0).Infof("copying start=%d stop=%d t=[%d,%d) t.data=%d => bufSize=%d nodeStart=%d, nodeStop=%d",
-				start, stop, t.Offset, t.Offset+t.Size, len(t.Data),
-				len(buf), nodeStart, nodeStop)
+			// glog.V(0).Infof("copying start=%d stop=%d t=[%d,%d) t.data=%d => bufSize=%d nodeStart=%d, nodeStop=%d", start, stop, t.Offset, t.Offset+t.Size, len(t.Data), len(buf), nodeStart, nodeStop)
 			copy(buf[nodeStart-start:], t.Data[nodeStart-t.Offset:nodeStop-t.Offset])
 		}
 
