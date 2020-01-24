@@ -65,6 +65,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	if err != nil {
 		glog.Errorf("file handle read %s: %v", fh.f.fullpath(), err)
+		return fuse.EIO
 	}
 
 	return err
@@ -103,11 +104,12 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 	// write the request to volume servers
 
 	fh.f.entry.Attributes.FileSize = uint64(max(req.Offset+int64(len(req.Data)), int64(fh.f.entry.Attributes.FileSize)))
+	glog.V(0).Infof("%v write [%d,%d)", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)))
 
 	chunks, err := fh.dirtyPages.AddPage(ctx, req.Offset, req.Data)
 	if err != nil {
-		glog.Errorf("%+v/%v write fh %d: [%d,%d): %v", fh.f.dir.Path, fh.f.Name, fh.handle, req.Offset, req.Offset+int64(len(req.Data)), err)
-		return fmt.Errorf("write %s/%s at [%d,%d): %v", fh.f.dir.Path, fh.f.Name, req.Offset, req.Offset+int64(len(req.Data)), err)
+		glog.Errorf("%v write fh %d: [%d,%d): %v", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(len(req.Data)), err)
+		return fuse.EIO
 	}
 
 	resp.Size = len(req.Data)
@@ -155,7 +157,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	chunks, err := fh.dirtyPages.FlushToStorage(ctx)
 	if err != nil {
 		glog.Errorf("flush %s/%s: %v", fh.f.dir.Path, fh.f.Name, err)
-		return fmt.Errorf("flush %s/%s: %v", fh.f.dir.Path, fh.f.Name, err)
+		return fuse.EIO
 	}
 
 	fh.f.addChunks(chunks)
@@ -209,5 +211,10 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		fh.dirtyMetadata = false
 	}
 
-	return err
+	if err != nil {
+		glog.Errorf("%v fh %d flush: %v", fh.f.fullpath(), fh.handle, err)
+		return fuse.EIO
+	}
+
+	return nil
 }

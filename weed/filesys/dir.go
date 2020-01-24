@@ -174,7 +174,7 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 		glog.V(1).Infof("mkdir: %v", request)
 		if _, err := client.CreateEntry(ctx, request); err != nil {
 			glog.V(0).Infof("mkdir %s/%s: %v", dir.Path, req.Name, err)
-			return fuse.EIO
+			return err
 		}
 
 		return nil
@@ -185,7 +185,7 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 		return node, nil
 	}
 
-	return nil, err
+	return nil, fuse.EIO
 }
 
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (node fs.Node, err error) {
