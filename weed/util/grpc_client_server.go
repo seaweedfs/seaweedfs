@@ -64,7 +64,14 @@ func WithCachedGrpcClient(ctx context.Context, fn func(*grpc.ClientConn) error, 
 	existingConnection, found := grpcClients[address]
 	if found {
 		grpcClientsLock.Unlock()
-		return fn(existingConnection)
+		err := fn(existingConnection)
+		if err != nil {
+			grpcClientsLock.Lock()
+			delete(grpcClients, address)
+			grpcClientsLock.Unlock()
+			existingConnection.Close()
+		}
+		return err
 	}
 
 	grpcConnection, err := GrpcDial(ctx, address, opts...)

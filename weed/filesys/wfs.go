@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,8 +48,8 @@ type WFS struct {
 	listDirectoryEntriesCache *ccache.Cache
 
 	// contains all open handles, protected by handlesLock
-	handlesLock sync.Mutex
-	handles     []*FileHandle
+	handlesLock       sync.Mutex
+	handles           []*FileHandle
 	pathToHandleIndex map[filer2.FullPath]int
 
 	bufPool sync.Pool
@@ -89,10 +90,23 @@ func (wfs *WFS) Root() (fs.Node, error) {
 
 func (wfs *WFS) WithFilerClient(ctx context.Context, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
+	err := util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
 	}, wfs.option.FilerGrpcAddress, wfs.option.GrpcDialOption)
+
+	if err == nil {
+		return nil
+	}
+	if strings.Contains(err.Error(), "context canceled") {
+		time.Sleep(1337 * time.Millisecond)
+		glog.V(2).Infoln("retry context canceled request...")
+		return util.WithCachedGrpcClient(context.Background(), func(grpcConnection *grpc.ClientConn) error {
+			client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+			return fn(client)
+		}, wfs.option.FilerGrpcAddress, wfs.option.GrpcDialOption)
+	}
+	return err
 
 }
 
@@ -116,7 +130,7 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 			wfs.handles[i] = fileHandle
 			fileHandle.handle = uint64(i)
 			wfs.pathToHandleIndex[fullpath] = i
-			glog.V(4).Infof( "%s reuse fh %d", fullpath,fileHandle.handle)
+			glog.V(4).Infof("%s reuse fh %d", fullpath, fileHandle.handle)
 			return
 		}
 	}
@@ -124,7 +138,7 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 	wfs.handles = append(wfs.handles, fileHandle)
 	fileHandle.handle = uint64(len(wfs.handles) - 1)
 	wfs.pathToHandleIndex[fullpath] = int(fileHandle.handle)
-	glog.V(4).Infof( "%s new fh %d", fullpath,fileHandle.handle)
+	glog.V(4).Infof("%s new fh %d", fullpath, fileHandle.handle)
 
 	return
 }
