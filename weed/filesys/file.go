@@ -42,7 +42,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
 	glog.V(4).Infof("file Attr %s, open:%v, existing attr: %+v", file.fullpath(), file.isOpen, attr)
 
-	if file.isOpen <=0 {
+	if file.isOpen <= 0 {
 		if err := file.maybeLoadEntry(ctx); err != nil {
 			return err
 		}
@@ -108,10 +108,11 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 			// fmt.Printf("truncate %v \n", fullPath)
 			var chunks []*filer_pb.FileChunk
 			for _, chunk := range file.entry.Chunks {
-				if uint64(chunk.Offset)+chunk.Size > req.Size {
-					chunk.Size = req.Size - uint64(chunk.Offset)
+				int64Size := int64(chunk.Size)
+				if chunk.Offset+int64Size > int64(req.Size) {
+					int64Size = int64(req.Size) - chunk.Offset
 				}
-				if chunk.Size > 0 {
+				if int64Size > 0 {
 					chunks = append(chunks, chunk)
 				}
 			}
@@ -218,7 +219,7 @@ func (file *File) Forget() {
 }
 
 func (file *File) maybeLoadEntry(ctx context.Context) error {
-	if file.entry == nil || file.isOpen <= 0{
+	if file.entry == nil || file.isOpen <= 0 {
 		entry, err := file.wfs.maybeLoadEntry(ctx, file.dir.Path, file.Name)
 		if err != nil {
 			return err
