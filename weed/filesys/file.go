@@ -54,6 +54,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Size = filer2.TotalSize(file.entry.Chunks)
 	if file.isOpen > 0 {
 		attr.Size = file.entry.Attributes.FileSize
+		glog.V(4).Infof("file Attr %s, open:%v, size: %d", file.fullpath(), file.isOpen, attr.Size)
 	}
 	attr.Crtime = time.Unix(file.entry.Attributes.Crtime, 0)
 	attr.Mtime = time.Unix(file.entry.Attributes.Mtime, 0)
