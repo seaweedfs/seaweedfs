@@ -1,0 +1,35 @@
+FROM frolvlad/alpine-glibc as builder
+RUN apk add git go g++
+RUN mkdir -p /go/src/github.com/chrislusf/
+RUN git clone https://github.com/chrislusf/seaweedfs /go/src/github.com/chrislusf/seaweedfs
+RUN cd /go/src/github.com/chrislusf/seaweedfs/weed && go install
+
+FROM alpine AS final
+LABEL author="Chris Lu"
+COPY --from=builder /root/go/bin/weed /usr/bin/
+RUN mkdir -p /etc/seaweedfs
+COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/filer.toml /etc/seaweedfs/filer.toml
+COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/entrypoint.sh /entrypoint.sh
+
+# volume server gprc port
+EXPOSE 18080
+# volume server http port
+EXPOSE 8080
+# filer server gprc port
+EXPOSE 18888
+# filer server http port
+EXPOSE 8888
+# master server shared gprc port
+EXPOSE 19333
+# master server shared http port
+EXPOSE 9333
+# s3 server http port
+EXPOSE 8333
+
+RUN mkdir -p /data/filerldb2
+
+VOLUME /data
+
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
