@@ -79,7 +79,7 @@ func (fh *FileHandle) readFromChunks(ctx context.Context, buff []byte, offset in
 
 	// this value should come from the filer instead of the old f
 	if len(fh.f.entry.Chunks) == 0 {
-		glog.V(1).Infof("empty fh %v/%v", fh.f.dir.Path, fh.f.Name)
+		glog.V(1).Infof("empty fh %v", fh.f.fullpath())
 		return 0, nil
 	}
 
@@ -156,7 +156,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 	chunks, err := fh.dirtyPages.FlushToStorage(ctx)
 	if err != nil {
-		glog.Errorf("flush %s/%s: %v", fh.f.dir.Path, fh.f.Name, err)
+		glog.Errorf("flush %s: %v", fh.f.fullpath(), err)
 		return fuse.EIO
 	}
 
@@ -185,7 +185,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 			Entry:     fh.f.entry,
 		}
 
-		glog.V(3).Infof("%s/%s set chunks: %v", fh.f.dir.Path, fh.f.Name, len(fh.f.entry.Chunks))
+		glog.V(3).Infof("%s set chunks: %v", fh.f.fullpath(), len(fh.f.entry.Chunks))
 		for i, chunk := range fh.f.entry.Chunks {
 			glog.V(3).Infof("%s chunks %d: %v [%d,%d)", fh.f.fullpath(), i, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}
@@ -201,7 +201,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 		fh.f.wfs.deleteFileChunks(ctx, garbages)
 		for i, chunk := range garbages {
-			glog.V(3).Infof("garbage %s/%s chunks %d: %v [%d,%d)", fh.f.dir.Path, fh.f.Name, i, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
+			glog.V(3).Infof("garbage %s chunks %d: %v [%d,%d)", fh.f.fullpath(), i, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}
 
 		return nil
