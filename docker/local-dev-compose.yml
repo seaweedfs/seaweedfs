@@ -4,7 +4,7 @@ services:
   master:
     build:
       context: .
-      dockerfile: Dockerfile.go_build
+      dockerfile: Dockerfile
     ports:
     - 9333:9333
     - 19333:19333
@@ -12,7 +12,7 @@ services:
   volume:
     build:
       context: .
-      dockerfile: Dockerfile.go_build
+      dockerfile: Dockerfile
     ports:
     - 8080:8080
     - 18080:18080
@@ -22,7 +22,7 @@ services:
   filer:
     build:
       context: .
-      dockerfile: Dockerfile.go_build
+      dockerfile: Dockerfile
     ports:
     - 8888:8888
     - 18888:18888
@@ -33,7 +33,7 @@ services:
   s3:
     build:
       context: .
-      dockerfile: Dockerfile.go_build
+      dockerfile: Dockerfile
     ports:
     - 8333:8333
     command: '-v=4 s3 -filer="filer:8888"'
