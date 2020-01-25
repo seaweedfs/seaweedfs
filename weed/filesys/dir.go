@@ -154,21 +154,23 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 
 func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
 
+	newEntry := &filer_pb.Entry{
+		Name:        req.Name,
+		IsDirectory: true,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    time.Now().Unix(),
+			Crtime:   time.Now().Unix(),
+			FileMode: uint32(req.Mode &^ dir.wfs.option.Umask),
+			Uid:      req.Uid,
+			Gid:      req.Gid,
+		},
+	}
+
 	err := dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.CreateEntryRequest{
 			Directory: dir.Path,
-			Entry: &filer_pb.Entry{
-				Name:        req.Name,
-				IsDirectory: true,
-				Attributes: &filer_pb.FuseAttributes{
-					Mtime:    time.Now().Unix(),
-					Crtime:   time.Now().Unix(),
-					FileMode: uint32(req.Mode &^ dir.wfs.option.Umask),
-					Uid:      req.Uid,
-					Gid:      req.Gid,
-				},
-			},
+			Entry:     newEntry,
 		}
 
 		glog.V(1).Infof("mkdir: %v", request)
@@ -181,7 +183,7 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 	})
 
 	if err == nil {
-		node := dir.newDirectory(filer2.NewFullPath(dir.Path, req.Name), nil)
+		node := dir.newDirectory(filer2.NewFullPath(dir.Path, req.Name), newEntry)
 		return node, nil
 	}
 
