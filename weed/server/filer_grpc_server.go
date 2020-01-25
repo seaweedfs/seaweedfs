@@ -133,6 +133,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
 
 	if req.Entry.Attributes == nil {
+		glog.V(3).Infof("CreateEntry %s: nil attributes", filepath.Join(req.Directory, req.Entry.Name))
 		return nil, fmt.Errorf("can not create entry with empty attributes")
 	}
 
@@ -144,6 +145,8 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 
 	if err == nil {
 		fs.filer.DeleteChunks(garbages)
+	} else {
+		glog.V(3).Infof("CreateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), err)
 	}
 
 	return &filer_pb.CreateEntryResponse{}, err
@@ -196,6 +199,8 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	if err = fs.filer.UpdateEntry(ctx, entry, newEntry); err == nil {
 		fs.filer.DeleteChunks(unusedChunks)
 		fs.filer.DeleteChunks(garbages)
+	} else {
+		glog.V(3).Infof("UpdateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), err)
 	}
 
 	fs.filer.NotifyUpdateEvent(entry, newEntry, true)
@@ -240,9 +245,11 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 	}
 	assignResult, err := operation.Assign(fs.filer.GetMaster(), fs.grpcDialOption, assignRequest, altRequest)
 	if err != nil {
+		glog.V(3).Infof("AssignVolume: %v",  err)
 		return nil, fmt.Errorf("assign volume: %v", err)
 	}
 	if assignResult.Error != "" {
+		glog.V(3).Infof("AssignVolume error: %v",  assignResult.Error)
 		return nil, fmt.Errorf("assign volume result: %v", assignResult.Error)
 	}
 
