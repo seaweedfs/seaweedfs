@@ -175,11 +175,11 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 		}
 	}
 
-	glog.V(4).Infof("CreateEntry %s: created", entry.FullPath)
-
 	f.NotifyUpdateEvent(oldEntry, entry, true)
 
 	f.deleteChunksIfNotNew(oldEntry, entry)
+
+	glog.V(4).Infof("CreateEntry %s: created", entry.FullPath)
 
 	return nil
 }
