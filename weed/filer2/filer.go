@@ -96,7 +96,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 			glog.V(4).Infof("find uncached directory: %s", dirPath)
 			dirEntry, _ = f.FindEntry(ctx, FullPath(dirPath))
 		} else {
-			glog.V(4).Infof("found cached directory: %s", dirPath)
+			// glog.V(4).Infof("found cached directory: %s", dirPath)
 		}
 
 		// no such existing directory
