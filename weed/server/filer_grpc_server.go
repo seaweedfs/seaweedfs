@@ -132,27 +132,31 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 
 func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (resp *filer_pb.CreateEntryResponse, err error) {
 
+	resp = &filer_pb.CreateEntryResponse{}
+
 	fullpath := filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name)))
 	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
 
 	if req.Entry.Attributes == nil {
 		glog.V(3).Infof("CreateEntry %s: nil attributes", filepath.Join(req.Directory, req.Entry.Name))
-		return nil, fmt.Errorf("can not create entry with empty attributes")
+		resp.Error = fmt.Sprintf("can not create entry with empty attributes")
+		return
 	}
 
-	err = fs.filer.CreateEntry(ctx, &filer2.Entry{
+	createErr := fs.filer.CreateEntry(ctx, &filer2.Entry{
 		FullPath: fullpath,
 		Attr:     filer2.PbToEntryAttribute(req.Entry.Attributes),
 		Chunks:   chunks,
 	}, req.OExcl)
 
-	if err == nil {
+	if createErr == nil {
 		fs.filer.DeleteChunks(garbages)
 	} else {
-		glog.V(3).Infof("CreateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), err)
+		glog.V(3).Infof("CreateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), createErr)
+		resp.Error = createErr.Error()
 	}
 
-	return &filer_pb.CreateEntryResponse{}, err
+	return
 }
 
 func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {

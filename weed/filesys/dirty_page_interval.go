@@ -31,12 +31,12 @@ func (list *IntervalLinkedList) Size() int64 {
 	return list.Tail.Offset + list.Tail.Size - list.Head.Offset
 }
 func (list *IntervalLinkedList) addNodeToTail(node *IntervalNode) {
-	// glog.V(0).Infof("add to tail [%d,%d) + [%d,%d) => [%d,%d)", list.Head.Offset, list.Tail.Offset+list.Tail.Size, node.Offset, node.Offset+node.Size, list.Head.Offset, node.Offset+node.Size)
+	glog.V(4).Infof("add to tail [%d,%d) + [%d,%d) => [%d,%d)", list.Head.Offset, list.Tail.Offset+list.Tail.Size, node.Offset, node.Offset+node.Size, list.Head.Offset, node.Offset+node.Size)
 	list.Tail.Next = node
 	list.Tail = node
 }
 func (list *IntervalLinkedList) addNodeToHead(node *IntervalNode) {
-	// glog.V(0).Infof("add to head [%d,%d) + [%d,%d) => [%d,%d)", node.Offset, node.Offset+node.Size, list.Head.Offset, list.Tail.Offset+list.Tail.Size, node.Offset, list.Tail.Offset+list.Tail.Size)
+	glog.V(4).Infof("add to head [%d,%d) + [%d,%d) => [%d,%d)", node.Offset, node.Offset+node.Size, list.Head.Offset, list.Tail.Offset+list.Tail.Size, node.Offset, list.Tail.Offset+list.Tail.Size)
 	node.Next = list.Head
 	list.Head = node
 }
@@ -102,7 +102,7 @@ func (c *ContinuousIntervals) AddInterval(data []byte, offset int64) (hasOverlap
 	}
 
 	if prevList != nil && nextList != nil {
-		// glog.V(4).Infof("connecting [%d,%d) + [%d,%d) => [%d,%d)", prevList.Head.Offset, prevList.Tail.Offset+prevList.Tail.Size, nextList.Head.Offset, nextList.Tail.Offset+nextList.Tail.Size, prevList.Head.Offset, nextList.Tail.Offset+nextList.Tail.Size)
+		glog.V(4).Infof("connecting [%d,%d) + [%d,%d) => [%d,%d)", prevList.Head.Offset, prevList.Tail.Offset+prevList.Tail.Size, nextList.Head.Offset, nextList.Tail.Offset+nextList.Tail.Size, prevList.Head.Offset, nextList.Tail.Offset+nextList.Tail.Size)
 		prevList.Tail.Next = nextList.Head
 		prevList.Tail = nextList.Tail
 		c.removeList(nextList)

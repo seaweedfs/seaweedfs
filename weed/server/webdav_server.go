@@ -155,7 +155,7 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 		}
 
 		glog.V(1).Infof("mkdir: %v", request)
-		if _, err := client.CreateEntry(ctx, request); err != nil {
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			return fmt.Errorf("mkdir %s/%s: %v", dir, name, err)
 		}
 
@@ -187,7 +187,7 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 
 		dir, name := filer2.FullPath(fullFilePath).DirAndName()
 		err = fs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
-			if _, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+			if err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 				Directory: dir,
 				Entry: &filer_pb.Entry{
 					Name:        name,

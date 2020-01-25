@@ -331,7 +331,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(ctx context.Context, task FileCopy
 			},
 		}
 
-		if _, err := client.CreateEntry(ctx, request); err != nil {
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			return fmt.Errorf("update fh: %v", err)
 		}
 		return nil
@@ -435,7 +435,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(ctx context.Context, task FileC
 			},
 		}
 
-		if _, err := client.CreateEntry(ctx, request); err != nil {
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			return fmt.Errorf("update fh: %v", err)
 		}
 		return nil

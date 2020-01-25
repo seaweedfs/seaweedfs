@@ -1,6 +1,9 @@
 package filer_pb
 
 import (
+	"context"
+	"fmt"
+
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
@@ -66,4 +69,15 @@ func AfterEntryDeserialization(chunks []*FileChunk) {
 		}
 
 	}
+}
+
+func CreateEntry(ctx context.Context, client SeaweedFilerClient, request *CreateEntryRequest) error {
+	resp, err := client.CreateEntry(ctx, request)
+	if err == nil && resp.Error != "" {
+		return fmt.Errorf("CreateEntry: %v", resp.Error)
+	}
+	if err != nil {
+		return fmt.Errorf("CreateEntry: %v", err)
+	}
+	return err
 }

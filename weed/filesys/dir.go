@@ -129,8 +129,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	glog.V(1).Infof("create: %v", req.String())
 
 	if err := dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
-		if _, err := client.CreateEntry(ctx, request); err != nil {
-			glog.V(0).Infof("create %s/%s: %v", dir.Path, req.Name, err)
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			if strings.Contains(err.Error(), "EEXIST") {
 				return fuse.EEXIST
 			}
@@ -174,7 +173,7 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 		}
 
 		glog.V(1).Infof("mkdir: %v", request)
-		if _, err := client.CreateEntry(ctx, request); err != nil {
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			glog.V(0).Infof("mkdir %s/%s: %v", dir.Path, req.Name, err)
 			return err
 		}

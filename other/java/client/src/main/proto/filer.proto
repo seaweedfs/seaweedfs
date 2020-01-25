@@ -127,6 +127,7 @@ message CreateEntryRequest {
 }
 
 message CreateEntryResponse {
+    string error = 1;
 }
 
 message UpdateEntryRequest {

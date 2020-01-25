@@ -124,7 +124,7 @@ func (fs *FilerSink) CreateEntry(ctx context.Context, key string, entry *filer_p
 		}
 
 		glog.V(1).Infof("create: %v", request)
-		if _, err := client.CreateEntry(ctx, request); err != nil {
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			glog.V(0).Infof("create entry %s: %v", key, err)
 			return fmt.Errorf("create entry %s: %v", key, err)
 		}

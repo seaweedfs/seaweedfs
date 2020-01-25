@@ -194,7 +194,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		fh.f.entry.Chunks = chunks
 		// fh.f.entryViewCache = nil
 
-		if _, err := client.CreateEntry(ctx, request); err != nil {
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			glog.Errorf("update fh: %v", err)
 			return fmt.Errorf("update fh: %v", err)
 		}

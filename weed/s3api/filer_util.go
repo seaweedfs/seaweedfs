@@ -37,7 +37,7 @@ func (s3a *S3ApiServer) mkdir(ctx context.Context, parentDirectoryPath string, d
 		}
 
 		glog.V(1).Infof("mkdir: %v", request)
-		if _, err := client.CreateEntry(ctx, request); err != nil {
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			glog.V(0).Infof("mkdir %v: %v", request, err)
 			return fmt.Errorf("mkdir %s/%s: %v", parentDirectoryPath, dirName, err)
 		}
@@ -68,7 +68,7 @@ func (s3a *S3ApiServer) mkFile(ctx context.Context, parentDirectoryPath string, 
 		}
 
 		glog.V(1).Infof("create file: %s/%s", parentDirectoryPath, fileName)
-		if _, err := client.CreateEntry(ctx, request); err != nil {
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			glog.V(0).Infof("create file %v:%v", request, err)
 			return fmt.Errorf("create file %s/%s: %v", parentDirectoryPath, fileName, err)
 		}
