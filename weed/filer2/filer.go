@@ -122,6 +122,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 			mkdirErr := f.store.InsertEntry(ctx, dirEntry)
 			if mkdirErr != nil {
 				if _, err := f.FindEntry(ctx, FullPath(dirPath)); err == ErrNotFound {
+					glog.V(3).Infof("mkdir %s: %v", dirPath, mkdirErr)
 					return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
 				}
 			} else {
@@ -165,6 +166,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 		}
 	} else {
 		if o_excl {
+			glog.V(3).Infof("EEXIST: entry %s already exists", entry.FullPath)
 			return fmt.Errorf("EEXIST: entry %s already exists", entry.FullPath)
 		}
 		if err := f.UpdateEntry(ctx, oldEntry, entry); err != nil {
@@ -173,7 +175,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 		}
 	}
 
-	// glog.V(4).Infof("CreateEntry %s: created", entry.FullPath)
+	glog.V(4).Infof("CreateEntry %s: created", entry.FullPath)
 
 	f.NotifyUpdateEvent(oldEntry, entry, true)
 
