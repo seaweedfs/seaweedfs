@@ -19,6 +19,9 @@ import (
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 
 	entry, err := fs.filer.FindEntry(ctx, filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name))))
+	if err == filer2.ErrNotFound {
+		return &filer_pb.LookupDirectoryEntryResponse{}, nil
+	}
 	if err != nil {
 		glog.V(3).Infof("LookupDirectoryEntry %s: %+v, ", filepath.Join(req.Directory, req.Name), err)
 		return nil, err
@@ -245,11 +248,11 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 	}
 	assignResult, err := operation.Assign(fs.filer.GetMaster(), fs.grpcDialOption, assignRequest, altRequest)
 	if err != nil {
-		glog.V(3).Infof("AssignVolume: %v",  err)
+		glog.V(3).Infof("AssignVolume: %v", err)
 		return nil, fmt.Errorf("assign volume: %v", err)
 	}
 	if assignResult.Error != "" {
-		glog.V(3).Infof("AssignVolume error: %v",  assignResult.Error)
+		glog.V(3).Infof("AssignVolume error: %v", assignResult.Error)
 		return nil, fmt.Errorf("assign volume result: %v", assignResult.Error)
 	}
 
