@@ -86,11 +86,11 @@ func (c *ContinuousIntervals) AddInterval(data []byte, offset int64) (hasOverlap
 		if list.Head.Offset <= offset && offset < list.Head.Offset+list.Size() {
 			if list.Tail.Offset <= offset {
 				dataStartIndex := list.Tail.Offset + list.Tail.Size - offset
-				// glog.V(4).Infof("overlap data new [0,%d) same=%v", dataStartIndex, bytes.Compare(interval.Data[0:dataStartIndex], list.Tail.Data[len(list.Tail.Data)-int(dataStartIndex):]))
+				glog.V(4).Infof("overlap data new [0,%d) same=%v", dataStartIndex, bytes.Compare(interval.Data[0:dataStartIndex], list.Tail.Data[len(list.Tail.Data)-int(dataStartIndex):]))
 				interval.Data = interval.Data[dataStartIndex:]
 				interval.Size -= dataStartIndex
 				interval.Offset = offset + dataStartIndex
-				// glog.V(4).Infof("overlapping append as [%d,%d) dataSize=%d", interval.Offset, interval.Offset+interval.Size, len(interval.Data))
+				glog.V(4).Infof("overlapping append as [%d,%d) dataSize=%d", interval.Offset, interval.Offset+interval.Size, len(interval.Data))
 				list.addNodeToTail(interval)
 				prevList = list
 				break
