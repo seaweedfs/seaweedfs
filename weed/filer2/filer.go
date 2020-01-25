@@ -74,6 +74,8 @@ func (f *Filer) RollbackTransaction(ctx context.Context) error {
 
 func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) error {
 
+	glog.V(4).Infof("CreateEntry create %s", entry.FullPath)
+
 	if string(entry.FullPath) == "/" {
 		return nil
 	}
@@ -127,6 +129,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 			}
 
 		} else if !dirEntry.IsDirectory() {
+			glog.Errorf("CreateEntry %s: %s should be a directory", entry.FullPath, dirPath)
 			return fmt.Errorf("%s is a file", dirPath)
 		}
 
@@ -141,6 +144,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 	}
 
 	if lastDirectoryEntry == nil {
+		glog.Errorf("CreateEntry %s: lastDirectoryEntry is nil", entry.FullPath)
 		return fmt.Errorf("parent folder not found: %v", entry.FullPath)
 	}
 
@@ -168,6 +172,8 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 			return fmt.Errorf("update entry %s: %v", entry.FullPath, err)
 		}
 	}
+
+	// glog.V(4).Infof("CreateEntry %s: created", entry.FullPath)
 
 	f.NotifyUpdateEvent(oldEntry, entry, true)
 
