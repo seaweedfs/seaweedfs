@@ -196,7 +196,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 	entry := dir.wfs.cacheGet(fullFilePath)
 
 	if entry == nil {
-		glog.V(3).Infof("dir Lookup cache miss %s", fullFilePath)
+		// glog.V(3).Infof("dir Lookup cache miss %s", fullFilePath)
 		entry, err = filer2.GetEntry(ctx, dir.wfs, fullFilePath)
 		if err != nil {
 			glog.V(1).Infof("dir GetEntry %s: %v", fullFilePath, err)

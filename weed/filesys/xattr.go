@@ -115,7 +115,7 @@ func (wfs *WFS) maybeLoadEntry(ctx context.Context, dir, name string) (entry *fi
 	if entry != nil {
 		return
 	}
-	glog.V(3).Infof("read entry cache miss %s", fullpath)
+	// glog.V(3).Infof("read entry cache miss %s", fullpath)
 
 	err = wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -130,7 +130,7 @@ func (wfs *WFS) maybeLoadEntry(ctx context.Context, dir, name string) (entry *fi
 				glog.V(3).Infof("file attr read not found file %v: %v", request, err)
 				return fuse.ENOENT
 			}
-			glog.V(3).Infof("file attr read file %v: %v", request, err)
+			glog.V(3).Infof("attr read %v: %v", request, err)
 			return fuse.EIO
 		}
 

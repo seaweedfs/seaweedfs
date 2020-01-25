@@ -74,8 +74,6 @@ func (f *Filer) RollbackTransaction(ctx context.Context) error {
 
 func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) error {
 
-	glog.V(4).Infof("CreateEntry create %s", entry.FullPath)
-
 	if string(entry.FullPath) == "/" {
 		return nil
 	}
@@ -159,6 +157,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 
 	oldEntry, _ := f.FindEntry(ctx, entry.FullPath)
 
+	glog.V(4).Infof("CreateEntry %s: old entry : %v", entry.FullPath, oldEntry)
 	if oldEntry == nil {
 		if err := f.store.InsertEntry(ctx, entry); err != nil {
 			glog.Errorf("insert entry %s: %v", entry.FullPath, err)
