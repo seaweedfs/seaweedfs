@@ -82,12 +82,12 @@ func duTraverseDirectory(ctx context.Context, writer io.Writer, filerClient file
 	return
 }
 
-func (env *CommandEnv) withFilerClient(ctx context.Context, filerServer string, filerPort int64, fn func(filer_pb.SeaweedFilerClient) error) error {
+func (env *CommandEnv) withFilerClient(ctx context.Context, filerServer string, filerPort int64, fn func(context.Context, filer_pb.SeaweedFilerClient) error) error {
 
 	filerGrpcAddress := fmt.Sprintf("%s:%d", filerServer, filerPort+10000)
-	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
+	return util.WithCachedGrpcClient(ctx, func(ctx2 context.Context, grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		return fn(client)
+		return fn(ctx2, client)
 	}, filerGrpcAddress, env.option.GrpcDialOption)
 
 }
@@ -105,6 +105,6 @@ func (env *CommandEnv) getFilerClient(filerServer string, filerPort int64) *comm
 		filerPort:   filerPort,
 	}
 }
-func (c *commandFilerClient) WithFilerClient(ctx context.Context, fn func(filer_pb.SeaweedFilerClient) error) error {
+func (c *commandFilerClient) WithFilerClient(ctx context.Context, fn func(context.Context, filer_pb.SeaweedFilerClient) error) error {
 	return c.env.withFilerClient(ctx, c.filerServer, c.filerPort, fn)
 }

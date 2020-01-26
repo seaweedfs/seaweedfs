@@ -20,7 +20,7 @@ func (wfs *WFS) deleteFileChunks(ctx context.Context, chunks []*filer_pb.FileChu
 		fileIds = append(fileIds, chunk.GetFileIdString())
 	}
 
-	wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	wfs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		deleteFileIds(ctx, wfs.option.GrpcDialOption, client, fileIds)
 		return nil
 	})

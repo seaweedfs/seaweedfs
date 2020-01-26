@@ -64,7 +64,7 @@ func (fs *FilerSink) initialize(grpcAddress string, dir string,
 }
 
 func (fs *FilerSink) DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool) error {
-	return fs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	return fs.withFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		dir, name := filer2.FullPath(key).DirAndName()
 
@@ -87,7 +87,7 @@ func (fs *FilerSink) DeleteEntry(ctx context.Context, key string, isDirectory, d
 
 func (fs *FilerSink) CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry) error {
 
-	return fs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	return fs.withFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		dir, name := filer2.FullPath(key).DirAndName()
 
@@ -139,7 +139,7 @@ func (fs *FilerSink) UpdateEntry(ctx context.Context, key string, oldEntry *file
 
 	// read existing entry
 	var existingEntry *filer_pb.Entry
-	err = fs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	err = fs.withFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
@@ -191,7 +191,7 @@ func (fs *FilerSink) UpdateEntry(ctx context.Context, key string, oldEntry *file
 	}
 
 	// save updated meta data
-	return true, fs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	return true, fs.withFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: newParentPath,

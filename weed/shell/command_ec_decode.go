@@ -99,7 +99,7 @@ func doEcDecode(ctx context.Context, commandEnv *CommandEnv, topoInfo *master_pb
 func mountVolumeAndDeleteEcShards(ctx context.Context, grpcDialOption grpc.DialOption, collection, targetNodeLocation string, nodeToEcIndexBits map[string]erasure_coding.ShardBits, vid needle.VolumeId) error {
 
 	// mount volume
-	if err := operation.WithVolumeServerClient(targetNodeLocation, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+	if err := operation.WithVolumeServerClient(targetNodeLocation, grpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, mountErr := volumeServerClient.VolumeMount(ctx, &volume_server_pb.VolumeMountRequest{
 			VolumeId: uint32(vid),
 		})
@@ -132,7 +132,7 @@ func generateNormalVolume(ctx context.Context, grpcDialOption grpc.DialOption, v
 
 	fmt.Printf("generateNormalVolume from ec volume %d on %s\n", vid, sourceVolumeServer)
 
-	err := operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, genErr := volumeServerClient.VolumeEcShardsToVolume(ctx, &volume_server_pb.VolumeEcShardsToVolumeRequest{
 			VolumeId:   uint32(vid),
 			Collection: collection,
@@ -170,7 +170,7 @@ func collectEcShards(ctx context.Context, commandEnv *CommandEnv, nodeToEcIndexB
 			continue
 		}
 
-		err = operation.WithVolumeServerClient(targetNodeLocation, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		err = operation.WithVolumeServerClient(targetNodeLocation, commandEnv.option.GrpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
 
 			fmt.Printf("copy %d.%v %s => %s\n", vid, needToCopyEcIndexBits.ShardIds(), loc, targetNodeLocation)
 

@@ -230,7 +230,7 @@ func (s *Store) cachedLookupEcShardLocations(ctx context.Context, ecVolume *eras
 
 	glog.V(3).Infof("lookup and cache ec volume %d locations", ecVolume.VolumeId)
 
-	err = operation.WithMasterServerClient(s.MasterAddress, s.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+	err = operation.WithMasterServerClient(s.MasterAddress, s.grpcDialOption, func(ctx context.Context, masterClient master_pb.SeaweedClient) error {
 		req := &master_pb.LookupEcVolumeRequest{
 			VolumeId: uint32(ecVolume.VolumeId),
 		}
@@ -278,7 +278,7 @@ func (s *Store) readRemoteEcShardInterval(ctx context.Context, sourceDataNodes [
 
 func (s *Store) doReadRemoteEcShardInterval(ctx context.Context, sourceDataNode string, needleId types.NeedleId, vid needle.VolumeId, shardId erasure_coding.ShardId, buf []byte, offset int64) (n int, is_deleted bool, err error) {
 
-	err = operation.WithVolumeServerClient(sourceDataNode, s.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+	err = operation.WithVolumeServerClient(sourceDataNode, s.grpcDialOption, func(ctx context.Context, client volume_server_pb.VolumeServerClient) error {
 
 		// copy data slice
 		shardReadClient, err := client.VolumeEcShardRead(ctx, &volume_server_pb.VolumeEcShardReadRequest{

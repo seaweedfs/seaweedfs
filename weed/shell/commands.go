@@ -70,7 +70,7 @@ func (ce *CommandEnv) checkDirectory(ctx context.Context, filerServer string, fi
 
 	dir, name := filer2.FullPath(path).DirAndName()
 
-	return ce.withFilerClient(ctx, filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
+	return ce.withFilerClient(ctx, filerServer, filerPort, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		resp, lookupErr := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,

@@ -140,7 +140,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context, reader io.
 	var fileId, host string
 	var auth security.EncodedJwt
 
-	if err := pages.f.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	if err := pages.f.wfs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AssignVolumeRequest{
 			Count:       1,

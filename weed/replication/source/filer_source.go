@@ -45,7 +45,7 @@ func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrl s
 
 	vid := volumeId(part)
 
-	err = fs.withFilerClient(ctx, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = fs.withFilerClient(ctx, fs.grpcDialOption, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		glog.V(4).Infof("read lookup volume id locations: %v", vid)
 		resp, err := client.LookupVolume(ctx, &filer_pb.LookupVolumeRequest{
@@ -89,11 +89,11 @@ func (fs *FilerSource) ReadPart(ctx context.Context, part string) (filename stri
 	return filename, header, readCloser, err
 }
 
-func (fs *FilerSource) withFilerClient(ctx context.Context, grpcDialOption grpc.DialOption, fn func(filer_pb.SeaweedFilerClient) error) error {
+func (fs *FilerSource) withFilerClient(ctx context.Context, grpcDialOption grpc.DialOption, fn func(context.Context, filer_pb.SeaweedFilerClient) error) error {
 
-	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
+	return util.WithCachedGrpcClient(ctx, func(ctx2 context.Context, grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		return fn(client)
+		return fn(ctx2, client)
 	}, fs.grpcAddress, fs.grpcDialOption)
 
 }

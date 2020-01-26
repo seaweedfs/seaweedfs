@@ -169,7 +169,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		return nil
 	}
 
-	err = fh.f.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	err = fh.f.wfs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		if fh.f.entry.Attributes != nil {
 			fh.f.entry.Attributes.Mime = fh.contentType

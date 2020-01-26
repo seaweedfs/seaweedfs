@@ -257,7 +257,7 @@ func (file *File) setEntry(entry *filer_pb.Entry) {
 }
 
 func (file *File) saveEntry(ctx context.Context) error {
-	return file.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	return file.wfs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: file.dir.Path,

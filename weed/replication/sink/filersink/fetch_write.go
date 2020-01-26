@@ -63,7 +63,7 @@ func (fs *FilerSink) fetchAndWrite(ctx context.Context, sourceChunk *filer_pb.Fi
 	var host string
 	var auth security.EncodedJwt
 
-	if err := fs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	if err := fs.withFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AssignVolumeRequest{
 			Count:       1,
@@ -104,11 +104,11 @@ func (fs *FilerSink) fetchAndWrite(ctx context.Context, sourceChunk *filer_pb.Fi
 	return
 }
 
-func (fs *FilerSink) withFilerClient(ctx context.Context, fn func(filer_pb.SeaweedFilerClient) error) error {
+func (fs *FilerSink) withFilerClient(ctx context.Context, fn func(context.Context, filer_pb.SeaweedFilerClient) error) error {
 
-	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
+	return util.WithCachedGrpcClient(ctx, func(ctx context.Context, grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		return fn(client)
+		return fn(ctx, client)
 	}, fs.grpcAddress, fs.grpcDialOption)
 
 }

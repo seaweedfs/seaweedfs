@@ -15,7 +15,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 	newDir := newDirectory.(*Dir)
 	glog.V(4).Infof("dir Rename %s/%s => %s/%s", dir.Path, req.OldName, newDir.Path, req.NewName)
 
-	err := dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	err := dir.wfs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AtomicRenameEntryRequest{
 			OldDirectory: dir.Path,

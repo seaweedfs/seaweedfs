@@ -125,9 +125,9 @@ func withMasterClient(ctx context.Context, master string, grpcDialOption grpc.Di
 		return fmt.Errorf("failed to parse master grpc %v: %v", master, parseErr)
 	}
 
-	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
+	return util.WithCachedGrpcClient(ctx, func(ctx2 context.Context, grpcConnection *grpc.ClientConn) error {
 		client := master_pb.NewSeaweedClient(grpcConnection)
-		return fn(ctx, client)
+		return fn(ctx2, client)
 	}, masterGrpcAddress, grpcDialOption)
 
 }

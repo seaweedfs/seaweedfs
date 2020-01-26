@@ -41,7 +41,7 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 	//   confirm size and timestamp
 	var volFileInfoResp *volume_server_pb.ReadVolumeFileStatusResponse
 	var volumeFileName, idxFileName, datFileName string
-	err := operation.WithVolumeServerClient(req.SourceDataNode, vs.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClient(req.SourceDataNode, vs.grpcDialOption, func(ctx context.Context, client volume_server_pb.VolumeServerClient) error {
 		var err error
 		volFileInfoResp, err = client.ReadVolumeFileStatus(ctx,
 			&volume_server_pb.ReadVolumeFileStatusRequest{

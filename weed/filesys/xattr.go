@@ -117,7 +117,7 @@ func (wfs *WFS) maybeLoadEntry(ctx context.Context, dir, name string) (entry *fi
 	}
 	// glog.V(3).Infof("read entry cache miss %s", fullpath)
 
-	err = wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	err = wfs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Name:      name,

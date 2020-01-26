@@ -53,7 +53,7 @@ func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 
 	destinationDir, destinationName := filer2.FullPath(destinationPath).DirAndName()
 
-	return commandEnv.withFilerClient(ctx, filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
+	return commandEnv.withFilerClient(ctx, filerServer, filerPort, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		// collect destination entry info
 		destinationRequest := &filer_pb.LookupDirectoryEntryRequest{

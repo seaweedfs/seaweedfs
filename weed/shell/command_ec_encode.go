@@ -120,7 +120,7 @@ func markVolumeReadonly(ctx context.Context, grpcDialOption grpc.DialOption, vol
 
 	for _, location := range locations {
 
-		err := operation.WithVolumeServerClient(location.Url, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		err := operation.WithVolumeServerClient(location.Url, grpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
 			_, markErr := volumeServerClient.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{
 				VolumeId: uint32(volumeId),
 			})
@@ -138,7 +138,7 @@ func markVolumeReadonly(ctx context.Context, grpcDialOption grpc.DialOption, vol
 
 func generateEcShards(ctx context.Context, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, collection string, sourceVolumeServer string) error {
 
-	err := operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, genErr := volumeServerClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{
 			VolumeId:   uint32(volumeId),
 			Collection: collection,

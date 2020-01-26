@@ -88,22 +88,22 @@ func (wfs *WFS) Root() (fs.Node, error) {
 	return wfs.root, nil
 }
 
-func (wfs *WFS) WithFilerClient(ctx context.Context, fn func(filer_pb.SeaweedFilerClient) error) error {
+func (wfs *WFS) WithFilerClient(ctx context.Context, fn func(context.Context, filer_pb.SeaweedFilerClient) error) error {
 
-	err := util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
+	err := util.WithCachedGrpcClient(ctx, func(ctx2 context.Context, grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		return fn(client)
+		return fn(ctx2, client)
 	}, wfs.option.FilerGrpcAddress, wfs.option.GrpcDialOption)
 
 	if err == nil {
 		return nil
 	}
 	if strings.Contains(err.Error(), "context canceled") {
-		time.Sleep(1337 * time.Millisecond)
+		time.Sleep(3337 * time.Millisecond)
 		glog.V(2).Infoln("retry context canceled request...")
-		return util.WithCachedGrpcClient(context.Background(), func(grpcConnection *grpc.ClientConn) error {
+		return util.WithCachedGrpcClient(context.Background(), func(ctx2 context.Context, grpcConnection *grpc.ClientConn) error {
 			client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-			return fn(client)
+			return fn(ctx2, client)
 		}, wfs.option.FilerGrpcAddress, wfs.option.GrpcDialOption)
 	}
 	return err
@@ -163,7 +163,7 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 
 	if wfs.stats.lastChecked < time.Now().Unix()-20 {
 
-		err := wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+		err := wfs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 			request := &filer_pb.StatisticsRequest{
 				Collection:  wfs.option.Collection,
