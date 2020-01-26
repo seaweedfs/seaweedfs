@@ -44,12 +44,7 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 		return pages.flushAndSave(ctx, offset, data)
 	}
 
-	hasOverlap := pages.intervals.AddInterval(data, offset)
-	if hasOverlap {
-		chunks, err = pages.saveExistingPagesToStorage(ctx)
-		pages.intervals.AddInterval(data, offset)
-		return
-	}
+	pages.intervals.AddInterval(data, offset)
 
 	var chunk *filer_pb.FileChunk
 	var hasSavedData bool

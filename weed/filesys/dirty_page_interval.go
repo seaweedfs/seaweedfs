@@ -65,7 +65,10 @@ func (c *ContinuousIntervals) TotalSize() (total int64) {
 	return
 }
 
-func (c *ContinuousIntervals) AddInterval(data []byte, offset int64) (hasOverlap bool) {
+func (c *ContinuousIntervals) AddInterval(data []byte, offset int64) {
+
+	// TODO AddInterval needs to handle all possible out of order writes
+
 	interval := &IntervalNode{Data: data, Offset: offset, Size: int64(len(data))}
 
 	var prevList, nextList *IntervalLinkedList
@@ -73,6 +76,10 @@ func (c *ContinuousIntervals) AddInterval(data []byte, offset int64) (hasOverlap
 	for _, list := range c.lists {
 		if list.Head.Offset == interval.Offset+interval.Size {
 			nextList = list
+			break
+		}
+		if list.Head.Offset < interval.Offset+interval.Size && interval.Offset+interval.Size <= list.Head.Offset+list.Size() {
+			glog.V(0).Infof("unexpected [%d,%d) overlaps [%d,%d)", interval.Offset, interval.Offset+interval.Size, list.Head.Offset, list.Head.Offset+list.Size())
 			break
 		}
 	}
@@ -84,20 +91,17 @@ func (c *ContinuousIntervals) AddInterval(data []byte, offset int64) (hasOverlap
 			break
 		}
 		if list.Head.Offset <= offset && offset < list.Head.Offset+list.Size() {
-			if list.Tail.Offset <= offset {
-				dataStartIndex := list.Tail.Offset + list.Tail.Size - offset
-				glog.V(4).Infof("overlap data new [0,%d) same=%v", dataStartIndex, bytes.Compare(interval.Data[0:dataStartIndex], list.Tail.Data[len(list.Tail.Data)-int(dataStartIndex):]))
-				interval.Data = interval.Data[dataStartIndex:]
-				interval.Size -= dataStartIndex
-				interval.Offset = offset + dataStartIndex
-				glog.V(4).Infof("overlapping append as [%d,%d) dataSize=%d", interval.Offset, interval.Offset+interval.Size, len(interval.Data))
-				list.addNodeToTail(interval)
-				prevList = list
-				break
-			}
-			glog.V(4).Infof("overlapped! interval is [%d,%d) dataSize=%d", interval.Offset, interval.Offset+interval.Size, len(interval.Data))
-			hasOverlap = true
-			return
+
+			// the new interval overwrites the old tail
+			dataStartIndex := list.Tail.Offset + list.Tail.Size - offset
+			glog.V(4).Infof("overlap data new [0,%d) same=%v", dataStartIndex, bytes.Compare(interval.Data[0:dataStartIndex], list.Tail.Data[len(list.Tail.Data)-int(dataStartIndex):]))
+			list.Tail.Data = list.Tail.Data[:len(list.Tail.Data)-int(dataStartIndex)]
+			list.Tail.Size -= dataStartIndex
+			glog.V(4).Infof("overlapping append as [%d,%d) dataSize=%d", interval.Offset, interval.Offset+interval.Size, len(interval.Data))
+
+			list.addNodeToTail(interval)
+			prevList = list
+			break
 		}
 	}
 
