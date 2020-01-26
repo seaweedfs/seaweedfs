@@ -16,6 +16,10 @@ docker-compose -f seaweedfs-compose.yml -p seaweedfs up
 ```bash
 cd $GOPATH/src/github.com/chrislusf/seaweedfs/docker
 
-docker-compose -f dev-compose.yml -p seaweedfs up
+// use existing builds for git tip
+docker-compose -f seaweedfs-dev-compose.yml -p seaweedfs up
+
+// use local repo
+docker-compose -f local-dev-compose.yml -p seaweedfs up
 
 ```
