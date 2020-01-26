@@ -157,7 +157,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 
 	oldEntry, _ := f.FindEntry(ctx, entry.FullPath)
 
-	glog.V(4).Infof("CreateEntry %s: old entry : %v", entry.FullPath, oldEntry)
+	glog.V(4).Infof("CreateEntry %s: old entry: %v exclusive:%v", entry.FullPath, oldEntry, o_excl)
 	if oldEntry == nil {
 		if err := f.store.InsertEntry(ctx, entry); err != nil {
 			glog.Errorf("insert entry %s: %v", entry.FullPath, err)
