@@ -99,7 +99,6 @@ func (wfs *WFS) WithFilerClient(ctx context.Context, fn func(context.Context, fi
 		return nil
 	}
 	if strings.Contains(err.Error(), "context canceled") {
-		time.Sleep(3337 * time.Millisecond)
 		glog.V(2).Infoln("retry context canceled request...")
 		return util.WithCachedGrpcClient(context.Background(), func(ctx2 context.Context, grpcConnection *grpc.ClientConn) error {
 			client := filer_pb.NewSeaweedFilerClient(grpcConnection)
