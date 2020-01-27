@@ -65,12 +65,61 @@ func (c *ContinuousIntervals) TotalSize() (total int64) {
 	return
 }
 
+func subList(list *IntervalLinkedList, start, stop int64) *IntervalLinkedList {
+	var nodes []*IntervalNode
+	for t := list.Head; t != nil; t = t.Next {
+		nodeStart, nodeStop := max(start, t.Offset), min(stop, t.Offset+t.Size)
+		if nodeStart >= nodeStop {
+			// skip non overlapping IntervalNode
+			continue
+		}
+		nodes = append(nodes, &IntervalNode{
+			Data:   t.Data[nodeStart-t.Offset : nodeStop-t.Offset],
+			Offset: nodeStart,
+			Size:   nodeStop-nodeStart,
+			Next:   nil,
+		})
+	}
+	for i := 1; i < len(nodes); i++ {
+		nodes[i-1].Next = nodes[i]
+	}
+	return &IntervalLinkedList{
+		Head: nodes[0],
+		Tail: nodes[len(nodes)-1],
+	}
+}
+
 func (c *ContinuousIntervals) AddInterval(data []byte, offset int64) {
 
 	// TODO AddInterval needs to handle all possible out of order writes
 
 	interval := &IntervalNode{Data: data, Offset: offset, Size: int64(len(data))}
 
+	var newLists []*IntervalLinkedList
+	for _, list := range c.lists {
+		// if list is to the left of new interval, add to the new list
+		if list.Tail.Offset+list.Tail.Size <= interval.Offset {
+			newLists = append(newLists, list)
+		}
+		// if list is to the right of new interval, add to the new list
+		if interval.Offset+interval.Size <= list.Head.Offset {
+			newLists = append(newLists, list)
+		}
+		// if new interval overwrite the right part of the list
+		if list.Head.Offset < interval.Offset && interval.Offset < list.Tail.Offset+list.Tail.Size {
+			// create a new list of the left part of existing list
+			newLists = append(newLists, subList(list, list.Offset(), interval.Offset))
+		}
+		// if new interval overwrite the left part of the list
+		if list.Head.Offset < interval.Offset+interval.Size && interval.Offset+interval.Size < list.Tail.Offset+list.Tail.Size {
+			// create a new list of the right part of existing list
+			newLists = append(newLists, subList(list, interval.Offset+interval.Size, list.Tail.Offset+list.Tail.Size))
+		}
+		// skip anything that is fully overwritten by the new interval
+	}
+
+	c.lists = newLists
+	// add the new interval to the lists, connecting neighbor lists
 	var prevList, nextList *IntervalLinkedList
 
 	for _, list := range c.lists {
@@ -78,27 +127,10 @@ func (c *ContinuousIntervals) AddInterval(data []byte, offset int64) {
 			nextList = list
 			break
 		}
-		if list.Head.Offset < interval.Offset+interval.Size && interval.Offset+interval.Size <= list.Head.Offset+list.Size() {
-			glog.V(0).Infof("unexpected [%d,%d) overlaps [%d,%d)", interval.Offset, interval.Offset+interval.Size, list.Head.Offset, list.Head.Offset+list.Size())
-			break
-		}
 	}
 
 	for _, list := range c.lists {
 		if list.Head.Offset+list.Size() == offset {
-			list.addNodeToTail(interval)
-			prevList = list
-			break
-		}
-		if list.Head.Offset <= offset && offset < list.Head.Offset+list.Size() {
-
-			// the new interval overwrites the old tail
-			dataStartIndex := list.Tail.Offset + list.Tail.Size - offset
-			glog.V(4).Infof("overlap data new [0,%d) same=%v", dataStartIndex, bytes.Compare(interval.Data[0:dataStartIndex], list.Tail.Data[len(list.Tail.Data)-int(dataStartIndex):]))
-			list.Tail.Data = list.Tail.Data[:len(list.Tail.Data)-int(dataStartIndex)]
-			list.Tail.Size -= dataStartIndex
-			glog.V(4).Infof("overlapping append as [%d,%d) dataSize=%d", interval.Offset, interval.Offset+interval.Size, len(interval.Data))
-
 			list.addNodeToTail(interval)
 			prevList = list
 			break
