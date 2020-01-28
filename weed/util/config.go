@@ -27,10 +27,7 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 		glog.V(0).Infof("Reading %s: %v", viper.ConfigFileUsed(), err)
 		if required {
 			glog.Fatalf("Failed to load %s.toml file from current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/"+
-				"\n\nPlease follow this example and add a filer.toml file to "+
-				"current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/:\n"+
-				"    https://github.com/chrislusf/seaweedfs/blob/master/weed/%s.toml\n"+
-				"\nOr use this command to generate the default toml file\n"+
+				"\n\nPlease use this command to generate the default %s.toml file\n"+
 				"    weed scaffold -config=%s -output=.\n\n\n",
 				configFileName, configFileName, configFileName)
 		} else {
