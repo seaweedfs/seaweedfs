@@ -14,8 +14,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 
-	"github.com/spf13/viper"
-
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/cassandra"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/etcd"
@@ -61,7 +59,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	fs = &FilerServer{
 		option:         option,
-		grpcDialOption: security.LoadClientTLS(viper.Sub("grpc"), "filer"),
+		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.filer"),
 	}
 
 	if len(option.Masters) == 0 {
@@ -72,7 +70,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	go fs.filer.KeepConnectedToMaster()
 
-	v := viper.GetViper()
+	v := util.GetViper()
 	if !util.LoadConfiguration("filer", false) {
 		v.Set("leveldb2.enabled", true)
 		v.Set("leveldb2.dir", option.DefaultLevelDbDir)
@@ -86,7 +84,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.option.recursiveDelete = v.GetBool("filer.options.recursive_delete")
 	fs.filer.LoadConfiguration(v)
 
-	notification.LoadConfiguration(v.Sub("notification"))
+	notification.LoadConfiguration(v, "notification.")
 
 	handleStaticResources(defaultMux)
 	if !option.DisableHttp {

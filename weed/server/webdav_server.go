@@ -17,8 +17,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 
-	"github.com/spf13/viper"
-
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -49,7 +47,7 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 
 	ws = &WebDavServer{
 		option:         option,
-		grpcDialOption: security.LoadClientTLS(viper.Sub("grpc"), "filer"),
+		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.filer"),
 		Handler: &webdav.Handler{
 			FileSystem: fs,
 			LockSystem: webdav.NewMemLS(),

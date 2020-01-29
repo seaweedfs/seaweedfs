@@ -26,8 +26,8 @@ type S3BackendFactory struct {
 func (factory *S3BackendFactory) StorageType() backend.StorageType {
 	return backend.StorageType("s3")
 }
-func (factory *S3BackendFactory) BuildStorage(configuration backend.StringProperties, id string) (backend.BackendStorage, error) {
-	return newS3BackendStorage(configuration, id)
+func (factory *S3BackendFactory) BuildStorage(configuration backend.StringProperties, configPrefix string, id string) (backend.BackendStorage, error) {
+	return newS3BackendStorage(configuration, configPrefix, id)
 }
 
 type S3BackendStorage struct {
@@ -39,13 +39,13 @@ type S3BackendStorage struct {
 	conn                  s3iface.S3API
 }
 
-func newS3BackendStorage(configuration backend.StringProperties, id string) (s *S3BackendStorage, err error) {
+func newS3BackendStorage(configuration backend.StringProperties, configPrefix string, id string) (s *S3BackendStorage, err error) {
 	s = &S3BackendStorage{}
 	s.id = id
-	s.aws_access_key_id = configuration.GetString("aws_access_key_id")
-	s.aws_secret_access_key = configuration.GetString("aws_secret_access_key")
-	s.region = configuration.GetString("region")
-	s.bucket = configuration.GetString("bucket")
+	s.aws_access_key_id = configuration.GetString(configPrefix + "aws_access_key_id")
+	s.aws_secret_access_key = configuration.GetString(configPrefix + "aws_secret_access_key")
+	s.region = configuration.GetString(configPrefix + "region")
+	s.bucket = configuration.GetString(configPrefix + "bucket")
 	s.conn, err = createSession(s.aws_access_key_id, s.aws_secret_access_key, s.region)
 
 	glog.V(0).Infof("created backend storage s3.%s for region %s bucket %s", s.id, s.region, s.bucket)

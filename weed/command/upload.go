@@ -6,11 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/spf13/viper"
-
-	"github.com/chrislusf/seaweedfs/weed/operation"
 )
 
 var (
@@ -63,7 +61,7 @@ var cmdUpload = &Command{
 func runUpload(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
-	grpcDialOption := security.LoadClientTLS(viper.Sub("grpc"), "client")
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	if len(args) == 0 {
 		if *upload.dir == "" {

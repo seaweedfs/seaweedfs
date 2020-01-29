@@ -14,6 +14,14 @@ var cmdScaffold = &Command{
 	Short:     "generate basic configuration files",
 	Long: `Generate filer.toml with all possible configurations for you to customize.
 
+	The options can also be overwritten by environment variables.
+	For example, the filer.toml mysql password can be overwritten by environment variable
+		export weed.mysql.password=some_password
+	Environment variable rules:
+		* Prefix fix with "WEED_"
+		* Upppercase the reset of variable name.
+		* Replace '.' with '_'
+
   `,
 }
 

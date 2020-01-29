@@ -7,8 +7,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/stats"
-
-	"github.com/spf13/viper"
+	"github.com/chrislusf/seaweedfs/weed/util"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -47,7 +46,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	fileSizeLimitMB int,
 ) *VolumeServer {
 
-	v := viper.GetViper()
+	v := util.GetViper()
 	signingKey := v.GetString("jwt.signing.key")
 	v.SetDefault("jwt.signing.expires_after_seconds", 10)
 	expiresAfterSec := v.GetInt("jwt.signing.expires_after_seconds")
@@ -64,7 +63,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		needleMapKind:           needleMapKind,
 		FixJpgOrientation:       fixJpgOrientation,
 		ReadRedirect:            readRedirect,
-		grpcDialOption:          security.LoadClientTLS(viper.Sub("grpc"), "volume"),
+		grpcDialOption:          security.LoadClientTLS(util.GetViper(), "grpc.volume"),
 		compactionBytePerSecond: int64(compactionMBPerSecond) * 1024 * 1024,
 		fileSizeLimitBytes:      int64(fileSizeLimitMB) * 1024 * 1024,
 	}

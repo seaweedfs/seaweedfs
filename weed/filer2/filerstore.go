@@ -14,7 +14,7 @@ type FilerStore interface {
 	// GetName gets the name to locate the configuration in filer.toml file
 	GetName() string
 	// Initialize initializes the file store
-	Initialize(configuration util.Configuration) error
+	Initialize(configuration util.Configuration, prefix string) error
 	InsertEntry(context.Context, *Entry) error
 	UpdateEntry(context.Context, *Entry) (err error)
 	// err == filer2.ErrNotFound if not found
@@ -47,8 +47,8 @@ func (fsw *FilerStoreWrapper) GetName() string {
 	return fsw.actualStore.GetName()
 }
 
-func (fsw *FilerStoreWrapper) Initialize(configuration util.Configuration) error {
-	return fsw.actualStore.Initialize(configuration)
+func (fsw *FilerStoreWrapper) Initialize(configuration util.Configuration, prefix string) error {
+	return fsw.actualStore.Initialize(configuration, prefix)
 }
 
 func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) error {

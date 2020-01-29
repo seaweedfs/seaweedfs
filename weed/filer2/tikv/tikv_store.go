@@ -30,8 +30,8 @@ func (store *TikvStore) GetName() string {
 	return "tikv"
 }
 
-func (store *TikvStore) Initialize(configuration weed_util.Configuration) (err error) {
-	pdAddr := configuration.GetString("pdAddress")
+func (store *TikvStore) Initialize(configuration weed_util.Configuration, prefix string) (err error) {
+	pdAddr := configuration.GetString(prefix + "pdAddress")
 	return store.initialize(pdAddr)
 }
 

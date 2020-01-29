@@ -14,13 +14,13 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"github.com/spf13/viper"
-	"google.golang.org/grpc"
 )
 
 var (
@@ -105,7 +105,7 @@ func runCopy(cmd *Command, args []string) bool {
 
 	filerGrpcPort := filerPort + 10000
 	filerGrpcAddress := fmt.Sprintf("%s:%d", filerUrl.Hostname(), filerGrpcPort)
-	copy.grpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
+	copy.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	ctx := context.Background()
 

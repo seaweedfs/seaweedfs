@@ -26,16 +26,16 @@ func (store *MysqlStore) GetName() string {
 	return "mysql"
 }
 
-func (store *MysqlStore) Initialize(configuration util.Configuration) (err error) {
+func (store *MysqlStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 	return store.initialize(
-		configuration.GetString("username"),
-		configuration.GetString("password"),
-		configuration.GetString("hostname"),
-		configuration.GetInt("port"),
-		configuration.GetString("database"),
-		configuration.GetInt("connection_max_idle"),
-		configuration.GetInt("connection_max_open"),
-		configuration.GetBool("interpolateParams"),
+		configuration.GetString(prefix+"username"),
+		configuration.GetString(prefix+"password"),
+		configuration.GetString(prefix+"hostname"),
+		configuration.GetInt(prefix+"port"),
+		configuration.GetString(prefix+"database"),
+		configuration.GetInt(prefix+"connection_max_idle"),
+		configuration.GetInt(prefix+"connection_max_open"),
+		configuration.GetBool(prefix+"interpolateParams"),
 	)
 }
 

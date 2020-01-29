@@ -11,7 +11,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/spf13/viper"
 )
 
 var (
@@ -75,7 +74,7 @@ func (wo *WebDavOption) startWebDav() bool {
 	ws, webdavServer_err := weed_server.NewWebDavServer(&weed_server.WebDavOption{
 		Filer:            *wo.filer,
 		FilerGrpcAddress: filerGrpcAddress,
-		GrpcDialOption:   security.LoadClientTLS(viper.Sub("grpc"), "client"),
+		GrpcDialOption:   security.LoadClientTLS(util.GetViper(), "grpc.client"),
 		Collection:       *wo.collection,
 		Uid:              uid,
 		Gid:              gid,

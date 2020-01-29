@@ -3,12 +3,13 @@ package source
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/spf13/viper"
-	"google.golang.org/grpc"
 	"io"
 	"net/http"
 	"strings"
+
+	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/security"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -25,17 +26,17 @@ type FilerSource struct {
 	Dir            string
 }
 
-func (fs *FilerSource) Initialize(configuration util.Configuration) error {
+func (fs *FilerSource) Initialize(configuration util.Configuration, prefix string) error {
 	return fs.initialize(
-		configuration.GetString("grpcAddress"),
-		configuration.GetString("directory"),
+		configuration.GetString(prefix+"grpcAddress"),
+		configuration.GetString(prefix+"directory"),
 	)
 }
 
 func (fs *FilerSource) initialize(grpcAddress string, dir string) (err error) {
 	fs.grpcAddress = grpcAddress
 	fs.Dir = dir
-	fs.grpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
+	fs.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 	return nil
 }
 

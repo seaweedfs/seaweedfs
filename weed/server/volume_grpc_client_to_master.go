@@ -5,16 +5,17 @@ import (
 	"net"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
-	"github.com/spf13/viper"
-	"google.golang.org/grpc"
+
+	"golang.org/x/net/context"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"golang.org/x/net/context"
 )
 
 func (vs *VolumeServer) GetMaster() string {
@@ -26,7 +27,7 @@ func (vs *VolumeServer) heartbeat() {
 	vs.store.SetDataCenter(vs.dataCenter)
 	vs.store.SetRack(vs.rack)
 
-	grpcDialOption := security.LoadClientTLS(viper.Sub("grpc"), "volume")
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.volume")
 
 	var err error
 	var newLeader string

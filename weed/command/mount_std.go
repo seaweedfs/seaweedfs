@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/jacobsa/daemonize"
-	"github.com/spf13/viper"
 
 	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -148,7 +147,7 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 
 	err = fs.Serve(c, filesys.NewSeaweedFileSystem(&filesys.Option{
 		FilerGrpcAddress:   filerGrpcAddress,
-		GrpcDialOption:     security.LoadClientTLS(viper.Sub("grpc"), "client"),
+		GrpcDialOption:     security.LoadClientTLS(util.GetViper(), "grpc.client"),
 		FilerMountRootPath: mountRoot,
 		Collection:         collection,
 		Replication:        replication,

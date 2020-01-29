@@ -74,7 +74,7 @@ func subList(list *IntervalLinkedList, start, stop int64) *IntervalLinkedList {
 		nodes = append(nodes, &IntervalNode{
 			Data:   t.Data[nodeStart-t.Offset : nodeStop-t.Offset],
 			Offset: nodeStart,
-			Size:   nodeStop-nodeStart,
+			Size:   nodeStop - nodeStart,
 			Next:   nil,
 		})
 	}

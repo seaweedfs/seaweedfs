@@ -22,10 +22,10 @@ func (store *CassandraStore) GetName() string {
 	return "cassandra"
 }
 
-func (store *CassandraStore) Initialize(configuration util.Configuration) (err error) {
+func (store *CassandraStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 	return store.initialize(
-		configuration.GetString("keyspace"),
-		configuration.GetStringSlice("hosts"),
+		configuration.GetString(prefix+"keyspace"),
+		configuration.GetStringSlice(prefix+"hosts"),
 	)
 }
 

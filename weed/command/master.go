@@ -8,15 +8,15 @@ import (
 	"strings"
 
 	"github.com/chrislusf/raft/protobuf"
+	"github.com/gorilla/mux"
+	"google.golang.org/grpc/reflection"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/gorilla/mux"
-	"github.com/spf13/viper"
-	"google.golang.org/grpc/reflection"
 )
 
 var (
@@ -102,7 +102,7 @@ func runMaster(cmd *Command, args []string) bool {
 
 func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
-	backend.LoadConfiguration(viper.GetViper())
+	backend.LoadConfiguration(util.GetViper())
 
 	myMasterAddress, peers := checkPeers(*masterOption.ip, *masterOption.port, *masterOption.peers)
 
@@ -115,7 +115,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		glog.Fatalf("Master startup error: %v", e)
 	}
 	// start raftServer
-	raftServer := weed_server.NewRaftServer(security.LoadClientTLS(viper.Sub("grpc"), "master"),
+	raftServer := weed_server.NewRaftServer(security.LoadClientTLS(util.GetViper(), "grpc.master"),
 		peers, myMasterAddress, *masterOption.metaFolder, ms.Topo, *masterOption.pulseSeconds)
 	if raftServer == nil {
 		glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717", *masterOption.metaFolder)
@@ -129,7 +129,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	// Create your protocol servers.
-	grpcS := util.NewGrpcServer(security.LoadServerTLS(viper.Sub("grpc"), "master"))
+	grpcS := util.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.master"))
 	master_pb.RegisterSeaweedServer(grpcS, ms)
 	protobuf.RegisterRaftServer(grpcS, raftServer)
 	reflection.Register(grpcS)

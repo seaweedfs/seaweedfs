@@ -1,8 +1,11 @@
 package util
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"strings"
+
 	"github.com/spf13/viper"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 type Configuration interface {
@@ -36,4 +39,12 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 	}
 
 	return true
+}
+
+func GetViper() *viper.Viper {
+	v := viper.GetViper()
+	v.AutomaticEnv()
+	v.SetEnvPrefix("weed")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	return v
 }

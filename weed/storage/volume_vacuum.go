@@ -356,7 +356,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName string, sb super_block.SuperBlock, version needle.Version, preallocate int64) (err error) {
 	var (
 		srcDatBackend, dstDatBackend backend.BackendStorageFile
-		dataFile *os.File
+		dataFile                     *os.File
 	)
 	if dstDatBackend, err = createVolumeFile(dstDatName, preallocate, 0); err != nil {
 		return

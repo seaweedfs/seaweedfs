@@ -26,16 +26,16 @@ func (store *PostgresStore) GetName() string {
 	return "postgres"
 }
 
-func (store *PostgresStore) Initialize(configuration util.Configuration) (err error) {
+func (store *PostgresStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 	return store.initialize(
-		configuration.GetString("username"),
-		configuration.GetString("password"),
-		configuration.GetString("hostname"),
-		configuration.GetInt("port"),
-		configuration.GetString("database"),
-		configuration.GetString("sslmode"),
-		configuration.GetInt("connection_max_idle"),
-		configuration.GetInt("connection_max_open"),
+		configuration.GetString(prefix+"username"),
+		configuration.GetString(prefix+"password"),
+		configuration.GetString(prefix+"hostname"),
+		configuration.GetInt(prefix+"port"),
+		configuration.GetString(prefix+"database"),
+		configuration.GetString(prefix+"sslmode"),
+		configuration.GetInt(prefix+"connection_max_idle"),
+		configuration.GetInt(prefix+"connection_max_open"),
 	)
 }
 

@@ -30,8 +30,8 @@ func (store *LevelDB2Store) GetName() string {
 	return "leveldb2"
 }
 
-func (store *LevelDB2Store) Initialize(configuration weed_util.Configuration) (err error) {
-	dir := configuration.GetString("dir")
+func (store *LevelDB2Store) Initialize(configuration weed_util.Configuration, prefix string) (err error) {
+	dir := configuration.GetString(prefix + "dir")
 	return store.initialize(dir, 8)
 }
 

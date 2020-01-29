@@ -3,8 +3,6 @@ package command
 import (
 	"fmt"
 
-	"github.com/spf13/viper"
-
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
@@ -66,7 +64,7 @@ var cmdBackup = &Command{
 func runBackup(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
-	grpcDialOption := security.LoadClientTLS(viper.Sub("grpc"), "client")
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	if *s.volumeId == -1 {
 		return false

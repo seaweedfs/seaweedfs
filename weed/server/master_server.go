@@ -14,6 +14,9 @@ import (
 	"time"
 
 	"github.com/chrislusf/raft"
+	"github.com/gorilla/mux"
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -22,9 +25,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"github.com/gorilla/mux"
-	"github.com/spf13/viper"
-	"google.golang.org/grpc"
 )
 
 const (
@@ -69,7 +69,7 @@ type MasterServer struct {
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *MasterServer {
 
-	v := viper.GetViper()
+	v := util.GetViper()
 	signingKey := v.GetString("jwt.signing.key")
 	v.SetDefault("jwt.signing.expires_after_seconds", 10)
 	expiresAfterSec := v.GetInt("jwt.signing.expires_after_seconds")
@@ -83,7 +83,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 		preallocateSize = int64(option.VolumeSizeLimitMB) * (1 << 20)
 	}
 
-	grpcDialOption := security.LoadClientTLS(v.Sub("grpc"), "master")
+	grpcDialOption := security.LoadClientTLS(v, "grpc.master")
 	ms := &MasterServer{
 		option:          option,
 		preallocateSize: preallocateSize,
@@ -183,7 +183,7 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 func (ms *MasterServer) startAdminScripts() {
 	var err error
 
-	v := viper.GetViper()
+	v := util.GetViper()
 	adminScripts := v.GetString("master.maintenance.scripts")
 	glog.V(0).Infof("adminScripts:\n%v", adminScripts)
 	if adminScripts == "" {
@@ -201,7 +201,7 @@ func (ms *MasterServer) startAdminScripts() {
 	masterAddress := "localhost:" + strconv.Itoa(ms.option.Port)
 
 	var shellOptions shell.ShellOptions
-	shellOptions.GrpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "master")
+	shellOptions.GrpcDialOption = security.LoadClientTLS(v, "grpc.master")
 	shellOptions.Masters = &masterAddress
 
 	shellOptions.FilerHost, shellOptions.FilerPort, shellOptions.Directory, err = util.ParseFilerUrl(filerURL)
@@ -250,7 +250,7 @@ func (ms *MasterServer) startAdminScripts() {
 
 func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer {
 	var seq sequence.Sequencer
-	v := viper.GetViper()
+	v := util.GetViper()
 	seqType := strings.ToLower(v.GetString(SequencerType))
 	glog.V(1).Infof("[%s] : [%s]", SequencerType, seqType)
 	switch strings.ToLower(seqType) {

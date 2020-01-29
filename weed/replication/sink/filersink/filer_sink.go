@@ -3,9 +3,10 @@ package filersink
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/spf13/viper"
+
 	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/security"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -38,13 +39,13 @@ func (fs *FilerSink) GetSinkToDirectory() string {
 	return fs.dir
 }
 
-func (fs *FilerSink) Initialize(configuration util.Configuration) error {
+func (fs *FilerSink) Initialize(configuration util.Configuration, prefix string) error {
 	return fs.initialize(
-		configuration.GetString("grpcAddress"),
-		configuration.GetString("directory"),
-		configuration.GetString("replication"),
-		configuration.GetString("collection"),
-		configuration.GetInt("ttlSec"),
+		configuration.GetString(prefix+"grpcAddress"),
+		configuration.GetString(prefix+"directory"),
+		configuration.GetString(prefix+"replication"),
+		configuration.GetString(prefix+"collection"),
+		configuration.GetInt(prefix+"ttlSec"),
 	)
 }
 
@@ -59,7 +60,7 @@ func (fs *FilerSink) initialize(grpcAddress string, dir string,
 	fs.replication = replication
 	fs.collection = collection
 	fs.ttlSec = int32(ttlSec)
-	fs.grpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
+	fs.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 	return nil
 }
 

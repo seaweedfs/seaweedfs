@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/spf13/viper"
-
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -42,8 +40,8 @@ func (c *commandFsMetaNotify) Do(args []string, commandEnv *CommandEnv, writer i
 	}
 
 	util.LoadConfiguration("notification", true)
-	v := viper.GetViper()
-	notification.LoadConfiguration(v.Sub("notification"))
+	v := util.GetViper()
+	notification.LoadConfiguration(v, "notification.")
 
 	ctx := context.Background()
 

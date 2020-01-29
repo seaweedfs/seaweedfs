@@ -27,8 +27,8 @@ func (k *GoCDKPubSubInput) GetName() string {
 	return "gocdk_pub_sub"
 }
 
-func (k *GoCDKPubSubInput) Initialize(config util.Configuration) error {
-	subURL := config.GetString("sub_url")
+func (k *GoCDKPubSubInput) Initialize(configuration util.Configuration, prefix string) error {
+	subURL := configuration.GetString(prefix + "sub_url")
 	glog.V(0).Infof("notification.gocdk_pub_sub.sub_url: %v", subURL)
 	sub, err := pubsub.OpenSubscription(context.Background(), subURL)
 	if err != nil {

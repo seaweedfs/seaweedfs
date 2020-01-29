@@ -18,16 +18,16 @@ func (store *RedisClusterStore) GetName() string {
 	return "redis_cluster"
 }
 
-func (store *RedisClusterStore) Initialize(configuration util.Configuration) (err error) {
+func (store *RedisClusterStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 
-	configuration.SetDefault("useReadOnly", true)
-	configuration.SetDefault("routeByLatency", true)
+	configuration.SetDefault(prefix+"useReadOnly", true)
+	configuration.SetDefault(prefix+"routeByLatency", true)
 
 	return store.initialize(
-		configuration.GetStringSlice("addresses"),
-		configuration.GetString("password"),
-		configuration.GetBool("useReadOnly"),
-		configuration.GetBool("routeByLatency"),
+		configuration.GetStringSlice(prefix+"addresses"),
+		configuration.GetString(prefix+"password"),
+		configuration.GetBool(prefix+"useReadOnly"),
+		configuration.GetBool(prefix+"routeByLatency"),
 	)
 }
 

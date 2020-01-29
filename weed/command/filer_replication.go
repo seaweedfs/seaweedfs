@@ -39,7 +39,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 	util.LoadConfiguration("replication", true)
 	util.LoadConfiguration("notification", true)
-	config := viper.GetViper()
+	config := util.GetViper()
 
 	var notificationInput sub.NotificationInput
 
@@ -47,8 +47,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 
 	for _, input := range sub.NotificationInputs {
 		if config.GetBool("notification." + input.GetName() + ".enabled") {
-			viperSub := config.Sub("notification." + input.GetName())
-			if err := input.Initialize(viperSub); err != nil {
+			if err := input.Initialize(config, "notification."+input.GetName()+"."); err != nil {
 				glog.Fatalf("Failed to initialize notification input for %s: %+v",
 					input.GetName(), err)
 			}
@@ -66,10 +65,9 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 
 	// avoid recursive replication
 	if config.GetBool("notification.source.filer.enabled") && config.GetBool("notification.sink.filer.enabled") {
-		sourceConfig, sinkConfig := config.Sub("source.filer"), config.Sub("sink.filer")
-		if sourceConfig.GetString("grpcAddress") == sinkConfig.GetString("grpcAddress") {
-			fromDir := sourceConfig.GetString("directory")
-			toDir := sinkConfig.GetString("directory")
+		if config.GetString("source.filer.grpcAddress") == config.GetString("sink.filer.grpcAddress") {
+			fromDir := config.GetString("source.filer.directory")
+			toDir := config.GetString("sink.filer.directory")
 			if strings.HasPrefix(toDir, fromDir) {
 				glog.Fatalf("recursive replication! source directory %s includes the sink directory %s", fromDir, toDir)
 			}
@@ -79,8 +77,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 	var dataSink sink.ReplicationSink
 	for _, sk := range sink.Sinks {
 		if config.GetBool("sink." + sk.GetName() + ".enabled") {
-			viperSub := config.Sub("sink." + sk.GetName())
-			if err := sk.Initialize(viperSub); err != nil {
+			if err := sk.Initialize(config, "sink."+sk.GetName()+"."); err != nil {
 				glog.Fatalf("Failed to initialize sink for %s: %+v",
 					sk.GetName(), err)
 			}
@@ -98,7 +95,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 		return true
 	}
 
-	replicator := replication.NewReplicator(config.Sub("source.filer"), dataSink)
+	replicator := replication.NewReplicator(config, "source.filer.", dataSink)
 
 	for {
 		key, m, err := notificationInput.ReceiveMessage()
