@@ -20,5 +20,5 @@ func TestAllKeysWithEnv(t *testing.T) {
 	sub := v.Sub("foo")
 
 	assert.Equal(t, "13", v.GetString("id"))
-	assert.Equal(t, "baz", sub.GetString("bar"))
+	assert.Equal(t, nil, sub)
 }
