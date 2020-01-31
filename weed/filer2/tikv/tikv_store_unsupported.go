@@ -21,7 +21,7 @@ func (store *TikvStore) GetName() string {
 	return "tikv"
 }
 
-func (store *TikvStore) Initialize(configuration weed_util.Configuration) (err error) {
+func (store *TikvStore) Initialize(configuration weed_util.Configuration, prefix string) (err error) {
 	return fmt.Errorf("not implemented for 32 bit computers")
 }
 
