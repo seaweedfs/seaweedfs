@@ -41,6 +41,8 @@ const (
 	ErrInvalidPartNumberMarker
 	ErrInvalidPart
 	ErrInternalError
+	ErrInvalidCopyDest
+	ErrInvalidCopySource
 	ErrNotImplemented
 )
 
@@ -118,6 +120,18 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "One or more of the specified parts could not be found.  The part may not have been uploaded, or the specified entity tag may not match the part's entity tag.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
+
+	ErrInvalidCopyDest: {
+		Code:           "InvalidRequest",
+		Description:    "This copy request is illegal because it is trying to copy an object to itself without changing the object's metadata, storage class, website redirect location or encryption attributes.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidCopySource: {
+		Code:           "InvalidArgument",
+		Description:    "Copy Source must mention the source bucket and key: sourcebucket/sourcekey.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+
 	ErrNotImplemented: {
 		Code:           "NotImplemented",
 		Description:    "A header you provided implies functionality that is not implemented",

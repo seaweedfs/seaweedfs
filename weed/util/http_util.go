@@ -286,3 +286,24 @@ func ReadUrlAsStream(fileUrl string, offset int64, size int, fn func(data []byte
 	}
 
 }
+
+func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, error) {
+
+	req, err := http.NewRequest("GET", fileUrl, nil)
+	if err != nil {
+		return nil, err
+	}
+	if rangeHeader != "" {
+		req.Header.Add("Range", rangeHeader)
+	}
+
+	r, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if r.StatusCode >= 400 {
+		return nil, fmt.Errorf("%s: %s", fileUrl, r.Status)
+	}
+
+	return r.Body, nil
+}
