@@ -51,9 +51,6 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	etag, errCode := s3a.putToFiler(r, dstUrl, dataReader)
 
-	println("srcUrl:", srcUrl)
-	println("dstUrl:", dstUrl)
-
 	if errCode != ErrNone {
 		writeErrorResponse(w, errCode, r.URL)
 		return
