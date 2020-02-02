@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -36,5 +37,12 @@ func (v *Volume) maybeWriteSuperBlock() error {
 
 func (v *Volume) readSuperBlock() (err error) {
 	v.SuperBlock, err = super_block.ReadSuperBlock(v.DataBackend)
+	if v.volumeInfo != nil && v.volumeInfo.Replication != ""{
+		if replication, err := super_block.NewReplicaPlacementFromString(v.volumeInfo.Replication); err != nil {
+			return fmt.Errorf("Error parse volume %d replication %s : %v", v.Id, v.volumeInfo.Replication, err)
+		} else {
+			v.SuperBlock.ReplicaPlacement = replication
+		}
+	}
 	return err
 }

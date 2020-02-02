@@ -35,6 +35,8 @@ service VolumeServer {
     }
     rpc VolumeMarkReadonly (VolumeMarkReadonlyRequest) returns (VolumeMarkReadonlyResponse) {
     }
+    rpc VolumeConfigure (VolumeConfigureRequest) returns (VolumeConfigureResponse) {
+    }
 
     // copy the .idx .dat files, and mount this volume
     rpc VolumeCopy (VolumeCopyRequest) returns (VolumeCopyResponse) {
@@ -187,6 +189,14 @@ message VolumeMarkReadonlyRequest {
     uint32 volume_id = 1;
 }
 message VolumeMarkReadonlyResponse {
+}
+
+message VolumeConfigureRequest {
+    uint32 volume_id = 1;
+    string replication = 2;
+}
+message VolumeConfigureResponse {
+    string error = 1;
 }
 
 message VolumeCopyRequest {
@@ -355,6 +365,7 @@ message RemoteFile {
 message VolumeInfo {
     repeated RemoteFile files = 1;
     uint32 version = 2;
+    string replication = 3;
 }
 
 message VolumeTierMoveDatToRemoteRequest {

@@ -2,11 +2,14 @@ package storage
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -341,6 +344,31 @@ func (s *Store) DeleteVolume(i needle.VolumeId) error {
 			s.DeletedVolumesChan <- message
 			return nil
 		}
+	}
+
+	return fmt.Errorf("volume %d not found on disk", i)
+}
+
+func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
+
+	for _, location := range s.Locations {
+		fileInfo, found := location.LocateVolume(i)
+		if !found {
+			continue
+		}
+		// load, modify, save
+		baseFileName := strings.TrimSuffix(fileInfo.Name(), filepath.Ext(fileInfo.Name()))
+		vifFile := filepath.Join(location.Directory, baseFileName + ".vif")
+		volumeInfo, _, err := pb.MaybeLoadVolumeInfo(vifFile)
+		if err != nil {
+			return fmt.Errorf("volume %d fail to load vif", i)
+		}
+		volumeInfo.Replication = replication
+		err = pb.SaveVolumeInfo(vifFile, volumeInfo)
+		if err != nil {
+			return fmt.Errorf("volume %d fail to save vif", i)
+		}
+		return nil
 	}
 
 	return fmt.Errorf("volume %d not found on disk", i)

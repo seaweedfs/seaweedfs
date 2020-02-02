@@ -1,12 +1,11 @@
 package storage
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"strings"
 	"sync"
-
-	"fmt"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
@@ -172,16 +171,10 @@ func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId) (e error) {
 }
 
 func (l *DiskLocation) LoadVolume(vid needle.VolumeId, needleMapKind NeedleMapType) bool {
-	if fileInfos, err := ioutil.ReadDir(l.Directory); err == nil {
-		for _, fileInfo := range fileInfos {
-			volId, _, err := l.volumeIdFromPath(fileInfo)
-			if vid == volId && err == nil {
-				l.loadExistingVolume(fileInfo, needleMapKind)
-				return true
-			}
-		}
+	if fileInfo, found := l.LocateVolume(vid); found {
+		l.loadExistingVolume(fileInfo, needleMapKind)
+		return true
 	}
-
 	return false
 }
 
@@ -217,7 +210,7 @@ func (l *DiskLocation) unmountVolumeByCollection(collectionName string) map[need
 		}
 	}
 
-	for k, _ := range deltaVols {
+	for k := range deltaVols {
 		delete(l.volumes, k)
 	}
 	return deltaVols
@@ -259,4 +252,17 @@ func (l *DiskLocation) Close() {
 	l.ecVolumesLock.Unlock()
 
 	return
+}
+
+func (l *DiskLocation) LocateVolume(vid needle.VolumeId) (os.FileInfo, bool) {
+	if fileInfos, err := ioutil.ReadDir(l.Directory); err == nil {
+		for _, fileInfo := range fileInfos {
+			volId, _, err := l.volumeIdFromPath(fileInfo)
+			if vid == volId && err == nil {
+				return fileInfo, true
+			}
+		}
+	}
+
+	return nil, false
 }
