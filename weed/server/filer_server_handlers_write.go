@@ -32,7 +32,7 @@ var (
 
 type FilerPostResult struct {
 	Name  string `json:"name,omitempty"`
-	Size  uint32 `json:"size,omitempty"`
+	Size  int64  `json:"size,omitempty"`
 	Error string `json:"error,omitempty"`
 	Fid   string `json:"fid,omitempty"`
 	Url   string `json:"url,omitempty"`
@@ -130,7 +130,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	// send back post result
 	reply := FilerPostResult{
 		Name:  ret.Name,
-		Size:  ret.Size,
+		Size:  int64(ret.Size),
 		Error: ret.Error,
 		Fid:   fileId,
 		Url:   urlLocation,
