@@ -369,6 +369,8 @@ type = "memory"     # Choose [memory|etcd] type for storing the file id sequence
 sequencer_etcd_urls = "http://127.0.0.1:2379"
 
 
+# configurations for tiered cloud storage
+# old volumes are transparently moved to cloud for cost efficiency
 [storage.backend]
 	[storage.backend.s3.default]
 	enabled = false
@@ -376,6 +378,13 @@ sequencer_etcd_urls = "http://127.0.0.1:2379"
 	aws_secret_access_key = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
 	region = "us-east-2"
 	bucket = "your_bucket_name"    # an existing bucket
+
+# create this number of logical volumes if no more writable volumes
+[master.volume_growth]
+count_1 = 7                # create 1 x 7 = 7 actual volumes
+count_2 = 6                # create 2 x 6 = 12 actual volumes
+count_3 = 3                # create 3 x 3 = 9 actual volumes
+count_other = 1            # create n x 1 = n actual volumes
 
 `
 )

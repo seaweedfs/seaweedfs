@@ -7,6 +7,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"github.com/chrislusf/seaweedfs/weed/util"
 
 	"google.golang.org/grpc"
 
@@ -48,15 +49,20 @@ func NewDefaultVolumeGrowth() *VolumeGrowth {
 // one replication type may need rp.GetCopyCount() actual volumes
 // given copyCount, how many logical volumes to create
 func (vg *VolumeGrowth) findVolumeCount(copyCount int) (count int) {
+	v := util.GetViper()
+	v.SetDefault("master.volume_growth.copy_1", 7)
+	v.SetDefault("master.volume_growth.copy_2", 6)
+	v.SetDefault("master.volume_growth.copy_3", 3)
+	v.SetDefault("master.volume_growth.copy_other", 1)
 	switch copyCount {
 	case 1:
-		count = 7
+		count = v.GetInt("master.volume_growth.copy_1")
 	case 2:
-		count = 6
+		count = v.GetInt("master.volume_growth.copy_2")
 	case 3:
-		count = 3
+		count = v.GetInt("master.volume_growth.copy_3")
 	default:
-		count = 1
+		count = v.GetInt("master.volume_growth.copy_other")
 	}
 	return
 }
