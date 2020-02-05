@@ -41,9 +41,9 @@ func TestEncodingDecoding(t *testing.T) {
 }
 
 func validateFiles(baseFileName string) error {
-	cm, err := readCompactMap(baseFileName)
+	nm, err := readNeedleMap(baseFileName)
 	if err != nil {
-		return fmt.Errorf("readCompactMap: %v", err)
+		return fmt.Errorf("readNeedleMap: %v", err)
 	}
 
 	datFile, err := os.OpenFile(baseFileName+".dat", os.O_RDONLY, 0)
@@ -60,7 +60,7 @@ func validateFiles(baseFileName string) error {
 	ecFiles, err := openEcFiles(baseFileName, true)
 	defer closeEcFiles(ecFiles)
 
-	err = cm.AscendingVisit(func(value needle_map.NeedleValue) error {
+	err = nm.AscendingVisit(func(value needle_map.NeedleValue) error {
 		return assertSame(datFile, fi.Size(), ecFiles, value.Offset, value.Size)
 	})
 	if err != nil {

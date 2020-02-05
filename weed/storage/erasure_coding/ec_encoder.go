@@ -26,9 +26,9 @@ const (
 // all keys are sorted in ascending order
 func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 
-	cm, err := readCompactMap(baseFileName)
+	nm, err := readNeedleMap(baseFileName)
 	if err != nil {
-		return fmt.Errorf("readCompactMap: %v", err)
+		return fmt.Errorf("readNeedleMap: %v", err)
 	}
 
 	ecxFile, err := os.OpenFile(baseFileName+ext, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
@@ -37,7 +37,7 @@ func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 	}
 	defer ecxFile.Close()
 
-	err = cm.AscendingVisit(func(value needle_map.NeedleValue) error {
+	err = nm.AscendingVisit(func(value needle_map.NeedleValue) error {
 		bytes := value.ToBytes()
 		_, writeErr := ecxFile.Write(bytes)
 		return writeErr
@@ -281,7 +281,7 @@ func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*o
 
 }
 
-func readCompactMap(baseFileName string) (*needle_map.MemDb, error) {
+func readNeedleMap(baseFileName string) (*needle_map.MemDb, error) {
 	indexFile, err := os.OpenFile(baseFileName+".idx", os.O_RDONLY, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read Volume Index %s.idx: %v", baseFileName, err)
