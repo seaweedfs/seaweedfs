@@ -5,12 +5,13 @@ import (
 	"io"
 	"os"
 
+	"github.com/klauspost/reedsolomon"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/klauspost/reedsolomon"
 )
 
 const (
@@ -280,14 +281,14 @@ func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*o
 
 }
 
-func readCompactMap(baseFileName string) (*needle_map.CompactMap, error) {
+func readCompactMap(baseFileName string) (*needle_map.MemDb, error) {
 	indexFile, err := os.OpenFile(baseFileName+".idx", os.O_RDONLY, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read Volume Index %s.idx: %v", baseFileName, err)
 	}
 	defer indexFile.Close()
 
-	cm := needle_map.NewCompactMap()
+	cm := needle_map.NewMemDb()
 	err = idx.WalkIndexFile(indexFile, func(key types.NeedleId, offset types.Offset, size uint32) error {
 		if !offset.IsZero() && size != types.TombstoneFileSize {
 			cm.Set(key, offset, size)
