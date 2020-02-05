@@ -3,12 +3,13 @@ package source
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/spf13/viper"
-	"google.golang.org/grpc"
 	"io"
 	"net/http"
 	"strings"
+
+	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/security"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -25,17 +26,17 @@ type FilerSource struct {
 	Dir            string
 }
 
-func (fs *FilerSource) Initialize(configuration util.Configuration) error {
+func (fs *FilerSource) Initialize(configuration util.Configuration, prefix string) error {
 	return fs.initialize(
-		configuration.GetString("grpcAddress"),
-		configuration.GetString("directory"),
+		configuration.GetString(prefix+"grpcAddress"),
+		configuration.GetString(prefix+"directory"),
 	)
 }
 
 func (fs *FilerSource) initialize(grpcAddress string, dir string) (err error) {
 	fs.grpcAddress = grpcAddress
 	fs.Dir = dir
-	fs.grpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
+	fs.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 	return nil
 }
 
@@ -45,7 +46,7 @@ func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrl s
 
 	vid := volumeId(part)
 
-	err = fs.withFilerClient(ctx, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = fs.withFilerClient(ctx, fs.grpcDialOption, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		glog.V(4).Infof("read lookup volume id locations: %v", vid)
 		resp, err := client.LookupVolume(ctx, &filer_pb.LookupVolumeRequest{
@@ -89,11 +90,11 @@ func (fs *FilerSource) ReadPart(ctx context.Context, part string) (filename stri
 	return filename, header, readCloser, err
 }
 
-func (fs *FilerSource) withFilerClient(ctx context.Context, grpcDialOption grpc.DialOption, fn func(filer_pb.SeaweedFilerClient) error) error {
+func (fs *FilerSource) withFilerClient(ctx context.Context, grpcDialOption grpc.DialOption, fn func(context.Context, filer_pb.SeaweedFilerClient) error) error {
 
-	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
+	return util.WithCachedGrpcClient(ctx, func(ctx2 context.Context, grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		return fn(client)
+		return fn(ctx2, client)
 	}, fs.grpcAddress, fs.grpcDialOption)
 
 }

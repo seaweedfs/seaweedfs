@@ -14,13 +14,13 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"github.com/spf13/viper"
-	"google.golang.org/grpc"
 )
 
 var (
@@ -105,7 +105,7 @@ func runCopy(cmd *Command, args []string) bool {
 
 	filerGrpcPort := filerPort + 10000
 	filerGrpcAddress := fmt.Sprintf("%s:%d", filerUrl.Hostname(), filerGrpcPort)
-	copy.grpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
+	copy.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	ctx := context.Background()
 
@@ -331,7 +331,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(ctx context.Context, task FileCopy
 			},
 		}
 
-		if _, err := client.CreateEntry(ctx, request); err != nil {
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			return fmt.Errorf("update fh: %v", err)
 		}
 		return nil
@@ -378,7 +378,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(ctx context.Context, task FileC
 			uploadResult, err := operation.Upload(targetUrl,
 				fileName+"-"+strconv.FormatInt(i+1, 10),
 				io.NewSectionReader(f, i*chunkSize, chunkSize),
-				false, "application/octet-stream", nil, assignResult.Auth)
+				false, "", nil, assignResult.Auth)
 			if err != nil {
 				uploadError = fmt.Errorf("upload data %v to %s: %v\n", fileName, targetUrl, err)
 				return
@@ -435,7 +435,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(ctx context.Context, task FileC
 			},
 		}
 
-		if _, err := client.CreateEntry(ctx, request); err != nil {
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			return fmt.Errorf("update fh: %v", err)
 		}
 		return nil
@@ -466,7 +466,7 @@ func detectMimeType(f *os.File) string {
 
 func withFilerClient(ctx context.Context, filerAddress string, grpcDialOption grpc.DialOption, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return util.WithCachedGrpcClient(ctx, func(clientConn *grpc.ClientConn) error {
+	return util.WithCachedGrpcClient(ctx, func(ctx context.Context, clientConn *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(clientConn)
 		return fn(client)
 	}, filerAddress, grpcDialOption)

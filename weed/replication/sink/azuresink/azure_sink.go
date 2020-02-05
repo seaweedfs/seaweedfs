@@ -35,12 +35,12 @@ func (g *AzureSink) GetSinkToDirectory() string {
 	return g.dir
 }
 
-func (g *AzureSink) Initialize(configuration util.Configuration) error {
+func (g *AzureSink) Initialize(configuration util.Configuration, prefix string) error {
 	return g.initialize(
-		configuration.GetString("account_name"),
-		configuration.GetString("account_key"),
-		configuration.GetString("container"),
-		configuration.GetString("directory"),
+		configuration.GetString(prefix+"account_name"),
+		configuration.GetString(prefix+"account_key"),
+		configuration.GetString(prefix+"container"),
+		configuration.GetString(prefix+"directory"),
 	)
 }
 

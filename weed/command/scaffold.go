@@ -14,6 +14,14 @@ var cmdScaffold = &Command{
 	Short:     "generate basic configuration files",
 	Long: `Generate filer.toml with all possible configurations for you to customize.
 
+	The options can also be overwritten by environment variables.
+	For example, the filer.toml mysql password can be overwritten by environment variable
+		export WEED_MYSQL_PASSWORD=some_password
+	Environment variable rules:
+		* Prefix fix with "WEED_"
+		* Upppercase the reset of variable name.
+		* Replace '.' with '_'
+
   `,
 }
 
@@ -59,24 +67,24 @@ const (
 #    $HOME/.seaweedfs/filer.toml
 #    /etc/seaweedfs/filer.toml
 
-[memory]
-# local in memory, mostly for testing purpose
-enabled = false
+####################################################
+# Customizable filer server options
+####################################################
+[filer.options]
+# with http DELETE, by default the filer would check whether a folder is empty.
+# recursive_delete will delete all sub folders and files, similar to "rm -Rf"
+recursive_delete = false
 
-[leveldb]
-# local on disk, mostly for simple single-machine setup, fairly scalable
-enabled = false
-dir = "."					# directory to store level db files
+
+####################################################
+# The following are filer store options
+####################################################
 
 [leveldb2]
 # local on disk, mostly for simple single-machine setup, fairly scalable
 # faster than previous leveldb, recommended.
 enabled = true
 dir = "."					# directory to store level db files
-
-####################################################
-# multiple filers on shared storage, fairly scalable
-####################################################
 
 [mysql]  # or tidb
 # CREATE TABLE IF NOT EXISTS filemeta (
@@ -95,6 +103,7 @@ password = ""
 database = ""              # create or use an existing database
 connection_max_idle = 2
 connection_max_open = 100
+interpolateParams = false
 
 [postgres] # or cockroachdb
 # CREATE TABLE IF NOT EXISTS filemeta (
@@ -144,6 +153,10 @@ addresses = [
     "localhost:30006",
 ]
 password = ""
+# allows reads from slave servers or the master, but all writes still go to the master
+readOnly = true
+# automatically use the closest Redis server for reads
+routeByLatency = true
 
 [etcd]
 enabled = false
@@ -345,6 +358,33 @@ scripts = """
   volume.balance -force
 """
 sleep_minutes = 17          # sleep minutes between each script execution
+
+[master.filer]
+default_filer_url = "http://localhost:8888/"
+
+[master.sequencer]
+type = "memory"     # Choose [memory|etcd] type for storing the file id sequence
+# when sequencer.type = etcd, set listen client urls of etcd cluster that store file id sequence
+# example : http://127.0.0.1:2379,http://127.0.0.1:2389
+sequencer_etcd_urls = "http://127.0.0.1:2379"
+
+
+# configurations for tiered cloud storage
+# old volumes are transparently moved to cloud for cost efficiency
+[storage.backend]
+	[storage.backend.s3.default]
+	enabled = false
+	aws_access_key_id     = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
+	aws_secret_access_key = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
+	region = "us-east-2"
+	bucket = "your_bucket_name"    # an existing bucket
+
+# create this number of logical volumes if no more writable volumes
+[master.volume_growth]
+count_1 = 7                # create 1 x 7 = 7 actual volumes
+count_2 = 6                # create 2 x 6 = 12 actual volumes
+count_3 = 3                # create 3 x 3 = 9 actual volumes
+count_other = 1            # create n x 1 = n actual volumes
 
 `
 )

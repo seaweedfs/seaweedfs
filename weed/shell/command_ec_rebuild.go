@@ -111,7 +111,7 @@ func rebuildEcVolumes(commandEnv *CommandEnv, allEcNodes []*EcNode, collection s
 			return fmt.Errorf("ec volume %d is unrepairable with %d shards\n", vid, shardCount)
 		}
 
-		sortEcNodes(allEcNodes)
+		sortEcNodesByFreeslotsDecending(allEcNodes)
 
 		if allEcNodes[0].freeEcSlot < erasure_coding.TotalShardsCount {
 			return fmt.Errorf("disk space is not enough")
@@ -170,7 +170,7 @@ func rebuildOneEcVolume(ctx context.Context, commandEnv *CommandEnv, rebuilder *
 func generateMissingShards(ctx context.Context, grpcDialOption grpc.DialOption,
 	collection string, volumeId needle.VolumeId, sourceLocation string) (rebuiltShardIds []uint32, err error) {
 
-	err = operation.WithVolumeServerClient(sourceLocation, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+	err = operation.WithVolumeServerClient(sourceLocation, grpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
 		resp, rebultErr := volumeServerClient.VolumeEcShardsRebuild(ctx, &volume_server_pb.VolumeEcShardsRebuildRequest{
 			VolumeId:   uint32(volumeId),
 			Collection: collection,
@@ -209,12 +209,14 @@ func prepareDataToRecover(ctx context.Context, commandEnv *CommandEnv, rebuilder
 
 		var copyErr error
 		if applyBalancing {
-			copyErr = operation.WithVolumeServerClient(rebuilder.info.Id, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+			copyErr = operation.WithVolumeServerClient(rebuilder.info.Id, commandEnv.option.GrpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
 				_, copyErr := volumeServerClient.VolumeEcShardsCopy(ctx, &volume_server_pb.VolumeEcShardsCopyRequest{
 					VolumeId:       uint32(volumeId),
 					Collection:     collection,
 					ShardIds:       []uint32{uint32(shardId)},
 					CopyEcxFile:    needEcxFile,
+					CopyEcjFile:    needEcxFile,
+					CopyVifFile:    needEcxFile,
 					SourceDataNode: ecNodes[0].info.Id,
 				})
 				return copyErr

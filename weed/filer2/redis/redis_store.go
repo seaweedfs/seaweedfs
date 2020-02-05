@@ -18,11 +18,11 @@ func (store *RedisStore) GetName() string {
 	return "redis"
 }
 
-func (store *RedisStore) Initialize(configuration util.Configuration) (err error) {
+func (store *RedisStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 	return store.initialize(
-		configuration.GetString("address"),
-		configuration.GetString("password"),
-		configuration.GetInt("database"),
+		configuration.GetString(prefix+"address"),
+		configuration.GetString(prefix+"password"),
+		configuration.GetInt(prefix+"database"),
 	)
 }
 

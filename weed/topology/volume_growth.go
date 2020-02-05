@@ -6,6 +6,9 @@ import (
 	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"github.com/chrislusf/seaweedfs/weed/util"
+
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -22,7 +25,7 @@ This package is created to resolve these replica placement issues:
 
 type VolumeGrowOption struct {
 	Collection         string
-	ReplicaPlacement   *storage.ReplicaPlacement
+	ReplicaPlacement   *super_block.ReplicaPlacement
 	Ttl                *needle.TTL
 	Prealloacte        int64
 	DataCenter         string
@@ -46,21 +49,29 @@ func NewDefaultVolumeGrowth() *VolumeGrowth {
 // one replication type may need rp.GetCopyCount() actual volumes
 // given copyCount, how many logical volumes to create
 func (vg *VolumeGrowth) findVolumeCount(copyCount int) (count int) {
+	v := util.GetViper()
+	v.SetDefault("master.volume_growth.copy_1", 7)
+	v.SetDefault("master.volume_growth.copy_2", 6)
+	v.SetDefault("master.volume_growth.copy_3", 3)
+	v.SetDefault("master.volume_growth.copy_other", 1)
 	switch copyCount {
 	case 1:
-		count = 7
+		count = v.GetInt("master.volume_growth.copy_1")
 	case 2:
-		count = 6
+		count = v.GetInt("master.volume_growth.copy_2")
 	case 3:
-		count = 3
+		count = v.GetInt("master.volume_growth.copy_3")
 	default:
-		count = 1
+		count = v.GetInt("master.volume_growth.copy_other")
 	}
 	return
 }
 
-func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, grpcDialOption grpc.DialOption, topo *Topology) (count int, err error) {
-	count, err = vg.GrowByCountAndType(grpcDialOption, vg.findVolumeCount(option.ReplicaPlacement.GetCopyCount()), option, topo)
+func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, grpcDialOption grpc.DialOption, topo *Topology, targetCount int) (count int, err error) {
+	if targetCount == 0 {
+		targetCount = vg.findVolumeCount(option.ReplicaPlacement.GetCopyCount())
+	}
+	count, err = vg.GrowByCountAndType(grpcDialOption, targetCount, option, topo)
 	if count > 0 && count%option.ReplicaPlacement.GetCopyCount() == 0 {
 		return count, nil
 	}

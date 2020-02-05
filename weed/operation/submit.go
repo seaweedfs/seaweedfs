@@ -203,7 +203,7 @@ func upload_one_chunk(filename string, reader io.Reader, master,
 ) (size uint32, e error) {
 	glog.V(4).Info("Uploading part ", filename, " to ", fileUrl, "...")
 	uploadResult, uploadError := Upload(fileUrl, filename, reader, false,
-		"application/octet-stream", nil, jwt)
+		"", nil, jwt)
 	if uploadError != nil {
 		return 0, uploadError
 	}

@@ -10,16 +10,16 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/webdav"
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"golang.org/x/net/webdav"
-	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/spf13/viper"
 )
 
 type WebDavOption struct {
@@ -47,7 +47,7 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 
 	ws = &WebDavServer{
 		option:         option,
-		grpcDialOption: security.LoadClientTLS(viper.Sub("grpc"), "filer"),
+		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.filer"),
 		Handler: &webdav.Handler{
 			FileSystem: fs,
 			LockSystem: webdav.NewMemLS(),
@@ -96,11 +96,11 @@ func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 	}, nil
 }
 
-func (fs *WebDavFileSystem) WithFilerClient(ctx context.Context, fn func(filer_pb.SeaweedFilerClient) error) error {
+func (fs *WebDavFileSystem) WithFilerClient(ctx context.Context, fn func(context.Context, filer_pb.SeaweedFilerClient) error) error {
 
-	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
+	return util.WithCachedGrpcClient(ctx, func(ctx2 context.Context, grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		return fn(client)
+		return fn(ctx2, client)
 	}, fs.option.FilerGrpcAddress, fs.option.GrpcDialOption)
 
 }
@@ -135,7 +135,7 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 		return os.ErrExist
 	}
 
-	return fs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	return fs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		dir, name := filer2.FullPath(fullDirPath).DirAndName()
 		request := &filer_pb.CreateEntryRequest{
 			Directory: dir,
@@ -153,7 +153,7 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 		}
 
 		glog.V(1).Infof("mkdir: %v", request)
-		if _, err := client.CreateEntry(ctx, request); err != nil {
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			return fmt.Errorf("mkdir %s/%s: %v", dir, name, err)
 		}
 
@@ -163,7 +163,7 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 
 func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, flag int, perm os.FileMode) (webdav.File, error) {
 
-	glog.V(2).Infof("WebDavFileSystem.OpenFile %v", fullFilePath)
+	glog.V(2).Infof("WebDavFileSystem.OpenFile %v %x", fullFilePath, flag)
 
 	var err error
 	if fullFilePath, err = clearName(fullFilePath); err != nil {
@@ -175,12 +175,6 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		if strings.HasSuffix(fullFilePath, "/") {
 			return nil, os.ErrInvalid
 		}
-		// based directory should be exists.
-		dir, _ := path.Split(fullFilePath)
-		_, err := fs.stat(ctx, dir)
-		if err != nil {
-			return nil, os.ErrInvalid
-		}
 		_, err = fs.stat(ctx, fullFilePath)
 		if err == nil {
 			if flag&os.O_EXCL != 0 {
@@ -190,8 +184,8 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		}
 
 		dir, name := filer2.FullPath(fullFilePath).DirAndName()
-		err = fs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
-			if _, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+		err = fs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+			if err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 				Directory: dir,
 				Entry: &filer_pb.Entry{
 					Name:        name,
@@ -255,7 +249,7 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string) 
 		//_, err = fs.db.Exec(`delete from filesystem where fullFilePath = ?`, fullFilePath)
 	}
 	dir, name := filer2.FullPath(fullFilePath).DirAndName()
-	err = fs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	err = fs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.DeleteEntryRequest{
 			Directory:    dir,
@@ -314,7 +308,7 @@ func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string)
 	oldDir, oldBaseName := filer2.FullPath(oldName).DirAndName()
 	newDir, newBaseName := filer2.FullPath(newName).DirAndName()
 
-	return fs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	return fs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AtomicRenameEntryRequest{
 			OldDirectory: oldDir,
@@ -339,8 +333,10 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 		return nil, err
 	}
 
+	fullpath := filer2.FullPath(fullFilePath)
+
 	var fi FileInfo
-	entry, err := filer2.GetEntry(ctx, fs, fullFilePath)
+	entry, err := filer2.GetEntry(ctx, fs, fullpath)
 	if entry == nil {
 		return nil, os.ErrNotExist
 	}
@@ -348,14 +344,12 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 		return nil, err
 	}
 	fi.size = int64(filer2.TotalSize(entry.GetChunks()))
-	fi.name = fullFilePath
+	fi.name = string(fullpath)
 	fi.mode = os.FileMode(entry.Attributes.FileMode)
 	fi.modifiledTime = time.Unix(entry.Attributes.Mtime, 0)
 	fi.isDirectory = entry.IsDirectory
 
-	_, fi.name = path.Split(path.Clean(fi.name))
-	if fi.name == "" {
-		fi.name = "/"
+	if fi.name == "/" {
 		fi.modifiledTime = time.Now()
 		fi.isDirectory = true
 	}
@@ -376,7 +370,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 	var err error
 	ctx := context.Background()
 	if f.entry == nil {
-		f.entry, err = filer2.GetEntry(ctx, f.fs, f.name)
+		f.entry, err = filer2.GetEntry(ctx, f.fs, filer2.FullPath(f.name))
 	}
 
 	if f.entry == nil {
@@ -389,7 +383,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 	var fileId, host string
 	var auth security.EncodedJwt
 
-	if err = f.fs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	if err = f.fs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AssignVolumeRequest{
 			Count:       1,
@@ -412,7 +406,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
 	bufReader := bytes.NewReader(buf)
-	uploadResult, err := operation.Upload(fileUrl, f.name, bufReader, false, "application/octet-stream", nil, auth)
+	uploadResult, err := operation.Upload(fileUrl, f.name, bufReader, false, "", nil, auth)
 	if err != nil {
 		glog.V(0).Infof("upload data %v to %s: %v", f.name, fileUrl, err)
 		return 0, fmt.Errorf("upload data: %v", err)
@@ -433,7 +427,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 	f.entry.Chunks = append(f.entry.Chunks, chunk)
 	dir, _ := filer2.FullPath(f.name).DirAndName()
 
-	err = f.fs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	err = f.fs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		f.entry.Attributes.Mtime = time.Now().Unix()
 
 		request := &filer_pb.UpdateEntryRequest{
@@ -448,9 +442,11 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 		return nil
 	})
 
-	if err != nil {
+	if err == nil {
+		glog.V(3).Infof("WebDavFileSystem.Write %v: written [%d,%d)", f.name, f.off, f.off+int64(len(buf)))
 		f.off += int64(len(buf))
 	}
+
 	return len(buf), err
 }
 
@@ -472,7 +468,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	ctx := context.Background()
 
 	if f.entry == nil {
-		f.entry, err = filer2.GetEntry(ctx, f.fs, f.name)
+		f.entry, err = filer2.GetEntry(ctx, f.fs, filer2.FullPath(f.name))
 	}
 	if f.entry == nil {
 		return 0, err
@@ -488,16 +484,19 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	}
 	chunkViews := filer2.ViewFromVisibleIntervals(f.entryViewCache, f.off, len(p))
 
-	totalRead, err := filer2.ReadIntoBuffer(ctx, f.fs, f.name, p, chunkViews, f.off)
+	totalRead, err := filer2.ReadIntoBuffer(ctx, f.fs, filer2.FullPath(f.name), p, chunkViews, f.off)
 	if err != nil {
 		return 0, err
 	}
 	readSize = int(totalRead)
 
+	glog.V(3).Infof("WebDavFileSystem.Read %v: [%d,%d)", f.name, f.off, f.off+totalRead)
+
 	f.off += totalRead
 	if readSize == 0 {
 		return 0, io.EOF
 	}
+
 	return
 }
 
@@ -506,12 +505,9 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 	glog.V(2).Infof("WebDavFileSystem.Readdir %v count %d", f.name, count)
 	ctx := context.Background()
 
-	dir := f.name
-	if dir != "/" && strings.HasSuffix(dir, "/") {
-		dir = dir[:len(dir)-1]
-	}
+	dir, _ := filer2.FullPath(f.name).DirAndName()
 
-	err = filer2.ReadDirAllEntries(ctx, f.fs, dir, func(entry *filer_pb.Entry) {
+	err = filer2.ReadDirAllEntries(ctx, f.fs, filer2.FullPath(dir), "", func(entry *filer_pb.Entry, isLast bool) {
 		fi := FileInfo{
 			size:          int64(filer2.TotalSize(entry.GetChunks())),
 			name:          entry.Name,

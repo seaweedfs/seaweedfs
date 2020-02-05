@@ -22,7 +22,7 @@ func LoadServerTLS(config *viper.Viper, component string) grpc.ServerOption {
 		glog.Errorf("load cert/key error: %v", err)
 		return nil
 	}
-	caCert, err := ioutil.ReadFile(config.GetString("ca"))
+	caCert, err := ioutil.ReadFile(config.GetString(component + ".ca"))
 	if err != nil {
 		glog.Errorf("read ca cert file error: %v", err)
 		return nil
@@ -49,7 +49,7 @@ func LoadClientTLS(config *viper.Viper, component string) grpc.DialOption {
 		glog.Errorf("load cert/key error: %v", err)
 		return grpc.WithInsecure()
 	}
-	caCert, err := ioutil.ReadFile(config.GetString("ca"))
+	caCert, err := ioutil.ReadFile(config.GetString(component + ".ca"))
 	if err != nil {
 		glog.Errorf("read ca cert file error: %v", err)
 		return grpc.WithInsecure()

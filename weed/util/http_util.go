@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 var (
@@ -28,7 +30,7 @@ func init() {
 }
 
 func PostBytes(url string, body []byte) ([]byte, error) {
-	r, err := client.Post(url, "application/octet-stream", bytes.NewReader(body))
+	r, err := client.Post(url, "", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("Post to %s: %v", url, err)
 	}
@@ -187,11 +189,14 @@ func NormalizeUrl(url string) string {
 	return "http://" + url
 }
 
-func ReadUrl(fileUrl string, offset int64, size int, buf []byte, isReadRange bool) (n int64, e error) {
+func ReadUrl(fileUrl string, offset int64, size int, buf []byte, isReadRange bool) (int64, error) {
 
-	req, _ := http.NewRequest("GET", fileUrl, nil)
+	req, err := http.NewRequest("GET", fileUrl, nil)
+	if err != nil {
+		return 0, err
+	}
 	if isReadRange {
-		req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)))
+		req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)-1))
 	} else {
 		req.Header.Set("Accept-Encoding", "gzip")
 	}
@@ -207,7 +212,8 @@ func ReadUrl(fileUrl string, offset int64, size int, buf []byte, isReadRange boo
 	}
 
 	var reader io.ReadCloser
-	switch r.Header.Get("Content-Encoding") {
+	contentEncoding := r.Header.Get("Content-Encoding")
+	switch contentEncoding {
 	case "gzip":
 		reader, err = gzip.NewReader(r.Body)
 		defer reader.Close()
@@ -215,29 +221,42 @@ func ReadUrl(fileUrl string, offset int64, size int, buf []byte, isReadRange boo
 		reader = r.Body
 	}
 
-	var i, m int
+	var (
+		i, m int
+		n    int64
+	)
 
+	// refers to https://github.com/golang/go/blob/master/src/bytes/buffer.go#L199
+	// commit id c170b14c2c1cfb2fd853a37add92a82fd6eb4318
 	for {
 		m, err = reader.Read(buf[i:])
-		if m == 0 {
-			return
-		}
 		i += m
 		n += int64(m)
 		if err == io.EOF {
 			return n, nil
 		}
-		if e != nil {
-			return n, e
+		if err != nil {
+			return n, err
+		}
+		if n == int64(len(buf)) {
+			break
 		}
 	}
-
+	// drains the response body to avoid memory leak
+	data, _ := ioutil.ReadAll(reader)
+	if len(data) != 0 {
+		glog.V(1).Infof("%s reader has remaining %d bytes", contentEncoding, len(data))
+	}
+	return n, err
 }
 
-func ReadUrlAsStream(fileUrl string, offset int64, size int, fn func(data []byte)) (n int64, e error) {
+func ReadUrlAsStream(fileUrl string, offset int64, size int, fn func(data []byte)) (int64, error) {
 
-	req, _ := http.NewRequest("GET", fileUrl, nil)
-	req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)))
+	req, err := http.NewRequest("GET", fileUrl, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)-1))
 
 	r, err := client.Do(req)
 	if err != nil {
@@ -248,22 +267,43 @@ func ReadUrlAsStream(fileUrl string, offset int64, size int, fn func(data []byte
 		return 0, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
 
-	var m int
+	var (
+		m int
+		n int64
+	)
 	buf := make([]byte, 64*1024)
 
 	for {
 		m, err = r.Body.Read(buf)
-		if m == 0 {
-			return
-		}
 		fn(buf[:m])
 		n += int64(m)
 		if err == io.EOF {
 			return n, nil
 		}
-		if e != nil {
-			return n, e
+		if err != nil {
+			return n, err
 		}
 	}
 
+}
+
+func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, error) {
+
+	req, err := http.NewRequest("GET", fileUrl, nil)
+	if err != nil {
+		return nil, err
+	}
+	if rangeHeader != "" {
+		req.Header.Add("Range", rangeHeader)
+	}
+
+	r, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if r.StatusCode >= 400 {
+		return nil, fmt.Errorf("%s: %s", fileUrl, r.Status)
+	}
+
+	return r.Body, nil
 }

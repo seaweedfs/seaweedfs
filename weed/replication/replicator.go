@@ -18,10 +18,10 @@ type Replicator struct {
 	source *source.FilerSource
 }
 
-func NewReplicator(sourceConfig util.Configuration, dataSink sink.ReplicationSink) *Replicator {
+func NewReplicator(sourceConfig util.Configuration, configPrefix string, dataSink sink.ReplicationSink) *Replicator {
 
 	source := &source.FilerSource{}
-	source.Initialize(sourceConfig)
+	source.Initialize(sourceConfig, configPrefix)
 
 	dataSink.SetSourceFiler(source)
 

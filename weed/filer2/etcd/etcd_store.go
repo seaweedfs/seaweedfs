@@ -28,13 +28,13 @@ func (store *EtcdStore) GetName() string {
 	return "etcd"
 }
 
-func (store *EtcdStore) Initialize(configuration weed_util.Configuration) (err error) {
-	servers := configuration.GetString("servers")
+func (store *EtcdStore) Initialize(configuration weed_util.Configuration, prefix string) (err error) {
+	servers := configuration.GetString(prefix + "servers")
 	if servers == "" {
 		servers = "localhost:2379"
 	}
 
-	timeout := configuration.GetString("timeout")
+	timeout := configuration.GetString(prefix + "timeout")
 	if timeout == "" {
 		timeout = "3s"
 	}
@@ -118,6 +118,16 @@ func (store *EtcdStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPat
 
 	if _, err := store.client.Delete(ctx, string(key)); err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
+	}
+
+	return nil
+}
+
+func (store *EtcdStore) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) (err error) {
+	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
+
+	if _, err := store.client.Delete(ctx, string(directoryPrefix), clientv3.WithPrefix()); err != nil {
+		return fmt.Errorf("deleteFolderChildren %s : %v", fullpath, err)
 	}
 
 	return nil

@@ -23,7 +23,7 @@ func (t *Topology) ToMap() interface{} {
 			}
 		}
 	}
-	m["layouts"] = layouts
+	m["Layouts"] = layouts
 	return m
 }
 
@@ -85,6 +85,7 @@ func (t *Topology) ToTopologyInfo() *master_pb.TopologyInfo {
 		MaxVolumeCount:    uint64(t.GetMaxVolumeCount()),
 		FreeVolumeCount:   uint64(t.FreeSpace()),
 		ActiveVolumeCount: uint64(t.GetActiveVolumeCount()),
+		RemoteVolumeCount: uint64(t.GetRemoteVolumeCount()),
 	}
 	for _, c := range t.Children() {
 		dc := c.(*DataCenter)

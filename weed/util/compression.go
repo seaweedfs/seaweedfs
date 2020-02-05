@@ -60,7 +60,7 @@ func UnGzipData(input []byte) ([]byte, error) {
 
 	// images
 	switch ext {
-	case ".svg", ".bmp":
+	case ".svg", ".bmp", ".wav":
 		return true, true
 	}
 	if strings.HasPrefix(mtype, "image/") {
@@ -85,6 +85,14 @@ func UnGzipData(input []byte) ([]byte, error) {
 			return true, true
 		}
 		if strings.HasSuffix(mtype, "script") {
+			return true, true
+		}
+
+	}
+
+	if strings.HasPrefix(mtype, "audio/") {
+		switch strings.TrimPrefix(mtype, "audio/") {
+		case "wave", "wav", "x-wav", "x-pn-wav":
 			return true, true
 		}
 	}

@@ -81,6 +81,15 @@ func (b ShardBits) ShardIds() (ret []ShardId) {
 	return
 }
 
+func (b ShardBits) ToUint32Slice() (ret []uint32) {
+	for i := uint32(0); i < TotalShardsCount; i++ {
+		if b.HasShardId(ShardId(i)) {
+			ret = append(ret, i)
+		}
+	}
+	return
+}
+
 func (b ShardBits) ShardIdCount() (count int) {
 	for count = 0; b > 0; count++ {
 		b &= b - 1
@@ -94,4 +103,11 @@ func (b ShardBits) Minus(other ShardBits) ShardBits {
 
 func (b ShardBits) Plus(other ShardBits) ShardBits {
 	return b | other
+}
+
+func (b ShardBits) MinusParityShards() ShardBits {
+	for i := DataShardsCount; i < TotalShardsCount; i++ {
+		b = b.RemoveShardId(ShardId(i))
+	}
+	return b
 }

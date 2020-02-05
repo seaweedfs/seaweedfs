@@ -1,4 +1,4 @@
-package storage
+package super_block
 
 import (
 	"testing"
@@ -10,7 +10,7 @@ func TestSuperBlockReadWrite(t *testing.T) {
 	rp, _ := NewReplicaPlacementFromByte(byte(001))
 	ttl, _ := needle.ReadTTL("15d")
 	s := &SuperBlock{
-		version:          needle.CurrentVersion,
+		Version:          needle.CurrentVersion,
 		ReplicaPlacement: rp,
 		Ttl:              ttl,
 	}

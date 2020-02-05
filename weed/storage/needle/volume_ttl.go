@@ -69,6 +69,9 @@ func (t *TTL) ToBytes(output []byte) {
 }
 
 func (t *TTL) ToUint32() (output uint32) {
+	if t == nil || t.Count == 0 {
+		return 0
+	}
 	output = uint32(t.Count) << 8
 	output += uint32(t.Unit)
 	return output

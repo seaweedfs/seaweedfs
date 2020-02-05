@@ -35,8 +35,8 @@ func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node,
 		},
 	}
 
-	err := dir.wfs.WithFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
-		if _, err := client.CreateEntry(ctx, request); err != nil {
+	err := dir.wfs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			glog.V(0).Infof("symlink %s/%s: %v", dir.Path, req.NewName, err)
 			return fuse.EIO
 		}
@@ -51,7 +51,7 @@ func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node,
 
 func (file *File) Readlink(ctx context.Context, req *fuse.ReadlinkRequest) (string, error) {
 
-	if err := file.maybeLoadAttributes(ctx); err != nil {
+	if err := file.maybeLoadEntry(ctx); err != nil {
 		return "", err
 	}
 

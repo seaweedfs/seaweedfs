@@ -331,6 +331,42 @@ func TestChunksReading(t *testing.T) {
 				{Offset: 0, Size: 100, FileId: "asdf", LogicOffset: 100},
 			},
 		},
+		// case 8: edge cases
+		{
+			Chunks: []*filer_pb.FileChunk{
+				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
+				{Offset: 90, Size: 200, FileId: "asdf", Mtime: 134},
+				{Offset: 190, Size: 300, FileId: "fsad", Mtime: 353},
+			},
+			Offset: 0,
+			Size:   300,
+			Expected: []*ChunkView{
+				{Offset: 0, Size: 90, FileId: "abc", LogicOffset: 0},
+				{Offset: 0, Size: 100, FileId: "asdf", LogicOffset: 90},
+				{Offset: 0, Size: 110, FileId: "fsad", LogicOffset: 190},
+			},
+		},
+		// case 9: edge cases
+		{
+			Chunks: []*filer_pb.FileChunk{
+				{Offset: 0, Size: 43175947, FileId: "2,111fc2cbfac1", Mtime: 1},
+				{Offset: 43175936, Size: 52981771 - 43175936, FileId: "2,112a36ea7f85", Mtime: 2},
+				{Offset: 52981760, Size: 72564747 - 52981760, FileId: "4,112d5f31c5e7", Mtime: 3},
+				{Offset: 72564736, Size: 133255179 - 72564736, FileId: "1,113245f0cdb6", Mtime: 4},
+				{Offset: 133255168, Size: 137269259 - 133255168, FileId: "3,1141a70733b5", Mtime: 5},
+				{Offset: 137269248, Size: 153578836 - 137269248, FileId: "1,114201d5bbdb", Mtime: 6},
+			},
+			Offset: 0,
+			Size:   153578836,
+			Expected: []*ChunkView{
+				{Offset: 0, Size: 43175936, FileId: "2,111fc2cbfac1", LogicOffset: 0},
+				{Offset: 0, Size: 52981760 - 43175936, FileId: "2,112a36ea7f85", LogicOffset: 43175936},
+				{Offset: 0, Size: 72564736 - 52981760, FileId: "4,112d5f31c5e7", LogicOffset: 52981760},
+				{Offset: 0, Size: 133255168 - 72564736, FileId: "1,113245f0cdb6", LogicOffset: 72564736},
+				{Offset: 0, Size: 137269248 - 133255168, FileId: "3,1141a70733b5", LogicOffset: 133255168},
+				{Offset: 0, Size: 153578836 - 137269248, FileId: "1,114201d5bbdb", LogicOffset: 137269248},
+			},
+		},
 	}
 
 	for i, testcase := range testcases {

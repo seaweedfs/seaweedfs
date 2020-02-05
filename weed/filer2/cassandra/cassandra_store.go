@@ -22,10 +22,10 @@ func (store *CassandraStore) GetName() string {
 	return "cassandra"
 }
 
-func (store *CassandraStore) Initialize(configuration util.Configuration) (err error) {
+func (store *CassandraStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 	return store.initialize(
-		configuration.GetString("keyspace"),
-		configuration.GetStringSlice("hosts"),
+		configuration.GetString(prefix+"keyspace"),
+		configuration.GetStringSlice(prefix+"hosts"),
 	)
 }
 
@@ -106,6 +106,17 @@ func (store *CassandraStore) DeleteEntry(ctx context.Context, fullpath filer2.Fu
 	if err := store.session.Query(
 		"DELETE FROM filemeta WHERE directory=? AND name=?",
 		dir, name).Exec(); err != nil {
+		return fmt.Errorf("delete %s : %v", fullpath, err)
+	}
+
+	return nil
+}
+
+func (store *CassandraStore) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) error {
+
+	if err := store.session.Query(
+		"DELETE FROM filemeta WHERE directory=?",
+		fullpath).Exec(); err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
 

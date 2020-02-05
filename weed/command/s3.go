@@ -1,18 +1,17 @@
 package command
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/spf13/viper"
 
-	"fmt"
+	"github.com/gorilla/mux"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/s3api"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/gorilla/mux"
 )
 
 var (
@@ -69,7 +68,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		FilerGrpcAddress: filerGrpcAddress,
 		DomainName:       *s3opt.domainName,
 		BucketsPath:      *s3opt.filerBucketsPath,
-		GrpcDialOption:   security.LoadClientTLS(viper.Sub("grpc"), "client"),
+		GrpcDialOption:   security.LoadClientTLS(util.GetViper(), "grpc.client"),
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)

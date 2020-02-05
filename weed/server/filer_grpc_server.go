@@ -19,7 +19,11 @@ import (
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 
 	entry, err := fs.filer.FindEntry(ctx, filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name))))
+	if err == filer2.ErrNotFound {
+		return &filer_pb.LookupDirectoryEntryResponse{}, nil
+	}
 	if err != nil {
+		glog.V(3).Infof("LookupDirectoryEntry %s: %+v, ", filepath.Join(req.Directory, req.Name), err)
 		return nil, err
 	}
 
@@ -29,27 +33,32 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 			IsDirectory: entry.IsDirectory(),
 			Attributes:  filer2.EntryAttributeToPb(entry),
 			Chunks:      entry.Chunks,
+			Extended:    entry.Extended,
 		},
 	}, nil
 }
 
-func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntriesRequest) (*filer_pb.ListEntriesResponse, error) {
+func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {
 
 	limit := int(req.Limit)
 	if limit == 0 {
 		limit = fs.option.DirListingLimit
 	}
 
-	resp := &filer_pb.ListEntriesResponse{}
+	paginationLimit := filer2.PaginationSize
+	if limit < paginationLimit {
+		paginationLimit = limit
+	}
+
 	lastFileName := req.StartFromFileName
 	includeLastFile := req.InclusiveStartFrom
 	for limit > 0 {
-		entries, err := fs.filer.ListDirectoryEntries(ctx, filer2.FullPath(req.Directory), lastFileName, includeLastFile, 1024)
+		entries, err := fs.filer.ListDirectoryEntries(stream.Context(), filer2.FullPath(req.Directory), lastFileName, includeLastFile, paginationLimit)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(entries) == 0 {
-			return resp, nil
+			return nil
 		}
 
 		includeLastFile = false
@@ -64,22 +73,30 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 				}
 			}
 
-			resp.Entries = append(resp.Entries, &filer_pb.Entry{
-				Name:        entry.Name(),
-				IsDirectory: entry.IsDirectory(),
-				Chunks:      entry.Chunks,
-				Attributes:  filer2.EntryAttributeToPb(entry),
-			})
+			if err := stream.Send(&filer_pb.ListEntriesResponse{
+				Entry: &filer_pb.Entry{
+					Name:        entry.Name(),
+					IsDirectory: entry.IsDirectory(),
+					Chunks:      entry.Chunks,
+					Attributes:  filer2.EntryAttributeToPb(entry),
+					Extended:    entry.Extended,
+				},
+			}); err != nil {
+				return err
+			}
 			limit--
+			if limit == 0 {
+				return nil
+			}
 		}
 
-		if len(resp.Entries) < 1024 {
+		if len(entries) < paginationLimit {
 			break
 		}
 
 	}
 
-	return resp, nil
+	return nil
 }
 
 func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
@@ -115,24 +132,31 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 
 func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (resp *filer_pb.CreateEntryResponse, err error) {
 
+	resp = &filer_pb.CreateEntryResponse{}
+
 	fullpath := filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name)))
 	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
 
 	if req.Entry.Attributes == nil {
-		return nil, fmt.Errorf("can not create entry with empty attributes")
+		glog.V(3).Infof("CreateEntry %s: nil attributes", filepath.Join(req.Directory, req.Entry.Name))
+		resp.Error = fmt.Sprintf("can not create entry with empty attributes")
+		return
 	}
 
-	err = fs.filer.CreateEntry(ctx, &filer2.Entry{
+	createErr := fs.filer.CreateEntry(ctx, &filer2.Entry{
 		FullPath: fullpath,
 		Attr:     filer2.PbToEntryAttribute(req.Entry.Attributes),
 		Chunks:   chunks,
-	})
+	}, req.OExcl)
 
-	if err == nil {
-		fs.filer.DeleteChunks(fullpath, garbages)
+	if createErr == nil {
+		fs.filer.DeleteChunks(garbages)
+	} else {
+		glog.V(3).Infof("CreateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), createErr)
+		resp.Error = createErr.Error()
 	}
 
-	return &filer_pb.CreateEntryResponse{}, err
+	return
 }
 
 func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
@@ -151,12 +175,14 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	newEntry := &filer2.Entry{
 		FullPath: filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name))),
 		Attr:     entry.Attr,
+		Extended: req.Entry.Extended,
 		Chunks:   chunks,
 	}
 
-	glog.V(3).Infof("updating %s: %+v, chunks %d: %v => %+v, chunks %d: %v",
+	glog.V(3).Infof("updating %s: %+v, chunks %d: %v => %+v, chunks %d: %v, extended: %v => %v",
 		fullpath, entry.Attr, len(entry.Chunks), entry.Chunks,
-		req.Entry.Attributes, len(req.Entry.Chunks), req.Entry.Chunks)
+		req.Entry.Attributes, len(req.Entry.Chunks), req.Entry.Chunks,
+		entry.Extended, req.Entry.Extended)
 
 	if req.Entry.Attributes != nil {
 		if req.Entry.Attributes.Mtime != 0 {
@@ -178,8 +204,10 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	}
 
 	if err = fs.filer.UpdateEntry(ctx, entry, newEntry); err == nil {
-		fs.filer.DeleteChunks(entry.FullPath, unusedChunks)
-		fs.filer.DeleteChunks(entry.FullPath, garbages)
+		fs.filer.DeleteChunks(unusedChunks)
+		fs.filer.DeleteChunks(garbages)
+	} else {
+		glog.V(3).Infof("UpdateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), err)
 	}
 
 	fs.filer.NotifyUpdateEvent(entry, newEntry, true)
@@ -224,9 +252,11 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 	}
 	assignResult, err := operation.Assign(fs.filer.GetMaster(), fs.grpcDialOption, assignRequest, altRequest)
 	if err != nil {
+		glog.V(3).Infof("AssignVolume: %v", err)
 		return nil, fmt.Errorf("assign volume: %v", err)
 	}
 	if assignResult.Error != "" {
+		glog.V(3).Infof("AssignVolume error: %v", assignResult.Error)
 		return nil, fmt.Errorf("assign volume result: %v", assignResult.Error)
 	}
 

@@ -3,13 +3,14 @@ package shell
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 	"io"
 	"math/rand"
 	"sort"
+
+	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 )
 
 func init() {
@@ -78,7 +79,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	underReplicatedVolumeLocations := make(map[uint32][]location)
 	for vid, locations := range replicatedVolumeLocations {
 		volumeInfo := replicatedVolumeInfo[vid]
-		replicaPlacement, _ := storage.NewReplicaPlacementFromByte(byte(volumeInfo.ReplicaPlacement))
+		replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(volumeInfo.ReplicaPlacement))
 		if replicaPlacement.GetCopyCount() > len(locations) {
 			underReplicatedVolumeLocations[vid] = locations
 		}
@@ -97,7 +98,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 
 	for vid, locations := range underReplicatedVolumeLocations {
 		volumeInfo := replicatedVolumeInfo[vid]
-		replicaPlacement, _ := storage.NewReplicaPlacementFromByte(byte(volumeInfo.ReplicaPlacement))
+		replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(volumeInfo.ReplicaPlacement))
 		foundNewLocation := false
 		for _, dst := range allLocations {
 			// check whether data nodes satisfy the constraints
@@ -112,7 +113,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 					break
 				}
 
-				err := operation.WithVolumeServerClient(dst.dataNode.Id, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+				err := operation.WithVolumeServerClient(dst.dataNode.Id, commandEnv.option.GrpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
 					_, replicateErr := volumeServerClient.VolumeCopy(ctx, &volume_server_pb.VolumeCopyRequest{
 						VolumeId:       volumeInfo.Id,
 						SourceDataNode: sourceNode.dataNode.Id,
@@ -145,7 +146,7 @@ func keepDataNodesSorted(dataNodes []location) {
 	})
 }
 
-func satisfyReplicaPlacement(replicaPlacement *storage.ReplicaPlacement, existingLocations []location, possibleLocation location) bool {
+func satisfyReplicaPlacement(replicaPlacement *super_block.ReplicaPlacement, existingLocations []location, possibleLocation location) bool {
 
 	existingDataCenters := make(map[string]bool)
 	existingRacks := make(map[string]bool)

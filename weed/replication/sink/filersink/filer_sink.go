@@ -3,9 +3,10 @@ package filersink
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/spf13/viper"
+
 	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/security"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -38,13 +39,13 @@ func (fs *FilerSink) GetSinkToDirectory() string {
 	return fs.dir
 }
 
-func (fs *FilerSink) Initialize(configuration util.Configuration) error {
+func (fs *FilerSink) Initialize(configuration util.Configuration, prefix string) error {
 	return fs.initialize(
-		configuration.GetString("grpcAddress"),
-		configuration.GetString("directory"),
-		configuration.GetString("replication"),
-		configuration.GetString("collection"),
-		configuration.GetInt("ttlSec"),
+		configuration.GetString(prefix+"grpcAddress"),
+		configuration.GetString(prefix+"directory"),
+		configuration.GetString(prefix+"replication"),
+		configuration.GetString(prefix+"collection"),
+		configuration.GetInt(prefix+"ttlSec"),
 	)
 }
 
@@ -59,12 +60,12 @@ func (fs *FilerSink) initialize(grpcAddress string, dir string,
 	fs.replication = replication
 	fs.collection = collection
 	fs.ttlSec = int32(ttlSec)
-	fs.grpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
+	fs.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 	return nil
 }
 
 func (fs *FilerSink) DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool) error {
-	return fs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	return fs.withFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		dir, name := filer2.FullPath(key).DirAndName()
 
@@ -87,7 +88,7 @@ func (fs *FilerSink) DeleteEntry(ctx context.Context, key string, isDirectory, d
 
 func (fs *FilerSink) CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry) error {
 
-	return fs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	return fs.withFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		dir, name := filer2.FullPath(key).DirAndName()
 
@@ -124,7 +125,7 @@ func (fs *FilerSink) CreateEntry(ctx context.Context, key string, entry *filer_p
 		}
 
 		glog.V(1).Infof("create: %v", request)
-		if _, err := client.CreateEntry(ctx, request); err != nil {
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			glog.V(0).Infof("create entry %s: %v", key, err)
 			return fmt.Errorf("create entry %s: %v", key, err)
 		}
@@ -139,7 +140,7 @@ func (fs *FilerSink) UpdateEntry(ctx context.Context, key string, oldEntry *file
 
 	// read existing entry
 	var existingEntry *filer_pb.Entry
-	err = fs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	err = fs.withFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
@@ -191,7 +192,7 @@ func (fs *FilerSink) UpdateEntry(ctx context.Context, key string, oldEntry *file
 	}
 
 	// save updated meta data
-	return true, fs.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	return true, fs.withFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: newParentPath,

@@ -11,11 +11,21 @@ docker-compose -f seaweedfs-compose.yml -p seaweedfs up
 
 ```
 
-## Development
+## Try latest tip
+
+```bash
+
+wget https://raw.githubusercontent.com/chrislusf/seaweedfs/master/docker/seaweedfs-dev-compose.yml
+
+docker-compose -f seaweedfs-dev-compose.yml -p seaweedfs up
+
+```
+
+## Local Development
 
 ```bash
 cd $GOPATH/src/github.com/chrislusf/seaweedfs/docker
 
-docker-compose -f dev-compose.yml -p seaweedfs up
+docker-compose -f local-dev-compose.yml -p seaweedfs up
 
 ```

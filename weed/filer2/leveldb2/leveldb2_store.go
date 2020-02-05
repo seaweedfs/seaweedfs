@@ -8,12 +8,13 @@ import (
 	"io"
 	"os"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	weed_util "github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
+
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	weed_util "github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func init() {
@@ -29,8 +30,8 @@ func (store *LevelDB2Store) GetName() string {
 	return "leveldb2"
 }
 
-func (store *LevelDB2Store) Initialize(configuration weed_util.Configuration) (err error) {
-	dir := configuration.GetString("dir")
+func (store *LevelDB2Store) Initialize(configuration weed_util.Configuration, prefix string) (err error) {
+	dir := configuration.GetString(prefix + "dir")
 	return store.initialize(dir, 8)
 }
 
@@ -127,6 +128,34 @@ func (store *LevelDB2Store) DeleteEntry(ctx context.Context, fullpath filer2.Ful
 	key, partitionId := genKey(dir, name, store.dbCount)
 
 	err = store.dbs[partitionId].Delete(key, nil)
+	if err != nil {
+		return fmt.Errorf("delete %s : %v", fullpath, err)
+	}
+
+	return nil
+}
+
+func (store *LevelDB2Store) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) (err error) {
+	directoryPrefix, partitionId := genDirectoryKeyPrefix(fullpath, "", store.dbCount)
+
+	batch := new(leveldb.Batch)
+
+	iter := store.dbs[partitionId].NewIterator(&leveldb_util.Range{Start: directoryPrefix}, nil)
+	for iter.Next() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, directoryPrefix) {
+			break
+		}
+		fileName := getNameFromKey(key)
+		if fileName == "" {
+			continue
+		}
+		batch.Delete(append(directoryPrefix, []byte(fileName)...))
+	}
+	iter.Release()
+
+	err = store.dbs[partitionId].Write(batch, nil)
+
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}

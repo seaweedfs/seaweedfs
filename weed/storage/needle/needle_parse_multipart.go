@@ -1,9 +1,7 @@
 package needle
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/util"
-
+	"fmt"
 	"io"
 	"io/ioutil"
 	"mime"
@@ -11,9 +9,12 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func parseMultipart(r *http.Request) (
+func parseMultipart(r *http.Request, sizeLimit int64) (
 	fileName string, data []byte, mimeType string, isGzipped bool, originalDataSize int, isChunkedFile bool, e error) {
 	defer func() {
 		if e != nil && r.Body != nil {
@@ -41,9 +42,13 @@ func parseMultipart(r *http.Request) (
 		fileName = path.Base(fileName)
 	}
 
-	data, e = ioutil.ReadAll(part)
+	data, e = ioutil.ReadAll(io.LimitReader(part, sizeLimit+1))
 	if e != nil {
 		glog.V(0).Infoln("Reading Content [ERROR]", e)
+		return
+	}
+	if len(data) == int(sizeLimit)+1 {
+		e = fmt.Errorf("file over the limited %d bytes", sizeLimit)
 		return
 	}
 
@@ -58,10 +63,14 @@ func parseMultipart(r *http.Request) (
 
 		//found the first <file type> multi-part has filename
 		if fName != "" {
-			data2, fe2 := ioutil.ReadAll(part2)
+			data2, fe2 := ioutil.ReadAll(io.LimitReader(part2, sizeLimit+1))
 			if fe2 != nil {
 				glog.V(0).Infoln("Reading Content [ERROR]", fe2)
 				e = fe2
+				return
+			}
+			if len(data) == int(sizeLimit)+1 {
+				e = fmt.Errorf("file over the limited %d bytes", sizeLimit)
 				return
 			}
 

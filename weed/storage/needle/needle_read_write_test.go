@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
@@ -54,7 +55,10 @@ func TestAppend(t *testing.T) {
 		os.Remove(tempFile.Name())
 	}()
 
-	offset, _, _, _ := n.Append(tempFile, CurrentVersion)
+	datBackend := backend.NewDiskFile(tempFile)
+	defer datBackend.Close()
+
+	offset, _, _, _ := n.Append(datBackend, CurrentVersion)
 	if offset != uint64(fileSize) {
 		t.Errorf("Fail to Append Needle.")
 	}

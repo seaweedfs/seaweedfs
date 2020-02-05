@@ -5,10 +5,11 @@ import (
 	"fmt"
 
 	"github.com/chrislusf/raft"
+
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 )
 
@@ -52,7 +53,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	if req.Replication == "" {
 		req.Replication = ms.option.DefaultReplicaPlacement
 	}
-	replicaPlacement, err := storage.NewReplicaPlacementFromString(req.Replication)
+	replicaPlacement, err := super_block.NewReplicaPlacementFromString(req.Replication)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +79,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		}
 		ms.vgLock.Lock()
 		if !ms.Topo.HasWritableVolume(option) {
-			if _, err = ms.vg.AutomaticGrowByType(option, ms.grpcDialOption, ms.Topo); err != nil {
+			if _, err = ms.vg.AutomaticGrowByType(option, ms.grpcDialOption, ms.Topo, int(req.WritableVolumeCount)); err != nil {
 				ms.vgLock.Unlock()
 				return nil, fmt.Errorf("Cannot grow volume group! %v", err)
 			}
@@ -108,7 +109,7 @@ func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.Statistic
 	if req.Replication == "" {
 		req.Replication = ms.option.DefaultReplicaPlacement
 	}
-	replicaPlacement, err := storage.NewReplicaPlacementFromString(req.Replication)
+	replicaPlacement, err := super_block.NewReplicaPlacementFromString(req.Replication)
 	if err != nil {
 		return nil, err
 	}

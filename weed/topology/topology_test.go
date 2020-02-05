@@ -5,6 +5,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/sequence"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 
 	"testing"
 )
@@ -94,7 +95,7 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 			[]*master_pb.VolumeShortInformationMessage{newVolumeShortMessage},
 			nil,
 			dn)
-		rp, _ := storage.NewReplicaPlacementFromString("000")
+		rp, _ := super_block.NewReplicaPlacementFromString("000")
 		layout := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL)
 		assert(t, "writables after repeated add", len(layout.writables), volumeCount)
 
@@ -154,7 +155,7 @@ func TestAddRemoveVolume(t *testing.T) {
 		DeletedByteCount: 45,
 		ReadOnly:         false,
 		Version:          needle.CurrentVersion,
-		ReplicaPlacement: &storage.ReplicaPlacement{},
+		ReplicaPlacement: &super_block.ReplicaPlacement{},
 		Ttl:              needle.EMPTY_TTL,
 	}
 

@@ -2,17 +2,18 @@ package storage
 
 import (
 	"fmt"
-
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
-
-	"os"
 	"path"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
@@ -21,15 +22,17 @@ type Volume struct {
 	Id                 needle.VolumeId
 	dir                string
 	Collection         string
-	dataFile           *os.File
+	DataBackend        backend.BackendStorageFile
 	nm                 NeedleMapper
 	needleMapKind      NeedleMapType
-	readOnly           bool
+	noWriteOrDelete    bool // if readonly, either noWriteOrDelete or noWriteCanDelete
+	noWriteCanDelete   bool // if readonly, either noWriteOrDelete or noWriteCanDelete
+	hasRemoteFile      bool // if the volume has a remote file
 	MemoryMapMaxSizeMb uint32
 
-	SuperBlock
+	super_block.SuperBlock
 
-	dataFileAccessLock    sync.Mutex
+	dataFileAccessLock    sync.RWMutex
 	lastModifiedTsSeconds uint64 //unix time in seconds
 	lastAppendAtNs        uint64 //unix time in nanoseconds
 
@@ -37,18 +40,20 @@ type Volume struct {
 	lastCompactRevision    uint16
 
 	isCompacting bool
+
+	volumeInfo *volume_server_pb.VolumeInfo
 }
 
-func NewVolume(dirname string, collection string, id needle.VolumeId, needleMapKind NeedleMapType, replicaPlacement *ReplicaPlacement, ttl *needle.TTL, preallocate int64, MemoryMapMaxSizeMb uint32) (v *Volume, e error) {
+func NewVolume(dirname string, collection string, id needle.VolumeId, needleMapKind NeedleMapType, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32) (v *Volume, e error) {
 	// if replicaPlacement is nil, the superblock will be loaded from disk
-	v = &Volume{dir: dirname, Collection: collection, Id: id, MemoryMapMaxSizeMb: MemoryMapMaxSizeMb}
-	v.SuperBlock = SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
+	v = &Volume{dir: dirname, Collection: collection, Id: id, MemoryMapMaxSizeMb: memoryMapMaxSizeMb}
+	v.SuperBlock = super_block.SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
 	v.needleMapKind = needleMapKind
 	e = v.load(true, true, needleMapKind, preallocate)
 	return
 }
 func (v *Volume) String() string {
-	return fmt.Sprintf("Id:%v, dir:%s, Collection:%s, dataFile:%v, nm:%v, readOnly:%v", v.Id, v.dir, v.Collection, v.dataFile, v.nm, v.readOnly)
+	return fmt.Sprintf("Id:%v, dir:%s, Collection:%s, dataFile:%v, nm:%v, noWrite:%v canDelete:%v", v.Id, v.dir, v.Collection, v.DataBackend, v.nm, v.noWriteOrDelete || v.noWriteCanDelete, v.noWriteCanDelete)
 }
 
 func VolumeFileName(dir string, collection string, id int) (fileName string) {
@@ -63,33 +68,33 @@ func VolumeFileName(dir string, collection string, id int) (fileName string) {
 func (v *Volume) FileName() (fileName string) {
 	return VolumeFileName(v.dir, v.Collection, int(v.Id))
 }
-func (v *Volume) DataFile() *os.File {
-	return v.dataFile
-}
 
 func (v *Volume) Version() needle.Version {
-	return v.SuperBlock.Version()
+	if v.volumeInfo.Version != 0 {
+		v.SuperBlock.Version = needle.Version(v.volumeInfo.Version)
+	}
+	return v.SuperBlock.Version
 }
 
 func (v *Volume) FileStat() (datSize uint64, idxSize uint64, modTime time.Time) {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
 
-	if v.dataFile == nil {
+	if v.DataBackend == nil {
 		return
 	}
 
-	stat, e := v.dataFile.Stat()
+	datFileSize, modTime, e := v.DataBackend.GetStat()
 	if e == nil {
-		return uint64(stat.Size()), v.nm.IndexFileSize(), stat.ModTime()
+		return uint64(datFileSize), v.nm.IndexFileSize(), modTime
 	}
-	glog.V(0).Infof("Failed to read file size %s %v", v.dataFile.Name(), e)
+	glog.V(0).Infof("Failed to read file size %s %v", v.DataBackend.Name(), e)
 	return // -1 causes integer overflow and the volume to become unwritable.
 }
 
 func (v *Volume) ContentSize() uint64 {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
 	if v.nm == nil {
 		return 0
 	}
@@ -97,8 +102,8 @@ func (v *Volume) ContentSize() uint64 {
 }
 
 func (v *Volume) DeletedSize() uint64 {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
 	if v.nm == nil {
 		return 0
 	}
@@ -106,8 +111,8 @@ func (v *Volume) DeletedSize() uint64 {
 }
 
 func (v *Volume) FileCount() uint64 {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
 	if v.nm == nil {
 		return 0
 	}
@@ -115,8 +120,8 @@ func (v *Volume) FileCount() uint64 {
 }
 
 func (v *Volume) DeletedCount() uint64 {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
 	if v.nm == nil {
 		return 0
 	}
@@ -124,8 +129,8 @@ func (v *Volume) DeletedCount() uint64 {
 }
 
 func (v *Volume) MaxFileKey() types.NeedleId {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
 	if v.nm == nil {
 		return 0
 	}
@@ -133,8 +138,8 @@ func (v *Volume) MaxFileKey() types.NeedleId {
 }
 
 func (v *Volume) IndexFileSize() uint64 {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
 	if v.nm == nil {
 		return 0
 	}
@@ -149,9 +154,9 @@ func (v *Volume) Close() {
 		v.nm.Close()
 		v.nm = nil
 	}
-	if v.dataFile != nil {
-		_ = v.dataFile.Close()
-		v.dataFile = nil
+	if v.DataBackend != nil {
+		_ = v.DataBackend.Close()
+		v.DataBackend = nil
 		stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume").Dec()
 	}
 }
@@ -203,18 +208,32 @@ func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
 func (v *Volume) ToVolumeInformationMessage() *master_pb.VolumeInformationMessage {
 	size, _, modTime := v.FileStat()
 
-	return &master_pb.VolumeInformationMessage{
+	volumInfo := &master_pb.VolumeInformationMessage{
 		Id:               uint32(v.Id),
 		Size:             size,
 		Collection:       v.Collection,
-		FileCount:        uint64(v.FileCount()),
-		DeleteCount:      uint64(v.DeletedCount()),
+		FileCount:        v.FileCount(),
+		DeleteCount:      v.DeletedCount(),
 		DeletedByteCount: v.DeletedSize(),
-		ReadOnly:         v.readOnly,
+		ReadOnly:         v.noWriteOrDelete,
 		ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
 		Version:          uint32(v.Version()),
 		Ttl:              v.Ttl.ToUint32(),
 		CompactRevision:  uint32(v.SuperBlock.CompactionRevision),
 		ModifiedAtSecond: modTime.Unix(),
 	}
+
+	volumInfo.RemoteStorageName, volumInfo.RemoteStorageKey = v.RemoteStorageNameKey()
+
+	return volumInfo
+}
+
+func (v *Volume) RemoteStorageNameKey() (storageName, storageKey string) {
+	if v.volumeInfo == nil {
+		return
+	}
+	if len(v.volumeInfo.GetFiles()) == 0 {
+		return
+	}
+	return v.volumeInfo.GetFiles()[0].BackendName(), v.volumeInfo.GetFiles()[0].GetKey()
 }

@@ -12,12 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/jacobsa/daemonize"
-	"github.com/spf13/viper"
 
 	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
@@ -43,13 +42,13 @@ func runMount(cmd *Command, args []string) bool {
 		*mountOptions.chunkSizeLimitMB,
 		*mountOptions.allowOthers,
 		*mountOptions.ttlSec,
-		*mountOptions.dirListingLimit,
+		*mountOptions.dirListCacheLimit,
 		os.FileMode(umask),
 	)
 }
 
 func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCenter string, chunkSizeLimitMB int,
-	allowOthers bool, ttlSec int, dirListingLimit int, umask os.FileMode) bool {
+	allowOthers bool, ttlSec int, dirListCacheLimit int64, umask os.FileMode) bool {
 
 	util.LoadConfiguration("security", false)
 
@@ -88,12 +87,18 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 		}
 	}
 
+	// Ensure target mount point availability
+	if isValid := checkMountPointAvailable(dir); !isValid {
+		glog.Fatalf("Expected mount to still be active, target mount point: %s, please check!", dir)
+		return false
+	}
+
 	mountName := path.Base(dir)
 
 	options := []fuse.MountOption{
 		fuse.VolumeName(mountName),
-		fuse.FSName("SeaweedFS"),
-		fuse.Subtype("SeaweedFS"),
+		fuse.FSName(filer + ":" + filerMountRootPath),
+		fuse.Subtype("seaweedfs"),
 		fuse.NoAppleDouble(),
 		fuse.NoAppleXattr(),
 		fuse.NoBrowse(),
@@ -116,9 +121,9 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 
 	c, err := fuse.Mount(dir, options...)
 	if err != nil {
-		glog.Fatal(err)
+		glog.V(0).Infof("mount: %v", err)
 		daemonize.SignalOutcome(err)
-		return false
+		return true
 	}
 
 	util.OnInterrupt(func() {
@@ -128,9 +133,9 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 
 	filerGrpcAddress, err := parseFilerGrpcAddress(filer)
 	if err != nil {
-		glog.Fatal(err)
+		glog.V(0).Infof("parseFilerGrpcAddress: %v", err)
 		daemonize.SignalOutcome(err)
-		return false
+		return true
 	}
 
 	mountRoot := filerMountRootPath
@@ -142,14 +147,14 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 
 	err = fs.Serve(c, filesys.NewSeaweedFileSystem(&filesys.Option{
 		FilerGrpcAddress:   filerGrpcAddress,
-		GrpcDialOption:     security.LoadClientTLS(viper.Sub("grpc"), "client"),
+		GrpcDialOption:     security.LoadClientTLS(util.GetViper(), "grpc.client"),
 		FilerMountRootPath: mountRoot,
 		Collection:         collection,
 		Replication:        replication,
 		TtlSec:             int32(ttlSec),
 		ChunkSizeLimit:     int64(chunkSizeLimitMB) * 1024 * 1024,
 		DataCenter:         dataCenter,
-		DirListingLimit:    dirListingLimit,
+		DirListCacheLimit:  dirListCacheLimit,
 		EntryCacheTtl:      3 * time.Second,
 		MountUid:           uid,
 		MountGid:           gid,
@@ -165,8 +170,9 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 	// check if the mount process has an error to report
 	<-c.Ready
 	if err := c.MountError; err != nil {
-		glog.Fatal(err)
+		glog.V(0).Infof("mount process: %v", err)
 		daemonize.SignalOutcome(err)
+		return true
 	}
 
 	return true

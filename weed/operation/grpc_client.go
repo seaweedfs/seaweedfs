@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-func WithVolumeServerClient(volumeServer string, grpcDialOption grpc.DialOption, fn func(volume_server_pb.VolumeServerClient) error) error {
+func WithVolumeServerClient(volumeServer string, grpcDialOption grpc.DialOption, fn func(context.Context, volume_server_pb.VolumeServerClient) error) error {
 
 	ctx := context.Background()
 
@@ -21,9 +21,9 @@ func WithVolumeServerClient(volumeServer string, grpcDialOption grpc.DialOption,
 		return err
 	}
 
-	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
+	return util.WithCachedGrpcClient(ctx, func(ctx2 context.Context, grpcConnection *grpc.ClientConn) error {
 		client := volume_server_pb.NewVolumeServerClient(grpcConnection)
-		return fn(client)
+		return fn(ctx2, client)
 	}, grpcAddress, grpcDialOption)
 
 }
@@ -38,7 +38,7 @@ func toVolumeServerGrpcAddress(volumeServer string) (grpcAddress string, err err
 	return fmt.Sprintf("%s:%d", volumeServer[0:sepIndex], port+10000), nil
 }
 
-func WithMasterServerClient(masterServer string, grpcDialOption grpc.DialOption, fn func(masterClient master_pb.SeaweedClient) error) error {
+func WithMasterServerClient(masterServer string, grpcDialOption grpc.DialOption, fn func(ctx2 context.Context, masterClient master_pb.SeaweedClient) error) error {
 
 	ctx := context.Background()
 
@@ -47,9 +47,9 @@ func WithMasterServerClient(masterServer string, grpcDialOption grpc.DialOption,
 		return fmt.Errorf("failed to parse master grpc %v: %v", masterServer, parseErr)
 	}
 
-	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
+	return util.WithCachedGrpcClient(ctx, func(ctx2 context.Context, grpcConnection *grpc.ClientConn) error {
 		client := master_pb.NewSeaweedClient(grpcConnection)
-		return fn(client)
+		return fn(ctx2, client)
 	}, masterGrpcAddress, grpcDialOption)
 
 }

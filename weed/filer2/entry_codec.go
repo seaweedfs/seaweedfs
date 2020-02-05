@@ -1,18 +1,21 @@
 package filer2
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"time"
 
-	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/golang/protobuf/proto"
+
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
 func (entry *Entry) EncodeAttributesAndChunks() ([]byte, error) {
 	message := &filer_pb.Entry{
 		Attributes: EntryAttributeToPb(entry),
 		Chunks:     entry.Chunks,
+		Extended:   entry.Extended,
 	}
 	return proto.Marshal(message)
 }
@@ -26,6 +29,8 @@ func (entry *Entry) DecodeAttributesAndChunks(blob []byte) error {
 	}
 
 	entry.Attr = PbToEntryAttribute(message.Attributes)
+
+	entry.Extended = message.Extended
 
 	entry.Chunks = message.Chunks
 
@@ -84,10 +89,28 @@ func EqualEntry(a, b *Entry) bool {
 		return false
 	}
 
+	if !eq(a.Extended, b.Extended) {
+		return false
+	}
+
 	for i := 0; i < len(a.Chunks); i++ {
 		if !proto.Equal(a.Chunks[i], b.Chunks[i]) {
 			return false
 		}
 	}
+	return true
+}
+
+func eq(a, b map[string][]byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for k, v := range a {
+		if w, ok := b[k]; !ok || !bytes.Equal(v, w) {
+			return false
+		}
+	}
+
 	return true
 }

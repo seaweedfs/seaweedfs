@@ -54,7 +54,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	glog.V(4).Infoln("volume", volumeId, "reading", n)
+	// glog.V(4).Infoln("volume", volumeId, "reading", n)
 	hasVolume := vs.store.HasVolume(volumeId)
 	_, hasEcVolume := vs.store.FindEcVolume(volumeId)
 	if !hasVolume && !hasEcVolume {
@@ -88,7 +88,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	} else if hasEcVolume {
 		count, err = vs.store.ReadEcShardNeedle(context.Background(), volumeId, n)
 	}
-	glog.V(4).Infoln("read bytes", count, "error", err)
+	// glog.V(4).Infoln("read bytes", count, "error", err)
 	if err != nil || count < 0 {
 		glog.V(0).Infof("read %s isNormalVolume %v error: %v", r.URL.Path, hasVolume, err)
 		w.WriteHeader(http.StatusNotFound)

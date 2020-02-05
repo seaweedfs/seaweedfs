@@ -1,3 +1,6 @@
+// +build !386
+// +build !arm
+
 package tikv
 
 import (
@@ -27,8 +30,8 @@ func (store *TikvStore) GetName() string {
 	return "tikv"
 }
 
-func (store *TikvStore) Initialize(configuration weed_util.Configuration) (err error) {
-	pdAddr := configuration.GetString("pdAddress")
+func (store *TikvStore) Initialize(configuration weed_util.Configuration, prefix string) (err error) {
+	pdAddr := configuration.GetString(prefix + "pdAddress")
 	return store.initialize(pdAddr)
 }
 
@@ -133,6 +136,38 @@ func (store *TikvStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPat
 	err = store.getTx(ctx).Delete(key)
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
+	}
+
+	return nil
+}
+
+func (store *TikvStore) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) (err error) {
+
+	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
+
+	tx := store.getTx(ctx)
+
+	iter, err := tx.Iter(directoryPrefix, nil)
+	if err != nil {
+		return fmt.Errorf("deleteFolderChildren %s: %v", fullpath, err)
+	}
+	defer iter.Close()
+	for iter.Valid() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, directoryPrefix) {
+			break
+		}
+		fileName := getNameFromKey(key)
+		if fileName == "" {
+			iter.Next()
+			continue
+		}
+
+		if err = tx.Delete(genKey(string(fullpath), fileName)); err != nil {
+			return fmt.Errorf("delete %s : %v", fullpath, err)
+		}
+
+		iter.Next()
 	}
 
 	return nil

@@ -34,11 +34,11 @@ func (g *GcsSink) GetSinkToDirectory() string {
 	return g.dir
 }
 
-func (g *GcsSink) Initialize(configuration util.Configuration) error {
+func (g *GcsSink) Initialize(configuration util.Configuration, prefix string) error {
 	return g.initialize(
-		configuration.GetString("google_application_credentials"),
-		configuration.GetString("bucket"),
-		configuration.GetString("directory"),
+		configuration.GetString(prefix+"google_application_credentials"),
+		configuration.GetString(prefix+"bucket"),
+		configuration.GetString(prefix+"directory"),
 	)
 }
 

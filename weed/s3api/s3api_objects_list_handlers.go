@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -107,7 +108,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket, originalPr
 			InclusiveStartFrom: false,
 		}
 
-		resp, err := client.ListEntries(ctx, request)
+		stream, err := client.ListEntries(ctx, request)
 		if err != nil {
 			return fmt.Errorf("list buckets: %v", err)
 		}
@@ -117,7 +118,18 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket, originalPr
 		var counter int
 		var lastEntryName string
 		var isTruncated bool
-		for _, entry := range resp.Entries {
+
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				if recvErr == io.EOF {
+					break
+				} else {
+					return recvErr
+				}
+			}
+
+			entry := resp.Entry
 			counter++
 			if counter > maxKeys {
 				isTruncated = true
@@ -143,6 +155,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket, originalPr
 					StorageClass: "STANDARD",
 				})
 			}
+
 		}
 
 		response = ListBucketResult{

@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -36,7 +37,7 @@ func (s3a *S3ApiServer) mkdir(ctx context.Context, parentDirectoryPath string, d
 		}
 
 		glog.V(1).Infof("mkdir: %v", request)
-		if _, err := client.CreateEntry(ctx, request); err != nil {
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			glog.V(0).Infof("mkdir %v: %v", request, err)
 			return fmt.Errorf("mkdir %s/%s: %v", parentDirectoryPath, dirName, err)
 		}
@@ -67,7 +68,7 @@ func (s3a *S3ApiServer) mkFile(ctx context.Context, parentDirectoryPath string, 
 		}
 
 		glog.V(1).Infof("create file: %s/%s", parentDirectoryPath, fileName)
-		if _, err := client.CreateEntry(ctx, request); err != nil {
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			glog.V(0).Infof("create file %v:%v", request, err)
 			return fmt.Errorf("create file %s/%s: %v", parentDirectoryPath, fileName, err)
 		}
@@ -89,13 +90,25 @@ func (s3a *S3ApiServer) list(ctx context.Context, parentDirectoryPath, prefix, s
 		}
 
 		glog.V(4).Infof("read directory: %v", request)
-		resp, err := client.ListEntries(ctx, request)
+		stream, err := client.ListEntries(ctx, request)
 		if err != nil {
 			glog.V(0).Infof("read directory %v: %v", request, err)
 			return fmt.Errorf("list dir %v: %v", parentDirectoryPath, err)
 		}
 
-		entries = resp.Entries
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				if recvErr == io.EOF {
+					break
+				} else {
+					return recvErr
+				}
+			}
+
+			entries = append(entries, resp.Entry)
+
+		}
 
 		return nil
 	})

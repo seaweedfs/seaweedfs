@@ -39,16 +39,16 @@ func (s3sink *S3Sink) GetSinkToDirectory() string {
 	return s3sink.dir
 }
 
-func (s3sink *S3Sink) Initialize(configuration util.Configuration) error {
-	glog.V(0).Infof("sink.s3.region: %v", configuration.GetString("region"))
-	glog.V(0).Infof("sink.s3.bucket: %v", configuration.GetString("bucket"))
-	glog.V(0).Infof("sink.s3.directory: %v", configuration.GetString("directory"))
+func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string) error {
+	glog.V(0).Infof("sink.s3.region: %v", configuration.GetString(prefix+"region"))
+	glog.V(0).Infof("sink.s3.bucket: %v", configuration.GetString(prefix+"bucket"))
+	glog.V(0).Infof("sink.s3.directory: %v", configuration.GetString(prefix+"directory"))
 	return s3sink.initialize(
-		configuration.GetString("aws_access_key_id"),
-		configuration.GetString("aws_secret_access_key"),
-		configuration.GetString("region"),
-		configuration.GetString("bucket"),
-		configuration.GetString("directory"),
+		configuration.GetString(prefix+"aws_access_key_id"),
+		configuration.GetString(prefix+"aws_secret_access_key"),
+		configuration.GetString(prefix+"region"),
+		configuration.GetString(prefix+"bucket"),
+		configuration.GetString(prefix+"directory"),
 	)
 }
 
@@ -56,7 +56,7 @@ func (s3sink *S3Sink) SetSourceFiler(s *source.FilerSource) {
 	s3sink.filerSource = s
 }
 
-func (s3sink *S3Sink) initialize(awsAccessKeyId, aswSecretAccessKey, region, bucket, dir string) error {
+func (s3sink *S3Sink) initialize(awsAccessKeyId, awsSecretAccessKey, region, bucket, dir string) error {
 	s3sink.region = region
 	s3sink.bucket = bucket
 	s3sink.dir = dir
@@ -64,8 +64,8 @@ func (s3sink *S3Sink) initialize(awsAccessKeyId, aswSecretAccessKey, region, buc
 	config := &aws.Config{
 		Region: aws.String(s3sink.region),
 	}
-	if awsAccessKeyId != "" && aswSecretAccessKey != "" {
-		config.Credentials = credentials.NewStaticCredentials(awsAccessKeyId, aswSecretAccessKey, "")
+	if awsAccessKeyId != "" && awsSecretAccessKey != "" {
+		config.Credentials = credentials.NewStaticCredentials(awsAccessKeyId, awsSecretAccessKey, "")
 	}
 
 	sess, err := session.NewSession(config)

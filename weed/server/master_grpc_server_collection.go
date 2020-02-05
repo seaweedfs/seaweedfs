@@ -57,8 +57,8 @@ func (ms *MasterServer) doDeleteNormalCollection(collectionName string) error {
 	}
 
 	for _, server := range collection.ListVolumeServers() {
-		err := operation.WithVolumeServerClient(server.Url(), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
-			_, deleteErr := client.DeleteCollection(context.Background(), &volume_server_pb.DeleteCollectionRequest{
+		err := operation.WithVolumeServerClient(server.Url(), ms.grpcDialOption, func(ctx context.Context, client volume_server_pb.VolumeServerClient) error {
+			_, deleteErr := client.DeleteCollection(ctx, &volume_server_pb.DeleteCollectionRequest{
 				Collection: collectionName,
 			})
 			return deleteErr
@@ -77,8 +77,8 @@ func (ms *MasterServer) doDeleteEcCollection(collectionName string) error {
 	listOfEcServers := ms.Topo.ListEcServersByCollection(collectionName)
 
 	for _, server := range listOfEcServers {
-		err := operation.WithVolumeServerClient(server, ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
-			_, deleteErr := client.DeleteCollection(context.Background(), &volume_server_pb.DeleteCollectionRequest{
+		err := operation.WithVolumeServerClient(server, ms.grpcDialOption, func(ctx context.Context, client volume_server_pb.VolumeServerClient) error {
+			_, deleteErr := client.DeleteCollection(ctx, &volume_server_pb.DeleteCollectionRequest{
 				Collection: collectionName,
 			})
 			return deleteErr

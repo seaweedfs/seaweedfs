@@ -9,10 +9,11 @@ import (
 	"strconv"
 	"strings"
 
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"google.golang.org/grpc"
 )
 
 type ShellOptions struct {
@@ -69,28 +70,21 @@ func (ce *CommandEnv) checkDirectory(ctx context.Context, filerServer string, fi
 
 	dir, name := filer2.FullPath(path).DirAndName()
 
-	return ce.withFilerClient(ctx, filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
+	return ce.withFilerClient(ctx, filerServer, filerPort, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
-		resp, listErr := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
-			Directory:          dir,
-			Prefix:             name,
-			StartFromFileName:  name,
-			InclusiveStartFrom: true,
-			Limit:              1,
+		resp, lookupErr := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: dir,
+			Name:      name,
 		})
-		if listErr != nil {
-			return listErr
+		if lookupErr != nil {
+			return lookupErr
 		}
 
-		if len(resp.Entries) == 0 {
+		if resp.Entry == nil {
 			return fmt.Errorf("entry not found")
 		}
 
-		if resp.Entries[0].Name != name {
-			return fmt.Errorf("not a valid directory, found %s", resp.Entries[0].Name)
-		}
-
-		if !resp.Entries[0].IsDirectory {
+		if !resp.Entry.IsDirectory {
 			return fmt.Errorf("not a directory")
 		}
 

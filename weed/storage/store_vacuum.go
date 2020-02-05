@@ -16,7 +16,8 @@ func (s *Store) CheckCompactVolume(volumeId needle.VolumeId) (float64, error) {
 }
 func (s *Store) CompactVolume(vid needle.VolumeId, preallocate int64, compactionBytePerSecond int64) error {
 	if v := s.findVolume(vid); v != nil {
-		return v.Compact(preallocate, compactionBytePerSecond)
+		return v.Compact2(preallocate) // compactionBytePerSecond
+		// return v.Compact(preallocate, compactionBytePerSecond)
 	}
 	return fmt.Errorf("volume id %d is not found during compact", vid)
 }

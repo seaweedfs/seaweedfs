@@ -32,7 +32,7 @@ var (
 
 type FilerPostResult struct {
 	Name  string `json:"name,omitempty"`
-	Size  uint32 `json:"size,omitempty"`
+	Size  int64  `json:"size,omitempty"`
 	Error string `json:"error,omitempty"`
 	Fid   string `json:"fid,omitempty"`
 	Url   string `json:"url,omitempty"`
@@ -130,7 +130,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	// send back post result
 	reply := FilerPostResult{
 		Name:  ret.Name,
-		Size:  ret.Size,
+		Size:  int64(ret.Size),
 		Error: ret.Error,
 		Fid:   fileId,
 		Url:   urlLocation,
@@ -149,6 +149,16 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 		stats.FilerRequestHistogram.WithLabelValues("postStoreWrite").Observe(time.Since(start).Seconds())
 	}()
 
+	modeStr := r.URL.Query().Get("mode")
+	if modeStr == "" {
+		modeStr = "0660"
+	}
+	mode, err := strconv.ParseUint(modeStr, 8, 32)
+	if err != nil {
+		glog.Errorf("Invalid mode format: %s, use 0660 by default", modeStr)
+		mode = 0660
+	}
+
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") {
 		if ret.Name != "" {
@@ -165,7 +175,7 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 		Attr: filer2.Attr{
 			Mtime:       time.Now(),
 			Crtime:      crTime,
-			Mode:        0660,
+			Mode:        os.FileMode(mode),
 			Uid:         OS_UID,
 			Gid:         OS_GID,
 			Replication: replication,
@@ -183,8 +193,8 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 		entry.Attr.Mime = mime.TypeByExtension(ext)
 	}
 	// glog.V(4).Infof("saving %s => %+v", path, entry)
-	if dbErr := fs.filer.CreateEntry(ctx, entry); dbErr != nil {
-		fs.filer.DeleteChunks(entry.FullPath, entry.Chunks)
+	if dbErr := fs.filer.CreateEntry(ctx, entry, false); dbErr != nil {
+		fs.filer.DeleteChunks(entry.Chunks)
 		glog.V(0).Infof("failing to write %s to filer server : %v", path, dbErr)
 		writeJsonError(w, r, http.StatusInternalServerError, dbErr)
 		err = dbErr
@@ -270,15 +280,26 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 // curl -X DELETE http://localhost:8888/path/to
 // curl -X DELETE http://localhost:8888/path/to?recursive=true
 // curl -X DELETE http://localhost:8888/path/to?recursive=true&ignoreRecursiveError=true
+// curl -X DELETE http://localhost:8888/path/to?recursive=true&skipChunkDeletion=true
 func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	isRecursive := r.FormValue("recursive") == "true"
+	if !isRecursive && fs.option.recursiveDelete {
+		if r.FormValue("recursive") != "false" {
+			isRecursive = true
+		}
+	}
 	ignoreRecursiveError := r.FormValue("ignoreRecursiveError") == "true"
+	skipChunkDeletion := r.FormValue("skipChunkDeletion") == "true"
 
-	err := fs.filer.DeleteEntryMetaAndData(context.Background(), filer2.FullPath(r.URL.Path), isRecursive, ignoreRecursiveError, true)
+	err := fs.filer.DeleteEntryMetaAndData(context.Background(), filer2.FullPath(r.URL.Path), isRecursive, ignoreRecursiveError, !skipChunkDeletion)
 	if err != nil {
 		glog.V(1).Infoln("deleting", r.URL.Path, ":", err.Error())
-		writeJsonError(w, r, http.StatusInternalServerError, err)
+		httpStatus := http.StatusInternalServerError
+		if err == filer2.ErrNotFound {
+			httpStatus = http.StatusNotFound
+		}
+		writeJsonError(w, r, httpStatus, err)
 		return
 	}
 

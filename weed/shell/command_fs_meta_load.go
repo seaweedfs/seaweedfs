@@ -55,7 +55,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	ctx := context.Background()
 
-	err = commandEnv.withFilerClient(ctx, filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
+	err = commandEnv.withFilerClient(ctx, filerServer, filerPort, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		sizeBuf := make([]byte, 4)
 
@@ -80,7 +80,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 				return err
 			}
 
-			if _, err = client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+			if err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 				Directory: fullEntry.Dir,
 				Entry:     fullEntry.Entry,
 			}); err != nil {
