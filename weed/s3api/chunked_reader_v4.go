@@ -27,11 +27,6 @@ import (
 	"net/http"
 )
 
-// Streaming AWS Signature Version '4' constants.
-const (
-	streamingContentSHA256 = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
-)
-
 const maxLineLength = 4 * humanize.KiByte // assumed <= bufio.defaultBufSize 4KiB
 
 // lineTooLong is generated as chunk header is bigger than 4KiB.
