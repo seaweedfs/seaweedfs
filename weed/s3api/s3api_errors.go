@@ -66,6 +66,7 @@ const (
 	ErrInvalidAccessKeyID
 	ErrRequestNotReadyYet
 	ErrMissingDateHeader
+	ErrInvalidRequest
 	ErrNotImplemented
 )
 
@@ -270,7 +271,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "AWS authentication requires a valid Date or x-amz-date header",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
-
+	ErrInvalidRequest: {
+		Code:           "InvalidRequest",
+		Description:    "Invalid Request",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
 	ErrNotImplemented: {
 		Code:           "NotImplemented",
 		Description:    "A header you provided implies functionality that is not implemented",

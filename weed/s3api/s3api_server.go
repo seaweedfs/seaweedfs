@@ -24,7 +24,7 @@ type S3ApiServer struct {
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
 	s3ApiServer = &S3ApiServer{
 		option: option,
-		iam:    NewIdentityAccessManagement(option.Config),
+		iam:    NewIdentityAccessManagement(option.Config, option.DomainName),
 	}
 
 	s3ApiServer.registerRouter(router)

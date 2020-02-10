@@ -57,7 +57,7 @@ func TestIsRequestPresignedSignatureV4(t *testing.T) {
 
 // Tests is requested authenticated function, tests replies for s3 errors.
 func TestIsReqAuthenticated(t *testing.T) {
-	iam := NewIdentityAccessManagement("")
+	iam := NewIdentityAccessManagement("", "")
 	iam.identities = []*Identity{
 		{
 			Name: "someone",
@@ -92,7 +92,7 @@ func TestIsReqAuthenticated(t *testing.T) {
 }
 
 func TestCheckAdminRequestAuthType(t *testing.T) {
-	iam := NewIdentityAccessManagement("")
+	iam := NewIdentityAccessManagement("", "")
 	iam.identities = []*Identity{
 		{
 			Name: "someone",

@@ -26,6 +26,7 @@ type Iam interface {
 
 type IdentityAccessManagement struct {
 	identities []*Identity
+	domain     string
 }
 
 type Identity struct {
@@ -39,8 +40,10 @@ type Credential struct {
 	SecretKey string
 }
 
-func NewIdentityAccessManagement(fileName string) *IdentityAccessManagement {
-	iam := &IdentityAccessManagement{}
+func NewIdentityAccessManagement(fileName string, domain string) *IdentityAccessManagement {
+	iam := &IdentityAccessManagement{
+		domain: domain,
+	}
 	if fileName == "" {
 		return iam
 	}
@@ -119,16 +122,25 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, actions []Acti
 	var identity *Identity
 	var s3Err ErrorCode
 	switch getRequestAuthType(r) {
-	case authTypeUnknown, authTypeStreamingSigned:
+	case authTypeStreamingSigned:
+		return ErrNone
+	case authTypeUnknown:
+		glog.V(3).Infof("unknown auth type")
 		return ErrAccessDenied
 	case authTypePresignedV2, authTypeSignedV2:
-		return ErrNotImplemented
+		glog.V(3).Infof("v2 auth type")
+		identity, s3Err = iam.isReqAuthenticatedV2(r)
 	case authTypeSigned, authTypePresigned:
+		glog.V(3).Infof("v4 auth type")
 		identity, s3Err = iam.reqSignatureV4Verify(r)
-		if s3Err != ErrNone {
-			return s3Err
-		}
 	}
+
+	glog.V(3).Infof("auth error: %v", s3Err)
+	if s3Err != ErrNone {
+		return s3Err
+	}
+
+	glog.V(3).Infof("user name: %v actions: %v", identity.Name, identity.Actions)
 
 	if !identity.canDo(actions) {
 		return ErrAccessDenied

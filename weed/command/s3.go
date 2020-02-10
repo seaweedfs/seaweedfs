@@ -54,7 +54,7 @@ var cmdS3 = &Command{
       "credentials": [
         {
           "accessKey": "some_access_key1",
-          "secretKey": "some_secret_key2"
+          "secretKey": "some_secret_key1"
         }
       ],
       "actions": [
@@ -67,8 +67,8 @@ var cmdS3 = &Command{
       "name": "some_read_only_user",
       "credentials": [
         {
-          "accessKey": "some_access_key1",
-          "secretKey": "some_secret_key1"
+          "accessKey": "some_access_key2",
+          "secretKey": "some_secret_key2"
         }
       ],
       "actions": [
@@ -79,8 +79,8 @@ var cmdS3 = &Command{
       "name": "some_normal_user",
       "credentials": [
         {
-          "accessKey": "some_access_key2",
-          "secretKey": "some_secret_key2"
+          "accessKey": "some_access_key3",
+          "secretKey": "some_secret_key3"
         }
       ],
       "actions": [
