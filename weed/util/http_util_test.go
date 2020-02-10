@@ -7,7 +7,7 @@ import (
 )
 
 func TestFasthttpClientHead(t *testing.T) {
-	err := Head("https://www.google.com", func(header fasthttp.ResponseHeader) {
+	err := Head("https://www.google.com", func(header *fasthttp.ResponseHeader) {
 		header.VisitAll(func(key, value []byte) {
 			println(string(key) + ": " + string(value))
 		})

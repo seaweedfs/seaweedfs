@@ -95,7 +95,7 @@ func LookupJwt(master string, fileId string) security.EncodedJwt {
 	tokenStr := ""
 	lookupUrl := fmt.Sprintf("http://%s/dir/lookup?fileId=%s", master, fileId)
 
-	err := util.Head(lookupUrl, func(header fasthttp.ResponseHeader) {
+	err := util.Head(lookupUrl, func(header *fasthttp.ResponseHeader) {
 		bearer := header.Peek("Authorization")
 		if len(bearer) > 7 && string(bytes.ToUpper(bearer[0:6])) == "BEARER" {
 			tokenStr = string(bearer[7:])

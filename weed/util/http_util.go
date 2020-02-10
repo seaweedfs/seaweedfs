@@ -1,6 +1,7 @@
 package util
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
@@ -29,6 +30,25 @@ func init() {
 	client = &http.Client{
 		Transport: Transport,
 	}
+}
+
+func PostContent(url string, fnWriteBody func(w *bufio.Writer), fnReqHeader func(*fasthttp.RequestHeader), fnResp func(resp *fasthttp.Response) error) error {
+	req := fasthttp.AcquireRequest()
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(req)
+	defer fasthttp.ReleaseResponse(resp)
+
+	req.SetRequestURI(url)
+	req.Header.SetMethod(fasthttp.MethodPost)
+	fnReqHeader(&req.Header)
+	req.SetBodyStreamWriter(fnWriteBody)
+	if err := fasthttp.Do(req, resp); err != nil {
+		return err
+	}
+	if resp.StatusCode() >= 400 {
+		return fmt.Errorf("%s: %d", url, resp.StatusCode())
+	}
+	return fnResp(resp)
 }
 
 func PostBytes(url string, body []byte) ([]byte, error) {
@@ -85,22 +105,21 @@ func Get(url string) ([]byte, error) {
 	return b, nil
 }
 
-func Head(url string, fn func(header fasthttp.ResponseHeader)) error {
+func Head(url string, fn func(*fasthttp.ResponseHeader)) error {
 	req := fasthttp.AcquireRequest()
 	resp := fasthttp.AcquireResponse()
-	defer fasthttp.ReleaseRequest(req)   // <- do not forget to release
-	defer fasthttp.ReleaseResponse(resp) // <- do not forget to release
+	defer fasthttp.ReleaseRequest(req)
+	defer fasthttp.ReleaseResponse(resp)
 
-	c := fasthttp.Client{}
 	req.SetRequestURI(url)
 	req.Header.SetMethod(fasthttp.MethodHead)
-	if err := c.Do(req, resp); err != nil {
+	if err := fasthttp.Do(req, resp); err != nil {
 		return err
 	}
 	if resp.StatusCode() >= 400 {
 		return fmt.Errorf("%s: %d", url, resp.StatusCode())
 	}
-	fn(resp.Header)
+	fn(&resp.Header)
 	return nil
 }
 
