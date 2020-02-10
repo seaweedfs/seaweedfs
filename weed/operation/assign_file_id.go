@@ -1,13 +1,17 @@
 package operation
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+
+	"github.com/valyala/fasthttp"
+	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"google.golang.org/grpc"
-	"strings"
 )
 
 type VolumeAssignRequest struct {
@@ -89,12 +93,16 @@ func Assign(server string, grpcDialOption grpc.DialOption, primaryRequest *Volum
 func LookupJwt(master string, fileId string) security.EncodedJwt {
 
 	tokenStr := ""
+	lookupUrl := fmt.Sprintf("http://%s/dir/lookup?fileId=%s", master, fileId)
 
-	if h, e := util.Head(fmt.Sprintf("http://%s/dir/lookup?fileId=%s", master, fileId)); e == nil {
-		bearer := h.Get("Authorization")
-		if len(bearer) > 7 && strings.ToUpper(bearer[0:6]) == "BEARER" {
-			tokenStr = bearer[7:]
+	err := util.Head(lookupUrl, func(header fasthttp.ResponseHeader) {
+		bearer := header.Peek("Authorization")
+		if len(bearer) > 7 && string(bytes.ToUpper(bearer[0:6])) == "BEARER" {
+			tokenStr = string(bearer[7:])
 		}
+	})
+	if err != nil {
+		glog.V(0).Infof("failed to lookup jwt %s: %v", lookupUrl, err)
 	}
 
 	return security.EncodedJwt(tokenStr)

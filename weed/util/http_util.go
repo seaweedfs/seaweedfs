@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/valyala/fasthttp"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
@@ -83,16 +85,23 @@ func Get(url string) ([]byte, error) {
 	return b, nil
 }
 
-func Head(url string) (http.Header, error) {
-	r, err := client.Head(url)
-	if err != nil {
-		return nil, err
+func Head(url string, fn func(header fasthttp.ResponseHeader)) error {
+	req := fasthttp.AcquireRequest()
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(req)   // <- do not forget to release
+	defer fasthttp.ReleaseResponse(resp) // <- do not forget to release
+
+	c := fasthttp.Client{}
+	req.SetRequestURI(url)
+	req.Header.SetMethod(fasthttp.MethodHead)
+	if err := c.Do(req, resp); err != nil {
+		return err
 	}
-	defer r.Body.Close()
-	if r.StatusCode >= 400 {
-		return nil, fmt.Errorf("%s: %s", url, r.Status)
+	if resp.StatusCode() >= 400 {
+		return fmt.Errorf("%s: %d", url, resp.StatusCode())
 	}
-	return r.Header, nil
+	fn(resp.Header)
+	return nil
 }
 
 func Delete(url string, jwt string) error {
