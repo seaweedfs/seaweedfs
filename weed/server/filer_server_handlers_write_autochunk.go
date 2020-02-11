@@ -57,9 +57,9 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 
 	reply, err := fs.doAutoChunk(ctx, w, r, contentLength, chunkSize, replication, collection, dataCenter)
 	if err != nil {
-		writeJsonError(w, r, http.StatusInternalServerError, err)
+		oldWriteJsonError(w, r, http.StatusInternalServerError, err)
 	} else if reply != nil {
-		writeJsonQuiet(w, r, http.StatusCreated, reply)
+		oldWriteJsonQuiet(w, r, http.StatusCreated, reply)
 	}
 	return true
 }

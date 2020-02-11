@@ -1,6 +1,7 @@
 package needle
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,13 +11,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/valyala/fasthttp"
+
 	"github.com/chrislusf/seaweedfs/weed/images"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 const (
-	NeedleChecksumSize = 4
-	PairNamePrefix     = "Seaweed-"
+	NeedleChecksumSize  = 4
+	PairNamePrefix      = "Seaweed-"
+)
+var (
+	PairNamePrefixBytes = []byte("Seaweed-")
 )
 
 /*
@@ -50,7 +56,7 @@ func (n *Needle) String() (str string) {
 	return
 }
 
-func ParseUpload(r *http.Request, sizeLimit int64) (
+func OldParseUpload(r *http.Request, sizeLimit int64) (
 	fileName string, data []byte, mimeType string, pairMap map[string]string, isGzipped bool, originalDataSize int,
 	modifiedTime uint64, ttl *TTL, isChunkedFile bool, e error) {
 	pairMap = make(map[string]string)
@@ -82,11 +88,45 @@ func ParseUpload(r *http.Request, sizeLimit int64) (
 
 	return
 }
-func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit int64) (n *Needle, originalSize int, e error) {
+
+func ParseUpload(ctx *fasthttp.RequestCtx, sizeLimit int64) (
+	fileName string, data []byte, mimeType string, pairMap map[string]string, isGzipped bool, originalDataSize int,
+	modifiedTime uint64, ttl *TTL, isChunkedFile bool, e error) {
+	pairMap = make(map[string]string)
+	ctx.Request.Header.VisitAll(func(k, v []byte) {
+		if len(v) > 0 && bytes.HasPrefix(k, PairNamePrefixBytes) {
+			pairMap[string(k)] = string(v)
+		}
+	})
+
+	if ctx.IsPost() {
+		fileName, data, mimeType, isGzipped, originalDataSize, isChunkedFile, e = parseMultipart(r, sizeLimit)
+	} else {
+		isGzipped = false
+		mimeType = string(ctx.Request.Header.Peek("Content-Type"))
+		fileName = ""
+		data, e = ioutil.ReadAll(io.LimitReader(ctx.PostBody(), sizeLimit+1))
+		originalDataSize = len(data)
+		if e == io.EOF || int64(originalDataSize) == sizeLimit+1 {
+			io.Copy(ioutil.Discard, r.Body)
+		}
+		r.Body.Close()
+	}
+	if e != nil {
+		return
+	}
+
+	modifiedTime, _ = strconv.ParseUint(r.FormValue("ts"), 10, 64)
+	ttl, _ = ReadTTL(r.FormValue("ttl"))
+
+	return
+}
+
+func OldCreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit int64) (n *Needle, originalSize int, e error) {
 	var pairMap map[string]string
 	fname, mimeType, isGzipped, isChunkedFile := "", "", false, false
 	n = new(Needle)
-	fname, n.Data, mimeType, pairMap, isGzipped, originalSize, n.LastModified, n.Ttl, isChunkedFile, e = ParseUpload(r, sizeLimit)
+	fname, n.Data, mimeType, pairMap, isGzipped, originalSize, n.LastModified, n.Ttl, isChunkedFile, e = OldParseUpload(r, sizeLimit)
 	if e != nil {
 		return
 	}
@@ -146,6 +186,72 @@ func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit 
 
 	return
 }
+
+func CreateNeedleFromRequest(ctx *fasthttp.RequestCtx, fixJpgOrientation bool, sizeLimit int64) (n *Needle, originalSize int, e error) {
+	var pairMap map[string]string
+	fname, mimeType, isGzipped, isChunkedFile := "", "", false, false
+	n = new(Needle)
+	fname, n.Data, mimeType, pairMap, isGzipped, originalSize, n.LastModified, n.Ttl, isChunkedFile, e = OldParseUpload(r, sizeLimit)
+	if e != nil {
+		return
+	}
+	if len(fname) < 256 {
+		n.Name = []byte(fname)
+		n.SetHasName()
+	}
+	if len(mimeType) < 256 {
+		n.Mime = []byte(mimeType)
+		n.SetHasMime()
+	}
+	if len(pairMap) != 0 {
+		trimmedPairMap := make(map[string]string)
+		for k, v := range pairMap {
+			trimmedPairMap[k[len(PairNamePrefix):]] = v
+		}
+
+		pairs, _ := json.Marshal(trimmedPairMap)
+		if len(pairs) < 65536 {
+			n.Pairs = pairs
+			n.PairsSize = uint16(len(pairs))
+			n.SetHasPairs()
+		}
+	}
+	if isGzipped {
+		n.SetGzipped()
+	}
+	if n.LastModified == 0 {
+		n.LastModified = uint64(time.Now().Unix())
+	}
+	n.SetHasLastModifiedDate()
+	if n.Ttl != EMPTY_TTL {
+		n.SetHasTtl()
+	}
+
+	if isChunkedFile {
+		n.SetIsChunkManifest()
+	}
+
+	if fixJpgOrientation {
+		loweredName := strings.ToLower(fname)
+		if mimeType == "image/jpeg" || strings.HasSuffix(loweredName, ".jpg") || strings.HasSuffix(loweredName, ".jpeg") {
+			n.Data = images.FixJpgOrientation(n.Data)
+		}
+	}
+
+	n.Checksum = NewCRC(n.Data)
+
+	commaSep := strings.LastIndex(r.URL.Path, ",")
+	dotSep := strings.LastIndex(r.URL.Path, ".")
+	fid := r.URL.Path[commaSep+1:]
+	if dotSep > 0 {
+		fid = r.URL.Path[commaSep+1 : dotSep]
+	}
+
+	e = n.ParsePath(fid)
+
+	return
+}
+
 func (n *Needle) ParsePath(fid string) (err error) {
 	length := len(fid)
 	if length <= CookieSize*2 {

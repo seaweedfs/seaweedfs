@@ -9,6 +9,7 @@ require (
 	github.com/DataDog/zstd v1.4.1 // indirect
 	github.com/Shopify/sarama v1.23.1
 	github.com/aws/aws-sdk-go v1.23.13
+	github.com/chrislusf/glog v0.0.0-20180213072942-e58d74c04389
 	github.com/chrislusf/raft v0.0.0-20190225081310-10d6e2182d92
 	github.com/coreos/etcd v3.3.15+incompatible // indirect
 	github.com/coreos/go-semver v0.3.0 // indirect
@@ -36,7 +37,8 @@ require (
 	github.com/jcmturner/gofork v1.0.0 // indirect
 	github.com/karlseguin/ccache v2.0.3+incompatible
 	github.com/karlseguin/expect v1.0.1 // indirect
-	github.com/klauspost/cpuid v1.2.1 // indirect
+	github.com/klauspost/compress v1.9.8 // indirect
+	github.com/klauspost/cpuid v1.2.3 // indirect
 	github.com/klauspost/crc32 v1.2.0
 	github.com/klauspost/reedsolomon v1.9.2
 	github.com/konsorten/go-windows-terminal-sequences v1.0.2 // indirect
@@ -76,6 +78,7 @@ require (
 	github.com/uber-go/atomic v1.4.0 // indirect
 	github.com/uber/jaeger-client-go v2.17.0+incompatible // indirect
 	github.com/uber/jaeger-lib v2.0.0+incompatible // indirect
+	github.com/valyala/fasthttp v1.9.0
 	github.com/willf/bitset v1.1.10 // indirect
 	github.com/willf/bloom v2.0.3+incompatible
 	github.com/wsxiaoys/terminal v0.0.0-20160513160801-0940f3fc43a0 // indirect

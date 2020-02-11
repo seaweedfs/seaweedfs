@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/valyala/fasthttp"
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -164,6 +165,8 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.compactionMBPerSecond,
 		*v.fileSizeLimitMB,
 	)
+
+	go fasthttp.ListenAndServe(":8081", volumeServer.HandleFastHTTP)
 
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)

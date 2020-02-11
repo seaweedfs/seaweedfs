@@ -55,7 +55,7 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 		isRead := forRead == "yes"
 		ms.maybeAddJwtAuthorization(w, fileId, !isRead)
 	}
-	writeJsonQuiet(w, r, httpStatus, location)
+	oldWriteJsonQuiet(w, r, httpStatus, location)
 }
 
 // findVolumeLocation finds the volume location from master topo if it is leader,
@@ -107,20 +107,20 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 
 	option, err := ms.getVolumeGrowOption(r)
 	if err != nil {
-		writeJsonQuiet(w, r, http.StatusNotAcceptable, operation.AssignResult{Error: err.Error()})
+		oldWriteJsonQuiet(w, r, http.StatusNotAcceptable, operation.AssignResult{Error: err.Error()})
 		return
 	}
 
 	if !ms.Topo.HasWritableVolume(option) {
 		if ms.Topo.FreeSpace() <= 0 {
-			writeJsonQuiet(w, r, http.StatusNotFound, operation.AssignResult{Error: "No free volumes left!"})
+			oldWriteJsonQuiet(w, r, http.StatusNotFound, operation.AssignResult{Error: "No free volumes left!"})
 			return
 		}
 		ms.vgLock.Lock()
 		defer ms.vgLock.Unlock()
 		if !ms.Topo.HasWritableVolume(option) {
 			if _, err = ms.vg.AutomaticGrowByType(option, ms.grpcDialOption, ms.Topo, writableVolumeCount); err != nil {
-				writeJsonError(w, r, http.StatusInternalServerError,
+				oldWriteJsonError(w, r, http.StatusInternalServerError,
 					fmt.Errorf("Cannot grow volume group! %v", err))
 				return
 			}
@@ -129,9 +129,9 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 	fid, count, dn, err := ms.Topo.PickForWrite(requestedCount, option)
 	if err == nil {
 		ms.maybeAddJwtAuthorization(w, fid, true)
-		writeJsonQuiet(w, r, http.StatusOK, operation.AssignResult{Fid: fid, Url: dn.Url(), PublicUrl: dn.PublicUrl, Count: count})
+		oldWriteJsonQuiet(w, r, http.StatusOK, operation.AssignResult{Fid: fid, Url: dn.Url(), PublicUrl: dn.PublicUrl, Count: count})
 	} else {
-		writeJsonQuiet(w, r, http.StatusNotAcceptable, operation.AssignResult{Error: err.Error()})
+		oldWriteJsonQuiet(w, r, http.StatusNotAcceptable, operation.AssignResult{Error: err.Error()})
 	}
 }
 

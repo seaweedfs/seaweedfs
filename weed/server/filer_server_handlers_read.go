@@ -69,7 +69,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	if r.Method == "HEAD" {
 		w.Header().Set("Content-Length", strconv.FormatInt(int64(filer2.TotalSize(entry.Chunks)), 10))
 		w.Header().Set("Last-Modified", entry.Attr.Mtime.Format(http.TimeFormat))
-		setEtag(w, filer2.ETag(entry.Chunks))
+		oldSetEtag(w, filer2.ETag(entry.Chunks))
 		return
 	}
 
@@ -122,7 +122,7 @@ func (fs *FilerServer) handleSingleChunk(w http.ResponseWriter, r *http.Request,
 	resp, do_err := util.Do(request)
 	if do_err != nil {
 		glog.V(0).Infoln("failing to connect to volume server", do_err.Error())
-		writeJsonError(w, r, http.StatusInternalServerError, do_err)
+		oldWriteJsonError(w, r, http.StatusInternalServerError, do_err)
 		return
 	}
 	defer func() {
@@ -150,7 +150,7 @@ func (fs *FilerServer) handleMultipleChunks(w http.ResponseWriter, r *http.Reque
 	if mimeType != "" {
 		w.Header().Set("Content-Type", mimeType)
 	}
-	setEtag(w, filer2.ETag(entry.Chunks))
+	oldSetEtag(w, filer2.ETag(entry.Chunks))
 
 	totalSize := int64(filer2.TotalSize(entry.Chunks))
 

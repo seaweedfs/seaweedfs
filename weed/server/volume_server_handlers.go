@@ -24,32 +24,32 @@ security settings:
 
 */
 
-func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Request) {
+func (vs *VolumeServer) oldPrivateStoreHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET", "HEAD":
 		stats.ReadRequest()
-		vs.GetOrHeadHandler(w, r)
+		vs.OldGetOrHeadHandler(w, r)
 	case "DELETE":
 		stats.DeleteRequest()
-		vs.guard.WhiteList(vs.DeleteHandler)(w, r)
+		vs.guard.OldWhiteList(vs.OldDeleteHandler)(w, r)
 	case "PUT", "POST":
 		stats.WriteRequest()
-		vs.guard.WhiteList(vs.PostHandler)(w, r)
+		vs.guard.OldWhiteList(vs.OldPostHandler)(w, r)
 	}
 }
 
-func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Request) {
+func (vs *VolumeServer) oldPublicReadOnlyHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		stats.ReadRequest()
-		vs.GetOrHeadHandler(w, r)
+		vs.OldGetOrHeadHandler(w, r)
 	case "HEAD":
 		stats.ReadRequest()
-		vs.GetOrHeadHandler(w, r)
+		vs.OldGetOrHeadHandler(w, r)
 	}
 }
 
-func (vs *VolumeServer) maybeCheckJwtAuthorization(r *http.Request, vid, fid string, isWrite bool) bool {
+func (vs *VolumeServer) oldMaybeCheckJwtAuthorization(r *http.Request, vid, fid string, isWrite bool) bool {
 
 	var signingKey security.SigningKey
 
@@ -67,7 +67,7 @@ func (vs *VolumeServer) maybeCheckJwtAuthorization(r *http.Request, vid, fid str
 		}
 	}
 
-	tokenStr := security.GetJwt(r)
+	tokenStr := security.OldGetJwt(r)
 	if tokenStr == "" {
 		glog.V(1).Infof("missing jwt from %s", r.RemoteAddr)
 		return false

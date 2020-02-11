@@ -3,6 +3,7 @@ package weed_server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"encoding/json"
+	"github.com/valyala/fasthttp"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/images"
@@ -25,32 +26,31 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
-
-func (vs *VolumeServer) OldGetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
+func (vs *VolumeServer) fastGetOrHeadHandler(ctx *fasthttp.RequestCtx) {
 
 	stats.VolumeServerRequestCounter.WithLabelValues("get").Inc()
 	start := time.Now()
 	defer func() { stats.VolumeServerRequestHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
 
+	requestPath := string(ctx.Path())
 	n := new(needle.Needle)
-	vid, fid, filename, ext, _ := parseURLPath(r.URL.Path)
+	vid, fid, filename, ext, _ := parseURLPath(requestPath)
 
-	if !vs.oldMaybeCheckJwtAuthorization(r, vid, fid, false) {
-		oldWriteJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
+	if !vs.maybeCheckJwtAuthorization(ctx, vid, fid, false) {
+		writeJsonError(ctx, http.StatusUnauthorized, errors.New("wrong jwt"))
 		return
 	}
 
 	volumeId, err := needle.NewVolumeId(vid)
 	if err != nil {
-		glog.V(2).Infoln("parsing error:", err, r.URL.Path)
-		w.WriteHeader(http.StatusBadRequest)
+		glog.V(2).Infof("parsing volumd id %s error: %v", err, requestPath)
+		ctx.SetStatusCode(http.StatusBadRequest)
 		return
 	}
 	err = n.ParsePath(fid)
 	if err != nil {
-		glog.V(2).Infoln("parsing fid error:", err, r.URL.Path)
-		w.WriteHeader(http.StatusBadRequest)
+		glog.V(2).Infof("parsing fid %s error: %v", err, requestPath)
+		ctx.SetStatusCode(http.StatusBadRequest)
 		return
 	}
 
@@ -59,8 +59,8 @@ func (vs *VolumeServer) OldGetOrHeadHandler(w http.ResponseWriter, r *http.Reque
 	_, hasEcVolume := vs.store.FindEcVolume(volumeId)
 	if !hasVolume && !hasEcVolume {
 		if !vs.ReadRedirect {
-			glog.V(2).Infoln("volume is not local:", err, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
+			glog.V(2).Infoln("volume is not local:", err, requestPath)
+			ctx.SetStatusCode(http.StatusNotFound)
 			return
 		}
 		lookupResult, err := operation.Lookup(vs.GetMaster(), volumeId.String())
@@ -69,18 +69,19 @@ func (vs *VolumeServer) OldGetOrHeadHandler(w http.ResponseWriter, r *http.Reque
 			u, _ := url.Parse(util.NormalizeUrl(lookupResult.Locations[0].PublicUrl))
 			u.Path = fmt.Sprintf("%s/%s,%s", u.Path, vid, fid)
 			arg := url.Values{}
-			if c := r.FormValue("collection"); c != "" {
-				arg.Set("collection", c)
+			if c := ctx.FormValue("collection"); c != nil {
+				arg.Set("collection", string(c))
 			}
 			u.RawQuery = arg.Encode()
-			http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
+			ctx.Redirect(u.String(), http.StatusMovedPermanently)
 
 		} else {
-			glog.V(2).Infoln("lookup error:", err, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
+			glog.V(2).Infof("lookup %s error: %v", requestPath, err)
+			ctx.SetStatusCode(http.StatusNotFound)
 		}
 		return
 	}
+
 	cookie := n.Cookie
 	var count int
 	if hasVolume {
@@ -90,34 +91,35 @@ func (vs *VolumeServer) OldGetOrHeadHandler(w http.ResponseWriter, r *http.Reque
 	}
 	// glog.V(4).Infoln("read bytes", count, "error", err)
 	if err != nil || count < 0 {
-		glog.V(0).Infof("read %s isNormalVolume %v error: %v", r.URL.Path, hasVolume, err)
-		w.WriteHeader(http.StatusNotFound)
+		glog.V(0).Infof("read %s isNormalVolume %v error: %v", requestPath, hasVolume, err)
+		ctx.SetStatusCode(http.StatusNotFound)
 		return
 	}
 	if n.Cookie != cookie {
-		glog.V(0).Infof("request %s with cookie:%x expected:%x from %s agent %s", r.URL.Path, cookie, n.Cookie, r.RemoteAddr, r.UserAgent())
-		w.WriteHeader(http.StatusNotFound)
+		glog.V(0).Infof("request %s with cookie:%x expected:%x agent %s", requestPath, cookie, n.Cookie, string(ctx.UserAgent()))
+		ctx.SetStatusCode(http.StatusNotFound)
 		return
 	}
 	if n.LastModified != 0 {
-		w.Header().Set("Last-Modified", time.Unix(int64(n.LastModified), 0).UTC().Format(http.TimeFormat))
-		if r.Header.Get("If-Modified-Since") != "" {
-			if t, parseError := time.Parse(http.TimeFormat, r.Header.Get("If-Modified-Since")); parseError == nil {
+		ctx.Response.Header.Set("Last-Modified", time.Unix(int64(n.LastModified), 0).UTC().Format(http.TimeFormat))
+		if ctx.Response.Header.Peek("If-Modified-Since") != nil {
+			if t, parseError := time.Parse(http.TimeFormat, string(ctx.Response.Header.Peek("If-Modified-Since"))); parseError == nil {
 				if t.Unix() >= int64(n.LastModified) {
-					w.WriteHeader(http.StatusNotModified)
+					ctx.SetStatusCode(http.StatusNotModified)
 					return
 				}
 			}
 		}
 	}
-	if inm := r.Header.Get("If-None-Match"); inm == "\""+n.Etag()+"\"" {
-		w.WriteHeader(http.StatusNotModified)
+	if inm := ctx.Response.Header.Peek("If-None-Match"); inm != nil && string(inm) == "\""+n.Etag()+"\"" {
+		ctx.SetStatusCode(http.StatusNotModified)
 		return
 	}
-	if r.Header.Get("ETag-MD5") == "True" {
-		oldSetEtag(w, n.MD5())
+	eTagMd5 := ctx.Response.Header.Peek("ETag-MD5")
+	if eTagMd5 != nil && string(eTagMd5) == "True" {
+		fastSetEtag(ctx, n.MD5())
 	} else {
-		oldSetEtag(w, n.Etag())
+		fastSetEtag(ctx, n.Etag())
 	}
 
 	if n.HasPairs() {
@@ -127,11 +129,11 @@ func (vs *VolumeServer) OldGetOrHeadHandler(w http.ResponseWriter, r *http.Reque
 			glog.V(0).Infoln("Unmarshal pairs error:", err)
 		}
 		for k, v := range pairMap {
-			w.Header().Set(k, v)
+			ctx.Response.Header.Set(k, v)
 		}
 	}
 
-	if vs.tryHandleChunkedFile(n, filename, w, r) {
+	if vs.fastTryHandleChunkedFile(n, filename, ctx) {
 		return
 	}
 
@@ -151,31 +153,33 @@ func (vs *VolumeServer) OldGetOrHeadHandler(w http.ResponseWriter, r *http.Reque
 
 	if ext != ".gz" {
 		if n.IsGzipped() {
-			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-				w.Header().Set("Content-Encoding", "gzip")
+			acceptEncoding := ctx.Request.Header.Peek("Accept-Encoding")
+			if acceptEncoding != nil && strings.Contains(string(acceptEncoding), "gzip") {
+				ctx.Response.Header.Set("Content-Encoding", "gzip")
 			} else {
 				if n.Data, err = util.UnGzipData(n.Data); err != nil {
-					glog.V(0).Infoln("ungzip error:", err, r.URL.Path)
+					glog.V(0).Infoln("ungzip error:", err, requestPath)
 				}
 			}
 		}
 	}
 
-	rs := conditionallyResizeImages(bytes.NewReader(n.Data), ext, r)
+	rs := fastConditionallyResizeImages(bytes.NewReader(n.Data), ext, ctx)
 
-	if e := writeResponseContent(filename, mtype, rs, w, r); e != nil {
+	if e := fastWriteResponseContent(filename, mtype, rs, ctx); e != nil {
 		glog.V(2).Infoln("response write error:", e)
 	}
+
 }
 
-func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, w http.ResponseWriter, r *http.Request) (processed bool) {
-	if !n.IsChunkedManifest() || r.URL.Query().Get("cm") == "false" {
+func (vs *VolumeServer) fastTryHandleChunkedFile(n *needle.Needle, fileName string, ctx *fasthttp.RequestCtx) (processed bool) {
+	if !n.IsChunkedManifest() || string(ctx.FormValue("cm")) == "false" {
 		return false
 	}
 
 	chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsGzipped())
 	if e != nil {
-		glog.V(0).Infof("load chunked manifest (%s) error: %v", r.URL.Path, e)
+		glog.V(0).Infof("load chunked manifest (%s) error: %v", string(ctx.Path()), e)
 		return false
 	}
 	if fileName == "" && chunkManifest.Name != "" {
@@ -192,7 +196,7 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, 
 		}
 	}
 
-	w.Header().Set("X-File-Store", "chunked")
+	ctx.Response.Header.Set("X-File-Store", "chunked")
 
 	chunkedFileReader := &operation.ChunkedFileReader{
 		Manifest: chunkManifest,
@@ -200,33 +204,35 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, 
 	}
 	defer chunkedFileReader.Close()
 
-	rs := conditionallyResizeImages(chunkedFileReader, ext, r)
+	rs := fastConditionallyResizeImages(chunkedFileReader, ext, ctx)
 
-	if e := writeResponseContent(fileName, mType, rs, w, r); e != nil {
+	if e := fastWriteResponseContent(fileName, mType, rs, ctx); e != nil {
 		glog.V(2).Infoln("response write error:", e)
 	}
 	return true
 }
 
-func conditionallyResizeImages(originalDataReaderSeeker io.ReadSeeker, ext string, r *http.Request) io.ReadSeeker {
+func fastConditionallyResizeImages(originalDataReaderSeeker io.ReadSeeker, ext string, ctx *fasthttp.RequestCtx) io.ReadSeeker {
 	rs := originalDataReaderSeeker
 	if len(ext) > 0 {
 		ext = strings.ToLower(ext)
 	}
 	if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" {
 		width, height := 0, 0
-		if r.FormValue("width") != "" {
-			width, _ = strconv.Atoi(r.FormValue("width"))
+		formWidth, formHeight := ctx.FormValue("width"), ctx.FormValue("height")
+		if formWidth != nil {
+			width, _ = strconv.Atoi(string(formWidth))
 		}
-		if r.FormValue("height") != "" {
-			height, _ = strconv.Atoi(r.FormValue("height"))
+		if formHeight != nil {
+			height, _ = strconv.Atoi(string(formHeight))
 		}
-		rs, _, _ = images.Resized(ext, originalDataReaderSeeker, width, height, r.FormValue("mode"))
+		formMode := ctx.FormValue("mode")
+		rs, _, _ = images.Resized(ext, originalDataReaderSeeker, width, height, string(formMode))
 	}
 	return rs
 }
 
-func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.ResponseWriter, r *http.Request) error {
+func fastWriteResponseContent(filename, mimeType string, rs io.ReadSeeker, ctx *fasthttp.RequestCtx) error {
 	totalSize, e := rs.Seek(0, 2)
 	if mimeType == "" {
 		if ext := path.Ext(filename); ext != "" {
@@ -234,37 +240,39 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 		}
 	}
 	if mimeType != "" {
-		w.Header().Set("Content-Type", mimeType)
+		ctx.Response.Header.Set("Content-Type", mimeType)
 	}
 	if filename != "" {
 		contentDisposition := "inline"
-		if r.FormValue("dl") != "" {
-			if dl, _ := strconv.ParseBool(r.FormValue("dl")); dl {
+		dlFormValue := ctx.FormValue("dl")
+		if dlFormValue != nil {
+			if dl, _ := strconv.ParseBool(string(dlFormValue)); dl {
 				contentDisposition = "attachment"
 			}
 		}
-		w.Header().Set("Content-Disposition", contentDisposition+`; filename="`+fileNameEscaper.Replace(filename)+`"`)
+		ctx.Response.Header.Set("Content-Disposition", contentDisposition+`; filename="`+fileNameEscaper.Replace(filename)+`"`)
 	}
-	w.Header().Set("Accept-Ranges", "bytes")
-	if r.Method == "HEAD" {
-		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
+	ctx.Response.Header.Set("Accept-Ranges", "bytes")
+	if ctx.IsHead() {
+		ctx.Response.Header.Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		return nil
 	}
-	rangeReq := r.Header.Get("Range")
-	if rangeReq == "" {
-		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
+	rangeReq := ctx.FormValue("Range")
+	if rangeReq == nil {
+		ctx.Response.Header.Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		if _, e = rs.Seek(0, 0); e != nil {
 			return e
 		}
-		_, e = io.Copy(w, rs)
+		_, e = io.Copy(ctx.Response.BodyWriter(), rs)
 		return e
 	}
 
 	//the rest is dealing with partial content request
 	//mostly copy from src/pkg/net/http/fs.go
-	ranges, err := parseRange(rangeReq, totalSize)
+	ranges, err := parseRange(string(rangeReq), totalSize)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusRequestedRangeNotSatisfiable)
+		ctx.Response.SetStatusCode(http.StatusRequestedRangeNotSatisfiable)
+		ctxError(ctx, err.Error(), http.StatusRequestedRangeNotSatisfiable)
 		return nil
 	}
 	if sumRangesSize(ranges) > totalSize {
@@ -290,27 +298,27 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 		// A response to a request for a single range MUST NOT
 		// be sent using the multipart/byteranges media type."
 		ra := ranges[0]
-		w.Header().Set("Content-Length", strconv.FormatInt(ra.length, 10))
-		w.Header().Set("Content-Range", ra.contentRange(totalSize))
-		w.WriteHeader(http.StatusPartialContent)
+		ctx.Response.Header.Set("Content-Length", strconv.FormatInt(ra.length, 10))
+		ctx.Response.Header.Set("Content-Range", ra.contentRange(totalSize))
+		ctx.Response.SetStatusCode(http.StatusPartialContent)
 		if _, e = rs.Seek(ra.start, 0); e != nil {
 			return e
 		}
 
-		_, e = io.CopyN(w, rs, ra.length)
+		_, e = io.CopyN(ctx.Response.BodyWriter(), rs, ra.length)
 		return e
 	}
 	// process multiple ranges
 	for _, ra := range ranges {
 		if ra.start > totalSize {
-			http.Error(w, "Out of Range", http.StatusRequestedRangeNotSatisfiable)
+			ctxError(ctx, "Out of Range", http.StatusRequestedRangeNotSatisfiable)
 			return nil
 		}
 	}
 	sendSize := rangesMIMESize(ranges, mimeType, totalSize)
 	pr, pw := io.Pipe()
 	mw := multipart.NewWriter(pw)
-	w.Header().Set("Content-Type", "multipart/byteranges; boundary="+mw.Boundary())
+	ctx.Response.Header.Set("Content-Type", "multipart/byteranges; boundary="+mw.Boundary())
 	sendContent := pr
 	defer pr.Close() // cause writing goroutine to fail and exit if CopyN doesn't finish.
 	go func() {
@@ -332,10 +340,27 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 		mw.Close()
 		pw.Close()
 	}()
-	if w.Header().Get("Content-Encoding") == "" {
-		w.Header().Set("Content-Length", strconv.FormatInt(sendSize, 10))
+	if ctx.Response.Header.Peek("Content-Encoding") == nil {
+		ctx.Response.Header.Set("Content-Length", strconv.FormatInt(sendSize, 10))
 	}
-	w.WriteHeader(http.StatusPartialContent)
-	_, e = io.CopyN(w, sendContent, sendSize)
+	ctx.Response.Header.SetStatusCode(http.StatusPartialContent)
+	_, e = io.CopyN(ctx.Response.BodyWriter(), sendContent, sendSize)
 	return e
+}
+
+func fastSetEtag(ctx *fasthttp.RequestCtx, etag string) {
+	if etag != "" {
+		if strings.HasPrefix(etag, "\"") {
+			ctx.Response.Header.Set("ETag", etag)
+		} else {
+			ctx.Response.Header.Set("ETag", "\""+etag+"\"")
+		}
+	}
+}
+
+func ctxError(ctx *fasthttp.RequestCtx, error string, code int) {
+	ctx.Response.Header.Set("Content-Type", "text/plain; charset=utf-8")
+	ctx.Response.Header.Set("X-Content-Type-Options", "nosniff")
+	ctx.Response.SetStatusCode(code)
+	fmt.Fprintln(ctx.Response.BodyWriter(), error)
 }

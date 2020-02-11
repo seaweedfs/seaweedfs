@@ -1,13 +1,16 @@
 package security
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/dgrijalva/jwt-go"
+	"github.com/valyala/fasthttp"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	jwt "github.com/dgrijalva/jwt-go"
 )
 
 type EncodedJwt string
@@ -39,7 +42,7 @@ func GenJwt(signingKey SigningKey, expiresAfterSec int, fileId string) EncodedJw
 	return EncodedJwt(encoded)
 }
 
-func GetJwt(r *http.Request) EncodedJwt {
+func OldGetJwt(r *http.Request) EncodedJwt {
 
 	// Get token from query params
 	tokenStr := r.URL.Query().Get("jwt")
@@ -48,6 +51,22 @@ func GetJwt(r *http.Request) EncodedJwt {
 	if tokenStr == "" {
 		bearer := r.Header.Get("Authorization")
 		if len(bearer) > 7 && strings.ToUpper(bearer[0:6]) == "BEARER" {
+			tokenStr = bearer[7:]
+		}
+	}
+
+	return EncodedJwt(tokenStr)
+}
+
+func GetJwt(ctx *fasthttp.RequestCtx) EncodedJwt {
+
+	// Get token from query params
+	tokenStr := ctx.FormValue("jwt")
+
+	// Get token from authorization header
+	if tokenStr == nil {
+		bearer := ctx.Request.Header.Peek("Authorization")
+		if len(bearer) > 7 && string(bytes.ToUpper(bearer[0:6])) == "BEARER" {
 			tokenStr = bearer[7:]
 		}
 	}

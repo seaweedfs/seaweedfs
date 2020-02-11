@@ -65,7 +65,7 @@ func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request,
 	assignResult, ae := operation.Assign(fs.filer.GetMaster(), fs.grpcDialOption, ar, altRequest)
 	if ae != nil {
 		glog.Errorf("failing to assign a file id: %v", ae)
-		writeJsonError(w, r, http.StatusInternalServerError, ae)
+		oldWriteJsonError(w, r, http.StatusInternalServerError, ae)
 		err = ae
 		return
 	}
@@ -135,8 +135,8 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		Fid:   fileId,
 		Url:   urlLocation,
 	}
-	setEtag(w, ret.ETag)
-	writeJsonQuiet(w, r, http.StatusCreated, reply)
+	oldSetEtag(w, ret.ETag)
+	oldWriteJsonQuiet(w, r, http.StatusCreated, reply)
 }
 
 // update metadata in filer store
@@ -196,7 +196,7 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 	if dbErr := fs.filer.CreateEntry(ctx, entry, false); dbErr != nil {
 		fs.filer.DeleteChunks(entry.Chunks)
 		glog.V(0).Infof("failing to write %s to filer server : %v", path, dbErr)
-		writeJsonError(w, r, http.StatusInternalServerError, dbErr)
+		oldWriteJsonError(w, r, http.StatusInternalServerError, dbErr)
 		err = dbErr
 		return
 	}
@@ -228,7 +228,7 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 	resp, doErr := util.Do(request)
 	if doErr != nil {
 		glog.Errorf("failing to connect to volume server %s: %v, %+v", r.RequestURI, doErr, r.Method)
-		writeJsonError(w, r, http.StatusInternalServerError, doErr)
+		oldWriteJsonError(w, r, http.StatusInternalServerError, doErr)
 		err = doErr
 		return
 	}
@@ -240,7 +240,7 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 	respBody, raErr := ioutil.ReadAll(resp.Body)
 	if raErr != nil {
 		glog.V(0).Infoln("failing to upload to volume server", r.RequestURI, raErr.Error())
-		writeJsonError(w, r, http.StatusInternalServerError, raErr)
+		oldWriteJsonError(w, r, http.StatusInternalServerError, raErr)
 		err = raErr
 		return
 	}
@@ -248,14 +248,14 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 	unmarshalErr := json.Unmarshal(respBody, &ret)
 	if unmarshalErr != nil {
 		glog.V(0).Infoln("failing to read upload resonse", r.RequestURI, string(respBody))
-		writeJsonError(w, r, http.StatusInternalServerError, unmarshalErr)
+		oldWriteJsonError(w, r, http.StatusInternalServerError, unmarshalErr)
 		err = unmarshalErr
 		return
 	}
 	if ret.Error != "" {
 		err = errors.New(ret.Error)
 		glog.V(0).Infoln("failing to post to volume server", r.RequestURI, ret.Error)
-		writeJsonError(w, r, http.StatusInternalServerError, err)
+		oldWriteJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
 	// find correct final path
@@ -267,7 +267,7 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 			err = fmt.Errorf("can not to write to folder %s without a file name", path)
 			fs.filer.DeleteFileByFileId(fileId)
 			glog.V(0).Infoln("Can not to write to folder", path, "without a file name!")
-			writeJsonError(w, r, http.StatusInternalServerError, err)
+			oldWriteJsonError(w, r, http.StatusInternalServerError, err)
 			return
 		}
 	}
@@ -299,7 +299,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		if err == filer2.ErrNotFound {
 			httpStatus = http.StatusNotFound
 		}
-		writeJsonError(w, r, httpStatus, err)
+		oldWriteJsonError(w, r, httpStatus, err)
 		return
 	}
 

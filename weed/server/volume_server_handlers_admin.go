@@ -13,7 +13,7 @@ func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
 	m["Volumes"] = vs.store.VolumeInfos()
-	writeJsonQuiet(w, r, http.StatusOK, m)
+	oldWriteJsonQuiet(w, r, http.StatusOK, m)
 }
 
 func (vs *VolumeServer) statsDiskHandler(w http.ResponseWriter, r *http.Request) {
@@ -26,5 +26,5 @@ func (vs *VolumeServer) statsDiskHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	m["DiskStatuses"] = ds
-	writeJsonQuiet(w, r, http.StatusOK, m)
+	oldWriteJsonQuiet(w, r, http.StatusOK, m)
 }

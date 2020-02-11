@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
+
+	"github.com/valyala/fasthttp"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -16,7 +17,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/topology"
 )
 
-func (vs *VolumeServer) OldPostHandler(w http.ResponseWriter, r *http.Request) {
+func (vs *VolumeServer) fastPostHandler(ctx *fasthttp.RequestCtx) {
 
 	stats.VolumeServerRequestCounter.WithLabelValues("post").Inc()
 	start := time.Now()
@@ -24,28 +25,24 @@ func (vs *VolumeServer) OldPostHandler(w http.ResponseWriter, r *http.Request) {
 		stats.VolumeServerRequestHistogram.WithLabelValues("post").Observe(time.Since(start).Seconds())
 	}()
 
-	if e := r.ParseForm(); e != nil {
-		glog.V(0).Infoln("form parse error:", e)
-		oldWriteJsonError(w, r, http.StatusBadRequest, e)
-		return
-	}
+	requestPath := string(ctx.Path())
 
-	vid, fid, _, _, _ := parseURLPath(r.URL.Path)
+	vid, fid, _, _, _ := parseURLPath(requestPath)
 	volumeId, ve := needle.NewVolumeId(vid)
 	if ve != nil {
 		glog.V(0).Infoln("NewVolumeId error:", ve)
-		oldWriteJsonError(w, r, http.StatusBadRequest, ve)
+		writeJsonError(ctx, http.StatusBadRequest, ve)
 		return
 	}
 
-	if !vs.oldMaybeCheckJwtAuthorization(r, vid, fid, true) {
-		oldWriteJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
+	if !vs.maybeCheckJwtAuthorization(ctx, vid, fid, true) {
+		writeJsonError(ctx, http.StatusUnauthorized, errors.New("wrong jwt"))
 		return
 	}
 
-	needle, originalSize, ne := needle.OldCreateNeedleFromRequest(r, vs.FixJpgOrientation, vs.fileSizeLimitBytes)
+	needle, originalSize, ne := needle.CreateNeedleFromRequest(ctx, vs.FixJpgOrientation, vs.fileSizeLimitBytes)
 	if ne != nil {
-		oldWriteJsonError(w, r, http.StatusBadRequest, ne)
+		writeJsonError(ctx, http.StatusBadRequest, ne)
 		return
 	}
 
@@ -54,7 +51,7 @@ func (vs *VolumeServer) OldPostHandler(w http.ResponseWriter, r *http.Request) {
 
 	// http 304 status code does not allow body
 	if writeError == nil && isUnchanged {
-		w.WriteHeader(http.StatusNotModified)
+		ctx.SetStatusCode(http.StatusNotModified)
 		return
 	}
 
@@ -68,11 +65,11 @@ func (vs *VolumeServer) OldPostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	ret.Size = uint32(originalSize)
 	ret.ETag = needle.Etag()
-	oldSetEtag(w, ret.ETag)
-	oldWriteJsonQuiet(w, r, httpStatus, ret)
+	fastSetEtag(ctx, ret.ETag)
+	writeJsonQuiet(ctx, httpStatus, ret)
 }
 
-func (vs *VolumeServer) OldDeleteHandler(w http.ResponseWriter, r *http.Request) {
+func (vs *VolumeServer) DeleteHandler(ctx *fasthttp.RequestCtx) {
 
 	stats.VolumeServerRequestCounter.WithLabelValues("delete").Inc()
 	start := time.Now()
@@ -80,13 +77,14 @@ func (vs *VolumeServer) OldDeleteHandler(w http.ResponseWriter, r *http.Request)
 		stats.VolumeServerRequestHistogram.WithLabelValues("delete").Observe(time.Since(start).Seconds())
 	}()
 
+	requestPath := string(ctx.Path())
 	n := new(needle.Needle)
-	vid, fid, _, _, _ := parseURLPath(r.URL.Path)
+	vid, fid, _, _, _ := parseURLPath(requestPath)
 	volumeId, _ := needle.NewVolumeId(vid)
 	n.ParsePath(fid)
 
-	if !vs.oldMaybeCheckJwtAuthorization(r, vid, fid, true) {
-		oldWriteJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
+	if !vs.maybeCheckJwtAuthorization(ctx, vid, fid, true) {
+		writeJsonError(ctx, http.StatusUnauthorized, errors.New("wrong jwt"))
 		return
 	}
 
@@ -98,7 +96,7 @@ func (vs *VolumeServer) OldDeleteHandler(w http.ResponseWriter, r *http.Request)
 
 	if hasEcVolume {
 		count, err := vs.store.DeleteEcShardNeedle(context.Background(), ecVolume, n, cookie)
-		oldWriteDeleteResult(err, count, w, r)
+		writeDeleteResult(err, count, ctx)
 		return
 	}
 
@@ -106,13 +104,13 @@ func (vs *VolumeServer) OldDeleteHandler(w http.ResponseWriter, r *http.Request)
 	if ok != nil {
 		m := make(map[string]uint32)
 		m["size"] = 0
-		oldWriteJsonQuiet(w, r, http.StatusNotFound, m)
+		writeJsonQuiet(ctx, http.StatusNotFound, m)
 		return
 	}
 
 	if n.Cookie != cookie {
-		glog.V(0).Infoln("delete", r.URL.Path, "with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
-		oldWriteJsonError(w, r, http.StatusBadRequest, errors.New("File Random Cookie does not match."))
+		glog.V(0).Infof("delete %s with unmaching cookie from %s agent %s", requestPath, ctx.RemoteAddr(), ctx.UserAgent())
+		writeJsonError(ctx, http.StatusBadRequest, errors.New("File Random Cookie does not match."))
 		return
 	}
 
@@ -121,47 +119,38 @@ func (vs *VolumeServer) OldDeleteHandler(w http.ResponseWriter, r *http.Request)
 	if n.IsChunkedManifest() {
 		chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsGzipped())
 		if e != nil {
-			oldWriteJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Load chunks manifest error: %v", e))
+			writeJsonError(ctx, http.StatusInternalServerError, fmt.Errorf("Load chunks manifest error: %v", e))
 			return
 		}
 		// make sure all chunks had deleted before delete manifest
 		if e := chunkManifest.DeleteChunks(vs.GetMaster(), vs.grpcDialOption); e != nil {
-			oldWriteJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Delete chunks error: %v", e))
+			writeJsonError(ctx, http.StatusInternalServerError, fmt.Errorf("Delete chunks error: %v", e))
 			return
 		}
 		count = chunkManifest.Size
 	}
 
 	n.LastModified = uint64(time.Now().Unix())
-	if len(r.FormValue("ts")) > 0 {
-		modifiedTime, err := strconv.ParseInt(r.FormValue("ts"), 10, 64)
+	tsValue := ctx.FormValue("ts")
+	if tsValue != nil {
+		modifiedTime, err := strconv.ParseInt(string(tsValue), 10, 64)
 		if err == nil {
 			n.LastModified = uint64(modifiedTime)
 		}
 	}
 
-	_, err := topology.OldReplicatedDelete(vs.GetMaster(), vs.store, volumeId, n, r)
+	_, err := topology.ReplicatedDelete(vs.GetMaster(), vs.store, volumeId, n, ctx)
 
-	oldWriteDeleteResult(err, count, w, r)
+	writeDeleteResult(err, count, ctx)
 
 }
 
-func oldWriteDeleteResult(err error, count int64, w http.ResponseWriter, r *http.Request) {
+func writeDeleteResult(err error, count int64, ctx *fasthttp.RequestCtx) {
 	if err == nil {
 		m := make(map[string]int64)
 		m["size"] = count
-		oldWriteJsonQuiet(w, r, http.StatusAccepted, m)
+		writeJsonQuiet(ctx, http.StatusAccepted, m)
 	} else {
-		oldWriteJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Deletion Failed: %v", err))
-	}
-}
-
-func oldSetEtag(w http.ResponseWriter, etag string) {
-	if etag != "" {
-		if strings.HasPrefix(etag, "\"") {
-			w.Header().Set("ETag", etag)
-		} else {
-			w.Header().Set("ETag", "\""+etag+"\"")
-		}
+		writeJsonQuiet(ctx, http.StatusInternalServerError, fmt.Errorf("Deletion Failed: %v", err))
 	}
 }

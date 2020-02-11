@@ -18,5 +18,5 @@ func (s *RaftServer) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	if leader, e := s.topo.Leader(); e == nil {
 		ret.Leader = leader
 	}
-	writeJsonQuiet(w, r, http.StatusOK, ret)
+	oldWriteJsonQuiet(w, r, http.StatusOK, ret)
 }

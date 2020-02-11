@@ -107,17 +107,17 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 		handleStaticResources2(r)
 		r.HandleFunc("/", ms.proxyToLeader(ms.uiStatusHandler))
 		r.HandleFunc("/ui/index.html", ms.uiStatusHandler)
-		r.HandleFunc("/dir/assign", ms.proxyToLeader(ms.guard.WhiteList(ms.dirAssignHandler)))
-		r.HandleFunc("/dir/lookup", ms.guard.WhiteList(ms.dirLookupHandler))
-		r.HandleFunc("/dir/status", ms.proxyToLeader(ms.guard.WhiteList(ms.dirStatusHandler)))
-		r.HandleFunc("/col/delete", ms.proxyToLeader(ms.guard.WhiteList(ms.collectionDeleteHandler)))
-		r.HandleFunc("/vol/grow", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeGrowHandler)))
-		r.HandleFunc("/vol/status", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeStatusHandler)))
-		r.HandleFunc("/vol/vacuum", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeVacuumHandler)))
-		r.HandleFunc("/submit", ms.guard.WhiteList(ms.submitFromMasterServerHandler))
-		r.HandleFunc("/stats/health", ms.guard.WhiteList(statsHealthHandler))
-		r.HandleFunc("/stats/counter", ms.guard.WhiteList(statsCounterHandler))
-		r.HandleFunc("/stats/memory", ms.guard.WhiteList(statsMemoryHandler))
+		r.HandleFunc("/dir/assign", ms.proxyToLeader(ms.guard.OldWhiteList(ms.dirAssignHandler)))
+		r.HandleFunc("/dir/lookup", ms.guard.OldWhiteList(ms.dirLookupHandler))
+		r.HandleFunc("/dir/status", ms.proxyToLeader(ms.guard.OldWhiteList(ms.dirStatusHandler)))
+		r.HandleFunc("/col/delete", ms.proxyToLeader(ms.guard.OldWhiteList(ms.collectionDeleteHandler)))
+		r.HandleFunc("/vol/grow", ms.proxyToLeader(ms.guard.OldWhiteList(ms.volumeGrowHandler)))
+		r.HandleFunc("/vol/status", ms.proxyToLeader(ms.guard.OldWhiteList(ms.volumeStatusHandler)))
+		r.HandleFunc("/vol/vacuum", ms.proxyToLeader(ms.guard.OldWhiteList(ms.volumeVacuumHandler)))
+		r.HandleFunc("/submit", ms.guard.OldWhiteList(ms.submitFromMasterServerHandler))
+		r.HandleFunc("/stats/health", ms.guard.OldWhiteList(statsHealthHandler))
+		r.HandleFunc("/stats/counter", ms.guard.OldWhiteList(statsCounterHandler))
+		r.HandleFunc("/stats/memory", ms.guard.OldWhiteList(statsMemoryHandler))
 		r.HandleFunc("/{fileId}", ms.redirectHandler)
 	}
 
@@ -157,7 +157,7 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 			defer func() { <-ms.bounedLeaderChan }()
 			targetUrl, err := url.Parse("http://" + ms.Topo.RaftServer.Leader())
 			if err != nil {
-				writeJsonError(w, r, http.StatusInternalServerError,
+				oldWriteJsonError(w, r, http.StatusInternalServerError,
 					fmt.Errorf("Leader URL http://%s Parse Error: %v", ms.Topo.RaftServer.Leader(), err))
 				return
 			}
@@ -175,7 +175,7 @@ func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Requ
 			proxy.ServeHTTP(w, r)
 		} else {
 			// drop it to the floor
-			// writeJsonError(w, r, errors.New(ms.Topo.RaftServer.Name()+" does not know Leader yet:"+ms.Topo.RaftServer.Leader()))
+			// oldWriteJsonError(w, r, errors.New(ms.Topo.RaftServer.Name()+" does not know Leader yet:"+ms.Topo.RaftServer.Leader()))
 		}
 	}
 }

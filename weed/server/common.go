@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/valyala/fasthttp"
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -35,7 +36,47 @@ func init() {
 	statikFS, _ = statik.New()
 }
 
-func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) (err error) {
+
+func writeJson(ctx *fasthttp.RequestCtx, httpStatus int, obj interface{}) (err error) {
+	var bytes []byte
+	if ctx.FormValue("pretty") != nil {
+		bytes, err = json.MarshalIndent(obj, "", "  ")
+	} else {
+		bytes, err = json.Marshal(obj)
+	}
+	if err != nil {
+		return
+	}
+	callback := ctx.FormValue("callback")
+	if callback == nil {
+		ctx.Response.Header.Set("Content-Type", "application/json")
+		ctx.SetStatusCode(httpStatus)
+		if httpStatus == http.StatusNotModified {
+			return
+		}
+		_, err = ctx.Response.BodyWriter().Write(bytes)
+	} else {
+		ctx.Response.Header.Set("Content-Type", "application/javascript")
+		ctx.SetStatusCode(httpStatus)
+		if httpStatus == http.StatusNotModified {
+			return
+		}
+		if _, err = ctx.Response.BodyWriter().Write([]uint8(callback)); err != nil {
+			return
+		}
+		if _, err = ctx.Response.BodyWriter().Write([]uint8("(")); err != nil {
+			return
+		}
+		fmt.Fprint(ctx.Response.BodyWriter(), string(bytes))
+		if _, err = ctx.Response.BodyWriter().Write([]uint8(")")); err != nil {
+			return
+		}
+	}
+
+	return
+}
+
+func oldWriteJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) (err error) {
 	var bytes []byte
 	if r.FormValue("pretty") != "" {
 		bytes, err = json.MarshalIndent(obj, "", "  ")
@@ -74,17 +115,32 @@ func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj inter
 	return
 }
 
-// wrapper for writeJson - just logs errors
-func writeJsonQuiet(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) {
-	if err := writeJson(w, r, httpStatus, obj); err != nil {
+// wrapper for oldWriteJson - just logs errors
+func oldWriteJsonQuiet(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) {
+	if err := oldWriteJson(w, r, httpStatus, obj); err != nil {
 		glog.V(0).Infof("error writing JSON status %d: %v", httpStatus, err)
 		glog.V(1).Infof("JSON content: %+v", obj)
 	}
 }
-func writeJsonError(w http.ResponseWriter, r *http.Request, httpStatus int, err error) {
+
+// wrapper for oldWriteJson - just logs errors
+func writeJsonQuiet(ctx *fasthttp.RequestCtx, httpStatus int, obj interface{}) {
+	if err := writeJson(ctx, httpStatus, obj); err != nil {
+		glog.V(0).Infof("error writing JSON status %d: %v", httpStatus, err)
+		glog.V(1).Infof("JSON content: %+v", obj)
+	}
+}
+
+func oldWriteJsonError(w http.ResponseWriter, r *http.Request, httpStatus int, err error) {
 	m := make(map[string]interface{})
 	m["error"] = err.Error()
-	writeJsonQuiet(w, r, httpStatus, m)
+	oldWriteJsonQuiet(w, r, httpStatus, m)
+}
+
+func writeJsonError(ctx *fasthttp.RequestCtx, httpStatus int, err error) {
+	m := make(map[string]interface{})
+	m["error"] = err.Error()
+	writeJsonQuiet(ctx, httpStatus, m)
 }
 
 func debug(params ...interface{}) {
@@ -94,14 +150,14 @@ func debug(params ...interface{}) {
 func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl string, grpcDialOption grpc.DialOption) {
 	m := make(map[string]interface{})
 	if r.Method != "POST" {
-		writeJsonError(w, r, http.StatusMethodNotAllowed, errors.New("Only submit via POST!"))
+		oldWriteJsonError(w, r, http.StatusMethodNotAllowed, errors.New("Only submit via POST!"))
 		return
 	}
 
 	debug("parsing upload file...")
-	fname, data, mimeType, pairMap, isGzipped, originalDataSize, lastModified, _, _, pe := needle.ParseUpload(r, 256*1024*1024)
+	fname, data, mimeType, pairMap, isGzipped, originalDataSize, lastModified, _, _, pe := needle.OldParseUpload(r, 256*1024*1024)
 	if pe != nil {
-		writeJsonError(w, r, http.StatusBadRequest, pe)
+		oldWriteJsonError(w, r, http.StatusBadRequest, pe)
 		return
 	}
 
@@ -111,7 +167,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	if r.FormValue("count") != "" {
 		count, pe = strconv.ParseUint(r.FormValue("count"), 10, 32)
 		if pe != nil {
-			writeJsonError(w, r, http.StatusBadRequest, pe)
+			oldWriteJsonError(w, r, http.StatusBadRequest, pe)
 			return
 		}
 	}
@@ -124,7 +180,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	}
 	assignResult, ae := operation.Assign(masterUrl, grpcDialOption, ar)
 	if ae != nil {
-		writeJsonError(w, r, http.StatusInternalServerError, ae)
+		oldWriteJsonError(w, r, http.StatusInternalServerError, ae)
 		return
 	}
 
@@ -136,7 +192,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	debug("upload file to store", url)
 	uploadResult, err := operation.Upload(url, fname, bytes.NewReader(data), isGzipped, mimeType, pairMap, assignResult.Auth)
 	if err != nil {
-		writeJsonError(w, r, http.StatusInternalServerError, err)
+		oldWriteJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -145,7 +201,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	m["fileUrl"] = assignResult.PublicUrl + "/" + assignResult.Fid
 	m["size"] = originalDataSize
 	m["eTag"] = uploadResult.ETag
-	writeJsonQuiet(w, r, http.StatusCreated, m)
+	oldWriteJsonQuiet(w, r, http.StatusCreated, m)
 	return
 }
 
@@ -185,20 +241,20 @@ func parseURLPath(path string) (vid, fid, filename, ext string, isVolumeIdOnly b
 func statsHealthHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
-	writeJsonQuiet(w, r, http.StatusOK, m)
+	oldWriteJsonQuiet(w, r, http.StatusOK, m)
 }
 func statsCounterHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
 	m["Counters"] = serverStats
-	writeJsonQuiet(w, r, http.StatusOK, m)
+	oldWriteJsonQuiet(w, r, http.StatusOK, m)
 }
 
 func statsMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
 	m["Memory"] = stats.MemStat()
-	writeJsonQuiet(w, r, http.StatusOK, m)
+	oldWriteJsonQuiet(w, r, http.StatusOK, m)
 }
 
 func handleStaticResources(defaultMux *http.ServeMux) {

@@ -52,7 +52,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 	glog.V(4).Infof("listDirectory %s, last file %s, limit %d: %d items", path, lastFileName, limit, len(entries))
 
 	if r.Header.Get("Accept") == "application/json" {
-		writeJsonQuiet(w, r, http.StatusOK, struct {
+		oldWriteJsonQuiet(w, r, http.StatusOK, struct {
 			Path                  string
 			Entries               interface{}
 			Limit                 int

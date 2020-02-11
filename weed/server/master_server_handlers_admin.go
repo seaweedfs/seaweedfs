@@ -21,7 +21,7 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 	collectionName := r.FormValue("collection")
 	collection, ok := ms.Topo.FindCollection(collectionName)
 	if !ok {
-		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("collection %s does not exist", collectionName))
+		oldWriteJsonError(w, r, http.StatusBadRequest, fmt.Errorf("collection %s does not exist", collectionName))
 		return
 	}
 	for _, server := range collection.ListVolumeServers() {
@@ -32,7 +32,7 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 			return deleteErr
 		})
 		if err != nil {
-			writeJsonError(w, r, http.StatusInternalServerError, err)
+			oldWriteJsonError(w, r, http.StatusInternalServerError, err)
 			return
 		}
 	}
@@ -46,7 +46,7 @@ func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request)
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
 	m["Topology"] = ms.Topo.ToMap()
-	writeJsonQuiet(w, r, http.StatusOK, m)
+	oldWriteJsonQuiet(w, r, http.StatusOK, m)
 }
 
 func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +57,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 		gcThreshold, err = strconv.ParseFloat(gcString, 32)
 		if err != nil {
 			glog.V(0).Infof("garbageThreshold %s is not a valid float number: %v", gcString, err)
-			writeJsonError(w, r, http.StatusNotAcceptable, fmt.Errorf("garbageThreshold %s is not a valid float number", gcString))
+			oldWriteJsonError(w, r, http.StatusNotAcceptable, fmt.Errorf("garbageThreshold %s is not a valid float number", gcString))
 			return
 		}
 	}
@@ -70,7 +70,7 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 	count := 0
 	option, err := ms.getVolumeGrowOption(r)
 	if err != nil {
-		writeJsonError(w, r, http.StatusNotAcceptable, err)
+		oldWriteJsonError(w, r, http.StatusNotAcceptable, err)
 		return
 	}
 
@@ -85,9 +85,9 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	if err != nil {
-		writeJsonError(w, r, http.StatusNotAcceptable, err)
+		oldWriteJsonError(w, r, http.StatusNotAcceptable, err)
 	} else {
-		writeJsonQuiet(w, r, http.StatusOK, map[string]interface{}{"count": count})
+		oldWriteJsonQuiet(w, r, http.StatusOK, map[string]interface{}{"count": count})
 	}
 }
 
@@ -95,7 +95,7 @@ func (ms *MasterServer) volumeStatusHandler(w http.ResponseWriter, r *http.Reque
 	m := make(map[string]interface{})
 	m["Version"] = util.VERSION
 	m["Volumes"] = ms.Topo.ToVolumeMap()
-	writeJsonQuiet(w, r, http.StatusOK, m)
+	oldWriteJsonQuiet(w, r, http.StatusOK, m)
 }
 
 func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) {
@@ -112,7 +112,7 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 		}
 		http.Redirect(w, r, url, http.StatusMovedPermanently)
 	} else {
-		writeJsonError(w, r, http.StatusNotFound, fmt.Errorf("volume id %s not found: %s", vid, location.Error))
+		oldWriteJsonError(w, r, http.StatusNotFound, fmt.Errorf("volume id %s not found: %s", vid, location.Error))
 	}
 }
 
@@ -128,7 +128,7 @@ func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *
 	} else {
 		masterUrl, err := ms.Topo.Leader()
 		if err != nil {
-			writeJsonError(w, r, http.StatusInternalServerError, err)
+			oldWriteJsonError(w, r, http.StatusInternalServerError, err)
 		} else {
 			submitForClientHandler(w, r, masterUrl, ms.grpcDialOption)
 		}
