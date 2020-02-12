@@ -63,12 +63,12 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 			var dirChunks []*filer_pb.FileChunk
 			if sub.IsDirectory() {
 				dirChunks, err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks)
+				chunks = append(chunks, dirChunks...)
+			} else {
+				chunks = append(chunks, sub.Chunks...)
 			}
 			if err != nil && !ignoreRecursiveError {
 				return nil, err
-			}
-			if shouldDeleteChunks {
-				chunks = append(chunks, dirChunks...)
 			}
 		}
 
@@ -79,7 +79,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 
 	f.cacheDelDirectory(string(entry.FullPath))
 
-	glog.V(3).Infof("deleting directory %v", entry.FullPath)
+	glog.V(3).Infof("deleting directory %v delete %d chunks: %v", entry.FullPath, len(chunks), shouldDeleteChunks)
 
 	if storeDeletionErr := f.store.DeleteFolderChildren(ctx, entry.FullPath); storeDeletionErr != nil {
 		return nil, fmt.Errorf("filer store delete: %v", storeDeletionErr)
@@ -91,7 +91,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 
 func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shouldDeleteChunks bool) (err error) {
 
-	glog.V(3).Infof("deleting entry %v", entry.FullPath)
+	glog.V(3).Infof("deleting entry %v, delete chunks: %v", entry.FullPath, shouldDeleteChunks)
 
 	if storeDeletionErr := f.store.DeleteEntry(ctx, entry.FullPath); storeDeletionErr != nil {
 		return fmt.Errorf("filer store delete: %v", storeDeletionErr)
