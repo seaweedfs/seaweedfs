@@ -19,6 +19,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
@@ -40,6 +41,7 @@ type BenchmarkOptions struct {
 	maxCpu           *int
 	grpcDialOption   grpc.DialOption
 	masterClient     *wdclient.MasterClient
+	grpcRead         *bool
 }
 
 var (
@@ -64,6 +66,7 @@ func init() {
 	b.replication = cmdBenchmark.Flag.String("replication", "000", "replication type")
 	b.cpuprofile = cmdBenchmark.Flag.String("cpuprofile", "", "cpu profile output file")
 	b.maxCpu = cmdBenchmark.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
+	b.grpcRead = cmdBenchmark.Flag.Bool("grpcRead", false, "use grpc API to read")
 	sharedBytes = make([]byte, 1024)
 }
 
@@ -278,21 +281,59 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 			fmt.Printf("reading file %s\n", fid)
 		}
 		start := time.Now()
-		url, err := b.masterClient.LookupFileId(fid)
-		if err != nil {
-			s.failed++
-			println("!!!! ", fid, " location not found!!!!!")
-			continue
+		var bytesRead int
+		var err error
+		if *b.grpcRead {
+			volumeServer, err := b.masterClient.LookupVolumeServer(fid)
+			if err != nil {
+				s.failed++
+				println("!!!! ", fid, " location not found!!!!!")
+				continue
+			}
+			bytesRead, err = grpcFileGet(volumeServer, fid, b.grpcDialOption)
+		} else {
+			url, err := b.masterClient.LookupFileId(fid)
+			if err != nil {
+				s.failed++
+				println("!!!! ", fid, " location not found!!!!!")
+				continue
+			}
+			var bytes []byte
+			bytes, err = util.Get(url)
+			bytesRead = len(bytes)
 		}
-		if bytesRead, err := util.Get(url); err == nil {
+		if err == nil {
 			s.completed++
-			s.transferred += int64(len(bytesRead))
+			s.transferred += int64(bytesRead)
 			readStats.addSample(time.Now().Sub(start))
 		} else {
 			s.failed++
-			fmt.Printf("Failed to read %s error:%v\n", url, err)
+			fmt.Printf("Failed to read %s error:%v\n", fid, err)
 		}
 	}
+}
+
+func grpcFileGet(volumeServer, fid string, grpcDialOption grpc.DialOption) (bytesRead int, err error) {
+	err = operation.WithVolumeServerClient(volumeServer, grpcDialOption, func(ctx context.Context, client volume_server_pb.VolumeServerClient) error {
+		fileGetClient, err := client.FileGet(ctx, &volume_server_pb.FileGetRequest{FileId: fid})
+		if err != nil {
+			return err
+		}
+
+		for {
+			resp, respErr := fileGetClient.Recv()
+			if resp != nil {
+				bytesRead += len(resp.Data)
+			}
+			if respErr != nil {
+				if respErr == io.EOF {
+					return nil
+				}
+				return respErr
+			}
+		}
+	})
+	return
 }
 
 func writeFileIds(fileName string, fileIdLineChan chan string, finishChan chan bool) {
