@@ -13,6 +13,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 var (
@@ -145,9 +146,10 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 		writeErrorResponse(w, ErrInternalError, r.URL)
 		return
 	}
-	defer resp.Body.Close()
+	defer util.CloseResponse(resp)
 
 	responseFn(resp, w)
+
 }
 func passThroughResponse(proxyResonse *http.Response, w http.ResponseWriter) {
 	for k, v := range proxyResonse.Header {
