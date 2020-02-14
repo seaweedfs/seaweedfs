@@ -71,6 +71,7 @@ func downloadToFile(server, fileId, saveDir string) error {
 	}
 	f, err := os.OpenFile(path.Join(saveDir, filename), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.ModePerm)
 	if err != nil {
+		io.Copy(ioutil.Discard, rc)
 		return err
 	}
 	defer f.Close()

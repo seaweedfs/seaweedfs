@@ -199,6 +199,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	if rAuthType == authTypeStreamingSigned {
 		dataReader = newSignV4ChunkedReader(r)
 	}
+	defer dataReader.Close()
 
 	uploadUrl := fmt.Sprintf("http://%s%s/%s/%04d.part?collection=%s",
 		s3a.option.Filer, s3a.genUploadsFolder(bucket), uploadID, partID-1, bucket)

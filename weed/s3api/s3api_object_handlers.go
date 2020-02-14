@@ -44,6 +44,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	if rAuthType == authTypeStreamingSigned {
 		dataReader = newSignV4ChunkedReader(r)
 	}
+	defer dataReader.Close()
 
 	uploadUrl := fmt.Sprintf("http://%s%s/%s%s?collection=%s",
 		s3a.option.Filer, s3a.option.BucketsPath, bucket, object, bucket)
@@ -156,7 +157,7 @@ func passThroughResponse(proxyResonse *http.Response, w http.ResponseWriter) {
 	io.Copy(w, proxyResonse.Body)
 }
 
-func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.ReadCloser) (etag string, code ErrorCode) {
+func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader) (etag string, code ErrorCode) {
 
 	hash := md5.New()
 	var body io.Reader = io.TeeReader(dataReader, hash)
@@ -178,8 +179,6 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	}
 
 	resp, postErr := client.Do(proxyReq)
-
-	dataReader.Close()
 
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)

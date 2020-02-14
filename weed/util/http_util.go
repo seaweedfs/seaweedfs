@@ -35,12 +35,12 @@ func PostBytes(url string, body []byte) ([]byte, error) {
 		return nil, fmt.Errorf("Post to %s: %v", url, err)
 	}
 	defer r.Body.Close()
-	if r.StatusCode >= 400 {
-		return nil, fmt.Errorf("%s: %s", url, r.Status)
-	}
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return nil, fmt.Errorf("Read response body: %v", err)
+	}
+	if r.StatusCode >= 400 {
+		return nil, fmt.Errorf("%s: %s", url, r.Status)
 	}
 	return b, nil
 }
@@ -88,7 +88,7 @@ func Head(url string) (http.Header, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer r.Body.Close()
+	defer closeResp(r)
 	if r.StatusCode >= 400 {
 		return nil, fmt.Errorf("%s: %s", url, r.Status)
 	}
@@ -130,7 +130,7 @@ func GetBufferStream(url string, values url.Values, allocatedBytes []byte, eachB
 	if err != nil {
 		return err
 	}
-	defer r.Body.Close()
+	defer closeResp(r)
 	if r.StatusCode != 200 {
 		return fmt.Errorf("%s: %s", url, r.Status)
 	}
@@ -153,7 +153,7 @@ func GetUrlStream(url string, values url.Values, readFn func(io.Reader) error) e
 	if err != nil {
 		return err
 	}
-	defer r.Body.Close()
+	defer closeResp(r)
 	if r.StatusCode != 200 {
 		return fmt.Errorf("%s: %s", url, r.Status)
 	}
@@ -262,7 +262,7 @@ func ReadUrlAsStream(fileUrl string, offset int64, size int, fn func(data []byte
 	if err != nil {
 		return 0, err
 	}
-	defer r.Body.Close()
+	defer closeResp(r)
 	if r.StatusCode >= 400 {
 		return 0, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
@@ -306,4 +306,9 @@ func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, e
 	}
 
 	return r.Body, nil
+}
+
+func closeResp(resp *http.Response) {
+	io.Copy(ioutil.Discard, resp.Body)
+	resp.Body.Close()
 }

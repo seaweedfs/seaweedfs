@@ -48,6 +48,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		writeErrorResponse(w, ErrInvalidCopySource, r.URL)
 		return
 	}
+	defer dataReader.Close()
 
 	etag, errCode := s3a.putToFiler(r, dstUrl, dataReader)
 
@@ -129,6 +130,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		writeErrorResponse(w, ErrInvalidCopySource, r.URL)
 		return
 	}
+	defer dataReader.Close()
 
 	etag, errCode := s3a.putToFiler(r, dstUrl, dataReader)
 
