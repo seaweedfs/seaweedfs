@@ -66,13 +66,21 @@ func getConnection(tcpAddress string) net.Conn {
 
 	pool, found := connectionPool[tcpAddress]
 	if !found {
+		println("creating pool for", tcpAddress)
 		pool = &sync.Pool{New: func() interface{} {
-			conn, err := net.Dial("tcp", tcpAddress)
+			raddr, err := net.ResolveTCPAddr("tcp", tcpAddress)
+			if err != nil {
+				glog.Fatal(err)
+			}
+
+			conn, err := net.DialTCP("tcp", nil, raddr)
 			if err != nil {
 				glog.Errorf("failed to connect to %s: %v", tcpAddress, err)
 				return conn
 			}
-			// println("connected", tcpAddress, "=>", conn.LocalAddr().String())
+			conn.SetKeepAlive(true)
+			conn.SetNoDelay(true)
+			println("connected", tcpAddress, "=>", conn.LocalAddr().String())
 			return conn
 		}}
 		connectionPool[tcpAddress] = pool
@@ -88,7 +96,7 @@ func releaseConnection(conn net.Conn, tcpAddress string) {
 
 	pool, found := connectionPool[tcpAddress]
 	if !found {
-		// println("can not return connection", tcpAddress, "=>", conn.LocalAddr().String())
+		println("can not return connection", tcpAddress, "=>", conn.LocalAddr().String())
 		return
 	}
 	pool.Put(conn)

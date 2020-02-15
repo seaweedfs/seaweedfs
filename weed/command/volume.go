@@ -261,18 +261,15 @@ func (v VolumeServerOptions) startTcpServer(vs *weed_server.VolumeServer) {
 
 	for {
 		c, err := tcpL.Accept()
-		if err!= nil {
+		if err != nil {
 			glog.V(0).Infof("accept tcp connection: %v", err)
 			continue
 		}
 		go func() {
-			for {
-				if err := vs.HandleTcpConnection(c); err != nil {
-					glog.V(0).Infof("handle tcp remote %s: %v", c.RemoteAddr(), err)
-					return
-				}
+			if err := vs.HandleTcpConnection(c); err != nil {
+				glog.V(0).Infof("handle tcp remote %s: %v", c.RemoteAddr(), err)
+				return
 			}
-
 		}()
 	}
 }

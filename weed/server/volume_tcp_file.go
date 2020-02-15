@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -16,19 +17,23 @@ import (
 
 func (vs *VolumeServer) HandleTcpConnection(conn net.Conn) error {
 
-	// println("handle tcp conn", conn.RemoteAddr())
-	tcpMessage := &volume_server_pb.TcpRequestHeader{}
-	if err := util.ReadMessage(conn, tcpMessage); err != nil {
-		return fmt.Errorf("read message: %v", err)
-	}
+	defer conn.Close()
+	for {
+		// println("handle tcp conn", conn.RemoteAddr())
+		tcpMessage := &volume_server_pb.TcpRequestHeader{}
+		if err := util.ReadMessage(conn, tcpMessage); err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return fmt.Errorf("read message: %v", err)
+		}
 
-	if tcpMessage.Get != nil {
-		vs.handleFileGet(conn, tcpMessage.Get)
-	}
+		if tcpMessage.Get != nil {
+			vs.handleFileGet(conn, tcpMessage.Get)
+		}
 
-	err := util.WriteMessageEOF(conn)
-	// println("processed", tcpMessage.Get.FileId)
-	return err
+		// println("processed", tcpMessage.Get.FileId)
+	}
 }
 
 func (vs *VolumeServer) handleFileGet(conn net.Conn, req *volume_server_pb.FileGetRequest) error {
@@ -135,6 +140,7 @@ func (vs *VolumeServer) handleFileGet(conn net.Conn, req *volume_server_pb.FileG
 			t = &volume_server_pb.FileGetResponse{}
 		}
 		t.Data = n.Data[bytesRead:stopIndex]
+		t.IsLast = stopIndex == bytesToRead
 
 		err = util.WriteMessage(conn, t)
 		t = nil

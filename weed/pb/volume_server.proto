@@ -122,6 +122,7 @@ message FileGetResponse {
     bool is_gzipped = 7;
     map<string, string> headers = 8;
     int32 errorCode = 9;
+    bool is_last = 10;
 }
 
 message Empty {

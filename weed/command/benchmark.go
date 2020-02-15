@@ -371,6 +371,9 @@ func tcpFileGet(volumeServer, fid string) (bytesRead int, err error) {
 			}
 			// println("resp size", len(resp.Data))
 			bytesRead += len(resp.Data)
+			if resp.IsLast {
+				return nil
+			}
 		}
 	})
 
