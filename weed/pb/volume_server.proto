@@ -104,6 +104,10 @@ message DeleteResult {
     uint32 version = 5;
 }
 
+message TcpRequestHeader {
+    FileGetRequest get = 1;
+}
+
 message FileGetRequest {
     string file_id = 1;
     bool accept_gzip = 2;

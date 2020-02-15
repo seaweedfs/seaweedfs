@@ -50,6 +50,7 @@ type VolumeServerOptions struct {
 	memProfile            *string
 	compactionMBPerSecond *int
 	fileSizeLimitMB       *int
+	enableTcp             *bool // temporary toggle
 }
 
 func init() {
@@ -71,6 +72,7 @@ func init() {
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
 	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
 	v.fileSizeLimitMB = cmdVolume.Flag.Int("fileSizeLimitMB", 256, "limit file size to avoid out of memory")
+	v.enableTcp = cmdVolume.Flag.Bool("enableTcp", false, "[experimental] toggle tcp port, running on 20000 + port")
 }
 
 var cmdVolume = &Command{
@@ -168,6 +170,10 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)
 
+	if v.enableTcp != nil && *v.enableTcp {
+		go v.startTcpServer(volumeServer)
+	}
+
 	// starting public http server
 	var publicHttpDown httpdown.Server
 	if v.isSeparatedPublicPort() {
@@ -243,6 +249,32 @@ func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerSe
 		}
 	}()
 	return grpcS
+}
+
+func (v VolumeServerOptions) startTcpServer(vs *weed_server.VolumeServer) {
+	tcpPort := *v.port + 20000
+	tcpL, err := util.NewListener(*v.bindIp+":"+strconv.Itoa(tcpPort), 0)
+	if err != nil {
+		glog.Fatalf("failed to listen on tcp port %d: %v", tcpPort, err)
+	}
+	defer tcpL.Close()
+
+	for {
+		c, err := tcpL.Accept()
+		if err!= nil {
+			glog.V(0).Infof("accept tcp connection: %v", err)
+			continue
+		}
+		go func() {
+			for {
+				if err := vs.HandleTcpConnection(c); err != nil {
+					glog.V(0).Infof("handle tcp remote %s: %v", c.RemoteAddr(), err)
+					return
+				}
+			}
+
+		}()
+	}
 }
 
 func (v VolumeServerOptions) startPublicHttpService(handler http.Handler) httpdown.Server {

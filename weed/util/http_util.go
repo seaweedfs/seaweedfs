@@ -8,9 +8,13 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/golang/protobuf/proto"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
@@ -311,4 +315,56 @@ func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, e
 func CloseResponse(resp *http.Response) {
 	io.Copy(ioutil.Discard, resp.Body)
 	resp.Body.Close()
+}
+
+func WriteMessage(conn net.Conn, message proto.Message) error {
+	data, err := proto.Marshal(message)
+	if err != nil {
+		glog.Fatalf("marshal: %v", err)
+	}
+	messageSizeBytes := make([]byte, 4)
+	Uint32toBytes(messageSizeBytes, uint32(len(data)))
+	_, err = conn.Write(messageSizeBytes)
+	if err != nil {
+		return err
+	}
+	_, err = conn.Write(data)
+	return err
+}
+func WriteMessageEOF(conn net.Conn) error {
+	messageSizeBytes := make([]byte, 4)
+	Uint32toBytes(messageSizeBytes, math.MaxUint32)
+	_, err := conn.Write(messageSizeBytes)
+	return err
+}
+func ReadMessage(conn net.Conn, message proto.Message) error {
+	messageSizeBuffer := make([]byte, 4)
+	n, err := conn.Read(messageSizeBuffer)
+	if err != nil {
+		if err == io.EOF {
+			// println("unexpected eof")
+			return err
+		}
+		return fmt.Errorf("read message size byte length: %d %v", n, err)
+	}
+	if n != 4 {
+		return fmt.Errorf("unexpected message size byte length: %d", n)
+	}
+	messageSize := BytesToUint32(messageSizeBuffer)
+	if messageSize == math.MaxUint32 {
+		// println("marked eof")
+		return io.EOF
+	}
+
+	messageBytes := make([]byte, messageSize)
+
+	readMessageLength, err := conn.Read(messageBytes)
+	if readMessageLength != int(messageSize) {
+		return fmt.Errorf("message size:%d, expected:%d", readMessageLength, messageSize)
+	}
+
+	if err := proto.Unmarshal(messageBytes, message); err != nil {
+		return err
+	}
+	return nil
 }

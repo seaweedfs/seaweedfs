@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"net"
 	"os"
 	"runtime"
 	"runtime/pprof"
@@ -41,7 +42,8 @@ type BenchmarkOptions struct {
 	maxCpu           *int
 	grpcDialOption   grpc.DialOption
 	masterClient     *wdclient.MasterClient
-	grpcRead         *bool
+	readByGrpc       *bool
+	readByTcp        *bool
 }
 
 var (
@@ -66,7 +68,8 @@ func init() {
 	b.replication = cmdBenchmark.Flag.String("replication", "000", "replication type")
 	b.cpuprofile = cmdBenchmark.Flag.String("cpuprofile", "", "cpu profile output file")
 	b.maxCpu = cmdBenchmark.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
-	b.grpcRead = cmdBenchmark.Flag.Bool("grpcRead", false, "use grpc API to read")
+	b.readByGrpc = cmdBenchmark.Flag.Bool("read.grpc", false, "use grpc API to read")
+	b.readByTcp = cmdBenchmark.Flag.Bool("read.tcp", false, "use tcp API to read")
 	sharedBytes = make([]byte, 1024)
 }
 
@@ -283,7 +286,7 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 		start := time.Now()
 		var bytesRead int
 		var err error
-		if *b.grpcRead {
+		if *b.readByGrpc {
 			volumeServer, err := b.masterClient.LookupVolumeServer(fid)
 			if err != nil {
 				s.failed++
@@ -291,6 +294,15 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 				continue
 			}
 			bytesRead, err = grpcFileGet(volumeServer, fid, b.grpcDialOption)
+		} else if *b.readByTcp {
+			volumeServer, err := b.masterClient.LookupVolumeServer(fid)
+			if err != nil {
+				s.failed++
+				println("!!!! ", fid, " location not found!!!!!")
+				continue
+			}
+			bytesRead, err = tcpFileGet(volumeServer, fid)
+
 		} else {
 			url, err := b.masterClient.LookupFileId(fid)
 			if err != nil {
@@ -333,6 +345,35 @@ func grpcFileGet(volumeServer, fid string, grpcDialOption grpc.DialOption) (byte
 			}
 		}
 	})
+	return
+}
+
+func tcpFileGet(volumeServer, fid string) (bytesRead int, err error) {
+
+	err = operation.WithVolumeServerTcpConnection(volumeServer, func(conn net.Conn) error {
+		// println("requesting", fid, "...")
+		if err := util.WriteMessage(conn, &volume_server_pb.TcpRequestHeader{
+			Get: &volume_server_pb.FileGetRequest{FileId: fid},
+		}); err != nil {
+			return err
+		}
+
+		for {
+			resp := &volume_server_pb.FileGetResponse{}
+			// println("reading...")
+			respErr := util.ReadMessage(conn, resp)
+			if respErr != nil {
+				if respErr == io.EOF {
+					return nil
+				}
+				// println("err:", respErr.Error())
+				return respErr
+			}
+			// println("resp size", len(resp.Data))
+			bytesRead += len(resp.Data)
+		}
+	})
+
 	return
 }
 
