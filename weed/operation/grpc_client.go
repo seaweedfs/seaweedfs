@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -17,7 +18,7 @@ import (
 )
 
 var (
-	connectionPool     = make(map[string]*sync.Pool)
+	connectionPool     = make(map[string]*util.ResourcePool)
 	connectionPoolLock sync.Mutex
 )
 
@@ -53,41 +54,49 @@ func WithVolumeServerTcpConnection(volumeServer string, fn func(conn net.Conn) e
 		return err
 	}
 
-	conn := getConnection(tcpAddress)
+	conn, err := getConnection(tcpAddress)
+	if err != nil {
+		return err
+	}
 	defer releaseConnection(conn, tcpAddress)
 
 	err = fn(conn)
 	return err
 }
 
-func getConnection(tcpAddress string) net.Conn {
+func getConnection(tcpAddress string) (net.Conn, error) {
 	connectionPoolLock.Lock()
 	defer connectionPoolLock.Unlock()
 
 	pool, found := connectionPool[tcpAddress]
 	if !found {
 		println("creating pool for", tcpAddress)
-		pool = &sync.Pool{New: func() interface{} {
-			raddr, err := net.ResolveTCPAddr("tcp", tcpAddress)
-			if err != nil {
-				glog.Fatal(err)
-			}
+
+		raddr, err := net.ResolveTCPAddr("tcp", tcpAddress)
+		if err != nil {
+			glog.Fatal(err)
+		}
+
+		pool = util.NewResourcePool(16, func() (interface{}, error) {
 
 			conn, err := net.DialTCP("tcp", nil, raddr)
 			if err != nil {
-				glog.Errorf("failed to connect to %s: %v", tcpAddress, err)
-				return conn
+				return conn, err
 			}
 			conn.SetKeepAlive(true)
 			conn.SetNoDelay(true)
 			println("connected", tcpAddress, "=>", conn.LocalAddr().String())
-			return conn
-		}}
+			return conn, nil
+		})
 		connectionPool[tcpAddress] = pool
 	}
-	conn := pool.Get().(net.Conn)
+
+	connObj, err := pool.Get(time.Minute)
+	if err != nil {
+		return nil, err
+	}
 	// println("get connection", tcpAddress, "=>", conn.LocalAddr().String())
-	return conn
+	return connObj.(net.Conn), nil
 }
 
 func releaseConnection(conn net.Conn, tcpAddress string) {
@@ -99,7 +108,7 @@ func releaseConnection(conn net.Conn, tcpAddress string) {
 		println("can not return connection", tcpAddress, "=>", conn.LocalAddr().String())
 		return
 	}
-	pool.Put(conn)
+	pool.Release(conn)
 	// println("returned connection", tcpAddress, "=>", conn.LocalAddr().String())
 }
 
