@@ -47,15 +47,15 @@ func NewIdentityAccessManagement(fileName string, domain string) *IdentityAccess
 	if fileName == "" {
 		return iam
 	}
-	if err := iam.loadIdentities(fileName); err != nil {
+	if err := iam.loadS3ApiConfiguration(fileName); err != nil {
 		glog.Fatalf("fail to load config file %s: %v", fileName, err)
 	}
 	return iam
 }
 
-func (iam *IdentityAccessManagement) loadIdentities(fileName string) error {
+func (iam *IdentityAccessManagement) loadS3ApiConfiguration(fileName string) error {
 
-	identities := &iam_pb.Identities{}
+	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
 
 	rawData, readErr := ioutil.ReadFile(fileName)
 	if readErr != nil {
@@ -64,12 +64,12 @@ func (iam *IdentityAccessManagement) loadIdentities(fileName string) error {
 	}
 
 	glog.V(1).Infof("maybeLoadVolumeInfo Unmarshal volume info %v", fileName)
-	if err := jsonpb.Unmarshal(bytes.NewReader(rawData), identities); err != nil {
+	if err := jsonpb.Unmarshal(bytes.NewReader(rawData), s3ApiConfiguration); err != nil {
 		glog.Warningf("unmarshal error: %v", err)
 		return fmt.Errorf("unmarshal %s error: %v", fileName, err)
 	}
 
-	for _, ident := range identities.Identities {
+	for _, ident := range s3ApiConfiguration.Identities {
 		t := &Identity{
 			Name:        ident.Name,
 			Credentials: nil,

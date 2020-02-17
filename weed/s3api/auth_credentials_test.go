@@ -10,7 +10,7 @@ import (
 
 func TestIdentityListFileFormat(t *testing.T) {
 
-	identities := &iam_pb.Identities{}
+	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
 
 	identity1 := &iam_pb.Identity{
 		Name: "some_name",
@@ -52,16 +52,16 @@ func TestIdentityListFileFormat(t *testing.T) {
 		},
 	}
 
-	identities.Identities = append(identities.Identities, identity1)
-	identities.Identities = append(identities.Identities, identity2)
-	identities.Identities = append(identities.Identities, identity3)
+	s3ApiConfiguration.Identities = append(s3ApiConfiguration.Identities, identity1)
+	s3ApiConfiguration.Identities = append(s3ApiConfiguration.Identities, identity2)
+	s3ApiConfiguration.Identities = append(s3ApiConfiguration.Identities, identity3)
 
 	m := jsonpb.Marshaler{
 		EmitDefaults: true,
 		Indent:       "  ",
 	}
 
-	text, _ := m.MarshalToString(identities)
+	text, _ := m.MarshalToString(s3ApiConfiguration)
 
 	println(text)
 

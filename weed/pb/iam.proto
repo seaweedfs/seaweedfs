@@ -13,7 +13,7 @@ service SeaweedIdentityAccessManagement {
 
 //////////////////////////////////////////////////
 
-message Identities {
+message S3ApiConfiguration {
     repeated Identity identities = 1;
 }
 
