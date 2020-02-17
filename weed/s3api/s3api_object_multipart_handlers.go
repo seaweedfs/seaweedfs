@@ -3,13 +3,14 @@ package s3api
 import (
 	"context"
 	"fmt"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/gorilla/mux"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/gorilla/mux"
 )
 
 const (
@@ -195,9 +196,14 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	var s3ErrCode ErrorCode
 	dataReader := r.Body
 	if rAuthType == authTypeStreamingSigned {
-		dataReader = newSignV4ChunkedReader(r)
+		dataReader, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
+	}
+	if s3ErrCode != ErrNone {
+		writeErrorResponse(w, s3ErrCode, r.URL)
+		return
 	}
 	defer dataReader.Close()
 

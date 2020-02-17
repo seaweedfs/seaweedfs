@@ -42,8 +42,13 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	rAuthType := getRequestAuthType(r)
 	dataReader := r.Body
+	var s3ErrCode ErrorCode
 	if rAuthType == authTypeStreamingSigned {
-		dataReader = newSignV4ChunkedReader(r)
+		dataReader, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
+	}
+	if s3ErrCode != ErrNone {
+		writeErrorResponse(w, s3ErrCode, r.URL)
+		return
 	}
 	defer dataReader.Close()
 
