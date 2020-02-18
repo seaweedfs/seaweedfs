@@ -133,6 +133,12 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, actions []Acti
 	case authTypeSigned, authTypePresigned:
 		glog.V(3).Infof("v4 auth type")
 		identity, s3Err = iam.reqSignatureV4Verify(r)
+	case authTypePostPolicy:
+		return ErrNotImplemented;
+	case authTypeJWT:
+		return ErrNotImplemented;
+	case authTypeAnonymous:
+		return ErrNotImplemented
 	}
 
 	glog.V(3).Infof("auth error: %v", s3Err)
