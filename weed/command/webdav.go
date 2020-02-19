@@ -36,7 +36,7 @@ func init() {
 
 var cmdWebDav = &Command{
 	UsageLine: "webdav -port=7333 -filer=<ip:port>",
-	Short:     "<unstable> start a webdav server that is backed by a filer",
+	Short:     "start a webdav server that is backed by a filer",
 	Long: `start a webdav server that is backed by a filer.
 
 `,
