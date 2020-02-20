@@ -131,3 +131,125 @@ func TestFindEmptySlotsForOneVolume(t *testing.T) {
 		fmt.Println("assigned node :", server.Id())
 	}
 }
+
+var topologyLayout2 = `
+{
+  "dc1":{
+    "rack1":{
+      "server111":{
+        "volumes":[
+          {"id":1, "size":12312},
+          {"id":2, "size":12312},
+          {"id":3, "size":12312}
+        ],
+        "limit":300
+      },
+      "server112":{
+        "volumes":[
+          {"id":4, "size":12312},
+          {"id":5, "size":12312},
+          {"id":6, "size":12312}
+        ],
+        "limit":300
+      },
+      "server113":{
+        "volumes":[],
+        "limit":300
+      },
+      "server114":{
+        "volumes":[],
+        "limit":300
+      },
+      "server115":{
+        "volumes":[],
+        "limit":300
+      },
+      "server116":{
+        "volumes":[],
+        "limit":300
+      }
+    },
+    "rack2":{
+      "server121":{
+        "volumes":[
+          {"id":4, "size":12312},
+          {"id":5, "size":12312},
+          {"id":6, "size":12312}
+        ],
+        "limit":300
+      },
+      "server122":{
+        "volumes":[],
+        "limit":300
+      },
+      "server123":{
+        "volumes":[
+          {"id":2, "size":12312},
+          {"id":3, "size":12312},
+          {"id":4, "size":12312}
+        ],
+        "limit":300
+      },
+      "server124":{
+        "volumes":[],
+        "limit":300
+      },
+      "server125":{
+        "volumes":[],
+        "limit":300
+      },
+      "server126":{
+        "volumes":[],
+        "limit":300
+      }
+    },
+    "rack3":{
+      "server131":{
+        "volumes":[],
+        "limit":300
+      },
+      "server132":{
+        "volumes":[],
+        "limit":300
+      },
+      "server133":{
+        "volumes":[],
+        "limit":300
+      },
+      "server134":{
+        "volumes":[],
+        "limit":300
+      },
+      "server135":{
+        "volumes":[],
+        "limit":300
+      },
+      "server136":{
+        "volumes":[],
+        "limit":300
+      }
+    }
+  }
+}
+`
+
+func TestReplication011(t *testing.T) {
+	topo := setup(topologyLayout2)
+	vg := NewDefaultVolumeGrowth()
+	rp, _ := super_block.NewReplicaPlacementFromString("011")
+	volumeGrowOption := &VolumeGrowOption{
+		Collection:       "MAIL",
+		ReplicaPlacement: rp,
+		DataCenter:       "dc1",
+		Rack:             "",
+		DataNode:         "",
+	}
+	servers, err := vg.findEmptySlotsForOneVolume(topo, volumeGrowOption)
+	if err != nil {
+		fmt.Println("finding empty slots error :", err)
+		t.Fail()
+	}
+	for _, server := range servers {
+		fmt.Println("assigned node :", server.Id())
+	}
+}
