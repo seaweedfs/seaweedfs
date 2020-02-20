@@ -13,6 +13,7 @@ import (
 	"github.com/karlseguin/ccache"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
@@ -24,19 +25,19 @@ var (
 )
 
 type Filer struct {
-	store              *FilerStoreWrapper
-	directoryCache     *ccache.Cache
-	MasterClient       *wdclient.MasterClient
-	fileIdDeletionChan chan string
-	GrpcDialOption     grpc.DialOption
+	store               *FilerStoreWrapper
+	directoryCache      *ccache.Cache
+	MasterClient        *wdclient.MasterClient
+	fileIdDeletionQueue *util.UnboundedQueue
+	GrpcDialOption      grpc.DialOption
 }
 
 func NewFiler(masters []string, grpcDialOption grpc.DialOption) *Filer {
 	f := &Filer{
-		directoryCache:     ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
-		MasterClient:       wdclient.NewMasterClient(context.Background(), grpcDialOption, "filer", masters),
-		fileIdDeletionChan: make(chan string, PaginationSize),
-		GrpcDialOption:     grpcDialOption,
+		directoryCache:      ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
+		MasterClient:        wdclient.NewMasterClient(context.Background(), grpcDialOption, "filer", masters),
+		fileIdDeletionQueue: util.NewUnboundedQueue(),
+		GrpcDialOption:      grpcDialOption,
 	}
 
 	go f.loopProcessingDeletion()
