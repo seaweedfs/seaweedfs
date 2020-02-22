@@ -81,7 +81,10 @@ service VolumeServer {
     rpc VolumeTierMoveDatFromRemote (VolumeTierMoveDatFromRemoteRequest) returns (stream VolumeTierMoveDatFromRemoteResponse) {
     }
 
-    // query
+    rpc VolumeServerStatus (VolumeServerStatusRequest) returns (VolumeServerStatusResponse) {
+    }
+
+    // <experimental> query
     rpc Query (QueryRequest) returns (stream QueriedStripe) {
     }
 
@@ -407,6 +410,14 @@ message VolumeTierMoveDatFromRemoteRequest {
 message VolumeTierMoveDatFromRemoteResponse {
     int64 processed = 1;
     float processedPercentage = 2;
+}
+
+message VolumeServerStatusRequest {
+
+}
+message VolumeServerStatusResponse {
+    repeated DiskStatus disk_statuses = 1;
+    MemStatus memory_status = 2;
 }
 
 // select on volume servers

@@ -115,9 +115,11 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 		r.HandleFunc("/vol/status", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeStatusHandler)))
 		r.HandleFunc("/vol/vacuum", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeVacuumHandler)))
 		r.HandleFunc("/submit", ms.guard.WhiteList(ms.submitFromMasterServerHandler))
-		r.HandleFunc("/stats/health", ms.guard.WhiteList(statsHealthHandler))
-		r.HandleFunc("/stats/counter", ms.guard.WhiteList(statsCounterHandler))
-		r.HandleFunc("/stats/memory", ms.guard.WhiteList(statsMemoryHandler))
+		/*
+			r.HandleFunc("/stats/health", ms.guard.WhiteList(statsHealthHandler))
+			r.HandleFunc("/stats/counter", ms.guard.WhiteList(statsCounterHandler))
+			r.HandleFunc("/stats/memory", ms.guard.WhiteList(statsMemoryHandler))
+		*/
 		r.HandleFunc("/{fileId}", ms.redirectHandler)
 	}
 
@@ -220,7 +222,7 @@ func (ms *MasterServer) startAdminScripts() {
 		commandEnv.MasterClient.WaitUntilConnected()
 
 		c := time.Tick(time.Duration(sleepMinutes) * time.Minute)
-		for _ = range c {
+		for range c {
 			if ms.Topo.IsLeader() {
 				for _, line := range scriptLines {
 
