@@ -87,6 +87,19 @@ var cmdS3 = &Command{
         "Read",
         "Write"
       ]
+    },
+    {
+      "name": "user_limited_to_bucket1",
+      "credentials": [
+        {
+          "accessKey": "some_access_key4",
+          "secretKey": "some_secret_key4"
+        }
+      ],
+      "actions": [
+        "Read:bucket1",
+        "Write:bucket1"
+      ]
     }
   ]
 }

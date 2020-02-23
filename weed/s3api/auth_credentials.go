@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/golang/protobuf/jsonpb"
+	"github.com/gorilla/mux"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
@@ -101,14 +102,14 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 	return nil, nil, false
 }
 
-func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, actions ...Action) http.HandlerFunc {
+func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) http.HandlerFunc {
 
 	if len(iam.identities) == 0 {
 		return f
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		errCode := iam.authRequest(r, actions)
+		errCode := iam.authRequest(r, action)
 		if errCode == ErrNone {
 			f(w, r)
 			return
@@ -118,7 +119,7 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, actions ...Action)
 }
 
 // check whether the request has valid access keys
-func (iam *IdentityAccessManagement) authRequest(r *http.Request, actions []Action) ErrorCode {
+func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action) ErrorCode {
 	var identity *Identity
 	var s3Err ErrorCode
 	switch getRequestAuthType(r) {
@@ -152,7 +153,10 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, actions []Acti
 
 	glog.V(3).Infof("user name: %v actions: %v", identity.Name, identity.Actions)
 
-	if !identity.canDo(actions) {
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+
+	if !identity.canDo(action, bucket) {
 		return ErrAccessDenied
 	}
 
@@ -160,12 +164,24 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, actions []Acti
 
 }
 
-func (identity *Identity) canDo(actions []Action) bool {
+func (identity *Identity) canDo(action Action, bucket string) bool {
 	for _, a := range identity.Actions {
-		for _, b := range actions {
-			if a == b {
-				return true
-			}
+		if a == "Admin" {
+			return true
+		}
+	}
+	for _, a := range identity.Actions {
+		if a == action {
+			return true
+		}
+	}
+	if bucket == "" {
+		return false
+	}
+	limitedByBucket := string(action) + ":" + bucket
+	for _, a := range identity.Actions {
+		if string(a) == limitedByBucket {
+			return true
 		}
 	}
 	return false
