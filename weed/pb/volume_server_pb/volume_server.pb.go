@@ -1505,10 +1505,12 @@ func (m *ReadVolumeFileStatusResponse) GetCollection() string {
 }
 
 type DiskStatus struct {
-	Dir  string `protobuf:"bytes,1,opt,name=dir" json:"dir,omitempty"`
-	All  uint64 `protobuf:"varint,2,opt,name=all" json:"all,omitempty"`
-	Used uint64 `protobuf:"varint,3,opt,name=used" json:"used,omitempty"`
-	Free uint64 `protobuf:"varint,4,opt,name=free" json:"free,omitempty"`
+	Dir         string  `protobuf:"bytes,1,opt,name=dir" json:"dir,omitempty"`
+	All         uint64  `protobuf:"varint,2,opt,name=all" json:"all,omitempty"`
+	Used        uint64  `protobuf:"varint,3,opt,name=used" json:"used,omitempty"`
+	Free        uint64  `protobuf:"varint,4,opt,name=free" json:"free,omitempty"`
+	PercentFree float32 `protobuf:"fixed32,5,opt,name=percentFree" json:"percentFree,omitempty"`
+	PercentUsed float32 `protobuf:"fixed32,6,opt,name=percentUsed" json:"percentUsed,omitempty"`
 }
 
 func (m *DiskStatus) Reset()                    { *m = DiskStatus{} }
@@ -1542,6 +1544,20 @@ func (m *DiskStatus) GetFree() uint64 {
 		return m.Free
 	}
 	return 0
+}
+
+func (m *DiskStatus) GetPercentFree() float32 {
+	if m != nil {
+		return m.PercentFree
+	}
+	return float32(0.0)
+}
+
+func (m *DiskStatus) GetPercentUsed() float32 {
+	if m != nil {
+		return m.PercentUsed
+	}
+	return float32(0.0)
 }
 
 type MemStatus struct {
