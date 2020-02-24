@@ -9,7 +9,7 @@ It is generated from these files:
 	iam.proto
 
 It has these top-level messages:
-	Identities
+	S3ApiConfiguration
 	Identity
 	Credential
 */
@@ -108,7 +108,7 @@ func (m *Credential) GetSecretKey() string {
 }
 
 func init() {
-	proto.RegisterType((*S3ApiConfiguration)(nil), "iam_pb.Identities")
+	proto.RegisterType((*S3ApiConfiguration)(nil), "iam_pb.S3ApiConfiguration")
 	proto.RegisterType((*Identity)(nil), "iam_pb.Identity")
 	proto.RegisterType((*Credential)(nil), "iam_pb.Credential")
 }
