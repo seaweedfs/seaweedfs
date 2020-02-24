@@ -363,6 +363,8 @@ message DiskStatus {
     uint64 all = 2;
     uint64 used = 3;
     uint64 free = 4;
+    float percent_free = 5;
+    float percent_used = 6;
 }
 
 message MemStatus {
