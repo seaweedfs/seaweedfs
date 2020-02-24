@@ -74,7 +74,8 @@ const (
 # with http DELETE, by default the filer would check whether a folder is empty.
 # recursive_delete will delete all sub folders and files, similar to "rm -Rf"
 recursive_delete = false
-
+# directories under this folder will be automatically creating a separate bucket
+buckets_folder = /buckets
 
 ####################################################
 # The following are filer store options

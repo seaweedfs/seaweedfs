@@ -83,6 +83,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	util.LoadConfiguration("notification", false)
 
 	fs.option.recursiveDelete = v.GetBool("filer.options.recursive_delete")
+	fs.option.DirBucketsPath = v.GetString("filer.option.buckets_folder")
 	fs.filer.LoadConfiguration(v)
 
 	notification.LoadConfiguration(v, "notification.")

@@ -82,7 +82,6 @@ func init() {
 	filerOptions.disableDirListing = cmdServer.Flag.Bool("filer.disableDirListing", false, "turn off directory listing")
 	filerOptions.maxMB = cmdServer.Flag.Int("filer.maxMB", 32, "split files larger than the limit")
 	filerOptions.dirListingLimit = cmdServer.Flag.Int("filer.dirListLimit", 1000, "limit sub dir listing size")
-	filerOptions.dirBucketsPath = cmdServer.Flag.String("filer.dir.buckets", "/buckets", "folder to store all buckets")
 
 	serverOptions.v.port = cmdServer.Flag.Int("volume.port", 8080, "volume server http listen port")
 	serverOptions.v.publicPort = cmdServer.Flag.Int("volume.port.public", 0, "volume server public port")
