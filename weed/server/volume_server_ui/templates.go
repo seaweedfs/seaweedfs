@@ -83,7 +83,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
               <th>Path</th>
               <th>Total</th>
               <th>Free</th>
-              <th>% Usage</th>
+              <th>Usage</th>
               </tr>
             </thead>
           <tbody>          
@@ -92,7 +92,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
               <td>{{ .Dir }}</td>
               <td>{{ bytesToHumanReadble .All }}</td>
               <td>{{ bytesToHumanReadble .Free  }}</td>
-              <td>{{ percentFrom .All .Used}}</td>
+              <td>{{ percentFrom .All .Used}}%</td>
             </tr>
           {{ end }}
           </tbody>
