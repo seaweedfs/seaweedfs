@@ -1,10 +1,12 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 
 	"github.com/gorilla/mux"
@@ -19,19 +21,17 @@ var (
 )
 
 type S3Options struct {
-	filer            *string
-	filerBucketsPath *string
-	port             *int
-	config           *string
-	domainName       *string
-	tlsPrivateKey    *string
-	tlsCertificate   *string
+	filer          *string
+	port           *int
+	config         *string
+	domainName     *string
+	tlsPrivateKey  *string
+	tlsCertificate *string
 }
 
 func init() {
 	cmdS3.Run = runS3 // break init cycle
 	s3StandaloneOptions.filer = cmdS3.Flag.String("filer", "localhost:8888", "filer server address")
-	s3StandaloneOptions.filerBucketsPath = cmdS3.Flag.String("filer.dir.buckets", "/buckets", "folder on filer to store all buckets")
 	s3StandaloneOptions.port = cmdS3.Flag.Int("port", 8333, "s3 server http listen port")
 	s3StandaloneOptions.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name, {bucket}.{domainName}")
 	s3StandaloneOptions.config = cmdS3.Flag.String("config", "", "path to the config file")
@@ -123,6 +123,24 @@ func (s3opt *S3Options) startS3Server() bool {
 		return false
 	}
 
+	filerBucketsPath := "/buckets"
+
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	ctx := context.Background()
+
+	err = withFilerClient(ctx, filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
+		}
+		filerBucketsPath = resp.DirBuckets
+		return nil
+	})
+	if err != nil {
+		glog.Fatal(err)
+		return false
+	}
+
 	router := mux.NewRouter().SkipClean(true)
 
 	_, s3ApiServer_err := s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
@@ -130,8 +148,8 @@ func (s3opt *S3Options) startS3Server() bool {
 		FilerGrpcAddress: filerGrpcAddress,
 		Config:           *s3opt.config,
 		DomainName:       *s3opt.domainName,
-		BucketsPath:      *s3opt.filerBucketsPath,
-		GrpcDialOption:   security.LoadClientTLS(util.GetViper(), "grpc.client"),
+		BucketsPath:      filerBucketsPath,
+		GrpcDialOption:   grpcDialOption,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)

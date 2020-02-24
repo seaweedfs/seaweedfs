@@ -46,6 +46,7 @@ type FilerOption struct {
 	DisableHttp        bool
 	Port               int
 	recursiveDelete    bool
+	DirBucketsPath     string
 }
 
 type FilerServer struct {

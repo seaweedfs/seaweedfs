@@ -308,5 +308,6 @@ func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.
 		Collection:  fs.option.Collection,
 		Replication: fs.option.DefaultReplication,
 		MaxMb:       uint32(fs.option.MaxMB),
+		DirBuckets:  fs.option.DirBucketsPath,
 	}, nil
 }
