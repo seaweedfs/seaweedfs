@@ -165,6 +165,7 @@ message AssignVolumeRequest {
     string replication = 3;
     int32 ttl_sec = 4;
     string data_center = 5;
+    string parent_path = 6;
 }
 
 message AssignVolumeResponse {
@@ -173,6 +174,8 @@ message AssignVolumeResponse {
     string public_url = 3;
     int32 count = 4;
     string auth = 5;
+    string collection = 6;
+    string replication = 7;
 }
 
 message LookupVolumeRequest {

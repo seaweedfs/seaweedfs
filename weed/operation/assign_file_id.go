@@ -3,11 +3,13 @@ package operation
 import (
 	"context"
 	"fmt"
+	"strings"
+
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"google.golang.org/grpc"
-	"strings"
 )
 
 type VolumeAssignRequest struct {

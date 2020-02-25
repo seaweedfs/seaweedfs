@@ -105,7 +105,7 @@ func (fs *FilerSink) CreateEntry(ctx context.Context, key string, entry *filer_p
 			}
 		}
 
-		replicatedChunks, err := fs.replicateChunks(ctx, entry.Chunks)
+		replicatedChunks, err := fs.replicateChunks(ctx, entry.Chunks, dir)
 
 		if err != nil {
 			glog.V(0).Infof("replicate entry chunks %s: %v", key, err)
@@ -184,7 +184,7 @@ func (fs *FilerSink) UpdateEntry(ctx context.Context, key string, oldEntry *file
 		}
 
 		// replicate the chunks that are new in the source
-		replicatedChunks, err := fs.replicateChunks(ctx, newChunks)
+		replicatedChunks, err := fs.replicateChunks(ctx, newChunks, newParentPath)
 		if err != nil {
 			return true, fmt.Errorf("replicte %s chunks error: %v", key, err)
 		}

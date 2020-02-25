@@ -67,7 +67,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Fatal("master list is required!")
 	}
 
-	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption)
+	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption, option.DirBucketsPath)
 
 	go fs.filer.KeepConnectedToMaster()
 
@@ -83,6 +83,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	util.LoadConfiguration("notification", false)
 
 	fs.option.recursiveDelete = v.GetBool("filer.options.recursive_delete")
+	v.Set("filer.option.buckets_folder", "/buckets")
 	fs.option.DirBucketsPath = v.GetString("filer.option.buckets_folder")
 	fs.filer.LoadConfiguration(v)
 
@@ -95,6 +96,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	if defaultMux != readonlyMux {
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
+
+	fs.filer.LoadBuckets(fs.option.DirBucketsPath)
 
 	maybeStartMetrics(fs, option)
 

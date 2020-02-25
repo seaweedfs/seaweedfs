@@ -54,6 +54,7 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 	includeLastFile := req.InclusiveStartFrom
 	for limit > 0 {
 		entries, err := fs.filer.ListDirectoryEntries(stream.Context(), filer2.FullPath(req.Directory), lastFileName, includeLastFile, paginationLimit)
+
 		if err != nil {
 			return err
 		}
@@ -84,6 +85,7 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 			}); err != nil {
 				return err
 			}
+
 			limit--
 			if limit == 0 {
 				return nil
@@ -226,6 +228,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 	if req.TtlSec > 0 {
 		ttlStr = strconv.Itoa(int(req.TtlSec))
 	}
+	collection, replication := fs.detectCollection(req.ParentPath, req.Collection, req.Replication)
 
 	var altRequest *operation.VolumeAssignRequest
 
@@ -236,16 +239,16 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 
 	assignRequest := &operation.VolumeAssignRequest{
 		Count:       uint64(req.Count),
-		Replication: req.Replication,
-		Collection:  req.Collection,
+		Replication: replication,
+		Collection:  collection,
 		Ttl:         ttlStr,
 		DataCenter:  dataCenter,
 	}
 	if dataCenter != "" {
 		altRequest = &operation.VolumeAssignRequest{
 			Count:       uint64(req.Count),
-			Replication: req.Replication,
-			Collection:  req.Collection,
+			Replication: replication,
+			Collection:  collection,
 			Ttl:         ttlStr,
 			DataCenter:  "",
 		}
@@ -261,11 +264,13 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 	}
 
 	return &filer_pb.AssignVolumeResponse{
-		FileId:    assignResult.Fid,
-		Count:     int32(assignResult.Count),
-		Url:       assignResult.Url,
-		PublicUrl: assignResult.PublicUrl,
-		Auth:      string(assignResult.Auth),
+		FileId:      assignResult.Fid,
+		Count:       int32(assignResult.Count),
+		Url:         assignResult.Url,
+		PublicUrl:   assignResult.PublicUrl,
+		Auth:        string(assignResult.Auth),
+		Collection:  collection,
+		Replication: replication,
 	}, err
 }
 

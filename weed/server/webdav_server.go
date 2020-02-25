@@ -367,6 +367,8 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 	glog.V(2).Infof("WebDavFileSystem.Write %v", f.name)
 
+	dir, _ := filer2.FullPath(f.name).DirAndName()
+
 	var err error
 	ctx := context.Background()
 	if f.entry == nil {
@@ -382,13 +384,15 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 	var fileId, host string
 	var auth security.EncodedJwt
+	var collection, replication string
 
 	if err = f.fs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AssignVolumeRequest{
 			Count:       1,
-			Replication: "000",
+			Replication: "",
 			Collection:  f.fs.option.Collection,
+			ParentPath:  dir,
 		}
 
 		resp, err := client.AssignVolume(ctx, request)
@@ -398,6 +402,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 		}
 
 		fileId, host, auth = resp.FileId, resp.Url, security.EncodedJwt(resp.Auth)
+		collection, replication = resp.Collection, resp.Replication
 
 		return nil
 	}); err != nil {
@@ -425,10 +430,11 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 	}
 
 	f.entry.Chunks = append(f.entry.Chunks, chunk)
-	dir, _ := filer2.FullPath(f.name).DirAndName()
 
 	err = f.fs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		f.entry.Attributes.Mtime = time.Now().Unix()
+		f.entry.Attributes.Collection = collection
+		f.entry.Attributes.Replication = replication
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: dir,

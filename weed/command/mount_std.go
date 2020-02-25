@@ -99,7 +99,7 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 		fuse.VolumeName(mountName),
 		fuse.FSName(filer + ":" + filerMountRootPath),
 		fuse.Subtype("seaweedfs"),
-		fuse.NoAppleDouble(),
+		// fuse.NoAppleDouble(), // include .DS_Store, otherwise can not delete non-empty folders
 		fuse.NoAppleXattr(),
 		fuse.NoBrowse(),
 		fuse.AutoXattr(),

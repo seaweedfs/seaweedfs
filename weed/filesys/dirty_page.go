@@ -15,9 +15,11 @@ import (
 )
 
 type ContinuousDirtyPages struct {
-	intervals *ContinuousIntervals
-	f         *File
-	lock      sync.Mutex
+	intervals   *ContinuousIntervals
+	f           *File
+	lock        sync.Mutex
+	collection  string
+	replication string
 }
 
 func newDirtyPages(file *File) *ContinuousDirtyPages {
@@ -140,6 +142,8 @@ func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context, reader io.
 	var fileId, host string
 	var auth security.EncodedJwt
 
+	dir, _ := pages.f.fullpath().DirAndName()
+
 	if err := pages.f.wfs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AssignVolumeRequest{
@@ -148,6 +152,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context, reader io.
 			Collection:  pages.f.wfs.option.Collection,
 			TtlSec:      pages.f.wfs.option.TtlSec,
 			DataCenter:  pages.f.wfs.option.DataCenter,
+			ParentPath:  dir,
 		}
 
 		resp, err := client.AssignVolume(ctx, request)
@@ -157,6 +162,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context, reader io.
 		}
 
 		fileId, host, auth = resp.FileId, resp.Url, security.EncodedJwt(resp.Auth)
+		pages.collection, pages.replication = resp.Collection, resp.Replication
 
 		return nil
 	}); err != nil {

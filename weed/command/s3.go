@@ -134,6 +134,7 @@ func (s3opt *S3Options) startS3Server() bool {
 			return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
 		}
 		filerBucketsPath = resp.DirBuckets
+		glog.V(0).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
 		return nil
 	})
 	if err != nil {

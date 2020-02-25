@@ -6,6 +6,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 )
 
 func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p FullPath, isRecursive bool, ignoreRecursiveError, shouldDeleteChunks bool) (err error) {
@@ -18,26 +19,34 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p FullPath, isRecurs
 		return findErr
 	}
 
+	isCollection := f.isBucket(entry)
+
 	var chunks []*filer_pb.FileChunk
 	chunks = append(chunks, entry.Chunks...)
 	if entry.IsDirectory() {
 		// delete the folder children, not including the folder itself
 		var dirChunks []*filer_pb.FileChunk
-		dirChunks, err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks)
+		dirChunks, err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !isCollection)
 		if err != nil {
+			glog.V(0).Infof("delete directory %s: %v", p, err)
 			return fmt.Errorf("delete directory %s: %v", p, err)
 		}
 		chunks = append(chunks, dirChunks...)
-		f.cacheDelDirectory(string(p))
 	}
+
 	// delete the file or folder
 	err = f.doDeleteEntryMetaAndData(ctx, entry, shouldDeleteChunks)
 	if err != nil {
 		return fmt.Errorf("delete file %s: %v", p, err)
 	}
 
-	if shouldDeleteChunks {
+	if shouldDeleteChunks && !isCollection {
 		go f.DeleteChunks(chunks)
+	}
+	if isCollection {
+		collectionName := entry.Name()
+		f.doDeleteCollection(ctx, collectionName)
+		f.deleteBucket(collectionName)
 	}
 
 	return nil
@@ -55,6 +64,9 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 		}
 		if lastFileName == "" && !isRecursive && len(entries) > 0 {
 			// only for first iteration in the loop
+			for _, child := range entries {
+				println("existing children", child.Name())
+			}
 			return nil, fmt.Errorf("fail to delete non-empty folder: %s", entry.FullPath)
 		}
 
@@ -99,4 +111,18 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 	f.NotifyUpdateEvent(entry, nil, shouldDeleteChunks)
 
 	return nil
+}
+
+func (f *Filer) doDeleteCollection(ctx context.Context, collectionName string) (err error) {
+
+	return f.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
+		_, err := client.CollectionDelete(ctx, &master_pb.CollectionDeleteRequest{
+			Name: collectionName,
+		})
+		if err != nil {
+			glog.Infof("delete collection %s: %v", collectionName, err)
+		}
+		return err
+	})
+
 }

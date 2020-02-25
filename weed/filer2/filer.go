@@ -30,9 +30,11 @@ type Filer struct {
 	MasterClient        *wdclient.MasterClient
 	fileIdDeletionQueue *util.UnboundedQueue
 	GrpcDialOption      grpc.DialOption
+	DirBucketsPath      string
+	buckets             *FilerBuckets
 }
 
-func NewFiler(masters []string, grpcDialOption grpc.DialOption) *Filer {
+func NewFiler(masters []string, grpcDialOption grpc.DialOption, bucketFolder string) *Filer {
 	f := &Filer{
 		directoryCache:      ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
 		MasterClient:        wdclient.NewMasterClient(context.Background(), grpcDialOption, "filer", masters),
@@ -109,11 +111,13 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 			dirEntry = &Entry{
 				FullPath: FullPath(dirPath),
 				Attr: Attr{
-					Mtime:  now,
-					Crtime: now,
-					Mode:   os.ModeDir | 0770,
-					Uid:    entry.Uid,
-					Gid:    entry.Gid,
+					Mtime:       now,
+					Crtime:      now,
+					Mode:        os.ModeDir | 0770,
+					Uid:         entry.Uid,
+					Gid:         entry.Gid,
+					Collection:  entry.Collection,
+					Replication: entry.Replication,
 				},
 			}
 
@@ -125,6 +129,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 					return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
 				}
 			} else {
+				f.maybeAddBucket(dirEntry)
 				f.NotifyUpdateEvent(nil, dirEntry, false)
 			}
 
@@ -175,6 +180,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 		}
 	}
 
+	f.maybeAddBucket(entry)
 	f.NotifyUpdateEvent(oldEntry, entry, true)
 
 	f.deleteChunksIfNotNew(oldEntry, entry)

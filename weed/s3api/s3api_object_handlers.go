@@ -52,8 +52,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 	defer dataReader.Close()
 
-	uploadUrl := fmt.Sprintf("http://%s%s/%s%s?collection=%s",
-		s3a.option.Filer, s3a.option.BucketsPath, bucket, object, bucket)
+	uploadUrl := fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
 
 	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
 
@@ -167,7 +166,7 @@ func passThroughResponse(proxyResonse *http.Response, w http.ResponseWriter) {
 func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader) (etag string, code ErrorCode) {
 
 	hash := md5.New()
-	var body io.Reader = io.TeeReader(dataReader, hash)
+	var body = io.TeeReader(dataReader, hash)
 
 	proxyReq, err := http.NewRequest("PUT", uploadUrl, body)
 
