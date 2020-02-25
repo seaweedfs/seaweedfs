@@ -67,7 +67,7 @@ func (c *commandBucketList) Do(args []string, commandEnv *CommandEnv, writer io.
 				}
 			}
 
-			if resp.Entry.Attributes.Replication == "" {
+			if resp.Entry.Attributes.Replication == "" || resp.Entry.Attributes.Replication == "000" {
 				fmt.Fprintf(writer, "  %s\n", resp.Entry.Name)
 			} else {
 				fmt.Fprintf(writer, "  %s\t\t\treplication: %s\n", resp.Entry.Name, resp.Entry.Attributes.Replication)

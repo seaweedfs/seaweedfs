@@ -54,7 +54,7 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Inode = filer2.FullPath(dir.Path).AsInode()
 	attr.Mode = os.FileMode(dir.entry.Attributes.FileMode) | os.ModeDir
 	attr.Mtime = time.Unix(dir.entry.Attributes.Mtime, 0)
-	attr.Ctime = time.Unix(dir.entry.Attributes.Crtime, 0)
+	attr.Crtime = time.Unix(dir.entry.Attributes.Crtime, 0)
 	attr.Gid = dir.entry.Attributes.Gid
 	attr.Uid = dir.entry.Attributes.Uid
 
@@ -221,7 +221,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		resp.Attr.Inode = fullFilePath.AsInode()
 		resp.Attr.Valid = time.Second
 		resp.Attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
-		resp.Attr.Ctime = time.Unix(entry.Attributes.Crtime, 0)
+		resp.Attr.Crtime = time.Unix(entry.Attributes.Crtime, 0)
 		resp.Attr.Mode = os.FileMode(entry.Attributes.FileMode)
 		resp.Attr.Gid = entry.Attributes.Gid
 		resp.Attr.Uid = entry.Attributes.Uid
