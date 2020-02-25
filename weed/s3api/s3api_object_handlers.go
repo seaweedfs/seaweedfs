@@ -1,8 +1,10 @@
 package s3api
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -115,10 +117,97 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 
 }
 
+/// ObjectIdentifier carries key name for the object to delete.
+type ObjectIdentifier struct {
+	ObjectName string `xml:"Key"`
+}
+
+// DeleteObjectsRequest - xml carrying the object key names which needs to be deleted.
+type DeleteObjectsRequest struct {
+	// Element to enable quiet mode for the request
+	Quiet bool
+	// List of objects to be deleted
+	Objects []ObjectIdentifier `xml:"Object"`
+}
+
+// DeleteError structure.
+type DeleteError struct {
+	Code    string
+	Message string
+	Key     string
+}
+
+// DeleteObjectsResponse container for multiple object deletes.
+type DeleteObjectsResponse struct {
+	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DeleteResult" json:"-"`
+
+	// Collection of all deleted objects
+	DeletedObjects []ObjectIdentifier `xml:"Deleted,omitempty"`
+
+	// Collection of errors deleting certain objects.
+	Errors []DeleteError `xml:"Error,omitempty"`
+}
+
 // DeleteMultipleObjectsHandler - Delete multiple objects
 func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *http.Request) {
-	// TODO
-	writeErrorResponse(w, ErrNotImplemented, r.URL)
+
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+
+	deleteXMLBytes, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		writeErrorResponse(w, ErrInternalError, r.URL)
+		return
+	}
+
+	deleteObjects := &DeleteObjectsRequest{}
+	if err := xml.Unmarshal(deleteXMLBytes, deleteObjects); err != nil {
+		writeErrorResponse(w, ErrMalformedXML, r.URL)
+		return
+	}
+
+	var index int
+
+	var deletedObjects []ObjectIdentifier
+	var deleteErrors []DeleteError
+	s3a.streamRemove(context.Background(), deleteObjects.Quiet, func() (finished bool, parentDirectoryPath string, entryName string, isDeleteData, isRecursive bool) {
+		if index >= len(deleteObjects.Objects) {
+			finished = true
+			return
+		}
+
+		object := deleteObjects.Objects[index]
+
+		lastSeparator := strings.LastIndex(object.ObjectName, "/")
+		parentDirectoryPath, entryName, isDeleteData, isRecursive = "/", object.ObjectName, true, false
+		if lastSeparator > 0 && lastSeparator+1 < len(object.ObjectName) {
+			entryName = object.ObjectName[lastSeparator+1:]
+			parentDirectoryPath = "/" + object.ObjectName[:lastSeparator]
+		}
+		parentDirectoryPath = fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, parentDirectoryPath)
+		return
+	}, func(err string) {
+		object := deleteObjects.Objects[index]
+		if err == "" {
+			deletedObjects = append(deletedObjects, object)
+		} else {
+			deleteErrors = append(deleteErrors, DeleteError{
+				Code:    "",
+				Message: err,
+				Key:     object.ObjectName,
+			})
+		}
+		index++
+	})
+
+	deleteResp := DeleteObjectsResponse{}
+	if !deleteObjects.Quiet {
+		deleteResp.DeletedObjects = deletedObjects
+	}
+	deleteResp.Errors = deleteErrors
+
+	writeSuccessResponseXML(w, encodeResponse(deleteResp))
+
 }
 
 func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, responseFn func(proxyResonse *http.Response, w http.ResponseWriter)) {

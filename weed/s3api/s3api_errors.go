@@ -49,6 +49,7 @@ const (
 	ErrMissingFields
 	ErrMissingCredTag
 	ErrCredMalformed
+	ErrMalformedXML
 	ErrMalformedDate
 	ErrMalformedPresignedDate
 	ErrMalformedCredentialDate
@@ -158,6 +159,12 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidCopySource: {
 		Code:           "InvalidArgument",
 		Description:    "Copy Source must mention the source bucket and key: sourcebucket/sourcekey.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+
+	ErrMalformedXML: {
+		Code:           "MalformedXML",
+		Description:    "The XML you provided was not well-formed or did not validate against our published schema.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 

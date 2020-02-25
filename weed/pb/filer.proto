@@ -24,6 +24,9 @@ service SeaweedFiler {
     rpc DeleteEntry (DeleteEntryRequest) returns (DeleteEntryResponse) {
     }
 
+    rpc StreamDeleteEntries (stream DeleteEntryRequest) returns (stream DeleteEntryResponse) {
+    }
+
     rpc AtomicRenameEntry (AtomicRenameEntryRequest) returns (AtomicRenameEntryResponse) {
     }
 
@@ -147,6 +150,7 @@ message DeleteEntryRequest {
 }
 
 message DeleteEntryResponse {
+    string error = 1;
 }
 
 message AtomicRenameEntryRequest {

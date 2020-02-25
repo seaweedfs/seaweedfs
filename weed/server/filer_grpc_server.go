@@ -219,7 +219,31 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {
 	err = fs.filer.DeleteEntryMetaAndData(ctx, filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name))), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData)
-	return &filer_pb.DeleteEntryResponse{}, err
+	resp = &filer_pb.DeleteEntryResponse{}
+	if err != nil {
+		resp.Error = err.Error()
+	}
+	return resp, nil
+}
+
+func (fs *FilerServer) StreamDeleteEntries(stream filer_pb.SeaweedFiler_StreamDeleteEntriesServer) error {
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			return fmt.Errorf("receive delete entry request: %v", err)
+		}
+		ctx := context.Background()
+		fullpath := filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name)))
+		err = fs.filer.DeleteEntryMetaAndData(ctx, fullpath, req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData)
+		resp := &filer_pb.DeleteEntryResponse{}
+		if err != nil {
+			resp.Error = err.Error()
+		}
+		if err := stream.Send(resp); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVolumeRequest) (resp *filer_pb.AssignVolumeResponse, err error) {
