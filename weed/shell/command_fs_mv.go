@@ -65,7 +65,7 @@ func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 		var targetDir, targetName string
 
 		// moving a file or folder
-		if err == nil && respDestinationLookupEntry.Entry.IsDirectory {
+		if err == nil && respDestinationLookupEntry.Entry!= nil && respDestinationLookupEntry.Entry.IsDirectory {
 			// to a directory
 			targetDir = filepath.ToSlash(filepath.Join(destinationDir, destinationName))
 			targetName = sourceName

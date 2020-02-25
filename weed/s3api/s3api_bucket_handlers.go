@@ -11,9 +11,10 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/gorilla/mux"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/gorilla/mux"
 )
 
 var (
@@ -119,7 +120,7 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 		}
 
 		glog.V(1).Infof("lookup bucket: %v", request)
-		if _, err := client.LookupDirectoryEntry(ctx, request); err != nil {
+		if resp, err := client.LookupDirectoryEntry(ctx, request); err != nil || resp.Entry == nil {
 			return fmt.Errorf("lookup bucket %s/%s: %v", s3a.option.BucketsPath, bucket, err)
 		}
 

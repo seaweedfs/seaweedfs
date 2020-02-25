@@ -229,7 +229,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		return node, nil
 	}
 
-	glog.V(1).Infof("not found dir GetEntry %s: %v", fullFilePath, err)
+	glog.V(4).Infof("not found dir GetEntry %s: %v", fullFilePath, err)
 	return nil, fuse.ENOENT
 }
 
@@ -275,6 +275,9 @@ func (dir *Dir) removeOneFile(ctx context.Context, req *fuse.RemoveRequest) erro
 	entry, err := filer2.GetEntry(ctx, dir.wfs, filePath)
 	if err != nil {
 		return err
+	}
+	if entry == nil {
+		return nil
 	}
 
 	dir.wfs.deleteFileChunks(ctx, entry.Chunks)

@@ -55,6 +55,9 @@ func (c *commandFsMetaCat) Do(args []string, commandEnv *CommandEnv, writer io.W
 		if err != nil {
 			return err
 		}
+		if respLookupEntry.Entry == nil {
+			return fmt.Errorf("file not found: %s", path)
+		}
 
 		m := jsonpb.Marshaler{
 			EmitDefaults: true,

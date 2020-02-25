@@ -64,9 +64,6 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 		}
 		if lastFileName == "" && !isRecursive && len(entries) > 0 {
 			// only for first iteration in the loop
-			for _, child := range entries {
-				println("existing children", child.Name())
-			}
 			return nil, fmt.Errorf("fail to delete non-empty folder: %s", entry.FullPath)
 		}
 

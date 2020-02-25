@@ -154,6 +154,10 @@ func (s3a *S3ApiServer) exists(ctx context.Context, parentDirectoryPath string, 
 			glog.V(0).Infof("exists entry %v: %v", request, err)
 			return fmt.Errorf("exists entry %s/%s: %v", parentDirectoryPath, entryName, err)
 		}
+		if resp.Entry == nil {
+			exists = false
+			return nil
+		}
 
 		exists = resp.Entry.IsDirectory == isDirectory
 
