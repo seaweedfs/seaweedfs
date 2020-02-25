@@ -14,10 +14,10 @@ import (
 )
 
 const (
-	maxObjectList   = 1000 // Limit number of objects in a listObjectsResponse.
-	maxUploadsList  = 1000 // Limit number of uploads in a listUploadsResponse.
-	maxPartsList    = 1000 // Limit number of parts in a listPartsResponse.
-	globalMaxPartID = 10000
+	maxObjectListSizeLimit = 10000 // Limit number of objects in a listObjectsResponse.
+	maxUploadsList         = 10000 // Limit number of uploads in a listUploadsResponse.
+	maxPartsList           = 10000 // Limit number of parts in a listPartsResponse.
+	globalMaxPartID        = 100000
 )
 
 // NewMultipartUploadHandler - New multipart upload.
