@@ -113,7 +113,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// check partID with maximum part ID for multipart objects
-	if partID > 10000 {
+	if partID > globalMaxPartID {
 		writeErrorResponse(w, ErrInvalidMaxParts, r.URL)
 		return
 	}
