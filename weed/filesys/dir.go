@@ -46,7 +46,7 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 		return nil
 	}
 
-	if err := dir.maybeLoadEntry(ctx); err != nil {
+	if err := dir.maybeLoadEntry(); err != nil {
 		glog.V(3).Infof("dir Attr %s,err: %+v", dir.Path, err)
 		return err
 	}
@@ -67,7 +67,7 @@ func (dir *Dir) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp *f
 
 	glog.V(4).Infof("dir Getxattr %s", dir.Path)
 
-	if err := dir.maybeLoadEntry(ctx); err != nil {
+	if err := dir.maybeLoadEntry(); err != nil {
 		return err
 	}
 
@@ -332,7 +332,7 @@ func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 
 	glog.V(3).Infof("%v dir setattr %+v", dir.Path, req)
 
-	if err := dir.maybeLoadEntry(ctx); err != nil {
+	if err := dir.maybeLoadEntry(); err != nil {
 		return err
 	}
 
@@ -362,7 +362,7 @@ func (dir *Dir) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
 
 	glog.V(4).Infof("dir Setxattr %s: %s", dir.Path, req.Name)
 
-	if err := dir.maybeLoadEntry(ctx); err != nil {
+	if err := dir.maybeLoadEntry(); err != nil {
 		return err
 	}
 
@@ -380,7 +380,7 @@ func (dir *Dir) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest) e
 
 	glog.V(4).Infof("dir Removexattr %s: %s", dir.Path, req.Name)
 
-	if err := dir.maybeLoadEntry(ctx); err != nil {
+	if err := dir.maybeLoadEntry(); err != nil {
 		return err
 	}
 
@@ -398,7 +398,7 @@ func (dir *Dir) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, resp 
 
 	glog.V(4).Infof("dir Listxattr %s", dir.Path)
 
-	if err := dir.maybeLoadEntry(ctx); err != nil {
+	if err := dir.maybeLoadEntry(); err != nil {
 		return err
 	}
 
@@ -416,7 +416,7 @@ func (dir *Dir) Forget() {
 	dir.wfs.forgetNode(filer2.FullPath(dir.Path))
 }
 
-func (dir *Dir) maybeLoadEntry(ctx context.Context) error {
+func (dir *Dir) maybeLoadEntry() error {
 	if dir.entry == nil {
 		parentDirPath, name := filer2.FullPath(dir.Path).DirAndName()
 		entry, err := dir.wfs.maybeLoadEntry(parentDirPath, name)
