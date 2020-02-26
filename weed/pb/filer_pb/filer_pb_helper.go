@@ -77,7 +77,7 @@ func CreateEntry(ctx context.Context, client SeaweedFilerClient, request *Create
 		return fmt.Errorf("CreateEntry: %v", err)
 	}
 	if resp.Error != "" {
-		return fmt.Errorf("CreateEntry: %v", resp.Error)
+		return fmt.Errorf("CreateEntry : %v", resp.Error)
 	}
 	return err
 }
