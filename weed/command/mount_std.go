@@ -3,6 +3,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/user"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/seaweedfs/fuse"
@@ -131,6 +133,7 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 		c.Close()
 	})
 
+	// parse filer grpc address
 	filerGrpcAddress, err := parseFilerGrpcAddress(filer)
 	if err != nil {
 		glog.V(0).Infof("parseFilerGrpcAddress: %v", err)
@@ -138,6 +141,23 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 		return true
 	}
 
+	// try to connect to filer, filerBucketsPath may be useful later
+	filerBucketsPath := "/buckets"
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	err = withFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
+		}
+		filerBucketsPath = resp.DirBuckets
+		return nil
+	})
+	if err != nil {
+		glog.Fatal(err)
+		return false
+	}
+
+	// find mount point
 	mountRoot := filerMountRootPath
 	if mountRoot != "/" && strings.HasSuffix(mountRoot, "/") {
 		mountRoot = mountRoot[0 : len(mountRoot)-1]
@@ -147,7 +167,7 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 
 	err = fs.Serve(c, filesys.NewSeaweedFileSystem(&filesys.Option{
 		FilerGrpcAddress:   filerGrpcAddress,
-		GrpcDialOption:     security.LoadClientTLS(util.GetViper(), "grpc.client"),
+		GrpcDialOption:     grpcDialOption,
 		FilerMountRootPath: mountRoot,
 		Collection:         collection,
 		Replication:        replication,
