@@ -354,7 +354,7 @@ func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 
 	dir.wfs.cacheDelete(filer2.FullPath(dir.Path))
 
-	return dir.saveEntry(ctx)
+	return dir.saveEntry()
 
 }
 
@@ -372,7 +372,7 @@ func (dir *Dir) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
 
 	dir.wfs.cacheDelete(filer2.FullPath(dir.Path))
 
-	return dir.saveEntry(ctx)
+	return dir.saveEntry()
 
 }
 
@@ -390,7 +390,7 @@ func (dir *Dir) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest) e
 
 	dir.wfs.cacheDelete(filer2.FullPath(dir.Path))
 
-	return dir.saveEntry(ctx)
+	return dir.saveEntry()
 
 }
 
@@ -428,7 +428,7 @@ func (dir *Dir) maybeLoadEntry() error {
 	return nil
 }
 
-func (dir *Dir) saveEntry(ctx context.Context) error {
+func (dir *Dir) saveEntry() error {
 
 	parentDir, name := filer2.FullPath(dir.Path).DirAndName()
 
