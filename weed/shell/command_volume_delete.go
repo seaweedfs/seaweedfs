@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"context"
 	"fmt"
 	"io"
 
@@ -42,7 +41,6 @@ func (c *commandVolumeDelete) Do(args []string, commandEnv *CommandEnv, writer i
 		return fmt.Errorf("wrong volume id format %s: %v", volumeId, err)
 	}
 
-	ctx := context.Background()
-	return deleteVolume(ctx, commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer)
+	return deleteVolume(commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer)
 
 }

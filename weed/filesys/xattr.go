@@ -108,7 +108,7 @@ func listxattr(entry *filer_pb.Entry, req *fuse.ListxattrRequest, resp *fuse.Lis
 
 }
 
-func (wfs *WFS) maybeLoadEntry(ctx context.Context, dir, name string) (entry *filer_pb.Entry, err error) {
+func (wfs *WFS) maybeLoadEntry(dir, name string) (entry *filer_pb.Entry, err error) {
 
 	fullpath := filer2.NewFullPath(dir, name)
 	entry = wfs.cacheGet(fullpath)
@@ -117,14 +117,14 @@ func (wfs *WFS) maybeLoadEntry(ctx context.Context, dir, name string) (entry *fi
 	}
 	// glog.V(3).Infof("read entry cache miss %s", fullpath)
 
-	err = wfs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+	err = wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Name:      name,
 			Directory: dir,
 		}
 
-		resp, err := client.LookupDirectoryEntry(ctx, request)
+		resp, err := client.LookupDirectoryEntry(context.Background(), request)
 		if err != nil || resp == nil || resp.Entry == nil {
 			if err == filer2.ErrNotFound || strings.Contains(err.Error(), filer2.ErrNotFound.Error()) {
 				glog.V(3).Infof("file attr read not found file %v: %v", request, err)

@@ -34,9 +34,8 @@ func (c *commandCollectionDelete) Do(args []string, commandEnv *CommandEnv, writ
 
 	collectionName := args[0]
 
-	ctx := context.Background()
-	err = commandEnv.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
-		_, err = client.CollectionDelete(ctx, &master_pb.CollectionDeleteRequest{
+	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+		_, err = client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
 			Name: collectionName,
 		})
 		return err

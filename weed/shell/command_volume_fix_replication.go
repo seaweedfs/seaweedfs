@@ -50,9 +50,8 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	}
 
 	var resp *master_pb.VolumeListResponse
-	ctx := context.Background()
-	err = commandEnv.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+		resp, err = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		return err
 	})
 	if err != nil {
@@ -113,8 +112,8 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 					break
 				}
 
-				err := operation.WithVolumeServerClient(dst.dataNode.Id, commandEnv.option.GrpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
-					_, replicateErr := volumeServerClient.VolumeCopy(ctx, &volume_server_pb.VolumeCopyRequest{
+				err := operation.WithVolumeServerClient(dst.dataNode.Id, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+					_, replicateErr := volumeServerClient.VolumeCopy(context.Background(), &volume_server_pb.VolumeCopyRequest{
 						VolumeId:       volumeInfo.Id,
 						SourceDataNode: sourceNode.dataNode.Id,
 					})

@@ -40,16 +40,16 @@ func (fs *FilerSource) initialize(grpcAddress string, dir string) (err error) {
 	return nil
 }
 
-func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrl string, err error) {
+func (fs *FilerSource) LookupFileId(part string) (fileUrl string, err error) {
 
 	vid2Locations := make(map[string]*filer_pb.Locations)
 
 	vid := volumeId(part)
 
-	err = fs.withFilerClient(ctx, fs.grpcDialOption, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+	err = fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		glog.V(4).Infof("read lookup volume id locations: %v", vid)
-		resp, err := client.LookupVolume(ctx, &filer_pb.LookupVolumeRequest{
+		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
 			VolumeIds: []string{vid},
 		})
 		if err != nil {
@@ -78,9 +78,9 @@ func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrl s
 	return
 }
 
-func (fs *FilerSource) ReadPart(ctx context.Context, part string) (filename string, header http.Header, readCloser io.ReadCloser, err error) {
+func (fs *FilerSource) ReadPart(part string) (filename string, header http.Header, readCloser io.ReadCloser, err error) {
 
-	fileUrl, err := fs.LookupFileId(ctx, part)
+	fileUrl, err := fs.LookupFileId(part)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -90,11 +90,11 @@ func (fs *FilerSource) ReadPart(ctx context.Context, part string) (filename stri
 	return filename, header, readCloser, err
 }
 
-func (fs *FilerSource) withFilerClient(ctx context.Context, grpcDialOption grpc.DialOption, fn func(context.Context, filer_pb.SeaweedFilerClient) error) error {
+func (fs *FilerSource) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return util.WithCachedGrpcClient(ctx, func(ctx2 context.Context, grpcConnection *grpc.ClientConn) error {
+	return util.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		return fn(ctx2, client)
+		return fn(client)
 	}, fs.grpcAddress, fs.grpcDialOption)
 
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -88,22 +87,15 @@ func (wfs *WFS) Root() (fs.Node, error) {
 	return wfs.root, nil
 }
 
-func (wfs *WFS) WithFilerClient(ctx context.Context, fn func(context.Context, filer_pb.SeaweedFilerClient) error) error {
+func (wfs *WFS) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	err := util.WithCachedGrpcClient(ctx, func(ctx2 context.Context, grpcConnection *grpc.ClientConn) error {
+	err := util.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		return fn(ctx2, client)
+		return fn(client)
 	}, wfs.option.FilerGrpcAddress, wfs.option.GrpcDialOption)
 
 	if err == nil {
 		return nil
-	}
-	if strings.Contains(err.Error(), "context canceled") {
-		glog.V(0).Infoln("retry context canceled request...")
-		return util.WithCachedGrpcClient(context.Background(), func(ctx2 context.Context, grpcConnection *grpc.ClientConn) error {
-			client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-			return fn(ctx2, client)
-		}, wfs.option.FilerGrpcAddress, wfs.option.GrpcDialOption)
 	}
 	return err
 
@@ -162,7 +154,7 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 
 	if wfs.stats.lastChecked < time.Now().Unix()-20 {
 
-		err := wfs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+		err := wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 			request := &filer_pb.StatisticsRequest{
 				Collection:  wfs.option.Collection,
@@ -171,7 +163,7 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 			}
 
 			glog.V(4).Infof("reading filer stats: %+v", request)
-			resp, err := client.Statistics(ctx, request)
+			resp, err := client.Statistics(context.Background(), request)
 			if err != nil {
 				glog.V(0).Infof("reading filer stats %v: %v", request, err)
 				return err

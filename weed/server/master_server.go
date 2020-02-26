@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
@@ -89,7 +88,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 		preallocateSize: preallocateSize,
 		clientChans:     make(map[string]chan *master_pb.VolumeLocation),
 		grpcDialOption:  grpcDialOption,
-		MasterClient:    wdclient.NewMasterClient(context.Background(), grpcDialOption, "master", peers),
+		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "master", peers),
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
 

@@ -1,15 +1,15 @@
 package shell
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
 
+	"github.com/golang/protobuf/proto"
+
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/golang/protobuf/proto"
 )
 
 func init() {
@@ -53,9 +53,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	var dirCount, fileCount uint64
 
-	ctx := context.Background()
-
-	err = commandEnv.withFilerClient(ctx, filerServer, filerPort, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+	err = commandEnv.withFilerClient(filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
 
 		sizeBuf := make([]byte, 4)
 
@@ -80,7 +78,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 				return err
 			}
 
-			if err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
+			if err := filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
 				Directory: fullEntry.Dir,
 				Entry:     fullEntry.Entry,
 			}); err != nil {

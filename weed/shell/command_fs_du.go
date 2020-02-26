@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"context"
 	"fmt"
 	"io"
 
@@ -39,15 +38,13 @@ func (c *commandFsDu) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 		return err
 	}
 
-	ctx := context.Background()
-
-	if commandEnv.isDirectory(ctx, filerServer, filerPort, path) {
+	if commandEnv.isDirectory(filerServer, filerPort, path) {
 		path = path + "/"
 	}
 
 	var blockCount, byteCount uint64
 	dir, name := filer2.FullPath(path).DirAndName()
-	blockCount, byteCount, err = duTraverseDirectory(ctx, writer, commandEnv.getFilerClient(filerServer, filerPort), dir, name)
+	blockCount, byteCount, err = duTraverseDirectory(writer, commandEnv.getFilerClient(filerServer, filerPort), dir, name)
 
 	if name == "" && err == nil {
 		fmt.Fprintf(writer, "block:%4d\tbyte:%10d\t%s\n", blockCount, byteCount, dir)
@@ -57,15 +54,15 @@ func (c *commandFsDu) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 
 }
 
-func duTraverseDirectory(ctx context.Context, writer io.Writer, filerClient filer2.FilerClient, dir, name string) (blockCount uint64, byteCount uint64, err error) {
+func duTraverseDirectory(writer io.Writer, filerClient filer2.FilerClient, dir, name string) (blockCount, byteCount uint64, err error) {
 
-	err = filer2.ReadDirAllEntries(ctx, filerClient, filer2.FullPath(dir), name, func(entry *filer_pb.Entry, isLast bool) {
+	err = filer2.ReadDirAllEntries(filerClient, filer2.FullPath(dir), name, func(entry *filer_pb.Entry, isLast bool) {
 		if entry.IsDirectory {
 			subDir := fmt.Sprintf("%s/%s", dir, entry.Name)
 			if dir == "/" {
 				subDir = "/" + entry.Name
 			}
-			numBlock, numByte, err := duTraverseDirectory(ctx, writer, filerClient, subDir, "")
+			numBlock, numByte, err := duTraverseDirectory(writer, filerClient, subDir, "")
 			if err == nil {
 				blockCount += numBlock
 				byteCount += numByte
@@ -82,12 +79,12 @@ func duTraverseDirectory(ctx context.Context, writer io.Writer, filerClient file
 	return
 }
 
-func (env *CommandEnv) withFilerClient(ctx context.Context, filerServer string, filerPort int64, fn func(context.Context, filer_pb.SeaweedFilerClient) error) error {
+func (env *CommandEnv) withFilerClient(filerServer string, filerPort int64, fn func(filer_pb.SeaweedFilerClient) error) error {
 
 	filerGrpcAddress := fmt.Sprintf("%s:%d", filerServer, filerPort+10000)
-	return util.WithCachedGrpcClient(ctx, func(ctx2 context.Context, grpcConnection *grpc.ClientConn) error {
+	return util.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		return fn(ctx2, client)
+		return fn(client)
 	}, filerGrpcAddress, env.option.GrpcDialOption)
 
 }
@@ -105,6 +102,6 @@ func (env *CommandEnv) getFilerClient(filerServer string, filerPort int64) *comm
 		filerPort:   filerPort,
 	}
 }
-func (c *commandFilerClient) WithFilerClient(ctx context.Context, fn func(context.Context, filer_pb.SeaweedFilerClient) error) error {
-	return c.env.withFilerClient(ctx, c.filerServer, c.filerPort, fn)
+func (c *commandFilerClient) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
+	return c.env.withFilerClient(c.filerServer, c.filerPort, fn)
 }

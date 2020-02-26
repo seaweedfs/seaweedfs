@@ -44,17 +44,15 @@ func (c *commandBucketDelete) Do(args []string, commandEnv *CommandEnv, writer i
 		return parseErr
 	}
 
-	ctx := context.Background()
+	err = commandEnv.withFilerClient(filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
 
-	err = commandEnv.withFilerClient(ctx, filerServer, filerPort, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
-
-		resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
+		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return fmt.Errorf("get filer %s:%d configuration: %v", filerServer, filerPort, err)
 		}
 		filerBucketsPath := resp.DirBuckets
 
-		if _, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+		if _, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
 			Directory:            filerBucketsPath,
 			Name:                 *bucketName,
 			IsDeleteData:         false,

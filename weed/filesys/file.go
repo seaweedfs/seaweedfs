@@ -148,7 +148,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 
 	file.wfs.cacheDelete(file.fullpath())
 
-	return file.saveEntry(ctx)
+	return file.saveEntry()
 
 }
 
@@ -166,7 +166,7 @@ func (file *File) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error
 
 	file.wfs.cacheDelete(file.fullpath())
 
-	return file.saveEntry(ctx)
+	return file.saveEntry()
 
 }
 
@@ -184,7 +184,7 @@ func (file *File) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest)
 
 	file.wfs.cacheDelete(file.fullpath())
 
-	return file.saveEntry(ctx)
+	return file.saveEntry()
 
 }
 
@@ -221,7 +221,7 @@ func (file *File) Forget() {
 
 func (file *File) maybeLoadEntry(ctx context.Context) error {
 	if file.entry == nil || file.isOpen <= 0 {
-		entry, err := file.wfs.maybeLoadEntry(ctx, file.dir.Path, file.Name)
+		entry, err := file.wfs.maybeLoadEntry(file.dir.Path, file.Name)
 		if err != nil {
 			return err
 		}
@@ -256,8 +256,8 @@ func (file *File) setEntry(entry *filer_pb.Entry) {
 	file.entryViewCache = filer2.NonOverlappingVisibleIntervals(file.entry.Chunks)
 }
 
-func (file *File) saveEntry(ctx context.Context) error {
-	return file.wfs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+func (file *File) saveEntry() error {
+	return file.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: file.dir.Path,
@@ -265,7 +265,7 @@ func (file *File) saveEntry(ctx context.Context) error {
 		}
 
 		glog.V(1).Infof("save file entry: %v", request)
-		_, err := client.UpdateEntry(ctx, request)
+		_, err := client.UpdateEntry(context.Background(), request)
 		if err != nil {
 			glog.V(0).Infof("UpdateEntry file %s/%s: %v", file.dir.Path, file.Name, err)
 			return fuse.EIO

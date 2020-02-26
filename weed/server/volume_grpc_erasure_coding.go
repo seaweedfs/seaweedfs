@@ -106,7 +106,7 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 
 	baseFileName := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))
 
-	err := operation.WithVolumeServerClient(req.SourceDataNode, vs.grpcDialOption, func(ctx context.Context, client volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClient(req.SourceDataNode, vs.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 
 		// copy ec data slices
 		for _, shardId := range req.ShardIds {

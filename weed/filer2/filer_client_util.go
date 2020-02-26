@@ -22,10 +22,10 @@ func VolumeId(fileId string) string {
 }
 
 type FilerClient interface {
-	WithFilerClient(ctx context.Context, fn func(context.Context, filer_pb.SeaweedFilerClient) error) error
+	WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error
 }
 
-func ReadIntoBuffer(ctx context.Context, filerClient FilerClient, fullFilePath FullPath, buff []byte, chunkViews []*ChunkView, baseOffset int64) (totalRead int64, err error) {
+func ReadIntoBuffer(filerClient FilerClient, fullFilePath FullPath, buff []byte, chunkViews []*ChunkView, baseOffset int64) (totalRead int64, err error) {
 	var vids []string
 	for _, chunkView := range chunkViews {
 		vids = append(vids, VolumeId(chunkView.FileId))
@@ -33,10 +33,10 @@ func ReadIntoBuffer(ctx context.Context, filerClient FilerClient, fullFilePath F
 
 	vid2Locations := make(map[string]*filer_pb.Locations)
 
-	err = filerClient.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+	err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		glog.V(4).Infof("read fh lookup volume id locations: %v", vids)
-		resp, err := client.LookupVolume(ctx, &filer_pb.LookupVolumeRequest{
+		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
 			VolumeIds: vids,
 		})
 		if err != nil {
@@ -93,11 +93,11 @@ func ReadIntoBuffer(ctx context.Context, filerClient FilerClient, fullFilePath F
 	return
 }
 
-func GetEntry(ctx context.Context, filerClient FilerClient, fullFilePath FullPath) (entry *filer_pb.Entry, err error) {
+func GetEntry(filerClient FilerClient, fullFilePath FullPath) (entry *filer_pb.Entry, err error) {
 
 	dir, name := fullFilePath.DirAndName()
 
-	err = filerClient.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+	err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
@@ -105,7 +105,7 @@ func GetEntry(ctx context.Context, filerClient FilerClient, fullFilePath FullPat
 		}
 
 		// glog.V(3).Infof("read %s request: %v", fullFilePath, request)
-		resp, err := client.LookupDirectoryEntry(ctx, request)
+		resp, err := client.LookupDirectoryEntry(context.Background(), request)
 		if err != nil {
 			if err == ErrNotFound || strings.Contains(err.Error(), ErrNotFound.Error()) {
 				return nil
@@ -126,9 +126,9 @@ func GetEntry(ctx context.Context, filerClient FilerClient, fullFilePath FullPat
 	return
 }
 
-func ReadDirAllEntries(ctx context.Context, filerClient FilerClient, fullDirPath FullPath, prefix string, fn func(entry *filer_pb.Entry, isLast bool)) (err error) {
+func ReadDirAllEntries(filerClient FilerClient, fullDirPath FullPath, prefix string, fn func(entry *filer_pb.Entry, isLast bool)) (err error) {
 
-	err = filerClient.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+	err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		lastEntryName := ""
 
@@ -140,7 +140,7 @@ func ReadDirAllEntries(ctx context.Context, filerClient FilerClient, fullDirPath
 		}
 
 		glog.V(3).Infof("read directory: %v", request)
-		stream, err := client.ListEntries(ctx, request)
+		stream, err := client.ListEntries(context.Background(), request)
 		if err != nil {
 			return fmt.Errorf("list %s: %v", fullDirPath, err)
 		}

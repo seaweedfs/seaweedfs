@@ -25,8 +25,8 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	for _, server := range collection.ListVolumeServers() {
-		err := operation.WithVolumeServerClient(server.Url(), ms.grpcDialOption, func(ctx context.Context, client volume_server_pb.VolumeServerClient) error {
-			_, deleteErr := client.DeleteCollection(ctx, &volume_server_pb.DeleteCollectionRequest{
+		err := operation.WithVolumeServerClient(server.Url(), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+			_, deleteErr := client.DeleteCollection(context.Background(), &volume_server_pb.DeleteCollectionRequest{
 				Collection: collection.Name,
 			})
 			return deleteErr

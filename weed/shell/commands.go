@@ -44,7 +44,7 @@ var (
 func NewCommandEnv(options ShellOptions) *CommandEnv {
 	return &CommandEnv{
 		env: make(map[string]string),
-		MasterClient: wdclient.NewMasterClient(context.Background(),
+		MasterClient: wdclient.NewMasterClient(
 			options.GrpcDialOption, "shell", strings.Split(*options.Masters, ",")),
 		option: options,
 	}
@@ -60,19 +60,19 @@ func (ce *CommandEnv) parseUrl(input string) (filerServer string, filerPort int6
 	return ce.option.FilerHost, ce.option.FilerPort, input, err
 }
 
-func (ce *CommandEnv) isDirectory(ctx context.Context, filerServer string, filerPort int64, path string) bool {
+func (ce *CommandEnv) isDirectory(filerServer string, filerPort int64, path string) bool {
 
-	return ce.checkDirectory(ctx, filerServer, filerPort, path) == nil
+	return ce.checkDirectory(filerServer, filerPort, path) == nil
 
 }
 
-func (ce *CommandEnv) checkDirectory(ctx context.Context, filerServer string, filerPort int64, path string) error {
+func (ce *CommandEnv) checkDirectory(filerServer string, filerPort int64, path string) error {
 
 	dir, name := filer2.FullPath(path).DirAndName()
 
-	return ce.withFilerClient(ctx, filerServer, filerPort, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+	return ce.withFilerClient(filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
 
-		resp, lookupErr := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+		resp, lookupErr := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
 			Name:      name,
 		})

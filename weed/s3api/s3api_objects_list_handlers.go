@@ -95,7 +95,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket, originalPr
 	}
 
 	// check filer
-	err = s3a.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	err = s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.ListEntriesRequest{
 			Directory:          fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, dir),

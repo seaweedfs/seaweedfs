@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -60,16 +59,14 @@ func (c *commandFsLs) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 		return err
 	}
 
-	ctx := context.Background()
-
-	if commandEnv.isDirectory(ctx, filerServer, filerPort, path) {
+	if commandEnv.isDirectory(filerServer, filerPort, path) {
 		path = path + "/"
 	}
 
 	dir, name := filer2.FullPath(path).DirAndName()
 	entryCount := 0
 
-	err = filer2.ReadDirAllEntries(ctx, commandEnv.getFilerClient(filerServer, filerPort), filer2.FullPath(dir), name, func(entry *filer_pb.Entry, isLast bool) {
+	err = filer2.ReadDirAllEntries(commandEnv.getFilerClient(filerServer, filerPort), filer2.FullPath(dir), name, func(entry *filer_pb.Entry, isLast bool) {
 
 		if !showHidden && strings.HasPrefix(entry.Name, ".") {
 			return

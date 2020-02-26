@@ -89,7 +89,7 @@ func (fh *FileHandle) readFromChunks(ctx context.Context, buff []byte, offset in
 
 	chunkViews := filer2.ViewFromVisibleIntervals(fh.f.entryViewCache, offset, len(buff))
 
-	totalRead, err := filer2.ReadIntoBuffer(ctx, fh.f.wfs, fh.f.fullpath(), buff, chunkViews, offset)
+	totalRead, err := filer2.ReadIntoBuffer(fh.f.wfs, fh.f.fullpath(), buff, chunkViews, offset)
 
 	if err != nil {
 		glog.Errorf("file handle read %s: %v", fh.f.fullpath(), err)
@@ -154,7 +154,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	// send the data to the OS
 	glog.V(4).Infof("%s fh %d flush %v", fh.f.fullpath(), fh.handle, req)
 
-	chunks, err := fh.dirtyPages.FlushToStorage(ctx)
+	chunks, err := fh.dirtyPages.FlushToStorage()
 	if err != nil {
 		glog.Errorf("flush %s: %v", fh.f.fullpath(), err)
 		return fuse.EIO
@@ -169,7 +169,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		return nil
 	}
 
-	err = fh.f.wfs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+	err = fh.f.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		if fh.f.entry.Attributes != nil {
 			fh.f.entry.Attributes.Mime = fh.contentType
@@ -196,12 +196,12 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		fh.f.entry.Chunks = chunks
 		// fh.f.entryViewCache = nil
 
-		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
-			glog.Errorf("update fh: %v", err)
-			return fmt.Errorf("update fh: %v", err)
+		if err := filer_pb.CreateEntry(client, request); err != nil {
+			glog.Errorf("fh flush create %s: %v", fh.f.fullpath(), err)
+			return fmt.Errorf("fh flush create %s: %v", fh.f.fullpath(), err)
 		}
 
-		fh.f.wfs.deleteFileChunks(ctx, garbages)
+		fh.f.wfs.deleteFileChunks(garbages)
 		for i, chunk := range garbages {
 			glog.V(3).Infof("garbage %s chunks %d: %v [%d,%d)", fh.f.fullpath(), i, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}

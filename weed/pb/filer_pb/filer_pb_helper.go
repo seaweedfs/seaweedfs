@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
@@ -71,13 +72,15 @@ func AfterEntryDeserialization(chunks []*FileChunk) {
 	}
 }
 
-func CreateEntry(ctx context.Context, client SeaweedFilerClient, request *CreateEntryRequest) error {
-	resp, err := client.CreateEntry(ctx, request)
+func CreateEntry(client SeaweedFilerClient, request *CreateEntryRequest) error {
+	resp, err := client.CreateEntry(context.Background(), request)
 	if err != nil {
+		glog.V(1).Infof("create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, err)
 		return fmt.Errorf("CreateEntry: %v", err)
 	}
 	if resp.Error != "" {
+		glog.V(1).Infof("create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, err)
 		return fmt.Errorf("CreateEntry : %v", resp.Error)
 	}
-	return err
+	return nil
 }

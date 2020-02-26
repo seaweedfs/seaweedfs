@@ -45,7 +45,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p FullPath, isRecurs
 	}
 	if isCollection {
 		collectionName := entry.Name()
-		f.doDeleteCollection(ctx, collectionName)
+		f.doDeleteCollection(collectionName)
 		f.deleteBucket(collectionName)
 	}
 
@@ -110,10 +110,10 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 	return nil
 }
 
-func (f *Filer) doDeleteCollection(ctx context.Context, collectionName string) (err error) {
+func (f *Filer) doDeleteCollection(collectionName string) (err error) {
 
-	return f.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
-		_, err := client.CollectionDelete(ctx, &master_pb.CollectionDeleteRequest{
+	return f.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+		_, err := client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
 			Name: collectionName,
 		})
 		if err != nil {

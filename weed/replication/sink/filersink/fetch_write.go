@@ -15,7 +15,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (fs *FilerSink) replicateChunks(ctx context.Context, sourceChunks []*filer_pb.FileChunk, dir string) (replicatedChunks []*filer_pb.FileChunk, err error) {
+func (fs *FilerSink) replicateChunks(sourceChunks []*filer_pb.FileChunk, dir string) (replicatedChunks []*filer_pb.FileChunk, err error) {
 	if len(sourceChunks) == 0 {
 		return
 	}
@@ -24,7 +24,7 @@ func (fs *FilerSink) replicateChunks(ctx context.Context, sourceChunks []*filer_
 		wg.Add(1)
 		go func(chunk *filer_pb.FileChunk) {
 			defer wg.Done()
-			replicatedChunk, e := fs.replicateOneChunk(ctx, chunk, dir)
+			replicatedChunk, e := fs.replicateOneChunk(chunk, dir)
 			if e != nil {
 				err = e
 			}
@@ -36,9 +36,9 @@ func (fs *FilerSink) replicateChunks(ctx context.Context, sourceChunks []*filer_
 	return
 }
 
-func (fs *FilerSink) replicateOneChunk(ctx context.Context, sourceChunk *filer_pb.FileChunk, dir string) (*filer_pb.FileChunk, error) {
+func (fs *FilerSink) replicateOneChunk(sourceChunk *filer_pb.FileChunk, dir string) (*filer_pb.FileChunk, error) {
 
-	fileId, err := fs.fetchAndWrite(ctx, sourceChunk, dir)
+	fileId, err := fs.fetchAndWrite(sourceChunk, dir)
 	if err != nil {
 		return nil, fmt.Errorf("copy %s: %v", sourceChunk.GetFileIdString(), err)
 	}
@@ -53,9 +53,9 @@ func (fs *FilerSink) replicateOneChunk(ctx context.Context, sourceChunk *filer_p
 	}, nil
 }
 
-func (fs *FilerSink) fetchAndWrite(ctx context.Context, sourceChunk *filer_pb.FileChunk, dir string) (fileId string, err error) {
+func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, dir string) (fileId string, err error) {
 
-	filename, header, readCloser, err := fs.filerSource.ReadPart(ctx, sourceChunk.GetFileIdString())
+	filename, header, readCloser, err := fs.filerSource.ReadPart(sourceChunk.GetFileIdString())
 	if err != nil {
 		return "", fmt.Errorf("read part %s: %v", sourceChunk.GetFileIdString(), err)
 	}
@@ -64,7 +64,7 @@ func (fs *FilerSink) fetchAndWrite(ctx context.Context, sourceChunk *filer_pb.Fi
 	var host string
 	var auth security.EncodedJwt
 
-	if err := fs.withFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+	if err := fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AssignVolumeRequest{
 			Count:       1,
@@ -75,7 +75,7 @@ func (fs *FilerSink) fetchAndWrite(ctx context.Context, sourceChunk *filer_pb.Fi
 			ParentPath:  dir,
 		}
 
-		resp, err := client.AssignVolume(ctx, request)
+		resp, err := client.AssignVolume(context.Background(), request)
 		if err != nil {
 			glog.V(0).Infof("assign volume failure %v: %v", request, err)
 			return err
@@ -109,11 +109,11 @@ func (fs *FilerSink) fetchAndWrite(ctx context.Context, sourceChunk *filer_pb.Fi
 	return
 }
 
-func (fs *FilerSink) withFilerClient(ctx context.Context, fn func(context.Context, filer_pb.SeaweedFilerClient) error) error {
+func (fs *FilerSink) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return util.WithCachedGrpcClient(ctx, func(ctx context.Context, grpcConnection *grpc.ClientConn) error {
+	return util.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		return fn(ctx, client)
+		return fn(client)
 	}, fs.grpcAddress, fs.grpcDialOption)
 
 }

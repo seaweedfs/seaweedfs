@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-func (wfs *WFS) deleteFileChunks(ctx context.Context, chunks []*filer_pb.FileChunk) {
+func (wfs *WFS) deleteFileChunks(chunks []*filer_pb.FileChunk) {
 	if len(chunks) == 0 {
 		return
 	}
@@ -20,13 +20,13 @@ func (wfs *WFS) deleteFileChunks(ctx context.Context, chunks []*filer_pb.FileChu
 		fileIds = append(fileIds, chunk.GetFileIdString())
 	}
 
-	wfs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
-		deleteFileIds(ctx, wfs.option.GrpcDialOption, client, fileIds)
+	wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		deleteFileIds(wfs.option.GrpcDialOption, client, fileIds)
 		return nil
 	})
 }
 
-func deleteFileIds(ctx context.Context, grpcDialOption grpc.DialOption, client filer_pb.SeaweedFilerClient, fileIds []string) error {
+func deleteFileIds(grpcDialOption grpc.DialOption, client filer_pb.SeaweedFilerClient, fileIds []string) error {
 
 	var vids []string
 	for _, fileId := range fileIds {
@@ -38,7 +38,7 @@ func deleteFileIds(ctx context.Context, grpcDialOption grpc.DialOption, client f
 		m := make(map[string]operation.LookupResult)
 
 		glog.V(4).Infof("remove file lookup volume id locations: %v", vids)
-		resp, err := client.LookupVolume(ctx, &filer_pb.LookupVolumeRequest{
+		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
 			VolumeIds: vids,
 		})
 		if err != nil {

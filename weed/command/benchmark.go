@@ -127,7 +127,7 @@ func runBenchmark(cmd *Command, args []string) bool {
 		defer pprof.StopCPUProfile()
 	}
 
-	b.masterClient = wdclient.NewMasterClient(context.Background(), b.grpcDialOption, "client", strings.Split(*b.masters, ","))
+	b.masterClient = wdclient.NewMasterClient(b.grpcDialOption, "client", strings.Split(*b.masters, ","))
 	go b.masterClient.KeepConnectedToMaster()
 	b.masterClient.WaitUntilConnected()
 
@@ -314,8 +314,8 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 }
 
 func grpcFileGet(volumeServer, fid string, grpcDialOption grpc.DialOption) (bytesRead int, err error) {
-	err = operation.WithVolumeServerClient(volumeServer, grpcDialOption, func(ctx context.Context, client volume_server_pb.VolumeServerClient) error {
-		fileGetClient, err := client.FileGet(ctx, &volume_server_pb.FileGetRequest{FileId: fid})
+	err = operation.WithVolumeServerClient(volumeServer, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		fileGetClient, err := client.FileGet(context.Background(), &volume_server_pb.FileGetRequest{FileId: fid})
 		if err != nil {
 			return err
 		}

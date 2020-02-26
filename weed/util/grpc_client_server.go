@@ -57,14 +57,14 @@ func GrpcDial(ctx context.Context, address string, opts ...grpc.DialOption) (*gr
 	return grpc.DialContext(ctx, address, options...)
 }
 
-func WithCachedGrpcClient(ctx context.Context, fn func(context.Context, *grpc.ClientConn) error, address string, opts ...grpc.DialOption) error {
+func WithCachedGrpcClient(fn func(*grpc.ClientConn) error, address string, opts ...grpc.DialOption) error {
 
 	grpcClientsLock.Lock()
 
 	existingConnection, found := grpcClients[address]
 	if found {
 		grpcClientsLock.Unlock()
-		err := fn(ctx, existingConnection)
+		err := fn(existingConnection)
 		if err != nil {
 			grpcClientsLock.Lock()
 			delete(grpcClients, address)
@@ -74,7 +74,7 @@ func WithCachedGrpcClient(ctx context.Context, fn func(context.Context, *grpc.Cl
 		return err
 	}
 
-	grpcConnection, err := GrpcDial(ctx, address, opts...)
+	grpcConnection, err := GrpcDial(context.Background(), address, opts...)
 	if err != nil {
 		grpcClientsLock.Unlock()
 		return fmt.Errorf("fail to dial %s: %v", address, err)
@@ -83,7 +83,7 @@ func WithCachedGrpcClient(ctx context.Context, fn func(context.Context, *grpc.Cl
 	grpcClients[address] = grpcConnection
 	grpcClientsLock.Unlock()
 
-	err = fn(ctx, grpcConnection)
+	err = fn(grpcConnection)
 	if err != nil {
 		grpcClientsLock.Lock()
 		delete(grpcClients, address)

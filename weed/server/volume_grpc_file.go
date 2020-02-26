@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -45,7 +44,7 @@ func (vs *VolumeServer) FileGet(req *volume_server_pb.FileGetRequest, stream vol
 	if hasVolume {
 		count, err = vs.store.ReadVolumeNeedle(volumeId, n)
 	} else if hasEcVolume {
-		count, err = vs.store.ReadEcShardNeedle(context.Background(), volumeId, n)
+		count, err = vs.store.ReadEcShardNeedle(volumeId, n)
 	}
 
 	if err != nil || count < 0 {

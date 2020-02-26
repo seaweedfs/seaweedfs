@@ -168,7 +168,7 @@ func processOneDirectory(ctx context.Context, writer io.Writer, filerClient file
 	parentPath filer2.FullPath, queue *util.Queue, jobQueueWg *sync.WaitGroup,
 	fn func(parentPath filer2.FullPath, entry *filer_pb.Entry)) (err error) {
 
-	return filer2.ReadDirAllEntries(ctx, filerClient, parentPath, "", func(entry *filer_pb.Entry, isLast bool) {
+	return filer2.ReadDirAllEntries(filerClient, parentPath, "", func(entry *filer_pb.Entry, isLast bool) {
 
 		fn(parentPath, entry)
 

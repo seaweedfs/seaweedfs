@@ -13,7 +13,6 @@ import (
 )
 
 type MasterClient struct {
-	ctx            context.Context
 	name           string
 	currentMaster  string
 	masters        []string
@@ -22,9 +21,8 @@ type MasterClient struct {
 	vidMap
 }
 
-func NewMasterClient(ctx context.Context, grpcDialOption grpc.DialOption, clientName string, masters []string) *MasterClient {
+func NewMasterClient(grpcDialOption grpc.DialOption, clientName string, masters []string) *MasterClient {
 	return &MasterClient{
-		ctx:            ctx,
 		name:           clientName,
 		masters:        masters,
 		grpcDialOption: grpcDialOption,
@@ -66,9 +64,9 @@ func (mc *MasterClient) tryAllMasters() {
 
 func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader string) {
 	glog.V(1).Infof("%s Connecting to master %v", mc.name, master)
-	gprcErr := withMasterClient(context.Background(), master, mc.grpcDialOption, func(ctx context.Context, client master_pb.SeaweedClient) error {
+	gprcErr := withMasterClient(master, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
 
-		stream, err := client.KeepConnected(ctx)
+		stream, err := client.KeepConnected(context.Background())
 		if err != nil {
 			glog.V(0).Infof("%s failed to keep connected to %s: %v", mc.name, master, err)
 			return err
@@ -118,22 +116,22 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 	return
 }
 
-func withMasterClient(ctx context.Context, master string, grpcDialOption grpc.DialOption, fn func(ctx context.Context, client master_pb.SeaweedClient) error) error {
+func withMasterClient(master string, grpcDialOption grpc.DialOption, fn func(client master_pb.SeaweedClient) error) error {
 
 	masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(master)
 	if parseErr != nil {
 		return fmt.Errorf("failed to parse master grpc %v: %v", master, parseErr)
 	}
 
-	return util.WithCachedGrpcClient(ctx, func(ctx2 context.Context, grpcConnection *grpc.ClientConn) error {
+	return util.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := master_pb.NewSeaweedClient(grpcConnection)
-		return fn(ctx2, client)
+		return fn(client)
 	}, masterGrpcAddress, grpcDialOption)
 
 }
 
-func (mc *MasterClient) WithClient(ctx context.Context, fn func(client master_pb.SeaweedClient) error) error {
-	return withMasterClient(ctx, mc.currentMaster, mc.grpcDialOption, func(ctx context.Context, client master_pb.SeaweedClient) error {
+func (mc *MasterClient) WithClient(fn func(client master_pb.SeaweedClient) error) error {
+	return withMasterClient(mc.currentMaster, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
 		return fn(client)
 	})
 }

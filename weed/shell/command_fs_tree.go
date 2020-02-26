@@ -53,7 +53,7 @@ func treeTraverseDirectory(ctx context.Context, writer io.Writer, filerClient fi
 
 	prefix.addMarker(level)
 
-	err = filer2.ReadDirAllEntries(ctx, filerClient, dir, name, func(entry *filer_pb.Entry, isLast bool) {
+	err = filer2.ReadDirAllEntries(filerClient, dir, name, func(entry *filer_pb.Entry, isLast bool) {
 		if level < 0 && name != "" {
 			if entry.Name != name {
 				return

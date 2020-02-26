@@ -19,8 +19,8 @@ func batchVacuumVolumeCheck(grpcDialOption grpc.DialOption, vl *VolumeLayout, vi
 	errCount := int32(0)
 	for index, dn := range locationlist.list {
 		go func(index int, url string, vid needle.VolumeId) {
-			err := operation.WithVolumeServerClient(url, grpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
-				resp, err := volumeServerClient.VacuumVolumeCheck(ctx, &volume_server_pb.VacuumVolumeCheckRequest{
+			err := operation.WithVolumeServerClient(url, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+				resp, err := volumeServerClient.VacuumVolumeCheck(context.Background(), &volume_server_pb.VacuumVolumeCheckRequest{
 					VolumeId: uint32(vid),
 				})
 				if err != nil {
@@ -63,8 +63,8 @@ func batchVacuumVolumeCompact(grpcDialOption grpc.DialOption, vl *VolumeLayout, 
 	for index, dn := range locationlist.list {
 		go func(index int, url string, vid needle.VolumeId) {
 			glog.V(0).Infoln(index, "Start vacuuming", vid, "on", url)
-			err := operation.WithVolumeServerClient(url, grpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
-				_, err := volumeServerClient.VacuumVolumeCompact(ctx, &volume_server_pb.VacuumVolumeCompactRequest{
+			err := operation.WithVolumeServerClient(url, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+				_, err := volumeServerClient.VacuumVolumeCompact(context.Background(), &volume_server_pb.VacuumVolumeCompactRequest{
 					VolumeId: uint32(vid),
 				})
 				return err
@@ -93,8 +93,8 @@ func batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *VolumeLayout, v
 	isCommitSuccess := true
 	for _, dn := range locationlist.list {
 		glog.V(0).Infoln("Start Committing vacuum", vid, "on", dn.Url())
-		err := operation.WithVolumeServerClient(dn.Url(), grpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
-			_, err := volumeServerClient.VacuumVolumeCommit(ctx, &volume_server_pb.VacuumVolumeCommitRequest{
+		err := operation.WithVolumeServerClient(dn.Url(), grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+			_, err := volumeServerClient.VacuumVolumeCommit(context.Background(), &volume_server_pb.VacuumVolumeCommitRequest{
 				VolumeId: uint32(vid),
 			})
 			return err
@@ -114,8 +114,8 @@ func batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *VolumeLayout, v
 func batchVacuumVolumeCleanup(grpcDialOption grpc.DialOption, vl *VolumeLayout, vid needle.VolumeId, locationlist *VolumeLocationList) {
 	for _, dn := range locationlist.list {
 		glog.V(0).Infoln("Start cleaning up", vid, "on", dn.Url())
-		err := operation.WithVolumeServerClient(dn.Url(), grpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
-			_, err := volumeServerClient.VacuumVolumeCleanup(ctx, &volume_server_pb.VacuumVolumeCleanupRequest{
+		err := operation.WithVolumeServerClient(dn.Url(), grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+			_, err := volumeServerClient.VacuumVolumeCleanup(context.Background(), &volume_server_pb.VacuumVolumeCleanupRequest{
 				VolumeId: uint32(vid),
 			})
 			return err

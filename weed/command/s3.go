@@ -128,7 +128,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	ctx := context.Background()
 
-	err = withFilerClient(ctx, filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = withFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)

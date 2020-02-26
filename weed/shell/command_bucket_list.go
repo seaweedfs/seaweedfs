@@ -39,17 +39,15 @@ func (c *commandBucketList) Do(args []string, commandEnv *CommandEnv, writer io.
 		return parseErr
 	}
 
-	ctx := context.Background()
+	err = commandEnv.withFilerClient(filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
 
-	err = commandEnv.withFilerClient(ctx, filerServer, filerPort, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
-
-		resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
+		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return fmt.Errorf("get filer %s:%d configuration: %v", filerServer, filerPort, err)
 		}
 		filerBucketsPath := resp.DirBuckets
 
-		stream, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
+		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
 			Directory: filerBucketsPath,
 			Limit:     math.MaxUint32,
 		})

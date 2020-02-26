@@ -37,7 +37,7 @@ type Filer struct {
 func NewFiler(masters []string, grpcDialOption grpc.DialOption, bucketFolder string) *Filer {
 	f := &Filer{
 		directoryCache:      ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
-		MasterClient:        wdclient.NewMasterClient(context.Background(), grpcDialOption, "filer", masters),
+		MasterClient:        wdclient.NewMasterClient(grpcDialOption, "filer", masters),
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
 	}

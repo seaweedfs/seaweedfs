@@ -52,7 +52,7 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 	var hasSavedData bool
 
 	if pages.intervals.TotalSize() > pages.f.wfs.option.ChunkSizeLimit {
-		chunk, hasSavedData, err = pages.saveExistingLargestPageToStorage(ctx)
+		chunk, hasSavedData, err = pages.saveExistingLargestPageToStorage()
 		if hasSavedData {
 			chunks = append(chunks, chunk)
 		}
@@ -67,7 +67,7 @@ func (pages *ContinuousDirtyPages) flushAndSave(ctx context.Context, offset int6
 	var newChunks []*filer_pb.FileChunk
 
 	// flush existing
-	if newChunks, err = pages.saveExistingPagesToStorage(ctx); err == nil {
+	if newChunks, err = pages.saveExistingPagesToStorage(); err == nil {
 		if newChunks != nil {
 			chunks = append(chunks, newChunks...)
 		}
@@ -76,7 +76,7 @@ func (pages *ContinuousDirtyPages) flushAndSave(ctx context.Context, offset int6
 	}
 
 	// flush the new page
-	if chunk, err = pages.saveToStorage(ctx, bytes.NewReader(data), offset, int64(len(data))); err == nil {
+	if chunk, err = pages.saveToStorage(bytes.NewReader(data), offset, int64(len(data))); err == nil {
 		if chunk != nil {
 			glog.V(4).Infof("%s/%s flush big request [%d,%d) to %s", pages.f.dir.Path, pages.f.Name, chunk.Offset, chunk.Offset+int64(chunk.Size), chunk.FileId)
 			chunks = append(chunks, chunk)
@@ -89,22 +89,22 @@ func (pages *ContinuousDirtyPages) flushAndSave(ctx context.Context, offset int6
 	return
 }
 
-func (pages *ContinuousDirtyPages) FlushToStorage(ctx context.Context) (chunks []*filer_pb.FileChunk, err error) {
+func (pages *ContinuousDirtyPages) FlushToStorage() (chunks []*filer_pb.FileChunk, err error) {
 
 	pages.lock.Lock()
 	defer pages.lock.Unlock()
 
-	return pages.saveExistingPagesToStorage(ctx)
+	return pages.saveExistingPagesToStorage()
 }
 
-func (pages *ContinuousDirtyPages) saveExistingPagesToStorage(ctx context.Context) (chunks []*filer_pb.FileChunk, err error) {
+func (pages *ContinuousDirtyPages) saveExistingPagesToStorage() (chunks []*filer_pb.FileChunk, err error) {
 
 	var hasSavedData bool
 	var chunk *filer_pb.FileChunk
 
 	for {
 
-		chunk, hasSavedData, err = pages.saveExistingLargestPageToStorage(ctx)
+		chunk, hasSavedData, err = pages.saveExistingLargestPageToStorage()
 		if !hasSavedData {
 			return chunks, err
 		}
@@ -118,14 +118,14 @@ func (pages *ContinuousDirtyPages) saveExistingPagesToStorage(ctx context.Contex
 
 }
 
-func (pages *ContinuousDirtyPages) saveExistingLargestPageToStorage(ctx context.Context) (chunk *filer_pb.FileChunk, hasSavedData bool, err error) {
+func (pages *ContinuousDirtyPages) saveExistingLargestPageToStorage() (chunk *filer_pb.FileChunk, hasSavedData bool, err error) {
 
 	maxList := pages.intervals.RemoveLargestIntervalLinkedList()
 	if maxList == nil {
 		return nil, false, nil
 	}
 
-	chunk, err = pages.saveToStorage(ctx, maxList.ToReader(), maxList.Offset(), maxList.Size())
+	chunk, err = pages.saveToStorage(maxList.ToReader(), maxList.Offset(), maxList.Size())
 	if err == nil {
 		hasSavedData = true
 		glog.V(3).Infof("%s saveToStorage [%d,%d) %s", pages.f.fullpath(), maxList.Offset(), maxList.Offset()+maxList.Size(), chunk.FileId)
@@ -137,14 +137,14 @@ func (pages *ContinuousDirtyPages) saveExistingLargestPageToStorage(ctx context.
 	return
 }
 
-func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context, reader io.Reader, offset int64, size int64) (*filer_pb.FileChunk, error) {
+func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64, size int64) (*filer_pb.FileChunk, error) {
 
 	var fileId, host string
 	var auth security.EncodedJwt
 
 	dir, _ := pages.f.fullpath().DirAndName()
 
-	if err := pages.f.wfs.WithFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+	if err := pages.f.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AssignVolumeRequest{
 			Count:       1,
@@ -155,7 +155,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context, reader io.
 			ParentPath:  dir,
 		}
 
-		resp, err := client.AssignVolume(ctx, request)
+		resp, err := client.AssignVolume(context.Background(), request)
 		if err != nil {
 			glog.V(0).Infof("assign volume failure %v: %v", request, err)
 			return err

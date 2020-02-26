@@ -157,7 +157,7 @@ func (s3sink *S3Sink) uploadPartCopy(key, uploadId string, partId int64, copySou
 }
 
 func (s3sink *S3Sink) buildReadSeeker(ctx context.Context, chunk *filer2.ChunkView) (io.ReadSeeker, error) {
-	fileUrl, err := s3sink.filerSource.LookupFileId(ctx, chunk.FileId)
+	fileUrl, err := s3sink.filerSource.LookupFileId(chunk.FileId)
 	if err != nil {
 		return nil, err
 	}

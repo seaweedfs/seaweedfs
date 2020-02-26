@@ -69,9 +69,8 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	}
 
 	var resp *master_pb.VolumeListResponse
-	ctx := context.Background()
-	err = commandEnv.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+		resp, err = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		return err
 	})
 	if err != nil {
@@ -239,8 +238,7 @@ func moveVolume(commandEnv *CommandEnv, v *master_pb.VolumeInformationMessage, f
 	}
 	fmt.Fprintf(os.Stdout, "moving volume %s%d %s => %s\n", collectionPrefix, v.Id, fullNode.info.Id, emptyNode.info.Id)
 	if applyBalancing {
-		ctx := context.Background()
-		return LiveMoveVolume(ctx, commandEnv.option.GrpcDialOption, needle.VolumeId(v.Id), fullNode.info.Id, emptyNode.info.Id, 5*time.Second)
+		return LiveMoveVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(v.Id), fullNode.info.Id, emptyNode.info.Id, 5*time.Second)
 	}
 	return nil
 }

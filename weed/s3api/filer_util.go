@@ -13,7 +13,7 @@ import (
 )
 
 func (s3a *S3ApiServer) mkdir(ctx context.Context, parentDirectoryPath string, dirName string, fn func(entry *filer_pb.Entry)) error {
-	return s3a.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	return s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		entry := &filer_pb.Entry{
 			Name:        dirName,
@@ -37,7 +37,7 @@ func (s3a *S3ApiServer) mkdir(ctx context.Context, parentDirectoryPath string, d
 		}
 
 		glog.V(1).Infof("mkdir: %v", request)
-		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
+		if err := filer_pb.CreateEntry(client, request); err != nil {
 			glog.V(0).Infof("mkdir %v: %v", request, err)
 			return fmt.Errorf("mkdir %s/%s: %v", parentDirectoryPath, dirName, err)
 		}
@@ -47,7 +47,7 @@ func (s3a *S3ApiServer) mkdir(ctx context.Context, parentDirectoryPath string, d
 }
 
 func (s3a *S3ApiServer) mkFile(ctx context.Context, parentDirectoryPath string, fileName string, chunks []*filer_pb.FileChunk) error {
-	return s3a.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	return s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		entry := &filer_pb.Entry{
 			Name:        fileName,
@@ -68,7 +68,7 @@ func (s3a *S3ApiServer) mkFile(ctx context.Context, parentDirectoryPath string, 
 		}
 
 		glog.V(1).Infof("create file: %s/%s", parentDirectoryPath, fileName)
-		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
+		if err := filer_pb.CreateEntry(client, request); err != nil {
 			glog.V(0).Infof("create file %v:%v", request, err)
 			return fmt.Errorf("create file %s/%s: %v", parentDirectoryPath, fileName, err)
 		}
@@ -79,7 +79,7 @@ func (s3a *S3ApiServer) mkFile(ctx context.Context, parentDirectoryPath string, 
 
 func (s3a *S3ApiServer) list(ctx context.Context, parentDirectoryPath, prefix, startFrom string, inclusive bool, limit int) (entries []*filer_pb.Entry, err error) {
 
-	err = s3a.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	err = s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.ListEntriesRequest{
 			Directory:          parentDirectoryPath,
@@ -119,7 +119,7 @@ func (s3a *S3ApiServer) list(ctx context.Context, parentDirectoryPath, prefix, s
 
 func (s3a *S3ApiServer) rm(ctx context.Context, parentDirectoryPath string, entryName string, isDirectory, isDeleteData, isRecursive bool) error {
 
-	return s3a.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	return s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.DeleteEntryRequest{
 			Directory:    parentDirectoryPath,
@@ -143,7 +143,7 @@ func (s3a *S3ApiServer) streamRemove(ctx context.Context, quiet bool,
 	fn func() (finished bool, parentDirectoryPath string, entryName string, isDeleteData, isRecursive bool),
 	respFn func(err string)) error {
 
-	return s3a.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	return s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		stream, err := client.StreamDeleteEntries(ctx)
 		if err != nil {
@@ -196,7 +196,7 @@ func (s3a *S3ApiServer) streamRemove(ctx context.Context, quiet bool,
 
 func (s3a *S3ApiServer) exists(ctx context.Context, parentDirectoryPath string, entryName string, isDirectory bool) (exists bool, err error) {
 
-	err = s3a.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	err = s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parentDirectoryPath,

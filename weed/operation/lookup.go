@@ -99,12 +99,12 @@ func LookupVolumeIds(server string, grpcDialOption grpc.DialOption, vids []strin
 
 	//only query unknown_vids
 
-	err := WithMasterServerClient(server, grpcDialOption, func(ctx context.Context, masterClient master_pb.SeaweedClient) error {
+	err := WithMasterServerClient(server, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
 		req := &master_pb.LookupVolumeRequest{
 			VolumeIds: unknown_vids,
 		}
-		resp, grpcErr := masterClient.LookupVolume(ctx, req)
+		resp, grpcErr := masterClient.LookupVolume(context.Background(), req)
 		if grpcErr != nil {
 			return grpcErr
 		}
