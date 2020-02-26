@@ -50,7 +50,6 @@ func (g *GcsSink) initialize(google_application_credentials, bucketName, dir str
 	g.bucket = bucketName
 	g.dir = dir
 
-	ctx := context.Background()
 	// Creates a client.
 	if google_application_credentials == "" {
 		var found bool
@@ -59,7 +58,7 @@ func (g *GcsSink) initialize(google_application_credentials, bucketName, dir str
 			glog.Fatalf("need to specific GOOGLE_APPLICATION_CREDENTIALS env variable or google_application_credentials in replication.toml")
 		}
 	}
-	client, err := storage.NewClient(ctx, option.WithCredentialsFile(google_application_credentials))
+	client, err := storage.NewClient(context.Background(), option.WithCredentialsFile(google_application_credentials))
 	if err != nil {
 		glog.Fatalf("Failed to create client: %v", err)
 	}

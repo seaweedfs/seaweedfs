@@ -107,7 +107,7 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId) 
 	}
 
 	// balance the ec shards to current cluster
-	err = spreadEcShards(context.Background(), commandEnv, vid, collection, locations)
+	err = spreadEcShards(commandEnv, vid, collection, locations)
 	if err != nil {
 		return fmt.Errorf("spread ec shards for volume %d from %s: %v", vid, locations[0].Url, err)
 	}
@@ -149,7 +149,7 @@ func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, 
 
 }
 
-func spreadEcShards(ctx context.Context, commandEnv *CommandEnv, volumeId needle.VolumeId, collection string, existingLocations []wdclient.Location) (err error) {
+func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection string, existingLocations []wdclient.Location) (err error) {
 
 	allEcNodes, totalFreeEcSlots, err := collectEcNodes(commandEnv, "")
 	if err != nil {

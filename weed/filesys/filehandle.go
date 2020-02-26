@@ -53,9 +53,9 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	buff := make([]byte, req.Size)
 
-	totalRead, err := fh.readFromChunks(ctx, buff, req.Offset)
+	totalRead, err := fh.readFromChunks(buff, req.Offset)
 	if err == nil {
-		dirtyOffset, dirtySize := fh.readFromDirtyPages(ctx, buff, req.Offset)
+		dirtyOffset, dirtySize := fh.readFromDirtyPages(buff, req.Offset)
 		if totalRead+req.Offset < dirtyOffset+int64(dirtySize) {
 			totalRead = dirtyOffset + int64(dirtySize) - req.Offset
 		}
@@ -71,11 +71,11 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	return err
 }
 
-func (fh *FileHandle) readFromDirtyPages(ctx context.Context, buff []byte, startOffset int64) (offset int64, size int) {
-	return fh.dirtyPages.ReadDirtyData(ctx, buff, startOffset)
+func (fh *FileHandle) readFromDirtyPages(buff []byte, startOffset int64) (offset int64, size int) {
+	return fh.dirtyPages.ReadDirtyData(buff, startOffset)
 }
 
-func (fh *FileHandle) readFromChunks(ctx context.Context, buff []byte, offset int64) (int64, error) {
+func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 	// this value should come from the filer instead of the old f
 	if len(fh.f.entry.Chunks) == 0 {
@@ -106,7 +106,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 	fh.f.entry.Attributes.FileSize = uint64(max(req.Offset+int64(len(req.Data)), int64(fh.f.entry.Attributes.FileSize)))
 	// glog.V(0).Infof("%v write [%d,%d)", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)))
 
-	chunks, err := fh.dirtyPages.AddPage(ctx, req.Offset, req.Data)
+	chunks, err := fh.dirtyPages.AddPage(req.Offset, req.Data)
 	if err != nil {
 		glog.Errorf("%v write fh %d: [%d,%d): %v", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(len(req.Data)), err)
 		return fuse.EIO

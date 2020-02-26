@@ -1,7 +1,6 @@
 package s3api
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -27,7 +26,7 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 	bucket = vars["bucket"]
 	object = vars["object"]
 
-	response, errCode := s3a.createMultipartUpload(context.Background(), &s3.CreateMultipartUploadInput{
+	response, errCode := s3a.createMultipartUpload(&s3.CreateMultipartUploadInput{
 		Bucket: aws.String(bucket),
 		Key:    objectKey(aws.String(object)),
 	})
@@ -52,7 +51,7 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 	// Get upload id.
 	uploadID, _, _, _ := getObjectResources(r.URL.Query())
 
-	response, errCode := s3a.completeMultipartUpload(context.Background(), &s3.CompleteMultipartUploadInput{
+	response, errCode := s3a.completeMultipartUpload(&s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(bucket),
 		Key:      objectKey(aws.String(object)),
 		UploadId: aws.String(uploadID),
@@ -78,7 +77,7 @@ func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *ht
 	// Get upload id.
 	uploadID, _, _, _ := getObjectResources(r.URL.Query())
 
-	response, errCode := s3a.abortMultipartUpload(context.Background(), &s3.AbortMultipartUploadInput{
+	response, errCode := s3a.abortMultipartUpload(&s3.AbortMultipartUploadInput{
 		Bucket:   aws.String(bucket),
 		Key:      objectKey(aws.String(object)),
 		UploadId: aws.String(uploadID),
@@ -113,7 +112,7 @@ func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *ht
 		}
 	}
 
-	response, errCode := s3a.listMultipartUploads(context.Background(), &s3.ListMultipartUploadsInput{
+	response, errCode := s3a.listMultipartUploads(&s3.ListMultipartUploadsInput{
 		Bucket:         aws.String(bucket),
 		Delimiter:      aws.String(delimiter),
 		EncodingType:   aws.String(encodingType),
@@ -150,7 +149,7 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	response, errCode := s3a.listObjectParts(context.Background(), &s3.ListPartsInput{
+	response, errCode := s3a.listObjectParts(&s3.ListPartsInput{
 		Bucket:           aws.String(bucket),
 		Key:              objectKey(aws.String(object)),
 		MaxParts:         aws.Int64(int64(maxParts)),
@@ -176,10 +175,8 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 
 	rAuthType := getRequestAuthType(r)
 
-	ctx := context.Background()
-
 	uploadID := r.URL.Query().Get("uploadId")
-	exists, err := s3a.exists(ctx, s3a.genUploadsFolder(bucket), uploadID, true)
+	exists, err := s3a.exists(s3a.genUploadsFolder(bucket), uploadID, true)
 	if !exists {
 		writeErrorResponse(w, ErrNoSuchUpload, r.URL)
 		return

@@ -1,7 +1,6 @@
 package s3api
 
 import (
-	"context"
 	"crypto/md5"
 	"encoding/json"
 	"encoding/xml"
@@ -170,7 +169,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 	var deletedObjects []ObjectIdentifier
 	var deleteErrors []DeleteError
-	s3a.streamRemove(context.Background(), deleteObjects.Quiet, func() (finished bool, parentDirectoryPath string, entryName string, isDeleteData, isRecursive bool) {
+	s3a.streamRemove(deleteObjects.Quiet, func() (finished bool, parentDirectoryPath string, entryName string, isDeleteData, isRecursive bool) {
 		if index >= len(deleteObjects.Objects) {
 			finished = true
 			return

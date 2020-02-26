@@ -232,9 +232,8 @@ func (fs *FilerServer) StreamDeleteEntries(stream filer_pb.SeaweedFiler_StreamDe
 		if err != nil {
 			return fmt.Errorf("receive delete entry request: %v", err)
 		}
-		ctx := context.Background()
 		fullpath := filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name)))
-		err = fs.filer.DeleteEntryMetaAndData(ctx, fullpath, req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData)
+		err = fs.filer.DeleteEntryMetaAndData(context.Background(), fullpath, req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData)
 		resp := &filer_pb.DeleteEntryResponse{}
 		if err != nil {
 			resp.Error = err.Error()

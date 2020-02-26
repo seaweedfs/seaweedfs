@@ -45,8 +45,7 @@ func (g *B2Sink) SetSourceFiler(s *source.FilerSource) {
 }
 
 func (g *B2Sink) initialize(accountId, accountKey, bucket, dir string) error {
-	ctx := context.Background()
-	client, err := b2.NewClient(ctx, accountId, accountKey)
+	client, err := b2.NewClient(context.Background(), accountId, accountKey)
 	if err != nil {
 		return err
 	}

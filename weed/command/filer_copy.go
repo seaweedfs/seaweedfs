@@ -107,9 +107,7 @@ func runCopy(cmd *Command, args []string) bool {
 	filerGrpcAddress := fmt.Sprintf("%s:%d", filerUrl.Hostname(), filerGrpcPort)
 	copy.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
-	ctx := context.Background()
-
-	masters, collection, replication, maxMB, err := readFilerConfiguration(ctx, copy.grpcDialOption, filerGrpcAddress)
+	masters, collection, replication, maxMB, err := readFilerConfiguration(copy.grpcDialOption, filerGrpcAddress)
 	if err != nil {
 		fmt.Printf("read from filer %s: %v\n", filerGrpcAddress, err)
 		return false
@@ -149,7 +147,7 @@ func runCopy(cmd *Command, args []string) bool {
 				filerHost:        filerUrl.Host,
 				filerGrpcAddress: filerGrpcAddress,
 			}
-			if err := worker.copyFiles(ctx, fileCopyTaskChan); err != nil {
+			if err := worker.copyFiles(fileCopyTaskChan); err != nil {
 				fmt.Fprintf(os.Stderr, "copy file error: %v\n", err)
 				return
 			}
@@ -160,9 +158,9 @@ func runCopy(cmd *Command, args []string) bool {
 	return true
 }
 
-func readFilerConfiguration(ctx context.Context, grpcDialOption grpc.DialOption, filerGrpcAddress string) (masters []string, collection, replication string, maxMB uint32, err error) {
+func readFilerConfiguration(grpcDialOption grpc.DialOption, filerGrpcAddress string) (masters []string, collection, replication string, maxMB uint32, err error) {
 	err = withFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
+		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
 		}
@@ -211,9 +209,9 @@ type FileCopyWorker struct {
 	filerGrpcAddress string
 }
 
-func (worker *FileCopyWorker) copyFiles(ctx context.Context, fileCopyTaskChan chan FileCopyTask) error {
+func (worker *FileCopyWorker) copyFiles(fileCopyTaskChan chan FileCopyTask) error {
 	for task := range fileCopyTaskChan {
-		if err := worker.doEachCopy(ctx, task); err != nil {
+		if err := worker.doEachCopy(task); err != nil {
 			return err
 		}
 	}
@@ -229,7 +227,7 @@ type FileCopyTask struct {
 	gid                uint32
 }
 
-func (worker *FileCopyWorker) doEachCopy(ctx context.Context, task FileCopyTask) error {
+func (worker *FileCopyWorker) doEachCopy(task FileCopyTask) error {
 
 	f, err := os.Open(task.sourceLocation)
 	if err != nil {

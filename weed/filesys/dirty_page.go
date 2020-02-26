@@ -34,7 +34,7 @@ func (pages *ContinuousDirtyPages) releaseResource() {
 
 var counter = int32(0)
 
-func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, data []byte) (chunks []*filer_pb.FileChunk, err error) {
+func (pages *ContinuousDirtyPages) AddPage(offset int64, data []byte) (chunks []*filer_pb.FileChunk, err error) {
 
 	pages.lock.Lock()
 	defer pages.lock.Unlock()
@@ -43,7 +43,7 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 
 	if len(data) > int(pages.f.wfs.option.ChunkSizeLimit) {
 		// this is more than what buffer can hold.
-		return pages.flushAndSave(ctx, offset, data)
+		return pages.flushAndSave(offset, data)
 	}
 
 	pages.intervals.AddInterval(data, offset)
@@ -61,7 +61,7 @@ func (pages *ContinuousDirtyPages) AddPage(ctx context.Context, offset int64, da
 	return
 }
 
-func (pages *ContinuousDirtyPages) flushAndSave(ctx context.Context, offset int64, data []byte) (chunks []*filer_pb.FileChunk, err error) {
+func (pages *ContinuousDirtyPages) flushAndSave(offset int64, data []byte) (chunks []*filer_pb.FileChunk, err error) {
 
 	var chunk *filer_pb.FileChunk
 	var newChunks []*filer_pb.FileChunk
@@ -206,7 +206,7 @@ func min(x, y int64) int64 {
 	return y
 }
 
-func (pages *ContinuousDirtyPages) ReadDirtyData(ctx context.Context, data []byte, startOffset int64) (offset int64, size int) {
+func (pages *ContinuousDirtyPages) ReadDirtyData(data []byte, startOffset int64) (offset int64, size int) {
 
 	pages.lock.Lock()
 	defer pages.lock.Unlock()

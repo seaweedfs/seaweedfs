@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -160,11 +159,9 @@ func collectRacks(allEcNodes []*EcNode) map[RackId]*EcRack {
 
 func balanceEcVolumes(commandEnv *CommandEnv, collection string, allEcNodes []*EcNode, racks map[RackId]*EcRack, applyBalancing bool) error {
 
-	ctx := context.Background()
-
 	fmt.Printf("balanceEcVolumes %s\n", collection)
 
-	if err := deleteDuplicatedEcShards(ctx, commandEnv, allEcNodes, collection, applyBalancing); err != nil {
+	if err := deleteDuplicatedEcShards(commandEnv, allEcNodes, collection, applyBalancing); err != nil {
 		return fmt.Errorf("delete duplicated collection %s ec shards: %v", collection, err)
 	}
 
@@ -179,7 +176,7 @@ func balanceEcVolumes(commandEnv *CommandEnv, collection string, allEcNodes []*E
 	return nil
 }
 
-func deleteDuplicatedEcShards(ctx context.Context, commandEnv *CommandEnv, allEcNodes []*EcNode, collection string, applyBalancing bool) error {
+func deleteDuplicatedEcShards(commandEnv *CommandEnv, allEcNodes []*EcNode, collection string, applyBalancing bool) error {
 	// vid => []ecNode
 	vidLocations := collectVolumeIdToEcNodes(allEcNodes)
 	// deduplicate ec shards

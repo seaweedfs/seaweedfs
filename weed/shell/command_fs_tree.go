@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -37,9 +36,7 @@ func (c *commandFsTree) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 
 	dir, name := filer2.FullPath(path).DirAndName()
 
-	ctx := context.Background()
-
-	dirCount, fCount, terr := treeTraverseDirectory(ctx, writer, commandEnv.getFilerClient(filerServer, filerPort), filer2.FullPath(dir), name, newPrefix(), -1)
+	dirCount, fCount, terr := treeTraverseDirectory(writer, commandEnv.getFilerClient(filerServer, filerPort), filer2.FullPath(dir), name, newPrefix(), -1)
 
 	if terr == nil {
 		fmt.Fprintf(writer, "%d directories, %d files\n", dirCount, fCount)
@@ -49,7 +46,7 @@ func (c *commandFsTree) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 
 }
 
-func treeTraverseDirectory(ctx context.Context, writer io.Writer, filerClient filer2.FilerClient, dir filer2.FullPath, name string, prefix *Prefix, level int) (directoryCount, fileCount int64, err error) {
+func treeTraverseDirectory(writer io.Writer, filerClient filer2.FilerClient, dir filer2.FullPath, name string, prefix *Prefix, level int) (directoryCount, fileCount int64, err error) {
 
 	prefix.addMarker(level)
 
@@ -65,7 +62,7 @@ func treeTraverseDirectory(ctx context.Context, writer io.Writer, filerClient fi
 		if entry.IsDirectory {
 			directoryCount++
 			subDir := dir.Child(entry.Name)
-			dirCount, fCount, terr := treeTraverseDirectory(ctx, writer, filerClient, subDir, "", prefix, level+1)
+			dirCount, fCount, terr := treeTraverseDirectory(writer, filerClient, subDir, "", prefix, level+1)
 			directoryCount += dirCount
 			fileCount += fCount
 			err = terr

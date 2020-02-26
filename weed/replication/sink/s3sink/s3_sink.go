@@ -113,7 +113,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
 		wg.Add(1)
 		go func(chunk *filer2.ChunkView) {
 			defer wg.Done()
-			if part, uploadErr := s3sink.uploadPart(context.Background(), key, uploadId, partId, chunk); uploadErr != nil {
+			if part, uploadErr := s3sink.uploadPart(key, uploadId, partId, chunk); uploadErr != nil {
 				err = uploadErr
 			} else {
 				parts = append(parts, part)

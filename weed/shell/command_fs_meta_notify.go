@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"context"
 	"fmt"
 	"io"
 
@@ -43,11 +42,9 @@ func (c *commandFsMetaNotify) Do(args []string, commandEnv *CommandEnv, writer i
 	v := util.GetViper()
 	notification.LoadConfiguration(v, "notification.")
 
-	ctx := context.Background()
-
 	var dirCount, fileCount uint64
 
-	err = doTraverseBFS(ctx, writer, commandEnv.getFilerClient(filerServer, filerPort), filer2.FullPath(path), func(parentPath filer2.FullPath, entry *filer_pb.Entry) {
+	err = doTraverseBFS(writer, commandEnv.getFilerClient(filerServer, filerPort), filer2.FullPath(path), func(parentPath filer2.FullPath, entry *filer_pb.Entry) {
 
 		if entry.IsDirectory {
 			dirCount++

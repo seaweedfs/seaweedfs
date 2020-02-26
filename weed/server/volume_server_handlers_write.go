@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -98,7 +97,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	ecVolume, hasEcVolume := vs.store.FindEcVolume(volumeId)
 
 	if hasEcVolume {
-		count, err := vs.store.DeleteEcShardNeedle(context.Background(), ecVolume, n, cookie)
+		count, err := vs.store.DeleteEcShardNeedle(ecVolume, n, cookie)
 		writeDeleteResult(err, count, w, r)
 		return
 	}

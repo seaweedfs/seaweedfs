@@ -60,8 +60,7 @@ func (k *GoCDKPubSub) SendMessage(key string, message proto.Message) error {
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
-	err = k.topic.Send(ctx, &pubsub.Message{
+	err = k.topic.Send(context.Background(), &pubsub.Message{
 		Body:     bytes,
 		Metadata: map[string]string{"key": key},
 	})

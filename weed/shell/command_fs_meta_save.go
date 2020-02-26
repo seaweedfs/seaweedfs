@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -59,8 +58,6 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 		return parseErr
 	}
 
-	ctx := context.Background()
-
 	t := time.Now()
 	fileName := *outputFileName
 	if fileName == "" {
@@ -89,7 +86,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	var dirCount, fileCount uint64
 
-	err = doTraverseBFS(ctx, writer, commandEnv.getFilerClient(filerServer, filerPort), filer2.FullPath(path), func(parentPath filer2.FullPath, entry *filer_pb.Entry) {
+	err = doTraverseBFS(writer, commandEnv.getFilerClient(filerServer, filerPort), filer2.FullPath(path), func(parentPath filer2.FullPath, entry *filer_pb.Entry) {
 
 		protoMessage := &filer_pb.FullEntry{
 			Dir:   string(parentPath),
@@ -128,8 +125,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	return err
 
 }
-func doTraverseBFS(ctx context.Context, writer io.Writer, filerClient filer2.FilerClient,
-	parentPath filer2.FullPath, fn func(parentPath filer2.FullPath, entry *filer_pb.Entry)) (err error) {
+func doTraverseBFS(writer io.Writer, filerClient filer2.FilerClient, parentPath filer2.FullPath, fn func(parentPath filer2.FullPath, entry *filer_pb.Entry)) (err error) {
 
 	K := 5
 
@@ -151,7 +147,7 @@ func doTraverseBFS(ctx context.Context, writer io.Writer, filerClient filer2.Fil
 					continue
 				}
 				dir := t.(filer2.FullPath)
-				processErr := processOneDirectory(ctx, writer, filerClient, dir, queue, &jobQueueWg, fn)
+				processErr := processOneDirectory(writer, filerClient, dir, queue, &jobQueueWg, fn)
 				if processErr != nil {
 					err = processErr
 				}
@@ -164,9 +160,7 @@ func doTraverseBFS(ctx context.Context, writer io.Writer, filerClient filer2.Fil
 	return
 }
 
-func processOneDirectory(ctx context.Context, writer io.Writer, filerClient filer2.FilerClient,
-	parentPath filer2.FullPath, queue *util.Queue, jobQueueWg *sync.WaitGroup,
-	fn func(parentPath filer2.FullPath, entry *filer_pb.Entry)) (err error) {
+func processOneDirectory(writer io.Writer, filerClient filer2.FilerClient, parentPath filer2.FullPath, queue *util.Queue, jobQueueWg *sync.WaitGroup, fn func(parentPath filer2.FullPath, entry *filer_pb.Entry)) (err error) {
 
 	return filer2.ReadDirAllEntries(filerClient, parentPath, "", func(entry *filer_pb.Entry, isLast bool) {
 

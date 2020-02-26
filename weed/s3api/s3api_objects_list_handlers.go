@@ -43,9 +43,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		marker = startAfter
 	}
 
-	ctx := context.Background()
-
-	response, err := s3a.listFilerEntries(ctx, bucket, originalPrefix, maxKeys, marker)
+	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker)
 
 	if err != nil {
 		writeErrorResponse(w, ErrInternalError, r.URL)
@@ -63,8 +61,6 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
-	ctx := context.Background()
-
 	originalPrefix, marker, delimiter, maxKeys := getListObjectsV1Args(r.URL.Query())
 
 	if maxKeys < 0 {
@@ -76,7 +72,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	response, err := s3a.listFilerEntries(ctx, bucket, originalPrefix, maxKeys, marker)
+	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker)
 
 	if err != nil {
 		writeErrorResponse(w, ErrInternalError, r.URL)
@@ -86,7 +82,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	writeSuccessResponseXML(w, encodeResponse(response))
 }
 
-func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket, originalPrefix string, maxKeys int, marker string) (response ListBucketResult, err error) {
+func (s3a *S3ApiServer) listFilerEntries(bucket, originalPrefix string, maxKeys int, marker string) (response ListBucketResult, err error) {
 
 	// convert full path prefix into directory name and prefix for entry name
 	dir, prefix := filepath.Split(originalPrefix)
@@ -105,7 +101,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket, originalPr
 			InclusiveStartFrom: false,
 		}
 
-		stream, err := client.ListEntries(ctx, request)
+		stream, err := client.ListEntries(context.Background(), request)
 		if err != nil {
 			return fmt.Errorf("list buckets: %v", err)
 		}
