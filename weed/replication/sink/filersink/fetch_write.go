@@ -80,6 +80,9 @@ func (fs *FilerSink) fetchAndWrite(ctx context.Context, sourceChunk *filer_pb.Fi
 			glog.V(0).Infof("assign volume failure %v: %v", request, err)
 			return err
 		}
+		if resp.Error != "" {
+			return fmt.Errorf("assign volume failure %v: %v", request, resp.Error)
+		}
 
 		fileId, host, auth = resp.FileId, resp.Url, security.EncodedJwt(resp.Auth)
 

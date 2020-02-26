@@ -290,6 +290,9 @@ func (worker *FileCopyWorker) uploadFileAsOne(ctx context.Context, task FileCopy
 			if assignError != nil {
 				return fmt.Errorf("assign volume failure %v: %v", request, assignError)
 			}
+			if assignResult.Error != "" {
+				return fmt.Errorf("assign volume failure %v: %v", request, assignResult.Error)
+			}
 			return nil
 		})
 		if err != nil {
@@ -386,6 +389,9 @@ func (worker *FileCopyWorker) uploadFileInChunks(ctx context.Context, task FileC
 				assignResult, assignError = client.AssignVolume(ctx, request)
 				if assignError != nil {
 					return fmt.Errorf("assign volume failure %v: %v", request, assignError)
+				}
+				if assignResult.Error != "" {
+					return fmt.Errorf("assign volume failure %v: %v", request, assignResult.Error)
 				}
 				return nil
 			})

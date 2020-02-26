@@ -180,6 +180,7 @@ message AssignVolumeResponse {
     string auth = 5;
     string collection = 6;
     string replication = 7;
+    string error = 8;
 }
 
 message LookupVolumeRequest {

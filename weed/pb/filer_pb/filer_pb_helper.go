@@ -73,11 +73,11 @@ func AfterEntryDeserialization(chunks []*FileChunk) {
 
 func CreateEntry(ctx context.Context, client SeaweedFilerClient, request *CreateEntryRequest) error {
 	resp, err := client.CreateEntry(ctx, request)
-	if err == nil && resp.Error != "" {
-		return fmt.Errorf("CreateEntry: %v", resp.Error)
-	}
 	if err != nil {
 		return fmt.Errorf("CreateEntry: %v", err)
+	}
+	if resp.Error != "" {
+		return fmt.Errorf("CreateEntry: %v", resp.Error)
 	}
 	return err
 }

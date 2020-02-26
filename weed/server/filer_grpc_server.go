@@ -280,11 +280,11 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 	assignResult, err := operation.Assign(fs.filer.GetMaster(), fs.grpcDialOption, assignRequest, altRequest)
 	if err != nil {
 		glog.V(3).Infof("AssignVolume: %v", err)
-		return nil, fmt.Errorf("assign volume: %v", err)
+		return &filer_pb.AssignVolumeResponse{Error: fmt.Sprintf("assign volume: %v", err)}, nil
 	}
 	if assignResult.Error != "" {
 		glog.V(3).Infof("AssignVolume error: %v", assignResult.Error)
-		return nil, fmt.Errorf("assign volume result: %v", assignResult.Error)
+		return &filer_pb.AssignVolumeResponse{Error: fmt.Sprintf("assign volume result: %v", assignResult.Error)}, nil
 	}
 
 	return &filer_pb.AssignVolumeResponse{
@@ -295,7 +295,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 		Auth:        string(assignResult.Auth),
 		Collection:  collection,
 		Replication: replication,
-	}, err
+	}, nil
 }
 
 func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.DeleteCollectionRequest) (resp *filer_pb.DeleteCollectionResponse, err error) {

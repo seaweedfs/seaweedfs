@@ -160,6 +160,9 @@ func (pages *ContinuousDirtyPages) saveToStorage(ctx context.Context, reader io.
 			glog.V(0).Infof("assign volume failure %v: %v", request, err)
 			return err
 		}
+		if resp.Error != "" {
+			return fmt.Errorf("assign volume failure %v: %v", request, resp.Error)
+		}
 
 		fileId, host, auth = resp.FileId, resp.Url, security.EncodedJwt(resp.Auth)
 		pages.collection, pages.replication = resp.Collection, resp.Replication

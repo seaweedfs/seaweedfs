@@ -400,6 +400,9 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 			glog.V(0).Infof("assign volume failure %v: %v", request, err)
 			return err
 		}
+		if resp.Error != "" {
+			return fmt.Errorf("assign volume failure %v: %v", request, resp.Error)
+		}
 
 		fileId, host, auth = resp.FileId, resp.Url, security.EncodedJwt(resp.Auth)
 		collection, replication = resp.Collection, resp.Replication
