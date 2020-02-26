@@ -142,14 +142,12 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 	}
 
 	// try to connect to filer, filerBucketsPath may be useful later
-	filerBucketsPath := "/buckets"
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	err = withFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+		_, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
 		}
-		filerBucketsPath = resp.DirBuckets
 		return nil
 	})
 	if err != nil {
