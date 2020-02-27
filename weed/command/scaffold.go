@@ -387,6 +387,11 @@ sequencer_etcd_urls = "http://127.0.0.1:2379"
 	bucket = "your_bucket_name"    # an existing bucket
 
 # create this number of logical volumes if no more writable volumes
+# count_x means how many copies of data.
+# e.g.:
+#   000 has only one copy, count_1
+#   010 and 001 has two copies, count_2
+#   011 has only 3 copies, count_3
 [master.volume_growth]
 count_1 = 7                # create 1 x 7 = 7 actual volumes
 count_2 = 6                # create 2 x 6 = 12 actual volumes
