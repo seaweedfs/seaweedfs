@@ -28,7 +28,7 @@ services:
     image: chrislusf/seaweedfs:local
     ports:
       - 8333:8333
-    command: '-v=4 s3 -filer="filer:8888" -waitForFiler'
+    command: '-v=4 s3 -filer="filer:8888"'
     depends_on:
       - master
       - volume

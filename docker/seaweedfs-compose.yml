@@ -40,7 +40,7 @@ services:
     image: chrislusf/seaweedfs # use a remote image
     ports:
       - 8333:8333
-    command: 's3 -filer="filer:8888" -waitForFiler'
+    command: 's3 -filer="filer:8888"'
     depends_on:
       - master
       - volume
