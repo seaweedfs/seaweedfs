@@ -91,8 +91,10 @@ func (v *Volume) CommitCompact() error {
 
 	glog.V(3).Infof("Got volume %d committing lock...", v.Id)
 	v.nm.Close()
-	if err := v.DataBackend.Close(); err != nil {
-		glog.V(0).Infof("fail to close volume %d", v.Id)
+	if v.DataBackend != nil {
+		if err := v.DataBackend.Close(); err != nil {
+			glog.V(0).Infof("fail to close volume %d", v.Id)
+		}
 	}
 	v.DataBackend = nil
 	stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume").Dec()
