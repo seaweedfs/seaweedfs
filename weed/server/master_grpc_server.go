@@ -3,16 +3,16 @@ package weed_server
 import (
 	"fmt"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/chrislusf/raft"
+	"google.golang.org/grpc/peer"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/topology"
-	"google.golang.org/grpc/peer"
 )
 
 func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
@@ -61,14 +61,6 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		t.Sequence.SetMax(heartbeat.MaxFileKey)
 
 		if dn == nil {
-			if heartbeat.Ip == "" {
-				if pr, ok := peer.FromContext(stream.Context()); ok {
-					if pr.Addr != net.Addr(nil) {
-						heartbeat.Ip = pr.Addr.String()[0:strings.LastIndex(pr.Addr.String(), ":")]
-						glog.V(0).Infof("remote IP address is detected as %v", heartbeat.Ip)
-					}
-				}
-			}
 			dcName, rackName := t.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
 			dc := t.GetOrCreateDataCenter(dcName)
 			rack := dc.GetOrCreateRack(rackName)
