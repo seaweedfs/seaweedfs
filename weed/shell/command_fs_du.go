@@ -105,3 +105,6 @@ func (env *CommandEnv) getFilerClient(filerServer string, filerPort int64) *comm
 func (c *commandFilerClient) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 	return c.env.withFilerClient(c.filerServer, c.filerPort, fn)
 }
+func (c *commandFilerClient) AdjustedUrl(hostAndPort string) string {
+	return hostAndPort
+}

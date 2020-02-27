@@ -165,6 +165,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 		}
 
 		fileId, host, auth = resp.FileId, resp.Url, security.EncodedJwt(resp.Auth)
+		host = pages.f.wfs.AdjustedUrl(host)
 		pages.collection, pages.replication = resp.Collection, resp.Replication
 
 		return nil

@@ -7,17 +7,18 @@ import (
 )
 
 type MountOptions struct {
-	filer              *string
-	filerMountRootPath *string
-	dir                *string
-	dirListCacheLimit  *int64
-	collection         *string
-	replication        *string
-	ttlSec             *int
-	chunkSizeLimitMB   *int
-	dataCenter         *string
-	allowOthers        *bool
-	umaskString        *string
+	filer                       *string
+	filerMountRootPath          *string
+	dir                         *string
+	dirListCacheLimit           *int64
+	collection                  *string
+	replication                 *string
+	ttlSec                      *int
+	chunkSizeLimitMB            *int
+	dataCenter                  *string
+	allowOthers                 *bool
+	umaskString                 *string
+	outsideContainerClusterMode *bool
 }
 
 var (
@@ -41,6 +42,7 @@ func init() {
 	mountOptions.umaskString = cmdMount.Flag.String("umask", "022", "octal umask, e.g., 022, 0111")
 	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
 	mountMemProfile = cmdMount.Flag.String("memprofile", "", "memory profile output file")
+	mountOptions.outsideContainerClusterMode = cmdMount.Flag.Bool("outsideContainerClusterMode", false, "allows other users to access the file system")
 }
 
 var cmdMount = &Command{
@@ -57,6 +59,12 @@ var cmdMount = &Command{
   Linux, and OS X.
 
   On OS X, it requires OSXFUSE (http://osxfuse.github.com/).
+
+  If the SeaweedFS systemm runs in a container cluster, e.g. managed by kubernetes or docker compose,
+  the volume servers are not accessible by their own ip addresses. 
+  In "outsideContainerClusterMode", the mount will use the filer ip address instead, assuming:
+    * All volume server containers are accessible through the same hostname or IP address as the filer.
+    * All volume server container ports are open external to the cluster.
 
   `,
 }

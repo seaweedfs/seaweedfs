@@ -23,6 +23,7 @@ func VolumeId(fileId string) string {
 
 type FilerClient interface {
 	WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error
+	AdjustedUrl(hostAndPort string) string
 }
 
 func ReadIntoBuffer(filerClient FilerClient, fullFilePath FullPath, buff []byte, chunkViews []*ChunkView, baseOffset int64) (totalRead int64, err error) {
@@ -67,9 +68,10 @@ func ReadIntoBuffer(filerClient FilerClient, fullFilePath FullPath, buff []byte,
 				return
 			}
 
+			volumeServerAddress := filerClient.AdjustedUrl(locations.Locations[0].Url)
 			var n int64
 			n, err = util.ReadUrl(
-				fmt.Sprintf("http://%s/%s", locations.Locations[0].Url, chunkView.FileId),
+				fmt.Sprintf("http://%s/%s", volumeServerAddress, chunkView.FileId),
 				chunkView.Offset,
 				int(chunkView.Size),
 				buff[chunkView.LogicOffset-baseOffset:chunkView.LogicOffset-baseOffset+int64(chunkView.Size)],
@@ -77,10 +79,10 @@ func ReadIntoBuffer(filerClient FilerClient, fullFilePath FullPath, buff []byte,
 
 			if err != nil {
 
-				glog.V(0).Infof("%v read http://%s/%v %v bytes: %v", fullFilePath, locations.Locations[0].Url, chunkView.FileId, n, err)
+				glog.V(0).Infof("%v read http://%s/%v %v bytes: %v", fullFilePath, volumeServerAddress, chunkView.FileId, n, err)
 
 				err = fmt.Errorf("failed to read http://%s/%s: %v",
-					locations.Locations[0].Url, chunkView.FileId, err)
+					volumeServerAddress, chunkView.FileId, err)
 				return
 			}
 

@@ -104,6 +104,9 @@ func (fs *WebDavFileSystem) WithFilerClient(fn func(filer_pb.SeaweedFilerClient)
 	}, fs.option.FilerGrpcAddress, fs.option.GrpcDialOption)
 
 }
+func (fs *WebDavFileSystem) AdjustedUrl(hostAndPort string) string {
+	return hostAndPort
+}
 
 func clearName(name string) (string, error) {
 	slashed := strings.HasSuffix(name, "/")

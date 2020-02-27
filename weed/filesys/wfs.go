@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +38,9 @@ type Option struct {
 	MountMode  os.FileMode
 	MountCtime time.Time
 	MountMtime time.Time
+
+	// whether the mount runs outside SeaweedFS containers
+	OutsideContainerClusterMode bool
 }
 
 var _ = fs.FS(&WFS{})
@@ -247,5 +251,17 @@ func (wfs *WFS) forgetNode(fullpath filer2.FullPath) {
 	defer wfs.nodesLock.Unlock()
 
 	delete(wfs.nodes, fullpath.AsInode())
+}
+
+func (wfs *WFS) AdjustedUrl(hostAndPort string) string {
+	if !wfs.option.OutsideContainerClusterMode {
+		return hostAndPort
+	}
+	commaIndex := strings.Index(hostAndPort, ":")
+	if commaIndex < 0 {
+		return hostAndPort
+	}
+	filerCommaIndex := strings.Index(wfs.option.FilerGrpcAddress, ":")
+	return fmt.Sprintf("%s:%s", wfs.option.FilerGrpcAddress[:filerCommaIndex], hostAndPort[commaIndex+1:])
 
 }

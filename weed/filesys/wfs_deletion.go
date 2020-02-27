@@ -3,11 +3,12 @@ package filesys
 import (
 	"context"
 
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"google.golang.org/grpc"
 )
 
 func (wfs *WFS) deleteFileChunks(chunks []*filer_pb.FileChunk) {
@@ -21,12 +22,12 @@ func (wfs *WFS) deleteFileChunks(chunks []*filer_pb.FileChunk) {
 	}
 
 	wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		deleteFileIds(wfs.option.GrpcDialOption, client, fileIds)
+		wfs.deleteFileIds(wfs.option.GrpcDialOption, client, fileIds)
 		return nil
 	})
 }
 
-func deleteFileIds(grpcDialOption grpc.DialOption, client filer_pb.SeaweedFilerClient, fileIds []string) error {
+func (wfs *WFS) deleteFileIds(grpcDialOption grpc.DialOption, client filer_pb.SeaweedFilerClient, fileIds []string) error {
 
 	var vids []string
 	for _, fileId := range fileIds {
@@ -56,7 +57,7 @@ func deleteFileIds(grpcDialOption grpc.DialOption, client filer_pb.SeaweedFilerC
 			}
 			for _, loc := range locations.Locations {
 				lr.Locations = append(lr.Locations, operation.Location{
-					Url:       loc.Url,
+					Url:       wfs.AdjustedUrl(loc.Url),
 					PublicUrl: loc.PublicUrl,
 				})
 			}
