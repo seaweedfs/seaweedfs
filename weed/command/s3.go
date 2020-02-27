@@ -127,18 +127,23 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
-	err = withFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+	for {
+		err = withFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+			if err != nil {
+				return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
+			}
+			filerBucketsPath = resp.DirBuckets
+			glog.V(0).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
+			return nil
+		})
 		if err != nil {
-			return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
+			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *s3opt.filer, filerGrpcAddress)
+			time.Sleep(time.Second)
+		} else {
+			glog.V(0).Infof("connected to filer %s grpc address %s", *s3opt.filer, filerGrpcAddress)
+			break
 		}
-		filerBucketsPath = resp.DirBuckets
-		glog.V(0).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
-		return nil
-	})
-	if err != nil {
-		glog.Fatal(err)
-		return false
 	}
 
 	router := mux.NewRouter().SkipClean(true)
