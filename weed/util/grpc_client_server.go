@@ -30,6 +30,7 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 		Timeout: 20 * time.Second, // ping timeout
 	}), grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 		MinTime: 60 * time.Second, // min time a client should wait before sending a ping
+		PermitWithoutStream: true,
 	}))
 	for _, opt := range opts {
 		if opt != nil {
@@ -48,6 +49,7 @@ func GrpcDial(ctx context.Context, address string, opts ...grpc.DialOption) (*gr
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:    30 * time.Second, // client ping server if no activity for this long
 			Timeout: 20 * time.Second,
+			PermitWithoutStream: true,
 		}))
 	for _, opt := range opts {
 		if opt != nil {
