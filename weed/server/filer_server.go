@@ -46,7 +46,6 @@ type FilerOption struct {
 	DisableHttp        bool
 	Port               int
 	recursiveDelete    bool
-	DirBucketsPath     string
 }
 
 type FilerServer struct {
@@ -67,7 +66,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Fatal("master list is required!")
 	}
 
-	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption, option.DirBucketsPath)
+	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption)
 
 	go fs.filer.KeepConnectedToMaster()
 
@@ -84,7 +83,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	fs.option.recursiveDelete = v.GetBool("filer.options.recursive_delete")
 	v.Set("filer.option.buckets_folder", "/buckets")
-	fs.option.DirBucketsPath = v.GetString("filer.option.buckets_folder")
+	v.Set("filer.option.queues_folder", "/queues")
+	fs.filer.DirBucketsPath = v.GetString("filer.option.buckets_folder")
+	fs.filer.DirQueuesPath = v.GetString("filer.option.queues_folder")
 	fs.filer.LoadConfiguration(v)
 
 	notification.LoadConfiguration(v, "notification.")
@@ -97,7 +98,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
 
-	fs.filer.LoadBuckets(fs.option.DirBucketsPath)
+	fs.filer.LoadBuckets(fs.filer.DirBucketsPath)
 
 	maybeStartMetrics(fs, option)
 

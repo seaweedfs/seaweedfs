@@ -31,10 +31,11 @@ type Filer struct {
 	fileIdDeletionQueue *util.UnboundedQueue
 	GrpcDialOption      grpc.DialOption
 	DirBucketsPath      string
+	DirQueuesPath       string
 	buckets             *FilerBuckets
 }
 
-func NewFiler(masters []string, grpcDialOption grpc.DialOption, bucketFolder string) *Filer {
+func NewFiler(masters []string, grpcDialOption grpc.DialOption) *Filer {
 	f := &Filer{
 		directoryCache:      ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
 		MasterClient:        wdclient.NewMasterClient(grpcDialOption, "filer", masters),

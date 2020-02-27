@@ -228,4 +228,5 @@ message GetFilerConfigurationResponse {
     string collection = 3;
     uint32 max_mb = 4;
     string dir_buckets = 5;
+    string dir_queues = 6;
 }

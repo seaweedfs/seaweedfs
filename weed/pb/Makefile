@@ -7,5 +7,6 @@ gen:
 	protoc volume_server.proto --go_out=plugins=grpc:./volume_server_pb
 	protoc filer.proto --go_out=plugins=grpc:./filer_pb
 	protoc iam.proto --go_out=plugins=grpc:./iam_pb
+	protoc queue.proto --go_out=plugins=grpc:./queue_pb
 	# protoc filer.proto --java_out=../../other/java/client/src/main/java
 	cp filer.proto ../../other/java/client/src/main/proto

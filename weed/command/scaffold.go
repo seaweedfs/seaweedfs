@@ -76,6 +76,8 @@ const (
 recursive_delete = false
 # directories under this folder will be automatically creating a separate bucket
 buckets_folder = /buckets
+# directories under this folder will be store message queue data
+queues_folder = /queues
 
 ####################################################
 # The following are filer store options
@@ -321,6 +323,10 @@ cert = ""
 key  = ""
 
 [grpc.filer]
+cert = ""
+key  = ""
+
+[grpc.queue]
 cert = ""
 key  = ""
 
