@@ -26,7 +26,7 @@ func isRequestSignatureV4(r *http.Request) bool {
 // Verify if request has AWS Signature Version '2'.
 func isRequestSignatureV2(r *http.Request) bool {
 	return !strings.HasPrefix(r.Header.Get("Authorization"), signV4Algorithm) &&
-			strings.HasPrefix(r.Header.Get("Authorization"), signV2Algorithm)
+		strings.HasPrefix(r.Header.Get("Authorization"), signV2Algorithm)
 }
 
 // Verify if request has AWS PreSign Version '4'.

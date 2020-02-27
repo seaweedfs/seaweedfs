@@ -48,7 +48,7 @@ func (iam *IdentityAccessManagement) reqSignatureV4Verify(r *http.Request) (*Ide
 const (
 	emptySHA256            = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	streamingContentSHA256 = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
-	signV4ChunkedAlgorithm   = "AWS4-HMAC-SHA256-PAYLOAD"
+	signV4ChunkedAlgorithm = "AWS4-HMAC-SHA256-PAYLOAD"
 
 	// http Header "x-amz-content-sha256" == "UNSIGNED-PAYLOAD" indicates that the
 	// client did not calculate sha256 of the payload.

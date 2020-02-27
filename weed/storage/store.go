@@ -358,7 +358,7 @@ func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
 		}
 		// load, modify, save
 		baseFileName := strings.TrimSuffix(fileInfo.Name(), filepath.Ext(fileInfo.Name()))
-		vifFile := filepath.Join(location.Directory, baseFileName + ".vif")
+		vifFile := filepath.Join(location.Directory, baseFileName+".vif")
 		volumeInfo, _, err := pb.MaybeLoadVolumeInfo(vifFile)
 		if err != nil {
 			return fmt.Errorf("volume %d fail to load vif", i)
