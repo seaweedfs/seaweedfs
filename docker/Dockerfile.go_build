@@ -1,9 +1,15 @@
+FROM frolvlad/alpine-glibc as builder
+RUN apk add git go g++
+RUN mkdir -p /go/src/github.com/chrislusf/
+RUN git clone https://github.com/chrislusf/seaweedfs /go/src/github.com/chrislusf/seaweedfs
+RUN cd /go/src/github.com/chrislusf/seaweedfs/weed && go install
+
 FROM alpine AS final
 LABEL author="Chris Lu"
-COPY  ./weed /usr/bin/
+COPY --from=builder /root/go/bin/weed /usr/bin/
 RUN mkdir -p /etc/seaweedfs
-COPY ./filer.toml /etc/seaweedfs/filer.toml
-COPY ./entrypoint.sh /entrypoint.sh
+COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/filer.toml /etc/seaweedfs/filer.toml
+COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/entrypoint.sh /entrypoint.sh
 
 # volume server gprc port
 EXPOSE 18080
