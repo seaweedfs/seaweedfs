@@ -215,7 +215,7 @@ func (v *Volume) ToVolumeInformationMessage() *master_pb.VolumeInformationMessag
 		FileCount:        v.FileCount(),
 		DeleteCount:      v.DeletedCount(),
 		DeletedByteCount: v.DeletedSize(),
-		ReadOnly:         v.noWriteOrDelete,
+		ReadOnly:         v.noWriteOrDelete || v.noWriteCanDelete,
 		ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
 		Version:          uint32(v.Version()),
 		Ttl:              v.Ttl.ToUint32(),
