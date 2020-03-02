@@ -35,10 +35,10 @@ type Filer struct {
 	buckets             *FilerBuckets
 }
 
-func NewFiler(masters []string, grpcDialOption grpc.DialOption) *Filer {
+func NewFiler(masters []string, grpcDialOption grpc.DialOption, filerGrpcPort uint32) *Filer {
 	f := &Filer{
 		directoryCache:      ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
-		MasterClient:        wdclient.NewMasterClient(grpcDialOption, "filer", masters),
+		MasterClient:        wdclient.NewMasterClient(grpcDialOption, "filer", filerGrpcPort, masters),
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
 	}

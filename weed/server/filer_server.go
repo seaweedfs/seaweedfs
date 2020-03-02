@@ -44,7 +44,7 @@ type FilerOption struct {
 	DataCenter         string
 	DefaultLevelDbDir  string
 	DisableHttp        bool
-	Port               int
+	Port               uint32
 	recursiveDelete    bool
 }
 
@@ -66,7 +66,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Fatal("master list is required!")
 	}
 
-	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption)
+	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption, option.Port+10000)
 
 	go fs.filer.KeepConnectedToMaster()
 

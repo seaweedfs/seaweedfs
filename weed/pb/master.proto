@@ -25,6 +25,8 @@ service Seaweed {
     }
     rpc GetMasterConfiguration (GetMasterConfigurationRequest) returns (GetMasterConfigurationResponse) {
     }
+    rpc ListMasterClients (ListMasterClientsRequest) returns (ListMasterClientsResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -112,6 +114,7 @@ message SuperBlockExtra {
 
 message KeepConnectedRequest {
     string name = 1;
+    uint32 grpc_port = 2;
 }
 
 message VolumeLocation {
@@ -263,4 +266,11 @@ message GetMasterConfigurationRequest {
 message GetMasterConfigurationResponse {
     string metrics_address = 1;
     uint32 metrics_interval_seconds = 2;
+}
+
+message ListMasterClientsRequest {
+    string client_type = 1;
+}
+message ListMasterClientsResponse {
+    repeated string grpc_addresses = 1;
 }

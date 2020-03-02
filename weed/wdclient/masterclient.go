@@ -6,14 +6,16 @@ import (
 	"math/rand"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"google.golang.org/grpc"
 )
 
 type MasterClient struct {
 	name           string
+	grpcPort       uint32
 	currentMaster  string
 	masters        []string
 	grpcDialOption grpc.DialOption
@@ -21,9 +23,10 @@ type MasterClient struct {
 	vidMap
 }
 
-func NewMasterClient(grpcDialOption grpc.DialOption, clientName string, masters []string) *MasterClient {
+func NewMasterClient(grpcDialOption grpc.DialOption, clientName string, clientGrpcPort uint32, masters []string) *MasterClient {
 	return &MasterClient{
 		name:           clientName,
+		grpcPort:       clientGrpcPort,
 		masters:        masters,
 		grpcDialOption: grpcDialOption,
 		vidMap:         newVidMap(),
@@ -72,7 +75,7 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 			return err
 		}
 
-		if err = stream.Send(&master_pb.KeepConnectedRequest{Name: mc.name}); err != nil {
+		if err = stream.Send(&master_pb.KeepConnectedRequest{Name: mc.name, GrpcPort: mc.grpcPort}); err != nil {
 			glog.V(0).Infof("%s failed to send to %s: %v", mc.name, master, err)
 			return err
 		}

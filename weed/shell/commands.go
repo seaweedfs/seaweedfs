@@ -44,8 +44,7 @@ var (
 func NewCommandEnv(options ShellOptions) *CommandEnv {
 	return &CommandEnv{
 		env: make(map[string]string),
-		MasterClient: wdclient.NewMasterClient(
-			options.GrpcDialOption, "shell", strings.Split(*options.Masters, ",")),
+		MasterClient: wdclient.NewMasterClient(options.GrpcDialOption, "shell", 0, strings.Split(*options.Masters, ",")),
 		option: options,
 	}
 }

@@ -136,7 +136,7 @@ func LoopPushingMetric(name, instance string, gatherer *prometheus.Registry, fnG
 	}
 }
 
-func SourceName(port int) string {
+func SourceName(port uint32) string {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return "unknown"

@@ -109,7 +109,7 @@ func (fo *FilerOptions) startFiler() {
 		DataCenter:         *fo.dataCenter,
 		DefaultLevelDbDir:  defaultLevelDbDirectory,
 		DisableHttp:        *fo.disableHttp,
-		Port:               *fo.port,
+		Port:               uint32(*fo.port),
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
