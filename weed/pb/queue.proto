@@ -29,7 +29,8 @@ service SeaweedQueue {
 message WriteMessageRequest {
     string topic = 1;
     int64 event_ns = 2;
-    bytes data = 3;
+    bytes partition_key = 3;
+    bytes data = 4;
 }
 
 message WriteMessageResponse {
@@ -51,6 +52,7 @@ message ReadMessageResponse {
 message ConfigureTopicRequest {
     string topic = 1;
     int64 ttl_seconds = 2;
+    int32 partition_count = 3;
 }
 message ConfigureTopicResponse {
     string error = 1;
