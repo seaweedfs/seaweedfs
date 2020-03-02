@@ -12,6 +12,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/images"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 const (
@@ -63,7 +64,7 @@ func ParseUpload(r *http.Request, sizeLimit int64) (
 	if r.Method == "POST" {
 		fileName, data, mimeType, isGzipped, originalDataSize, isChunkedFile, e = parseMultipart(r, sizeLimit)
 	} else {
-		isGzipped = false
+		isGzipped = r.Header.Get("Content-Encoding") == "gzip"
 		mimeType = r.Header.Get("Content-Type")
 		fileName = ""
 		data, e = ioutil.ReadAll(io.LimitReader(r.Body, sizeLimit+1))
@@ -72,6 +73,16 @@ func ParseUpload(r *http.Request, sizeLimit int64) (
 			io.Copy(ioutil.Discard, r.Body)
 		}
 		r.Body.Close()
+		if isGzipped {
+			if unzipped, e := util.UnGzipData(data); e == nil {
+				originalDataSize = len(unzipped)
+			}
+		} else if shouldGzip, _ := util.IsGzippableFileType("", mimeType); shouldGzip {
+			if compressedData, err := util.GzipData(data); err == nil {
+				data = compressedData
+				isGzipped = true
+			}
+		}
 	}
 	if e != nil {
 		return
