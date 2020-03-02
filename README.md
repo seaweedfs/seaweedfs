@@ -461,50 +461,49 @@ My Own Unscientific Single Machine Results on Mac Book with Solid State Disk, CP
 Write 1 million 1KB file:
 ```
 Concurrency Level:      16
-Time taken for tests:   88.796 seconds
+Time taken for tests:   66.753 seconds
 Complete requests:      1048576
 Failed requests:        0
-Total transferred:      1106764659 bytes
-Requests per second:    11808.87 [#/sec]
-Transfer rate:          12172.05 [Kbytes/sec]
+Total transferred:      1106789009 bytes
+Requests per second:    15708.23 [#/sec]
+Transfer rate:          16191.69 [Kbytes/sec]
 
 Connection Times (ms)
               min      avg        max      std
-Total:        0.2      1.3       44.8      0.9
+Total:        0.3      1.0       84.3      0.9
 
 Percentage of the requests served within a certain time (ms)
-   50%      1.1 ms
-   66%      1.3 ms
-   75%      1.5 ms
-   80%      1.7 ms
-   90%      2.1 ms
-   95%      2.6 ms
-   98%      3.7 ms
-   99%      4.6 ms
-  100%     44.8 ms
+   50%      0.8 ms
+   66%      1.0 ms
+   75%      1.1 ms
+   80%      1.2 ms
+   90%      1.4 ms
+   95%      1.7 ms
+   98%      2.1 ms
+   99%      2.6 ms
+  100%     84.3 ms
 ```
 
 Randomly read 1 million files:
 ```
 Concurrency Level:      16
-Time taken for tests:   34.263 seconds
+Time taken for tests:   22.301 seconds
 Complete requests:      1048576
 Failed requests:        0
-Total transferred:      1106762945 bytes
-Requests per second:    30603.34 [#/sec]
-Transfer rate:          31544.49 [Kbytes/sec]
+Total transferred:      1106812873 bytes
+Requests per second:    47019.38 [#/sec]
+Transfer rate:          48467.57 [Kbytes/sec]
 
 Connection Times (ms)
               min      avg        max      std
-Total:        0.0      0.5       20.7      0.7
+Total:        0.0      0.3       54.1      0.2
 
 Percentage of the requests served within a certain time (ms)
-   50%      0.4 ms
-   75%      0.5 ms
-   95%      0.6 ms
-   98%      0.8 ms
-   99%      1.2 ms
-  100%     20.7 ms
+   50%      0.3 ms
+   90%      0.4 ms
+   98%      0.6 ms
+   99%      0.7 ms
+  100%     54.1 ms
 ```
 
 [Back to TOC](#table-of-contents)
