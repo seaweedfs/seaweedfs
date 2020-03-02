@@ -283,7 +283,7 @@ func findClientAddress(ctx context.Context, grpcPort uint32) string {
 
 }
 
-func (ms *MasterServer ListMasterClients(ctx context.Context, req *master_pb.ListMasterClientsRequest) (*master_pb.ListMasterClientsResponse, error) {
+func (ms *MasterServer) ListMasterClients(ctx context.Context, req *master_pb.ListMasterClientsRequest) (*master_pb.ListMasterClientsResponse, error) {
 	resp := &master_pb.ListMasterClientsResponse{}
 	ms.clientChansLock.RLock()
 	defer ms.clientChansLock.RUnlock()
