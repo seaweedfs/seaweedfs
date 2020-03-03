@@ -1,0 +1,187 @@
+{{- if .Values.volume.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ template "seaweedfs.name" . }}-volume
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ template "seaweedfs.name" . }}
+    chart: {{ template "seaweedfs.chart" . }}
+    heritage: {{ .Release.Service }}
+    release: {{ .Release.Name }}
+spec:
+  serviceName: {{ template "seaweedfs.name" . }}-volume
+  replicas: {{ .Values.volume.replicas }}
+  selector:
+    matchLabels:
+      app: {{ template "seaweedfs.name" . }}
+      chart: {{ template "seaweedfs.chart" . }}
+      release: {{ .Release.Name }}
+      component: volume
+  template:
+    metadata:
+      labels:
+        app: {{ template "seaweedfs.name" . }}
+        chart: {{ template "seaweedfs.chart" . }}
+        release: {{ .Release.Name }}
+        component: volume
+    spec:
+      {{- if .Values.volume.affinity }}
+      affinity:
+        {{ tpl .Values.volume.affinity . | nindent 8 | trim }}
+      {{- end }}
+      restartPolicy: {{ default .Values.global.restartPolicy .Values.volume.restartPolicy }}
+      {{- if .Values.volume.tolerations }}
+      tolerations:
+        {{ tpl .Values.volume.tolerations . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        - name: {{ .Values.global.imagePullSecrets }}
+      {{- end }}
+      terminationGracePeriodSeconds: 10
+      {{- if .Values.volume.priorityClassName }}
+      priorityClassName: {{ .Values.volume.priorityClassName | quote }}
+      {{- end }}
+      enableServiceLinks: false
+      containers:
+        - name: seaweedfs
+          image: {{ template "volume.image" . }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: SEAWEEDFS_FULLNAME
+              value: "{{ template "seaweedfs.name" . }}"                  
+          command:
+            - "/bin/sh"
+            - "-ec"
+            - |
+              exec /usr/bin/weed -logdir=/logs \
+                {{- if .Values.volume.loggingOverrideLevel }}
+                -v={{ .Values.volume.loggingOverrideLevel }} \
+                {{- else }}
+                -v={{ .Values.global.loggingLevel }} \
+                {{- end }}
+                volume \
+                -port={{ .Values.volume.port }} \
+                -dir={{ .Values.volume.dir }} \
+                -max={{ .Values.volume.maxVolumes }} \
+                {{- if .Values.volume.rack }}
+                -rack={{ .Values.volume.rack }} \
+                {{- end }}
+                {{- if .Values.volume.dataCenter }}
+                -dataCenter={{ .Values.volume.dataCenter }} \
+                {{- end }}
+                -ip.bind={{ .Values.volume.ipBind }} \
+                -read.redirect={{ .Values.volume.readRedirect }} \
+                {{- if .Values.volume.whiteList }}
+                -whiteList={{ .Values.volume.whiteList }} \
+                {{- end }}
+                {{- if .Values.volume.imagesFixOrientation }}
+                -images.fix.orientation \
+                {{- end }}
+                -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-volume \
+                -compactionMBps={{ .Values.volume.compactionMBps }} \
+                -mserver={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
+          volumeMounts:
+            - name: seaweedfs-volume-storage
+              mountPath: "/data/"
+            - name: seaweedfs-volume-log-volume
+              mountPath: "/logs/"
+            {{- if .Values.global.enableSecurity }}
+            - name: security-config
+              readOnly: true
+              mountPath: /etc/seaweedfs/security.toml
+              subPath: security.toml
+            - name: ca-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/ca/
+            - name: master-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/master/
+            - name: volume-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/volume/
+            - name: filer-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/filer/
+            - name: client-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/client/
+            {{- end }}
+            {{ tpl .Values.volume.extraVolumeMounts . | nindent 12 | trim }}
+          ports:
+            - containerPort: {{ .Values.volume.port }}
+              name: swfs-vol
+            - containerPort: {{ .Values.volume.grpcPort }}
+              #name: swfs-vol-grpc
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: {{ .Values.volume.port }}
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            successThreshold: 1
+            failureThreshold: 100
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: {{ .Values.volume.port }}
+              scheme: HTTP
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            successThreshold: 1
+            failureThreshold: 10
+          {{- if .Values.volume.resources }}
+          resources:
+            {{ tpl .Values.volume.resources . | nindent 12 | trim }}
+          {{- end }}
+      volumes:
+        - name: seaweedfs-volume-log-volume
+          hostPath:
+            path: /storage/logs/seaweedfs/volume
+            type: DirectoryOrCreate
+        - name: seaweedfs-volume-storage
+          hostPath:
+            path: /storage/object_store/
+            type: DirectoryOrCreate
+        {{- if .Values.global.enableSecurity }}
+        - name: security-config
+          configMap:
+            name: {{ template "seaweedfs.name" . }}-security-config
+        - name: ca-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-ca-cert
+        - name: master-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-master-cert
+        - name: volume-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-volume-cert
+        - name: filer-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-filer-cert
+        - name: client-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-client-cert
+        {{- end }}
+      {{- if .Values.volume.extraVolumes }}
+        {{ tpl .Values.volume.extraVolumes . | indent 8 | trim }}
+      {{- end }}
+      {{- if .Values.volume.nodeSelector }}
+      nodeSelector:
+        {{ tpl .Values.volume.nodeSelector . | indent 8 | trim }}
+      {{- end }}
+{{- end }}
