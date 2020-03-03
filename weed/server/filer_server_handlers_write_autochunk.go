@@ -125,12 +125,13 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 
 		glog.V(4).Infof("uploaded %s chunk %d to %s [%d,%d) of %d", fileName, len(fileChunks), fileId, chunkOffset, chunkOffset+int64(uploadedSize), contentLength)
 
+		// reset variables for the next chunk
+		chunkOffset = chunkOffset + int64(uploadedSize)
+
 		// if last chunk was not at full chunk size, but already exhausted the reader
 		if uploadedSize < int64(chunkSize) {
 			break
 		}
-		// reset variables for the next chunk
-		chunkOffset = chunkOffset + int64(uploadedSize)
 	}
 
 	path := r.URL.Path
