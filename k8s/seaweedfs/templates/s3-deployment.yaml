@@ -75,7 +75,6 @@ spec:
               -cert.file=/usr/local/share/ca-certificates/client/tls.crt \
               -key.file=/usr/local/share/ca-certificates/client/tls.key \
               {{- end }}
-              -filer.dir.buckets={{ .Values.s3.filerDirBuckets }} \
               {{- if .Values.s3.domainName }}
               -domainName={{ .Values.s3.domainName }} \
               {{- end }}

@@ -249,7 +249,7 @@ filer:
     WEED_MYSQL_ENABLED: "true"
     WEED_MYSQL_HOSTNAME: "mysql-db-host"
     WEED_MYSQL_PORT: "3306"
-    WEED_MYSQL_DATABASE: "sw-database"
+    WEED_MYSQL_DATABASE: "sw_database"
     WEED_MYSQL_CONNECTION_MAX_IDLE: "10"
     WEED_MYSQL_CONNECTION_MAX_OPEN: "150"
     # enable usage of memsql as filer backend
@@ -272,9 +272,6 @@ s3:
   replicas: 1
   port: 8333
   loggingOverrideLevel: null
-
-  # Folder on filer to store all buckets (default "/buckets")
-  filerDirBuckets: "/buckets"
 
   # Suffix of the host name, {bucket}.{domainName}
   domainName: ""
