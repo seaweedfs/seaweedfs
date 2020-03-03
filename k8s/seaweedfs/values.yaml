@@ -273,9 +273,6 @@ s3:
   port: 8333
   loggingOverrideLevel: null
 
-  # Folder on filer to store all buckets (default "/buckets")
-  filerDirBuckets: "/buckets"
-
   # Suffix of the host name, {bucket}.{domainName}
   domainName: ""
 
