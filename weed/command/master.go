@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/server"
@@ -129,7 +130,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	// Create your protocol servers.
-	grpcS := util.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.master"))
+	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.master"))
 	master_pb.RegisterSeaweedServer(grpcS, ms)
 	protobuf.RegisterRaftServer(grpcS, raftServer)
 	reflection.Register(grpcS)

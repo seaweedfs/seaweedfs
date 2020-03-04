@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -54,7 +55,7 @@ func runWebDav(cmd *Command, args []string) bool {
 
 func (wo *WebDavOption) startWebDav() bool {
 
-	filerGrpcAddress, err := parseFilerGrpcAddress(*wo.filer)
+	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(*wo.filer)
 	if err != nil {
 		glog.Fatal(err)
 		return false

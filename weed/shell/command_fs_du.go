@@ -4,11 +4,9 @@ import (
 	"fmt"
 	"io"
 
-	"google.golang.org/grpc"
-
 	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func init() {
@@ -82,10 +80,7 @@ func duTraverseDirectory(writer io.Writer, filerClient filer2.FilerClient, dir, 
 func (env *CommandEnv) withFilerClient(filerServer string, filerPort int64, fn func(filer_pb.SeaweedFilerClient) error) error {
 
 	filerGrpcAddress := fmt.Sprintf("%s:%d", filerServer, filerPort+10000)
-	return util.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
-		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		return fn(client)
-	}, filerGrpcAddress, env.option.GrpcDialOption)
+	return pb.WithGrpcFilerClient(filerGrpcAddress, env.option.GrpcDialOption, fn)
 
 }
 

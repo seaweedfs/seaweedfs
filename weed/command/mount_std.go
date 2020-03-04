@@ -17,6 +17,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -135,16 +136,16 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 	})
 
 	// parse filer grpc address
-	filerGrpcAddress, err := parseFilerGrpcAddress(filer)
+	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(filer)
 	if err != nil {
-		glog.V(0).Infof("parseFilerGrpcAddress: %v", err)
+		glog.V(0).Infof("ParseFilerGrpcAddress: %v", err)
 		daemonize.SignalOutcome(err)
 		return true
 	}
 
 	// try to connect to filer, filerBucketsPath may be useful later
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
-	err = withFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)

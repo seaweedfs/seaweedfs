@@ -326,7 +326,7 @@ key  = ""
 cert = ""
 key  = ""
 
-[grpc.queue]
+[grpc.msg_broker]
 cert = ""
 key  = ""
 

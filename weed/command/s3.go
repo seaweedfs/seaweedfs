@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 
@@ -117,7 +118,7 @@ func runS3(cmd *Command, args []string) bool {
 
 func (s3opt *S3Options) startS3Server() bool {
 
-	filerGrpcAddress, err := parseFilerGrpcAddress(*s3opt.filer)
+	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(*s3opt.filer)
 	if err != nil {
 		glog.Fatal(err)
 		return false
@@ -128,7 +129,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	for {
-		err = withFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)

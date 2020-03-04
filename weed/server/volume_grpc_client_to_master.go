@@ -7,6 +7,7 @@ import (
 
 	"google.golang.org/grpc"
 
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
@@ -36,7 +37,7 @@ func (vs *VolumeServer) heartbeat() {
 			if newLeader != "" {
 				master = newLeader
 			}
-			masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(master)
+			masterGrpcAddress, parseErr := pb.ParseServerToGrpcAddress(master)
 			if parseErr != nil {
 				glog.V(0).Infof("failed to parse master grpc %v: %v", masterGrpcAddress, parseErr)
 				continue
@@ -55,7 +56,7 @@ func (vs *VolumeServer) heartbeat() {
 
 func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader string, err error) {
 
-	grpcConection, err := util.GrpcDial(context.Background(), masterGrpcAddress, grpcDialOption)
+	grpcConection, err := pb.GrpcDial(context.Background(), masterGrpcAddress, grpcDialOption)
 	if err != nil {
 		return "", fmt.Errorf("fail to dial %s : %v", masterNode, err)
 	}

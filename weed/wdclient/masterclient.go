@@ -2,15 +2,14 @@ package wdclient
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"time"
 
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type MasterClient struct {
@@ -67,7 +66,7 @@ func (mc *MasterClient) tryAllMasters() {
 
 func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader string) {
 	glog.V(1).Infof("%s Connecting to master %v", mc.name, master)
-	gprcErr := withMasterClient(master, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
+	gprcErr := pb.WithMasterClient(master, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
 
 		stream, err := client.KeepConnected(context.Background())
 		if err != nil {
@@ -119,22 +118,8 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 	return
 }
 
-func withMasterClient(master string, grpcDialOption grpc.DialOption, fn func(client master_pb.SeaweedClient) error) error {
-
-	masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(master)
-	if parseErr != nil {
-		return fmt.Errorf("failed to parse master grpc %v: %v", master, parseErr)
-	}
-
-	return util.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
-		client := master_pb.NewSeaweedClient(grpcConnection)
-		return fn(client)
-	}, masterGrpcAddress, grpcDialOption)
-
-}
-
 func (mc *MasterClient) WithClient(fn func(client master_pb.SeaweedClient) error) error {
-	return withMasterClient(mc.currentMaster, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
+	return pb.WithMasterClient(mc.currentMaster, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
 		return fn(client)
 	})
 }
