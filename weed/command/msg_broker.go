@@ -25,8 +25,6 @@ var (
 type QueueOptions struct {
 	filer          *string
 	port           *int
-	tlsPrivateKey  *string
-	tlsCertificate *string
 	defaultTtl     *string
 }
 
@@ -34,8 +32,6 @@ func init() {
 	cmdMsgBroker.Run = runMsgBroker // break init cycle
 	messageBrokerStandaloneOptions.filer = cmdMsgBroker.Flag.String("filer", "localhost:8888", "filer server address")
 	messageBrokerStandaloneOptions.port = cmdMsgBroker.Flag.Int("port", 17777, "queue server gRPC listen port")
-	messageBrokerStandaloneOptions.tlsPrivateKey = cmdMsgBroker.Flag.String("key.file", "", "path to the TLS private key file")
-	messageBrokerStandaloneOptions.tlsCertificate = cmdMsgBroker.Flag.String("cert.file", "", "path to the TLS certificate file")
 	messageBrokerStandaloneOptions.defaultTtl = cmdMsgBroker.Flag.String("ttl", "1h", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
 }
 
