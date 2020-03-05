@@ -3,12 +3,14 @@ package redis
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/go-redis/redis"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/go-redis/redis"
+
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 const (
@@ -120,7 +122,8 @@ func (store *UniversalRedisStore) DeleteFolderChildren(ctx context.Context, full
 func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool,
 	limit int) (entries []*filer2.Entry, err error) {
 
-	members, err := store.Client.SMembers(genDirectoryListKey(string(fullpath))).Result()
+	dirListKey := genDirectoryListKey(string(fullpath))
+	members, err := store.Client.SMembers(dirListKey).Result()
 	if err != nil {
 		return nil, fmt.Errorf("list %s : %v", fullpath, err)
 	}
@@ -159,6 +162,13 @@ func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, full
 		if err != nil {
 			glog.V(0).Infof("list %s : %v", path, err)
 		} else {
+			if entry.TtlSec > 0 {
+				if entry.Attr.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
+					store.Client.Del(string(path)).Result()
+					store.Client.SRem(dirListKey, fileName).Result()
+					continue
+				}
+			}
 			entries = append(entries, entry)
 		}
 	}
