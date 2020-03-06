@@ -338,5 +338,6 @@ func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.
 		MaxMb:       uint32(fs.option.MaxMB),
 		DirBuckets:  fs.filer.DirBucketsPath,
 		DirQueues:   fs.filer.DirQueuesPath,
+		Cipher:      fs.filer.Cipher,
 	}, nil
 }

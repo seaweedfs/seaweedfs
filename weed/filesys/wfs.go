@@ -39,8 +39,9 @@ type Option struct {
 	MountCtime time.Time
 	MountMtime time.Time
 
-	// whether the mount runs outside SeaweedFS containers
-	OutsideContainerClusterMode bool
+	OutsideContainerClusterMode bool // whether the mount runs outside SeaweedFS containers
+	Cipher                      bool // whether encrypt data on volume server
+
 }
 
 var _ = fs.FS(&WFS{})

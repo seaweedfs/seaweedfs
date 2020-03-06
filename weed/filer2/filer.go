@@ -33,6 +33,7 @@ type Filer struct {
 	DirBucketsPath      string
 	DirQueuesPath       string
 	buckets             *FilerBuckets
+	Cipher              bool
 }
 
 func NewFiler(masters []string, grpcDialOption grpc.DialOption, filerGrpcPort uint32) *Filer {

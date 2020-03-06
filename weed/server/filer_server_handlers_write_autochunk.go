@@ -182,7 +182,7 @@ func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *ht
 		stats.FilerRequestHistogram.WithLabelValues("postAutoChunkUpload").Observe(time.Since(start).Seconds())
 	}()
 
-	uploadResult, uploadError := operation.Upload(urlLocation, fileName, limitedReader, false, contentType, nil, auth)
+	uploadResult, uploadError := operation.Upload(urlLocation, fileName, fs.option.Cipher, limitedReader, false, contentType, nil, auth)
 	if uploadError != nil {
 		return 0, uploadError
 	}

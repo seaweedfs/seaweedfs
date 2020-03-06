@@ -134,7 +134,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	}
 
 	debug("upload file to store", url)
-	uploadResult, err := operation.Upload(url, fname, bytes.NewReader(data), isGzipped, mimeType, pairMap, assignResult.Auth)
+	uploadResult, err := operation.Upload(url, fname, false, bytes.NewReader(data), isGzipped, mimeType, pairMap, assignResult.Auth)
 	if err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return

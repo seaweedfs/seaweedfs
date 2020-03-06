@@ -27,7 +27,7 @@ func StreamContent(masterClient *wdclient.MasterClient, w io.Writer, chunks []*f
 
 	for _, chunkView := range chunkViews {
 		urlString := fileId2Url[chunkView.FileId]
-		_, err := util.ReadUrlAsStream(urlString, chunkView.Offset, int(chunkView.Size), func(data []byte) {
+		err := util.ReadUrlAsStream(urlString, chunkView.CipherKey, chunkView.IsFullChunk, chunkView.Offset, int(chunkView.Size), func(data []byte) {
 			w.Write(data)
 		})
 		if err != nil {

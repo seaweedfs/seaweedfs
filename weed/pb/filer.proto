@@ -99,6 +99,7 @@ message FileChunk {
     string source_file_id = 6; // to be deprecated
     FileId fid = 7;
     FileId source_fid = 8;
+    bytes cipher_key = 9;
 }
 
 message FileId {
@@ -229,4 +230,5 @@ message GetFilerConfigurationResponse {
     uint32 max_mb = 4;
     string dir_buckets = 5;
     string dir_queues = 6;
+    bool cipher = 7;
 }

@@ -46,6 +46,7 @@ type FilerOption struct {
 	DisableHttp        bool
 	Port               uint32
 	recursiveDelete    bool
+	Cipher             bool
 }
 
 type FilerServer struct {
@@ -67,6 +68,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	}
 
 	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption, option.Port+10000)
+	fs.filer.Cipher = option.Cipher
 
 	go fs.filer.KeepConnectedToMaster()
 

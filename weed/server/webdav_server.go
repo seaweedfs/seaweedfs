@@ -32,6 +32,7 @@ type WebDavOption struct {
 	Collection       string
 	Uid              uint32
 	Gid              uint32
+	Cipher           bool
 }
 
 type WebDavServer struct {
@@ -418,7 +419,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
 	bufReader := bytes.NewReader(buf)
-	uploadResult, err := operation.Upload(fileUrl, f.name, bufReader, false, "", nil, auth)
+	uploadResult, err := operation.Upload(fileUrl, f.name, f.fs.option.Cipher, bufReader, false, "", nil, auth)
 	if err != nil {
 		glog.V(0).Infof("upload data %v to %s: %v", f.name, fileUrl, err)
 		return 0, fmt.Errorf("upload data: %v", err)
@@ -429,11 +430,12 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 	}
 
 	chunk := &filer_pb.FileChunk{
-		FileId: fileId,
-		Offset: f.off,
-		Size:   uint64(len(buf)),
-		Mtime:  time.Now().UnixNano(),
-		ETag:   uploadResult.ETag,
+		FileId:    fileId,
+		Offset:    f.off,
+		Size:      uint64(len(buf)),
+		Mtime:     time.Now().UnixNano(),
+		ETag:      uploadResult.ETag,
+		CipherKey: uploadResult.CipherKey,
 	}
 
 	f.entry.Chunks = append(f.entry.Chunks, chunk)

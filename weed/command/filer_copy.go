@@ -41,6 +41,7 @@ type CopyOptions struct {
 	compressionLevel  *int
 	grpcDialOption    grpc.DialOption
 	masters           []string
+	cipher            bool
 }
 
 func init() {
@@ -108,7 +109,7 @@ func runCopy(cmd *Command, args []string) bool {
 	filerGrpcAddress := fmt.Sprintf("%s:%d", filerUrl.Hostname(), filerGrpcPort)
 	copy.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
-	masters, collection, replication, maxMB, err := readFilerConfiguration(copy.grpcDialOption, filerGrpcAddress)
+	masters, collection, replication, maxMB, cipher, err := readFilerConfiguration(copy.grpcDialOption, filerGrpcAddress)
 	if err != nil {
 		fmt.Printf("read from filer %s: %v\n", filerGrpcAddress, err)
 		return false
@@ -123,6 +124,7 @@ func runCopy(cmd *Command, args []string) bool {
 		*copy.maxMB = int(maxMB)
 	}
 	copy.masters = masters
+	copy.cipher = cipher
 
 	if *cmdCopy.IsDebug {
 		util.SetupProfiling("filer.copy.cpu.pprof", "filer.copy.mem.pprof")
@@ -159,13 +161,14 @@ func runCopy(cmd *Command, args []string) bool {
 	return true
 }
 
-func readFilerConfiguration(grpcDialOption grpc.DialOption, filerGrpcAddress string) (masters []string, collection, replication string, maxMB uint32, err error) {
+func readFilerConfiguration(grpcDialOption grpc.DialOption, filerGrpcAddress string) (masters []string, collection, replication string, maxMB uint32, cipher bool, err error) {
 	err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
 		}
 		masters, collection, replication, maxMB = resp.Masters, resp.Collection, resp.Replication, resp.MaxMb
+		cipher = resp.Cipher
 		return nil
 	})
 	return
@@ -300,7 +303,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 
 		targetUrl := "http://" + assignResult.Url + "/" + assignResult.FileId
 
-		uploadResult, err := operation.UploadWithLocalCompressionLevel(targetUrl, fileName, f, false, mimeType, nil, security.EncodedJwt(assignResult.Auth), *worker.options.compressionLevel)
+		uploadResult, err := operation.UploadWithLocalCompressionLevel(targetUrl, fileName, worker.options.cipher, f, false, mimeType, nil, security.EncodedJwt(assignResult.Auth), *worker.options.compressionLevel)
 		if err != nil {
 			return fmt.Errorf("upload data %v to %s: %v\n", fileName, targetUrl, err)
 		}
@@ -310,11 +313,12 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 		fmt.Printf("uploaded %s to %s\n", fileName, targetUrl)
 
 		chunks = append(chunks, &filer_pb.FileChunk{
-			FileId: assignResult.FileId,
-			Offset: 0,
-			Size:   uint64(uploadResult.Size),
-			Mtime:  time.Now().UnixNano(),
-			ETag:   uploadResult.ETag,
+			FileId:    assignResult.FileId,
+			Offset:    0,
+			Size:      uint64(uploadResult.Size),
+			Mtime:     time.Now().UnixNano(),
+			ETag:      uploadResult.ETag,
+			CipherKey: uploadResult.CipherKey,
 		})
 
 		fmt.Printf("copied %s => http://%s%s%s\n", fileName, worker.filerHost, task.destinationUrlPath, fileName)
@@ -409,10 +413,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 				replication = assignResult.Replication
 			}
 
-			uploadResult, err := operation.Upload(targetUrl,
-				fileName+"-"+strconv.FormatInt(i+1, 10),
-				io.NewSectionReader(f, i*chunkSize, chunkSize),
-				false, "", nil, security.EncodedJwt(assignResult.Auth))
+			uploadResult, err := operation.Upload(targetUrl, fileName+"-"+strconv.FormatInt(i+1, 10), false, io.NewSectionReader(f, i*chunkSize, chunkSize), false, "", nil, security.EncodedJwt(assignResult.Auth))
 			if err != nil {
 				uploadError = fmt.Errorf("upload data %v to %s: %v\n", fileName, targetUrl, err)
 				return
@@ -422,11 +423,12 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 				return
 			}
 			chunksChan <- &filer_pb.FileChunk{
-				FileId: assignResult.FileId,
-				Offset: i * chunkSize,
-				Size:   uint64(uploadResult.Size),
-				Mtime:  time.Now().UnixNano(),
-				ETag:   uploadResult.ETag,
+				FileId:    assignResult.FileId,
+				Offset:    i * chunkSize,
+				Size:      uint64(uploadResult.Size),
+				Mtime:     time.Now().UnixNano(),
+				ETag:      uploadResult.ETag,
+				CipherKey: uploadResult.CipherKey,
 			}
 			fmt.Printf("uploaded %s-%d to %s [%d,%d)\n", fileName, i+1, targetUrl, i*chunkSize, i*chunkSize+int64(uploadResult.Size))
 		}(i)

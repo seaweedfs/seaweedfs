@@ -72,9 +72,8 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 				}
 			}
 
-			_, err := operation.Upload(u.String(),
-				string(n.Name), bytes.NewReader(n.Data), n.IsGzipped(), string(n.Mime),
-				pairMap, jwt)
+			// volume server do not know about encryption
+			_, err := operation.Upload(u.String(), string(n.Name), false, bytes.NewReader(n.Data), n.IsGzipped(), string(n.Mime), pairMap, jwt)
 			return err
 		}); err != nil {
 			size = 0

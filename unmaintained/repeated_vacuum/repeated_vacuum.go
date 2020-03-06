@@ -35,7 +35,7 @@ func main() {
 
 		targetUrl := fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
 
-		_, err = operation.Upload(targetUrl, fmt.Sprintf("test%d", i), reader, false, "", nil, assignResult.Auth)
+		_, err = operation.Upload(targetUrl, fmt.Sprintf("test%d", i), false, reader, false, "", nil, assignResult.Auth)
 		if err != nil {
 			log.Fatalf("upload: %v", err)
 		}

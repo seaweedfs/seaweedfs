@@ -103,7 +103,7 @@ func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
 		}
 
 		var writeErr error
-		_, readErr := util.ReadUrlAsStream(fileUrl, chunk.Offset, int(chunk.Size), func(data []byte) {
+		readErr := util.ReadUrlAsStream(fileUrl, nil, chunk.IsFullChunk, chunk.Offset, int(chunk.Size), func(data []byte) {
 			_, err := writer.Write(data)
 			if err != nil {
 				writeErr = err

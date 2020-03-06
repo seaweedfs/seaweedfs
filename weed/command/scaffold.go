@@ -75,9 +75,9 @@ const (
 # recursive_delete will delete all sub folders and files, similar to "rm -Rf"
 recursive_delete = false
 # directories under this folder will be automatically creating a separate bucket
-buckets_folder = /buckets
+buckets_folder = "/buckets"
 # directories under this folder will be store message queue data
-queues_folder = /queues
+queues_folder = "/queues"
 
 ####################################################
 # The following are filer store options

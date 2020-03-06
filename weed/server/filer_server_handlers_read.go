@@ -14,6 +14,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -93,7 +94,7 @@ func (fs *FilerServer) handleSingleChunk(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	if fs.option.RedirectOnRead {
+	if fs.option.RedirectOnRead && entry.Chunks[0].CipherKey == nil {
 		stats.FilerRequestCounter.WithLabelValues("redirect").Inc()
 		http.Redirect(w, r, urlString, http.StatusFound)
 		return
@@ -136,7 +137,27 @@ func (fs *FilerServer) handleSingleChunk(w http.ResponseWriter, r *http.Request,
 		w.Header().Set("Content-Type", entry.Attr.Mime)
 	}
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	if entry.Chunks[0].CipherKey == nil {
+		io.Copy(w, resp.Body)
+	} else {
+		fs.writeEncryptedChunk(w, resp, entry.Chunks[0])
+	}
+}
+
+func (fs *FilerServer) writeEncryptedChunk(w http.ResponseWriter, resp *http.Response, chunk *filer_pb.FileChunk) {
+	encryptedData, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		glog.V(1).Infof("read encrypted %s failed, err: %v", chunk.FileId, err)
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	decryptedData, err := util.Decrypt(encryptedData, util.CipherKey(chunk.CipherKey))
+	if err != nil {
+		glog.V(1).Infof("decrypt %s failed, err: %v", chunk.FileId, err)
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	w.Write(decryptedData)
 }
 
 func (fs *FilerServer) handleMultipleChunks(w http.ResponseWriter, r *http.Request, entry *filer2.Entry) {

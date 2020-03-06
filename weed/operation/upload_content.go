@@ -22,10 +22,11 @@ import (
 )
 
 type UploadResult struct {
-	Name  string `json:"name,omitempty"`
-	Size  uint32 `json:"size,omitempty"`
-	Error string `json:"error,omitempty"`
-	ETag  string `json:"eTag,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Size      uint32 `json:"size,omitempty"`
+	Error     string `json:"error,omitempty"`
+	ETag      string `json:"eTag,omitempty"`
+	CipherKey []byte `json:"cipherKey,omitempty"`
 }
 
 var (
@@ -41,22 +42,22 @@ func init() {
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
 // Upload sends a POST request to a volume server to upload the content with adjustable compression level
-func UploadWithLocalCompressionLevel(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt, compressionLevel int) (*UploadResult, error) {
+func UploadWithLocalCompressionLevel(uploadUrl string, filename string, cipher bool, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt, compressionLevel int) (*UploadResult, error) {
 	if compressionLevel < 1 {
 		compressionLevel = 1
 	}
 	if compressionLevel > 9 {
 		compressionLevel = 9
 	}
-	return doUpload(uploadUrl, filename, reader, isGzipped, mtype, pairMap, compressionLevel, jwt)
+	return doUpload(uploadUrl, filename, cipher, reader, isGzipped, mtype, pairMap, compressionLevel, jwt)
 }
 
 // Upload sends a POST request to a volume server to upload the content with fast compression
-func Upload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
-	return doUpload(uploadUrl, filename, reader, isGzipped, mtype, pairMap, flate.BestSpeed, jwt)
+func Upload(uploadUrl string, filename string, cipher bool, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
+	return doUpload(uploadUrl, filename, cipher, reader, isGzipped, mtype, pairMap, flate.BestSpeed, jwt)
 }
 
-func doUpload(uploadUrl string, filename string, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, compression int, jwt security.EncodedJwt) (*UploadResult, error) {
+func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, compression int, jwt security.EncodedJwt) (*UploadResult, error) {
 	contentIsGzipped := isGzipped
 	shouldGzipNow := false
 	if !isGzipped {
@@ -65,7 +66,25 @@ func doUpload(uploadUrl string, filename string, reader io.Reader, isGzipped boo
 			contentIsGzipped = true
 		}
 	}
-	return upload_content(uploadUrl, func(w io.Writer) (err error) {
+	// encrypt data
+	var cipherKey util.CipherKey
+	var clearDataLen int
+	if cipher {
+		clearData, err := ioutil.ReadAll(reader)
+		if err != nil {
+			return nil, fmt.Errorf("read raw input: %v", err)
+		}
+		clearDataLen = len(clearData)
+		cipherKey = util.GenCipherKey()
+		encryptedData, err := util.Encrypt(clearData, cipherKey)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt input: %v", err)
+		}
+		reader = bytes.NewReader(encryptedData)
+	}
+
+	// upload data
+	uploadResult, err := upload_content(uploadUrl, func(w io.Writer) (err error) {
 		if shouldGzipNow {
 			gzWriter, _ := gzip.NewWriterLevel(w, compression)
 			_, err = io.Copy(gzWriter, reader)
@@ -75,6 +94,14 @@ func doUpload(uploadUrl string, filename string, reader io.Reader, isGzipped boo
 		}
 		return
 	}, filename, contentIsGzipped, mtype, pairMap, jwt)
+
+	// remember cipher key
+	if uploadResult != nil && cipherKey != nil {
+		uploadResult.CipherKey = cipherKey
+		uploadResult.Size = uint32(clearDataLen)
+	}
+
+	return uploadResult, err
 }
 
 func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {

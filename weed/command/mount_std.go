@@ -145,11 +145,13 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 
 	// try to connect to filer, filerBucketsPath may be useful later
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	var cipher bool
 	err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
 		}
+		cipher = resp.Cipher
 		return nil
 	})
 	if err != nil {
@@ -183,6 +185,7 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 		MountMtime:                  time.Now(),
 		Umask:                       umask,
 		OutsideContainerClusterMode: outsideContainerClusterMode,
+		Cipher:                      cipher,
 	}))
 	if err != nil {
 		fuse.Unmount(dir)

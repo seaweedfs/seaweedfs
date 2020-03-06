@@ -34,6 +34,7 @@ type FilerOptions struct {
 	dataCenter              *string
 	enableNotification      *bool
 	disableHttp             *bool
+	cipher                  *bool
 
 	// default leveldb directory, used in "weed server" mode
 	defaultLevelDbDirectory *string
@@ -53,6 +54,7 @@ func init() {
 	f.dirListingLimit = cmdFiler.Flag.Int("dirListLimit", 100000, "limit sub dir listing size")
 	f.dataCenter = cmdFiler.Flag.String("dataCenter", "", "prefer to write to volumes in this data center")
 	f.disableHttp = cmdFiler.Flag.Bool("disableHttp", false, "disable http request, only gRpc operations are allowed")
+	f.cipher = cmdFiler.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
 }
 
 var cmdFiler = &Command{
@@ -111,6 +113,7 @@ func (fo *FilerOptions) startFiler() {
 		DefaultLevelDbDir:  defaultLevelDbDirectory,
 		DisableHttp:        *fo.disableHttp,
 		Port:               uint32(*fo.port),
+		Cipher:             *fo.cipher,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
