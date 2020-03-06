@@ -54,7 +54,7 @@ var cmdMount = &Command{
 
   On OS X, it requires OSXFUSE (http://osxfuse.github.com/).
 
-  If the SeaweedFS systemm runs in a container cluster, e.g. managed by kubernetes or docker compose,
+  If the SeaweedFS system runs in a container cluster, e.g. managed by kubernetes or docker compose,
   the volume servers are not accessible by their own ip addresses. 
   In "outsideContainerClusterMode", the mount will use the filer ip address instead, assuming:
     * All volume server containers are accessible through the same hostname or IP address as the filer.
