@@ -27,6 +27,7 @@ type UploadResult struct {
 	Error     string `json:"error,omitempty"`
 	ETag      string `json:"eTag,omitempty"`
 	CipherKey []byte `json:"cipherKey,omitempty"`
+	Mime      string `json:"mime,omitempty"`
 }
 
 var (

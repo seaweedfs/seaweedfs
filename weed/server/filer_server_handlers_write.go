@@ -186,6 +186,7 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 			Replication: replication,
 			Collection:  collection,
 			TtlSec:      int32(util.ParseInt(r.URL.Query().Get("ttl"), 0)),
+			Mime:        ret.Mime,
 		},
 		Chunks: []*filer_pb.FileChunk{{
 			FileId: fileId,
@@ -194,8 +195,10 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 			ETag:   ret.ETag,
 		}},
 	}
-	if ext := filenamePath.Ext(path); ext != "" {
-		entry.Attr.Mime = mime.TypeByExtension(ext)
+	if entry.Attr.Mime == "" {
+		if ext := filenamePath.Ext(path); ext != "" {
+			entry.Attr.Mime = mime.TypeByExtension(ext)
+		}
 	}
 	// glog.V(4).Infof("saving %s => %+v", path, entry)
 	if dbErr := fs.filer.CreateEntry(ctx, entry, false); dbErr != nil {
