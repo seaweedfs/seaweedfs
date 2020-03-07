@@ -328,7 +328,7 @@ func TestFindEmptySlotsForOneVolumeScheduleByWeight(t *testing.T) {
 			t.Fail()
 		}
 		for _, server := range servers {
-			fmt.Println("assigned node :", server.Id())
+			// fmt.Println("assigned node :", server.Id())
 			if _, ok := distribution[server.id]; !ok {
 				distribution[server.id] = 0
 			}
@@ -337,6 +337,6 @@ func TestFindEmptySlotsForOneVolumeScheduleByWeight(t *testing.T) {
 	}
 
 	for k, v := range distribution {
-		fmt.Println(k, "%s : %d", k, v)
+		fmt.Printf("%s : %d\n", k, v)
 	}
 }
