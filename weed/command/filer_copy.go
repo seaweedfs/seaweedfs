@@ -493,9 +493,12 @@ func detectMimeType(f *os.File) string {
 	}
 	if err != nil {
 		fmt.Printf("read head of %v: %v\n", f.Name(), err)
-		return "application/octet-stream"
+		return ""
 	}
 	f.Seek(0, io.SeekStart)
 	mimeType := http.DetectContentType(head[:n])
+	if mimeType == "application/octet-stream" {
+		return ""
+	}
 	return mimeType
 }
