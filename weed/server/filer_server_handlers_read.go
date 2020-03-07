@@ -70,6 +70,9 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	if r.Method == "HEAD" {
 		w.Header().Set("Content-Length", strconv.FormatInt(int64(filer2.TotalSize(entry.Chunks)), 10))
 		w.Header().Set("Last-Modified", entry.Attr.Mtime.Format(http.TimeFormat))
+		if entry.Attr.Mime != "" {
+			w.Header().Set("Content-Type", entry.Attr.Mime)
+		}
 		setEtag(w, filer2.ETag(entry.Chunks))
 		return
 	}
