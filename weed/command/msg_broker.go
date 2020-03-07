@@ -23,9 +23,9 @@ var (
 )
 
 type QueueOptions struct {
-	filer          *string
-	port           *int
-	defaultTtl     *string
+	filer      *string
+	port       *int
+	defaultTtl *string
 }
 
 func init() {

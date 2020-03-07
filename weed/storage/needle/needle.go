@@ -48,7 +48,6 @@ func (n *Needle) String() (str string) {
 	return
 }
 
-
 func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit int64) (n *Needle, originalSize int, e error) {
 	n = new(Needle)
 	pu, e := ParseUpload(r, sizeLimit)
@@ -59,7 +58,6 @@ func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit 
 	originalSize = pu.OriginalDataSize
 	n.LastModified = pu.ModifiedTime
 	n.Ttl = pu.Ttl
-
 
 	if len(pu.FileName) < 256 {
 		n.Name = []byte(pu.FileName)

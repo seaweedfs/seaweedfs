@@ -321,7 +321,7 @@ func TestFindEmptySlotsForOneVolumeScheduleByWeight(t *testing.T) {
 
 	distribution := map[NodeId]int{}
 	// assign 1000 volumes
-	for i:=0;i<1000 ;i++ {
+	for i := 0; i < 1000; i++ {
 		servers, err := vg.findEmptySlotsForOneVolume(topo, volumeGrowOption)
 		if err != nil {
 			fmt.Println("finding empty slots error :", err)

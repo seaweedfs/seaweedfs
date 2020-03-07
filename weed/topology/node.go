@@ -85,11 +85,11 @@ func (n *NodeImpl) PickNodesByWeight(numberOfNodes int, filterFirstNodeFn func(d
 
 	//pick nodes randomly by weights, the node picked earlier has higher final weights
 	sortedCandidates := make([]Node, 0, len(candidates))
-	for i:=0; i<len(candidates); i++  {
+	for i := 0; i < len(candidates); i++ {
 		weightsInterval := rand.Int63n(totalWeights)
 		lastWeights := int64(0)
 		for k, weights := range candidatesWeights {
-			if (weightsInterval>=lastWeights) && (weightsInterval<lastWeights + weights) {
+			if (weightsInterval >= lastWeights) && (weightsInterval < lastWeights+weights) {
 				sortedCandidates = append(sortedCandidates, candidates[k])
 				candidatesWeights[k] = 0
 				totalWeights -= weights

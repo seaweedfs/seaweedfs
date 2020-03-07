@@ -1035,10 +1035,12 @@ func (m *VolumeEcShardsGenerateRequest) GetCollection() string {
 type VolumeEcShardsGenerateResponse struct {
 }
 
-func (m *VolumeEcShardsGenerateResponse) Reset()                    { *m = VolumeEcShardsGenerateResponse{} }
-func (m *VolumeEcShardsGenerateResponse) String() string            { return proto.CompactTextString(m) }
-func (*VolumeEcShardsGenerateResponse) ProtoMessage()               {}
-func (*VolumeEcShardsGenerateResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{41} }
+func (m *VolumeEcShardsGenerateResponse) Reset()         { *m = VolumeEcShardsGenerateResponse{} }
+func (m *VolumeEcShardsGenerateResponse) String() string { return proto.CompactTextString(m) }
+func (*VolumeEcShardsGenerateResponse) ProtoMessage()    {}
+func (*VolumeEcShardsGenerateResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor0, []int{41}
+}
 
 type VolumeEcShardsRebuildRequest struct {
 	VolumeId   uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
@@ -1411,10 +1413,12 @@ func (m *VolumeEcShardsToVolumeRequest) GetCollection() string {
 type VolumeEcShardsToVolumeResponse struct {
 }
 
-func (m *VolumeEcShardsToVolumeResponse) Reset()                    { *m = VolumeEcShardsToVolumeResponse{} }
-func (m *VolumeEcShardsToVolumeResponse) String() string            { return proto.CompactTextString(m) }
-func (*VolumeEcShardsToVolumeResponse) ProtoMessage()               {}
-func (*VolumeEcShardsToVolumeResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{57} }
+func (m *VolumeEcShardsToVolumeResponse) Reset()         { *m = VolumeEcShardsToVolumeResponse{} }
+func (m *VolumeEcShardsToVolumeResponse) String() string { return proto.CompactTextString(m) }
+func (*VolumeEcShardsToVolumeResponse) ProtoMessage()    {}
+func (*VolumeEcShardsToVolumeResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor0, []int{57}
+}
 
 type ReadVolumeFileStatusRequest struct {
 	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
@@ -2081,8 +2085,10 @@ type QueryRequest_InputSerialization_JSONInput struct {
 func (m *QueryRequest_InputSerialization_JSONInput) Reset() {
 	*m = QueryRequest_InputSerialization_JSONInput{}
 }
-func (m *QueryRequest_InputSerialization_JSONInput) String() string { return proto.CompactTextString(m) }
-func (*QueryRequest_InputSerialization_JSONInput) ProtoMessage()    {}
+func (m *QueryRequest_InputSerialization_JSONInput) String() string {
+	return proto.CompactTextString(m)
+}
+func (*QueryRequest_InputSerialization_JSONInput) ProtoMessage() {}
 func (*QueryRequest_InputSerialization_JSONInput) Descriptor() ([]byte, []int) {
 	return fileDescriptor0, []int{70, 1, 1}
 }
