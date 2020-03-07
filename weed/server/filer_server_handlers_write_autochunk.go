@@ -103,33 +103,35 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 
 		// upload the chunk to the volume server
 		chunkName := fileName + "_chunk_" + strconv.FormatInt(int64(len(fileChunks)+1), 10)
-		uploadedSize, uploadErr := fs.doUpload(urlLocation, w, r, limitedReader, chunkName, "", fileId, auth)
+		uploadResult, uploadErr := fs.doUpload(urlLocation, w, r, limitedReader, chunkName, "", fileId, auth)
 		if uploadErr != nil {
 			return nil, uploadErr
 		}
 
 		// if last chunk exhausted the reader exactly at the border
-		if uploadedSize == 0 {
+		if uploadResult.Size == 0 {
 			break
 		}
 
 		// Save to chunk manifest structure
 		fileChunks = append(fileChunks,
 			&filer_pb.FileChunk{
-				FileId: fileId,
-				Offset: chunkOffset,
-				Size:   uint64(uploadedSize),
-				Mtime:  time.Now().UnixNano(),
+				FileId:    fileId,
+				Offset:    chunkOffset,
+				Size:      uint64(uploadResult.Size),
+				Mtime:     time.Now().UnixNano(),
+				ETag:      uploadResult.ETag,
+				CipherKey: uploadResult.CipherKey,
 			},
 		)
 
-		glog.V(4).Infof("uploaded %s chunk %d to %s [%d,%d) of %d", fileName, len(fileChunks), fileId, chunkOffset, chunkOffset+int64(uploadedSize), contentLength)
+		glog.V(4).Infof("uploaded %s chunk %d to %s [%d,%d) of %d", fileName, len(fileChunks), fileId, chunkOffset, chunkOffset+int64(uploadResult.Size), contentLength)
 
 		// reset variables for the next chunk
-		chunkOffset = chunkOffset + int64(uploadedSize)
+		chunkOffset = chunkOffset + int64(uploadResult.Size)
 
 		// if last chunk was not at full chunk size, but already exhausted the reader
-		if uploadedSize < int64(chunkSize) {
+		if int64(uploadResult.Size) < int64(chunkSize) {
 			break
 		}
 	}
@@ -174,7 +176,7 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 }
 
 func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *http.Request,
-	limitedReader io.Reader, fileName string, contentType string, fileId string, auth security.EncodedJwt) (size int64, err error) {
+	limitedReader io.Reader, fileName string, contentType string, fileId string, auth security.EncodedJwt) (*operation.UploadResult, error) {
 
 	stats.FilerRequestCounter.WithLabelValues("postAutoChunkUpload").Inc()
 	start := time.Now()
@@ -182,9 +184,5 @@ func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *ht
 		stats.FilerRequestHistogram.WithLabelValues("postAutoChunkUpload").Observe(time.Since(start).Seconds())
 	}()
 
-	uploadResult, uploadError := operation.Upload(urlLocation, fileName, fs.option.Cipher, limitedReader, false, contentType, nil, auth)
-	if uploadError != nil {
-		return 0, uploadError
-	}
-	return int64(uploadResult.Size), nil
+	return operation.Upload(urlLocation, fileName, fs.option.Cipher, limitedReader, false, contentType, nil, auth)
 }

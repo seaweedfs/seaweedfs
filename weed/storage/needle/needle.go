@@ -3,8 +3,6 @@ package needle
 import (
 	"encoding/json"
 	"fmt"
-	"io"
-	"io/ioutil"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,7 +10,6 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/images"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 const (
@@ -51,67 +48,30 @@ func (n *Needle) String() (str string) {
 	return
 }
 
-func ParseUpload(r *http.Request, sizeLimit int64) (
-	fileName string, data []byte, mimeType string, pairMap map[string]string, isGzipped bool, originalDataSize int,
-	modifiedTime uint64, ttl *TTL, isChunkedFile bool, e error) {
-	pairMap = make(map[string]string)
-	for k, v := range r.Header {
-		if len(v) > 0 && strings.HasPrefix(k, PairNamePrefix) {
-			pairMap[k] = v[0]
-		}
-	}
 
-	if r.Method == "POST" {
-		fileName, data, mimeType, isGzipped, originalDataSize, isChunkedFile, e = parseMultipart(r, sizeLimit)
-	} else {
-		isGzipped = r.Header.Get("Content-Encoding") == "gzip"
-		mimeType = r.Header.Get("Content-Type")
-		fileName = ""
-		data, e = ioutil.ReadAll(io.LimitReader(r.Body, sizeLimit+1))
-		originalDataSize = len(data)
-		if e == io.EOF || int64(originalDataSize) == sizeLimit+1 {
-			io.Copy(ioutil.Discard, r.Body)
-		}
-		r.Body.Close()
-		if isGzipped {
-			if unzipped, e := util.UnGzipData(data); e == nil {
-				originalDataSize = len(unzipped)
-			}
-		} else if shouldGzip, _ := util.IsGzippableFileType("", mimeType); shouldGzip {
-			if compressedData, err := util.GzipData(data); err == nil {
-				data = compressedData
-				isGzipped = true
-			}
-		}
-	}
-	if e != nil {
-		return
-	}
-
-	modifiedTime, _ = strconv.ParseUint(r.FormValue("ts"), 10, 64)
-	ttl, _ = ReadTTL(r.FormValue("ttl"))
-
-	return
-}
 func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit int64) (n *Needle, originalSize int, e error) {
-	var pairMap map[string]string
-	fname, mimeType, isGzipped, isChunkedFile := "", "", false, false
 	n = new(Needle)
-	fname, n.Data, mimeType, pairMap, isGzipped, originalSize, n.LastModified, n.Ttl, isChunkedFile, e = ParseUpload(r, sizeLimit)
+	pu, e := ParseUpload(r, sizeLimit)
 	if e != nil {
 		return
 	}
-	if len(fname) < 256 {
-		n.Name = []byte(fname)
+	n.Data = pu.Data
+	originalSize = pu.OriginalDataSize
+	n.LastModified = pu.ModifiedTime
+	n.Ttl = pu.Ttl
+
+
+	if len(pu.FileName) < 256 {
+		n.Name = []byte(pu.FileName)
 		n.SetHasName()
 	}
-	if len(mimeType) < 256 {
-		n.Mime = []byte(mimeType)
+	if len(pu.MimeType) < 256 {
+		n.Mime = []byte(pu.MimeType)
 		n.SetHasMime()
 	}
-	if len(pairMap) != 0 {
+	if len(pu.PairMap) != 0 {
 		trimmedPairMap := make(map[string]string)
-		for k, v := range pairMap {
+		for k, v := range pu.PairMap {
 			trimmedPairMap[k[len(PairNamePrefix):]] = v
 		}
 
@@ -122,7 +82,7 @@ func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit 
 			n.SetHasPairs()
 		}
 	}
-	if isGzipped {
+	if pu.IsGzipped {
 		n.SetGzipped()
 	}
 	if n.LastModified == 0 {
@@ -133,13 +93,13 @@ func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit 
 		n.SetHasTtl()
 	}
 
-	if isChunkedFile {
+	if pu.IsChunkedFile {
 		n.SetIsChunkManifest()
 	}
 
 	if fixJpgOrientation {
-		loweredName := strings.ToLower(fname)
-		if mimeType == "image/jpeg" || strings.HasSuffix(loweredName, ".jpg") || strings.HasSuffix(loweredName, ".jpeg") {
+		loweredName := strings.ToLower(pu.FileName)
+		if pu.MimeType == "image/jpeg" || strings.HasSuffix(loweredName, ".jpg") || strings.HasSuffix(loweredName, ".jpeg") {
 			n.Data = images.FixJpgOrientation(n.Data)
 		}
 	}

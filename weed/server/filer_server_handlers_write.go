@@ -90,10 +90,22 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if fs.option.Cipher {
+		reply, err := fs.encrypt(ctx, w, r, replication, collection, dataCenter)
+		if err != nil {
+			writeJsonError(w, r, http.StatusInternalServerError, err)
+		} else if reply != nil {
+			writeJsonQuiet(w, r, http.StatusCreated, reply)
+		}
+
+		return
+	}
+
 	fileId, urlLocation, auth, err := fs.assignNewFileInfo(w, r, replication, collection, dataCenter)
 
 	if err != nil || fileId == "" || urlLocation == "" {
 		glog.V(0).Infof("fail to allocate volume for %s, collection:%s, datacenter:%s", r.URL.Path, collection, dataCenter)
+		writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("fail to allocate volume for %s, collection:%s, datacenter:%s", r.URL.Path, collection, dataCenter))
 		return
 	}
 
@@ -134,7 +146,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 // update metadata in filer store
 func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w http.ResponseWriter,
-	replication string, collection string, ret operation.UploadResult, fileId string) (err error) {
+	replication string, collection string, ret *operation.UploadResult, fileId string) (err error) {
 
 	stats.FilerRequestCounter.WithLabelValues("postStoreWrite").Inc()
 	start := time.Now()
@@ -198,11 +210,13 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 }
 
 // send request to volume server
-func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth security.EncodedJwt, w http.ResponseWriter, fileId string) (ret operation.UploadResult, err error) {
+func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth security.EncodedJwt, w http.ResponseWriter, fileId string) (ret *operation.UploadResult, err error) {
 
 	stats.FilerRequestCounter.WithLabelValues("postUpload").Inc()
 	start := time.Now()
 	defer func() { stats.FilerRequestHistogram.WithLabelValues("postUpload").Observe(time.Since(start).Seconds()) }()
+
+	ret = &operation.UploadResult{}
 
 	request := &http.Request{
 		Method:        r.Method,
@@ -215,6 +229,7 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 		Host:          r.Host,
 		ContentLength: r.ContentLength,
 	}
+
 	if auth != "" {
 		request.Header.Set("Authorization", "BEARER "+string(auth))
 	}

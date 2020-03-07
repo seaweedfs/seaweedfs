@@ -99,13 +99,13 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	}
 
 	debug("parsing upload file...")
-	fname, data, mimeType, pairMap, isGzipped, originalDataSize, lastModified, _, _, pe := needle.ParseUpload(r, 256*1024*1024)
+	pu, pe := needle.ParseUpload(r, 256*1024*1024)
 	if pe != nil {
 		writeJsonError(w, r, http.StatusBadRequest, pe)
 		return
 	}
 
-	debug("assigning file id for", fname)
+	debug("assigning file id for", pu.FileName)
 	r.ParseForm()
 	count := uint64(1)
 	if r.FormValue("count") != "" {
@@ -129,21 +129,21 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	}
 
 	url := "http://" + assignResult.Url + "/" + assignResult.Fid
-	if lastModified != 0 {
-		url = url + "?ts=" + strconv.FormatUint(lastModified, 10)
+	if pu.ModifiedTime != 0 {
+		url = url + "?ts=" + strconv.FormatUint(pu.ModifiedTime, 10)
 	}
 
 	debug("upload file to store", url)
-	uploadResult, err := operation.Upload(url, fname, false, bytes.NewReader(data), isGzipped, mimeType, pairMap, assignResult.Auth)
+	uploadResult, err := operation.Upload(url, pu.FileName, false, bytes.NewReader(pu.Data), pu.IsGzipped, pu.MimeType, pu.PairMap, assignResult.Auth)
 	if err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
 
-	m["fileName"] = fname
+	m["fileName"] = pu.FileName
 	m["fid"] = assignResult.Fid
 	m["fileUrl"] = assignResult.PublicUrl + "/" + assignResult.Fid
-	m["size"] = originalDataSize
+	m["size"] = pu.OriginalDataSize
 	m["eTag"] = uploadResult.ETag
 	writeJsonQuiet(w, r, http.StatusCreated, m)
 	return

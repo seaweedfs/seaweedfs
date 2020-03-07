@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"mime"
@@ -14,7 +15,6 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -136,15 +136,16 @@ func (fs *FilerServer) handleSingleChunk(w http.ResponseWriter, r *http.Request,
 	if entry.Attr.Mime != "" {
 		w.Header().Set("Content-Type", entry.Attr.Mime)
 	}
-	w.WriteHeader(resp.StatusCode)
 	if entry.Chunks[0].CipherKey == nil {
+		w.WriteHeader(resp.StatusCode)
 		io.Copy(w, resp.Body)
 	} else {
-		fs.writeEncryptedChunk(w, resp, entry.Chunks[0])
+		fs.writeEncryptedChunk(w, resp, entry)
 	}
 }
 
-func (fs *FilerServer) writeEncryptedChunk(w http.ResponseWriter, resp *http.Response, chunk *filer_pb.FileChunk) {
+func (fs *FilerServer) writeEncryptedChunk(w http.ResponseWriter, resp *http.Response, entry *filer2.Entry) {
+	chunk := entry.Chunks[0]
 	encryptedData, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		glog.V(1).Infof("read encrypted %s failed, err: %v", chunk.FileId, err)
@@ -157,6 +158,8 @@ func (fs *FilerServer) writeEncryptedChunk(w http.ResponseWriter, resp *http.Res
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", chunk.Size))
+	w.WriteHeader(resp.StatusCode)
 	w.Write(decryptedData)
 }
 

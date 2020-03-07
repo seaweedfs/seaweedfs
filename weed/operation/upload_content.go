@@ -69,18 +69,12 @@ func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, 
 	// encrypt data
 	var cipherKey util.CipherKey
 	var clearDataLen int
+	var err error
 	if cipher {
-		clearData, err := ioutil.ReadAll(reader)
+		cipherKey, reader, clearDataLen, _, err = util.EncryptReader(reader)
 		if err != nil {
-			return nil, fmt.Errorf("read raw input: %v", err)
+			return nil, err
 		}
-		clearDataLen = len(clearData)
-		cipherKey = util.GenCipherKey()
-		encryptedData, err := util.Encrypt(clearData, cipherKey)
-		if err != nil {
-			return nil, fmt.Errorf("encrypt input: %v", err)
-		}
-		reader = bytes.NewReader(encryptedData)
 	}
 
 	// upload data
