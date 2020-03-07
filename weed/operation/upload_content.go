@@ -62,7 +62,7 @@ func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, 
 	contentIsGzipped := isGzipped
 	shouldGzipNow := false
 	if !isGzipped {
-		if shouldBeZipped, iAmSure := util.IsGzippableFileType(filepath.Base(filename), mtype); iAmSure && shouldBeZipped {
+		if shouldBeZipped, iAmSure := util.IsGzippableFileType(filepath.Base(filename), mtype); mtype == "" || iAmSure && shouldBeZipped {
 			shouldGzipNow = true
 			contentIsGzipped = true
 		}

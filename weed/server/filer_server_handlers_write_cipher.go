@@ -33,21 +33,15 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 	sizeLimit := int64(fs.option.MaxMB) * 1024 * 1024
 
 	pu, err := needle.ParseUpload(r, sizeLimit)
-	data := pu.Data
 	uncompressedData := pu.Data
-	cipherKey := util.GenCipherKey()
 	if pu.IsGzipped {
 		uncompressedData = pu.UncompressedData
-		data, err = util.Encrypt(pu.UncompressedData, cipherKey)
-		if err != nil {
-			return nil, fmt.Errorf("encrypt input: %v", err)
-		}
 	}
 	if pu.MimeType == "" {
 		pu.MimeType = http.DetectContentType(uncompressedData)
 	}
 
-	uploadResult, uploadError := operation.Upload(urlLocation, pu.FileName, true, bytes.NewReader(data), pu.IsGzipped, "", pu.PairMap, auth)
+	uploadResult, uploadError := operation.Upload(urlLocation, pu.FileName, true, bytes.NewReader(uncompressedData), false, pu.MimeType, pu.PairMap, auth)
 	if uploadError != nil {
 		return nil, fmt.Errorf("upload to volume server: %v", uploadError)
 	}
