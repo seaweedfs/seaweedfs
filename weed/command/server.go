@@ -78,7 +78,6 @@ func init() {
 	filerOptions.port = cmdServer.Flag.Int("filer.port", 8888, "filer server http listen port")
 	filerOptions.publicPort = cmdServer.Flag.Int("filer.port.public", 0, "filer server public http listen port")
 	filerOptions.defaultReplicaPlacement = cmdServer.Flag.String("filer.defaultReplicaPlacement", "", "Default replication type if not specified during runtime.")
-	filerOptions.redirectOnRead = cmdServer.Flag.Bool("filer.redirectOnRead", false, "whether proxy or redirect to volume server during file GET request")
 	filerOptions.disableDirListing = cmdServer.Flag.Bool("filer.disableDirListing", false, "turn off directory listing")
 	filerOptions.maxMB = cmdServer.Flag.Int("filer.maxMB", 32, "split files larger than the limit")
 	filerOptions.dirListingLimit = cmdServer.Flag.Int("filer.dirListLimit", 1000, "limit sub dir listing size")
@@ -113,10 +112,6 @@ func runServer(cmd *Command, args []string) bool {
 		}
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
-	}
-
-	if *filerOptions.redirectOnRead {
-		*isStartingFiler = true
 	}
 
 	if *isStartingS3 {

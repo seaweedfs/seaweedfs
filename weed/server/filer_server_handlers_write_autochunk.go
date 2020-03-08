@@ -102,8 +102,7 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 		}
 
 		// upload the chunk to the volume server
-		chunkName := fileName + "_chunk_" + strconv.FormatInt(int64(len(fileChunks)+1), 10)
-		uploadResult, uploadErr := fs.doUpload(urlLocation, w, r, limitedReader, chunkName, "", fileId, auth)
+		uploadResult, uploadErr := fs.doUpload(urlLocation, w, r, limitedReader, "", "", nil, auth)
 		if uploadErr != nil {
 			return nil, uploadErr
 		}
@@ -175,8 +174,7 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 	return
 }
 
-func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *http.Request,
-	limitedReader io.Reader, fileName string, contentType string, fileId string, auth security.EncodedJwt) (*operation.UploadResult, error) {
+func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *http.Request, limitedReader io.Reader, fileName string, contentType string, pairMap map[string]string, auth security.EncodedJwt) (*operation.UploadResult, error) {
 
 	stats.FilerRequestCounter.WithLabelValues("postAutoChunkUpload").Inc()
 	start := time.Now()
@@ -184,5 +182,5 @@ func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *ht
 		stats.FilerRequestHistogram.WithLabelValues("postAutoChunkUpload").Observe(time.Since(start).Seconds())
 	}()
 
-	return operation.Upload(urlLocation, fileName, fs.option.Cipher, limitedReader, false, contentType, nil, auth)
+	return operation.Upload(urlLocation, fileName, fs.option.Cipher, limitedReader, false, contentType, pairMap, auth)
 }

@@ -9,7 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
-	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -111,11 +111,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	if r.Header.Get("ETag-MD5") == "True" {
-		setEtag(w, n.MD5())
-	} else {
-		setEtag(w, n.Etag())
-	}
+	setEtag(w, n.Etag())
 
 	if n.HasPairs() {
 		pairMap := make(map[string]string)
@@ -135,7 +131,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	if n.NameSize > 0 && filename == "" {
 		filename = string(n.Name)
 		if ext == "" {
-			ext = path.Ext(filename)
+			ext = filepath.Ext(filename)
 		}
 	}
 	mtype := ""
@@ -179,7 +175,7 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, 
 		fileName = chunkManifest.Name
 	}
 
-	ext := path.Ext(fileName)
+	ext := filepath.Ext(fileName)
 
 	mType := ""
 	if chunkManifest.Mime != "" {
@@ -226,27 +222,21 @@ func conditionallyResizeImages(originalDataReaderSeeker io.ReadSeeker, ext strin
 func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.ResponseWriter, r *http.Request) error {
 	totalSize, e := rs.Seek(0, 2)
 	if mimeType == "" {
-		if ext := path.Ext(filename); ext != "" {
+		if ext := filepath.Ext(filename); ext != "" {
 			mimeType = mime.TypeByExtension(ext)
 		}
 	}
 	if mimeType != "" {
 		w.Header().Set("Content-Type", mimeType)
 	}
-	if filename != "" {
-		contentDisposition := "inline"
-		if r.FormValue("dl") != "" {
-			if dl, _ := strconv.ParseBool(r.FormValue("dl")); dl {
-				contentDisposition = "attachment"
-			}
-		}
-		w.Header().Set("Content-Disposition", contentDisposition+`; filename="`+fileNameEscaper.Replace(filename)+`"`)
-	}
 	w.Header().Set("Accept-Ranges", "bytes")
+
 	if r.Method == "HEAD" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		return nil
 	}
+
+	adjustHeadersAfterHEAD(w, r, filename)
 
 	processRangeRequst(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
 		if _, e = rs.Seek(offset, 0); e != nil {

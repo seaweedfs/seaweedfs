@@ -223,7 +223,6 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 
 	proxyReq.Header.Set("Host", s3a.option.Filer)
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
-	proxyReq.Header.Set("Etag-MD5", "True")
 
 	for header, values := range r.Header {
 		for _, value := range values {

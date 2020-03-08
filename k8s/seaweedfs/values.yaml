@@ -177,9 +177,6 @@ filer:
   grpcPort: 18888
   loggingOverrideLevel: null
 
-  # Whether proxy or redirect to volume server during file GET request
-  redirectOnRead: false
-
   # Limit sub dir listing size (default 100000)
   dirListLimit: 100000
 

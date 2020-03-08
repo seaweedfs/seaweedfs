@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -220,6 +221,8 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 	defer func() { stats.FilerRequestHistogram.WithLabelValues("postUpload").Observe(time.Since(start).Seconds()) }()
 
 	ret = &operation.UploadResult{}
+	hash := md5.New()
+	var body = ioutil.NopCloser(io.TeeReader(r.Body, hash))
 
 	request := &http.Request{
 		Method:        r.Method,
@@ -228,7 +231,7 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 		ProtoMajor:    r.ProtoMajor,
 		ProtoMinor:    r.ProtoMinor,
 		Header:        r.Header,
-		Body:          r.Body,
+		Body:          body,
 		Host:          r.Host,
 		ContentLength: r.ContentLength,
 	}
@@ -247,7 +250,7 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 		io.Copy(ioutil.Discard, resp.Body)
 		resp.Body.Close()
 	}()
-	etag := resp.Header.Get("ETag")
+
 	respBody, raErr := ioutil.ReadAll(resp.Body)
 	if raErr != nil {
 		glog.V(0).Infoln("failing to upload to volume server", r.RequestURI, raErr.Error())
@@ -255,6 +258,7 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 		err = raErr
 		return
 	}
+
 	glog.V(4).Infoln("post result", string(respBody))
 	unmarshalErr := json.Unmarshal(respBody, &ret)
 	if unmarshalErr != nil {
@@ -282,9 +286,8 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 			return
 		}
 	}
-	if etag != "" {
-		ret.ETag = etag
-	}
+	// use filer calculated md5 ETag, instead of the volume server crc ETag
+	ret.ETag = fmt.Sprintf("%x", hash.Sum(nil))
 	return
 }
 

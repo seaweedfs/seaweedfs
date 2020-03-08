@@ -37,7 +37,6 @@ type FilerOption struct {
 	Masters            []string
 	Collection         string
 	DefaultReplication string
-	RedirectOnRead     bool
 	DisableDirListing  bool
 	MaxMB              int
 	DirListingLimit    int

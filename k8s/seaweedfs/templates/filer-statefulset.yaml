@@ -99,9 +99,6 @@ spec:
               {{- end }}
               filer \
               -port={{ .Values.filer.port }} \
-              {{- if .Values.filer.redirectOnRead }}
-              -redirectOnRead \
-              {{- end }}
               {{- if .Values.filer.disableHttp }}
               -disableHttp \
               {{- end }}

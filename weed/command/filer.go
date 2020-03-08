@@ -27,7 +27,6 @@ type FilerOptions struct {
 	publicPort              *int
 	collection              *string
 	defaultReplicaPlacement *string
-	redirectOnRead          *bool
 	disableDirListing       *bool
 	maxMB                   *int
 	dirListingLimit         *int
@@ -48,7 +47,6 @@ func init() {
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
 	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "000", "default replication type if not specified")
-	f.redirectOnRead = cmdFiler.Flag.Bool("redirectOnRead", false, "whether proxy or redirect to volume server during file GET request")
 	f.disableDirListing = cmdFiler.Flag.Bool("disableDirListing", false, "turn off directory listing")
 	f.maxMB = cmdFiler.Flag.Int("maxMB", 32, "split files larger than the limit")
 	f.dirListingLimit = cmdFiler.Flag.Int("dirListLimit", 100000, "limit sub dir listing size")
@@ -105,7 +103,6 @@ func (fo *FilerOptions) startFiler() {
 		Masters:            strings.Split(*fo.masters, ","),
 		Collection:         *fo.collection,
 		DefaultReplication: *fo.defaultReplicaPlacement,
-		RedirectOnRead:     *fo.redirectOnRead,
 		DisableDirListing:  *fo.disableDirListing,
 		MaxMB:              *fo.maxMB,
 		DirListingLimit:    *fo.dirListingLimit,
