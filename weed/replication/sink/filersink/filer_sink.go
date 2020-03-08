@@ -98,7 +98,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 			Name:      name,
 		}
 		glog.V(1).Infof("lookup: %v", lookupRequest)
-		if resp, err := client.LookupDirectoryEntry(context.Background(), lookupRequest); err == nil && resp.Entry != nil {
+		if resp, err := filer_pb.LookupEntry(client, lookupRequest); err == nil {
 			if filer2.ETag(resp.Entry.Chunks) == filer2.ETag(entry.Chunks) {
 				glog.V(0).Infof("already replicated %s", key)
 				return nil
@@ -148,13 +148,10 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		}
 
 		glog.V(4).Infof("lookup entry: %v", request)
-		resp, err := client.LookupDirectoryEntry(context.Background(), request)
+		resp, err := filer_pb.LookupEntry(client, request)
 		if err != nil {
 			glog.V(0).Infof("lookup %s: %v", key, err)
 			return err
-		}
-		if resp.Entry == nil {
-			return filer2.ErrNotFound
 		}
 
 		existingEntry = resp.Entry

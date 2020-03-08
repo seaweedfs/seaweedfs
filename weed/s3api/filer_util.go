@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
@@ -202,14 +203,14 @@ func (s3a *S3ApiServer) exists(parentDirectoryPath string, entryName string, isD
 		}
 
 		glog.V(4).Infof("exists entry %v/%v: %v", parentDirectoryPath, entryName, request)
-		resp, err := client.LookupDirectoryEntry(context.Background(), request)
+		resp, err := filer_pb.LookupEntry(client, request)
 		if err != nil {
+			if err == filer2.ErrNotFound {
+				exists = false
+				return nil
+			}
 			glog.V(0).Infof("exists entry %v: %v", request, err)
 			return fmt.Errorf("exists entry %s/%s: %v", parentDirectoryPath, entryName, err)
-		}
-		if resp.Entry == nil {
-			exists = false
-			return nil
 		}
 
 		exists = resp.Entry.IsDirectory == isDirectory

@@ -58,12 +58,12 @@ func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 			Name:      destinationDir,
 			Directory: destinationName,
 		}
-		respDestinationLookupEntry, err := client.LookupDirectoryEntry(context.Background(), destinationRequest)
+		respDestinationLookupEntry, err := filer_pb.LookupEntry(client, destinationRequest)
 
 		var targetDir, targetName string
 
 		// moving a file or folder
-		if err == nil && respDestinationLookupEntry.Entry != nil && respDestinationLookupEntry.Entry.IsDirectory {
+		if err == nil && respDestinationLookupEntry.Entry.IsDirectory {
 			// to a directory
 			targetDir = filepath.ToSlash(filepath.Join(destinationDir, destinationName))
 			targetName = sourceName

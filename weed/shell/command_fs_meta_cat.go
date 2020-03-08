@@ -49,12 +49,9 @@ func (c *commandFsMetaCat) Do(args []string, commandEnv *CommandEnv, writer io.W
 			Name:      name,
 			Directory: dir,
 		}
-		respLookupEntry, err := client.LookupDirectoryEntry(context.Background(), request)
+		respLookupEntry, err := filer_pb.LookupEntry(client, request)
 		if err != nil {
 			return err
-		}
-		if respLookupEntry.Entry == nil {
-			return fmt.Errorf("file not found: %s", path)
 		}
 
 		m := jsonpb.Marshaler{

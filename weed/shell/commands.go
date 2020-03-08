@@ -71,16 +71,12 @@ func (ce *CommandEnv) checkDirectory(filerServer string, filerPort int64, path s
 
 	return ce.withFilerClient(filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
 
-		resp, lookupErr := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+		resp, lookupErr := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
 			Name:      name,
 		})
 		if lookupErr != nil {
 			return lookupErr
-		}
-
-		if resp.Entry == nil {
-			return fmt.Errorf("entry not found")
 		}
 
 		if !resp.Entry.IsDirectory {

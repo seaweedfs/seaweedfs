@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"math"
@@ -50,12 +49,9 @@ func (c *commandFsCat) Do(args []string, commandEnv *CommandEnv, writer io.Write
 			Name:      name,
 			Directory: dir,
 		}
-		respLookupEntry, err := client.LookupDirectoryEntry(context.Background(), request)
+		respLookupEntry, err := filer_pb.LookupEntry(client, request)
 		if err != nil {
 			return err
-		}
-		if respLookupEntry.Entry == nil {
-			return fmt.Errorf("file not found: %s", path)
 		}
 
 		return filer2.StreamContent(commandEnv.MasterClient, writer, respLookupEntry.Entry.Chunks, 0, math.MaxInt32)
