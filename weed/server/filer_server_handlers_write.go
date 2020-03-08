@@ -307,7 +307,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		glog.V(1).Infoln("deleting", r.URL.Path, ":", err.Error())
 		httpStatus := http.StatusInternalServerError
-		if err == filer2.ErrNotFound {
+		if err == filer_pb.ErrNotFound {
 			httpStatus = http.StatusNotFound
 		}
 		writeJsonError(w, r, httpStatus, err)

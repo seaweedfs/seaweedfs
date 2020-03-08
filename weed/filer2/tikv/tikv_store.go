@@ -12,6 +12,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	weed_util "github.com/chrislusf/seaweedfs/weed/util"
 
 	"github.com/pingcap/tidb/kv"
@@ -110,7 +111,7 @@ func (store *TikvStore) FindEntry(ctx context.Context, fullpath filer2.FullPath)
 	data, err := store.getTx(ctx).Get(ctx, key)
 
 	if err == kv.ErrNotExist {
-		return nil, filer2.ErrNotFound
+		return nil, filer_pb.ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get %s : %v", entry.FullPath, err)

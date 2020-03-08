@@ -15,6 +15,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -33,7 +34,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 			fs.listDirectoryHandler(w, r)
 			return
 		}
-		if err == filer2.ErrNotFound {
+		if err == filer_pb.ErrNotFound {
 			glog.V(1).Infof("Not found %s: %v", path, err)
 			stats.FilerRequestCounter.WithLabelValues("read.notfound").Inc()
 			w.WriteHeader(http.StatusNotFound)

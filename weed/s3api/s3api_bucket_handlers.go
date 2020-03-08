@@ -13,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gorilla/mux"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
@@ -119,8 +118,8 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 
 		glog.V(1).Infof("lookup bucket: %v", request)
 		if _, err := filer_pb.LookupEntry(client, request); err != nil {
-			if err == filer2.ErrNotFound {
-				return filer2.ErrNotFound
+			if err == filer_pb.ErrNotFound {
+				return filer_pb.ErrNotFound
 			}
 			return fmt.Errorf("lookup bucket %s/%s: %v", s3a.option.BucketsPath, bucket, err)
 		}

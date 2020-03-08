@@ -3,10 +3,13 @@ package cassandra
 import (
 	"context"
 	"fmt"
+
+	"github.com/gocql/gocql"
+
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/gocql/gocql"
 )
 
 func init() {
@@ -80,12 +83,12 @@ func (store *CassandraStore) FindEntry(ctx context.Context, fullpath filer2.Full
 		"SELECT meta FROM filemeta WHERE directory=? AND name=?",
 		dir, name).Consistency(gocql.One).Scan(&data); err != nil {
 		if err != gocql.ErrNotFound {
-			return nil, filer2.ErrNotFound
+			return nil, filer_pb.ErrNotFound
 		}
 	}
 
 	if len(data) == 0 {
-		return nil, filer2.ErrNotFound
+		return nil, filer_pb.ErrNotFound
 	}
 
 	entry = &filer2.Entry{

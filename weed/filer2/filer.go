@@ -13,6 +13,7 @@ import (
 	"github.com/karlseguin/ccache"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
@@ -126,7 +127,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 			glog.V(2).Infof("create directory: %s %v", dirPath, dirEntry.Mode)
 			mkdirErr := f.store.InsertEntry(ctx, dirEntry)
 			if mkdirErr != nil {
-				if _, err := f.FindEntry(ctx, FullPath(dirPath)); err == ErrNotFound {
+				if _, err := f.FindEntry(ctx, FullPath(dirPath)); err == filer_pb.ErrNotFound {
 					glog.V(3).Infof("mkdir %s: %v", dirPath, mkdirErr)
 					return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
 				}

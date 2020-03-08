@@ -11,6 +11,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
 const (
@@ -64,7 +65,7 @@ func (store *UniversalRedisStore) FindEntry(ctx context.Context, fullpath filer2
 
 	data, err := store.Client.Get(string(fullpath)).Result()
 	if err == redis.Nil {
-		return nil, filer2.ErrNotFound
+		return nil, filer_pb.ErrNotFound
 	}
 
 	if err != nil {

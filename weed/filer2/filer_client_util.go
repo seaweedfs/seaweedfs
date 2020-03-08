@@ -104,7 +104,7 @@ func GetEntry(filerClient FilerClient, fullFilePath FullPath) (entry *filer_pb.E
 		// glog.V(3).Infof("read %s request: %v", fullFilePath, request)
 		resp, err := filer_pb.LookupEntry(client, request)
 		if err != nil {
-			if err == ErrNotFound {
+			if err == filer_pb.ErrNotFound {
 				return nil
 			}
 			glog.V(3).Infof("read %s %v: %v", fullFilePath, resp, err)

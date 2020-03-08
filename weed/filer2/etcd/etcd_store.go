@@ -6,10 +6,12 @@ import (
 	"strings"
 	"time"
 
+	"go.etcd.io/etcd/clientv3"
+
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	weed_util "github.com/chrislusf/seaweedfs/weed/util"
-	"go.etcd.io/etcd/clientv3"
 )
 
 const (
@@ -99,7 +101,7 @@ func (store *EtcdStore) FindEntry(ctx context.Context, fullpath filer2.FullPath)
 	}
 
 	if len(resp.Kvs) == 0 {
-		return nil, filer2.ErrNotFound
+		return nil, filer_pb.ErrNotFound
 	}
 
 	entry = &filer2.Entry{

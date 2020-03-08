@@ -123,7 +123,7 @@ func (wfs *WFS) maybeLoadEntry(dir, name string) (entry *filer_pb.Entry, err err
 
 		resp, err := filer_pb.LookupEntry(client, request)
 		if err != nil {
-			if err == filer2.ErrNotFound {
+			if err == filer_pb.ErrNotFound {
 				glog.V(3).Infof("file attr read not found file %v: %v", request, err)
 				return fuse.ENOENT
 			}

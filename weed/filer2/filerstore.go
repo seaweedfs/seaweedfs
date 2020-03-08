@@ -2,7 +2,6 @@ package filer2
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -27,8 +26,6 @@ type FilerStore interface {
 	CommitTransaction(ctx context.Context) error
 	RollbackTransaction(ctx context.Context) error
 }
-
-var ErrNotFound = errors.New("filer: no entry is found in filer store")
 
 type FilerStoreWrapper struct {
 	actualStore FilerStore
