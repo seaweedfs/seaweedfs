@@ -182,11 +182,18 @@ func (fs *FilerServer) handleMultipleChunks(w http.ResponseWriter, r *http.Reque
 
 	totalSize := int64(filer2.TotalSize(entry.Chunks))
 
+	processRangeRequst(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
+		return fs.writeContent(writer, entry, offset, int(size))
+	})
+
+}
+
+func processRangeRequst(r *http.Request, w http.ResponseWriter, totalSize int64, mimeType string, writeFn func(writer io.Writer, offset int64, size int64) error) {
 	rangeReq := r.Header.Get("Range")
 
 	if rangeReq == "" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
-		if err := fs.writeContent(w, entry, 0, int(totalSize)); err != nil {
+		if err := writeFn(w, 0, totalSize); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -227,7 +234,7 @@ func (fs *FilerServer) handleMultipleChunks(w http.ResponseWriter, r *http.Reque
 		w.Header().Set("Content-Range", ra.contentRange(totalSize))
 		w.WriteHeader(http.StatusPartialContent)
 
-		err = fs.writeContent(w, entry, ra.start, int(ra.length))
+		err = writeFn(w, ra.start, ra.length)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -255,7 +262,7 @@ func (fs *FilerServer) handleMultipleChunks(w http.ResponseWriter, r *http.Reque
 				pw.CloseWithError(e)
 				return
 			}
-			if e = fs.writeContent(part, entry, ra.start, int(ra.length)); e != nil {
+			if e = writeFn(part, ra.start, ra.length); e != nil {
 				pw.CloseWithError(e)
 				return
 			}
@@ -271,7 +278,6 @@ func (fs *FilerServer) handleMultipleChunks(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Internal Error", http.StatusInternalServerError)
 		return
 	}
-
 }
 
 func (fs *FilerServer) writeContent(w io.Writer, entry *filer2.Entry, offset int64, size int) error {

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"mime"
-	"mime/multipart"
 	"net/http"
 	"net/url"
 	"path"
@@ -248,92 +247,13 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		return nil
 	}
-	rangeReq := r.Header.Get("Range")
-	if rangeReq == "" {
-		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
-		if _, e = rs.Seek(0, 0); e != nil {
+
+	processRangeRequst(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
+		if _, e = rs.Seek(offset, 0); e != nil {
 			return e
 		}
-		_, e = io.Copy(w, rs)
+		_, e = io.CopyN(writer, rs, size)
 		return e
-	}
-
-	//the rest is dealing with partial content request
-	//mostly copy from src/pkg/net/http/fs.go
-	ranges, err := parseRange(rangeReq, totalSize)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusRequestedRangeNotSatisfiable)
-		return nil
-	}
-	if sumRangesSize(ranges) > totalSize {
-		// The total number of bytes in all the ranges
-		// is larger than the size of the file by
-		// itself, so this is probably an attack, or a
-		// dumb client.  Ignore the range request.
-		return nil
-	}
-	if len(ranges) == 0 {
-		return nil
-	}
-	if len(ranges) == 1 {
-		// RFC 2616, Section 14.16:
-		// "When an HTTP message includes the content of a single
-		// range (for example, a response to a request for a
-		// single range, or to a request for a set of ranges
-		// that overlap without any holes), this content is
-		// transmitted with a Content-Range header, and a
-		// Content-Length header showing the number of bytes
-		// actually transferred.
-		// ...
-		// A response to a request for a single range MUST NOT
-		// be sent using the multipart/byteranges media type."
-		ra := ranges[0]
-		w.Header().Set("Content-Length", strconv.FormatInt(ra.length, 10))
-		w.Header().Set("Content-Range", ra.contentRange(totalSize))
-		w.WriteHeader(http.StatusPartialContent)
-		if _, e = rs.Seek(ra.start, 0); e != nil {
-			return e
-		}
-
-		_, e = io.CopyN(w, rs, ra.length)
-		return e
-	}
-	// process multiple ranges
-	for _, ra := range ranges {
-		if ra.start > totalSize {
-			http.Error(w, "Out of Range", http.StatusRequestedRangeNotSatisfiable)
-			return nil
-		}
-	}
-	sendSize := rangesMIMESize(ranges, mimeType, totalSize)
-	pr, pw := io.Pipe()
-	mw := multipart.NewWriter(pw)
-	w.Header().Set("Content-Type", "multipart/byteranges; boundary="+mw.Boundary())
-	sendContent := pr
-	defer pr.Close() // cause writing goroutine to fail and exit if CopyN doesn't finish.
-	go func() {
-		for _, ra := range ranges {
-			part, e := mw.CreatePart(ra.mimeHeader(mimeType, totalSize))
-			if e != nil {
-				pw.CloseWithError(e)
-				return
-			}
-			if _, e = rs.Seek(ra.start, 0); e != nil {
-				pw.CloseWithError(e)
-				return
-			}
-			if _, e = io.CopyN(part, rs, ra.length); e != nil {
-				pw.CloseWithError(e)
-				return
-			}
-		}
-		mw.Close()
-		pw.Close()
-	}()
-	if w.Header().Get("Content-Encoding") == "" {
-		w.Header().Set("Content-Length", strconv.FormatInt(sendSize, 10))
-	}
-	w.WriteHeader(http.StatusPartialContent)
-	_, e = io.CopyN(w, sendContent, sendSize)
-	return e
+	})
+	return nil
 }
