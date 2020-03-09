@@ -20,6 +20,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
@@ -41,6 +42,7 @@ type CopyOptions struct {
 	grpcDialOption    grpc.DialOption
 	masters           []string
 	cipher            bool
+	ttlSec            int32
 }
 
 func init() {
@@ -123,6 +125,13 @@ func runCopy(cmd *Command, args []string) bool {
 	}
 	copy.masters = masters
 	copy.cipher = cipher
+
+	ttl, err := needle.ReadTTL(*copy.ttl)
+	if err != nil {
+		fmt.Printf("parsing ttl %s: %v\n", *copy.ttl, err)
+		return false
+	}
+	copy.ttlSec = int32(ttl.Minutes()) * 60
 
 	if *cmdCopy.IsDebug {
 		util.SetupProfiling("filer.copy.cpu.pprof", "filer.copy.mem.pprof")
@@ -286,7 +295,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 				Count:       1,
 				Replication: *worker.options.replication,
 				Collection:  *worker.options.collection,
-				TtlSec:      int32(util.ParseInt(*worker.options.ttl, 0)),
+				TtlSec:      worker.options.ttlSec,
 				ParentPath:  task.destinationUrlPath,
 			}
 
@@ -342,7 +351,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 					Mime:        mimeType,
 					Replication: *worker.options.replication,
 					Collection:  *worker.options.collection,
-					TtlSec:      int32(util.ParseInt(*worker.options.ttl, 0)),
+					TtlSec:      worker.options.ttlSec,
 				},
 				Chunks: chunks,
 			},
@@ -388,7 +397,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 					Count:       1,
 					Replication: *worker.options.replication,
 					Collection:  *worker.options.collection,
-					TtlSec:      int32(util.ParseInt(*worker.options.ttl, 0)),
+					TtlSec:      worker.options.ttlSec,
 					ParentPath:  task.destinationUrlPath,
 				}
 
@@ -469,7 +478,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 					Mime:        mimeType,
 					Replication: replication,
 					Collection:  collection,
-					TtlSec:      int32(util.ParseInt(*worker.options.ttl, 0)),
+					TtlSec:      worker.options.ttlSec,
 				},
 				Chunks: chunks,
 			},

@@ -223,14 +223,36 @@ func (f *Filer) FindEntry(ctx context.Context, p FullPath) (entry *Entry, err er
 			},
 		}, nil
 	}
-	return f.store.FindEntry(ctx, p)
+	entry, err = f.store.FindEntry(ctx, p)
+	if entry != nil && entry.TtlSec > 0 {
+		if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
+			f.store.DeleteEntry(ctx, p.Child(entry.Name()))
+			return nil, filer_pb.ErrNotFound
+		}
+	}
+	return
+
 }
 
-func (f *Filer) ListDirectoryEntries(ctx context.Context, p FullPath, startFileName string, inclusive bool, limit int) ([]*Entry, error) {
+func (f *Filer) ListDirectoryEntries(ctx context.Context, p FullPath, startFileName string, inclusive bool, limit int) (entries []*Entry, expiredCount int, err error) {
 	if strings.HasSuffix(string(p), "/") && len(p) > 1 {
 		p = p[0 : len(p)-1]
 	}
-	return f.store.ListDirectoryEntries(ctx, p, startFileName, inclusive, limit)
+	listedEntries, listErr := f.store.ListDirectoryEntries(ctx, p, startFileName, inclusive, limit)
+	if listErr != nil {
+		return listedEntries, expiredCount, err
+	}
+	for _, entry := range listedEntries {
+		if entry.TtlSec > 0 {
+			if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
+				f.store.DeleteEntry(ctx, p.Child(entry.Name()))
+				expiredCount++
+				continue
+			}
+		}
+		entries = append(entries, entry)
+	}
+	return
 }
 
 func (f *Filer) cacheDelDirectory(dirpath string) {
