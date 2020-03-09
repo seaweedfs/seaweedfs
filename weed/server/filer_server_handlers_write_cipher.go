@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -28,7 +27,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 
 	glog.V(4).Infof("write %s to %v", r.URL.Path, urlLocation)
 
-	// Note: gzip(cipher(data)), cipher data first, then gzip
+	// Note: encrypt(gzip(data)), encrypt data first, then gzip
 
 	sizeLimit := int64(fs.option.MaxMB) * 1024 * 1024
 
@@ -41,7 +40,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 		pu.MimeType = http.DetectContentType(uncompressedData)
 	}
 
-	uploadResult, uploadError := operation.Upload(urlLocation, pu.FileName, true, bytes.NewReader(uncompressedData), false, pu.MimeType, pu.PairMap, auth)
+	uploadResult, uploadError := operation.UploadData(urlLocation, pu.FileName, true, uncompressedData, false, pu.MimeType, pu.PairMap, auth)
 	if uploadError != nil {
 		return nil, fmt.Errorf("upload to volume server: %v", uploadError)
 	}
@@ -53,10 +52,13 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 			Offset:    0,
 			Size:      uint64(uploadResult.Size),
 			Mtime:     time.Now().UnixNano(),
-			ETag:      uploadResult.ETag,
+			ETag:      uploadResult.Md5,
 			CipherKey: uploadResult.CipherKey,
+			IsGzipped: uploadResult.Gzip > 0,
 		},
 	}
+
+	fmt.Printf("uploaded: %+v\n", uploadResult)
 
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") {

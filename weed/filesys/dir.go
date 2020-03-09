@@ -35,8 +35,6 @@ var _ = fs.NodeForgetter(&Dir{})
 
 func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 
-	glog.V(3).Infof("dir Attr %s, existing attr: %+v", dir.Path, attr)
-
 	// https://github.com/bazil/fuse/issues/196
 	attr.Valid = time.Second
 

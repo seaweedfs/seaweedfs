@@ -1,7 +1,6 @@
 package topology
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -73,7 +72,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 			}
 
 			// volume server do not know about encryption
-			_, err := operation.Upload(u.String(), string(n.Name), false, bytes.NewReader(n.Data), n.IsGzipped(), string(n.Mime), pairMap, jwt)
+			_, err := operation.UploadData(u.String(), string(n.Name), false, n.Data, n.IsGzipped(), string(n.Mime), pairMap, jwt)
 			return err
 		}); err != nil {
 			size = 0

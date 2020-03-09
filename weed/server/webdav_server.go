@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -418,8 +417,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 	}
 
 	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
-	bufReader := bytes.NewReader(buf)
-	uploadResult, err := operation.Upload(fileUrl, f.name, f.fs.option.Cipher, bufReader, false, "", nil, auth)
+	uploadResult, err := operation.UploadData(fileUrl, f.name, f.fs.option.Cipher, buf, false, "", nil, auth)
 	if err != nil {
 		glog.V(0).Infof("upload data %v to %s: %v", f.name, fileUrl, err)
 		return 0, fmt.Errorf("upload data: %v", err)
@@ -436,6 +434,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 		Mtime:     time.Now().UnixNano(),
 		ETag:      uploadResult.ETag,
 		CipherKey: uploadResult.CipherKey,
+		IsGzipped: uploadResult.Gzip > 0,
 	}
 
 	f.entry.Chunks = append(f.entry.Chunks, chunk)

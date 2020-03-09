@@ -51,6 +51,7 @@ func (fs *FilerSink) replicateOneChunk(sourceChunk *filer_pb.FileChunk, dir stri
 		ETag:         sourceChunk.ETag,
 		SourceFileId: sourceChunk.GetFileIdString(),
 		CipherKey:    sourceChunk.CipherKey,
+		IsGzipped:    sourceChunk.IsGzipped,
 	}, nil
 }
 

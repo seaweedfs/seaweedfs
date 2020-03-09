@@ -191,6 +191,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 		Mtime:     time.Now().UnixNano(),
 		ETag:      uploadResult.ETag,
 		CipherKey: uploadResult.CipherKey,
+		IsGzipped: uploadResult.Gzip > 0,
 	}, nil
 
 }

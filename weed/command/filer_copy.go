@@ -38,7 +38,6 @@ type CopyOptions struct {
 	masterClient      *wdclient.MasterClient
 	concurrenctFiles  *int
 	concurrenctChunks *int
-	compressionLevel  *int
 	grpcDialOption    grpc.DialOption
 	masters           []string
 	cipher            bool
@@ -54,7 +53,6 @@ func init() {
 	copy.maxMB = cmdCopy.Flag.Int("maxMB", 32, "split files larger than the limit")
 	copy.concurrenctFiles = cmdCopy.Flag.Int("c", 8, "concurrent file copy goroutines")
 	copy.concurrenctChunks = cmdCopy.Flag.Int("concurrentChunks", 8, "concurrent chunk copy goroutines for each file")
-	copy.compressionLevel = cmdCopy.Flag.Int("compressionLevel", 9, "local file compression level 1 ~ 9")
 }
 
 var cmdCopy = &Command{
@@ -270,6 +268,10 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 	// upload the file content
 	fileName := filepath.Base(f.Name())
 	mimeType := detectMimeType(f)
+	data, err := ioutil.ReadAll(f)
+	if err != nil {
+		return err
+	}
 
 	var chunks []*filer_pb.FileChunk
 	var assignResult *filer_pb.AssignVolumeResponse
@@ -303,7 +305,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 
 		targetUrl := "http://" + assignResult.Url + "/" + assignResult.FileId
 
-		uploadResult, err := operation.UploadWithLocalCompressionLevel(targetUrl, fileName, worker.options.cipher, f, false, mimeType, nil, security.EncodedJwt(assignResult.Auth), *worker.options.compressionLevel)
+		uploadResult, err := operation.UploadData(targetUrl, fileName, worker.options.cipher, data, false, mimeType, nil, security.EncodedJwt(assignResult.Auth))
 		if err != nil {
 			return fmt.Errorf("upload data %v to %s: %v\n", fileName, targetUrl, err)
 		}
@@ -317,8 +319,9 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 			Offset:    0,
 			Size:      uint64(uploadResult.Size),
 			Mtime:     time.Now().UnixNano(),
-			ETag:      uploadResult.ETag,
+			ETag:      uploadResult.Md5,
 			CipherKey: uploadResult.CipherKey,
+			IsGzipped: uploadResult.Gzip > 0,
 		})
 
 		fmt.Printf("copied %s => http://%s%s%s\n", fileName, worker.filerHost, task.destinationUrlPath, fileName)
@@ -429,6 +432,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 				Mtime:     time.Now().UnixNano(),
 				ETag:      uploadResult.ETag,
 				CipherKey: uploadResult.CipherKey,
+				IsGzipped: uploadResult.Gzip > 0,
 			}
 			fmt.Printf("uploaded %s-%d to %s [%d,%d)\n", fileName, i+1, targetUrl, i*chunkSize, i*chunkSize+int64(uploadResult.Size))
 		}(i)

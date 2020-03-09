@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"path"
@@ -87,6 +88,9 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 	if fileName != "" {
 		fileName = path.Base(fileName)
 	}
+	contentType := part1.Header.Get("Content-Type")
+
+	fmt.Printf("autochunk part header: %+v\n", part1.Header)
 
 	var fileChunks []*filer_pb.FileChunk
 
@@ -102,7 +106,7 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 		}
 
 		// upload the chunk to the volume server
-		uploadResult, uploadErr := fs.doUpload(urlLocation, w, r, limitedReader, "", "", nil, auth)
+		uploadResult, uploadErr := fs.doUpload(urlLocation, w, r, limitedReader, fileName, contentType, nil, auth)
 		if uploadErr != nil {
 			return nil, uploadErr
 		}
@@ -121,6 +125,7 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 				Mtime:     time.Now().UnixNano(),
 				ETag:      uploadResult.ETag,
 				CipherKey: uploadResult.CipherKey,
+				IsGzipped: uploadResult.Gzip > 0,
 			},
 		)
 
@@ -154,6 +159,7 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 			Replication: replication,
 			Collection:  collection,
 			TtlSec:      int32(util.ParseInt(r.URL.Query().Get("ttl"), 0)),
+			Mime:        contentType,
 		},
 		Chunks: fileChunks,
 	}

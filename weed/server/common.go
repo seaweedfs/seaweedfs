@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -136,7 +135,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	}
 
 	debug("upload file to store", url)
-	uploadResult, err := operation.Upload(url, pu.FileName, false, bytes.NewReader(pu.Data), pu.IsGzipped, pu.MimeType, pu.PairMap, assignResult.Auth)
+	uploadResult, err := operation.UploadData(url, pu.FileName, false, pu.Data, pu.IsGzipped, pu.MimeType, pu.PairMap, assignResult.Auth)
 	if err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return

@@ -1,8 +1,6 @@
 package operation
 
 import (
-	"bytes"
-	"google.golang.org/grpc"
 	"io"
 	"mime"
 	"net/url"
@@ -10,6 +8,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -52,7 +52,7 @@ func SubmitFiles(master string, grpcDialOption grpc.DialOption, files []FilePart
 	}
 	ret, err := Assign(master, grpcDialOption, ar)
 	if err != nil {
-		for index, _ := range files {
+		for index := range files {
 			results[index].Error = err.Error()
 		}
 		return results, err
@@ -214,12 +214,11 @@ func upload_chunked_file_manifest(fileUrl string, manifest *ChunkManifest, jwt s
 	if e != nil {
 		return e
 	}
-	bufReader := bytes.NewReader(buf)
 	glog.V(4).Info("Uploading chunks manifest ", manifest.Name, " to ", fileUrl, "...")
 	u, _ := url.Parse(fileUrl)
 	q := u.Query()
 	q.Set("cm", "true")
 	u.RawQuery = q.Encode()
-	_, e = Upload(u.String(), manifest.Name, false, bufReader, false, "application/json", nil, jwt)
+	_, e = UploadData(u.String(), manifest.Name, false, buf, false, "application/json", nil, jwt)
 	return e
 }

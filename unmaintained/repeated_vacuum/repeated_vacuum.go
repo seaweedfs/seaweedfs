@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
 	"log"
@@ -31,11 +30,10 @@ func main() {
 
 		data := make([]byte, 1024)
 		rand.Read(data)
-		reader := bytes.NewReader(data)
 
 		targetUrl := fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
 
-		_, err = operation.Upload(targetUrl, fmt.Sprintf("test%d", i), false, reader, false, "bench/test", nil, assignResult.Auth)
+		_, err = operation.UploadData(targetUrl, fmt.Sprintf("test%d", i), false, data, false, "bench/test", nil, assignResult.Auth)
 		if err != nil {
 			log.Fatalf("upload: %v", err)
 		}
