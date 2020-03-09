@@ -23,6 +23,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -39,7 +40,7 @@ type FilerPostResult struct {
 	Url   string `json:"url,omitempty"`
 }
 
-func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request, replication, collection string, dataCenter string) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
+func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request, replication, collection, dataCenter, ttlString string) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
 
 	stats.FilerRequestCounter.WithLabelValues("assign").Inc()
 	start := time.Now()
@@ -49,7 +50,7 @@ func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request,
 		Count:       1,
 		Replication: replication,
 		Collection:  collection,
-		Ttl:         r.URL.Query().Get("ttl"),
+		Ttl:         ttlString,
 		DataCenter:  dataCenter,
 	}
 	var altRequest *operation.VolumeAssignRequest
@@ -58,7 +59,7 @@ func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request,
 			Count:       1,
 			Replication: replication,
 			Collection:  collection,
-			Ttl:         r.URL.Query().Get("ttl"),
+			Ttl:         ttlString,
 			DataCenter:  "",
 		}
 	}
@@ -86,13 +87,21 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	if dataCenter == "" {
 		dataCenter = fs.option.DataCenter
 	}
+	ttlString := r.URL.Query().Get("ttl")
 
-	if autoChunked := fs.autoChunk(ctx, w, r, replication, collection, dataCenter); autoChunked {
+	// read ttl in seconds
+	ttl, err := needle.ReadTTL(ttlString)
+	ttlSeconds := int32(0)
+	if err == nil {
+		ttlSeconds = int32(ttl.Minutes()) * 60
+	}
+
+	if autoChunked := fs.autoChunk(ctx, w, r, replication, collection, dataCenter, ttlSeconds, ttlString); autoChunked {
 		return
 	}
 
 	if fs.option.Cipher {
-		reply, err := fs.encrypt(ctx, w, r, replication, collection, dataCenter)
+		reply, err := fs.encrypt(ctx, w, r, replication, collection, dataCenter, ttlSeconds, ttlString)
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 		} else if reply != nil {
@@ -102,7 +111,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fileId, urlLocation, auth, err := fs.assignNewFileInfo(w, r, replication, collection, dataCenter)
+	fileId, urlLocation, auth, err := fs.assignNewFileInfo(w, r, replication, collection, dataCenter, ttlString)
 
 	if err != nil || fileId == "" || urlLocation == "" {
 		glog.V(0).Infof("fail to allocate volume for %s, collection:%s, datacenter:%s", r.URL.Path, collection, dataCenter)
@@ -118,7 +127,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err = fs.updateFilerStore(ctx, r, w, replication, collection, ret, fileId); err != nil {
+	if err = fs.updateFilerStore(ctx, r, w, replication, collection, ret, fileId, ttlSeconds); err != nil {
 		return
 	}
 
@@ -136,7 +145,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 // update metadata in filer store
 func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w http.ResponseWriter,
-	replication string, collection string, ret *operation.UploadResult, fileId string) (err error) {
+	replication string, collection string, ret *operation.UploadResult, fileId string, ttlSeconds int32) (err error) {
 
 	stats.FilerRequestCounter.WithLabelValues("postStoreWrite").Inc()
 	start := time.Now()
@@ -175,7 +184,7 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 			Gid:         OS_GID,
 			Replication: replication,
 			Collection:  collection,
-			TtlSec:      int32(util.ParseInt(r.URL.Query().Get("ttl"), 0)),
+			TtlSec:      ttlSeconds,
 			Mime:        ret.Mime,
 		},
 		Chunks: []*filer_pb.FileChunk{{
