@@ -113,17 +113,6 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	glog.V(4).Infof("write %s to %v", r.URL.Path, urlLocation)
 
 	u, _ := url.Parse(urlLocation)
-
-	// This allows a client to generate a chunk manifest and submit it to the filer -- it is a little off
-	// because they need to provide FIDs instead of file paths...
-	cm, _ := strconv.ParseBool(query.Get("cm"))
-	if cm {
-		q := u.Query()
-		q.Set("cm", "true")
-		u.RawQuery = q.Encode()
-	}
-	glog.V(4).Infoln("post to", u)
-
 	ret, err := fs.uploadToVolumeServer(r, u, auth, w, fileId)
 	if err != nil {
 		return
