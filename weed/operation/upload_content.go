@@ -158,8 +158,6 @@ func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, 
 		}
 	}
 
-	println("data size", clearDataLen)
-
 	if cipher {
 		// encrypt(gzip(data))
 
@@ -170,12 +168,10 @@ func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, 
 			err = fmt.Errorf("encrypt input: %v", encryptionErr)
 			return
 		}
-		println("encrypted data size", len(encryptedData))
 
 		// upload data
 		uploadResult, err = upload_content(uploadUrl, func(w io.Writer) (err error) {
-			n, err := w.Write(encryptedData)
-			println("writtern data size", n)
+			_, err = w.Write(encryptedData)
 			return
 		}, "", false, "", nil, jwt)
 		if uploadResult != nil {
@@ -187,8 +183,7 @@ func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, 
 	} else {
 		// upload data
 		uploadResult, err = upload_content(uploadUrl, func(w io.Writer) (err error) {
-			n, err := w.Write(data)
-			println("written data size", n)
+			_, err = w.Write(data)
 			return
 		}, filename, contentIsGzipped, mtype, pairMap, jwt)
 	}
