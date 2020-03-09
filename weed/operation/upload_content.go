@@ -43,25 +43,25 @@ func init() {
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
 // Upload sends a POST request to a volume server to upload the content with adjustable compression level
-func UploadWithLocalCompressionLevel(uploadUrl string, filename string, cipher bool, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt, compressionLevel int) (*UploadResult, error) {
+func UploadWithLocalCompressionLevel(uploadUrl string, filename string, cipher bool, reader io.Reader, isInputGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt, compressionLevel int) (*UploadResult, error) {
 	if compressionLevel < 1 {
 		compressionLevel = 1
 	}
 	if compressionLevel > 9 {
 		compressionLevel = 9
 	}
-	return doUpload(uploadUrl, filename, cipher, reader, isGzipped, mtype, pairMap, compressionLevel, jwt)
+	return doUpload(uploadUrl, filename, cipher, reader, isInputGzipped, mtype, pairMap, compressionLevel, jwt)
 }
 
 // Upload sends a POST request to a volume server to upload the content with fast compression
-func Upload(uploadUrl string, filename string, cipher bool, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
-	return doUpload(uploadUrl, filename, cipher, reader, isGzipped, mtype, pairMap, flate.BestSpeed, jwt)
+func Upload(uploadUrl string, filename string, cipher bool, reader io.Reader, isInputGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
+	return doUpload(uploadUrl, filename, cipher, reader, isInputGzipped, mtype, pairMap, flate.BestSpeed, jwt)
 }
 
-func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, isGzipped bool, mtype string, pairMap map[string]string, compression int, jwt security.EncodedJwt) (*UploadResult, error) {
-	contentIsGzipped := isGzipped
+func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, isInputGzipped bool, mtype string, pairMap map[string]string, compression int, jwt security.EncodedJwt) (*UploadResult, error) {
+	contentIsGzipped := isInputGzipped
 	shouldGzipNow := false
-	if !isGzipped {
+	if !isInputGzipped {
 		if shouldBeZipped, iAmSure := util.IsGzippableFileType(filepath.Base(filename), mtype); mtype == "" || iAmSure && shouldBeZipped {
 			shouldGzipNow = true
 			contentIsGzipped = true
