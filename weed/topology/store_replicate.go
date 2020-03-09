@@ -158,8 +158,8 @@ func getWritableRemoteReplications(s *storage.Store, volumeId needle.VolumeId, m
 	if copyCount > 1 {
 		if lookupResult, lookupErr := operation.Lookup(masterNode, volumeId.String()); lookupErr == nil {
 			if len(lookupResult.Locations) < copyCount {
-				err = fmt.Errorf("replicating opetations [%d] is less than volume's replication copy count [%d]",
-					len(lookupResult.Locations), copyCount)
+				err = fmt.Errorf("replicating opetations [%d] is less than volume %d replication copy count [%d]",
+					len(lookupResult.Locations), volumeId, copyCount)
 				return
 			}
 			selfUrl := s.Ip + ":" + strconv.Itoa(s.Port)
