@@ -4,7 +4,7 @@ global:
   registry: ""
   repository: ""
   imageName: chrislusf/seaweedfs
-  imageTag: "1.60"
+  imageTag: "1.61"
   imagePullPolicy: IfNotPresent
   imagePullSecrets: imagepullsecret
   restartPolicy: Always
