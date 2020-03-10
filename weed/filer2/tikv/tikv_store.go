@@ -1,5 +1,6 @@
 // +build !386
 // +build !arm
+// +build !windows
 
 package tikv
 
