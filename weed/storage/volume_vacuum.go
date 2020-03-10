@@ -381,6 +381,7 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 		return err
 	}
 	srcDatBackend = backend.NewDiskFile(dataFile)
+	defer srcDatBackend.Close()
 
 	now := uint64(time.Now().Unix())
 
