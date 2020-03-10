@@ -113,8 +113,14 @@ func (v *Volume) CommitCompact() error {
 		}
 	} else {
 		if runtime.GOOS == "windows" {
-			os.RemoveAll(v.FileName() + ".dat")
-			os.RemoveAll(v.FileName() + ".idx")
+			e = os.RemoveAll(v.FileName() + ".dat")
+			if e != nil {
+				return e
+			}
+			e = os.RemoveAll(v.FileName() + ".idx")
+			if e != nil {
+				return e
+			}
 		}
 		var e error
 		if e = os.Rename(v.FileName()+".cpd", v.FileName()+".dat"); e != nil {
@@ -414,7 +420,7 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 			return fmt.Errorf("cannot append needle: %s", err)
 		}
 		newOffset += n.DiskSize(version)
-		glog.V(3).Infoln("saving key", n.Id, "volume offset", offset, "=>", newOffset, "data_size", n.Size)
+		glog.V(4).Infoln("saving key", n.Id, "volume offset", offset, "=>", newOffset, "data_size", n.Size)
 
 		return nil
 	})
