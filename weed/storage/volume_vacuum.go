@@ -342,6 +342,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 	defer dst.Close()
 
 	nm := needle_map.NewMemDb()
+	defer nm.Close()
 
 	scanner := &VolumeFileScanner4Vacuum{
 		v:              v,
@@ -370,7 +371,9 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 	defer dstDatBackend.Close()
 
 	oldNm := needle_map.NewMemDb()
+	defer oldNm.Close()
 	newNm := needle_map.NewMemDb()
+	defer newNm.Close()
 	if err = oldNm.LoadFromIdx(srcIdxName); err != nil {
 		return
 	}
