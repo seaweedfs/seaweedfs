@@ -234,15 +234,30 @@ func (f *Filer) FindEntry(ctx context.Context, p FullPath) (entry *Entry, err er
 
 }
 
-func (f *Filer) ListDirectoryEntries(ctx context.Context, p FullPath, startFileName string, inclusive bool, limit int) (entries []*Entry, expiredCount int, err error) {
+func (f *Filer) ListDirectoryEntries(ctx context.Context, p FullPath, startFileName string, inclusive bool, limit int) ([]*Entry, error) {
 	if strings.HasSuffix(string(p), "/") && len(p) > 1 {
 		p = p[0 : len(p)-1]
 	}
+
+	var makeupEntries []*Entry
+	entries, expiredCount, lastFileName, err := f.doListDirectoryEntries(ctx, p, startFileName, inclusive, limit)
+	for expiredCount > 0 && err == nil {
+		makeupEntries, expiredCount, lastFileName, err = f.doListDirectoryEntries(ctx, p, lastFileName, false, expiredCount)
+		if err == nil {
+			entries = append(entries, makeupEntries...)
+		}
+	}
+
+	return entries, err
+}
+
+func (f *Filer) doListDirectoryEntries(ctx context.Context, p FullPath, startFileName string, inclusive bool, limit int) (entries []*Entry, expiredCount int, lastFileName string, err error) {
 	listedEntries, listErr := f.store.ListDirectoryEntries(ctx, p, startFileName, inclusive, limit)
 	if listErr != nil {
-		return listedEntries, expiredCount, err
+		return listedEntries, expiredCount, "", listErr
 	}
 	for _, entry := range listedEntries {
+		lastFileName = entry.Name()
 		if entry.TtlSec > 0 {
 			if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
 				f.store.DeleteEntry(ctx, p.Child(entry.Name()))

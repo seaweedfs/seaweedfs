@@ -57,7 +57,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 	lastFileName := ""
 	includeLastFile := false
 	for {
-		entries, _, err := f.ListDirectoryEntries(ctx, entry.FullPath, lastFileName, includeLastFile, PaginationSize)
+		entries, err := f.ListDirectoryEntries(ctx, entry.FullPath, lastFileName, includeLastFile, PaginationSize)
 		if err != nil {
 			glog.Errorf("list folder %s: %v", entry.FullPath, err)
 			return nil, fmt.Errorf("list folder %s: %v", entry.FullPath, err)

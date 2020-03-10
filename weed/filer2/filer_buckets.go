@@ -28,7 +28,7 @@ func (f *Filer) LoadBuckets(dirBucketsPath string) {
 
 	limit := math.MaxInt32
 
-	entries, _, err := f.ListDirectoryEntries(context.Background(), FullPath(dirBucketsPath), "", false, limit)
+	entries, err := f.ListDirectoryEntries(context.Background(), FullPath(dirBucketsPath), "", false, limit)
 
 	if err != nil {
 		glog.V(1).Infof("no buckets found: %v", err)

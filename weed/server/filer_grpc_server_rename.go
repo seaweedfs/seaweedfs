@@ -68,7 +68,7 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, oldParent filer
 	includeLastFile := false
 	for {
 
-		entries, _, err := fs.filer.ListDirectoryEntries(ctx, currentDirPath, lastFileName, includeLastFile, 1024)
+		entries, err := fs.filer.ListDirectoryEntries(ctx, currentDirPath, lastFileName, includeLastFile, 1024)
 		if err != nil {
 			return err
 		}
