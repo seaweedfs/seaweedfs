@@ -52,7 +52,7 @@ func init() {
 	f.dirListingLimit = cmdFiler.Flag.Int("dirListLimit", 100000, "limit sub dir listing size")
 	f.dataCenter = cmdFiler.Flag.String("dataCenter", "", "prefer to write to volumes in this data center")
 	f.disableHttp = cmdFiler.Flag.Bool("disableHttp", false, "disable http request, only gRpc operations are allowed")
-	f.cipher = cmdFiler.Flag.Bool("work_in_progress_encryptVolumeData", false, "<not ready> encrypt data on volume servers")
+	f.cipher = cmdFiler.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
 }
 
 var cmdFiler = &Command{
