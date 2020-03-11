@@ -2,7 +2,6 @@ package weed_server
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"path"
@@ -88,8 +87,6 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 		fileName = path.Base(fileName)
 	}
 	contentType := part1.Header.Get("Content-Type")
-
-	fmt.Printf("autochunk part header: %+v\n", part1.Header)
 
 	var fileChunks []*filer_pb.FileChunk
 
