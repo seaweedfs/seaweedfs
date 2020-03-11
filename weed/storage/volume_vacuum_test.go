@@ -84,7 +84,7 @@ func TestCompaction(t *testing.T) {
 	}
 
 	startTime := time.Now()
-	v.Compact2(0)
+	v.Compact2(0, 0)
 	speed := float64(v.ContentSize()) / time.Now().Sub(startTime).Seconds()
 	t.Logf("compaction speed: %.2f bytes/s", speed)
 
