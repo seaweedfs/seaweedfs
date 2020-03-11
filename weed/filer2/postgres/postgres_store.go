@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	CONNECTION_URL_PATTERN = "host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=30"
+	CONNECTION_URL_PATTERN = "host=%s port=%d user=%s sslmode=%s connect_timeout=30"
 )
 
 func init() {
@@ -49,7 +49,13 @@ func (store *PostgresStore) initialize(user, password, hostname string, port int
 	store.SqlListExclusive = "SELECT NAME, meta FROM filemeta WHERE dirhash=$1 AND name>$2 AND directory=$3 ORDER BY NAME ASC LIMIT $4"
 	store.SqlListInclusive = "SELECT NAME, meta FROM filemeta WHERE dirhash=$1 AND name>=$2 AND directory=$3 ORDER BY NAME ASC LIMIT $4"
 
-	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, hostname, port, user, password, database, sslmode)
+	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, hostname, port, user, sslmode)
+	if password != "" {
+		sqlUrl += " password="+password
+	}
+	if database != "" {
+		sqlUrl += " dbname="+database
+	}
 	var dbErr error
 	store.DB, dbErr = sql.Open("postgres", sqlUrl)
 	if dbErr != nil {
