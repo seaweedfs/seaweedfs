@@ -28,14 +28,14 @@ func (k *KafkaInput) GetName() string {
 	return "kafka"
 }
 
-func (k *KafkaInput) Initialize(configuration util.Configuration) error {
-	glog.V(0).Infof("replication.notification.kafka.hosts: %v\n", configuration.GetStringSlice("hosts"))
-	glog.V(0).Infof("replication.notification.kafka.topic: %v\n", configuration.GetString("topic"))
+func (k *KafkaInput) Initialize(configuration util.Configuration, prefix string) error {
+	glog.V(0).Infof("replication.notification.kafka.hosts: %v\n", configuration.GetStringSlice(prefix+"hosts"))
+	glog.V(0).Infof("replication.notification.kafka.topic: %v\n", configuration.GetString(prefix+"topic"))
 	return k.initialize(
-		configuration.GetStringSlice("hosts"),
-		configuration.GetString("topic"),
-		configuration.GetString("offsetFile"),
-		configuration.GetInt("offsetSaveIntervalSeconds"),
+		configuration.GetStringSlice(prefix+"hosts"),
+		configuration.GetString(prefix+"topic"),
+		configuration.GetString(prefix+"offsetFile"),
+		configuration.GetInt(prefix+"offsetSaveIntervalSeconds"),
 	)
 }
 

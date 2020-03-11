@@ -3,10 +3,13 @@ package cassandra
 import (
 	"context"
 	"fmt"
+
+	"github.com/gocql/gocql"
+
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/gocql/gocql"
 )
 
 func init() {
@@ -22,10 +25,10 @@ func (store *CassandraStore) GetName() string {
 	return "cassandra"
 }
 
-func (store *CassandraStore) Initialize(configuration util.Configuration) (err error) {
+func (store *CassandraStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 	return store.initialize(
-		configuration.GetString("keyspace"),
-		configuration.GetStringSlice("hosts"),
+		configuration.GetString(prefix+"keyspace"),
+		configuration.GetStringSlice(prefix+"hosts"),
 	)
 }
 
@@ -80,12 +83,12 @@ func (store *CassandraStore) FindEntry(ctx context.Context, fullpath filer2.Full
 		"SELECT meta FROM filemeta WHERE directory=? AND name=?",
 		dir, name).Consistency(gocql.One).Scan(&data); err != nil {
 		if err != gocql.ErrNotFound {
-			return nil, filer2.ErrNotFound
+			return nil, filer_pb.ErrNotFound
 		}
 	}
 
 	if len(data) == 0 {
-		return nil, filer2.ErrNotFound
+		return nil, filer_pb.ErrNotFound
 	}
 
 	entry = &filer2.Entry{
@@ -106,6 +109,17 @@ func (store *CassandraStore) DeleteEntry(ctx context.Context, fullpath filer2.Fu
 	if err := store.session.Query(
 		"DELETE FROM filemeta WHERE directory=? AND name=?",
 		dir, name).Exec(); err != nil {
+		return fmt.Errorf("delete %s : %v", fullpath, err)
+	}
+
+	return nil
+}
+
+func (store *CassandraStore) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) error {
+
+	if err := store.session.Query(
+		"DELETE FROM filemeta WHERE directory=?",
+		fullpath).Exec(); err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
 

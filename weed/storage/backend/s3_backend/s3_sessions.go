@@ -52,3 +52,11 @@ func createSession(awsAccessKeyId, awsSecretAccessKey, region string) (s3iface.S
 	return t, nil
 
 }
+
+func deleteFromS3(sess s3iface.S3API, sourceBucket string, sourceKey string) (err error) {
+	_, err = sess.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: aws.String(sourceBucket),
+		Key:    aws.String(sourceKey),
+	})
+	return err
+}

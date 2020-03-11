@@ -125,13 +125,13 @@ func (n *Needle) prepareWriteBuffer(version Version) ([]byte, uint32, int64, err
 	return writeBytes, 0, 0, fmt.Errorf("Unsupported Version! (%d)", version)
 }
 
-func (n *Needle) Append(w backend.DataStorageBackend, version Version) (offset uint64, size uint32, actualSize int64, err error) {
+func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset uint64, size uint32, actualSize int64, err error) {
 
 	if end, _, e := w.GetStat(); e == nil {
-		defer func(w backend.DataStorageBackend, off int64) {
+		defer func(w backend.BackendStorageFile, off int64) {
 			if err != nil {
 				if te := w.Truncate(end); te != nil {
-					glog.V(0).Infof("Failed to truncate %s back to %d with error: %v", w.String(), end, te)
+					glog.V(0).Infof("Failed to truncate %s back to %d with error: %v", w.Name(), end, te)
 				}
 			}
 		}(w, end)
@@ -150,7 +150,7 @@ func (n *Needle) Append(w backend.DataStorageBackend, version Version) (offset u
 	return offset, size, actualSize, err
 }
 
-func ReadNeedleBlob(r backend.DataStorageBackend, offset int64, size uint32, version Version) (dataSlice []byte, err error) {
+func ReadNeedleBlob(r backend.BackendStorageFile, offset int64, size uint32, version Version) (dataSlice []byte, err error) {
 
 	dataSize := GetActualSize(size, version)
 	dataSlice = make([]byte, int(dataSize))
@@ -191,7 +191,7 @@ func (n *Needle) ReadBytes(bytes []byte, offset int64, size uint32, version Vers
 }
 
 // ReadData hydrates the needle from the file, with only n.Id is set.
-func (n *Needle) ReadData(r backend.DataStorageBackend, offset int64, size uint32, version Version) (err error) {
+func (n *Needle) ReadData(r backend.BackendStorageFile, offset int64, size uint32, version Version) (err error) {
 	bytes, err := ReadNeedleBlob(r, offset, size, version)
 	if err != nil {
 		return err
@@ -266,7 +266,7 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 	return nil
 }
 
-func ReadNeedleHeader(r backend.DataStorageBackend, version Version, offset int64) (n *Needle, bytes []byte, bodyLength int64, err error) {
+func ReadNeedleHeader(r backend.BackendStorageFile, version Version, offset int64) (n *Needle, bytes []byte, bodyLength int64, err error) {
 	n = new(Needle)
 	if version == Version1 || version == Version2 || version == Version3 {
 		bytes = make([]byte, NeedleHeaderSize)
@@ -301,7 +301,7 @@ func NeedleBodyLength(needleSize uint32, version Version) int64 {
 
 //n should be a needle already read the header
 //the input stream will read until next file entry
-func (n *Needle) ReadNeedleBody(r backend.DataStorageBackend, version Version, offset int64, bodyLength int64) (bytes []byte, err error) {
+func (n *Needle) ReadNeedleBody(r backend.BackendStorageFile, version Version, offset int64, bodyLength int64) (bytes []byte, err error) {
 
 	if bodyLength <= 0 {
 		return nil, nil

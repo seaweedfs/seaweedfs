@@ -21,12 +21,12 @@ func (k *KafkaQueue) GetName() string {
 	return "kafka"
 }
 
-func (k *KafkaQueue) Initialize(configuration util.Configuration) (err error) {
-	glog.V(0).Infof("filer.notification.kafka.hosts: %v\n", configuration.GetStringSlice("hosts"))
-	glog.V(0).Infof("filer.notification.kafka.topic: %v\n", configuration.GetString("topic"))
+func (k *KafkaQueue) Initialize(configuration util.Configuration, prefix string) (err error) {
+	glog.V(0).Infof("filer.notification.kafka.hosts: %v\n", configuration.GetStringSlice(prefix+"hosts"))
+	glog.V(0).Infof("filer.notification.kafka.topic: %v\n", configuration.GetString(prefix+"topic"))
 	return k.initialize(
-		configuration.GetStringSlice("hosts"),
-		configuration.GetString("topic"),
+		configuration.GetStringSlice(prefix+"hosts"),
+		configuration.GetString(prefix+"topic"),
 	)
 }
 
@@ -76,7 +76,7 @@ func (k *KafkaQueue) handleError() {
 	for {
 		err := <-k.producer.Errors()
 		if err != nil {
-			glog.Errorf("producer message error, partition:%d offset:%d key:%v valus:%s error(%v) topic:%s", err.Msg.Partition, err.Msg.Offset, err.Msg.Key, err.Msg.Value, err.Err, k.topic)
+			glog.Errorf("producer message error, partition:%d offset:%d key:%v value:%s error(%v) topic:%s", err.Msg.Partition, err.Msg.Offset, err.Msg.Key, err.Msg.Value, err.Err, k.topic)
 		}
 	}
 }

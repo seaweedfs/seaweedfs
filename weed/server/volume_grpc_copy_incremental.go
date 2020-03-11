@@ -47,7 +47,7 @@ func (vs *VolumeServer) VolumeSyncStatus(ctx context.Context, req *volume_server
 
 }
 
-func sendFileContent(datBackend backend.DataStorageBackend, buf []byte, startOffset, stopOffset int64, stream volume_server_pb.VolumeServer_VolumeIncrementalCopyServer) error {
+func sendFileContent(datBackend backend.BackendStorageFile, buf []byte, startOffset, stopOffset int64, stream volume_server_pb.VolumeServer_VolumeIncrementalCopyServer) error {
 	var blockSizeLimit = int64(len(buf))
 	for i := int64(0); i < stopOffset-startOffset; i += blockSizeLimit {
 		n, readErr := datBackend.ReadAt(buf, startOffset+i)

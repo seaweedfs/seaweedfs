@@ -1,5 +1,10 @@
 package util
 
+import (
+	"crypto/md5"
+	"io"
+)
+
 // big endian
 
 func BytesToUint64(b []byte) (v uint64) {
@@ -42,4 +47,30 @@ func Uint16toBytes(b []byte, v uint16) {
 }
 func Uint8toBytes(b []byte, v uint8) {
 	b[0] = byte(v)
+}
+
+// returns a 64 bit big int
+func HashStringToLong(dir string) (v int64) {
+	h := md5.New()
+	io.WriteString(h, dir)
+
+	b := h.Sum(nil)
+
+	v += int64(b[0])
+	v <<= 8
+	v += int64(b[1])
+	v <<= 8
+	v += int64(b[2])
+	v <<= 8
+	v += int64(b[3])
+	v <<= 8
+	v += int64(b[4])
+	v <<= 8
+	v += int64(b[5])
+	v <<= 8
+	v += int64(b[6])
+	v <<= 8
+	v += int64(b[7])
+
+	return
 }

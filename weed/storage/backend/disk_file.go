@@ -6,7 +6,7 @@ import (
 )
 
 var (
-	_ DataStorageBackend = &DiskFile{}
+	_ BackendStorageFile = &DiskFile{}
 )
 
 type DiskFile struct {
@@ -45,6 +45,6 @@ func (df *DiskFile) GetStat() (datSize int64, modTime time.Time, err error) {
 	return 0, time.Time{}, err
 }
 
-func (df *DiskFile) String() string {
+func (df *DiskFile) Name() string {
 	return df.fullFilePath
 }

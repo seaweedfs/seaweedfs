@@ -128,8 +128,17 @@ func (m *LevelDbNeedleMap) Delete(key NeedleId, offset Offset) error {
 }
 
 func (m *LevelDbNeedleMap) Close() {
-	m.indexFile.Close()
-	m.db.Close()
+	indexFileName := m.indexFile.Name()
+	if err := m.indexFile.Sync(); err != nil {
+		glog.Warningf("sync file %s failed: %v", indexFileName, err)
+	}
+	if err := m.indexFile.Close(); err != nil {
+		glog.Warningf("close index file %s failed: %v", indexFileName, err)
+	}
+
+	if err := m.db.Close(); err != nil {
+		glog.Warningf("close levelDB failed: %v", err)
+	}
 }
 
 func (m *LevelDbNeedleMap) Destroy() error {

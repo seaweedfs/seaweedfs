@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	_ backend.DataStorageBackend = &MemoryMappedFile{}
+	_ backend.BackendStorageFile = &MemoryMappedFile{}
 )
 
 type MemoryMappedFile struct {
@@ -55,6 +55,6 @@ func (mmf *MemoryMappedFile) GetStat() (datSize int64, modTime time.Time, err er
 	return 0, time.Time{}, err
 }
 
-func (mmf *MemoryMappedFile) String() string {
+func (mmf *MemoryMappedFile) Name() string {
 	return mmf.mm.File.Name()
 }

@@ -7,9 +7,10 @@ import (
 	"os"
 	"testing"
 
+	"github.com/klauspost/reedsolomon"
+
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/klauspost/reedsolomon"
 )
 
 const (
@@ -26,14 +27,14 @@ func TestEncodingDecoding(t *testing.T) {
 		t.Logf("generateEcFiles: %v", err)
 	}
 
-	err = WriteSortedEcxFile(baseFileName)
+	err = WriteSortedFileFromIdx(baseFileName, ".ecx")
 	if err != nil {
-		t.Logf("WriteSortedEcxFile: %v", err)
+		t.Logf("WriteSortedFileFromIdx: %v", err)
 	}
 
 	err = validateFiles(baseFileName)
 	if err != nil {
-		t.Logf("WriteSortedEcxFile: %v", err)
+		t.Logf("WriteSortedFileFromIdx: %v", err)
 	}
 
 	removeGeneratedFiles(baseFileName)
@@ -41,9 +42,10 @@ func TestEncodingDecoding(t *testing.T) {
 }
 
 func validateFiles(baseFileName string) error {
-	cm, err := readCompactMap(baseFileName)
+	nm, err := readNeedleMap(baseFileName)
+	defer nm.Close()
 	if err != nil {
-		return fmt.Errorf("readCompactMap: %v", err)
+		return fmt.Errorf("readNeedleMap: %v", err)
 	}
 
 	datFile, err := os.OpenFile(baseFileName+".dat", os.O_RDONLY, 0)
@@ -60,7 +62,7 @@ func validateFiles(baseFileName string) error {
 	ecFiles, err := openEcFiles(baseFileName, true)
 	defer closeEcFiles(ecFiles)
 
-	err = cm.AscendingVisit(func(value needle_map.NeedleValue) error {
+	err = nm.AscendingVisit(func(value needle_map.NeedleValue) error {
 		return assertSame(datFile, fi.Size(), ecFiles, value.Offset, value.Size)
 	})
 	if err != nil {

@@ -48,6 +48,7 @@ func (dc *DataCenter) ToDataCenterInfo() *master_pb.DataCenterInfo {
 		MaxVolumeCount:    uint64(dc.GetMaxVolumeCount()),
 		FreeVolumeCount:   uint64(dc.FreeSpace()),
 		ActiveVolumeCount: uint64(dc.GetActiveVolumeCount()),
+		RemoteVolumeCount: uint64(dc.GetRemoteVolumeCount()),
 	}
 	for _, c := range dc.Children() {
 		rack := c.(*Rack)

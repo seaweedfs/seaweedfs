@@ -81,17 +81,15 @@ SeaweedFS is a simple and highly scalable distributed file system. There are two
 1. to store billions of files!
 2. to serve the files fast!
 
-SeaweedFS started as an Object Store to handle small files efficiently. Instead of managing all file metadata in a central master, the central master only manages file volumes, and it lets these volume servers manage files and their metadata. This relieves concurrency pressure from the central master and spreads file metadata into volume servers, allowing faster file access (just one disk read operation).
+SeaweedFS started as an Object Store to handle small files efficiently. Instead of managing all file metadata in a central master, the central master only manages file volumes, and it lets these volume servers manage files and their metadata. This relieves concurrency pressure from the central master and spreads file metadata into volume servers, allowing faster file access (O(1), usually just one disk read operation).
+
+SeaweedFS can transparently integrate with the cloud. With hot data on local cluster, and warm data on the cloud with O(1) access time, SeaweedFS can achieve both fast local access time and elastic cloud storage capacity, without any client side changes.
 
 There is only 40 bytes of disk storage overhead for each file's metadata. It is so simple with O(1) disk reads that you are welcome to challenge the performance with your actual use cases.
 
 SeaweedFS started by implementing [Facebook's Haystack design paper](http://www.usenix.org/event/osdi10/tech/full_papers/Beaver.pdf). Also, SeaweedFS implements erasure coding with ideas from [f4: Facebook’s Warm BLOB Storage System](https://www.usenix.org/system/files/conference/osdi14/osdi14-paper-muralidhar.pdf)
 
-SeaweedFS can work very well with just the object store. [[Filer]] can then be added later to support directories and POSIX attributes. Filer is a separate linearly-scalable stateless server with customizable metadata stores, e.g., MySql/Postgres/Redis/Etcd/Cassandra/LevelDB.
-
-[Back to TOC](#table-of-contents)
-
-## Features ##
+On top of the object store, optional [Filer] can support directories and POSIX attributes. Filer is a separate linearly-scalable stateless server with customizable metadata stores, e.g., MySql, Postgres, Redis, Etcd, Cassandra, LevelDB, MemSql, TiDB, TiKV, CockroachDB, etc.
 
 [Back to TOC](#table-of-contents)
 
@@ -104,8 +102,10 @@ SeaweedFS can work very well with just the object store. [[Filer]] can then be a
 * Adding/Removing servers does **not** cause any data re-balancing.
 * Optionally fix the orientation for jpeg pictures.
 * Support ETag, Accept-Range, Last-Modified, etc.
-* Support in-memory/leveldb/boltdb/btree mode tuning for memory/performance balance.
+* Support in-memory/leveldb/readonly mode tuning for memory/performance balance.
 * Support rebalancing the writable and readonly volumes.
+* [Transparent cloud integration][CloudTier]: unlimited capacity via tiered cloud storage for warm data.
+* [Erasure Coding for warm storage][ErasureCoding]  Rack-Aware 10.4 erasure coding reduces storage cost and increases availability.
 
 [Back to TOC](#table-of-contents)
 
@@ -113,7 +113,6 @@ SeaweedFS can work very well with just the object store. [[Filer]] can then be a
 * [filer server][Filer] provide "normal" directories and files via http.
 * [mount filer][Mount] to read and write files directly as a local directory via FUSE.
 * [Amazon S3 compatible API][AmazonS3API] to access files with S3 tooling.
-* [Erasure Coding for warm storage][ErasureCoding]  Rack-Aware 10.4 erasure coding reduces storage cost and increases availability.
 * [Hadoop Compatible File System][Hadoop] to access files from Hadoop/Spark/Flink/etc jobs.
 * [Async Backup To Cloud][BackupToCloud] has extremely fast local access and backups to Amazon S3, Google Cloud Storage, Azure, BackBlaze.
 * [WebDAV] access as a mapped drive on Mac and Windows, or from mobile devices.
@@ -125,6 +124,7 @@ SeaweedFS can work very well with just the object store. [[Filer]] can then be a
 [Hadoop]: https://github.com/chrislusf/seaweedfs/wiki/Hadoop-Compatible-File-System
 [WebDAV]: https://github.com/chrislusf/seaweedfs/wiki/WebDAV
 [ErasureCoding]: https://github.com/chrislusf/seaweedfs/wiki/Erasure-coding-for-warm-storage
+[CloudTier]: https://github.com/chrislusf/seaweedfs/wiki/Cloud-Tier
 
 [Back to TOC](#table-of-contents)
 
@@ -318,6 +318,16 @@ Each individual file size is limited to the volume size.
 
 All file meta information stored on an volume server is readable from memory without disk access. Each file takes just a 16-byte map entry of <64bit key, 32bit offset, 32bit size>. Of course, each map entry has its own space cost for the map. But usually the disk space runs out before the memory does.
 
+### Tiered Storage to the cloud ###
+
+The local volume servers are much faster, while cloud storages have elastic capacity and are actually more cost-efficient if not accessed often (usually free to upload, but relatively costly to access). With the append-only structure and O(1) access time, SeaweedFS can take advantage of both local and cloud storage by offloading the warm data to the cloud.
+
+Usually hot data are fresh and warm data are old. SeaweedFS puts the newly created volumes on local servers, and optionally upload the older volumes on the cloud. If the older data are accessed less often, this literally gives you unlimited capacity with limited local servers, and still fast for new data. 
+
+With the O(1) access time, the network latency cost is kept at minimum. 
+
+If the hot~warm data is split as 20~80, with 20 servers, you can achieve storage capacity of 100 servers. That's a cost saving of 80%! Or you can repurpose the 80 servers to store new data also, and get 5X storage throughput.
+
 [Back to TOC](#table-of-contents)
 
 ## Compared to Other File Systems ##
@@ -344,7 +354,7 @@ The architectures are mostly the same. SeaweedFS aims to store and read files fa
 
 * SeaweedFS optimizes for small files, ensuring O(1) disk seek operation, and can also handle large files.
 * SeaweedFS statically assigns a volume id for a file. Locating file content becomes just a lookup of the volume id, which can be easily cached.
-* SeaweedFS Filer metadata store can be any well-known and proven data stores, e.g., Cassandra, Redis, Etcd, MySql, Postgres, etc, and is easy to customized.
+* SeaweedFS Filer metadata store can be any well-known and proven data stores, e.g., Cassandra, Redis, Etcd, MySql, Postgres, MemSql, TiDB, CockroachDB, etc, and is easy to customized.
 * SeaweedFS Volume server also communicates directly with clients via HTTP, supporting range queries, direct uploads, etc.
 
 | System         | File Meta                       | File Content Read| POSIX  | REST API | Optimized for small files |
@@ -376,7 +386,7 @@ Ceph uses CRUSH hashing to automatically manage the data placement. SeaweedFS pl
 
 SeaweedFS is optimized for small files. Small files are stored as one continuous block of content, with at most 8 unused bytes between files. Small file access is O(1) disk read.
 
-SeaweedFS Filer uses off-the-shelf stores, such as MySql, Postgres, Redis, Etcd, Cassandra, to manage file directories. There are proven, scalable, and easier to manage.
+SeaweedFS Filer uses off-the-shelf stores, such as MySql, Postgres, Redis, Etcd, Cassandra, MemSql, TiDB, CockroachCB, to manage file directories. There are proven, scalable, and easier to manage.
 
 | SeaweedFS         | comparable to Ceph | advantage |
 | -------------  | ------------- | ---------------- |
@@ -451,50 +461,49 @@ My Own Unscientific Single Machine Results on Mac Book with Solid State Disk, CP
 Write 1 million 1KB file:
 ```
 Concurrency Level:      16
-Time taken for tests:   88.796 seconds
+Time taken for tests:   66.753 seconds
 Complete requests:      1048576
 Failed requests:        0
-Total transferred:      1106764659 bytes
-Requests per second:    11808.87 [#/sec]
-Transfer rate:          12172.05 [Kbytes/sec]
+Total transferred:      1106789009 bytes
+Requests per second:    15708.23 [#/sec]
+Transfer rate:          16191.69 [Kbytes/sec]
 
 Connection Times (ms)
               min      avg        max      std
-Total:        0.2      1.3       44.8      0.9
+Total:        0.3      1.0       84.3      0.9
 
 Percentage of the requests served within a certain time (ms)
-   50%      1.1 ms
-   66%      1.3 ms
-   75%      1.5 ms
-   80%      1.7 ms
-   90%      2.1 ms
-   95%      2.6 ms
-   98%      3.7 ms
-   99%      4.6 ms
-  100%     44.8 ms
+   50%      0.8 ms
+   66%      1.0 ms
+   75%      1.1 ms
+   80%      1.2 ms
+   90%      1.4 ms
+   95%      1.7 ms
+   98%      2.1 ms
+   99%      2.6 ms
+  100%     84.3 ms
 ```
 
 Randomly read 1 million files:
 ```
 Concurrency Level:      16
-Time taken for tests:   34.263 seconds
+Time taken for tests:   22.301 seconds
 Complete requests:      1048576
 Failed requests:        0
-Total transferred:      1106762945 bytes
-Requests per second:    30603.34 [#/sec]
-Transfer rate:          31544.49 [Kbytes/sec]
+Total transferred:      1106812873 bytes
+Requests per second:    47019.38 [#/sec]
+Transfer rate:          48467.57 [Kbytes/sec]
 
 Connection Times (ms)
               min      avg        max      std
-Total:        0.0      0.5       20.7      0.7
+Total:        0.0      0.3       54.1      0.2
 
 Percentage of the requests served within a certain time (ms)
-   50%      0.4 ms
-   75%      0.5 ms
-   95%      0.6 ms
-   98%      0.8 ms
-   99%      1.2 ms
-  100%     20.7 ms
+   50%      0.3 ms
+   90%      0.4 ms
+   98%      0.6 ms
+   99%      0.7 ms
+  100%     54.1 ms
 ```
 
 [Back to TOC](#table-of-contents)
@@ -512,6 +521,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+The text of this page is available for modification and reuse under the terms of the Creative Commons Attribution-Sharealike 3.0 Unported License and the GNU Free Documentation License (unversioned, with no invariant sections, front-cover texts, or back-cover texts).
 
 [Back to TOC](#table-of-contents)
 

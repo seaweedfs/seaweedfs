@@ -1,8 +1,6 @@
 package operation
 
 import (
-	"bytes"
-	"google.golang.org/grpc"
 	"io"
 	"mime"
 	"net/url"
@@ -10,6 +8,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -52,7 +52,7 @@ func SubmitFiles(master string, grpcDialOption grpc.DialOption, files []FilePart
 	}
 	ret, err := Assign(master, grpcDialOption, ar)
 	if err != nil {
-		for index, _ := range files {
+		for index := range files {
 			results[index].Error = err.Error()
 		}
 		return results, err
@@ -189,7 +189,7 @@ func (fi FilePart) Upload(maxMB int, master string, jwt security.EncodedJwt, grp
 			cm.DeleteChunks(master, grpcDialOption)
 		}
 	} else {
-		ret, e := Upload(fileUrl, baseName, fi.Reader, false, fi.MimeType, nil, jwt)
+		ret, e := Upload(fileUrl, baseName, false, fi.Reader, false, fi.MimeType, nil, jwt)
 		if e != nil {
 			return 0, e
 		}
@@ -202,8 +202,7 @@ func upload_one_chunk(filename string, reader io.Reader, master,
 	fileUrl string, jwt security.EncodedJwt,
 ) (size uint32, e error) {
 	glog.V(4).Info("Uploading part ", filename, " to ", fileUrl, "...")
-	uploadResult, uploadError := Upload(fileUrl, filename, reader, false,
-		"application/octet-stream", nil, jwt)
+	uploadResult, uploadError := Upload(fileUrl, filename, false, reader, false, "", nil, jwt)
 	if uploadError != nil {
 		return 0, uploadError
 	}
@@ -215,12 +214,11 @@ func upload_chunked_file_manifest(fileUrl string, manifest *ChunkManifest, jwt s
 	if e != nil {
 		return e
 	}
-	bufReader := bytes.NewReader(buf)
 	glog.V(4).Info("Uploading chunks manifest ", manifest.Name, " to ", fileUrl, "...")
 	u, _ := url.Parse(fileUrl)
 	q := u.Query()
 	q.Set("cm", "true")
 	u.RawQuery = q.Encode()
-	_, e = Upload(u.String(), manifest.Name, bufReader, false, "application/json", nil, jwt)
+	_, e = UploadData(u.String(), manifest.Name, false, buf, false, "application/json", nil, jwt)
 	return e
 }

@@ -1,12 +1,24 @@
 package shell
 
 import (
-	"context"
+	"fmt"
 	"testing"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
+
+func TestCommandEcDistribution(t *testing.T) {
+
+	allEcNodes := []*EcNode{
+		newEcNode("dc1", "rack1", "dn1", 100),
+		newEcNode("dc1", "rack2", "dn2", 100),
+	}
+
+	allocated := balancedEcDistribution(allEcNodes)
+
+	fmt.Printf("allocated: %+v", allocated)
+}
 
 func TestCommandEcBalanceSmall(t *testing.T) {
 
@@ -108,7 +120,7 @@ func TestCommandEcBalanceVolumeEvenButRackUneven(t *testing.T) {
 
 	racks := collectRacks(allEcNodes)
 	balanceEcVolumes(nil, "c1", allEcNodes, racks, false)
-	balanceEcRacks(context.Background(), nil, racks, false)
+	balanceEcRacks(nil, racks, false)
 }
 
 func newEcNode(dc string, rack string, dataNodeId string, freeEcSlot int) *EcNode {

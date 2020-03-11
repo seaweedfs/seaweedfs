@@ -8,6 +8,10 @@ service VolumeServer {
     //Experts only: takes multiple fid parameters. This function does not propagate deletes to replicas.
     rpc BatchDelete (BatchDeleteRequest) returns (BatchDeleteResponse) {
     }
+
+    rpc FileGet (FileGetRequest) returns (stream FileGetResponse) {
+    }
+
     rpc VacuumVolumeCheck (VacuumVolumeCheckRequest) returns (VacuumVolumeCheckResponse) {
     }
     rpc VacuumVolumeCompact (VacuumVolumeCompactRequest) returns (VacuumVolumeCompactResponse) {
@@ -34,6 +38,8 @@ service VolumeServer {
     rpc VolumeDelete (VolumeDeleteRequest) returns (VolumeDeleteResponse) {
     }
     rpc VolumeMarkReadonly (VolumeMarkReadonlyRequest) returns (VolumeMarkReadonlyResponse) {
+    }
+    rpc VolumeConfigure (VolumeConfigureRequest) returns (VolumeConfigureResponse) {
     }
 
     // copy the .idx .dat files, and mount this volume
@@ -66,8 +72,19 @@ service VolumeServer {
     }
     rpc VolumeEcBlobDelete (VolumeEcBlobDeleteRequest) returns (VolumeEcBlobDeleteResponse) {
     }
+    rpc VolumeEcShardsToVolume (VolumeEcShardsToVolumeRequest) returns (VolumeEcShardsToVolumeResponse) {
+    }
 
-    // query
+    // tiered storage
+    rpc VolumeTierMoveDatToRemote (VolumeTierMoveDatToRemoteRequest) returns (stream VolumeTierMoveDatToRemoteResponse) {
+    }
+    rpc VolumeTierMoveDatFromRemote (VolumeTierMoveDatFromRemoteRequest) returns (stream VolumeTierMoveDatFromRemoteResponse) {
+    }
+
+    rpc VolumeServerStatus (VolumeServerStatusRequest) returns (VolumeServerStatusResponse) {
+    }
+
+    // <experimental> query
     rpc Query (QueryRequest) returns (stream QueriedStripe) {
     }
 
@@ -88,6 +105,22 @@ message DeleteResult {
     string error = 3;
     uint32 size = 4;
     uint32 version = 5;
+}
+
+message FileGetRequest {
+    string file_id = 1;
+    bool accept_gzip = 2;
+}
+message FileGetResponse {
+    bytes data = 1;
+    uint32 content_length = 2;
+    string content_type = 3;
+    uint64 last_modified = 4;
+    string filename = 5;
+    string etag = 6;
+    bool is_gzipped = 7;
+    map<string, string> headers = 8;
+    int32 errorCode = 9;
 }
 
 message Empty {
@@ -181,6 +214,14 @@ message VolumeMarkReadonlyRequest {
 message VolumeMarkReadonlyResponse {
 }
 
+message VolumeConfigureRequest {
+    uint32 volume_id = 1;
+    string replication = 2;
+}
+message VolumeConfigureResponse {
+    string error = 1;
+}
+
 message VolumeCopyRequest {
     uint32 volume_id = 1;
     string collection = 2;
@@ -199,6 +240,7 @@ message CopyFileRequest {
     uint64 stop_offset = 4;
     string collection = 5;
     bool is_ec_volume = 6;
+    bool ignore_source_file_not_found = 7;
 }
 message CopyFileResponse {
     bytes file_content = 1;
@@ -245,6 +287,8 @@ message VolumeEcShardsCopyRequest {
     repeated uint32 shard_ids = 3;
     bool copy_ecx_file = 4;
     string source_data_node = 5;
+    bool copy_ecj_file = 6;
+    bool copy_vif_file = 7;
 }
 message VolumeEcShardsCopyResponse {
 }
@@ -293,6 +337,13 @@ message VolumeEcBlobDeleteRequest {
 message VolumeEcBlobDeleteResponse {
 }
 
+message VolumeEcShardsToVolumeRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+}
+message VolumeEcShardsToVolumeResponse {
+}
+
 message ReadVolumeFileStatusRequest {
     uint32 volume_id = 1;
 }
@@ -312,6 +363,8 @@ message DiskStatus {
     uint64 all = 2;
     uint64 used = 3;
     uint64 free = 4;
+    float percent_free = 5;
+    float percent_used = 6;
 }
 
 message MemStatus {
@@ -324,6 +377,52 @@ message MemStatus {
     uint64 stack = 7;
 }
 
+// tired storage on volume servers
+message RemoteFile {
+    string backend_type = 1;
+    string backend_id = 2;
+    string key = 3;
+    uint64 offset = 4;
+    uint64 file_size = 5;
+    uint64 modified_time = 6;
+    string extension = 7;
+}
+message VolumeInfo {
+    repeated RemoteFile files = 1;
+    uint32 version = 2;
+    string replication = 3;
+}
+
+message VolumeTierMoveDatToRemoteRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+    string destination_backend_name = 3;
+    bool keep_local_dat_file = 4;
+}
+message VolumeTierMoveDatToRemoteResponse {
+    int64 processed = 1;
+    float processedPercentage = 2;
+}
+
+message VolumeTierMoveDatFromRemoteRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+    bool keep_remote_dat_file = 3;
+}
+message VolumeTierMoveDatFromRemoteResponse {
+    int64 processed = 1;
+    float processedPercentage = 2;
+}
+
+message VolumeServerStatusRequest {
+
+}
+message VolumeServerStatusResponse {
+    repeated DiskStatus disk_statuses = 1;
+    MemStatus memory_status = 2;
+}
+
+// select on volume servers
 message QueryRequest {
     repeated string selections = 1;
     repeated string from_file_ids = 2;
@@ -338,17 +437,17 @@ message QueryRequest {
         // NONE | GZIP | BZIP2
         string compression_type = 1;
         message CSVInput {
-            string file_header_info = 1;  // Valid values: NONE | USE | IGNORE
-            string record_delimiter = 2;  // Default: \n
-            string field_delimiter = 3;   // Default: ,
-            string quote_charactoer = 4;  // Default: "
+            string file_header_info = 1; // Valid values: NONE | USE | IGNORE
+            string record_delimiter = 2; // Default: \n
+            string field_delimiter = 3; // Default: ,
+            string quote_charactoer = 4; // Default: "
             string quote_escape_character = 5; // Default: "
-            string comments = 6;          // Default: #
+            string comments = 6; // Default: #
             // If true, records might contain record delimiters within quote characters
-            bool   allow_quoted_record_delimiter = 7; // default False.
+            bool allow_quoted_record_delimiter = 7; // default False.
         }
         message JSONInput {
-            string type = 1;              // Valid values: DOCUMENT | LINES
+            string type = 1; // Valid values: DOCUMENT | LINES
         }
         message ParquetInput {
         }
@@ -361,10 +460,10 @@ message QueryRequest {
 
     message OutputSerialization {
         message CSVOutput {
-            string quote_fields = 1;  // Valid values: ALWAYS | ASNEEDED
-            string record_delimiter = 2;  // Default: \n
-            string field_delimiter = 3;   // Default: ,
-            string quote_charactoer = 4;  // Default: "
+            string quote_fields = 1; // Valid values: ALWAYS | ASNEEDED
+            string record_delimiter = 2; // Default: \n
+            string field_delimiter = 3; // Default: ,
+            string quote_charactoer = 4; // Default: "
             string quote_escape_character = 5; // Default: "
         }
         message JSONOutput {

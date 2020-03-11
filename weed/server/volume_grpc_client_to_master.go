@@ -5,15 +5,18 @@ import (
 	"net"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
-	"github.com/spf13/viper"
 	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
+	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
+
+	"golang.org/x/net/context"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"golang.org/x/net/context"
 )
 
 func (vs *VolumeServer) GetMaster() string {
@@ -25,7 +28,7 @@ func (vs *VolumeServer) heartbeat() {
 	vs.store.SetDataCenter(vs.dataCenter)
 	vs.store.SetRack(vs.rack)
 
-	grpcDialOption := security.LoadClientTLS(viper.Sub("grpc"), "volume")
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.volume")
 
 	var err error
 	var newLeader string
@@ -34,13 +37,13 @@ func (vs *VolumeServer) heartbeat() {
 			if newLeader != "" {
 				master = newLeader
 			}
-			masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(master)
+			masterGrpcAddress, parseErr := pb.ParseServerToGrpcAddress(master)
 			if parseErr != nil {
 				glog.V(0).Infof("failed to parse master grpc %v: %v", masterGrpcAddress, parseErr)
 				continue
 			}
 			vs.store.MasterAddress = master
-			newLeader, err = vs.doHeartbeat(context.Background(), master, masterGrpcAddress, grpcDialOption, time.Duration(vs.pulseSeconds)*time.Second)
+			newLeader, err = vs.doHeartbeat(master, masterGrpcAddress, grpcDialOption, time.Duration(vs.pulseSeconds)*time.Second)
 			if err != nil {
 				glog.V(0).Infof("heartbeat error: %v", err)
 				time.Sleep(time.Duration(vs.pulseSeconds) * time.Second)
@@ -51,16 +54,16 @@ func (vs *VolumeServer) heartbeat() {
 	}
 }
 
-func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcAddress string, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader string, err error) {
+func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader string, err error) {
 
-	grpcConection, err := util.GrpcDial(ctx, masterGrpcAddress, grpcDialOption)
+	grpcConection, err := pb.GrpcDial(context.Background(), masterGrpcAddress, grpcDialOption)
 	if err != nil {
 		return "", fmt.Errorf("fail to dial %s : %v", masterNode, err)
 	}
 	defer grpcConection.Close()
 
 	client := master_pb.NewSeaweedClient(grpcConection)
-	stream, err := client.SendHeartbeat(ctx)
+	stream, err := client.SendHeartbeat(context.Background())
 	if err != nil {
 		glog.V(0).Infof("SendHeartbeat to %s: %v", masterNode, err)
 		return "", err
@@ -89,6 +92,9 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 			if in.GetMetricsAddress() != "" && vs.MetricsAddress != in.GetMetricsAddress() {
 				vs.MetricsAddress = in.GetMetricsAddress()
 				vs.MetricsIntervalSec = int(in.GetMetricsIntervalSeconds())
+			}
+			if len(in.StorageBackends) > 0 {
+				backend.LoadFromPbStorageBackends(in.StorageBackends)
 			}
 		}
 	}()

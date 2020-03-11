@@ -63,7 +63,7 @@ public class SeaweedRead {
         if (!chunkView.isFullChunk) {
             request.setHeader(HttpHeaders.ACCEPT_ENCODING, "");
             request.setHeader(HttpHeaders.RANGE,
-                String.format("bytes=%d-%d", chunkView.offset, chunkView.offset + chunkView.size));
+                String.format("bytes=%d-%d", chunkView.offset, chunkView.offset + chunkView.size - 1));
         }
 
         try {

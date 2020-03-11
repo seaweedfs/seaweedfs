@@ -1,5 +1,6 @@
 // +build !386
 // +build !arm
+// +build !windows
 
 package tikv
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	weed_util "github.com/chrislusf/seaweedfs/weed/util"
 
 	"github.com/pingcap/tidb/kv"
@@ -30,8 +32,8 @@ func (store *TikvStore) GetName() string {
 	return "tikv"
 }
 
-func (store *TikvStore) Initialize(configuration weed_util.Configuration) (err error) {
-	pdAddr := configuration.GetString("pdAddress")
+func (store *TikvStore) Initialize(configuration weed_util.Configuration, prefix string) (err error) {
+	pdAddr := configuration.GetString(prefix + "pdAddress")
 	return store.initialize(pdAddr)
 }
 
@@ -110,7 +112,7 @@ func (store *TikvStore) FindEntry(ctx context.Context, fullpath filer2.FullPath)
 	data, err := store.getTx(ctx).Get(ctx, key)
 
 	if err == kv.ErrNotExist {
-		return nil, filer2.ErrNotFound
+		return nil, filer_pb.ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get %s : %v", entry.FullPath, err)
@@ -136,6 +138,38 @@ func (store *TikvStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPat
 	err = store.getTx(ctx).Delete(key)
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
+	}
+
+	return nil
+}
+
+func (store *TikvStore) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) (err error) {
+
+	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
+
+	tx := store.getTx(ctx)
+
+	iter, err := tx.Iter(directoryPrefix, nil)
+	if err != nil {
+		return fmt.Errorf("deleteFolderChildren %s: %v", fullpath, err)
+	}
+	defer iter.Close()
+	for iter.Valid() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, directoryPrefix) {
+			break
+		}
+		fileName := getNameFromKey(key)
+		if fileName == "" {
+			iter.Next()
+			continue
+		}
+
+		if err = tx.Delete(genKey(string(fullpath), fileName)); err != nil {
+			return fmt.Errorf("delete %s : %v", fullpath, err)
+		}
+
+		iter.Next()
 	}
 
 	return nil

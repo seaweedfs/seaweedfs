@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/chrislusf/seaweedfs/weed/stats"
 	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/util"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
-	"github.com/spf13/viper"
 )
 
 type VolumeServer struct {
@@ -29,6 +30,7 @@ type VolumeServer struct {
 	compactionBytePerSecond int64
 	MetricsAddress          string
 	MetricsIntervalSec      int
+	fileSizeLimitBytes      int64
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
@@ -41,9 +43,10 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	fixJpgOrientation bool,
 	readRedirect bool,
 	compactionMBPerSecond int,
+	fileSizeLimitMB int,
 ) *VolumeServer {
 
-	v := viper.GetViper()
+	v := util.GetViper()
 	signingKey := v.GetString("jwt.signing.key")
 	v.SetDefault("jwt.signing.expires_after_seconds", 10)
 	expiresAfterSec := v.GetInt("jwt.signing.expires_after_seconds")
@@ -60,8 +63,9 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		needleMapKind:           needleMapKind,
 		FixJpgOrientation:       fixJpgOrientation,
 		ReadRedirect:            readRedirect,
-		grpcDialOption:          security.LoadClientTLS(viper.Sub("grpc"), "volume"),
+		grpcDialOption:          security.LoadClientTLS(util.GetViper(), "grpc.volume"),
 		compactionBytePerSecond: int64(compactionMBPerSecond) * 1024 * 1024,
+		fileSizeLimitBytes:      int64(fileSizeLimitMB) * 1024 * 1024,
 	}
 	vs.SeedMasterNodes = masterNodes
 	vs.store = storage.NewStore(vs.grpcDialOption, port, ip, publicUrl, folders, maxCounts, vs.needleMapKind)
@@ -73,9 +77,11 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		// only expose the volume server details for safe environments
 		adminMux.HandleFunc("/ui/index.html", vs.uiStatusHandler)
 		adminMux.HandleFunc("/status", vs.guard.WhiteList(vs.statusHandler))
-		adminMux.HandleFunc("/stats/counter", vs.guard.WhiteList(statsCounterHandler))
-		adminMux.HandleFunc("/stats/memory", vs.guard.WhiteList(statsMemoryHandler))
-		adminMux.HandleFunc("/stats/disk", vs.guard.WhiteList(vs.statsDiskHandler))
+		/*
+			adminMux.HandleFunc("/stats/counter", vs.guard.WhiteList(statsCounterHandler))
+			adminMux.HandleFunc("/stats/memory", vs.guard.WhiteList(statsMemoryHandler))
+			adminMux.HandleFunc("/stats/disk", vs.guard.WhiteList(vs.statsDiskHandler))
+		*/
 	}
 	adminMux.HandleFunc("/", vs.privateStoreHandler)
 	if publicMux != adminMux {

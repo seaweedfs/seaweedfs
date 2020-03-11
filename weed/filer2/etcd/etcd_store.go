@@ -6,10 +6,12 @@ import (
 	"strings"
 	"time"
 
+	"go.etcd.io/etcd/clientv3"
+
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	weed_util "github.com/chrislusf/seaweedfs/weed/util"
-	"go.etcd.io/etcd/clientv3"
 )
 
 const (
@@ -28,13 +30,13 @@ func (store *EtcdStore) GetName() string {
 	return "etcd"
 }
 
-func (store *EtcdStore) Initialize(configuration weed_util.Configuration) (err error) {
-	servers := configuration.GetString("servers")
+func (store *EtcdStore) Initialize(configuration weed_util.Configuration, prefix string) (err error) {
+	servers := configuration.GetString(prefix + "servers")
 	if servers == "" {
 		servers = "localhost:2379"
 	}
 
-	timeout := configuration.GetString("timeout")
+	timeout := configuration.GetString(prefix + "timeout")
 	if timeout == "" {
 		timeout = "3s"
 	}
@@ -99,7 +101,7 @@ func (store *EtcdStore) FindEntry(ctx context.Context, fullpath filer2.FullPath)
 	}
 
 	if len(resp.Kvs) == 0 {
-		return nil, filer2.ErrNotFound
+		return nil, filer_pb.ErrNotFound
 	}
 
 	entry = &filer2.Entry{
@@ -118,6 +120,16 @@ func (store *EtcdStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPat
 
 	if _, err := store.client.Delete(ctx, string(key)); err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
+	}
+
+	return nil
+}
+
+func (store *EtcdStore) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) (err error) {
+	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
+
+	if _, err := store.client.Delete(ctx, string(directoryPrefix), clientv3.WithPrefix()); err != nil {
+		return fmt.Errorf("deleteFolderChildren %s : %v", fullpath, err)
 	}
 
 	return nil

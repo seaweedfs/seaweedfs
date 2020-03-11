@@ -10,15 +10,15 @@ import (
 )
 
 var (
-	markNeedleDeleted = func(file *os.File, offset int64) error {
+	MarkNeedleDeleted = func(file *os.File, offset int64) error {
 		b := make([]byte, types.SizeSize)
 		util.Uint32toBytes(b, types.TombstoneFileSize)
 		n, err := file.WriteAt(b, offset+types.NeedleIdSize+types.OffsetSize)
 		if err != nil {
-			return fmt.Errorf("ecx write error: %v", err)
+			return fmt.Errorf("sorted needle write error: %v", err)
 		}
 		if n != types.SizeSize {
-			return fmt.Errorf("ecx written %d bytes, expecting %d", n, types.SizeSize)
+			return fmt.Errorf("sorted needle written %d bytes, expecting %d", n, types.SizeSize)
 		}
 		return nil
 	}
@@ -26,7 +26,7 @@ var (
 
 func (ev *EcVolume) DeleteNeedleFromEcx(needleId types.NeedleId) (err error) {
 
-	_, _, err = searchNeedleFromEcx(ev.ecxFile, ev.ecxFileSize, needleId, markNeedleDeleted)
+	_, _, err = SearchNeedleFromSortedIndex(ev.ecxFile, ev.ecxFileSize, needleId, MarkNeedleDeleted)
 
 	if err != nil {
 		if err == NotFoundError {
@@ -81,7 +81,7 @@ func RebuildEcxFile(baseFileName string) error {
 
 		needleId := types.BytesToNeedleId(buf)
 
-		_, _, err = searchNeedleFromEcx(ecxFile, ecxFileSize, needleId, markNeedleDeleted)
+		_, _, err = SearchNeedleFromSortedIndex(ecxFile, ecxFileSize, needleId, MarkNeedleDeleted)
 
 		if err != nil && err != NotFoundError {
 			ecxFile.Close()

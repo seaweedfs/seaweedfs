@@ -17,8 +17,7 @@ func (f *Filer) LoadConfiguration(config *viper.Viper) {
 
 	for _, store := range Stores {
 		if config.GetBool(store.GetName() + ".enabled") {
-			viperSub := config.Sub(store.GetName())
-			if err := store.Initialize(viperSub); err != nil {
+			if err := store.Initialize(config, store.GetName()+"."); err != nil {
 				glog.Fatalf("Failed to initialize store for %s: %+v",
 					store.GetName(), err)
 			}

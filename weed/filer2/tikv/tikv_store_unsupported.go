@@ -1,4 +1,4 @@
-// +build 386 arm
+// +build 386 arm windows
 
 package tikv
 
@@ -21,7 +21,7 @@ func (store *TikvStore) GetName() string {
 	return "tikv"
 }
 
-func (store *TikvStore) Initialize(configuration weed_util.Configuration) (err error) {
+func (store *TikvStore) Initialize(configuration weed_util.Configuration, prefix string) (err error) {
 	return fmt.Errorf("not implemented for 32 bit computers")
 }
 
@@ -52,6 +52,10 @@ func (store *TikvStore) FindEntry(ctx context.Context, fullpath filer2.FullPath)
 }
 
 func (store *TikvStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPath) (err error) {
+	return fmt.Errorf("not implemented for 32 bit computers")
+}
+
+func (store *TikvStore) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) (err error) {
 	return fmt.Errorf("not implemented for 32 bit computers")
 }
 

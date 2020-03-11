@@ -1,17 +1,18 @@
 package storage
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io/ioutil"
 	"math/rand"
 	"testing"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 func TestFastLoadingNeedleMapMetrics(t *testing.T) {
 
 	idxFile, _ := ioutil.TempFile("", "tmp.idx")
-	nm := NewBtreeNeedleMap(idxFile)
+	nm := NewCompactNeedleMap(idxFile)
 
 	for i := 0; i < 10000; i++ {
 		nm.Put(Uint64ToNeedleId(uint64(i+1)), Uint32ToOffset(uint32(0)), uint32(1))

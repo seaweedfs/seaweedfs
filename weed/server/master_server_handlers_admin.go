@@ -10,9 +10,9 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend/memory_map"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -61,7 +61,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	glog.Infoln("garbageThreshold =", gcThreshold)
+	// glog.Infoln("garbageThreshold =", gcThreshold)
 	ms.Topo.Vacuum(ms.grpcDialOption, gcThreshold, ms.preallocateSize)
 	ms.dirStatusHandler(w, r)
 }
@@ -145,7 +145,7 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 	if replicationString == "" {
 		replicationString = ms.option.DefaultReplicaPlacement
 	}
-	replicaPlacement, err := storage.NewReplicaPlacementFromString(replicationString)
+	replicaPlacement, err := super_block.NewReplicaPlacementFromString(replicationString)
 	if err != nil {
 		return nil, err
 	}

@@ -9,9 +9,9 @@ import (
 	"strconv"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -59,7 +59,7 @@ func main() {
 	}
 	defer newDatFile.Close()
 
-	superBlock, err := storage.ReadSuperBlock(datBackend)
+	superBlock, err := super_block.ReadSuperBlock(datBackend)
 	if err != nil {
 		glog.Fatalf("Read Volume Data superblock %v", err)
 	}
@@ -67,13 +67,13 @@ func main() {
 
 	iterateEntries(datBackend, indexFile, func(n *needle.Needle, offset int64) {
 		fmt.Printf("needle id=%v name=%s size=%d dataSize=%d\n", n.Id, string(n.Name), n.Size, n.DataSize)
-		_, s, _, e := n.Append(datBackend, superBlock.Version())
+		_, s, _, e := n.Append(datBackend, superBlock.Version)
 		fmt.Printf("size %d error %v\n", s, e)
 	})
 
 }
 
-func iterateEntries(datBackend backend.DataStorageBackend, idxFile *os.File, visitNeedle func(n *needle.Needle, offset int64)) {
+func iterateEntries(datBackend backend.BackendStorageFile, idxFile *os.File, visitNeedle func(n *needle.Needle, offset int64)) {
 	// start to read index file
 	var readerOffset int64
 	bytes := make([]byte, 16)
@@ -81,13 +81,13 @@ func iterateEntries(datBackend backend.DataStorageBackend, idxFile *os.File, vis
 	readerOffset += int64(count)
 
 	// start to read dat file
-	superBlock, err := storage.ReadSuperBlock(datBackend)
+	superBlock, err := super_block.ReadSuperBlock(datBackend)
 	if err != nil {
 		fmt.Printf("cannot read dat file super block: %v", err)
 		return
 	}
 	offset := int64(superBlock.BlockSize())
-	version := superBlock.Version()
+	version := superBlock.Version
 	n, _, rest, err := needle.ReadNeedleHeader(datBackend, version, offset)
 	if err != nil {
 		fmt.Printf("cannot read needle header: %v", err)

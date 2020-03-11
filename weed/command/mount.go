@@ -1,23 +1,18 @@
 package command
 
-import (
-	"fmt"
-	"strconv"
-	"strings"
-)
-
 type MountOptions struct {
-	filer              *string
-	filerMountRootPath *string
-	dir                *string
-	dirListingLimit    *int
-	collection         *string
-	replication        *string
-	ttlSec             *int
-	chunkSizeLimitMB   *int
-	dataCenter         *string
-	allowOthers        *bool
-	umaskString        *string
+	filer                       *string
+	filerMountRootPath          *string
+	dir                         *string
+	dirListCacheLimit           *int64
+	collection                  *string
+	replication                 *string
+	ttlSec                      *int
+	chunkSizeLimitMB            *int
+	dataCenter                  *string
+	allowOthers                 *bool
+	umaskString                 *string
+	outsideContainerClusterMode *bool
 }
 
 var (
@@ -31,7 +26,7 @@ func init() {
 	mountOptions.filer = cmdMount.Flag.String("filer", "localhost:8888", "weed filer location")
 	mountOptions.filerMountRootPath = cmdMount.Flag.String("filer.path", "/", "mount this remote path from filer server")
 	mountOptions.dir = cmdMount.Flag.String("dir", ".", "mount weed filer to this directory")
-	mountOptions.dirListingLimit = cmdMount.Flag.Int("dirListLimit", 100000, "limit directory listing size")
+	mountOptions.dirListCacheLimit = cmdMount.Flag.Int64("dirListCacheLimit", 1000000, "limit cache size to speed up directory long format listing")
 	mountOptions.collection = cmdMount.Flag.String("collection", "", "collection to create the files")
 	mountOptions.replication = cmdMount.Flag.String("replication", "", "replication(e.g. 000, 001) to create to files. If empty, let filer decide.")
 	mountOptions.ttlSec = cmdMount.Flag.Int("ttl", 0, "file ttl in seconds")
@@ -41,6 +36,7 @@ func init() {
 	mountOptions.umaskString = cmdMount.Flag.String("umask", "022", "octal umask, e.g., 022, 0111")
 	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
 	mountMemProfile = cmdMount.Flag.String("memprofile", "", "memory profile output file")
+	mountOptions.outsideContainerClusterMode = cmdMount.Flag.Bool("outsideContainerClusterMode", false, "allows other users to access the file system")
 }
 
 var cmdMount = &Command{
@@ -58,21 +54,11 @@ var cmdMount = &Command{
 
   On OS X, it requires OSXFUSE (http://osxfuse.github.com/).
 
+  If the SeaweedFS system runs in a container cluster, e.g. managed by kubernetes or docker compose,
+  the volume servers are not accessible by their own ip addresses. 
+  In "outsideContainerClusterMode", the mount will use the filer ip address instead, assuming:
+    * All volume server containers are accessible through the same hostname or IP address as the filer.
+    * All volume server container ports are open external to the cluster.
+
   `,
-}
-
-func parseFilerGrpcAddress(filer string) (filerGrpcAddress string, err error) {
-	hostnameAndPort := strings.Split(filer, ":")
-	if len(hostnameAndPort) != 2 {
-		return "", fmt.Errorf("The filer should have hostname:port format: %v", hostnameAndPort)
-	}
-
-	filerPort, parseErr := strconv.ParseUint(hostnameAndPort[1], 10, 64)
-	if parseErr != nil {
-		return "", fmt.Errorf("The filer filer port parse error: %v", parseErr)
-	}
-
-	filerGrpcPort := int(filerPort) + 10000
-
-	return fmt.Sprintf("%s:%d", hostnameAndPort[0], filerGrpcPort), nil
 }

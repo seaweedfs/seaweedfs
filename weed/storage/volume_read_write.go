@@ -11,6 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
@@ -45,22 +46,25 @@ func (v *Volume) Destroy() (err error) {
 		err = fmt.Errorf("volume %d is compacting", v.Id)
 		return
 	}
+	storageName, storageKey := v.RemoteStorageNameKey()
+	if v.HasRemoteFile() && storageName != "" && storageKey != "" {
+		if backendStorage, found := backend.BackendStorages[storageName]; found {
+			backendStorage.DeleteFile(storageKey)
+		}
+	}
 	v.Close()
 	os.Remove(v.FileName() + ".dat")
 	os.Remove(v.FileName() + ".idx")
+	os.Remove(v.FileName() + ".vif")
+	os.Remove(v.FileName() + ".sdx")
 	os.Remove(v.FileName() + ".cpd")
 	os.Remove(v.FileName() + ".cpx")
 	os.RemoveAll(v.FileName() + ".ldb")
-	os.RemoveAll(v.FileName() + ".bdb")
 	return
 }
 
 func (v *Volume) writeNeedle(n *needle.Needle) (offset uint64, size uint32, isUnchanged bool, err error) {
-	glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
-	if v.readOnly {
-		err = fmt.Errorf("%s is read-only", v.DataBackend.String())
-		return
-	}
+	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 	if v.isFileUnchanged(n) {
@@ -110,9 +114,6 @@ func (v *Volume) writeNeedle(n *needle.Needle) (offset uint64, size uint32, isUn
 
 func (v *Volume) deleteNeedle(n *needle.Needle) (uint32, error) {
 	glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
-	if v.readOnly {
-		return 0, fmt.Errorf("%s is read-only", v.DataBackend.String())
-	}
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 	nv, ok := v.nm.Get(n.Id)
@@ -136,8 +137,8 @@ func (v *Volume) deleteNeedle(n *needle.Needle) (uint32, error) {
 
 // read fills in Needle content by looking up n.Id from NeedleMapper
 func (v *Volume) readNeedle(n *needle.Needle) (int, error) {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
 
 	nv, ok := v.nm.Get(n.Id)
 	if !ok || nv.Offset.IsZero() {
@@ -171,7 +172,7 @@ func (v *Volume) readNeedle(n *needle.Needle) (int, error) {
 }
 
 type VolumeFileScanner interface {
-	VisitSuperBlock(SuperBlock) error
+	VisitSuperBlock(super_block.SuperBlock) error
 	ReadNeedleBody() bool
 	VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error
 }
@@ -183,8 +184,10 @@ func ScanVolumeFile(dirname string, collection string, id needle.VolumeId,
 	if v, err = loadVolumeWithoutIndex(dirname, collection, id, needleMapKind); err != nil {
 		return fmt.Errorf("failed to load volume %d: %v", id, err)
 	}
-	if err = volumeFileScanner.VisitSuperBlock(v.SuperBlock); err != nil {
-		return fmt.Errorf("failed to process volume %d super block: %v", id, err)
+	if v.volumeInfo.Version == 0 {
+		if err = volumeFileScanner.VisitSuperBlock(v.SuperBlock); err != nil {
+			return fmt.Errorf("failed to process volume %d super block: %v", id, err)
+		}
 	}
 	defer v.Close()
 
@@ -195,13 +198,13 @@ func ScanVolumeFile(dirname string, collection string, id needle.VolumeId,
 	return ScanVolumeFileFrom(version, v.DataBackend, offset, volumeFileScanner)
 }
 
-func ScanVolumeFileFrom(version needle.Version, datBackend backend.DataStorageBackend, offset int64, volumeFileScanner VolumeFileScanner) (err error) {
+func ScanVolumeFileFrom(version needle.Version, datBackend backend.BackendStorageFile, offset int64, volumeFileScanner VolumeFileScanner) (err error) {
 	n, nh, rest, e := needle.ReadNeedleHeader(datBackend, version, offset)
 	if e != nil {
 		if e == io.EOF {
 			return nil
 		}
-		return fmt.Errorf("cannot read %s at offset %d: %v", datBackend.String(), offset, e)
+		return fmt.Errorf("cannot read %s at offset %d: %v", datBackend.Name(), offset, e)
 	}
 	for n != nil {
 		var needleBody []byte

@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"context"
 	"io"
 )
 
@@ -45,9 +44,7 @@ func (c *commandFsCd) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 		return nil
 	}
 
-	ctx := context.Background()
-
-	err = commandEnv.checkDirectory(ctx, filerServer, filerPort, path)
+	err = commandEnv.checkDirectory(filerServer, filerPort, path)
 
 	if err == nil {
 		commandEnv.option.FilerHost = filerServer

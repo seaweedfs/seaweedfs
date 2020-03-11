@@ -18,10 +18,10 @@ type Replicator struct {
 	source *source.FilerSource
 }
 
-func NewReplicator(sourceConfig util.Configuration, dataSink sink.ReplicationSink) *Replicator {
+func NewReplicator(sourceConfig util.Configuration, configPrefix string, dataSink sink.ReplicationSink) *Replicator {
 
 	source := &source.FilerSource{}
-	source.Initialize(sourceConfig)
+	source.Initialize(sourceConfig, configPrefix)
 
 	dataSink.SetSourceFiler(source)
 
@@ -41,28 +41,28 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 	key = newKey
 	if message.OldEntry != nil && message.NewEntry == nil {
 		glog.V(4).Infof("deleting %v", key)
-		return r.sink.DeleteEntry(ctx, key, message.OldEntry.IsDirectory, message.DeleteChunks)
+		return r.sink.DeleteEntry(key, message.OldEntry.IsDirectory, message.DeleteChunks)
 	}
 	if message.OldEntry == nil && message.NewEntry != nil {
 		glog.V(4).Infof("creating %v", key)
-		return r.sink.CreateEntry(ctx, key, message.NewEntry)
+		return r.sink.CreateEntry(key, message.NewEntry)
 	}
 	if message.OldEntry == nil && message.NewEntry == nil {
 		glog.V(0).Infof("weird message %+v", message)
 		return nil
 	}
 
-	foundExisting, err := r.sink.UpdateEntry(ctx, key, message.OldEntry, message.NewParentPath, message.NewEntry, message.DeleteChunks)
+	foundExisting, err := r.sink.UpdateEntry(key, message.OldEntry, message.NewParentPath, message.NewEntry, message.DeleteChunks)
 	if foundExisting {
 		glog.V(4).Infof("updated %v", key)
 		return err
 	}
 
-	err = r.sink.DeleteEntry(ctx, key, message.OldEntry.IsDirectory, false)
+	err = r.sink.DeleteEntry(key, message.OldEntry.IsDirectory, false)
 	if err != nil {
 		return fmt.Errorf("delete old entry %v: %v", key, err)
 	}
 
 	glog.V(4).Infof("creating missing %v", key)
-	return r.sink.CreateEntry(ctx, key, message.NewEntry)
+	return r.sink.CreateEntry(key, message.NewEntry)
 }

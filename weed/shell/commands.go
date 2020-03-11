@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/url"
@@ -9,10 +8,11 @@ import (
 	"strconv"
 	"strings"
 
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"google.golang.org/grpc"
 )
 
 type ShellOptions struct {
@@ -42,10 +42,9 @@ var (
 
 func NewCommandEnv(options ShellOptions) *CommandEnv {
 	return &CommandEnv{
-		env: make(map[string]string),
-		MasterClient: wdclient.NewMasterClient(context.Background(),
-			options.GrpcDialOption, "shell", strings.Split(*options.Masters, ",")),
-		option: options,
+		env:          make(map[string]string),
+		MasterClient: wdclient.NewMasterClient(options.GrpcDialOption, "shell", 0, strings.Split(*options.Masters, ",")),
+		option:       options,
 	}
 }
 
@@ -59,38 +58,27 @@ func (ce *CommandEnv) parseUrl(input string) (filerServer string, filerPort int6
 	return ce.option.FilerHost, ce.option.FilerPort, input, err
 }
 
-func (ce *CommandEnv) isDirectory(ctx context.Context, filerServer string, filerPort int64, path string) bool {
+func (ce *CommandEnv) isDirectory(filerServer string, filerPort int64, path string) bool {
 
-	return ce.checkDirectory(ctx, filerServer, filerPort, path) == nil
+	return ce.checkDirectory(filerServer, filerPort, path) == nil
 
 }
 
-func (ce *CommandEnv) checkDirectory(ctx context.Context, filerServer string, filerPort int64, path string) error {
+func (ce *CommandEnv) checkDirectory(filerServer string, filerPort int64, path string) error {
 
 	dir, name := filer2.FullPath(path).DirAndName()
 
-	return ce.withFilerClient(ctx, filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
+	return ce.withFilerClient(filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
 
-		resp, listErr := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
-			Directory:          dir,
-			Prefix:             name,
-			StartFromFileName:  name,
-			InclusiveStartFrom: true,
-			Limit:              1,
+		resp, lookupErr := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: dir,
+			Name:      name,
 		})
-		if listErr != nil {
-			return listErr
+		if lookupErr != nil {
+			return lookupErr
 		}
 
-		if len(resp.Entries) == 0 {
-			return fmt.Errorf("entry not found")
-		}
-
-		if resp.Entries[0].Name != name {
-			return fmt.Errorf("not a valid directory, found %s", resp.Entries[0].Name)
-		}
-
-		if !resp.Entries[0].IsDirectory {
+		if !resp.Entry.IsDirectory {
 			return fmt.Errorf("not a directory")
 		}
 

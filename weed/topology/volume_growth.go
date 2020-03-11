@@ -6,6 +6,9 @@ import (
 	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"github.com/chrislusf/seaweedfs/weed/util"
+
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -22,7 +25,7 @@ This package is created to resolve these replica placement issues:
 
 type VolumeGrowOption struct {
 	Collection         string
-	ReplicaPlacement   *storage.ReplicaPlacement
+	ReplicaPlacement   *super_block.ReplicaPlacement
 	Ttl                *needle.TTL
 	Prealloacte        int64
 	DataCenter         string
@@ -46,15 +49,20 @@ func NewDefaultVolumeGrowth() *VolumeGrowth {
 // one replication type may need rp.GetCopyCount() actual volumes
 // given copyCount, how many logical volumes to create
 func (vg *VolumeGrowth) findVolumeCount(copyCount int) (count int) {
+	v := util.GetViper()
+	v.SetDefault("master.volume_growth.copy_1", 7)
+	v.SetDefault("master.volume_growth.copy_2", 6)
+	v.SetDefault("master.volume_growth.copy_3", 3)
+	v.SetDefault("master.volume_growth.copy_other", 1)
 	switch copyCount {
 	case 1:
-		count = 7
+		count = v.GetInt("master.volume_growth.copy_1")
 	case 2:
-		count = 6
+		count = v.GetInt("master.volume_growth.copy_2")
 	case 3:
-		count = 3
+		count = v.GetInt("master.volume_growth.copy_3")
 	default:
-		count = 1
+		count = v.GetInt("master.volume_growth.copy_other")
 	}
 	return
 }
@@ -104,7 +112,7 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption) (servers []*DataNode, err error) {
 	//find main datacenter and other data centers
 	rp := option.ReplicaPlacement
-	mainDataCenter, otherDataCenters, dc_err := topo.RandomlyPickNodes(rp.DiffDataCenterCount+1, func(node Node) error {
+	mainDataCenter, otherDataCenters, dc_err := topo.PickNodesByWeight(rp.DiffDataCenterCount+1, func(node Node) error {
 		if option.DataCenter != "" && node.IsDataCenter() && node.Id() != NodeId(option.DataCenter) {
 			return fmt.Errorf("Not matching preferred data center:%s", option.DataCenter)
 		}
@@ -136,7 +144,7 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 	}
 
 	//find main rack and other racks
-	mainRack, otherRacks, rackErr := mainDataCenter.(*DataCenter).RandomlyPickNodes(rp.DiffRackCount+1, func(node Node) error {
+	mainRack, otherRacks, rackErr := mainDataCenter.(*DataCenter).PickNodesByWeight(rp.DiffRackCount+1, func(node Node) error {
 		if option.Rack != "" && node.IsRack() && node.Id() != NodeId(option.Rack) {
 			return fmt.Errorf("Not matching preferred rack:%s", option.Rack)
 		}
@@ -163,7 +171,7 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 	}
 
 	//find main rack and other racks
-	mainServer, otherServers, serverErr := mainRack.(*Rack).RandomlyPickNodes(rp.SameRackCount+1, func(node Node) error {
+	mainServer, otherServers, serverErr := mainRack.(*Rack).PickNodesByWeight(rp.SameRackCount+1, func(node Node) error {
 		if option.DataNode != "" && node.IsDataNode() && node.Id() != NodeId(option.DataNode) {
 			return fmt.Errorf("Not matching preferred data node:%s", option.DataNode)
 		}

@@ -32,9 +32,8 @@ func (c *commandVolumeList) Help() string {
 func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	var resp *master_pb.VolumeListResponse
-	ctx := context.Background()
-	err = commandEnv.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+		resp, err = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		return err
 	})
 	if err != nil {
@@ -46,7 +45,7 @@ func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.
 }
 
 func writeTopologyInfo(writer io.Writer, t *master_pb.TopologyInfo, volumeSizeLimitMb uint64) statistics {
-	fmt.Fprintf(writer, "Topology volume:%d/%d active:%d free:%d volumeSizeLimit:%d MB\n", t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount, volumeSizeLimitMb)
+	fmt.Fprintf(writer, "Topology volume:%d/%d active:%d free:%d remote:%d volumeSizeLimit:%d MB\n", t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount, t.RemoteVolumeCount, volumeSizeLimitMb)
 	sort.Slice(t.DataCenterInfos, func(i, j int) bool {
 		return t.DataCenterInfos[i].Id < t.DataCenterInfos[j].Id
 	})
@@ -58,7 +57,7 @@ func writeTopologyInfo(writer io.Writer, t *master_pb.TopologyInfo, volumeSizeLi
 	return s
 }
 func writeDataCenterInfo(writer io.Writer, t *master_pb.DataCenterInfo) statistics {
-	fmt.Fprintf(writer, "  DataCenter %s volume:%d/%d active:%d free:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount)
+	fmt.Fprintf(writer, "  DataCenter %s volume:%d/%d active:%d free:%d remote:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount, t.RemoteVolumeCount)
 	var s statistics
 	sort.Slice(t.RackInfos, func(i, j int) bool {
 		return t.RackInfos[i].Id < t.RackInfos[j].Id
@@ -70,7 +69,7 @@ func writeDataCenterInfo(writer io.Writer, t *master_pb.DataCenterInfo) statisti
 	return s
 }
 func writeRackInfo(writer io.Writer, t *master_pb.RackInfo) statistics {
-	fmt.Fprintf(writer, "    Rack %s volume:%d/%d active:%d free:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount)
+	fmt.Fprintf(writer, "    Rack %s volume:%d/%d active:%d free:%d remote:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount, t.RemoteVolumeCount)
 	var s statistics
 	sort.Slice(t.DataNodeInfos, func(i, j int) bool {
 		return t.DataNodeInfos[i].Id < t.DataNodeInfos[j].Id
@@ -82,7 +81,7 @@ func writeRackInfo(writer io.Writer, t *master_pb.RackInfo) statistics {
 	return s
 }
 func writeDataNodeInfo(writer io.Writer, t *master_pb.DataNodeInfo) statistics {
-	fmt.Fprintf(writer, "      DataNode %s volume:%d/%d active:%d free:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount)
+	fmt.Fprintf(writer, "      DataNode %s volume:%d/%d active:%d free:%d remote:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount, t.RemoteVolumeCount)
 	var s statistics
 	sort.Slice(t.VolumeInfos, func(i, j int) bool {
 		return t.VolumeInfos[i].Id < t.VolumeInfos[j].Id

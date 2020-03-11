@@ -10,6 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 )
 
 var (
@@ -24,16 +25,16 @@ func Checksum(n *needle.Needle) string {
 
 type VolumeFileScanner4SeeDat struct {
 	version needle.Version
-	block   storage.SuperBlock
+	block   super_block.SuperBlock
 
 	dir        string
 	hashes     map[string]bool
 	dat        *os.File
-	datBackend backend.DataStorageBackend
+	datBackend backend.BackendStorageFile
 }
 
-func (scanner *VolumeFileScanner4SeeDat) VisitSuperBlock(superBlock storage.SuperBlock) error {
-	scanner.version = superBlock.Version()
+func (scanner *VolumeFileScanner4SeeDat) VisitSuperBlock(superBlock super_block.SuperBlock) error {
+	scanner.version = superBlock.Version
 	scanner.block = superBlock
 	return nil
 

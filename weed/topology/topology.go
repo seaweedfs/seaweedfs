@@ -7,11 +7,13 @@ import (
 	"sync"
 
 	"github.com/chrislusf/raft"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/sequence"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -58,7 +60,12 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 
 func (t *Topology) IsLeader() bool {
 	if t.RaftServer != nil {
-		return t.RaftServer.State() == raft.Leader
+		if t.RaftServer.State() == raft.Leader {
+			return true
+		}
+		if t.RaftServer.Leader() == "" {
+			return true
+		}
 	}
 	return false
 }
@@ -73,7 +80,7 @@ func (t *Topology) Leader() (string, error) {
 
 	if l == "" {
 		// We are a single node cluster, we are the leader
-		return t.RaftServer.Name(), errors.New("Raft Server not initialized!")
+		return t.RaftServer.Name(), nil
 	}
 
 	return l, nil
@@ -129,7 +136,7 @@ func (t *Topology) PickForWrite(count uint64, option *VolumeGrowOption) (string,
 	return needle.NewFileId(*vid, fileId, rand.Uint32()).String(), count, datanodes.Head(), nil
 }
 
-func (t *Topology) GetVolumeLayout(collectionName string, rp *storage.ReplicaPlacement, ttl *needle.TTL) *VolumeLayout {
+func (t *Topology) GetVolumeLayout(collectionName string, rp *super_block.ReplicaPlacement, ttl *needle.TTL) *VolumeLayout {
 	return t.collectionMap.Get(collectionName, func() interface{} {
 		return NewCollection(collectionName, t.volumeSizeLimit)
 	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl)
@@ -150,7 +157,7 @@ func (t *Topology) ListCollections(includeNormalVolumes, includeEcVolumes bool) 
 		t.ecShardMapLock.RUnlock()
 	}
 
-	for k, _ := range mapOfCollections {
+	for k := range mapOfCollections {
 		ret = append(ret, k)
 	}
 	return ret

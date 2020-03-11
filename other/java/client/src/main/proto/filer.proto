@@ -12,7 +12,7 @@ service SeaweedFiler {
     rpc LookupDirectoryEntry (LookupDirectoryEntryRequest) returns (LookupDirectoryEntryResponse) {
     }
 
-    rpc ListEntries (ListEntriesRequest) returns (ListEntriesResponse) {
+    rpc ListEntries (ListEntriesRequest) returns (stream ListEntriesResponse) {
     }
 
     rpc CreateEntry (CreateEntryRequest) returns (CreateEntryResponse) {
@@ -22,6 +22,9 @@ service SeaweedFiler {
     }
 
     rpc DeleteEntry (DeleteEntryRequest) returns (DeleteEntryResponse) {
+    }
+
+    rpc StreamDeleteEntries (stream DeleteEntryRequest) returns (stream DeleteEntryResponse) {
     }
 
     rpc AtomicRenameEntry (AtomicRenameEntryRequest) returns (AtomicRenameEntryResponse) {
@@ -64,7 +67,7 @@ message ListEntriesRequest {
 }
 
 message ListEntriesResponse {
-    repeated Entry entries = 1;
+    Entry entry = 1;
 }
 
 message Entry {
@@ -96,6 +99,8 @@ message FileChunk {
     string source_file_id = 6; // to be deprecated
     FileId fid = 7;
     FileId source_fid = 8;
+    bytes cipher_key = 9;
+    bool is_gzipped = 10;
 }
 
 message FileId {
@@ -123,9 +128,11 @@ message FuseAttributes {
 message CreateEntryRequest {
     string directory = 1;
     Entry entry = 2;
+    bool o_excl = 3;
 }
 
 message CreateEntryResponse {
+    string error = 1;
 }
 
 message UpdateEntryRequest {
@@ -145,6 +152,7 @@ message DeleteEntryRequest {
 }
 
 message DeleteEntryResponse {
+    string error = 1;
 }
 
 message AtomicRenameEntryRequest {
@@ -163,6 +171,7 @@ message AssignVolumeRequest {
     string replication = 3;
     int32 ttl_sec = 4;
     string data_center = 5;
+    string parent_path = 6;
 }
 
 message AssignVolumeResponse {
@@ -171,6 +180,9 @@ message AssignVolumeResponse {
     string public_url = 3;
     int32 count = 4;
     string auth = 5;
+    string collection = 6;
+    string replication = 7;
+    string error = 8;
 }
 
 message LookupVolumeRequest {
@@ -217,4 +229,7 @@ message GetFilerConfigurationResponse {
     string replication = 2;
     string collection = 3;
     uint32 max_mb = 4;
+    string dir_buckets = 5;
+    string dir_queues = 6;
+    bool cipher = 7;
 }

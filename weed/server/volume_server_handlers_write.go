@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -43,7 +42,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	needle, originalSize, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation)
+	needle, originalSize, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation, vs.fileSizeLimitBytes)
 	if ne != nil {
 		writeJsonError(w, r, http.StatusBadRequest, ne)
 		return
@@ -51,10 +50,15 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 	ret := operation.UploadResult{}
 	_, isUnchanged, writeError := topology.ReplicatedWrite(vs.GetMaster(), vs.store, volumeId, needle, r)
-	httpStatus := http.StatusCreated
-	if isUnchanged {
-		httpStatus = http.StatusNotModified
+
+	// http 204 status code does not allow body
+	if writeError == nil && isUnchanged {
+		setEtag(w, needle.Etag())
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
+
+	httpStatus := http.StatusCreated
 	if writeError != nil {
 		httpStatus = http.StatusInternalServerError
 		ret.Error = writeError.Error()
@@ -64,6 +68,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	ret.Size = uint32(originalSize)
 	ret.ETag = needle.Etag()
+	ret.Mime = string(needle.Mime)
 	setEtag(w, ret.ETag)
 	writeJsonQuiet(w, r, httpStatus, ret)
 }
@@ -93,7 +98,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	ecVolume, hasEcVolume := vs.store.FindEcVolume(volumeId)
 
 	if hasEcVolume {
-		count, err := vs.store.DeleteEcShardNeedle(context.Background(), ecVolume, n, cookie)
+		count, err := vs.store.DeleteEcShardNeedle(ecVolume, n, cookie)
 		writeDeleteResult(err, count, w, r)
 		return
 	}

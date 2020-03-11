@@ -1,27 +1,26 @@
 package operation
 
 import (
-	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"google.golang.org/grpc"
 	"strconv"
 	"strings"
+
+	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 )
 
 func WithVolumeServerClient(volumeServer string, grpcDialOption grpc.DialOption, fn func(volume_server_pb.VolumeServerClient) error) error {
-
-	ctx := context.Background()
 
 	grpcAddress, err := toVolumeServerGrpcAddress(volumeServer)
 	if err != nil {
 		return err
 	}
 
-	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
+	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := volume_server_pb.NewVolumeServerClient(grpcConnection)
 		return fn(client)
 	}, grpcAddress, grpcDialOption)
@@ -40,14 +39,12 @@ func toVolumeServerGrpcAddress(volumeServer string) (grpcAddress string, err err
 
 func WithMasterServerClient(masterServer string, grpcDialOption grpc.DialOption, fn func(masterClient master_pb.SeaweedClient) error) error {
 
-	ctx := context.Background()
-
-	masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(masterServer)
+	masterGrpcAddress, parseErr := pb.ParseServerToGrpcAddress(masterServer)
 	if parseErr != nil {
 		return fmt.Errorf("failed to parse master grpc %v: %v", masterServer, parseErr)
 	}
 
-	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
+	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := master_pb.NewSeaweedClient(grpcConnection)
 		return fn(client)
 	}, masterGrpcAddress, grpcDialOption)

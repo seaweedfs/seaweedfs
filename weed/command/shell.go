@@ -6,7 +6,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/shell"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/spf13/viper"
 )
 
 var (
@@ -31,7 +30,7 @@ var cmdShell = &Command{
 func runShell(command *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
-	shellOptions.GrpcDialOption = security.LoadClientTLS(viper.Sub("grpc"), "client")
+	shellOptions.GrpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	var filerPwdErr error
 	shellOptions.FilerHost, shellOptions.FilerPort, shellOptions.Directory, filerPwdErr = util.ParseFilerUrl(*shellInitialFilerUrl)

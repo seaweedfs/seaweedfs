@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os/user"
@@ -8,10 +9,11 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/spf13/viper"
 )
 
 var (
@@ -37,7 +39,7 @@ func init() {
 
 var cmdWebDav = &Command{
 	UsageLine: "webdav -port=7333 -filer=<ip:port>",
-	Short:     "<unstable> start a webdav server that is backed by a filer",
+	Short:     "start a webdav server that is backed by a filer",
 	Long: `start a webdav server that is backed by a filer.
 
 `,
@@ -55,12 +57,6 @@ func runWebDav(cmd *Command, args []string) bool {
 
 func (wo *WebDavOption) startWebDav() bool {
 
-	filerGrpcAddress, err := parseFilerGrpcAddress(*wo.filer)
-	if err != nil {
-		glog.Fatal(err)
-		return false
-	}
-
 	// detect current user
 	uid, gid := uint32(0), uint32(0)
 	if u, err := user.Current(); err == nil {
@@ -72,13 +68,43 @@ func (wo *WebDavOption) startWebDav() bool {
 		}
 	}
 
+	// parse filer grpc address
+	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(*wo.filer)
+	if err != nil {
+		glog.Fatal(err)
+		return false
+	}
+
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+
+	var cipher bool
+	// connect to filer
+	for {
+		err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+			if err != nil {
+				return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
+			}
+			cipher = resp.Cipher
+			return nil
+		})
+		if err != nil {
+			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *wo.filer, filerGrpcAddress)
+			time.Sleep(time.Second)
+		} else {
+			glog.V(0).Infof("connected to filer %s grpc address %s", *wo.filer, filerGrpcAddress)
+			break
+		}
+	}
+
 	ws, webdavServer_err := weed_server.NewWebDavServer(&weed_server.WebDavOption{
 		Filer:            *wo.filer,
 		FilerGrpcAddress: filerGrpcAddress,
-		GrpcDialOption:   security.LoadClientTLS(viper.Sub("grpc"), "client"),
+		GrpcDialOption:   grpcDialOption,
 		Collection:       *wo.collection,
 		Uid:              uid,
 		Gid:              gid,
+		Cipher:           cipher,
 	})
 	if webdavServer_err != nil {
 		glog.Fatalf("WebDav Server startup error: %v", webdavServer_err)

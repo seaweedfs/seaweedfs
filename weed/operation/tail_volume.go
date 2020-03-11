@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"io"
 
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"google.golang.org/grpc"
 )
 
 func TailVolume(master string, grpcDialOption grpc.DialOption, vid needle.VolumeId, sinceNs uint64, timeoutSeconds int, fn func(n *needle.Needle) error) error {

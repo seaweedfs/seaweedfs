@@ -9,7 +9,7 @@ import (
 )
 
 func TestCreateAndFind(t *testing.T) {
-	filer := filer2.NewFiler(nil, nil)
+	filer := filer2.NewFiler(nil, nil, 0)
 	dir, _ := ioutil.TempDir("", "seaweedfs_filer_test")
 	defer os.RemoveAll(dir)
 	store := &LevelDBStore{}
@@ -30,7 +30,7 @@ func TestCreateAndFind(t *testing.T) {
 		},
 	}
 
-	if err := filer.CreateEntry(ctx, entry1); err != nil {
+	if err := filer.CreateEntry(ctx, entry1, false); err != nil {
 		t.Errorf("create entry %v: %v", entry1.FullPath, err)
 		return
 	}
@@ -64,7 +64,7 @@ func TestCreateAndFind(t *testing.T) {
 }
 
 func TestEmptyRoot(t *testing.T) {
-	filer := filer2.NewFiler(nil, nil)
+	filer := filer2.NewFiler(nil, nil, 0)
 	dir, _ := ioutil.TempDir("", "seaweedfs_filer_test2")
 	defer os.RemoveAll(dir)
 	store := &LevelDBStore{}
