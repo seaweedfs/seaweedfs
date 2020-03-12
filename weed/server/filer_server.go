@@ -22,7 +22,6 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/mysql"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/postgres"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/redis"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/tikv"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/aws_sqs"
