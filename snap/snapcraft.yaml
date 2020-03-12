@@ -6,10 +6,12 @@ version: git
 summary: SeaweedFS
 # Longer multi-line description found in 'snap info $SNAPNAME'
 description: |
-  SeaweedFS is a simple and highly scalable distributed file system.
-  There are two objectives: to store billions of files! to serve the
-  files fast! SeaweedFS implements an object store with O(1) disk seek,
-  and an optional Filer with POSIX interface. 
+  SeaweedFS is a simple and highly scalable distributed file system,
+  to store and serve billions of files fast!
+  SeaweedFS implements an object store with O(1) disk seek,
+  transparent cloud integration, and an optional Filer with POSIX interface,
+  supporting S3 API, Rack-Aware Erasure Coding for warm storage,
+  FUSE mount, Hadoop compatible, WebDAV.
 
 # Grade is stable for snaps expected to land in the stable channel
 grade: stable
@@ -31,7 +33,7 @@ parts:
     go-importpath: github.com/chrislusf/seaweedfs
   go:
     # Defines the version of golang which will be bootstrapped into the snap
-    source-tag: go1.10.4
+    source-tag: go1.14
 
 # Apps exposes the binaries inside the snap to the host system once installed
 apps:
