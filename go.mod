@@ -18,7 +18,10 @@ require (
 	github.com/dustin/go-humanize v1.0.0
 	github.com/eapache/go-resiliency v1.2.0 // indirect
 	github.com/facebookgo/clock v0.0.0-20150410010913-600d898af40a
+	github.com/facebookgo/ensure v0.0.0-20200202191622-63f1cf65ac4c // indirect
+	github.com/facebookgo/stack v0.0.0-20160209184415-751773369052 // indirect
 	github.com/facebookgo/stats v0.0.0-20151006221625-1b76add642e4
+	github.com/facebookgo/subset v0.0.0-20200203212716-c811ad88dec4 // indirect
 	github.com/frankban/quicktest v1.7.2 // indirect
 	github.com/gabriel-vasile/mimetype v1.0.0
 	github.com/go-redis/redis v6.15.2+incompatible
