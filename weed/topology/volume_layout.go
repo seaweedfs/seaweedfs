@@ -51,6 +51,9 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
+	defer vl.ensureCorrectWritables(v)
+	defer vl.rememberOversizedVolume(v)
+
 	if _, ok := vl.vid2location[v.Id]; !ok {
 		vl.vid2location[v.Id] = NewVolumeLocationList()
 	}
@@ -73,9 +76,6 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 			return
 		}
 	}
-
-	vl.rememberOversizedVolume(v)
-	vl.ensureCorrectWritables(v)
 
 }
 
@@ -109,20 +109,11 @@ func (vl *VolumeLayout) UnRegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 func (vl *VolumeLayout) ensureCorrectWritables(v *storage.VolumeInfo) {
 	if vl.vid2location[v.Id].Length() == vl.rp.GetCopyCount() && vl.isWritable(v) {
 		if _, ok := vl.oversizedVolumes[v.Id]; !ok {
-			vl.addToWritable(v.Id)
+			vl.setVolumeWritable(v.Id)
 		}
 	} else {
 		vl.removeFromWritable(v.Id)
 	}
-}
-
-func (vl *VolumeLayout) addToWritable(vid needle.VolumeId) {
-	for _, id := range vl.writables {
-		if vid == id {
-			return
-		}
-	}
-	vl.writables = append(vl.writables, vid)
 }
 
 func (vl *VolumeLayout) isOversized(v *storage.VolumeInfo) bool {
@@ -270,7 +261,17 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId) bo
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
+	vInfo, err := dn.GetVolumesById(v.Id)
+	if err != nil {
+		return false
+	}
+
 	vl.vid2location[vid].Set(dn)
+
+	if vInfo.ReadOnly {
+		return false
+	}
+
 	if vl.vid2location[vid].Length() == vl.rp.GetCopyCount() {
 		return vl.setVolumeWritable(vid)
 	}

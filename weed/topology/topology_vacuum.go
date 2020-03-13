@@ -5,8 +5,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -105,7 +106,9 @@ func batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *VolumeLayout, v
 		} else {
 			glog.V(0).Infof("Complete Committing vacuum %d on %s", vid, dn.Url())
 		}
-		if isCommitSuccess {
+	}
+	if isCommitSuccess {
+		for _, dn := range locationlist.list {
 			vl.SetVolumeAvailable(dn, vid)
 		}
 	}
