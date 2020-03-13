@@ -98,7 +98,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 * Automatic master servers failover - no single point of failure (SPOF).
 * Automatic Gzip compression depending on file mime type.
 * Automatic compaction to reclaim disk space after deletion or update.
-* [Automatic TTL expires entries][VolumeServerTTL].
+* [Automatic entry TTL expiration][VolumeServerTTL].
 * Servers in the same cluster can have different disk spaces, file systems, OS etc.
 * Adding/Removing servers does **not** cause any data re-balancing.
 * Optionally fix the orientation for jpeg pictures.
