@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -17,6 +18,7 @@ var (
 	master           = flag.String("master", "127.0.0.1:9333", "the master server")
 	repeat           = flag.Int("n", 5, "repeat how many times")
 	garbageThreshold = flag.Float64("garbageThreshold", 0.3, "garbageThreshold")
+	replication      = flag.String("replication", "", "replication 000, 001, 002, etc")
 )
 
 func main() {
@@ -27,6 +29,17 @@ func main() {
 
 	genFile(grpcDialOption, 0)
 
+	go func() {
+		for {
+			println("vacuum threshold", *garbageThreshold)
+			_, err := util.Get(fmt.Sprintf("http://%s/vol/vacuum?garbageThreshold=%f", *master, *garbageThreshold))
+			if err != nil {
+				log.Fatalf("vacuum: %v", err)
+			}
+			time.Sleep(time.Second)
+		}
+	}()
+
 	for i := 0; i < *repeat; i++ {
 		// create 2 files, and delete one of them
 
@@ -34,15 +47,15 @@ func main() {
 
 		util.Delete(targetUrl, string(assignResult.Auth))
 
-		println("vacuum", i, "threshold", *garbageThreshold)
-		util.Get(fmt.Sprintf("http://%s/vol/vacuum?garbageThreshold=%f", *master, *garbageThreshold))
-
 	}
 
 }
 
 func genFile(grpcDialOption grpc.DialOption, i int) (*operation.AssignResult, string) {
-	assignResult, err := operation.Assign(*master, grpcDialOption, &operation.VolumeAssignRequest{Count: 1})
+	assignResult, err := operation.Assign(*master, grpcDialOption, &operation.VolumeAssignRequest{
+		Count:       1,
+		Replication: *replication,
+	})
 	if err != nil {
 		log.Fatalf("assign: %v", err)
 	}
