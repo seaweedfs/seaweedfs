@@ -261,7 +261,7 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId) bo
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
-	vInfo, err := dn.GetVolumesById(v.Id)
+	vInfo, err := dn.GetVolumesById(vid)
 	if err != nil {
 		return false
 	}
