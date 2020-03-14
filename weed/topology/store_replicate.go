@@ -154,7 +154,11 @@ func distributedOperation(locations []operation.Location, store *storage.Store, 
 
 func getWritableRemoteReplications(s *storage.Store, volumeId needle.VolumeId, masterNode string) (
 	remoteLocations []operation.Location, err error) {
-	copyCount := s.GetVolume(volumeId).ReplicaPlacement.GetCopyCount()
+	volume := s.GetVolume(volumeId)
+	if volume == nil {
+		return nil, fmt.Errorf("fail to find volume %d", volumeId)
+	}
+	copyCount := v.ReplicaPlacement.GetCopyCount()
 	if copyCount > 1 {
 		if lookupResult, lookupErr := operation.Lookup(masterNode, volumeId.String()); lookupErr == nil {
 			if len(lookupResult.Locations) < copyCount {
