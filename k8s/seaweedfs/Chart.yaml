@@ -1,4 +1,4 @@
 apiVersion: v1
 description: SeaweedFS
 name: seaweedfs
-version: 1.62
+version: c1.63
