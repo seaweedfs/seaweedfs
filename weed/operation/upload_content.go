@@ -120,11 +120,13 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 		}, filename, contentIsGzipped, mtype, pairMap, jwt)
 	}
 
-	if uploadResult != nil {
-		uploadResult.Size = uint32(clearDataLen)
-		if contentIsGzipped {
-			uploadResult.Gzip = 1
-		}
+	if uploadResult == nil {
+		return
+	}
+
+	uploadResult.Size = uint32(clearDataLen)
+	if contentIsGzipped {
+		uploadResult.Gzip = 1
 	}
 
 	return uploadResult, err
