@@ -117,7 +117,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 * [Hadoop Compatible File System][Hadoop] to access files from Hadoop/Spark/Flink/etc jobs.
 * [Async Backup To Cloud][BackupToCloud] has extremely fast local access and backups to Amazon S3, Google Cloud Storage, Azure, BackBlaze.
 * [WebDAV] access as a mapped drive on Mac and Windows, or from mobile devices.
-* [Encrypted Storage][FilerDataEncryption] safely stores the encrypted data.
+* [256bit AES Encrypted Storage][FilerDataEncryption] safely stores the encrypted data.
 * [File TTL][FilerTTL] automatically purge file metadata and actual file data.
 
 [Filer]: https://github.com/chrislusf/seaweedfs/wiki/Directories-and-Files
