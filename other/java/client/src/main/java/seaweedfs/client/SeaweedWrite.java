@@ -1,5 +1,6 @@
 package seaweedfs.client;
 
+import com.google.protobuf.ByteString;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpPost;
@@ -11,8 +12,11 @@ import java.io.ByteArrayInputStream;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
+import java.security.SecureRandom;
 
 public class SeaweedWrite {
+
+    private static SecureRandom random = new SecureRandom();
 
     public static void writeData(FilerProto.Entry.Builder entry,
                                  final String replication,
@@ -22,10 +26,9 @@ public class SeaweedWrite {
                                  final long bytesOffset, final long bytesLength) throws IOException {
         FilerProto.AssignVolumeResponse response = filerGrpcClient.getBlockingStub().assignVolume(
                 FilerProto.AssignVolumeRequest.newBuilder()
-                        .setCollection("")
-                        .setReplication(replication)
+                        .setCollection(filerGrpcClient.getCollection())
+                        .setReplication(replication == null ? filerGrpcClient.getReplication() : replication)
                         .setDataCenter("")
-                        .setReplication("")
                         .setTtlSec(0)
                         .build());
         String fileId = response.getFileId();
@@ -33,7 +36,14 @@ public class SeaweedWrite {
         String auth = response.getAuth();
         String targetUrl = String.format("http://%s/%s", url, fileId);
 
-        String etag = multipartUpload(targetUrl, auth, bytes, bytesOffset, bytesLength);
+        ByteString cipherKeyString = null;
+        byte[] cipherKey = null;
+        if (filerGrpcClient.isCipher()) {
+            cipherKey = genCipherKey();
+            cipherKeyString = ByteString.copyFrom(cipherKey);
+        }
+
+        String etag = multipartUpload(targetUrl, auth, bytes, bytesOffset, bytesLength, cipherKey);
 
         entry.addChunks(FilerProto.FileChunk.newBuilder()
                 .setFileId(fileId)
@@ -41,6 +51,7 @@ public class SeaweedWrite {
                 .setSize(bytesLength)
                 .setMtime(System.currentTimeMillis() / 10000L)
                 .setETag(etag)
+                .setCipherKey(cipherKeyString)
         );
 
     }
@@ -58,11 +69,22 @@ public class SeaweedWrite {
     private static String multipartUpload(String targetUrl,
                                           String auth,
                                           final byte[] bytes,
-                                          final long bytesOffset, final long bytesLength) throws IOException {
+                                          final long bytesOffset, final long bytesLength,
+                                          byte[] cipherKey) throws IOException {
 
         HttpClient client = new DefaultHttpClient();
 
-        InputStream inputStream = new ByteArrayInputStream(bytes, (int) bytesOffset, (int) bytesLength);
+        InputStream inputStream = null;
+        if (cipherKey == null) {
+            inputStream = new ByteArrayInputStream(bytes, (int) bytesOffset, (int) bytesLength);
+        } else {
+            try {
+                byte[] encryptedBytes = SeaweedCipher.encrypt(bytes, (int) bytesOffset, (int) bytesLength, cipherKey);
+                inputStream = new ByteArrayInputStream(encryptedBytes, 0, encryptedBytes.length);
+            } catch (Exception e) {
+                throw new IOException("fail to encrypt data", e);
+            }
+        }
 
         HttpPost post = new HttpPost(targetUrl);
         if (auth != null && auth.length() != 0) {
@@ -91,5 +113,11 @@ public class SeaweedWrite {
             }
         }
 
+    }
+
+    private static byte[] genCipherKey() {
+        byte[] b = new byte[32];
+        random.nextBytes(b);
+        return b;
     }
 }
