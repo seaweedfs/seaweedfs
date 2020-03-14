@@ -1,14 +1,11 @@
 package util
 
 import (
-	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"io"
-	"io/ioutil"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
@@ -60,22 +57,4 @@ func Decrypt(ciphertext []byte, key CipherKey) ([]byte, error) {
 
 	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
 	return gcm.Open(nil, nonce, ciphertext, nil)
-}
-
-func EncryptReader(clearReader io.Reader) (cipherKey CipherKey, encryptedReader io.ReadCloser, clearDataLen, encryptedDataLen int, err error) {
-	clearData, err := ioutil.ReadAll(clearReader)
-	if err != nil {
-		err = fmt.Errorf("read raw input: %v", err)
-		return
-	}
-	clearDataLen = len(clearData)
-	cipherKey = GenCipherKey()
-	encryptedData, err := Encrypt(clearData, cipherKey)
-	if err != nil {
-		err = fmt.Errorf("encrypt input: %v", err)
-		return
-	}
-	encryptedDataLen = len(encryptedData)
-	encryptedReader = ioutil.NopCloser(bytes.NewReader(encryptedData))
-	return
 }
