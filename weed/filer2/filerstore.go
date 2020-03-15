@@ -25,6 +25,8 @@ type FilerStore interface {
 	BeginTransaction(ctx context.Context) (context.Context, error)
 	CommitTransaction(ctx context.Context) error
 	RollbackTransaction(ctx context.Context) error
+
+	Shutdown()
 }
 
 type FilerStoreWrapper struct {
@@ -132,4 +134,8 @@ func (fsw *FilerStoreWrapper) CommitTransaction(ctx context.Context) error {
 
 func (fsw *FilerStoreWrapper) RollbackTransaction(ctx context.Context) error {
 	return fsw.actualStore.RollbackTransaction(ctx)
+}
+
+func (fsw *FilerStoreWrapper) Shutdown() {
+	fsw.actualStore.Shutdown()
 }

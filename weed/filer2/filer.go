@@ -308,3 +308,7 @@ func (f *Filer) cacheSetDirectory(dirpath string, dirEntry *Entry, level int) {
 
 	f.directoryCache.Set(dirpath, dirEntry, time.Duration(minutes)*time.Minute)
 }
+
+func (f *Filer) Shutdown() {
+	f.store.Shutdown()
+}

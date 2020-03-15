@@ -236,3 +236,9 @@ func hashToBytes(dir string, dbCount int) ([]byte, int) {
 
 	return b, int(x) % dbCount
 }
+
+func (store *LevelDB2Store) Shutdown() {
+	for d := 0; d < store.dbCount; d++ {
+		store.dbs[d].Close()
+	}
+}

@@ -184,3 +184,7 @@ func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, fullpat
 
 	return entries, nil
 }
+
+func (store *AbstractSqlStore) Shutdown() {
+	store.DB.Close()
+}

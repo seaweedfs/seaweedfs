@@ -196,3 +196,7 @@ func getNameFromKey(key []byte) string {
 
 	return string(key[sepIndex+1:])
 }
+
+func (store *EtcdStore) Shutdown() {
+	store.client.Close()
+}

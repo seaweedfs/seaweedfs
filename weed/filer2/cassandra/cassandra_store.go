@@ -154,3 +154,7 @@ func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, fullpath 
 
 	return entries, err
 }
+
+func (store *CassandraStore) Shutdown() {
+	store.session.Close()
+}

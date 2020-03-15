@@ -102,6 +102,10 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	maybeStartMetrics(fs, option)
 
+	util.OnInterrupt(func() {
+		fs.filer.Shutdown()
+	})
+
 	return fs, nil
 }
 

@@ -180,3 +180,8 @@ func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, full
 func genDirectoryListKey(dir string) (dirList string) {
 	return dir + DIR_LIST_MARKER
 }
+
+
+func (store *UniversalRedisStore) Shutdown() {
+	store.Client.Close()
+}
