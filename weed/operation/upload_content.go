@@ -188,12 +188,17 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 		return nil, post_err
 	}
 	defer resp.Body.Close()
+
+	var ret UploadResult
 	etag := getEtag(resp)
+	if resp.StatusCode == http.StatusNoContent {
+		ret.ETag = etag
+		return &ret, nil
+	}
 	resp_body, ra_err := ioutil.ReadAll(resp.Body)
 	if ra_err != nil {
 		return nil, ra_err
 	}
-	var ret UploadResult
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
 		glog.V(0).Infoln("failing to read upload response", uploadUrl, string(resp_body))
