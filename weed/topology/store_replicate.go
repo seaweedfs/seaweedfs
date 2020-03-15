@@ -17,9 +17,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func ReplicatedWrite(masterNode string, s *storage.Store,
-	volumeId needle.VolumeId, n *needle.Needle,
-	r *http.Request) (size uint32, isUnchanged bool, err error) {
+func ReplicatedWrite(masterNode string, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request) (isUnchanged bool, err error) {
 
 	//check JWT
 	jwt := security.GetJwt(r)
@@ -33,11 +31,13 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 		}
 	}
 
-	size, isUnchanged, err = s.WriteVolumeNeedle(volumeId, n)
-	if err != nil {
-		err = fmt.Errorf("failed to write to local disk: %v", err)
-		glog.V(0).Infoln(err)
-		return
+	if s.GetVolume(volumeId) != nil {
+		isUnchanged, err = s.WriteVolumeNeedle(volumeId, n)
+		if err != nil {
+			err = fmt.Errorf("failed to write to local disk: %v", err)
+			glog.V(0).Infoln(err)
+			return
+		}
 	}
 
 	if len(remoteLocations) > 0 { //send to other replica locations
@@ -75,7 +75,6 @@ func ReplicatedWrite(masterNode string, s *storage.Store,
 			_, err := operation.UploadData(u.String(), string(n.Name), false, n.Data, n.IsGzipped(), string(n.Mime), pairMap, jwt)
 			return err
 		}); err != nil {
-			size = 0
 			err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
 			glog.V(0).Infoln(err)
 		}
