@@ -154,27 +154,32 @@ func distributedOperation(locations []operation.Location, store *storage.Store, 
 
 func getWritableRemoteReplications(s *storage.Store, volumeId needle.VolumeId, masterNode string) (
 	remoteLocations []operation.Location, err error) {
+
 	v := s.GetVolume(volumeId)
-	if v == nil {
-		return nil, fmt.Errorf("fail to find volume %d", volumeId)
+	if v != nil && v.ReplicaPlacement.GetCopyCount() == 1 {
+		return
 	}
-	copyCount := v.ReplicaPlacement.GetCopyCount()
-	if copyCount > 1 {
-		if lookupResult, lookupErr := operation.Lookup(masterNode, volumeId.String()); lookupErr == nil {
-			if len(lookupResult.Locations) < copyCount {
-				err = fmt.Errorf("replicating opetations [%d] is less than volume %d replication copy count [%d]",
-					len(lookupResult.Locations), volumeId, copyCount)
-				return
+
+	// not on local store, or has replications
+	lookupResult, lookupErr := operation.Lookup(masterNode, volumeId.String())
+	if lookupErr == nil {
+		selfUrl := s.Ip + ":" + strconv.Itoa(s.Port)
+		for _, location := range lookupResult.Locations {
+			if location.Url != selfUrl {
+				remoteLocations = append(remoteLocations, location)
 			}
-			selfUrl := s.Ip + ":" + strconv.Itoa(s.Port)
-			for _, location := range lookupResult.Locations {
-				if location.Url != selfUrl {
-					remoteLocations = append(remoteLocations, location)
-				}
-			}
-		} else {
-			err = fmt.Errorf("failed to lookup for %d: %v", volumeId, lookupErr)
-			return
+		}
+	} else {
+		err = fmt.Errorf("failed to lookup for %d: %v", volumeId, lookupErr)
+		return
+	}
+
+	if v != nil {
+		// has one local and has remote replications
+		copyCount := v.ReplicaPlacement.GetCopyCount()
+		if len(lookupResult.Locations) < copyCount {
+			err = fmt.Errorf("replicating opetations [%d] is less than volume %d replication copy count [%d]",
+				len(lookupResult.Locations), volumeId, copyCount)
 		}
 	}
 
