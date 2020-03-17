@@ -51,10 +51,10 @@ func (store *PostgresStore) initialize(user, password, hostname string, port int
 
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, hostname, port, user, sslmode)
 	if password != "" {
-		sqlUrl += " password="+password
+		sqlUrl += " password=" + password
 	}
 	if database != "" {
-		sqlUrl += " dbname="+database
+		sqlUrl += " dbname=" + database
 	}
 	var dbErr error
 	store.DB, dbErr = sql.Open("postgres", sqlUrl)

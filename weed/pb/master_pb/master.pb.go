@@ -428,10 +428,12 @@ type VolumeEcShardInformationMessage struct {
 	EcIndexBits uint32 `protobuf:"varint,3,opt,name=ec_index_bits,json=ecIndexBits" json:"ec_index_bits,omitempty"`
 }
 
-func (m *VolumeEcShardInformationMessage) Reset()                    { *m = VolumeEcShardInformationMessage{} }
-func (m *VolumeEcShardInformationMessage) String() string            { return proto.CompactTextString(m) }
-func (*VolumeEcShardInformationMessage) ProtoMessage()               {}
-func (*VolumeEcShardInformationMessage) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{4} }
+func (m *VolumeEcShardInformationMessage) Reset()         { *m = VolumeEcShardInformationMessage{} }
+func (m *VolumeEcShardInformationMessage) String() string { return proto.CompactTextString(m) }
+func (*VolumeEcShardInformationMessage) ProtoMessage()    {}
+func (*VolumeEcShardInformationMessage) Descriptor() ([]byte, []int) {
+	return fileDescriptor0, []int{4}
+}
 
 func (m *VolumeEcShardInformationMessage) GetId() uint32 {
 	if m != nil {
@@ -1422,10 +1424,12 @@ type GetMasterConfigurationResponse struct {
 	MetricsIntervalSeconds uint32 `protobuf:"varint,2,opt,name=metrics_interval_seconds,json=metricsIntervalSeconds" json:"metrics_interval_seconds,omitempty"`
 }
 
-func (m *GetMasterConfigurationResponse) Reset()                    { *m = GetMasterConfigurationResponse{} }
-func (m *GetMasterConfigurationResponse) String() string            { return proto.CompactTextString(m) }
-func (*GetMasterConfigurationResponse) ProtoMessage()               {}
-func (*GetMasterConfigurationResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{32} }
+func (m *GetMasterConfigurationResponse) Reset()         { *m = GetMasterConfigurationResponse{} }
+func (m *GetMasterConfigurationResponse) String() string { return proto.CompactTextString(m) }
+func (*GetMasterConfigurationResponse) ProtoMessage()    {}
+func (*GetMasterConfigurationResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor0, []int{32}
+}
 
 func (m *GetMasterConfigurationResponse) GetMetricsAddress() string {
 	if m != nil {

@@ -94,4 +94,3 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	})
 
 }
-

@@ -20,7 +20,7 @@ func (fs *FilerSink) replicateChunks(sourceChunks []*filer_pb.FileChunk, dir str
 		return
 	}
 
-	replicatedChunks =  make([]*filer_pb.FileChunk, len(sourceChunks))
+	replicatedChunks = make([]*filer_pb.FileChunk, len(sourceChunks))
 
 	var wg sync.WaitGroup
 	for chunkIndex, sourceChunk := range sourceChunks {
