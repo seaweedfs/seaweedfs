@@ -229,7 +229,7 @@ func (s *Store) Close() {
 
 func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (isUnchanged bool, err error) {
 	if v := s.findVolume(i); v != nil {
-		if v.v.IsReadOnly() {
+		if v.IsReadOnly() {
 			err = fmt.Errorf("volume %d is read only", i)
 			return
 		}
