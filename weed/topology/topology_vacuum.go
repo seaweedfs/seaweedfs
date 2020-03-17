@@ -93,12 +93,16 @@ func batchVacuumVolumeCompact(grpcDialOption grpc.DialOption, vl *VolumeLayout, 
 }
 func batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *VolumeLayout, vid needle.VolumeId, locationlist *VolumeLocationList) bool {
 	isCommitSuccess := true
+	isReadOnly := false
 	for _, dn := range locationlist.list {
 		glog.V(0).Infoln("Start Committing vacuum", vid, "on", dn.Url())
 		err := operation.WithVolumeServerClient(dn.Url(), grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-			_, err := volumeServerClient.VacuumVolumeCommit(context.Background(), &volume_server_pb.VacuumVolumeCommitRequest{
+			resp, err := volumeServerClient.VacuumVolumeCommit(context.Background(), &volume_server_pb.VacuumVolumeCommitRequest{
 				VolumeId: uint32(vid),
 			})
+			if resp.IsReadOnly {
+				isReadOnly = true
+			}
 			return err
 		})
 		if err != nil {
@@ -110,7 +114,7 @@ func batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *VolumeLayout, v
 	}
 	if isCommitSuccess {
 		for _, dn := range locationlist.list {
-			vl.SetVolumeAvailable(dn, vid)
+			vl.SetVolumeAvailable(dn, vid, isReadOnly)
 		}
 	}
 	return isCommitSuccess

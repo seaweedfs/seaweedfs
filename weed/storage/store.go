@@ -145,7 +145,7 @@ func (s *Store) VolumeInfos() []*VolumeInfo {
 				FileCount:        int(v.FileCount()),
 				DeleteCount:      int(v.DeletedCount()),
 				DeletedByteCount: v.DeletedSize(),
-				ReadOnly:         v.noWriteOrDelete || v.noWriteCanDelete,
+				ReadOnly:         v.IsReadOnly(),
 				Ttl:              v.Ttl,
 				CompactRevision:  uint32(v.CompactionRevision),
 			}
@@ -229,7 +229,7 @@ func (s *Store) Close() {
 
 func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (isUnchanged bool, err error) {
 	if v := s.findVolume(i); v != nil {
-		if v.noWriteOrDelete || v.noWriteCanDelete {
+		if v.v.IsReadOnly() {
 			err = fmt.Errorf("volume %d is read only", i)
 			return
 		}

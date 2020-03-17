@@ -257,7 +257,7 @@ func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) 
 	}
 	return false
 }
-func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId) bool {
+func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, isReadOnly bool) bool {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
@@ -268,7 +268,7 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId) bo
 
 	vl.vid2location[vid].Set(dn)
 
-	if vInfo.ReadOnly {
+	if vInfo.ReadOnly || isReadOnly {
 		return false
 	}
 

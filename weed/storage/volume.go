@@ -215,7 +215,7 @@ func (v *Volume) ToVolumeInformationMessage() *master_pb.VolumeInformationMessag
 		FileCount:        v.FileCount(),
 		DeleteCount:      v.DeletedCount(),
 		DeletedByteCount: v.DeletedSize(),
-		ReadOnly:         v.noWriteOrDelete || v.noWriteCanDelete,
+		ReadOnly:         v.IsReadOnly(),
 		ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
 		Version:          uint32(v.Version()),
 		Ttl:              v.Ttl.ToUint32(),
@@ -236,4 +236,8 @@ func (v *Volume) RemoteStorageNameKey() (storageName, storageKey string) {
 		return
 	}
 	return v.volumeInfo.GetFiles()[0].BackendName(), v.volumeInfo.GetFiles()[0].GetKey()
+}
+
+func (v *Volume) IsReadOnly() bool {
+	return v.noWriteOrDelete || v.noWriteCanDelete
 }

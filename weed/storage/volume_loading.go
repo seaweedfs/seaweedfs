@@ -94,7 +94,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			glog.V(0).Infof("volumeDataIntegrityChecking failed %v", err)
 		}
 
-		if v.noWriteOrDelete || v.noWriteCanDelete {
+		if v.IsReadOnly() {
 			if v.nm, err = NewSortedFileNeedleMap(fileName, indexFile); err != nil {
 				glog.V(0).Infof("loading sorted db %s error: %v", fileName+".sdx", err)
 			}
