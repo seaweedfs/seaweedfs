@@ -37,8 +37,7 @@ type SubmitResult struct {
 	Error    string `json:"error,omitempty"`
 }
 
-func SubmitFiles(master string, grpcDialOption grpc.DialOption, files []FilePart,
-	replication string, collection string, dataCenter string, ttl string, maxMB int) ([]SubmitResult, error) {
+func SubmitFiles(master string, grpcDialOption grpc.DialOption, files []FilePart, replication string, collection string, dataCenter string, ttl string, maxMB int, usePublicUrl bool) ([]SubmitResult, error) {
 	results := make([]SubmitResult, len(files))
 	for index, file := range files {
 		results[index].FileName = file.FileName
@@ -63,6 +62,9 @@ func SubmitFiles(master string, grpcDialOption grpc.DialOption, files []FilePart
 			file.Fid = file.Fid + "_" + strconv.Itoa(index)
 		}
 		file.Server = ret.Url
+		if usePublicUrl {
+			file.Server = ret.PublicUrl
+		}
 		file.Replication = replication
 		file.Collection = collection
 		file.DataCenter = dataCenter
