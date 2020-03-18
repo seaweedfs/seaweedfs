@@ -68,7 +68,7 @@ func SubmitFiles(master string, grpcDialOption grpc.DialOption, files []FilePart
 		file.Replication = replication
 		file.Collection = collection
 		file.DataCenter = dataCenter
-		results[index].Size, err = file.Upload(maxMB, master, ret.Auth, grpcDialOption)
+		results[index].Size, err = file.Upload(maxMB, master, usePublicUrl, ret.Auth, grpcDialOption)
 		if err != nil {
 			results[index].Error = err.Error()
 		}
@@ -111,7 +111,7 @@ func newFilePart(fullPathFilename string) (ret FilePart, err error) {
 	return ret, nil
 }
 
-func (fi FilePart) Upload(maxMB int, master string, jwt security.EncodedJwt, grpcDialOption grpc.DialOption) (retSize uint32, err error) {
+func (fi FilePart) Upload(maxMB int, master string, usePublicUrl bool, jwt security.EncodedJwt, grpcDialOption grpc.DialOption) (retSize uint32, err error) {
 	fileUrl := "http://" + fi.Server + "/" + fi.Fid
 	if fi.ModTime != 0 {
 		fileUrl += "?ts=" + strconv.Itoa(int(fi.ModTime))
@@ -155,7 +155,7 @@ func (fi FilePart) Upload(maxMB int, master string, jwt security.EncodedJwt, grp
 				ret, err = Assign(master, grpcDialOption, ar)
 				if err != nil {
 					// delete all uploaded chunks
-					cm.DeleteChunks(master, grpcDialOption)
+					cm.DeleteChunks(master, usePublicUrl, grpcDialOption)
 					return
 				}
 				id = ret.Fid
@@ -173,7 +173,7 @@ func (fi FilePart) Upload(maxMB int, master string, jwt security.EncodedJwt, grp
 				ret.Auth)
 			if e != nil {
 				// delete all uploaded chunks
-				cm.DeleteChunks(master, grpcDialOption)
+				cm.DeleteChunks(master, usePublicUrl, grpcDialOption)
 				return 0, e
 			}
 			cm.Chunks = append(cm.Chunks,
@@ -188,7 +188,7 @@ func (fi FilePart) Upload(maxMB int, master string, jwt security.EncodedJwt, grp
 		err = upload_chunked_file_manifest(fileUrl, &cm, jwt)
 		if err != nil {
 			// delete all uploaded chunks
-			cm.DeleteChunks(master, grpcDialOption)
+			cm.DeleteChunks(master, usePublicUrl, grpcDialOption)
 		}
 	} else {
 		ret, e := Upload(fileUrl, baseName, false, fi.Reader, false, fi.MimeType, nil, jwt)
