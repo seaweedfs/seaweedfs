@@ -40,12 +40,13 @@ type ChunkManifest struct {
 
 // seekable chunked file reader
 type ChunkedFileReader struct {
-	Manifest *ChunkManifest
-	Master   string
-	pos      int64
-	pr       *io.PipeReader
-	pw       *io.PipeWriter
-	mutex    sync.Mutex
+	totalSize int64
+	chunkList []*ChunkInfo
+	master    string
+	pos       int64
+	pr        *io.PipeReader
+	pw        *io.PipeWriter
+	mutex     sync.Mutex
 }
 
 func (s ChunkList) Len() int           { return len(s) }
@@ -125,10 +126,15 @@ func readChunkNeedle(fileUrl string, w io.Writer, offset int64) (written int64, 
 	return io.Copy(w, resp.Body)
 }
 
-func NewChunkedFileReader(chunkManifest *ChunkManifest, master string) *ChunkedFileReader {
+func NewChunkedFileReader(chunkList []*ChunkInfo, master string) *ChunkedFileReader {
+	var totalSize int64
+	for _, chunk := range chunkList {
+		totalSize += chunk.Size
+	}
 	return &ChunkedFileReader{
-		Manifest: chunkManifest,
-		Master:   master,
+		totalSize: totalSize,
+		chunkList: chunkList,
+		master:    master,
 	}
 }
 
@@ -139,9 +145,9 @@ func (cf *ChunkedFileReader) Seek(offset int64, whence int) (int64, error) {
 	case 1:
 		offset += cf.pos
 	case 2:
-		offset = cf.Manifest.Size - offset
+		offset = cf.totalSize - offset
 	}
-	if offset > cf.Manifest.Size {
+	if offset > cf.totalSize {
 		err = ErrInvalidRange
 	}
 	if cf.pos != offset {
@@ -152,10 +158,9 @@ func (cf *ChunkedFileReader) Seek(offset int64, whence int) (int64, error) {
 }
 
 func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
-	cm := cf.Manifest
 	chunkIndex := -1
 	chunkStartOffset := int64(0)
-	for i, ci := range cm.Chunks {
+	for i, ci := range cf.chunkList {
 		if cf.pos >= ci.Offset && cf.pos < ci.Offset+ci.Size {
 			chunkIndex = i
 			chunkStartOffset = cf.pos - ci.Offset
@@ -165,10 +170,10 @@ func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
 	if chunkIndex < 0 {
 		return n, ErrInvalidRange
 	}
-	for ; chunkIndex < cm.Chunks.Len(); chunkIndex++ {
-		ci := cm.Chunks[chunkIndex]
+	for ; chunkIndex < len(cf.chunkList); chunkIndex++ {
+		ci := cf.chunkList[chunkIndex]
 		// if we need read date from local volume server first?
-		fileUrl, lookupError := LookupFileId(cf.Master, ci.Fid)
+		fileUrl, lookupError := LookupFileId(cf.master, ci.Fid)
 		if lookupError != nil {
 			return n, lookupError
 		}
