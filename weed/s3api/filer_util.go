@@ -117,21 +117,13 @@ func (s3a *S3ApiServer) list(parentDirectoryPath, prefix, startFrom string, incl
 
 }
 
-func (s3a *S3ApiServer) rm(parentDirectoryPath, entryName string, isDirectory, isDeleteData, isRecursive bool) error {
+func (s3a *S3ApiServer) rm(parentDirectoryPath, entryName string, isDeleteData, isRecursive bool) error {
 
 	return s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		request := &filer_pb.DeleteEntryRequest{
-			Directory:    parentDirectoryPath,
-			Name:         entryName,
-			IsDeleteData: isDeleteData,
-			IsRecursive:  isRecursive,
-		}
-
-		glog.V(1).Infof("delete entry %v/%v: %v", parentDirectoryPath, entryName, request)
-		if _, err := client.DeleteEntry(context.Background(), request); err != nil {
-			glog.V(0).Infof("delete entry %v: %v", request, err)
-			return fmt.Errorf("delete entry %s/%s: %v", parentDirectoryPath, entryName, err)
+		err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
+		if err != nil {
+			return err
 		}
 
 		return nil
@@ -139,57 +131,24 @@ func (s3a *S3ApiServer) rm(parentDirectoryPath, entryName string, isDirectory, i
 
 }
 
-func (s3a *S3ApiServer) streamRemove(quiet bool, fn func() (finished bool, parentDirectoryPath string, entryName string, isDeleteData, isRecursive bool), respFn func(err string)) error {
+func doDeleteEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath string, entryName string, isDeleteData bool, isRecursive bool) error {
+	request := &filer_pb.DeleteEntryRequest{
+		Directory:    parentDirectoryPath,
+		Name:         entryName,
+		IsDeleteData: isDeleteData,
+		IsRecursive:  isRecursive,
+	}
 
-	return s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-
-		stream, err := client.StreamDeleteEntries(context.Background())
-		if err != nil {
-			glog.V(0).Infof("stream delete entry: %v", err)
-			return fmt.Errorf("stream delete entry: %v", err)
+	glog.V(1).Infof("delete entry %v/%v: %v", parentDirectoryPath, entryName, request)
+	if resp, err := client.DeleteEntry(context.Background(), request); err != nil {
+		glog.V(0).Infof("delete entry %v: %v", request, err)
+		return fmt.Errorf("delete entry %s/%s: %v", parentDirectoryPath, entryName, err)
+	} else {
+		if resp.Error != "" {
+			return fmt.Errorf("delete entry %s/%s: %v", parentDirectoryPath, entryName, resp.Error)
 		}
-
-		waitc := make(chan struct{})
-		go func() {
-			for {
-				resp, err := stream.Recv()
-				if err == io.EOF {
-					// read done.
-					close(waitc)
-					return
-				}
-				if err != nil {
-					glog.V(0).Infof("streamRemove: %v", err)
-					return
-				}
-				respFn(resp.Error)
-			}
-		}()
-
-		for {
-			finished, parentDirectoryPath, entryName, isDeleteData, isRecursive := fn()
-			if finished {
-				break
-			}
-			err = stream.Send(&filer_pb.DeleteEntryRequest{
-				Directory:            parentDirectoryPath,
-				Name:                 entryName,
-				IsDeleteData:         isDeleteData,
-				IsRecursive:          isRecursive,
-				IgnoreRecursiveError: quiet,
-			})
-			if err != nil {
-				glog.V(0).Infof("streamRemove: %v", err)
-				break
-			}
-
-		}
-		stream.CloseSend()
-		<-waitc
-		return err
-
-	})
-
+	}
+	return nil
 }
 
 func (s3a *S3ApiServer) exists(parentDirectoryPath string, entryName string, isDirectory bool) (exists bool, err error) {

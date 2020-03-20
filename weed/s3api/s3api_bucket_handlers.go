@@ -94,7 +94,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		return nil
 	})
 
-	err = s3a.rm(s3a.option.BucketsPath, bucket, true, false, true)
+	err = s3a.rm(s3a.option.BucketsPath, bucket, false, true)
 
 	if err != nil {
 		writeErrorResponse(w, ErrInternalError, r.URL)

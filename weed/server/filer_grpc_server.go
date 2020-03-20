@@ -226,25 +226,6 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 	return resp, nil
 }
 
-func (fs *FilerServer) StreamDeleteEntries(stream filer_pb.SeaweedFiler_StreamDeleteEntriesServer) error {
-	for {
-		req, err := stream.Recv()
-		if err != nil {
-			return fmt.Errorf("receive delete entry request: %v", err)
-		}
-		fullpath := filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name)))
-		err = fs.filer.DeleteEntryMetaAndData(context.Background(), fullpath, req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData)
-		resp := &filer_pb.DeleteEntryResponse{}
-		if err != nil {
-			resp.Error = err.Error()
-		}
-		if err := stream.Send(resp); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVolumeRequest) (resp *filer_pb.AssignVolumeResponse, err error) {
 
 	ttlStr := ""
