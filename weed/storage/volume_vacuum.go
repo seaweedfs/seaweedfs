@@ -53,6 +53,9 @@ func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error
 	v.lastCompactIndexOffset = v.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactionRevision
 	glog.V(3).Infof("creating copies for volume %d ,last offset %d...", v.Id, v.lastCompactIndexOffset)
+	if err := v.DataBackend.Sync(); err != nil {
+		glog.V(0).Infof("compact fail to sync volume %d", v.Id)
+	}
 	return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx", preallocate, compactionBytePerSecond)
 }
 
@@ -73,6 +76,9 @@ func (v *Volume) Compact2(preallocate int64, compactionBytePerSecond int64) erro
 	v.lastCompactIndexOffset = v.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactionRevision
 	glog.V(3).Infof("creating copies for volume %d ...", v.Id)
+	if err := v.DataBackend.Sync(); err != nil {
+		glog.V(0).Infof("compact2 fail to sync volume %d", v.Id)
+	}
 	return copyDataBasedOnIndexFile(filePath+".dat", filePath+".idx", filePath+".cpd", filePath+".cpx", v.SuperBlock, v.Version(), preallocate, compactionBytePerSecond)
 }
 
@@ -93,6 +99,9 @@ func (v *Volume) CommitCompact() error {
 	glog.V(3).Infof("Got volume %d committing lock...", v.Id)
 	v.nm.Close()
 	if v.DataBackend != nil {
+		if err := v.DataBackend.Sync(); err != nil {
+			glog.V(0).Infof("fail to sync volume %d", v.Id)
+		}
 		if err := v.DataBackend.Close(); err != nil {
 			glog.V(0).Infof("fail to close volume %d", v.Id)
 		}
