@@ -8,10 +8,9 @@ import (
 	"io/ioutil"
 	"net/http"
 	"sort"
+	"sync"
 
 	"google.golang.org/grpc"
-
-	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -124,6 +123,13 @@ func readChunkNeedle(fileUrl string, w io.Writer, offset int64) (written int64, 
 
 	}
 	return io.Copy(w, resp.Body)
+}
+
+func NewChunkedFileReader(chunkManifest *ChunkManifest, master string) *ChunkedFileReader {
+	return &ChunkedFileReader{
+		Manifest: chunkManifest,
+		Master:   master,
+	}
 }
 
 func (cf *ChunkedFileReader) Seek(offset int64, whence int) (int64, error) {
