@@ -24,7 +24,7 @@ func getSession(region string) (s3iface.S3API, bool) {
 	return sess, found
 }
 
-func createSession(awsAccessKeyId, awsSecretAccessKey, region string) (s3iface.S3API, error) {
+func createSession(awsAccessKeyId, awsSecretAccessKey, region, endpoint string) (s3iface.S3API, error) {
 
 	sessionsLock.Lock()
 	defer sessionsLock.Unlock()
@@ -34,7 +34,8 @@ func createSession(awsAccessKeyId, awsSecretAccessKey, region string) (s3iface.S
 	}
 
 	config := &aws.Config{
-		Region: aws.String(region),
+		Region:   aws.String(region),
+		Endpoint: aws.String(endpoint),
 	}
 	if awsAccessKeyId != "" && awsSecretAccessKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(awsAccessKeyId, awsSecretAccessKey, "")
