@@ -30,6 +30,7 @@ type NeedleMapper interface {
 	DeletedCount() int
 	MaxFileKey() NeedleId
 	IndexFileSize() uint64
+	Sync() error
 }
 
 type baseNeedleMapper struct {
@@ -58,4 +59,8 @@ func (nm *baseNeedleMapper) appendToIndexFile(key NeedleId, offset Offset, size 
 	}
 	_, err := nm.indexFile.Write(bytes)
 	return err
+}
+
+func (nm *baseNeedleMapper) Sync() error {
+	return nm.indexFile.Sync()
 }
