@@ -34,11 +34,14 @@ func (f *Filer) loopProcessingDeletion() {
 		deletionCount = 0
 		f.fileIdDeletionQueue.Consume(func(fileIds []string) {
 			deletionCount = len(fileIds)
-			_, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, fileIds, lookupFunc)
+			deleteResults, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, fileIds, lookupFunc)
 			if err != nil {
 				glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
 			} else {
 				glog.V(1).Infof("deleting fileIds len=%d", deletionCount)
+			}
+			if len(deleteResults) != deletionCount {
+				glog.V(0).Infof("delete %d fileIds actual %d", deletionCount, len(deleteResults))
 			}
 		})
 
