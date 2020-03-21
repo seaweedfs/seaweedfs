@@ -18,7 +18,7 @@ func (q *UnboundedQueue) EnQueue(items ...string) {
 	q.inboundLock.Lock()
 	defer q.inboundLock.Unlock()
 
-	q.outbound = append(q.outbound, items...)
+	q.inbound = append(q.inbound, items...)
 
 }
 
