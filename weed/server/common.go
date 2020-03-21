@@ -224,7 +224,7 @@ func adjustHeadersAfterHEAD(w http.ResponseWriter, r *http.Request, filename str
 	}
 }
 
-func processRangeRequst(r *http.Request, w http.ResponseWriter, totalSize int64, mimeType string, writeFn func(writer io.Writer, offset int64, size int64) error) {
+func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64, mimeType string, writeFn func(writer io.Writer, offset int64, size int64) error) {
 	rangeReq := r.Header.Get("Range")
 
 	if rangeReq == "" {

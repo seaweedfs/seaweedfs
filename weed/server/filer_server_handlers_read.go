@@ -11,6 +11,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 )
@@ -89,8 +90,19 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 
 	totalSize := int64(filer2.TotalSize(entry.Chunks))
 
-	processRangeRequst(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
-		return filer2.StreamContent(fs.filer.MasterClient, w, entry.Chunks, offset, int(size))
+	if rangeReq := r.Header.Get("Range"); rangeReq == "" {
+		ext := filepath.Ext(filename)
+		width, height, mode, shouldResize := shouldResizeImages(ext, r)
+		if shouldResize {
+			chunkedFileReader := filer2.NewChunkStreamReader(fs.filer.MasterClient, entry.Chunks)
+			rs, _, _ := images.Resized(ext, chunkedFileReader, width, height, mode)
+			io.Copy(w, rs)
+			return
+		}
+	}
+
+	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
+		return filer2.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, int(size))
 	})
 
 }

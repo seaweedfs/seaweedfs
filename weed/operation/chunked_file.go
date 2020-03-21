@@ -131,6 +131,7 @@ func NewChunkedFileReader(chunkList []*ChunkInfo, master string) *ChunkedFileRea
 	for _, chunk := range chunkList {
 		totalSize += chunk.Size
 	}
+	sort.Sort(ChunkList(chunkList))
 	return &ChunkedFileReader{
 		totalSize: totalSize,
 		chunkList: chunkList,

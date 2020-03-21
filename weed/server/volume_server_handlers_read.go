@@ -200,20 +200,29 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, 
 
 func conditionallyResizeImages(originalDataReaderSeeker io.ReadSeeker, ext string, r *http.Request) io.ReadSeeker {
 	rs := originalDataReaderSeeker
+
+	width, height, mode, shouldResize := shouldResizeImages(ext, r)
+	if shouldResize {
+		rs, _, _ = images.Resized(ext, originalDataReaderSeeker, width, height, mode)
+	}
+	return rs
+}
+
+func shouldResizeImages(ext string, r *http.Request) (width, height int, mode string, shouldResize bool) {
 	if len(ext) > 0 {
 		ext = strings.ToLower(ext)
 	}
 	if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" {
-		width, height := 0, 0
 		if r.FormValue("width") != "" {
 			width, _ = strconv.Atoi(r.FormValue("width"))
 		}
 		if r.FormValue("height") != "" {
 			height, _ = strconv.Atoi(r.FormValue("height"))
 		}
-		rs, _, _ = images.Resized(ext, originalDataReaderSeeker, width, height, r.FormValue("mode"))
 	}
-	return rs
+	mode = r.FormValue("mode")
+	shouldResize = width > 0 || height > 0
+	return
 }
 
 func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.ResponseWriter, r *http.Request) error {
@@ -235,7 +244,7 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 
 	adjustHeadersAfterHEAD(w, r, filename)
 
-	processRangeRequst(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
+	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
 		if _, e = rs.Seek(offset, 0); e != nil {
 			return e
 		}
