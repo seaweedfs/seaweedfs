@@ -81,6 +81,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 		}
 
+		if dn.GetMaxVolumeCount() != int64(heartbeat.MaxVolumeCount) {
+			delta := int64(heartbeat.MaxVolumeCount) - dn.GetMaxVolumeCount()
+			dn.UpAdjustMaxVolumeCountDelta(delta)
+		}
+
 		glog.V(4).Infof("master received heartbeat %s", heartbeat.String())
 		message := &master_pb.VolumeLocation{
 			Url:       dn.Url(),

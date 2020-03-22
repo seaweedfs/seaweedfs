@@ -80,8 +80,13 @@ func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDi
 				doneChan <- err
 				return
 			}
-			if in.GetVolumeSizeLimit() != 0 {
+			if in.GetVolumeSizeLimit() != 0 && vs.store.GetVolumeSizeLimit() != in.GetVolumeSizeLimit() {
 				vs.store.SetVolumeSizeLimit(in.GetVolumeSizeLimit())
+				if vs.store.MaybeAdjustVolumeMax() {
+					if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
+						glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
+					}
+				}
 			}
 			if in.GetLeader() != "" && masterNode != in.GetLeader() && !isSameIP(in.GetLeader(), masterNode) {
 				glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", in.GetLeader(), masterNode)

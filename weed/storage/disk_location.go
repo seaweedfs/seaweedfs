@@ -275,3 +275,19 @@ func (l *DiskLocation) LocateVolume(vid needle.VolumeId) (os.FileInfo, bool) {
 
 	return nil, false
 }
+
+func (l *DiskLocation) UnUsedSpace(volumeSizeLimit uint64) (unUsedSpace uint64) {
+
+	l.volumesLock.RLock()
+	defer l.volumesLock.RUnlock()
+
+	for _, vol := range l.volumes {
+		if vol.IsReadOnly() {
+			continue
+		}
+		datSize, idxSize, _ := vol.FileStat()
+		unUsedSpace += volumeSizeLimit - (datSize + idxSize)
+	}
+
+	return
+}

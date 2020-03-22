@@ -12,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
@@ -99,6 +100,9 @@ func (s *Store) FindFreeLocation() (ret *DiskLocation) {
 	max := 0
 	for _, location := range s.Locations {
 		currentFreeCount := location.MaxVolumeCount - location.VolumesLen()
+		currentFreeCount *= erasure_coding.DataShardsCount
+		currentFreeCount -= location.EcVolumesLen()
+		currentFreeCount /= erasure_coding.DataShardsCount
 		if currentFreeCount > max {
 			max = currentFreeCount
 			ret = location
@@ -381,4 +385,25 @@ func (s *Store) SetVolumeSizeLimit(x uint64) {
 
 func (s *Store) GetVolumeSizeLimit() uint64 {
 	return atomic.LoadUint64(&s.volumeSizeLimit)
+}
+
+func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
+	volumeSizeLimit := s.GetVolumeSizeLimit()
+	for _, diskLocation := range s.Locations {
+		if diskLocation.MaxVolumeCount == 0 {
+			diskStatus := stats.NewDiskStatus(diskLocation.Directory)
+			unusedSpace := diskLocation.UnUsedSpace(volumeSizeLimit)
+			unclaimedSpaces := int64(diskStatus.Free) - int64(unusedSpace)
+			volCount := diskLocation.VolumesLen()
+			maxVolumeCount := volCount
+			if unclaimedSpaces > int64(volumeSizeLimit) {
+				maxVolumeCount += int(uint64(unclaimedSpaces)/volumeSizeLimit) - 1
+			}
+			diskLocation.MaxVolumeCount = maxVolumeCount
+			glog.V(0).Infof("disk %s max %d unclaimedSpace:%dMB, unused:%dMB volumeSizeLimit:%d/MB",
+				diskLocation.Directory, maxVolumeCount, unclaimedSpaces/1024/1024, unusedSpace/1024/1024, volumeSizeLimit/1024/1024)
+			hasChanges = true
+		}
+	}
+	return
 }
