@@ -43,7 +43,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 		oldFileNode := dir.wfs.getNode(oldPath, func() fs.Node {
 			return nil
 		})
-		newDirNode := dir.wfs.getNode(filer2.FullPath(dir.Path), func() fs.Node {
+		newDirNode := dir.wfs.getNode(filer2.FullPath(newDir.Path), func() fs.Node {
 			return nil
 		})
 		dir.wfs.forgetNode(newPath)
