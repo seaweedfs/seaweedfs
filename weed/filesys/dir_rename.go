@@ -46,6 +46,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 		newDirNode := dir.wfs.getNode(filer2.FullPath(newDir.Path), func() fs.Node {
 			return nil
 		})
+		// fmt.Printf("new path: %v dir: %v node:%+v\n", newPath, newDir.Path, newDirNode)
 		dir.wfs.forgetNode(newPath)
 		dir.wfs.forgetNode(oldPath)
 		if oldFileNode != nil && newDirNode != nil {
