@@ -94,7 +94,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		ext := filepath.Ext(filename)
 		width, height, mode, shouldResize := shouldResizeImages(ext, r)
 		if shouldResize {
-			chunkedFileReader := filer2.NewChunkStreamReader(fs.filer.MasterClient, entry.Chunks)
+			chunkedFileReader := filer2.NewChunkStreamReaderFromFiler(fs.filer.MasterClient, entry.Chunks)
 			rs, _, _ := images.Resized(ext, chunkedFileReader, width, height, mode)
 			io.Copy(w, rs)
 			return

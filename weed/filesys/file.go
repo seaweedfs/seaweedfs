@@ -2,6 +2,7 @@ package filesys
 
 import (
 	"context"
+	"io"
 	"os"
 	"sort"
 	"time"
@@ -32,6 +33,7 @@ type File struct {
 	entry          *filer_pb.Entry
 	entryViewCache []filer2.VisibleInterval
 	isOpen         int
+	reader         io.ReadSeeker
 }
 
 func (file *File) fullpath() filer2.FullPath {
@@ -119,6 +121,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 			}
 			file.entry.Chunks = chunks
 			file.entryViewCache = nil
+			file.reader = nil
 		}
 		file.entry.Attributes.FileSize = req.Size
 	}
@@ -245,6 +248,7 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 		file.entryViewCache = newVisibles
 		newVisibles = t
 	}
+	file.reader = nil
 
 	glog.V(3).Infof("%s existing %d chunks adds %d more", file.fullpath(), len(file.entry.Chunks), len(chunks))
 
@@ -254,6 +258,7 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 func (file *File) setEntry(entry *filer_pb.Entry) {
 	file.entry = entry
 	file.entryViewCache = filer2.NonOverlappingVisibleIntervals(file.entry.Chunks)
+	file.reader = nil
 }
 
 func (file *File) saveEntry() error {

@@ -3,6 +3,8 @@ package filesys
 import (
 	"context"
 	"fmt"
+	"io"
+	"math"
 	"mime"
 	"path"
 	"time"
@@ -85,17 +87,23 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 	if fh.f.entryViewCache == nil {
 		fh.f.entryViewCache = filer2.NonOverlappingVisibleIntervals(fh.f.entry.Chunks)
+		fh.f.reader = nil
+	}
+	if fh.f.reader == nil {
+		chunkViews := filer2.ViewFromVisibleIntervals(fh.f.entryViewCache, 0, math.MaxInt32)
+		fh.f.reader = filer2.NewChunkStreamReaderFromClient(fh.f.wfs, chunkViews)
 	}
 
-	chunkViews := filer2.ViewFromVisibleIntervals(fh.f.entryViewCache, offset, len(buff))
-
-	totalRead, err := filer2.ReadIntoBuffer(fh.f.wfs, fh.f.fullpath(), buff, chunkViews, offset)
+	fh.f.reader.Seek(offset, io.SeekStart)
+	totalRead, err := fh.f.reader.Read(buff)
 
 	if err != nil {
 		glog.Errorf("file handle read %s: %v", fh.f.fullpath(), err)
 	}
 
-	return totalRead, err
+	// glog.V(0).Infof("file handle read %s [%d,%d] %d : %v", fh.f.fullpath(), offset, offset+int64(totalRead), totalRead, err)
+
+	return int64(totalRead), err
 }
 
 // Write to the file handle
