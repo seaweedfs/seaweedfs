@@ -142,11 +142,11 @@ func NewChunkedFileReader(chunkList []*ChunkInfo, master string) *ChunkedFileRea
 func (cf *ChunkedFileReader) Seek(offset int64, whence int) (int64, error) {
 	var err error
 	switch whence {
-	case 0:
-	case 1:
+	case io.SeekStart:
+	case io.SeekCurrent:
 		offset += cf.pos
-	case 2:
-		offset = cf.totalSize - offset
+	case io.SeekEnd:
+		offset = cf.totalSize + offset
 	}
 	if offset > cf.totalSize {
 		err = ErrInvalidRange
