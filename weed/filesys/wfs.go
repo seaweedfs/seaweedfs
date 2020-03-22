@@ -84,6 +84,9 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	}
 
 	wfs.root = &Dir{Path: wfs.option.FilerMountRootPath, wfs: wfs}
+	wfs.getNode(filer2.FullPath(wfs.option.FilerMountRootPath), func() fs.Node {
+		return wfs.root
+	})
 
 	return wfs
 }
