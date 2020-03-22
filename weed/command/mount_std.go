@@ -35,24 +35,15 @@ func runMount(cmd *Command, args []string) bool {
 		return false
 	}
 
-	return RunMount(
-		*mountOptions.filer,
-		*mountOptions.filerMountRootPath,
-		*mountOptions.dir,
-		*mountOptions.collection,
-		*mountOptions.replication,
-		*mountOptions.dataCenter,
-		*mountOptions.chunkSizeLimitMB,
-		*mountOptions.allowOthers,
-		*mountOptions.ttlSec,
-		*mountOptions.dirListCacheLimit,
-		os.FileMode(umask),
-		*mountOptions.outsideContainerClusterMode,
-	)
+	return RunMount(&mountOptions, os.FileMode(umask))
 }
 
-func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCenter string, chunkSizeLimitMB int,
-	allowOthers bool, ttlSec int, dirListCacheLimit int64, umask os.FileMode, outsideContainerClusterMode bool) bool {
+func RunMount(option *MountOptions, umask os.FileMode) bool {
+
+	filer := *option.filer
+	filerMountRootPath := *option.filerMountRootPath
+	dir := *option.dir
+	chunkSizeLimitMB := *mountOptions.chunkSizeLimitMB
 
 	util.LoadConfiguration("security", false)
 
@@ -114,13 +105,15 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 		fuse.MaxReadahead(1024 * 128),
 		fuse.AsyncRead(),
 		fuse.WritebackCache(),
-		fuse.AllowNonEmptyMount(),
 	}
 
 	options = append(options, osSpecificMountOptions()...)
 
-	if allowOthers {
+	if *option.allowOthers {
 		options = append(options, fuse.AllowOther())
+	}
+	if *option.nonempty {
+		options = append(options, fuse.AllowNonEmptyMount())
 	}
 
 	c, err := fuse.Mount(dir, options...)
@@ -171,12 +164,12 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 		FilerGrpcAddress:            filerGrpcAddress,
 		GrpcDialOption:              grpcDialOption,
 		FilerMountRootPath:          mountRoot,
-		Collection:                  collection,
-		Replication:                 replication,
-		TtlSec:                      int32(ttlSec),
+		Collection:                  *option.collection,
+		Replication:                 *option.replication,
+		TtlSec:                      int32(*option.ttlSec),
 		ChunkSizeLimit:              int64(chunkSizeLimitMB) * 1024 * 1024,
-		DataCenter:                  dataCenter,
-		DirListCacheLimit:           dirListCacheLimit,
+		DataCenter:                  *option.dataCenter,
+		DirListCacheLimit:           *option.dirListCacheLimit,
 		EntryCacheTtl:               3 * time.Second,
 		MountUid:                    uid,
 		MountGid:                    gid,
@@ -184,7 +177,7 @@ func RunMount(filer, filerMountRootPath, dir, collection, replication, dataCente
 		MountCtime:                  fileInfo.ModTime(),
 		MountMtime:                  time.Now(),
 		Umask:                       umask,
-		OutsideContainerClusterMode: outsideContainerClusterMode,
+		OutsideContainerClusterMode: *mountOptions.outsideContainerClusterMode,
 		Cipher:                      cipher,
 	}))
 	if err != nil {
