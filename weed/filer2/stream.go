@@ -14,7 +14,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
-func StreamContent(masterClient *wdclient.MasterClient, w io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int) error {
+func StreamContent(masterClient *wdclient.MasterClient, w io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
 
 	chunkViews := ViewFromChunks(chunks, offset, size)
 
@@ -61,7 +61,7 @@ var _ = io.ReadSeeker(&ChunkStreamReader{})
 
 func NewChunkStreamReaderFromFiler(masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
 
-	chunkViews := ViewFromChunks(chunks, 0, math.MaxInt32)
+	chunkViews := ViewFromChunks(chunks, 0, math.MaxInt64)
 
 	return &ChunkStreamReader{
 		chunkViews: chunkViews,

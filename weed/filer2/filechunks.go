@@ -75,7 +75,7 @@ type ChunkView struct {
 	isGzipped   bool
 }
 
-func ViewFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int) (views []*ChunkView) {
+func ViewFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int64) (views []*ChunkView) {
 
 	visibles := NonOverlappingVisibleIntervals(chunks)
 
@@ -83,9 +83,9 @@ func ViewFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int) (views
 
 }
 
-func ViewFromVisibleIntervals(visibles []VisibleInterval, offset int64, size int) (views []*ChunkView) {
+func ViewFromVisibleIntervals(visibles []VisibleInterval, offset int64, size int64) (views []*ChunkView) {
 
-	stop := offset + int64(size)
+	stop := offset + size
 
 	for _, chunk := range visibles {
 

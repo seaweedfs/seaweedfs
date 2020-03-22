@@ -90,7 +90,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		fh.f.reader = nil
 	}
 	if fh.f.reader == nil {
-		chunkViews := filer2.ViewFromVisibleIntervals(fh.f.entryViewCache, 0, math.MaxInt32)
+		chunkViews := filer2.ViewFromVisibleIntervals(fh.f.entryViewCache, 0, math.MaxInt64)
 		fh.f.reader = filer2.NewChunkStreamReaderFromClient(fh.f.wfs, chunkViews)
 	}
 

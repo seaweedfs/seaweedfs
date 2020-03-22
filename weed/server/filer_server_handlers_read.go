@@ -102,7 +102,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	}
 
 	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
-		return filer2.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, int(size))
+		return filer2.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size)
 	})
 
 }
