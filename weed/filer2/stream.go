@@ -51,7 +51,6 @@ type ChunkStreamReader struct {
 	bufferOffset int64
 	bufferPos    int
 	chunkIndex   int
-	totalSize    int64
 }
 
 var _ = io.ReadSeeker(&ChunkStreamReader{})
@@ -59,16 +58,11 @@ var _ = io.ReadSeeker(&ChunkStreamReader{})
 func NewChunkStreamReader(masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
 
 	chunkViews := ViewFromChunks(chunks, 0, math.MaxInt32)
-	var totalSize uint64
-	for _, chunk := range chunkViews {
-		totalSize += chunk.Size
-	}
 
 	return &ChunkStreamReader{
 		masterClient: masterClient,
 		chunkViews:   chunkViews,
 		bufferOffset: -1,
-		totalSize:    int64(totalSize),
 	}
 }
 
@@ -92,15 +86,20 @@ func (c *ChunkStreamReader) isBufferEmpty() bool {
 
 func (c *ChunkStreamReader) Seek(offset int64, whence int) (int64, error) {
 
+	var totalSize int64
+	for _, chunk := range c.chunkViews {
+		totalSize += int64(chunk.Size)
+	}
+
 	var err error
 	switch whence {
 	case io.SeekStart:
 	case io.SeekCurrent:
 		offset += c.bufferOffset + int64(c.bufferPos)
 	case io.SeekEnd:
-		offset = c.totalSize + offset
+		offset = totalSize + offset
 	}
-	if offset > c.totalSize {
+	if offset > totalSize {
 		err = io.ErrUnexpectedEOF
 	}
 
