@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path"
 	"strings"
@@ -89,6 +90,7 @@ type WebDavFile struct {
 	off            int64
 	entry          *filer_pb.Entry
 	entryViewCache []filer2.VisibleInterval
+	reader         io.ReadSeeker
 }
 
 func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
@@ -494,23 +496,25 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	}
 	if f.entryViewCache == nil {
 		f.entryViewCache = filer2.NonOverlappingVisibleIntervals(f.entry.Chunks)
+		f.reader = nil
 	}
-	chunkViews := filer2.ViewFromVisibleIntervals(f.entryViewCache, f.off, len(p))
+	if f.reader == nil {
+		chunkViews := filer2.ViewFromVisibleIntervals(f.entryViewCache, 0, math.MaxInt32)
+		f.reader = filer2.NewChunkStreamReaderFromClient(f.fs, chunkViews)
+	}
 
-	totalRead, err := filer2.ReadIntoBuffer(f.fs, filer2.FullPath(f.name), p, chunkViews, f.off)
+	f.reader.Seek(f.off, io.SeekStart)
+	readSize, err = f.reader.Read(p)
+
+	glog.V(0).Infof("WebDavFileSystem.Read %v: [%d,%d)", f.name, f.off, f.off+int64(readSize))
+	f.off += int64(readSize)
+
 	if err != nil {
-		return 0, err
-	}
-	readSize = int(totalRead)
-
-	glog.V(3).Infof("WebDavFileSystem.Read %v: [%d,%d)", f.name, f.off, f.off+totalRead)
-
-	f.off += totalRead
-	if readSize == 0 {
-		return 0, io.EOF
+		glog.Errorf("file read %s: %v", f.name, err)
 	}
 
 	return
+
 }
 
 func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
