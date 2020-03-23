@@ -81,7 +81,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 		}
 
-		if dn.GetMaxVolumeCount() != int64(heartbeat.MaxVolumeCount) {
+		if heartbeat.MaxVolumeCount != 0 && dn.GetMaxVolumeCount() != int64(heartbeat.MaxVolumeCount) {
 			delta := int64(heartbeat.MaxVolumeCount) - dn.GetMaxVolumeCount()
 			dn.UpAdjustMaxVolumeCountDelta(delta)
 		}
