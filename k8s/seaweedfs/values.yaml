@@ -107,8 +107,9 @@ volume:
   # Directories to store data files. dir[,dir]... (default "/tmp")
   dir: "/data"
 
-  # Maximum numbers of volumes, count[,count]... (default "7")
-  maxVolumes: "10000"
+  # Maximum numbers of volumes, count[,count]...
+  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
+  maxVolumes: "0"
 
   # Volume server's rack name
   rack: null
