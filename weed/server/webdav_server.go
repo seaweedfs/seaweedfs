@@ -244,14 +244,9 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string) 
 		return err
 	}
 
-	fi, err := fs.stat(ctx, fullFilePath)
-	if err != nil {
-		return err
-	}
-
 	dir, name := util.FullPath(fullFilePath).DirAndName()
 
-	return filer_pb.Remove(fs, dir, name, true, true, true)
+	return filer_pb.Remove(fs, dir, name, true, false, false)
 
 }
 
