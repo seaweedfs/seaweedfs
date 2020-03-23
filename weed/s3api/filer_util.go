@@ -13,7 +13,7 @@ import (
 )
 
 func (s3a *S3ApiServer) mkdir(parentDirectoryPath string, dirName string, fn func(entry *filer_pb.Entry)) error {
-	return s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		entry := &filer_pb.Entry{
 			Name:        dirName,
@@ -47,7 +47,7 @@ func (s3a *S3ApiServer) mkdir(parentDirectoryPath string, dirName string, fn fun
 }
 
 func (s3a *S3ApiServer) mkFile(parentDirectoryPath string, fileName string, chunks []*filer_pb.FileChunk) error {
-	return s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		entry := &filer_pb.Entry{
 			Name:        fileName,
@@ -79,7 +79,7 @@ func (s3a *S3ApiServer) mkFile(parentDirectoryPath string, fileName string, chun
 
 func (s3a *S3ApiServer) list(parentDirectoryPath, prefix, startFrom string, inclusive bool, limit int) (entries []*filer_pb.Entry, err error) {
 
-	err = s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.ListEntriesRequest{
 			Directory:          parentDirectoryPath,
@@ -119,7 +119,7 @@ func (s3a *S3ApiServer) list(parentDirectoryPath, prefix, startFrom string, incl
 
 func (s3a *S3ApiServer) rm(parentDirectoryPath, entryName string, isDeleteData, isRecursive bool) error {
 
-	return s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
 		if err != nil {
@@ -153,7 +153,7 @@ func doDeleteEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath strin
 
 func (s3a *S3ApiServer) exists(parentDirectoryPath string, entryName string, isDirectory bool) (exists bool, err error) {
 
-	err = s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parentDirectoryPath,

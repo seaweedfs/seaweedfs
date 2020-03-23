@@ -169,7 +169,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	var deletedObjects []ObjectIdentifier
 	var deleteErrors []DeleteError
 
-	s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		for _, object := range deleteObjects.Objects {
 			lastSeparator := strings.LastIndex(object.ObjectName, "/")

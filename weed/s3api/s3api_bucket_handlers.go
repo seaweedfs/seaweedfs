@@ -79,7 +79,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
-	err := s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		// delete collection
 		deleteCollectionRequest := &filer_pb.DeleteCollectionRequest{
@@ -109,7 +109,7 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
-	err := s3a.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: s3a.option.BucketsPath,
