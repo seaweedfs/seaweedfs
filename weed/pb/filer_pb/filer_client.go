@@ -5,9 +5,16 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
+)
+
+var (
+	OS_UID = uint32(os.Getuid())
+	OS_GID = uint32(os.Getgid())
 )
 
 type FilerClient interface {
@@ -50,15 +57,26 @@ func GetEntry(filerClient FilerClient, fullFilePath util.FullPath) (entry *Entry
 
 func ReadDirAllEntries(filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn func(entry *Entry, isLast bool)) (err error) {
 
+	return doList(filerClient, fullDirPath, prefix, fn, "", false, math.MaxUint32)
+
+}
+
+func List(filerClient FilerClient, parentDirectoryPath, prefix string, fn func(entry *Entry, isLast bool), startFrom string, inclusive bool, limit uint32) (err error) {
+
+	return doList(filerClient, util.FullPath(parentDirectoryPath), prefix, fn, startFrom, inclusive, limit)
+
+}
+
+func doList(filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn func(entry *Entry, isLast bool), startFrom string, inclusive bool, limit uint32) (err error) {
+
 	err = filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
 
-		lastEntryName := ""
-
 		request := &ListEntriesRequest{
-			Directory:         string(fullDirPath),
-			Prefix:            prefix,
-			StartFromFileName: lastEntryName,
-			Limit:             math.MaxUint32,
+			Directory:          string(fullDirPath),
+			Prefix:             prefix,
+			StartFromFileName:  startFrom,
+			Limit:              limit,
+			InclusiveStartFrom: inclusive,
 		}
 
 		glog.V(3).Infof("read directory: %v", request)
@@ -119,4 +137,69 @@ func Exists(filerClient FilerClient, parentDirectoryPath string, entryName strin
 	})
 
 	return
+}
+
+func Mkdir(filerClient FilerClient, parentDirectoryPath string, dirName string, fn func(entry *Entry)) error {
+	return filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
+
+		entry := &Entry{
+			Name:        dirName,
+			IsDirectory: true,
+			Attributes: &FuseAttributes{
+				Mtime:    time.Now().Unix(),
+				Crtime:   time.Now().Unix(),
+				FileMode: uint32(0777 | os.ModeDir),
+				Uid:      OS_UID,
+				Gid:      OS_GID,
+			},
+		}
+
+		if fn != nil {
+			fn(entry)
+		}
+
+		request := &CreateEntryRequest{
+			Directory: parentDirectoryPath,
+			Entry:     entry,
+		}
+
+		glog.V(1).Infof("mkdir: %v", request)
+		if err := CreateEntry(client, request); err != nil {
+			glog.V(0).Infof("mkdir %v: %v", request, err)
+			return fmt.Errorf("mkdir %s/%s: %v", parentDirectoryPath, dirName, err)
+		}
+
+		return nil
+	})
+}
+
+func MkFile(filerClient FilerClient, parentDirectoryPath string, fileName string, chunks []*FileChunk) error {
+	return filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
+
+		entry := &Entry{
+			Name:        fileName,
+			IsDirectory: false,
+			Attributes: &FuseAttributes{
+				Mtime:    time.Now().Unix(),
+				Crtime:   time.Now().Unix(),
+				FileMode: uint32(0770),
+				Uid:      OS_UID,
+				Gid:      OS_GID,
+			},
+			Chunks: chunks,
+		}
+
+		request := &CreateEntryRequest{
+			Directory: parentDirectoryPath,
+			Entry:     entry,
+		}
+
+		glog.V(1).Infof("create file: %s/%s", parentDirectoryPath, fileName)
+		if err := CreateEntry(client, request); err != nil {
+			glog.V(0).Infof("create file %v:%v", request, err)
+			return fmt.Errorf("create file %s/%s: %v", parentDirectoryPath, fileName, err)
+		}
+
+		return nil
+	})
 }

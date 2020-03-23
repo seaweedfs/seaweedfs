@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -15,11 +14,6 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-)
-
-var (
-	OS_UID = uint32(os.Getuid())
-	OS_GID = uint32(os.Getgid())
 )
 
 type ListAllMyBucketsResult struct {
