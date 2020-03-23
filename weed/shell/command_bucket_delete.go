@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -44,28 +43,14 @@ func (c *commandBucketDelete) Do(args []string, commandEnv *CommandEnv, writer i
 		return parseErr
 	}
 
-	err = commandEnv.withFilerClient(filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
+	filerClient := commandEnv.getFilerClient(filerServer, filerPort)
 
-		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
-		if err != nil {
-			return fmt.Errorf("get filer %s:%d configuration: %v", filerServer, filerPort, err)
-		}
-		filerBucketsPath := resp.DirBuckets
+	var filerBucketsPath string
+	filerBucketsPath, err = readFilerBucketsPath(filerClient)
+	if err != nil {
+		return fmt.Errorf("read buckets: %v", err)
+	}
 
-		if _, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-			Directory:            filerBucketsPath,
-			Name:                 *bucketName,
-			IsDeleteData:         false,
-			IsRecursive:          true,
-			IgnoreRecursiveError: true,
-		}); err != nil {
-			return err
-		}
-
-		return nil
-
-	})
-
-	return err
+	return filer_pb.Remove(filerClient, filerBucketsPath, *bucketName, false, true, true)
 
 }

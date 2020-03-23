@@ -39,43 +39,41 @@ func (c *commandBucketList) Do(args []string, commandEnv *CommandEnv, writer io.
 		return parseErr
 	}
 
-	err = commandEnv.withFilerClient(filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
+	filerClient := commandEnv.getFilerClient(filerServer, filerPort)
+
+	var filerBucketsPath string
+	filerBucketsPath, err = readFilerBucketsPath(filerClient)
+	if err != nil {
+		return fmt.Errorf("read buckets: %v", err)
+	}
+
+	err = filer_pb.List(filerClient, filerBucketsPath, "", func(entry *filer_pb.Entry, isLast bool) {
+		if entry.Attributes.Replication == "" || entry.Attributes.Replication == "000" {
+			fmt.Fprintf(writer, "  %s\n", entry.Name)
+		} else {
+			fmt.Fprintf(writer, "  %s\t\t\treplication: %s\n", entry.Name, entry.Attributes.Replication)
+		}
+	}, "", false, math.MaxUint32)
+	if err != nil {
+		return fmt.Errorf("list buckets under %v: %v", filerBucketsPath, err)
+	}
+
+	return err
+
+}
+
+func readFilerBucketsPath(filerClient filer_pb.FilerClient) (filerBucketsPath string, err error) {
+	err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
-			return fmt.Errorf("get filer %s:%d configuration: %v", filerServer, filerPort, err)
+			return fmt.Errorf("get filer configuration: %v", err)
 		}
-		filerBucketsPath := resp.DirBuckets
-
-		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
-			Directory: filerBucketsPath,
-			Limit:     math.MaxUint32,
-		})
-		if err != nil {
-			return fmt.Errorf("list buckets under %v: %v", filerBucketsPath, err)
-		}
-
-		for {
-			resp, recvErr := stream.Recv()
-			if recvErr != nil {
-				if recvErr == io.EOF {
-					break
-				} else {
-					return recvErr
-				}
-			}
-
-			if resp.Entry.Attributes.Replication == "" || resp.Entry.Attributes.Replication == "000" {
-				fmt.Fprintf(writer, "  %s\n", resp.Entry.Name)
-			} else {
-				fmt.Fprintf(writer, "  %s\t\t\treplication: %s\n", resp.Entry.Name, resp.Entry.Attributes.Replication)
-			}
-		}
+		filerBucketsPath = resp.DirBuckets
 
 		return nil
 
 	})
 
-	return err
-
+	return filerBucketsPath, err
 }
