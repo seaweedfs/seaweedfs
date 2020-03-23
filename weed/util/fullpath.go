@@ -1,10 +1,8 @@
-package filer2
+package util
 
 import (
 	"path/filepath"
 	"strings"
-
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type FullPath string
@@ -38,5 +36,5 @@ func (fp FullPath) Child(name string) FullPath {
 }
 
 func (fp FullPath) AsInode() uint64 {
-	return uint64(util.HashStringToLong(string(fp)))
+	return uint64(HashStringToLong(string(fp)))
 }

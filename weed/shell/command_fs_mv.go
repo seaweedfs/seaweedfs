@@ -6,8 +6,8 @@ import (
 	"io"
 	"path/filepath"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func init() {
@@ -47,9 +47,9 @@ func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 		return err
 	}
 
-	sourceDir, sourceName := filer2.FullPath(sourcePath).DirAndName()
+	sourceDir, sourceName := util.FullPath(sourcePath).DirAndName()
 
-	destinationDir, destinationName := filer2.FullPath(destinationPath).DirAndName()
+	destinationDir, destinationName := util.FullPath(destinationPath).DirAndName()
 
 	return commandEnv.withFilerClient(filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -82,7 +82,7 @@ func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 
 		_, err = client.AtomicRenameEntry(context.Background(), request)
 
-		fmt.Fprintf(writer, "move: %s => %s\n", sourcePath, filer2.NewFullPath(targetDir, targetName))
+		fmt.Fprintf(writer, "move: %s => %s\n", sourcePath, util.NewFullPath(targetDir, targetName))
 
 		return err
 

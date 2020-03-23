@@ -92,7 +92,7 @@ func (store *EtcdStore) UpdateEntry(ctx context.Context, entry *filer2.Entry) (e
 	return store.InsertEntry(ctx, entry)
 }
 
-func (store *EtcdStore) FindEntry(ctx context.Context, fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
+func (store *EtcdStore) FindEntry(ctx context.Context, fullpath weed_util.FullPath) (entry *filer2.Entry, err error) {
 	key := genKey(fullpath.DirAndName())
 
 	resp, err := store.client.Get(ctx, string(key))
@@ -115,7 +115,7 @@ func (store *EtcdStore) FindEntry(ctx context.Context, fullpath filer2.FullPath)
 	return entry, nil
 }
 
-func (store *EtcdStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPath) (err error) {
+func (store *EtcdStore) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	key := genKey(fullpath.DirAndName())
 
 	if _, err := store.client.Delete(ctx, string(key)); err != nil {
@@ -125,7 +125,7 @@ func (store *EtcdStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPat
 	return nil
 }
 
-func (store *EtcdStore) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) (err error) {
+func (store *EtcdStore) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
 
 	if _, err := store.client.Delete(ctx, string(directoryPrefix), clientv3.WithPrefix()); err != nil {
@@ -136,7 +136,7 @@ func (store *EtcdStore) DeleteFolderChildren(ctx context.Context, fullpath filer
 }
 
 func (store *EtcdStore) ListDirectoryEntries(
-	ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool, limit int,
+	ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int,
 ) (entries []*filer2.Entry, err error) {
 	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
 
@@ -159,7 +159,7 @@ func (store *EtcdStore) ListDirectoryEntries(
 			break
 		}
 		entry := &filer2.Entry{
-			FullPath: filer2.NewFullPath(string(fullpath), fileName),
+			FullPath: weed_util.NewFullPath(string(fullpath), fileName),
 		}
 		if decodeErr := entry.DecodeAttributesAndChunks(kv.Value); decodeErr != nil {
 			err = decodeErr
@@ -179,7 +179,7 @@ func genKey(dirPath, fileName string) (key []byte) {
 	return key
 }
 
-func genDirectoryKeyPrefix(fullpath filer2.FullPath, startFileName string) (keyPrefix []byte) {
+func genDirectoryKeyPrefix(fullpath weed_util.FullPath, startFileName string) (keyPrefix []byte) {
 	keyPrefix = []byte(string(fullpath))
 	keyPrefix = append(keyPrefix, DIR_FILE_SEPARATOR)
 	if len(startFileName) > 0 {

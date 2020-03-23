@@ -3,9 +3,9 @@ package filesys
 import (
 	"context"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
 )
@@ -35,15 +35,15 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 	})
 
 	if err == nil {
-		newPath := filer2.NewFullPath(newDir.Path, req.NewName)
-		oldPath := filer2.NewFullPath(dir.Path, req.OldName)
+		newPath := util.NewFullPath(newDir.Path, req.NewName)
+		oldPath := util.NewFullPath(dir.Path, req.OldName)
 		dir.wfs.cacheDelete(newPath)
 		dir.wfs.cacheDelete(oldPath)
 
 		oldFileNode := dir.wfs.getNode(oldPath, func() fs.Node {
 			return nil
 		})
-		newDirNode := dir.wfs.getNode(filer2.FullPath(newDir.Path), func() fs.Node {
+		newDirNode := dir.wfs.getNode(util.FullPath(newDir.Path), func() fs.Node {
 			return nil
 		})
 		// fmt.Printf("new path: %v dir: %v node:%+v\n", newPath, newDir.Path, newDirNode)

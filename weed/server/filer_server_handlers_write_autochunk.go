@@ -15,6 +15,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request,
@@ -145,7 +146,7 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 
 	glog.V(4).Infoln("saving", path)
 	entry := &filer2.Entry{
-		FullPath: filer2.FullPath(path),
+		FullPath: util.FullPath(path),
 		Attr: filer2.Attr{
 			Mtime:       time.Now(),
 			Crtime:      time.Now(),

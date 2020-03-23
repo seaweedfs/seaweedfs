@@ -1,9 +1,9 @@
 package filesys
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/seaweedfs/fuse"
 )
 
@@ -107,7 +107,7 @@ func listxattr(entry *filer_pb.Entry, req *fuse.ListxattrRequest, resp *fuse.Lis
 
 func (wfs *WFS) maybeLoadEntry(dir, name string) (entry *filer_pb.Entry, err error) {
 
-	fullpath := filer2.NewFullPath(dir, name)
+	fullpath := util.NewFullPath(dir, name)
 	entry = wfs.cacheGet(fullpath)
 	if entry != nil {
 		return

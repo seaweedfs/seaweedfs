@@ -71,13 +71,13 @@ func NewChunkStreamReaderFromFiler(masterClient *wdclient.MasterClient, chunks [
 	}
 }
 
-func NewChunkStreamReaderFromClient(filerClient FilerClient, chunkViews []*ChunkView) *ChunkStreamReader {
+func NewChunkStreamReaderFromClient(filerClient filer_pb.FilerClient, chunkViews []*ChunkView) *ChunkStreamReader {
 
 	return &ChunkStreamReader{
 		chunkViews: chunkViews,
 		lookupFileId: func(fileId string) (targetUrl string, err error) {
 			err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-				vid := fileIdToVolumeId(fileId)
+				vid := VolumeId(fileId)
 				resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
 					VolumeIds: []string{vid},
 				})
@@ -178,10 +178,11 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 	return nil
 }
 
-func fileIdToVolumeId(fileId string) (volumeId string) {
-	parts := strings.Split(fileId, ",")
-	if len(parts) != 2 {
-		return fileId
+func VolumeId(fileId string) string {
+	lastCommaIndex := strings.LastIndex(fileId, ",")
+	if lastCommaIndex > 0 {
+		return fileId[:lastCommaIndex]
 	}
-	return parts[0]
+	return fileId
 }
+

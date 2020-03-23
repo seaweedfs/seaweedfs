@@ -6,8 +6,8 @@ import (
 
 	"github.com/golang/protobuf/jsonpb"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func init() {
@@ -40,7 +40,7 @@ func (c *commandFsMetaCat) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return err
 	}
 
-	dir, name := filer2.FullPath(path).DirAndName()
+	dir, name := util.FullPath(path).DirAndName()
 
 	return commandEnv.withFilerClient(filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
 

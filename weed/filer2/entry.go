@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type Attr struct {
@@ -27,7 +28,7 @@ func (attr Attr) IsDirectory() bool {
 }
 
 type Entry struct {
-	FullPath
+	util.FullPath
 
 	Attr
 	Extended map[string][]byte

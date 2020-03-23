@@ -169,13 +169,13 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 			path += ret.Name
 		}
 	}
-	existingEntry, err := fs.filer.FindEntry(ctx, filer2.FullPath(path))
+	existingEntry, err := fs.filer.FindEntry(ctx, util.FullPath(path))
 	crTime := time.Now()
 	if err == nil && existingEntry != nil {
 		crTime = existingEntry.Crtime
 	}
 	entry := &filer2.Entry{
-		FullPath: filer2.FullPath(path),
+		FullPath: util.FullPath(path),
 		Attr: filer2.Attr{
 			Mtime:       time.Now(),
 			Crtime:      crTime,
@@ -304,7 +304,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	ignoreRecursiveError := r.FormValue("ignoreRecursiveError") == "true"
 	skipChunkDeletion := r.FormValue("skipChunkDeletion") == "true"
 
-	err := fs.filer.DeleteEntryMetaAndData(context.Background(), filer2.FullPath(r.URL.Path), isRecursive, ignoreRecursiveError, !skipChunkDeletion)
+	err := fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(r.URL.Path), isRecursive, ignoreRecursiveError, !skipChunkDeletion)
 	if err != nil {
 		glog.V(1).Infoln("deleting", r.URL.Path, ":", err.Error())
 		httpStatus := http.StatusInternalServerError

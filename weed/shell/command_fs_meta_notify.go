@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -44,7 +43,7 @@ func (c *commandFsMetaNotify) Do(args []string, commandEnv *CommandEnv, writer i
 
 	var dirCount, fileCount uint64
 
-	err = doTraverseBFS(writer, commandEnv.getFilerClient(filerServer, filerPort), filer2.FullPath(path), func(parentPath filer2.FullPath, entry *filer_pb.Entry) {
+	err = doTraverseBFS(writer, commandEnv.getFilerClient(filerServer, filerPort), util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) {
 
 		if entry.IsDirectory {
 			dirCount++

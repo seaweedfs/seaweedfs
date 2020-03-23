@@ -75,7 +75,7 @@ func (store *CassandraStore) UpdateEntry(ctx context.Context, entry *filer2.Entr
 	return store.InsertEntry(ctx, entry)
 }
 
-func (store *CassandraStore) FindEntry(ctx context.Context, fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
+func (store *CassandraStore) FindEntry(ctx context.Context, fullpath util.FullPath) (entry *filer2.Entry, err error) {
 
 	dir, name := fullpath.DirAndName()
 	var data []byte
@@ -102,7 +102,7 @@ func (store *CassandraStore) FindEntry(ctx context.Context, fullpath filer2.Full
 	return entry, nil
 }
 
-func (store *CassandraStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPath) error {
+func (store *CassandraStore) DeleteEntry(ctx context.Context, fullpath util.FullPath) error {
 
 	dir, name := fullpath.DirAndName()
 
@@ -115,7 +115,7 @@ func (store *CassandraStore) DeleteEntry(ctx context.Context, fullpath filer2.Fu
 	return nil
 }
 
-func (store *CassandraStore) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) error {
+func (store *CassandraStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) error {
 
 	if err := store.session.Query(
 		"DELETE FROM filemeta WHERE directory=?",
@@ -126,7 +126,7 @@ func (store *CassandraStore) DeleteFolderChildren(ctx context.Context, fullpath 
 	return nil
 }
 
-func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool,
+func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool,
 	limit int) (entries []*filer2.Entry, err error) {
 
 	cqlStr := "SELECT NAME, meta FROM filemeta WHERE directory=? AND name>? ORDER BY NAME ASC LIMIT ?"
@@ -139,7 +139,7 @@ func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, fullpath 
 	iter := store.session.Query(cqlStr, string(fullpath), startFileName, limit).Iter()
 	for iter.Scan(&name, &data) {
 		entry := &filer2.Entry{
-			FullPath: filer2.NewFullPath(string(fullpath), name),
+			FullPath: util.NewFullPath(string(fullpath), name),
 		}
 		if decodeErr := entry.DecodeAttributesAndChunks(data); decodeErr != nil {
 			err = decodeErr

@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type BucketName string
@@ -28,7 +29,7 @@ func (f *Filer) LoadBuckets(dirBucketsPath string) {
 
 	limit := math.MaxInt32
 
-	entries, err := f.ListDirectoryEntries(context.Background(), FullPath(dirBucketsPath), "", false, limit)
+	entries, err := f.ListDirectoryEntries(context.Background(), util.FullPath(dirBucketsPath), "", false, limit)
 
 	if err != nil {
 		glog.V(1).Infof("no buckets found: %v", err)

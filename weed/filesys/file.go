@@ -10,6 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
 )
@@ -36,8 +37,8 @@ type File struct {
 	reader         io.ReadSeeker
 }
 
-func (file *File) fullpath() filer2.FullPath {
-	return filer2.NewFullPath(file.dir.Path, file.Name)
+func (file *File) fullpath() util.FullPath {
+	return util.NewFullPath(file.dir.Path, file.Name)
 }
 
 func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
@@ -218,7 +219,7 @@ func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 func (file *File) Forget() {
 	glog.V(3).Infof("Forget file %s/%s", file.dir.Path, file.Name)
 
-	file.wfs.forgetNode(filer2.NewFullPath(file.dir.Path, file.Name))
+	file.wfs.forgetNode(util.NewFullPath(file.dir.Path, file.Name))
 
 }
 

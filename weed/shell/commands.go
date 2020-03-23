@@ -10,8 +10,8 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
@@ -66,7 +66,7 @@ func (ce *CommandEnv) isDirectory(filerServer string, filerPort int64, path stri
 
 func (ce *CommandEnv) checkDirectory(filerServer string, filerPort int64, path string) error {
 
-	dir, name := filer2.FullPath(path).DirAndName()
+	dir, name := util.FullPath(path).DirAndName()
 
 	return ce.withFilerClient(filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
 

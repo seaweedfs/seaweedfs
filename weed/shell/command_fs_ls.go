@@ -10,6 +10,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func init() {
@@ -63,10 +64,10 @@ func (c *commandFsLs) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 		path = path + "/"
 	}
 
-	dir, name := filer2.FullPath(path).DirAndName()
+	dir, name := util.FullPath(path).DirAndName()
 	entryCount := 0
 
-	err = filer2.ReadDirAllEntries(commandEnv.getFilerClient(filerServer, filerPort), filer2.FullPath(dir), name, func(entry *filer_pb.Entry, isLast bool) {
+	err = filer_pb.ReadDirAllEntries(commandEnv.getFilerClient(filerServer, filerPort), util.FullPath(dir), name, func(entry *filer_pb.Entry, isLast bool) {
 
 		if !showHidden && strings.HasPrefix(entry.Name, ".") {
 			return

@@ -142,7 +142,7 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 	}
 
 	return fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		dir, name := filer2.FullPath(fullDirPath).DirAndName()
+		dir, name := util.FullPath(fullDirPath).DirAndName()
 		request := &filer_pb.CreateEntryRequest{
 			Directory: dir,
 			Entry: &filer_pb.Entry{
@@ -189,7 +189,7 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 			fs.removeAll(ctx, fullFilePath)
 		}
 
-		dir, name := filer2.FullPath(fullFilePath).DirAndName()
+		dir, name := util.FullPath(fullFilePath).DirAndName()
 		err = fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 			if err := filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
 				Directory: dir,
@@ -254,7 +254,7 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string) 
 	} else {
 		//_, err = fs.db.Exec(`delete from filesystem where fullFilePath = ?`, fullFilePath)
 	}
-	dir, name := filer2.FullPath(fullFilePath).DirAndName()
+	dir, name := util.FullPath(fullFilePath).DirAndName()
 	err = fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.DeleteEntryRequest{
@@ -311,8 +311,8 @@ func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string)
 		return os.ErrExist
 	}
 
-	oldDir, oldBaseName := filer2.FullPath(oldName).DirAndName()
-	newDir, newBaseName := filer2.FullPath(newName).DirAndName()
+	oldDir, oldBaseName := util.FullPath(oldName).DirAndName()
+	newDir, newBaseName := util.FullPath(newName).DirAndName()
 
 	return fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
@@ -339,10 +339,10 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 		return nil, err
 	}
 
-	fullpath := filer2.FullPath(fullFilePath)
+	fullpath := util.FullPath(fullFilePath)
 
 	var fi FileInfo
-	entry, err := filer2.GetEntry(fs, fullpath)
+	entry, err := filer_pb.GetEntry(fs, fullpath)
 	if entry == nil {
 		return nil, os.ErrNotExist
 	}
@@ -373,12 +373,12 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 	glog.V(2).Infof("WebDavFileSystem.Write %v", f.name)
 
-	dir, _ := filer2.FullPath(f.name).DirAndName()
+	dir, _ := util.FullPath(f.name).DirAndName()
 
 	var err error
 	ctx := context.Background()
 	if f.entry == nil {
-		f.entry, err = filer2.GetEntry(f.fs, filer2.FullPath(f.name))
+		f.entry, err = filer_pb.GetEntry(f.fs, util.FullPath(f.name))
 	}
 
 	if f.entry == nil {
@@ -483,7 +483,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	glog.V(2).Infof("WebDavFileSystem.Read %v", f.name)
 
 	if f.entry == nil {
-		f.entry, err = filer2.GetEntry(f.fs, filer2.FullPath(f.name))
+		f.entry, err = filer_pb.GetEntry(f.fs, util.FullPath(f.name))
 	}
 	if f.entry == nil {
 		return 0, err
@@ -521,9 +521,9 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 
 	glog.V(2).Infof("WebDavFileSystem.Readdir %v count %d", f.name, count)
 
-	dir, _ := filer2.FullPath(f.name).DirAndName()
+	dir, _ := util.FullPath(f.name).DirAndName()
 
-	err = filer2.ReadDirAllEntries(f.fs, filer2.FullPath(dir), "", func(entry *filer_pb.Entry, isLast bool) {
+	err = filer_pb.ReadDirAllEntries(f.fs, util.FullPath(dir), "", func(entry *filer_pb.Entry, isLast bool) {
 		fi := FileInfo{
 			size:          int64(filer2.TotalSize(entry.GetChunks())),
 			name:          entry.Name,

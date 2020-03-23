@@ -11,7 +11,6 @@ import (
 
 	"github.com/golang/protobuf/proto"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -86,7 +85,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	var dirCount, fileCount uint64
 
-	err = doTraverseBFS(writer, commandEnv.getFilerClient(filerServer, filerPort), filer2.FullPath(path), func(parentPath filer2.FullPath, entry *filer_pb.Entry) {
+	err = doTraverseBFS(writer, commandEnv.getFilerClient(filerServer, filerPort), util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) {
 
 		protoMessage := &filer_pb.FullEntry{
 			Dir:   string(parentPath),
@@ -125,7 +124,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	return err
 
 }
-func doTraverseBFS(writer io.Writer, filerClient filer2.FilerClient, parentPath filer2.FullPath, fn func(parentPath filer2.FullPath, entry *filer_pb.Entry)) (err error) {
+func doTraverseBFS(writer io.Writer, filerClient filer_pb.FilerClient, parentPath util.FullPath, fn func(parentPath util.FullPath, entry *filer_pb.Entry)) (err error) {
 
 	K := 5
 
@@ -146,7 +145,7 @@ func doTraverseBFS(writer io.Writer, filerClient filer2.FilerClient, parentPath 
 					time.Sleep(329 * time.Millisecond)
 					continue
 				}
-				dir := t.(filer2.FullPath)
+				dir := t.(util.FullPath)
 				processErr := processOneDirectory(writer, filerClient, dir, queue, &jobQueueWg, fn)
 				if processErr != nil {
 					err = processErr
@@ -160,9 +159,9 @@ func doTraverseBFS(writer io.Writer, filerClient filer2.FilerClient, parentPath 
 	return
 }
 
-func processOneDirectory(writer io.Writer, filerClient filer2.FilerClient, parentPath filer2.FullPath, queue *util.Queue, jobQueueWg *sync.WaitGroup, fn func(parentPath filer2.FullPath, entry *filer_pb.Entry)) (err error) {
+func processOneDirectory(writer io.Writer, filerClient filer_pb.FilerClient, parentPath util.FullPath, queue *util.Queue, jobQueueWg *sync.WaitGroup, fn func(parentPath util.FullPath, entry *filer_pb.Entry)) (err error) {
 
-	return filer2.ReadDirAllEntries(filerClient, parentPath, "", func(entry *filer_pb.Entry, isLast bool) {
+	return filer_pb.ReadDirAllEntries(filerClient, parentPath, "", func(entry *filer_pb.Entry, isLast bool) {
 
 		fn(parentPath, entry)
 
@@ -172,7 +171,7 @@ func processOneDirectory(writer io.Writer, filerClient filer2.FilerClient, paren
 				subDir = "/" + entry.Name
 			}
 			jobQueueWg.Add(1)
-			queue.Enqueue(filer2.FullPath(subDir))
+			queue.Enqueue(util.FullPath(subDir))
 		}
 	})
 

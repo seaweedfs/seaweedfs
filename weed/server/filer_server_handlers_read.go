@@ -14,6 +14,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
@@ -24,7 +25,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		path = path[:len(path)-1]
 	}
 
-	entry, err := fs.filer.FindEntry(context.Background(), filer2.FullPath(path))
+	entry, err := fs.filer.FindEntry(context.Background(), util.FullPath(path))
 	if err != nil {
 		if path == "/" {
 			fs.listDirectoryHandler(w, r)

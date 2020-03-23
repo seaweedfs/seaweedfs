@@ -100,7 +100,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 		// not found, check the store directly
 		if dirEntry == nil {
 			glog.V(4).Infof("find uncached directory: %s", dirPath)
-			dirEntry, _ = f.FindEntry(ctx, FullPath(dirPath))
+			dirEntry, _ = f.FindEntry(ctx, util.FullPath(dirPath))
 		} else {
 			// glog.V(4).Infof("found cached directory: %s", dirPath)
 		}
@@ -112,7 +112,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 			now := time.Now()
 
 			dirEntry = &Entry{
-				FullPath: FullPath(dirPath),
+				FullPath: util.FullPath(dirPath),
 				Attr: Attr{
 					Mtime:       now,
 					Crtime:      now,
@@ -127,7 +127,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 			glog.V(2).Infof("create directory: %s %v", dirPath, dirEntry.Mode)
 			mkdirErr := f.store.InsertEntry(ctx, dirEntry)
 			if mkdirErr != nil {
-				if _, err := f.FindEntry(ctx, FullPath(dirPath)); err == filer_pb.ErrNotFound {
+				if _, err := f.FindEntry(ctx, util.FullPath(dirPath)); err == filer_pb.ErrNotFound {
 					glog.V(3).Infof("mkdir %s: %v", dirPath, mkdirErr)
 					return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
 				}
@@ -207,7 +207,7 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err er
 	return f.store.UpdateEntry(ctx, entry)
 }
 
-func (f *Filer) FindEntry(ctx context.Context, p FullPath) (entry *Entry, err error) {
+func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, err error) {
 
 	now := time.Now()
 
@@ -234,7 +234,7 @@ func (f *Filer) FindEntry(ctx context.Context, p FullPath) (entry *Entry, err er
 
 }
 
-func (f *Filer) ListDirectoryEntries(ctx context.Context, p FullPath, startFileName string, inclusive bool, limit int) ([]*Entry, error) {
+func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int) ([]*Entry, error) {
 	if strings.HasSuffix(string(p), "/") && len(p) > 1 {
 		p = p[0 : len(p)-1]
 	}
@@ -251,7 +251,7 @@ func (f *Filer) ListDirectoryEntries(ctx context.Context, p FullPath, startFileN
 	return entries, err
 }
 
-func (f *Filer) doListDirectoryEntries(ctx context.Context, p FullPath, startFileName string, inclusive bool, limit int) (entries []*Entry, expiredCount int, lastFileName string, err error) {
+func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int) (entries []*Entry, expiredCount int, lastFileName string, err error) {
 	listedEntries, listErr := f.store.ListDirectoryEntries(ctx, p, startFileName, inclusive, limit)
 	if listErr != nil {
 		return listedEntries, expiredCount, "", listErr

@@ -67,7 +67,7 @@ func (fs *FilerSink) initialize(grpcAddress string, dir string,
 func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) error {
 	return fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		dir, name := filer2.FullPath(key).DirAndName()
+		dir, name := util.FullPath(key).DirAndName()
 
 		request := &filer_pb.DeleteEntryRequest{
 			Directory:    dir,
@@ -90,7 +90,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
 	return fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		dir, name := filer2.FullPath(key).DirAndName()
+		dir, name := util.FullPath(key).DirAndName()
 
 		// look up existing entry
 		lookupRequest := &filer_pb.LookupDirectoryEntryRequest{
@@ -136,7 +136,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
 func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
 
-	dir, name := filer2.FullPath(key).DirAndName()
+	dir, name := util.FullPath(key).DirAndName()
 
 	// read existing entry
 	var existingEntry *filer_pb.Entry

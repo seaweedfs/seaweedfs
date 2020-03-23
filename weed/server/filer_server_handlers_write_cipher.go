@@ -12,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 // handling single chunk POST or PUT upload
@@ -67,7 +68,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 	}
 
 	entry := &filer2.Entry{
-		FullPath: filer2.FullPath(path),
+		FullPath: util.FullPath(path),
 		Attr: filer2.Attr{
 			Mtime:       time.Now(),
 			Crtime:      time.Now(),

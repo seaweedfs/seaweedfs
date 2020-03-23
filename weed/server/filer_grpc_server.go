@@ -14,11 +14,12 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 
-	entry, err := fs.filer.FindEntry(ctx, filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name))))
+	entry, err := fs.filer.FindEntry(ctx, util.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name))))
 	if err == filer_pb.ErrNotFound {
 		return &filer_pb.LookupDirectoryEntryResponse{}, nil
 	}
@@ -53,7 +54,7 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 	lastFileName := req.StartFromFileName
 	includeLastFile := req.InclusiveStartFrom
 	for limit > 0 {
-		entries, err := fs.filer.ListDirectoryEntries(stream.Context(), filer2.FullPath(req.Directory), lastFileName, includeLastFile, paginationLimit)
+		entries, err := fs.filer.ListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, paginationLimit)
 
 		if err != nil {
 			return err
@@ -136,7 +137,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 
 	resp = &filer_pb.CreateEntryResponse{}
 
-	fullpath := filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name)))
+	fullpath := util.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name)))
 	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
 
 	if req.Entry.Attributes == nil {
@@ -164,7 +165,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 
 	fullpath := filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name))
-	entry, err := fs.filer.FindEntry(ctx, filer2.FullPath(fullpath))
+	entry, err := fs.filer.FindEntry(ctx, util.FullPath(fullpath))
 	if err != nil {
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("not found %s: %v", fullpath, err)
 	}
@@ -175,7 +176,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
 
 	newEntry := &filer2.Entry{
-		FullPath: filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name))),
+		FullPath: util.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Entry.Name))),
 		Attr:     entry.Attr,
 		Extended: req.Entry.Extended,
 		Chunks:   chunks,
@@ -218,7 +219,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 }
 
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {
-	err = fs.filer.DeleteEntryMetaAndData(ctx, filer2.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name))), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData)
+	err = fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(filepath.ToSlash(filepath.Join(req.Directory, req.Name))), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData)
 	resp = &filer_pb.DeleteEntryResponse{}
 	if err != nil {
 		resp.Error = err.Error()

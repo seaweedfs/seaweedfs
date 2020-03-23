@@ -1,44 +1,35 @@
-package filer2
+package filer_pb
 
 import (
 	"context"
 	"fmt"
 	"io"
 	"math"
-	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func VolumeId(fileId string) string {
-	lastCommaIndex := strings.LastIndex(fileId, ",")
-	if lastCommaIndex > 0 {
-		return fileId[:lastCommaIndex]
-	}
-	return fileId
-}
-
 type FilerClient interface {
-	WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error
+	WithFilerClient(fn func(SeaweedFilerClient) error) error
 	AdjustedUrl(hostAndPort string) string
 }
 
-func GetEntry(filerClient FilerClient, fullFilePath FullPath) (entry *filer_pb.Entry, err error) {
+func GetEntry(filerClient FilerClient, fullFilePath util.FullPath) (entry *Entry, err error) {
 
 	dir, name := fullFilePath.DirAndName()
 
-	err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
 
-		request := &filer_pb.LookupDirectoryEntryRequest{
+		request := &LookupDirectoryEntryRequest{
 			Directory: dir,
 			Name:      name,
 		}
 
 		// glog.V(3).Infof("read %s request: %v", fullFilePath, request)
-		resp, err := filer_pb.LookupEntry(client, request)
+		resp, err := LookupEntry(client, request)
 		if err != nil {
-			if err == filer_pb.ErrNotFound {
+			if err == ErrNotFound {
 				return nil
 			}
 			glog.V(3).Infof("read %s %v: %v", fullFilePath, resp, err)
@@ -57,13 +48,13 @@ func GetEntry(filerClient FilerClient, fullFilePath FullPath) (entry *filer_pb.E
 	return
 }
 
-func ReadDirAllEntries(filerClient FilerClient, fullDirPath FullPath, prefix string, fn func(entry *filer_pb.Entry, isLast bool)) (err error) {
+func ReadDirAllEntries(filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn func(entry *Entry, isLast bool)) (err error) {
 
-	err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
 
 		lastEntryName := ""
 
-		request := &filer_pb.ListEntriesRequest{
+		request := &ListEntriesRequest{
 			Directory:         string(fullDirPath),
 			Prefix:            prefix,
 			StartFromFileName: lastEntryName,
@@ -76,7 +67,7 @@ func ReadDirAllEntries(filerClient FilerClient, fullDirPath FullPath, prefix str
 			return fmt.Errorf("list %s: %v", fullDirPath, err)
 		}
 
-		var prevEntry *filer_pb.Entry
+		var prevEntry *Entry
 		for {
 			resp, recvErr := stream.Recv()
 			if recvErr != nil {
