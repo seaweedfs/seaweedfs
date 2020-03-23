@@ -85,6 +85,7 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 		if c, e := vg.findAndGrow(grpcDialOption, topo, option); e == nil {
 			counter += c
 		} else {
+			glog.V(0).Infof("create %d volume, created %d: %v", targetCount, counter, e)
 			return counter, e
 		}
 	}
