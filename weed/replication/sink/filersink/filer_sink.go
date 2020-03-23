@@ -65,30 +65,21 @@ func (fs *FilerSink) initialize(grpcAddress string, dir string,
 }
 
 func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) error {
-	return fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		dir, name := util.FullPath(key).DirAndName()
+	dir, name := util.FullPath(key).DirAndName()
 
-		request := &filer_pb.DeleteEntryRequest{
-			Directory:    dir,
-			Name:         name,
-			IsDeleteData: deleteIncludeChunks,
-		}
-
-		glog.V(1).Infof("delete entry: %v", request)
-		_, err := client.DeleteEntry(context.Background(), request)
-		if err != nil {
-			glog.V(0).Infof("delete entry %s: %v", key, err)
-			return fmt.Errorf("delete entry %s: %v", key, err)
-		}
-
-		return nil
-	})
+	glog.V(1).Infof("delete entry: %v", key)
+	err := filer_pb.Remove(fs, dir, name, deleteIncludeChunks, false, false)
+	if err != nil {
+		glog.V(0).Infof("delete entry %s: %v", key, err)
+		return fmt.Errorf("delete entry %s: %v", key, err)
+	}
+	return nil
 }
 
 func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
-	return fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		dir, name := util.FullPath(key).DirAndName()
 
@@ -140,7 +131,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 
 	// read existing entry
 	var existingEntry *filer_pb.Entry
-	err = fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
@@ -192,7 +183,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	}
 
 	// save updated meta data
-	return true, fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return true, fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: newParentPath,

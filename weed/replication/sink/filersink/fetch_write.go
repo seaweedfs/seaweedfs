@@ -3,7 +3,6 @@ package filersink
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -69,7 +68,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, dir string) 
 	var host string
 	var auth security.EncodedJwt
 
-	if err := fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	if err := fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AssignVolumeRequest{
 			Count:       1,
@@ -114,7 +113,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, dir string) 
 	return
 }
 
-func (fs *FilerSink) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
+func (fs *FilerSink) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
 	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
@@ -122,11 +121,6 @@ func (fs *FilerSink) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error)
 	}, fs.grpcAddress, fs.grpcDialOption)
 
 }
-
-func volumeId(fileId string) string {
-	lastCommaIndex := strings.LastIndex(fileId, ",")
-	if lastCommaIndex > 0 {
-		return fileId[:lastCommaIndex]
-	}
-	return fileId
+func (fs *FilerSink) AdjustedUrl(hostAndPort string) string {
+	return hostAndPort
 }
