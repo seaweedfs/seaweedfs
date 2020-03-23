@@ -255,23 +255,9 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string) 
 		//_, err = fs.db.Exec(`delete from filesystem where fullFilePath = ?`, fullFilePath)
 	}
 	dir, name := util.FullPath(fullFilePath).DirAndName()
-	err = fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		request := &filer_pb.DeleteEntryRequest{
-			Directory:    dir,
-			Name:         name,
-			IsDeleteData: true,
-		}
+	return filer_pb.Remove(fs, dir, name, true, true, true)
 
-		glog.V(3).Infof("removing entry: %v", request)
-		_, err := client.DeleteEntry(ctx, request)
-		if err != nil {
-			return fmt.Errorf("remove %s: %v", fullFilePath, err)
-		}
-
-		return nil
-	})
-	return err
 }
 
 func (fs *WebDavFileSystem) RemoveAll(ctx context.Context, name string) error {
