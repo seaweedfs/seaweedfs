@@ -12,7 +12,7 @@ services:
     ports:
       - 8080:8080
       - 18080:18080
-    command: 'volume -max=15 -mserver="master:9333" -port=8080'
+    command: 'volume -mserver="master:9333" -port=8080'
     depends_on:
       - master
   filer:
