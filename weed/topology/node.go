@@ -196,7 +196,6 @@ func (n *NodeImpl) UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int64) { //ca
 		return
 	}
 	atomic.AddInt64(&n.maxVolumeCount, maxVolumeCountDelta)
-	println("node", n.Id(), "new max", n.maxVolumeCount, "delta", maxVolumeCountDelta)
 	if n.parent != nil {
 		n.parent.UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta)
 	}
