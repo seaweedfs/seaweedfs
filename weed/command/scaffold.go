@@ -389,10 +389,10 @@ sequencer_etcd_urls = "http://127.0.0.1:2379"
 #   010 and 001 has two copies, count_2
 #   011 has only 3 copies, count_3
 [master.volume_growth]
-count_1 = 7                # create 1 x 7 = 7 actual volumes
-count_2 = 6                # create 2 x 6 = 12 actual volumes
-count_3 = 3                # create 3 x 3 = 9 actual volumes
-count_other = 1            # create n x 1 = n actual volumes
+copy_1 = 7                # create 1 x 7 = 7 actual volumes
+copy_2 = 6                # create 2 x 6 = 12 actual volumes
+copy_3 = 3                # create 3 x 3 = 9 actual volumes
+copy_other = 1            # create n x 1 = n actual volumes
 
 `
 )
