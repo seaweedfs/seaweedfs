@@ -282,23 +282,14 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 
 	dir.wfs.cacheDelete(filePath)
 
-	return dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	glog.V(3).Infof("remove file: %v", req)
+	err = filer_pb.Remove(dir.wfs, dir.Path, req.Name, false, false, false)
+	if err != nil {
+		glog.V(3).Infof("not found remove file %s/%s: %v", dir.Path, req.Name, err)
+		return fuse.ENOENT
+	}
 
-		request := &filer_pb.DeleteEntryRequest{
-			Directory:    dir.Path,
-			Name:         req.Name,
-			IsDeleteData: false,
-		}
-
-		glog.V(3).Infof("remove file: %v", request)
-		_, err := client.DeleteEntry(context.Background(), request)
-		if err != nil {
-			glog.V(3).Infof("not found remove file %s/%s: %v", dir.Path, req.Name, err)
-			return fuse.ENOENT
-		}
-
-		return nil
-	})
+	return nil
 
 }
 
@@ -306,23 +297,13 @@ func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 
 	dir.wfs.cacheDelete(util.NewFullPath(dir.Path, req.Name))
 
-	return dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-
-		request := &filer_pb.DeleteEntryRequest{
-			Directory:    dir.Path,
-			Name:         req.Name,
-			IsDeleteData: true,
-		}
-
-		glog.V(3).Infof("remove directory entry: %v", request)
-		_, err := client.DeleteEntry(context.Background(), request)
-		if err != nil {
-			glog.V(3).Infof("not found remove %s/%s: %v", dir.Path, req.Name, err)
-			return fuse.ENOENT
-		}
-
-		return nil
-	})
+	glog.V(3).Infof("remove directory entry: %v", req)
+	err := filer_pb.Remove(dir.wfs, dir.Path, req.Name, true, false, false)
+	if err != nil {
+		glog.V(3).Infof("not found remove %s/%s: %v", dir.Path, req.Name, err)
+		return fuse.ENOENT
+	}
+	return nil
 
 }
 
