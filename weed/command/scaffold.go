@@ -385,9 +385,9 @@ sequencer_etcd_urls = "http://127.0.0.1:2379"
 # create this number of logical volumes if no more writable volumes
 # count_x means how many copies of data.
 # e.g.:
-#   000 has only one copy, count_1
-#   010 and 001 has two copies, count_2
-#   011 has only 3 copies, count_3
+#   000 has only one copy, copy_1
+#   010 and 001 has two copies, copy_2
+#   011 has only 3 copies, copy_3
 [master.volume_growth]
 copy_1 = 7                # create 1 x 7 = 7 actual volumes
 copy_2 = 6                # create 2 x 6 = 12 actual volumes
