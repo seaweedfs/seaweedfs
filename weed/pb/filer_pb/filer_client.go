@@ -92,3 +92,31 @@ func ReadDirAllEntries(filerClient FilerClient, fullDirPath util.FullPath, prefi
 
 	return
 }
+
+func Exists(filerClient FilerClient, parentDirectoryPath string, entryName string, isDirectory bool) (exists bool, err error) {
+
+	err = filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
+
+		request := &LookupDirectoryEntryRequest{
+			Directory: parentDirectoryPath,
+			Name:      entryName,
+		}
+
+		glog.V(4).Infof("exists entry %v/%v: %v", parentDirectoryPath, entryName, request)
+		resp, err := LookupEntry(client, request)
+		if err != nil {
+			if err == ErrNotFound {
+				exists = false
+				return nil
+			}
+			glog.V(0).Infof("exists entry %v: %v", request, err)
+			return fmt.Errorf("exists entry %s/%s: %v", parentDirectoryPath, entryName, err)
+		}
+
+		exists = resp.Entry.IsDirectory == isDirectory
+
+		return nil
+	})
+
+	return
+}

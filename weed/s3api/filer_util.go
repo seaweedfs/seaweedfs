@@ -153,30 +153,8 @@ func doDeleteEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath strin
 
 func (s3a *S3ApiServer) exists(parentDirectoryPath string, entryName string, isDirectory bool) (exists bool, err error) {
 
-	err = s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return filer_pb.Exists(s3a, parentDirectoryPath, entryName, isDirectory)
 
-		request := &filer_pb.LookupDirectoryEntryRequest{
-			Directory: parentDirectoryPath,
-			Name:      entryName,
-		}
-
-		glog.V(4).Infof("exists entry %v/%v: %v", parentDirectoryPath, entryName, request)
-		resp, err := filer_pb.LookupEntry(client, request)
-		if err != nil {
-			if err == filer_pb.ErrNotFound {
-				exists = false
-				return nil
-			}
-			glog.V(0).Infof("exists entry %v: %v", request, err)
-			return fmt.Errorf("exists entry %s/%s: %v", parentDirectoryPath, entryName, err)
-		}
-
-		exists = resp.Entry.IsDirectory == isDirectory
-
-		return nil
-	})
-
-	return
 }
 
 func objectKey(key *string) *string {
