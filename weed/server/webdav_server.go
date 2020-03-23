@@ -249,11 +249,6 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string) 
 		return err
 	}
 
-	if fi.IsDir() {
-		//_, err = fs.db.Exec(`delete from filesystem where fullFilePath like $1 escape '\'`, strings.Replace(fullFilePath, `%`, `\%`, -1)+`%`)
-	} else {
-		//_, err = fs.db.Exec(`delete from filesystem where fullFilePath = ?`, fullFilePath)
-	}
 	dir, name := util.FullPath(fullFilePath).DirAndName()
 
 	return filer_pb.Remove(fs, dir, name, true, true, true)
