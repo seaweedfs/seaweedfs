@@ -6,9 +6,8 @@ import (
 	"os"
 	"path"
 	"regexp"
-	"strings"
-
 	"sort"
+	"strings"
 
 	"github.com/peterh/liner"
 )
@@ -66,7 +65,7 @@ func RunShell(options ShellOptions) {
 			} else {
 				foundCommand := false
 				for _, c := range Commands {
-					if c.Name() == cmd {
+					if c.Name() == cmd || c.Name() == "fs."+cmd {
 						if err := c.Do(args, commandEnv, os.Stdout); err != nil {
 							fmt.Fprintf(os.Stderr, "error: %v\n", err)
 						}
