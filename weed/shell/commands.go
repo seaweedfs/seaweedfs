@@ -50,7 +50,8 @@ func NewCommandEnv(options ShellOptions) *CommandEnv {
 
 func (ce *CommandEnv) parseUrl(input string) (filerServer string, filerPort int64, path string, err error) {
 	if strings.HasPrefix(input, "http") {
-		return parseFilerUrl(input)
+		err = fmt.Errorf("http://<filer>:<port> prefix is not supported any more")
+		return
 	}
 	if !strings.HasPrefix(input, "/") {
 		input = filepath.ToSlash(filepath.Join(ce.option.Directory, input))
@@ -101,7 +102,7 @@ func parseFilerUrl(entryPath string) (filerServer string, filerPort int64, path 
 		}
 		path = u.Path
 	} else {
-		err = fmt.Errorf("path should have full url http://<filer_server>:<port>/path/to/dirOrFile : %s", entryPath)
+		err = fmt.Errorf("path should have full url /path/to/dirOrFile : %s", entryPath)
 	}
 	return
 }

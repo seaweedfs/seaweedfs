@@ -26,8 +26,6 @@ func (c *commandFsMetaCat) Help() string {
 
 	fs.meta.cat /dir/
 	fs.meta.cat /dir/file_name
-	fs.meta.cat http://<filer_server>:<port>/dir/
-	fs.meta.cat http://<filer_server>:<port>/dir/file_name
 `
 }
 

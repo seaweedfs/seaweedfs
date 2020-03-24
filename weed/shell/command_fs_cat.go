@@ -25,7 +25,6 @@ func (c *commandFsCat) Help() string {
 	return `stream the file content on to the screen
 
 	fs.cat /dir/file_name
-	fs.cat http://<filer_server>:<port>/dir/file_name
 `
 }
 

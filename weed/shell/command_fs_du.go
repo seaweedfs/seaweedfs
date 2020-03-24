@@ -24,9 +24,9 @@ func (c *commandFsDu) Name() string {
 func (c *commandFsDu) Help() string {
 	return `show disk usage
 
-	fs.du http://<filer_server>:<port>/dir
-	fs.du http://<filer_server>:<port>/dir/file_name
-	fs.du http://<filer_server>:<port>/dir/file_prefix
+	fs.du /dir
+	fs.du /dir/file_name
+	fs.du /dir/file_prefix
 `
 }
 

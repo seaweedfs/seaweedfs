@@ -16,14 +16,14 @@ func (c *commandFsCd) Name() string {
 }
 
 func (c *commandFsCd) Help() string {
-	return `change directory to http://<filer_server>:<port>/dir/
+	return `change directory to a directory /path/to/dir
 
 	The full path can be too long to type. For example,
-		fs.ls http://<filer_server>:<port>/some/path/to/file_name
+		fs.ls /some/path/to/file_name
 
 	can be simplified as
 
-		fs.cd http://<filer_server>:<port>/some/path
+		fs.cd /some/path
 		fs.ls to/file_name
 `
 }

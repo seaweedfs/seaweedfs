@@ -30,9 +30,6 @@ func (c *commandFsLs) Help() string {
 	fs.ls [-l] [-a] /dir/
 	fs.ls [-l] [-a] /dir/file_name
 	fs.ls [-l] [-a] /dir/file_prefix
-	fs.ls [-l] [-a] http://<filer_server>:<port>/dir/
-	fs.ls [-l] [-a] http://<filer_server>:<port>/dir/file_name
-	fs.ls [-l] [-a] http://<filer_server>:<port>/dir/file_prefix
 `
 }
 

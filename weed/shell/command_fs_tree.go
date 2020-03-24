@@ -23,7 +23,8 @@ func (c *commandFsTree) Name() string {
 func (c *commandFsTree) Help() string {
 	return `recursively list all files under a directory
 
-	fs.tree http://<filer_server>:<port>/dir/
+	fs.tree /some/dir
+
 `
 }
 
