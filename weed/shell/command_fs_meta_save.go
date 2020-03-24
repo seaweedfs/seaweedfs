@@ -38,15 +38,6 @@ func (c *commandFsMetaSave) Help() string {
 	The meta data will be saved into a local <filer_host>-<port>-<time>.meta file.
 	These meta data can be later loaded by fs.meta.load command, 
 
-Another usage is to export all data chunk file ids used by the files.
-	
-	fs.meta.save -chunks <filer.chunks>
-
-	The output chunks file will contain lines as:
-		<file key> <tab> <volumeId, fileKey, cookie> <tab> <file name>
-
-	This output chunks can be used to find out missing chunks or files.
-
 `
 }
 
@@ -55,7 +46,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	fsMetaSaveCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	verbose := fsMetaSaveCommand.Bool("v", false, "print out each processed files")
 	outputFileName := fsMetaSaveCommand.String("o", "", "output the meta data to this file")
-	chunksFileName := fsMetaSaveCommand.String("chunks", "", "output all the chunks to this file")
+	// chunksFileName := fsMetaSaveCommand.String("chunks", "", "output all the chunks to this file")
 	if err = fsMetaSaveCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -72,7 +63,14 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 			fileName = fmt.Sprintf("%s-%d-%4d%02d%02d-%02d%02d%02d.meta",
 				commandEnv.option.FilerHost, commandEnv.option.FilerPort, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 		}
-		return doTraverseBfsAndSaving(fileName, commandEnv, writer, path, *verbose, func(dst io.Writer, outputChan chan []byte) {
+
+		dst, openErr := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+		if openErr != nil {
+			return fmt.Errorf("failed to create file %s: %v", fileName, openErr)
+		}
+		defer dst.Close()
+
+		return doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, func(dst io.Writer, outputChan chan []byte) {
 			sizeBuf := make([]byte, 4)
 			for b := range outputChan {
 				util.Uint32toBytes(sizeBuf, uint32(len(b)))
@@ -91,8 +89,16 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 		})
 	}
 
-	if *chunksFileName != "" {
-		return doTraverseBfsAndSaving(*chunksFileName, commandEnv, writer, path, *verbose, func(dst io.Writer, outputChan chan []byte) {
+	var chunksFileName = ""
+	if chunksFileName != "" {
+
+		dst, openErr := os.OpenFile(chunksFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+		if openErr != nil {
+			return fmt.Errorf("failed to create file %s: %v", chunksFileName, openErr)
+		}
+		defer dst.Close()
+
+		return doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, func(dst io.Writer, outputChan chan []byte) {
 			for b := range outputChan {
 				dst.Write(b)
 			}
@@ -113,15 +119,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 
 }
 
-func doTraverseBfsAndSaving(fileName string, commandEnv *CommandEnv, writer io.Writer, path string, verbose bool,
-	saveFn func(dst io.Writer, outputChan chan []byte),
-	genFn func(entry *filer_pb.FullEntry, outputChan chan []byte) error) error {
-
-	dst, openErr := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if openErr != nil {
-		return fmt.Errorf("failed to create file %s: %v", fileName, openErr)
-	}
-	defer dst.Close()
+func doTraverseBfsAndSaving(commandEnv *CommandEnv, writer io.Writer, path string, verbose bool, saveFn func(dst io.Writer, outputChan chan []byte), genFn func(entry *filer_pb.FullEntry, outputChan chan []byte) error) error {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
