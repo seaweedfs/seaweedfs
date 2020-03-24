@@ -69,7 +69,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 	defer dst.Close()
 
-	return doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, func(dst io.Writer, outputChan chan []byte) {
+	return doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, func(outputChan chan []byte) {
 		sizeBuf := make([]byte, 4)
 		for b := range outputChan {
 			util.Uint32toBytes(sizeBuf, uint32(len(b)))
@@ -96,7 +96,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 		}
 		defer dst.Close()
 
-		return doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, func(dst io.Writer, outputChan chan []byte) {
+		return doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, func(outputChan chan []byte) {
 			for b := range outputChan {
 				dst.Write(b)
 			}
@@ -117,13 +117,13 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 
 }
 
-func doTraverseBfsAndSaving(commandEnv *CommandEnv, writer io.Writer, path string, verbose bool, saveFn func(dst io.Writer, outputChan chan []byte), genFn func(entry *filer_pb.FullEntry, outputChan chan []byte) error) error {
+func doTraverseBfsAndSaving(commandEnv *CommandEnv, writer io.Writer, path string, verbose bool, saveFn func(outputChan chan []byte), genFn func(entry *filer_pb.FullEntry, outputChan chan []byte) error) error {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 	outputChan := make(chan []byte, 1024)
 	go func() {
-		saveFn(dst, outputChan)
+		saveFn(outputChan)
 		wg.Done()
 	}()
 
