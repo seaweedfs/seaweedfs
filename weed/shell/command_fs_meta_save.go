@@ -56,38 +56,36 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 		return parseErr
 	}
 
-	if *outputFileName != "" {
-		fileName := *outputFileName
-		if fileName == "" {
-			t := time.Now()
-			fileName = fmt.Sprintf("%s-%d-%4d%02d%02d-%02d%02d%02d.meta",
-				commandEnv.option.FilerHost, commandEnv.option.FilerPort, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
-		}
-
-		dst, openErr := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-		if openErr != nil {
-			return fmt.Errorf("failed to create file %s: %v", fileName, openErr)
-		}
-		defer dst.Close()
-
-		return doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, func(dst io.Writer, outputChan chan []byte) {
-			sizeBuf := make([]byte, 4)
-			for b := range outputChan {
-				util.Uint32toBytes(sizeBuf, uint32(len(b)))
-				dst.Write(sizeBuf)
-				dst.Write(b)
-			}
-		}, func(entry *filer_pb.FullEntry, outputChan chan []byte) (err error) {
-			bytes, err := proto.Marshal(entry)
-			if err != nil {
-				fmt.Fprintf(writer, "marshall error: %v\n", err)
-				return
-			}
-
-			outputChan <- bytes
-			return nil
-		})
+	fileName := *outputFileName
+	if fileName == "" {
+		t := time.Now()
+		fileName = fmt.Sprintf("%s-%d-%4d%02d%02d-%02d%02d%02d.meta",
+			commandEnv.option.FilerHost, commandEnv.option.FilerPort, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 	}
+
+	dst, openErr := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if openErr != nil {
+		return fmt.Errorf("failed to create file %s: %v", fileName, openErr)
+	}
+	defer dst.Close()
+
+	return doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, func(dst io.Writer, outputChan chan []byte) {
+		sizeBuf := make([]byte, 4)
+		for b := range outputChan {
+			util.Uint32toBytes(sizeBuf, uint32(len(b)))
+			dst.Write(sizeBuf)
+			dst.Write(b)
+		}
+	}, func(entry *filer_pb.FullEntry, outputChan chan []byte) (err error) {
+		bytes, err := proto.Marshal(entry)
+		if err != nil {
+			fmt.Fprintf(writer, "marshall error: %v\n", err)
+			return
+		}
+
+		outputChan <- bytes
+		return nil
+	})
 
 	var chunksFileName = ""
 	if chunksFileName != "" {
