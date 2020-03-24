@@ -48,6 +48,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	fsMetaSaveCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	verbose := fsMetaSaveCommand.Bool("v", false, "print out each processed files")
 	outputFileName := fsMetaSaveCommand.String("o", "", "output the meta data to this file")
+	chunksFileName := fsMetaSaveCommand.String("chunks", "", "output all the chunks to this file")
 	if err = fsMetaSaveCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -57,12 +58,57 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 		return parseErr
 	}
 
-	t := time.Now()
-	fileName := *outputFileName
-	if fileName == "" {
-		fileName = fmt.Sprintf("%s-%d-%4d%02d%02d-%02d%02d%02d.meta",
-			commandEnv.option.FilerHost, commandEnv.option.FilerPort, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
+	if *outputFileName != "" {
+		fileName := *outputFileName
+		if fileName == "" {
+			t := time.Now()
+			fileName = fmt.Sprintf("%s-%d-%4d%02d%02d-%02d%02d%02d.meta",
+				commandEnv.option.FilerHost, commandEnv.option.FilerPort, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
+		}
+		return doTraverseBfsAndSaving(fileName, commandEnv, writer, path, *verbose, func(dst io.Writer, outputChan chan []byte) {
+			sizeBuf := make([]byte, 4)
+			for b := range outputChan {
+				util.Uint32toBytes(sizeBuf, uint32(len(b)))
+				dst.Write(sizeBuf)
+				dst.Write(b)
+			}
+		}, func(entry *filer_pb.FullEntry, outputChan chan []byte) (err error) {
+			bytes, err := proto.Marshal(entry)
+			if err != nil {
+				fmt.Fprintf(writer, "marshall error: %v\n", err)
+				return
+			}
+
+			outputChan <- bytes
+			return nil
+		})
 	}
+
+	if *chunksFileName != "" {
+		return doTraverseBfsAndSaving(*chunksFileName, commandEnv, writer, path, *verbose, func(dst io.Writer, outputChan chan []byte) {
+			for b := range outputChan {
+				dst.Write(b)
+			}
+		}, func(entry *filer_pb.FullEntry, outputChan chan []byte) (err error) {
+			for _, chunk := range entry.Entry.Chunks {
+				dir := entry.Dir
+				if dir == "/" {
+					dir = ""
+				}
+				outputLine := fmt.Sprintf("%d\t%s\t%s/%s\n", chunk.Fid.FileKey, chunk.FileId, dir, entry.Entry.Name)
+				outputChan <- []byte(outputLine)
+			}
+			return nil
+		})
+	}
+
+	return err
+
+}
+
+func doTraverseBfsAndSaving(fileName string, commandEnv *CommandEnv, writer io.Writer, path string, verbose bool,
+	saveFn func(dst io.Writer, outputChan chan []byte),
+	genFn func(entry *filer_pb.FullEntry, outputChan chan []byte) error) error {
 
 	dst, openErr := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if openErr != nil {
@@ -74,31 +120,23 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	wg.Add(1)
 	outputChan := make(chan []byte, 1024)
 	go func() {
-		sizeBuf := make([]byte, 4)
-		for b := range outputChan {
-			util.Uint32toBytes(sizeBuf, uint32(len(b)))
-			dst.Write(sizeBuf)
-			dst.Write(b)
-		}
+		saveFn(dst, outputChan)
 		wg.Done()
 	}()
 
 	var dirCount, fileCount uint64
 
-	err = doTraverseBFS(writer, commandEnv, util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) {
+	err := doTraverseBfs(writer, commandEnv, util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) {
 
 		protoMessage := &filer_pb.FullEntry{
 			Dir:   string(parentPath),
 			Entry: entry,
 		}
 
-		bytes, err := proto.Marshal(protoMessage)
-		if err != nil {
+		if err := genFn(protoMessage, outputChan); err != nil {
 			fmt.Fprintf(writer, "marshall error: %v\n", err)
 			return
 		}
-
-		outputChan <- bytes
 
 		if entry.IsDirectory {
 			atomic.AddUint64(&dirCount, 1)
@@ -106,7 +144,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 			atomic.AddUint64(&fileCount, 1)
 		}
 
-		if *verbose {
+		if verbose {
 			println(parentPath.Child(entry.Name))
 		}
 
@@ -118,13 +156,11 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	if err == nil {
 		fmt.Fprintf(writer, "total %d directories, %d files\n", dirCount, fileCount)
-		fmt.Fprintf(writer, "meta data for %s is saved to %s\n", path, fileName)
 	}
-
 	return err
-
 }
-func doTraverseBFS(writer io.Writer, filerClient filer_pb.FilerClient, parentPath util.FullPath, fn func(parentPath util.FullPath, entry *filer_pb.Entry)) (err error) {
+
+func doTraverseBfs(writer io.Writer, filerClient filer_pb.FilerClient, parentPath util.FullPath, fn func(parentPath util.FullPath, entry *filer_pb.Entry)) (err error) {
 
 	K := 5
 

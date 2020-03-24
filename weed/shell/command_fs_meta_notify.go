@@ -43,7 +43,7 @@ func (c *commandFsMetaNotify) Do(args []string, commandEnv *CommandEnv, writer i
 
 	var dirCount, fileCount uint64
 
-	err = doTraverseBFS(writer, commandEnv, util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) {
+	err = doTraverseBfs(writer, commandEnv, util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) {
 
 		if entry.IsDirectory {
 			dirCount++
