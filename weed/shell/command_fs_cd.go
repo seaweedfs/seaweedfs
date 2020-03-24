@@ -30,25 +30,19 @@ func (c *commandFsCd) Help() string {
 
 func (c *commandFsCd) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	input := findInputDirectory(args)
-
-	filerServer, filerPort, path, err := commandEnv.parseUrl(input)
+	path, err := commandEnv.parseUrl(findInputDirectory(args))
 	if err != nil {
 		return err
 	}
 
 	if path == "/" {
-		commandEnv.option.FilerHost = filerServer
-		commandEnv.option.FilerPort = filerPort
 		commandEnv.option.Directory = "/"
 		return nil
 	}
 
-	err = commandEnv.checkDirectory(filerServer, filerPort, path)
+	err = commandEnv.checkDirectory(path)
 
 	if err == nil {
-		commandEnv.option.FilerHost = filerServer
-		commandEnv.option.FilerPort = filerPort
 		commandEnv.option.Directory = path
 	}
 

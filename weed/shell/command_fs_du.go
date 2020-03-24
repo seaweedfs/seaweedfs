@@ -32,18 +32,18 @@ func (c *commandFsDu) Help() string {
 
 func (c *commandFsDu) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	filerServer, filerPort, path, err := commandEnv.parseUrl(findInputDirectory(args))
+	path, err := commandEnv.parseUrl(findInputDirectory(args))
 	if err != nil {
 		return err
 	}
 
-	if commandEnv.isDirectory(filerServer, filerPort, path) {
+	if commandEnv.isDirectory(path) {
 		path = path + "/"
 	}
 
 	var blockCount, byteCount uint64
 	dir, name := util.FullPath(path).DirAndName()
-	blockCount, byteCount, err = duTraverseDirectory(writer, commandEnv.getFilerClient(filerServer, filerPort), dir, name)
+	blockCount, byteCount, err = duTraverseDirectory(writer, commandEnv, dir, name)
 
 	if name == "" && err == nil {
 		fmt.Fprintf(writer, "block:%4d\tbyte:%10d\t%s\n", blockCount, byteCount, dir)
@@ -78,29 +78,13 @@ func duTraverseDirectory(writer io.Writer, filerClient filer_pb.FilerClient, dir
 	return
 }
 
-func (env *CommandEnv) withFilerClient(filerServer string, filerPort int64, fn func(filer_pb.SeaweedFilerClient) error) error {
+func (env *CommandEnv) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	filerGrpcAddress := fmt.Sprintf("%s:%d", filerServer, filerPort+10000)
+	filerGrpcAddress := fmt.Sprintf("%s:%d", env.option.FilerHost, env.option.FilerPort+10000)
 	return pb.WithGrpcFilerClient(filerGrpcAddress, env.option.GrpcDialOption, fn)
 
 }
 
-type commandFilerClient struct {
-	env         *CommandEnv
-	filerServer string
-	filerPort   int64
-}
-
-func (env *CommandEnv) getFilerClient(filerServer string, filerPort int64) *commandFilerClient {
-	return &commandFilerClient{
-		env:         env,
-		filerServer: filerServer,
-		filerPort:   filerPort,
-	}
-}
-func (c *commandFilerClient) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
-	return c.env.withFilerClient(c.filerServer, c.filerPort, fn)
-}
-func (c *commandFilerClient) AdjustedUrl(hostAndPort string) string {
+func (env *CommandEnv) AdjustedUrl(hostAndPort string) string {
 	return hostAndPort
 }

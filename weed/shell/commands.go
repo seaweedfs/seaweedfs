@@ -48,7 +48,7 @@ func NewCommandEnv(options ShellOptions) *CommandEnv {
 	}
 }
 
-func (ce *CommandEnv) parseUrl(input string) (filerServer string, filerPort int64, path string, err error) {
+func (ce *CommandEnv) parseUrl(input string) (path string, err error) {
 	if strings.HasPrefix(input, "http") {
 		err = fmt.Errorf("http://<filer>:<port> prefix is not supported any more")
 		return
@@ -56,35 +56,22 @@ func (ce *CommandEnv) parseUrl(input string) (filerServer string, filerPort int6
 	if !strings.HasPrefix(input, "/") {
 		input = filepath.ToSlash(filepath.Join(ce.option.Directory, input))
 	}
-	return ce.option.FilerHost, ce.option.FilerPort, input, err
+	return input, err
 }
 
-func (ce *CommandEnv) isDirectory(filerServer string, filerPort int64, path string) bool {
+func (ce *CommandEnv) isDirectory(path string) bool {
 
-	return ce.checkDirectory(filerServer, filerPort, path) == nil
+	return ce.checkDirectory(path) == nil
 
 }
 
-func (ce *CommandEnv) checkDirectory(filerServer string, filerPort int64, path string) error {
+func (ce *CommandEnv) checkDirectory(path string) error {
 
 	dir, name := util.FullPath(path).DirAndName()
 
-	return ce.withFilerClient(filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
+	_, err := filer_pb.Exists(ce, dir, name, true)
 
-		resp, lookupErr := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: dir,
-			Name:      name,
-		})
-		if lookupErr != nil {
-			return lookupErr
-		}
-
-		if !resp.Entry.IsDirectory {
-			return fmt.Errorf("not a directory")
-		}
-
-		return nil
-	})
+	return err
 
 }
 

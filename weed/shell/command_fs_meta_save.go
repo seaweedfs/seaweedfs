@@ -52,7 +52,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 		return nil
 	}
 
-	filerServer, filerPort, path, parseErr := commandEnv.parseUrl(findInputDirectory(fsMetaSaveCommand.Args()))
+	path, parseErr := commandEnv.parseUrl(findInputDirectory(fsMetaSaveCommand.Args()))
 	if parseErr != nil {
 		return parseErr
 	}
@@ -61,7 +61,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	fileName := *outputFileName
 	if fileName == "" {
 		fileName = fmt.Sprintf("%s-%d-%4d%02d%02d-%02d%02d%02d.meta",
-			filerServer, filerPort, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
+			commandEnv.option.FilerHost, commandEnv.option.FilerPort, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 	}
 
 	dst, openErr := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
@@ -85,7 +85,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	var dirCount, fileCount uint64
 
-	err = doTraverseBFS(writer, commandEnv.getFilerClient(filerServer, filerPort), util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) {
+	err = doTraverseBFS(writer, commandEnv, util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) {
 
 		protoMessage := &filer_pb.FullEntry{
 			Dir:   string(parentPath),
@@ -118,7 +118,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	if err == nil {
 		fmt.Fprintf(writer, "total %d directories, %d files\n", dirCount, fileCount)
-		fmt.Fprintf(writer, "meta data for http://%s:%d%s is saved to %s\n", filerServer, filerPort, path, fileName)
+		fmt.Fprintf(writer, "meta data for %s is saved to %s\n", path, fileName)
 	}
 
 	return err

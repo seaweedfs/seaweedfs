@@ -32,7 +32,7 @@ func (c *commandFsMetaNotify) Help() string {
 
 func (c *commandFsMetaNotify) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	filerServer, filerPort, path, err := commandEnv.parseUrl(findInputDirectory(args))
+	path, err := commandEnv.parseUrl(findInputDirectory(args))
 	if err != nil {
 		return err
 	}
@@ -43,7 +43,7 @@ func (c *commandFsMetaNotify) Do(args []string, commandEnv *CommandEnv, writer i
 
 	var dirCount, fileCount uint64
 
-	err = doTraverseBFS(writer, commandEnv.getFilerClient(filerServer, filerPort), util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) {
+	err = doTraverseBFS(writer, commandEnv, util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) {
 
 		if entry.IsDirectory {
 			dirCount++

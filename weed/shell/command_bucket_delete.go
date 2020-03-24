@@ -38,19 +38,17 @@ func (c *commandBucketDelete) Do(args []string, commandEnv *CommandEnv, writer i
 		return fmt.Errorf("empty bucket name")
 	}
 
-	filerServer, filerPort, _, parseErr := commandEnv.parseUrl(findInputDirectory(bucketCommand.Args()))
+	_, parseErr := commandEnv.parseUrl(findInputDirectory(bucketCommand.Args()))
 	if parseErr != nil {
 		return parseErr
 	}
 
-	filerClient := commandEnv.getFilerClient(filerServer, filerPort)
-
 	var filerBucketsPath string
-	filerBucketsPath, err = readFilerBucketsPath(filerClient)
+	filerBucketsPath, err = readFilerBucketsPath(commandEnv)
 	if err != nil {
 		return fmt.Errorf("read buckets: %v", err)
 	}
 
-	return filer_pb.Remove(filerClient, filerBucketsPath, *bucketName, false, true, true)
+	return filer_pb.Remove(commandEnv, filerBucketsPath, *bucketName, false, true, true)
 
 }

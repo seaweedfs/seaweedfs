@@ -34,20 +34,18 @@ func (c *commandBucketList) Do(args []string, commandEnv *CommandEnv, writer io.
 		return nil
 	}
 
-	filerServer, filerPort, _, parseErr := commandEnv.parseUrl(findInputDirectory(bucketCommand.Args()))
+	_, parseErr := commandEnv.parseUrl(findInputDirectory(bucketCommand.Args()))
 	if parseErr != nil {
 		return parseErr
 	}
 
-	filerClient := commandEnv.getFilerClient(filerServer, filerPort)
-
 	var filerBucketsPath string
-	filerBucketsPath, err = readFilerBucketsPath(filerClient)
+	filerBucketsPath, err = readFilerBucketsPath(commandEnv)
 	if err != nil {
 		return fmt.Errorf("read buckets: %v", err)
 	}
 
-	err = filer_pb.List(filerClient, filerBucketsPath, "", func(entry *filer_pb.Entry, isLast bool) {
+	err = filer_pb.List(commandEnv, filerBucketsPath, "", func(entry *filer_pb.Entry, isLast bool) {
 		if entry.Attributes.Replication == "" || entry.Attributes.Replication == "000" {
 			fmt.Fprintf(writer, "  %s\n", entry.Name)
 		} else {

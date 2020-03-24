@@ -30,14 +30,14 @@ func (c *commandFsTree) Help() string {
 
 func (c *commandFsTree) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	filerServer, filerPort, path, err := commandEnv.parseUrl(findInputDirectory(args))
+	path, err := commandEnv.parseUrl(findInputDirectory(args))
 	if err != nil {
 		return err
 	}
 
 	dir, name := util.FullPath(path).DirAndName()
 
-	dirCount, fCount, terr := treeTraverseDirectory(writer, commandEnv.getFilerClient(filerServer, filerPort), util.FullPath(dir), name, newPrefix(), -1)
+	dirCount, fCount, terr := treeTraverseDirectory(writer, commandEnv, util.FullPath(dir), name, newPrefix(), -1)
 
 	if terr == nil {
 		fmt.Fprintf(writer, "%d directories, %d files\n", dirCount, fCount)

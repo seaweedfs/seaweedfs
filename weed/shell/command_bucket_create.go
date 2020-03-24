@@ -43,16 +43,11 @@ func (c *commandBucketCreate) Do(args []string, commandEnv *CommandEnv, writer i
 		return fmt.Errorf("empty bucket name")
 	}
 
-	filerServer, filerPort, _, parseErr := commandEnv.parseUrl(findInputDirectory(bucketCommand.Args()))
-	if parseErr != nil {
-		return parseErr
-	}
-
-	err = commandEnv.withFilerClient(filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
+	err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
-			return fmt.Errorf("get filer %s:%d configuration: %v", filerServer, filerPort, err)
+			return fmt.Errorf("get filer configuration: %v", err)
 		}
 		filerBucketsPath := resp.DirBuckets
 

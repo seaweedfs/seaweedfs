@@ -37,12 +37,12 @@ func (c *commandFsMv) Help() string {
 
 func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	filerServer, filerPort, sourcePath, err := commandEnv.parseUrl(args[0])
+	sourcePath, err := commandEnv.parseUrl(args[0])
 	if err != nil {
 		return err
 	}
 
-	_, _, destinationPath, err := commandEnv.parseUrl(args[1])
+	destinationPath, err := commandEnv.parseUrl(args[1])
 	if err != nil {
 		return err
 	}
@@ -51,7 +51,7 @@ func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 
 	destinationDir, destinationName := util.FullPath(destinationPath).DirAndName()
 
-	return commandEnv.withFilerClient(filerServer, filerPort, func(client filer_pb.SeaweedFilerClient) error {
+	return commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		// collect destination entry info
 		destinationRequest := &filer_pb.LookupDirectoryEntryRequest{
