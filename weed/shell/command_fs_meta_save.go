@@ -69,14 +69,15 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 	defer dst.Close()
 
-	return doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, func(outputChan chan []byte) {
+	return doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, func(outputChan chan interface{}) {
 		sizeBuf := make([]byte, 4)
-		for b := range outputChan {
+		for item := range outputChan {
+			b := item.([]byte)
 			util.Uint32toBytes(sizeBuf, uint32(len(b)))
 			dst.Write(sizeBuf)
 			dst.Write(b)
 		}
-	}, func(entry *filer_pb.FullEntry, outputChan chan []byte) (err error) {
+	}, func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 		bytes, err := proto.Marshal(entry)
 		if err != nil {
 			fmt.Fprintf(writer, "marshall error: %v\n", err)
@@ -87,41 +88,13 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 		return nil
 	})
 
-	var chunksFileName = ""
-	if chunksFileName != "" {
-
-		dst, openErr := os.OpenFile(chunksFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-		if openErr != nil {
-			return fmt.Errorf("failed to create file %s: %v", chunksFileName, openErr)
-		}
-		defer dst.Close()
-
-		return doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, func(outputChan chan []byte) {
-			for b := range outputChan {
-				dst.Write(b)
-			}
-		}, func(entry *filer_pb.FullEntry, outputChan chan []byte) (err error) {
-			for _, chunk := range entry.Entry.Chunks {
-				dir := entry.Dir
-				if dir == "/" {
-					dir = ""
-				}
-				outputLine := fmt.Sprintf("%d\t%s\t%s/%s\n", chunk.Fid.FileKey, chunk.FileId, dir, entry.Entry.Name)
-				outputChan <- []byte(outputLine)
-			}
-			return nil
-		})
-	}
-
-	return err
-
 }
 
-func doTraverseBfsAndSaving(commandEnv *CommandEnv, writer io.Writer, path string, verbose bool, saveFn func(outputChan chan []byte), genFn func(entry *filer_pb.FullEntry, outputChan chan []byte) error) error {
+func doTraverseBfsAndSaving(commandEnv *CommandEnv, writer io.Writer, path string, verbose bool, saveFn func(outputChan chan interface{}), genFn func(entry *filer_pb.FullEntry, outputChan chan interface{}) error) error {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	outputChan := make(chan []byte, 1024)
+	outputChan := make(chan interface{}, 1024)
 	go func() {
 		saveFn(outputChan)
 		wg.Done()
@@ -157,7 +130,7 @@ func doTraverseBfsAndSaving(commandEnv *CommandEnv, writer io.Writer, path strin
 
 	wg.Wait()
 
-	if err == nil {
+	if err == nil && writer != nil {
 		fmt.Fprintf(writer, "total %d directories, %d files\n", dirCount, fileCount)
 	}
 	return err
