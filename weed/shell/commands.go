@@ -10,6 +10,7 @@ import (
 
 	"google.golang.org/grpc"
 
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
@@ -78,6 +79,18 @@ func (ce *CommandEnv) checkDirectory(path string) error {
 	return err
 
 }
+
+func (ce *CommandEnv) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
+
+	filerGrpcAddress := fmt.Sprintf("%s:%d", ce.option.FilerHost, ce.option.FilerPort+10000)
+	return pb.WithGrpcFilerClient(filerGrpcAddress, ce.option.GrpcDialOption, fn)
+
+}
+
+func (ce *CommandEnv) AdjustedUrl(hostAndPort string) string {
+	return hostAndPort
+}
+
 
 func parseFilerUrl(entryPath string) (filerServer string, filerPort int64, path string, err error) {
 	if strings.HasPrefix(entryPath, "http") {

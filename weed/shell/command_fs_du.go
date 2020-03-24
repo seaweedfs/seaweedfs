@@ -5,7 +5,6 @@ import (
 	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
-	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -81,15 +80,4 @@ func duTraverseDirectory(writer io.Writer, filerClient filer_pb.FilerClient, dir
 		}
 	})
 	return
-}
-
-func (env *CommandEnv) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
-
-	filerGrpcAddress := fmt.Sprintf("%s:%d", env.option.FilerHost, env.option.FilerPort+10000)
-	return pb.WithGrpcFilerClient(filerGrpcAddress, env.option.GrpcDialOption, fn)
-
-}
-
-func (env *CommandEnv) AdjustedUrl(hostAndPort string) string {
-	return hostAndPort
 }
