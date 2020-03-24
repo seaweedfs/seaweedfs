@@ -59,7 +59,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	if err != nil {
 		return fmt.Errorf("failed to create temp folder: %v", err)
 	}
-	fmt.Fprintf(writer, "working directory: %s\n", tempFolder)
+	// fmt.Fprintf(writer, "working directory: %s\n", tempFolder)
 
 	// collect each volume file ids
 	for volumeId, vinfo := range volumeIdToServer {
@@ -77,7 +77,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	// volume file ids substract filer file ids
 	var totalOrphanChunkCount, totalOrphanDataSize uint64
 	for volumeId, server := range volumeIdToServer {
-		orphanChunkCount, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(tempFolder, volumeId)
+		orphanChunkCount, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(tempFolder, volumeId, writer)
 		if checkErr != nil {
 			return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, server, checkErr)
 		}
@@ -86,7 +86,9 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 
 	if totalOrphanChunkCount > 0 {
-		fmt.Fprintf(writer, "total %d orphan chunks, %d bytes\n", totalOrphanChunkCount, totalOrphanDataSize)
+		fmt.Fprintf(writer, "\ntotal\t%d orphan entries\t%d bytes not used by filer http://%s:%d/\n",
+			totalOrphanChunkCount, totalOrphanDataSize, c.env.option.FilerHost, c.env.option.FilerPort)
+		fmt.Fprintf(writer, "This could be normal if multiple filers or no filers are used.\n")
 	} else {
 		fmt.Fprintf(writer, "no orphan data\n")
 	}
@@ -162,7 +164,7 @@ func (c *commandVolumeFsck) collectFilerFileIds(tempFolder string, volumeIdToSer
 	})
 }
 
-func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(tempFolder string, volumeId uint32) (orphanChunkCount, orphanDataSize uint64, err error) {
+func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(tempFolder string, volumeId uint32, writer io.Writer) (orphanChunkCount, orphanDataSize uint64, err error) {
 
 	db := needle_map.NewMemDb()
 	defer db.Close()
@@ -187,11 +189,15 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(tempFolder stri
 	}
 
 	db.AscendingVisit(func(n needle_map.NeedleValue) error {
-		fmt.Printf("%d,%x\n", volumeId, n.Key)
+		// fmt.Printf("%d,%x\n", volumeId, n.Key)
 		orphanChunkCount++
 		orphanDataSize += uint64(n.Size)
 		return nil
 	})
+
+	if orphanChunkCount > 0 {
+		fmt.Fprintf(writer, "volume %d\t%d orphan entries\t%d bytes\n", volumeId, orphanChunkCount, orphanDataSize)
+	}
 
 	return
 
