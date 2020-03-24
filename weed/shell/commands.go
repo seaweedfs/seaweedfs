@@ -69,7 +69,11 @@ func (ce *CommandEnv) checkDirectory(path string) error {
 
 	dir, name := util.FullPath(path).DirAndName()
 
-	_, err := filer_pb.Exists(ce, dir, name, true)
+	exists, err := filer_pb.Exists(ce, dir, name, true)
+
+	if !exists {
+		return fmt.Errorf("%s is not a directory", path)
+	}
 
 	return err
 
