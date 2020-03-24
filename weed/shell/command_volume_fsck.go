@@ -91,6 +91,8 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		fmt.Fprintf(writer, "no orphan data\n")
 	}
 
+	os.RemoveAll(tempFolder)
+
 	return nil
 }
 
