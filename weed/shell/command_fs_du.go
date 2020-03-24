@@ -56,6 +56,9 @@ func (c *commandFsDu) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 func duTraverseDirectory(writer io.Writer, filerClient filer_pb.FilerClient, dir, name string) (blockCount, byteCount uint64, err error) {
 
 	err = filer_pb.ReadDirAllEntries(filerClient, util.FullPath(dir), name, func(entry *filer_pb.Entry, isLast bool) {
+
+		var fileBlockCount, fileByteCount uint64
+
 		if entry.IsDirectory {
 			subDir := fmt.Sprintf("%s/%s", dir, entry.Name)
 			if dir == "/" {
@@ -67,12 +70,14 @@ func duTraverseDirectory(writer io.Writer, filerClient filer_pb.FilerClient, dir
 				byteCount += numByte
 			}
 		} else {
+			fileBlockCount = uint64(len(entry.Chunks))
+			fileByteCount = filer2.TotalSize(entry.Chunks)
 			blockCount += uint64(len(entry.Chunks))
 			byteCount += filer2.TotalSize(entry.Chunks)
 		}
 
 		if name != "" && !entry.IsDirectory {
-			fmt.Fprintf(writer, "block:%4d\tbyte:%10d\t%s/%s\n", blockCount, byteCount, dir, name)
+			fmt.Fprintf(writer, "block:%4d\tbyte:%10d\t%s/%s\n", fileBlockCount, fileByteCount, dir, entry.Name)
 		}
 	})
 	return
