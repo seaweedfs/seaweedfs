@@ -38,7 +38,14 @@ func (c *commandFsMetaSave) Help() string {
 	The meta data will be saved into a local <filer_host>-<port>-<time>.meta file.
 	These meta data can be later loaded by fs.meta.load command, 
 
-	This assumes there are no deletions, so this is different from taking a snapshot.
+Another usage is to export all data chunk file ids used by the files.
+	
+	fs.meta.save -chunks <filer.chunks>
+
+	The output chunks file will contain lines as:
+		<file key> <tab> <volumeId, fileKey, cookie> <tab> <file name>
+
+	This output chunks can be used to find out missing chunks or files.
 
 `
 }
