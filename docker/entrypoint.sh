@@ -13,7 +13,7 @@ case "$1" in
 	;;
 
   'server')
-  	ARGS="-ip=`hostname -i` -dir=/data -volume.max=0 -master.volumePreallocate -master.volumeSizeLimitMB=1024"
+  	ARGS="-dir=/data -volume.max=0 -master.volumePreallocate -master.volumeSizeLimitMB=1024"
   	exec /usr/bin/weed $@ $ARGS
   	;;
 
