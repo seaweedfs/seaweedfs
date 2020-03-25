@@ -135,31 +135,52 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 	return fmt.Errorf("No more free space left")
 }
 
-func (s *Store) VolumeInfos() []*VolumeInfo {
-	var stats []*VolumeInfo
+func (s *Store) VolumeInfos() (allStats []*VolumeInfo) {
 	for _, location := range s.Locations {
-		location.volumesLock.RLock()
-		for k, v := range location.volumes {
-			s := &VolumeInfo{
-				Id:               needle.VolumeId(k),
-				Size:             v.ContentSize(),
-				Collection:       v.Collection,
-				ReplicaPlacement: v.ReplicaPlacement,
-				Version:          v.Version(),
-				FileCount:        int(v.FileCount()),
-				DeleteCount:      int(v.DeletedCount()),
-				DeletedByteCount: v.DeletedSize(),
-				ReadOnly:         v.IsReadOnly(),
-				Ttl:              v.Ttl,
-				CompactRevision:  uint32(v.CompactionRevision),
-			}
-			s.RemoteStorageName, s.RemoteStorageKey = v.RemoteStorageNameKey()
-			stats = append(stats, s)
-		}
-		location.volumesLock.RUnlock()
+		stats := collectStatsForOneLocation(location)
+		allStats = append(allStats, stats...)
 	}
-	sortVolumeInfos(stats)
+	sortVolumeInfos(allStats)
+	return allStats
+}
+
+func collectStatsForOneLocation(location *DiskLocation) (stats []*VolumeInfo) {
+	location.volumesLock.RLock()
+	defer location.volumesLock.RUnlock()
+
+	for k, v := range location.volumes {
+		s := collectStatForOneVolume(k, v)
+		stats = append(stats, s)
+	}
 	return stats
+}
+
+func collectStatForOneVolume(vid needle.VolumeId, v *Volume) (s *VolumeInfo) {
+
+	s = &VolumeInfo{
+		Id:               vid,
+		Collection:       v.Collection,
+		ReplicaPlacement: v.ReplicaPlacement,
+		Version:          v.Version(),
+		ReadOnly:         v.IsReadOnly(),
+		Ttl:              v.Ttl,
+		CompactRevision:  uint32(v.CompactionRevision),
+	}
+	s.RemoteStorageName, s.RemoteStorageKey = v.RemoteStorageNameKey()
+
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
+
+	if v.nm == nil {
+		return
+	}
+
+	s.FileCount = v.nm.FileCount()
+	s.DeleteCount = v.nm.DeletedCount()
+	s.DeletedByteCount = v.nm.DeletedSize()
+	s.Size = v.nm.ContentSize()
+
+	return
 }
 
 func (s *Store) SetDataCenter(dataCenter string) {
