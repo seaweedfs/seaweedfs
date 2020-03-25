@@ -2,12 +2,14 @@ package shell
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"math"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -46,10 +48,17 @@ func (c *commandVolumeFsck) Help() string {
 
 func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
+	fsckCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	verbose := fsckCommand.Bool("v", false, "verbose mode")
+	applyPurging := fsckCommand.Bool("reallyDeleteFromVolume", false, "<expert only> delete data not referenced by the filer")
+	if err = fsckCommand.Parse(args); err != nil {
+		return nil
+	}
+
 	c.env = commandEnv
 
 	// collect all volume id locations
-	volumeIdToServer, err := c.collectVolumeIds()
+	volumeIdToServer, err := c.collectVolumeIds(*verbose)
 	if err != nil {
 		return fmt.Errorf("failed to collect all volume locations: %v", err)
 	}
@@ -59,46 +68,56 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	if err != nil {
 		return fmt.Errorf("failed to create temp folder: %v", err)
 	}
-	// fmt.Fprintf(writer, "working directory: %s\n", tempFolder)
+	if *verbose {
+		fmt.Fprintf(writer, "working directory: %s\n", tempFolder)
+	}
+	defer os.RemoveAll(tempFolder)
 
 	// collect each volume file ids
 	for volumeId, vinfo := range volumeIdToServer {
-		err = c.collectOneVolumeFileIds(tempFolder, volumeId, vinfo)
+		err = c.collectOneVolumeFileIds(tempFolder, volumeId, vinfo, *verbose)
 		if err != nil {
 			return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, err)
 		}
 	}
 
 	// collect all filer file ids
-	if err = c.collectFilerFileIds(tempFolder, volumeIdToServer); err != nil {
+	if err = c.collectFilerFileIds(tempFolder, volumeIdToServer, *verbose); err != nil {
 		return fmt.Errorf("failed to collect file ids from filer: %v", err)
 	}
 
 	// volume file ids substract filer file ids
-	var totalOrphanChunkCount, totalOrphanDataSize uint64
+	var totalInUseCount, totalOrphanChunkCount, totalOrphanDataSize uint64
 	for volumeId, vinfo := range volumeIdToServer {
-		orphanChunkCount, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(tempFolder, volumeId, writer)
+		inUseCount, orphanChunkCount, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(tempFolder, volumeId, writer, *verbose)
 		if checkErr != nil {
 			return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, checkErr)
 		}
+		totalInUseCount += inUseCount
 		totalOrphanChunkCount += orphanChunkCount
 		totalOrphanDataSize += orphanDataSize
 	}
 
-	if totalOrphanChunkCount > 0 {
-		fmt.Fprintf(writer, "\ntotal\t%d orphan entries\t%d bytes not used by filer http://%s:%d/\n",
-			totalOrphanChunkCount, totalOrphanDataSize, c.env.option.FilerHost, c.env.option.FilerPort)
-		fmt.Fprintf(writer, "This could be normal if multiple filers or no filers are used.\n")
-	} else {
+	if totalOrphanChunkCount == 0 {
 		fmt.Fprintf(writer, "no orphan data\n")
 	}
 
-	os.RemoveAll(tempFolder)
+	pct := float64(totalOrphanChunkCount*100) / (float64(totalOrphanChunkCount + totalInUseCount))
+	fmt.Fprintf(writer, "\nTotal\t\tentries:%d\torphan:%d\t%.2f%%\t%dB\n",
+		totalOrphanChunkCount+totalInUseCount, totalOrphanChunkCount, pct, totalOrphanDataSize)
+
+	fmt.Fprintf(writer, "This could be normal if multiple filers or no filers are used.\n")
+
+	if *applyPurging {
+		fmt.Fprintf(writer, "\nstarting to destroy your data ...\n")
+		time.Sleep(30 * time.Second)
+		fmt.Fprintf(writer, "just kidding. Not implemented yet.\n")
+	}
 
 	return nil
 }
 
-func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, volumeId uint32, vinfo VInfo) error {
+func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, volumeId uint32, vinfo VInfo, verbose bool) error {
 
 	return operation.WithVolumeServerClient(vinfo.server, c.env.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
@@ -126,7 +145,7 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, volumeId 
 
 }
 
-func (c *commandVolumeFsck) collectFilerFileIds(tempFolder string, volumeIdToServer map[uint32]VInfo) error {
+func (c *commandVolumeFsck) collectFilerFileIds(tempFolder string, volumeIdToServer map[uint32]VInfo, verbose bool) error {
 
 	files := make(map[uint32]*os.File)
 	for vid := range volumeIdToServer {
@@ -164,7 +183,7 @@ func (c *commandVolumeFsck) collectFilerFileIds(tempFolder string, volumeIdToSer
 	})
 }
 
-func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(tempFolder string, volumeId uint32, writer io.Writer) (orphanChunkCount, orphanDataSize uint64, err error) {
+func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(tempFolder string, volumeId uint32, writer io.Writer, verbose bool) (inUseCount, orphanChunkCount, orphanDataSize uint64, err error) {
 
 	db := needle_map.NewMemDb()
 	defer db.Close()
@@ -180,12 +199,13 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(tempFolder stri
 
 	dataLen := len(filerFileIdsData)
 	if dataLen%8 != 0 {
-		return 0, 0, fmt.Errorf("filer data is corrupted")
+		return 0, 0, 0, fmt.Errorf("filer data is corrupted")
 	}
 
 	for i := 0; i < len(filerFileIdsData); i += 8 {
 		fileKey := util.BytesToUint64(filerFileIdsData[i : i+8])
 		db.Delete(types.NeedleId(fileKey))
+		inUseCount++
 	}
 
 	db.AscendingVisit(func(n needle_map.NeedleValue) error {
@@ -196,7 +216,9 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(tempFolder stri
 	})
 
 	if orphanChunkCount > 0 {
-		fmt.Fprintf(writer, "volume %d\t%d orphan entries\t%d bytes\n", volumeId, orphanChunkCount, orphanDataSize)
+		pct := float64(orphanChunkCount*100) / (float64(orphanChunkCount + inUseCount))
+		fmt.Fprintf(writer, "volume:%d\tentries:%d\torphan:%d\t%.2f%%\t%dB\n",
+			volumeId, orphanChunkCount+inUseCount, orphanChunkCount, pct, orphanDataSize)
 	}
 
 	return
@@ -209,7 +231,7 @@ type VInfo struct {
 	isEcVolume bool
 }
 
-func (c *commandVolumeFsck) collectVolumeIds() (volumeIdToServer map[uint32]VInfo, err error) {
+func (c *commandVolumeFsck) collectVolumeIds(verbose bool) (volumeIdToServer map[uint32]VInfo, err error) {
 
 	volumeIdToServer = make(map[uint32]VInfo)
 	var resp *master_pb.VolumeListResponse
