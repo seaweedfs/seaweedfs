@@ -381,6 +381,14 @@ GlusterFS hashes the path and filename into ids, and assigned to virtual volumes
 
 [Back to TOC](#table-of-contents)
 
+### Compared to MooseFS ###
+
+MooseFS choose to neglect small file issue. From moosefs 3.0 manual, "even a small file will occupy 64KiB plus additionally 4KiB of checksums and 1KiB for the header", because it "was initially designed for keeping large amounts (like several thousands) of very big files"
+
+MooseFS Master Server keeps all meta data in memory. Same issue as HDFS namenode. 
+
+[Back to TOC](#table-of-contents)
+
 ### Compared to Ceph ###
 
 Ceph can be setup similar to SeaweedFS as a key->blob store. It is much more complicated, with the need to support layers on top of it. [Here is a more detailed comparison](https://github.com/chrislusf/seaweedfs/issues/120)
