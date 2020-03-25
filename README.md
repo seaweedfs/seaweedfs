@@ -370,6 +370,7 @@ The architectures are mostly the same. SeaweedFS aims to store and read files fa
 | SeaweedFS Filer| Linearly Scalable, Customizable | O(1) disk seek   | FUSE   | Yes      | Yes                       |
 | GlusterFS      | hashing          |                  | FUSE, NFS          |          |                           |
 | Ceph           | hashing + rules  |                  | FUSE               | Yes      |                           |
+| MooseFS        | in memory        |                  | FUSE               |       | No                          |
 
 [Back to TOC](#table-of-contents)
 
@@ -383,7 +384,7 @@ GlusterFS hashes the path and filename into ids, and assigned to virtual volumes
 
 ### Compared to MooseFS ###
 
-MooseFS choose to neglect small file issue. From moosefs 3.0 manual, "even a small file will occupy 64KiB plus additionally 4KiB of checksums and 1KiB for the header", because it "was initially designed for keeping large amounts (like several thousands) of very big files"
+MooseFS chooses to neglect small file issue. From moosefs 3.0 manual, "even a small file will occupy 64KiB plus additionally 4KiB of checksums and 1KiB for the header", because it "was initially designed for keeping large amounts (like several thousands) of very big files"
 
 MooseFS Master Server keeps all meta data in memory. Same issue as HDFS namenode. 
 
