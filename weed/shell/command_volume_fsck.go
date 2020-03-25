@@ -57,12 +57,6 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	c.env = commandEnv
 
-	// collect all volume id locations
-	volumeIdToServer, err := c.collectVolumeIds(*verbose)
-	if err != nil {
-		return fmt.Errorf("failed to collect all volume locations: %v", err)
-	}
-
 	// create a temp folder
 	tempFolder, err := ioutil.TempDir("", "sw_fsck")
 	if err != nil {
@@ -73,16 +67,22 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 	defer os.RemoveAll(tempFolder)
 
+	// collect all volume id locations
+	volumeIdToServer, err := c.collectVolumeIds(*verbose, writer)
+	if err != nil {
+		return fmt.Errorf("failed to collect all volume locations: %v", err)
+	}
+
 	// collect each volume file ids
 	for volumeId, vinfo := range volumeIdToServer {
-		err = c.collectOneVolumeFileIds(tempFolder, volumeId, vinfo, *verbose)
+		err = c.collectOneVolumeFileIds(tempFolder, volumeId, vinfo, *verbose, writer)
 		if err != nil {
 			return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, err)
 		}
 	}
 
 	// collect all filer file ids
-	if err = c.collectFilerFileIds(tempFolder, volumeIdToServer, *verbose); err != nil {
+	if err = c.collectFilerFileIds(tempFolder, volumeIdToServer, *verbose, writer); err != nil {
 		return fmt.Errorf("failed to collect file ids from filer: %v", err)
 	}
 
@@ -117,7 +117,11 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	return nil
 }
 
-func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, volumeId uint32, vinfo VInfo, verbose bool) error {
+func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, volumeId uint32, vinfo VInfo, verbose bool, writer io.Writer) error {
+
+	if verbose {
+		fmt.Fprintf(writer, "collecting volume %d file ids from %s ...\n", volumeId, vinfo.server)
+	}
 
 	return operation.WithVolumeServerClient(vinfo.server, c.env.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
@@ -145,7 +149,11 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, volumeId 
 
 }
 
-func (c *commandVolumeFsck) collectFilerFileIds(tempFolder string, volumeIdToServer map[uint32]VInfo, verbose bool) error {
+func (c *commandVolumeFsck) collectFilerFileIds(tempFolder string, volumeIdToServer map[uint32]VInfo, verbose bool, writer io.Writer) error {
+
+	if verbose {
+		fmt.Fprintf(writer, "collecting file ids from filer ...\n")
+	}
 
 	files := make(map[uint32]*os.File)
 	for vid := range volumeIdToServer {
@@ -231,7 +239,11 @@ type VInfo struct {
 	isEcVolume bool
 }
 
-func (c *commandVolumeFsck) collectVolumeIds(verbose bool) (volumeIdToServer map[uint32]VInfo, err error) {
+func (c *commandVolumeFsck) collectVolumeIds(verbose bool, writer io.Writer) (volumeIdToServer map[uint32]VInfo, err error) {
+
+	if verbose {
+		fmt.Fprintf(writer, "collecting volume id and locations from master ...\n")
+	}
 
 	volumeIdToServer = make(map[uint32]VInfo)
 	var resp *master_pb.VolumeListResponse
@@ -260,6 +272,9 @@ func (c *commandVolumeFsck) collectVolumeIds(verbose bool) (volumeIdToServer map
 		}
 	})
 
+	if verbose {
+		fmt.Fprintf(writer, "collected %d volumes and locations.\n", len(volumeIdToServer))
+	}
 	return
 }
 
