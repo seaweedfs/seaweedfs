@@ -98,6 +98,9 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		totalOrphanDataSize += orphanDataSize
 
 		if *applyPurging && len(orphanFileIds) > 0 {
+			if vinfo.isEcVolume {
+				fmt.Fprintf(writer, "Skip purging for Erasure Coded volumes.\n")
+			}
 			if err = c.purgeFileIdsForOneVolume(volumeId, orphanFileIds, writer); err != nil {
 				return fmt.Errorf("purge for volume %d: %v\n", volumeId, err)
 			}
