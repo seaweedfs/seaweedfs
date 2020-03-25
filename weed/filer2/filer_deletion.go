@@ -6,14 +6,14 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
-func (f *Filer) loopProcessingDeletion() {
-
-	lookupFunc := func(vids []string) (map[string]operation.LookupResult, error) {
+func LookupByMasterClientFn(masterClient *wdclient.MasterClient) func(vids []string) (map[string]operation.LookupResult, error) {
+	return func(vids []string) (map[string]operation.LookupResult, error) {
 		m := make(map[string]operation.LookupResult)
 		for _, vid := range vids {
-			locs, _ := f.MasterClient.GetVidLocations(vid)
+			locs, _ := masterClient.GetVidLocations(vid)
 			var locations []operation.Location
 			for _, loc := range locs {
 				locations = append(locations, operation.Location{
@@ -28,6 +28,11 @@ func (f *Filer) loopProcessingDeletion() {
 		}
 		return m, nil
 	}
+}
+
+func (f *Filer) loopProcessingDeletion() {
+
+	lookupFunc := LookupByMasterClientFn(f.MasterClient)
 
 	var deletionCount int
 	for {
