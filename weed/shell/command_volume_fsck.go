@@ -76,10 +76,10 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	// volume file ids substract filer file ids
 	var totalOrphanChunkCount, totalOrphanDataSize uint64
-	for volumeId, server := range volumeIdToServer {
+	for volumeId, vinfo := range volumeIdToServer {
 		orphanChunkCount, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(tempFolder, volumeId, writer)
 		if checkErr != nil {
-			return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, server, checkErr)
+			return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, checkErr)
 		}
 		totalOrphanChunkCount += orphanChunkCount
 		totalOrphanDataSize += orphanDataSize
@@ -117,7 +117,7 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, volumeId 
 
 		err = writeToFile(copyFileClient, getVolumeFileIdFile(tempFolder, volumeId))
 		if err != nil {
-			return fmt.Errorf("failed to copy %s.idx from %s: %v", volumeId, vinfo.server, err)
+			return fmt.Errorf("failed to copy %d.idx from %s: %v", volumeId, vinfo.server, err)
 		}
 
 		return nil
