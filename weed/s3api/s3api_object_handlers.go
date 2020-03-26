@@ -173,7 +173,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 		for _, object := range deleteObjects.Objects {
 			lastSeparator := strings.LastIndex(object.ObjectName, "/")
-			parentDirectoryPath, entryName, isDeleteData, isRecursive := "/", object.ObjectName, true, false
+			parentDirectoryPath, entryName, isDeleteData, isRecursive := "/", object.ObjectName, true, true
 			if lastSeparator > 0 && lastSeparator+1 < len(object.ObjectName) {
 				entryName = object.ObjectName[lastSeparator+1:]
 				parentDirectoryPath = "/" + object.ObjectName[:lastSeparator]
