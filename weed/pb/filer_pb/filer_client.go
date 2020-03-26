@@ -2,6 +2,7 @@ package filer_pb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -207,7 +208,7 @@ func MkFile(filerClient FilerClient, parentDirectoryPath string, fileName string
 func Remove(filerClient FilerClient, parentDirectoryPath string, name string, isDeleteData, isRecursive, ignoreRecursiveErr bool) error {
 	return filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
 
-		if _, err := client.DeleteEntry(context.Background(), &DeleteEntryRequest{
+		if resp, err := client.DeleteEntry(context.Background(), &DeleteEntryRequest{
 			Directory:            parentDirectoryPath,
 			Name:                 name,
 			IsDeleteData:         isDeleteData,
@@ -215,6 +216,10 @@ func Remove(filerClient FilerClient, parentDirectoryPath string, name string, is
 			IgnoreRecursiveError: ignoreRecursiveErr,
 		}); err != nil {
 			return err
+		} else {
+			if resp.Error != "" {
+				return errors.New(resp.Error)
+			}
 		}
 
 		return nil
