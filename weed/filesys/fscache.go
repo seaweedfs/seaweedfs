@@ -64,7 +64,7 @@ func (c *FsCache) DeleteFsNode(path util.FullPath) {
 		}
 	}
 	if t.parent != nil {
-		t.parent.deleteChild(t.name)
+		t.parent.disconnectChild(t)
 	}
 	t.deleteSelf()
 }
@@ -81,9 +81,8 @@ func (c *FsCache) Move(oldPath util.FullPath, newPath util.FullPath) *FsNode {
 		}
 	}
 	if src.parent != nil {
-		src.parent.deleteChild(src.name)
+		src.parent.disconnectChild(src)
 	}
-	src.parent = nil
 
 	// find new node
 	target := c.root
@@ -95,7 +94,7 @@ func (c *FsCache) Move(oldPath util.FullPath, newPath util.FullPath) *FsNode {
 	if dir, ok := src.node.(*Dir); ok {
 		dir.name = target.name // target is not Dir, but a shortcut
 	}
-	parent.deleteChild(target.name)
+	parent.disconnectChild(target)
 
 	target.deleteSelf()
 
@@ -150,10 +149,11 @@ func (n *FsNode) ensureChild(name string) *FsNode {
 	return t
 }
 
-func (n *FsNode) deleteChild(name string) {
+func (n *FsNode) disconnectChild(child *FsNode) {
 	n.childrenLock.Lock()
-	delete(n.children, name)
+	delete(n.children, child.name)
 	n.childrenLock.Unlock()
+	child.parent = nil
 }
 
 func (n *FsNode) deleteSelf() {
