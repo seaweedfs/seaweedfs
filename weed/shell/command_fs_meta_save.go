@@ -69,7 +69,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 	defer dst.Close()
 
-	return doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, func(outputChan chan interface{}) {
+	err = doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, func(outputChan chan interface{}) {
 		sizeBuf := make([]byte, 4)
 		for item := range outputChan {
 			b := item.([]byte)
@@ -87,6 +87,12 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 		outputChan <- bytes
 		return nil
 	})
+
+	if err == nil {
+		fmt.Fprintf(writer, "meta data for http://%s:%d%s is saved to %s\n", commandEnv.option.FilerHost, commandEnv.option.FilerPort, path, fileName)
+	}
+
+	return err
 
 }
 
