@@ -2,6 +2,7 @@ package filesys
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -12,8 +13,11 @@ import (
 
 func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirectory fs.Node) error {
 
+	newPath := util.NewFullPath(newDir.Path, req.NewName)
+	oldPath := util.NewFullPath(dir.Path, req.OldName)
+
 	newDir := newDirectory.(*Dir)
-	glog.V(4).Infof("dir Rename %s/%s => %s/%s", dir.Path, req.OldName, newDir.Path, req.NewName)
+	glog.V(4).Infof("dir Rename %s => %s", oldPath, newPath)
 
 	err := dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
@@ -26,7 +30,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 
 		_, err := client.AtomicRenameEntry(context.Background(), request)
 		if err != nil {
-			glog.V(0).Infof("dir Rename %s/%s => %s/%s : %v", dir.Path, req.OldName, newDir.Path, req.NewName, err)
+			glog.V(0).Infof("dir Rename %s => %s : %v", oldPath, newPath, err)
 			return fuse.EIO
 		}
 
@@ -35,29 +39,12 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 	})
 
 	if err == nil {
-		newPath := util.NewFullPath(newDir.Path, req.NewName)
-		oldPath := util.NewFullPath(dir.Path, req.OldName)
 		dir.wfs.cacheDelete(newPath)
 		dir.wfs.cacheDelete(oldPath)
 
-		oldFileNode := dir.wfs.getNode(oldPath, func() fs.Node {
-			return nil
-		})
-		newDirNode := dir.wfs.getNode(util.FullPath(newDir.Path), func() fs.Node {
-			return nil
-		})
-		// fmt.Printf("new path: %v dir: %v node:%+v\n", newPath, newDir.Path, newDirNode)
-		dir.wfs.forgetNode(newPath)
-		dir.wfs.forgetNode(oldPath)
-		if oldFileNode != nil && newDirNode != nil {
-			oldFile := oldFileNode.(*File)
-			oldFile.Name = req.NewName
-			oldFile.dir = newDirNode.(*Dir)
-			dir.wfs.getNode(newPath, func() fs.Node {
-				return oldFile
-			})
+		fmt.Printf("rename path: %v => %v\n", oldPath, newPath)
+		dir.wfs.fsNodeCache.Move(oldPath, newPath)
 
-		}
 	}
 
 	return err

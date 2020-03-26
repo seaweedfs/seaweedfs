@@ -86,7 +86,7 @@ func (dir *Dir) setRootDirAttributes(attr *fuse.Attr) {
 }
 
 func (dir *Dir) newFile(name string, entry *filer_pb.Entry) fs.Node {
-	return dir.wfs.getNode(util.NewFullPath(dir.Path, name), func() fs.Node {
+	return dir.wfs.fsNodeCache.EnsureFsNode(util.NewFullPath(dir.Path, name), func() fs.Node {
 		return &File{
 			Name:           name,
 			dir:            dir,
@@ -98,9 +98,11 @@ func (dir *Dir) newFile(name string, entry *filer_pb.Entry) fs.Node {
 }
 
 func (dir *Dir) newDirectory(fullpath util.FullPath, entry *filer_pb.Entry) fs.Node {
-	return dir.wfs.getNode(fullpath, func() fs.Node {
+
+	return dir.wfs.fsNodeCache.EnsureFsNode(fullpath, func() fs.Node {
 		return &Dir{Path: string(fullpath), wfs: dir.wfs, entry: entry}
 	})
+
 }
 
 func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
@@ -182,7 +184,7 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 	})
 
 	if err == nil {
-		node := dir.newDirectory(util.NewFullPath(dir.Path, req.Name), newEntry)
+		node := dir.newDirectory(util.NewFullPath(dir.Path(), req.Name), newEntry)
 		return node, nil
 	}
 
@@ -392,7 +394,7 @@ func (dir *Dir) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, resp 
 func (dir *Dir) Forget() {
 	glog.V(3).Infof("Forget dir %s", dir.Path)
 
-	dir.wfs.forgetNode(util.FullPath(dir.Path))
+	dir.wfs.fsNodeCache.DeleteFsNode(util.FullPath(dir.Path))
 }
 
 func (dir *Dir) maybeLoadEntry() error {

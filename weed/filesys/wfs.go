@@ -61,9 +61,10 @@ type WFS struct {
 	stats statsCache
 
 	// nodes, protected by nodesLock
-	nodesLock sync.Mutex
-	nodes     map[uint64]fs.Node
-	root      fs.Node
+	nodesLock   sync.Mutex
+	nodes       map[uint64]fs.Node
+	root        fs.Node
+	fsNodeCache *FsCache
 }
 type statsCache struct {
 	filer_pb.StatisticsResponse
@@ -84,9 +85,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	}
 
 	wfs.root = &Dir{Path: wfs.option.FilerMountRootPath, wfs: wfs}
-	wfs.getNode(util.FullPath(wfs.option.FilerMountRootPath), func() fs.Node {
-		return wfs.root
-	})
+	wfs.fsNodeCache = newFsCache(wfs.root)
 
 	return wfs
 }
@@ -233,28 +232,6 @@ func (wfs *WFS) cacheSet(path util.FullPath, entry *filer_pb.Entry, ttl time.Dur
 }
 func (wfs *WFS) cacheDelete(path util.FullPath) {
 	wfs.listDirectoryEntriesCache.Delete(string(path))
-}
-
-func (wfs *WFS) getNode(fullpath util.FullPath, fn func() fs.Node) fs.Node {
-	wfs.nodesLock.Lock()
-	defer wfs.nodesLock.Unlock()
-
-	node, found := wfs.nodes[fullpath.AsInode()]
-	if found {
-		return node
-	}
-	node = fn()
-	if node != nil {
-		wfs.nodes[fullpath.AsInode()] = node
-	}
-	return node
-}
-
-func (wfs *WFS) forgetNode(fullpath util.FullPath) {
-	wfs.nodesLock.Lock()
-	defer wfs.nodesLock.Unlock()
-
-	delete(wfs.nodes, fullpath.AsInode())
 }
 
 func (wfs *WFS) AdjustedUrl(hostAndPort string) string {

@@ -38,3 +38,11 @@ func (fp FullPath) Child(name string) FullPath {
 func (fp FullPath) AsInode() uint64 {
 	return uint64(HashStringToLong(string(fp)))
 }
+
+// split, but skipping the root
+func (fp FullPath) Split() []string {
+	if fp == "" || fp == "/"{
+		return []string{}
+	}
+	return strings.Split(string(fp)[1:], "/")
+}
