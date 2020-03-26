@@ -11,6 +11,12 @@ func TestPathSplit(t *testing.T) {
 	if len(parts) != 0 {
 		t.Errorf("expecting an empty list, but getting %d", len(parts))
 	}
+
+	parts = util.FullPath("/readme.md").Split()
+	if len(parts) != 1 {
+		t.Errorf("expecting an empty list, but getting %d", len(parts))
+	}
+
 }
 
 func TestFsCache(t *testing.T) {

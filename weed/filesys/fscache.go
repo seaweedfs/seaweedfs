@@ -95,7 +95,7 @@ func (c *FsCache) Move(oldPath util.FullPath, newPath util.FullPath) *FsNode {
 		dir.name = target.name // target is not Dir, but a shortcut
 	}
 	if f, ok := src.node.(*File); ok {
-		f.Name = target.name // target is not Dir, but a shortcut
+		f.Name = target.name
 		if f.entry != nil {
 			f.entry.Name = f.Name
 		}
