@@ -191,7 +191,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		}
 
 		request := &filer_pb.CreateEntryRequest{
-			Directory: fh.f.dir.Path,
+			Directory: fh.f.dir.FullPath(),
 			Entry:     fh.f.entry,
 		}
 

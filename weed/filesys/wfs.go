@@ -60,9 +60,6 @@ type WFS struct {
 
 	stats statsCache
 
-	// nodes, protected by nodesLock
-	nodesLock   sync.Mutex
-	nodes       map[uint64]fs.Node
 	root        fs.Node
 	fsNodeCache *FsCache
 }
@@ -81,10 +78,9 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 				return make([]byte, option.ChunkSizeLimit)
 			},
 		},
-		nodes: make(map[uint64]fs.Node),
 	}
 
-	wfs.root = &Dir{Path: wfs.option.FilerMountRootPath, wfs: wfs}
+	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs}
 	wfs.fsNodeCache = newFsCache(wfs.root)
 
 	return wfs

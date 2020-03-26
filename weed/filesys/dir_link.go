@@ -17,10 +17,10 @@ var _ = fs.NodeReadlinker(&File{})
 
 func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node, error) {
 
-	glog.V(3).Infof("Symlink: %v/%v to %v", dir.Path, req.NewName, req.Target)
+	glog.V(3).Infof("Symlink: %v/%v to %v", dir.FullPath(), req.NewName, req.Target)
 
 	request := &filer_pb.CreateEntryRequest{
-		Directory: dir.Path,
+		Directory: dir.FullPath(),
 		Entry: &filer_pb.Entry{
 			Name:        req.NewName,
 			IsDirectory: false,
@@ -37,7 +37,7 @@ func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node,
 
 	err := dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		if err := filer_pb.CreateEntry(client, request); err != nil {
-			glog.V(0).Infof("symlink %s/%s: %v", dir.Path, req.NewName, err)
+			glog.V(0).Infof("symlink %s/%s: %v", dir.FullPath(), req.NewName, err)
 			return fuse.EIO
 		}
 		return nil
@@ -59,7 +59,7 @@ func (file *File) Readlink(ctx context.Context, req *fuse.ReadlinkRequest) (stri
 		return "", fuse.Errno(syscall.EINVAL)
 	}
 
-	glog.V(3).Infof("Readlink: %v/%v => %v", file.dir.Path, file.Name, file.entry.Attributes.SymlinkTarget)
+	glog.V(3).Infof("Readlink: %v/%v => %v", file.dir.FullPath(), file.Name, file.entry.Attributes.SymlinkTarget)
 
 	return file.entry.Attributes.SymlinkTarget, nil
 

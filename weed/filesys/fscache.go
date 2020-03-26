@@ -1,6 +1,8 @@
 package filesys
 
 import (
+	"sync"
+
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/seaweedfs/fuse/fs"
 )
@@ -9,10 +11,11 @@ type FsCache struct {
 	root *FsNode
 }
 type FsNode struct {
-	parent   *FsNode
-	node     fs.Node
-	name     string
-	children map[string]*FsNode
+	parent       *FsNode
+	node         fs.Node
+	name         string
+	childrenLock sync.RWMutex
+	children     map[string]*FsNode
 }
 
 func newFsCache(root fs.Node) *FsCache {
@@ -89,6 +92,9 @@ func (c *FsCache) Move(oldPath util.FullPath, newPath util.FullPath) *FsNode {
 	}
 	parent := target.parent
 	src.name = target.name
+	if dir, ok := src.node.(*Dir); ok {
+		dir.name = target.name // target is not Dir, but a shortcut
+	}
 	parent.deleteChild(target.name)
 
 	target.deleteSelf()
@@ -104,10 +110,18 @@ func (n *FsNode) connectToParent(parent *FsNode) {
 	if oldNode != nil {
 		oldNode.deleteSelf()
 	}
+	if dir, ok := n.node.(*Dir); ok {
+		dir.parent = parent.node.(*Dir)
+	}
+	n.childrenLock.Lock()
 	parent.children[n.name] = n
+	n.childrenLock.Unlock()
 }
 
 func (n *FsNode) findChild(name string) *FsNode {
+	n.childrenLock.RLock()
+	defer n.childrenLock.RUnlock()
+
 	child, found := n.children[name]
 	if found {
 		return child
@@ -116,6 +130,9 @@ func (n *FsNode) findChild(name string) *FsNode {
 }
 
 func (n *FsNode) ensureChild(name string) *FsNode {
+	n.childrenLock.Lock()
+	defer n.childrenLock.Unlock()
+
 	if n.children == nil {
 		n.children = make(map[string]*FsNode)
 	}
@@ -134,14 +151,20 @@ func (n *FsNode) ensureChild(name string) *FsNode {
 }
 
 func (n *FsNode) deleteChild(name string) {
+	n.childrenLock.Lock()
 	delete(n.children, name)
+	n.childrenLock.Unlock()
 }
 
 func (n *FsNode) deleteSelf() {
+	n.childrenLock.Lock()
 	for _, child := range n.children {
 		child.deleteSelf()
 	}
+	n.children = nil
+	n.childrenLock.Unlock()
+
 	n.node = nil
 	n.parent = nil
-	n.children = nil
+
 }

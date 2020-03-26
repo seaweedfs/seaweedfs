@@ -38,7 +38,7 @@ type File struct {
 }
 
 func (file *File) fullpath() util.FullPath {
-	return util.NewFullPath(file.dir.Path, file.Name)
+	return util.NewFullPath(file.dir.FullPath(), file.Name)
 }
 
 func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
@@ -211,21 +211,21 @@ func (file *File) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, res
 func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 	// fsync works at OS level
 	// write the file chunks to the filerGrpcAddress
-	glog.V(3).Infof("%s/%s fsync file %+v", file.dir.Path, file.Name, req)
+	glog.V(3).Infof("%s/%s fsync file %+v", file.dir.FullPath(), file.Name, req)
 
 	return nil
 }
 
 func (file *File) Forget() {
-	glog.V(3).Infof("Forget file %s/%s", file.dir.Path, file.Name)
+	glog.V(3).Infof("Forget file %s/%s", file.dir.FullPath(), file.Name)
 
-	file.wfs.fsNodeCache.DeleteFsNode(util.NewFullPath(file.dir.Path, file.Name))
+	file.wfs.fsNodeCache.DeleteFsNode(util.NewFullPath(file.dir.FullPath(), file.Name))
 
 }
 
 func (file *File) maybeLoadEntry(ctx context.Context) error {
 	if file.entry == nil || file.isOpen <= 0 {
-		entry, err := file.wfs.maybeLoadEntry(file.dir.Path, file.Name)
+		entry, err := file.wfs.maybeLoadEntry(file.dir.FullPath(), file.Name)
 		if err != nil {
 			return err
 		}
@@ -266,14 +266,14 @@ func (file *File) saveEntry() error {
 	return file.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
-			Directory: file.dir.Path,
+			Directory: file.dir.FullPath(),
 			Entry:     file.entry,
 		}
 
 		glog.V(1).Infof("save file entry: %v", request)
 		_, err := client.UpdateEntry(context.Background(), request)
 		if err != nil {
-			glog.V(0).Infof("UpdateEntry file %s/%s: %v", file.dir.Path, file.Name, err)
+			glog.V(0).Infof("UpdateEntry file %s/%s: %v", file.dir.FullPath(), file.Name, err)
 			return fuse.EIO
 		}
 

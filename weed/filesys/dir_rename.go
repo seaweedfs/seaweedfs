@@ -13,18 +13,19 @@ import (
 
 func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirectory fs.Node) error {
 
-	newPath := util.NewFullPath(newDir.Path, req.NewName)
-	oldPath := util.NewFullPath(dir.Path, req.OldName)
-
 	newDir := newDirectory.(*Dir)
+
+	newPath := util.NewFullPath(newDir.FullPath(), req.NewName)
+	oldPath := util.NewFullPath(dir.FullPath(), req.OldName)
+
 	glog.V(4).Infof("dir Rename %s => %s", oldPath, newPath)
 
 	err := dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AtomicRenameEntryRequest{
-			OldDirectory: dir.Path,
+			OldDirectory: dir.FullPath(),
 			OldName:      req.OldName,
-			NewDirectory: newDir.Path,
+			NewDirectory: newDir.FullPath(),
 			NewName:      req.NewName,
 		}
 
