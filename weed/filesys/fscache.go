@@ -94,6 +94,12 @@ func (c *FsCache) Move(oldPath util.FullPath, newPath util.FullPath) *FsNode {
 	if dir, ok := src.node.(*Dir); ok {
 		dir.name = target.name // target is not Dir, but a shortcut
 	}
+	if f, ok := src.node.(*File); ok {
+		f.Name = target.name // target is not Dir, but a shortcut
+		if f.entry != nil {
+			f.entry.Name = f.Name
+		}
+	}
 	parent.disconnectChild(target)
 
 	target.deleteSelf()
