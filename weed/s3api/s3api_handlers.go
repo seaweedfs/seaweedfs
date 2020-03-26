@@ -50,7 +50,6 @@ func (s3a *S3ApiServer) AdjustedUrl(hostAndPort string) string {
 	return hostAndPort
 }
 
-
 // If none of the http routes match respond with MethodNotAllowed
 func notFoundHandler(w http.ResponseWriter, r *http.Request) {
 	glog.V(0).Infof("unsupported %s %s", r.Method, r.RequestURI)

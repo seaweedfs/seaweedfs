@@ -91,7 +91,6 @@ func (ce *CommandEnv) AdjustedUrl(hostAndPort string) string {
 	return hostAndPort
 }
 
-
 func parseFilerUrl(entryPath string) (filerServer string, filerPort int64, path string, err error) {
 	if strings.HasPrefix(entryPath, "http") {
 		var u *url.URL

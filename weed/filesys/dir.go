@@ -102,7 +102,7 @@ func (dir *Dir) newFile(name string, entry *filer_pb.Entry) fs.Node {
 func (dir *Dir) newDirectory(fullpath util.FullPath, entry *filer_pb.Entry) fs.Node {
 
 	return dir.wfs.fsNodeCache.EnsureFsNode(fullpath, func() fs.Node {
-		return &Dir{name: entry.Name, wfs: dir.wfs, entry: entry, parent: dir,}
+		return &Dir{name: entry.Name, wfs: dir.wfs, entry: entry, parent: dir}
 	})
 
 }
