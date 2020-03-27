@@ -2,7 +2,6 @@ package filesys
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -43,7 +42,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 		dir.wfs.cacheDelete(newPath)
 		dir.wfs.cacheDelete(oldPath)
 
-		fmt.Printf("rename path: %v => %v\n", oldPath, newPath)
+		// fmt.Printf("rename path: %v => %v\n", oldPath, newPath)
 		dir.wfs.fsNodeCache.Move(oldPath, newPath)
 
 	}

@@ -108,7 +108,6 @@ func (c *ChunkStreamReader) Read(p []byte) (n int, err error) {
 			return 0, io.EOF
 		}
 		chunkView := c.chunkViews[c.chunkIndex]
-		println("fetch1")
 		c.fetchChunkToBuffer(chunkView)
 		c.chunkIndex++
 	}
