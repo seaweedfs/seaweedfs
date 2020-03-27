@@ -293,13 +293,22 @@ func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.Delet
 
 func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsRequest) (resp *filer_pb.StatisticsResponse, err error) {
 
-	input := &master_pb.StatisticsRequest{
-		Replication: req.Replication,
-		Collection:  req.Collection,
-		Ttl:         req.Ttl,
-	}
+	var output *master_pb.StatisticsResponse
 
-	output, err := operation.Statistics(fs.filer.GetMaster(), fs.grpcDialOption, input)
+	err = fs.filer.MasterClient.WithClient(func(masterClient master_pb.SeaweedClient) error {
+		grpcResponse, grpcErr := masterClient.Statistics(context.Background(), &master_pb.StatisticsRequest{
+			Replication: req.Replication,
+			Collection:  req.Collection,
+			Ttl:         req.Ttl,
+		})
+		if grpcErr != nil {
+			return grpcErr
+		}
+
+		output = grpcResponse
+		return nil
+	})
+
 	if err != nil {
 		return nil, err
 	}
