@@ -78,9 +78,13 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 	contentIsGzipped := isInputGzipped
 	shouldGzipNow := false
 	if !isInputGzipped {
-		if shouldBeZipped, iAmSure := util.IsGzippableFileType(filepath.Base(filename), mtype); mtype == "" || iAmSure && shouldBeZipped {
+		if shouldBeZipped, iAmSure := util.IsGzippableFileType(filepath.Base(filename), mtype); iAmSure && shouldBeZipped {
 			shouldGzipNow = true
 			contentIsGzipped = true
+		} else if len(data) > 128 {
+			var compressed []byte
+			compressed, err = util.GzipData(data[0:128])
+			shouldGzipNow = len(compressed)*10 < 128*9 // can not compress to less than 90%
 		}
 	}
 
@@ -90,7 +94,12 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 	// this could be double copying
 	clearDataLen = len(data)
 	if shouldGzipNow {
-		data, err = util.GzipData(data)
+		compressed, compressErr := util.GzipData(data)
+		// fmt.Printf("data is compressed from %d ==> %d\n", len(data), len(compressed))
+		if compressErr == nil {
+			data = compressed
+			contentIsGzipped = true
+		}
 	} else if isInputGzipped {
 		// just to get the clear data length
 		clearData, err := util.UnGzipData(data)
