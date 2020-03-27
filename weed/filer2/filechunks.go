@@ -3,6 +3,7 @@ package filer2
 import (
 	"fmt"
 	"hash/fnv"
+	"math"
 	"sort"
 	"sync"
 
@@ -86,6 +87,12 @@ func ViewFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int64) (vie
 func ViewFromVisibleIntervals(visibles []VisibleInterval, offset int64, size int64) (views []*ChunkView) {
 
 	stop := offset + size
+	if size == math.MaxInt64 {
+		stop = math.MaxInt64
+	}
+	if stop < offset {
+		stop = math.MaxInt64
+	}
 
 	for _, chunk := range visibles {
 

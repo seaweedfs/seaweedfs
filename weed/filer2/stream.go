@@ -61,7 +61,7 @@ var _ = io.ReadSeeker(&ChunkStreamReader{})
 
 func NewChunkStreamReaderFromFiler(masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
 
-	chunkViews := ViewFromChunks(chunks, 0, math.MaxInt64)
+	chunkViews := ViewFromChunks(chunks, 0, math.MaxInt32)
 
 	return &ChunkStreamReader{
 		chunkViews: chunkViews,
