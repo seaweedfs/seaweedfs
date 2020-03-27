@@ -121,8 +121,10 @@ func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.Statistic
 	volumeLayout := ms.Topo.GetVolumeLayout(req.Collection, replicaPlacement, ttl)
 	stats := volumeLayout.Stats()
 
+	totalSize := ms.Topo.GetMaxVolumeCount() * int64(ms.option.VolumeSizeLimitMB) * 1024 * 1024
+
 	resp := &master_pb.StatisticsResponse{
-		TotalSize: stats.TotalSize,
+		TotalSize: uint64(totalSize),
 		UsedSize:  stats.UsedSize,
 		FileCount: stats.FileCount,
 	}
