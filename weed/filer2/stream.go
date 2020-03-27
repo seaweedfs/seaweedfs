@@ -2,8 +2,6 @@ package filer2
 
 import (
 	"bytes"
-	"context"
-	"fmt"
 	"io"
 	"math"
 	"strings"
@@ -67,37 +65,6 @@ func NewChunkStreamReaderFromFiler(masterClient *wdclient.MasterClient, chunks [
 		chunkViews: chunkViews,
 		lookupFileId: func(fileId string) (targetUrl string, err error) {
 			return masterClient.LookupFileId(fileId)
-		},
-	}
-}
-
-func NewChunkStreamReaderFromClient(filerClient filer_pb.FilerClient, chunkViews []*ChunkView) *ChunkStreamReader {
-
-	return &ChunkStreamReader{
-		chunkViews: chunkViews,
-		lookupFileId: func(fileId string) (targetUrl string, err error) {
-			err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-				vid := VolumeId(fileId)
-				resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
-					VolumeIds: []string{vid},
-				})
-				if err != nil {
-					return err
-				}
-
-				locations := resp.LocationsMap[vid]
-				if locations == nil || len(locations.Locations) == 0 {
-					glog.V(0).Infof("failed to locate %s", fileId)
-					return fmt.Errorf("failed to locate %s", fileId)
-				}
-
-				volumeServerAddress := filerClient.AdjustedUrl(locations.Locations[0].Url)
-
-				targetUrl = fmt.Sprintf("http://%s/%s", volumeServerAddress, fileId)
-
-				return nil
-			})
-			return
 		},
 	}
 }

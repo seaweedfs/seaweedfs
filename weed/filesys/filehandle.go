@@ -3,7 +3,6 @@ package filesys
 import (
 	"context"
 	"fmt"
-	"io"
 	"math"
 	"mime"
 	"path"
@@ -30,6 +29,7 @@ type FileHandle struct {
 	NodeId    fuse.NodeID    // file or directory the request is about
 	Uid       uint32         // user ID of process making request
 	Gid       uint32         // group ID of process making request
+
 }
 
 func newFileHandle(file *File, uid, gid uint32) *FileHandle {
@@ -89,13 +89,13 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		fh.f.entryViewCache = filer2.NonOverlappingVisibleIntervals(fh.f.entry.Chunks)
 		fh.f.reader = nil
 	}
+
 	if fh.f.reader == nil {
-		chunkViews := filer2.ViewFromVisibleIntervals(fh.f.entryViewCache, 0, math.MaxInt64)
-		fh.f.reader = filer2.NewChunkStreamReaderFromClient(fh.f.wfs, chunkViews)
+		chunkViews := filer2.ViewFromVisibleIntervals(fh.f.entryViewCache, 0, math.MaxInt32)
+		fh.f.reader = filer2.NewChunkReaderAtFromClient(fh.f.wfs, chunkViews)
 	}
 
-	fh.f.reader.Seek(offset, io.SeekStart)
-	totalRead, err := fh.f.reader.Read(buff)
+	totalRead, err := fh.f.reader.ReadAt(buff, offset)
 
 	if err != nil {
 		glog.Errorf("file handle read %s: %v", fh.f.fullpath(), err)
@@ -168,8 +168,8 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		return fuse.EIO
 	}
 
-	fh.f.addChunks(chunks)
 	if len(chunks) > 0 {
+		fh.f.addChunks(chunks)
 		fh.dirtyMetadata = true
 	}
 

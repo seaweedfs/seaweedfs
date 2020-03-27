@@ -34,7 +34,7 @@ type File struct {
 	entry          *filer_pb.Entry
 	entryViewCache []filer2.VisibleInterval
 	isOpen         int
-	reader         io.ReadSeeker
+	reader         io.ReaderAt
 }
 
 func (file *File) fullpath() util.FullPath {
@@ -249,6 +249,7 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 		file.entryViewCache = newVisibles
 		newVisibles = t
 	}
+
 	file.reader = nil
 
 	glog.V(3).Infof("%s existing %d chunks adds %d more", file.fullpath(), len(file.entry.Chunks), len(chunks))

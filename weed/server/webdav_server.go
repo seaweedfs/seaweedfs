@@ -90,7 +90,7 @@ type WebDavFile struct {
 	off            int64
 	entry          *filer_pb.Entry
 	entryViewCache []filer2.VisibleInterval
-	reader         io.ReadSeeker
+	reader         io.ReaderAt
 }
 
 func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
@@ -475,12 +475,11 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 		f.reader = nil
 	}
 	if f.reader == nil {
-		chunkViews := filer2.ViewFromVisibleIntervals(f.entryViewCache, 0, math.MaxInt64)
-		f.reader = filer2.NewChunkStreamReaderFromClient(f.fs, chunkViews)
+		chunkViews := filer2.ViewFromVisibleIntervals(f.entryViewCache, 0, math.MaxInt32)
+		f.reader = filer2.NewChunkReaderAtFromClient(f.fs, chunkViews)
 	}
 
-	f.reader.Seek(f.off, io.SeekStart)
-	readSize, err = f.reader.Read(p)
+	readSize, err = f.reader.ReadAt(p, f.off)
 
 	glog.V(3).Infof("WebDavFileSystem.Read %v: [%d,%d)", f.name, f.off, f.off+int64(readSize))
 	f.off += int64(readSize)
