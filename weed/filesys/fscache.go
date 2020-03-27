@@ -99,7 +99,6 @@ func (c *FsCache) Move(oldPath util.FullPath, newPath util.FullPath) *FsNode {
 		if f.entry != nil {
 			f.entry.Name = f.Name
 		}
-		f.dir = target.parent.node.(*Dir)
 	}
 	parent.disconnectChild(target)
 
@@ -118,6 +117,9 @@ func (n *FsNode) connectToParent(parent *FsNode) {
 	}
 	if dir, ok := n.node.(*Dir); ok {
 		dir.parent = parent.node.(*Dir)
+	}
+	if f, ok := n.node.(*File); ok {
+		f.dir = parent.node.(*Dir)
 	}
 	n.childrenLock.Lock()
 	parent.children[n.name] = n
