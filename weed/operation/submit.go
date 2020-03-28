@@ -191,7 +191,7 @@ func (fi FilePart) Upload(maxMB int, master string, usePublicUrl bool, jwt secur
 			cm.DeleteChunks(master, usePublicUrl, grpcDialOption)
 		}
 	} else {
-		ret, e := Upload(fileUrl, baseName, false, fi.Reader, false, fi.MimeType, nil, jwt)
+		ret, e, _ := Upload(fileUrl, baseName, false, fi.Reader, false, fi.MimeType, nil, jwt)
 		if e != nil {
 			return 0, e
 		}
@@ -204,7 +204,7 @@ func upload_one_chunk(filename string, reader io.Reader, master,
 	fileUrl string, jwt security.EncodedJwt,
 ) (size uint32, e error) {
 	glog.V(4).Info("Uploading part ", filename, " to ", fileUrl, "...")
-	uploadResult, uploadError := Upload(fileUrl, filename, false, reader, false, "", nil, jwt)
+	uploadResult, uploadError, _ := Upload(fileUrl, filename, false, reader, false, "", nil, jwt)
 	if uploadError != nil {
 		return 0, uploadError
 	}
