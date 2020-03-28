@@ -73,7 +73,7 @@ type ChunkView struct {
 	LogicOffset int64
 	IsFullChunk bool
 	CipherKey   []byte
-	isGzipped   bool
+	IsGzipped   bool
 }
 
 func ViewFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int64) (views []*ChunkView) {
@@ -105,7 +105,7 @@ func ViewFromVisibleIntervals(visibles []VisibleInterval, offset int64, size int
 				LogicOffset: offset,
 				IsFullChunk: isFullChunk,
 				CipherKey:   chunk.cipherKey,
-				isGzipped:   chunk.isGzipped,
+				IsGzipped:   chunk.isGzipped,
 			})
 			offset = min(chunk.stop, stop)
 		}
