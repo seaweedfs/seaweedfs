@@ -11,9 +11,13 @@ type ChunkCache struct {
 	cache *ccache.Cache
 }
 
-func NewChunkCache() *ChunkCache {
+func NewChunkCache(maxEntries int64) *ChunkCache {
+	pruneCount := maxEntries >> 3
+	if pruneCount <= 0 {
+		pruneCount = 500
+	}
 	return &ChunkCache{
-		cache: ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
+		cache: ccache.New(ccache.Configure().MaxSize(maxEntries).ItemsToPrune(uint32(pruneCount))),
 	}
 }
 

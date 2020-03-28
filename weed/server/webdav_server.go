@@ -99,7 +99,7 @@ type WebDavFile struct {
 func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 	return &WebDavFileSystem{
 		option:     option,
-		chunkCache: pb_cache.NewChunkCache(),
+		chunkCache: pb_cache.NewChunkCache(1000),
 	}, nil
 }
 

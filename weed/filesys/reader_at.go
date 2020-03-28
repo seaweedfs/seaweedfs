@@ -57,6 +57,7 @@ func NewChunkReaderAtFromClient(filerClient filer_pb.FilerClient, chunkViews []*
 			return
 		},
 		bufferOffset: -1,
+		chunkCache:   chunkCache,
 	}
 }
 
