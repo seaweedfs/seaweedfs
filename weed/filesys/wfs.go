@@ -15,6 +15,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/pb_cache"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
@@ -62,6 +63,8 @@ type WFS struct {
 
 	root        fs.Node
 	fsNodeCache *FsCache
+
+	chunkCache *pb_cache.ChunkCache
 }
 type statsCache struct {
 	filer_pb.StatisticsResponse
@@ -78,6 +81,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 				return make([]byte, option.ChunkSizeLimit)
 			},
 		},
+		chunkCache: pb_cache.NewChunkCache(),
 	}
 
 	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs}

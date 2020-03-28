@@ -1,4 +1,4 @@
-package filer2
+package filesys
 
 import (
 	"bytes"
@@ -7,30 +7,34 @@ import (
 	"io"
 	"sync"
 
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/pb_cache"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
 type ChunkReadAt struct {
 	masterClient *wdclient.MasterClient
-	chunkViews   []*ChunkView
+	chunkViews   []*filer2.ChunkView
 	buffer       []byte
 	bufferOffset int64
 	lookupFileId func(fileId string) (targetUrl string, err error)
 	readerLock   sync.Mutex
+
+	chunkCache *pb_cache.ChunkCache
 }
 
 // var _ = io.ReaderAt(&ChunkReadAt{})
 
-func NewChunkReaderAtFromClient(filerClient filer_pb.FilerClient, chunkViews   []*ChunkView) *ChunkReadAt {
+func NewChunkReaderAtFromClient(filerClient filer_pb.FilerClient, chunkViews []*filer2.ChunkView, chunkCache *pb_cache.ChunkCache) *ChunkReadAt {
 
 	return &ChunkReadAt{
 		chunkViews: chunkViews,
 		lookupFileId: func(fileId string) (targetUrl string, err error) {
 			err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-				vid := VolumeId(fileId)
+				vid := filer2.VolumeId(fileId)
 				resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
 					VolumeIds: []string{vid},
 				})
@@ -61,7 +65,6 @@ func (c *ChunkReadAt) ReadAt(p []byte, offset int64) (n int, err error) {
 	c.readerLock.Lock()
 	defer c.readerLock.Unlock()
 
-
 	for n < len(p) && err == nil {
 		readCount, readErr := c.doReadAt(p[n:], offset+int64(n))
 		n += readCount
@@ -80,7 +83,8 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 		if chunk.LogicOffset <= offset && offset < chunk.LogicOffset+int64(chunk.Size) {
 			found = true
 			if c.bufferOffset != chunk.LogicOffset {
-				c.fetchChunkToBuffer(chunk)
+				c.buffer, err = c.fetchChunkData(chunk)
+				c.bufferOffset = chunk.LogicOffset
 			}
 			break
 		}
@@ -97,27 +101,34 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
 }
 
-func (c *ChunkReadAt) fetchChunkToBuffer(chunkView *ChunkView) error {
+func (c *ChunkReadAt) fetchChunkData(chunkView *filer2.ChunkView) ([]byte, error) {
 
-	// fmt.Printf("fetching %s [%d,%d)\n", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
+	fmt.Printf("fetching %s [%d,%d)\n", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
+
+	chunkData := c.chunkCache.GetChunk(chunkView.FileId)
+	if chunkData != nil {
+		glog.V(3).Infof("cache hit %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
+		return chunkData, nil
+	}
 
 	urlString, err := c.lookupFileId(chunkView.FileId)
 	if err != nil {
 		glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
-		return err
+		return nil, err
 	}
 	var buffer bytes.Buffer
-	err = util.ReadUrlAsStream(urlString, chunkView.CipherKey, chunkView.isGzipped, chunkView.IsFullChunk, chunkView.Offset, int(chunkView.Size), func(data []byte) {
+	err = util.ReadUrlAsStream(urlString, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk, chunkView.Offset, int(chunkView.Size), func(data []byte) {
 		buffer.Write(data)
 	})
 	if err != nil {
 		glog.V(1).Infof("read %s failed, err: %v", chunkView.FileId, err)
-		return err
+		return nil, err
 	}
-	c.buffer = buffer.Bytes()
-	c.bufferOffset = chunkView.LogicOffset
 
 	glog.V(3).Infof("read %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
 
-	return nil
+	chunkData = buffer.Bytes()
+	c.chunkCache.SetChunk(chunkView.FileId, chunkData)
+
+	return chunkData, nil
 }

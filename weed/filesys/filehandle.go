@@ -92,7 +92,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 	if fh.f.reader == nil {
 		chunkViews := filer2.ViewFromVisibleIntervals(fh.f.entryViewCache, 0, math.MaxInt32)
-		fh.f.reader = filer2.NewChunkReaderAtFromClient(fh.f.wfs, chunkViews)
+		fh.f.reader = NewChunkReaderAtFromClient(fh.f.wfs, chunkViews, fh.f.wfs.chunkCache)
 	}
 
 	totalRead, err := fh.f.reader.ReadAt(buff, offset)
@@ -153,6 +153,8 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 		fh.dirtyPages.releaseResource()
 		fh.f.wfs.ReleaseHandle(fh.f.fullpath(), fuse.HandleID(fh.handle))
 	}
+	fh.f.entryViewCache = nil
+	fh.f.reader = nil
 
 	return nil
 }

@@ -13,9 +13,11 @@ import (
 	"golang.org/x/net/webdav"
 	"google.golang.org/grpc"
 
+	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/pb_cache"
 	"github.com/chrislusf/seaweedfs/weed/util"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
@@ -66,6 +68,7 @@ type WebDavFileSystem struct {
 	secret         security.SigningKey
 	filer          *filer2.Filer
 	grpcDialOption grpc.DialOption
+	chunkCache     *pb_cache.ChunkCache
 }
 
 type FileInfo struct {
@@ -95,7 +98,8 @@ type WebDavFile struct {
 
 func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 	return &WebDavFileSystem{
-		option: option,
+		option:     option,
+		chunkCache: pb_cache.NewChunkCache(),
 	}, nil
 }
 
@@ -476,7 +480,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	}
 	if f.reader == nil {
 		chunkViews := filer2.ViewFromVisibleIntervals(f.entryViewCache, 0, math.MaxInt32)
-		f.reader = filer2.NewChunkReaderAtFromClient(f.fs, chunkViews)
+		f.reader = filesys.NewChunkReaderAtFromClient(f.fs, chunkViews, f.fs.chunkCache)
 	}
 
 	readSize, err = f.reader.ReadAt(p, f.off)

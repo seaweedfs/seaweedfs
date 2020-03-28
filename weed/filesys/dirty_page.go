@@ -183,6 +183,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 		glog.V(0).Infof("upload failure %v to %s: %v", pages.f.Name, fileUrl, err)
 		return nil, fmt.Errorf("upload result: %v", uploadResult.Error)
 	}
+	pages.f.wfs.chunkCache.SetChunk(fileId, data)
 
 	return &filer_pb.FileChunk{
 		FileId:    fileId,
