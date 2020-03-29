@@ -10,13 +10,13 @@ import org.apache.http.util.EntityUtils;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.io.OutputStream;
-import java.nio.ByteBuffer;
 import java.util.*;
 
 public class SeaweedRead {
 
     // private static final Logger LOG = LoggerFactory.getLogger(SeaweedRead.class);
+
+    static ChunkCache chunkCache = new ChunkCache(1000);
 
     // returns bytesRead
     public static long read(FilerGrpcClient filerGrpcClient, List<VisibleInterval> visibleIntervals,
@@ -57,42 +57,23 @@ public class SeaweedRead {
     }
 
     private static int readChunkView(long position, byte[] buffer, int startOffset, ChunkView chunkView, FilerProto.Locations locations) throws IOException {
-        if (chunkView.cipherKey != null) {
-            return readEncryptedChunkView(position, buffer, startOffset, chunkView, locations);
+
+        byte[] chunkData = chunkCache.getChunk(chunkView.fileId);
+
+        if (chunkData == null) {
+            chunkData = doFetchFullChunkData(chunkView, locations);
         }
 
-        // TODO: read the chunk and returns the chunk view data here
+        int len = (int) (chunkView.logicOffset - position + chunkView.size);
+        System.arraycopy(chunkData, (int) chunkView.offset, buffer, startOffset, len);
 
-        HttpClient client = new DefaultHttpClient();
-        HttpGet request = new HttpGet(
-                String.format("http://%s/%s", locations.getLocations(0).getUrl(), chunkView.fileId));
+        chunkCache.setChunk(chunkView.fileId, chunkData);
 
-        if (!chunkView.isFullChunk) {
-            request.setHeader(HttpHeaders.ACCEPT_ENCODING, "");
-            request.setHeader(HttpHeaders.RANGE,
-                    String.format("bytes=%d-%d", chunkView.offset, chunkView.offset + chunkView.size - 1));
-        }
-
-        try {
-            HttpResponse response = client.execute(request);
-            HttpEntity entity = response.getEntity();
-
-            int len = (int) (chunkView.logicOffset - position + chunkView.size);
-            OutputStream outputStream = new ByteBufferOutputStream(ByteBuffer.wrap(buffer, startOffset, len));
-            entity.writeTo(outputStream);
-            // LOG.debug("* read chunkView:{} startOffset:{} length:{}", chunkView, startOffset, len);
-
-            return len;
-
-        } finally {
-            if (client instanceof Closeable) {
-                Closeable t = (Closeable) client;
-                t.close();
-            }
-        }
+        return len;
     }
 
-    private static int readEncryptedChunkView(long position, byte[] buffer, int startOffset, ChunkView chunkView, FilerProto.Locations locations) throws IOException {
+    private static byte[] doFetchFullChunkData(ChunkView chunkView, FilerProto.Locations locations) throws IOException {
+
         HttpClient client = new DefaultHttpClient();
         HttpGet request = new HttpGet(
                 String.format("http://%s/%s", locations.getLocations(0).getUrl(), chunkView.fileId));
@@ -124,9 +105,7 @@ public class SeaweedRead {
             throw new IOException("fail to decrypt", e);
         }
 
-        int len = (int) (chunkView.logicOffset - position + chunkView.size);
-        System.arraycopy(data, (int) chunkView.offset, buffer, startOffset, len);
-        return len;
+        return data;
 
     }
 
