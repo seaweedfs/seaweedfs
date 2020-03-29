@@ -61,6 +61,8 @@ public class SeaweedRead {
             return readEncryptedChunkView(position, buffer, startOffset, chunkView, locations);
         }
 
+        // TODO: read the chunk and returns the chunk view data here
+
         HttpClient client = new DefaultHttpClient();
         HttpGet request = new HttpGet(
                 String.format("http://%s/%s", locations.getLocations(0).getUrl(), chunkView.fileId));
