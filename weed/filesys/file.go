@@ -227,6 +227,7 @@ func (file *File) maybeLoadEntry(ctx context.Context) error {
 	if file.entry == nil || file.isOpen <= 0 {
 		entry, err := file.wfs.maybeLoadEntry(file.dir.FullPath(), file.Name)
 		if err != nil {
+			glog.V(3).Infof("maybeLoadEntry file %s/%s: %v", file.dir.FullPath(), file.Name, err)
 			return err
 		}
 		if entry != nil {

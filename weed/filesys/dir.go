@@ -157,6 +157,8 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 
 func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
 
+	glog.V(4).Infof("mkdir %s: %s", dir.FullPath(), req.Name)
+
 	newEntry := &filer_pb.Entry{
 		Name:        req.Name,
 		IsDirectory: true,
@@ -187,8 +189,11 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 
 	if err == nil {
 		node := dir.newDirectory(util.NewFullPath(dir.FullPath(), req.Name), newEntry)
+
 		return node, nil
 	}
+
+	glog.V(0).Infof("mkdir %s/%s: %v", dir.FullPath(), req.Name, err)
 
 	return nil, fuse.EIO
 }
@@ -285,6 +290,7 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 	dir.wfs.deleteFileChunks(entry.Chunks)
 
 	dir.wfs.cacheDelete(filePath)
+	dir.wfs.fsNodeCache.DeleteFsNode(filePath)
 
 	glog.V(3).Infof("remove file: %v", req)
 	err = filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, false, false, false)
@@ -299,7 +305,9 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 
 func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 
-	dir.wfs.cacheDelete(util.NewFullPath(dir.FullPath(), req.Name))
+	t := util.NewFullPath(dir.FullPath(), req.Name)
+	dir.wfs.cacheDelete(t)
+	dir.wfs.fsNodeCache.DeleteFsNode(t)
 
 	glog.V(3).Infof("remove directory entry: %v", req)
 	err := filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, true, false, false)
