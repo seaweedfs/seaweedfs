@@ -193,7 +193,7 @@ func ReadUrl(fileUrl string, cipherKey []byte, isGzipped bool, isFullChunk bool,
 
 	if cipherKey != nil {
 		var n int
-		err := readEncryptedUrl(fileUrl, cipherKey, isGzipped, offset, size, func(data []byte) {
+		err := readEncryptedUrl(fileUrl, cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
 			n = copy(buf, data)
 		})
 		return int64(n), err
@@ -261,7 +261,7 @@ func ReadUrl(fileUrl string, cipherKey []byte, isGzipped bool, isFullChunk bool,
 func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) error {
 
 	if cipherKey != nil {
-		return readEncryptedUrl(fileUrl, cipherKey, isContentGzipped, offset, size, fn)
+		return readEncryptedUrl(fileUrl, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
 	}
 
 	req, err := http.NewRequest("GET", fileUrl, nil)
@@ -300,7 +300,7 @@ func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, is
 
 }
 
-func readEncryptedUrl(fileUrl string, cipherKey []byte, isContentGzipped bool, offset int64, size int, fn func(data []byte)) error {
+func readEncryptedUrl(fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) error {
 	encryptedData, err := Get(fileUrl)
 	if err != nil {
 		return fmt.Errorf("fetch %s: %v", fileUrl, err)
@@ -318,7 +318,11 @@ func readEncryptedUrl(fileUrl string, cipherKey []byte, isContentGzipped bool, o
 	if len(decryptedData) < int(offset)+size {
 		return fmt.Errorf("read decrypted %s size %d [%d, %d)", fileUrl, len(decryptedData), offset, int(offset)+size)
 	}
-	fn(decryptedData[int(offset) : int(offset)+size])
+	if isFullChunk {
+		fn(decryptedData)
+	} else {
+		fn(decryptedData[int(offset) : int(offset)+size])
+	}
 	return nil
 }
 

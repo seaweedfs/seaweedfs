@@ -102,34 +102,46 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
 }
 
-func (c *ChunkReadAt) fetchChunkData(chunkView *filer2.ChunkView) ([]byte, error) {
+func (c *ChunkReadAt) fetchChunkData(chunkView *filer2.ChunkView) (data []byte, err error) {
 
 	// fmt.Printf("fetching %s [%d,%d)\n", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
 
 	chunkData := c.chunkCache.GetChunk(chunkView.FileId)
 	if chunkData != nil {
 		glog.V(3).Infof("cache hit %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
-		return chunkData, nil
+	} else {
+		chunkData, err = c.doFetchFullChunkData(chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	urlString, err := c.lookupFileId(chunkView.FileId)
+	if int64(len(chunkData)) < chunkView.Offset+int64(chunkView.Size) {
+		return nil, fmt.Errorf("unexpected larger chunkView [%d,%d) than chunk %d", chunkView.Offset, chunkView.Offset+int64(chunkView.Size), len(chunkData))
+	}
+
+	data = chunkData[chunkView.Offset : chunkView.Offset+int64(chunkView.Size)]
+
+	c.chunkCache.SetChunk(chunkView.FileId, chunkData)
+
+	return data, nil
+}
+
+func (c *ChunkReadAt) doFetchFullChunkData(fileId string, cipherKey []byte, isGzipped bool) ([]byte, error) {
+
+	urlString, err := c.lookupFileId(fileId)
 	if err != nil {
-		glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
+		glog.V(1).Infof("operation LookupFileId %s failed, err: %v", fileId, err)
 		return nil, err
 	}
 	var buffer bytes.Buffer
-	err = util.ReadUrlAsStream(urlString, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk, chunkView.Offset, int(chunkView.Size), func(data []byte) {
+	err = util.ReadUrlAsStream(urlString, cipherKey, isGzipped, true, 0, 0, func(data []byte) {
 		buffer.Write(data)
 	})
 	if err != nil {
-		glog.V(1).Infof("read %s failed, err: %v", chunkView.FileId, err)
+		glog.V(1).Infof("read %s failed, err: %v", fileId, err)
 		return nil, err
 	}
 
-	glog.V(3).Infof("read %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
-
-	chunkData = buffer.Bytes()
-	c.chunkCache.SetChunk(chunkView.FileId, chunkData)
-
-	return chunkData, nil
+	return buffer.Bytes(), nil
 }
