@@ -15,18 +15,18 @@ import (
 )
 
 func (f *Filer) NotifyUpdateEvent(oldEntry, newEntry *Entry, deleteChunks bool) {
-	var key string
+	var fullpath string
 	if oldEntry != nil {
-		key = string(oldEntry.FullPath)
+		fullpath = string(oldEntry.FullPath)
 	} else if newEntry != nil {
-		key = string(newEntry.FullPath)
+		fullpath = string(newEntry.FullPath)
 	} else {
 		return
 	}
 
-	println("key:", key)
+	// println("fullpath:", fullpath)
 
-	if strings.HasPrefix(key, "/.meta") {
+	if strings.HasPrefix(fullpath, "/.meta") {
 		return
 	}
 
@@ -42,15 +42,18 @@ func (f *Filer) NotifyUpdateEvent(oldEntry, newEntry *Entry, deleteChunks bool) 
 	}
 
 	if notification.Queue != nil {
-		glog.V(3).Infof("notifying entry update %v", key)
-		notification.Queue.SendMessage(key, eventNotification)
+		glog.V(3).Infof("notifying entry update %v", fullpath)
+		notification.Queue.SendMessage(fullpath, eventNotification)
 	}
 
-	f.logMetaEvent(time.Now(), key, eventNotification)
+	f.logMetaEvent(time.Now(), fullpath, eventNotification)
 
 }
 
-func (f *Filer) logMetaEvent(ts time.Time, dir string, eventNotification *filer_pb.EventNotification) {
+func (f *Filer) logMetaEvent(ts time.Time, fullpath string, eventNotification *filer_pb.EventNotification) {
+
+	dir, _ := util.FullPath(fullpath).DirAndName()
+
 	event := &filer_pb.FullEventNotification{
 		Directory:         dir,
 		EventNotification: eventNotification,

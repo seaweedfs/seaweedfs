@@ -31,7 +31,7 @@ func (f *Filer) appendToFile(targetFile string, data []byte) error {
 	if err != nil {
 		return fmt.Errorf("upload data %s: %v", targetUrl, err)
 	}
-	println("uploaded to", targetUrl)
+	// println("uploaded to", targetUrl)
 
 	// find out existing entry
 	fullpath := util.FullPath(targetFile)
