@@ -1,4 +1,4 @@
-package filesys
+package filer2
 
 import (
 	"bytes"
@@ -7,7 +7,6 @@ import (
 	"io"
 	"sync"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/pb_cache"
@@ -17,7 +16,7 @@ import (
 
 type ChunkReadAt struct {
 	masterClient *wdclient.MasterClient
-	chunkViews   []*filer2.ChunkView
+	chunkViews   []*ChunkView
 	buffer       []byte
 	bufferOffset int64
 	lookupFileId func(fileId string) (targetUrl string, err error)
@@ -28,13 +27,13 @@ type ChunkReadAt struct {
 
 // var _ = io.ReaderAt(&ChunkReadAt{})
 
-func NewChunkReaderAtFromClient(filerClient filer_pb.FilerClient, chunkViews []*filer2.ChunkView, chunkCache *pb_cache.ChunkCache) *ChunkReadAt {
+func NewChunkReaderAtFromClient(filerClient filer_pb.FilerClient, chunkViews []*ChunkView, chunkCache *pb_cache.ChunkCache) *ChunkReadAt {
 
 	return &ChunkReadAt{
 		chunkViews: chunkViews,
 		lookupFileId: func(fileId string) (targetUrl string, err error) {
 			err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-				vid := filer2.VolumeId(fileId)
+				vid := VolumeId(fileId)
 				resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
 					VolumeIds: []string{vid},
 				})
@@ -102,7 +101,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
 }
 
-func (c *ChunkReadAt) fetchChunkData(chunkView *filer2.ChunkView) (data []byte, err error) {
+func (c *ChunkReadAt) fetchChunkData(chunkView *ChunkView) (data []byte, err error) {
 
 	// fmt.Printf("fetching %s [%d,%d)\n", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
 
