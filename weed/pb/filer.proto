@@ -42,6 +42,9 @@ service SeaweedFiler {
     rpc GetFilerConfiguration (GetFilerConfigurationRequest) returns (GetFilerConfigurationResponse) {
     }
 
+    rpc ListenForEvents (ListenForEventsRequest) returns (stream FullEventNotification) {
+    }
+
 }
 
 //////////////////////////////////////////////////
@@ -229,4 +232,20 @@ message GetFilerConfigurationResponse {
     string dir_buckets = 5;
     string dir_queues = 6;
     bool cipher = 7;
+}
+
+message ListenForEventsRequest {
+    string client_name = 1;
+    string directory = 2;
+    int64 since_sec = 3;
+}
+message FullEventNotification {
+    string directory = 1;
+    EventNotification event_notification = 2;
+}
+
+message LogEntry {
+    int64 ts_ns = 1;
+    int32 partition_key_hash = 2;
+    bytes data = 3;
 }

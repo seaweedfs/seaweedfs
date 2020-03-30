@@ -94,6 +94,7 @@ service VolumeServer {
 
 message BatchDeleteRequest {
     repeated string file_ids = 1;
+    bool skip_cookie_check = 2;
 }
 
 message BatchDeleteResponse {

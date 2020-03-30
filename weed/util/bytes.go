@@ -74,3 +74,20 @@ func HashStringToLong(dir string) (v int64) {
 
 	return
 }
+
+func HashToInt32(data []byte) (v int32) {
+	h := md5.New()
+	h.Write(data)
+
+	b := h.Sum(nil)
+
+	v += int32(b[0])
+	v <<= 8
+	v += int32(b[1])
+	v <<= 8
+	v += int32(b[2])
+	v <<= 8
+	v += int32(b[3])
+
+	return
+}

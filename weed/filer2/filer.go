@@ -35,6 +35,7 @@ type Filer struct {
 	DirQueuesPath       string
 	buckets             *FilerBuckets
 	Cipher              bool
+	metaLogBuffer       *LogBuffer
 }
 
 func NewFiler(masters []string, grpcDialOption grpc.DialOption, filerGrpcPort uint32) *Filer {
@@ -44,6 +45,7 @@ func NewFiler(masters []string, grpcDialOption grpc.DialOption, filerGrpcPort ui
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
 	}
+	f.metaLogBuffer = NewLogBuffer(time.Minute, f.logFlushFunc)
 
 	go f.loopProcessingDeletion()
 
