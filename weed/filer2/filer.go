@@ -14,6 +14,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/queue"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
@@ -35,7 +36,7 @@ type Filer struct {
 	DirQueuesPath       string
 	buckets             *FilerBuckets
 	Cipher              bool
-	metaLogBuffer       *LogBuffer
+	metaLogBuffer       *queue.LogBuffer
 }
 
 func NewFiler(masters []string, grpcDialOption grpc.DialOption, filerGrpcPort uint32) *Filer {
@@ -45,7 +46,7 @@ func NewFiler(masters []string, grpcDialOption grpc.DialOption, filerGrpcPort ui
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
 	}
-	f.metaLogBuffer = NewLogBuffer(time.Minute, f.logFlushFunc)
+	f.metaLogBuffer = queue.NewLogBuffer(time.Minute, f.logFlushFunc)
 
 	go f.loopProcessingDeletion()
 
@@ -312,5 +313,6 @@ func (f *Filer) cacheSetDirectory(dirpath string, dirEntry *Entry, level int) {
 }
 
 func (f *Filer) Shutdown() {
+	f.metaLogBuffer.Shutdown()
 	f.store.Shutdown()
 }
