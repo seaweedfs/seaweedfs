@@ -394,5 +394,13 @@ copy_2 = 6                # create 2 x 6 = 12 actual volumes
 copy_3 = 3                # create 3 x 3 = 9 actual volumes
 copy_other = 1            # create n x 1 = n actual volumes
 
+# configuration flags for replication
+[master.replication]
+# any replication counts should be considered minimums. If you specify 010 and
+# have 3 different racks, that's still considered writable. Writes will still
+# try to replicate to all available volumes. You should only use this option
+# if you are doing your own replication or periodic sync of volumes.
+treat_replication_as_minimums = false
+
 `
 )

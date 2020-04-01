@@ -77,6 +77,9 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 	v.SetDefault("jwt.signing.read.expires_after_seconds", 60)
 	readExpiresAfterSec := v.GetInt("jwt.signing.read.expires_after_seconds")
 
+	v.SetDefault("master.replication.treat_replication_as_minimums", false)
+	replicationAsMin := v.GetBool("master.replication.treat_replication_as_minimums")
+
 	var preallocateSize int64
 	if option.VolumePreallocate {
 		preallocateSize = int64(option.VolumeSizeLimitMB) * (1 << 20)
@@ -96,7 +99,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 	if nil == seq {
 		glog.Fatalf("create sequencer failed.")
 	}
-	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, ms.option.PulseSeconds)
+	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, ms.option.PulseSeconds, replicationAsMin)
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", ms.option.VolumeSizeLimitMB, "MB")
 
