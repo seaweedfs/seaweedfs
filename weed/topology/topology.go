@@ -27,7 +27,8 @@ type Topology struct {
 
 	pulse int64
 
-	volumeSizeLimit uint64
+	volumeSizeLimit  uint64
+	replicationAsMin bool
 
 	Sequence sequence.Sequencer
 
@@ -38,7 +39,7 @@ type Topology struct {
 	RaftServer raft.Server
 }
 
-func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int) *Topology {
+func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
 	t := &Topology{}
 	t.id = NodeId(id)
 	t.nodeType = "Topology"
@@ -48,6 +49,7 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 	t.ecShardMap = make(map[needle.VolumeId]*EcShardLocations)
 	t.pulse = int64(pulse)
 	t.volumeSizeLimit = volumeSizeLimit
+	t.replicationAsMin = replicationAsMin
 
 	t.Sequence = seq
 
@@ -138,7 +140,7 @@ func (t *Topology) PickForWrite(count uint64, option *VolumeGrowOption) (string,
 
 func (t *Topology) GetVolumeLayout(collectionName string, rp *super_block.ReplicaPlacement, ttl *needle.TTL) *VolumeLayout {
 	return t.collectionMap.Get(collectionName, func() interface{} {
-		return NewCollection(collectionName, t.volumeSizeLimit)
+		return NewCollection(collectionName, t.volumeSizeLimit, t.replicationAsMin)
 	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl)
 }
 
