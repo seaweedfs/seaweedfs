@@ -68,13 +68,13 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	defer os.RemoveAll(tempFolder)
 
 	// collect all volume id locations
-	volumeIdToServer, err := c.collectVolumeIds(*verbose, writer)
+	volumeIdToVInfo, err := c.collectVolumeIds(*verbose, writer)
 	if err != nil {
 		return fmt.Errorf("failed to collect all volume locations: %v", err)
 	}
 
 	// collect each volume file ids
-	for volumeId, vinfo := range volumeIdToServer {
+	for volumeId, vinfo := range volumeIdToVInfo {
 		err = c.collectOneVolumeFileIds(tempFolder, volumeId, vinfo, *verbose, writer)
 		if err != nil {
 			return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, err)
@@ -82,13 +82,13 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 
 	// collect all filer file ids
-	if err = c.collectFilerFileIds(tempFolder, volumeIdToServer, *verbose, writer); err != nil {
+	if err = c.collectFilerFileIds(tempFolder, volumeIdToVInfo, *verbose, writer); err != nil {
 		return fmt.Errorf("failed to collect file ids from filer: %v", err)
 	}
 
 	// volume file ids substract filer file ids
 	var totalInUseCount, totalOrphanChunkCount, totalOrphanDataSize uint64
-	for volumeId, vinfo := range volumeIdToServer {
+	for volumeId, vinfo := range volumeIdToVInfo {
 		inUseCount, orphanFileIds, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(tempFolder, volumeId, writer, *verbose)
 		if checkErr != nil {
 			return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, checkErr)
@@ -131,9 +131,14 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, volumeId 
 
 	return operation.WithVolumeServerClient(vinfo.server, c.env.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
+		ext := ".idx"
+		if vinfo.isEcVolume {
+			ext = ".ecx"
+		}
+
 		copyFileClient, err := volumeServerClient.CopyFile(context.Background(), &volume_server_pb.CopyFileRequest{
 			VolumeId:                 volumeId,
-			Ext:                      ".idx",
+			Ext:                      ext,
 			CompactionRevision:       math.MaxUint32,
 			StopOffset:               math.MaxInt64,
 			Collection:               vinfo.collection,
