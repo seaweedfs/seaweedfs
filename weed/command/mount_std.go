@@ -52,7 +52,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
-			return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
+			return fmt.Errorf("get filer grpc address %s configuration: %v", filerGrpcAddress, err)
 		}
 		cipher = resp.Cipher
 		return nil
