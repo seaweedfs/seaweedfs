@@ -130,11 +130,13 @@ func maybeStartMetrics(fs *FilerServer, option *FilerOption) {
 	var metricsIntervalSec int
 	var readErr error
 	for !isConnected {
-		metricsAddress, metricsIntervalSec, readErr = readFilerConfiguration(fs.grpcDialOption, option.Masters[0])
-		if readErr == nil {
-			isConnected = true
-		} else {
-			time.Sleep(7 * time.Second)
+		for _, master := range option.Masters {
+			metricsAddress, metricsIntervalSec, readErr = readFilerConfiguration(fs.grpcDialOption, master)
+			if readErr == nil {
+				isConnected = true
+			} else {
+				time.Sleep(7 * time.Second)
+			}
 		}
 	}
 	if metricsAddress == "" && metricsIntervalSec <= 0 {
