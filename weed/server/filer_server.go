@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
@@ -58,7 +59,6 @@ type FilerServer struct {
 	// notifying clients
 	clientChansLock sync.RWMutex
 	clientChans     map[string]chan *filer_pb.FullEventNotification
-
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
@@ -117,6 +117,14 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 }
 
 func maybeStartMetrics(fs *FilerServer, option *FilerOption) {
+
+	for _, master := range option.Masters {
+		_, err := pb.ParseFilerGrpcAddress(master)
+		if err != nil {
+			glog.Fatalf("invalid master address %s: %v", master, err)
+		}
+	}
+
 	isConnected := false
 	var metricsAddress string
 	var metricsIntervalSec int
