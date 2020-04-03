@@ -145,7 +145,13 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	if ext != ".gz" {
 		if n.IsGzipped() {
 			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-				w.Header().Set("Content-Encoding", "gzip")
+				if _, _, _, shouldResize := shouldResizeImages(ext, r); shouldResize {
+					if n.Data, err = util.UnGzipData(n.Data); err != nil {
+						glog.V(0).Infoln("ungzip error:", err, r.URL.Path)
+					}
+				} else {
+					w.Header().Set("Content-Encoding", "gzip")
+				}
 			} else {
 				if n.Data, err = util.UnGzipData(n.Data); err != nil {
 					glog.V(0).Infoln("ungzip error:", err, r.URL.Path)
