@@ -13,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jacobsa/daemonize"
-
 	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -41,6 +39,29 @@ func runMount(cmd *Command, args []string) bool {
 func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	filer := *option.filer
+	// parse filer grpc address
+	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(filer)
+	if err != nil {
+		glog.V(0).Infof("ParseFilerGrpcAddress: %v", err)
+		return true
+	}
+
+	// try to connect to filer, filerBucketsPath may be useful later
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	var cipher bool
+	err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
+		}
+		cipher = resp.Cipher
+		return nil
+	})
+	if err != nil {
+		glog.Infof("failed to talk to filer %s: %v", filerGrpcAddress, err)
+		return true
+	}
+
 	filerMountRootPath := *option.filerMountRootPath
 	dir := *option.dir
 	chunkSizeLimitMB := *mountOptions.chunkSizeLimitMB
@@ -85,7 +106,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	// Ensure target mount point availability
 	if isValid := checkMountPointAvailable(dir); !isValid {
 		glog.Fatalf("Expected mount to still be active, target mount point: %s, please check!", dir)
-		return false
+		return true
 	}
 
 	mountName := path.Base(dir)
@@ -119,46 +140,21 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	c, err := fuse.Mount(dir, options...)
 	if err != nil {
 		glog.V(0).Infof("mount: %v", err)
-		daemonize.SignalOutcome(err)
 		return true
 	}
+
+	defer fuse.Unmount(dir)
 
 	util.OnInterrupt(func() {
 		fuse.Unmount(dir)
 		c.Close()
 	})
 
-	// parse filer grpc address
-	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(filer)
-	if err != nil {
-		glog.V(0).Infof("ParseFilerGrpcAddress: %v", err)
-		daemonize.SignalOutcome(err)
-		return true
-	}
-
-	// try to connect to filer, filerBucketsPath may be useful later
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
-	var cipher bool
-	err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
-		if err != nil {
-			return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
-		}
-		cipher = resp.Cipher
-		return nil
-	})
-	if err != nil {
-		glog.Fatal(err)
-		return false
-	}
-
 	// find mount point
 	mountRoot := filerMountRootPath
 	if mountRoot != "/" && strings.HasSuffix(mountRoot, "/") {
 		mountRoot = mountRoot[0 : len(mountRoot)-1]
 	}
-
-	daemonize.SignalOutcome(nil)
 
 	err = fs.Serve(c, filesys.NewSeaweedFileSystem(&filesys.Option{
 		FilerGrpcAddress:            filerGrpcAddress,
@@ -181,15 +177,11 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		OutsideContainerClusterMode: *mountOptions.outsideContainerClusterMode,
 		Cipher:                      cipher,
 	}))
-	if err != nil {
-		fuse.Unmount(dir)
-	}
 
 	// check if the mount process has an error to report
 	<-c.Ready
 	if err := c.MountError; err != nil {
 		glog.V(0).Infof("mount process: %v", err)
-		daemonize.SignalOutcome(err)
 		return true
 	}
 
