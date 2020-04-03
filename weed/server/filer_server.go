@@ -75,6 +75,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption, option.Port+10000)
 	fs.filer.Cipher = option.Cipher
 
+	maybeStartMetrics(fs, option)
+
 	go fs.filer.KeepConnectedToMaster()
 
 	v := util.GetViper()
@@ -106,8 +108,6 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	}
 
 	fs.filer.LoadBuckets(fs.filer.DirBucketsPath)
-
-	maybeStartMetrics(fs, option)
 
 	util.OnInterrupt(func() {
 		fs.filer.Shutdown()
