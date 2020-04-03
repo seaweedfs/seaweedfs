@@ -124,7 +124,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	if vs.tryHandleChunkedFile(n, filename, w, r) {
+	if vs.tryHandleChunkedFile(n, filename, ext, w, r) {
 		return
 	}
 
@@ -161,7 +161,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, w http.ResponseWriter, r *http.Request) (processed bool) {
+func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, ext string, w http.ResponseWriter, r *http.Request) (processed bool) {
 	if !n.IsChunkedManifest() || r.URL.Query().Get("cm") == "false" {
 		return false
 	}
@@ -175,7 +175,9 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, 
 		fileName = chunkManifest.Name
 	}
 
-	ext := filepath.Ext(fileName)
+	if ext == "" {
+		ext = filepath.Ext(fileName)
+	}
 
 	mType := ""
 	if chunkManifest.Mime != "" {
