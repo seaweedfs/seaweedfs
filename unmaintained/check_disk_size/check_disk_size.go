@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"runtime"
 	"syscall"
 )
 
@@ -14,6 +15,10 @@ func main() {
 	flag.Parse()
 
 	fillInDiskStatus(*dir)
+
+	fmt.Printf("OS: %v\n", runtime.GOOS)
+	fmt.Printf("Arch: %v\n", runtime.GOARCH)
+
 }
 
 func fillInDiskStatus(dir string) {
