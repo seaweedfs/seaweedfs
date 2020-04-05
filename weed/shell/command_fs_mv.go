@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"path/filepath"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -65,7 +64,7 @@ func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 		// moving a file or folder
 		if err == nil && respDestinationLookupEntry.Entry.IsDirectory {
 			// to a directory
-			targetDir = filepath.ToSlash(filepath.Join(destinationDir, destinationName))
+			targetDir = util.Join(destinationDir, destinationName)
 			targetName = sourceName
 		} else {
 			// to a file or folder

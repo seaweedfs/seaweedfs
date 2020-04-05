@@ -3,7 +3,6 @@ package replication
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -36,7 +35,7 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 		glog.V(4).Infof("skipping %v outside of %v", key, r.source.Dir)
 		return nil
 	}
-	newKey := filepath.ToSlash(filepath.Join(r.sink.GetSinkToDirectory(), key[len(r.source.Dir):]))
+	newKey := util.Join(r.sink.GetSinkToDirectory(), key[len(r.source.Dir):])
 	glog.V(3).Infof("replicate %s => %s", key, newKey)
 	key = newKey
 	if message.OldEntry != nil && message.NewEntry == nil {

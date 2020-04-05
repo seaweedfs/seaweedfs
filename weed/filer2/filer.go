@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -94,7 +93,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 	var lastDirectoryEntry *Entry
 
 	for i := 1; i < len(dirParts); i++ {
-		dirPath := "/" + filepath.ToSlash(filepath.Join(dirParts[:i]...))
+		dirPath := "/" + util.Join(dirParts[:i]...)
 		// fmt.Printf("%d directory: %+v\n", i, dirPath)
 
 		// first check local cache

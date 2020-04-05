@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -55,7 +54,7 @@ func (ce *CommandEnv) parseUrl(input string) (path string, err error) {
 		return
 	}
 	if !strings.HasPrefix(input, "/") {
-		input = filepath.ToSlash(filepath.Join(ce.option.Directory, input))
+		input = util.Join(ce.option.Directory, input)
 	}
 	return input, err
 }

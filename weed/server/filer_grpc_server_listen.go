@@ -34,7 +34,7 @@ func (fs *FilerServer) ListenForEvents(req *filer_pb.ListenForEventsRequest, str
 				entryName = eventNotification.NewEntry.Name
 			}
 
-			fullpath := util.PathJoin(dirPath, entryName)
+			fullpath := util.Join(dirPath, entryName)
 
 			// skip on filer internal meta logs
 			if strings.HasPrefix(fullpath, "/.meta") {
