@@ -12,11 +12,11 @@ import (
 )
 
 func init() {
-	cmdTail.Run = runTail // break init cycle
+	cmdWatch.Run = runWatch // break init cycle
 }
 
-var cmdTail = &Command{
-	UsageLine: "tail <wip> [-filer=localhost:8888]",
+var cmdWatch = &Command{
+	UsageLine: "watch <wip> [-filer=localhost:8888] [-target=/]",
 	Short:     "see recent changes on a filer",
 	Long: `See recent changes on a filer.
 
@@ -24,19 +24,19 @@ var cmdTail = &Command{
 }
 
 var (
-	tailFiler  = cmdTail.Flag.String("filer", "localhost:8888", "filer hostname:port")
-	tailTarget = cmdTail.Flag.String("target", "/", "a folder or file on filer")
+	watchFiler  = cmdWatch.Flag.String("filer", "localhost:8888", "filer hostname:port")
+	watchTarget = cmdWatch.Flag.String("target", "/", "a folder or file on filer")
 )
 
-func runTail(cmd *Command, args []string) bool {
+func runWatch(cmd *Command, args []string) bool {
 
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
-	tailErr := pb.WithFilerClient(*tailFiler, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	watchErr := pb.WithFilerClient(*watchFiler, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 
 		stream, err := client.ListenForEvents(context.Background(), &filer_pb.ListenForEventsRequest{
-			ClientName: "tail",
-			Directory:  *tailTarget,
+			ClientName: "watch",
+			Directory:  *watchTarget,
 			SinceNs:    0,
 		})
 		if err != nil {
@@ -55,8 +55,8 @@ func runTail(cmd *Command, args []string) bool {
 		}
 
 	})
-	if tailErr != nil {
-		fmt.Printf("tail %s: %v\n", *tailFiler, tailErr)
+	if watchErr != nil {
+		fmt.Printf("watch %s: %v\n", *watchFiler, watchErr)
 	}
 
 	return true
