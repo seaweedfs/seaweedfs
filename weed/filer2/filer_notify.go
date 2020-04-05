@@ -81,6 +81,7 @@ func (f *Filer) ReadLogBuffer(lastReadTime time.Time, eachEventFn func(fullpath 
 
 	var buf []byte
 	newLastReadTime, buf = f.metaLogBuffer.ReadFromBuffer(lastReadTime)
+	var processedTs int64
 
 	for pos := 0; pos+4 < len(buf); {
 
@@ -103,7 +104,10 @@ func (f *Filer) ReadLogBuffer(lastReadTime time.Time, eachEventFn func(fullpath 
 
 		err = eachEventFn(event.Directory, event.EventNotification)
 
+		processedTs = logEntry.TsNs
+
 		if err != nil {
+			newLastReadTime = time.Unix(0, processedTs)
 			return
 		}
 
@@ -111,6 +115,7 @@ func (f *Filer) ReadLogBuffer(lastReadTime time.Time, eachEventFn func(fullpath 
 
 	}
 
+	newLastReadTime = time.Unix(0, processedTs)
 	return
 
 }
