@@ -6,7 +6,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"path"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -226,7 +225,7 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 	} else {
 		baseFileName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId)) + req.Ext
 		for _, location := range vs.store.Locations {
-			tName := path.Join(location.Directory, baseFileName)
+			tName := util.PathJoin(location.Directory, baseFileName)
 			if util.FileExists(tName) {
 				fileName = tName
 			}

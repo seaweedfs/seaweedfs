@@ -46,3 +46,7 @@ func (fp FullPath) Split() []string {
 	}
 	return strings.Split(string(fp)[1:], "/")
 }
+
+func PathJoin(dir, name string) string {
+	return filepath.ToSlash(filepath.Join(dir, name))
+}
