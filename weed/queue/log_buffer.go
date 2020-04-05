@@ -27,7 +27,7 @@ type LogBuffer struct {
 
 func NewLogBuffer(flushInterval time.Duration, flushFn func(startTime, stopTime time.Time, buf []byte), notifyFn func()) *LogBuffer {
 	lb := &LogBuffer{
-		buf:           make([]byte, 4*0124*1024),
+		buf:           make([]byte, 4*1024*1024),
 		sizeBuf:       make([]byte, 4),
 		flushInterval: flushInterval,
 		flushFn:       flushFn,
@@ -97,7 +97,9 @@ func (m *LogBuffer) loopFlush() {
 }
 
 func (m *LogBuffer) flush() {
+
 	if m.flushFn != nil && m.pos > 0 {
+		// fmt.Printf("flush buffer %d pos %d empty space %d\n", len(m.buf), m.pos, len(m.buf)-m.pos)
 		m.flushFn(m.startTime, m.stopTime, m.buf[:m.pos])
 		m.pos = 0
 		m.idx = m.idx[:0]
