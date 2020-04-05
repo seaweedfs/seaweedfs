@@ -25,7 +25,7 @@ var cmdWatch = &Command{
 
 var (
 	watchFiler  = cmdWatch.Flag.String("filer", "localhost:8888", "filer hostname:port")
-	watchTarget = cmdWatch.Flag.String("target", "/", "a folder or file on filer")
+	watchTarget = cmdWatch.Flag.String("pathPrefix", "/", "path to a folder or file, or common prefix for the folders or files on filer")
 )
 
 func runWatch(cmd *Command, args []string) bool {
@@ -36,7 +36,7 @@ func runWatch(cmd *Command, args []string) bool {
 
 		stream, err := client.ListenForEvents(context.Background(), &filer_pb.ListenForEventsRequest{
 			ClientName: "watch",
-			Directory:  *watchTarget,
+			PathPrefix: *watchTarget,
 			SinceNs:    0,
 		})
 		if err != nil {

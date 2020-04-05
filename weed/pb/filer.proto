@@ -236,7 +236,7 @@ message GetFilerConfigurationResponse {
 
 message ListenForEventsRequest {
     string client_name = 1;
-    string directory = 2;
+    string path_prefix = 2;
     int64 since_ns = 3;
 }
 message FullEventNotification {
