@@ -213,7 +213,7 @@ func satisfyReplicaPlacement(replicaPlacement *super_block.ReplicaPlacement, exi
 	// now this is one of the primary dcs
 	existingRacks := make(map[string]int)
 	for _, loc := range existingLocations {
-		if loc.DataCenter()!=possibleLocation.DataCenter() {
+		if loc.DataCenter() != possibleLocation.DataCenter() {
 			continue
 		}
 		existingRacks[loc.Rack()] += 1

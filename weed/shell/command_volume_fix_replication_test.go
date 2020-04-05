@@ -14,6 +14,7 @@ type testcase struct {
 	possibleLocation  location
 	expected          bool
 }
+
 func TestSatisfyReplicaPlacementComplicated(t *testing.T) {
 
 	var tests = []testcase{
