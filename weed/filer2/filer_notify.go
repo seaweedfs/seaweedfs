@@ -68,9 +68,9 @@ func (f *Filer) logMetaEvent(ts time.Time, fullpath string, eventNotification *f
 }
 
 func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
-	targetFile := fmt.Sprintf("/.meta/log/%04d/%02d/%02d/%02d/%02d/%02d-%02d.log",
+	targetFile := fmt.Sprintf("/.meta/log/%04d/%02d/%02d/%02d/%02d/%02d.%09d.log",
 		startTime.Year(), startTime.Month(), startTime.Day(), startTime.Hour(), startTime.Minute(),
-		startTime.Second(), stopTime.Second())
+		startTime.Second(), startTime.Nanosecond())
 
 	if err := f.appendToFile(targetFile, buf); err != nil {
 		glog.V(0).Infof("log write failed %s: %v", targetFile, err)
