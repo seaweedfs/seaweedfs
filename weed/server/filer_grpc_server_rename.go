@@ -40,13 +40,6 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 		}
 	}
 
-	for _, entry := range events.newEntries {
-		fs.filer.NotifyUpdateEvent(nil, entry, false)
-	}
-	for _, entry := range events.oldEntries {
-		fs.filer.NotifyUpdateEvent(entry, nil, false)
-	}
-
 	return &filer_pb.AtomicRenameEntryResponse{}, nil
 }
 
