@@ -1,6 +1,9 @@
 package weed_server
 
 import (
+	"strings"
+	"time"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
@@ -9,62 +12,56 @@ func (fs *FilerServer) ListenForEvents(req *filer_pb.ListenForEventsRequest, str
 
 	peerAddress := findClientAddress(stream.Context(), 0)
 
-	clientName, messageChan := fs.addClient(req.ClientName, peerAddress)
+	clientName := fs.addClient(req.ClientName, peerAddress)
 
-	defer fs.deleteClient(clientName, messageChan)
+	defer fs.deleteClient(clientName)
 
-	// ts := time.Unix(req.SinceSec, 0)
+	lastReadTime := time.Now()
+	if req.SinceNs > 0 {
+		lastReadTime = time.Unix(0, req.SinceNs)
+	}
+	var readErr error
+	for {
 
-	// iterate through old messages
-	/*
-		for _, message := range ms.Topo.ToVolumeLocations() {
+		lastReadTime, readErr = fs.filer.ReadLogBuffer(lastReadTime, func(fullpath string, eventNotification *filer_pb.EventNotification) error {
+			if strings.HasPrefix(fullpath, "/.meta") {
+				return nil
+			}
+			if !strings.HasPrefix(fullpath, req.Directory) {
+				return nil
+			}
+			message := &filer_pb.FullEventNotification{
+				Directory:         fullpath,
+				EventNotification: eventNotification,
+			}
 			if err := stream.Send(message); err != nil {
 				return err
 			}
+			return nil
+		})
+		if readErr != nil {
+			glog.V(0).Infof("=> client %v: %+v", clientName, readErr)
+			return readErr
 		}
-	*/
 
-	// need to add a buffer here to avoid slow clients
-	// also needs to support millions of clients
-
-	for message := range messageChan {
-		if err := stream.Send(message); err != nil {
-			glog.V(0).Infof("=> client %v: %+v", clientName, message)
-			return err
-		}
+		fs.listenersLock.Lock()
+		fs.listenersCond.Wait()
+		fs.listenersLock.Unlock()
 	}
 
 	return nil
 }
 
-func (fs *FilerServer) addClient(clientType string, clientAddress string) (clientName string, messageChan chan *filer_pb.FullEventNotification) {
+func (fs *FilerServer) addClient(clientType string, clientAddress string) (clientName string) {
 	clientName = clientType + "@" + clientAddress
 	glog.V(0).Infof("+ listener %v", clientName)
-
-	messageChan = make(chan *filer_pb.FullEventNotification, 10)
-
-	fs.clientChansLock.Lock()
-	fs.clientChans[clientName] = messageChan
-	fs.clientChansLock.Unlock()
 	return
 }
 
-func (fs *FilerServer) deleteClient(clientName string, messageChan chan *filer_pb.FullEventNotification) {
+func (fs *FilerServer) deleteClient(clientName string) {
 	glog.V(0).Infof("- listener %v", clientName)
-	close(messageChan)
-	fs.clientChansLock.Lock()
-	delete(fs.clientChans, clientName)
-	fs.clientChansLock.Unlock()
 }
 
-func (fs *FilerServer) sendMessageToClients(dir string, eventNotification *filer_pb.EventNotification) {
-	message := &filer_pb.FullEventNotification{
-		Directory:         dir,
-		EventNotification: eventNotification,
-	}
-	fs.clientChansLock.RLock()
-	for _, ch := range fs.clientChans {
-		ch <- message
-	}
-	fs.clientChansLock.RUnlock()
+func (fs *FilerServer) notifyMetaListeners() {
+	fs.listenersCond.Broadcast()
 }

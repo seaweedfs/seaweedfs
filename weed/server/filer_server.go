@@ -12,7 +12,6 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -57,8 +56,8 @@ type FilerServer struct {
 	grpcDialOption grpc.DialOption
 
 	// notifying clients
-	clientChansLock sync.RWMutex
-	clientChans     map[string]chan *filer_pb.FullEventNotification
+	listenersLock sync.Mutex
+	listenersCond *sync.Cond
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
@@ -67,12 +66,13 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		option:         option,
 		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.filer"),
 	}
+	fs.listenersCond = sync.NewCond(&fs.listenersLock)
 
 	if len(option.Masters) == 0 {
 		glog.Fatal("master list is required!")
 	}
 
-	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption, option.Port+10000)
+	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption, option.Port+10000, fs.notifyMetaListeners)
 	fs.filer.Cipher = option.Cipher
 
 	maybeStartMetrics(fs, option)

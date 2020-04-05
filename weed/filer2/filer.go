@@ -39,14 +39,14 @@ type Filer struct {
 	metaLogBuffer       *queue.LogBuffer
 }
 
-func NewFiler(masters []string, grpcDialOption grpc.DialOption, filerGrpcPort uint32) *Filer {
+func NewFiler(masters []string, grpcDialOption grpc.DialOption, filerGrpcPort uint32, notifyFn func()) *Filer {
 	f := &Filer{
 		directoryCache:      ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
 		MasterClient:        wdclient.NewMasterClient(grpcDialOption, "filer", filerGrpcPort, masters),
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
 	}
-	f.metaLogBuffer = queue.NewLogBuffer(time.Minute, f.logFlushFunc)
+	f.metaLogBuffer = queue.NewLogBuffer(time.Minute, f.logFlushFunc, notifyFn)
 
 	go f.loopProcessingDeletion()
 
