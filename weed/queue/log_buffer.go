@@ -162,7 +162,7 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (ts time.Time, buffer
 		fmt.Printf("l=%d, h=%d\n", l, h)
 	*/
 
-	for {
+	for l <= h {
 		mid := (l + h) / 2
 		pos := m.idx[mid]
 		t := readTs(m.buf, m.idx[mid])
