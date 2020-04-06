@@ -16,6 +16,10 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 )
 
+const (
+	Max_Message_Size = 1 << 30 // 1 GB
+)
+
 var (
 	// cache grpc connections
 	grpcClients     = make(map[string]*grpc.ClientConn)
@@ -28,13 +32,18 @@ func init() {
 
 func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 	var options []grpc.ServerOption
-	options = append(options, grpc.KeepaliveParams(keepalive.ServerParameters{
-		Time:    10 * time.Second, // wait time before ping if no activity
-		Timeout: 20 * time.Second, // ping timeout
-	}), grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-		MinTime:             60 * time.Second, // min time a client should wait before sending a ping
-		PermitWithoutStream: true,
-	}))
+	options = append(options,
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    10 * time.Second, // wait time before ping if no activity
+			Timeout: 20 * time.Second, // ping timeout
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             60 * time.Second, // min time a client should wait before sending a ping
+			PermitWithoutStream: true,
+		}),
+		grpc.MaxRecvMsgSize(Max_Message_Size),
+		grpc.MaxSendMsgSize(Max_Message_Size),
+	)
 	for _, opt := range opts {
 		if opt != nil {
 			options = append(options, opt)
@@ -49,6 +58,10 @@ func GrpcDial(ctx context.Context, address string, opts ...grpc.DialOption) (*gr
 	var options []grpc.DialOption
 	options = append(options,
 		// grpc.WithInsecure(),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallSendMsgSize(Max_Message_Size),
+			grpc.MaxCallRecvMsgSize(Max_Message_Size),
+		),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                30 * time.Second, // client ping server if no activity for this long
 			Timeout:             20 * time.Second,
