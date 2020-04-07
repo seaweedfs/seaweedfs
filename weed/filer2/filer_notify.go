@@ -45,7 +45,9 @@ func (f *Filer) NotifyUpdateEvent(oldEntry, newEntry *Entry, deleteChunks bool) 
 		notification.Queue.SendMessage(fullpath, eventNotification)
 	}
 
-	f.logMetaEvent(time.Now(), fullpath, eventNotification)
+	if false {
+		f.logMetaEvent(time.Now(), fullpath, eventNotification)
+	}
 
 }
 
