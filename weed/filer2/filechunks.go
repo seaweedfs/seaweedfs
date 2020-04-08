@@ -22,14 +22,14 @@ func TotalSize(chunks []*filer_pb.FileChunk) (size uint64) {
 
 func ETag(entry *filer_pb.Entry) (etag string) {
 	if entry.Attributes == nil || entry.Attributes.Md5 == nil {
-		ETagChunks(entry.Chunks)
+		return ETagChunks(entry.Chunks)
 	}
 	return fmt.Sprintf("%x", entry.Attributes.Md5)
 }
 
 func ETagEntry(entry *Entry) (etag string) {
 	if entry.Attr.Md5 == nil {
-		ETagChunks(entry.Chunks)
+		return ETagChunks(entry.Chunks)
 	}
 	return fmt.Sprintf("%x", entry.Attr.Md5)
 }

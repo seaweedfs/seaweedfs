@@ -220,8 +220,13 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 	defer func() { stats.FilerRequestHistogram.WithLabelValues("postUpload").Observe(time.Since(start).Seconds()) }()
 
 	ret = &operation.UploadResult{}
+
 	md5Hash := md5.New()
-	var body = ioutil.NopCloser(io.TeeReader(r.Body, md5Hash))
+	body := r.Body
+	if r.Method == "PUT" {
+		// only PUT or large chunked files has Md5 in attributes
+		body = ioutil.NopCloser(io.TeeReader(r.Body, md5Hash))
+	}
 
 	request := &http.Request{
 		Method:        r.Method,
@@ -286,8 +291,10 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 		}
 	}
 	// use filer calculated md5 ETag, instead of the volume server crc ETag
-	md5value = md5Hash.Sum(nil)
-	ret.ETag = fmt.Sprintf("%x", md5value)
+	if r.Method == "PUT" {
+		md5value = md5Hash.Sum(nil)
+	}
+	ret.ETag = getEtag(resp)
 	return
 }
 
