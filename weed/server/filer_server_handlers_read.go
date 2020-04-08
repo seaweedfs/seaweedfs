@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -78,8 +79,26 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		w.Header().Set("Content-Type", mimeType)
 	}
 
+	// if modified since
+	if !entry.Attr.Mtime.IsZero() {
+		w.Header().Set("Last-Modified", entry.Attr.Mtime.UTC().Format(http.TimeFormat))
+		if r.Header.Get("If-Modified-Since") != "" {
+			if t, parseError := time.Parse(http.TimeFormat, r.Header.Get("If-Modified-Since")); parseError == nil {
+				if t.After(entry.Attr.Mtime) {
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
+			}
+		}
+	}
+
 	// set etag
-	setEtag(w, filer2.ETag(entry.Chunks))
+	etag := filer2.ETagEntry(entry)
+	if inm := r.Header.Get("If-None-Match"); inm == "\""+etag+"\"" {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	setEtag(w, etag)
 
 	if r.Method == "HEAD" {
 		w.Header().Set("Content-Length", strconv.FormatInt(int64(filer2.TotalSize(entry.Chunks)), 10))

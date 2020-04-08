@@ -90,7 +90,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 		}
 		glog.V(1).Infof("lookup: %v", lookupRequest)
 		if resp, err := filer_pb.LookupEntry(client, lookupRequest); err == nil {
-			if filer2.ETag(resp.Entry.Chunks) == filer2.ETag(entry.Chunks) {
+			if filer2.ETag(resp.Entry) == filer2.ETag(entry) {
 				glog.V(0).Infof("already replicated %s", key)
 				return nil
 			}
@@ -160,7 +160,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		// skip if already changed
 		// this usually happens when the messages are not ordered
 		glog.V(0).Infof("late updates %s", key)
-	} else if filer2.ETag(newEntry.Chunks) == filer2.ETag(existingEntry.Chunks) {
+	} else if filer2.ETag(newEntry) == filer2.ETag(existingEntry) {
 		// skip if no change
 		// this usually happens when retrying the replication
 		glog.V(0).Infof("already replicated %s", key)

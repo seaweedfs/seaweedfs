@@ -123,6 +123,7 @@ message FuseAttributes {
     string user_name = 11; // for hdfs
     repeated string group_name = 12; // for hdfs
     string symlink_target = 13;
+    bytes md5 = 14;
 }
 
 message CreateEntryRequest {

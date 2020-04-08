@@ -52,6 +52,7 @@ func EntryAttributeToPb(entry *Entry) *filer_pb.FuseAttributes {
 		UserName:      entry.Attr.UserName,
 		GroupName:     entry.Attr.GroupNames,
 		SymlinkTarget: entry.Attr.SymlinkTarget,
+		Md5:           entry.Attr.Md5,
 	}
 }
 
@@ -71,6 +72,7 @@ func PbToEntryAttribute(attr *filer_pb.FuseAttributes) Attr {
 	t.UserName = attr.UserName
 	t.GroupNames = attr.GroupName
 	t.SymlinkTarget = attr.SymlinkTarget
+	t.Md5 = attr.Md5
 
 	return t
 }
@@ -90,6 +92,10 @@ func EqualEntry(a, b *Entry) bool {
 	}
 
 	if !eq(a.Extended, b.Extended) {
+		return false
+	}
+
+	if !bytes.Equal(a.Md5, b.Md5) {
 		return false
 	}
 

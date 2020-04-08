@@ -2,7 +2,9 @@ package weed_server
 
 import (
 	"context"
+	"crypto/md5"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"path"
 	"strconv"
@@ -91,10 +93,13 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 
 	var fileChunks []*filer_pb.FileChunk
 
+	md5Hash := md5.New()
+	var partReader = ioutil.NopCloser(io.TeeReader(part1, md5Hash))
+
 	chunkOffset := int64(0)
 
 	for chunkOffset < contentLength {
-		limitedReader := io.LimitReader(part1, int64(chunkSize))
+		limitedReader := io.LimitReader(partReader, int64(chunkSize))
 
 		// assign one file id for one chunk
 		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(w, r, replication, collection, dataCenter, ttlString)
@@ -157,6 +162,7 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 			Collection:  collection,
 			TtlSec:      ttlSec,
 			Mime:        contentType,
+			Md5:         md5Hash.Sum(nil),
 		},
 		Chunks: fileChunks,
 	}

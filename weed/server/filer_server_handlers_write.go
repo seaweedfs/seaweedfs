@@ -122,12 +122,12 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	glog.V(4).Infof("write %s to %v", r.URL.Path, urlLocation)
 
 	u, _ := url.Parse(urlLocation)
-	ret, err := fs.uploadToVolumeServer(r, u, auth, w, fileId)
+	ret, md5value, err := fs.uploadToVolumeServer(r, u, auth, w, fileId)
 	if err != nil {
 		return
 	}
 
-	if err = fs.updateFilerStore(ctx, r, w, replication, collection, ret, fileId, ttlSeconds); err != nil {
+	if err = fs.updateFilerStore(ctx, r, w, replication, collection, ret, md5value, fileId, ttlSeconds); err != nil {
 		return
 	}
 
@@ -144,8 +144,8 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // update metadata in filer store
-func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w http.ResponseWriter,
-	replication string, collection string, ret *operation.UploadResult, fileId string, ttlSeconds int32) (err error) {
+func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w http.ResponseWriter, replication string,
+	collection string, ret *operation.UploadResult, md5value []byte, fileId string, ttlSeconds int32) (err error) {
 
 	stats.FilerRequestCounter.WithLabelValues("postStoreWrite").Inc()
 	start := time.Now()
@@ -186,6 +186,7 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 			Collection:  collection,
 			TtlSec:      ttlSeconds,
 			Mime:        ret.Mime,
+			Md5:         md5value,
 		},
 		Chunks: []*filer_pb.FileChunk{{
 			FileId: fileId,
@@ -212,15 +213,15 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 }
 
 // send request to volume server
-func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth security.EncodedJwt, w http.ResponseWriter, fileId string) (ret *operation.UploadResult, err error) {
+func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth security.EncodedJwt, w http.ResponseWriter, fileId string) (ret *operation.UploadResult, md5value []byte, err error) {
 
 	stats.FilerRequestCounter.WithLabelValues("postUpload").Inc()
 	start := time.Now()
 	defer func() { stats.FilerRequestHistogram.WithLabelValues("postUpload").Observe(time.Since(start).Seconds()) }()
 
 	ret = &operation.UploadResult{}
-	hash := md5.New()
-	var body = ioutil.NopCloser(io.TeeReader(r.Body, hash))
+	md5Hash := md5.New()
+	var body = ioutil.NopCloser(io.TeeReader(r.Body, md5Hash))
 
 	request := &http.Request{
 		Method:        r.Method,
@@ -285,7 +286,8 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 		}
 	}
 	// use filer calculated md5 ETag, instead of the volume server crc ETag
-	ret.ETag = fmt.Sprintf("%x", hash.Sum(nil))
+	md5value = md5Hash.Sum(nil)
+	ret.ETag = fmt.Sprintf("%x", md5value)
 	return
 }
 

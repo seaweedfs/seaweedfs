@@ -139,7 +139,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket, originalPrefix string, maxKeys 
 				contents = append(contents, ListEntry{
 					Key:          fmt.Sprintf("%s%s", dir, entry.Name),
 					LastModified: time.Unix(entry.Attributes.Mtime, 0),
-					ETag:         "\"" + filer2.ETag(entry.Chunks) + "\"",
+					ETag:         "\"" + filer2.ETag(entry) + "\"",
 					Size:         int64(filer2.TotalSize(entry.Chunks)),
 					Owner: CanonicalUser{
 						ID:          fmt.Sprintf("%x", entry.Attributes.Uid),

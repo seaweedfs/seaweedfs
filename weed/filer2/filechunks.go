@@ -20,7 +20,21 @@ func TotalSize(chunks []*filer_pb.FileChunk) (size uint64) {
 	return
 }
 
-func ETag(chunks []*filer_pb.FileChunk) (etag string) {
+func ETag(entry *filer_pb.Entry) (etag string) {
+	if entry.Attributes == nil || entry.Attributes.Md5 == nil {
+		ETagChunks(entry.Chunks)
+	}
+	return fmt.Sprintf("%x", entry.Attributes.Md5)
+}
+
+func ETagEntry(entry *Entry) (etag string) {
+	if entry.Attr.Md5 == nil {
+		ETagChunks(entry.Chunks)
+	}
+	return fmt.Sprintf("%x", entry.Attr.Md5)
+}
+
+func ETagChunks(chunks []*filer_pb.FileChunk) (etag string) {
 	if len(chunks) == 1 {
 		return chunks[0].ETag
 	}
