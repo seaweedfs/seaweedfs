@@ -33,12 +33,16 @@ type FileHandle struct {
 }
 
 func newFileHandle(file *File, uid, gid uint32) *FileHandle {
-	return &FileHandle{
+	fh := &FileHandle{
 		f:          file,
 		dirtyPages: newDirtyPages(file),
 		Uid:        uid,
 		Gid:        gid,
 	}
+	if fh.f.entry != nil {
+		fh.f.entry.Attributes.FileSize = filer2.TotalSize(fh.f.entry.Chunks)
+	}
+	return fh
 }
 
 var _ = fs.Handle(&FileHandle{})
