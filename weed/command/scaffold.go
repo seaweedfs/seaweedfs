@@ -364,7 +364,8 @@ scripts = """
 sleep_minutes = 17          # sleep minutes between each script execution
 
 [master.filer]
-default_filer_url = "http://localhost:8888/"
+default = "localhost:8888"    # used by maintenance scripts if the scripts needs to use fs related commands
+
 
 [master.sequencer]
 type = "memory"     # Choose [memory|etcd] type for storing the file id sequence
