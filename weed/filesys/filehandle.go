@@ -114,21 +114,23 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
 
 	// write the request to volume servers
+	data := make([]byte, len(req.Data))
+	copy(data, req.Data)
 
-	fh.f.entry.Attributes.FileSize = uint64(max(req.Offset+int64(len(req.Data)), int64(fh.f.entry.Attributes.FileSize)))
+	fh.f.entry.Attributes.FileSize = uint64(max(req.Offset+int64(len(data)), int64(fh.f.entry.Attributes.FileSize)))
 	// glog.V(0).Infof("%v write [%d,%d)", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)))
 
-	chunks, err := fh.dirtyPages.AddPage(req.Offset, req.Data)
+	chunks, err := fh.dirtyPages.AddPage(req.Offset, data)
 	if err != nil {
-		glog.Errorf("%v write fh %d: [%d,%d): %v", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(len(req.Data)), err)
+		glog.Errorf("%v write fh %d: [%d,%d): %v", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(len(data)), err)
 		return fuse.EIO
 	}
 
-	resp.Size = len(req.Data)
+	resp.Size = len(data)
 
 	if req.Offset == 0 {
 		// detect mime type
-		detectedMIME := mimetype.Detect(req.Data)
+		detectedMIME := mimetype.Detect(data)
 		fh.contentType = detectedMIME.String()
 		if ext := path.Ext(fh.f.Name); ext != detectedMIME.Extension() {
 			fh.contentType = mime.TypeByExtension(ext)
@@ -159,6 +161,8 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 	}
 	fh.f.entryViewCache = nil
 	fh.f.reader = nil
+	fh.dirtyPages = nil
+	fh.f = nil
 
 	return nil
 }
