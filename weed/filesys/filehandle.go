@@ -161,8 +161,6 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 	}
 	fh.f.entryViewCache = nil
 	fh.f.reader = nil
-	fh.dirtyPages = nil
-	fh.f = nil
 
 	return nil
 }
