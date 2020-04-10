@@ -44,12 +44,19 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 }
 
 func (fs *FilerServer) moveEntry(ctx context.Context, oldParent util.FullPath, entry *filer2.Entry, newParent util.FullPath, newName string, events *MoveEvents) error {
-	if entry.IsDirectory() {
-		if err := fs.moveFolderSubEntries(ctx, oldParent, entry, newParent, newName, events); err != nil {
-			return err
+
+	if err := fs.moveSelfEntry(ctx, oldParent, entry, newParent, newName, events, func() error {
+		if entry.IsDirectory() {
+			if err := fs.moveFolderSubEntries(ctx, oldParent, entry, newParent, newName, events); err != nil {
+				return err
+			}
 		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("fail to move %s => %s: %v", oldParent.Child(entry.Name()), newParent.Child(newName), err)
 	}
-	return fs.moveSelfEntry(ctx, oldParent, entry, newParent, newName, events)
+
+	return nil
 }
 
 func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, oldParent util.FullPath, entry *filer2.Entry, newParent util.FullPath, newName string, events *MoveEvents) error {
@@ -85,7 +92,8 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, oldParent util.
 	return nil
 }
 
-func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPath, entry *filer2.Entry, newParent util.FullPath, newName string, events *MoveEvents) error {
+func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPath, entry *filer2.Entry, newParent util.FullPath, newName string, events *MoveEvents,
+	moveFolderSubEntries func() error) error {
 
 	oldPath, newPath := oldParent.Child(entry.Name()), newParent.Child(newName)
 
@@ -107,6 +115,14 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPat
 		return createErr
 	}
 
+	events.newEntries = append(events.newEntries, newEntry)
+
+	if moveFolderSubEntries!=nil {
+		if moveChildrenErr := moveFolderSubEntries(); moveChildrenErr != nil {
+			return moveChildrenErr
+		}
+	}
+
 	// delete old entry
 	deleteErr := fs.filer.DeleteEntryMetaAndData(ctx, oldPath, false, false, false)
 	if deleteErr != nil {
@@ -114,7 +130,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPat
 	}
 
 	events.oldEntries = append(events.oldEntries, entry)
-	events.newEntries = append(events.newEntries, newEntry)
+
 	return nil
 
 }
