@@ -421,7 +421,7 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 				maxVolumeCount += int(uint64(unclaimedSpaces)/volumeSizeLimit) - 1
 			}
 			diskLocation.MaxVolumeCount = maxVolumeCount
-			glog.V(0).Infof("disk %s max %d unclaimedSpace:%dMB, unused:%dMB volumeSizeLimit:%d/MB",
+			glog.V(0).Infof("disk %s max %d unclaimedSpace:%dMB, unused:%dMB volumeSizeLimit:%dMB",
 				diskLocation.Directory, maxVolumeCount, unclaimedSpaces/1024/1024, unusedSpace/1024/1024, volumeSizeLimit/1024/1024)
 			hasChanges = true
 		}
