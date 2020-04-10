@@ -45,11 +45,11 @@ func (f *Filer) NotifyUpdateEvent(oldEntry, newEntry *Entry, deleteChunks bool) 
 		notification.Queue.SendMessage(fullpath, eventNotification)
 	}
 
-	f.logMetaEvent(time.Now(), fullpath, eventNotification)
+	f.logMetaEvent(fullpath, eventNotification)
 
 }
 
-func (f *Filer) logMetaEvent(ts time.Time, fullpath string, eventNotification *filer_pb.EventNotification) {
+func (f *Filer) logMetaEvent(fullpath string, eventNotification *filer_pb.EventNotification) {
 
 	dir, _ := util.FullPath(fullpath).DirAndName()
 
@@ -63,7 +63,7 @@ func (f *Filer) logMetaEvent(ts time.Time, fullpath string, eventNotification *f
 		return
 	}
 
-	f.metaLogBuffer.AddToBuffer(ts, []byte(dir), data)
+	f.metaLogBuffer.AddToBuffer([]byte(dir), data)
 
 }
 

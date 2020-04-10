@@ -46,8 +46,18 @@ func NewLogBuffer(flushInterval time.Duration, flushFn func(startTime, stopTime 
 	return lb
 }
 
-func (m *LogBuffer) AddToBuffer(ts time.Time, key, data []byte) {
+func (m *LogBuffer) AddToBuffer(key, data []byte) {
 
+	m.Lock()
+	defer func() {
+		m.Unlock()
+		if m.notifyFn != nil {
+			m.notifyFn()
+		}
+	}()
+
+	// need to put the timestamp inside the lock
+	ts := time.Now()
 	logEntry := &filer_pb.LogEntry{
 		TsNs:             ts.UnixNano(),
 		PartitionKeyHash: util.HashToInt32(key),
@@ -57,14 +67,6 @@ func (m *LogBuffer) AddToBuffer(ts time.Time, key, data []byte) {
 	logEntryData, _ := proto.Marshal(logEntry)
 
 	size := len(logEntryData)
-
-	m.Lock()
-	defer func() {
-		m.Unlock()
-		if m.notifyFn != nil {
-			m.notifyFn()
-		}
-	}()
 
 	if m.pos == 0 {
 		m.startTime = ts
@@ -153,18 +155,18 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (ts time.Time, buffer
 	l, h := 0, len(m.idx)-1
 
 	/*
-	for i, pos := range m.idx {
-		logEntry, ts := readTs(m.buf, pos)
-		event := &filer_pb.FullEventNotification{}
-		proto.Unmarshal(logEntry.Data, event)
-		entry := event.EventNotification.OldEntry
-		if entry == nil {
-			entry = event.EventNotification.NewEntry
+		for i, pos := range m.idx {
+			logEntry, ts := readTs(m.buf, pos)
+			event := &filer_pb.FullEventNotification{}
+			proto.Unmarshal(logEntry.Data, event)
+			entry := event.EventNotification.OldEntry
+			if entry == nil {
+				entry = event.EventNotification.NewEntry
+			}
+			fmt.Printf("entry %d ts: %v offset:%d dir:%s name:%s\n", i, time.Unix(0, ts), pos, event.Directory, entry.Name)
 		}
-		fmt.Printf("entry %d ts: %v offset:%d dir:%s name:%s\n", i, time.Unix(0, ts), pos, event.Directory, entry.Name)
-	}
-	fmt.Printf("l=%d, h=%d\n", l, h)
-	 */
+		fmt.Printf("l=%d, h=%d\n", l, h)
+	*/
 
 	for l <= h {
 		mid := (l + h) / 2
