@@ -1,15 +1,14 @@
 // +build !linux,!windows
 
-package storage
+package backend
 
 import (
 	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 )
 
-func CreateVolumeFile(fileName string, preallocate int64, memoryMapSizeMB uint32) (backend.BackendStorageFile, error) {
+func CreateVolumeFile(fileName string, preallocate int64, memoryMapSizeMB uint32) (BackendStorageFile, error) {
 	file, e := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 	if e != nil {
 		return nil, e
@@ -17,5 +16,5 @@ func CreateVolumeFile(fileName string, preallocate int64, memoryMapSizeMB uint32
 	if preallocate > 0 {
 		glog.V(0).Infof("Preallocated disk space for %s is not supported", fileName)
 	}
-	return backend.NewDiskFile(file), nil
+	return NewDiskFile(file), nil
 }

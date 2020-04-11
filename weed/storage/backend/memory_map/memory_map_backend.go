@@ -3,12 +3,10 @@ package memory_map
 import (
 	"os"
 	"time"
-
-	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 )
 
 var (
-	_ backend.BackendStorageFile = &MemoryMappedFile{}
+	// _ backend.BackendStorageFile = &MemoryMappedFile{} // remove this to break import cycle
 )
 
 type MemoryMappedFile struct {
