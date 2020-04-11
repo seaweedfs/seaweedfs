@@ -11,6 +11,9 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
+const BufferSize = 4 * 1024 * 1024
+const PreviousBufferCount = 3
+
 type dataToFlush struct {
 	startTime time.Time
 	stopTime  time.Time
@@ -18,6 +21,7 @@ type dataToFlush struct {
 }
 
 type LogBuffer struct {
+	prevBuffers   *SealedBuffers
 	buf           []byte
 	idx           []int
 	pos           int
@@ -34,7 +38,8 @@ type LogBuffer struct {
 
 func NewLogBuffer(flushInterval time.Duration, flushFn func(startTime, stopTime time.Time, buf []byte), notifyFn func()) *LogBuffer {
 	lb := &LogBuffer{
-		buf:           make([]byte, 4*1024*1024),
+		prevBuffers:   newSealedBuffers(PreviousBufferCount),
+		buf:           make([]byte, BufferSize),
 		sizeBuf:       make([]byte, 4),
 		flushInterval: flushInterval,
 		flushFn:       flushFn,
@@ -127,6 +132,7 @@ func (m *LogBuffer) copyToFlush() *dataToFlush {
 			stopTime:  m.stopTime,
 			data:      copiedBytes(m.buf[:m.pos]),
 		}
+		m.buf = m.prevBuffers.SealBuffer(m.startTime, m.stopTime, m.buf)
 		m.pos = 0
 		m.idx = m.idx[:0]
 		return d
