@@ -12,9 +12,9 @@ import (
 	"github.com/karlseguin/ccache"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/log_buffer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/util/log_buffer"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
