@@ -10,7 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 )
 
-func createVolumeFile(fileName string, preallocate int64, memoryMapSizeMB uint32) (backend.BackendStorageFile, error) {
+func CreateVolumeFile(fileName string, preallocate int64, memoryMapSizeMB uint32) (backend.BackendStorageFile, error) {
 	file, e := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 	if e != nil {
 		return nil, e
