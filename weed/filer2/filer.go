@@ -12,8 +12,8 @@ import (
 	"github.com/karlseguin/ccache"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/log_buffer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/queue"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
@@ -35,7 +35,7 @@ type Filer struct {
 	DirQueuesPath       string
 	buckets             *FilerBuckets
 	Cipher              bool
-	metaLogBuffer       *queue.LogBuffer
+	metaLogBuffer       *log_buffer.LogBuffer
 }
 
 func NewFiler(masters []string, grpcDialOption grpc.DialOption, filerGrpcPort uint32, notifyFn func()) *Filer {
@@ -45,7 +45,7 @@ func NewFiler(masters []string, grpcDialOption grpc.DialOption, filerGrpcPort ui
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
 	}
-	f.metaLogBuffer = queue.NewLogBuffer(time.Minute, f.logFlushFunc, notifyFn)
+	f.metaLogBuffer = log_buffer.NewLogBuffer(time.Minute, f.logFlushFunc, notifyFn)
 
 	go f.loopProcessingDeletion()
 

@@ -1,4 +1,4 @@
-package queue
+package log_buffer
 
 import (
 	"sync"
