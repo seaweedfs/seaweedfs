@@ -17,7 +17,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/util/pb_cache"
+	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -67,7 +67,7 @@ type WebDavFileSystem struct {
 	secret         security.SigningKey
 	filer          *filer2.Filer
 	grpcDialOption grpc.DialOption
-	chunkCache     *pb_cache.ChunkCache
+	chunkCache     *chunk_cache.ChunkCache
 }
 
 type FileInfo struct {
@@ -98,7 +98,7 @@ type WebDavFile struct {
 func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 	return &WebDavFileSystem{
 		option:     option,
-		chunkCache: pb_cache.NewChunkCache(1000),
+		chunkCache: chunk_cache.NewChunkCache(1000),
 	}, nil
 }
 

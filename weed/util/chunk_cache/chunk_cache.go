@@ -1,4 +1,4 @@
-package pb_cache
+package chunk_cache
 
 import (
 	"time"
