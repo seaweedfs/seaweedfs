@@ -38,16 +38,13 @@ func (store *UniversalRedis2Store) InsertEntry(ctx context.Context, entry *filer
 		return fmt.Errorf("encoding %s %+v: %v", entry.FullPath, entry.Attr, err)
 	}
 
-	_, err = store.Client.Set(string(entry.FullPath), value, time.Duration(entry.TtlSec)*time.Second).Result()
-
-	if err != nil {
+	if err = store.Client.Set(string(entry.FullPath), value, time.Duration(entry.TtlSec)*time.Second).Err(); err != nil {
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
 	}
 
 	dir, name := entry.FullPath.DirAndName()
 	if name != "" {
-		_, err = store.Client.ZAdd(genDirectoryListKey(dir), &redis.Z{Score: 0, Member: name}).Result()
-		if err != nil {
+		if err = store.Client.ZAddNX(genDirectoryListKey(dir), redis.Z{Score: 0, Member: name}).Err(); err != nil {
 			return fmt.Errorf("persisting %s in parent dir: %v", entry.FullPath, err)
 		}
 	}
