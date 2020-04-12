@@ -47,6 +47,10 @@ func NewChunkCache(maxEntries int64, dir string, diskSizeMB int64, segmentCount 
 }
 
 func (c *ChunkCache) GetChunk(fileId string) (data []byte) {
+	if c == nil {
+		return
+	}
+
 	c.RLock()
 	defer c.RUnlock()
 
@@ -76,6 +80,9 @@ func (c *ChunkCache) GetChunk(fileId string) (data []byte) {
 }
 
 func (c *ChunkCache) SetChunk(fileId string, data []byte) {
+	if c == nil {
+		return
+	}
 	c.Lock()
 	defer c.Unlock()
 
@@ -107,6 +114,9 @@ func (c *ChunkCache) SetChunk(fileId string, data []byte) {
 }
 
 func (c *ChunkCache) Shutdown() {
+	if c == nil {
+		return
+	}
 	c.Lock()
 	defer c.Unlock()
 	for _, diskCache := range c.diskCaches {
