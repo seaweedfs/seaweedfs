@@ -40,7 +40,7 @@ type FilerPostResult struct {
 	Url   string `json:"url,omitempty"`
 }
 
-func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request, replication, collection, dataCenter, ttlString string) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
+func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request, replication, collection, dataCenter, ttlString string, fsync bool) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
 
 	stats.FilerRequestCounter.WithLabelValues("assign").Inc()
 	start := time.Now()
@@ -73,6 +73,9 @@ func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request,
 	}
 	fileId = assignResult.Fid
 	urlLocation = "http://" + assignResult.Url + "/" + assignResult.Fid
+	if fsync {
+		urlLocation += "?fsync=true"
+	}
 	auth = assignResult.Auth
 	return
 }
@@ -82,7 +85,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
 	query := r.URL.Query()
-	collection, replication := fs.detectCollection(r.RequestURI, query.Get("collection"), query.Get("replication"))
+	collection, replication, fsync := fs.detectCollection(r.RequestURI, query.Get("collection"), query.Get("replication"))
 	dataCenter := query.Get("dataCenter")
 	if dataCenter == "" {
 		dataCenter = fs.option.DataCenter
@@ -96,12 +99,12 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		ttlSeconds = int32(ttl.Minutes()) * 60
 	}
 
-	if autoChunked := fs.autoChunk(ctx, w, r, replication, collection, dataCenter, ttlSeconds, ttlString); autoChunked {
+	if autoChunked := fs.autoChunk(ctx, w, r, replication, collection, dataCenter, ttlSeconds, ttlString, fsync); autoChunked {
 		return
 	}
 
 	if fs.option.Cipher {
-		reply, err := fs.encrypt(ctx, w, r, replication, collection, dataCenter, ttlSeconds, ttlString)
+		reply, err := fs.encrypt(ctx, w, r, replication, collection, dataCenter, ttlSeconds, ttlString, fsync)
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 		} else if reply != nil {
@@ -111,7 +114,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fileId, urlLocation, auth, err := fs.assignNewFileInfo(w, r, replication, collection, dataCenter, ttlString)
+	fileId, urlLocation, auth, err := fs.assignNewFileInfo(w, r, replication, collection, dataCenter, ttlString, fsync)
 
 	if err != nil || fileId == "" || urlLocation == "" {
 		glog.V(0).Infof("fail to allocate volume for %s, collection:%s, datacenter:%s", r.URL.Path, collection, dataCenter)
@@ -327,7 +330,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (fs *FilerServer) detectCollection(requestURI, qCollection, qReplication string) (collection, replication string) {
+func (fs *FilerServer) detectCollection(requestURI, qCollection, qReplication string) (collection, replication string, fsync bool) {
 	// default
 	collection = fs.option.Collection
 	replication = fs.option.DefaultReplication
@@ -350,7 +353,7 @@ func (fs *FilerServer) detectCollection(requestURI, qCollection, qReplication st
 		if t > 0 {
 			collection = bucketAndObjectKey[:t]
 		}
-		replication = fs.filer.ReadBucketOption(collection)
+		replication, fsync = fs.filer.ReadBucketOption(collection)
 	}
 
 	return

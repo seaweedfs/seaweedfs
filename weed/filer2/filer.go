@@ -33,6 +33,7 @@ type Filer struct {
 	GrpcDialOption      grpc.DialOption
 	DirBucketsPath      string
 	DirQueuesPath       string
+	FsyncBuckets        []string
 	buckets             *FilerBuckets
 	Cipher              bool
 	metaLogBuffer       *log_buffer.LogBuffer

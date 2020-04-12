@@ -13,6 +13,7 @@ type BucketName string
 type BucketOption struct {
 	Name        BucketName
 	Replication string
+	fsync       bool
 }
 type FilerBuckets struct {
 	dirBucketsPath string
@@ -20,36 +21,42 @@ type FilerBuckets struct {
 	sync.RWMutex
 }
 
-func (f *Filer) LoadBuckets(dirBucketsPath string) {
+func (f *Filer) LoadBuckets() {
 
 	f.buckets = &FilerBuckets{
 		buckets: make(map[BucketName]*BucketOption),
 	}
-	f.DirBucketsPath = dirBucketsPath
 
 	limit := math.MaxInt32
 
-	entries, err := f.ListDirectoryEntries(context.Background(), util.FullPath(dirBucketsPath), "", false, limit)
+	entries, err := f.ListDirectoryEntries(context.Background(), util.FullPath(f.DirBucketsPath), "", false, limit)
 
 	if err != nil {
 		glog.V(1).Infof("no buckets found: %v", err)
 		return
 	}
 
+	shouldFsyncMap := make(map[string]bool)
+	for _, bucket := range f.FsyncBuckets {
+		shouldFsyncMap[bucket] = true
+	}
+
 	glog.V(1).Infof("buckets found: %d", len(entries))
 
 	f.buckets.Lock()
 	for _, entry := range entries {
+		_, shouldFsnyc := shouldFsyncMap[entry.Name()]
 		f.buckets.buckets[BucketName(entry.Name())] = &BucketOption{
 			Name:        BucketName(entry.Name()),
 			Replication: entry.Replication,
+			fsync:       shouldFsnyc,
 		}
 	}
 	f.buckets.Unlock()
 
 }
 
-func (f *Filer) ReadBucketOption(buketName string) (replication string) {
+func (f *Filer) ReadBucketOption(buketName string) (replication string, fsync bool) {
 
 	f.buckets.RLock()
 	defer f.buckets.RUnlock()
@@ -57,9 +64,9 @@ func (f *Filer) ReadBucketOption(buketName string) (replication string) {
 	option, found := f.buckets.buckets[BucketName(buketName)]
 
 	if !found {
-		return ""
+		return "", false
 	}
-	return option.Replication
+	return option.Replication, option.fsync
 
 }
 

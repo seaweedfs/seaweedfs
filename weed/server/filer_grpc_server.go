@@ -232,7 +232,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 	if req.TtlSec > 0 {
 		ttlStr = strconv.Itoa(int(req.TtlSec))
 	}
-	collection, replication := fs.detectCollection(req.ParentPath, req.Collection, req.Replication)
+	collection, replication, _ := fs.detectCollection(req.ParentPath, req.Collection, req.Replication)
 
 	var altRequest *operation.VolumeAssignRequest
 
