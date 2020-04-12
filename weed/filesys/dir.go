@@ -58,7 +58,7 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Gid = dir.entry.Attributes.Gid
 	attr.Uid = dir.entry.Attributes.Uid
 
-	glog.V(3).Infof("dir Attr %s, attr: %+v", dir.FullPath(), attr)
+	glog.V(4).Infof("dir Attr %s, attr: %+v", dir.FullPath(), attr)
 
 	return nil
 }
@@ -200,7 +200,7 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (node fs.Node, err error) {
 
-	glog.V(4).Infof("dir Lookup %s: %s", dir.FullPath(), req.Name)
+	glog.V(4).Infof("dir Lookup %s: %s by %s", dir.FullPath(), req.Name, req.Header.String())
 
 	fullFilePath := util.NewFullPath(dir.FullPath(), req.Name)
 	entry := dir.wfs.cacheGet(fullFilePath)

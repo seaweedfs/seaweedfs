@@ -73,10 +73,6 @@ type statsCache struct {
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {
-	chunkCache := chunk_cache.NewChunkCache(256, option.CacheDir, option.CacheSizeMB, 4)
-	util.OnInterrupt(func() {
-		chunkCache.Shutdown()
-	})
 	wfs := &WFS{
 		option:                    option,
 		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(option.DirListCacheLimit * 3).ItemsToPrune(100)),
@@ -86,7 +82,12 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 				return make([]byte, option.ChunkSizeLimit)
 			},
 		},
-		chunkCache: chunkCache,
+	}
+	if option.CacheSizeMB > 0 {
+		wfs.chunkCache = chunk_cache.NewChunkCache(256, option.CacheDir, option.CacheSizeMB, 4)
+		util.OnInterrupt(func() {
+			wfs.chunkCache.Shutdown()
+		})
 	}
 
 	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs}
