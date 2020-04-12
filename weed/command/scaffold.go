@@ -143,13 +143,13 @@ hosts=[
 	"localhost:9042",
 ]
 
-[redis]
+[redis2]
 enabled = false
 address  = "localhost:6379"
 password = ""
 database = 0
 
-[redis_cluster]
+[redis_cluster2]
 enabled = false
 addresses = [
     "localhost:30001",
