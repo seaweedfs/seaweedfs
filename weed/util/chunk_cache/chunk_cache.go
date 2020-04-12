@@ -90,9 +90,7 @@ func (c *ChunkCache) SetChunk(fileId string, data []byte) {
 	c.Lock()
 	defer c.Unlock()
 
-	if existingData := c.doGetChunk(fileId); len(existingData)==0{
-		c.doSetChunk(fileId, data)
-	}
+	c.doSetChunk(fileId, data)
 }
 
 func (c *ChunkCache) doSetChunk(fileId string, data []byte) {
