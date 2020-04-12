@@ -54,6 +54,10 @@ func (c *ChunkCache) GetChunk(fileId string) (data []byte) {
 	c.RLock()
 	defer c.RUnlock()
 
+	return c.doGetChunk(fileId)
+}
+
+func (c *ChunkCache) doGetChunk(fileId string) (data []byte) {
 	if data = c.memCache.GetChunk(fileId); data != nil {
 		return data
 	}
@@ -85,6 +89,13 @@ func (c *ChunkCache) SetChunk(fileId string, data []byte) {
 	}
 	c.Lock()
 	defer c.Unlock()
+
+	if existingData := c.doGetChunk(fileId); len(existingData)==0{
+		c.doSetChunk(fileId, data)
+	}
+}
+
+func (c *ChunkCache) doSetChunk(fileId string, data []byte) {
 
 	c.memCache.SetChunk(fileId, data)
 
