@@ -129,7 +129,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	options = append(options, osSpecificMountOptions()...)
-
 	if *option.allowOthers {
 		options = append(options, fuse.AllowOther())
 	}
@@ -137,12 +136,12 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		options = append(options, fuse.AllowNonEmptyMount())
 	}
 
+	// mount
 	c, err := fuse.Mount(dir, options...)
 	if err != nil {
 		glog.V(0).Infof("mount: %v", err)
 		return true
 	}
-
 	defer fuse.Unmount(dir)
 
 	util.OnInterrupt(func() {
@@ -164,7 +163,8 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		Replication:                 *option.replication,
 		TtlSec:                      int32(*option.ttlSec),
 		ChunkSizeLimit:              int64(chunkSizeLimitMB) * 1024 * 1024,
-		ChunkCacheCountLimit:        *option.chunkCacheCountLimit,
+		CacheDir:                    *option.cacheDir,
+		CacheSizeMB:                 *option.cacheSizeMB,
 		DataCenter:                  *option.dataCenter,
 		DirListCacheLimit:           *option.dirListCacheLimit,
 		EntryCacheTtl:               3 * time.Second,

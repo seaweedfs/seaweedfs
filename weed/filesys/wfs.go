@@ -22,18 +22,19 @@ import (
 )
 
 type Option struct {
-	FilerGrpcAddress     string
-	GrpcDialOption       grpc.DialOption
-	FilerMountRootPath   string
-	Collection           string
-	Replication          string
-	TtlSec               int32
-	ChunkSizeLimit       int64
-	ChunkCacheCountLimit int64
-	DataCenter           string
-	DirListCacheLimit    int64
-	EntryCacheTtl        time.Duration
-	Umask                os.FileMode
+	FilerGrpcAddress   string
+	GrpcDialOption     grpc.DialOption
+	FilerMountRootPath string
+	Collection         string
+	Replication        string
+	TtlSec             int32
+	ChunkSizeLimit     int64
+	CacheDir           string
+	CacheSizeMB        int64
+	DataCenter         string
+	DirListCacheLimit  int64
+	EntryCacheTtl      time.Duration
+	Umask              os.FileMode
 
 	MountUid   uint32
 	MountGid   uint32
@@ -72,6 +73,10 @@ type statsCache struct {
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {
+	chunkCache := chunk_cache.NewChunkCache(256, option.CacheDir, option.CacheSizeMB, 4)
+	util.OnInterrupt(func() {
+		chunkCache.Shutdown()
+	})
 	wfs := &WFS{
 		option:                    option,
 		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(option.DirListCacheLimit * 3).ItemsToPrune(100)),
@@ -81,7 +86,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 				return make([]byte, option.ChunkSizeLimit)
 			},
 		},
-		chunkCache: chunk_cache.NewChunkCache(option.ChunkCacheCountLimit),
+		chunkCache: chunkCache,
 	}
 
 	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs}

@@ -34,6 +34,8 @@ type WebDavOption struct {
 	Uid              uint32
 	Gid              uint32
 	Cipher           bool
+	CacheDir         string
+	CacheSizeMB      int64
 }
 
 type WebDavServer struct {
@@ -96,9 +98,14 @@ type WebDavFile struct {
 }
 
 func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
+
+	chunkCache := chunk_cache.NewChunkCache(256, option.CacheDir, option.CacheSizeMB, 4)
+	util.OnInterrupt(func() {
+		chunkCache.Shutdown()
+	})
 	return &WebDavFileSystem{
 		option:     option,
-		chunkCache: chunk_cache.NewChunkCache(1000),
+		chunkCache: chunkCache,
 	}, nil
 }
 

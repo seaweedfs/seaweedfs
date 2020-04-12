@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"os/user"
 	"strconv"
 	"time"
@@ -26,6 +27,8 @@ type WebDavOption struct {
 	collection     *string
 	tlsPrivateKey  *string
 	tlsCertificate *string
+	cacheDir       *string
+	cacheSizeMB    *int64
 }
 
 func init() {
@@ -35,6 +38,8 @@ func init() {
 	webDavStandaloneOptions.collection = cmdWebDav.Flag.String("collection", "", "collection to create the files")
 	webDavStandaloneOptions.tlsPrivateKey = cmdWebDav.Flag.String("key.file", "", "path to the TLS private key file")
 	webDavStandaloneOptions.tlsCertificate = cmdWebDav.Flag.String("cert.file", "", "path to the TLS certificate file")
+	webDavStandaloneOptions.cacheDir = cmdWebDav.Flag.String("cacheDir", os.TempDir(), "local cache directory for file chunks")
+	webDavStandaloneOptions.cacheSizeMB = cmdWebDav.Flag.Int64("cacheCapacityMB", 1000, "local cache capacity in MB")
 }
 
 var cmdWebDav = &Command{
@@ -105,6 +110,8 @@ func (wo *WebDavOption) startWebDav() bool {
 		Uid:              uid,
 		Gid:              gid,
 		Cipher:           cipher,
+		CacheDir:         *wo.cacheDir,
+		CacheSizeMB:      *wo.cacheSizeMB,
 	})
 	if webdavServer_err != nil {
 		glog.Fatalf("WebDav Server startup error: %v", webdavServer_err)
