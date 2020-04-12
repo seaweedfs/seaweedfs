@@ -80,8 +80,6 @@ buckets_fsync = [          # a list of buckets with all write requests fsync=tru
 	"important_bucket",
 	"should_always_fsync",
 ]
-# directories under this folder will be store message queue data
-queues_folder = "/queues"
 
 ####################################################
 # The following are filer store options

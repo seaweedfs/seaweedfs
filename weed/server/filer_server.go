@@ -93,9 +93,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	fs.option.recursiveDelete = v.GetBool("filer.options.recursive_delete")
 	v.SetDefault("filer.options.buckets_folder", "/buckets")
-	v.SetDefault("filer.options.queues_folder", "/queues")
 	fs.filer.DirBucketsPath = v.GetString("filer.options.buckets_folder")
-	fs.filer.DirQueuesPath = v.GetString("filer.options.queues_folder")
 	fs.filer.FsyncBuckets = v.GetStringSlice("filer.options.buckets_fsync")
 	fs.filer.LoadConfiguration(v)
 

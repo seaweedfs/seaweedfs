@@ -32,7 +32,6 @@ type Filer struct {
 	fileIdDeletionQueue *util.UnboundedQueue
 	GrpcDialOption      grpc.DialOption
 	DirBucketsPath      string
-	DirQueuesPath       string
 	FsyncBuckets        []string
 	buckets             *FilerBuckets
 	Cipher              bool

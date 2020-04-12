@@ -62,18 +62,14 @@ func (msgBrokerOpt *QueueOptions) startQueueServer() bool {
 		return false
 	}
 
-	filerQueuesPath := "/queues"
-
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	for {
 		err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+			_, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
 			}
-			filerQueuesPath = resp.DirQueues
-			glog.V(0).Infof("Queue read filer queues dir: %s", filerQueuesPath)
 			return nil
 		})
 		if err != nil {
