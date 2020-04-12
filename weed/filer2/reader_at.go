@@ -105,9 +105,11 @@ func (c *ChunkReadAt) fetchChunkData(chunkView *ChunkView) (data []byte, err err
 
 	// fmt.Printf("fetching %s [%d,%d)\n", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
 
+	hasDataInCache := false
 	chunkData := c.chunkCache.GetChunk(chunkView.FileId)
 	if chunkData != nil {
 		glog.V(3).Infof("cache hit %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
+		hasDataInCache = true
 	} else {
 		chunkData, err = c.doFetchFullChunkData(chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped)
 		if err != nil {
@@ -121,7 +123,9 @@ func (c *ChunkReadAt) fetchChunkData(chunkView *ChunkView) (data []byte, err err
 
 	data = chunkData[chunkView.Offset : chunkView.Offset+int64(chunkView.Size)]
 
-	c.chunkCache.SetChunk(chunkView.FileId, chunkData)
+	if !hasDataInCache {
+		c.chunkCache.SetChunk(chunkView.FileId, chunkData)
+	}
 
 	return data, nil
 }
