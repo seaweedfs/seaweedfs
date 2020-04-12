@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -37,7 +38,7 @@ func (fs *FilerServer) ListenForEvents(req *filer_pb.ListenForEventsRequest, str
 			fullpath := util.Join(dirPath, entryName)
 
 			// skip on filer internal meta logs
-			if strings.HasPrefix(fullpath, "/.meta") {
+			if strings.HasPrefix(fullpath, filer2.SystemLogDir) {
 				return nil
 			}
 

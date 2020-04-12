@@ -73,7 +73,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Fatal("master list is required!")
 	}
 
-	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption, option.Port+10000, fs.notifyMetaListeners)
+	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption, option.Port+10000, option.Collection, option.DefaultReplication, fs.notifyMetaListeners)
 	fs.filer.Cipher = option.Cipher
 
 	maybeStartMetrics(fs, option)

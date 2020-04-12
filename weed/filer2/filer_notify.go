@@ -25,7 +25,7 @@ func (f *Filer) NotifyUpdateEvent(oldEntry, newEntry *Entry, deleteChunks bool) 
 
 	// println("fullpath:", fullpath)
 
-	if strings.HasPrefix(fullpath, "/.meta") {
+	if strings.HasPrefix(fullpath, SystemLogDir) {
 		return
 	}
 
@@ -69,11 +69,10 @@ func (f *Filer) logMetaEvent(fullpath string, eventNotification *filer_pb.EventN
 
 func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
 
-	return
-
-	targetFile := fmt.Sprintf("/.meta/log/%04d/%02d/%02d/%02d/%02d/%02d.%09d.log",
+	targetFile := fmt.Sprintf("%s/%04d-%02d-%02d/%02d-%02d.segment", SystemLogDir,
 		startTime.Year(), startTime.Month(), startTime.Day(), startTime.Hour(), startTime.Minute(),
-		startTime.Second(), startTime.Nanosecond())
+		// startTime.Second(), startTime.Nanosecond(),
+	)
 
 	if err := f.appendToFile(targetFile, buf); err != nil {
 		glog.V(0).Infof("log write failed %s: %v", targetFile, err)
