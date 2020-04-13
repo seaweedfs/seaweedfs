@@ -64,6 +64,8 @@ type MasterServer struct {
 	grpcDialOption grpc.DialOption
 
 	MasterClient *wdclient.MasterClient
+
+	currentAdminShellClient string
 }
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *MasterServer {
