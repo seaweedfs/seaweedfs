@@ -15,7 +15,7 @@ require (
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd v0.0.0-20190719114852-fd7a80b32e1f // indirect
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
-	github.com/disintegration/imaging v1.6.1
+	github.com/disintegration/imaging v1.6.2
 	github.com/dustin/go-humanize v1.0.0
 	github.com/eapache/go-resiliency v1.2.0 // indirect
 	github.com/facebookgo/clock v0.0.0-20150410010913-600d898af40a
@@ -82,7 +82,7 @@ require (
 	gocloud.dev/pubsub/natspubsub v0.16.0
 	gocloud.dev/pubsub/rabbitpubsub v0.16.0
 	golang.org/x/crypto v0.0.0-20190911031432-227b76d455e7 // indirect
-	golang.org/x/image v0.0.0-20190829233526-b3c06291d021 // indirect
+	golang.org/x/image v0.0.0-20200119044424-58c23975cae1 // indirect
 	golang.org/x/net v0.0.0-20190909003024-a7b16738d86b
 	golang.org/x/sys v0.0.0-20190910064555-bbd175535a8b
 	golang.org/x/tools v0.0.0-20190911022129-16c5e0f7d110
