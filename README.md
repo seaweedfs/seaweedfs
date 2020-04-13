@@ -450,6 +450,12 @@ go get github.com/chrislusf/seaweedfs/weed
 
 Once this is done, you will find the executable "weed" in your `$GOPATH/bin` directory
 
+Note:
+* If you got into this problem, try to `rm -Rf $GOPATH/src/go.etcd.io/etcd/vendor/golang.org/x/net/trace` and build again.
+```
+panic: /debug/requests is already registered. You may have two independent copies of golang.org/x/net/trace in your binary, trying to maintain separate state. This may involve a vendored copy of golang.org/x/net/trace.
+```
+
 Step 4: after you modify your code locally, you could start a local build by calling `go install` under
 
 ```

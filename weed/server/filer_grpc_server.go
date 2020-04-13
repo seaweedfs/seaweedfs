@@ -232,7 +232,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 	if req.TtlSec > 0 {
 		ttlStr = strconv.Itoa(int(req.TtlSec))
 	}
-	collection, replication := fs.detectCollection(req.ParentPath, req.Collection, req.Replication)
+	collection, replication, _ := fs.detectCollection(req.ParentPath, req.Collection, req.Replication)
 
 	var altRequest *operation.VolumeAssignRequest
 
@@ -327,7 +327,6 @@ func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.
 		Replication: fs.option.DefaultReplication,
 		MaxMb:       uint32(fs.option.MaxMB),
 		DirBuckets:  fs.filer.DirBucketsPath,
-		DirQueues:   fs.filer.DirQueuesPath,
 		Cipher:      fs.filer.Cipher,
 	}, nil
 }

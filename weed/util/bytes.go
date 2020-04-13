@@ -2,6 +2,7 @@ package util
 
 import (
 	"crypto/md5"
+	"fmt"
 	"io"
 )
 
@@ -90,4 +91,10 @@ func HashToInt32(data []byte) (v int32) {
 	v += int32(b[3])
 
 	return
+}
+
+func Md5(data []byte) string {
+	hash := md5.New()
+	hash.Write(data)
+	return fmt.Sprintf("%x", hash.Sum(nil))
 }

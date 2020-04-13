@@ -63,7 +63,7 @@ func (v *Volume) Destroy() (err error) {
 	return
 }
 
-func (v *Volume) writeNeedle(n *needle.Needle) (offset uint64, size uint32, isUnchanged bool, err error) {
+func (v *Volume) writeNeedle(n *needle.Needle, fsync bool) (offset uint64, size uint32, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
@@ -97,6 +97,11 @@ func (v *Volume) writeNeedle(n *needle.Needle) (offset uint64, size uint32, isUn
 	n.AppendAtNs = uint64(time.Now().UnixNano())
 	if offset, size, _, err = n.Append(v.DataBackend, v.Version()); err != nil {
 		return
+	}
+	if fsync {
+		if err = v.DataBackend.Sync(); err != nil {
+			return
+		}
 	}
 	v.lastAppendAtNs = n.AppendAtNs
 

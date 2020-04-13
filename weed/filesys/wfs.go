@@ -15,25 +15,26 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/pb_cache"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
 )
 
 type Option struct {
-	FilerGrpcAddress     string
-	GrpcDialOption       grpc.DialOption
-	FilerMountRootPath   string
-	Collection           string
-	Replication          string
-	TtlSec               int32
-	ChunkSizeLimit       int64
-	ChunkCacheCountLimit int64
-	DataCenter           string
-	DirListCacheLimit    int64
-	EntryCacheTtl        time.Duration
-	Umask                os.FileMode
+	FilerGrpcAddress   string
+	GrpcDialOption     grpc.DialOption
+	FilerMountRootPath string
+	Collection         string
+	Replication        string
+	TtlSec             int32
+	ChunkSizeLimit     int64
+	CacheDir           string
+	CacheSizeMB        int64
+	DataCenter         string
+	DirListCacheLimit  int64
+	EntryCacheTtl      time.Duration
+	Umask              os.FileMode
 
 	MountUid   uint32
 	MountGid   uint32
@@ -54,9 +55,8 @@ type WFS struct {
 	listDirectoryEntriesCache *ccache.Cache
 
 	// contains all open handles, protected by handlesLock
-	handlesLock       sync.Mutex
-	handles           []*FileHandle
-	pathToHandleIndex map[util.FullPath]int
+	handlesLock sync.Mutex
+	handles     map[uint64]*FileHandle
 
 	bufPool sync.Pool
 
@@ -65,7 +65,7 @@ type WFS struct {
 	root        fs.Node
 	fsNodeCache *FsCache
 
-	chunkCache *pb_cache.ChunkCache
+	chunkCache *chunk_cache.ChunkCache
 }
 type statsCache struct {
 	filer_pb.StatisticsResponse
@@ -76,13 +76,18 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	wfs := &WFS{
 		option:                    option,
 		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(option.DirListCacheLimit * 3).ItemsToPrune(100)),
-		pathToHandleIndex:         make(map[util.FullPath]int),
+		handles:                   make(map[uint64]*FileHandle),
 		bufPool: sync.Pool{
 			New: func() interface{} {
 				return make([]byte, option.ChunkSizeLimit)
 			},
 		},
-		chunkCache: pb_cache.NewChunkCache(option.ChunkCacheCountLimit),
+	}
+	if option.CacheSizeMB > 0 {
+		wfs.chunkCache = chunk_cache.NewChunkCache(256, option.CacheDir, option.CacheSizeMB, 4)
+		util.OnInterrupt(func() {
+			wfs.chunkCache.Shutdown()
+		})
 	}
 
 	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs}
@@ -117,26 +122,15 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 	wfs.handlesLock.Lock()
 	defer wfs.handlesLock.Unlock()
 
-	index, found := wfs.pathToHandleIndex[fullpath]
-	if found && wfs.handles[index] != nil {
-		glog.V(2).Infoln(fullpath, "found fileHandle id", index)
-		return wfs.handles[index]
+	inodeId := file.fullpath().AsInode()
+	existingHandle, found := wfs.handles[inodeId]
+	if found && existingHandle != nil {
+		return existingHandle
 	}
 
 	fileHandle = newFileHandle(file, uid, gid)
-	for i, h := range wfs.handles {
-		if h == nil {
-			wfs.handles[i] = fileHandle
-			fileHandle.handle = uint64(i)
-			wfs.pathToHandleIndex[fullpath] = i
-			glog.V(4).Infof("%s reuse fh %d", fullpath, fileHandle.handle)
-			return
-		}
-	}
-
-	wfs.handles = append(wfs.handles, fileHandle)
-	fileHandle.handle = uint64(len(wfs.handles) - 1)
-	wfs.pathToHandleIndex[fullpath] = int(fileHandle.handle)
+	wfs.handles[inodeId] = fileHandle
+	fileHandle.handle = inodeId
 	glog.V(4).Infof("%s new fh %d", fullpath, fileHandle.handle)
 
 	return
@@ -147,10 +141,8 @@ func (wfs *WFS) ReleaseHandle(fullpath util.FullPath, handleId fuse.HandleID) {
 	defer wfs.handlesLock.Unlock()
 
 	glog.V(4).Infof("%s ReleaseHandle id %d current handles length %d", fullpath, handleId, len(wfs.handles))
-	delete(wfs.pathToHandleIndex, fullpath)
-	if int(handleId) < len(wfs.handles) {
-		wfs.handles[int(handleId)] = nil
-	}
+
+	delete(wfs.handles, fullpath.AsInode())
 
 	return
 }

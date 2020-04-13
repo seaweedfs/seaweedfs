@@ -18,7 +18,7 @@ var cmdScaffold = &Command{
 	For example, the filer.toml mysql password can be overwritten by environment variable
 		export WEED_MYSQL_PASSWORD=some_password
 	Environment variable rules:
-		* Prefix fix with "WEED_"
+		* Prefix the variable name with "WEED_"
 		* Upppercase the reset of variable name.
 		* Replace '.' with '_'
 
@@ -76,8 +76,10 @@ const (
 recursive_delete = false
 # directories under this folder will be automatically creating a separate bucket
 buckets_folder = "/buckets"
-# directories under this folder will be store message queue data
-queues_folder = "/queues"
+buckets_fsync = [          # a list of buckets with all write requests fsync=true
+	"important_bucket",
+	"should_always_fsync",
+]
 
 ####################################################
 # The following are filer store options
@@ -139,13 +141,13 @@ hosts=[
 	"localhost:9042",
 ]
 
-[redis]
+[redis2]
 enabled = false
 address  = "localhost:6379"
 password = ""
 database = 0
 
-[redis_cluster]
+[redis_cluster2]
 enabled = false
 addresses = [
     "localhost:30001",
@@ -260,6 +262,7 @@ aws_secret_access_key = ""     # if empty, loads from the shared credentials fil
 region = "us-east-2"
 bucket = "your_bucket_name"    # an existing bucket
 directory = "/"                # destination directory
+endpoint = ""
 
 [sink.google_cloud_storage]
 # read credentials doc at https://cloud.google.com/docs/authentication/getting-started
@@ -358,11 +361,13 @@ scripts = """
   ec.rebuild -force
   ec.balance -force
   volume.balance -force
+  volume.fix.replication
 """
 sleep_minutes = 17          # sleep minutes between each script execution
 
 [master.filer]
-default_filer_url = "http://localhost:8888/"
+default = "localhost:8888"    # used by maintenance scripts if the scripts needs to use fs related commands
+
 
 [master.sequencer]
 type = "memory"     # Choose [memory|etcd] type for storing the file id sequence

@@ -40,7 +40,7 @@ type FilerPostResult struct {
 	Url   string `json:"url,omitempty"`
 }
 
-func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request, replication, collection, dataCenter, ttlString string) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
+func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request, replication, collection, dataCenter, ttlString string, fsync bool) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
 
 	stats.FilerRequestCounter.WithLabelValues("assign").Inc()
 	start := time.Now()
@@ -73,6 +73,9 @@ func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request,
 	}
 	fileId = assignResult.Fid
 	urlLocation = "http://" + assignResult.Url + "/" + assignResult.Fid
+	if fsync {
+		urlLocation += "?fsync=true"
+	}
 	auth = assignResult.Auth
 	return
 }
@@ -82,7 +85,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
 	query := r.URL.Query()
-	collection, replication := fs.detectCollection(r.RequestURI, query.Get("collection"), query.Get("replication"))
+	collection, replication, fsync := fs.detectCollection(r.RequestURI, query.Get("collection"), query.Get("replication"))
 	dataCenter := query.Get("dataCenter")
 	if dataCenter == "" {
 		dataCenter = fs.option.DataCenter
@@ -96,12 +99,12 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		ttlSeconds = int32(ttl.Minutes()) * 60
 	}
 
-	if autoChunked := fs.autoChunk(ctx, w, r, replication, collection, dataCenter, ttlSeconds, ttlString); autoChunked {
+	if autoChunked := fs.autoChunk(ctx, w, r, replication, collection, dataCenter, ttlSeconds, ttlString, fsync); autoChunked {
 		return
 	}
 
 	if fs.option.Cipher {
-		reply, err := fs.encrypt(ctx, w, r, replication, collection, dataCenter, ttlSeconds, ttlString)
+		reply, err := fs.encrypt(ctx, w, r, replication, collection, dataCenter, ttlSeconds, ttlString, fsync)
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 		} else if reply != nil {
@@ -111,7 +114,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fileId, urlLocation, auth, err := fs.assignNewFileInfo(w, r, replication, collection, dataCenter, ttlString)
+	fileId, urlLocation, auth, err := fs.assignNewFileInfo(w, r, replication, collection, dataCenter, ttlString, fsync)
 
 	if err != nil || fileId == "" || urlLocation == "" {
 		glog.V(0).Infof("fail to allocate volume for %s, collection:%s, datacenter:%s", r.URL.Path, collection, dataCenter)
@@ -122,12 +125,12 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	glog.V(4).Infof("write %s to %v", r.URL.Path, urlLocation)
 
 	u, _ := url.Parse(urlLocation)
-	ret, err := fs.uploadToVolumeServer(r, u, auth, w, fileId)
+	ret, md5value, err := fs.uploadToVolumeServer(r, u, auth, w, fileId)
 	if err != nil {
 		return
 	}
 
-	if err = fs.updateFilerStore(ctx, r, w, replication, collection, ret, fileId, ttlSeconds); err != nil {
+	if err = fs.updateFilerStore(ctx, r, w, replication, collection, ret, md5value, fileId, ttlSeconds); err != nil {
 		return
 	}
 
@@ -144,8 +147,8 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // update metadata in filer store
-func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w http.ResponseWriter,
-	replication string, collection string, ret *operation.UploadResult, fileId string, ttlSeconds int32) (err error) {
+func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w http.ResponseWriter, replication string,
+	collection string, ret *operation.UploadResult, md5value []byte, fileId string, ttlSeconds int32) (err error) {
 
 	stats.FilerRequestCounter.WithLabelValues("postStoreWrite").Inc()
 	start := time.Now()
@@ -186,6 +189,7 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 			Collection:  collection,
 			TtlSec:      ttlSeconds,
 			Mime:        ret.Mime,
+			Md5:         md5value,
 		},
 		Chunks: []*filer_pb.FileChunk{{
 			FileId: fileId,
@@ -212,15 +216,20 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 }
 
 // send request to volume server
-func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth security.EncodedJwt, w http.ResponseWriter, fileId string) (ret *operation.UploadResult, err error) {
+func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth security.EncodedJwt, w http.ResponseWriter, fileId string) (ret *operation.UploadResult, md5value []byte, err error) {
 
 	stats.FilerRequestCounter.WithLabelValues("postUpload").Inc()
 	start := time.Now()
 	defer func() { stats.FilerRequestHistogram.WithLabelValues("postUpload").Observe(time.Since(start).Seconds()) }()
 
 	ret = &operation.UploadResult{}
-	hash := md5.New()
-	var body = ioutil.NopCloser(io.TeeReader(r.Body, hash))
+
+	md5Hash := md5.New()
+	body := r.Body
+	if r.Method == "PUT" {
+		// only PUT or large chunked files has Md5 in attributes
+		body = ioutil.NopCloser(io.TeeReader(r.Body, md5Hash))
+	}
 
 	request := &http.Request{
 		Method:        r.Method,
@@ -285,7 +294,10 @@ func (fs *FilerServer) uploadToVolumeServer(r *http.Request, u *url.URL, auth se
 		}
 	}
 	// use filer calculated md5 ETag, instead of the volume server crc ETag
-	ret.ETag = fmt.Sprintf("%x", hash.Sum(nil))
+	if r.Method == "PUT" {
+		md5value = md5Hash.Sum(nil)
+	}
+	ret.ETag = getEtag(resp)
 	return
 }
 
@@ -318,7 +330,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (fs *FilerServer) detectCollection(requestURI, qCollection, qReplication string) (collection, replication string) {
+func (fs *FilerServer) detectCollection(requestURI, qCollection, qReplication string) (collection, replication string, fsync bool) {
 	// default
 	collection = fs.option.Collection
 	replication = fs.option.DefaultReplication
@@ -341,7 +353,7 @@ func (fs *FilerServer) detectCollection(requestURI, qCollection, qReplication st
 		if t > 0 {
 			collection = bucketAndObjectKey[:t]
 		}
-		replication = fs.filer.ReadBucketOption(collection)
+		replication, fsync = fs.filer.ReadBucketOption(collection)
 	}
 
 	return

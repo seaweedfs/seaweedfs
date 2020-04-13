@@ -1,4 +1,4 @@
-package pb_cache
+package chunk_cache
 
 import (
 	"time"
@@ -7,21 +7,21 @@ import (
 )
 
 // a global cache for recently accessed file chunks
-type ChunkCache struct {
+type ChunkCacheInMemory struct {
 	cache *ccache.Cache
 }
 
-func NewChunkCache(maxEntries int64) *ChunkCache {
+func NewChunkCacheInMemory(maxEntries int64) *ChunkCacheInMemory {
 	pruneCount := maxEntries >> 3
 	if pruneCount <= 0 {
 		pruneCount = 500
 	}
-	return &ChunkCache{
+	return &ChunkCacheInMemory{
 		cache: ccache.New(ccache.Configure().MaxSize(maxEntries).ItemsToPrune(uint32(pruneCount))),
 	}
 }
 
-func (c *ChunkCache) GetChunk(fileId string) []byte {
+func (c *ChunkCacheInMemory) GetChunk(fileId string) []byte {
 	item := c.cache.Get(fileId)
 	if item == nil {
 		return nil
@@ -31,6 +31,6 @@ func (c *ChunkCache) GetChunk(fileId string) []byte {
 	return data
 }
 
-func (c *ChunkCache) SetChunk(fileId string, data []byte) {
+func (c *ChunkCacheInMemory) SetChunk(fileId string, data []byte) {
 	c.cache.Set(fileId, data, time.Hour)
 }

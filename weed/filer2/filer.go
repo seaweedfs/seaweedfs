@@ -13,8 +13,8 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/queue"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/util/log_buffer"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
@@ -32,20 +32,24 @@ type Filer struct {
 	fileIdDeletionQueue *util.UnboundedQueue
 	GrpcDialOption      grpc.DialOption
 	DirBucketsPath      string
-	DirQueuesPath       string
+	FsyncBuckets        []string
 	buckets             *FilerBuckets
 	Cipher              bool
-	metaLogBuffer       *queue.LogBuffer
+	metaLogBuffer       *log_buffer.LogBuffer
+	metaLogCollection   string
+	metaLogReplication  string
 }
 
-func NewFiler(masters []string, grpcDialOption grpc.DialOption, filerGrpcPort uint32, notifyFn func()) *Filer {
+func NewFiler(masters []string, grpcDialOption grpc.DialOption, filerGrpcPort uint32, collection string, replication string, notifyFn func()) *Filer {
 	f := &Filer{
 		directoryCache:      ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
 		MasterClient:        wdclient.NewMasterClient(grpcDialOption, "filer", filerGrpcPort, masters),
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
 	}
-	f.metaLogBuffer = queue.NewLogBuffer(time.Minute, f.logFlushFunc, notifyFn)
+	f.metaLogBuffer = log_buffer.NewLogBuffer(time.Minute, f.logFlushFunc, notifyFn)
+	f.metaLogCollection = collection
+	f.metaLogReplication = replication
 
 	go f.loopProcessingDeletion()
 
