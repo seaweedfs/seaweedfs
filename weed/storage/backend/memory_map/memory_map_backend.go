@@ -6,7 +6,7 @@ import (
 )
 
 var (
-	// _ backend.BackendStorageFile = &MemoryMappedFile{} // remove this to break import cycle
+// _ backend.BackendStorageFile = &MemoryMappedFile{} // remove this to break import cycle
 )
 
 type MemoryMappedFile struct {

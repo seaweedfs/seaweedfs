@@ -62,7 +62,6 @@ func (c *FsCache) doSetFsNode(path util.FullPath, node fs.Node) {
 	t.node = node
 }
 
-
 func (c *FsCache) EnsureFsNode(path util.FullPath, genNodeFn func() fs.Node) fs.Node {
 
 	c.Lock()

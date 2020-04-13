@@ -117,7 +117,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPat
 
 	events.newEntries = append(events.newEntries, newEntry)
 
-	if moveFolderSubEntries!=nil {
+	if moveFolderSubEntries != nil {
 		if moveChildrenErr := moveFolderSubEntries(); moveChildrenErr != nil {
 			return moveChildrenErr
 		}

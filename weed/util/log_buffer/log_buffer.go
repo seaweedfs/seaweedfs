@@ -163,7 +163,7 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (ts time.Time, buffer
 	/*
 		for i, pos := range m.idx {
 			logEntry, ts := readTs(m.buf, pos)
-			event := &filer_pb.FullEventNotification{}
+			event := &filer_pb.SubscribeMetadataResponse{}
 			proto.Unmarshal(logEntry.Data, event)
 			entry := event.EventNotification.OldEntry
 			if entry == nil {

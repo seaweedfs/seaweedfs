@@ -34,7 +34,7 @@ func runWatch(cmd *Command, args []string) bool {
 
 	watchErr := pb.WithFilerClient(*watchFiler, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 
-		stream, err := client.ListenForEvents(context.Background(), &filer_pb.ListenForEventsRequest{
+		stream, err := client.SubscribeMetadata(context.Background(), &filer_pb.SubscribeMetadataRequest{
 			ClientName: "watch",
 			PathPrefix: *watchTarget,
 			SinceNs:    0,

@@ -53,13 +53,13 @@ func (f *Filer) logMetaEvent(fullpath string, eventNotification *filer_pb.EventN
 
 	dir, _ := util.FullPath(fullpath).DirAndName()
 
-	event := &filer_pb.FullEventNotification{
+	event := &filer_pb.SubscribeMetadataResponse{
 		Directory:         dir,
 		EventNotification: eventNotification,
 	}
 	data, err := proto.Marshal(event)
 	if err != nil {
-		glog.Errorf("failed to marshal filer_pb.FullEventNotification %+v: %v", event, err)
+		glog.Errorf("failed to marshal filer_pb.SubscribeMetadataResponse %+v: %v", event, err)
 		return
 	}
 
@@ -97,11 +97,11 @@ func (f *Filer) ReadLogBuffer(lastReadTime time.Time, eachEventFn func(fullpath 
 			return lastReadTime, fmt.Errorf("unexpected unmarshal filer_pb.LogEntry: %v", err)
 		}
 
-		event := &filer_pb.FullEventNotification{}
+		event := &filer_pb.SubscribeMetadataResponse{}
 		err = proto.Unmarshal(logEntry.Data, event)
 		if err != nil {
-			glog.Errorf("unexpected unmarshal filer_pb.FullEventNotification: %v", err)
-			return lastReadTime, fmt.Errorf("unexpected unmarshal filer_pb.FullEventNotification: %v", err)
+			glog.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
+			return lastReadTime, fmt.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
 		}
 
 		err = eachEventFn(event.Directory, event.EventNotification)

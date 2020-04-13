@@ -61,10 +61,10 @@ func walkLogEntryFile(dst *os.File) error {
 			return nil
 		}
 
-		event := &filer_pb.FullEventNotification{}
+		event := &filer_pb.SubscribeMetadataResponse{}
 		err = proto.Unmarshal(logEntry.Data, event)
 		if err != nil {
-			log.Printf("unexpected unmarshal filer_pb.FullEventNotification: %v", err)
+			log.Printf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
 			return nil
 		}
 

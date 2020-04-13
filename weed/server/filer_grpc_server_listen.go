@@ -10,7 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (fs *FilerServer) ListenForEvents(req *filer_pb.ListenForEventsRequest, stream filer_pb.SeaweedFiler_ListenForEventsServer) error {
+func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) error {
 
 	peerAddress := findClientAddress(stream.Context(), 0)
 
@@ -46,7 +46,7 @@ func (fs *FilerServer) ListenForEvents(req *filer_pb.ListenForEventsRequest, str
 				return nil
 			}
 
-			message := &filer_pb.FullEventNotification{
+			message := &filer_pb.SubscribeMetadataResponse{
 				Directory:         dirPath,
 				EventNotification: eventNotification,
 			}

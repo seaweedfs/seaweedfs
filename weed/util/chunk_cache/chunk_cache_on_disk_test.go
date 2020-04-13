@@ -21,11 +21,11 @@ func TestOnDisk(t *testing.T) {
 
 	writeCount := 5
 	type test_data struct {
-		data []byte
+		data   []byte
 		fileId string
 	}
 	testData := make([]*test_data, writeCount)
-	for i:=0;i<writeCount;i++{
+	for i := 0; i < writeCount; i++ {
 		buff := make([]byte, 1024*1024)
 		rand.Read(buff)
 		testData[i] = &test_data{
@@ -35,7 +35,7 @@ func TestOnDisk(t *testing.T) {
 		cache.SetChunk(testData[i].fileId, testData[i].data)
 	}
 
-	for i:=0;i<writeCount;i++{
+	for i := 0; i < writeCount; i++ {
 		data := cache.GetChunk(testData[i].fileId)
 		if bytes.Compare(data, testData[i].data) != 0 {
 			t.Errorf("failed to write to and read from cache: %d", i)
@@ -46,7 +46,7 @@ func TestOnDisk(t *testing.T) {
 
 	cache = NewChunkCache(0, tmpDir, totalDiskSizeMb, segmentCount)
 
-	for i:=0;i<writeCount;i++{
+	for i := 0; i < writeCount; i++ {
 		data := cache.GetChunk(testData[i].fileId)
 		if bytes.Compare(data, testData[i].data) != 0 {
 			t.Errorf("failed to write to and read from cache: %d", i)
