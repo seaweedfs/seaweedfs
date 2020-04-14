@@ -4,11 +4,8 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"mime"
-	"path"
+	"net/http"
 	"time"
-
-	"github.com/gabriel-vasile/mimetype"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -130,12 +127,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 	if req.Offset == 0 {
 		// detect mime type
-		detectedMIME := mimetype.Detect(data)
-		fh.contentType = detectedMIME.String()
-		if ext := path.Ext(fh.f.Name); ext != detectedMIME.Extension() {
-			fh.contentType = mime.TypeByExtension(ext)
-		}
-
+		fh.contentType = http.DetectContentType(data)
 		fh.dirtyMetadata = true
 	}
 
