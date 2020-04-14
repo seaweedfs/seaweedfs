@@ -99,7 +99,7 @@ type WebDavFile struct {
 
 func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 
-	chunkCache := chunk_cache.NewChunkCache(256, option.CacheDir, option.CacheSizeMB, 4)
+	chunkCache := chunk_cache.NewChunkCache(256, option.CacheDir, option.CacheSizeMB)
 	util.OnInterrupt(func() {
 		chunkCache.Shutdown()
 	})

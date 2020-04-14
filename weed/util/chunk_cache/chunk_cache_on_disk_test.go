@@ -14,10 +14,9 @@ func TestOnDisk(t *testing.T) {
 	tmpDir, _ := ioutil.TempDir("", "c")
 	defer os.RemoveAll(tmpDir)
 
-	totalDiskSizeMb := int64(6)
-	segmentCount := 2
+	totalDiskSizeMb := int64(32)
 
-	cache := NewChunkCache(0, tmpDir, totalDiskSizeMb, segmentCount)
+	cache := NewChunkCache(0, tmpDir, totalDiskSizeMb)
 
 	writeCount := 5
 	type test_data struct {
@@ -46,7 +45,7 @@ func TestOnDisk(t *testing.T) {
 
 	cache.Shutdown()
 
-	cache = NewChunkCache(0, tmpDir, totalDiskSizeMb, segmentCount)
+	cache = NewChunkCache(0, tmpDir, totalDiskSizeMb)
 
 	for i := 0; i < writeCount; i++ {
 		data := cache.GetChunk(testData[i].fileId, testData[i].size)

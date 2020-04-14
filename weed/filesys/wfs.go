@@ -84,7 +84,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		},
 	}
 	if option.CacheSizeMB > 0 {
-		wfs.chunkCache = chunk_cache.NewChunkCache(256, option.CacheDir, option.CacheSizeMB, 4)
+		wfs.chunkCache = chunk_cache.NewChunkCache(256, option.CacheDir, option.CacheSizeMB)
 		util.OnInterrupt(func() {
 			wfs.chunkCache.Shutdown()
 		})

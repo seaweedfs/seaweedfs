@@ -8,27 +8,27 @@ import (
 )
 
 const (
-	memCacheSizeLimit = 1024 * 1024
+	memCacheSizeLimit     = 1024 * 1024
+	onDiskCacheSizeLimit0 = memCacheSizeLimit
+	onDiskCacheSizeLimit1 = 4 * memCacheSizeLimit
 )
 
 // a global cache for recently accessed file chunks
 type ChunkCache struct {
-	memCache  *ChunkCacheInMemory
-	diskCache *OnDiskCacheLayer
+	memCache   *ChunkCacheInMemory
+	diskCaches []*OnDiskCacheLayer
 	sync.RWMutex
 }
 
-func NewChunkCache(maxEntries int64, dir string, diskSizeMB int64, segmentCount int) *ChunkCache {
-
-	volumeCount, volumeSize := int(diskSizeMB/30000), int64(30000)
-	if volumeCount < segmentCount {
-		volumeCount, volumeSize = segmentCount, diskSizeMB/int64(segmentCount)
-	}
+func NewChunkCache(maxEntries int64, dir string, diskSizeMB int64) *ChunkCache {
 
 	c := &ChunkCache{
-		memCache:  NewChunkCacheInMemory(maxEntries),
-		diskCache: NewOnDiskCacheLayer(dir, "cache", volumeCount, volumeSize),
+		memCache: NewChunkCacheInMemory(maxEntries),
 	}
+	c.diskCaches = make([]*OnDiskCacheLayer, 3)
+	c.diskCaches[0] = NewOnDiskCacheLayer(dir, "c0_1", diskSizeMB/4, 4)
+	c.diskCaches[1] = NewOnDiskCacheLayer(dir, "c1_4", diskSizeMB/4, 4)
+	c.diskCaches[2] = NewOnDiskCacheLayer(dir, "cache", diskSizeMB/2, 4)
 
 	return c
 }
@@ -58,7 +58,14 @@ func (c *ChunkCache) doGetChunk(fileId string, chunkSize uint64) (data []byte) {
 		return nil
 	}
 
-	return c.diskCache.getChunk(fid.Key)
+	for _, diskCache := range c.diskCaches {
+		data := diskCache.getChunk(fid.Key)
+		if len(data) != 0 {
+			return data
+		}
+	}
+
+	return nil
 
 }
 
@@ -84,7 +91,13 @@ func (c *ChunkCache) doSetChunk(fileId string, data []byte) {
 		return
 	}
 
-	c.diskCache.setChunk(fid.Key, data)
+	if len(data) < onDiskCacheSizeLimit0 {
+		c.diskCaches[0].setChunk(fid.Key, data)
+	} else if len(data) < onDiskCacheSizeLimit1 {
+		c.diskCaches[1].setChunk(fid.Key, data)
+	} else {
+		c.diskCaches[2].setChunk(fid.Key, data)
+	}
 
 }
 
@@ -94,5 +107,7 @@ func (c *ChunkCache) Shutdown() {
 	}
 	c.Lock()
 	defer c.Unlock()
-	c.diskCache.shutdown()
+	for _, diskCache := range c.diskCaches {
+		diskCache.shutdown()
+	}
 }

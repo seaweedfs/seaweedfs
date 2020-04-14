@@ -14,7 +14,13 @@ type OnDiskCacheLayer struct {
 	diskCaches []*ChunkCacheVolume
 }
 
-func NewOnDiskCacheLayer(dir, namePrefix string, volumeCount int, volumeSize int64) *OnDiskCacheLayer{
+func NewOnDiskCacheLayer(dir, namePrefix string, diskSizeMB int64, segmentCount int) *OnDiskCacheLayer{
+
+	volumeCount, volumeSize := int(diskSizeMB/30000), int64(30000)
+	if volumeCount < segmentCount {
+		volumeCount, volumeSize = segmentCount, diskSizeMB/int64(segmentCount)
+	}
+
 	c := &OnDiskCacheLayer{}
 	for i := 0; i < volumeCount; i++ {
 		fileName := path.Join(dir, fmt.Sprintf("%s_%d", namePrefix, i))
