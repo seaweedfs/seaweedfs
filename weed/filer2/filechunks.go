@@ -85,9 +85,13 @@ type ChunkView struct {
 	Offset      int64
 	Size        uint64
 	LogicOffset int64
-	IsFullChunk bool
+	ChunkSize   uint64
 	CipherKey   []byte
 	IsGzipped   bool
+}
+
+func (cv *ChunkView) IsFullChunk() bool {
+	return cv.Size == cv.ChunkSize
 }
 
 func ViewFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int64) (views []*ChunkView) {
@@ -111,13 +115,12 @@ func ViewFromVisibleIntervals(visibles []VisibleInterval, offset int64, size int
 	for _, chunk := range visibles {
 
 		if chunk.start <= offset && offset < chunk.stop && offset < stop {
-			isFullChunk := chunk.isFullChunk && chunk.start == offset && chunk.stop <= stop
 			views = append(views, &ChunkView{
 				FileId:      chunk.fileId,
 				Offset:      offset - chunk.start, // offset is the data starting location in this file id
 				Size:        uint64(min(chunk.stop, stop) - offset),
 				LogicOffset: offset,
-				IsFullChunk: isFullChunk,
+				ChunkSize:   chunk.chunkSize,
 				CipherKey:   chunk.cipherKey,
 				IsGzipped:   chunk.isGzipped,
 			})
@@ -146,7 +149,7 @@ var bufPool = sync.Pool{
 
 func MergeIntoVisibles(visibles, newVisibles []VisibleInterval, chunk *filer_pb.FileChunk) []VisibleInterval {
 
-	newV := newVisibleInterval(chunk.Offset, chunk.Offset+int64(chunk.Size), chunk.GetFileIdString(), chunk.Mtime, true, chunk.CipherKey, chunk.IsGzipped)
+	newV := newVisibleInterval(chunk.Offset, chunk.Offset+int64(chunk.Size), chunk.GetFileIdString(), chunk.Mtime, chunk.Size, chunk.CipherKey, chunk.IsGzipped)
 
 	length := len(visibles)
 	if length == 0 {
@@ -160,11 +163,11 @@ func MergeIntoVisibles(visibles, newVisibles []VisibleInterval, chunk *filer_pb.
 	logPrintf("  before", visibles)
 	for _, v := range visibles {
 		if v.start < chunk.Offset && chunk.Offset < v.stop {
-			newVisibles = append(newVisibles, newVisibleInterval(v.start, chunk.Offset, v.fileId, v.modifiedTime, false, v.cipherKey, v.isGzipped))
+			newVisibles = append(newVisibles, newVisibleInterval(v.start, chunk.Offset, v.fileId, v.modifiedTime, chunk.Size, v.cipherKey, v.isGzipped))
 		}
 		chunkStop := chunk.Offset + int64(chunk.Size)
 		if v.start < chunkStop && chunkStop < v.stop {
-			newVisibles = append(newVisibles, newVisibleInterval(chunkStop, v.stop, v.fileId, v.modifiedTime, false, v.cipherKey, v.isGzipped))
+			newVisibles = append(newVisibles, newVisibleInterval(chunkStop, v.stop, v.fileId, v.modifiedTime, chunk.Size, v.cipherKey, v.isGzipped))
 		}
 		if chunkStop <= v.start || v.stop <= chunk.Offset {
 			newVisibles = append(newVisibles, v)
@@ -216,18 +219,18 @@ type VisibleInterval struct {
 	stop         int64
 	modifiedTime int64
 	fileId       string
-	isFullChunk  bool
+	chunkSize    uint64
 	cipherKey    []byte
 	isGzipped    bool
 }
 
-func newVisibleInterval(start, stop int64, fileId string, modifiedTime int64, isFullChunk bool, cipherKey []byte, isGzipped bool) VisibleInterval {
+func newVisibleInterval(start, stop int64, fileId string, modifiedTime int64, chunkSize uint64, cipherKey []byte, isGzipped bool) VisibleInterval {
 	return VisibleInterval{
 		start:        start,
 		stop:         stop,
 		fileId:       fileId,
 		modifiedTime: modifiedTime,
-		isFullChunk:  isFullChunk,
+		chunkSize:    chunkSize,
 		cipherKey:    cipherKey,
 		isGzipped:    isGzipped,
 	}
