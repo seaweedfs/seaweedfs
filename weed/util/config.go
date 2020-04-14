@@ -42,7 +42,8 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 }
 
 func GetViper() *viper.Viper {
-	v := viper.GetViper()
+	v := &viper.Viper{}
+	*v = *viper.GetViper()
 	v.AutomaticEnv()
 	v.SetEnvPrefix("weed")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
