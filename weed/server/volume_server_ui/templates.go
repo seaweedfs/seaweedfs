@@ -151,9 +151,9 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
             <tr>
               <td><code>{{ .Id }}</code></td>
               <td>{{ .Collection }}</td>
-              <td>{{ .Size }} Bytes</td>
+              <td>{{ bytesToHumanReadble .Size }}</td>
               <td>{{ .FileCount }}</td>
-              <td>{{ .DeleteCount }} / {{.DeletedByteCount}} Bytes</td>
+              <td>{{ .DeleteCount }} / {{bytesToHumanReadble .DeletedByteCount}}</td>
               <td>{{ .Ttl }}</td>
               <td>{{ .ReadOnly }}</td>
             </tr>
@@ -181,9 +181,9 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
             <tr>
               <td><code>{{ .Id }}</code></td>
               <td>{{ .Collection }}</td>
-              <td>{{ .Size }} Bytes</td>
+              <td>{{ bytesToHumanReadble .Size }}</td>
               <td>{{ .FileCount }}</td>
-              <td>{{ .DeleteCount }} / {{.DeletedByteCount}} Bytes</td>
+              <td>{{ .DeleteCount }} / {{bytesToHumanReadble .DeletedByteCount}}</td>
               <td>{{ .RemoteStorageName }}</td>
               <td>{{ .RemoteStorageKey }}</td>
             </tr>
@@ -209,7 +209,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
             <tr>
               <td><code>{{ .VolumeId }}</code></td>
               <td>{{ .Collection }}</td>
-              <td>{{ .ShardSize }} Bytes</td>
+              <td>{{ bytesToHumanReadble .ShardSize }}</td>
               <td>{{ .ShardIdList }}</td>
               <td>{{ .CreatedAt.Format "02 Jan 06 15:04 -0700" }}</td>
             </tr>
