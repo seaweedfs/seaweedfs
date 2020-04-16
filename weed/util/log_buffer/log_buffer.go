@@ -51,7 +51,7 @@ func NewLogBuffer(flushInterval time.Duration, flushFn func(startTime, stopTime 
 	return lb
 }
 
-func (m *LogBuffer) AddToBuffer(key, data []byte) {
+func (m *LogBuffer) AddToBuffer(partitionKey, data []byte) {
 
 	m.Lock()
 	defer func() {
@@ -65,7 +65,7 @@ func (m *LogBuffer) AddToBuffer(key, data []byte) {
 	ts := time.Now()
 	logEntry := &filer_pb.LogEntry{
 		TsNs:             ts.UnixNano(),
-		PartitionKeyHash: util.HashToInt32(key),
+		PartitionKeyHash: util.HashToInt32(partitionKey),
 		Data:             data,
 	}
 

@@ -8,13 +8,12 @@ import (
 
 	"google.golang.org/grpc/reflection"
 
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/messaging"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
-	weed_server "github.com/chrislusf/seaweedfs/weed/server"
-
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -79,7 +78,7 @@ func (msgBrokerOpt *QueueOptions) startQueueServer() bool {
 		}
 	}
 
-	qs, err := weed_server.NewMessageBroker(&weed_server.MessageBrokerOption{
+	qs, err := messaging.NewMessageBroker(&messaging.MessageBrokerOption{
 		Filers:             []string{*msgBrokerOpt.filer},
 		DefaultReplication: "",
 		MaxMB:              0,

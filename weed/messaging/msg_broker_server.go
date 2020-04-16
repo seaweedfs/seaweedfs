@@ -1,4 +1,4 @@
-package weed_server
+package messaging
 
 import (
 	"context"
