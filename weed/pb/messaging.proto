@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package messaging_pb;
+
+option java_package = "seaweedfs.client";
+option java_outer_classname = "MessagingProto";
+
+//////////////////////////////////////////////////
+
+service SeaweedMessaging {
+
+    rpc Subscribe (SubscribeRequest) returns (stream Message) {
+    }
+
+    rpc Publish (stream PublishRequest) returns (stream PublishResponse) {
+    }
+
+    rpc ConfigureTopic (ConfigureTopicRequest) returns (ConfigureTopicResponse) {
+    }
+
+    rpc GetTopicConfiguration (GetTopicConfigurationRequest) returns (GetTopicConfigurationResponse) {
+    }
+
+}
+
+//////////////////////////////////////////////////
+
+message SubscribeRequest {
+    string namespace = 1;
+    string topic = 2;
+    int32 partition = 3;
+    enum StartPosition {
+        LATEST = 0; // Start at the newest message
+        EARLIEST = 1; // Start at the oldest message
+        TIMESTAMP = 2; // Start after a specified timestamp, exclusive
+    }
+    StartPosition startPosition = 4; // Where to begin consuming from
+    int64 timestampNs = 5; // timestamp in nano seconds
+}
+
+message Message {
+    int64 timestamp = 1 [jstype = JS_STRING]; // When the message was received by the broker
+    bytes key = 2; // Message key
+    bytes value = 3; // Message payload
+    map<string, bytes> headers = 4; // Message headers
+}
+
+message PublishRequest {
+    string namespace = 1; // only needed on the initial request
+    string topic = 2; // only needed on the initial request
+    int32 partition = 4;
+    bytes key = 5; // Message key
+    bytes value = 6; // Message payload
+    map<string, bytes> headers = 7; // Message headers
+}
+
+message PublishResponse {
+    int32 partition_count = 1;
+}
+
+message ConfigureTopicRequest {
+    string namespace = 1;
+    string topic = 2;
+    int32 partition_count = 3;
+    string collection = 4;
+}
+message ConfigureTopicResponse {
+}
+
+message GetTopicConfigurationRequest {
+    string namespace = 1;
+    string topic = 2;
+}
+message GetTopicConfigurationResponse {
+    int32 partitions = 3;
+}

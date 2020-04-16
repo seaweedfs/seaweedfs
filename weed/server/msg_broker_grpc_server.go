@@ -3,21 +3,21 @@ package weed_server
 import (
 	"context"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/queue_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
 )
 
-func (broker *MessageBroker) ConfigureTopic(context.Context, *queue_pb.ConfigureTopicRequest) (*queue_pb.ConfigureTopicResponse, error) {
+func (broker *MessageBroker) Subscribe(request *messaging_pb.SubscribeRequest, server messaging_pb.SeaweedMessaging_SubscribeServer) error {
 	panic("implement me")
 }
 
-func (broker *MessageBroker) DeleteTopic(context.Context, *queue_pb.DeleteTopicRequest) (*queue_pb.DeleteTopicResponse, error) {
+func (broker *MessageBroker) Publish(server messaging_pb.SeaweedMessaging_PublishServer) error {
 	panic("implement me")
 }
 
-func (broker *MessageBroker) StreamWrite(queue_pb.SeaweedQueue_StreamWriteServer) error {
+func (broker *MessageBroker) ConfigureTopic(c context.Context, request *messaging_pb.ConfigureTopicRequest) (*messaging_pb.ConfigureTopicResponse, error) {
 	panic("implement me")
 }
 
-func (broker *MessageBroker) StreamRead(*queue_pb.ReadMessageRequest, queue_pb.SeaweedQueue_StreamReadServer) error {
+func (broker *MessageBroker) GetTopicConfiguration(c context.Context, request *messaging_pb.GetTopicConfigurationRequest) (*messaging_pb.GetTopicConfigurationResponse, error) {
 	panic("implement me")
 }
