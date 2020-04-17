@@ -217,6 +217,38 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	return &filer_pb.UpdateEntryResponse{}, err
 }
 
+func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendToEntryRequest) (*filer_pb.AppendToEntryResponse, error) {
+
+	fullpath := util.NewFullPath(req.Directory, req.EntryName)
+	var offset int64 = 0
+	entry, err := fs.filer.FindEntry(ctx, util.FullPath(fullpath))
+	if err == filer_pb.ErrNotFound {
+		entry = &filer2.Entry{
+			FullPath: fullpath,
+			Attr: filer2.Attr{
+				Crtime: time.Now(),
+				Mtime:  time.Now(),
+				Mode:   os.FileMode(0644),
+				Uid:    OS_UID,
+				Gid:    OS_GID,
+			},
+		}
+	} else {
+		offset = int64(filer2.TotalSize(entry.Chunks))
+	}
+
+	for _, chunk := range req.Chunks {
+		chunk.Offset = offset
+		offset += int64(chunk.Size)
+	}
+
+	entry.Chunks = append(entry.Chunks, req.Chunks...)
+
+	err = fs.filer.CreateEntry(context.Background(), entry, false)
+
+	return &filer_pb.AppendToEntryResponse{}, err
+}
+
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {
 	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData)
 	resp = &filer_pb.DeleteEntryResponse{}

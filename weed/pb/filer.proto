@@ -21,6 +21,9 @@ service SeaweedFiler {
     rpc UpdateEntry (UpdateEntryRequest) returns (UpdateEntryResponse) {
     }
 
+    rpc AppendToEntry (AppendToEntryRequest) returns (AppendToEntryResponse) {
+    }
+
     rpc DeleteEntry (DeleteEntryRequest) returns (DeleteEntryResponse) {
     }
 
@@ -141,6 +144,14 @@ message UpdateEntryRequest {
     Entry entry = 2;
 }
 message UpdateEntryResponse {
+}
+
+message AppendToEntryRequest {
+    string directory = 1;
+    string entry_name = 2;
+    repeated FileChunk chunks = 3;
+}
+message AppendToEntryResponse {
 }
 
 message DeleteEntryRequest {
