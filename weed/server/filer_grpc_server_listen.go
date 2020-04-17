@@ -65,7 +65,6 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		fs.listenersLock.Unlock()
 	}
 
-	return nil
 }
 
 func (fs *FilerServer) addClient(clientType string, clientAddress string) (clientName string) {
