@@ -22,8 +22,8 @@ var (
 )
 
 type QueueOptions struct {
-	filer      *string
-	port       *int
+	filer *string
+	port  *int
 }
 
 func init() {
@@ -59,14 +59,16 @@ func (msgBrokerOpt *QueueOptions) startQueueServer() bool {
 		return false
 	}
 
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.msg_broker")
+	cipher := false
 
 	for {
 		err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			_, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
 			}
+			cipher = resp.Cipher
 			return nil
 		})
 		if err != nil {
@@ -83,7 +85,8 @@ func (msgBrokerOpt *QueueOptions) startQueueServer() bool {
 		DefaultReplication: "",
 		MaxMB:              0,
 		Port:               *msgBrokerOpt.port,
-	})
+		Cipher:             cipher,
+	}, grpcDialOption)
 
 	// start grpc listener
 	grpcL, err := util.NewListener(":"+strconv.Itoa(*msgBrokerOpt.port), 0)

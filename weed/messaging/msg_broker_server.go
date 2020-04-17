@@ -10,8 +10,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type MessageBrokerOption struct {
@@ -19,6 +17,7 @@ type MessageBrokerOption struct {
 	DefaultReplication string
 	MaxMB              int
 	Port               int
+	Cipher             bool
 }
 
 type MessageBroker struct {
@@ -26,11 +25,11 @@ type MessageBroker struct {
 	grpcDialOption grpc.DialOption
 }
 
-func NewMessageBroker(option *MessageBrokerOption) (messageBroker *MessageBroker, err error) {
+func NewMessageBroker(option *MessageBrokerOption, grpcDialOption grpc.DialOption) (messageBroker *MessageBroker, err error) {
 
 	messageBroker = &MessageBroker{
 		option:         option,
-		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.msg_broker"),
+		grpcDialOption: grpcDialOption,
 	}
 
 	go messageBroker.loopForEver()
