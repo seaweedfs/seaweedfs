@@ -72,7 +72,7 @@ func (f *Filer) assignAndUpload(data []byte) (*operation.AssignResult, *operatio
 
 	// upload data
 	targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
-	uploadResult, err := operation.UploadData(targetUrl, "", false, data, false, "", nil, assignResult.Auth)
+	uploadResult, err := operation.UploadData(targetUrl, "", f.Cipher, data, false, "", nil, assignResult.Auth)
 	if err != nil {
 		return nil, nil, fmt.Errorf("upload data %s: %v", targetUrl, err)
 	}
