@@ -58,7 +58,6 @@ func (broker *MessageBroker) appendToFile(targetFile string, topicConfig *messag
 func (broker *MessageBroker) assignAndUpload(topicConfig *messaging_pb.TopicConfiguration, data []byte) (*operation.AssignResult, *operation.UploadResult, error) {
 
 	var assignResult = &operation.AssignResult{}
-	var collection, replication string
 
 	// assign a volume location
 	if err := broker.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
@@ -83,8 +82,6 @@ func (broker *MessageBroker) assignAndUpload(topicConfig *messaging_pb.TopicConf
 		assignResult.Url = resp.Url
 		assignResult.PublicUrl = resp.PublicUrl
 		assignResult.Count = uint64(resp.Count)
-
-		collection, replication = resp.Collection, resp.Replication
 
 		return nil
 	}); err != nil {
