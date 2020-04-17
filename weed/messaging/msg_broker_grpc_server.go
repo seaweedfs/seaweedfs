@@ -32,6 +32,11 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 
 	updatesChan := make(chan int32)
 
+	// TODO look it up
+	topicConfig := &messaging_pb.TopicConfiguration{
+
+	}
+
 	go func() {
 		for update := range updatesChan {
 			if err := stream.Send(&messaging_pb.PublishResponse{
@@ -47,18 +52,16 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 
 	logBuffer := log_buffer.NewLogBuffer(time.Minute, func(startTime, stopTime time.Time, buf []byte) {
 
-		//targetFile :=
-		fmt.Sprintf("%s/%s/%s/%04d-%02d-%02d/%02d-%02d.part%02d",
+		targetFile := fmt.Sprintf(
+			"%s/%s/%s/%04d-%02d-%02d/%02d-%02d.part%02d",
 			filer2.TopicsDir, namespace, topic,
 			startTime.Year(), startTime.Month(), startTime.Day(), startTime.Hour(), startTime.Minute(),
 			partition,
 		)
 
-		/*
-			if err := f.appendToFile(targetFile, buf); err != nil {
-				glog.V(0).Infof("log write failed %s: %v", targetFile, err)
-			}
-		*/
+		if err := broker.appendToFile(targetFile, topicConfig, buf); err != nil {
+			glog.V(0).Infof("log write failed %s: %v", targetFile, err)
+		}
 
 	}, func() {
 		// notify subscribers

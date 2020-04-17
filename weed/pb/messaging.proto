@@ -90,8 +90,7 @@ message PublishResponse {
 message ConfigureTopicRequest {
     string namespace = 1;
     string topic = 2;
-    int32 partition_count = 3;
-    string collection = 4;
+    TopicConfiguration configuration = 3;
 }
 message ConfigureTopicResponse {
 }
@@ -101,5 +100,11 @@ message GetTopicConfigurationRequest {
     string topic = 2;
 }
 message GetTopicConfigurationResponse {
-    int32 partitions = 3;
+    TopicConfiguration configuration = 1;
+}
+
+message TopicConfiguration {
+    int32 partition_count = 1;
+    string collection = 2;
+    string replication = 3;
 }
