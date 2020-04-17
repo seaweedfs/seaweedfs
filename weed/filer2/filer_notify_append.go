@@ -13,7 +13,7 @@ import (
 
 func (f *Filer) appendToFile(targetFile string, data []byte) error {
 
-	assignResult, err, uploadResult, err2 := f.assignAndUpload(data)
+	assignResult, uploadResult, err2 := f.assignAndUpload(data)
 	if err2 != nil {
 		return err2
 	}
@@ -54,7 +54,7 @@ func (f *Filer) appendToFile(targetFile string, data []byte) error {
 	return err
 }
 
-func (f *Filer) assignAndUpload(data []byte) (*operation.AssignResult, error, *operation.UploadResult, error) {
+func (f *Filer) assignAndUpload(data []byte) (*operation.AssignResult, *operation.UploadResult, error) {
 	// assign a volume location
 	assignRequest := &operation.VolumeAssignRequest{
 		Count:               1,
@@ -64,18 +64,18 @@ func (f *Filer) assignAndUpload(data []byte) (*operation.AssignResult, error, *o
 	}
 	assignResult, err := operation.Assign(f.GetMaster(), f.GrpcDialOption, assignRequest)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("AssignVolume: %v", err)
+		return nil, nil, fmt.Errorf("AssignVolume: %v", err)
 	}
 	if assignResult.Error != "" {
-		return nil, nil, nil, fmt.Errorf("AssignVolume error: %v", assignResult.Error)
+		return nil, nil, fmt.Errorf("AssignVolume error: %v", assignResult.Error)
 	}
 
 	// upload data
 	targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
 	uploadResult, err := operation.UploadData(targetUrl, "", false, data, false, "", nil, assignResult.Auth)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("upload data %s: %v", targetUrl, err)
+		return nil, nil, fmt.Errorf("upload data %s: %v", targetUrl, err)
 	}
 	// println("uploaded to", targetUrl)
-	return assignResult, err, uploadResult, nil
+	return assignResult, uploadResult, nil
 }
