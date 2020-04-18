@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"go.mongodb.org/mongo-driver/bson"
@@ -73,8 +74,6 @@ func (store *MongodbStore) InsertEntry(ctx context.Context, entry *filer2.Entry)
 		Meta:      meta,
 	})
 
-	fmt.Println(err)
-
 	return nil
 }
 
@@ -87,7 +86,7 @@ func (store *MongodbStore) FindEntry(ctx context.Context, fullpath util.FullPath
 	dir, name := fullpath.DirAndName()
 	var data Model
 
-	var where = bson.M{ "directory": dir, "name": name }
+	var where = bson.M{"directory": dir, "name": name}
 	err = store.connect.Database(store.database).Collection(store.collectionName).FindOne(ctx, where).Decode(&data)
 	if err != mongo.ErrNoDocuments && err != nil {
 		return nil, filer_pb.ErrNotFound
@@ -121,7 +120,38 @@ func (store *MongodbStore) DeleteFolderChildren(ctx context.Context, fullpath ut
 
 func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
 
-	return nil, nil
+	var where = bson.M{"directory": string(fullpath), "name": bson.M{ "$gt": startFileName, }}
+	if inclusive {
+		where["name"] = bson.M{
+			"$gte": startFileName,
+		}
+	}
+	optLimit := int64(limit)
+	cur, err := store.connect.Database(store.database).Collection(store.collectionName).Find(ctx, where, &options.FindOptions{Limit: &optLimit})
+	for cur.Next(ctx) {
+		var data Model
+		err := cur.Decode(&data)
+		if err != nil && err != mongo.ErrNoDocuments {
+			return nil, err
+		}
+
+		entry := &filer2.Entry{
+			FullPath: util.NewFullPath(string(fullpath), data.Name),
+		}
+		if decodeErr := entry.DecodeAttributesAndChunks(data.Meta); decodeErr != nil {
+			err = decodeErr
+			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+			break
+		}
+
+		entries = append(entries, entry)
+	}
+
+	if err := cur.Close(ctx); err != nil {
+		glog.V(0).Infof("list iterator close: %v", err)
+	}
+
+	return entries, err
 }
 
 func (store *MongodbStore) Shutdown() {
