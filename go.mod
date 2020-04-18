@@ -75,7 +75,7 @@ require (
 	github.com/wsxiaoys/terminal v0.0.0-20160513160801-0940f3fc43a0 // indirect
 	go.etcd.io/bbolt v1.3.3 // indirect
 	go.etcd.io/etcd v3.3.15+incompatible
-	go.mongodb.org/mongo-driver v1.3.2 // indirect
+	go.mongodb.org/mongo-driver v1.3.2
 	go.uber.org/multierr v1.2.0 // indirect
 	gocloud.dev v0.16.0
 	gocloud.dev/pubsub/natspubsub v0.16.0
