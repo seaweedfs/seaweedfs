@@ -60,7 +60,6 @@ require (
 	github.com/rcrowley/go-metrics v0.0.0-20190826022208-cac0b30c2563 // indirect
 	github.com/seaweedfs/fuse v0.0.0-20190510212405-310228904eff
 	github.com/seaweedfs/goexif v1.0.2
-	github.com/sirupsen/logrus v1.4.2 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/spf13/afero v1.2.2 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
