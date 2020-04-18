@@ -110,7 +110,9 @@ func (store *MongodbStore) FindEntry(ctx context.Context, fullpath util.FullPath
 
 func (store *MongodbStore) DeleteEntry(ctx context.Context, fullpath util.FullPath) error {
 
-	where := bson.M{"directory": fullpath}
+	dir, name := fullpath.DirAndName()
+
+	where := bson.M{"directory": dir, "name": name}
 	_, err := store.connect.Database(store.database).Collection(store.collectionName).DeleteOne(ctx, where)
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
@@ -120,6 +122,12 @@ func (store *MongodbStore) DeleteEntry(ctx context.Context, fullpath util.FullPa
 }
 
 func (store *MongodbStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) error {
+
+	where := bson.M{"directory": fullpath}
+	_, err := store.connect.Database(store.database).Collection(store.collectionName).DeleteOne(ctx, where)
+	if err != nil {
+		return fmt.Errorf("delete %s : %v", fullpath, err)
+	}
 
 	return nil
 }
