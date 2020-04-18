@@ -45,7 +45,6 @@ require (
 	github.com/klauspost/cpuid v1.2.1 // indirect
 	github.com/klauspost/crc32 v1.2.0
 	github.com/klauspost/reedsolomon v1.9.2
-	github.com/konsorten/go-windows-terminal-sequences v1.0.2 // indirect
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.2.0
 	github.com/magiconair/properties v1.8.1 // indirect
@@ -54,17 +53,14 @@ require (
 	github.com/nats-io/nats-server/v2 v2.0.4 // indirect
 	github.com/onsi/ginkgo v1.10.1 // indirect
 	github.com/onsi/gomega v1.7.0 // indirect
-	github.com/pelletier/go-toml v1.4.0 // indirect
 	github.com/peterh/liner v1.1.0
 	github.com/pierrec/lz4 v2.2.7+incompatible // indirect
 	github.com/prometheus/client_golang v1.1.0
-	github.com/prometheus/client_model v0.0.0-20190812154241-14fe0d1b01d4 // indirect
 	github.com/prometheus/procfs v0.0.4 // indirect
 	github.com/rakyll/statik v0.1.6
 	github.com/rcrowley/go-metrics v0.0.0-20190826022208-cac0b30c2563 // indirect
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
 	github.com/seaweedfs/fuse v0.0.0-20190510212405-310228904eff
-	github.com/sirupsen/logrus v1.4.2 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/spf13/afero v1.2.2 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
@@ -79,6 +75,7 @@ require (
 	github.com/wsxiaoys/terminal v0.0.0-20160513160801-0940f3fc43a0 // indirect
 	go.etcd.io/bbolt v1.3.3 // indirect
 	go.etcd.io/etcd v3.3.15+incompatible
+	go.mongodb.org/mongo-driver v1.3.2 // indirect
 	go.uber.org/multierr v1.2.0 // indirect
 	gocloud.dev v0.16.0
 	gocloud.dev/pubsub/natspubsub v0.16.0
