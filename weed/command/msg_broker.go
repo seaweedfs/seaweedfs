@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/messaging"
+	"github.com/chrislusf/seaweedfs/weed/messaging/broker"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
@@ -80,7 +80,7 @@ func (msgBrokerOpt *QueueOptions) startQueueServer() bool {
 		}
 	}
 
-	qs, err := messaging.NewMessageBroker(&messaging.MessageBrokerOption{
+	qs, err := broker.NewMessageBroker(&broker.MessageBrokerOption{
 		Filers:             []string{*msgBrokerOpt.filer},
 		DefaultReplication: "",
 		MaxMB:              0,

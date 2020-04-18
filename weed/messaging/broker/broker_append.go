@@ -1,4 +1,4 @@
-package messaging
+package broker
 
 import (
 	"context"

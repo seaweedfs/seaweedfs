@@ -1,4 +1,4 @@
-package messaging
+package broker
 
 import (
 	"context"
@@ -23,6 +23,7 @@ type MessageBrokerOption struct {
 type MessageBroker struct {
 	option         *MessageBrokerOption
 	grpcDialOption grpc.DialOption
+	topicLocks     *TopicLocks
 }
 
 func NewMessageBroker(option *MessageBrokerOption, grpcDialOption grpc.DialOption) (messageBroker *MessageBroker, err error) {
@@ -30,6 +31,7 @@ func NewMessageBroker(option *MessageBrokerOption, grpcDialOption grpc.DialOptio
 	messageBroker = &MessageBroker{
 		option:         option,
 		grpcDialOption: grpcDialOption,
+		topicLocks:     NewTopicLocks(),
 	}
 
 	go messageBroker.loopForEver()

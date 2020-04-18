@@ -1,4 +1,4 @@
-package messaging
+package broker
 
 import (
 	"fmt"
@@ -10,7 +10,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
-	"github.com/chrislusf/seaweedfs/weed/util/log_buffer"
 )
 
 func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_PublishServer) error {
@@ -23,14 +22,35 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 	if err != nil {
 		return err
 	}
-	namespace, topic, partition := in.Init.Namespace, in.Init.Topic, in.Init.Partition
-
-	updatesChan := make(chan int32)
 
 	// TODO look it up
 	topicConfig := &messaging_pb.TopicConfiguration{
 
 	}
+
+	// get lock
+	tp := TopicPartition{
+		Namespace: in.Init.Namespace,
+		Topic:     in.Init.Topic,
+		Partition: in.Init.Partition,
+	}
+	logBuffer := broker.topicLocks.RequestPublisherLock(tp, func(startTime, stopTime time.Time, buf []byte) {
+
+		targetFile := fmt.Sprintf(
+			"%s/%s/%s/%04d-%02d-%02d/%02d-%02d.part%02d",
+			filer2.TopicsDir, tp.Namespace, tp.Topic,
+			startTime.Year(), startTime.Month(), startTime.Day(), startTime.Hour(), startTime.Minute(),
+			tp.Partition,
+		)
+
+		if err := broker.appendToFile(targetFile, topicConfig, buf); err != nil {
+			glog.V(0).Infof("log write failed %s: %v", targetFile, err)
+		}
+
+	})
+	defer broker.topicLocks.ReleaseLock(tp, true)
+
+	updatesChan := make(chan int32)
 
 	go func() {
 		for update := range updatesChan {
@@ -45,23 +65,8 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 		}
 	}()
 
-	logBuffer := log_buffer.NewLogBuffer(time.Minute, func(startTime, stopTime time.Time, buf []byte) {
 
-		targetFile := fmt.Sprintf(
-			"%s/%s/%s/%04d-%02d-%02d/%02d-%02d.part%02d",
-			filer2.TopicsDir, namespace, topic,
-			startTime.Year(), startTime.Month(), startTime.Day(), startTime.Hour(), startTime.Minute(),
-			partition,
-		)
-
-		if err := broker.appendToFile(targetFile, topicConfig, buf); err != nil {
-			glog.V(0).Infof("log write failed %s: %v", targetFile, err)
-		}
-
-	}, func() {
-		// notify subscribers
-	})
-
+	// process each message
 	for {
 		in, err := stream.Recv()
 		if err == io.EOF {
@@ -69,6 +74,10 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 		}
 		if err != nil {
 			return err
+		}
+
+		if in.Data == nil {
+			continue
 		}
 
 		m := &messaging_pb.Message{
