@@ -2,11 +2,11 @@ package broker
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"google.golang.org/grpc"
 
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -34,7 +34,9 @@ func NewMessageBroker(option *MessageBrokerOption, grpcDialOption grpc.DialOptio
 		topicLocks:     NewTopicLocks(),
 	}
 
-	go messageBroker.loopForEver()
+	messageBroker.checkPeers()
+
+	// go messageBroker.loopForEver()
 
 	return messageBroker, nil
 }
@@ -52,58 +54,55 @@ func (broker *MessageBroker) checkPeers() {
 
 	// contact a filer about masters
 	var masters []string
-	for _, filer := range broker.option.Filers {
-		err := broker.withFilerClient(filer, func(client filer_pb.SeaweedFilerClient) error {
-			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
-			if err != nil {
-				return err
+	found := false
+	for !found {
+		for _, filer := range broker.option.Filers {
+			err := broker.withFilerClient(filer, func(client filer_pb.SeaweedFilerClient) error {
+				resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+				if err != nil {
+					return err
+				}
+				masters = append(masters, resp.Masters...)
+				return nil
+			})
+			if err == nil {
+				found = true
+				break
 			}
-			masters = append(masters, resp.Masters...)
-			return nil
-		})
-		if err != nil {
-			fmt.Printf("failed to read masters from %+v: %v\n", broker.option.Filers, err)
-			return
+			glog.V(0).Infof("failed to read masters from %+v: %v", broker.option.Filers, err)
+			time.Sleep(time.Second)
 		}
 	}
+	glog.V(0).Infof("received master list: %s", masters)
 
 	// contact each masters for filers
 	var filers []string
-	for _, master := range masters {
-		err := broker.withMasterClient(master, func(client master_pb.SeaweedClient) error {
-			resp, err := client.ListMasterClients(context.Background(), &master_pb.ListMasterClientsRequest{
-				ClientType: "filer",
+	found = false
+	for !found {
+		for _, master := range masters {
+			err := broker.withMasterClient(master, func(client master_pb.SeaweedClient) error {
+				resp, err := client.ListMasterClients(context.Background(), &master_pb.ListMasterClientsRequest{
+					ClientType: "filer",
+				})
+				if err != nil {
+					return err
+				}
+
+				filers = append(filers, resp.GrpcAddresses...)
+
+				return nil
 			})
-			if err != nil {
-				return err
+			if err == nil {
+				found = true
+				break
 			}
-
-			fmt.Printf("filers: %+v\n", resp.GrpcAddresses)
-			filers = append(filers, resp.GrpcAddresses...)
-
-			return nil
-		})
-		if err != nil {
-			fmt.Printf("failed to list filers: %v\n", err)
-			return
+			glog.V(0).Infof("failed to list filers: %v", err)
+			time.Sleep(time.Second)
 		}
 	}
+	glog.V(0).Infof("received filer list: %s", filers)
 
-	// contact each filer about brokers
-	for _, filer := range filers {
-		err := broker.withFilerClient(filer, func(client filer_pb.SeaweedFilerClient) error {
-			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
-			if err != nil {
-				return err
-			}
-			masters = append(masters, resp.Masters...)
-			return nil
-		})
-		if err != nil {
-			fmt.Printf("failed to read masters from %+v: %v\n", broker.option.Filers, err)
-			return
-		}
-	}
+	broker.option.Filers = filers
 
 }
 

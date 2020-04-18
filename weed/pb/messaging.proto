@@ -74,11 +74,6 @@ message PublishRequest {
         int32 partition = 3;
     }
     InitMessage init = 1;
-    message RawData {
-        bytes key = 1; // Message key
-        bytes value = 2; // Message payload
-        map<string, bytes> headers = 3; // Message headers
-    }
     RawData data = 2;
 }
 

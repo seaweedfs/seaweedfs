@@ -27,6 +27,19 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 	topicConfig := &messaging_pb.TopicConfiguration{
 
 	}
+	
+	// send init response
+	initResponse := &messaging_pb.PublishResponse{
+		Config:   nil,
+		Redirect: nil,
+	}
+	err = stream.Send(initResponse)
+	if err != nil {
+		return err
+	}
+	if initResponse.Redirect != nil {
+		return nil
+	}
 
 	// get lock
 	tp := TopicPartition{
@@ -86,6 +99,8 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 			Value:     in.Data.Value,
 			Headers:   in.Data.Headers,
 		}
+
+		println("received message:", string(in.Data.Value))
 
 		data, err := proto.Marshal(m)
 		if err != nil {

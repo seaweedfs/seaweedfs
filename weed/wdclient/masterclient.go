@@ -14,6 +14,7 @@ import (
 
 type MasterClient struct {
 	clientType     string
+	clientHost     string
 	grpcPort       uint32
 	currentMaster  string
 	masters        []string
@@ -22,9 +23,10 @@ type MasterClient struct {
 	vidMap
 }
 
-func NewMasterClient(grpcDialOption grpc.DialOption, clientType string, clientGrpcPort uint32, masters []string) *MasterClient {
+func NewMasterClient(grpcDialOption grpc.DialOption, clientType string, clientHost string, clientGrpcPort uint32, masters []string) *MasterClient {
 	return &MasterClient{
 		clientType:     clientType,
+		clientHost:     clientHost,
 		grpcPort:       clientGrpcPort,
 		masters:        masters,
 		grpcDialOption: grpcDialOption,

@@ -43,7 +43,7 @@ func init() {
 	cmdFiler.Run = runFiler // break init cycle
 	f.masters = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this collection")
-	f.ip = cmdFiler.Flag.String("ip", "", "filer server http listen ip address")
+	f.ip = cmdFiler.Flag.String("ip", util.DetectedHostAddress(), "filer server http listen ip address")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
 	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "000", "default replication type if not specified")
@@ -109,6 +109,7 @@ func (fo *FilerOptions) startFiler() {
 		DataCenter:         *fo.dataCenter,
 		DefaultLevelDbDir:  defaultLevelDbDirectory,
 		DisableHttp:        *fo.disableHttp,
+		Host:               *fo.ip,
 		Port:               uint32(*fo.port),
 		Cipher:             *fo.cipher,
 	})

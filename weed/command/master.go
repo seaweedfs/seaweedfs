@@ -172,6 +172,7 @@ func checkPeers(masterIp string, masterPort int, peers string) (masterAddress st
 
 func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {
 	return &weed_server.MasterOption{
+		Host:                    *m.ip,
 		Port:                    *m.port,
 		MetaFolder:              *m.metaFolder,
 		VolumeSizeLimitMB:       *m.volumeSizeLimitMB,

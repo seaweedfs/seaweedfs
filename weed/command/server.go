@@ -45,7 +45,7 @@ var cmdServer = &Command{
 }
 
 var (
-	serverIp                  = cmdServer.Flag.String("ip", "localhost", "ip or server name")
+	serverIp                  = cmdServer.Flag.String("ip", util.DetectedHostAddress(), "ip or server name")
 	serverBindIp              = cmdServer.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	serverTimeout             = cmdServer.Flag.Int("idleTimeout", 30, "connection idle seconds")
 	serverDataCenter          = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
