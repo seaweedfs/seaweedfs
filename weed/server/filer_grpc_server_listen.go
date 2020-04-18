@@ -4,12 +4,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (fs *FilerServer) ListenForEvents(req *filer_pb.ListenForEventsRequest, stream filer_pb.SeaweedFiler_ListenForEventsServer) error {
+func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) error {
 
 	peerAddress := findClientAddress(stream.Context(), 0)
 
@@ -37,7 +38,7 @@ func (fs *FilerServer) ListenForEvents(req *filer_pb.ListenForEventsRequest, str
 			fullpath := util.Join(dirPath, entryName)
 
 			// skip on filer internal meta logs
-			if strings.HasPrefix(fullpath, "/.meta") {
+			if strings.HasPrefix(fullpath, filer2.SystemLogDir) {
 				return nil
 			}
 
@@ -45,7 +46,7 @@ func (fs *FilerServer) ListenForEvents(req *filer_pb.ListenForEventsRequest, str
 				return nil
 			}
 
-			message := &filer_pb.FullEventNotification{
+			message := &filer_pb.SubscribeMetadataResponse{
 				Directory:         dirPath,
 				EventNotification: eventNotification,
 			}
@@ -64,7 +65,6 @@ func (fs *FilerServer) ListenForEvents(req *filer_pb.ListenForEventsRequest, str
 		fs.listenersLock.Unlock()
 	}
 
-	return nil
 }
 
 func (fs *FilerServer) addClient(clientType string, clientAddress string) (clientName string) {

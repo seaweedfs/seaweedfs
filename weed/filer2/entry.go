@@ -21,6 +21,7 @@ type Attr struct {
 	UserName      string
 	GroupNames    []string
 	SymlinkTarget string
+	Md5           []byte
 }
 
 func (attr Attr) IsDirectory() bool {

@@ -117,7 +117,7 @@ func Delete(url string, jwt string) error {
 		return nil
 	}
 	m := make(map[string]interface{})
-	if e := json.Unmarshal(body, m); e == nil {
+	if e := json.Unmarshal(body, &m); e == nil {
 		if s, ok := m["error"].(string); ok {
 			return errors.New(s)
 		}

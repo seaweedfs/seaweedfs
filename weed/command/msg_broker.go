@@ -8,13 +8,12 @@ import (
 
 	"google.golang.org/grpc/reflection"
 
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/messaging/broker"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/queue_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
-	weed_server "github.com/chrislusf/seaweedfs/weed/server"
-
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -23,16 +22,14 @@ var (
 )
 
 type QueueOptions struct {
-	filer      *string
-	port       *int
-	defaultTtl *string
+	filer *string
+	port  *int
 }
 
 func init() {
 	cmdMsgBroker.Run = runMsgBroker // break init cycle
 	messageBrokerStandaloneOptions.filer = cmdMsgBroker.Flag.String("filer", "localhost:8888", "filer server address")
 	messageBrokerStandaloneOptions.port = cmdMsgBroker.Flag.Int("port", 17777, "queue server gRPC listen port")
-	messageBrokerStandaloneOptions.defaultTtl = cmdMsgBroker.Flag.String("ttl", "1h", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
 }
 
 var cmdMsgBroker = &Command{
@@ -62,9 +59,8 @@ func (msgBrokerOpt *QueueOptions) startQueueServer() bool {
 		return false
 	}
 
-	filerQueuesPath := "/queues"
-
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.msg_broker")
+	cipher := false
 
 	for {
 		err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -72,8 +68,7 @@ func (msgBrokerOpt *QueueOptions) startQueueServer() bool {
 			if err != nil {
 				return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
 			}
-			filerQueuesPath = resp.DirQueues
-			glog.V(0).Infof("Queue read filer queues dir: %s", filerQueuesPath)
+			cipher = resp.Cipher
 			return nil
 		})
 		if err != nil {
@@ -85,12 +80,13 @@ func (msgBrokerOpt *QueueOptions) startQueueServer() bool {
 		}
 	}
 
-	qs, err := weed_server.NewMessageBroker(&weed_server.MessageBrokerOption{
+	qs, err := broker.NewMessageBroker(&broker.MessageBrokerOption{
 		Filers:             []string{*msgBrokerOpt.filer},
 		DefaultReplication: "",
 		MaxMB:              0,
 		Port:               *msgBrokerOpt.port,
-	})
+		Cipher:             cipher,
+	}, grpcDialOption)
 
 	// start grpc listener
 	grpcL, err := util.NewListener(":"+strconv.Itoa(*msgBrokerOpt.port), 0)
@@ -98,7 +94,7 @@ func (msgBrokerOpt *QueueOptions) startQueueServer() bool {
 		glog.Fatalf("failed to listen on grpc port %d: %v", *msgBrokerOpt.port, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.msg_broker"))
-	queue_pb.RegisterSeaweedQueueServer(grpcS, qs)
+	messaging_pb.RegisterSeaweedMessagingServer(grpcS, qs)
 	reflection.Register(grpcS)
 	grpcS.Serve(grpcL)
 

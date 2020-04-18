@@ -9,6 +9,7 @@ import (
 
 type FsCache struct {
 	root *FsNode
+	sync.RWMutex
 }
 type FsNode struct {
 	parent       *FsNode
@@ -27,6 +28,14 @@ func newFsCache(root fs.Node) *FsCache {
 }
 
 func (c *FsCache) GetFsNode(path util.FullPath) fs.Node {
+
+	c.RLock()
+	defer c.RUnlock()
+
+	return c.doGetFsNode(path)
+}
+
+func (c *FsCache) doGetFsNode(path util.FullPath) fs.Node {
 	t := c.root
 	for _, p := range path.Split() {
 		t = t.findChild(p)
@@ -38,6 +47,14 @@ func (c *FsCache) GetFsNode(path util.FullPath) fs.Node {
 }
 
 func (c *FsCache) SetFsNode(path util.FullPath, node fs.Node) {
+
+	c.Lock()
+	defer c.Unlock()
+
+	c.doSetFsNode(path, node)
+}
+
+func (c *FsCache) doSetFsNode(path util.FullPath, node fs.Node) {
 	t := c.root
 	for _, p := range path.Split() {
 		t = t.ensureChild(p)
@@ -46,16 +63,24 @@ func (c *FsCache) SetFsNode(path util.FullPath, node fs.Node) {
 }
 
 func (c *FsCache) EnsureFsNode(path util.FullPath, genNodeFn func() fs.Node) fs.Node {
-	t := c.GetFsNode(path)
+
+	c.Lock()
+	defer c.Unlock()
+
+	t := c.doGetFsNode(path)
 	if t != nil {
 		return t
 	}
 	t = genNodeFn()
-	c.SetFsNode(path, t)
+	c.doSetFsNode(path, t)
 	return t
 }
 
 func (c *FsCache) DeleteFsNode(path util.FullPath) {
+
+	c.Lock()
+	defer c.Unlock()
+
 	t := c.root
 	for _, p := range path.Split() {
 		t = t.findChild(p)
@@ -71,6 +96,9 @@ func (c *FsCache) DeleteFsNode(path util.FullPath) {
 
 // oldPath and newPath are full path including the new name
 func (c *FsCache) Move(oldPath util.FullPath, newPath util.FullPath) *FsNode {
+
+	c.Lock()
+	defer c.Unlock()
 
 	// find old node
 	src := c.root

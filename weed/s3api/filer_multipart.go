@@ -107,7 +107,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 		CompleteMultipartUploadOutput: s3.CompleteMultipartUploadOutput{
 			Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer, dirName, entryName)),
 			Bucket:   input.Bucket,
-			ETag:     aws.String("\"" + filer2.ETag(finalParts) + "\""),
+			ETag:     aws.String("\"" + filer2.ETagChunks(finalParts) + "\""),
 			Key:      objectKey(input.Key),
 		},
 	}
@@ -208,7 +208,7 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 				PartNumber:   aws.Int64(int64(partNumber)),
 				LastModified: aws.Time(time.Unix(entry.Attributes.Mtime, 0)),
 				Size:         aws.Int64(int64(filer2.TotalSize(entry.Chunks))),
-				ETag:         aws.String("\"" + filer2.ETag(entry.Chunks) + "\""),
+				ETag:         aws.String("\"" + filer2.ETag(entry) + "\""),
 			})
 		}
 	}

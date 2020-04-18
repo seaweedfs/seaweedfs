@@ -21,6 +21,9 @@ service SeaweedFiler {
     rpc UpdateEntry (UpdateEntryRequest) returns (UpdateEntryResponse) {
     }
 
+    rpc AppendToEntry (AppendToEntryRequest) returns (AppendToEntryResponse) {
+    }
+
     rpc DeleteEntry (DeleteEntryRequest) returns (DeleteEntryResponse) {
     }
 
@@ -42,7 +45,7 @@ service SeaweedFiler {
     rpc GetFilerConfiguration (GetFilerConfigurationRequest) returns (GetFilerConfigurationResponse) {
     }
 
-    rpc ListenForEvents (ListenForEventsRequest) returns (stream FullEventNotification) {
+    rpc SubscribeMetadata (SubscribeMetadataRequest) returns (stream SubscribeMetadataResponse) {
     }
 
 }
@@ -123,6 +126,7 @@ message FuseAttributes {
     string user_name = 11; // for hdfs
     repeated string group_name = 12; // for hdfs
     string symlink_target = 13;
+    bytes md5 = 14;
 }
 
 message CreateEntryRequest {
@@ -140,6 +144,14 @@ message UpdateEntryRequest {
     Entry entry = 2;
 }
 message UpdateEntryResponse {
+}
+
+message AppendToEntryRequest {
+    string directory = 1;
+    string entry_name = 2;
+    repeated FileChunk chunks = 3;
+}
+message AppendToEntryResponse {
 }
 
 message DeleteEntryRequest {
@@ -230,16 +242,15 @@ message GetFilerConfigurationResponse {
     string collection = 3;
     uint32 max_mb = 4;
     string dir_buckets = 5;
-    string dir_queues = 6;
     bool cipher = 7;
 }
 
-message ListenForEventsRequest {
+message SubscribeMetadataRequest {
     string client_name = 1;
     string path_prefix = 2;
     int64 since_ns = 3;
 }
-message FullEventNotification {
+message SubscribeMetadataResponse {
     string directory = 1;
     EventNotification event_notification = 2;
 }

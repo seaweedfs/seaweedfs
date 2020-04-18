@@ -121,7 +121,6 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 		}
 	}
 
-	return true
 }
 
 func validateOneEnabledInput(config *viper.Viper) {

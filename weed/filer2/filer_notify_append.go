@@ -13,25 +13,10 @@ import (
 
 func (f *Filer) appendToFile(targetFile string, data []byte) error {
 
-	// assign a volume location
-	assignRequest := &operation.VolumeAssignRequest{
-		Count: 1,
+	assignResult, uploadResult, err2 := f.assignAndUpload(data)
+	if err2 != nil {
+		return err2
 	}
-	assignResult, err := operation.Assign(f.GetMaster(), f.GrpcDialOption, assignRequest)
-	if err != nil {
-		return fmt.Errorf("AssignVolume: %v", err)
-	}
-	if assignResult.Error != "" {
-		return fmt.Errorf("AssignVolume error: %v", assignResult.Error)
-	}
-
-	// upload data
-	targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
-	uploadResult, err := operation.UploadData(targetUrl, "", false, data, false, "", nil, assignResult.Auth)
-	if err != nil {
-		return fmt.Errorf("upload data %s: %v", targetUrl, err)
-	}
-	// println("uploaded to", targetUrl)
 
 	// find out existing entry
 	fullpath := util.FullPath(targetFile)
@@ -67,4 +52,30 @@ func (f *Filer) appendToFile(targetFile string, data []byte) error {
 	err = f.CreateEntry(context.Background(), entry, false)
 
 	return err
+}
+
+func (f *Filer) assignAndUpload(data []byte) (*operation.AssignResult, *operation.UploadResult, error) {
+	// assign a volume location
+	assignRequest := &operation.VolumeAssignRequest{
+		Count:               1,
+		Collection:          f.metaLogCollection,
+		Replication:         f.metaLogReplication,
+		WritableVolumeCount: 1,
+	}
+	assignResult, err := operation.Assign(f.GetMaster(), f.GrpcDialOption, assignRequest)
+	if err != nil {
+		return nil, nil, fmt.Errorf("AssignVolume: %v", err)
+	}
+	if assignResult.Error != "" {
+		return nil, nil, fmt.Errorf("AssignVolume error: %v", assignResult.Error)
+	}
+
+	// upload data
+	targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
+	uploadResult, err := operation.UploadData(targetUrl, "", f.Cipher, data, false, "", nil, assignResult.Auth)
+	if err != nil {
+		return nil, nil, fmt.Errorf("upload data %s: %v", targetUrl, err)
+	}
+	// println("uploaded to", targetUrl)
+	return assignResult, uploadResult, nil
 }

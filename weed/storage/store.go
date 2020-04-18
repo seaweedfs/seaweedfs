@@ -252,7 +252,7 @@ func (s *Store) Close() {
 	}
 }
 
-func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (isUnchanged bool, err error) {
+func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, fsync bool) (isUnchanged bool, err error) {
 	if v := s.findVolume(i); v != nil {
 		if v.IsReadOnly() {
 			err = fmt.Errorf("volume %d is read only", i)
@@ -260,7 +260,7 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (isUnchan
 		}
 		// using len(n.Data) here instead of n.Size before n.Size is populated in v.writeNeedle(n)
 		if MaxPossibleVolumeSize >= v.ContentSize()+uint64(needle.GetActualSize(uint32(len(n.Data)), v.Version())) {
-			_, _, isUnchanged, err = v.writeNeedle(n)
+			_, _, isUnchanged, err = v.writeNeedle(n, fsync)
 		} else {
 			err = fmt.Errorf("volume size limit %d exceeded! current size is %d", s.GetVolumeSizeLimit(), v.ContentSize())
 		}
@@ -421,7 +421,7 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 				maxVolumeCount += int(uint64(unclaimedSpaces)/volumeSizeLimit) - 1
 			}
 			diskLocation.MaxVolumeCount = maxVolumeCount
-			glog.V(0).Infof("disk %s max %d unclaimedSpace:%dMB, unused:%dMB volumeSizeLimit:%d/MB",
+			glog.V(0).Infof("disk %s max %d unclaimedSpace:%dMB, unused:%dMB volumeSizeLimit:%dMB",
 				diskLocation.Directory, maxVolumeCount, unclaimedSpaces/1024/1024, unusedSpace/1024/1024, volumeSizeLimit/1024/1024)
 			hasChanges = true
 		}

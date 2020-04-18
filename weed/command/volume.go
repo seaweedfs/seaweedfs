@@ -127,7 +127,8 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	}
 
 	if *v.ip == "" {
-		*v.ip = "127.0.0.1"
+		*v.ip = util.DetectedHostAddress()
+		glog.V(0).Infof("detected volume server ip address: %v", *v.ip)
 	}
 
 	if *v.publicPort == 0 {

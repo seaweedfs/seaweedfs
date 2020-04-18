@@ -47,7 +47,7 @@ func init() {
 	m.ip = cmdMaster.Flag.String("ip", "localhost", "master <ip>|<server> address")
 	m.ipBind = cmdMaster.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	m.metaFolder = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
-	m.peers = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094")
+	m.peers = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
 	m.volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
 	m.volumePreallocate = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
 	m.pulseSeconds = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
@@ -147,6 +147,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 }
 
 func checkPeers(masterIp string, masterPort int, peers string) (masterAddress string, cleanedPeers []string) {
+	glog.V(0).Infof("current: %s:%d peers:%s", masterIp, masterPort, peers)
 	masterAddress = masterIp + ":" + strconv.Itoa(masterPort)
 	if peers != "" {
 		cleanedPeers = strings.Split(peers, ",")

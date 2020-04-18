@@ -1,4 +1,4 @@
-package queue
+package log_buffer
 
 import (
 	"sync"
@@ -11,6 +11,9 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
+const BufferSize = 4 * 1024 * 1024
+const PreviousBufferCount = 3
+
 type dataToFlush struct {
 	startTime time.Time
 	stopTime  time.Time
@@ -18,6 +21,7 @@ type dataToFlush struct {
 }
 
 type LogBuffer struct {
+	prevBuffers   *SealedBuffers
 	buf           []byte
 	idx           []int
 	pos           int
@@ -34,7 +38,8 @@ type LogBuffer struct {
 
 func NewLogBuffer(flushInterval time.Duration, flushFn func(startTime, stopTime time.Time, buf []byte), notifyFn func()) *LogBuffer {
 	lb := &LogBuffer{
-		buf:           make([]byte, 4*1024*1024),
+		prevBuffers:   newSealedBuffers(PreviousBufferCount),
+		buf:           make([]byte, BufferSize),
 		sizeBuf:       make([]byte, 4),
 		flushInterval: flushInterval,
 		flushFn:       flushFn,
@@ -46,17 +51,7 @@ func NewLogBuffer(flushInterval time.Duration, flushFn func(startTime, stopTime 
 	return lb
 }
 
-func (m *LogBuffer) AddToBuffer(ts time.Time, key, data []byte) {
-
-	logEntry := &filer_pb.LogEntry{
-		TsNs:             ts.UnixNano(),
-		PartitionKeyHash: util.HashToInt32(key),
-		Data:             data,
-	}
-
-	logEntryData, _ := proto.Marshal(logEntry)
-
-	size := len(logEntryData)
+func (m *LogBuffer) AddToBuffer(partitionKey, data []byte) {
 
 	m.Lock()
 	defer func() {
@@ -65,6 +60,18 @@ func (m *LogBuffer) AddToBuffer(ts time.Time, key, data []byte) {
 			m.notifyFn()
 		}
 	}()
+
+	// need to put the timestamp inside the lock
+	ts := time.Now()
+	logEntry := &filer_pb.LogEntry{
+		TsNs:             ts.UnixNano(),
+		PartitionKeyHash: util.HashToInt32(partitionKey),
+		Data:             data,
+	}
+
+	logEntryData, _ := proto.Marshal(logEntry)
+
+	size := len(logEntryData)
 
 	if m.pos == 0 {
 		m.startTime = ts
@@ -125,6 +132,7 @@ func (m *LogBuffer) copyToFlush() *dataToFlush {
 			stopTime:  m.stopTime,
 			data:      copiedBytes(m.buf[:m.pos]),
 		}
+		m.buf = m.prevBuffers.SealBuffer(m.startTime, m.stopTime, m.buf)
 		m.pos = 0
 		m.idx = m.idx[:0]
 		return d
@@ -153,18 +161,18 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (ts time.Time, buffer
 	l, h := 0, len(m.idx)-1
 
 	/*
-	for i, pos := range m.idx {
-		logEntry, ts := readTs(m.buf, pos)
-		event := &filer_pb.FullEventNotification{}
-		proto.Unmarshal(logEntry.Data, event)
-		entry := event.EventNotification.OldEntry
-		if entry == nil {
-			entry = event.EventNotification.NewEntry
+		for i, pos := range m.idx {
+			logEntry, ts := readTs(m.buf, pos)
+			event := &filer_pb.SubscribeMetadataResponse{}
+			proto.Unmarshal(logEntry.Data, event)
+			entry := event.EventNotification.OldEntry
+			if entry == nil {
+				entry = event.EventNotification.NewEntry
+			}
+			fmt.Printf("entry %d ts: %v offset:%d dir:%s name:%s\n", i, time.Unix(0, ts), pos, event.Directory, entry.Name)
 		}
-		fmt.Printf("entry %d ts: %v offset:%d dir:%s name:%s\n", i, time.Unix(0, ts), pos, event.Directory, entry.Name)
-	}
-	fmt.Printf("l=%d, h=%d\n", l, h)
-	 */
+		fmt.Printf("l=%d, h=%d\n", l, h)
+	*/
 
 	for l <= h {
 		mid := (l + h) / 2
