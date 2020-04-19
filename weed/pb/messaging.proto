@@ -108,4 +108,5 @@ message TopicConfiguration {
     int32 partition_count = 1;
     string collection = 2;
     string replication = 3;
+    bool is_transient = 4;
 }

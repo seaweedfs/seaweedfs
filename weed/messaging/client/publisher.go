@@ -69,8 +69,7 @@ func (p *Publisher) Publish(m *messaging_pb.RawData) error {
 
 }
 
-func (p *Publisher) Shutdown() {
+func (p *Publisher) Close() error {
 
-	p.publishClient.CloseSend()
-
+	return p.publishClient.CloseSend()
 }

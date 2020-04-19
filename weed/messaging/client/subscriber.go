@@ -59,7 +59,3 @@ func (s *Subscriber) Subscribe(processFn func(m *messaging_pb.Message)) error {
 		processFn(resp.Data)
 	}
 }
-
-func (s *Subscriber) Shutdown() {
-	s.subscriberClient.CloseSend()
-}

@@ -22,14 +22,18 @@ var (
 )
 
 type QueueOptions struct {
-	filer *string
-	port  *int
+	filer      *string
+	port       *int
+	cpuprofile *string
+	memprofile *string
 }
 
 func init() {
 	cmdMsgBroker.Run = runMsgBroker // break init cycle
 	messageBrokerStandaloneOptions.filer = cmdMsgBroker.Flag.String("filer", "localhost:8888", "filer server address")
 	messageBrokerStandaloneOptions.port = cmdMsgBroker.Flag.Int("port", 17777, "queue server gRPC listen port")
+	messageBrokerStandaloneOptions.cpuprofile = cmdMsgBroker.Flag.String("cpuprofile", "", "cpu profile output file")
+	messageBrokerStandaloneOptions.memprofile = cmdMsgBroker.Flag.String("memprofile", "", "memory profile output file")
 }
 
 var cmdMsgBroker = &Command{
@@ -52,6 +56,8 @@ func runMsgBroker(cmd *Command, args []string) bool {
 }
 
 func (msgBrokerOpt *QueueOptions) startQueueServer() bool {
+
+	util.SetupProfiling(*messageBrokerStandaloneOptions.cpuprofile, *messageBrokerStandaloneOptions.memprofile)
 
 	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(*msgBrokerOpt.filer)
 	if err != nil {
