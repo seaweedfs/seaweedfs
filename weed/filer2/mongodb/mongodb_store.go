@@ -78,7 +78,7 @@ func (store *MongodbStore) InsertEntry(ctx context.Context, entry *filer2.Entry)
 }
 
 func (store *MongodbStore) UpdateEntry(ctx context.Context, entry *filer2.Entry) (err error) {
-	return store.UpdateEntry(ctx, entry)
+	return store.InsertEntry(ctx, entry)
 }
 
 func (store *MongodbStore) FindEntry(ctx context.Context, fullpath util.FullPath) (entry *filer2.Entry, err error) {
