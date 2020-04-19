@@ -36,12 +36,19 @@ func (store *MongodbStore) GetName() string {
 func (store *MongodbStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 	store.database = configuration.GetString(prefix + "database")
 	store.collectionName = "filemeta"
-	return store.connection(configuration.GetString(prefix + "uri"))
+	poolSize := configuration.GetInt(prefix + "option_pool_size")
+	return store.connection(configuration.GetString(prefix + "uri"), uint64(poolSize))
 }
 
-func (store *MongodbStore) connection(uri string) (err error) {
+func (store *MongodbStore) connection(uri string, poolSize uint64) (err error) {
 	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
+	opts := options.Client().ApplyURI(uri)
+
+	if poolSize > 0 {
+		opts.SetMaxPoolSize(poolSize)
+	}
+
+	client, err := mongo.Connect(ctx, opts)
 	store.connect = client
 	return err
 }
@@ -141,7 +148,8 @@ func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, fullpath ut
 		}
 	}
 	optLimit := int64(limit)
-	cur, err := store.connect.Database(store.database).Collection(store.collectionName).Find(ctx, where, &options.FindOptions{Limit: &optLimit})
+	opts := &options.FindOptions{Limit: &optLimit, Sort: bson.M{ "name": 1 }}
+	cur, err := store.connect.Database(store.database).Collection(store.collectionName).Find(ctx, where, opts)
 	for cur.Next(ctx) {
 		var data Model
 		err := cur.Decode(&data)
