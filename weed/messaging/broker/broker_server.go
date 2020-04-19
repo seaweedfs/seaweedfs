@@ -31,8 +31,9 @@ func NewMessageBroker(option *MessageBrokerOption, grpcDialOption grpc.DialOptio
 	messageBroker = &MessageBroker{
 		option:         option,
 		grpcDialOption: grpcDialOption,
-		topicLocks:     NewTopicLocks(),
 	}
+
+	messageBroker.topicLocks = NewTopicLocks(messageBroker)
 
 	messageBroker.checkPeers()
 

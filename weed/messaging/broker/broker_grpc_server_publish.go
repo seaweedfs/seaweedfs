@@ -1,13 +1,11 @@
 package broker
 
 import (
-	"fmt"
 	"io"
 	"time"
 
 	"github.com/golang/protobuf/proto"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
 )
@@ -27,7 +25,7 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 	topicConfig := &messaging_pb.TopicConfiguration{
 
 	}
-	
+
 	// send init response
 	initResponse := &messaging_pb.PublishResponse{
 		Config:   nil,
@@ -47,20 +45,7 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 		Topic:     in.Init.Topic,
 		Partition: in.Init.Partition,
 	}
-	logBuffer := broker.topicLocks.RequestPublisherLock(tp, func(startTime, stopTime time.Time, buf []byte) {
-
-		targetFile := fmt.Sprintf(
-			"%s/%s/%s/%04d-%02d-%02d/%02d-%02d.part%02d",
-			filer2.TopicsDir, tp.Namespace, tp.Topic,
-			startTime.Year(), startTime.Month(), startTime.Day(), startTime.Hour(), startTime.Minute(),
-			tp.Partition,
-		)
-
-		if err := broker.appendToFile(targetFile, topicConfig, buf); err != nil {
-			glog.V(0).Infof("log write failed %s: %v", targetFile, err)
-		}
-
-	})
+	tl := broker.topicLocks.RequestLock(tp, topicConfig, true)
 	defer broker.topicLocks.ReleaseLock(tp, true)
 
 	updatesChan := make(chan int32)
@@ -77,7 +62,6 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 			}
 		}
 	}()
-
 
 	// process each message
 	for {
@@ -100,7 +84,7 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 			Headers:   in.Data.Headers,
 		}
 
-		println("received message:", string(in.Data.Value))
+		// fmt.Printf("received: %d : %s\n", len(m.Value), string(m.Value))
 
 		data, err := proto.Marshal(m)
 		if err != nil {
@@ -108,7 +92,7 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 			continue
 		}
 
-		logBuffer.AddToBuffer(in.Data.Key, data)
+		tl.logBuffer.AddToBuffer(in.Data.Key, data)
 
 	}
 }
