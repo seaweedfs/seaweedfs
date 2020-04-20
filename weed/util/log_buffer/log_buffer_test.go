@@ -8,8 +8,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
-func TestNewLogBuffer(t *testing.T) {
-	lb := NewLogBuffer(time.Second, func(startTime, stopTime time.Time, buf []byte) {
+func TestNewLogBufferFirstBuffer(t *testing.T) {
+	lb := NewLogBuffer(time.Minute, func(startTime, stopTime time.Time, buf []byte) {
 
 	}, func() {
 
