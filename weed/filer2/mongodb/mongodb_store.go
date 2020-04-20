@@ -10,6 +10,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/x/bsonx"
 	"time"
 )
 
@@ -49,8 +50,35 @@ func (store *MongodbStore) connection(uri string, poolSize uint64) (err error) {
 	}
 
 	client, err := mongo.Connect(ctx, opts)
+	if err != nil {
+		return err
+	}
+
+	c := client.Database(store.database).Collection(store.collectionName)
+	err = store.indexUnique(c)
 	store.connect = client
 	return err
+}
+
+func (store *MongodbStore) createIndex (c *mongo.Collection, index mongo.IndexModel, opts *options.CreateIndexesOptions) error {
+	_, err := c.Indexes().CreateOne(context.Background(), index, opts)
+	return err
+}
+
+func (store *MongodbStore) indexUnique(c *mongo.Collection) error {
+	opts := options.CreateIndexes().SetMaxTime(10 * time.Second)
+
+	unique := new(bool)
+	*unique = true
+
+	index := mongo.IndexModel{
+		Keys: bsonx.Doc{{Key: "directory", Value: bsonx.Int32(1)}, {Key: "name", Value: bsonx.Int32(1)}},
+		Options: &options.IndexOptions{
+			Unique: unique,
+		},
+	}
+
+	return store.createIndex(c, index, opts)
 }
 
 func (store *MongodbStore) BeginTransaction(ctx context.Context) (context.Context, error) {
