@@ -46,14 +46,8 @@ message SubscriberMessage {
     AckMessage ack = 2;
 }
 
-message RawData {
-    bytes key = 1; // Message key
-    bytes value = 2; // Message payload
-    map<string, bytes> headers = 3; // Message headers
-}
-
 message Message {
-    int64 timestamp = 1 [jstype = JS_STRING]; // When the message was received by the broker
+    int64 event_time_ns = 1 [jstype = JS_STRING];
     bytes key = 2; // Message key
     bytes value = 3; // Message payload
     map<string, bytes> headers = 4; // Message headers
@@ -74,7 +68,7 @@ message PublishRequest {
         int32 partition = 3;
     }
     InitMessage init = 1;
-    RawData data = 2;
+    Message data = 2;
 }
 
 message PublishResponse {

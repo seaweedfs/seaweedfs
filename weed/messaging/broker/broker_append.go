@@ -16,10 +16,6 @@ import (
 
 func (broker *MessageBroker) appendToFile(targetFile string, topicConfig *messaging_pb.TopicConfiguration, data []byte) error {
 
-	if topicConfig.IsTransient {
-		return nil
-	}
-
 	assignResult, uploadResult, err2 := broker.assignAndUpload(topicConfig, data)
 	if err2 != nil {
 		return err2

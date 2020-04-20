@@ -41,6 +41,10 @@ func (locks *TopicLocks) buildLogBuffer(tl *TopicLock, tp TopicPartition, topicC
 
 	flushFn := func(startTime, stopTime time.Time, buf []byte) {
 
+		if topicConfig.IsTransient {
+			return
+		}
+
 		targetFile := fmt.Sprintf(
 			"%s/%s/%s/%04d-%02d-%02d/%02d-%02d.part%02d",
 			filer2.TopicsDir, tp.Namespace, tp.Topic,

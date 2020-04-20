@@ -2,7 +2,6 @@ package broker
 
 import (
 	"io"
-	"time"
 
 	"github.com/golang/protobuf/proto"
 
@@ -77,16 +76,9 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 			continue
 		}
 
-		m := &messaging_pb.Message{
-			Timestamp: time.Now().UnixNano(),
-			Key:       in.Data.Key,
-			Value:     in.Data.Value,
-			Headers:   in.Data.Headers,
-		}
+		// fmt.Printf("received: %d : %s\n", len(in.Data.Value), string(in.Data.Value))
 
-		// fmt.Printf("received: %d : %s\n", len(m.Value), string(m.Value))
-
-		data, err := proto.Marshal(m)
+		data, err := proto.Marshal(in.Data)
 		if err != nil {
 			glog.Errorf("marshall error: %v\n", err)
 			continue

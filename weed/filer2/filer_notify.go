@@ -1,6 +1,7 @@
 package filer2
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"time"
@@ -81,8 +82,13 @@ func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
 
 func (f *Filer) ReadLogBuffer(lastReadTime time.Time, eachEventFn func(fullpath string, eventNotification *filer_pb.EventNotification) error) (newLastReadTime time.Time, err error) {
 
-	var buf []byte
-	newLastReadTime, buf = f.metaLogBuffer.ReadFromBuffer(lastReadTime)
+	var bytesBuf *bytes.Buffer
+	bytesBuf = f.metaLogBuffer.ReadFromBuffer(lastReadTime)
+	if bytesBuf == nil {
+		return
+	}
+	defer f.metaLogBuffer.ReleaseMeory(bytesBuf)
+	buf := bytesBuf.Bytes()
 	var processedTs int64
 
 	for pos := 0; pos+4 < len(buf); {

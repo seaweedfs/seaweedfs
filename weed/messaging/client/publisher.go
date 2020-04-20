@@ -61,7 +61,7 @@ func (mc *MessagingClient) NewPublisher(namespace, topic string) (*Publisher, er
 	}, nil
 }
 
-func (p *Publisher) Publish(m *messaging_pb.RawData) error {
+func (p *Publisher) Publish(m *messaging_pb.Message) error {
 
 	return p.publishClient.Send(&messaging_pb.PublishRequest{
 		Data: m,
