@@ -45,6 +45,8 @@ func (locks *TopicLocks) buildLogBuffer(tl *TopicLock, tp TopicPartition, topicC
 			return
 		}
 
+		// fmt.Printf("flushing with topic config %+v\n", topicConfig)
+
 		targetFile := fmt.Sprintf(
 			"%s/%s/%s/%04d-%02d-%02d/%02d-%02d.part%02d",
 			filer2.TopicsDir, tp.Namespace, tp.Topic,
