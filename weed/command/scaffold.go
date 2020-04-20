@@ -168,6 +168,11 @@ enabled = false
 servers = "localhost:2379"
 timeout = "3s"
 
+[mongodb]
+enabled = false
+uri = "mongodb://localhost:27017"
+option_pool_size = 0
+database = "seaweedfs"
 `
 
 	NOTIFICATION_TOML_EXAMPLE = `
