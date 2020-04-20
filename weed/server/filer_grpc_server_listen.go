@@ -22,6 +22,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	if req.SinceNs > 0 {
 		lastReadTime = time.Unix(0, req.SinceNs)
 	}
+
 	var readErr error
 	for {
 

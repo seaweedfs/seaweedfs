@@ -64,7 +64,7 @@ func (f *Filer) logMetaEvent(fullpath string, eventNotification *filer_pb.EventN
 		return
 	}
 
-	f.metaLogBuffer.AddToBuffer([]byte(dir), data)
+	f.MetaLogBuffer.AddToBuffer([]byte(dir), data)
 
 }
 
@@ -83,11 +83,11 @@ func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
 func (f *Filer) ReadLogBuffer(lastReadTime time.Time, eachEventFn func(fullpath string, eventNotification *filer_pb.EventNotification) error) (newLastReadTime time.Time, err error) {
 
 	var bytesBuf *bytes.Buffer
-	bytesBuf = f.metaLogBuffer.ReadFromBuffer(lastReadTime)
+	bytesBuf = f.MetaLogBuffer.ReadFromBuffer(lastReadTime)
 	if bytesBuf == nil {
 		return
 	}
-	defer f.metaLogBuffer.ReleaseMeory(bytesBuf)
+	defer f.MetaLogBuffer.ReleaseMeory(bytesBuf)
 	buf := bytesBuf.Bytes()
 	var processedTs int64
 
