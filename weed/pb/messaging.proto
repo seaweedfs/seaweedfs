@@ -103,4 +103,10 @@ message TopicConfiguration {
     string collection = 2;
     string replication = 3;
     bool is_transient = 4;
+    enum Partitioning {
+        NonNullKeyHash = 0; // If not null, hash by key value. If null, round robin
+        KeyHash = 1; // hash by key value
+        RoundRobin = 2; // round robin pick one partition
+    }
+    Partitioning partitoning = 5;
 }
