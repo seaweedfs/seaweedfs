@@ -14,7 +14,7 @@ type OnDiskCacheLayer struct {
 	diskCaches []*ChunkCacheVolume
 }
 
-func NewOnDiskCacheLayer(dir, namePrefix string, diskSizeMB int64, segmentCount int) *OnDiskCacheLayer{
+func NewOnDiskCacheLayer(dir, namePrefix string, diskSizeMB int64, segmentCount int) *OnDiskCacheLayer {
 
 	volumeCount, volumeSize := int(diskSizeMB/30000), int64(30000)
 	if volumeCount < segmentCount {
@@ -58,7 +58,7 @@ func (c *OnDiskCacheLayer) setChunk(needleId types.NeedleId, data []byte) {
 
 }
 
-func (c *OnDiskCacheLayer) getChunk(needleId types.NeedleId) (data []byte){
+func (c *OnDiskCacheLayer) getChunk(needleId types.NeedleId) (data []byte) {
 
 	var err error
 
@@ -80,7 +80,7 @@ func (c *OnDiskCacheLayer) getChunk(needleId types.NeedleId) (data []byte){
 
 }
 
-func (c *OnDiskCacheLayer) shutdown(){
+func (c *OnDiskCacheLayer) shutdown() {
 
 	for _, diskCache := range c.diskCaches {
 		diskCache.Shutdown()

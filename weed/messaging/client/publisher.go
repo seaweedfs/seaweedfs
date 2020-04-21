@@ -49,9 +49,9 @@ func (mc *MessagingClient) NewPublisher(namespace, topic string) (*Publisher, er
 				doneChan <- err
 				return
 			}
-			if in.Redirect != nil{
+			if in.Redirect != nil {
 			}
-			if in.Config != nil{
+			if in.Config != nil {
 			}
 		}
 	}()

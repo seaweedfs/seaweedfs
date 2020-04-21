@@ -18,7 +18,7 @@ type TopicPartition struct {
 }
 type TopicLock struct {
 	sync.Mutex
-	cond *sync.Cond
+	cond            *sync.Cond
 	subscriberCount int
 	publisherCount  int
 	logBuffer       *log_buffer.LogBuffer

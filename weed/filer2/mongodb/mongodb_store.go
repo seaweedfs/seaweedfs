@@ -38,7 +38,7 @@ func (store *MongodbStore) Initialize(configuration util.Configuration, prefix s
 	store.database = configuration.GetString(prefix + "database")
 	store.collectionName = "filemeta"
 	poolSize := configuration.GetInt(prefix + "option_pool_size")
-	return store.connection(configuration.GetString(prefix + "uri"), uint64(poolSize))
+	return store.connection(configuration.GetString(prefix+"uri"), uint64(poolSize))
 }
 
 func (store *MongodbStore) connection(uri string, poolSize uint64) (err error) {
@@ -60,7 +60,7 @@ func (store *MongodbStore) connection(uri string, poolSize uint64) (err error) {
 	return err
 }
 
-func (store *MongodbStore) createIndex (c *mongo.Collection, index mongo.IndexModel, opts *options.CreateIndexesOptions) error {
+func (store *MongodbStore) createIndex(c *mongo.Collection, index mongo.IndexModel, opts *options.CreateIndexesOptions) error {
 	_, err := c.Indexes().CreateOne(context.Background(), index, opts)
 	return err
 }
@@ -169,14 +169,14 @@ func (store *MongodbStore) DeleteFolderChildren(ctx context.Context, fullpath ut
 
 func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
 
-	var where = bson.M{"directory": string(fullpath), "name": bson.M{"$gt": startFileName,}}
+	var where = bson.M{"directory": string(fullpath), "name": bson.M{"$gt": startFileName}}
 	if inclusive {
 		where["name"] = bson.M{
 			"$gte": startFileName,
 		}
 	}
 	optLimit := int64(limit)
-	opts := &options.FindOptions{Limit: &optLimit, Sort: bson.M{ "name": 1 }}
+	opts := &options.FindOptions{Limit: &optLimit, Sort: bson.M{"name": 1}}
 	cur, err := store.connect.Database(store.database).Collection(store.collectionName).Find(ctx, where, opts)
 	for cur.Next(ctx) {
 		var data Model
