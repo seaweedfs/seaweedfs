@@ -170,14 +170,15 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Bu
 		for i, buf := range m.prevBuffers.buffers {
 			if buf.startTime.After(lastReadTime) {
 				if i == 0 {
-					println("return the earliest in memory")
+					// println("return the earliest in memory", buf.startTime.UnixNano())
 					return copiedBytes(buf.buf[:buf.size])
 				}
 				return copiedBytes(buf.buf[:buf.size])
 			}
 			if !buf.startTime.After(lastReadTime) && buf.stopTime.After(lastReadTime) {
 				pos := buf.locateByTs(lastReadTime)
-				return copiedBytes(buf.buf[pos:])
+				// fmt.Printf("locate buffer[%d] pos %d\n", i, pos)
+				return copiedBytes(buf.buf[pos:buf.size])
 			}
 		}
 		return copiedBytes(m.buf[:m.pos])
