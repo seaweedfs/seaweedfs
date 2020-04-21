@@ -167,7 +167,7 @@ func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e er
 	return
 }
 
-func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId) (e error) {
+func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId) (found bool, e error) {
 	v, ok := l.volumes[vid]
 	if !ok {
 		return
@@ -176,6 +176,7 @@ func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId) (e error) {
 	if e != nil {
 		return
 	}
+	found = true
 	delete(l.volumes, vid)
 	return
 }
@@ -195,7 +196,8 @@ func (l *DiskLocation) DeleteVolume(vid needle.VolumeId) error {
 	if !ok {
 		return fmt.Errorf("Volume not found, VolumeId: %d", vid)
 	}
-	return l.deleteVolumeById(vid)
+	_, err := l.deleteVolumeById(vid)
+	return err
 }
 
 func (l *DiskLocation) UnloadVolume(vid needle.VolumeId) error {
