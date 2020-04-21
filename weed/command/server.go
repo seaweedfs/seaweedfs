@@ -125,7 +125,8 @@ func runServer(cmd *Command, args []string) bool {
 	masterOptions.ip = serverIp
 	masterOptions.ipBind = serverBindIp
 	filerOptions.masters = &peers
-	filerOptions.ip = serverBindIp
+	filerOptions.ip = serverIp
+	filerOptions.bindIp = serverBindIp
 	serverOptions.v.ip = serverIp
 	serverOptions.v.bindIp = serverBindIp
 	serverOptions.v.masters = &peers

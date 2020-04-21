@@ -23,6 +23,7 @@ var (
 type FilerOptions struct {
 	masters                 *string
 	ip                      *string
+	bindIp                  *string
 	port                    *int
 	publicPort              *int
 	collection              *string
@@ -44,6 +45,7 @@ func init() {
 	f.masters = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this collection")
 	f.ip = cmdFiler.Flag.String("ip", util.DetectedHostAddress(), "filer server http listen ip address")
+	f.bindIp = cmdFiler.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
 	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "000", "default replication type if not specified")
@@ -118,7 +120,7 @@ func (fo *FilerOptions) startFiler() {
 	}
 
 	if *fo.publicPort != 0 {
-		publicListeningAddress := *fo.ip + ":" + strconv.Itoa(*fo.publicPort)
+		publicListeningAddress := *fo.bindIp + ":" + strconv.Itoa(*fo.publicPort)
 		glog.V(0).Infoln("Start Seaweed filer server", util.VERSION, "public at", publicListeningAddress)
 		publicListener, e := util.NewListener(publicListeningAddress, 0)
 		if e != nil {
@@ -133,7 +135,7 @@ func (fo *FilerOptions) startFiler() {
 
 	glog.V(0).Infof("Start Seaweed Filer %s at %s:%d", util.VERSION, *fo.ip, *fo.port)
 	filerListener, e := util.NewListener(
-		*fo.ip+":"+strconv.Itoa(*fo.port),
+		*fo.bindIp+":"+strconv.Itoa(*fo.port),
 		time.Duration(10)*time.Second,
 	)
 	if e != nil {
