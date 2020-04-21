@@ -122,6 +122,11 @@ func (m *LogBuffer) loopInterval() {
 		m.Unlock()
 		m.flushChan <- toFlush
 		time.Sleep(m.flushInterval)
+		if m.notifyFn != nil {
+			// check whether blocked clients are already disconnected
+			println("notifying log buffer readers")
+			m.notifyFn()
+		}
 	}
 }
 

@@ -19,7 +19,7 @@ func TestNewLogBufferFirstBuffer(t *testing.T) {
 	startTime := time.Now()
 
 	messageSize := 1024
-	messageCount := 100
+	messageCount := 5000
 	var buf = make([]byte, messageSize)
 	for i := 0; i < messageCount; i++ {
 		rand.Read(buf)
