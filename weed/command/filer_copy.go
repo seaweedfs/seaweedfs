@@ -309,7 +309,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 			return nil
 		})
 		if err != nil {
-			fmt.Printf("Failed to assign from %v: %v\n", worker.options.masters, err)
+			return fmt.Errorf("Failed to assign from %v: %v\n", worker.options.masters, err)
 		}
 
 		targetUrl := "http://" + assignResult.Url + "/" + assignResult.FileId
