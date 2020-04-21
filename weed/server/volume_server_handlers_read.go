@@ -40,13 +40,13 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 
 	volumeId, err := needle.NewVolumeId(vid)
 	if err != nil {
-		glog.V(2).Infoln("parsing error:", err, r.URL.Path)
+		glog.V(2).Infof("parsing vid %s: %v", r.URL.Path, err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	err = n.ParsePath(fid)
 	if err != nil {
-		glog.V(2).Infoln("parsing fid error:", err, r.URL.Path)
+		glog.V(2).Infof("parsing fid %s: %v", r.URL.Path, err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
