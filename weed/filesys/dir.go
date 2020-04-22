@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -137,6 +138,11 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 			}
 			return fuse.EIO
 		}
+
+		if dir.wfs.option.AsyncMetaDataCaching {
+			dir.wfs.metaCache.InsertEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
+		}
+
 		return nil
 	}); err != nil {
 		return nil, nil, err
@@ -182,6 +188,10 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 		if err := filer_pb.CreateEntry(client, request); err != nil {
 			glog.V(0).Infof("mkdir %s/%s: %v", dir.FullPath(), req.Name, err)
 			return err
+		}
+
+		if dir.wfs.option.AsyncMetaDataCaching {
+			dir.wfs.metaCache.InsertEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
 		}
 
 		return nil
@@ -320,6 +330,10 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 		return fuse.ENOENT
 	}
 
+	if dir.wfs.option.AsyncMetaDataCaching {
+		dir.wfs.metaCache.DeleteEntry(context.Background(), filePath)
+	}
+
 	return nil
 
 }
@@ -336,6 +350,11 @@ func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 		glog.V(3).Infof("not found remove %s/%s: %v", dir.FullPath(), req.Name, err)
 		return fuse.ENOENT
 	}
+
+	if dir.wfs.option.AsyncMetaDataCaching {
+		dir.wfs.metaCache.DeleteEntry(context.Background(), t)
+	}
+
 	return nil
 
 }
@@ -456,6 +475,10 @@ func (dir *Dir) saveEntry() error {
 		if err != nil {
 			glog.V(0).Infof("UpdateEntry dir %s/%s: %v", parentDir, name, err)
 			return fuse.EIO
+		}
+
+		if dir.wfs.option.AsyncMetaDataCaching {
+			dir.wfs.metaCache.UpdateEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
 		}
 
 		return nil

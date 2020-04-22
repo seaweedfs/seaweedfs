@@ -6,6 +6,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/fuse"
@@ -40,6 +41,11 @@ func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node,
 			glog.V(0).Infof("symlink %s/%s: %v", dir.FullPath(), req.NewName, err)
 			return fuse.EIO
 		}
+
+		if dir.wfs.option.AsyncMetaDataCaching {
+			dir.wfs.metaCache.InsertEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
+		}
+
 		return nil
 	})
 

@@ -279,6 +279,10 @@ func (file *File) saveEntry() error {
 			return fuse.EIO
 		}
 
+		if file.wfs.option.AsyncMetaDataCaching {
+			file.wfs.metaCache.UpdateEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
+		}
+
 		return nil
 	})
 }
