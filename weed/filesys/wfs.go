@@ -44,6 +44,7 @@ type Option struct {
 
 	OutsideContainerClusterMode bool // whether the mount runs outside SeaweedFS containers
 	Cipher                      bool // whether encrypt data on volume server
+	AsyncMetaDataCaching        bool // whether asynchronously cache meta data
 
 }
 

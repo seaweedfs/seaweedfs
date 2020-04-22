@@ -205,6 +205,10 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 	fullFilePath := util.NewFullPath(dir.FullPath(), req.Name)
 	entry := dir.wfs.cacheGet(fullFilePath)
 
+	if dir.wfs.option.AsyncMetaDataCaching {
+
+	}
+
 	if entry == nil {
 		// glog.V(3).Infof("dir Lookup cache miss %s", fullFilePath)
 		entry, err = filer_pb.GetEntry(dir.wfs, fullFilePath)
@@ -243,6 +247,10 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 	glog.V(3).Infof("dir ReadDirAll %s", dir.FullPath())
+
+	if dir.wfs.option.AsyncMetaDataCaching {
+
+	}
 
 	cacheTtl := 5 * time.Minute
 
