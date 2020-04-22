@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/karlseguin/ccache"
 	"google.golang.org/grpc"
 
+	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -67,6 +69,7 @@ type WFS struct {
 	fsNodeCache *FsCache
 
 	chunkCache *chunk_cache.ChunkCache
+	metaCache  *meta_cache.MetaCache
 }
 type statsCache struct {
 	filer_pb.StatisticsResponse
@@ -89,6 +92,9 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		util.OnInterrupt(func() {
 			wfs.chunkCache.Shutdown()
 		})
+	}
+	if wfs.option.AsyncMetaDataCaching {
+		wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.CacheDir, "meta"))
 	}
 
 	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs}

@@ -1,6 +1,8 @@
 package filesys
 
 import (
+	"context"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -114,8 +116,13 @@ func (wfs *WFS) maybeLoadEntry(dir, name string) (entry *filer_pb.Entry, err err
 	}
 	// glog.V(3).Infof("read entry cache miss %s", fullpath)
 
+	// read from async meta cache
 	if wfs.option.AsyncMetaDataCaching {
-
+		cachedEntry, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
+		if cacheErr == filer_pb.ErrNotFound {
+			return nil, fuse.ENOENT
+		}
+		return cachedEntry.ToProtoEntry(), nil
 	}
 
 	err = wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {

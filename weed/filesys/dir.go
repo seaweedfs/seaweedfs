@@ -206,7 +206,11 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 	entry := dir.wfs.cacheGet(fullFilePath)
 
 	if dir.wfs.option.AsyncMetaDataCaching {
-
+		cachedEntry, cacheErr := dir.wfs.metaCache.FindEntry(context.Background(), fullFilePath)
+		if cacheErr == filer_pb.ErrNotFound {
+			return nil, fuse.ENOENT
+		}
+		entry = cachedEntry.ToProtoEntry()
 	}
 
 	if entry == nil {
@@ -248,13 +252,8 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 	glog.V(3).Infof("dir ReadDirAll %s", dir.FullPath())
 
-	if dir.wfs.option.AsyncMetaDataCaching {
-
-	}
-
 	cacheTtl := 5 * time.Minute
-
-	readErr := filer_pb.ReadDirAllEntries(dir.wfs, util.FullPath(dir.FullPath()), "", func(entry *filer_pb.Entry, isLast bool) {
+	processEachEntryFn := func(entry *filer_pb.Entry, isLast bool) {
 		fullpath := util.NewFullPath(dir.FullPath(), entry.Name)
 		inode := fullpath.AsInode()
 		if entry.IsDirectory {
@@ -265,7 +264,21 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 			ret = append(ret, dirent)
 		}
 		dir.wfs.cacheSet(fullpath, entry, cacheTtl)
-	})
+	}
+
+	if dir.wfs.option.AsyncMetaDataCaching {
+		listedEntries, listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), util.FullPath(dir.FullPath()), "", false, int(dir.wfs.option.DirListCacheLimit))
+		if listErr != nil {
+			glog.Errorf("list meta cache: %v", listErr)
+			return nil, fuse.EIO
+		}
+		for _, cachedEntry := range listedEntries {
+			processEachEntryFn(cachedEntry.ToProtoEntry(), false)
+		}
+		return
+	}
+
+	readErr := filer_pb.ReadDirAllEntries(dir.wfs, util.FullPath(dir.FullPath()), "", processEachEntryFn)
 	if readErr != nil {
 		glog.V(0).Infof("list %s: %v", dir.FullPath(), err)
 		return ret, fuse.EIO
