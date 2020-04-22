@@ -20,10 +20,13 @@ func NewMetaCache(dbFolder string) *MetaCache {
 
 func openMetaStore(dbFolder string) filer2.FilerStore {
 
+	os.RemoveAll(dbFolder)
 	os.MkdirAll(dbFolder, 0755)
 
 	store := &leveldb.LevelDBStore{}
-	config := &cacheConfig{}
+	config := &cacheConfig{
+		dir: dbFolder,
+	}
 
 	if err := store.Initialize(config, ""); err != nil {
 		glog.Fatalf("Failed to initialize metadata cache store for %s: %+v", store.GetName(), err)
