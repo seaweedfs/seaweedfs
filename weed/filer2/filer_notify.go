@@ -56,6 +56,7 @@ func (f *Filer) logMetaEvent(fullpath string, eventNotification *filer_pb.EventN
 	event := &filer_pb.SubscribeMetadataResponse{
 		Directory:         dir,
 		EventNotification: eventNotification,
+		TsNs:              time.Now().UnixNano(),
 	}
 	data, err := proto.Marshal(event)
 	if err != nil {

@@ -14,11 +14,11 @@ type MetaCache struct {
 
 func NewMetaCache(dbFolder string) *MetaCache {
 	return &MetaCache{
-		FilerStore: OpenMetaStore(dbFolder),
+		FilerStore: openMetaStore(dbFolder),
 	}
 }
 
-func OpenMetaStore(dbFolder string) filer2.FilerStore {
+func openMetaStore(dbFolder string) filer2.FilerStore {
 
 	os.MkdirAll(dbFolder, 0755)
 

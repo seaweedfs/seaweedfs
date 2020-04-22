@@ -253,6 +253,7 @@ message SubscribeMetadataRequest {
 message SubscribeMetadataResponse {
     string directory = 1;
     EventNotification event_notification = 2;
+    int64 ts_ns = 3;
 }
 
 message LogEntry {

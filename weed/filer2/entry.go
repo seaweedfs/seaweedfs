@@ -73,3 +73,11 @@ func (entry *Entry) ToProtoFullEntry() *filer_pb.FullEntry {
 		Entry: entry.ToProtoEntry(),
 	}
 }
+
+func FromPbEntry(dir string, entry *filer_pb.Entry) *Entry {
+	return &Entry{
+		FullPath: util.NewFullPath(dir, entry.Name),
+		Attr:     PbToEntryAttribute(entry.Attributes),
+		Chunks:   entry.Chunks,
+	}
+}

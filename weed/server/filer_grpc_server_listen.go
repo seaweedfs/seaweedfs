@@ -26,7 +26,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		lastReadTime = time.Unix(0, req.SinceNs)
 	}
 
-	eachEventNotificationFn := func(dirPath string, eventNotification *filer_pb.EventNotification) error {
+	eachEventNotificationFn := func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 
 		// get complete path to the file or directory
 		var entryName string
@@ -50,6 +50,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		message := &filer_pb.SubscribeMetadataResponse{
 			Directory:         dirPath,
 			EventNotification: eventNotification,
+			TsNs:              tsNs,
 		}
 		if err := stream.Send(message); err != nil {
 			glog.V(0).Infof("=> client %v: %+v", clientName, err)
@@ -70,7 +71,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			return fmt.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
 		}
 
-		if err := eachEventNotificationFn(event.Directory, event.EventNotification); err != nil {
+		if err := eachEventNotificationFn(event.Directory, event.EventNotification, event.TsNs); err != nil {
 			return err
 		}
 
