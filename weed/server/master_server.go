@@ -236,29 +236,34 @@ func (ms *MasterServer) startAdminScripts() {
 		for range c {
 			if ms.Topo.IsLeader() {
 				for _, line := range scriptLines {
-
-					cmds := reg.FindAllString(line, -1)
-					if len(cmds) == 0 {
-						continue
-					}
-					args := make([]string, len(cmds[1:]))
-					for i := range args {
-						args[i] = strings.Trim(string(cmds[1+i]), "\"'")
-					}
-					cmd := strings.ToLower(cmds[0])
-
-					for _, c := range shell.Commands {
-						if c.Name() == cmd {
-							glog.V(0).Infof("executing: %s %v", cmd, args)
-							if err := c.Do(args, commandEnv, os.Stdout); err != nil {
-								glog.V(0).Infof("error: %v", err)
-							}
-						}
+					for _, c := range strings.Split(line, ";") {
+						processEachCmd(reg, c, commandEnv)
 					}
 				}
 			}
 		}
 	}()
+}
+
+func processEachCmd(reg *regexp.Regexp, line string, commandEnv *shell.CommandEnv) {
+	cmds := reg.FindAllString(line, -1)
+	if len(cmds) == 0 {
+		return
+	}
+	args := make([]string, len(cmds[1:]))
+	for i := range args {
+		args[i] = strings.Trim(string(cmds[1+i]), "\"'")
+	}
+	cmd := strings.ToLower(cmds[0])
+
+	for _, c := range shell.Commands {
+		if c.Name() == cmd {
+			glog.V(0).Infof("executing: %s %v", cmd, args)
+			if err := c.Do(args, commandEnv, os.Stdout); err != nil {
+				glog.V(0).Infof("error: %v", err)
+			}
+		}
+	}
 }
 
 func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer {
