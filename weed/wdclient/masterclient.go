@@ -121,6 +121,9 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 }
 
 func (mc *MasterClient) WithClient(fn func(client master_pb.SeaweedClient) error) error {
+	for mc.currentMaster == "" {
+		time.Sleep(3 * time.Second)
+	}
 	return pb.WithMasterClient(mc.currentMaster, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
 		return fn(client)
 	})

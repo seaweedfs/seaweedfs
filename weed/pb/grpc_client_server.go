@@ -86,13 +86,15 @@ func WithCachedGrpcClient(fn func(*grpc.ClientConn) error, address string, opts 
 		err := fn(existingConnection)
 		if err != nil {
 			grpcClientsLock.Lock()
-			delete(grpcClients, address)
+			// delete(grpcClients, address)
 			grpcClientsLock.Unlock()
-			existingConnection.Close()
+			// println("closing existing connection to", existingConnection.Target())
+			// existingConnection.Close()
 		}
 		return err
 	}
 
+	println(" dialing to", address, "...")
 	grpcConnection, err := GrpcDial(context.Background(), address, opts...)
 	if err != nil {
 		grpcClientsLock.Unlock()
@@ -105,9 +107,10 @@ func WithCachedGrpcClient(fn func(*grpc.ClientConn) error, address string, opts 
 	err = fn(grpcConnection)
 	if err != nil {
 		grpcClientsLock.Lock()
-		delete(grpcClients, address)
+		// delete(grpcClients, address)
 		grpcClientsLock.Unlock()
-		grpcConnection.Close()
+		// println("closing created new connection to", grpcConnection.Target())
+		// grpcConnection.Close()
 	}
 
 	return err
