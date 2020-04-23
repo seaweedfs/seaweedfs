@@ -18,8 +18,6 @@ Shell
 When shell lock,
   * lease an admin token (lockTime, token)
   * start a goroutine to renew the admin token periodically
-For later volume operations, send (lockTime, token) to volume servers for exclusive access
-  * need to pause renewal a few seconds, to prevent race condition
 
 When shell unlock
   * stop the renewal goroutine
@@ -48,13 +46,9 @@ When master receives the lease/renew request from shell
 When master receives the release lock request from shell
   set the lastLockTime to zero
 
-When master receives the verfication request from volume servers
-  return secret+lockTime == token && lockTime == lastLockTime
 
-Volume
-------
-When receives (lockTime, token), ask the master whether this is valid
-
+The volume server does not need to verify.
+This makes the lock/unlock optional, similar to what golang code usually does.
 
 */
 
@@ -94,14 +88,6 @@ func (ms *MasterServer) ReleaseAdminToken(ctx context.Context, req *master_pb.Re
 	resp := &master_pb.ReleaseAdminTokenResponse{}
 	if ms.isValidToken(time.Unix(0, req.PreviousLockTime), req.PreviousToken) {
 		ms.adminAccessSecret = 0
-	}
-	return resp, nil
-}
-
-func (ms *MasterServer) VerifyAdminToken(ctx context.Context, req *master_pb.VerifyAdminTokenRequest) (*master_pb.VerifyAdminTokenResponse, error) {
-	resp := &master_pb.VerifyAdminTokenResponse{}
-	if ms.isValidToken(time.Unix(0, req.LockTime), req.Token) {
-		resp.IsValid = true
 	}
 	return resp, nil
 }

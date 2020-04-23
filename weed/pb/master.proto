@@ -31,8 +31,6 @@ service Seaweed {
     }
     rpc ReleaseAdminToken (ReleaseAdminTokenRequest) returns (ReleaseAdminTokenResponse) {
     }
-    rpc VerifyAdminToken (VerifyAdminTokenRequest) returns (VerifyAdminTokenResponse) {
-    }
 
 }
 
@@ -296,12 +294,4 @@ message ReleaseAdminTokenRequest {
     int64 previous_lock_time = 2;
 }
 message ReleaseAdminTokenResponse {
-}
-
-message VerifyAdminTokenRequest {
-    int64 token = 1;
-    int64 lock_time = 2;
-}
-message VerifyAdminTokenResponse {
-    bool is_valid = 1;
 }
