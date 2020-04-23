@@ -48,7 +48,7 @@ func init() {
 	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
 	mountMemProfile = cmdMount.Flag.String("memprofile", "", "memory profile output file")
 	mountOptions.outsideContainerClusterMode = cmdMount.Flag.Bool("outsideContainerClusterMode", false, "allows other users to access the file system")
-	mountOptions.asyncMetaDataCaching = cmdMount.Flag.Bool("asyncMetaDataCaching", false, "<wip> async meta data caching")
+	mountOptions.asyncMetaDataCaching = cmdMount.Flag.Bool("asyncMetaDataCaching", true, "async meta data caching. this feature will be permanent and this option will be removed.")
 }
 
 var cmdMount = &Command{
