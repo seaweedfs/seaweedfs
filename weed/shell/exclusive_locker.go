@@ -36,7 +36,7 @@ func (l *ExclusiveLocker) GetToken() (token int64, lockTsNs int64) {
 	return atomic.LoadInt64(&l.token), atomic.LoadInt64(&l.lockTsNs)
 }
 
-func (l *ExclusiveLocker) Lock() {
+func (l *ExclusiveLocker) RequestLock() {
 	// retry to get the lease
 	for {
 		if err := l.masterClient.WithClient(func(client master_pb.SeaweedClient) error {
@@ -69,6 +69,7 @@ func (l *ExclusiveLocker) Lock() {
 				if err == nil {
 					atomic.StoreInt64(&l.token, resp.Token)
 					atomic.StoreInt64(&l.lockTsNs, resp.LockTsNs)
+					// println("ts", l.lockTsNs, "token", l.token)
 				}
 				return err
 			}); err != nil {
@@ -83,7 +84,7 @@ func (l *ExclusiveLocker) Lock() {
 
 }
 
-func (l *ExclusiveLocker) Unlock() {
+func (l *ExclusiveLocker) ReleaseLock() {
 	l.isLocking = false
 	l.masterClient.WithClient(func(client master_pb.SeaweedClient) error {
 		client.ReleaseAdminToken(context.Background(), &master_pb.ReleaseAdminTokenRequest{
