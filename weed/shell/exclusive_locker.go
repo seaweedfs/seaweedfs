@@ -41,7 +41,10 @@ func (l *ExclusiveLocker) RequestLock() {
 	// retry to get the lease
 	for {
 		if err := l.masterClient.WithClient(func(client master_pb.SeaweedClient) error {
-			resp, err := client.LeaseAdminToken(context.Background(), &master_pb.LeaseAdminTokenRequest{})
+			resp, err := client.LeaseAdminToken(context.Background(), &master_pb.LeaseAdminTokenRequest{
+				PreviousToken:    atomic.LoadInt64(&l.token),
+				PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
+			})
 			if err == nil {
 				atomic.StoreInt64(&l.token, resp.Token)
 				atomic.StoreInt64(&l.lockTsNs, resp.LockTsNs)
