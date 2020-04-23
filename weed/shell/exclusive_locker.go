@@ -13,6 +13,7 @@ import (
 const (
 	RenewInteval     = 4 * time.Second
 	SafeRenewInteval = 3 * time.Second
+	InitLockInteval  = 1 * time.Second
 )
 
 type ExclusiveLocker struct {
@@ -40,17 +41,15 @@ func (l *ExclusiveLocker) RequestLock() {
 	// retry to get the lease
 	for {
 		if err := l.masterClient.WithClient(func(client master_pb.SeaweedClient) error {
-			resp, err := client.LeaseAdminToken(context.Background(), &master_pb.LeaseAdminTokenRequest{
-				PreviousToken:    atomic.LoadInt64(&l.token),
-				PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
-			})
+			resp, err := client.LeaseAdminToken(context.Background(), &master_pb.LeaseAdminTokenRequest{})
 			if err == nil {
 				atomic.StoreInt64(&l.token, resp.Token)
 				atomic.StoreInt64(&l.lockTsNs, resp.LockTsNs)
 			}
 			return err
 		}); err != nil {
-			time.Sleep(RenewInteval)
+			// println("leasing problem", err.Error())
+			time.Sleep(InitLockInteval)
 		} else {
 			break
 		}
@@ -93,4 +92,6 @@ func (l *ExclusiveLocker) ReleaseLock() {
 		})
 		return nil
 	})
+	atomic.StoreInt64(&l.token, 0)
+	atomic.StoreInt64(&l.lockTsNs, 0)
 }

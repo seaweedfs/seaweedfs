@@ -65,7 +65,7 @@ const (
 func (ms *MasterServer) LeaseAdminToken(ctx context.Context, req *master_pb.LeaseAdminTokenRequest) (*master_pb.LeaseAdminTokenResponse, error) {
 	resp := &master_pb.LeaseAdminTokenResponse{}
 
-	if ms.adminAccessLockTime.Add(LockDuration).After(time.Now()) {
+	if ms.adminAccessSecret != 0 && ms.adminAccessLockTime.Add(LockDuration).After(time.Now()) {
 		if req.PreviousToken != 0 && ms.isValidToken(time.Unix(0, req.PreviousLockTime), req.PreviousToken) {
 			// for renew
 			ts, token := ms.generateToken()
