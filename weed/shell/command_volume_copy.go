@@ -31,6 +31,10 @@ func (c *commandVolumeCopy) Help() string {
 
 func (c *commandVolumeCopy) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
+	}
+
 	if len(args) != 3 {
 		fmt.Fprintf(writer, "received args: %+v\n", args)
 		return fmt.Errorf("need 3 args of <source volume server host:port> <target volume server host:port> <volume id>")

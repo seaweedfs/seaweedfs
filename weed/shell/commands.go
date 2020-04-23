@@ -68,6 +68,16 @@ func (ce *CommandEnv) isDirectory(path string) bool {
 
 }
 
+func (ce *CommandEnv) confirmIsLocked() error {
+
+	if ce.locker.isLocking {
+		return nil
+	}
+
+	return fmt.Errorf("need to lock to continue")
+
+}
+
 func (ce *CommandEnv) checkDirectory(path string) error {
 
 	dir, name := util.FullPath(path).DirAndName()

@@ -34,6 +34,10 @@ func (c *commandVolumeUnmount) Help() string {
 
 func (c *commandVolumeUnmount) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
+	}
+
 	if len(args) != 2 {
 		fmt.Fprintf(writer, "received args: %+v\n", args)
 		return fmt.Errorf("need 2 args of <volume server host:port> <volume id>")

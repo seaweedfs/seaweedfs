@@ -44,6 +44,10 @@ func (c *commandVolumeFixReplication) Help() string {
 
 func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
+	}
+
 	takeAction := true
 	if len(args) > 0 && args[0] == "-n" {
 		takeAction = false

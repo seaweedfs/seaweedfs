@@ -205,6 +205,10 @@ func (ms *MasterServer) startAdminScripts() {
 	filerHostPort := v.GetString("master.filer.default")
 
 	scriptLines := strings.Split(adminScripts, "\n")
+	if !strings.Contains(adminScripts, "lock") {
+		scriptLines = append(append([]string{}, "lock"), scriptLines...)
+		scriptLines = append(scriptLines, "unlock")
+	}
 
 	masterAddress := "localhost:" + strconv.Itoa(ms.option.Port)
 

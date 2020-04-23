@@ -48,6 +48,10 @@ func (c *commandVolumeFsck) Help() string {
 
 func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
+	}
+
 	fsckCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	verbose := fsckCommand.Bool("v", false, "verbose mode")
 	applyPurging := fsckCommand.Bool("reallyDeleteFromVolume", false, "<expert only> delete data not referenced by the filer")
