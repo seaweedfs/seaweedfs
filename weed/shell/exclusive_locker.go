@@ -75,7 +75,7 @@ func (l *ExclusiveLocker) RequestLock() {
 				}
 				return err
 			}); err != nil {
-				glog.Error("failed to renew lock: %v", err)
+				glog.Errorf("failed to renew lock: %v", err)
 				return
 			} else {
 				time.Sleep(RenewInteval)
