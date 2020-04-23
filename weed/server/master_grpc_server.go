@@ -11,7 +11,6 @@ import (
 	"google.golang.org/grpc/peer"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -190,18 +189,6 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	}
 
 	peerAddress := findClientAddress(stream.Context(), req.GrpcPort)
-
-	// only one shell can be connected at any time
-	if req.Name == pb.AdminShellClient {
-		if ms.currentAdminShellClient == "" {
-			ms.currentAdminShellClient = peerAddress
-			defer func() {
-				ms.currentAdminShellClient = ""
-			}()
-		} else {
-			return fmt.Errorf("only one concurrent shell allowed, but another shell is already connected from %s", peerAddress)
-		}
-	}
 
 	stopChan := make(chan bool)
 
