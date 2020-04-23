@@ -27,6 +27,13 @@ service Seaweed {
     }
     rpc ListMasterClients (ListMasterClientsRequest) returns (ListMasterClientsResponse) {
     }
+    rpc LeaseAdminToken (LeaseAdminTokenRequest) returns (LeaseAdminTokenResponse) {
+    }
+    rpc ReleaseAdminToken (ReleaseAdminTokenRequest) returns (ReleaseAdminTokenResponse) {
+    }
+    rpc VerifyAdminToken (VerifyAdminTokenRequest) returns (VerifyAdminTokenResponse) {
+    }
+
 }
 
 //////////////////////////////////////////////////
@@ -273,4 +280,30 @@ message ListMasterClientsRequest {
 }
 message ListMasterClientsResponse {
     repeated string grpc_addresses = 1;
+}
+
+message LeaseAdminTokenRequest {
+    int64 previous_token = 1;
+    int64 previous_lock_time = 2;
+}
+message LeaseAdminTokenResponse {
+    bool is_allowed = 1;
+    string error = 2;
+    int64 lock_ts_ns = 3;
+    int64 token = 4;
+}
+
+message ReleaseAdminTokenRequest {
+    int64 previous_token = 1;
+    int64 previous_lock_time = 2;
+}
+message ReleaseAdminTokenResponse {
+}
+
+message VerifyAdminTokenRequest {
+    int64 token = 1;
+    int64 lock_time = 2;
+}
+message VerifyAdminTokenResponse {
+    bool is_valid = 1;
 }

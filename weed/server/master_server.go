@@ -66,7 +66,8 @@ type MasterServer struct {
 
 	MasterClient *wdclient.MasterClient
 
-	currentAdminShellClient string
+	adminAccessSecret   int64
+	adminAccessLockTime time.Time
 }
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *MasterServer {
