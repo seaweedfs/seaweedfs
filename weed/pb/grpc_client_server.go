@@ -94,7 +94,6 @@ func WithCachedGrpcClient(fn func(*grpc.ClientConn) error, address string, opts 
 		return err
 	}
 
-	println(" dialing to", address, "...")
 	grpcConnection, err := GrpcDial(context.Background(), address, opts...)
 	if err != nil {
 		grpcClientsLock.Unlock()
