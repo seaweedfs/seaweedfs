@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"time"
 
@@ -72,8 +73,7 @@ func (ms *MasterServer) LeaseAdminToken(ctx context.Context, req *master_pb.Leas
 			return resp, nil
 		}
 		// refuse since still locked
-		resp.Error = "already locked"
-		return resp, nil
+		return resp, fmt.Errorf("already locked")
 	}
 	// for fresh lease request
 	ts, token := ms.generateToken()

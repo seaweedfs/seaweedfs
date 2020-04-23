@@ -287,10 +287,8 @@ message LeaseAdminTokenRequest {
     int64 previous_lock_time = 2;
 }
 message LeaseAdminTokenResponse {
-    bool is_allowed = 1;
-    string error = 2;
-    int64 lock_ts_ns = 3;
-    int64 token = 4;
+    int64 token = 1;
+    int64 lock_ts_ns = 2;
 }
 
 message ReleaseAdminTokenRequest {

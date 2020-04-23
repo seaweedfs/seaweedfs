@@ -28,6 +28,7 @@ type CommandEnv struct {
 	env          map[string]string
 	MasterClient *wdclient.MasterClient
 	option       ShellOptions
+	locker       *ExclusiveLocker
 }
 
 type command interface {
@@ -41,11 +42,13 @@ var (
 )
 
 func NewCommandEnv(options ShellOptions) *CommandEnv {
-	return &CommandEnv{
+	ce := &CommandEnv{
 		env:          make(map[string]string),
 		MasterClient: wdclient.NewMasterClient(options.GrpcDialOption, pb.AdminShellClient, "", 0, strings.Split(*options.Masters, ",")),
 		option:       options,
 	}
+	ce.locker = NewExclusiveLocker(ce.MasterClient)
+	return ce
 }
 
 func (ce *CommandEnv) parseUrl(input string) (path string, err error) {
