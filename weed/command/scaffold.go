@@ -362,11 +362,13 @@ key  = ""
 [master.maintenance]
 # periodically run these scripts are the same as running them from 'weed shell'
 scripts = """
+  lock
   ec.encode -fullPercent=95 -quietFor=1h
   ec.rebuild -force
   ec.balance -force
   volume.balance -force
   volume.fix.replication
+  unlock
 """
 sleep_minutes = 17          # sleep minutes between each script execution
 
