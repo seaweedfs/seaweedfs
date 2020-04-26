@@ -99,10 +99,12 @@ public class SeaweedRead {
             data = Gzip.decompress(data);
         }
 
-        try {
-            data = SeaweedCipher.decrypt(data, chunkView.cipherKey);
-        } catch (Exception e) {
-            throw new IOException("fail to decrypt", e);
+        if (chunkView.cipherKey != null && chunkView.cipherKey.length != 0) {
+            try {
+                data = SeaweedCipher.decrypt(data, chunkView.cipherKey);
+            } catch (Exception e) {
+                throw new IOException("fail to decrypt", e);
+            }
         }
 
         return data;

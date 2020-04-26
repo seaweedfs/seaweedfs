@@ -36,7 +36,7 @@ public class SeaweedWrite {
         String auth = response.getAuth();
         String targetUrl = String.format("http://%s/%s", url, fileId);
 
-        ByteString cipherKeyString = null;
+        ByteString cipherKeyString = com.google.protobuf.ByteString.EMPTY;
         byte[] cipherKey = null;
         if (filerGrpcClient.isCipher()) {
             cipherKey = genCipherKey();
@@ -78,7 +78,7 @@ public class SeaweedWrite {
         HttpClient client = new DefaultHttpClient();
 
         InputStream inputStream = null;
-        if (cipherKey == null) {
+        if (cipherKey == null || cipherKey.length == 0) {
             inputStream = new ByteArrayInputStream(bytes, (int) bytesOffset, (int) bytesLength);
         } else {
             try {

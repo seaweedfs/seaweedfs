@@ -19,9 +19,11 @@ import (
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 
+	glog.V(4).Infof("LookupDirectoryEntry %s", filepath.Join(req.Directory, req.Name))
+
 	entry, err := fs.filer.FindEntry(ctx, util.JoinPath(req.Directory, req.Name))
 	if err == filer_pb.ErrNotFound {
-		return &filer_pb.LookupDirectoryEntryResponse{}, nil
+		return &filer_pb.LookupDirectoryEntryResponse{}, err
 	}
 	if err != nil {
 		glog.V(3).Infof("LookupDirectoryEntry %s: %+v, ", filepath.Join(req.Directory, req.Name), err)
@@ -40,6 +42,8 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 }
 
 func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {
+
+	glog.V(4).Infof("ListEntries %v", req)
 
 	limit := int(req.Limit)
 	if limit == 0 {
@@ -135,6 +139,8 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 
 func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (resp *filer_pb.CreateEntryResponse, err error) {
 
+	glog.V(4).Infof("CreateEntry %v", req)
+
 	resp = &filer_pb.CreateEntryResponse{}
 
 	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
@@ -162,6 +168,8 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 }
 
 func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+
+	glog.V(4).Infof("UpdateEntry %v", req)
 
 	fullpath := util.Join(req.Directory, req.Entry.Name)
 	entry, err := fs.filer.FindEntry(ctx, util.FullPath(fullpath))
@@ -219,6 +227,8 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 
 func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendToEntryRequest) (*filer_pb.AppendToEntryResponse, error) {
 
+	glog.V(4).Infof("AppendToEntry %v", req)
+
 	fullpath := util.NewFullPath(req.Directory, req.EntryName)
 	var offset int64 = 0
 	entry, err := fs.filer.FindEntry(ctx, util.FullPath(fullpath))
@@ -250,6 +260,9 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 }
 
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {
+
+	glog.V(4).Infof("DeleteEntry %v", req)
+
 	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData)
 	resp = &filer_pb.DeleteEntryResponse{}
 	if err != nil {
@@ -312,6 +325,8 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 
 func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.DeleteCollectionRequest) (resp *filer_pb.DeleteCollectionResponse, err error) {
 
+	glog.V(4).Infof("DeleteCollection %v", req)
+
 	err = fs.filer.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
 		_, err := client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
 			Name: req.GetCollection(),
@@ -353,12 +368,16 @@ func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsR
 
 func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.GetFilerConfigurationRequest) (resp *filer_pb.GetFilerConfigurationResponse, err error) {
 
-	return &filer_pb.GetFilerConfigurationResponse{
+	t := &filer_pb.GetFilerConfigurationResponse{
 		Masters:     fs.option.Masters,
 		Collection:  fs.option.Collection,
 		Replication: fs.option.DefaultReplication,
 		MaxMb:       uint32(fs.option.MaxMB),
 		DirBuckets:  fs.filer.DirBucketsPath,
 		Cipher:      fs.filer.Cipher,
-	}, nil
+	}
+
+	glog.V(4).Infof("GetFilerConfiguration: %v", t)
+
+	return t, nil
 }
