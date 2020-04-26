@@ -88,9 +88,9 @@ func (c *commandFsLs) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 				}
 			}
 
-			if dir == "/" {
+			if strings.HasSuffix(dir, "/") {
 				// just for printing
-				dir = ""
+				dir = dir[:len(dir)-1]
 			}
 			fmt.Fprintf(writer, "%s %3d %s %s %6d %s/%s\n",
 				fileMode, len(entry.Chunks),
