@@ -95,10 +95,11 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	}
 	if wfs.option.AsyncMetaDataCaching {
 		wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.CacheDir, "meta"))
+		startTime := time.Now()
 		if err := meta_cache.InitMetaCache(wfs.metaCache, wfs, wfs.option.FilerMountRootPath); err != nil{
 			glog.V(0).Infof("failed to init meta cache: %v", err)
 		} else {
-			go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs, wfs.option.FilerMountRootPath)
+			go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
 			util.OnInterrupt(func() {
 				wfs.metaCache.Shutdown()
 			})

@@ -12,7 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func SubscribeMetaEvents(mc *MetaCache, client filer_pb.FilerClient, dir string) error {
+func SubscribeMetaEvents(mc *MetaCache, client filer_pb.FilerClient, dir string, lastTsNs int64) error {
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
@@ -36,7 +36,6 @@ func SubscribeMetaEvents(mc *MetaCache, client filer_pb.FilerClient, dir string)
 		return err
 	}
 
-	var lastTsNs int64
 	for {
 		err := client.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 			stream, err := client.SubscribeMetadata(context.Background(), &filer_pb.SubscribeMetadataRequest{
