@@ -122,11 +122,13 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 				Attr: Attr{
 					Mtime:       now,
 					Crtime:      now,
-					Mode:        os.ModeDir | 0770,
+					Mode:        os.ModeDir | entry.Mode | 0110,
 					Uid:         entry.Uid,
 					Gid:         entry.Gid,
 					Collection:  entry.Collection,
 					Replication: entry.Replication,
+					UserName:    entry.UserName,
+					GroupNames:  entry.GroupNames,
 				},
 			}
 
