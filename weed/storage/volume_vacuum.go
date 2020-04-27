@@ -80,10 +80,10 @@ func (v *Volume) Compact2(preallocate int64, compactionBytePerSecond int64) erro
 	v.lastCompactRevision = v.SuperBlock.CompactionRevision
 	glog.V(3).Infof("creating copies for volume %d ...", v.Id)
 	if err := v.DataBackend.Sync(); err != nil {
-		glog.V(0).Infof("compact2 fail to sync volume dat %d", v.Id)
+		glog.V(0).Infof("compact2 fail to sync volume dat %d: %v", v.Id, err)
 	}
 	if err := v.nm.Sync(); err != nil {
-		glog.V(0).Infof("compact2 fail to sync volume idx %d", v.Id)
+		glog.V(0).Infof("compact2 fail to sync volume idx %d: %v", v.Id, err)
 	}
 	return copyDataBasedOnIndexFile(filePath+".dat", filePath+".idx", filePath+".cpd", filePath+".cpx", v.SuperBlock, v.Version(), preallocate, compactionBytePerSecond)
 }
