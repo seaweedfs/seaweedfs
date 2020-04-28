@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"mime"
@@ -114,8 +115,13 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		ext := filepath.Ext(filename)
 		width, height, mode, shouldResize := shouldResizeImages(ext, r)
 		if shouldResize {
-			chunkedFileReader := filer2.NewChunkStreamReaderFromFiler(fs.filer.MasterClient, entry.Chunks)
-			rs, _, _ := images.Resized(ext, chunkedFileReader, width, height, mode)
+			data, err := filer2.ReadAll(fs.filer.MasterClient, entry.Chunks)
+			if err != nil {
+				glog.Errorf("failed to read %s: %v", path, err)
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			rs, _, _ := images.Resized(ext, bytes.NewReader(data), width, height, mode)
 			io.Copy(w, rs)
 			return
 		}

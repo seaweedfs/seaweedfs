@@ -44,8 +44,37 @@ func StreamContent(masterClient *wdclient.MasterClient, w io.Writer, chunks []*f
 
 }
 
+// ----------------  ReadAllReader ----------------------------------
+
+func ReadAll(masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) ([]byte, error) {
+
+	buffer := bytes.Buffer{}
+
+	chunkViews := ViewFromChunks(chunks, 0, math.MaxInt32)
+
+	lookupFileId := func(fileId string) (targetUrl string, err error) {
+		return masterClient.LookupFileId(fileId)
+	}
+
+	for _, chunkView := range chunkViews {
+		urlString, err := lookupFileId(chunkView.FileId)
+		if err != nil {
+			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
+			return nil, err
+		}
+		err = util.ReadUrlAsStream(urlString, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size), func(data []byte) {
+			buffer.Write(data)
+		})
+		if err != nil {
+			glog.V(1).Infof("read %s failed, err: %v", chunkView.FileId, err)
+			return nil, err
+		}
+	}
+	return buffer.Bytes(), nil
+}
+
+// ----------------  ChunkStreamReader ----------------------------------
 type ChunkStreamReader struct {
-	masterClient *wdclient.MasterClient
 	chunkViews   []*ChunkView
 	logicOffset  int64
 	buffer       []byte
@@ -68,6 +97,7 @@ func NewChunkStreamReaderFromFiler(masterClient *wdclient.MasterClient, chunks [
 		},
 	}
 }
+
 
 func (c *ChunkStreamReader) Read(p []byte) (n int, err error) {
 	if c.isBufferEmpty() {
@@ -142,6 +172,10 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 	// glog.V(0).Infof("read %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
 
 	return nil
+}
+
+func (c *ChunkStreamReader) Close() {
+	// TODO try to release and reuse buffer
 }
 
 func VolumeId(fileId string) string {
