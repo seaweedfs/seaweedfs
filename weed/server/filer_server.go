@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -111,7 +112,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	fs.filer.LoadBuckets()
 
-	util.OnInterrupt(func() {
+	grace.OnInterrupt(func() {
 		fs.filer.Shutdown()
 	})
 

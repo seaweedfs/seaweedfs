@@ -7,6 +7,7 @@ require (
 	github.com/Azure/azure-pipeline-go v0.2.2 // indirect
 	github.com/Azure/azure-storage-blob-go v0.8.0
 	github.com/DataDog/zstd v1.4.1 // indirect
+	github.com/OneOfOne/xxhash v1.2.2
 	github.com/Shopify/sarama v1.23.1
 	github.com/aws/aws-sdk-go v1.23.13
 	github.com/chrislusf/raft v0.0.0-20190225081310-10d6e2182d92
@@ -24,7 +25,6 @@ require (
 	github.com/facebookgo/stats v0.0.0-20151006221625-1b76add642e4
 	github.com/facebookgo/subset v0.0.0-20200203212716-c811ad88dec4 // indirect
 	github.com/frankban/quicktest v1.7.2 // indirect
-	github.com/gabriel-vasile/mimetype v1.0.0
 	github.com/go-redis/redis v6.15.7+incompatible
 	github.com/go-sql-driver/mysql v1.4.1
 	github.com/gocql/gocql v0.0.0-20190829130954-e163eff7a8c6

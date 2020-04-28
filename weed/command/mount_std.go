@@ -19,13 +19,14 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
 )
 
 func runMount(cmd *Command, args []string) bool {
 
-	util.SetupProfiling(*mountCpuProfile, *mountMemProfile)
+	grace.SetupProfiling(*mountCpuProfile, *mountMemProfile)
 
 	umask, umaskErr := strconv.ParseUint(*mountOptions.umaskString, 8, 64)
 	if umaskErr != nil {
@@ -144,7 +145,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 	defer fuse.Unmount(dir)
 
-	util.OnInterrupt(func() {
+	grace.OnInterrupt(func() {
 		fuse.Unmount(dir)
 		c.Close()
 	})

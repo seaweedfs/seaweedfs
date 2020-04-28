@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"google.golang.org/grpc/reflection"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -57,7 +58,7 @@ func runMsgBroker(cmd *Command, args []string) bool {
 
 func (msgBrokerOpt *QueueOptions) startQueueServer() bool {
 
-	util.SetupProfiling(*messageBrokerStandaloneOptions.cpuprofile, *messageBrokerStandaloneOptions.memprofile)
+	grace.SetupProfiling(*messageBrokerStandaloneOptions.cpuprofile, *messageBrokerStandaloneOptions.memprofile)
 
 	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(*msgBrokerOpt.filer)
 	if err != nil {

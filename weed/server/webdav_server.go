@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"golang.org/x/net/webdav"
 	"google.golang.org/grpc"
 
@@ -100,7 +101,7 @@ type WebDavFile struct {
 func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 
 	chunkCache := chunk_cache.NewChunkCache(256, option.CacheDir, option.CacheSizeMB)
-	util.OnInterrupt(func() {
+	grace.OnInterrupt(func() {
 		chunkCache.Shutdown()
 	})
 	return &WebDavFileSystem{
