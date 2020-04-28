@@ -58,7 +58,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 		},
 	}
 
-	fmt.Printf("uploaded: %+v\n", uploadResult)
+	// fmt.Printf("uploaded: %+v\n", uploadResult)
 
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") {
