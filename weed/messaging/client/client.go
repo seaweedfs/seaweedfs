@@ -23,10 +23,6 @@ func NewMessagingClient(bootstrapBrokers []string) (*MessagingClient, error) {
 		return nil, err
 	}
 
-	util.OnInterrupt(func() {
-		grpcConnection.Close()
-	})
-
 	return &MessagingClient{
 		bootstrapBrokers: bootstrapBrokers,
 		grpcConnection:   grpcConnection,
