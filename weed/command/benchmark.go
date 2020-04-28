@@ -227,7 +227,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 		start := time.Now()
 		fileSize := int64(*b.fileSize + random.Intn(64))
 		fp := &operation.FilePart{
-			Reader:   &FakeReader{id: uint64(id), size: fileSize},
+			Reader:   &FakeReader{id: uint64(id), size: fileSize, random: random},
 			FileSize: fileSize,
 			MimeType: "image/bench", // prevent gzip benchmark content
 		}
@@ -550,8 +550,9 @@ func (s *stats) printStats() {
 
 // a fake reader to generate content to upload
 type FakeReader struct {
-	id   uint64 // an id number
-	size int64  // max bytes
+	id     uint64 // an id number
+	size   int64  // max bytes
+	random *rand.Rand
 }
 
 func (l *FakeReader) Read(p []byte) (n int, err error) {
@@ -567,6 +568,7 @@ func (l *FakeReader) Read(p []byte) (n int, err error) {
 		for i := 0; i < 8; i++ {
 			p[i] = byte(l.id >> uint(i*8))
 		}
+		l.random.Read(p[8:])
 	}
 	l.size -= int64(n)
 	return
