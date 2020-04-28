@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/chrislusf/raft/protobuf"
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc/reflection"
 
@@ -82,7 +83,7 @@ func runMaster(cmd *Command, args []string) bool {
 	util.LoadConfiguration("master", false)
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	util.SetupProfiling(*masterCpuProfile, *masterMemProfile)
+	grace.SetupProfiling(*masterCpuProfile, *masterMemProfile)
 
 	if err := util.TestFolderWritable(*m.metaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *m.metaFolder, err)

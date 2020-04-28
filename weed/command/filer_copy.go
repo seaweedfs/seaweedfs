@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -134,7 +135,7 @@ func runCopy(cmd *Command, args []string) bool {
 	copy.ttlSec = int32(ttl.Minutes()) * 60
 
 	if *cmdCopy.IsDebug {
-		util.SetupProfiling("filer.copy.cpu.pprof", "filer.copy.mem.pprof")
+		grace.SetupProfiling("filer.copy.cpu.pprof", "filer.copy.mem.pprof")
 	}
 
 	fileCopyTaskChan := make(chan FileCopyTask, *copy.concurrenctFiles)

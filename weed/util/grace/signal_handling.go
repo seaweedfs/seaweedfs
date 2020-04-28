@@ -1,6 +1,6 @@
 // +build !plan9
 
-package util
+package grace
 
 import (
 	"os"

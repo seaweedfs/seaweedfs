@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 
@@ -93,7 +94,7 @@ func runVolume(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	util.SetupProfiling(*v.cpuProfile, *v.memProfile)
+	grace.SetupProfiling(*v.cpuProfile, *v.memProfile)
 
 	v.startVolumeServer(*volumeFolders, *maxVolumeCounts, *volumeWhiteListOption)
 
@@ -183,7 +184,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	clusterHttpServer := v.startClusterHttpService(volumeMux)
 
 	stopChain := make(chan struct{})
-	util.OnInterrupt(func() {
+	grace.OnInterrupt(func() {
 		fmt.Println("volume server has be killed")
 		var startTime time.Time
 
