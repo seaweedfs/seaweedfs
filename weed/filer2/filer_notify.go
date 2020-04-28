@@ -1,7 +1,9 @@
 package filer2
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -77,5 +79,78 @@ func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
 
 	if err := f.appendToFile(targetFile, buf); err != nil {
 		glog.V(0).Infof("log write failed %s: %v", targetFile, err)
+	}
+}
+
+func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) error {
+
+	startDate := fmt.Sprintf("%04d-%02d-%02d", startTime.Year(), startTime.Month(), startTime.Day())
+	startHourMinute := fmt.Sprintf("%02d-%02d.segment", startTime.Hour(), startTime.Minute())
+
+	sizeBuf := make([]byte, 4)
+	startTsNs := startTime.UnixNano()
+
+	dayEntries, listDayErr := f.ListDirectoryEntries(context.Background(), SystemLogDir, startDate, true, 366)
+	if listDayErr != nil {
+		return fmt.Errorf("fail to list log by day: %v", listDayErr)
+	}
+	for _, dayEntry := range dayEntries {
+		// println("checking day", dayEntry.FullPath)
+		hourMinuteEntries, listHourMinuteErr := f.ListDirectoryEntries(context.Background(), util.NewFullPath(SystemLogDir, dayEntry.Name()), "", false, 24*60)
+		if listHourMinuteErr != nil {
+			return fmt.Errorf("fail to list log %s by day: %v", dayEntry.Name(), listHourMinuteErr)
+		}
+		for _, hourMinuteEntry := range hourMinuteEntries {
+			// println("checking hh-mm", hourMinuteEntry.FullPath)
+			if dayEntry.Name() == startDate {
+				if strings.Compare(hourMinuteEntry.Name(), startHourMinute) < 0 {
+					continue
+				}
+			}
+			// println("processing", hourMinuteEntry.FullPath)
+			chunkedFileReader := NewChunkStreamReaderFromFiler(f.MasterClient, hourMinuteEntry.Chunks)
+			if err := readEachLogEntry(chunkedFileReader, sizeBuf, startTsNs, eachLogEntryFn); err != nil {
+				chunkedFileReader.Close()
+				if err == io.EOF {
+					break
+				}
+				return err
+			}
+			chunkedFileReader.Close()
+		}
+	}
+
+	return nil
+}
+
+func readEachLogEntry(r io.Reader, sizeBuf []byte, ns int64, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) error {
+	for {
+		n, err := r.Read(sizeBuf)
+		if err != nil {
+			return err
+		}
+		if n != 4 {
+			return fmt.Errorf("size %d bytes, expected 4 bytes", n)
+		}
+		size := util.BytesToUint32(sizeBuf)
+		entryData := make([]byte, size)
+		n, err = r.Read(entryData)
+		if err != nil {
+			return err
+		}
+		if n != int(size) {
+			return fmt.Errorf("entry data %d bytes, expected %d bytes", n, size)
+		}
+		logEntry := &filer_pb.LogEntry{}
+		if err = proto.Unmarshal(entryData, logEntry); err != nil {
+			return err
+		}
+		if logEntry.TsNs <= ns {
+			return nil
+		}
+		// println("each log: ", logEntry.TsNs)
+		if err := eachLogEntryFn(logEntry); err != nil {
+			return err
+		}
 	}
 }
