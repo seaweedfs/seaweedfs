@@ -117,6 +117,8 @@ func (wfs *WFS) Root() (fs.Node, error) {
 	return wfs.root, nil
 }
 
+var _ = filer_pb.FilerClient(&WFS{})
+
 func (wfs *WFS) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
 	err := pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {

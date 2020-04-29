@@ -38,6 +38,8 @@ func encodeResponse(response interface{}) []byte {
 	return bytesBuffer.Bytes()
 }
 
+var _ = filer_pb.FilerClient(&S3ApiServer{})
+
 func (s3a *S3ApiServer) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
 	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {

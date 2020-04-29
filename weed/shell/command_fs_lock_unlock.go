@@ -52,4 +52,3 @@ func (c *commandUnlock) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 
 	return nil
 }
-

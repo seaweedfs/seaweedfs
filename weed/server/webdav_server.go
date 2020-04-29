@@ -110,6 +110,8 @@ func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 	}, nil
 }
 
+var _ = filer_pb.FilerClient(&WebDavFileSystem{})
+
 func (fs *WebDavFileSystem) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
 	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {

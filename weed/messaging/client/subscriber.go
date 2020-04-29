@@ -85,7 +85,7 @@ func (s *Subscriber) doSubscribe(partition int, processFn func(m *messaging_pb.M
 
 // Subscribe starts goroutines to process the messages
 func (s *Subscriber) Subscribe(processFn func(m *messaging_pb.Message)) {
-	for i:=0;i<len(s.subscriberClients);i++{
+	for i := 0; i < len(s.subscriberClients); i++ {
 		go s.doSubscribe(i, processFn)
 	}
 }

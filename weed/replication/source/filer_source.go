@@ -47,7 +47,7 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrl string, err error) {
 
 	vid := volumeId(part)
 
-	err = fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		glog.V(4).Infof("read lookup volume id locations: %v", vid)
 		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
@@ -91,13 +91,19 @@ func (fs *FilerSource) ReadPart(part string) (filename string, header http.Heade
 	return filename, header, readCloser, err
 }
 
-func (fs *FilerSource) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
+var _ = filer_pb.FilerClient(&FilerSource{})
+
+func (fs *FilerSource) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
 	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
 	}, fs.grpcAddress, fs.grpcDialOption)
 
+}
+
+func (fs *FilerSource) AdjustedUrl(hostAndPort string) string {
+	return hostAndPort
 }
 
 func volumeId(fileId string) string {

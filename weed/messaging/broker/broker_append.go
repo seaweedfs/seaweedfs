@@ -98,6 +98,8 @@ func (broker *MessageBroker) assignAndUpload(topicConfig *messaging_pb.TopicConf
 	return assignResult, uploadResult, nil
 }
 
+var _ = filer_pb.FilerClient(&MessageBroker{})
+
 func (broker *MessageBroker) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) (err error) {
 
 	for _, filer := range broker.option.Filers {
@@ -110,4 +112,8 @@ func (broker *MessageBroker) WithFilerClient(fn func(filer_pb.SeaweedFilerClient
 
 	return
 
+}
+
+func (broker *MessageBroker) AdjustedUrl(hostAndPort string) string {
+	return hostAndPort
 }

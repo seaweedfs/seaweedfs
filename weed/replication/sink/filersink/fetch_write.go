@@ -113,6 +113,8 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, dir string) 
 	return
 }
 
+var _ = filer_pb.FilerClient(&FilerSink{})
+
 func (fs *FilerSink) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
 	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
