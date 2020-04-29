@@ -22,6 +22,8 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	defer fs.deleteClient(clientName)
 
 	lastReadTime := time.Unix(0, req.SinceNs)
+	glog.V(0).Infof(" %v starts to subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
+	var processedTsNs int64
 
 	eachEventNotificationFn := func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 
@@ -67,11 +69,17 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			return err
 		}
 
+		processedTsNs = logEntry.TsNs
+
 		return nil
 	}
 
 	if err := fs.filer.ReadPersistedLogBuffer(lastReadTime, eachLogEntryFn); err != nil {
 		return fmt.Errorf("reading from persisted logs: %v", err)
+	}
+
+	if processedTsNs != 0 {
+		lastReadTime = time.Unix(0, processedTsNs)
 	}
 
 	_, err := fs.filer.MetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
