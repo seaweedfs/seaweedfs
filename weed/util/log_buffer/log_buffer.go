@@ -226,7 +226,6 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Bu
 
 }
 func (m *LogBuffer) ReleaseMeory(b *bytes.Buffer) {
-	b.Reset()
 	bufferPool.Put(b)
 }
 
@@ -238,6 +237,7 @@ var bufferPool = sync.Pool{
 
 func copiedBytes(buf []byte) (copied *bytes.Buffer) {
 	copied = bufferPool.Get().(*bytes.Buffer)
+	copied.Reset()
 	copied.Write(buf)
 	return
 }
