@@ -114,7 +114,7 @@ func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, eachLogEntryFn func(
 				if err == io.EOF {
 					break
 				}
-				return err
+				return fmt.Errorf("reading %s: %v", hourMinuteEntry.FullPath, err)
 			}
 			chunkedFileReader.Close()
 		}
