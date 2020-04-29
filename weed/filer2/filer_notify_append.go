@@ -44,6 +44,7 @@ func (f *Filer) appendToFile(targetFile string, data []byte) error {
 		Size:      uint64(uploadResult.Size),
 		Mtime:     time.Now().UnixNano(),
 		ETag:      uploadResult.ETag,
+		CipherKey: uploadResult.CipherKey,
 		IsGzipped: uploadResult.Gzip > 0,
 	}
 	entry.Chunks = append(entry.Chunks, chunk)

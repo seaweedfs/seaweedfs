@@ -69,11 +69,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 		if strings.HasSuffix(entry.Name, ".part") && !entry.IsDirectory {
 			for _, chunk := range entry.Chunks {
 				p := &filer_pb.FileChunk{
-					FileId: chunk.GetFileIdString(),
-					Offset: offset,
-					Size:   chunk.Size,
-					Mtime:  chunk.Mtime,
-					ETag:   chunk.ETag,
+					FileId:    chunk.GetFileIdString(),
+					Offset:    offset,
+					Size:      chunk.Size,
+					Mtime:     chunk.Mtime,
+					CipherKey: chunk.CipherKey,
+					ETag:      chunk.ETag,
 				}
 				finalParts = append(finalParts, p)
 				offset += int64(chunk.Size)
