@@ -98,18 +98,20 @@ func NewChunkStreamReaderFromFiler(masterClient *wdclient.MasterClient, chunks [
 	}
 }
 
-
 func (c *ChunkStreamReader) Read(p []byte) (n int, err error) {
-	if c.isBufferEmpty() {
-		if c.chunkIndex >= len(c.chunkViews) {
-			return 0, io.EOF
+	for n < len(p) {
+		if c.isBufferEmpty() {
+			if c.chunkIndex >= len(c.chunkViews) {
+				return n, io.EOF
+			}
+			chunkView := c.chunkViews[c.chunkIndex]
+			c.fetchChunkToBuffer(chunkView)
+			c.chunkIndex++
 		}
-		chunkView := c.chunkViews[c.chunkIndex]
-		c.fetchChunkToBuffer(chunkView)
-		c.chunkIndex++
+		t := copy(p[n:], c.buffer[c.bufferPos:])
+		c.bufferPos += t
+		n += t
 	}
-	n = copy(p, c.buffer[c.bufferPos:])
-	c.bufferPos += n
 	return
 }
 
