@@ -35,6 +35,9 @@ func (vs *VolumeServer) heartbeat() {
 	for {
 		for _, master := range vs.SeedMasterNodes {
 			if newLeader != "" {
+				// the new leader may actually is the same master
+				// need to wait a bit before adding itself
+				time.Sleep(3 * time.Second)
 				master = newLeader
 			}
 			masterGrpcAddress, parseErr := pb.ParseServerToGrpcAddress(master)
