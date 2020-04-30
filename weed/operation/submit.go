@@ -27,6 +27,7 @@ type FilePart struct {
 	Ttl         string
 	Server      string //this comes from assign result
 	Fid         string //this comes from assign result, but customizable
+	Fsync       bool      
 }
 
 type SubmitResult struct {
@@ -115,6 +116,9 @@ func (fi FilePart) Upload(maxMB int, master string, usePublicUrl bool, jwt secur
 	fileUrl := "http://" + fi.Server + "/" + fi.Fid
 	if fi.ModTime != 0 {
 		fileUrl += "?ts=" + strconv.Itoa(int(fi.ModTime))
+	}
+	if fi.Fsync {
+		fileUrl += "?fsync=true"
 	}
 	if closer, ok := fi.Reader.(io.Closer); ok {
 		defer closer.Close()
