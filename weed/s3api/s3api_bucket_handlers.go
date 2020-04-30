@@ -38,7 +38,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 		if entry.IsDirectory {
 			buckets = append(buckets, &s3.Bucket{
 				Name:         aws.String(entry.Name),
-				CreationDate: aws.Time(time.Unix(entry.Attributes.Crtime, 0)),
+				CreationDate: aws.Time(time.Unix(entry.Attributes.Crtime, 0).UTC()),
 			})
 		}
 	}
