@@ -22,7 +22,7 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 
 	// TODO look it up
 	topicConfig := &messaging_pb.TopicConfiguration{
-		IsTransient: true,
+		// IsTransient: true,
 	}
 
 	// send init response

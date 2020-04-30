@@ -42,7 +42,7 @@ func (locks *TopicLocks) buildLogBuffer(tl *TopicLock, tp TopicPartition, topicC
 	flushFn := func(startTime, stopTime time.Time, buf []byte) {
 
 		if topicConfig.IsTransient {
-			return
+			// return
 		}
 
 		// fmt.Printf("flushing with topic config %+v\n", topicConfig)

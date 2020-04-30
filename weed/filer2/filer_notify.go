@@ -133,6 +133,7 @@ func ReadEachLogEntry(r io.Reader, sizeBuf []byte, ns int64, eachLogEntryFn func
 			return fmt.Errorf("size %d bytes, expected 4 bytes", n)
 		}
 		size := util.BytesToUint32(sizeBuf)
+		// println("entry size", size)
 		entryData := make([]byte, size)
 		n, err = r.Read(entryData)
 		if err != nil {
