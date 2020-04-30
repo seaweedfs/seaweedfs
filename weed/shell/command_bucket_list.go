@@ -45,12 +45,13 @@ func (c *commandBucketList) Do(args []string, commandEnv *CommandEnv, writer io.
 		return fmt.Errorf("read buckets: %v", err)
 	}
 
-	err = filer_pb.List(commandEnv, filerBucketsPath, "", func(entry *filer_pb.Entry, isLast bool) {
+	err = filer_pb.List(commandEnv, filerBucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
 		if entry.Attributes.Replication == "" || entry.Attributes.Replication == "000" {
 			fmt.Fprintf(writer, "  %s\n", entry.Name)
 		} else {
 			fmt.Fprintf(writer, "  %s\t\t\treplication: %s\n", entry.Name, entry.Attributes.Replication)
 		}
+		return nil
 	}, "", false, math.MaxUint32)
 	if err != nil {
 		return fmt.Errorf("list buckets under %v: %v", filerBucketsPath, err)

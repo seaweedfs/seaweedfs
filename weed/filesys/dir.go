@@ -263,7 +263,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 	glog.V(3).Infof("dir ReadDirAll %s", dir.FullPath())
 
 	cacheTtl := 5 * time.Minute
-	processEachEntryFn := func(entry *filer_pb.Entry, isLast bool) {
+	processEachEntryFn := func(entry *filer_pb.Entry, isLast bool) error {
 		fullpath := util.NewFullPath(dir.FullPath(), entry.Name)
 		inode := fullpath.AsInode()
 		if entry.IsDirectory {
@@ -274,6 +274,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 			ret = append(ret, dirent)
 		}
 		dir.wfs.cacheSet(fullpath, entry, cacheTtl)
+		return nil
 	}
 
 	if dir.wfs.option.AsyncMetaDataCaching {

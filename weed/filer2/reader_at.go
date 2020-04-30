@@ -27,34 +27,40 @@ type ChunkReadAt struct {
 
 // var _ = io.ReaderAt(&ChunkReadAt{})
 
+type LookupFileIdFunctionType func(fileId string) (targetUrl string, err error)
+
+func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
+	return func(fileId string) (targetUrl string, err error) {
+		err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+			vid := VolumeId(fileId)
+			resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
+				VolumeIds: []string{vid},
+			})
+			if err != nil {
+				return err
+			}
+
+			locations := resp.LocationsMap[vid]
+			if locations == nil || len(locations.Locations) == 0 {
+				glog.V(0).Infof("failed to locate %s", fileId)
+				return fmt.Errorf("failed to locate %s", fileId)
+			}
+
+			volumeServerAddress := filerClient.AdjustedUrl(locations.Locations[0].Url)
+
+			targetUrl = fmt.Sprintf("http://%s/%s", volumeServerAddress, fileId)
+
+			return nil
+		})
+		return
+	}
+}
+
 func NewChunkReaderAtFromClient(filerClient filer_pb.FilerClient, chunkViews []*ChunkView, chunkCache *chunk_cache.ChunkCache) *ChunkReadAt {
 
 	return &ChunkReadAt{
 		chunkViews: chunkViews,
-		lookupFileId: func(fileId string) (targetUrl string, err error) {
-			err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-				vid := VolumeId(fileId)
-				resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
-					VolumeIds: []string{vid},
-				})
-				if err != nil {
-					return err
-				}
-
-				locations := resp.LocationsMap[vid]
-				if locations == nil || len(locations.Locations) == 0 {
-					glog.V(0).Infof("failed to locate %s", fileId)
-					return fmt.Errorf("failed to locate %s", fileId)
-				}
-
-				volumeServerAddress := filerClient.AdjustedUrl(locations.Locations[0].Url)
-
-				targetUrl = fmt.Sprintf("http://%s/%s", volumeServerAddress, fileId)
-
-				return nil
-			})
-			return
-		},
+		lookupFileId: LookupFn(filerClient),
 		bufferOffset: -1,
 		chunkCache:   chunkCache,
 	}

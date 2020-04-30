@@ -51,10 +51,10 @@ func treeTraverseDirectory(writer io.Writer, filerClient filer_pb.FilerClient, d
 
 	prefix.addMarker(level)
 
-	err = filer_pb.ReadDirAllEntries(filerClient, dir, name, func(entry *filer_pb.Entry, isLast bool) {
+	err = filer_pb.ReadDirAllEntries(filerClient, dir, name, func(entry *filer_pb.Entry, isLast bool) error {
 		if level < 0 && name != "" {
 			if entry.Name != name {
-				return
+				return nil
 			}
 		}
 
@@ -70,7 +70,7 @@ func treeTraverseDirectory(writer io.Writer, filerClient filer_pb.FilerClient, d
 		} else {
 			fileCount++
 		}
-
+		return nil
 	})
 	return
 }

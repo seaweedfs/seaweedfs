@@ -81,7 +81,7 @@ type ChunkStreamReader struct {
 	bufferOffset int64
 	bufferPos    int
 	chunkIndex   int
-	lookupFileId func(fileId string) (targetUrl string, err error)
+	lookupFileId LookupFileIdFunctionType
 }
 
 var _ = io.ReadSeeker(&ChunkStreamReader{})
@@ -95,6 +95,16 @@ func NewChunkStreamReaderFromFiler(masterClient *wdclient.MasterClient, chunks [
 		lookupFileId: func(fileId string) (targetUrl string, err error) {
 			return masterClient.LookupFileId(fileId)
 		},
+	}
+}
+
+func NewChunkStreamReader(filerClient filer_pb.FilerClient, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
+
+	chunkViews := ViewFromChunks(chunks, 0, math.MaxInt32)
+
+	return &ChunkStreamReader{
+		chunkViews: chunkViews,
+		lookupFileId: LookupFn(filerClient),
 	}
 }
 

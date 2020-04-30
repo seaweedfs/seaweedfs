@@ -56,19 +56,21 @@ func GetEntry(filerClient FilerClient, fullFilePath util.FullPath) (entry *Entry
 	return
 }
 
-func ReadDirAllEntries(filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn func(entry *Entry, isLast bool)) (err error) {
+type EachEntryFunciton func(entry *Entry, isLast bool) error
+
+func ReadDirAllEntries(filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunciton) (err error) {
 
 	return doList(filerClient, fullDirPath, prefix, fn, "", false, math.MaxUint32)
 
 }
 
-func List(filerClient FilerClient, parentDirectoryPath, prefix string, fn func(entry *Entry, isLast bool), startFrom string, inclusive bool, limit uint32) (err error) {
+func List(filerClient FilerClient, parentDirectoryPath, prefix string, fn EachEntryFunciton, startFrom string, inclusive bool, limit uint32) (err error) {
 
 	return doList(filerClient, util.FullPath(parentDirectoryPath), prefix, fn, startFrom, inclusive, limit)
 
 }
 
-func doList(filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn func(entry *Entry, isLast bool), startFrom string, inclusive bool, limit uint32) (err error) {
+func doList(filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunciton, startFrom string, inclusive bool, limit uint32) (err error) {
 
 	err = filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
 
@@ -92,7 +94,9 @@ func doList(filerClient FilerClient, fullDirPath util.FullPath, prefix string, f
 			if recvErr != nil {
 				if recvErr == io.EOF {
 					if prevEntry != nil {
-						fn(prevEntry, true)
+						if err := fn(prevEntry, true); err != nil {
+							return err
+						}
 					}
 					break
 				} else {
@@ -100,7 +104,9 @@ func doList(filerClient FilerClient, fullDirPath util.FullPath, prefix string, f
 				}
 			}
 			if prevEntry != nil {
-				fn(prevEntry, false)
+				if err := fn(prevEntry, false); err != nil {
+					return err
+				}
 			}
 			prevEntry = resp.Entry
 		}

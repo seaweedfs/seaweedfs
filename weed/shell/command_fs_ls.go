@@ -62,10 +62,10 @@ func (c *commandFsLs) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 	dir, name := util.FullPath(path).DirAndName()
 	entryCount := 0
 
-	err = filer_pb.ReadDirAllEntries(commandEnv, util.FullPath(dir), name, func(entry *filer_pb.Entry, isLast bool) {
+	err = filer_pb.ReadDirAllEntries(commandEnv, util.FullPath(dir), name, func(entry *filer_pb.Entry, isLast bool) error {
 
 		if !showHidden && strings.HasPrefix(entry.Name, ".") {
-			return
+			return nil
 		}
 
 		entryCount++
@@ -100,6 +100,7 @@ func (c *commandFsLs) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 			fmt.Fprintf(writer, "%s\n", entry.Name)
 		}
 
+		return nil
 	})
 
 	if isLongFormat && err == nil {
