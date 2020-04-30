@@ -1,6 +1,9 @@
 package log_buffer
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 type MemBuffer struct {
 	buf       []byte
@@ -52,4 +55,8 @@ func (mb *MemBuffer) locateByTs(lastReadTime time.Time) (pos int) {
 		pos += size + 4
 	}
 	return len(mb.buf)
+}
+
+func (mb *MemBuffer) String() string {
+	return fmt.Sprintf("[%v,%v] bytes:%d", mb.startTime, mb.stopTime, mb.size)
 }
