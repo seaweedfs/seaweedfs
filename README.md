@@ -100,9 +100,9 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 * Automatic Gzip compression depending on file mime type.
 * Automatic compaction to reclaim disk space after deletion or update.
 * [Automatic entry TTL expiration][VolumeServerTTL].
-* Servers in the same cluster can have different disk spaces, file systems, OS etc.
+* Any server with some disk spaces can add to the total storage space.
 * Adding/Removing servers does **not** cause any data re-balancing.
-* Optionally fix the orientation for jpeg pictures.
+* Optional picture resizing.
 * Support ETag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/readonly mode tuning for memory/performance balance.
 * Support rebalancing the writable and readonly volumes.
