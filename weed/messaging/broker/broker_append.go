@@ -29,6 +29,7 @@ func (broker *MessageBroker) appendToFile(targetFile string, topicConfig *messag
 		Size:      uint64(uploadResult.Size),
 		Mtime:     time.Now().UnixNano(),
 		ETag:      uploadResult.ETag,
+		CipherKey: uploadResult.CipherKey,
 		IsGzipped: uploadResult.Gzip > 0,
 	}
 
