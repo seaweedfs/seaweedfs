@@ -16,12 +16,11 @@ func SubscribeMetaEvents(mc *MetaCache, client filer_pb.FilerClient, dir string,
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
-		ctx := context.Background()
-		var err error
+		var oldPath util.FullPath
+		var newEntry *filer2.Entry
 		if message.OldEntry != nil {
-			key := util.NewFullPath(resp.Directory, message.OldEntry.Name)
-			glog.V(4).Infof("deleting %v", key)
-			err = mc.DeleteEntry(ctx, key)
+			oldPath = util.NewFullPath(resp.Directory, message.OldEntry.Name)
+			glog.V(4).Infof("deleting %v", oldPath)
 		}
 
 		if message.NewEntry != nil {
@@ -31,9 +30,9 @@ func SubscribeMetaEvents(mc *MetaCache, client filer_pb.FilerClient, dir string,
 			}
 			key := util.NewFullPath(dir, message.NewEntry.Name)
 			glog.V(4).Infof("creating %v", key)
-			err = mc.InsertEntry(ctx, filer2.FromPbEntry(dir, message.NewEntry))
+			newEntry = filer2.FromPbEntry(dir, message.NewEntry)
 		}
-		return err
+		return mc.AtomicUpdateEntry(context.Background(), oldPath, newEntry)
 	}
 
 	for {
