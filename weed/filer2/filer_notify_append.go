@@ -38,16 +38,7 @@ func (f *Filer) appendToFile(targetFile string, data []byte) error {
 	}
 
 	// append to existing chunks
-	chunk := &filer_pb.FileChunk{
-		FileId:    assignResult.Fid,
-		Offset:    offset,
-		Size:      uint64(uploadResult.Size),
-		Mtime:     time.Now().UnixNano(),
-		ETag:      uploadResult.ETag,
-		CipherKey: uploadResult.CipherKey,
-		IsGzipped: uploadResult.Gzip > 0,
-	}
-	entry.Chunks = append(entry.Chunks, chunk)
+	entry.Chunks = append(entry.Chunks, uploadResult.ToPbFileChunk(assignResult.Fid, offset))
 
 	// update the entry
 	err = f.CreateEntry(context.Background(), entry, false)

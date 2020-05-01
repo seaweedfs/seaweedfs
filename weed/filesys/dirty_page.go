@@ -187,15 +187,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 	}
 	pages.f.wfs.chunkCache.SetChunk(fileId, data)
 
-	return &filer_pb.FileChunk{
-		FileId:    fileId,
-		Offset:    offset,
-		Size:      uint64(size),
-		Mtime:     time.Now().UnixNano(),
-		ETag:      uploadResult.ETag,
-		CipherKey: uploadResult.CipherKey,
-		IsGzipped: uploadResult.Gzip > 0,
-	}, nil
+	return uploadResult.ToPbFileChunk(fileId, offset), nil
 
 }
 

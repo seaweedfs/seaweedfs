@@ -14,8 +14,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -324,15 +325,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 		}
 		fmt.Printf("uploaded %s to %s\n", fileName, targetUrl)
 
-		chunks = append(chunks, &filer_pb.FileChunk{
-			FileId:    assignResult.FileId,
-			Offset:    0,
-			Size:      uint64(uploadResult.Size),
-			Mtime:     time.Now().UnixNano(),
-			ETag:      uploadResult.Md5,
-			CipherKey: uploadResult.CipherKey,
-			IsGzipped: uploadResult.Gzip > 0,
-		})
+		chunks = append(chunks, uploadResult.ToPbFileChunk(assignResult.FileId, 0))
 
 		fmt.Printf("copied %s => http://%s%s%s\n", fileName, worker.filerHost, task.destinationUrlPath, fileName)
 	}
@@ -435,15 +428,8 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 				uploadError = fmt.Errorf("upload %v to %s result: %v\n", fileName, targetUrl, uploadResult.Error)
 				return
 			}
-			chunksChan <- &filer_pb.FileChunk{
-				FileId:    assignResult.FileId,
-				Offset:    i * chunkSize,
-				Size:      uint64(uploadResult.Size),
-				Mtime:     time.Now().UnixNano(),
-				ETag:      uploadResult.ETag,
-				CipherKey: uploadResult.CipherKey,
-				IsGzipped: uploadResult.Gzip > 0,
-			}
+			chunksChan <- uploadResult.ToPbFileChunk(assignResult.FileId, i * chunkSize)
+
 			fmt.Printf("uploaded %s-%d to %s [%d,%d)\n", fileName, i+1, targetUrl, i*chunkSize, i*chunkSize+int64(uploadResult.Size))
 		}(i)
 	}

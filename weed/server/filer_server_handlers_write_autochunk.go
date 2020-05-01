@@ -119,17 +119,7 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 		}
 
 		// Save to chunk manifest structure
-		fileChunks = append(fileChunks,
-			&filer_pb.FileChunk{
-				FileId:    fileId,
-				Offset:    chunkOffset,
-				Size:      uint64(uploadResult.Size),
-				Mtime:     time.Now().UnixNano(),
-				ETag:      uploadResult.ETag,
-				CipherKey: uploadResult.CipherKey,
-				IsGzipped: uploadResult.Gzip > 0,
-			},
-		)
+		fileChunks = append(fileChunks, uploadResult.ToPbFileChunk(fileId, chunkOffset))
 
 		glog.V(4).Infof("uploaded %s chunk %d to %s [%d,%d) of %d", fileName, len(fileChunks), fileId, chunkOffset, chunkOffset+int64(uploadResult.Size), contentLength)
 

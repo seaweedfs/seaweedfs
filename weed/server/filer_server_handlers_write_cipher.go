@@ -46,17 +46,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 	}
 
 	// Save to chunk manifest structure
-	fileChunks := []*filer_pb.FileChunk{
-		{
-			FileId:    fileId,
-			Offset:    0,
-			Size:      uint64(uploadResult.Size),
-			Mtime:     time.Now().UnixNano(),
-			ETag:      uploadResult.Md5,
-			CipherKey: uploadResult.CipherKey,
-			IsGzipped: uploadResult.Gzip > 0,
-		},
-	}
+	fileChunks := []*filer_pb.FileChunk{uploadResult.ToPbFileChunk(fileId, 0)}
 
 	// fmt.Printf("uploaded: %+v\n", uploadResult)
 

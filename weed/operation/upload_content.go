@@ -14,8 +14,10 @@ import (
 	"net/textproto"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -29,6 +31,18 @@ type UploadResult struct {
 	Mime      string `json:"mime,omitempty"`
 	Gzip      uint32 `json:"gzip,omitempty"`
 	Md5       string `json:"md5,omitempty"`
+}
+
+func (uploadResult *UploadResult) ToPbFileChunk(fileId string, offset int64) *filer_pb.FileChunk {
+	return &filer_pb.FileChunk{
+		FileId:    fileId,
+		Offset:    offset,
+		Size:      uint64(uploadResult.Size),
+		Mtime:     time.Now().UnixNano(),
+		ETag:      uploadResult.ETag,
+		CipherKey: uploadResult.CipherKey,
+		IsGzipped: uploadResult.Gzip > 0,
+	}
 }
 
 var (
