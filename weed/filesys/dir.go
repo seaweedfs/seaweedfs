@@ -324,15 +324,15 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 	dir.wfs.cacheDelete(filePath)
 	dir.wfs.fsNodeCache.DeleteFsNode(filePath)
 
+	if dir.wfs.option.AsyncMetaDataCaching {
+		dir.wfs.metaCache.DeleteEntry(context.Background(), filePath)
+	}
+
 	glog.V(3).Infof("remove file: %v", req)
 	err = filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, false, false, false)
 	if err != nil {
 		glog.V(3).Infof("not found remove file %s/%s: %v", dir.FullPath(), req.Name, err)
 		return fuse.ENOENT
-	}
-
-	if dir.wfs.option.AsyncMetaDataCaching {
-		dir.wfs.metaCache.DeleteEntry(context.Background(), filePath)
 	}
 
 	return nil
@@ -345,15 +345,15 @@ func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 	dir.wfs.cacheDelete(t)
 	dir.wfs.fsNodeCache.DeleteFsNode(t)
 
+	if dir.wfs.option.AsyncMetaDataCaching {
+		dir.wfs.metaCache.DeleteEntry(context.Background(), t)
+	}
+
 	glog.V(3).Infof("remove directory entry: %v", req)
 	err := filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, true, false, false)
 	if err != nil {
 		glog.V(3).Infof("not found remove %s/%s: %v", dir.FullPath(), req.Name, err)
 		return fuse.ENOENT
-	}
-
-	if dir.wfs.option.AsyncMetaDataCaching {
-		dir.wfs.metaCache.DeleteEntry(context.Background(), t)
 	}
 
 	return nil
