@@ -381,3 +381,39 @@ func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.
 
 	return t, nil
 }
+
+func (fs *FilerServer) KeepConnected(stream filer_pb.SeaweedFiler_KeepConnectedServer) error {
+
+	req, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+
+	clientName := fmt.Sprintf("%s:%d", req.Name, req.GrpcPort)
+	fs.brokersLock.Lock()
+	fs.brokers[clientName] = true
+	glog.V(0).Infof("+ broker %v", clientName)
+	fs.brokersLock.Unlock()
+
+	defer func() {
+		fs.brokersLock.Lock()
+		delete(fs.brokers, clientName)
+		glog.V(0).Infof("- broker %v: %v", clientName, err)
+		fs.brokersLock.Unlock()
+	}()
+
+	for {
+		if err := stream.Send(&filer_pb.KeepConnectedResponse{}); err != nil {
+			glog.V(0).Infof("send broker %v: %+v", clientName, err)
+			return err
+		}
+		// println("replied")
+
+		if _, err := stream.Recv(); err != nil {
+			glog.V(0).Infof("recv broker %v: %v", clientName, err)
+			return err
+		}
+		// println("received")
+	}
+
+}

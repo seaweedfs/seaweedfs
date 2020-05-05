@@ -48,6 +48,8 @@ service SeaweedFiler {
     rpc SubscribeMetadata (SubscribeMetadataRequest) returns (stream SubscribeMetadataResponse) {
     }
 
+    rpc KeepConnected (stream KeepConnectedRequest) returns (stream KeepConnectedResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -260,4 +262,11 @@ message LogEntry {
     int64 ts_ns = 1;
     int32 partition_key_hash = 2;
     bytes data = 3;
+}
+
+message KeepConnectedRequest {
+    string name = 1;
+    uint32 grpc_port = 2;
+}
+message KeepConnectedResponse {
 }

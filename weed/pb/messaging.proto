@@ -21,6 +21,9 @@ service SeaweedMessaging {
     rpc GetTopicConfiguration (GetTopicConfigurationRequest) returns (GetTopicConfigurationResponse) {
     }
 
+    rpc FindBroker (FindBrokerRequest) returns (FindBrokerResponse) {
+    }
+
 }
 
 //////////////////////////////////////////////////
@@ -55,10 +58,7 @@ message Message {
 
 message BrokerMessage {
     Message data = 1;
-    message RedirectMessage {
-        string new_broker = 1;
-    }
-    RedirectMessage redirect = 2;
+    bool is_close = 2;
 }
 
 message PublishRequest {
@@ -96,6 +96,16 @@ message GetTopicConfigurationRequest {
 }
 message GetTopicConfigurationResponse {
     TopicConfiguration configuration = 1;
+}
+
+message FindBrokerRequest {
+    string namespace = 1;
+    string topic = 2;
+    int32 parition = 3;
+}
+
+message FindBrokerResponse {
+    string broker = 1;
 }
 
 message TopicConfiguration {

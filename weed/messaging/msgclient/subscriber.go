@@ -1,4 +1,4 @@
-package client
+package msgclient
 
 import (
 	"context"
@@ -36,9 +36,22 @@ func (mc *MessagingClient) NewSubscriber(subscriberId, namespace, topic string, 
 
 func (mc *MessagingClient) setupSubscriberClient(subscriberId, namespace, topic string, partition int32, startTime time.Time) (messaging_pb.SeaweedMessaging_SubscribeClient, error) {
 
-	stream, err := messaging_pb.NewSeaweedMessagingClient(mc.grpcConnection).Subscribe(context.Background())
+	stream, newBroker, err := mc.initSubscriberClient(subscriberId, namespace, topic, partition, startTime)
 	if err != nil {
-		return nil, err
+		return client, err
+	}
+	if newBroker != nil {
+
+	}
+
+	return stream, nil
+
+}
+
+func setupSubscriberClient(grpcConnection *grpc.ClientConn, subscriberId string, namespace string, topic string, partition int32, startTime time.Time) (stream messaging_pb.SeaweedMessaging_SubscribeClient, err error) {
+	stream, err = messaging_pb.NewSeaweedMessagingClient(grpcConnection).Subscribe(context.Background())
+	if err != nil {
+		return
 	}
 
 	// send init message
@@ -53,20 +66,18 @@ func (mc *MessagingClient) setupSubscriberClient(subscriberId, namespace, topic 
 		},
 	})
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	// process init response
 	initResponse, err := stream.Recv()
 	if err != nil {
-		return nil, err
+		return
 	}
 	if initResponse.Redirect != nil {
 		// TODO follow redirection
 	}
-
 	return stream, nil
-
 }
 
 func (s *Subscriber) doSubscribe(partition int, processFn func(m *messaging_pb.Message)) error {

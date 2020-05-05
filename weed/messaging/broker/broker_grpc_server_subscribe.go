@@ -38,7 +38,6 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 	}
 
 	if err = stream.Send(&messaging_pb.BrokerMessage{
-		Redirect: nil,
 	}); err != nil {
 		return err
 	}
