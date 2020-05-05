@@ -33,7 +33,6 @@ type Volume struct {
 	super_block.SuperBlock
 
 	dataFileAccessLock    sync.RWMutex
-	asyncRequestsChan     chan *needle.AsyncRequest
 	lastModifiedTsSeconds uint64 //unix time in seconds
 	lastAppendAtNs        uint64 //unix time in nanoseconds
 
@@ -47,15 +46,12 @@ type Volume struct {
 
 func NewVolume(dirname string, collection string, id needle.VolumeId, needleMapKind NeedleMapType, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32) (v *Volume, e error) {
 	// if replicaPlacement is nil, the superblock will be loaded from disk
-	v = &Volume{dir: dirname, Collection: collection, Id: id, MemoryMapMaxSizeMb: memoryMapMaxSizeMb,
-		asyncRequestsChan: make(chan *needle.AsyncRequest, 128)}
+	v = &Volume{dir: dirname, Collection: collection, Id: id, MemoryMapMaxSizeMb: memoryMapMaxSizeMb}
 	v.SuperBlock = super_block.SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
 	v.needleMapKind = needleMapKind
 	e = v.load(true, true, needleMapKind, preallocate)
-	v.startWorker()
 	return
 }
-
 func (v *Volume) String() string {
 	return fmt.Sprintf("Id:%v, dir:%s, Collection:%s, dataFile:%v, nm:%v, noWrite:%v canDelete:%v", v.Id, v.dir, v.Collection, v.DataBackend, v.nm, v.noWriteOrDelete || v.noWriteCanDelete, v.noWriteCanDelete)
 }
@@ -69,7 +65,6 @@ func VolumeFileName(dir string, collection string, id int) (fileName string) {
 	}
 	return
 }
-
 func (v *Volume) FileName() (fileName string) {
 	return VolumeFileName(v.dir, v.Collection, int(v.Id))
 }

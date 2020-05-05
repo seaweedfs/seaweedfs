@@ -264,7 +264,12 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, fsync boo
 			err = fmt.Errorf("volume %d is read only", i)
 			return
 		}
-		_, _, isUnchanged, err = v.writeNeedle2(n, fsync)
+		// using len(n.Data) here instead of n.Size before n.Size is populated in v.writeNeedle(n)
+		if MaxPossibleVolumeSize >= v.ContentSize()+uint64(needle.GetActualSize(uint32(len(n.Data)), v.Version())) {
+			_, _, isUnchanged, err = v.writeNeedle(n, fsync)
+		} else {
+			err = fmt.Errorf("volume size limit %d exceeded! current size is %d", s.GetVolumeSizeLimit(), v.ContentSize())
+		}
 		return
 	}
 	glog.V(0).Infoln("volume", i, "not found!")
@@ -277,7 +282,11 @@ func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (uint32,
 		if v.noWriteOrDelete {
 			return 0, fmt.Errorf("volume %d is read only", i)
 		}
-		return v.deleteNeedle2(n)
+		if MaxPossibleVolumeSize >= v.ContentSize()+uint64(needle.GetActualSize(0, v.Version())) {
+			return v.deleteNeedle(n)
+		} else {
+			return 0, fmt.Errorf("volume size limit %d exceeded! current size is %d", s.GetVolumeSizeLimit(), v.ContentSize())
+		}
 	}
 	return 0, fmt.Errorf("volume %d not found on %s:%d", i, s.Ip, s.Port)
 }
