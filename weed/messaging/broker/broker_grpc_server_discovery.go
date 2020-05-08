@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -25,12 +26,40 @@ If one of the pub or sub connects very late, and the system topo changed quite a
 
 func (broker *MessageBroker) FindBroker(c context.Context, request *messaging_pb.FindBrokerRequest) (*messaging_pb.FindBrokerResponse, error) {
 
-	panic("implement me")
+	t := &messaging_pb.FindBrokerResponse{}
+	var peers []string
+
+	targetTopicPartition := fmt.Sprintf(TopicPartitionFmt, request.Namespace, request.Topic, request.Parition)
+
+	for _, filer := range broker.option.Filers {
+		err := broker.withFilerClient(filer, func(client filer_pb.SeaweedFilerClient) error {
+			resp, err := client.LocateBroker(context.Background(), &filer_pb.LocateBrokerRequest{
+				Resource: targetTopicPartition,
+			})
+			if err != nil {
+				return err
+			}
+			if resp.Found && len(resp.Resources) > 0 {
+				t.Broker = resp.Resources[0].GrpcAddresses
+				return nil
+			}
+			for _, b := range resp.Resources {
+				peers = append(peers, b.GrpcAddresses)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	t.Broker = PickMember(peers, []byte(targetTopicPartition))
+
+	return t, nil
+
 }
 
-
-
-func (broker *MessageBroker) checkPeers() {
+func (broker *MessageBroker) checkFilers() {
 
 	// contact a filer about masters
 	var masters []string

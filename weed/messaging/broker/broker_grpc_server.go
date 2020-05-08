@@ -10,6 +10,10 @@ func (broker *MessageBroker) ConfigureTopic(c context.Context, request *messagin
 	panic("implement me")
 }
 
+func (broker *MessageBroker) DeleteTopic(c context.Context, request *messaging_pb.DeleteTopicRequest) (*messaging_pb.DeleteTopicResponse, error) {
+	panic("implement me")
+}
+
 func (broker *MessageBroker) GetTopicConfiguration(c context.Context, request *messaging_pb.GetTopicConfigurationRequest) (*messaging_pb.GetTopicConfigurationResponse, error) {
 	panic("implement me")
 }

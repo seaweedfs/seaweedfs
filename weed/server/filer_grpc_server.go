@@ -390,8 +390,12 @@ func (fs *FilerServer) KeepConnected(stream filer_pb.SeaweedFiler_KeepConnectedS
 	}
 
 	clientName := fmt.Sprintf("%s:%d", req.Name, req.GrpcPort)
+	m := make(map[string]bool)
+	for _, tp := range req.Resources {
+		m[tp] = true
+	}
 	fs.brokersLock.Lock()
-	fs.brokers[clientName] = true
+	fs.brokers[clientName] = m
 	glog.V(0).Infof("+ broker %v", clientName)
 	fs.brokersLock.Unlock()
 
@@ -415,5 +419,37 @@ func (fs *FilerServer) KeepConnected(stream filer_pb.SeaweedFiler_KeepConnectedS
 		}
 		// println("received")
 	}
+
+}
+
+func (fs *FilerServer) LocateBroker(ctx context.Context, req *filer_pb.LocateBrokerRequest) (resp *filer_pb.LocateBrokerResponse, err error) {
+
+	resp = &filer_pb.LocateBrokerResponse{}
+
+	fs.brokersLock.Lock()
+	defer fs.brokersLock.Unlock()
+
+	var localBrokers []*filer_pb.LocateBrokerResponse_Resource
+
+	for b, m := range fs.brokers {
+		if _, found := m[req.Resource]; found {
+			resp.Found = true
+			resp.Resources = []*filer_pb.LocateBrokerResponse_Resource{
+				{
+					GrpcAddresses: b,
+					ResourceCount: int32(len(m)),
+				},
+			}
+			return
+		}
+		localBrokers = append(localBrokers, &filer_pb.LocateBrokerResponse_Resource{
+			GrpcAddresses: b,
+			ResourceCount: int32(len(m)),
+		})
+	}
+
+	resp.Resources = localBrokers
+
+	return resp, nil
 
 }

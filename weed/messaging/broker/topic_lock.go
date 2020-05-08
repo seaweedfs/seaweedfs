@@ -16,6 +16,13 @@ type TopicPartition struct {
 	Topic     string
 	Partition int32
 }
+const (
+	TopicPartitionFmt = "%s/%s_%2d"
+)
+func (tp *TopicPartition) String() string {
+	return fmt.Sprintf(TopicPartitionFmt, tp.Namespace, tp.Topic, tp.Partition)
+}
+
 type TopicLock struct {
 	sync.Mutex
 	cond            *sync.Cond
@@ -100,4 +107,14 @@ func (tl *TopicLocks) ReleaseLock(partition TopicPartition, isPublisher bool) {
 	if lock.subscriberCount <= 0 && lock.publisherCount <= 0 {
 		delete(tl.locks, partition)
 	}
+}
+
+func (tl *TopicLocks) ListTopicPartitions() (tps []TopicPartition) {
+	tl.Lock()
+	defer tl.Unlock()
+
+	for k := range tl.locks {
+		tps = append(tps, k)
+	}
+	return
 }

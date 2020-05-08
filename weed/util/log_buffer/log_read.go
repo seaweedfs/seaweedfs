@@ -12,8 +12,9 @@ import (
 )
 
 func (logBuffer *LogBuffer) LoopProcessLogData(
-	startTreadTime time.Time, waitForDataFn func() bool,
-	eachLogDataFn func(logEntry *filer_pb.LogEntry) error) (processed int64, err error) {
+	startTreadTime time.Time,
+	waitForDataFn func() bool,
+	eachLogDataFn func(logEntry *filer_pb.LogEntry) error) (err error) {
 	// loop through all messages
 	var bytesBuf *bytes.Buffer
 	lastReadTime := startTreadTime
@@ -66,7 +67,6 @@ func (logBuffer *LogBuffer) LoopProcessLogData(
 
 			pos += 4 + int(size)
 			batchSize++
-			processed++
 		}
 
 		// fmt.Printf("sent message ts[%d,%d] size %d\n", startReadTime.UnixNano(), lastReadTime.UnixNano(), batchSize)

@@ -47,24 +47,11 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 	tl := broker.topicLocks.RequestLock(tp, topicConfig, true)
 	defer broker.topicLocks.ReleaseLock(tp, true)
 
-	updatesChan := make(chan int32)
-
-	go func() {
-		for update := range updatesChan {
-			if err := stream.Send(&messaging_pb.PublishResponse{
-				Config: &messaging_pb.PublishResponse_ConfigMessage{
-					PartitionCount: update,
-				},
-			}); err != nil {
-				glog.V(0).Infof("err sending publish response: %v", err)
-				return
-			}
-		}
-	}()
-
 	// process each message
 	for {
+		// println("recv")
 		in, err := stream.Recv()
+		// glog.V(0).Infof("recieved %v err: %v", in, err)
 		if err == io.EOF {
 			return nil
 		}
@@ -86,5 +73,18 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 
 		tl.logBuffer.AddToBuffer(in.Data.Key, data)
 
+		if in.Data.IsClose {
+			// println("server received closing")
+			break
+		}
+
 	}
+
+	// send the close ack
+	// println("server send ack closing")
+	if err := stream.Send(&messaging_pb.PublishResponse{IsClosed: true}); err != nil {
+		glog.V(0).Infof("err sending close response: %v", err)
+	}
+	return nil
+
 }

@@ -83,11 +83,17 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 			glog.Errorf("sending %d bytes to %s: %s", len(m.Value), subscriberId, err)
 			return err
 		}
+		if m.IsClose {
+			// println("processed EOF")
+			return io.EOF
+		}
 		processedTsNs = logEntry.TsNs
+		messageCount++
 		return nil
 	}
 
 	if err := broker.readPersistedLogBuffer(&tp, lastReadTime, eachLogEntryFn); err != nil {
+		// println("stopping from persisted logs")
 		return err
 	}
 
@@ -95,7 +101,7 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 		lastReadTime = time.Unix(0, processedTsNs)
 	}
 
-	messageCount, err = lock.logBuffer.LoopProcessLogData(lastReadTime, func() bool {
+	err = lock.logBuffer.LoopProcessLogData(lastReadTime, func() bool {
 		lock.Mutex.Lock()
 		lock.cond.Wait()
 		lock.Mutex.Unlock()
@@ -124,7 +130,7 @@ func (broker *MessageBroker) readPersistedLogBuffer(tp *TopicPartition, startTim
 					return nil
 				}
 			}
-			if !strings.HasSuffix(hourMinuteEntry.Name, partitionSuffix){
+			if !strings.HasSuffix(hourMinuteEntry.Name, partitionSuffix) {
 				return nil
 			}
 			// println("partition", tp.Partition, "processing", dayDir, "/", hourMinuteEntry.Name)
@@ -133,7 +139,7 @@ func (broker *MessageBroker) readPersistedLogBuffer(tp *TopicPartition, startTim
 			if err := filer2.ReadEachLogEntry(chunkedFileReader, sizeBuf, startTsNs, eachLogEntryFn); err != nil {
 				chunkedFileReader.Close()
 				if err == io.EOF {
-					return nil
+					return err
 				}
 				return fmt.Errorf("reading %s/%s: %v", dayDir, hourMinuteEntry.Name, err)
 			}

@@ -10,6 +10,8 @@ require (
 	github.com/OneOfOne/xxhash v1.2.2
 	github.com/Shopify/sarama v1.23.1
 	github.com/aws/aws-sdk-go v1.23.13
+	github.com/buraksezer/consistent v0.0.0-20191006190839-693edf70fd72
+	github.com/cespare/xxhash v1.1.0
 	github.com/chrislusf/raft v0.0.0-20190225081310-10d6e2182d92
 	github.com/coreos/bbolt v1.3.3 // indirect
 	github.com/coreos/etcd v3.3.15+incompatible // indirect

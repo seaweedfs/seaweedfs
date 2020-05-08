@@ -5,6 +5,7 @@ import (
 	"io"
 	"time"
 
+	"google.golang.org/grpc"
 	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
 )
 
@@ -13,6 +14,7 @@ type Subscriber struct {
 	subscriberId      string
 }
 
+/*
 func (mc *MessagingClient) NewSubscriber(subscriberId, namespace, topic string, startTime time.Time) (*Subscriber, error) {
 	// read topic configuration
 	topicConfiguration := &messaging_pb.TopicConfiguration{
@@ -36,9 +38,9 @@ func (mc *MessagingClient) NewSubscriber(subscriberId, namespace, topic string, 
 
 func (mc *MessagingClient) setupSubscriberClient(subscriberId, namespace, topic string, partition int32, startTime time.Time) (messaging_pb.SeaweedMessaging_SubscribeClient, error) {
 
-	stream, newBroker, err := mc.initSubscriberClient(subscriberId, namespace, topic, partition, startTime)
+	stream, err := setupSubscriberClient(subscriberId, namespace, topic, partition, startTime)
 	if err != nil {
-		return client, err
+		return stream, err
 	}
 	if newBroker != nil {
 
@@ -47,6 +49,7 @@ func (mc *MessagingClient) setupSubscriberClient(subscriberId, namespace, topic 
 	return stream, nil
 
 }
+*/
 
 func setupSubscriberClient(grpcConnection *grpc.ClientConn, subscriberId string, namespace string, topic string, partition int32, startTime time.Time) (stream messaging_pb.SeaweedMessaging_SubscribeClient, err error) {
 	stream, err = messaging_pb.NewSeaweedMessagingClient(grpcConnection).Subscribe(context.Background())
@@ -70,12 +73,9 @@ func setupSubscriberClient(grpcConnection *grpc.ClientConn, subscriberId string,
 	}
 
 	// process init response
-	initResponse, err := stream.Recv()
+	_, err = stream.Recv()
 	if err != nil {
 		return
-	}
-	if initResponse.Redirect != nil {
-		// TODO follow redirection
 	}
 	return stream, nil
 }

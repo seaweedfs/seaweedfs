@@ -64,7 +64,7 @@ type FilerServer struct {
 	listenersLock sync.Mutex
 	listenersCond *sync.Cond
 
-	brokers     map[string]bool
+	brokers     map[string]map[string]bool
 	brokersLock sync.Mutex
 }
 
@@ -73,7 +73,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs = &FilerServer{
 		option:         option,
 		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.filer"),
-		brokers:        make(map[string]bool),
+		brokers:        make(map[string]map[string]bool),
 	}
 	fs.listenersCond = sync.NewCond(&fs.listenersLock)
 

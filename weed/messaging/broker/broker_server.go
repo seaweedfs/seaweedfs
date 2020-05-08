@@ -36,7 +36,7 @@ func NewMessageBroker(option *MessageBrokerOption, grpcDialOption grpc.DialOptio
 
 	messageBroker.topicLocks = NewTopicLocks(messageBroker)
 
-	messageBroker.checkPeers()
+	messageBroker.checkFilers()
 
 	go messageBroker.keepConnectedToOneFiler()
 
@@ -53,6 +53,24 @@ func (broker *MessageBroker) keepConnectedToOneFiler() {
 					glog.V(0).Infof("%s:%d failed to keep connected to %s: %v", broker.option.Ip, broker.option.Port, filer, err)
 					return err
 				}
+
+				initRequest := &filer_pb.KeepConnectedRequest{
+					Name:     broker.option.Ip,
+					GrpcPort: uint32(broker.option.Port),
+				}
+				for _, tp := range broker.topicLocks.ListTopicPartitions() {
+					initRequest.Resources = append(initRequest.Resources, tp.String())
+				}
+				if err := stream.Send(&filer_pb.KeepConnectedRequest{
+					Name:     broker.option.Ip,
+					GrpcPort: uint32(broker.option.Port),
+				}); err != nil {
+					glog.V(0).Infof("broker %s:%d failed to init at %s: %v", broker.option.Ip, broker.option.Port, filer, err)
+					return err
+				}
+
+				// TODO send events of adding/removing topics
+
 				glog.V(0).Infof("conntected with filer: %v", filer)
 				for {
 					if err := stream.Send(&filer_pb.KeepConnectedRequest{
@@ -68,12 +86,12 @@ func (broker *MessageBroker) keepConnectedToOneFiler() {
 						return err
 					}
 					// println("received reply")
-					time.Sleep(11*time.Second)
+					time.Sleep(11 * time.Second)
 					// println("woke up")
 				}
 				return nil
 			})
-			time.Sleep(3*time.Second)
+			time.Sleep(3 * time.Second)
 		}
 	}
 
