@@ -119,7 +119,7 @@ func (broker *MessageBroker) readPersistedLogBuffer(tp *TopicPartition, startTim
 	sizeBuf := make([]byte, 4)
 	startTsNs := startTime.UnixNano()
 
-	topicDir := fmt.Sprintf("/topics/%s/%s", tp.Namespace, tp.Topic)
+	topicDir := genTopicDir(tp.Namespace, tp.Topic)
 	partitionSuffix := fmt.Sprintf(".part%02d", tp.Partition)
 
 	return filer_pb.List(broker, topicDir, "", func(dayEntry *filer_pb.Entry, isLast bool) error {
