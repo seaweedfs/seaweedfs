@@ -33,5 +33,5 @@ func genTopicDir(namespace, topic string) string {
 }
 
 func genTopicDirEntry(namespace, topic string) (dir, entry string) {
-	return fmt.Sprintf("%s/%s/%s", filer2.TopicsDir, namespace), topic
+	return fmt.Sprintf("%s/%s", filer2.TopicsDir, namespace), topic
 }

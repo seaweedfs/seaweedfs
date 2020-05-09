@@ -1,6 +1,8 @@
 package msgclient
 
 import (
+	"crypto/md5"
+	"hash"
 	"io"
 	"log"
 	"time"
@@ -10,8 +12,9 @@ import (
 )
 
 type SubChannel struct {
-	ch     chan []byte
-	stream messaging_pb.SeaweedMessaging_SubscribeClient
+	ch      chan []byte
+	stream  messaging_pb.SeaweedMessaging_SubscribeClient
+	md5hash hash.Hash
 }
 
 func (mc *MessagingClient) NewSubChannel(chanName string) (*SubChannel, error) {
@@ -30,8 +33,9 @@ func (mc *MessagingClient) NewSubChannel(chanName string) (*SubChannel, error) {
 	}
 
 	t := &SubChannel{
-		ch:     make(chan []byte),
-		stream: sc,
+		ch:      make(chan []byte),
+		stream:  sc,
+		md5hash: md5.New(),
 	}
 
 	go func() {
@@ -51,6 +55,7 @@ func (mc *MessagingClient) NewSubChannel(chanName string) (*SubChannel, error) {
 				close(t.ch)
 				return
 			}
+			t.md5hash.Write(resp.Data.Value)
 			t.ch <- resp.Data.Value
 		}
 	}()
@@ -60,4 +65,8 @@ func (mc *MessagingClient) NewSubChannel(chanName string) (*SubChannel, error) {
 
 func (sc *SubChannel) Channel() chan []byte {
 	return sc.ch
+}
+
+func (sc *SubChannel) Md5() []byte {
+	return sc.md5hash.Sum(nil)
 }

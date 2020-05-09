@@ -1,6 +1,8 @@
 package msgclient
 
 import (
+	"crypto/md5"
+	"hash"
 	"io"
 	"log"
 
@@ -13,6 +15,7 @@ import (
 type PubChannel struct {
 	client         messaging_pb.SeaweedMessaging_PublishClient
 	grpcConnection *grpc.ClientConn
+	md5hash        hash.Hash
 }
 
 func (mc *MessagingClient) NewPubChannel(chanName string) (*PubChannel, error) {
@@ -32,15 +35,20 @@ func (mc *MessagingClient) NewPubChannel(chanName string) (*PubChannel, error) {
 	return &PubChannel{
 		client:         pc,
 		grpcConnection: grpcConnection,
+		md5hash:        md5.New(),
 	}, nil
 }
 
 func (pc *PubChannel) Publish(m []byte) error {
-	return pc.client.Send(&messaging_pb.PublishRequest{
+	err := pc.client.Send(&messaging_pb.PublishRequest{
 		Data: &messaging_pb.Message{
 			Value: m,
 		},
 	})
+	if err == nil {
+		pc.md5hash.Write(m)
+	}
+	return err
 }
 func (pc *PubChannel) Close() error {
 
@@ -61,4 +69,8 @@ func (pc *PubChannel) Close() error {
 		log.Printf("err connection close: %v", err)
 	}
 	return nil
+}
+
+func (pc *PubChannel) Md5() []byte {
+	return pc.md5hash.Sum(nil)
 }
