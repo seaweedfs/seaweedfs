@@ -28,7 +28,6 @@ func NewMessagingClient(bootstrapBrokers ...string) *MessagingClient {
 	}
 }
 
-
 func (mc *MessagingClient) findBroker(tp broker.TopicPartition) (*grpc.ClientConn, error) {
 
 	for _, broker := range mc.bootstrapBrokers {

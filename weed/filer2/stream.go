@@ -103,7 +103,7 @@ func NewChunkStreamReader(filerClient filer_pb.FilerClient, chunks []*filer_pb.F
 	chunkViews := ViewFromChunks(chunks, 0, math.MaxInt32)
 
 	return &ChunkStreamReader{
-		chunkViews: chunkViews,
+		chunkViews:   chunkViews,
 		lookupFileId: LookupFn(filerClient),
 	}
 }

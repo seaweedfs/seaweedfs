@@ -5,8 +5,8 @@ import (
 	"io"
 	"time"
 
-	"google.golang.org/grpc"
 	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
+	"google.golang.org/grpc"
 )
 
 type Subscriber struct {

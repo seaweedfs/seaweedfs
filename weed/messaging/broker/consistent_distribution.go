@@ -1,8 +1,8 @@
 package broker
 
 import (
-	"github.com/cespare/xxhash"
 	"github.com/buraksezer/consistent"
+	"github.com/cespare/xxhash"
 )
 
 type Member string

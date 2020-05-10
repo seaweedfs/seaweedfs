@@ -18,7 +18,7 @@ func TestPickMember(t *testing.T) {
 	total := 1000
 
 	distribution := make(map[string]int)
-	for i:=0;i<total;i++{
+	for i := 0; i < total; i++ {
 		tp := fmt.Sprintf("tp:%2d", i)
 		m := PickMember(servers, []byte(tp))
 		// println(tp, "=>", m)

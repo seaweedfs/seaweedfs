@@ -37,8 +37,7 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 		// IsTransient: true,
 	}
 
-	if err = stream.Send(&messaging_pb.BrokerMessage{
-	}); err != nil {
+	if err = stream.Send(&messaging_pb.BrokerMessage{}); err != nil {
 		return err
 	}
 

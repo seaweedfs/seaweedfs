@@ -16,9 +16,11 @@ type TopicPartition struct {
 	Topic     string
 	Partition int32
 }
+
 const (
 	TopicPartitionFmt = "%s/%s_%02d"
 )
+
 func (tp *TopicPartition) String() string {
 	return fmt.Sprintf(TopicPartitionFmt, tp.Namespace, tp.Topic, tp.Partition)
 }

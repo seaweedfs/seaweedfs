@@ -16,6 +16,7 @@ type Publisher struct {
 	messageCount       uint64
 	publisherId        string
 }
+
 /*
 func (mc *MessagingClient) NewPublisher(publisherId, namespace, topic string) (*Publisher, error) {
 	// read topic configuration
