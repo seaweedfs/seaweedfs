@@ -17,7 +17,7 @@ type TopicPartition struct {
 	Partition int32
 }
 const (
-	TopicPartitionFmt = "%s/%s_%2d"
+	TopicPartitionFmt = "%s/%s_%02d"
 )
 func (tp *TopicPartition) String() string {
 	return fmt.Sprintf(TopicPartitionFmt, tp.Namespace, tp.Topic, tp.Partition)
@@ -106,6 +106,7 @@ func (tl *TopicLocks) ReleaseLock(partition TopicPartition, isPublisher bool) {
 	}
 	if lock.subscriberCount <= 0 && lock.publisherCount <= 0 {
 		delete(tl.locks, partition)
+		lock.logBuffer.Shutdown()
 	}
 }
 

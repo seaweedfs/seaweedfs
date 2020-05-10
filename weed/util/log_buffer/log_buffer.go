@@ -98,13 +98,14 @@ func (m *LogBuffer) AddToBuffer(partitionKey, data []byte) {
 }
 
 func (m *LogBuffer) Shutdown() {
+	m.Lock()
+	defer m.Unlock()
+
 	if m.isStopping {
 		return
 	}
 	m.isStopping = true
-	m.Lock()
 	toFlush := m.copyToFlush()
-	m.Unlock()
 	m.flushChan <- toFlush
 	close(m.flushChan)
 }
@@ -123,10 +124,14 @@ func (m *LogBuffer) loopInterval() {
 	for !m.isStopping {
 		time.Sleep(m.flushInterval)
 		m.Lock()
+		if m.isStopping {
+			m.Unlock()
+			return
+		}
 		// println("loop interval")
 		toFlush := m.copyToFlush()
-		m.Unlock()
 		m.flushChan <- toFlush
+		m.Unlock()
 	}
 }
 

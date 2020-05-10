@@ -55,8 +55,8 @@ func (mc *MessagingClient) NewSubChannel(chanName string) (*SubChannel, error) {
 				close(t.ch)
 				return
 			}
-			t.md5hash.Write(resp.Data.Value)
 			t.ch <- resp.Data.Value
+			t.md5hash.Write(resp.Data.Value)
 		}
 	}()
 

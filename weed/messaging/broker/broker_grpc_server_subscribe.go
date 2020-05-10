@@ -57,6 +57,7 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 		lastReadTime = time.Unix(0, in.Init.TimestampNs)
 	case messaging_pb.SubscriberMessage_InitMessage_LATEST:
 	case messaging_pb.SubscriberMessage_InitMessage_EARLIEST:
+		lastReadTime = time.Unix(0, 0)
 	}
 	var processedTsNs int64
 
