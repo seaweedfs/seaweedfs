@@ -34,6 +34,7 @@ type LogBuffer struct {
 	notifyFn      func()
 	isStopping    bool
 	flushChan     chan *dataToFlush
+	lastTsNs      int64
 	sync.RWMutex
 }
 
@@ -64,8 +65,15 @@ func (m *LogBuffer) AddToBuffer(partitionKey, data []byte) {
 
 	// need to put the timestamp inside the lock
 	ts := time.Now()
+	tsNs := ts.UnixNano()
+	if m.lastTsNs >= tsNs {
+		// this is unlikely to happen, but just in case
+		tsNs = m.lastTsNs + 1
+		ts = time.Unix(0, tsNs)
+	}
+	m.lastTsNs = tsNs
 	logEntry := &filer_pb.LogEntry{
-		TsNs:             ts.UnixNano(),
+		TsNs:             tsNs,
 		PartitionKeyHash: util.HashToInt32(partitionKey),
 		Data:             data,
 	}
