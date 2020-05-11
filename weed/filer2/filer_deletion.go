@@ -34,19 +34,31 @@ func (f *Filer) loopProcessingDeletion() {
 
 	lookupFunc := LookupByMasterClientFn(f.MasterClient)
 
+	DeletionBatchSize := 100000 // roughly 20 bytes cost per file id.
+
 	var deletionCount int
 	for {
 		deletionCount = 0
 		f.fileIdDeletionQueue.Consume(func(fileIds []string) {
-			deletionCount = len(fileIds)
-			deleteResults, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, fileIds, lookupFunc)
-			if err != nil {
-				glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
-			} else {
-				glog.V(1).Infof("deleting fileIds len=%d", deletionCount)
-			}
-			if len(deleteResults) != deletionCount {
-				glog.V(0).Infof("delete %d fileIds actual %d", deletionCount, len(deleteResults))
+			for len(fileIds) > 0 {
+				var toDeleteFileIds []string
+				if len(fileIds) > DeletionBatchSize {
+					toDeleteFileIds = fileIds[:DeletionBatchSize]
+					fileIds = fileIds[DeletionBatchSize:]
+				} else {
+					toDeleteFileIds = fileIds
+					fileIds = fileIds[:0]
+				}
+				deletionCount = len(toDeleteFileIds)
+				deleteResults, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
+				if err != nil {
+					glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
+				} else {
+					glog.V(1).Infof("deleting fileIds len=%d", deletionCount)
+				}
+				if len(deleteResults) != deletionCount {
+					glog.V(0).Infof("delete %d fileIds actual %d", deletionCount, len(deleteResults))
+				}
 			}
 		})
 
