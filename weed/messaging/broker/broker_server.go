@@ -24,7 +24,7 @@ type MessageBrokerOption struct {
 type MessageBroker struct {
 	option         *MessageBrokerOption
 	grpcDialOption grpc.DialOption
-	topicLocks     *TopicLocks
+	topicManager   *TopicManager
 }
 
 func NewMessageBroker(option *MessageBrokerOption, grpcDialOption grpc.DialOption) (messageBroker *MessageBroker, err error) {
@@ -34,7 +34,7 @@ func NewMessageBroker(option *MessageBrokerOption, grpcDialOption grpc.DialOptio
 		grpcDialOption: grpcDialOption,
 	}
 
-	messageBroker.topicLocks = NewTopicLocks(messageBroker)
+	messageBroker.topicManager = NewTopicManager(messageBroker)
 
 	messageBroker.checkFilers()
 
@@ -58,7 +58,7 @@ func (broker *MessageBroker) keepConnectedToOneFiler() {
 					Name:     broker.option.Ip,
 					GrpcPort: uint32(broker.option.Port),
 				}
-				for _, tp := range broker.topicLocks.ListTopicPartitions() {
+				for _, tp := range broker.topicManager.ListTopicPartitions() {
 					initRequest.Resources = append(initRequest.Resources, tp.String())
 				}
 				if err := stream.Send(&filer_pb.KeepConnectedRequest{

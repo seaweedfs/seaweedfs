@@ -57,8 +57,8 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 		return fmt.Errorf("channel is already closed")
 	}
 
-	tl := broker.topicLocks.RequestLock(tp, topicConfig, true)
-	defer broker.topicLocks.ReleaseLock(tp, true)
+	tl := broker.topicManager.RequestLock(tp, topicConfig, true)
+	defer broker.topicManager.ReleaseLock(tp, true)
 
 	md5hash := md5.New()
 	// process each message

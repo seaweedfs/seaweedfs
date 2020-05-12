@@ -47,8 +47,8 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 		Topic:     in.Init.Topic,
 		Partition: in.Init.Partition,
 	}
-	lock := broker.topicLocks.RequestLock(tp, topicConfig, false)
-	defer broker.topicLocks.ReleaseLock(tp, false)
+	lock := broker.topicManager.RequestLock(tp, topicConfig, false)
+	defer broker.topicManager.ReleaseLock(tp, false)
 
 	lastReadTime := time.Now()
 	switch in.Init.StartPosition {
