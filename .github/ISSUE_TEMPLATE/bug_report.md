@@ -8,7 +8,7 @@ assignees: ''
 ---
 
 Sponsors SeaweedFS via Patreon https://www.patreon.com/seaweedfs
-Report issues here. You can ask questions on stackoverflow with tag seaweedfs. https://stackoverflow.com/questions/tagged/seaweedfs
+Report issues here. Ask questions here https://stackoverflow.com/questions/tagged/seaweedfs
 
 example of a good issue report:
 https://github.com/chrislusf/seaweedfs/issues/1005
