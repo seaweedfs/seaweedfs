@@ -17,7 +17,7 @@ type SubChannel struct {
 	md5hash hash.Hash
 }
 
-func (mc *MessagingClient) NewSubChannel(chanName string) (*SubChannel, error) {
+func (mc *MessagingClient) NewSubChannel(subscriberId, chanName string) (*SubChannel, error) {
 	tp := broker.TopicPartition{
 		Namespace: "chan",
 		Topic:     chanName,
@@ -27,7 +27,7 @@ func (mc *MessagingClient) NewSubChannel(chanName string) (*SubChannel, error) {
 	if err != nil {
 		return nil, err
 	}
-	sc, err := setupSubscriberClient(grpcConnection, "", "chan", chanName, 0, time.Unix(0, 0))
+	sc, err := setupSubscriberClient(grpcConnection, subscriberId, "chan", chanName, 0, time.Unix(0, 0))
 	if err != nil {
 		return nil, err
 	}
