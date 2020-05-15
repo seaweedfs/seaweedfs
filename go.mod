@@ -30,7 +30,7 @@ require (
 	github.com/gocql/gocql v0.0.0-20190829130954-e163eff7a8c6
 	github.com/gogo/protobuf v1.2.2-0.20190730201129-28a6bbf47e48 // indirect
 	github.com/golang/groupcache v0.0.0-20190702054246-869f871628b6 // indirect
-	github.com/golang/protobuf v1.3.2
+	github.com/golang/protobuf v1.4.0
 	github.com/google/btree v1.0.0
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.3
@@ -54,8 +54,7 @@ require (
 	github.com/onsi/gomega v1.7.0 // indirect
 	github.com/peterh/liner v1.1.0
 	github.com/pierrec/lz4 v2.2.7+incompatible // indirect
-	github.com/prometheus/client_golang v1.1.0
-	github.com/prometheus/procfs v0.0.4 // indirect
+	github.com/prometheus/client_golang v1.6.0
 	github.com/rakyll/statik v0.1.7
 	github.com/rcrowley/go-metrics v0.0.0-20190826022208-cac0b30c2563 // indirect
 	github.com/seaweedfs/fuse v0.0.0-20190510212405-310228904eff
@@ -65,7 +64,7 @@ require (
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/viper v1.4.0
 	github.com/streadway/amqp v0.0.0-20190827072141-edfb9018d271 // indirect
-	github.com/stretchr/testify v1.3.0
+	github.com/stretchr/testify v1.4.0
 	github.com/syndtr/goleveldb v1.0.0
 	github.com/tidwall/gjson v1.3.2
 	github.com/tidwall/match v1.0.1
@@ -82,7 +81,7 @@ require (
 	golang.org/x/crypto v0.0.0-20190911031432-227b76d455e7 // indirect
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1 // indirect
 	golang.org/x/net v0.0.0-20190909003024-a7b16738d86b
-	golang.org/x/sys v0.0.0-20190910064555-bbd175535a8b
+	golang.org/x/sys v0.0.0-20200420163511-1957bb5e6d1f
 	golang.org/x/tools v0.0.0-20190911022129-16c5e0f7d110
 	google.golang.org/api v0.9.0
 	google.golang.org/appengine v1.6.2 // indirect
