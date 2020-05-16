@@ -31,23 +31,22 @@ type TopicControl struct {
 	subscriberCount int
 	publisherCount  int
 	logBuffer       *log_buffer.LogBuffer
-	subscriptions   *TopicPartitionSubscriptions
 }
 
 type TopicManager struct {
 	sync.Mutex
-	topicCursors map[TopicPartition]*TopicControl
-	broker       *MessageBroker
+	topicControls map[TopicPartition]*TopicControl
+	broker        *MessageBroker
 }
 
 func NewTopicManager(messageBroker *MessageBroker) *TopicManager {
 	return &TopicManager{
-		topicCursors: make(map[TopicPartition]*TopicControl),
-		broker:       messageBroker,
+		topicControls: make(map[TopicPartition]*TopicControl),
+		broker:        messageBroker,
 	}
 }
 
-func (tm *TopicManager) buildLogBuffer(tc *TopicControl, tp TopicPartition, topicConfig *messaging_pb.TopicConfiguration) *log_buffer.LogBuffer {
+func (tm *TopicManager) buildLogBuffer(tl *TopicControl, tp TopicPartition, topicConfig *messaging_pb.TopicConfiguration) *log_buffer.LogBuffer {
 
 	flushFn := func(startTime, stopTime time.Time, buf []byte) {
 
@@ -69,7 +68,7 @@ func (tm *TopicManager) buildLogBuffer(tc *TopicControl, tp TopicPartition, topi
 		}
 	}
 	logBuffer := log_buffer.NewLogBuffer(time.Minute, flushFn, func() {
-		tc.subscriptions.NotifyAll()
+		tl.cond.Broadcast()
 	})
 
 	return logBuffer
@@ -79,11 +78,11 @@ func (tm *TopicManager) RequestLock(partition TopicPartition, topicConfig *messa
 	tm.Lock()
 	defer tm.Unlock()
 
-	tc, found := tm.topicCursors[partition]
+	tc, found := tm.topicControls[partition]
 	if !found {
 		tc = &TopicControl{}
-		tm.topicCursors[partition] = tc
-		tc.subscriptions = NewTopicPartitionSubscriptions()
+		tc.cond = sync.NewCond(&tc.Mutex)
+		tm.topicControls[partition] = tc
 		tc.logBuffer = tm.buildLogBuffer(tc, partition, topicConfig)
 	}
 	if isPublisher {
@@ -98,7 +97,7 @@ func (tm *TopicManager) ReleaseLock(partition TopicPartition, isPublisher bool) 
 	tm.Lock()
 	defer tm.Unlock()
 
-	lock, found := tm.topicCursors[partition]
+	lock, found := tm.topicControls[partition]
 	if !found {
 		return
 	}
@@ -108,7 +107,7 @@ func (tm *TopicManager) ReleaseLock(partition TopicPartition, isPublisher bool) 
 		lock.subscriberCount--
 	}
 	if lock.subscriberCount <= 0 && lock.publisherCount <= 0 {
-		delete(tm.topicCursors, partition)
+		delete(tm.topicControls, partition)
 		lock.logBuffer.Shutdown()
 	}
 }
@@ -117,7 +116,7 @@ func (tm *TopicManager) ListTopicPartitions() (tps []TopicPartition) {
 	tm.Lock()
 	defer tm.Unlock()
 
-	for k := range tm.topicCursors {
+	for k := range tm.topicControls {
 		tps = append(tps, k)
 	}
 	return

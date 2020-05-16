@@ -48,7 +48,6 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 		Partition: in.Init.Partition,
 	}
 	lock := broker.topicManager.RequestLock(tp, topicConfig, false)
-	subscription := lock.subscriptions.AddSubscription(subscriberId)
 	defer broker.topicManager.ReleaseLock(tp, false)
 
 	lastReadTime := time.Now()
@@ -103,7 +102,9 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 	}
 
 	err = lock.logBuffer.LoopProcessLogData(lastReadTime, func() bool {
-		subscription.Wait()
+		lock.Mutex.Lock()
+		lock.cond.Wait()
+		lock.Mutex.Unlock()
 		return true
 	}, eachLogEntryFn)
 
