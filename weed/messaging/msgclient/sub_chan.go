@@ -27,7 +27,7 @@ func (mc *MessagingClient) NewSubChannel(subscriberId, chanName string) (*SubCha
 	if err != nil {
 		return nil, err
 	}
-	sc, err := setupSubscriberClient(grpcConnection, subscriberId, "chan", chanName, 0, time.Unix(0, 0))
+	sc, err := setupSubscriberClient(grpcConnection, tp, subscriberId, time.Unix(0, 0))
 	if err != nil {
 		return nil, err
 	}
@@ -47,6 +47,10 @@ func (mc *MessagingClient) NewSubChannel(subscriberId, chanName string) (*SubCha
 			if subErr != nil {
 				log.Printf("fail to receive from netchan %s: %v", chanName, subErr)
 				return
+			}
+			if resp.Data == nil {
+				// this could be heartbeat from broker
+				continue
 			}
 			if resp.Data.IsClose {
 				t.stream.Send(&messaging_pb.SubscriberMessage{

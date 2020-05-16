@@ -50,6 +50,17 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 	lock := broker.topicManager.RequestLock(tp, topicConfig, false)
 	defer broker.topicManager.ReleaseLock(tp, false)
 
+	isConnected := true
+	go func() {
+		for isConnected {
+			time.Sleep(1737 * time.Millisecond)
+			if err = stream.Send(&messaging_pb.BrokerMessage{}); err != nil {
+				isConnected = false
+				lock.cond.Signal()
+			}
+		}
+	}()
+
 	lastReadTime := time.Now()
 	switch in.Init.StartPosition {
 	case messaging_pb.SubscriberMessage_InitMessage_TIMESTAMP:
@@ -93,8 +104,10 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 	}
 
 	if err := broker.readPersistedLogBuffer(&tp, lastReadTime, eachLogEntryFn); err != nil {
-		// println("stopping from persisted logs")
-		return err
+		if err != io.EOF {
+			println("stopping from persisted logs", err.Error())
+			return err
+		}
 	}
 
 	if processedTsNs != 0 {
@@ -105,7 +118,7 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 		lock.Mutex.Lock()
 		lock.cond.Wait()
 		lock.Mutex.Unlock()
-		return true
+		return isConnected
 	}, eachLogEntryFn)
 
 	return err
