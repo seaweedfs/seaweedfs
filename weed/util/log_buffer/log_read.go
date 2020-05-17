@@ -30,6 +30,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(
 			logBuffer.ReleaseMeory(bytesBuf)
 		}
 		bytesBuf = logBuffer.ReadFromBuffer(lastReadTime)
+		// fmt.Printf("ReadFromBuffer by %v\n", lastReadTime)
 		if bytesBuf == nil {
 			if waitForDataFn() {
 				continue
@@ -39,6 +40,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(
 		}
 
 		buf := bytesBuf.Bytes()
+		// fmt.Printf("ReadFromBuffer by %v size %d\n", lastReadTime, len(buf))
 
 		batchSize := 0
 		var startReadTime time.Time
