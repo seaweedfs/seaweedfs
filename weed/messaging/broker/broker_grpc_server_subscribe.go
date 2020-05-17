@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -25,20 +26,13 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 		return err
 	}
 
+	var processedTsNs int64
 	var messageCount int64
 	subscriberId := in.Init.SubscriberId
-	fmt.Printf("+ subscriber %s\n", subscriberId)
-	defer func() {
-		fmt.Printf("- subscriber %s: %d messages\n", subscriberId, messageCount)
-	}()
 
 	// TODO look it up
 	topicConfig := &messaging_pb.TopicConfiguration{
 		// IsTransient: true,
-	}
-
-	if err = stream.Send(&messaging_pb.BrokerMessage{}); err != nil {
-		return err
 	}
 
 	// get lock
@@ -47,17 +41,32 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 		Topic:     in.Init.Topic,
 		Partition: in.Init.Partition,
 	}
+	fmt.Printf("+ subscriber %s for %s\n", subscriberId, tp.String())
+	defer func() {
+		fmt.Printf("- subscriber %s for %s %d messages last %v\n", subscriberId, tp.String(), messageCount, time.Unix(0, processedTsNs))
+	}()
+
 	lock := broker.topicManager.RequestLock(tp, topicConfig, false)
 	defer broker.topicManager.ReleaseLock(tp, false)
 
 	isConnected := true
+	var streamLock sync.Mutex // https://github.com/grpc/grpc-go/issues/948
 	go func() {
+		lastActiveTime := time.Now().UnixNano()
+		sleepTime := 1737 * time.Millisecond
 		for isConnected {
-			time.Sleep(1737 * time.Millisecond)
+			time.Sleep(sleepTime)
+			if lastActiveTime != processedTsNs {
+				lastActiveTime = processedTsNs
+				continue
+			}
+			streamLock.Lock()
+			// println("checking connection health to", subscriberId, tp.String())
 			if err = stream.Send(&messaging_pb.BrokerMessage{}); err != nil {
 				isConnected = false
 				lock.cond.Signal()
 			}
+			streamLock.Unlock()
 		}
 	}()
 
@@ -69,14 +78,15 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 	case messaging_pb.SubscriberMessage_InitMessage_EARLIEST:
 		lastReadTime = time.Unix(0, 0)
 	}
-	var processedTsNs int64
 
 	// how to process each message
 	// an error returned will end the subscription
 	eachMessageFn := func(m *messaging_pb.Message) error {
+		streamLock.Lock()
 		err := stream.Send(&messaging_pb.BrokerMessage{
 			Data: m,
 		})
+		streamLock.Unlock()
 		if err != nil {
 			glog.V(0).Infof("=> subscriber %v: %+v", subscriberId, err)
 		}
@@ -105,7 +115,7 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 
 	if err := broker.readPersistedLogBuffer(&tp, lastReadTime, eachLogEntryFn); err != nil {
 		if err != io.EOF {
-			println("stopping from persisted logs", err.Error())
+			// println("stopping from persisted logs", err.Error())
 			return err
 		}
 	}
@@ -113,6 +123,8 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 	if processedTsNs != 0 {
 		lastReadTime = time.Unix(0, processedTsNs)
 	}
+
+	// fmt.Printf("subscriber %s read %d on disk log %v\n", subscriberId, messageCount, lastReadTime)
 
 	err = lock.logBuffer.LoopProcessLogData(lastReadTime, func() bool {
 		lock.Mutex.Lock()
