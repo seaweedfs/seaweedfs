@@ -12,6 +12,7 @@ import (
 
 type Subscriber struct {
 	subscriberClients []messaging_pb.SeaweedMessaging_SubscribeClient
+	subscriberCancels []context.CancelFunc
 	subscriberId      string
 }
 
@@ -21,6 +22,7 @@ func (mc *MessagingClient) NewSubscriber(subscriberId, namespace, topic string, 
 		PartitionCount: 4,
 	}
 	subscriberClients := make([]messaging_pb.SeaweedMessaging_SubscribeClient, topicConfiguration.PartitionCount)
+	subscriberCancels := make([]context.CancelFunc, topicConfiguration.PartitionCount)
 
 	for i := 0; i < int(topicConfiguration.PartitionCount); i++ {
 		if partitionId>=0 && i != partitionId {
@@ -35,21 +37,24 @@ func (mc *MessagingClient) NewSubscriber(subscriberId, namespace, topic string, 
 		if err != nil {
 			return nil, err
 		}
-		client, err := setupSubscriberClient(grpcClientConn, tp, subscriberId, startTime)
+		ctx, cancel := context.WithCancel(context.Background())
+		client, err := setupSubscriberClient(ctx, grpcClientConn, tp, subscriberId, startTime)
 		if err != nil {
 			return nil, err
 		}
 		subscriberClients[i] = client
+		subscriberCancels[i] = cancel
 	}
 
 	return &Subscriber{
 		subscriberClients: subscriberClients,
+		subscriberCancels: subscriberCancels,
 		subscriberId:      subscriberId,
 	}, nil
 }
 
-func setupSubscriberClient(grpcConnection *grpc.ClientConn, tp broker.TopicPartition, subscriberId string, startTime time.Time) (stream messaging_pb.SeaweedMessaging_SubscribeClient, err error) {
-	stream, err = messaging_pb.NewSeaweedMessagingClient(grpcConnection).Subscribe(context.Background())
+func setupSubscriberClient(ctx context.Context, grpcConnection *grpc.ClientConn, tp broker.TopicPartition, subscriberId string, startTime time.Time) (stream messaging_pb.SeaweedMessaging_SubscribeClient, err error) {
+	stream, err = messaging_pb.NewSeaweedMessagingClient(grpcConnection).Subscribe(ctx)
 	if err != nil {
 		return
 	}
@@ -95,6 +100,14 @@ func (s *Subscriber) Subscribe(processFn func(m *messaging_pb.Message)) {
 	for i := 0; i < len(s.subscriberClients); i++ {
 		if s.subscriberClients[i] != nil {
 			go doSubscribe(s.subscriberClients[i], processFn)
+		}
+	}
+}
+
+func (s *Subscriber) Shutdown() {
+	for i := 0; i < len(s.subscriberClients); i++ {
+		if s.subscriberCancels[i] != nil {
+			s.subscriberCancels[i]()
 		}
 	}
 }

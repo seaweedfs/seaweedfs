@@ -1,6 +1,7 @@
 package msgclient
 
 import (
+	"context"
 	"crypto/md5"
 	"hash"
 	"io"
@@ -15,6 +16,7 @@ type SubChannel struct {
 	ch      chan []byte
 	stream  messaging_pb.SeaweedMessaging_SubscribeClient
 	md5hash hash.Hash
+	cancel  context.CancelFunc
 }
 
 func (mc *MessagingClient) NewSubChannel(subscriberId, chanName string) (*SubChannel, error) {
@@ -27,7 +29,8 @@ func (mc *MessagingClient) NewSubChannel(subscriberId, chanName string) (*SubCha
 	if err != nil {
 		return nil, err
 	}
-	sc, err := setupSubscriberClient(grpcConnection, tp, subscriberId, time.Unix(0, 0))
+	ctx, cancel := context.WithCancel(context.Background())
+	sc, err := setupSubscriberClient(ctx, grpcConnection, tp, subscriberId, time.Unix(0, 0))
 	if err != nil {
 		return nil, err
 	}
@@ -36,6 +39,7 @@ func (mc *MessagingClient) NewSubChannel(subscriberId, chanName string) (*SubCha
 		ch:      make(chan []byte),
 		stream:  sc,
 		md5hash: md5.New(),
+		cancel:  cancel,
 	}
 
 	go func() {
@@ -57,6 +61,7 @@ func (mc *MessagingClient) NewSubChannel(subscriberId, chanName string) (*SubCha
 					IsClose: true,
 				})
 				close(t.ch)
+				cancel()
 				return
 			}
 			t.ch <- resp.Data.Value
@@ -73,4 +78,8 @@ func (sc *SubChannel) Channel() chan []byte {
 
 func (sc *SubChannel) Md5() []byte {
 	return sc.md5hash.Sum(nil)
+}
+
+func (sc *SubChannel) Cancel() {
+	sc.cancel()
 }
