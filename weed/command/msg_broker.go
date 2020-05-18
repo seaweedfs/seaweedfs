@@ -20,10 +20,10 @@ import (
 )
 
 var (
-	messageBrokerStandaloneOptions QueueOptions
+	messageBrokerStandaloneOptions MessageBrokerOptions
 )
 
-type QueueOptions struct {
+type MessageBrokerOptions struct {
 	filer      *string
 	ip         *string
 	port       *int
@@ -41,8 +41,8 @@ func init() {
 }
 
 var cmdMsgBroker = &Command{
-	UsageLine: "msg.broker [-port=17777] [-filer=<ip:port>]",
-	Short:     "<WIP> start a message queue broker",
+	UsageLine: "msgBroker [-port=17777] [-filer=<ip:port>]",
+	Short:     "start a message queue broker",
 	Long: `start a message queue broker
 
 	The broker can accept gRPC calls to write or read messages. The messages are stored via filer.
@@ -59,7 +59,7 @@ func runMsgBroker(cmd *Command, args []string) bool {
 
 }
 
-func (msgBrokerOpt *QueueOptions) startQueueServer() bool {
+func (msgBrokerOpt *MessageBrokerOptions) startQueueServer() bool {
 
 	grace.SetupProfiling(*messageBrokerStandaloneOptions.cpuprofile, *messageBrokerStandaloneOptions.memprofile)
 
