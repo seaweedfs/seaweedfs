@@ -121,7 +121,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 						VolumeId:       volumeInfo.Id,
 						SourceDataNode: sourceNode.dataNode.Id,
 					})
-					return replicateErr
+					return fmt.Errorf("copying from %s => %s : %v", sourceNode.dataNode.Id, dst.dataNode.Id, replicateErr)
 				})
 
 				if err != nil {
