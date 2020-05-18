@@ -34,6 +34,10 @@ func runMount(cmd *Command, args []string) bool {
 		return false
 	}
 
+	if len(args)>0 {
+		return false
+	}
+
 	return RunMount(&mountOptions, os.FileMode(umask))
 }
 
