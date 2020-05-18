@@ -102,10 +102,10 @@ func (s *Subscriber) Subscribe(processFn func(m *messaging_pb.Message)) {
 	for i := 0; i < len(s.subscriberClients); i++ {
 		if s.subscriberClients[i] != nil {
 			wg.Add(1)
-			go func() {
+			go func(subscriberClient messaging_pb.SeaweedMessaging_SubscribeClient) {
 				defer wg.Done()
-				doSubscribe(s.subscriberClients[i], processFn)
-			}()
+				doSubscribe(subscriberClient, processFn)
+			}(s.subscriberClients[i])
 		}
 	}
 	wg.Wait()
