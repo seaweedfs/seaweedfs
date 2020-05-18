@@ -52,7 +52,7 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 	go func() {
 		for isConnected {
 			if _, err := stream.Recv(); err != nil {
-				println("disconnecting connection to", subscriberId, tp.String())
+				// println("disconnecting connection to", subscriberId, tp.String())
 				isConnected = false
 				lock.cond.Signal()
 			}
