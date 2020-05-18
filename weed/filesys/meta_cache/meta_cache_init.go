@@ -10,6 +10,7 @@ import (
 )
 
 func InitMetaCache(mc *MetaCache, client filer_pb.FilerClient, path string) error {
+	glog.V(0).Infof("synchronizing meta data ...")
 	filer_pb.TraverseBfs(client, util.FullPath(path), func(parentPath util.FullPath, pbEntry *filer_pb.Entry) {
 		entry := filer2.FromPbEntry(string(parentPath), pbEntry)
 		if err := mc.InsertEntry(context.Background(), entry); err != nil {
