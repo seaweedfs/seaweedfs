@@ -82,6 +82,13 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 		return nil
 	})
 
+	if err != nil {
+		return nil, err
+	}
+	if volumeFileName == "" {
+		return nil, fmt.Errorf("not found volume %d file", req.VolumeId)
+	}
+
 	idxFileName = volumeFileName + ".idx"
 	datFileName = volumeFileName + ".dat"
 
@@ -92,10 +99,6 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 			os.Remove(volumeFileName + ".vif")
 		}
 	}()
-
-	if err != nil && volumeFileName != "" {
-		return nil, err
-	}
 
 	if err = checkCopyFiles(volFileInfoResp, idxFileName, datFileName); err != nil { // added by panyc16
 		return nil, err
