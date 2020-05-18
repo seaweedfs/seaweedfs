@@ -59,7 +59,7 @@ func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 func NewChunkReaderAtFromClient(filerClient filer_pb.FilerClient, chunkViews []*ChunkView, chunkCache *chunk_cache.ChunkCache) *ChunkReadAt {
 
 	return &ChunkReadAt{
-		chunkViews: chunkViews,
+		chunkViews:   chunkViews,
 		lookupFileId: LookupFn(filerClient),
 		bufferOffset: -1,
 		chunkCache:   chunkCache,

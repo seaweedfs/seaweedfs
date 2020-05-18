@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -94,6 +95,9 @@ func (broker *MessageBroker) WithFilerClient(fn func(filer_pb.SeaweedFilerClient
 
 	for _, filer := range broker.option.Filers {
 		if err = pb.WithFilerClient(filer, broker.grpcDialOption, fn); err != nil {
+			if err == io.EOF {
+				return
+			}
 			glog.V(0).Infof("fail to connect to %s: %v", filer, err)
 		} else {
 			break

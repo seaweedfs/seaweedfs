@@ -27,7 +27,7 @@ type FilePart struct {
 	Ttl         string
 	Server      string //this comes from assign result
 	Fid         string //this comes from assign result, but customizable
-	Fsync       bool      
+	Fsync       bool
 }
 
 type SubmitResult struct {

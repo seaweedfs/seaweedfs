@@ -15,10 +15,16 @@ service SeaweedMessaging {
     rpc Publish (stream PublishRequest) returns (stream PublishResponse) {
     }
 
+    rpc DeleteTopic (DeleteTopicRequest) returns (DeleteTopicResponse) {
+    }
+
     rpc ConfigureTopic (ConfigureTopicRequest) returns (ConfigureTopicResponse) {
     }
 
     rpc GetTopicConfiguration (GetTopicConfigurationRequest) returns (GetTopicConfigurationResponse) {
+    }
+
+    rpc FindBroker (FindBrokerRequest) returns (FindBrokerResponse) {
     }
 
 }
@@ -44,6 +50,7 @@ message SubscriberMessage {
         int64 message_id = 1;
     }
     AckMessage ack = 2;
+    bool is_close = 3;
 }
 
 message Message {
@@ -51,14 +58,11 @@ message Message {
     bytes key = 2; // Message key
     bytes value = 3; // Message payload
     map<string, bytes> headers = 4; // Message headers
+    bool is_close = 5;
 }
 
 message BrokerMessage {
     Message data = 1;
-    message RedirectMessage {
-        string new_broker = 1;
-    }
-    RedirectMessage redirect = 2;
 }
 
 message PublishRequest {
@@ -80,6 +84,14 @@ message PublishResponse {
         string new_broker = 1;
     }
     RedirectMessage redirect = 2;
+    bool is_closed = 3;
+}
+
+message DeleteTopicRequest {
+    string namespace = 1;
+    string topic = 2;
+}
+message DeleteTopicResponse {
 }
 
 message ConfigureTopicRequest {
@@ -96,6 +108,16 @@ message GetTopicConfigurationRequest {
 }
 message GetTopicConfigurationResponse {
     TopicConfiguration configuration = 1;
+}
+
+message FindBrokerRequest {
+    string namespace = 1;
+    string topic = 2;
+    int32 parition = 3;
+}
+
+message FindBrokerResponse {
+    string broker = 1;
 }
 
 message TopicConfiguration {

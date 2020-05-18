@@ -428,7 +428,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 				uploadError = fmt.Errorf("upload %v to %s result: %v\n", fileName, targetUrl, uploadResult.Error)
 				return
 			}
-			chunksChan <- uploadResult.ToPbFileChunk(assignResult.FileId, i * chunkSize)
+			chunksChan <- uploadResult.ToPbFileChunk(assignResult.FileId, i*chunkSize)
 
 			fmt.Printf("uploaded %s-%d to %s [%d,%d)\n", fileName, i+1, targetUrl, i*chunkSize, i*chunkSize+int64(uploadResult.Size))
 		}(i)

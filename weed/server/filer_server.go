@@ -8,8 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -62,6 +63,9 @@ type FilerServer struct {
 	// notifying clients
 	listenersLock sync.Mutex
 	listenersCond *sync.Cond
+
+	brokers     map[string]map[string]bool
+	brokersLock sync.Mutex
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
@@ -69,6 +73,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs = &FilerServer{
 		option:         option,
 		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.filer"),
+		brokers:        make(map[string]map[string]bool),
 	}
 	fs.listenersCond = sync.NewCond(&fs.listenersLock)
 

@@ -232,7 +232,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 			Reader:   &FakeReader{id: uint64(id), size: fileSize, random: random},
 			FileSize: fileSize,
 			MimeType: "image/bench", // prevent gzip benchmark content
-			Fsync: *b.fsync,
+			Fsync:    *b.fsync,
 		}
 		ar := &operation.VolumeAssignRequest{
 			Count:       1,

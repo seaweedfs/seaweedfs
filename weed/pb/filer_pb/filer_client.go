@@ -83,10 +83,12 @@ func doList(filerClient FilerClient, fullDirPath util.FullPath, prefix string, f
 		}
 
 		glog.V(3).Infof("read directory: %v", request)
-		stream, err := client.ListEntries(context.Background(), request)
+		ctx, cancel := context.WithCancel(context.Background())
+		stream, err := client.ListEntries(ctx, request)
 		if err != nil {
 			return fmt.Errorf("list %s: %v", fullDirPath, err)
 		}
+		defer cancel()
 
 		var prevEntry *Entry
 		for {

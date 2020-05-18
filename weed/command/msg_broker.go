@@ -6,8 +6,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"google.golang.org/grpc/reflection"
+
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/messaging/broker"
@@ -24,6 +25,7 @@ var (
 
 type QueueOptions struct {
 	filer      *string
+	ip         *string
 	port       *int
 	cpuprofile *string
 	memprofile *string
@@ -32,7 +34,8 @@ type QueueOptions struct {
 func init() {
 	cmdMsgBroker.Run = runMsgBroker // break init cycle
 	messageBrokerStandaloneOptions.filer = cmdMsgBroker.Flag.String("filer", "localhost:8888", "filer server address")
-	messageBrokerStandaloneOptions.port = cmdMsgBroker.Flag.Int("port", 17777, "queue server gRPC listen port")
+	messageBrokerStandaloneOptions.ip = cmdMsgBroker.Flag.String("ip", util.DetectedHostAddress(), "broker host address")
+	messageBrokerStandaloneOptions.port = cmdMsgBroker.Flag.Int("port", 17777, "broker gRPC listen port")
 	messageBrokerStandaloneOptions.cpuprofile = cmdMsgBroker.Flag.String("cpuprofile", "", "cpu profile output file")
 	messageBrokerStandaloneOptions.memprofile = cmdMsgBroker.Flag.String("memprofile", "", "memory profile output file")
 }
@@ -91,6 +94,7 @@ func (msgBrokerOpt *QueueOptions) startQueueServer() bool {
 		Filers:             []string{*msgBrokerOpt.filer},
 		DefaultReplication: "",
 		MaxMB:              0,
+		Ip:                 *msgBrokerOpt.ip,
 		Port:               *msgBrokerOpt.port,
 		Cipher:             cipher,
 	}, grpcDialOption)

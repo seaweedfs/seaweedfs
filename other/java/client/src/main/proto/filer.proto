@@ -48,6 +48,12 @@ service SeaweedFiler {
     rpc SubscribeMetadata (SubscribeMetadataRequest) returns (stream SubscribeMetadataResponse) {
     }
 
+    rpc KeepConnected (stream KeepConnectedRequest) returns (stream KeepConnectedResponse) {
+    }
+
+    rpc LocateBroker (LocateBrokerRequest) returns (LocateBrokerResponse) {
+    }
+
 }
 
 //////////////////////////////////////////////////
@@ -260,4 +266,26 @@ message LogEntry {
     int64 ts_ns = 1;
     int32 partition_key_hash = 2;
     bytes data = 3;
+}
+
+message KeepConnectedRequest {
+    string name = 1;
+    uint32 grpc_port = 2;
+    repeated string resources = 3;
+}
+message KeepConnectedResponse {
+}
+
+message LocateBrokerRequest {
+    string resource = 1;
+}
+message LocateBrokerResponse {
+    bool found = 1;
+    // if found, send the exact address
+    // if not found, send the full list of existing brokers
+    message Resource {
+        string grpc_addresses = 1;
+        int32 resource_count = 2;
+    }
+    repeated Resource resources = 2;
 }

@@ -25,22 +25,13 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 		return err
 	}
 
+	var processedTsNs int64
 	var messageCount int64
 	subscriberId := in.Init.SubscriberId
-	fmt.Printf("+ subscriber %s\n", subscriberId)
-	defer func() {
-		fmt.Printf("- subscriber %s: %d messages\n", subscriberId, messageCount)
-	}()
 
 	// TODO look it up
 	topicConfig := &messaging_pb.TopicConfiguration{
 		// IsTransient: true,
-	}
-
-	if err = stream.Send(&messaging_pb.BrokerMessage{
-		Redirect: nil,
-	}); err != nil {
-		return err
 	}
 
 	// get lock
@@ -49,8 +40,24 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 		Topic:     in.Init.Topic,
 		Partition: in.Init.Partition,
 	}
-	lock := broker.topicLocks.RequestLock(tp, topicConfig, false)
-	defer broker.topicLocks.ReleaseLock(tp, false)
+	fmt.Printf("+ subscriber %s for %s\n", subscriberId, tp.String())
+	defer func() {
+		fmt.Printf("- subscriber %s for %s %d messages last %v\n", subscriberId, tp.String(), messageCount, time.Unix(0, processedTsNs))
+	}()
+
+	lock := broker.topicManager.RequestLock(tp, topicConfig, false)
+	defer broker.topicManager.ReleaseLock(tp, false)
+
+	isConnected := true
+	go func() {
+		for isConnected {
+			if _, err := stream.Recv(); err != nil {
+				// println("disconnecting connection to", subscriberId, tp.String())
+				isConnected = false
+				lock.cond.Signal()
+			}
+		}
+	}()
 
 	lastReadTime := time.Now()
 	switch in.Init.StartPosition {
@@ -58,8 +65,8 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 		lastReadTime = time.Unix(0, in.Init.TimestampNs)
 	case messaging_pb.SubscriberMessage_InitMessage_LATEST:
 	case messaging_pb.SubscriberMessage_InitMessage_EARLIEST:
+		lastReadTime = time.Unix(0, 0)
 	}
-	var processedTsNs int64
 
 	// how to process each message
 	// an error returned will end the subscription
@@ -84,23 +91,33 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 			glog.Errorf("sending %d bytes to %s: %s", len(m.Value), subscriberId, err)
 			return err
 		}
+		if m.IsClose {
+			// println("processed EOF")
+			return io.EOF
+		}
 		processedTsNs = logEntry.TsNs
+		messageCount++
 		return nil
 	}
 
 	if err := broker.readPersistedLogBuffer(&tp, lastReadTime, eachLogEntryFn); err != nil {
-		return err
+		if err != io.EOF {
+			// println("stopping from persisted logs", err.Error())
+			return err
+		}
 	}
 
 	if processedTsNs != 0 {
 		lastReadTime = time.Unix(0, processedTsNs)
 	}
 
-	messageCount, err = lock.logBuffer.LoopProcessLogData(lastReadTime, func() bool {
+	// fmt.Printf("subscriber %s read %d on disk log %v\n", subscriberId, messageCount, lastReadTime)
+
+	err = lock.logBuffer.LoopProcessLogData(lastReadTime, func() bool {
 		lock.Mutex.Lock()
 		lock.cond.Wait()
 		lock.Mutex.Unlock()
-		return true
+		return isConnected
 	}, eachLogEntryFn)
 
 	return err
@@ -114,7 +131,7 @@ func (broker *MessageBroker) readPersistedLogBuffer(tp *TopicPartition, startTim
 	sizeBuf := make([]byte, 4)
 	startTsNs := startTime.UnixNano()
 
-	topicDir := fmt.Sprintf("/topics/%s/%s", tp.Namespace, tp.Topic)
+	topicDir := genTopicDir(tp.Namespace, tp.Topic)
 	partitionSuffix := fmt.Sprintf(".part%02d", tp.Partition)
 
 	return filer_pb.List(broker, topicDir, "", func(dayEntry *filer_pb.Entry, isLast bool) error {
@@ -125,7 +142,7 @@ func (broker *MessageBroker) readPersistedLogBuffer(tp *TopicPartition, startTim
 					return nil
 				}
 			}
-			if !strings.HasSuffix(hourMinuteEntry.Name, partitionSuffix){
+			if !strings.HasSuffix(hourMinuteEntry.Name, partitionSuffix) {
 				return nil
 			}
 			// println("partition", tp.Partition, "processing", dayDir, "/", hourMinuteEntry.Name)
@@ -134,7 +151,7 @@ func (broker *MessageBroker) readPersistedLogBuffer(tp *TopicPartition, startTim
 			if err := filer2.ReadEachLogEntry(chunkedFileReader, sizeBuf, startTsNs, eachLogEntryFn); err != nil {
 				chunkedFileReader.Close()
 				if err == io.EOF {
-					return nil
+					return err
 				}
 				return fmt.Errorf("reading %s/%s: %v", dayDir, hourMinuteEntry.Name, err)
 			}
