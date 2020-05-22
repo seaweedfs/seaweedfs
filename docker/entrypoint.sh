@@ -9,11 +9,17 @@ case "$1" in
 
   'volume')
   	ARGS="-dir=/data -max=0"
+  	if [[ $@ == *"-max="* ]]; then
+  	  ARGS="-dir=/data"
+  	fi
   	exec /usr/bin/weed $@ $ARGS
 	;;
 
   'server')
   	ARGS="-dir=/data -volume.max=0 -master.volumePreallocate -master.volumeSizeLimitMB=1024"
+  	if [[ $@ == *"-volume.max="* ]]; then
+  	  ARGS="-dir=/data -master.volumePreallocate -master.volumeSizeLimitMB=1024"
+  	fi
   	exec /usr/bin/weed $@ $ARGS
   	;;
 
