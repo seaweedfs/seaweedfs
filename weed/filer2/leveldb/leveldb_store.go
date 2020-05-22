@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
 
@@ -49,6 +50,9 @@ func (store *LevelDBStore) initialize(dir string) (err error) {
 	}
 
 	if store.db, err = leveldb.OpenFile(dir, opts); err != nil {
+		if errors.IsCorrupted(err) {
+			store.db, err = leveldb.RecoverFile(dir, opts)
+		}
 		glog.Infof("filer store open dir %s: %v", dir, err)
 		return
 	}

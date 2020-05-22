@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
 
@@ -52,9 +53,12 @@ func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
 		dbFolder := fmt.Sprintf("%s/%02d", dir, d)
 		os.MkdirAll(dbFolder, 0755)
 		db, dbErr := leveldb.OpenFile(dbFolder, opts)
+		if errors.IsCorrupted(dbErr) {
+			db, dbErr = leveldb.RecoverFile(dbFolder, opts)
+		}
 		if dbErr != nil {
 			glog.Errorf("filer store open dir %s: %v", dbFolder, dbErr)
-			return
+			return dbErr
 		}
 		store.dbs = append(store.dbs, db)
 	}
