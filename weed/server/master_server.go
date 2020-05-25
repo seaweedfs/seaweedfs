@@ -156,7 +156,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	}
 }
 
-func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
+func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if ms.Topo.IsLeader() {
 			f(w, r)
