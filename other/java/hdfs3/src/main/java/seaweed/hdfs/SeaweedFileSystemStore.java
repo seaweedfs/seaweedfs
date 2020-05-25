@@ -64,6 +64,16 @@ public class SeaweedFileSystemStore {
     public FileStatus[] listEntries(final Path path) {
         LOG.debug("listEntries path: {}", path);
 
+        FileStatus pathStatus = getFileStatus(path);
+
+        if (pathStatus == null) {
+            return new FileStatus[0];
+        }
+
+        if (!pathStatus.isDirectory()) {
+            return new FileStatus[]{pathStatus};
+        }
+
         List<FileStatus> fileStatuses = new ArrayList<FileStatus>();
 
         List<FilerProto.Entry> entries = filerClient.listEntries(path.toUri().getPath());
@@ -74,7 +84,9 @@ public class SeaweedFileSystemStore {
 
             fileStatuses.add(fileStatus);
         }
+        LOG.debug("listEntries path: {} size {}", fileStatuses, fileStatuses.size());
         return fileStatuses.toArray(new FileStatus[0]);
+
     }
 
     public FileStatus getFileStatus(final Path path) {

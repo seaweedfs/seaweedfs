@@ -7,6 +7,8 @@ import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.util.EntityUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -14,7 +16,7 @@ import java.util.*;
 
 public class SeaweedRead {
 
-    // private static final Logger LOG = LoggerFactory.getLogger(SeaweedRead.class);
+    private static final Logger LOG = LoggerFactory.getLogger(SeaweedRead.class);
 
     static ChunkCache chunkCache = new ChunkCache(1000);
 
@@ -64,7 +66,9 @@ public class SeaweedRead {
             chunkData = doFetchFullChunkData(chunkView, locations);
         }
 
-        int len = (int) (chunkView.logicOffset - position + chunkView.size);
+        int len = (int) chunkView.size;
+        LOG.debug("readChunkView fid:{} chunkData.length:{} chunkView.offset:{} buffer.length:{} startOffset:{} len:{}",
+                chunkView.fileId, chunkData.length, chunkView.offset, buffer.length, startOffset, len);
         System.arraycopy(chunkData, (int) chunkView.offset, buffer, startOffset, len);
 
         chunkCache.setChunk(chunkView.fileId, chunkData);
