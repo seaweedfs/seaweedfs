@@ -9,7 +9,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	util2 "github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/spf13/viper"
 	"golang.org/x/tools/godoc/util"
 )
 
@@ -25,7 +24,7 @@ func main() {
 	flag.Parse()
 
 	util2.LoadConfiguration("security", false)
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	grpcDialOption := security.LoadClientTLS(util2.GetViper(), "grpc.client")
 
 	vid := needle.VolumeId(*volumeId)
 
