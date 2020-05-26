@@ -38,7 +38,9 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 		if errors.IsCorrupted(err) {
 			m.db, err = leveldb.RecoverFile(dbFileName, opts)
 		}
-		return
+		if err != nil {
+			return
+		}
 	}
 	glog.V(1).Infof("Loading %s...", indexFile.Name())
 	mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile)
