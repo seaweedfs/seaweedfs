@@ -14,6 +14,7 @@ const (
 	RenewInteval     = 4 * time.Second
 	SafeRenewInteval = 3 * time.Second
 	InitLockInteval  = 1 * time.Second
+	AdminLockName    = "admin"
 )
 
 type ExclusiveLocker struct {
@@ -44,6 +45,7 @@ func (l *ExclusiveLocker) RequestLock() {
 			resp, err := client.LeaseAdminToken(context.Background(), &master_pb.LeaseAdminTokenRequest{
 				PreviousToken:    atomic.LoadInt64(&l.token),
 				PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
+				LockName:         AdminLockName,
 			})
 			if err == nil {
 				atomic.StoreInt64(&l.token, resp.Token)
@@ -67,6 +69,7 @@ func (l *ExclusiveLocker) RequestLock() {
 				resp, err := client.LeaseAdminToken(context.Background(), &master_pb.LeaseAdminTokenRequest{
 					PreviousToken:    atomic.LoadInt64(&l.token),
 					PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
+					LockName:         AdminLockName,
 				})
 				if err == nil {
 					atomic.StoreInt64(&l.token, resp.Token)
@@ -92,6 +95,7 @@ func (l *ExclusiveLocker) ReleaseLock() {
 		client.ReleaseAdminToken(context.Background(), &master_pb.ReleaseAdminTokenRequest{
 			PreviousToken:    atomic.LoadInt64(&l.token),
 			PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
+			LockName:         AdminLockName,
 		})
 		return nil
 	})

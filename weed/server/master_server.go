@@ -66,8 +66,7 @@ type MasterServer struct {
 
 	MasterClient *wdclient.MasterClient
 
-	adminAccessSecret   int64
-	adminAccessLockTime time.Time
+	adminLocks          *AdminLocks
 }
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *MasterServer {
@@ -96,6 +95,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 		clientChans:     make(map[string]chan *master_pb.VolumeLocation),
 		grpcDialOption:  grpcDialOption,
 		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "master", option.Host, 0, peers),
+		adminLocks:      NewAdminLocks(),
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
 
