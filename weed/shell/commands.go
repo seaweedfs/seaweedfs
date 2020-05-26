@@ -13,6 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"github.com/chrislusf/seaweedfs/weed/wdclient/exclusive_locks"
 )
 
 type ShellOptions struct {
@@ -28,7 +29,7 @@ type CommandEnv struct {
 	env          map[string]string
 	MasterClient *wdclient.MasterClient
 	option       ShellOptions
-	locker       *ExclusiveLocker
+	locker       *exclusive_locks.ExclusiveLocker
 }
 
 type command interface {
@@ -47,7 +48,7 @@ func NewCommandEnv(options ShellOptions) *CommandEnv {
 		MasterClient: wdclient.NewMasterClient(options.GrpcDialOption, pb.AdminShellClient, "", 0, strings.Split(*options.Masters, ",")),
 		option:       options,
 	}
-	ce.locker = NewExclusiveLocker(ce.MasterClient)
+	ce.locker = exclusive_locks.NewExclusiveLocker(ce.MasterClient)
 	return ce
 }
 
@@ -70,7 +71,7 @@ func (ce *CommandEnv) isDirectory(path string) bool {
 
 func (ce *CommandEnv) confirmIsLocked() error {
 
-	if ce.locker.isLocking {
+	if ce.locker.IsLocking() {
 		return nil
 	}
 

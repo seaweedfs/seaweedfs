@@ -1,4 +1,4 @@
-package shell
+package exclusive_locks
 
 import (
 	"context"
@@ -29,6 +29,9 @@ func NewExclusiveLocker(masterClient *wdclient.MasterClient) *ExclusiveLocker {
 		masterClient: masterClient,
 	}
 }
+func (l *ExclusiveLocker) IsLocking() bool {
+	return l.isLocking
+}
 
 func (l *ExclusiveLocker) GetToken() (token int64, lockTsNs int64) {
 	for time.Unix(0, atomic.LoadInt64(&l.lockTsNs)).Add(SafeRenewInteval).Before(time.Now()) {
@@ -39,6 +42,10 @@ func (l *ExclusiveLocker) GetToken() (token int64, lockTsNs int64) {
 }
 
 func (l *ExclusiveLocker) RequestLock() {
+	if 	l.isLocking {
+		return
+	}
+
 	// retry to get the lease
 	for {
 		if err := l.masterClient.WithClient(func(client master_pb.SeaweedClient) error {
