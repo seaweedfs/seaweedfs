@@ -283,6 +283,7 @@ message ListMasterClientsResponse {
 message LeaseAdminTokenRequest {
     int64 previous_token = 1;
     int64 previous_lock_time = 2;
+    string lock_name = 3;
 }
 message LeaseAdminTokenResponse {
     int64 token = 1;
@@ -292,6 +293,7 @@ message LeaseAdminTokenResponse {
 message ReleaseAdminTokenRequest {
     int64 previous_token = 1;
     int64 previous_lock_time = 2;
+    string lock_name = 3;
 }
 message ReleaseAdminTokenResponse {
 }

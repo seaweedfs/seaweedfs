@@ -53,8 +53,10 @@ func (store *LevelDBStore) initialize(dir string) (err error) {
 		if errors.IsCorrupted(err) {
 			store.db, err = leveldb.RecoverFile(dir, opts)
 		}
-		glog.Infof("filer store open dir %s: %v", dir, err)
-		return
+		if err != nil {
+			glog.Infof("filer store open dir %s: %v", dir, err)
+			return
+		}
 	}
 	return
 }

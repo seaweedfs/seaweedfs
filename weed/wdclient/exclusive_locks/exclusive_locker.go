@@ -1,4 +1,4 @@
-package shell
+package exclusive_locks
 
 import (
 	"context"
@@ -14,6 +14,7 @@ const (
 	RenewInteval     = 4 * time.Second
 	SafeRenewInteval = 3 * time.Second
 	InitLockInteval  = 1 * time.Second
+	AdminLockName    = "admin"
 )
 
 type ExclusiveLocker struct {
@@ -28,6 +29,9 @@ func NewExclusiveLocker(masterClient *wdclient.MasterClient) *ExclusiveLocker {
 		masterClient: masterClient,
 	}
 }
+func (l *ExclusiveLocker) IsLocking() bool {
+	return l.isLocking
+}
 
 func (l *ExclusiveLocker) GetToken() (token int64, lockTsNs int64) {
 	for time.Unix(0, atomic.LoadInt64(&l.lockTsNs)).Add(SafeRenewInteval).Before(time.Now()) {
@@ -38,12 +42,17 @@ func (l *ExclusiveLocker) GetToken() (token int64, lockTsNs int64) {
 }
 
 func (l *ExclusiveLocker) RequestLock() {
+	if 	l.isLocking {
+		return
+	}
+
 	// retry to get the lease
 	for {
 		if err := l.masterClient.WithClient(func(client master_pb.SeaweedClient) error {
 			resp, err := client.LeaseAdminToken(context.Background(), &master_pb.LeaseAdminTokenRequest{
 				PreviousToken:    atomic.LoadInt64(&l.token),
 				PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
+				LockName:         AdminLockName,
 			})
 			if err == nil {
 				atomic.StoreInt64(&l.token, resp.Token)
@@ -67,6 +76,7 @@ func (l *ExclusiveLocker) RequestLock() {
 				resp, err := client.LeaseAdminToken(context.Background(), &master_pb.LeaseAdminTokenRequest{
 					PreviousToken:    atomic.LoadInt64(&l.token),
 					PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
+					LockName:         AdminLockName,
 				})
 				if err == nil {
 					atomic.StoreInt64(&l.token, resp.Token)
@@ -92,6 +102,7 @@ func (l *ExclusiveLocker) ReleaseLock() {
 		client.ReleaseAdminToken(context.Background(), &master_pb.ReleaseAdminTokenRequest{
 			PreviousToken:    atomic.LoadInt64(&l.token),
 			PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
+			LockName:         AdminLockName,
 		})
 		return nil
 	})
