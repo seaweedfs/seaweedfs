@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	master_ui "github.com/chrislusf/seaweedfs/weed/server/volume_server_ui"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -31,11 +31,8 @@ func (scanner *VolumeFileScanner4SeeDat) ReadNeedleBody() bool { return true }
 func (scanner *VolumeFileScanner4SeeDat) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 	t := time.Unix(int64(n.AppendAtNs)/int64(time.Second), int64(n.AppendAtNs)%int64(time.Second))
 
-	if readable, ok := master_ui.BytesToHumanReadable(uint64(n.Size)); ok {
-		glog.V(0).Infof("%d,%s%x offset %d size %d (%s) cookie %x appendedAt %v", *volumeId, n.Id, n.Cookie, offset, n.Size, readable, n.Cookie, t)
-	} else {
-		glog.V(0).Infof("%d,%s%x offset %d size %d cookie %x appendedAt %v", *volumeId, n.Id, n.Cookie, offset, n.Size, n.Cookie, t)
-	}
+	glog.V(0).Infof("%d,%s%x offset %d size %s cookie %x appendedAt %v",
+		*volumeId, n.Id, n.Cookie, offset, util.BytesToHumanReadable(uint64(n.Size)), n.Cookie, t)
 
 	return nil
 }
