@@ -167,7 +167,7 @@ func (dn *DataNode) ToMap() interface{} {
 	ret := make(map[string]interface{})
 	ret["Url"] = dn.Url()
 	ret["Volumes"] = dn.GetVolumeCount()
-	ret["VolumesID"] = dn.GetVolumesID()
+	ret["VolumeIds"] = dn.GetVolumeIds()
 	ret["EcShards"] = dn.GetEcShardCount()
 	ret["Max"] = dn.GetMaxVolumeCount()
 	ret["Free"] = dn.FreeSpace()
@@ -175,7 +175,7 @@ func (dn *DataNode) ToMap() interface{} {
 	return ret
 }
 
-func (dn *DataNode) GetVolumesID() string {
+func (dn *DataNode) GetVolumeIds() string {
 	volumesLen := len(dn.volumes)
 	if volumesLen <= 100 {
 		return "..."
