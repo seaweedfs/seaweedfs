@@ -2,6 +2,7 @@ package topology
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 
@@ -166,11 +167,58 @@ func (dn *DataNode) ToMap() interface{} {
 	ret := make(map[string]interface{})
 	ret["Url"] = dn.Url()
 	ret["Volumes"] = dn.GetVolumeCount()
+	ret["VolumesID"] = dn.GetVolumesID()
 	ret["EcShards"] = dn.GetEcShardCount()
 	ret["Max"] = dn.GetMaxVolumeCount()
 	ret["Free"] = dn.FreeSpace()
 	ret["PublicUrl"] = dn.PublicUrl
 	return ret
+}
+
+func (dn *DataNode) GetVolumesID() string {
+	ids := make([]int, 0, len(dn.volumes))
+
+	for k := range dn.volumes {
+		ids = append(ids, int(k))
+	}
+
+	return JoinInts(ids...)
+}
+
+func JoinInts(ids ...int) string {
+	sort.Ints(ids)
+
+	s := ""
+	start := 0
+	last := 0
+
+	for i, v := range ids {
+		if i == 0 {
+			start = v
+			last = v
+			s = fmt.Sprintf("%d", v)
+			continue
+		}
+
+		if last+1 == v {
+			last = v
+			continue
+		}
+
+		if last > start {
+			s += fmt.Sprintf("-%d", last)
+		}
+
+		s += fmt.Sprintf(" %d", v)
+		start = v
+		last = v
+	}
+
+	if last != start {
+		s += fmt.Sprintf("-%d", last)
+	}
+
+	return s
 }
 
 func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
