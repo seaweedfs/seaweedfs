@@ -66,6 +66,12 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
+	fileIds := make([]string, len(entry.Chunks))
+	for i, chunk := range entry.Chunks {
+		fileIds[i] = chunk.FileId
+	}
+	w.Header().Set("Weed-FileIds", strings.Join(fileIds, ";"))
+
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Last-Modified", entry.Attr.Mtime.Format(http.TimeFormat))
 
