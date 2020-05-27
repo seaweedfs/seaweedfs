@@ -7,8 +7,16 @@ import (
 	"strings"
 )
 
+const unit = 1024
+
+// BytesToHumanReadable exposes the bytesToHumanReadble.
+// It returns the converted human readable representation of the bytes
+// and the conversion state that true for conversion realy occurred or false for no conversion.
+func BytesToHumanReadable(b uint64) (string, bool) {
+	return bytesToHumanReadble(b), b >= unit
+}
+
 func bytesToHumanReadble(b uint64) string {
-	const unit = 1024
 	if b < unit {
 		return fmt.Sprintf("%d B", b)
 	}

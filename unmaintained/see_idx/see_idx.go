@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	master_ui "github.com/chrislusf/seaweedfs/weed/server/volume_server_ui"
 	"os"
 	"path"
 	"strconv"
@@ -36,8 +37,11 @@ func main() {
 	defer indexFile.Close()
 
 	idx.WalkIndexFile(indexFile, func(key types.NeedleId, offset types.Offset, size uint32) error {
-		fmt.Printf("key:%v offset:%v size:%v\n", key, offset, size)
+		if readable, ok := master_ui.BytesToHumanReadable(uint64(size)); ok {
+			fmt.Printf("key:%v offset:%v size:%v (%s)\n", key, offset, size, readable)
+		} else {
+			fmt.Printf("key:%v offset:%v size:%v\n", key, offset, size)
+		}
 		return nil
 	})
-
 }
