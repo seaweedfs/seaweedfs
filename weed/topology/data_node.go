@@ -176,7 +176,12 @@ func (dn *DataNode) ToMap() interface{} {
 }
 
 func (dn *DataNode) GetVolumesID() string {
-	ids := make([]int, 0, len(dn.volumes))
+	volumesLen := len(dn.volumes)
+	if volumesLen <= 100 {
+		return "..."
+	}
+
+	ids := make([]int, 0, volumesLen)
 
 	for k := range dn.volumes {
 		ids = append(ids, int(k))
