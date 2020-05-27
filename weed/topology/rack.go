@@ -2,6 +2,7 @@ package topology
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -46,17 +47,30 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVol
 	return dn
 }
 
+type DataNodePtrSlice []*DataNode
+func (p DataNodePtrSlice) Len() int           { return len(p) }
+func (p DataNodePtrSlice) Less(i, j int) bool { return p[i].Url() < p[j].Url() }
+func (p DataNodePtrSlice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+
 func (r *Rack) ToMap() interface{} {
 	m := make(map[string]interface{})
 	m["Id"] = r.Id()
 	m["Max"] = r.GetMaxVolumeCount()
 	m["Free"] = r.FreeSpace()
-	var dns []interface{}
+
+	var dataNodes DataNodePtrSlice
 	for _, c := range r.Children() {
-		dn := c.(*DataNode)
-		dns = append(dns, dn.ToMap())
+		dataNodes = append(dataNodes, c.(*DataNode))
 	}
+	sort.Sort(dataNodes)
+
+	var dns []interface{}
+	for _, c := range dataNodes {
+		dns = append(dns, c.ToMap())
+	}
+
 	m["DataNodes"] = dns
+
 	return m
 }
 
