@@ -47,8 +47,10 @@ func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj inter
 		return
 	}
 
-	glog.V(0).Infof("response method:%s URL:%s with httpStatus:%d and JSON:%s",
-		r.Method, r.URL.String(), httpStatus, string(bytes))
+	if httpStatus >= 400 {
+		glog.V(0).Infof("response method:%s URL:%s with httpStatus:%d and JSON:%s",
+			r.Method, r.URL.String(), httpStatus, string(bytes))
+	}
 
 	callback := r.FormValue("callback")
 	if callback == "" {

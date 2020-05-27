@@ -25,8 +25,6 @@ security settings:
 */
 
 func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Request) {
-	glog.V(0).Infof("request method:%s URL:%s", r.Method, r.URL.String())
-
 	switch r.Method {
 	case "GET", "HEAD":
 		stats.ReadRequest()
