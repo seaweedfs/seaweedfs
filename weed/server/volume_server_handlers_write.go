@@ -42,18 +42,18 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	needle, originalSize, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation, vs.fileSizeLimitBytes)
+	reqNeedle, originalSize, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation, vs.fileSizeLimitBytes)
 	if ne != nil {
 		writeJsonError(w, r, http.StatusBadRequest, ne)
 		return
 	}
 
 	ret := operation.UploadResult{}
-	isUnchanged, writeError := topology.ReplicatedWrite(vs.GetMaster(), vs.store, volumeId, needle, r)
+	isUnchanged, writeError := topology.ReplicatedWrite(vs.GetMaster(), vs.store, volumeId, reqNeedle, r)
 
 	// http 204 status code does not allow body
 	if writeError == nil && isUnchanged {
-		setEtag(w, needle.Etag())
+		setEtag(w, reqNeedle.Etag())
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -63,12 +63,12 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		httpStatus = http.StatusInternalServerError
 		ret.Error = writeError.Error()
 	}
-	if needle.HasName() {
-		ret.Name = string(needle.Name)
+	if reqNeedle.HasName() {
+		ret.Name = string(reqNeedle.Name)
 	}
 	ret.Size = uint32(originalSize)
-	ret.ETag = needle.Etag()
-	ret.Mime = string(needle.Mime)
+	ret.ETag = reqNeedle.Etag()
+	ret.Mime = string(reqNeedle.Mime)
 	setEtag(w, ret.ETag)
 	writeJsonQuiet(w, r, httpStatus, ret)
 }
