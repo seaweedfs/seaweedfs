@@ -5,6 +5,15 @@ import (
 	"sort"
 )
 
+// HumanReadableIntsMax joins a serials of inits into a smart one like 1-3 5 ... for human readable.
+func HumanReadableIntsMax(max int, ids ...int) string {
+	if len(ids) <= max {
+		return HumanReadableInts(ids...)
+	}
+
+	return HumanReadableInts(ids[:max]...) + " ..."
+}
+
 // HumanReadableInts joins a serials of inits into a smart one like 1-3 5 7-10 for human readable.
 func HumanReadableInts(ids ...int) string {
 	sort.Ints(ids)

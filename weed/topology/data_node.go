@@ -195,16 +195,11 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 
 // GetVolumeIds returns the human readable volume ids limited to count of max 100.
 func (dn *DataNode) GetVolumeIds() string {
-	volumesLen := len(dn.volumes)
-	if volumesLen > 100 {
-		return "..."
-	}
-
-	ids := make([]int, 0, volumesLen)
+	ids := make([]int, 0, len(dn.volumes))
 
 	for k := range dn.volumes {
 		ids = append(ids, int(k))
 	}
 
-	return util.HumanReadableInts(ids...)
+	return util.HumanReadableIntsMax(100, ids...)
 }

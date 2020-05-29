@@ -5,6 +5,11 @@ import (
 	"testing"
 )
 
+func TestHumanReadableIntsMax(t *testing.T) {
+	assert.Equal(t, "1-2 ...", HumanReadableIntsMax(2, 1, 2, 3))
+	assert.Equal(t, "1 3 ...", HumanReadableIntsMax(2, 1, 3, 5))
+}
+
 func TestHumanReadableInts(t *testing.T) {
 	assert.Equal(t, "1-3", HumanReadableInts(1, 2, 3))
 	assert.Equal(t, "1 3", HumanReadableInts(1, 3))
