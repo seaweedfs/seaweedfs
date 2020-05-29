@@ -2,6 +2,7 @@ package topology
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"strconv"
 	"sync"
 
@@ -166,6 +167,7 @@ func (dn *DataNode) ToMap() interface{} {
 	ret := make(map[string]interface{})
 	ret["Url"] = dn.Url()
 	ret["Volumes"] = dn.GetVolumeCount()
+	ret["VolumeIds"] = dn.GetVolumeIds()
 	ret["EcShards"] = dn.GetEcShardCount()
 	ret["Max"] = dn.GetMaxVolumeCount()
 	ret["Free"] = dn.FreeSpace()
@@ -189,4 +191,15 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 		m.EcShardInfos = append(m.EcShardInfos, ecv.ToVolumeEcShardInformationMessage())
 	}
 	return m
+}
+
+// GetVolumeIds returns the human readable volume ids limited to count of max 100.
+func (dn *DataNode) GetVolumeIds() string {
+	ids := make([]int, 0, len(dn.volumes))
+
+	for k := range dn.volumes {
+		ids = append(ids, int(k))
+	}
+
+	return util.HumanReadableIntsMax(100, ids...)
 }
