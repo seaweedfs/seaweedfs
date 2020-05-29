@@ -6,6 +6,22 @@ import (
 	"io"
 )
 
+// BytesToHumanReadable returns the converted human readable representation of the bytes.
+func BytesToHumanReadable(b uint64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+
+	div, exp := uint64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+
+	return fmt.Sprintf("%.2f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
 // big endian
 
 func BytesToUint64(b []byte) (v uint64) {
