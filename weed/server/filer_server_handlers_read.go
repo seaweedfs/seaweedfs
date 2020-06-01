@@ -66,6 +66,15 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
+	// add Weed-FileIds to the response of `GET /123.png?verbose=true` for debugging like internal FileIds checking
+	if r.Method == "GET" && r.FormValue("verbose") != "" {
+		fileIds := make([]string, len(entry.Chunks))
+		for i, chunk := range entry.Chunks {
+			fileIds[i] = chunk.FileId
+		}
+		w.Header().Set("Weed-FileIds", strings.Join(fileIds, ";"))
+	}
+
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Last-Modified", entry.Attr.Mtime.Format(http.TimeFormat))
 
