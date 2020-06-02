@@ -44,7 +44,7 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 
 func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
-	m["Version"] = util.VERSION
+	m["Version"] = util.Version()
 	m["Topology"] = ms.Topo.ToMap()
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
@@ -93,7 +93,7 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 
 func (ms *MasterServer) volumeStatusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
-	m["Version"] = util.VERSION
+	m["Version"] = util.Version()
 	m["Volumes"] = ms.Topo.ToVolumeMap()
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }

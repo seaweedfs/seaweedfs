@@ -191,19 +191,19 @@ func parseURLPath(path string) (vid, fid, filename, ext string, isVolumeIdOnly b
 
 func statsHealthHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
-	m["Version"] = util.VERSION
+	m["Version"] = util.Version()
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
 func statsCounterHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
-	m["Version"] = util.VERSION
+	m["Version"] = util.Version()
 	m["Counters"] = serverStats
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
 
 func statsMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
-	m["Version"] = util.VERSION
+	m["Version"] = util.Version()
 	m["Memory"] = stats.MemStat()
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }

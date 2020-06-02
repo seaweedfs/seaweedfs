@@ -20,7 +20,7 @@ func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		Stats      map[string]interface{}
 		Counters   *stats.ServerStats
 	}{
-		util.VERSION,
+		util.Version(),
 		ms.Topo.ToMap(),
 		ms.Topo.RaftServer,
 		infos,

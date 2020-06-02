@@ -54,7 +54,7 @@ func runWebDav(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
 
-	glog.V(0).Infof("Starting Seaweed WebDav Server %s at https port %d", util.VERSION, *webDavStandaloneOptions.port)
+	glog.V(0).Infof("Starting Seaweed WebDav Server %s at https port %d", util.Version(), *webDavStandaloneOptions.port)
 
 	return webDavStandaloneOptions.startWebDav()
 
@@ -126,12 +126,12 @@ func (wo *WebDavOption) startWebDav() bool {
 	}
 
 	if *wo.tlsPrivateKey != "" {
-		glog.V(0).Infof("Start Seaweed WebDav Server %s at https port %d", util.VERSION, *wo.port)
+		glog.V(0).Infof("Start Seaweed WebDav Server %s at https port %d", util.Version(), *wo.port)
 		if err = httpS.ServeTLS(webDavListener, *wo.tlsCertificate, *wo.tlsPrivateKey); err != nil {
 			glog.Fatalf("WebDav Server Fail to serve: %v", err)
 		}
 	} else {
-		glog.V(0).Infof("Start Seaweed WebDav Server %s at http port %d", util.VERSION, *wo.port)
+		glog.V(0).Infof("Start Seaweed WebDav Server %s at http port %d", util.Version(), *wo.port)
 		if err = httpS.Serve(webDavListener); err != nil {
 			glog.Fatalf("WebDav Server Fail to serve: %v", err)
 		}

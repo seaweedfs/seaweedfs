@@ -170,12 +170,12 @@ func (s3opt *S3Options) startS3Server() bool {
 	}
 
 	if *s3opt.tlsPrivateKey != "" {
-		glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.VERSION, *s3opt.port)
+		glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.port)
 		if err = httpS.ServeTLS(s3ApiListener, *s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
 			glog.Fatalf("S3 API Server Fail to serve: %v", err)
 		}
 	} else {
-		glog.V(0).Infof("Start Seaweed S3 API Server %s at http port %d", util.VERSION, *s3opt.port)
+		glog.V(0).Infof("Start Seaweed S3 API Server %s at http port %d", util.Version(), *s3opt.port)
 		if err = httpS.Serve(s3ApiListener); err != nil {
 			glog.Fatalf("S3 API Server Fail to serve: %v", err)
 		}

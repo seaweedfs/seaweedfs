@@ -111,7 +111,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), peers)
 	listeningAddress := *masterOption.ipBind + ":" + strconv.Itoa(*masterOption.port)
-	glog.V(0).Infof("Start Seaweed Master %s at %s", util.VERSION, listeningAddress)
+	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
 	masterListener, e := util.NewListener(listeningAddress, 0)
 	if e != nil {
 		glog.Fatalf("Master startup error: %v", e)
@@ -135,7 +135,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	master_pb.RegisterSeaweedServer(grpcS, ms)
 	protobuf.RegisterRaftServer(grpcS, raftServer)
 	reflection.Register(grpcS)
-	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.VERSION, *masterOption.ipBind, grpcPort)
+	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOption.ipBind, grpcPort)
 	go grpcS.Serve(grpcL)
 
 	go ms.MasterClient.KeepConnectedToMaster()

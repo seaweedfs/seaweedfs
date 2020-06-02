@@ -11,7 +11,7 @@ import (
 
 func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
-	m["Version"] = util.VERSION
+	m["Version"] = util.Version()
 	var ds []*volume_server_pb.DiskStatus
 	for _, loc := range vs.store.Locations {
 		if dir, e := filepath.Abs(loc.Directory); e == nil {
@@ -25,7 +25,7 @@ func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 
 func (vs *VolumeServer) statsDiskHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
-	m["Version"] = util.VERSION
+	m["Version"] = util.Version()
 	var ds []*volume_server_pb.DiskStatus
 	for _, loc := range vs.store.Locations {
 		if dir, e := filepath.Abs(loc.Directory); e == nil {

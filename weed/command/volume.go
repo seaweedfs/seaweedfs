@@ -250,7 +250,7 @@ func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerSe
 
 func (v VolumeServerOptions) startPublicHttpService(handler http.Handler) httpdown.Server {
 	publicListeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.publicPort)
-	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "public at", publicListeningAddress)
+	glog.V(0).Infoln("Start Seaweed volume server", util.Version(), "public at", publicListeningAddress)
 	publicListener, e := util.NewListener(publicListeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)
@@ -277,7 +277,7 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 	}
 
 	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port)
-	glog.V(0).Infof("Start Seaweed volume server %s at %s", util.VERSION, listeningAddress)
+	glog.V(0).Infof("Start Seaweed volume server %s at %s", util.Version(), listeningAddress)
 	listener, e := util.NewListener(listeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)

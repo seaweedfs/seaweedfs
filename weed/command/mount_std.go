@@ -73,7 +73,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	util.LoadConfiguration("security", false)
 
-	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.Version(), runtime.GOOS, runtime.GOARCH)
 	if dir == "" {
 		fmt.Printf("Please specify the mount directory via \"-dir\"")
 		return false

@@ -121,7 +121,7 @@ func (fo *FilerOptions) startFiler() {
 
 	if *fo.publicPort != 0 {
 		publicListeningAddress := *fo.bindIp + ":" + strconv.Itoa(*fo.publicPort)
-		glog.V(0).Infoln("Start Seaweed filer server", util.VERSION, "public at", publicListeningAddress)
+		glog.V(0).Infoln("Start Seaweed filer server", util.Version(), "public at", publicListeningAddress)
 		publicListener, e := util.NewListener(publicListeningAddress, 0)
 		if e != nil {
 			glog.Fatalf("Filer server public listener error on port %d:%v", *fo.publicPort, e)
@@ -133,7 +133,7 @@ func (fo *FilerOptions) startFiler() {
 		}()
 	}
 
-	glog.V(0).Infof("Start Seaweed Filer %s at %s:%d", util.VERSION, *fo.ip, *fo.port)
+	glog.V(0).Infof("Start Seaweed Filer %s at %s:%d", util.Version(), *fo.ip, *fo.port)
 	filerListener, e := util.NewListener(
 		*fo.bindIp+":"+strconv.Itoa(*fo.port),
 		time.Duration(10)*time.Second,

@@ -115,7 +115,7 @@ func runBenchmark(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 	b.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
-	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.VERSION, runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.Version(), runtime.GOOS, runtime.GOARCH)
 	if *b.maxCpu < 1 {
 		*b.maxCpu = runtime.NumCPU()
 	}
