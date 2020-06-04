@@ -58,7 +58,7 @@ func readIndexEntryAtOffset(indexFile *os.File, offset int64) (bytes []byte, err
 func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version, offset int64, key NeedleId, size uint32) (lastAppendAtNs uint64, err error) {
 	n := new(needle.Needle)
 	if err = n.ReadData(datFile, offset, size, v); err != nil {
-		return n.AppendAtNs, err
+		return n.AppendAtNs, fmt.Errorf("read data [%d,%d) : %v", offset, offset+int64(size), err)
 	}
 	if n.Id != key {
 		return n.AppendAtNs, fmt.Errorf("index key %#x does not match needle's Id %#x", key, n.Id)

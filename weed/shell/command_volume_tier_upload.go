@@ -56,6 +56,10 @@ func (c *commandVolumeTierUpload) Help() string {
 
 func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
+	}
+
 	tierCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := tierCommand.Int("volumeId", 0, "the volume id")
 	collection := tierCommand.String("collection", "", "the collection name")
@@ -67,23 +71,22 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 		return nil
 	}
 
-	ctx := context.Background()
 	vid := needle.VolumeId(*volumeId)
 
 	// volumeId is provided
 	if vid != 0 {
-		return doVolumeTierUpload(ctx, commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile)
+		return doVolumeTierUpload(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile)
 	}
 
 	// apply to all volumes in the collection
 	// reusing collectVolumeIdsForEcEncode for now
-	volumeIds, err := collectVolumeIdsForEcEncode(ctx, commandEnv, *collection, *fullPercentage, *quietPeriod)
+	volumeIds, err := collectVolumeIdsForEcEncode(commandEnv, *collection, *fullPercentage, *quietPeriod)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("tier upload volumes: %v\n", volumeIds)
 	for _, vid := range volumeIds {
-		if err = doVolumeTierUpload(ctx, commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile); err != nil {
+		if err = doVolumeTierUpload(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile); err != nil {
 			return err
 		}
 	}
@@ -91,20 +94,20 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	return nil
 }
 
-func doVolumeTierUpload(ctx context.Context, commandEnv *CommandEnv, writer io.Writer, collection string, vid needle.VolumeId, dest string, keepLocalDatFile bool) (err error) {
+func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection string, vid needle.VolumeId, dest string, keepLocalDatFile bool) (err error) {
 	// find volume location
 	locations, found := commandEnv.MasterClient.GetLocations(uint32(vid))
 	if !found {
 		return fmt.Errorf("volume %d not found", vid)
 	}
 
-	err = markVolumeReadonly(ctx, commandEnv.option.GrpcDialOption, needle.VolumeId(vid), locations)
+	err = markVolumeReadonly(commandEnv.option.GrpcDialOption, needle.VolumeId(vid), locations)
 	if err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
 	}
 
 	// copy the .dat file to remote tier
-	err = uploadDatToRemoteTier(ctx, commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, locations[0].Url, dest, keepLocalDatFile)
+	err = uploadDatToRemoteTier(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, locations[0].Url, dest, keepLocalDatFile)
 	if err != nil {
 		return fmt.Errorf("copy dat file for volume %d on %s to %s: %v", vid, locations[0].Url, dest, err)
 	}
@@ -112,10 +115,10 @@ func doVolumeTierUpload(ctx context.Context, commandEnv *CommandEnv, writer io.W
 	return nil
 }
 
-func uploadDatToRemoteTier(ctx context.Context, grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, sourceVolumeServer string, dest string, keepLocalDatFile bool) error {
+func uploadDatToRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, sourceVolumeServer string, dest string, keepLocalDatFile bool) error {
 
-	err := operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
-		stream, copyErr := volumeServerClient.VolumeTierMoveDatToRemote(ctx, &volume_server_pb.VolumeTierMoveDatToRemoteRequest{
+	err := operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		stream, copyErr := volumeServerClient.VolumeTierMoveDatToRemote(context.Background(), &volume_server_pb.VolumeTierMoveDatToRemoteRequest{
 			VolumeId:               uint32(volumeId),
 			Collection:             collection,
 			DestinationBackendName: dest,

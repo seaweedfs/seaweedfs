@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package iam_pb;
+
+option java_package = "seaweedfs.client";
+option java_outer_classname = "IamProto";
+
+//////////////////////////////////////////////////
+
+service SeaweedIdentityAccessManagement {
+
+}
+
+//////////////////////////////////////////////////
+
+message S3ApiConfiguration {
+    repeated Identity identities = 1;
+}
+
+message Identity {
+    string name = 1;
+    repeated Credential credentials = 2;
+    repeated string actions = 3;
+}
+
+message Credential {
+    string access_key = 1;
+    string secret_key = 2;
+    // uint64 expiration = 3;
+    // bool is_disabled = 4;
+}
+
+/*
+message Policy {
+    repeated Statement statements = 1;
+}
+
+message Statement {
+    repeated Action action = 1;
+    repeated Resource resource = 2;
+}
+
+message Action {
+    string action = 1;
+}
+message Resource {
+    string bucket = 1;
+    // string path = 2;
+}
+*/

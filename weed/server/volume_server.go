@@ -77,9 +77,11 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		// only expose the volume server details for safe environments
 		adminMux.HandleFunc("/ui/index.html", vs.uiStatusHandler)
 		adminMux.HandleFunc("/status", vs.guard.WhiteList(vs.statusHandler))
-		adminMux.HandleFunc("/stats/counter", vs.guard.WhiteList(statsCounterHandler))
-		adminMux.HandleFunc("/stats/memory", vs.guard.WhiteList(statsMemoryHandler))
-		adminMux.HandleFunc("/stats/disk", vs.guard.WhiteList(vs.statsDiskHandler))
+		/*
+			adminMux.HandleFunc("/stats/counter", vs.guard.WhiteList(statsCounterHandler))
+			adminMux.HandleFunc("/stats/memory", vs.guard.WhiteList(statsMemoryHandler))
+			adminMux.HandleFunc("/stats/disk", vs.guard.WhiteList(vs.statsDiskHandler))
+		*/
 	}
 	adminMux.HandleFunc("/", vs.privateStoreHandler)
 	if publicMux != adminMux {

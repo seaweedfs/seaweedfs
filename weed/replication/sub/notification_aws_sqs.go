@@ -92,7 +92,9 @@ func (k *AwsSqsInput) ReceiveMessage() (key string, message *filer_pb.EventNotif
 	}
 
 	// process the message
-	key = *result.Messages[0].Attributes["key"]
+	// fmt.Printf("messages: %+v\n", result.Messages[0])
+	keyValue := result.Messages[0].MessageAttributes["key"]
+	key = *keyValue.StringValue
 	text := *result.Messages[0].Body
 	message = &filer_pb.EventNotification{}
 	err = proto.UnmarshalText(text, message)

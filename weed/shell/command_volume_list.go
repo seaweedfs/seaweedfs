@@ -32,9 +32,8 @@ func (c *commandVolumeList) Help() string {
 func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	var resp *master_pb.VolumeListResponse
-	ctx := context.Background()
-	err = commandEnv.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+		resp, err = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		return err
 	})
 	if err != nil {

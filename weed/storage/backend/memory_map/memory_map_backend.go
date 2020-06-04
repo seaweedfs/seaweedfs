@@ -3,12 +3,10 @@ package memory_map
 import (
 	"os"
 	"time"
-
-	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 )
 
 var (
-	_ backend.BackendStorageFile = &MemoryMappedFile{}
+// _ backend.BackendStorageFile = &MemoryMappedFile{} // remove this to break import cycle
 )
 
 type MemoryMappedFile struct {
@@ -57,4 +55,8 @@ func (mmf *MemoryMappedFile) GetStat() (datSize int64, modTime time.Time, err er
 
 func (mmf *MemoryMappedFile) Name() string {
 	return mmf.mm.File.Name()
+}
+
+func (mm *MemoryMappedFile) Sync() error {
+	return nil
 }

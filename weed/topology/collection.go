@@ -11,11 +11,16 @@ import (
 type Collection struct {
 	Name                     string
 	volumeSizeLimit          uint64
+	replicationAsMin         bool
 	storageType2VolumeLayout *util.ConcurrentReadMap
 }
 
-func NewCollection(name string, volumeSizeLimit uint64) *Collection {
-	c := &Collection{Name: name, volumeSizeLimit: volumeSizeLimit}
+func NewCollection(name string, volumeSizeLimit uint64, replicationAsMin bool) *Collection {
+	c := &Collection{
+		Name:             name,
+		volumeSizeLimit:  volumeSizeLimit,
+		replicationAsMin: replicationAsMin,
+	}
 	c.storageType2VolumeLayout = util.NewConcurrentReadMap()
 	return c
 }
@@ -30,7 +35,7 @@ func (c *Collection) GetOrCreateVolumeLayout(rp *super_block.ReplicaPlacement, t
 		keyString += ttl.String()
 	}
 	vl := c.storageType2VolumeLayout.Get(keyString, func() interface{} {
-		return NewVolumeLayout(rp, ttl, c.volumeSizeLimit)
+		return NewVolumeLayout(rp, ttl, c.volumeSizeLimit, c.replicationAsMin)
 	})
 	return vl.(*VolumeLayout)
 }

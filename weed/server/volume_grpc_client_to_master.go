@@ -7,6 +7,7 @@ import (
 
 	"google.golang.org/grpc"
 
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
@@ -34,15 +35,18 @@ func (vs *VolumeServer) heartbeat() {
 	for {
 		for _, master := range vs.SeedMasterNodes {
 			if newLeader != "" {
+				// the new leader may actually is the same master
+				// need to wait a bit before adding itself
+				time.Sleep(3 * time.Second)
 				master = newLeader
 			}
-			masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(master)
+			masterGrpcAddress, parseErr := pb.ParseServerToGrpcAddress(master)
 			if parseErr != nil {
 				glog.V(0).Infof("failed to parse master grpc %v: %v", masterGrpcAddress, parseErr)
 				continue
 			}
 			vs.store.MasterAddress = master
-			newLeader, err = vs.doHeartbeat(context.Background(), master, masterGrpcAddress, grpcDialOption, time.Duration(vs.pulseSeconds)*time.Second)
+			newLeader, err = vs.doHeartbeat(master, masterGrpcAddress, grpcDialOption, time.Duration(vs.pulseSeconds)*time.Second)
 			if err != nil {
 				glog.V(0).Infof("heartbeat error: %v", err)
 				time.Sleep(time.Duration(vs.pulseSeconds) * time.Second)
@@ -53,16 +57,16 @@ func (vs *VolumeServer) heartbeat() {
 	}
 }
 
-func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcAddress string, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader string, err error) {
+func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader string, err error) {
 
-	grpcConection, err := util.GrpcDial(ctx, masterGrpcAddress, grpcDialOption)
+	grpcConection, err := pb.GrpcDial(context.Background(), masterGrpcAddress, grpcDialOption)
 	if err != nil {
 		return "", fmt.Errorf("fail to dial %s : %v", masterNode, err)
 	}
 	defer grpcConection.Close()
 
 	client := master_pb.NewSeaweedClient(grpcConection)
-	stream, err := client.SendHeartbeat(ctx)
+	stream, err := client.SendHeartbeat(context.Background())
 	if err != nil {
 		glog.V(0).Infof("SendHeartbeat to %s: %v", masterNode, err)
 		return "", err
@@ -79,8 +83,13 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 				doneChan <- err
 				return
 			}
-			if in.GetVolumeSizeLimit() != 0 {
+			if in.GetVolumeSizeLimit() != 0 && vs.store.GetVolumeSizeLimit() != in.GetVolumeSizeLimit() {
 				vs.store.SetVolumeSizeLimit(in.GetVolumeSizeLimit())
+				if vs.store.MaybeAdjustVolumeMax() {
+					if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
+						glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
+					}
+				}
 			}
 			if in.GetLeader() != "" && masterNode != in.GetLeader() && !isSameIP(in.GetLeader(), masterNode) {
 				glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", in.GetLeader(), masterNode)

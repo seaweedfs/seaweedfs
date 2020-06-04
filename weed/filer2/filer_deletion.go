@@ -6,16 +6,14 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
-func (f *Filer) loopProcessingDeletion() {
-
-	ticker := time.NewTicker(5 * time.Second)
-
-	lookupFunc := func(vids []string) (map[string]operation.LookupResult, error) {
+func LookupByMasterClientFn(masterClient *wdclient.MasterClient) func(vids []string) (map[string]operation.LookupResult, error) {
+	return func(vids []string) (map[string]operation.LookupResult, error) {
 		m := make(map[string]operation.LookupResult)
 		for _, vid := range vids {
-			locs, _ := f.MasterClient.GetVidLocations(vid)
+			locs, _ := masterClient.GetVidLocations(vid)
 			var locations []operation.Location
 			for _, loc := range locs {
 				locations = append(locations, operation.Location{
@@ -30,37 +28,56 @@ func (f *Filer) loopProcessingDeletion() {
 		}
 		return m, nil
 	}
+}
 
-	var fileIds []string
+func (f *Filer) loopProcessingDeletion() {
+
+	lookupFunc := LookupByMasterClientFn(f.MasterClient)
+
+	DeletionBatchSize := 100000 // roughly 20 bytes cost per file id.
+
+	var deletionCount int
 	for {
-		select {
-		case fid := <-f.fileIdDeletionChan:
-			fileIds = append(fileIds, fid)
-			if len(fileIds) >= 4096 {
-				glog.V(1).Infof("deleting fileIds len=%d", len(fileIds))
-				operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, fileIds, lookupFunc)
-				fileIds = fileIds[:0]
+		deletionCount = 0
+		f.fileIdDeletionQueue.Consume(func(fileIds []string) {
+			for len(fileIds) > 0 {
+				var toDeleteFileIds []string
+				if len(fileIds) > DeletionBatchSize {
+					toDeleteFileIds = fileIds[:DeletionBatchSize]
+					fileIds = fileIds[DeletionBatchSize:]
+				} else {
+					toDeleteFileIds = fileIds
+					fileIds = fileIds[:0]
+				}
+				deletionCount = len(toDeleteFileIds)
+				deleteResults, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
+				if err != nil {
+					glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
+				} else {
+					glog.V(1).Infof("deleting fileIds len=%d", deletionCount)
+				}
+				if len(deleteResults) != deletionCount {
+					glog.V(0).Infof("delete %d fileIds actual %d", deletionCount, len(deleteResults))
+				}
 			}
-		case <-ticker.C:
-			if len(fileIds) > 0 {
-				glog.V(1).Infof("timed deletion fileIds len=%d", len(fileIds))
-				operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, fileIds, lookupFunc)
-				fileIds = fileIds[:0]
-			}
+		})
+
+		if deletionCount == 0 {
+			time.Sleep(1123 * time.Millisecond)
 		}
 	}
 }
 
 func (f *Filer) DeleteChunks(chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
-		f.fileIdDeletionChan <- chunk.GetFileIdString()
+		f.fileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
 	}
 }
 
 // DeleteFileByFileId direct delete by file id.
 // Only used when the fileId is not being managed by snapshots.
 func (f *Filer) DeleteFileByFileId(fileId string) {
-	f.fileIdDeletionChan <- fileId
+	f.fileIdDeletionQueue.EnQueue(fileId)
 }
 
 func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {

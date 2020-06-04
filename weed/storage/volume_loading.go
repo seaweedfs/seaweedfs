@@ -54,7 +54,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		v.DataBackend = backend.NewDiskFile(dataFile)
 	} else {
 		if createDatIfMissing {
-			v.DataBackend, err = createVolumeFile(fileName+".dat", preallocate, v.MemoryMapMaxSizeMb)
+			v.DataBackend, err = backend.CreateVolumeFile(fileName+".dat", preallocate, v.MemoryMapMaxSizeMb)
 		} else {
 			return fmt.Errorf("Volume Data file %s.dat does not exist.", fileName)
 		}
@@ -94,7 +94,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			glog.V(0).Infof("volumeDataIntegrityChecking failed %v", err)
 		}
 
-		if v.noWriteOrDelete || v.noWriteCanDelete {
+		if v.IsReadOnly() {
 			if v.nm, err = NewSortedFileNeedleMap(fileName, indexFile); err != nil {
 				glog.V(0).Infof("loading sorted db %s error: %v", fileName+".sdx", err)
 			}

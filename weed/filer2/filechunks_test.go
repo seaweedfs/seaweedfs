@@ -218,7 +218,7 @@ func TestChunksReading(t *testing.T) {
 	testcases := []struct {
 		Chunks   []*filer_pb.FileChunk
 		Offset   int64
-		Size     int
+		Size     int64
 		Expected []*ChunkView
 	}{
 		// case 0: normal

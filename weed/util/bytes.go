@@ -2,8 +2,25 @@ package util
 
 import (
 	"crypto/md5"
+	"fmt"
 	"io"
 )
+
+// BytesToHumanReadable returns the converted human readable representation of the bytes.
+func BytesToHumanReadable(b uint64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+
+	div, exp := uint64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+
+	return fmt.Sprintf("%.2f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
 
 // big endian
 
@@ -73,4 +90,27 @@ func HashStringToLong(dir string) (v int64) {
 	v += int64(b[7])
 
 	return
+}
+
+func HashToInt32(data []byte) (v int32) {
+	h := md5.New()
+	h.Write(data)
+
+	b := h.Sum(nil)
+
+	v += int32(b[0])
+	v <<= 8
+	v += int32(b[1])
+	v <<= 8
+	v += int32(b[2])
+	v <<= 8
+	v += int32(b[3])
+
+	return
+}
+
+func Md5(data []byte) string {
+	hash := md5.New()
+	hash.Write(data)
+	return fmt.Sprintf("%x", hash.Sum(nil))
 }

@@ -8,11 +8,14 @@ appname := weed
 
 sources := $(wildcard *.go)
 
-build = CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) go build -ldflags "-extldflags -static" -o build/$(appname)$(3) $(SOURCE_DIR)
+COMMIT ?= $(shell git rev-parse --short HEAD)
+LDFLAGS ?= -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${COMMIT}
+
+build = CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) go build -ldflags "-extldflags -static $(LDFLAGS)" -o build/$(appname)$(3) $(SOURCE_DIR)
 tar = cd build && tar -cvzf $(1)_$(2).tar.gz $(appname)$(3) && rm $(appname)$(3)
 zip = cd build && zip $(1)_$(2).zip $(appname)$(3) && rm $(appname)$(3)
 
-build_large = CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) go build -tags 5BytesOffset -ldflags "-extldflags -static" -o build/$(appname)$(3) $(SOURCE_DIR)
+build_large = CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) go build -tags 5BytesOffset -ldflags "-extldflags -static $(LDFLAGS)" -o build/$(appname)$(3) $(SOURCE_DIR)
 tar_large = cd build && tar -cvzf $(1)_$(2)_large_disk.tar.gz $(appname)$(3) && rm $(appname)$(3)
 zip_large = cd build && zip $(1)_$(2)_large_disk.zip $(appname)$(3) && rm $(appname)$(3)
 
@@ -31,11 +34,11 @@ deps:
 	rm -rf /home/travis/gopath/src/go.etcd.io/etcd/vendor/golang.org/x/net/trace
 
 build: deps
-	go build $(GO_FLAGS) -o $(BINARY) $(SOURCE_DIR)
+	go build $(GO_FLAGS) -ldflags "$(LDFLAGS)" -o $(BINARY) $(SOURCE_DIR)
 
 linux: deps
 	mkdir -p linux
-	GOOS=linux GOARCH=amd64 go build $(GO_FLAGS) -o linux/$(BINARY) $(SOURCE_DIR)
+	GOOS=linux GOARCH=amd64 go build $(GO_FLAGS) -ldflags "$(LDFLAGS)" -o linux/$(BINARY) $(SOURCE_DIR)
 
 release: deps windows_build darwin_build linux_build bsd_build 5_byte_linux_build 5_byte_darwin_build 5_byte_windows_build
 

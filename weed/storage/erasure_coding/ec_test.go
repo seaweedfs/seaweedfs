@@ -7,9 +7,10 @@ import (
 	"os"
 	"testing"
 
+	"github.com/klauspost/reedsolomon"
+
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/klauspost/reedsolomon"
 )
 
 const (
@@ -42,6 +43,7 @@ func TestEncodingDecoding(t *testing.T) {
 
 func validateFiles(baseFileName string) error {
 	nm, err := readNeedleMap(baseFileName)
+	defer nm.Close()
 	if err != nil {
 		return fmt.Errorf("readNeedleMap: %v", err)
 	}

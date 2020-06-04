@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
@@ -33,6 +32,7 @@ const (
 )
 
 type MasterOption struct {
+	Host                    string
 	Port                    int
 	MetaFolder              string
 	VolumeSizeLimitMB       uint
@@ -65,6 +65,8 @@ type MasterServer struct {
 	grpcDialOption grpc.DialOption
 
 	MasterClient *wdclient.MasterClient
+
+	adminLocks          *AdminLocks
 }
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *MasterServer {
@@ -78,6 +80,9 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 	v.SetDefault("jwt.signing.read.expires_after_seconds", 60)
 	readExpiresAfterSec := v.GetInt("jwt.signing.read.expires_after_seconds")
 
+	v.SetDefault("master.replication.treat_replication_as_minimums", false)
+	replicationAsMin := v.GetBool("master.replication.treat_replication_as_minimums")
+
 	var preallocateSize int64
 	if option.VolumePreallocate {
 		preallocateSize = int64(option.VolumeSizeLimitMB) * (1 << 20)
@@ -89,7 +94,8 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 		preallocateSize: preallocateSize,
 		clientChans:     make(map[string]chan *master_pb.VolumeLocation),
 		grpcDialOption:  grpcDialOption,
-		MasterClient:    wdclient.NewMasterClient(context.Background(), grpcDialOption, "master", peers),
+		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "master", option.Host, 0, peers),
+		adminLocks:      NewAdminLocks(),
 	}
 	ms.bounedLeaderChan = make(chan int, 16)
 
@@ -97,7 +103,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 	if nil == seq {
 		glog.Fatalf("create sequencer failed.")
 	}
-	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, ms.option.PulseSeconds)
+	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, ms.option.PulseSeconds, replicationAsMin)
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", ms.option.VolumeSizeLimitMB, "MB")
 
@@ -115,9 +121,11 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 		r.HandleFunc("/vol/status", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeStatusHandler)))
 		r.HandleFunc("/vol/vacuum", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeVacuumHandler)))
 		r.HandleFunc("/submit", ms.guard.WhiteList(ms.submitFromMasterServerHandler))
-		r.HandleFunc("/stats/health", ms.guard.WhiteList(statsHealthHandler))
-		r.HandleFunc("/stats/counter", ms.guard.WhiteList(statsCounterHandler))
-		r.HandleFunc("/stats/memory", ms.guard.WhiteList(statsMemoryHandler))
+		/*
+			r.HandleFunc("/stats/health", ms.guard.WhiteList(statsHealthHandler))
+			r.HandleFunc("/stats/counter", ms.guard.WhiteList(statsCounterHandler))
+			r.HandleFunc("/stats/memory", ms.guard.WhiteList(statsMemoryHandler))
+		*/
 		r.HandleFunc("/{fileId}", ms.redirectHandler)
 	}
 
@@ -148,7 +156,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	}
 }
 
-func (ms *MasterServer) proxyToLeader(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
+func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if ms.Topo.IsLeader() {
 			f(w, r)
@@ -193,10 +201,14 @@ func (ms *MasterServer) startAdminScripts() {
 	v.SetDefault("master.maintenance.sleep_minutes", 17)
 	sleepMinutes := v.GetInt("master.maintenance.sleep_minutes")
 
-	v.SetDefault("master.filer.default_filer_url", "http://localhost:8888/")
-	filerURL := v.GetString("master.filer.default_filer_url")
+	v.SetDefault("master.filer.default", "localhost:8888")
+	filerHostPort := v.GetString("master.filer.default")
 
 	scriptLines := strings.Split(adminScripts, "\n")
+	if !strings.Contains(adminScripts, "lock") {
+		scriptLines = append(append([]string{}, "lock"), scriptLines...)
+		scriptLines = append(scriptLines, "unlock")
+	}
 
 	masterAddress := "localhost:" + strconv.Itoa(ms.option.Port)
 
@@ -204,9 +216,10 @@ func (ms *MasterServer) startAdminScripts() {
 	shellOptions.GrpcDialOption = security.LoadClientTLS(v, "grpc.master")
 	shellOptions.Masters = &masterAddress
 
-	shellOptions.FilerHost, shellOptions.FilerPort, shellOptions.Directory, err = util.ParseFilerUrl(filerURL)
+	shellOptions.FilerHost, shellOptions.FilerPort, err = util.ParseHostPort(filerHostPort)
+	shellOptions.Directory = "/"
 	if err != nil {
-		glog.V(0).Infof("failed to parse master.filer.default_filer_urll=%s : %v\n", filerURL, err)
+		glog.V(0).Infof("failed to parse master.filer.default = %s : %v\n", filerHostPort, err)
 		return
 	}
 
@@ -220,32 +233,37 @@ func (ms *MasterServer) startAdminScripts() {
 		commandEnv.MasterClient.WaitUntilConnected()
 
 		c := time.Tick(time.Duration(sleepMinutes) * time.Minute)
-		for _ = range c {
+		for range c {
 			if ms.Topo.IsLeader() {
 				for _, line := range scriptLines {
-
-					cmds := reg.FindAllString(line, -1)
-					if len(cmds) == 0 {
-						continue
-					}
-					args := make([]string, len(cmds[1:]))
-					for i := range args {
-						args[i] = strings.Trim(string(cmds[1+i]), "\"'")
-					}
-					cmd := strings.ToLower(cmds[0])
-
-					for _, c := range shell.Commands {
-						if c.Name() == cmd {
-							glog.V(0).Infof("executing: %s %v", cmd, args)
-							if err := c.Do(args, commandEnv, os.Stdout); err != nil {
-								glog.V(0).Infof("error: %v", err)
-							}
-						}
+					for _, c := range strings.Split(line, ";") {
+						processEachCmd(reg, c, commandEnv)
 					}
 				}
 			}
 		}
 	}()
+}
+
+func processEachCmd(reg *regexp.Regexp, line string, commandEnv *shell.CommandEnv) {
+	cmds := reg.FindAllString(line, -1)
+	if len(cmds) == 0 {
+		return
+	}
+	args := make([]string, len(cmds[1:]))
+	for i := range args {
+		args[i] = strings.Trim(string(cmds[1+i]), "\"'")
+	}
+	cmd := strings.ToLower(cmds[0])
+
+	for _, c := range shell.Commands {
+		if c.Name() == cmd {
+			glog.V(0).Infof("executing: %s %v", cmd, args)
+			if err := c.Do(args, commandEnv, os.Stdout); err != nil {
+				glog.V(0).Infof("error: %v", err)
+			}
+		}
+	}
 }
 
 func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer {

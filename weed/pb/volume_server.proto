@@ -8,6 +8,10 @@ service VolumeServer {
     //Experts only: takes multiple fid parameters. This function does not propagate deletes to replicas.
     rpc BatchDelete (BatchDeleteRequest) returns (BatchDeleteResponse) {
     }
+
+    rpc FileGet (FileGetRequest) returns (stream FileGetResponse) {
+    }
+
     rpc VacuumVolumeCheck (VacuumVolumeCheckRequest) returns (VacuumVolumeCheckResponse) {
     }
     rpc VacuumVolumeCompact (VacuumVolumeCompactRequest) returns (VacuumVolumeCompactResponse) {
@@ -77,7 +81,10 @@ service VolumeServer {
     rpc VolumeTierMoveDatFromRemote (VolumeTierMoveDatFromRemoteRequest) returns (stream VolumeTierMoveDatFromRemoteResponse) {
     }
 
-    // query
+    rpc VolumeServerStatus (VolumeServerStatusRequest) returns (VolumeServerStatusResponse) {
+    }
+
+    // <experimental> query
     rpc Query (QueryRequest) returns (stream QueriedStripe) {
     }
 
@@ -87,6 +94,7 @@ service VolumeServer {
 
 message BatchDeleteRequest {
     repeated string file_ids = 1;
+    bool skip_cookie_check = 2;
 }
 
 message BatchDeleteResponse {
@@ -98,6 +106,22 @@ message DeleteResult {
     string error = 3;
     uint32 size = 4;
     uint32 version = 5;
+}
+
+message FileGetRequest {
+    string file_id = 1;
+    bool accept_gzip = 2;
+}
+message FileGetResponse {
+    bytes data = 1;
+    uint32 content_length = 2;
+    string content_type = 3;
+    uint64 last_modified = 4;
+    string filename = 5;
+    string etag = 6;
+    bool is_gzipped = 7;
+    map<string, string> headers = 8;
+    int32 errorCode = 9;
 }
 
 message Empty {
@@ -121,6 +145,7 @@ message VacuumVolumeCommitRequest {
     uint32 volume_id = 1;
 }
 message VacuumVolumeCommitResponse {
+    bool is_read_only = 1;
 }
 
 message VacuumVolumeCleanupRequest {
@@ -340,6 +365,8 @@ message DiskStatus {
     uint64 all = 2;
     uint64 used = 3;
     uint64 free = 4;
+    float percent_free = 5;
+    float percent_used = 6;
 }
 
 message MemStatus {
@@ -387,6 +414,14 @@ message VolumeTierMoveDatFromRemoteRequest {
 message VolumeTierMoveDatFromRemoteResponse {
     int64 processed = 1;
     float processedPercentage = 2;
+}
+
+message VolumeServerStatusRequest {
+
+}
+message VolumeServerStatusResponse {
+    repeated DiskStatus disk_statuses = 1;
+    MemStatus memory_status = 2;
 }
 
 // select on volume servers

@@ -195,6 +195,8 @@ func runExport(cmd *Command, args []string) bool {
 	vid := needle.VolumeId(*export.volumeId)
 
 	needleMap := needle_map.NewMemDb()
+	defer needleMap.Close()
+
 	if err := needleMap.LoadFromIdx(path.Join(*export.dir, fileName+".idx")); err != nil {
 		glog.Fatalf("cannot load needle map from %s.idx: %s", fileName, err)
 	}

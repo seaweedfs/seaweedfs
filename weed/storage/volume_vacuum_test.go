@@ -84,7 +84,7 @@ func TestCompaction(t *testing.T) {
 	}
 
 	startTime := time.Now()
-	v.Compact2(0)
+	v.Compact2(0, 0)
 	speed := float64(v.ContentSize()) / time.Now().Sub(startTime).Seconds()
 	t.Logf("compaction speed: %.2f bytes/s", speed)
 
@@ -129,7 +129,7 @@ func TestCompaction(t *testing.T) {
 }
 func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 	n := newRandomNeedle(uint64(i))
-	_, size, _, err := v.writeNeedle(n)
+	_, size, _, err := v.writeNeedle2(n, false)
 	if err != nil {
 		t.Fatalf("write file %d: %v", i, err)
 	}
@@ -141,7 +141,7 @@ func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 	if rand.Float64() < 0.03 {
 		toBeDeleted := rand.Intn(i) + 1
 		oldNeedle := newEmptyNeedle(uint64(toBeDeleted))
-		v.deleteNeedle(oldNeedle)
+		v.deleteNeedle2(oldNeedle)
 		// println("deleted file", toBeDeleted)
 		infos[toBeDeleted-1] = &needleInfo{
 			size: 0,

@@ -3,11 +3,13 @@ package stats
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 var (
@@ -119,7 +121,7 @@ func LoopPushingMetric(name, instance string, gatherer *prometheus.Registry, fnG
 	for {
 		if currentAddr != "" {
 			err := pusher.Push()
-			if err != nil {
+			if err != nil && !strings.HasPrefix(err.Error(), "unexpected status code 200") {
 				glog.V(0).Infof("could not push metrics to prometheus push gateway %s: %v", addr, err)
 			}
 		}
@@ -136,7 +138,7 @@ func LoopPushingMetric(name, instance string, gatherer *prometheus.Registry, fnG
 	}
 }
 
-func SourceName(port int) string {
+func SourceName(port uint32) string {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return "unknown"

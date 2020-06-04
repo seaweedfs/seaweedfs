@@ -42,6 +42,10 @@ func (c *commandVolumeTierDownload) Help() string {
 
 func (c *commandVolumeTierDownload) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
+	}
+
 	tierCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := tierCommand.Int("volumeId", 0, "the volume id")
 	collection := tierCommand.String("collection", "", "the collection name")
@@ -49,18 +53,17 @@ func (c *commandVolumeTierDownload) Do(args []string, commandEnv *CommandEnv, wr
 		return nil
 	}
 
-	ctx := context.Background()
 	vid := needle.VolumeId(*volumeId)
 
 	// collect topology information
-	topologyInfo, err := collectTopologyInfo(ctx, commandEnv)
+	topologyInfo, err := collectTopologyInfo(commandEnv)
 	if err != nil {
 		return err
 	}
 
 	// volumeId is provided
 	if vid != 0 {
-		return doVolumeTierDownload(ctx, commandEnv, writer, *collection, vid)
+		return doVolumeTierDownload(commandEnv, writer, *collection, vid)
 	}
 
 	// apply to all volumes in the collection
@@ -71,7 +74,7 @@ func (c *commandVolumeTierDownload) Do(args []string, commandEnv *CommandEnv, wr
 	}
 	fmt.Printf("tier download volumes: %v\n", volumeIds)
 	for _, vid := range volumeIds {
-		if err = doVolumeTierDownload(ctx, commandEnv, writer, *collection, vid); err != nil {
+		if err = doVolumeTierDownload(commandEnv, writer, *collection, vid); err != nil {
 			return err
 		}
 	}
@@ -97,7 +100,7 @@ func collectRemoteVolumes(topoInfo *master_pb.TopologyInfo, selectedCollection s
 	return
 }
 
-func doVolumeTierDownload(ctx context.Context, commandEnv *CommandEnv, writer io.Writer, collection string, vid needle.VolumeId) (err error) {
+func doVolumeTierDownload(commandEnv *CommandEnv, writer io.Writer, collection string, vid needle.VolumeId) (err error) {
 	// find volume location
 	locations, found := commandEnv.MasterClient.GetLocations(uint32(vid))
 	if !found {
@@ -107,7 +110,7 @@ func doVolumeTierDownload(ctx context.Context, commandEnv *CommandEnv, writer io
 	// TODO parallelize this
 	for _, loc := range locations {
 		// copy the .dat file from remote tier to local
-		err = downloadDatFromRemoteTier(ctx, commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, loc.Url)
+		err = downloadDatFromRemoteTier(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, loc.Url)
 		if err != nil {
 			return fmt.Errorf("download dat file for volume %d to %s: %v", vid, loc.Url, err)
 		}
@@ -116,10 +119,10 @@ func doVolumeTierDownload(ctx context.Context, commandEnv *CommandEnv, writer io
 	return nil
 }
 
-func downloadDatFromRemoteTier(ctx context.Context, grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, targetVolumeServer string) error {
+func downloadDatFromRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, targetVolumeServer string) error {
 
-	err := operation.WithVolumeServerClient(targetVolumeServer, grpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
-		stream, downloadErr := volumeServerClient.VolumeTierMoveDatFromRemote(ctx, &volume_server_pb.VolumeTierMoveDatFromRemoteRequest{
+	err := operation.WithVolumeServerClient(targetVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		stream, downloadErr := volumeServerClient.VolumeTierMoveDatFromRemote(context.Background(), &volume_server_pb.VolumeTierMoveDatFromRemoteRequest{
 			VolumeId:   uint32(volumeId),
 			Collection: collection,
 		})
@@ -145,14 +148,14 @@ func downloadDatFromRemoteTier(ctx context.Context, grpcDialOption grpc.DialOpti
 			return downloadErr
 		}
 
-		_, unmountErr := volumeServerClient.VolumeUnmount(ctx, &volume_server_pb.VolumeUnmountRequest{
+		_, unmountErr := volumeServerClient.VolumeUnmount(context.Background(), &volume_server_pb.VolumeUnmountRequest{
 			VolumeId: uint32(volumeId),
 		})
 		if unmountErr != nil {
 			return unmountErr
 		}
 
-		_, mountErr := volumeServerClient.VolumeMount(ctx, &volume_server_pb.VolumeMountRequest{
+		_, mountErr := volumeServerClient.VolumeMount(context.Background(), &volume_server_pb.VolumeMountRequest{
 			VolumeId: uint32(volumeId),
 		})
 		if mountErr != nil {

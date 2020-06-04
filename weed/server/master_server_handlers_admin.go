@@ -25,8 +25,8 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	for _, server := range collection.ListVolumeServers() {
-		err := operation.WithVolumeServerClient(server.Url(), ms.grpcDialOption, func(ctx context.Context, client volume_server_pb.VolumeServerClient) error {
-			_, deleteErr := client.DeleteCollection(ctx, &volume_server_pb.DeleteCollectionRequest{
+		err := operation.WithVolumeServerClient(server.Url(), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+			_, deleteErr := client.DeleteCollection(context.Background(), &volume_server_pb.DeleteCollectionRequest{
 				Collection: collection.Name,
 			})
 			return deleteErr
@@ -44,7 +44,7 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 
 func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
-	m["Version"] = util.VERSION
+	m["Version"] = util.Version()
 	m["Topology"] = ms.Topo.ToMap()
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
@@ -61,7 +61,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	glog.Infoln("garbageThreshold =", gcThreshold)
+	// glog.Infoln("garbageThreshold =", gcThreshold)
 	ms.Topo.Vacuum(ms.grpcDialOption, gcThreshold, ms.preallocateSize)
 	ms.dirStatusHandler(w, r)
 }
@@ -93,7 +93,7 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 
 func (ms *MasterServer) volumeStatusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
-	m["Version"] = util.VERSION
+	m["Version"] = util.Version()
 	m["Volumes"] = ms.Topo.ToVolumeMap()
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }

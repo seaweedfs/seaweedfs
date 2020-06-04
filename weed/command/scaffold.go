@@ -18,7 +18,7 @@ var cmdScaffold = &Command{
 	For example, the filer.toml mysql password can be overwritten by environment variable
 		export WEED_MYSQL_PASSWORD=some_password
 	Environment variable rules:
-		* Prefix fix with "WEED_"
+		* Prefix the variable name with "WEED_"
 		* Upppercase the reset of variable name.
 		* Replace '.' with '_'
 
@@ -74,7 +74,12 @@ const (
 # with http DELETE, by default the filer would check whether a folder is empty.
 # recursive_delete will delete all sub folders and files, similar to "rm -Rf"
 recursive_delete = false
-
+# directories under this folder will be automatically creating a separate bucket
+buckets_folder = "/buckets"
+buckets_fsync = [          # a list of buckets with all write requests fsync=true
+	"important_bucket",
+	"should_always_fsync",
+]
 
 ####################################################
 # The following are filer store options
@@ -136,13 +141,13 @@ hosts=[
 	"localhost:9042",
 ]
 
-[redis]
+[redis2]
 enabled = false
 address  = "localhost:6379"
 password = ""
 database = 0
 
-[redis_cluster]
+[redis_cluster2]
 enabled = false
 addresses = [
     "localhost:30001",
@@ -163,11 +168,11 @@ enabled = false
 servers = "localhost:2379"
 timeout = "3s"
 
-[tikv]
+[mongodb]
 enabled = false
-pdAddress = "192.168.199.113:2379"
-
-
+uri = "mongodb://localhost:27017"
+option_pool_size = 0
+database = "seaweedfs"
 `
 
 	NOTIFICATION_TOML_EXAMPLE = `
@@ -262,6 +267,7 @@ aws_secret_access_key = ""     # if empty, loads from the shared credentials fil
 region = "us-east-2"
 bucket = "your_bucket_name"    # an existing bucket
 directory = "/"                # destination directory
+endpoint = ""
 
 [sink.google_cloud_storage]
 # read credentials doc at https://cloud.google.com/docs/authentication/getting-started
@@ -323,6 +329,10 @@ key  = ""
 cert = ""
 key  = ""
 
+[grpc.msg_broker]
+cert = ""
+key  = ""
+
 # use this for any place needs a grpc client
 # i.e., "weed backup|benchmark|filer.copy|filer.replicate|mount|s3|upload"
 [grpc.client]
@@ -352,15 +362,19 @@ key  = ""
 [master.maintenance]
 # periodically run these scripts are the same as running them from 'weed shell'
 scripts = """
+  lock
   ec.encode -fullPercent=95 -quietFor=1h
   ec.rebuild -force
   ec.balance -force
   volume.balance -force
+  volume.fix.replication
+  unlock
 """
 sleep_minutes = 17          # sleep minutes between each script execution
 
 [master.filer]
-default_filer_url = "http://localhost:8888/"
+default = "localhost:8888"    # used by maintenance scripts if the scripts needs to use fs related commands
+
 
 [master.sequencer]
 type = "memory"     # Choose [memory|etcd] type for storing the file id sequence
@@ -378,13 +392,27 @@ sequencer_etcd_urls = "http://127.0.0.1:2379"
 	aws_secret_access_key = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
 	region = "us-east-2"
 	bucket = "your_bucket_name"    # an existing bucket
+	endpoint = ""
 
 # create this number of logical volumes if no more writable volumes
+# count_x means how many copies of data.
+# e.g.:
+#   000 has only one copy, copy_1
+#   010 and 001 has two copies, copy_2
+#   011 has only 3 copies, copy_3
 [master.volume_growth]
-count_1 = 7                # create 1 x 7 = 7 actual volumes
-count_2 = 6                # create 2 x 6 = 12 actual volumes
-count_3 = 3                # create 3 x 3 = 9 actual volumes
-count_other = 1            # create n x 1 = n actual volumes
+copy_1 = 7                # create 1 x 7 = 7 actual volumes
+copy_2 = 6                # create 2 x 6 = 12 actual volumes
+copy_3 = 3                # create 3 x 3 = 9 actual volumes
+copy_other = 1            # create n x 1 = n actual volumes
+
+# configuration flags for replication
+[master.replication]
+# any replication counts should be considered minimums. If you specify 010 and
+# have 3 different racks, that's still considered writable. Writes will still
+# try to replicate to all available volumes. You should only use this option
+# if you are doing your own replication or periodic sync of volumes.
+treat_replication_as_minimums = false
 
 `
 )

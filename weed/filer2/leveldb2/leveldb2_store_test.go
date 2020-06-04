@@ -2,14 +2,16 @@ package leveldb
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"io/ioutil"
 	"os"
 	"testing"
+
+	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func TestCreateAndFind(t *testing.T) {
-	filer := filer2.NewFiler(nil, nil)
+	filer := filer2.NewFiler(nil, nil, "", 0, "", "", nil)
 	dir, _ := ioutil.TempDir("", "seaweedfs_filer_test")
 	defer os.RemoveAll(dir)
 	store := &LevelDB2Store{}
@@ -17,7 +19,7 @@ func TestCreateAndFind(t *testing.T) {
 	filer.SetStore(store)
 	filer.DisableDirectoryCache()
 
-	fullpath := filer2.FullPath("/home/chris/this/is/one/file1.jpg")
+	fullpath := util.FullPath("/home/chris/this/is/one/file1.jpg")
 
 	ctx := context.Background()
 
@@ -48,14 +50,14 @@ func TestCreateAndFind(t *testing.T) {
 	}
 
 	// checking one upper directory
-	entries, _ := filer.ListDirectoryEntries(ctx, filer2.FullPath("/home/chris/this/is/one"), "", false, 100)
+	entries, _ := filer.ListDirectoryEntries(ctx, util.FullPath("/home/chris/this/is/one"), "", false, 100)
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
 		return
 	}
 
 	// checking one upper directory
-	entries, _ = filer.ListDirectoryEntries(ctx, filer2.FullPath("/"), "", false, 100)
+	entries, _ = filer.ListDirectoryEntries(ctx, util.FullPath("/"), "", false, 100)
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
 		return
@@ -64,7 +66,7 @@ func TestCreateAndFind(t *testing.T) {
 }
 
 func TestEmptyRoot(t *testing.T) {
-	filer := filer2.NewFiler(nil, nil)
+	filer := filer2.NewFiler(nil, nil, "", 0, "", "", nil)
 	dir, _ := ioutil.TempDir("", "seaweedfs_filer_test2")
 	defer os.RemoveAll(dir)
 	store := &LevelDB2Store{}
@@ -75,7 +77,7 @@ func TestEmptyRoot(t *testing.T) {
 	ctx := context.Background()
 
 	// checking one upper directory
-	entries, err := filer.ListDirectoryEntries(ctx, filer2.FullPath("/"), "", false, 100)
+	entries, err := filer.ListDirectoryEntries(ctx, util.FullPath("/"), "", false, 100)
 	if err != nil {
 		t.Errorf("list entries: %v", err)
 		return

@@ -9,14 +9,14 @@ import (
 )
 
 var (
-	shellOptions         shell.ShellOptions
-	shellInitialFilerUrl *string
+	shellOptions      shell.ShellOptions
+	shellInitialFiler *string
 )
 
 func init() {
 	cmdShell.Run = runShell // break init cycle
 	shellOptions.Masters = cmdShell.Flag.String("master", "localhost:9333", "comma-separated master servers")
-	shellInitialFilerUrl = cmdShell.Flag.String("filer.url", "http://localhost:8888/", "initial filer url")
+	shellInitialFiler = cmdShell.Flag.String("filer", "localhost:8888", "filer host and port")
 }
 
 var cmdShell = &Command{
@@ -32,12 +32,13 @@ func runShell(command *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 	shellOptions.GrpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
-	var filerPwdErr error
-	shellOptions.FilerHost, shellOptions.FilerPort, shellOptions.Directory, filerPwdErr = util.ParseFilerUrl(*shellInitialFilerUrl)
-	if filerPwdErr != nil {
-		fmt.Printf("failed to parse url filer.url=%s : %v\n", *shellInitialFilerUrl, filerPwdErr)
+	var err error
+	shellOptions.FilerHost, shellOptions.FilerPort, err = util.ParseHostPort(*shellInitialFiler)
+	if err != nil {
+		fmt.Printf("failed to parse filer %s: %v\n", *shellInitialFiler, err)
 		return false
 	}
+	shellOptions.Directory = "/"
 
 	shell.RunShell(shellOptions)
 

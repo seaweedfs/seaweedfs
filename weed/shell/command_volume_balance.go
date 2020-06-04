@@ -60,6 +60,10 @@ func (c *commandVolumeBalance) Help() string {
 
 func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
+	}
+
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	collection := balanceCommand.String("collection", "EACH_COLLECTION", "collection name, or use \"ALL_COLLECTIONS\" across collections, \"EACH_COLLECTION\" for each collection")
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
@@ -69,9 +73,8 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	}
 
 	var resp *master_pb.VolumeListResponse
-	ctx := context.Background()
-	err = commandEnv.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+		resp, err = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		return err
 	})
 	if err != nil {
@@ -109,14 +112,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	return nil
 }
 
-func balanceVolumeServers(commandEnv *CommandEnv, dataNodeInfos []*master_pb.DataNodeInfo, volumeSizeLimit uint64, collection string, applyBalancing bool) error {
-
-	var nodes []*Node
-	for _, dn := range dataNodeInfos {
-		nodes = append(nodes, &Node{
-			info: dn,
-		})
-	}
+func balanceVolumeServers(commandEnv *CommandEnv, nodes []*Node, volumeSizeLimit uint64, collection string, applyBalancing bool) error {
 
 	// balance writable volumes
 	for _, n := range nodes {
@@ -151,15 +147,19 @@ func balanceVolumeServers(commandEnv *CommandEnv, dataNodeInfos []*master_pb.Dat
 	return nil
 }
 
-func collectVolumeServersByType(t *master_pb.TopologyInfo, selectedDataCenter string) (typeToNodes map[uint64][]*master_pb.DataNodeInfo) {
-	typeToNodes = make(map[uint64][]*master_pb.DataNodeInfo)
+func collectVolumeServersByType(t *master_pb.TopologyInfo, selectedDataCenter string) (typeToNodes map[uint64][]*Node) {
+	typeToNodes = make(map[uint64][]*Node)
 	for _, dc := range t.DataCenterInfos {
 		if selectedDataCenter != "" && dc.Id != selectedDataCenter {
 			continue
 		}
 		for _, r := range dc.RackInfos {
 			for _, dn := range r.DataNodeInfos {
-				typeToNodes[dn.MaxVolumeCount] = append(typeToNodes[dn.MaxVolumeCount], dn)
+				typeToNodes[dn.MaxVolumeCount] = append(typeToNodes[dn.MaxVolumeCount], &Node{
+					info: dn,
+					dc:   dc.Id,
+					rack: r.Id,
+				})
 			}
 		}
 	}
@@ -169,6 +169,8 @@ func collectVolumeServersByType(t *master_pb.TopologyInfo, selectedDataCenter st
 type Node struct {
 	info            *master_pb.DataNodeInfo
 	selectedVolumes map[uint32]*master_pb.VolumeInformationMessage
+	dc              string
+	rack            string
 }
 
 func sortWritableVolumes(volumes []*master_pb.VolumeInformationMessage) {
@@ -210,6 +212,13 @@ func balanceSelectedVolume(commandEnv *CommandEnv, nodes []*Node, sortCandidates
 			sortCandidatesFn(candidateVolumes)
 
 			for _, v := range candidateVolumes {
+				if v.ReplicaPlacement > 0 {
+					if fullNode.dc != emptyNode.dc && fullNode.rack != emptyNode.rack {
+						// TODO this logic is too simple, but should work most of the time
+						// Need a correct algorithm to handle all different cases
+						continue
+					}
+				}
 				if _, found := emptyNode.selectedVolumes[v.Id]; !found {
 					if err := moveVolume(commandEnv, v, fullNode, emptyNode, applyBalancing); err == nil {
 						delete(fullNode.selectedVolumes, v.Id)
@@ -233,8 +242,7 @@ func moveVolume(commandEnv *CommandEnv, v *master_pb.VolumeInformationMessage, f
 	}
 	fmt.Fprintf(os.Stdout, "moving volume %s%d %s => %s\n", collectionPrefix, v.Id, fullNode.info.Id, emptyNode.info.Id)
 	if applyBalancing {
-		ctx := context.Background()
-		return LiveMoveVolume(ctx, commandEnv.option.GrpcDialOption, needle.VolumeId(v.Id), fullNode.info.Id, emptyNode.info.Id, 5*time.Second)
+		return LiveMoveVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(v.Id), fullNode.info.Id, emptyNode.info.Id, 5*time.Second)
 	}
 	return nil
 }

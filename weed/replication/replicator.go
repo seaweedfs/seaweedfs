@@ -3,7 +3,6 @@ package replication
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -36,33 +35,33 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 		glog.V(4).Infof("skipping %v outside of %v", key, r.source.Dir)
 		return nil
 	}
-	newKey := filepath.ToSlash(filepath.Join(r.sink.GetSinkToDirectory(), key[len(r.source.Dir):]))
+	newKey := util.Join(r.sink.GetSinkToDirectory(), key[len(r.source.Dir):])
 	glog.V(3).Infof("replicate %s => %s", key, newKey)
 	key = newKey
 	if message.OldEntry != nil && message.NewEntry == nil {
 		glog.V(4).Infof("deleting %v", key)
-		return r.sink.DeleteEntry(ctx, key, message.OldEntry.IsDirectory, message.DeleteChunks)
+		return r.sink.DeleteEntry(key, message.OldEntry.IsDirectory, message.DeleteChunks)
 	}
 	if message.OldEntry == nil && message.NewEntry != nil {
 		glog.V(4).Infof("creating %v", key)
-		return r.sink.CreateEntry(ctx, key, message.NewEntry)
+		return r.sink.CreateEntry(key, message.NewEntry)
 	}
 	if message.OldEntry == nil && message.NewEntry == nil {
 		glog.V(0).Infof("weird message %+v", message)
 		return nil
 	}
 
-	foundExisting, err := r.sink.UpdateEntry(ctx, key, message.OldEntry, message.NewParentPath, message.NewEntry, message.DeleteChunks)
+	foundExisting, err := r.sink.UpdateEntry(key, message.OldEntry, message.NewParentPath, message.NewEntry, message.DeleteChunks)
 	if foundExisting {
 		glog.V(4).Infof("updated %v", key)
 		return err
 	}
 
-	err = r.sink.DeleteEntry(ctx, key, message.OldEntry.IsDirectory, false)
+	err = r.sink.DeleteEntry(key, message.OldEntry.IsDirectory, false)
 	if err != nil {
 		return fmt.Errorf("delete old entry %v: %v", key, err)
 	}
 
 	glog.V(4).Infof("creating missing %v", key)
-	return r.sink.CreateEntry(ctx, key, message.NewEntry)
+	return r.sink.CreateEntry(key, message.NewEntry)
 }

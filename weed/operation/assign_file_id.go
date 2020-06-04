@@ -3,11 +3,13 @@ package operation
 import (
 	"context"
 	"fmt"
+	"strings"
+
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"google.golang.org/grpc"
-	"strings"
 )
 
 type VolumeAssignRequest struct {
@@ -44,7 +46,7 @@ func Assign(server string, grpcDialOption grpc.DialOption, primaryRequest *Volum
 			continue
 		}
 
-		lastError = WithMasterServerClient(server, grpcDialOption, func(ctx context.Context, masterClient master_pb.SeaweedClient) error {
+		lastError = WithMasterServerClient(server, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
 			req := &master_pb.AssignRequest{
 				Count:               primaryRequest.Count,

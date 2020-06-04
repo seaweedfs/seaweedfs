@@ -8,10 +8,12 @@ import (
 	"strings"
 
 	"github.com/chrislusf/raft/protobuf"
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc/reflection"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/server"
@@ -43,10 +45,10 @@ type MasterOptions struct {
 func init() {
 	cmdMaster.Run = runMaster // break init cycle
 	m.port = cmdMaster.Flag.Int("port", 9333, "http listen port")
-	m.ip = cmdMaster.Flag.String("ip", "localhost", "master <ip>|<server> address")
+	m.ip = cmdMaster.Flag.String("ip", util.DetectedHostAddress(), "master <ip>|<server> address")
 	m.ipBind = cmdMaster.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	m.metaFolder = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
-	m.peers = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094")
+	m.peers = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
 	m.volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
 	m.volumePreallocate = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
 	m.pulseSeconds = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
@@ -81,7 +83,7 @@ func runMaster(cmd *Command, args []string) bool {
 	util.LoadConfiguration("master", false)
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	util.SetupProfiling(*masterCpuProfile, *masterMemProfile)
+	grace.SetupProfiling(*masterCpuProfile, *masterMemProfile)
 
 	if err := util.TestFolderWritable(*m.metaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *m.metaFolder, err)
@@ -109,7 +111,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), peers)
 	listeningAddress := *masterOption.ipBind + ":" + strconv.Itoa(*masterOption.port)
-	glog.V(0).Infof("Start Seaweed Master %s at %s", util.VERSION, listeningAddress)
+	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
 	masterListener, e := util.NewListener(listeningAddress, 0)
 	if e != nil {
 		glog.Fatalf("Master startup error: %v", e)
@@ -129,11 +131,11 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	// Create your protocol servers.
-	grpcS := util.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.master"))
+	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.master"))
 	master_pb.RegisterSeaweedServer(grpcS, ms)
 	protobuf.RegisterRaftServer(grpcS, raftServer)
 	reflection.Register(grpcS)
-	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.VERSION, *masterOption.ipBind, grpcPort)
+	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOption.ipBind, grpcPort)
 	go grpcS.Serve(grpcL)
 
 	go ms.MasterClient.KeepConnectedToMaster()
@@ -146,6 +148,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 }
 
 func checkPeers(masterIp string, masterPort int, peers string) (masterAddress string, cleanedPeers []string) {
+	glog.V(0).Infof("current: %s:%d peers:%s", masterIp, masterPort, peers)
 	masterAddress = masterIp + ":" + strconv.Itoa(masterPort)
 	if peers != "" {
 		cleanedPeers = strings.Split(peers, ",")
@@ -170,6 +173,7 @@ func checkPeers(masterIp string, masterPort int, peers string) (masterAddress st
 
 func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {
 	return &weed_server.MasterOption{
+		Host:                    *m.ip,
 		Port:                    *m.port,
 		MetaFolder:              *m.metaFolder,
 		VolumeSizeLimitMB:       *m.volumeSizeLimitMB,

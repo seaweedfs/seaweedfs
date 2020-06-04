@@ -11,14 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gorilla/mux"
+
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/gorilla/mux"
-)
-
-const (
-	maxObjectListSizeLimit = 1000 // Limit number of objects in a listObjectsResponse.
 )
 
 func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Request) {
@@ -46,9 +43,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		marker = startAfter
 	}
 
-	ctx := context.Background()
-
-	response, err := s3a.listFilerEntries(ctx, bucket, originalPrefix, maxKeys, marker)
+	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker)
 
 	if err != nil {
 		writeErrorResponse(w, ErrInternalError, r.URL)
@@ -66,8 +61,6 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
-	ctx := context.Background()
-
 	originalPrefix, marker, delimiter, maxKeys := getListObjectsV1Args(r.URL.Query())
 
 	if maxKeys < 0 {
@@ -79,7 +72,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	response, err := s3a.listFilerEntries(ctx, bucket, originalPrefix, maxKeys, marker)
+	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker)
 
 	if err != nil {
 		writeErrorResponse(w, ErrInternalError, r.URL)
@@ -89,7 +82,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	writeSuccessResponseXML(w, encodeResponse(response))
 }
 
-func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket, originalPrefix string, maxKeys int, marker string) (response ListBucketResult, err error) {
+func (s3a *S3ApiServer) listFilerEntries(bucket, originalPrefix string, maxKeys int, marker string) (response ListBucketResult, err error) {
 
 	// convert full path prefix into directory name and prefix for entry name
 	dir, prefix := filepath.Split(originalPrefix)
@@ -98,7 +91,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket, originalPr
 	}
 
 	// check filer
-	err = s3a.withFilerClient(ctx, func(client filer_pb.SeaweedFilerClient) error {
+	err = s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.ListEntriesRequest{
 			Directory:          fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, dir),
@@ -108,7 +101,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket, originalPr
 			InclusiveStartFrom: false,
 		}
 
-		stream, err := client.ListEntries(ctx, request)
+		stream, err := client.ListEntries(context.Background(), request)
 		if err != nil {
 			return fmt.Errorf("list buckets: %v", err)
 		}
@@ -146,7 +139,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket, originalPr
 				contents = append(contents, ListEntry{
 					Key:          fmt.Sprintf("%s%s", dir, entry.Name),
 					LastModified: time.Unix(entry.Attributes.Mtime, 0),
-					ETag:         "\"" + filer2.ETag(entry.Chunks) + "\"",
+					ETag:         "\"" + filer2.ETag(entry) + "\"",
 					Size:         int64(filer2.TotalSize(entry.Chunks)),
 					Owner: CanonicalUser{
 						ID:          fmt.Sprintf("%x", entry.Attributes.Uid),

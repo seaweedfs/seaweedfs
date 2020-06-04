@@ -2,17 +2,18 @@ package s3api
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"encoding/xml"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"google.golang.org/grpc"
 	"net/http"
 	"net/url"
 	"time"
+
+	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
 type mimeType string
@@ -37,13 +38,18 @@ func encodeResponse(response interface{}) []byte {
 	return bytesBuffer.Bytes()
 }
 
-func (s3a *S3ApiServer) withFilerClient(ctx context.Context, fn func(filer_pb.SeaweedFilerClient) error) error {
+var _ = filer_pb.FilerClient(&S3ApiServer{})
 
-	return util.WithCachedGrpcClient(ctx, func(ctx context.Context, grpcConnection *grpc.ClientConn) error {
+func (s3a *S3ApiServer) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
+
+	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
 	}, s3a.option.FilerGrpcAddress, s3a.option.GrpcDialOption)
 
+}
+func (s3a *S3ApiServer) AdjustedUrl(hostAndPort string) string {
+	return hostAndPort
 }
 
 // If none of the http routes match respond with MethodNotAllowed

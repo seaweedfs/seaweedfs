@@ -70,6 +70,7 @@ func runFix(cmd *Command, args []string) bool {
 	indexFileName := path.Join(*fixVolumePath, baseFileName+".idx")
 
 	nm := needle_map.NewMemDb()
+	defer nm.Close()
 
 	vid := needle.VolumeId(*fixVolumeId)
 	scanner := &VolumeFileScanner4Fix{

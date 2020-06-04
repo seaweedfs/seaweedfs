@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/server"
@@ -22,17 +23,18 @@ var (
 type FilerOptions struct {
 	masters                 *string
 	ip                      *string
+	bindIp                  *string
 	port                    *int
 	publicPort              *int
 	collection              *string
 	defaultReplicaPlacement *string
-	redirectOnRead          *bool
 	disableDirListing       *bool
 	maxMB                   *int
 	dirListingLimit         *int
 	dataCenter              *string
 	enableNotification      *bool
 	disableHttp             *bool
+	cipher                  *bool
 
 	// default leveldb directory, used in "weed server" mode
 	defaultLevelDbDirectory *string
@@ -42,16 +44,17 @@ func init() {
 	cmdFiler.Run = runFiler // break init cycle
 	f.masters = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this collection")
-	f.ip = cmdFiler.Flag.String("ip", "", "filer server http listen ip address")
+	f.ip = cmdFiler.Flag.String("ip", util.DetectedHostAddress(), "filer server http listen ip address")
+	f.bindIp = cmdFiler.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
 	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "000", "default replication type if not specified")
-	f.redirectOnRead = cmdFiler.Flag.Bool("redirectOnRead", false, "whether proxy or redirect to volume server during file GET request")
 	f.disableDirListing = cmdFiler.Flag.Bool("disableDirListing", false, "turn off directory listing")
 	f.maxMB = cmdFiler.Flag.Int("maxMB", 32, "split files larger than the limit")
 	f.dirListingLimit = cmdFiler.Flag.Int("dirListLimit", 100000, "limit sub dir listing size")
 	f.dataCenter = cmdFiler.Flag.String("dataCenter", "", "prefer to write to volumes in this data center")
 	f.disableHttp = cmdFiler.Flag.Bool("disableHttp", false, "disable http request, only gRpc operations are allowed")
+	f.cipher = cmdFiler.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
 }
 
 var cmdFiler = &Command{
@@ -102,22 +105,23 @@ func (fo *FilerOptions) startFiler() {
 		Masters:            strings.Split(*fo.masters, ","),
 		Collection:         *fo.collection,
 		DefaultReplication: *fo.defaultReplicaPlacement,
-		RedirectOnRead:     *fo.redirectOnRead,
 		DisableDirListing:  *fo.disableDirListing,
 		MaxMB:              *fo.maxMB,
 		DirListingLimit:    *fo.dirListingLimit,
 		DataCenter:         *fo.dataCenter,
 		DefaultLevelDbDir:  defaultLevelDbDirectory,
 		DisableHttp:        *fo.disableHttp,
-		Port:               *fo.port,
+		Host:               *fo.ip,
+		Port:               uint32(*fo.port),
+		Cipher:             *fo.cipher,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
 	}
 
 	if *fo.publicPort != 0 {
-		publicListeningAddress := *fo.ip + ":" + strconv.Itoa(*fo.publicPort)
-		glog.V(0).Infoln("Start Seaweed filer server", util.VERSION, "public at", publicListeningAddress)
+		publicListeningAddress := *fo.bindIp + ":" + strconv.Itoa(*fo.publicPort)
+		glog.V(0).Infoln("Start Seaweed filer server", util.Version(), "public at", publicListeningAddress)
 		publicListener, e := util.NewListener(publicListeningAddress, 0)
 		if e != nil {
 			glog.Fatalf("Filer server public listener error on port %d:%v", *fo.publicPort, e)
@@ -129,9 +133,9 @@ func (fo *FilerOptions) startFiler() {
 		}()
 	}
 
-	glog.V(0).Infof("Start Seaweed Filer %s at %s:%d", util.VERSION, *fo.ip, *fo.port)
+	glog.V(0).Infof("Start Seaweed Filer %s at %s:%d", util.Version(), *fo.ip, *fo.port)
 	filerListener, e := util.NewListener(
-		*fo.ip+":"+strconv.Itoa(*fo.port),
+		*fo.bindIp+":"+strconv.Itoa(*fo.port),
 		time.Duration(10)*time.Second,
 	)
 	if e != nil {
@@ -144,7 +148,7 @@ func (fo *FilerOptions) startFiler() {
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
-	grpcS := util.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
+	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
 	reflection.Register(grpcS)
 	go grpcS.Serve(grpcL)

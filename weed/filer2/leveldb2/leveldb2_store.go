@@ -9,11 +9,13 @@ import (
 	"os"
 
 	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	weed_util "github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -51,9 +53,12 @@ func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
 		dbFolder := fmt.Sprintf("%s/%02d", dir, d)
 		os.MkdirAll(dbFolder, 0755)
 		db, dbErr := leveldb.OpenFile(dbFolder, opts)
+		if errors.IsCorrupted(dbErr) {
+			db, dbErr = leveldb.RecoverFile(dbFolder, opts)
+		}
 		if dbErr != nil {
 			glog.Errorf("filer store open dir %s: %v", dbFolder, dbErr)
-			return
+			return dbErr
 		}
 		store.dbs = append(store.dbs, db)
 	}
@@ -97,14 +102,14 @@ func (store *LevelDB2Store) UpdateEntry(ctx context.Context, entry *filer2.Entry
 	return store.InsertEntry(ctx, entry)
 }
 
-func (store *LevelDB2Store) FindEntry(ctx context.Context, fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
+func (store *LevelDB2Store) FindEntry(ctx context.Context, fullpath weed_util.FullPath) (entry *filer2.Entry, err error) {
 	dir, name := fullpath.DirAndName()
 	key, partitionId := genKey(dir, name, store.dbCount)
 
 	data, err := store.dbs[partitionId].Get(key, nil)
 
 	if err == leveldb.ErrNotFound {
-		return nil, filer2.ErrNotFound
+		return nil, filer_pb.ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get %s : %v", entry.FullPath, err)
@@ -123,7 +128,7 @@ func (store *LevelDB2Store) FindEntry(ctx context.Context, fullpath filer2.FullP
 	return entry, nil
 }
 
-func (store *LevelDB2Store) DeleteEntry(ctx context.Context, fullpath filer2.FullPath) (err error) {
+func (store *LevelDB2Store) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	dir, name := fullpath.DirAndName()
 	key, partitionId := genKey(dir, name, store.dbCount)
 
@@ -135,7 +140,7 @@ func (store *LevelDB2Store) DeleteEntry(ctx context.Context, fullpath filer2.Ful
 	return nil
 }
 
-func (store *LevelDB2Store) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) (err error) {
+func (store *LevelDB2Store) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	directoryPrefix, partitionId := genDirectoryKeyPrefix(fullpath, "", store.dbCount)
 
 	batch := new(leveldb.Batch)
@@ -163,7 +168,7 @@ func (store *LevelDB2Store) DeleteFolderChildren(ctx context.Context, fullpath f
 	return nil
 }
 
-func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool,
+func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool,
 	limit int) (entries []*filer2.Entry, err error) {
 
 	directoryPrefix, partitionId := genDirectoryKeyPrefix(fullpath, "", store.dbCount)
@@ -187,7 +192,7 @@ func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, fullpath f
 			break
 		}
 		entry := &filer2.Entry{
-			FullPath: filer2.NewFullPath(string(fullpath), fileName),
+			FullPath: weed_util.NewFullPath(string(fullpath), fileName),
 		}
 
 		// println("list", entry.FullPath, "chunks", len(entry.Chunks))
@@ -210,7 +215,7 @@ func genKey(dirPath, fileName string, dbCount int) (key []byte, partitionId int)
 	return key, partitionId
 }
 
-func genDirectoryKeyPrefix(fullpath filer2.FullPath, startFileName string, dbCount int) (keyPrefix []byte, partitionId int) {
+func genDirectoryKeyPrefix(fullpath weed_util.FullPath, startFileName string, dbCount int) (keyPrefix []byte, partitionId int) {
 	keyPrefix, partitionId = hashToBytes(string(fullpath), dbCount)
 	if len(startFileName) > 0 {
 		keyPrefix = append(keyPrefix, []byte(startFileName)...)
@@ -234,4 +239,10 @@ func hashToBytes(dir string, dbCount int) ([]byte, int) {
 	x := b[len(b)-1]
 
 	return b, int(x) % dbCount
+}
+
+func (store *LevelDB2Store) Shutdown() {
+	for d := 0; d < store.dbCount; d++ {
+		store.dbs[d].Close()
+	}
 }

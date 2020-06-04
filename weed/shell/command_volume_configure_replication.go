@@ -35,6 +35,10 @@ func (c *commandVolumeConfigureReplication) Help() string {
 
 func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
+	}
+
 	configureReplicationCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeIdInt := configureReplicationCommand.Int("volumeId", 0, "the volume id")
 	replicationString := configureReplicationCommand.String("replication", "", "the intended replication value")
@@ -53,9 +57,8 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 	replicaPlacementInt32 := uint32(replicaPlacement.Byte())
 
 	var resp *master_pb.VolumeListResponse
-	ctx := context.Background()
-	err = commandEnv.MasterClient.WithClient(ctx, func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+		resp, err = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		return err
 	})
 	if err != nil {
@@ -81,8 +84,8 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 	}
 
 	for _, dst := range allLocations {
-		err := operation.WithVolumeServerClient(dst.dataNode.Id, commandEnv.option.GrpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
-			resp, configureErr := volumeServerClient.VolumeConfigure(ctx, &volume_server_pb.VolumeConfigureRequest{
+		err := operation.WithVolumeServerClient(dst.dataNode.Id, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+			resp, configureErr := volumeServerClient.VolumeConfigure(context.Background(), &volume_server_pb.VolumeConfigureRequest{
 				VolumeId:    uint32(vid),
 				Replication: replicaPlacement.String(),
 			})

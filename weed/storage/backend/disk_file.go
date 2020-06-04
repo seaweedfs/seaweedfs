@@ -48,3 +48,7 @@ func (df *DiskFile) GetStat() (datSize int64, modTime time.Time, err error) {
 func (df *DiskFile) Name() string {
 	return df.fullFilePath
 }
+
+func (df *DiskFile) Sync() error {
+	return df.File.Sync()
+}

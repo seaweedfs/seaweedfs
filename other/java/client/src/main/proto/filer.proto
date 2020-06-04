@@ -21,6 +21,9 @@ service SeaweedFiler {
     rpc UpdateEntry (UpdateEntryRequest) returns (UpdateEntryResponse) {
     }
 
+    rpc AppendToEntry (AppendToEntryRequest) returns (AppendToEntryResponse) {
+    }
+
     rpc DeleteEntry (DeleteEntryRequest) returns (DeleteEntryResponse) {
     }
 
@@ -40,6 +43,15 @@ service SeaweedFiler {
     }
 
     rpc GetFilerConfiguration (GetFilerConfigurationRequest) returns (GetFilerConfigurationResponse) {
+    }
+
+    rpc SubscribeMetadata (SubscribeMetadataRequest) returns (stream SubscribeMetadataResponse) {
+    }
+
+    rpc KeepConnected (stream KeepConnectedRequest) returns (stream KeepConnectedResponse) {
+    }
+
+    rpc LocateBroker (LocateBrokerRequest) returns (LocateBrokerResponse) {
     }
 
 }
@@ -96,6 +108,8 @@ message FileChunk {
     string source_file_id = 6; // to be deprecated
     FileId fid = 7;
     FileId source_fid = 8;
+    bytes cipher_key = 9;
+    bool is_gzipped = 10;
 }
 
 message FileId {
@@ -118,6 +132,7 @@ message FuseAttributes {
     string user_name = 11; // for hdfs
     repeated string group_name = 12; // for hdfs
     string symlink_target = 13;
+    bytes md5 = 14;
 }
 
 message CreateEntryRequest {
@@ -137,6 +152,14 @@ message UpdateEntryRequest {
 message UpdateEntryResponse {
 }
 
+message AppendToEntryRequest {
+    string directory = 1;
+    string entry_name = 2;
+    repeated FileChunk chunks = 3;
+}
+message AppendToEntryResponse {
+}
+
 message DeleteEntryRequest {
     string directory = 1;
     string name = 2;
@@ -147,6 +170,7 @@ message DeleteEntryRequest {
 }
 
 message DeleteEntryResponse {
+    string error = 1;
 }
 
 message AtomicRenameEntryRequest {
@@ -165,6 +189,7 @@ message AssignVolumeRequest {
     string replication = 3;
     int32 ttl_sec = 4;
     string data_center = 5;
+    string parent_path = 6;
 }
 
 message AssignVolumeResponse {
@@ -173,6 +198,9 @@ message AssignVolumeResponse {
     string public_url = 3;
     int32 count = 4;
     string auth = 5;
+    string collection = 6;
+    string replication = 7;
+    string error = 8;
 }
 
 message LookupVolumeRequest {
@@ -219,4 +247,45 @@ message GetFilerConfigurationResponse {
     string replication = 2;
     string collection = 3;
     uint32 max_mb = 4;
+    string dir_buckets = 5;
+    bool cipher = 7;
+}
+
+message SubscribeMetadataRequest {
+    string client_name = 1;
+    string path_prefix = 2;
+    int64 since_ns = 3;
+}
+message SubscribeMetadataResponse {
+    string directory = 1;
+    EventNotification event_notification = 2;
+    int64 ts_ns = 3;
+}
+
+message LogEntry {
+    int64 ts_ns = 1;
+    int32 partition_key_hash = 2;
+    bytes data = 3;
+}
+
+message KeepConnectedRequest {
+    string name = 1;
+    uint32 grpc_port = 2;
+    repeated string resources = 3;
+}
+message KeepConnectedResponse {
+}
+
+message LocateBrokerRequest {
+    string resource = 1;
+}
+message LocateBrokerResponse {
+    bool found = 1;
+    // if found, send the exact address
+    // if not found, send the full list of existing brokers
+    message Resource {
+        string grpc_addresses = 1;
+        int32 resource_count = 2;
+    }
+    repeated Resource resources = 2;
 }

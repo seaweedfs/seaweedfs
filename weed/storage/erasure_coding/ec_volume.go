@@ -152,6 +152,13 @@ func (ev *EcVolume) ShardSize() int64 {
 	return 0
 }
 
+func (ev *EcVolume) Size() (size int64) {
+	for _, shard := range ev.Shards {
+		size += shard.Size()
+	}
+	return
+}
+
 func (ev *EcVolume) CreatedAt() time.Time {
 	return ev.ecxCreatedAt
 }

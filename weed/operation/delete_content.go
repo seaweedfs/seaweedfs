@@ -10,7 +10,6 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 )
 
@@ -30,10 +29,18 @@ func ParseFileId(fid string) (vid string, key_cookie string, err error) {
 }
 
 // DeleteFiles batch deletes a list of fileIds
-func DeleteFiles(master string, grpcDialOption grpc.DialOption, fileIds []string) ([]*volume_server_pb.DeleteResult, error) {
+func DeleteFiles(master string, usePublicUrl bool, grpcDialOption grpc.DialOption, fileIds []string) ([]*volume_server_pb.DeleteResult, error) {
 
-	lookupFunc := func(vids []string) (map[string]LookupResult, error) {
-		return LookupVolumeIds(master, grpcDialOption, vids)
+	lookupFunc := func(vids []string) (results map[string]LookupResult, err error) {
+		results, err = LookupVolumeIds(master, grpcDialOption, vids)
+		if err == nil && usePublicUrl {
+			for _, result := range results {
+				for _, loc := range result.Locations {
+					loc.Url = loc.PublicUrl
+				}
+			}
+		}
+		return
 	}
 
 	return DeleteFilesWithLookupVolumeId(grpcDialOption, fileIds, lookupFunc)
@@ -94,7 +101,7 @@ func DeleteFilesWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []str
 		go func(server string, fidList []string) {
 			defer wg.Done()
 
-			if deleteResults, deleteErr := DeleteFilesAtOneVolumeServer(server, grpcDialOption, fidList); deleteErr != nil {
+			if deleteResults, deleteErr := DeleteFilesAtOneVolumeServer(server, grpcDialOption, fidList, true); deleteErr != nil {
 				err = deleteErr
 			} else if deleteResults != nil {
 				resultChan <- deleteResults
@@ -109,18 +116,17 @@ func DeleteFilesWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []str
 		ret = append(ret, result...)
 	}
 
-	glog.V(1).Infof("deleted %d items", len(ret))
-
 	return ret, err
 }
 
 // DeleteFilesAtOneVolumeServer deletes a list of files that is on one volume server via gRpc
-func DeleteFilesAtOneVolumeServer(volumeServer string, grpcDialOption grpc.DialOption, fileIds []string) (ret []*volume_server_pb.DeleteResult, err error) {
+func DeleteFilesAtOneVolumeServer(volumeServer string, grpcDialOption grpc.DialOption, fileIds []string, includeCookie bool) (ret []*volume_server_pb.DeleteResult, err error) {
 
-	err = WithVolumeServerClient(volumeServer, grpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
+	err = WithVolumeServerClient(volumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
 		req := &volume_server_pb.BatchDeleteRequest{
-			FileIds: fileIds,
+			FileIds:         fileIds,
+			SkipCookieCheck: !includeCookie,
 		}
 
 		resp, err := volumeServerClient.BatchDelete(context.Background(), req)

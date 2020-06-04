@@ -113,3 +113,7 @@ func (cm *MemDb) LoadFromIdx(idxName string) (ret error) {
 	})
 
 }
+
+func (cm *MemDb) Close() {
+	cm.db.Close()
+}

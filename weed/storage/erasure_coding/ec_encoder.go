@@ -27,6 +27,9 @@ const (
 func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 
 	nm, err := readNeedleMap(baseFileName)
+	if nm != nil {
+		defer nm.Close()
+	}
 	if err != nil {
 		return fmt.Errorf("readNeedleMap: %v", err)
 	}
@@ -196,7 +199,7 @@ func encodeDatFile(remainingSize int64, err error, baseFileName string, bufferSi
 	}
 
 	buffers := make([][]byte, TotalShardsCount)
-	for i, _ := range buffers {
+	for i := range buffers {
 		buffers[i] = make([]byte, bufferSize)
 	}
 
@@ -233,7 +236,7 @@ func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*o
 	}
 
 	buffers := make([][]byte, TotalShardsCount)
-	for i, _ := range buffers {
+	for i := range buffers {
 		if shardHasData[i] {
 			buffers[i] = make([]byte, ErasureCodingSmallBlockSize)
 		}

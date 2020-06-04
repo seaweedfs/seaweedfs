@@ -5,13 +5,15 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
+
 	"github.com/golang/protobuf/proto"
 )
 
 func TestProtoMarshalText(t *testing.T) {
 
 	oldEntry := &Entry{
-		FullPath: FullPath("/this/path/to"),
+		FullPath: util.FullPath("/this/path/to"),
 		Attr: Attr{
 			Mtime:  time.Now(),
 			Mode:   0644,

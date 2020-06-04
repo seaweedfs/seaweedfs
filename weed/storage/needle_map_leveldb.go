@@ -5,14 +5,17 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/idx"
+	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
+
+	"github.com/chrislusf/seaweedfs/weed/storage/idx"
+
+	"github.com/syndtr/goleveldb/leveldb"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/syndtr/goleveldb/leveldb"
 )
 
 type LevelDbNeedleMap struct {
@@ -32,7 +35,12 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 	glog.V(1).Infof("Opening %s...", dbFileName)
 
 	if m.db, err = leveldb.OpenFile(dbFileName, opts); err != nil {
-		return
+		if errors.IsCorrupted(err) {
+			m.db, err = leveldb.RecoverFile(dbFileName, opts)
+		}
+		if err != nil {
+			return
+		}
 	}
 	glog.V(1).Infof("Loading %s...", indexFile.Name())
 	mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile)

@@ -70,7 +70,7 @@ func (g *AzureSink) initialize(accountName, accountKey, container, dir string) e
 	return nil
 }
 
-func (g *AzureSink) DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool) error {
+func (g *AzureSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) error {
 
 	key = cleanKey(key)
 
@@ -78,7 +78,7 @@ func (g *AzureSink) DeleteEntry(ctx context.Context, key string, isDirectory, de
 		key = key + "/"
 	}
 
-	if _, err := g.containerURL.NewBlobURL(key).Delete(ctx,
+	if _, err := g.containerURL.NewBlobURL(key).Delete(context.Background(),
 		azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{}); err != nil {
 		return fmt.Errorf("azure delete %s/%s: %v", g.container, key, err)
 	}
@@ -87,7 +87,7 @@ func (g *AzureSink) DeleteEntry(ctx context.Context, key string, isDirectory, de
 
 }
 
-func (g *AzureSink) CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry) error {
+func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
 	key = cleanKey(key)
 
@@ -96,27 +96,27 @@ func (g *AzureSink) CreateEntry(ctx context.Context, key string, entry *filer_pb
 	}
 
 	totalSize := filer2.TotalSize(entry.Chunks)
-	chunkViews := filer2.ViewFromChunks(entry.Chunks, 0, int(totalSize))
+	chunkViews := filer2.ViewFromChunks(entry.Chunks, 0, int64(totalSize))
 
 	// Create a URL that references a to-be-created blob in your
 	// Azure Storage account's container.
 	appendBlobURL := g.containerURL.NewAppendBlobURL(key)
 
-	_, err := appendBlobURL.Create(ctx, azblob.BlobHTTPHeaders{}, azblob.Metadata{}, azblob.BlobAccessConditions{})
+	_, err := appendBlobURL.Create(context.Background(), azblob.BlobHTTPHeaders{}, azblob.Metadata{}, azblob.BlobAccessConditions{})
 	if err != nil {
 		return err
 	}
 
 	for _, chunk := range chunkViews {
 
-		fileUrl, err := g.filerSource.LookupFileId(ctx, chunk.FileId)
+		fileUrl, err := g.filerSource.LookupFileId(chunk.FileId)
 		if err != nil {
 			return err
 		}
 
 		var writeErr error
-		_, readErr := util.ReadUrlAsStream(fileUrl, chunk.Offset, int(chunk.Size), func(data []byte) {
-			_, writeErr = appendBlobURL.AppendBlock(ctx, bytes.NewReader(data), azblob.AppendBlobAccessConditions{}, nil)
+		readErr := util.ReadUrlAsStream(fileUrl, nil, false, chunk.IsFullChunk(), chunk.Offset, int(chunk.Size), func(data []byte) {
+			_, writeErr = appendBlobURL.AppendBlock(context.Background(), bytes.NewReader(data), azblob.AppendBlobAccessConditions{}, nil)
 		})
 
 		if readErr != nil {
@@ -132,7 +132,7 @@ func (g *AzureSink) CreateEntry(ctx context.Context, key string, entry *filer_pb
 
 }
 
-func (g *AzureSink) UpdateEntry(ctx context.Context, key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (g *AzureSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
 	key = cleanKey(key)
 	// TODO improve efficiency
 	return false, nil

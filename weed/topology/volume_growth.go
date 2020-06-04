@@ -85,6 +85,7 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 		if c, e := vg.findAndGrow(grpcDialOption, topo, option); e == nil {
 			counter += c
 		} else {
+			glog.V(0).Infof("create %d volume, created %d: %v", targetCount, counter, e)
 			return counter, e
 		}
 	}
@@ -112,7 +113,7 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption) (servers []*DataNode, err error) {
 	//find main datacenter and other data centers
 	rp := option.ReplicaPlacement
-	mainDataCenter, otherDataCenters, dc_err := topo.RandomlyPickNodes(rp.DiffDataCenterCount+1, func(node Node) error {
+	mainDataCenter, otherDataCenters, dc_err := topo.PickNodesByWeight(rp.DiffDataCenterCount+1, func(node Node) error {
 		if option.DataCenter != "" && node.IsDataCenter() && node.Id() != NodeId(option.DataCenter) {
 			return fmt.Errorf("Not matching preferred data center:%s", option.DataCenter)
 		}
@@ -144,7 +145,7 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 	}
 
 	//find main rack and other racks
-	mainRack, otherRacks, rackErr := mainDataCenter.(*DataCenter).RandomlyPickNodes(rp.DiffRackCount+1, func(node Node) error {
+	mainRack, otherRacks, rackErr := mainDataCenter.(*DataCenter).PickNodesByWeight(rp.DiffRackCount+1, func(node Node) error {
 		if option.Rack != "" && node.IsRack() && node.Id() != NodeId(option.Rack) {
 			return fmt.Errorf("Not matching preferred rack:%s", option.Rack)
 		}
@@ -171,7 +172,7 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 	}
 
 	//find main rack and other racks
-	mainServer, otherServers, serverErr := mainRack.(*Rack).RandomlyPickNodes(rp.SameRackCount+1, func(node Node) error {
+	mainServer, otherServers, serverErr := mainRack.(*Rack).PickNodesByWeight(rp.SameRackCount+1, func(node Node) error {
 		if option.DataNode != "" && node.IsDataNode() && node.Id() != NodeId(option.DataNode) {
 			return fmt.Errorf("Not matching preferred data node:%s", option.DataNode)
 		}

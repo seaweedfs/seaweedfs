@@ -183,3 +183,10 @@ func (l *DiskLocation) unmountEcVolumeByCollection(collectionName string) map[ne
 	}
 	return deltaVols
 }
+
+func (l *DiskLocation) EcVolumesLen() int {
+	l.ecVolumesLock.RLock()
+	defer l.ecVolumesLock.RUnlock()
+
+	return len(l.ecVolumes)
+}

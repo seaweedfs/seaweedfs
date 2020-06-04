@@ -6,11 +6,13 @@ import (
 	"fmt"
 
 	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	weed_util "github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -48,8 +50,13 @@ func (store *LevelDBStore) initialize(dir string) (err error) {
 	}
 
 	if store.db, err = leveldb.OpenFile(dir, opts); err != nil {
-		glog.Infof("filer store open dir %s: %v", dir, err)
-		return
+		if errors.IsCorrupted(err) {
+			store.db, err = leveldb.RecoverFile(dir, opts)
+		}
+		if err != nil {
+			glog.Infof("filer store open dir %s: %v", dir, err)
+			return
+		}
 	}
 	return
 }
@@ -88,13 +95,13 @@ func (store *LevelDBStore) UpdateEntry(ctx context.Context, entry *filer2.Entry)
 	return store.InsertEntry(ctx, entry)
 }
 
-func (store *LevelDBStore) FindEntry(ctx context.Context, fullpath filer2.FullPath) (entry *filer2.Entry, err error) {
+func (store *LevelDBStore) FindEntry(ctx context.Context, fullpath weed_util.FullPath) (entry *filer2.Entry, err error) {
 	key := genKey(fullpath.DirAndName())
 
 	data, err := store.db.Get(key, nil)
 
 	if err == leveldb.ErrNotFound {
-		return nil, filer2.ErrNotFound
+		return nil, filer_pb.ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get %s : %v", entry.FullPath, err)
@@ -113,7 +120,7 @@ func (store *LevelDBStore) FindEntry(ctx context.Context, fullpath filer2.FullPa
 	return entry, nil
 }
 
-func (store *LevelDBStore) DeleteEntry(ctx context.Context, fullpath filer2.FullPath) (err error) {
+func (store *LevelDBStore) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	key := genKey(fullpath.DirAndName())
 
 	err = store.db.Delete(key, nil)
@@ -124,7 +131,7 @@ func (store *LevelDBStore) DeleteEntry(ctx context.Context, fullpath filer2.Full
 	return nil
 }
 
-func (store *LevelDBStore) DeleteFolderChildren(ctx context.Context, fullpath filer2.FullPath) (err error) {
+func (store *LevelDBStore) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 
 	batch := new(leveldb.Batch)
 
@@ -152,7 +159,7 @@ func (store *LevelDBStore) DeleteFolderChildren(ctx context.Context, fullpath fi
 	return nil
 }
 
-func (store *LevelDBStore) ListDirectoryEntries(ctx context.Context, fullpath filer2.FullPath, startFileName string, inclusive bool,
+func (store *LevelDBStore) ListDirectoryEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool,
 	limit int) (entries []*filer2.Entry, err error) {
 
 	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
@@ -175,7 +182,7 @@ func (store *LevelDBStore) ListDirectoryEntries(ctx context.Context, fullpath fi
 			break
 		}
 		entry := &filer2.Entry{
-			FullPath: filer2.NewFullPath(string(fullpath), fileName),
+			FullPath: weed_util.NewFullPath(string(fullpath), fileName),
 		}
 		if decodeErr := entry.DecodeAttributesAndChunks(iter.Value()); decodeErr != nil {
 			err = decodeErr
@@ -196,7 +203,7 @@ func genKey(dirPath, fileName string) (key []byte) {
 	return key
 }
 
-func genDirectoryKeyPrefix(fullpath filer2.FullPath, startFileName string) (keyPrefix []byte) {
+func genDirectoryKeyPrefix(fullpath weed_util.FullPath, startFileName string) (keyPrefix []byte) {
 	keyPrefix = []byte(string(fullpath))
 	keyPrefix = append(keyPrefix, DIR_FILE_SEPARATOR)
 	if len(startFileName) > 0 {
@@ -214,4 +221,8 @@ func getNameFromKey(key []byte) string {
 
 	return string(key[sepIndex+1:])
 
+}
+
+func (store *LevelDBStore) Shutdown() {
+	store.db.Close()
 }

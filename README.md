@@ -50,6 +50,7 @@ Your support will be really appreciated by me and other supporters!
 
 - [Download Binaries for different platforms](https://github.com/chrislusf/seaweedfs/releases/latest)
 - [SeaweedFS on Slack](https://join.slack.com/t/seaweedfs/shared_invite/enQtMzI4MTMwMjU2MzA3LTEyYzZmZWYzOGQ3MDJlZWMzYmI0OTE4OTJiZjJjODBmMzUxNmYwODg0YjY3MTNlMjBmZDQ1NzQ5NDJhZWI2ZmY)
+- [SeaweedFS on Twitter](https://twitter.com/SeaweedFS)
 - [SeaweedFS Mailing List](https://groups.google.com/d/forum/seaweedfs)
 - [Wiki Documentation](https://github.com/chrislusf/seaweedfs/wiki)
 - [SeaweedFS Introduction Slides](https://www.slideshare.net/chrislusf/seaweedfs-introduction)
@@ -89,7 +90,7 @@ There is only 40 bytes of disk storage overhead for each file's metadata. It is 
 
 SeaweedFS started by implementing [Facebook's Haystack design paper](http://www.usenix.org/event/osdi10/tech/full_papers/Beaver.pdf). Also, SeaweedFS implements erasure coding with ideas from [f4: Facebook’s Warm BLOB Storage System](https://www.usenix.org/system/files/conference/osdi14/osdi14-paper-muralidhar.pdf)
 
-On top of the object store, optional [Filer] can support directories and POSIX attributes. Filer is a separate linearly-scalable stateless server with customizable metadata stores, e.g., MySql, Postgres, Redis, Etcd, Cassandra, LevelDB, MemSql, TiDB, TiKV, CockroachDB, etc.
+On top of the object store, optional [Filer] can support directories and POSIX attributes. Filer is a separate linearly-scalable stateless server with customizable metadata stores, e.g., MySql, Postgres, Mongodb, Redis, Etcd, Cassandra, LevelDB, MemSql, TiDB, TiKV, CockroachDB, etc.
 
 [Back to TOC](#table-of-contents)
 
@@ -98,9 +99,10 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 * Automatic master servers failover - no single point of failure (SPOF).
 * Automatic Gzip compression depending on file mime type.
 * Automatic compaction to reclaim disk space after deletion or update.
-* Servers in the same cluster can have different disk spaces, file systems, OS etc.
+* [Automatic entry TTL expiration][VolumeServerTTL].
+* Any server with some disk spaces can add to the total storage space.
 * Adding/Removing servers does **not** cause any data re-balancing.
-* Optionally fix the orientation for jpeg pictures.
+* Optional picture resizing.
 * Support ETag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/readonly mode tuning for memory/performance balance.
 * Support rebalancing the writable and readonly volumes.
@@ -116,6 +118,8 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 * [Hadoop Compatible File System][Hadoop] to access files from Hadoop/Spark/Flink/etc jobs.
 * [Async Backup To Cloud][BackupToCloud] has extremely fast local access and backups to Amazon S3, Google Cloud Storage, Azure, BackBlaze.
 * [WebDAV] access as a mapped drive on Mac and Windows, or from mobile devices.
+* [AES256-GCM Encrypted Storage][FilerDataEncryption] safely stores the encrypted data.
+* [File TTL][FilerTTL] automatically purge file metadata and actual file data.
 
 [Filer]: https://github.com/chrislusf/seaweedfs/wiki/Directories-and-Files
 [Mount]: https://github.com/chrislusf/seaweedfs/wiki/Mount
@@ -125,6 +129,9 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 [WebDAV]: https://github.com/chrislusf/seaweedfs/wiki/WebDAV
 [ErasureCoding]: https://github.com/chrislusf/seaweedfs/wiki/Erasure-coding-for-warm-storage
 [CloudTier]: https://github.com/chrislusf/seaweedfs/wiki/Cloud-Tier
+[FilerDataEncryption]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Data-Encryption
+[FilerTTL]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Stores
+[VolumeServerTTL]: https://github.com/chrislusf/seaweedfs/wiki/Store-file-with-a-Time-To-Live
 
 [Back to TOC](#table-of-contents)
 
@@ -354,7 +361,7 @@ The architectures are mostly the same. SeaweedFS aims to store and read files fa
 
 * SeaweedFS optimizes for small files, ensuring O(1) disk seek operation, and can also handle large files.
 * SeaweedFS statically assigns a volume id for a file. Locating file content becomes just a lookup of the volume id, which can be easily cached.
-* SeaweedFS Filer metadata store can be any well-known and proven data stores, e.g., Cassandra, Redis, Etcd, MySql, Postgres, MemSql, TiDB, CockroachDB, etc, and is easy to customized.
+* SeaweedFS Filer metadata store can be any well-known and proven data stores, e.g., Cassandra, Mongodb, Redis, Etcd, MySql, Postgres, MemSql, TiDB, CockroachDB, etc, and is easy to customized.
 * SeaweedFS Volume server also communicates directly with clients via HTTP, supporting range queries, direct uploads, etc.
 
 | System         | File Meta                       | File Content Read| POSIX  | REST API | Optimized for small files |
@@ -363,6 +370,7 @@ The architectures are mostly the same. SeaweedFS aims to store and read files fa
 | SeaweedFS Filer| Linearly Scalable, Customizable | O(1) disk seek   | FUSE   | Yes      | Yes                       |
 | GlusterFS      | hashing          |                  | FUSE, NFS          |          |                           |
 | Ceph           | hashing + rules  |                  | FUSE               | Yes      |                           |
+| MooseFS        | in memory        |                  | FUSE               |       | No                          |
 
 [Back to TOC](#table-of-contents)
 
@@ -371,6 +379,14 @@ The architectures are mostly the same. SeaweedFS aims to store and read files fa
 GlusterFS stores files, both directories and content, in configurable volumes called "bricks".
 
 GlusterFS hashes the path and filename into ids, and assigned to virtual volumes, and then mapped to "bricks".
+
+[Back to TOC](#table-of-contents)
+
+### Compared to MooseFS ###
+
+MooseFS chooses to neglect small file issue. From moosefs 3.0 manual, "even a small file will occupy 64KiB plus additionally 4KiB of checksums and 1KiB for the header", because it "was initially designed for keeping large amounts (like several thousands) of very big files"
+
+MooseFS Master Server keeps all meta data in memory. Same issue as HDFS namenode. 
 
 [Back to TOC](#table-of-contents)
 
@@ -386,7 +402,7 @@ Ceph uses CRUSH hashing to automatically manage the data placement. SeaweedFS pl
 
 SeaweedFS is optimized for small files. Small files are stored as one continuous block of content, with at most 8 unused bytes between files. Small file access is O(1) disk read.
 
-SeaweedFS Filer uses off-the-shelf stores, such as MySql, Postgres, Redis, Etcd, Cassandra, MemSql, TiDB, CockroachCB, to manage file directories. There are proven, scalable, and easier to manage.
+SeaweedFS Filer uses off-the-shelf stores, such as MySql, Postgres, Mongodb, Redis, Etcd, Cassandra, MemSql, TiDB, CockroachCB, to manage file directories. These stores are proven, scalable, and easier to manage.
 
 | SeaweedFS         | comparable to Ceph | advantage |
 | -------------  | ------------- | ---------------- |
@@ -434,6 +450,12 @@ go get github.com/chrislusf/seaweedfs/weed
 
 Once this is done, you will find the executable "weed" in your `$GOPATH/bin` directory
 
+Note:
+* If you got into this problem, try to `rm -Rf $GOPATH/src/go.etcd.io/etcd/vendor/golang.org/x/net/trace` and build again.
+```
+panic: /debug/requests is already registered. You may have two independent copies of golang.org/x/net/trace in your binary, trying to maintain separate state. This may involve a vendored copy of golang.org/x/net/trace.
+```
+
 Step 4: after you modify your code locally, you could start a local build by calling `go install` under
 
 ```
@@ -461,50 +483,49 @@ My Own Unscientific Single Machine Results on Mac Book with Solid State Disk, CP
 Write 1 million 1KB file:
 ```
 Concurrency Level:      16
-Time taken for tests:   88.796 seconds
+Time taken for tests:   66.753 seconds
 Complete requests:      1048576
 Failed requests:        0
-Total transferred:      1106764659 bytes
-Requests per second:    11808.87 [#/sec]
-Transfer rate:          12172.05 [Kbytes/sec]
+Total transferred:      1106789009 bytes
+Requests per second:    15708.23 [#/sec]
+Transfer rate:          16191.69 [Kbytes/sec]
 
 Connection Times (ms)
               min      avg        max      std
-Total:        0.2      1.3       44.8      0.9
+Total:        0.3      1.0       84.3      0.9
 
 Percentage of the requests served within a certain time (ms)
-   50%      1.1 ms
-   66%      1.3 ms
-   75%      1.5 ms
-   80%      1.7 ms
-   90%      2.1 ms
-   95%      2.6 ms
-   98%      3.7 ms
-   99%      4.6 ms
-  100%     44.8 ms
+   50%      0.8 ms
+   66%      1.0 ms
+   75%      1.1 ms
+   80%      1.2 ms
+   90%      1.4 ms
+   95%      1.7 ms
+   98%      2.1 ms
+   99%      2.6 ms
+  100%     84.3 ms
 ```
 
 Randomly read 1 million files:
 ```
 Concurrency Level:      16
-Time taken for tests:   34.263 seconds
+Time taken for tests:   22.301 seconds
 Complete requests:      1048576
 Failed requests:        0
-Total transferred:      1106762945 bytes
-Requests per second:    30603.34 [#/sec]
-Transfer rate:          31544.49 [Kbytes/sec]
+Total transferred:      1106812873 bytes
+Requests per second:    47019.38 [#/sec]
+Transfer rate:          48467.57 [Kbytes/sec]
 
 Connection Times (ms)
               min      avg        max      std
-Total:        0.0      0.5       20.7      0.7
+Total:        0.0      0.3       54.1      0.2
 
 Percentage of the requests served within a certain time (ms)
-   50%      0.4 ms
-   75%      0.5 ms
-   95%      0.6 ms
-   98%      0.8 ms
-   99%      1.2 ms
-  100%     20.7 ms
+   50%      0.3 ms
+   90%      0.4 ms
+   98%      0.6 ms
+   99%      0.7 ms
+  100%     54.1 ms
 ```
 
 [Back to TOC](#table-of-contents)

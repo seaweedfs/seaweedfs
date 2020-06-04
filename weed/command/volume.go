@@ -10,9 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util/httpdown"
 
@@ -56,7 +58,7 @@ func init() {
 	cmdVolume.Run = runVolume // break init cycle
 	v.port = cmdVolume.Flag.Int("port", 8080, "http listen port")
 	v.publicPort = cmdVolume.Flag.Int("port.public", 0, "port opened to public")
-	v.ip = cmdVolume.Flag.String("ip", "", "ip or server name")
+	v.ip = cmdVolume.Flag.String("ip", util.DetectedHostAddress(), "ip or server name")
 	v.publicUrl = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible address")
 	v.bindIp = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	v.masters = cmdVolume.Flag.String("mserver", "localhost:9333", "comma-separated master servers")
@@ -83,7 +85,7 @@ var cmdVolume = &Command{
 
 var (
 	volumeFolders         = cmdVolume.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
-	maxVolumeCounts       = cmdVolume.Flag.String("max", "7", "maximum numbers of volumes, count[,count]...")
+	maxVolumeCounts       = cmdVolume.Flag.String("max", "7", "maximum numbers of volumes, count[,count]... If set to zero on non-windows OS, the limit will be auto configured.")
 	volumeWhiteListOption = cmdVolume.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 )
 
@@ -92,7 +94,7 @@ func runVolume(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	util.SetupProfiling(*v.cpuProfile, *v.memProfile)
+	grace.SetupProfiling(*v.cpuProfile, *v.memProfile)
 
 	v.startVolumeServer(*volumeFolders, *maxVolumeCounts, *volumeWhiteListOption)
 
@@ -126,7 +128,8 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	}
 
 	if *v.ip == "" {
-		*v.ip = "127.0.0.1"
+		*v.ip = util.DetectedHostAddress()
+		glog.V(0).Infof("detected volume server ip address: %v", *v.ip)
 	}
 
 	if *v.publicPort == 0 {
@@ -181,7 +184,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	clusterHttpServer := v.startClusterHttpService(volumeMux)
 
 	stopChain := make(chan struct{})
-	util.OnInterrupt(func() {
+	grace.OnInterrupt(func() {
 		fmt.Println("volume server has be killed")
 		var startTime time.Time
 
@@ -234,7 +237,7 @@ func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerSe
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
-	grpcS := util.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.volume"))
+	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.volume"))
 	volume_server_pb.RegisterVolumeServerServer(grpcS, vs)
 	reflection.Register(grpcS)
 	go func() {
@@ -247,7 +250,7 @@ func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerSe
 
 func (v VolumeServerOptions) startPublicHttpService(handler http.Handler) httpdown.Server {
 	publicListeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.publicPort)
-	glog.V(0).Infoln("Start Seaweed volume server", util.VERSION, "public at", publicListeningAddress)
+	glog.V(0).Infoln("Start Seaweed volume server", util.Version(), "public at", publicListeningAddress)
 	publicListener, e := util.NewListener(publicListeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)
@@ -274,7 +277,7 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 	}
 
 	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port)
-	glog.V(0).Infof("Start Seaweed volume server %s at %s", util.VERSION, listeningAddress)
+	glog.V(0).Infof("Start Seaweed volume server %s at %s", util.Version(), listeningAddress)
 	listener, e := util.NewListener(listeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)

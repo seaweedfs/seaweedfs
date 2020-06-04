@@ -19,6 +19,7 @@ type BackendStorageFile interface {
 	io.Closer
 	GetStat() (datSize int64, modTime time.Time, err error)
 	Name() string
+	Sync() error
 }
 
 type BackendStorage interface {

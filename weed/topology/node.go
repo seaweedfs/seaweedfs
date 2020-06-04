@@ -62,56 +62,64 @@ type NodeImpl struct {
 }
 
 // the first node must satisfy filterFirstNodeFn(), the rest nodes must have one free slot
-func (n *NodeImpl) RandomlyPickNodes(numberOfNodes int, filterFirstNodeFn func(dn Node) error) (firstNode Node, restNodes []Node, err error) {
-	candidates := make([]Node, 0, len(n.children))
+func (n *NodeImpl) PickNodesByWeight(numberOfNodes int, filterFirstNodeFn func(dn Node) error) (firstNode Node, restNodes []Node, err error) {
+	var totalWeights int64
 	var errs []string
 	n.RLock()
+	candidates := make([]Node, 0, len(n.children))
+	candidatesWeights := make([]int64, 0, len(n.children))
+	//pick nodes which has enough free volumes as candidates, and use free volumes number as node weight.
 	for _, node := range n.children {
+		if node.FreeSpace() <= 0 {
+			continue
+		}
+		totalWeights += node.FreeSpace()
+		candidates = append(candidates, node)
+		candidatesWeights = append(candidatesWeights, node.FreeSpace())
+	}
+	n.RUnlock()
+	if len(candidates) < numberOfNodes {
+		glog.V(0).Infoln(n.Id(), "failed to pick", numberOfNodes, "from ", len(candidates), "node candidates")
+		return nil, nil, errors.New("No enough data node found!")
+	}
+
+	//pick nodes randomly by weights, the node picked earlier has higher final weights
+	sortedCandidates := make([]Node, 0, len(candidates))
+	for i := 0; i < len(candidates); i++ {
+		weightsInterval := rand.Int63n(totalWeights)
+		lastWeights := int64(0)
+		for k, weights := range candidatesWeights {
+			if (weightsInterval >= lastWeights) && (weightsInterval < lastWeights+weights) {
+				sortedCandidates = append(sortedCandidates, candidates[k])
+				candidatesWeights[k] = 0
+				totalWeights -= weights
+				break
+			}
+			lastWeights += weights
+		}
+	}
+
+	restNodes = make([]Node, 0, numberOfNodes-1)
+	ret := false
+	n.RLock()
+	for k, node := range sortedCandidates {
 		if err := filterFirstNodeFn(node); err == nil {
-			candidates = append(candidates, node)
+			firstNode = node
+			if k >= numberOfNodes-1 {
+				restNodes = sortedCandidates[:numberOfNodes-1]
+			} else {
+				restNodes = append(restNodes, sortedCandidates[:k]...)
+				restNodes = append(restNodes, sortedCandidates[k+1:numberOfNodes]...)
+			}
+			ret = true
+			break
 		} else {
 			errs = append(errs, string(node.Id())+":"+err.Error())
 		}
 	}
 	n.RUnlock()
-	if len(candidates) == 0 {
-		return nil, nil, errors.New("No matching data node found! \n" + strings.Join(errs, "\n"))
-	}
-	firstNode = candidates[rand.Intn(len(candidates))]
-	glog.V(2).Infoln(n.Id(), "picked main node:", firstNode.Id())
-
-	restNodes = make([]Node, numberOfNodes-1)
-	candidates = candidates[:0]
-	n.RLock()
-	for _, node := range n.children {
-		if node.Id() == firstNode.Id() {
-			continue
-		}
-		if node.FreeSpace() <= 0 {
-			continue
-		}
-		glog.V(2).Infoln("select rest node candidate:", node.Id())
-		candidates = append(candidates, node)
-	}
-	n.RUnlock()
-	glog.V(2).Infoln(n.Id(), "picking", numberOfNodes-1, "from rest", len(candidates), "node candidates")
-	ret := len(restNodes) == 0
-	for k, node := range candidates {
-		if k < len(restNodes) {
-			restNodes[k] = node
-			if k == len(restNodes)-1 {
-				ret = true
-			}
-		} else {
-			r := rand.Intn(k + 1)
-			if r < len(restNodes) {
-				restNodes[r] = node
-			}
-		}
-	}
 	if !ret {
-		glog.V(2).Infoln(n.Id(), "failed to pick", numberOfNodes-1, "from rest", len(candidates), "node candidates")
-		err = errors.New("No enough data node found!")
+		return nil, nil, errors.New("No matching data node found! \n" + strings.Join(errs, "\n"))
 	}
 	return
 }
@@ -184,30 +192,45 @@ func (n *NodeImpl) ReserveOneVolume(r int64) (assignedNode *DataNode, err error)
 }
 
 func (n *NodeImpl) UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int64) { //can be negative
+	if maxVolumeCountDelta == 0 {
+		return
+	}
 	atomic.AddInt64(&n.maxVolumeCount, maxVolumeCountDelta)
 	if n.parent != nil {
 		n.parent.UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta)
 	}
 }
 func (n *NodeImpl) UpAdjustVolumeCountDelta(volumeCountDelta int64) { //can be negative
+	if volumeCountDelta == 0 {
+		return
+	}
 	atomic.AddInt64(&n.volumeCount, volumeCountDelta)
 	if n.parent != nil {
 		n.parent.UpAdjustVolumeCountDelta(volumeCountDelta)
 	}
 }
 func (n *NodeImpl) UpAdjustRemoteVolumeCountDelta(remoteVolumeCountDelta int64) { //can be negative
+	if remoteVolumeCountDelta == 0 {
+		return
+	}
 	atomic.AddInt64(&n.remoteVolumeCount, remoteVolumeCountDelta)
 	if n.parent != nil {
 		n.parent.UpAdjustRemoteVolumeCountDelta(remoteVolumeCountDelta)
 	}
 }
 func (n *NodeImpl) UpAdjustEcShardCountDelta(ecShardCountDelta int64) { //can be negative
+	if ecShardCountDelta == 0 {
+		return
+	}
 	atomic.AddInt64(&n.ecShardCount, ecShardCountDelta)
 	if n.parent != nil {
 		n.parent.UpAdjustEcShardCountDelta(ecShardCountDelta)
 	}
 }
 func (n *NodeImpl) UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int64) { //can be negative
+	if activeVolumeCountDelta == 0 {
+		return
+	}
 	atomic.AddInt64(&n.activeVolumeCount, activeVolumeCountDelta)
 	if n.parent != nil {
 		n.parent.UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta)

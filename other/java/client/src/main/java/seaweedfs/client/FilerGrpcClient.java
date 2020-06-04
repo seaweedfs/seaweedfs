@@ -14,12 +14,6 @@ import java.util.concurrent.TimeUnit;
 public class FilerGrpcClient {
 
     private static final Logger logger = LoggerFactory.getLogger(FilerGrpcClient.class);
-
-    private final ManagedChannel channel;
-    private final SeaweedFilerGrpc.SeaweedFilerBlockingStub blockingStub;
-    private final SeaweedFilerGrpc.SeaweedFilerStub asyncStub;
-    private final SeaweedFilerGrpc.SeaweedFilerFutureStub futureStub;
-
     static SslContext sslContext;
 
     static {
@@ -29,6 +23,14 @@ public class FilerGrpcClient {
             logger.warn("failed to load ssl context", e);
         }
     }
+
+    private final ManagedChannel channel;
+    private final SeaweedFilerGrpc.SeaweedFilerBlockingStub blockingStub;
+    private final SeaweedFilerGrpc.SeaweedFilerStub asyncStub;
+    private final SeaweedFilerGrpc.SeaweedFilerFutureStub futureStub;
+    private boolean cipher = false;
+    private String collection = "";
+    private String replication = "";
 
     public FilerGrpcClient(String host, int grpcPort) {
         this(host, grpcPort, sslContext);
@@ -42,6 +44,13 @@ public class FilerGrpcClient {
                         .negotiationType(NegotiationType.TLS)
                         .sslContext(sslContext));
 
+        FilerProto.GetFilerConfigurationResponse filerConfigurationResponse =
+                this.getBlockingStub().getFilerConfiguration(
+                        FilerProto.GetFilerConfigurationRequest.newBuilder().build());
+        cipher = filerConfigurationResponse.getCipher();
+        collection = filerConfigurationResponse.getCollection();
+        replication = filerConfigurationResponse.getReplication();
+
     }
 
     public FilerGrpcClient(ManagedChannelBuilder<?> channelBuilder) {
@@ -49,6 +58,18 @@ public class FilerGrpcClient {
         blockingStub = SeaweedFilerGrpc.newBlockingStub(channel);
         asyncStub = SeaweedFilerGrpc.newStub(channel);
         futureStub = SeaweedFilerGrpc.newFutureStub(channel);
+    }
+
+    public boolean isCipher() {
+        return cipher;
+    }
+
+    public String getCollection() {
+        return collection;
+    }
+
+    public String getReplication() {
+        return replication;
     }
 
     public void shutdown() throws InterruptedException {

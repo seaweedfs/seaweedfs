@@ -3,9 +3,11 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 )
@@ -146,5 +148,21 @@ func (vs *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_serv
 	}
 
 	return resp, err
+
+}
+
+func (vs *VolumeServer) VolumeServerStatus(ctx context.Context, req *volume_server_pb.VolumeServerStatusRequest) (*volume_server_pb.VolumeServerStatusResponse, error) {
+
+	resp := &volume_server_pb.VolumeServerStatusResponse{}
+
+	for _, loc := range vs.store.Locations {
+		if dir, e := filepath.Abs(loc.Directory); e == nil {
+			resp.DiskStatuses = append(resp.DiskStatuses, stats.NewDiskStatus(dir))
+		}
+	}
+
+	resp.MemoryStatus = stats.MemStat()
+
+	return resp, nil
 
 }

@@ -35,6 +35,23 @@ func TestContinuousIntervals_AddIntervalFullOverwrite(t *testing.T) {
 
 	c := &ContinuousIntervals{}
 
+	// 1,
+	c.AddInterval(getBytes(1, 1), 0)
+	//  _,  2,
+	c.AddInterval(getBytes(2, 1), 1)
+	//  _,  _,  3,  3, 3
+	c.AddInterval(getBytes(3, 3), 2)
+	//  _,  _,  _,  4, 4, 4
+	c.AddInterval(getBytes(4, 3), 3)
+
+	expectedData(t, c, 0, 1, 2, 3, 4, 4, 4)
+
+}
+
+func TestContinuousIntervals_RealCase1(t *testing.T) {
+
+	c := &ContinuousIntervals{}
+
 	// 25,
 	c.AddInterval(getBytes(25, 1), 0)
 	//  _,  _,  _,  _, 23, 23

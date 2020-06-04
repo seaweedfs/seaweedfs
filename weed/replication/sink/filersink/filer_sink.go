@@ -64,33 +64,24 @@ func (fs *FilerSink) initialize(grpcAddress string, dir string,
 	return nil
 }
 
-func (fs *FilerSink) DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool) error {
-	return fs.withFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) error {
 
-		dir, name := filer2.FullPath(key).DirAndName()
+	dir, name := util.FullPath(key).DirAndName()
 
-		request := &filer_pb.DeleteEntryRequest{
-			Directory:    dir,
-			Name:         name,
-			IsDeleteData: deleteIncludeChunks,
-		}
-
-		glog.V(1).Infof("delete entry: %v", request)
-		_, err := client.DeleteEntry(ctx, request)
-		if err != nil {
-			glog.V(0).Infof("delete entry %s: %v", key, err)
-			return fmt.Errorf("delete entry %s: %v", key, err)
-		}
-
-		return nil
-	})
+	glog.V(1).Infof("delete entry: %v", key)
+	err := filer_pb.Remove(fs, dir, name, deleteIncludeChunks, false, false)
+	if err != nil {
+		glog.V(0).Infof("delete entry %s: %v", key, err)
+		return fmt.Errorf("delete entry %s: %v", key, err)
+	}
+	return nil
 }
 
-func (fs *FilerSink) CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry) error {
+func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
-	return fs.withFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+	return fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		dir, name := filer2.FullPath(key).DirAndName()
+		dir, name := util.FullPath(key).DirAndName()
 
 		// look up existing entry
 		lookupRequest := &filer_pb.LookupDirectoryEntryRequest{
@@ -98,14 +89,14 @@ func (fs *FilerSink) CreateEntry(ctx context.Context, key string, entry *filer_p
 			Name:      name,
 		}
 		glog.V(1).Infof("lookup: %v", lookupRequest)
-		if resp, err := client.LookupDirectoryEntry(ctx, lookupRequest); err == nil {
-			if filer2.ETag(resp.Entry.Chunks) == filer2.ETag(entry.Chunks) {
+		if resp, err := filer_pb.LookupEntry(client, lookupRequest); err == nil {
+			if filer2.ETag(resp.Entry) == filer2.ETag(entry) {
 				glog.V(0).Infof("already replicated %s", key)
 				return nil
 			}
 		}
 
-		replicatedChunks, err := fs.replicateChunks(ctx, entry.Chunks)
+		replicatedChunks, err := fs.replicateChunks(entry.Chunks, dir)
 
 		if err != nil {
 			glog.V(0).Infof("replicate entry chunks %s: %v", key, err)
@@ -125,7 +116,7 @@ func (fs *FilerSink) CreateEntry(ctx context.Context, key string, entry *filer_p
 		}
 
 		glog.V(1).Infof("create: %v", request)
-		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
+		if err := filer_pb.CreateEntry(client, request); err != nil {
 			glog.V(0).Infof("create entry %s: %v", key, err)
 			return fmt.Errorf("create entry %s: %v", key, err)
 		}
@@ -134,13 +125,13 @@ func (fs *FilerSink) CreateEntry(ctx context.Context, key string, entry *filer_p
 	})
 }
 
-func (fs *FilerSink) UpdateEntry(ctx context.Context, key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
 
-	dir, name := filer2.FullPath(key).DirAndName()
+	dir, name := util.FullPath(key).DirAndName()
 
 	// read existing entry
 	var existingEntry *filer_pb.Entry
-	err = fs.withFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+	err = fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
@@ -148,7 +139,7 @@ func (fs *FilerSink) UpdateEntry(ctx context.Context, key string, oldEntry *file
 		}
 
 		glog.V(4).Infof("lookup entry: %v", request)
-		resp, err := client.LookupDirectoryEntry(ctx, request)
+		resp, err := filer_pb.LookupEntry(client, request)
 		if err != nil {
 			glog.V(0).Infof("lookup %s: %v", key, err)
 			return err
@@ -169,7 +160,7 @@ func (fs *FilerSink) UpdateEntry(ctx context.Context, key string, oldEntry *file
 		// skip if already changed
 		// this usually happens when the messages are not ordered
 		glog.V(0).Infof("late updates %s", key)
-	} else if filer2.ETag(newEntry.Chunks) == filer2.ETag(existingEntry.Chunks) {
+	} else if filer2.ETag(newEntry) == filer2.ETag(existingEntry) {
 		// skip if no change
 		// this usually happens when retrying the replication
 		glog.V(0).Infof("already replicated %s", key)
@@ -184,7 +175,7 @@ func (fs *FilerSink) UpdateEntry(ctx context.Context, key string, oldEntry *file
 		}
 
 		// replicate the chunks that are new in the source
-		replicatedChunks, err := fs.replicateChunks(ctx, newChunks)
+		replicatedChunks, err := fs.replicateChunks(newChunks, newParentPath)
 		if err != nil {
 			return true, fmt.Errorf("replicte %s chunks error: %v", key, err)
 		}
@@ -192,14 +183,14 @@ func (fs *FilerSink) UpdateEntry(ctx context.Context, key string, oldEntry *file
 	}
 
 	// save updated meta data
-	return true, fs.withFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+	return true, fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: newParentPath,
 			Entry:     existingEntry,
 		}
 
-		if _, err := client.UpdateEntry(ctx, request); err != nil {
+		if _, err := client.UpdateEntry(context.Background(), request); err != nil {
 			return fmt.Errorf("update existingEntry %s: %v", key, err)
 		}
 

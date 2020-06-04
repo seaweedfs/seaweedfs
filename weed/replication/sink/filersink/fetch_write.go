@@ -3,41 +3,44 @@ package filersink
 import (
 	"context"
 	"fmt"
-	"google.golang.org/grpc"
-	"strings"
 	"sync"
+
+	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (fs *FilerSink) replicateChunks(ctx context.Context, sourceChunks []*filer_pb.FileChunk) (replicatedChunks []*filer_pb.FileChunk, err error) {
+func (fs *FilerSink) replicateChunks(sourceChunks []*filer_pb.FileChunk, dir string) (replicatedChunks []*filer_pb.FileChunk, err error) {
 	if len(sourceChunks) == 0 {
 		return
 	}
+
+	replicatedChunks = make([]*filer_pb.FileChunk, len(sourceChunks))
+
 	var wg sync.WaitGroup
-	for _, sourceChunk := range sourceChunks {
+	for chunkIndex, sourceChunk := range sourceChunks {
 		wg.Add(1)
-		go func(chunk *filer_pb.FileChunk) {
+		go func(chunk *filer_pb.FileChunk, index int) {
 			defer wg.Done()
-			replicatedChunk, e := fs.replicateOneChunk(ctx, chunk)
+			replicatedChunk, e := fs.replicateOneChunk(chunk, dir)
 			if e != nil {
 				err = e
 			}
-			replicatedChunks = append(replicatedChunks, replicatedChunk)
-		}(sourceChunk)
+			replicatedChunks[index] = replicatedChunk
+		}(sourceChunk, chunkIndex)
 	}
 	wg.Wait()
 
 	return
 }
 
-func (fs *FilerSink) replicateOneChunk(ctx context.Context, sourceChunk *filer_pb.FileChunk) (*filer_pb.FileChunk, error) {
+func (fs *FilerSink) replicateOneChunk(sourceChunk *filer_pb.FileChunk, dir string) (*filer_pb.FileChunk, error) {
 
-	fileId, err := fs.fetchAndWrite(ctx, sourceChunk)
+	fileId, err := fs.fetchAndWrite(sourceChunk, dir)
 	if err != nil {
 		return nil, fmt.Errorf("copy %s: %v", sourceChunk.GetFileIdString(), err)
 	}
@@ -49,12 +52,14 @@ func (fs *FilerSink) replicateOneChunk(ctx context.Context, sourceChunk *filer_p
 		Mtime:        sourceChunk.Mtime,
 		ETag:         sourceChunk.ETag,
 		SourceFileId: sourceChunk.GetFileIdString(),
+		CipherKey:    sourceChunk.CipherKey,
+		IsGzipped:    sourceChunk.IsGzipped,
 	}, nil
 }
 
-func (fs *FilerSink) fetchAndWrite(ctx context.Context, sourceChunk *filer_pb.FileChunk) (fileId string, err error) {
+func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, dir string) (fileId string, err error) {
 
-	filename, header, readCloser, err := fs.filerSource.ReadPart(ctx, sourceChunk.GetFileIdString())
+	filename, header, readCloser, err := fs.filerSource.ReadPart(sourceChunk.GetFileIdString())
 	if err != nil {
 		return "", fmt.Errorf("read part %s: %v", sourceChunk.GetFileIdString(), err)
 	}
@@ -63,7 +68,7 @@ func (fs *FilerSink) fetchAndWrite(ctx context.Context, sourceChunk *filer_pb.Fi
 	var host string
 	var auth security.EncodedJwt
 
-	if err := fs.withFilerClient(ctx, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+	if err := fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AssignVolumeRequest{
 			Count:       1,
@@ -71,12 +76,16 @@ func (fs *FilerSink) fetchAndWrite(ctx context.Context, sourceChunk *filer_pb.Fi
 			Collection:  fs.collection,
 			TtlSec:      fs.ttlSec,
 			DataCenter:  fs.dataCenter,
+			ParentPath:  dir,
 		}
 
-		resp, err := client.AssignVolume(ctx, request)
+		resp, err := client.AssignVolume(context.Background(), request)
 		if err != nil {
 			glog.V(0).Infof("assign volume failure %v: %v", request, err)
 			return err
+		}
+		if resp.Error != "" {
+			return fmt.Errorf("assign volume failure %v: %v", request, resp.Error)
 		}
 
 		fileId, host, auth = resp.FileId, resp.Url, security.EncodedJwt(resp.Auth)
@@ -90,8 +99,8 @@ func (fs *FilerSink) fetchAndWrite(ctx context.Context, sourceChunk *filer_pb.Fi
 
 	glog.V(4).Infof("replicating %s to %s header:%+v", filename, fileUrl, header)
 
-	uploadResult, err := operation.Upload(fileUrl, filename, readCloser,
-		"gzip" == header.Get("Content-Encoding"), header.Get("Content-Type"), nil, auth)
+	// fetch data as is, regardless whether it is encrypted or not
+	uploadResult, err, _ := operation.Upload(fileUrl, filename, false, readCloser, "gzip" == header.Get("Content-Encoding"), header.Get("Content-Type"), nil, auth)
 	if err != nil {
 		glog.V(0).Infof("upload data %v to %s: %v", filename, fileUrl, err)
 		return "", fmt.Errorf("upload data: %v", err)
@@ -104,19 +113,16 @@ func (fs *FilerSink) fetchAndWrite(ctx context.Context, sourceChunk *filer_pb.Fi
 	return
 }
 
-func (fs *FilerSink) withFilerClient(ctx context.Context, fn func(context.Context, filer_pb.SeaweedFilerClient) error) error {
+var _ = filer_pb.FilerClient(&FilerSink{})
 
-	return util.WithCachedGrpcClient(ctx, func(ctx context.Context, grpcConnection *grpc.ClientConn) error {
+func (fs *FilerSink) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
+
+	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		return fn(ctx, client)
+		return fn(client)
 	}, fs.grpcAddress, fs.grpcDialOption)
 
 }
-
-func volumeId(fileId string) string {
-	lastCommaIndex := strings.LastIndex(fileId, ",")
-	if lastCommaIndex > 0 {
-		return fileId[:lastCommaIndex]
-	}
-	return fileId
+func (fs *FilerSink) AdjustedUrl(hostAndPort string) string {
+	return hostAndPort
 }

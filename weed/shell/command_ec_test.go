@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -121,7 +120,7 @@ func TestCommandEcBalanceVolumeEvenButRackUneven(t *testing.T) {
 
 	racks := collectRacks(allEcNodes)
 	balanceEcVolumes(nil, "c1", allEcNodes, racks, false)
-	balanceEcRacks(context.Background(), nil, racks, false)
+	balanceEcRacks(nil, racks, false)
 }
 
 func newEcNode(dc string, rack string, dataNodeId string, freeEcSlot int) *EcNode {

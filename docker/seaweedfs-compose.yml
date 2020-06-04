@@ -4,28 +4,28 @@ services:
   master:
     image: chrislusf/seaweedfs # use a remote image
     ports:
-    - 9333:9333
-    - 19333:19333
+      - 9333:9333
+      - 19333:19333
     command: "master -ip=master"
   volume:
     image: chrislusf/seaweedfs # use a remote image
     ports:
-    - 8080:8080
-    - 18080:18080
-    command: 'volume -max=15 -mserver="master:9333" -port=8080'
+      - 8080:8080
+      - 18080:18080
+    command: 'volume -mserver="master:9333" -port=8080'
     depends_on:
-    - master
+      - master
   filer:
     image: chrislusf/seaweedfs # use a remote image
     ports:
-    - 8888:8888
-    - 18888:18888
+      - 8888:8888
+      - 18888:18888
     command: 'filer -master="master:9333"'
     tty: true
     stdin_open: true
     depends_on:
-    - master
-    - volume
+      - master
+      - volume
   cronjob:
     image: chrislusf/seaweedfs # use a remote image
     command: 'cronjob'
@@ -34,14 +34,14 @@ services:
       CRON_SCHEDULE: '*/2 * * * * *' # Default: '*/5 * * * * *'
       WEED_MASTER: master:9333 # Default: localhost:9333
     depends_on:
-    - master
-    - volume
+      - master
+      - volume
   s3:
     image: chrislusf/seaweedfs # use a remote image
     ports:
-    - 8333:8333
+      - 8333:8333
     command: 's3 -filer="filer:8888"'
     depends_on:
-    - master
-    - volume
-    - filer
+      - master
+      - volume
+      - filer

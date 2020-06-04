@@ -6,6 +6,7 @@
 
 - [4Sight Imaging](https://www.4sightimaging.com/)
 - [Evercam Camera Management Software](https://evercam.io/)
+- [Admiral](https://getadmiral.com)
 
 <h2 align="center">Backers</h2>
 

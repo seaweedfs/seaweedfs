@@ -138,9 +138,7 @@ func parseInfoFile(r io.Reader) ([]*Info, error) {
 }
 
 func osSpecificMountOptions() []fuse.MountOption {
-	return []fuse.MountOption{
-		fuse.AllowNonEmptyMount(),
-	}
+	return []fuse.MountOption{}
 }
 
 func checkMountPointAvailable(dir string) bool {

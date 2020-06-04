@@ -34,6 +34,10 @@ func (c *commandVolumeMount) Help() string {
 
 func (c *commandVolumeMount) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
+	}
+
 	if len(args) != 2 {
 		fmt.Fprintf(writer, "received args: %+v\n", args)
 		return fmt.Errorf("need 2 args of <volume server host:port> <volume id>")
@@ -45,14 +49,13 @@ func (c *commandVolumeMount) Do(args []string, commandEnv *CommandEnv, writer io
 		return fmt.Errorf("wrong volume id format %s: %v", volumeId, err)
 	}
 
-	ctx := context.Background()
-	return mountVolume(ctx, commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer)
+	return mountVolume(commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer)
 
 }
 
-func mountVolume(ctx context.Context, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer string) (err error) {
-	return operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(ctx context.Context, volumeServerClient volume_server_pb.VolumeServerClient) error {
-		_, mountErr := volumeServerClient.VolumeMount(ctx, &volume_server_pb.VolumeMountRequest{
+func mountVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer string) (err error) {
+	return operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		_, mountErr := volumeServerClient.VolumeMount(context.Background(), &volume_server_pb.VolumeMountRequest{
 			VolumeId: uint32(volumeId),
 		})
 		return mountErr

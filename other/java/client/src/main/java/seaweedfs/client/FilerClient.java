@@ -14,7 +14,7 @@ public class FilerClient {
 
     private static final Logger LOG = LoggerFactory.getLogger(FilerClient.class);
 
-    private FilerGrpcClient filerGrpcClient;
+    private final FilerGrpcClient filerGrpcClient;
 
     public FilerClient(String host, int grpcPort) {
         filerGrpcClient = new FilerGrpcClient(host, grpcPort);
@@ -181,7 +181,7 @@ public class FilerClient {
                 .setLimit(limit)
                 .build());
         List<FilerProto.Entry> entries = new ArrayList<>();
-        while (iter.hasNext()){
+        while (iter.hasNext()) {
             FilerProto.ListEntriesResponse resp = iter.next();
             entries.add(fixEntryAfterReading(resp.getEntry()));
         }
@@ -195,9 +195,12 @@ public class FilerClient {
                             .setDirectory(directory)
                             .setName(entryName)
                             .build()).getEntry();
+            if (entry == null) {
+                return null;
+            }
             return fixEntryAfterReading(entry);
         } catch (Exception e) {
-            if (e.getMessage().indexOf("filer: no entry is found in filer store")>0){
+            if (e.getMessage().indexOf("filer: no entry is found in filer store") > 0) {
                 return null;
             }
             LOG.warn("lookupEntry {}/{}: {}", directory, entryName, e);

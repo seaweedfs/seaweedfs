@@ -12,7 +12,7 @@ type OffsetHigher struct {
 
 const (
 	OffsetSize            = 4 + 1
-	MaxPossibleVolumeSize = 4 * 1024 * 1024 * 1024 * 8 * 256 /* 256 is from the extra byte */ // 8TB
+	MaxPossibleVolumeSize uint64 = 4 * 1024 * 1024 * 1024 * 8 * 256 /* 256 is from the extra byte */ // 8TB
 )
 
 func OffsetToBytes(bytes []byte, offset Offset) {

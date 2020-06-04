@@ -35,12 +35,12 @@ func PostBytes(url string, body []byte) ([]byte, error) {
 		return nil, fmt.Errorf("Post to %s: %v", url, err)
 	}
 	defer r.Body.Close()
-	if r.StatusCode >= 400 {
-		return nil, fmt.Errorf("%s: %s", url, r.Status)
-	}
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return nil, fmt.Errorf("Read response body: %v", err)
+	}
+	if r.StatusCode >= 400 {
+		return nil, fmt.Errorf("%s: %s", url, r.Status)
 	}
 	return b, nil
 }
@@ -88,7 +88,7 @@ func Head(url string) (http.Header, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer r.Body.Close()
+	defer CloseResponse(r)
 	if r.StatusCode >= 400 {
 		return nil, fmt.Errorf("%s: %s", url, r.Status)
 	}
@@ -117,7 +117,7 @@ func Delete(url string, jwt string) error {
 		return nil
 	}
 	m := make(map[string]interface{})
-	if e := json.Unmarshal(body, m); e == nil {
+	if e := json.Unmarshal(body, &m); e == nil {
 		if s, ok := m["error"].(string); ok {
 			return errors.New(s)
 		}
@@ -130,7 +130,7 @@ func GetBufferStream(url string, values url.Values, allocatedBytes []byte, eachB
 	if err != nil {
 		return err
 	}
-	defer r.Body.Close()
+	defer CloseResponse(r)
 	if r.StatusCode != 200 {
 		return fmt.Errorf("%s: %s", url, r.Status)
 	}
@@ -153,7 +153,7 @@ func GetUrlStream(url string, values url.Values, readFn func(io.Reader) error) e
 	if err != nil {
 		return err
 	}
-	defer r.Body.Close()
+	defer CloseResponse(r)
 	if r.StatusCode != 200 {
 		return fmt.Errorf("%s: %s", url, r.Status)
 	}
@@ -189,13 +189,21 @@ func NormalizeUrl(url string) string {
 	return "http://" + url
 }
 
-func ReadUrl(fileUrl string, offset int64, size int, buf []byte, isReadRange bool) (int64, error) {
+func ReadUrl(fileUrl string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int, buf []byte) (int64, error) {
+
+	if cipherKey != nil {
+		var n int
+		err := readEncryptedUrl(fileUrl, cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
+			n = copy(buf, data)
+		})
+		return int64(n), err
+	}
 
 	req, err := http.NewRequest("GET", fileUrl, nil)
 	if err != nil {
 		return 0, err
 	}
-	if isReadRange {
+	if !isFullChunk {
 		req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)-1))
 	} else {
 		req.Header.Set("Accept-Encoding", "gzip")
@@ -250,41 +258,72 @@ func ReadUrl(fileUrl string, offset int64, size int, buf []byte, isReadRange boo
 	return n, err
 }
 
-func ReadUrlAsStream(fileUrl string, offset int64, size int, fn func(data []byte)) (int64, error) {
+func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) error {
+
+	if cipherKey != nil {
+		return readEncryptedUrl(fileUrl, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
+	}
 
 	req, err := http.NewRequest("GET", fileUrl, nil)
 	if err != nil {
-		return 0, err
+		return err
 	}
-	req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)-1))
+
+	if !isFullChunk {
+		req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)-1))
+	}
 
 	r, err := client.Do(req)
 	if err != nil {
-		return 0, err
+		return err
 	}
-	defer r.Body.Close()
+	defer CloseResponse(r)
 	if r.StatusCode >= 400 {
-		return 0, fmt.Errorf("%s: %s", fileUrl, r.Status)
+		return fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
 
 	var (
 		m int
-		n int64
 	)
 	buf := make([]byte, 64*1024)
 
 	for {
 		m, err = r.Body.Read(buf)
 		fn(buf[:m])
-		n += int64(m)
 		if err == io.EOF {
-			return n, nil
+			return nil
 		}
 		if err != nil {
-			return n, err
+			return err
 		}
 	}
 
+}
+
+func readEncryptedUrl(fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) error {
+	encryptedData, err := Get(fileUrl)
+	if err != nil {
+		return fmt.Errorf("fetch %s: %v", fileUrl, err)
+	}
+	decryptedData, err := Decrypt(encryptedData, CipherKey(cipherKey))
+	if err != nil {
+		return fmt.Errorf("decrypt %s: %v", fileUrl, err)
+	}
+	if isContentGzipped {
+		decryptedData, err = UnGzipData(decryptedData)
+		if err != nil {
+			return fmt.Errorf("unzip decrypt %s: %v", fileUrl, err)
+		}
+	}
+	if len(decryptedData) < int(offset)+size {
+		return fmt.Errorf("read decrypted %s size %d [%d, %d)", fileUrl, len(decryptedData), offset, int(offset)+size)
+	}
+	if isFullChunk {
+		fn(decryptedData)
+	} else {
+		fn(decryptedData[int(offset) : int(offset)+size])
+	}
+	return nil
 }
 
 func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, error) {
@@ -306,4 +345,9 @@ func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, e
 	}
 
 	return r.Body, nil
+}
+
+func CloseResponse(resp *http.Response) {
+	io.Copy(ioutil.Discard, resp.Body)
+	resp.Body.Close()
 }

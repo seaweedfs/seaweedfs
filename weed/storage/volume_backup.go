@@ -72,9 +72,9 @@ func (v *Volume) IncrementalBackup(volumeServer string, grpcDialOption grpc.Dial
 
 	writeOffset := int64(startFromOffset)
 
-	err = operation.WithVolumeServerClient(volumeServer, grpcDialOption, func(ctx context.Context, client volume_server_pb.VolumeServerClient) error {
+	err = operation.WithVolumeServerClient(volumeServer, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 
-		stream, err := client.VolumeIncrementalCopy(ctx, &volume_server_pb.VolumeIncrementalCopyRequest{
+		stream, err := client.VolumeIncrementalCopy(context.Background(), &volume_server_pb.VolumeIncrementalCopyRequest{
 			VolumeId: uint32(v.Id),
 			SinceNs:  appendAtNs,
 		})
