@@ -40,7 +40,7 @@ type VolumeServerOptions struct {
 	publicUrl             *string
 	bindIp                *string
 	masters               *string
-	pulseSeconds          *int
+	// pulseSeconds          *int
 	idleConnectionTimeout *int
 	dataCenter            *string
 	rack                  *string
@@ -62,7 +62,7 @@ func init() {
 	v.publicUrl = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible address")
 	v.bindIp = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	v.masters = cmdVolume.Flag.String("mserver", "localhost:9333", "comma-separated master servers")
-	v.pulseSeconds = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
+	// v.pulseSeconds = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
 	v.idleConnectionTimeout = cmdVolume.Flag.Int("idleTimeout", 30, "connection idle seconds")
 	v.dataCenter = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	v.rack = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
@@ -161,7 +161,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.ip, *v.port, *v.publicUrl,
 		v.folders, v.folderMaxLimits,
 		volumeNeedleMapKind,
-		strings.Split(masters, ","), *v.pulseSeconds, *v.dataCenter, *v.rack,
+		strings.Split(masters, ","), 5, *v.dataCenter, *v.rack,
 		v.whiteList,
 		*v.fixJpgOrientation, *v.readRedirect,
 		*v.compactionMBPerSecond,
