@@ -35,7 +35,7 @@ type VolumeServer struct {
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	port int, publicUrl string,
-	folders []string, maxCounts []int, freeDiskSpaceWatermark []float32,
+	folders []string, maxCounts []int, minFreeSpacePercent []float32,
 	needleMapKind storage.NeedleMapType,
 	masterNodes []string, pulseSeconds int,
 	dataCenter string, rack string,
@@ -68,7 +68,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		fileSizeLimitBytes:      int64(fileSizeLimitMB) * 1024 * 1024,
 	}
 	vs.SeedMasterNodes = masterNodes
-	vs.store = storage.NewStore(vs.grpcDialOption, port, ip, publicUrl, folders, maxCounts, freeDiskSpaceWatermark, vs.needleMapKind)
+	vs.store = storage.NewStore(vs.grpcDialOption, port, ip, publicUrl, folders, maxCounts, minFreeSpacePercent, vs.needleMapKind)
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources(adminMux)

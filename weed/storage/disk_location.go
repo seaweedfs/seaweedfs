@@ -18,7 +18,7 @@ import (
 type DiskLocation struct {
 	Directory      string
 	MaxVolumeCount int
-	FreeDiskSpaceWatermark float32
+	MinFreeSpacePercent float32
 	volumes        map[needle.VolumeId]*Volume
 	volumesLock    sync.RWMutex
 
@@ -27,8 +27,8 @@ type DiskLocation struct {
 	ecVolumesLock sync.RWMutex
 }
 
-func NewDiskLocation(dir string, maxVolumeCount int, freeDiskSpaceWatermark float32) *DiskLocation {
-	location := &DiskLocation{Directory: dir, MaxVolumeCount: maxVolumeCount, FreeDiskSpaceWatermark: freeDiskSpaceWatermark}
+func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32) *DiskLocation {
+	location := &DiskLocation{Directory: dir, MaxVolumeCount: maxVolumeCount, MinFreeSpacePercent: minFreeSpacePercent}
 	location.volumes = make(map[needle.VolumeId]*Volume)
 	location.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
 	go location.CheckDiskSpace()
@@ -305,7 +305,7 @@ func (l *DiskLocation) CheckDiskSpace() {
 	for _ = range t.C {
 		if dir, e := filepath.Abs(l.Directory); e == nil {
 			s := stats.NewDiskStatus(dir)
-			if (s.PercentFree < l.FreeDiskSpaceWatermark) != lastStat {
+			if (s.PercentFree < l.MinFreeSpacePercent) != lastStat {
 				lastStat = !lastStat
 				for _, v := range l.volumes {
 					v.SetLowDiskSpace(lastStat)
