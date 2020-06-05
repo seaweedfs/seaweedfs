@@ -55,6 +55,8 @@ var (
 	serverDisableHttp         = cmdServer.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
 	volumeDataFolders         = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	volumeMaxDataVolumeCounts = cmdServer.Flag.String("volume.max", "7", "maximum numbers of volumes, count[,count]... If set to zero on non-windows OS, the limit will be auto configured.")
+	volumeMinFreeSpacePercent  = cmdServer.Flag.String("volume.minFreeSpacePercent", "0", "minimum free disk space(in percents). If free disk space lower this value - all volumes marks as ReadOnly")
+
 	// pulseSeconds              = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	isStartingFiler           = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 	isStartingS3              = cmdServer.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -206,7 +208,8 @@ func runServer(cmd *Command, args []string) bool {
 
 	// start volume server
 	{
-		go serverOptions.v.startVolumeServer(*volumeDataFolders, *volumeMaxDataVolumeCounts, *serverWhiteListOption)
+		go serverOptions.v.startVolumeServer(*volumeDataFolders, *volumeMaxDataVolumeCounts, *serverWhiteListOption, *volumeMinFreeSpacePercent )
+
 	}
 
 	startMaster(masterOptions, serverWhiteList)

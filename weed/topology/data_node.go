@@ -41,7 +41,7 @@ func (dn *DataNode) String() string {
 	return fmt.Sprintf("Node:%s, volumes:%v, Ip:%s, Port:%d, PublicUrl:%s", dn.NodeImpl.String(), dn.volumes, dn.Ip, dn.Port, dn.PublicUrl)
 }
 
-func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) (isNew bool) {
+func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChangedRO bool) {
 	dn.Lock()
 	defer dn.Unlock()
 	if oldV, ok := dn.volumes[v.Id]; !ok {
@@ -64,12 +64,13 @@ func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) (isNew bool) {
 				dn.UpAdjustRemoteVolumeCountDelta(-1)
 			}
 		}
+		isChangedRO = dn.volumes[v.Id].ReadOnly != v.ReadOnly
 		dn.volumes[v.Id] = v
 	}
 	return
 }
 
-func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolumes, deletedVolumes []storage.VolumeInfo) {
+func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolumes, deletedVolumes, changeRO []storage.VolumeInfo) {
 	actualVolumeMap := make(map[needle.VolumeId]storage.VolumeInfo)
 	for _, v := range actualVolumes {
 		actualVolumeMap[v.Id] = v
@@ -91,9 +92,12 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 	}
 	dn.Unlock()
 	for _, v := range actualVolumes {
-		isNew := dn.AddOrUpdateVolume(v)
+		isNew, isChangedRO := dn.AddOrUpdateVolume(v)
 		if isNew {
 			newVolumes = append(newVolumes, v)
+		}
+		if isChangedRO {
+			changeRO = append(changeRO, v)
 		}
 	}
 	return
