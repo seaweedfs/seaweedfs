@@ -1,13 +1,13 @@
 package storage
 
 import (
- 	"fmt"
+	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/stats"
- 	"io/ioutil"
- 	"os"
+	"io/ioutil"
+	"os"
 	"path/filepath"
- 	"strings"
- 	"sync"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -16,11 +16,11 @@ import (
 )
 
 type DiskLocation struct {
-	Directory      string
-	MaxVolumeCount int
+	Directory           string
+	MaxVolumeCount      int
 	MinFreeSpacePercent float32
-	volumes        map[needle.VolumeId]*Volume
-	volumesLock    sync.RWMutex
+	volumes             map[needle.VolumeId]*Volume
+	volumesLock         sync.RWMutex
 
 	// erasure coding
 	ecVolumes     map[needle.VolumeId]*erasure_coding.EcVolume

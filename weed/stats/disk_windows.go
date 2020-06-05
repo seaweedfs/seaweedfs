@@ -6,6 +6,7 @@ import (
 	"syscall"
 	"unsafe"
 )
+
 var (
 	kernel32           = windows.NewLazySystemDLL("Kernel32.dll")
 	getDiskFreeSpaceEx = kernel32.NewProc("GetDiskFreeSpaceExW")

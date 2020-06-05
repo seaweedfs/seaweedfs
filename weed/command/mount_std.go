@@ -34,7 +34,7 @@ func runMount(cmd *Command, args []string) bool {
 		return false
 	}
 
-	if len(args)>0 {
+	if len(args) > 0 {
 		return false
 	}
 

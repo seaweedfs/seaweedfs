@@ -6,7 +6,7 @@ import (
 
 var (
 	VERSION = fmt.Sprintf("%s %d.%d", sizeLimit, 1, 79)
-	COMMIT = ""
+	COMMIT  = ""
 )
 
 func Version() string {

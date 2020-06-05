@@ -42,7 +42,7 @@ func (l *ExclusiveLocker) GetToken() (token int64, lockTsNs int64) {
 }
 
 func (l *ExclusiveLocker) RequestLock() {
-	if 	l.isLocking {
+	if l.isLocking {
 		return
 	}
 
