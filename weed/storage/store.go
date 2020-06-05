@@ -48,11 +48,11 @@ func (s *Store) String() (str string) {
 	return
 }
 
-func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int, needleMapKind NeedleMapType) (s *Store) {
+func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int, freeDiskSpaceWatermark []float32, needleMapKind NeedleMapType) (s *Store) {
 	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, PublicUrl: publicUrl, NeedleMapType: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirnames); i++ {
-		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i])
+		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i], freeDiskSpaceWatermark[i])
 		location.loadExistingVolumes(needleMapKind)
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))

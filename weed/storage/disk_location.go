@@ -1,11 +1,14 @@
 package storage
 
 import (
-	"fmt"
-	"io/ioutil"
-	"os"
-	"strings"
-	"sync"
+ 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/stats"
+ 	"io/ioutil"
+ 	"os"
+	"path/filepath"
+ 	"strings"
+ 	"sync"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
@@ -15,6 +18,7 @@ import (
 type DiskLocation struct {
 	Directory      string
 	MaxVolumeCount int
+	FreeDiskSpaceWatermark float32
 	volumes        map[needle.VolumeId]*Volume
 	volumesLock    sync.RWMutex
 
@@ -23,10 +27,11 @@ type DiskLocation struct {
 	ecVolumesLock sync.RWMutex
 }
 
-func NewDiskLocation(dir string, maxVolumeCount int) *DiskLocation {
-	location := &DiskLocation{Directory: dir, MaxVolumeCount: maxVolumeCount}
+func NewDiskLocation(dir string, maxVolumeCount int, freeDiskSpaceWatermark float32) *DiskLocation {
+	location := &DiskLocation{Directory: dir, MaxVolumeCount: maxVolumeCount, FreeDiskSpaceWatermark: freeDiskSpaceWatermark}
 	location.volumes = make(map[needle.VolumeId]*Volume)
 	location.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
+	go location.CheckDiskSpace()
 	return location
 }
 
@@ -292,4 +297,22 @@ func (l *DiskLocation) UnUsedSpace(volumeSizeLimit uint64) (unUsedSpace uint64) 
 	}
 
 	return
+}
+
+func (l *DiskLocation) CheckDiskSpace() {
+	lastStat := false
+	t := time.NewTicker(time.Minute)
+	for _ = range t.C {
+		if dir, e := filepath.Abs(l.Directory); e == nil {
+			s := stats.NewDiskStatus(dir)
+			if (s.PercentFree < l.FreeDiskSpaceWatermark) != lastStat {
+				lastStat = !lastStat
+				for _, v := range l.volumes {
+					v.SetLowDiskSpace(lastStat)
+				}
+
+			}
+		}
+	}
+
 }
