@@ -49,6 +49,10 @@ func CheckFile(filename string) (exists, canRead, canWrite bool, modTime time.Ti
 		exists = false
 		return
 	}
+	if err != nil {
+		glog.Errorf("check %s: %v", filename, err)
+		return
+	}
 	if fi.Mode()&0400 != 0 {
 		canRead = true
 	}
