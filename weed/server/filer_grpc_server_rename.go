@@ -32,11 +32,11 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 	moveErr := fs.moveEntry(ctx, oldParent, oldEntry, util.FullPath(filepath.ToSlash(req.NewDirectory)), req.NewName, &events)
 	if moveErr != nil {
 		fs.filer.RollbackTransaction(ctx)
-		return nil, fmt.Errorf("%s/%s move error: %v", req.OldDirectory, req.OldName, err)
+		return nil, fmt.Errorf("%s/%s move error: %v", req.OldDirectory, req.OldName, moveErr)
 	} else {
 		if commitError := fs.filer.CommitTransaction(ctx); commitError != nil {
 			fs.filer.RollbackTransaction(ctx)
-			return nil, fmt.Errorf("%s/%s move commit error: %v", req.OldDirectory, req.OldName, err)
+			return nil, fmt.Errorf("%s/%s move commit error: %v", req.OldDirectory, req.OldName, commitError)
 		}
 	}
 
