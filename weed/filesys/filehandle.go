@@ -3,6 +3,7 @@ package filesys
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"time"
@@ -97,6 +98,10 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 	}
 
 	totalRead, err := fh.f.reader.ReadAt(buff, offset)
+
+	if err == io.EOF {
+		err = nil
+	}
 
 	if err != nil {
 		glog.Errorf("file handle read %s: %v", fh.f.fullpath(), err)
