@@ -11,9 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -33,15 +34,14 @@ var (
 )
 
 type VolumeServerOptions struct {
-	port            *int
-	publicPort      *int
-	folders         []string
-	folderMaxLimits []int
-	ip              *string
-	publicUrl       *string
-	bindIp          *string
-	masters         *string
-	// pulseSeconds          *int
+	port                  *int
+	publicPort            *int
+	folders               []string
+	folderMaxLimits       []int
+	ip                    *string
+	publicUrl             *string
+	bindIp                *string
+	masters               *string
 	idleConnectionTimeout *int
 	dataCenter            *string
 	rack                  *string
@@ -55,6 +55,7 @@ type VolumeServerOptions struct {
 	fileSizeLimitMB       *int
 	minFreeSpacePercent   []float32
 	pprof                 *bool
+	// pulseSeconds          *int
 }
 
 func init() {

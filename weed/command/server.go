@@ -63,6 +63,8 @@ var (
 	isStartingMsgBroker       = cmdServer.Flag.Bool("msgBroker", false, "whether to start message broker")
 
 	serverWhiteList []string
+
+	False = false
 )
 
 func init() {
@@ -95,6 +97,7 @@ func init() {
 	serverOptions.v.compactionMBPerSecond = cmdServer.Flag.Int("volume.compactionMBps", 0, "limit compaction speed in mega bytes per second")
 	serverOptions.v.fileSizeLimitMB = cmdServer.Flag.Int("volume.fileSizeLimitMB", 256, "limit file size to avoid out of memory")
 	serverOptions.v.publicUrl = cmdServer.Flag.String("volume.publicUrl", "", "publicly accessible address")
+	serverOptions.v.pprof = &False
 
 	s3Options.port = cmdServer.Flag.Int("s3.port", 8333, "s3 server http listen port")
 	s3Options.domainName = cmdServer.Flag.String("s3.domainName", "", "suffix of the host name, {bucket}.{domainName}")
