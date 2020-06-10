@@ -3,6 +3,7 @@ package command
 import (
 	"fmt"
 	"net/http"
+	httppprof "net/http/pprof"
 	"os"
 	"runtime"
 	"runtime/pprof"
@@ -32,14 +33,14 @@ var (
 )
 
 type VolumeServerOptions struct {
-	port                  *int
-	publicPort            *int
-	folders               []string
-	folderMaxLimits       []int
-	ip                    *string
-	publicUrl             *string
-	bindIp                *string
-	masters               *string
+	port            *int
+	publicPort      *int
+	folders         []string
+	folderMaxLimits []int
+	ip              *string
+	publicUrl       *string
+	bindIp          *string
+	masters         *string
 	// pulseSeconds          *int
 	idleConnectionTimeout *int
 	dataCenter            *string
@@ -53,6 +54,7 @@ type VolumeServerOptions struct {
 	compactionMBPerSecond *int
 	fileSizeLimitMB       *int
 	minFreeSpacePercent   []float32
+	pprof                 *bool
 }
 
 func init() {
@@ -74,6 +76,7 @@ func init() {
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
 	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
 	v.fileSizeLimitMB = cmdVolume.Flag.Int("fileSizeLimitMB", 256, "limit file size to avoid out of memory")
+	v.pprof = cmdVolume.Flag.Bool("pprof", false, "enable pprof http handlers. precludes --memprofile and --cpuprofile")
 }
 
 var cmdVolume = &Command{
@@ -96,7 +99,12 @@ func runVolume(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	grace.SetupProfiling(*v.cpuProfile, *v.memProfile)
+
+	// If --pprof is set we assume the caller wants to be able to collect
+	// cpu and memory profiles via go tool pprof
+	if !*v.pprof {
+		grace.SetupProfiling(*v.cpuProfile, *v.memProfile)
+	}
 
 	v.startVolumeServer(*volumeFolders, *maxVolumeCounts, *volumeWhiteListOption, *minFreeSpacePercent)
 
@@ -155,6 +163,14 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	publicVolumeMux := volumeMux
 	if v.isSeparatedPublicPort() {
 		publicVolumeMux = http.NewServeMux()
+	}
+
+	if *v.pprof {
+		volumeMux.HandleFunc("/debug/pprof/", httppprof.Index)
+		volumeMux.HandleFunc("/debug/pprof/cmdline", httppprof.Cmdline)
+		volumeMux.HandleFunc("/debug/pprof/profile", httppprof.Profile)
+		volumeMux.HandleFunc("/debug/pprof/symbol", httppprof.Symbol)
+		volumeMux.HandleFunc("/debug/pprof/trace", httppprof.Trace)
 	}
 
 	volumeNeedleMapKind := storage.NeedleMapInMemory
