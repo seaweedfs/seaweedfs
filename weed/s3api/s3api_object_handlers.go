@@ -112,11 +112,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		for k, v := range proxyResponse.Header {
 			w.Header()[k] = v
 		}
-		if proxyResponse.StatusCode == http.StatusNotFound {
-			writeErrorResponse(w, ErrNoSuchKey, r.URL)
-			return
-		}
-		w.WriteHeader(proxyResponse.StatusCode)
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 }
