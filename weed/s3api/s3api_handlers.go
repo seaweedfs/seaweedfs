@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"google.golang.org/grpc"
@@ -76,13 +77,19 @@ func getRESTErrorResponse(err APIError, resource string) RESTErrorResponse {
 
 func writeResponse(w http.ResponseWriter, statusCode int, response []byte, mType mimeType) {
 	setCommonHeaders(w)
+	if response != nil {
+		w.Header().Set("Content-Length", strconv.Itoa(len(response)))
+	}
 	if mType != mimeNone {
 		w.Header().Set("Content-Type", string(mType))
 	}
 	w.WriteHeader(statusCode)
 	if response != nil {
 		glog.V(4).Infof("status %d %s: %s", statusCode, mType, string(response))
-		w.Write(response)
+		_, err := w.Write(response)
+		if err != nil {
+			glog.V(0).Infof("write err: %v", err)
+		}
 		w.(http.Flusher).Flush()
 	}
 }
