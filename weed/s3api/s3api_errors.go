@@ -33,6 +33,7 @@ const (
 	ErrBucketAlreadyExists
 	ErrBucketAlreadyOwnedByYou
 	ErrNoSuchBucket
+	ErrNoSuchKey
 	ErrNoSuchUpload
 	ErrInvalidBucketName
 	ErrInvalidDigest
@@ -132,6 +133,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrNoSuchBucket: {
 		Code:           "NoSuchBucket",
 		Description:    "The specified bucket does not exist",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrNoSuchKey: {
+		Code:           "NoSuchKey",
+		Description:    "The specified key does not exist.",
 		HTTPStatusCode: http.StatusNotFound,
 	},
 	ErrNoSuchUpload: {
