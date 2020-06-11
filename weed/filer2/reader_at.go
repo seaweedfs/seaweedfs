@@ -76,7 +76,7 @@ func (c *ChunkReadAt) ReadAt(p []byte, offset int64) (n int, err error) {
 		n += readCount
 		err = readErr
 		if readCount == 0 {
-			return n, nil
+			return n, io.EOF
 		}
 	}
 	return

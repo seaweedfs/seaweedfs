@@ -89,6 +89,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		},
 	}
 	if option.CacheSizeMB > 0 {
+		os.MkdirAll(option.CacheDir, 0755)
 		wfs.chunkCache = chunk_cache.NewChunkCache(256, option.CacheDir, option.CacheSizeMB)
 		grace.OnInterrupt(func() {
 			wfs.chunkCache.Shutdown()

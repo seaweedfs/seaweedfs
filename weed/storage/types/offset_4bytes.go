@@ -11,7 +11,7 @@ type OffsetHigher struct {
 }
 
 const (
-	OffsetSize            = 4
+	OffsetSize                   = 4
 	MaxPossibleVolumeSize uint64 = 4 * 1024 * 1024 * 1024 * 8 // 32GB
 )
 

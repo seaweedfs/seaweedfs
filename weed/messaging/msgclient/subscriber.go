@@ -3,8 +3,8 @@ package msgclient
 import (
 	"context"
 	"io"
-	"time"
 	"sync"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/messaging/broker"
 	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
@@ -26,12 +26,12 @@ func (mc *MessagingClient) NewSubscriber(subscriberId, namespace, topic string, 
 	subscriberCancels := make([]context.CancelFunc, topicConfiguration.PartitionCount)
 
 	for i := 0; i < int(topicConfiguration.PartitionCount); i++ {
-		if partitionId>=0 && i != partitionId {
+		if partitionId >= 0 && i != partitionId {
 			continue
 		}
 		tp := broker.TopicPartition{
 			Namespace: namespace,
-			Topic: topic,
+			Topic:     topic,
 			Partition: int32(i),
 		}
 		grpcClientConn, err := mc.findBroker(tp)

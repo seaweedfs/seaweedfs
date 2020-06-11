@@ -212,12 +212,17 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		}
 	}
 	// find out the delta volumes
-	newVolumes, deletedVolumes = dn.UpdateVolumes(volumeInfos)
+	var changedVolumes []storage.VolumeInfo
+	newVolumes, deletedVolumes, changedVolumes = dn.UpdateVolumes(volumeInfos)
 	for _, v := range newVolumes {
 		t.RegisterVolumeLayout(v, dn)
 	}
 	for _, v := range deletedVolumes {
 		t.UnRegisterVolumeLayout(v, dn)
+	}
+	for _, v := range changedVolumes {
+		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl)
+		vl.ensureCorrectWritables(&v)
 	}
 	return
 }

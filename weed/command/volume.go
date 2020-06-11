@@ -3,6 +3,7 @@ package command
 import (
 	"fmt"
 	"net/http"
+	httppprof "net/http/pprof"
 	"os"
 	"runtime"
 	"runtime/pprof"
@@ -10,9 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -40,7 +42,6 @@ type VolumeServerOptions struct {
 	publicUrl             *string
 	bindIp                *string
 	masters               *string
-	pulseSeconds          *int
 	idleConnectionTimeout *int
 	dataCenter            *string
 	rack                  *string
@@ -52,6 +53,9 @@ type VolumeServerOptions struct {
 	memProfile            *string
 	compactionMBPerSecond *int
 	fileSizeLimitMB       *int
+	minFreeSpacePercent   []float32
+	pprof                 *bool
+	// pulseSeconds          *int
 }
 
 func init() {
@@ -62,7 +66,7 @@ func init() {
 	v.publicUrl = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible address")
 	v.bindIp = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	v.masters = cmdVolume.Flag.String("mserver", "localhost:9333", "comma-separated master servers")
-	v.pulseSeconds = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
+	// v.pulseSeconds = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
 	v.idleConnectionTimeout = cmdVolume.Flag.Int("idleTimeout", 30, "connection idle seconds")
 	v.dataCenter = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	v.rack = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
@@ -73,6 +77,7 @@ func init() {
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
 	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
 	v.fileSizeLimitMB = cmdVolume.Flag.Int("fileSizeLimitMB", 256, "limit file size to avoid out of memory")
+	v.pprof = cmdVolume.Flag.Bool("pprof", false, "enable pprof http handlers. precludes --memprofile and --cpuprofile")
 }
 
 var cmdVolume = &Command{
@@ -87,6 +92,7 @@ var (
 	volumeFolders         = cmdVolume.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	maxVolumeCounts       = cmdVolume.Flag.String("max", "7", "maximum numbers of volumes, count[,count]... If set to zero on non-windows OS, the limit will be auto configured.")
 	volumeWhiteListOption = cmdVolume.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
+	minFreeSpacePercent   = cmdVolume.Flag.String("minFreeSpacePercent ", "0", "minimum free disk space(in percents). If free disk space lower this value - all volumes marks as ReadOnly")
 )
 
 func runVolume(cmd *Command, args []string) bool {
@@ -94,14 +100,19 @@ func runVolume(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	grace.SetupProfiling(*v.cpuProfile, *v.memProfile)
 
-	v.startVolumeServer(*volumeFolders, *maxVolumeCounts, *volumeWhiteListOption)
+	// If --pprof is set we assume the caller wants to be able to collect
+	// cpu and memory profiles via go tool pprof
+	if !*v.pprof {
+		grace.SetupProfiling(*v.cpuProfile, *v.memProfile)
+	}
+
+	v.startVolumeServer(*volumeFolders, *maxVolumeCounts, *volumeWhiteListOption, *minFreeSpacePercent)
 
 	return true
 }
 
-func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, volumeWhiteListOption string) {
+func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, volumeWhiteListOption, minFreeSpacePercent string) {
 
 	// Set multiple folders and each folder's max volume count limit'
 	v.folders = strings.Split(volumeFolders, ",")
@@ -116,6 +127,16 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	if len(v.folders) != len(v.folderMaxLimits) {
 		glog.Fatalf("%d directories by -dir, but only %d max is set by -max", len(v.folders), len(v.folderMaxLimits))
 	}
+	minFreeSpacePercentStrings := strings.Split(minFreeSpacePercent, ",")
+	for _, freeString := range minFreeSpacePercentStrings {
+
+		if value, e := strconv.ParseFloat(freeString, 32); e == nil {
+			v.minFreeSpacePercent = append(v.minFreeSpacePercent, float32(value))
+		} else {
+			glog.Fatalf("The value specified in -minFreeSpacePercent not a valid value %s", freeString)
+		}
+	}
+
 	for _, folder := range v.folders {
 		if err := util.TestFolderWritable(folder); err != nil {
 			glog.Fatalf("Check Data Folder(-dir) Writable %s : %s", folder, err)
@@ -145,6 +166,14 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		publicVolumeMux = http.NewServeMux()
 	}
 
+	if *v.pprof {
+		volumeMux.HandleFunc("/debug/pprof/", httppprof.Index)
+		volumeMux.HandleFunc("/debug/pprof/cmdline", httppprof.Cmdline)
+		volumeMux.HandleFunc("/debug/pprof/profile", httppprof.Profile)
+		volumeMux.HandleFunc("/debug/pprof/symbol", httppprof.Symbol)
+		volumeMux.HandleFunc("/debug/pprof/trace", httppprof.Trace)
+	}
+
 	volumeNeedleMapKind := storage.NeedleMapInMemory
 	switch *v.indexType {
 	case "leveldb":
@@ -159,9 +188,9 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.publicUrl,
-		v.folders, v.folderMaxLimits,
+		v.folders, v.folderMaxLimits, v.minFreeSpacePercent,
 		volumeNeedleMapKind,
-		strings.Split(masters, ","), *v.pulseSeconds, *v.dataCenter, *v.rack,
+		strings.Split(masters, ","), 5, *v.dataCenter, *v.rack,
 		v.whiteList,
 		*v.fixJpgOrientation, *v.readRedirect,
 		*v.compactionMBPerSecond,

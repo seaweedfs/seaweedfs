@@ -55,12 +55,16 @@ var (
 	serverDisableHttp         = cmdServer.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
 	volumeDataFolders         = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	volumeMaxDataVolumeCounts = cmdServer.Flag.String("volume.max", "7", "maximum numbers of volumes, count[,count]... If set to zero on non-windows OS, the limit will be auto configured.")
-	pulseSeconds              = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
+	volumeMinFreeSpacePercent = cmdServer.Flag.String("volume.minFreeSpacePercent", "0", "minimum free disk space(in percents). If free disk space lower this value - all volumes marks as ReadOnly")
+
+	// pulseSeconds              = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	isStartingFiler           = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 	isStartingS3              = cmdServer.Flag.Bool("s3", false, "whether to start S3 gateway")
 	isStartingMsgBroker       = cmdServer.Flag.Bool("msgBroker", false, "whether to start message broker")
 
 	serverWhiteList []string
+
+	False = false
 )
 
 func init() {
@@ -93,6 +97,7 @@ func init() {
 	serverOptions.v.compactionMBPerSecond = cmdServer.Flag.Int("volume.compactionMBps", 0, "limit compaction speed in mega bytes per second")
 	serverOptions.v.fileSizeLimitMB = cmdServer.Flag.Int("volume.fileSizeLimitMB", 256, "limit file size to avoid out of memory")
 	serverOptions.v.publicUrl = cmdServer.Flag.String("volume.publicUrl", "", "publicly accessible address")
+	serverOptions.v.pprof = &False
 
 	s3Options.port = cmdServer.Flag.Int("s3.port", 8333, "s3 server http listen port")
 	s3Options.domainName = cmdServer.Flag.String("s3.domainName", "", "suffix of the host name, {bucket}.{domainName}")
@@ -142,8 +147,8 @@ func runServer(cmd *Command, args []string) bool {
 	serverOptions.v.rack = serverRack
 	msgBrokerOptions.ip = serverIp
 
-	serverOptions.v.pulseSeconds = pulseSeconds
-	masterOptions.pulseSeconds = pulseSeconds
+	// serverOptions.v.pulseSeconds = pulseSeconds
+	// masterOptions.pulseSeconds = pulseSeconds
 
 	masterOptions.whiteList = serverWhiteListOption
 
@@ -206,7 +211,8 @@ func runServer(cmd *Command, args []string) bool {
 
 	// start volume server
 	{
-		go serverOptions.v.startVolumeServer(*volumeDataFolders, *volumeMaxDataVolumeCounts, *serverWhiteListOption)
+		go serverOptions.v.startVolumeServer(*volumeDataFolders, *volumeMaxDataVolumeCounts, *serverWhiteListOption, *volumeMinFreeSpacePercent)
+
 	}
 
 	startMaster(masterOptions, serverWhiteList)

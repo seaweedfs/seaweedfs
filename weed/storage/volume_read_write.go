@@ -76,7 +76,7 @@ func (v *Volume) syncWrite(n *needle.Needle) (offset uint64, size uint32, isUnch
 	defer v.dataFileAccessLock.Unlock()
 
 	if MaxPossibleVolumeSize < v.nm.ContentSize()+uint64(actualSize) {
-		err = fmt.Errorf("volume size limit %d exceeded! current size is %d", MaxPossibleVolumeSize, v.ContentSize())
+		err = fmt.Errorf("volume size limit %d exceeded! current size is %d", MaxPossibleVolumeSize, v.nm.ContentSize())
 		return
 	}
 	if v.isFileUnchanged(n) {
@@ -190,7 +190,7 @@ func (v *Volume) syncDelete(n *needle.Needle) (uint32, error) {
 	defer v.dataFileAccessLock.Unlock()
 
 	if MaxPossibleVolumeSize < v.nm.ContentSize()+uint64(actualSize) {
-		err := fmt.Errorf("volume size limit %d exceeded! current size is %d", MaxPossibleVolumeSize, v.ContentSize())
+		err := fmt.Errorf("volume size limit %d exceeded! current size is %d", MaxPossibleVolumeSize, v.nm.ContentSize())
 		return 0, err
 	}
 

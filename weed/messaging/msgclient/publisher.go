@@ -26,7 +26,7 @@ func (mc *MessagingClient) NewPublisher(publisherId, namespace, topic string) (*
 	for i := 0; i < int(topicConfiguration.PartitionCount); i++ {
 		tp := broker.TopicPartition{
 			Namespace: namespace,
-			Topic: topic,
+			Topic:     topic,
 			Partition: int32(i),
 		}
 		grpcClientConn, err := mc.findBroker(tp)

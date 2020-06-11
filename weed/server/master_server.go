@@ -37,7 +37,7 @@ type MasterOption struct {
 	MetaFolder              string
 	VolumeSizeLimitMB       uint
 	VolumePreallocate       bool
-	PulseSeconds            int
+	// PulseSeconds            int
 	DefaultReplicaPlacement string
 	GarbageThreshold        float64
 	WhiteList               []string
@@ -103,7 +103,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 	if nil == seq {
 		glog.Fatalf("create sequencer failed.")
 	}
-	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, ms.option.PulseSeconds, replicationAsMin)
+	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, 5, replicationAsMin)
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", ms.option.VolumeSizeLimitMB, "MB")
 

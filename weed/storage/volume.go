@@ -27,6 +27,7 @@ type Volume struct {
 	needleMapKind      NeedleMapType
 	noWriteOrDelete    bool // if readonly, either noWriteOrDelete or noWriteCanDelete
 	noWriteCanDelete   bool // if readonly, either noWriteOrDelete or noWriteCanDelete
+	lowDiskSpace       bool
 	hasRemoteFile      bool // if the volume has a remote file
 	MemoryMapMaxSizeMb uint32
 
@@ -43,6 +44,11 @@ type Volume struct {
 	isCompacting bool
 
 	volumeInfo *volume_server_pb.VolumeInfo
+}
+
+func (v *Volume) SetLowDiskSpace(lowDiskSpace bool) {
+	glog.V(0).Infof("SetLowDiskSpace id %d value %t", v.Id, lowDiskSpace)
+	v.lowDiskSpace = lowDiskSpace
 }
 
 func NewVolume(dirname string, collection string, id needle.VolumeId, needleMapKind NeedleMapType, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32) (v *Volume, e error) {
@@ -244,5 +250,5 @@ func (v *Volume) RemoteStorageNameKey() (storageName, storageKey string) {
 }
 
 func (v *Volume) IsReadOnly() bool {
-	return v.noWriteOrDelete || v.noWriteCanDelete
+	return v.noWriteOrDelete || v.noWriteCanDelete || v.lowDiskSpace
 }

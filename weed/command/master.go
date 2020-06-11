@@ -33,7 +33,7 @@ type MasterOptions struct {
 	peers              *string
 	volumeSizeLimitMB  *uint
 	volumePreallocate  *bool
-	pulseSeconds       *int
+	// pulseSeconds       *int
 	defaultReplication *string
 	garbageThreshold   *float64
 	whiteList          *string
@@ -51,7 +51,7 @@ func init() {
 	m.peers = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
 	m.volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
 	m.volumePreallocate = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
-	m.pulseSeconds = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
+	// m.pulseSeconds = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	m.defaultReplication = cmdMaster.Flag.String("defaultReplication", "000", "Default replication type if not specified.")
 	m.garbageThreshold = cmdMaster.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
 	m.whiteList = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
@@ -118,7 +118,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 	// start raftServer
 	raftServer := weed_server.NewRaftServer(security.LoadClientTLS(util.GetViper(), "grpc.master"),
-		peers, myMasterAddress, *masterOption.metaFolder, ms.Topo, *masterOption.pulseSeconds)
+		peers, myMasterAddress, *masterOption.metaFolder, ms.Topo, 5)
 	if raftServer == nil {
 		glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717", *masterOption.metaFolder)
 	}
@@ -178,7 +178,7 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		MetaFolder:              *m.metaFolder,
 		VolumeSizeLimitMB:       *m.volumeSizeLimitMB,
 		VolumePreallocate:       *m.volumePreallocate,
-		PulseSeconds:            *m.pulseSeconds,
+		// PulseSeconds:            *m.pulseSeconds,
 		DefaultReplicaPlacement: *m.defaultReplication,
 		GarbageThreshold:        *m.garbageThreshold,
 		WhiteList:               whiteList,
