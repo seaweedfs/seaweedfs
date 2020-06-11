@@ -42,9 +42,7 @@ func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node,
 			return fuse.EIO
 		}
 
-		if dir.wfs.option.AsyncMetaDataCaching {
-			dir.wfs.metaCache.InsertEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
-		}
+		dir.wfs.metaCache.InsertEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
 
 		return nil
 	})

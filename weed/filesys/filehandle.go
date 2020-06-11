@@ -214,9 +214,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 			return fmt.Errorf("fh flush create %s: %v", fh.f.fullpath(), err)
 		}
 
-		if fh.f.wfs.option.AsyncMetaDataCaching {
-			fh.f.wfs.metaCache.InsertEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
-		}
+		fh.f.wfs.metaCache.InsertEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
 
 		fh.f.wfs.deleteFileChunks(garbages)
 		for i, chunk := range garbages {
