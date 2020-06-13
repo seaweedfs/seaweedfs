@@ -30,7 +30,7 @@ func init() {
 }
 
 var cmdServer = &Command{
-	UsageLine: "server -port=8080 -dir=/tmp -volume.max=5 -ip=server_name",
+	UsageLine: "server -dir=/tmp -volume.max=5 -ip=server_name",
 	Short:     "start a master server, a volume server, and optionally a filer and a S3 gateway",
 	Long: `start both a volume server to provide storage spaces
   and a master server to provide volume=>location mapping service and sequence number of file ids
