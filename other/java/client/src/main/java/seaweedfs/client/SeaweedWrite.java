@@ -45,28 +45,32 @@ public class SeaweedWrite {
 
         String etag = multipartUpload(targetUrl, auth, bytes, bytesOffset, bytesLength, cipherKey);
 
+        synchronized (entry) {
+            entry.addChunks(FilerProto.FileChunk.newBuilder()
+                    .setFileId(fileId)
+                    .setOffset(offset)
+                    .setSize(bytesLength)
+                    .setMtime(System.currentTimeMillis() / 10000L)
+                    .setETag(etag)
+                    .setCipherKey(cipherKeyString)
+            );
+        }
+
         // cache fileId ~ bytes
         SeaweedRead.chunkCache.setChunk(fileId, bytes);
-
-        entry.addChunks(FilerProto.FileChunk.newBuilder()
-                .setFileId(fileId)
-                .setOffset(offset)
-                .setSize(bytesLength)
-                .setMtime(System.currentTimeMillis() / 10000L)
-                .setETag(etag)
-                .setCipherKey(cipherKeyString)
-        );
 
     }
 
     public static void writeMeta(final FilerGrpcClient filerGrpcClient,
                                  final String parentDirectory, final FilerProto.Entry.Builder entry) {
-        filerGrpcClient.getBlockingStub().createEntry(
-                FilerProto.CreateEntryRequest.newBuilder()
-                        .setDirectory(parentDirectory)
-                        .setEntry(entry)
-                        .build()
-        );
+        synchronized (entry){
+            filerGrpcClient.getBlockingStub().createEntry(
+                    FilerProto.CreateEntryRequest.newBuilder()
+                            .setDirectory(parentDirectory)
+                            .setEntry(entry)
+                            .build()
+            );
+        }
     }
 
     private static String multipartUpload(String targetUrl,

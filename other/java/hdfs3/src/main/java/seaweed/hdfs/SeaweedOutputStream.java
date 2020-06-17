@@ -78,9 +78,6 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
     }
 
     private synchronized void flushWrittenBytesToServiceInternal(final long offset) throws IOException {
-
-        LOG.debug("SeaweedWrite.writeMeta path: {} entry:{}", path, entry);
-
         try {
             SeaweedWrite.writeMeta(filerGrpcClient, getParentDirectory(path), entry);
         } catch (Exception ex) {
