@@ -120,6 +120,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 * [WebDAV] access as a mapped drive on Mac and Windows, or from mobile devices.
 * [AES256-GCM Encrypted Storage][FilerDataEncryption] safely stores the encrypted data.
 * [File TTL][FilerTTL] automatically purge file metadata and actual file data.
+* [Kubernetes CSI Driver][SeaweedFsCsiDriver] A Container Storage Interface (CSI) Driver.
 
 [Filer]: https://github.com/chrislusf/seaweedfs/wiki/Directories-and-Files
 [Mount]: https://github.com/chrislusf/seaweedfs/wiki/Mount
@@ -132,6 +133,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 [FilerDataEncryption]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Data-Encryption
 [FilerTTL]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Stores
 [VolumeServerTTL]: https://github.com/chrislusf/seaweedfs/wiki/Store-file-with-a-Time-To-Live
+[SeaweedFsCsiDriver]: https://github.com/seaweedfs/seaweedfs-csi-driver
 
 [Back to TOC](#table-of-contents)
 
