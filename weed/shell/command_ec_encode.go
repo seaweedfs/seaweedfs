@@ -123,6 +123,8 @@ func markVolumeReadonly(grpcDialOption grpc.DialOption, volumeId needle.VolumeId
 
 	for _, location := range locations {
 
+		fmt.Printf("markVolumeReadonly %d on %s ...\n", volumeId, location.Url)
+
 		err := operation.WithVolumeServerClient(location.Url, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 			_, markErr := volumeServerClient.VolumeMarkReadonly(context.Background(), &volume_server_pb.VolumeMarkReadonlyRequest{
 				VolumeId: uint32(volumeId),
@@ -140,6 +142,8 @@ func markVolumeReadonly(grpcDialOption grpc.DialOption, volumeId needle.VolumeId
 }
 
 func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, collection string, sourceVolumeServer string) error {
+
+	fmt.Printf("generateEcShards %s %d on %s ...\n", collection, volumeId, sourceVolumeServer)
 
 	err := operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, genErr := volumeServerClient.VolumeEcShardsGenerate(context.Background(), &volume_server_pb.VolumeEcShardsGenerateRequest{
@@ -203,6 +207,8 @@ func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection
 }
 
 func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServers []*EcNode, allocatedEcIds [][]uint32, volumeId needle.VolumeId, collection string, existingLocation wdclient.Location) (actuallyCopied []uint32, err error) {
+
+	fmt.Printf("parallelCopyEcShardsFromSource %d %s\n", volumeId, existingLocation.Url)
 
 	// parallelize
 	shardIdChan := make(chan []uint32, len(targetServers))

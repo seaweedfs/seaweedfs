@@ -201,9 +201,7 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 		if err := os.Remove(baseFilename + ".ecx"); err != nil {
 			return nil, err
 		}
-		if err := os.Remove(baseFilename + ".ecj"); err != nil {
-			return nil, err
-		}
+		os.Remove(baseFilename + ".ecj")
 	}
 	if !hasIdxFile {
 		// .vif is used for ec volumes and normal volumes

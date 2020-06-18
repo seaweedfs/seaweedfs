@@ -11,6 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 // write .idx file from .ecx and .ecj files
@@ -118,9 +119,12 @@ func iterateEcxFile(baseFileName string, processNeedleFn func(key types.NeedleId
 }
 
 func iterateEcjFile(baseFileName string, processNeedleFn func(key types.NeedleId) error) error {
+	if !util.FileExists(baseFileName+".ecj") {
+		return nil
+	}
 	ecjFile, openErr := os.OpenFile(baseFileName+".ecj", os.O_RDONLY, 0644)
 	if openErr != nil {
-		return fmt.Errorf("cannot open ec index %s.ecx: %v", baseFileName, openErr)
+		return fmt.Errorf("cannot open ec index %s.ecj: %v", baseFileName, openErr)
 	}
 	defer ecjFile.Close()
 
