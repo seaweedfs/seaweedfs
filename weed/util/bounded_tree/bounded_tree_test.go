@@ -62,6 +62,15 @@ func TestBoundedTree(t *testing.T) {
 	tree.EnsureVisited(util.FullPath("/a/b/c"), visitFn)
 
 	assert.Equal(t, true, tree.HasVisited(util.FullPath("/a/b")))
+	assert.Equal(t, true, tree.HasVisited(util.FullPath("/a/b/c")))
+	assert.Equal(t, false, tree.HasVisited(util.FullPath("/a/b/c/d")))
+	assert.Equal(t, false, tree.HasVisited(util.FullPath("/a/b/e")))
+	assert.Equal(t, false, tree.HasVisited(util.FullPath("/a/f")))
+	assert.Equal(t, false, tree.HasVisited(util.FullPath("/g")))
+	assert.Equal(t, false, tree.HasVisited(util.FullPath("/h")))
+	assert.Equal(t, true, tree.HasVisited(util.FullPath("/")))
+	assert.Equal(t, true, tree.HasVisited(util.FullPath("/x")))
+	assert.Equal(t, false, tree.HasVisited(util.FullPath("/a/b/e/x")))
 
 	printMap(tree.root.Children)
 
