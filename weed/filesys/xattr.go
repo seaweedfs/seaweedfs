@@ -5,6 +5,7 @@ import (
 
 	"github.com/seaweedfs/fuse"
 
+	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -113,6 +114,7 @@ func (wfs *WFS) maybeLoadEntry(dir, name string) (entry *filer_pb.Entry, err err
 	// glog.V(3).Infof("read entry cache miss %s", fullpath)
 
 	// read from async meta cache
+	meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath(dir))
 	cachedEntry, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
 	if cacheErr == filer_pb.ErrNotFound {
 		return nil, fuse.ENOENT

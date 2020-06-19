@@ -9,16 +9,19 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2/leveldb"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/util/bounded_tree"
 )
 
 type MetaCache struct {
 	actualStore filer2.FilerStore
 	sync.RWMutex
+	visitedBoundary *bounded_tree.BoundedTree
 }
 
 func NewMetaCache(dbFolder string) *MetaCache {
 	return &MetaCache{
-		actualStore: openMetaStore(dbFolder),
+		actualStore:     openMetaStore(dbFolder),
+		visitedBoundary: bounded_tree.NewBoundedTree(),
 	}
 }
 
@@ -49,14 +52,24 @@ func (mc *MetaCache) InsertEntry(ctx context.Context, entry *filer2.Entry) error
 func (mc *MetaCache) AtomicUpdateEntry(ctx context.Context, oldPath util.FullPath, newEntry *filer2.Entry) error {
 	mc.Lock()
 	defer mc.Unlock()
-	if oldPath != "" {
-		if err := mc.actualStore.DeleteEntry(ctx, oldPath); err != nil {
-			return err
+
+	oldDir, _ := oldPath.DirAndName()
+	if mc.visitedBoundary.HasVisited(util.FullPath(oldDir)) {
+		if oldPath != "" {
+			if err := mc.actualStore.DeleteEntry(ctx, oldPath); err != nil {
+				return err
+			}
 		}
+	}else{
+		// println("unknown old directory:", oldDir)
 	}
+
 	if newEntry != nil {
-		if err := mc.actualStore.InsertEntry(ctx, newEntry); err != nil {
-			return err
+		newDir, _ := newEntry.DirAndName()
+		if mc.visitedBoundary.HasVisited(util.FullPath(newDir)) {
+			if err := mc.actualStore.InsertEntry(ctx, newEntry); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

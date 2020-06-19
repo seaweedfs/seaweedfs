@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -204,8 +205,10 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 
 	glog.V(4).Infof("dir Lookup %s: %s by %s", dir.FullPath(), req.Name, req.Header.String())
 
-	fullFilePath := util.NewFullPath(dir.FullPath(), req.Name)
+	dirPath := dir.FullPath()
+	fullFilePath := util.NewFullPath(dirPath, req.Name)
 
+	meta_cache.EnsureVisited(dir.wfs.metaCache, dir.wfs, util.FullPath(dirPath))
 	cachedEntry, cacheErr := dir.wfs.metaCache.FindEntry(context.Background(), fullFilePath)
 	if cacheErr == filer_pb.ErrNotFound {
 		return nil, fuse.ENOENT
@@ -263,7 +266,9 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 		return nil
 	}
 
-	listedEntries, listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), util.FullPath(dir.FullPath()), "", false, int(dir.wfs.option.DirListCacheLimit))
+	dirPath := util.FullPath(dir.FullPath())
+	meta_cache.EnsureVisited(dir.wfs.metaCache, dir.wfs, dirPath)
+	listedEntries, listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, "", false, int(dir.wfs.option.DirListCacheLimit))
 	if listErr != nil {
 		glog.Errorf("list meta cache: %v", listErr)
 		return nil, fuse.EIO
