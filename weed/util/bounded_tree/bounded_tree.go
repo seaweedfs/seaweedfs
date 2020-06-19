@@ -1,6 +1,8 @@
 package bounded_tree
 
 import (
+	"fmt"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -133,7 +135,7 @@ func (t *BoundedTree) HasVisited(p util.FullPath) bool {
 	}
 
 	components := p.Split()
-	// fmt.Printf("components %v %d\n", components, len(components))
+	fmt.Printf("components %v %d\n", components, len(components))
 	return t.hasVisited(t.root, util.FullPath("/"), components, 0)
 }
 
@@ -147,15 +149,15 @@ func (t *BoundedTree) hasVisited(n *Node, currentPath util.FullPath, components 
 		return false
 	}
 
-	// fmt.Printf("  hasVisited child %v %v\n", currentPath, components[i])
+	fmt.Printf("  hasVisited child %v %+v %d\n", currentPath, components, i)
+
+	if i >= len(components) {
+		return true
+	}
 
 	toVisitNode, found := n.Children[components[i]]
 	if !found {
 		return true
-	}
-
-	if i+1 >= len(components) {
-		return false
 	}
 
 	return t.hasVisited(toVisitNode, currentPath.Child(components[i]), components, i+1)

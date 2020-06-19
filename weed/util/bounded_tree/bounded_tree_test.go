@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -59,6 +61,8 @@ func TestBoundedTree(t *testing.T) {
 
 	tree.EnsureVisited(util.FullPath("/a/b/c"), visitFn)
 
+	assert.Equal(t, true, tree.HasVisited(util.FullPath("/a/b")))
+
 	printMap(tree.root.Children)
 
 	a := tree.root.getChild("a")
@@ -110,9 +114,9 @@ func TestEmptyBoundedTree(t *testing.T) {
 
 	printMap(tree.root.Children)
 
-	println(tree.HasVisited(util.FullPath("/a/b")))
-	println(tree.HasVisited(util.FullPath("/a")))
-	println(tree.HasVisited(util.FullPath("/g")))
-	println(tree.HasVisited(util.FullPath("/g/x")))
+	assert.Equal(t, true, tree.HasVisited(util.FullPath("/a/b")))
+	assert.Equal(t, true, tree.HasVisited(util.FullPath("/a")))
+	assert.Equal(t, false, tree.HasVisited(util.FullPath("/g")))
+	assert.Equal(t, false, tree.HasVisited(util.FullPath("/g/x")))
 
 }
