@@ -110,4 +110,9 @@ func TestEmptyBoundedTree(t *testing.T) {
 
 	printMap(tree.root.Children)
 
+	println(tree.HasVisited(util.FullPath("/a/b")))
+	println(tree.HasVisited(util.FullPath("/a")))
+	println(tree.HasVisited(util.FullPath("/g")))
+	println(tree.HasVisited(util.FullPath("/g/x")))
+
 }
