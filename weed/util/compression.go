@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
+	"fmt"
 	"io/ioutil"
 	"strings"
 
@@ -29,18 +30,7 @@ func UnCompressData(input []byte) ([]byte, error) {
 	if IsGzippedContent(input) {
 		return ungzipData(input)
 	}
-
-}
-
-func ungzipData(input []byte) ([]byte, error) {
-	buf := bytes.NewBuffer(input)
-	r, _ := gzip.NewReader(buf)
-	defer r.Close()
-	output, err := ioutil.ReadAll(r)
-	if err != nil {
-		glog.V(2).Infoln("error uncompressing data:", err)
-	}
-	return output, err
+	return nil, fmt.Errorf("unsupported compression")
 }
 
 func ungzipData(input []byte) ([]byte, error) {
