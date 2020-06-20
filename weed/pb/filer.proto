@@ -110,7 +110,7 @@ message FileChunk {
     FileId fid = 7;
     FileId source_fid = 8;
     bytes cipher_key = 9;
-    bool is_gzipped = 10;
+    bool is_compressed = 10;
 }
 
 message FileId {
