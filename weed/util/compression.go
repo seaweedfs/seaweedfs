@@ -26,7 +26,7 @@ func GzipData(input []byte) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
-func UnCompressData(input []byte) ([]byte, error) {
+func DecompressData(input []byte) ([]byte, error) {
 	if IsGzippedContent(input) {
 		return ungzipData(input)
 	}

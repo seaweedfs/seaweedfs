@@ -49,7 +49,7 @@ func main() {
 
 			data := n.Data
 			if n.IsCompressed() {
-				if data, err = util2.UnCompressData(data); err != nil {
+				if data, err = util2.DecompressData(data); err != nil {
 					return err
 				}
 			}

@@ -310,7 +310,7 @@ func readEncryptedUrl(fileUrl string, cipherKey []byte, isContentCompressed bool
 		return fmt.Errorf("decrypt %s: %v", fileUrl, err)
 	}
 	if isContentCompressed {
-		decryptedData, err = UnCompressData(decryptedData)
+		decryptedData, err = DecompressData(decryptedData)
 		if err != nil {
 			return fmt.Errorf("unzip decrypt %s: %v", fileUrl, err)
 		}

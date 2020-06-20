@@ -56,7 +56,7 @@ func (s ChunkList) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 func LoadChunkManifest(buffer []byte, isCompressed bool) (*ChunkManifest, error) {
 	if isCompressed {
 		var err error
-		if buffer, err = util.UnCompressData(buffer); err != nil {
+		if buffer, err = util.DecompressData(buffer); err != nil {
 			return nil, err
 		}
 	}

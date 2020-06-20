@@ -146,7 +146,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		if n.IsCompressed() {
 			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 				if _, _, _, shouldResize := shouldResizeImages(ext, r); shouldResize {
-					if n.Data, err = util.UnCompressData(n.Data); err != nil {
+					if n.Data, err = util.DecompressData(n.Data); err != nil {
 						glog.V(0).Infoln("ungzip error:", err, r.URL.Path)
 					}
 				} else {
@@ -155,7 +155,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 					}
 				}
 			} else {
-				if n.Data, err = util.UnCompressData(n.Data); err != nil {
+				if n.Data, err = util.DecompressData(n.Data); err != nil {
 					glog.V(0).Infoln("ungzip error:", err, r.URL.Path)
 				}
 			}

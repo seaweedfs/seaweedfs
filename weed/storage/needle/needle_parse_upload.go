@@ -60,7 +60,7 @@ func ParseUpload(r *http.Request, sizeLimit int64) (pu *ParsedUpload, e error) {
 		}
 	}
 	if pu.IsGzipped {
-		if unzipped, e := util.UnCompressData(pu.Data); e == nil {
+		if unzipped, e := util.DecompressData(pu.Data); e == nil {
 			pu.OriginalDataSize = len(unzipped)
 			pu.UncompressedData = unzipped
 			// println("ungzipped data size", len(unzipped))
