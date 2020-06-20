@@ -2,7 +2,6 @@ package command
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"io"
 	"math"
@@ -19,7 +18,6 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
@@ -41,7 +39,6 @@ type BenchmarkOptions struct {
 	maxCpu           *int
 	grpcDialOption   grpc.DialOption
 	masterClient     *wdclient.MasterClient
-	grpcRead         *bool
 	fsync            *bool
 }
 
@@ -67,7 +64,6 @@ func init() {
 	b.replication = cmdBenchmark.Flag.String("replication", "000", "replication type")
 	b.cpuprofile = cmdBenchmark.Flag.String("cpuprofile", "", "cpu profile output file")
 	b.maxCpu = cmdBenchmark.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
-	b.grpcRead = cmdBenchmark.Flag.Bool("grpcRead", false, "use grpc API to read")
 	b.fsync = cmdBenchmark.Flag.Bool("fsync", false, "flush data to disk after write")
 	sharedBytes = make([]byte, 1024)
 }
@@ -286,25 +282,15 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 		start := time.Now()
 		var bytesRead int
 		var err error
-		if *b.grpcRead {
-			volumeServer, err := b.masterClient.LookupVolumeServer(fid)
-			if err != nil {
-				s.failed++
-				println("!!!! ", fid, " location not found!!!!!")
-				continue
-			}
-			bytesRead, err = grpcFileGet(volumeServer, fid, b.grpcDialOption)
-		} else {
-			url, err := b.masterClient.LookupFileId(fid)
-			if err != nil {
-				s.failed++
-				println("!!!! ", fid, " location not found!!!!!")
-				continue
-			}
-			var bytes []byte
-			bytes, err = util.Get(url)
-			bytesRead = len(bytes)
+		url, err := b.masterClient.LookupFileId(fid)
+		if err != nil {
+			s.failed++
+			println("!!!! ", fid, " location not found!!!!!")
+			continue
 		}
+		var bytes []byte
+		bytes, err = util.Get(url)
+		bytesRead = len(bytes)
 		if err == nil {
 			s.completed++
 			s.transferred += int64(bytesRead)
@@ -314,29 +300,6 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 			fmt.Printf("Failed to read %s error:%v\n", fid, err)
 		}
 	}
-}
-
-func grpcFileGet(volumeServer, fid string, grpcDialOption grpc.DialOption) (bytesRead int, err error) {
-	err = operation.WithVolumeServerClient(volumeServer, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
-		fileGetClient, err := client.FileGet(context.Background(), &volume_server_pb.FileGetRequest{FileId: fid})
-		if err != nil {
-			return err
-		}
-
-		for {
-			resp, respErr := fileGetClient.Recv()
-			if resp != nil {
-				bytesRead += len(resp.Data)
-			}
-			if respErr != nil {
-				if respErr == io.EOF {
-					return nil
-				}
-				return respErr
-			}
-		}
-	})
-	return
 }
 
 func writeFileIds(fileName string, fileIdLineChan chan string, finishChan chan bool) {
@@ -396,7 +359,7 @@ func readFileIds(fileName string, fileIdLineChan chan string) {
 }
 
 const (
-	benchResolution = 10000 //0.1 microsecond
+	benchResolution = 10000 // 0.1 microsecond
 	benchBucket     = 1000000000 / benchResolution
 )
 
@@ -519,7 +482,7 @@ func (s *stats) printStats() {
 	fmt.Printf("\nConnection Times (ms)\n")
 	fmt.Printf("              min      avg        max      std\n")
 	fmt.Printf("Total:        %2.1f      %3.1f       %3.1f      %3.1f\n", float32(min)/10, float32(avg)/10, float32(max)/10, std/10)
-	//printing percentiles
+	// printing percentiles
 	fmt.Printf("\nPercentage of the requests served within a certain time (ms)\n")
 	percentiles := make([]int, len(percentages))
 	for i := 0; i < len(percentages); i++ {

@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package master_pb;
 
+option go_package = "github.com/chrislusf/seaweedfs/weed/pb/master_pb";
+
 //////////////////////////////////////////////////
 
 service Seaweed {

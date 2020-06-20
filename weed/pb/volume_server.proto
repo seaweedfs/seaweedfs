@@ -1,15 +1,13 @@
 syntax = "proto3";
 
 package volume_server_pb;
+option go_package = "github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb";
 
 //////////////////////////////////////////////////
 
 service VolumeServer {
     //Experts only: takes multiple fid parameters. This function does not propagate deletes to replicas.
     rpc BatchDelete (BatchDeleteRequest) returns (BatchDeleteResponse) {
-    }
-
-    rpc FileGet (FileGetRequest) returns (stream FileGetResponse) {
     }
 
     rpc VacuumVolumeCheck (VacuumVolumeCheckRequest) returns (VacuumVolumeCheckResponse) {
@@ -106,22 +104,6 @@ message DeleteResult {
     string error = 3;
     uint32 size = 4;
     uint32 version = 5;
-}
-
-message FileGetRequest {
-    string file_id = 1;
-    bool accept_gzip = 2;
-}
-message FileGetResponse {
-    bytes data = 1;
-    uint32 content_length = 2;
-    string content_type = 3;
-    uint64 last_modified = 4;
-    string filename = 5;
-    string etag = 6;
-    bool is_gzipped = 7;
-    map<string, string> headers = 8;
-    int32 errorCode = 9;
 }
 
 message Empty {

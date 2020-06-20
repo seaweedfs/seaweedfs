@@ -32,7 +32,7 @@ require (
 	github.com/gocql/gocql v0.0.0-20190829130954-e163eff7a8c6
 	github.com/gogo/protobuf v1.2.2-0.20190730201129-28a6bbf47e48 // indirect
 	github.com/golang/groupcache v0.0.0-20190702054246-869f871628b6 // indirect
-	github.com/golang/protobuf v1.3.2
+	github.com/golang/protobuf v1.4.1
 	github.com/google/btree v1.0.0
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.3
@@ -67,29 +67,26 @@ require (
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/viper v1.4.0
 	github.com/streadway/amqp v0.0.0-20190827072141-edfb9018d271 // indirect
-	github.com/stretchr/testify v1.3.0
+	github.com/stretchr/testify v1.4.0
 	github.com/syndtr/goleveldb v1.0.0
 	github.com/tidwall/gjson v1.3.2
 	github.com/tidwall/match v1.0.1
 	github.com/willf/bitset v1.1.10 // indirect
 	github.com/willf/bloom v2.0.3+incompatible
 	github.com/wsxiaoys/terminal v0.0.0-20160513160801-0940f3fc43a0 // indirect
-	go.etcd.io/bbolt v1.3.3 // indirect
 	go.etcd.io/etcd v3.3.15+incompatible
 	go.mongodb.org/mongo-driver v1.3.2
-	go.uber.org/multierr v1.2.0 // indirect
 	gocloud.dev v0.16.0
 	gocloud.dev/pubsub/natspubsub v0.16.0
 	gocloud.dev/pubsub/rabbitpubsub v0.16.0
-	golang.org/x/crypto v0.0.0-20190911031432-227b76d455e7 // indirect
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1 // indirect
 	golang.org/x/net v0.0.0-20190909003024-a7b16738d86b
-	golang.org/x/sys v0.0.0-20190910064555-bbd175535a8b
-	golang.org/x/tools v0.0.0-20190911022129-16c5e0f7d110
+	golang.org/x/sys v0.0.0-20200202164722-d101bd2416d5
+	golang.org/x/tools v0.0.0-20191029190741-b9c20aec41a5
 	google.golang.org/api v0.9.0
 	google.golang.org/appengine v1.6.2 // indirect
-	google.golang.org/genproto v0.0.0-20190905072037-92dd089d5514 // indirect
-	google.golang.org/grpc v1.26.0
+	google.golang.org/grpc v1.27.0
+	google.golang.org/protobuf v1.24.0
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 	gopkg.in/jcmturner/goidentity.v3 v3.0.0 // indirect
 	gopkg.in/jcmturner/gokrb5.v7 v7.3.0 // indirect
@@ -97,4 +94,7 @@ require (
 	sigs.k8s.io/yaml v1.1.0 // indirect
 )
 
-replace github.com/satori/go.uuid v1.2.0 => github.com/satori/go.uuid v0.0.0-20181028125025-b2ce2384e17b
+replace (
+	github.com/satori/go.uuid v1.2.0 => github.com/satori/go.uuid v0.0.0-20181028125025-b2ce2384e17b
+	go.etcd.io/etcd => go.etcd.io/etcd v0.5.0-alpha.5.0.20200425165423-262c93980547
+)
