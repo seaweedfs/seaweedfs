@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/images"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
@@ -48,7 +47,7 @@ func (n *Needle) String() (str string) {
 	return
 }
 
-func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit int64) (n *Needle, originalSize int, e error) {
+func CreateNeedleFromRequest(r *http.Request, sizeLimit int64) (n *Needle, originalSize int, e error) {
 	n = new(Needle)
 	pu, e := ParseUpload(r, sizeLimit)
 	if e != nil {
@@ -93,13 +92,6 @@ func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit 
 
 	if pu.IsChunkedFile {
 		n.SetIsChunkManifest()
-	}
-
-	if fixJpgOrientation {
-		loweredName := strings.ToLower(pu.FileName)
-		if pu.MimeType == "image/jpeg" || strings.HasSuffix(loweredName, ".jpg") || strings.HasSuffix(loweredName, ".jpeg") {
-			n.Data = images.FixJpgOrientation(n.Data)
-		}
 	}
 
 	n.Checksum = NewCRC(n.Data)

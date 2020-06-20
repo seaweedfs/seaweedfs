@@ -88,9 +88,6 @@ spec:
                 {{- if .Values.volume.whiteList }}
                 -whiteList={{ .Values.volume.whiteList }} \
                 {{- end }}
-                {{- if .Values.volume.imagesFixOrientation }}
-                -images.fix.orientation \
-                {{- end }}
                 -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-volume \
                 -compactionMBps={{ .Values.volume.compactionMBps }} \
                 -mserver={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
