@@ -51,7 +51,7 @@ func ParseUpload(r *http.Request, sizeLimit int64) (pu *ParsedUpload, e error) {
 
 	pu.OriginalDataSize = len(pu.Data)
 	pu.UncompressedData = pu.Data
-	// println("received data", len(pu.Data), "isGzipped", pu.IsGzipped, "mime", pu.MimeType, "name", pu.FileName)
+	// println("received data", len(pu.Data), "isGzipped", pu.IsCompressed, "mime", pu.MimeType, "name", pu.FileName)
 	if pu.MimeType == "" {
 		pu.MimeType = http.DetectContentType(pu.Data)
 		// println("detected mimetype to", pu.MimeType)
@@ -60,7 +60,7 @@ func ParseUpload(r *http.Request, sizeLimit int64) (pu *ParsedUpload, e error) {
 		}
 	}
 	if pu.IsGzipped {
-		if unzipped, e := util.UnGzipData(pu.Data); e == nil {
+		if unzipped, e := util.UnCompressData(pu.Data); e == nil {
 			pu.OriginalDataSize = len(unzipped)
 			pu.UncompressedData = unzipped
 			// println("ungzipped data size", len(unzipped))

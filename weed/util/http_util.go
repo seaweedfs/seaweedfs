@@ -189,11 +189,11 @@ func NormalizeUrl(url string) string {
 	return "http://" + url
 }
 
-func ReadUrl(fileUrl string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int, buf []byte) (int64, error) {
+func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, buf []byte) (int64, error) {
 
 	if cipherKey != nil {
 		var n int
-		err := readEncryptedUrl(fileUrl, cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
+		err := readEncryptedUrl(fileUrl, cipherKey, isContentCompressed, isFullChunk, offset, size, func(data []byte) {
 			n = copy(buf, data)
 		})
 		return int64(n), err
@@ -300,7 +300,7 @@ func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, is
 
 }
 
-func readEncryptedUrl(fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) error {
+func readEncryptedUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) error {
 	encryptedData, err := Get(fileUrl)
 	if err != nil {
 		return fmt.Errorf("fetch %s: %v", fileUrl, err)
@@ -309,8 +309,8 @@ func readEncryptedUrl(fileUrl string, cipherKey []byte, isContentGzipped bool, i
 	if err != nil {
 		return fmt.Errorf("decrypt %s: %v", fileUrl, err)
 	}
-	if isContentGzipped {
-		decryptedData, err = UnGzipData(decryptedData)
+	if isContentCompressed {
+		decryptedData, err = UnCompressData(decryptedData)
 		if err != nil {
 			return fmt.Errorf("unzip decrypt %s: %v", fileUrl, err)
 		}

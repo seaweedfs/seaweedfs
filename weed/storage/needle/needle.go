@@ -81,7 +81,7 @@ func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit 
 		}
 	}
 	if pu.IsGzipped {
-		n.SetGzipped()
+		n.SetIsCompressed()
 	}
 	if n.LastModified == 0 {
 		n.LastModified = uint64(time.Now().Unix())

@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	FlagGzip                = 0x01
+	FlagIsCompressed        = 0x01
 	FlagHasName             = 0x02
 	FlagHasMime             = 0x04
 	FlagHasLastModifiedDate = 0x08
@@ -343,11 +343,11 @@ func (n *Needle) ReadNeedleBodyBytes(needleBody []byte, version Version) (err er
 	return
 }
 
-func (n *Needle) IsGzipped() bool {
-	return n.Flags&FlagGzip > 0
+func (n *Needle) IsCompressed() bool {
+	return n.Flags&FlagIsCompressed > 0
 }
-func (n *Needle) SetGzipped() {
-	n.Flags = n.Flags | FlagGzip
+func (n *Needle) SetIsCompressed() {
+	n.Flags = n.Flags | FlagIsCompressed
 }
 func (n *Needle) HasName() bool {
 	return n.Flags&FlagHasName > 0

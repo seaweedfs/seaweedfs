@@ -80,7 +80,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId needle.Volume
 			}
 
 			// volume server do not know about encryption
-			_, err := operation.UploadData(u.String(), string(n.Name), false, n.Data, n.IsGzipped(), string(n.Mime), pairMap, jwt)
+			_, err := operation.UploadData(u.String(), string(n.Name), false, n.Data, n.IsCompressed(), string(n.Mime), pairMap, jwt)
 			return err
 		}); err != nil {
 			err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)

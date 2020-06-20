@@ -25,7 +25,25 @@ func GzipData(input []byte) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
-func UnGzipData(input []byte) ([]byte, error) {
+func UnCompressData(input []byte) ([]byte, error) {
+	if IsGzippedContent(input) {
+		return ungzipData(input)
+	}
+
+}
+
+func ungzipData(input []byte) ([]byte, error) {
+	buf := bytes.NewBuffer(input)
+	r, _ := gzip.NewReader(buf)
+	defer r.Close()
+	output, err := ioutil.ReadAll(r)
+	if err != nil {
+		glog.V(2).Infoln("error uncompressing data:", err)
+	}
+	return output, err
+}
+
+func ungzipData(input []byte) ([]byte, error) {
 	buf := bytes.NewBuffer(input)
 	r, _ := gzip.NewReader(buf)
 	defer r.Close()
@@ -49,6 +67,13 @@ func IsGzippable(ext, mtype string, data []byte) bool {
 	isMostlyText := util.IsText(data)
 
 	return isMostlyText
+}
+
+func IsGzippedContent(data []byte) bool {
+	if len(data) < 2 {
+		return false
+	}
+	return data[0] == 31 && data[1] == 139
 }
 
 /*

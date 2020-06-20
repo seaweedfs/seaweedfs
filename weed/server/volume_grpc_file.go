@@ -11,6 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
+// Deprecated
 func (vs *VolumeServer) FileGet(req *volume_server_pb.FileGetRequest, stream volume_server_pb.VolumeServer_FileGetServer) error {
 
 	headResponse := &volume_server_pb.FileGetResponse{}
@@ -90,10 +91,10 @@ func (vs *VolumeServer) FileGet(req *volume_server_pb.FileGetRequest, stream vol
 	}
 	headResponse.ContentType = mtype
 
-	headResponse.IsGzipped = n.IsGzipped()
+	headResponse.IsGzipped = n.IsCompressed()
 
-	if n.IsGzipped() && req.AcceptGzip {
-		if n.Data, err = util.UnGzipData(n.Data); err != nil {
+	if n.IsCompressed() && req.AcceptGzip {
+		if n.Data, err = util.UnCompressData(n.Data); err != nil {
 			glog.V(0).Infof("ungzip %s error: %v", req.FileId, err)
 		}
 	}

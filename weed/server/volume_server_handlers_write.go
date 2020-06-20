@@ -120,7 +120,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	count := int64(n.Size)
 
 	if n.IsChunkedManifest() {
-		chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsGzipped())
+		chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsCompressed())
 		if e != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Load chunks manifest error: %v", e))
 			return

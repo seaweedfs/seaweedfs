@@ -121,7 +121,7 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 		}
 	} else if isInputGzipped {
 		// just to get the clear data length
-		clearData, err := util.UnGzipData(data)
+		clearData, err := util.UnCompressData(data)
 		if err == nil {
 			clearDataLen = len(clearData)
 		}

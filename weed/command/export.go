@@ -19,6 +19,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 const (
@@ -79,7 +80,7 @@ func printNeedle(vid needle.VolumeId, n *needle.Needle, version needle.Version, 
 		key,
 		n.Name,
 		size,
-		n.IsGzipped(),
+		n.IsCompressed(),
 		n.Mime,
 		n.LastModifiedString(),
 		n.Ttl.String(),
@@ -108,8 +109,8 @@ func (scanner *VolumeFileScanner4Export) VisitNeedle(n *needle.Needle, offset in
 	vid := scanner.vid
 
 	nv, ok := needleMap.Get(n.Id)
-	glog.V(3).Infof("key %d offset %d size %d disk_size %d gzip %v ok %v nv %+v",
-		n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsGzipped(), ok, nv)
+	glog.V(3).Infof("key %d offset %d size %d disk_size %d compressed %v ok %v nv %+v",
+		n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsCompressed(), ok, nv)
 	if ok && nv.Size > 0 && nv.Size != types.TombstoneFileSize && nv.Offset.ToAcutalOffset() == offset {
 		if newerThanUnix >= 0 && n.HasLastModifiedDate() && n.LastModified < uint64(newerThanUnix) {
 			glog.V(3).Infof("Skipping this file, as it's old enough: LastModified %d vs %d",
@@ -242,8 +243,11 @@ func writeFile(vid needle.VolumeId, n *needle.Needle) (err error) {
 
 	fileName := fileNameTemplateBuffer.String()
 
-	if n.IsGzipped() && path.Ext(fileName) != ".gz" {
-		fileName = fileName + ".gz"
+	if n.IsCompressed() {
+		if util.IsGzippedContent(n.Data) && path.Ext(fileName) != ".gz" {
+			fileName = fileName + ".gz"
+		}
+		// TODO other compression method
 	}
 
 	tarHeader.Name, tarHeader.Size = fileName, int64(len(n.Data))
