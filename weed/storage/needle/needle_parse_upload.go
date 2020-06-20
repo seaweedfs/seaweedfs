@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -50,18 +51,33 @@ func ParseUpload(r *http.Request, sizeLimit int64) (pu *ParsedUpload, e error) {
 
 	pu.OriginalDataSize = len(pu.Data)
 	pu.UncompressedData = pu.Data
+	// println("received data", len(pu.Data), "isGzipped", pu.IsGzipped, "mime", pu.MimeType, "name", pu.FileName)
+	if pu.MimeType == "" {
+		pu.MimeType = http.DetectContentType(pu.Data)
+		// println("detected mimetype to", pu.MimeType)
+		if pu.MimeType == "application/octet-stream" {
+			pu.MimeType = ""
+		}
+	}
 	if pu.IsGzipped {
 		if unzipped, e := util.UnGzipData(pu.Data); e == nil {
 			pu.OriginalDataSize = len(unzipped)
 			pu.UncompressedData = unzipped
+			// println("ungzipped data size", len(unzipped))
 		}
-	} else if shouldGzip, _ := util.IsGzippableFileType("", pu.MimeType); pu.MimeType == "" || shouldGzip {
-		if compressedData, err := util.GzipData(pu.Data); err == nil {
-			pu.Data = compressedData
-			pu.IsGzipped = true
+	} else {
+		ext := filepath.Base(pu.FileName)
+		if shouldGzip, iAmSure := util.IsGzippableFileType(ext, pu.MimeType); pu.MimeType == "" && !iAmSure || shouldGzip && iAmSure {
+			// println("ext", ext, "iAmSure", iAmSure, "shouldGzip", shouldGzip, "mimeType", pu.MimeType)
+			if compressedData, err := util.GzipData(pu.Data); err == nil {
+				if len(compressedData)*10 < len(pu.Data)*9 {
+					pu.Data = compressedData
+					pu.IsGzipped = true
+				}
+				// println("gzipped data size", len(compressedData))
+			}
 		}
 	}
-
 	return
 }
 
@@ -91,7 +107,7 @@ func parseMultipart(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error
 		return
 	}
 
-	//first multi-part item
+	// first multi-part item
 	part, fe := form.NextPart()
 	if fe != nil {
 		glog.V(0).Infoln("Reading Multi part [ERROR]", fe)
@@ -114,7 +130,7 @@ func parseMultipart(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error
 		return
 	}
 
-	//if the filename is empty string, do a search on the other multi-part items
+	// if the filename is empty string, do a search on the other multi-part items
 	for pu.FileName == "" {
 		part2, fe := form.NextPart()
 		if fe != nil {
@@ -123,7 +139,7 @@ func parseMultipart(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error
 
 		fName := part2.FileName()
 
-		//found the first <file type> multi-part has filename
+		// found the first <file type> multi-part has filename
 		if fName != "" {
 			data2, fe2 := ioutil.ReadAll(io.LimitReader(part2, sizeLimit+1))
 			if fe2 != nil {
@@ -136,7 +152,7 @@ func parseMultipart(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error
 				return
 			}
 
-			//update
+			// update
 			pu.Data = data2
 			pu.FileName = path.Base(fName)
 			break
@@ -155,7 +171,7 @@ func parseMultipart(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error
 		}
 		contentType := part.Header.Get("Content-Type")
 		if contentType != "" && contentType != "application/octet-stream" && mtype != contentType {
-			pu.MimeType = contentType //only return mime type if not deductable
+			pu.MimeType = contentType // only return mime type if not deductable
 			mtype = contentType
 		}
 

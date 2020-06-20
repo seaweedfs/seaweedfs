@@ -38,6 +38,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 	}
 	if pu.MimeType == "" {
 		pu.MimeType = http.DetectContentType(uncompressedData)
+		// println("detect2 mimetype to", pu.MimeType)
 	}
 
 	uploadResult, uploadError := operation.UploadData(urlLocation, pu.FileName, true, uncompressedData, false, pu.MimeType, pu.PairMap, auth)
