@@ -46,12 +46,13 @@ func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr, d
 	transporter := raft.NewGrpcTransporter(grpcDialOption)
 	glog.V(0).Infof("Starting RaftServer with %v", serverAddr)
 
+	// always clear previous metadata
+	os.RemoveAll(path.Join(s.dataDir, "conf"))
+	os.RemoveAll(path.Join(s.dataDir, "log"))
+	os.RemoveAll(path.Join(s.dataDir, "snapshot"))
 	// Clear old cluster configurations if peers are changed
 	if oldPeers, changed := isPeersChanged(s.dataDir, serverAddr, s.peers); changed {
 		glog.V(0).Infof("Peers Change: %v => %v", oldPeers, s.peers)
-		os.RemoveAll(path.Join(s.dataDir, "conf"))
-		os.RemoveAll(path.Join(s.dataDir, "log"))
-		os.RemoveAll(path.Join(s.dataDir, "snapshot"))
 	}
 
 	s.raftServer, err = raft.NewServer(s.serverAddr, s.dataDir, transporter, nil, topo, "")
