@@ -114,6 +114,13 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	// Set multiple folders and each folder's max volume count limit'
 	v.folders = strings.Split(volumeFolders, ",")
+	for _, folder := range v.folders {
+		if err := util.TestFolderWritable(folder); err != nil {
+			glog.Fatalf("Check Data Folder(-dir) Writable %s : %s", folder, err)
+		}
+	}
+
+	// set max
 	maxCountStrings := strings.Split(maxVolumeCounts, ",")
 	for _, maxString := range maxCountStrings {
 		if max, e := strconv.Atoi(maxString); e == nil {
@@ -125,6 +132,8 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	if len(v.folders) != len(v.folderMaxLimits) {
 		glog.Fatalf("%d directories by -dir, but only %d max is set by -max", len(v.folders), len(v.folderMaxLimits))
 	}
+
+	// set minFreeSpacePercent
 	minFreeSpacePercentStrings := strings.Split(minFreeSpacePercent, ",")
 	for _, freeString := range minFreeSpacePercentStrings {
 		if value, e := strconv.ParseFloat(freeString, 32); e == nil {
@@ -134,13 +143,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		}
 	}
 	if len(v.folders) != len(v.minFreeSpacePercent) {
-		glog.Fatalf("%d directories by -dir, but only %d max is set by -max", len(v.folders), len(v.folderMaxLimits))
-	}
-
-	for _, folder := range v.folders {
-		if err := util.TestFolderWritable(folder); err != nil {
-			glog.Fatalf("Check Data Folder(-dir) Writable %s : %s", folder, err)
-		}
+		glog.Fatalf("%d directories by -dir, but only %d minFreeSpacePercent is set by -minFreeSpacePercent", len(v.folders), len(v.minFreeSpacePercent))
 	}
 
 	// security related white list configuration
