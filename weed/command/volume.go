@@ -142,6 +142,11 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 			glog.Fatalf("The value specified in -minFreeSpacePercent not a valid value %s", freeString)
 		}
 	}
+	if len(v.minFreeSpacePercent) == 1 && len(v.folders) > 1 {
+		for i := 0; i < len(v.folders)-1; i++ {
+			v.minFreeSpacePercent = append(v.minFreeSpacePercent, v.minFreeSpacePercent[0])
+		}
+	}
 	if len(v.folders) != len(v.minFreeSpacePercent) {
 		glog.Fatalf("%d directories by -dir, but only %d minFreeSpacePercent is set by -minFreeSpacePercent", len(v.folders), len(v.minFreeSpacePercent))
 	}
