@@ -134,6 +134,9 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 			glog.Fatalf("The value specified in -minFreeSpacePercent not a valid value %s", freeString)
 		}
 	}
+	if len(v.folders) != len(v.minFreeSpacePercent) {
+		glog.Fatalf("%d directories by -dir, but only %d max is set by -max", len(v.folders), len(v.folderMaxLimits))
+	}
 
 	for _, folder := range v.folders {
 		if err := util.TestFolderWritable(folder); err != nil {
