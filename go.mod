@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go v1.23.13
 	github.com/buraksezer/consistent v0.0.0-20191006190839-693edf70fd72
 	github.com/cespare/xxhash v1.1.0
-	github.com/chrislusf/raft v0.0.0-20190225081310-10d6e2182d92
+	github.com/chrislusf/raft v1.0.0
 	github.com/coreos/bbolt v1.3.3 // indirect
 	github.com/coreos/etcd v3.3.15+incompatible // indirect
 	github.com/coreos/go-semver v0.3.0 // indirect
@@ -32,7 +32,7 @@ require (
 	github.com/gocql/gocql v0.0.0-20190829130954-e163eff7a8c6
 	github.com/gogo/protobuf v1.2.2-0.20190730201129-28a6bbf47e48 // indirect
 	github.com/golang/groupcache v0.0.0-20190702054246-869f871628b6 // indirect
-	github.com/golang/protobuf v1.4.1
+	github.com/golang/protobuf v1.4.2
 	github.com/google/btree v1.0.0
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.3
@@ -43,6 +43,7 @@ require (
 	github.com/jcmturner/gofork v1.0.0 // indirect
 	github.com/karlseguin/ccache v2.0.3+incompatible
 	github.com/karlseguin/expect v1.0.1 // indirect
+	github.com/klauspost/compress v1.10.9
 	github.com/klauspost/cpuid v1.2.1 // indirect
 	github.com/klauspost/crc32 v1.2.0
 	github.com/klauspost/reedsolomon v1.9.2
@@ -85,7 +86,7 @@ require (
 	golang.org/x/tools v0.0.0-20191029190741-b9c20aec41a5
 	google.golang.org/api v0.9.0
 	google.golang.org/appengine v1.6.2 // indirect
-	google.golang.org/grpc v1.27.0
+	google.golang.org/grpc v1.29.1
 	google.golang.org/protobuf v1.24.0
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 	gopkg.in/jcmturner/goidentity.v3 v3.0.0 // indirect
