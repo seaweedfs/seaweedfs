@@ -105,7 +105,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	bucket := vars["bucket"]
 	object := getObject(vars)
 
-	destUrl := fmt.Sprintf("http://%s%s/%s%s",
+	destUrl := fmt.Sprintf("http://%s%s/%s%s?recursive=true",
 		s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
 
 	s3a.proxyToFiler(w, r, destUrl, func(proxyResponse *http.Response, w http.ResponseWriter) {

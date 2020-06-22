@@ -316,9 +316,14 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	ignoreRecursiveError := r.FormValue("ignoreRecursiveError") == "true"
 	skipChunkDeletion := r.FormValue("skipChunkDeletion") == "true"
 
-	err := fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(r.URL.Path), isRecursive, ignoreRecursiveError, !skipChunkDeletion)
+	objectPath := r.URL.Path
+	if len(r.URL.Path) > 1 && strings.HasSuffix(objectPath, "/") {
+		objectPath = objectPath[0 : len(objectPath)-1]
+	}
+
+	err := fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), isRecursive, ignoreRecursiveError, !skipChunkDeletion)
 	if err != nil {
-		glog.V(1).Infoln("deleting", r.URL.Path, ":", err.Error())
+		glog.V(1).Infoln("deleting", objectPath, ":", err.Error())
 		httpStatus := http.StatusInternalServerError
 		if err == filer_pb.ErrNotFound {
 			httpStatus = http.StatusNotFound
