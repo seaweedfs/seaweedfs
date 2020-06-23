@@ -103,9 +103,7 @@ type ChecksumReader struct {
 
 func (cr *ChecksumReader) Read(p []byte) (int, error) {
 	n, err := cr.r.Read(p)
-	if err == nil {
-		cr.h.Write(p[:n])
-	}
+	cr.h.Write(p[:n])
 	return n, err
 }
 
