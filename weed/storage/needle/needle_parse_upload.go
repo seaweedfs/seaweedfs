@@ -1,7 +1,10 @@
 package needle
 
 import (
+	"compress/gzip"
+	"crypto/md5"
 	"fmt"
+	"hash"
 	"io"
 	"io/ioutil"
 	"mime"
@@ -93,6 +96,23 @@ func parsePut(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 	return nil
 }
 
+type ChecksumReader struct {
+	h hash.Hash
+	r io.Reader
+}
+
+func (cr *ChecksumReader) Read(p []byte) (int, error) {
+	n, err := cr.r.Read(p)
+	if err == nil {
+		cr.h.Write(p[:n])
+	}
+	return n, err
+}
+
+func (cr *ChecksumReader) Checksum() string {
+	return fmt.Sprintf("%x", cr.h.Sum(nil))
+}
+
 func parseMultipart(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 	defer func() {
 		if e != nil && r.Body != nil {
@@ -120,7 +140,26 @@ func parseMultipart(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error
 		pu.FileName = path.Base(pu.FileName)
 	}
 
-	pu.Data, e = ioutil.ReadAll(io.LimitReader(part, sizeLimit+1))
+	reader := io.LimitReader(part, sizeLimit+1)
+	if expectedChecksum := r.Header.Get("Content-MD5"); expectedChecksum != "" {
+		if part.Header.Get("Content-Encoding") == "gzip" {
+			gr, err := gzip.NewReader(reader)
+			if err != nil {
+				e = fmt.Errorf("Content-Encoding == gzip but content was not gzipped: %s", err)
+				return
+			}
+			reader = gr
+		}
+		cr := &ChecksumReader{md5.New(), reader}
+		pu.Data, e = ioutil.ReadAll(cr)
+		if expectedChecksum != cr.Checksum() {
+			e = fmt.Errorf("Content-MD5 did not match md5 of file data [%s] != [%s]", expectedChecksum, cr.Checksum())
+			return
+		}
+	} else {
+		pu.Data, e = ioutil.ReadAll(reader)
+	}
+
 	if e != nil {
 		glog.V(0).Infoln("Reading Content [ERROR]", e)
 		return
