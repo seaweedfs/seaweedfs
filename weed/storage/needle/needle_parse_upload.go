@@ -140,7 +140,7 @@ func parseMultipart(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error
 
 	reader := io.LimitReader(part, sizeLimit+1)
 	if expectedChecksum := r.Header.Get("Content-MD5"); expectedChecksum != "" {
-		if part.Header.Get("Content-Encoding") == "gzip" {
+		if r.Header.Get("Content-Encoding") == "gzip" {
 			gr, err := gzip.NewReader(reader)
 			if err != nil {
 				e = fmt.Errorf("Content-Encoding == gzip but content was not gzipped: %s", err)
