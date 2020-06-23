@@ -98,7 +98,7 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 				mtype = ""
 			}
 		}
-		if shouldBeZipped, iAmSure := util.IsGzippableFileType(filepath.Base(filename), mtype); iAmSure && shouldBeZipped {
+		if shouldBeCompressed, iAmSure := util.IsCompressableFileType(filepath.Base(filename), mtype); iAmSure && shouldBeCompressed {
 			shouldGzipNow = true
 		} else if !iAmSure && mtype == "" && len(data) > 128 {
 			var compressed []byte
@@ -142,7 +142,7 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 		uploadResult, err = upload_content(uploadUrl, func(w io.Writer) (err error) {
 			_, err = w.Write(encryptedData)
 			return
-		}, "", false, "", nil, jwt)
+		}, "", false, len(encryptedData), "", nil, jwt)
 		if uploadResult != nil {
 			uploadResult.Name = filename
 			uploadResult.Mime = mtype
@@ -153,7 +153,7 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 		uploadResult, err = upload_content(uploadUrl, func(w io.Writer) (err error) {
 			_, err = w.Write(data)
 			return
-		}, filename, contentIsGzipped, mtype, pairMap, jwt)
+		}, filename, contentIsGzipped, 0, mtype, pairMap, jwt)
 	}
 
 	if uploadResult == nil {
@@ -168,7 +168,7 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 	return uploadResult, err
 }
 
-func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
+func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, originalDataSize int, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
 	body_buf := bytes.NewBufferString("")
 	body_writer := multipart.NewWriter(body_buf)
 	h := make(textproto.MIMEHeader)
