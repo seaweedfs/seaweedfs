@@ -1,10 +1,8 @@
 package needle
 
 import (
-	"compress/gzip"
 	"crypto/md5"
 	"fmt"
-	"hash"
 	"io"
 	"io/ioutil"
 	"mime"
