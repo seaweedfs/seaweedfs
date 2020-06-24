@@ -45,12 +45,17 @@ func (uploadResult *UploadResult) ToPbFileChunk(fileId string, offset int64) *fi
 	}
 }
 
+// HTTPClient interface for testing
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
 var (
-	client *http.Client
+	HttpClient HTTPClient
 )
 
 func init() {
-	client = &http.Client{Transport: &http.Transport{
+	HttpClient = &http.Client{Transport: &http.Transport{
 		MaxIdleConnsPerHost: 1024,
 	}}
 }
@@ -58,8 +63,8 @@ func init() {
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
 // Upload sends a POST request to a volume server to upload the content with adjustable compression level
-func UploadData(uploadUrl string, filename string, cipher bool, data []byte, isInputGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error) {
-	uploadResult, err = doUploadData(uploadUrl, filename, cipher, data, isInputGzipped, mtype, pairMap, jwt)
+func UploadData(uploadUrl string, filename string, cipher bool, data []byte, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error) {
+	uploadResult, err = doUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
 	if uploadResult != nil {
 		uploadResult.Md5 = util.Md5(data)
 	}
@@ -67,30 +72,30 @@ func UploadData(uploadUrl string, filename string, cipher bool, data []byte, isI
 }
 
 // Upload sends a POST request to a volume server to upload the content with fast compression
-func Upload(uploadUrl string, filename string, cipher bool, reader io.Reader, isInputGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error, data []byte) {
+func Upload(uploadUrl string, filename string, cipher bool, reader io.Reader, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error, data []byte) {
 	hash := md5.New()
 	reader = io.TeeReader(reader, hash)
-	uploadResult, err, data = doUpload(uploadUrl, filename, cipher, reader, isInputGzipped, mtype, pairMap, jwt)
+	uploadResult, err, data = doUpload(uploadUrl, filename, cipher, reader, isInputCompressed, mtype, pairMap, jwt)
 	if uploadResult != nil {
 		uploadResult.Md5 = fmt.Sprintf("%x", hash.Sum(nil))
 	}
 	return
 }
 
-func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, isInputGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error, data []byte) {
+func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error, data []byte) {
 	data, err = ioutil.ReadAll(reader)
 	if err != nil {
 		err = fmt.Errorf("read input: %v", err)
 		return
 	}
-	uploadResult, uploadErr := doUploadData(uploadUrl, filename, cipher, data, isInputGzipped, mtype, pairMap, jwt)
+	uploadResult, uploadErr := doUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
 	return uploadResult, uploadErr, data
 }
 
-func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, isInputGzipped bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error) {
-	contentIsGzipped := isInputGzipped
+func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error) {
+	contentIsGzipped := isInputCompressed
 	shouldGzipNow := false
-	if !isInputGzipped {
+	if !isInputCompressed {
 		if mtype == "" {
 			mtype = http.DetectContentType(data)
 			// println("detect1 mimetype to", mtype)
@@ -119,7 +124,7 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 			data = compressed
 			contentIsGzipped = true
 		}
-	} else if isInputGzipped {
+	} else if isInputCompressed {
 		// just to get the clear data length
 		clearData, err := util.DecompressData(data)
 		if err == nil {
@@ -210,7 +215,7 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	if jwt != "" {
 		req.Header.Set("Authorization", "BEARER "+string(jwt))
 	}
-	resp, post_err := client.Do(req)
+	resp, post_err := HttpClient.Do(req)
 	if post_err != nil {
 		glog.V(0).Infoln("failing to upload to", uploadUrl, post_err.Error())
 		return nil, post_err

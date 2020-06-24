@@ -54,13 +54,6 @@ func ParseUpload(r *http.Request, sizeLimit int64) (pu *ParsedUpload, e error) {
 	pu.OriginalDataSize = len(pu.Data)
 	pu.UncompressedData = pu.Data
 	// println("received data", len(pu.Data), "isGzipped", pu.IsCompressed, "mime", pu.MimeType, "name", pu.FileName)
-	if pu.MimeType == "" {
-		pu.MimeType = http.DetectContentType(pu.Data)
-		// println("detected mimetype to", pu.MimeType)
-		if pu.MimeType == "application/octet-stream" {
-			pu.MimeType = ""
-		}
-	}
 	if pu.IsGzipped {
 		if unzipped, e := util.DecompressData(pu.Data); e == nil {
 			pu.OriginalDataSize = len(unzipped)
@@ -69,7 +62,15 @@ func ParseUpload(r *http.Request, sizeLimit int64) (pu *ParsedUpload, e error) {
 		}
 	} else {
 		ext := filepath.Base(pu.FileName)
-		if shouldBeCompressed, iAmSure := util.IsCompressableFileType(ext, pu.MimeType); pu.MimeType == "" && !iAmSure || shouldBeCompressed && iAmSure {
+		mimeType := pu.MimeType
+		if mimeType == "" {
+			mimeType = http.DetectContentType(pu.Data)
+		}
+		// println("detected mimetype to", pu.MimeType)
+		if mimeType == "application/octet-stream" {
+			mimeType = ""
+		}
+		if shouldBeCompressed, iAmSure := util.IsCompressableFileType(ext, mimeType); mimeType == "" && !iAmSure || shouldBeCompressed && iAmSure {
 			// println("ext", ext, "iAmSure", iAmSure, "shouldGzip", shouldGzip, "mimeType", pu.MimeType)
 			if compressedData, err := util.GzipData(pu.Data); err == nil {
 				if len(compressedData)*10 < len(pu.Data)*9 {
