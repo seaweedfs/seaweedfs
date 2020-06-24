@@ -25,6 +25,13 @@ func GzipData(input []byte) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
+var zstdEncoder, _ = zstd.NewWriter(nil)
+
+func ZstdData(input []byte) ([]byte, error) {
+	return zstdEncoder.EncodeAll(input, nil), nil
+}
+
 func DecompressData(input []byte) ([]byte, error) {
 	if IsGzippedContent(input) {
 		return ungzipData(input)
@@ -46,10 +53,9 @@ func ungzipData(input []byte) ([]byte, error) {
 	return output, err
 }
 
-var zstdEncoder, _ = zstd.NewWriter(nil)
-
+var decoder, _ = zstd.NewReader(nil)
 func unzstdData(input []byte) ([]byte, error) {
-	return zstdEncoder.EncodeAll(input, nil), nil
+	return decoder.DecodeAll(input, nil)
 }
 
 func IsGzippedContent(data []byte) bool {
@@ -63,7 +69,7 @@ func IsZstdContent(data []byte) bool {
 	if len(data) < 4 {
 		return false
 	}
-	return data[0] == 0xFD && data[1] == 0x2F && data[2] == 0xB5 && data[3] == 0x28
+	return data[3] == 0xFD && data[2] == 0x2F && data[1] == 0xB5 && data[0] == 0x28
 }
 
 /*
