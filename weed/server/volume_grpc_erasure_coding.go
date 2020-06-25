@@ -50,14 +50,14 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 		return nil, fmt.Errorf("existing collection:%v unexpected input: %v", v.Collection, req.Collection)
 	}
 
-	// write .ecx file
-	if err := erasure_coding.WriteSortedFileFromIdx(baseFileName, ".ecx"); err != nil {
-		return nil, fmt.Errorf("WriteSortedFileFromIdx %s: %v", baseFileName, err)
-	}
-
 	// write .ec00 ~ .ec13 files
 	if err := erasure_coding.WriteEcFiles(baseFileName); err != nil {
 		return nil, fmt.Errorf("WriteEcFiles %s: %v", baseFileName, err)
+	}
+
+	// write .ecx file
+	if err := erasure_coding.WriteSortedFileFromIdx(baseFileName, ".ecx"); err != nil {
+		return nil, fmt.Errorf("WriteSortedFileFromIdx %s: %v", baseFileName, err)
 	}
 
 	// write .vif files
