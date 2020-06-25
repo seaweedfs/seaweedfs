@@ -78,7 +78,7 @@ func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, 
 		return fmt.Errorf("failed to stat dat file: %v", err)
 	}
 
-	glog.V(0).Infof("encodeDatFile %s.dat size:%d", baseFileNam, fi.Size())
+	glog.V(0).Infof("encodeDatFile %s.dat size:%d", baseFileName, fi.Size())
 	err = encodeDatFile(fi.Size(), err, baseFileName, bufferSize, largeBlockSize, file, smallBlockSize)
 	if err != nil {
 		return fmt.Errorf("encodeDatFile: %v", err)
