@@ -90,6 +90,9 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 			found = true
 			if c.bufferOffset != chunk.LogicOffset {
 				c.buffer, err = c.fetchChunkData(chunk)
+				if err != nil {
+					glog.Errorf("fetching chunk %+v: %v\n", chunk, err)
+				}
 				c.bufferOffset = chunk.LogicOffset
 			}
 			break
@@ -99,7 +102,9 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 		return 0, io.EOF
 	}
 
-	n = copy(p, c.buffer[offset-c.bufferOffset:])
+	if err == nil {
+		n = copy(p, c.buffer[offset-c.bufferOffset:])
+	}
 
 	// fmt.Printf("> doReadAt [%d,%d), buffer:[%d,%d)\n", offset, offset+int64(n), c.bufferOffset, c.bufferOffset+int64(len(c.buffer)))
 

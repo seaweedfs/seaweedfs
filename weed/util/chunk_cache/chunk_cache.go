@@ -60,7 +60,7 @@ func (c *ChunkCache) doGetChunk(fileId string, chunkSize uint64) (data []byte) {
 
 	for _, diskCache := range c.diskCaches {
 		data := diskCache.getChunk(fid.Key)
-		if len(data) != 0 {
+		if len(data) != 0 && len(data) >= int(chunkSize) {
 			return data
 		}
 	}
