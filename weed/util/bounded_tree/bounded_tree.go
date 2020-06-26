@@ -1,6 +1,8 @@
 package bounded_tree
 
 import (
+	"sync"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -13,6 +15,7 @@ type Node struct {
 
 type BoundedTree struct {
 	root *Node
+	sync.Mutex
 }
 
 func NewBoundedTree() *BoundedTree {
@@ -30,8 +33,8 @@ type VisitNodeFunc func(path util.FullPath) (childDirectories []string, err erro
 // A leaf node, which has no children, represents a directory not visited.
 // A non-leaf node or a non-existing node represents a directory already visited, or does not need to visit.
 func (t *BoundedTree) EnsureVisited(p util.FullPath, visitFn VisitNodeFunc) {
-	// println()
-	// println("EnsureVisited", p)
+	t.Lock()
+	defer t.Unlock()
 
 	if t.root == nil {
 		return
