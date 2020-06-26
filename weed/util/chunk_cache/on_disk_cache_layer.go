@@ -54,7 +54,9 @@ func (c *OnDiskCacheLayer) setChunk(needleId types.NeedleId, data []byte) {
 		c.diskCaches[0] = t
 	}
 
-	c.diskCaches[0].WriteNeedle(needleId, data)
+	if err := c.diskCaches[0].WriteNeedle(needleId, data); err != nil {
+		glog.V(0).Infof("cache write %v size %d: %v", needleId, len(data), err)
+	}
 
 }
 

@@ -138,7 +138,7 @@ func (v *ChunkCacheVolume) WriteNeedle(key types.NeedleId, data []byte) error {
 	}
 
 	if err := v.nm.Put(key, types.ToOffset(offset), uint32(len(data))); err != nil {
-		glog.V(4).Infof("failed to save in needle map %d: %v", key, err)
+		return err
 	}
 
 	return nil
