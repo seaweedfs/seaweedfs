@@ -129,8 +129,8 @@ func (c *ChunkReadAt) fetchChunkData(chunkView *ChunkView) (data []byte, err err
 	}
 
 	if int64(len(chunkData)) < chunkView.Offset+int64(chunkView.Size) {
-		glog.Errorf("unexpected larger cached:%v chunk [%d,%d) than %d", hasDataInCache, chunkView.Offset, chunkView.Offset+int64(chunkView.Size), len(chunkData))
-		return nil, fmt.Errorf("unexpected larger cached:%v chunk [%d,%d) than %d", hasDataInCache, chunkView.Offset, chunkView.Offset+int64(chunkView.Size), len(chunkData))
+		glog.Errorf("unexpected larger cached:%v chunk %s [%d,%d) than %d", hasDataInCache, chunkView.FileId, chunkView.Offset, chunkView.Offset+int64(chunkView.Size), len(chunkData))
+		return nil, fmt.Errorf("unexpected larger cached:%v chunk %s [%d,%d) than %d", hasDataInCache, chunkView.FileId, chunkView.Offset, chunkView.Offset+int64(chunkView.Size), len(chunkData))
 	}
 
 	data = chunkData[chunkView.Offset : chunkView.Offset+int64(chunkView.Size)]
@@ -154,7 +154,7 @@ func (c *ChunkReadAt) doFetchFullChunkData(fileId string, cipherKey []byte, isGz
 		buffer.Write(data)
 	})
 	if err != nil {
-		glog.V(1).Infof("read %s failed, err: %v", fileId, err)
+		glog.V(0).Infof("read %s failed, err: %v", fileId, err)
 		return nil, err
 	}
 
