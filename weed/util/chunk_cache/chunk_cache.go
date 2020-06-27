@@ -46,10 +46,9 @@ func (c *ChunkCache) GetChunk(fileId string, chunkSize uint64) (data []byte) {
 
 func (c *ChunkCache) doGetChunk(fileId string, chunkSize uint64) (data []byte) {
 
-	if chunkSize < memCacheSizeLimit {
-		if data = c.memCache.GetChunk(fileId); data != nil {
-			return data
-		}
+	data = c.memCache.GetChunk(fileId)
+	if len(data) != 0 && len(data) >= int(chunkSize) {
+		return data
 	}
 
 	fid, err := needle.ParseFileIdFromString(fileId)
@@ -58,21 +57,9 @@ func (c *ChunkCache) doGetChunk(fileId string, chunkSize uint64) (data []byte) {
 		return nil
 	}
 
-	if chunkSize < onDiskCacheSizeLimit0 {
-		data = c.diskCaches[0].getChunk(fid.Key)
-		if len(data) >= int(chunkSize) {
-			return data
-		}
-	}
-	if chunkSize < onDiskCacheSizeLimit1 {
-		data = c.diskCaches[1].getChunk(fid.Key)
-		if len(data) >= int(chunkSize) {
-			return data
-		}
-	}
-	{
-		data = c.diskCaches[2].getChunk(fid.Key)
-		if len(data) >= int(chunkSize) {
+	for _, diskCache := range c.diskCaches {
+		data := diskCache.getChunk(fid.Key)
+		if len(data) != 0 && len(data) >= int(chunkSize) {
 			return data
 		}
 	}
