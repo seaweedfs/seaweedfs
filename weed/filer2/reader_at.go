@@ -129,7 +129,8 @@ func (c *ChunkReadAt) fetchChunkData(chunkView *ChunkView) (data []byte, err err
 	}
 
 	if int64(len(chunkData)) < chunkView.Offset+int64(chunkView.Size) {
-		return nil, fmt.Errorf("unexpected larger chunkView [%d,%d) than chunk %d", chunkView.Offset, chunkView.Offset+int64(chunkView.Size), len(chunkData))
+		glog.Errorf("unexpected larger cached:%v chunk [%d,%d) than %d", hasDataInCache, chunkView.Offset, chunkView.Offset+int64(chunkView.Size), len(chunkData))
+		return nil, fmt.Errorf("unexpected larger cached:%v chunk [%d,%d) than %d", hasDataInCache, chunkView.Offset, chunkView.Offset+int64(chunkView.Size), len(chunkData))
 	}
 
 	data = chunkData[chunkView.Offset : chunkView.Offset+int64(chunkView.Size)]
