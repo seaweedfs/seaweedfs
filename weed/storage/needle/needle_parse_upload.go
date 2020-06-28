@@ -2,6 +2,7 @@ package needle
 
 import (
 	"crypto/md5"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -85,7 +86,7 @@ func ParseUpload(r *http.Request, sizeLimit int64) (pu *ParsedUpload, e error) {
 	if expectedChecksum := r.Header.Get("Content-MD5"); expectedChecksum != "" {
 		h := md5.New()
 		h.Write(pu.UncompressedData)
-		if receivedChecksum := fmt.Sprintf("%x", h.Sum(nil)); expectedChecksum != receivedChecksum {
+		if receivedChecksum := base64.StdEncoding.EncodeToString(h.Sum(nil)); expectedChecksum != receivedChecksum {
 			e = fmt.Errorf("Content-MD5 did not match md5 of file data [%s] != [%s]", expectedChecksum, receivedChecksum)
 			return
 		}
