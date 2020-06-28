@@ -211,15 +211,13 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 	glog.V(4).Infof("dir Lookup %s: %s by %s", dir.FullPath(), req.Name, req.Header.String())
 
 	fullFilePath := util.NewFullPath(dir.FullPath(), req.Name)
-	entry := dir.wfs.cacheGet(fullFilePath)
-
 	dirPath := util.FullPath(dir.FullPath())
 	meta_cache.EnsureVisited(dir.wfs.metaCache, dir.wfs, util.FullPath(dirPath))
 	cachedEntry, cacheErr := dir.wfs.metaCache.FindEntry(context.Background(), fullFilePath)
 	if cacheErr == filer_pb.ErrNotFound {
 		return nil, fuse.ENOENT
 	}
-	entry = cachedEntry.ToProtoEntry()
+	entry := cachedEntry.ToProtoEntry()
 
 	if entry == nil {
 		// glog.V(3).Infof("dir Lookup cache miss %s", fullFilePath)
@@ -228,7 +226,6 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 			glog.V(1).Infof("dir GetEntry %s: %v", fullFilePath, err)
 			return nil, fuse.ENOENT
 		}
-		dir.wfs.cacheSet(fullFilePath, entry, 5*time.Minute)
 	} else {
 		glog.V(4).Infof("dir Lookup cache hit %s", fullFilePath)
 	}
@@ -260,7 +257,6 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 	glog.V(3).Infof("dir ReadDirAll %s", dir.FullPath())
 
-	cacheTtl := 5 * time.Minute
 	processEachEntryFn := func(entry *filer_pb.Entry, isLast bool) error {
 		fullpath := util.NewFullPath(dir.FullPath(), entry.Name)
 		inode := fullpath.AsInode()
@@ -271,7 +267,6 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 			dirent := fuse.Dirent{Inode: inode, Name: entry.Name, Type: fuse.DT_File}
 			ret = append(ret, dirent)
 		}
-		dir.wfs.cacheSet(fullpath, entry, cacheTtl)
 		return nil
 	}
 
@@ -311,7 +306,6 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 
 	dir.wfs.deleteFileChunks(entry.Chunks)
 
-	dir.wfs.cacheDelete(filePath)
 	dir.wfs.fsNodeCache.DeleteFsNode(filePath)
 
 	dir.wfs.metaCache.DeleteEntry(context.Background(), filePath)
@@ -330,7 +324,6 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 
 	t := util.NewFullPath(dir.FullPath(), req.Name)
-	dir.wfs.cacheDelete(t)
 	dir.wfs.fsNodeCache.DeleteFsNode(t)
 
 	dir.wfs.metaCache.DeleteEntry(context.Background(), t)
@@ -370,8 +363,6 @@ func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 		dir.entry.Attributes.Mtime = req.Mtime.Unix()
 	}
 
-	dir.wfs.cacheDelete(util.FullPath(dir.FullPath()))
-
 	return dir.saveEntry()
 
 }
@@ -388,8 +379,6 @@ func (dir *Dir) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
 		return err
 	}
 
-	dir.wfs.cacheDelete(util.FullPath(dir.FullPath()))
-
 	return dir.saveEntry()
 
 }
@@ -405,8 +394,6 @@ func (dir *Dir) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest) e
 	if err := removexattr(dir.entry, req); err != nil {
 		return err
 	}
-
-	dir.wfs.cacheDelete(util.FullPath(dir.FullPath()))
 
 	return dir.saveEntry()
 

@@ -150,8 +150,6 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		return nil
 	}
 
-	file.wfs.cacheDelete(file.fullpath())
-
 	return file.saveEntry()
 
 }
@@ -168,8 +166,6 @@ func (file *File) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error
 		return err
 	}
 
-	file.wfs.cacheDelete(file.fullpath())
-
 	return file.saveEntry()
 
 }
@@ -185,8 +181,6 @@ func (file *File) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest)
 	if err := removexattr(file.entry, req); err != nil {
 		return err
 	}
-
-	file.wfs.cacheDelete(file.fullpath())
 
 	return file.saveEntry()
 

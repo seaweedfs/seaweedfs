@@ -226,14 +226,6 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 	return nil
 }
 
-func (wfs *WFS) cacheGet(path util.FullPath) *filer_pb.Entry {
-	return nil
-}
-func (wfs *WFS) cacheSet(path util.FullPath, entry *filer_pb.Entry, ttl time.Duration) {
-}
-func (wfs *WFS) cacheDelete(path util.FullPath) {
-}
-
 func (wfs *WFS) AdjustedUrl(hostAndPort string) string {
 	if !wfs.option.OutsideContainerClusterMode {
 		return hostAndPort

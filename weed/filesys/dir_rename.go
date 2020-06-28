@@ -39,8 +39,6 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 	})
 
 	if err == nil {
-		dir.wfs.cacheDelete(newPath)
-		dir.wfs.cacheDelete(oldPath)
 
 		// fmt.Printf("rename path: %v => %v\n", oldPath, newPath)
 		dir.wfs.fsNodeCache.Move(oldPath, newPath)
