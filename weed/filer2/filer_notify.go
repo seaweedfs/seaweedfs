@@ -15,7 +15,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (f *Filer) NotifyUpdateEvent(oldEntry, newEntry *Entry, deleteChunks bool) {
+func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry, deleteChunks bool) {
 	var fullpath string
 	if oldEntry != nil {
 		fullpath = string(oldEntry.FullPath)
@@ -47,11 +47,11 @@ func (f *Filer) NotifyUpdateEvent(oldEntry, newEntry *Entry, deleteChunks bool) 
 		notification.Queue.SendMessage(fullpath, eventNotification)
 	}
 
-	f.logMetaEvent(fullpath, eventNotification)
+	f.logMetaEvent(ctx, fullpath, eventNotification)
 
 }
 
-func (f *Filer) logMetaEvent(fullpath string, eventNotification *filer_pb.EventNotification) {
+func (f *Filer) logMetaEvent(ctx context.Context, fullpath string, eventNotification *filer_pb.EventNotification) {
 
 	dir, _ := util.FullPath(fullpath).DirAndName()
 

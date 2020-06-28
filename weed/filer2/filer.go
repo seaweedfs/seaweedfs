@@ -141,7 +141,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 				}
 			} else {
 				f.maybeAddBucket(dirEntry)
-				f.NotifyUpdateEvent(nil, dirEntry, false)
+				f.NotifyUpdateEvent(ctx, nil, dirEntry, false)
 			}
 
 		} else if !dirEntry.IsDirectory() {
@@ -192,7 +192,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 	}
 
 	f.maybeAddBucket(entry)
-	f.NotifyUpdateEvent(oldEntry, entry, true)
+	f.NotifyUpdateEvent(ctx, oldEntry, entry, true)
 
 	f.deleteChunksIfNotNew(oldEntry, entry)
 

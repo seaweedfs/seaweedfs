@@ -74,7 +74,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 			if sub.IsDirectory() {
 				dirChunks, err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks)
 				f.cacheDelDirectory(string(sub.FullPath))
-				f.NotifyUpdateEvent(sub, nil, shouldDeleteChunks)
+				f.NotifyUpdateEvent(ctx, sub, nil, shouldDeleteChunks)
 				chunks = append(chunks, dirChunks...)
 			} else {
 				chunks = append(chunks, sub.Chunks...)
@@ -108,7 +108,7 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 	if entry.IsDirectory() {
 		f.cacheDelDirectory(string(entry.FullPath))
 	}
-	f.NotifyUpdateEvent(entry, nil, shouldDeleteChunks)
+	f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks)
 
 	return nil
 }

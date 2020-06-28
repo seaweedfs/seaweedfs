@@ -220,7 +220,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		glog.V(3).Infof("UpdateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), err)
 	}
 
-	fs.filer.NotifyUpdateEvent(entry, newEntry, true)
+	fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true)
 
 	return &filer_pb.UpdateEntryResponse{}, err
 }
