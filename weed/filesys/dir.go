@@ -141,9 +141,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 			return fuse.EIO
 		}
 
-		if dir.wfs.option.AsyncMetaDataCaching {
-			dir.wfs.metaCache.InsertEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
-		}
+		dir.wfs.metaCache.InsertEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
 
 		return nil
 	}); err != nil {
@@ -192,9 +190,7 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 			return err
 		}
 
-		if dir.wfs.option.AsyncMetaDataCaching {
-			dir.wfs.metaCache.InsertEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
-		}
+		dir.wfs.metaCache.InsertEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
 
 		return nil
 	})
@@ -219,13 +215,11 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 
 	dirPath := util.FullPath(dir.FullPath())
 	meta_cache.EnsureVisited(dir.wfs.metaCache, dir.wfs, util.FullPath(dirPath))
-	if dir.wfs.option.AsyncMetaDataCaching {
-		cachedEntry, cacheErr := dir.wfs.metaCache.FindEntry(context.Background(), fullFilePath)
-		if cacheErr == filer_pb.ErrNotFound {
-			return nil, fuse.ENOENT
-		}
-		entry = cachedEntry.ToProtoEntry()
+	cachedEntry, cacheErr := dir.wfs.metaCache.FindEntry(context.Background(), fullFilePath)
+	if cacheErr == filer_pb.ErrNotFound {
+		return nil, fuse.ENOENT
 	}
+	entry = cachedEntry.ToProtoEntry()
 
 	if entry == nil {
 		// glog.V(3).Infof("dir Lookup cache miss %s", fullFilePath)
@@ -283,25 +277,15 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 	dirPath := util.FullPath(dir.FullPath())
 	meta_cache.EnsureVisited(dir.wfs.metaCache, dir.wfs, dirPath)
-	if dir.wfs.option.AsyncMetaDataCaching {
-		listedEntries, listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), util.FullPath(dir.FullPath()), "", false, int(dir.wfs.option.DirListCacheLimit))
-		if listErr != nil {
-			glog.Errorf("list meta cache: %v", listErr)
-			return nil, fuse.EIO
-		}
-		for _, cachedEntry := range listedEntries {
-			processEachEntryFn(cachedEntry.ToProtoEntry(), false)
-		}
-		return
+	listedEntries, listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), util.FullPath(dir.FullPath()), "", false, int(dir.wfs.option.DirListCacheLimit))
+	if listErr != nil {
+		glog.Errorf("list meta cache: %v", listErr)
+		return nil, fuse.EIO
 	}
-
-	readErr := filer_pb.ReadDirAllEntries(dir.wfs, util.FullPath(dir.FullPath()), "", processEachEntryFn)
-	if readErr != nil {
-		glog.V(0).Infof("list %s: %v", dir.FullPath(), err)
-		return ret, fuse.EIO
+	for _, cachedEntry := range listedEntries {
+		processEachEntryFn(cachedEntry.ToProtoEntry(), false)
 	}
-
-	return ret, err
+	return
 }
 
 func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
@@ -330,9 +314,7 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 	dir.wfs.cacheDelete(filePath)
 	dir.wfs.fsNodeCache.DeleteFsNode(filePath)
 
-	if dir.wfs.option.AsyncMetaDataCaching {
-		dir.wfs.metaCache.DeleteEntry(context.Background(), filePath)
-	}
+	dir.wfs.metaCache.DeleteEntry(context.Background(), filePath)
 
 	glog.V(3).Infof("remove file: %v", req)
 	err = filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, false, false, false)
@@ -351,9 +333,7 @@ func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 	dir.wfs.cacheDelete(t)
 	dir.wfs.fsNodeCache.DeleteFsNode(t)
 
-	if dir.wfs.option.AsyncMetaDataCaching {
-		dir.wfs.metaCache.DeleteEntry(context.Background(), t)
-	}
+	dir.wfs.metaCache.DeleteEntry(context.Background(), t)
 
 	glog.V(3).Infof("remove directory entry: %v", req)
 	err := filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, true, false, false)
@@ -484,9 +464,7 @@ func (dir *Dir) saveEntry() error {
 			return fuse.EIO
 		}
 
-		if dir.wfs.option.AsyncMetaDataCaching {
-			dir.wfs.metaCache.UpdateEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
-		}
+		dir.wfs.metaCache.UpdateEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
 
 		return nil
 	})

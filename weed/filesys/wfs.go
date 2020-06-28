@@ -10,9 +10,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"github.com/karlseguin/ccache"
 	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
+
+	"github.com/seaweedfs/fuse"
+	"github.com/seaweedfs/fuse/fs"
 
 	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -20,8 +24,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
-	"github.com/seaweedfs/fuse"
-	"github.com/seaweedfs/fuse/fs"
 )
 
 type Option struct {
@@ -47,7 +49,6 @@ type Option struct {
 
 	OutsideContainerClusterMode bool // whether the mount runs outside SeaweedFS containers
 	Cipher                      bool // whether encrypt data on volume server
-	AsyncMetaDataCaching        bool // whether asynchronously cache meta data
 
 }
 
@@ -95,17 +96,16 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			wfs.chunkCache.Shutdown()
 		})
 	}
-	if wfs.option.AsyncMetaDataCaching {
-		wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.CacheDir, "meta"))
-		startTime := time.Now()
-		if err := meta_cache.InitMetaCache(wfs.metaCache, wfs, wfs.option.FilerMountRootPath); err != nil {
-			glog.V(0).Infof("failed to init meta cache: %v", err)
-		} else {
-			go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
-			grace.OnInterrupt(func() {
-				wfs.metaCache.Shutdown()
-			})
-		}
+
+	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.CacheDir, "meta"))
+	startTime := time.Now()
+	if err := meta_cache.InitMetaCache(wfs.metaCache, wfs, wfs.option.FilerMountRootPath); err != nil {
+		glog.V(0).Infof("failed to init meta cache: %v", err)
+	} else {
+		go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
+		grace.OnInterrupt(func() {
+			wfs.metaCache.Shutdown()
+		})
 	}
 
 	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs}

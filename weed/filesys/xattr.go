@@ -3,11 +3,11 @@ package filesys
 import (
 	"context"
 
+	"github.com/seaweedfs/fuse"
+
 	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/seaweedfs/fuse"
 )
 
 func getxattr(entry *filer_pb.Entry, req *fuse.GetxattrRequest, resp *fuse.GetxattrResponse) error {
@@ -119,36 +119,9 @@ func (wfs *WFS) maybeLoadEntry(dir, name string) (entry *filer_pb.Entry, err err
 
 	// read from async meta cache
 	meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath(dir))
-	if wfs.option.AsyncMetaDataCaching {
-		cachedEntry, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
-		if cacheErr == filer_pb.ErrNotFound {
-			return nil, fuse.ENOENT
-		}
-		return cachedEntry.ToProtoEntry(), nil
+	cachedEntry, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
+	if cacheErr == filer_pb.ErrNotFound {
+		return nil, fuse.ENOENT
 	}
-
-	err = wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-
-		request := &filer_pb.LookupDirectoryEntryRequest{
-			Name:      name,
-			Directory: dir,
-		}
-
-		resp, err := filer_pb.LookupEntry(client, request)
-		if err != nil {
-			if err == filer_pb.ErrNotFound {
-				glog.V(3).Infof("file attr read not found file %v: %v", request, err)
-				return fuse.ENOENT
-			}
-			glog.V(3).Infof("attr read %v: %v", request, err)
-			return fuse.EIO
-		}
-
-		entry = resp.Entry
-		wfs.cacheSet(fullpath, entry, wfs.option.EntryCacheTtl)
-
-		return nil
-	})
-
-	return
+	return cachedEntry.ToProtoEntry(), nil
 }

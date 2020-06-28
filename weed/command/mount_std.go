@@ -170,7 +170,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		MountMtime:                  time.Now(),
 		Umask:                       umask,
 		OutsideContainerClusterMode: *mountOptions.outsideContainerClusterMode,
-		AsyncMetaDataCaching:        *mountOptions.asyncMetaDataCaching,
 		Cipher:                      cipher,
 	})
 
