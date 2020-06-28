@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/karlseguin/ccache"
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
@@ -57,7 +56,6 @@ var _ = fs.FSStatfser(&WFS{})
 
 type WFS struct {
 	option                    *Option
-	listDirectoryEntriesCache *ccache.Cache
 
 	// contains all open handles, protected by handlesLock
 	handlesLock sync.Mutex
@@ -81,7 +79,6 @@ type statsCache struct {
 func NewSeaweedFileSystem(option *Option) *WFS {
 	wfs := &WFS{
 		option:                    option,
-		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(option.DirListCacheLimit * 3).ItemsToPrune(100)),
 		handles:                   make(map[uint64]*FileHandle),
 		bufPool: sync.Pool{
 			New: func() interface{} {
@@ -230,21 +227,11 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 }
 
 func (wfs *WFS) cacheGet(path util.FullPath) *filer_pb.Entry {
-	item := wfs.listDirectoryEntriesCache.Get(string(path))
-	if item != nil && !item.Expired() {
-		return item.Value().(*filer_pb.Entry)
-	}
 	return nil
 }
 func (wfs *WFS) cacheSet(path util.FullPath, entry *filer_pb.Entry, ttl time.Duration) {
-	if entry == nil {
-		wfs.listDirectoryEntriesCache.Delete(string(path))
-	} else {
-		wfs.listDirectoryEntriesCache.Set(string(path), entry, ttl)
-	}
 }
 func (wfs *WFS) cacheDelete(path util.FullPath) {
-	wfs.listDirectoryEntriesCache.Delete(string(path))
 }
 
 func (wfs *WFS) AdjustedUrl(hostAndPort string) string {
