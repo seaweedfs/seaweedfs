@@ -10,12 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/grpc"
-
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
-
-	"github.com/seaweedfs/fuse"
-	"github.com/seaweedfs/fuse/fs"
+	"github.com/karlseguin/ccache"
+	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -23,6 +20,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
+	"github.com/seaweedfs/fuse"
+	"github.com/seaweedfs/fuse/fs"
 )
 
 type Option struct {
@@ -48,6 +47,7 @@ type Option struct {
 
 	OutsideContainerClusterMode bool // whether the mount runs outside SeaweedFS containers
 	Cipher                      bool // whether encrypt data on volume server
+	AsyncMetaDataCaching        bool // whether asynchronously cache meta data
 
 }
 
@@ -56,6 +56,7 @@ var _ = fs.FSStatfser(&WFS{})
 
 type WFS struct {
 	option                    *Option
+	listDirectoryEntriesCache *ccache.Cache
 
 	// contains all open handles, protected by handlesLock
 	handlesLock sync.Mutex
@@ -66,6 +67,7 @@ type WFS struct {
 	stats statsCache
 
 	root        fs.Node
+	fsNodeCache *FsCache
 
 	chunkCache *chunk_cache.ChunkCache
 	metaCache  *meta_cache.MetaCache
@@ -78,6 +80,7 @@ type statsCache struct {
 func NewSeaweedFileSystem(option *Option) *WFS {
 	wfs := &WFS{
 		option:                    option,
+		listDirectoryEntriesCache: ccache.New(ccache.Configure().MaxSize(option.DirListCacheLimit * 3).ItemsToPrune(100)),
 		handles:                   make(map[uint64]*FileHandle),
 		bufPool: sync.Pool{
 			New: func() interface{} {
@@ -92,18 +95,21 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			wfs.chunkCache.Shutdown()
 		})
 	}
-	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.CacheDir, "meta"))
-	startTime := time.Now()
-	if err := meta_cache.InitMetaCache(wfs.metaCache, wfs, wfs.option.FilerMountRootPath); err != nil {
-		glog.V(0).Infof("failed to init meta cache: %v", err)
-	} else {
-		go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
-		grace.OnInterrupt(func() {
-			wfs.metaCache.Shutdown()
-		})
+	if wfs.option.AsyncMetaDataCaching {
+		wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.CacheDir, "meta"))
+		startTime := time.Now()
+		if err := meta_cache.InitMetaCache(wfs.metaCache, wfs, wfs.option.FilerMountRootPath); err != nil {
+			glog.V(0).Infof("failed to init meta cache: %v", err)
+		} else {
+			go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
+			grace.OnInterrupt(func() {
+				wfs.metaCache.Shutdown()
+			})
+		}
 	}
 
 	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs}
+	wfs.fsNodeCache = newFsCache(wfs.root)
 
 	return wfs
 }
@@ -221,6 +227,24 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 	resp.Frsize = uint32(blockSize)
 
 	return nil
+}
+
+func (wfs *WFS) cacheGet(path util.FullPath) *filer_pb.Entry {
+	item := wfs.listDirectoryEntriesCache.Get(string(path))
+	if item != nil && !item.Expired() {
+		return item.Value().(*filer_pb.Entry)
+	}
+	return nil
+}
+func (wfs *WFS) cacheSet(path util.FullPath, entry *filer_pb.Entry, ttl time.Duration) {
+	if entry == nil {
+		wfs.listDirectoryEntriesCache.Delete(string(path))
+	} else {
+		wfs.listDirectoryEntriesCache.Set(string(path), entry, ttl)
+	}
+}
+func (wfs *WFS) cacheDelete(path util.FullPath) {
+	wfs.listDirectoryEntriesCache.Delete(string(path))
 }
 
 func (wfs *WFS) AdjustedUrl(hostAndPort string) string {

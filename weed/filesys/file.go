@@ -150,6 +150,8 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		return nil
 	}
 
+	file.wfs.cacheDelete(file.fullpath())
+
 	return file.saveEntry()
 
 }
@@ -166,6 +168,8 @@ func (file *File) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error
 		return err
 	}
 
+	file.wfs.cacheDelete(file.fullpath())
+
 	return file.saveEntry()
 
 }
@@ -181,6 +185,8 @@ func (file *File) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest)
 	if err := removexattr(file.entry, req); err != nil {
 		return err
 	}
+
+	file.wfs.cacheDelete(file.fullpath())
 
 	return file.saveEntry()
 
@@ -212,7 +218,8 @@ func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 
 func (file *File) Forget() {
 	t := util.NewFullPath(file.dir.FullPath(), file.Name)
-	glog.V(4).Infof("Forget file %s", t)
+	glog.V(3).Infof("Forget file %s", t)
+	file.wfs.fsNodeCache.DeleteFsNode(t)
 }
 
 func (file *File) maybeLoadEntry(ctx context.Context) error {
@@ -271,7 +278,9 @@ func (file *File) saveEntry() error {
 			return fuse.EIO
 		}
 
-		file.wfs.metaCache.UpdateEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
+		if file.wfs.option.AsyncMetaDataCaching {
+			file.wfs.metaCache.UpdateEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
+		}
 
 		return nil
 	})
