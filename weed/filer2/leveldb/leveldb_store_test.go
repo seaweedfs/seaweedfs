@@ -32,7 +32,7 @@ func TestCreateAndFind(t *testing.T) {
 		},
 	}
 
-	if err := filer.CreateEntry(ctx, entry1, false); err != nil {
+	if err := filer.CreateEntry(ctx, entry1, false, false); err != nil {
 		t.Errorf("create entry %v: %v", entry1.FullPath, err)
 		return
 	}

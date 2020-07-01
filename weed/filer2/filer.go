@@ -84,7 +84,7 @@ func (f *Filer) RollbackTransaction(ctx context.Context) error {
 	return f.store.RollbackTransaction(ctx)
 }
 
-func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) error {
+func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFromOtherCluster bool) error {
 
 	if string(entry.FullPath) == "/" {
 		return nil
@@ -141,7 +141,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 				}
 			} else {
 				f.maybeAddBucket(dirEntry)
-				f.NotifyUpdateEvent(ctx, nil, dirEntry, false)
+				f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster)
 			}
 
 		} else if !dirEntry.IsDirectory() {
@@ -192,7 +192,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool) erro
 	}
 
 	f.maybeAddBucket(entry)
-	f.NotifyUpdateEvent(ctx, oldEntry, entry, true)
+	f.NotifyUpdateEvent(ctx, oldEntry, entry, true, isFromOtherCluster)
 
 	f.deleteChunksIfNotNew(oldEntry, entry)
 

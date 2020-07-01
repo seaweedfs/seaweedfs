@@ -204,7 +204,7 @@ func (fs *FilerServer) updateFilerStore(ctx context.Context, r *http.Request, w 
 		}
 	}
 	// glog.V(4).Infof("saving %s => %+v", path, entry)
-	if dbErr := fs.filer.CreateEntry(ctx, entry, false); dbErr != nil {
+	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false); dbErr != nil {
 		fs.filer.DeleteChunks(entry.Chunks)
 		glog.V(0).Infof("failing to write %s to filer server : %v", path, dbErr)
 		writeJsonError(w, r, http.StatusInternalServerError, dbErr)
@@ -321,7 +321,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		objectPath = objectPath[0 : len(objectPath)-1]
 	}
 
-	err := fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), isRecursive, ignoreRecursiveError, !skipChunkDeletion)
+	err := fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), isRecursive, ignoreRecursiveError, !skipChunkDeletion, false)
 	if err != nil {
 		glog.V(1).Infoln("deleting", objectPath, ":", err.Error())
 		httpStatus := http.StatusInternalServerError

@@ -140,6 +140,7 @@ message CreateEntryRequest {
     string directory = 1;
     Entry entry = 2;
     bool o_excl = 3;
+    bool is_from_other_cluster = 4;
 }
 
 message CreateEntryResponse {
@@ -149,6 +150,7 @@ message CreateEntryResponse {
 message UpdateEntryRequest {
     string directory = 1;
     Entry entry = 2;
+    bool is_from_other_cluster = 3;
 }
 message UpdateEntryResponse {
 }
@@ -168,6 +170,7 @@ message DeleteEntryRequest {
     bool is_delete_data = 4;
     bool is_recursive = 5;
     bool ignore_recursive_error = 6;
+    bool is_from_other_cluster = 7;
 }
 
 message DeleteEntryResponse {

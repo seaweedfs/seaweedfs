@@ -110,7 +110,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPat
 		Attr:     entry.Attr,
 		Chunks:   entry.Chunks,
 	}
-	createErr := fs.filer.CreateEntry(ctx, newEntry, false)
+	createErr := fs.filer.CreateEntry(ctx, newEntry, false, false)
 	if createErr != nil {
 		return createErr
 	}
@@ -124,7 +124,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPat
 	}
 
 	// delete old entry
-	deleteErr := fs.filer.DeleteEntryMetaAndData(ctx, oldPath, false, false, false)
+	deleteErr := fs.filer.DeleteEntryMetaAndData(ctx, oldPath, false, false, false, false)
 	if deleteErr != nil {
 		return deleteErr
 	}

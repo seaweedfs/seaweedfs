@@ -69,7 +69,7 @@ func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bo
 	dir, name := util.FullPath(key).DirAndName()
 
 	glog.V(1).Infof("delete entry: %v", key)
-	err := filer_pb.Remove(fs, dir, name, deleteIncludeChunks, false, false)
+	err := filer_pb.Remove(fs, dir, name, deleteIncludeChunks, false, false, true)
 	if err != nil {
 		glog.V(0).Infof("delete entry %s: %v", key, err)
 		return fmt.Errorf("delete entry %s: %v", key, err)
@@ -113,6 +113,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 				Attributes:  entry.Attributes,
 				Chunks:      replicatedChunks,
 			},
+			IsFromOtherCluster: true,
 		}
 
 		glog.V(1).Infof("create: %v", request)
@@ -186,8 +187,9 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	return true, fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
-			Directory: newParentPath,
-			Entry:     existingEntry,
+			Directory:          newParentPath,
+			Entry:              existingEntry,
+			IsFromOtherCluster: true,
 		}
 
 		if _, err := client.UpdateEntry(context.Background(), request); err != nil {

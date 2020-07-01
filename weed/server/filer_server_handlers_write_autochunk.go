@@ -162,7 +162,7 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 		Size: chunkOffset,
 	}
 
-	if dbErr := fs.filer.CreateEntry(ctx, entry, false); dbErr != nil {
+	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false); dbErr != nil {
 		fs.filer.DeleteChunks(entry.Chunks)
 		replyerr = dbErr
 		filerResult.Error = dbErr.Error()

@@ -311,7 +311,7 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 	dir.wfs.metaCache.DeleteEntry(context.Background(), filePath)
 
 	glog.V(3).Infof("remove file: %v", req)
-	err = filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, false, false, false)
+	err = filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, false, false, false, false)
 	if err != nil {
 		glog.V(3).Infof("not found remove file %s/%s: %v", dir.FullPath(), req.Name, err)
 		return fuse.ENOENT
@@ -329,7 +329,7 @@ func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 	dir.wfs.metaCache.DeleteEntry(context.Background(), t)
 
 	glog.V(3).Infof("remove directory entry: %v", req)
-	err := filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, true, false, false)
+	err := filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, true, false, false, false)
 	if err != nil {
 		glog.V(3).Infof("not found remove %s/%s: %v", dir.FullPath(), req.Name, err)
 		return fuse.ENOENT
