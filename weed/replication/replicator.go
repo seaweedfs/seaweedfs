@@ -31,6 +31,9 @@ func NewReplicator(sourceConfig util.Configuration, configPrefix string, dataSin
 }
 
 func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_pb.EventNotification) error {
+	if message.IsFromOtherCluster && r.sink.GetName() == "filer" {
+		return nil
+	}
 	if !strings.HasPrefix(key, r.source.Dir) {
 		glog.V(4).Infof("skipping %v outside of %v", key, r.source.Dir)
 		return nil

@@ -36,17 +36,16 @@ func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 		newParentPath, _ = newEntry.FullPath.DirAndName()
 	}
 	eventNotification := &filer_pb.EventNotification{
-		OldEntry:      oldEntry.ToProtoEntry(),
-		NewEntry:      newEntry.ToProtoEntry(),
-		DeleteChunks:  deleteChunks,
-		NewParentPath: newParentPath,
+		OldEntry:           oldEntry.ToProtoEntry(),
+		NewEntry:           newEntry.ToProtoEntry(),
+		DeleteChunks:       deleteChunks,
+		NewParentPath:      newParentPath,
+		IsFromOtherCluster: isFromOtherCluster,
 	}
 
 	if notification.Queue != nil {
-		if !isFromOtherCluster {
-			glog.V(3).Infof("notifying entry update %v", fullpath)
-			notification.Queue.SendMessage(fullpath, eventNotification)
-		}
+		glog.V(3).Infof("notifying entry update %v", fullpath)
+		notification.Queue.SendMessage(fullpath, eventNotification)
 	}
 
 	f.logMetaEvent(ctx, fullpath, eventNotification)
