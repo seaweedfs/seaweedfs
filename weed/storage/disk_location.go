@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/stats"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
@@ -25,6 +25,8 @@ type DiskLocation struct {
 	// erasure coding
 	ecVolumes     map[needle.VolumeId]*erasure_coding.EcVolume
 	ecVolumesLock sync.RWMutex
+
+	isDiskSpaceLow bool
 }
 
 func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32) *DiskLocation {
@@ -79,9 +81,8 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 			return false
 		}
 
-		l.volumesLock.Lock()
-		l.volumes[vid] = v
-		l.volumesLock.Unlock()
+		l.SetVolume(vid, v)
+
 		size, _, _ := v.FileStat()
 		glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s",
 			l.Directory+"/"+name, v.ReplicaPlacement, v.Version(), size, v.Ttl.String())
@@ -237,6 +238,7 @@ func (l *DiskLocation) SetVolume(vid needle.VolumeId, volume *Volume) {
 	defer l.volumesLock.Unlock()
 
 	l.volumes[vid] = volume
+	volume.location = l
 }
 
 func (l *DiskLocation) FindVolume(vid needle.VolumeId) (*Volume, bool) {
@@ -300,19 +302,19 @@ func (l *DiskLocation) UnUsedSpace(volumeSizeLimit uint64) (unUsedSpace uint64) 
 }
 
 func (l *DiskLocation) CheckDiskSpace() {
-	lastStat := false
-	t := time.NewTicker(time.Minute)
-	for _ = range t.C {
+	for {
 		if dir, e := filepath.Abs(l.Directory); e == nil {
 			s := stats.NewDiskStatus(dir)
-			if (s.PercentFree < l.MinFreeSpacePercent) != lastStat {
-				lastStat = !lastStat
-				for _, v := range l.volumes {
-					v.SetLowDiskSpace(lastStat)
-				}
-
+			if (s.PercentFree < l.MinFreeSpacePercent) != l.isDiskSpaceLow {
+				l.isDiskSpaceLow = !l.isDiskSpaceLow
+			}
+			if l.isDiskSpaceLow {
+				glog.V(0).Infof("dir %s freePercent %.2f%% < min %.2f%%, isLowDiskSpace: %v", dir, s.PercentFree, l.MinFreeSpacePercent, l.isDiskSpaceLow)
+			} else {
+				glog.V(4).Infof("dir %s freePercent %.2f%% < min %.2f%%, isLowDiskSpace: %v", dir, s.PercentFree, l.MinFreeSpacePercent, l.isDiskSpaceLow)
 			}
 		}
+		time.Sleep(time.Minute)
 	}
 
 }

@@ -27,7 +27,6 @@ type Volume struct {
 	needleMapKind      NeedleMapType
 	noWriteOrDelete    bool // if readonly, either noWriteOrDelete or noWriteCanDelete
 	noWriteCanDelete   bool // if readonly, either noWriteOrDelete or noWriteCanDelete
-	lowDiskSpace       bool
 	hasRemoteFile      bool // if the volume has a remote file
 	MemoryMapMaxSizeMb uint32
 
@@ -35,8 +34,8 @@ type Volume struct {
 
 	dataFileAccessLock    sync.RWMutex
 	asyncRequestsChan     chan *needle.AsyncRequest
-	lastModifiedTsSeconds uint64 //unix time in seconds
-	lastAppendAtNs        uint64 //unix time in nanoseconds
+	lastModifiedTsSeconds uint64 // unix time in seconds
+	lastAppendAtNs        uint64 // unix time in nanoseconds
 
 	lastCompactIndexOffset uint64
 	lastCompactRevision    uint16
@@ -44,11 +43,7 @@ type Volume struct {
 	isCompacting bool
 
 	volumeInfo *volume_server_pb.VolumeInfo
-}
-
-func (v *Volume) SetLowDiskSpace(lowDiskSpace bool) {
-	glog.V(0).Infof("SetLowDiskSpace id %d value %t", v.Id, lowDiskSpace)
-	v.lowDiskSpace = lowDiskSpace
+	location   *DiskLocation
 }
 
 func NewVolume(dirname string, collection string, id needle.VolumeId, needleMapKind NeedleMapType, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32) (v *Volume, e error) {
@@ -182,7 +177,7 @@ func (v *Volume) NeedToReplicate() bool {
 // or when volumeSizeLimit is 0 when server just starts
 func (v *Volume) expired(volumeSizeLimit uint64) bool {
 	if volumeSizeLimit == 0 {
-		//skip if we don't know size limit
+		// skip if we don't know size limit
 		return false
 	}
 	if v.ContentSize() == 0 {
@@ -250,5 +245,5 @@ func (v *Volume) RemoteStorageNameKey() (storageName, storageKey string) {
 }
 
 func (v *Volume) IsReadOnly() bool {
-	return v.noWriteOrDelete || v.noWriteCanDelete || v.lowDiskSpace
+	return v.noWriteOrDelete || v.noWriteCanDelete || v.location.isDiskSpaceLow
 }
