@@ -52,7 +52,7 @@ type VolumeServerOptions struct {
 	memProfile            *string
 	compactionMBPerSecond *int
 	fileSizeLimitMB       *int
-	minFreeSpacePercent   []float32
+	minFreeSpacePercents  []float32
 	pprof                 *bool
 	// pulseSeconds          *int
 }
@@ -137,18 +137,18 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	minFreeSpacePercentStrings := strings.Split(minFreeSpacePercent, ",")
 	for _, freeString := range minFreeSpacePercentStrings {
 		if value, e := strconv.ParseFloat(freeString, 32); e == nil {
-			v.minFreeSpacePercent = append(v.minFreeSpacePercent, float32(value))
+			v.minFreeSpacePercents = append(v.minFreeSpacePercents, float32(value))
 		} else {
 			glog.Fatalf("The value specified in -minFreeSpacePercent not a valid value %s", freeString)
 		}
 	}
-	if len(v.minFreeSpacePercent) == 1 && len(v.folders) > 1 {
+	if len(v.minFreeSpacePercents) == 1 && len(v.folders) > 1 {
 		for i := 0; i < len(v.folders)-1; i++ {
-			v.minFreeSpacePercent = append(v.minFreeSpacePercent, v.minFreeSpacePercent[0])
+			v.minFreeSpacePercents = append(v.minFreeSpacePercents, v.minFreeSpacePercents[0])
 		}
 	}
-	if len(v.folders) != len(v.minFreeSpacePercent) {
-		glog.Fatalf("%d directories by -dir, but only %d minFreeSpacePercent is set by -minFreeSpacePercent", len(v.folders), len(v.minFreeSpacePercent))
+	if len(v.folders) != len(v.minFreeSpacePercents) {
+		glog.Fatalf("%d directories by -dir, but only %d minFreeSpacePercent is set by -minFreeSpacePercent", len(v.folders), len(v.minFreeSpacePercents))
 	}
 
 	// security related white list configuration
@@ -196,7 +196,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.publicUrl,
-		v.folders, v.folderMaxLimits, v.minFreeSpacePercent,
+		v.folders, v.folderMaxLimits, v.minFreeSpacePercents,
 		volumeNeedleMapKind,
 		strings.Split(masters, ","), 5, *v.dataCenter, *v.rack,
 		v.whiteList,
