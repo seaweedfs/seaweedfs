@@ -6,7 +6,6 @@ import (
 	"math"
 	"os"
 	"path"
-	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +18,6 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
@@ -115,22 +113,6 @@ func (wfs *WFS) Root() (fs.Node, error) {
 	return wfs.root, nil
 }
 
-var _ = filer_pb.FilerClient(&WFS{})
-
-func (wfs *WFS) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
-
-	err := pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
-		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		return fn(client)
-	}, wfs.option.FilerGrpcAddress, wfs.option.GrpcDialOption)
-
-	if err == nil {
-		return nil
-	}
-	return err
-
-}
-
 func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHandle) {
 
 	fullpath := file.fullpath()
@@ -224,17 +206,4 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 	resp.Frsize = uint32(blockSize)
 
 	return nil
-}
-
-func (wfs *WFS) AdjustedUrl(hostAndPort string) string {
-	if !wfs.option.OutsideContainerClusterMode {
-		return hostAndPort
-	}
-	commaIndex := strings.Index(hostAndPort, ":")
-	if commaIndex < 0 {
-		return hostAndPort
-	}
-	filerCommaIndex := strings.Index(wfs.option.FilerGrpcAddress, ":")
-	return fmt.Sprintf("%s:%s", wfs.option.FilerGrpcAddress[:filerCommaIndex], hostAndPort[commaIndex+1:])
-
 }
