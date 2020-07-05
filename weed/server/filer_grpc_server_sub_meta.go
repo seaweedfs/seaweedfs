@@ -23,9 +23,49 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 	lastReadTime := time.Unix(0, req.SinceNs)
 	glog.V(0).Infof(" %v starts to subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
-	var processedTsNs int64
 
-	eachEventNotificationFn := func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+	eachEventNotificationFn := eachEventNotificationFn(req, stream, clientName)
+
+	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
+
+	processedTsNs, err := fs.filer.ReadPersistedLogBuffer(lastReadTime, eachLogEntryFn)
+	if err != nil {
+		return fmt.Errorf("reading from persisted logs: %v", err)
+	}
+
+	if processedTsNs != 0 {
+		lastReadTime = time.Unix(0, processedTsNs)
+	}
+
+	err = fs.filer.MetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
+		fs.listenersLock.Lock()
+		fs.listenersCond.Wait()
+		fs.listenersLock.Unlock()
+		return true
+	}, eachLogEntryFn)
+
+	return err
+
+}
+
+func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error) func(logEntry *filer_pb.LogEntry) error {
+	return func(logEntry *filer_pb.LogEntry) error {
+		event := &filer_pb.SubscribeMetadataResponse{}
+		if err := proto.Unmarshal(logEntry.Data, event); err != nil {
+			glog.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
+			return fmt.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
+		}
+
+		if err := eachEventNotificationFn(event.Directory, event.EventNotification, event.TsNs); err != nil {
+			return err
+		}
+
+		return nil
+	}
+}
+
+func eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer, clientName string) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+	return func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 
 		// get complete path to the file or directory
 		var entryName string
@@ -57,40 +97,6 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		}
 		return nil
 	}
-
-	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) error {
-		event := &filer_pb.SubscribeMetadataResponse{}
-		if err := proto.Unmarshal(logEntry.Data, event); err != nil {
-			glog.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
-			return fmt.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
-		}
-
-		if err := eachEventNotificationFn(event.Directory, event.EventNotification, event.TsNs); err != nil {
-			return err
-		}
-
-		processedTsNs = logEntry.TsNs
-
-		return nil
-	}
-
-	if err := fs.filer.ReadPersistedLogBuffer(lastReadTime, eachLogEntryFn); err != nil {
-		return fmt.Errorf("reading from persisted logs: %v", err)
-	}
-
-	if processedTsNs != 0 {
-		lastReadTime = time.Unix(0, processedTsNs)
-	}
-
-	err := fs.filer.MetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
-		fs.listenersLock.Lock()
-		fs.listenersCond.Wait()
-		fs.listenersLock.Unlock()
-		return true
-	}, eachLogEntryFn)
-
-	return err
-
 }
 
 func (fs *FilerServer) addClient(clientType string, clientAddress string) (clientName string) {
