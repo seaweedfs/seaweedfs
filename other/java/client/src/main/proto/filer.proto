@@ -49,6 +49,9 @@ service SeaweedFiler {
     rpc SubscribeMetadata (SubscribeMetadataRequest) returns (stream SubscribeMetadataResponse) {
     }
 
+    rpc SubscribeLocalMetadata (SubscribeMetadataRequest) returns (stream SubscribeMetadataResponse) {
+    }
+
     rpc KeepConnected (stream KeepConnectedRequest) returns (stream KeepConnectedResponse) {
     }
 
