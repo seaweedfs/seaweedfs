@@ -67,7 +67,7 @@ func (f *Filer) logMetaEvent(ctx context.Context, fullpath string, eventNotifica
 		return
 	}
 
-	f.MetaLogBuffer.AddToBuffer([]byte(dir), data)
+	f.LocalMetaLogBuffer.AddToBuffer([]byte(dir), data)
 
 }
 

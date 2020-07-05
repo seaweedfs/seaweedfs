@@ -35,7 +35,7 @@ type Filer struct {
 	FsyncBuckets        []string
 	buckets             *FilerBuckets
 	Cipher              bool
-	MetaLogBuffer       *log_buffer.LogBuffer
+	LocalMetaLogBuffer  *log_buffer.LogBuffer
 	metaLogCollection   string
 	metaLogReplication  string
 }
@@ -47,7 +47,7 @@ func NewFiler(masters []string, grpcDialOption grpc.DialOption, filerHost string
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
 	}
-	f.MetaLogBuffer = log_buffer.NewLogBuffer(time.Minute, f.logFlushFunc, notifyFn)
+	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer(time.Minute, f.logFlushFunc, notifyFn)
 	f.metaLogCollection = collection
 	f.metaLogReplication = replication
 
@@ -318,6 +318,6 @@ func (f *Filer) cacheSetDirectory(dirpath string, dirEntry *Entry, level int) {
 }
 
 func (f *Filer) Shutdown() {
-	f.MetaLogBuffer.Shutdown()
+	f.LocalMetaLogBuffer.Shutdown()
 	f.store.Shutdown()
 }
