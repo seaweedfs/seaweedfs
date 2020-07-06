@@ -37,10 +37,10 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		lastReadTime = time.Unix(0, processedTsNs)
 	}
 
-	err = fs.filer.LocalMetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
-		fs.listenersLock.Lock()
-		fs.listenersCond.Wait()
-		fs.listenersLock.Unlock()
+	err = fs.metaAggregator.MetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
+		fs.metaAggregator.ListenersLock.Lock()
+		fs.metaAggregator.ListenersCond.Wait()
+		fs.metaAggregator.ListenersLock.Unlock()
 		return true
 	}, eachLogEntryFn)
 
@@ -133,8 +133,4 @@ func (fs *FilerServer) addClient(clientType string, clientAddress string) (clien
 
 func (fs *FilerServer) deleteClient(clientName string) {
 	glog.V(0).Infof("- listener %v", clientName)
-}
-
-func (fs *FilerServer) notifyMetaListeners() {
-	fs.listenersCond.Broadcast()
 }

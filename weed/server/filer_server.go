@@ -52,12 +52,14 @@ type FilerOption struct {
 	Port               uint32
 	recursiveDelete    bool
 	Cipher             bool
+	Filers             []string
 }
 
 type FilerServer struct {
 	option         *FilerOption
 	secret         security.SigningKey
 	filer          *filer2.Filer
+	metaAggregator *filer2.MetaAggregator
 	grpcDialOption grpc.DialOption
 
 	// notifying clients
@@ -81,12 +83,16 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Fatal("master list is required!")
 	}
 
-	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption, option.Host, option.Port, option.Collection, option.DefaultReplication, fs.notifyMetaListeners)
+	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption, option.Host, option.Port, option.Collection, option.DefaultReplication, func() {
+		fs.listenersCond.Broadcast()
+	})
+	fs.metaAggregator = filer2.NewMetaAggregator(append(option.Filers, fmt.Sprintf("%s:%d", option.Host, option.Port)), fs.grpcDialOption)
 	fs.filer.Cipher = option.Cipher
 
 	maybeStartMetrics(fs, option)
 
 	go fs.filer.KeepConnectedToMaster()
+	fs.metaAggregator.StartLoopSubscribe(time.Now().UnixNano())
 
 	v := util.GetViper()
 	if !util.LoadConfiguration("filer", false) {
