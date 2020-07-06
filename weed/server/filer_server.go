@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -86,8 +87,16 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption, option.Host, option.Port, option.Collection, option.DefaultReplication, func() {
 		fs.listenersCond.Broadcast()
 	})
-	fs.metaAggregator = filer2.NewMetaAggregator(append(option.Filers, fmt.Sprintf("%s:%d", option.Host, option.Port)), fs.grpcDialOption)
 	fs.filer.Cipher = option.Cipher
+
+	// set peers
+	if strings.HasPrefix(fs.filer.GetStore().GetName(), "leveldb") && len(option.Filers) > 0 {
+		glog.Fatal("filers using separate leveldb stores should not configure peers!")
+	}
+	if len(option.Filers) == 0 {
+		option.Filers = append(option.Filers, fmt.Sprintf("%s:%d", option.Host, option.Port)
+	}
+	fs.metaAggregator = filer2.NewMetaAggregator(option.Filers, fs.grpcDialOption)
 
 	maybeStartMetrics(fs, option)
 

@@ -35,6 +35,7 @@ type FilerOptions struct {
 	enableNotification      *bool
 	disableHttp             *bool
 	cipher                  *bool
+	peers                   *string
 
 	// default leveldb directory, used in "weed server" mode
 	defaultLevelDbDirectory *string
@@ -55,6 +56,7 @@ func init() {
 	f.dataCenter = cmdFiler.Flag.String("dataCenter", "", "prefer to write to volumes in this data center")
 	f.disableHttp = cmdFiler.Flag.Bool("disableHttp", false, "disable http request, only gRpc operations are allowed")
 	f.cipher = cmdFiler.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
+	f.peers = cmdFiler.Flag.String("peers", "", "all filers sharing the same filer store in comma separated ip:port list")
 }
 
 var cmdFiler = &Command{
@@ -114,6 +116,7 @@ func (fo *FilerOptions) startFiler() {
 		Host:               *fo.ip,
 		Port:               uint32(*fo.port),
 		Cipher:             *fo.cipher,
+		Filers:             strings.Split(*fo.peers, ","),
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

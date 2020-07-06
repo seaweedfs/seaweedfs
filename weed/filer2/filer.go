@@ -60,6 +60,10 @@ func (f *Filer) SetStore(store FilerStore) {
 	f.store = NewFilerStoreWrapper(store)
 }
 
+func (f *Filer) GetStore() (store FilerStore) {
+	return f.store
+}
+
 func (f *Filer) DisableDirectoryCache() {
 	f.directoryCache = nil
 }
