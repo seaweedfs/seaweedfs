@@ -94,7 +94,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Fatal("filers using separate leveldb stores should not configure peers!")
 	}
 	if len(option.Filers) == 0 {
-		option.Filers = append(option.Filers, fmt.Sprintf("%s:%d", option.Host, option.Port)
+		option.Filers = append(option.Filers, fmt.Sprintf("%s:%d", option.Host, option.Port))
 	}
 	fs.metaAggregator = filer2.NewMetaAggregator(option.Filers, fs.grpcDialOption)
 
