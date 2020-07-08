@@ -89,19 +89,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	})
 	fs.filer.Cipher = option.Cipher
 
-	// set peers
-	if strings.HasPrefix(fs.filer.GetStore().GetName(), "leveldb") && len(option.Filers) > 0 {
-		glog.Fatal("filers using separate leveldb stores should not configure peers!")
-	}
-	if len(option.Filers) == 0 {
-		option.Filers = append(option.Filers, fmt.Sprintf("%s:%d", option.Host, option.Port))
-	}
-	fs.metaAggregator = filer2.NewMetaAggregator(option.Filers, fs.grpcDialOption)
-
 	maybeStartMetrics(fs, option)
 
 	go fs.filer.KeepConnectedToMaster()
-	fs.metaAggregator.StartLoopSubscribe(time.Now().UnixNano())
 
 	v := util.GetViper()
 	if !util.LoadConfiguration("filer", false) {
@@ -111,6 +101,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		if os.IsNotExist(err) {
 			os.MkdirAll(option.DefaultLevelDbDir, 0755)
 		}
+		glog.V(0).Infof("default to create filer store dir in %s", option.DefaultLevelDbDir)
 	}
 	util.LoadConfiguration("notification", false)
 
@@ -129,6 +120,16 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	if defaultMux != readonlyMux {
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
+
+	// set peers
+	if strings.HasPrefix(fs.filer.GetStore().GetName(), "leveldb") && len(option.Filers) > 0 {
+		glog.Fatalf("filers using separate leveldb stores should not configure %d peers %+v", len(option.Filers), option.Filers)
+	}
+	if len(option.Filers) == 0 {
+		option.Filers = append(option.Filers, fmt.Sprintf("%s:%d", option.Host, option.Port))
+	}
+	fs.metaAggregator = filer2.NewMetaAggregator(option.Filers, fs.grpcDialOption)
+	fs.metaAggregator.StartLoopSubscribe(time.Now().UnixNano())
 
 	fs.filer.LoadBuckets()
 

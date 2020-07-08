@@ -103,6 +103,11 @@ func (fo *FilerOptions) startFiler() {
 		defaultLevelDbDirectory = *fo.defaultLevelDbDirectory + "/filerldb2"
 	}
 
+	var peers []string
+	if *fo.peers != "" {
+		peers = strings.Split(*fo.peers, ",")
+	}
+
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
 		Masters:            strings.Split(*fo.masters, ","),
 		Collection:         *fo.collection,
@@ -116,7 +121,7 @@ func (fo *FilerOptions) startFiler() {
 		Host:               *fo.ip,
 		Port:               uint32(*fo.port),
 		Cipher:             *fo.cipher,
-		Filers:             strings.Split(*fo.peers, ","),
+		Filers:             peers,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
