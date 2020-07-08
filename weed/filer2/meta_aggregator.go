@@ -52,7 +52,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(filer string, lastTsNs int64) {
 			return err
 		}
 		dir := event.Directory
-		println("received meta change", dir, "size", len(data))
+		// println("received meta change", dir, "size", len(data))
 		ma.MetaLogBuffer.AddToBuffer([]byte(dir), data)
 		return nil
 	}
