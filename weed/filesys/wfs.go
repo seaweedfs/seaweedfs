@@ -84,15 +84,17 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			},
 		},
 	}
+	cacheUniqueId := util.Md5([]byte(option.FilerGrpcAddress))[0:4]
+	cacheDir := path.Join(option.CacheDir, cacheUniqueId)
 	if option.CacheSizeMB > 0 {
-		os.MkdirAll(option.CacheDir, 0755)
-		wfs.chunkCache = chunk_cache.NewChunkCache(256, option.CacheDir, option.CacheSizeMB)
+		os.MkdirAll(cacheDir, 0755)
+		wfs.chunkCache = chunk_cache.NewChunkCache(256, cacheDir, option.CacheSizeMB)
 		grace.OnInterrupt(func() {
 			wfs.chunkCache.Shutdown()
 		})
 	}
 
-	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.CacheDir, "meta"))
+	wfs.metaCache = meta_cache.NewMetaCache(path.Join(cacheDir, "meta"))
 	startTime := time.Now()
 	if err := meta_cache.InitMetaCache(wfs.metaCache, wfs, wfs.option.FilerMountRootPath); err != nil {
 		glog.V(0).Infof("failed to init meta cache: %v", err)
