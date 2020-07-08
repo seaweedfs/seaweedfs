@@ -28,9 +28,9 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 	m = &LevelDbNeedleMap{dbFileName: dbFileName}
 	m.indexFile = indexFile
 	if !isLevelDbFresh(dbFileName, indexFile) {
-		glog.V(0).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
+		glog.V(1).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
 		generateLevelDbFile(dbFileName, indexFile)
-		glog.V(0).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
+		glog.V(1).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
 	}
 	glog.V(1).Infof("Opening %s...", dbFileName)
 
