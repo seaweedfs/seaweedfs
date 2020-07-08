@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go v1.23.13
 	github.com/buraksezer/consistent v0.0.0-20191006190839-693edf70fd72
 	github.com/cespare/xxhash v1.1.0
-	github.com/chrislusf/raft v1.0.0
+	github.com/chrislusf/raft v1.0.1
 	github.com/coreos/bbolt v1.3.3 // indirect
 	github.com/coreos/etcd v3.3.15+incompatible // indirect
 	github.com/coreos/go-semver v0.3.0 // indirect

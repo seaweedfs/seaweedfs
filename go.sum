@@ -71,6 +71,8 @@ github.com/chrislusf/raft v0.0.0-20190225081310-10d6e2182d92 h1:lM9SFsh0EPXkyJyr
 github.com/chrislusf/raft v0.0.0-20190225081310-10d6e2182d92/go.mod h1:4jyiUCD5y548+yKW+oiHtccBiMaLCCbFBpK2t7X4eUo=
 github.com/chrislusf/raft v1.0.0 h1:tRGtB3nWOg8VOPSoeZ4NfHMLJcjKgyNkUZQbcyKWf1Y=
 github.com/chrislusf/raft v1.0.0/go.mod h1:Ep5DP+mJSosjfKiix1uU7Lc2Df/SX4oGJEpZlXH5l68=
+github.com/chrislusf/raft v1.0.1 h1:Wa4ffkmkysW7cX3T/gMC/Mk3PhnOXhsqOVwQJcMndhw=
+github.com/chrislusf/raft v1.0.1/go.mod h1:Ep5DP+mJSosjfKiix1uU7Lc2Df/SX4oGJEpZlXH5l68=
 github.com/client9/misspell v0.3.4/go.mod h1:qj6jICC3Q7zFZvVWo7KLAzC3yx5G7kyvSDkc90ppPyw=
 github.com/cncf/udpa/go v0.0.0-20191209042840-269d4d468f6f/go.mod h1:M8M6+tZqaGXZJjfX53e64911xZQV5JYwmTeXPW+k8Sc=
 github.com/cockroachdb/datadriven v0.0.0-20190809214429-80d97fb3cbaa/go.mod h1:zn76sxSg3SzpJ0PPJaLDCu+Bu0Lg3sKTORVIj19EIF8=
