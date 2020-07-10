@@ -1,5 +1,5 @@
 package pb
 
 const (
-	AdminShellClient = "adminShell"
+	AdminShellClient = "shell"
 )

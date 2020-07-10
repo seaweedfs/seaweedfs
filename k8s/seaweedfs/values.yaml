@@ -123,6 +123,9 @@ volume:
   # Comma separated Ip addresses having write permission. No limit if empty.
   whiteList: null
 
+  # Adjust jpg orientation when uploading.
+  imagesFixOrientation: false
+
   extraVolumes: ""
   extraVolumeMounts: ""
 
