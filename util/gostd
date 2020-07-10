@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+
+############################  GLOBAL VARIABLES
+regex=' '
+branch="master"
+max_length=150
+
+REGEX_SUFFIX_GO=".+\.go$"
+
+############################  FUNCTIONS
+msg() {
+    printf '%b' "$1" >&2
+}
+
+die() {
+    msg "\33[31m[✘]\33[0m ${1}${2}"
+    exit 1
+}
+
+succ() {
+    msg "\33[34m[√]\33[0m ${1}${2}"
+}
+
+gostd() {
+    local branch=$1
+    local reg4exclude=$2
+    local max_length=$3
+
+    for file in `git diff $branch --name-only`
+    do
+        if ! [[ $file =~ $REGEX_SUFFIX_GO ]] || [[ $file =~ $reg4exclude ]]; then
+            continue
+        fi
+
+        error=`go fmt $file 2>&1`
+        if ! [ $? -eq 0 ]; then
+            die "go fmt $file:" "$error"
+        fi
+
+        succ "$file\n"
+
+        grep -n -E --color=always ".{$max_length}" $file | awk '{ printf ("%4s %s\n", "", $0) }'
+    done
+}
+
+get_options() {
+    while getopts "b:e:hl:" opts
+    do
+        case $opts in
+            b)
+                branch=$OPTARG
+                ;;
+            e)
+                regex=$OPTARG
+                ;;
+            h)
+                usage
+                exit 0
+                ;;
+            l)
+                max_length=$OPTARG
+                ;;
+            \?)
+                usage
+                exit 1
+                ;;
+        esac
+    done
+}
+
+usage () {
+    cat << _EOC_
+Usage:
+    gostd [options]
+
+Options:
+    -b <branch/commit>        Specify the git diff branch or commit.
+                              (default: master)
+    -e <regex>                Regex for excluding file or directory.
+    -h                        Print this usage.
+    -l <length>               Show files that exceed the limit line length.
+                              (default: 150)
+
+Examples:
+    gostd
+    gostd -b master -l 100
+    gostd -b 59d532a -e weed/pb -l 100
+_EOC_
+}
+
+main() {
+    get_options "$@"
+
+    gostd "$branch" "$regex" "$max_length"
+}
+
+############################  MAIN()
+main "$@"

@@ -1,0 +1,53 @@
+# Name of snap as registered in the store
+name: seaweedfs
+# Automatically derive snap version from git  tags
+version: git
+# Short human readable name as seen in 'snap find $SNAPNAME'
+summary: SeaweedFS
+# Longer multi-line description found in 'snap info $SNAPNAME'
+description: |
+  SeaweedFS is a simple and highly scalable distributed file system,
+  to store and serve billions of files fast!
+  SeaweedFS implements an object store with O(1) disk seek,
+  transparent cloud integration, and an optional Filer with POSIX interface,
+  supporting S3 API, Rack-Aware Erasure Coding for warm storage,
+  FUSE mount, Hadoop compatible, WebDAV.
+
+# Grade is stable for snaps expected to land in the stable channel
+grade: stable
+# Uses the strict confinement model and uses interfaces to open up access to
+# resources on the target host
+confinement: strict
+
+# List of parts which comprise the snap
+parts:
+  # The main part which defines how to build the application in the snap
+  seaweedfs:
+    # This part needs a newer version of golang, so we use a separate part
+    # which defines how to get a newer golang during the build
+    after: [go]
+    # The go plugin knows how to build go applications into a snap
+    plugin: go
+    # Snapcraft will look in this location for the source of the application
+    source: .
+    go-importpath: github.com/chrislusf/seaweedfs
+  go:
+    # Defines the version of golang which will be bootstrapped into the snap
+    source-tag: go1.14
+
+# Apps exposes the binaries inside the snap to the host system once installed
+apps:
+  # We expose the weed command.
+  # This differs from the snap name, so it will be namespaced as seaweedfs.weed
+  # An alias can be added to expose this as 'weed' if requested in the snapcraft forum
+  weed:
+    # The path to the binary inside the snap, relative to the $SNAP home
+    command: bin/weed
+    # Plugs connect the snap to resources on the host system. We enable network connectivity
+    # We also add home and removable-media (latter not autoconnected by default)
+    # so users can access files in their home or on removable disks
+    plugs:
+      - network
+      - network-bind
+      - home
+      - removable-media

@@ -1,16 +1,17 @@
 package weed_server
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/operation"
 	"net/http"
 )
 
-func (s *RaftServer) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
-	s.router.HandleFunc(pattern, handler)
+type ClusterStatusResult struct {
+	IsLeader bool     `json:"IsLeader,omitempty"`
+	Leader   string   `json:"Leader,omitempty"`
+	Peers    []string `json:"Peers,omitempty"`
 }
 
-func (s *RaftServer) statusHandler(w http.ResponseWriter, r *http.Request) {
-	ret := operation.ClusterStatusResult{
+func (s *RaftServer) StatusHandler(w http.ResponseWriter, r *http.Request) {
+	ret := ClusterStatusResult{
 		IsLeader: s.topo.IsLeader(),
 		Peers:    s.Peers(),
 	}

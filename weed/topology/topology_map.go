@@ -23,7 +23,7 @@ func (t *Topology) ToMap() interface{} {
 			}
 		}
 	}
-	m["layouts"] = layouts
+	m["Layouts"] = layouts
 	return m
 }
 
@@ -68,9 +68,28 @@ func (t *Topology) ToVolumeLocations() (volumeLocations []*master_pb.VolumeLocat
 				for _, v := range dn.GetVolumes() {
 					volumeLocation.NewVids = append(volumeLocation.NewVids, uint32(v.Id))
 				}
+				for _, s := range dn.GetEcShards() {
+					volumeLocation.NewVids = append(volumeLocation.NewVids, uint32(s.VolumeId))
+				}
 				volumeLocations = append(volumeLocations, volumeLocation)
 			}
 		}
 	}
 	return
+}
+
+func (t *Topology) ToTopologyInfo() *master_pb.TopologyInfo {
+	m := &master_pb.TopologyInfo{
+		Id:                string(t.Id()),
+		VolumeCount:       uint64(t.GetVolumeCount()),
+		MaxVolumeCount:    uint64(t.GetMaxVolumeCount()),
+		FreeVolumeCount:   uint64(t.FreeSpace()),
+		ActiveVolumeCount: uint64(t.GetActiveVolumeCount()),
+		RemoteVolumeCount: uint64(t.GetRemoteVolumeCount()),
+	}
+	for _, c := range t.Children() {
+		dc := c.(*DataCenter)
+		m.DataCenterInfos = append(m.DataCenterInfos, dc.ToDataCenterInfo())
+	}
+	return m
 }

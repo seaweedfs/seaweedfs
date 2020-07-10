@@ -1,6 +1,7 @@
 package S3Sink
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
+
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -23,6 +25,7 @@ type S3Sink struct {
 	region      string
 	bucket      string
 	dir         string
+	endpoint    string
 	filerSource *source.FilerSource
 }
 
@@ -38,16 +41,18 @@ func (s3sink *S3Sink) GetSinkToDirectory() string {
 	return s3sink.dir
 }
 
-func (s3sink *S3Sink) Initialize(configuration util.Configuration) error {
-	glog.V(0).Infof("sink.s3.region: %v", configuration.GetString("region"))
-	glog.V(0).Infof("sink.s3.bucket: %v", configuration.GetString("bucket"))
-	glog.V(0).Infof("sink.s3.directory: %v", configuration.GetString("directory"))
+func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string) error {
+	glog.V(0).Infof("sink.s3.region: %v", configuration.GetString(prefix+"region"))
+	glog.V(0).Infof("sink.s3.bucket: %v", configuration.GetString(prefix+"bucket"))
+	glog.V(0).Infof("sink.s3.directory: %v", configuration.GetString(prefix+"directory"))
+	glog.V(0).Infof("sink.s3.endpoint: %v", configuration.GetString(prefix+"endpoint"))
 	return s3sink.initialize(
-		configuration.GetString("aws_access_key_id"),
-		configuration.GetString("aws_secret_access_key"),
-		configuration.GetString("region"),
-		configuration.GetString("bucket"),
-		configuration.GetString("directory"),
+		configuration.GetString(prefix+"aws_access_key_id"),
+		configuration.GetString(prefix+"aws_secret_access_key"),
+		configuration.GetString(prefix+"region"),
+		configuration.GetString(prefix+"bucket"),
+		configuration.GetString(prefix+"directory"),
+		configuration.GetString(prefix+"endpoint"),
 	)
 }
 
@@ -55,16 +60,18 @@ func (s3sink *S3Sink) SetSourceFiler(s *source.FilerSource) {
 	s3sink.filerSource = s
 }
 
-func (s3sink *S3Sink) initialize(awsAccessKeyId, aswSecretAccessKey, region, bucket, dir string) error {
+func (s3sink *S3Sink) initialize(awsAccessKeyId, awsSecretAccessKey, region, bucket, dir, endpoint string) error {
 	s3sink.region = region
 	s3sink.bucket = bucket
 	s3sink.dir = dir
+	s3sink.endpoint = endpoint
 
 	config := &aws.Config{
-		Region: aws.String(s3sink.region),
+		Region:   aws.String(s3sink.region),
+		Endpoint: aws.String(s3sink.endpoint),
 	}
-	if awsAccessKeyId != "" && aswSecretAccessKey != "" {
-		config.Credentials = credentials.NewStaticCredentials(awsAccessKeyId, aswSecretAccessKey, "")
+	if awsAccessKeyId != "" && awsSecretAccessKey != "" {
+		config.Credentials = credentials.NewStaticCredentials(awsAccessKeyId, awsSecretAccessKey, "")
 	}
 
 	sess, err := session.NewSession(config)
@@ -89,7 +96,6 @@ func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks b
 }
 
 func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
-
 	key = cleanKey(key)
 
 	if entry.IsDirectory {
@@ -102,21 +108,22 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
 	}
 
 	totalSize := filer2.TotalSize(entry.Chunks)
-	chunkViews := filer2.ViewFromChunks(entry.Chunks, 0, int(totalSize))
+	chunkViews := filer2.ViewFromChunks(entry.Chunks, 0, int64(totalSize))
 
-	var parts []*s3.CompletedPart
+	parts := make([]*s3.CompletedPart, len(chunkViews))
+
 	var wg sync.WaitGroup
 	for chunkIndex, chunk := range chunkViews {
 		partId := chunkIndex + 1
 		wg.Add(1)
-		go func(chunk *filer2.ChunkView) {
+		go func(chunk *filer2.ChunkView, index int) {
 			defer wg.Done()
 			if part, uploadErr := s3sink.uploadPart(key, uploadId, partId, chunk); uploadErr != nil {
 				err = uploadErr
 			} else {
-				parts = append(parts, part)
+				parts[index] = part
 			}
-		}(chunk)
+		}(chunk, chunkIndex)
 	}
 	wg.Wait()
 
@@ -125,11 +132,11 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
 		return err
 	}
 
-	return s3sink.completeMultipartUpload(key, uploadId, parts)
+	return s3sink.completeMultipartUpload(context.Background(), key, uploadId, parts)
 
 }
 
-func (s3sink *S3Sink) UpdateEntry(key string, oldEntry, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (s3sink *S3Sink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
 	key = cleanKey(key)
 	// TODO improve efficiency
 	return false, nil

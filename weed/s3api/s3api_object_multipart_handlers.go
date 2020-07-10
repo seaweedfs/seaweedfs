@@ -2,20 +2,21 @@ package s3api
 
 import (
 	"fmt"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/gorilla/mux"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/gorilla/mux"
 )
 
 const (
-	maxObjectList   = 1000 // Limit number of objects in a listObjectsResponse.
-	maxUploadsList  = 1000 // Limit number of uploads in a listUploadsResponse.
-	maxPartsList    = 1000 // Limit number of parts in a listPartsResponse.
-	globalMaxPartID = 10000
+	maxObjectListSizeLimit = 10000 // Limit number of objects in a listObjectsResponse.
+	maxUploadsList         = 10000 // Limit number of uploads in a listUploadsResponse.
+	maxPartsList           = 10000 // Limit number of parts in a listPartsResponse.
+	globalMaxPartID        = 100000
 )
 
 // NewMultipartUploadHandler - New multipart upload.
@@ -27,7 +28,7 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 
 	response, errCode := s3a.createMultipartUpload(&s3.CreateMultipartUploadInput{
 		Bucket: aws.String(bucket),
-		Key:    aws.String(object),
+		Key:    objectKey(aws.String(object)),
 	})
 
 	if errCode != ErrNone {
@@ -52,7 +53,7 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 
 	response, errCode := s3a.completeMultipartUpload(&s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(bucket),
-		Key:      aws.String(object),
+		Key:      objectKey(aws.String(object)),
 		UploadId: aws.String(uploadID),
 	})
 
@@ -78,7 +79,7 @@ func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *ht
 
 	response, errCode := s3a.abortMultipartUpload(&s3.AbortMultipartUploadInput{
 		Bucket:   aws.String(bucket),
-		Key:      aws.String(object),
+		Key:      objectKey(aws.String(object)),
 		UploadId: aws.String(uploadID),
 	})
 
@@ -150,7 +151,7 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 
 	response, errCode := s3a.listObjectParts(&s3.ListPartsInput{
 		Bucket:           aws.String(bucket),
-		Key:              aws.String(object),
+		Key:              objectKey(aws.String(object)),
 		MaxParts:         aws.Int64(int64(maxParts)),
 		PartNumberMarker: aws.Int64(int64(partNumberMarker)),
 		UploadId:         aws.String(uploadID),
@@ -192,13 +193,19 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	var s3ErrCode ErrorCode
 	dataReader := r.Body
 	if rAuthType == authTypeStreamingSigned {
-		dataReader = newSignV4ChunkedReader(r)
+		dataReader, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
 	}
+	if s3ErrCode != ErrNone {
+		writeErrorResponse(w, s3ErrCode, r.URL)
+		return
+	}
+	defer dataReader.Close()
 
-	uploadUrl := fmt.Sprintf("http://%s%s/%s/%04d.part",
-		s3a.option.Filer, s3a.genUploadsFolder(bucket), uploadID, partID-1)
+	uploadUrl := fmt.Sprintf("http://%s%s/%s/%04d.part?collection=%s",
+		s3a.option.Filer, s3a.genUploadsFolder(bucket), uploadID, partID-1, bucket)
 
 	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
 

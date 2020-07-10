@@ -1,6 +1,10 @@
 package storage
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+)
 
 func TestSortVolumeInfos(t *testing.T) {
 	vis := []*VolumeInfo{
@@ -16,7 +20,7 @@ func TestSortVolumeInfos(t *testing.T) {
 	}
 	sortVolumeInfos(vis)
 	for i := 0; i < len(vis); i++ {
-		if vis[i].Id != VolumeId(i+1) {
+		if vis[i].Id != needle.VolumeId(i+1) {
 			t.Fatal()
 		}
 	}

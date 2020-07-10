@@ -19,9 +19,15 @@ import (
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 
-	entry, err := fs.filer.FindEntry(filer2.FullPath(filepath.Join(req.Directory, req.Name)))
+	glog.V(4).Infof("LookupDirectoryEntry %s", filepath.Join(req.Directory, req.Name))
+
+	entry, err := fs.filer.FindEntry(ctx, util.JoinPath(req.Directory, req.Name))
+	if err == filer_pb.ErrNotFound {
+		return &filer_pb.LookupDirectoryEntryResponse{}, err
+	}
 	if err != nil {
-		return nil, fmt.Errorf("%s not found under %s: %v", req.Name, req.Directory, err)
+		glog.V(3).Infof("LookupDirectoryEntry %s: %+v, ", filepath.Join(req.Directory, req.Name), err)
+		return nil, err
 	}
 
 	return &filer_pb.LookupDirectoryEntryResponse{
@@ -30,27 +36,35 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 			IsDirectory: entry.IsDirectory(),
 			Attributes:  filer2.EntryAttributeToPb(entry),
 			Chunks:      entry.Chunks,
+			Extended:    entry.Extended,
 		},
 	}, nil
 }
 
-func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntriesRequest) (*filer_pb.ListEntriesResponse, error) {
+func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {
+
+	glog.V(4).Infof("ListEntries %v", req)
 
 	limit := int(req.Limit)
 	if limit == 0 {
 		limit = fs.option.DirListingLimit
 	}
 
-	resp := &filer_pb.ListEntriesResponse{}
+	paginationLimit := filer2.PaginationSize
+	if limit < paginationLimit {
+		paginationLimit = limit
+	}
+
 	lastFileName := req.StartFromFileName
 	includeLastFile := req.InclusiveStartFrom
 	for limit > 0 {
-		entries, err := fs.filer.ListDirectoryEntries(filer2.FullPath(req.Directory), lastFileName, includeLastFile, 1024)
+		entries, err := fs.filer.ListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, paginationLimit)
+
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(entries) == 0 {
-			return resp, nil
+			return nil
 		}
 
 		includeLastFile = false
@@ -65,22 +79,31 @@ func (fs *FilerServer) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 				}
 			}
 
-			resp.Entries = append(resp.Entries, &filer_pb.Entry{
-				Name:        entry.Name(),
-				IsDirectory: entry.IsDirectory(),
-				Chunks:      entry.Chunks,
-				Attributes:  filer2.EntryAttributeToPb(entry),
-			})
+			if err := stream.Send(&filer_pb.ListEntriesResponse{
+				Entry: &filer_pb.Entry{
+					Name:        entry.Name(),
+					IsDirectory: entry.IsDirectory(),
+					Chunks:      entry.Chunks,
+					Attributes:  filer2.EntryAttributeToPb(entry),
+					Extended:    entry.Extended,
+				},
+			}); err != nil {
+				return err
+			}
+
 			limit--
+			if limit == 0 {
+				return nil
+			}
 		}
 
-		if len(resp.Entries) < 1024 {
+		if len(entries) < paginationLimit {
 			break
 		}
 
 	}
 
-	return resp, nil
+	return nil
 }
 
 func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
@@ -96,7 +119,11 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 			return nil, err
 		}
 		var locs []*filer_pb.Location
-		for _, loc := range fs.filer.MasterClient.GetLocations(uint32(vid)) {
+		locations, found := fs.filer.MasterClient.GetLocations(uint32(vid))
+		if !found {
+			continue
+		}
+		for _, loc := range locations {
 			locs = append(locs, &filer_pb.Location{
 				Url:       loc.Url,
 				PublicUrl: loc.PublicUrl,
@@ -112,49 +139,60 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 
 func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (resp *filer_pb.CreateEntryResponse, err error) {
 
-	fullpath := filer2.FullPath(filepath.Join(req.Directory, req.Entry.Name))
+	glog.V(4).Infof("CreateEntry %v", req)
+
+	resp = &filer_pb.CreateEntryResponse{}
+
 	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
 
-	fs.filer.DeleteChunks(garbages)
-
 	if req.Entry.Attributes == nil {
-		return nil, fmt.Errorf("can not create entry with empty attributes")
+		glog.V(3).Infof("CreateEntry %s: nil attributes", filepath.Join(req.Directory, req.Entry.Name))
+		resp.Error = fmt.Sprintf("can not create entry with empty attributes")
+		return
 	}
 
-	err = fs.filer.CreateEntry(&filer2.Entry{
-		FullPath: fullpath,
+	createErr := fs.filer.CreateEntry(ctx, &filer2.Entry{
+		FullPath: util.JoinPath(req.Directory, req.Entry.Name),
 		Attr:     filer2.PbToEntryAttribute(req.Entry.Attributes),
 		Chunks:   chunks,
-	})
+	}, req.OExcl, req.IsFromOtherCluster)
 
-	if err == nil {
+	if createErr == nil {
+		fs.filer.DeleteChunks(garbages)
+	} else {
+		glog.V(3).Infof("CreateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), createErr)
+		resp.Error = createErr.Error()
 	}
 
-	return &filer_pb.CreateEntryResponse{}, err
+	return
 }
 
 func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 
-	fullpath := filepath.Join(req.Directory, req.Entry.Name)
-	entry, err := fs.filer.FindEntry(filer2.FullPath(fullpath))
+	glog.V(4).Infof("UpdateEntry %v", req)
+
+	fullpath := util.Join(req.Directory, req.Entry.Name)
+	entry, err := fs.filer.FindEntry(ctx, util.FullPath(fullpath))
 	if err != nil {
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("not found %s: %v", fullpath, err)
 	}
 
 	// remove old chunks if not included in the new ones
-	unusedChunks := filer2.FindUnusedFileChunks(entry.Chunks, req.Entry.Chunks)
+	unusedChunks := filer2.MinusChunks(entry.Chunks, req.Entry.Chunks)
 
 	chunks, garbages := filer2.CompactFileChunks(req.Entry.Chunks)
 
 	newEntry := &filer2.Entry{
-		FullPath: filer2.FullPath(filepath.Join(req.Directory, req.Entry.Name)),
+		FullPath: util.JoinPath(req.Directory, req.Entry.Name),
 		Attr:     entry.Attr,
+		Extended: req.Entry.Extended,
 		Chunks:   chunks,
 	}
 
-	glog.V(3).Infof("updating %s: %+v, chunks %d: %v => %+v, chunks %d: %v",
+	glog.V(3).Infof("updating %s: %+v, chunks %d: %v => %+v, chunks %d: %v, extended: %v => %v",
 		fullpath, entry.Attr, len(entry.Chunks), entry.Chunks,
-		req.Entry.Attributes, len(req.Entry.Chunks), req.Entry.Chunks)
+		req.Entry.Attributes, len(req.Entry.Chunks), req.Entry.Chunks,
+		entry.Extended, req.Entry.Extended)
 
 	if req.Entry.Attributes != nil {
 		if req.Entry.Attributes.Mtime != 0 {
@@ -175,19 +213,62 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		return &filer_pb.UpdateEntryResponse{}, err
 	}
 
-	if err = fs.filer.UpdateEntry(entry, newEntry); err == nil {
+	if err = fs.filer.UpdateEntry(ctx, entry, newEntry); err == nil {
 		fs.filer.DeleteChunks(unusedChunks)
 		fs.filer.DeleteChunks(garbages)
+	} else {
+		glog.V(3).Infof("UpdateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), err)
 	}
 
-	fs.filer.NotifyUpdateEvent(entry, newEntry, true)
+	fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, req.IsFromOtherCluster)
 
 	return &filer_pb.UpdateEntryResponse{}, err
 }
 
+func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendToEntryRequest) (*filer_pb.AppendToEntryResponse, error) {
+
+	glog.V(4).Infof("AppendToEntry %v", req)
+
+	fullpath := util.NewFullPath(req.Directory, req.EntryName)
+	var offset int64 = 0
+	entry, err := fs.filer.FindEntry(ctx, util.FullPath(fullpath))
+	if err == filer_pb.ErrNotFound {
+		entry = &filer2.Entry{
+			FullPath: fullpath,
+			Attr: filer2.Attr{
+				Crtime: time.Now(),
+				Mtime:  time.Now(),
+				Mode:   os.FileMode(0644),
+				Uid:    OS_UID,
+				Gid:    OS_GID,
+			},
+		}
+	} else {
+		offset = int64(filer2.TotalSize(entry.Chunks))
+	}
+
+	for _, chunk := range req.Chunks {
+		chunk.Offset = offset
+		offset += int64(chunk.Size)
+	}
+
+	entry.Chunks = append(entry.Chunks, req.Chunks...)
+
+	err = fs.filer.CreateEntry(context.Background(), entry, false, false)
+
+	return &filer_pb.AppendToEntryResponse{}, err
+}
+
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {
-	err = fs.filer.DeleteEntryMetaAndData(filer2.FullPath(filepath.Join(req.Directory, req.Name)), req.IsRecursive, req.IsDeleteData)
-	return &filer_pb.DeleteEntryResponse{}, err
+
+	glog.V(4).Infof("DeleteEntry %v", req)
+
+	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster)
+	resp = &filer_pb.DeleteEntryResponse{}
+	if err != nil {
+		resp.Error = err.Error()
+	}
+	return resp, nil
 }
 
 func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVolumeRequest) (resp *filer_pb.AssignVolumeResponse, err error) {
@@ -196,6 +277,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 	if req.TtlSec > 0 {
 		ttlStr = strconv.Itoa(int(req.TtlSec))
 	}
+	collection, replication, _ := fs.detectCollection(req.ParentPath, req.Collection, req.Replication)
 
 	var altRequest *operation.VolumeAssignRequest
 
@@ -206,54 +288,73 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 
 	assignRequest := &operation.VolumeAssignRequest{
 		Count:       uint64(req.Count),
-		Replication: req.Replication,
-		Collection:  req.Collection,
+		Replication: replication,
+		Collection:  collection,
 		Ttl:         ttlStr,
 		DataCenter:  dataCenter,
 	}
 	if dataCenter != "" {
 		altRequest = &operation.VolumeAssignRequest{
 			Count:       uint64(req.Count),
-			Replication: req.Replication,
-			Collection:  req.Collection,
+			Replication: replication,
+			Collection:  collection,
 			Ttl:         ttlStr,
 			DataCenter:  "",
 		}
 	}
-	assignResult, err := operation.Assign(fs.filer.GetMaster(), assignRequest, altRequest)
+	assignResult, err := operation.Assign(fs.filer.GetMaster(), fs.grpcDialOption, assignRequest, altRequest)
 	if err != nil {
-		return nil, fmt.Errorf("assign volume: %v", err)
+		glog.V(3).Infof("AssignVolume: %v", err)
+		return &filer_pb.AssignVolumeResponse{Error: fmt.Sprintf("assign volume: %v", err)}, nil
 	}
 	if assignResult.Error != "" {
-		return nil, fmt.Errorf("assign volume result: %v", assignResult.Error)
+		glog.V(3).Infof("AssignVolume error: %v", assignResult.Error)
+		return &filer_pb.AssignVolumeResponse{Error: fmt.Sprintf("assign volume result: %v", assignResult.Error)}, nil
 	}
 
 	return &filer_pb.AssignVolumeResponse{
-		FileId:    assignResult.Fid,
-		Count:     int32(assignResult.Count),
-		Url:       assignResult.Url,
-		PublicUrl: assignResult.PublicUrl,
-	}, err
+		FileId:      assignResult.Fid,
+		Count:       int32(assignResult.Count),
+		Url:         assignResult.Url,
+		PublicUrl:   assignResult.PublicUrl,
+		Auth:        string(assignResult.Auth),
+		Collection:  collection,
+		Replication: replication,
+	}, nil
 }
 
 func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.DeleteCollectionRequest) (resp *filer_pb.DeleteCollectionResponse, err error) {
 
-	for _, master := range fs.option.Masters {
-		_, err = util.Get(fmt.Sprintf("http://%s/col/delete?collection=%s", master, req.Collection))
-	}
+	glog.V(4).Infof("DeleteCollection %v", req)
+
+	err = fs.filer.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+		_, err := client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
+			Name: req.GetCollection(),
+		})
+		return err
+	})
 
 	return &filer_pb.DeleteCollectionResponse{}, err
 }
 
 func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsRequest) (resp *filer_pb.StatisticsResponse, err error) {
 
-	input := &master_pb.StatisticsRequest{
-		Replication: req.Replication,
-		Collection:  req.Collection,
-		Ttl:         req.Ttl,
-	}
+	var output *master_pb.StatisticsResponse
 
-	output, err := operation.Statistics(fs.filer.GetMaster(), input)
+	err = fs.filer.MasterClient.WithClient(func(masterClient master_pb.SeaweedClient) error {
+		grpcResponse, grpcErr := masterClient.Statistics(context.Background(), &master_pb.StatisticsRequest{
+			Replication: req.Replication,
+			Collection:  req.Collection,
+			Ttl:         req.Ttl,
+		})
+		if grpcErr != nil {
+			return grpcErr
+		}
+
+		output = grpcResponse
+		return nil
+	})
+
 	if err != nil {
 		return nil, err
 	}
@@ -263,4 +364,92 @@ func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsR
 		UsedSize:  output.UsedSize,
 		FileCount: output.FileCount,
 	}, nil
+}
+
+func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.GetFilerConfigurationRequest) (resp *filer_pb.GetFilerConfigurationResponse, err error) {
+
+	t := &filer_pb.GetFilerConfigurationResponse{
+		Masters:     fs.option.Masters,
+		Collection:  fs.option.Collection,
+		Replication: fs.option.DefaultReplication,
+		MaxMb:       uint32(fs.option.MaxMB),
+		DirBuckets:  fs.filer.DirBucketsPath,
+		Cipher:      fs.filer.Cipher,
+	}
+
+	glog.V(4).Infof("GetFilerConfiguration: %v", t)
+
+	return t, nil
+}
+
+func (fs *FilerServer) KeepConnected(stream filer_pb.SeaweedFiler_KeepConnectedServer) error {
+
+	req, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+
+	clientName := fmt.Sprintf("%s:%d", req.Name, req.GrpcPort)
+	m := make(map[string]bool)
+	for _, tp := range req.Resources {
+		m[tp] = true
+	}
+	fs.brokersLock.Lock()
+	fs.brokers[clientName] = m
+	glog.V(0).Infof("+ broker %v", clientName)
+	fs.brokersLock.Unlock()
+
+	defer func() {
+		fs.brokersLock.Lock()
+		delete(fs.brokers, clientName)
+		glog.V(0).Infof("- broker %v: %v", clientName, err)
+		fs.brokersLock.Unlock()
+	}()
+
+	for {
+		if err := stream.Send(&filer_pb.KeepConnectedResponse{}); err != nil {
+			glog.V(0).Infof("send broker %v: %+v", clientName, err)
+			return err
+		}
+		// println("replied")
+
+		if _, err := stream.Recv(); err != nil {
+			glog.V(0).Infof("recv broker %v: %v", clientName, err)
+			return err
+		}
+		// println("received")
+	}
+
+}
+
+func (fs *FilerServer) LocateBroker(ctx context.Context, req *filer_pb.LocateBrokerRequest) (resp *filer_pb.LocateBrokerResponse, err error) {
+
+	resp = &filer_pb.LocateBrokerResponse{}
+
+	fs.brokersLock.Lock()
+	defer fs.brokersLock.Unlock()
+
+	var localBrokers []*filer_pb.LocateBrokerResponse_Resource
+
+	for b, m := range fs.brokers {
+		if _, found := m[req.Resource]; found {
+			resp.Found = true
+			resp.Resources = []*filer_pb.LocateBrokerResponse_Resource{
+				{
+					GrpcAddresses: b,
+					ResourceCount: int32(len(m)),
+				},
+			}
+			return
+		}
+		localBrokers = append(localBrokers, &filer_pb.LocateBrokerResponse_Resource{
+			GrpcAddresses: b,
+			ResourceCount: int32(len(m)),
+		})
+	}
+
+	resp.Resources = localBrokers
+
+	return resp, nil
+
 }

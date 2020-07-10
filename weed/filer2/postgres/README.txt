@@ -9,8 +9,8 @@ $PGHOME/bin/psql --username=postgres --password seaweedfs
 
 CREATE TABLE IF NOT EXISTS filemeta (
   dirhash     BIGINT,
-  name        VARCHAR(1000),
-  directory   VARCHAR(4096),
+  name        VARCHAR(65535),
+  directory   VARCHAR(65535),
   meta        bytea,
   PRIMARY KEY (dirhash, name)
 );

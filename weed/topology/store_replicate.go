@@ -1,7 +1,6 @@
 package topology
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,101 +13,113 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func ReplicatedWrite(masterNode string, s *storage.Store,
-	volumeId storage.VolumeId, needle *storage.Needle,
-	r *http.Request) (size uint32, errorStatus string) {
+func ReplicatedWrite(masterNode string, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request) (isUnchanged bool, err error) {
 
 	//check JWT
 	jwt := security.GetJwt(r)
 
-	ret, err := s.Write(volumeId, needle)
-	needToReplicate := !s.HasVolume(volumeId)
-	if err != nil {
-		errorStatus = "Failed to write to local disk (" + err.Error() + ")"
-		size = ret
-		return
-	}
-
-	needToReplicate = needToReplicate || s.GetVolume(volumeId).NeedToReplicate()
-	if !needToReplicate {
-		needToReplicate = s.GetVolume(volumeId).NeedToReplicate()
-	}
-	if needToReplicate { //send to other replica locations
-		if r.FormValue("type") != "replicate" {
-
-			if err = distributedOperation(masterNode, s, volumeId, func(location operation.Location) error {
-				u := url.URL{
-					Scheme: "http",
-					Host:   location.Url,
-					Path:   r.URL.Path,
-				}
-				q := url.Values{
-					"type": {"replicate"},
-				}
-				if needle.LastModified > 0 {
-					q.Set("ts", strconv.FormatUint(needle.LastModified, 10))
-				}
-				if needle.IsChunkedManifest() {
-					q.Set("cm", "true")
-				}
-				u.RawQuery = q.Encode()
-
-				pairMap := make(map[string]string)
-				if needle.HasPairs() {
-					tmpMap := make(map[string]string)
-					err := json.Unmarshal(needle.Pairs, &tmpMap)
-					if err != nil {
-						glog.V(0).Infoln("Unmarshal pairs error:", err)
-					}
-					for k, v := range tmpMap {
-						pairMap[storage.PairNamePrefix+k] = v
-					}
-				}
-
-				_, err := operation.Upload(u.String(),
-					string(needle.Name), bytes.NewReader(needle.Data), needle.IsGzipped(), string(needle.Mime),
-					pairMap, jwt)
-				return err
-			}); err != nil {
-				ret = 0
-				errorStatus = fmt.Sprintf("Failed to write to replicas for volume %d: %v", volumeId, err)
-			}
+	// check whether this is a replicated write request
+	var remoteLocations []operation.Location
+	if r.FormValue("type") != "replicate" {
+		// this is the initial request
+		remoteLocations, err = getWritableRemoteReplications(s, volumeId, masterNode)
+		if err != nil {
+			glog.V(0).Infoln(err)
+			return
 		}
 	}
-	size = ret
+
+	// read fsync value
+	fsync := false
+	if r.FormValue("fsync") == "true" {
+		fsync = true
+	}
+
+	if s.GetVolume(volumeId) != nil {
+		isUnchanged, err = s.WriteVolumeNeedle(volumeId, n, fsync)
+		if err != nil {
+			err = fmt.Errorf("failed to write to local disk: %v", err)
+			glog.V(0).Infoln(err)
+			return
+		}
+	}
+
+	if len(remoteLocations) > 0 { //send to other replica locations
+		if err = distributedOperation(remoteLocations, s, func(location operation.Location) error {
+			u := url.URL{
+				Scheme: "http",
+				Host:   location.Url,
+				Path:   r.URL.Path,
+			}
+			q := url.Values{
+				"type": {"replicate"},
+				"ttl":  {n.Ttl.String()},
+			}
+			if n.LastModified > 0 {
+				q.Set("ts", strconv.FormatUint(n.LastModified, 10))
+			}
+			if n.IsChunkedManifest() {
+				q.Set("cm", "true")
+			}
+			u.RawQuery = q.Encode()
+
+			pairMap := make(map[string]string)
+			if n.HasPairs() {
+				tmpMap := make(map[string]string)
+				err := json.Unmarshal(n.Pairs, &tmpMap)
+				if err != nil {
+					glog.V(0).Infoln("Unmarshal pairs error:", err)
+				}
+				for k, v := range tmpMap {
+					pairMap[needle.PairNamePrefix+k] = v
+				}
+			}
+
+			// volume server do not know about encryption
+			_, err := operation.UploadData(u.String(), string(n.Name), false, n.Data, n.IsCompressed(), string(n.Mime), pairMap, jwt)
+			return err
+		}); err != nil {
+			err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
+			glog.V(0).Infoln(err)
+		}
+	}
 	return
 }
 
 func ReplicatedDelete(masterNode string, store *storage.Store,
-	volumeId storage.VolumeId, n *storage.Needle,
-	r *http.Request) (uint32, error) {
+	volumeId needle.VolumeId, n *needle.Needle,
+	r *http.Request) (size uint32, err error) {
 
 	//check JWT
 	jwt := security.GetJwt(r)
 
-	ret, err := store.Delete(volumeId, n)
-	if err != nil {
-		glog.V(0).Infoln("delete error:", err)
-		return ret, err
-	}
-
-	needToReplicate := !store.HasVolume(volumeId)
-	if !needToReplicate && ret > 0 {
-		needToReplicate = store.GetVolume(volumeId).NeedToReplicate()
-	}
-	if needToReplicate { //send to other replica locations
-		if r.FormValue("type") != "replicate" {
-			if err = distributedOperation(masterNode, store, volumeId, func(location operation.Location) error {
-				return util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", jwt)
-			}); err != nil {
-				ret = 0
-			}
+	var remoteLocations []operation.Location
+	if r.FormValue("type") != "replicate" {
+		remoteLocations, err = getWritableRemoteReplications(store, volumeId, masterNode)
+		if err != nil {
+			glog.V(0).Infoln(err)
+			return
 		}
 	}
-	return ret, err
+
+	size, err = store.DeleteVolumeNeedle(volumeId, n)
+	if err != nil {
+		glog.V(0).Infoln("delete error:", err)
+		return
+	}
+
+	if len(remoteLocations) > 0 { //send to other replica locations
+		if err = distributedOperation(remoteLocations, store, func(location operation.Location) error {
+			return util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", string(jwt))
+		}); err != nil {
+			size = 0
+		}
+	}
+	return
 }
 
 type DistributedOperationResult map[string]error
@@ -131,32 +142,53 @@ type RemoteResult struct {
 	Error error
 }
 
-func distributedOperation(masterNode string, store *storage.Store, volumeId storage.VolumeId, op func(location operation.Location) error) error {
-	if lookupResult, lookupErr := operation.Lookup(masterNode, volumeId.String()); lookupErr == nil {
-		length := 0
-		selfUrl := (store.Ip + ":" + strconv.Itoa(store.Port))
-		results := make(chan RemoteResult)
+func distributedOperation(locations []operation.Location, store *storage.Store, op func(location operation.Location) error) error {
+	length := len(locations)
+	results := make(chan RemoteResult)
+	for _, location := range locations {
+		go func(location operation.Location, results chan RemoteResult) {
+			results <- RemoteResult{location.Url, op(location)}
+		}(location, results)
+	}
+	ret := DistributedOperationResult(make(map[string]error))
+	for i := 0; i < length; i++ {
+		result := <-results
+		ret[result.Host] = result.Error
+	}
+
+	return ret.Error()
+}
+
+func getWritableRemoteReplications(s *storage.Store, volumeId needle.VolumeId, masterNode string) (
+	remoteLocations []operation.Location, err error) {
+
+	v := s.GetVolume(volumeId)
+	if v != nil && v.ReplicaPlacement.GetCopyCount() == 1 {
+		return
+	}
+
+	// not on local store, or has replications
+	lookupResult, lookupErr := operation.Lookup(masterNode, volumeId.String())
+	if lookupErr == nil {
+		selfUrl := s.Ip + ":" + strconv.Itoa(s.Port)
 		for _, location := range lookupResult.Locations {
 			if location.Url != selfUrl {
-				length++
-				go func(location operation.Location, results chan RemoteResult) {
-					results <- RemoteResult{location.Url, op(location)}
-				}(location, results)
+				remoteLocations = append(remoteLocations, location)
 			}
 		}
-		ret := DistributedOperationResult(make(map[string]error))
-		for i := 0; i < length; i++ {
-			result := <-results
-			ret[result.Host] = result.Error
-		}
-		if volume := store.GetVolume(volumeId); volume != nil {
-			if length+1 < volume.ReplicaPlacement.GetCopyCount() {
-				return fmt.Errorf("replicating opetations [%d] is less than volume's replication copy count [%d]", length+1, volume.ReplicaPlacement.GetCopyCount())
-			}
-		}
-		return ret.Error()
 	} else {
-		glog.V(0).Infoln()
-		return fmt.Errorf("Failed to lookup for %d: %v", volumeId, lookupErr)
+		err = fmt.Errorf("failed to lookup for %d: %v", volumeId, lookupErr)
+		return
 	}
+
+	if v != nil {
+		// has one local and has remote replications
+		copyCount := v.ReplicaPlacement.GetCopyCount()
+		if len(lookupResult.Locations) < copyCount {
+			err = fmt.Errorf("replicating opetations [%d] is less than volume %d replication copy count [%d]",
+				len(lookupResult.Locations), volumeId, copyCount)
+		}
+	}
+
+	return
 }

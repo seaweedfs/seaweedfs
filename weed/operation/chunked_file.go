@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"sort"
-
 	"sync"
+
+	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -38,22 +40,23 @@ type ChunkManifest struct {
 
 // seekable chunked file reader
 type ChunkedFileReader struct {
-	Manifest *ChunkManifest
-	Master   string
-	pos      int64
-	pr       *io.PipeReader
-	pw       *io.PipeWriter
-	mutex    sync.Mutex
+	totalSize int64
+	chunkList []*ChunkInfo
+	master    string
+	pos       int64
+	pr        *io.PipeReader
+	pw        *io.PipeWriter
+	mutex     sync.Mutex
 }
 
 func (s ChunkList) Len() int           { return len(s) }
 func (s ChunkList) Less(i, j int) bool { return s[i].Offset < s[j].Offset }
 func (s ChunkList) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
-func LoadChunkManifest(buffer []byte, isGzipped bool) (*ChunkManifest, error) {
-	if isGzipped {
+func LoadChunkManifest(buffer []byte, isCompressed bool) (*ChunkManifest, error) {
+	if isCompressed {
 		var err error
-		if buffer, err = UnGzipData(buffer); err != nil {
+		if buffer, err = util.DecompressData(buffer); err != nil {
 			return nil, err
 		}
 	}
@@ -69,12 +72,12 @@ func (cm *ChunkManifest) Marshal() ([]byte, error) {
 	return json.Marshal(cm)
 }
 
-func (cm *ChunkManifest) DeleteChunks(master string) error {
+func (cm *ChunkManifest) DeleteChunks(master string, usePublicUrl bool, grpcDialOption grpc.DialOption) error {
 	var fileIds []string
 	for _, ci := range cm.Chunks {
 		fileIds = append(fileIds, ci.Fid)
 	}
-	results, err := DeleteFiles(master, fileIds)
+	results, err := DeleteFiles(master, usePublicUrl, grpcDialOption, fileIds)
 	if err != nil {
 		glog.V(0).Infof("delete %+v: %v", fileIds, err)
 		return fmt.Errorf("chunk delete: %v", err)
@@ -102,7 +105,10 @@ func readChunkNeedle(fileUrl string, w io.Writer, offset int64) (written int64, 
 	if err != nil {
 		return written, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		io.Copy(ioutil.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 
 	switch resp.StatusCode {
 	case http.StatusRequestedRangeNotSatisfiable:
@@ -120,16 +126,29 @@ func readChunkNeedle(fileUrl string, w io.Writer, offset int64) (written int64, 
 	return io.Copy(w, resp.Body)
 }
 
+func NewChunkedFileReader(chunkList []*ChunkInfo, master string) *ChunkedFileReader {
+	var totalSize int64
+	for _, chunk := range chunkList {
+		totalSize += chunk.Size
+	}
+	sort.Sort(ChunkList(chunkList))
+	return &ChunkedFileReader{
+		totalSize: totalSize,
+		chunkList: chunkList,
+		master:    master,
+	}
+}
+
 func (cf *ChunkedFileReader) Seek(offset int64, whence int) (int64, error) {
 	var err error
 	switch whence {
-	case 0:
-	case 1:
+	case io.SeekStart:
+	case io.SeekCurrent:
 		offset += cf.pos
-	case 2:
-		offset = cf.Manifest.Size - offset
+	case io.SeekEnd:
+		offset = cf.totalSize + offset
 	}
-	if offset > cf.Manifest.Size {
+	if offset > cf.totalSize {
 		err = ErrInvalidRange
 	}
 	if cf.pos != offset {
@@ -140,10 +159,9 @@ func (cf *ChunkedFileReader) Seek(offset int64, whence int) (int64, error) {
 }
 
 func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
-	cm := cf.Manifest
 	chunkIndex := -1
 	chunkStartOffset := int64(0)
-	for i, ci := range cm.Chunks {
+	for i, ci := range cf.chunkList {
 		if cf.pos >= ci.Offset && cf.pos < ci.Offset+ci.Size {
 			chunkIndex = i
 			chunkStartOffset = cf.pos - ci.Offset
@@ -153,10 +171,10 @@ func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
 	if chunkIndex < 0 {
 		return n, ErrInvalidRange
 	}
-	for ; chunkIndex < cm.Chunks.Len(); chunkIndex++ {
-		ci := cm.Chunks[chunkIndex]
+	for ; chunkIndex < len(cf.chunkList); chunkIndex++ {
+		ci := cf.chunkList[chunkIndex]
 		// if we need read date from local volume server first?
-		fileUrl, lookupError := LookupFileId(cf.Master, ci.Fid)
+		fileUrl, lookupError := LookupFileId(cf.master, ci.Fid)
 		if lookupError != nil {
 			return n, lookupError
 		}

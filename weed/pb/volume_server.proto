@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 package volume_server_pb;
+option go_package = "github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb";
 
 //////////////////////////////////////////////////
 
@@ -8,6 +9,7 @@ service VolumeServer {
     //Experts only: takes multiple fid parameters. This function does not propagate deletes to replicas.
     rpc BatchDelete (BatchDeleteRequest) returns (BatchDeleteResponse) {
     }
+
     rpc VacuumVolumeCheck (VacuumVolumeCheckRequest) returns (VacuumVolumeCheckResponse) {
     }
     rpc VacuumVolumeCompact (VacuumVolumeCompactRequest) returns (VacuumVolumeCompactResponse) {
@@ -19,14 +21,12 @@ service VolumeServer {
 
     rpc DeleteCollection (DeleteCollectionRequest) returns (DeleteCollectionResponse) {
     }
-    rpc AssignVolume (AssignVolumeRequest) returns (AssignVolumeResponse) {
+    rpc AllocateVolume (AllocateVolumeRequest) returns (AllocateVolumeResponse) {
     }
 
     rpc VolumeSyncStatus (VolumeSyncStatusRequest) returns (VolumeSyncStatusResponse) {
     }
-    rpc VolumeSyncIndex (VolumeSyncIndexRequest) returns (stream VolumeSyncIndexResponse) {
-    }
-    rpc VolumeSyncData (VolumeSyncDataRequest) returns (stream VolumeSyncDataResponse) {
+    rpc VolumeIncrementalCopy (VolumeIncrementalCopyRequest) returns (stream VolumeIncrementalCopyResponse) {
     }
 
     rpc VolumeMount (VolumeMountRequest) returns (VolumeMountResponse) {
@@ -35,8 +35,56 @@ service VolumeServer {
     }
     rpc VolumeDelete (VolumeDeleteRequest) returns (VolumeDeleteResponse) {
     }
+    rpc VolumeMarkReadonly (VolumeMarkReadonlyRequest) returns (VolumeMarkReadonlyResponse) {
+    }
+    rpc VolumeConfigure (VolumeConfigureRequest) returns (VolumeConfigureResponse) {
+    }
 
-    // rpc VolumeUiPage (VolumeUiPageRequest) returns (VolumeUiPageResponse) {}
+    // copy the .idx .dat files, and mount this volume
+    rpc VolumeCopy (VolumeCopyRequest) returns (VolumeCopyResponse) {
+    }
+    rpc ReadVolumeFileStatus (ReadVolumeFileStatusRequest) returns (ReadVolumeFileStatusResponse) {
+    }
+    rpc CopyFile (CopyFileRequest) returns (stream CopyFileResponse) {
+    }
+
+    rpc VolumeTailSender (VolumeTailSenderRequest) returns (stream VolumeTailSenderResponse) {
+    }
+    rpc VolumeTailReceiver (VolumeTailReceiverRequest) returns (VolumeTailReceiverResponse) {
+    }
+
+    // erasure coding
+    rpc VolumeEcShardsGenerate (VolumeEcShardsGenerateRequest) returns (VolumeEcShardsGenerateResponse) {
+    }
+    rpc VolumeEcShardsRebuild (VolumeEcShardsRebuildRequest) returns (VolumeEcShardsRebuildResponse) {
+    }
+    rpc VolumeEcShardsCopy (VolumeEcShardsCopyRequest) returns (VolumeEcShardsCopyResponse) {
+    }
+    rpc VolumeEcShardsDelete (VolumeEcShardsDeleteRequest) returns (VolumeEcShardsDeleteResponse) {
+    }
+    rpc VolumeEcShardsMount (VolumeEcShardsMountRequest) returns (VolumeEcShardsMountResponse) {
+    }
+    rpc VolumeEcShardsUnmount (VolumeEcShardsUnmountRequest) returns (VolumeEcShardsUnmountResponse) {
+    }
+    rpc VolumeEcShardRead (VolumeEcShardReadRequest) returns (stream VolumeEcShardReadResponse) {
+    }
+    rpc VolumeEcBlobDelete (VolumeEcBlobDeleteRequest) returns (VolumeEcBlobDeleteResponse) {
+    }
+    rpc VolumeEcShardsToVolume (VolumeEcShardsToVolumeRequest) returns (VolumeEcShardsToVolumeResponse) {
+    }
+
+    // tiered storage
+    rpc VolumeTierMoveDatToRemote (VolumeTierMoveDatToRemoteRequest) returns (stream VolumeTierMoveDatToRemoteResponse) {
+    }
+    rpc VolumeTierMoveDatFromRemote (VolumeTierMoveDatFromRemoteRequest) returns (stream VolumeTierMoveDatFromRemoteResponse) {
+    }
+
+    rpc VolumeServerStatus (VolumeServerStatusRequest) returns (VolumeServerStatusResponse) {
+    }
+
+    // <experimental> query
+    rpc Query (QueryRequest) returns (stream QueriedStripe) {
+    }
 
 }
 
@@ -44,6 +92,7 @@ service VolumeServer {
 
 message BatchDeleteRequest {
     repeated string file_ids = 1;
+    bool skip_cookie_check = 2;
 }
 
 message BatchDeleteResponse {
@@ -54,33 +103,35 @@ message DeleteResult {
     int32 status = 2;
     string error = 3;
     uint32 size = 4;
+    uint32 version = 5;
 }
 
 message Empty {
 }
 
 message VacuumVolumeCheckRequest {
-    uint32 volumd_id = 1;
+    uint32 volume_id = 1;
 }
 message VacuumVolumeCheckResponse {
     double garbage_ratio = 1;
 }
 
 message VacuumVolumeCompactRequest {
-    uint32 volumd_id = 1;
+    uint32 volume_id = 1;
     int64 preallocate = 2;
 }
 message VacuumVolumeCompactResponse {
 }
 
 message VacuumVolumeCommitRequest {
-    uint32 volumd_id = 1;
+    uint32 volume_id = 1;
 }
 message VacuumVolumeCommitResponse {
+    bool is_read_only = 1;
 }
 
 message VacuumVolumeCleanupRequest {
-    uint32 volumd_id = 1;
+    uint32 volume_id = 1;
 }
 message VacuumVolumeCleanupResponse {
 }
@@ -91,21 +142,22 @@ message DeleteCollectionRequest {
 message DeleteCollectionResponse {
 }
 
-message AssignVolumeRequest {
-    uint32 volumd_id = 1;
+message AllocateVolumeRequest {
+    uint32 volume_id = 1;
     string collection = 2;
     int64 preallocate = 3;
     string replication = 4;
     string ttl = 5;
+    uint32 memory_map_max_size_mb = 6;
 }
-message AssignVolumeResponse {
+message AllocateVolumeResponse {
 }
 
 message VolumeSyncStatusRequest {
-    uint32 volumd_id = 1;
+    uint32 volume_id = 1;
 }
 message VolumeSyncStatusResponse {
-    uint32 volumd_id = 1;
+    uint32 volume_id = 1;
     string collection = 2;
     string replication = 4;
     string ttl = 5;
@@ -114,45 +166,180 @@ message VolumeSyncStatusResponse {
     uint64 idx_file_size = 8;
 }
 
-message VolumeSyncIndexRequest {
-    uint32 volumd_id = 1;
+message VolumeIncrementalCopyRequest {
+    uint32 volume_id = 1;
+    uint64 since_ns = 2;
 }
-message VolumeSyncIndexResponse {
-    bytes index_file_content = 1;
-}
-
-message VolumeSyncDataRequest {
-    uint32 volumd_id = 1;
-    uint32 revision = 2;
-    uint32 offset = 3;
-    uint32 size = 4;
-    string needle_id = 5;
-}
-message VolumeSyncDataResponse {
+message VolumeIncrementalCopyResponse {
     bytes file_content = 1;
 }
 
 message VolumeMountRequest {
-    uint32 volumd_id = 1;
+    uint32 volume_id = 1;
 }
 message VolumeMountResponse {
 }
 
 message VolumeUnmountRequest {
-    uint32 volumd_id = 1;
+    uint32 volume_id = 1;
 }
 message VolumeUnmountResponse {
 }
 
 message VolumeDeleteRequest {
-    uint32 volumd_id = 1;
+    uint32 volume_id = 1;
 }
 message VolumeDeleteResponse {
 }
 
-message VolumeUiPageRequest {
+message VolumeMarkReadonlyRequest {
+    uint32 volume_id = 1;
 }
-message VolumeUiPageResponse {
+message VolumeMarkReadonlyResponse {
+}
+
+message VolumeConfigureRequest {
+    uint32 volume_id = 1;
+    string replication = 2;
+}
+message VolumeConfigureResponse {
+    string error = 1;
+}
+
+message VolumeCopyRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+    string replication = 3;
+    string ttl = 4;
+    string source_data_node = 5;
+}
+message VolumeCopyResponse {
+    uint64 last_append_at_ns = 1;
+}
+
+message CopyFileRequest {
+    uint32 volume_id = 1;
+    string ext = 2;
+    uint32 compaction_revision = 3;
+    uint64 stop_offset = 4;
+    string collection = 5;
+    bool is_ec_volume = 6;
+    bool ignore_source_file_not_found = 7;
+}
+message CopyFileResponse {
+    bytes file_content = 1;
+}
+
+message VolumeTailSenderRequest {
+    uint32 volume_id = 1;
+    uint64 since_ns = 2;
+    uint32 idle_timeout_seconds = 3;
+}
+message VolumeTailSenderResponse {
+    bytes needle_header = 1;
+    bytes needle_body = 2;
+    bool is_last_chunk = 3;
+}
+
+message VolumeTailReceiverRequest {
+    uint32 volume_id = 1;
+    uint64 since_ns = 2;
+    uint32 idle_timeout_seconds = 3;
+    string source_volume_server = 4;
+}
+message VolumeTailReceiverResponse {
+}
+
+message VolumeEcShardsGenerateRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+}
+message VolumeEcShardsGenerateResponse {
+}
+
+message VolumeEcShardsRebuildRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+}
+message VolumeEcShardsRebuildResponse {
+    repeated uint32 rebuilt_shard_ids = 1;
+}
+
+message VolumeEcShardsCopyRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+    repeated uint32 shard_ids = 3;
+    bool copy_ecx_file = 4;
+    string source_data_node = 5;
+    bool copy_ecj_file = 6;
+    bool copy_vif_file = 7;
+}
+message VolumeEcShardsCopyResponse {
+}
+
+message VolumeEcShardsDeleteRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+    repeated uint32 shard_ids = 3;
+}
+message VolumeEcShardsDeleteResponse {
+}
+
+message VolumeEcShardsMountRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+    repeated uint32 shard_ids = 3;
+}
+message VolumeEcShardsMountResponse {
+}
+
+message VolumeEcShardsUnmountRequest {
+    uint32 volume_id = 1;
+    repeated uint32 shard_ids = 3;
+}
+message VolumeEcShardsUnmountResponse {
+}
+
+message VolumeEcShardReadRequest {
+    uint32 volume_id = 1;
+    uint32 shard_id = 2;
+    int64 offset = 3;
+    int64 size = 4;
+    uint64 file_key = 5;
+}
+message VolumeEcShardReadResponse {
+    bytes data = 1;
+    bool is_deleted = 2;
+}
+
+message VolumeEcBlobDeleteRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+    uint64 file_key = 3;
+    uint32 version = 4;
+}
+message VolumeEcBlobDeleteResponse {
+}
+
+message VolumeEcShardsToVolumeRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+}
+message VolumeEcShardsToVolumeResponse {
+}
+
+message ReadVolumeFileStatusRequest {
+    uint32 volume_id = 1;
+}
+message ReadVolumeFileStatusResponse {
+    uint32 volume_id = 1;
+    uint64 idx_file_timestamp_seconds = 2;
+    uint64 idx_file_size = 3;
+    uint64 dat_file_timestamp_seconds = 4;
+    uint64 dat_file_size = 5;
+    uint64 file_count = 6;
+    uint32 compaction_revision = 7;
+    string collection = 8;
 }
 
 message DiskStatus {
@@ -160,6 +347,8 @@ message DiskStatus {
     uint64 all = 2;
     uint64 used = 3;
     uint64 free = 4;
+    float percent_free = 5;
+    float percent_used = 6;
 }
 
 message MemStatus {
@@ -170,4 +359,107 @@ message MemStatus {
     uint64 self = 5;
     uint64 heap = 6;
     uint64 stack = 7;
+}
+
+// tired storage on volume servers
+message RemoteFile {
+    string backend_type = 1;
+    string backend_id = 2;
+    string key = 3;
+    uint64 offset = 4;
+    uint64 file_size = 5;
+    uint64 modified_time = 6;
+    string extension = 7;
+}
+message VolumeInfo {
+    repeated RemoteFile files = 1;
+    uint32 version = 2;
+    string replication = 3;
+}
+
+message VolumeTierMoveDatToRemoteRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+    string destination_backend_name = 3;
+    bool keep_local_dat_file = 4;
+}
+message VolumeTierMoveDatToRemoteResponse {
+    int64 processed = 1;
+    float processedPercentage = 2;
+}
+
+message VolumeTierMoveDatFromRemoteRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+    bool keep_remote_dat_file = 3;
+}
+message VolumeTierMoveDatFromRemoteResponse {
+    int64 processed = 1;
+    float processedPercentage = 2;
+}
+
+message VolumeServerStatusRequest {
+
+}
+message VolumeServerStatusResponse {
+    repeated DiskStatus disk_statuses = 1;
+    MemStatus memory_status = 2;
+}
+
+// select on volume servers
+message QueryRequest {
+    repeated string selections = 1;
+    repeated string from_file_ids = 2;
+    message Filter {
+        string field = 1;
+        string operand = 2;
+        string value = 3;
+    }
+    Filter filter = 3;
+
+    message InputSerialization {
+        // NONE | GZIP | BZIP2
+        string compression_type = 1;
+        message CSVInput {
+            string file_header_info = 1; // Valid values: NONE | USE | IGNORE
+            string record_delimiter = 2; // Default: \n
+            string field_delimiter = 3; // Default: ,
+            string quote_charactoer = 4; // Default: "
+            string quote_escape_character = 5; // Default: "
+            string comments = 6; // Default: #
+            // If true, records might contain record delimiters within quote characters
+            bool allow_quoted_record_delimiter = 7; // default False.
+        }
+        message JSONInput {
+            string type = 1; // Valid values: DOCUMENT | LINES
+        }
+        message ParquetInput {
+        }
+
+        CSVInput csv_input = 2;
+        JSONInput json_input = 3;
+        ParquetInput parquet_input = 4;
+    }
+    InputSerialization input_serialization = 4;
+
+    message OutputSerialization {
+        message CSVOutput {
+            string quote_fields = 1; // Valid values: ALWAYS | ASNEEDED
+            string record_delimiter = 2; // Default: \n
+            string field_delimiter = 3; // Default: ,
+            string quote_charactoer = 4; // Default: "
+            string quote_escape_character = 5; // Default: "
+        }
+        message JSONOutput {
+            string record_delimiter = 1;
+        }
+
+        CSVOutput csv_output = 2;
+        JSONOutput json_output = 3;
+    }
+
+    OutputSerialization output_serialization = 5;
+}
+message QueriedStripe {
+    bytes records = 1;
 }

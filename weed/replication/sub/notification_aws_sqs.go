@@ -27,24 +27,24 @@ func (k *AwsSqsInput) GetName() string {
 	return "aws_sqs"
 }
 
-func (k *AwsSqsInput) Initialize(configuration util.Configuration) error {
-	glog.V(0).Infof("replication.notification.aws_sqs.region: %v", configuration.GetString("region"))
-	glog.V(0).Infof("replication.notification.aws_sqs.sqs_queue_name: %v", configuration.GetString("sqs_queue_name"))
+func (k *AwsSqsInput) Initialize(configuration util.Configuration, prefix string) error {
+	glog.V(0).Infof("replication.notification.aws_sqs.region: %v", configuration.GetString(prefix+"region"))
+	glog.V(0).Infof("replication.notification.aws_sqs.sqs_queue_name: %v", configuration.GetString(prefix+"sqs_queue_name"))
 	return k.initialize(
-		configuration.GetString("aws_access_key_id"),
-		configuration.GetString("aws_secret_access_key"),
-		configuration.GetString("region"),
-		configuration.GetString("sqs_queue_name"),
+		configuration.GetString(prefix+"aws_access_key_id"),
+		configuration.GetString(prefix+"aws_secret_access_key"),
+		configuration.GetString(prefix+"region"),
+		configuration.GetString(prefix+"sqs_queue_name"),
 	)
 }
 
-func (k *AwsSqsInput) initialize(awsAccessKeyId, aswSecretAccessKey, region, queueName string) (err error) {
+func (k *AwsSqsInput) initialize(awsAccessKeyId, awsSecretAccessKey, region, queueName string) (err error) {
 
 	config := &aws.Config{
 		Region: aws.String(region),
 	}
-	if awsAccessKeyId != "" && aswSecretAccessKey != "" {
-		config.Credentials = credentials.NewStaticCredentials(awsAccessKeyId, aswSecretAccessKey, "")
+	if awsAccessKeyId != "" && awsSecretAccessKey != "" {
+		config.Credentials = credentials.NewStaticCredentials(awsAccessKeyId, awsSecretAccessKey, "")
 	}
 
 	sess, err := session.NewSession(config)
@@ -92,7 +92,9 @@ func (k *AwsSqsInput) ReceiveMessage() (key string, message *filer_pb.EventNotif
 	}
 
 	// process the message
-	key = *result.Messages[0].Attributes["key"]
+	// fmt.Printf("messages: %+v\n", result.Messages[0])
+	keyValue := result.Messages[0].MessageAttributes["key"]
+	key = *keyValue.StringValue
 	text := *result.Messages[0].Body
 	message = &filer_pb.EventNotification{}
 	err = proto.UnmarshalText(text, message)

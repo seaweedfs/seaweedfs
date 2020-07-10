@@ -1,0 +1,52 @@
+{{- if .Values.global.enableSecurity }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "seaweedfs.name" . }}-security-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ template "seaweedfs.name" . }}
+    chart: {{ template "seaweedfs.chart" . }}
+    heritage: {{ .Release.Service }}
+    release: {{ .Release.Name }}
+data:
+  security.toml: |-
+    # this file is read by master, volume server, and filer
+
+    # the jwt signing key is read by master and volume server
+    # a jwt expires in 10 seconds
+    [jwt.signing]
+    key = "{{ randAlphaNum 10 | b64enc }}"
+
+    # all grpc tls authentications are mutual
+    # the values for the following ca, cert, and key are paths to the PERM files.
+    [grpc]
+    ca = "/usr/local/share/ca-certificates/ca/tls.crt"
+
+    [grpc.volume]
+    cert = "/usr/local/share/ca-certificates/volume/tls.crt"
+    key  = "/usr/local/share/ca-certificates/volume/tls.key"
+
+    [grpc.master]
+    cert = "/usr/local/share/ca-certificates/master/tls.crt"
+    key  = "/usr/local/share/ca-certificates/master/tls.key"
+
+    [grpc.filer]
+    cert = "/usr/local/share/ca-certificates/filer/tls.crt"
+    key  = "/usr/local/share/ca-certificates/filer/tls.key"
+
+    # use this for any place needs a grpc client
+    # i.e., "weed backup|benchmark|filer.copy|filer.replicate|mount|s3|upload"
+    [grpc.client]
+    cert = "/usr/local/share/ca-certificates/client/tls.crt"
+    key  = "/usr/local/share/ca-certificates/client/tls.key"
+
+    # volume server https options
+    # Note: work in progress!
+    #     this does not work with other clients, e.g., "weed filer|mount" etc, yet.
+    [https.client]
+    enabled = false
+    [https.volume]
+    cert = ""
+    key  = ""
+{{- end }}

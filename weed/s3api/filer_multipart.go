@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"encoding/xml"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -9,18 +10,20 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/google/uuid"
+
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/satori/go.uuid"
 )
 
 type InitiateMultipartUploadResult struct {
+	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ InitiateMultipartUploadResult"`
 	s3.CreateMultipartUploadOutput
 }
 
 func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInput) (output *InitiateMultipartUploadResult, code ErrorCode) {
-	uploadId, _ := uuid.NewV4()
+	uploadId, _ := uuid.NewRandom()
 	uploadIdString := uploadId.String()
 
 	if err := s3a.mkdir(s3a.genUploadsFolder(*input.Bucket), uploadIdString, func(entry *filer_pb.Entry) {
@@ -34,9 +37,9 @@ func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInp
 	}
 
 	output = &InitiateMultipartUploadResult{
-		s3.CreateMultipartUploadOutput{
+		CreateMultipartUploadOutput: s3.CreateMultipartUploadOutput{
 			Bucket:   input.Bucket,
-			Key:      input.Key,
+			Key:      objectKey(input.Key),
 			UploadId: aws.String(uploadIdString),
 		},
 	}
@@ -45,6 +48,7 @@ func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInp
 }
 
 type CompleteMultipartUploadResult struct {
+	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CompleteMultipartUploadResult"`
 	s3.CompleteMultipartUploadOutput
 }
 
@@ -65,11 +69,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 		if strings.HasSuffix(entry.Name, ".part") && !entry.IsDirectory {
 			for _, chunk := range entry.Chunks {
 				p := &filer_pb.FileChunk{
-					FileId: chunk.FileId,
-					Offset: offset,
-					Size:   chunk.Size,
-					Mtime:  chunk.Mtime,
-					ETag:   chunk.ETag,
+					FileId:    chunk.GetFileIdString(),
+					Offset:    offset,
+					Size:      chunk.Size,
+					Mtime:     chunk.Mtime,
+					CipherKey: chunk.CipherKey,
+					ETag:      chunk.ETag,
 				}
 				finalParts = append(finalParts, p)
 				offset += int64(chunk.Size)
@@ -87,6 +92,11 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	}
 	dirName = fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, *input.Bucket, dirName)
 
+	// remove suffix '/'
+	if strings.HasSuffix(dirName, "/") {
+		dirName = dirName[:len(dirName)-1]
+	}
+
 	err = s3a.mkFile(dirName, entryName, finalParts)
 
 	if err != nil {
@@ -95,14 +105,15 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	}
 
 	output = &CompleteMultipartUploadResult{
-		s3.CompleteMultipartUploadOutput{
-			Bucket: input.Bucket,
-			ETag:   aws.String("\"" + filer2.ETag(finalParts) + "\""),
-			Key:    input.Key,
+		CompleteMultipartUploadOutput: s3.CompleteMultipartUploadOutput{
+			Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer, dirName, entryName)),
+			Bucket:   input.Bucket,
+			ETag:     aws.String("\"" + filer2.ETagChunks(finalParts) + "\""),
+			Key:      objectKey(input.Key),
 		},
 	}
 
-	if err = s3a.rm(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true, false, true); err != nil {
+	if err = s3a.rm(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, false, true); err != nil {
 		glog.V(1).Infof("completeMultipartUpload cleanup %s upload %s: %v", *input.Bucket, *input.UploadId, err)
 	}
 
@@ -117,7 +128,7 @@ func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput
 		return nil, ErrNoSuchUpload
 	}
 	if exists {
-		err = s3a.rm(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true, true, true)
+		err = s3a.rm(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true, true)
 	}
 	if err != nil {
 		glog.V(1).Infof("bucket %s remove upload %s: %v", *input.Bucket, *input.UploadId, err)
@@ -128,13 +139,14 @@ func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput
 }
 
 type ListMultipartUploadsResult struct {
+	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListMultipartUploadsResult"`
 	s3.ListMultipartUploadsOutput
 }
 
 func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput) (output *ListMultipartUploadsResult, code ErrorCode) {
 
 	output = &ListMultipartUploadsResult{
-		s3.ListMultipartUploadsOutput{
+		ListMultipartUploadsOutput: s3.ListMultipartUploadsOutput{
 			Bucket:       input.Bucket,
 			Delimiter:    input.Delimiter,
 			EncodingType: input.EncodingType,
@@ -144,7 +156,7 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 		},
 	}
 
-	entries, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), *input.Prefix, *input.KeyMarker, true, int(*input.MaxUploads))
+	entries, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), *input.Prefix, *input.KeyMarker, true, uint32(*input.MaxUploads))
 	if err != nil {
 		glog.Errorf("listMultipartUploads %s error: %v", *input.Bucket, err)
 		return
@@ -154,7 +166,7 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 		if entry.Extended != nil {
 			key := entry.Extended["key"]
 			output.Uploads = append(output.Uploads, &s3.MultipartUpload{
-				Key:      aws.String(string(key)),
+				Key:      objectKey(aws.String(string(key))),
 				UploadId: aws.String(entry.Name),
 			})
 		}
@@ -164,22 +176,22 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 }
 
 type ListPartsResult struct {
+	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListPartsResult"`
 	s3.ListPartsOutput
 }
 
 func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListPartsResult, code ErrorCode) {
 	output = &ListPartsResult{
-		s3.ListPartsOutput{
+		ListPartsOutput: s3.ListPartsOutput{
 			Bucket:           input.Bucket,
-			Key:              input.Key,
+			Key:              objectKey(input.Key),
 			UploadId:         input.UploadId,
 			MaxParts:         input.MaxParts,         // the maximum number of parts to return.
 			PartNumberMarker: input.PartNumberMarker, // the part number starts after this, exclusive
 		},
 	}
 
-	entries, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId,
-		"", fmt.Sprintf("%04d.part", *input.PartNumberMarker), false, int(*input.MaxParts))
+	entries, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d.part", *input.PartNumberMarker), false, uint32(*input.MaxParts))
 	if err != nil {
 		glog.Errorf("listObjectParts %s %s error: %v", *input.Bucket, *input.UploadId, err)
 		return nil, ErrNoSuchUpload
@@ -195,9 +207,9 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 			}
 			output.Parts = append(output.Parts, &s3.Part{
 				PartNumber:   aws.Int64(int64(partNumber)),
-				LastModified: aws.Time(time.Unix(entry.Attributes.Mtime, 0)),
+				LastModified: aws.Time(time.Unix(entry.Attributes.Mtime, 0).UTC()),
 				Size:         aws.Int64(int64(filer2.TotalSize(entry.Chunks))),
-				ETag:         aws.String("\"" + filer2.ETag(entry.Chunks) + "\""),
+				ETag:         aws.String("\"" + filer2.ETag(entry) + "\""),
 			})
 		}
 	}

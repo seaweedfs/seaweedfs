@@ -5,8 +5,11 @@ import (
 	"fmt"
 
 	"github.com/chrislusf/raft"
+
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 )
 
@@ -48,25 +51,26 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	}
 
 	if req.Replication == "" {
-		req.Replication = ms.defaultReplicaPlacement
+		req.Replication = ms.option.DefaultReplicaPlacement
 	}
-	replicaPlacement, err := storage.NewReplicaPlacementFromString(req.Replication)
+	replicaPlacement, err := super_block.NewReplicaPlacementFromString(req.Replication)
 	if err != nil {
 		return nil, err
 	}
-	ttl, err := storage.ReadTTL(req.Ttl)
+	ttl, err := needle.ReadTTL(req.Ttl)
 	if err != nil {
 		return nil, err
 	}
 
 	option := &topology.VolumeGrowOption{
-		Collection:       req.Collection,
-		ReplicaPlacement: replicaPlacement,
-		Ttl:              ttl,
-		Prealloacte:      ms.preallocate,
-		DataCenter:       req.DataCenter,
-		Rack:             req.Rack,
-		DataNode:         req.DataNode,
+		Collection:         req.Collection,
+		ReplicaPlacement:   replicaPlacement,
+		Ttl:                ttl,
+		Prealloacte:        ms.preallocateSize,
+		DataCenter:         req.DataCenter,
+		Rack:               req.Rack,
+		DataNode:           req.DataNode,
+		MemoryMapMaxSizeMb: req.MemoryMapMaxSizeMb,
 	}
 
 	if !ms.Topo.HasWritableVolume(option) {
@@ -75,7 +79,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		}
 		ms.vgLock.Lock()
 		if !ms.Topo.HasWritableVolume(option) {
-			if _, err = ms.vg.AutomaticGrowByType(option, ms.Topo); err != nil {
+			if _, err = ms.vg.AutomaticGrowByType(option, ms.grpcDialOption, ms.Topo, int(req.WritableVolumeCount)); err != nil {
 				ms.vgLock.Unlock()
 				return nil, fmt.Errorf("Cannot grow volume group! %v", err)
 			}
@@ -92,6 +96,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		Url:       dn.Url(),
 		PublicUrl: dn.PublicUrl,
 		Count:     count,
+		Auth:      string(security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
 	}, nil
 }
 
@@ -102,13 +107,13 @@ func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.Statistic
 	}
 
 	if req.Replication == "" {
-		req.Replication = ms.defaultReplicaPlacement
+		req.Replication = ms.option.DefaultReplicaPlacement
 	}
-	replicaPlacement, err := storage.NewReplicaPlacementFromString(req.Replication)
+	replicaPlacement, err := super_block.NewReplicaPlacementFromString(req.Replication)
 	if err != nil {
 		return nil, err
 	}
-	ttl, err := storage.ReadTTL(req.Ttl)
+	ttl, err := needle.ReadTTL(req.Ttl)
 	if err != nil {
 		return nil, err
 	}
@@ -116,10 +121,69 @@ func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.Statistic
 	volumeLayout := ms.Topo.GetVolumeLayout(req.Collection, replicaPlacement, ttl)
 	stats := volumeLayout.Stats()
 
+	totalSize := ms.Topo.GetMaxVolumeCount() * int64(ms.option.VolumeSizeLimitMB) * 1024 * 1024
+
 	resp := &master_pb.StatisticsResponse{
-		TotalSize: stats.TotalSize,
+		TotalSize: uint64(totalSize),
 		UsedSize:  stats.UsedSize,
 		FileCount: stats.FileCount,
+	}
+
+	return resp, nil
+}
+
+func (ms *MasterServer) VolumeList(ctx context.Context, req *master_pb.VolumeListRequest) (*master_pb.VolumeListResponse, error) {
+
+	if !ms.Topo.IsLeader() {
+		return nil, raft.NotLeaderError
+	}
+
+	resp := &master_pb.VolumeListResponse{
+		TopologyInfo:      ms.Topo.ToTopologyInfo(),
+		VolumeSizeLimitMb: uint64(ms.option.VolumeSizeLimitMB),
+	}
+
+	return resp, nil
+}
+
+func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.LookupEcVolumeRequest) (*master_pb.LookupEcVolumeResponse, error) {
+
+	if !ms.Topo.IsLeader() {
+		return nil, raft.NotLeaderError
+	}
+
+	resp := &master_pb.LookupEcVolumeResponse{}
+
+	ecLocations, found := ms.Topo.LookupEcShards(needle.VolumeId(req.VolumeId))
+
+	if !found {
+		return resp, fmt.Errorf("ec volume %d not found", req.VolumeId)
+	}
+
+	resp.VolumeId = req.VolumeId
+
+	for shardId, shardLocations := range ecLocations.Locations {
+		var locations []*master_pb.Location
+		for _, dn := range shardLocations {
+			locations = append(locations, &master_pb.Location{
+				Url:       string(dn.Id()),
+				PublicUrl: dn.PublicUrl,
+			})
+		}
+		resp.ShardIdLocations = append(resp.ShardIdLocations, &master_pb.LookupEcVolumeResponse_EcShardIdLocation{
+			ShardId:   uint32(shardId),
+			Locations: locations,
+		})
+	}
+
+	return resp, nil
+}
+
+func (ms *MasterServer) GetMasterConfiguration(ctx context.Context, req *master_pb.GetMasterConfigurationRequest) (*master_pb.GetMasterConfigurationResponse, error) {
+
+	resp := &master_pb.GetMasterConfigurationResponse{
+		MetricsAddress:         ms.option.MetricsAddress,
+		MetricsIntervalSeconds: uint32(ms.option.MetricsIntervalSec),
 	}
 
 	return resp, nil

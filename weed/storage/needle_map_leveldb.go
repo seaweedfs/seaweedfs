@@ -5,30 +5,42 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/syndtr/goleveldb/leveldb/errors"
+	"github.com/syndtr/goleveldb/leveldb/opt"
+
+	"github.com/chrislusf/seaweedfs/weed/storage/idx"
+
+	"github.com/syndtr/goleveldb/leveldb"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/syndtr/goleveldb/leveldb"
 )
 
 type LevelDbNeedleMap struct {
+	baseNeedleMapper
 	dbFileName string
 	db         *leveldb.DB
-	baseNeedleMapper
 }
 
-func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File) (m *LevelDbNeedleMap, err error) {
+func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Options) (m *LevelDbNeedleMap, err error) {
 	m = &LevelDbNeedleMap{dbFileName: dbFileName}
 	m.indexFile = indexFile
 	if !isLevelDbFresh(dbFileName, indexFile) {
-		glog.V(0).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
+		glog.V(1).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
 		generateLevelDbFile(dbFileName, indexFile)
-		glog.V(0).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
+		glog.V(1).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
 	}
 	glog.V(1).Infof("Opening %s...", dbFileName)
-	if m.db, err = leveldb.OpenFile(dbFileName, nil); err != nil {
-		return
+
+	if m.db, err = leveldb.OpenFile(dbFileName, opts); err != nil {
+		if errors.IsCorrupted(err) {
+			m.db, err = leveldb.RecoverFile(dbFileName, opts)
+		}
+		if err != nil {
+			return
+		}
 	}
 	glog.V(1).Infof("Loading %s...", indexFile.Name())
 	mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile)
@@ -62,8 +74,8 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 		return err
 	}
 	defer db.Close()
-	return WalkIndexFile(indexFile, func(key NeedleId, offset Offset, size uint32) error {
-		if offset > 0 && size != TombstoneFileSize {
+	return idx.WalkIndexFile(indexFile, func(key NeedleId, offset Offset, size uint32) error {
+		if !offset.IsZero() && size != TombstoneFileSize {
 			levelDbWrite(db, key, offset, size)
 		} else {
 			levelDbDelete(db, key)
@@ -72,7 +84,7 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 	})
 }
 
-func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle.NeedleValue, ok bool) {
+func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, ok bool) {
 	bytes := make([]byte, NeedleIdSize)
 	NeedleIdToBytes(bytes[0:NeedleIdSize], key)
 	data, err := m.db.Get(bytes, nil)
@@ -81,7 +93,7 @@ func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle.NeedleValue, ok bo
 	}
 	offset := BytesToOffset(data[0:OffsetSize])
 	size := util.BytesToUint32(data[OffsetSize : OffsetSize+SizeSize])
-	return &needle.NeedleValue{Key: NeedleId(key), Offset: offset, Size: size}, true
+	return &needle_map.NeedleValue{Key: key, Offset: offset, Size: size}, true
 }
 
 func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size uint32) error {
@@ -97,13 +109,9 @@ func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size uint32) error {
 	return levelDbWrite(m.db, key, offset, size)
 }
 
-func levelDbWrite(db *leveldb.DB,
-	key NeedleId, offset Offset, size uint32) error {
+func levelDbWrite(db *leveldb.DB, key NeedleId, offset Offset, size uint32) error {
 
-	bytes := make([]byte, NeedleIdSize+OffsetSize+SizeSize)
-	NeedleIdToBytes(bytes[0:NeedleIdSize], key)
-	OffsetToBytes(bytes[NeedleIdSize:NeedleIdSize+OffsetSize], offset)
-	util.Uint32toBytes(bytes[NeedleIdSize+OffsetSize:NeedleIdSize+OffsetSize+SizeSize], size)
+	bytes := needle_map.ToBytes(key, offset, size)
 
 	if err := db.Put(bytes[0:NeedleIdSize], bytes[NeedleIdSize:NeedleIdSize+OffsetSize+SizeSize], nil); err != nil {
 		return fmt.Errorf("failed to write leveldb: %v", err)
@@ -128,8 +136,17 @@ func (m *LevelDbNeedleMap) Delete(key NeedleId, offset Offset) error {
 }
 
 func (m *LevelDbNeedleMap) Close() {
-	m.indexFile.Close()
-	m.db.Close()
+	indexFileName := m.indexFile.Name()
+	if err := m.indexFile.Sync(); err != nil {
+		glog.Warningf("sync file %s failed: %v", indexFileName, err)
+	}
+	if err := m.indexFile.Close(); err != nil {
+		glog.Warningf("close index file %s failed: %v", indexFileName, err)
+	}
+
+	if err := m.db.Close(); err != nil {
+		glog.Warningf("close levelDB failed: %v", err)
+	}
 }
 
 func (m *LevelDbNeedleMap) Destroy() error {

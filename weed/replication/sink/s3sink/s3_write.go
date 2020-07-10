@@ -2,6 +2,7 @@ package S3Sink
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 
@@ -81,7 +82,7 @@ func (s3sink *S3Sink) abortMultipartUpload(key, uploadId string) error {
 }
 
 // To complete multipart upload
-func (s3sink *S3Sink) completeMultipartUpload(key, uploadId string, parts []*s3.CompletedPart) error {
+func (s3sink *S3Sink) completeMultipartUpload(ctx context.Context, key, uploadId string, parts []*s3.CompletedPart) error {
 	input := &s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(s3sink.bucket),
 		Key:      aws.String(key),
@@ -161,6 +162,6 @@ func (s3sink *S3Sink) buildReadSeeker(chunk *filer2.ChunkView) (io.ReadSeeker, e
 		return nil, err
 	}
 	buf := make([]byte, chunk.Size)
-	util.ReadUrl(fileUrl, chunk.Offset, int(chunk.Size), buf, true)
+	util.ReadUrl(fileUrl, nil, false, false, chunk.Offset, int(chunk.Size), buf)
 	return bytes.NewReader(buf), nil
 }

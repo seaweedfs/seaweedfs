@@ -7,6 +7,11 @@ import (
 	"net/http"
 	"strings"
 
+	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/security"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -17,20 +22,22 @@ type ReplicationSource interface {
 }
 
 type FilerSource struct {
-	grpcAddress string
-	Dir         string
+	grpcAddress    string
+	grpcDialOption grpc.DialOption
+	Dir            string
 }
 
-func (fs *FilerSource) Initialize(configuration util.Configuration) error {
+func (fs *FilerSource) Initialize(configuration util.Configuration, prefix string) error {
 	return fs.initialize(
-		configuration.GetString("grpcAddress"),
-		configuration.GetString("directory"),
+		configuration.GetString(prefix+"grpcAddress"),
+		configuration.GetString(prefix+"directory"),
 	)
 }
 
 func (fs *FilerSource) initialize(grpcAddress string, dir string) (err error) {
 	fs.grpcAddress = grpcAddress
 	fs.Dir = dir
+	fs.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 	return nil
 }
 
@@ -40,7 +47,7 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrl string, err error) {
 
 	vid := volumeId(part)
 
-	err = fs.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		glog.V(4).Infof("read lookup volume id locations: %v", vid)
 		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
@@ -84,17 +91,19 @@ func (fs *FilerSource) ReadPart(part string) (filename string, header http.Heade
 	return filename, header, readCloser, err
 }
 
-func (fs *FilerSource) withFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
+var _ = filer_pb.FilerClient(&FilerSource{})
 
-	grpcConnection, err := util.GrpcDial(fs.grpcAddress)
-	if err != nil {
-		return fmt.Errorf("fail to dial %s: %v", fs.grpcAddress, err)
-	}
-	defer grpcConnection.Close()
+func (fs *FilerSource) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
+		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+		return fn(client)
+	}, fs.grpcAddress, fs.grpcDialOption)
 
-	return fn(client)
+}
+
+func (fs *FilerSource) AdjustedUrl(hostAndPort string) string {
+	return hostAndPort
 }
 
 func volumeId(fileId string) string {

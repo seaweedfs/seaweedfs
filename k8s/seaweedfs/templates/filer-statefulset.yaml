@@ -1,0 +1,207 @@
+{{- if .Values.filer.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ template "seaweedfs.name" . }}-filer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ template "seaweedfs.name" . }}
+    chart: {{ template "seaweedfs.chart" . }}
+    heritage: {{ .Release.Service }}
+    release: {{ .Release.Name }}
+spec:
+  serviceName: {{ template "seaweedfs.name" . }}-filer
+  podManagementPolicy: Parallel
+  replicas: {{ .Values.filer.replicas }}
+  {{- if (gt (int .Values.filer.updatePartition) 0) }}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: {{ .Values.filer.updatePartition }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app: {{ template "seaweedfs.name" . }}
+      chart: {{ template "seaweedfs.chart" . }}
+      release: {{ .Release.Name }}
+      component: filer
+  template:
+    metadata:
+      labels:
+        app: {{ template "seaweedfs.name" . }}
+        chart: {{ template "seaweedfs.chart" . }}
+        release: {{ .Release.Name }}
+        component: filer
+    spec:
+      restartPolicy: {{ default .Values.global.restartPolicy .Values.filer.restartPolicy }}
+      {{- if .Values.filer.affinity }}
+      affinity:
+        {{ tpl .Values.filer.affinity . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.filer.tolerations }}
+      tolerations:
+        {{ tpl .Values.filer.tolerations . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        - name: {{ .Values.global.imagePullSecrets }}
+      {{- end }}
+      serviceAccountName: seaweefds-rw-sa #hack for delete pod master after migration
+      terminationGracePeriodSeconds: 60
+      {{- if .Values.filer.priorityClassName }}
+      priorityClassName: {{ .Values.filer.priorityClassName | quote }}
+      {{- end }}
+      enableServiceLinks: false
+      containers:
+        - name: seaweedfs
+          image: {{ template "filer.image" . }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: WEED_MYSQL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: secret-seaweedfs-db
+                  key: user
+            - name: WEED_MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: secret-seaweedfs-db
+                  key: password
+            - name: SEAWEEDFS_FULLNAME
+              value: "{{ template "seaweedfs.name" . }}"
+            {{- if .Values.filer.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.filer.extraEnvironmentVars }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
+          command:
+            - "/bin/sh"
+            - "-ec"
+            - | 
+              exec /usr/bin/weed -logdir=/logs \
+              {{- if .Values.filer.loggingOverrideLevel }}
+              -v={{ .Values.filer.loggingOverrideLevel }} \
+              {{- else }}
+              -v={{ .Values.global.loggingLevel }} \
+              {{- end }}
+              filer \
+              -port={{ .Values.filer.port }} \
+              {{- if .Values.filer.disableHttp }}
+              -disableHttp \
+              {{- end }}
+              {{- if .Values.filer.disableDirListing }}
+              -disableDirListing \
+              {{- end }}
+              -dirListLimit={{ .Values.filer.dirListLimit }} \
+              -ip=${POD_IP} \
+              -master={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
+          {{- if or (.Values.global.enableSecurity) (.Values.filer.extraVolumeMounts) }}    
+          volumeMounts:
+            - name: seaweedfs-filer-log-volume
+              mountPath: "/logs/"
+            {{- if .Values.global.enableSecurity }}
+            - name: security-config
+              readOnly: true
+              mountPath: /etc/seaweedfs/security.toml
+              subPath: security.toml
+            - name: ca-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/ca/
+            - name: master-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/master/
+            - name: volume-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/volume/
+            - name: filer-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/filer/
+            - name: client-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/client/
+            {{- end }}
+            {{ tpl .Values.filer.extraVolumeMounts . | nindent 12 | trim }}
+          {{- end }}
+          ports:
+            - containerPort: {{ .Values.filer.port }}
+              name: swfs-filer
+            - containerPort: {{ .Values.filer.grpcPort }}
+              #name: swfs-filer-grpc
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.filer.port }}
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            successThreshold: 1
+            failureThreshold: 100
+          livenessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.filer.port }}
+              scheme: HTTP
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            successThreshold: 1
+            failureThreshold: 5
+          {{- if .Values.filer.resources }}
+          resources:
+            {{ tpl .Values.filer.resources . | nindent 12 | trim }}
+          {{- end }}
+      volumes:
+        - name: seaweedfs-filer-log-volume
+          hostPath:
+            path: /storage/logs/seaweedfs/filer
+            type: DirectoryOrCreate
+        {{- if .Values.global.enableSecurity }}
+        - name: security-config
+          configMap:
+            name: {{ template "seaweedfs.name" . }}-security-config
+        - name: ca-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-ca-cert
+        - name: master-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-master-cert
+        - name: volume-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-volume-cert
+        - name: filer-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-filer-cert
+        - name: client-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-client-cert
+        {{- end }}
+        {{ tpl .Values.filer.extraVolumes . | indent 8 | trim }}
+      {{- if .Values.filer.nodeSelector }}
+      nodeSelector:
+        {{ tpl .Values.filer.nodeSelector . | indent 8 | trim }}
+      {{- end }}
+{{/*  volumeClaimTemplates:*/}}
+{{/*    - metadata:*/}}
+{{/*        name: data-{{ .Release.Namespace }}*/}}
+{{/*      spec:*/}}
+{{/*        accessModes:*/}}
+{{/*          - ReadWriteOnce*/}}
+{{/*        resources:*/}}
+{{/*          requests:*/}}
+{{/*            storage: {{ .Values.filer.storage }}*/}}
+{{/*        {{- if .Values.filer.storageClass }}*/}}
+{{/*        storageClassName: {{ .Values.filer.storageClass }}*/}}
+{{/*      {{- end }}*/}}
+{{- end }}

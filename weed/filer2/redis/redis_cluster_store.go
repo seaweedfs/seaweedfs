@@ -18,15 +18,25 @@ func (store *RedisClusterStore) GetName() string {
 	return "redis_cluster"
 }
 
-func (store *RedisClusterStore) Initialize(configuration util.Configuration) (err error) {
+func (store *RedisClusterStore) Initialize(configuration util.Configuration, prefix string) (err error) {
+
+	configuration.SetDefault(prefix+"useReadOnly", true)
+	configuration.SetDefault(prefix+"routeByLatency", true)
+
 	return store.initialize(
-		configuration.GetStringSlice("addresses"),
+		configuration.GetStringSlice(prefix+"addresses"),
+		configuration.GetString(prefix+"password"),
+		configuration.GetBool(prefix+"useReadOnly"),
+		configuration.GetBool(prefix+"routeByLatency"),
 	)
 }
 
-func (store *RedisClusterStore) initialize(addresses []string) (err error) {
+func (store *RedisClusterStore) initialize(addresses []string, password string, readOnly, routeByLatency bool) (err error) {
 	store.Client = redis.NewClusterClient(&redis.ClusterOptions{
-		Addrs: addresses,
+		Addrs:          addresses,
+		Password:       password,
+		ReadOnly:       readOnly,
+		RouteByLatency: routeByLatency,
 	})
 	return
 }

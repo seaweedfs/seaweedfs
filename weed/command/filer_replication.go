@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -12,7 +13,7 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/gcssink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/s3sink"
 	"github.com/chrislusf/seaweedfs/weed/replication/sub"
-	"github.com/chrislusf/seaweedfs/weed/server"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/spf13/viper"
 )
 
@@ -28,16 +29,17 @@ var cmdFilerReplicate = &Command{
 	filer.replicate listens on filer notifications. If any file is updated, it will fetch the updated content,
 	and write to the other destination.
 
-	Run "weed scaffold -config replication" to generate a replication.toml file and customize the parameters.
+	Run "weed scaffold -config=replication" to generate a replication.toml file and customize the parameters.
 
   `,
 }
 
 func runFilerReplicate(cmd *Command, args []string) bool {
 
-	weed_server.LoadConfiguration("replication", true)
-	weed_server.LoadConfiguration("notification", true)
-	config := viper.GetViper()
+	util.LoadConfiguration("security", false)
+	util.LoadConfiguration("replication", true)
+	util.LoadConfiguration("notification", true)
+	config := util.GetViper()
 
 	var notificationInput sub.NotificationInput
 
@@ -45,8 +47,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 
 	for _, input := range sub.NotificationInputs {
 		if config.GetBool("notification." + input.GetName() + ".enabled") {
-			viperSub := config.Sub("notification." + input.GetName())
-			if err := input.Initialize(viperSub); err != nil {
+			if err := input.Initialize(config, "notification."+input.GetName()+"."); err != nil {
 				glog.Fatalf("Failed to initialize notification input for %s: %+v",
 					input.GetName(), err)
 			}
@@ -64,10 +65,9 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 
 	// avoid recursive replication
 	if config.GetBool("notification.source.filer.enabled") && config.GetBool("notification.sink.filer.enabled") {
-		sourceConfig, sinkConfig := config.Sub("source.filer"), config.Sub("sink.filer")
-		if sourceConfig.GetString("grpcAddress") == sinkConfig.GetString("grpcAddress") {
-			fromDir := sourceConfig.GetString("directory")
-			toDir := sinkConfig.GetString("directory")
+		if config.GetString("source.filer.grpcAddress") == config.GetString("sink.filer.grpcAddress") {
+			fromDir := config.GetString("source.filer.directory")
+			toDir := config.GetString("sink.filer.directory")
 			if strings.HasPrefix(toDir, fromDir) {
 				glog.Fatalf("recursive replication! source directory %s includes the sink directory %s", fromDir, toDir)
 			}
@@ -77,8 +77,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 	var dataSink sink.ReplicationSink
 	for _, sk := range sink.Sinks {
 		if config.GetBool("sink." + sk.GetName() + ".enabled") {
-			viperSub := config.Sub("sink." + sk.GetName())
-			if err := sk.Initialize(viperSub); err != nil {
+			if err := sk.Initialize(config, "sink."+sk.GetName()+"."); err != nil {
 				glog.Fatalf("Failed to initialize sink for %s: %+v",
 					sk.GetName(), err)
 			}
@@ -96,7 +95,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 		return true
 	}
 
-	replicator := replication.NewReplicator(config.Sub("source.filer"), dataSink)
+	replicator := replication.NewReplicator(config, "source.filer.", dataSink)
 
 	for {
 		key, m, err := notificationInput.ReceiveMessage()
@@ -115,14 +114,13 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 		} else {
 			glog.V(1).Infof("modify: %s", key)
 		}
-		if err = replicator.Replicate(key, m); err != nil {
+		if err = replicator.Replicate(context.Background(), key, m); err != nil {
 			glog.Errorf("replicate %s: %+v", key, err)
 		} else {
 			glog.V(1).Infof("replicated %s", key)
 		}
 	}
 
-	return true
 }
 
 func validateOneEnabledInput(config *viper.Viper) {

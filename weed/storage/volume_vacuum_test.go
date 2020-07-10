@@ -1,11 +1,15 @@
 package storage
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io/ioutil"
 	"math/rand"
 	"os"
 	"testing"
+	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 /*
@@ -43,7 +47,7 @@ func TestMakeDiff(t *testing.T) {
 	v := new(Volume)
 	//lastCompactIndexOffset value is the index file size before step 4
 	v.lastCompactIndexOffset = 96
-	v.SuperBlock.version = 0x2
+	v.SuperBlock.Version = 0x2
 	/*
 		err := v.makeupDiff(
 			"/yourpath/1.cpd",
@@ -65,13 +69,13 @@ func TestCompaction(t *testing.T) {
 	}
 	defer os.RemoveAll(dir) // clean up
 
-	v, err := NewVolume(dir, "", 1, NeedleMapInMemory, &ReplicaPlacement{}, &TTL{}, 0)
+	v, err := NewVolume(dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
 
-	beforeCommitFileCount := 1000
-	afterCommitFileCount := 1000
+	beforeCommitFileCount := 10000
+	afterCommitFileCount := 10000
 
 	infos := make([]*needleInfo, beforeCommitFileCount+afterCommitFileCount)
 
@@ -79,17 +83,20 @@ func TestCompaction(t *testing.T) {
 		doSomeWritesDeletes(i, v, t, infos)
 	}
 
-	v.Compact(0)
+	startTime := time.Now()
+	v.Compact2(0, 0)
+	speed := float64(v.ContentSize()) / time.Now().Sub(startTime).Seconds()
+	t.Logf("compaction speed: %.2f bytes/s", speed)
 
 	for i := 1; i <= afterCommitFileCount; i++ {
 		doSomeWritesDeletes(i+beforeCommitFileCount, v, t, infos)
 	}
 
-	v.commitCompact()
+	v.CommitCompact()
 
 	v.Close()
 
-	v, err = NewVolume(dir, "", 1, NeedleMapInMemory, nil, nil, 0)
+	v, err = NewVolume(dir, "", 1, NeedleMapInMemory, nil, nil, 0, 0)
 	if err != nil {
 		t.Fatalf("volume reloading: %v", err)
 	}
@@ -122,7 +129,7 @@ func TestCompaction(t *testing.T) {
 }
 func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 	n := newRandomNeedle(uint64(i))
-	_, size, err := v.writeNeedle(n)
+	_, size, _, err := v.writeNeedle2(n, false)
 	if err != nil {
 		t.Fatalf("write file %d: %v", i, err)
 	}
@@ -134,7 +141,7 @@ func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 	if rand.Float64() < 0.03 {
 		toBeDeleted := rand.Intn(i) + 1
 		oldNeedle := newEmptyNeedle(uint64(toBeDeleted))
-		v.deleteNeedle(oldNeedle)
+		v.deleteNeedle2(oldNeedle)
 		// println("deleted file", toBeDeleted)
 		infos[toBeDeleted-1] = &needleInfo{
 			size: 0,
@@ -145,21 +152,21 @@ func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 
 type needleInfo struct {
 	size uint32
-	crc  CRC
+	crc  needle.CRC
 }
 
-func newRandomNeedle(id uint64) *Needle {
-	n := new(Needle)
+func newRandomNeedle(id uint64) *needle.Needle {
+	n := new(needle.Needle)
 	n.Data = make([]byte, rand.Intn(1024))
 	rand.Read(n.Data)
 
-	n.Checksum = NewCRC(n.Data)
+	n.Checksum = needle.NewCRC(n.Data)
 	n.Id = types.Uint64ToNeedleId(id)
 	return n
 }
 
-func newEmptyNeedle(id uint64) *Needle {
-	n := new(Needle)
+func newEmptyNeedle(id uint64) *needle.Needle {
+	n := new(needle.Needle)
 	n.Id = types.Uint64ToNeedleId(id)
 	return n
 }

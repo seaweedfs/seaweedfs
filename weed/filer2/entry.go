@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type Attr struct {
@@ -20,6 +21,7 @@ type Attr struct {
 	UserName      string
 	GroupNames    []string
 	SymlinkTarget string
+	Md5           []byte
 }
 
 func (attr Attr) IsDirectory() bool {
@@ -27,9 +29,10 @@ func (attr Attr) IsDirectory() bool {
 }
 
 type Entry struct {
-	FullPath
+	util.FullPath
 
 	Attr
+	Extended map[string][]byte
 
 	// the following is for files
 	Chunks []*filer_pb.FileChunk `json:"chunks,omitempty"`
@@ -52,9 +55,29 @@ func (entry *Entry) ToProtoEntry() *filer_pb.Entry {
 		return nil
 	}
 	return &filer_pb.Entry{
-		Name:        string(entry.FullPath),
+		Name:        entry.FullPath.Name(),
 		IsDirectory: entry.IsDirectory(),
 		Attributes:  EntryAttributeToPb(entry),
 		Chunks:      entry.Chunks,
+		Extended:    entry.Extended,
+	}
+}
+
+func (entry *Entry) ToProtoFullEntry() *filer_pb.FullEntry {
+	if entry == nil {
+		return nil
+	}
+	dir, _ := entry.FullPath.DirAndName()
+	return &filer_pb.FullEntry{
+		Dir:   dir,
+		Entry: entry.ToProtoEntry(),
+	}
+}
+
+func FromPbEntry(dir string, entry *filer_pb.Entry) *Entry {
+	return &Entry{
+		FullPath: util.NewFullPath(dir, entry.Name),
+		Attr:     PbToEntryAttribute(entry.Attributes),
+		Chunks:   entry.Chunks,
 	}
 }

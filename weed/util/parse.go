@@ -1,7 +1,10 @@
 package util
 
 import (
+	"fmt"
+	"net/url"
 	"strconv"
+	"strings"
 )
 
 func ParseInt(text string, defaultValue int) int {
@@ -23,4 +26,38 @@ func ParseUint64(text string, defaultValue uint64) uint64 {
 		return defaultValue
 	}
 	return count
+}
+
+func ParseFilerUrl(entryPath string) (filerServer string, filerPort int64, path string, err error) {
+	if !strings.HasPrefix(entryPath, "http://") && !strings.HasPrefix(entryPath, "https://") {
+		entryPath = "http://" + entryPath
+	}
+
+	var u *url.URL
+	u, err = url.Parse(entryPath)
+	if err != nil {
+		return
+	}
+	filerServer = u.Hostname()
+	portString := u.Port()
+	if portString != "" {
+		filerPort, err = strconv.ParseInt(portString, 10, 32)
+	}
+	path = u.Path
+	return
+}
+
+func ParseHostPort(hostPort string) (filerServer string, filerPort int64, err error) {
+	parts := strings.Split(hostPort, ":")
+	if len(parts) != 2 {
+		err = fmt.Errorf("failed to parse %s\n", hostPort)
+		return
+	}
+
+	filerPort, err = strconv.ParseInt(parts[1], 10, 64)
+	if err == nil {
+		filerServer = parts[0]
+	}
+
+	return
 }

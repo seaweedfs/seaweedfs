@@ -1,24 +1,65 @@
 package abstract_sql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type AbstractSqlStore struct {
-	DB               *sql.DB
-	SqlInsert        string
-	SqlUpdate        string
-	SqlFind          string
-	SqlDelete        string
-	SqlListExclusive string
-	SqlListInclusive string
+	DB                      *sql.DB
+	SqlInsert               string
+	SqlUpdate               string
+	SqlFind                 string
+	SqlDelete               string
+	SqlDeleteFolderChildren string
+	SqlListExclusive        string
+	SqlListInclusive        string
 }
 
-func (store *AbstractSqlStore) InsertEntry(entry *filer2.Entry) (err error) {
+type TxOrDB interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+}
+
+func (store *AbstractSqlStore) BeginTransaction(ctx context.Context) (context.Context, error) {
+	tx, err := store.DB.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelReadCommitted,
+		ReadOnly:  false,
+	})
+	if err != nil {
+		return ctx, err
+	}
+
+	return context.WithValue(ctx, "tx", tx), nil
+}
+func (store *AbstractSqlStore) CommitTransaction(ctx context.Context) error {
+	if tx, ok := ctx.Value("tx").(*sql.Tx); ok {
+		return tx.Commit()
+	}
+	return nil
+}
+func (store *AbstractSqlStore) RollbackTransaction(ctx context.Context) error {
+	if tx, ok := ctx.Value("tx").(*sql.Tx); ok {
+		return tx.Rollback()
+	}
+	return nil
+}
+
+func (store *AbstractSqlStore) getTxOrDB(ctx context.Context) TxOrDB {
+	if tx, ok := ctx.Value("tx").(*sql.Tx); ok {
+		return tx
+	}
+	return store.DB
+}
+
+func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer2.Entry) (err error) {
 
 	dir, name := entry.FullPath.DirAndName()
 	meta, err := entry.EncodeAttributesAndChunks()
@@ -26,7 +67,7 @@ func (store *AbstractSqlStore) InsertEntry(entry *filer2.Entry) (err error) {
 		return fmt.Errorf("encode %s: %s", entry.FullPath, err)
 	}
 
-	res, err := store.DB.Exec(store.SqlInsert, hashToLong(dir), name, dir, meta)
+	res, err := store.getTxOrDB(ctx).ExecContext(ctx, store.SqlInsert, util.HashStringToLong(dir), name, dir, meta)
 	if err != nil {
 		return fmt.Errorf("insert %s: %s", entry.FullPath, err)
 	}
@@ -38,7 +79,7 @@ func (store *AbstractSqlStore) InsertEntry(entry *filer2.Entry) (err error) {
 	return nil
 }
 
-func (store *AbstractSqlStore) UpdateEntry(entry *filer2.Entry) (err error) {
+func (store *AbstractSqlStore) UpdateEntry(ctx context.Context, entry *filer2.Entry) (err error) {
 
 	dir, name := entry.FullPath.DirAndName()
 	meta, err := entry.EncodeAttributesAndChunks()
@@ -46,7 +87,7 @@ func (store *AbstractSqlStore) UpdateEntry(entry *filer2.Entry) (err error) {
 		return fmt.Errorf("encode %s: %s", entry.FullPath, err)
 	}
 
-	res, err := store.DB.Exec(store.SqlUpdate, meta, hashToLong(dir), name, dir)
+	res, err := store.getTxOrDB(ctx).ExecContext(ctx, store.SqlUpdate, meta, util.HashStringToLong(dir), name, dir)
 	if err != nil {
 		return fmt.Errorf("update %s: %s", entry.FullPath, err)
 	}
@@ -58,13 +99,13 @@ func (store *AbstractSqlStore) UpdateEntry(entry *filer2.Entry) (err error) {
 	return nil
 }
 
-func (store *AbstractSqlStore) FindEntry(fullpath filer2.FullPath) (*filer2.Entry, error) {
+func (store *AbstractSqlStore) FindEntry(ctx context.Context, fullpath util.FullPath) (*filer2.Entry, error) {
 
 	dir, name := fullpath.DirAndName()
-	row := store.DB.QueryRow(store.SqlFind, hashToLong(dir), name, dir)
+	row := store.getTxOrDB(ctx).QueryRowContext(ctx, store.SqlFind, util.HashStringToLong(dir), name, dir)
 	var data []byte
 	if err := row.Scan(&data); err != nil {
-		return nil, filer2.ErrNotFound
+		return nil, filer_pb.ErrNotFound
 	}
 
 	entry := &filer2.Entry{
@@ -77,11 +118,11 @@ func (store *AbstractSqlStore) FindEntry(fullpath filer2.FullPath) (*filer2.Entr
 	return entry, nil
 }
 
-func (store *AbstractSqlStore) DeleteEntry(fullpath filer2.FullPath) error {
+func (store *AbstractSqlStore) DeleteEntry(ctx context.Context, fullpath util.FullPath) error {
 
 	dir, name := fullpath.DirAndName()
 
-	res, err := store.DB.Exec(store.SqlDelete, hashToLong(dir), name, dir)
+	res, err := store.getTxOrDB(ctx).ExecContext(ctx, store.SqlDelete, util.HashStringToLong(dir), name, dir)
 	if err != nil {
 		return fmt.Errorf("delete %s: %s", fullpath, err)
 	}
@@ -94,14 +135,29 @@ func (store *AbstractSqlStore) DeleteEntry(fullpath filer2.FullPath) error {
 	return nil
 }
 
-func (store *AbstractSqlStore) ListDirectoryEntries(fullpath filer2.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
+func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) error {
+
+	res, err := store.getTxOrDB(ctx).ExecContext(ctx, store.SqlDeleteFolderChildren, util.HashStringToLong(string(fullpath)), fullpath)
+	if err != nil {
+		return fmt.Errorf("deleteFolderChildren %s: %s", fullpath, err)
+	}
+
+	_, err = res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("deleteFolderChildren %s but no rows affected: %s", fullpath, err)
+	}
+
+	return nil
+}
+
+func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
 
 	sqlText := store.SqlListExclusive
 	if inclusive {
 		sqlText = store.SqlListInclusive
 	}
 
-	rows, err := store.DB.Query(sqlText, hashToLong(string(fullpath)), startFileName, string(fullpath), limit)
+	rows, err := store.getTxOrDB(ctx).QueryContext(ctx, sqlText, util.HashStringToLong(string(fullpath)), startFileName, string(fullpath), limit)
 	if err != nil {
 		return nil, fmt.Errorf("list %s : %v", fullpath, err)
 	}
@@ -116,7 +172,7 @@ func (store *AbstractSqlStore) ListDirectoryEntries(fullpath filer2.FullPath, st
 		}
 
 		entry := &filer2.Entry{
-			FullPath: filer2.NewFullPath(string(fullpath), name),
+			FullPath: util.NewFullPath(string(fullpath), name),
 		}
 		if err = entry.DecodeAttributesAndChunks(data); err != nil {
 			glog.V(0).Infof("scan decode %s : %v", entry.FullPath, err)
@@ -127,4 +183,8 @@ func (store *AbstractSqlStore) ListDirectoryEntries(fullpath filer2.FullPath, st
 	}
 
 	return entries, nil
+}
+
+func (store *AbstractSqlStore) Shutdown() {
+	store.DB.Close()
 }

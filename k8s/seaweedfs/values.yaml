@@ -1,0 +1,306 @@
+# Available parameters and their default values for the SeaweedFS chart.
+
+global:
+  registry: ""
+  repository: ""
+  imageName: chrislusf/seaweedfs
+  imageTag: "1.84"
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: imagepullsecret
+  restartPolicy: Always
+  loggingLevel: 1
+  enableSecurity: false
+  monitoring:
+    enabled: false
+    gatewayHost: null
+    gatewayPort: null
+
+image:
+  registry: ""
+  repository: ""
+
+master:
+  enabled: true
+  repository: null
+  imageName: null
+  imageTag: null
+  imageOverride: null
+  restartPolicy: null
+  replicas: 1
+  port: 9333
+  grpcPort: 19333
+  ipBind: "0.0.0.0"
+  volumePreallocate: false
+  volumeSizeLimitMB: 30000
+  loggingOverrideLevel: null
+
+  # Disable http request, only gRpc operations are allowed
+  disableHttp: false
+
+  extraVolumes: ""
+  extraVolumeMounts: ""
+
+  # storage and storageClass are the settings for configuring stateful
+  # storage for the master pods. storage should be set to the disk size of
+  # the attached volume. storageClass is the class of storage which defaults
+  # to null (the Kube cluster will pick the default).
+  storage: 25Gi
+  storageClass: null
+
+  # Resource requests, limits, etc. for the master cluster placement. This
+  # should map directly to the value of the resources field for a PodSpec,
+  # formatted as a multi-line string. By default no direct resource request
+  # is made.
+  resources: null
+
+  # updatePartition is used to control a careful rolling update of SeaweedFS
+  # masters.
+  updatePartition: 0
+
+  # Affinity Settings
+  # Commenting out or setting as empty the affinity variable, will allow
+  # deployment to single node services such as Minikube
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app: {{ template "seaweedfs.name" . }}
+              release: "{{ .Release.Name }}"
+              component: master
+          topologyKey: kubernetes.io/hostname
+
+  # Toleration Settings for master pods
+  # This should be a multi-line string matching the Toleration array
+  # in a PodSpec.
+  tolerations: ""
+
+  # nodeSelector labels for master pod assignment, formatted as a muli-line string.
+  # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
+  # Example:
+  # nodeSelector: |
+  #   beta.kubernetes.io/arch: amd64
+  nodeSelector: |
+    sw-backend: "true"
+
+  # used to assign priority to master pods
+  # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
+  priorityClassName: ""
+
+
+volume:
+  enabled: true
+  repository: null
+  imageName: null
+  imageTag: null
+  imageOverride: null
+  restartPolicy: null
+  port: 8080
+  grpcPort: 18080
+  ipBind: "0.0.0.0"
+  replicas: 1
+  loggingOverrideLevel: null
+
+  # limit background compaction or copying speed in mega bytes per second
+  compactionMBps: "40"
+
+  # Directories to store data files. dir[,dir]... (default "/tmp")
+  dir: "/data"
+
+  # Maximum numbers of volumes, count[,count]...
+  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
+  maxVolumes: "0"
+
+  # Volume server's rack name
+  rack: null
+
+  # Volume server's data center name
+  dataCenter: null
+
+  # Redirect moved or non-local volumes. (default true)
+  readRedirect: true
+
+  # Comma separated Ip addresses having write permission. No limit if empty.
+  whiteList: null
+
+  extraVolumes: ""
+  extraVolumeMounts: ""
+
+  # Affinity Settings
+  # Commenting out or setting as empty the affinity variable, will allow
+  # deployment to single node services such as Minikube
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app: {{ template "seaweedfs.name" . }}
+              release: "{{ .Release.Name }}"
+              component: volume
+          topologyKey: kubernetes.io/hostname
+
+  # Resource requests, limits, etc. for the server cluster placement. This
+  # should map directly to the value of the resources field for a PodSpec,
+  # formatted as a multi-line string. By default no direct resource request
+  # is made.
+  resources: null
+
+  # Toleration Settings for server pods
+  # This should be a multi-line string matching the Toleration array
+  # in a PodSpec.
+  tolerations: ""
+
+  # nodeSelector labels for server pod assignment, formatted as a muli-line string.
+  # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
+  # Example:
+  # nodeSelector: |
+  #   beta.kubernetes.io/arch: amd64
+  nodeSelector: |
+    sw-volume: "true"
+
+  # used to assign priority to server pods
+  # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
+  priorityClassName: ""
+
+
+filer:
+  enabled: true
+  repository: null
+  imageName: null
+  imageTag: null
+  imageOverride: null
+  restartPolicy: null
+  replicas: 1
+  port: 8888
+  grpcPort: 18888
+  loggingOverrideLevel: null
+
+  # Limit sub dir listing size (default 100000)
+  dirListLimit: 100000
+
+  # Turn off directory listing
+  disableDirListing: false
+
+  # Disable http request, only gRpc operations are allowed
+  disableHttp: false
+
+  # storage and storageClass are the settings for configuring stateful
+  # storage for the master pods. storage should be set to the disk size of
+  # the attached volume. storageClass is the class of storage which defaults
+  # to null (the Kube cluster will pick the default).
+  storage: 25Gi
+  storageClass: null
+
+  extraVolumes: ""
+  extraVolumeMounts: ""
+
+  # Affinity Settings
+  # Commenting out or setting as empty the affinity variable, will allow
+  # deployment to single node services such as Minikube
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app: {{ template "seaweedfs.name" . }}
+              release: "{{ .Release.Name }}"
+              component: filer
+          topologyKey: kubernetes.io/hostname
+
+  # updatePartition is used to control a careful rolling update of SeaweedFS
+  # masters.
+  updatePartition: 0
+
+  # Resource requests, limits, etc. for the server cluster placement. This
+  # should map directly to the value of the resources field for a PodSpec,
+  # formatted as a multi-line string. By default no direct resource request
+  # is made.
+  resources: null
+
+  # Toleration Settings for server pods
+  # This should be a multi-line string matching the Toleration array
+  # in a PodSpec.
+  tolerations: ""
+
+  # nodeSelector labels for server pod assignment, formatted as a muli-line string.
+  # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
+  # Example:
+  # nodeSelector: |
+  #   beta.kubernetes.io/arch: amd64
+  nodeSelector: |
+    sw-backend: "true"
+
+  # used to assign priority to server pods
+  # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
+  priorityClassName: ""
+
+  dbSchema:
+    imageName: db-schema
+    imageTag: "development"
+    imageOverride: ""
+
+  # extraEnvVars is a list of extra enviroment variables to set with the stateful set.
+  extraEnvironmentVars:
+    WEED_MYSQL_ENABLED: "true"
+    WEED_MYSQL_HOSTNAME: "mysql-db-host"
+    WEED_MYSQL_PORT: "3306"
+    WEED_MYSQL_DATABASE: "sw_database"
+    WEED_MYSQL_CONNECTION_MAX_IDLE: "10"
+    WEED_MYSQL_CONNECTION_MAX_OPEN: "150"
+    # enable usage of memsql as filer backend
+    WEED_MYSQL_INTERPOLATEPARAMS: "true"
+    WEED_LEVELDB2_ENABLED: "false"
+    # with http DELETE, by default the filer would check whether a folder is empty.
+    # recursive_delete will delete all sub folders and files, similar to "rm -Rf"
+    WEED_FILER_OPTIONS_RECURSIVE_DELETE: "false"
+    # directories under this folder will be automatically creating a separate bucket
+    WEED_FILER_BUCKETS_FOLDER: "/buckets"
+    # directories under this folder will be store message queue data
+    WEED_FILER_QUEUES_FOLDER: "/queues"
+
+s3:
+  enabled: true
+  repository: null
+  imageName: null
+  imageTag: null
+  restartPolicy: null
+  replicas: 1
+  port: 8333
+  loggingOverrideLevel: null
+
+  # Suffix of the host name, {bucket}.{domainName}
+  domainName: ""
+
+  extraVolumes: ""
+  extraVolumeMounts: ""
+
+  # Resource requests, limits, etc. for the server cluster placement. This
+  # should map directly to the value of the resources field for a PodSpec,
+  # formatted as a multi-line string. By default no direct resource request
+  # is made.
+  resources: null
+
+  # Toleration Settings for server pods
+  # This should be a multi-line string matching the Toleration array
+  # in a PodSpec.
+  tolerations: ""
+
+  # nodeSelector labels for server pod assignment, formatted as a muli-line string.
+  # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
+  # Example:
+  # nodeSelector: |
+  #   beta.kubernetes.io/arch: amd64
+  nodeSelector: |
+    sw-backend: "true"
+
+  # used to assign priority to server pods
+  # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
+  priorityClassName: ""
+
+certificates:
+  commonName: "SeaweedFS CA"
+  ipAddresses: []
+  keyAlgorithm: rsa
+  keySize: 2048
+  duration: 2160h # 90d
+  renewBefore: 360h # 15d

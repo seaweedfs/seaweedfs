@@ -1,64 +1,161 @@
 package command
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"time"
 
-	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/security"
+
+	"github.com/gorilla/mux"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/s3api"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/gorilla/mux"
 )
 
 var (
-	s3options S3Options
+	s3StandaloneOptions S3Options
 )
 
 type S3Options struct {
-	filer            *string
-	filerGrpcPort    *int
-	filerBucketsPath *string
-	port             *int
-	domainName       *string
-	tlsPrivateKey    *string
-	tlsCertificate   *string
+	filer          *string
+	port           *int
+	config         *string
+	domainName     *string
+	tlsPrivateKey  *string
+	tlsCertificate *string
 }
 
 func init() {
 	cmdS3.Run = runS3 // break init cycle
-	s3options.filer = cmdS3.Flag.String("filer", "localhost:8888", "filer server address")
-	s3options.filerGrpcPort = cmdS3.Flag.Int("filer.grpcPort", 0, "filer server grpc port, default to filer http port plus 10000")
-	s3options.filerBucketsPath = cmdS3.Flag.String("filer.dir.buckets", "/buckets", "folder on filer to store all buckets")
-	s3options.port = cmdS3.Flag.Int("port", 8333, "s3options server http listen port")
-	s3options.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name, {bucket}.{domainName}")
-	s3options.tlsPrivateKey = cmdS3.Flag.String("key.file", "", "path to the TLS private key file")
-	s3options.tlsCertificate = cmdS3.Flag.String("cert.file", "", "path to the TLS certificate file")
+	s3StandaloneOptions.filer = cmdS3.Flag.String("filer", "localhost:8888", "filer server address")
+	s3StandaloneOptions.port = cmdS3.Flag.Int("port", 8333, "s3 server http listen port")
+	s3StandaloneOptions.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name, {bucket}.{domainName}")
+	s3StandaloneOptions.config = cmdS3.Flag.String("config", "", "path to the config file")
+	s3StandaloneOptions.tlsPrivateKey = cmdS3.Flag.String("key.file", "", "path to the TLS private key file")
+	s3StandaloneOptions.tlsCertificate = cmdS3.Flag.String("cert.file", "", "path to the TLS certificate file")
 }
 
 var cmdS3 = &Command{
-	UsageLine: "s3 -port=8333 -filer=<ip:port>",
+	UsageLine: "s3 [-port=8333] [-filer=<ip:port>] [-config=</path/to/config.json>]",
 	Short:     "start a s3 API compatible server that is backed by a filer",
 	Long: `start a s3 API compatible server that is backed by a filer.
+
+	By default, you can use any access key and secret key to access the S3 APIs.
+	To enable credential based access, create a config.json file similar to this:
+
+{
+  "identities": [
+    {
+      "name": "some_name",
+      "credentials": [
+        {
+          "accessKey": "some_access_key1",
+          "secretKey": "some_secret_key1"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "Write"
+      ]
+    },
+    {
+      "name": "some_read_only_user",
+      "credentials": [
+        {
+          "accessKey": "some_access_key2",
+          "secretKey": "some_secret_key2"
+        }
+      ],
+      "actions": [
+        "Read"
+      ]
+    },
+    {
+      "name": "some_normal_user",
+      "credentials": [
+        {
+          "accessKey": "some_access_key3",
+          "secretKey": "some_secret_key3"
+        }
+      ],
+      "actions": [
+        "Read",
+        "Write"
+      ]
+    },
+    {
+      "name": "user_limited_to_bucket1",
+      "credentials": [
+        {
+          "accessKey": "some_access_key4",
+          "secretKey": "some_secret_key4"
+        }
+      ],
+      "actions": [
+        "Read:bucket1",
+        "Write:bucket1"
+      ]
+    }
+  ]
+}
 
 `,
 }
 
 func runS3(cmd *Command, args []string) bool {
 
-	filerGrpcAddress, err := parseFilerGrpcAddress(*s3options.filer, *s3options.filerGrpcPort)
+	util.LoadConfiguration("security", false)
+
+	return s3StandaloneOptions.startS3Server()
+
+}
+
+func (s3opt *S3Options) startS3Server() bool {
+
+	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(*s3opt.filer)
 	if err != nil {
 		glog.Fatal(err)
 		return false
 	}
 
+	filerBucketsPath := "/buckets"
+
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+
+	for {
+		err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+			if err != nil {
+				return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
+			}
+			filerBucketsPath = resp.DirBuckets
+			glog.V(0).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
+			return nil
+		})
+		if err != nil {
+			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *s3opt.filer, filerGrpcAddress)
+			time.Sleep(time.Second)
+		} else {
+			glog.V(0).Infof("connected to filer %s grpc address %s", *s3opt.filer, filerGrpcAddress)
+			break
+		}
+	}
+
 	router := mux.NewRouter().SkipClean(true)
 
 	_, s3ApiServer_err := s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
-		Filer:            *s3options.filer,
+		Filer:            *s3opt.filer,
 		FilerGrpcAddress: filerGrpcAddress,
-		DomainName:       *s3options.domainName,
-		BucketsPath:      *s3options.filerBucketsPath,
+		Config:           *s3opt.config,
+		DomainName:       *s3opt.domainName,
+		BucketsPath:      filerBucketsPath,
+		GrpcDialOption:   grpcDialOption,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
@@ -66,22 +163,22 @@ func runS3(cmd *Command, args []string) bool {
 
 	httpS := &http.Server{Handler: router}
 
-	listenAddress := fmt.Sprintf(":%d", *s3options.port)
+	listenAddress := fmt.Sprintf(":%d", *s3opt.port)
 	s3ApiListener, err := util.NewListener(listenAddress, time.Duration(10)*time.Second)
 	if err != nil {
 		glog.Fatalf("S3 API Server listener on %s error: %v", listenAddress, err)
 	}
 
-	if *s3options.tlsPrivateKey != "" {
-		if err = httpS.ServeTLS(s3ApiListener, *s3options.tlsCertificate, *s3options.tlsPrivateKey); err != nil {
+	if *s3opt.tlsPrivateKey != "" {
+		glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.port)
+		if err = httpS.ServeTLS(s3ApiListener, *s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
 			glog.Fatalf("S3 API Server Fail to serve: %v", err)
 		}
-		glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.VERSION, *s3options.port)
 	} else {
+		glog.V(0).Infof("Start Seaweed S3 API Server %s at http port %d", util.Version(), *s3opt.port)
 		if err = httpS.Serve(s3ApiListener); err != nil {
 			glog.Fatalf("S3 API Server Fail to serve: %v", err)
 		}
-		glog.V(0).Infof("Start Seaweed S3 API Server %s at http port %d", util.VERSION, *s3options.port)
 	}
 
 	return true

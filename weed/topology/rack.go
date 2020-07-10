@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"strconv"
 	"time"
 )
@@ -27,7 +28,7 @@ func (r *Rack) FindDataNode(ip string, port int) *DataNode {
 	}
 	return nil
 }
-func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVolumeCount int) *DataNode {
+func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVolumeCount int64) *DataNode {
 	for _, c := range r.Children() {
 		dn := c.(*DataNode)
 		if dn.MatchLocation(ip, port) {
@@ -56,5 +57,21 @@ func (r *Rack) ToMap() interface{} {
 		dns = append(dns, dn.ToMap())
 	}
 	m["DataNodes"] = dns
+	return m
+}
+
+func (r *Rack) ToRackInfo() *master_pb.RackInfo {
+	m := &master_pb.RackInfo{
+		Id:                string(r.Id()),
+		VolumeCount:       uint64(r.GetVolumeCount()),
+		MaxVolumeCount:    uint64(r.GetMaxVolumeCount()),
+		FreeVolumeCount:   uint64(r.FreeSpace()),
+		ActiveVolumeCount: uint64(r.GetActiveVolumeCount()),
+		RemoteVolumeCount: uint64(r.GetRemoteVolumeCount()),
+	}
+	for _, c := range r.Children() {
+		dn := c.(*DataNode)
+		m.DataNodeInfos = append(m.DataNodeInfos, dn.ToDataNodeInfo())
+	}
 	return m
 }

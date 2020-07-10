@@ -1,0 +1,158 @@
+{{- if .Values.s3.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "seaweedfs.name" . }}-s3
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ template "seaweedfs.name" . }}
+    chart: {{ template "seaweedfs.chart" . }}
+    heritage: {{ .Release.Service }}
+    release: {{ .Release.Name }}
+spec:
+  serviceName: {{ template "seaweedfs.name" . }}-s3
+  replicas: {{ .Values.s3.replicas }}
+  selector:
+    matchLabels:
+      app: {{ template "seaweedfs.name" . }}
+      chart: {{ template "seaweedfs.chart" . }}
+      release: {{ .Release.Name }}
+      component: s3
+  template:
+    metadata:
+      labels:
+        app: {{ template "seaweedfs.name" . }}
+        chart: {{ template "seaweedfs.chart" . }}
+        release: {{ .Release.Name }}
+        component: s3
+    spec:
+      restartPolicy: {{ default .Values.global.restartPolicy .Values.s3.restartPolicy }}
+      {{- if .Values.s3.tolerations }}
+      tolerations:
+        {{ tpl .Values.s3.tolerations . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        - name: {{ .Values.global.imagePullSecrets }}
+      {{- end }}
+      terminationGracePeriodSeconds: 10
+      {{- if .Values.s3.priorityClassName }}
+      priorityClassName: {{ .Values.s3.priorityClassName | quote }}
+      {{- end }}
+      enableServiceLinks: false
+      containers:
+        - name: seaweedfs
+          image: {{ template "s3.image" . }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: SEAWEEDFS_FULLNAME
+              value: "{{ template "seaweedfs.name" . }}"
+          command:
+            - "/bin/sh"
+            - "-ec"
+            - | 
+              exec /usr/bin/weed \
+              {{- if .Values.s3.loggingOverrideLevel }}
+              -v={{ .Values.s3.loggingOverrideLevel }} \
+              {{- else }}
+              -v={{ .Values.global.loggingLevel }} \
+              {{- end }}
+              s3 \
+              -port={{ .Values.s3.port }} \
+              {{- if .Values.global.enableSecurity }}
+              -cert.file=/usr/local/share/ca-certificates/client/tls.crt \
+              -key.file=/usr/local/share/ca-certificates/client/tls.key \
+              {{- end }}
+              {{- if .Values.s3.domainName }}
+              -domainName={{ .Values.s3.domainName }} \
+              {{- end }}
+              -filer={{ template "seaweedfs.name" . }}-filer:{{ .Values.filer.port }}
+          {{- if or (.Values.global.enableSecurity) (.Values.s3.extraVolumeMounts) }}
+          volumeMounts:
+            {{- if .Values.global.enableSecurity }}
+            - name: security-config
+              readOnly: true
+              mountPath: /etc/seaweedfs/security.toml
+              subPath: security.toml
+            - name: ca-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/ca/
+            - name: master-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/master/
+            - name: volume-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/volume/
+            - name: filer-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/filer/
+            - name: client-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/client/
+            {{- end }}
+            {{ tpl .Values.s3.extraVolumeMounts . | nindent 12 | trim }}
+          {{- end }}
+          ports:
+            - containerPort: {{ .Values.s3.port }}
+              name: swfs-s3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.s3.port }}
+              scheme: HTTP
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            successThreshold: 1
+            failureThreshold: 100
+          livenessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.s3.port }}
+              scheme: HTTP
+            initialDelaySeconds: 20
+            periodSeconds: 60
+            successThreshold: 1
+            failureThreshold: 20
+          {{- if .Values.s3.resources }}
+          resources:
+            {{ tpl .Values.s3.resources . | nindent 12 | trim }}
+          {{- end }}
+      volumes:
+        {{- if .Values.global.enableSecurity }}
+        - name: security-config
+          configMap:
+            name: {{ template "seaweedfs.name" . }}-security-config
+        - name: ca-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-ca-cert
+        - name: master-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-master-cert
+        - name: volume-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-volume-cert
+        - name: filer-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-filer-cert
+        - name: client-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-client-cert
+        {{- end }}
+        {{ tpl .Values.s3.extraVolumes . | indent 8 | trim }}
+      {{- if .Values.s3.nodeSelector }}
+      nodeSelector:
+        {{ tpl .Values.s3.nodeSelector . | indent 8 | trim }}
+      {{- end }}
+{{- end }}

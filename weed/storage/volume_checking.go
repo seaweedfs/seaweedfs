@@ -4,41 +4,41 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
+	"github.com/chrislusf/seaweedfs/weed/storage/idx"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func getActualSize(size uint32, version Version) int64 {
-	return NeedleEntrySize + NeedleBodyLength(size, version)
-}
-
-func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) error {
+func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uint64, e error) {
 	var indexSize int64
-	var e error
 	if indexSize, e = verifyIndexFileIntegrity(indexFile); e != nil {
-		return fmt.Errorf("verifyIndexFileIntegrity %s failed: %v", indexFile.Name(), e)
+		return 0, fmt.Errorf("verifyIndexFileIntegrity %s failed: %v", indexFile.Name(), e)
 	}
 	if indexSize == 0 {
-		return nil
+		return 0, nil
 	}
 	var lastIdxEntry []byte
-	if lastIdxEntry, e = readIndexEntryAtOffset(indexFile, indexSize-NeedleEntrySize); e != nil {
-		return fmt.Errorf("readLastIndexEntry %s failed: %v", indexFile.Name(), e)
+	if lastIdxEntry, e = readIndexEntryAtOffset(indexFile, indexSize-NeedleMapEntrySize); e != nil {
+		return 0, fmt.Errorf("readLastIndexEntry %s failed: %v", indexFile.Name(), e)
 	}
-	key, offset, size := IdxFileEntry(lastIdxEntry)
-	if offset == 0 || size == TombstoneFileSize {
-		return nil
+	key, offset, size := idx.IdxFileEntry(lastIdxEntry)
+	if offset.IsZero() {
+		return 0, nil
 	}
-	if e = verifyNeedleIntegrity(v.dataFile, v.Version(), int64(offset)*NeedlePaddingSize, key, size); e != nil {
-		return fmt.Errorf("verifyNeedleIntegrity %s failed: %v", indexFile.Name(), e)
+	if size == TombstoneFileSize {
+		size = 0
 	}
-
-	return nil
+	if lastAppendAtNs, e = verifyNeedleIntegrity(v.DataBackend, v.Version(), offset.ToAcutalOffset(), key, size); e != nil {
+		return lastAppendAtNs, fmt.Errorf("verifyNeedleIntegrity %s failed: %v", indexFile.Name(), e)
+	}
+	return
 }
 
 func verifyIndexFileIntegrity(indexFile *os.File) (indexSize int64, err error) {
 	if indexSize, err = util.GetFileSize(indexFile); err == nil {
-		if indexSize%NeedleEntrySize != 0 {
+		if indexSize%NeedleMapEntrySize != 0 {
 			err = fmt.Errorf("index file's size is %d bytes, maybe corrupted", indexSize)
 		}
 	}
@@ -50,19 +50,18 @@ func readIndexEntryAtOffset(indexFile *os.File, offset int64) (bytes []byte, err
 		err = fmt.Errorf("offset %d for index file is invalid", offset)
 		return
 	}
-	bytes = make([]byte, NeedleEntrySize)
+	bytes = make([]byte, NeedleMapEntrySize)
 	_, err = indexFile.ReadAt(bytes, offset)
 	return
 }
 
-func verifyNeedleIntegrity(datFile *os.File, v Version, offset int64, key NeedleId, size uint32) error {
-	n := new(Needle)
-	err := n.ReadData(datFile, offset, size, v)
-	if err != nil {
-		return err
+func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version, offset int64, key NeedleId, size uint32) (lastAppendAtNs uint64, err error) {
+	n := new(needle.Needle)
+	if err = n.ReadData(datFile, offset, size, v); err != nil {
+		return n.AppendAtNs, fmt.Errorf("read data [%d,%d) : %v", offset, offset+int64(size), err)
 	}
 	if n.Id != key {
-		return fmt.Errorf("index key %#x does not match needle's Id %#x", key, n.Id)
+		return n.AppendAtNs, fmt.Errorf("index key %#x does not match needle's Id %#x", key, n.Id)
 	}
-	return nil
+	return n.AppendAtNs, err
 }

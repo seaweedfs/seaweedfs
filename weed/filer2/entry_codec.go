@@ -1,18 +1,21 @@
 package filer2
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"time"
 
-	"fmt"
+	"github.com/golang/protobuf/proto"
+
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/gogo/protobuf/proto"
 )
 
 func (entry *Entry) EncodeAttributesAndChunks() ([]byte, error) {
 	message := &filer_pb.Entry{
 		Attributes: EntryAttributeToPb(entry),
 		Chunks:     entry.Chunks,
+		Extended:   entry.Extended,
 	}
 	return proto.Marshal(message)
 }
@@ -26,6 +29,8 @@ func (entry *Entry) DecodeAttributesAndChunks(blob []byte) error {
 	}
 
 	entry.Attr = PbToEntryAttribute(message.Attributes)
+
+	entry.Extended = message.Extended
 
 	entry.Chunks = message.Chunks
 
@@ -47,6 +52,7 @@ func EntryAttributeToPb(entry *Entry) *filer_pb.FuseAttributes {
 		UserName:      entry.Attr.UserName,
 		GroupName:     entry.Attr.GroupNames,
 		SymlinkTarget: entry.Attr.SymlinkTarget,
+		Md5:           entry.Attr.Md5,
 	}
 }
 
@@ -66,6 +72,7 @@ func PbToEntryAttribute(attr *filer_pb.FuseAttributes) Attr {
 	t.UserName = attr.UserName
 	t.GroupNames = attr.GroupName
 	t.SymlinkTarget = attr.SymlinkTarget
+	t.Md5 = attr.Md5
 
 	return t
 }
@@ -84,10 +91,32 @@ func EqualEntry(a, b *Entry) bool {
 		return false
 	}
 
+	if !eq(a.Extended, b.Extended) {
+		return false
+	}
+
+	if !bytes.Equal(a.Md5, b.Md5) {
+		return false
+	}
+
 	for i := 0; i < len(a.Chunks); i++ {
 		if !proto.Equal(a.Chunks[i], b.Chunks[i]) {
 			return false
 		}
 	}
+	return true
+}
+
+func eq(a, b map[string][]byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for k, v := range a {
+		if w, ok := b[k]; !ok || !bytes.Equal(v, w) {
+			return false
+		}
+	}
+
 	return true
 }

@@ -1,8 +1,9 @@
 package master_ui
 
 import (
-	"path/filepath"
 	"strings"
+
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type Breadcrumb struct {
@@ -14,10 +15,14 @@ func ToBreadcrumb(fullpath string) (crumbs []Breadcrumb) {
 	parts := strings.Split(fullpath, "/")
 
 	for i := 0; i < len(parts); i++ {
-		crumbs = append(crumbs, Breadcrumb{
-			Name: parts[i] + "/",
-			Link: "/" + filepath.Join(parts[0:i+1]...),
-		})
+		crumb := Breadcrumb{
+			Name: parts[i] + " /",
+			Link: "/" + util.Join(parts[0:i+1]...),
+		}
+		if !strings.HasSuffix(crumb.Link, "/") {
+			crumb.Link += "/"
+		}
+		crumbs = append(crumbs, crumb)
 	}
 
 	return

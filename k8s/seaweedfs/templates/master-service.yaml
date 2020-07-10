@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "seaweedfs.name" . }}-master
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ template "seaweedfs.name" . }}
+    component: master
+  annotations:
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"    
+spec:
+  clusterIP: None
+  ports:
+  - name: "swfs-master"
+    port: {{ .Values.master.port }}
+    targetPort: {{ .Values.master.port }}
+    protocol: TCP
+  - name: "swfs-master-grpc"
+    port: {{ .Values.master.grpcPort }}
+    targetPort: {{ .Values.master.grpcPort }}
+    protocol: TCP
+  selector:
+    app: {{ template "seaweedfs.name" . }}
+    component: master

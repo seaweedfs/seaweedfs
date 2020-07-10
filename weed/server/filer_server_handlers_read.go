@@ -1,34 +1,47 @@
 package weed_server
 
 import (
+	"bytes"
+	"context"
 	"io"
 	"mime"
-	"mime/multipart"
 	"net/http"
-	"net/url"
-	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/images"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
+
 	path := r.URL.Path
-	if strings.HasSuffix(path, "/") && len(path) > 1 {
+	isForDirectory := strings.HasSuffix(path, "/")
+	if isForDirectory && len(path) > 1 {
 		path = path[:len(path)-1]
 	}
 
-	entry, err := fs.filer.FindEntry(filer2.FullPath(path))
+	entry, err := fs.filer.FindEntry(context.Background(), util.FullPath(path))
 	if err != nil {
 		if path == "/" {
 			fs.listDirectoryHandler(w, r)
 			return
 		}
-		glog.V(1).Infof("Not found %s: %v", path, err)
-		w.WriteHeader(http.StatusNotFound)
+		if err == filer_pb.ErrNotFound {
+			glog.V(1).Infof("Not found %s: %v", path, err)
+			stats.FilerRequestCounter.WithLabelValues("read.notfound").Inc()
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			glog.V(0).Infof("Internal %s: %v", path, err)
+			stats.FilerRequestCounter.WithLabelValues("read.internalerror").Inc()
+			w.WriteHeader(http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -41,212 +54,81 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
+	if isForDirectory {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
 	if len(entry.Chunks) == 0 {
 		glog.V(1).Infof("no file chunks for %s, attr=%+v", path, entry.Attr)
+		stats.FilerRequestCounter.WithLabelValues("read.nocontent").Inc()
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
 	w.Header().Set("Accept-Ranges", "bytes")
-	if r.Method == "HEAD" {
-		w.Header().Set("Content-Length", strconv.FormatInt(int64(filer2.TotalSize(entry.Chunks)), 10))
-		w.Header().Set("Last-Modified", entry.Attr.Mtime.Format(http.TimeFormat))
-		return
-	}
+	w.Header().Set("Last-Modified", entry.Attr.Mtime.Format(http.TimeFormat))
 
-	if len(entry.Chunks) == 1 {
-		fs.handleSingleChunk(w, r, entry)
-		return
-	}
-
-	fs.handleMultipleChunks(w, r, entry)
-
-}
-
-func (fs *FilerServer) handleSingleChunk(w http.ResponseWriter, r *http.Request, entry *filer2.Entry) {
-
-	fileId := entry.Chunks[0].FileId
-
-	urlString, err := fs.filer.MasterClient.LookupFileId(fileId)
-	if err != nil {
-		glog.V(1).Infof("operation LookupFileId %s failed, err: %v", fileId, err)
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	if fs.option.RedirectOnRead {
-		http.Redirect(w, r, urlString, http.StatusFound)
-		return
-	}
-
-	u, _ := url.Parse(urlString)
-	q := u.Query()
-	for key, values := range r.URL.Query() {
-		for _, value := range values {
-			q.Add(key, value)
-		}
-	}
-	u.RawQuery = q.Encode()
-	request := &http.Request{
-		Method:        r.Method,
-		URL:           u,
-		Proto:         r.Proto,
-		ProtoMajor:    r.ProtoMajor,
-		ProtoMinor:    r.ProtoMinor,
-		Header:        r.Header,
-		Body:          r.Body,
-		Host:          r.Host,
-		ContentLength: r.ContentLength,
-	}
-	glog.V(3).Infoln("retrieving from", u)
-	resp, do_err := util.Do(request)
-	if do_err != nil {
-		glog.V(0).Infoln("failing to connect to volume server", do_err.Error())
-		writeJsonError(w, r, http.StatusInternalServerError, do_err)
-		return
-	}
-	defer resp.Body.Close()
-	for k, v := range resp.Header {
-		w.Header()[k] = v
-	}
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-}
-
-func (fs *FilerServer) handleMultipleChunks(w http.ResponseWriter, r *http.Request, entry *filer2.Entry) {
-
-	mimeType := entry.Mime
+	// mime type
+	mimeType := entry.Attr.Mime
 	if mimeType == "" {
-		if ext := path.Ext(entry.Name()); ext != "" {
+		if ext := filepath.Ext(entry.Name()); ext != "" {
 			mimeType = mime.TypeByExtension(ext)
 		}
 	}
 	if mimeType != "" {
 		w.Header().Set("Content-Type", mimeType)
 	}
-	setEtag(w, filer2.ETag(entry.Chunks))
+
+	// if modified since
+	if !entry.Attr.Mtime.IsZero() {
+		w.Header().Set("Last-Modified", entry.Attr.Mtime.UTC().Format(http.TimeFormat))
+		if r.Header.Get("If-Modified-Since") != "" {
+			if t, parseError := time.Parse(http.TimeFormat, r.Header.Get("If-Modified-Since")); parseError == nil {
+				if t.After(entry.Attr.Mtime) {
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
+			}
+		}
+	}
+
+	// set etag
+	etag := filer2.ETagEntry(entry)
+	if inm := r.Header.Get("If-None-Match"); inm == "\""+etag+"\"" {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	setEtag(w, etag)
+
+	if r.Method == "HEAD" {
+		w.Header().Set("Content-Length", strconv.FormatInt(int64(filer2.TotalSize(entry.Chunks)), 10))
+		return
+	}
+
+	filename := entry.Name()
+	adjustHeadersAfterHEAD(w, r, filename)
 
 	totalSize := int64(filer2.TotalSize(entry.Chunks))
 
-	rangeReq := r.Header.Get("Range")
-
-	if rangeReq == "" {
-		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
-		if err := fs.writeContent(w, entry, 0, int(totalSize)); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		return
-	}
-
-	//the rest is dealing with partial content request
-	//mostly copy from src/pkg/net/http/fs.go
-	ranges, err := parseRange(rangeReq, totalSize)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusRequestedRangeNotSatisfiable)
-		return
-	}
-	if sumRangesSize(ranges) > totalSize {
-		// The total number of bytes in all the ranges
-		// is larger than the size of the file by
-		// itself, so this is probably an attack, or a
-		// dumb client.  Ignore the range request.
-		return
-	}
-	if len(ranges) == 0 {
-		return
-	}
-	if len(ranges) == 1 {
-		// RFC 2616, Section 14.16:
-		// "When an HTTP message includes the content of a single
-		// range (for example, a response to a request for a
-		// single range, or to a request for a set of ranges
-		// that overlap without any holes), this content is
-		// transmitted with a Content-Range header, and a
-		// Content-Length header showing the number of bytes
-		// actually transferred.
-		// ...
-		// A response to a request for a single range MUST NOT
-		// be sent using the multipart/byteranges media type."
-		ra := ranges[0]
-		w.Header().Set("Content-Length", strconv.FormatInt(ra.length, 10))
-		w.Header().Set("Content-Range", ra.contentRange(totalSize))
-		w.WriteHeader(http.StatusPartialContent)
-
-		err = fs.writeContent(w, entry, ra.start, int(ra.length))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		return
-	}
-
-	// process multiple ranges
-	for _, ra := range ranges {
-		if ra.start > totalSize {
-			http.Error(w, "Out of Range", http.StatusRequestedRangeNotSatisfiable)
-			return
-		}
-	}
-	sendSize := rangesMIMESize(ranges, mimeType, totalSize)
-	pr, pw := io.Pipe()
-	mw := multipart.NewWriter(pw)
-	w.Header().Set("Content-Type", "multipart/byteranges; boundary="+mw.Boundary())
-	sendContent := pr
-	defer pr.Close() // cause writing goroutine to fail and exit if CopyN doesn't finish.
-	go func() {
-		for _, ra := range ranges {
-			part, e := mw.CreatePart(ra.mimeHeader(mimeType, totalSize))
-			if e != nil {
-				pw.CloseWithError(e)
+	if rangeReq := r.Header.Get("Range"); rangeReq == "" {
+		ext := filepath.Ext(filename)
+		width, height, mode, shouldResize := shouldResizeImages(ext, r)
+		if shouldResize {
+			data, err := filer2.ReadAll(fs.filer.MasterClient, entry.Chunks)
+			if err != nil {
+				glog.Errorf("failed to read %s: %v", path, err)
+				w.WriteHeader(http.StatusNotModified)
 				return
 			}
-			if e = fs.writeContent(part, entry, ra.start, int(ra.length)); e != nil {
-				pw.CloseWithError(e)
-				return
-			}
-		}
-		mw.Close()
-		pw.Close()
-	}()
-	if w.Header().Get("Content-Encoding") == "" {
-		w.Header().Set("Content-Length", strconv.FormatInt(sendSize, 10))
-	}
-	w.WriteHeader(http.StatusPartialContent)
-	if _, err := io.CopyN(w, sendContent, sendSize); err != nil {
-		http.Error(w, "Internal Error", http.StatusInternalServerError)
-		return
-	}
-
-}
-
-func (fs *FilerServer) writeContent(w io.Writer, entry *filer2.Entry, offset int64, size int) error {
-
-	chunkViews := filer2.ViewFromChunks(entry.Chunks, offset, size)
-
-	fileId2Url := make(map[string]string)
-
-	for _, chunkView := range chunkViews {
-
-		urlString, err := fs.filer.MasterClient.LookupFileId(chunkView.FileId)
-		if err != nil {
-			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
-			return err
-		}
-		fileId2Url[chunkView.FileId] = urlString
-	}
-
-	for _, chunkView := range chunkViews {
-		urlString := fileId2Url[chunkView.FileId]
-		_, err := util.ReadUrlAsStream(urlString, chunkView.Offset, int(chunkView.Size), func(data []byte) {
-			w.Write(data)
-		})
-		if err != nil {
-			glog.V(1).Infof("read %s failed, err: %v", chunkView.FileId, err)
-			return err
+			rs, _, _ := images.Resized(ext, bytes.NewReader(data), width, height, mode)
+			io.Copy(w, rs)
+			return
 		}
 	}
 
-	return nil
+	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
+		return filer2.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size)
+	})
 
 }
