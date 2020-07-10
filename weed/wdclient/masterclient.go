@@ -45,7 +45,7 @@ func (mc *MasterClient) WaitUntilConnected() {
 }
 
 func (mc *MasterClient) KeepConnectedToMaster() {
-	glog.V(1).Infof("%s bootstraps with masters %v", mc.clientType, mc.masters)
+	glog.V(1).Infof("%s masterClient bootstraps with masters %v", mc.clientType, mc.masters)
 	for {
 		mc.tryAllMasters()
 		time.Sleep(time.Second)
@@ -67,27 +67,27 @@ func (mc *MasterClient) tryAllMasters() {
 }
 
 func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader string) {
-	glog.V(1).Infof("%s Connecting to master %v", mc.clientType, master)
+	glog.V(1).Infof("%s masterClient Connecting to master %v", mc.clientType, master)
 	gprcErr := pb.WithMasterClient(master, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
 
 		stream, err := client.KeepConnected(context.Background())
 		if err != nil {
-			glog.V(0).Infof("%s failed to keep connected to %s: %v", mc.clientType, master, err)
+			glog.V(0).Infof("%s masterClient failed to keep connected to %s: %v", mc.clientType, master, err)
 			return err
 		}
 
 		if err = stream.Send(&master_pb.KeepConnectedRequest{Name: mc.clientType, GrpcPort: mc.grpcPort}); err != nil {
-			glog.V(0).Infof("%s failed to send to %s: %v", mc.clientType, master, err)
+			glog.V(0).Infof("%s masterClient failed to send to %s: %v", mc.clientType, master, err)
 			return err
 		}
 
-		glog.V(1).Infof("%s Connected to %v", mc.clientType, master)
+		glog.V(1).Infof("%s masterClient Connected to %v", mc.clientType, master)
 		mc.currentMaster = master
 
 		for {
 			volumeLocation, err := stream.Recv()
 			if err != nil {
-				glog.V(0).Infof("%s failed to receive from %s: %v", mc.clientType, master, err)
+				glog.V(0).Infof("%s masterClient failed to receive from %s: %v", mc.clientType, master, err)
 				return err
 			}
 
@@ -104,18 +104,18 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 				PublicUrl: volumeLocation.PublicUrl,
 			}
 			for _, newVid := range volumeLocation.NewVids {
-				glog.V(1).Infof("%s: %s adds volume %d", mc.clientType, loc.Url, newVid)
+				glog.V(1).Infof("%s: %s masterClient adds volume %d", mc.clientType, loc.Url, newVid)
 				mc.addLocation(newVid, loc)
 			}
 			for _, deletedVid := range volumeLocation.DeletedVids {
-				glog.V(1).Infof("%s: %s removes volume %d", mc.clientType, loc.Url, deletedVid)
+				glog.V(1).Infof("%s: %s masterClient removes volume %d", mc.clientType, loc.Url, deletedVid)
 				mc.deleteLocation(deletedVid, loc)
 			}
 		}
 
 	})
 	if gprcErr != nil {
-		glog.V(0).Infof("%s failed to connect with master %v: %v", mc.clientType, master, gprcErr)
+		glog.V(0).Infof("%s masterClient failed to connect with master %v: %v", mc.clientType, master, gprcErr)
 	}
 	return
 }
