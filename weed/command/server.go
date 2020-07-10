@@ -58,9 +58,9 @@ var (
 	volumeMinFreeSpacePercent = cmdServer.Flag.String("volume.minFreeSpacePercent", "1", "minimum free disk space (default to 1%). Low disk space will mark all volumes as ReadOnly.")
 
 	// pulseSeconds              = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
-	isStartingFiler           = cmdServer.Flag.Bool("filer", false, "whether to start filer")
-	isStartingS3              = cmdServer.Flag.Bool("s3", false, "whether to start S3 gateway")
-	isStartingMsgBroker       = cmdServer.Flag.Bool("msgBroker", false, "whether to start message broker")
+	isStartingFiler     = cmdServer.Flag.Bool("filer", false, "whether to start filer")
+	isStartingS3        = cmdServer.Flag.Bool("s3", false, "whether to start S3 gateway")
+	isStartingMsgBroker = cmdServer.Flag.Bool("msgBroker", false, "whether to start message broker")
 
 	serverWhiteList []string
 
@@ -93,6 +93,7 @@ func init() {
 	serverOptions.v.port = cmdServer.Flag.Int("volume.port", 8080, "volume server http listen port")
 	serverOptions.v.publicPort = cmdServer.Flag.Int("volume.port.public", 0, "volume server public port")
 	serverOptions.v.indexType = cmdServer.Flag.String("volume.index", "memory", "Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance.")
+	serverOptions.v.fixJpgOrientation = cmdServer.Flag.Bool("volume.images.fix.orientation", false, "Adjust jpg orientation when uploading.")
 	serverOptions.v.readRedirect = cmdServer.Flag.Bool("volume.read.redirect", true, "Redirect moved or non-local volumes.")
 	serverOptions.v.compactionMBPerSecond = cmdServer.Flag.Int("volume.compactionMBps", 0, "limit compaction speed in mega bytes per second")
 	serverOptions.v.fileSizeLimitMB = cmdServer.Flag.Int("volume.fileSizeLimitMB", 256, "limit file size to avoid out of memory")

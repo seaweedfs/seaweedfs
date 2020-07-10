@@ -47,6 +47,7 @@ type VolumeServerOptions struct {
 	rack                  *string
 	whiteList             []string
 	indexType             *string
+	fixJpgOrientation     *bool
 	readRedirect          *bool
 	cpuProfile            *string
 	memProfile            *string
@@ -70,6 +71,7 @@ func init() {
 	v.dataCenter = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	v.rack = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
 	v.indexType = cmdVolume.Flag.String("index", "memory", "Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance.")
+	v.fixJpgOrientation = cmdVolume.Flag.Bool("images.fix.orientation", false, "Adjust jpg orientation when uploading.")
 	v.readRedirect = cmdVolume.Flag.Bool("read.redirect", true, "Redirect moved or non-local volumes.")
 	v.cpuProfile = cmdVolume.Flag.String("cpuprofile", "", "cpu profile output file")
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
@@ -200,7 +202,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		volumeNeedleMapKind,
 		strings.Split(masters, ","), 5, *v.dataCenter, *v.rack,
 		v.whiteList,
-		*v.readRedirect,
+		*v.fixJpgOrientation, *v.readRedirect,
 		*v.compactionMBPerSecond,
 		*v.fileSizeLimitMB,
 	)
