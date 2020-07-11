@@ -6,7 +6,7 @@ import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.mime.HttpMultipartMode;
 import org.apache.http.entity.mime.MultipartEntityBuilder;
-import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.impl.client.HttpClientBuilder;
 
 import java.io.ByteArrayInputStream;
 import java.io.Closeable;
@@ -79,7 +79,7 @@ public class SeaweedWrite {
                                           final long bytesOffset, final long bytesLength,
                                           byte[] cipherKey) throws IOException {
 
-        HttpClient client = new DefaultHttpClient();
+        HttpClient client = HttpClientBuilder.create().build();
 
         InputStream inputStream = null;
         if (cipherKey == null || cipherKey.length == 0) {
