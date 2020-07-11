@@ -53,7 +53,7 @@ var _ = fs.FS(&WFS{})
 var _ = fs.FSStatfser(&WFS{})
 
 type WFS struct {
-	option                    *Option
+	option *Option
 
 	// contains all open handles, protected by handlesLock
 	handlesLock sync.Mutex
@@ -76,15 +76,15 @@ type statsCache struct {
 
 func NewSeaweedFileSystem(option *Option) *WFS {
 	wfs := &WFS{
-		option:                    option,
-		handles:                   make(map[uint64]*FileHandle),
+		option:  option,
+		handles: make(map[uint64]*FileHandle),
 		bufPool: sync.Pool{
 			New: func() interface{} {
 				return make([]byte, option.ChunkSizeLimit)
 			},
 		},
 	}
-	cacheUniqueId := util.Md5([]byte(option.FilerGrpcAddress))[0:4]
+	cacheUniqueId := util.Md5([]byte(option.FilerGrpcAddress + option.FilerMountRootPath + util.Version()))[0:4]
 	cacheDir := path.Join(option.CacheDir, cacheUniqueId)
 	if option.CacheSizeMB > 0 {
 		os.MkdirAll(cacheDir, 0755)
