@@ -3,10 +3,10 @@ package seaweedfs.client;
 import com.google.protobuf.ByteString;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.mime.HttpMultipartMode;
 import org.apache.http.entity.mime.MultipartEntityBuilder;
-import org.apache.http.impl.client.HttpClientBuilder;
 
 import java.io.ByteArrayInputStream;
 import java.io.Closeable;
@@ -16,7 +16,7 @@ import java.security.SecureRandom;
 
 public class SeaweedWrite {
 
-    private static SecureRandom random = new SecureRandom();
+    private static final SecureRandom random = new SecureRandom();
 
     public static void writeData(FilerProto.Entry.Builder entry,
                                  final String replication,
@@ -63,7 +63,7 @@ public class SeaweedWrite {
 
     public static void writeMeta(final FilerGrpcClient filerGrpcClient,
                                  final String parentDirectory, final FilerProto.Entry.Builder entry) {
-        synchronized (entry){
+        synchronized (entry) {
             filerGrpcClient.getBlockingStub().createEntry(
                     FilerProto.CreateEntryRequest.newBuilder()
                             .setDirectory(parentDirectory)
@@ -78,8 +78,6 @@ public class SeaweedWrite {
                                           final byte[] bytes,
                                           final long bytesOffset, final long bytesLength,
                                           byte[] cipherKey) throws IOException {
-
-        HttpClient client = HttpClientBuilder.create().build();
 
         InputStream inputStream = null;
         if (cipherKey == null || cipherKey.length == 0) {
@@ -103,8 +101,9 @@ public class SeaweedWrite {
                 .addBinaryBody("upload", inputStream)
                 .build());
 
+        CloseableHttpResponse response = SeaweedUtil.getClosableHttpClient().execute(post);
+
         try {
-            HttpResponse response = client.execute(post);
 
             String etag = response.getLastHeader("ETag").getValue();
 
@@ -114,10 +113,7 @@ public class SeaweedWrite {
 
             return etag;
         } finally {
-            if (client instanceof Closeable) {
-                Closeable t = (Closeable) client;
-                t.close();
-            }
+            response.close();
         }
 
     }

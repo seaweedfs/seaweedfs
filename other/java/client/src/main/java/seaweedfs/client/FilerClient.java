@@ -156,7 +156,7 @@ public class FilerClient {
         List<FilerProto.Entry> results = new ArrayList<FilerProto.Entry>();
         String lastFileName = "";
         for (int limit = Integer.MAX_VALUE; limit > 0; ) {
-            List<FilerProto.Entry> t = listEntries(path, "", lastFileName, 1024);
+            List<FilerProto.Entry> t = listEntries(path, "", lastFileName, 1024, false);
             if (t == null) {
                 break;
             }
@@ -173,11 +173,12 @@ public class FilerClient {
         return results;
     }
 
-    public List<FilerProto.Entry> listEntries(String path, String entryPrefix, String lastEntryName, int limit) {
+    public List<FilerProto.Entry> listEntries(String path, String entryPrefix, String lastEntryName, int limit, boolean includeLastEntry) {
         Iterator<FilerProto.ListEntriesResponse> iter = filerGrpcClient.getBlockingStub().listEntries(FilerProto.ListEntriesRequest.newBuilder()
                 .setDirectory(path)
                 .setPrefix(entryPrefix)
                 .setStartFromFileName(lastEntryName)
+                .setInclusiveStartFrom(includeLastEntry)
                 .setLimit(limit)
                 .build());
         List<FilerProto.Entry> entries = new ArrayList<>();
