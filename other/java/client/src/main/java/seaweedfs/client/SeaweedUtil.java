@@ -1,7 +1,8 @@
 package seaweedfs.client;
 
-import org.apache.http.client.HttpClient;
+import org.apache.http.impl.DefaultConnectionReuseStrategy;
 import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.DefaultConnectionKeepAliveStrategy;
 import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 
@@ -19,6 +20,8 @@ public class SeaweedUtil {
     public static CloseableHttpClient getClosableHttpClient() {
         return HttpClientBuilder.create()
                 .setConnectionManager(cm)
+                .setConnectionReuseStrategy(DefaultConnectionReuseStrategy.INSTANCE)
+                .setKeepAliveStrategy(DefaultConnectionKeepAliveStrategy.INSTANCE)
                 .build();
     }
 }

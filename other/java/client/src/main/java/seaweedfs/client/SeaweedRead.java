@@ -93,8 +93,11 @@ public class SeaweedRead {
 
             data = EntityUtils.toByteArray(entity);
 
+            EntityUtils.consume(entity);
+
         } finally {
             response.close();
+            request.releaseConnection();
         }
 
         if (chunkView.isCompressed) {

@@ -7,6 +7,7 @@ import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.mime.HttpMultipartMode;
 import org.apache.http.entity.mime.MultipartEntityBuilder;
+import org.apache.http.util.EntityUtils;
 
 import java.io.ByteArrayInputStream;
 import java.io.Closeable;
@@ -111,9 +112,12 @@ public class SeaweedWrite {
                 etag = etag.substring(1, etag.length() - 1);
             }
 
+            EntityUtils.consume(response.getEntity());
+
             return etag;
         } finally {
             response.close();
+            post.releaseConnection();
         }
 
     }
