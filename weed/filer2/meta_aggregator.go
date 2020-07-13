@@ -52,7 +52,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, filer strin
 
 	MaxChangeLimit := 100
 
-	if localStore, ok := f.store.actualStore.(FilerLocalStore); ok {
+	if localStore, ok := f.Store.ActualStore.(FilerLocalStore); ok {
 		if self != filer {
 
 			if prevTsNs, err := localStore.ReadOffset(filer); err == nil {
@@ -61,7 +61,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, filer strin
 
 			glog.V(0).Infof("follow filer: %v, lastTsNs=%d", filer, lastTsNs)
 			maybeReplicateMetadataChange = func(event *filer_pb.SubscribeMetadataResponse) {
-				if err := Replay(f.store.actualStore, event); err != nil {
+				if err := Replay(f.Store.ActualStore, event); err != nil {
 					glog.Errorf("failed to reply metadata change from %v: %v", filer, err)
 					return
 				}

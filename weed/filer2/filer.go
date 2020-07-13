@@ -26,7 +26,7 @@ var (
 )
 
 type Filer struct {
-	store               *FilerStoreWrapper
+	Store               *FilerStoreWrapper
 	directoryCache      *ccache.Cache
 	MasterClient        *wdclient.MasterClient
 	fileIdDeletionQueue *util.UnboundedQueue
@@ -70,11 +70,11 @@ func (f *Filer) AggregateFromPeers(self string, filers []string) {
 }
 
 func (f *Filer) SetStore(store FilerStore) {
-	f.store = NewFilerStoreWrapper(store)
+	f.Store = NewFilerStoreWrapper(store)
 }
 
 func (f *Filer) GetStore() (store FilerStore) {
-	return f.store
+	return f.Store
 }
 
 func (f *Filer) DisableDirectoryCache() {
@@ -90,15 +90,15 @@ func (fs *Filer) KeepConnectedToMaster() {
 }
 
 func (f *Filer) BeginTransaction(ctx context.Context) (context.Context, error) {
-	return f.store.BeginTransaction(ctx)
+	return f.Store.BeginTransaction(ctx)
 }
 
 func (f *Filer) CommitTransaction(ctx context.Context) error {
-	return f.store.CommitTransaction(ctx)
+	return f.Store.CommitTransaction(ctx)
 }
 
 func (f *Filer) RollbackTransaction(ctx context.Context) error {
-	return f.store.RollbackTransaction(ctx)
+	return f.Store.RollbackTransaction(ctx)
 }
 
 func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFromOtherCluster bool) error {
@@ -150,7 +150,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 			}
 
 			glog.V(2).Infof("create directory: %s %v", dirPath, dirEntry.Mode)
-			mkdirErr := f.store.InsertEntry(ctx, dirEntry)
+			mkdirErr := f.Store.InsertEntry(ctx, dirEntry)
 			if mkdirErr != nil {
 				if _, err := f.FindEntry(ctx, util.FullPath(dirPath)); err == filer_pb.ErrNotFound {
 					glog.V(3).Infof("mkdir %s: %v", dirPath, mkdirErr)
@@ -193,7 +193,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 
 	glog.V(4).Infof("CreateEntry %s: old entry: %v exclusive:%v", entry.FullPath, oldEntry, o_excl)
 	if oldEntry == nil {
-		if err := f.store.InsertEntry(ctx, entry); err != nil {
+		if err := f.Store.InsertEntry(ctx, entry); err != nil {
 			glog.Errorf("insert entry %s: %v", entry.FullPath, err)
 			return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
 		}
@@ -229,7 +229,7 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err er
 			return fmt.Errorf("existing %s is a file", entry.FullPath)
 		}
 	}
-	return f.store.UpdateEntry(ctx, entry)
+	return f.Store.UpdateEntry(ctx, entry)
 }
 
 func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, err error) {
@@ -248,10 +248,10 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 			},
 		}, nil
 	}
-	entry, err = f.store.FindEntry(ctx, p)
+	entry, err = f.Store.FindEntry(ctx, p)
 	if entry != nil && entry.TtlSec > 0 {
 		if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
-			f.store.DeleteEntry(ctx, p.Child(entry.Name()))
+			f.Store.DeleteEntry(ctx, p.Child(entry.Name()))
 			return nil, filer_pb.ErrNotFound
 		}
 	}
@@ -277,7 +277,7 @@ func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, start
 }
 
 func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int) (entries []*Entry, expiredCount int, lastFileName string, err error) {
-	listedEntries, listErr := f.store.ListDirectoryEntries(ctx, p, startFileName, inclusive, limit)
+	listedEntries, listErr := f.Store.ListDirectoryEntries(ctx, p, startFileName, inclusive, limit)
 	if listErr != nil {
 		return listedEntries, expiredCount, "", listErr
 	}
@@ -285,7 +285,7 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 		lastFileName = entry.Name()
 		if entry.TtlSec > 0 {
 			if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
-				f.store.DeleteEntry(ctx, p.Child(entry.Name()))
+				f.Store.DeleteEntry(ctx, p.Child(entry.Name()))
 				expiredCount++
 				continue
 			}
@@ -336,5 +336,5 @@ func (f *Filer) cacheSetDirectory(dirpath string, dirEntry *Entry, level int) {
 
 func (f *Filer) Shutdown() {
 	f.LocalMetaLogBuffer.Shutdown()
-	f.store.Shutdown()
+	f.Store.Shutdown()
 }
