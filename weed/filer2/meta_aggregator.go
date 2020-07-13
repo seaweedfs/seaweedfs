@@ -37,13 +37,42 @@ func NewMetaAggregator(filers []string, grpcDialOption grpc.DialOption) *MetaAgg
 	return t
 }
 
-func (ma *MetaAggregator) StartLoopSubscribe(lastTsNs int64) {
+func (ma *MetaAggregator) StartLoopSubscribe(f *Filer, self string, lastTsNs int64) {
 	for _, filer := range ma.filers {
-		go ma.subscribeToOneFiler(filer, lastTsNs)
+		go ma.subscribeToOneFiler(f, self, filer, lastTsNs)
 	}
 }
 
-func (ma *MetaAggregator) subscribeToOneFiler(filer string, lastTsNs int64) {
+func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, filer string, self string, lastTsNs int64) {
+
+	var maybeReplicateMetadataChange func(*filer_pb.SubscribeMetadataResponse)
+	lastPersistTime := time.Now()
+	changesSinceLastPersist := 0
+
+	MaxChangeLimit := 100
+
+	if localStore, ok := f.store.actualStore.(FilerLocalStore); ok {
+		if prevTsNs, err := localStore.ReadOffset(filer); err == nil {
+			lastTsNs = prevTsNs
+		}
+		if self != filer {
+			maybeReplicateMetadataChange = func(event *filer_pb.SubscribeMetadataResponse) {
+				if err := Replay(f.store.actualStore, event); err != nil {
+					glog.Errorf("failed to reply metadata change from %v: %v", filer, err)
+					return
+				}
+				changesSinceLastPersist++
+				if changesSinceLastPersist >= MaxChangeLimit || lastPersistTime.Add(time.Minute).Before(time.Now()) {
+					if err := localStore.UpdateOffset(filer, event.TsNs); err == nil {
+						lastPersistTime = time.Now()
+						changesSinceLastPersist = 0
+					} else {
+						glog.V(0).Infof("failed to update offset for %v: %v", filer, err)
+					}
+				}
+			}
+		}
+	}
 
 	processEventFn := func(event *filer_pb.SubscribeMetadataResponse) error {
 		data, err := proto.Marshal(event)
@@ -54,6 +83,9 @@ func (ma *MetaAggregator) subscribeToOneFiler(filer string, lastTsNs int64) {
 		dir := event.Directory
 		// println("received meta change", dir, "size", len(data))
 		ma.MetaLogBuffer.AddToBuffer([]byte(dir), data)
+		if maybeReplicateMetadataChange != nil {
+			maybeReplicateMetadataChange(event)
+		}
 		return nil
 	}
 

@@ -68,7 +68,7 @@ func (f *Filer) AggregateFromPeers(self string, filers []string) {
 		filers = append(filers, self)
 	}
 	f.MetaAggregator = NewMetaAggregator(filers, f.GrpcDialOption)
-	f.MetaAggregator.StartLoopSubscribe(time.Now().UnixNano())
+	f.MetaAggregator.StartLoopSubscribe(f, self, time.Now().UnixNano())
 
 }
 
