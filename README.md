@@ -123,7 +123,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 * [Kubernetes CSI Driver][SeaweedFsCsiDriver] A Container Storage Interface (CSI) Driver. [![Docker Pulls](https://img.shields.io/docker/pulls/chrislusf/seaweedfs-csi-driver.svg?maxAge=604800)](https://hub.docker.com/r/chrislusf/seaweedfs-csi-driver/)
 
 [Filer]: https://github.com/chrislusf/seaweedfs/wiki/Directories-and-Files
-[Mount]: https://github.com/chrislusf/seaweedfs/wiki/Mount
+[Mount]: https://github.com/chrislusf/seaweedfs/wiki/FUSE-Mount
 [AmazonS3API]: https://github.com/chrislusf/seaweedfs/wiki/Amazon-S3-API
 [BackupToCloud]: https://github.com/chrislusf/seaweedfs/wiki/Backup-to-Cloud
 [Hadoop]: https://github.com/chrislusf/seaweedfs/wiki/Hadoop-Compatible-File-System
