@@ -74,9 +74,9 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 			if sub.IsDirectory() {
 				dirChunks, err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, false)
 				f.cacheDelDirectory(string(sub.FullPath))
-				f.NotifyUpdateEvent(ctx, sub, nil, shouldDeleteChunks, isFromOtherCluster)
 				chunks = append(chunks, dirChunks...)
 			} else {
+				f.NotifyUpdateEvent(ctx, sub, nil, shouldDeleteChunks, isFromOtherCluster)
 				chunks = append(chunks, sub.Chunks...)
 			}
 			if err != nil && !ignoreRecursiveError {
@@ -95,6 +95,8 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 		return nil, fmt.Errorf("filer store delete: %v", storeDeletionErr)
 	}
 
+	f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks, isFromOtherCluster)
+
 	return chunks, nil
 }
 
@@ -107,8 +109,9 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 	}
 	if entry.IsDirectory() {
 		f.cacheDelDirectory(string(entry.FullPath))
+	} else {
+		f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks, isFromOtherCluster)
 	}
-	f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks, isFromOtherCluster)
 
 	return nil
 }
