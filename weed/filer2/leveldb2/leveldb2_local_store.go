@@ -7,10 +7,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func init() {
-	filer2.Stores = append(filer2.Stores, &LevelDB2Store{})
-}
-
 var (
 	_ = filer2.FilerLocalStore(&LevelDB2Store{})
 )

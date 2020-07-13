@@ -61,14 +61,11 @@ func NewFiler(masters []string, grpcDialOption grpc.DialOption,
 func (f *Filer) AggregateFromPeers(self string, filers []string) {
 
 	// set peers
-	if strings.HasPrefix(f.GetStore().GetName(), "leveldb") && len(filers) > 0 {
-		glog.Fatalf("filers using separate leveldb stores should not configure %d peers %+v", len(filers), filers)
-	}
 	if len(filers) == 0 {
 		filers = append(filers, self)
 	}
 	f.MetaAggregator = NewMetaAggregator(filers, f.GrpcDialOption)
-	f.MetaAggregator.StartLoopSubscribe(f, self, time.Now().UnixNano())
+	f.MetaAggregator.StartLoopSubscribe(f, self)
 
 }
 
