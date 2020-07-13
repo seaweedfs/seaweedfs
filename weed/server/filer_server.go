@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -60,7 +59,6 @@ type FilerServer struct {
 	option         *FilerOption
 	secret         security.SigningKey
 	filer          *filer2.Filer
-	metaAggregator *filer2.MetaAggregator
 	grpcDialOption grpc.DialOption
 
 	// notifying clients
@@ -121,15 +119,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
 
-	// set peers
-	if strings.HasPrefix(fs.filer.GetStore().GetName(), "leveldb") && len(option.Filers) > 0 {
-		glog.Fatalf("filers using separate leveldb stores should not configure %d peers %+v", len(option.Filers), option.Filers)
-	}
-	if len(option.Filers) == 0 {
-		option.Filers = append(option.Filers, fmt.Sprintf("%s:%d", option.Host, option.Port))
-	}
-	fs.metaAggregator = filer2.NewMetaAggregator(option.Filers, fs.grpcDialOption)
-	fs.metaAggregator.StartLoopSubscribe(time.Now().UnixNano())
+	fs.filer.AggregateFromPeers(fmt.Sprintf("%s:%d", option.Host, option.Port), option.Filers)
 
 	fs.filer.LoadBuckets()
 

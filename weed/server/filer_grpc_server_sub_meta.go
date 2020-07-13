@@ -37,10 +37,10 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		lastReadTime = time.Unix(0, processedTsNs)
 	}
 
-	err = fs.metaAggregator.MetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
-		fs.metaAggregator.ListenersLock.Lock()
-		fs.metaAggregator.ListenersCond.Wait()
-		fs.metaAggregator.ListenersLock.Unlock()
+	err = fs.filer.MetaAggregator.MetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
+		fs.filer.MetaAggregator.ListenersLock.Lock()
+		fs.filer.MetaAggregator.ListenersCond.Wait()
+		fs.filer.MetaAggregator.ListenersLock.Unlock()
 		return true
 	}, eachLogEntryFn)
 

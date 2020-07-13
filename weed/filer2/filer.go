@@ -38,9 +38,11 @@ type Filer struct {
 	LocalMetaLogBuffer  *log_buffer.LogBuffer
 	metaLogCollection   string
 	metaLogReplication  string
+	MetaAggregator      *MetaAggregator
 }
 
-func NewFiler(masters []string, grpcDialOption grpc.DialOption, filerHost string, filerGrpcPort uint32, collection string, replication string, notifyFn func()) *Filer {
+func NewFiler(masters []string, grpcDialOption grpc.DialOption,
+	filerHost string, filerGrpcPort uint32, collection string, replication string, notifyFn func()) *Filer {
 	f := &Filer{
 		directoryCache:      ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
 		MasterClient:        wdclient.NewMasterClient(grpcDialOption, "filer", filerHost, filerGrpcPort, masters),
@@ -54,6 +56,20 @@ func NewFiler(masters []string, grpcDialOption grpc.DialOption, filerHost string
 	go f.loopProcessingDeletion()
 
 	return f
+}
+
+func (f *Filer) AggregateFromPeers(self string, filers []string) {
+
+	// set peers
+	if strings.HasPrefix(f.GetStore().GetName(), "leveldb") && len(filers) > 0 {
+		glog.Fatalf("filers using separate leveldb stores should not configure %d peers %+v", len(filers), filers)
+	}
+	if len(filers) == 0 {
+		filers = append(filers, self)
+	}
+	f.MetaAggregator = NewMetaAggregator(filers, f.GrpcDialOption)
+	f.MetaAggregator.StartLoopSubscribe(time.Now().UnixNano())
+
 }
 
 func (f *Filer) SetStore(store FilerStore) {
