@@ -78,8 +78,13 @@ func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
 		// startTime.Second(), startTime.Nanosecond(),
 	)
 
-	if err := f.appendToFile(targetFile, buf); err != nil {
-		glog.V(0).Infof("log write failed %s: %v", targetFile, err)
+	for {
+		if err := f.appendToFile(targetFile, buf); err != nil {
+			glog.V(1).Infof("log write failed %s: %v", targetFile, err)
+			time.Sleep(737 * time.Millisecond)
+		} else {
+			break
+		}
 	}
 }
 
