@@ -26,13 +26,13 @@ var (
 )
 
 type MasterOptions struct {
-	port               *int
-	ip                 *string
-	ipBind             *string
-	metaFolder         *string
-	peers              *string
-	volumeSizeLimitMB  *uint
-	volumePreallocate  *bool
+	port              *int
+	ip                *string
+	ipBind            *string
+	metaFolder        *string
+	peers             *string
+	volumeSizeLimitMB *uint
+	volumePreallocate *bool
 	// pulseSeconds       *int
 	defaultReplication *string
 	garbageThreshold   *float64
@@ -173,11 +173,11 @@ func checkPeers(masterIp string, masterPort int, peers string) (masterAddress st
 
 func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {
 	return &weed_server.MasterOption{
-		Host:                    *m.ip,
-		Port:                    *m.port,
-		MetaFolder:              *m.metaFolder,
-		VolumeSizeLimitMB:       *m.volumeSizeLimitMB,
-		VolumePreallocate:       *m.volumePreallocate,
+		Host:              *m.ip,
+		Port:              *m.port,
+		MetaFolder:        *m.metaFolder,
+		VolumeSizeLimitMB: *m.volumeSizeLimitMB,
+		VolumePreallocate: *m.volumePreallocate,
 		// PulseSeconds:            *m.pulseSeconds,
 		DefaultReplicaPlacement: *m.defaultReplication,
 		GarbageThreshold:        *m.garbageThreshold,
