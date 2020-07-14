@@ -59,7 +59,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, filer strin
 				lastTsNs = prevTsNs
 			}
 
-			glog.V(0).Infof("follow filer: %v, lastTsNs=%d", filer, lastTsNs)
+			glog.V(0).Infof("follow filer: %v, last %v (%d)", filer, time.Unix(0, lastTsNs), lastTsNs)
 			maybeReplicateMetadataChange = func(event *filer_pb.SubscribeMetadataResponse) {
 				if err := Replay(f.Store.ActualStore, event); err != nil {
 					glog.Errorf("failed to reply metadata change from %v: %v", filer, err)
@@ -98,7 +98,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, filer strin
 	for {
 		err := pb.WithFilerClient(filer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			stream, err := client.SubscribeLocalMetadata(context.Background(), &filer_pb.SubscribeMetadataRequest{
-				ClientName: "filer",
+				ClientName: "filer:"+self,
 				PathPrefix: "/",
 				SinceNs:    lastTsNs,
 			})
