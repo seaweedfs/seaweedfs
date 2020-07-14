@@ -24,8 +24,8 @@ func TestPositioning(t *testing.T) {
 
 	tests := []struct {
 		needleId string
-		offset int64
-		size int
+		offset   int64
+		size     int
 	}{
 		{needleId: "0f0edb92", offset: 31300679656, size: 1167},
 		{needleId: "0ef7d7f8", offset: 11513014944, size: 66044},

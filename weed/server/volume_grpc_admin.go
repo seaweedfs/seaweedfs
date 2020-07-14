@@ -118,7 +118,7 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 	}
 
 	// modify the volume info file
-	if err := vs.store.ConfigureVolume(needle.VolumeId(req.VolumeId), req.Replication); err != nil {
+	if err := vs.store.ConfigureVolume(needle.VolumeId(req.VolumeId), req.Replication, req.Ttl); err != nil {
 		glog.Errorf("volume configure %v: %v", req, err)
 		resp.Error = fmt.Sprintf("volume configure %v: %v", req, err)
 		return resp, nil

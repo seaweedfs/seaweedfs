@@ -15,34 +15,36 @@ import (
 )
 
 func init() {
-	Commands = append(Commands, &commandVolumeConfigureReplication{})
+	Commands = append(Commands, &commandVolumeConfigure{})
 }
 
-type commandVolumeConfigureReplication struct {
+type commandVolumeConfigure struct {
 }
 
-func (c *commandVolumeConfigureReplication) Name() string {
-	return "volume.configure.replication"
+func (c *commandVolumeConfigure) Name() string {
+	return "volume.configure"
 }
 
-func (c *commandVolumeConfigureReplication) Help() string {
-	return `change volume replication value
+func (c *commandVolumeConfigure) Help() string {
+	return `change volume replication or ttl value
 
-	This command changes a volume replication value. It should be followed by volume.fix.replication.
+	This command changes a volume replication or ttl value. It should be followed by volume.fix.replication.
 
 `
 }
 
-func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
+func (c *commandVolumeConfigure) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	if err = commandEnv.confirmIsLocked(); err != nil {
 		return
 	}
 
-	configureReplicationCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	volumeIdInt := configureReplicationCommand.Int("volumeId", 0, "the volume id")
-	replicationString := configureReplicationCommand.String("replication", "", "the intended replication value")
-	if err = configureReplicationCommand.Parse(args); err != nil {
+	configureVolumeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	volumeIdInt := configureVolumeCommand.Int("volumeId", 0, "the volume id")
+	replicationString := configureVolumeCommand.String("replication", "", "the intended replication value")
+	ttlString := configureVolumeCommand.String("ttl", "", "the intended ttl value")
+
+	if err = configureVolumeCommand.Parse(args); err != nil {
 		return nil
 	}
 
@@ -50,11 +52,20 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 		return fmt.Errorf("empty replication value")
 	}
 
+	if *ttlString == "" {
+		return fmt.Errorf("empty ttl value")
+	}
+
 	replicaPlacement, err := super_block.NewReplicaPlacementFromString(*replicationString)
 	if err != nil {
 		return fmt.Errorf("replication format: %v", err)
 	}
 	replicaPlacementInt32 := uint32(replicaPlacement.Byte())
+
+	ttl, err := needle.ReadTTL(*ttlString)
+	if err != nil {
+		return fmt.Errorf("wrong ttl format: %v", err)
+	}
 
 	var resp *master_pb.VolumeListResponse
 	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
@@ -72,7 +83,7 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 	eachDataNode(resp.TopologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
 		loc := newLocation(dc, string(rack), dn)
 		for _, v := range dn.VolumeInfos {
-			if v.Id == uint32(vid) && v.ReplicaPlacement != replicaPlacementInt32 {
+			if v.Id == uint32(vid) && (v.ReplicaPlacement != replicaPlacementInt32 || v.Ttl != ttl.ToUint32()) {
 				allLocations = append(allLocations, loc)
 				continue
 			}
@@ -88,6 +99,7 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 			resp, configureErr := volumeServerClient.VolumeConfigure(context.Background(), &volume_server_pb.VolumeConfigureRequest{
 				VolumeId:    uint32(vid),
 				Replication: replicaPlacement.String(),
+				Ttl:         ttl.String(),
 			})
 			if configureErr != nil {
 				return configureErr

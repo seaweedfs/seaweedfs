@@ -98,7 +98,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, filer strin
 	for {
 		err := pb.WithFilerClient(filer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			stream, err := client.SubscribeLocalMetadata(context.Background(), &filer_pb.SubscribeMetadataRequest{
-				ClientName: "filer:"+self,
+				ClientName: "filer:" + self,
 				PathPrefix: "/",
 				SinceNs:    lastTsNs,
 			})

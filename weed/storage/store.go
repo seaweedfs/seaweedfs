@@ -372,7 +372,7 @@ func (s *Store) DeleteVolume(i needle.VolumeId) error {
 	return fmt.Errorf("volume %d not found on disk", i)
 }
 
-func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
+func (s *Store) ConfigureVolume(i needle.VolumeId, replication, ttl string) error {
 
 	for _, location := range s.Locations {
 		fileInfo, found := location.LocateVolume(i)
@@ -387,6 +387,7 @@ func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
 			return fmt.Errorf("volume %d fail to load vif", i)
 		}
 		volumeInfo.Replication = replication
+		volumeInfo.Ttl = ttl
 		err = pb.SaveVolumeInfo(vifFile, volumeInfo)
 		if err != nil {
 			return fmt.Errorf("volume %d fail to save vif", i)

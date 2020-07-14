@@ -119,7 +119,7 @@ func iterateEcxFile(baseFileName string, processNeedleFn func(key types.NeedleId
 }
 
 func iterateEcjFile(baseFileName string, processNeedleFn func(key types.NeedleId) error) error {
-	if !util.FileExists(baseFileName+".ecj") {
+	if !util.FileExists(baseFileName + ".ecj") {
 		return nil
 	}
 	ecjFile, openErr := os.OpenFile(baseFileName+".ecj", os.O_RDONLY, 0644)

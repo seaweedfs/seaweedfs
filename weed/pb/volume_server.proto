@@ -201,6 +201,7 @@ message VolumeMarkReadonlyResponse {
 message VolumeConfigureRequest {
     uint32 volume_id = 1;
     string replication = 2;
+    string ttl = 3;
 }
 message VolumeConfigureResponse {
     string error = 1;
@@ -375,6 +376,7 @@ message VolumeInfo {
     repeated RemoteFile files = 1;
     uint32 version = 2;
     string replication = 3;
+    string ttl = 4;
 }
 
 message VolumeTierMoveDatToRemoteRequest {

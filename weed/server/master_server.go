@@ -32,11 +32,11 @@ const (
 )
 
 type MasterOption struct {
-	Host                    string
-	Port                    int
-	MetaFolder              string
-	VolumeSizeLimitMB       uint
-	VolumePreallocate       bool
+	Host              string
+	Port              int
+	MetaFolder        string
+	VolumeSizeLimitMB uint
+	VolumePreallocate bool
 	// PulseSeconds            int
 	DefaultReplicaPlacement string
 	GarbageThreshold        float64
@@ -66,7 +66,7 @@ type MasterServer struct {
 
 	MasterClient *wdclient.MasterClient
 
-	adminLocks          *AdminLocks
+	adminLocks *AdminLocks
 }
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *MasterServer {

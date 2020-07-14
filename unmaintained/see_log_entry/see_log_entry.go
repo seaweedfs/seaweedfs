@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	logdataFile = flag.String("logdata", "", "log data file saved under "+ filer2.SystemLogDir)
+	logdataFile = flag.String("logdata", "", "log data file saved under "+filer2.SystemLogDir)
 )
 
 func main() {
