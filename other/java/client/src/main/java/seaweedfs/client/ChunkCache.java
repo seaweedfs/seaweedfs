@@ -7,7 +7,7 @@ import java.util.concurrent.TimeUnit;
 
 public class ChunkCache {
 
-    private final Cache<String, byte[]> cache;
+    private Cache<String, byte[]> cache = null;
 
     public ChunkCache(int maxEntries) {
         if (maxEntries == 0) {

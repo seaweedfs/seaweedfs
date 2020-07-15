@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.util.Arrays;
+import java.util.Locale;
 import java.util.concurrent.*;
 
 import static seaweed.hdfs.SeaweedFileSystemStore.getParentDirectory;
@@ -108,7 +109,7 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
             // ensureCapacity
             if (numberOfBytesToWrite > buffer.length - bufferIndex) {
                 int capacity = buffer.length;
-                while(capacity-bufferIndex<numberOfBytesToWrite){
+                while (capacity - bufferIndex < numberOfBytesToWrite) {
                     capacity = capacity << 1;
                 }
                 if (capacity < 0) {
