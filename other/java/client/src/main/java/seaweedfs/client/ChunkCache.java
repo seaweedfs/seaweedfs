@@ -21,7 +21,7 @@ public class ChunkCache {
 
     public byte[] getChunk(String fileId) {
         if (this.cache == null) {
-            return;
+            return null;
         }
         return this.cache.getIfPresent(fileId);
     }
