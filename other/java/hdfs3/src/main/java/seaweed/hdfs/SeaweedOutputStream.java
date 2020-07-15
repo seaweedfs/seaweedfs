@@ -16,14 +16,8 @@ import seaweedfs.client.SeaweedWrite;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
-import java.util.Locale;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.concurrent.ExecutorCompletionService;
-import java.util.concurrent.Future;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
+import java.util.Arrays;
+import java.util.concurrent.*;
 
 import static seaweed.hdfs.SeaweedFileSystemStore.getParentDirectory;
 
@@ -37,16 +31,16 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
     private final int maxConcurrentRequestCount;
     private final ThreadPoolExecutor threadExecutor;
     private final ExecutorCompletionService<Void> completionService;
-    private FilerProto.Entry.Builder entry;
+    private final FilerProto.Entry.Builder entry;
+    private final boolean supportFlush = true;
+    private final ConcurrentLinkedDeque<WriteOperation> writeOperations;
     private long position;
     private boolean closed;
-    private boolean supportFlush = true;
     private volatile IOException lastError;
     private long lastFlushOffset;
     private long lastTotalAppendOffset = 0;
     private byte[] buffer;
     private int bufferIndex;
-    private ConcurrentLinkedDeque<WriteOperation> writeOperations;
     private String replication = "000";
 
     public SeaweedOutputStream(FilerGrpcClient filerGrpcClient, final Path path, FilerProto.Entry.Builder entry,
@@ -59,18 +53,18 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
         this.lastError = null;
         this.lastFlushOffset = 0;
         this.bufferSize = bufferSize;
-        this.buffer = new byte[bufferSize];
+        // this.buffer = new byte[bufferSize];
         this.bufferIndex = 0;
         this.writeOperations = new ConcurrentLinkedDeque<>();
 
         this.maxConcurrentRequestCount = 4 * Runtime.getRuntime().availableProcessors();
 
         this.threadExecutor
-            = new ThreadPoolExecutor(maxConcurrentRequestCount,
-            maxConcurrentRequestCount,
-            10L,
-            TimeUnit.SECONDS,
-            new LinkedBlockingQueue<Runnable>());
+                = new ThreadPoolExecutor(maxConcurrentRequestCount,
+                maxConcurrentRequestCount,
+                10L,
+                TimeUnit.SECONDS,
+                new LinkedBlockingQueue<Runnable>());
         this.completionService = new ExecutorCompletionService<>(this.threadExecutor);
 
         this.entry = entry;
@@ -93,7 +87,7 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
 
     @Override
     public synchronized void write(final byte[] data, final int off, final int length)
-        throws IOException {
+            throws IOException {
         maybeThrowLastError();
 
         Preconditions.checkArgument(data != null, "null data");
@@ -107,6 +101,22 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
         int numberOfBytesToWrite = length;
 
         while (numberOfBytesToWrite > 0) {
+
+            if (buffer == null) {
+                buffer = new byte[32];
+            }
+            // ensureCapacity
+            if (numberOfBytesToWrite > buffer.length - bufferIndex) {
+                int capacity = buffer.length;
+                while(capacity-bufferIndex<numberOfBytesToWrite){
+                    capacity = capacity << 1;
+                }
+                if (capacity < 0) {
+                    throw new OutOfMemoryError();
+                }
+                buffer = Arrays.copyOf(buffer, capacity);
+            }
+
             if (writableBytes <= numberOfBytesToWrite) {
                 System.arraycopy(data, currentOffset, buffer, bufferIndex, writableBytes);
                 bufferIndex += writableBytes;
@@ -217,7 +227,7 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
         final byte[] bytes = buffer;
         final int bytesLength = bufferIndex;
 
-        buffer = new byte[bufferSize];
+        buffer = null; // new byte[bufferSize];
         bufferIndex = 0;
         final long offset = position;
         position += bytesLength;
