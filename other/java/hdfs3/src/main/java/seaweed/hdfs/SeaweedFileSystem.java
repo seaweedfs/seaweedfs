@@ -10,6 +10,7 @@ import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.Progressable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import seaweedfs.client.FilerProto;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -144,7 +145,7 @@ public class SeaweedFileSystem extends FileSystem {
     }
 
     @Override
-    public boolean rename(Path src, Path dst) {
+    public boolean rename(Path src, Path dst) throws IOException {
 
         LOG.debug("rename path: {} => {}", src, dst);
 
@@ -155,12 +156,13 @@ public class SeaweedFileSystem extends FileSystem {
         if (src.equals(dst)) {
             return true;
         }
-        FileStatus dstFileStatus = getFileStatus(dst);
+        FilerProto.Entry entry = seaweedFileSystemStore.lookupEntry(dst);
 
-        String sourceFileName = src.getName();
         Path adjustedDst = dst;
 
-        if (dstFileStatus != null) {
+        if (entry != null) {
+            FileStatus dstFileStatus = getFileStatus(dst);
+            String sourceFileName = src.getName();
             if (!dstFileStatus.isDirectory()) {
                 return false;
             }
@@ -175,17 +177,19 @@ public class SeaweedFileSystem extends FileSystem {
     }
 
     @Override
-    public boolean delete(Path path, boolean recursive) {
+    public boolean delete(Path path, boolean recursive) throws IOException {
 
         LOG.debug("delete path: {} recursive:{}", path, recursive);
 
         path = qualify(path);
 
-        FileStatus fileStatus = getFileStatus(path);
+        FilerProto.Entry entry = seaweedFileSystemStore.lookupEntry(path);
 
-        if (fileStatus == null) {
+        if (entry == null) {
             return true;
         }
+
+        FileStatus fileStatus = getFileStatus(path);
 
         return seaweedFileSystemStore.deleteEntries(path, fileStatus.isDirectory(), recursive);
 
@@ -222,9 +226,9 @@ public class SeaweedFileSystem extends FileSystem {
 
         path = qualify(path);
 
-        FileStatus fileStatus = getFileStatus(path);
+        FilerProto.Entry entry = seaweedFileSystemStore.lookupEntry(path);
 
-        if (fileStatus == null) {
+        if (entry == null) {
 
             UserGroupInformation currentUser = UserGroupInformation.getCurrentUser();
             return seaweedFileSystemStore.createDirectory(path, currentUser,
@@ -232,6 +236,8 @@ public class SeaweedFileSystem extends FileSystem {
                     FsPermission.getUMask(getConf()));
 
         }
+
+        FileStatus fileStatus = getFileStatus(path);
 
         if (fileStatus.isDirectory()) {
             return true;
@@ -241,7 +247,7 @@ public class SeaweedFileSystem extends FileSystem {
     }
 
     @Override
-    public FileStatus getFileStatus(Path path) {
+    public FileStatus getFileStatus(Path path) throws IOException {
 
         LOG.debug("getFileStatus path: {}", path);
 
