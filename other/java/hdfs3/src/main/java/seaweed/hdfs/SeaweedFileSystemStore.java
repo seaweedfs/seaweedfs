@@ -61,7 +61,7 @@ public class SeaweedFileSystemStore {
         );
     }
 
-    public FileStatus[] listEntries(final Path path) {
+    public FileStatus[] listEntries(final Path path) throws IOException {
         LOG.debug("listEntries path: {}", path);
 
         FileStatus pathStatus = getFileStatus(path);
@@ -89,11 +89,11 @@ public class SeaweedFileSystemStore {
 
     }
 
-    public FileStatus getFileStatus(final Path path) {
+    public FileStatus getFileStatus(final Path path) throws IOException {
 
         FilerProto.Entry entry = lookupEntry(path);
         if (entry == null) {
-            return null;
+            throw new FileNotFoundException("File does not exist: " + path);
         }
         LOG.debug("doGetFileStatus path:{} entry:{}", path, entry);
 
@@ -136,7 +136,7 @@ public class SeaweedFileSystemStore {
             modification_time, access_time, permission, owner, group, null, path);
     }
 
-    private FilerProto.Entry lookupEntry(Path path) {
+    public FilerProto.Entry lookupEntry(Path path) {
 
         return filerClient.lookupEntry(getParentDirectory(path), path.getName());
 
