@@ -19,7 +19,7 @@ public class SeaweedRead {
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedRead.class);
 
-    static ChunkCache chunkCache = new ChunkCache(1000);
+    static ChunkCache chunkCache = new ChunkCache(16);
 
     // returns bytesRead
     public static long read(FilerGrpcClient filerGrpcClient, List<VisibleInterval> visibleIntervals,
