@@ -212,7 +212,6 @@ public class SeaweedFileSystemStore {
 
         LOG.debug("openFileForRead path:{} bufferSize:{}", path, bufferSize);
 
-        int readAheadQueueDepth = 2;
         FilerProto.Entry entry = lookupEntry(path);
 
         if (entry == null) {
@@ -223,8 +222,7 @@ public class SeaweedFileSystemStore {
             statistics,
             path.toUri().getPath(),
             entry,
-            bufferSize,
-            readAheadQueueDepth);
+            bufferSize);
     }
 
     public void setOwner(Path path, String owner, String group) {
