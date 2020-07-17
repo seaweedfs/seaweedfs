@@ -208,7 +208,9 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, 
 
 func conditionallyResizeImages(originalDataReaderSeeker io.ReadSeeker, ext string, r *http.Request) io.ReadSeeker {
 	rs := originalDataReaderSeeker
-
+	if len(ext) > 0 {
+		ext = strings.ToLower(ext)
+	}
 	width, height, mode, shouldResize := shouldResizeImages(ext, r)
 	if shouldResize {
 		rs, _, _ = images.Resized(ext, originalDataReaderSeeker, width, height, mode)
@@ -217,9 +219,6 @@ func conditionallyResizeImages(originalDataReaderSeeker io.ReadSeeker, ext strin
 }
 
 func shouldResizeImages(ext string, r *http.Request) (width, height int, mode string, shouldResize bool) {
-	if len(ext) > 0 {
-		ext = strings.ToLower(ext)
-	}
 	if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" {
 		if r.FormValue("width") != "" {
 			width, _ = strconv.Atoi(r.FormValue("width"))
