@@ -117,7 +117,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	// Set multiple folders and each folder's max volume count limit'
 	v.folders = strings.Split(volumeFolders, ",")
 	for _, folder := range v.folders {
-		if err := util.TestFolderWritable(folder); err != nil {
+		if err := util.TestFolderWritable(util.ResolvePath(folder)); err != nil {
 			glog.Fatalf("Check Data Folder(-dir) Writable %s : %s", folder, err)
 		}
 	}

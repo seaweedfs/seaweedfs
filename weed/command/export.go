@@ -198,7 +198,7 @@ func runExport(cmd *Command, args []string) bool {
 	needleMap := needle_map.NewMemDb()
 	defer needleMap.Close()
 
-	if err := needleMap.LoadFromIdx(path.Join(*export.dir, fileName+".idx")); err != nil {
+	if err := needleMap.LoadFromIdx(path.Join(util.ResolvePath(*export.dir), fileName+".idx")); err != nil {
 		glog.Fatalf("cannot load needle map from %s.idx: %s", fileName, err)
 	}
 
@@ -211,7 +211,7 @@ func runExport(cmd *Command, args []string) bool {
 		fmt.Printf("key\tname\tsize\tgzip\tmime\tmodified\tttl\tdeleted\n")
 	}
 
-	err = storage.ScanVolumeFile(*export.dir, *export.collection, vid, storage.NeedleMapInMemory, volumeFileScanner)
+	err = storage.ScanVolumeFile(util.ResolvePath(*export.dir), *export.collection, vid, storage.NeedleMapInMemory, volumeFileScanner)
 	if err != nil && err != io.EOF {
 		glog.Fatalf("Export Volume File [ERROR] %s\n", err)
 	}

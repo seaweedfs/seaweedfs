@@ -16,6 +16,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 const (
@@ -28,13 +29,13 @@ const (
 type Store struct {
 	MasterAddress       string
 	grpcDialOption      grpc.DialOption
-	volumeSizeLimit     uint64 //read from the master
+	volumeSizeLimit     uint64 // read from the master
 	Ip                  string
 	Port                int
 	PublicUrl           string
 	Locations           []*DiskLocation
-	dataCenter          string //optional informaton, overwriting master setting if exists
-	rack                string //optional information, overwriting master setting if exists
+	dataCenter          string // optional informaton, overwriting master setting if exists
+	rack                string // optional information, overwriting master setting if exists
 	connected           bool
 	NeedleMapType       NeedleMapType
 	NewVolumesChan      chan master_pb.VolumeShortInformationMessage
@@ -52,7 +53,7 @@ func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, di
 	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, PublicUrl: publicUrl, NeedleMapType: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirnames); i++ {
-		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i], minFreeSpacePercents[i])
+		location := NewDiskLocation(util.ResolvePath(dirnames[i]), maxVolumeCounts[i], minFreeSpacePercents[i])
 		location.loadExistingVolumes(needleMapKind)
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))

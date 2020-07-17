@@ -8,9 +8,10 @@ import (
 	"strings"
 
 	"github.com/chrislusf/raft/protobuf"
-	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc/reflection"
+
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -85,7 +86,7 @@ func runMaster(cmd *Command, args []string) bool {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	grace.SetupProfiling(*masterCpuProfile, *masterMemProfile)
 
-	if err := util.TestFolderWritable(*m.metaFolder); err != nil {
+	if err := util.TestFolderWritable(util.ResolvePath(*m.metaFolder)); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *m.metaFolder, err)
 	}
 
@@ -118,7 +119,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 	// start raftServer
 	raftServer := weed_server.NewRaftServer(security.LoadClientTLS(util.GetViper(), "grpc.master"),
-		peers, myMasterAddress, *masterOption.metaFolder, ms.Topo, 5)
+		peers, myMasterAddress, util.ResolvePath(*masterOption.metaFolder), ms.Topo, 5)
 	if raftServer == nil {
 		glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717", *masterOption.metaFolder)
 	}

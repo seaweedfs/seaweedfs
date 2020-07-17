@@ -100,7 +100,7 @@ func (fo *FilerOptions) startFiler() {
 
 	defaultLevelDbDirectory := "./filerldb2"
 	if fo.defaultLevelDbDirectory != nil {
-		defaultLevelDbDirectory = *fo.defaultLevelDbDirectory + "/filerldb2"
+		defaultLevelDbDirectory = util.ResolvePath(*fo.defaultLevelDbDirectory + "/filerldb2")
 	}
 
 	var peers []string
