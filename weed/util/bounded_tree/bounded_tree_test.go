@@ -9,9 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-
 var (
-
 	visitFn = func(path util.FullPath) (childDirectories []string, err error) {
 		fmt.Printf("  visit %v ...\n", path)
 		switch path {
@@ -37,14 +35,11 @@ var (
 		return nil, nil
 	}
 
-
 	printMap = func(m map[string]*Node) {
 		for k := range m {
 			println("  >", k)
 		}
 	}
-
-
 )
 
 func TestBoundedTree(t *testing.T) {

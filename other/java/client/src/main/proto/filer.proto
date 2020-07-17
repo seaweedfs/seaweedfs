@@ -115,6 +115,11 @@ message FileChunk {
     FileId source_fid = 8;
     bytes cipher_key = 9;
     bool is_compressed = 10;
+    bool is_chunk_manifest = 11; // content is a list of FileChunks
+}
+
+message FileChunkManifest {
+    repeated FileChunk chunks = 1;
 }
 
 message FileId {

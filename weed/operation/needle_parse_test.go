@@ -18,7 +18,7 @@ type MockClient struct {
 }
 
 func (m *MockClient) Do(req *http.Request) (*http.Response, error) {
-	n, originalSize, err := needle.CreateNeedleFromRequest(req, 1024*1024)
+	n, originalSize, err := needle.CreateNeedleFromRequest(req, false, 1024*1024)
 	if m.needleHandling != nil {
 		m.needleHandling(n, originalSize, err)
 	}
@@ -100,7 +100,6 @@ func TestCreateNeedleFromRequest(t *testing.T) {
 	}
 
 }
-
 
 var textContent = `Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are

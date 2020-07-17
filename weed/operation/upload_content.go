@@ -205,8 +205,8 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 
 	req, postErr := http.NewRequest("POST", uploadUrl, body_buf)
 	if postErr != nil {
-		glog.V(0).Infoln("failing to upload to", uploadUrl, postErr.Error())
-		return nil, postErr
+		glog.V(1).Infof("failing to upload to %s: %v", uploadUrl, postErr)
+		return nil, fmt.Errorf("failing to upload to %s: %v", uploadUrl, postErr)
 	}
 	req.Header.Set("Content-Type", content_type)
 	for k, v := range pairMap {
@@ -217,8 +217,8 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	}
 	resp, post_err := HttpClient.Do(req)
 	if post_err != nil {
-		glog.V(0).Infoln("failing to upload to", uploadUrl, post_err.Error())
-		return nil, post_err
+		glog.V(1).Infof("failing to upload to %v: %v", uploadUrl, post_err)
+		return nil, fmt.Errorf("failing to upload to %v: %v", uploadUrl, post_err)
 	}
 	defer resp.Body.Close()
 

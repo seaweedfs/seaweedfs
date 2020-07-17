@@ -32,7 +32,7 @@ func TestMemoryUsage(t *testing.T) {
 
 	startTime := time.Now()
 	for i := 0; i < 10; i++ {
-		indexFile, ie := os.OpenFile("../../../test/sample.idx", os.O_RDWR|os.O_RDONLY, 0644)
+		indexFile, ie := os.OpenFile("../../../test/data/sample.idx", os.O_RDWR|os.O_RDONLY, 0644)
 		if ie != nil {
 			log.Fatalln(ie)
 		}

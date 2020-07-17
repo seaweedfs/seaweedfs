@@ -39,8 +39,10 @@ public class FilerGrpcClient {
     public FilerGrpcClient(String host, int grpcPort, SslContext sslContext) {
 
         this(sslContext == null ?
-                ManagedChannelBuilder.forAddress(host, grpcPort).usePlaintext() :
+                ManagedChannelBuilder.forAddress(host, grpcPort).usePlaintext()
+                        .maxInboundMessageSize(1024 * 1024 * 1024) :
                 NettyChannelBuilder.forAddress(host, grpcPort)
+                        .maxInboundMessageSize(1024 * 1024 * 1024)
                         .negotiationType(NegotiationType.TLS)
                         .sslContext(sslContext));
 

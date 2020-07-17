@@ -13,6 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/fuse"
+	"github.com/seaweedfs/fuse/fs"
+
 	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -20,8 +23,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
-	"github.com/seaweedfs/fuse"
-	"github.com/seaweedfs/fuse/fs"
 )
 
 func runMount(cmd *Command, args []string) bool {
@@ -68,7 +69,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	filerMountRootPath := *option.filerMountRootPath
-	dir := *option.dir
+	dir := util.ResolvePath(*option.dir)
 	chunkSizeLimitMB := *mountOptions.chunkSizeLimitMB
 
 	util.LoadConfiguration("security", false)
@@ -97,6 +98,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		mountMode = os.ModeDir | fileInfo.Mode()
 		uid, gid = util.GetFileUidGid(fileInfo)
 		fmt.Printf("mount point owner uid=%d gid=%d mode=%s\n", uid, gid, fileInfo.Mode())
+	} else {
+		fmt.Printf("can not stat %s\n", dir)
+		return false
 	}
 
 	if uid == 0 {

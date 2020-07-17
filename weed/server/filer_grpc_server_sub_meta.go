@@ -37,10 +37,10 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		lastReadTime = time.Unix(0, processedTsNs)
 	}
 
-	err = fs.metaAggregator.MetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
-		fs.metaAggregator.ListenersLock.Lock()
-		fs.metaAggregator.ListenersCond.Wait()
-		fs.metaAggregator.ListenersLock.Unlock()
+	err = fs.filer.MetaAggregator.MetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
+		fs.filer.MetaAggregator.ListenersLock.Lock()
+		fs.filer.MetaAggregator.ListenersCond.Wait()
+		fs.filer.MetaAggregator.ListenersLock.Unlock()
 		return true
 	}, eachLogEntryFn)
 
@@ -63,6 +63,20 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
 
+	if _, ok := fs.filer.Store.ActualStore.(filer2.FilerLocalStore); ok {
+		// println("reading from persisted logs ...")
+		processedTsNs, err := fs.filer.ReadPersistedLogBuffer(lastReadTime, eachLogEntryFn)
+		if err != nil {
+			return fmt.Errorf("reading from persisted logs: %v", err)
+		}
+
+		if processedTsNs != 0 {
+			lastReadTime = time.Unix(0, processedTsNs)
+		}
+		glog.V(0).Infof("after local log reads, %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
+	}
+
+	// println("reading from in memory logs ...")
 	err := fs.filer.LocalMetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
 		fs.listenersLock.Lock()
 		fs.listenersCond.Wait()
@@ -117,6 +131,7 @@ func eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, stream file
 			EventNotification: eventNotification,
 			TsNs:              tsNs,
 		}
+		// println("sending", dirPath, entryName)
 		if err := stream.Send(message); err != nil {
 			glog.V(0).Infof("=> client %v: %+v", clientName, err)
 			return err

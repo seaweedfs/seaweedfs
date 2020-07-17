@@ -56,13 +56,13 @@ func SubscribeMetaEvents(mc *MetaCache, client filer_pb.FilerClient, dir string,
 				}
 
 				if err := processEventFn(resp); err != nil {
-					return fmt.Errorf("process %v: %v", resp, err)
+					glog.Fatalf("process %v: %v", resp, err)
 				}
 				lastTsNs = resp.TsNs
 			}
 		})
 		if err != nil {
-			glog.V(0).Infof("subscribing filer meta change: %v", err)
+			glog.Errorf("subscribing filer meta change: %v", err)
 			time.Sleep(time.Second)
 		}
 	}

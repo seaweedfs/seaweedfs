@@ -60,7 +60,7 @@ func (mc *MetaCache) AtomicUpdateEntry(ctx context.Context, oldPath util.FullPat
 				return err
 			}
 		}
-	}else{
+	} else {
 		// println("unknown old directory:", oldDir)
 	}
 

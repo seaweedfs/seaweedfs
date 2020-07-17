@@ -91,7 +91,13 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(fileName string) err
 	return nil
 }
 
+func (iam *IdentityAccessManagement) isEnabled() bool {
+
+	return len(iam.identities) > 0
+}
+
 func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identity *Identity, cred *Credential, found bool) {
+
 	for _, ident := range iam.identities {
 		for _, cred := range ident.Credentials {
 			if cred.AccessKey == accessKey {
@@ -104,7 +110,7 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 
 func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) http.HandlerFunc {
 
-	if len(iam.identities) == 0 {
+	if iam.isEnabled() {
 		return f
 	}
 

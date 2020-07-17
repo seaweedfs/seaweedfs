@@ -10,18 +10,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func InitMetaCache(mc *MetaCache, client filer_pb.FilerClient, path string) error {
-	return nil
-	glog.V(0).Infof("synchronizing meta data ...")
-	filer_pb.TraverseBfs(client, util.FullPath(path), func(parentPath util.FullPath, pbEntry *filer_pb.Entry) {
-		entry := filer2.FromPbEntry(string(parentPath), pbEntry)
-		if err := mc.InsertEntry(context.Background(), entry); err != nil {
-			glog.V(0).Infof("read %s: %v", entry.FullPath, err)
-		}
-	})
-	return nil
-}
-
 func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath) {
 
 	mc.visitedBoundary.EnsureVisited(dirPath, func(path util.FullPath) (childDirectories []string, err error) {

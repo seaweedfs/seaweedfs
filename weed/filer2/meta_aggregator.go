@@ -37,13 +37,48 @@ func NewMetaAggregator(filers []string, grpcDialOption grpc.DialOption) *MetaAgg
 	return t
 }
 
-func (ma *MetaAggregator) StartLoopSubscribe(lastTsNs int64) {
+func (ma *MetaAggregator) StartLoopSubscribe(f *Filer, self string) {
 	for _, filer := range ma.filers {
-		go ma.subscribeToOneFiler(filer, lastTsNs)
+		go ma.subscribeToOneFiler(f, self, filer)
 	}
 }
 
-func (ma *MetaAggregator) subscribeToOneFiler(filer string, lastTsNs int64) {
+func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, filer string) {
+
+	var maybeReplicateMetadataChange func(*filer_pb.SubscribeMetadataResponse)
+	lastPersistTime := time.Now()
+	changesSinceLastPersist := 0
+	lastTsNs := int64(0)
+
+	MaxChangeLimit := 100
+
+	if localStore, ok := f.Store.ActualStore.(FilerLocalStore); ok {
+		if self != filer {
+
+			if prevTsNs, err := localStore.ReadOffset(filer); err == nil {
+				lastTsNs = prevTsNs
+			}
+
+			glog.V(0).Infof("follow filer: %v, last %v (%d)", filer, time.Unix(0, lastTsNs), lastTsNs)
+			maybeReplicateMetadataChange = func(event *filer_pb.SubscribeMetadataResponse) {
+				if err := Replay(f.Store.ActualStore, event); err != nil {
+					glog.Errorf("failed to reply metadata change from %v: %v", filer, err)
+					return
+				}
+				changesSinceLastPersist++
+				if changesSinceLastPersist >= MaxChangeLimit || lastPersistTime.Add(time.Minute).Before(time.Now()) {
+					if err := localStore.UpdateOffset(filer, event.TsNs); err == nil {
+						lastPersistTime = time.Now()
+						changesSinceLastPersist = 0
+					} else {
+						glog.V(0).Infof("failed to update offset for %v: %v", filer, err)
+					}
+				}
+			}
+		} else {
+			glog.V(0).Infof("skipping following self: %v", self)
+		}
+	}
 
 	processEventFn := func(event *filer_pb.SubscribeMetadataResponse) error {
 		data, err := proto.Marshal(event)
@@ -54,13 +89,16 @@ func (ma *MetaAggregator) subscribeToOneFiler(filer string, lastTsNs int64) {
 		dir := event.Directory
 		// println("received meta change", dir, "size", len(data))
 		ma.MetaLogBuffer.AddToBuffer([]byte(dir), data)
+		if maybeReplicateMetadataChange != nil {
+			maybeReplicateMetadataChange(event)
+		}
 		return nil
 	}
 
 	for {
 		err := pb.WithFilerClient(filer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			stream, err := client.SubscribeLocalMetadata(context.Background(), &filer_pb.SubscribeMetadataRequest{
-				ClientName: "filer",
+				ClientName: "filer:" + self,
 				PathPrefix: "/",
 				SinceNs:    lastTsNs,
 			})

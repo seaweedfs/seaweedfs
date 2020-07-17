@@ -18,12 +18,18 @@
 
 package seaweed.hdfs;
 
-/**
- * The ReadBufferStatus for Rest AbfsClient
- */
-public enum ReadBufferStatus {
-  NOT_AVAILABLE,  // buffers sitting in readaheadqueue have this stats
-  READING_IN_PROGRESS,  // reading is in progress on this buffer. Buffer should be in inProgressList
-  AVAILABLE,  // data is available in buffer. It should be in completedList
-  READ_FAILED  // read completed, but failed.
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.DelegateToFileSystem;
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+
+public class SeaweedAbstractFileSystem extends DelegateToFileSystem {
+
+    SeaweedAbstractFileSystem(final URI uri, final Configuration conf)
+            throws IOException, URISyntaxException {
+        super(uri, new SeaweedFileSystem(), conf, "seaweedfs", false);
+    }
+
 }

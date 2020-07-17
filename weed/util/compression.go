@@ -54,6 +54,7 @@ func ungzipData(input []byte) ([]byte, error) {
 }
 
 var decoder, _ = zstd.NewReader(nil)
+
 func unzstdData(input []byte) ([]byte, error) {
 	return decoder.DecodeAll(input, nil)
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func init() {
@@ -67,7 +68,7 @@ func runFix(cmd *Command, args []string) bool {
 	if *fixVolumeCollection != "" {
 		baseFileName = *fixVolumeCollection + "_" + baseFileName
 	}
-	indexFileName := path.Join(*fixVolumePath, baseFileName+".idx")
+	indexFileName := path.Join(util.ResolvePath(*fixVolumePath), baseFileName+".idx")
 
 	nm := needle_map.NewMemDb()
 	defer nm.Close()
@@ -77,7 +78,7 @@ func runFix(cmd *Command, args []string) bool {
 		nm: nm,
 	}
 
-	if err := storage.ScanVolumeFile(*fixVolumePath, *fixVolumeCollection, vid, storage.NeedleMapInMemory, scanner); err != nil {
+	if err := storage.ScanVolumeFile(util.ResolvePath(*fixVolumePath), *fixVolumeCollection, vid, storage.NeedleMapInMemory, scanner); err != nil {
 		glog.Fatalf("scan .dat File: %v", err)
 		os.Remove(indexFileName)
 	}

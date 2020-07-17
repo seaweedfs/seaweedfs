@@ -145,12 +145,15 @@ func (m *LogBuffer) loopInterval() {
 
 func (m *LogBuffer) copyToFlush() *dataToFlush {
 
-	if m.flushFn != nil && m.pos > 0 {
+	if m.pos > 0 {
 		// fmt.Printf("flush buffer %d pos %d empty space %d\n", len(m.buf), m.pos, len(m.buf)-m.pos)
-		d := &dataToFlush{
-			startTime: m.startTime,
-			stopTime:  m.stopTime,
-			data:      copiedBytes(m.buf[:m.pos]),
+		var d *dataToFlush
+		if m.flushFn != nil {
+			d = &dataToFlush{
+				startTime: m.startTime,
+				stopTime:  m.stopTime,
+				data:      copiedBytes(m.buf[:m.pos]),
+			}
 		}
 		// fmt.Printf("flusing [0,%d) with %d entries\n", m.pos, len(m.idx))
 		m.buf = m.prevBuffers.SealBuffer(m.startTime, m.stopTime, m.buf, m.pos)
