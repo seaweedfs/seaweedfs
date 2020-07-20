@@ -8,9 +8,13 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/filer2/leveldb"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/bounded_tree"
 )
+
+// need to have logic similar to FilerStoreWrapper
+// e.g. fill fileId field for chunks
 
 type MetaCache struct {
 	actualStore filer2.FilerStore
@@ -46,6 +50,7 @@ func openMetaStore(dbFolder string) filer2.FilerStore {
 func (mc *MetaCache) InsertEntry(ctx context.Context, entry *filer2.Entry) error {
 	mc.Lock()
 	defer mc.Unlock()
+	filer_pb.BeforeEntrySerialization(entry.Chunks)
 	return mc.actualStore.InsertEntry(ctx, entry)
 }
 
@@ -78,13 +83,19 @@ func (mc *MetaCache) AtomicUpdateEntry(ctx context.Context, oldPath util.FullPat
 func (mc *MetaCache) UpdateEntry(ctx context.Context, entry *filer2.Entry) error {
 	mc.Lock()
 	defer mc.Unlock()
+	filer_pb.BeforeEntrySerialization(entry.Chunks)
 	return mc.actualStore.UpdateEntry(ctx, entry)
 }
 
 func (mc *MetaCache) FindEntry(ctx context.Context, fp util.FullPath) (entry *filer2.Entry, err error) {
 	mc.RLock()
 	defer mc.RUnlock()
-	return mc.actualStore.FindEntry(ctx, fp)
+	entry, err = mc.actualStore.FindEntry(ctx, fp)
+	if err != nil {
+		return nil, err
+	}
+	filer_pb.AfterEntryDeserialization(entry.Chunks)
+	return
 }
 
 func (mc *MetaCache) DeleteEntry(ctx context.Context, fp util.FullPath) (err error) {
@@ -96,7 +107,15 @@ func (mc *MetaCache) DeleteEntry(ctx context.Context, fp util.FullPath) (err err
 func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*filer2.Entry, error) {
 	mc.RLock()
 	defer mc.RUnlock()
-	return mc.actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
+
+	entries, err := mc.actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		filer_pb.AfterEntryDeserialization(entry.Chunks)
+	}
+	return entries, err
 }
 
 func (mc *MetaCache) Shutdown() {
