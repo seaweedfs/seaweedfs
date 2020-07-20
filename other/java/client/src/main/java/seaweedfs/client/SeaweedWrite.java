@@ -1,8 +1,6 @@
 package seaweedfs.client;
 
 import com.google.protobuf.ByteString;
-import org.apache.http.HttpResponse;
-import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.mime.HttpMultipartMode;
@@ -10,10 +8,10 @@ import org.apache.http.entity.mime.MultipartEntityBuilder;
 import org.apache.http.util.EntityUtils;
 
 import java.io.ByteArrayInputStream;
-import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.SecureRandom;
+import java.util.List;
 
 public class SeaweedWrite {
 
@@ -25,6 +23,17 @@ public class SeaweedWrite {
                                  final long offset,
                                  final byte[] bytes,
                                  final long bytesOffset, final long bytesLength) throws IOException {
+        synchronized (entry) {
+            entry.addChunks(writeChunk(replication, filerGrpcClient, offset, bytes, bytesOffset, bytesLength));
+        }
+    }
+
+    public static FilerProto.FileChunk.Builder writeChunk(final String replication,
+                                                          final FilerGrpcClient filerGrpcClient,
+                                                          final long offset,
+                                                          final byte[] bytes,
+                                                          final long bytesOffset,
+                                                          final long bytesLength) throws IOException {
         FilerProto.AssignVolumeResponse response = filerGrpcClient.getBlockingStub().assignVolume(
                 FilerProto.AssignVolumeRequest.newBuilder()
                         .setCollection(filerGrpcClient.getCollection())
@@ -46,25 +55,28 @@ public class SeaweedWrite {
 
         String etag = multipartUpload(targetUrl, auth, bytes, bytesOffset, bytesLength, cipherKey);
 
-        synchronized (entry) {
-            entry.addChunks(FilerProto.FileChunk.newBuilder()
-                    .setFileId(fileId)
-                    .setOffset(offset)
-                    .setSize(bytesLength)
-                    .setMtime(System.currentTimeMillis() / 10000L)
-                    .setETag(etag)
-                    .setCipherKey(cipherKeyString)
-            );
-        }
-
         // cache fileId ~ bytes
         SeaweedRead.chunkCache.setChunk(fileId, bytes);
 
+        return FilerProto.FileChunk.newBuilder()
+                .setFileId(fileId)
+                .setOffset(offset)
+                .setSize(bytesLength)
+                .setMtime(System.currentTimeMillis() / 10000L)
+                .setETag(etag)
+                .setCipherKey(cipherKeyString);
     }
 
     public static void writeMeta(final FilerGrpcClient filerGrpcClient,
-                                 final String parentDirectory, final FilerProto.Entry.Builder entry) {
+                                 final String parentDirectory,
+                                 final FilerProto.Entry.Builder entry) throws IOException {
+
+        int chunkSize = entry.getChunksCount();
+        List<FilerProto.FileChunk> chunks = FileChunkManifest.maybeManifestize(filerGrpcClient, entry.getChunksList());
+
         synchronized (entry) {
+            entry.clearChunks();
+            entry.addAllChunks(chunks);
             filerGrpcClient.getBlockingStub().createEntry(
                     FilerProto.CreateEntryRequest.newBuilder()
                             .setDirectory(parentDirectory)

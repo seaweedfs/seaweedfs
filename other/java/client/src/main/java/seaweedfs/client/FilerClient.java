@@ -24,6 +24,10 @@ public class FilerClient {
         this.filerGrpcClient = filerGrpcClient;
     }
 
+    public static String toFileId(FilerProto.FileId fid) {
+        return String.format("%d,%d%x", fid.getVolumeId(), fid.getFileKey(), fid.getCookie());
+    }
+
     public boolean mkdirs(String path, int mode) {
         String currentUser = System.getProperty("user.name");
         return mkdirs(path, mode, 0, 0, currentUser, new String[]{});
@@ -209,7 +213,6 @@ public class FilerClient {
         }
     }
 
-
     public boolean createEntry(String parent, FilerProto.Entry entry) {
         try {
             filerGrpcClient.getBlockingStub().createEntry(FilerProto.CreateEntryRequest.newBuilder()
@@ -279,9 +282,7 @@ public class FilerClient {
         entryBuilder.clearChunks();
         for (FilerProto.FileChunk chunk : entry.getChunksList()) {
             FilerProto.FileChunk.Builder chunkBuilder = chunk.toBuilder();
-            FilerProto.FileId fid = chunk.getFid();
-            fileId = String.format("%d,%d%x", fid.getVolumeId(), fid.getFileKey(), fid.getCookie());
-            chunkBuilder.setFileId(fileId);
+            chunkBuilder.setFileId(toFileId(chunk.getFid()));
             entryBuilder.addChunks(chunkBuilder);
         }
         return entryBuilder.build();

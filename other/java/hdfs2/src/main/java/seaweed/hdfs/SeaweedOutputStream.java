@@ -109,7 +109,7 @@ public class SeaweedOutputStream extends OutputStream {
                 break;
             }
 
-            // System.out.println(path + "     [" + (outputIndex + currentOffset) + "," + ((outputIndex + currentOffset) + writableBytes) + ")");
+            // System.out.println(path + "     [" + (outputIndex + currentOffset) + "," + ((outputIndex + currentOffset) + writableBytes) + ") " + buffer.capacity());
             buffer.put(data, currentOffset, writableBytes);
             outputIndex += writableBytes;
             currentOffset += writableBytes;

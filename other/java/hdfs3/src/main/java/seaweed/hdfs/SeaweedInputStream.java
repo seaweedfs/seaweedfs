@@ -45,7 +45,7 @@ public class SeaweedInputStream extends FSInputStream {
         this.contentLength = SeaweedRead.totalSize(entry.getChunksList());
         this.bufferSize = bufferSize;
 
-        this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(entry.getChunksList());
+        this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(filerGrpcClient, entry.getChunksList());
 
         LOG.debug("new path:{} entry:{} visibleIntervalList:{}", path, entry, visibleIntervalList);
 
