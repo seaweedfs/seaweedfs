@@ -4,6 +4,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func init() {
@@ -40,7 +41,7 @@ func runCompact(cmd *Command, args []string) bool {
 	preallocate := *compactVolumePreallocate * (1 << 20)
 
 	vid := needle.VolumeId(*compactVolumeId)
-	v, err := storage.NewVolume(*compactVolumePath, *compactVolumeCollection, vid,
+	v, err := storage.NewVolume(util.ResolvePath(*compactVolumePath), *compactVolumeCollection, vid,
 		storage.NeedleMapInMemory, nil, nil, preallocate, 0)
 	if err != nil {
 		glog.Fatalf("Load Volume [ERROR] %s\n", err)

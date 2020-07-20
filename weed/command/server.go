@@ -176,7 +176,7 @@ func runServer(cmd *Command, args []string) bool {
 	if *masterOptions.metaFolder == "" {
 		*masterOptions.metaFolder = folders[0]
 	}
-	if err := util.TestFolderWritable(*masterOptions.metaFolder); err != nil {
+	if err := util.TestFolderWritable(util.ResolvePath(*masterOptions.metaFolder)); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterOptions.metaFolder, err)
 	}
 	filerOptions.defaultLevelDbDirectory = masterOptions.metaFolder

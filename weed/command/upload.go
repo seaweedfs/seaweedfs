@@ -69,7 +69,7 @@ func runUpload(cmd *Command, args []string) bool {
 		if *upload.dir == "" {
 			return false
 		}
-		filepath.Walk(*upload.dir, func(path string, info os.FileInfo, err error) error {
+		filepath.Walk(util.ResolvePath(*upload.dir), func(path string, info os.FileInfo, err error) error {
 			if err == nil {
 				if !info.IsDir() {
 					if *upload.include != "" {

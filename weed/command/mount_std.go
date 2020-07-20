@@ -69,7 +69,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	filerMountRootPath := *option.filerMountRootPath
-	dir := *option.dir
+	dir := util.ResolvePath(*option.dir)
 	chunkSizeLimitMB := *mountOptions.chunkSizeLimitMB
 
 	util.LoadConfiguration("security", false)
