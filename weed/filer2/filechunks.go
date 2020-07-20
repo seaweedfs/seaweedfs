@@ -46,9 +46,9 @@ func ETagChunks(chunks []*filer_pb.FileChunk) (etag string) {
 	return fmt.Sprintf("%x", h.Sum32())
 }
 
-func CompactFileChunks(chunks []*filer_pb.FileChunk) (compacted, garbage []*filer_pb.FileChunk) {
+func CompactFileChunks(lookupFileIdFn LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (compacted, garbage []*filer_pb.FileChunk) {
 
-	visibles := NonOverlappingVisibleIntervals(chunks)
+	visibles, _ := NonOverlappingVisibleIntervals(lookupFileIdFn, chunks)
 
 	fileIds := make(map[string]bool)
 	for _, interval := range visibles {
@@ -65,7 +65,23 @@ func CompactFileChunks(chunks []*filer_pb.FileChunk) (compacted, garbage []*file
 	return
 }
 
-func MinusChunks(as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk) {
+func MinusChunks(lookupFileIdFn LookupFileIdFunctionType, as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk, err error) {
+
+	aData, aMeta, aErr := ResolveChunkManifest(lookupFileIdFn, as)
+	if aErr != nil {
+		return nil, aErr
+	}
+	bData, bMeta, bErr := ResolveChunkManifest(lookupFileIdFn, bs)
+	if bErr != nil {
+		return nil, bErr
+	}
+
+	delta = append(delta, DoMinusChunks(aData, bData)...)
+	delta = append(delta, DoMinusChunks(aMeta, bMeta)...)
+	return
+}
+
+func DoMinusChunks(as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk) {
 
 	fileIds := make(map[string]bool)
 	for _, interval := range bs {
@@ -94,9 +110,9 @@ func (cv *ChunkView) IsFullChunk() bool {
 	return cv.Size == cv.ChunkSize
 }
 
-func ViewFromChunks(chunks []*filer_pb.FileChunk, offset int64, size int64) (views []*ChunkView) {
+func ViewFromChunks(lookupFileIdFn LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (views []*ChunkView) {
 
-	visibles := NonOverlappingVisibleIntervals(chunks)
+	visibles, _ := NonOverlappingVisibleIntervals(lookupFileIdFn, chunks)
 
 	return ViewFromVisibleIntervals(visibles, offset, size)
 
@@ -190,7 +206,11 @@ func MergeIntoVisibles(visibles, newVisibles []VisibleInterval, chunk *filer_pb.
 	return newVisibles
 }
 
-func NonOverlappingVisibleIntervals(chunks []*filer_pb.FileChunk) (visibles []VisibleInterval) {
+// NonOverlappingVisibleIntervals translates the file chunk into VisibleInterval in memory
+// If the file chunk content is a chunk manifest
+func NonOverlappingVisibleIntervals(lookupFileIdFn LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (visibles []VisibleInterval, err error) {
+
+	chunks, _, err = ResolveChunkManifest(lookupFileIdFn, chunks)
 
 	sort.Slice(chunks, func(i, j int) bool {
 		return chunks[i].Mtime < chunks[j].Mtime

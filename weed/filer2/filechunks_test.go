@@ -16,7 +16,7 @@ func TestCompactFileChunks(t *testing.T) {
 		{Offset: 110, Size: 200, FileId: "jkl", Mtime: 300},
 	}
 
-	compacted, garbage := CompactFileChunks(chunks)
+	compacted, garbage := CompactFileChunks(nil, chunks)
 
 	if len(compacted) != 3 {
 		t.Fatalf("unexpected compacted: %d", len(compacted))
@@ -49,7 +49,7 @@ func TestCompactFileChunks2(t *testing.T) {
 		})
 	}
 
-	compacted, garbage := CompactFileChunks(chunks)
+	compacted, garbage := CompactFileChunks(nil, chunks)
 
 	if len(compacted) != 4 {
 		t.Fatalf("unexpected compacted: %d", len(compacted))
@@ -186,7 +186,7 @@ func TestIntervalMerging(t *testing.T) {
 
 	for i, testcase := range testcases {
 		log.Printf("++++++++++ merged test case %d ++++++++++++++++++++", i)
-		intervals := NonOverlappingVisibleIntervals(testcase.Chunks)
+		intervals, _ := NonOverlappingVisibleIntervals(nil, testcase.Chunks)
 		for x, interval := range intervals {
 			log.Printf("test case %d, interval %d, start=%d, stop=%d, fileId=%s",
 				i, x, interval.start, interval.stop, interval.fileId)
@@ -371,7 +371,7 @@ func TestChunksReading(t *testing.T) {
 
 	for i, testcase := range testcases {
 		log.Printf("++++++++++ read test case %d ++++++++++++++++++++", i)
-		chunks := ViewFromChunks(testcase.Chunks, testcase.Offset, testcase.Size)
+		chunks := ViewFromChunks(nil, testcase.Chunks, testcase.Offset, testcase.Size)
 		for x, chunk := range chunks {
 			log.Printf("read case %d, chunk %d, offset=%d, size=%d, fileId=%s",
 				i, x, chunk.Offset, chunk.Size, chunk.FileId)
@@ -415,6 +415,6 @@ func BenchmarkCompactFileChunks(b *testing.B) {
 	}
 
 	for n := 0; n < b.N; n++ {
-		CompactFileChunks(chunks)
+		CompactFileChunks(nil, chunks)
 	}
 }

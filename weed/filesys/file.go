@@ -253,7 +253,7 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 
 func (file *File) setEntry(entry *filer_pb.Entry) {
 	file.entry = entry
-	file.entryViewCache = filer2.NonOverlappingVisibleIntervals(file.entry.Chunks)
+	file.entryViewCache, _ = filer2.NonOverlappingVisibleIntervals(filer2.LookupFn(file.wfs), file.entry.Chunks)
 	file.reader = nil
 }
 

@@ -40,7 +40,7 @@ type FilerPostResult struct {
 	Url   string `json:"url,omitempty"`
 }
 
-func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request, replication, collection, dataCenter, ttlString string, fsync bool) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
+func (fs *FilerServer) assignNewFileInfo(replication, collection, dataCenter, ttlString string, fsync bool) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
 
 	stats.FilerRequestCounter.WithLabelValues("assign").Inc()
 	start := time.Now()
@@ -67,7 +67,6 @@ func (fs *FilerServer) assignNewFileInfo(w http.ResponseWriter, r *http.Request,
 	assignResult, ae := operation.Assign(fs.filer.GetMaster(), fs.grpcDialOption, ar, altRequest)
 	if ae != nil {
 		glog.Errorf("failing to assign a file id: %v", ae)
-		writeJsonError(w, r, http.StatusInternalServerError, ae)
 		err = ae
 		return
 	}
@@ -114,7 +113,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fileId, urlLocation, auth, err := fs.assignNewFileInfo(w, r, replication, collection, dataCenter, ttlString, fsync)
+	fileId, urlLocation, auth, err := fs.assignNewFileInfo(replication, collection, dataCenter, ttlString, fsync)
 
 	if err != nil || fileId == "" || urlLocation == "" {
 		glog.V(0).Infof("fail to allocate volume for %s, collection:%s, datacenter:%s", r.URL.Path, collection, dataCenter)

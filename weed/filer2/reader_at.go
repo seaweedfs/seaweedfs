@@ -1,7 +1,6 @@
 package filer2
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -9,7 +8,6 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
@@ -144,19 +142,6 @@ func (c *ChunkReadAt) fetchChunkData(chunkView *ChunkView) (data []byte, err err
 
 func (c *ChunkReadAt) doFetchFullChunkData(fileId string, cipherKey []byte, isGzipped bool) ([]byte, error) {
 
-	urlString, err := c.lookupFileId(fileId)
-	if err != nil {
-		glog.V(1).Infof("operation LookupFileId %s failed, err: %v", fileId, err)
-		return nil, err
-	}
-	var buffer bytes.Buffer
-	err = util.ReadUrlAsStream(urlString, cipherKey, isGzipped, true, 0, 0, func(data []byte) {
-		buffer.Write(data)
-	})
-	if err != nil {
-		glog.V(0).Infof("read %s failed, err: %v", fileId, err)
-		return nil, err
-	}
+	return fetchChunk(c.lookupFileId, fileId, cipherKey, isGzipped)
 
-	return buffer.Bytes(), nil
 }
