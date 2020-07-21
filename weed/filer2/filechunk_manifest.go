@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	ManifestBatch = 10000
+	ManifestBatch = 1000
 )
 
 func HasChunkManifest(chunks []*filer_pb.FileChunk) bool {
