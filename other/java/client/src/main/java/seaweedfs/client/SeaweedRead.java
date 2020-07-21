@@ -40,7 +40,8 @@ public class SeaweedRead {
         int startOffset = bufferOffset;
         for (ChunkView chunkView : chunkViews) {
             FilerProto.Locations locations = vid2Locations.get(parseVolumeId(chunkView.fileId));
-            if (locations.getLocationsCount() == 0) {
+            if (locations == null || locations.getLocationsCount() == 0) {
+                LOG.error("failed to locate {}", chunkView.fileId);
                 // log here!
                 return 0;
             }
