@@ -12,7 +12,7 @@ public class FileChunkManifest {
 
     private static final Logger LOG = LoggerFactory.getLogger(FileChunkManifest.class);
 
-    private static final int mergeFactor = 3;
+    private static final int mergeFactor = 1000;
 
     public static boolean hasChunkManifest(List<FilerProto.FileChunk> chunks) {
         for (FilerProto.FileChunk chunk : chunks) {
