@@ -45,6 +45,7 @@ func ResolveChunkManifest(lookupFileIdFn LookupFileIdFunctionType, chunks []*fil
 		}
 		manifestChunks = append(manifestChunks, chunk)
 		// recursive
+		filer_pb.AfterEntryDeserialization(m.Chunks)
 		dchunks, mchunks, subErr := ResolveChunkManifest(lookupFileIdFn, m.Chunks)
 		if subErr != nil {
 			return chunks, nil, subErr
@@ -106,6 +107,8 @@ func doMaybeManifestize(saveFunc SaveDataAsChunkFunctionType, inputChunks []*fil
 }
 
 func mergeIntoManifest(saveFunc SaveDataAsChunkFunctionType, dataChunks []*filer_pb.FileChunk) (manifestChunk *filer_pb.FileChunk, err error) {
+
+	filer_pb.BeforeEntrySerialization(dataChunks)
 
 	// create and serialize the manifest
 	data, serErr := proto.Marshal(&filer_pb.FileChunkManifest{
