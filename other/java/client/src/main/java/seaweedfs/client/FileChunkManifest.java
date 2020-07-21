@@ -110,6 +110,7 @@ public class FileChunkManifest {
 
     private static FilerProto.FileChunk mergeIntoManifest(final FilerGrpcClient filerGrpcClient, List<FilerProto.FileChunk> dataChunks) throws IOException {
         // create and serialize the manifest
+        dataChunks = FilerClient.beforeEntrySerialization(dataChunks);
         FilerProto.FileChunkManifest.Builder m = FilerProto.FileChunkManifest.newBuilder().addAllChunks(dataChunks);
         byte[] data = m.build().toByteArray();
 
