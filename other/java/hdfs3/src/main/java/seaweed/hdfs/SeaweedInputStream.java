@@ -2,7 +2,6 @@ package seaweed.hdfs;
 
 // based on org.apache.hadoop.fs.azurebfs.services.AbfsInputStream
 
-import com.google.common.base.Preconditions;
 import org.apache.hadoop.fs.FSExceptionMessages;
 import org.apache.hadoop.fs.FSInputStream;
 import org.apache.hadoop.fs.FileSystem.Statistics;
@@ -37,7 +36,7 @@ public class SeaweedInputStream extends FSInputStream {
             final Statistics statistics,
             final String path,
             final FilerProto.Entry entry,
-            final int bufferSize) {
+            final int bufferSize) throws IOException {
         this.filerGrpcClient = filerGrpcClient;
         this.statistics = statistics;
         this.path = path;
@@ -100,7 +99,7 @@ public class SeaweedInputStream extends FSInputStream {
             }
         }
 
-        return (int)bytesRead;
+        return (int) bytesRead;
 
     }
 

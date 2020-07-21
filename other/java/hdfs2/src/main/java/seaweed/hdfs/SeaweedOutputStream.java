@@ -56,12 +56,12 @@ public class SeaweedOutputStream extends OutputStream {
         this.outputIndex = 0;
         this.writeOperations = new ConcurrentLinkedDeque<>();
 
-        this.maxConcurrentRequestCount = 4 * Runtime.getRuntime().availableProcessors();
+        this.maxConcurrentRequestCount = Runtime.getRuntime().availableProcessors();
 
         this.threadExecutor
                 = new ThreadPoolExecutor(maxConcurrentRequestCount,
                 maxConcurrentRequestCount,
-                10L,
+                120L,
                 TimeUnit.SECONDS,
                 new LinkedBlockingQueue<Runnable>());
         this.completionService = new ExecutorCompletionService<>(this.threadExecutor);
@@ -180,7 +180,7 @@ public class SeaweedOutputStream extends OutputStream {
         bufferToWrite.flip();
         int bytesLength = bufferToWrite.limit() - bufferToWrite.position();
 
-        if (threadExecutor.getQueue().size() >= maxConcurrentRequestCount * 2) {
+        if (threadExecutor.getQueue().size() >= maxConcurrentRequestCount) {
             waitForTaskToComplete();
         }
         final Future<Void> job = completionService.submit(() -> {
