@@ -60,12 +60,12 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
         this.outputIndex = 0;
         this.writeOperations = new ConcurrentLinkedDeque<>();
 
-        this.maxConcurrentRequestCount = 4 * Runtime.getRuntime().availableProcessors();
+        this.maxConcurrentRequestCount = Runtime.getRuntime().availableProcessors();
 
         this.threadExecutor
                 = new ThreadPoolExecutor(maxConcurrentRequestCount,
                 maxConcurrentRequestCount,
-                10L,
+                120L,
                 TimeUnit.SECONDS,
                 new LinkedBlockingQueue<Runnable>());
         this.completionService = new ExecutorCompletionService<>(this.threadExecutor);
@@ -113,7 +113,7 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
                 break;
             }
 
-            // System.out.println(path + "     [" + (outputIndex + currentOffset) + "," + ((outputIndex + currentOffset) + writableBytes) + ")");
+            // System.out.println(path + "     [" + (outputIndex + currentOffset) + "," + ((outputIndex + currentOffset) + writableBytes) + ") " + buffer.capacity());
             buffer.put(data, currentOffset, writableBytes);
             outputIndex += writableBytes;
             currentOffset += writableBytes;
@@ -227,7 +227,7 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
         bufferToWrite.flip();
         int bytesLength = bufferToWrite.limit() - bufferToWrite.position();
 
-        if (threadExecutor.getQueue().size() >= maxConcurrentRequestCount * 2) {
+        if (threadExecutor.getQueue().size() >= maxConcurrentRequestCount) {
             waitForTaskToComplete();
         }
         final Future<Void> job = completionService.submit(() -> {

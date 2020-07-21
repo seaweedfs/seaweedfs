@@ -2,16 +2,12 @@ package seaweedfs.client;
 
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpHeaders;
-import org.apache.http.HttpResponse;
-import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
-import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.util.EntityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.Closeable;
 import java.io.IOException;
 import java.util.*;
 
@@ -19,7 +15,7 @@ public class SeaweedRead {
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedRead.class);
 
-    static ChunkCache chunkCache = new ChunkCache(16);
+    static ChunkCache chunkCache = new ChunkCache(0);
 
     // returns bytesRead
     public static long read(FilerGrpcClient filerGrpcClient, List<VisibleInterval> visibleIntervals,
@@ -44,7 +40,8 @@ public class SeaweedRead {
         int startOffset = bufferOffset;
         for (ChunkView chunkView : chunkViews) {
             FilerProto.Locations locations = vid2Locations.get(parseVolumeId(chunkView.fileId));
-            if (locations.getLocationsCount() == 0) {
+            if (locations == null || locations.getLocationsCount() == 0) {
+                LOG.error("failed to locate {}", chunkView.fileId);
                 // log here!
                 return 0;
             }
@@ -77,7 +74,7 @@ public class SeaweedRead {
         return len;
     }
 
-    private static byte[] doFetchFullChunkData(ChunkView chunkView, FilerProto.Locations locations) throws IOException {
+    public static byte[] doFetchFullChunkData(ChunkView chunkView, FilerProto.Locations locations) throws IOException {
 
         HttpGet request = new HttpGet(
                 String.format("http://%s/%s", locations.getLocations(0).getUrl(), chunkView.fileId));
@@ -138,7 +135,11 @@ public class SeaweedRead {
         return views;
     }
 
-    public static List<VisibleInterval> nonOverlappingVisibleIntervals(List<FilerProto.FileChunk> chunkList) {
+    public static List<VisibleInterval> nonOverlappingVisibleIntervals(
+            final FilerGrpcClient filerGrpcClient, List<FilerProto.FileChunk> chunkList) throws IOException {
+
+        chunkList = FileChunkManifest.resolveChunkManifest(filerGrpcClient, chunkList);
+
         FilerProto.FileChunk[] chunks = chunkList.toArray(new FilerProto.FileChunk[0]);
         Arrays.sort(chunks, new Comparator<FilerProto.FileChunk>() {
             @Override

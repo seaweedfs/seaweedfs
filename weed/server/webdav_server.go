@@ -474,7 +474,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 		return 0, io.EOF
 	}
 	if f.entryViewCache == nil {
-		f.entryViewCache = filer2.NonOverlappingVisibleIntervals(f.entry.Chunks)
+		f.entryViewCache, _ = filer2.NonOverlappingVisibleIntervals(filer2.LookupFn(f.fs), f.entry.Chunks)
 		f.reader = nil
 	}
 	if f.reader == nil {

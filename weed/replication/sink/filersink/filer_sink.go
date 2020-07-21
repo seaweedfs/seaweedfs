@@ -167,12 +167,15 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		glog.V(0).Infof("already replicated %s", key)
 	} else {
 		// find out what changed
-		deletedChunks, newChunks := compareChunks(oldEntry, newEntry)
+		deletedChunks, newChunks, err := compareChunks(filer2.LookupFn(fs), oldEntry, newEntry)
+		if err != nil {
+			return true, fmt.Errorf("replicte %s compare chunks error: %v", key, err)
+		}
 
 		// delete the chunks that are deleted from the source
 		if deleteIncludeChunks {
 			// remove the deleted chunks. Actual data deletion happens in filer UpdateEntry FindUnusedFileChunks
-			existingEntry.Chunks = filer2.MinusChunks(existingEntry.Chunks, deletedChunks)
+			existingEntry.Chunks = filer2.DoMinusChunks(existingEntry.Chunks, deletedChunks)
 		}
 
 		// replicate the chunks that are new in the source
@@ -200,8 +203,21 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	})
 
 }
-func compareChunks(oldEntry, newEntry *filer_pb.Entry) (deletedChunks, newChunks []*filer_pb.FileChunk) {
-	deletedChunks = filer2.MinusChunks(oldEntry.Chunks, newEntry.Chunks)
-	newChunks = filer2.MinusChunks(newEntry.Chunks, oldEntry.Chunks)
+func compareChunks(lookupFileIdFn filer2.LookupFileIdFunctionType, oldEntry, newEntry *filer_pb.Entry) (deletedChunks, newChunks []*filer_pb.FileChunk, err error) {
+	aData, aMeta, aErr := filer2.ResolveChunkManifest(lookupFileIdFn, oldEntry.Chunks)
+	if aErr != nil {
+		return nil, nil, aErr
+	}
+	bData, bMeta, bErr := filer2.ResolveChunkManifest(lookupFileIdFn, newEntry.Chunks)
+	if bErr != nil {
+		return nil, nil, bErr
+	}
+
+	deletedChunks = append(deletedChunks, filer2.DoMinusChunks(aData, bData)...)
+	deletedChunks = append(deletedChunks, filer2.DoMinusChunks(aMeta, bMeta)...)
+
+	newChunks = append(newChunks, filer2.DoMinusChunks(bData, aData)...)
+	newChunks = append(newChunks, filer2.DoMinusChunks(bMeta, aMeta)...)
+
 	return
 }

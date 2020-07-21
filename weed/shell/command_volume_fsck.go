@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -196,7 +197,12 @@ func (c *commandVolumeFsck) collectFilerFileIds(tempFolder string, volumeIdToSer
 			files[i.vid].Write(buffer)
 		}
 	}, func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
-		for _, chunk := range entry.Entry.Chunks {
+		dChunks, mChunks, resolveErr := filer2.ResolveChunkManifest(filer2.LookupFn(c.env), entry.Entry.Chunks)
+		if resolveErr != nil {
+			return nil
+		}
+		dChunks = append(dChunks, mChunks...)
+		for _, chunk := range dChunks {
 			outputChan <- &Item{
 				vid:     chunk.Fid.VolumeId,
 				fileKey: chunk.Fid.FileKey,

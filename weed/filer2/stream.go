@@ -2,6 +2,7 @@ package filer2
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"math"
 	"strings"
@@ -14,7 +15,8 @@ import (
 
 func StreamContent(masterClient *wdclient.MasterClient, w io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
 
-	chunkViews := ViewFromChunks(chunks, offset, size)
+	fmt.Printf("start to stream content for chunks: %+v\n", chunks)
+	chunkViews := ViewFromChunks(masterClient.LookupFileId, chunks, offset, size)
 
 	fileId2Url := make(map[string]string)
 
@@ -50,14 +52,14 @@ func ReadAll(masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) 
 
 	buffer := bytes.Buffer{}
 
-	chunkViews := ViewFromChunks(chunks, 0, math.MaxInt32)
-
-	lookupFileId := func(fileId string) (targetUrl string, err error) {
+	lookupFileIdFn := func(fileId string) (targetUrl string, err error) {
 		return masterClient.LookupFileId(fileId)
 	}
 
+	chunkViews := ViewFromChunks(lookupFileIdFn, chunks, 0, math.MaxInt64)
+
 	for _, chunkView := range chunkViews {
-		urlString, err := lookupFileId(chunkView.FileId)
+		urlString, err := lookupFileIdFn(chunkView.FileId)
 		if err != nil {
 			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
 			return nil, err
@@ -88,23 +90,27 @@ var _ = io.ReadSeeker(&ChunkStreamReader{})
 
 func NewChunkStreamReaderFromFiler(masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
 
-	chunkViews := ViewFromChunks(chunks, 0, math.MaxInt32)
+	lookupFileIdFn := func(fileId string) (targetUrl string, err error) {
+		return masterClient.LookupFileId(fileId)
+	}
+
+	chunkViews := ViewFromChunks(lookupFileIdFn, chunks, 0, math.MaxInt64)
 
 	return &ChunkStreamReader{
-		chunkViews: chunkViews,
-		lookupFileId: func(fileId string) (targetUrl string, err error) {
-			return masterClient.LookupFileId(fileId)
-		},
+		chunkViews:   chunkViews,
+		lookupFileId: lookupFileIdFn,
 	}
 }
 
 func NewChunkStreamReader(filerClient filer_pb.FilerClient, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
 
-	chunkViews := ViewFromChunks(chunks, 0, math.MaxInt32)
+	lookupFileIdFn := LookupFn(filerClient)
+
+	chunkViews := ViewFromChunks(lookupFileIdFn, chunks, 0, math.MaxInt64)
 
 	return &ChunkStreamReader{
 		chunkViews:   chunkViews,
-		lookupFileId: LookupFn(filerClient),
+		lookupFileId: lookupFileIdFn,
 	}
 }
 

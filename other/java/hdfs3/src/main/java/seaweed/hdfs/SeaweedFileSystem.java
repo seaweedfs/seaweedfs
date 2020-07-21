@@ -30,7 +30,6 @@ public class SeaweedFileSystem extends FileSystem {
     public static final String FS_SEAWEED_FILER_PORT = "fs.seaweed.filer.port";
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedFileSystem.class);
-    private static int BUFFER_SIZE = 16 * 1024 * 1024;
 
     private URI uri;
     private Path workingDirectory = new Path("/");
@@ -60,8 +59,6 @@ public class SeaweedFileSystem extends FileSystem {
         int port = uri.getPort();
         port = (port == -1) ? FS_SEAWEED_DEFAULT_PORT : port;
         conf.setInt(FS_SEAWEED_FILER_PORT, port);
-
-        conf.setInt(IO_FILE_BUFFER_SIZE_KEY, BUFFER_SIZE);
 
         setConf(conf);
         this.uri = uri;

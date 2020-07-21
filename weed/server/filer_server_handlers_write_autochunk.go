@@ -102,7 +102,7 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 		limitedReader := io.LimitReader(partReader, int64(chunkSize))
 
 		// assign one file id for one chunk
-		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(w, r, replication, collection, dataCenter, ttlString, fsync)
+		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(replication, collection, dataCenter, ttlString, fsync)
 		if assignErr != nil {
 			return nil, assignErr
 		}
@@ -130,6 +130,12 @@ func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r
 		if int64(uploadResult.Size) < int64(chunkSize) {
 			break
 		}
+	}
+
+	fileChunks, replyerr = filer2.MaybeManifestize(fs.saveAsChunk(replication, collection, dataCenter, ttlString, fsync), fileChunks)
+	if replyerr != nil {
+		glog.V(0).Infof("manifestize %s: %v", r.RequestURI, replyerr)
+		return
 	}
 
 	path := r.URL.Path
@@ -184,3 +190,23 @@ func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *ht
 	uploadResult, err, _ := operation.Upload(urlLocation, fileName, fs.option.Cipher, limitedReader, false, contentType, pairMap, auth)
 	return uploadResult, err
 }
+
+func (fs *FilerServer) saveAsChunk(replication string, collection string, dataCenter string, ttlString string, fsync bool) filer2.SaveDataAsChunkFunctionType {
+
+	return func(reader io.Reader, name string, offset int64) (*filer_pb.FileChunk, string, string, error) {
+		// assign one file id for one chunk
+		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(replication, collection, dataCenter, ttlString, fsync)
+		if assignErr != nil {
+			return nil, "", "", assignErr
+		}
+
+		// upload the chunk to the volume server
+		uploadResult, uploadErr, _ := operation.Upload(urlLocation, name, fs.option.Cipher, reader, false, "", nil, auth)
+		if uploadErr != nil {
+			return nil, "", "", uploadErr
+		}
+
+		return uploadResult.ToPbFileChunk(fileId, offset), collection, replication, nil
+	}
+}
+

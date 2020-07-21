@@ -88,8 +88,12 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		return 0, nil
 	}
 
+	var chunkResolveErr error
 	if fh.f.entryViewCache == nil {
-		fh.f.entryViewCache = filer2.NonOverlappingVisibleIntervals(fh.f.entry.Chunks)
+		fh.f.entryViewCache, chunkResolveErr = filer2.NonOverlappingVisibleIntervals(filer2.LookupFn(fh.f.wfs), fh.f.entry.Chunks)
+		if chunkResolveErr != nil {
+			return 0, fmt.Errorf("fail to resolve chunk manifest: %v", chunkResolveErr)
+		}
 		fh.f.reader = nil
 	}
 
@@ -206,7 +210,12 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 			glog.V(3).Infof("%s chunks %d: %v [%d,%d)", fh.f.fullpath(), i, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}
 
-		chunks, garbages := filer2.CompactFileChunks(fh.f.entry.Chunks)
+		chunks, garbages := filer2.CompactFileChunks(filer2.LookupFn(fh.f.wfs), fh.f.entry.Chunks)
+		chunks, manifestErr := filer2.MaybeManifestize(fh.f.wfs.saveDataAsChunk(fh.f.dir.FullPath()), chunks)
+		if manifestErr != nil {
+			// not good, but should be ok
+			glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
+		}
 		fh.f.entry.Chunks = chunks
 		// fh.f.entryViewCache = nil
 
