@@ -2,7 +2,6 @@ package idx
 
 import (
 	"io"
-	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
@@ -15,13 +14,7 @@ func WalkIndexFile(r io.ReaderAt, fn func(key types.NeedleId, offset types.Offse
 	var readerOffset int64
 	bytes := make([]byte, types.NeedleMapEntrySize*RowsToRead)
 	count, e := r.ReadAt(bytes, readerOffset)
-	var name string
-	if f, ok := r.(*os.File); ok {
-		name = f.Name()
-	} else {
-		name = "memory"
-	}
-	glog.V(3).Infoln("file", name, "readerOffset", readerOffset, "count", count, "e", e)
+	glog.V(3).Infof("readerOffset %d count %d err: %v", readerOffset, count, "e", e)
 	readerOffset += int64(count)
 	var (
 		key    types.NeedleId
@@ -41,7 +34,7 @@ func WalkIndexFile(r io.ReaderAt, fn func(key types.NeedleId, offset types.Offse
 			return nil
 		}
 		count, e = r.ReadAt(bytes, readerOffset)
-		glog.V(3).Infoln("file", name, "readerOffset", readerOffset, "count", count, "e", e)
+		glog.V(3).Infof("readerOffset %d count %d err: %v", readerOffset, count, "e", e)
 		readerOffset += int64(count)
 	}
 	return e
