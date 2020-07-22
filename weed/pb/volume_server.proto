@@ -86,6 +86,8 @@ service VolumeServer {
     rpc Query (QueryRequest) returns (stream QueriedStripe) {
     }
 
+    rpc VolumeNeedleStatus (VolumeNeedleStatusRequest) returns (VolumeNeedleStatusResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -462,4 +464,17 @@ message QueryRequest {
 }
 message QueriedStripe {
     bytes records = 1;
+}
+
+message VolumeNeedleStatusRequest {
+    uint32 volume_id = 1;
+    uint64 needle_id = 2;
+}
+message VolumeNeedleStatusResponse {
+    uint64 needle_id = 1;
+    uint32 cookie = 2;
+    uint32 size = 3;
+    uint64 last_modified = 4;
+    uint32 crc = 5;
+    string ttl = 6;
 }
