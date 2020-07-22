@@ -14,7 +14,7 @@ func WalkIndexFile(r io.ReaderAt, fn func(key types.NeedleId, offset types.Offse
 	var readerOffset int64
 	bytes := make([]byte, types.NeedleMapEntrySize*RowsToRead)
 	count, e := r.ReadAt(bytes, readerOffset)
-	glog.V(3).Infof("readerOffset %d count %d err: %v", readerOffset, count, "e", e)
+	glog.V(3).Infof("readerOffset %d count %d err: %v", readerOffset, count, e)
 	readerOffset += int64(count)
 	var (
 		key    types.NeedleId
@@ -34,7 +34,7 @@ func WalkIndexFile(r io.ReaderAt, fn func(key types.NeedleId, offset types.Offse
 			return nil
 		}
 		count, e = r.ReadAt(bytes, readerOffset)
-		glog.V(3).Infof("readerOffset %d count %d err: %v", readerOffset, count, "e", e)
+		glog.V(3).Infof("readerOffset %d count %d err: %v", readerOffset, count, e)
 		readerOffset += int64(count)
 	}
 	return e
