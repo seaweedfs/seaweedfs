@@ -2,7 +2,6 @@ package idx
 
 import (
 	"io"
-	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
@@ -11,11 +10,11 @@ import (
 
 // walks through the index file, calls fn function with each key, offset, size
 // stops with the error returned by the fn function
-func WalkIndexFile(r *os.File, fn func(key types.NeedleId, offset types.Offset, size uint32) error) error {
+func WalkIndexFile(r io.ReaderAt, fn func(key types.NeedleId, offset types.Offset, size uint32) error) error {
 	var readerOffset int64
 	bytes := make([]byte, types.NeedleMapEntrySize*RowsToRead)
 	count, e := r.ReadAt(bytes, readerOffset)
-	glog.V(3).Infoln("file", r.Name(), "readerOffset", readerOffset, "count", count, "e", e)
+	glog.V(3).Infof("readerOffset %d count %d err: %v", readerOffset, count, e)
 	readerOffset += int64(count)
 	var (
 		key    types.NeedleId
@@ -35,7 +34,7 @@ func WalkIndexFile(r *os.File, fn func(key types.NeedleId, offset types.Offset, 
 			return nil
 		}
 		count, e = r.ReadAt(bytes, readerOffset)
-		glog.V(3).Infoln("file", r.Name(), "readerOffset", readerOffset, "count", count, "e", e)
+		glog.V(3).Infof("readerOffset %d count %d err: %v", readerOffset, count, e)
 		readerOffset += int64(count)
 	}
 	return e

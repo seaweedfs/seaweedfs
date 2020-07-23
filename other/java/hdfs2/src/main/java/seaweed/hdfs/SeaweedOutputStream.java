@@ -187,7 +187,6 @@ public class SeaweedOutputStream extends OutputStream {
             // System.out.println(path + " is going to save [" + (writePosition) + "," + ((writePosition) + bytesLength) + ")");
             SeaweedWrite.writeData(entry, replication, filerGrpcClient, writePosition, bufferToWrite.array(), bufferToWrite.position(), bufferToWrite.limit());
             // System.out.println(path + " saved [" + (writePosition) + "," + ((writePosition) + bytesLength) + ")");
-            bufferToWrite.clear();
             ByteBufferPool.release(bufferToWrite);
             return null;
         });

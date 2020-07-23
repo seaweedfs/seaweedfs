@@ -18,6 +18,7 @@ public class ByteBufferPool {
         if (bufferSize < MIN_BUFFER_SIZE) {
             bufferSize = MIN_BUFFER_SIZE;
         }
+        LOG.debug("requested new buffer {}", bufferSize);
         if (bufferList.isEmpty()) {
             return ByteBuffer.allocate(bufferSize);
         }
@@ -33,6 +34,7 @@ public class ByteBufferPool {
     }
 
     public static synchronized void release(ByteBuffer obj) {
+        obj.clear();
         bufferList.add(0, obj);
     }
 

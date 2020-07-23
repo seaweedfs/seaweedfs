@@ -6,6 +6,8 @@ import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.mime.HttpMultipartMode;
 import org.apache.http.entity.mime.MultipartEntityBuilder;
 import org.apache.http.util.EntityUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -15,6 +17,8 @@ import java.util.List;
 
 public class SeaweedWrite {
 
+    private static final Logger LOG = LoggerFactory.getLogger(SeaweedWrite.class);
+
     private static final SecureRandom random = new SecureRandom();
 
     public static void writeData(FilerProto.Entry.Builder entry,
@@ -23,8 +27,10 @@ public class SeaweedWrite {
                                  final long offset,
                                  final byte[] bytes,
                                  final long bytesOffset, final long bytesLength) throws IOException {
+        FilerProto.FileChunk.Builder chunkBuilder = writeChunk(
+                replication, filerGrpcClient, offset, bytes, bytesOffset, bytesLength);
         synchronized (entry) {
-            entry.addChunks(writeChunk(replication, filerGrpcClient, offset, bytes, bytesOffset, bytesLength));
+            entry.addChunks(chunkBuilder);
         }
     }
 
@@ -58,6 +64,8 @@ public class SeaweedWrite {
         // cache fileId ~ bytes
         SeaweedRead.chunkCache.setChunk(fileId, bytes);
 
+        LOG.debug("write file chunk {} size {}", targetUrl, bytesLength);
+
         return FilerProto.FileChunk.newBuilder()
                 .setFileId(fileId)
                 .setOffset(offset)
@@ -71,10 +79,8 @@ public class SeaweedWrite {
                                  final String parentDirectory,
                                  final FilerProto.Entry.Builder entry) throws IOException {
 
-        int chunkSize = entry.getChunksCount();
-        List<FilerProto.FileChunk> chunks = FileChunkManifest.maybeManifestize(filerGrpcClient, entry.getChunksList());
-
         synchronized (entry) {
+            List<FilerProto.FileChunk> chunks = FileChunkManifest.maybeManifestize(filerGrpcClient, entry.getChunksList());
             entry.clearChunks();
             entry.addAllChunks(chunks);
             filerGrpcClient.getBlockingStub().createEntry(
