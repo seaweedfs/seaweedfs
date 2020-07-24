@@ -27,6 +27,7 @@ type Dir struct {
 var _ = fs.Node(&Dir{})
 var _ = fs.NodeCreater(&Dir{})
 var _ = fs.NodeMkdirer(&Dir{})
+var _ = fs.NodeFsyncer(&Dir{})
 var _ = fs.NodeRequestLookuper(&Dir{})
 var _ = fs.HandleReadDirAller(&Dir{})
 var _ = fs.NodeRemover(&Dir{})
@@ -88,6 +89,14 @@ func (dir *Dir) setRootDirAttributes(attr *fuse.Attr) {
 	attr.Mtime = dir.wfs.option.MountMtime
 	attr.Atime = dir.wfs.option.MountMtime
 	attr.BlockSize = 1024 * 1024
+}
+
+func (dir *Dir) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
+	// fsync works at OS level
+	// write the file chunks to the filerGrpcAddress
+	glog.V(3).Infof("dir %s fsync %+v", dir.FullPath(), req)
+
+	return nil
 }
 
 func (dir *Dir) newFile(name string, entry *filer_pb.Entry) fs.Node {
