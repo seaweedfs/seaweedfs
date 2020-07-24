@@ -102,7 +102,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	})
 
 	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs}
-	wfs.fsNodeCache = newFsCache(wfs.root)
+	// wfs.fsNodeCache = newFsCache(wfs.root)
 
 	return wfs
 }
