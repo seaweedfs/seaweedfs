@@ -191,8 +191,12 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 		if fh.f.entry.Attributes != nil {
 			fh.f.entry.Attributes.Mime = fh.contentType
-			fh.f.entry.Attributes.Uid = req.Uid
-			fh.f.entry.Attributes.Gid = req.Gid
+			if req.Uid != 0 {
+				fh.f.entry.Attributes.Uid = req.Uid
+			}
+			if req.Gid != 0 {
+				fh.f.entry.Attributes.Gid = req.Gid
+			}
 			fh.f.entry.Attributes.Mtime = time.Now().Unix()
 			fh.f.entry.Attributes.Crtime = time.Now().Unix()
 			fh.f.entry.Attributes.FileMode = uint32(os.FileMode(fh.f.entry.Attributes.FileMode) &^ fh.f.wfs.option.Umask)
