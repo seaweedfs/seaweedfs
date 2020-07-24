@@ -191,14 +191,16 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 		if fh.f.entry.Attributes != nil {
 			fh.f.entry.Attributes.Mime = fh.contentType
-			if req.Uid != 0 {
+			if fh.f.entry.Attributes.Uid == 0 {
 				fh.f.entry.Attributes.Uid = req.Uid
 			}
-			if req.Gid != 0 {
+			if fh.f.entry.Attributes.Gid == 0 {
 				fh.f.entry.Attributes.Gid = req.Gid
 			}
+			if fh.f.entry.Attributes.Crtime == 0 {
+				fh.f.entry.Attributes.Crtime = time.Now().Unix()
+			}
 			fh.f.entry.Attributes.Mtime = time.Now().Unix()
-			fh.f.entry.Attributes.Crtime = time.Now().Unix()
 			fh.f.entry.Attributes.FileMode = uint32(os.FileMode(fh.f.entry.Attributes.FileMode) &^ fh.f.wfs.option.Umask)
 			fh.f.entry.Attributes.Collection = fh.dirtyPages.collection
 			fh.f.entry.Attributes.Replication = fh.dirtyPages.replication
