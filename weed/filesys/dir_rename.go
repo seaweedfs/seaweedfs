@@ -23,7 +23,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 	// find local old entry
 	oldEntry, err := dir.wfs.metaCache.FindEntry(context.Background(), oldPath)
 	if err != nil {
-		glog.V(0).Infof("dir Rename can not find %s => %s : %v", oldPath, err)
+		glog.V(0).Infof("dir Rename can not find source %s : %v", oldPath, err)
 		return fuse.ENOENT
 	}
 
