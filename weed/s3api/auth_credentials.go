@@ -110,7 +110,7 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 
 func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) http.HandlerFunc {
 
-	if iam.isEnabled() {
+	if !iam.isEnabled() {
 		return f
 	}
 
