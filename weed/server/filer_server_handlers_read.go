@@ -101,13 +101,13 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	}
 	setEtag(w, etag)
 
+	filename := entry.Name()
+	adjustHeaders(w, r, filename)
+
 	if r.Method == "HEAD" {
 		w.Header().Set("Content-Length", strconv.FormatInt(int64(filer2.TotalSize(entry.Chunks)), 10))
 		return
 	}
-
-	filename := entry.Name()
-	adjustHeadersAfterHEAD(w, r, filename)
 
 	totalSize := int64(filer2.TotalSize(entry.Chunks))
 

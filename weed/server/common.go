@@ -218,7 +218,7 @@ func handleStaticResources2(r *mux.Router) {
 	r.PathPrefix("/seaweedfsstatic/").Handler(http.StripPrefix("/seaweedfsstatic", http.FileServer(statikFS)))
 }
 
-func adjustHeadersAfterHEAD(w http.ResponseWriter, r *http.Request, filename string) {
+func adjustHeaders(w http.ResponseWriter, r *http.Request, filename string) {
 	if filename != "" {
 		contentDisposition := "inline"
 		if r.FormValue("dl") != "" {
