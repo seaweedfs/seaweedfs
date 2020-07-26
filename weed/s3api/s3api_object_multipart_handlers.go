@@ -9,7 +9,6 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/gorilla/mux"
 )
 
 const (
@@ -21,10 +20,7 @@ const (
 
 // NewMultipartUploadHandler - New multipart upload.
 func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http.Request) {
-	var object, bucket string
-	vars := mux.Vars(r)
-	bucket = vars["bucket"]
-	object = vars["object"]
+	bucket, object := getBucketAndObject(r)
 
 	response, errCode := s3a.createMultipartUpload(&s3.CreateMultipartUploadInput{
 		Bucket: aws.String(bucket),
@@ -44,9 +40,7 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 
 // CompleteMultipartUploadHandler - Completes multipart upload.
 func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	bucket := vars["bucket"]
-	object := getObject(vars)
+	bucket, object := getBucketAndObject(r)
 
 	// Get upload id.
 	uploadID, _, _, _ := getObjectResources(r.URL.Query())
@@ -70,9 +64,7 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 
 // AbortMultipartUploadHandler - Aborts multipart upload.
 func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	bucket := vars["bucket"]
-	object := getObject(vars)
+	bucket, object := getBucketAndObject(r)
 
 	// Get upload id.
 	uploadID, _, _, _ := getObjectResources(r.URL.Query())
@@ -96,8 +88,7 @@ func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *ht
 
 // ListMultipartUploadsHandler - Lists multipart uploads.
 func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	bucket := vars["bucket"]
+	bucket, _ := getBucketAndObject(r)
 
 	prefix, keyMarker, uploadIDMarker, delimiter, maxUploads, encodingType := getBucketMultipartResources(r.URL.Query())
 	if maxUploads < 0 {
@@ -135,9 +126,7 @@ func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *ht
 
 // ListObjectPartsHandler - Lists object parts in a multipart upload.
 func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	bucket := vars["bucket"]
-	object := getObject(vars)
+	bucket, object := getBucketAndObject(r)
 
 	uploadID, partNumberMarker, maxParts, _ := getObjectResources(r.URL.Query())
 	if partNumberMarker < 0 {
@@ -170,8 +159,7 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 
 // PutObjectPartHandler - Put an object part in a multipart upload.
 func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	bucket := vars["bucket"]
+	bucket, _ := getBucketAndObject(r)
 
 	uploadID := r.URL.Query().Get("uploadId")
 	exists, err := s3a.exists(s3a.genUploadsFolder(bucket), uploadID, true)
