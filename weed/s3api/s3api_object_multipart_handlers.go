@@ -173,8 +173,6 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
-	rAuthType := getRequestAuthType(r)
-
 	uploadID := r.URL.Query().Get("uploadId")
 	exists, err := s3a.exists(s3a.genUploadsFolder(bucket), uploadID, true)
 	if !exists {
@@ -193,10 +191,16 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	var s3ErrCode ErrorCode
+	rAuthType := getRequestAuthType(r)
 	dataReader := r.Body
-	if rAuthType == authTypeStreamingSigned {
+	var s3ErrCode ErrorCode
+	switch rAuthType {
+	case authTypeStreamingSigned:
 		dataReader, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
+	case authTypeSignedV2, authTypePresignedV2:
+		_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
+	case authTypePresigned, authTypeSigned:
+		_, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
 	}
 	if s3ErrCode != ErrNone {
 		writeErrorResponse(w, s3ErrCode, r.URL)
