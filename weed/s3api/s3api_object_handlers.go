@@ -57,16 +57,23 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 	defer dataReader.Close()
 
-	uploadUrl := fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
+	if strings.HasSuffix(object, "/") {
+		if err := s3a.mkdir(s3a.option.BucketsPath, bucket+object, nil); err != nil {
+			writeErrorResponse(w, ErrInternalError, r.URL)
+			return
+		}
+	} else {
+		uploadUrl := fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
 
-	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
+		etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
 
-	if errCode != ErrNone {
-		writeErrorResponse(w, errCode, r.URL)
-		return
+		if errCode != ErrNone {
+			writeErrorResponse(w, errCode, r.URL)
+			return
+		}
+
+		setEtag(w, etag)
 	}
-
-	setEtag(w, etag)
 
 	writeSuccessResponseEmpty(w)
 }
