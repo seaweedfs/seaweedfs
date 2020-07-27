@@ -27,6 +27,7 @@ type Dir struct {
 var _ = fs.Node(&Dir{})
 var _ = fs.NodeCreater(&Dir{})
 var _ = fs.NodeMkdirer(&Dir{})
+var _ = fs.NodeFsyncer(&Dir{})
 var _ = fs.NodeRequestLookuper(&Dir{})
 var _ = fs.HandleReadDirAller(&Dir{})
 var _ = fs.NodeRemover(&Dir{})
@@ -90,23 +91,27 @@ func (dir *Dir) setRootDirAttributes(attr *fuse.Attr) {
 	attr.BlockSize = 1024 * 1024
 }
 
+func (dir *Dir) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
+	// fsync works at OS level
+	// write the file chunks to the filerGrpcAddress
+	glog.V(3).Infof("dir %s fsync %+v", dir.FullPath(), req)
+
+	return nil
+}
+
 func (dir *Dir) newFile(name string, entry *filer_pb.Entry) fs.Node {
-	return dir.wfs.fsNodeCache.EnsureFsNode(util.NewFullPath(dir.FullPath(), name), func() fs.Node {
-		return &File{
-			Name:           name,
-			dir:            dir,
-			wfs:            dir.wfs,
-			entry:          entry,
-			entryViewCache: nil,
-		}
-	})
+	return &File{
+		Name:           name,
+		dir:            dir,
+		wfs:            dir.wfs,
+		entry:          entry,
+		entryViewCache: nil,
+	}
 }
 
 func (dir *Dir) newDirectory(fullpath util.FullPath, entry *filer_pb.Entry) fs.Node {
 
-	return dir.wfs.fsNodeCache.EnsureFsNode(fullpath, func() fs.Node {
-		return &Dir{name: entry.Name, wfs: dir.wfs, entry: entry, parent: dir}
-	})
+	return &Dir{name: entry.Name, wfs: dir.wfs, entry: entry, parent: dir}
 
 }
 
@@ -306,8 +311,6 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 
 	dir.wfs.deleteFileChunks(entry.Chunks)
 
-	dir.wfs.fsNodeCache.DeleteFsNode(filePath)
-
 	dir.wfs.metaCache.DeleteEntry(context.Background(), filePath)
 
 	glog.V(3).Infof("remove file: %v", req)
@@ -324,7 +327,6 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 
 	t := util.NewFullPath(dir.FullPath(), req.Name)
-	dir.wfs.fsNodeCache.DeleteFsNode(t)
 
 	dir.wfs.metaCache.DeleteEntry(context.Background(), t)
 
@@ -417,8 +419,6 @@ func (dir *Dir) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, resp 
 
 func (dir *Dir) Forget() {
 	glog.V(3).Infof("Forget dir %s", dir.FullPath())
-
-	dir.wfs.fsNodeCache.DeleteFsNode(util.FullPath(dir.FullPath()))
 }
 
 func (dir *Dir) maybeLoadEntry() error {

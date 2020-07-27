@@ -10,7 +10,6 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/gorilla/mux"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -56,8 +55,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
 
-	vars := mux.Vars(r)
-	bucket := vars["bucket"]
+	bucket, _ := getBucketAndObject(r)
 
 	// create the folder for bucket, but lazily create actual collection
 	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, nil); err != nil {
@@ -70,8 +68,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 
 func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Request) {
 
-	vars := mux.Vars(r)
-	bucket := vars["bucket"]
+	bucket, _ := getBucketAndObject(r)
 
 	err := s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
@@ -100,8 +97,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request) {
 
-	vars := mux.Vars(r)
-	bucket := vars["bucket"]
+	bucket, _ := getBucketAndObject(r)
 
 	err := s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 

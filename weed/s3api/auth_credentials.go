@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	"github.com/golang/protobuf/jsonpb"
-	"github.com/gorilla/mux"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
@@ -110,7 +109,7 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 
 func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) http.HandlerFunc {
 
-	if iam.isEnabled() {
+	if !iam.isEnabled() {
 		return f
 	}
 
@@ -159,8 +158,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 
 	glog.V(3).Infof("user name: %v actions: %v", identity.Name, identity.Actions)
 
-	vars := mux.Vars(r)
-	bucket := vars["bucket"]
+	bucket, _ := getBucketAndObject(r)
 
 	if !identity.canDo(action, bucket) {
 		return ErrAccessDenied

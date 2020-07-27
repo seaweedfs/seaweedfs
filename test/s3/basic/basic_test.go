@@ -2,14 +2,14 @@ package basic
 
 import (
 	"fmt"
-	"os"
-	"strings"
-	"testing"
-
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"io/ioutil"
+	"os"
+	"strings"
+	"testing"
 )
 
 var (
@@ -108,4 +108,102 @@ func TestPutObject(t *testing.T) {
 func exitErrorf(msg string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, msg+"\n", args...)
 	os.Exit(1)
+}
+
+const (
+	Bucket = "theBucket"
+	object = "foo/bar"
+	Data   = "<data>"
+)
+
+func TestObjectOp(t *testing.T) {
+	_, err := svc.CreateBucket(&s3.CreateBucketInput{
+		Bucket: aws.String(Bucket),
+	})
+	if err != nil {
+		exitErrorf("Unable to create bucket, %v", err)
+	}
+
+	_, err = svc.PutObject(&s3.PutObjectInput{
+		Bucket: aws.String(Bucket),
+		Key:    aws.String(object),
+		Body:   strings.NewReader(Data),
+	})
+	if err != nil {
+		exitErrorf("Unable to put object, %v", err)
+	}
+
+	dest := fmt.Sprintf("%s_bak", object)
+	copyObj, err := svc.CopyObject(&s3.CopyObjectInput{
+		Bucket:     aws.String(Bucket),
+		CopySource: aws.String(fmt.Sprintf("%s/%s", Bucket, object)),
+		Key:        aws.String(dest),
+	})
+	if err != nil {
+		exitErrorf("Unable to copy object, %v", err)
+	}
+	t.Log("copy object result -> ", copyObj.CopyObjectResult)
+
+	getObj, err := svc.GetObject(&s3.GetObjectInput{
+		Bucket: aws.String(Bucket),
+		Key:    aws.String(dest),
+	})
+	if err != nil {
+		exitErrorf("Unable to get copy object, %v", err)
+	}
+
+	data, err := ioutil.ReadAll(getObj.Body)
+	if err != nil {
+		exitErrorf("Unable to read object data, %v", err)
+	}
+	if string(data) != Data {
+		t.Error("object data -> ", string(data))
+	}
+
+	listObj, err := svc.ListObjectsV2(&s3.ListObjectsV2Input{
+		Bucket: aws.String(Bucket),
+		Prefix: aws.String("foo/"),
+	})
+	if err != nil {
+		exitErrorf("Unable to list objects, %v", err)
+	}
+	count := 0
+	for _, content := range listObj.Contents {
+		key := aws.StringValue(content.Key)
+		if key == dest {
+			count++
+		} else if key == object {
+			count++
+		}
+		if count == 2 {
+			break
+		}
+	}
+	if count != 2 {
+		exitErrorf("Unable to find two objects, %v", listObj.Contents)
+	}
+
+	_, err = svc.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: aws.String(Bucket),
+		Key:    aws.String(object),
+	})
+	if err != nil {
+		exitErrorf("Unable to delete source object, %v", err)
+	}
+
+	_, err = svc.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: aws.String(Bucket),
+		Key:    aws.String(dest),
+	})
+	if err != nil {
+		exitErrorf("Unable to delete object, %v", err)
+	}
+
+	_, err = svc.DeleteBucket(&s3.DeleteBucketInput{
+		Bucket: aws.String(Bucket),
+	})
+
+	if err != nil {
+		exitErrorf("Unable to delete bucket, %v", err)
+	}
 }

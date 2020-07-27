@@ -8,16 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gorilla/mux"
-
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request) {
 
-	vars := mux.Vars(r)
-	dstBucket := vars["bucket"]
-	dstObject := getObject(vars)
+	dstBucket, dstObject := getBucketAndObject(r)
 
 	// Copy source path.
 	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
@@ -61,7 +57,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	response := CopyObjectResult{
 		ETag:         etag,
-		LastModified: time.Now(),
+		LastModified: time.Now().UTC(),
 	}
 
 	writeSuccessResponseXML(w, encodeResponse(response))
@@ -85,9 +81,7 @@ type CopyPartResult struct {
 func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Request) {
 	// https://docs.aws.amazon.com/AmazonS3/latest/dev/CopyingObjctsUsingRESTMPUapi.html
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html
-	vars := mux.Vars(r)
-	dstBucket := vars["bucket"]
-	// dstObject := getObject(vars)
+	dstBucket, _ := getBucketAndObject(r)
 
 	// Copy source path.
 	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
@@ -143,7 +137,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	response := CopyPartResult{
 		ETag:         etag,
-		LastModified: time.Now(),
+		LastModified: time.Now().UTC(),
 	}
 
 	writeSuccessResponseXML(w, encodeResponse(response))
