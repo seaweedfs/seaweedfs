@@ -62,14 +62,13 @@ public class SeaweedRead {
 
         if (chunkData == null) {
             chunkData = doFetchFullChunkData(chunkView, locations);
+            chunkCache.setChunk(chunkView.fileId, chunkData);
         }
 
         int len = (int) chunkView.size;
         LOG.debug("readChunkView fid:{} chunkData.length:{} chunkView.offset:{} buffer.length:{} startOffset:{} len:{}",
                 chunkView.fileId, chunkData.length, chunkView.offset, buffer.length, startOffset, len);
         System.arraycopy(chunkData, (int) chunkView.offset, buffer, startOffset, len);
-
-        chunkCache.setChunk(chunkView.fileId, chunkData);
 
         return len;
     }
