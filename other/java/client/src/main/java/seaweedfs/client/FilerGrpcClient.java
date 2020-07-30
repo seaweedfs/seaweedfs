@@ -9,6 +9,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.SSLException;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
 
 public class FilerGrpcClient {
@@ -24,6 +26,7 @@ public class FilerGrpcClient {
         }
     }
 
+    public final Map<String, FilerProto.Locations> vidLocations = new HashMap<>();
     private final ManagedChannel channel;
     private final SeaweedFilerGrpc.SeaweedFilerBlockingStub blockingStub;
     private final SeaweedFilerGrpc.SeaweedFilerStub asyncStub;
