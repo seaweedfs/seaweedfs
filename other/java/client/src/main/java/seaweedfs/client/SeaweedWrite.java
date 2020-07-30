@@ -61,9 +61,6 @@ public class SeaweedWrite {
 
         String etag = multipartUpload(targetUrl, auth, bytes, bytesOffset, bytesLength, cipherKey);
 
-        // cache fileId ~ bytes
-        SeaweedRead.chunkCache.setChunk(fileId, bytes);
-
         LOG.debug("write file chunk {} size {}", targetUrl, bytesLength);
 
         return FilerProto.FileChunk.newBuilder()
