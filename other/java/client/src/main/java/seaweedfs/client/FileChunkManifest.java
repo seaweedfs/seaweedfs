@@ -59,7 +59,7 @@ public class FileChunkManifest {
                     .getBlockingStub().lookupVolume(lookupRequest.build());
             locations = lookupResponse.getLocationsMapMap().get(vid);
             filerGrpcClient.vidLocations.put(vid, locations);
-            LOG.warn("fetchChunk vid:{} locations:{}", vid, locations);
+            LOG.debug("fetchChunk vid:{} locations:{}", vid, locations);
         }
 
         SeaweedRead.ChunkView chunkView = new SeaweedRead.ChunkView(

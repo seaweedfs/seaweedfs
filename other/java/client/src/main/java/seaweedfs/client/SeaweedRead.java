@@ -108,6 +108,8 @@ public class SeaweedRead {
             }
         }
 
+        LOG.debug("doFetchFullChunkData fid:{} chunkData.length:{}", chunkView.fileId, data.length);
+
         return data;
 
     }
