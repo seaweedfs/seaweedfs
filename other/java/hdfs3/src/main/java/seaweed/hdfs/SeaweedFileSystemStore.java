@@ -1,5 +1,6 @@
 package seaweed.hdfs;
 
+import org.apache.hadoop.fs.FSInputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -207,8 +208,8 @@ public class SeaweedFileSystemStore {
 
     }
 
-    public InputStream openFileForRead(final Path path, FileSystem.Statistics statistics,
-                                       int bufferSize) throws IOException {
+    public FSInputStream openFileForRead(final Path path, FileSystem.Statistics statistics,
+                                         int bufferSize) throws IOException {
 
         LOG.debug("openFileForRead path:{} bufferSize:{}", path, bufferSize);
 

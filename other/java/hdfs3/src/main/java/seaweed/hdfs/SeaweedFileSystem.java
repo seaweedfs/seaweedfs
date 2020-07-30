@@ -75,8 +75,8 @@ public class SeaweedFileSystem extends FileSystem {
         path = qualify(path);
 
         try {
-            InputStream inputStream = seaweedFileSystemStore.openFileForRead(path, statistics, bufferSize);
-            return new FSDataInputStream(new BufferedSeaweedInputStream(inputStream, 16 * 1024 * 1024));
+            FSInputStream inputStream = seaweedFileSystemStore.openFileForRead(path, statistics, bufferSize);
+            return new FSDataInputStream(new BufferedFSInputStream(inputStream, 16 * 1024 * 1024));
         } catch (Exception ex) {
             LOG.warn("open path: {} bufferSize:{}", path, bufferSize, ex);
             return null;
