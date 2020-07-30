@@ -15,7 +15,7 @@ public class SeaweedRead {
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedRead.class);
 
-    static ChunkCache chunkCache = new ChunkCache(0);
+    static ChunkCache chunkCache = new ChunkCache(4);
 
     // returns bytesRead
     public static long read(FilerGrpcClient filerGrpcClient, List<VisibleInterval> visibleIntervals,
@@ -62,14 +62,13 @@ public class SeaweedRead {
 
         if (chunkData == null) {
             chunkData = doFetchFullChunkData(chunkView, locations);
+            chunkCache.setChunk(chunkView.fileId, chunkData);
         }
 
         int len = (int) chunkView.size;
         LOG.debug("readChunkView fid:{} chunkData.length:{} chunkView.offset:{} buffer.length:{} startOffset:{} len:{}",
                 chunkView.fileId, chunkData.length, chunkView.offset, buffer.length, startOffset, len);
         System.arraycopy(chunkData, (int) chunkView.offset, buffer, startOffset, len);
-
-        chunkCache.setChunk(chunkView.fileId, chunkData);
 
         return len;
     }
@@ -108,6 +107,8 @@ public class SeaweedRead {
                 throw new IOException("fail to decrypt", e);
             }
         }
+
+        LOG.debug("doFetchFullChunkData fid:{} chunkData.length:{}", chunkView.fileId, data.length);
 
         return data;
 

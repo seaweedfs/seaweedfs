@@ -34,7 +34,6 @@ type Option struct {
 	CacheDir           string
 	CacheSizeMB        int64
 	DataCenter         string
-	DirListCacheLimit  int64
 	EntryCacheTtl      time.Duration
 	Umask              os.FileMode
 

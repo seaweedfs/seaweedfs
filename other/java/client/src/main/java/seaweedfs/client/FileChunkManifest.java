@@ -6,7 +6,6 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 public class FileChunkManifest {
 
@@ -51,13 +50,17 @@ public class FileChunkManifest {
 
     private static byte[] fetchChunk(final FilerGrpcClient filerGrpcClient, FilerProto.FileChunk chunk) throws IOException {
 
-        FilerProto.LookupVolumeRequest.Builder lookupRequest = FilerProto.LookupVolumeRequest.newBuilder();
         String vid = "" + chunk.getFid().getVolumeId();
-        lookupRequest.addVolumeIds(vid);
-        FilerProto.LookupVolumeResponse lookupResponse = filerGrpcClient
-                .getBlockingStub().lookupVolume(lookupRequest.build());
-        Map<String, FilerProto.Locations> vid2Locations = lookupResponse.getLocationsMapMap();
-        FilerProto.Locations locations = vid2Locations.get(vid);
+        FilerProto.Locations locations = filerGrpcClient.vidLocations.get(vid);
+        if (locations == null) {
+            FilerProto.LookupVolumeRequest.Builder lookupRequest = FilerProto.LookupVolumeRequest.newBuilder();
+            lookupRequest.addVolumeIds(vid);
+            FilerProto.LookupVolumeResponse lookupResponse = filerGrpcClient
+                    .getBlockingStub().lookupVolume(lookupRequest.build());
+            locations = lookupResponse.getLocationsMapMap().get(vid);
+            filerGrpcClient.vidLocations.put(vid, locations);
+            LOG.debug("fetchChunk vid:{} locations:{}", vid, locations);
+        }
 
         SeaweedRead.ChunkView chunkView = new SeaweedRead.ChunkView(
                 FilerClient.toFileId(chunk.getFid()), // avoid deprecated chunk.getFileId()

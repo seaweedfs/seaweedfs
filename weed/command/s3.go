@@ -151,6 +151,7 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	_, s3ApiServer_err := s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
 		Filer:            *s3opt.filer,
+		Port:             *s3opt.port,
 		FilerGrpcAddress: filerGrpcAddress,
 		Config:           *s3opt.config,
 		DomainName:       *s3opt.domainName,

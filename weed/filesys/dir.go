@@ -3,6 +3,7 @@ package filesys
 import (
 	"bytes"
 	"context"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -277,7 +278,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 	dirPath := util.FullPath(dir.FullPath())
 	meta_cache.EnsureVisited(dir.wfs.metaCache, dir.wfs, dirPath)
-	listedEntries, listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), util.FullPath(dir.FullPath()), "", false, int(dir.wfs.option.DirListCacheLimit))
+	listedEntries, listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), util.FullPath(dir.FullPath()), "", false, int(math.MaxInt32))
 	if listErr != nil {
 		glog.Errorf("list meta cache: %v", listErr)
 		return nil, fuse.EIO
