@@ -230,6 +230,11 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 
 	resp, postErr := client.Do(proxyReq)
 
+	if resp.ContentLength == -1 {
+		writeErrorResponse(w, ErrNoSuchKey, r.URL)
+		return
+	}
+
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)
 		writeErrorResponse(w, ErrInternalError, r.URL)
