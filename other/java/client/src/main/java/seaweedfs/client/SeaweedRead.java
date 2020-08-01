@@ -1,5 +1,7 @@
 package seaweedfs.client;
 
+import org.apache.http.Header;
+import org.apache.http.HeaderElement;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpHeaders;
 import org.apache.http.client.entity.GzipDecompressingEntity;
