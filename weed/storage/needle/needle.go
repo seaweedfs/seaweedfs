@@ -44,7 +44,7 @@ type Needle struct {
 }
 
 func (n *Needle) String() (str string) {
-	str = fmt.Sprintf("%s Size:%d, DataSize:%d, Name:%s, Mime:%s", formatNeedleIdCookie(n.Id, n.Cookie), n.Size, n.DataSize, n.Name, n.Mime)
+	str = fmt.Sprintf("%s Size:%d, DataSize:%d, Name:%s, Mime:%s Compressed:%v", formatNeedleIdCookie(n.Id, n.Cookie), n.Size, n.DataSize, n.Name, n.Mime, n.IsCompressed())
 	return
 }
 
@@ -81,6 +81,7 @@ func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit 
 		}
 	}
 	if pu.IsGzipped {
+		// println(r.URL.Path, "is set to compressed", pu.FileName, pu.IsGzipped, "dataSize", pu.OriginalDataSize)
 		n.SetIsCompressed()
 	}
 	if n.LastModified == 0 {
