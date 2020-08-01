@@ -68,14 +68,28 @@ func Post(url string, values url.Values) ([]byte, error) {
 //	github.com/chrislusf/seaweedfs/unmaintained/repeated_vacuum/repeated_vacuum.go
 //	may need increasing http.Client.Timeout
 func Get(url string) ([]byte, error) {
-	r, err := client.Get(url)
+
+	request, err := http.NewRequest("GET", url, nil)
+	request.Header.Add("Accept-Encoding", "gzip")
+
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, err
 	}
-	defer r.Body.Close()
-	b, err := ioutil.ReadAll(r.Body)
-	if r.StatusCode >= 400 {
-		return nil, fmt.Errorf("%s: %s", url, r.Status)
+	defer response.Body.Close()
+
+	var reader io.ReadCloser
+	switch response.Header.Get("Content-Encoding") {
+	case "gzip":
+		reader, err = gzip.NewReader(response.Body)
+		defer reader.Close()
+	default:
+		reader = response.Body
+	}
+
+	b, err := ioutil.ReadAll(reader)
+	if response.StatusCode >= 400 {
+		return nil, fmt.Errorf("%s: %s", url, response.Status)
 	}
 	if err != nil {
 		return nil, err
@@ -269,7 +283,9 @@ func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, is
 		return err
 	}
 
-	if !isFullChunk {
+	if isFullChunk {
+		req.Header.Add("Accept-Encoding", "gzip")
+	} else {
 		req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)-1))
 	}
 
@@ -282,13 +298,23 @@ func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, is
 		return fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
 
+	var reader io.ReadCloser
+	contentEncoding := r.Header.Get("Content-Encoding")
+	switch contentEncoding {
+	case "gzip":
+		reader, err = gzip.NewReader(r.Body)
+		defer reader.Close()
+	default:
+		reader = r.Body
+	}
+
 	var (
 		m int
 	)
 	buf := make([]byte, 64*1024)
 
 	for {
-		m, err = r.Body.Read(buf)
+		m, err = reader.Read(buf)
 		fn(buf[:m])
 		if err == io.EOF {
 			return nil
@@ -334,6 +360,8 @@ func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, e
 	}
 	if rangeHeader != "" {
 		req.Header.Add("Range", rangeHeader)
+	} else {
+		req.Header.Add("Accept-Encoding", "gzip")
 	}
 
 	r, err := client.Do(req)
@@ -344,7 +372,17 @@ func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, e
 		return nil, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
 
-	return r.Body, nil
+	var reader io.ReadCloser
+	contentEncoding := r.Header.Get("Content-Encoding")
+	switch contentEncoding {
+	case "gzip":
+		reader, err = gzip.NewReader(r.Body)
+		defer reader.Close()
+	default:
+		reader = r.Body
+	}
+
+	return reader, nil
 }
 
 func CloseResponse(resp *http.Response) {
