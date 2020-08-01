@@ -97,7 +97,7 @@ public class SeaweedRead {
         }
 
         if (chunkView.isCompressed) {
-            data = Gzip.decompress(data);
+            // data = Gzip.decompress(data);
         }
 
         if (chunkView.cipherKey != null && chunkView.cipherKey.length != 0) {
