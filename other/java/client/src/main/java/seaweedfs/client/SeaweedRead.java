@@ -1,7 +1,10 @@
 package seaweedfs.client;
 
+import org.apache.http.Header;
+import org.apache.http.HeaderElement;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpHeaders;
+import org.apache.http.client.entity.GzipDecompressingEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.util.EntityUtils;
@@ -78,7 +81,7 @@ public class SeaweedRead {
         HttpGet request = new HttpGet(
                 String.format("http://%s/%s", locations.getLocations(0).getUrl(), chunkView.fileId));
 
-        request.setHeader(HttpHeaders.ACCEPT_ENCODING, "");
+        request.setHeader(HttpHeaders.ACCEPT_ENCODING, "gzip");
 
         byte[] data = null;
 
@@ -86,6 +89,18 @@ public class SeaweedRead {
 
         try {
             HttpEntity entity = response.getEntity();
+
+            Header contentEncodingHeader = entity.getContentEncoding();
+
+            if (contentEncodingHeader != null) {
+                HeaderElement[] encodings =contentEncodingHeader.getElements();
+                for (int i = 0; i < encodings.length; i++) {
+                    if (encodings[i].getName().equalsIgnoreCase("gzip")) {
+                        entity = new GzipDecompressingEntity(entity);
+                        break;
+                    }
+                }
+            }
 
             data = EntityUtils.toByteArray(entity);
 
@@ -96,16 +111,16 @@ public class SeaweedRead {
             request.releaseConnection();
         }
 
-        if (chunkView.isCompressed) {
-            data = Gzip.decompress(data);
-        }
-
         if (chunkView.cipherKey != null && chunkView.cipherKey.length != 0) {
             try {
                 data = SeaweedCipher.decrypt(data, chunkView.cipherKey);
             } catch (Exception e) {
                 throw new IOException("fail to decrypt", e);
             }
+        }
+
+        if (chunkView.isCompressed) {
+            data = Gzip.decompress(data);
         }
 
         LOG.debug("doFetchFullChunkData fid:{} chunkData.length:{}", chunkView.fileId, data.length);
