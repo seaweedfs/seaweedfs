@@ -119,6 +119,10 @@ public class SeaweedRead {
             }
         }
 
+        if (chunkView.isCompressed) {
+            data = Gzip.decompress(data);
+        }
+
         LOG.debug("doFetchFullChunkData fid:{} chunkData.length:{}", chunkView.fileId, data.length);
 
         return data;
