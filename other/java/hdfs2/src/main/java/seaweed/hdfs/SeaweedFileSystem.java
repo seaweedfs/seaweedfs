@@ -11,6 +11,7 @@ import org.apache.hadoop.util.Progressable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import seaweedfs.client.FilerProto;
+import seaweedfs.client.ReadAheadInputStream;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -76,7 +77,7 @@ public class SeaweedFileSystem extends FileSystem {
 
         try {
             FSInputStream inputStream = seaweedFileSystemStore.openFileForRead(path, statistics, bufferSize);
-            return new FSDataInputStream(new BufferedFSInputStream(inputStream, 16 * 1024 * 1024));
+            return new FSDataInputStream(new ReadAheadInputStream(inputStream, 16 * 1024 * 1024));
         } catch (Exception ex) {
             LOG.warn("open path: {} bufferSize:{}", path, bufferSize, ex);
             return null;
