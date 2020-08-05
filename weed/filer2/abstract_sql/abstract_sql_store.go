@@ -4,8 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
-
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -151,87 +149,13 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 	return nil
 }
 
-//func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
-//	sqlText := store.SqlListExclusive
-//	if inclusive {
-//		sqlText = store.SqlListInclusive
-//	}
-//
-//	rows, err := store.getTxOrDB(ctx).QueryContext(ctx, sqlText, util.HashStringToLong(string(fullpath)), startFileName, string(fullpath), prefix, limit)
-//	if err != nil {
-//		return nil, fmt.Errorf("list %s : %v", fullpath, err)
-//	}
-//	defer rows.Close()
-//
-//	for rows.Next() {
-//		var name string
-//		var data []byte
-//		if err = rows.Scan(&name, &data); err != nil {
-//			glog.V(0).Infof("scan %s : %v", fullpath, err)
-//			return nil, fmt.Errorf("scan %s: %v", fullpath, err)
-//		}
-//
-//		entry := &filer2.Entry{
-//			FullPath: util.NewFullPath(string(fullpath), name),
-//		}
-//		if err = entry.DecodeAttributesAndChunks(data); err != nil {
-//			glog.V(0).Infof("scan decode %s : %v", entry.FullPath, err)
-//			return nil, fmt.Errorf("scan decode %s : %v", entry.FullPath, err)
-//		}
-//
-//		entries = append(entries, entry)
-//	}
-//
-//	return entries, nil
-//}
-//func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
-//	return nil, fmt.Errorf("not implemented")
-//
-//}
-
 func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
-	count := 0
-	notPrefixed, err := store.ListDirectoryEntries(ctx, fullpath, startFileName, inclusive, limit)
-	if err != nil {
-		return nil, err
-	}
-
-	if prefix == "" {
-		return notPrefixed, nil
-	}
-	var lastFileName string
-	for count < limit {
-		for _, entry := range notPrefixed {
-			lastFileName = entry.Name()
-			if strings.HasPrefix(entry.Name(), prefix) {
-				count++
-				entries = append(entries, entry)
-			}
-		}
-		if count >= limit {
-			break
-		}
-
-		notPrefixed, err = store.ListDirectoryEntries(ctx, fullpath, lastFileName, inclusive, limit)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(notPrefixed) == 0 {
-			break
-		}
-	}
-
-	return entries, nil
-}
-
-func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
 	sqlText := store.SqlListExclusive
 	if inclusive {
 		sqlText = store.SqlListInclusive
 	}
 
-	rows, err := store.getTxOrDB(ctx).QueryContext(ctx, sqlText, util.HashStringToLong(string(fullpath)), startFileName, string(fullpath), limit)
+	rows, err := store.getTxOrDB(ctx).QueryContext(ctx, sqlText, util.HashStringToLong(string(fullpath)), startFileName, string(fullpath), prefix, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list %s : %v", fullpath, err)
 	}
@@ -257,6 +181,10 @@ func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, fullpat
 	}
 
 	return entries, nil
+}
+func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
+	return nil, fmt.Errorf("not implemented")
+
 }
 
 func (store *AbstractSqlStore) Shutdown() {
