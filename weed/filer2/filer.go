@@ -277,7 +277,7 @@ func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, start
 }
 
 func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*Entry, expiredCount int, lastFileName string, err error) {
-	listedEntries, listErr := f.Store.ListDirectoryEntries(ctx, p, startFileName, inclusive, limit, prefix)
+	listedEntries, listErr := f.Store.ListDirectoryPrefixedEntries(ctx, p, startFileName, inclusive, limit, prefix)
 	if listErr != nil {
 		return listedEntries, expiredCount, "", listErr
 	}
