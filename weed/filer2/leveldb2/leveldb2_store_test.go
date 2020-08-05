@@ -50,14 +50,14 @@ func TestCreateAndFind(t *testing.T) {
 	}
 
 	// checking one upper directory
-	entries, _ := filer.ListDirectoryEntries(ctx, util.FullPath("/home/chris/this/is/one"), "", false, 100)
+	entries, _ := filer.ListDirectoryEntries(ctx, util.FullPath("/home/chris/this/is/one"), "", false, 100, "")
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
 		return
 	}
 
 	// checking one upper directory
-	entries, _ = filer.ListDirectoryEntries(ctx, util.FullPath("/"), "", false, 100)
+	entries, _ = filer.ListDirectoryEntries(ctx, util.FullPath("/"), "", false, 100, "")
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
 		return
@@ -77,7 +77,7 @@ func TestEmptyRoot(t *testing.T) {
 	ctx := context.Background()
 
 	// checking one upper directory
-	entries, err := filer.ListDirectoryEntries(ctx, util.FullPath("/"), "", false, 100)
+	entries, err := filer.ListDirectoryEntries(ctx, util.FullPath("/"), "", false, 100, "")
 	if err != nil {
 		t.Errorf("list entries: %v", err)
 		return
