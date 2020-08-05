@@ -199,8 +199,10 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 	if prefix == "" {
 		return notPrefixed, nil
 	}
+	var lastFileName string
 	for count < limit {
 		for _, entry := range notPrefixed {
+			lastFileName = entry.Name()
 			if strings.HasPrefix(entry.Name(), prefix) {
 				count++
 				entries = append(entries, entry)
@@ -210,9 +212,13 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 			break
 		}
 
-		notPrefixed, err = store.ListDirectoryEntries(ctx, fullpath, startFileName, inclusive, limit)
+		notPrefixed, err = store.ListDirectoryEntries(ctx, fullpath, lastFileName, inclusive, limit)
 		if err != nil {
 			return nil, err
+		}
+
+		if len(notPrefixed) == 0 {
+			break
 		}
 	}
 
