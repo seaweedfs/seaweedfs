@@ -182,8 +182,8 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 
 	return entries, nil
 }
-func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
-	return nil, fmt.Errorf("not implemented")
+func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
+	return store.ListDirectoryPrefixedEntries(ctx, fullpath, startFileName, inclusive, limit, "")
 
 }
 
