@@ -168,7 +168,7 @@ func ReadNeedleBlob(r backend.BackendStorageFile, offset int64, size uint32, ver
 func (n *Needle) ReadBytes(bytes []byte, offset int64, size uint32, version Version) (err error) {
 	n.ParseNeedleHeader(bytes)
 	if n.Size != size {
-		return fmt.Errorf("entry not found: offset %d found id %d size %d, expected size %d", offset, n.Id, n.Size, size)
+		return fmt.Errorf("entry not found: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
 	}
 	switch version {
 	case Version1:
