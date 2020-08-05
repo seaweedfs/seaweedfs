@@ -3,6 +3,7 @@ package redis2
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis"
@@ -114,6 +115,36 @@ func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, ful
 	}
 
 	return nil
+}
+
+func (store *UniversalRedis2Store) ListDirectoryPrefixedEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
+	count := 0
+	notPrefixed, err := store.ListDirectoryEntries(ctx, fullpath, startFileName, inclusive, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	if prefix == "" {
+		return notPrefixed, nil
+	}
+	for count < limit {
+		for _, entry := range notPrefixed {
+			if strings.HasPrefix(entry.Name(), prefix) {
+				count++
+				entries = append(entries, entry)
+			}
+		}
+		if count >= limit {
+			break
+		}
+
+		notPrefixed, err = store.ListDirectoryEntries(ctx, fullpath, startFileName, inclusive, limit)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return entries, nil
 }
 
 func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool,

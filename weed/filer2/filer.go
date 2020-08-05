@@ -259,15 +259,15 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 
 }
 
-func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int) ([]*Entry, error) {
+func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int, prefix string) ([]*Entry, error) {
 	if strings.HasSuffix(string(p), "/") && len(p) > 1 {
 		p = p[0 : len(p)-1]
 	}
 
 	var makeupEntries []*Entry
-	entries, expiredCount, lastFileName, err := f.doListDirectoryEntries(ctx, p, startFileName, inclusive, limit)
+	entries, expiredCount, lastFileName, err := f.doListDirectoryEntries(ctx, p, startFileName, inclusive, limit, prefix)
 	for expiredCount > 0 && err == nil {
-		makeupEntries, expiredCount, lastFileName, err = f.doListDirectoryEntries(ctx, p, lastFileName, false, expiredCount)
+		makeupEntries, expiredCount, lastFileName, err = f.doListDirectoryEntries(ctx, p, lastFileName, false, expiredCount, prefix)
 		if err == nil {
 			entries = append(entries, makeupEntries...)
 		}
@@ -276,8 +276,8 @@ func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, start
 	return entries, err
 }
 
-func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int) (entries []*Entry, expiredCount int, lastFileName string, err error) {
-	listedEntries, listErr := f.Store.ListDirectoryEntries(ctx, p, startFileName, inclusive, limit)
+func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*Entry, expiredCount int, lastFileName string, err error) {
+	listedEntries, listErr := f.Store.ListDirectoryEntries(ctx, p, startFileName, inclusive, limit, prefix)
 	if listErr != nil {
 		return listedEntries, expiredCount, "", listErr
 	}

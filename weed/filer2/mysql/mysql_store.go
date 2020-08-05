@@ -41,7 +41,7 @@ func (store *MysqlStore) Initialize(configuration util.Configuration, prefix str
 
 func (store *MysqlStore) initialize(user, password, hostname string, port int, database string, maxIdle, maxOpen int,
 	interpolateParams bool) (err error) {
-
+	//AND name like CONCAT(?,'%')
 	store.SqlInsert = "INSERT INTO filemeta (dirhash,name,directory,meta) VALUES(?,?,?,?)"
 	store.SqlUpdate = "UPDATE filemeta SET meta=? WHERE dirhash=? AND name=? AND directory=?"
 	store.SqlFind = "SELECT meta FROM filemeta WHERE dirhash=? AND name=? AND directory=?"

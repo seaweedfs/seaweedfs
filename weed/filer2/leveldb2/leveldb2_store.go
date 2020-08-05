@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/errors"
@@ -166,6 +167,36 @@ func (store *LevelDB2Store) DeleteFolderChildren(ctx context.Context, fullpath w
 	}
 
 	return nil
+}
+
+func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
+	count := 0
+	notPrefixed, err := store.ListDirectoryEntries(ctx, fullpath, startFileName, inclusive, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	if prefix == "" {
+		return notPrefixed, nil
+	}
+	for count < limit {
+		for _, entry := range notPrefixed {
+			if strings.HasPrefix(entry.Name(), prefix) {
+				count++
+				entries = append(entries, entry)
+			}
+		}
+		if count >= limit {
+			break
+		}
+
+		notPrefixed, err = store.ListDirectoryEntries(ctx, fullpath, startFileName, inclusive, limit)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return entries, nil
 }
 
 func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool,

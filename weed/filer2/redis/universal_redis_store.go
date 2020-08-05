@@ -121,6 +121,36 @@ func (store *UniversalRedisStore) DeleteFolderChildren(ctx context.Context, full
 	return nil
 }
 
+func (store *UniversalRedisStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
+	count := 0
+	notPrefixed, err := store.ListDirectoryEntries(ctx, fullpath, startFileName, inclusive, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	if prefix == "" {
+		return notPrefixed, nil
+	}
+	for count < limit {
+		for _, entry := range notPrefixed {
+			if strings.HasPrefix(entry.Name(), prefix) {
+				count++
+				entries = append(entries, entry)
+			}
+		}
+		if count >= limit {
+			break
+		}
+
+		notPrefixed, err = store.ListDirectoryEntries(ctx, fullpath, startFileName, inclusive, limit)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return entries, nil
+}
+
 func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool,
 	limit int) (entries []*filer2.Entry, err error) {
 
