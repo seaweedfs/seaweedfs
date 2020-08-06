@@ -19,14 +19,13 @@ import (
 
 func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
 	var dn *topology.DataNode
-	t := ms.Topo
 
 	defer func() {
 		if dn != nil {
 
 			// if the volume server disconnects and reconnects quickly
 			//  the unregister and register can race with each other
-			t.UnRegisterDataNode(dn)
+			ms.Topo.UnRegisterDataNode(dn)
 			glog.V(0).Infof("unregister disconnected volume server %s:%d", dn.Ip, dn.Port)
 
 			message := &master_pb.VolumeLocation{
@@ -62,11 +61,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			return err
 		}
 
-		t.Sequence.SetMax(heartbeat.MaxFileKey)
+		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)
 
 		if dn == nil {
-			dcName, rackName := t.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
-			dc := t.GetOrCreateDataCenter(dcName)
+			dcName, rackName := ms.Topo.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
+			dc := ms.Topo.GetOrCreateDataCenter(dcName)
 			rack := dc.GetOrCreateRack(rackName)
 			dn = rack.GetOrCreateDataNode(heartbeat.Ip,
 				int(heartbeat.Port), heartbeat.PublicUrl,
@@ -102,12 +101,12 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				message.DeletedVids = append(message.DeletedVids, volInfo.Id)
 			}
 			// update master internal volume layouts
-			t.IncrementalSyncDataNodeRegistration(heartbeat.NewVolumes, heartbeat.DeletedVolumes, dn)
+			ms.Topo.IncrementalSyncDataNodeRegistration(heartbeat.NewVolumes, heartbeat.DeletedVolumes, dn)
 		}
 
 		if len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes {
 			// process heartbeat.Volumes
-			newVolumes, deletedVolumes := t.SyncDataNodeRegistration(heartbeat.Volumes, dn)
+			newVolumes, deletedVolumes := ms.Topo.SyncDataNodeRegistration(heartbeat.Volumes, dn)
 
 			for _, v := range newVolumes {
 				glog.V(0).Infof("master see new volume %d from %s", uint32(v.Id), dn.Url())
@@ -122,7 +121,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		if len(heartbeat.NewEcShards) > 0 || len(heartbeat.DeletedEcShards) > 0 {
 
 			// update master internal volume layouts
-			t.IncrementalSyncDataNodeEcShards(heartbeat.NewEcShards, heartbeat.DeletedEcShards, dn)
+			ms.Topo.IncrementalSyncDataNodeEcShards(heartbeat.NewEcShards, heartbeat.DeletedEcShards, dn)
 
 			for _, s := range heartbeat.NewEcShards {
 				message.NewVids = append(message.NewVids, s.Id)
@@ -138,7 +137,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		if len(heartbeat.EcShards) > 0 || heartbeat.HasNoEcShards {
 			glog.V(1).Infof("master recieved ec shards from %s: %+v", dn.Url(), heartbeat.EcShards)
-			newShards, deletedShards := t.SyncDataNodeEcShards(heartbeat.EcShards, dn)
+			newShards, deletedShards := ms.Topo.SyncDataNodeEcShards(heartbeat.EcShards, dn)
 
 			// broadcast the ec vid changes to master clients
 			for _, s := range newShards {
@@ -163,7 +162,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 
 		// tell the volume servers about the leader
-		newLeader, err := t.Leader()
+		newLeader, err := ms.Topo.Leader()
 		if err != nil {
 			glog.Warningf("SendHeartbeat find leader: %v", err)
 			return err
