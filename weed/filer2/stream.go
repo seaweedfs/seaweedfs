@@ -2,7 +2,6 @@ package filer2
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"math"
 	"strings"
@@ -15,7 +14,7 @@ import (
 
 func StreamContent(masterClient *wdclient.MasterClient, w io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
 
-	fmt.Printf("start to stream content for chunks: %+v\n", chunks)
+	// fmt.Printf("start to stream content for chunks: %+v\n", chunks)
 	chunkViews := ViewFromChunks(masterClient.LookupFileId, chunks, offset, size)
 
 	fileId2Url := make(map[string]string)
