@@ -107,6 +107,16 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 	return nil, nil, false
 }
 
+func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, found bool) {
+
+	for _, ident := range iam.identities {
+		if ident.Name == "anonymous" {
+			return ident, true
+		}
+	}
+	return nil, false
+}
+
 func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) http.HandlerFunc {
 
 	if !iam.isEnabled() {
@@ -127,6 +137,7 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action) ErrorCode {
 	var identity *Identity
 	var s3Err ErrorCode
+	var found bool
 	switch getRequestAuthType(r) {
 	case authTypeStreamingSigned:
 		return ErrNone
@@ -146,7 +157,10 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		glog.V(3).Infof("jwt auth type")
 		return ErrNotImplemented
 	case authTypeAnonymous:
-		return ErrAccessDenied
+		identity, found = iam.lookupAnonymous()
+		if !found {
+			return ErrAccessDenied
+		}
 	default:
 		return ErrNotImplemented
 	}
