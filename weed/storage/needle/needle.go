@@ -48,7 +48,7 @@ func (n *Needle) String() (str string) {
 	return
 }
 
-func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit int64) (n *Needle, originalSize int, e error) {
+func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit int64) (n *Needle, originalSize int, md5 string, e error) {
 	n = new(Needle)
 	pu, e := ParseUpload(r, sizeLimit)
 	if e != nil {

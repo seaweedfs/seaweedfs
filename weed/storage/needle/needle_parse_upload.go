@@ -29,6 +29,7 @@ type ParsedUpload struct {
 	Ttl              *TTL
 	IsChunkedFile    bool
 	UncompressedData []byte
+	ContentMd5       string
 }
 
 func ParseUpload(r *http.Request, sizeLimit int64) (pu *ParsedUpload, e error) {
@@ -83,11 +84,13 @@ func ParseUpload(r *http.Request, sizeLimit int64) (pu *ParsedUpload, e error) {
 		}
 	}
 
+	// md5
+	h := md5.New()
+	h.Write(pu.UncompressedData)
+	pu.ContentMd5 = base64.StdEncoding.EncodeToString(h.Sum(nil))
 	if expectedChecksum := r.Header.Get("Content-MD5"); expectedChecksum != "" {
-		h := md5.New()
-		h.Write(pu.UncompressedData)
-		if receivedChecksum := base64.StdEncoding.EncodeToString(h.Sum(nil)); expectedChecksum != receivedChecksum {
-			e = fmt.Errorf("Content-MD5 did not match md5 of file data [%s] != [%s]", expectedChecksum, receivedChecksum)
+		if expectedChecksum != pu.ContentMd5 {
+			e = fmt.Errorf("Content-MD5 did not match md5 of file data [%s] != [%s]", expectedChecksum, pu.ContentMd5)
 			return
 		}
 	}
