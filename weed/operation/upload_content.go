@@ -2,7 +2,6 @@ package operation
 
 import (
 	"bytes"
-	"crypto/md5"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,14 +22,14 @@ import (
 )
 
 type UploadResult struct {
-	Name      string `json:"name,omitempty"`
-	Size      uint32 `json:"size,omitempty"`
-	Error     string `json:"error,omitempty"`
-	ETag      string `json:"eTag,omitempty"`
-	CipherKey []byte `json:"cipherKey,omitempty"`
-	Mime      string `json:"mime,omitempty"`
-	Gzip      uint32 `json:"gzip,omitempty"`
-	Md5       string `json:"md5,omitempty"`
+	Name       string `json:"name,omitempty"`
+	Size       uint32 `json:"size,omitempty"`
+	Error      string `json:"error,omitempty"`
+	ETag       string `json:"eTag,omitempty"`
+	CipherKey  []byte `json:"cipherKey,omitempty"`
+	Mime       string `json:"mime,omitempty"`
+	Gzip       uint32 `json:"gzip,omitempty"`
+	ContentMd5 string `json:"contentMd5,omitempty"`
 }
 
 func (uploadResult *UploadResult) ToPbFileChunk(fileId string, offset int64) *filer_pb.FileChunk {
@@ -65,20 +64,12 @@ var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 // Upload sends a POST request to a volume server to upload the content with adjustable compression level
 func UploadData(uploadUrl string, filename string, cipher bool, data []byte, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error) {
 	uploadResult, err = doUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
-	if uploadResult != nil {
-		uploadResult.Md5 = util.Md5(data)
-	}
 	return
 }
 
 // Upload sends a POST request to a volume server to upload the content with fast compression
 func Upload(uploadUrl string, filename string, cipher bool, reader io.Reader, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error, data []byte) {
-	hash := md5.New()
-	reader = io.TeeReader(reader, hash)
 	uploadResult, err, data = doUpload(uploadUrl, filename, cipher, reader, isInputCompressed, mtype, pairMap, jwt)
-	if uploadResult != nil {
-		uploadResult.Md5 = fmt.Sprintf("%x", hash.Sum(nil))
-	}
 	return
 }
 
@@ -241,6 +232,7 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 		return nil, errors.New(ret.Error)
 	}
 	ret.ETag = etag
+	ret.ContentMd5 = resp.Header.Get("Content-MD5")
 	return &ret, nil
 }
 

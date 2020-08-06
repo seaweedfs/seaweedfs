@@ -70,6 +70,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 			Collection:  collection,
 			TtlSec:      ttlSeconds,
 			Mime:        pu.MimeType,
+			Md5:         util.Base64Md5ToBytes(pu.ContentMd5),
 		},
 		Chunks: fileChunks,
 	}

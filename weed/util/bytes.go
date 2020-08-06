@@ -2,6 +2,7 @@ package util
 
 import (
 	"crypto/md5"
+	"encoding/base64"
 	"fmt"
 	"io"
 )
@@ -109,8 +110,20 @@ func HashToInt32(data []byte) (v int32) {
 	return
 }
 
-func Md5(data []byte) string {
+func Base64Encode(data []byte) string {
+	return base64.StdEncoding.EncodeToString(data)
+}
+
+func Base64Md5(data []byte) string {
 	hash := md5.New()
 	hash.Write(data)
-	return fmt.Sprintf("%x", hash.Sum(nil))
+	return Base64Encode(hash.Sum(nil))
+}
+
+func Base64Md5ToBytes(contentMd5 string) []byte {
+	data, err := base64.StdEncoding.DecodeString(contentMd5)
+	if err != nil {
+		return nil
+	}
+	return data
 }

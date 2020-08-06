@@ -9,11 +9,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/seaweedfs/fuse"
+	"github.com/seaweedfs/fuse/fs"
+
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/fuse"
-	"github.com/seaweedfs/fuse/fs"
 )
 
 type FileHandle struct {
@@ -224,6 +225,10 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		}
 		fh.f.entry.Chunks = chunks
 		// fh.f.entryViewCache = nil
+
+		// special handling of one chunk md5
+		if len(chunks) == 1 {
+		}
 
 		if err := filer_pb.CreateEntry(client, request); err != nil {
 			glog.Errorf("fh flush create %s: %v", fh.f.fullpath(), err)
