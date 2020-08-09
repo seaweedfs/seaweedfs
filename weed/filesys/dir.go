@@ -334,7 +334,10 @@ func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 	glog.V(3).Infof("remove directory entry: %v", req)
 	err := filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, true, false, false, false)
 	if err != nil {
-		glog.V(3).Infof("not found remove %s/%s: %v", dir.FullPath(), req.Name, err)
+		glog.V(3).Infof("remove %s/%s: %v", dir.FullPath(), req.Name, err)
+		if strings.Contains(err.Error(), "non-empty"){
+			return fuse.EEXIST
+		}
 		return fuse.ENOENT
 	}
 
