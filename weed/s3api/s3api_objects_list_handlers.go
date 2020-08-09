@@ -159,7 +159,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket, originalPrefix string, maxKeys 
 			Marker:         marker,
 			NextMarker:     lastEntryName,
 			MaxKeys:        maxKeys,
-			Delimiter:      "/",
+			Delimiter:      delimiter,
 			IsTruncated:    isTruncated,
 			Contents:       contents,
 			CommonPrefixes: commonPrefixes,
