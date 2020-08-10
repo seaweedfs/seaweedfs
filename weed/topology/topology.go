@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"sync"
+	"time"
 
 	"github.com/chrislusf/raft"
 
@@ -65,26 +66,26 @@ func (t *Topology) IsLeader() bool {
 		if t.RaftServer.State() == raft.Leader {
 			return true
 		}
-		if t.RaftServer.Leader() == "" {
-			return true
-		}
 	}
 	return false
 }
 
 func (t *Topology) Leader() (string, error) {
 	l := ""
-	if t.RaftServer != nil {
-		l = t.RaftServer.Leader()
-	} else {
-		return "", errors.New("Raft Server not ready yet!")
+	count := 3
+	for count > 0 {
+		if t.RaftServer != nil {
+			l = t.RaftServer.Leader()
+		} else {
+			return "", errors.New("Raft Server not ready yet!")
+		}
+		if l != "" {
+			break
+		} else {
+			time.Sleep(time.Duration(5-count) * time.Second)
+		}
+		count -= 1
 	}
-
-	if l == "" {
-		// We are a single node cluster, we are the leader
-		return t.RaftServer.Name(), nil
-	}
-
 	return l, nil
 }
 
