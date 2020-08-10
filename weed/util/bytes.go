@@ -115,9 +115,17 @@ func Base64Encode(data []byte) string {
 }
 
 func Base64Md5(data []byte) string {
+	return Base64Encode(Md5(data))
+}
+
+func Md5(data []byte) []byte {
 	hash := md5.New()
 	hash.Write(data)
-	return Base64Encode(hash.Sum(nil))
+	return hash.Sum(nil)
+}
+
+func Md5String(data []byte) string {
+	return fmt.Sprintf("%x", Md5(data))
 }
 
 func Base64Md5ToBytes(contentMd5 string) []byte {
