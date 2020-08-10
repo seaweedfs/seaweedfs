@@ -6,7 +6,6 @@ require (
 	cloud.google.com/go v0.44.3
 	github.com/Azure/azure-pipeline-go v0.2.2 // indirect
 	github.com/Azure/azure-storage-blob-go v0.8.0
-	github.com/DataDog/zstd v1.4.1 // indirect
 	github.com/OneOfOne/xxhash v1.2.2
 	github.com/Shopify/sarama v1.23.1
 	github.com/aws/aws-sdk-go v1.23.13

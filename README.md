@@ -112,15 +112,15 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 [Back to TOC](#table-of-contents)
 
 ## Filer Features ##
-* [Filer server][Filer] provide "normal" directories and files via http.
+* [Filer server][Filer] provides "normal" directories and files via http.
 * [Super Large Files][SuperLargeFiles] stores large or super large files in tens of TB.
-* [Mount filer][Mount] to read and write files directly as a local directory via FUSE.
-* [Amazon S3 compatible API][AmazonS3API] to access files with S3 tooling.
-* [Hadoop Compatible File System][Hadoop] to access files from Hadoop/Spark/Flink/etc jobs.
+* [Mount filer][Mount] reads and writes files directly as a local directory via FUSE.
+* [Amazon S3 compatible API][AmazonS3API] accesses files with S3 tooling.
+* [Hadoop Compatible File System][Hadoop] accesses files from Hadoop/Spark/Flink/etc jobs.
 * [Async Backup To Cloud][BackupToCloud] has extremely fast local access and backups to Amazon S3, Google Cloud Storage, Azure, BackBlaze.
-* [WebDAV] access as a mapped drive on Mac and Windows, or from mobile devices.
+* [WebDAV] accesses as a mapped drive on Mac and Windows, or from mobile devices.
 * [AES256-GCM Encrypted Storage][FilerDataEncryption] safely stores the encrypted data.
-* [File TTL][FilerTTL] automatically purge file metadata and actual file data.
+* [File TTL][FilerTTL] automatically purges file metadata and actual file data.
 * [Kubernetes CSI Driver][SeaweedFsCsiDriver] A Container Storage Interface (CSI) Driver. [![Docker Pulls](https://img.shields.io/docker/pulls/chrislusf/seaweedfs-csi-driver.svg?maxAge=4800)](https://hub.docker.com/r/chrislusf/seaweedfs-csi-driver/)
 
 [Filer]: https://github.com/chrislusf/seaweedfs/wiki/Directories-and-Files

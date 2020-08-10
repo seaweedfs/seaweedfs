@@ -76,8 +76,7 @@ public class FileChunkManifest {
             LOG.debug("doFetchFullChunkData:{}", chunkView);
             chunkData = SeaweedRead.doFetchFullChunkData(chunkView, locations);
         }
-        if（chunk.getIsChunkManifest()){
-            // only cache manifest chunks
+        if (chunk.getIsChunkManifest()){
             LOG.debug("chunk {} size {}", chunkView.fileId, chunkData.length);
             SeaweedRead.chunkCache.setChunk(chunkView.fileId, chunkData);
         }

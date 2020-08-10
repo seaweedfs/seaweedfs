@@ -2,7 +2,6 @@ package weed_server
 
 import (
 	"fmt"
-	"net"
 	"time"
 
 	"google.golang.org/grpc"
@@ -87,12 +86,12 @@ func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDi
 				vs.store.SetVolumeSizeLimit(in.GetVolumeSizeLimit())
 				if vs.store.MaybeAdjustVolumeMax() {
 					if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
-						glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
+						glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", vs.currentMaster, err)
 					}
 				}
 			}
-			if in.GetLeader() != "" && masterNode != in.GetLeader() && !isSameIP(in.GetLeader(), masterNode) {
-				glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", in.GetLeader(), masterNode)
+			if in.GetLeader() != "" && vs.currentMaster != in.GetLeader() {
+				glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", in.GetLeader(), vs.currentMaster)
 				newLeader = in.GetLeader()
 				doneChan <- nil
 				return
@@ -169,13 +168,13 @@ func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDi
 				return "", err
 			}
 		case <-volumeTickChan:
-			glog.V(4).Infof("volume server %s:%d heartbeat", vs.store.Ip, vs.store.Port)
+			glog.V(5).Infof("volume server %s:%d heartbeat", vs.store.Ip, vs.store.Port)
 			if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
 				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
 				return "", err
 			}
 		case <-ecShardTickChan:
-			glog.V(4).Infof("volume server %s:%d ec heartbeat", vs.store.Ip, vs.store.Port)
+			glog.V(5).Infof("volume server %s:%d ec heartbeat", vs.store.Ip, vs.store.Port)
 			if err = stream.Send(vs.store.CollectErasureCodingHeartbeat()); err != nil {
 				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
 				return "", err
@@ -184,17 +183,4 @@ func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDi
 			return
 		}
 	}
-}
-
-func isSameIP(ip string, host string) bool {
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		return false
-	}
-	for _, t := range ips {
-		if ip == t.String() {
-			return true
-		}
-	}
-	return false
 }

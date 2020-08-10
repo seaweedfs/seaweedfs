@@ -63,6 +63,7 @@ type WFS struct {
 	stats statsCache
 
 	root        fs.Node
+	fsNodeCache *FsCache
 
 	chunkCache *chunk_cache.ChunkCache
 	metaCache  *meta_cache.MetaCache
@@ -82,7 +83,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			},
 		},
 	}
-	cacheUniqueId := util.Md5([]byte(option.FilerGrpcAddress + option.FilerMountRootPath + util.Version()))[0:4]
+	cacheUniqueId := util.Md5String([]byte(option.FilerGrpcAddress + option.FilerMountRootPath + util.Version()))[0:4]
 	cacheDir := path.Join(option.CacheDir, cacheUniqueId)
 	if option.CacheSizeMB > 0 {
 		os.MkdirAll(cacheDir, 0755)
@@ -100,6 +101,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	})
 
 	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs}
+	wfs.fsNodeCache = newFsCache(wfs.root)
 
 	return wfs
 }
