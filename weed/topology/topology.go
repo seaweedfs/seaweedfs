@@ -72,8 +72,7 @@ func (t *Topology) IsLeader() bool {
 
 func (t *Topology) Leader() (string, error) {
 	l := ""
-	count := 3
-	for count > 0 {
+	for count := 0; count < 3; count++ {
 		if t.RaftServer != nil {
 			l = t.RaftServer.Leader()
 		} else {
@@ -82,15 +81,14 @@ func (t *Topology) Leader() (string, error) {
 		if l != "" {
 			break
 		} else {
-			time.Sleep(time.Duration(5-count) * time.Second)
+			time.Sleep(time.Duration(5+count) * time.Second)
 		}
-		count -= 1
 	}
 	return l, nil
 }
 
 func (t *Topology) Lookup(collection string, vid needle.VolumeId) (dataNodes []*DataNode) {
-	//maybe an issue if lots of collections?
+	// maybe an issue if lots of collections?
 	if collection == "" {
 		for _, c := range t.collectionMap.Items() {
 			if list := c.(*Collection).Lookup(vid); list != nil {
