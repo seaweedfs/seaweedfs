@@ -9,8 +9,6 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/karlseguin/ccache"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -27,7 +25,6 @@ var (
 
 type Filer struct {
 	Store               *FilerStoreWrapper
-	directoryCache      *ccache.Cache
 	MasterClient        *wdclient.MasterClient
 	fileIdDeletionQueue *util.UnboundedQueue
 	GrpcDialOption      grpc.DialOption
@@ -44,7 +41,6 @@ type Filer struct {
 func NewFiler(masters []string, grpcDialOption grpc.DialOption,
 	filerHost string, filerGrpcPort uint32, collection string, replication string, notifyFn func()) *Filer {
 	f := &Filer{
-		directoryCache:      ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100)),
 		MasterClient:        wdclient.NewMasterClient(grpcDialOption, "filer", filerHost, filerGrpcPort, masters),
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
@@ -75,10 +71,6 @@ func (f *Filer) SetStore(store FilerStore) {
 
 func (f *Filer) GetStore() (store FilerStore) {
 	return f.Store
-}
-
-func (f *Filer) DisableDirectoryCache() {
-	f.directoryCache = nil
 }
 
 func (fs *Filer) GetMaster() string {
@@ -117,16 +109,9 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 		dirPath := "/" + util.Join(dirParts[:i]...)
 		// fmt.Printf("%d directory: %+v\n", i, dirPath)
 
-		// first check local cache
-		dirEntry := f.cacheGetDirectory(dirPath)
-
-		// not found, check the store directly
-		if dirEntry == nil {
-			glog.V(4).Infof("find uncached directory: %s", dirPath)
-			dirEntry, _ = f.FindEntry(ctx, util.FullPath(dirPath))
-		} else {
-			// glog.V(4).Infof("found cached directory: %s", dirPath)
-		}
+		// check the store directly, skipping cached directories
+		glog.V(4).Infof("find uncached directory: %s", dirPath)
+		dirEntry, _ := f.FindEntry(ctx, util.FullPath(dirPath))
 
 		// no such existing directory
 		if dirEntry == nil {
@@ -165,9 +150,6 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 			glog.Errorf("CreateEntry %s: %s should be a directory", entry.FullPath, dirPath)
 			return fmt.Errorf("%s is a file", dirPath)
 		}
-
-		// cache the directory entry
-		f.cacheSetDirectory(dirPath, dirEntry, i)
 
 		// remember the direct parent directory entry
 		if i == len(dirParts)-1 {
@@ -293,45 +275,6 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 		entries = append(entries, entry)
 	}
 	return
-}
-
-func (f *Filer) cacheDelDirectory(dirpath string) {
-
-	if dirpath == "/" {
-		return
-	}
-
-	if f.directoryCache == nil {
-		return
-	}
-	f.directoryCache.Delete(dirpath)
-	return
-}
-
-func (f *Filer) cacheGetDirectory(dirpath string) *Entry {
-
-	if f.directoryCache == nil {
-		return nil
-	}
-	item := f.directoryCache.Get(dirpath)
-	if item == nil {
-		return nil
-	}
-	return item.Value().(*Entry)
-}
-
-func (f *Filer) cacheSetDirectory(dirpath string, dirEntry *Entry, level int) {
-
-	if f.directoryCache == nil {
-		return
-	}
-
-	minutes := 60
-	if level < 10 {
-		minutes -= level * 6
-	}
-
-	f.directoryCache.Set(dirpath, dirEntry, time.Duration(minutes)*time.Minute)
 }
 
 func (f *Filer) Shutdown() {
