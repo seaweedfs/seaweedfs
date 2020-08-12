@@ -109,7 +109,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 		dirPath := "/" + util.Join(dirParts[:i]...)
 		// fmt.Printf("%d directory: %+v\n", i, dirPath)
 
-		// check the store directly, skipping cached directories
+		// check the store directly
 		glog.V(4).Infof("find uncached directory: %s", dirPath)
 		dirEntry, _ := f.FindEntry(ctx, util.FullPath(dirPath))
 
