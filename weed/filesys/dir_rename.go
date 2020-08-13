@@ -63,6 +63,9 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 
 	// fmt.Printf("rename path: %v => %v\n", oldPath, newPath)
 	dir.wfs.fsNodeCache.Move(oldPath, newPath)
+
+	wfs.handlesLock.Lock()
+	defer wfs.handlesLock.Unlock()
 	delete(dir.wfs.handles, oldPath.AsInode())
 
 	return err
