@@ -225,9 +225,15 @@ func Remove(filerClient FilerClient, parentDirectoryPath, name string, isDeleteD
 			IgnoreRecursiveError: ignoreRecursiveErr,
 			IsFromOtherCluster:   isFromOtherCluster,
 		}); err != nil {
+			if strings.Contains(err.Error(), ErrNotFound.Error()){
+				return nil
+			}
 			return err
 		} else {
 			if resp.Error != "" {
+				if strings.Contains(resp.Error, ErrNotFound.Error()){
+					return nil
+				}
 				return errors.New(resp.Error)
 			}
 		}
