@@ -265,7 +265,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 
 func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
-	glog.V(3).Infof("dir ReadDirAll %s", dir.FullPath())
+	glog.V(4).Infof("dir ReadDirAll %s", dir.FullPath())
 
 	processEachEntryFn := func(entry *filer_pb.Entry, isLast bool) error {
 		fullpath := util.NewFullPath(dir.FullPath(), entry.Name)
@@ -354,7 +354,7 @@ func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 
 func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
-	glog.V(3).Infof("%v dir setattr %+v", dir.FullPath(), req)
+	glog.V(4).Infof("%v dir setattr %+v", dir.FullPath(), req)
 
 	if err := dir.maybeLoadEntry(); err != nil {
 		return err
@@ -429,7 +429,7 @@ func (dir *Dir) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, resp 
 }
 
 func (dir *Dir) Forget() {
-	glog.V(3).Infof("Forget dir %s", dir.FullPath())
+	glog.V(4).Infof("Forget dir %s", dir.FullPath())
 
 	dir.wfs.fsNodeCache.DeleteFsNode(util.FullPath(dir.FullPath()))
 }

@@ -91,7 +91,7 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 	resp.Handle = fuse.HandleID(handle.handle)
 
-	glog.V(3).Infof("%v file open handle id = %d", file.fullpath(), handle.handle)
+	glog.V(4).Infof("%v file open handle id = %d", file.fullpath(), handle.handle)
 
 	return handle, nil
 
@@ -99,7 +99,7 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
-	glog.V(3).Infof("%v file setattr %+v, old:%+v", file.fullpath(), req, file.entry.Attributes)
+	glog.V(4).Infof("%v file setattr %+v, old:%+v", file.fullpath(), req, file.entry.Attributes)
 
 	if err := file.maybeLoadEntry(ctx); err != nil {
 		return err
@@ -107,7 +107,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 
 	if req.Valid.Size() {
 
-		glog.V(3).Infof("%v file setattr set size=%v", file.fullpath(), req.Size)
+		glog.V(4).Infof("%v file setattr set size=%v", file.fullpath(), req.Size)
 		if req.Size < filer2.TotalSize(file.entry.Chunks) {
 			// fmt.Printf("truncate %v \n", fullPath)
 			var chunks []*filer_pb.FileChunk
@@ -205,14 +205,14 @@ func (file *File) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, res
 func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 	// fsync works at OS level
 	// write the file chunks to the filerGrpcAddress
-	glog.V(3).Infof("%s/%s fsync file %+v", file.dir.FullPath(), file.Name, req)
+	glog.V(4).Infof("%s/%s fsync file %+v", file.dir.FullPath(), file.Name, req)
 
 	return nil
 }
 
 func (file *File) Forget() {
 	t := util.NewFullPath(file.dir.FullPath(), file.Name)
-	glog.V(3).Infof("Forget file %s", t)
+	glog.V(4).Infof("Forget file %s", t)
 	file.wfs.fsNodeCache.DeleteFsNode(t)
 }
 
@@ -246,7 +246,7 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 
 	file.reader = nil
 
-	glog.V(3).Infof("%s existing %d chunks adds %d more", file.fullpath(), len(file.entry.Chunks), len(chunks))
+	glog.V(4).Infof("%s existing %d chunks adds %d more", file.fullpath(), len(file.entry.Chunks), len(chunks))
 
 	file.entry.Chunks = append(file.entry.Chunks, chunks...)
 }

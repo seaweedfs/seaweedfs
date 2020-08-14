@@ -18,7 +18,7 @@ var _ = fs.NodeReadlinker(&File{})
 
 func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node, error) {
 
-	glog.V(3).Infof("Symlink: %v/%v to %v", dir.FullPath(), req.NewName, req.Target)
+	glog.V(4).Infof("Symlink: %v/%v to %v", dir.FullPath(), req.NewName, req.Target)
 
 	request := &filer_pb.CreateEntryRequest{
 		Directory: dir.FullPath(),
@@ -63,7 +63,7 @@ func (file *File) Readlink(ctx context.Context, req *fuse.ReadlinkRequest) (stri
 		return "", fuse.Errno(syscall.EINVAL)
 	}
 
-	glog.V(3).Infof("Readlink: %v/%v => %v", file.dir.FullPath(), file.Name, file.entry.Attributes.SymlinkTarget)
+	glog.V(4).Infof("Readlink: %v/%v => %v", file.dir.FullPath(), file.Name, file.entry.Attributes.SymlinkTarget)
 
 	return file.entry.Attributes.SymlinkTarget, nil
 

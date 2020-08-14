@@ -35,7 +35,7 @@ func (pages *ContinuousDirtyPages) AddPage(offset int64, data []byte) (chunks []
 	pages.lock.Lock()
 	defer pages.lock.Unlock()
 
-	glog.V(3).Infof("%s AddPage [%d,%d)", pages.f.fullpath(), offset, offset+int64(len(data)))
+	glog.V(4).Infof("%s AddPage [%d,%d)", pages.f.fullpath(), offset, offset+int64(len(data)))
 
 	if len(data) > int(pages.f.wfs.option.ChunkSizeLimit) {
 		// this is more than what buffer can hold.
@@ -125,7 +125,7 @@ func (pages *ContinuousDirtyPages) saveExistingLargestPageToStorage() (chunk *fi
 		chunk, err = pages.saveToStorage(maxList.ToReader(), maxList.Offset(), maxList.Size())
 		if err == nil {
 			hasSavedData = true
-			glog.V(3).Infof("%s saveToStorage [%d,%d) %s", pages.f.fullpath(), maxList.Offset(), maxList.Offset()+maxList.Size(), chunk.FileId)
+			glog.V(4).Infof("%s saveToStorage [%d,%d) %s", pages.f.fullpath(), maxList.Offset(), maxList.Offset()+maxList.Size(), chunk.FileId)
 			return
 		} else {
 			glog.V(0).Infof("%s saveToStorage [%d,%d): %v", pages.f.fullpath(), maxList.Offset(), maxList.Offset()+maxList.Size(), err)
