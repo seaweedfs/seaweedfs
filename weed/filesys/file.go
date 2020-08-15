@@ -7,12 +7,13 @@ import (
 	"sort"
 	"time"
 
+	"github.com/seaweedfs/fuse"
+	"github.com/seaweedfs/fuse/fs"
+
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/seaweedfs/fuse"
-	"github.com/seaweedfs/fuse/fs"
 )
 
 const blockSize = 512
@@ -35,6 +36,7 @@ type File struct {
 	entryViewCache []filer2.VisibleInterval
 	isOpen         int
 	reader         io.ReaderAt
+	dirtyMetadata  bool
 }
 
 func (file *File) fullpath() util.FullPath {
@@ -43,7 +45,7 @@ func (file *File) fullpath() util.FullPath {
 
 func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
-	glog.V(4).Infof("file Attr %s, open:%v, existing attr: %+v", file.fullpath(), file.isOpen, attr)
+	glog.V(5).Infof("file Attr %s, open:%v, existing attr: %+v", file.fullpath(), file.isOpen, attr)
 
 	if file.isOpen <= 0 {
 		if err := file.maybeLoadEntry(ctx); err != nil {
@@ -54,7 +56,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Inode = file.fullpath().AsInode()
 	attr.Valid = time.Second
 	attr.Mode = os.FileMode(file.entry.Attributes.FileMode)
-	attr.Size = filer2.TotalSize(file.entry.Chunks)
+	attr.Size = filer2.FileSize(file.entry)
 	if file.isOpen > 0 {
 		attr.Size = file.entry.Attributes.FileSize
 		glog.V(4).Infof("file Attr %s, open:%v, size: %d", file.fullpath(), file.isOpen, attr.Size)
@@ -107,22 +109,31 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 
 	if req.Valid.Size() {
 
-		glog.V(4).Infof("%v file setattr set size=%v", file.fullpath(), req.Size)
+		glog.V(4).Infof("%v file setattr set size=%v chunks=%d", file.fullpath(), req.Size, len(file.entry.Chunks))
 		if req.Size < filer2.TotalSize(file.entry.Chunks) {
 			// fmt.Printf("truncate %v \n", fullPath)
 			var chunks []*filer_pb.FileChunk
+			var truncatedChunks []*filer_pb.FileChunk
 			for _, chunk := range file.entry.Chunks {
 				int64Size := int64(chunk.Size)
 				if chunk.Offset+int64Size > int64(req.Size) {
+					// this chunk is truncated
 					int64Size = int64(req.Size) - chunk.Offset
-				}
-				if int64Size > 0 {
-					chunks = append(chunks, chunk)
+					if int64Size > 0 {
+						chunks = append(chunks, chunk)
+						glog.V(4).Infof("truncated chunk %+v from %d to %d\n", chunk, chunk.Size, int64Size)
+						chunk.Size = uint64(int64Size)
+					} else {
+						glog.V(4).Infof("truncated whole chunk %+v\n", chunk)
+						truncatedChunks = append(truncatedChunks, chunk)
+					}
 				}
 			}
+			file.wfs.deleteFileChunks(truncatedChunks)
 			file.entry.Chunks = chunks
 			file.entryViewCache = nil
 			file.reader = nil
+			file.dirtyMetadata = true
 		}
 		file.entry.Attributes.FileSize = req.Size
 	}

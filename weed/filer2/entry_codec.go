@@ -53,6 +53,7 @@ func EntryAttributeToPb(entry *Entry) *filer_pb.FuseAttributes {
 		GroupName:     entry.Attr.GroupNames,
 		SymlinkTarget: entry.Attr.SymlinkTarget,
 		Md5:           entry.Attr.Md5,
+		FileSize:      entry.Attr.FileSize,
 	}
 }
 
@@ -73,6 +74,7 @@ func PbToEntryAttribute(attr *filer_pb.FuseAttributes) Attr {
 	t.GroupNames = attr.GroupName
 	t.SymlinkTarget = attr.SymlinkTarget
 	t.Md5 = attr.Md5
+	t.FileSize = attr.FileSize
 
 	return t
 }

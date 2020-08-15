@@ -95,7 +95,7 @@ func (c *commandFsLs) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 			fmt.Fprintf(writer, "%s %3d %s %s %6d %s/%s\n",
 				fileMode, len(entry.Chunks),
 				userName, groupName,
-				filer2.TotalSize(entry.Chunks), dir, entry.Name)
+				filer2.FileSize(entry), dir, entry.Name)
 		} else {
 			fmt.Fprintf(writer, "%s\n", entry.Name)
 		}

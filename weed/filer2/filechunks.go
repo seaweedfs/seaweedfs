@@ -20,6 +20,10 @@ func TotalSize(chunks []*filer_pb.FileChunk) (size uint64) {
 	return
 }
 
+func FileSize(entry *filer_pb.Entry) (size uint64) {
+	return maxUint64(TotalSize(entry.Chunks), entry.Attributes.FileSize)
+}
+
 func ETag(entry *filer_pb.Entry) (etag string) {
 	if entry.Attributes == nil || entry.Attributes.Md5 == nil {
 		return ETagChunks(entry.Chunks)

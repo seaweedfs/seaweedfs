@@ -208,7 +208,7 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 			output.Parts = append(output.Parts, &s3.Part{
 				PartNumber:   aws.Int64(int64(partNumber)),
 				LastModified: aws.Time(time.Unix(entry.Attributes.Mtime, 0).UTC()),
-				Size:         aws.Int64(int64(filer2.TotalSize(entry.Chunks))),
+				Size:         aws.Int64(int64(filer2.FileSize(entry))),
 				ETag:         aws.String("\"" + filer2.ETag(entry) + "\""),
 			})
 		}

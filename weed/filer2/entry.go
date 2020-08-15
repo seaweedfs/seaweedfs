@@ -22,6 +22,7 @@ type Attr struct {
 	GroupNames    []string
 	SymlinkTarget string
 	Md5           []byte
+	FileSize      uint64
 }
 
 func (attr Attr) IsDirectory() bool {
@@ -39,7 +40,7 @@ type Entry struct {
 }
 
 func (entry *Entry) Size() uint64 {
-	return TotalSize(entry.Chunks)
+	return maxUint64(TotalSize(entry.Chunks), entry.FileSize)
 }
 
 func (entry *Entry) Timestamp() time.Time {
@@ -80,4 +81,11 @@ func FromPbEntry(dir string, entry *filer_pb.Entry) *Entry {
 		Attr:     PbToEntryAttribute(entry.Attributes),
 		Chunks:   entry.Chunks,
 	}
+}
+
+func maxUint64(x, y uint64) uint64 {
+	if x > y {
+		return x
+	}
+	return y
 }

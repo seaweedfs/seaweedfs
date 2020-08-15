@@ -19,10 +19,9 @@ import (
 
 type FileHandle struct {
 	// cache file has been written to
-	dirtyPages    *ContinuousDirtyPages
-	contentType   string
-	dirtyMetadata bool
-	handle        uint64
+	dirtyPages  *ContinuousDirtyPages
+	contentType string
+	handle      uint64
 
 	f         *File
 	RequestId fuse.RequestID // unique ID for request
@@ -40,7 +39,7 @@ func newFileHandle(file *File, uid, gid uint32) *FileHandle {
 		Gid:        gid,
 	}
 	if fh.f.entry != nil {
-		fh.f.entry.Attributes.FileSize = filer2.TotalSize(fh.f.entry.Chunks)
+		fh.f.entry.Attributes.FileSize = filer2.FileSize(fh.f.entry)
 	}
 	return fh
 }
@@ -55,7 +54,7 @@ var _ = fs.HandleReleaser(&FileHandle{})
 
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 
-	glog.V(4).Infof("%s read fh %d: [%d,%d)", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size))
+	glog.V(2).Infof("%s read fh %d: [%d,%d)", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size))
 
 	buff := make([]byte, req.Size)
 
@@ -126,7 +125,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 	copy(data, req.Data)
 
 	fh.f.entry.Attributes.FileSize = uint64(max(req.Offset+int64(len(data)), int64(fh.f.entry.Attributes.FileSize)))
-	glog.V(4).Infof("%v write [%d,%d)", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)))
+	glog.V(2).Infof("%v write [%d,%d)", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)))
 
 	chunks, err := fh.dirtyPages.AddPage(req.Offset, data)
 	if err != nil {
@@ -139,14 +138,14 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 	if req.Offset == 0 {
 		// detect mime type
 		fh.contentType = http.DetectContentType(data)
-		fh.dirtyMetadata = true
+		fh.f.dirtyMetadata = true
 	}
 
 	if len(chunks) > 0 {
 
 		fh.f.addChunks(chunks)
 
-		fh.dirtyMetadata = true
+		fh.f.dirtyMetadata = true
 	}
 
 	return nil
@@ -181,10 +180,10 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 	if len(chunks) > 0 {
 		fh.f.addChunks(chunks)
-		fh.dirtyMetadata = true
+		fh.f.dirtyMetadata = true
 	}
 
-	if !fh.dirtyMetadata {
+	if !fh.f.dirtyMetadata {
 		return nil
 	}
 
@@ -246,7 +245,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	})
 
 	if err == nil {
-		fh.dirtyMetadata = false
+		fh.f.dirtyMetadata = false
 	}
 
 	if err != nil {

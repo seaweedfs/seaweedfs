@@ -338,7 +338,7 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 	if err != nil {
 		return nil, err
 	}
-	fi.size = int64(filer2.TotalSize(entry.GetChunks()))
+	fi.size = int64(filer2.FileSize(entry))
 	fi.name = string(fullpath)
 	fi.mode = os.FileMode(entry.Attributes.FileMode)
 	fi.modifiledTime = time.Unix(entry.Attributes.Mtime, 0)
@@ -507,7 +507,7 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 
 	err = filer_pb.ReadDirAllEntries(f.fs, util.FullPath(dir), "", func(entry *filer_pb.Entry, isLast bool) error {
 		fi := FileInfo{
-			size:          int64(filer2.TotalSize(entry.GetChunks())),
+			size:          int64(filer2.FileSize(entry)),
 			name:          entry.Name,
 			mode:          os.FileMode(entry.Attributes.FileMode),
 			modifiledTime: time.Unix(entry.Attributes.Mtime, 0),
