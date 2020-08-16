@@ -94,3 +94,24 @@ func TestFsCacheMove(t *testing.T) {
 	}
 
 }
+
+
+func TestFsCacheMove2(t *testing.T) {
+
+	cache := newFsCache(nil)
+
+	cache.SetFsNode(util.FullPath("/a/b/d"), &File{Name: "dd"})
+	cache.SetFsNode(util.FullPath("/a/b/e"), &File{Name: "ee"})
+
+	cache.Move(util.FullPath("/a/b/d"), util.FullPath("/a/b/e"))
+
+	d := cache.GetFsNode(util.FullPath("/a/b/e"))
+	if d == nil {
+		t.Errorf("unexpected nil node!")
+	}
+	if d.(*File).Name != "e" {
+		t.Errorf("unexpected node!")
+	}
+
+}
+

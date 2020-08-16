@@ -101,7 +101,7 @@ func (dir *Dir) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 }
 
 func (dir *Dir) newFile(name string, entry *filer_pb.Entry) fs.Node {
-	return dir.wfs.fsNodeCache.EnsureFsNode(util.NewFullPath(dir.FullPath(), name), func() fs.Node {
+	f := dir.wfs.fsNodeCache.EnsureFsNode(util.NewFullPath(dir.FullPath(), name), func() fs.Node {
 		return &File{
 			Name:           name,
 			dir:            dir,
@@ -110,14 +110,17 @@ func (dir *Dir) newFile(name string, entry *filer_pb.Entry) fs.Node {
 			entryViewCache: nil,
 		}
 	})
+	f.(*File).dir = dir // in case dir node was created later
+	return f
 }
 
 func (dir *Dir) newDirectory(fullpath util.FullPath, entry *filer_pb.Entry) fs.Node {
 
-	return dir.wfs.fsNodeCache.EnsureFsNode(fullpath, func() fs.Node {
+	d := dir.wfs.fsNodeCache.EnsureFsNode(fullpath, func() fs.Node {
 		return &Dir{name: entry.Name, wfs: dir.wfs, entry: entry, parent: dir}
 	})
-
+	d.(*Dir).parent = dir // in case dir node was created later
+	return d
 }
 
 func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
