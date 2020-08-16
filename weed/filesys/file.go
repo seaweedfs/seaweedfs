@@ -170,6 +170,10 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		return nil
 	}
 
+	if !file.dirtyMetadata {
+		return nil
+	}
+
 	return file.saveEntry()
 
 }
