@@ -7,7 +7,6 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -140,7 +139,7 @@ func ViewFromVisibleIntervals(visibles []VisibleInterval, offset int64, size int
 		if chunkStart < chunkStop {
 			views = append(views, &ChunkView{
 				FileId:      chunk.fileId,
-				Offset:      chunkStart-chunk.start,
+				Offset:      chunkStart - chunk.start,
 				Size:        uint64(chunkStop - chunkStart),
 				LogicOffset: chunkStart,
 				ChunkSize:   chunk.chunkSize,
