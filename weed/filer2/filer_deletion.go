@@ -1,6 +1,7 @@
 package filer2
 
 import (
+	"strings"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -50,14 +51,13 @@ func (f *Filer) loopProcessingDeletion() {
 					fileIds = fileIds[:0]
 				}
 				deletionCount = len(toDeleteFileIds)
-				deleteResults, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
+				_, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
 				if err != nil {
-					glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
+					if !strings.Contains(err.Error(), "already deleted") {
+						glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
+					}
 				} else {
 					glog.V(1).Infof("deleting fileIds len=%d", deletionCount)
-				}
-				if len(deleteResults) != deletionCount {
-					glog.V(0).Infof("delete %d fileIds actual %d", deletionCount, len(deleteResults))
 				}
 			}
 		})
