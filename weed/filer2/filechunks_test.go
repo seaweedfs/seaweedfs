@@ -290,7 +290,7 @@ func TestChunksReading(t *testing.T) {
 			Size:   400,
 			Expected: []*ChunkView{
 				{Offset: 0, Size: 200, FileId: "asdf", LogicOffset: 0},
-				// {Offset: 0, Size: 150, FileId: "xxxx"}, // missing intervals should not happen
+				{Offset: 0, Size: 150, FileId: "xxxx", LogicOffset: 250},
 			},
 		},
 		// case 5: updates overwrite full chunks

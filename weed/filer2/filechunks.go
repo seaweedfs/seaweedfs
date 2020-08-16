@@ -143,7 +143,7 @@ func ViewFromVisibleIntervals(visibles []VisibleInterval, offset int64, size int
 				FileId:      chunk.fileId,
 				Offset:      chunkStart-chunk.start,
 				Size:        uint64(chunkStop - chunkStart),
-				LogicOffset: chunk.start,
+				LogicOffset: chunkStart,
 				ChunkSize:   chunk.chunkSize,
 				CipherKey:   chunk.cipherKey,
 				IsGzipped:   chunk.isGzipped,
