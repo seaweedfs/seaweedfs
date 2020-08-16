@@ -135,7 +135,6 @@ func ViewFromVisibleIntervals(visibles []VisibleInterval, offset int64, size int
 
 	for _, chunk := range visibles {
 
-		glog.V(1).Infof("visible [%d,%d)", chunk.start, chunk.stop)
 		chunkStart, chunkStop := max(offset, chunk.start), min(stop, chunk.stop)
 
 		if chunkStart < chunkStop {

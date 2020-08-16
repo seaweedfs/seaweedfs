@@ -99,7 +99,6 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 	}
 
 	if fh.f.reader == nil {
-		glog.V(1).Infof("entryViewCache %d", len(fh.f.entryViewCache))
 		chunkViews := filer2.ViewFromVisibleIntervals(fh.f.entryViewCache, 0, math.MaxInt32)
 		fh.f.reader = filer2.NewChunkReaderAtFromClient(fh.f.wfs, chunkViews, fh.f.wfs.chunkCache, fileSize)
 	}
