@@ -232,7 +232,7 @@ func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 
 func (file *File) Forget() {
 	t := util.NewFullPath(file.dir.FullPath(), file.Name)
-	glog.V(4).Infof("Forget file %s", t)
+	glog.V(5).Infof("Forget file %s", t)
 	file.wfs.fsNodeCache.DeleteFsNode(t)
 }
 

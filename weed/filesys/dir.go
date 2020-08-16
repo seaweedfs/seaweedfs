@@ -63,7 +63,7 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Gid = dir.entry.Attributes.Gid
 	attr.Uid = dir.entry.Attributes.Uid
 
-	glog.V(4).Infof("dir Attr %s, attr: %+v", dir.FullPath(), attr)
+	glog.V(5).Infof("dir Attr %s, attr: %+v", dir.FullPath(), attr)
 
 	return nil
 }
@@ -430,7 +430,7 @@ func (dir *Dir) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, resp 
 }
 
 func (dir *Dir) Forget() {
-	glog.V(4).Infof("Forget dir %s", dir.FullPath())
+	glog.V(5).Infof("Forget dir %s", dir.FullPath())
 
 	dir.wfs.fsNodeCache.DeleteFsNode(util.FullPath(dir.FullPath()))
 }
