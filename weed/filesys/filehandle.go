@@ -54,9 +54,13 @@ var _ = fs.HandleReleaser(&FileHandle{})
 
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 
-	glog.V(5).Infof("%s read fh %d: [%d,%d)", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size))
+	glog.V(0).Infof("%s read fh %d: [%d,%d) size %d resp.Data len=%d cap=%d", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size), req.Size, len(resp.Data), cap(resp.Data))
 
-	buff := make([]byte, req.Size)
+	buff := resp.Data[:cap(resp.Data)]
+	if req.Size > cap(resp.Data) {
+		// should not happen
+		buff = make([]byte, req.Size)
+	}
 
 	totalRead, err := fh.readFromChunks(buff, req.Offset)
 	if err == nil {
