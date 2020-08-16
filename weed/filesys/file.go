@@ -101,7 +101,7 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
-	glog.V(5).Infof("%v file setattr %+v, old:%+v", file.fullpath(), req, file.entry.Attributes)
+	glog.V(5).Infof("%v file setattr %+v", file.fullpath(), req)
 
 	if err := file.maybeLoadEntry(ctx); err != nil {
 		return err
@@ -133,10 +133,11 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 			file.entry.Chunks = chunks
 			file.entryViewCache = nil
 			file.reader = nil
-			file.dirtyMetadata = true
 		}
 		file.entry.Attributes.FileSize = req.Size
+		file.dirtyMetadata = true
 	}
+
 	if req.Valid.Mode() {
 		file.entry.Attributes.FileMode = uint32(req.Mode)
 		file.dirtyMetadata = true
@@ -289,7 +290,7 @@ func (file *File) saveEntry() error {
 			Entry:     file.entry,
 		}
 
-		glog.V(1).Infof("save file entry: %v", request)
+		glog.V(4).Infof("save file entry: %v", request)
 		_, err := client.UpdateEntry(context.Background(), request)
 		if err != nil {
 			glog.V(0).Infof("UpdateEntry file %s/%s: %v", file.dir.FullPath(), file.Name, err)
