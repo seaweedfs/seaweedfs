@@ -82,10 +82,11 @@ func (fh *FileHandle) readFromDirtyPages(buff []byte, startOffset int64) (offset
 
 func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
-	// this value should come from the filer instead of the old f
-	if len(fh.f.entry.Chunks) == 0 {
+	fileSize := int64(filer2.FileSize(fh.f.entry))
+
+	if fileSize == 0 {
 		glog.V(1).Infof("empty fh %v", fh.f.fullpath())
-		return 0, nil
+		return 0, io.EOF
 	}
 
 	var chunkResolveErr error
@@ -98,8 +99,9 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 	}
 
 	if fh.f.reader == nil {
+		glog.V(1).Infof("entryViewCache %d", len(fh.f.entryViewCache))
 		chunkViews := filer2.ViewFromVisibleIntervals(fh.f.entryViewCache, 0, math.MaxInt32)
-		fh.f.reader = filer2.NewChunkReaderAtFromClient(fh.f.wfs, chunkViews, fh.f.wfs.chunkCache)
+		fh.f.reader = filer2.NewChunkReaderAtFromClient(fh.f.wfs, chunkViews, fh.f.wfs.chunkCache, fileSize)
 	}
 
 	totalRead, err := fh.f.reader.ReadAt(buff, offset)

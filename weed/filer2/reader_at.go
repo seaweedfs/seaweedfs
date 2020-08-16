@@ -19,6 +19,7 @@ type ChunkReadAt struct {
 	bufferOffset int64
 	lookupFileId func(fileId string) (targetUrl string, err error)
 	readerLock   sync.Mutex
+	fileSize     int64
 
 	chunkCache *chunk_cache.ChunkCache
 }
@@ -54,13 +55,14 @@ func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 	}
 }
 
-func NewChunkReaderAtFromClient(filerClient filer_pb.FilerClient, chunkViews []*ChunkView, chunkCache *chunk_cache.ChunkCache) *ChunkReadAt {
+func NewChunkReaderAtFromClient(filerClient filer_pb.FilerClient, chunkViews []*ChunkView, chunkCache *chunk_cache.ChunkCache, fileSize int64) *ChunkReadAt {
 
 	return &ChunkReadAt{
 		chunkViews:   chunkViews,
 		lookupFileId: LookupFn(filerClient),
 		bufferOffset: -1,
 		chunkCache:   chunkCache,
+		fileSize:     fileSize,
 	}
 }
 
@@ -73,9 +75,6 @@ func (c *ChunkReadAt) ReadAt(p []byte, offset int64) (n int, err error) {
 		readCount, readErr := c.doReadAt(p[n:], offset+int64(n))
 		n += readCount
 		err = readErr
-		if readCount == 0 {
-			return n, io.EOF
-		}
 	}
 	return
 }
@@ -83,8 +82,11 @@ func (c *ChunkReadAt) ReadAt(p []byte, offset int64) (n int, err error) {
 func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
 	var found bool
+	var chunkStart, chunkStop int64
 	for _, chunk := range c.chunkViews {
-		if chunk.LogicOffset <= offset && offset < chunk.LogicOffset+int64(chunk.Size) {
+		// fmt.Printf(">>> doReadAt [%d,%d), chunk[%d,%d), %v && %v\n", offset, offset+int64(len(p)), chunk.LogicOffset, chunk.LogicOffset+int64(chunk.Size), chunk.LogicOffset <= offset, offset < chunk.LogicOffset+int64(chunk.Size))
+		chunkStart, chunkStop = max(chunk.LogicOffset, offset), min(chunk.LogicOffset+int64(chunk.Size), offset+int64(len(p)))
+		if chunkStart < chunkStop {
 			found = true
 			if c.bufferOffset != chunk.LogicOffset {
 				c.buffer, err = c.fetchChunkData(chunk)
@@ -96,15 +98,23 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 			break
 		}
 	}
-	if !found {
-		return 0, io.EOF
+
+	// fmt.Printf("> doReadAt [%d,%d), buffer:[%d,%d), found:%v, err:%v\n", offset, offset+int64(len(p)), c.bufferOffset, c.bufferOffset+int64(len(c.buffer)), found, err)
+
+	if err != nil {
+		return
 	}
 
-	if err == nil {
-		n = copy(p, c.buffer[offset-c.bufferOffset:])
+	if found {
+		n = int(chunkStart-offset) + copy(p[chunkStart-offset:chunkStop-offset], c.buffer[chunkStart-c.bufferOffset:chunkStop-c.bufferOffset])
+		return
 	}
 
-	// fmt.Printf("> doReadAt [%d,%d), buffer:[%d,%d)\n", offset, offset+int64(n), c.bufferOffset, c.bufferOffset+int64(len(c.buffer)))
+	n = len(p)
+	if offset+int64(n) >= c.fileSize {
+		err = io.EOF
+		n = int(c.fileSize - offset)
+	}
 
 	return
 
