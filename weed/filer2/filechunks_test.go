@@ -2,9 +2,13 @@ package filer2
 
 import (
 	"log"
+	"math"
 	"testing"
 
 	"fmt"
+
+	"github.com/stretchr/testify/assert"
+
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -417,4 +421,31 @@ func BenchmarkCompactFileChunks(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		CompactFileChunks(nil, chunks)
 	}
+}
+
+func TestViewFromVisibleIntervals(t *testing.T) {
+	visibles := []VisibleInterval{
+		{
+			start: 0,
+			stop: 25,
+			fileId: "fid1",
+		},
+		{
+			start: 4096,
+			stop: 8192,
+			fileId: "fid2",
+		},
+		{
+			start: 16384,
+			stop: 18551,
+			fileId: "fid3",
+		},
+	}
+
+	views := ViewFromVisibleIntervals(visibles, 0, math.MaxInt32)
+
+	if len(views) != len(visibles) {
+		assert.Equal(t, len(visibles), len(views), "ViewFromVisibleIntervals error")
+	}
+
 }

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -134,17 +135,19 @@ func ViewFromVisibleIntervals(visibles []VisibleInterval, offset int64, size int
 
 	for _, chunk := range visibles {
 
-		if chunk.start <= offset && offset < chunk.stop && offset < stop {
+		glog.V(1).Infof("visible [%d,%d)", chunk.start, chunk.stop)
+		chunkStart, chunkStop := max(offset, chunk.start), min(stop, chunk.stop)
+
+		if chunkStart < chunkStop {
 			views = append(views, &ChunkView{
 				FileId:      chunk.fileId,
-				Offset:      offset - chunk.start, // offset is the data starting location in this file id
-				Size:        uint64(min(chunk.stop, stop) - offset),
-				LogicOffset: offset,
+				Offset:      chunkStart-chunk.start,
+				Size:        uint64(chunkStop - chunkStart),
+				LogicOffset: chunk.start,
 				ChunkSize:   chunk.chunkSize,
 				CipherKey:   chunk.cipherKey,
 				IsGzipped:   chunk.isGzipped,
 			})
-			offset = min(chunk.stop, stop)
 		}
 	}
 
@@ -265,4 +268,10 @@ func min(x, y int64) int64 {
 		return x
 	}
 	return y
+}
+func max(x, y int64) int64 {
+	if x <= y {
+		return y
+	}
+	return x
 }
