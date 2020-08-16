@@ -89,7 +89,7 @@ func (c *ChunkCache) SetChunk(fileId string, data []byte) {
 	c.Lock()
 	defer c.Unlock()
 
-	glog.V(4).Infof("SetChunk %s size %d\n", fileId, len(data))
+	glog.V(5).Infof("SetChunk %s size %d\n", fileId, len(data))
 
 	c.doSetChunk(fileId, data)
 }

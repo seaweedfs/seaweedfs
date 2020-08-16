@@ -113,7 +113,7 @@ func (wfs *WFS) Root() (fs.Node, error) {
 func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHandle) {
 
 	fullpath := file.fullpath()
-	glog.V(4).Infof("%s AcquireHandle uid=%d gid=%d", fullpath, uid, gid)
+	glog.V(4).Infof("AcquireHandle %s uid=%d gid=%d", fullpath, uid, gid)
 
 	wfs.handlesLock.Lock()
 	defer wfs.handlesLock.Unlock()
@@ -127,7 +127,6 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 	fileHandle = newFileHandle(file, uid, gid)
 	wfs.handles[inodeId] = fileHandle
 	fileHandle.handle = inodeId
-	glog.V(4).Infof("%s new fh %d", fullpath, fileHandle.handle)
 
 	return
 }
@@ -136,7 +135,7 @@ func (wfs *WFS) ReleaseHandle(fullpath util.FullPath, handleId fuse.HandleID) {
 	wfs.handlesLock.Lock()
 	defer wfs.handlesLock.Unlock()
 
-	glog.V(4).Infof("%s ReleaseHandle id %d current handles length %d", fullpath, handleId, len(wfs.handles))
+	glog.V(5).Infof("%s ReleaseHandle id %d current handles length %d", fullpath, handleId, len(wfs.handles))
 
 	delete(wfs.handles, fullpath.AsInode())
 
@@ -146,7 +145,7 @@ func (wfs *WFS) ReleaseHandle(fullpath util.FullPath, handleId fuse.HandleID) {
 // Statfs is called to obtain file system metadata. Implements fuse.FSStatfser
 func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.StatfsResponse) error {
 
-	glog.V(4).Infof("reading fs stats: %+v", req)
+	glog.V(5).Infof("reading fs stats: %+v", req)
 
 	if wfs.stats.lastChecked < time.Now().Unix()-20 {
 
@@ -158,13 +157,13 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 				Ttl:         fmt.Sprintf("%ds", wfs.option.TtlSec),
 			}
 
-			glog.V(4).Infof("reading filer stats: %+v", request)
+			glog.V(5).Infof("reading filer stats: %+v", request)
 			resp, err := client.Statistics(context.Background(), request)
 			if err != nil {
 				glog.V(0).Infof("reading filer stats %v: %v", request, err)
 				return err
 			}
-			glog.V(4).Infof("read filer stats: %+v", resp)
+			glog.V(5).Infof("read filer stats: %+v", resp)
 
 			wfs.stats.TotalSize = resp.TotalSize
 			wfs.stats.UsedSize = resp.UsedSize

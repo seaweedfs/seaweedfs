@@ -85,7 +85,7 @@ func (file *File) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp 
 
 func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 
-	glog.V(4).Infof("file %v open %+v", file.fullpath(), req)
+	glog.V(5).Infof("file %v open %+v", file.fullpath(), req)
 
 	file.isOpen++
 
@@ -93,7 +93,7 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 	resp.Handle = fuse.HandleID(handle.handle)
 
-	glog.V(4).Infof("%v file open handle id = %d", file.fullpath(), handle.handle)
+	glog.V(5).Infof("%v file open handle id = %d", file.fullpath(), handle.handle)
 
 	return handle, nil
 
@@ -101,7 +101,7 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
-	glog.V(4).Infof("%v file setattr %+v, old:%+v", file.fullpath(), req, file.entry.Attributes)
+	glog.V(5).Infof("%v file setattr %+v, old:%+v", file.fullpath(), req, file.entry.Attributes)
 
 	if err := file.maybeLoadEntry(ctx); err != nil {
 		return err
@@ -121,10 +121,10 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 					int64Size = int64(req.Size) - chunk.Offset
 					if int64Size > 0 {
 						chunks = append(chunks, chunk)
-						glog.V(4).Infof("truncated chunk %+v from %d to %d\n", chunk, chunk.Size, int64Size)
+						glog.V(4).Infof("truncated chunk %+v from %d to %d\n", chunk.GetFileIdString(), chunk.Size, int64Size)
 						chunk.Size = uint64(int64Size)
 					} else {
-						glog.V(4).Infof("truncated whole chunk %+v\n", chunk)
+						glog.V(4).Infof("truncated whole chunk %+v\n", chunk.GetFileIdString())
 						truncatedChunks = append(truncatedChunks, chunk)
 					}
 				}

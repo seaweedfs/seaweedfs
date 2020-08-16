@@ -54,7 +54,7 @@ var _ = fs.HandleReleaser(&FileHandle{})
 
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 
-	glog.V(2).Infof("%s read fh %d: [%d,%d)", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size))
+	glog.V(5).Infof("%s read fh %d: [%d,%d)", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size))
 
 	buff := make([]byte, req.Size)
 
@@ -125,7 +125,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 	copy(data, req.Data)
 
 	fh.f.entry.Attributes.FileSize = uint64(max(req.Offset+int64(len(data)), int64(fh.f.entry.Attributes.FileSize)))
-	glog.V(2).Infof("%v write [%d,%d)", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)))
+	glog.V(5).Infof("%v write [%d,%d)", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)))
 
 	chunks, err := fh.dirtyPages.AddPage(req.Offset, data)
 	if err != nil {
@@ -153,7 +153,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 
-	glog.V(4).Infof("%v release fh %d", fh.f.fullpath(), fh.handle)
+	glog.V(4).Infof("Release %v fh %d", fh.f.fullpath(), fh.handle)
 
 	fh.f.isOpen--
 
@@ -170,7 +170,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	// fflush works at fh level
 	// send the data to the OS
-	glog.V(4).Infof("%s fh %d flush %v", fh.f.fullpath(), fh.handle, req)
+	glog.V(5).Infof("Flush %s fh %d %v", fh.f.fullpath(), fh.handle, req)
 
 	chunks, err := fh.dirtyPages.FlushToStorage()
 	if err != nil {
@@ -213,7 +213,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 		glog.V(4).Infof("%s set chunks: %v", fh.f.fullpath(), len(fh.f.entry.Chunks))
 		for i, chunk := range fh.f.entry.Chunks {
-			glog.V(4).Infof("%s chunks %d: %v [%d,%d)", fh.f.fullpath(), i, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
+			glog.V(4).Infof("%s chunks %d: %v [%d,%d)", fh.f.fullpath(), i, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}
 
 		chunks, garbages := filer2.CompactFileChunks(filer2.LookupFn(fh.f.wfs), fh.f.entry.Chunks)
@@ -238,7 +238,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 		fh.f.wfs.deleteFileChunks(garbages)
 		for i, chunk := range garbages {
-			glog.V(4).Infof("garbage %s chunks %d: %v [%d,%d)", fh.f.fullpath(), i, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
+			glog.V(4).Infof("garbage %s chunks %d: %v [%d,%d)", fh.f.fullpath(), i, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}
 
 		return nil

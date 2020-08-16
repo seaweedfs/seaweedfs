@@ -240,7 +240,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 			return nil, fuse.ENOENT
 		}
 	} else {
-		glog.V(4).Infof("dir Lookup cache hit %s", fullFilePath)
+		glog.V(5).Infof("dir Lookup cache hit %s", fullFilePath)
 	}
 
 	if entry != nil {
@@ -268,7 +268,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 
 func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
-	glog.V(4).Infof("dir ReadDirAll %s", dir.FullPath())
+	glog.V(5).Infof("dir ReadDirAll %s", dir.FullPath())
 
 	processEachEntryFn := func(entry *filer_pb.Entry, isLast bool) error {
 		fullpath := util.NewFullPath(dir.FullPath(), entry.Name)
