@@ -154,10 +154,11 @@ func ViewFromVisibleIntervals(visibles []VisibleInterval, offset int64, size int
 }
 
 func logPrintf(name string, visibles []VisibleInterval) {
+
 	/*
-		log.Printf("%s len %d", name, len(visibles))
+		glog.V(0).Infof("%s len %d", name, len(visibles))
 		for _, v := range visibles {
-			log.Printf("%s:  => %+v", name, v)
+			glog.V(0).Infof("%s:  [%d,%d)", name, v.start, v.stop)
 		}
 	*/
 }
@@ -224,6 +225,7 @@ func NonOverlappingVisibleIntervals(lookupFileIdFn LookupFileIdFunctionType, chu
 	var newVisibles []VisibleInterval
 	for _, chunk := range chunks {
 
+		// glog.V(0).Infof("merge [%d,%d)", chunk.Offset, chunk.Offset+int64(chunk.Size))
 		newVisibles = MergeIntoVisibles(visibles, newVisibles, chunk)
 		t := visibles[:0]
 		visibles = newVisibles
