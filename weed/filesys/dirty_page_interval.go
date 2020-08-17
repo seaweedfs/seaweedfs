@@ -185,7 +185,7 @@ func (c *ContinuousIntervals) removeList(target *IntervalLinkedList) {
 
 }
 
-func (c *ContinuousIntervals) ReadData(data []byte, startOffset int64) (maxStop int64) {
+func (c *ContinuousIntervals) ReadDataAt(data []byte, startOffset int64) (maxStop int64) {
 	for _, list := range c.lists {
 		start := max(startOffset, list.Offset())
 		stop := min(startOffset+int64(len(data)), list.Offset()+list.Size())

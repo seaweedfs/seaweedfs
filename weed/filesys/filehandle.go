@@ -80,7 +80,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 }
 
 func (fh *FileHandle) readFromDirtyPages(buff []byte, startOffset int64) (maxStop int64) {
-	return fh.dirtyPages.ReadDirtyData(buff, startOffset)
+	return fh.dirtyPages.ReadDirtyDataAt(buff, startOffset)
 }
 
 func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {

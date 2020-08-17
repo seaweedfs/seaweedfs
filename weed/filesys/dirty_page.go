@@ -172,11 +172,11 @@ func min(x, y int64) int64 {
 	return y
 }
 
-func (pages *ContinuousDirtyPages) ReadDirtyData(data []byte, startOffset int64) (maxStop int64) {
+func (pages *ContinuousDirtyPages) ReadDirtyDataAt(data []byte, startOffset int64) (maxStop int64) {
 
 	pages.lock.Lock()
 	defer pages.lock.Unlock()
 
-	return pages.intervals.ReadData(data, startOffset)
+	return pages.intervals.ReadDataAt(data, startOffset)
 
 }
