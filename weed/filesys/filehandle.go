@@ -68,13 +68,13 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 		totalRead = max(maxStop - req.Offset, totalRead)
 	}
 
-	totalRead = min(int64(len(buff)), totalRead)
-	resp.Data = buff[:totalRead]
-
 	if err != nil {
 		glog.Errorf("file handle read %s: %v", fh.f.fullpath(), err)
 		return fuse.EIO
 	}
+
+	totalRead = min(int64(len(buff)), totalRead)
+	resp.Data = buff[:totalRead]
 
 	return err
 }
