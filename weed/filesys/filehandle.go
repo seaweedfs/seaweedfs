@@ -54,7 +54,7 @@ var _ = fs.HandleReleaser(&FileHandle{})
 
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 
-	glog.V(5).Infof("%s read fh %d: [%d,%d) size %d resp.Data len=%d cap=%d", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size), req.Size, len(resp.Data), cap(resp.Data))
+	glog.V(4).Infof("%s read fh %d: [%d,%d) size %d resp.Data len=%d cap=%d", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size), req.Size, len(resp.Data), cap(resp.Data))
 
 	buff := resp.Data[:cap(resp.Data)]
 	if req.Size > cap(resp.Data) {
@@ -64,12 +64,11 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	totalRead, err := fh.readFromChunks(buff, req.Offset)
 	if err == nil {
-		dirtyOffset, dirtySize := fh.readFromDirtyPages(buff, req.Offset)
-		if totalRead+req.Offset < dirtyOffset+int64(dirtySize) {
-			totalRead = dirtyOffset + int64(dirtySize) - req.Offset
-		}
+		maxStop := fh.readFromDirtyPages(buff, req.Offset)
+		totalRead = max(maxStop - req.Offset, totalRead)
 	}
 
+	totalRead = min(int64(len(buff)), totalRead)
 	resp.Data = buff[:totalRead]
 
 	if err != nil {
@@ -80,7 +79,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	return err
 }
 
-func (fh *FileHandle) readFromDirtyPages(buff []byte, startOffset int64) (offset int64, size int) {
+func (fh *FileHandle) readFromDirtyPages(buff []byte, startOffset int64) (maxStop int64) {
 	return fh.dirtyPages.ReadDirtyData(buff, startOffset)
 }
 

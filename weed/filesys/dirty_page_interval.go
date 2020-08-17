@@ -3,7 +3,6 @@ package filesys
 import (
 	"bytes"
 	"io"
-	"math"
 )
 
 type IntervalNode struct {
@@ -186,25 +185,15 @@ func (c *ContinuousIntervals) removeList(target *IntervalLinkedList) {
 
 }
 
-func (c *ContinuousIntervals) ReadData(data []byte, startOffset int64) (offset int64, size int) {
-	var minOffset int64 = math.MaxInt64
-	var maxStop int64
+func (c *ContinuousIntervals) ReadData(data []byte, startOffset int64) (maxStop int64) {
 	for _, list := range c.lists {
 		start := max(startOffset, list.Offset())
 		stop := min(startOffset+int64(len(data)), list.Offset()+list.Size())
-		if start <= stop {
+		if start < stop {
 			list.ReadData(data[start-startOffset:], start, stop)
-			minOffset = min(minOffset, start)
 			maxStop = max(maxStop, stop)
 		}
 	}
-
-	if minOffset == math.MaxInt64 {
-		return 0, 0
-	}
-
-	offset = minOffset
-	size = int(maxStop - offset)
 	return
 }
 
