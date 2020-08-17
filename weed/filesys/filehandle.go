@@ -73,7 +73,10 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 		return fuse.EIO
 	}
 
-	totalRead = min(int64(len(buff)), totalRead)
+	if totalRead > int64(len(buff)) {
+		glog.Warningf("%s FileHandle Read %d: [%d,%d) size %d totalRead %d", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size), req.Size, totalRead)
+		totalRead = min(int64(len(buff)), totalRead)
+	}
 	resp.Data = buff[:totalRead]
 
 	return err
@@ -102,7 +105,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 	}
 
 	if fh.f.reader == nil {
-		chunkViews := filer2.ViewFromVisibleIntervals(fh.f.entryViewCache, 0, math.MaxInt32)
+		chunkViews := filer2.ViewFromVisibleIntervals(fh.f.entryViewCache, 0, math.MaxInt64)
 		fh.f.reader = filer2.NewChunkReaderAtFromClient(fh.f.wfs, chunkViews, fh.f.wfs.chunkCache, fileSize)
 	}
 
