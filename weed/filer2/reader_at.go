@@ -101,7 +101,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 			return
 		}
 		bufferOffset := chunkStart - chunk.LogicOffset + chunk.Offset
-		copied := copy(p[chunkStart-startOffset:chunkStop-startOffset], buffer[bufferOffset:bufferOffset+chunkStop-chunkStart])
+		copied := copy(p[startOffset-offset:chunkStop-chunkStart+startOffset-offset], buffer[bufferOffset:bufferOffset+chunkStop-chunkStart])
 		n += copied
 		startOffset, remaining = startOffset+int64(copied), remaining-int64(copied)
 	}
@@ -111,6 +111,9 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 	if remaining > 0 {
 		glog.V(4).Infof("zero2 [%d,%d)", n, n+int(remaining))
 		n += int(remaining)
+		if n > int(c.fileSize - offset){
+			n = int(c.fileSize - offset)
+		}
 	}
 
 	if offset+int64(n) >= c.fileSize {
