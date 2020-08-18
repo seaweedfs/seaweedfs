@@ -114,7 +114,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 		n += delta
 	}
 
-	if offset+int64(n) >= c.fileSize {
+	if err == nil && offset+int64(len(p)) > c.fileSize {
 		err = io.EOF
 	}
 	// fmt.Printf("~~~ filled %d, err: %v\n\n", n, err)
