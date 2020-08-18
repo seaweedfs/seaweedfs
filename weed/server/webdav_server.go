@@ -70,7 +70,7 @@ type WebDavFileSystem struct {
 	secret         security.SigningKey
 	filer          *filer2.Filer
 	grpcDialOption grpc.DialOption
-	chunkCache     *chunk_cache.ChunkCache
+	chunkCache     *chunk_cache.TieredChunkCache
 }
 
 type FileInfo struct {
@@ -100,7 +100,7 @@ type WebDavFile struct {
 
 func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 
-	chunkCache := chunk_cache.NewChunkCache(256, option.CacheDir, option.CacheSizeMB)
+	chunkCache := chunk_cache.NewTieredChunkCache(256, option.CacheDir, option.CacheSizeMB)
 	grace.OnInterrupt(func() {
 		chunkCache.Shutdown()
 	})

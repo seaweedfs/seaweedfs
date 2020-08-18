@@ -14,15 +14,15 @@ const (
 )
 
 // a global cache for recently accessed file chunks
-type ChunkCache struct {
+type TieredChunkCache struct {
 	memCache   *ChunkCacheInMemory
 	diskCaches []*OnDiskCacheLayer
 	sync.RWMutex
 }
 
-func NewChunkCache(maxEntries int64, dir string, diskSizeMB int64) *ChunkCache {
+func NewTieredChunkCache(maxEntries int64, dir string, diskSizeMB int64) *TieredChunkCache {
 
-	c := &ChunkCache{
+	c := &TieredChunkCache{
 		memCache: NewChunkCacheInMemory(maxEntries),
 	}
 	c.diskCaches = make([]*OnDiskCacheLayer, 3)
@@ -33,7 +33,7 @@ func NewChunkCache(maxEntries int64, dir string, diskSizeMB int64) *ChunkCache {
 	return c
 }
 
-func (c *ChunkCache) GetChunk(fileId string, minSize uint64) (data []byte) {
+func (c *TieredChunkCache) GetChunk(fileId string, minSize uint64) (data []byte) {
 	if c == nil {
 		return
 	}
@@ -44,7 +44,7 @@ func (c *ChunkCache) GetChunk(fileId string, minSize uint64) (data []byte) {
 	return c.doGetChunk(fileId, minSize)
 }
 
-func (c *ChunkCache) doGetChunk(fileId string, minSize uint64) (data []byte) {
+func (c *TieredChunkCache) doGetChunk(fileId string, minSize uint64) (data []byte) {
 
 	if minSize < memCacheSizeLimit {
 		data = c.memCache.GetChunk(fileId)
@@ -82,7 +82,7 @@ func (c *ChunkCache) doGetChunk(fileId string, minSize uint64) (data []byte) {
 
 }
 
-func (c *ChunkCache) SetChunk(fileId string, data []byte) {
+func (c *TieredChunkCache) SetChunk(fileId string, data []byte) {
 	if c == nil {
 		return
 	}
@@ -94,7 +94,7 @@ func (c *ChunkCache) SetChunk(fileId string, data []byte) {
 	c.doSetChunk(fileId, data)
 }
 
-func (c *ChunkCache) doSetChunk(fileId string, data []byte) {
+func (c *TieredChunkCache) doSetChunk(fileId string, data []byte) {
 
 	if len(data) < memCacheSizeLimit {
 		c.memCache.SetChunk(fileId, data)
@@ -116,7 +116,7 @@ func (c *ChunkCache) doSetChunk(fileId string, data []byte) {
 
 }
 
-func (c *ChunkCache) Shutdown() {
+func (c *TieredChunkCache) Shutdown() {
 	if c == nil {
 		return
 	}

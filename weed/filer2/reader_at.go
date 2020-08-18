@@ -19,7 +19,7 @@ type ChunkReadAt struct {
 	readerLock   sync.Mutex
 	fileSize     int64
 
-	chunkCache *chunk_cache.ChunkCache
+	chunkCache *chunk_cache.TieredChunkCache
 }
 
 // var _ = io.ReaderAt(&ChunkReadAt{})
@@ -53,7 +53,7 @@ func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 	}
 }
 
-func NewChunkReaderAtFromClient(filerClient filer_pb.FilerClient, chunkViews []*ChunkView, chunkCache *chunk_cache.ChunkCache, fileSize int64) *ChunkReadAt {
+func NewChunkReaderAtFromClient(filerClient filer_pb.FilerClient, chunkViews []*ChunkView, chunkCache *chunk_cache.TieredChunkCache, fileSize int64) *ChunkReadAt {
 
 	return &ChunkReadAt{
 		chunkViews:   chunkViews,

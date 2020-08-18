@@ -65,7 +65,7 @@ type WFS struct {
 	root        fs.Node
 	fsNodeCache *FsCache
 
-	chunkCache *chunk_cache.ChunkCache
+	chunkCache *chunk_cache.TieredChunkCache
 	metaCache  *meta_cache.MetaCache
 }
 type statsCache struct {
@@ -87,7 +87,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	cacheDir := path.Join(option.CacheDir, cacheUniqueId)
 	if option.CacheSizeMB > 0 {
 		os.MkdirAll(cacheDir, 0755)
-		wfs.chunkCache = chunk_cache.NewChunkCache(256, cacheDir, option.CacheSizeMB)
+		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, cacheDir, option.CacheSizeMB)
 		grace.OnInterrupt(func() {
 			wfs.chunkCache.Shutdown()
 		})
