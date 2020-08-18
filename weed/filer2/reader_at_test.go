@@ -121,5 +121,6 @@ func TestReaderAt0(t *testing.T) {
 	testReadAt(t, readerAt, 3, 5, 5, nil)
 
 	testReadAt(t, readerAt, 11, 5, 0, io.EOF)
+	testReadAt(t, readerAt, 10, 5, 0, io.EOF)
 
 }
