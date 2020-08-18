@@ -77,6 +77,11 @@ func testReadAt(t *testing.T, readerAt *ChunkReadAt, offset int64, size int, exp
 	data := make([]byte, size)
 	n, err := readerAt.ReadAt(data, offset)
 
+	for _, d := range data {
+		fmt.Printf("%x", d)
+	}
+	fmt.Println()
+
 	if expected != n {
 		t.Errorf("unexpected read size: %d, expect: %d", n, expected)
 	}
@@ -84,10 +89,6 @@ func testReadAt(t *testing.T, readerAt *ChunkReadAt, offset int64, size int, exp
 		t.Errorf("unexpected read error: %v, expect: %v", err, expectedErr)
 	}
 
-	for _, d := range data {
-		fmt.Printf("%x", d)
-	}
-	fmt.Println()
 }
 
 func TestReaderAt0(t *testing.T) {
@@ -118,5 +119,7 @@ func TestReaderAt0(t *testing.T) {
 	testReadAt(t, readerAt, 0, 10, 10, io.EOF)
 	testReadAt(t, readerAt, 3, 16, 7, io.EOF)
 	testReadAt(t, readerAt, 3, 5, 5, nil)
+
+	testReadAt(t, readerAt, 11, 5, 0, io.EOF)
 
 }

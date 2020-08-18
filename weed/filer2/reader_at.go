@@ -108,12 +108,10 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
 	glog.V(4).Infof("doReadAt [%d,%d), n:%v, err:%v", offset, offset+int64(len(p)), n, err)
 
-	if remaining > 0 {
-		glog.V(4).Infof("zero2 [%d,%d)", n, n+int(remaining))
-		n += int(remaining)
-		if n > int(c.fileSize - offset){
-			n = int(c.fileSize - offset)
-		}
+	if remaining > 0 && c.fileSize > startOffset {
+		delta := int(min(remaining, c.fileSize - startOffset))
+		glog.V(4).Infof("zero2 [%d,%d)", n, n+delta)
+		n += delta
 	}
 
 	if offset+int64(n) >= c.fileSize {
