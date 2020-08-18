@@ -167,9 +167,9 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 	if fh.f.isOpen <= 0 {
 		fh.dirtyPages.releaseResource()
 		fh.f.wfs.ReleaseHandle(fh.f.fullpath(), fuse.HandleID(fh.handle))
+		fh.f.entryViewCache = nil
+		fh.f.reader = nil
 	}
-	fh.f.entryViewCache = nil
-	fh.f.reader = nil
 
 	return nil
 }
