@@ -124,3 +124,33 @@ func TestReaderAt0(t *testing.T) {
 	testReadAt(t, readerAt, 10, 5, 0, io.EOF)
 
 }
+
+func TestReaderAt1(t *testing.T) {
+
+	visibles := []VisibleInterval{
+		{
+			start:  2,
+			stop:   5,
+			fileId: "1",
+			chunkSize: 9,
+		},
+	}
+
+	readerAt := &ChunkReadAt{
+		chunkViews:   ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
+		lookupFileId: nil,
+		readerLock:   sync.Mutex{},
+		fileSize:     20,
+		chunkCache:   &mockChunkCache{},
+	}
+
+	testReadAt(t, readerAt, 0, 20, 20, io.EOF)
+	testReadAt(t, readerAt, 1, 7, 7, nil)
+	testReadAt(t, readerAt, 0, 1, 1, nil)
+	testReadAt(t, readerAt, 18, 4, 2, io.EOF)
+	testReadAt(t, readerAt, 12, 4, 4, nil)
+	testReadAt(t, readerAt, 4, 20, 16, io.EOF)
+	testReadAt(t, readerAt, 4, 10, 10, nil)
+	testReadAt(t, readerAt, 1, 10, 10, nil)
+
+}

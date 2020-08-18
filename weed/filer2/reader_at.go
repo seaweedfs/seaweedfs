@@ -82,8 +82,8 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 		}
 		if startOffset < chunk.LogicOffset {
 			gap := int(chunk.LogicOffset - startOffset)
-			glog.V(4).Infof("zero [%d,%d)", n, n+gap)
-			n += gap
+			glog.V(4).Infof("zero [%d,%d)", startOffset, startOffset+int64(gap))
+			n += int(min(int64(gap), remaining))
 			startOffset, remaining = chunk.LogicOffset, remaining-int64(gap)
 			if remaining <= 0 {
 				break
