@@ -81,7 +81,7 @@ func CreateEntry(client SeaweedFilerClient, request *CreateEntryRequest) error {
 		return fmt.Errorf("CreateEntry: %v", err)
 	}
 	if resp.Error != "" {
-		glog.V(1).Infof("create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, err)
+		glog.V(1).Infof("create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, resp.Error)
 		return fmt.Errorf("CreateEntry : %v", resp.Error)
 	}
 	return nil
