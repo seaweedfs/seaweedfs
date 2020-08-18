@@ -19,7 +19,7 @@ type ChunkReadAt struct {
 	readerLock   sync.Mutex
 	fileSize     int64
 
-	chunkCache *chunk_cache.TieredChunkCache
+	chunkCache chunk_cache.ChunkCache
 }
 
 // var _ = io.ReaderAt(&ChunkReadAt{})
@@ -53,7 +53,7 @@ func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 	}
 }
 
-func NewChunkReaderAtFromClient(filerClient filer_pb.FilerClient, chunkViews []*ChunkView, chunkCache *chunk_cache.TieredChunkCache, fileSize int64) *ChunkReadAt {
+func NewChunkReaderAtFromClient(filerClient filer_pb.FilerClient, chunkViews []*ChunkView, chunkCache chunk_cache.ChunkCache, fileSize int64) *ChunkReadAt {
 
 	return &ChunkReadAt{
 		chunkViews:   chunkViews,
@@ -103,7 +103,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 		bufferOffset := chunkStart - chunk.LogicOffset + chunk.Offset
 		copied := copy(p[chunkStart-startOffset:chunkStop-startOffset], buffer[bufferOffset:bufferOffset+chunkStop-chunkStart])
 		n += copied
-		startOffset, remaining = startOffset + int64(copied), remaining-int64(copied)
+		startOffset, remaining = startOffset+int64(copied), remaining-int64(copied)
 	}
 
 	glog.V(4).Infof("doReadAt [%d,%d), n:%v, err:%v", offset, offset+int64(len(p)), n, err)

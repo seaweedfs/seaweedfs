@@ -13,6 +13,11 @@ const (
 	onDiskCacheSizeLimit1 = 4 * memCacheSizeLimit
 )
 
+type ChunkCache interface {
+	GetChunk(fileId string, minSize uint64) (data []byte)
+	SetChunk(fileId string, data []byte)
+}
+
 // a global cache for recently accessed file chunks
 type TieredChunkCache struct {
 	memCache   *ChunkCacheInMemory
