@@ -18,6 +18,9 @@ type Size uint32
 func (s Size) IsDeleted() bool {
 	return s == TombstoneFileSize
 }
+func (s Size) IsValid() bool {
+	return s != TombstoneFileSize
+}
 
 type OffsetLower struct {
 	b3 byte

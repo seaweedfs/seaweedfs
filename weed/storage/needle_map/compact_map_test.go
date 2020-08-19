@@ -76,7 +76,7 @@ func TestCompactMap(t *testing.T) {
 				t.Fatal("key", i, "size", v.Size)
 			}
 		} else if i%37 == 0 {
-			if ok && v.Size != TombstoneFileSize {
+			if ok && v.Size.IsValid() {
 				t.Fatal("key", i, "should have been deleted needle value", v)
 			}
 		} else if i%2 == 0 {
@@ -89,7 +89,7 @@ func TestCompactMap(t *testing.T) {
 	for i := uint32(10 * batch); i < 100*batch; i++ {
 		v, ok := m.Get(NeedleId(i))
 		if i%37 == 0 {
-			if ok && v.Size != TombstoneFileSize {
+			if ok && v.Size.IsValid() {
 				t.Fatal("key", i, "should have been deleted needle value", v)
 			}
 		} else if i%2 == 0 {

@@ -31,7 +31,7 @@ func (mm *mapMetric) logPut(key NeedleId, oldSize Size, newSize Size) {
 	}
 	mm.MaybeSetMaxFileKey(key)
 	mm.LogFileCounter(newSize)
-	if oldSize > 0 && oldSize != TombstoneFileSize {
+	if oldSize > 0 && oldSize.IsValid() {
 		mm.LogDeletionCounter(oldSize)
 	}
 }
@@ -101,7 +101,7 @@ func newNeedleMapMetricFromIndexFile(r *os.File) (mm *mapMetric, err error) {
 
 		mm.MaybeSetMaxFileKey(key)
 		NeedleIdToBytes(buf, key)
-		if size != TombstoneFileSize {
+		if size.IsValid() {
 			mm.FileByteCounter += uint64(size)
 		}
 
@@ -111,7 +111,7 @@ func newNeedleMapMetricFromIndexFile(r *os.File) (mm *mapMetric, err error) {
 		} else {
 			// deleted file
 			mm.DeletionCounter++
-			if size != TombstoneFileSize {
+			if size.IsValid() {
 				// previously already deleted file
 				mm.DeletionByteCounter += uint64(size)
 			}

@@ -25,7 +25,7 @@ func (v *Volume) isFileUnchanged(n *needle.Needle) bool {
 	}
 
 	nv, ok := v.nm.Get(n.Id)
-	if ok && !nv.Offset.IsZero() && nv.Size != TombstoneFileSize {
+	if ok && !nv.Offset.IsZero() && nv.Size.IsValid() {
 		oldNeedle := new(needle.Needle)
 		err := oldNeedle.ReadData(v.DataBackend, nv.Offset.ToAcutalOffset(), nv.Size, v.Version())
 		if err != nil {
@@ -196,7 +196,7 @@ func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 
 	nv, ok := v.nm.Get(n.Id)
 	//fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
-	if ok && nv.Size != TombstoneFileSize {
+	if ok && nv.Size.IsValid() {
 		size := nv.Size
 		n.Data = nil
 		n.AppendAtNs = uint64(time.Now().UnixNano())
@@ -234,7 +234,7 @@ func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
 	glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	nv, ok := v.nm.Get(n.Id)
 	//fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
-	if ok && nv.Size != TombstoneFileSize {
+	if ok && nv.Size.IsValid() {
 		size := nv.Size
 		n.Data = nil
 		n.AppendAtNs = uint64(time.Now().UnixNano())

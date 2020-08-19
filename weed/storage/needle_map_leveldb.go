@@ -74,7 +74,7 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 	}
 	defer db.Close()
 	return idx.WalkIndexFile(indexFile, func(key NeedleId, offset Offset, size Size) error {
-		if !offset.IsZero() && size != TombstoneFileSize {
+		if !offset.IsZero() && size.IsValid() {
 			levelDbWrite(db, key, offset, size)
 		} else {
 			levelDbDelete(db, key)

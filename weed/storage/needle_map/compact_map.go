@@ -130,7 +130,7 @@ func (cs *CompactSection) Delete(key NeedleId) Size {
 	cs.Lock()
 	ret := Size(0)
 	if i := cs.binarySearchValues(skey); i >= 0 {
-		if cs.values[i].Size > 0 && cs.values[i].Size != TombstoneFileSize {
+		if cs.values[i].Size > 0 && cs.values[i].Size.IsValid() {
 			ret = cs.values[i].Size
 			cs.values[i].Size = TombstoneFileSize
 		}

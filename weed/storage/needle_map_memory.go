@@ -30,11 +30,11 @@ func LoadCompactNeedleMap(file *os.File) (*NeedleMap, error) {
 func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
 	e := idx.WalkIndexFile(file, func(key NeedleId, offset Offset, size Size) error {
 		nm.MaybeSetMaxFileKey(key)
-		if !offset.IsZero() && size != TombstoneFileSize {
+		if !offset.IsZero() && size.IsValid() {
 			nm.FileCounter++
 			nm.FileByteCounter = nm.FileByteCounter + uint64(size)
 			oldOffset, oldSize := nm.m.Set(NeedleId(key), offset, size)
-			if !oldOffset.IsZero() && oldSize != TombstoneFileSize {
+			if !oldOffset.IsZero() && oldSize.IsValid() {
 				nm.DeletionCounter++
 				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 			}
