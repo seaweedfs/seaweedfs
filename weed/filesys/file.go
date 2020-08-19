@@ -93,7 +93,7 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 	resp.Handle = fuse.HandleID(handle.handle)
 
-	glog.V(5).Infof("%v file open handle id = %d", file.fullpath(), handle.handle)
+	glog.V(4).Infof("%v file open handle id = %d", file.fullpath(), handle.handle)
 
 	return handle, nil
 
