@@ -112,12 +112,12 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 	if strings.HasPrefix(reqDir, "/") {
 		reqDir = reqDir[1:]
 	}
+	bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
+	reqDir = fmt.Sprintf("%s%s", bucketPrefix, reqDir)
 	if strings.HasSuffix(reqDir, "/") {
 		// remove trailing "/"
 		reqDir = reqDir[:len(reqDir)-1]
 	}
-	bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
-	reqDir = fmt.Sprintf("%s%s", bucketPrefix, reqDir)
 
 	var contents []ListEntry
 	var commonPrefixes []PrefixEntry
@@ -131,14 +131,13 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 		_, isTruncated, nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, maxKeys, marker, delimiter, func(dir string, entry *filer_pb.Entry) {
 			if entry.IsDirectory {
 				if delimiter == "/" {
-					prefix = fmt.Sprintf("%s%s/", dir, entry.Name)
 					commonPrefixes = append(commonPrefixes, PrefixEntry{
-						Prefix: prefix[len(bucketPrefix):],
+						Prefix: fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
 					})
 				}
 			} else {
 				contents = append(contents, ListEntry{
-					Key:          fmt.Sprintf("%s%s", dir[len(bucketPrefix):], entry.Name),
+					Key:          fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):],
 					LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
 					ETag:         "\"" + filer2.ETag(entry) + "\"",
 					Size:         int64(filer2.FileSize(entry)),
