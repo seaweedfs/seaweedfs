@@ -129,8 +129,8 @@ func TestOverflow(t *testing.T) {
 
 	cs.deleteOverflowEntry(4)
 
-	if len(cs.overflow) != 4 {
-		t.Fatalf("expecting 4 entries now: %+v", cs.overflow)
+	if len(cs.overflow) != 5 {
+		t.Fatalf("expecting 5 entries now: %+v", cs.overflow)
 	}
 
 	_, x, _ := cs.findOverflowEntry(5)
@@ -146,7 +146,7 @@ func TestOverflow(t *testing.T) {
 	cs.deleteOverflowEntry(1)
 
 	for i, x := range cs.overflow {
-		println("overflow[", i, "]:", x.Key)
+		println("overflow[", i, "]:", x.Key, "size", x.Size)
 	}
 	println()
 
