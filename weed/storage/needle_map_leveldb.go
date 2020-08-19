@@ -124,14 +124,18 @@ func levelDbDelete(db *leveldb.DB, key NeedleId) error {
 }
 
 func (m *LevelDbNeedleMap) Delete(key NeedleId, offset Offset) error {
-	if oldNeedle, ok := m.Get(key); ok {
-		m.logDelete(oldNeedle.Size)
+	oldNeedle, found := m.Get(key)
+	if !found || oldNeedle.Size.IsDeleted() {
+		return nil
 	}
+	m.logDelete(oldNeedle.Size)
+
 	// write to index file first
 	if err := m.appendToIndexFile(key, offset, TombstoneFileSize); err != nil {
 		return err
 	}
-	return levelDbDelete(m.db, key)
+
+	return levelDbWrite(m.db, key, oldNeedle.Offset, -oldNeedle.Size)
 }
 
 func (m *LevelDbNeedleMap) Close() {

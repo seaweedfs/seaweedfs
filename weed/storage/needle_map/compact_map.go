@@ -115,12 +115,9 @@ func (cs *CompactSection) deleteOverflowEntry(key SectionalNeedleId) {
 		return cs.overflow[i].Key >= key
 	})
 	if deleteCandidate != length && cs.overflow[deleteCandidate].Key == key {
-		for i := deleteCandidate; i < length-1; i++ {
-			cs.overflow[i] = cs.overflow[i+1]
-			cs.overflowExtra[i] = cs.overflowExtra[i+1]
+		if cs.overflow[deleteCandidate].Size.IsValid() {
+			cs.overflow[deleteCandidate].Size = - cs.overflow[deleteCandidate].Size
 		}
-		cs.overflow = cs.overflow[0 : length-1]
-		cs.overflowExtra = cs.overflowExtra[0 : length-1]
 	}
 }
 
@@ -132,7 +129,7 @@ func (cs *CompactSection) Delete(key NeedleId) Size {
 	if i := cs.binarySearchValues(skey); i >= 0 {
 		if cs.values[i].Size > 0 && cs.values[i].Size.IsValid() {
 			ret = cs.values[i].Size
-			cs.values[i].Size = TombstoneFileSize
+			cs.values[i].Size = -cs.values[i].Size
 		}
 	}
 	if _, v, found := cs.findOverflowEntry(skey); found {

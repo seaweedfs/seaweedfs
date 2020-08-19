@@ -195,7 +195,7 @@ func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 	}
 
 	nv, ok := v.nm.Get(n.Id)
-	//fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
+	// fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
 	if ok && nv.Size.IsValid() {
 		size := nv.Size
 		n.Data = nil
@@ -233,7 +233,7 @@ func (v *Volume) deleteNeedle2(n *needle.Needle) (Size, error) {
 func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
 	glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	nv, ok := v.nm.Get(n.Id)
-	//fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
+	// fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
 	if ok && nv.Size.IsValid() {
 		size := nv.Size
 		n.Data = nil
@@ -260,13 +260,18 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption) (int, erro
 	if !ok || nv.Offset.IsZero() {
 		return -1, ErrorNotFound
 	}
-	if nv.Size.IsDeleted() {
-		return -1, errors.New("already deleted")
+	readSize := nv.Size
+	if readSize.IsDeleted() {
+		if readOption != nil && readOption.ReadDeleted && readSize != TombstoneFileSize {
+			readSize = -readSize
+		} else {
+			return -1, errors.New("already deleted")
+		}
 	}
-	if nv.Size == 0 {
+	if readSize == 0 {
 		return 0, nil
 	}
-	err := n.ReadData(v.DataBackend, nv.Offset.ToAcutalOffset(), nv.Size, v.Version())
+	err := n.ReadData(v.DataBackend, nv.Offset.ToAcutalOffset(), readSize, v.Version())
 	if err != nil {
 		return 0, err
 	}
@@ -299,7 +304,7 @@ func (v *Volume) startWorker() {
 			currentBytesToWrite := int64(0)
 			for {
 				request, ok := <-v.asyncRequestsChan
-				//volume may be closed
+				// volume may be closed
 				if !ok {
 					chanClosed = true
 					break
@@ -402,8 +407,8 @@ func ScanVolumeFileFrom(version needle.Version, datBackend backend.BackendStorag
 		if volumeFileScanner.ReadNeedleBody() {
 			if needleBody, err = n.ReadNeedleBody(datBackend, version, offset+NeedleHeaderSize, rest); err != nil {
 				glog.V(0).Infof("cannot read needle body: %v", err)
-				//err = fmt.Errorf("cannot read needle body: %v", err)
-				//return
+				// err = fmt.Errorf("cannot read needle body: %v", err)
+				// return
 			}
 		}
 		err := volumeFileScanner.VisitNeedle(n, offset, nh, needleBody)

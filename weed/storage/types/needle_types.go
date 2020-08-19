@@ -2,7 +2,6 @@ package types
 
 import (
 	"fmt"
-	"math"
 	"strconv"
 
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -13,13 +12,13 @@ type Offset struct {
 	OffsetLower
 }
 
-type Size uint32
+type Size int32
 
 func (s Size) IsDeleted() bool {
-	return s == TombstoneFileSize
+	return s < 0 || s == TombstoneFileSize
 }
 func (s Size) IsValid() bool {
-	return s != TombstoneFileSize
+	return s >0 && s != TombstoneFileSize
 }
 
 type OffsetLower struct {
@@ -37,7 +36,7 @@ const (
 	NeedleMapEntrySize = NeedleIdSize + OffsetSize + SizeSize
 	TimestampSize      = 8 // int64 size
 	NeedlePaddingSize  = 8
-	TombstoneFileSize  = math.MaxUint32
+	TombstoneFileSize  = Size(-1)
 	CookieSize         = 4
 )
 
