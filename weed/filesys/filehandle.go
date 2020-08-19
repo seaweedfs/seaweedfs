@@ -165,6 +165,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 	fh.f.isOpen--
 
 	if fh.f.isOpen <= 0 {
+		fh.doFlush(ctx, req.Header)
 		fh.dirtyPages.releaseResource()
 		fh.f.wfs.ReleaseHandle(fh.f.fullpath(), fuse.HandleID(fh.handle))
 		fh.f.entryViewCache = nil
@@ -175,9 +176,13 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 }
 
 func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
+	return fh.doFlush(ctx, req.Header)
+}
+
+func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 	// fflush works at fh level
 	// send the data to the OS
-	glog.V(5).Infof("Flush %s fh %d %v", fh.f.fullpath(), fh.handle, req)
+	glog.V(4).Infof("doFlush %s fh %d %v", fh.f.fullpath(), fh.handle, header)
 
 	chunks, err := fh.dirtyPages.FlushToStorage()
 	if err != nil {
@@ -199,10 +204,10 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		if fh.f.entry.Attributes != nil {
 			fh.f.entry.Attributes.Mime = fh.contentType
 			if fh.f.entry.Attributes.Uid == 0 {
-				fh.f.entry.Attributes.Uid = req.Uid
+				fh.f.entry.Attributes.Uid = header.Uid
 			}
 			if fh.f.entry.Attributes.Gid == 0 {
-				fh.f.entry.Attributes.Gid = req.Gid
+				fh.f.entry.Attributes.Gid = header.Gid
 			}
 			if fh.f.entry.Attributes.Crtime == 0 {
 				fh.f.entry.Attributes.Crtime = time.Now().Unix()
