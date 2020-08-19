@@ -88,7 +88,7 @@ func (cm *MemDb) SaveToIdx(idxName string) (ret error) {
 	defer idxFile.Close()
 
 	return cm.AscendingVisit(func(value NeedleValue) error {
-		if value.Offset.IsZero() || value.Size == TombstoneFileSize {
+		if value.Offset.IsZero() || value.Size.IsDeleted() {
 			return nil
 		}
 		_, err := idxFile.Write(value.ToBytes())
@@ -105,7 +105,7 @@ func (cm *MemDb) LoadFromIdx(idxName string) (ret error) {
 	defer idxFile.Close()
 
 	return idx.WalkIndexFile(idxFile, func(key NeedleId, offset Offset, size Size) error {
-		if offset.IsZero() || size == TombstoneFileSize {
+		if offset.IsZero() || size.IsDeleted() {
 			return cm.Delete(key)
 		}
 		return cm.Set(key, offset, size)

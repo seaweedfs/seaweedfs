@@ -15,6 +15,10 @@ type Offset struct {
 
 type Size uint32
 
+func (s Size) IsDeleted() bool {
+	return s == TombstoneFileSize
+}
+
 type OffsetLower struct {
 	b3 byte
 	b2 byte

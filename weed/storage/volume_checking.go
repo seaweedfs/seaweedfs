@@ -27,7 +27,7 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uin
 	if offset.IsZero() {
 		return 0, nil
 	}
-	if size == TombstoneFileSize {
+	if size.IsDeleted() {
 		size = 0
 	}
 	if lastAppendAtNs, e = verifyNeedleIntegrity(v.DataBackend, v.Version(), offset.ToAcutalOffset(), key, size); e != nil {

@@ -260,7 +260,7 @@ func (v *Volume) readNeedle(n *needle.Needle) (int, error) {
 	if !ok || nv.Offset.IsZero() {
 		return -1, ErrorNotFound
 	}
-	if nv.Size == TombstoneFileSize {
+	if nv.Size.IsDeleted() {
 		return -1, errors.New("already deleted")
 	}
 	if nv.Size == 0 {

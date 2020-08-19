@@ -413,7 +413,7 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 
 		offset, size := value.Offset, value.Size
 
-		if offset.IsZero() || size == TombstoneFileSize {
+		if offset.IsZero() || size.IsDeleted() {
 			return nil
 		}
 

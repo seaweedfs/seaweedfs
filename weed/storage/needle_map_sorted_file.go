@@ -80,7 +80,7 @@ func (m *SortedFileNeedleMap) Delete(key NeedleId, offset Offset) error {
 		return err
 	}
 
-	if size == TombstoneFileSize {
+	if size.IsDeleted() {
 		return nil
 	}
 
