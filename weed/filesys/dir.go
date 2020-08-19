@@ -317,8 +317,8 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 		return nil
 	}
 
-	dir.wfs.deleteFileChunks(entry.Chunks)
 
+	// first, ensure the filer store can correctly delete
 	glog.V(3).Infof("remove file: %v", req)
 	err = filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, false, false, false, false)
 	if err != nil {
@@ -326,8 +326,12 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 		return fuse.ENOENT
 	}
 
+	// then, delete meta cache and fsNode cache
 	dir.wfs.metaCache.DeleteEntry(context.Background(), filePath)
 	dir.wfs.fsNodeCache.DeleteFsNode(filePath)
+
+	// delete the chunks last
+	dir.wfs.deleteFileChunks(entry.Chunks)
 
 	return nil
 
