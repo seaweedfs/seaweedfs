@@ -118,7 +118,7 @@ const (
 
 type needleState struct {
 	state uint8
-	size  uint32
+	size  types.Size
 }
 
 func getVolumeFiles(v uint32, addr string) (map[types.NeedleId]needleState, int64, error) {
@@ -154,8 +154,8 @@ func getVolumeFiles(v uint32, addr string) (map[types.NeedleId]needleState, int6
 
 	var maxOffset int64
 	files := map[types.NeedleId]needleState{}
-	err = idx.WalkIndexFile(idxFile, func(key types.NeedleId, offset types.Offset, size Size) error {
-		if offset.IsZero() || size == types.TombstoneFileSize {
+	err = idx.WalkIndexFile(idxFile, func(key types.NeedleId, offset types.Offset, size types.Size) error {
+		if offset.IsZero() || size < 0 || size == types.TombstoneFileSize {
 			files[key] = needleState{
 				state: stateDeleted,
 				size:  size,

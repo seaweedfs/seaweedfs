@@ -36,7 +36,7 @@ func main() {
 	}
 	defer indexFile.Close()
 
-	idx.WalkIndexFile(indexFile, func(key types.NeedleId, offset types.Offset, size Size) error {
+	idx.WalkIndexFile(indexFile, func(key types.NeedleId, offset types.Offset, size types.Size) error {
 		fmt.Printf("key:%v offset:%v size:%v(%v)\n", key, offset, size, util.BytesToHumanReadable(uint64(size)))
 		return nil
 	})
