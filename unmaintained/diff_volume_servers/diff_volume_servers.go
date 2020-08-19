@@ -155,7 +155,7 @@ func getVolumeFiles(v uint32, addr string) (map[types.NeedleId]needleState, int6
 	var maxOffset int64
 	files := map[types.NeedleId]needleState{}
 	err = idx.WalkIndexFile(idxFile, func(key types.NeedleId, offset types.Offset, size types.Size) error {
-		if offset.IsZero() || size < 0 || size == types.TombstoneFileSize {
+		if offset.IsZero() || size.IsDeleted() {
 			files[key] = needleState{
 				state: stateDeleted,
 				size:  size,

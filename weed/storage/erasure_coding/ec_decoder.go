@@ -54,7 +54,7 @@ func FindDatFileSize(baseFileName string) (datSize int64, err error) {
 
 	err = iterateEcxFile(baseFileName, func(key types.NeedleId, offset types.Offset, size types.Size) error {
 
-		if size == types.TombstoneFileSize {
+		if size.IsDeleted() {
 			return nil
 		}
 
