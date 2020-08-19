@@ -49,7 +49,7 @@ func TestIssue52(t *testing.T) {
 func TestCompactMap(t *testing.T) {
 	m := NewCompactMap()
 	for i := uint32(0); i < 100*batch; i += 2 {
-		m.Set(NeedleId(i), ToOffset(int64(i)), i)
+		m.Set(NeedleId(i), ToOffset(int64(i)), Size(i))
 	}
 
 	for i := uint32(0); i < 100*batch; i += 37 {
@@ -57,7 +57,7 @@ func TestCompactMap(t *testing.T) {
 	}
 
 	for i := uint32(0); i < 10*batch; i += 3 {
-		m.Set(NeedleId(i), ToOffset(int64(i+11)), i+5)
+		m.Set(NeedleId(i), ToOffset(int64(i+11)), Size(i+5))
 	}
 
 	//	for i := uint32(0); i < 100; i++ {
@@ -72,7 +72,7 @@ func TestCompactMap(t *testing.T) {
 			if !ok {
 				t.Fatal("key", i, "missing!")
 			}
-			if v.Size != i+5 {
+			if v.Size != Size(i+5) {
 				t.Fatal("key", i, "size", v.Size)
 			}
 		} else if i%37 == 0 {
@@ -80,7 +80,7 @@ func TestCompactMap(t *testing.T) {
 				t.Fatal("key", i, "should have been deleted needle value", v)
 			}
 		} else if i%2 == 0 {
-			if v.Size != i {
+			if v.Size != Size(i) {
 				t.Fatal("key", i, "size", v.Size)
 			}
 		}
@@ -96,7 +96,7 @@ func TestCompactMap(t *testing.T) {
 			if v == nil {
 				t.Fatal("key", i, "missing")
 			}
-			if v.Size != i {
+			if v.Size != Size(i) {
 				t.Fatal("key", i, "size", v.Size)
 			}
 		}

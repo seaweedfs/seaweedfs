@@ -273,7 +273,7 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, fsync boo
 	return
 }
 
-func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (uint32, error) {
+func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (Size, error) {
 	if v := s.findVolume(i); v != nil {
 		if v.noWriteOrDelete {
 			return 0, fmt.Errorf("volume %d is read only", i)

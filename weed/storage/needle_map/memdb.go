@@ -11,7 +11,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/idx"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 //This map uses in memory level db
@@ -32,7 +31,7 @@ func NewMemDb() *MemDb {
 	return t
 }
 
-func (cm *MemDb) Set(key NeedleId, offset Offset, size uint32) error {
+func (cm *MemDb) Set(key NeedleId, offset Offset, size Size) error {
 
 	bytes := ToBytes(key, offset, size)
 
@@ -56,7 +55,7 @@ func (cm *MemDb) Get(key NeedleId) (*NeedleValue, bool) {
 		return nil, false
 	}
 	offset := BytesToOffset(data[0:OffsetSize])
-	size := util.BytesToUint32(data[OffsetSize : OffsetSize+SizeSize])
+	size := BytesToSize(data[OffsetSize : OffsetSize+SizeSize])
 	return &NeedleValue{Key: key, Offset: offset, Size: size}, true
 }
 
@@ -67,7 +66,7 @@ func (cm *MemDb) AscendingVisit(visit func(NeedleValue) error) (ret error) {
 		key := BytesToNeedleId(iter.Key())
 		data := iter.Value()
 		offset := BytesToOffset(data[0:OffsetSize])
-		size := util.BytesToUint32(data[OffsetSize : OffsetSize+SizeSize])
+		size := BytesToSize(data[OffsetSize : OffsetSize+SizeSize])
 
 		needle := NeedleValue{Key: key, Offset: offset, Size: size}
 		ret = visit(needle)
@@ -105,7 +104,7 @@ func (cm *MemDb) LoadFromIdx(idxName string) (ret error) {
 	}
 	defer idxFile.Close()
 
-	return idx.WalkIndexFile(idxFile, func(key NeedleId, offset Offset, size uint32) error {
+	return idx.WalkIndexFile(idxFile, func(key NeedleId, offset Offset, size Size) error {
 		if offset.IsZero() || size == TombstoneFileSize {
 			return cm.Delete(key)
 		}

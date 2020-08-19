@@ -207,7 +207,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 
 	type keyField struct {
 		offset Offset
-		size   uint32
+		size   Size
 	}
 	incrementedHasUpdatedIndexEntry := make(map[NeedleId]keyField)
 

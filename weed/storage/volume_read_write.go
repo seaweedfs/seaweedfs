@@ -68,9 +68,9 @@ func (v *Volume) asyncRequestAppend(request *needle.AsyncRequest) {
 	v.asyncRequestsChan <- request
 }
 
-func (v *Volume) syncWrite(n *needle.Needle) (offset uint64, size uint32, isUnchanged bool, err error) {
+func (v *Volume) syncWrite(n *needle.Needle) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
-	actualSize := needle.GetActualSize(uint32(len(n.Data)), v.Version())
+	actualSize := needle.GetActualSize(Size(len(n.Data)), v.Version())
 
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
@@ -80,7 +80,7 @@ func (v *Volume) syncWrite(n *needle.Needle) (offset uint64, size uint32, isUnch
 		return
 	}
 	if v.isFileUnchanged(n) {
-		size = n.DataSize
+		size = Size(n.DataSize)
 		isUnchanged = true
 		return
 	}
@@ -120,7 +120,7 @@ func (v *Volume) syncWrite(n *needle.Needle) (offset uint64, size uint32, isUnch
 	return
 }
 
-func (v *Volume) writeNeedle2(n *needle.Needle, fsync bool) (offset uint64, size uint32, isUnchanged bool, err error) {
+func (v *Volume) writeNeedle2(n *needle.Needle, fsync bool) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	if n.Ttl == needle.EMPTY_TTL && v.Ttl != needle.EMPTY_TTL {
 		n.SetHasTtl()
@@ -132,7 +132,7 @@ func (v *Volume) writeNeedle2(n *needle.Needle, fsync bool) (offset uint64, size
 	} else {
 		asyncRequest := needle.NewAsyncRequest(n, true)
 		// using len(n.Data) here instead of n.Size before n.Size is populated in n.Append()
-		asyncRequest.ActualSize = needle.GetActualSize(uint32(len(n.Data)), v.Version())
+		asyncRequest.ActualSize = needle.GetActualSize(Size(len(n.Data)), v.Version())
 
 		v.asyncRequestAppend(asyncRequest)
 		offset, _, isUnchanged, err = asyncRequest.WaitComplete()
@@ -141,10 +141,10 @@ func (v *Volume) writeNeedle2(n *needle.Needle, fsync bool) (offset uint64, size
 	}
 }
 
-func (v *Volume) doWriteRequest(n *needle.Needle) (offset uint64, size uint32, isUnchanged bool, err error) {
+func (v *Volume) doWriteRequest(n *needle.Needle) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	if v.isFileUnchanged(n) {
-		size = n.DataSize
+		size = Size(n.DataSize)
 		isUnchanged = true
 		return
 	}
@@ -183,7 +183,7 @@ func (v *Volume) doWriteRequest(n *needle.Needle) (offset uint64, size uint32, i
 	return
 }
 
-func (v *Volume) syncDelete(n *needle.Needle) (uint32, error) {
+func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 	glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	actualSize := needle.GetActualSize(0, v.Version())
 	v.dataFileAccessLock.Lock()
@@ -213,7 +213,7 @@ func (v *Volume) syncDelete(n *needle.Needle) (uint32, error) {
 	return 0, nil
 }
 
-func (v *Volume) deleteNeedle2(n *needle.Needle) (uint32, error) {
+func (v *Volume) deleteNeedle2(n *needle.Needle) (Size, error) {
 	// todo: delete info is always appended no fsync, it may need fsync in future
 	fsync := false
 
@@ -226,11 +226,11 @@ func (v *Volume) deleteNeedle2(n *needle.Needle) (uint32, error) {
 		v.asyncRequestAppend(asyncRequest)
 		_, size, _, err := asyncRequest.WaitComplete()
 
-		return uint32(size), err
+		return Size(size), err
 	}
 }
 
-func (v *Volume) doDeleteRequest(n *needle.Needle) (uint32, error) {
+func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
 	glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	nv, ok := v.nm.Get(n.Id)
 	//fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)

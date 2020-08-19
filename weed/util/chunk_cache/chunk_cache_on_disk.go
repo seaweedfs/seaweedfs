@@ -137,7 +137,7 @@ func (v *ChunkCacheVolume) WriteNeedle(key types.NeedleId, data []byte) error {
 		v.fileSize += int64(types.NeedlePaddingSize - extraSize)
 	}
 
-	if err := v.nm.Put(key, types.ToOffset(offset), uint32(len(data))); err != nil {
+	if err := v.nm.Put(key, types.ToOffset(offset), types.Size(len(data))); err != nil {
 		return err
 	}
 

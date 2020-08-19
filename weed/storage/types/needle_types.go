@@ -2,15 +2,18 @@ package types
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"math"
 	"strconv"
+
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type Offset struct {
 	OffsetHigher
 	OffsetLower
 }
+
+type Size uint32
 
 type OffsetLower struct {
 	b3 byte
@@ -48,4 +51,12 @@ func ParseCookie(cookieString string) (Cookie, error) {
 		return 0, fmt.Errorf("needle cookie %s format error: %v", cookieString, err)
 	}
 	return Cookie(cookie), nil
+}
+
+func BytesToSize(bytes []byte) Size {
+	return Size(util.BytesToUint32(bytes))
+}
+
+func SizeToBytes(bytes []byte, size Size) {
+	util.Uint32toBytes(bytes, uint32(size))
 }

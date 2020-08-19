@@ -79,7 +79,7 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 			resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
 				FileId: fid,
 				Status: http.StatusAccepted,
-				Size:   size},
+				Size:   uint32(size)},
 			)
 		}
 	}

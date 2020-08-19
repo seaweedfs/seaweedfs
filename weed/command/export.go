@@ -72,9 +72,9 @@ var (
 
 func printNeedle(vid needle.VolumeId, n *needle.Needle, version needle.Version, deleted bool) {
 	key := needle.NewFileIdFromNeedle(vid, n).String()
-	size := n.DataSize
+	size := int32(n.DataSize)
 	if version == needle.Version1 {
-		size = n.Size
+		size = int32(n.Size)
 	}
 	fmt.Printf("%s\t%s\t%d\t%t\t%s\t%s\t%s\t%t\n",
 		key,

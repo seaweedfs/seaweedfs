@@ -199,7 +199,7 @@ func (vs *VolumeServer) VolumeNeedleStatus(ctx context.Context, req *volume_serv
 
 	resp.NeedleId = uint64(n.Id)
 	resp.Cookie = uint32(n.Cookie)
-	resp.Size = n.Size
+	resp.Size = uint32(n.Size)
 	resp.LastModified = n.LastModified
 	resp.Crc = n.Checksum.Value()
 	if n.HasTtl() {

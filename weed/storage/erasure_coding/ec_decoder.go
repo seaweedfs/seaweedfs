@@ -52,7 +52,7 @@ func FindDatFileSize(baseFileName string) (datSize int64, err error) {
 		return 0, fmt.Errorf("read ec volume %s version: %v", baseFileName, err)
 	}
 
-	err = iterateEcxFile(baseFileName, func(key types.NeedleId, offset types.Offset, size uint32) error {
+	err = iterateEcxFile(baseFileName, func(key types.NeedleId, offset types.Offset, size types.Size) error {
 
 		if size == types.TombstoneFileSize {
 			return nil
@@ -88,7 +88,7 @@ func readEcVolumeVersion(baseFileName string) (version needle.Version, err error
 
 }
 
-func iterateEcxFile(baseFileName string, processNeedleFn func(key types.NeedleId, offset types.Offset, size uint32) error) error {
+func iterateEcxFile(baseFileName string, processNeedleFn func(key types.NeedleId, offset types.Offset, size types.Size) error) error {
 	ecxFile, openErr := os.OpenFile(baseFileName+".ecx", os.O_RDONLY, 0644)
 	if openErr != nil {
 		return fmt.Errorf("cannot open ec index %s.ecx: %v", baseFileName, openErr)

@@ -15,7 +15,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type LevelDbNeedleMap struct {
@@ -74,7 +73,7 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 		return err
 	}
 	defer db.Close()
-	return idx.WalkIndexFile(indexFile, func(key NeedleId, offset Offset, size uint32) error {
+	return idx.WalkIndexFile(indexFile, func(key NeedleId, offset Offset, size Size) error {
 		if !offset.IsZero() && size != TombstoneFileSize {
 			levelDbWrite(db, key, offset, size)
 		} else {
@@ -92,12 +91,12 @@ func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, o
 		return nil, false
 	}
 	offset := BytesToOffset(data[0:OffsetSize])
-	size := util.BytesToUint32(data[OffsetSize : OffsetSize+SizeSize])
+	size := BytesToSize(data[OffsetSize : OffsetSize+SizeSize])
 	return &needle_map.NeedleValue{Key: key, Offset: offset, Size: size}, true
 }
 
-func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size uint32) error {
-	var oldSize uint32
+func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
+	var oldSize Size
 	if oldNeedle, ok := m.Get(key); ok {
 		oldSize = oldNeedle.Size
 	}
@@ -109,7 +108,7 @@ func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size uint32) error {
 	return levelDbWrite(m.db, key, offset, size)
 }
 
-func levelDbWrite(db *leveldb.DB, key NeedleId, offset Offset, size uint32) error {
+func levelDbWrite(db *leveldb.DB, key NeedleId, offset Offset, size Size) error {
 
 	bytes := needle_map.ToBytes(key, offset, size)
 

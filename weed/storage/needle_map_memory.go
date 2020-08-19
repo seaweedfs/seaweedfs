@@ -28,7 +28,7 @@ func LoadCompactNeedleMap(file *os.File) (*NeedleMap, error) {
 }
 
 func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
-	e := idx.WalkIndexFile(file, func(key NeedleId, offset Offset, size uint32) error {
+	e := idx.WalkIndexFile(file, func(key NeedleId, offset Offset, size Size) error {
 		nm.MaybeSetMaxFileKey(key)
 		if !offset.IsZero() && size != TombstoneFileSize {
 			nm.FileCounter++
@@ -49,7 +49,7 @@ func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
 	return nm, e
 }
 
-func (nm *NeedleMap) Put(key NeedleId, offset Offset, size uint32) error {
+func (nm *NeedleMap) Put(key NeedleId, offset Offset, size Size) error {
 	_, oldSize := nm.m.Set(NeedleId(key), offset, size)
 	nm.logPut(key, oldSize, size)
 	return nm.appendToIndexFile(key, offset, size)
