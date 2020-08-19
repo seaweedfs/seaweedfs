@@ -465,7 +465,7 @@ func (dir *Dir) saveEntry() error {
 		glog.V(1).Infof("save dir entry: %v", request)
 		_, err := client.UpdateEntry(context.Background(), request)
 		if err != nil {
-			glog.V(0).Infof("UpdateEntry dir %s/%s: %v", parentDir, name, err)
+			glog.Errorf("UpdateEntry dir %s/%s: %v", parentDir, name, err)
 			return fuse.EIO
 		}
 

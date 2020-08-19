@@ -85,7 +85,7 @@ func (file *File) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp 
 
 func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 
-	glog.V(5).Infof("file %v open %+v", file.fullpath(), req)
+	glog.V(4).Infof("file %v open %+v", file.fullpath(), req)
 
 	file.isOpen++
 
@@ -293,7 +293,7 @@ func (file *File) saveEntry() error {
 		glog.V(4).Infof("save file entry: %v", request)
 		_, err := client.UpdateEntry(context.Background(), request)
 		if err != nil {
-			glog.V(0).Infof("UpdateEntry file %s/%s: %v", file.dir.FullPath(), file.Name, err)
+			glog.Errorf("UpdateEntry file %s/%s: %v", file.dir.FullPath(), file.Name, err)
 			return fuse.EIO
 		}
 

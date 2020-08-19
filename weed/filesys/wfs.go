@@ -135,7 +135,7 @@ func (wfs *WFS) ReleaseHandle(fullpath util.FullPath, handleId fuse.HandleID) {
 	wfs.handlesLock.Lock()
 	defer wfs.handlesLock.Unlock()
 
-	glog.V(5).Infof("%s ReleaseHandle id %d current handles length %d", fullpath, handleId, len(wfs.handles))
+	glog.V(4).Infof("%s ReleaseHandle id %d current handles length %d", fullpath, handleId, len(wfs.handles))
 
 	delete(wfs.handles, fullpath.AsInode())
 
