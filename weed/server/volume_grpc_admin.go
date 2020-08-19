@@ -188,7 +188,7 @@ func (vs *VolumeServer) VolumeNeedleStatus(ctx context.Context, req *volume_serv
 		}
 		count, err = vs.store.ReadEcShardNeedle(volumeId, n)
 	} else {
-		count, err = vs.store.ReadVolumeNeedle(volumeId, n)
+		count, err = vs.store.ReadVolumeNeedle(volumeId, n, nil)
 	}
 	if err != nil {
 		return nil, err

@@ -252,7 +252,7 @@ func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
 }
 
 // read fills in Needle content by looking up n.Id from NeedleMapper
-func (v *Volume) readNeedle(n *needle.Needle) (int, error) {
+func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption) (int, error) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
 

@@ -23,6 +23,10 @@ const (
 	MAX_TTL_VOLUME_REMOVAL_DELAY = 10 // 10 minutes
 )
 
+type ReadOption struct {
+	ReadDeleted bool
+}
+
 /*
  * A VolumeServer contains one Store
  */
@@ -283,9 +287,9 @@ func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (Size, e
 	return 0, fmt.Errorf("volume %d not found on %s:%d", i, s.Ip, s.Port)
 }
 
-func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle) (int, error) {
+func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle, readOption *ReadOption) (int, error) {
 	if v := s.findVolume(i); v != nil {
-		return v.readNeedle(n)
+		return v.readNeedle(n, readOption)
 	}
 	return 0, fmt.Errorf("volume %d not found", i)
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -81,9 +82,14 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	cookie := n.Cookie
+
+	readOption := &storage.ReadOption{
+		ReadDeleted: r.FormValue("readDeleted") == "true",
+	}
+
 	var count int
 	if hasVolume {
-		count, err = vs.store.ReadVolumeNeedle(volumeId, n)
+		count, err = vs.store.ReadVolumeNeedle(volumeId, n, readOption)
 	} else if hasEcVolume {
 		count, err = vs.store.ReadEcShardNeedle(volumeId, n)
 	}

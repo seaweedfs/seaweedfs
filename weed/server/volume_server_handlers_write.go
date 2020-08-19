@@ -104,7 +104,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, ok := vs.store.ReadVolumeNeedle(volumeId, n)
+	_, ok := vs.store.ReadVolumeNeedle(volumeId, n, nil)
 	if ok != nil {
 		m := make(map[string]uint32)
 		m["size"] = 0
