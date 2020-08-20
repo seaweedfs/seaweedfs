@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -82,7 +83,7 @@ func doList(filerClient FilerClient, fullDirPath util.FullPath, prefix string, f
 			InclusiveStartFrom: inclusive,
 		}
 
-		glog.V(3).Infof("read directory: %v", request)
+		glog.V(5).Infof("read directory: %v", request)
 		ctx, cancel := context.WithCancel(context.Background())
 		stream, err := client.ListEntries(ctx, request)
 		if err != nil {
@@ -224,9 +225,15 @@ func Remove(filerClient FilerClient, parentDirectoryPath, name string, isDeleteD
 			IgnoreRecursiveError: ignoreRecursiveErr,
 			IsFromOtherCluster:   isFromOtherCluster,
 		}); err != nil {
+			if strings.Contains(err.Error(), ErrNotFound.Error()){
+				return nil
+			}
 			return err
 		} else {
 			if resp.Error != "" {
+				if strings.Contains(resp.Error, ErrNotFound.Error()){
+					return nil
+				}
 				return errors.New(resp.Error)
 			}
 		}

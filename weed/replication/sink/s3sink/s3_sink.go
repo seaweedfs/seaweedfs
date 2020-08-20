@@ -107,7 +107,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
 		return err
 	}
 
-	totalSize := filer2.TotalSize(entry.Chunks)
+	totalSize := filer2.FileSize(entry)
 	chunkViews := filer2.ViewFromChunks(s3sink.filerSource.LookupFileId, entry.Chunks, 0, int64(totalSize))
 
 	parts := make([]*s3.CompletedPart, len(chunkViews))

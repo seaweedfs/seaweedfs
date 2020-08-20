@@ -14,7 +14,7 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 
 	mc.visitedBoundary.EnsureVisited(dirPath, func(path util.FullPath) (childDirectories []string, err error) {
 
-		glog.V(2).Infof("ReadDirAllEntries %s ...", path)
+		glog.V(5).Infof("ReadDirAllEntries %s ...", path)
 
 		err = filer_pb.ReadDirAllEntries(client, dirPath, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
 			entry := filer2.FromPbEntry(string(dirPath), pbEntry)

@@ -91,6 +91,43 @@ func LiveMoveVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, so
 
 func copyVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer, targetVolumeServer string) (lastAppendAtNs uint64, err error) {
 
+	// check to see if the volume is already read-only and if its not then we need
+	// to mark it as read-only and then before we return we need to undo what we
+	// did
+	var shouldMarkWritable bool
+	defer func() {
+		if !shouldMarkWritable {
+			return
+		}
+
+		clientErr := operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+			_, writableErr := volumeServerClient.VolumeMarkWritable(context.Background(), &volume_server_pb.VolumeMarkWritableRequest{
+				VolumeId: uint32(volumeId),
+			})
+			return writableErr
+		})
+		if clientErr != nil {
+			log.Printf("failed to mark volume %d as writable after copy from %s: %v", volumeId, sourceVolumeServer, clientErr)
+		}
+	}()
+
+	err = operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		resp, statusErr := volumeServerClient.VolumeStatus(context.Background(), &volume_server_pb.VolumeStatusRequest{
+			VolumeId: uint32(volumeId),
+		})
+		if statusErr == nil && !resp.IsReadOnly {
+			shouldMarkWritable = true
+			_, readonlyErr := volumeServerClient.VolumeMarkReadonly(context.Background(), &volume_server_pb.VolumeMarkReadonlyRequest{
+				VolumeId: uint32(volumeId),
+			})
+			return readonlyErr
+		}
+		return statusErr
+	})
+	if err != nil {
+		return
+	}
+
 	err = operation.WithVolumeServerClient(targetVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		resp, replicateErr := volumeServerClient.VolumeCopy(context.Background(), &volume_server_pb.VolumeCopyRequest{
 			VolumeId:       uint32(volumeId),

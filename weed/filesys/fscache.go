@@ -3,8 +3,9 @@ package filesys
 import (
 	"sync"
 
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/seaweedfs/fuse/fs"
+
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type FsCache struct {
@@ -118,7 +119,6 @@ func (c *FsCache) Move(oldPath util.FullPath, newPath util.FullPath) *FsNode {
 		target = target.ensureChild(p)
 	}
 	parent := target.parent
-	src.name = target.name
 	if dir, ok := src.node.(*Dir); ok {
 		dir.name = target.name // target is not Dir, but a shortcut
 	}
@@ -132,6 +132,7 @@ func (c *FsCache) Move(oldPath util.FullPath, newPath util.FullPath) *FsNode {
 
 	target.deleteSelf()
 
+	src.name = target.name
 	src.connectToParent(parent)
 
 	return src
@@ -144,10 +145,14 @@ func (n *FsNode) connectToParent(parent *FsNode) {
 		oldNode.deleteSelf()
 	}
 	if dir, ok := n.node.(*Dir); ok {
-		dir.parent = parent.node.(*Dir)
+		if parent.node != nil {
+			dir.parent = parent.node.(*Dir)
+		}
 	}
 	if f, ok := n.node.(*File); ok {
-		f.dir = parent.node.(*Dir)
+		if parent.node != nil {
+			f.dir = parent.node.(*Dir)
+		}
 	}
 	n.childrenLock.Lock()
 	parent.children[n.name] = n

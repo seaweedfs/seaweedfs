@@ -23,7 +23,7 @@ public class SeaweedRead {
     // returns bytesRead
     public static long read(FilerGrpcClient filerGrpcClient, List<VisibleInterval> visibleIntervals,
                             final long position, final byte[] buffer, final int bufferOffset,
-                            final int bufferLength) throws IOException {
+                            final int bufferLength, final long fileSize) throws IOException {
 
         List<ChunkView> chunkViews = viewFromVisibles(visibleIntervals, position, bufferLength);
 
@@ -42,6 +42,14 @@ public class SeaweedRead {
         long readCount = 0;
         int startOffset = bufferOffset;
         for (ChunkView chunkView : chunkViews) {
+
+            if (startOffset < chunkView.logicOffset) {
+                long gap = chunkView.logicOffset - startOffset;
+                LOG.debug("zero [{},{})", startOffset, startOffset + gap);
+                readCount += gap;
+                startOffset += gap;
+            }
+
             FilerProto.Locations locations = vid2Locations.get(parseVolumeId(chunkView.fileId));
             if (locations == null || locations.getLocationsCount() == 0) {
                 LOG.error("failed to locate {}", chunkView.fileId);
@@ -51,9 +59,20 @@ public class SeaweedRead {
 
             int len = readChunkView(position, buffer, startOffset, chunkView, locations);
 
+            LOG.debug("read [{},{}) {} size {}", startOffset, startOffset + len, chunkView.fileId, chunkView.size);
+
             readCount += len;
             startOffset += len;
 
+        }
+
+        long limit = Math.min(bufferLength, fileSize);
+
+        if (startOffset < limit) {
+            long gap = limit - startOffset;
+            LOG.debug("zero2 [{},{})", startOffset, startOffset + gap);
+            readCount += gap;
+            startOffset += gap;
         }
 
         return readCount;
@@ -71,7 +90,7 @@ public class SeaweedRead {
         int len = (int) chunkView.size;
         LOG.debug("readChunkView fid:{} chunkData.length:{} chunkView.offset:{} buffer.length:{} startOffset:{} len:{}",
                 chunkView.fileId, chunkData.length, chunkView.offset, buffer.length, startOffset, len);
-        System.arraycopy(chunkData, (int) chunkView.offset, buffer, startOffset, len);
+        System.arraycopy(chunkData, startOffset - (int) (chunkView.logicOffset - chunkView.offset), buffer, startOffset, len);
 
         return len;
     }
@@ -93,7 +112,7 @@ public class SeaweedRead {
             Header contentEncodingHeader = entity.getContentEncoding();
 
             if (contentEncodingHeader != null) {
-                HeaderElement[] encodings =contentEncodingHeader.getElements();
+                HeaderElement[] encodings = contentEncodingHeader.getElements();
                 for (int i = 0; i < encodings.length; i++) {
                     if (encodings[i].getName().equalsIgnoreCase("gzip")) {
                         entity = new GzipDecompressingEntity(entity);
@@ -134,18 +153,19 @@ public class SeaweedRead {
 
         long stop = offset + size;
         for (VisibleInterval chunk : visibleIntervals) {
-            if (chunk.start <= offset && offset < chunk.stop && offset < stop) {
+            long chunkStart = Math.max(offset, chunk.start);
+            long chunkStop = Math.min(stop, chunk.stop);
+            if (chunkStart < chunkStop) {
                 boolean isFullChunk = chunk.isFullChunk && chunk.start == offset && chunk.stop <= stop;
                 views.add(new ChunkView(
                         chunk.fileId,
-                        offset - chunk.start,
-                        Math.min(chunk.stop, stop) - offset,
-                        offset,
+                        chunkStart - chunk.start + chunk.chunkOffset,
+                        chunkStop - chunkStart,
+                        chunkStart,
                         isFullChunk,
                         chunk.cipherKey,
                         chunk.isCompressed
                 ));
-                offset = Math.min(chunk.stop, stop);
             }
         }
         return views;
@@ -160,7 +180,13 @@ public class SeaweedRead {
         Arrays.sort(chunks, new Comparator<FilerProto.FileChunk>() {
             @Override
             public int compare(FilerProto.FileChunk a, FilerProto.FileChunk b) {
-                return (int) (a.getMtime() - b.getMtime());
+                // if just a.getMtime() - b.getMtime(), it will overflow!
+                if (a.getMtime() < b.getMtime()) {
+                    return -1;
+                } else if (a.getMtime() > b.getMtime()) {
+                    return 1;
+                }
+                return 0;
             }
         });
 
@@ -181,6 +207,7 @@ public class SeaweedRead {
                 chunk.getOffset() + chunk.getSize(),
                 chunk.getFileId(),
                 chunk.getMtime(),
+                0,
                 true,
                 chunk.getCipherKey().toByteArray(),
                 chunk.getIsCompressed()
@@ -203,6 +230,7 @@ public class SeaweedRead {
                         chunk.getOffset(),
                         v.fileId,
                         v.modifiedTime,
+                        v.chunkOffset,
                         false,
                         v.cipherKey,
                         v.isCompressed
@@ -215,6 +243,7 @@ public class SeaweedRead {
                         v.stop,
                         v.fileId,
                         v.modifiedTime,
+                        v.chunkOffset + (chunkStop - v.start),
                         false,
                         v.cipherKey,
                         v.isCompressed
@@ -247,6 +276,10 @@ public class SeaweedRead {
         return fileId;
     }
 
+    public static long fileSize(FilerProto.Entry entry) {
+        return Math.max(totalSize(entry.getChunksList()), entry.getAttributes().getFileSize());
+    }
+
     public static long totalSize(List<FilerProto.FileChunk> chunksList) {
         long size = 0;
         for (FilerProto.FileChunk chunk : chunksList) {
@@ -263,15 +296,17 @@ public class SeaweedRead {
         public final long stop;
         public final long modifiedTime;
         public final String fileId;
+        public final long chunkOffset;
         public final boolean isFullChunk;
         public final byte[] cipherKey;
         public final boolean isCompressed;
 
-        public VisibleInterval(long start, long stop, String fileId, long modifiedTime, boolean isFullChunk, byte[] cipherKey, boolean isCompressed) {
+        public VisibleInterval(long start, long stop, String fileId, long modifiedTime, long chunkOffset, boolean isFullChunk, byte[] cipherKey, boolean isCompressed) {
             this.start = start;
             this.stop = stop;
             this.modifiedTime = modifiedTime;
             this.fileId = fileId;
+            this.chunkOffset = chunkOffset;
             this.isFullChunk = isFullChunk;
             this.cipherKey = cipherKey;
             this.isCompressed = isCompressed;

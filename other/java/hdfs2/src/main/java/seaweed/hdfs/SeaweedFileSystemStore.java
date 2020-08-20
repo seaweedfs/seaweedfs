@@ -124,7 +124,7 @@ public class SeaweedFileSystemStore {
 
     private FileStatus doGetFileStatus(Path path, FilerProto.Entry entry) {
         FilerProto.FuseAttributes attributes = entry.getAttributes();
-        long length = SeaweedRead.totalSize(entry.getChunksList());
+        long length = SeaweedRead.fileSize(entry);
         boolean isDir = entry.getIsDirectory();
         int block_replication = 1;
         int blocksize = 512;
@@ -185,7 +185,7 @@ public class SeaweedFileSystemStore {
                 entry.mergeFrom(existingEntry);
                 entry.getAttributesBuilder().setMtime(now);
                 LOG.debug("createFile merged entry path:{} entry:{} from:{}", path, entry, existingEntry);
-                writePosition = SeaweedRead.totalSize(existingEntry.getChunksList());
+                writePosition = SeaweedRead.fileSize(existingEntry);
                 replication = existingEntry.getAttributes().getReplication();
             }
         }

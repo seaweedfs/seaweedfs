@@ -17,7 +17,6 @@ func TestCreateAndFind(t *testing.T) {
 	store := &LevelDBStore{}
 	store.initialize(dir)
 	filer.SetStore(store)
-	filer.DisableDirectoryCache()
 
 	fullpath := util.FullPath("/home/chris/this/is/one/file1.jpg")
 
@@ -72,7 +71,6 @@ func TestEmptyRoot(t *testing.T) {
 	store := &LevelDBStore{}
 	store.initialize(dir)
 	filer.SetStore(store)
-	filer.DisableDirectoryCache()
 
 	ctx := context.Background()
 

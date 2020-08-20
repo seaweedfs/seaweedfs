@@ -61,8 +61,13 @@ func (mc *MetaCache) AtomicUpdateEntry(ctx context.Context, oldPath util.FullPat
 	oldDir, _ := oldPath.DirAndName()
 	if mc.visitedBoundary.HasVisited(util.FullPath(oldDir)) {
 		if oldPath != "" {
-			if err := mc.actualStore.DeleteEntry(ctx, oldPath); err != nil {
-				return err
+			if newEntry != nil && oldPath == newEntry.FullPath {
+				// skip the unnecessary deletion
+				// leave the update to the following InsertEntry operation
+			} else {
+				if err := mc.actualStore.DeleteEntry(ctx, oldPath); err != nil {
+					return err
+				}
 			}
 		}
 	} else {

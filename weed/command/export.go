@@ -72,9 +72,9 @@ var (
 
 func printNeedle(vid needle.VolumeId, n *needle.Needle, version needle.Version, deleted bool) {
 	key := needle.NewFileIdFromNeedle(vid, n).String()
-	size := n.DataSize
+	size := int32(n.DataSize)
 	if version == needle.Version1 {
-		size = n.Size
+		size = int32(n.Size)
 	}
 	fmt.Printf("%s\t%s\t%d\t%t\t%s\t%s\t%s\t%t\n",
 		key,
@@ -111,7 +111,7 @@ func (scanner *VolumeFileScanner4Export) VisitNeedle(n *needle.Needle, offset in
 	nv, ok := needleMap.Get(n.Id)
 	glog.V(3).Infof("key %d offset %d size %d disk_size %d compressed %v ok %v nv %+v",
 		n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsCompressed(), ok, nv)
-	if ok && nv.Size > 0 && nv.Size != types.TombstoneFileSize && nv.Offset.ToAcutalOffset() == offset {
+	if ok && nv.Size.IsValid() && nv.Offset.ToAcutalOffset() == offset {
 		if newerThanUnix >= 0 && n.HasLastModifiedDate() && n.LastModified < uint64(newerThanUnix) {
 			glog.V(3).Infof("Skipping this file, as it's old enough: LastModified %d vs %d",
 				n.LastModified, newerThanUnix)

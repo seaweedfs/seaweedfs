@@ -71,7 +71,7 @@ func validateFiles(baseFileName string) error {
 	return nil
 }
 
-func assertSame(datFile *os.File, datSize int64, ecFiles []*os.File, offset types.Offset, size uint32) error {
+func assertSame(datFile *os.File, datSize int64, ecFiles []*os.File, offset types.Offset, size types.Size) error {
 
 	data, err := readDatFile(datFile, offset, size)
 	if err != nil {
@@ -90,7 +90,7 @@ func assertSame(datFile *os.File, datSize int64, ecFiles []*os.File, offset type
 	return nil
 }
 
-func readDatFile(datFile *os.File, offset types.Offset, size uint32) ([]byte, error) {
+func readDatFile(datFile *os.File, offset types.Offset, size types.Size) ([]byte, error) {
 
 	data := make([]byte, size)
 	n, err := datFile.ReadAt(data, offset.ToAcutalOffset())
@@ -103,7 +103,7 @@ func readDatFile(datFile *os.File, offset types.Offset, size uint32) ([]byte, er
 	return data, nil
 }
 
-func readEcFile(datSize int64, ecFiles []*os.File, offset types.Offset, size uint32) (data []byte, err error) {
+func readEcFile(datSize int64, ecFiles []*os.File, offset types.Offset, size types.Size) (data []byte, err error) {
 
 	intervals := LocateData(largeBlockSize, smallBlockSize, datSize, offset.ToAcutalOffset(), size)
 
@@ -140,7 +140,7 @@ func readOneInterval(interval Interval, ecFiles []*os.File) (data []byte, err er
 	return
 }
 
-func readFromOtherEcFiles(ecFiles []*os.File, ecFileIndex int, ecFileOffset int64, size uint32) (data []byte, err error) {
+func readFromOtherEcFiles(ecFiles []*os.File, ecFileIndex int, ecFileOffset int64, size types.Size) (data []byte, err error) {
 	enc, err := reedsolomon.New(DataShardsCount, ParityShardsCount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create encoder: %v", err)

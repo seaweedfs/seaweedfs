@@ -24,7 +24,7 @@ const (
 type Needle struct {
 	Cookie Cookie   `comment:"random number to mitigate brute force lookups"`
 	Id     NeedleId `comment:"needle id"`
-	Size   uint32   `comment:"sum of DataSize,Data,NameSize,Name,MimeSize,Mime"`
+	Size   Size   `comment:"sum of DataSize,Data,NameSize,Name,MimeSize,Mime"`
 
 	DataSize     uint32 `comment:"Data size"` //version2
 	Data         []byte `comment:"The actual file data"`

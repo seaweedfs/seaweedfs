@@ -48,7 +48,7 @@ func (scanner *VolumeFileScanner4Fix) ReadNeedleBody() bool {
 
 func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 	glog.V(2).Infof("key %d offset %d size %d disk_size %d compressed %v", n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsCompressed())
-	if n.Size > 0 && n.Size != types.TombstoneFileSize {
+	if n.Size.IsValid() {
 		pe := scanner.nm.Set(n.Id, types.ToOffset(offset), n.Size)
 		glog.V(2).Infof("saved %d with error %v", n.Size, pe)
 	} else {

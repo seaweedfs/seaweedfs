@@ -65,6 +65,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 		}
 		if lastFileName == "" && !isRecursive && len(entries) > 0 {
 			// only for first iteration in the loop
+			glog.Errorf("deleting a folder %s has children: %+v ...", entry.FullPath, entries[0].Name())
 			return nil, fmt.Errorf("fail to delete non-empty folder: %s", entry.FullPath)
 		}
 
@@ -73,7 +74,6 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 			var dirChunks []*filer_pb.FileChunk
 			if sub.IsDirectory() {
 				dirChunks, err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, false)
-				f.cacheDelDirectory(string(sub.FullPath))
 				chunks = append(chunks, dirChunks...)
 			} else {
 				f.NotifyUpdateEvent(ctx, sub, nil, shouldDeleteChunks, isFromOtherCluster)
@@ -107,9 +107,7 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 	if storeDeletionErr := f.Store.DeleteEntry(ctx, entry.FullPath); storeDeletionErr != nil {
 		return fmt.Errorf("filer store delete: %v", storeDeletionErr)
 	}
-	if entry.IsDirectory() {
-		f.cacheDelDirectory(string(entry.FullPath))
-	} else {
+	if !entry.IsDirectory() {
 		f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks, isFromOtherCluster)
 	}
 

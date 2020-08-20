@@ -9,7 +9,6 @@ import (
 	"time"
 
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 /*
@@ -60,7 +59,7 @@ func loadNewNeedleMap(file *os.File) (*CompactMap, uint64) {
 			rowCount++
 			key := BytesToNeedleId(bytes[i : i+NeedleIdSize])
 			offset := BytesToOffset(bytes[i+NeedleIdSize : i+NeedleIdSize+OffsetSize])
-			size := util.BytesToUint32(bytes[i+NeedleIdSize+OffsetSize : i+NeedleIdSize+OffsetSize+SizeSize])
+			size := BytesToSize(bytes[i+NeedleIdSize+OffsetSize : i+NeedleIdSize+OffsetSize+SizeSize])
 
 			if !offset.IsZero() {
 				m.Set(NeedleId(key), offset, size)

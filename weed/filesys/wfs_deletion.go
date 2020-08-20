@@ -38,7 +38,7 @@ func (wfs *WFS) deleteFileIds(grpcDialOption grpc.DialOption, client filer_pb.Se
 
 		m := make(map[string]operation.LookupResult)
 
-		glog.V(4).Infof("remove file lookup volume id locations: %v", vids)
+		glog.V(5).Infof("deleteFileIds lookup volume id locations: %v", vids)
 		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
 			VolumeIds: vids,
 		})

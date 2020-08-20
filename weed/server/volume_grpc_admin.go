@@ -149,7 +149,35 @@ func (vs *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_serv
 	}
 
 	return resp, err
+}
 
+func (vs *VolumeServer) VolumeMarkWritable(ctx context.Context, req *volume_server_pb.VolumeMarkWritableRequest) (*volume_server_pb.VolumeMarkWritableResponse, error) {
+
+	resp := &volume_server_pb.VolumeMarkWritableResponse{}
+
+	err := vs.store.MarkVolumeWritable(needle.VolumeId(req.VolumeId))
+
+	if err != nil {
+		glog.Errorf("volume mark writable %v: %v", req, err)
+	} else {
+		glog.V(2).Infof("volume mark writable %v", req)
+	}
+
+	return resp, err
+}
+
+func (vs *VolumeServer) VolumeStatus(ctx context.Context, req *volume_server_pb.VolumeStatusRequest) (*volume_server_pb.VolumeStatusResponse, error) {
+
+	resp := &volume_server_pb.VolumeStatusResponse{}
+
+	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
+	if v == nil {
+		return nil, fmt.Errorf("not found volume id %d", req.VolumeId)
+	}
+
+	resp.IsReadOnly = v.IsReadOnly()
+
+	return resp, nil
 }
 
 func (vs *VolumeServer) VolumeServerStatus(ctx context.Context, req *volume_server_pb.VolumeServerStatusRequest) (*volume_server_pb.VolumeServerStatusResponse, error) {
@@ -188,7 +216,7 @@ func (vs *VolumeServer) VolumeNeedleStatus(ctx context.Context, req *volume_serv
 		}
 		count, err = vs.store.ReadEcShardNeedle(volumeId, n)
 	} else {
-		count, err = vs.store.ReadVolumeNeedle(volumeId, n)
+		count, err = vs.store.ReadVolumeNeedle(volumeId, n, nil)
 	}
 	if err != nil {
 		return nil, err
@@ -199,7 +227,7 @@ func (vs *VolumeServer) VolumeNeedleStatus(ctx context.Context, req *volume_serv
 
 	resp.NeedleId = uint64(n.Id)
 	resp.Cookie = uint32(n.Cookie)
-	resp.Size = n.Size
+	resp.Size = uint32(n.Size)
 	resp.LastModified = n.LastModified
 	resp.Crc = n.Checksum.Value()
 	if n.HasTtl() {

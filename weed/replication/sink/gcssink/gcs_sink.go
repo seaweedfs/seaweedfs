@@ -89,7 +89,7 @@ func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 		return nil
 	}
 
-	totalSize := filer2.TotalSize(entry.Chunks)
+	totalSize := filer2.FileSize(entry)
 	chunkViews := filer2.ViewFromChunks(g.filerSource.LookupFileId, entry.Chunks, 0, int64(totalSize))
 
 	wc := g.client.Bucket(g.bucket).Object(key).NewWriter(context.Background())
@@ -101,7 +101,7 @@ func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 			return err
 		}
 
-		err = util.ReadUrlAsStream(fileUrl, nil, false, chunk.IsFullChunk(), chunk.Offset, int(chunk.Size), func(data []byte) {
+		err = util.ReadUrlAsStream(fileUrl+"?readDeleted=true", nil, false, chunk.IsFullChunk(), chunk.Offset, int(chunk.Size), func(data []byte) {
 			wc.Write(data)
 		})
 

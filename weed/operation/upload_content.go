@@ -33,6 +33,7 @@ type UploadResult struct {
 }
 
 func (uploadResult *UploadResult) ToPbFileChunk(fileId string, offset int64) *filer_pb.FileChunk {
+	fid, _ := filer_pb.ToFileIdObject(fileId)
 	return &filer_pb.FileChunk{
 		FileId:       fileId,
 		Offset:       offset,
@@ -41,6 +42,7 @@ func (uploadResult *UploadResult) ToPbFileChunk(fileId string, offset int64) *fi
 		ETag:         uploadResult.ETag,
 		CipherKey:    uploadResult.CipherKey,
 		IsCompressed: uploadResult.Gzip > 0,
+		Fid:          fid,
 	}
 }
 
@@ -63,7 +65,7 @@ var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
 // Upload sends a POST request to a volume server to upload the content with adjustable compression level
 func UploadData(uploadUrl string, filename string, cipher bool, data []byte, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error) {
-	uploadResult, err = doUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
+	uploadResult, err = retriedUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
 	return
 }
 
@@ -79,8 +81,20 @@ func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, 
 		err = fmt.Errorf("read input: %v", err)
 		return
 	}
-	uploadResult, uploadErr := doUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
+	uploadResult, uploadErr := retriedUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
 	return uploadResult, uploadErr, data
+}
+
+func retriedUploadData(uploadUrl string, filename string, cipher bool, data []byte, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error) {
+	for i := 0; i < 3; i++ {
+		uploadResult, err = doUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
+		if err == nil {
+			return
+		} else {
+			glog.Warningf("uploading to %s: %v", uploadUrl, err)
+		}
+	}
+	return
 }
 
 func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error) {

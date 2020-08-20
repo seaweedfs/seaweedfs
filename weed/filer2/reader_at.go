@@ -15,12 +15,11 @@ import (
 type ChunkReadAt struct {
 	masterClient *wdclient.MasterClient
 	chunkViews   []*ChunkView
-	buffer       []byte
-	bufferOffset int64
 	lookupFileId func(fileId string) (targetUrl string, err error)
 	readerLock   sync.Mutex
+	fileSize     int64
 
-	chunkCache *chunk_cache.ChunkCache
+	chunkCache chunk_cache.ChunkCache
 }
 
 // var _ = io.ReaderAt(&ChunkReadAt{})
@@ -54,13 +53,13 @@ func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 	}
 }
 
-func NewChunkReaderAtFromClient(filerClient filer_pb.FilerClient, chunkViews []*ChunkView, chunkCache *chunk_cache.ChunkCache) *ChunkReadAt {
+func NewChunkReaderAtFromClient(filerClient filer_pb.FilerClient, chunkViews []*ChunkView, chunkCache chunk_cache.ChunkCache, fileSize int64) *ChunkReadAt {
 
 	return &ChunkReadAt{
 		chunkViews:   chunkViews,
 		lookupFileId: LookupFn(filerClient),
-		bufferOffset: -1,
 		chunkCache:   chunkCache,
+		fileSize:     fileSize,
 	}
 }
 
@@ -69,75 +68,78 @@ func (c *ChunkReadAt) ReadAt(p []byte, offset int64) (n int, err error) {
 	c.readerLock.Lock()
 	defer c.readerLock.Unlock()
 
-	for n < len(p) && err == nil {
-		readCount, readErr := c.doReadAt(p[n:], offset+int64(n))
-		n += readCount
-		err = readErr
-		if readCount == 0 {
-			return n, io.EOF
-		}
-	}
-	return
+	glog.V(4).Infof("ReadAt [%d,%d) of total file size %d bytes %d chunk views", offset, offset+int64(len(p)), c.fileSize, len(c.chunkViews))
+	return c.doReadAt(p[n:], offset+int64(n))
 }
 
 func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
-	var found bool
-	for _, chunk := range c.chunkViews {
-		if chunk.LogicOffset <= offset && offset < chunk.LogicOffset+int64(chunk.Size) {
-			found = true
-			if c.bufferOffset != chunk.LogicOffset {
-				c.buffer, err = c.fetchChunkData(chunk)
-				if err != nil {
-					glog.Errorf("fetching chunk %+v: %v\n", chunk, err)
-				}
-				c.bufferOffset = chunk.LogicOffset
-			}
+	var buffer []byte
+	startOffset, remaining := offset, int64(len(p))
+	for i, chunk := range c.chunkViews {
+		if remaining <= 0 {
 			break
 		}
-	}
-	if !found {
-		return 0, io.EOF
+		if startOffset < chunk.LogicOffset {
+			gap := int(chunk.LogicOffset - startOffset)
+			glog.V(4).Infof("zero [%d,%d)", startOffset, startOffset+int64(gap))
+			n += int(min(int64(gap), remaining))
+			startOffset, remaining = chunk.LogicOffset, remaining-int64(gap)
+			if remaining <= 0 {
+				break
+			}
+		}
+		// fmt.Printf(">>> doReadAt [%d,%d), chunk[%d,%d)\n", offset, offset+int64(len(p)), chunk.LogicOffset, chunk.LogicOffset+int64(chunk.Size))
+		chunkStart, chunkStop := max(chunk.LogicOffset, startOffset), min(chunk.LogicOffset+int64(chunk.Size), startOffset+remaining)
+		if chunkStart >= chunkStop {
+			continue
+		}
+		glog.V(4).Infof("read [%d,%d), %d/%d chunk %s [%d,%d)", chunkStart, chunkStop, i, len(c.chunkViews), chunk.FileId, chunk.LogicOffset-chunk.Offset, chunk.LogicOffset-chunk.Offset+int64(chunk.Size))
+		buffer, err = c.readFromWholeChunkData(chunk)
+		if err != nil {
+			glog.Errorf("fetching chunk %+v: %v\n", chunk, err)
+			return
+		}
+		bufferOffset := chunkStart - chunk.LogicOffset + chunk.Offset
+		copied := copy(p[startOffset-offset:chunkStop-chunkStart+startOffset-offset], buffer[bufferOffset:bufferOffset+chunkStop-chunkStart])
+		n += copied
+		startOffset, remaining = startOffset+int64(copied), remaining-int64(copied)
 	}
 
-	if err == nil {
-		n = copy(p, c.buffer[offset-c.bufferOffset:])
+	glog.V(4).Infof("doReadAt [%d,%d), n:%v, err:%v", offset, offset+int64(len(p)), n, err)
+
+	if err == nil && remaining > 0 && c.fileSize > startOffset {
+		delta := int(min(remaining, c.fileSize - startOffset))
+		glog.V(4).Infof("zero2 [%d,%d) of file size %d bytes", startOffset, startOffset+int64(delta), c.fileSize)
+		n += delta
 	}
 
-	// fmt.Printf("> doReadAt [%d,%d), buffer:[%d,%d)\n", offset, offset+int64(n), c.bufferOffset, c.bufferOffset+int64(len(c.buffer)))
+	if err == nil && offset+int64(len(p)) > c.fileSize {
+		err = io.EOF
+	}
+	// fmt.Printf("~~~ filled %d, err: %v\n\n", n, err)
 
 	return
 
 }
 
-func (c *ChunkReadAt) fetchChunkData(chunkView *ChunkView) (data []byte, err error) {
+func (c *ChunkReadAt) readFromWholeChunkData(chunkView *ChunkView) (chunkData []byte, err error) {
 
-	glog.V(4).Infof("fetchChunkData %s [%d,%d)\n", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
+	glog.V(4).Infof("readFromWholeChunkData %s offset %d [%d,%d) size at least %d", chunkView.FileId, chunkView.Offset, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size), chunkView.ChunkSize)
 
-	hasDataInCache := false
-	chunkData := c.chunkCache.GetChunk(chunkView.FileId, chunkView.ChunkSize)
+	chunkData = c.chunkCache.GetChunk(chunkView.FileId, chunkView.ChunkSize)
 	if chunkData != nil {
-		glog.V(3).Infof("cache hit %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
-		hasDataInCache = true
+		glog.V(5).Infof("cache hit %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset-chunkView.Offset, chunkView.LogicOffset-chunkView.Offset+int64(len(chunkData)))
 	} else {
+		glog.V(4).Infof("doFetchFullChunkData %s", chunkView.FileId)
 		chunkData, err = c.doFetchFullChunkData(chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped)
 		if err != nil {
-			return nil, err
+			return
 		}
-	}
-
-	if int64(len(chunkData)) < chunkView.Offset+int64(chunkView.Size) {
-		glog.Errorf("unexpected larger cached:%v chunk %s [%d,%d) than %d", hasDataInCache, chunkView.FileId, chunkView.Offset, chunkView.Offset+int64(chunkView.Size), len(chunkData))
-		return nil, fmt.Errorf("unexpected larger cached:%v chunk %s [%d,%d) than %d", hasDataInCache, chunkView.FileId, chunkView.Offset, chunkView.Offset+int64(chunkView.Size), len(chunkData))
-	}
-
-	data = chunkData[chunkView.Offset : chunkView.Offset+int64(chunkView.Size)]
-
-	if !hasDataInCache {
 		c.chunkCache.SetChunk(chunkView.FileId, chunkData)
 	}
 
-	return data, nil
+	return
 }
 
 func (c *ChunkReadAt) doFetchFullChunkData(fileId string, cipherKey []byte, isGzipped bool) ([]byte, error) {

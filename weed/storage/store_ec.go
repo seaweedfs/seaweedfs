@@ -124,7 +124,7 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle) (int, e
 			if err != nil {
 				return 0, fmt.Errorf("locate in local ec volume: %v", err)
 			}
-			if size == types.TombstoneFileSize {
+			if size.IsDeleted() {
 				return 0, fmt.Errorf("entry %s is deleted", n.Id)
 			}
 
