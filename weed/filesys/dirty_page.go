@@ -25,9 +25,6 @@ func newDirtyPages(file *File) *ContinuousDirtyPages {
 	}
 }
 
-func (pages *ContinuousDirtyPages) releaseResource() {
-}
-
 var counter = int32(0)
 
 func (pages *ContinuousDirtyPages) AddPage(offset int64, data []byte) (chunks []*filer_pb.FileChunk, err error) {
