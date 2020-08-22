@@ -2,6 +2,7 @@ package filesys
 
 import (
 	"bytes"
+	"math/rand"
 	"testing"
 )
 
@@ -63,6 +64,29 @@ func TestContinuousIntervals_RealCase1(t *testing.T) {
 	c.AddInterval(getBytes(22, 2), 1)
 
 	expectedData(t, c, 0, 25, 22, 22, 24, 24, 24, 24)
+
+}
+
+func TestRandomWrites(t *testing.T) {
+
+	c := &ContinuousIntervals{}
+
+	data := make([]byte, 1024)
+
+	for i:=0;i<1024;i++ {
+
+		start, stop := rand.Intn(len(data)), rand.Intn(len(data))
+		if start > stop {
+			start,stop = stop, start
+		}
+
+		rand.Read(data[start:stop+1])
+
+		c.AddInterval(data[start:stop+1], int64(start))
+
+		expectedData(t, c, 0, data...)
+
+	}
 
 }
 
