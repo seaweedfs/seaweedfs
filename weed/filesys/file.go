@@ -87,8 +87,6 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 	glog.V(4).Infof("file %v open %+v", file.fullpath(), req)
 
-	file.isOpen++
-
 	handle := file.wfs.AcquireHandle(file, req.Uid, req.Gid)
 
 	resp.Handle = fuse.HandleID(handle.handle)
@@ -120,7 +118,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 	if req.Valid.Size() {
 
 		glog.V(4).Infof("%v file setattr set size=%v chunks=%d", file.fullpath(), req.Size, len(file.entry.Chunks))
-		if req.Size < filer2.TotalSize(file.entry.Chunks) {
+		if req.Size < filer2.FileSize(file.entry) {
 			// fmt.Printf("truncate %v \n", fullPath)
 			var chunks []*filer_pb.FileChunk
 			var truncatedChunks []*filer_pb.FileChunk
@@ -252,7 +250,7 @@ func (file *File) Forget() {
 }
 
 func (file *File) maybeLoadEntry(ctx context.Context) error {
-	if file.entry == nil || file.isOpen <= 0 {
+	if file.entry == nil && file.isOpen <= 0 {
 		entry, err := file.wfs.maybeLoadEntry(file.dir.FullPath(), file.Name)
 		if err != nil {
 			glog.V(3).Infof("maybeLoadEntry file %s/%s: %v", file.dir.FullPath(), file.Name, err)
@@ -268,15 +266,14 @@ func (file *File) maybeLoadEntry(ctx context.Context) error {
 func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 
 	sort.Slice(chunks, func(i, j int) bool {
-		return chunks[i].Fid.FileKey < chunks[j].Fid.FileKey
+		if chunks[i].Mtime == chunks[j].Mtime {
+			return chunks[i].Fid.FileKey < chunks[j].Fid.FileKey
+		}
+		return chunks[i].Mtime < chunks[j].Mtime
 	})
 
-	var newVisibles []filer2.VisibleInterval
 	for _, chunk := range chunks {
-		newVisibles = filer2.MergeIntoVisibles(file.entryViewCache, newVisibles, chunk)
-		t := file.entryViewCache[:0]
-		file.entryViewCache = newVisibles
-		newVisibles = t
+		file.entryViewCache = filer2.MergeIntoVisibles(file.entryViewCache, chunk)
 	}
 
 	file.reader = nil

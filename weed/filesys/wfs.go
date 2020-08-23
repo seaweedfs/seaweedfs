@@ -118,10 +118,14 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 	inodeId := file.fullpath().AsInode()
 	existingHandle, found := wfs.handles[inodeId]
 	if found && existingHandle != nil {
+		file.isOpen++
 		return existingHandle
 	}
 
 	fileHandle = newFileHandle(file, uid, gid)
+	file.maybeLoadEntry(context.Background())
+	file.isOpen++
+
 	wfs.handles[inodeId] = fileHandle
 	fileHandle.handle = inodeId
 

@@ -168,7 +168,6 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 
 	node = dir.newFile(req.Name, request.Entry)
 	file := node.(*File)
-	file.isOpen++
 	fh := dir.wfs.AcquireHandle(file, req.Uid, req.Gid)
 	return file, fh, nil
 

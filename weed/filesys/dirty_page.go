@@ -29,9 +29,6 @@ var counter = int32(0)
 
 func (pages *ContinuousDirtyPages) AddPage(offset int64, data []byte) (chunks []*filer_pb.FileChunk, err error) {
 
-	pages.lock.Lock()
-	defer pages.lock.Unlock()
-
 	glog.V(5).Infof("%s AddPage [%d,%d) of %d bytes", pages.f.fullpath(), offset, offset+int64(len(data)), pages.f.entry.Attributes.FileSize)
 
 	if len(data) > int(pages.f.wfs.option.ChunkSizeLimit) {
@@ -82,14 +79,6 @@ func (pages *ContinuousDirtyPages) flushAndSave(offset int64, data []byte) (chun
 	return
 }
 
-func (pages *ContinuousDirtyPages) FlushToStorage() (chunks []*filer_pb.FileChunk, err error) {
-
-	pages.lock.Lock()
-	defer pages.lock.Unlock()
-
-	return pages.saveExistingPagesToStorage()
-}
-
 func (pages *ContinuousDirtyPages) saveExistingPagesToStorage() (chunks []*filer_pb.FileChunk, err error) {
 
 	var hasSavedData bool
@@ -103,7 +92,9 @@ func (pages *ContinuousDirtyPages) saveExistingPagesToStorage() (chunks []*filer
 		}
 
 		if err == nil {
-			chunks = append(chunks, chunk)
+			if chunk != nil {
+				chunks = append(chunks, chunk)
+			}
 		} else {
 			return
 		}
@@ -121,9 +112,14 @@ func (pages *ContinuousDirtyPages) saveExistingLargestPageToStorage() (chunk *fi
 	fileSize := int64(pages.f.entry.Attributes.FileSize)
 	for {
 		chunkSize := min(maxList.Size(), fileSize-maxList.Offset())
+		if chunkSize == 0 {
+			return
+		}
 		chunk, err = pages.saveToStorage(maxList.ToReader(), maxList.Offset(), chunkSize)
 		if err == nil {
-			hasSavedData = true
+			if chunk != nil {
+				hasSavedData = true
+			}
 			glog.V(4).Infof("saveToStorage %s %s [%d,%d) of %d bytes", pages.f.fullpath(), chunk.GetFileIdString(), maxList.Offset(), maxList.Offset()+chunkSize, fileSize)
 			return
 		} else {
@@ -170,10 +166,5 @@ func min(x, y int64) int64 {
 }
 
 func (pages *ContinuousDirtyPages) ReadDirtyDataAt(data []byte, startOffset int64) (maxStop int64) {
-
-	pages.lock.Lock()
-	defer pages.lock.Unlock()
-
 	return pages.intervals.ReadDataAt(data, startOffset)
-
 }

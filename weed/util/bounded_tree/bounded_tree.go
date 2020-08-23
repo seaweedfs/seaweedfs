@@ -15,7 +15,7 @@ type Node struct {
 
 type BoundedTree struct {
 	root *Node
-	sync.Mutex
+	sync.RWMutex
 }
 
 func NewBoundedTree() *BoundedTree {
@@ -130,6 +130,9 @@ func (n *Node) getChild(childName string) *Node {
 }
 
 func (t *BoundedTree) HasVisited(p util.FullPath) bool {
+
+	t.RLock()
+	defer t.RUnlock()
 
 	if t.root == nil {
 		return true

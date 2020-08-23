@@ -18,7 +18,7 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 
 		err = filer_pb.ReadDirAllEntries(client, dirPath, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
 			entry := filer2.FromPbEntry(string(dirPath), pbEntry)
-			if err := mc.InsertEntry(context.Background(), entry); err != nil {
+			if err := mc.doInsertEntry(context.Background(), entry); err != nil {
 				glog.V(0).Infof("read %s: %v", entry.FullPath, err)
 				return err
 			}
