@@ -137,10 +137,10 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 					}
 				}
 			}
-			file.wfs.deleteFileChunks(truncatedChunks)
 			file.entry.Chunks = chunks
 			file.entryViewCache = nil
 			file.reader = nil
+			file.wfs.deleteFileChunks(truncatedChunks)
 		}
 		file.entry.Attributes.FileSize = req.Size
 		file.dirtyMetadata = true
