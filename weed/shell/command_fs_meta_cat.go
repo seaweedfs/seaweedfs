@@ -3,6 +3,7 @@ package shell
 import (
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/golang/protobuf/jsonpb"
 
@@ -53,6 +54,13 @@ func (c *commandFsMetaCat) Do(args []string, commandEnv *CommandEnv, writer io.W
 			EmitDefaults: true,
 			Indent:       "  ",
 		}
+
+		sort.Slice(respLookupEntry.Entry.Chunks, func(i, j int) bool {
+			if respLookupEntry.Entry.Chunks[i].Offset == respLookupEntry.Entry.Chunks[j].Offset {
+				return respLookupEntry.Entry.Chunks[i].Mtime < respLookupEntry.Entry.Chunks[j].Mtime
+			}
+			return respLookupEntry.Entry.Chunks[i].Offset < respLookupEntry.Entry.Chunks[j].Offset
+		})
 
 		text, marshalErr := m.MarshalToString(respLookupEntry.Entry)
 		if marshalErr != nil {

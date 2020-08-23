@@ -258,7 +258,7 @@ func (file *File) maybeLoadEntry(ctx context.Context) error {
 func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 
 	sort.Slice(chunks, func(i, j int) bool {
-		return chunks[i].Mtime < chunks[j].Mtime
+		return chunks[i].Fid.FileKey < chunks[j].Fid.FileKey
 	})
 
 	var newVisibles []filer2.VisibleInterval

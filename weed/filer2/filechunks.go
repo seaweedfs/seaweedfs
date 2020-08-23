@@ -219,7 +219,7 @@ func NonOverlappingVisibleIntervals(lookupFileIdFn LookupFileIdFunctionType, chu
 	chunks, _, err = ResolveChunkManifest(lookupFileIdFn, chunks)
 
 	sort.Slice(chunks, func(i, j int) bool {
-		return chunks[i].Mtime < chunks[j].Mtime
+		return chunks[i].Fid.FileKey < chunks[j].Fid.FileKey
 	})
 
 	var newVisibles []VisibleInterval
