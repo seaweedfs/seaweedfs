@@ -352,14 +352,14 @@ func TestChunksReading(t *testing.T) {
 		// case 6: same updates
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
+				{Offset: 0, Size: 100, FileId: "abc", Fid: &filer_pb.FileId{FileKey:  1}, Mtime: 123},
+				{Offset: 0, Size: 100, FileId: "def", Fid: &filer_pb.FileId{FileKey:  2}, Mtime: 123},
+				{Offset: 0, Size: 100, FileId: "xyz", Fid: &filer_pb.FileId{FileKey:  3}, Mtime: 123},
 			},
 			Offset: 0,
 			Size:   100,
 			Expected: []*ChunkView{
-				{Offset: 0, Size: 100, FileId: "abc", LogicOffset: 0},
+				{Offset: 0, Size: 100, FileId: "xyz", LogicOffset: 0},
 			},
 		},
 		// case 7: edge cases
