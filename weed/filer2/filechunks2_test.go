@@ -17,17 +17,11 @@ func TestCompactFileChunksRealCase(t *testing.T) {
 		{FileId:"5,5144463173fe77", Offset:  917504,   Size: 2297856- 917504, Mtime: 5325894},
 		{FileId:"4,51444c7ab54e2d", Offset: 2301952,   Size: 2367488-2301952, Mtime: 5325900},
 		{FileId:"4,514450e643ad22", Offset: 2371584,   Size: 2420736-2371584, Mtime: 5325904},
-		{FileId:"1,51446489116dbb", Offset: 2424832,   Size: 2445312-2424832, Mtime: 5325924},
 		{FileId:"6,514456a5e9e4d7", Offset: 2449408,   Size: 2490368-2449408, Mtime: 5325910},
 		{FileId:"3,51444f8d53eebe", Offset: 2494464,   Size: 2555904-2494464, Mtime: 5325903},
 		{FileId:"4,5144578b097c7e", Offset: 2560000,   Size: 2596864-2560000, Mtime: 5325911},
-		{FileId:"4,51446563a1d91a", Offset: 2600960,   Size: 2617344-2600960, Mtime: 5325925},
-		{FileId:"7,514471a77e7b61", Offset: 2621440,   Size: 2633728-2621440, Mtime: 5325937},
 		{FileId:"3,51445500b6b4ac", Offset: 2637824,   Size: 2678784-2637824, Mtime: 5325909},
-		{FileId:"2,514476409139dc", Offset: 2682880,   Size: 2691072-2682880, Mtime: 5325942},
 		{FileId:"1,51446285e52a61", Offset: 2695168,   Size: 2715648-2695168, Mtime: 5325922},
-		{FileId:"6,51447234faf940", Offset: 2719744,   Size: 2730531-2719744, Mtime: 5325938},
-		{FileId:"5,514473558a90ed", Offset: 2736128,   Size: 2744590-2736128, Mtime: 5325939},
 	}
 
 	printChunks("before", chunks)
