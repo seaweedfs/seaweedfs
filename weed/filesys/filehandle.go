@@ -253,13 +253,20 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 			glog.V(4).Infof("%s chunks %d: %v [%d,%d)", fh.f.fullpath(), i, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}
 
-		chunks, _ := filer2.CompactFileChunks(filer2.LookupFn(fh.f.wfs), fh.f.entry.Chunks)
+		var nonManifestChunks []*filer_pb.FileChunk
+		for _, c := range fh.f.entry.Chunks {
+			if !c.IsChunkManifest {
+				nonManifestChunks = append(nonManifestChunks, c)
+			}
+		}
+
+		chunks, _ := filer2.CompactFileChunks(filer2.LookupFn(fh.f.wfs), nonManifestChunks)
 		chunks, manifestErr := filer2.MaybeManifestize(fh.f.wfs.saveDataAsChunk(fh.f.dir.FullPath()), chunks)
 		if manifestErr != nil {
 			// not good, but should be ok
 			glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
 		}
-		fh.f.entry.Chunks = chunks
+		fh.f.entry.Chunks = append(chunks, nonManifestChunks...)
 		fh.f.entryViewCache = nil
 
 		if err := filer_pb.CreateEntry(client, request); err != nil {
