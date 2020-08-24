@@ -226,6 +226,10 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 		return nil, fmt.Errorf("failing to upload to %v: %v", uploadUrl, post_err)
 	}
 	defer resp.Body.Close()
+	resp_body, ra_err := ioutil.ReadAll(resp.Body)
+	if ra_err != nil {
+		return nil, ra_err
+	}
 
 	var ret UploadResult
 	etag := getEtag(resp)
@@ -233,10 +237,7 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 		ret.ETag = etag
 		return &ret, nil
 	}
-	resp_body, ra_err := ioutil.ReadAll(resp.Body)
-	if ra_err != nil {
-		return nil, ra_err
-	}
+
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
 		glog.V(0).Infoln("failing to read upload response", uploadUrl, string(resp_body))
