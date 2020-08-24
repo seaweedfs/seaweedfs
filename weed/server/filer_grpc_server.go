@@ -241,22 +241,20 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 }
 
 func (fs *FilerServer) cleanupChunks(existingEntry *filer2.Entry, newEntry *filer_pb.Entry) (chunks, garbage []*filer_pb.FileChunk, err error) {
-	chunks = newEntry.Chunks
 
 	// remove old chunks if not included in the new ones
 	if existingEntry != nil {
 		garbage, err = filer2.MinusChunks(fs.lookupFileId, existingEntry.Chunks, newEntry.Chunks)
 		if err != nil {
-			return chunks, nil, fmt.Errorf("MinusChunks: %v", err)
+			return newEntry.Chunks, nil, fmt.Errorf("MinusChunks: %v", err)
 		}
 	}
 
 	// files with manifest chunks are usually large and append only, skip calculating covered chunks
-	var coveredChunks []*filer_pb.FileChunk
-	if !filer2.HasChunkManifest(newEntry.Chunks) {
-		chunks, coveredChunks = filer2.CompactFileChunks(fs.lookupFileId, newEntry.Chunks)
-		garbage = append(garbage, coveredChunks...)
-	}
+	manifestChunks, nonManifestChunks := filer2.SeparateManifestChunks(newEntry.Chunks)
+
+	chunks, coveredChunks := filer2.CompactFileChunks(fs.lookupFileId, nonManifestChunks)
+	garbage = append(garbage, coveredChunks...)
 
 	chunks, err = filer2.MaybeManifestize(fs.saveAsChunk(
 		newEntry.Attributes.Replication,
@@ -268,6 +266,9 @@ func (fs *FilerServer) cleanupChunks(existingEntry *filer2.Entry, newEntry *file
 		// not good, but should be ok
 		glog.V(0).Infof("MaybeManifestize: %v", err)
 	}
+
+	chunks = append(chunks, manifestChunks...)
+
 	return
 }
 
