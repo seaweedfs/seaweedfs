@@ -225,17 +225,18 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 		glog.V(1).Infof("failing to upload to %v: %v", uploadUrl, post_err)
 		return nil, fmt.Errorf("failing to upload to %v: %v", uploadUrl, post_err)
 	}
-	defer resp.Body.Close()
-	resp_body, ra_err := ioutil.ReadAll(resp.Body)
-	if ra_err != nil {
-		return nil, ra_err
-	}
+	defer util.CloseResponse(resp)
 
 	var ret UploadResult
 	etag := getEtag(resp)
 	if resp.StatusCode == http.StatusNoContent {
 		ret.ETag = etag
 		return &ret, nil
+	}
+
+	resp_body, ra_err := ioutil.ReadAll(resp.Body)
+	if ra_err != nil {
+		return nil, ra_err
 	}
 
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
