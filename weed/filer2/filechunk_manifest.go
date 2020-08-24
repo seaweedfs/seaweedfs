@@ -26,6 +26,18 @@ func HasChunkManifest(chunks []*filer_pb.FileChunk) bool {
 	return false
 }
 
+func SeparateManifestChunks(chunks []*filer_pb.FileChunk) (manifestChunks, nonManifestChunks []*filer_pb.FileChunk) {
+	for _, c := range chunks {
+		if !c.IsChunkManifest {
+			manifestChunks = append(manifestChunks, c)
+		} else {
+			nonManifestChunks = append(nonManifestChunks, c)
+		}
+	}
+	return
+}
+
+
 func ResolveChunkManifest(lookupFileIdFn LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (dataChunks, manifestChunks []*filer_pb.FileChunk, manefestResolveErr error) {
 	// TODO maybe parallel this
 	for _, chunk := range chunks {
