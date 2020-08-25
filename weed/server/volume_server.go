@@ -72,10 +72,10 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources(adminMux)
+	adminMux.HandleFunc("/status", vs.statusHandler)
 	if signingKey == "" || enableUiAccess {
 		// only expose the volume server details for safe environments
 		adminMux.HandleFunc("/ui/index.html", vs.uiStatusHandler)
-		adminMux.HandleFunc("/status", vs.guard.WhiteList(vs.statusHandler))
 		/*
 			adminMux.HandleFunc("/stats/counter", vs.guard.WhiteList(statsCounterHandler))
 			adminMux.HandleFunc("/stats/memory", vs.guard.WhiteList(statsMemoryHandler))
