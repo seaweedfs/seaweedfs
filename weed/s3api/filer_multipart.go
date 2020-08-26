@@ -57,8 +57,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
 
 	entries, err := s3a.list(uploadDirectory, "", "", false, 0)
-	if err != nil {
-		glog.Errorf("completeMultipartUpload %s %s error: %v", *input.Bucket, *input.UploadId, err)
+	if err != nil || len(entries) == 0 {
+		glog.Errorf("completeMultipartUpload %s %s error: %v, entries:%d", *input.Bucket, *input.UploadId, err, len(entries))
 		return nil, ErrNoSuchUpload
 	}
 
