@@ -1,4 +1,4 @@
-package seaewedfs.mmap;
+package seaweedfs.file;
 
 import org.junit.Test;
 
@@ -11,7 +11,7 @@ import java.nio.channels.FileChannel;
 
 public class MmapFileTest {
 
-    File dir = new File("/Users/chris/tmp/mm/dev");
+    static File dir = new File("/Users/chris/tmp/mm/dev");
 
     @Test
     public void testMmap() {
