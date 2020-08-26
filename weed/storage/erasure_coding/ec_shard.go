@@ -29,11 +29,11 @@ func NewEcVolumeShard(dirname string, collection string, id needle.VolumeId, sha
 
 	// open ecd file
 	if v.ecdFile, e = os.OpenFile(baseFileName+ToExt(int(shardId)), os.O_RDONLY, 0644); e != nil {
-		return nil, fmt.Errorf("cannot read ec volume shard %s.%s: %v", baseFileName, ToExt(int(shardId)), e)
+		return nil, fmt.Errorf("cannot read ec volume shard %s%s: %v", baseFileName, ToExt(int(shardId)), e)
 	}
 	ecdFi, statErr := v.ecdFile.Stat()
 	if statErr != nil {
-		return nil, fmt.Errorf("can not stat ec volume shard %s.%s: %v", baseFileName, ToExt(int(shardId)), statErr)
+		return nil, fmt.Errorf("can not stat ec volume shard %s%s: %v", baseFileName, ToExt(int(shardId)), statErr)
 	}
 	v.ecdFileSize = ecdFi.Size()
 
