@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -29,6 +30,9 @@ func NewEcVolumeShard(dirname string, collection string, id needle.VolumeId, sha
 
 	// open ecd file
 	if v.ecdFile, e = os.OpenFile(baseFileName+ToExt(int(shardId)), os.O_RDONLY, 0644); e != nil {
+		if e == os.ErrNotExist || strings.Contains(e.Error(), "no such file or directory") {
+			return nil, os.ErrNotExist
+		}
 		return nil, fmt.Errorf("cannot read ec volume shard %s%s: %v", baseFileName, ToExt(int(shardId)), e)
 	}
 	ecdFi, statErr := v.ecdFile.Stat()

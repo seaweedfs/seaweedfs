@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"io/ioutil"
+	"os"
 	"path"
 	"regexp"
 	"sort"
@@ -58,6 +59,9 @@ func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shard
 
 	ecVolumeShard, err := erasure_coding.NewEcVolumeShard(l.Directory, collection, vid, shardId)
 	if err != nil {
+		if err == os.ErrNotExist {
+			return os.ErrNotExist
+		}
 		return fmt.Errorf("failed to create ec shard %d.%d: %v", vid, shardId, err)
 	}
 	l.ecVolumesLock.Lock()
