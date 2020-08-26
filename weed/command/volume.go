@@ -229,7 +229,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		var startTime time.Time
 
 		// Stop heartbeats
-		glog.V(0).Infof("stop send heartbeat and sleep %d seconds ...", *v.preStopSeconds)
+		glog.V(0).Infof("stop send heartbeat and wait %d seconds until shutdown ...", *v.preStopSeconds)
 		volumeServer.SendHeartbeat = false
 		time.Sleep(time.Duration(*v.preStopSeconds) * time.Second)
 		glog.V(0).Infof("end sleep %d sec", *v.preStopSeconds)
