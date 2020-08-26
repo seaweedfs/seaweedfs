@@ -229,10 +229,10 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		var startTime time.Time
 
 		// Stop heartbeats
-		fmt.Println("stop send heartbeat and sleep %d sec", v.preStopSeconds)
+		glog.V(0).Infof("stop send heartbeat and sleep %d seconds ...", v.preStopSeconds)
 		volumeServer.SendHeartbeat = false
 		time.Sleep(time.Duration(*v.preStopSeconds) * time.Second)
-		fmt.Println("end sleep 20 sec")
+		glog.V(0).Infof("end sleep %d sec", v.preStopSeconds)
 		// firstly, stop the public http service to prevent from receiving new user request
 		if nil != publicHttpDown {
 			startTime = time.Now()
