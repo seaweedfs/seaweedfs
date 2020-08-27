@@ -249,7 +249,7 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Bu
 	return nil
 
 }
-func (m *LogBuffer) ReleaseMeory(b *bytes.Buffer) {
+func (m *LogBuffer) ReleaseMemory(b *bytes.Buffer) {
 	bufferPool.Put(b)
 }
 
