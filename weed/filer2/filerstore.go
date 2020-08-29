@@ -63,6 +63,9 @@ func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) err
 	}()
 
 	filer_pb.BeforeEntrySerialization(entry.Chunks)
+	if entry.Mime == "application/octet-stream" {
+		entry.Mime = ""
+	}
 	return fsw.ActualStore.InsertEntry(ctx, entry)
 }
 
@@ -74,6 +77,9 @@ func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) err
 	}()
 
 	filer_pb.BeforeEntrySerialization(entry.Chunks)
+	if entry.Mime == "application/octet-stream" {
+		entry.Mime = ""
+	}
 	return fsw.ActualStore.UpdateEntry(ctx, entry)
 }
 
