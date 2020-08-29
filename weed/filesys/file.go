@@ -293,8 +293,9 @@ func (file *File) saveEntry() error {
 	return file.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
-			Directory: file.dir.FullPath(),
-			Entry:     file.entry,
+			Directory:  file.dir.FullPath(),
+			Entry:      file.entry,
+			Signatures: []int32{file.wfs.signature},
 		}
 
 		glog.V(4).Infof("save file entry: %v", request)

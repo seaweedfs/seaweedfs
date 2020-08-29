@@ -70,6 +70,7 @@ type WebDavFileSystem struct {
 	filer          *filer2.Filer
 	grpcDialOption grpc.DialOption
 	chunkCache     *chunk_cache.TieredChunkCache
+	signature      int32
 }
 
 type FileInfo struct {
@@ -103,6 +104,7 @@ func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 	return &WebDavFileSystem{
 		option:     option,
 		chunkCache: chunkCache,
+		signature:  util.RandomInt32(),
 	}, nil
 }
 
@@ -165,6 +167,7 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 					Gid:      fs.option.Gid,
 				},
 			},
+			Signatures: []int32{fs.signature},
 		}
 
 		glog.V(1).Infof("mkdir: %v", request)
@@ -216,6 +219,7 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 						TtlSec:      0,
 					},
 				},
+				Signatures: []int32{fs.signature},
 			}); err != nil {
 				return fmt.Errorf("create %s: %v", fullFilePath, err)
 			}
@@ -255,7 +259,7 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string) 
 
 	dir, name := util.FullPath(fullFilePath).DirAndName()
 
-	return filer_pb.Remove(fs, dir, name, true, false, false, false)
+	return filer_pb.Remove(fs, dir, name, true, false, false, false, fs.signature)
 
 }
 
@@ -422,8 +426,9 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 		f.entry.Attributes.Replication = replication
 
 		request := &filer_pb.UpdateEntryRequest{
-			Directory: dir,
-			Entry:     f.entry,
+			Directory:  dir,
+			Entry:      f.entry,
+			Signatures: []int32{f.fs.signature},
 		}
 
 		if _, err := client.UpdateEntry(ctx, request); err != nil {

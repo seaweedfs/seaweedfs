@@ -171,7 +171,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		FullPath: util.JoinPath(req.Directory, req.Entry.Name),
 		Attr:     filer2.PbToEntryAttribute(req.Entry.Attributes),
 		Chunks:   chunks,
-	}, req.OExcl, req.IsFromOtherCluster)
+	}, req.OExcl, req.IsFromOtherCluster, req.Signatures)
 
 	if createErr == nil {
 		fs.filer.DeleteChunks(garbage)
@@ -235,7 +235,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		glog.V(3).Infof("UpdateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), err)
 	}
 
-	fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, req.IsFromOtherCluster)
+	fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, req.IsFromOtherCluster, req.Signatures)
 
 	return &filer_pb.UpdateEntryResponse{}, err
 }
@@ -312,7 +312,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 		glog.V(0).Infof("MaybeManifestize: %v", err)
 	}
 
-	err = fs.filer.CreateEntry(context.Background(), entry, false, false)
+	err = fs.filer.CreateEntry(context.Background(), entry, false, false, nil)
 
 	return &filer_pb.AppendToEntryResponse{}, err
 }
@@ -321,7 +321,7 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 	glog.V(4).Infof("DeleteEntry %v", req)
 
-	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster)
+	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, nil)
 	resp = &filer_pb.DeleteEntryResponse{}
 	if err != nil {
 		resp.Error = err.Error()

@@ -67,6 +67,7 @@ type WFS struct {
 
 	chunkCache *chunk_cache.TieredChunkCache
 	metaCache  *meta_cache.MetaCache
+	signature  int32
 }
 type statsCache struct {
 	filer_pb.StatisticsResponse
@@ -82,6 +83,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 				return make([]byte, option.ChunkSizeLimit)
 			},
 		},
+		signature: util.RandomInt32(),
 	}
 	cacheUniqueId := util.Md5String([]byte(option.FilerGrpcAddress + option.FilerMountRootPath + util.Version()))[0:4]
 	cacheDir := path.Join(option.CacheDir, cacheUniqueId)
@@ -92,7 +94,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 
 	wfs.metaCache = meta_cache.NewMetaCache(path.Join(cacheDir, "meta"))
 	startTime := time.Now()
-	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
+	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
 	grace.OnInterrupt(func() {
 		wfs.metaCache.Shutdown()
 	})

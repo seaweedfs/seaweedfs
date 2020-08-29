@@ -142,7 +142,8 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 				TtlSec:      dir.wfs.option.TtlSec,
 			},
 		},
-		OExcl: req.Flags&fuse.OpenExclusive != 0,
+		OExcl:      req.Flags&fuse.OpenExclusive != 0,
+		Signatures: []int32{dir.wfs.signature},
 	}
 	glog.V(1).Infof("create %s/%s: %v", dir.FullPath(), req.Name, req.Flags)
 
@@ -192,8 +193,9 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 	err := dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.CreateEntryRequest{
-			Directory: dir.FullPath(),
-			Entry:     newEntry,
+			Directory:  dir.FullPath(),
+			Entry:      newEntry,
+			Signatures: []int32{dir.wfs.signature},
 		}
 
 		glog.V(1).Infof("mkdir: %v", request)
@@ -316,10 +318,9 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 		return nil
 	}
 
-
 	// first, ensure the filer store can correctly delete
 	glog.V(3).Infof("remove file: %v", req)
-	err = filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, false, false, false, false)
+	err = filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, false, false, false, false, dir.wfs.signature)
 	if err != nil {
 		glog.V(3).Infof("not found remove file %s/%s: %v", dir.FullPath(), req.Name, err)
 		return fuse.ENOENT
@@ -339,10 +340,10 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 
 	glog.V(3).Infof("remove directory entry: %v", req)
-	err := filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, true, false, false, false)
+	err := filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, true, false, false, false, dir.wfs.signature)
 	if err != nil {
 		glog.V(0).Infof("remove %s/%s: %v", dir.FullPath(), req.Name, err)
-		if strings.Contains(err.Error(), "non-empty"){
+		if strings.Contains(err.Error(), "non-empty") {
 			return fuse.EEXIST
 		}
 		return fuse.ENOENT
@@ -457,8 +458,9 @@ func (dir *Dir) saveEntry() error {
 	return dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.UpdateEntryRequest{
-			Directory: parentDir,
-			Entry:     dir.entry,
+			Directory:  parentDir,
+			Entry:      dir.entry,
+			Signatures: []int32{dir.wfs.signature},
 		}
 
 		glog.V(1).Infof("save dir entry: %v", request)

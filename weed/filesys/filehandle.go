@@ -244,8 +244,9 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 		}
 
 		request := &filer_pb.CreateEntryRequest{
-			Directory: fh.f.dir.FullPath(),
-			Entry:     fh.f.entry,
+			Directory:  fh.f.dir.FullPath(),
+			Entry:      fh.f.entry,
+			Signatures: []int32{fh.f.wfs.signature},
 		}
 
 		glog.V(4).Infof("%s set chunks: %v", fh.f.fullpath(), len(fh.f.entry.Chunks))

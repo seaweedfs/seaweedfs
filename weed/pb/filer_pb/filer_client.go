@@ -214,24 +214,28 @@ func MkFile(filerClient FilerClient, parentDirectoryPath string, fileName string
 	})
 }
 
-func Remove(filerClient FilerClient, parentDirectoryPath, name string, isDeleteData, isRecursive, ignoreRecursiveErr, isFromOtherCluster bool) error {
+func Remove(filerClient FilerClient, parentDirectoryPath, name string, isDeleteData, isRecursive, ignoreRecursiveErr, isFromOtherCluster bool, signature int32) error {
 	return filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
 
-		if resp, err := client.DeleteEntry(context.Background(), &DeleteEntryRequest{
+		deleteEntryRequest := &DeleteEntryRequest{
 			Directory:            parentDirectoryPath,
 			Name:                 name,
 			IsDeleteData:         isDeleteData,
 			IsRecursive:          isRecursive,
 			IgnoreRecursiveError: ignoreRecursiveErr,
 			IsFromOtherCluster:   isFromOtherCluster,
-		}); err != nil {
-			if strings.Contains(err.Error(), ErrNotFound.Error()){
+		}
+		if signature != 0 {
+			deleteEntryRequest.Signatures = []int32{signature}
+		}
+		if resp, err := client.DeleteEntry(context.Background(), deleteEntryRequest); err != nil {
+			if strings.Contains(err.Error(), ErrNotFound.Error()) {
 				return nil
 			}
 			return err
 		} else {
 			if resp.Error != "" {
-				if strings.Contains(resp.Error, ErrNotFound.Error()){
+				if strings.Contains(resp.Error, ErrNotFound.Error()) {
 					return nil
 				}
 				return errors.New(resp.Error)

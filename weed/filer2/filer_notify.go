@@ -15,7 +15,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry, deleteChunks, isFromOtherCluster bool) {
+func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry, deleteChunks, isFromOtherCluster bool, signatures []int32) {
 	var fullpath string
 	if oldEntry != nil {
 		fullpath = string(oldEntry.FullPath)
@@ -41,6 +41,7 @@ func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 		DeleteChunks:       deleteChunks,
 		NewParentPath:      newParentPath,
 		IsFromOtherCluster: isFromOtherCluster,
+		Signatures:         append(signatures, f.Signature),
 	}
 
 	if notification.Queue != nil {

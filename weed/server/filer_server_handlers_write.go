@@ -111,7 +111,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		objectPath = objectPath[0 : len(objectPath)-1]
 	}
 
-	err := fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), isRecursive, ignoreRecursiveError, !skipChunkDeletion, false)
+	err := fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), isRecursive, ignoreRecursiveError, !skipChunkDeletion, false, nil)
 	if err != nil {
 		glog.V(1).Infoln("deleting", objectPath, ":", err.Error())
 		httpStatus := http.StatusInternalServerError

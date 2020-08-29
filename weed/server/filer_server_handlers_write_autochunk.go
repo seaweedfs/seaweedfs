@@ -172,7 +172,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		Size: chunkOffset,
 	}
 
-	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false); dbErr != nil {
+	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil); dbErr != nil {
 		fs.filer.DeleteChunks(entry.Chunks)
 		replyerr = dbErr
 		filerResult.Error = dbErr.Error()
