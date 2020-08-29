@@ -206,7 +206,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 	// fflush works at fh level
 	// send the data to the OS
-	glog.V(4).Infof("doFlush %s fh %d %v", fh.f.fullpath(), fh.handle, header)
+	glog.V(4).Infof("doFlush %s fh %d", fh.f.fullpath(), fh.handle)
 
 	chunks, err := fh.dirtyPages.saveExistingPagesToStorage()
 	if err != nil {
