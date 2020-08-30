@@ -70,14 +70,18 @@ func (f *Filer) loopProcessingDeletion() {
 
 func (f *Filer) DeleteChunks(chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
-		f.fileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
+		if !chunk.IsChunkManifest {
+			f.fileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
+			continue
+		}
+		dataChunks, manifestResolveErr := ResolveOneChunkManifest(f.MasterClient.LookupFileId, chunk)
+		if manifestResolveErr != nil {
+			glog.V(0).Infof("failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
+		}
+		for _, dChunk := range dataChunks {
+			f.fileIdDeletionQueue.EnQueue(dChunk.GetFileIdString())
+		}
 	}
-}
-
-// DeleteFileByFileId direct delete by file id.
-// Only used when the fileId is not being managed by snapshots.
-func (f *Filer) DeleteFileByFileId(fileId string) {
-	f.fileIdDeletionQueue.EnQueue(fileId)
 }
 
 func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {

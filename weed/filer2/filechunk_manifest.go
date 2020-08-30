@@ -28,7 +28,7 @@ func HasChunkManifest(chunks []*filer_pb.FileChunk) bool {
 
 func SeparateManifestChunks(chunks []*filer_pb.FileChunk) (manifestChunks, nonManifestChunks []*filer_pb.FileChunk) {
 	for _, c := range chunks {
-		if !c.IsChunkManifest {
+		if c.IsChunkManifest {
 			manifestChunks = append(manifestChunks, c)
 		} else {
 			nonManifestChunks = append(nonManifestChunks, c)
@@ -37,7 +37,7 @@ func SeparateManifestChunks(chunks []*filer_pb.FileChunk) (manifestChunks, nonMa
 	return
 }
 
-func ResolveChunkManifest(lookupFileIdFn LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (dataChunks, manifestChunks []*filer_pb.FileChunk, manefestResolveErr error) {
+func ResolveChunkManifest(lookupFileIdFn LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
 	// TODO maybe parallel this
 	for _, chunk := range chunks {
 		if !chunk.IsChunkManifest {
@@ -45,19 +45,14 @@ func ResolveChunkManifest(lookupFileIdFn LookupFileIdFunctionType, chunks []*fil
 			continue
 		}
 
-		// IsChunkManifest
-		data, err := fetchChunk(lookupFileIdFn, chunk.FileId, chunk.CipherKey, chunk.IsCompressed)
+		resolvedChunks, err := ResolveOneChunkManifest(lookupFileIdFn, chunk)
 		if err != nil {
-			return chunks, nil, fmt.Errorf("fail to read manifest %s: %v", chunk.FileId, err)
+			return chunks, nil, err
 		}
-		m := &filer_pb.FileChunkManifest{}
-		if err := proto.Unmarshal(data, m); err != nil {
-			return chunks, nil, fmt.Errorf("fail to unmarshal manifest %s: %v", chunk.FileId, err)
-		}
+
 		manifestChunks = append(manifestChunks, chunk)
 		// recursive
-		filer_pb.AfterEntryDeserialization(m.Chunks)
-		dchunks, mchunks, subErr := ResolveChunkManifest(lookupFileIdFn, m.Chunks)
+		dchunks, mchunks, subErr := ResolveChunkManifest(lookupFileIdFn, resolvedChunks)
 		if subErr != nil {
 			return chunks, nil, subErr
 		}
@@ -65,6 +60,26 @@ func ResolveChunkManifest(lookupFileIdFn LookupFileIdFunctionType, chunks []*fil
 		manifestChunks = append(manifestChunks, mchunks...)
 	}
 	return
+}
+
+func ResolveOneChunkManifest(lookupFileIdFn LookupFileIdFunctionType, chunk *filer_pb.FileChunk) (dataChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+	if !chunk.IsChunkManifest {
+		return
+	}
+
+	// IsChunkManifest
+	data, err := fetchChunk(lookupFileIdFn, chunk.GetFileIdString(), chunk.CipherKey, chunk.IsCompressed)
+	if err != nil {
+		return nil, fmt.Errorf("fail to read manifest %s: %v", chunk.GetFileIdString(), err)
+	}
+	m := &filer_pb.FileChunkManifest{}
+	if err := proto.Unmarshal(data, m); err != nil {
+		return nil, fmt.Errorf("fail to unmarshal manifest %s: %v", chunk.GetFileIdString(), err)
+	}
+
+	// recursive
+	filer_pb.AfterEntryDeserialization(m.Chunks)
+	return m.Chunks, nil
 }
 
 // TODO fetch from cache for weed mount?

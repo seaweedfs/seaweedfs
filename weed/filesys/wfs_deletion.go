@@ -18,7 +18,17 @@ func (wfs *WFS) deleteFileChunks(chunks []*filer_pb.FileChunk) {
 
 	var fileIds []string
 	for _, chunk := range chunks {
-		fileIds = append(fileIds, chunk.GetFileIdString())
+		if !chunk.IsChunkManifest {
+			fileIds = append(fileIds, chunk.GetFileIdString())
+			continue
+		}
+		dataChunks, manifestResolveErr := filer2.ResolveOneChunkManifest(filer2.LookupFn(wfs), chunk)
+		if manifestResolveErr != nil {
+			glog.V(0).Infof("failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
+		}
+		for _, dChunk := range dataChunks {
+			fileIds = append(fileIds, dChunk.GetFileIdString())
+		}
 	}
 
 	wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
