@@ -18,7 +18,7 @@ import (
 
 const (
 	LogFlushInterval = time.Minute
-	PaginationSize = 1024 * 256
+	PaginationSize   = 1024 * 256
 )
 
 var (

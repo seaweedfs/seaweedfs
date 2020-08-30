@@ -73,7 +73,7 @@ func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer2.En
 	}
 
 	affectedRows, err := res.RowsAffected()
-	if err == nil && affectedRows > 0{
+	if err == nil && affectedRows > 0 {
 		return nil
 	}
 

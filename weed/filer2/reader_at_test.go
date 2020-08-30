@@ -27,33 +27,33 @@ func TestReaderAt(t *testing.T) {
 
 	visibles := []VisibleInterval{
 		{
-			start:  1,
-			stop:   2,
-			fileId: "1",
+			start:     1,
+			stop:      2,
+			fileId:    "1",
 			chunkSize: 9,
 		},
 		{
-			start:  3,
-			stop:   4,
-			fileId: "3",
+			start:     3,
+			stop:      4,
+			fileId:    "3",
 			chunkSize: 1,
 		},
 		{
-			start:  5,
-			stop:   6,
-			fileId: "5",
+			start:     5,
+			stop:      6,
+			fileId:    "5",
 			chunkSize: 2,
 		},
 		{
-			start:  7,
-			stop:   9,
-			fileId: "7",
+			start:     7,
+			stop:      9,
+			fileId:    "7",
 			chunkSize: 2,
 		},
 		{
-			start:  9,
-			stop:   10,
-			fileId: "9",
+			start:     9,
+			stop:      10,
+			fileId:    "9",
 			chunkSize: 2,
 		},
 	}
@@ -95,15 +95,15 @@ func TestReaderAt0(t *testing.T) {
 
 	visibles := []VisibleInterval{
 		{
-			start:  2,
-			stop:   5,
-			fileId: "1",
+			start:     2,
+			stop:      5,
+			fileId:    "1",
 			chunkSize: 9,
 		},
 		{
-			start:  7,
-			stop:   9,
-			fileId: "2",
+			start:     7,
+			stop:      9,
+			fileId:    "2",
 			chunkSize: 9,
 		},
 	}
@@ -129,9 +129,9 @@ func TestReaderAt1(t *testing.T) {
 
 	visibles := []VisibleInterval{
 		{
-			start:  2,
-			stop:   5,
-			fileId: "1",
+			start:     2,
+			stop:      5,
+			fileId:    "1",
 			chunkSize: 9,
 		},
 	}

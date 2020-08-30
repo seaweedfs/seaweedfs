@@ -160,7 +160,7 @@ func logPrintf(name string, visibles []VisibleInterval) {
 		for _, v := range visibles {
 			glog.V(0).Infof("%s:  [%d,%d) %s %d", name, v.start, v.stop, v.fileId, v.chunkOffset)
 		}
-	 */
+	*/
 }
 
 var bufPool = sync.Pool{

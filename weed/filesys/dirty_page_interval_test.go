@@ -73,14 +73,14 @@ func TestRandomWrites(t *testing.T) {
 
 	data := make([]byte, 1024)
 
-	for i:=0;i<1024;i++ {
+	for i := 0; i < 1024; i++ {
 
 		start, stop := rand.Intn(len(data)), rand.Intn(len(data))
 		if start > stop {
-			start,stop = stop, start
+			start, stop = stop, start
 		}
 
-		rand.Read(data[start:stop+1])
+		rand.Read(data[start : stop+1])
 
 		c.AddInterval(data[start:stop+1], int64(start))
 

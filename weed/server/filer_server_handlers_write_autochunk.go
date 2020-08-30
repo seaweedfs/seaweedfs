@@ -148,7 +148,6 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		crTime = existingEntry.Crtime
 	}
 
-
 	glog.V(4).Infoln("saving", path)
 	entry := &filer2.Entry{
 		FullPath: util.FullPath(path),

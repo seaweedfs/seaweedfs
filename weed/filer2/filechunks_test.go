@@ -74,7 +74,7 @@ func TestRandomFileChunksCompact(t *testing.T) {
 		if start > stop {
 			start, stop = stop, start
 		}
-		if start + 16 < stop {
+		if start+16 < stop {
 			stop = start + 16
 		}
 		chunk := &filer_pb.FileChunk{
@@ -352,9 +352,9 @@ func TestChunksReading(t *testing.T) {
 		// case 6: same updates
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "abc", Fid: &filer_pb.FileId{FileKey:  1}, Mtime: 123},
-				{Offset: 0, Size: 100, FileId: "def", Fid: &filer_pb.FileId{FileKey:  2}, Mtime: 123},
-				{Offset: 0, Size: 100, FileId: "xyz", Fid: &filer_pb.FileId{FileKey:  3}, Mtime: 123},
+				{Offset: 0, Size: 100, FileId: "abc", Fid: &filer_pb.FileId{FileKey: 1}, Mtime: 123},
+				{Offset: 0, Size: 100, FileId: "def", Fid: &filer_pb.FileId{FileKey: 2}, Mtime: 123},
+				{Offset: 0, Size: 100, FileId: "xyz", Fid: &filer_pb.FileId{FileKey: 3}, Mtime: 123},
 			},
 			Offset: 0,
 			Size:   100,
