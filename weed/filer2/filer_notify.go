@@ -74,6 +74,8 @@ func (f *Filer) logMetaEvent(ctx context.Context, fullpath string, eventNotifica
 
 func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
 
+	startTime, stopTime = startTime.UTC(), stopTime.UTC()
+
 	targetFile := fmt.Sprintf("%s/%04d-%02d-%02d/%02d-%02d.segment", SystemLogDir,
 		startTime.Year(), startTime.Month(), startTime.Day(), startTime.Hour(), startTime.Minute(),
 		// startTime.Second(), startTime.Nanosecond(),
@@ -91,6 +93,7 @@ func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
 
 func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) (lastTsNs int64, err error) {
 
+	startTime = startTime.UTC()
 	startDate := fmt.Sprintf("%04d-%02d-%02d", startTime.Year(), startTime.Month(), startTime.Day())
 	startHourMinute := fmt.Sprintf("%02d-%02d.segment", startTime.Hour(), startTime.Minute())
 

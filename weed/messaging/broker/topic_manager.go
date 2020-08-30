@@ -56,6 +56,7 @@ func (tm *TopicManager) buildLogBuffer(tl *TopicControl, tp TopicPartition, topi
 
 		// fmt.Printf("flushing with topic config %+v\n", topicConfig)
 
+		startTime, stopTime = startTime.UTC(), stopTime.UTC()
 		targetFile := fmt.Sprintf(
 			"%s/%s/%s/%04d-%02d-%02d/%02d-%02d.part%02d",
 			filer2.TopicsDir, tp.Namespace, tp.Topic,
