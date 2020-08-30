@@ -68,7 +68,7 @@ func (f *Filer) logMetaEvent(ctx context.Context, fullpath string, eventNotifica
 		return
 	}
 
-	f.LocalMetaLogBuffer.AddToBuffer([]byte(dir), data)
+	f.LocalMetaLogBuffer.AddToBuffer([]byte(dir), data, event.TsNs)
 
 }
 
@@ -119,7 +119,7 @@ func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, eachLogEntryFn func(
 			if lastTsNs, err = ReadEachLogEntry(chunkedFileReader, sizeBuf, startTsNs, eachLogEntryFn); err != nil {
 				chunkedFileReader.Close()
 				if err == io.EOF {
-					break
+					continue
 				}
 				return lastTsNs, fmt.Errorf("reading %s: %v", hourMinuteEntry.FullPath, err)
 			}

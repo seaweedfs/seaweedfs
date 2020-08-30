@@ -53,7 +53,7 @@ func NewLogBuffer(flushInterval time.Duration, flushFn func(startTime, stopTime 
 	return lb
 }
 
-func (m *LogBuffer) AddToBuffer(partitionKey, data []byte) {
+func (m *LogBuffer) AddToBuffer(partitionKey, data []byte, eventTsNs int64) {
 
 	m.Lock()
 	defer func() {
@@ -64,16 +64,21 @@ func (m *LogBuffer) AddToBuffer(partitionKey, data []byte) {
 	}()
 
 	// need to put the timestamp inside the lock
-	ts := time.Now()
-	tsNs := ts.UnixNano()
-	if m.lastTsNs >= tsNs {
-		// this is unlikely to happen, but just in case
-		tsNs = m.lastTsNs + 1
-		ts = time.Unix(0, tsNs)
+	var ts time.Time
+	if eventTsNs == 0 {
+		ts = time.Now()
+		eventTsNs = ts.UnixNano()
+	} else {
+		ts = time.Unix(0, eventTsNs)
 	}
-	m.lastTsNs = tsNs
+	if m.lastTsNs >= eventTsNs {
+		// this is unlikely to happen, but just in case
+		eventTsNs = m.lastTsNs + 1
+		ts = time.Unix(0, eventTsNs)
+	}
+	m.lastTsNs = eventTsNs
 	logEntry := &filer_pb.LogEntry{
-		TsNs:             tsNs,
+		TsNs:             eventTsNs,
 		PartitionKeyHash: util.HashToInt32(partitionKey),
 		Data:             data,
 	}

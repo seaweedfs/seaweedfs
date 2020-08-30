@@ -16,7 +16,10 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
-const PaginationSize = 1024 * 256
+const (
+	LogFlushInterval = time.Minute
+	PaginationSize = 1024 * 256
+)
 
 var (
 	OS_UID = uint32(os.Getuid())
@@ -47,7 +50,7 @@ func NewFiler(masters []string, grpcDialOption grpc.DialOption,
 		GrpcDialOption:      grpcDialOption,
 		Signature:           util.RandomInt32(),
 	}
-	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer(time.Minute, f.logFlushFunc, notifyFn)
+	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer(LogFlushInterval, f.logFlushFunc, notifyFn)
 	f.metaLogCollection = collection
 	f.metaLogReplication = replication
 
