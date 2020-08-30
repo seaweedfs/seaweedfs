@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -210,7 +209,7 @@ func (ms *MasterServer) startAdminScripts() {
 		scriptLines = append(scriptLines, "unlock")
 	}
 
-	masterAddress := "localhost:" + strconv.Itoa(ms.option.Port)
+	masterAddress := fmt.Sprintf("%s:%d",ms.option.Host, ms.option.Port)
 
 	var shellOptions shell.ShellOptions
 	shellOptions.GrpcDialOption = security.LoadClientTLS(v, "grpc.master")
