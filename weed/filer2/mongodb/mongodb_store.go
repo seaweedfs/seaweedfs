@@ -11,7 +11,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/x/bsonx"
-	"strings"
 	"time"
 )
 
@@ -169,39 +168,7 @@ func (store *MongodbStore) DeleteFolderChildren(ctx context.Context, fullpath ut
 }
 
 func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
-	count := 0
-	notPrefixed, err := store.ListDirectoryEntries(ctx, fullpath, startFileName, inclusive, limit)
-	if err != nil {
-		return nil, err
-	}
-
-	if prefix == "" {
-		return notPrefixed, nil
-	}
-	var lastFileName string
-	for count < limit {
-		for _, entry := range notPrefixed {
-			lastFileName = entry.Name()
-			if strings.HasPrefix(entry.Name(), prefix) {
-				count++
-				entries = append(entries, entry)
-			}
-		}
-		if count >= limit {
-			break
-		}
-
-		notPrefixed, err = store.ListDirectoryEntries(ctx, fullpath, lastFileName, inclusive, limit)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(notPrefixed) == 0 {
-			break
-		}
-	}
-
-	return entries, nil
+	return nil, fmt.Errorf("UNSUPPORTED")
 }
 
 func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {

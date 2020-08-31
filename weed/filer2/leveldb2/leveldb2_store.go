@@ -5,14 +5,12 @@ import (
 	"context"
 	"crypto/md5"
 	"fmt"
-	"io"
-	"os"
-	"strings"
-
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
+	"io"
+	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -170,39 +168,7 @@ func (store *LevelDB2Store) DeleteFolderChildren(ctx context.Context, fullpath w
 }
 
 func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
-	count := 0
-	notPrefixed, err := store.ListDirectoryEntries(ctx, fullpath, startFileName, inclusive, limit)
-	if err != nil {
-		return nil, err
-	}
-
-	if prefix == "" {
-		return notPrefixed, nil
-	}
-	var lastFileName string
-	for count < limit {
-		for _, entry := range notPrefixed {
-			lastFileName = entry.Name()
-			if strings.HasPrefix(entry.Name(), prefix) {
-				count++
-				entries = append(entries, entry)
-			}
-		}
-		if count >= limit {
-			break
-		}
-
-		notPrefixed, err = store.ListDirectoryEntries(ctx, fullpath, lastFileName, inclusive, limit)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(notPrefixed) == 0 {
-			break
-		}
-	}
-
-	return entries, nil
+	return nil, fmt.Errorf("UNSUPPORTED")
 }
 
 func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool,
