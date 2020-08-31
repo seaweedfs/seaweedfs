@@ -152,6 +152,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 			if strings.Contains(err.Error(), "EEXIST") {
 				return fuse.EEXIST
 			}
+			glog.V(0).Infof("create %s/%s: %v", dir.FullPath(), req.Name, err)
 			return fuse.EIO
 		}
 
