@@ -176,10 +176,13 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 			if strings.HasPrefix(entry.Name(), prefix) {
 				count++
 				entries = append(entries, entry)
+				if count >= limit {
+					break
+				}
 			}
 		}
 		if count < limit {
-			notPrefixed, err = fsw.ActualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, false, limit-count)
+			notPrefixed, err = fsw.ActualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, false, limit)
 			if err != nil {
 				return
 			}
