@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
@@ -59,7 +58,7 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 	lastFileName := req.StartFromFileName
 	includeLastFile := req.InclusiveStartFrom
 	for limit > 0 {
-		entries, err := fs.filer.ListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, paginationLimit)
+		entries, err := fs.filer.ListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, paginationLimit, req.Prefix)
 
 		if err != nil {
 			return err
@@ -73,12 +72,6 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 		for _, entry := range entries {
 
 			lastFileName = entry.Name()
-
-			if req.Prefix != "" {
-				if !strings.HasPrefix(entry.Name(), req.Prefix) {
-					continue
-				}
-			}
 
 			if err := stream.Send(&filer_pb.ListEntriesResponse{
 				Entry: &filer_pb.Entry{

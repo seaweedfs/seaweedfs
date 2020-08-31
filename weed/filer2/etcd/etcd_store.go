@@ -135,9 +135,11 @@ func (store *EtcdStore) DeleteFolderChildren(ctx context.Context, fullpath weed_
 	return nil
 }
 
-func (store *EtcdStore) ListDirectoryEntries(
-	ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int,
-) (entries []*filer2.Entry, err error) {
+func (store *EtcdStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
+	return nil, filer2.ErrUnsupportedListDirectoryPrefixed
+}
+
+func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
 	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
 
 	resp, err := store.client.Get(ctx, string(directoryPrefix),

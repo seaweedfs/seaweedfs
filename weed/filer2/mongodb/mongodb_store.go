@@ -167,6 +167,10 @@ func (store *MongodbStore) DeleteFolderChildren(ctx context.Context, fullpath ut
 	return nil
 }
 
+func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
+	return nil, filer2.ErrUnsupportedListDirectoryPrefixed
+}
+
 func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
 
 	var where = bson.M{"directory": string(fullpath), "name": bson.M{"$gt": startFileName}}

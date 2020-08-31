@@ -2,6 +2,7 @@ package filer2
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -21,6 +22,7 @@ type FilerStore interface {
 	DeleteEntry(context.Context, util.FullPath) (err error)
 	DeleteFolderChildren(context.Context, util.FullPath) (err error)
 	ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*Entry, error)
+	ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*Entry, error)
 
 	BeginTransaction(ctx context.Context) (context.Context, error)
 	CommitTransaction(ctx context.Context) error
@@ -133,6 +135,54 @@ func (fsw *FilerStoreWrapper) ListDirectoryEntries(ctx context.Context, dirPath 
 		filer_pb.AfterEntryDeserialization(entry.Chunks)
 	}
 	return entries, err
+}
+
+func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*Entry, error) {
+	stats.FilerStoreCounter.WithLabelValues(fsw.ActualStore.GetName(), "list").Inc()
+	start := time.Now()
+	defer func() {
+		stats.FilerStoreHistogram.WithLabelValues(fsw.ActualStore.GetName(), "list").Observe(time.Since(start).Seconds())
+	}()
+	entries, err := fsw.ActualStore.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix)
+	if err == ErrUnsupportedListDirectoryPrefixed {
+		count := 0
+		notPrefixed, err := fsw.ActualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
+		if err != nil {
+			return nil, err
+		}
+		if prefix == "" {
+			entries = notPrefixed
+		} else {
+			var lastFileName string
+			for count < limit {
+				for _, entry := range notPrefixed {
+					lastFileName = entry.Name()
+					if strings.HasPrefix(entry.Name(), prefix) {
+						count++
+						entries = append(entries, entry)
+					}
+					if count >= limit {
+						goto Exit
+					}
+				}
+				notPrefixed, err = fsw.ActualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, false, limit)
+				if err != nil {
+					return nil, err
+				}
+
+				if len(notPrefixed) == 0 {
+					break
+				}
+			}
+		Exit:
+		}
+	} else if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		filer_pb.AfterEntryDeserialization(entry.Chunks)
+	}
+	return entries, nil
 }
 
 func (fsw *FilerStoreWrapper) BeginTransaction(ctx context.Context) (context.Context, error) {

@@ -5,13 +5,12 @@ import (
 	"context"
 	"crypto/md5"
 	"fmt"
-	"io"
-	"os"
-
 	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/errors"
+	leveldb_errors "github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
+	"io"
+	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -53,7 +52,7 @@ func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
 		dbFolder := fmt.Sprintf("%s/%02d", dir, d)
 		os.MkdirAll(dbFolder, 0755)
 		db, dbErr := leveldb.OpenFile(dbFolder, opts)
-		if errors.IsCorrupted(dbErr) {
+		if leveldb_errors.IsCorrupted(dbErr) {
 			db, dbErr = leveldb.RecoverFile(dbFolder, opts)
 		}
 		if dbErr != nil {
@@ -166,6 +165,10 @@ func (store *LevelDB2Store) DeleteFolderChildren(ctx context.Context, fullpath w
 	}
 
 	return nil
+}
+
+func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
+	return nil, filer2.ErrUnsupportedListDirectoryPrefixed
 }
 
 func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool,
