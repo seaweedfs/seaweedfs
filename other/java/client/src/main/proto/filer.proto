@@ -102,6 +102,7 @@ message EventNotification {
     bool delete_chunks = 3;
     string new_parent_path = 4;
     bool is_from_other_cluster = 5;
+    repeated int32 signatures = 6;
 }
 
 message FileChunk {
@@ -150,6 +151,7 @@ message CreateEntryRequest {
     Entry entry = 2;
     bool o_excl = 3;
     bool is_from_other_cluster = 4;
+    repeated int32 signatures = 5;
 }
 
 message CreateEntryResponse {
@@ -160,6 +162,7 @@ message UpdateEntryRequest {
     string directory = 1;
     Entry entry = 2;
     bool is_from_other_cluster = 3;
+    repeated int32 signatures = 4;
 }
 message UpdateEntryResponse {
 }
@@ -180,6 +183,7 @@ message DeleteEntryRequest {
     bool is_recursive = 5;
     bool ignore_recursive_error = 6;
     bool is_from_other_cluster = 7;
+    repeated int32 signatures = 8;
 }
 
 message DeleteEntryResponse {
@@ -268,6 +272,7 @@ message SubscribeMetadataRequest {
     string client_name = 1;
     string path_prefix = 2;
     int64 since_ns = 3;
+    int32 signature = 4;
 }
 message SubscribeMetadataResponse {
     string directory = 1;

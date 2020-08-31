@@ -16,7 +16,10 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
-const PaginationSize = 1024 * 256
+const (
+	LogFlushInterval = time.Minute
+	PaginationSize   = 1024 * 256
+)
 
 var (
 	OS_UID = uint32(os.Getuid())
@@ -36,6 +39,7 @@ type Filer struct {
 	metaLogCollection   string
 	metaLogReplication  string
 	MetaAggregator      *MetaAggregator
+	Signature           int32
 }
 
 func NewFiler(masters []string, grpcDialOption grpc.DialOption,
@@ -44,8 +48,9 @@ func NewFiler(masters []string, grpcDialOption grpc.DialOption,
 		MasterClient:        wdclient.NewMasterClient(grpcDialOption, "filer", filerHost, filerGrpcPort, masters),
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
+		Signature:           util.RandomInt32(),
 	}
-	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer(time.Minute, f.logFlushFunc, notifyFn)
+	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer(LogFlushInterval, f.logFlushFunc, notifyFn)
 	f.metaLogCollection = collection
 	f.metaLogReplication = replication
 
@@ -93,7 +98,7 @@ func (f *Filer) RollbackTransaction(ctx context.Context) error {
 	return f.Store.RollbackTransaction(ctx)
 }
 
-func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFromOtherCluster bool) error {
+func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFromOtherCluster bool, signatures []int32) error {
 
 	if string(entry.FullPath) == "/" {
 		return nil
@@ -143,7 +148,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 				}
 			} else {
 				f.maybeAddBucket(dirEntry)
-				f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster)
+				f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
 			}
 
 		} else if !dirEntry.IsDirectory() {
@@ -191,7 +196,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 	}
 
 	f.maybeAddBucket(entry)
-	f.NotifyUpdateEvent(ctx, oldEntry, entry, true, isFromOtherCluster)
+	f.NotifyUpdateEvent(ctx, oldEntry, entry, true, isFromOtherCluster, signatures)
 
 	f.deleteChunksIfNotNew(oldEntry, entry)
 

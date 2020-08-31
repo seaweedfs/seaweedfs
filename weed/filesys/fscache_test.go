@@ -95,7 +95,6 @@ func TestFsCacheMove(t *testing.T) {
 
 }
 
-
 func TestFsCacheMove2(t *testing.T) {
 
 	cache := newFsCache(nil)
@@ -114,4 +113,3 @@ func TestFsCacheMove2(t *testing.T) {
 	}
 
 }
-

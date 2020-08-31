@@ -18,7 +18,7 @@ const SectionalNeedleIdLimit = 1<<32 - 1
 type SectionalNeedleValue struct {
 	Key         SectionalNeedleId
 	OffsetLower OffsetLower `comment:"Volume offset"` //since aligned to 8 bytes, range is 4G*8=32G
-	Size        Size      `comment:"Size of the data portion"`
+	Size        Size        `comment:"Size of the data portion"`
 }
 
 type SectionalNeedleValueExtra struct {
@@ -116,7 +116,7 @@ func (cs *CompactSection) deleteOverflowEntry(key SectionalNeedleId) {
 	})
 	if deleteCandidate != length && cs.overflow[deleteCandidate].Key == key {
 		if cs.overflow[deleteCandidate].Size.IsValid() {
-			cs.overflow[deleteCandidate].Size = - cs.overflow[deleteCandidate].Size
+			cs.overflow[deleteCandidate].Size = -cs.overflow[deleteCandidate].Size
 		}
 	}
 }

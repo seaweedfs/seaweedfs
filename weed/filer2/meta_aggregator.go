@@ -25,13 +25,15 @@ type MetaAggregator struct {
 	ListenersCond *sync.Cond
 }
 
+// MetaAggregator only aggregates data "on the fly". The logs are not re-persisted to disk.
+// The old data comes from what each LocalMetadata persisted on disk.
 func NewMetaAggregator(filers []string, grpcDialOption grpc.DialOption) *MetaAggregator {
 	t := &MetaAggregator{
 		filers:         filers,
 		grpcDialOption: grpcDialOption,
 	}
 	t.ListenersCond = sync.NewCond(&t.ListenersLock)
-	t.MetaLogBuffer = log_buffer.NewLogBuffer(time.Minute, nil, func() {
+	t.MetaLogBuffer = log_buffer.NewLogBuffer(LogFlushInterval, nil, func() {
 		t.ListenersCond.Broadcast()
 	})
 	return t
@@ -48,7 +50,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, filer strin
 	var maybeReplicateMetadataChange func(*filer_pb.SubscribeMetadataResponse)
 	lastPersistTime := time.Now()
 	changesSinceLastPersist := 0
-	lastTsNs := int64(0)
+	lastTsNs := time.Now().Add(-LogFlushInterval).UnixNano()
 
 	MaxChangeLimit := 100
 
@@ -88,7 +90,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, filer strin
 		}
 		dir := event.Directory
 		// println("received meta change", dir, "size", len(data))
-		ma.MetaLogBuffer.AddToBuffer([]byte(dir), data)
+		ma.MetaLogBuffer.AddToBuffer([]byte(dir), data, event.TsNs)
 		if maybeReplicateMetadataChange != nil {
 			maybeReplicateMetadataChange(event)
 		}

@@ -2,6 +2,7 @@ package util
 
 import (
 	"crypto/md5"
+	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -134,4 +135,10 @@ func Base64Md5ToBytes(contentMd5 string) []byte {
 		return nil
 	}
 	return data
+}
+
+func RandomInt32() int32 {
+	buf := make([]byte, 4)
+	rand.Read(buf)
+	return int32(BytesToUint32(buf))
 }

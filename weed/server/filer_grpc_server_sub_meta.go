@@ -24,7 +24,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	lastReadTime := time.Unix(0, req.SinceNs)
 	glog.V(0).Infof(" %v starts to subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-	eachEventNotificationFn := eachEventNotificationFn(req, stream, clientName)
+	eachEventNotificationFn := eachEventNotificationFn(req, stream, clientName, req.Signature)
 
 	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
 
@@ -59,7 +59,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	lastReadTime := time.Unix(0, req.SinceNs)
 	glog.V(0).Infof(" %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-	eachEventNotificationFn := eachEventNotificationFn(req, stream, clientName)
+	eachEventNotificationFn := eachEventNotificationFn(req, stream, clientName, req.Signature)
 
 	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
 
@@ -104,8 +104,14 @@ func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotificati
 	}
 }
 
-func eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer, clientName string) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+func eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer, clientName string, clientSignature int32) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 	return func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+
+		for _, sig := range eventNotification.Signatures {
+			if sig == clientSignature && clientSignature != 0 {
+				return nil
+			}
+		}
 
 		// get complete path to the file or directory
 		var entryName string

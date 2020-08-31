@@ -15,7 +15,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry, deleteChunks, isFromOtherCluster bool) {
+func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry, deleteChunks, isFromOtherCluster bool, signatures []int32) {
 	var fullpath string
 	if oldEntry != nil {
 		fullpath = string(oldEntry.FullPath)
@@ -41,6 +41,7 @@ func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 		DeleteChunks:       deleteChunks,
 		NewParentPath:      newParentPath,
 		IsFromOtherCluster: isFromOtherCluster,
+		Signatures:         append(signatures, f.Signature),
 	}
 
 	if notification.Queue != nil {
@@ -67,11 +68,13 @@ func (f *Filer) logMetaEvent(ctx context.Context, fullpath string, eventNotifica
 		return
 	}
 
-	f.LocalMetaLogBuffer.AddToBuffer([]byte(dir), data)
+	f.LocalMetaLogBuffer.AddToBuffer([]byte(dir), data, event.TsNs)
 
 }
 
 func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
+
+	startTime, stopTime = startTime.UTC(), stopTime.UTC()
 
 	targetFile := fmt.Sprintf("%s/%04d-%02d-%02d/%02d-%02d.segment", SystemLogDir,
 		startTime.Year(), startTime.Month(), startTime.Day(), startTime.Hour(), startTime.Minute(),
@@ -90,6 +93,7 @@ func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
 
 func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) (lastTsNs int64, err error) {
 
+	startTime = startTime.UTC()
 	startDate := fmt.Sprintf("%04d-%02d-%02d", startTime.Year(), startTime.Month(), startTime.Day())
 	startHourMinute := fmt.Sprintf("%02d-%02d.segment", startTime.Hour(), startTime.Minute())
 
@@ -118,7 +122,7 @@ func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, eachLogEntryFn func(
 			if lastTsNs, err = ReadEachLogEntry(chunkedFileReader, sizeBuf, startTsNs, eachLogEntryFn); err != nil {
 				chunkedFileReader.Close()
 				if err == io.EOF {
-					break
+					continue
 				}
 				return lastTsNs, fmt.Errorf("reading %s: %v", hourMinuteEntry.FullPath, err)
 			}

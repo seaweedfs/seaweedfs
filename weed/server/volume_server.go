@@ -31,6 +31,7 @@ type VolumeServer struct {
 	MetricsAddress          string
 	MetricsIntervalSec      int
 	fileSizeLimitBytes      int64
+	SendHeartbeat           bool
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
@@ -66,16 +67,17 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		grpcDialOption:          security.LoadClientTLS(util.GetViper(), "grpc.volume"),
 		compactionBytePerSecond: int64(compactionMBPerSecond) * 1024 * 1024,
 		fileSizeLimitBytes:      int64(fileSizeLimitMB) * 1024 * 1024,
+		SendHeartbeat:           true,
 	}
 	vs.SeedMasterNodes = masterNodes
 	vs.store = storage.NewStore(vs.grpcDialOption, port, ip, publicUrl, folders, maxCounts, minFreeSpacePercents, vs.needleMapKind)
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources(adminMux)
+	adminMux.HandleFunc("/status", vs.statusHandler)
 	if signingKey == "" || enableUiAccess {
 		// only expose the volume server details for safe environments
 		adminMux.HandleFunc("/ui/index.html", vs.uiStatusHandler)
-		adminMux.HandleFunc("/status", vs.guard.WhiteList(vs.statusHandler))
 		/*
 			adminMux.HandleFunc("/stats/counter", vs.guard.WhiteList(statsCounterHandler))
 			adminMux.HandleFunc("/stats/memory", vs.guard.WhiteList(statsMemoryHandler))

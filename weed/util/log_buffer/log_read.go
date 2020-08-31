@@ -20,14 +20,14 @@ func (logBuffer *LogBuffer) LoopProcessLogData(
 	lastReadTime := startTreadTime
 	defer func() {
 		if bytesBuf != nil {
-			logBuffer.ReleaseMeory(bytesBuf)
+			logBuffer.ReleaseMemory(bytesBuf)
 		}
 	}()
 
 	for {
 
 		if bytesBuf != nil {
-			logBuffer.ReleaseMeory(bytesBuf)
+			logBuffer.ReleaseMemory(bytesBuf)
 		}
 		bytesBuf = logBuffer.ReadFromBuffer(lastReadTime)
 		// fmt.Printf("ReadFromBuffer by %v\n", lastReadTime)

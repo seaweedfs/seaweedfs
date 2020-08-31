@@ -34,6 +34,7 @@ func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node,
 				SymlinkTarget: req.Target,
 			},
 		},
+		Signatures: []int32{dir.wfs.signature},
 	}
 
 	err := dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {

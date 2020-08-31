@@ -72,11 +72,25 @@ func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer2.En
 		return fmt.Errorf("insert %s: %s", entry.FullPath, err)
 	}
 
+	affectedRows, err := res.RowsAffected()
+	if err == nil && affectedRows > 0 {
+		return nil
+	}
+
+	// now the insert failed possibly due to duplication constraints
+	glog.V(1).Infof("insert %s falls back to update: %s", entry.FullPath, err)
+
+	res, err = store.getTxOrDB(ctx).ExecContext(ctx, store.SqlUpdate, meta, util.HashStringToLong(dir), name, dir)
+	if err != nil {
+		return fmt.Errorf("upsert %s: %s", entry.FullPath, err)
+	}
+
 	_, err = res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("insert %s but no rows affected: %s", entry.FullPath, err)
+		return fmt.Errorf("upsert %s but no rows affected: %s", entry.FullPath, err)
 	}
 	return nil
+
 }
 
 func (store *AbstractSqlStore) UpdateEntry(ctx context.Context, entry *filer2.Entry) (err error) {

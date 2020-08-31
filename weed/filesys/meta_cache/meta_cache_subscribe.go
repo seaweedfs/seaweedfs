@@ -12,10 +12,17 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func SubscribeMetaEvents(mc *MetaCache, client filer_pb.FilerClient, dir string, lastTsNs int64) error {
+func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.FilerClient, dir string, lastTsNs int64) error {
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
+
+		for _, sig := range message.Signatures {
+			if sig == selfSignature && selfSignature != 0 {
+				return nil
+			}
+		}
+
 		var oldPath util.FullPath
 		var newEntry *filer2.Entry
 		if message.OldEntry != nil {
@@ -41,6 +48,7 @@ func SubscribeMetaEvents(mc *MetaCache, client filer_pb.FilerClient, dir string,
 				ClientName: "mount",
 				PathPrefix: dir,
 				SinceNs:    lastTsNs,
+				Signature:  selfSignature,
 			})
 			if err != nil {
 				return fmt.Errorf("subscribe: %v", err)

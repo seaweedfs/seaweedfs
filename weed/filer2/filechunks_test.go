@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/rand"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -60,6 +62,42 @@ func TestCompactFileChunks2(t *testing.T) {
 	if len(garbage) != 8 {
 		t.Fatalf("unexpected garbage: %d", len(garbage))
 	}
+}
+
+func TestRandomFileChunksCompact(t *testing.T) {
+
+	data := make([]byte, 1024)
+
+	var chunks []*filer_pb.FileChunk
+	for i := 0; i < 15; i++ {
+		start, stop := rand.Intn(len(data)), rand.Intn(len(data))
+		if start > stop {
+			start, stop = stop, start
+		}
+		if start+16 < stop {
+			stop = start + 16
+		}
+		chunk := &filer_pb.FileChunk{
+			FileId: strconv.Itoa(i),
+			Offset: int64(start),
+			Size:   uint64(stop - start),
+			Mtime:  int64(i),
+			Fid:    &filer_pb.FileId{FileKey: uint64(i)},
+		}
+		chunks = append(chunks, chunk)
+		for x := start; x < stop; x++ {
+			data[x] = byte(i)
+		}
+	}
+
+	visibles, _ := NonOverlappingVisibleIntervals(nil, chunks)
+
+	for _, v := range visibles {
+		for x := v.start; x < v.stop; x++ {
+			assert.Equal(t, strconv.Itoa(int(data[x])), v.fileId)
+		}
+	}
+
 }
 
 func TestIntervalMerging(t *testing.T) {
@@ -142,12 +180,12 @@ func TestIntervalMerging(t *testing.T) {
 		// case 6: same updates
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
+				{Offset: 0, Size: 100, FileId: "abc", Fid: &filer_pb.FileId{FileKey: 1}, Mtime: 123},
+				{Offset: 0, Size: 100, FileId: "axf", Fid: &filer_pb.FileId{FileKey: 2}, Mtime: 123},
+				{Offset: 0, Size: 100, FileId: "xyz", Fid: &filer_pb.FileId{FileKey: 3}, Mtime: 123},
 			},
 			Expected: []*VisibleInterval{
-				{start: 0, stop: 100, fileId: "abc"},
+				{start: 0, stop: 100, fileId: "xyz"},
 			},
 		},
 		// case 7: real updates
@@ -314,14 +352,14 @@ func TestChunksReading(t *testing.T) {
 		// case 6: same updates
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
+				{Offset: 0, Size: 100, FileId: "abc", Fid: &filer_pb.FileId{FileKey: 1}, Mtime: 123},
+				{Offset: 0, Size: 100, FileId: "def", Fid: &filer_pb.FileId{FileKey: 2}, Mtime: 123},
+				{Offset: 0, Size: 100, FileId: "xyz", Fid: &filer_pb.FileId{FileKey: 3}, Mtime: 123},
 			},
 			Offset: 0,
 			Size:   100,
 			Expected: []*ChunkView{
-				{Offset: 0, Size: 100, FileId: "abc", LogicOffset: 0},
+				{Offset: 0, Size: 100, FileId: "xyz", LogicOffset: 0},
 			},
 		},
 		// case 7: edge cases

@@ -168,13 +168,17 @@ func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDi
 				return "", err
 			}
 		case <-volumeTickChan:
-			glog.V(5).Infof("volume server %s:%d heartbeat", vs.store.Ip, vs.store.Port)
-			if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
-				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
-				return "", err
+			if vs.SendHeartbeat {
+				glog.V(4).Infof("volume server %s:%d heartbeat", vs.store.Ip, vs.store.Port)
+				if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
+					glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
+					return "", err
+				}
+			} else {
+				glog.V(4).Infof("volume server %s:%d skip send heartbeat", vs.store.Ip, vs.store.Port)
 			}
 		case <-ecShardTickChan:
-			glog.V(5).Infof("volume server %s:%d ec heartbeat", vs.store.Ip, vs.store.Port)
+			glog.V(4).Infof("volume server %s:%d ec heartbeat", vs.store.Ip, vs.store.Port)
 			if err = stream.Send(vs.store.CollectErasureCodingHeartbeat()); err != nil {
 				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
 				return "", err

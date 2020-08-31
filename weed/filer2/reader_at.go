@@ -109,7 +109,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 	glog.V(4).Infof("doReadAt [%d,%d), n:%v, err:%v", offset, offset+int64(len(p)), n, err)
 
 	if err == nil && remaining > 0 && c.fileSize > startOffset {
-		delta := int(min(remaining, c.fileSize - startOffset))
+		delta := int(min(remaining, c.fileSize-startOffset))
 		glog.V(4).Infof("zero2 [%d,%d) of file size %d bytes", startOffset, startOffset+int64(delta), c.fileSize)
 		n += delta
 	}
@@ -129,7 +129,7 @@ func (c *ChunkReadAt) readFromWholeChunkData(chunkView *ChunkView) (chunkData []
 
 	chunkData = c.chunkCache.GetChunk(chunkView.FileId, chunkView.ChunkSize)
 	if chunkData != nil {
-		glog.V(5).Infof("cache hit %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset-chunkView.Offset, chunkView.LogicOffset-chunkView.Offset+int64(len(chunkData)))
+		glog.V(4).Infof("cache hit %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset-chunkView.Offset, chunkView.LogicOffset-chunkView.Offset+int64(len(chunkData)))
 	} else {
 		glog.V(4).Infof("doFetchFullChunkData %s", chunkView.FileId)
 		chunkData, err = c.doFetchFullChunkData(chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped)

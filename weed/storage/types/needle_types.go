@@ -18,7 +18,7 @@ func (s Size) IsDeleted() bool {
 	return s < 0 || s == TombstoneFileSize
 }
 func (s Size) IsValid() bool {
-	return s >0 && s != TombstoneFileSize
+	return s > 0 && s != TombstoneFileSize
 }
 
 type OffsetLower struct {

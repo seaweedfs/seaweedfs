@@ -85,7 +85,7 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 			continue
 		}
 
-		tl.logBuffer.AddToBuffer(in.Data.Key, data)
+		tl.logBuffer.AddToBuffer(in.Data.Key, data, in.Data.EventTimeNs)
 
 		if in.Data.IsClose {
 			// println("server received closing")

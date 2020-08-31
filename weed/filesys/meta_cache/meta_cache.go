@@ -50,6 +50,10 @@ func openMetaStore(dbFolder string) filer2.FilerStore {
 func (mc *MetaCache) InsertEntry(ctx context.Context, entry *filer2.Entry) error {
 	mc.Lock()
 	defer mc.Unlock()
+	return mc.doInsertEntry(ctx, entry)
+}
+
+func (mc *MetaCache) doInsertEntry(ctx context.Context, entry *filer2.Entry) error {
 	filer_pb.BeforeEntrySerialization(entry.Chunks)
 	return mc.actualStore.InsertEntry(ctx, entry)
 }

@@ -55,6 +55,7 @@ type VolumeServerOptions struct {
 	fileSizeLimitMB       *int
 	minFreeSpacePercents  []float32
 	pprof                 *bool
+	preStopSeconds        *int
 	// pulseSeconds          *int
 }
 
@@ -66,6 +67,7 @@ func init() {
 	v.publicUrl = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible address")
 	v.bindIp = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	v.masters = cmdVolume.Flag.String("mserver", "localhost:9333", "comma-separated master servers")
+	v.preStopSeconds = cmdVolume.Flag.Int("preStopSeconds", 30, "number of seconds between stop send heartbeats and stop volume server")
 	// v.pulseSeconds = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
 	v.idleConnectionTimeout = cmdVolume.Flag.Int("idleTimeout", 30, "connection idle seconds")
 	v.dataCenter = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
@@ -206,7 +208,6 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.compactionMBPerSecond,
 		*v.fileSizeLimitMB,
 	)
-
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)
 
@@ -227,6 +228,11 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		fmt.Println("volume server has be killed")
 		var startTime time.Time
 
+		// Stop heartbeats
+		glog.V(0).Infof("stop send heartbeat and wait %d seconds until shutdown ...", *v.preStopSeconds)
+		volumeServer.SendHeartbeat = false
+		time.Sleep(time.Duration(*v.preStopSeconds) * time.Second)
+		glog.V(0).Infof("end sleep %d sec", *v.preStopSeconds)
 		// firstly, stop the public http service to prevent from receiving new user request
 		if nil != publicHttpDown {
 			startTime = time.Now()
