@@ -19,9 +19,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
-const (
-	PaginationSize = 1024 * 256
-)
+const PaginationSize = 1024 * 256
 
 var (
 	OS_UID                              = uint32(os.Getuid())
