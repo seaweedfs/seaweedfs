@@ -155,12 +155,11 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 						count++
 						entries = append(entries, entry)
 					}
+					if count >= limit {
+						goto Exit
+					}
 				}
-				if count >= limit {
-					break
-				}
-
-				notPrefixed, err = fsw.ActualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, includeStartFile, limit)
+				notPrefixed, err = fsw.ActualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, false, limit)
 				if err != nil {
 					return nil, err
 				}
@@ -169,6 +168,7 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 					break
 				}
 			}
+		Exit:
 		}
 	} else if err != nil {
 		return nil, err
