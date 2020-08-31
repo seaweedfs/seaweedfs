@@ -3,9 +3,10 @@ package leveldb
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/errors"
+	leveldb_errors "github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
 
@@ -49,7 +50,7 @@ func (store *LevelDBStore) initialize(dir string) (err error) {
 	}
 
 	if store.db, err = leveldb.OpenFile(dir, opts); err != nil {
-		if errors.IsCorrupted(err) {
+		if leveldb_errors.IsCorrupted(err) {
 			store.db, err = leveldb.RecoverFile(dir, opts)
 		}
 		if err != nil {
@@ -159,7 +160,7 @@ func (store *LevelDBStore) DeleteFolderChildren(ctx context.Context, fullpath we
 }
 
 func (store *LevelDBStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
-	return nil, fmt.Errorf("UNSUPPORTED")
+	return nil, errors.New(filer2.UnsupportedListDirectoryPrefixedErr)
 }
 
 func (store *LevelDBStore) ListDirectoryEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool,

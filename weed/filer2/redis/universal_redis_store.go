@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -122,7 +123,7 @@ func (store *UniversalRedisStore) DeleteFolderChildren(ctx context.Context, full
 }
 
 func (store *UniversalRedisStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
-	return nil, fmt.Errorf("UNSUPPORTED")
+	return nil, errors.New(filer2.UnsupportedListDirectoryPrefixedErr)
 }
 
 func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool,
