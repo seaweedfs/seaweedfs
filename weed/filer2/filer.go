@@ -24,7 +24,7 @@ const PaginationSize = 1024 * 256
 var (
 	OS_UID                              = uint32(os.Getuid())
 	OS_GID                              = uint32(os.Getgid())
-	UnsupportedListDirectoryPrefixedErr = errors.New("UNSUPPORTED")
+	ErrUnsupportedListDirectoryPrefixed = errors.New("UNSUPPORTED")
 )
 
 type Filer struct {

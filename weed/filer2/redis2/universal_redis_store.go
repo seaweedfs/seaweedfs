@@ -117,7 +117,7 @@ func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, ful
 }
 
 func (store *UniversalRedis2Store) ListDirectoryPrefixedEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
-	return nil, filer2.UnsupportedListDirectoryPrefixedErr
+	return nil, filer2.ErrUnsupportedListDirectoryPrefixed
 }
 
 func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool,

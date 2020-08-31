@@ -168,7 +168,7 @@ func (store *MongodbStore) DeleteFolderChildren(ctx context.Context, fullpath ut
 }
 
 func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
-	return nil, filer2.UnsupportedListDirectoryPrefixedErr
+	return nil, filer2.ErrUnsupportedListDirectoryPrefixed
 }
 
 func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {

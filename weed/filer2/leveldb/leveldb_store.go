@@ -159,7 +159,7 @@ func (store *LevelDBStore) DeleteFolderChildren(ctx context.Context, fullpath we
 }
 
 func (store *LevelDBStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
-	return nil, filer2.UnsupportedListDirectoryPrefixedErr
+	return nil, filer2.ErrUnsupportedListDirectoryPrefixed
 }
 
 func (store *LevelDBStore) ListDirectoryEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool,
