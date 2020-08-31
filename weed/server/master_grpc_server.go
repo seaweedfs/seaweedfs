@@ -136,7 +136,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 
 		if len(heartbeat.EcShards) > 0 || heartbeat.HasNoEcShards {
-			glog.V(1).Infof("master recieved ec shards from %s: %+v", dn.Url(), heartbeat.EcShards)
+			glog.V(1).Infof("master received ec shards from %s: %+v", dn.Url(), heartbeat.EcShards)
 			newShards, deletedShards := ms.Topo.SyncDataNodeEcShards(heartbeat.EcShards, dn)
 
 			// broadcast the ec vid changes to master clients
