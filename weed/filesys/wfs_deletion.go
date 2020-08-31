@@ -29,6 +29,7 @@ func (wfs *WFS) deleteFileChunks(chunks []*filer_pb.FileChunk) {
 		for _, dChunk := range dataChunks {
 			fileIds = append(fileIds, dChunk.GetFileIdString())
 		}
+		fileIds = append(fileIds, chunk.GetFileIdString())
 	}
 
 	wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {

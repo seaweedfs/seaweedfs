@@ -81,6 +81,7 @@ func (f *Filer) DeleteChunks(chunks []*filer_pb.FileChunk) {
 		for _, dChunk := range dataChunks {
 			f.fileIdDeletionQueue.EnQueue(dChunk.GetFileIdString())
 		}
+		f.fileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
 	}
 }
 
