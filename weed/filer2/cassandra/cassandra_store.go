@@ -2,7 +2,6 @@ package cassandra
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/gocql/gocql"
 
@@ -127,7 +126,7 @@ func (store *CassandraStore) DeleteFolderChildren(ctx context.Context, fullpath 
 }
 
 func (store *CassandraStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
-	return nil, errors.New(filer2.UnsupportedListDirectoryPrefixedErr)
+	return nil, filer2.UnsupportedListDirectoryPrefixedErr
 }
 
 func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool,

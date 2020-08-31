@@ -138,7 +138,7 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 		stats.FilerStoreHistogram.WithLabelValues(fsw.ActualStore.GetName(), "list").Observe(time.Since(start).Seconds())
 	}()
 	entries, err := fsw.ActualStore.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix)
-	if err.Error() == UnsupportedListDirectoryPrefixedErr {
+	if err.Error() == UnsupportedListDirectoryPrefixedErr.Error() {
 		count := 0
 		notPrefixed, err := fsw.ActualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
 		if err != nil {

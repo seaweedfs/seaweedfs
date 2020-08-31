@@ -2,6 +2,7 @@ package filer2
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -19,13 +20,13 @@ import (
 )
 
 const (
-	PaginationSize                      = 1024 * 256
-	UnsupportedListDirectoryPrefixedErr = "UNSUPPORTED"
+	PaginationSize = 1024 * 256
 )
 
 var (
-	OS_UID = uint32(os.Getuid())
-	OS_GID = uint32(os.Getgid())
+	OS_UID                              = uint32(os.Getuid())
+	OS_GID                              = uint32(os.Getgid())
+	UnsupportedListDirectoryPrefixedErr = errors.New("UNSUPPORTED")
 )
 
 type Filer struct {

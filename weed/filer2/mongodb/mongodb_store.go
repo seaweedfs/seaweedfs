@@ -2,7 +2,6 @@ package mongodb
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -169,7 +168,7 @@ func (store *MongodbStore) DeleteFolderChildren(ctx context.Context, fullpath ut
 }
 
 func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer2.Entry, err error) {
-	return nil, errors.New(filer2.UnsupportedListDirectoryPrefixedErr)
+	return nil, filer2.UnsupportedListDirectoryPrefixedErr
 }
 
 func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
