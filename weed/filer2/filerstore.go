@@ -2,7 +2,6 @@ package filer2
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -24,7 +23,6 @@ type FilerStore interface {
 	DeleteFolderChildren(context.Context, util.FullPath) (err error)
 	ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*Entry, error)
 	ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*Entry, error)
-	ListDirectoryUnSupPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*Entry, err error)
 
 	BeginTransaction(ctx context.Context) (context.Context, error)
 	CommitTransaction(ctx context.Context) error
@@ -140,10 +138,39 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 		stats.FilerStoreHistogram.WithLabelValues(fsw.ActualStore.GetName(), "list").Observe(time.Since(start).Seconds())
 	}()
 	entries, err := fsw.ActualStore.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix)
-	if err == fmt.Errorf("UNSUPPORTED") {
-		entries, err = fsw.ListDirectoryUnSupPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix)
-	}
-	if err != nil {
+	if err.Error() == "UNSUPPORTED" {
+		count := 0
+		notPrefixed, err := fsw.ActualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
+		if err != nil {
+			return nil, err
+		}
+		if prefix == "" {
+			entries = notPrefixed
+		} else {
+			var lastFileName string
+			for count < limit {
+				for _, entry := range notPrefixed {
+					lastFileName = entry.Name()
+					if strings.HasPrefix(entry.Name(), prefix) {
+						count++
+						entries = append(entries, entry)
+					}
+				}
+				if count >= limit {
+					break
+				}
+
+				notPrefixed, err = fsw.ActualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, includeStartFile, limit)
+				if err != nil {
+					return nil, err
+				}
+
+				if len(notPrefixed) == 0 {
+					break
+				}
+			}
+		}
+	} else if err != nil {
 		return nil, err
 	}
 	for _, entry := range entries {
@@ -153,38 +180,6 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 }
 
 func (fsw *FilerStoreWrapper) ListDirectoryUnSupPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*Entry, err error) {
-	count := 0
-	notPrefixed, err := fsw.ActualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
-	if err != nil {
-		return nil, err
-	}
-
-	if prefix == "" {
-		return notPrefixed, nil
-	}
-
-	var lastFileName string
-	for count < limit {
-		for _, entry := range notPrefixed {
-			lastFileName = entry.Name()
-			if strings.HasPrefix(entry.Name(), prefix) {
-				count++
-				entries = append(entries, entry)
-			}
-		}
-		if count >= limit {
-			break
-		}
-
-		notPrefixed, err = fsw.ActualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, includeStartFile, limit)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(notPrefixed) == 0 {
-			break
-		}
-	}
 
 	return entries, nil
 }
