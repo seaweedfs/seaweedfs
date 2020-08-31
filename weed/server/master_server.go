@@ -209,7 +209,7 @@ func (ms *MasterServer) startAdminScripts() {
 		scriptLines = append(scriptLines, "unlock")
 	}
 
-	masterAddress := fmt.Sprintf("%s:%d",ms.option.Host, ms.option.Port)
+	masterAddress := fmt.Sprintf("%s:%d", ms.option.Host, ms.option.Port)
 
 	var shellOptions shell.ShellOptions
 	shellOptions.GrpcDialOption = security.LoadClientTLS(v, "grpc.master")
