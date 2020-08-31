@@ -78,7 +78,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	}
 
 	if err != nil {
-		glog.Errorf("file handle read %s: %v", fh.f.fullpath(), err)
+		glog.Errorf("file handle read %s %d: %v", fh.f.fullpath(), totalRead, err)
 		return nil
 	}
 
