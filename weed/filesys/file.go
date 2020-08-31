@@ -45,7 +45,7 @@ func (file *File) fullpath() util.FullPath {
 
 func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
-	glog.V(5).Infof("file Attr %s, open:%v, existing attr: %+v", file.fullpath(), file.isOpen, attr)
+	glog.V(4).Infof("file Attr %s, open:%v, existing attr: %+v", file.fullpath(), file.isOpen, attr)
 
 	if file.isOpen <= 0 {
 		if err := file.maybeLoadEntry(ctx); err != nil {
@@ -99,7 +99,7 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
-	glog.V(5).Infof("%v file setattr %+v", file.fullpath(), req)
+	glog.V(4).Infof("%v file setattr %+v", file.fullpath(), req)
 
 	if err := file.maybeLoadEntry(ctx); err != nil {
 		return err
@@ -245,7 +245,7 @@ func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 
 func (file *File) Forget() {
 	t := util.NewFullPath(file.dir.FullPath(), file.Name)
-	glog.V(5).Infof("Forget file %s", t)
+	glog.V(4).Infof("Forget file %s", t)
 	file.wfs.fsNodeCache.DeleteFsNode(t)
 }
 

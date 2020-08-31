@@ -148,7 +148,7 @@ func (wfs *WFS) ReleaseHandle(fullpath util.FullPath, handleId fuse.HandleID) {
 // Statfs is called to obtain file system metadata. Implements fuse.FSStatfser
 func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.StatfsResponse) error {
 
-	glog.V(5).Infof("reading fs stats: %+v", req)
+	glog.V(4).Infof("reading fs stats: %+v", req)
 
 	if wfs.stats.lastChecked < time.Now().Unix()-20 {
 
@@ -160,13 +160,13 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 				Ttl:         fmt.Sprintf("%ds", wfs.option.TtlSec),
 			}
 
-			glog.V(5).Infof("reading filer stats: %+v", request)
+			glog.V(4).Infof("reading filer stats: %+v", request)
 			resp, err := client.Statistics(context.Background(), request)
 			if err != nil {
 				glog.V(0).Infof("reading filer stats %v: %v", request, err)
 				return err
 			}
-			glog.V(5).Infof("read filer stats: %+v", resp)
+			glog.V(4).Infof("read filer stats: %+v", resp)
 
 			wfs.stats.TotalSize = resp.TotalSize
 			wfs.stats.UsedSize = resp.UsedSize

@@ -83,7 +83,7 @@ func doList(filerClient FilerClient, fullDirPath util.FullPath, prefix string, f
 			InclusiveStartFrom: inclusive,
 		}
 
-		glog.V(5).Infof("read directory: %v", request)
+		glog.V(4).Infof("read directory: %v", request)
 		ctx, cancel := context.WithCancel(context.Background())
 		stream, err := client.ListEntries(ctx, request)
 		if err != nil {
