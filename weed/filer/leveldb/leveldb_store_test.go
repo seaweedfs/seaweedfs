@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
+	filer2 "github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -22,7 +22,7 @@ func TestCreateAndFind(t *testing.T) {
 
 	ctx := context.Background()
 
-	entry1 := &filer.Entry{
+	entry1 := &filer2.Entry{
 		FullPath: fullpath,
 		Attr: filer.Attr{
 			Mode: 0440,
