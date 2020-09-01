@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -94,7 +94,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	}
 
 	// set etag
-	etag := filer2.ETagEntry(entry)
+	etag := filer.ETagEntry(entry)
 	if inm := r.Header.Get("If-None-Match"); inm == "\""+etag+"\"" {
 		w.WriteHeader(http.StatusNotModified)
 		return
@@ -115,7 +115,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		ext := filepath.Ext(filename)
 		width, height, mode, shouldResize := shouldResizeImages(ext, r)
 		if shouldResize {
-			data, err := filer2.ReadAll(fs.filer.MasterClient, entry.Chunks)
+			data, err := filer.ReadAll(fs.filer.MasterClient, entry.Chunks)
 			if err != nil {
 				glog.Errorf("failed to read %s: %v", path, err)
 				w.WriteHeader(http.StatusNotModified)
@@ -128,7 +128,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	}
 
 	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
-		return filer2.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size)
+		return filer.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size)
 	})
 
 }

@@ -6,7 +6,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -24,7 +24,7 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 		}
 
 		var oldPath util.FullPath
-		var newEntry *filer2.Entry
+		var newEntry *filer.Entry
 		if message.OldEntry != nil {
 			oldPath = util.NewFullPath(resp.Directory, message.OldEntry.Name)
 			glog.V(4).Infof("deleting %v", oldPath)
@@ -37,7 +37,7 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 			}
 			key := util.NewFullPath(dir, message.NewEntry.Name)
 			glog.V(4).Infof("creating %v", key)
-			newEntry = filer2.FromPbEntry(dir, message.NewEntry)
+			newEntry = filer.FromPbEntry(dir, message.NewEntry)
 		}
 		return mc.AtomicUpdateEntry(context.Background(), oldPath, newEntry)
 	}

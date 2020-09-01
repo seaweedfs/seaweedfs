@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
 	"github.com/chrislusf/seaweedfs/weed/util/log_buffer"
@@ -59,7 +59,7 @@ func (tm *TopicManager) buildLogBuffer(tl *TopicControl, tp TopicPartition, topi
 		startTime, stopTime = startTime.UTC(), stopTime.UTC()
 		targetFile := fmt.Sprintf(
 			"%s/%s/%s/%04d-%02d-%02d/%02d-%02d.part%02d",
-			filer2.TopicsDir, tp.Namespace, tp.Topic,
+			filer.TopicsDir, tp.Namespace, tp.Topic,
 			startTime.Year(), startTime.Month(), startTime.Day(), startTime.Hour(), startTime.Minute(),
 			tp.Partition,
 		)

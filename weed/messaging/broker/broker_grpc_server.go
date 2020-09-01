@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
 )
@@ -29,9 +29,9 @@ func (broker *MessageBroker) GetTopicConfiguration(c context.Context, request *m
 }
 
 func genTopicDir(namespace, topic string) string {
-	return fmt.Sprintf("%s/%s/%s", filer2.TopicsDir, namespace, topic)
+	return fmt.Sprintf("%s/%s/%s", filer.TopicsDir, namespace, topic)
 }
 
 func genTopicDirEntry(namespace, topic string) (dir, entry string) {
-	return fmt.Sprintf("%s/%s", filer2.TopicsDir, namespace), topic
+	return fmt.Sprintf("%s/%s", filer.TopicsDir, namespace), topic
 }

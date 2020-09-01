@@ -10,7 +10,7 @@ import (
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -33,7 +33,7 @@ type File struct {
 	dir            *Dir
 	wfs            *WFS
 	entry          *filer_pb.Entry
-	entryViewCache []filer2.VisibleInterval
+	entryViewCache []filer.VisibleInterval
 	isOpen         int
 	reader         io.ReaderAt
 	dirtyMetadata  bool
@@ -56,7 +56,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Inode = file.fullpath().AsInode()
 	attr.Valid = time.Second
 	attr.Mode = os.FileMode(file.entry.Attributes.FileMode)
-	attr.Size = filer2.FileSize(file.entry)
+	attr.Size = filer.FileSize(file.entry)
 	if file.isOpen > 0 {
 		attr.Size = file.entry.Attributes.FileSize
 		glog.V(4).Infof("file Attr %s, open:%v, size: %d", file.fullpath(), file.isOpen, attr.Size)
@@ -118,7 +118,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 	if req.Valid.Size() {
 
 		glog.V(4).Infof("%v file setattr set size=%v chunks=%d", file.fullpath(), req.Size, len(file.entry.Chunks))
-		if req.Size < filer2.FileSize(file.entry) {
+		if req.Size < filer.FileSize(file.entry) {
 			// fmt.Printf("truncate %v \n", fullPath)
 			var chunks []*filer_pb.FileChunk
 			var truncatedChunks []*filer_pb.FileChunk
@@ -273,7 +273,7 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 	})
 
 	for _, chunk := range chunks {
-		file.entryViewCache = filer2.MergeIntoVisibles(file.entryViewCache, chunk)
+		file.entryViewCache = filer.MergeIntoVisibles(file.entryViewCache, chunk)
 	}
 
 	file.reader = nil
@@ -285,7 +285,7 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 
 func (file *File) setEntry(entry *filer_pb.Entry) {
 	file.entry = entry
-	file.entryViewCache, _ = filer2.NonOverlappingVisibleIntervals(filer2.LookupFn(file.wfs), file.entry.Chunks)
+	file.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(filer.LookupFn(file.wfs), file.entry.Chunks)
 	file.reader = nil
 }
 
@@ -305,7 +305,7 @@ func (file *File) saveEntry() error {
 			return fuse.EIO
 		}
 
-		file.wfs.metaCache.UpdateEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
+		file.wfs.metaCache.UpdateEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
 
 		return nil
 	})

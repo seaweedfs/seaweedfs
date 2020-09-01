@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -86,7 +86,7 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 		return nil, nil, err
 	}
 
-	fileChunks, replyerr = filer2.MaybeManifestize(fs.saveAsChunk(replication, collection, dataCenter, ttlString, fsync), fileChunks)
+	fileChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(replication, collection, dataCenter, ttlString, fsync), fileChunks)
 	if replyerr != nil {
 		glog.V(0).Infof("manifestize %s: %v", r.RequestURI, replyerr)
 		return
@@ -108,7 +108,7 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 		return nil, nil, err
 	}
 
-	fileChunks, replyerr = filer2.MaybeManifestize(fs.saveAsChunk(replication, collection, dataCenter, ttlString, fsync), fileChunks)
+	fileChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(replication, collection, dataCenter, ttlString, fsync), fileChunks)
 	if replyerr != nil {
 		glog.V(0).Infof("manifestize %s: %v", r.RequestURI, replyerr)
 		return
@@ -149,9 +149,9 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	}
 
 	glog.V(4).Infoln("saving", path)
-	entry := &filer2.Entry{
+	entry := &filer.Entry{
 		FullPath: util.FullPath(path),
-		Attr: filer2.Attr{
+		Attr: filer.Attr{
 			Mtime:       time.Now(),
 			Crtime:      crTime,
 			Mode:        os.FileMode(mode),
@@ -236,7 +236,7 @@ func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *ht
 	return uploadResult, err
 }
 
-func (fs *FilerServer) saveAsChunk(replication string, collection string, dataCenter string, ttlString string, fsync bool) filer2.SaveDataAsChunkFunctionType {
+func (fs *FilerServer) saveAsChunk(replication string, collection string, dataCenter string, ttlString string, fsync bool) filer.SaveDataAsChunkFunctionType {
 
 	return func(reader io.Reader, name string, offset int64) (*filer_pb.FileChunk, string, string, error) {
 		// assign one file id for one chunk

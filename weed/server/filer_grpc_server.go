@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -34,7 +34,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 		Entry: &filer_pb.Entry{
 			Name:        req.Name,
 			IsDirectory: entry.IsDirectory(),
-			Attributes:  filer2.EntryAttributeToPb(entry),
+			Attributes:  filer.EntryAttributeToPb(entry),
 			Chunks:      entry.Chunks,
 			Extended:    entry.Extended,
 		},
@@ -50,7 +50,7 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 		limit = fs.option.DirListingLimit
 	}
 
-	paginationLimit := filer2.PaginationSize
+	paginationLimit := filer.PaginationSize
 	if limit < paginationLimit {
 		paginationLimit = limit
 	}
@@ -78,7 +78,7 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 					Name:        entry.Name(),
 					IsDirectory: entry.IsDirectory(),
 					Chunks:      entry.Chunks,
-					Attributes:  filer2.EntryAttributeToPb(entry),
+					Attributes:  filer.EntryAttributeToPb(entry),
 					Extended:    entry.Extended,
 				},
 			}); err != nil {
@@ -160,9 +160,9 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		return
 	}
 
-	createErr := fs.filer.CreateEntry(ctx, &filer2.Entry{
+	createErr := fs.filer.CreateEntry(ctx, &filer.Entry{
 		FullPath: util.JoinPath(req.Directory, req.Entry.Name),
-		Attr:     filer2.PbToEntryAttribute(req.Entry.Attributes),
+		Attr:     filer.PbToEntryAttribute(req.Entry.Attributes),
 		Chunks:   chunks,
 	}, req.OExcl, req.IsFromOtherCluster, req.Signatures)
 
@@ -191,7 +191,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("UpdateEntry cleanupChunks %s: %v", fullpath, err2)
 	}
 
-	newEntry := &filer2.Entry{
+	newEntry := &filer.Entry{
 		FullPath: util.JoinPath(req.Directory, req.Entry.Name),
 		Attr:     entry.Attr,
 		Extended: req.Entry.Extended,
@@ -218,7 +218,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 
 	}
 
-	if filer2.EqualEntry(entry, newEntry) {
+	if filer.EqualEntry(entry, newEntry) {
 		return &filer_pb.UpdateEntryResponse{}, err
 	}
 
@@ -233,23 +233,23 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	return &filer_pb.UpdateEntryResponse{}, err
 }
 
-func (fs *FilerServer) cleanupChunks(existingEntry *filer2.Entry, newEntry *filer_pb.Entry) (chunks, garbage []*filer_pb.FileChunk, err error) {
+func (fs *FilerServer) cleanupChunks(existingEntry *filer.Entry, newEntry *filer_pb.Entry) (chunks, garbage []*filer_pb.FileChunk, err error) {
 
 	// remove old chunks if not included in the new ones
 	if existingEntry != nil {
-		garbage, err = filer2.MinusChunks(fs.lookupFileId, existingEntry.Chunks, newEntry.Chunks)
+		garbage, err = filer.MinusChunks(fs.lookupFileId, existingEntry.Chunks, newEntry.Chunks)
 		if err != nil {
 			return newEntry.Chunks, nil, fmt.Errorf("MinusChunks: %v", err)
 		}
 	}
 
 	// files with manifest chunks are usually large and append only, skip calculating covered chunks
-	manifestChunks, nonManifestChunks := filer2.SeparateManifestChunks(newEntry.Chunks)
+	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(newEntry.Chunks)
 
-	chunks, coveredChunks := filer2.CompactFileChunks(fs.lookupFileId, nonManifestChunks)
+	chunks, coveredChunks := filer.CompactFileChunks(fs.lookupFileId, nonManifestChunks)
 	garbage = append(garbage, coveredChunks...)
 
-	chunks, err = filer2.MaybeManifestize(fs.saveAsChunk(
+	chunks, err = filer.MaybeManifestize(fs.saveAsChunk(
 		newEntry.Attributes.Replication,
 		newEntry.Attributes.Collection,
 		"",
@@ -273,9 +273,9 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	var offset int64 = 0
 	entry, err := fs.filer.FindEntry(ctx, util.FullPath(fullpath))
 	if err == filer_pb.ErrNotFound {
-		entry = &filer2.Entry{
+		entry = &filer.Entry{
 			FullPath: fullpath,
-			Attr: filer2.Attr{
+			Attr: filer.Attr{
 				Crtime: time.Now(),
 				Mtime:  time.Now(),
 				Mode:   os.FileMode(0644),
@@ -284,7 +284,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 			},
 		}
 	} else {
-		offset = int64(filer2.TotalSize(entry.Chunks))
+		offset = int64(filer.TotalSize(entry.Chunks))
 	}
 
 	for _, chunk := range req.Chunks {
@@ -294,7 +294,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 
 	entry.Chunks = append(entry.Chunks, req.Chunks...)
 
-	entry.Chunks, err = filer2.MaybeManifestize(fs.saveAsChunk(
+	entry.Chunks, err = filer.MaybeManifestize(fs.saveAsChunk(
 		entry.Replication,
 		entry.Collection,
 		"",

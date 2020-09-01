@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -43,7 +43,7 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 	return &filer_pb.AtomicRenameEntryResponse{}, nil
 }
 
-func (fs *FilerServer) moveEntry(ctx context.Context, oldParent util.FullPath, entry *filer2.Entry, newParent util.FullPath, newName string, events *MoveEvents) error {
+func (fs *FilerServer) moveEntry(ctx context.Context, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, events *MoveEvents) error {
 
 	if err := fs.moveSelfEntry(ctx, oldParent, entry, newParent, newName, events, func() error {
 		if entry.IsDirectory() {
@@ -59,7 +59,7 @@ func (fs *FilerServer) moveEntry(ctx context.Context, oldParent util.FullPath, e
 	return nil
 }
 
-func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, oldParent util.FullPath, entry *filer2.Entry, newParent util.FullPath, newName string, events *MoveEvents) error {
+func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, events *MoveEvents) error {
 
 	currentDirPath := oldParent.Child(entry.Name())
 	newDirPath := newParent.Child(newName)
@@ -92,7 +92,7 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, oldParent util.
 	return nil
 }
 
-func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPath, entry *filer2.Entry, newParent util.FullPath, newName string, events *MoveEvents,
+func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, events *MoveEvents,
 	moveFolderSubEntries func() error) error {
 
 	oldPath, newPath := oldParent.Child(entry.Name()), newParent.Child(newName)
@@ -105,7 +105,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPat
 	}
 
 	// add to new directory
-	newEntry := &filer2.Entry{
+	newEntry := &filer.Entry{
 		FullPath: newPath,
 		Attr:     entry.Attr,
 		Chunks:   entry.Chunks,
@@ -136,6 +136,6 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPat
 }
 
 type MoveEvents struct {
-	oldEntries []*filer2.Entry
-	newEntries []*filer2.Entry
+	oldEntries []*filer.Entry
+	newEntries []*filer.Entry
 }
