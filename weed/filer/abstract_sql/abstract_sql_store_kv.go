@@ -7,6 +7,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"strings"
 )
 
 func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
@@ -15,14 +16,9 @@ func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []by
 
 	res, err := store.getTxOrDB(ctx).ExecContext(ctx, store.SqlInsert, dirHash, name, dirStr, value)
 	if err != nil {
-		return fmt.Errorf("kv insert: %s", err)
-	}
-
-	// TODO maybe it will throw error before coming here?
-
-	affectedRows, err := res.RowsAffected()
-	if err == nil && affectedRows > 0 {
-		return nil
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+			return fmt.Errorf("kv insert: %s", err)
+		}
 	}
 
 	// now the insert failed possibly due to duplication constraints
