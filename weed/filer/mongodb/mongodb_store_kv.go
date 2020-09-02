@@ -5,7 +5,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
 )
 
-
 func (store *MongodbStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
 	return filer.ErrKvNotImplemented
 }

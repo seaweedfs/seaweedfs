@@ -22,8 +22,8 @@ const (
 )
 
 var (
-	OS_UID                              = uint32(os.Getuid())
-	OS_GID                              = uint32(os.Getgid())
+	OS_UID = uint32(os.Getuid())
+	OS_GID = uint32(os.Getgid())
 )
 
 type Filer struct {
