@@ -2,7 +2,6 @@ package filer
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -25,7 +24,6 @@ const (
 var (
 	OS_UID                              = uint32(os.Getuid())
 	OS_GID                              = uint32(os.Getgid())
-	ErrUnsupportedListDirectoryPrefixed = errors.New("UNSUPPORTED")
 )
 
 type Filer struct {

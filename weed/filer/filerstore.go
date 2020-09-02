@@ -2,12 +2,19 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
+)
+
+var (
+	ErrUnsupportedListDirectoryPrefixed = errors.New("unsupported directory prefix listing")
+	ErrKvNotImplemented                 = errors.New("kv not implemented yet")
+	ErrKvNotFound                       = errors.New("kv: not found")
 )
 
 type FilerStore interface {
@@ -27,6 +34,10 @@ type FilerStore interface {
 	BeginTransaction(ctx context.Context) (context.Context, error)
 	CommitTransaction(ctx context.Context) error
 	RollbackTransaction(ctx context.Context) error
+
+	KvPut(ctx context.Context, key []byte, value []byte) (err error)
+	KvGet(ctx context.Context, key []byte) (value []byte, err error)
+	KvDelete(ctx context.Context, key []byte) (err error)
 
 	Shutdown()
 }
@@ -205,4 +216,14 @@ func (fsw *FilerStoreWrapper) RollbackTransaction(ctx context.Context) error {
 
 func (fsw *FilerStoreWrapper) Shutdown() {
 	fsw.ActualStore.Shutdown()
+}
+
+func (fsw *FilerStoreWrapper) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
+	return fsw.ActualStore.KvPut(ctx, key, value)
+}
+func (fsw *FilerStoreWrapper) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
+	return fsw.ActualStore.KvGet(ctx, key)
+}
+func (fsw *FilerStoreWrapper) KvDelete(ctx context.Context, key []byte) (err error) {
+	return fsw.ActualStore.KvDelete(ctx, key)
 }
