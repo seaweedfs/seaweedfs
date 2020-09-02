@@ -70,7 +70,7 @@ func (store *AbstractSqlStore) KvDelete(ctx context.Context, key []byte) (err er
 
 	_, err = res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("kv delete %s but no rows affected: %s", err)
+		return fmt.Errorf("kv delete no rows affected: %s", err)
 	}
 
 	return nil
