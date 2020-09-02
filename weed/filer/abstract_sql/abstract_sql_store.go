@@ -118,6 +118,7 @@ func (store *AbstractSqlStore) FindEntry(ctx context.Context, fullpath util.Full
 	row := store.getTxOrDB(ctx).QueryRowContext(ctx, store.SqlFind, util.HashStringToLong(dir), name, dir)
 	var data []byte
 	if err := row.Scan(&data); err != nil {
+		glog.Errorf("find %s: %v", fullpath, err)
 		return nil, filer_pb.ErrNotFound
 	}
 
