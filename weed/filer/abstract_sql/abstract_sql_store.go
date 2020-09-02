@@ -8,6 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"strings"
 )
 
 type AbstractSqlStore struct {
@@ -68,12 +69,9 @@ func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer.Ent
 
 	res, err := store.getTxOrDB(ctx).ExecContext(ctx, store.SqlInsert, util.HashStringToLong(dir), name, dir, meta)
 	if err != nil {
-		return fmt.Errorf("insert %s: %s", entry.FullPath, err)
-	}
-
-	affectedRows, err := res.RowsAffected()
-	if err == nil && affectedRows > 0 {
-		return nil
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+			return fmt.Errorf("kv insert: %s", err)
+		}
 	}
 
 	// now the insert failed possibly due to duplication constraints
