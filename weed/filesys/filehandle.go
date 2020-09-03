@@ -265,6 +265,9 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 		fh.f.entry.Chunks = append(chunks, manifestChunks...)
 		fh.f.entryViewCache = nil
 
+		fh.f.wfs.mapPbIdFromLocalToFiler(request.Entry)
+		defer fh.f.wfs.mapPbIdFromFilerToLocal(request.Entry)
+
 		if err := filer_pb.CreateEntry(client, request); err != nil {
 			glog.Errorf("fh flush create %s: %v", fh.f.fullpath(), err)
 			return fmt.Errorf("fh flush create %s: %v", fh.f.fullpath(), err)

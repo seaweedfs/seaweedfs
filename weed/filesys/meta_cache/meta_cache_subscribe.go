@@ -39,7 +39,7 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 			glog.V(4).Infof("creating %v", key)
 			newEntry = filer.FromPbEntry(dir, message.NewEntry)
 		}
-		return mc.AtomicUpdateEntry(context.Background(), oldPath, newEntry)
+		return mc.AtomicUpdateEntryFromFiler(context.Background(), oldPath, newEntry)
 	}
 
 	for {

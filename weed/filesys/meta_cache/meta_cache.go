@@ -20,12 +20,14 @@ type MetaCache struct {
 	actualStore filer.FilerStore
 	sync.RWMutex
 	visitedBoundary *bounded_tree.BoundedTree
+	uidGidMapper    *UidGidMapper
 }
 
-func NewMetaCache(dbFolder string) *MetaCache {
+func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper) *MetaCache {
 	return &MetaCache{
 		actualStore:     openMetaStore(dbFolder),
 		visitedBoundary: bounded_tree.NewBoundedTree(),
+		uidGidMapper:    uidGidMapper,
 	}
 }
 
@@ -58,7 +60,7 @@ func (mc *MetaCache) doInsertEntry(ctx context.Context, entry *filer.Entry) erro
 	return mc.actualStore.InsertEntry(ctx, entry)
 }
 
-func (mc *MetaCache) AtomicUpdateEntry(ctx context.Context, oldPath util.FullPath, newEntry *filer.Entry) error {
+func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath util.FullPath, newEntry *filer.Entry) error {
 	mc.Lock()
 	defer mc.Unlock()
 
@@ -103,6 +105,7 @@ func (mc *MetaCache) FindEntry(ctx context.Context, fp util.FullPath) (entry *fi
 	if err != nil {
 		return nil, err
 	}
+	mc.mapIdFromFilerToLocal(entry)
 	filer_pb.AfterEntryDeserialization(entry.Chunks)
 	return
 }
@@ -122,6 +125,7 @@ func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.Full
 		return nil, err
 	}
 	for _, entry := range entries {
+		mc.mapIdFromFilerToLocal(entry)
 		filer_pb.AfterEntryDeserialization(entry.Chunks)
 	}
 	return entries, err
@@ -131,4 +135,8 @@ func (mc *MetaCache) Shutdown() {
 	mc.Lock()
 	defer mc.Unlock()
 	mc.actualStore.Shutdown()
+}
+
+func (mc *MetaCache) mapIdFromFilerToLocal(entry *filer.Entry) {
+	entry.Attr.Uid, entry.Attr.Gid = mc.uidGidMapper.FilerToLocal(entry.Attr.Uid, entry.Attr.Gid)
 }

@@ -20,6 +20,8 @@ type MountOptions struct {
 	umaskString                 *string
 	nonempty                    *bool
 	outsideContainerClusterMode *bool
+	uidMap                      *string
+	gidMap                      *string
 }
 
 var (
@@ -47,6 +49,8 @@ func init() {
 	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
 	mountMemProfile = cmdMount.Flag.String("memprofile", "", "memory profile output file")
 	mountOptions.outsideContainerClusterMode = cmdMount.Flag.Bool("outsideContainerClusterMode", false, "allows other users to access the file system")
+	mountOptions.uidMap = cmdMount.Flag.String("map.uid", "", "map local uid to uid on filer, comma-separated <local_uid>:<filer_uid>")
+	mountOptions.gidMap = cmdMount.Flag.String("map.gid", "", "map local gid to gid on filer, comma-separated <local_gid>:<filer_gid>")
 }
 
 var cmdMount = &Command{

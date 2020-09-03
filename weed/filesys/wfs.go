@@ -45,7 +45,7 @@ type Option struct {
 
 	OutsideContainerClusterMode bool // whether the mount runs outside SeaweedFS containers
 	Cipher                      bool // whether encrypt data on volume server
-
+	UidGidMapper                *meta_cache.UidGidMapper
 }
 
 var _ = fs.FS(&WFS{})
@@ -92,7 +92,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, cacheDir, option.CacheSizeMB)
 	}
 
-	wfs.metaCache = meta_cache.NewMetaCache(path.Join(cacheDir, "meta"))
+	wfs.metaCache = meta_cache.NewMetaCache(path.Join(cacheDir, "meta"), option.UidGidMapper)
 	startTime := time.Now()
 	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
 	grace.OnInterrupt(func() {
@@ -205,4 +205,11 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 	resp.Frsize = uint32(blockSize)
 
 	return nil
+}
+
+func (wfs *WFS) mapPbIdFromFilerToLocal(entry *filer_pb.Entry) {
+	entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
+}
+func (wfs *WFS) mapPbIdFromLocalToFiler(entry *filer_pb.Entry) {
+	entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.LocalToFiler(entry.Attributes.Uid, entry.Attributes.Gid)
 }
