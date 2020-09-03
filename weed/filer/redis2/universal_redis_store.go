@@ -38,6 +38,10 @@ func (store *UniversalRedis2Store) InsertEntry(ctx context.Context, entry *filer
 		return fmt.Errorf("encoding %s %+v: %v", entry.FullPath, entry.Attr, err)
 	}
 
+	if len(entry.Chunks) > 50 {
+		value = util.MaybeGzipData(value)
+	}
+
 	if err = store.Client.Set(string(entry.FullPath), value, time.Duration(entry.TtlSec)*time.Second).Err(); err != nil {
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
 	}
@@ -71,7 +75,7 @@ func (store *UniversalRedis2Store) FindEntry(ctx context.Context, fullpath util.
 	entry = &filer.Entry{
 		FullPath: fullpath,
 	}
-	err = entry.DecodeAttributesAndChunks([]byte(data))
+	err = entry.DecodeAttributesAndChunks(util.MaybeDecompressData([]byte(data)))
 	if err != nil {
 		return entry, fmt.Errorf("decode %s : %v", entry.FullPath, err)
 	}

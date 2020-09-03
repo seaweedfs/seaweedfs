@@ -70,8 +70,10 @@ func (c *commandFsMetaCat) Do(args []string, commandEnv *CommandEnv, writer io.W
 
 		fmt.Fprintf(writer, "%s\n", text)
 
-		bytes, err := proto.Marshal(respLookupEntry.Entry)
-		fmt.Fprintf(writer, "chunks %d meta size: %d\n", len(respLookupEntry.Entry.Chunks), len(bytes))
+		bytes, _ := proto.Marshal(respLookupEntry.Entry)
+		gzippedBytes, _ := util.GzipData(bytes)
+		zstdBytes, _ := util.ZstdData(bytes)
+		fmt.Fprintf(writer, "chunks %d meta size: %d gzip:%d zstd:%d\n", len(respLookupEntry.Entry.Chunks), len(bytes), len(gzippedBytes), len(zstdBytes))
 
 		return nil
 

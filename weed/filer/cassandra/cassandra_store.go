@@ -60,6 +60,10 @@ func (store *CassandraStore) InsertEntry(ctx context.Context, entry *filer.Entry
 		return fmt.Errorf("encode %s: %s", entry.FullPath, err)
 	}
 
+	if len(entry.Chunks) > 50 {
+		meta = util.MaybeGzipData(meta)
+	}
+
 	if err := store.session.Query(
 		"INSERT INTO filemeta (directory,name,meta) VALUES(?,?,?) USING TTL ? ",
 		dir, name, meta, entry.TtlSec).Exec(); err != nil {
@@ -93,7 +97,7 @@ func (store *CassandraStore) FindEntry(ctx context.Context, fullpath util.FullPa
 	entry = &filer.Entry{
 		FullPath: fullpath,
 	}
-	err = entry.DecodeAttributesAndChunks(data)
+	err = entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data))
 	if err != nil {
 		return entry, fmt.Errorf("decode %s : %v", entry.FullPath, err)
 	}
@@ -144,7 +148,7 @@ func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, fullpath 
 		entry := &filer.Entry{
 			FullPath: util.NewFullPath(string(fullpath), name),
 		}
-		if decodeErr := entry.DecodeAttributesAndChunks(data); decodeErr != nil {
+		if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); decodeErr != nil {
 			err = decodeErr
 			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
 			break

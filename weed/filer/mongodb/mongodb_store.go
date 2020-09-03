@@ -101,6 +101,10 @@ func (store *MongodbStore) InsertEntry(ctx context.Context, entry *filer.Entry) 
 		return fmt.Errorf("encode %s: %s", entry.FullPath, err)
 	}
 
+	if len(entry.Chunks) > 50 {
+		meta = util.MaybeGzipData(meta)
+	}
+
 	c := store.connect.Database(store.database).Collection(store.collectionName)
 
 	_, err = c.InsertOne(ctx, Model{
@@ -140,7 +144,7 @@ func (store *MongodbStore) FindEntry(ctx context.Context, fullpath util.FullPath
 		FullPath: fullpath,
 	}
 
-	err = entry.DecodeAttributesAndChunks(data.Meta)
+	err = entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data.Meta))
 	if err != nil {
 		return entry, fmt.Errorf("decode %s : %v", entry.FullPath, err)
 	}
@@ -197,7 +201,7 @@ func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, fullpath ut
 		entry := &filer.Entry{
 			FullPath: util.NewFullPath(string(fullpath), data.Name),
 		}
-		if decodeErr := entry.DecodeAttributesAndChunks(data.Meta); decodeErr != nil {
+		if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data.Meta)); decodeErr != nil {
 			err = decodeErr
 			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
 			break

@@ -12,15 +12,44 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+var(
+	UnsupportedCompression = fmt.Errorf("unsupported compression")
+)
+
+func MaybeGzipData(input []byte) ([]byte) {
+	if IsGzippedContent(input) {
+		return input
+	}
+	gzipped, err := GzipData(input)
+	if err != nil {
+		return input
+	}
+	if len(gzipped) * 10 > len(input) * 9 {
+		return input
+	}
+	return gzipped
+}
+
+func MaybeDecompressData(input []byte) ([]byte) {
+	uncompressed, err := DecompressData(input)
+	if err != nil {
+		if err != UnsupportedCompression {
+			glog.Errorf("decompressed data: %v", err)
+		}
+		return input
+	}
+	return uncompressed
+}
+
 func GzipData(input []byte) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	w, _ := gzip.NewWriterLevel(buf, flate.BestSpeed)
 	if _, err := w.Write(input); err != nil {
-		glog.V(2).Infoln("error compressing data:", err)
+		glog.V(2).Infof("error gzip data: %v", err)
 		return nil, err
 	}
 	if err := w.Close(); err != nil {
-		glog.V(2).Infoln("error closing compressed data:", err)
+		glog.V(2).Infof("error closing gzipped data: %v", err)
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -39,7 +68,7 @@ func DecompressData(input []byte) ([]byte, error) {
 	if IsZstdContent(input) {
 		return unzstdData(input)
 	}
-	return input, fmt.Errorf("unsupported compression")
+	return input, UnsupportedCompression
 }
 
 func ungzipData(input []byte) ([]byte, error) {
@@ -48,7 +77,7 @@ func ungzipData(input []byte) ([]byte, error) {
 	defer r.Close()
 	output, err := ioutil.ReadAll(r)
 	if err != nil {
-		glog.V(2).Infoln("error uncompressing data:", err)
+		glog.V(2).Infof("error ungzip data: %v", err)
 	}
 	return output, err
 }

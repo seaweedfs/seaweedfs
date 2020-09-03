@@ -67,6 +67,10 @@ func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer.Ent
 		return fmt.Errorf("encode %s: %s", entry.FullPath, err)
 	}
 
+	if len(entry.Chunks) > 50 {
+		meta = util.MaybeGzipData(meta)
+	}
+
 	res, err := store.getTxOrDB(ctx).ExecContext(ctx, store.SqlInsert, util.HashStringToLong(dir), name, dir, meta)
 	if err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
@@ -126,7 +130,7 @@ func (store *AbstractSqlStore) FindEntry(ctx context.Context, fullpath util.Full
 	entry := &filer.Entry{
 		FullPath: fullpath,
 	}
-	if err := entry.DecodeAttributesAndChunks(data); err != nil {
+	if err := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
 		return entry, fmt.Errorf("decode %s : %v", entry.FullPath, err)
 	}
 
@@ -188,7 +192,7 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 		entry := &filer.Entry{
 			FullPath: util.NewFullPath(string(fullpath), name),
 		}
-		if err = entry.DecodeAttributesAndChunks(data); err != nil {
+		if err = entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
 			glog.V(0).Infof("scan decode %s : %v", entry.FullPath, err)
 			return nil, fmt.Errorf("scan decode %s : %v", entry.FullPath, err)
 		}

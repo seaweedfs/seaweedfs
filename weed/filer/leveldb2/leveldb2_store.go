@@ -85,6 +85,10 @@ func (store *LevelDB2Store) InsertEntry(ctx context.Context, entry *filer.Entry)
 		return fmt.Errorf("encoding %s %+v: %v", entry.FullPath, entry.Attr, err)
 	}
 
+	if len(entry.Chunks) > 50 {
+		value = weed_util.MaybeGzipData(value)
+	}
+
 	err = store.dbs[partitionId].Put(key, value, nil)
 
 	if err != nil {
@@ -117,7 +121,7 @@ func (store *LevelDB2Store) FindEntry(ctx context.Context, fullpath weed_util.Fu
 	entry = &filer.Entry{
 		FullPath: fullpath,
 	}
-	err = entry.DecodeAttributesAndChunks(data)
+	err = entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(data))
 	if err != nil {
 		return entry, fmt.Errorf("decode %s : %v", entry.FullPath, err)
 	}
@@ -199,8 +203,7 @@ func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, fullpath w
 		}
 
 		// println("list", entry.FullPath, "chunks", len(entry.Chunks))
-
-		if decodeErr := entry.DecodeAttributesAndChunks(iter.Value()); decodeErr != nil {
+		if decodeErr := entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(iter.Value())); decodeErr != nil {
 			err = decodeErr
 			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
 			break
