@@ -128,7 +128,7 @@ func (store *MongodbStore) FindEntry(ctx context.Context, fullpath util.FullPath
 	var where = bson.M{"directory": dir, "name": name}
 	err = store.connect.Database(store.database).Collection(store.collectionName).FindOne(ctx, where).Decode(&data)
 	if err != mongo.ErrNoDocuments && err != nil {
-		glog.Error("find %s: %v", fullpath, err)
+		glog.Errorf("find %s: %v", fullpath, err)
 		return nil, filer_pb.ErrNotFound
 	}
 
