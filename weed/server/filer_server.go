@@ -20,6 +20,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/cassandra"
+	_ "github.com/chrislusf/seaweedfs/weed/filer2/elastic/v7"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/etcd"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/leveldb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer2/leveldb2"
