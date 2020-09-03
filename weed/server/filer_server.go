@@ -20,6 +20,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/cassandra"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/elastic/v7"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/etcd"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/leveldb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/leveldb2"
@@ -28,7 +29,6 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer/postgres"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis2"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/elastic/v7"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/aws_sqs"

@@ -36,6 +36,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway v1.11.0 // indirect
 	github.com/hashicorp/golang-lru v0.5.3 // indirect
 	github.com/jcmturner/gofork v1.0.0 // indirect
+	github.com/json-iterator/go v1.1.10
 	github.com/karlseguin/ccache v2.0.3+incompatible
 	github.com/karlseguin/expect v1.0.1 // indirect
 	github.com/klauspost/compress v1.10.9
@@ -48,6 +49,7 @@ require (
 	github.com/mattn/go-ieproxy v0.0.0-20190805055040-f9202b1cfdeb // indirect
 	github.com/mattn/go-runewidth v0.0.4 // indirect
 	github.com/nats-io/nats-server/v2 v2.0.4 // indirect
+	github.com/olivere/elastic/v7 v7.0.19
 	github.com/onsi/ginkgo v1.10.1 // indirect
 	github.com/onsi/gomega v1.7.0 // indirect
 	github.com/peterh/liner v1.1.0
@@ -87,8 +89,6 @@ require (
 	gopkg.in/jcmturner/goidentity.v3 v3.0.0 // indirect
 	gopkg.in/jcmturner/gokrb5.v7 v7.3.0 // indirect
 	gopkg.in/karlseguin/expect.v1 v1.0.1 // indirect
-	github.com/json-iterator/go v1.1.10
-	github.com/olivere/elastic/v7 v7.0.19
 )
 
 replace go.etcd.io/etcd => go.etcd.io/etcd v0.5.0-alpha.5.0.20200425165423-262c93980547

@@ -7,7 +7,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	weed_util "github.com/chrislusf/seaweedfs/weed/util"
@@ -22,11 +22,11 @@ var (
 
 type ESEntry struct {
 	ParentId string `json:"ParentId"`
-	Entry    *filer2.Entry
+	Entry    *filer.Entry
 }
 
 func init() {
-	filer2.Stores = append(filer2.Stores, &ElasticStore{})
+	filer.Stores = append(filer.Stores, &ElasticStore{})
 }
 
 type ElasticStore struct {
@@ -66,7 +66,20 @@ func (store *ElasticStore) CommitTransaction(ctx context.Context) error {
 func (store *ElasticStore) RollbackTransaction(ctx context.Context) error {
 	return nil
 }
-func (store *ElasticStore) InsertEntry(ctx context.Context, entry *filer2.Entry) (err error) {
+func (store *ElasticStore) KvDelete(ctx context.Context, key []byte) (err error) {
+	return filer.ErrKvNotImplemented
+}
+func (store *ElasticStore) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
+	return []byte(""), filer.ErrKvNotImplemented
+}
+func (store *ElasticStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
+	return filer.ErrKvNotImplemented
+}
+func (store *ElasticStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, err error) {
+	return nil, filer.ErrUnsupportedListDirectoryPrefixed
+}
+
+func (store *ElasticStore) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
 	index := getIndex(entry.FullPath)
 	dir, _ := entry.FullPath.DirAndName()
 	id := fmt.Sprintf("%x", md5.Sum([]byte(entry.FullPath)))
@@ -91,10 +104,10 @@ func (store *ElasticStore) InsertEntry(ctx context.Context, entry *filer2.Entry)
 	}
 	return nil
 }
-func (store *ElasticStore) UpdateEntry(ctx context.Context, entry *filer2.Entry) (err error) {
+func (store *ElasticStore) UpdateEntry(ctx context.Context, entry *filer.Entry) (err error) {
 	return store.InsertEntry(ctx, entry)
 }
-func (store *ElasticStore) FindEntry(ctx context.Context, fullpath weed_util.FullPath) (entry *filer2.Entry, err error) {
+func (store *ElasticStore) FindEntry(ctx context.Context, fullpath weed_util.FullPath) (entry *filer.Entry, err error) {
 	index := getIndex(fullpath)
 	id := fmt.Sprintf("%x", md5.Sum([]byte(fullpath)))
 	searchResult, err := store.client.Get().
@@ -108,7 +121,7 @@ func (store *ElasticStore) FindEntry(ctx context.Context, fullpath weed_util.Ful
 	if searchResult != nil && searchResult.Found {
 		esEntry := &ESEntry{
 			ParentId: "",
-			Entry:    &filer2.Entry{},
+			Entry:    &filer.Entry{},
 		}
 		err := jsoniter.Unmarshal(searchResult.Source, esEntry)
 		return esEntry.Entry, err
@@ -157,14 +170,14 @@ func (store *ElasticStore) DeleteFolderChildren(ctx context.Context, fullpath we
 
 func (store *ElasticStore) ListDirectoryEntries(
 	ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int,
-) (entries []*filer2.Entry, err error) {
+) (entries []*filer.Entry, err error) {
 	if string(fullpath) == "/" {
 		return store.listRootDirectoryEntries(ctx, startFileName, inclusive, limit)
 	}
 	return store.listDirectoryEntries(ctx, fullpath, startFileName, inclusive, limit)
 }
 
-func (store *ElasticStore) listRootDirectoryEntries(ctx context.Context, startFileName string, inclusive bool, limit int) (entries []*filer2.Entry, err error) {
+func (store *ElasticStore) listRootDirectoryEntries(ctx context.Context, startFileName string, inclusive bool, limit int) (entries []*filer.Entry, err error) {
 	indexResult, err := store.client.CatIndices().Do(context.Background())
 	if err != nil {
 		glog.Errorf("list indices %v.", err)
@@ -191,7 +204,7 @@ func (store *ElasticStore) listRootDirectoryEntries(ctx context.Context, startFi
 
 func (store *ElasticStore) listDirectoryEntries(
 	ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int,
-) (entries []*filer2.Entry, err error) {
+) (entries []*filer.Entry, err error) {
 	first := true
 	index := getIndex(fullpath)
 	nextStart := ""
@@ -224,7 +237,7 @@ func (store *ElasticStore) listDirectoryEntries(
 		for _, hit := range result.Hits.Hits {
 			esEntry := &ESEntry{
 				ParentId: "",
-				Entry:    &filer2.Entry{},
+				Entry:    &filer.Entry{},
 			}
 			if err := jsoniter.Unmarshal(hit.Source, esEntry); err == nil {
 				limit--
