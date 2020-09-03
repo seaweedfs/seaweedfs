@@ -8,7 +8,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
@@ -147,9 +147,9 @@ func (broker *MessageBroker) readPersistedLogBuffer(tp *TopicPartition, startTim
 				return nil
 			}
 			// println("partition", tp.Partition, "processing", dayDir, "/", hourMinuteEntry.Name)
-			chunkedFileReader := filer2.NewChunkStreamReader(broker, hourMinuteEntry.Chunks)
+			chunkedFileReader := filer.NewChunkStreamReader(broker, hourMinuteEntry.Chunks)
 			defer chunkedFileReader.Close()
-			if _, err := filer2.ReadEachLogEntry(chunkedFileReader, sizeBuf, startTsNs, eachLogEntryFn); err != nil {
+			if _, err := filer.ReadEachLogEntry(chunkedFileReader, sizeBuf, startTsNs, eachLogEntryFn); err != nil {
 				chunkedFileReader.Close()
 				if err == io.EOF {
 					return err

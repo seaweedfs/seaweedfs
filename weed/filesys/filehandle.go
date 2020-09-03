@@ -13,7 +13,7 @@ import (
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
@@ -41,7 +41,7 @@ func newFileHandle(file *File, uid, gid uint32) *FileHandle {
 		Gid:        gid,
 	}
 	if fh.f.entry != nil {
-		fh.f.entry.Attributes.FileSize = filer2.FileSize(fh.f.entry)
+		fh.f.entry.Attributes.FileSize = filer.FileSize(fh.f.entry)
 	}
 
 	return fh
@@ -99,7 +99,7 @@ func (fh *FileHandle) readFromDirtyPages(buff []byte, startOffset int64) (maxSto
 
 func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
-	fileSize := int64(filer2.FileSize(fh.f.entry))
+	fileSize := int64(filer.FileSize(fh.f.entry))
 
 	if fileSize == 0 {
 		glog.V(1).Infof("empty fh %v", fh.f.fullpath())
@@ -108,7 +108,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 	var chunkResolveErr error
 	if fh.f.entryViewCache == nil {
-		fh.f.entryViewCache, chunkResolveErr = filer2.NonOverlappingVisibleIntervals(filer2.LookupFn(fh.f.wfs), fh.f.entry.Chunks)
+		fh.f.entryViewCache, chunkResolveErr = filer.NonOverlappingVisibleIntervals(filer.LookupFn(fh.f.wfs), fh.f.entry.Chunks)
 		if chunkResolveErr != nil {
 			return 0, fmt.Errorf("fail to resolve chunk manifest: %v", chunkResolveErr)
 		}
@@ -116,8 +116,8 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 	}
 
 	if fh.f.reader == nil {
-		chunkViews := filer2.ViewFromVisibleIntervals(fh.f.entryViewCache, 0, math.MaxInt64)
-		fh.f.reader = filer2.NewChunkReaderAtFromClient(fh.f.wfs, chunkViews, fh.f.wfs.chunkCache, fileSize)
+		chunkViews := filer.ViewFromVisibleIntervals(fh.f.entryViewCache, 0, math.MaxInt64)
+		fh.f.reader = filer.NewChunkReaderAtFromClient(fh.f.wfs, chunkViews, fh.f.wfs.chunkCache, fileSize)
 	}
 
 	totalRead, err := fh.f.reader.ReadAt(buff, offset)
@@ -254,10 +254,10 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 			glog.V(4).Infof("%s chunks %d: %v [%d,%d)", fh.f.fullpath(), i, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}
 
-		manifestChunks, nonManifestChunks := filer2.SeparateManifestChunks(fh.f.entry.Chunks)
+		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(fh.f.entry.Chunks)
 
-		chunks, _ := filer2.CompactFileChunks(filer2.LookupFn(fh.f.wfs), nonManifestChunks)
-		chunks, manifestErr := filer2.MaybeManifestize(fh.f.wfs.saveDataAsChunk(fh.f.dir.FullPath()), chunks)
+		chunks, _ := filer.CompactFileChunks(filer.LookupFn(fh.f.wfs), nonManifestChunks)
+		chunks, manifestErr := filer.MaybeManifestize(fh.f.wfs.saveDataAsChunk(fh.f.dir.FullPath()), chunks)
 		if manifestErr != nil {
 			// not good, but should be ok
 			glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
@@ -270,7 +270,7 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 			return fmt.Errorf("fh flush create %s: %v", fh.f.fullpath(), err)
 		}
 
-		fh.f.wfs.metaCache.InsertEntry(context.Background(), filer2.FromPbEntry(request.Directory, request.Entry))
+		fh.f.wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
 
 		return nil
 	})

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -139,8 +139,8 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 				contents = append(contents, ListEntry{
 					Key:          fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):],
 					LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
-					ETag:         "\"" + filer2.ETag(entry) + "\"",
-					Size:         int64(filer2.FileSize(entry)),
+					ETag:         "\"" + filer.ETag(entry) + "\"",
+					Size:         int64(filer.FileSize(entry)),
 					Owner: CanonicalUser{
 						ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
 						DisplayName: entry.Attributes.UserName,

@@ -8,7 +8,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/security"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
@@ -92,7 +92,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 		}
 		glog.V(1).Infof("lookup: %v", lookupRequest)
 		if resp, err := filer_pb.LookupEntry(client, lookupRequest); err == nil {
-			if filer2.ETag(resp.Entry) == filer2.ETag(entry) {
+			if filer.ETag(resp.Entry) == filer.ETag(entry) {
 				glog.V(0).Infof("already replicated %s", key)
 				return nil
 			}
@@ -164,13 +164,13 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		// skip if already changed
 		// this usually happens when the messages are not ordered
 		glog.V(0).Infof("late updates %s", key)
-	} else if filer2.ETag(newEntry) == filer2.ETag(existingEntry) {
+	} else if filer.ETag(newEntry) == filer.ETag(existingEntry) {
 		// skip if no change
 		// this usually happens when retrying the replication
 		glog.V(0).Infof("already replicated %s", key)
 	} else {
 		// find out what changed
-		deletedChunks, newChunks, err := compareChunks(filer2.LookupFn(fs), oldEntry, newEntry)
+		deletedChunks, newChunks, err := compareChunks(filer.LookupFn(fs), oldEntry, newEntry)
 		if err != nil {
 			return true, fmt.Errorf("replicte %s compare chunks error: %v", key, err)
 		}
@@ -178,7 +178,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		// delete the chunks that are deleted from the source
 		if deleteIncludeChunks {
 			// remove the deleted chunks. Actual data deletion happens in filer UpdateEntry FindUnusedFileChunks
-			existingEntry.Chunks = filer2.DoMinusChunks(existingEntry.Chunks, deletedChunks)
+			existingEntry.Chunks = filer.DoMinusChunks(existingEntry.Chunks, deletedChunks)
 		}
 
 		// replicate the chunks that are new in the source
@@ -207,21 +207,21 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	})
 
 }
-func compareChunks(lookupFileIdFn filer2.LookupFileIdFunctionType, oldEntry, newEntry *filer_pb.Entry) (deletedChunks, newChunks []*filer_pb.FileChunk, err error) {
-	aData, aMeta, aErr := filer2.ResolveChunkManifest(lookupFileIdFn, oldEntry.Chunks)
+func compareChunks(lookupFileIdFn filer.LookupFileIdFunctionType, oldEntry, newEntry *filer_pb.Entry) (deletedChunks, newChunks []*filer_pb.FileChunk, err error) {
+	aData, aMeta, aErr := filer.ResolveChunkManifest(lookupFileIdFn, oldEntry.Chunks)
 	if aErr != nil {
 		return nil, nil, aErr
 	}
-	bData, bMeta, bErr := filer2.ResolveChunkManifest(lookupFileIdFn, newEntry.Chunks)
+	bData, bMeta, bErr := filer.ResolveChunkManifest(lookupFileIdFn, newEntry.Chunks)
 	if bErr != nil {
 		return nil, nil, bErr
 	}
 
-	deletedChunks = append(deletedChunks, filer2.DoMinusChunks(aData, bData)...)
-	deletedChunks = append(deletedChunks, filer2.DoMinusChunks(aMeta, bMeta)...)
+	deletedChunks = append(deletedChunks, filer.DoMinusChunks(aData, bData)...)
+	deletedChunks = append(deletedChunks, filer.DoMinusChunks(aMeta, bMeta)...)
 
-	newChunks = append(newChunks, filer2.DoMinusChunks(bData, aData)...)
-	newChunks = append(newChunks, filer2.DoMinusChunks(bMeta, aMeta)...)
+	newChunks = append(newChunks, filer.DoMinusChunks(bData, aData)...)
+	newChunks = append(newChunks, filer.DoMinusChunks(bMeta, aMeta)...)
 
 	return
 }

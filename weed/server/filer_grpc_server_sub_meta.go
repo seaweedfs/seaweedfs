@@ -7,7 +7,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -63,7 +63,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
 
-	if _, ok := fs.filer.Store.ActualStore.(filer2.FilerLocalStore); ok {
+	if _, ok := fs.filer.Store.ActualStore.(filer.FilerLocalStore); ok {
 		// println("reading from persisted logs ...")
 		processedTsNs, err := fs.filer.ReadPersistedLogBuffer(lastReadTime, eachLogEntryFn)
 		if err != nil {
@@ -124,7 +124,7 @@ func eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, stream file
 		fullpath := util.Join(dirPath, entryName)
 
 		// skip on filer internal meta logs
-		if strings.HasPrefix(fullpath, filer2.SystemLogDir) {
+		if strings.HasPrefix(fullpath, filer.SystemLogDir) {
 			return nil
 		}
 

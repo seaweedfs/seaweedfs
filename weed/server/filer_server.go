@@ -18,16 +18,16 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/cassandra"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/etcd"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/leveldb"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/leveldb2"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/mongodb"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/mysql"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/postgres"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/redis"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/redis2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/cassandra"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/etcd"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/leveldb"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/leveldb2"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/mongodb"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/mysql"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/postgres"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/redis"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/redis2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/aws_sqs"
@@ -58,7 +58,7 @@ type FilerOption struct {
 type FilerServer struct {
 	option         *FilerOption
 	secret         security.SigningKey
-	filer          *filer2.Filer
+	filer          *filer.Filer
 	grpcDialOption grpc.DialOption
 
 	// notifying clients
@@ -82,7 +82,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Fatal("master list is required!")
 	}
 
-	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption, option.Host, option.Port, option.Collection, option.DefaultReplication, func() {
+	fs.filer = filer.NewFiler(option.Masters, fs.grpcDialOption, option.Host, option.Port, option.Collection, option.DefaultReplication, func() {
 		fs.listenersCond.Broadcast()
 	})
 	fs.filer.Cipher = option.Cipher
