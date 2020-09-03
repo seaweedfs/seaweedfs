@@ -87,6 +87,8 @@ require (
 	gopkg.in/jcmturner/goidentity.v3 v3.0.0 // indirect
 	gopkg.in/jcmturner/gokrb5.v7 v7.3.0 // indirect
 	gopkg.in/karlseguin/expect.v1 v1.0.1 // indirect
+	github.com/json-iterator/go v1.1.10
+	github.com/olivere/elastic/v7 v7.0.19
 )
 
 replace go.etcd.io/etcd => go.etcd.io/etcd v0.5.0-alpha.5.0.20200425165423-262c93980547

@@ -173,6 +173,12 @@ enabled = false
 uri = "mongodb://localhost:27017"
 option_pool_size = 0
 database = "seaweedfs"
+
+[elastic7]
+enabled = false
+servers = "http://localhost:9200"
+# increase the value is recommend, both filer and elastic cluster
+index.max_result_window = 10000
 `
 
 	NOTIFICATION_TOML_EXAMPLE = `
