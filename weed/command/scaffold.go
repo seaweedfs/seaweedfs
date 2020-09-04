@@ -177,7 +177,7 @@ database = "seaweedfs"
 [elastic7]
 enabled = false
 servers = "http://localhost:9200"
-# increase the value is recommend, both filer and elastic cluster
+# increase the value is recommend, both here and in elastic cluster configuration
 index.max_result_window = 10000
 `
 

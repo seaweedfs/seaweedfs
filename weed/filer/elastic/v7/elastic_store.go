@@ -44,7 +44,7 @@ func (store *ElasticStore) Initialize(configuration weed_util.Configuration, pre
 	}
 	store.maxPageSize = configuration.GetInt(prefix + "index.max_result_window")
 	if store.maxPageSize <= 0 {
-		return fmt.Errorf("error elastic index.max_result_window.")
+		store.maxPageSize = 10000
 	}
 	glog.Infof("filer store elastic endpoints: %s, index.max_result_window:%d", servers, store.maxPageSize)
 	store.client, err = elastic.NewClient(
