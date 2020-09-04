@@ -18,6 +18,7 @@ import (
 var (
 	indexType   = "_doc"
 	indexPrefix = ".seaweedfs_"
+	indexKV     = ".seaweedfs_kv_entries"
 )
 
 type ESEntry struct {
@@ -32,6 +33,11 @@ func init() {
 type ElasticStore struct {
 	client      *elastic.Client
 	maxPageSize int
+}
+
+type ESKVEntry struct {
+	Key   string `json:Key`
+	Value string `json:Value`
 }
 
 func (store *ElasticStore) GetName() string {
@@ -66,15 +72,66 @@ func (store *ElasticStore) CommitTransaction(ctx context.Context) error {
 func (store *ElasticStore) RollbackTransaction(ctx context.Context) error {
 	return nil
 }
+
 func (store *ElasticStore) KvDelete(ctx context.Context, key []byte) (err error) {
-	return filer.ErrKvNotImplemented
+	id := fmt.Sprintf("%x", md5.Sum(key))
+	deleteResult, err := store.client.Delete().
+		Index(indexKV).
+		Type(indexType).
+		Id(id).
+		Do(context.Background())
+	if err == nil {
+		if deleteResult.Result == "deleted" || deleteResult.Result == "not_found" {
+			return nil
+		}
+	}
+	glog.Errorf("delete key(id:%s) %v.", string(key), err)
+	return fmt.Errorf("delete key %v.", err)
 }
+
 func (store *ElasticStore) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
-	return []byte(""), filer.ErrKvNotImplemented
+	id := fmt.Sprintf("%x", md5.Sum(key))
+	searchResult, err := store.client.Get().
+		Index(indexKV).
+		Type(indexType).
+		Id(id).
+		Do(context.Background())
+	if elastic.IsNotFound(err) {
+		return nil, filer_pb.ErrNotFound
+	}
+	if searchResult != nil && searchResult.Found {
+		esEntry := &ESKVEntry{}
+		if err := jsoniter.Unmarshal(searchResult.Source, esEntry); err == nil {
+			return []byte(esEntry.Value), nil
+		}
+	}
+	glog.Errorf("find key(%s),%v.", string(key), err)
+	return nil, filer_pb.ErrNotFound
 }
+
 func (store *ElasticStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
-	return filer.ErrKvNotImplemented
+	id := fmt.Sprintf("%x", md5.Sum(key))
+	esEntry := &ESKVEntry{
+		string(key),
+		string(value),
+	}
+	val, err := jsoniter.Marshal(esEntry)
+	if err != nil {
+		glog.Errorf("insert key(%s) %v.", string(key), err)
+		return fmt.Errorf("insert key %v.", err)
+	}
+	_, err = store.client.Index().
+		Index(indexKV).
+		Type(indexType).
+		Id(id).
+		BodyJson(string(val)).
+		Do(context.Background())
+	if err != nil {
+		return fmt.Errorf("kv put: %v", err)
+	}
+	return nil
 }
+
 func (store *ElasticStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, err error) {
 	return nil, filer.ErrUnsupportedListDirectoryPrefixed
 }
