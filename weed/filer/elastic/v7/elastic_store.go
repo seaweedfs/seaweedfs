@@ -191,6 +191,9 @@ func (store *ElasticStore) listRootDirectoryEntries(ctx context.Context, startFi
 		return entries, err
 	}
 	for _, index := range indexResult {
+		if index.Index == indexKV {
+			continue
+		}
 		if strings.HasPrefix(index.Index, indexPrefix) {
 			if entry, err := store.FindEntry(ctx,
 				weed_util.FullPath("/"+strings.Replace(index.Index, indexPrefix, "", 1))); err == nil {
