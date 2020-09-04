@@ -85,8 +85,12 @@ func (store *UniversalRedis2Store) FindEntry(ctx context.Context, fullpath util.
 
 func (store *UniversalRedis2Store) DeleteEntry(ctx context.Context, fullpath util.FullPath) (err error) {
 
-	_, err = store.Client.Del(string(fullpath)).Result()
+	_, err = store.Client.Del(genDirectoryListKey(string(fullpath))).Result()
+	if err != nil {
+		return fmt.Errorf("delete dir list %s : %v", fullpath, err)
+	}
 
+	_, err = store.Client.Del(string(fullpath)).Result()
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
@@ -95,7 +99,7 @@ func (store *UniversalRedis2Store) DeleteEntry(ctx context.Context, fullpath uti
 	if name != "" {
 		_, err = store.Client.ZRem(genDirectoryListKey(dir), name).Result()
 		if err != nil {
-			return fmt.Errorf("delete %s in parent dir: %v", fullpath, err)
+			return fmt.Errorf("DeleteEntry %s in parent dir: %v", fullpath, err)
 		}
 	}
 
@@ -106,14 +110,14 @@ func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, ful
 
 	members, err := store.Client.ZRange(genDirectoryListKey(string(fullpath)), 0, -1).Result()
 	if err != nil {
-		return fmt.Errorf("delete folder %s : %v", fullpath, err)
+		return fmt.Errorf("DeleteFolderChildren %s : %v", fullpath, err)
 	}
 
 	for _, fileName := range members {
 		path := util.NewFullPath(string(fullpath), fileName)
 		_, err = store.Client.Del(string(path)).Result()
 		if err != nil {
-			return fmt.Errorf("delete %s in parent dir: %v", fullpath, err)
+			return fmt.Errorf("DeleteFolderChildren %s in parent dir: %v", fullpath, err)
 		}
 	}
 
