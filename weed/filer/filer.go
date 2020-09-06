@@ -62,9 +62,16 @@ func NewFiler(masters []string, grpcDialOption grpc.DialOption,
 func (f *Filer) AggregateFromPeers(self string, filers []string) {
 
 	// set peers
-	if len(filers) == 0 {
+	found := false
+	for _, peer := range filers {
+		if peer == self {
+			found = true
+		}
+	}
+	if !found {
 		filers = append(filers, self)
 	}
+
 	f.MetaAggregator = NewMetaAggregator(filers, f.GrpcDialOption)
 	f.MetaAggregator.StartLoopSubscribe(f, self)
 
