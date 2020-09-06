@@ -48,14 +48,14 @@ func (ma *MetaAggregator) StartLoopSubscribe(f *Filer, self string) {
 func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, filer string) {
 
 	/*
-	Each filer reads the "filer.store.id", which is the store's signature when filer starts.
+		Each filer reads the "filer.store.id", which is the store's signature when filer starts.
 
-	When reading from other filers' local meta changes:
-	* if the received change does not contain signature from self, apply the change to current filer store.
+		When reading from other filers' local meta changes:
+		* if the received change does not contain signature from self, apply the change to current filer store.
 
-	Upon connecting to other filers, need to remember their signature and their offsets.
+		Upon connecting to other filers, need to remember their signature and their offsets.
 
-	 */
+	*/
 
 	var maybeReplicateMetadataChange func(*filer_pb.SubscribeMetadataResponse)
 	lastPersistTime := time.Now()
@@ -138,4 +138,16 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, filer strin
 			time.Sleep(1733 * time.Millisecond)
 		}
 	}
+}
+
+func (ma *MetaAggregator) isSameFilerStore(f *Filer, peer string) (isSame bool, err error) {
+	err = pb.WithFilerClient(peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		isSame = f.Signature == resp.Signature
+		return nil
+	})
+	return
 }
