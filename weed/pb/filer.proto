@@ -266,6 +266,7 @@ message GetFilerConfigurationResponse {
     uint32 max_mb = 4;
     string dir_buckets = 5;
     bool cipher = 7;
+    int32 signature = 8;
 }
 
 message SubscribeMetadataRequest {

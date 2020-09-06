@@ -47,6 +47,16 @@ func (ma *MetaAggregator) StartLoopSubscribe(f *Filer, self string) {
 
 func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, filer string) {
 
+	/*
+	Each filer reads the "filer.store.id", which is the store's signature when filer starts.
+
+	When reading from other filers' local meta changes:
+	* if the received change does not contain signature from self, apply the change to current filer store.
+
+	Upon connecting to other filers, need to remember their signature and their offsets.
+
+	 */
+
 	var maybeReplicateMetadataChange func(*filer_pb.SubscribeMetadataResponse)
 	lastPersistTime := time.Now()
 	changesSinceLastPersist := 0

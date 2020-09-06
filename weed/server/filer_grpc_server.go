@@ -426,6 +426,7 @@ func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.
 		MaxMb:       uint32(fs.option.MaxMB),
 		DirBuckets:  fs.filer.DirBucketsPath,
 		Cipher:      fs.filer.Cipher,
+		Signature:   fs.filer.Signature,
 	}
 
 	glog.V(4).Infof("GetFilerConfiguration: %v", t)
