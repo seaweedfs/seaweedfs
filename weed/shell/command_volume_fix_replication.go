@@ -86,7 +86,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		if replicaPlacement.GetCopyCount() > len(locations) {
 			underReplicatedVolumeLocations[vid] = locations
 		} else if replicaPlacement.GetCopyCount() < len(locations) {
-			fmt.Fprintf(writer, "volume %d replication %s, but over repliacated:%+v\n", volumeInfo.Id, replicaPlacement, locations)
+			fmt.Fprintf(writer, "volume %d replication %s, but over replicated:%+v\n", volumeInfo.Id, replicaPlacement, locations)
 		}
 	}
 
