@@ -60,10 +60,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, filer strin
 
 	var maybeReplicateMetadataChange func(*filer_pb.SubscribeMetadataResponse)
 	lastPersistTime := time.Now()
-	changesSinceLastPersist := 0
 	lastTsNs := time.Now().Add(-LogFlushInterval).UnixNano()
-
-	MaxChangeLimit := 100
 
 	isSameFilerStore, err := ma.isSameFilerStore(f, filer)
 	for err != nil {
@@ -72,7 +69,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, filer strin
 		isSameFilerStore, err = ma.isSameFilerStore(f, filer)
 	}
 
-	if !isSameFilerStore{
+	if !isSameFilerStore {
 		if prevTsNs, err := ma.readOffset(f, filer); err == nil {
 			lastTsNs = prevTsNs
 		}
@@ -83,11 +80,12 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, filer strin
 				glog.Errorf("failed to reply metadata change from %v: %v", filer, err)
 				return
 			}
-			changesSinceLastPersist++
-			if changesSinceLastPersist >= MaxChangeLimit || lastPersistTime.Add(time.Minute).Before(time.Now()) {
+			if lastPersistTime.Add(time.Minute).Before(time.Now()) {
 				if err := ma.updateOffset(f, filer, event.TsNs); err == nil {
+					if event.TsNs < time.Now().Add(-2*time.Minute).UnixNano() {
+						glog.V(0).Infof("sync with %s progressed to: %v", filer, time.Unix(0, event.TsNs).UTC())
+					}
 					lastPersistTime = time.Now()
-					changesSinceLastPersist = 0
 				} else {
 					glog.V(0).Infof("failed to update offset for %v: %v", filer, err)
 				}
@@ -158,6 +156,11 @@ func (ma *MetaAggregator) isSameFilerStore(f *Filer, peer string) (isSame bool, 
 func (ma *MetaAggregator) readOffset(f *Filer, peer string) (lastTsNs int64, err error) {
 
 	value, err := f.Store.KvGet(context.Background(), []byte("meta"+peer))
+
+	if err == ErrKvNotFound {
+		glog.Warningf("readOffset %s not found", peer)
+		return 0, nil
+	}
 
 	if err != nil {
 		return 0, fmt.Errorf("readOffset %s : %v", peer, err)
