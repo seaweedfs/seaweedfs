@@ -42,11 +42,6 @@ type FilerStore interface {
 	Shutdown()
 }
 
-type FilerLocalStore interface {
-	UpdateOffset(filer string, lastTsNs int64) error
-	ReadOffset(filer string) (lastTsNs int64, err error)
-}
-
 type FilerStoreWrapper struct {
 	ActualStore FilerStore
 }

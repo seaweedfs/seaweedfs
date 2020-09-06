@@ -63,21 +63,19 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
 
-	if _, ok := fs.filer.Store.ActualStore.(filer.FilerLocalStore); ok {
-		// println("reading from persisted logs ...")
-		processedTsNs, err := fs.filer.ReadPersistedLogBuffer(lastReadTime, eachLogEntryFn)
-		if err != nil {
-			return fmt.Errorf("reading from persisted logs: %v", err)
-		}
-
-		if processedTsNs != 0 {
-			lastReadTime = time.Unix(0, processedTsNs)
-		}
-		glog.V(0).Infof("after local log reads, %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
+	// println("reading from persisted logs ...")
+	processedTsNs, err := fs.filer.ReadPersistedLogBuffer(lastReadTime, eachLogEntryFn)
+	if err != nil {
+		return fmt.Errorf("reading from persisted logs: %v", err)
 	}
 
+	if processedTsNs != 0 {
+		lastReadTime = time.Unix(0, processedTsNs)
+	}
+	glog.V(0).Infof("after local log reads, %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
+
 	// println("reading from in memory logs ...")
-	err := fs.filer.LocalMetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
+	err = fs.filer.LocalMetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
 		fs.listenersLock.Lock()
 		fs.listenersCond.Wait()
 		fs.listenersLock.Unlock()
