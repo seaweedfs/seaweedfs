@@ -70,7 +70,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, peer string
 	}
 
 	if peerSignature != f.Signature {
-		if prevTsNs, err := ma.readOffset(f, file, peerSignature); err == nil {
+		if prevTsNs, err := ma.readOffset(f, peer, peerSignature); err == nil {
 			lastTsNs = prevTsNs
 		}
 
