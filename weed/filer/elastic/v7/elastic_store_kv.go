@@ -3,9 +3,9 @@ package elastic
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	jsoniter "github.com/json-iterator/go"
 	elastic "github.com/olivere/elastic/v7"
 )
@@ -32,7 +32,7 @@ func (store *ElasticStore) KvGet(ctx context.Context, key []byte) (value []byte,
 		Id(string(key)).
 		Do(ctx)
 	if elastic.IsNotFound(err) {
-		return nil, filer_pb.ErrNotFound
+		return nil, filer.ErrKvNotFound
 	}
 	if searchResult != nil && searchResult.Found {
 		esEntry := &ESKVEntry{}
@@ -41,7 +41,7 @@ func (store *ElasticStore) KvGet(ctx context.Context, key []byte) (value []byte,
 		}
 	}
 	glog.Errorf("find key(%s),%v.", string(key), err)
-	return nil, filer_pb.ErrNotFound
+	return nil, filer.ErrKvNotFound
 }
 
 func (store *ElasticStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
