@@ -97,7 +97,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	}
 
 	if len(underReplicatedVolumeIds) == 0 {
-		return fmt.Errorf("no under replicated volumes")
+		return nil
 	}
 
 	if len(allLocations) == 0 {
