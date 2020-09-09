@@ -46,10 +46,13 @@ func (l *ExclusiveLocker) RequestLock() {
 		return
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// retry to get the lease
 	for {
 		if err := l.masterClient.WithClient(func(client master_pb.SeaweedClient) error {
-			resp, err := client.LeaseAdminToken(context.Background(), &master_pb.LeaseAdminTokenRequest{
+			resp, err := client.LeaseAdminToken(ctx, &master_pb.LeaseAdminTokenRequest{
 				PreviousToken:    atomic.LoadInt64(&l.token),
 				PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
 				LockName:         AdminLockName,
@@ -73,7 +76,7 @@ func (l *ExclusiveLocker) RequestLock() {
 	go func() {
 		for l.isLocking {
 			if err := l.masterClient.WithClient(func(client master_pb.SeaweedClient) error {
-				resp, err := client.LeaseAdminToken(context.Background(), &master_pb.LeaseAdminTokenRequest{
+				resp, err := client.LeaseAdminToken(ctx, &master_pb.LeaseAdminTokenRequest{
 					PreviousToken:    atomic.LoadInt64(&l.token),
 					PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
 					LockName:         AdminLockName,
@@ -98,8 +101,12 @@ func (l *ExclusiveLocker) RequestLock() {
 
 func (l *ExclusiveLocker) ReleaseLock() {
 	l.isLocking = false
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	l.masterClient.WithClient(func(client master_pb.SeaweedClient) error {
-		client.ReleaseAdminToken(context.Background(), &master_pb.ReleaseAdminTokenRequest{
+		client.ReleaseAdminToken(ctx, &master_pb.ReleaseAdminTokenRequest{
 			PreviousToken:    atomic.LoadInt64(&l.token),
 			PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
 			LockName:         AdminLockName,

@@ -28,8 +28,10 @@ func TailVolume(master string, grpcDialOption grpc.DialOption, vid needle.Volume
 
 func TailVolumeFromSource(volumeServer string, grpcDialOption grpc.DialOption, vid needle.VolumeId, sinceNs uint64, idleTimeoutSeconds int, fn func(n *needle.Needle) error) error {
 	return WithVolumeServerClient(volumeServer, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-		stream, err := client.VolumeTailSender(context.Background(), &volume_server_pb.VolumeTailSenderRequest{
+		stream, err := client.VolumeTailSender(ctx, &volume_server_pb.VolumeTailSenderRequest{
 			VolumeId:           uint32(vid),
 			SinceNs:            sinceNs,
 			IdleTimeoutSeconds: uint32(idleTimeoutSeconds),

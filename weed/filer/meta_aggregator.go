@@ -117,7 +117,9 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, peer string
 
 	for {
 		err := pb.WithFilerClient(peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			stream, err := client.SubscribeLocalMetadata(context.Background(), &filer_pb.SubscribeMetadataRequest{
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			stream, err := client.SubscribeLocalMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
 				ClientName: "filer:" + self,
 				PathPrefix: "/",
 				SinceNs:    lastTsNs,

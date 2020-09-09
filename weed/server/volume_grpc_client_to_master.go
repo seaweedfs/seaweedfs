@@ -58,14 +58,17 @@ func (vs *VolumeServer) heartbeat() {
 
 func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader string, err error) {
 
-	grpcConection, err := pb.GrpcDial(context.Background(), masterGrpcAddress, grpcDialOption)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	grpcConection, err := pb.GrpcDial(ctx, masterGrpcAddress, grpcDialOption)
 	if err != nil {
 		return "", fmt.Errorf("fail to dial %s : %v", masterNode, err)
 	}
 	defer grpcConection.Close()
 
 	client := master_pb.NewSeaweedClient(grpcConection)
-	stream, err := client.SendHeartbeat(context.Background())
+	stream, err := client.SendHeartbeat(ctx)
 	if err != nil {
 		glog.V(0).Infof("SendHeartbeat to %s: %v", masterNode, err)
 		return "", err

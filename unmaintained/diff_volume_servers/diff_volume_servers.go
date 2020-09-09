@@ -124,7 +124,9 @@ type needleState struct {
 func getVolumeFiles(v uint32, addr string) (map[types.NeedleId]needleState, int64, error) {
 	var idxFile *bytes.Reader
 	err := operation.WithVolumeServerClient(addr, grpcDialOption, func(vs volume_server_pb.VolumeServerClient) error {
-		copyFileClient, err := vs.CopyFile(context.Background(), &volume_server_pb.CopyFileRequest{
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		copyFileClient, err := vs.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
 			VolumeId:           v,
 			Ext:                ".idx",
 			CompactionRevision: math.MaxUint32,
