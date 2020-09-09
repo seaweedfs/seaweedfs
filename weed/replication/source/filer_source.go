@@ -79,16 +79,16 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrl string, err error) {
 	return
 }
 
-func (fs *FilerSource) ReadPart(part string) (filename string, header http.Header, readCloser io.ReadCloser, err error) {
+func (fs *FilerSource) ReadPart(part string) (filename string, header http.Header, resp *http.Response, err error) {
 
 	fileUrl, err := fs.LookupFileId(part)
 	if err != nil {
 		return "", nil, nil, err
 	}
 
-	filename, header, readCloser, err = util.DownloadFile(fileUrl)
+	filename, header, resp, err = util.DownloadFile(fileUrl)
 
-	return filename, header, readCloser, err
+	return filename, header, resp, err
 }
 
 var _ = filer_pb.FilerClient(&FilerSource{})
