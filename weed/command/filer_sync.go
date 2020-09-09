@@ -12,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"google.golang.org/grpc"
 	"io"
 	"strings"
@@ -36,6 +37,8 @@ type SyncOptions struct {
 
 var (
 	syncOptions SyncOptions
+	syncCpuProfile *string
+	syncMemProfile *string
 )
 
 func init() {
@@ -53,6 +56,8 @@ func init() {
 	syncOptions.bTtlSec = cmdFilerSynchronize.Flag.Int("b.ttlSec", 0, "ttl in seconds on filer B")
 	syncOptions.aDebug = cmdFilerSynchronize.Flag.Bool("a.debug", false, "debug mode to print out filer A received files")
 	syncOptions.bDebug = cmdFilerSynchronize.Flag.Bool("b.debug", false, "debug mode to print out filer B received files")
+	syncCpuProfile = cmdFilerSynchronize.Flag.String("cpuprofile", "", "cpu profile output file")
+	syncMemProfile = cmdFilerSynchronize.Flag.String("memprofile", "", "memory profile output file")
 }
 
 var cmdFilerSynchronize = &Command{
@@ -75,6 +80,8 @@ var cmdFilerSynchronize = &Command{
 func runFilerSynchronize(cmd *Command, args []string) bool {
 
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+
+	grace.SetupProfiling(*syncCpuProfile, *syncMemProfile)
 
 	go func() {
 		for {
