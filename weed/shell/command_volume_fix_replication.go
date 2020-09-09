@@ -79,6 +79,10 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		allLocations = append(allLocations, loc)
 	})
 
+	if len(allLocations) == 0 {
+		return fmt.Errorf("no data nodes at all")
+	}
+
 	// find all under replicated volumes
 	var underReplicatedVolumeIds, overReplicatedVolumeIds []uint32
 	for vid, replicas := range volumeReplicas {
@@ -98,10 +102,6 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 
 	if len(underReplicatedVolumeIds) == 0 {
 		return nil
-	}
-
-	if len(allLocations) == 0 {
-		return fmt.Errorf("no data nodes at all")
 	}
 
 	// find the most under populated data nodes

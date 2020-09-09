@@ -25,7 +25,6 @@ type FilerSink struct {
 	ttlSec         int32
 	dataCenter     string
 	grpcDialOption grpc.DialOption
-	signature      int32
 }
 
 func init() {
@@ -41,37 +40,36 @@ func (fs *FilerSink) GetSinkToDirectory() string {
 }
 
 func (fs *FilerSink) Initialize(configuration util.Configuration, prefix string) error {
-	return fs.initialize(
+	return fs.DoInitialize(
 		configuration.GetString(prefix+"grpcAddress"),
 		configuration.GetString(prefix+"directory"),
 		configuration.GetString(prefix+"replication"),
 		configuration.GetString(prefix+"collection"),
 		configuration.GetInt(prefix+"ttlSec"),
-	)
+		security.LoadClientTLS(util.GetViper(), "grpc.client"))
 }
 
 func (fs *FilerSink) SetSourceFiler(s *source.FilerSource) {
 	fs.filerSource = s
 }
 
-func (fs *FilerSink) initialize(grpcAddress string, dir string,
-	replication string, collection string, ttlSec int) (err error) {
+func (fs *FilerSink) DoInitialize(grpcAddress string, dir string,
+	replication string, collection string, ttlSec int, grpcDialOption grpc.DialOption) (err error) {
 	fs.grpcAddress = grpcAddress
 	fs.dir = dir
 	fs.replication = replication
 	fs.collection = collection
 	fs.ttlSec = int32(ttlSec)
-	fs.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
-	fs.signature = util.RandomInt32()
+	fs.grpcDialOption = grpcDialOption
 	return nil
 }
 
-func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) error {
+func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 
 	dir, name := util.FullPath(key).DirAndName()
 
-	glog.V(1).Infof("delete entry: %v", key)
-	err := filer_pb.Remove(fs, dir, name, deleteIncludeChunks, false, false, true, fs.signature)
+	glog.V(4).Infof("delete entry: %v", key)
+	err := filer_pb.Remove(fs, dir, name, deleteIncludeChunks, true, true, true, signatures)
 	if err != nil {
 		glog.V(0).Infof("delete entry %s: %v", key, err)
 		return fmt.Errorf("delete entry %s: %v", key, err)
@@ -79,7 +77,7 @@ func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bo
 	return nil
 }
 
-func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry) error {
+func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
 
 	return fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
@@ -93,7 +91,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 		glog.V(1).Infof("lookup: %v", lookupRequest)
 		if resp, err := filer_pb.LookupEntry(client, lookupRequest); err == nil {
 			if filer.ETag(resp.Entry) == filer.ETag(entry) {
-				glog.V(0).Infof("already replicated %s", key)
+				glog.V(3).Infof("already replicated %s", key)
 				return nil
 			}
 		}
@@ -101,11 +99,11 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 		replicatedChunks, err := fs.replicateChunks(entry.Chunks, dir)
 
 		if err != nil {
-			glog.V(0).Infof("replicate entry chunks %s: %v", key, err)
-			return fmt.Errorf("replicate entry chunks %s: %v", key, err)
+			// only warning here since the source chunk may have been deleted already
+			glog.Warningf("replicate entry chunks %s: %v", key, err)
 		}
 
-		glog.V(0).Infof("replicated %s %+v ===> %+v", key, entry.Chunks, replicatedChunks)
+		glog.V(4).Infof("replicated %s %+v ===> %+v", key, entry.Chunks, replicatedChunks)
 
 		request := &filer_pb.CreateEntryRequest{
 			Directory: dir,
@@ -116,10 +114,10 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 				Chunks:      replicatedChunks,
 			},
 			IsFromOtherCluster: true,
-			Signatures:         []int32{fs.signature},
+			Signatures:         signatures,
 		}
 
-		glog.V(1).Infof("create: %v", request)
+		glog.V(3).Infof("create: %v", request)
 		if err := filer_pb.CreateEntry(client, request); err != nil {
 			glog.V(0).Infof("create entry %s: %v", key, err)
 			return fmt.Errorf("create entry %s: %v", key, err)
@@ -129,7 +127,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 	})
 }
 
-func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
 
 	dir, name := util.FullPath(key).DirAndName()
 
@@ -158,16 +156,16 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		return false, fmt.Errorf("lookup %s: %v", key, err)
 	}
 
-	glog.V(0).Infof("oldEntry %+v, newEntry %+v, existingEntry: %+v", oldEntry, newEntry, existingEntry)
+	glog.V(4).Infof("oldEntry %+v, newEntry %+v, existingEntry: %+v", oldEntry, newEntry, existingEntry)
 
 	if existingEntry.Attributes.Mtime > newEntry.Attributes.Mtime {
 		// skip if already changed
 		// this usually happens when the messages are not ordered
-		glog.V(0).Infof("late updates %s", key)
+		glog.V(2).Infof("late updates %s", key)
 	} else if filer.ETag(newEntry) == filer.ETag(existingEntry) {
 		// skip if no change
 		// this usually happens when retrying the replication
-		glog.V(0).Infof("already replicated %s", key)
+		glog.V(3).Infof("already replicated %s", key)
 	} else {
 		// find out what changed
 		deletedChunks, newChunks, err := compareChunks(filer.LookupFn(fs), oldEntry, newEntry)
@@ -196,7 +194,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 			Directory:          newParentPath,
 			Entry:              existingEntry,
 			IsFromOtherCluster: true,
-			Signatures:         []int32{fs.signature},
+			Signatures:         signatures,
 		}
 
 		if _, err := client.UpdateEntry(context.Background(), request); err != nil {

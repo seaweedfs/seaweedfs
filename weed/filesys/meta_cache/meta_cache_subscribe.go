@@ -44,7 +44,9 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 
 	for {
 		err := client.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-			stream, err := client.SubscribeMetadata(context.Background(), &filer_pb.SubscribeMetadataRequest{
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
 				ClientName: "mount",
 				PathPrefix: dir,
 				SinceNs:    lastTsNs,
@@ -71,7 +73,7 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 		})
 		if err != nil {
 			glog.Errorf("subscribing filer meta change: %v", err)
-			time.Sleep(time.Second)
 		}
+		time.Sleep(time.Second)
 	}
 }

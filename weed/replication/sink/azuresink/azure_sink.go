@@ -70,7 +70,7 @@ func (g *AzureSink) initialize(accountName, accountKey, container, dir string) e
 	return nil
 }
 
-func (g *AzureSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) error {
+func (g *AzureSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 
 	key = cleanKey(key)
 
@@ -87,7 +87,7 @@ func (g *AzureSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks boo
 
 }
 
-func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry) error {
+func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
 
 	key = cleanKey(key)
 
@@ -132,7 +132,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
 }
 
-func (g *AzureSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (g *AzureSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
 	key = cleanKey(key)
 	// TODO improve efficiency
 	return false, nil

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -85,7 +86,7 @@ func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, 
 }
 
 func retriedUploadData(uploadUrl string, filename string, cipher bool, data []byte, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error) {
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 1; i++ {
 		uploadResult, err = doUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
 		if err == nil {
 			return
@@ -221,8 +222,9 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	}
 	resp, post_err := HttpClient.Do(req)
 	if post_err != nil {
-		glog.Errorf("upload to %v: %v", uploadUrl, post_err)
-		return nil, fmt.Errorf("upload to %v: %v", uploadUrl, post_err)
+		glog.Errorf("upload %s %d bytes to %v: %v", filename, originalDataSize, uploadUrl, post_err)
+		debug.PrintStack()
+		return nil, fmt.Errorf("upload %s %d bytes to %v: %v", filename, originalDataSize, uploadUrl, post_err)
 	}
 	defer util.CloseResponse(resp)
 

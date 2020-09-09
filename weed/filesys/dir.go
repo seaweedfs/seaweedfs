@@ -328,7 +328,7 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 
 	// first, ensure the filer store can correctly delete
 	glog.V(3).Infof("remove file: %v", req)
-	err = filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, false, false, false, false, dir.wfs.signature)
+	err = filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, false, false, false, false, []int32{dir.wfs.signature})
 	if err != nil {
 		glog.V(3).Infof("not found remove file %s/%s: %v", dir.FullPath(), req.Name, err)
 		return fuse.ENOENT
@@ -348,7 +348,7 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 
 	glog.V(3).Infof("remove directory entry: %v", req)
-	err := filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, true, false, false, false, dir.wfs.signature)
+	err := filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, true, false, false, false, []int32{dir.wfs.signature})
 	if err != nil {
 		glog.V(0).Infof("remove %s/%s: %v", dir.FullPath(), req.Name, err)
 		if strings.Contains(err.Error(), "non-empty") {

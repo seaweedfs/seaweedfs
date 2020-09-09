@@ -69,7 +69,7 @@ func (g *GcsSink) initialize(google_application_credentials, bucketName, dir str
 	return nil
 }
 
-func (g *GcsSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) error {
+func (g *GcsSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 
 	if isDirectory {
 		key = key + "/"
@@ -83,7 +83,7 @@ func (g *GcsSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool)
 
 }
 
-func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry) error {
+func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
 
 	if entry.IsDirectory {
 		return nil
@@ -119,7 +119,7 @@ func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
 }
 
-func (g *GcsSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (g *GcsSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
 	// TODO improve efficiency
 	return false, nil
 }

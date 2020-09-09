@@ -57,7 +57,7 @@ func (g *B2Sink) initialize(accountId, accountKey, bucket, dir string) error {
 	return nil
 }
 
-func (g *B2Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) error {
+func (g *B2Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 
 	key = cleanKey(key)
 
@@ -76,7 +76,7 @@ func (g *B2Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) 
 
 }
 
-func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
+func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
 
 	key = cleanKey(key)
 
@@ -123,7 +123,7 @@ func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
 }
 
-func (g *B2Sink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (g *B2Sink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
 
 	key = cleanKey(key)
 

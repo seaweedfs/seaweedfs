@@ -19,7 +19,7 @@ func (broker *MessageBroker) DeleteTopic(c context.Context, request *messaging_p
 	if exists, err := filer_pb.Exists(broker, dir, entry, true); err != nil {
 		return nil, err
 	} else if exists {
-		err = filer_pb.Remove(broker, dir, entry, true, true, true, false, 0)
+		err = filer_pb.Remove(broker, dir, entry, true, true, true, false, nil)
 	}
 	return resp, nil
 }
