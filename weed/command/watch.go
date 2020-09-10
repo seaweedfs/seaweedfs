@@ -101,7 +101,7 @@ func runWatch(cmd *Command, args []string) bool {
 			if !shouldPrint(resp) {
 				continue
 			}
-			fmt.Printf("%+v\n", resp.EventNotification)
+			fmt.Printf("dir:%s %+v\n", resp.Directory, resp.EventNotification)
 		}
 
 	})
