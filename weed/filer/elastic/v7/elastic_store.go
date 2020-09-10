@@ -2,7 +2,6 @@ package elastic
 
 import (
 	"context"
-	"crypto/md5"
 	"fmt"
 	"math"
 	"strings"
@@ -108,9 +107,9 @@ func (store *ElasticStore) ListDirectoryPrefixedEntries(ctx context.Context, ful
 func (store *ElasticStore) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
 	index := getIndex(entry.FullPath)
 	dir, _ := entry.FullPath.DirAndName()
-	id := fmt.Sprintf("%x", md5.Sum([]byte(entry.FullPath)))
+	id := weed_util.Md5String([]byte(entry.FullPath))
 	esEntry := &ESEntry{
-		ParentId: fmt.Sprintf("%x", md5.Sum([]byte(dir))),
+		ParentId: weed_util.Md5String([]byte(dir)),
 		Entry:    entry,
 	}
 	value, err := jsoniter.Marshal(esEntry)
@@ -137,7 +136,7 @@ func (store *ElasticStore) UpdateEntry(ctx context.Context, entry *filer.Entry) 
 
 func (store *ElasticStore) FindEntry(ctx context.Context, fullpath weed_util.FullPath) (entry *filer.Entry, err error) {
 	index := getIndex(fullpath)
-	id := fmt.Sprintf("%x", md5.Sum([]byte(fullpath)))
+	id := weed_util.Md5String([]byte(fullpath))
 	searchResult, err := store.client.Get().
 		Index(index).
 		Type(indexType).
@@ -160,7 +159,7 @@ func (store *ElasticStore) FindEntry(ctx context.Context, fullpath weed_util.Ful
 
 func (store *ElasticStore) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	index := getIndex(fullpath)
-	id := fmt.Sprintf("%x", md5.Sum([]byte(fullpath)))
+	id := weed_util.Md5String([]byte(fullpath))
 	if strings.Count(string(fullpath), "/") == 1 {
 		return store.deleteIndex(ctx, index)
 	}
@@ -243,7 +242,7 @@ func (store *ElasticStore) listDirectoryEntries(
 	first := true
 	index := getIndex(fullpath)
 	nextStart := ""
-	parentId := fmt.Sprintf("%x", md5.Sum([]byte(fullpath)))
+	parentId := weed_util.Md5String([]byte(fullpath))
 	if _, err := store.client.Refresh(index).Do(ctx); err != nil {
 		if elastic.IsNotFound(err) {
 			store.client.CreateIndex(index).Do(ctx)
@@ -262,7 +261,7 @@ func (store *ElasticStore) listDirectoryEntries(
 			if !first {
 				fullPath = nextStart
 			}
-			after := fmt.Sprintf("%x", md5.Sum([]byte(fullPath)))
+			after := weed_util.Md5String([]byte(fullPath))
 			if result, err = store.searchAfter(ctx, index, parentId, after); err != nil {
 				glog.Errorf("searchAfter (%s,%s,%t,%d) %v.", string(fullpath), startFileName, inclusive, limit, err)
 				return entries, err
