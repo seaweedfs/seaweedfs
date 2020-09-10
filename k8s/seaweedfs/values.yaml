@@ -284,11 +284,6 @@ filer:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
-  dbSchema:
-    imageName: db-schema
-    imageTag: "development"
-    imageOverride: ""
-
   # extraEnvVars is a list of extra enviroment variables to set with the stateful set.
   extraEnvironmentVars:
     WEED_MYSQL_ENABLED: "true"
