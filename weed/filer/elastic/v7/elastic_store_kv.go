@@ -3,6 +3,7 @@ package elastic
 import (
 	"context"
 	"fmt"
+
 	"github.com/chrislusf/seaweedfs/weed/filer"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -32,20 +33,20 @@ func (store *ElasticStore) KvGet(ctx context.Context, key []byte) (value []byte,
 		Id(string(key)).
 		Do(ctx)
 	if elastic.IsNotFound(err) {
-		return nil, filer.ErrKvNotFound
+		return value, filer.ErrKvNotFound
 	}
 	if searchResult != nil && searchResult.Found {
 		esEntry := &ESKVEntry{}
 		if err := jsoniter.Unmarshal(searchResult.Source, esEntry); err == nil {
-			return []byte(esEntry.Value), nil
+			return esEntry.Value, nil
 		}
 	}
 	glog.Errorf("find key(%s),%v.", string(key), err)
-	return nil, filer.ErrKvNotFound
+	return value, filer.ErrKvNotFound
 }
 
 func (store *ElasticStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
-	esEntry := &ESKVEntry{string(value)}
+	esEntry := &ESKVEntry{value}
 	val, err := jsoniter.Marshal(esEntry)
 	if err != nil {
 		glog.Errorf("insert key(%s) %v.", string(key), err)

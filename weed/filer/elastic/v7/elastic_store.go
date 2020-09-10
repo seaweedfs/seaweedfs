@@ -20,10 +20,15 @@ var (
 	indexPrefix         = ".seaweedfs_"
 	indexKV             = ".seaweedfs_kv_entries"
 	mappingWithoutQuery = ` {
-  "mappings": {
-	"enabled": false
-  }
-}`
+		     "mappings": {
+		   	"enabled": false,
+		       "properties": {
+		         "Value":{
+		           "type": "binary"
+		         }
+		       }
+		     }
+		   }`
 )
 
 type ESEntry struct {
@@ -32,7 +37,7 @@ type ESEntry struct {
 }
 
 type ESKVEntry struct {
-	Value string `json:Value`
+	Value []byte `json:"Value"`
 }
 
 func init() {
