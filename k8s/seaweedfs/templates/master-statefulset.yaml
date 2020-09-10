@@ -133,19 +133,21 @@ spec:
               path: /cluster/status
               port: {{ .Values.master.port }}
               scheme: HTTP
-            initialDelaySeconds: 5
-            periodSeconds: 15
+            initialDelaySeconds: 10
+            periodSeconds: 45
             successThreshold: 2
             failureThreshold: 100
+            timeoutSeconds: 5
           livenessProbe:
             httpGet:
               path: /cluster/status
               port: {{ .Values.master.port }}
               scheme: HTTP
             initialDelaySeconds: 20
-            periodSeconds: 10
+            periodSeconds: 30
             successThreshold: 1
-            failureThreshold: 6
+            failureThreshold: 4
+            timeoutSeconds: 5
           {{- if .Values.master.resources }}
           resources:
             {{ tpl .Values.master.resources . | nindent 12 | trim }}

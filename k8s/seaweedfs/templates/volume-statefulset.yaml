@@ -142,19 +142,21 @@ spec:
               path: /status
               port: {{ .Values.volume.port }}
               scheme: HTTP
-            initialDelaySeconds: 5
-            periodSeconds: 15
+            initialDelaySeconds: 15
+            periodSeconds: 90
             successThreshold: 1
             failureThreshold: 100
+            timeoutSeconds: 5
           livenessProbe:
             httpGet:
               path: /status
               port: {{ .Values.volume.port }}
               scheme: HTTP
             initialDelaySeconds: 20
-            periodSeconds: 30
+            periodSeconds: 90
             successThreshold: 1
-            failureThreshold: 10
+            failureThreshold: 4
+            timeoutSeconds: 5
           {{- if .Values.volume.resources }}
           resources:
             {{ tpl .Values.volume.resources . | nindent 12 | trim }}

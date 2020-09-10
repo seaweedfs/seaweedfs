@@ -116,6 +116,7 @@ spec:
             periodSeconds: 15
             successThreshold: 1
             failureThreshold: 100
+            timeoutSeconds: 3
           livenessProbe:
             httpGet:
               path: /
@@ -125,6 +126,7 @@ spec:
             periodSeconds: 60
             successThreshold: 1
             failureThreshold: 20
+            timeoutSeconds: 3
           {{- if .Values.s3.resources }}
           resources:
             {{ tpl .Values.s3.resources . | nindent 12 | trim }}
