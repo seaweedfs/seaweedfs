@@ -68,13 +68,8 @@ func (store *ElasticStore) Initialize(configuration weed_util.Configuration, pre
 }
 
 func (store *ElasticStore) initialize(configuration weed_util.Configuration, prefix string) (options []elastic.ClientOptionFunc) {
-	configuration.SetDefault(prefix+"servers", "http://localhost:9200")
-	servers := configuration.GetString(prefix + "servers")
-	url := make([]string, 0)
-	for _, v := range strings.Split(servers, ",") {
-		url = append(url, v)
-	}
-	options = append(options, elastic.SetURL(url...))
+	servers := configuration.GetStringSlice(prefix + "servers")
+	options = append(options, elastic.SetURL(servers...))
 	username := configuration.GetString(prefix + "username")
 	password := configuration.GetString(prefix + "password")
 	if username != "" && password != "" {

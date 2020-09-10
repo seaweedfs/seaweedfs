@@ -176,7 +176,11 @@ database = "seaweedfs"
 
 [elastic7]
 enabled = false
-servers = "http://localhost1:9200,http://localhost2:9200,http://localhost3:9200"
+servers = [
+    "http://localhost1:9200",
+    "http://localhost2:9200",
+    "http://localhost3:9200",
+]
 username = ""
 password = ""
 sniff_enabled = false
