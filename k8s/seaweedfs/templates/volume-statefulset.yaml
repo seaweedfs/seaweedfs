@@ -12,6 +12,7 @@ metadata:
 spec:
   serviceName: {{ template "seaweedfs.name" . }}-volume
   replicas: {{ .Values.volume.replicas }}
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
       app: {{ template "seaweedfs.name" . }}
@@ -33,7 +34,7 @@ spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.volume.restartPolicy }}
       {{- if .Values.volume.tolerations }}
       tolerations:
-        {{ tpl .Values.volume.tolerations . | nindent 8 | trim }}
+      {{ tpl .Values.volume.tolerations . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
@@ -62,7 +63,7 @@ spec:
                 fieldRef:
                   fieldPath: status.hostIP
             - name: SEAWEEDFS_FULLNAME
-              value: "{{ template "seaweedfs.name" . }}"                  
+              value: "{{ template "seaweedfs.name" . }}"
           command:
             - "/bin/sh"
             - "-ec"
