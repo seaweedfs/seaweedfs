@@ -2,7 +2,6 @@ package elastic
 
 import (
 	"context"
-	"crypto/md5"
 	"fmt"
 	"math"
 	"strings"
@@ -20,10 +19,15 @@ var (
 	indexPrefix         = ".seaweedfs_"
 	indexKV             = ".seaweedfs_kv_entries"
 	mappingWithoutQuery = ` {
-  "mappings": {
-	"enabled": false
-  }
-}`
+		     "mappings": {
+		   	"enabled": false,
+		       "properties": {
+		         "Value":{
+		           "type": "binary"
+		         }
+		       }
+		     }
+		   }`
 )
 
 type ESEntry struct {
@@ -32,7 +36,7 @@ type ESEntry struct {
 }
 
 type ESKVEntry struct {
-	Value string `json:Value`
+	Value []byte `json:"Value"`
 }
 
 func init() {
@@ -47,23 +51,12 @@ type ElasticStore struct {
 func (store *ElasticStore) GetName() string {
 	return "elastic7"
 }
+
 func (store *ElasticStore) Initialize(configuration weed_util.Configuration, prefix string) (err error) {
-	servers := configuration.GetString(prefix + "servers")
-	if servers == "" {
-		return fmt.Errorf("error elastic endpoints.")
-	}
-	store.maxPageSize = configuration.GetInt(prefix + "index.max_result_window")
-	if store.maxPageSize <= 0 {
-		store.maxPageSize = 10000
-	}
-	glog.Infof("filer store elastic endpoints: %s, index.max_result_window:%d", servers, store.maxPageSize)
-	store.client, err = elastic.NewClient(
-		elastic.SetSniff(false),
-		elastic.SetHealthcheck(false),
-		elastic.SetURL(servers),
-	)
+	options := store.initialize(configuration, prefix)
+	store.client, err = elastic.NewClient(options...)
 	if err != nil {
-		return fmt.Errorf("init elastic %s: %v.", servers, err)
+		return fmt.Errorf("init elastic %v.", err)
 	}
 	if ok, err := store.client.IndexExists(indexKV).Do(context.Background()); err == nil && !ok {
 		_, err = store.client.CreateIndex(indexKV).Body(mappingWithoutQuery).Do(context.Background())
@@ -73,6 +66,25 @@ func (store *ElasticStore) Initialize(configuration weed_util.Configuration, pre
 	}
 	return nil
 }
+
+func (store *ElasticStore) initialize(configuration weed_util.Configuration, prefix string) (options []elastic.ClientOptionFunc) {
+	servers := configuration.GetStringSlice(prefix + "servers")
+	options = append(options, elastic.SetURL(servers...))
+	username := configuration.GetString(prefix + "username")
+	password := configuration.GetString(prefix + "password")
+	if username != "" && password != "" {
+		options = append(options, elastic.SetBasicAuth(username, password))
+	}
+	options = append(options, elastic.SetSniff(configuration.GetBool(prefix+"sniff_enabled")))
+	options = append(options, elastic.SetHealthcheck(configuration.GetBool(prefix+"healthcheck_enabled")))
+	store.maxPageSize = configuration.GetInt(prefix + "index.max_result_window")
+	if store.maxPageSize <= 0 {
+		store.maxPageSize = 10000
+	}
+	glog.Infof("filer store elastic endpoints: %v.", servers)
+	return options
+}
+
 func (store *ElasticStore) BeginTransaction(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }
@@ -82,6 +94,7 @@ func (store *ElasticStore) CommitTransaction(ctx context.Context) error {
 func (store *ElasticStore) RollbackTransaction(ctx context.Context) error {
 	return nil
 }
+
 func (store *ElasticStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, err error) {
 	return nil, filer.ErrUnsupportedListDirectoryPrefixed
 }
@@ -89,9 +102,9 @@ func (store *ElasticStore) ListDirectoryPrefixedEntries(ctx context.Context, ful
 func (store *ElasticStore) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
 	index := getIndex(entry.FullPath)
 	dir, _ := entry.FullPath.DirAndName()
-	id := fmt.Sprintf("%x", md5.Sum([]byte(entry.FullPath)))
+	id := weed_util.Md5String([]byte(entry.FullPath))
 	esEntry := &ESEntry{
-		ParentId: fmt.Sprintf("%x", md5.Sum([]byte(dir))),
+		ParentId: weed_util.Md5String([]byte(dir)),
 		Entry:    entry,
 	}
 	value, err := jsoniter.Marshal(esEntry)
@@ -111,12 +124,14 @@ func (store *ElasticStore) InsertEntry(ctx context.Context, entry *filer.Entry) 
 	}
 	return nil
 }
+
 func (store *ElasticStore) UpdateEntry(ctx context.Context, entry *filer.Entry) (err error) {
 	return store.InsertEntry(ctx, entry)
 }
+
 func (store *ElasticStore) FindEntry(ctx context.Context, fullpath weed_util.FullPath) (entry *filer.Entry, err error) {
 	index := getIndex(fullpath)
-	id := fmt.Sprintf("%x", md5.Sum([]byte(fullpath)))
+	id := weed_util.Md5String([]byte(fullpath))
 	searchResult, err := store.client.Get().
 		Index(index).
 		Type(indexType).
@@ -136,14 +151,16 @@ func (store *ElasticStore) FindEntry(ctx context.Context, fullpath weed_util.Ful
 	glog.Errorf("find entry(%s),%v.", string(fullpath), err)
 	return nil, filer_pb.ErrNotFound
 }
+
 func (store *ElasticStore) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	index := getIndex(fullpath)
-	id := fmt.Sprintf("%x", md5.Sum([]byte(fullpath)))
+	id := weed_util.Md5String([]byte(fullpath))
 	if strings.Count(string(fullpath), "/") == 1 {
 		return store.deleteIndex(ctx, index)
 	}
 	return store.deleteEntry(ctx, index, id)
 }
+
 func (store *ElasticStore) deleteIndex(ctx context.Context, index string) (err error) {
 	deleteResult, err := store.client.DeleteIndex(index).Do(ctx)
 	if elastic.IsNotFound(err) || (err == nil && deleteResult.Acknowledged) {
@@ -152,6 +169,7 @@ func (store *ElasticStore) deleteIndex(ctx context.Context, index string) (err e
 	glog.Errorf("delete index(%s) %v.", index, err)
 	return err
 }
+
 func (store *ElasticStore) deleteEntry(ctx context.Context, index, id string) (err error) {
 	deleteResult, err := store.client.Delete().
 		Index(index).
@@ -166,6 +184,7 @@ func (store *ElasticStore) deleteEntry(ctx context.Context, index, id string) (e
 	glog.Errorf("delete entry(index:%s,_id:%s) %v.", index, id, err)
 	return fmt.Errorf("delete entry %v.", err)
 }
+
 func (store *ElasticStore) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	if entries, err := store.ListDirectoryEntries(ctx, fullpath, "", false, math.MaxInt32); err == nil {
 		for _, entry := range entries {
@@ -218,7 +237,7 @@ func (store *ElasticStore) listDirectoryEntries(
 	first := true
 	index := getIndex(fullpath)
 	nextStart := ""
-	parentId := fmt.Sprintf("%x", md5.Sum([]byte(fullpath)))
+	parentId := weed_util.Md5String([]byte(fullpath))
 	if _, err := store.client.Refresh(index).Do(ctx); err != nil {
 		if elastic.IsNotFound(err) {
 			store.client.CreateIndex(index).Do(ctx)
@@ -237,7 +256,7 @@ func (store *ElasticStore) listDirectoryEntries(
 			if !first {
 				fullPath = nextStart
 			}
-			after := fmt.Sprintf("%x", md5.Sum([]byte(fullPath)))
+			after := weed_util.Md5String([]byte(fullPath))
 			if result, err = store.searchAfter(ctx, index, parentId, after); err != nil {
 				glog.Errorf("searchAfter (%s,%s,%t,%d) %v.", string(fullpath), startFileName, inclusive, limit, err)
 				return entries, err
