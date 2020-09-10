@@ -186,6 +186,20 @@ filer:
   port: 8888
   grpcPort: 18888
   loggingOverrideLevel: null
+  #  replication type is XYZ:
+  # X number of replica in other data centers
+  # Y number of replica in other racks in the same data center
+  # Z number of replica in other servers in the same rack
+  defaultReplicaPlacement: "000"
+  # turn off directory listing
+  disableDirListing: false
+  # split files larger than the limit, default 32
+  maxMB: null
+  # encrypt data on volume servers
+  encryptVolumeData: false
+
+  # Whether proxy or redirect to volume server during file GET request
+  redirectOnRead: false
 
   # Limit sub dir listing size (default 100000)
   dirListLimit: 100000
@@ -269,6 +283,8 @@ filer:
     WEED_FILER_BUCKETS_FOLDER: "/buckets"
     # directories under this folder will be store message queue data
     WEED_FILER_QUEUES_FOLDER: "/queues"
+    # WEED_FILER_OPTIONS_BUCKETS_FSYNC a list of buckets names with all write requests fsync=true
+    WEED_FILER_OPTIONS_BUCKETS_FSYNC: []
 
 s3:
   enabled: true

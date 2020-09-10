@@ -99,6 +99,9 @@ spec:
               {{- end }}
               filer \
               -port={{ .Values.filer.port }} \
+              {{- if .Values.filer.redirectOnRead }}
+              -redirectOnRead \
+              {{- end }}
               {{- if .Values.filer.disableHttp }}
               -disableHttp \
               {{- end }}
@@ -106,7 +109,24 @@ spec:
               -disableDirListing \
               {{- end }}
               -dirListLimit={{ .Values.filer.dirListLimit }} \
+              {{- if .Values.global.enableReplication }}
+              -defaultReplicaPlacement={{ .Values.global.replicationPlacment }} \
+              {{- else }}
+              -defaultReplicaPlacement={{ .Values.filer.defaultReplicaPlacement }} \
+              {{- end }}
+              {{- if .Values.filer.disableDirListing }}
+              -disableDirListing \
+              {{- end }}
+              {{- if .Values.filer.maxMB }}
+              -maxMB={{ .Values.filer.maxMB }} \
+              {{- end }}
+              {{- if .Values.filer.encryptVolumeData }}
+              -encryptVolumeData \
+              {{- end }}
               -ip=${POD_IP} \
+              {{- if gt (.Values.filer.replicas | int) 1 }}
+              -peers={{ range $index := until (.Values.filer.replicas | int) }}${SEAWEEDFS_FULLNAME}-filer-{{ $index }}.${SEAWEEDFS_FULLNAME}-filer:{{ $.Values.filer.port }}{{ if lt $index (sub ($.Values.filer.replicas | int) 1) }},{{ end }}{{ end }}
+              {{- end }}
               -master={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
           {{- if or (.Values.global.enableSecurity) (.Values.filer.extraVolumeMounts) }}    
           volumeMounts:
