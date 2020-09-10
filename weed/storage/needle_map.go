@@ -21,7 +21,7 @@ const (
 type NeedleMapper interface {
 	Put(key NeedleId, offset Offset, size Size) error
 	Get(key NeedleId) (element *needle_map.NeedleValue, ok bool)
-	Delete(key NeedleId, offset Offset) error
+	Delete(key NeedleId) error
 	Close()
 	Destroy() error
 	ContentSize() uint64

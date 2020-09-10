@@ -80,7 +80,7 @@ func (cm *MemDb) AscendingVisit(visit func(NeedleValue) error) (ret error) {
 	return
 }
 
-func (cm *MemDb) SaveToIdx(idxName string) (ret error) {
+func (cm *MemDb) SaveToIdx(idxName string, includeDeleted bool) (ret error) {
 	idxFile, err := os.OpenFile(idxName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return
@@ -88,7 +88,10 @@ func (cm *MemDb) SaveToIdx(idxName string) (ret error) {
 	defer idxFile.Close()
 
 	return cm.AscendingVisit(func(value NeedleValue) error {
-		if value.Offset.IsZero() || value.Size.IsDeleted() {
+		if value.Offset.IsZero() {
+			return nil
+		}
+		if !includeDeleted && value.Size.IsDeleted() {
 			return nil
 		}
 		_, err := idxFile.Write(value.ToBytes())

@@ -256,5 +256,5 @@ func (scanner *VolumeFileScanner4GenIdx) VisitNeedle(n *needle.Needle, offset in
 	if n.Size > 0 && n.Size.IsValid() {
 		return scanner.v.nm.Put(n.Id, ToOffset(offset), n.Size)
 	}
-	return scanner.v.nm.Delete(n.Id, ToOffset(offset))
+	return scanner.v.nm.Delete(n.Id)
 }

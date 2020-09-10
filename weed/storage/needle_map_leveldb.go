@@ -74,7 +74,7 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 	}
 	defer db.Close()
 	return idx.WalkIndexFile(indexFile, func(key NeedleId, offset Offset, size Size) error {
-		if !offset.IsZero() && size.IsValid() {
+		if !offset.IsZero() {
 			levelDbWrite(db, key, offset, size)
 		} else {
 			levelDbDelete(db, key)
@@ -123,7 +123,7 @@ func levelDbDelete(db *leveldb.DB, key NeedleId) error {
 	return db.Delete(bytes, nil)
 }
 
-func (m *LevelDbNeedleMap) Delete(key NeedleId, offset Offset) error {
+func (m *LevelDbNeedleMap) Delete(key NeedleId) error {
 	oldNeedle, found := m.Get(key)
 	if !found || oldNeedle.Size.IsDeleted() {
 		return nil
@@ -131,7 +131,7 @@ func (m *LevelDbNeedleMap) Delete(key NeedleId, offset Offset) error {
 	m.logDelete(oldNeedle.Size)
 
 	// write to index file first
-	if err := m.appendToIndexFile(key, offset, TombstoneFileSize); err != nil {
+	if err := m.appendToIndexFile(key, oldNeedle.Offset, -oldNeedle.Size); err != nil {
 		return err
 	}
 
