@@ -81,7 +81,7 @@ func (store *ElasticStore) initialize(configuration weed_util.Configuration, pre
 	if store.maxPageSize <= 0 {
 		store.maxPageSize = 10000
 	}
-	glog.Infof("filer store elastic endpoints: %s.", servers)
+	glog.Infof("filer store elastic endpoints: %v.", servers)
 	return options
 }
 
