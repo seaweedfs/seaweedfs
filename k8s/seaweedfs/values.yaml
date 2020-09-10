@@ -100,9 +100,18 @@ volume:
   ipBind: "0.0.0.0"
   replicas: 1
   loggingOverrideLevel: null
+  # number of seconds between heartbeats, must be smaller than or equal to the master's setting
+  pulseSeconds: null
+  # Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance., default memory
+  index: null
+  # limit file size to avoid out of memory, default 256mb
+  fileSizeLimitMB: null
+  # minimum free disk space(in percents). If free disk space lower this value - all volumes marks as ReadOnly
+  minFreeSpacePercent: 1
+
 
   # limit background compaction or copying speed in mega bytes per second
-  compactionMBps: "40"
+  compactionMBps: "50"
 
   # Directories to store data files. dir[,dir]... (default "/tmp")
   dir: "/data"
