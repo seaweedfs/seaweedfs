@@ -115,7 +115,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 * [Filer server][Filer] provides "normal" directories and files via http.
 * [Super Large Files][SuperLargeFiles] stores large or super large files in tens of TB.
 * [Mount filer][Mount] reads and writes files directly as a local directory via FUSE.
-* [Active-Active Replication][ActiveActiveAsyncReplication] enables asynchronous cross data center synchronization.
+* [Active-Active Replication][ActiveActiveAsyncReplication] enables asynchronous one-way or two-way cross data center replication.
 * [Amazon S3 compatible API][AmazonS3API] accesses files with S3 tooling.
 * [Hadoop Compatible File System][Hadoop] accesses files from Hadoop/Spark/Flink/etc or even runs HBase.
 * [Async Backup To Cloud][BackupToCloud] has extremely fast local access and backups to Amazon S3, Google Cloud Storage, Azure, BackBlaze.
