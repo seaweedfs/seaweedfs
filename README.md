@@ -117,7 +117,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 * [Mount filer][Mount] reads and writes files directly as a local directory via FUSE.
 * [Active-Active Replication][ActiveActiveAsyncReplication] enables asynchronous cross data center synchronization.
 * [Amazon S3 compatible API][AmazonS3API] accesses files with S3 tooling.
-* [Hadoop Compatible File System][Hadoop] accesses files from Hadoop/Spark/Flink/etc jobs.
+* [Hadoop Compatible File System][Hadoop] accesses files from Hadoop/Spark/Flink/etc or even runs HBase.
 * [Async Backup To Cloud][BackupToCloud] has extremely fast local access and backups to Amazon S3, Google Cloud Storage, Azure, BackBlaze.
 * [WebDAV] accesses as a mapped drive on Mac and Windows, or from mobile devices.
 * [AES256-GCM Encrypted Storage][FilerDataEncryption] safely stores the encrypted data.
