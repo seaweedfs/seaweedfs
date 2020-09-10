@@ -14,6 +14,13 @@ global:
     enabled: false
     gatewayHost: null
     gatewayPort: null
+  # if enabled will use global.replicationPlacment and override master & filer defaultReplicaPlacement config
+  enableReplication: false
+  #  replication type is XYZ:
+  # X number of replica in other data centers
+  # Y number of replica in other racks in the same data center
+  # Z number of replica in other servers in the same rack
+  replicationPlacment: "001"
 
 image:
   registry: ""
@@ -31,8 +38,20 @@ master:
   grpcPort: 19333
   ipBind: "0.0.0.0"
   volumePreallocate: false
+  #Master stops directing writes to oversized volumes
   volumeSizeLimitMB: 30000
   loggingOverrideLevel: null
+  #number of seconds between heartbeats, default 5
+  pulseSeconds: null
+  #threshold to vacuum and reclaim spaces, default 0.3 (30%)
+  garbageThreshold: null
+  #Prometheus push interval in seconds, default 15
+  metricsIntervalSec: 15
+  #  replication type is XYZ:
+  # X number of replica in other data centers
+  # Y number of replica in other racks in the same data center
+  # Z number of replica in other servers in the same rack
+  defaultReplication: "000"
 
   # Disable http request, only gRpc operations are allowed
   disableHttp: false
@@ -87,6 +106,11 @@ master:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
+  extraEnvironmentVars:
+    WEED_MASTER_VOLUME_GROWTH_COPY_1: 7
+    WEED_MASTER_VOLUME_GROWTH_COPY_2: 6
+    WEED_MASTER_VOLUME_GROWTH_COPY_3: 3
+    WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
 
 volume:
   enabled: true

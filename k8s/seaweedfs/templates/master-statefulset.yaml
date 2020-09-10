@@ -70,6 +70,12 @@ spec:
                   fieldPath: metadata.namespace
             - name: SEAWEEDFS_FULLNAME
               value: "{{ template "seaweedfs.name" . }}"
+            {{- if .Values.master.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.master.extraEnvironmentVars }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
           command:
             - "/bin/sh"
             - "-ec"
@@ -84,6 +90,11 @@ spec:
               -port={{ .Values.master.port }} \
               -mdir=/data \
               -ip.bind={{ .Values.master.ipBind }} \
+              {{- if .Values.global.enableReplication }}
+              -defaultReplication={{ .Values.global.replicationPlacment }} \
+              {{- else }}
+              -defaultReplication={{ .Values.master.defaultReplication }} \
+              {{- end }}
               {{- if .Values.master.volumePreallocate }}
               -volumePreallocate \
               {{- end }}
@@ -93,6 +104,15 @@ spec:
               -volumeSizeLimitMB={{ .Values.master.volumeSizeLimitMB }} \
               {{- if .Values.master.disableHttp }}
               -disableHttp \
+              {{- end }}
+              {{- if .Values.master.pulseSeconds }}
+              -pulseSeconds={{ .Values.master.pulseSeconds }} \
+              {{- end }}
+              {{- if .Values.master.garbageThreshold }}
+              -garbageThreshold={{ .Values.master.garbageThreshold }} \
+              {{- end }}
+              {{- if .Values.master.metricsIntervalSec }}
+              -metrics.intervalSeconds={{ .Values.master.metricsIntervalSec }} \
               {{- end }}
               -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-master \
               -peers={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
