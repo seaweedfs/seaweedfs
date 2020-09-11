@@ -21,10 +21,13 @@ func (s3a *S3ApiServer) mkFile(parentDirectoryPath string, fileName string, chun
 
 }
 
-func (s3a *S3ApiServer) list(parentDirectoryPath, prefix, startFrom string, inclusive bool, limit uint32) (entries []*filer_pb.Entry, err error) {
+func (s3a *S3ApiServer) list(parentDirectoryPath, prefix, startFrom string, inclusive bool, limit uint32) (entries []*filer_pb.Entry, isLast bool, err error) {
 
-	err = filer_pb.List(s3a, parentDirectoryPath, prefix, func(entry *filer_pb.Entry, isLast bool) error {
+	err = filer_pb.List(s3a, parentDirectoryPath, prefix, func(entry *filer_pb.Entry, isLastEntry bool) error {
 		entries = append(entries, entry)
+		if isLastEntry {
+			isLast = true
+		}
 		return nil
 	}, startFrom, inclusive, limit)
 

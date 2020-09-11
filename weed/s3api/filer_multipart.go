@@ -56,7 +56,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 
 	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
 
-	entries, err := s3a.list(uploadDirectory, "", "", false, 0)
+	entries, _, err := s3a.list(uploadDirectory, "", "", false, 0)
 	if err != nil || len(entries) == 0 {
 		glog.Errorf("completeMultipartUpload %s %s error: %v, entries:%d", *input.Bucket, *input.UploadId, err, len(entries))
 		return nil, ErrNoSuchUpload
@@ -156,7 +156,7 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 		},
 	}
 
-	entries, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), *input.Prefix, *input.KeyMarker, true, uint32(*input.MaxUploads))
+	entries, _, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), *input.Prefix, *input.KeyMarker, true, uint32(*input.MaxUploads))
 	if err != nil {
 		glog.Errorf("listMultipartUploads %s error: %v", *input.Bucket, err)
 		return
@@ -177,25 +177,36 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 
 type ListPartsResult struct {
 	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListPartsResult"`
-	s3.ListPartsOutput
+
+	// copied from s3.ListPartsOutput, the Parts is not converting to <Part></Part>
+	Bucket               *string    `type:"string"`
+	IsTruncated          *bool      `type:"boolean"`
+	Key                  *string    `min:"1" type:"string"`
+	MaxParts             *int64     `type:"integer"`
+	NextPartNumberMarker *int64     `type:"integer"`
+	PartNumberMarker     *int64     `type:"integer"`
+	Part                 []*s3.Part `locationName:"Part" type:"list" flattened:"true"`
+	StorageClass         *string    `type:"string" enum:"StorageClass"`
+	UploadId             *string    `type:"string"`
 }
 
 func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListPartsResult, code ErrorCode) {
 	output = &ListPartsResult{
-		ListPartsOutput: s3.ListPartsOutput{
-			Bucket:           input.Bucket,
-			Key:              objectKey(input.Key),
-			UploadId:         input.UploadId,
-			MaxParts:         input.MaxParts,         // the maximum number of parts to return.
-			PartNumberMarker: input.PartNumberMarker, // the part number starts after this, exclusive
-		},
+		Bucket:           input.Bucket,
+		Key:              objectKey(input.Key),
+		UploadId:         input.UploadId,
+		MaxParts:         input.MaxParts,         // the maximum number of parts to return.
+		PartNumberMarker: input.PartNumberMarker, // the part number starts after this, exclusive
+		StorageClass:     aws.String("STANDARD"),
 	}
 
-	entries, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d.part", *input.PartNumberMarker), false, uint32(*input.MaxParts))
+	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d.part", *input.PartNumberMarker), false, uint32(*input.MaxParts))
 	if err != nil {
 		glog.Errorf("listObjectParts %s %s error: %v", *input.Bucket, *input.UploadId, err)
 		return nil, ErrNoSuchUpload
 	}
+
+	output.IsTruncated = aws.Bool(!isLast)
 
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.Name, ".part") && !entry.IsDirectory {
@@ -205,12 +216,15 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 				glog.Errorf("listObjectParts %s %s parse %s: %v", *input.Bucket, *input.UploadId, entry.Name, err)
 				continue
 			}
-			output.Parts = append(output.Parts, &s3.Part{
+			output.Part = append(output.Part, &s3.Part{
 				PartNumber:   aws.Int64(int64(partNumber)),
 				LastModified: aws.Time(time.Unix(entry.Attributes.Mtime, 0).UTC()),
 				Size:         aws.Int64(int64(filer.FileSize(entry))),
 				ETag:         aws.String("\"" + filer.ETag(entry) + "\""),
 			})
+			if !isLast {
+				output.NextPartNumberMarker = aws.Int64(int64(partNumber))
+			}
 		}
 	}
 
