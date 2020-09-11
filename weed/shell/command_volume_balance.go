@@ -299,7 +299,7 @@ func isGoodMove(placement *super_block.ReplicaPlacement, existingReplicas []*Vol
 		return false
 	}
 
-	if len(racks) > placement.DiffRackCount+1 {
+	if len(racks) > placement.DiffRackCount+placement.DiffDataCenterCount+1 {
 		return false
 	}
 

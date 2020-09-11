@@ -19,6 +19,24 @@ type testMoveCase struct {
 func TestIsGoodMove(t *testing.T) {
 
 	var tests = []testMoveCase{
+
+
+		{
+			name:        "test 100 move to spread into proper data centers",
+			replication: "100",
+			replicas: []*VolumeReplica{
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+				},
+				{
+					location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
+				},
+			},
+			sourceLocation: location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
+			targetLocation: location{"dc2", "r2", &master_pb.DataNodeInfo{Id: "dn3"}},
+			expected:       true,
+		},
+
 		{
 			name:        "test move to the same node",
 			replication: "001",
