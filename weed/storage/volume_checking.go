@@ -27,8 +27,8 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uin
 	if offset.IsZero() {
 		return 0, nil
 	}
-	if size.IsDeleted() {
-		size = 0
+	if size < 0 {
+		size = -size
 	}
 	if lastAppendAtNs, e = verifyNeedleIntegrity(v.DataBackend, v.Version(), offset.ToAcutalOffset(), key, size); e != nil {
 		return lastAppendAtNs, fmt.Errorf("verifyNeedleIntegrity %s failed: %v", indexFile.Name(), e)
