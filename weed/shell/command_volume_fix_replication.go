@@ -66,18 +66,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 
 	// find all volumes that needs replication
 	// collect all data nodes
-	volumeReplicas := make(map[uint32][]*VolumeReplica)
-	var allLocations []location
-	eachDataNode(resp.TopologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
-		loc := newLocation(dc, string(rack), dn)
-		for _, v := range dn.VolumeInfos {
-			volumeReplicas[v.Id] = append(volumeReplicas[v.Id], &VolumeReplica{
-				location: &loc,
-				info:     v,
-			})
-		}
-		allLocations = append(allLocations, loc)
-	})
+	volumeReplicas, allLocations := collectVolumeReplicaLocations(resp)
 
 	if len(allLocations) == 0 {
 		return fmt.Errorf("no data nodes at all")
@@ -109,6 +98,22 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 
 	return c.fixUnderReplicatedVolumes(commandEnv, writer, takeAction, underReplicatedVolumeIds, volumeReplicas, allLocations)
 
+}
+
+func collectVolumeReplicaLocations(resp *master_pb.VolumeListResponse) (map[uint32][]*VolumeReplica, []location) {
+	volumeReplicas := make(map[uint32][]*VolumeReplica)
+	var allLocations []location
+	eachDataNode(resp.TopologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
+		loc := newLocation(dc, string(rack), dn)
+		for _, v := range dn.VolumeInfos {
+			volumeReplicas[v.Id] = append(volumeReplicas[v.Id], &VolumeReplica{
+				location: &loc,
+				info:     v,
+			})
+		}
+		allLocations = append(allLocations, loc)
+	})
+	return volumeReplicas, allLocations
 }
 
 func (c *commandVolumeFixReplication) fixOverReplicatedVolumes(commandEnv *CommandEnv, writer io.Writer, takeAction bool, overReplicatedVolumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, allLocations []location) error {
