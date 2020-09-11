@@ -140,35 +140,50 @@ func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput
 
 type ListMultipartUploadsResult struct {
 	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListMultipartUploadsResult"`
-	s3.ListMultipartUploadsOutput
+
+	// copied from s3.ListMultipartUploadsOutput, the Uploads is not converting to <Upload></Upload>
+	Bucket             *string               `type:"string"`
+	Delimiter          *string               `type:"string"`
+	EncodingType       *string               `type:"string" enum:"EncodingType"`
+	IsTruncated        *bool                 `type:"boolean"`
+	KeyMarker          *string               `type:"string"`
+	MaxUploads         *int64                `type:"integer"`
+	NextKeyMarker      *string               `type:"string"`
+	NextUploadIdMarker *string               `type:"string"`
+	Prefix             *string               `type:"string"`
+	UploadIdMarker     *string               `type:"string"`
+	Upload             []*s3.MultipartUpload `locationName:"Upload" type:"list" flattened:"true"`
 }
 
 func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput) (output *ListMultipartUploadsResult, code ErrorCode) {
+	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListMultipartUploads.html
 
 	output = &ListMultipartUploadsResult{
-		ListMultipartUploadsOutput: s3.ListMultipartUploadsOutput{
-			Bucket:       input.Bucket,
-			Delimiter:    input.Delimiter,
-			EncodingType: input.EncodingType,
-			KeyMarker:    input.KeyMarker,
-			MaxUploads:   input.MaxUploads,
-			Prefix:       input.Prefix,
-		},
+		Bucket:       input.Bucket,
+		Delimiter:    input.Delimiter,
+		EncodingType: input.EncodingType,
+		KeyMarker:    input.KeyMarker,
+		MaxUploads:   input.MaxUploads,
+		Prefix:       input.Prefix,
 	}
 
-	entries, _, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), *input.Prefix, *input.KeyMarker, true, uint32(*input.MaxUploads))
+	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), *input.Prefix, *input.KeyMarker, true, uint32(*input.MaxUploads))
 	if err != nil {
 		glog.Errorf("listMultipartUploads %s error: %v", *input.Bucket, err)
 		return
 	}
+	output.IsTruncated = aws.Bool(!isLast)
 
 	for _, entry := range entries {
 		if entry.Extended != nil {
 			key := entry.Extended["key"]
-			output.Uploads = append(output.Uploads, &s3.MultipartUpload{
+			output.Upload = append(output.Upload, &s3.MultipartUpload{
 				Key:      objectKey(aws.String(string(key))),
 				UploadId: aws.String(entry.Name),
 			})
+			if !isLast {
+				output.NextUploadIdMarker = aws.String(entry.Name)
+			}
 		}
 	}
 
