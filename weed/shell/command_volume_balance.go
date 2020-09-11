@@ -42,11 +42,12 @@ func (c *commandVolumeBalance) Help() string {
 		idealWritableVolumes = totalWritableVolumes / numVolumeServers
 		for hasMovedOneVolume {
 			sort all volume servers ordered by the number of local writable volumes
-			pick the volume server A with the lowest number of writable volumes x
 			pick the volume server B with the highest number of writable volumes y
-			if y > idealWritableVolumes and x +1 <= idealWritableVolumes {
-				if B has a writable volume id v that A does not have {
-					move writable volume v from A to B
+			for any the volume server A with the number of writable volumes x +1 <= idealWritableVolume {
+				if y > idealWritableVolumes and x +1 <= idealWritableVolumes {
+					if B has a writable volume id v that A does not have, and satisfy v replication requirements {
+						move writable volume v from A to B
+					}
 				}
 			}
 		}
@@ -185,7 +186,7 @@ func sortReadOnlyVolumes(volumes []*master_pb.VolumeInformationMessage) {
 	})
 }
 
-func balanceSelectedVolume(commandEnv *CommandEnv, nodes []*Node, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage), applyBalancing bool) error {
+func balanceSelectedVolume(commandEnv *CommandEnv, nodes []*Node, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage), applyBalancing bool) (err error) {
 	selectedVolumeCount := 0
 	for _, dn := range nodes {
 		selectedVolumeCount += len(dn.selectedVolumes)
@@ -193,46 +194,63 @@ func balanceSelectedVolume(commandEnv *CommandEnv, nodes []*Node, sortCandidates
 
 	idealSelectedVolumes := ceilDivide(selectedVolumeCount, len(nodes))
 
-	hasMove := true
+	hasMoved := true
 
-	for hasMove {
-		hasMove = false
+	for hasMoved {
+		hasMoved = false
 		sort.Slice(nodes, func(i, j int) bool {
 			// TODO sort by free volume slots???
 			return len(nodes[i].selectedVolumes) < len(nodes[j].selectedVolumes)
 		})
-		emptyNode, fullNode := nodes[0], nodes[len(nodes)-1]
-		if len(fullNode.selectedVolumes) > idealSelectedVolumes && len(emptyNode.selectedVolumes)+1 <= idealSelectedVolumes {
 
-			// sort the volumes to move
-			var candidateVolumes []*master_pb.VolumeInformationMessage
-			for _, v := range fullNode.selectedVolumes {
-				candidateVolumes = append(candidateVolumes, v)
+		fullNode := nodes[len(nodes)-1]
+		var candidateVolumes []*master_pb.VolumeInformationMessage
+		for _, v := range fullNode.selectedVolumes {
+			candidateVolumes = append(candidateVolumes, v)
+		}
+		sortCandidatesFn(candidateVolumes)
+
+		for i := 0; i < len(nodes)-1; i++ {
+			emptyNode := nodes[i]
+			if !(len(fullNode.selectedVolumes) > idealSelectedVolumes && len(emptyNode.selectedVolumes)+1 <= idealSelectedVolumes) {
+				// no more volume servers with empty slots
+				break
 			}
-			sortCandidatesFn(candidateVolumes)
-
-			for _, v := range candidateVolumes {
-				if v.ReplicaPlacement > 0 {
-					if fullNode.dc != emptyNode.dc && fullNode.rack != emptyNode.rack {
-						// TODO this logic is too simple, but should work most of the time
-						// Need a correct algorithm to handle all different cases
-						continue
-					}
-				}
-				if _, found := emptyNode.selectedVolumes[v.Id]; !found {
-					if err := moveVolume(commandEnv, v, fullNode, emptyNode, applyBalancing); err == nil {
-						delete(fullNode.selectedVolumes, v.Id)
-						emptyNode.selectedVolumes[v.Id] = v
-						hasMove = true
-						break
-					} else {
-						return err
-					}
-				}
+			hasMoved, err = attemptToMoveOneVolume(commandEnv, fullNode, candidateVolumes, emptyNode, applyBalancing)
+			if err != nil {
+				return
+			}
+			if hasMoved {
+				// moved one volume
+				break
 			}
 		}
 	}
 	return nil
+}
+
+func attemptToMoveOneVolume(commandEnv *CommandEnv, fullNode *Node, candidateVolumes []*master_pb.VolumeInformationMessage, emptyNode *Node, applyBalancing bool) (hasMoved bool, err error) {
+
+	for _, v := range candidateVolumes {
+		if v.ReplicaPlacement > 0 {
+			if fullNode.dc != emptyNode.dc && fullNode.rack != emptyNode.rack {
+				// TODO this logic is too simple, but should work most of the time
+				// Need a correct algorithm to handle all different cases
+				continue
+			}
+		}
+		if _, found := emptyNode.selectedVolumes[v.Id]; !found {
+			if err = moveVolume(commandEnv, v, fullNode, emptyNode, applyBalancing); err == nil {
+				delete(fullNode.selectedVolumes, v.Id)
+				emptyNode.selectedVolumes[v.Id] = v
+				hasMoved = true
+				break
+			} else {
+				return
+			}
+		}
+	}
+	return
 }
 
 func moveVolume(commandEnv *CommandEnv, v *master_pb.VolumeInformationMessage, fullNode *Node, emptyNode *Node, applyBalancing bool) error {
