@@ -74,9 +74,12 @@ func (l *ExclusiveLocker) RequestLock() {
 
 	// start a goroutine to renew the lease
 	go func() {
+		ctx2, cancel2 := context.WithCancel(context.Background())
+		defer cancel2()
+
 		for l.isLocking {
 			if err := l.masterClient.WithClient(func(client master_pb.SeaweedClient) error {
-				resp, err := client.LeaseAdminToken(ctx, &master_pb.LeaseAdminTokenRequest{
+				resp, err := client.LeaseAdminToken(ctx2, &master_pb.LeaseAdminTokenRequest{
 					PreviousToken:    atomic.LoadInt64(&l.token),
 					PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
 					LockName:         AdminLockName,
