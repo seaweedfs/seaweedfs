@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	defaultFnFormat = `{{.Mime}}/{{.Id}}:{{.Name}}`
+	defaultFnFormat = `{{.Id}}_{{.Name}}{{.Ext}}`
 	timeFormat      = "2006-01-02T15:04:05"
 )
 
@@ -56,7 +56,7 @@ func init() {
 
 var (
 	output      = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
-	format      = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename formatted with {{.Mime}} {{.Id}} {{.Name}} {{.Ext}}")
+	format      = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename formatted with {{.Id}} {{.Name}} {{.Ext}}")
 	newer       = cmdExport.Flag.String("newer", "", "export only files newer than this time, default is all files. Must be specified in RFC3339 without timezone, e.g. 2006-01-02T15:04:05")
 	showDeleted = cmdExport.Flag.Bool("deleted", false, "export deleted files. only applies if -o is not specified")
 	limit       = cmdExport.Flag.Int("limit", 0, "only show first n entries if specified")
@@ -111,7 +111,7 @@ func (scanner *VolumeFileScanner4Export) VisitNeedle(n *needle.Needle, offset in
 	nv, ok := needleMap.Get(n.Id)
 	glog.V(3).Infof("key %d offset %d size %d disk_size %d compressed %v ok %v nv %+v",
 		n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsCompressed(), ok, nv)
-	if ok && nv.Size.IsValid() && nv.Offset.ToAcutalOffset() == offset {
+	if *showDeleted && n.Size > 0 || ok && nv.Size.IsValid() && nv.Offset.ToAcutalOffset() == offset {
 		if newerThanUnix >= 0 && n.HasLastModifiedDate() && n.LastModified < uint64(newerThanUnix) {
 			glog.V(3).Infof("Skipping this file, as it's old enough: LastModified %d vs %d",
 				n.LastModified, newerThanUnix)
