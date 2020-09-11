@@ -206,6 +206,8 @@ type ListPartsResult struct {
 }
 
 func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListPartsResult, code ErrorCode) {
+	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html
+
 	output = &ListPartsResult{
 		Bucket:           input.Bucket,
 		Key:              objectKey(input.Key),
