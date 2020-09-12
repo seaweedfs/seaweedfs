@@ -253,6 +253,10 @@ func mountEcShards(grpcDialOption grpc.DialOption, collection string, volumeId n
 	})
 }
 
+func divide(total, n int) float64 {
+	return float64(total) / float64(n)
+}
+
 func ceilDivide(total, n int) int {
 	return int(math.Ceil(float64(total) / float64(n)))
 }
