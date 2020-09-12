@@ -374,7 +374,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 		return nil
 	}
 
-	err = nm.SaveToIdx(idxName, false)
+	err = nm.SaveToIdx(idxName)
 	return
 }
 
@@ -441,7 +441,7 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 		return nil
 	})
 
-	newNm.SaveToIdx(datIdxName, false)
+	newNm.SaveToIdx(datIdxName)
 
 	return
 }

@@ -30,18 +30,13 @@ func LoadCompactNeedleMap(file *os.File) (*NeedleMap, error) {
 func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
 	e := idx.WalkIndexFile(file, func(key NeedleId, offset Offset, size Size) error {
 		nm.MaybeSetMaxFileKey(key)
-		if !offset.IsZero() {
+		if !offset.IsZero() && size.IsValid() {
 			nm.FileCounter++
 			nm.FileByteCounter = nm.FileByteCounter + uint64(size)
-
 			oldOffset, oldSize := nm.m.Set(NeedleId(key), offset, size)
 			if !oldOffset.IsZero() && oldSize.IsValid() {
 				nm.DeletionCounter++
 				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
-			} else if size < 0 {
-				// deletion
-				nm.DeletionCounter++
-				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(-size)
 			}
 		} else {
 			oldSize := nm.m.Delete(NeedleId(key))
@@ -59,18 +54,14 @@ func (nm *NeedleMap) Put(key NeedleId, offset Offset, size Size) error {
 	nm.logPut(key, oldSize, size)
 	return nm.appendToIndexFile(key, offset, size)
 }
-func (nm *NeedleMap) Get(key NeedleId) (existingValue *needle_map.NeedleValue, ok bool) {
-	existingValue, ok = nm.m.Get(NeedleId(key))
+func (nm *NeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, ok bool) {
+	element, ok = nm.m.Get(NeedleId(key))
 	return
 }
-func (nm *NeedleMap) Delete(key NeedleId) error {
-	existingValue, ok := nm.m.Get(NeedleId(key))
-	if !ok || existingValue.Size.IsDeleted() {
-		return nil
-	}
+func (nm *NeedleMap) Delete(key NeedleId, offset Offset) error {
 	deletedBytes := nm.m.Delete(NeedleId(key))
 	nm.logDelete(deletedBytes)
-	return nm.appendToIndexFile(key, existingValue.Offset, -existingValue.Size)
+	return nm.appendToIndexFile(key, offset, TombstoneFileSize)
 }
 func (nm *NeedleMap) Close() {
 	indexFileName := nm.indexFile.Name()

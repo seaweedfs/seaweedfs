@@ -69,9 +69,9 @@ func (m *SortedFileNeedleMap) Put(key NeedleId, offset Offset, size Size) error 
 	return os.ErrInvalid
 }
 
-func (m *SortedFileNeedleMap) Delete(key NeedleId) error {
+func (m *SortedFileNeedleMap) Delete(key NeedleId, offset Offset) error {
 
-	offset, size, err := erasure_coding.SearchNeedleFromSortedIndex(m.dbFile, m.dbFileSize, key, nil)
+	_, size, err := erasure_coding.SearchNeedleFromSortedIndex(m.dbFile, m.dbFileSize, key, nil)
 
 	if err != nil {
 		if err == erasure_coding.NotFoundError {
@@ -85,7 +85,7 @@ func (m *SortedFileNeedleMap) Delete(key NeedleId) error {
 	}
 
 	// write to index file first
-	if err := m.appendToIndexFile(key, offset, -size); err != nil {
+	if err := m.appendToIndexFile(key, offset, TombstoneFileSize); err != nil {
 		return err
 	}
 	_, _, err = erasure_coding.SearchNeedleFromSortedIndex(m.dbFile, m.dbFileSize, key, erasure_coding.MarkNeedleDeleted)

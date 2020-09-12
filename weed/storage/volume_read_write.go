@@ -200,12 +200,12 @@ func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 		size := nv.Size
 		n.Data = nil
 		n.AppendAtNs = uint64(time.Now().UnixNano())
-		_, _, _, err := n.Append(v.DataBackend, v.Version())
+		offset, _, _, err := n.Append(v.DataBackend, v.Version())
 		if err != nil {
 			return size, err
 		}
 		v.lastAppendAtNs = n.AppendAtNs
-		if err = v.nm.Delete(n.Id); err != nil {
+		if err = v.nm.Delete(n.Id, ToOffset(int64(offset))); err != nil {
 			return size, err
 		}
 		return size, err
@@ -238,12 +238,12 @@ func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
 		size := nv.Size
 		n.Data = nil
 		n.AppendAtNs = uint64(time.Now().UnixNano())
-		_, _, _, err := n.Append(v.DataBackend, v.Version())
+		offset, _, _, err := n.Append(v.DataBackend, v.Version())
 		if err != nil {
 			return size, err
 		}
 		v.lastAppendAtNs = n.AppendAtNs
-		if err = v.nm.Delete(n.Id); err != nil {
+		if err = v.nm.Delete(n.Id, ToOffset(int64(offset))); err != nil {
 			return size, err
 		}
 		return size, err
@@ -263,7 +263,7 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption) (int, erro
 	readSize := nv.Size
 	if readSize.IsDeleted() {
 		if readOption != nil && readOption.ReadDeleted && readSize != TombstoneFileSize {
-			glog.V(3).Infof("reading deleted %s size %d", n.String(), readSize)
+			glog.V(3).Infof("reading deleted %s", n.String())
 			readSize = -readSize
 		} else {
 			return -1, errors.New("already deleted")
