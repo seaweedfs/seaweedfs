@@ -40,12 +40,12 @@ func (c *commandVolumeBalance) Help() string {
 	}
 
 	func balanceWritableVolumes(){
-		idealWritableVolumes = totalWritableVolumes / numVolumeServers
+		idealWritableVolumeRatio = totalWritableVolumes / totalNumberOfMaxVolumes
 		for hasMovedOneVolume {
-			sort all volume servers ordered by the number of local writable volumes
-			pick the volume server B with the highest number of writable volumes y
-			for any the volume server A with the number of writable volumes x +1 <= idealWritableVolume {
-				if y > idealWritableVolumes and x +1 <= idealWritableVolumes {
+			sort all volume servers ordered by the localWritableVolumeRatio = localWritableVolumes to localVolumeMax
+			pick the volume server B with the highest localWritableVolumeRatio y
+			for any the volume server A with the number of writable volumes x + 1 <= idealWritableVolumeRatio * localVolumeMax {
+				if y > localWritableVolumeRatio {
 					if B has a writable volume id v that A does not have, and satisfy v replication requirements {
 						move writable volume v from A to B
 					}
@@ -242,8 +242,7 @@ func attemptToMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]
 		}
 		if _, found := emptyNode.selectedVolumes[v.Id]; !found {
 			if err = moveVolume(commandEnv, v, fullNode, emptyNode, applyBalancing); err == nil {
-				delete(fullNode.selectedVolumes, v.Id)
-				emptyNode.selectedVolumes[v.Id] = v
+				adjustAfterMove(v, volumeReplicas, fullNode, emptyNode)
 				hasMoved = true
 				break
 			} else {
@@ -311,4 +310,20 @@ func isGoodMove(placement *super_block.ReplicaPlacement, existingReplicas []*Vol
 
 	return true
 
+}
+
+func adjustAfterMove(v *master_pb.VolumeInformationMessage, volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, emptyNode *Node) {
+	delete(fullNode.selectedVolumes, v.Id)
+	emptyNode.selectedVolumes[v.Id] = v
+	existingReplicas := volumeReplicas[v.Id]
+	for _, replica := range existingReplicas {
+		if replica.location.dataNode.Id == fullNode.info.Id &&
+			replica.location.rack == fullNode.rack &&
+			replica.location.dc == fullNode.dc {
+			replica.location.dc = emptyNode.dc
+			replica.location.rack = emptyNode.rack
+			replica.location.dataNode = emptyNode.info
+			return
+		}
+	}
 }
