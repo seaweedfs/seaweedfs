@@ -36,7 +36,7 @@ type SyncOptions struct {
 }
 
 var (
-	syncOptions SyncOptions
+	syncOptions    SyncOptions
 	syncCpuProfile *string
 	syncMemProfile *string
 )

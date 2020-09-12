@@ -65,7 +65,7 @@ func (nm *NeedleMap) Get(key NeedleId) (existingValue *needle_map.NeedleValue, o
 }
 func (nm *NeedleMap) Delete(key NeedleId) error {
 	existingValue, ok := nm.m.Get(NeedleId(key))
-	if !ok || existingValue.Size.IsDeleted(){
+	if !ok || existingValue.Size.IsDeleted() {
 		return nil
 	}
 	deletedBytes := nm.m.Delete(NeedleId(key))

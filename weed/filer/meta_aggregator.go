@@ -87,7 +87,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, peer string
 				if err := ma.updateOffset(f, peer, peerSignature, event.TsNs); err == nil {
 					if event.TsNs < time.Now().Add(-2*time.Minute).UnixNano() {
 						glog.V(0).Infof("sync with %s progressed to: %v %0.2f/sec", peer, time.Unix(0, event.TsNs), float64(counter)/60.0)
-					} else if !synced{
+					} else if !synced {
 						synced = true
 						glog.V(0).Infof("synced with %s", peer)
 					}
@@ -162,13 +162,13 @@ func (ma *MetaAggregator) readFilerStoreSignature(peer string) (sig int32, err e
 	return
 }
 
-const(
+const (
 	MetaOffsetPrefix = "Meta"
 )
 
 func (ma *MetaAggregator) readOffset(f *Filer, peer string, peerSignature int32) (lastTsNs int64, err error) {
 
-	key := []byte(MetaOffsetPrefix+"xxxx")
+	key := []byte(MetaOffsetPrefix + "xxxx")
 	util.Uint32toBytes(key[len(MetaOffsetPrefix):], uint32(peerSignature))
 
 	value, err := f.Store.KvGet(context.Background(), key)
@@ -191,7 +191,7 @@ func (ma *MetaAggregator) readOffset(f *Filer, peer string, peerSignature int32)
 
 func (ma *MetaAggregator) updateOffset(f *Filer, peer string, peerSignature int32, lastTsNs int64) (err error) {
 
-	key := []byte(MetaOffsetPrefix+"xxxx")
+	key := []byte(MetaOffsetPrefix + "xxxx")
 	util.Uint32toBytes(key[len(MetaOffsetPrefix):], uint32(peerSignature))
 
 	value := make([]byte, 8)

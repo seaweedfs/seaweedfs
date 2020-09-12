@@ -12,11 +12,11 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-var(
+var (
 	UnsupportedCompression = fmt.Errorf("unsupported compression")
 )
 
-func MaybeGzipData(input []byte) ([]byte) {
+func MaybeGzipData(input []byte) []byte {
 	if IsGzippedContent(input) {
 		return input
 	}
@@ -24,13 +24,13 @@ func MaybeGzipData(input []byte) ([]byte) {
 	if err != nil {
 		return input
 	}
-	if len(gzipped) * 10 > len(input) * 9 {
+	if len(gzipped)*10 > len(input)*9 {
 		return input
 	}
 	return gzipped
 }
 
-func MaybeDecompressData(input []byte) ([]byte) {
+func MaybeDecompressData(input []byte) []byte {
 	uncompressed, err := DecompressData(input)
 	if err != nil {
 		if err != UnsupportedCompression {

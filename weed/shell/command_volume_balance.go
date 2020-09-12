@@ -174,7 +174,7 @@ func (n *Node) localVolumeRatio() float64 {
 }
 
 func (n *Node) localVolumeNextRatio() float64 {
-	return divide(len(n.selectedVolumes) + 1, int(n.info.MaxVolumeCount))
+	return divide(len(n.selectedVolumes)+1, int(n.info.MaxVolumeCount))
 }
 
 func (n *Node) selectVolumes(fn func(v *master_pb.VolumeInformationMessage) bool) {

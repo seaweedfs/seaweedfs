@@ -84,4 +84,3 @@ func ReadFilerSignature(grpcDialOption grpc.DialOption, filer string) (filerSign
 	}
 	return filerSignature, nil
 }
-

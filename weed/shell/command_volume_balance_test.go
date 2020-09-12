@@ -20,7 +20,6 @@ func TestIsGoodMove(t *testing.T) {
 
 	var tests = []testMoveCase{
 
-
 		{
 			name:        "test 100 move to spread into proper data centers",
 			replication: "100",
@@ -132,7 +131,6 @@ func TestIsGoodMove(t *testing.T) {
 			targetLocation: location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn3"}},
 			expected:       true,
 		},
-
 	}
 
 	for _, tt := range tests {
