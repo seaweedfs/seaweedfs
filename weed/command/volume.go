@@ -223,52 +223,43 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	// starting the cluster http server
 	clusterHttpServer := v.startClusterHttpService(volumeMux)
 
-	stopChain := make(chan struct{})
 	grace.OnInterrupt(func() {
 		fmt.Println("volume server has be killed")
-		var startTime time.Time
 
-		// Stop heartbeats
+		// Stop heartbeatsZ
 		glog.V(0).Infof("stop send heartbeat and wait %d seconds until shutdown ...", *v.preStopSeconds)
 		volumeServer.SendHeartbeat = false
 		time.Sleep(time.Duration(*v.preStopSeconds) * time.Second)
-		glog.V(0).Infof("end sleep %d sec", *v.preStopSeconds)
-		// firstly, stop the public http service to prevent from receiving new user request
-		if nil != publicHttpDown {
-			startTime = time.Now()
-			if err := publicHttpDown.Stop(); err != nil {
-				glog.Warningf("stop the public http server failed, %v", err)
-			}
-			delta := time.Now().Sub(startTime).Nanoseconds() / 1e6
-			glog.V(0).Infof("stop public http server, elapsed %dms", delta)
-		}
 
-		startTime = time.Now()
-		if err := clusterHttpServer.Stop(); err != nil {
-			glog.Warningf("stop the cluster http server failed, %v", err)
-		}
-		delta := time.Now().Sub(startTime).Nanoseconds() / 1e6
-		glog.V(0).Infof("graceful stop cluster http server, elapsed [%d]", delta)
-
-		startTime = time.Now()
-		grpcS.GracefulStop()
-		delta = time.Now().Sub(startTime).Nanoseconds() / 1e6
-		glog.V(0).Infof("graceful stop gRPC, elapsed [%d]", delta)
-
-		startTime = time.Now()
-		volumeServer.Shutdown()
-		delta = time.Now().Sub(startTime).Nanoseconds() / 1e6
-		glog.V(0).Infof("stop volume server, elapsed [%d]", delta)
-
-		pprof.StopCPUProfile()
-
-		close(stopChain) // notify exit
+		v.shutdown(publicHttpDown, clusterHttpServer, grpcS, volumeServer)
 	})
 
-	select {
-	case <-stopChain:
+	select {}
+
+}
+
+func (v VolumeServerOptions) shutdown(publicHttpDown httpdown.Server, clusterHttpServer httpdown.Server, grpcS *grpc.Server, volumeServer *weed_server.VolumeServer) {
+
+	// firstly, stop the public http service to prevent from receiving new user request
+	if nil != publicHttpDown {
+		glog.V(0).Infof("stop public http server ... ")
+		if err := publicHttpDown.Stop(); err != nil {
+			glog.Warningf("stop the public http server failed, %v", err)
+		}
 	}
-	glog.Warningf("the volume server exit.")
+
+	glog.V(0).Infof("graceful stop cluster http server ... ")
+	if err := clusterHttpServer.Stop(); err != nil {
+		glog.Warningf("stop the cluster http server failed, %v", err)
+	}
+
+	glog.V(0).Infof("graceful stop gRPC ...")
+	grpcS.GracefulStop()
+
+	volumeServer.Shutdown()
+
+	pprof.StopCPUProfile()
+
 }
 
 // check whether configure the public port
