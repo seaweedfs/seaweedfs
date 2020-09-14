@@ -115,7 +115,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 * [Filer server][Filer] provides "normal" directories and files via http.
 * [Super Large Files][SuperLargeFiles] stores large or super large files in tens of TB.
 * [Mount filer][Mount] reads and writes files directly as a local directory via FUSE.
-* [Active-Active Replication][ActiveActiveAsyncReplication] enables asynchronous one-way or two-way cross data center replication.
+* [Active-Active Replication][ActiveActiveAsyncReplication] enables asynchronous one-way or two-way cross cluster continuous replication.
 * [Amazon S3 compatible API][AmazonS3API] accesses files with S3 tooling.
 * [Hadoop Compatible File System][Hadoop] accesses files from Hadoop/Spark/Flink/etc or even runs HBase.
 * [Async Replication To Cloud][BackupToCloud] has extremely fast local access and backups to Amazon S3, Google Cloud Storage, Azure, BackBlaze.
@@ -137,7 +137,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 [FilerTTL]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Stores
 [VolumeServerTTL]: https://github.com/chrislusf/seaweedfs/wiki/Store-file-with-a-Time-To-Live
 [SeaweedFsCsiDriver]: https://github.com/seaweedfs/seaweedfs-csi-driver
-[ActiveActiveAsyncReplication]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Active-Active-xDC-synchronization
+[ActiveActiveAsyncReplication]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Active-Active-cross-cluster-continuous-synchronization
 
 [Back to TOC](#table-of-contents)
 
