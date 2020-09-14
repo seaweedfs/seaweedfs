@@ -5720,8 +5720,8 @@ var file_volume_server_proto_goTypes = []interface{}{
 	(*VolumeTierMoveDatFromRemoteResponse)(nil),          // 69: volume_server_pb.VolumeTierMoveDatFromRemoteResponse
 	(*VolumeServerStatusRequest)(nil),                    // 70: volume_server_pb.VolumeServerStatusRequest
 	(*VolumeServerStatusResponse)(nil),                   // 71: volume_server_pb.VolumeServerStatusResponse
-	(*VolumeServerLeaveRequest)(nil),                      // 72: volume_server_pb.VolumeServerLeaveRequest
-	(*VolumeServerLeaveResponse)(nil),                     // 73: volume_server_pb.VolumeServerLeaveResponse
+	(*VolumeServerLeaveRequest)(nil),                     // 72: volume_server_pb.VolumeServerLeaveRequest
+	(*VolumeServerLeaveResponse)(nil),                    // 73: volume_server_pb.VolumeServerLeaveResponse
 	(*QueryRequest)(nil),                                 // 74: volume_server_pb.QueryRequest
 	(*QueriedStripe)(nil),                                // 75: volume_server_pb.QueriedStripe
 	(*VolumeNeedleStatusRequest)(nil),                    // 76: volume_server_pb.VolumeNeedleStatusRequest
