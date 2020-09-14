@@ -24,4 +24,4 @@ debug_server:
 
 debug_volume:
 	go build -gcflags="all=-N -l"
-	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- volume -dir=/Volumes/mobile_disk/100 -port 8564 -max=30
+	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- volume -dir=/Volumes/mobile_disk/100 -port 8564 -max=30 -preStopSeconds=2

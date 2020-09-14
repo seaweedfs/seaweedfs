@@ -196,6 +196,16 @@ func (vs *VolumeServer) VolumeServerStatus(ctx context.Context, req *volume_serv
 
 }
 
+func (vs *VolumeServer) VolumeServerLeave(ctx context.Context, req *volume_server_pb.VolumeServerLeaveRequest) (*volume_server_pb.VolumeServerLeaveResponse, error) {
+
+	resp := &volume_server_pb.VolumeServerLeaveResponse{}
+
+	vs.StopHeartbeat()
+
+	return resp, nil
+
+}
+
 func (vs *VolumeServer) VolumeNeedleStatus(ctx context.Context, req *volume_server_pb.VolumeNeedleStatusRequest) (*volume_server_pb.VolumeNeedleStatusResponse, error) {
 
 	resp := &volume_server_pb.VolumeNeedleStatusResponse{}

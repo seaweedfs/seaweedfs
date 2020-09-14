@@ -31,7 +31,8 @@ type VolumeServer struct {
 	MetricsAddress          string
 	MetricsIntervalSec      int
 	fileSizeLimitBytes      int64
-	SendHeartbeat           bool
+	isHeartbeating          bool
+	stopChan                chan bool
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
@@ -67,7 +68,8 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		grpcDialOption:          security.LoadClientTLS(util.GetViper(), "grpc.volume"),
 		compactionBytePerSecond: int64(compactionMBPerSecond) * 1024 * 1024,
 		fileSizeLimitBytes:      int64(fileSizeLimitMB) * 1024 * 1024,
-		SendHeartbeat:           true,
+		isHeartbeating:          true,
+		stopChan:                make(chan bool),
 	}
 	vs.SeedMasterNodes = masterNodes
 	vs.store = storage.NewStore(vs.grpcDialOption, port, ip, publicUrl, folders, maxCounts, minFreeSpacePercents, vs.needleMapKind)

@@ -223,22 +223,27 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	// starting the cluster http server
 	clusterHttpServer := v.startClusterHttpService(volumeMux)
 
+	stopChan := make(chan bool)
 	grace.OnInterrupt(func() {
 		fmt.Println("volume server has be killed")
 
-		// Stop heartbeatsZ
-		glog.V(0).Infof("stop send heartbeat and wait %d seconds until shutdown ...", *v.preStopSeconds)
-		volumeServer.SendHeartbeat = false
-		time.Sleep(time.Duration(*v.preStopSeconds) * time.Second)
+		// Stop heartbeats
+		if !volumeServer.StopHeartbeat() {
+			glog.V(0).Infof("stop send heartbeat and wait %d seconds until shutdown ...", *v.preStopSeconds)
+			time.Sleep(time.Duration(*v.preStopSeconds) * time.Second)
+		}
 
-		v.shutdown(publicHttpDown, clusterHttpServer, grpcS, volumeServer)
+		shutdown(publicHttpDown, clusterHttpServer, grpcS, volumeServer)
+		stopChan <- true
 	})
 
-	select {}
+	select {
+	case <-stopChan:
+	}
 
 }
 
-func (v VolumeServerOptions) shutdown(publicHttpDown httpdown.Server, clusterHttpServer httpdown.Server, grpcS *grpc.Server, volumeServer *weed_server.VolumeServer) {
+func shutdown(publicHttpDown httpdown.Server, clusterHttpServer httpdown.Server, grpcS *grpc.Server, volumeServer *weed_server.VolumeServer) {
 
 	// firstly, stop the public http service to prevent from receiving new user request
 	if nil != publicHttpDown {

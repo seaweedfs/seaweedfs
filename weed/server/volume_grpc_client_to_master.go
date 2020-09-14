@@ -31,7 +31,7 @@ func (vs *VolumeServer) heartbeat() {
 
 	var err error
 	var newLeader string
-	for {
+	for vs.isHeartbeating {
 		for _, master := range vs.SeedMasterNodes {
 			if newLeader != "" {
 				// the new leader may actually is the same master
@@ -52,8 +52,20 @@ func (vs *VolumeServer) heartbeat() {
 				newLeader = ""
 				vs.store.MasterAddress = ""
 			}
+			if !vs.isHeartbeating {
+				break
+			}
 		}
 	}
+}
+
+func (vs *VolumeServer) StopHeartbeat() (isAlreadyStopping bool) {
+	if !vs.isHeartbeating {
+		return true
+	}
+	vs.isHeartbeating = false
+	vs.stopChan <- true
+	return false
 }
 
 func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader string, err error) {
@@ -171,14 +183,10 @@ func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDi
 				return "", err
 			}
 		case <-volumeTickChan:
-			if vs.SendHeartbeat {
-				glog.V(4).Infof("volume server %s:%d heartbeat", vs.store.Ip, vs.store.Port)
-				if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
-					glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
-					return "", err
-				}
-			} else {
-				glog.V(4).Infof("volume server %s:%d skip send heartbeat", vs.store.Ip, vs.store.Port)
+			glog.V(4).Infof("volume server %s:%d heartbeat", vs.store.Ip, vs.store.Port)
+			if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
+				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
+				return "", err
 			}
 		case <-ecShardTickChan:
 			glog.V(4).Infof("volume server %s:%d ec heartbeat", vs.store.Ip, vs.store.Port)
@@ -187,6 +195,8 @@ func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDi
 				return "", err
 			}
 		case err = <-doneChan:
+			return
+		case <-vs.stopChan:
 			return
 		}
 	}
