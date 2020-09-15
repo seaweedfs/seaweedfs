@@ -73,6 +73,7 @@ var cmdFilerSynchronize = &Command{
 	* filer.sync supports both active-active and active-passive modes.
 	
 	If restarted, the synchronization will resume from the previous checkpoints, persisted every minute.
+	A fresh sync will start from the earliest metadata logs.
 
 `,
 }
