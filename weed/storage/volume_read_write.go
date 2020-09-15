@@ -381,10 +381,8 @@ func ScanVolumeFile(dirname string, collection string, id needle.VolumeId,
 	if v, err = loadVolumeWithoutIndex(dirname, collection, id, needleMapKind); err != nil {
 		return fmt.Errorf("failed to load volume %d: %v", id, err)
 	}
-	if v.volumeInfo.Version == 0 {
-		if err = volumeFileScanner.VisitSuperBlock(v.SuperBlock); err != nil {
-			return fmt.Errorf("failed to process volume %d super block: %v", id, err)
-		}
+	if err = volumeFileScanner.VisitSuperBlock(v.SuperBlock); err != nil {
+		return fmt.Errorf("failed to process volume %d super block: %v", id, err)
 	}
 	defer v.Close()
 
@@ -406,8 +404,9 @@ func ScanVolumeFileFrom(version needle.Version, datBackend backend.BackendStorag
 	for n != nil {
 		var needleBody []byte
 		if volumeFileScanner.ReadNeedleBody() {
+			// println("needle", n.Id.String(), "offset", offset, "size", n.Size, "rest", rest)
 			if needleBody, err = n.ReadNeedleBody(datBackend, version, offset+NeedleHeaderSize, rest); err != nil {
-				glog.V(0).Infof("cannot read needle body: %v", err)
+				glog.V(0).Infof("cannot read needle head [%d, %d) body [%d, %d) body length %d: %v", offset, offset+NeedleHeaderSize, offset+NeedleHeaderSize, offset+NeedleHeaderSize+rest, rest, err)
 				// err = fmt.Errorf("cannot read needle body: %v", err)
 				// return
 			}

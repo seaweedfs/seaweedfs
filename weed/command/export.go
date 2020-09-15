@@ -70,13 +70,13 @@ var (
 	localLocation, _             = time.LoadLocation("Local")
 )
 
-func printNeedle(vid needle.VolumeId, n *needle.Needle, version needle.Version, deleted bool) {
+func printNeedle(vid needle.VolumeId, n *needle.Needle, version needle.Version, deleted bool, offset int64, onDiskSize int64) {
 	key := needle.NewFileIdFromNeedle(vid, n).String()
 	size := int32(n.DataSize)
 	if version == needle.Version1 {
 		size = int32(n.Size)
 	}
-	fmt.Printf("%s\t%s\t%d\t%t\t%s\t%s\t%s\t%t\n",
+	fmt.Printf("%s\t%s\t%d\t%t\t%s\t%s\t%s\t%t\t%d\t%d\n",
 		key,
 		n.Name,
 		size,
@@ -85,6 +85,8 @@ func printNeedle(vid needle.VolumeId, n *needle.Needle, version needle.Version, 
 		n.LastModifiedString(),
 		n.Ttl.String(),
 		deleted,
+		offset,
+		offset+onDiskSize,
 	)
 }
 
@@ -124,17 +126,17 @@ func (scanner *VolumeFileScanner4Export) VisitNeedle(n *needle.Needle, offset in
 		if tarOutputFile != nil {
 			return writeFile(vid, n)
 		} else {
-			printNeedle(vid, n, scanner.version, false)
+			printNeedle(vid, n, scanner.version, false, offset, n.DiskSize(scanner.version))
 			return nil
 		}
 	}
 	if !ok {
 		if *showDeleted && tarOutputFile == nil {
 			if n.DataSize > 0 {
-				printNeedle(vid, n, scanner.version, true)
+				printNeedle(vid, n, scanner.version, true, offset, n.DiskSize(scanner.version))
 			} else {
 				n.Name = []byte("*tombstone")
-				printNeedle(vid, n, scanner.version, true)
+				printNeedle(vid, n, scanner.version, true, offset, n.DiskSize(scanner.version))
 			}
 		}
 		glog.V(2).Infof("This seems deleted %d size %d", n.Id, n.Size)
@@ -208,7 +210,7 @@ func runExport(cmd *Command, args []string) bool {
 	}
 
 	if tarOutputFile == nil {
-		fmt.Printf("key\tname\tsize\tgzip\tmime\tmodified\tttl\tdeleted\n")
+		fmt.Printf("key\tname\tsize\tgzip\tmime\tmodified\tttl\tdeleted\tstart\tstop\n")
 	}
 
 	err = storage.ScanVolumeFile(util.ResolvePath(*export.dir), *export.collection, vid, storage.NeedleMapInMemory, volumeFileScanner)
