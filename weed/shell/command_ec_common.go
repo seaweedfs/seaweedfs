@@ -173,6 +173,16 @@ type EcNode struct {
 	freeEcSlot int
 }
 
+func (ecNode *EcNode) localShardIdCount(vid uint32) int {
+	for _, ecShardInfo := range ecNode.info.EcShardInfos {
+		if vid == ecShardInfo.Id {
+			shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
+			return shardBits.ShardIdCount()
+		}
+	}
+	return 0
+}
+
 type EcRack struct {
 	ecNodes    map[EcNodeId]*EcNode
 	freeEcSlot int
@@ -191,7 +201,15 @@ func collectEcNodes(commandEnv *CommandEnv, selectedDataCenter string) (ecNodes 
 	}
 
 	// find out all volume servers with one slot left.
-	eachDataNode(resp.TopologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
+	ecNodes, totalFreeEcSlots = collectEcVolumeServersByDc(resp.TopologyInfo, selectedDataCenter)
+
+	sortEcNodesByFreeslotsDecending(ecNodes)
+
+	return
+}
+
+func collectEcVolumeServersByDc(topo *master_pb.TopologyInfo, selectedDataCenter string) (ecNodes []*EcNode, totalFreeEcSlots int) {
+	eachDataNode(topo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
 		if selectedDataCenter != "" && selectedDataCenter != dc {
 			return
 		}
@@ -205,9 +223,6 @@ func collectEcNodes(commandEnv *CommandEnv, selectedDataCenter string) (ecNodes 
 		})
 		totalFreeEcSlots += freeEcSlots
 	})
-
-	sortEcNodesByFreeslotsDecending(ecNodes)
-
 	return
 }
 

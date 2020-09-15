@@ -244,32 +244,43 @@ func balanceSelectedVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*
 func attemptToMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, candidateVolumes []*master_pb.VolumeInformationMessage, emptyNode *Node, applyBalancing bool) (hasMoved bool, err error) {
 
 	for _, v := range candidateVolumes {
-		if v.ReplicaPlacement > 0 {
-			replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(v.ReplicaPlacement))
-			if !isGoodMove(replicaPlacement, volumeReplicas[v.Id], fullNode, emptyNode) {
-				continue
-			}
+		hasMoved, err = maybeMoveOneVolume(commandEnv, volumeReplicas, fullNode, v, emptyNode, applyBalancing)
+		if err != nil {
+			return
 		}
-		if _, found := emptyNode.selectedVolumes[v.Id]; !found {
-			if err = moveVolume(commandEnv, v, fullNode, emptyNode, applyBalancing); err == nil {
-				adjustAfterMove(v, volumeReplicas, fullNode, emptyNode)
-				hasMoved = true
-				break
-			} else {
-				return
-			}
+		if hasMoved {
+			break
 		}
 	}
 	return
 }
 
-func moveVolume(commandEnv *CommandEnv, v *master_pb.VolumeInformationMessage, fullNode *Node, emptyNode *Node, applyBalancing bool) error {
+func maybeMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, candidateVolume *master_pb.VolumeInformationMessage, emptyNode *Node, applyChange bool) (hasMoved bool, err error) {
+
+	if candidateVolume.ReplicaPlacement > 0 {
+		replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(candidateVolume.ReplicaPlacement))
+		if !isGoodMove(replicaPlacement, volumeReplicas[candidateVolume.Id], fullNode, emptyNode) {
+			return false, nil
+		}
+	}
+	if _, found := emptyNode.selectedVolumes[candidateVolume.Id]; !found {
+		if err = moveVolume(commandEnv, candidateVolume, fullNode, emptyNode, applyChange); err == nil {
+			adjustAfterMove(candidateVolume, volumeReplicas, fullNode, emptyNode)
+			return true, nil
+		} else {
+			return
+		}
+	}
+	return
+}
+
+func moveVolume(commandEnv *CommandEnv, v *master_pb.VolumeInformationMessage, fullNode *Node, emptyNode *Node, applyChange bool) error {
 	collectionPrefix := v.Collection + "_"
 	if v.Collection == "" {
 		collectionPrefix = ""
 	}
 	fmt.Fprintf(os.Stdout, "moving volume %s%d %s => %s\n", collectionPrefix, v.Id, fullNode.info.Id, emptyNode.info.Id)
-	if applyBalancing {
+	if applyChange {
 		return LiveMoveVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(v.Id), fullNode.info.Id, emptyNode.info.Id, 5*time.Second)
 	}
 	return nil
@@ -315,7 +326,9 @@ func isGoodMove(placement *super_block.ReplicaPlacement, existingReplicas []*Vol
 
 func adjustAfterMove(v *master_pb.VolumeInformationMessage, volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, emptyNode *Node) {
 	delete(fullNode.selectedVolumes, v.Id)
-	emptyNode.selectedVolumes[v.Id] = v
+	if emptyNode.selectedVolumes != nil {
+		emptyNode.selectedVolumes[v.Id] = v
+	}
 	existingReplicas := volumeReplicas[v.Id]
 	for _, replica := range existingReplicas {
 		if replica.location.dataNode.Id == fullNode.info.Id &&
