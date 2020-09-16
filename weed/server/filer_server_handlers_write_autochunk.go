@@ -289,11 +289,11 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 	entry := &filer.Entry{
 		FullPath: util.FullPath(path),
 		Attr: filer.Attr{
-			Mtime:       time.Now(),
-			Crtime:      time.Now(),
-			Mode:        os.FileMode(mode) | os.ModeDir,
-			Uid:         OS_UID,
-			Gid:         OS_GID,
+			Mtime:  time.Now(),
+			Crtime: time.Now(),
+			Mode:   os.FileMode(mode) | os.ModeDir,
+			Uid:    OS_UID,
+			Gid:    OS_GID,
 		},
 	}
 
