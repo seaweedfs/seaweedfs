@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/operation"
 	"time"
 
 	"google.golang.org/grpc"
@@ -21,6 +22,27 @@ import (
 func (vs *VolumeServer) GetMaster() string {
 	return vs.currentMaster
 }
+
+func (vs *VolumeServer) checkWithMaster() (err error) {
+	for _, master := range vs.SeedMasterNodes {
+		err = operation.WithMasterServerClient(master, vs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+			resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+			if err != nil {
+				return fmt.Errorf("get master %s configuration: %v", master, err)
+			}
+			vs.MetricsAddress, vs.MetricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSeconds)
+			backend.LoadFromPbStorageBackends(resp.StorageBackends)
+			return nil
+		})
+		if err == nil {
+			return
+		} else {
+			glog.V(0).Infof("checkWithMaster %s: %v", master, err)
+		}
+	}
+	return
+}
+
 func (vs *VolumeServer) heartbeat() {
 
 	glog.V(0).Infof("Volume server start with seed master nodes: %v", vs.SeedMasterNodes)

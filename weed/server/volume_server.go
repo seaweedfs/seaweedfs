@@ -72,6 +72,9 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		stopChan:                make(chan bool),
 	}
 	vs.SeedMasterNodes = masterNodes
+
+	vs.checkWithMaster()
+
 	vs.store = storage.NewStore(vs.grpcDialOption, port, ip, publicUrl, folders, maxCounts, minFreeSpacePercents, vs.needleMapKind)
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
