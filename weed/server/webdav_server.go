@@ -552,9 +552,9 @@ func (f *WebDavFile) Seek(offset int64, whence int) (int64, error) {
 
 	var err error
 	switch whence {
-	case 0:
+	case io.SeekStart:
 		f.off = 0
-	case 2:
+	case io.SeekEnd:
 		if fi, err := f.fs.stat(ctx, f.name); err != nil {
 			return 0, err
 		} else {
