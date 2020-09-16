@@ -480,7 +480,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 		f.reader = nil
 	}
 	if f.reader == nil {
-		chunkViews := filer.ViewFromVisibleIntervals(f.entryViewCache, 0, math.MaxInt32)
+		chunkViews := filer.ViewFromVisibleIntervals(f.entryViewCache, 0, math.MaxInt64)
 		f.reader = filer.NewChunkReaderAtFromClient(f.fs, chunkViews, f.fs.chunkCache, fileSize)
 	}
 
