@@ -133,13 +133,6 @@ func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDi
 				doneChan <- nil
 				return
 			}
-			if in.GetMetricsAddress() != "" && vs.MetricsAddress != in.GetMetricsAddress() {
-				vs.MetricsAddress = in.GetMetricsAddress()
-				vs.MetricsIntervalSec = int(in.GetMetricsIntervalSeconds())
-			}
-			if len(in.StorageBackends) > 0 {
-				backend.LoadFromPbStorageBackends(in.StorageBackends)
-			}
 		}
 	}()
 
