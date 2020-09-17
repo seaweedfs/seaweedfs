@@ -14,6 +14,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/s3api"
+	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -128,6 +129,10 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
+	// metrics read from the filer
+	var metricsAddress string
+	var metricsIntervalSec int
+
 	for {
 		err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
@@ -135,6 +140,7 @@ func (s3opt *S3Options) startS3Server() bool {
 				return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
 			}
 			filerBucketsPath = resp.DirBuckets
+			metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSec)
 			glog.V(0).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
 			return nil
 		})
@@ -145,6 +151,9 @@ func (s3opt *S3Options) startS3Server() bool {
 			glog.V(0).Infof("connected to filer %s grpc address %s", *s3opt.filer, filerGrpcAddress)
 			break
 		}
+	}
+	if metricsAddress != "" && metricsIntervalSec > 0 {
+		go stats_collect.LoopPushingMetric("s3", stats_collect.SourceName(uint32(*s3opt.port)), stats_collect.S3Gather, metricsAddress, metricsIntervalSec)
 	}
 
 	router := mux.NewRouter().SkipClean(true)

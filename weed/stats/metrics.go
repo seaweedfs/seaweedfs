@@ -15,6 +15,7 @@ import (
 var (
 	FilerGather        = prometheus.NewRegistry()
 	VolumeServerGather = prometheus.NewRegistry()
+	S3Gather           = prometheus.NewRegistry()
 
 	FilerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
