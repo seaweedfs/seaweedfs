@@ -59,6 +59,15 @@ func BeforeEntrySerialization(chunks []*FileChunk) {
 	}
 }
 
+func EnsureFid(chunk *FileChunk) {
+	if chunk.Fid != nil {
+		return
+	}
+	if fid, err := ToFileIdObject(chunk.FileId); err == nil {
+		chunk.Fid = fid
+	}
+}
+
 func AfterEntryDeserialization(chunks []*FileChunk) {
 
 	for _, chunk := range chunks {

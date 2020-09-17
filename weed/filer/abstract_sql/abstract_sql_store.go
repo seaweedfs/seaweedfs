@@ -67,15 +67,21 @@ func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer.Ent
 		return fmt.Errorf("encode %s: %s", entry.FullPath, err)
 	}
 
+	if len(entry.Chunks) > 50 {
+		meta = util.MaybeGzipData(meta)
+	}
+
 	res, err := store.getTxOrDB(ctx).ExecContext(ctx, store.SqlInsert, util.HashStringToLong(dir), name, dir, meta)
-	if err != nil {
-		if !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
-			return fmt.Errorf("kv insert: %s", err)
-		}
+	if err == nil {
+		return
+	}
+
+	if !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+		return fmt.Errorf("kv insert: %s", err)
 	}
 
 	// now the insert failed possibly due to duplication constraints
-	glog.V(1).Infof("insert %s falls back to update: %s", entry.FullPath, err)
+	glog.V(1).Infof("insert %s falls back to update: %v", entry.FullPath, err)
 
 	res, err = store.getTxOrDB(ctx).ExecContext(ctx, store.SqlUpdate, meta, util.HashStringToLong(dir), name, dir)
 	if err != nil {
@@ -126,7 +132,7 @@ func (store *AbstractSqlStore) FindEntry(ctx context.Context, fullpath util.Full
 	entry := &filer.Entry{
 		FullPath: fullpath,
 	}
-	if err := entry.DecodeAttributesAndChunks(data); err != nil {
+	if err := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
 		return entry, fmt.Errorf("decode %s : %v", entry.FullPath, err)
 	}
 
@@ -171,7 +177,7 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 		sqlText = store.SqlListInclusive
 	}
 
-	rows, err := store.getTxOrDB(ctx).QueryContext(ctx, sqlText, util.HashStringToLong(string(fullpath)), startFileName, string(fullpath), prefix, limit)
+	rows, err := store.getTxOrDB(ctx).QueryContext(ctx, sqlText, util.HashStringToLong(string(fullpath)), startFileName, string(fullpath), prefix+"%", limit)
 	if err != nil {
 		return nil, fmt.Errorf("list %s : %v", fullpath, err)
 	}
@@ -188,7 +194,7 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 		entry := &filer.Entry{
 			FullPath: util.NewFullPath(string(fullpath), name),
 		}
-		if err = entry.DecodeAttributesAndChunks(data); err != nil {
+		if err = entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
 			glog.V(0).Infof("scan decode %s : %v", entry.FullPath, err)
 			return nil, fmt.Errorf("scan decode %s : %v", entry.FullPath, err)
 		}

@@ -226,6 +226,11 @@ func NonOverlappingVisibleIntervals(lookupFileIdFn LookupFileIdFunctionType, chu
 
 	sort.Slice(chunks, func(i, j int) bool {
 		if chunks[i].Mtime == chunks[j].Mtime {
+			filer_pb.EnsureFid(chunks[i])
+			filer_pb.EnsureFid(chunks[j])
+			if chunks[i].Fid == nil || chunks[j].Fid == nil {
+				return true
+			}
 			return chunks[i].Fid.FileKey < chunks[j].Fid.FileKey
 		}
 		return chunks[i].Mtime < chunks[j].Mtime // keep this to make tests run

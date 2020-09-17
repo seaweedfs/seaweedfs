@@ -292,6 +292,9 @@ func (file *File) setEntry(entry *filer_pb.Entry) {
 func (file *File) saveEntry() error {
 	return file.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
+		file.wfs.mapPbIdFromLocalToFiler(file.entry)
+		defer file.wfs.mapPbIdFromFilerToLocal(file.entry)
+
 		request := &filer_pb.UpdateEntryRequest{
 			Directory:  file.dir.FullPath(),
 			Entry:      file.entry,

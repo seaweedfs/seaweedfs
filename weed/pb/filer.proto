@@ -58,6 +58,12 @@ service SeaweedFiler {
     rpc LocateBroker (LocateBrokerRequest) returns (LocateBrokerResponse) {
     }
 
+    rpc KvGet (KvGetRequest) returns (KvGetResponse) {
+    }
+
+    rpc KvPut (KvPutRequest) returns (KvPutResponse) {
+    }
+
 }
 
 //////////////////////////////////////////////////
@@ -266,6 +272,7 @@ message GetFilerConfigurationResponse {
     uint32 max_mb = 4;
     string dir_buckets = 5;
     bool cipher = 7;
+    int32 signature = 8;
 }
 
 message SubscribeMetadataRequest {
@@ -306,4 +313,20 @@ message LocateBrokerResponse {
         int32 resource_count = 2;
     }
     repeated Resource resources = 2;
+}
+
+// Key-Value operations
+message KvGetRequest {
+    bytes key = 1;
+}
+message KvGetResponse {
+    bytes value = 1;
+    string error = 2;
+}
+message KvPutRequest {
+    bytes key = 1;
+    bytes value = 2;
+}
+message KvPutResponse {
+    string error = 1;
 }

@@ -78,7 +78,10 @@ func runWatch(cmd *Command, args []string) bool {
 
 	watchErr := pb.WithFilerClient(*watchFiler, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 
-		stream, err := client.SubscribeMetadata(context.Background(), &filer_pb.SubscribeMetadataRequest{
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
 			ClientName: "watch",
 			PathPrefix: *watchTarget,
 			SinceNs:    time.Now().Add(-*watchStart).UnixNano(),
@@ -98,7 +101,7 @@ func runWatch(cmd *Command, args []string) bool {
 			if !shouldPrint(resp) {
 				continue
 			}
-			fmt.Printf("%+v\n", resp.EventNotification)
+			fmt.Printf("dir:%s %+v\n", resp.Directory, resp.EventNotification)
 		}
 
 	})

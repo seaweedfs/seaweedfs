@@ -76,12 +76,16 @@ func (store *EtcdStore) RollbackTransaction(ctx context.Context) error {
 func (store *EtcdStore) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
 	key := genKey(entry.DirAndName())
 
-	value, err := entry.EncodeAttributesAndChunks()
+	meta, err := entry.EncodeAttributesAndChunks()
 	if err != nil {
 		return fmt.Errorf("encoding %s %+v: %v", entry.FullPath, entry.Attr, err)
 	}
 
-	if _, err := store.client.Put(ctx, string(key), string(value)); err != nil {
+	if len(entry.Chunks) > 50 {
+		meta = weed_util.MaybeGzipData(meta)
+	}
+
+	if _, err := store.client.Put(ctx, string(key), string(meta)); err != nil {
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
 	}
 
@@ -107,7 +111,7 @@ func (store *EtcdStore) FindEntry(ctx context.Context, fullpath weed_util.FullPa
 	entry = &filer.Entry{
 		FullPath: fullpath,
 	}
-	err = entry.DecodeAttributesAndChunks(resp.Kvs[0].Value)
+	err = entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(resp.Kvs[0].Value))
 	if err != nil {
 		return entry, fmt.Errorf("decode %s : %v", entry.FullPath, err)
 	}
@@ -163,7 +167,7 @@ func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, fullpath weed_
 		entry := &filer.Entry{
 			FullPath: weed_util.NewFullPath(string(fullpath), fileName),
 		}
-		if decodeErr := entry.DecodeAttributesAndChunks(kv.Value); decodeErr != nil {
+		if decodeErr := entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(kv.Value)); decodeErr != nil {
 			err = decodeErr
 			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
 			break

@@ -10,6 +10,10 @@ clean:
 	go clean $(SOURCE_DIR)
 	rm -f $(BINARY)
 
+debug_shell:
+	go build -gcflags="all=-N -l"
+	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- shell
+
 debug_mount:
 	go build -gcflags="all=-N -l"
 	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- mount -dir=~/tmp/mm
@@ -17,3 +21,7 @@ debug_mount:
 debug_server:
 	go build -gcflags="all=-N -l"
 	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- server -dir=/Volumes/mobile_disk/99 -filer -volume.port=8343 -s3 -volume.max=0
+
+debug_volume:
+	go build -gcflags="all=-N -l"
+	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- volume -dir=/Volumes/mobile_disk/100 -port 8564 -max=30 -preStopSeconds=2

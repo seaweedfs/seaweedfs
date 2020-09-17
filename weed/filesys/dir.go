@@ -148,6 +148,10 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	glog.V(1).Infof("create %s/%s: %v", dir.FullPath(), req.Name, req.Flags)
 
 	if err := dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		dir.wfs.mapPbIdFromLocalToFiler(request.Entry)
+		defer dir.wfs.mapPbIdFromFilerToLocal(request.Entry)
+
 		if err := filer_pb.CreateEntry(client, request); err != nil {
 			if strings.Contains(err.Error(), "EEXIST") {
 				return fuse.EEXIST
@@ -192,6 +196,9 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 	}
 
 	err := dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		dir.wfs.mapPbIdFromLocalToFiler(newEntry)
+		defer dir.wfs.mapPbIdFromFilerToLocal(newEntry)
 
 		request := &filer_pb.CreateEntryRequest{
 			Directory:  dir.FullPath(),
@@ -321,7 +328,7 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 
 	// first, ensure the filer store can correctly delete
 	glog.V(3).Infof("remove file: %v", req)
-	err = filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, false, false, false, false, dir.wfs.signature)
+	err = filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, false, false, false, false, []int32{dir.wfs.signature})
 	if err != nil {
 		glog.V(3).Infof("not found remove file %s/%s: %v", dir.FullPath(), req.Name, err)
 		return fuse.ENOENT
@@ -341,7 +348,7 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 
 	glog.V(3).Infof("remove directory entry: %v", req)
-	err := filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, true, false, false, false, dir.wfs.signature)
+	err := filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, true, false, false, false, []int32{dir.wfs.signature})
 	if err != nil {
 		glog.V(0).Infof("remove %s/%s: %v", dir.FullPath(), req.Name, err)
 		if strings.Contains(err.Error(), "non-empty") {
@@ -457,6 +464,9 @@ func (dir *Dir) saveEntry() error {
 	parentDir, name := util.FullPath(dir.FullPath()).DirAndName()
 
 	return dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		dir.wfs.mapPbIdFromLocalToFiler(dir.entry)
+		defer dir.wfs.mapPbIdFromFilerToLocal(dir.entry)
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory:  parentDir,

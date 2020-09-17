@@ -30,6 +30,15 @@ func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 	if strings.HasPrefix(fullpath, SystemLogDir) {
 		return
 	}
+	foundSelf := false
+	for _, sig := range signatures {
+		if sig == f.Signature {
+			foundSelf = true
+		}
+	}
+	if !foundSelf {
+		signatures = append(signatures, f.Signature)
+	}
 
 	newParentPath := ""
 	if newEntry != nil {
@@ -41,7 +50,7 @@ func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 		DeleteChunks:       deleteChunks,
 		NewParentPath:      newParentPath,
 		IsFromOtherCluster: isFromOtherCluster,
-		Signatures:         append(signatures, f.Signature),
+		Signatures:         signatures,
 	}
 
 	if notification.Queue != nil {

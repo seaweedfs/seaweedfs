@@ -28,7 +28,7 @@ func (c *commandEcBalance) Help() string {
 
 	Algorithm:
 
-	For each type of volume server (different max volume count limit){
+	func EcBalance() {
 		for each collection:
 			balanceEcVolumes(collectionName)
 		for each rack:

@@ -259,7 +259,7 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string) 
 
 	dir, name := util.FullPath(fullFilePath).DirAndName()
 
-	return filer_pb.Remove(fs, dir, name, true, false, false, false, fs.signature)
+	return filer_pb.Remove(fs, dir, name, true, false, false, false, []int32{fs.signature})
 
 }
 
@@ -480,7 +480,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 		f.reader = nil
 	}
 	if f.reader == nil {
-		chunkViews := filer.ViewFromVisibleIntervals(f.entryViewCache, 0, math.MaxInt32)
+		chunkViews := filer.ViewFromVisibleIntervals(f.entryViewCache, 0, math.MaxInt64)
 		f.reader = filer.NewChunkReaderAtFromClient(f.fs, chunkViews, f.fs.chunkCache, fileSize)
 	}
 
@@ -552,9 +552,9 @@ func (f *WebDavFile) Seek(offset int64, whence int) (int64, error) {
 
 	var err error
 	switch whence {
-	case 0:
+	case io.SeekStart:
 		f.off = 0
-	case 2:
+	case io.SeekEnd:
 		if fi, err := f.fs.stat(ctx, f.name); err != nil {
 			return 0, err
 		} else {

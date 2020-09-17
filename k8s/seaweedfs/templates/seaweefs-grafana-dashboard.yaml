@@ -91,7 +91,7 @@ data:
               "thresholds": [],
               "timeFrom": null,
               "timeShift": null,
-              "title": "Filer Request Duration 95th percentile",
+              "title": "Filer Request Duration 80th percentile",
               "tooltip": {
                 "msResolution": true,
                 "shared": true,

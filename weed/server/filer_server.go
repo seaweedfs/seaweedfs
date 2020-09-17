@@ -20,6 +20,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/cassandra"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/elastic/v7"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/etcd"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/leveldb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/leveldb2"
@@ -156,10 +157,7 @@ func maybeStartMetrics(fs *FilerServer, option *FilerOption) {
 	if metricsAddress == "" && metricsIntervalSec <= 0 {
 		return
 	}
-	go stats.LoopPushingMetric("filer", stats.SourceName(option.Port), stats.FilerGather,
-		func() (addr string, intervalSeconds int) {
-			return metricsAddress, metricsIntervalSec
-		})
+	go stats.LoopPushingMetric("filer", stats.SourceName(option.Port), stats.FilerGather, metricsAddress, metricsIntervalSec)
 }
 
 func readFilerConfiguration(grpcDialOption grpc.DialOption, masterAddress string) (metricsAddress string, metricsIntervalSec int, err error) {

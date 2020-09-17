@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/util/log_buffer"
 	"strings"
 	"time"
 
@@ -24,7 +25,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	lastReadTime := time.Unix(0, req.SinceNs)
 	glog.V(0).Infof(" %v starts to subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-	eachEventNotificationFn := eachEventNotificationFn(req, stream, clientName, req.Signature)
+	eachEventNotificationFn := fs.eachEventNotificationFn(req, stream, clientName, req.Signature)
 
 	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
 
@@ -37,12 +38,21 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		lastReadTime = time.Unix(0, processedTsNs)
 	}
 
-	err = fs.filer.MetaAggregator.MetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
-		fs.filer.MetaAggregator.ListenersLock.Lock()
-		fs.filer.MetaAggregator.ListenersCond.Wait()
-		fs.filer.MetaAggregator.ListenersLock.Unlock()
-		return true
-	}, eachLogEntryFn)
+	for {
+		lastReadTime, err = fs.filer.MetaAggregator.MetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
+			fs.filer.MetaAggregator.ListenersLock.Lock()
+			fs.filer.MetaAggregator.ListenersCond.Wait()
+			fs.filer.MetaAggregator.ListenersLock.Unlock()
+			return true
+		}, eachLogEntryFn)
+		if err != nil {
+			glog.Errorf("processed to %v: %v", lastReadTime, err)
+			time.Sleep(3127 * time.Millisecond)
+			if err != log_buffer.ResumeError {
+				break
+			}
+		}
+	}
 
 	return err
 
@@ -59,30 +69,37 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	lastReadTime := time.Unix(0, req.SinceNs)
 	glog.V(0).Infof(" %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-	eachEventNotificationFn := eachEventNotificationFn(req, stream, clientName, req.Signature)
+	eachEventNotificationFn := fs.eachEventNotificationFn(req, stream, clientName, req.Signature)
 
 	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
 
-	if _, ok := fs.filer.Store.ActualStore.(filer.FilerLocalStore); ok {
-		// println("reading from persisted logs ...")
-		processedTsNs, err := fs.filer.ReadPersistedLogBuffer(lastReadTime, eachLogEntryFn)
-		if err != nil {
-			return fmt.Errorf("reading from persisted logs: %v", err)
-		}
-
-		if processedTsNs != 0 {
-			lastReadTime = time.Unix(0, processedTsNs)
-		}
-		glog.V(0).Infof("after local log reads, %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
+	// println("reading from persisted logs ...")
+	processedTsNs, err := fs.filer.ReadPersistedLogBuffer(lastReadTime, eachLogEntryFn)
+	if err != nil {
+		return fmt.Errorf("reading from persisted logs: %v", err)
 	}
 
+	if processedTsNs != 0 {
+		lastReadTime = time.Unix(0, processedTsNs)
+	}
+	glog.V(0).Infof("after local log reads, %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
+
 	// println("reading from in memory logs ...")
-	err := fs.filer.LocalMetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
-		fs.listenersLock.Lock()
-		fs.listenersCond.Wait()
-		fs.listenersLock.Unlock()
-		return true
-	}, eachLogEntryFn)
+	for {
+		lastReadTime, err = fs.filer.LocalMetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
+			fs.listenersLock.Lock()
+			fs.listenersCond.Wait()
+			fs.listenersLock.Unlock()
+			return true
+		}, eachLogEntryFn)
+		if err != nil {
+			glog.Errorf("processed to %v: %v", lastReadTime, err)
+			time.Sleep(3127 * time.Millisecond)
+			if err != log_buffer.ResumeError {
+				break
+			}
+		}
+	}
 
 	return err
 
@@ -104,13 +121,20 @@ func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotificati
 	}
 }
 
-func eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer, clientName string, clientSignature int32) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer, clientName string, clientSignature int32) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 	return func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 
+		foundSelf := false
 		for _, sig := range eventNotification.Signatures {
 			if sig == clientSignature && clientSignature != 0 {
 				return nil
 			}
+			if sig == fs.filer.Signature {
+				foundSelf = true
+			}
+		}
+		if !foundSelf {
+			eventNotification.Signatures = append(eventNotification.Signatures, fs.filer.Signature)
 		}
 
 		// get complete path to the file or directory

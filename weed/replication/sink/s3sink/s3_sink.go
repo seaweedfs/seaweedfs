@@ -83,7 +83,7 @@ func (s3sink *S3Sink) initialize(awsAccessKeyId, awsSecretAccessKey, region, buc
 	return nil
 }
 
-func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) error {
+func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 
 	key = cleanKey(key)
 
@@ -95,7 +95,7 @@ func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks b
 
 }
 
-func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
+func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
 	key = cleanKey(key)
 
 	if entry.IsDirectory {
@@ -136,7 +136,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
 }
 
-func (s3sink *S3Sink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (s3sink *S3Sink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
 	key = cleanKey(key)
 	// TODO improve efficiency
 	return false, nil

@@ -3,10 +3,19 @@ package master_ui
 import (
 	"github.com/dustin/go-humanize"
 	"html/template"
+	"net/url"
+	"strings"
 )
+
+func printpath(parts ...string) string {
+	concat := strings.Join(parts, "")
+	escaped := url.PathEscape(concat)
+	return strings.ReplaceAll(escaped, "%2F", "/")
+}
 
 var funcMap = template.FuncMap{
 	"humanizeBytes": humanize.Bytes,
+	"printpath":     printpath,
 }
 
 var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOCTYPE html>
@@ -50,7 +59,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
 		<div class="row">
 			<div>
 			{{ range $entry := .Breadcrumbs }}
-				<a href="{{ $entry.Link }}" >
+				<a href="{{ printpath $entry.Link }}" >
 					{{ $entry.Name }}
 				</a>
 			{{ end }}
@@ -69,11 +78,11 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
 					<td>
 					{{if $entry.IsDirectory}}
 						<img src="/seaweedfsstatic/images/folder.gif" width="20" height="23">
-						<a href={{ print $path  "/" $entry.Name  "/"}} >
+						<a href="{{ printpath $path  "/" $entry.Name  "/"}}" >
 							{{ $entry.Name }}
 						</a>
 					{{else}}
-						<a href={{ print $path  "/" $entry.Name }} >
+						<a href="{{ printpath $path  "/" $entry.Name }}" >
 							{{ $entry.Name }}
 						</a>
 					{{end}}

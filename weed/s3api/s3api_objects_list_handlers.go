@@ -212,7 +212,9 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		InclusiveStartFrom: false,
 	}
 
-	stream, listErr := client.ListEntries(context.Background(), request)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, listErr := client.ListEntries(ctx, request)
 	if listErr != nil {
 		err = fmt.Errorf("list entires %+v: %v", request, listErr)
 		return

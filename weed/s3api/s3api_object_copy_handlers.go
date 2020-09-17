@@ -39,14 +39,14 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
 		s3a.option.Filer, s3a.option.BucketsPath, srcBucket, srcObject)
 
-	_, _, dataReader, err := util.DownloadFile(srcUrl)
+	_, _, resp, err := util.DownloadFile(srcUrl)
 	if err != nil {
 		writeErrorResponse(w, ErrInvalidCopySource, r.URL)
 		return
 	}
-	defer dataReader.Close()
+	defer util.CloseResponse(resp)
 
-	etag, errCode := s3a.putToFiler(r, dstUrl, dataReader)
+	etag, errCode := s3a.putToFiler(r, dstUrl, resp.Body)
 
 	if errCode != ErrNone {
 		writeErrorResponse(w, errCode, r.URL)

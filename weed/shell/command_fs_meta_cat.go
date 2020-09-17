@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"github.com/golang/protobuf/proto"
 	"io"
 	"sort"
 
@@ -68,6 +69,11 @@ func (c *commandFsMetaCat) Do(args []string, commandEnv *CommandEnv, writer io.W
 		}
 
 		fmt.Fprintf(writer, "%s\n", text)
+
+		bytes, _ := proto.Marshal(respLookupEntry.Entry)
+		gzippedBytes, _ := util.GzipData(bytes)
+		zstdBytes, _ := util.ZstdData(bytes)
+		fmt.Fprintf(writer, "chunks %d meta size: %d gzip:%d zstd:%d\n", len(respLookupEntry.Entry.Chunks), len(bytes), len(gzippedBytes), len(zstdBytes))
 
 		return nil
 

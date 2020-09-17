@@ -2,6 +2,7 @@ package log_buffer
 
 import (
 	"bytes"
+	"fmt"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -11,13 +12,17 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
+var (
+	ResumeError = fmt.Errorf("resume")
+)
+
 func (logBuffer *LogBuffer) LoopProcessLogData(
 	startTreadTime time.Time,
 	waitForDataFn func() bool,
-	eachLogDataFn func(logEntry *filer_pb.LogEntry) error) (err error) {
+	eachLogDataFn func(logEntry *filer_pb.LogEntry) error) (lastReadTime time.Time, err error) {
 	// loop through all messages
 	var bytesBuf *bytes.Buffer
-	lastReadTime := startTreadTime
+	lastReadTime = startTreadTime
 	defer func() {
 		if bytesBuf != nil {
 			logBuffer.ReleaseMemory(bytesBuf)
@@ -48,9 +53,12 @@ func (logBuffer *LogBuffer) LoopProcessLogData(
 		for pos := 0; pos+4 < len(buf); {
 
 			size := util.BytesToUint32(buf[pos : pos+4])
+			if pos+4+int(size) > len(buf) {
+				err = ResumeError
+				glog.Errorf("LoopProcessLogData: read buffer %v read %d [%d,%d) from [0,%d)", lastReadTime, batchSize, pos, pos+int(size)+4, len(buf))
+				return
+			}
 			entryData := buf[pos+4 : pos+4+int(size)]
-
-			// fmt.Printf("read buffer read %d [%d,%d) from [0,%d)\n", batchSize, pos, pos+int(size)+4, len(buf))
 
 			logEntry := &filer_pb.LogEntry{}
 			if err = proto.Unmarshal(entryData, logEntry); err != nil {

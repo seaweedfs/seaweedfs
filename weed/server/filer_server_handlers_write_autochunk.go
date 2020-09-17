@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"crypto/md5"
+	"fmt"
 	"hash"
 	"io"
 	"io/ioutil"
@@ -46,7 +47,11 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 	var err error
 	var md5bytes []byte
 	if r.Method == "POST" {
-		reply, md5bytes, err = fs.doPostAutoChunk(ctx, w, r, chunkSize, replication, collection, dataCenter, ttlSec, ttlString, fsync)
+		if r.Header.Get("Content-Type") == "" && strings.HasSuffix(r.URL.Path, "/") {
+			reply, err = fs.mkdir(ctx, w, r)
+		} else {
+			reply, md5bytes, err = fs.doPostAutoChunk(ctx, w, r, chunkSize, replication, collection, dataCenter, ttlSec, ttlString, fsync)
+		}
 	} else {
 		reply, md5bytes, err = fs.doPutAutoChunk(ctx, w, r, chunkSize, replication, collection, dataCenter, ttlSec, ttlString, fsync)
 	}
@@ -253,4 +258,53 @@ func (fs *FilerServer) saveAsChunk(replication string, collection string, dataCe
 
 		return uploadResult.ToPbFileChunk(fileId, offset), collection, replication, nil
 	}
+}
+
+func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http.Request) (filerResult *FilerPostResult, replyerr error) {
+
+	// detect file mode
+	modeStr := r.URL.Query().Get("mode")
+	if modeStr == "" {
+		modeStr = "0660"
+	}
+	mode, err := strconv.ParseUint(modeStr, 8, 32)
+	if err != nil {
+		glog.Errorf("Invalid mode format: %s, use 0660 by default", modeStr)
+		mode = 0660
+	}
+
+	// fix the path
+	path := r.URL.Path
+	if strings.HasSuffix(path, "/") {
+		path = path[:len(path)-1]
+	}
+
+	existingEntry, err := fs.filer.FindEntry(ctx, util.FullPath(path))
+	if err == nil && existingEntry != nil {
+		replyerr = fmt.Errorf("dir %s already exists", path)
+		return
+	}
+
+	glog.V(4).Infoln("mkdir", path)
+	entry := &filer.Entry{
+		FullPath: util.FullPath(path),
+		Attr: filer.Attr{
+			Mtime:  time.Now(),
+			Crtime: time.Now(),
+			Mode:   os.FileMode(mode) | os.ModeDir,
+			Uid:    OS_UID,
+			Gid:    OS_GID,
+		},
+	}
+
+	filerResult = &FilerPostResult{
+		Name: util.FullPath(path).Name(),
+	}
+
+	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil); dbErr != nil {
+		replyerr = dbErr
+		filerResult.Error = dbErr.Error()
+		glog.V(0).Infof("failing to create dir %s on filer server : %v", path, dbErr)
+	}
+	return filerResult, replyerr
 }

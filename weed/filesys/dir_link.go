@@ -38,6 +38,10 @@ func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node,
 	}
 
 	err := dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		dir.wfs.mapPbIdFromLocalToFiler(request.Entry)
+		defer dir.wfs.mapPbIdFromFilerToLocal(request.Entry)
+
 		if err := filer_pb.CreateEntry(client, request); err != nil {
 			glog.V(0).Infof("symlink %s/%s: %v", dir.FullPath(), req.NewName, err)
 			return fuse.EIO

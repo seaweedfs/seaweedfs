@@ -108,32 +108,23 @@ func init() {
 
 }
 
-func LoopPushingMetric(name, instance string, gatherer *prometheus.Registry, fnGetMetricsDest func() (addr string, intervalSeconds int)) {
+func LoopPushingMetric(name, instance string, gatherer *prometheus.Registry, addr string, intervalSeconds int) {
 
-	if fnGetMetricsDest == nil {
+	if addr == "" || intervalSeconds == 0 {
 		return
 	}
 
-	addr, intervalSeconds := fnGetMetricsDest()
 	pusher := push.New(addr, name).Gatherer(gatherer).Grouping("instance", instance)
-	currentAddr := addr
 
 	for {
-		if currentAddr != "" {
-			err := pusher.Push()
-			if err != nil && !strings.HasPrefix(err.Error(), "unexpected status code 200") {
-				glog.V(0).Infof("could not push metrics to prometheus push gateway %s: %v", addr, err)
-			}
+		err := pusher.Push()
+		if err != nil && !strings.HasPrefix(err.Error(), "unexpected status code 200") {
+			glog.V(0).Infof("could not push metrics to prometheus push gateway %s: %v", addr, err)
 		}
 		if intervalSeconds <= 0 {
 			intervalSeconds = 15
 		}
 		time.Sleep(time.Duration(intervalSeconds) * time.Second)
-		addr, intervalSeconds = fnGetMetricsDest()
-		if currentAddr != addr {
-			pusher = push.New(addr, name).Gatherer(gatherer).Grouping("instance", instance)
-			currentAddr = addr
-		}
 
 	}
 }

@@ -85,6 +85,8 @@ service VolumeServer {
 
     rpc VolumeServerStatus (VolumeServerStatusRequest) returns (VolumeServerStatusResponse) {
     }
+    rpc VolumeServerLeave (VolumeServerLeaveRequest) returns (VolumeServerLeaveResponse) {
+    }
 
     // <experimental> query
     rpc Query (QueryRequest) returns (stream QueriedStripe) {
@@ -423,6 +425,11 @@ message VolumeServerStatusRequest {
 message VolumeServerStatusResponse {
     repeated DiskStatus disk_statuses = 1;
     MemStatus memory_status = 2;
+}
+
+message VolumeServerLeaveRequest {
+}
+message VolumeServerLeaveResponse {
 }
 
 // select on volume servers
