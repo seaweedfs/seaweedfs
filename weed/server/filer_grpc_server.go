@@ -420,13 +420,15 @@ func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsR
 func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.GetFilerConfigurationRequest) (resp *filer_pb.GetFilerConfigurationResponse, err error) {
 
 	t := &filer_pb.GetFilerConfigurationResponse{
-		Masters:     fs.option.Masters,
-		Collection:  fs.option.Collection,
-		Replication: fs.option.DefaultReplication,
-		MaxMb:       uint32(fs.option.MaxMB),
-		DirBuckets:  fs.filer.DirBucketsPath,
-		Cipher:      fs.filer.Cipher,
-		Signature:   fs.filer.Signature,
+		Masters:            fs.option.Masters,
+		Collection:         fs.option.Collection,
+		Replication:        fs.option.DefaultReplication,
+		MaxMb:              uint32(fs.option.MaxMB),
+		DirBuckets:         fs.filer.DirBucketsPath,
+		Cipher:             fs.filer.Cipher,
+		Signature:          fs.filer.Signature,
+		MetricsAddress:     fs.metricsAddress,
+		MetricsIntervalSec: int32(fs.metricsIntervalSec),
 	}
 
 	glog.V(4).Infof("GetFilerConfiguration: %v", t)
