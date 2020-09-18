@@ -62,7 +62,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// NewMultipartUpload
 		bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(stats(s3a.iam.Auth(s3a.NewMultipartUploadHandler, ACTION_WRITE), "POST")).Queries("uploads", "")
 		// AbortMultipartUpload
-		bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(stats(s3a.iam.Auth(s3a.AbortMultipartUploadHandler, ACTION_WRITE), , "DELETE")).Queries("uploadId", "{uploadId:.*}")
+		bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(stats(s3a.iam.Auth(s3a.AbortMultipartUploadHandler, ACTION_WRITE), "DELETE")).Queries("uploadId", "{uploadId:.*}")
 		// ListObjectParts
 		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(stats(s3a.iam.Auth(s3a.ListObjectPartsHandler, ACTION_WRITE), "GET")).Queries("uploadId", "{uploadId:.*}")
 		// ListMultipartUploads
@@ -71,7 +71,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// CopyObject
 		bucket.Methods("PUT").Path("/{object:.+}").HeadersRegexp("X-Amz-Copy-Source", ".*?(\\/|%2F).*?").HandlerFunc(stats(s3a.iam.Auth(s3a.CopyObjectHandler, ACTION_WRITE), "COPY"))
 		// PutObject
-		bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(stats(s3a.iam.Auth(s3a.PutObjectHandler, ACTION_WRITE), , "PUT"))
+		bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(stats(s3a.iam.Auth(s3a.PutObjectHandler, ACTION_WRITE), "PUT"))
 		// PutBucket
 		bucket.Methods("PUT").HandlerFunc(stats(s3a.iam.Auth(s3a.PutBucketHandler, ACTION_ADMIN), "PUT"))
 
