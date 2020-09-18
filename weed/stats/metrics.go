@@ -91,6 +91,23 @@ var (
 			Name:      "total_disk_size",
 			Help:      "Actual disk size used by volumes.",
 		}, []string{"collection", "type"})
+
+	S3RequestCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "s3",
+			Name:      "request_total",
+			Help:      "Counter of s3 requests.",
+		}, []string{"type"})
+	S3RequestHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "s3",
+			Name:      "request_seconds",
+			Help:      "Bucketed histogram of s3 request processing time.",
+			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
+		}, []string{"type"})
+
 )
 
 func init() {
@@ -107,6 +124,8 @@ func init() {
 	VolumeServerGather.MustRegister(VolumeServerMaxVolumeCounter)
 	VolumeServerGather.MustRegister(VolumeServerDiskSizeGauge)
 
+	S3Gather.MustRegister(S3RequestCounter)
+	S3Gather.MustRegister(S3RequestHistogram)
 }
 
 func LoopPushingMetric(name, instance string, gatherer *prometheus.Registry, addr string, intervalSeconds int) {

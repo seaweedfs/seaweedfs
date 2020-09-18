@@ -49,46 +49,46 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	for _, bucket := range routers {
 
 		// HeadObject
-		bucket.Methods("HEAD").Path("/{object:.+}").HandlerFunc(s3a.iam.Auth(s3a.HeadObjectHandler, ACTION_READ))
+		bucket.Methods("HEAD").Path("/{object:.+}").HandlerFunc(stats(s3a.iam.Auth(s3a.HeadObjectHandler, ACTION_READ), "GET"))
 		// HeadBucket
-		bucket.Methods("HEAD").HandlerFunc(s3a.iam.Auth(s3a.HeadBucketHandler, ACTION_ADMIN))
+		bucket.Methods("HEAD").HandlerFunc(stats(s3a.iam.Auth(s3a.HeadBucketHandler, ACTION_ADMIN), "GET"))
 
 		// CopyObjectPart
-		bucket.Methods("PUT").Path("/{object:.+}").HeadersRegexp("X-Amz-Copy-Source", ".*?(\\/|%2F).*?").HandlerFunc(s3a.iam.Auth(s3a.CopyObjectPartHandler, ACTION_WRITE)).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
+		bucket.Methods("PUT").Path("/{object:.+}").HeadersRegexp("X-Amz-Copy-Source", ".*?(\\/|%2F).*?").HandlerFunc(stats(s3a.iam.Auth(s3a.CopyObjectPartHandler, ACTION_WRITE), "PUT")).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
 		// PutObjectPart
-		bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(s3a.iam.Auth(s3a.PutObjectPartHandler, ACTION_WRITE)).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
+		bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(stats(s3a.iam.Auth(s3a.PutObjectPartHandler, ACTION_WRITE), "PUT")).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
 		// CompleteMultipartUpload
-		bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(s3a.iam.Auth(s3a.CompleteMultipartUploadHandler, ACTION_WRITE)).Queries("uploadId", "{uploadId:.*}")
+		bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(stats(s3a.iam.Auth(s3a.CompleteMultipartUploadHandler, ACTION_WRITE), "POST")).Queries("uploadId", "{uploadId:.*}")
 		// NewMultipartUpload
-		bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(s3a.iam.Auth(s3a.NewMultipartUploadHandler, ACTION_WRITE)).Queries("uploads", "")
+		bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(stats(s3a.iam.Auth(s3a.NewMultipartUploadHandler, ACTION_WRITE), "POST")).Queries("uploads", "")
 		// AbortMultipartUpload
-		bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(s3a.iam.Auth(s3a.AbortMultipartUploadHandler, ACTION_WRITE)).Queries("uploadId", "{uploadId:.*}")
+		bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(stats(s3a.iam.Auth(s3a.AbortMultipartUploadHandler, ACTION_WRITE), , "DELETE")).Queries("uploadId", "{uploadId:.*}")
 		// ListObjectParts
-		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(s3a.iam.Auth(s3a.ListObjectPartsHandler, ACTION_WRITE)).Queries("uploadId", "{uploadId:.*}")
+		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(stats(s3a.iam.Auth(s3a.ListObjectPartsHandler, ACTION_WRITE), "GET")).Queries("uploadId", "{uploadId:.*}")
 		// ListMultipartUploads
-		bucket.Methods("GET").HandlerFunc(s3a.iam.Auth(s3a.ListMultipartUploadsHandler, ACTION_WRITE)).Queries("uploads", "")
+		bucket.Methods("GET").HandlerFunc(stats(s3a.iam.Auth(s3a.ListMultipartUploadsHandler, ACTION_WRITE), "GET")).Queries("uploads", "")
 
 		// CopyObject
-		bucket.Methods("PUT").Path("/{object:.+}").HeadersRegexp("X-Amz-Copy-Source", ".*?(\\/|%2F).*?").HandlerFunc(s3a.iam.Auth(s3a.CopyObjectHandler, ACTION_WRITE))
+		bucket.Methods("PUT").Path("/{object:.+}").HeadersRegexp("X-Amz-Copy-Source", ".*?(\\/|%2F).*?").HandlerFunc(stats(s3a.iam.Auth(s3a.CopyObjectHandler, ACTION_WRITE), "COPY"))
 		// PutObject
-		bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(s3a.iam.Auth(s3a.PutObjectHandler, ACTION_WRITE))
+		bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(stats(s3a.iam.Auth(s3a.PutObjectHandler, ACTION_WRITE), , "PUT"))
 		// PutBucket
-		bucket.Methods("PUT").HandlerFunc(s3a.iam.Auth(s3a.PutBucketHandler, ACTION_ADMIN))
+		bucket.Methods("PUT").HandlerFunc(stats(s3a.iam.Auth(s3a.PutBucketHandler, ACTION_ADMIN), "PUT"))
 
 		// DeleteObject
-		bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(s3a.iam.Auth(s3a.DeleteObjectHandler, ACTION_WRITE))
+		bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(stats(s3a.iam.Auth(s3a.DeleteObjectHandler, ACTION_WRITE), "DELETE"))
 		// DeleteBucket
-		bucket.Methods("DELETE").HandlerFunc(s3a.iam.Auth(s3a.DeleteBucketHandler, ACTION_WRITE))
+		bucket.Methods("DELETE").HandlerFunc(stats(s3a.iam.Auth(s3a.DeleteBucketHandler, ACTION_WRITE), "DELETE"))
 
 		// ListObjectsV2
-		bucket.Methods("GET").HandlerFunc(s3a.iam.Auth(s3a.ListObjectsV2Handler, ACTION_READ)).Queries("list-type", "2")
+		bucket.Methods("GET").HandlerFunc(stats(s3a.iam.Auth(s3a.ListObjectsV2Handler, ACTION_READ), "LIST")).Queries("list-type", "2")
 		// GetObject, but directory listing is not supported
-		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(s3a.iam.Auth(s3a.GetObjectHandler, ACTION_READ))
+		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(stats(s3a.iam.Auth(s3a.GetObjectHandler, ACTION_READ), "GET"))
 		// ListObjectsV1 (Legacy)
-		bucket.Methods("GET").HandlerFunc(s3a.iam.Auth(s3a.ListObjectsV1Handler, ACTION_READ))
+		bucket.Methods("GET").HandlerFunc(stats(s3a.iam.Auth(s3a.ListObjectsV1Handler, ACTION_READ), "LIST"))
 
 		// DeleteMultipleObjects
-		bucket.Methods("POST").HandlerFunc(s3a.iam.Auth(s3a.DeleteMultipleObjectsHandler, ACTION_WRITE)).Queries("delete", "")
+		bucket.Methods("POST").HandlerFunc(stats(s3a.iam.Auth(s3a.DeleteMultipleObjectsHandler, ACTION_WRITE), "DELETE")).Queries("delete", "")
 		/*
 
 			// not implemented
@@ -111,7 +111,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	}
 
 	// ListBuckets
-	apiRouter.Methods("GET").Path("/").HandlerFunc(s3a.iam.Auth(s3a.ListBucketsHandler, ACTION_READ))
+	apiRouter.Methods("GET").Path("/").HandlerFunc(stats(s3a.iam.Auth(s3a.ListBucketsHandler, ACTION_READ), "LIST"))
 
 	// NotFound
 	apiRouter.NotFoundHandler = http.HandlerFunc(notFoundHandler)
