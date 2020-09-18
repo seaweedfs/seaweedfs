@@ -95,6 +95,12 @@ func (store *MongodbStore) RollbackTransaction(ctx context.Context) error {
 
 func (store *MongodbStore) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
 
+	return store.UpdateEntry(ctx, entry)
+
+}
+
+func (store *MongodbStore) UpdateEntry(ctx context.Context, entry *filer.Entry) (err error) {
+
 	dir, name := entry.FullPath.DirAndName()
 	meta, err := entry.EncodeAttributesAndChunks()
 	if err != nil {
@@ -107,21 +113,17 @@ func (store *MongodbStore) InsertEntry(ctx context.Context, entry *filer.Entry) 
 
 	c := store.connect.Database(store.database).Collection(store.collectionName)
 
-	_, err = c.InsertOne(ctx, Model{
-		Directory: dir,
-		Name:      name,
-		Meta:      meta,
-	})
+	opts := options.Update().SetUpsert(true)
+	filter := bson.D{{"directory", dir}, {"name", name}}
+	update := bson.D{{"$set", bson.D{{"meta", meta}}}}
+
+	_, err = c.UpdateOne(ctx, filter, update, opts)
 
 	if err != nil {
-		return fmt.Errorf("InsertEntry %st: %v", entry.FullPath, err)
+		return fmt.Errorf("UpdateEntry %s: %v", entry.FullPath, err)
 	}
 
 	return nil
-}
-
-func (store *MongodbStore) UpdateEntry(ctx context.Context, entry *filer.Entry) (err error) {
-	return store.InsertEntry(ctx, entry)
 }
 
 func (store *MongodbStore) FindEntry(ctx context.Context, fullpath util.FullPath) (entry *filer.Entry, err error) {
