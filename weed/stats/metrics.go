@@ -107,7 +107,6 @@ var (
 			Help:      "Bucketed histogram of s3 request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"type"})
-
 )
 
 func init() {
