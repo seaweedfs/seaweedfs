@@ -1,4 +1,4 @@
-package s3api
+package s3err
 
 import (
 	"encoding/xml"
@@ -296,7 +296,7 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	},
 }
 
-// getAPIError provides API Error for input API error code.
-func getAPIError(code ErrorCode) APIError {
+// GetAPIError provides API Error for input API error code.
+func GetAPIError(code ErrorCode) APIError {
 	return errorCodeResponse[code]
 }

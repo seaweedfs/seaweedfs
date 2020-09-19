@@ -3,6 +3,7 @@ package s3api
 import (
 	"bytes"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"io/ioutil"
 	"net/http"
 
@@ -125,7 +126,7 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		errCode := iam.authRequest(r, action)
-		if errCode == ErrNone {
+		if errCode == s3err.ErrNone {
 			f(w, r)
 			return
 		}
@@ -134,16 +135,16 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 }
 
 // check whether the request has valid access keys
-func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action) ErrorCode {
+func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action) s3err.ErrorCode {
 	var identity *Identity
-	var s3Err ErrorCode
+	var s3Err s3err.ErrorCode
 	var found bool
 	switch getRequestAuthType(r) {
 	case authTypeStreamingSigned:
-		return ErrNone
+		return s3err.ErrNone
 	case authTypeUnknown:
 		glog.V(3).Infof("unknown auth type")
-		return ErrAccessDenied
+		return s3err.ErrAccessDenied
 	case authTypePresignedV2, authTypeSignedV2:
 		glog.V(3).Infof("v2 auth type")
 		identity, s3Err = iam.isReqAuthenticatedV2(r)
@@ -152,21 +153,21 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		identity, s3Err = iam.reqSignatureV4Verify(r)
 	case authTypePostPolicy:
 		glog.V(3).Infof("post policy auth type")
-		return ErrNotImplemented
+		return s3err.ErrNotImplemented
 	case authTypeJWT:
 		glog.V(3).Infof("jwt auth type")
-		return ErrNotImplemented
+		return s3err.ErrNotImplemented
 	case authTypeAnonymous:
 		identity, found = iam.lookupAnonymous()
 		if !found {
-			return ErrAccessDenied
+			return s3err.ErrAccessDenied
 		}
 	default:
-		return ErrNotImplemented
+		return s3err.ErrNotImplemented
 	}
 
 	glog.V(3).Infof("auth error: %v", s3Err)
-	if s3Err != ErrNone {
+	if s3Err != s3err.ErrNone {
 		return s3Err
 	}
 
@@ -175,10 +176,10 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	bucket, _ := getBucketAndObject(r)
 
 	if !identity.canDo(action, bucket) {
-		return ErrAccessDenied
+		return s3err.ErrAccessDenied
 	}
 
-	return ErrNone
+	return s3err.ErrNone
 
 }
 

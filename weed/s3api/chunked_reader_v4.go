@@ -24,6 +24,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"hash"
 	"io"
 	"net/http"
@@ -56,7 +57,7 @@ func getChunkSignature(secretKey string, seedSignature string, region string, da
 //     - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-streaming.html
 // returns signature, error otherwise if the signature mismatches or any other
 // error while parsing and validating.
-func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cred *Credential, signature string, region string, date time.Time, errCode ErrorCode) {
+func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cred *Credential, signature string, region string, date time.Time, errCode s3err.ErrorCode) {
 
 	// Copy request.
 	req := *r
@@ -66,7 +67,7 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 
 	// Parse signature version '4' header.
 	signV4Values, errCode := parseSignV4(v4Auth)
-	if errCode != ErrNone {
+	if errCode != s3err.ErrNone {
 		return nil, "", "", time.Time{}, errCode
 	}
 
@@ -75,18 +76,18 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 
 	// Payload for STREAMING signature should be 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD'
 	if payload != req.Header.Get("X-Amz-Content-Sha256") {
-		return nil, "", "", time.Time{}, ErrContentSHA256Mismatch
+		return nil, "", "", time.Time{}, s3err.ErrContentSHA256Mismatch
 	}
 
 	// Extract all the signed headers along with its values.
 	extractedSignedHeaders, errCode := extractSignedHeaders(signV4Values.SignedHeaders, r)
-	if errCode != ErrNone {
+	if errCode != s3err.ErrNone {
 		return nil, "", "", time.Time{}, errCode
 	}
 	// Verify if the access key id matches.
 	_, cred, found := iam.lookupByAccessKey(signV4Values.Credential.accessKey)
 	if !found {
-		return nil, "", "", time.Time{}, ErrInvalidAccessKeyID
+		return nil, "", "", time.Time{}, s3err.ErrInvalidAccessKeyID
 	}
 
 	// Verify if region is valid.
@@ -96,14 +97,14 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 	var dateStr string
 	if dateStr = req.Header.Get(http.CanonicalHeaderKey("x-amz-date")); dateStr == "" {
 		if dateStr = r.Header.Get("Date"); dateStr == "" {
-			return nil, "", "", time.Time{}, ErrMissingDateHeader
+			return nil, "", "", time.Time{}, s3err.ErrMissingDateHeader
 		}
 	}
 	// Parse date header.
 	var err error
 	date, err = time.Parse(iso8601Format, dateStr)
 	if err != nil {
-		return nil, "", "", time.Time{}, ErrMalformedDate
+		return nil, "", "", time.Time{}, s3err.ErrMalformedDate
 	}
 
 	// Query string.
@@ -123,11 +124,11 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 
 	// Verify if signature match.
 	if !compareSignatureV4(newSignature, signV4Values.Signature) {
-		return nil, "", "", time.Time{}, ErrSignatureDoesNotMatch
+		return nil, "", "", time.Time{}, s3err.ErrSignatureDoesNotMatch
 	}
 
 	// Return caculated signature.
-	return cred, newSignature, region, date, ErrNone
+	return cred, newSignature, region, date, s3err.ErrNone
 }
 
 const maxLineLength = 4 * humanize.KiByte // assumed <= bufio.defaultBufSize 4KiB
@@ -141,9 +142,9 @@ var errMalformedEncoding = errors.New("malformed chunked encoding")
 // newSignV4ChunkedReader returns a new s3ChunkedReader that translates the data read from r
 // out of HTTP "chunked" format before returning it.
 // The s3ChunkedReader returns io.EOF when the final 0-length chunk is read.
-func (iam *IdentityAccessManagement) newSignV4ChunkedReader(req *http.Request) (io.ReadCloser, ErrorCode) {
+func (iam *IdentityAccessManagement) newSignV4ChunkedReader(req *http.Request) (io.ReadCloser, s3err.ErrorCode) {
 	ident, seedSignature, region, seedDate, errCode := iam.calculateSeedSignature(req)
-	if errCode != ErrNone {
+	if errCode != s3err.ErrNone {
 		return nil, errCode
 	}
 	return &s3ChunkedReader{
@@ -154,7 +155,7 @@ func (iam *IdentityAccessManagement) newSignV4ChunkedReader(req *http.Request) (
 		region:            region,
 		chunkSHA256Writer: sha256.New(),
 		state:             readChunkHeader,
-	}, ErrNone
+	}, s3err.ErrNone
 }
 
 // Represents the overall state that is required for decoding a

@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -25,12 +26,12 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	srcBucket, srcObject := pathToBucketAndObject(cpSrcPath)
 	// If source object is empty or bucket is empty, reply back invalid copy source.
 	if srcObject == "" || srcBucket == "" {
-		writeErrorResponse(w, ErrInvalidCopySource, r.URL)
+		writeErrorResponse(w, s3err.ErrInvalidCopySource, r.URL)
 		return
 	}
 
 	if srcBucket == dstBucket && srcObject == dstObject {
-		writeErrorResponse(w, ErrInvalidCopySource, r.URL)
+		writeErrorResponse(w, s3err.ErrInvalidCopySource, r.URL)
 		return
 	}
 
@@ -41,14 +42,14 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	_, _, resp, err := util.DownloadFile(srcUrl)
 	if err != nil {
-		writeErrorResponse(w, ErrInvalidCopySource, r.URL)
+		writeErrorResponse(w, s3err.ErrInvalidCopySource, r.URL)
 		return
 	}
 	defer util.CloseResponse(resp)
 
 	etag, errCode := s3a.putToFiler(r, dstUrl, resp.Body)
 
-	if errCode != ErrNone {
+	if errCode != s3err.ErrNone {
 		writeErrorResponse(w, errCode, r.URL)
 		return
 	}
@@ -93,7 +94,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	srcBucket, srcObject := pathToBucketAndObject(cpSrcPath)
 	// If source object is empty or bucket is empty, reply back invalid copy source.
 	if srcObject == "" || srcBucket == "" {
-		writeErrorResponse(w, ErrInvalidCopySource, r.URL)
+		writeErrorResponse(w, s3err.ErrInvalidCopySource, r.URL)
 		return
 	}
 
@@ -102,13 +103,13 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	partID, err := strconv.Atoi(partIDString)
 	if err != nil {
-		writeErrorResponse(w, ErrInvalidPart, r.URL)
+		writeErrorResponse(w, s3err.ErrInvalidPart, r.URL)
 		return
 	}
 
 	// check partID with maximum part ID for multipart objects
 	if partID > globalMaxPartID {
-		writeErrorResponse(w, ErrInvalidMaxParts, r.URL)
+		writeErrorResponse(w, s3err.ErrInvalidMaxParts, r.URL)
 		return
 	}
 
@@ -121,14 +122,14 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	dataReader, err := util.ReadUrlAsReaderCloser(srcUrl, rangeHeader)
 	if err != nil {
-		writeErrorResponse(w, ErrInvalidCopySource, r.URL)
+		writeErrorResponse(w, s3err.ErrInvalidCopySource, r.URL)
 		return
 	}
 	defer dataReader.Close()
 
 	etag, errCode := s3a.putToFiler(r, dstUrl, dataReader)
 
-	if errCode != ErrNone {
+	if errCode != s3err.ErrNone {
 		writeErrorResponse(w, errCode, r.URL)
 		return
 	}
