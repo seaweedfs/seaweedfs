@@ -156,6 +156,9 @@ func (fs *FilerServer) maybeStartMetrics() {
 			}
 		}
 	}
+
+	glog.V(0).Infof("filer sends metrics to %s every %d seconds", fs.metricsAddress, fs.metricsIntervalSec)
+
 	if fs.metricsAddress == "" && fs.metricsIntervalSec <= 0 {
 		return
 	}
