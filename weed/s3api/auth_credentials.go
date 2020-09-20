@@ -153,7 +153,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		identity, s3Err = iam.reqSignatureV4Verify(r)
 	case authTypePostPolicy:
 		glog.V(3).Infof("post policy auth type")
-		identity, s3Err = iam.reqSignatureV4Verify(r)
+		return s3err.ErrNone
 	case authTypeJWT:
 		glog.V(3).Infof("jwt auth type")
 		return s3err.ErrNotImplemented
