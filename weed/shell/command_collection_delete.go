@@ -41,7 +41,7 @@ func (c *commandCollectionDelete) Do(args []string, commandEnv *CommandEnv, writ
 	}
 
 	if !*applyBalancing {
-		fmt.Fprintf(writer, "collection %s will be deleted. Use -force to apply the change.\n", collectionName)
+		fmt.Fprintf(writer, "collection %s will be deleted. Use -force to apply the change.\n", *collectionName)
 		return nil
 	}
 
@@ -55,7 +55,7 @@ func (c *commandCollectionDelete) Do(args []string, commandEnv *CommandEnv, writ
 		return
 	}
 
-	fmt.Fprintf(writer, "collection %s is deleted.\n", collectionName)
+	fmt.Fprintf(writer, "collection %s is deleted.\n", *collectionName)
 
 	return nil
 }
