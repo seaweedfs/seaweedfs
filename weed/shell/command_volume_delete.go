@@ -1,7 +1,7 @@
 package shell
 
 import (
-	"fmt"
+	"flag"
 	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -21,7 +21,7 @@ func (c *commandVolumeDelete) Name() string {
 func (c *commandVolumeDelete) Help() string {
 	return `delete a live volume from one volume server
 
-	volume.delete <volume server host:port> <volume id>
+	volume.delete -node <volume server host:port> -volumeId <volume id>
 
 	This command deletes a volume from one volume server.
 
@@ -34,16 +34,16 @@ func (c *commandVolumeDelete) Do(args []string, commandEnv *CommandEnv, writer i
 		return
 	}
 
-	if len(args) != 2 {
-		fmt.Fprintf(writer, "received args: %+v\n", args)
-		return fmt.Errorf("need 2 args of <volume server host:port> <volume id>")
+	volDeleteCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	volumeIdInt := volDeleteCommand.Int("volumeId", 0, "the volume id")
+	nodeStr := volDeleteCommand.String("node", "", "the volume server <host>:<port>")
+	if err = volDeleteCommand.Parse(args); err != nil {
+		return nil
 	}
-	sourceVolumeServer, volumeIdString := args[0], args[1]
 
-	volumeId, err := needle.NewVolumeId(volumeIdString)
-	if err != nil {
-		return fmt.Errorf("wrong volume id format %s: %v", volumeId, err)
-	}
+	sourceVolumeServer := *nodeStr
+
+	volumeId := needle.VolumeId(*volumeIdInt)
 
 	return deleteVolume(commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer)
 

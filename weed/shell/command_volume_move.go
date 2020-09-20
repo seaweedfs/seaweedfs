@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -27,7 +28,7 @@ func (c *commandVolumeMove) Name() string {
 func (c *commandVolumeMove) Help() string {
 	return `move a live volume from one volume server to another volume server
 
-	volume.move <source volume server host:port> <target volume server host:port> <volume id>
+	volume.move -source <source volume server host:port> -target <target volume server host:port> -volumeId <volume id>
 
 	This command move a live volume from one volume server to another volume server. Here are the steps:
 
@@ -48,16 +49,17 @@ func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.
 		return
 	}
 
-	if len(args) != 3 {
-		fmt.Fprintf(writer, "received args: %+v\n", args)
-		return fmt.Errorf("need 3 args of <source volume server host:port> <target volume server host:port> <volume id>")
+	volMoveCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	volumeIdInt := volMoveCommand.Int("volumeId", 0, "the volume id")
+	sourceNodeStr := volMoveCommand.String("source", "", "the source volume server <host>:<port>")
+	targetNodeStr := volMoveCommand.String("target", "", "the target volume server <host>:<port>")
+	if err = volMoveCommand.Parse(args); err != nil {
+		return nil
 	}
-	sourceVolumeServer, targetVolumeServer, volumeIdString := args[0], args[1], args[2]
 
-	volumeId, err := needle.NewVolumeId(volumeIdString)
-	if err != nil {
-		return fmt.Errorf("wrong volume id format %s: %v", volumeId, err)
-	}
+	sourceVolumeServer, targetVolumeServer := *sourceNodeStr, *targetNodeStr
+
+	volumeId := needle.VolumeId(*volumeIdInt)
 
 	if sourceVolumeServer == targetVolumeServer {
 		return fmt.Errorf("source and target volume servers are the same!")
