@@ -147,7 +147,6 @@ func (s3a *S3ApiServer) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 
 }
 
-
 // Extract form fields and file data from a HTTP POST Policy
 func extractPostPolicyFormValues(form *multipart.Form) (filePart io.ReadCloser, fileName string, fileSize int64, formValues http.Header, err error) {
 	/// HTML Form values
@@ -215,7 +214,7 @@ func validateFormFieldSize(formValues http.Header) error {
 	// Iterate over form values
 	for k := range formValues {
 		// Check if value's field exceeds S3 limit
-		if int64(len(formValues.Get(k))) > int64(1 * humanize.MiByte) {
+		if int64(len(formValues.Get(k))) > int64(1*humanize.MiByte) {
 			return errors.New("Data size larger than expected")
 		}
 	}

@@ -100,7 +100,7 @@ type contentLengthRange struct {
 // PostPolicyForm provides strict static type conversion and validation for Amazon S3's POST policy JSON string.
 type PostPolicyForm struct {
 	Expiration time.Time // Expiration date and time of the POST policy.
-	Conditions struct { // Conditional policy structure.
+	Conditions struct {  // Conditional policy structure.
 		Policies []struct {
 			Operator string
 			Key      string

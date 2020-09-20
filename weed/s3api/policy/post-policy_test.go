@@ -320,8 +320,6 @@ func makeTestTargetURL(endPoint, bucketName, objectName string, queryValues url.
 	return urlStr
 }
 
-
-
 // if object matches reserved string, no need to encode them
 var reservedObjectNames = regexp.MustCompile("^[a-zA-Z0-9-_.~/]+$")
 

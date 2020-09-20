@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"net/http"
 	"strings"
 
@@ -25,6 +26,7 @@ security settings:
 */
 
 func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Server", "Seaweed Volume "+util.VERSION)
 	switch r.Method {
 	case "GET", "HEAD":
 		stats.ReadRequest()
@@ -39,6 +41,7 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 }
 
 func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Server", "Seaweed Volume "+util.VERSION)
 	switch r.Method {
 	case "GET":
 		stats.ReadRequest()

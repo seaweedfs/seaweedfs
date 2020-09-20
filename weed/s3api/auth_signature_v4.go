@@ -293,14 +293,13 @@ func parseSignature(signElement string) (string, s3err.ErrorCode) {
 	return signature, s3err.ErrNone
 }
 
-
 // doesPolicySignatureMatch - Verify query headers with post policy
 //     - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-HTTPPOSTConstructPolicy.html
 // returns ErrNone if the signature matches.
 func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.Header) s3err.ErrorCode {
 
 	// Parse credential tag.
-	credHeader, err := parseCredentialHeader("Credential="+formValues.Get("X-Amz-Credential"))
+	credHeader, err := parseCredentialHeader("Credential=" + formValues.Get("X-Amz-Credential"))
 	if err != s3err.ErrNone {
 		return s3err.ErrMissingFields
 	}
