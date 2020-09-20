@@ -293,6 +293,38 @@ func parseSignature(signElement string) (string, s3err.ErrorCode) {
 	return signature, s3err.ErrNone
 }
 
+
+// doesPolicySignatureMatch - Verify query headers with post policy
+//     - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-HTTPPOSTConstructPolicy.html
+// returns ErrNone if the signature matches.
+func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.Header) s3err.ErrorCode {
+
+	// Parse credential tag.
+	credHeader, err := parseCredentialHeader("Credential="+formValues.Get("X-Amz-Credential"))
+	if err != s3err.ErrNone {
+		return s3err.ErrMissingFields
+	}
+
+	_, cred, found := iam.lookupByAccessKey(credHeader.accessKey)
+	if !found {
+		return s3err.ErrInvalidAccessKeyID
+	}
+
+	// Get signing key.
+	signingKey := getSigningKey(cred.SecretKey, credHeader.scope.date, credHeader.scope.region)
+
+	// Get signature.
+	newSignature := getSignature(signingKey, formValues.Get("Policy"))
+
+	// Verify signature.
+	if !compareSignatureV4(newSignature, formValues.Get("X-Amz-Signature")) {
+		return s3err.ErrSignatureDoesNotMatch
+	}
+
+	// Success.
+	return s3err.ErrNone
+}
+
 // check query headers with presigned signature
 //  - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html
 func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload string, r *http.Request) (*Identity, s3err.ErrorCode) {

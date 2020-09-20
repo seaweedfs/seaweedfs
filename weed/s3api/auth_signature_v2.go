@@ -69,6 +69,20 @@ func (iam *IdentityAccessManagement) isReqAuthenticatedV2(r *http.Request) (*Ide
 	return iam.doesPresignV2SignatureMatch(r)
 }
 
+func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(formValues http.Header) s3err.ErrorCode {
+	accessKey := formValues.Get("AWSAccessKeyId")
+	_, cred, found := iam.lookupByAccessKey(accessKey)
+	if !found {
+		return s3err.ErrInvalidAccessKeyID
+	}
+	policy := formValues.Get("Policy")
+	signature := formValues.Get("Signature")
+	if !compareSignatureV2(signature, calculateSignatureV2(policy, cred.SecretKey)) {
+		return s3err.ErrSignatureDoesNotMatch
+	}
+	return s3err.ErrNone
+}
+
 // Authorization = "AWS" + " " + AWSAccessKeyId + ":" + Signature;
 // Signature = Base64( HMAC-SHA1( YourSecretKey, UTF-8-Encoding-Of( StringToSign ) ) );
 //
