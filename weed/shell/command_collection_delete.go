@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"io"
@@ -21,22 +22,32 @@ func (c *commandCollectionDelete) Name() string {
 func (c *commandCollectionDelete) Help() string {
 	return `delete specified collection
 
-	collection.delete <collection_name>
+	collection.delete -collectin <collection_name> -force
 
 `
 }
 
 func (c *commandCollectionDelete) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if len(args) == 0 {
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
+	}
+
+	colDeleteCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	collectionName := colDeleteCommand.String("collection", "", "collection to delete")
+	applyBalancing := colDeleteCommand.Bool("force", false, "apply the collection")
+	if err = colDeleteCommand.Parse(args); err != nil {
 		return nil
 	}
 
-	collectionName := args[0]
+	if !*applyBalancing {
+		fmt.Fprintf(writer, "collection %s will be deleted. Use -force to apply the change.\n", collectionName)
+		return nil
+	}
 
 	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
 		_, err = client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
-			Name: collectionName,
+			Name: *collectionName,
 		})
 		return err
 	})
