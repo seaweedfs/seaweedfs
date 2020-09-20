@@ -133,6 +133,8 @@ func LoopPushingMetric(name, instance string, gatherer *prometheus.Registry, add
 		return
 	}
 
+	glog.V(0).Infof("%s server sends metrics to %s every %d seconds", name, addr, intervalSeconds)
+
 	pusher := push.New(addr, name).Gatherer(gatherer).Grouping("instance", instance)
 
 	for {

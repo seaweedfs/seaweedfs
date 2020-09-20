@@ -153,10 +153,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		}
 	}
 
-	glog.V(0).Infof("s3 server sends metrics to %s every %d seconds", metricsAddress, metricsIntervalSec)
-	if metricsAddress != "" && metricsIntervalSec > 0 {
-		go stats_collect.LoopPushingMetric("s3", stats_collect.SourceName(uint32(*s3opt.port)), stats_collect.S3Gather, metricsAddress, metricsIntervalSec)
-	}
+	go stats_collect.LoopPushingMetric("s3", stats_collect.SourceName(uint32(*s3opt.port)), stats_collect.S3Gather, metricsAddress, metricsIntervalSec)
 
 	router := mux.NewRouter().SkipClean(true)
 

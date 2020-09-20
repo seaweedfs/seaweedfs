@@ -64,7 +64,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(fileName string) err
 		return fmt.Errorf("fail to read %s : %v", fileName, readErr)
 	}
 
-	glog.V(1).Infof("maybeLoadVolumeInfo Unmarshal volume info %v", fileName)
+	glog.V(1).Infof("load s3 config: %v", fileName)
 	if err := jsonpb.Unmarshal(bytes.NewReader(rawData), s3ApiConfiguration); err != nil {
 		glog.Warningf("unmarshal error: %v", err)
 		return fmt.Errorf("unmarshal %s error: %v", fileName, err)
