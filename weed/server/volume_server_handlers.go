@@ -26,7 +26,7 @@ security settings:
 */
 
 func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Server", "Seaweed Volume "+util.VERSION)
+	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
 	switch r.Method {
 	case "GET", "HEAD":
 		stats.ReadRequest()
@@ -41,7 +41,7 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 }
 
 func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Server", "Seaweed Volume "+util.VERSION)
+	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
 	switch r.Method {
 	case "GET":
 		stats.ReadRequest()
