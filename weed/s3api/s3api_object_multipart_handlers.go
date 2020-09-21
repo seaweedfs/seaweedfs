@@ -200,7 +200,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	defer dataReader.Close()
 
 	uploadUrl := fmt.Sprintf("http://%s%s/%s/%04d.part?collection=%s",
-		s3a.option.Filer, s3a.genUploadsFolder(bucket), uploadID, partID-1, bucket)
+		s3a.option.Filer, s3a.genUploadsFolder(bucket), uploadID, partID, bucket)
 
 	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
 

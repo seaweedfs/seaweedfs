@@ -116,7 +116,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	rangeHeader := r.Header.Get("x-amz-copy-source-range")
 
 	dstUrl := fmt.Sprintf("http://%s%s/%s/%04d.part?collection=%s",
-		s3a.option.Filer, s3a.genUploadsFolder(dstBucket), uploadID, partID-1, dstBucket)
+		s3a.option.Filer, s3a.genUploadsFolder(dstBucket), uploadID, partID, dstBucket)
 	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
 		s3a.option.Filer, s3a.option.BucketsPath, srcBucket, srcObject)
 
