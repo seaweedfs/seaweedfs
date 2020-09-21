@@ -164,6 +164,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		FullPath: util.JoinPath(req.Directory, req.Entry.Name),
 		Attr:     filer.PbToEntryAttribute(req.Entry.Attributes),
 		Chunks:   chunks,
+		Extended: req.Entry.Extended,
 	}, req.OExcl, req.IsFromOtherCluster, req.Signatures)
 
 	if createErr == nil {
