@@ -29,6 +29,7 @@ type ParsedUpload struct {
 	Ttl              *TTL
 	IsChunkedFile    bool
 	UncompressedData []byte
+	ContentMd5       string
 }
 
 func ParseUpload(r *http.Request, sizeLimit int64) (pu *ParsedUpload, e error) {
@@ -54,7 +55,7 @@ func ParseUpload(r *http.Request, sizeLimit int64) (pu *ParsedUpload, e error) {
 
 	pu.OriginalDataSize = len(pu.Data)
 	pu.UncompressedData = pu.Data
-	// println("received data", len(pu.Data), "isGzipped", pu.IsCompressed, "mime", pu.MimeType, "name", pu.FileName)
+	// println("received data", len(pu.Data), "isGzipped", pu.IsGzipped, "mime", pu.MimeType, "name", pu.FileName)
 	if pu.IsGzipped {
 		if unzipped, e := util.DecompressData(pu.Data); e == nil {
 			pu.OriginalDataSize = len(unzipped)
@@ -72,7 +73,7 @@ func ParseUpload(r *http.Request, sizeLimit int64) (pu *ParsedUpload, e error) {
 			mimeType = ""
 		}
 		if shouldBeCompressed, iAmSure := util.IsCompressableFileType(ext, mimeType); mimeType == "" && !iAmSure || shouldBeCompressed && iAmSure {
-			// println("ext", ext, "iAmSure", iAmSure, "shouldGzip", shouldGzip, "mimeType", pu.MimeType)
+			// println("ext", ext, "iAmSure", iAmSure, "shouldBeCompressed", shouldBeCompressed, "mimeType", pu.MimeType)
 			if compressedData, err := util.GzipData(pu.Data); err == nil {
 				if len(compressedData)*10 < len(pu.Data)*9 {
 					pu.Data = compressedData
@@ -83,11 +84,13 @@ func ParseUpload(r *http.Request, sizeLimit int64) (pu *ParsedUpload, e error) {
 		}
 	}
 
+	// md5
+	h := md5.New()
+	h.Write(pu.UncompressedData)
+	pu.ContentMd5 = base64.StdEncoding.EncodeToString(h.Sum(nil))
 	if expectedChecksum := r.Header.Get("Content-MD5"); expectedChecksum != "" {
-		h := md5.New()
-		h.Write(pu.UncompressedData)
-		if receivedChecksum := base64.StdEncoding.EncodeToString(h.Sum(nil)); expectedChecksum != receivedChecksum {
-			e = fmt.Errorf("Content-MD5 did not match md5 of file data [%s] != [%s]", expectedChecksum, receivedChecksum)
+		if expectedChecksum != pu.ContentMd5 {
+			e = fmt.Errorf("Content-MD5 did not match md5 of file data expected [%s] received [%s] size %d", expectedChecksum, pu.ContentMd5, len(pu.UncompressedData))
 			return
 		}
 	}

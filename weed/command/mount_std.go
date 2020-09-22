@@ -5,6 +5,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"os"
 	"os/user"
 	"path"
@@ -115,6 +116,13 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		}
 	}
 
+	// mapping uid, gid
+	uidGidMapper, err := meta_cache.NewUidGidMapper(*option.uidMap, *option.gidMap)
+	if err != nil {
+		fmt.Printf("failed to parse %s %s: %v\n", *option.uidMap, *option.gidMap, err)
+		return false
+	}
+
 	// Ensure target mount point availability
 	if isValid := checkMountPointAvailable(dir); !isValid {
 		glog.Fatalf("Expected mount to still be active, target mount point: %s, please check!", dir)
@@ -165,7 +173,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		CacheDir:                    *option.cacheDir,
 		CacheSizeMB:                 *option.cacheSizeMB,
 		DataCenter:                  *option.dataCenter,
-		DirListCacheLimit:           *option.dirListCacheLimit,
 		EntryCacheTtl:               3 * time.Second,
 		MountUid:                    uid,
 		MountGid:                    gid,
@@ -175,6 +182,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		Umask:                       umask,
 		OutsideContainerClusterMode: *mountOptions.outsideContainerClusterMode,
 		Cipher:                      cipher,
+		UidGidMapper:                uidGidMapper,
 	})
 
 	// mount

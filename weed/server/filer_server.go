@@ -18,16 +18,17 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/cassandra"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/etcd"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/leveldb"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/leveldb2"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/mongodb"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/mysql"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/postgres"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/redis"
-	_ "github.com/chrislusf/seaweedfs/weed/filer2/redis2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/cassandra"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/elastic/v7"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/etcd"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/leveldb"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/leveldb2"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/mongodb"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/mysql"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/postgres"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/redis"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/redis2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/aws_sqs"
@@ -58,8 +59,12 @@ type FilerOption struct {
 type FilerServer struct {
 	option         *FilerOption
 	secret         security.SigningKey
-	filer          *filer2.Filer
+	filer          *filer.Filer
 	grpcDialOption grpc.DialOption
+
+	// metrics read from the master
+	metricsAddress     string
+	metricsIntervalSec int
 
 	// notifying clients
 	listenersLock sync.Mutex
@@ -82,12 +87,12 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Fatal("master list is required!")
 	}
 
-	fs.filer = filer2.NewFiler(option.Masters, fs.grpcDialOption, option.Host, option.Port, option.Collection, option.DefaultReplication, func() {
+	fs.filer = filer.NewFiler(option.Masters, fs.grpcDialOption, option.Host, option.Port, option.Collection, option.DefaultReplication, func() {
 		fs.listenersCond.Broadcast()
 	})
 	fs.filer.Cipher = option.Cipher
 
-	maybeStartMetrics(fs, option)
+	fs.maybeStartMetrics()
 
 	go fs.filer.KeepConnectedToMaster()
 
@@ -130,9 +135,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	return fs, nil
 }
 
-func maybeStartMetrics(fs *FilerServer, option *FilerOption) {
+func (fs *FilerServer) maybeStartMetrics() {
 
-	for _, master := range option.Masters {
+	for _, master := range fs.option.Masters {
 		_, err := pb.ParseFilerGrpcAddress(master)
 		if err != nil {
 			glog.Fatalf("invalid master address %s: %v", master, err)
@@ -140,12 +145,10 @@ func maybeStartMetrics(fs *FilerServer, option *FilerOption) {
 	}
 
 	isConnected := false
-	var metricsAddress string
-	var metricsIntervalSec int
 	var readErr error
 	for !isConnected {
-		for _, master := range option.Masters {
-			metricsAddress, metricsIntervalSec, readErr = readFilerConfiguration(fs.grpcDialOption, master)
+		for _, master := range fs.option.Masters {
+			fs.metricsAddress, fs.metricsIntervalSec, readErr = readFilerConfiguration(fs.grpcDialOption, master)
 			if readErr == nil {
 				isConnected = true
 			} else {
@@ -153,13 +156,8 @@ func maybeStartMetrics(fs *FilerServer, option *FilerOption) {
 			}
 		}
 	}
-	if metricsAddress == "" && metricsIntervalSec <= 0 {
-		return
-	}
-	go stats.LoopPushingMetric("filer", stats.SourceName(option.Port), stats.FilerGather,
-		func() (addr string, intervalSeconds int) {
-			return metricsAddress, metricsIntervalSec
-		})
+
+	go stats.LoopPushingMetric("filer", stats.SourceName(fs.option.Port), stats.FilerGather, fs.metricsAddress, fs.metricsIntervalSec)
 }
 
 func readFilerConfiguration(grpcDialOption grpc.DialOption, masterAddress string) (metricsAddress string, metricsIntervalSec int, err error) {

@@ -63,7 +63,7 @@ func LoadOrCreateChunkCacheVolume(fileName string, preallocate int64) (*ChunkCac
 		return nil, fmt.Errorf("cannot write cache index %s.idx: %v", v.fileName, err)
 	}
 
-	glog.V(0).Infoln("loading leveldb", v.fileName+".ldb")
+	glog.V(1).Infoln("loading leveldb", v.fileName+".ldb")
 	opts := &opt.Options{
 		BlockCacheCapacity:            2 * 1024 * 1024, // default value is 8MiB
 		WriteBuffer:                   1 * 1024 * 1024, // default value is 4MiB
@@ -137,7 +137,7 @@ func (v *ChunkCacheVolume) WriteNeedle(key types.NeedleId, data []byte) error {
 		v.fileSize += int64(types.NeedlePaddingSize - extraSize)
 	}
 
-	if err := v.nm.Put(key, types.ToOffset(offset), uint32(len(data))); err != nil {
+	if err := v.nm.Put(key, types.ToOffset(offset), types.Size(len(data))); err != nil {
 		return err
 	}
 

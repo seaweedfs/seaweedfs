@@ -15,6 +15,7 @@ import (
 var (
 	FilerGather        = prometheus.NewRegistry()
 	VolumeServerGather = prometheus.NewRegistry()
+	S3Gather           = prometheus.NewRegistry()
 
 	FilerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -90,6 +91,22 @@ var (
 			Name:      "total_disk_size",
 			Help:      "Actual disk size used by volumes.",
 		}, []string{"collection", "type"})
+
+	S3RequestCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "s3",
+			Name:      "request_total",
+			Help:      "Counter of s3 requests.",
+		}, []string{"type"})
+	S3RequestHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "s3",
+			Name:      "request_seconds",
+			Help:      "Bucketed histogram of s3 request processing time.",
+			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
+		}, []string{"type"})
 )
 
 func init() {
@@ -106,34 +123,29 @@ func init() {
 	VolumeServerGather.MustRegister(VolumeServerMaxVolumeCounter)
 	VolumeServerGather.MustRegister(VolumeServerDiskSizeGauge)
 
+	S3Gather.MustRegister(S3RequestCounter)
+	S3Gather.MustRegister(S3RequestHistogram)
 }
 
-func LoopPushingMetric(name, instance string, gatherer *prometheus.Registry, fnGetMetricsDest func() (addr string, intervalSeconds int)) {
+func LoopPushingMetric(name, instance string, gatherer *prometheus.Registry, addr string, intervalSeconds int) {
 
-	if fnGetMetricsDest == nil {
+	if addr == "" || intervalSeconds == 0 {
 		return
 	}
 
-	addr, intervalSeconds := fnGetMetricsDest()
+	glog.V(0).Infof("%s server sends metrics to %s every %d seconds", name, addr, intervalSeconds)
+
 	pusher := push.New(addr, name).Gatherer(gatherer).Grouping("instance", instance)
-	currentAddr := addr
 
 	for {
-		if currentAddr != "" {
-			err := pusher.Push()
-			if err != nil && !strings.HasPrefix(err.Error(), "unexpected status code 200") {
-				glog.V(0).Infof("could not push metrics to prometheus push gateway %s: %v", addr, err)
-			}
+		err := pusher.Push()
+		if err != nil && !strings.HasPrefix(err.Error(), "unexpected status code 200") {
+			glog.V(0).Infof("could not push metrics to prometheus push gateway %s: %v", addr, err)
 		}
 		if intervalSeconds <= 0 {
 			intervalSeconds = 15
 		}
 		time.Sleep(time.Duration(intervalSeconds) * time.Second)
-		addr, intervalSeconds = fnGetMetricsDest()
-		if currentAddr != addr {
-			pusher = push.New(addr, name).Gatherer(gatherer).Grouping("instance", instance)
-			currentAddr = addr
-		}
 
 	}
 }

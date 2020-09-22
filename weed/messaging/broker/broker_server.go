@@ -48,7 +48,9 @@ func (broker *MessageBroker) keepConnectedToOneFiler() {
 	for {
 		for _, filer := range broker.option.Filers {
 			broker.withFilerClient(filer, func(client filer_pb.SeaweedFilerClient) error {
-				stream, err := client.KeepConnected(context.Background())
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				stream, err := client.KeepConnected(ctx)
 				if err != nil {
 					glog.V(0).Infof("%s:%d failed to keep connected to %s: %v", broker.option.Ip, broker.option.Port, filer, err)
 					return err

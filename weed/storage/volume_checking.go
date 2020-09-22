@@ -27,11 +27,15 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uin
 	if offset.IsZero() {
 		return 0, nil
 	}
-	if size == TombstoneFileSize {
-		size = 0
-	}
-	if lastAppendAtNs, e = verifyNeedleIntegrity(v.DataBackend, v.Version(), offset.ToAcutalOffset(), key, size); e != nil {
-		return lastAppendAtNs, fmt.Errorf("verifyNeedleIntegrity %s failed: %v", indexFile.Name(), e)
+	if size < 0 {
+		// read the deletion entry
+		if lastAppendAtNs, e = verifyDeletedNeedleIntegrity(v.DataBackend, v.Version(), key); e != nil {
+			return lastAppendAtNs, fmt.Errorf("verifyNeedleIntegrity %s failed: %v", indexFile.Name(), e)
+		}
+	} else {
+		if lastAppendAtNs, e = verifyNeedleIntegrity(v.DataBackend, v.Version(), offset.ToAcutalOffset(), key, size); e != nil {
+			return lastAppendAtNs, fmt.Errorf("verifyNeedleIntegrity %s failed: %v", indexFile.Name(), e)
+		}
 	}
 	return
 }
@@ -55,10 +59,27 @@ func readIndexEntryAtOffset(indexFile *os.File, offset int64) (bytes []byte, err
 	return
 }
 
-func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version, offset int64, key NeedleId, size uint32) (lastAppendAtNs uint64, err error) {
+func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version, offset int64, key NeedleId, size Size) (lastAppendAtNs uint64, err error) {
 	n := new(needle.Needle)
 	if err = n.ReadData(datFile, offset, size, v); err != nil {
 		return n.AppendAtNs, fmt.Errorf("read data [%d,%d) : %v", offset, offset+int64(size), err)
+	}
+	if n.Id != key {
+		return n.AppendAtNs, fmt.Errorf("index key %#x does not match needle's Id %#x", key, n.Id)
+	}
+	return n.AppendAtNs, err
+}
+
+func verifyDeletedNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version, key NeedleId) (lastAppendAtNs uint64, err error) {
+	n := new(needle.Needle)
+	size := n.DiskSize(v)
+	var fileSize int64
+	fileSize, _, err = datFile.GetStat()
+	if err != nil {
+		return 0, fmt.Errorf("GetStat: %v", err)
+	}
+	if err = n.ReadData(datFile, fileSize-size, Size(0), v); err != nil {
+		return n.AppendAtNs, fmt.Errorf("read data [%d,%d) : %v", fileSize-size, size, err)
 	}
 	if n.Id != key {
 		return n.AppendAtNs, fmt.Errorf("index key %#x does not match needle's Id %#x", key, n.Id)

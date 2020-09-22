@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -36,37 +37,46 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	_, err := validateContentMd5(r.Header)
 	if err != nil {
-		writeErrorResponse(w, ErrInvalidDigest, r.URL)
+		writeErrorResponse(w, s3err.ErrInvalidDigest, r.URL)
 		return
 	}
 
-	rAuthType := getRequestAuthType(r)
 	dataReader := r.Body
-	var s3ErrCode ErrorCode
-	switch rAuthType {
-	case authTypeStreamingSigned:
-		dataReader, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
-	case authTypeSignedV2, authTypePresignedV2:
-		_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
-	case authTypePresigned, authTypeSigned:
-		_, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
-	}
-	if s3ErrCode != ErrNone {
-		writeErrorResponse(w, s3ErrCode, r.URL)
-		return
+	if s3a.iam.isEnabled() {
+		rAuthType := getRequestAuthType(r)
+		var s3ErrCode s3err.ErrorCode
+		switch rAuthType {
+		case authTypeStreamingSigned:
+			dataReader, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
+		case authTypeSignedV2, authTypePresignedV2:
+			_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
+		case authTypePresigned, authTypeSigned:
+			_, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
+		}
+		if s3ErrCode != s3err.ErrNone {
+			writeErrorResponse(w, s3ErrCode, r.URL)
+			return
+		}
 	}
 	defer dataReader.Close()
 
-	uploadUrl := fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
+	if strings.HasSuffix(object, "/") {
+		if err := s3a.mkdir(s3a.option.BucketsPath, bucket+object, nil); err != nil {
+			writeErrorResponse(w, s3err.ErrInternalError, r.URL)
+			return
+		}
+	} else {
+		uploadUrl := fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
 
-	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
+		etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
 
-	if errCode != ErrNone {
-		writeErrorResponse(w, errCode, r.URL)
-		return
+		if errCode != s3err.ErrNone {
+			writeErrorResponse(w, errCode, r.URL)
+			return
+		}
+
+		setEtag(w, etag)
 	}
-
-	setEtag(w, etag)
 
 	writeSuccessResponseEmpty(w)
 }
@@ -76,7 +86,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	bucket, object := getBucketAndObject(r)
 
 	if strings.HasSuffix(r.URL.Path, "/") {
-		writeErrorResponse(w, ErrNotImplemented, r.URL)
+		writeErrorResponse(w, s3err.ErrNotImplemented, r.URL)
 		return
 	}
 
@@ -152,13 +162,13 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 	deleteXMLBytes, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		writeErrorResponse(w, ErrInternalError, r.URL)
+		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
 
 	deleteObjects := &DeleteObjectsRequest{}
 	if err := xml.Unmarshal(deleteXMLBytes, deleteObjects); err != nil {
-		writeErrorResponse(w, ErrMalformedXML, r.URL)
+		writeErrorResponse(w, s3err.ErrMalformedXML, r.URL)
 		return
 	}
 
@@ -208,7 +218,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", destUrl, err)
-		writeErrorResponse(w, ErrInternalError, r.URL)
+		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
 
@@ -223,9 +233,14 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 
 	resp, postErr := client.Do(proxyReq)
 
+	if resp.ContentLength == -1 {
+		writeErrorResponse(w, s3err.ErrNoSuchKey, r.URL)
+		return
+	}
+
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)
-		writeErrorResponse(w, ErrInternalError, r.URL)
+		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
 	defer util.CloseResponse(resp)
@@ -241,7 +256,7 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) {
 	io.Copy(w, proxyResponse.Body)
 }
 
-func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader) (etag string, code ErrorCode) {
+func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader) (etag string, code s3err.ErrorCode) {
 
 	hash := md5.New()
 	var body = io.TeeReader(dataReader, hash)
@@ -250,7 +265,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", uploadUrl, err)
-		return "", ErrInternalError
+		return "", s3err.ErrInternalError
 	}
 
 	proxyReq.Header.Set("Host", s3a.option.Filer)
@@ -266,7 +281,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)
-		return "", ErrInternalError
+		return "", s3err.ErrInternalError
 	}
 	defer resp.Body.Close()
 
@@ -275,20 +290,20 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	resp_body, ra_err := ioutil.ReadAll(resp.Body)
 	if ra_err != nil {
 		glog.Errorf("upload to filer response read: %v", ra_err)
-		return etag, ErrInternalError
+		return etag, s3err.ErrInternalError
 	}
 	var ret weed_server.FilerPostResult
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
 		glog.Errorf("failing to read upload to %s : %v", uploadUrl, string(resp_body))
-		return "", ErrInternalError
+		return "", s3err.ErrInternalError
 	}
 	if ret.Error != "" {
 		glog.Errorf("upload to filer error: %v", ret.Error)
-		return "", ErrInternalError
+		return "", s3err.ErrInternalError
 	}
 
-	return etag, ErrNone
+	return etag, s3err.ErrNone
 }
 
 func setEtag(w http.ResponseWriter, etag string) {

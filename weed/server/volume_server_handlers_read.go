@@ -18,6 +18,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -25,6 +26,8 @@ import (
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
+
+	// println(r.Method + " " + r.URL.Path)
 
 	stats.VolumeServerRequestCounter.WithLabelValues("get").Inc()
 	start := time.Now()
@@ -79,15 +82,20 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	cookie := n.Cookie
+
+	readOption := &storage.ReadOption{
+		ReadDeleted: r.FormValue("readDeleted") == "true",
+	}
+
 	var count int
 	if hasVolume {
-		count, err = vs.store.ReadVolumeNeedle(volumeId, n)
+		count, err = vs.store.ReadVolumeNeedle(volumeId, n, readOption)
 	} else if hasEcVolume {
 		count, err = vs.store.ReadEcShardNeedle(volumeId, n)
 	}
 	// glog.V(4).Infoln("read bytes", count, "error", err)
 	if err != nil || count < 0 {
-		glog.V(0).Infof("read %s isNormalVolume %v error: %v", r.URL.Path, hasVolume, err)
+		glog.V(3).Infof("read %s isNormalVolume %v error: %v", r.URL.Path, hasVolume, err)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -142,20 +150,18 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	if ext != ".gz" && ext != ".zst" {
-		if n.IsCompressed() {
-			if _, _, _, shouldResize := shouldResizeImages(ext, r); shouldResize {
-				if n.Data, err = util.DecompressData(n.Data); err != nil {
-					glog.V(0).Infoln("ungzip error:", err, r.URL.Path)
-				}
-			} else if strings.Contains(r.Header.Get("Accept-Encoding"), "zstd") && util.IsZstdContent(n.Data) {
-				w.Header().Set("Content-Encoding", "zstd")
-			} else if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") && util.IsGzippedContent(n.Data) {
-				w.Header().Set("Content-Encoding", "gzip")
-			} else {
-				if n.Data, err = util.DecompressData(n.Data); err != nil {
-					glog.V(0).Infoln("uncompress error:", err, r.URL.Path)
-				}
+	if n.IsCompressed() {
+		if _, _, _, shouldResize := shouldResizeImages(ext, r); shouldResize {
+			if n.Data, err = util.DecompressData(n.Data); err != nil {
+				glog.V(0).Infoln("ungzip error:", err, r.URL.Path)
+			}
+		} else if strings.Contains(r.Header.Get("Accept-Encoding"), "zstd") && util.IsZstdContent(n.Data) {
+			w.Header().Set("Content-Encoding", "zstd")
+		} else if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") && util.IsGzippedContent(n.Data) {
+			w.Header().Set("Content-Encoding", "gzip")
+		} else {
+			if n.Data, err = util.DecompressData(n.Data); err != nil {
+				glog.V(0).Infoln("uncompress error:", err, r.URL.Path)
 			}
 		}
 	}

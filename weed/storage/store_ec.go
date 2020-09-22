@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -59,6 +60,8 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 				EcIndexBits: uint32(shardBits.AddShardId(shardId)),
 			}
 			return nil
+		} else if err == os.ErrNotExist {
+			continue
 		} else {
 			return fmt.Errorf("%s load ec shard %d.%d: %v", location.Directory, vid, shardId, err)
 		}
@@ -124,7 +127,7 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle) (int, e
 			if err != nil {
 				return 0, fmt.Errorf("locate in local ec volume: %v", err)
 			}
-			if size == types.TombstoneFileSize {
+			if size.IsDeleted() {
 				return 0, fmt.Errorf("entry %s is deleted", n.Id)
 			}
 

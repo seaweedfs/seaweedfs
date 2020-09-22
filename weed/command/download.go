@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -59,7 +60,7 @@ func downloadToFile(server, fileId, saveDir string) error {
 	if err != nil {
 		return err
 	}
-	defer rc.Close()
+	defer util.CloseResponse(rc)
 	if filename == "" {
 		filename = fileId
 	}
@@ -71,12 +72,11 @@ func downloadToFile(server, fileId, saveDir string) error {
 	}
 	f, err := os.OpenFile(path.Join(saveDir, filename), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.ModePerm)
 	if err != nil {
-		io.Copy(ioutil.Discard, rc)
 		return err
 	}
 	defer f.Close()
 	if isFileList {
-		content, err := ioutil.ReadAll(rc)
+		content, err := ioutil.ReadAll(rc.Body)
 		if err != nil {
 			return err
 		}
@@ -95,7 +95,7 @@ func downloadToFile(server, fileId, saveDir string) error {
 			}
 		}
 	} else {
-		if _, err = io.Copy(f, rc); err != nil {
+		if _, err = io.Copy(f, rc.Body); err != nil {
 			return err
 		}
 
@@ -108,12 +108,12 @@ func fetchContent(server string, fileId string) (filename string, content []byte
 	if lookupError != nil {
 		return "", nil, lookupError
 	}
-	var rc io.ReadCloser
+	var rc *http.Response
 	if filename, _, rc, e = util.DownloadFile(fileUrl); e != nil {
 		return "", nil, e
 	}
-	content, e = ioutil.ReadAll(rc)
-	rc.Close()
+	defer util.CloseResponse(rc)
+	content, e = ioutil.ReadAll(rc.Body)
 	return
 }
 

@@ -65,7 +65,7 @@ func (m *SortedFileNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue
 
 }
 
-func (m *SortedFileNeedleMap) Put(key NeedleId, offset Offset, size uint32) error {
+func (m *SortedFileNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
 	return os.ErrInvalid
 }
 
@@ -80,7 +80,7 @@ func (m *SortedFileNeedleMap) Delete(key NeedleId, offset Offset) error {
 		return err
 	}
 
-	if size == TombstoneFileSize {
+	if size.IsDeleted() {
 		return nil
 	}
 

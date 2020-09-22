@@ -24,7 +24,7 @@ const (
 type Needle struct {
 	Cookie Cookie   `comment:"random number to mitigate brute force lookups"`
 	Id     NeedleId `comment:"needle id"`
-	Size   uint32   `comment:"sum of DataSize,Data,NameSize,Name,MimeSize,Mime"`
+	Size   Size     `comment:"sum of DataSize,Data,NameSize,Name,MimeSize,Mime"`
 
 	DataSize     uint32 `comment:"Data size"` //version2
 	Data         []byte `comment:"The actual file data"`
@@ -44,11 +44,11 @@ type Needle struct {
 }
 
 func (n *Needle) String() (str string) {
-	str = fmt.Sprintf("%s Size:%d, DataSize:%d, Name:%s, Mime:%s", formatNeedleIdCookie(n.Id, n.Cookie), n.Size, n.DataSize, n.Name, n.Mime)
+	str = fmt.Sprintf("%s Size:%d, DataSize:%d, Name:%s, Mime:%s Compressed:%v", formatNeedleIdCookie(n.Id, n.Cookie), n.Size, n.DataSize, n.Name, n.Mime, n.IsCompressed())
 	return
 }
 
-func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit int64) (n *Needle, originalSize int, e error) {
+func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit int64) (n *Needle, originalSize int, contentMd5 string, e error) {
 	n = new(Needle)
 	pu, e := ParseUpload(r, sizeLimit)
 	if e != nil {
@@ -58,6 +58,7 @@ func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit 
 	originalSize = pu.OriginalDataSize
 	n.LastModified = pu.ModifiedTime
 	n.Ttl = pu.Ttl
+	contentMd5 = pu.ContentMd5
 
 	if len(pu.FileName) < 256 {
 		n.Name = []byte(pu.FileName)
@@ -81,6 +82,7 @@ func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit 
 		}
 	}
 	if pu.IsGzipped {
+		// println(r.URL.Path, "is set to compressed", pu.FileName, pu.IsGzipped, "dataSize", pu.OriginalDataSize)
 		n.SetIsCompressed()
 	}
 	if n.LastModified == 0 {

@@ -72,7 +72,7 @@ var cmdCopy = &Command{
 
   If "maxMB" is set to a positive number, files larger than it would be split into chunks.
 
-  `,
+`,
 }
 
 func runCopy(cmd *Command, args []string) bool {

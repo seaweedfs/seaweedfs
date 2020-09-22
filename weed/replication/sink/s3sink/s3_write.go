@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -103,7 +103,7 @@ func (s3sink *S3Sink) completeMultipartUpload(ctx context.Context, key, uploadId
 }
 
 // To upload a part
-func (s3sink *S3Sink) uploadPart(key, uploadId string, partId int, chunk *filer2.ChunkView) (*s3.CompletedPart, error) {
+func (s3sink *S3Sink) uploadPart(key, uploadId string, partId int, chunk *filer.ChunkView) (*s3.CompletedPart, error) {
 	var readSeeker io.ReadSeeker
 
 	readSeeker, err := s3sink.buildReadSeeker(chunk)
@@ -156,7 +156,7 @@ func (s3sink *S3Sink) uploadPartCopy(key, uploadId string, partId int64, copySou
 	return err
 }
 
-func (s3sink *S3Sink) buildReadSeeker(chunk *filer2.ChunkView) (io.ReadSeeker, error) {
+func (s3sink *S3Sink) buildReadSeeker(chunk *filer.ChunkView) (io.ReadSeeker, error) {
 	fileUrl, err := s3sink.filerSource.LookupFileId(chunk.FileId)
 	if err != nil {
 		return nil, err

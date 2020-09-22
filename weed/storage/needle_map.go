@@ -19,7 +19,7 @@ const (
 )
 
 type NeedleMapper interface {
-	Put(key NeedleId, offset Offset, size uint32) error
+	Put(key NeedleId, offset Offset, size Size) error
 	Get(key NeedleId) (element *needle_map.NeedleValue, ok bool)
 	Delete(key NeedleId, offset Offset) error
 	Close()
@@ -48,7 +48,7 @@ func (nm *baseNeedleMapper) IndexFileSize() uint64 {
 	return 0
 }
 
-func (nm *baseNeedleMapper) appendToIndexFile(key NeedleId, offset Offset, size uint32) error {
+func (nm *baseNeedleMapper) appendToIndexFile(key NeedleId, offset Offset, size Size) error {
 	bytes := needle_map.ToBytes(key, offset, size)
 
 	nm.indexFileAccessLock.Lock()

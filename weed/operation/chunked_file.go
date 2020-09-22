@@ -57,7 +57,7 @@ func LoadChunkManifest(buffer []byte, isCompressed bool) (*ChunkManifest, error)
 	if isCompressed {
 		var err error
 		if buffer, err = util.DecompressData(buffer); err != nil {
-			return nil, err
+			glog.V(0).Infof("fail to decompress chunk manifest: %v", err)
 		}
 	}
 	cm := ChunkManifest{}

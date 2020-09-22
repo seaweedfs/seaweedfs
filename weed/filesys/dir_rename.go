@@ -29,6 +29,8 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 
 	// update remote filer
 	err = dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
 		request := &filer_pb.AtomicRenameEntryRequest{
 			OldDirectory: dir.FullPath(),
@@ -37,7 +39,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 			NewName:      req.NewName,
 		}
 
-		_, err := client.AtomicRenameEntry(context.Background(), request)
+		_, err := client.AtomicRenameEntry(ctx, request)
 		if err != nil {
 			return fuse.EIO
 		}
@@ -62,7 +64,18 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 	}
 
 	// fmt.Printf("rename path: %v => %v\n", oldPath, newPath)
-	delete(dir.wfs.handles, oldPath.AsInode())
+	dir.wfs.fsNodeCache.Move(oldPath, newPath)
+
+	// change file handle
+	dir.wfs.handlesLock.Lock()
+	defer dir.wfs.handlesLock.Unlock()
+	inodeId := oldPath.AsInode()
+	existingHandle, found := dir.wfs.handles[inodeId]
+	if !found || existingHandle == nil {
+		return err
+	}
+	delete(dir.wfs.handles, inodeId)
+	dir.wfs.handles[newPath.AsInode()] = existingHandle
 
 	return err
 }

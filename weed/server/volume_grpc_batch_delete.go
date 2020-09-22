@@ -41,7 +41,7 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 		} else {
 			n.ParsePath(id_cookie)
 			cookie := n.Cookie
-			if _, err := vs.store.ReadVolumeNeedle(volumeId, n); err != nil {
+			if _, err := vs.store.ReadVolumeNeedle(volumeId, n, nil); err != nil {
 				resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
 					FileId: fid,
 					Status: http.StatusNotFound,
@@ -79,7 +79,7 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 			resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
 				FileId: fid,
 				Status: http.StatusAccepted,
-				Size:   size},
+				Size:   uint32(size)},
 			)
 		}
 	}

@@ -26,8 +26,10 @@ func (v *Volume) maybeWriteSuperBlock() error {
 			if dataFile, e = os.Create(v.DataBackend.Name()); e == nil {
 				v.DataBackend = backend.NewDiskFile(dataFile)
 				if _, e = v.DataBackend.WriteAt(v.SuperBlock.Bytes(), 0); e == nil {
+					v.noWriteLock.Lock()
 					v.noWriteOrDelete = false
 					v.noWriteCanDelete = false
+					v.noWriteLock.Unlock()
 				}
 			}
 		}
