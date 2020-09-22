@@ -187,7 +187,8 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 
 	peerAddress := findClientAddress(stream.Context(), req.GrpcPort)
 
-	stopChan := make(chan bool)
+	// buffer by 1 so we don't end up getting stuck writing to stopChan forever
+	stopChan := make(chan bool, 1)
 
 	clientName, messageChan := ms.addClient(req.Name, peerAddress)
 
@@ -247,7 +248,12 @@ func (ms *MasterServer) addClient(clientType string, clientAddress string) (clie
 	clientName = clientType + "@" + clientAddress
 	glog.V(0).Infof("+ client %v", clientName)
 
-	messageChan = make(chan *master_pb.VolumeLocation)
+	// we buffer this because otherwise we end up in a potential deadlock where
+	// the KeepConnected loop is no longer listening on this channel but we're
+	// trying to send to it in SendHeartbeat and so we can't lock the
+	// clientChansLock to remove the channel and we're stuck writing to it
+	// 100 is probably overkill
+	messageChan = make(chan *master_pb.VolumeLocation, 100)
 
 	ms.clientChansLock.Lock()
 	ms.clientChans[clientName] = messageChan
