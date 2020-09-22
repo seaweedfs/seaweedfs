@@ -78,7 +78,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, peer string
 		var counter int64
 		var synced bool
 		maybeReplicateMetadataChange = func(event *filer_pb.SubscribeMetadataResponse) {
-			if err := Replay(f.Store.ActualStore, event); err != nil {
+			if err := Replay(f.Store, event); err != nil {
 				glog.Errorf("failed to reply metadata change from %v: %v", peer, err)
 				return
 			}
