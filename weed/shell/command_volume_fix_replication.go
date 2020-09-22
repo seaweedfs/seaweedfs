@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"io"
@@ -50,10 +51,13 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		return
 	}
 
-	takeAction := true
-	if len(args) > 0 && args[0] == "-n" {
-		takeAction = false
+	volFixReplicationCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	skipChange := volFixReplicationCommand.Bool("n", false, "skip the changes")
+	if err = volFixReplicationCommand.Parse(args); err != nil {
+		return nil
 	}
+
+	takeAction := !*skipChange
 
 	var resp *master_pb.VolumeListResponse
 	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {

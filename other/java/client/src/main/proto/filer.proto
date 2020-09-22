@@ -273,6 +273,8 @@ message GetFilerConfigurationResponse {
     string dir_buckets = 5;
     bool cipher = 7;
     int32 signature = 8;
+    string metrics_address = 9;
+    int32 metrics_interval_sec = 10;
 }
 
 message SubscribeMetadataRequest {

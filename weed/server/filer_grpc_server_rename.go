@@ -109,6 +109,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPat
 		FullPath: newPath,
 		Attr:     entry.Attr,
 		Chunks:   entry.Chunks,
+		Extended: entry.Extended,
 	}
 	createErr := fs.filer.CreateEntry(ctx, newEntry, false, false, nil)
 	if createErr != nil {

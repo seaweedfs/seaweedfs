@@ -24,21 +24,25 @@ func (vs *VolumeServer) GetMaster() string {
 }
 
 func (vs *VolumeServer) checkWithMaster() (err error) {
-	for _, master := range vs.SeedMasterNodes {
-		err = operation.WithMasterServerClient(master, vs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
-			resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
-			if err != nil {
-				return fmt.Errorf("get master %s configuration: %v", master, err)
+	isConnected := false
+	for !isConnected {
+		for _, master := range vs.SeedMasterNodes {
+			err = operation.WithMasterServerClient(master, vs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+				resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+				if err != nil {
+					return fmt.Errorf("get master %s configuration: %v", master, err)
+				}
+				vs.metricsAddress, vs.metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSeconds)
+				backend.LoadFromPbStorageBackends(resp.StorageBackends)
+				return nil
+			})
+			if err == nil {
+				return
+			} else {
+				glog.V(0).Infof("checkWithMaster %s: %v", master, err)
 			}
-			vs.MetricsAddress, vs.MetricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSeconds)
-			backend.LoadFromPbStorageBackends(resp.StorageBackends)
-			return nil
-		})
-		if err == nil {
-			return
-		} else {
-			glog.V(0).Infof("checkWithMaster %s: %v", master, err)
 		}
+		time.Sleep(1790 * time.Millisecond)
 	}
 	return
 }

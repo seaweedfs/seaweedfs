@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"math"
 	"net/http"
 	"time"
@@ -28,7 +29,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	entries, _, err := s3a.list(s3a.option.BucketsPath, "", "", false, math.MaxInt32)
 
 	if err != nil {
-		writeErrorResponse(w, ErrInternalError, r.URL)
+		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
 
@@ -59,7 +60,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 
 	// create the folder for bucket, but lazily create actual collection
 	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, nil); err != nil {
-		writeErrorResponse(w, ErrInternalError, r.URL)
+		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
 
@@ -88,7 +89,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	err = s3a.rm(s3a.option.BucketsPath, bucket, false, true)
 
 	if err != nil {
-		writeErrorResponse(w, ErrInternalError, r.URL)
+		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
 
@@ -118,7 +119,7 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 	})
 
 	if err != nil {
-		writeErrorResponse(w, ErrNoSuchBucket, r.URL)
+		writeErrorResponse(w, s3err.ErrNoSuchBucket, r.URL)
 		return
 	}
 

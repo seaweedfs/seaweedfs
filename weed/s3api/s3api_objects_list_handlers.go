@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"io"
 	"net/http"
 	"net/url"
@@ -41,11 +42,11 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	originalPrefix, continuationToken, startAfter, delimiter, _, maxKeys := getListObjectsV2Args(r.URL.Query())
 
 	if maxKeys < 0 {
-		writeErrorResponse(w, ErrInvalidMaxKeys, r.URL)
+		writeErrorResponse(w, s3err.ErrInvalidMaxKeys, r.URL)
 		return
 	}
 	if delimiter != "" && delimiter != "/" {
-		writeErrorResponse(w, ErrNotImplemented, r.URL)
+		writeErrorResponse(w, s3err.ErrNotImplemented, r.URL)
 		return
 	}
 
@@ -57,7 +58,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker, delimiter)
 
 	if err != nil {
-		writeErrorResponse(w, ErrInternalError, r.URL)
+		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
 	responseV2 := &ListBucketResultV2{
@@ -88,18 +89,18 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	originalPrefix, marker, delimiter, maxKeys := getListObjectsV1Args(r.URL.Query())
 
 	if maxKeys < 0 {
-		writeErrorResponse(w, ErrInvalidMaxKeys, r.URL)
+		writeErrorResponse(w, s3err.ErrInvalidMaxKeys, r.URL)
 		return
 	}
 	if delimiter != "" && delimiter != "/" {
-		writeErrorResponse(w, ErrNotImplemented, r.URL)
+		writeErrorResponse(w, s3err.ErrNotImplemented, r.URL)
 		return
 	}
 
 	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker, delimiter)
 
 	if err != nil {
-		writeErrorResponse(w, ErrInternalError, r.URL)
+		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
 

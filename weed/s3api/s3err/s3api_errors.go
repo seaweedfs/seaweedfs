@@ -1,7 +1,8 @@
-package s3api
+package s3err
 
 import (
 	"encoding/xml"
+	"fmt"
 	"net/http"
 )
 
@@ -19,6 +20,21 @@ type RESTErrorResponse struct {
 	Message   string   `xml:"Message" json:"Message"`
 	Resource  string   `xml:"Resource" json:"Resource"`
 	RequestID string   `xml:"RequestId" json:"RequestId"`
+
+	// Underlying HTTP status code for the returned error
+	StatusCode int `xml:"-" json:"-"`
+}
+
+// Error - Returns S3 error string.
+func (e RESTErrorResponse) Error() string {
+	if e.Message == "" {
+		msg, ok := s3ErrorResponseMap[e.Code]
+		if !ok {
+			msg = fmt.Sprintf("Error response code %s.", e.Code)
+		}
+		return msg
+	}
+	return e.Message
 }
 
 // ErrorCode type of error status.
@@ -47,6 +63,11 @@ const (
 	ErrInvalidCopySource
 	ErrAuthHeaderEmpty
 	ErrSignatureVersionNotSupported
+	ErrMalformedPOSTRequest
+	ErrPOSTFileRequired
+	ErrPostPolicyConditionInvalidFormat
+	ErrEntityTooSmall
+	ErrEntityTooLarge
 	ErrMissingFields
 	ErrMissingCredTag
 	ErrCredMalformed
@@ -167,13 +188,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "Copy Source must mention the source bucket and key: sourcebucket/sourcekey.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
-
 	ErrMalformedXML: {
 		Code:           "MalformedXML",
 		Description:    "The XML you provided was not well-formed or did not validate against our published schema.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
-
 	ErrAuthHeaderEmpty: {
 		Code:           "InvalidArgument",
 		Description:    "Authorization header is invalid -- one and only one ' ' (space) required.",
@@ -182,6 +201,31 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrSignatureVersionNotSupported: {
 		Code:           "InvalidRequest",
 		Description:    "The authorization mechanism you have provided is not supported. Please use AWS4-HMAC-SHA256.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrMalformedPOSTRequest: {
+		Code:           "MalformedPOSTRequest",
+		Description:    "The body of your POST request is not well-formed multipart/form-data.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrPOSTFileRequired: {
+		Code:           "InvalidArgument",
+		Description:    "POST requires exactly one file upload per request.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrPostPolicyConditionInvalidFormat: {
+		Code:           "PostPolicyInvalidKeyName",
+		Description:    "Invalid according to Policy: Policy Condition failed",
+		HTTPStatusCode: http.StatusForbidden,
+	},
+	ErrEntityTooSmall: {
+		Code:           "EntityTooSmall",
+		Description:    "Your proposed upload is smaller than the minimum allowed object size.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrEntityTooLarge: {
+		Code:           "EntityTooLarge",
+		Description:    "Your proposed upload exceeds the maximum allowed object size.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrMissingFields: {
@@ -296,7 +340,7 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	},
 }
 
-// getAPIError provides API Error for input API error code.
-func getAPIError(code ErrorCode) APIError {
+// GetAPIError provides API Error for input API error code.
+func GetAPIError(code ErrorCode) APIError {
 	return errorCodeResponse[code]
 }

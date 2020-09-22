@@ -3,6 +3,7 @@ package s3api
 import (
 	"encoding/xml"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -22,7 +23,10 @@ type InitiateMultipartUploadResult struct {
 	s3.CreateMultipartUploadOutput
 }
 
-func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInput) (output *InitiateMultipartUploadResult, code ErrorCode) {
+func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInput) (output *InitiateMultipartUploadResult, code s3err.ErrorCode) {
+
+	glog.V(2).Infof("createMultipartUpload input %v", input)
+
 	uploadId, _ := uuid.NewRandom()
 	uploadIdString := uploadId.String()
 
@@ -33,7 +37,7 @@ func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInp
 		entry.Extended["key"] = []byte(*input.Key)
 	}); err != nil {
 		glog.Errorf("NewMultipartUpload error: %v", err)
-		return nil, ErrInternalError
+		return nil, s3err.ErrInternalError
 	}
 
 	output = &InitiateMultipartUploadResult{
@@ -52,14 +56,16 @@ type CompleteMultipartUploadResult struct {
 	s3.CompleteMultipartUploadOutput
 }
 
-func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploadInput) (output *CompleteMultipartUploadResult, code ErrorCode) {
+func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploadInput) (output *CompleteMultipartUploadResult, code s3err.ErrorCode) {
+
+	glog.V(2).Infof("completeMultipartUpload input %v", input)
 
 	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
 
 	entries, _, err := s3a.list(uploadDirectory, "", "", false, 0)
 	if err != nil || len(entries) == 0 {
 		glog.Errorf("completeMultipartUpload %s %s error: %v, entries:%d", *input.Bucket, *input.UploadId, err, len(entries))
-		return nil, ErrNoSuchUpload
+		return nil, s3err.ErrNoSuchUpload
 	}
 
 	var finalParts []*filer_pb.FileChunk
@@ -101,7 +107,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 
 	if err != nil {
 		glog.Errorf("completeMultipartUpload %s/%s error: %v", dirName, entryName, err)
-		return nil, ErrInternalError
+		return nil, s3err.ErrInternalError
 	}
 
 	output = &CompleteMultipartUploadResult{
@@ -120,22 +126,24 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	return
 }
 
-func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput) (output *s3.AbortMultipartUploadOutput, code ErrorCode) {
+func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput) (output *s3.AbortMultipartUploadOutput, code s3err.ErrorCode) {
+
+	glog.V(2).Infof("abortMultipartUpload input %v", input)
 
 	exists, err := s3a.exists(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true)
 	if err != nil {
 		glog.V(1).Infof("bucket %s abort upload %s: %v", *input.Bucket, *input.UploadId, err)
-		return nil, ErrNoSuchUpload
+		return nil, s3err.ErrNoSuchUpload
 	}
 	if exists {
 		err = s3a.rm(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true, true)
 	}
 	if err != nil {
 		glog.V(1).Infof("bucket %s remove upload %s: %v", *input.Bucket, *input.UploadId, err)
-		return nil, ErrInternalError
+		return nil, s3err.ErrInternalError
 	}
 
-	return &s3.AbortMultipartUploadOutput{}, ErrNone
+	return &s3.AbortMultipartUploadOutput{}, s3err.ErrNone
 }
 
 type ListMultipartUploadsResult struct {
@@ -155,8 +163,10 @@ type ListMultipartUploadsResult struct {
 	Upload             []*s3.MultipartUpload `locationName:"Upload" type:"list" flattened:"true"`
 }
 
-func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput) (output *ListMultipartUploadsResult, code ErrorCode) {
+func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput) (output *ListMultipartUploadsResult, code s3err.ErrorCode) {
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListMultipartUploads.html
+
+	glog.V(2).Infof("listMultipartUploads input %v", input)
 
 	output = &ListMultipartUploadsResult{
 		Bucket:       input.Bucket,
@@ -167,7 +177,7 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 		Prefix:       input.Prefix,
 	}
 
-	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), *input.Prefix, *input.KeyMarker, true, uint32(*input.MaxUploads))
+	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), "", *input.UploadIdMarker, false, uint32(*input.MaxUploads))
 	if err != nil {
 		glog.Errorf("listMultipartUploads %s error: %v", *input.Bucket, err)
 		return
@@ -176,9 +186,15 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 
 	for _, entry := range entries {
 		if entry.Extended != nil {
-			key := entry.Extended["key"]
+			key := string(entry.Extended["key"])
+			if *input.KeyMarker != "" && *input.KeyMarker != key {
+				continue
+			}
+			if *input.Prefix != "" && !strings.HasPrefix(key, *input.Prefix) {
+				continue
+			}
 			output.Upload = append(output.Upload, &s3.MultipartUpload{
-				Key:      objectKey(aws.String(string(key))),
+				Key:      objectKey(aws.String(key)),
 				UploadId: aws.String(entry.Name),
 			})
 			if !isLast {
@@ -205,8 +221,10 @@ type ListPartsResult struct {
 	UploadId             *string    `type:"string"`
 }
 
-func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListPartsResult, code ErrorCode) {
+func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListPartsResult, code s3err.ErrorCode) {
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html
+
+	glog.V(2).Infof("listObjectParts input %v", input)
 
 	output = &ListPartsResult{
 		Bucket:           input.Bucket,
@@ -220,7 +238,7 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d.part", *input.PartNumberMarker), false, uint32(*input.MaxParts))
 	if err != nil {
 		glog.Errorf("listObjectParts %s %s error: %v", *input.Bucket, *input.UploadId, err)
-		return nil, ErrNoSuchUpload
+		return nil, s3err.ErrNoSuchUpload
 	}
 
 	output.IsTruncated = aws.Bool(!isLast)

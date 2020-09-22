@@ -28,8 +28,8 @@ type VolumeServer struct {
 	FixJpgOrientation       bool
 	ReadRedirect            bool
 	compactionBytePerSecond int64
-	MetricsAddress          string
-	MetricsIntervalSec      int
+	metricsAddress          string
+	metricsIntervalSec      int
 	fileSizeLimitBytes      int64
 	isHeartbeating          bool
 	stopChan                chan bool
@@ -97,8 +97,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	}
 
 	go vs.heartbeat()
-	hostAddress := fmt.Sprintf("%s:%d", ip, port)
-	go stats.LoopPushingMetric("volumeServer", hostAddress, stats.VolumeServerGather, vs.MetricsAddress, vs.MetricsIntervalSec)
+	go stats.LoopPushingMetric("volumeServer", fmt.Sprintf("%s:%d", ip, port), stats.VolumeServerGather, vs.metricsAddress, vs.metricsIntervalSec)
 
 	return vs
 }
