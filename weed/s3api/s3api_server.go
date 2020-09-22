@@ -88,7 +88,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.ListObjectsV1Handler, ACTION_READ), "LIST"))
 
 		// PostPolicy
-		bucket.Methods("POST").HeadersRegexp("Content-Type", "multipart/form-data*").HandlerFunc(track(s3a.iam.Auth(s3a.PutBucketPolicyHandler, ACTION_WRITE), "POST"))
+		bucket.Methods("POST").HeadersRegexp("Content-Type", "multipart/form-data*").HandlerFunc(track(s3a.iam.Auth(s3a.PostPolicyBucketHandler, ACTION_WRITE), "POST"))
 
 		// DeleteMultipleObjects
 		bucket.Methods("POST").HandlerFunc(track(s3a.iam.Auth(s3a.DeleteMultipleObjectsHandler, ACTION_WRITE), "DELETE")).Queries("delete", "")
@@ -107,8 +107,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 			bucket.Methods("PUT").HandlerFunc(s3a.PutBucketPolicyHandler).Queries("policy", "")
 			// DeleteBucketPolicy
 			bucket.Methods("DELETE").HandlerFunc(s3a.DeleteBucketPolicyHandler).Queries("policy", "")
-			// PostPolicy
-			bucket.Methods("POST").HeadersRegexp("Content-Type", "multipart/form-data*").HandlerFunc(s3a.PostPolicyBucketHandler)
 		*/
 
 	}

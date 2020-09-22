@@ -17,7 +17,7 @@ import (
 	"strings"
 )
 
-func (s3a *S3ApiServer) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Request) {
+func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.Request) {
 
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-HTTPPOSTConstructPolicy.html
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-post-example.html
