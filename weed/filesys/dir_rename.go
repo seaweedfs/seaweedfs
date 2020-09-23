@@ -23,7 +23,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 	// find local old entry
 	oldEntry, err := dir.wfs.metaCache.FindEntry(context.Background(), oldPath)
 	if err != nil {
-		glog.V(0).Infof("dir Rename can not find source %s : %v", oldPath, err)
+		glog.Errorf("dir Rename can not find source %s : %v", oldPath, err)
 		return fuse.ENOENT
 	}
 
@@ -41,6 +41,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 
 		_, err := client.AtomicRenameEntry(ctx, request)
 		if err != nil {
+			glog.Errorf("dir AtomicRenameEntry %s => %s : %v", oldPath, newPath, err)
 			return fuse.EIO
 		}
 
