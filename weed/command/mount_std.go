@@ -91,7 +91,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	// detect mount folder mode
 	if *option.dirAutoCreate {
-		os.MkdirAll(dir, 0755)
+		os.MkdirAll(dir, os.FileMode(0777) &^ umask)
 	}
 	mountMode := os.ModeDir | 0755
 	fileInfo, err := os.Stat(dir)
