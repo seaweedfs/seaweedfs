@@ -113,7 +113,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	bucket, object := getBucketAndObject(r)
 
 	response, _ := s3a.listFilerEntries(bucket, object, 1, "", "/")
-	if len(response.Contents) != 0 && strings.HasSuffix(r.URL.Path, "/") {
+	if len(response.Contents) != 0 && strings.HasSuffix(object, "/") {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
