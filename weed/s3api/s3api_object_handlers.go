@@ -183,6 +183,11 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		for _, object := range deleteObjects.Objects {
+			response, _ := s3a.listFilerEntries(bucket, object.ObjectName, 1, "", "/")
+			if len(response.Contents) != 0 && strings.HasSuffix(object.ObjectName, "/") {
+				continue
+			}
+
 			lastSeparator := strings.LastIndex(object.ObjectName, "/")
 			parentDirectoryPath, entryName, isDeleteData, isRecursive := "/", object.ObjectName, true, true
 			if lastSeparator > 0 && lastSeparator+1 < len(object.ObjectName) {
