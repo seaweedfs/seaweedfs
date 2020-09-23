@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"crypto/md5"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"net/http"
@@ -82,7 +83,7 @@ type CopyPartResult struct {
 func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Request) {
 	// https://docs.aws.amazon.com/AmazonS3/latest/dev/CopyingObjctsUsingRESTMPUapi.html
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html
-	dstBucket, _ := getBucketAndObject(r)
+	dstBucket, dstObject := getBucketAndObject(r)
 
 	// Copy source path.
 	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
@@ -127,11 +128,20 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 	defer dataReader.Close()
 
-	etag, errCode := s3a.putToFiler(r, dstUrl, dataReader)
-
-	if errCode != s3err.ErrNone {
-		writeErrorResponse(w, errCode, r.URL)
-		return
+	var etag string
+	if strings.HasSuffix(srcObject, "/") {
+		if err := s3a.mkdir(s3a.option.BucketsPath, dstBucket+dstObject, nil); err != nil {
+			writeErrorResponse(w, s3err.ErrInternalError, r.URL)
+			return
+		}
+		etag = fmt.Sprintf("%x", md5.New().Sum(nil))
+	} else {
+		_etag, errCode := s3a.putToFiler(r, dstUrl, dataReader)
+		etag = _etag
+		if errCode != s3err.ErrNone {
+			writeErrorResponse(w, errCode, r.URL)
+			return
+		}
 	}
 
 	setEtag(w, etag)
