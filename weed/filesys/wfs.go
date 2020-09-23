@@ -88,7 +88,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	cacheUniqueId := util.Md5String([]byte(option.FilerGrpcAddress + option.FilerMountRootPath + util.Version()))[0:4]
 	cacheDir := path.Join(option.CacheDir, cacheUniqueId)
 	if option.CacheSizeMB > 0 {
-		os.MkdirAll(cacheDir, 0755)
+		os.MkdirAll(cacheDir, os.FileMode(0777) &^ option.Umask)
 		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, cacheDir, option.CacheSizeMB)
 	}
 
