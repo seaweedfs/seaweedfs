@@ -12,7 +12,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/seaweedfs/fuse"
@@ -92,9 +91,8 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	// detect mount folder mode
 	if *option.dirAutoCreate {
-		oldMask := syscall.Umask(0)
-		os.MkdirAll(dir, os.ModePerm&^umask)
-		syscall.Umask(oldMask)
+		os.MkdirAll(dir, os.FileMode(0777)&^umask)
+		os.Chmod(dir, os.FileMode(0777)&^umask)
 	}
 	mountMode := os.ModeDir | 0777
 	fileInfo, err := os.Stat(dir)
