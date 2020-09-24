@@ -2,11 +2,14 @@ package stats
 
 import (
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/client_golang/prometheus/push"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -148,6 +151,14 @@ func LoopPushingMetric(name, instance string, gatherer *prometheus.Registry, add
 		time.Sleep(time.Duration(intervalSeconds) * time.Second)
 
 	}
+}
+
+func StartMetricsServer(gatherer *prometheus.Registry, port int) {
+	if port == 0 {
+		return
+	}
+	http.Handle("/metrics", promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{}))
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 }
 
 func SourceName(port uint32) string {
