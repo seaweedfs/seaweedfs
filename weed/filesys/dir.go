@@ -267,6 +267,9 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		resp.Attr.Mode = os.FileMode(entry.Attributes.FileMode)
 		resp.Attr.Gid = entry.Attributes.Gid
 		resp.Attr.Uid = entry.Attributes.Uid
+		if entry.HardLinkCounter > 0 {
+			resp.Attr.Nlink = uint32(entry.HardLinkCounter)
+		}
 
 		return node, nil
 	}

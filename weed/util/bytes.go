@@ -142,3 +142,9 @@ func RandomInt32() int32 {
 	rand.Read(buf)
 	return int32(BytesToUint32(buf))
 }
+
+func RandomInt64() int64 {
+	buf := make([]byte, 8)
+	rand.Read(buf)
+	return int64(BytesToUint64(buf))
+}

@@ -37,6 +37,9 @@ type Entry struct {
 
 	// the following is for files
 	Chunks []*filer_pb.FileChunk `json:"chunks,omitempty"`
+
+	HardLinkId      HardLinkId
+	HardLinkCounter int32
 }
 
 func (entry *Entry) Size() uint64 {
@@ -56,11 +59,13 @@ func (entry *Entry) ToProtoEntry() *filer_pb.Entry {
 		return nil
 	}
 	return &filer_pb.Entry{
-		Name:        entry.FullPath.Name(),
-		IsDirectory: entry.IsDirectory(),
-		Attributes:  EntryAttributeToPb(entry),
-		Chunks:      entry.Chunks,
-		Extended:    entry.Extended,
+		Name:            entry.FullPath.Name(),
+		IsDirectory:     entry.IsDirectory(),
+		Attributes:      EntryAttributeToPb(entry),
+		Chunks:          entry.Chunks,
+		Extended:        entry.Extended,
+		HardLinkId:      int64(entry.HardLinkId),
+		HardLinkCounter: entry.HardLinkCounter,
 	}
 }
 
@@ -75,11 +80,24 @@ func (entry *Entry) ToProtoFullEntry() *filer_pb.FullEntry {
 	}
 }
 
+func (entry *Entry) Clone() *Entry {
+	return &Entry{
+		FullPath:        entry.FullPath,
+		Attr:            entry.Attr,
+		Chunks:          entry.Chunks,
+		Extended:        entry.Extended,
+		HardLinkId:      entry.HardLinkId,
+		HardLinkCounter: entry.HardLinkCounter,
+	}
+}
+
 func FromPbEntry(dir string, entry *filer_pb.Entry) *Entry {
 	return &Entry{
-		FullPath: util.NewFullPath(dir, entry.Name),
-		Attr:     PbToEntryAttribute(entry.Attributes),
-		Chunks:   entry.Chunks,
+		FullPath:        util.NewFullPath(dir, entry.Name),
+		Attr:            PbToEntryAttribute(entry.Attributes),
+		Chunks:          entry.Chunks,
+		HardLinkId:      HardLinkId(entry.HardLinkId),
+		HardLinkCounter: entry.HardLinkCounter,
 	}
 }
 
