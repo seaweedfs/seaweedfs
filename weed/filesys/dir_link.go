@@ -32,8 +32,8 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 	}
 
 	// update old file to hardlink mode
-	if oldFile.entry.HardLinkId == 0 {
-		oldFile.entry.HardLinkId = util.RandomInt64()
+	if oldFile.entry.HardLinkId == nil {
+		oldFile.entry.HardLinkId = util.RandomBytes(16)
 		oldFile.entry.HardLinkCounter = 1
 	}
 	oldFile.entry.HardLinkCounter++

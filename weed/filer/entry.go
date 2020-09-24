@@ -64,7 +64,7 @@ func (entry *Entry) ToProtoEntry() *filer_pb.Entry {
 		Attributes:      EntryAttributeToPb(entry),
 		Chunks:          entry.Chunks,
 		Extended:        entry.Extended,
-		HardLinkId:      int64(entry.HardLinkId),
+		HardLinkId:      entry.HardLinkId,
 		HardLinkCounter: entry.HardLinkCounter,
 	}
 }

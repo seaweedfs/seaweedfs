@@ -10,12 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-type HardLinkId int64
-func (hardLinkId HardLinkId) Key() []byte{
-	bytes := make([]byte, 8)
-	util.Uint64toBytes(bytes, uint64(hardLinkId))
-	return bytes
-}
+type HardLinkId []byte
 
 func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32) (err error) {
 	if p == "/" {
@@ -95,7 +90,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 				hardlinkIds = append(hardlinkIds, dirHardLinkIds...)
 			} else {
 				f.NotifyUpdateEvent(ctx, sub, nil, shouldDeleteChunks, isFromOtherCluster, nil)
-				if sub.HardLinkId != 0 {
+				if len(sub.HardLinkId) != 0 {
 					// hard link chunk data are deleted separately
 					hardlinkIds = append(hardlinkIds, sub.HardLinkId)
 				} else {

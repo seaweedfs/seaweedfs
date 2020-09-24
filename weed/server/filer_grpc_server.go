@@ -37,7 +37,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 			Attributes:  filer.EntryAttributeToPb(entry),
 			Chunks:      entry.Chunks,
 			Extended:    entry.Extended,
-			HardLinkId:  int64(entry.HardLinkId),
+			HardLinkId:  entry.HardLinkId,
 			HardLinkCounter: entry.HardLinkCounter,
 		},
 	}, nil
@@ -82,7 +82,7 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 					Chunks:      entry.Chunks,
 					Attributes:  filer.EntryAttributeToPb(entry),
 					Extended:    entry.Extended,
-					HardLinkId:  int64(entry.HardLinkId),
+					HardLinkId:  entry.HardLinkId,
 					HardLinkCounter: entry.HardLinkCounter,
 				},
 			}); err != nil {

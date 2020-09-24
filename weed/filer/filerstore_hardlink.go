@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -8,7 +9,7 @@ import (
 )
 
 func (fsw *FilerStoreWrapper) handleUpdateToHardLinks(ctx context.Context, entry *Entry) error {
-	if entry.HardLinkId == 0 {
+	if len(entry.HardLinkId) == 0 {
 		return nil
 	}
 	// handle hard links
@@ -23,7 +24,7 @@ func (fsw *FilerStoreWrapper) handleUpdateToHardLinks(ctx context.Context, entry
 	}
 
 	// remove old hard link
-	if err == nil && existingEntry.HardLinkId != entry.HardLinkId {
+	if err == nil && bytes.Compare(existingEntry.HardLinkId, entry.HardLinkId) != 0 {
 		if err = fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); err != nil {
 			return err
 		}
@@ -32,10 +33,10 @@ func (fsw *FilerStoreWrapper) handleUpdateToHardLinks(ctx context.Context, entry
 }
 
 func (fsw *FilerStoreWrapper) setHardLink(ctx context.Context, entry *Entry) error {
-	if entry.HardLinkId == 0 {
+	if len(entry.HardLinkId) == 0 {
 		return nil
 	}
-	key := entry.HardLinkId.Key()
+	key := entry.HardLinkId
 
 	newBlob, encodeErr := entry.EncodeAttributesAndChunks()
 	if encodeErr != nil {
@@ -46,10 +47,10 @@ func (fsw *FilerStoreWrapper) setHardLink(ctx context.Context, entry *Entry) err
 }
 
 func (fsw *FilerStoreWrapper) maybeReadHardLink(ctx context.Context, entry *Entry) error {
-	if entry.HardLinkId == 0 {
+	if len(entry.HardLinkId) == 0 {
 		return nil
 	}
-	key := entry.HardLinkId.Key()
+	key := entry.HardLinkId
 
 	value, err := fsw.KvGet(ctx, key)
 	if err != nil {
@@ -66,7 +67,7 @@ func (fsw *FilerStoreWrapper) maybeReadHardLink(ctx context.Context, entry *Entr
 }
 
 func (fsw *FilerStoreWrapper) DeleteHardLink(ctx context.Context, hardLinkId HardLinkId) error {
-	key := hardLinkId.Key()
+	key := hardLinkId
 	value, err := fsw.KvGet(ctx, key)
 	if err == ErrKvNotFound {
 		return nil

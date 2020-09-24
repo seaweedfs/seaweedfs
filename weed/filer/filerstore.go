@@ -135,7 +135,7 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 	if findErr == filer_pb.ErrNotFound {
 		return nil
 	}
-	if existingEntry.HardLinkId != 0 {
+	if len(existingEntry.HardLinkId) != 0 {
 		// remove hard link
 		if err = fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); err != nil {
 			return err
