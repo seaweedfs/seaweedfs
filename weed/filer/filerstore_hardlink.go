@@ -24,7 +24,7 @@ func (fsw *FilerStoreWrapper) handleUpdateToHardLinks(ctx context.Context, entry
 	}
 
 	// remove old hard link
-	if err == nil && bytes.Compare(existingEntry.HardLinkId, entry.HardLinkId) != 0 {
+	if err == nil && len(existingEntry.HardLinkId) != 0 && bytes.Compare(existingEntry.HardLinkId, entry.HardLinkId) != 0 {
 		if err = fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); err != nil {
 			return err
 		}
