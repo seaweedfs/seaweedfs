@@ -32,31 +32,28 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 	}
 
 	// update old file to hardlink mode
-	var updateOldEntryRequest *filer_pb.UpdateEntryRequest
-	var hardLinkId filer.HardLinkId
-	if oldFile.entry.HardLinkId != 0 {
-		hardLinkId = filer.HardLinkId(oldFile.entry.HardLinkId)
-	} else {
-		// CreateLink 1.1 : split source entry into hardlink+empty_entry
-		hardLinkId = filer.HardLinkId(util.RandomInt64())
-		updateOldEntryRequest = &filer_pb.UpdateEntryRequest{
-			Directory: oldFile.dir.FullPath(),
-			Entry: &filer_pb.Entry{
-				Name:        oldFile.entry.Name,
-				IsDirectory: oldFile.entry.IsDirectory,
-				HardLinkId:  int64(hardLinkId),
-			},
-			Signatures: []int32{dir.wfs.signature},
-		}
+	if oldFile.entry.HardLinkId == 0 {
+		oldFile.entry.HardLinkId = util.RandomInt64()
+		oldFile.entry.HardLinkCounter = 1
+	}
+	oldFile.entry.HardLinkCounter++
+	updateOldEntryRequest := &filer_pb.UpdateEntryRequest{
+		Directory:  oldFile.dir.FullPath(),
+		Entry:      oldFile.entry,
+		Signatures: []int32{dir.wfs.signature},
 	}
 
 	// CreateLink 1.2 : update new file to hardlink mode
 	request := &filer_pb.CreateEntryRequest{
 		Directory: dir.FullPath(),
 		Entry: &filer_pb.Entry{
-			Name:        req.NewName,
-			IsDirectory: false,
-			HardLinkId:  int64(hardLinkId),
+			Name:            req.NewName,
+			IsDirectory:     false,
+			Attributes:      oldFile.entry.Attributes,
+			Chunks:          oldFile.entry.Chunks,
+			Extended:        oldFile.entry.Extended,
+			HardLinkId:      oldFile.entry.HardLinkId,
+			HardLinkCounter: oldFile.entry.HardLinkCounter,
 		},
 		Signatures: []int32{dir.wfs.signature},
 	}
@@ -67,14 +64,11 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 		dir.wfs.mapPbIdFromLocalToFiler(request.Entry)
 		defer dir.wfs.mapPbIdFromFilerToLocal(request.Entry)
 
-		if updateOldEntryRequest != nil {
-			if err := filer_pb.UpdateEntry(client, updateOldEntryRequest); err != nil {
-				glog.V(0).Infof("Link %v/%v -> %s/%s: %v", oldFile.dir.FullPath(), oldFile.Name, dir.FullPath(), req.NewName, err)
-				return fuse.EIO
-			}
-			dir.wfs.metaCache.UpdateEntry(context.Background(), filer.FromPbEntry(updateOldEntryRequest.Directory, updateOldEntryRequest.Entry))
-			oldFile.entry.HardLinkId = int64(hardLinkId)
+		if err := filer_pb.UpdateEntry(client, updateOldEntryRequest); err != nil {
+			glog.V(0).Infof("Link %v/%v -> %s/%s: %v", oldFile.dir.FullPath(), oldFile.Name, dir.FullPath(), req.NewName, err)
+			return fuse.EIO
 		}
+		dir.wfs.metaCache.UpdateEntry(context.Background(), filer.FromPbEntry(updateOldEntryRequest.Directory, updateOldEntryRequest.Entry))
 
 		if err := filer_pb.CreateEntry(client, request); err != nil {
 			glog.V(0).Infof("Link %v/%v -> %s/%s: %v", oldFile.dir.FullPath(), oldFile.Name, dir.FullPath(), req.NewName, err)

@@ -3,8 +3,6 @@ package filer
 import (
 	"context"
 	"errors"
-	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"strings"
 	"time"
 
@@ -82,29 +80,8 @@ func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) err
 		entry.Mime = ""
 	}
 
-	if entry.HardLinkId != 0 {
-		// check what is existing entry
-		existingEntry, err := fsw.ActualStore.FindEntry(ctx, entry.FullPath)
-
-		if err == nil && entry.HardLinkId == existingEntry.HardLinkId {
-			// updating the same entry
-			if err := fsw.updateHardLink(ctx, entry); err != nil {
-				return err
-			}
-			return nil
-		} else {
-			if err == nil && existingEntry.HardLinkId != 0 {
-				// break away from the old hard link
-				if err := fsw.DeleteHardLink(ctx, entry.HardLinkId); err != nil {
-					return err
-				}
-			}
-			// CreateLink 1.2 : update new file to hardlink mode
-			// update one existing hard link, counter ++
-			if err := fsw.increaseHardLink(ctx, entry.HardLinkId); err != nil {
-				return err
-			}
-		}
+	if err := fsw.handleUpdateToHardLinks(ctx, entry); err != nil {
+		return err
 	}
 
 	return fsw.ActualStore.InsertEntry(ctx, entry)
@@ -122,50 +99,8 @@ func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) err
 		entry.Mime = ""
 	}
 
-	if entry.HardLinkId != 0 {
-		// handle hard link
-
-		// check what is existing entry
-		existingEntry, err := fsw.ActualStore.FindEntry(ctx, entry.FullPath)
-		if err != nil {
-			return fmt.Errorf("update existing entry %s: %v", entry.FullPath, err)
-		}
-
-		err = fsw.maybeReadHardLink(ctx, &Entry{HardLinkId: entry.HardLinkId})
-		if err == ErrKvNotFound {
-
-			// CreateLink 1.1 : split source entry into hardlink+empty_entry
-
-			// create hard link from existing entry, counter ++
-			existingEntry.HardLinkId = entry.HardLinkId
-			if err = fsw.createHardLink(ctx, existingEntry); err != nil {
-				return fmt.Errorf("createHardLink %d: %v", existingEntry.HardLinkId, err)
-			}
-
-			// create the empty entry
-			if err = fsw.ActualStore.UpdateEntry(ctx, &Entry{
-				FullPath:   entry.FullPath,
-				HardLinkId: entry.HardLinkId,
-			}); err != nil {
-				return fmt.Errorf("UpdateEntry to link %d: %v", entry.FullPath, err)
-			}
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("update entry %s: %v", entry.FullPath, err)
-		}
-
-		if entry.HardLinkId != existingEntry.HardLinkId {
-			// if different hard link id, moving to a new hard link
-			glog.Fatalf("unexpected. update entry to a new link. not implemented yet.")
-		} else {
-			// updating hardlink with new metadata
-			if err = fsw.updateHardLink(ctx, entry); err != nil {
-				return fmt.Errorf("updateHardLink %d from %s: %v", entry.HardLinkId, entry.FullPath, err)
-			}
-		}
-
-		return nil
+	if err := fsw.handleUpdateToHardLinks(ctx, entry); err != nil {
+		return err
 	}
 
 	return fsw.ActualStore.UpdateEntry(ctx, entry)
@@ -317,132 +252,4 @@ func (fsw *FilerStoreWrapper) KvGet(ctx context.Context, key []byte) (value []by
 }
 func (fsw *FilerStoreWrapper) KvDelete(ctx context.Context, key []byte) (err error) {
 	return fsw.ActualStore.KvDelete(ctx, key)
-}
-
-func (fsw *FilerStoreWrapper) createHardLink(ctx context.Context, entry *Entry) error {
-	if entry.HardLinkId == 0 {
-		return nil
-	}
-	key := entry.HardLinkId.Key()
-
-	_, err := fsw.KvGet(ctx, key)
-	if err != ErrKvNotFound {
-		return fmt.Errorf("create hardlink %d: already exists: %v", entry.HardLinkId, err)
-	}
-
-	entry.HardLinkCounter = 1
-
-	newBlob, encodeErr := entry.EncodeAttributesAndChunks()
-	if encodeErr != nil {
-		return encodeErr
-	}
-
-	return fsw.KvPut(ctx, key, newBlob)
-}
-
-func (fsw *FilerStoreWrapper) updateHardLink(ctx context.Context, entry *Entry) error {
-	if entry.HardLinkId == 0 {
-		return nil
-	}
-	key := entry.HardLinkId.Key()
-
-	value, err := fsw.KvGet(ctx, key)
-	if err == ErrKvNotFound {
-		return fmt.Errorf("update hardlink %d: missing", entry.HardLinkId)
-	}
-	if err != nil {
-		return fmt.Errorf("update hardlink %d err: %v", entry.HardLinkId, err)
-	}
-
-	existingEntry := &Entry{}
-	if err = existingEntry.DecodeAttributesAndChunks(value); err != nil {
-		return err
-	}
-
-	entry.HardLinkCounter = existingEntry.HardLinkCounter
-
-	newBlob, encodeErr := entry.EncodeAttributesAndChunks()
-	if encodeErr != nil {
-		return encodeErr
-	}
-
-	return fsw.KvPut(ctx, key, newBlob)
-}
-
-func (fsw *FilerStoreWrapper) increaseHardLink(ctx context.Context, hardLinkId HardLinkId) error {
-	if hardLinkId == 0 {
-		return nil
-	}
-	key := hardLinkId.Key()
-
-	value, err := fsw.KvGet(ctx, key)
-	if err == ErrKvNotFound {
-		return fmt.Errorf("increaseHardLink %d: missing", hardLinkId)
-	}
-	if err != nil {
-		return fmt.Errorf("increaseHardLink %d err: %v", hardLinkId, err)
-	}
-
-	existingEntry := &Entry{}
-	if err = existingEntry.DecodeAttributesAndChunks(value); err != nil {
-		return err
-	}
-
-	existingEntry.HardLinkCounter++
-
-	newBlob, encodeErr := existingEntry.EncodeAttributesAndChunks()
-	if encodeErr != nil {
-		return encodeErr
-	}
-
-	return fsw.KvPut(ctx, key, newBlob)
-}
-
-func (fsw *FilerStoreWrapper) maybeReadHardLink(ctx context.Context, entry *Entry) error {
-	if entry.HardLinkId == 0 {
-		return nil
-	}
-	key := entry.HardLinkId.Key()
-
-	value, err := fsw.KvGet(ctx, key)
-	if err != nil {
-		glog.Errorf("read %s hardlink %d: %v", entry.FullPath, entry.HardLinkId, err)
-		return err
-	}
-
-	if err = entry.DecodeAttributesAndChunks(value); err != nil {
-		glog.Errorf("decode %s hardlink %d: %v", entry.FullPath, entry.HardLinkId, err)
-		return err
-	}
-
-	return nil
-}
-
-func (fsw *FilerStoreWrapper) DeleteHardLink(ctx context.Context, hardLinkId HardLinkId) error {
-	key := hardLinkId.Key()
-	value, err := fsw.KvGet(ctx, key)
-	if err == ErrKvNotFound {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-
-	entry := &Entry{}
-	if err = entry.DecodeAttributesAndChunks(value); err != nil {
-		return err
-	}
-
-	entry.HardLinkCounter--
-	if entry.HardLinkCounter <= 0 {
-		return fsw.KvDelete(ctx, key)
-	}
-
-	newBlob, encodeErr := entry.EncodeAttributesAndChunks()
-	if encodeErr != nil {
-		return encodeErr
-	}
-
-	return fsw.KvPut(ctx, key, newBlob)
-
 }
