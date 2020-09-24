@@ -36,6 +36,7 @@ type FilerOptions struct {
 	disableHttp             *bool
 	cipher                  *bool
 	peers                   *string
+	metricsHttpPort         *int
 
 	// default leveldb directory, used in "weed server" mode
 	defaultLevelDbDirectory *string
@@ -57,6 +58,7 @@ func init() {
 	f.disableHttp = cmdFiler.Flag.Bool("disableHttp", false, "disable http request, only gRpc operations are allowed")
 	f.cipher = cmdFiler.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
 	f.peers = cmdFiler.Flag.String("peers", "", "all filers sharing the same filer store in comma separated ip:port list")
+	f.metricsHttpPort = cmdFiler.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 }
 
 var cmdFiler = &Command{
@@ -122,6 +124,7 @@ func (fo *FilerOptions) startFiler() {
 		Port:               uint32(*fo.port),
 		Cipher:             *fo.cipher,
 		Filers:             peers,
+		MetricsHttpPort:    *fo.metricsHttpPort,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

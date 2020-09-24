@@ -56,6 +56,7 @@ type VolumeServerOptions struct {
 	minFreeSpacePercents  []float32
 	pprof                 *bool
 	preStopSeconds        *int
+	metricsHttpPort       *int
 	// pulseSeconds          *int
 }
 
@@ -80,6 +81,7 @@ func init() {
 	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
 	v.fileSizeLimitMB = cmdVolume.Flag.Int("fileSizeLimitMB", 1024, "limit file size to avoid out of memory")
 	v.pprof = cmdVolume.Flag.Bool("pprof", false, "enable pprof http handlers. precludes --memprofile and --cpuprofile")
+	v.metricsHttpPort = cmdVolume.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 }
 
 var cmdVolume = &Command{
@@ -207,6 +209,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.fixJpgOrientation, *v.readRedirect,
 		*v.compactionMBPerSecond,
 		*v.fileSizeLimitMB,
+		*v.metricsHttpPort,
 	)
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)
