@@ -13,6 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/server"
+	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -86,6 +87,8 @@ func runFiler(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
 
+	go stats_collect.StartMetricsServer(*f.metricsHttpPort)
+
 	f.startFiler()
 
 	return true
@@ -124,7 +127,6 @@ func (fo *FilerOptions) startFiler() {
 		Port:               uint32(*fo.port),
 		Cipher:             *fo.cipher,
 		Filers:             peers,
-		MetricsHttpPort:    *fo.metricsHttpPort,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

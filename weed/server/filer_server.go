@@ -54,7 +54,6 @@ type FilerOption struct {
 	recursiveDelete    bool
 	Cipher             bool
 	Filers             []string
-	MetricsHttpPort    int
 }
 
 type FilerServer struct {
@@ -158,8 +157,7 @@ func (fs *FilerServer) maybeStartMetrics() {
 		}
 	}
 
-	go stats.StartMetricsServer(stats.FilerGather, fs.option.MetricsHttpPort)
-	go stats.LoopPushingMetric("filer", stats.SourceName(fs.option.Port), stats.FilerGather, fs.metricsAddress, fs.metricsIntervalSec)
+	go stats.LoopPushingMetric("filer", stats.SourceName(fs.option.Port), fs.metricsAddress, fs.metricsIntervalSec)
 }
 
 func readFilerConfiguration(grpcDialOption grpc.DialOption, masterAddress string) (metricsAddress string, metricsIntervalSec int, err error) {

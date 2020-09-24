@@ -115,6 +115,8 @@ func runS3(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
 
+	go stats_collect.StartMetricsServer(*s3StandaloneOptions.metricsHttpPort)
+
 	return s3StandaloneOptions.startS3Server()
 
 }
@@ -155,8 +157,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		}
 	}
 
-	go stats_collect.StartMetricsServer(stats_collect.S3Gather, *s3opt.metricsHttpPort)
-	go stats_collect.LoopPushingMetric("s3", stats_collect.SourceName(uint32(*s3opt.port)), stats_collect.S3Gather, metricsAddress, metricsIntervalSec)
+	go stats_collect.LoopPushingMetric("s3", stats_collect.SourceName(uint32(*s3opt.port)), metricsAddress, metricsIntervalSec)
 
 	router := mux.NewRouter().SkipClean(true)
 

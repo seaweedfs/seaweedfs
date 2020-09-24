@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"os"
 	"runtime"
 	"runtime/pprof"
@@ -151,11 +152,6 @@ func runServer(cmd *Command, args []string) bool {
 	serverOptions.v.rack = serverRack
 	msgBrokerOptions.ip = serverIp
 
-	// metrics port
-	filerOptions.metricsHttpPort = serverMetricsHttpPort
-	serverOptions.v.metricsHttpPort = serverMetricsHttpPort
-	s3Options.metricsHttpPort = serverMetricsHttpPort
-
 	// serverOptions.v.pulseSeconds = pulseSeconds
 	// masterOptions.pulseSeconds = pulseSeconds
 
@@ -174,6 +170,7 @@ func runServer(cmd *Command, args []string) bool {
 	}
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
+	go stats_collect.StartMetricsServer(*serverMetricsHttpPort)
 
 	folders := strings.Split(*volumeDataFolders, ",")
 
