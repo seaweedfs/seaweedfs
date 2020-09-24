@@ -172,6 +172,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
 	}
+
 	httpS := &http.Server{Handler: router}
 
 	listenAddress := fmt.Sprintf(":%d", *s3opt.port)

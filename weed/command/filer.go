@@ -37,6 +37,7 @@ type FilerOptions struct {
 	cipher                  *bool
 	peers                   *string
 	metricsHttpPort         *int
+
 	// default leveldb directory, used in "weed server" mode
 	defaultLevelDbDirectory *string
 }
