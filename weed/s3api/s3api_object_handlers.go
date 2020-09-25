@@ -265,7 +265,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 
 	resp, postErr := client.Do(proxyReq)
 
-	if resp.ContentLength == -1 {
+	if resp.ContentLength == -1 && !strings.HasSuffix(destUrl, "/") {
 		writeErrorResponse(w, s3err.ErrNoSuchKey, r.URL)
 		return
 	}
