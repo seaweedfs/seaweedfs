@@ -157,7 +157,7 @@ func (fs *FilerServer) maybeStartMetrics() {
 		}
 	}
 
-	go stats.LoopPushingMetric("filer", stats.SourceName(fs.option.Port), fs.metricsAddress, fs.metricsIntervalSec)
+	go stats.LoopPushingMetric("filer", stats.SourceName(fs.option.Port), stats.FilerGather, fs.metricsAddress, fs.metricsIntervalSec)
 }
 
 func readFilerConfiguration(grpcDialOption grpc.DialOption, masterAddress string) (metricsAddress string, metricsIntervalSec int, err error) {
