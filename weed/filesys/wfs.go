@@ -206,14 +206,8 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 }
 
 func (wfs *WFS) mapPbIdFromFilerToLocal(entry *filer_pb.Entry) {
-	if entry.Attributes == nil {
-		return
-	}
 	entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
 }
 func (wfs *WFS) mapPbIdFromLocalToFiler(entry *filer_pb.Entry) {
-	if entry.Attributes == nil {
-		return
-	}
 	entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.LocalToFiler(entry.Attributes.Uid, entry.Attributes.Gid)
 }

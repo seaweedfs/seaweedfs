@@ -25,7 +25,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/server"
-	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -57,7 +56,6 @@ type VolumeServerOptions struct {
 	minFreeSpacePercents  []float32
 	pprof                 *bool
 	preStopSeconds        *int
-	metricsHttpPort       *int
 	// pulseSeconds          *int
 }
 
@@ -82,7 +80,6 @@ func init() {
 	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
 	v.fileSizeLimitMB = cmdVolume.Flag.Int("fileSizeLimitMB", 1024, "limit file size to avoid out of memory")
 	v.pprof = cmdVolume.Flag.Bool("pprof", false, "enable pprof http handlers. precludes --memprofile and --cpuprofile")
-	v.metricsHttpPort = cmdVolume.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 }
 
 var cmdVolume = &Command{
@@ -111,8 +108,6 @@ func runVolume(cmd *Command, args []string) bool {
 	if !*v.pprof {
 		grace.SetupProfiling(*v.cpuProfile, *v.memProfile)
 	}
-
-	go stats_collect.StartMetricsServer(*v.metricsHttpPort)
 
 	v.startVolumeServer(*volumeFolders, *maxVolumeCounts, *volumeWhiteListOption, *minFreeSpacePercent)
 

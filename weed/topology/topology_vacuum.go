@@ -165,17 +165,17 @@ func vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeLayout *VolumeL
 	volumeLayout.accessLock.RLock()
 	tmpMap := make(map[needle.VolumeId]*VolumeLocationList)
 	for vid, locationList := range volumeLayout.vid2location {
-		tmpMap[vid] = locationList.Copy()
+		tmpMap[vid] = locationList
 	}
 	volumeLayout.accessLock.RUnlock()
 
 	for vid, locationList := range tmpMap {
 
 		volumeLayout.accessLock.RLock()
-		isReadOnly := volumeLayout.readonlyVolumes.IsTrue(vid)
+		isReadOnly, hasValue := volumeLayout.readonlyVolumes[vid]
 		volumeLayout.accessLock.RUnlock()
 
-		if isReadOnly {
+		if hasValue && isReadOnly {
 			continue
 		}
 

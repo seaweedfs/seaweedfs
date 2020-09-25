@@ -2,7 +2,6 @@ package command
 
 import (
 	"fmt"
-	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"os"
 	"runtime"
 	"runtime/pprof"
@@ -57,7 +56,6 @@ var (
 	volumeDataFolders         = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	volumeMaxDataVolumeCounts = cmdServer.Flag.String("volume.max", "8", "maximum numbers of volumes, count[,count]... If set to zero, the limit will be auto configured.")
 	volumeMinFreeSpacePercent = cmdServer.Flag.String("volume.minFreeSpacePercent", "1", "minimum free disk space (default to 1%). Low disk space will mark all volumes as ReadOnly.")
-	serverMetricsHttpPort     = cmdServer.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 
 	// pulseSeconds              = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	isStartingFiler     = cmdServer.Flag.Bool("filer", false, "whether to start filer")
@@ -138,7 +136,6 @@ func runServer(cmd *Command, args []string) bool {
 	peers := strings.Join(peerList, ",")
 	masterOptions.peers = &peers
 
-	// ip address
 	masterOptions.ip = serverIp
 	masterOptions.ipBind = serverBindIp
 	filerOptions.masters = &peers
@@ -170,7 +167,6 @@ func runServer(cmd *Command, args []string) bool {
 	}
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	go stats_collect.StartMetricsServer(*serverMetricsHttpPort)
 
 	folders := strings.Split(*volumeDataFolders, ",")
 

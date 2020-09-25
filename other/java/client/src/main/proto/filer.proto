@@ -95,8 +95,6 @@ message Entry {
     repeated FileChunk chunks = 3;
     FuseAttributes attributes = 4;
     map<string, bytes> extended = 5;
-    bytes hard_link_id = 7;
-    int32 hard_link_counter = 8; // only exists in hard link meta data
 }
 
 message FullEntry {
