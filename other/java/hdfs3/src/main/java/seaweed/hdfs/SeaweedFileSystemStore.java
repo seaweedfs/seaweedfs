@@ -202,6 +202,8 @@ public class SeaweedFileSystemStore {
                     .clearGroupName()
                     .addAllGroupName(Arrays.asList(userGroupInformation.getGroupNames()))
                 );
+
+            filerClient.createEntry(getParentDirectory(path), entry.build());
         }
 
         return new SeaweedOutputStream(filerGrpcClient, path, entry, writePosition, bufferSize, replication);
