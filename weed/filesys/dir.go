@@ -267,6 +267,9 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		resp.Attr.Mode = os.FileMode(entry.Attributes.FileMode)
 		resp.Attr.Gid = entry.Attributes.Gid
 		resp.Attr.Uid = entry.Attributes.Uid
+		if entry.HardLinkCounter > 0 {
+			resp.Attr.Nlink = uint32(entry.HardLinkCounter)
+		}
 
 		return node, nil
 	}
@@ -328,7 +331,8 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 
 	// first, ensure the filer store can correctly delete
 	glog.V(3).Infof("remove file: %v", req)
-	err = filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, false, false, false, false, []int32{dir.wfs.signature})
+	isDeleteData := entry.HardLinkCounter <= 1
+	err = filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, isDeleteData, false, false, false, []int32{dir.wfs.signature})
 	if err != nil {
 		glog.V(3).Infof("not found remove file %s/%s: %v", dir.FullPath(), req.Name, err)
 		return fuse.ENOENT
@@ -339,7 +343,9 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 	dir.wfs.fsNodeCache.DeleteFsNode(filePath)
 
 	// delete the chunks last
-	dir.wfs.deleteFileChunks(entry.Chunks)
+	if isDeleteData {
+		dir.wfs.deleteFileChunks(entry.Chunks)
+	}
 
 	return nil
 

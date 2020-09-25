@@ -96,6 +96,15 @@ func CreateEntry(client SeaweedFilerClient, request *CreateEntryRequest) error {
 	return nil
 }
 
+func UpdateEntry(client SeaweedFilerClient, request *UpdateEntryRequest) error {
+	_, err := client.UpdateEntry(context.Background(), request)
+	if err != nil {
+		glog.V(1).Infof("update entry %s/%s :%v", request.Directory, request.Entry.Name, err)
+		return fmt.Errorf("UpdateEntry: %v", err)
+	}
+	return nil
+}
+
 func LookupEntry(client SeaweedFilerClient, request *LookupDirectoryEntryRequest) (*LookupDirectoryEntryResponse, error) {
 	resp, err := client.LookupDirectoryEntry(context.Background(), request)
 	if err != nil {

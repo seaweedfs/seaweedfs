@@ -97,7 +97,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	}
 
 	go vs.heartbeat()
-	go stats.LoopPushingMetric("volumeServer", fmt.Sprintf("%s:%d", ip, port), stats.VolumeServerGather, vs.metricsAddress, vs.metricsIntervalSec)
+	go stats.LoopPushingMetric("volumeServer", fmt.Sprintf("%s:%d", ip, port), vs.metricsAddress, vs.metricsIntervalSec)
 
 	return vs
 }

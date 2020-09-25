@@ -24,7 +24,7 @@ type FilerStore interface {
 	Initialize(configuration util.Configuration, prefix string) error
 	InsertEntry(context.Context, *Entry) error
 	UpdateEntry(context.Context, *Entry) (err error)
-	// err == filer2.ErrNotFound if not found
+	// err == filer_pb.ErrNotFound if not found
 	FindEntry(context.Context, util.FullPath) (entry *Entry, err error)
 	DeleteEntry(context.Context, util.FullPath) (err error)
 	DeleteFolderChildren(context.Context, util.FullPath) (err error)
@@ -40,6 +40,11 @@ type FilerStore interface {
 	KvDelete(ctx context.Context, key []byte) (err error)
 
 	Shutdown()
+}
+
+type VirtualFilerStore interface {
+	FilerStore
+	DeleteHardLink(ctx context.Context, hardLinkId HardLinkId) error
 }
 
 type FilerStoreWrapper struct {
@@ -74,6 +79,11 @@ func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) err
 	if entry.Mime == "application/octet-stream" {
 		entry.Mime = ""
 	}
+
+	if err := fsw.handleUpdateToHardLinks(ctx, entry); err != nil {
+		return err
+	}
+
 	return fsw.ActualStore.InsertEntry(ctx, entry)
 }
 
@@ -88,6 +98,11 @@ func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) err
 	if entry.Mime == "application/octet-stream" {
 		entry.Mime = ""
 	}
+
+	if err := fsw.handleUpdateToHardLinks(ctx, entry); err != nil {
+		return err
+	}
+
 	return fsw.ActualStore.UpdateEntry(ctx, entry)
 }
 
@@ -102,6 +117,9 @@ func (fsw *FilerStoreWrapper) FindEntry(ctx context.Context, fp util.FullPath) (
 	if err != nil {
 		return nil, err
 	}
+
+	fsw.maybeReadHardLink(ctx, entry)
+
 	filer_pb.AfterEntryDeserialization(entry.Chunks)
 	return
 }
@@ -112,6 +130,17 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 	defer func() {
 		stats.FilerStoreHistogram.WithLabelValues(fsw.ActualStore.GetName(), "delete").Observe(time.Since(start).Seconds())
 	}()
+
+	existingEntry, findErr := fsw.FindEntry(ctx, fp)
+	if findErr == filer_pb.ErrNotFound {
+		return nil
+	}
+	if len(existingEntry.HardLinkId) != 0 {
+		// remove hard link
+		if err = fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); err != nil {
+			return err
+		}
+	}
 
 	return fsw.ActualStore.DeleteEntry(ctx, fp)
 }
@@ -138,6 +167,7 @@ func (fsw *FilerStoreWrapper) ListDirectoryEntries(ctx context.Context, dirPath 
 		return nil, err
 	}
 	for _, entry := range entries {
+		fsw.maybeReadHardLink(ctx, entry)
 		filer_pb.AfterEntryDeserialization(entry.Chunks)
 	}
 	return entries, err
@@ -157,6 +187,7 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 		return nil, err
 	}
 	for _, entry := range entries {
+		fsw.maybeReadHardLink(ctx, entry)
 		filer_pb.AfterEntryDeserialization(entry.Chunks)
 	}
 	return entries, nil

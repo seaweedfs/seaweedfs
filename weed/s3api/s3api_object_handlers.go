@@ -220,6 +220,15 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 }
 
+var passThroughHeaders = []string{
+	"response-cache-control",
+	"response-content-disposition",
+	"response-content-encoding",
+	"response-content-language",
+	"response-content-type",
+	"response-expires",
+}
+
 func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, responseFn func(proxyResponse *http.Response, w http.ResponseWriter)) {
 
 	glog.V(2).Infof("s3 proxying %s to %s", r.Method, destUrl)
@@ -236,6 +245,19 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
 
 	for header, values := range r.Header {
+		// handle s3 related headers
+		passed := false
+		for _, h := range passThroughHeaders {
+			if strings.ToLower(header) == h && len(values) > 0 {
+				proxyReq.Header.Add(header[len("response-"):], values[0])
+				passed = true
+				break
+			}
+		}
+		if passed {
+			continue
+		}
+		// handle other headers
 		for _, value := range values {
 			proxyReq.Header.Add(header, value)
 		}
@@ -258,6 +280,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	responseFn(resp, w)
 
 }
+
 func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) {
 	for k, v := range proxyResponse.Header {
 		w.Header()[k] = v

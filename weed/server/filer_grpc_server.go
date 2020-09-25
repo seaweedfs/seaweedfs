@@ -37,6 +37,8 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 			Attributes:  filer.EntryAttributeToPb(entry),
 			Chunks:      entry.Chunks,
 			Extended:    entry.Extended,
+			HardLinkId:  entry.HardLinkId,
+			HardLinkCounter: entry.HardLinkCounter,
 		},
 	}, nil
 }
@@ -80,6 +82,8 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 					Chunks:      entry.Chunks,
 					Attributes:  filer.EntryAttributeToPb(entry),
 					Extended:    entry.Extended,
+					HardLinkId:  entry.HardLinkId,
+					HardLinkCounter: entry.HardLinkCounter,
 				},
 			}); err != nil {
 				return err
@@ -154,17 +158,13 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		return &filer_pb.CreateEntryResponse{}, fmt.Errorf("CreateEntry cleanupChunks %s %s: %v", req.Directory, req.Entry.Name, err2)
 	}
 
-	if req.Entry.Attributes == nil {
-		glog.V(3).Infof("CreateEntry %s: nil attributes", filepath.Join(req.Directory, req.Entry.Name))
-		resp.Error = fmt.Sprintf("can not create entry with empty attributes")
-		return
-	}
-
 	createErr := fs.filer.CreateEntry(ctx, &filer.Entry{
 		FullPath: util.JoinPath(req.Directory, req.Entry.Name),
 		Attr:     filer.PbToEntryAttribute(req.Entry.Attributes),
 		Chunks:   chunks,
 		Extended: req.Entry.Extended,
+		HardLinkId: filer.HardLinkId(req.Entry.HardLinkId),
+		HardLinkCounter: req.Entry.HardLinkCounter,
 	}, req.OExcl, req.IsFromOtherCluster, req.Signatures)
 
 	if createErr == nil {
@@ -197,6 +197,8 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		Attr:     entry.Attr,
 		Extended: req.Entry.Extended,
 		Chunks:   chunks,
+		HardLinkId: filer.HardLinkId(req.Entry.HardLinkId),
+		HardLinkCounter: req.Entry.HardLinkCounter,
 	}
 
 	glog.V(3).Infof("updating %s: %+v, chunks %d: %v => %+v, chunks %d: %v, extended: %v => %v",
@@ -225,11 +227,12 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 
 	if err = fs.filer.UpdateEntry(ctx, entry, newEntry); err == nil {
 		fs.filer.DeleteChunks(garbage)
+
+		fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, req.IsFromOtherCluster, req.Signatures)
+
 	} else {
 		glog.V(3).Infof("UpdateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), err)
 	}
-
-	fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, req.IsFromOtherCluster, req.Signatures)
 
 	return &filer_pb.UpdateEntryResponse{}, err
 }
@@ -250,15 +253,17 @@ func (fs *FilerServer) cleanupChunks(existingEntry *filer.Entry, newEntry *filer
 	chunks, coveredChunks := filer.CompactFileChunks(fs.lookupFileId, nonManifestChunks)
 	garbage = append(garbage, coveredChunks...)
 
-	chunks, err = filer.MaybeManifestize(fs.saveAsChunk(
-		newEntry.Attributes.Replication,
-		newEntry.Attributes.Collection,
-		"",
-		needle.SecondsToTTL(newEntry.Attributes.TtlSec),
-		false), chunks)
-	if err != nil {
-		// not good, but should be ok
-		glog.V(0).Infof("MaybeManifestize: %v", err)
+	if newEntry.Attributes != nil {
+		chunks, err = filer.MaybeManifestize(fs.saveAsChunk(
+			newEntry.Attributes.Replication,
+			newEntry.Attributes.Collection,
+			"",
+			needle.SecondsToTTL(newEntry.Attributes.TtlSec),
+			false), chunks)
+		if err != nil {
+			// not good, but should be ok
+			glog.V(0).Infof("MaybeManifestize: %v", err)
+		}
 	}
 
 	chunks = append(chunks, manifestChunks...)

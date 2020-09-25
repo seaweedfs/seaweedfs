@@ -13,9 +13,11 @@ import (
 
 func (entry *Entry) EncodeAttributesAndChunks() ([]byte, error) {
 	message := &filer_pb.Entry{
-		Attributes: EntryAttributeToPb(entry),
-		Chunks:     entry.Chunks,
-		Extended:   entry.Extended,
+		Attributes:      EntryAttributeToPb(entry),
+		Chunks:          entry.Chunks,
+		Extended:        entry.Extended,
+		HardLinkId:      entry.HardLinkId,
+		HardLinkCounter: entry.HardLinkCounter,
 	}
 	return proto.Marshal(message)
 }
@@ -33,6 +35,9 @@ func (entry *Entry) DecodeAttributesAndChunks(blob []byte) error {
 	entry.Extended = message.Extended
 
 	entry.Chunks = message.Chunks
+
+	entry.HardLinkId = message.HardLinkId
+	entry.HardLinkCounter = message.HardLinkCounter
 
 	return nil
 }
@@ -60,6 +65,10 @@ func EntryAttributeToPb(entry *Entry) *filer_pb.FuseAttributes {
 func PbToEntryAttribute(attr *filer_pb.FuseAttributes) Attr {
 
 	t := Attr{}
+
+	if attr == nil {
+		return t
+	}
 
 	t.Crtime = time.Unix(attr.Crtime, 0)
 	t.Mtime = time.Unix(attr.Mtime, 0)
@@ -105,6 +114,13 @@ func EqualEntry(a, b *Entry) bool {
 		if !proto.Equal(a.Chunks[i], b.Chunks[i]) {
 			return false
 		}
+	}
+
+	if !bytes.Equal(a.HardLinkId, b.HardLinkId) {
+		return false
+	}
+	if a.HardLinkCounter != b.HardLinkCounter {
+		return false
 	}
 	return true
 }

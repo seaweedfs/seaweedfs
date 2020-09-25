@@ -18,6 +18,14 @@ func (dnll *VolumeLocationList) String() string {
 	return fmt.Sprintf("%v", dnll.list)
 }
 
+func (dnll *VolumeLocationList) Copy() *VolumeLocationList {
+	list := make([]*DataNode, len(dnll.list))
+	copy(list, dnll.list)
+	return &VolumeLocationList{
+		list: list,
+	}
+}
+
 func (dnll *VolumeLocationList) Head() *DataNode {
 	//mark first node as master volume
 	return dnll.list[0]

@@ -28,7 +28,7 @@ var (
 )
 
 type Filer struct {
-	Store               *FilerStoreWrapper
+	Store               VirtualFilerStore
 	MasterClient        *wdclient.MasterClient
 	fileIdDeletionQueue *util.UnboundedQueue
 	GrpcDialOption      grpc.DialOption
@@ -313,4 +313,12 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 func (f *Filer) Shutdown() {
 	f.LocalMetaLogBuffer.Shutdown()
 	f.Store.Shutdown()
+}
+
+func (f *Filer) maybeDeleteHardLinks(hardLinkIds []HardLinkId) {
+	for _, hardLinkId := range hardLinkIds {
+		if err := f.Store.DeleteHardLink(context.Background(), hardLinkId); err != nil {
+			glog.Errorf("delete hard link id %d : %v", hardLinkId, err)
+		}
+	}
 }
