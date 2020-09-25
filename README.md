@@ -370,7 +370,7 @@ The architectures are mostly the same. SeaweedFS aims to store and read files fa
 * SeaweedFS Filer metadata store can be any well-known and proven data stores, e.g., Cassandra, Mongodb, Redis, Elastic Search, MySql, Postgres, MemSql, TiDB, CockroachDB, Etcd etc, and is easy to customized.
 * SeaweedFS Volume server also communicates directly with clients via HTTP, supporting range queries, direct uploads, etc.
 
-| System         | File Meta                       | File Content Read| POSIX  | REST API | Optimized for small files |
+| System         | File Meta                       | File Content Read| POSIX  | REST API | Optimized for large number of small files |
 | -------------  | ------------------------------- | ---------------- | ------ | -------- | ------------------------- |
 | SeaweedFS      | lookup volume id, cacheable     | O(1) disk seek   |        | Yes      | Yes                       |
 | SeaweedFS Filer| Linearly Scalable, Customizable | O(1) disk seek   | FUSE   | Yes      | Yes                       |
