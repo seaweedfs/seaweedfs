@@ -37,9 +37,6 @@ type Option struct {
 	EntryCacheTtl      time.Duration
 	Umask              os.FileMode
 
-	MountUid   uint32
-	MountGid   uint32
-	MountMode  os.FileMode
 	MountCtime time.Time
 	MountMtime time.Time
 
@@ -88,7 +85,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	cacheUniqueId := util.Md5String([]byte(option.FilerGrpcAddress + option.FilerMountRootPath + util.Version()))[0:4]
 	cacheDir := path.Join(option.CacheDir, cacheUniqueId)
 	if option.CacheSizeMB > 0 {
-		os.MkdirAll(cacheDir, os.FileMode(0777) &^ option.Umask)
+		os.MkdirAll(cacheDir, os.FileMode(0777)&^option.Umask)
 		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, cacheDir, option.CacheSizeMB)
 	}
 
@@ -99,7 +96,8 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		wfs.metaCache.Shutdown()
 	})
 
-	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs}
+	entry, _ := filer_pb.GetEntry(wfs, util.FullPath(wfs.option.FilerMountRootPath))
+	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs, entry: entry}
 	wfs.fsNodeCache = newFsCache(wfs.root)
 
 	return wfs

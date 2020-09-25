@@ -112,6 +112,12 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 
 	bucket, object := getBucketAndObject(r)
 
+	response, _ := s3a.listFilerEntries(bucket, object, 1, "", "/")
+	if len(response.Contents) != 0 && strings.HasSuffix(object, "/") {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	destUrl := fmt.Sprintf("http://%s%s/%s%s?recursive=true",
 		s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
 
@@ -121,7 +127,6 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-
 }
 
 // / ObjectIdentifier carries key name for the object to delete.
@@ -178,6 +183,11 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		for _, object := range deleteObjects.Objects {
+			response, _ := s3a.listFilerEntries(bucket, object.ObjectName, 1, "", "/")
+			if len(response.Contents) != 0 && strings.HasSuffix(object.ObjectName, "/") {
+				continue
+			}
+
 			lastSeparator := strings.LastIndex(object.ObjectName, "/")
 			parentDirectoryPath, entryName, isDeleteData, isRecursive := "/", object.ObjectName, true, true
 			if lastSeparator > 0 && lastSeparator+1 < len(object.ObjectName) {
