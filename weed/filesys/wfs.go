@@ -97,6 +97,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	})
 
 	entry, _ := filer_pb.GetEntry(wfs, util.FullPath(wfs.option.FilerMountRootPath))
+
 	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs, entry: entry}
 	wfs.fsNodeCache = newFsCache(wfs.root)
 
