@@ -2,20 +2,21 @@ package stats
 
 import (
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/client_golang/prometheus/push"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 var (
-	FilerGather        = prometheus.NewRegistry()
-	VolumeServerGather = prometheus.NewRegistry()
-	S3Gather           = prometheus.NewRegistry()
+	Gather        = prometheus.NewRegistry()
 
 	FilerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -111,23 +112,23 @@ var (
 
 func init() {
 
-	FilerGather.MustRegister(FilerRequestCounter)
-	FilerGather.MustRegister(FilerRequestHistogram)
-	FilerGather.MustRegister(FilerStoreCounter)
-	FilerGather.MustRegister(FilerStoreHistogram)
-	FilerGather.MustRegister(prometheus.NewGoCollector())
+	Gather.MustRegister(FilerRequestCounter)
+	Gather.MustRegister(FilerRequestHistogram)
+	Gather.MustRegister(FilerStoreCounter)
+	Gather.MustRegister(FilerStoreHistogram)
+	Gather.MustRegister(prometheus.NewGoCollector())
 
-	VolumeServerGather.MustRegister(VolumeServerRequestCounter)
-	VolumeServerGather.MustRegister(VolumeServerRequestHistogram)
-	VolumeServerGather.MustRegister(VolumeServerVolumeCounter)
-	VolumeServerGather.MustRegister(VolumeServerMaxVolumeCounter)
-	VolumeServerGather.MustRegister(VolumeServerDiskSizeGauge)
+	Gather.MustRegister(VolumeServerRequestCounter)
+	Gather.MustRegister(VolumeServerRequestHistogram)
+	Gather.MustRegister(VolumeServerVolumeCounter)
+	Gather.MustRegister(VolumeServerMaxVolumeCounter)
+	Gather.MustRegister(VolumeServerDiskSizeGauge)
 
-	S3Gather.MustRegister(S3RequestCounter)
-	S3Gather.MustRegister(S3RequestHistogram)
+	Gather.MustRegister(S3RequestCounter)
+	Gather.MustRegister(S3RequestHistogram)
 }
 
-func LoopPushingMetric(name, instance string, gatherer *prometheus.Registry, addr string, intervalSeconds int) {
+func LoopPushingMetric(name, instance, addr string, intervalSeconds int) {
 
 	if addr == "" || intervalSeconds == 0 {
 		return
@@ -135,7 +136,7 @@ func LoopPushingMetric(name, instance string, gatherer *prometheus.Registry, add
 
 	glog.V(0).Infof("%s server sends metrics to %s every %d seconds", name, addr, intervalSeconds)
 
-	pusher := push.New(addr, name).Gatherer(gatherer).Grouping("instance", instance)
+	pusher := push.New(addr, name).Gatherer(Gather).Grouping("instance", instance)
 
 	for {
 		err := pusher.Push()
@@ -148,6 +149,14 @@ func LoopPushingMetric(name, instance string, gatherer *prometheus.Registry, add
 		time.Sleep(time.Duration(intervalSeconds) * time.Second)
 
 	}
+}
+
+func StartMetricsServer(port int) {
+	if port == 0 {
+		return
+	}
+	http.Handle("/metrics", promhttp.HandlerFor(Gather, promhttp.HandlerOpts{}))
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 }
 
 func SourceName(port uint32) string {

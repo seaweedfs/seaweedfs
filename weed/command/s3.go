@@ -23,12 +23,13 @@ var (
 )
 
 type S3Options struct {
-	filer          *string
-	port           *int
-	config         *string
-	domainName     *string
-	tlsPrivateKey  *string
-	tlsCertificate *string
+	filer           *string
+	port            *int
+	config          *string
+	domainName      *string
+	tlsPrivateKey   *string
+	tlsCertificate  *string
+	metricsHttpPort *int
 }
 
 func init() {
@@ -39,6 +40,7 @@ func init() {
 	s3StandaloneOptions.config = cmdS3.Flag.String("config", "", "path to the config file")
 	s3StandaloneOptions.tlsPrivateKey = cmdS3.Flag.String("key.file", "", "path to the TLS private key file")
 	s3StandaloneOptions.tlsCertificate = cmdS3.Flag.String("cert.file", "", "path to the TLS certificate file")
+	s3StandaloneOptions.metricsHttpPort = cmdS3.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 }
 
 var cmdS3 = &Command{
@@ -113,6 +115,8 @@ func runS3(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
 
+	go stats_collect.StartMetricsServer(*s3StandaloneOptions.metricsHttpPort)
+
 	return s3StandaloneOptions.startS3Server()
 
 }
@@ -153,7 +157,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		}
 	}
 
-	go stats_collect.LoopPushingMetric("s3", stats_collect.SourceName(uint32(*s3opt.port)), stats_collect.S3Gather, metricsAddress, metricsIntervalSec)
+	go stats_collect.LoopPushingMetric("s3", stats_collect.SourceName(uint32(*s3opt.port)), metricsAddress, metricsIntervalSec)
 
 	router := mux.NewRouter().SkipClean(true)
 

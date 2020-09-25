@@ -13,6 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/server"
+	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -36,6 +37,7 @@ type FilerOptions struct {
 	disableHttp             *bool
 	cipher                  *bool
 	peers                   *string
+	metricsHttpPort         *int
 
 	// default leveldb directory, used in "weed server" mode
 	defaultLevelDbDirectory *string
@@ -57,6 +59,7 @@ func init() {
 	f.disableHttp = cmdFiler.Flag.Bool("disableHttp", false, "disable http request, only gRpc operations are allowed")
 	f.cipher = cmdFiler.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
 	f.peers = cmdFiler.Flag.String("peers", "", "all filers sharing the same filer store in comma separated ip:port list")
+	f.metricsHttpPort = cmdFiler.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 }
 
 var cmdFiler = &Command{
@@ -83,6 +86,8 @@ var cmdFiler = &Command{
 func runFiler(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
+
+	go stats_collect.StartMetricsServer(*f.metricsHttpPort)
 
 	f.startFiler()
 

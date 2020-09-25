@@ -90,7 +90,7 @@ func fetchChunk(lookupFileIdFn LookupFileIdFunctionType, fileId string, cipherKe
 		return nil, err
 	}
 	var buffer bytes.Buffer
-	err = util.ReadUrlAsStream(urlString+"?readDeleted=true", cipherKey, isGzipped, true, 0, 0, func(data []byte) {
+	err = util.ReadUrlAsStream(urlString, cipherKey, isGzipped, true, 0, 0, func(data []byte) {
 		buffer.Write(data)
 	})
 	if err != nil {

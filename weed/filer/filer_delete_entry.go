@@ -10,6 +10,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
+type HardLinkId []byte
+
 func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32) (err error) {
 	if p == "/" {
 		return nil
@@ -23,16 +25,19 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	isCollection := f.isBucket(entry)
 
 	var chunks []*filer_pb.FileChunk
+	var hardLinkIds []HardLinkId
 	chunks = append(chunks, entry.Chunks...)
 	if entry.IsDirectory() {
 		// delete the folder children, not including the folder itself
 		var dirChunks []*filer_pb.FileChunk
-		dirChunks, err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !isCollection, isFromOtherCluster, signatures)
+		var dirHardLinkIds []HardLinkId
+		dirChunks, dirHardLinkIds, err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !isCollection, isFromOtherCluster, signatures)
 		if err != nil {
 			glog.V(0).Infof("delete directory %s: %v", p, err)
 			return fmt.Errorf("delete directory %s: %v", p, err)
 		}
 		chunks = append(chunks, dirChunks...)
+		hardLinkIds = append(hardLinkIds, dirHardLinkIds...)
 	}
 
 	// delete the file or folder
@@ -44,6 +49,12 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	if shouldDeleteChunks && !isCollection {
 		go f.DeleteChunks(chunks)
 	}
+	// A case not handled:
+	// what if the chunk is in a different collection?
+	if shouldDeleteChunks {
+		f.maybeDeleteHardLinks(hardLinkIds)
+	}
+
 	if isCollection {
 		collectionName := entry.Name()
 		f.doDeleteCollection(collectionName)
@@ -53,7 +64,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	return nil
 }
 
-func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32) (chunks []*filer_pb.FileChunk, err error) {
+func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32) (chunks []*filer_pb.FileChunk, hardlinkIds []HardLinkId, err error) {
 
 	lastFileName := ""
 	includeLastFile := false
@@ -61,26 +72,33 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 		entries, err := f.ListDirectoryEntries(ctx, entry.FullPath, lastFileName, includeLastFile, PaginationSize, "")
 		if err != nil {
 			glog.Errorf("list folder %s: %v", entry.FullPath, err)
-			return nil, fmt.Errorf("list folder %s: %v", entry.FullPath, err)
+			return nil, nil, fmt.Errorf("list folder %s: %v", entry.FullPath, err)
 		}
 		if lastFileName == "" && !isRecursive && len(entries) > 0 {
 			// only for first iteration in the loop
 			glog.Errorf("deleting a folder %s has children: %+v ...", entry.FullPath, entries[0].Name())
-			return nil, fmt.Errorf("fail to delete non-empty folder: %s", entry.FullPath)
+			return nil, nil,fmt.Errorf("fail to delete non-empty folder: %s", entry.FullPath)
 		}
 
 		for _, sub := range entries {
 			lastFileName = sub.Name()
 			var dirChunks []*filer_pb.FileChunk
+			var dirHardLinkIds []HardLinkId
 			if sub.IsDirectory() {
-				dirChunks, err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, false, nil)
+				dirChunks, dirHardLinkIds, err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, false, nil)
 				chunks = append(chunks, dirChunks...)
+				hardlinkIds = append(hardlinkIds, dirHardLinkIds...)
 			} else {
 				f.NotifyUpdateEvent(ctx, sub, nil, shouldDeleteChunks, isFromOtherCluster, nil)
-				chunks = append(chunks, sub.Chunks...)
+				if len(sub.HardLinkId) != 0 {
+					// hard link chunk data are deleted separately
+					hardlinkIds = append(hardlinkIds, sub.HardLinkId)
+				} else {
+					chunks = append(chunks, sub.Chunks...)
+				}
 			}
 			if err != nil && !ignoreRecursiveError {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 
@@ -92,12 +110,12 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 	glog.V(3).Infof("deleting directory %v delete %d chunks: %v", entry.FullPath, len(chunks), shouldDeleteChunks)
 
 	if storeDeletionErr := f.Store.DeleteFolderChildren(ctx, entry.FullPath); storeDeletionErr != nil {
-		return nil, fmt.Errorf("filer store delete: %v", storeDeletionErr)
+		return nil, nil, fmt.Errorf("filer store delete: %v", storeDeletionErr)
 	}
 
 	f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks, isFromOtherCluster, signatures)
 
-	return chunks, nil
+	return chunks, hardlinkIds, nil
 }
 
 func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shouldDeleteChunks bool, isFromOtherCluster bool, signatures []int32) (err error) {
