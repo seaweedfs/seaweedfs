@@ -28,11 +28,16 @@ func (store *CassandraStore) Initialize(configuration util.Configuration, prefix
 	return store.initialize(
 		configuration.GetString(prefix+"keyspace"),
 		configuration.GetStringSlice(prefix+"hosts"),
+		configuration.GetString(prefix+"username"),
+		configuration.GetString(prefix+"password"),
 	)
 }
 
-func (store *CassandraStore) initialize(keyspace string, hosts []string) (err error) {
+func (store *CassandraStore) initialize(keyspace string, hosts []string, username string, password string) (err error) {
 	store.cluster = gocql.NewCluster(hosts...)
+	if username != "" && password != "" {
+		store.cluster.Authenticator = gocql.PasswordAuthenticator{Username: username, Password: password}
+	}
 	store.cluster.Keyspace = keyspace
 	store.cluster.Consistency = gocql.LocalQuorum
 	store.session, err = store.cluster.CreateSession()
