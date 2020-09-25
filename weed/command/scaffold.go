@@ -140,6 +140,8 @@ keyspace="seaweedfs"
 hosts=[
 	"localhost:9042",
 ]
+username=""
+password=""
 
 [redis2]
 enabled = false
