@@ -13,6 +13,7 @@ func NewFullPath(dir, name string) FullPath {
 
 func (fp FullPath) DirAndName() (string, string) {
 	dir, name := filepath.Split(string(fp))
+	name = strings.ToValidUTF8(name, "?")
 	if dir == "/" {
 		return dir, name
 	}
@@ -24,6 +25,7 @@ func (fp FullPath) DirAndName() (string, string) {
 
 func (fp FullPath) Name() string {
 	_, name := filepath.Split(string(fp))
+	name = strings.ToValidUTF8(name, "?")
 	return name
 }
 
