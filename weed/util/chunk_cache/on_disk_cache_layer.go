@@ -14,11 +14,11 @@ type OnDiskCacheLayer struct {
 	diskCaches []*ChunkCacheVolume
 }
 
-func NewOnDiskCacheLayer(dir, namePrefix string, diskSizeMB int64, segmentCount int) *OnDiskCacheLayer {
+func NewOnDiskCacheLayer(dir, namePrefix string, diskSize int64, segmentCount int) *OnDiskCacheLayer {
 
-	volumeCount, volumeSize := int(diskSizeMB/30000), int64(30000)
+	volumeCount, volumeSize := int(diskSize/(30000*1024*1024)), int64(30000*1024*1024)
 	if volumeCount < segmentCount {
-		volumeCount, volumeSize = segmentCount, diskSizeMB/int64(segmentCount)
+		volumeCount, volumeSize = segmentCount, diskSize/int64(segmentCount)
 	}
 
 	c := &OnDiskCacheLayer{}
