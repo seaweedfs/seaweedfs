@@ -24,7 +24,7 @@ func NewOnDiskCacheLayer(dir, namePrefix string, diskSize int64, segmentCount in
 	c := &OnDiskCacheLayer{}
 	for i := 0; i < volumeCount; i++ {
 		fileName := path.Join(dir, fmt.Sprintf("%s_%d", namePrefix, i))
-		diskCache, err := LoadOrCreateChunkCacheVolume(fileName, volumeSize*1024*1024)
+		diskCache, err := LoadOrCreateChunkCacheVolume(fileName, volumeSize)
 		if err != nil {
 			glog.Errorf("failed to add cache %s : %v", fileName, err)
 		} else {
