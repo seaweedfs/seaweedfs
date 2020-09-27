@@ -16,7 +16,7 @@ func TestOnDisk(t *testing.T) {
 
 	totalDiskSizeInKB := int64(32)
 
-	cache := NewTieredChunkCache(0, tmpDir, totalDiskSizeInKB, 1024)
+	cache := NewTieredChunkCache(2, tmpDir, totalDiskSizeInKB, 1024)
 
 	writeCount := 5
 	type test_data struct {
@@ -58,7 +58,7 @@ func TestOnDisk(t *testing.T) {
 
 	cache.Shutdown()
 
-	cache = NewTieredChunkCache(0, tmpDir, totalDiskSizeInKB, 1024)
+	cache = NewTieredChunkCache(2, tmpDir, totalDiskSizeInKB, 1024)
 
 	for i := 0; i < 2; i++ {
 		data := cache.GetChunk(testData[i].fileId, testData[i].size)
