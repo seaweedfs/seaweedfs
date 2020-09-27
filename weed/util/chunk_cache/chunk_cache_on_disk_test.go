@@ -34,9 +34,22 @@ func TestOnDisk(t *testing.T) {
 			size:   uint64(len(buff)),
 		}
 		cache.SetChunk(testData[i].fileId, testData[i].data)
+
+		// read back right after write
+		data := cache.GetChunk(testData[i].fileId, testData[i].size)
+		if bytes.Compare(data, testData[i].data) != 0 {
+			t.Errorf("failed to write to and read from cache: %d", i)
+		}
 	}
 
-	for i := 0; i < writeCount; i++ {
+	for i := 0; i < 2; i++ {
+		data := cache.GetChunk(testData[i].fileId, testData[i].size)
+		if bytes.Compare(data, testData[i].data) == 0 {
+			t.Errorf("old cache should have been purged: %d", i)
+		}
+	}
+
+	for i := 2; i < writeCount; i++ {
 		data := cache.GetChunk(testData[i].fileId, testData[i].size)
 		if bytes.Compare(data, testData[i].data) != 0 {
 			t.Errorf("failed to write to and read from cache: %d", i)
@@ -47,7 +60,14 @@ func TestOnDisk(t *testing.T) {
 
 	cache = NewTieredChunkCache(0, tmpDir, totalDiskSizeInKB, 1024)
 
-	for i := 0; i < writeCount; i++ {
+	for i := 0; i < 2; i++ {
+		data := cache.GetChunk(testData[i].fileId, testData[i].size)
+		if bytes.Compare(data, testData[i].data) == 0 {
+			t.Errorf("old cache should have been purged: %d", i)
+		}
+	}
+
+	for i := 2; i < writeCount; i++ {
 		data := cache.GetChunk(testData[i].fileId, testData[i].size)
 		if bytes.Compare(data, testData[i].data) != 0 {
 			t.Errorf("failed to write to and read from cache: %d", i)
