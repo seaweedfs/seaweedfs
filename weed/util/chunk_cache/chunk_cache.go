@@ -19,6 +19,7 @@ type TieredChunkCache struct {
 	sync.RWMutex
 	onDiskCacheSizeLimit0 uint64
 	onDiskCacheSizeLimit1 uint64
+	onDiskCacheSizeLimit2 uint64
 }
 
 func NewTieredChunkCache(maxEntries int64, dir string, diskSizeInUnit int64, unitSize int64) *TieredChunkCache {
@@ -29,6 +30,7 @@ func NewTieredChunkCache(maxEntries int64, dir string, diskSizeInUnit int64, uni
 	c.diskCaches = make([]*OnDiskCacheLayer, 3)
 	c.onDiskCacheSizeLimit0 = uint64(unitSize)
 	c.onDiskCacheSizeLimit1 = 4 * c.onDiskCacheSizeLimit0
+	c.onDiskCacheSizeLimit2 = 2 * c.onDiskCacheSizeLimit1
 	c.diskCaches[0] = NewOnDiskCacheLayer(dir, "c0_2", diskSizeInUnit*unitSize/8, 2)
 	c.diskCaches[1] = NewOnDiskCacheLayer(dir, "c1_3", diskSizeInUnit*unitSize/4+diskSizeInUnit*unitSize/8, 3)
 	c.diskCaches[2] = NewOnDiskCacheLayer(dir, "c2_2", diskSizeInUnit*unitSize/2, 2)
@@ -74,7 +76,7 @@ func (c *TieredChunkCache) doGetChunk(fileId string, minSize uint64) (data []byt
 			return data
 		}
 	}
-	{
+	if minSize <= c.onDiskCacheSizeLimit2 {
 		data = c.diskCaches[2].getChunk(fid.Key)
 		if len(data) >= int(minSize) {
 			return data
@@ -113,7 +115,7 @@ func (c *TieredChunkCache) doSetChunk(fileId string, data []byte) {
 		c.diskCaches[0].setChunk(fid.Key, data)
 	} else if len(data) <= int(c.onDiskCacheSizeLimit1) {
 		c.diskCaches[1].setChunk(fid.Key, data)
-	} else {
+	} else if len(data) <= int(c.onDiskCacheSizeLimit2) {
 		c.diskCaches[2].setChunk(fid.Key, data)
 	}
 
