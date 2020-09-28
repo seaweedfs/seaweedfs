@@ -18,6 +18,10 @@ var _ = fs.NodeLinker(&Dir{})
 var _ = fs.NodeSymlinker(&Dir{})
 var _ = fs.NodeReadlinker(&File{})
 
+const (
+	HARD_LINK_MARKER = '\x01'
+)
+
 func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (fs.Node, error) {
 
 	oldFile, ok := old.(*File)
@@ -33,7 +37,7 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 
 	// update old file to hardlink mode
 	if len(oldFile.entry.HardLinkId) == 0 {
-		oldFile.entry.HardLinkId = util.RandomBytes(16)
+		oldFile.entry.HardLinkId = append(util.RandomBytes(16), HARD_LINK_MARKER)
 		oldFile.entry.HardLinkCounter = 1
 	}
 	oldFile.entry.HardLinkCounter++
