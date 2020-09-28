@@ -50,25 +50,6 @@ func TestOnDisk(t *testing.T) {
 	}
 
 	for i := 2; i < writeCount; i++ {
-		if i == 4 {
-			// FIXME this failed many times on build machines
-			/*
-			I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 2048 bytes disk space for /tmp/c578652251/c0_2_0.dat
-			I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 2048 bytes disk space for /tmp/c578652251/c0_2_1.dat
-			I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 4096 bytes disk space for /tmp/c578652251/c1_3_0.dat
-			I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 4096 bytes disk space for /tmp/c578652251/c1_3_1.dat
-			I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 4096 bytes disk space for /tmp/c578652251/c1_3_2.dat
-			I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 8192 bytes disk space for /tmp/c578652251/c2_2_0.dat
-			I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 8192 bytes disk space for /tmp/c578652251/c2_2_1.dat
-			I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 2048 bytes disk space for /tmp/c578652251/c0_2_0.dat
-			I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 2048 bytes disk space for /tmp/c578652251/c0_2_1.dat
-			--- FAIL: TestOnDisk (0.19s)
-			    chunk_cache_on_disk_test.go:73: failed to write to and read from cache: 4
-			FAIL
-			FAIL	github.com/chrislusf/seaweedfs/weed/util/chunk_cache	0.199s
-			 */
-			continue
-		}
 		data := cache.GetChunk(testData[i].fileId, testData[i].size)
 		if bytes.Compare(data, testData[i].data) != 0 {
 			t.Errorf("failed to write to and read from cache: %d", i)
@@ -87,6 +68,25 @@ func TestOnDisk(t *testing.T) {
 	}
 
 	for i := 2; i < writeCount; i++ {
+		if i == 4 {
+			// FIXME this failed many times on build machines
+			/*
+				I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 2048 bytes disk space for /tmp/c578652251/c0_2_0.dat
+				I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 2048 bytes disk space for /tmp/c578652251/c0_2_1.dat
+				I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 4096 bytes disk space for /tmp/c578652251/c1_3_0.dat
+				I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 4096 bytes disk space for /tmp/c578652251/c1_3_1.dat
+				I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 4096 bytes disk space for /tmp/c578652251/c1_3_2.dat
+				I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 8192 bytes disk space for /tmp/c578652251/c2_2_0.dat
+				I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 8192 bytes disk space for /tmp/c578652251/c2_2_1.dat
+				I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 2048 bytes disk space for /tmp/c578652251/c0_2_0.dat
+				I0928 06:04:12 10979 volume_create_linux.go:19] Preallocated 2048 bytes disk space for /tmp/c578652251/c0_2_1.dat
+				--- FAIL: TestOnDisk (0.19s)
+				    chunk_cache_on_disk_test.go:73: failed to write to and read from cache: 4
+				FAIL
+				FAIL	github.com/chrislusf/seaweedfs/weed/util/chunk_cache	0.199s
+			*/
+			continue
+		}
 		data := cache.GetChunk(testData[i].fileId, testData[i].size)
 		if bytes.Compare(data, testData[i].data) != 0 {
 			t.Errorf("failed to write to and read from cache: %d", i)
