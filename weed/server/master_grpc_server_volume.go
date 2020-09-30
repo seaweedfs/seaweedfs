@@ -186,6 +186,7 @@ func (ms *MasterServer) GetMasterConfiguration(ctx context.Context, req *master_
 		MetricsAddress:         ms.option.MetricsAddress,
 		MetricsIntervalSeconds: uint32(ms.option.MetricsIntervalSec),
 		StorageBackends:        backend.ToPbStorageBackends(),
+		DefaultReplication:     ms.option.DefaultReplicaPlacement,
 	}
 
 	return resp, nil

@@ -165,10 +165,6 @@ func runServer(cmd *Command, args []string) bool {
 	s3Options.filer = &filerAddress
 	msgBrokerOptions.filer = &filerAddress
 
-	if *filerOptions.defaultReplicaPlacement == "" {
-		*filerOptions.defaultReplicaPlacement = *masterOptions.defaultReplication
-	}
-
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	go stats_collect.StartMetricsServer(*serverMetricsHttpPort)
 
