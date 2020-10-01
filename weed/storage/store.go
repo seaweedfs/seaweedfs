@@ -380,10 +380,12 @@ func (s *Store) DeleteVolume(i needle.VolumeId) error {
 		Ttl:              v.Ttl.ToUint32(),
 	}
 	for _, location := range s.Locations {
-		if found, err := location.deleteVolumeById(i); found && err == nil {
+		if err := location.DeleteVolume(i); err == nil {
 			glog.V(0).Infof("DeleteVolume %d", i)
 			s.DeletedVolumesChan <- message
 			return nil
+		} else {
+			glog.Errorf("DeleteVolume %d: %v", i, err)
 		}
 	}
 
