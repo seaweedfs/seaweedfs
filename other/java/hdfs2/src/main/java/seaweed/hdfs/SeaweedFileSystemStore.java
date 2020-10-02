@@ -8,14 +8,10 @@ import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import seaweedfs.client.FilerClient;
-import seaweedfs.client.FilerGrpcClient;
-import seaweedfs.client.FilerProto;
-import seaweedfs.client.SeaweedRead;
+import seaweedfs.client.*;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -124,7 +120,7 @@ public class SeaweedFileSystemStore {
 
     private FileStatus doGetFileStatus(Path path, FilerProto.Entry entry) {
         FilerProto.FuseAttributes attributes = entry.getAttributes();
-        long length = SeaweedRead.totalSize(entry.getChunksList());
+        long length = SeaweedRead.fileSize(entry);
         boolean isDir = entry.getIsDirectory();
         int block_replication = 1;
         int blocksize = 512;
@@ -185,7 +181,7 @@ public class SeaweedFileSystemStore {
                 entry.mergeFrom(existingEntry);
                 entry.getAttributesBuilder().setMtime(now);
                 LOG.debug("createFile merged entry path:{} entry:{} from:{}", path, entry, existingEntry);
-                writePosition = SeaweedRead.totalSize(existingEntry.getChunksList());
+                writePosition = SeaweedRead.fileSize(existingEntry);
                 replication = existingEntry.getAttributes().getReplication();
             }
         }
@@ -202,6 +198,7 @@ public class SeaweedFileSystemStore {
                     .clearGroupName()
                     .addAllGroupName(Arrays.asList(userGroupInformation.getGroupNames()))
                 );
+            SeaweedWrite.writeMeta(filerGrpcClient, getParentDirectory(path), entry);
         }
 
         return new SeaweedOutputStream(filerGrpcClient, path, entry, writePosition, bufferSize, replication);

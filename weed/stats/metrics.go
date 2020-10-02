@@ -2,19 +2,21 @@ package stats
 
 import (
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/client_golang/prometheus/push"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 var (
-	FilerGather        = prometheus.NewRegistry()
-	VolumeServerGather = prometheus.NewRegistry()
+	Gather = prometheus.NewRegistry()
 
 	FilerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -90,52 +92,71 @@ var (
 			Name:      "total_disk_size",
 			Help:      "Actual disk size used by volumes.",
 		}, []string{"collection", "type"})
+
+	S3RequestCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "s3",
+			Name:      "request_total",
+			Help:      "Counter of s3 requests.",
+		}, []string{"type", "code"})
+	S3RequestHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "s3",
+			Name:      "request_seconds",
+			Help:      "Bucketed histogram of s3 request processing time.",
+			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
+		}, []string{"type"})
 )
 
 func init() {
 
-	FilerGather.MustRegister(FilerRequestCounter)
-	FilerGather.MustRegister(FilerRequestHistogram)
-	FilerGather.MustRegister(FilerStoreCounter)
-	FilerGather.MustRegister(FilerStoreHistogram)
-	FilerGather.MustRegister(prometheus.NewGoCollector())
+	Gather.MustRegister(FilerRequestCounter)
+	Gather.MustRegister(FilerRequestHistogram)
+	Gather.MustRegister(FilerStoreCounter)
+	Gather.MustRegister(FilerStoreHistogram)
+	Gather.MustRegister(prometheus.NewGoCollector())
 
-	VolumeServerGather.MustRegister(VolumeServerRequestCounter)
-	VolumeServerGather.MustRegister(VolumeServerRequestHistogram)
-	VolumeServerGather.MustRegister(VolumeServerVolumeCounter)
-	VolumeServerGather.MustRegister(VolumeServerMaxVolumeCounter)
-	VolumeServerGather.MustRegister(VolumeServerDiskSizeGauge)
+	Gather.MustRegister(VolumeServerRequestCounter)
+	Gather.MustRegister(VolumeServerRequestHistogram)
+	Gather.MustRegister(VolumeServerVolumeCounter)
+	Gather.MustRegister(VolumeServerMaxVolumeCounter)
+	Gather.MustRegister(VolumeServerDiskSizeGauge)
 
+	Gather.MustRegister(S3RequestCounter)
+	Gather.MustRegister(S3RequestHistogram)
 }
 
-func LoopPushingMetric(name, instance string, gatherer *prometheus.Registry, fnGetMetricsDest func() (addr string, intervalSeconds int)) {
+func LoopPushingMetric(name, instance, addr string, intervalSeconds int) {
 
-	if fnGetMetricsDest == nil {
+	if addr == "" || intervalSeconds == 0 {
 		return
 	}
 
-	addr, intervalSeconds := fnGetMetricsDest()
-	pusher := push.New(addr, name).Gatherer(gatherer).Grouping("instance", instance)
-	currentAddr := addr
+	glog.V(0).Infof("%s server sends metrics to %s every %d seconds", name, addr, intervalSeconds)
+
+	pusher := push.New(addr, name).Gatherer(Gather).Grouping("instance", instance)
 
 	for {
-		if currentAddr != "" {
-			err := pusher.Push()
-			if err != nil && !strings.HasPrefix(err.Error(), "unexpected status code 200") {
-				glog.V(0).Infof("could not push metrics to prometheus push gateway %s: %v", addr, err)
-			}
+		err := pusher.Push()
+		if err != nil && !strings.HasPrefix(err.Error(), "unexpected status code 200") {
+			glog.V(0).Infof("could not push metrics to prometheus push gateway %s: %v", addr, err)
 		}
 		if intervalSeconds <= 0 {
 			intervalSeconds = 15
 		}
 		time.Sleep(time.Duration(intervalSeconds) * time.Second)
-		addr, intervalSeconds = fnGetMetricsDest()
-		if currentAddr != addr {
-			pusher = push.New(addr, name).Gatherer(gatherer).Grouping("instance", instance)
-			currentAddr = addr
-		}
 
 	}
+}
+
+func StartMetricsServer(port int) {
+	if port == 0 {
+		return
+	}
+	http.Handle("/metrics", promhttp.HandlerFor(Gather, promhttp.HandlerOpts{}))
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 }
 
 func SourceName(port uint32) string {

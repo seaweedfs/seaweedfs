@@ -14,6 +14,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -92,7 +93,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId needle.Volume
 
 func ReplicatedDelete(masterNode string, store *storage.Store,
 	volumeId needle.VolumeId, n *needle.Needle,
-	r *http.Request) (size uint32, err error) {
+	r *http.Request) (size types.Size, err error) {
 
 	//check JWT
 	jwt := security.GetJwt(r)

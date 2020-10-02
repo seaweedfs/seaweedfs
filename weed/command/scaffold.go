@@ -140,6 +140,8 @@ keyspace="seaweedfs"
 hosts=[
 	"localhost:9042",
 ]
+username=""
+password=""
 
 [redis2]
 enabled = false
@@ -173,6 +175,20 @@ enabled = false
 uri = "mongodb://localhost:27017"
 option_pool_size = 0
 database = "seaweedfs"
+
+[elastic7]
+enabled = false
+servers = [
+    "http://localhost1:9200",
+    "http://localhost2:9200",
+    "http://localhost3:9200",
+]
+username = ""
+password = ""
+sniff_enabled = false
+healthcheck_enabled = false
+# increase the value is recommend, be sure the value in Elastic is greater or equal here
+index.max_result_window = 10000
 `
 
 	NOTIFICATION_TOML_EXAMPLE = `
@@ -377,7 +393,7 @@ default = "localhost:8888"    # used by maintenance scripts if the scripts needs
 
 
 [master.sequencer]
-type = "memory"     # Choose [memory|etcd] type for storing the file id sequence
+type = "raft"     # Choose [raft|etcd] type for storing the file id sequence
 # when sequencer.type = etcd, set listen client urls of etcd cluster that store file id sequence
 # example : http://127.0.0.1:2379,http://127.0.0.1:2389
 sequencer_etcd_urls = "http://127.0.0.1:2379"

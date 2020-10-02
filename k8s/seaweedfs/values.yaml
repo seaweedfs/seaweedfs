@@ -4,7 +4,7 @@ global:
   registry: ""
   repository: ""
   imageName: chrislusf/seaweedfs
-  imageTag: "1.87"
+  imageTag: "2.02"
   imagePullPolicy: IfNotPresent
   imagePullSecrets: imagepullsecret
   restartPolicy: Always
@@ -14,6 +14,13 @@ global:
     enabled: false
     gatewayHost: null
     gatewayPort: null
+  # if enabled will use global.replicationPlacment and override master & filer defaultReplicaPlacement config
+  enableReplication: false
+  #  replication type is XYZ:
+  # X number of replica in other data centers
+  # Y number of replica in other racks in the same data center
+  # Z number of replica in other servers in the same rack
+  replicationPlacment: "001"
 
 image:
   registry: ""
@@ -31,8 +38,20 @@ master:
   grpcPort: 19333
   ipBind: "0.0.0.0"
   volumePreallocate: false
+  #Master stops directing writes to oversized volumes
   volumeSizeLimitMB: 30000
   loggingOverrideLevel: null
+  #number of seconds between heartbeats, default 5
+  pulseSeconds: null
+  #threshold to vacuum and reclaim spaces, default 0.3 (30%)
+  garbageThreshold: null
+  #Prometheus push interval in seconds, default 15
+  metricsIntervalSec: 15
+  #  replication type is XYZ:
+  # X number of replica in other data centers
+  # Y number of replica in other racks in the same data center
+  # Z number of replica in other servers in the same rack
+  defaultReplication: "000"
 
   # Disable http request, only gRpc operations are allowed
   disableHttp: false
@@ -87,6 +106,11 @@ master:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
+  extraEnvironmentVars:
+    WEED_MASTER_VOLUME_GROWTH_COPY_1: 7
+    WEED_MASTER_VOLUME_GROWTH_COPY_2: 6
+    WEED_MASTER_VOLUME_GROWTH_COPY_3: 3
+    WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
 
 volume:
   enabled: true
@@ -100,9 +124,18 @@ volume:
   ipBind: "0.0.0.0"
   replicas: 1
   loggingOverrideLevel: null
+  # number of seconds between heartbeats, must be smaller than or equal to the master's setting
+  pulseSeconds: null
+  # Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance., default memory
+  index: null
+  # limit file size to avoid out of memory, default 256mb
+  fileSizeLimitMB: null
+  # minimum free disk space(in percents). If free disk space lower this value - all volumes marks as ReadOnly
+  minFreeSpacePercent: 1
+
 
   # limit background compaction or copying speed in mega bytes per second
-  compactionMBps: "40"
+  compactionMBps: "50"
 
   # Directories to store data files. dir[,dir]... (default "/tmp")
   dir: "/data"
@@ -177,6 +210,20 @@ filer:
   port: 8888
   grpcPort: 18888
   loggingOverrideLevel: null
+  #  replication type is XYZ:
+  # X number of replica in other data centers
+  # Y number of replica in other racks in the same data center
+  # Z number of replica in other servers in the same rack
+  defaultReplicaPlacement: "000"
+  # turn off directory listing
+  disableDirListing: false
+  # split files larger than the limit, default 32
+  maxMB: null
+  # encrypt data on volume servers
+  encryptVolumeData: false
+
+  # Whether proxy or redirect to volume server during file GET request
+  redirectOnRead: false
 
   # Limit sub dir listing size (default 100000)
   dirListLimit: 100000
@@ -237,11 +284,6 @@ filer:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
-  dbSchema:
-    imageName: db-schema
-    imageTag: "development"
-    imageOverride: ""
-
   # extraEnvVars is a list of extra enviroment variables to set with the stateful set.
   extraEnvironmentVars:
     WEED_MYSQL_ENABLED: "true"
@@ -260,6 +302,8 @@ filer:
     WEED_FILER_BUCKETS_FOLDER: "/buckets"
     # directories under this folder will be store message queue data
     WEED_FILER_QUEUES_FOLDER: "/queues"
+    # WEED_FILER_OPTIONS_BUCKETS_FSYNC a list of buckets names with all write requests fsync=true
+    WEED_FILER_OPTIONS_BUCKETS_FSYNC: []
 
 s3:
   enabled: true

@@ -27,6 +27,7 @@ type Volume struct {
 	needleMapKind      NeedleMapType
 	noWriteOrDelete    bool // if readonly, either noWriteOrDelete or noWriteCanDelete
 	noWriteCanDelete   bool // if readonly, either noWriteOrDelete or noWriteCanDelete
+	noWriteLock        sync.RWMutex
 	hasRemoteFile      bool // if the volume has a remote file
 	MemoryMapMaxSizeMb uint32
 
@@ -58,6 +59,8 @@ func NewVolume(dirname string, collection string, id needle.VolumeId, needleMapK
 }
 
 func (v *Volume) String() string {
+	v.noWriteLock.RLock()
+	defer v.noWriteLock.RUnlock()
 	return fmt.Sprintf("Id:%v, dir:%s, Collection:%s, dataFile:%v, nm:%v, noWrite:%v canDelete:%v", v.Id, v.dir, v.Collection, v.DataBackend, v.nm, v.noWriteOrDelete || v.noWriteCanDelete, v.noWriteCanDelete)
 }
 
@@ -245,5 +248,7 @@ func (v *Volume) RemoteStorageNameKey() (storageName, storageKey string) {
 }
 
 func (v *Volume) IsReadOnly() bool {
+	v.noWriteLock.RLock()
+	defer v.noWriteLock.RUnlock()
 	return v.noWriteOrDelete || v.noWriteCanDelete || v.location.isDiskSpaceLow
 }

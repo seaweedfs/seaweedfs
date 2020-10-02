@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 
 	"github.com/chrislusf/raft"
 
@@ -184,6 +185,8 @@ func (ms *MasterServer) GetMasterConfiguration(ctx context.Context, req *master_
 	resp := &master_pb.GetMasterConfigurationResponse{
 		MetricsAddress:         ms.option.MetricsAddress,
 		MetricsIntervalSeconds: uint32(ms.option.MetricsIntervalSec),
+		StorageBackends:        backend.ToPbStorageBackends(),
+		DefaultReplication:     ms.option.DefaultReplicaPlacement,
 	}
 
 	return resp, nil

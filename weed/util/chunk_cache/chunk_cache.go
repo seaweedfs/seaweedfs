@@ -7,33 +7,38 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
-const (
-	memCacheSizeLimit     = 1024 * 1024
-	onDiskCacheSizeLimit0 = memCacheSizeLimit
-	onDiskCacheSizeLimit1 = 4 * memCacheSizeLimit
-)
+type ChunkCache interface {
+	GetChunk(fileId string, minSize uint64) (data []byte)
+	SetChunk(fileId string, data []byte)
+}
 
 // a global cache for recently accessed file chunks
-type ChunkCache struct {
+type TieredChunkCache struct {
 	memCache   *ChunkCacheInMemory
 	diskCaches []*OnDiskCacheLayer
 	sync.RWMutex
+	onDiskCacheSizeLimit0 uint64
+	onDiskCacheSizeLimit1 uint64
+	onDiskCacheSizeLimit2 uint64
 }
 
-func NewChunkCache(maxEntries int64, dir string, diskSizeMB int64) *ChunkCache {
+func NewTieredChunkCache(maxEntries int64, dir string, diskSizeInUnit int64, unitSize int64) *TieredChunkCache {
 
-	c := &ChunkCache{
+	c := &TieredChunkCache{
 		memCache: NewChunkCacheInMemory(maxEntries),
 	}
 	c.diskCaches = make([]*OnDiskCacheLayer, 3)
-	c.diskCaches[0] = NewOnDiskCacheLayer(dir, "c0_1", diskSizeMB/4, 4)
-	c.diskCaches[1] = NewOnDiskCacheLayer(dir, "c1_4", diskSizeMB/4, 4)
-	c.diskCaches[2] = NewOnDiskCacheLayer(dir, "cache", diskSizeMB/2, 4)
+	c.onDiskCacheSizeLimit0 = uint64(unitSize)
+	c.onDiskCacheSizeLimit1 = 4 * c.onDiskCacheSizeLimit0
+	c.onDiskCacheSizeLimit2 = 2 * c.onDiskCacheSizeLimit1
+	c.diskCaches[0] = NewOnDiskCacheLayer(dir, "c0_2", diskSizeInUnit*unitSize/8, 2)
+	c.diskCaches[1] = NewOnDiskCacheLayer(dir, "c1_3", diskSizeInUnit*unitSize/4+diskSizeInUnit*unitSize/8, 3)
+	c.diskCaches[2] = NewOnDiskCacheLayer(dir, "c2_2", diskSizeInUnit*unitSize/2, 2)
 
 	return c
 }
 
-func (c *ChunkCache) GetChunk(fileId string, chunkSize uint64) (data []byte) {
+func (c *TieredChunkCache) GetChunk(fileId string, minSize uint64) (data []byte) {
 	if c == nil {
 		return
 	}
@@ -41,14 +46,14 @@ func (c *ChunkCache) GetChunk(fileId string, chunkSize uint64) (data []byte) {
 	c.RLock()
 	defer c.RUnlock()
 
-	return c.doGetChunk(fileId, chunkSize)
+	return c.doGetChunk(fileId, minSize)
 }
 
-func (c *ChunkCache) doGetChunk(fileId string, chunkSize uint64) (data []byte) {
+func (c *TieredChunkCache) doGetChunk(fileId string, minSize uint64) (data []byte) {
 
-	if chunkSize < memCacheSizeLimit {
+	if minSize <= c.onDiskCacheSizeLimit0 {
 		data = c.memCache.GetChunk(fileId)
-		if len(data) >= int(chunkSize) {
+		if len(data) >= int(minSize) {
 			return data
 		}
 	}
@@ -59,21 +64,21 @@ func (c *ChunkCache) doGetChunk(fileId string, chunkSize uint64) (data []byte) {
 		return nil
 	}
 
-	if chunkSize < onDiskCacheSizeLimit0 {
+	if minSize <= c.onDiskCacheSizeLimit0 {
 		data = c.diskCaches[0].getChunk(fid.Key)
-		if len(data) >= int(chunkSize) {
+		if len(data) >= int(minSize) {
 			return data
 		}
 	}
-	if chunkSize < onDiskCacheSizeLimit1 {
+	if minSize <= c.onDiskCacheSizeLimit1 {
 		data = c.diskCaches[1].getChunk(fid.Key)
-		if len(data) >= int(chunkSize) {
+		if len(data) >= int(minSize) {
 			return data
 		}
 	}
-	{
+	if minSize <= c.onDiskCacheSizeLimit2 {
 		data = c.diskCaches[2].getChunk(fid.Key)
-		if len(data) >= int(chunkSize) {
+		if len(data) >= int(minSize) {
 			return data
 		}
 	}
@@ -82,7 +87,7 @@ func (c *ChunkCache) doGetChunk(fileId string, chunkSize uint64) (data []byte) {
 
 }
 
-func (c *ChunkCache) SetChunk(fileId string, data []byte) {
+func (c *TieredChunkCache) SetChunk(fileId string, data []byte) {
 	if c == nil {
 		return
 	}
@@ -94,9 +99,9 @@ func (c *ChunkCache) SetChunk(fileId string, data []byte) {
 	c.doSetChunk(fileId, data)
 }
 
-func (c *ChunkCache) doSetChunk(fileId string, data []byte) {
+func (c *TieredChunkCache) doSetChunk(fileId string, data []byte) {
 
-	if len(data) < memCacheSizeLimit {
+	if len(data) <= int(c.onDiskCacheSizeLimit0) {
 		c.memCache.SetChunk(fileId, data)
 	}
 
@@ -106,17 +111,17 @@ func (c *ChunkCache) doSetChunk(fileId string, data []byte) {
 		return
 	}
 
-	if len(data) < onDiskCacheSizeLimit0 {
+	if len(data) <= int(c.onDiskCacheSizeLimit0) {
 		c.diskCaches[0].setChunk(fid.Key, data)
-	} else if len(data) < onDiskCacheSizeLimit1 {
+	} else if len(data) <= int(c.onDiskCacheSizeLimit1) {
 		c.diskCaches[1].setChunk(fid.Key, data)
-	} else {
+	} else if len(data) <= int(c.onDiskCacheSizeLimit2) {
 		c.diskCaches[2].setChunk(fid.Key, data)
 	}
 
 }
 
-func (c *ChunkCache) Shutdown() {
+func (c *TieredChunkCache) Shutdown() {
 	if c == nil {
 		return
 	}

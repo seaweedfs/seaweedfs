@@ -37,7 +37,11 @@ service VolumeServer {
     }
     rpc VolumeMarkReadonly (VolumeMarkReadonlyRequest) returns (VolumeMarkReadonlyResponse) {
     }
+    rpc VolumeMarkWritable (VolumeMarkWritableRequest) returns (VolumeMarkWritableResponse) {
+    }
     rpc VolumeConfigure (VolumeConfigureRequest) returns (VolumeConfigureResponse) {
+    }
+    rpc VolumeStatus (VolumeStatusRequest) returns (VolumeStatusResponse) {
     }
 
     // copy the .idx .dat files, and mount this volume
@@ -80,6 +84,8 @@ service VolumeServer {
     }
 
     rpc VolumeServerStatus (VolumeServerStatusRequest) returns (VolumeServerStatusResponse) {
+    }
+    rpc VolumeServerLeave (VolumeServerLeaveRequest) returns (VolumeServerLeaveResponse) {
     }
 
     // <experimental> query
@@ -200,12 +206,25 @@ message VolumeMarkReadonlyRequest {
 message VolumeMarkReadonlyResponse {
 }
 
+message VolumeMarkWritableRequest {
+    uint32 volume_id = 1;
+}
+message VolumeMarkWritableResponse {
+}
+
 message VolumeConfigureRequest {
     uint32 volume_id = 1;
     string replication = 2;
 }
 message VolumeConfigureResponse {
     string error = 1;
+}
+
+message VolumeStatusRequest {
+    uint32 volume_id = 1;
+}
+message VolumeStatusResponse {
+    bool is_read_only = 1;
 }
 
 message VolumeCopyRequest {
@@ -406,6 +425,11 @@ message VolumeServerStatusRequest {
 message VolumeServerStatusResponse {
     repeated DiskStatus disk_statuses = 1;
     MemStatus memory_status = 2;
+}
+
+message VolumeServerLeaveRequest {
+}
+message VolumeServerLeaveResponse {
 }
 
 // select on volume servers

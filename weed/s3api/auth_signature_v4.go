@@ -23,6 +23,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -33,7 +34,7 @@ import (
 	"unicode/utf8"
 )
 
-func (iam *IdentityAccessManagement) reqSignatureV4Verify(r *http.Request) (*Identity, ErrorCode) {
+func (iam *IdentityAccessManagement) reqSignatureV4Verify(r *http.Request) (*Identity, s3err.ErrorCode) {
 	sha256sum := getContentSha256Cksum(r)
 	switch {
 	case isRequestSignatureV4(r):
@@ -41,7 +42,7 @@ func (iam *IdentityAccessManagement) reqSignatureV4Verify(r *http.Request) (*Ide
 	case isRequestPresignedSignatureV4(r):
 		return iam.doesPresignedSignatureMatch(sha256sum, r)
 	}
-	return nil, ErrAccessDenied
+	return nil, s3err.ErrAccessDenied
 }
 
 // Streaming AWS Signature Version '4' constants.
@@ -89,7 +90,7 @@ func getContentSha256Cksum(r *http.Request) string {
 }
 
 // Verify authorization header - http://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-authenticating-requests.html
-func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r *http.Request) (*Identity, ErrorCode) {
+func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r *http.Request) (*Identity, s3err.ErrorCode) {
 
 	// Copy request.
 	req := *r
@@ -99,33 +100,33 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 
 	// Parse signature version '4' header.
 	signV4Values, err := parseSignV4(v4Auth)
-	if err != ErrNone {
+	if err != s3err.ErrNone {
 		return nil, err
 	}
 
 	// Extract all the signed headers along with its values.
 	extractedSignedHeaders, errCode := extractSignedHeaders(signV4Values.SignedHeaders, r)
-	if errCode != ErrNone {
+	if errCode != s3err.ErrNone {
 		return nil, errCode
 	}
 
 	// Verify if the access key id matches.
 	identity, cred, found := iam.lookupByAccessKey(signV4Values.Credential.accessKey)
 	if !found {
-		return nil, ErrInvalidAccessKeyID
+		return nil, s3err.ErrInvalidAccessKeyID
 	}
 
 	// Extract date, if not present throw error.
 	var date string
 	if date = req.Header.Get(http.CanonicalHeaderKey("X-Amz-Date")); date == "" {
 		if date = r.Header.Get("Date"); date == "" {
-			return nil, ErrMissingDateHeader
+			return nil, s3err.ErrMissingDateHeader
 		}
 	}
 	// Parse date header.
 	t, e := time.Parse(iso8601Format, date)
 	if e != nil {
-		return nil, ErrMalformedDate
+		return nil, s3err.ErrMalformedDate
 	}
 
 	// Query string.
@@ -145,11 +146,11 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 
 	// Verify if signature match.
 	if !compareSignatureV4(newSignature, signV4Values.Signature) {
-		return nil, ErrSignatureDoesNotMatch
+		return nil, s3err.ErrSignatureDoesNotMatch
 	}
 
 	// Return error none.
-	return identity, ErrNone
+	return identity, s3err.ErrNone
 }
 
 // credentialHeader data type represents structured form of Credential
@@ -184,65 +185,65 @@ func (c credentialHeader) getScope() string {
 //    Authorization: algorithm Credential=accessKeyID/credScope, \
 //            SignedHeaders=signedHeaders, Signature=signature
 //
-func parseSignV4(v4Auth string) (sv signValues, aec ErrorCode) {
+func parseSignV4(v4Auth string) (sv signValues, aec s3err.ErrorCode) {
 	// Replace all spaced strings, some clients can send spaced
 	// parameters and some won't. So we pro-actively remove any spaces
 	// to make parsing easier.
 	v4Auth = strings.Replace(v4Auth, " ", "", -1)
 	if v4Auth == "" {
-		return sv, ErrAuthHeaderEmpty
+		return sv, s3err.ErrAuthHeaderEmpty
 	}
 
 	// Verify if the header algorithm is supported or not.
 	if !strings.HasPrefix(v4Auth, signV4Algorithm) {
-		return sv, ErrSignatureVersionNotSupported
+		return sv, s3err.ErrSignatureVersionNotSupported
 	}
 
 	// Strip off the Algorithm prefix.
 	v4Auth = strings.TrimPrefix(v4Auth, signV4Algorithm)
 	authFields := strings.Split(strings.TrimSpace(v4Auth), ",")
 	if len(authFields) != 3 {
-		return sv, ErrMissingFields
+		return sv, s3err.ErrMissingFields
 	}
 
 	// Initialize signature version '4' structured header.
 	signV4Values := signValues{}
 
-	var err ErrorCode
+	var err s3err.ErrorCode
 	// Save credentail values.
 	signV4Values.Credential, err = parseCredentialHeader(authFields[0])
-	if err != ErrNone {
+	if err != s3err.ErrNone {
 		return sv, err
 	}
 
 	// Save signed headers.
 	signV4Values.SignedHeaders, err = parseSignedHeader(authFields[1])
-	if err != ErrNone {
+	if err != s3err.ErrNone {
 		return sv, err
 	}
 
 	// Save signature.
 	signV4Values.Signature, err = parseSignature(authFields[2])
-	if err != ErrNone {
+	if err != s3err.ErrNone {
 		return sv, err
 	}
 
 	// Return the structure here.
-	return signV4Values, ErrNone
+	return signV4Values, s3err.ErrNone
 }
 
 // parse credentialHeader string into its structured form.
-func parseCredentialHeader(credElement string) (ch credentialHeader, aec ErrorCode) {
+func parseCredentialHeader(credElement string) (ch credentialHeader, aec s3err.ErrorCode) {
 	creds := strings.Split(strings.TrimSpace(credElement), "=")
 	if len(creds) != 2 {
-		return ch, ErrMissingFields
+		return ch, s3err.ErrMissingFields
 	}
 	if creds[0] != "Credential" {
-		return ch, ErrMissingCredTag
+		return ch, s3err.ErrMissingCredTag
 	}
 	credElements := strings.Split(strings.TrimSpace(creds[1]), "/")
 	if len(credElements) != 5 {
-		return ch, ErrCredMalformed
+		return ch, s3err.ErrCredMalformed
 	}
 	// Save access key id.
 	cred := credentialHeader{
@@ -251,69 +252,100 @@ func parseCredentialHeader(credElement string) (ch credentialHeader, aec ErrorCo
 	var e error
 	cred.scope.date, e = time.Parse(yyyymmdd, credElements[1])
 	if e != nil {
-		return ch, ErrMalformedCredentialDate
+		return ch, s3err.ErrMalformedCredentialDate
 	}
 
 	cred.scope.region = credElements[2]
 	cred.scope.service = credElements[3] // "s3"
 	cred.scope.request = credElements[4] // "aws4_request"
-	return cred, ErrNone
+	return cred, s3err.ErrNone
 }
 
 // Parse slice of signed headers from signed headers tag.
-func parseSignedHeader(signedHdrElement string) ([]string, ErrorCode) {
+func parseSignedHeader(signedHdrElement string) ([]string, s3err.ErrorCode) {
 	signedHdrFields := strings.Split(strings.TrimSpace(signedHdrElement), "=")
 	if len(signedHdrFields) != 2 {
-		return nil, ErrMissingFields
+		return nil, s3err.ErrMissingFields
 	}
 	if signedHdrFields[0] != "SignedHeaders" {
-		return nil, ErrMissingSignHeadersTag
+		return nil, s3err.ErrMissingSignHeadersTag
 	}
 	if signedHdrFields[1] == "" {
-		return nil, ErrMissingFields
+		return nil, s3err.ErrMissingFields
 	}
 	signedHeaders := strings.Split(signedHdrFields[1], ";")
-	return signedHeaders, ErrNone
+	return signedHeaders, s3err.ErrNone
 }
 
 // Parse signature from signature tag.
-func parseSignature(signElement string) (string, ErrorCode) {
+func parseSignature(signElement string) (string, s3err.ErrorCode) {
 	signFields := strings.Split(strings.TrimSpace(signElement), "=")
 	if len(signFields) != 2 {
-		return "", ErrMissingFields
+		return "", s3err.ErrMissingFields
 	}
 	if signFields[0] != "Signature" {
-		return "", ErrMissingSignTag
+		return "", s3err.ErrMissingSignTag
 	}
 	if signFields[1] == "" {
-		return "", ErrMissingFields
+		return "", s3err.ErrMissingFields
 	}
 	signature := signFields[1]
-	return signature, ErrNone
+	return signature, s3err.ErrNone
+}
+
+// doesPolicySignatureMatch - Verify query headers with post policy
+//     - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-HTTPPOSTConstructPolicy.html
+// returns ErrNone if the signature matches.
+func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.Header) s3err.ErrorCode {
+
+	// Parse credential tag.
+	credHeader, err := parseCredentialHeader("Credential=" + formValues.Get("X-Amz-Credential"))
+	if err != s3err.ErrNone {
+		return s3err.ErrMissingFields
+	}
+
+	_, cred, found := iam.lookupByAccessKey(credHeader.accessKey)
+	if !found {
+		return s3err.ErrInvalidAccessKeyID
+	}
+
+	// Get signing key.
+	signingKey := getSigningKey(cred.SecretKey, credHeader.scope.date, credHeader.scope.region)
+
+	// Get signature.
+	newSignature := getSignature(signingKey, formValues.Get("Policy"))
+
+	// Verify signature.
+	if !compareSignatureV4(newSignature, formValues.Get("X-Amz-Signature")) {
+		return s3err.ErrSignatureDoesNotMatch
+	}
+
+	// Success.
+	return s3err.ErrNone
 }
 
 // check query headers with presigned signature
 //  - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html
-func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload string, r *http.Request) (*Identity, ErrorCode) {
+func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload string, r *http.Request) (*Identity, s3err.ErrorCode) {
 
 	// Copy request
 	req := *r
 
 	// Parse request query string.
 	pSignValues, err := parsePreSignV4(req.URL.Query())
-	if err != ErrNone {
+	if err != s3err.ErrNone {
 		return nil, err
 	}
 
 	// Verify if the access key id matches.
 	identity, cred, found := iam.lookupByAccessKey(pSignValues.Credential.accessKey)
 	if !found {
-		return nil, ErrInvalidAccessKeyID
+		return nil, s3err.ErrInvalidAccessKeyID
 	}
 
 	// Extract all the signed headers along with its values.
 	extractedSignedHeaders, errCode := extractSignedHeaders(pSignValues.SignedHeaders, r)
-	if errCode != ErrNone {
+	if errCode != s3err.ErrNone {
 		return nil, errCode
 	}
 	// Construct new query.
@@ -329,11 +361,11 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 	// If the host which signed the request is slightly ahead in time (by less than globalMaxSkewTime) the
 	// request should still be allowed.
 	if pSignValues.Date.After(now.Add(15 * time.Minute)) {
-		return nil, ErrRequestNotReadyYet
+		return nil, s3err.ErrRequestNotReadyYet
 	}
 
 	if now.Sub(pSignValues.Date) > pSignValues.Expires {
-		return nil, ErrExpiredPresignRequest
+		return nil, s3err.ErrExpiredPresignRequest
 	}
 
 	// Save the date and expires.
@@ -365,24 +397,24 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 
 	// Verify if date query is same.
 	if req.URL.Query().Get("X-Amz-Date") != query.Get("X-Amz-Date") {
-		return nil, ErrSignatureDoesNotMatch
+		return nil, s3err.ErrSignatureDoesNotMatch
 	}
 	// Verify if expires query is same.
 	if req.URL.Query().Get("X-Amz-Expires") != query.Get("X-Amz-Expires") {
-		return nil, ErrSignatureDoesNotMatch
+		return nil, s3err.ErrSignatureDoesNotMatch
 	}
 	// Verify if signed headers query is same.
 	if req.URL.Query().Get("X-Amz-SignedHeaders") != query.Get("X-Amz-SignedHeaders") {
-		return nil, ErrSignatureDoesNotMatch
+		return nil, s3err.ErrSignatureDoesNotMatch
 	}
 	// Verify if credential query is same.
 	if req.URL.Query().Get("X-Amz-Credential") != query.Get("X-Amz-Credential") {
-		return nil, ErrSignatureDoesNotMatch
+		return nil, s3err.ErrSignatureDoesNotMatch
 	}
 	// Verify if sha256 payload query is same.
 	if req.URL.Query().Get("X-Amz-Content-Sha256") != "" {
 		if req.URL.Query().Get("X-Amz-Content-Sha256") != query.Get("X-Amz-Content-Sha256") {
-			return nil, ErrContentSHA256Mismatch
+			return nil, s3err.ErrContentSHA256Mismatch
 		}
 	}
 
@@ -402,9 +434,9 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 
 	// Verify signature.
 	if !compareSignatureV4(req.URL.Query().Get("X-Amz-Signature"), newSignature) {
-		return nil, ErrSignatureDoesNotMatch
+		return nil, s3err.ErrSignatureDoesNotMatch
 	}
-	return identity, ErrNone
+	return identity, s3err.ErrNone
 }
 
 func contains(list []string, elem string) bool {
@@ -433,28 +465,28 @@ type preSignValues struct {
 //   querystring += &X-Amz-Signature=signature
 //
 // verifies if any of the necessary query params are missing in the presigned request.
-func doesV4PresignParamsExist(query url.Values) ErrorCode {
+func doesV4PresignParamsExist(query url.Values) s3err.ErrorCode {
 	v4PresignQueryParams := []string{"X-Amz-Algorithm", "X-Amz-Credential", "X-Amz-Signature", "X-Amz-Date", "X-Amz-SignedHeaders", "X-Amz-Expires"}
 	for _, v4PresignQueryParam := range v4PresignQueryParams {
 		if _, ok := query[v4PresignQueryParam]; !ok {
-			return ErrInvalidQueryParams
+			return s3err.ErrInvalidQueryParams
 		}
 	}
-	return ErrNone
+	return s3err.ErrNone
 }
 
 // Parses all the presigned signature values into separate elements.
-func parsePreSignV4(query url.Values) (psv preSignValues, aec ErrorCode) {
-	var err ErrorCode
+func parsePreSignV4(query url.Values) (psv preSignValues, aec s3err.ErrorCode) {
+	var err s3err.ErrorCode
 	// verify whether the required query params exist.
 	err = doesV4PresignParamsExist(query)
-	if err != ErrNone {
+	if err != s3err.ErrNone {
 		return psv, err
 	}
 
 	// Verify if the query algorithm is supported or not.
 	if query.Get("X-Amz-Algorithm") != signV4Algorithm {
-		return psv, ErrInvalidQuerySignatureAlgo
+		return psv, s3err.ErrInvalidQuerySignatureAlgo
 	}
 
 	// Initialize signature version '4' structured header.
@@ -462,7 +494,7 @@ func parsePreSignV4(query url.Values) (psv preSignValues, aec ErrorCode) {
 
 	// Save credential.
 	preSignV4Values.Credential, err = parseCredentialHeader("Credential=" + query.Get("X-Amz-Credential"))
-	if err != ErrNone {
+	if err != s3err.ErrNone {
 		return psv, err
 	}
 
@@ -470,47 +502,47 @@ func parsePreSignV4(query url.Values) (psv preSignValues, aec ErrorCode) {
 	// Save date in native time.Time.
 	preSignV4Values.Date, e = time.Parse(iso8601Format, query.Get("X-Amz-Date"))
 	if e != nil {
-		return psv, ErrMalformedPresignedDate
+		return psv, s3err.ErrMalformedPresignedDate
 	}
 
 	// Save expires in native time.Duration.
 	preSignV4Values.Expires, e = time.ParseDuration(query.Get("X-Amz-Expires") + "s")
 	if e != nil {
-		return psv, ErrMalformedExpires
+		return psv, s3err.ErrMalformedExpires
 	}
 
 	if preSignV4Values.Expires < 0 {
-		return psv, ErrNegativeExpires
+		return psv, s3err.ErrNegativeExpires
 	}
 
 	// Check if Expiry time is less than 7 days (value in seconds).
 	if preSignV4Values.Expires.Seconds() > 604800 {
-		return psv, ErrMaximumExpires
+		return psv, s3err.ErrMaximumExpires
 	}
 
 	// Save signed headers.
 	preSignV4Values.SignedHeaders, err = parseSignedHeader("SignedHeaders=" + query.Get("X-Amz-SignedHeaders"))
-	if err != ErrNone {
+	if err != s3err.ErrNone {
 		return psv, err
 	}
 
 	// Save signature.
 	preSignV4Values.Signature, err = parseSignature("Signature=" + query.Get("X-Amz-Signature"))
-	if err != ErrNone {
+	if err != s3err.ErrNone {
 		return psv, err
 	}
 
 	// Return structed form of signature query string.
-	return preSignV4Values, ErrNone
+	return preSignV4Values, s3err.ErrNone
 }
 
 // extractSignedHeaders extract signed headers from Authorization header
-func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header, ErrorCode) {
+func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header, s3err.ErrorCode) {
 	reqHeaders := r.Header
 	// find whether "host" is part of list of signed headers.
 	// if not return ErrUnsignedHeaders. "host" is mandatory.
 	if !contains(signedHeaders, "host") {
-		return nil, ErrUnsignedHeaders
+		return nil, s3err.ErrUnsignedHeaders
 	}
 	extractedSignedHeaders := make(http.Header)
 	for _, header := range signedHeaders {
@@ -555,10 +587,10 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 			// calculation to be compatible with such clients.
 			extractedSignedHeaders.Set(header, strconv.FormatInt(r.ContentLength, 10))
 		default:
-			return nil, ErrUnsignedHeaders
+			return nil, s3err.ErrUnsignedHeaders
 		}
 	}
-	return extractedSignedHeaders, ErrNone
+	return extractedSignedHeaders, s3err.ErrNone
 }
 
 // getSignedHeaders generate a string i.e alphabetically sorted, semicolon-separated list of lowercase request header names

@@ -58,6 +58,12 @@ service SeaweedFiler {
     rpc LocateBroker (LocateBrokerRequest) returns (LocateBrokerResponse) {
     }
 
+    rpc KvGet (KvGetRequest) returns (KvGetResponse) {
+    }
+
+    rpc KvPut (KvPutRequest) returns (KvPutResponse) {
+    }
+
 }
 
 //////////////////////////////////////////////////
@@ -89,6 +95,8 @@ message Entry {
     repeated FileChunk chunks = 3;
     FuseAttributes attributes = 4;
     map<string, bytes> extended = 5;
+    bytes hard_link_id = 7;
+    int32 hard_link_counter = 8; // only exists in hard link meta data
 }
 
 message FullEntry {
@@ -102,6 +110,7 @@ message EventNotification {
     bool delete_chunks = 3;
     string new_parent_path = 4;
     bool is_from_other_cluster = 5;
+    repeated int32 signatures = 6;
 }
 
 message FileChunk {
@@ -150,6 +159,7 @@ message CreateEntryRequest {
     Entry entry = 2;
     bool o_excl = 3;
     bool is_from_other_cluster = 4;
+    repeated int32 signatures = 5;
 }
 
 message CreateEntryResponse {
@@ -160,6 +170,7 @@ message UpdateEntryRequest {
     string directory = 1;
     Entry entry = 2;
     bool is_from_other_cluster = 3;
+    repeated int32 signatures = 4;
 }
 message UpdateEntryResponse {
 }
@@ -180,6 +191,7 @@ message DeleteEntryRequest {
     bool is_recursive = 5;
     bool ignore_recursive_error = 6;
     bool is_from_other_cluster = 7;
+    repeated int32 signatures = 8;
 }
 
 message DeleteEntryResponse {
@@ -262,12 +274,16 @@ message GetFilerConfigurationResponse {
     uint32 max_mb = 4;
     string dir_buckets = 5;
     bool cipher = 7;
+    int32 signature = 8;
+    string metrics_address = 9;
+    int32 metrics_interval_sec = 10;
 }
 
 message SubscribeMetadataRequest {
     string client_name = 1;
     string path_prefix = 2;
     int64 since_ns = 3;
+    int32 signature = 4;
 }
 message SubscribeMetadataResponse {
     string directory = 1;
@@ -301,4 +317,20 @@ message LocateBrokerResponse {
         int32 resource_count = 2;
     }
     repeated Resource resources = 2;
+}
+
+// Key-Value operations
+message KvGetRequest {
+    bytes key = 1;
+}
+message KvGetResponse {
+    bytes value = 1;
+    string error = 2;
+}
+message KvPutRequest {
+    bytes key = 1;
+    bytes value = 2;
+}
+message KvPutResponse {
+    string error = 1;
 }

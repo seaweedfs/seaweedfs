@@ -45,13 +45,18 @@ func LoadClientTLS(config *viper.Viper, component string) grpc.DialOption {
 		return grpc.WithInsecure()
 	}
 
+	certFileName, keyFileName, caFileName := config.GetString(component+".cert"), config.GetString(component+".key"), config.GetString(component+".ca")
+	if certFileName == "" || keyFileName == "" || caFileName == "" {
+		return grpc.WithInsecure()
+	}
+
 	// load cert/key, cacert
-	cert, err := tls.LoadX509KeyPair(config.GetString(component+".cert"), config.GetString(component+".key"))
+	cert, err := tls.LoadX509KeyPair(certFileName, keyFileName)
 	if err != nil {
 		glog.V(1).Infof("load cert/key error: %v", err)
 		return grpc.WithInsecure()
 	}
-	caCert, err := ioutil.ReadFile(config.GetString(component + ".ca"))
+	caCert, err := ioutil.ReadFile(caFileName)
 	if err != nil {
 		glog.V(1).Infof("read ca cert file error: %v", err)
 		return grpc.WithInsecure()

@@ -23,6 +23,10 @@ const (
 	MAX_TTL_VOLUME_REMOVAL_DELAY = 10 // 10 minutes
 )
 
+type ReadOption struct {
+	ReadDeleted bool
+}
+
 /*
  * A VolumeServer contains one Store
  */
@@ -273,7 +277,7 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, fsync boo
 	return
 }
 
-func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (uint32, error) {
+func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (Size, error) {
 	if v := s.findVolume(i); v != nil {
 		if v.noWriteOrDelete {
 			return 0, fmt.Errorf("volume %d is read only", i)
@@ -283,9 +287,9 @@ func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (uint32,
 	return 0, fmt.Errorf("volume %d not found on %s:%d", i, s.Ip, s.Port)
 }
 
-func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle) (int, error) {
+func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle, readOption *ReadOption) (int, error) {
 	if v := s.findVolume(i); v != nil {
-		return v.readNeedle(n)
+		return v.readNeedle(n, readOption)
 	}
 	return 0, fmt.Errorf("volume %d not found", i)
 }
@@ -303,7 +307,20 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId) error {
 	if v == nil {
 		return fmt.Errorf("volume %d not found", i)
 	}
+	v.noWriteLock.Lock()
 	v.noWriteOrDelete = true
+	v.noWriteLock.Unlock()
+	return nil
+}
+
+func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
+	v := s.findVolume(i)
+	if v == nil {
+		return fmt.Errorf("volume %d not found", i)
+	}
+	v.noWriteLock.Lock()
+	v.noWriteOrDelete = false
+	v.noWriteLock.Unlock()
 	return nil
 }
 
@@ -363,10 +380,12 @@ func (s *Store) DeleteVolume(i needle.VolumeId) error {
 		Ttl:              v.Ttl.ToUint32(),
 	}
 	for _, location := range s.Locations {
-		if found, error := location.deleteVolumeById(i); found && error == nil {
+		if err := location.DeleteVolume(i); err == nil {
 			glog.V(0).Infof("DeleteVolume %d", i)
 			s.DeletedVolumesChan <- message
 			return nil
+		} else {
+			glog.Errorf("DeleteVolume %d: %v", i, err)
 		}
 	}
 

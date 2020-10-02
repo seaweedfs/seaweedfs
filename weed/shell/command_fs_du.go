@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -70,9 +70,9 @@ func duTraverseDirectory(writer io.Writer, filerClient filer_pb.FilerClient, dir
 			}
 		} else {
 			fileBlockCount = uint64(len(entry.Chunks))
-			fileByteCount = filer2.TotalSize(entry.Chunks)
-			blockCount += uint64(len(entry.Chunks))
-			byteCount += filer2.TotalSize(entry.Chunks)
+			fileByteCount = filer.FileSize(entry)
+			blockCount += fileBlockCount
+			byteCount += fileByteCount
 		}
 
 		if name != "" && !entry.IsDirectory {

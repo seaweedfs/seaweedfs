@@ -70,7 +70,10 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 	glog.V(1).Infof("%s masterClient Connecting to master %v", mc.clientType, master)
 	gprcErr := pb.WithMasterClient(master, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
 
-		stream, err := client.KeepConnected(context.Background())
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		stream, err := client.KeepConnected(ctx)
 		if err != nil {
 			glog.V(0).Infof("%s masterClient failed to keep connected to %s: %v", mc.clientType, master, err)
 			return err

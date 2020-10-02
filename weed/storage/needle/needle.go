@@ -24,7 +24,7 @@ const (
 type Needle struct {
 	Cookie Cookie   `comment:"random number to mitigate brute force lookups"`
 	Id     NeedleId `comment:"needle id"`
-	Size   uint32   `comment:"sum of DataSize,Data,NameSize,Name,MimeSize,Mime"`
+	Size   Size     `comment:"sum of DataSize,Data,NameSize,Name,MimeSize,Mime"`
 
 	DataSize     uint32 `comment:"Data size"` //version2
 	Data         []byte `comment:"The actual file data"`
@@ -48,7 +48,7 @@ func (n *Needle) String() (str string) {
 	return
 }
 
-func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit int64) (n *Needle, originalSize int, e error) {
+func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit int64) (n *Needle, originalSize int, contentMd5 string, e error) {
 	n = new(Needle)
 	pu, e := ParseUpload(r, sizeLimit)
 	if e != nil {
@@ -58,6 +58,7 @@ func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit 
 	originalSize = pu.OriginalDataSize
 	n.LastModified = pu.ModifiedTime
 	n.Ttl = pu.Ttl
+	contentMd5 = pu.ContentMd5
 
 	if len(pu.FileName) < 256 {
 		n.Name = []byte(pu.FileName)

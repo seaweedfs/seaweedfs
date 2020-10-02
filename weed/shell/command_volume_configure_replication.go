@@ -28,7 +28,7 @@ func (c *commandVolumeConfigureReplication) Name() string {
 func (c *commandVolumeConfigureReplication) Help() string {
 	return `change volume replication value
 
-	This command changes a volume replication value. It should be followed by volume.fix.replication.
+	This command changes a volume replication value. It should be followed by "volume.fix.replication".
 
 `
 }

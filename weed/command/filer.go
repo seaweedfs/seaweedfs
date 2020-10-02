@@ -1,6 +1,7 @@
 package command
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,11 +14,14 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/server"
+	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 var (
-	f FilerOptions
+	f              FilerOptions
+	filerStartS3   *bool
+	filerS3Options S3Options
 )
 
 type FilerOptions struct {
@@ -36,6 +40,7 @@ type FilerOptions struct {
 	disableHttp             *bool
 	cipher                  *bool
 	peers                   *string
+	metricsHttpPort         *int
 
 	// default leveldb directory, used in "weed server" mode
 	defaultLevelDbDirectory *string
@@ -49,7 +54,7 @@ func init() {
 	f.bindIp = cmdFiler.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
 	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
-	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "000", "default replication type if not specified")
+	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "", "default replication type. If not specified, use master setting.")
 	f.disableDirListing = cmdFiler.Flag.Bool("disableDirListing", false, "turn off directory listing")
 	f.maxMB = cmdFiler.Flag.Int("maxMB", 32, "split files larger than the limit")
 	f.dirListingLimit = cmdFiler.Flag.Int("dirListLimit", 100000, "limit sub dir listing size")
@@ -57,6 +62,15 @@ func init() {
 	f.disableHttp = cmdFiler.Flag.Bool("disableHttp", false, "disable http request, only gRpc operations are allowed")
 	f.cipher = cmdFiler.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
 	f.peers = cmdFiler.Flag.String("peers", "", "all filers sharing the same filer store in comma separated ip:port list")
+	f.metricsHttpPort = cmdFiler.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
+
+	// start s3 on filer
+	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
+	filerS3Options.port = cmdFiler.Flag.Int("s3.port", 8333, "s3 server http listen port")
+	filerS3Options.domainName = cmdFiler.Flag.String("s3.domainName", "", "suffix of the host name, {bucket}.{domainName}")
+	filerS3Options.tlsPrivateKey = cmdFiler.Flag.String("s3.key.file", "", "path to the TLS private key file")
+	filerS3Options.tlsCertificate = cmdFiler.Flag.String("s3.cert.file", "", "path to the TLS certificate file")
+	filerS3Options.config = cmdFiler.Flag.String("s3.config", "", "path to the config file")
 }
 
 var cmdFiler = &Command{
@@ -83,6 +97,17 @@ var cmdFiler = &Command{
 func runFiler(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
+
+	go stats_collect.StartMetricsServer(*f.metricsHttpPort)
+
+	if *filerStartS3 {
+		filerAddress := fmt.Sprintf("%s:%d", *f.ip, *f.port)
+		filerS3Options.filer = &filerAddress
+		go func() {
+			time.Sleep(2 * time.Second)
+			filerS3Options.startS3Server()
+		}()
+	}
 
 	f.startFiler()
 
@@ -152,7 +177,7 @@ func (fo *FilerOptions) startFiler() {
 
 	// starting grpc server
 	grpcPort := *fo.port + 10000
-	grpcL, err := util.NewListener(":"+strconv.Itoa(grpcPort), 0)
+	grpcL, err := util.NewListener(*fo.bindIp+":"+strconv.Itoa(grpcPort), 0)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}

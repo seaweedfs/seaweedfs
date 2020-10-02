@@ -2,7 +2,7 @@ package shell
 
 import (
 	"context"
-	"fmt"
+	"flag"
 	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -25,7 +25,7 @@ func (c *commandVolumeMount) Name() string {
 func (c *commandVolumeMount) Help() string {
 	return `mount a volume from one volume server
 
-	volume.mount <volume server host:port> <volume id>
+	volume.mount -node <volume server host:port> -volumeId <volume id>
 
 	This command mounts a volume from one volume server.
 
@@ -38,16 +38,16 @@ func (c *commandVolumeMount) Do(args []string, commandEnv *CommandEnv, writer io
 		return
 	}
 
-	if len(args) != 2 {
-		fmt.Fprintf(writer, "received args: %+v\n", args)
-		return fmt.Errorf("need 2 args of <volume server host:port> <volume id>")
+	volMountCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	volumeIdInt := volMountCommand.Int("volumeId", 0, "the volume id")
+	nodeStr := volMountCommand.String("node", "", "the volume server <host>:<port>")
+	if err = volMountCommand.Parse(args); err != nil {
+		return nil
 	}
-	sourceVolumeServer, volumeIdString := args[0], args[1]
 
-	volumeId, err := needle.NewVolumeId(volumeIdString)
-	if err != nil {
-		return fmt.Errorf("wrong volume id format %s: %v", volumeId, err)
-	}
+	sourceVolumeServer := *nodeStr
+
+	volumeId := needle.VolumeId(*volumeIdInt)
 
 	return mountVolume(commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer)
 

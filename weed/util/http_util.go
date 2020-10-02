@@ -174,7 +174,7 @@ func GetUrlStream(url string, values url.Values, readFn func(io.Reader) error) e
 	return readFn(r.Body)
 }
 
-func DownloadFile(fileUrl string) (filename string, header http.Header, rc io.ReadCloser, e error) {
+func DownloadFile(fileUrl string) (filename string, header http.Header, resp *http.Response, e error) {
 	response, err := client.Get(fileUrl)
 	if err != nil {
 		return "", nil, nil, err
@@ -188,7 +188,7 @@ func DownloadFile(fileUrl string) (filename string, header http.Header, rc io.Re
 			filename = strings.Trim(filename, "\"")
 		}
 	}
-	rc = response.Body
+	resp = response
 	return
 }
 
@@ -368,6 +368,7 @@ func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, e
 	if err != nil {
 		return nil, err
 	}
+	defer CloseResponse(r)
 	if r.StatusCode >= 400 {
 		return nil, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}

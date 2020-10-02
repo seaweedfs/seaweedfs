@@ -37,15 +37,12 @@ type Option struct {
 	EntryCacheTtl      time.Duration
 	Umask              os.FileMode
 
-	MountUid   uint32
-	MountGid   uint32
-	MountMode  os.FileMode
 	MountCtime time.Time
 	MountMtime time.Time
 
 	OutsideContainerClusterMode bool // whether the mount runs outside SeaweedFS containers
 	Cipher                      bool // whether encrypt data on volume server
-
+	UidGidMapper                *meta_cache.UidGidMapper
 }
 
 var _ = fs.FS(&WFS{})
@@ -63,9 +60,11 @@ type WFS struct {
 	stats statsCache
 
 	root        fs.Node
+	fsNodeCache *FsCache
 
-	chunkCache *chunk_cache.ChunkCache
+	chunkCache *chunk_cache.TieredChunkCache
 	metaCache  *meta_cache.MetaCache
+	signature  int32
 }
 type statsCache struct {
 	filer_pb.StatisticsResponse
@@ -81,25 +80,25 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 				return make([]byte, option.ChunkSizeLimit)
 			},
 		},
+		signature: util.RandomInt32(),
 	}
-	cacheUniqueId := util.Md5([]byte(option.FilerGrpcAddress + option.FilerMountRootPath + util.Version()))[0:4]
+	cacheUniqueId := util.Md5String([]byte(option.FilerGrpcAddress + option.FilerMountRootPath + util.Version()))[0:4]
 	cacheDir := path.Join(option.CacheDir, cacheUniqueId)
 	if option.CacheSizeMB > 0 {
-		os.MkdirAll(cacheDir, 0755)
-		wfs.chunkCache = chunk_cache.NewChunkCache(256, cacheDir, option.CacheSizeMB)
-		grace.OnInterrupt(func() {
-			wfs.chunkCache.Shutdown()
-		})
+		os.MkdirAll(cacheDir, os.FileMode(0777)&^option.Umask)
+		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, cacheDir, option.CacheSizeMB, 1024*1024)
 	}
 
-	wfs.metaCache = meta_cache.NewMetaCache(path.Join(cacheDir, "meta"))
+	wfs.metaCache = meta_cache.NewMetaCache(path.Join(cacheDir, "meta"), option.UidGidMapper)
 	startTime := time.Now()
-	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
+	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
 	grace.OnInterrupt(func() {
 		wfs.metaCache.Shutdown()
 	})
 
-	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs}
+	entry, _ := filer_pb.GetEntry(wfs, util.FullPath(wfs.option.FilerMountRootPath))
+	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs, entry: entry}
+	wfs.fsNodeCache = newFsCache(wfs.root)
 
 	return wfs
 }
@@ -111,7 +110,7 @@ func (wfs *WFS) Root() (fs.Node, error) {
 func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHandle) {
 
 	fullpath := file.fullpath()
-	glog.V(4).Infof("%s AcquireHandle uid=%d gid=%d", fullpath, uid, gid)
+	glog.V(4).Infof("AcquireHandle %s uid=%d gid=%d", fullpath, uid, gid)
 
 	wfs.handlesLock.Lock()
 	defer wfs.handlesLock.Unlock()
@@ -119,13 +118,16 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 	inodeId := file.fullpath().AsInode()
 	existingHandle, found := wfs.handles[inodeId]
 	if found && existingHandle != nil {
+		file.isOpen++
 		return existingHandle
 	}
 
 	fileHandle = newFileHandle(file, uid, gid)
+	file.maybeLoadEntry(context.Background())
+	file.isOpen++
+
 	wfs.handles[inodeId] = fileHandle
 	fileHandle.handle = inodeId
-	glog.V(4).Infof("%s new fh %d", fullpath, fileHandle.handle)
 
 	return
 }
@@ -201,4 +203,17 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 	resp.Frsize = uint32(blockSize)
 
 	return nil
+}
+
+func (wfs *WFS) mapPbIdFromFilerToLocal(entry *filer_pb.Entry) {
+	if entry.Attributes == nil {
+		return
+	}
+	entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
+}
+func (wfs *WFS) mapPbIdFromLocalToFiler(entry *filer_pb.Entry) {
+	if entry.Attributes == nil {
+		return
+	}
+	entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.LocalToFiler(entry.Attributes.Uid, entry.Attributes.Gid)
 }

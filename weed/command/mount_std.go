@@ -5,8 +5,8 @@ package command
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"os"
-	"os/user"
 	"path"
 	"runtime"
 	"strconv"
@@ -86,33 +86,17 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	fuse.Unmount(dir)
 
-	uid, gid := uint32(0), uint32(0)
-
 	// detect mount folder mode
 	if *option.dirAutoCreate {
-		os.MkdirAll(dir, 0755)
+		os.MkdirAll(dir, os.FileMode(0777)&^umask)
 	}
-	mountMode := os.ModeDir | 0755
 	fileInfo, err := os.Stat(dir)
-	if err == nil {
-		mountMode = os.ModeDir | fileInfo.Mode()
-		uid, gid = util.GetFileUidGid(fileInfo)
-		fmt.Printf("mount point owner uid=%d gid=%d mode=%s\n", uid, gid, fileInfo.Mode())
-	} else {
-		fmt.Printf("can not stat %s\n", dir)
-		return false
-	}
 
-	if uid == 0 {
-		if u, err := user.Current(); err == nil {
-			if parsedId, pe := strconv.ParseUint(u.Uid, 10, 32); pe == nil {
-				uid = uint32(parsedId)
-			}
-			if parsedId, pe := strconv.ParseUint(u.Gid, 10, 32); pe == nil {
-				gid = uint32(parsedId)
-			}
-			fmt.Printf("current uid=%d gid=%d\n", uid, gid)
-		}
+	// mapping uid, gid
+	uidGidMapper, err := meta_cache.NewUidGidMapper(*option.uidMap, *option.gidMap)
+	if err != nil {
+		fmt.Printf("failed to parse %s %s: %v\n", *option.uidMap, *option.gidMap, err)
+		return false
 	}
 
 	// Ensure target mount point availability
@@ -166,14 +150,12 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		CacheSizeMB:                 *option.cacheSizeMB,
 		DataCenter:                  *option.dataCenter,
 		EntryCacheTtl:               3 * time.Second,
-		MountUid:                    uid,
-		MountGid:                    gid,
-		MountMode:                   mountMode,
 		MountCtime:                  fileInfo.ModTime(),
 		MountMtime:                  time.Now(),
 		Umask:                       umask,
 		OutsideContainerClusterMode: *mountOptions.outsideContainerClusterMode,
 		Cipher:                      cipher,
+		UidGidMapper:                uidGidMapper,
 	})
 
 	// mount

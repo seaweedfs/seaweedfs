@@ -12,7 +12,7 @@ import (
 var (
 	MarkNeedleDeleted = func(file *os.File, offset int64) error {
 		b := make([]byte, types.SizeSize)
-		util.Uint32toBytes(b, types.TombstoneFileSize)
+		types.SizeToBytes(b, types.TombstoneFileSize)
 		n, err := file.WriteAt(b, offset+types.NeedleIdSize+types.OffsetSize)
 		if err != nil {
 			return fmt.Errorf("sorted needle write error: %v", err)

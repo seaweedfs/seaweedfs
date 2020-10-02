@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -17,7 +19,7 @@ func init() {
 }
 
 var cmdWatch = &Command{
-	UsageLine: "watch <wip> [-filer=localhost:8888] [-target=/]",
+	UsageLine: "watch [-filer=localhost:8888] [-target=/]",
 	Short:     "see recent changes on a filer",
 	Long: `See recent changes on a filer.
 
@@ -25,18 +27,61 @@ var cmdWatch = &Command{
 }
 
 var (
-	watchFiler  = cmdWatch.Flag.String("filer", "localhost:8888", "filer hostname:port")
-	watchTarget = cmdWatch.Flag.String("pathPrefix", "/", "path to a folder or file, or common prefix for the folders or files on filer")
-	watchStart  = cmdWatch.Flag.Duration("timeAgo", 0, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
+	watchFiler   = cmdWatch.Flag.String("filer", "localhost:8888", "filer hostname:port")
+	watchTarget  = cmdWatch.Flag.String("pathPrefix", "/", "path to a folder or file, or common prefix for the folders or files on filer")
+	watchStart   = cmdWatch.Flag.Duration("timeAgo", 0, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
+	watchPattern = cmdWatch.Flag.String("pattern", "", "full path or just filename pattern, ex: \"/home/?opher\", \"*.pdf\", see https://golang.org/pkg/path/filepath/#Match ")
 )
 
 func runWatch(cmd *Command, args []string) bool {
 
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
+	var filterFunc func(dir, fname string) bool
+	if *watchPattern != "" {
+		if strings.Contains(*watchPattern, "/") {
+			println("watch path pattern", *watchPattern)
+			filterFunc = func(dir, fname string) bool {
+				matched, err := filepath.Match(*watchPattern, dir+"/"+fname)
+				if err != nil {
+					fmt.Printf("error: %v", err)
+				}
+				return matched
+			}
+		} else {
+			println("watch file pattern", *watchPattern)
+			filterFunc = func(dir, fname string) bool {
+				matched, err := filepath.Match(*watchPattern, fname)
+				if err != nil {
+					fmt.Printf("error: %v", err)
+				}
+				return matched
+			}
+		}
+	}
+
+	shouldPrint := func(resp *filer_pb.SubscribeMetadataResponse) bool {
+		if filterFunc == nil {
+			return true
+		}
+		if resp.EventNotification.OldEntry == nil && resp.EventNotification.NewEntry == nil {
+			return false
+		}
+		if resp.EventNotification.OldEntry != nil && filterFunc(resp.Directory, resp.EventNotification.OldEntry.Name) {
+			return true
+		}
+		if resp.EventNotification.NewEntry != nil && filterFunc(resp.EventNotification.NewParentPath, resp.EventNotification.NewEntry.Name) {
+			return true
+		}
+		return false
+	}
+
 	watchErr := pb.WithFilerClient(*watchFiler, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 
-		stream, err := client.SubscribeMetadata(context.Background(), &filer_pb.SubscribeMetadataRequest{
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
 			ClientName: "watch",
 			PathPrefix: *watchTarget,
 			SinceNs:    time.Now().Add(-*watchStart).UnixNano(),
@@ -53,7 +98,10 @@ func runWatch(cmd *Command, args []string) bool {
 			if listenErr != nil {
 				return listenErr
 			}
-			fmt.Printf("events: %+v\n", resp.EventNotification)
+			if !shouldPrint(resp) {
+				continue
+			}
+			fmt.Printf("dir:%s %+v\n", resp.Directory, resp.EventNotification)
 		}
 
 	})

@@ -27,17 +27,12 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 
 		glog.V(0).Infof("volume %d already exists. deleted before copying...", req.VolumeId)
 
-		err := vs.store.UnmountVolume(needle.VolumeId(req.VolumeId))
-		if err != nil {
-			return nil, fmt.Errorf("failed to mount existing volume %d: %v", req.VolumeId, err)
-		}
-
-		err = vs.store.DeleteVolume(needle.VolumeId(req.VolumeId))
+		err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId))
 		if err != nil {
 			return nil, fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, err)
 		}
 
-		glog.V(0).Infof("deleted exisitng volume %d before copying.", req.VolumeId)
+		glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
 	}
 
 	location := vs.store.FindFreeLocation()

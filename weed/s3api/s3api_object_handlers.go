@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -36,30 +37,32 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	_, err := validateContentMd5(r.Header)
 	if err != nil {
-		writeErrorResponse(w, ErrInvalidDigest, r.URL)
+		writeErrorResponse(w, s3err.ErrInvalidDigest, r.URL)
 		return
 	}
 
-	rAuthType := getRequestAuthType(r)
 	dataReader := r.Body
-	var s3ErrCode ErrorCode
-	switch rAuthType {
-	case authTypeStreamingSigned:
-		dataReader, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
-	case authTypeSignedV2, authTypePresignedV2:
-		_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
-	case authTypePresigned, authTypeSigned:
-		_, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
-	}
-	if s3ErrCode != ErrNone {
-		writeErrorResponse(w, s3ErrCode, r.URL)
-		return
+	if s3a.iam.isEnabled() {
+		rAuthType := getRequestAuthType(r)
+		var s3ErrCode s3err.ErrorCode
+		switch rAuthType {
+		case authTypeStreamingSigned:
+			dataReader, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
+		case authTypeSignedV2, authTypePresignedV2:
+			_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
+		case authTypePresigned, authTypeSigned:
+			_, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
+		}
+		if s3ErrCode != s3err.ErrNone {
+			writeErrorResponse(w, s3ErrCode, r.URL)
+			return
+		}
 	}
 	defer dataReader.Close()
 
 	if strings.HasSuffix(object, "/") {
 		if err := s3a.mkdir(s3a.option.BucketsPath, bucket+object, nil); err != nil {
-			writeErrorResponse(w, ErrInternalError, r.URL)
+			writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 			return
 		}
 	} else {
@@ -67,7 +70,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
 
-		if errCode != ErrNone {
+		if errCode != s3err.ErrNone {
 			writeErrorResponse(w, errCode, r.URL)
 			return
 		}
@@ -83,7 +86,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	bucket, object := getBucketAndObject(r)
 
 	if strings.HasSuffix(r.URL.Path, "/") {
-		writeErrorResponse(w, ErrNotImplemented, r.URL)
+		writeErrorResponse(w, s3err.ErrNotImplemented, r.URL)
 		return
 	}
 
@@ -109,6 +112,12 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 
 	bucket, object := getBucketAndObject(r)
 
+	response, _ := s3a.listFilerEntries(bucket, object, 1, "", "/")
+	if len(response.Contents) != 0 && strings.HasSuffix(object, "/") {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	destUrl := fmt.Sprintf("http://%s%s/%s%s?recursive=true",
 		s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
 
@@ -118,7 +127,6 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-
 }
 
 // / ObjectIdentifier carries key name for the object to delete.
@@ -159,13 +167,13 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 	deleteXMLBytes, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		writeErrorResponse(w, ErrInternalError, r.URL)
+		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
 
 	deleteObjects := &DeleteObjectsRequest{}
 	if err := xml.Unmarshal(deleteXMLBytes, deleteObjects); err != nil {
-		writeErrorResponse(w, ErrMalformedXML, r.URL)
+		writeErrorResponse(w, s3err.ErrMalformedXML, r.URL)
 		return
 	}
 
@@ -175,6 +183,11 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		for _, object := range deleteObjects.Objects {
+			response, _ := s3a.listFilerEntries(bucket, object.ObjectName, 1, "", "/")
+			if len(response.Contents) != 0 && strings.HasSuffix(object.ObjectName, "/") {
+				continue
+			}
+
 			lastSeparator := strings.LastIndex(object.ObjectName, "/")
 			parentDirectoryPath, entryName, isDeleteData, isRecursive := "/", object.ObjectName, true, true
 			if lastSeparator > 0 && lastSeparator+1 < len(object.ObjectName) {
@@ -207,6 +220,15 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 }
 
+var passThroughHeaders = []string{
+	"response-cache-control",
+	"response-content-disposition",
+	"response-content-encoding",
+	"response-content-language",
+	"response-content-type",
+	"response-expires",
+}
+
 func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, responseFn func(proxyResponse *http.Response, w http.ResponseWriter)) {
 
 	glog.V(2).Infof("s3 proxying %s to %s", r.Method, destUrl)
@@ -215,7 +237,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", destUrl, err)
-		writeErrorResponse(w, ErrInternalError, r.URL)
+		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
 
@@ -223,6 +245,19 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
 
 	for header, values := range r.Header {
+		// handle s3 related headers
+		passed := false
+		for _, h := range passThroughHeaders {
+			if strings.ToLower(header) == h && len(values) > 0 {
+				proxyReq.Header.Add(header[len("response-"):], values[0])
+				passed = true
+				break
+			}
+		}
+		if passed {
+			continue
+		}
+		// handle other headers
 		for _, value := range values {
 			proxyReq.Header.Add(header, value)
 		}
@@ -230,14 +265,14 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 
 	resp, postErr := client.Do(proxyReq)
 
-	if resp.ContentLength == -1 {
-		writeErrorResponse(w, ErrNoSuchKey, r.URL)
+	if resp.ContentLength == -1 && !strings.HasSuffix(destUrl, "/") {
+		writeErrorResponse(w, s3err.ErrNoSuchKey, r.URL)
 		return
 	}
 
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)
-		writeErrorResponse(w, ErrInternalError, r.URL)
+		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
 	defer util.CloseResponse(resp)
@@ -245,6 +280,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	responseFn(resp, w)
 
 }
+
 func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) {
 	for k, v := range proxyResponse.Header {
 		w.Header()[k] = v
@@ -253,7 +289,7 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) {
 	io.Copy(w, proxyResponse.Body)
 }
 
-func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader) (etag string, code ErrorCode) {
+func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader) (etag string, code s3err.ErrorCode) {
 
 	hash := md5.New()
 	var body = io.TeeReader(dataReader, hash)
@@ -262,7 +298,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", uploadUrl, err)
-		return "", ErrInternalError
+		return "", s3err.ErrInternalError
 	}
 
 	proxyReq.Header.Set("Host", s3a.option.Filer)
@@ -278,7 +314,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)
-		return "", ErrInternalError
+		return "", s3err.ErrInternalError
 	}
 	defer resp.Body.Close()
 
@@ -287,20 +323,20 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	resp_body, ra_err := ioutil.ReadAll(resp.Body)
 	if ra_err != nil {
 		glog.Errorf("upload to filer response read: %v", ra_err)
-		return etag, ErrInternalError
+		return etag, s3err.ErrInternalError
 	}
 	var ret weed_server.FilerPostResult
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
 		glog.Errorf("failing to read upload to %s : %v", uploadUrl, string(resp_body))
-		return "", ErrInternalError
+		return "", s3err.ErrInternalError
 	}
 	if ret.Error != "" {
 		glog.Errorf("upload to filer error: %v", ret.Error)
-		return "", ErrInternalError
+		return "", s3err.ErrInternalError
 	}
 
-	return etag, ErrNone
+	return etag, s3err.ErrNone
 }
 
 func setEtag(w http.ResponseWriter, etag string) {

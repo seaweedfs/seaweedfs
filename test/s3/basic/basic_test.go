@@ -61,7 +61,7 @@ func TestCreateBucket(t *testing.T) {
 
 }
 
-func TestListBuckets(t *testing.T) {
+func TestPutObject(t *testing.T) {
 
 	input := &s3.PutObjectInput{
 		ACL:    aws.String("authenticated-read"),
@@ -89,7 +89,7 @@ func TestListBuckets(t *testing.T) {
 
 }
 
-func TestPutObject(t *testing.T) {
+func TestListBucket(t *testing.T) {
 
 	result, err := svc.ListBuckets(nil)
 	if err != nil {
@@ -102,6 +102,23 @@ func TestPutObject(t *testing.T) {
 		fmt.Printf("* %s created on %s\n",
 			aws.StringValue(b.Name), aws.TimeValue(b.CreationDate))
 	}
+
+}
+
+func TestListObjectV2(t *testing.T) {
+
+	listObj, err := svc.ListObjectsV2(&s3.ListObjectsV2Input{
+		Bucket: aws.String(Bucket),
+		Prefix: aws.String("foo"),
+		Delimiter: aws.String("/"),
+	})
+	if err != nil {
+		exitErrorf("Unable to list objects, %v", err)
+	}
+	for _, content := range listObj.Contents {
+		fmt.Println(aws.StringValue(content.Key))
+	}
+	fmt.Printf("list: %s\n", listObj)
 
 }
 
