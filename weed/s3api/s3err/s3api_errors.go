@@ -61,6 +61,7 @@ const (
 	ErrInternalError
 	ErrInvalidCopyDest
 	ErrInvalidCopySource
+	ErrInvalidTag
 	ErrAuthHeaderEmpty
 	ErrSignatureVersionNotSupported
 	ErrMalformedPOSTRequest
@@ -186,6 +187,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidCopySource: {
 		Code:           "InvalidArgument",
 		Description:    "Copy Source must mention the source bucket and key: sourcebucket/sourcekey.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidTag: {
+		Code:           "InvalidArgument",
+		Description:    "The Tag value you have provided is invalid",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrMalformedXML: {
