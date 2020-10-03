@@ -52,7 +52,7 @@ func (s StateMachine) Recovery(data []byte) error {
 	return nil
 }
 
-func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr, dataDir string, topo *topology.Topology, pulseSeconds int, cleanState bool) (*RaftServer, error) {
+func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr, dataDir string, topo *topology.Topology, pulseSeconds int, raftResumeState bool) (*RaftServer, error) {
 	s := &RaftServer{
 		peers:      peers,
 		serverAddr: serverAddr,
@@ -70,7 +70,7 @@ func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr, d
 	transporter := raft.NewGrpcTransporter(grpcDialOption)
 	glog.V(0).Infof("Starting RaftServer with %v", serverAddr)
 
-	if cleanState {
+	if !raftResumeState {
 		// always clear previous metadata
 		os.RemoveAll(path.Join(s.dataDir, "conf"))
 		os.RemoveAll(path.Join(s.dataDir, "log"))

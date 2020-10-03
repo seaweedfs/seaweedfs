@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go v1.33.5
 	github.com/buraksezer/consistent v0.0.0-20191006190839-693edf70fd72
 	github.com/cespare/xxhash v1.1.0
-	github.com/chrislusf/raft v1.0.1
+	github.com/chrislusf/raft v1.0.2-0.20201002174524-b13c3bfdb011
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/disintegration/imaging v1.6.2
