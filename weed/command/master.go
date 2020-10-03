@@ -60,7 +60,7 @@ func init() {
 	m.disableHttp = cmdMaster.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
 	m.metricsAddress = cmdMaster.Flag.String("metrics.address", "", "Prometheus gateway address <host>:<port>")
 	m.metricsIntervalSec = cmdMaster.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
-	m.raftResumeState = cmdMaster.Flag.Bool("raft.resumeState", false, "resume state of raft on start master server")
+	m.raftResumeState = cmdMaster.Flag.Bool("resumeState", false, "resume previous state on start master server")
 }
 
 var cmdMaster = &Command{
