@@ -104,7 +104,24 @@ func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr, d
 		if err := s.raftServer.AddPeer(peer, pb.ServerToGrpcAddress(peer)); err != nil {
 			return nil, err
 		}
+	}
 
+	// Remove deleted peers
+	if raftResumeState {
+		for existsPeerName, _ := range s.raftServer.Peers() {
+			exists := false
+			for _, peer := range s.peers {
+				if peer == existsPeerName {
+					exists = true
+				}
+			}
+			if !exists {
+				if err := s.raftServer.RemovePeer(existsPeerName); err != nil {
+					glog.V(0).Infoln(err)
+					return nil, err
+				}
+			}
+		}
 	}
 
 	s.GrpcServer = raft.NewGrpcServer(s.raftServer)
