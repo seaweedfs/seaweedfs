@@ -3,7 +3,9 @@ package filer
 import (
 	"context"
 	"fmt"
+	"github.com/golang/groupcache/singleflight"
 	"io"
+	"math/rand"
 	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -19,7 +21,10 @@ type ChunkReadAt struct {
 	readerLock   sync.Mutex
 	fileSize     int64
 
-	chunkCache chunk_cache.ChunkCache
+	fetchGroup          singleflight.Group
+	lastChunkFileId     string
+	lastChunkData       []byte
+	chunkCache          chunk_cache.ChunkCache
 }
 
 // var _ = io.ReaderAt(&ChunkReadAt{})
@@ -27,28 +32,36 @@ type ChunkReadAt struct {
 type LookupFileIdFunctionType func(fileId string) (targetUrl string, err error)
 
 func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
+
+	vidCache := make(map[string]*filer_pb.Locations)
 	return func(fileId string) (targetUrl string, err error) {
-		err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-			vid := VolumeId(fileId)
-			resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
-				VolumeIds: []string{vid},
+		vid := VolumeId(fileId)
+		locations, found := vidCache[vid]
+
+		if !found {
+			// println("looking up volume", vid)
+			err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+				resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
+					VolumeIds: []string{vid},
+				})
+				if err != nil {
+					return err
+				}
+
+				locations = resp.LocationsMap[vid]
+				if locations == nil || len(locations.Locations) == 0 {
+					glog.V(0).Infof("failed to locate %s", fileId)
+					return fmt.Errorf("failed to locate %s", fileId)
+				}
+				vidCache[vid] = locations
+
+				return nil
 			})
-			if err != nil {
-				return err
-			}
+		}
 
-			locations := resp.LocationsMap[vid]
-			if locations == nil || len(locations.Locations) == 0 {
-				glog.V(0).Infof("failed to locate %s", fileId)
-				return fmt.Errorf("failed to locate %s", fileId)
-			}
+		volumeServerAddress := filerClient.AdjustedUrl(locations.Locations[rand.Intn(len(locations.Locations))].Url)
+		targetUrl = fmt.Sprintf("http://%s/%s", volumeServerAddress, fileId)
 
-			volumeServerAddress := filerClient.AdjustedUrl(locations.Locations[0].Url)
-
-			targetUrl = fmt.Sprintf("http://%s/%s", volumeServerAddress, fileId)
-
-			return nil
-		})
 		return
 	}
 }
@@ -76,9 +89,15 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
 	var buffer []byte
 	startOffset, remaining := offset, int64(len(p))
+	var nextChunk *ChunkView
 	for i, chunk := range c.chunkViews {
 		if remaining <= 0 {
 			break
+		}
+		if i+1 < len(c.chunkViews) {
+			nextChunk = c.chunkViews[i+1]
+		} else {
+			nextChunk = nil
 		}
 		if startOffset < chunk.LogicOffset {
 			gap := int(chunk.LogicOffset - startOffset)
@@ -95,7 +114,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 			continue
 		}
 		glog.V(4).Infof("read [%d,%d), %d/%d chunk %s [%d,%d)", chunkStart, chunkStop, i, len(c.chunkViews), chunk.FileId, chunk.LogicOffset-chunk.Offset, chunk.LogicOffset-chunk.Offset+int64(chunk.Size))
-		buffer, err = c.readFromWholeChunkData(chunk)
+		buffer, err = c.readFromWholeChunkData(chunk, nextChunk)
 		if err != nil {
 			glog.Errorf("fetching chunk %+v: %v\n", chunk, err)
 			return
@@ -123,27 +142,63 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
 }
 
-func (c *ChunkReadAt) readFromWholeChunkData(chunkView *ChunkView) (chunkData []byte, err error) {
+func (c *ChunkReadAt) readFromWholeChunkData(chunkView, nextChunkView *ChunkView) (chunkData []byte, err error) {
 
-	glog.V(4).Infof("readFromWholeChunkData %s offset %d [%d,%d) size at least %d", chunkView.FileId, chunkView.Offset, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size), chunkView.ChunkSize)
-
-	chunkData = c.chunkCache.GetChunk(chunkView.FileId, chunkView.ChunkSize)
-	if chunkData != nil {
-		glog.V(4).Infof("cache hit %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset-chunkView.Offset, chunkView.LogicOffset-chunkView.Offset+int64(len(chunkData)))
-	} else {
-		glog.V(4).Infof("doFetchFullChunkData %s", chunkView.FileId)
-		chunkData, err = c.doFetchFullChunkData(chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped)
-		if err != nil {
-			return
-		}
-		c.chunkCache.SetChunk(chunkView.FileId, chunkData)
+	if c.lastChunkFileId == chunkView.FileId {
+		return c.lastChunkData, nil
 	}
+
+	v, doErr := c.readOneWholeChunk(chunkView)
+
+	if doErr != nil {
+		return
+	}
+
+	chunkData = v.([]byte)
+
+	c.lastChunkData = chunkData
+	c.lastChunkFileId = chunkView.FileId
+
+	go func() {
+		if c.chunkCache != nil && nextChunkView != nil {
+			c.readOneWholeChunk(nextChunkView)
+		}
+	}()
 
 	return
 }
 
-func (c *ChunkReadAt) doFetchFullChunkData(fileId string, cipherKey []byte, isGzipped bool) ([]byte, error) {
+func (c *ChunkReadAt) readOneWholeChunk(chunkView *ChunkView) (interface{}, error) {
 
-	return fetchChunk(c.lookupFileId, fileId, cipherKey, isGzipped)
+	var err error
+
+	return c.fetchGroup.Do(chunkView.FileId, func() (interface{}, error) {
+
+		glog.V(4).Infof("readFromWholeChunkData %s offset %d [%d,%d) size at least %d", chunkView.FileId, chunkView.Offset, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size), chunkView.ChunkSize)
+
+		data := c.chunkCache.GetChunk(chunkView.FileId, chunkView.ChunkSize)
+		if data != nil {
+			glog.V(4).Infof("cache hit %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset-chunkView.Offset, chunkView.LogicOffset-chunkView.Offset+int64(len(data)))
+		} else {
+			var err error
+			data, err = c.doFetchFullChunkData(chunkView)
+			if err != nil {
+				return data, err
+			}
+			c.chunkCache.SetChunk(chunkView.FileId, data)
+		}
+		return data, err
+	})
+}
+
+func (c *ChunkReadAt) doFetchFullChunkData(chunkView *ChunkView) ([]byte, error) {
+
+	glog.V(2).Infof("+ doFetchFullChunkData %s", chunkView.FileId)
+
+	data, err := fetchChunk(c.lookupFileId, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped)
+
+	glog.V(2).Infof("- doFetchFullChunkData %s", chunkView.FileId)
+
+	return data, err
 
 }

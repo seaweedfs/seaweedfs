@@ -82,9 +82,9 @@ func (dir *Dir) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp *f
 func (dir *Dir) setRootDirAttributes(attr *fuse.Attr) {
 	attr.Inode = 1 // filer2.FullPath(dir.Path).AsInode()
 	attr.Valid = time.Hour
-	attr.Uid = dir.entry.Attributes.Uid
-	attr.Gid = dir.entry.Attributes.Gid
-	attr.Mode = os.FileMode(dir.entry.Attributes.FileMode)
+	attr.Uid = dir.wfs.option.MountUid
+	attr.Gid = dir.wfs.option.MountGid
+	attr.Mode = dir.wfs.option.MountMode
 	attr.Crtime = dir.wfs.option.MountCtime
 	attr.Ctime = dir.wfs.option.MountCtime
 	attr.Mtime = dir.wfs.option.MountMtime

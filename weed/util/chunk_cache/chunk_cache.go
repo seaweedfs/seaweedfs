@@ -76,7 +76,7 @@ func (c *TieredChunkCache) doGetChunk(fileId string, minSize uint64) (data []byt
 			return data
 		}
 	}
-	if minSize <= c.onDiskCacheSizeLimit2 {
+	{
 		data = c.diskCaches[2].getChunk(fid.Key)
 		if len(data) >= int(minSize) {
 			return data
@@ -115,7 +115,7 @@ func (c *TieredChunkCache) doSetChunk(fileId string, data []byte) {
 		c.diskCaches[0].setChunk(fid.Key, data)
 	} else if len(data) <= int(c.onDiskCacheSizeLimit1) {
 		c.diskCaches[1].setChunk(fid.Key, data)
-	} else if len(data) <= int(c.onDiskCacheSizeLimit2) {
+	} else {
 		c.diskCaches[2].setChunk(fid.Key, data)
 	}
 
