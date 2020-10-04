@@ -193,11 +193,11 @@ func (c *ChunkReadAt) readOneWholeChunk(chunkView *ChunkView) (interface{}, erro
 
 func (c *ChunkReadAt) doFetchFullChunkData(chunkView *ChunkView) ([]byte, error) {
 
-	glog.V(2).Infof("+ doFetchFullChunkData %s", chunkView.FileId)
+	glog.V(4).Infof("+ doFetchFullChunkData %s", chunkView.FileId)
 
 	data, err := fetchChunk(c.lookupFileId, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped)
 
-	glog.V(2).Infof("- doFetchFullChunkData %s", chunkView.FileId)
+	glog.V(4).Infof("- doFetchFullChunkData %s", chunkView.FileId)
 
 	return data, err
 
