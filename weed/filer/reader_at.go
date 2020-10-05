@@ -159,13 +159,11 @@ func (c *ChunkReadAt) readFromWholeChunkData(chunkView *ChunkView, nextChunkView
 	c.lastChunkData = chunkData
 	c.lastChunkFileId = chunkView.FileId
 
-	go func() {
-		for _, nextChunkView := range nextChunkViews {
-			if c.chunkCache != nil && nextChunkView != nil {
-				c.readOneWholeChunk(nextChunkView)
-			}
+	for _, nextChunkView := range nextChunkViews {
+		if c.chunkCache != nil && nextChunkView != nil {
+			go c.readOneWholeChunk(nextChunkView)
 		}
-	}()
+	}
 
 	return
 }
