@@ -142,7 +142,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
 }
 
-func (c *ChunkReadAt) readFromWholeChunkData(chunkView, nextChunkView *ChunkView) (chunkData []byte, err error) {
+func (c *ChunkReadAt) readFromWholeChunkData(chunkView *ChunkView, nextChunkViews... *ChunkView) (chunkData []byte, err error) {
 
 	if c.lastChunkFileId == chunkView.FileId {
 		return c.lastChunkData, nil
@@ -160,8 +160,10 @@ func (c *ChunkReadAt) readFromWholeChunkData(chunkView, nextChunkView *ChunkView
 	c.lastChunkFileId = chunkView.FileId
 
 	go func() {
-		if c.chunkCache != nil && nextChunkView != nil {
-			c.readOneWholeChunk(nextChunkView)
+		for _, nextChunkView := range nextChunkViews {
+			if c.chunkCache != nil && nextChunkView != nil {
+				c.readOneWholeChunk(nextChunkView)
+			}
 		}
 	}()
 
