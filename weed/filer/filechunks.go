@@ -1,13 +1,15 @@
 package filer
 
 import (
+	"bytes"
+	"encoding/hex"
 	"fmt"
-	"hash/fnv"
 	"math"
 	"sort"
 	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func TotalSize(chunks []*filer_pb.FileChunk) (size uint64) {
@@ -42,12 +44,12 @@ func ETagChunks(chunks []*filer_pb.FileChunk) (etag string) {
 	if len(chunks) == 1 {
 		return chunks[0].ETag
 	}
-
-	h := fnv.New32a()
+	md5_digests := [][]byte{}
 	for _, c := range chunks {
-		h.Write([]byte(c.ETag))
+		md5_decoded, _ := hex.DecodeString(c.ETag)
+		md5_digests = append(md5_digests, md5_decoded)
 	}
-	return fmt.Sprintf("%x", h.Sum32())
+	return fmt.Sprintf("%x-%d", util.Md5(bytes.Join(md5_digests, nil)), len(chunks))
 }
 
 func CompactFileChunks(lookupFileIdFn LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (compacted, garbage []*filer_pb.FileChunk) {
