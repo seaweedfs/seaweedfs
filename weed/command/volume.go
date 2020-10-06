@@ -138,6 +138,11 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 			glog.Fatalf("The max specified in -max not a valid number %s", maxString)
 		}
 	}
+	if len(v.folderMaxLimits) == 1 && len(v.folders) > 1 {
+		for i := 0; i < len(v.folders)-1; i++ {
+			v.folderMaxLimits = append(v.folderMaxLimits, v.folderMaxLimits[0])
+		}
+	}
 	if len(v.folders) != len(v.folderMaxLimits) {
 		glog.Fatalf("%d directories by -dir, but only %d max is set by -max", len(v.folders), len(v.folderMaxLimits))
 	}
