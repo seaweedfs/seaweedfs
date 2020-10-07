@@ -1,15 +1,16 @@
 package command
 
 import (
-	"net/http"
-	"os"
-	"runtime"
-	"strconv"
-	"strings"
-
 	"github.com/chrislusf/raft/protobuf"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc/reflection"
+	"net/http"
+	"os"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
 
@@ -141,6 +142,15 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOption.ipBind, grpcPort)
 	go grpcS.Serve(grpcL)
 
+	go func() {
+		time.Sleep(1500 * time.Millisecond)
+		if ms.Topo.RaftServer.Leader() == "" && ms.Topo.RaftServer.IsLogEmpty() && isTheFirstOne(myMasterAddress, peers) {
+			if ms.MasterClient.FindLeader(myMasterAddress) == "" {
+				raftServer.DoJoinCommand()
+			}
+		}
+	}()
+
 	go ms.MasterClient.KeepConnectedToMaster()
 
 	// start http server
@@ -172,6 +182,14 @@ func checkPeers(masterIp string, masterPort int, peers string) (masterAddress st
 		glog.Fatalf("Only odd number of masters are supported!")
 	}
 	return
+}
+
+func isTheFirstOne(self string, peers []string) bool {
+	sort.Strings(peers)
+	if len(peers) <= 0 {
+		return true
+	}
+	return self == peers[0]
 }
 
 func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {

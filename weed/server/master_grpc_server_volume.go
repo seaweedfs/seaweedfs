@@ -3,8 +3,6 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage/backend"
-
 	"github.com/chrislusf/raft"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -180,14 +178,3 @@ func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.Looku
 	return resp, nil
 }
 
-func (ms *MasterServer) GetMasterConfiguration(ctx context.Context, req *master_pb.GetMasterConfigurationRequest) (*master_pb.GetMasterConfigurationResponse, error) {
-
-	resp := &master_pb.GetMasterConfigurationResponse{
-		MetricsAddress:         ms.option.MetricsAddress,
-		MetricsIntervalSeconds: uint32(ms.option.MetricsIntervalSec),
-		StorageBackends:        backend.ToPbStorageBackends(),
-		DefaultReplication:     ms.option.DefaultReplicaPlacement,
-	}
-
-	return resp, nil
-}

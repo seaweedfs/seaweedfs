@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"net"
 	"strings"
 	"time"
@@ -300,5 +301,21 @@ func (ms *MasterServer) ListMasterClients(ctx context.Context, req *master_pb.Li
 			resp.GrpcAddresses = append(resp.GrpcAddresses, k[len(req.ClientType)+1:])
 		}
 	}
+	return resp, nil
+}
+
+func (ms *MasterServer) GetMasterConfiguration(ctx context.Context, req *master_pb.GetMasterConfigurationRequest) (*master_pb.GetMasterConfigurationResponse, error) {
+
+	// tell the volume servers about the leader
+	leader, _ := ms.Topo.Leader()
+
+	resp := &master_pb.GetMasterConfigurationResponse{
+		MetricsAddress:         ms.option.MetricsAddress,
+		MetricsIntervalSeconds: uint32(ms.option.MetricsIntervalSec),
+		StorageBackends:        backend.ToPbStorageBackends(),
+		DefaultReplication:     ms.option.DefaultReplicaPlacement,
+		Leader:                 leader,
+	}
+
 	return resp, nil
 }

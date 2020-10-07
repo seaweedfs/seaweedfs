@@ -138,13 +138,10 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	ms.Topo.RaftServer = raftServer.raftServer
 	ms.Topo.RaftServer.AddEventListener(raft.LeaderChangeEventType, func(e raft.Event) {
-		glog.V(0).Infof("event: %+v", e)
+		glog.V(0).Infof("leader change event: %+v => %+v", e.PrevValue(), e.Value())
 		if ms.Topo.RaftServer.Leader() != "" {
 			glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "becomes leader.")
 		}
-	})
-	ms.Topo.RaftServer.AddEventListener(raft.StateChangeEventType, func(e raft.Event) {
-		glog.V(0).Infof("state change: %+v", e)
 	})
 	if ms.Topo.IsLeader() {
 		glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", "I am the leader!")

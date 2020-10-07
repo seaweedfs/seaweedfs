@@ -275,6 +275,7 @@ message GetMasterConfigurationResponse {
     uint32 metrics_interval_seconds = 2;
     repeated StorageBackend storage_backends = 3;
     string default_replication = 4;
+    string leader = 5;
 }
 
 message ListMasterClientsRequest {
