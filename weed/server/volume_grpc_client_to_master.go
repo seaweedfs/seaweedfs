@@ -90,7 +90,7 @@ func (vs *VolumeServer) StopHeartbeat() (isAlreadyStopping bool) {
 		return true
 	}
 	vs.isHeartbeating = false
-	vs.stopChan <- true
+	close(vs.stopChan)
 	return false
 }
 
