@@ -6,7 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
-const(
+const (
 	S3TAG_PREFIX = "s3-"
 )
 
@@ -15,8 +15,8 @@ func (s3a *S3ApiServer) getTags(parentDirectoryPath string, entryName string) (t
 	err = s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		resp, err := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory:    parentDirectoryPath,
-			Name:         entryName,
+			Directory: parentDirectoryPath,
+			Name:      entryName,
 		})
 		if err != nil {
 			return err
@@ -37,8 +37,8 @@ func (s3a *S3ApiServer) setTags(parentDirectoryPath string, entryName string, ta
 	return s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		resp, err := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory:    parentDirectoryPath,
-			Name:         entryName,
+			Directory: parentDirectoryPath,
+			Name:      entryName,
 		})
 		if err != nil {
 			return err
@@ -73,8 +73,8 @@ func (s3a *S3ApiServer) rmTags(parentDirectoryPath string, entryName string) (er
 	return s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		resp, err := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory:    parentDirectoryPath,
-			Name:         entryName,
+			Directory: parentDirectoryPath,
+			Name:      entryName,
 		})
 		if err != nil {
 			return err
