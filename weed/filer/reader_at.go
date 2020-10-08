@@ -3,14 +3,14 @@ package filer
 import (
 	"context"
 	"fmt"
-	"github.com/golang/groupcache/singleflight"
-	"io"
-	"sync"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"github.com/golang/groupcache/singleflight"
+	"io"
+	"math/rand"
+	"sync"
 )
 
 type ChunkReadAt struct {
@@ -62,6 +62,11 @@ func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 			volumeServerAddress := filerClient.AdjustedUrl(loc.Url)
 			targetUrl := fmt.Sprintf("http://%s/%s", volumeServerAddress, fileId)
 			targetUrls = append(targetUrls, targetUrl)
+		}
+
+		for i := len(targetUrls) - 1; i > 0; i-- {
+			j := rand.Intn(i + 1)
+			targetUrls[i], targetUrls[j] = targetUrls[j], targetUrls[i]
 		}
 
 		return
