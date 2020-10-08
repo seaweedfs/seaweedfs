@@ -2,6 +2,7 @@ package B2Sink
 
 import (
 	"context"
+	"github.com/chrislusf/seaweedfs/weed/replication/repl_util"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
@@ -95,31 +96,18 @@ func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int
 	targetObject := bucket.Object(key)
 	writer := targetObject.NewWriter(context.Background())
 
-	for _, chunk := range chunkViews {
-
-		fileUrl, err := g.filerSource.LookupFileId(chunk.FileId)
-		if err != nil {
-			return err
-		}
-
-		var writeErr error
-		readErr := util.ReadUrlAsStream(fileUrl+"?readDeleted=true", nil, false, chunk.IsFullChunk(), chunk.Offset, int(chunk.Size), func(data []byte) {
-			_, err := writer.Write(data)
-			if err != nil {
-				writeErr = err
-			}
-		})
-
-		if readErr != nil {
-			return readErr
-		}
-		if writeErr != nil {
-			return writeErr
-		}
-
+	writeFunc := func(data []byte) error {
+		_, writeErr := writer.Write(data)
+		return writeErr
 	}
 
-	return writer.Close()
+	defer writer.Close()
+
+	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc); err != nil {
+		return err
+	}
+
+	return nil
 
 }
 

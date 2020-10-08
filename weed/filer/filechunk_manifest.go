@@ -84,21 +84,26 @@ func ResolveOneChunkManifest(lookupFileIdFn LookupFileIdFunctionType, chunk *fil
 
 // TODO fetch from cache for weed mount?
 func fetchChunk(lookupFileIdFn LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool) ([]byte, error) {
-	urlString, err := lookupFileIdFn(fileId)
+	urlStrings, err := lookupFileIdFn(fileId)
 	if err != nil {
 		glog.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
 		return nil, err
 	}
 	var buffer bytes.Buffer
-	err = util.ReadUrlAsStream(urlString, cipherKey, isGzipped, true, 0, 0, func(data []byte) {
-		buffer.Write(data)
-	})
-	if err != nil {
-		glog.V(0).Infof("read %s failed, err: %v", fileId, err)
-		return nil, err
+
+	for _, urlString := range urlStrings {
+		err = util.ReadUrlAsStream(urlString, cipherKey, isGzipped, true, 0, 0, func(data []byte) {
+			buffer.Write(data)
+		})
+		if err != nil {
+			glog.V(0).Infof("read %s failed, err: %v", fileId, err)
+			buffer.Reset()
+		} else {
+			break
+		}
 	}
 
-	return buffer.Bytes(), nil
+	return buffer.Bytes(), err
 }
 
 func MaybeManifestize(saveFunc SaveDataAsChunkFunctionType, inputChunks []*filer_pb.FileChunk) (chunks []*filer_pb.FileChunk, err error) {

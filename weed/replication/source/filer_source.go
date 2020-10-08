@@ -41,7 +41,7 @@ func (fs *FilerSource) DoInitialize(grpcAddress string, dir string) (err error) 
 	return nil
 }
 
-func (fs *FilerSource) LookupFileId(part string) (fileUrl string, err error) {
+func (fs *FilerSource) LookupFileId(part string) (fileUrls []string, err error) {
 
 	vid2Locations := make(map[string]*filer_pb.Locations)
 
@@ -64,29 +64,38 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrl string, err error) {
 
 	if err != nil {
 		glog.V(1).Infof("LookupFileId volume id %s: %v", vid, err)
-		return "", fmt.Errorf("LookupFileId volume id %s: %v", vid, err)
+		return nil, fmt.Errorf("LookupFileId volume id %s: %v", vid, err)
 	}
 
 	locations := vid2Locations[vid]
 
 	if locations == nil || len(locations.Locations) == 0 {
 		glog.V(1).Infof("LookupFileId locate volume id %s: %v", vid, err)
-		return "", fmt.Errorf("LookupFileId locate volume id %s: %v", vid, err)
+		return nil, fmt.Errorf("LookupFileId locate volume id %s: %v", vid, err)
 	}
 
-	fileUrl = fmt.Sprintf("http://%s/%s", locations.Locations[0].Url, part)
+	for _, loc := range locations.Locations {
+		fileUrls = append(fileUrls, fmt.Sprintf("http://%s/%s", loc.Url, part))
+	}
 
 	return
 }
 
 func (fs *FilerSource) ReadPart(part string) (filename string, header http.Header, resp *http.Response, err error) {
 
-	fileUrl, err := fs.LookupFileId(part)
+	fileUrls, err := fs.LookupFileId(part)
 	if err != nil {
 		return "", nil, nil, err
 	}
 
-	filename, header, resp, err = util.DownloadFile(fileUrl)
+	for _, fileUrl := range fileUrls {
+		filename, header, resp, err = util.DownloadFile(fileUrl)
+		if err != nil {
+			glog.V(1).Infof("fail to read from %s: %v", fileUrl, err)
+		} else {
+			break
+		}
+	}
 
 	return filename, header, resp, err
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/replication/repl_util"
 	"net/url"
 	"strings"
 
@@ -107,25 +108,13 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 		return err
 	}
 
-	for _, chunk := range chunkViews {
+	writeFunc := func(data []byte) error {
+		_, writeErr := appendBlobURL.AppendBlock(context.Background(), bytes.NewReader(data), azblob.AppendBlobAccessConditions{}, nil)
+		return writeErr
+	}
 
-		fileUrl, err := g.filerSource.LookupFileId(chunk.FileId)
-		if err != nil {
-			return err
-		}
-
-		var writeErr error
-		readErr := util.ReadUrlAsStream(fileUrl+"?readDeleted=true", nil, false, chunk.IsFullChunk(), chunk.Offset, int(chunk.Size), func(data []byte) {
-			_, writeErr = appendBlobURL.AppendBlock(context.Background(), bytes.NewReader(data), azblob.AppendBlobAccessConditions{}, nil)
-		})
-
-		if readErr != nil {
-			return readErr
-		}
-		if writeErr != nil {
-			return writeErr
-		}
-
+	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc); err != nil {
+		return err
 	}
 
 	return nil

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/golang/groupcache/singleflight"
 	"io"
-	"math/rand"
 	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -17,24 +16,24 @@ import (
 type ChunkReadAt struct {
 	masterClient *wdclient.MasterClient
 	chunkViews   []*ChunkView
-	lookupFileId func(fileId string) (targetUrl string, err error)
+	lookupFileId LookupFileIdFunctionType
 	readerLock   sync.Mutex
 	fileSize     int64
 
-	fetchGroup          singleflight.Group
-	lastChunkFileId     string
-	lastChunkData       []byte
-	chunkCache          chunk_cache.ChunkCache
+	fetchGroup      singleflight.Group
+	lastChunkFileId string
+	lastChunkData   []byte
+	chunkCache      chunk_cache.ChunkCache
 }
 
 // var _ = io.ReaderAt(&ChunkReadAt{})
 
-type LookupFileIdFunctionType func(fileId string) (targetUrl string, err error)
+type LookupFileIdFunctionType func(fileId string) (targetUrls []string, err error)
 
 func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 
 	vidCache := make(map[string]*filer_pb.Locations)
-	return func(fileId string) (targetUrl string, err error) {
+	return func(fileId string) (targetUrls []string, err error) {
 		vid := VolumeId(fileId)
 		locations, found := vidCache[vid]
 
@@ -59,8 +58,11 @@ func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 			})
 		}
 
-		volumeServerAddress := filerClient.AdjustedUrl(locations.Locations[rand.Intn(len(locations.Locations))].Url)
-		targetUrl = fmt.Sprintf("http://%s/%s", volumeServerAddress, fileId)
+		for _, loc := range locations.Locations {
+			volumeServerAddress := filerClient.AdjustedUrl(loc.Url)
+			targetUrl := fmt.Sprintf("http://%s/%s", volumeServerAddress, fileId)
+			targetUrls = append(targetUrls, targetUrl)
+		}
 
 		return
 	}
@@ -142,7 +144,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
 }
 
-func (c *ChunkReadAt) readFromWholeChunkData(chunkView *ChunkView, nextChunkViews... *ChunkView) (chunkData []byte, err error) {
+func (c *ChunkReadAt) readFromWholeChunkData(chunkView *ChunkView, nextChunkViews ...*ChunkView) (chunkData []byte, err error) {
 
 	if c.lastChunkFileId == chunkView.FileId {
 		return c.lastChunkData, nil
