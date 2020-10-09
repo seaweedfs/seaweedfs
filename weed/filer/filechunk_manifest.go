@@ -98,7 +98,7 @@ func retriedFetchChunkData(urlStrings []string, cipherKey []byte, isGzipped bool
 	var err error
 	var buffer bytes.Buffer
 
-	for waitTime := time.Second; waitTime < 10*time.Minute; waitTime += waitTime / 2 {
+	for waitTime := time.Second; waitTime < 10*time.Second; waitTime += waitTime / 2 {
 		for _, urlString := range urlStrings {
 			err = util.ReadUrlAsStream(urlString, cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
 				buffer.Write(data)
@@ -110,8 +110,12 @@ func retriedFetchChunkData(urlStrings []string, cipherKey []byte, isGzipped bool
 				break
 			}
 		}
-		glog.V(0).Infof("sleep for %v before retrying reading", waitTime)
-		time.Sleep(waitTime)
+		if err != nil {
+			glog.V(0).Infof("sleep for %v before retrying reading", waitTime)
+			time.Sleep(waitTime)
+		} else {
+			break
+		}
 	}
 
 	return buffer.Bytes(), err
