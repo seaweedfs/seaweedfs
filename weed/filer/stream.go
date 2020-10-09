@@ -32,18 +32,13 @@ func StreamContent(masterClient *wdclient.MasterClient, w io.Writer, chunks []*f
 	for _, chunkView := range chunkViews {
 
 		urlStrings := fileId2Url[chunkView.FileId]
-		for _, urlString := range urlStrings {
-			err := util.ReadUrlAsStream(urlString, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size), func(data []byte) {
-				w.Write(data)
-			})
-			if err != nil {
-				// data already written to w would be wrong
-				// but usually there are nothing written if fails to read
-				glog.V(1).Infof("read %s failed, err: %v", chunkView.FileId, err)
-			} else {
-				break
-			}
+
+		data, err := fetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
+		if err == nil {
+			return err
 		}
+		w.Write(data)
+
 	}
 
 	return nil
@@ -68,17 +63,12 @@ func ReadAll(masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) 
 			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
 			return nil, err
 		}
-		for _, urlString := range urlStrings {
-			err = util.ReadUrlAsStream(urlString, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size), func(data []byte) {
-				buffer.Write(data)
-			})
-			if err != nil {
-				glog.V(1).Infof("read %s failed, err: %v", chunkView.FileId, err)
-				buffer.Reset()
-			} else {
-				break
-			}
+
+		data, err := fetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
+		if err != nil {
+			return nil, err
 		}
+		buffer.Write(data)
 	}
 	return buffer.Bytes(), nil
 }

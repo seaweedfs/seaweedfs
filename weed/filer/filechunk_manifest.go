@@ -89,10 +89,15 @@ func fetchChunk(lookupFileIdFn LookupFileIdFunctionType, fileId string, cipherKe
 		glog.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
 		return nil, err
 	}
-	var buffer bytes.Buffer
+	return fetchChunkData(urlStrings, cipherKey, isGzipped, true, 0, 0)
+}
 
+func fetchChunkData(urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int) ([]byte, error) {
+
+	var err error
+	var buffer bytes.Buffer
 	for _, urlString := range urlStrings {
-		err = util.ReadUrlAsStream(urlString, cipherKey, isGzipped, true, 0, 0, func(data []byte) {
+		err = util.ReadUrlAsStream(urlString, cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
 			buffer.Write(data)
 		})
 		if err != nil {
