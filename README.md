@@ -379,7 +379,7 @@ The architectures are mostly the same. SeaweedFS aims to store and read files fa
 | GlusterFS      | hashing          |                  | FUSE, NFS          |          |                           |
 | Ceph           | hashing + rules  |                  | FUSE               | Yes      |                           |
 | MooseFS        | in memory        |                  | FUSE               |       | No                          |
-| MinIO          | not horizontally scalable   |                  |         | Yes   | No                          |
+| MinIO          | separate meta file for each file  |                  |         | Yes   | No                          |
 
 [Back to TOC](#table-of-contents)
 
