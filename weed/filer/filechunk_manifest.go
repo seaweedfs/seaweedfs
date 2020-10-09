@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 
@@ -89,23 +90,27 @@ func fetchChunk(lookupFileIdFn LookupFileIdFunctionType, fileId string, cipherKe
 		glog.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
 		return nil, err
 	}
-	return fetchChunkData(urlStrings, cipherKey, isGzipped, true, 0, 0)
+	return retriedFetchChunkData(urlStrings, cipherKey, isGzipped, true, 0, 0)
 }
 
-func fetchChunkData(urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int) ([]byte, error) {
+func retriedFetchChunkData(urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int) ([]byte, error) {
 
 	var err error
 	var buffer bytes.Buffer
-	for _, urlString := range urlStrings {
-		err = util.ReadUrlAsStream(urlString, cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
-			buffer.Write(data)
-		})
-		if err != nil {
-			glog.V(0).Infof("read %s failed, err: %v", urlString, err)
-			buffer.Reset()
-		} else {
-			break
+
+	for waitTime := time.Second; waitTime < 10*time.Minute; waitTime+=waitTime/2 {
+		for _, urlString := range urlStrings {
+			err = util.ReadUrlAsStream(urlString, cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
+				buffer.Write(data)
+			})
+			if err != nil {
+				glog.V(0).Infof("read %s failed, err: %v", urlString, err)
+				buffer.Reset()
+			} else {
+				break
+			}
 		}
+		time.Sleep(waitTime)
 	}
 
 	return buffer.Bytes(), err

@@ -33,7 +33,7 @@ func StreamContent(masterClient *wdclient.MasterClient, w io.Writer, chunks []*f
 
 		urlStrings := fileId2Url[chunkView.FileId]
 
-		data, err := fetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
+		data, err := retriedFetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
 		if err == nil {
 			return err
 		}
@@ -64,7 +64,7 @@ func ReadAll(masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) 
 			return nil, err
 		}
 
-		data, err := fetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
+		data, err := retriedFetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
 		if err != nil {
 			return nil, err
 		}
