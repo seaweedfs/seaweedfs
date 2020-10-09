@@ -96,7 +96,7 @@ func fetchChunk(lookupFileIdFn LookupFileIdFunctionType, fileId string, cipherKe
 			buffer.Write(data)
 		})
 		if err != nil {
-			glog.V(0).Infof("read %s failed, err: %v", fileId, err)
+			glog.V(0).Infof("read %s failed, err: %v", urlString, err)
 			buffer.Reset()
 		} else {
 			break
