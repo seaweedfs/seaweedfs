@@ -158,7 +158,7 @@ func (c *ChunkReadAt) readFromWholeChunkData(chunkView *ChunkView, nextChunkView
 	v, doErr := c.readOneWholeChunk(chunkView)
 
 	if doErr != nil {
-		return
+		return nil, doErr
 	}
 
 	chunkData = v.([]byte)
