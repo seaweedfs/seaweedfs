@@ -16,6 +16,7 @@ import (
 )
 
 var ErrorNotFound = errors.New("not found")
+var ErrorDeleted = errors.New("already deleted")
 
 // isFileUnchanged checks whether this needle to write is same as last one.
 // It requires serialized access in the same volume.
@@ -266,7 +267,7 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption) (int, erro
 			glog.V(3).Infof("reading deleted %s", n.String())
 			readSize = -readSize
 		} else {
-			return -1, errors.New("already deleted")
+			return -1, ErrorDeleted
 		}
 	}
 	if readSize == 0 {
