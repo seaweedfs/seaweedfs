@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"net/http"
 	"os"
 	"sync"
@@ -15,7 +16,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
@@ -92,8 +92,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	})
 	fs.filer.Cipher = option.Cipher
 
-	fs.maybeStartMetrics()
+	fs.checkWithMaster()
 
+	go stats.LoopPushingMetric("filer", stats.SourceName(fs.option.Port), fs.metricsAddress, fs.metricsIntervalSec)
 	go fs.filer.KeepConnectedToMaster()
 
 	v := util.GetViper()
@@ -135,7 +136,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	return fs, nil
 }
 
-func (fs *FilerServer) maybeStartMetrics() {
+func (fs *FilerServer) checkWithMaster() {
 
 	for _, master := range fs.option.Masters {
 		_, err := pb.ParseFilerGrpcAddress(master)
@@ -145,10 +146,19 @@ func (fs *FilerServer) maybeStartMetrics() {
 	}
 
 	isConnected := false
-	var readErr error
 	for !isConnected {
 		for _, master := range fs.option.Masters {
-			fs.metricsAddress, fs.metricsIntervalSec, readErr = readFilerConfiguration(fs.grpcDialOption, master)
+			readErr := operation.WithMasterServerClient(master, fs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+				resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+				if err != nil {
+					return fmt.Errorf("get master %s configuration: %v", master, err)
+				}
+				fs.metricsAddress, fs.metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSeconds)
+				if fs.option.DefaultReplication == "" {
+					fs.option.DefaultReplication = resp.DefaultReplication
+				}
+				return nil
+			})
 			if readErr == nil {
 				isConnected = true
 			} else {
@@ -157,17 +167,4 @@ func (fs *FilerServer) maybeStartMetrics() {
 		}
 	}
 
-	go stats.LoopPushingMetric("filer", stats.SourceName(fs.option.Port), fs.metricsAddress, fs.metricsIntervalSec)
-}
-
-func readFilerConfiguration(grpcDialOption grpc.DialOption, masterAddress string) (metricsAddress string, metricsIntervalSec int, err error) {
-	err = operation.WithMasterServerClient(masterAddress, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
-		resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
-		if err != nil {
-			return fmt.Errorf("get master %s configuration: %v", masterAddress, err)
-		}
-		metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSeconds)
-		return nil
-	})
-	return
 }

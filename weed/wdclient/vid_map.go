@@ -44,38 +44,36 @@ func (vc *vidMap) getLocationIndex(length int) (int, error) {
 	return int(atomic.AddInt32(&vc.cursor, 1)) % length, nil
 }
 
-func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrl string, err error) {
+func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err error) {
 	id, err := strconv.Atoi(vid)
 	if err != nil {
 		glog.V(1).Infof("Unknown volume id %s", vid)
-		return "", err
+		return nil, err
 	}
 
-	return vc.GetRandomLocation(uint32(id))
+	locations, found := vc.GetLocations(uint32(id))
+	if !found {
+		return nil, fmt.Errorf("volume %d not found", id)
+	}
+	for _, loc := range locations {
+		serverUrls = append(serverUrls, loc.Url)
+	}
+	return
 }
 
-func (vc *vidMap) LookupFileId(fileId string) (fullUrl string, err error) {
+func (vc *vidMap) LookupFileId(fileId string) (fullUrls []string, err error) {
 	parts := strings.Split(fileId, ",")
 	if len(parts) != 2 {
-		return "", errors.New("Invalid fileId " + fileId)
+		return nil, errors.New("Invalid fileId " + fileId)
 	}
-	serverUrl, lookupError := vc.LookupVolumeServerUrl(parts[0])
+	serverUrls, lookupError := vc.LookupVolumeServerUrl(parts[0])
 	if lookupError != nil {
-		return "", lookupError
+		return nil, lookupError
 	}
-	return "http://" + serverUrl + "/" + fileId, nil
-}
-
-func (vc *vidMap) LookupVolumeServer(fileId string) (volumeServer string, err error) {
-	parts := strings.Split(fileId, ",")
-	if len(parts) != 2 {
-		return "", errors.New("Invalid fileId " + fileId)
+	for _, serverUrl := range serverUrls {
+		fullUrls = append(fullUrls, "http://"+serverUrl+"/"+fileId)
 	}
-	serverUrl, lookupError := vc.LookupVolumeServerUrl(parts[0])
-	if lookupError != nil {
-		return "", lookupError
-	}
-	return serverUrl, nil
+	return
 }
 
 func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) {
@@ -97,23 +95,6 @@ func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
 
 	locations, found = vc.vid2Locations[vid]
 	return
-}
-
-func (vc *vidMap) GetRandomLocation(vid uint32) (serverUrl string, err error) {
-	vc.RLock()
-	defer vc.RUnlock()
-
-	locations := vc.vid2Locations[vid]
-	if len(locations) == 0 {
-		return "", fmt.Errorf("volume %d not found", vid)
-	}
-
-	index, err := vc.getLocationIndex(len(locations))
-	if err != nil {
-		return "", fmt.Errorf("volume %d: %v", vid, err)
-	}
-
-	return locations[index].Url, nil
 }
 
 func (vc *vidMap) addLocation(vid uint32, location Location) {

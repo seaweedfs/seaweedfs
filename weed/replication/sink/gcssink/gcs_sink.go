@@ -3,6 +3,7 @@ package gcssink
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/replication/repl_util"
 	"os"
 
 	"cloud.google.com/go/storage"
@@ -93,25 +94,14 @@ func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []in
 	chunkViews := filer.ViewFromChunks(g.filerSource.LookupFileId, entry.Chunks, 0, int64(totalSize))
 
 	wc := g.client.Bucket(g.bucket).Object(key).NewWriter(context.Background())
+	defer wc.Close()
 
-	for _, chunk := range chunkViews {
-
-		fileUrl, err := g.filerSource.LookupFileId(chunk.FileId)
-		if err != nil {
-			return err
-		}
-
-		err = util.ReadUrlAsStream(fileUrl+"?readDeleted=true", nil, false, chunk.IsFullChunk(), chunk.Offset, int(chunk.Size), func(data []byte) {
-			wc.Write(data)
-		})
-
-		if err != nil {
-			return err
-		}
-
+	writeFunc := func(data []byte) error {
+		_, writeErr := wc.Write(data)
+		return writeErr
 	}
 
-	if err := wc.Close(); err != nil {
+	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc); err != nil {
 		return err
 	}
 

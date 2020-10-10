@@ -1,15 +1,16 @@
 package command
 
 import (
-	"net/http"
-	"os"
-	"runtime"
-	"strconv"
-	"strings"
-
 	"github.com/chrislusf/raft/protobuf"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc/reflection"
+	"net/http"
+	"os"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
 
@@ -41,6 +42,7 @@ type MasterOptions struct {
 	disableHttp        *bool
 	metricsAddress     *string
 	metricsIntervalSec *int
+	raftResumeState    *bool
 }
 
 func init() {
@@ -59,6 +61,7 @@ func init() {
 	m.disableHttp = cmdMaster.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
 	m.metricsAddress = cmdMaster.Flag.String("metrics.address", "", "Prometheus gateway address <host>:<port>")
 	m.metricsIntervalSec = cmdMaster.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
+	m.raftResumeState = cmdMaster.Flag.Bool("resumeState", false, "resume previous state on start master server")
 }
 
 var cmdMaster = &Command{
@@ -118,10 +121,10 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		glog.Fatalf("Master startup error: %v", e)
 	}
 	// start raftServer
-	raftServer := weed_server.NewRaftServer(security.LoadClientTLS(util.GetViper(), "grpc.master"),
-		peers, myMasterAddress, util.ResolvePath(*masterOption.metaFolder), ms.Topo, 5)
+	raftServer, err := weed_server.NewRaftServer(security.LoadClientTLS(util.GetViper(), "grpc.master"),
+		peers, myMasterAddress, util.ResolvePath(*masterOption.metaFolder), ms.Topo, 5, *masterOption.raftResumeState)
 	if raftServer == nil {
-		glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717", *masterOption.metaFolder)
+		glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
 	}
 	ms.SetRaftServer(raftServer)
 	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
@@ -138,6 +141,15 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	reflection.Register(grpcS)
 	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOption.ipBind, grpcPort)
 	go grpcS.Serve(grpcL)
+
+	go func() {
+		time.Sleep(1500 * time.Millisecond)
+		if ms.Topo.RaftServer.Leader() == "" && ms.Topo.RaftServer.IsLogEmpty() && isTheFirstOne(myMasterAddress, peers) {
+			if ms.MasterClient.FindLeader(myMasterAddress) == "" {
+				raftServer.DoJoinCommand()
+			}
+		}
+	}()
 
 	go ms.MasterClient.KeepConnectedToMaster()
 
@@ -170,6 +182,14 @@ func checkPeers(masterIp string, masterPort int, peers string) (masterAddress st
 		glog.Fatalf("Only odd number of masters are supported!")
 	}
 	return
+}
+
+func isTheFirstOne(self string, peers []string) bool {
+	sort.Strings(peers)
+	if len(peers) <= 0 {
+		return true
+	}
+	return self == peers[0]
 }
 
 func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {

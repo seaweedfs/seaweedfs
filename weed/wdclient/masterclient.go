@@ -52,6 +52,32 @@ func (mc *MasterClient) KeepConnectedToMaster() {
 	}
 }
 
+func (mc *MasterClient) FindLeader(myMasterAddress string) (leader string) {
+	for _, master := range mc.masters {
+		if master == myMasterAddress {
+			continue
+		}
+		if grpcErr := pb.WithMasterClient(master, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
+			defer cancel()
+			resp, err := client.GetMasterConfiguration(ctx, &master_pb.GetMasterConfigurationRequest{})
+			if err != nil {
+				return err
+			}
+			leader = resp.Leader
+			return nil
+		}); grpcErr != nil {
+			glog.V(0).Infof("connect to %s: %v", master, grpcErr)
+		}
+		if leader != "" {
+			glog.V(0).Infof("existing leader is %s", leader)
+			return
+		}
+	}
+	glog.V(0).Infof("No existing leader found!")
+	return
+}
+
 func (mc *MasterClient) tryAllMasters() {
 	nextHintedLeader := ""
 	for _, master := range mc.masters {
@@ -75,7 +101,7 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 
 		stream, err := client.KeepConnected(ctx)
 		if err != nil {
-			glog.V(0).Infof("%s masterClient failed to keep connected to %s: %v", mc.clientType, master, err)
+			glog.V(1).Infof("%s masterClient failed to keep connected to %s: %v", mc.clientType, master, err)
 			return err
 		}
 
@@ -118,7 +144,7 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 
 	})
 	if gprcErr != nil {
-		glog.V(0).Infof("%s masterClient failed to connect with master %v: %v", mc.clientType, master, gprcErr)
+		glog.V(1).Infof("%s masterClient failed to connect with master %v: %v", mc.clientType, master, gprcErr)
 	}
 	return
 }

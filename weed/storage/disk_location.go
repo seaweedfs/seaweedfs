@@ -174,9 +174,6 @@ func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e er
 }
 
 func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId) (found bool, e error) {
-	l.volumesLock.Lock()
-	defer l.volumesLock.Unlock()
-
 	v, ok := l.volumes[vid]
 	if !ok {
 		return

@@ -82,9 +82,9 @@ func (dir *Dir) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp *f
 func (dir *Dir) setRootDirAttributes(attr *fuse.Attr) {
 	attr.Inode = 1 // filer2.FullPath(dir.Path).AsInode()
 	attr.Valid = time.Hour
-	attr.Uid = dir.entry.Attributes.Uid
-	attr.Gid = dir.entry.Attributes.Gid
-	attr.Mode = os.FileMode(dir.entry.Attributes.FileMode)
+	attr.Uid = dir.wfs.option.MountUid
+	attr.Gid = dir.wfs.option.MountGid
+	attr.Mode = dir.wfs.option.MountMode
 	attr.Crtime = dir.wfs.option.MountCtime
 	attr.Ctime = dir.wfs.option.MountCtime
 	attr.Mtime = dir.wfs.option.MountMtime
@@ -354,7 +354,8 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 
 	glog.V(3).Infof("remove directory entry: %v", req)
-	err := filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, true, false, false, false, []int32{dir.wfs.signature})
+	ignoreRecursiveErr := true // ignore recursion error since the OS should manage it
+	err := filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, true, false, ignoreRecursiveErr, false, []int32{dir.wfs.signature})
 	if err != nil {
 		glog.V(0).Infof("remove %s/%s: %v", dir.FullPath(), req.Name, err)
 		if strings.Contains(err.Error(), "non-empty") {

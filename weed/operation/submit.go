@@ -170,6 +170,9 @@ func (fi FilePart) Upload(maxMB int, master string, usePublicUrl bool, jwt secur
 				}
 			}
 			fileUrl := "http://" + ret.Url + "/" + id
+			if usePublicUrl {
+				fileUrl = "http://" + ret.PublicUrl + "/" + id
+			}
 			count, e := upload_one_chunk(
 				baseName+"-"+strconv.FormatInt(i+1, 10),
 				io.LimitReader(fi.Reader, chunkSize),

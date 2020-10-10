@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	Gather        = prometheus.NewRegistry()
+	Gather = prometheus.NewRegistry()
 
 	FilerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -99,7 +99,7 @@ var (
 			Subsystem: "s3",
 			Name:      "request_total",
 			Help:      "Counter of s3 requests.",
-		}, []string{"type"})
+		}, []string{"type", "code"})
 	S3RequestHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "SeaweedFS",

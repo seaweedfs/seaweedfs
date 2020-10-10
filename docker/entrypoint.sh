@@ -1,5 +1,24 @@
 #!/bin/sh
 
+isArgPassed() {
+  arg="$1"
+  argWithEqualSign="$1="
+  shift
+  while [ $# -gt 0 ]; do
+    passedArg="$1"
+    shift
+    case $passedArg in
+    $arg)
+      return 0
+      ;;
+    $argWithEqualSign*)
+      return 0
+      ;;
+    esac
+  done
+  return 1
+}
+
 case "$1" in
 
   'master')
@@ -9,7 +28,7 @@ case "$1" in
 
   'volume')
   	ARGS="-dir=/data -max=0"
-  	if [[ $@ == *"-max="* ]]; then
+  	if isArgPassed "-max" "$@"; then
   	  ARGS="-dir=/data"
   	fi
   	exec /usr/bin/weed $@ $ARGS
@@ -17,7 +36,7 @@ case "$1" in
 
   'server')
   	ARGS="-dir=/data -volume.max=0 -master.volumePreallocate -master.volumeSizeLimitMB=1024"
-  	if [[ $@ == *"-volume.max="* ]]; then
+  	if isArgPassed "-volume.max" "$@"; then
   	  ARGS="-dir=/data -master.volumePreallocate -master.volumeSizeLimitMB=1024"
   	fi
   	exec /usr/bin/weed $@ $ARGS

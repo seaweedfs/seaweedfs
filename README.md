@@ -349,6 +349,8 @@ Most other distributed file systems seem more complicated than necessary.
 
 SeaweedFS is meant to be fast and simple, in both setup and operation. If you do not understand how it works when you reach here, we've failed! Please raise an issue with any questions or update this file with clarifications.
 
+SeaweedFS is constantly moving forward. Same with other systems. These comparisons can be outdated quickly. Please help to keep them updated.
+
 [Back to TOC](#table-of-contents)
 
 ### Compared to HDFS ###
@@ -370,13 +372,14 @@ The architectures are mostly the same. SeaweedFS aims to store and read files fa
 * SeaweedFS Filer metadata store can be any well-known and proven data stores, e.g., Cassandra, Mongodb, Redis, Elastic Search, MySql, Postgres, MemSql, TiDB, CockroachDB, Etcd etc, and is easy to customized.
 * SeaweedFS Volume server also communicates directly with clients via HTTP, supporting range queries, direct uploads, etc.
 
-| System         | File Meta                       | File Content Read| POSIX  | REST API | Optimized for small files |
+| System         | File Metadata                   | File Content Read| POSIX  | REST API | Optimized for large number of small files |
 | -------------  | ------------------------------- | ---------------- | ------ | -------- | ------------------------- |
 | SeaweedFS      | lookup volume id, cacheable     | O(1) disk seek   |        | Yes      | Yes                       |
 | SeaweedFS Filer| Linearly Scalable, Customizable | O(1) disk seek   | FUSE   | Yes      | Yes                       |
 | GlusterFS      | hashing          |                  | FUSE, NFS          |          |                           |
 | Ceph           | hashing + rules  |                  | FUSE               | Yes      |                           |
 | MooseFS        | in memory        |                  | FUSE               |       | No                          |
+| MinIO          | separate meta file for each file  |                  |         | Yes   | No                          |
 
 [Back to TOC](#table-of-contents)
 
@@ -417,6 +420,22 @@ SeaweedFS Filer uses off-the-shelf stores, such as MySql, Postgres, Mongodb, Red
 | Filer  | Ceph FS | linearly scalable, Customizable, O(1) or O(logN) |
 
 [Back to TOC](#table-of-contents)
+
+### Compared to MinIO ###
+
+MinIO follows AWS S3 closely and is ideal for testing for S3 API. It has good UI, policies, versionings, etc. SeaweedFS is trying to catch up here. It is also possible to put MinIO as a gateway in front of SeaweedFS later.
+
+MinIO metadata are in simple files. Each file write will incur meta file writes.
+
+MinIO does not have optimization for large number of small files.
+
+MinIO has multiple disk IO to read one file. SeaweedFS has O(1) disk reads.
+
+MinIO has full-time erasure coding. SeaweedFS uses replication on hot data for faster speed and optionally applies erasure coding on warm data.
+
+MinIO does not have POSIX-like API support.
+
+MinIO has specific requirements on storage layout. It is not flexible to adjust capacity. In SeaweedFS, just start one volume server pointing to the master. That's all.
 
 ## Dev Plan ##
 

@@ -157,11 +157,18 @@ func (s3sink *S3Sink) uploadPartCopy(key, uploadId string, partId int64, copySou
 }
 
 func (s3sink *S3Sink) buildReadSeeker(chunk *filer.ChunkView) (io.ReadSeeker, error) {
-	fileUrl, err := s3sink.filerSource.LookupFileId(chunk.FileId)
+	fileUrls, err := s3sink.filerSource.LookupFileId(chunk.FileId)
 	if err != nil {
 		return nil, err
 	}
 	buf := make([]byte, chunk.Size)
-	util.ReadUrl(fileUrl, nil, false, false, chunk.Offset, int(chunk.Size), buf)
+	for _, fileUrl := range fileUrls {
+		_, err = util.ReadUrl(fileUrl, nil, false, false, chunk.Offset, int(chunk.Size), buf)
+		if err != nil {
+			glog.V(1).Infof("read from %s: %v", fileUrl, err)
+		} else {
+			break
+		}
+	}
 	return bytes.NewReader(buf), nil
 }

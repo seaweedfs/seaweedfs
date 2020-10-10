@@ -54,7 +54,13 @@ var cmdS3 = &Command{
 {
   "identities": [
     {
-      "name": "some_name",
+      "name": "anonymous",
+      "actions": [
+        "Read"
+      ]
+    },
+    {
+      "name": "some_admin_user",
       "credentials": [
         {
           "accessKey": "some_access_key1",
@@ -64,6 +70,8 @@ var cmdS3 = &Command{
       "actions": [
         "Admin",
         "Read",
+        "List",
+        "Tagging",
         "Write"
       ]
     },
@@ -89,6 +97,8 @@ var cmdS3 = &Command{
       ],
       "actions": [
         "Read",
+        "List",
+        "Tagging",
         "Write"
       ]
     },
@@ -102,6 +112,8 @@ var cmdS3 = &Command{
       ],
       "actions": [
         "Read:bucket1",
+        "List:bucket1",
+        "Tagging:bucket1",
         "Write:bucket1"
       ]
     }

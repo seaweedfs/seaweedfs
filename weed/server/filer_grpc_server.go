@@ -32,12 +32,12 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 
 	return &filer_pb.LookupDirectoryEntryResponse{
 		Entry: &filer_pb.Entry{
-			Name:        req.Name,
-			IsDirectory: entry.IsDirectory(),
-			Attributes:  filer.EntryAttributeToPb(entry),
-			Chunks:      entry.Chunks,
-			Extended:    entry.Extended,
-			HardLinkId:  entry.HardLinkId,
+			Name:            req.Name,
+			IsDirectory:     entry.IsDirectory(),
+			Attributes:      filer.EntryAttributeToPb(entry),
+			Chunks:          entry.Chunks,
+			Extended:        entry.Extended,
+			HardLinkId:      entry.HardLinkId,
 			HardLinkCounter: entry.HardLinkCounter,
 		},
 	}, nil
@@ -77,12 +77,12 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 
 			if err := stream.Send(&filer_pb.ListEntriesResponse{
 				Entry: &filer_pb.Entry{
-					Name:        entry.Name(),
-					IsDirectory: entry.IsDirectory(),
-					Chunks:      entry.Chunks,
-					Attributes:  filer.EntryAttributeToPb(entry),
-					Extended:    entry.Extended,
-					HardLinkId:  entry.HardLinkId,
+					Name:            entry.Name(),
+					IsDirectory:     entry.IsDirectory(),
+					Chunks:          entry.Chunks,
+					Attributes:      filer.EntryAttributeToPb(entry),
+					Extended:        entry.Extended,
+					HardLinkId:      entry.HardLinkId,
 					HardLinkCounter: entry.HardLinkCounter,
 				},
 			}); err != nil {
@@ -135,16 +135,19 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 	return resp, nil
 }
 
-func (fs *FilerServer) lookupFileId(fileId string) (targetUrl string, err error) {
+func (fs *FilerServer) lookupFileId(fileId string) (targetUrls []string, err error) {
 	fid, err := needle.ParseFileIdFromString(fileId)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	locations, found := fs.filer.MasterClient.GetLocations(uint32(fid.VolumeId))
 	if !found || len(locations) == 0 {
-		return "", fmt.Errorf("not found volume %d in %s", fid.VolumeId, fileId)
+		return nil, fmt.Errorf("not found volume %d in %s", fid.VolumeId, fileId)
 	}
-	return fmt.Sprintf("http://%s/%s", locations[0].Url, fileId), nil
+	for _, loc := range locations {
+		targetUrls = append(targetUrls, fmt.Sprintf("http://%s/%s", loc.Url, fileId))
+	}
+	return
 }
 
 func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (resp *filer_pb.CreateEntryResponse, err error) {
@@ -159,11 +162,11 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	}
 
 	createErr := fs.filer.CreateEntry(ctx, &filer.Entry{
-		FullPath: util.JoinPath(req.Directory, req.Entry.Name),
-		Attr:     filer.PbToEntryAttribute(req.Entry.Attributes),
-		Chunks:   chunks,
-		Extended: req.Entry.Extended,
-		HardLinkId: filer.HardLinkId(req.Entry.HardLinkId),
+		FullPath:        util.JoinPath(req.Directory, req.Entry.Name),
+		Attr:            filer.PbToEntryAttribute(req.Entry.Attributes),
+		Chunks:          chunks,
+		Extended:        req.Entry.Extended,
+		HardLinkId:      filer.HardLinkId(req.Entry.HardLinkId),
 		HardLinkCounter: req.Entry.HardLinkCounter,
 	}, req.OExcl, req.IsFromOtherCluster, req.Signatures)
 
@@ -193,11 +196,11 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	}
 
 	newEntry := &filer.Entry{
-		FullPath: util.JoinPath(req.Directory, req.Entry.Name),
-		Attr:     entry.Attr,
-		Extended: req.Entry.Extended,
-		Chunks:   chunks,
-		HardLinkId: filer.HardLinkId(req.Entry.HardLinkId),
+		FullPath:        util.JoinPath(req.Directory, req.Entry.Name),
+		Attr:            entry.Attr,
+		Extended:        req.Entry.Extended,
+		Chunks:          chunks,
+		HardLinkId:      filer.HardLinkId(req.Entry.HardLinkId),
 		HardLinkCounter: req.Entry.HardLinkCounter,
 	}
 

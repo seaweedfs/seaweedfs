@@ -167,6 +167,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			TtlSec:      ttlSec,
 			Mime:        contentType,
 			Md5:         md5bytes,
+			FileSize:    uint64(chunkOffset),
 		},
 		Chunks: fileChunks,
 	}
