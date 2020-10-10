@@ -8,14 +8,10 @@ import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import seaweedfs.client.FilerClient;
-import seaweedfs.client.FilerGrpcClient;
-import seaweedfs.client.FilerProto;
-import seaweedfs.client.SeaweedRead;
+import seaweedfs.client.*;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -202,8 +198,7 @@ public class SeaweedFileSystemStore {
                     .clearGroupName()
                     .addAllGroupName(Arrays.asList(userGroupInformation.getGroupNames()))
                 );
-
-            filerClient.createEntry(getParentDirectory(path), entry.build());
+            SeaweedWrite.writeMeta(filerGrpcClient, getParentDirectory(path), entry);
         }
 
         return new SeaweedOutputStream(filerGrpcClient, path, entry, writePosition, bufferSize, replication);
