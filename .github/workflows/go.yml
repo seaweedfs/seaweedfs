@@ -34,4 +34,4 @@ jobs:
       run: cd weed; go build -v .
 
     - name: Test
-      run: cd weed; go test -v .
+      run: cd weed; go test -v ./...
