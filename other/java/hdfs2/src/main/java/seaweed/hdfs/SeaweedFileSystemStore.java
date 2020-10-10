@@ -205,10 +205,9 @@ public class SeaweedFileSystemStore {
 
     }
 
-    public FSInputStream openFileForRead(final Path path, FileSystem.Statistics statistics,
-                                         int bufferSize) throws IOException {
+    public FSInputStream openFileForRead(final Path path, FileSystem.Statistics statistics) throws IOException {
 
-        LOG.debug("openFileForRead path:{} bufferSize:{}", path, bufferSize);
+        LOG.debug("openFileForRead path:{}", path);
 
         FilerProto.Entry entry = lookupEntry(path);
 
@@ -219,8 +218,7 @@ public class SeaweedFileSystemStore {
         return new SeaweedInputStream(filerGrpcClient,
             statistics,
             path.toUri().getPath(),
-            entry,
-            bufferSize);
+            entry);
     }
 
     public void setOwner(Path path, String owner, String group) {
