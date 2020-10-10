@@ -40,7 +40,7 @@ public class SeaweedRead {
 
         //TODO parallel this
         long readCount = 0;
-        int startOffset = bufferOffset;
+        long startOffset = position;
         for (ChunkView chunkView : chunkViews) {
 
             if (startOffset < chunkView.logicOffset) {
@@ -57,7 +57,7 @@ public class SeaweedRead {
                 return 0;
             }
 
-            int len = readChunkView(position, buffer, startOffset, chunkView, locations);
+            int len = readChunkView(startOffset, buffer, bufferOffset + readCount, chunkView, locations);
 
             LOG.debug("read [{},{}) {} size {}", startOffset, startOffset + len, chunkView.fileId, chunkView.size);
 
@@ -66,7 +66,7 @@ public class SeaweedRead {
 
         }
 
-        long limit = Math.min(bufferLength, fileSize);
+        long limit = Math.min(bufferOffset + bufferLength, fileSize);
 
         if (startOffset < limit) {
             long gap = limit - startOffset;
@@ -78,7 +78,7 @@ public class SeaweedRead {
         return readCount;
     }
 
-    private static int readChunkView(long position, byte[] buffer, int startOffset, ChunkView chunkView, FilerProto.Locations locations) throws IOException {
+    private static int readChunkView(long startOffset, byte[] buffer, long bufOffset, ChunkView chunkView, FilerProto.Locations locations) throws IOException {
 
         byte[] chunkData = chunkCache.getChunk(chunkView.fileId);
 
@@ -88,17 +88,51 @@ public class SeaweedRead {
         }
 
         int len = (int) chunkView.size;
-        LOG.debug("readChunkView fid:{} chunkData.length:{} chunkView.offset:{} buffer.length:{} startOffset:{} len:{}",
-                chunkView.fileId, chunkData.length, chunkView.offset, buffer.length, startOffset, len);
-        System.arraycopy(chunkData, startOffset - (int) (chunkView.logicOffset - chunkView.offset), buffer, startOffset, len);
+        LOG.debug("readChunkView fid:{} chunkData.length:{} chunkView.offset:{} chunkView[{};{}) buf[{},{})/{} startOffset:{}",
+                chunkView.fileId, chunkData.length, chunkView.offset, chunkView.logicOffset, chunkView.logicOffset + chunkView.size, bufOffset, bufOffset + len, buffer.length, startOffset);
+        System.arraycopy(chunkData, (int) (startOffset - chunkView.logicOffset + chunkView.offset), buffer, (int) bufOffset, len);
 
         return len;
     }
 
     public static byte[] doFetchFullChunkData(ChunkView chunkView, FilerProto.Locations locations) throws IOException {
 
-        HttpGet request = new HttpGet(
-                String.format("http://%s/%s", locations.getLocations(0).getUrl(), chunkView.fileId));
+        byte[] data = null;
+        IOException lastException = null;
+        for (long waitTime = 1000L; waitTime < 10 * 1000; waitTime += waitTime / 2) {
+            for (FilerProto.Location location : locations.getLocationsList()) {
+                String url = String.format("http://%s/%s", location.getUrl(), chunkView.fileId);
+                try {
+                    data = doFetchOneFullChunkData(chunkView, url);
+                    lastException = null;
+                    break;
+                } catch (IOException ioe) {
+                    LOG.debug("doFetchFullChunkData {} :{}", url, ioe);
+                    lastException = ioe;
+                }
+            }
+            if (data != null) {
+                break;
+            }
+            try {
+                Thread.sleep(waitTime);
+            } catch (InterruptedException e) {
+            }
+        }
+
+        if (lastException != null) {
+            throw lastException;
+        }
+
+        LOG.debug("doFetchFullChunkData fid:{} chunkData.length:{}", chunkView.fileId, data.length);
+
+        return data;
+
+    }
+
+    public static byte[] doFetchOneFullChunkData(ChunkView chunkView, String url) throws IOException {
+
+        HttpGet request = new HttpGet(url);
 
         request.setHeader(HttpHeaders.ACCEPT_ENCODING, "gzip");
 
@@ -142,7 +176,7 @@ public class SeaweedRead {
             data = Gzip.decompress(data);
         }
 
-        LOG.debug("doFetchFullChunkData fid:{} chunkData.length:{}", chunkView.fileId, data.length);
+        LOG.debug("doFetchOneFullChunkData url:{} chunkData.length:{}", url, data.length);
 
         return data;
 

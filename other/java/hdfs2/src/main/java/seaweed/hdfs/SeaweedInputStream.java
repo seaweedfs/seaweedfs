@@ -25,7 +25,6 @@ public class SeaweedInputStream extends FSInputStream {
     private final FilerProto.Entry entry;
     private final List<SeaweedRead.VisibleInterval> visibleIntervalList;
     private final long contentLength;
-    private final int bufferSize; // default buffer size
 
     private long position = 0;  // cursor of the file
 
@@ -35,14 +34,12 @@ public class SeaweedInputStream extends FSInputStream {
             final FilerGrpcClient filerGrpcClient,
             final Statistics statistics,
             final String path,
-            final FilerProto.Entry entry,
-            final int bufferSize) throws IOException {
+            final FilerProto.Entry entry) throws IOException {
         this.filerGrpcClient = filerGrpcClient;
         this.statistics = statistics;
         this.path = path;
         this.entry = entry;
         this.contentLength = SeaweedRead.fileSize(entry);
-        this.bufferSize = bufferSize;
 
         this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(filerGrpcClient, entry.getChunksList());
 
