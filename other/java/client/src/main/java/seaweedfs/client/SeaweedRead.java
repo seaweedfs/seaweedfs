@@ -89,8 +89,8 @@ public class SeaweedRead {
 
         int len = (int) chunkView.size;
         LOG.debug("readChunkView fid:{} chunkData.length:{} chunkView[{};{}) buf[{},{})/{} startOffset:{}",
-                chunkView.fileId, chunkData.length, chunkView.offset, chunkView.offset+chunkView.size, bufOffset, bufOffset+len, buffer.length, startOffset);
-        System.arraycopy(chunkData, (int) (startOffset - chunkView.logicOffset + chunkView.offset), buffer, (int)bufOffset, len);
+                chunkView.fileId, chunkData.length, chunkView.offset, chunkView.offset + chunkView.size, bufOffset, bufOffset + len, buffer.length, startOffset);
+        System.arraycopy(chunkData, (int) (startOffset - chunkView.logicOffset + chunkView.offset), buffer, (int) bufOffset, len);
 
         return len;
     }
@@ -119,7 +119,7 @@ public class SeaweedRead {
             }
         }
 
-        if (data == null) {
+        if (data == null && lastException != null) {
             throw lastException;
         }
 
