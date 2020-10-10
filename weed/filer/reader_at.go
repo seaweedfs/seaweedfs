@@ -11,6 +11,7 @@ import (
 	"io"
 	"math/rand"
 	"sync"
+	"time"
 )
 
 type ChunkReadAt struct {
@@ -37,7 +38,8 @@ func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 		vid := VolumeId(fileId)
 		locations, found := vidCache[vid]
 
-		if !found {
+		waitTime := time.Second
+		for !found && waitTime < 6*time.Second {
 			// println("looking up volume", vid)
 			err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 				resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
@@ -56,6 +58,12 @@ func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 
 				return nil
 			})
+			if err == nil {
+				break
+			}
+			glog.V(1).Infof("wait for volume %s", vid)
+			time.Sleep(waitTime)
+			waitTime += waitTime / 2
 		}
 
 		if err != nil {
