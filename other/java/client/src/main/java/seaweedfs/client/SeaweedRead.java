@@ -104,6 +104,7 @@ public class SeaweedRead {
                 String url = String.format("http://%s/%s", location.getUrl(), chunkView.fileId);
                 try {
                     data = doFetchOneFullChunkData(chunkView, url);
+                    lastException = null;
                     break;
                 } catch (IOException ioe) {
                     LOG.debug("doFetchFullChunkData {} :{}", url, ioe);
@@ -119,7 +120,7 @@ public class SeaweedRead {
             }
         }
 
-        if (data == null && lastException != null) {
+        if (lastException != null) {
             throw lastException;
         }
 
