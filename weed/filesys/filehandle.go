@@ -79,7 +79,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	if err != nil {
 		glog.Warningf("file handle read %s %d: %v", fh.f.fullpath(), totalRead, err)
-		return nil
+		return fuse.EIO
 	}
 
 	if totalRead > int64(len(buff)) {
