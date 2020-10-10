@@ -97,8 +97,35 @@ public class SeaweedRead {
 
     public static byte[] doFetchFullChunkData(ChunkView chunkView, FilerProto.Locations locations) throws IOException {
 
-        HttpGet request = new HttpGet(
-                String.format("http://%s/%s", locations.getLocations(0).getUrl(), chunkView.fileId));
+        byte[] data = null;
+        for (long waitTime = 230L; waitTime < 20 * 1000; waitTime += waitTime / 2) {
+            for (FilerProto.Location location : locations.getLocationsList()) {
+                String url = String.format("http://%s/%s", location.getUrl(), chunkView.fileId);
+                try {
+                    data = doFetchOneFullChunkData(chunkView, url);
+                    break;
+                } catch (IOException ioe) {
+                    LOG.debug("doFetchFullChunkData {} :{}", url, ioe);
+                }
+            }
+            if (data != null) {
+                break;
+            }
+            try {
+                Thread.sleep(waitTime);
+            } catch (InterruptedException e) {
+            }
+        }
+
+        LOG.debug("doFetchFullChunkData fid:{} chunkData.length:{}", chunkView.fileId, data.length);
+
+        return data;
+
+    }
+
+    public static byte[] doFetchOneFullChunkData(ChunkView chunkView, String url) throws IOException {
+
+        HttpGet request = new HttpGet(url);
 
         request.setHeader(HttpHeaders.ACCEPT_ENCODING, "gzip");
 
@@ -142,7 +169,7 @@ public class SeaweedRead {
             data = Gzip.decompress(data);
         }
 
-        LOG.debug("doFetchFullChunkData fid:{} chunkData.length:{}", chunkView.fileId, data.length);
+        LOG.debug("doFetchOneFullChunkData url:{} chunkData.length:{}", url, data.length);
 
         return data;
 
