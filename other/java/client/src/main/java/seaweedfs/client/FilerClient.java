@@ -290,7 +290,7 @@ public class FilerClient {
                     .setEntry(entry)
                     .build());
         } catch (Exception e) {
-            LOG.warn("createEntry {}/{}: {}", parent, entry.getName(), e);
+            LOG.warn("updateEntry {}/{}: {}", parent, entry.getName(), e);
             return false;
         }
         return true;
