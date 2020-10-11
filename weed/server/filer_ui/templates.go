@@ -21,9 +21,11 @@ var funcMap = template.FuncMap{
 var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOCTYPE html>
 <html>
 <head>
-	<title>SeaweedFS Filer</title>
-	<link rel="stylesheet" href="/seaweedfsstatic/bootstrap/3.3.1/css/bootstrap.min.css">
+  <title>SeaweedFS Filer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/seaweedfsstatic/bootstrap/3.3.1/css/bootstrap.min.css">
 <style>
+body { padding-bottom: 70px; }
 #drop-area {
   border: 1px transparent;
 }
@@ -45,6 +47,11 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
 }
 #fileElem {
   display: none;
+}
+.qrImage {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
 }
 </style>
 </head>
@@ -116,6 +123,14 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
 		</a>
 		</div>
 		{{end}}
+
+		<br/>
+		<br/>
+
+		<div class="navbar navbar-fixed-bottom">
+          <img src="data:image/png;base64,{{.QrImage}}" class="qrImage" />
+		</div>
+
 	</div>
 </body>
 <script type="text/javascript">
