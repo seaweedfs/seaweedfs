@@ -2,6 +2,7 @@ package command
 
 import (
 	"os"
+	"time"
 )
 
 type MountOptions struct {
@@ -25,9 +26,10 @@ type MountOptions struct {
 }
 
 var (
-	mountOptions    MountOptions
-	mountCpuProfile *string
-	mountMemProfile *string
+	mountOptions       MountOptions
+	mountCpuProfile    *string
+	mountMemProfile    *string
+	mountReadRetryTime *time.Duration
 )
 
 func init() {
@@ -46,11 +48,13 @@ func init() {
 	mountOptions.allowOthers = cmdMount.Flag.Bool("allowOthers", true, "allows other users to access the file system")
 	mountOptions.umaskString = cmdMount.Flag.String("umask", "022", "octal umask, e.g., 022, 0111")
 	mountOptions.nonempty = cmdMount.Flag.Bool("nonempty", false, "allows the mounting over a non-empty directory")
-	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
-	mountMemProfile = cmdMount.Flag.String("memprofile", "", "memory profile output file")
 	mountOptions.outsideContainerClusterMode = cmdMount.Flag.Bool("outsideContainerClusterMode", false, "allows other users to access the file system")
 	mountOptions.uidMap = cmdMount.Flag.String("map.uid", "", "map local uid to uid on filer, comma-separated <local_uid>:<filer_uid>")
 	mountOptions.gidMap = cmdMount.Flag.String("map.gid", "", "map local gid to gid on filer, comma-separated <local_gid>:<filer_gid>")
+
+	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
+	mountMemProfile = cmdMount.Flag.String("memprofile", "", "memory profile output file")
+	mountReadRetryTime = cmdMount.Flag.Duration("readRetryTime", 6*time.Second, "maximum read retry wait time")
 }
 
 var cmdMount = &Command{

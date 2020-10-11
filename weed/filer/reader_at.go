@@ -14,6 +14,10 @@ import (
 	"time"
 )
 
+var (
+	ReadWaitTime = 6 * time.Second
+)
+
 type ChunkReadAt struct {
 	masterClient *wdclient.MasterClient
 	chunkViews   []*ChunkView
@@ -39,7 +43,7 @@ func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 		locations, found := vidCache[vid]
 
 		waitTime := time.Second
-		for !found && waitTime < 6*time.Second {
+		for !found && waitTime < ReadWaitTime {
 			// println("looking up volume", vid)
 			err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 				resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{

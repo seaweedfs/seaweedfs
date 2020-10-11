@@ -5,6 +5,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"os"
 	"os/user"
@@ -29,6 +30,10 @@ import (
 func runMount(cmd *Command, args []string) bool {
 
 	grace.SetupProfiling(*mountCpuProfile, *mountMemProfile)
+	if *mountReadRetryTime < time.Second {
+		*mountReadRetryTime = time.Second
+	}
+	filer.ReadWaitTime = *mountReadRetryTime
 
 	umask, umaskErr := strconv.ParseUint(*mountOptions.umaskString, 8, 64)
 	if umaskErr != nil {
