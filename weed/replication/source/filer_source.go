@@ -111,8 +111,8 @@ func (fs *FilerSource) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) erro
 
 }
 
-func (fs *FilerSource) AdjustedUrl(hostAndPort string) string {
-	return hostAndPort
+func (fs *FilerSource) AdjustedUrl(location *filer_pb.Location) string {
+	return location.Url
 }
 
 func volumeId(fileId string) string {

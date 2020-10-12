@@ -50,8 +50,8 @@ func (s3a *S3ApiServer) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) err
 	}, s3a.option.FilerGrpcAddress, s3a.option.GrpcDialOption)
 
 }
-func (s3a *S3ApiServer) AdjustedUrl(hostAndPort string) string {
-	return hostAndPort
+func (s3a *S3ApiServer) AdjustedUrl(location *filer_pb.Location) string {
+	return location.Url
 }
 
 // If none of the http routes match respond with MethodNotAllowed

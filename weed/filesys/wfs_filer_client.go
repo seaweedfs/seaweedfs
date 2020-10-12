@@ -26,15 +26,15 @@ func (wfs *WFS) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) erro
 
 }
 
-func (wfs *WFS) AdjustedUrl(hostAndPort string) string {
+func (wfs *WFS) AdjustedUrl(location *filer_pb.Location) string {
 	if !wfs.option.OutsideContainerClusterMode {
-		return hostAndPort
+		return location.Url
 	}
-	commaIndex := strings.Index(hostAndPort, ":")
+	commaIndex := strings.Index(location.Url, ":")
 	if commaIndex < 0 {
-		return hostAndPort
+		return location.Url
 	}
 	filerCommaIndex := strings.Index(wfs.option.FilerGrpcAddress, ":")
-	return fmt.Sprintf("%s:%s", wfs.option.FilerGrpcAddress[:filerCommaIndex], hostAndPort[commaIndex+1:])
+	return fmt.Sprintf("%s:%s", wfs.option.FilerGrpcAddress[:filerCommaIndex], location.Url[commaIndex+1:])
 
 }

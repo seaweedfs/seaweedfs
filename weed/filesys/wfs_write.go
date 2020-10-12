@@ -38,8 +38,12 @@ func (wfs *WFS) saveDataAsChunk(dir string) filer.SaveDataAsChunkFunctionType {
 				return fmt.Errorf("assign volume failure %v: %v", request, resp.Error)
 			}
 
-			fileId, host, auth = resp.FileId, resp.Url, security.EncodedJwt(resp.Auth)
-			host = wfs.AdjustedUrl(host)
+			fileId, auth = resp.FileId, security.EncodedJwt(resp.Auth)
+			loc := &filer_pb.Location{
+				Url:       resp.Url,
+				PublicUrl: resp.PublicUrl,
+			}
+			host = wfs.AdjustedUrl(loc)
 			collection, replication = resp.Collection, resp.Replication
 
 			return nil
