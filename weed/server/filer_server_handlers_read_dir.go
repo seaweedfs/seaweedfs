@@ -2,6 +2,9 @@ package weed_server
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
+	"github.com/skip2/go-qrcode"
 	"net/http"
 	"strconv"
 	"strings"
@@ -65,21 +68,30 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 			lastFileName,
 			shouldDisplayLoadMore,
 		})
-	} else {
-		ui.StatusTpl.Execute(w, struct {
-			Path                  string
-			Breadcrumbs           []ui.Breadcrumb
-			Entries               interface{}
-			Limit                 int
-			LastFileName          string
-			ShouldDisplayLoadMore bool
-		}{
-			path,
-			ui.ToBreadcrumb(path),
-			entries,
-			limit,
-			lastFileName,
-			shouldDisplayLoadMore,
-		})
+		return
 	}
+
+	var qrImageString string
+	img, err := qrcode.Encode(fmt.Sprintf("http://%s:%d%s", fs.option.Host, fs.option.Port, r.URL.Path), qrcode.Medium, 128)
+	if err == nil {
+		qrImageString = base64.StdEncoding.EncodeToString(img)
+	}
+
+	ui.StatusTpl.Execute(w, struct {
+		Path                  string
+		Breadcrumbs           []ui.Breadcrumb
+		Entries               interface{}
+		Limit                 int
+		LastFileName          string
+		ShouldDisplayLoadMore bool
+		QrImage               string
+	}{
+		path,
+		ui.ToBreadcrumb(path),
+		entries,
+		limit,
+		lastFileName,
+		shouldDisplayLoadMore,
+		qrImageString,
+	})
 }

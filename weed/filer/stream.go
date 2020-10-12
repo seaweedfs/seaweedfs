@@ -34,7 +34,7 @@ func StreamContent(masterClient *wdclient.MasterClient, w io.Writer, chunks []*f
 		urlStrings := fileId2Url[chunkView.FileId]
 
 		data, err := retriedFetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
-		if err == nil {
+		if err != nil {
 			return err
 		}
 		w.Write(data)
