@@ -2,6 +2,7 @@ package meta_cache
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sync"
 
@@ -115,6 +116,11 @@ func (mc *MetaCache) DeleteEntry(ctx context.Context, fp util.FullPath) (err err
 func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*filer.Entry, error) {
 	mc.RLock()
 	defer mc.RUnlock()
+
+
+	if !mc.visitedBoundary.HasVisited(dirPath) {
+		return nil, fmt.Errorf("unsynchronized dir: %v", dirPath)
+	}
 
 	entries, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
 	if err != nil {

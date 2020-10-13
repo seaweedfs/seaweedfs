@@ -10,9 +10,9 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath) {
+func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath) error {
 
-	mc.visitedBoundary.EnsureVisited(dirPath, func(path util.FullPath) (childDirectories []string, err error) {
+	return mc.visitedBoundary.EnsureVisited(dirPath, func(path util.FullPath) (childDirectories []string, err error) {
 
 		glog.V(4).Infof("ReadDirAllEntries %s ...", path)
 
