@@ -2,6 +2,7 @@ package filer
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"math"
 	"strings"
@@ -35,10 +36,14 @@ func StreamContent(masterClient *wdclient.MasterClient, w io.Writer, chunks []*f
 
 		data, err := retriedFetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
 		if err != nil {
-			return err
+			glog.Errorf("read chunk: %v", err)
+			return fmt.Errorf("read chunk: %v", err)
 		}
-		w.Write(data)
-
+		_, err = w.Write(data)
+		if err != nil {
+			glog.Errorf("write chunk: %v", err)
+			return fmt.Errorf("write chunk: %v", err)
+		}
 	}
 
 	return nil
