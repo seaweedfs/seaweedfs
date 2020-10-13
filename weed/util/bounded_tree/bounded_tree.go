@@ -16,13 +16,15 @@ type Node struct {
 type BoundedTree struct {
 	root *Node
 	sync.RWMutex
+	baseDir util.FullPath
 }
 
-func NewBoundedTree() *BoundedTree {
+func NewBoundedTree(baseDir util.FullPath) *BoundedTree {
 	return &BoundedTree{
 		root: &Node{
 			Name: "/",
 		},
+		baseDir: baseDir,
 	}
 }
 
@@ -39,9 +41,12 @@ func (t *BoundedTree) EnsureVisited(p util.FullPath, visitFn VisitNodeFunc) {
 	if t.root == nil {
 		return
 	}
+	if t.baseDir != "/" {
+		p = p[len(t.baseDir):]
+	}
 	components := p.Split()
 	// fmt.Printf("components %v %d\n", components, len(components))
-	if canDelete := t.ensureVisited(t.root, util.FullPath("/"), components, 0, visitFn); canDelete {
+	if canDelete := t.ensureVisited(t.root, t.baseDir, components, 0, visitFn); canDelete {
 		t.root = nil
 	}
 }
@@ -60,7 +65,12 @@ func (t *BoundedTree) ensureVisited(n *Node, currentPath util.FullPath, componen
 	} else {
 		// fmt.Printf("ensure %v\n", currentPath)
 
-		children, err := visitFn(currentPath)
+		filerPath := currentPath
+		if t.baseDir != "/" {
+			filerPath = t.baseDir + filerPath
+		}
+
+		children, err := visitFn(filerPath)
 		if err != nil {
 			glog.V(0).Infof("failed to visit %s: %v", currentPath, err)
 			return

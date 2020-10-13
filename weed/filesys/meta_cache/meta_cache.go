@@ -22,10 +22,10 @@ type MetaCache struct {
 	uidGidMapper    *UidGidMapper
 }
 
-func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper) *MetaCache {
+func NewMetaCache(dbFolder string, baseDir util.FullPath, uidGidMapper *UidGidMapper) *MetaCache {
 	return &MetaCache{
 		localStore:      openMetaStore(dbFolder),
-		visitedBoundary: bounded_tree.NewBoundedTree(),
+		visitedBoundary: bounded_tree.NewBoundedTree(baseDir),
 		uidGidMapper:    uidGidMapper,
 	}
 }

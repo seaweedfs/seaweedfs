@@ -52,7 +52,7 @@ func TestBoundedTree(t *testing.T) {
 	// g
 	// h
 
-	tree := NewBoundedTree()
+	tree := NewBoundedTree(util.FullPath("/"))
 
 	tree.EnsureVisited(util.FullPath("/a/b/c"), visitFn)
 
@@ -100,7 +100,7 @@ func TestEmptyBoundedTree(t *testing.T) {
 	// g
 	// h
 
-	tree := NewBoundedTree()
+	tree := NewBoundedTree(util.FullPath("/"))
 
 	visitFn := func(path util.FullPath) (childDirectories []string, err error) {
 		fmt.Printf("  visit %v ...\n", path)
