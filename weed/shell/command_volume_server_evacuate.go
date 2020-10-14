@@ -9,6 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"io"
+	"os"
 	"sort"
 )
 
@@ -151,6 +152,11 @@ func moveAwayOneEcVolume(commandEnv *CommandEnv, ecShardInfo *master_pb.VolumeEc
 
 		for i := 0; i < len(otherNodes); i++ {
 			emptyNode := otherNodes[i]
+			collectionPrefix := ""
+			if ecShardInfo.Collection != "" {
+				collectionPrefix = ecShardInfo.Collection + "_"
+			}
+			fmt.Fprintf(os.Stdout, "moving ec volume %s%d.%d %s => %s\n", collectionPrefix, ecShardInfo.Id, shardId, thisNode.info.Id, emptyNode.info.Id)
 			err = moveMountedShardToEcNode(commandEnv, thisNode, ecShardInfo.Collection, needle.VolumeId(ecShardInfo.Id), shardId, emptyNode, applyChange)
 			if err != nil {
 				return

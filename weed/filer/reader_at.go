@@ -75,7 +75,7 @@ func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 		}
 
 		for _, loc := range locations.Locations {
-			volumeServerAddress := filerClient.AdjustedUrl(loc.Url)
+			volumeServerAddress := filerClient.AdjustedUrl(loc)
 			targetUrl := fmt.Sprintf("http://%s/%s", volumeServerAddress, fileId)
 			targetUrls = append(targetUrls, targetUrl)
 		}

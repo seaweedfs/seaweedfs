@@ -2,6 +2,7 @@ package meta_cache
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sync"
 
@@ -22,10 +23,10 @@ type MetaCache struct {
 	uidGidMapper    *UidGidMapper
 }
 
-func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper) *MetaCache {
+func NewMetaCache(dbFolder string, baseDir util.FullPath, uidGidMapper *UidGidMapper) *MetaCache {
 	return &MetaCache{
 		localStore:      openMetaStore(dbFolder),
-		visitedBoundary: bounded_tree.NewBoundedTree(),
+		visitedBoundary: bounded_tree.NewBoundedTree(baseDir),
 		uidGidMapper:    uidGidMapper,
 	}
 }
@@ -115,6 +116,10 @@ func (mc *MetaCache) DeleteEntry(ctx context.Context, fp util.FullPath) (err err
 func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*filer.Entry, error) {
 	mc.RLock()
 	defer mc.RUnlock()
+
+	if !mc.visitedBoundary.HasVisited(dirPath) {
+		return nil, fmt.Errorf("unsynchronized dir: %v", dirPath)
+	}
 
 	entries, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
 	if err != nil {

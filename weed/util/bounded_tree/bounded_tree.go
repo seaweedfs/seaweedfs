@@ -16,13 +16,15 @@ type Node struct {
 type BoundedTree struct {
 	root *Node
 	sync.RWMutex
+	baseDir util.FullPath
 }
 
-func NewBoundedTree() *BoundedTree {
+func NewBoundedTree(baseDir util.FullPath) *BoundedTree {
 	return &BoundedTree{
 		root: &Node{
 			Name: "/",
 		},
+		baseDir: baseDir,
 	}
 }
 
@@ -32,21 +34,29 @@ type VisitNodeFunc func(path util.FullPath) (childDirectories []string, err erro
 // No action if the directory has been visited before or does not exist.
 // A leaf node, which has no children, represents a directory not visited.
 // A non-leaf node or a non-existing node represents a directory already visited, or does not need to visit.
-func (t *BoundedTree) EnsureVisited(p util.FullPath, visitFn VisitNodeFunc) {
+func (t *BoundedTree) EnsureVisited(p util.FullPath, visitFn VisitNodeFunc) (visitErr error) {
 	t.Lock()
 	defer t.Unlock()
 
 	if t.root == nil {
 		return
 	}
+	if t.baseDir != "/" {
+		p = p[len(t.baseDir):]
+	}
 	components := p.Split()
 	// fmt.Printf("components %v %d\n", components, len(components))
-	if canDelete := t.ensureVisited(t.root, util.FullPath("/"), components, 0, visitFn); canDelete {
+	canDelete, err := t.ensureVisited(t.root, t.baseDir, components, 0, visitFn)
+	if err != nil {
+		return err
+	}
+	if canDelete {
 		t.root = nil
 	}
+	return nil
 }
 
-func (t *BoundedTree) ensureVisited(n *Node, currentPath util.FullPath, components []string, i int, visitFn VisitNodeFunc) (canDeleteNode bool) {
+func (t *BoundedTree) ensureVisited(n *Node, currentPath util.FullPath, components []string, i int, visitFn VisitNodeFunc) (canDeleteNode bool, visitErr error) {
 
 	// println("ensureVisited", currentPath, i)
 
@@ -60,15 +70,20 @@ func (t *BoundedTree) ensureVisited(n *Node, currentPath util.FullPath, componen
 	} else {
 		// fmt.Printf("ensure %v\n", currentPath)
 
-		children, err := visitFn(currentPath)
+		filerPath := currentPath
+		if t.baseDir != "/" {
+			filerPath = t.baseDir + filerPath
+		}
+
+		children, err := visitFn(filerPath)
 		if err != nil {
 			glog.V(0).Infof("failed to visit %s: %v", currentPath, err)
-			return
+			return false, err
 		}
 
 		if len(children) == 0 {
 			// fmt.Printf("  canDelete %v without children\n", currentPath)
-			return true
+			return true, nil
 		}
 
 		n.Children = make(map[string]*Node)
@@ -93,19 +108,22 @@ func (t *BoundedTree) ensureVisited(n *Node, currentPath util.FullPath, componen
 	}
 
 	// fmt.Printf("  ensureVisited %v %v\n", currentPath, toVisitNode.Name)
-
-	if canDelete := t.ensureVisited(toVisitNode, currentPath.Child(components[i]), components, i+1, visitFn); canDelete {
+	canDelete, childVisitErr := t.ensureVisited(toVisitNode, currentPath.Child(components[i]), components, i+1, visitFn)
+	if childVisitErr != nil {
+		return false, childVisitErr
+	}
+	if canDelete {
 
 		// fmt.Printf("  delete %v %v\n", currentPath, components[i])
 		delete(n.Children, components[i])
 
 		if len(n.Children) == 0 {
 			// fmt.Printf("  canDelete %v\n", currentPath)
-			return true
+			return true, nil
 		}
 	}
 
-	return false
+	return false, nil
 
 }
 

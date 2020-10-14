@@ -290,7 +290,7 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 		}
 		var bytes []byte
 		for _, url := range urls {
-			bytes, err = util.Get(url)
+			bytes, _, err = util.Get(url)
 			if err == nil {
 				break
 			}

@@ -68,7 +68,7 @@ func (wfs *WFS) deleteFileIds(grpcDialOption grpc.DialOption, client filer_pb.Se
 			}
 			for _, loc := range locations.Locations {
 				lr.Locations = append(lr.Locations, operation.Location{
-					Url:       wfs.AdjustedUrl(loc.Url),
+					Url:       wfs.AdjustedUrl(loc),
 					PublicUrl: loc.PublicUrl,
 				})
 			}

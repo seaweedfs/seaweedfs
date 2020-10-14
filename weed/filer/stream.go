@@ -2,6 +2,7 @@ package filer
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"math"
 	"strings"
@@ -35,10 +36,14 @@ func StreamContent(masterClient *wdclient.MasterClient, w io.Writer, chunks []*f
 
 		data, err := retriedFetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
 		if err != nil {
-			return err
+			glog.Errorf("read chunk: %v", err)
+			return fmt.Errorf("read chunk: %v", err)
 		}
-		w.Write(data)
-
+		_, err = w.Write(data)
+		if err != nil {
+			glog.Errorf("write chunk: %v", err)
+			return fmt.Errorf("write chunk: %v", err)
+		}
 	}
 
 	return nil
@@ -174,10 +179,14 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 		return err
 	}
 	var buffer bytes.Buffer
+	var shouldRetry bool
 	for _, urlString := range urlStrings {
-		err = util.ReadUrlAsStream(urlString, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size), func(data []byte) {
+		shouldRetry, err = util.ReadUrlAsStream(urlString, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size), func(data []byte) {
 			buffer.Write(data)
 		})
+		if !shouldRetry {
+			break
+		}
 		if err != nil {
 			glog.V(1).Infof("read %s failed, err: %v", chunkView.FileId, err)
 			buffer.Reset()

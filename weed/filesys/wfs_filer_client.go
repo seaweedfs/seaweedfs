@@ -1,9 +1,6 @@
 package filesys
 
 import (
-	"fmt"
-	"strings"
-
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -26,15 +23,9 @@ func (wfs *WFS) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) erro
 
 }
 
-func (wfs *WFS) AdjustedUrl(hostAndPort string) string {
-	if !wfs.option.OutsideContainerClusterMode {
-		return hostAndPort
+func (wfs *WFS) AdjustedUrl(location *filer_pb.Location) string {
+	if wfs.option.OutsideContainerClusterMode {
+		return location.PublicUrl
 	}
-	commaIndex := strings.Index(hostAndPort, ":")
-	if commaIndex < 0 {
-		return hostAndPort
-	}
-	filerCommaIndex := strings.Index(wfs.option.FilerGrpcAddress, ":")
-	return fmt.Sprintf("%s:%s", wfs.option.FilerGrpcAddress[:filerCommaIndex], hostAndPort[commaIndex+1:])
-
+	return location.Url
 }

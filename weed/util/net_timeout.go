@@ -54,7 +54,8 @@ func (c *Conn) Read(b []byte) (count int, e error) {
 
 func (c *Conn) Write(b []byte) (count int, e error) {
 	if c.WriteTimeout != 0 {
-		err := c.Conn.SetWriteDeadline(time.Now().Add(c.WriteTimeout))
+		// minimum 4KB/s
+		err := c.Conn.SetWriteDeadline(time.Now().Add(c.WriteTimeout * time.Duration(len(b)/40000+1)))
 		if err != nil {
 			return 0, err
 		}
