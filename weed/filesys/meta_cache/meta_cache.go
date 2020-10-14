@@ -117,7 +117,6 @@ func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.Full
 	mc.RLock()
 	defer mc.RUnlock()
 
-
 	if !mc.visitedBoundary.HasVisited(dirPath) {
 		return nil, fmt.Errorf("unsynchronized dir: %v", dirPath)
 	}
