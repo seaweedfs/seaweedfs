@@ -114,7 +114,7 @@ func retriedFetchChunkData(urlStrings []string, cipherKey []byte, isGzipped bool
 				break
 			}
 		}
-		if err != nil && shouldRetry{
+		if err != nil && shouldRetry {
 			glog.V(0).Infof("retry reading in %v", waitTime)
 			time.Sleep(waitTime)
 		} else {

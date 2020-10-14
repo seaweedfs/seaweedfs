@@ -34,7 +34,7 @@ type VisitNodeFunc func(path util.FullPath) (childDirectories []string, err erro
 // No action if the directory has been visited before or does not exist.
 // A leaf node, which has no children, represents a directory not visited.
 // A non-leaf node or a non-existing node represents a directory already visited, or does not need to visit.
-func (t *BoundedTree) EnsureVisited(p util.FullPath, visitFn VisitNodeFunc) (visitErr error){
+func (t *BoundedTree) EnsureVisited(p util.FullPath, visitFn VisitNodeFunc) (visitErr error) {
 	t.Lock()
 	defer t.Unlock()
 
