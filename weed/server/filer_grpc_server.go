@@ -383,6 +383,28 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 	}, nil
 }
 
+func (fs *FilerServer) CollectionList(ctx context.Context, req *filer_pb.CollectionListRequest) (resp *filer_pb.CollectionListResponse, err error) {
+
+	glog.V(4).Infof("CollectionList %v", req)
+	resp = &filer_pb.CollectionListResponse{}
+
+	err = fs.filer.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+		masterResp, err := client.CollectionList(context.Background(), &master_pb.CollectionListRequest{
+			IncludeNormalVolumes: req.IncludeNormalVolumes,
+			IncludeEcVolumes:     req.IncludeEcVolumes,
+		})
+		if err != nil {
+			return err
+		}
+		for _, c := range masterResp.Collections {
+			resp.Collections = append(resp.Collections, &filer_pb.Collection{Name: c.Name})
+		}
+		return nil
+	})
+
+	return
+}
+
 func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.DeleteCollectionRequest) (resp *filer_pb.DeleteCollectionResponse, err error) {
 
 	glog.V(4).Infof("DeleteCollection %v", req)

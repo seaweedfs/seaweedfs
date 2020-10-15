@@ -37,6 +37,9 @@ service SeaweedFiler {
     rpc LookupVolume (LookupVolumeRequest) returns (LookupVolumeResponse) {
     }
 
+    rpc CollectionList (CollectionListRequest) returns (CollectionListResponse) {
+    }
+
     rpc DeleteCollection (DeleteCollectionRequest) returns (DeleteCollectionResponse) {
     }
 
@@ -244,6 +247,16 @@ message LookupVolumeResponse {
     map<string, Locations> locations_map = 1;
 }
 
+message Collection {
+    string name = 1;
+}
+message CollectionListRequest {
+    bool include_normal_volumes = 1;
+    bool include_ec_volumes = 2;
+}
+message CollectionListResponse {
+    repeated Collection collections = 1;
+}
 message DeleteCollectionRequest {
     string collection = 1;
 }

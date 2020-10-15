@@ -58,8 +58,36 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 
 	bucket, _ := getBucketAndObject(r)
 
+	// avoid duplicated buckets
+	errCode := s3err.ErrNone
+	if err := s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		if resp, err := client.CollectionList(context.Background(), &filer_pb.CollectionListRequest{
+			IncludeEcVolumes:     true,
+			IncludeNormalVolumes: true,
+		}); err != nil {
+			glog.Errorf("list collection: %v", err)
+			return fmt.Errorf("list collections: %v", err)
+		}else {
+			for _, c := range resp.Collections {
+				if bucket == c.Name {
+					errCode = s3err.ErrBucketAlreadyExists
+					break
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
+		return
+	}
+	if errCode != s3err.ErrNone {
+		writeErrorResponse(w, errCode, r.URL)
+		return
+	}
+
 	// create the folder for bucket, but lazily create actual collection
 	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, nil); err != nil {
+		glog.Errorf("PutBucketHandler mkdir: %v", err)
 		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
