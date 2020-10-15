@@ -17,6 +17,12 @@ spec:
     port: {{ .Values.volume.grpcPort }}
     targetPort: {{ .Values.volume.grpcPort }}
     protocol: TCP
-  selector:
+{{- if .Values.volume.metricsPort }}
+  - name: "swfs-volume-metrics"
+    port: {{ .Values.volume.metricsPort }}
+    targetPort: {{ .Values.volume.metricsPort }}
+    protocol: TCP
+{{- end }}}
+selector:
     app: {{ template "seaweedfs.name" . }}
     component: volume

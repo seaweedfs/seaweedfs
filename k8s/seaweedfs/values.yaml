@@ -121,6 +121,7 @@ volume:
   restartPolicy: null
   port: 8080
   grpcPort: 18080
+  metricsPort: 9327
   ipBind: "0.0.0.0"
   replicas: 1
   loggingOverrideLevel: null
@@ -209,6 +210,7 @@ filer:
   replicas: 1
   port: 8888
   grpcPort: 18888
+  metricsPort: 9327
   loggingOverrideLevel: null
   #  replication type is XYZ:
   # X number of replica in other data centers
@@ -313,6 +315,7 @@ s3:
   restartPolicy: null
   replicas: 1
   port: 8333
+  metricsPort: 9327
   loggingOverrideLevel: null
 
   # Suffix of the host name, {bucket}.{domainName}
