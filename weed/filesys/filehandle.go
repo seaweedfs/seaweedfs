@@ -179,7 +179,9 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 	}
 
 	if fh.f.isOpen == 0 {
-		fh.doFlush(ctx, req.Header)
+		if err := fh.doFlush(ctx, req.Header); err != nil {
+			glog.Errorf("Release doFlush %s: %v", fh.f.Name, err)
+		}
 		fh.f.wfs.ReleaseHandle(fh.f.fullpath(), fuse.HandleID(fh.handle))
 	}
 
