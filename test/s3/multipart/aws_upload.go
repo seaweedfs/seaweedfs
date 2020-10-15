@@ -49,7 +49,8 @@ func main() {
 	fileInfo, _ := file.Stat()
 	size := fileInfo.Size()
 	buffer := make([]byte, size)
-	fileType := http.DetectContentType(buffer)
+	// fileType := http.DetectContentType(buffer)
+	fileType := "application/octet-stream"
 	file.Read(buffer)
 
 	path := "/media/" + file.Name()
