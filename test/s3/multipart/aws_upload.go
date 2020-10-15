@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 
 	"github.com/aws/aws-sdk-go/aws"
