@@ -77,6 +77,14 @@ var (
 			Help:      "Number of volumes or shards.",
 		}, []string{"collection", "type"})
 
+	VolumeServerReadOnlyVolumeGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "volumeServer",
+			Name:      "read_only_volumes",
+			Help:      "Number of read only volumes.",
+		}, []string{"collection", "type"})
+
 	VolumeServerMaxVolumeCounter = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "SeaweedFS",
@@ -122,6 +130,7 @@ func init() {
 	Gather.MustRegister(VolumeServerRequestHistogram)
 	Gather.MustRegister(VolumeServerVolumeCounter)
 	Gather.MustRegister(VolumeServerMaxVolumeCounter)
+	Gather.MustRegister(VolumeServerReadOnlyVolumeGauge)
 	Gather.MustRegister(VolumeServerDiskSizeGauge)
 
 	Gather.MustRegister(S3RequestCounter)
