@@ -183,6 +183,9 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 		fh.f.wfs.ReleaseHandle(fh.f.fullpath(), fuse.HandleID(fh.handle))
 	}
 
+	// stop the goroutine
+	close(fh.dirtyPages.chunkSaveErrChan)
+
 	return nil
 }
 
