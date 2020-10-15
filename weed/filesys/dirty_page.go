@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"io"
 	"sync"
+	"time"
 )
 
 type ContinuousDirtyPages struct {
@@ -81,6 +82,7 @@ func (pages *ContinuousDirtyPages) saveExistingLargestPageToStorage() (hasSavedD
 
 func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64, size int64) {
 
+	mtime := time.Now().UnixNano()
 	pages.writeWaitGroup.Add(1)
 	go func() {
 		defer pages.writeWaitGroup.Done()
@@ -94,17 +96,11 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 			pages.chunkSaveErrChan <- err
 			return
 		}
+		chunk.Mtime = mtime
 		pages.collection, pages.replication = collection, replication
 		pages.f.addChunks([]*filer_pb.FileChunk{chunk})
 		pages.chunkSaveErrChan <- nil
 	}()
-}
-
-func maxUint64(x, y uint64) uint64 {
-	if x > y {
-		return x
-	}
-	return y
 }
 
 func max(x, y int64) int64 {
