@@ -66,9 +66,9 @@ func TestReaderAt(t *testing.T) {
 		chunkCache:   &mockChunkCache{},
 	}
 
-	testReadAt(t, readerAt, 0, 10, 10, nil)
+	testReadAt(t, readerAt, 0, 10, 10, io.EOF)
 	testReadAt(t, readerAt, 0, 12, 10, io.EOF)
-	testReadAt(t, readerAt, 2, 8, 8, nil)
+	testReadAt(t, readerAt, 2, 8, 8, io.EOF)
 	testReadAt(t, readerAt, 3, 6, 6, nil)
 
 }
@@ -116,7 +116,7 @@ func TestReaderAt0(t *testing.T) {
 		chunkCache:   &mockChunkCache{},
 	}
 
-	testReadAt(t, readerAt, 0, 10, 10, nil)
+	testReadAt(t, readerAt, 0, 10, 10, io.EOF)
 	testReadAt(t, readerAt, 3, 16, 7, io.EOF)
 	testReadAt(t, readerAt, 3, 5, 5, nil)
 
@@ -144,7 +144,7 @@ func TestReaderAt1(t *testing.T) {
 		chunkCache:   &mockChunkCache{},
 	}
 
-	testReadAt(t, readerAt, 0, 20, 20, nil)
+	testReadAt(t, readerAt, 0, 20, 20, io.EOF)
 	testReadAt(t, readerAt, 1, 7, 7, nil)
 	testReadAt(t, readerAt, 0, 1, 1, nil)
 	testReadAt(t, readerAt, 18, 4, 2, io.EOF)
