@@ -1,6 +1,7 @@
 FROM frolvlad/alpine-glibc as builder
 RUN apk add git go g++
 RUN mkdir -p /go/src/github.com/chrislusf/
+ADD https://api.github.com/repos/Dando-Real-ITA/seaweedfs/git/refs/heads/develop version.json
 RUN git clone --depth 1 https://github.com/Dando-Real-ITA/seaweedfs -b develop /go/src/github.com/chrislusf/seaweedfs
 RUN cd /go/src/github.com/chrislusf/seaweedfs/weed && go install
 

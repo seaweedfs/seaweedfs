@@ -277,7 +277,8 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 
 	// upload the file content
 	fileName := filepath.Base(f.Name())
-	mimeType := detectMimeType(f)
+	// mimeType := detectMimeType(f)
+	mimeType := "application/octet-stream"
 	data, err := ioutil.ReadAll(f)
 	if err != nil {
 		return err
@@ -364,7 +365,8 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, chunkCount int, chunkSize int64) error {
 
 	fileName := filepath.Base(f.Name())
-	mimeType := detectMimeType(f)
+	// mimeType := detectMimeType(f)
+	mimeType := "application/octet-stream"
 
 	chunksChan := make(chan *filer_pb.FileChunk, chunkCount)
 
@@ -486,7 +488,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 func detectMimeType(f *os.File) string {
 	head := make([]byte, 512)
 	f.Seek(0, io.SeekStart)
-	n, err := f.Read(head)
+	_, err := f.Read(head)
 	if err == io.EOF {
 		return ""
 	}
