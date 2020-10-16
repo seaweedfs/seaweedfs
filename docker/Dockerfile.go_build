@@ -18,7 +18,6 @@ COPY --from=builder /root/go/bin/weed /usr/bin/
 RUN mkdir -p /etc/seaweedfs
 COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/filer.toml /etc/seaweedfs/filer.toml
 COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/entrypoint.sh /entrypoint.sh
-COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/start.sh /start.sh
 
 # volume server gprc port
 EXPOSE 18080
