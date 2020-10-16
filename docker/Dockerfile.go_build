@@ -7,15 +7,12 @@ COPY go.mod .
 COPY go.sum .
 RUN go mod download
 
-ADD https://api.github.com/repos/Dando-Real-ITA/seaweedfs/git/refs/heads/develop version.json
-RUN git clone --depth 1 https://github.com/Dando-Real-ITA/seaweedfs -b develop seaweedfs
+ADD https://api.github.com/repos/chrislusf/seaweedfs/git/refs/heads/master version.json
+RUN git clone --depth 1 https://github.com/chrislusf/seaweedfs seaweedfs
 WORKDIR seaweedfs/weed
 RUN go install
 
 FROM alpine AS final
-RUN \
-  apk add --no-cache --update bind-tools bash && \
-  rm -rf /tmp/*
 LABEL author="Chris Lu"
 COPY --from=builder /root/go/bin/weed /usr/bin/
 RUN mkdir -p /etc/seaweedfs
@@ -43,6 +40,5 @@ RUN mkdir -p /data/filerldb2
 VOLUME /data
 
 RUN chmod +x /entrypoint.sh
-RUN chmod +x /start.sh
 
-ENTRYPOINT ["/start.sh"]
+ENTRYPOINT ["/entrypoint.sh"]
