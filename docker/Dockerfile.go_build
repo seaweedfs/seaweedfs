@@ -1,3 +1,4 @@
+# 2020-10-16 02:02:54
 FROM frolvlad/alpine-glibc as builder
 RUN apk add git go g++
 RUN mkdir -p /go/src/github.com/chrislusf/
@@ -12,11 +13,15 @@ WORKDIR seaweedfs/weed
 RUN go install
 
 FROM alpine AS final
+RUN \
+  apk add --no-cache --update bind-tools bash && \
+  rm -rf /tmp/*
 LABEL author="Chris Lu"
 COPY --from=builder /root/go/bin/weed /usr/bin/
 RUN mkdir -p /etc/seaweedfs
 COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/filer.toml /etc/seaweedfs/filer.toml
 COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/entrypoint.sh /entrypoint.sh
+COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/start.sh /start.sh
 
 # volume server gprc port
 EXPOSE 18080
@@ -38,5 +43,6 @@ RUN mkdir -p /data/filerldb2
 VOLUME /data
 
 RUN chmod +x /entrypoint.sh
+RUN chmod +x /start.sh
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/start.sh"]
