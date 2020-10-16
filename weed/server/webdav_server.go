@@ -484,10 +484,10 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 		f.reader = filer.NewChunkReaderAtFromClient(f.fs, chunkViews, f.fs.chunkCache, fileSize)
 	}
 
-	if f.off+int64(len(p)) > fileSize {
+	if f.off >= fileSize {
 		readSize = int(len(p))
 		err = io.EOF
-		glog.V(2).Infof("WebDavFileSystem.Read %v: faked readSize: %d", f.name, readSize)
+		glog.V(2).Infof("WebDavFileSystem.Read %v: %d offset of filesize %d, faked readSize: %d", f.name, f.off, fileSize, readSize)
 	} else {
 		readSize, err = f.reader.ReadAt(p, f.off)
 		glog.V(3).Infof("WebDavFileSystem.Read %v: [%d,%d)", f.name, f.off, f.off+int64(readSize))
