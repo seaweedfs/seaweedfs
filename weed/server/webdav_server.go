@@ -497,7 +497,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 		glog.Errorf("file read %s: %v", f.name, err)
 	}
 
-	return
+	return readSize, err
 
 }
 
