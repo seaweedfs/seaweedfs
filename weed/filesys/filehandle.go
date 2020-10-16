@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -153,8 +154,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 	if req.Offset == 0 {
 		// detect mime type
-		// fh.contentType = http.DetectContentType(data)
-		fh.contentType = "application/octet-stream"
+		fh.contentType = http.DetectContentType(data)
 		fh.f.dirtyMetadata = true
 	}
 

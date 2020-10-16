@@ -102,8 +102,7 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 	shouldGzipNow := false
 	if !isInputCompressed {
 		if mtype == "" {
-			// mtype = http.DetectContentType(data)
-			mtype = "application/octet-stream"
+			mtype = http.DetectContentType(data)
 			// println("detect1 mimetype to", mtype)
 			if mtype == "application/octet-stream" {
 				mtype = ""

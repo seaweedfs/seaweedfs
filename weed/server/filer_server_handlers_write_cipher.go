@@ -37,8 +37,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 		uncompressedData = pu.UncompressedData
 	}
 	if pu.MimeType == "" {
-		// pu.MimeType = http.DetectContentType(uncompressedData)
-		pu.MimeType = "application/octet-stream"
+		pu.MimeType = http.DetectContentType(uncompressedData)
 		// println("detect2 mimetype to", pu.MimeType)
 	}
 

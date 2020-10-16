@@ -66,8 +66,7 @@ func ParseUpload(r *http.Request, sizeLimit int64) (pu *ParsedUpload, e error) {
 		ext := filepath.Base(pu.FileName)
 		mimeType := pu.MimeType
 		if mimeType == "" {
-			// mimeType = http.DetectContentType(pu.Data)
-			mimeType = "application/octet-stream"
+			mimeType = http.DetectContentType(pu.Data)
 		}
 		// println("detected mimetype to", pu.MimeType)
 		if mimeType == "application/octet-stream" {

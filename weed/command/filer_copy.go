@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -277,8 +278,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 
 	// upload the file content
 	fileName := filepath.Base(f.Name())
-	// mimeType := detectMimeType(f)
-	mimeType := "application/octet-stream"
+	mimeType := detectMimeType(f)
 	data, err := ioutil.ReadAll(f)
 	if err != nil {
 		return err
@@ -365,8 +365,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, chunkCount int, chunkSize int64) error {
 
 	fileName := filepath.Base(f.Name())
-	// mimeType := detectMimeType(f)
-	mimeType := "application/octet-stream"
+	mimeType := detectMimeType(f)
 
 	chunksChan := make(chan *filer_pb.FileChunk, chunkCount)
 
@@ -488,7 +487,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 func detectMimeType(f *os.File) string {
 	head := make([]byte, 512)
 	f.Seek(0, io.SeekStart)
-	_, err := f.Read(head)
+	n, err := f.Read(head)
 	if err == io.EOF {
 		return ""
 	}
@@ -497,8 +496,7 @@ func detectMimeType(f *os.File) string {
 		return ""
 	}
 	f.Seek(0, io.SeekStart)
-	// mimeType := http.DetectContentType(head[:n])
-	mimeType := "application/octet-stream"
+	mimeType := http.DetectContentType(head[:n])
 	if mimeType == "application/octet-stream" {
 		return ""
 	}

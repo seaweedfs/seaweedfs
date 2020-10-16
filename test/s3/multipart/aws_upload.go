@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -48,8 +49,7 @@ func main() {
 	fileInfo, _ := file.Stat()
 	size := fileInfo.Size()
 	buffer := make([]byte, size)
-	// fileType := http.DetectContentType(buffer)
-	fileType := "application/octet-stream"
+	fileType := http.DetectContentType(buffer)
 	file.Read(buffer)
 
 	path := "/media/" + file.Name()
