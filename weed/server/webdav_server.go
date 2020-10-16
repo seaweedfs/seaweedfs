@@ -489,11 +489,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	glog.V(3).Infof("WebDavFileSystem.Read %v: [%d,%d)", f.name, f.off, f.off+int64(readSize))
 	f.off += int64(readSize)
 
-	if err == io.EOF {
-		err = nil
-	}
-
-	if err != nil {
+	if err != nil && err != io.EOF {
 		glog.Errorf("file read %s: %v", f.name, err)
 	}
 
