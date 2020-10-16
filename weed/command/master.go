@@ -145,7 +145,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	go func() {
 		time.Sleep(1500 * time.Millisecond)
 		if ms.Topo.RaftServer.Leader() == "" && ms.Topo.RaftServer.IsLogEmpty() && isTheFirstOne(myMasterAddress, peers) {
-			if ms.MasterClient.FindLeader(myMasterAddress) == "" {
+			if ms.MasterClient.FindLeaderFromOtherPeers(myMasterAddress) == "" {
 				raftServer.DoJoinCommand()
 			}
 		}
