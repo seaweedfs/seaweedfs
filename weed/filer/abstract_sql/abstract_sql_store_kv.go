@@ -3,6 +3,7 @@ package abstract_sql
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -80,8 +81,8 @@ func genDirAndName(key []byte) (dirStr string, dirHash int64, name string) {
 	}
 
 	dirHash = int64(util.BytesToUint64(key[:8]))
-	dirStr = string(key[:8])
-	name = string(key[8:])
+	dirStr = base64.StdEncoding.EncodeToString(key[:8])
+	name = base64.StdEncoding.EncodeToString(key[8:])
 
 	return
 }
