@@ -10,13 +10,14 @@ import (
 )
 
 type ContinuousDirtyPages struct {
-	intervals        *ContinuousIntervals
-	f                *File
-	writeWaitGroup   sync.WaitGroup
-	chunkSaveErrChan chan error
-	lock             sync.Mutex
-	collection       string
-	replication      string
+	intervals              *ContinuousIntervals
+	f                      *File
+	writeWaitGroup         sync.WaitGroup
+	chunkSaveErrChan       chan error
+	chunkSaveErrChanClosed bool
+	lock                   sync.Mutex
+	collection             string
+	replication            string
 }
 
 func newDirtyPages(file *File) *ContinuousDirtyPages {
@@ -81,6 +82,11 @@ func (pages *ContinuousDirtyPages) saveExistingLargestPageToStorage() (hasSavedD
 }
 
 func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64, size int64) {
+
+	if pages.chunkSaveErrChanClosed {
+		pages.chunkSaveErrChan = make(chan error, 8)
+		pages.chunkSaveErrChanClosed = false
+	}
 
 	mtime := time.Now().UnixNano()
 	pages.writeWaitGroup.Add(1)
