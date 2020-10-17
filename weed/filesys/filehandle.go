@@ -77,6 +77,10 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 		totalRead = max(maxStop-req.Offset, totalRead)
 	}
 
+	if err == io.EOF {
+		err = nil
+	}
+
 	if err != nil {
 		glog.Warningf("file handle read %s %d: %v", fh.f.fullpath(), totalRead, err)
 		return fuse.EIO
@@ -122,11 +126,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 	totalRead, err := fh.f.reader.ReadAt(buff, offset)
 
-	if err == io.EOF {
-		err = nil
-	}
-
-	if err != nil {
+	if err != nil && err != io.EOF{
 		glog.Errorf("file handle read %s: %v", fh.f.fullpath(), err)
 	}
 
