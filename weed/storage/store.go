@@ -200,6 +200,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	maxVolumeCount := 0
 	var maxFileKey NeedleId
 	collectionVolumeSize := make(map[string]uint64)
+	collectionVolumeReadOnlyCount := make(map[string]uint8)
 	for _, location := range s.Locations {
 		var deleteVids []needle.VolumeId
 		maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
@@ -219,6 +220,9 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			}
 			fileSize, _, _ := v.FileStat()
 			collectionVolumeSize[v.Collection] += fileSize
+			if v.IsReadOnly() {
+				collectionVolumeReadOnlyCount[v.Collection] += 1
+			}
 		}
 		location.volumesLock.RUnlock()
 
@@ -241,6 +245,10 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 
 	for col, size := range collectionVolumeSize {
 		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "normal").Set(float64(size))
+	}
+
+	for col, count := range collectionVolumeReadOnlyCount {
+		stats.VolumeServerReadOnlyVolumeGauge.WithLabelValues(col, "normal").Set(float64(count))
 	}
 
 	return &master_pb.Heartbeat{

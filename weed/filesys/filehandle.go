@@ -77,6 +77,10 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 		totalRead = max(maxStop-req.Offset, totalRead)
 	}
 
+	if err == io.EOF {
+		err = nil
+	}
+
 	if err != nil {
 		glog.Warningf("file handle read %s %d: %v", fh.f.fullpath(), totalRead, err)
 		return fuse.EIO
@@ -122,11 +126,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 	totalRead, err := fh.f.reader.ReadAt(buff, offset)
 
-	if err == io.EOF {
-		err = nil
-	}
-
-	if err != nil {
+	if err != nil && err != io.EOF{
 		glog.Errorf("file handle read %s: %v", fh.f.fullpath(), err)
 	}
 
@@ -179,9 +179,15 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 	}
 
 	if fh.f.isOpen == 0 {
-		fh.doFlush(ctx, req.Header)
+		if err := fh.doFlush(ctx, req.Header); err != nil {
+			glog.Errorf("Release doFlush %s: %v", fh.f.Name, err)
+		}
 		fh.f.wfs.ReleaseHandle(fh.f.fullpath(), fuse.HandleID(fh.handle))
 	}
+
+	// stop the goroutine
+	fh.dirtyPages.chunkSaveErrChanClosed = true
+	close(fh.dirtyPages.chunkSaveErrChan)
 
 	return nil
 }

@@ -52,7 +52,7 @@ func (mc *MasterClient) KeepConnectedToMaster() {
 	}
 }
 
-func (mc *MasterClient) FindLeader(myMasterAddress string) (leader string) {
+func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress string) (leader string) {
 	for _, master := range mc.masters {
 		if master == myMasterAddress {
 			continue

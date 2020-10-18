@@ -2,6 +2,7 @@ package cassandra
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/gocql/gocql"
@@ -54,8 +55,8 @@ func genDirAndName(key []byte) (dir string, name string) {
 		key = append(key, 0)
 	}
 
-	dir = string(key[:8])
-	name = string(key[8:])
+	dir = base64.StdEncoding.EncodeToString(key[:8])
+	name = base64.StdEncoding.EncodeToString(key[8:])
 
 	return
 }
