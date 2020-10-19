@@ -1,5 +1,6 @@
 package seaweed.hdfs;
 
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSInputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -17,17 +18,22 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import static seaweed.hdfs.SeaweedFileSystem.FS_SEAWEED_BUFFER_SIZE;
+import static seaweed.hdfs.SeaweedFileSystem.FS_SEAWEED_DEFAULT_BUFFER_SIZE;
+
 public class SeaweedFileSystemStore {
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedFileSystemStore.class);
 
     private FilerGrpcClient filerGrpcClient;
     private FilerClient filerClient;
+    private Configuration conf;
 
-    public SeaweedFileSystemStore(String host, int port) {
+    public SeaweedFileSystemStore(String host, int port, Configuration conf) {
         int grpcPort = 10000 + port;
         filerGrpcClient = new FilerGrpcClient(host, grpcPort);
         filerClient = new FilerClient(filerGrpcClient);
+        this.conf = conf;
     }
 
     public static String getParentDirectory(Path path) {
@@ -123,7 +129,7 @@ public class SeaweedFileSystemStore {
         long length = SeaweedRead.fileSize(entry);
         boolean isDir = entry.getIsDirectory();
         int block_replication = 1;
-        int blocksize = 512;
+        int blocksize = this.conf.getInt(FS_SEAWEED_BUFFER_SIZE, FS_SEAWEED_DEFAULT_BUFFER_SIZE);
         long modification_time = attributes.getMtime() * 1000; // milliseconds
         long access_time = 0;
         FsPermission permission = FsPermission.createImmutable((short) attributes.getFileMode());

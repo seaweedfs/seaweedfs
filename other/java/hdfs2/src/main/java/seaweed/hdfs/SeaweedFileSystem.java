@@ -61,7 +61,7 @@ public class SeaweedFileSystem extends FileSystem {
         setConf(conf);
         this.uri = uri;
 
-        seaweedFileSystemStore = new SeaweedFileSystemStore(host, port);
+        seaweedFileSystemStore = new SeaweedFileSystemStore(host, port, conf);
 
     }
 
