@@ -42,13 +42,17 @@ func batchVacuumVolumeCheck(grpcDialOption grpc.DialOption, vl *VolumeLayout, vi
 		}(index, dn.Url(), vid)
 	}
 	vacuumLocationList := NewVolumeLocationList()
+
+	waitTimeout := time.NewTimer(30 * time.Minute)
+	defer waitTimeout.Stop()
+
 	for range locationlist.list {
 		select {
 		case index := <-ch:
 			if index != -1 {
 				vacuumLocationList.list = append(vacuumLocationList.list, locationlist.list[index])
 			}
-		case <-time.After(30 * time.Minute):
+		case <-waitTimeout.C:
 			return vacuumLocationList, false
 		}
 	}
@@ -81,11 +85,15 @@ func batchVacuumVolumeCompact(grpcDialOption grpc.DialOption, vl *VolumeLayout, 
 		}(index, dn.Url(), vid)
 	}
 	isVacuumSuccess := true
+
+	waitTimeout := time.NewTimer(30 * time.Minute)
+	defer waitTimeout.Stop()
+
 	for range locationlist.list {
 		select {
 		case canCommit := <-ch:
 			isVacuumSuccess = isVacuumSuccess && canCommit
-		case <-time.After(30 * time.Minute):
+		case <-waitTimeout.C:
 			return false
 		}
 	}
