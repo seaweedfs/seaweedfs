@@ -2,7 +2,9 @@ FROM frolvlad/alpine-glibc as builder
 RUN apk add git go g++
 RUN mkdir -p /go/src/github.com/chrislusf/
 RUN git clone https://github.com/chrislusf/seaweedfs /go/src/github.com/chrislusf/seaweedfs
-RUN cd /go/src/github.com/chrislusf/seaweedfs/weed && go install
+RUN cd /go/src/github.com/chrislusf/seaweedfs/weed \
+  && export LDFLAGS="-X github.com/chrislusf/seaweedfs/weed/util.COMMIT=$(git rev-parse --short HEAD)" \
+  && go install -ldflags "${LDFLAGS}"
 
 FROM alpine AS final
 LABEL author="Chris Lu"
