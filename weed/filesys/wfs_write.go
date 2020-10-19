@@ -65,6 +65,6 @@ func (wfs *WFS) saveDataAsChunk(dir string) filer.SaveDataAsChunkFunctionType {
 		wfs.chunkCache.SetChunk(fileId, data)
 
 		chunk = uploadResult.ToPbFileChunk(fileId, offset)
-		return chunk, "", "", nil
+		return chunk, collection, replication, nil
 	}
 }

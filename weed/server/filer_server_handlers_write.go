@@ -139,6 +139,7 @@ func (fs *FilerServer) detectCollection(requestURI, qCollection, qReplication st
 	}
 
 	// required by buckets folder
+	bucketDefaultReplication := ""
 	if strings.HasPrefix(requestURI, fs.filer.DirBucketsPath+"/") {
 		bucketAndObjectKey := requestURI[len(fs.filer.DirBucketsPath)+1:]
 		t := strings.Index(bucketAndObjectKey, "/")
@@ -148,7 +149,10 @@ func (fs *FilerServer) detectCollection(requestURI, qCollection, qReplication st
 		if t > 0 {
 			collection = bucketAndObjectKey[:t]
 		}
-		replication, fsync = fs.filer.ReadBucketOption(collection)
+		bucketDefaultReplication, fsync = fs.filer.ReadBucketOption(collection)
+	}
+	if replication == "" {
+		replication = bucketDefaultReplication
 	}
 
 	return
