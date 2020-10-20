@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"strings"
+
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 
 	"github.com/gorilla/mux"
 
@@ -333,7 +334,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	}
 	if ret.Error != "" {
 		glog.Errorf("upload to filer error: %v", ret.Error)
-		return "", s3err.ErrInternalError
+		return "", filerErrorToS3Error(ret.Error)
 	}
 
 	return etag, s3err.ErrNone
@@ -358,4 +359,11 @@ func getBucketAndObject(r *http.Request) (bucket, object string) {
 	}
 
 	return
+}
+
+func filerErrorToS3Error(errString string) s3err.ErrorCode {
+	if strings.HasPrefix(errString, "existing ") && strings.HasSuffix(errString, "is a directory") {
+		return s3err.ErrExistingObjectIsDirectory
+	}
+	return s3err.ErrInternalError
 }
