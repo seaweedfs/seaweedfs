@@ -429,7 +429,7 @@ MinIO metadata are in simple files. Each file write will incur meta file writes.
 
 MinIO does not have optimization for large number of small files.
 
-MinIO has multiple disk IO to read one file. SeaweedFS has O(1) disk reads.
+MinIO has multiple disk IO to read one file. SeaweedFS has O(1) disk reads, even for erasure coded files.
 
 MinIO has full-time erasure coding. SeaweedFS uses replication on hot data for faster speed and optionally applies erasure coding on warm data.
 
