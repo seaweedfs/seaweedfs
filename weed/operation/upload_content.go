@@ -19,6 +19,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/valyala/bytebufferpool"
 )
 
 type UploadResult struct {
@@ -76,12 +77,14 @@ func Upload(uploadUrl string, filename string, cipher bool, reader io.Reader, is
 }
 
 func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error, data []byte) {
-	data, err = ioutil.ReadAll(reader)
+	buf := bytebufferpool.Get()
+	defer bytebufferpool.Put(buf)
+	_, err = buf.ReadFrom(reader)
 	if err != nil {
 		err = fmt.Errorf("read input: %v", err)
 		return
 	}
-	uploadResult, uploadErr := retriedUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
+	uploadResult, uploadErr := retriedUploadData(uploadUrl, filename, cipher, buf.Bytes(), isInputCompressed, mtype, pairMap, jwt)
 	return uploadResult, uploadErr, data
 }
 
@@ -179,6 +182,7 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 }
 
 func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, originalDataSize int, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
+
 	body_buf := bytes.NewBufferString("")
 	body_writer := multipart.NewWriter(body_buf)
 	h := make(textproto.MIMEHeader)
