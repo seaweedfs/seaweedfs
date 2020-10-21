@@ -2,11 +2,17 @@ package filesys
 
 import (
 	"bytes"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"io"
+	"runtime"
 	"sync"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+)
+
+var (
+	concurrentWriterLimit = runtime.NumCPU()
 )
 
 type ContinuousDirtyPages struct {
@@ -15,17 +21,26 @@ type ContinuousDirtyPages struct {
 	writeWaitGroup         sync.WaitGroup
 	chunkSaveErrChan       chan error
 	chunkSaveErrChanClosed bool
+	lastErr                error
 	lock                   sync.Mutex
 	collection             string
 	replication            string
 }
 
 func newDirtyPages(file *File) *ContinuousDirtyPages {
-	return &ContinuousDirtyPages{
+	dirtyPages := &ContinuousDirtyPages{
 		intervals:        &ContinuousIntervals{},
 		f:                file,
-		chunkSaveErrChan: make(chan error, 8),
+		chunkSaveErrChan: make(chan error, concurrentWriterLimit),
 	}
+	go func() {
+		for t := range dirtyPages.chunkSaveErrChan {
+			if t != nil {
+				dirtyPages.lastErr = t
+			}
+		}
+	}()
+	return dirtyPages
 }
 
 func (pages *ContinuousDirtyPages) AddPage(offset int64, data []byte) {
@@ -105,7 +120,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 		chunk.Mtime = mtime
 		pages.collection, pages.replication = collection, replication
 		pages.f.addChunks([]*filer_pb.FileChunk{chunk})
-		pages.chunkSaveErrChan <- nil
+		glog.V(0).Infof("%s saveToStorage [%d,%d)", pages.f.fullpath(), offset, offset+size)
 	}()
 }
 

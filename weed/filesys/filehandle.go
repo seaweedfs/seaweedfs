@@ -208,25 +208,17 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 
 	fh.dirtyPages.saveExistingPagesToStorage()
 
-	var err error
-	go func() {
-		for t := range fh.dirtyPages.chunkSaveErrChan {
-			if t != nil {
-				err = t
-			}
-		}
-	}()
 	fh.dirtyPages.writeWaitGroup.Wait()
 
-	if err != nil {
-		return err
+	if fh.dirtyPages.lastErr != nil {
+		return fh.dirtyPages.lastErr
 	}
 
 	if !fh.f.dirtyMetadata {
 		return nil
 	}
 
-	err = fh.f.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := fh.f.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		if fh.f.entry.Attributes != nil {
 			fh.f.entry.Attributes.Mime = fh.contentType
