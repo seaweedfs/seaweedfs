@@ -120,7 +120,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 		chunk.Mtime = mtime
 		pages.collection, pages.replication = collection, replication
 		pages.f.addChunks([]*filer_pb.FileChunk{chunk})
-		glog.V(0).Infof("%s saveToStorage [%d,%d)", pages.f.fullpath(), offset, offset+size)
+		glog.V(3).Infof("%s saveToStorage [%d,%d)", pages.f.fullpath(), offset, offset+size)
 	}()
 }
 
