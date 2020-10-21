@@ -36,6 +36,7 @@ type FilerOptions struct {
 	maxMB                   *int
 	dirListingLimit         *int
 	dataCenter              *string
+	rack                    *string
 	enableNotification      *bool
 	disableHttp             *bool
 	cipher                  *bool
@@ -59,6 +60,7 @@ func init() {
 	f.maxMB = cmdFiler.Flag.Int("maxMB", 32, "split files larger than the limit")
 	f.dirListingLimit = cmdFiler.Flag.Int("dirListLimit", 100000, "limit sub dir listing size")
 	f.dataCenter = cmdFiler.Flag.String("dataCenter", "", "prefer to write to volumes in this data center")
+	f.rack = cmdFiler.Flag.String("rack", "", "prefer to write to volumes in this rack")
 	f.disableHttp = cmdFiler.Flag.Bool("disableHttp", false, "disable http request, only gRpc operations are allowed")
 	f.cipher = cmdFiler.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
 	f.peers = cmdFiler.Flag.String("peers", "", "all filers sharing the same filer store in comma separated ip:port list")
@@ -141,6 +143,7 @@ func (fo *FilerOptions) startFiler() {
 		MaxMB:              *fo.maxMB,
 		DirListingLimit:    *fo.dirListingLimit,
 		DataCenter:         *fo.dataCenter,
+		Rack:               *fo.rack,
 		DefaultLevelDbDir:  defaultLevelDbDirectory,
 		DisableHttp:        *fo.disableHttp,
 		Host:               *fo.ip,

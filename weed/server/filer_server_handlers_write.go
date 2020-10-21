@@ -29,7 +29,7 @@ type FilerPostResult struct {
 	Url   string `json:"url,omitempty"`
 }
 
-func (fs *FilerServer) assignNewFileInfo(replication, collection, dataCenter, ttlString string, fsync bool) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
+func (fs *FilerServer) assignNewFileInfo(replication, collection, dataCenter, rack, ttlString string, fsync bool) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
 
 	stats.FilerRequestCounter.WithLabelValues("assign").Inc()
 	start := time.Now()
@@ -43,13 +43,14 @@ func (fs *FilerServer) assignNewFileInfo(replication, collection, dataCenter, tt
 		DataCenter:  dataCenter,
 	}
 	var altRequest *operation.VolumeAssignRequest
-	if dataCenter != "" {
+	if dataCenter != "" || rack != "" {
 		altRequest = &operation.VolumeAssignRequest{
 			Count:       1,
 			Replication: replication,
 			Collection:  collection,
 			Ttl:         ttlString,
 			DataCenter:  "",
+			Rack:        "",
 		}
 	}
 
@@ -78,6 +79,10 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	if dataCenter == "" {
 		dataCenter = fs.option.DataCenter
 	}
+	rack := query.Get("rack")
+	if dataCenter == "" {
+		rack = fs.option.Rack
+	}
 	ttlString := r.URL.Query().Get("ttl")
 
 	// read ttl in seconds
@@ -87,7 +92,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		ttlSeconds = int32(ttl.Minutes()) * 60
 	}
 
-	fs.autoChunk(ctx, w, r, replication, collection, dataCenter, ttlSeconds, ttlString, fsync)
+	fs.autoChunk(ctx, w, r, replication, collection, dataCenter, rack, ttlSeconds, ttlString, fsync)
 
 }
 

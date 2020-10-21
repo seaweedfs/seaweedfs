@@ -3,11 +3,12 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/stats"
 	"net/http"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/stats"
 
 	"google.golang.org/grpc"
 
@@ -47,6 +48,7 @@ type FilerOption struct {
 	MaxMB              int
 	DirListingLimit    int
 	DataCenter         string
+	Rack               string
 	DefaultLevelDbDir  string
 	DisableHttp        bool
 	Host               string

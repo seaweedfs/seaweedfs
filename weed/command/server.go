@@ -159,6 +159,7 @@ func runServer(cmd *Command, args []string) bool {
 	masterOptions.whiteList = serverWhiteListOption
 
 	filerOptions.dataCenter = serverDataCenter
+	filerOptions.rack = serverRack
 	filerOptions.disableHttp = serverDisableHttp
 	masterOptions.disableHttp = serverDisableHttp
 

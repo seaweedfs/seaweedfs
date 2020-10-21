@@ -92,6 +92,8 @@ const (
 	ErrMissingDateHeader
 	ErrInvalidRequest
 	ErrNotImplemented
+
+	ErrExistingObjectIsDirectory
 )
 
 // error code to APIError structure, these fields carry respective
@@ -343,6 +345,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "NotImplemented",
 		Description:    "A header you provided implies functionality that is not implemented",
 		HTTPStatusCode: http.StatusNotImplemented,
+	},
+	ErrExistingObjectIsDirectory: {
+		Code:           "ExistingObjectIsDirectory",
+		Description:    "Existing Object is a directory.",
+		HTTPStatusCode: http.StatusConflict,
 	},
 }
 
