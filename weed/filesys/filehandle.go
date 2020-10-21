@@ -142,8 +142,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 	defer fh.Unlock()
 
 	// write the request to volume servers
-	data := make([]byte, len(req.Data))
-	copy(data, req.Data)
+	data := req.Data
 
 	fh.f.entry.Attributes.FileSize = uint64(max(req.Offset+int64(len(data)), int64(fh.f.entry.Attributes.FileSize)))
 	glog.V(4).Infof("%v write [%d,%d) %d", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)), len(req.Data))
