@@ -185,8 +185,10 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 	}
 
 	// stop the goroutine
-	fh.dirtyPages.chunkSaveErrChanClosed = true
-	close(fh.dirtyPages.chunkSaveErrChan)
+	if !fh.dirtyPages.chunkSaveErrChanClosed {
+		fh.dirtyPages.chunkSaveErrChanClosed = true
+		close(fh.dirtyPages.chunkSaveErrChan)
+	}
 
 	return nil
 }
