@@ -36,6 +36,9 @@ deps:
 build: deps
 	go build $(GO_FLAGS) -ldflags "$(LDFLAGS)" -o $(BINARY) $(SOURCE_DIR)
 
+install: deps
+	go install $(GO_FLAGS) -ldflags "$(LDFLAGS)" $(SOURCE_DIR)
+
 linux: deps
 	mkdir -p linux
 	GOOS=linux GOARCH=amd64 go build $(GO_FLAGS) -ldflags "$(LDFLAGS)" -o linux/$(BINARY) $(SOURCE_DIR)
