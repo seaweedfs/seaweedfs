@@ -257,12 +257,7 @@ func (fs *FilerServer) cleanupChunks(existingEntry *filer.Entry, newEntry *filer
 	garbage = append(garbage, coveredChunks...)
 
 	if newEntry.Attributes != nil {
-		chunks, err = filer.MaybeManifestize(fs.saveAsChunk(
-			newEntry.Attributes.Replication,
-			newEntry.Attributes.Collection,
-			"",
-			needle.SecondsToTTL(newEntry.Attributes.TtlSec),
-			false), chunks)
+		chunks, err = filer.MaybeManifestize(fs.saveAsChunk(newEntry.Attributes.Replication, newEntry.Attributes.Collection, "", "", needle.SecondsToTTL(newEntry.Attributes.TtlSec), false), chunks)
 		if err != nil {
 			// not good, but should be ok
 			glog.V(0).Infof("MaybeManifestize: %v", err)
@@ -303,12 +298,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 
 	entry.Chunks = append(entry.Chunks, req.Chunks...)
 
-	entry.Chunks, err = filer.MaybeManifestize(fs.saveAsChunk(
-		entry.Replication,
-		entry.Collection,
-		"",
-		needle.SecondsToTTL(entry.TtlSec),
-		false), entry.Chunks)
+	entry.Chunks, err = filer.MaybeManifestize(fs.saveAsChunk(entry.Replication, entry.Collection, "", "", needle.SecondsToTTL(entry.TtlSec), false), entry.Chunks)
 	if err != nil {
 		// not good, but should be ok
 		glog.V(0).Infof("MaybeManifestize: %v", err)
@@ -345,6 +335,10 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 	if dataCenter == "" {
 		dataCenter = fs.option.DataCenter
 	}
+	rack := req.Rack
+	if rack == "" {
+		rack = fs.option.Rack
+	}
 
 	assignRequest := &operation.VolumeAssignRequest{
 		Count:       uint64(req.Count),
@@ -352,14 +346,16 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 		Collection:  collection,
 		Ttl:         ttlStr,
 		DataCenter:  dataCenter,
+		Rack:        rack,
 	}
-	if dataCenter != "" {
+	if dataCenter != "" || rack != "" {
 		altRequest = &operation.VolumeAssignRequest{
 			Count:       uint64(req.Count),
 			Replication: replication,
 			Collection:  collection,
 			Ttl:         ttlStr,
 			DataCenter:  "",
+			Rack:        "",
 		}
 	}
 	assignResult, err := operation.Assign(fs.filer.GetMaster(), fs.grpcDialOption, assignRequest, altRequest)

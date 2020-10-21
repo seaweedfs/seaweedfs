@@ -218,6 +218,7 @@ message AssignVolumeRequest {
     int32 ttl_sec = 4;
     string data_center = 5;
     string parent_path = 6;
+    string rack = 7;
 }
 
 message AssignVolumeResponse {
