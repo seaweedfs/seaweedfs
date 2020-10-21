@@ -99,7 +99,7 @@ func (pages *ContinuousDirtyPages) saveExistingLargestPageToStorage() (hasSavedD
 func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64, size int64) {
 
 	if pages.chunkSaveErrChanClosed {
-		pages.chunkSaveErrChan = make(chan error, 8)
+		pages.chunkSaveErrChan = make(chan error, concurrentWriterLimit)
 		pages.chunkSaveErrChanClosed = false
 	}
 
