@@ -463,29 +463,17 @@ https://golang.org/doc/install
 make sure you set up your $GOPATH
 
 
-Step 2: also you may need to install Mercurial by following the instructions at:
-
-http://mercurial.selenic.com/downloads
-
+Step 2: checkout this repo:
+```bash
+git clone https://github.com/chrislusf/seaweedfs.git
+```
 Step 3: download, compile, and install the project by executing the following command
 
 ```bash
-go get github.com/chrislusf/seaweedfs/weed
+make install
 ```
 
 Once this is done, you will find the executable "weed" in your `$GOPATH/bin` directory
-
-Note:
-* If you got into this problem, try to `rm -Rf $GOPATH/src/go.etcd.io/etcd/vendor/golang.org/x/net/trace` and build again.
-```
-panic: /debug/requests is already registered. You may have two independent copies of golang.org/x/net/trace in your binary, trying to maintain separate state. This may involve a vendored copy of golang.org/x/net/trace.
-```
-
-Step 4: after you modify your code locally, you could start a local build by calling `go install` under
-
-```
-$GOPATH/src/github.com/chrislusf/seaweedfs/weed
-```
 
 [Back to TOC](#table-of-contents)
 
