@@ -76,10 +76,15 @@ func Upload(uploadUrl string, filename string, cipher bool, reader io.Reader, is
 }
 
 func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error, data []byte) {
-	data, err = ioutil.ReadAll(reader)
-	if err != nil {
-		err = fmt.Errorf("read input: %v", err)
-		return
+	bytesReader, ok := reader.(*util.BytesReader)
+	if ok {
+		data = bytesReader.Bytes
+	} else {
+		data, err = ioutil.ReadAll(reader)
+		if err != nil {
+			err = fmt.Errorf("read input: %v", err)
+			return
+		}
 	}
 	uploadResult, uploadErr := retriedUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
 	return uploadResult, uploadErr, data
