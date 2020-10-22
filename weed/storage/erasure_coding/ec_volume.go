@@ -145,9 +145,9 @@ func (ev *EcVolume) FileName() string {
 
 }
 
-func (ev *EcVolume) ShardSize() int64 {
+func (ev *EcVolume) ShardSize() uint64 {
 	if len(ev.Shards) > 0 {
-		return ev.Shards[0].Size()
+		return uint64(ev.Shards[0].Size())
 	}
 	return 0
 }
