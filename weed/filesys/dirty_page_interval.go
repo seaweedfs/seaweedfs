@@ -129,6 +129,15 @@ func (c *ContinuousIntervals) AddInterval(data []byte, offset int64) {
 
 	interval := &IntervalNode{Data: data, Offset: offset, Size: int64(len(data))}
 
+	// append to the tail and return
+	if len(c.lists) == 1 {
+		lastSpan := c.lists[0]
+		if lastSpan.Tail.Offset + lastSpan.Tail.Size == offset {
+			lastSpan.addNodeToTail(interval)
+			return
+		}
+	}
+
 	var newLists []*IntervalLinkedList
 	for _, list := range c.lists {
 		// if list is to the left of new interval, add to the new list
