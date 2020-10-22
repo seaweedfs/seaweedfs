@@ -38,9 +38,12 @@ type LookupFileIdFunctionType func(fileId string) (targetUrls []string, err erro
 func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 
 	vidCache := make(map[string]*filer_pb.Locations)
+	var vicCacheLock sync.RWMutex
 	return func(fileId string) (targetUrls []string, err error) {
 		vid := VolumeId(fileId)
+		vicCacheLock.RLock()
 		locations, found := vidCache[vid]
+		vicCacheLock.RUnlock()
 
 		waitTime := time.Second
 		for !found && waitTime < ReadWaitTime {
@@ -58,7 +61,9 @@ func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 					glog.V(0).Infof("failed to locate %s", fileId)
 					return fmt.Errorf("failed to locate %s", fileId)
 				}
+				vicCacheLock.Lock()
 				vidCache[vid] = locations
+				vicCacheLock.Unlock()
 
 				return nil
 			})
