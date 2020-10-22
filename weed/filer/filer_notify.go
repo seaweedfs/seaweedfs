@@ -83,6 +83,10 @@ func (f *Filer) logMetaEvent(ctx context.Context, fullpath string, eventNotifica
 
 func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
 
+	if len(buf) == 0 {
+		return
+	}
+
 	startTime, stopTime = startTime.UTC(), stopTime.UTC()
 
 	targetFile := fmt.Sprintf("%s/%04d-%02d-%02d/%02d-%02d.segment", SystemLogDir,

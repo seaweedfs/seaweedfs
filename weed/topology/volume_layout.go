@@ -198,6 +198,13 @@ func (vl *VolumeLayout) UnRegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	}
 }
 
+func (vl *VolumeLayout) EnsureCorrectWritables(v *storage.VolumeInfo) {
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
+
+	vl.ensureCorrectWritables(v)
+}
+
 func (vl *VolumeLayout) ensureCorrectWritables(v *storage.VolumeInfo) {
 	if vl.enoughCopies(v.Id) && vl.isWritable(v) {
 		if !vl.oversizedVolumes.IsTrue(v.Id) {
