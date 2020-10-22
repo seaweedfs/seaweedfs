@@ -190,7 +190,6 @@ func (c *ContinuousIntervals) AddInterval(data []byte, offset int64) {
 func (c *ContinuousIntervals) RemoveLargestIntervalLinkedList() *IntervalLinkedList {
 	var maxSize int64
 	maxIndex, maxOffset := -1, int64(-1)
-	println("in memory list:", len(c.lists))
 	for k, list := range c.lists {
 		listSize := list.Size()
 		if maxSize < listSize || (maxSize == listSize && list.Offset() < maxOffset ) {
