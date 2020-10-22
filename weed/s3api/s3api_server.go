@@ -3,6 +3,7 @@ package s3api
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc"
@@ -39,10 +40,13 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	apiRouter := router.PathPrefix("/").Subrouter()
 	var routers []*mux.Router
 	if s3a.option.DomainName != "" {
-		routers = append(routers, apiRouter.Host(
-			fmt.Sprintf("%s.%s:%d", "{bucket:.+}", s3a.option.DomainName, s3a.option.Port)).Subrouter())
-		routers = append(routers, apiRouter.Host(
-			fmt.Sprintf("%s.%s", "{bucket:.+}", s3a.option.DomainName)).Subrouter())
+		domainNames := strings.Split(s3a.option.DomainName, ",")
+		for _, domainName := range domainNames {
+			routers = append(routers, apiRouter.Host(
+				fmt.Sprintf("%s.%s:%d", "{bucket:.+}", domainName, s3a.option.Port)).Subrouter())
+			routers = append(routers, apiRouter.Host(
+				fmt.Sprintf("%s.%s", "{bucket:.+}", domainName)).Subrouter())
+		}
 	}
 	routers = append(routers, apiRouter.PathPrefix("/{bucket}").Subrouter())
 
