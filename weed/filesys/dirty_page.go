@@ -54,7 +54,7 @@ func (pages *ContinuousDirtyPages) AddPage(offset int64, data []byte) {
 
 	pages.intervals.AddInterval(data, offset)
 
-	if pages.intervals.TotalSize() > pages.f.wfs.option.ChunkSizeLimit {
+	if pages.intervals.TotalSize() >= pages.f.wfs.option.ChunkSizeLimit {
 		pages.saveExistingLargestPageToStorage()
 	}
 
@@ -92,6 +92,8 @@ func (pages *ContinuousDirtyPages) saveExistingLargestPageToStorage() (hasSavedD
 	}
 
 	pages.saveToStorage(maxList.ToReader(), maxList.Offset(), chunkSize)
+
+	maxList.Destroy()
 
 	return true
 }
