@@ -101,6 +101,14 @@ var (
 			Help:      "Actual disk size used by volumes.",
 		}, []string{"collection", "type"})
 
+	VolumeServerResourceGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "volumeServer",
+			Name:      "resource",
+			Help:      "Resource usage",
+		}, []string{"name", "type"})
+
 	S3RequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "SeaweedFS",
@@ -132,6 +140,7 @@ func init() {
 	Gather.MustRegister(VolumeServerMaxVolumeCounter)
 	Gather.MustRegister(VolumeServerReadOnlyVolumeGauge)
 	Gather.MustRegister(VolumeServerDiskSizeGauge)
+	Gather.MustRegister(VolumeServerResourceGauge)
 
 	Gather.MustRegister(S3RequestCounter)
 	Gather.MustRegister(S3RequestHistogram)
