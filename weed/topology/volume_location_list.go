@@ -32,6 +32,9 @@ func (dnll *VolumeLocationList) Head() *DataNode {
 }
 
 func (dnll *VolumeLocationList) Length() int {
+	if dnll == nil {
+		return 0
+	}
 	return len(dnll.list)
 }
 

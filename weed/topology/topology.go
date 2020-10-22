@@ -221,7 +221,7 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 	}
 	for _, v := range changedVolumes {
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl)
-		vl.ensureCorrectWritables(&v)
+		vl.EnsureCorrectWritables(&v)
 	}
 	return
 }
