@@ -174,7 +174,7 @@ func balanceEcVolumes(commandEnv *CommandEnv, collection string, allEcNodes []*E
 	}
 
 	if err := balanceEcShardsWithinRacks(commandEnv, allEcNodes, racks, collection, applyBalancing); err != nil {
-		return fmt.Errorf("balance across racks collection %s ec shards: %v", collection, err)
+		return fmt.Errorf("balance within racks collection %s ec shards: %v", collection, err)
 	}
 
 	return nil
