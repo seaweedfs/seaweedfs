@@ -19,6 +19,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/valyala/bytebufferpool"
 )
 
 type UploadResult struct {
@@ -80,7 +81,9 @@ func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, 
 	if ok {
 		data = bytesReader.Bytes
 	} else {
-		data, err = ioutil.ReadAll(reader)
+		buf := bytebufferpool.Get()
+		_, err = buf.ReadFrom(reader)
+		defer bytebufferpool.Put(buf)
 		if err != nil {
 			err = fmt.Errorf("read input: %v", err)
 			return
