@@ -188,8 +188,9 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 }
 
 func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, originalDataSize int, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
-	body_buf := bytes.NewBufferString("")
-	body_writer := multipart.NewWriter(body_buf)
+	buf := bytebufferpool.Get()
+	defer bytebufferpool.Put(buf)
+	body_writer := multipart.NewWriter(buf)
 	h := make(textproto.MIMEHeader)
 	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, fileNameEscaper.Replace(filename)))
 	if mtype == "" {
@@ -217,7 +218,7 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 		return nil, err
 	}
 
-	req, postErr := http.NewRequest("POST", uploadUrl, body_buf)
+	req, postErr := http.NewRequest("POST", uploadUrl, bytes.NewReader(buf.Bytes()))
 	if postErr != nil {
 		glog.V(1).Infof("create upload request %s: %v", uploadUrl, postErr)
 		return nil, fmt.Errorf("create upload request %s: %v", uploadUrl, postErr)
