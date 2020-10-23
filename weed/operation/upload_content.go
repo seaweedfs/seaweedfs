@@ -88,6 +88,7 @@ func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, 
 			err = fmt.Errorf("read input: %v", err)
 			return
 		}
+		data = buf.Bytes()
 	}
 	uploadResult, uploadErr := retriedUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
 	return uploadResult, uploadErr, data
