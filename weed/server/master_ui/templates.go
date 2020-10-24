@@ -89,7 +89,7 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
               <td><code>{{ $dc.Id }}</code></td>
               <td>{{ $rack.Id }}</td>
               <td><a href="http://{{ $dn.Url }}/ui/index.html">{{ $dn.Url }}</a> 
-                {{ if $dn.PublicUrl }}
+                {{ if ne $dn.PublicUrl $dn.Url }}
 					/ <a href="http://{{ $dn.PublicUrl }}/ui/index.html">{{ $dn.PublicUrl }}</a> 
                 {{ end }}
 			  </td>
