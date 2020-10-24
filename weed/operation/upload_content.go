@@ -230,12 +230,14 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	if jwt != "" {
 		req.Header.Set("Authorization", "BEARER "+string(jwt))
 	}
+	// print("+")
 	resp, post_err := HttpClient.Do(req)
 	if post_err != nil {
 		glog.Errorf("upload %s %d bytes to %v: %v", filename, originalDataSize, uploadUrl, post_err)
 		debug.PrintStack()
 		return nil, fmt.Errorf("upload %s %d bytes to %v: %v", filename, originalDataSize, uploadUrl, post_err)
 	}
+	// print("-")
 	defer util.CloseResponse(resp)
 
 	var ret UploadResult
