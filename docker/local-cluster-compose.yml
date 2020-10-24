@@ -6,19 +6,19 @@ services:
     ports:
       - 9333:9333
       - 19333:19333
-    command: "master -ip=master0 -port=9333 -peers=master0:9333,master1:9334,master2:9335"
+    command: "master -ip=master0 -port=9333 -peers=master0:9333,master1:9334,master2:9335 -mdir=/data/m1"
   master1:
     image: chrislusf/seaweedfs:local
     ports:
       - 9334:9334
       - 19334:19334
-    command: "master -ip=master1 -port=9334 -peers=master0:9333,master1:9334,master2:9335"
+    command: "master -ip=master1 -port=9334 -peers=master0:9333,master1:9334,master2:9335 -mdir=/data/m2"
   master2:
     image: chrislusf/seaweedfs:local
     ports:
       - 9335:9335
       - 19335:19335
-    command: "master -ip=master2 -port=9335 -peers=master0:9333,master1:9334,master2:9335"
+    command: "master -ip=master2 -port=9335 -peers=master0:9333,master1:9334,master2:9335 -mdir=/data/m3"
   volume:
     image: chrislusf/seaweedfs:local
     ports:
