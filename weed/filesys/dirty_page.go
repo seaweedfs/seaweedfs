@@ -109,7 +109,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 
 	mtime := time.Now().UnixNano()
 	pages.writeWaitGroup.Add(1)
-	concurrentWriters.Execute(func() {
+	go func() {
 		defer pages.writeWaitGroup.Done()
 
 		dir, _ := pages.f.fullpath().DirAndName()
@@ -125,7 +125,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 		pages.collection, pages.replication = collection, replication
 		pages.f.addChunks([]*filer_pb.FileChunk{chunk})
 		glog.V(3).Infof("%s saveToStorage [%d,%d)", pages.f.fullpath(), offset, offset+size)
-	})
+	}()
 }
 
 func max(x, y int64) int64 {
