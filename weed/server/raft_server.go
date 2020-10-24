@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"encoding/json"
+	"math/rand"
 	"os"
 	"path"
 	"sort"
@@ -50,7 +51,7 @@ func (s StateMachine) Recovery(data []byte) error {
 	return nil
 }
 
-func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr, dataDir string, topo *topology.Topology, pulseSeconds int, raftResumeState bool) (*RaftServer, error) {
+func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr, dataDir string, topo *topology.Topology, raftResumeState bool) (*RaftServer, error) {
 	s := &RaftServer{
 		peers:      peers,
 		serverAddr: serverAddr,
@@ -84,8 +85,8 @@ func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr, d
 		glog.V(0).Infoln(err)
 		return nil, err
 	}
-	s.raftServer.SetHeartbeatInterval(500 * time.Millisecond)
-	s.raftServer.SetElectionTimeout(time.Duration(pulseSeconds) * 500 * time.Millisecond)
+	s.raftServer.SetHeartbeatInterval(time.Duration(300+rand.Intn(150)) * time.Millisecond)
+	s.raftServer.SetElectionTimeout(10 * time.Second)
 	if err := s.raftServer.LoadSnapshot(); err != nil {
 		return nil, err
 	}

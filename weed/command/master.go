@@ -126,7 +126,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 	// start raftServer
 	raftServer, err := weed_server.NewRaftServer(security.LoadClientTLS(util.GetViper(), "grpc.master"),
-		peers, myMasterAddress, util.ResolvePath(*masterOption.metaFolder), ms.Topo, 5, *masterOption.raftResumeState)
+		peers, myMasterAddress, util.ResolvePath(*masterOption.metaFolder), ms.Topo, *masterOption.raftResumeState)
 	if raftServer == nil {
 		glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
 	}
