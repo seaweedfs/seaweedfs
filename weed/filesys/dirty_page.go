@@ -9,10 +9,12 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 var (
 	concurrentWriterLimit = runtime.NumCPU()
+	concurrentWriters = util.NewLimitedConcurrentExecutor(4 * concurrentWriterLimit)
 )
 
 type ContinuousDirtyPages struct {
@@ -107,7 +109,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 
 	mtime := time.Now().UnixNano()
 	pages.writeWaitGroup.Add(1)
-	go func() {
+	concurrentWriters.Execute(func() {
 		defer pages.writeWaitGroup.Done()
 
 		dir, _ := pages.f.fullpath().DirAndName()
@@ -123,7 +125,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 		pages.collection, pages.replication = collection, replication
 		pages.f.addChunks([]*filer_pb.FileChunk{chunk})
 		glog.V(3).Infof("%s saveToStorage [%d,%d)", pages.f.fullpath(), offset, offset+size)
-	}()
+	})
 }
 
 func max(x, y int64) int64 {
