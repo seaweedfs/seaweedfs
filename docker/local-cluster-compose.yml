@@ -24,7 +24,7 @@ services:
     ports:
       - 8080:8080
       - 18080:18080
-    command: 'volume -mserver="master0:9333,master1:9334,master2:9335" -port=8080 -ip=volume'
+    command: 'volume -mserver="master0:9333,master1:9334,master2:9335" -port=8080 -ip=volume -publicUrl=localhost:8080'
     depends_on:
       - master0
       - master1
