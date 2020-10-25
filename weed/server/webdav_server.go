@@ -387,7 +387,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 			Count:       1,
 			Replication: "",
 			Collection:  f.fs.option.Collection,
-			Path:        dir,
+			Path:        f.name,
 		}
 
 		resp, err := client.AssignVolume(ctx, request)

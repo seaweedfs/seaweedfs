@@ -10,9 +10,10 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (wfs *WFS) saveDataAsChunk(dir string) filer.SaveDataAsChunkFunctionType {
+func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFunctionType {
 
 	return func(reader io.Reader, filename string, offset int64) (chunk *filer_pb.FileChunk, collection, replication string, err error) {
 		var fileId, host string
@@ -26,7 +27,7 @@ func (wfs *WFS) saveDataAsChunk(dir string) filer.SaveDataAsChunkFunctionType {
 				Collection:  wfs.option.Collection,
 				TtlSec:      wfs.option.TtlSec,
 				DataCenter:  wfs.option.DataCenter,
-				Path:        dir,
+				Path:        string(fullPath),
 			}
 
 			resp, err := client.AssignVolume(context.Background(), request)

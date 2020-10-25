@@ -256,7 +256,7 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(fh.f.entry.Chunks)
 
 		chunks, _ := filer.CompactFileChunks(filer.LookupFn(fh.f.wfs), nonManifestChunks)
-		chunks, manifestErr := filer.MaybeManifestize(fh.f.wfs.saveDataAsChunk(fh.f.dir.FullPath()), chunks)
+		chunks, manifestErr := filer.MaybeManifestize(fh.f.wfs.saveDataAsChunk(fh.f.fullpath()), chunks)
 		if manifestErr != nil {
 			// not good, but should be ok
 			glog.V(0).Infof("MaybeManifestize: %v", manifestErr)

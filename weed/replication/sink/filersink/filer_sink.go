@@ -96,7 +96,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 			}
 		}
 
-		replicatedChunks, err := fs.replicateChunks(entry.Chunks, dir)
+		replicatedChunks, err := fs.replicateChunks(entry.Chunks, key)
 
 		if err != nil {
 			// only warning here since the source chunk may have been deleted already
@@ -180,7 +180,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		}
 
 		// replicate the chunks that are new in the source
-		replicatedChunks, err := fs.replicateChunks(newChunks, newParentPath)
+		replicatedChunks, err := fs.replicateChunks(newChunks, key)
 		if err != nil {
 			return true, fmt.Errorf("replicte %s chunks error: %v", key, err)
 		}

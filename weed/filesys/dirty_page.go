@@ -110,10 +110,8 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 	go func() {
 		defer pages.writeWaitGroup.Done()
 
-		dir, _ := pages.f.fullpath().DirAndName()
-
 		reader = io.LimitReader(reader, size)
-		chunk, collection, replication, err := pages.f.wfs.saveDataAsChunk(dir)(reader, pages.f.Name, offset)
+		chunk, collection, replication, err := pages.f.wfs.saveDataAsChunk(pages.f.fullpath())(reader, pages.f.Name, offset)
 		if err != nil {
 			glog.V(0).Infof("%s saveToStorage [%d,%d): %v", pages.f.fullpath(), offset, offset+size, err)
 			pages.chunkSaveErrChan <- err
