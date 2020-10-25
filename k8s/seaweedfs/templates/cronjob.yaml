@@ -9,7 +9,6 @@ spec:
   concurrencyPolicy: Forbid
   failedJobsHistoryLimit: 2
   successfulJobsHistoryLimit: 2
-  startingDeadlineSeconds: 300
   jobTemplate:
     spec:
       backoffLimit: 2
@@ -35,7 +34,11 @@ spec:
                 - -c
                 - |
                   set -ex
-                  echo -e "lock\nvolume.balance -force{{ if .Values.volume.dataCenter }} -dataCenter {{ .Values.volume.dataCenter }}{{ end }}{{ if .Values.cronjob.collection }} -collection {{ .Values.cronjob.collection }}{{ end }}\nvolume.fix.replication\nunlock\n" | \
+                  echo -e "lock\n\
+                  volume.balance -force\
+                  {{ if .Values.volume.dataCenter }} -dataCenter {{ .Values.volume.dataCenter }}{{ end }}\
+                  {{ if .Values.cronjob.collection }} -collection {{ .Values.cronjob.collection }}{{ end }}\n\
+                  volume.fix.replication\nunlock\n" | \
                   /usr/bin/weed shell \
                   {{- if .Values.cronjob.master }}
                   -master {{ .Values.cronjob.master }} \
