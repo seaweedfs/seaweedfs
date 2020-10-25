@@ -350,7 +350,7 @@ s3:
 cronjob:
   enabled: false
   schedule: "*/7 * * * *"
-  resources: nul
+  resources: null
   master: ""
   filer: ""
   tolerations: ""
