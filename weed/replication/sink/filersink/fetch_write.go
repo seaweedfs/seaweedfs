@@ -77,7 +77,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, dir string) 
 			Collection:  fs.collection,
 			TtlSec:      fs.ttlSec,
 			DataCenter:  fs.dataCenter,
-			ParentPath:  dir,
+			Path:        dir,
 		}
 
 		resp, err := client.AssignVolume(context.Background(), request)

@@ -311,7 +311,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 				Replication: *worker.options.replication,
 				Collection:  *worker.options.collection,
 				TtlSec:      worker.options.ttlSec,
-				ParentPath:  task.destinationUrlPath,
+				Path:        task.destinationUrlPath,
 			}
 
 			assignResult, assignError = client.AssignVolume(context.Background(), request)
@@ -405,7 +405,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 					Replication: *worker.options.replication,
 					Collection:  *worker.options.collection,
 					TtlSec:      worker.options.ttlSec,
-					ParentPath:  task.destinationUrlPath,
+					Path:        task.destinationUrlPath,
 				}
 
 				assignResult, assignError = client.AssignVolume(context.Background(), request)

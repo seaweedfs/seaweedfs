@@ -27,9 +27,9 @@ public class SeaweedWrite {
                                  final long offset,
                                  final byte[] bytes,
                                  final long bytesOffset, final long bytesLength,
-                                 final String parentPath) throws IOException {
+                                 final String path) throws IOException {
         FilerProto.FileChunk.Builder chunkBuilder = writeChunk(
-                replication, filerGrpcClient, offset, bytes, bytesOffset, bytesLength, parentPath);
+                replication, filerGrpcClient, offset, bytes, bytesOffset, bytesLength, path);
         synchronized (entry) {
             entry.addChunks(chunkBuilder);
         }
@@ -41,14 +41,14 @@ public class SeaweedWrite {
                                                           final byte[] bytes,
                                                           final long bytesOffset,
                                                           final long bytesLength,
-                                                          final String parentPath) throws IOException {
+                                                          final String path) throws IOException {
         FilerProto.AssignVolumeResponse response = filerGrpcClient.getBlockingStub().assignVolume(
                 FilerProto.AssignVolumeRequest.newBuilder()
                         .setCollection(filerGrpcClient.getCollection())
                         .setReplication(replication == null ? filerGrpcClient.getReplication() : replication)
                         .setDataCenter("")
                         .setTtlSec(0)
-                        .setParentPath(parentPath)
+                        .setPath(path)
                         .build());
         String fileId = response.getFileId();
         String url = response.getUrl();

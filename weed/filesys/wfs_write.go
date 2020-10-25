@@ -26,7 +26,7 @@ func (wfs *WFS) saveDataAsChunk(dir string) filer.SaveDataAsChunkFunctionType {
 				Collection:  wfs.option.Collection,
 				TtlSec:      wfs.option.TtlSec,
 				DataCenter:  wfs.option.DataCenter,
-				ParentPath:  dir,
+				Path:        dir,
 			}
 
 			resp, err := client.AssignVolume(context.Background(), request)
