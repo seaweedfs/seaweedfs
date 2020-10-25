@@ -347,6 +347,16 @@ s3:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
+cronjob:
+  enabled: false
+  schedule: "*/7 * * * *"
+  resources: nul
+  master: ""
+  filer: ""
+  tolerations: ""
+  nodeSelector: |
+    sw-backend: "true"
+
 certificates:
   commonName: "SeaweedFS CA"
   ipAddresses: []
