@@ -222,6 +222,10 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			collectionVolumeSize[v.Collection] += volumeMessage.Size
 			if v.IsReadOnly() {
 				collectionVolumeReadOnlyCount[v.Collection] += 1
+			} else {
+				if _, exist := collectionVolumeReadOnlyCount[v.Collection]; !exist {
+					collectionVolumeReadOnlyCount[v.Collection] = 0
+				}
 			}
 		}
 		location.volumesLock.RUnlock()
