@@ -95,8 +95,6 @@ func (pages *ContinuousDirtyPages) saveExistingLargestPageToStorage() (hasSavedD
 
 	pages.saveToStorage(maxList.ToReader(), maxList.Offset(), chunkSize)
 
-	maxList.Destroy()
-
 	return true
 }
 
