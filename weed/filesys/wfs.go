@@ -119,10 +119,12 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 	defer wfs.handlesLock.Unlock()
 
 	inodeId := file.fullpath().AsInode()
-	existingHandle, found := wfs.handles[inodeId]
-	if found && existingHandle != nil {
-		file.isOpen++
-		return existingHandle
+	if file.isOpen > 0 {
+		existingHandle, found := wfs.handles[inodeId]
+		if found && existingHandle != nil {
+			file.isOpen++
+			return existingHandle
+		}
 	}
 
 	fileHandle = newFileHandle(file, uid, gid)
