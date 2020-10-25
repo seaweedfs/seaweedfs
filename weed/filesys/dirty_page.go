@@ -14,7 +14,7 @@ import (
 
 var (
 	concurrentWriterLimit = runtime.NumCPU()
-	concurrentWriters = util.NewLimitedConcurrentExecutor(4 * concurrentWriterLimit)
+	concurrentWriters     = util.NewLimitedConcurrentExecutor(4 * concurrentWriterLimit)
 )
 
 type ContinuousDirtyPages struct {

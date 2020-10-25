@@ -126,7 +126,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 	totalRead, err := fh.f.reader.ReadAt(buff, offset)
 
-	if err != nil && err != io.EOF{
+	if err != nil && err != io.EOF {
 		glog.Errorf("file handle read %s: %v", fh.f.fullpath(), err)
 	}
 

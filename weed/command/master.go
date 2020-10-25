@@ -90,7 +90,7 @@ func runMaster(cmd *Command, args []string) bool {
 	grace.SetupProfiling(*masterCpuProfile, *masterMemProfile)
 
 	parent, _ := util.FullPath(*m.metaFolder).DirAndName()
-	if util.FileExists(string(parent)) && !util.FileExists(*m.metaFolder){
+	if util.FileExists(string(parent)) && !util.FileExists(*m.metaFolder) {
 		os.MkdirAll(*m.metaFolder, 0755)
 	}
 	if err := util.TestFolderWritable(util.ResolvePath(*m.metaFolder)); err != nil {
