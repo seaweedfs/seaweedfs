@@ -35,7 +35,7 @@ spec:
                 - -c
                 - |
                   set -ex
-                  echo -e "lock\nvolume.balance -force -dataCenter {{ .Values.dataCenter }}\nvolume.fix.replication\nunlock\n" | \
+                  echo -e "lock\nvolume.balance -force{{ if .Values.volume.dataCenter }} -dataCenter {{ .Values.volume.dataCenter }}{{ end }}\nvolume.fix.replication\nunlock\n" | \
                   /usr/bin/weed shell \
                   {{- if .Values.cronjob.master }}
                   -master {{ .Values.cronjob.master }} \
