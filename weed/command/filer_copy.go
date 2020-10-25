@@ -116,7 +116,7 @@ func runCopy(cmd *Command, args []string) bool {
 		fmt.Printf("read from filer %s: %v\n", filerGrpcAddress, err)
 		return false
 	}
-	if strings.HasPrefix(urlPath, dirBuckets) {
+	if strings.HasPrefix(urlPath, dirBuckets+"/") {
 		restPath := urlPath[len(dirBuckets)+1:]
 		if strings.Index(restPath, "/") > 0 {
 			expectedBucket := restPath[:strings.Index(restPath, "/")]
