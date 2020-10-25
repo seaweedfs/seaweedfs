@@ -351,6 +351,9 @@ cronjob:
   enabled: false
   schedule: "*/7 * * * *"
   resources: null
+  # balance all volumes among volume servers
+  # ALL|EACH_COLLECTION|<collection_name>
+  collection: ""
   master: ""
   filer: ""
   tolerations: ""
