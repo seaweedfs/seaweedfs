@@ -26,9 +26,10 @@ public class SeaweedWrite {
                                  final FilerGrpcClient filerGrpcClient,
                                  final long offset,
                                  final byte[] bytes,
-                                 final long bytesOffset, final long bytesLength) throws IOException {
+                                 final long bytesOffset, final long bytesLength,
+                                 final String parentPath) throws IOException {
         FilerProto.FileChunk.Builder chunkBuilder = writeChunk(
-                replication, filerGrpcClient, offset, bytes, bytesOffset, bytesLength);
+                replication, filerGrpcClient, offset, bytes, bytesOffset, bytesLength, parentPath);
         synchronized (entry) {
             entry.addChunks(chunkBuilder);
         }
@@ -39,13 +40,15 @@ public class SeaweedWrite {
                                                           final long offset,
                                                           final byte[] bytes,
                                                           final long bytesOffset,
-                                                          final long bytesLength) throws IOException {
+                                                          final long bytesLength,
+                                                          final String parentPath) throws IOException {
         FilerProto.AssignVolumeResponse response = filerGrpcClient.getBlockingStub().assignVolume(
                 FilerProto.AssignVolumeRequest.newBuilder()
                         .setCollection(filerGrpcClient.getCollection())
                         .setReplication(replication == null ? filerGrpcClient.getReplication() : replication)
                         .setDataCenter("")
                         .setTtlSec(0)
+                        .setParentPath(parentPath)
                         .build());
         String fileId = response.getFileId();
         String url = response.getUrl();
@@ -77,7 +80,7 @@ public class SeaweedWrite {
                                  final FilerProto.Entry.Builder entry) throws IOException {
 
         synchronized (entry) {
-            List<FilerProto.FileChunk> chunks = FileChunkManifest.maybeManifestize(filerGrpcClient, entry.getChunksList());
+            List<FilerProto.FileChunk> chunks = FileChunkManifest.maybeManifestize(filerGrpcClient, entry.getChunksList(), parentDirectory);
             entry.clearChunks();
             entry.addAllChunks(chunks);
             filerGrpcClient.getBlockingStub().createEntry(

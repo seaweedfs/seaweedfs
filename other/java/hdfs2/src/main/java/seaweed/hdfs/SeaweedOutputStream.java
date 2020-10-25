@@ -185,7 +185,7 @@ public class SeaweedOutputStream extends OutputStream {
         }
         final Future<Void> job = completionService.submit(() -> {
             // System.out.println(path + " is going to save [" + (writePosition) + "," + ((writePosition) + bytesLength) + ")");
-            SeaweedWrite.writeData(entry, replication, filerGrpcClient, writePosition, bufferToWrite.array(), bufferToWrite.position(), bufferToWrite.limit());
+            SeaweedWrite.writeData(entry, replication, filerGrpcClient, writePosition, bufferToWrite.array(), bufferToWrite.position(), bufferToWrite.limit(), getParentDirectory(path));
             // System.out.println(path + " saved [" + (writePosition) + "," + ((writePosition) + bytesLength) + ")");
             ByteBufferPool.release(bufferToWrite);
             return null;
