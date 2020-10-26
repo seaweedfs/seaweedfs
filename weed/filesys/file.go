@@ -253,7 +253,7 @@ func (file *File) Forget() {
 }
 
 func (file *File) maybeLoadEntry(ctx context.Context) error {
-	if file.isOpen > 0 {
+	if (file.entry != nil && len(file.entry.HardLinkId) != 0) || file.isOpen > 0 {
 		return nil
 	}
 	entry, err := file.wfs.maybeLoadEntry(file.dir.FullPath(), file.Name)
