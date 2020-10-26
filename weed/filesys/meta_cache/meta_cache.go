@@ -21,13 +21,15 @@ type MetaCache struct {
 	sync.RWMutex
 	visitedBoundary *bounded_tree.BoundedTree
 	uidGidMapper    *UidGidMapper
+	invalidateFunc  func(util.FullPath)
 }
 
-func NewMetaCache(dbFolder string, baseDir util.FullPath, uidGidMapper *UidGidMapper) *MetaCache {
+func NewMetaCache(dbFolder string, baseDir util.FullPath, uidGidMapper *UidGidMapper, invalidateFunc func(util.FullPath)) *MetaCache {
 	return &MetaCache{
 		localStore:      openMetaStore(dbFolder),
 		visitedBoundary: bounded_tree.NewBoundedTree(baseDir),
 		uidGidMapper:    uidGidMapper,
+		invalidateFunc:  invalidateFunc,
 	}
 }
 
@@ -70,6 +72,7 @@ func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath uti
 				// skip the unnecessary deletion
 				// leave the update to the following InsertEntry operation
 			} else {
+				glog.V(3).Infof("DeleteEntry %s/%s", oldPath, oldPath.Name())
 				if err := mc.localStore.DeleteEntry(ctx, oldPath); err != nil {
 					return err
 				}
@@ -82,6 +85,7 @@ func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath uti
 	if newEntry != nil {
 		newDir, _ := newEntry.DirAndName()
 		if mc.visitedBoundary.HasVisited(util.FullPath(newDir)) {
+			glog.V(3).Infof("InsertEntry %s/%s", newDir, newEntry.Name())
 			if err := mc.localStore.InsertEntry(ctx, newEntry); err != nil {
 				return err
 			}

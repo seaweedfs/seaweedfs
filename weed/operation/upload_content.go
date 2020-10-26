@@ -19,6 +19,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/valyala/bytebufferpool"
 )
 
 type UploadResult struct {
@@ -80,11 +81,14 @@ func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, 
 	if ok {
 		data = bytesReader.Bytes
 	} else {
-		data, err = ioutil.ReadAll(reader)
+		buf := bytebufferpool.Get()
+		_, err = buf.ReadFrom(reader)
+		defer bytebufferpool.Put(buf)
 		if err != nil {
 			err = fmt.Errorf("read input: %v", err)
 			return
 		}
+		data = buf.Bytes()
 	}
 	uploadResult, uploadErr := retriedUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
 	return uploadResult, uploadErr, data
@@ -115,7 +119,7 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 		}
 		if shouldBeCompressed, iAmSure := util.IsCompressableFileType(filepath.Base(filename), mtype); iAmSure && shouldBeCompressed {
 			shouldGzipNow = true
-		} else if !iAmSure && mtype == "" && len(data) > 128 {
+		} else if !iAmSure && mtype == "" && len(data) > 16*1024 {
 			var compressed []byte
 			compressed, err = util.GzipData(data[0:128])
 			shouldGzipNow = len(compressed)*10 < 128*9 // can not compress to less than 90%
@@ -184,8 +188,9 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 }
 
 func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, originalDataSize int, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
-	body_buf := bytes.NewBufferString("")
-	body_writer := multipart.NewWriter(body_buf)
+	buf := bytebufferpool.Get()
+	defer bytebufferpool.Put(buf)
+	body_writer := multipart.NewWriter(buf)
 	h := make(textproto.MIMEHeader)
 	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, fileNameEscaper.Replace(filename)))
 	if mtype == "" {
@@ -213,7 +218,7 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 		return nil, err
 	}
 
-	req, postErr := http.NewRequest("POST", uploadUrl, body_buf)
+	req, postErr := http.NewRequest("POST", uploadUrl, bytes.NewReader(buf.Bytes()))
 	if postErr != nil {
 		glog.V(1).Infof("create upload request %s: %v", uploadUrl, postErr)
 		return nil, fmt.Errorf("create upload request %s: %v", uploadUrl, postErr)
@@ -225,12 +230,14 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	if jwt != "" {
 		req.Header.Set("Authorization", "BEARER "+string(jwt))
 	}
+	// print("+")
 	resp, post_err := HttpClient.Do(req)
 	if post_err != nil {
 		glog.Errorf("upload %s %d bytes to %v: %v", filename, originalDataSize, uploadUrl, post_err)
 		debug.PrintStack()
 		return nil, fmt.Errorf("upload %s %d bytes to %v: %v", filename, originalDataSize, uploadUrl, post_err)
 	}
+	// print("-")
 	defer util.CloseResponse(resp)
 
 	var ret UploadResult

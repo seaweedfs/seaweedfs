@@ -206,11 +206,12 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
 		location.volumesLock.RLock()
 		for _, v := range location.volumes {
-			if maxFileKey < v.MaxFileKey() {
-				maxFileKey = v.MaxFileKey()
+			curMaxFileKey, volumeMessage := v.ToVolumeInformationMessage()
+			if maxFileKey < curMaxFileKey {
+				maxFileKey = curMaxFileKey
 			}
-			if !v.expired(s.GetVolumeSizeLimit()) {
-				volumeMessages = append(volumeMessages, v.ToVolumeInformationMessage())
+			if !v.expired(volumeMessage.Size, s.GetVolumeSizeLimit()) {
+				volumeMessages = append(volumeMessages, volumeMessage)
 			} else {
 				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
 					deleteVids = append(deleteVids, v.Id)
@@ -218,10 +219,13 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 					glog.V(0).Infoln("volume", v.Id, "is expired.")
 				}
 			}
-			fileSize, _, _ := v.FileStat()
-			collectionVolumeSize[v.Collection] += fileSize
+			collectionVolumeSize[v.Collection] += volumeMessage.Size
 			if v.IsReadOnly() {
 				collectionVolumeReadOnlyCount[v.Collection] += 1
+			} else {
+				if _, exist := collectionVolumeReadOnlyCount[v.Collection]; !exist {
+					collectionVolumeReadOnlyCount[v.Collection] = 0
+				}
 			}
 		}
 		location.volumesLock.RUnlock()

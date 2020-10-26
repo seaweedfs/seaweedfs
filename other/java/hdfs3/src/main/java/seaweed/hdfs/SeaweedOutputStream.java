@@ -18,7 +18,6 @@ import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
-import java.util.Arrays;
 import java.util.Locale;
 import java.util.concurrent.*;
 
@@ -232,7 +231,7 @@ public class SeaweedOutputStream extends OutputStream implements Syncable, Strea
         }
         final Future<Void> job = completionService.submit(() -> {
             // System.out.println(path + " is going to save [" + (writePosition) + "," + ((writePosition) + bytesLength) + ")");
-            SeaweedWrite.writeData(entry, replication, filerGrpcClient, writePosition, bufferToWrite.array(), bufferToWrite.position(), bufferToWrite.limit());
+            SeaweedWrite.writeData(entry, replication, filerGrpcClient, writePosition, bufferToWrite.array(), bufferToWrite.position(), bufferToWrite.limit(), path.toUri().getPath());
             // System.out.println(path + " saved [" + (writePosition) + "," + ((writePosition) + bytesLength) + ")");
             ByteBufferPool.release(bufferToWrite);
             return null;

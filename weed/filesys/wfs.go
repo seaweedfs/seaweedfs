@@ -92,7 +92,14 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, cacheDir, option.CacheSizeMB, 1024*1024)
 	}
 
-	wfs.metaCache = meta_cache.NewMetaCache(path.Join(cacheDir, "meta"), util.FullPath(option.FilerMountRootPath), option.UidGidMapper)
+	wfs.metaCache = meta_cache.NewMetaCache(path.Join(cacheDir, "meta"), util.FullPath(option.FilerMountRootPath), option.UidGidMapper, func(filePath util.FullPath) {
+		fsNode := wfs.fsNodeCache.GetFsNode(filePath)
+		if fsNode != nil {
+			if file, ok := fsNode.(*File); ok {
+				file.entry = nil
+			}
+		}
+	})
 	startTime := time.Now()
 	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
 	grace.OnInterrupt(func() {
@@ -119,10 +126,12 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 	defer wfs.handlesLock.Unlock()
 
 	inodeId := file.fullpath().AsInode()
-	existingHandle, found := wfs.handles[inodeId]
-	if found && existingHandle != nil {
-		file.isOpen++
-		return existingHandle
+	if file.isOpen > 0 {
+		existingHandle, found := wfs.handles[inodeId]
+		if found && existingHandle != nil {
+			file.isOpen++
+			return existingHandle
+		}
 	}
 
 	fileHandle = newFileHandle(file, uid, gid)

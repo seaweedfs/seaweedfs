@@ -126,7 +126,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 	totalRead, err := fh.f.reader.ReadAt(buff, offset)
 
-	if err != nil && err != io.EOF{
+	if err != nil && err != io.EOF {
 		glog.Errorf("file handle read %s: %v", fh.f.fullpath(), err)
 	}
 
@@ -143,6 +143,11 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 	// write the request to volume servers
 	data := req.Data
+	if len(data) <= 512 {
+		// fuse message cacheable size
+		data = make([]byte, len(req.Data))
+		copy(data, req.Data)
+	}
 
 	fh.f.entry.Attributes.FileSize = uint64(max(req.Offset+int64(len(data)), int64(fh.f.entry.Attributes.FileSize)))
 	glog.V(4).Infof("%v write [%d,%d) %d", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)), len(req.Data))
@@ -251,7 +256,7 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(fh.f.entry.Chunks)
 
 		chunks, _ := filer.CompactFileChunks(filer.LookupFn(fh.f.wfs), nonManifestChunks)
-		chunks, manifestErr := filer.MaybeManifestize(fh.f.wfs.saveDataAsChunk(fh.f.dir.FullPath()), chunks)
+		chunks, manifestErr := filer.MaybeManifestize(fh.f.wfs.saveDataAsChunk(fh.f.fullpath()), chunks)
 		if manifestErr != nil {
 			// not good, but should be ok
 			glog.V(0).Infof("MaybeManifestize: %v", manifestErr)

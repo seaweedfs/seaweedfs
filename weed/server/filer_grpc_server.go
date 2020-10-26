@@ -152,7 +152,7 @@ func (fs *FilerServer) lookupFileId(fileId string) (targetUrls []string, err err
 
 func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (resp *filer_pb.CreateEntryResponse, err error) {
 
-	glog.V(4).Infof("CreateEntry %v", req)
+	glog.V(4).Infof("CreateEntry %v/%v", req.Directory, req.Entry.Name)
 
 	resp = &filer_pb.CreateEntryResponse{}
 
@@ -327,7 +327,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 	if req.TtlSec > 0 {
 		ttlStr = strconv.Itoa(int(req.TtlSec))
 	}
-	collection, replication, _ := fs.detectCollection(req.ParentPath, req.Collection, req.Replication)
+	collection, replication, _ := fs.detectCollection(req.Path, req.Collection, req.Replication)
 
 	var altRequest *operation.VolumeAssignRequest
 

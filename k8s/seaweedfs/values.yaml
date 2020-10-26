@@ -4,7 +4,7 @@ global:
   registry: ""
   repository: ""
   imageName: chrislusf/seaweedfs
-  imageTag: "2.05"
+  imageTag: "2.07"
   imagePullPolicy: IfNotPresent
   imagePullSecrets: imagepullsecret
   restartPolicy: Always
@@ -346,6 +346,19 @@ s3:
   # used to assign priority to server pods
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
+
+cronjob:
+  enabled: false
+  schedule: "*/7 * * * *"
+  resources: null
+  # balance all volumes among volume servers
+  # ALL|EACH_COLLECTION|<collection_name>
+  collection: ""
+  master: ""
+  filer: ""
+  tolerations: ""
+  nodeSelector: |
+    sw-backend: "true"
 
 certificates:
   commonName: "SeaweedFS CA"

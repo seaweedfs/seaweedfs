@@ -217,7 +217,7 @@ message AssignVolumeRequest {
     string replication = 3;
     int32 ttl_sec = 4;
     string data_center = 5;
-    string parent_path = 6;
+    string path = 6;
     string rack = 7;
 }
 

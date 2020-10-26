@@ -86,7 +86,7 @@ public class FileChunkManifest {
     }
 
     public static List<FilerProto.FileChunk> maybeManifestize(
-            final FilerGrpcClient filerGrpcClient, List<FilerProto.FileChunk> inputChunks) throws IOException {
+            final FilerGrpcClient filerGrpcClient, List<FilerProto.FileChunk> inputChunks, String parentDirectory) throws IOException {
         // the return variable
         List<FilerProto.FileChunk> chunks = new ArrayList<>();
 
@@ -101,7 +101,7 @@ public class FileChunkManifest {
 
         int remaining = dataChunks.size();
         for (int i = 0; i + mergeFactor < dataChunks.size(); i += mergeFactor) {
-            FilerProto.FileChunk chunk = mergeIntoManifest(filerGrpcClient, dataChunks.subList(i, i + mergeFactor));
+            FilerProto.FileChunk chunk = mergeIntoManifest(filerGrpcClient, dataChunks.subList(i, i + mergeFactor), parentDirectory);
             chunks.add(chunk);
             remaining -= mergeFactor;
         }
@@ -113,7 +113,7 @@ public class FileChunkManifest {
         return chunks;
     }
 
-    private static FilerProto.FileChunk mergeIntoManifest(final FilerGrpcClient filerGrpcClient, List<FilerProto.FileChunk> dataChunks) throws IOException {
+    private static FilerProto.FileChunk mergeIntoManifest(final FilerGrpcClient filerGrpcClient, List<FilerProto.FileChunk> dataChunks, String parentDirectory) throws IOException {
         // create and serialize the manifest
         dataChunks = FilerClient.beforeEntrySerialization(dataChunks);
         FilerProto.FileChunkManifest.Builder m = FilerProto.FileChunkManifest.newBuilder().addAllChunks(dataChunks);
@@ -130,7 +130,7 @@ public class FileChunkManifest {
                 filerGrpcClient.getReplication(),
                 filerGrpcClient,
                 minOffset,
-                data, 0, data.length);
+                data, 0, data.length, parentDirectory);
         manifestChunk.setIsChunkManifest(true);
         manifestChunk.setSize(maxOffset - minOffset);
         return manifestChunk.build();

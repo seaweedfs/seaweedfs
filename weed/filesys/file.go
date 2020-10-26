@@ -253,15 +253,16 @@ func (file *File) Forget() {
 }
 
 func (file *File) maybeLoadEntry(ctx context.Context) error {
-	if (file.entry == nil || len(file.entry.HardLinkId) != 0) && file.isOpen <= 0 {
-		entry, err := file.wfs.maybeLoadEntry(file.dir.FullPath(), file.Name)
-		if err != nil {
-			glog.V(3).Infof("maybeLoadEntry file %s/%s: %v", file.dir.FullPath(), file.Name, err)
-			return err
-		}
-		if entry != nil {
-			file.setEntry(entry)
-		}
+	if (file.entry != nil && len(file.entry.HardLinkId) != 0) || file.isOpen > 0 {
+		return nil
+	}
+	entry, err := file.wfs.maybeLoadEntry(file.dir.FullPath(), file.Name)
+	if err != nil {
+		glog.V(3).Infof("maybeLoadEntry file %s/%s: %v", file.dir.FullPath(), file.Name, err)
+		return err
+	}
+	if entry != nil {
+		file.setEntry(entry)
 	}
 	return nil
 }

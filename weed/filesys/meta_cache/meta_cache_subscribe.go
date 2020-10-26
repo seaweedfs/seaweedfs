@@ -23,15 +23,15 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 			}
 		}
 
+		dir := resp.Directory
 		var oldPath util.FullPath
 		var newEntry *filer.Entry
 		if message.OldEntry != nil {
-			oldPath = util.NewFullPath(resp.Directory, message.OldEntry.Name)
+			oldPath = util.NewFullPath(dir, message.OldEntry.Name)
 			glog.V(4).Infof("deleting %v", oldPath)
 		}
 
 		if message.NewEntry != nil {
-			dir := resp.Directory
 			if message.NewParentPath != "" {
 				dir = message.NewParentPath
 			}
@@ -39,7 +39,14 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 			glog.V(4).Infof("creating %v", key)
 			newEntry = filer.FromPbEntry(dir, message.NewEntry)
 		}
-		return mc.AtomicUpdateEntryFromFiler(context.Background(), oldPath, newEntry)
+		err := mc.AtomicUpdateEntryFromFiler(context.Background(), oldPath, newEntry)
+		if err == nil && message.OldEntry != nil && message.NewEntry != nil {
+			key := util.NewFullPath(dir, message.NewEntry.Name)
+			mc.invalidateFunc(key)
+		}
+
+		return err
+
 	}
 
 	for {

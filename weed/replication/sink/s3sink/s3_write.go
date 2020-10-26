@@ -163,7 +163,7 @@ func (s3sink *S3Sink) buildReadSeeker(chunk *filer.ChunkView) (io.ReadSeeker, er
 	}
 	buf := make([]byte, chunk.Size)
 	for _, fileUrl := range fileUrls {
-		_, err = util.ReadUrl(fileUrl, nil, false, false, chunk.Offset, int(chunk.Size), buf)
+		_, err = util.ReadUrl(fileUrl+"?readDeleted=true", nil, false, false, chunk.Offset, int(chunk.Size), buf)
 		if err != nil {
 			glog.V(1).Infof("read from %s: %v", fileUrl, err)
 		} else {

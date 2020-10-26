@@ -67,7 +67,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		}); err != nil {
 			glog.Errorf("list collection: %v", err)
 			return fmt.Errorf("list collections: %v", err)
-		}else {
+		} else {
 			for _, c := range resp.Collections {
 				if bucket == c.Name {
 					errCode = s3err.ErrBucketAlreadyExists

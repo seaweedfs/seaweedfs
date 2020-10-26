@@ -305,6 +305,9 @@ func (l *DiskLocation) CheckDiskSpace() {
 	for {
 		if dir, e := filepath.Abs(l.Directory); e == nil {
 			s := stats.NewDiskStatus(dir)
+			stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "all").Set(float64(s.All))
+			stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "used").Set(float64(s.Used))
+			stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "free").Set(float64(s.Free))
 			if (s.PercentFree < l.MinFreeSpacePercent) != l.isDiskSpaceLow {
 				l.isDiskSpaceLow = !l.isDiskSpaceLow
 			}

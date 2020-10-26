@@ -178,12 +178,12 @@ func (v *Volume) NeedToReplicate() bool {
 // except when volume is empty
 // or when the volume does not have a ttl
 // or when volumeSizeLimit is 0 when server just starts
-func (v *Volume) expired(volumeSizeLimit uint64) bool {
+func (v *Volume) expired(contentSize uint64, volumeSizeLimit uint64) bool {
 	if volumeSizeLimit == 0 {
 		// skip if we don't know size limit
 		return false
 	}
-	if v.ContentSize() == 0 {
+	if contentSize <= super_block.SuperBlockSize {
 		return false
 	}
 	if v.Ttl == nil || v.Ttl.Minutes() == 0 {
@@ -214,16 +214,32 @@ func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
 	return false
 }
 
-func (v *Volume) ToVolumeInformationMessage() *master_pb.VolumeInformationMessage {
-	size, _, modTime := v.FileStat()
+func (v *Volume) CollectStatus() (maxFileKey types.NeedleId, datFileSize int64, modTime time.Time, fileCount, deletedCount, deletedSize uint64) {
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
+	glog.V(3).Infof("CollectStatus volume %d", v.Id)
 
-	volumInfo := &master_pb.VolumeInformationMessage{
+	maxFileKey = v.nm.MaxFileKey()
+	datFileSize, modTime, _ = v.DataBackend.GetStat()
+	fileCount = uint64(v.nm.FileCount())
+	deletedCount = uint64(v.nm.DeletedCount())
+	deletedSize = v.nm.DeletedSize()
+	fileCount = uint64(v.nm.FileCount())
+
+	return
+}
+
+func (v *Volume) ToVolumeInformationMessage() (types.NeedleId, *master_pb.VolumeInformationMessage) {
+
+	maxFileKey, volumeSize, modTime, fileCount, deletedCount, deletedSize := v.CollectStatus()
+
+	volumeInfo := &master_pb.VolumeInformationMessage{
 		Id:               uint32(v.Id),
-		Size:             size,
+		Size:             uint64(volumeSize),
 		Collection:       v.Collection,
-		FileCount:        v.FileCount(),
-		DeleteCount:      v.DeletedCount(),
-		DeletedByteCount: v.DeletedSize(),
+		FileCount:        fileCount,
+		DeleteCount:      deletedCount,
+		DeletedByteCount: deletedSize,
 		ReadOnly:         v.IsReadOnly(),
 		ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
 		Version:          uint32(v.Version()),
@@ -232,9 +248,9 @@ func (v *Volume) ToVolumeInformationMessage() *master_pb.VolumeInformationMessag
 		ModifiedAtSecond: modTime.Unix(),
 	}
 
-	volumInfo.RemoteStorageName, volumInfo.RemoteStorageKey = v.RemoteStorageNameKey()
+	volumeInfo.RemoteStorageName, volumeInfo.RemoteStorageKey = v.RemoteStorageNameKey()
 
-	return volumInfo
+	return maxFileKey, volumeInfo
 }
 
 func (v *Volume) RemoteStorageNameKey() (storageName, storageKey string) {
