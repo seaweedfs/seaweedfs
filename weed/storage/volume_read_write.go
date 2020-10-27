@@ -56,14 +56,19 @@ func (v *Volume) Destroy() (err error) {
 		}
 	}
 	v.Close()
-	os.Remove(v.FileName() + ".dat")
-	os.Remove(v.FileName() + ".idx")
-	os.Remove(v.FileName() + ".vif")
-	os.Remove(v.FileName() + ".sdx")
-	os.Remove(v.FileName() + ".cpd")
-	os.Remove(v.FileName() + ".cpx")
-	os.RemoveAll(v.FileName() + ".ldb")
+	removeVolumeFiles(v.FileName())
 	return
+}
+
+func removeVolumeFiles(filename string) {
+	os.Remove(filename+ ".dat")
+	os.Remove(filename + ".idx")
+	os.Remove(filename + ".vif")
+	os.Remove(filename + ".sdx")
+	os.Remove(filename + ".cpd")
+	os.Remove(filename + ".cpx")
+	os.RemoveAll(filename + ".ldb")
+	os.Remove(filename + ".note")
 }
 
 func (v *Volume) asyncRequestAppend(request *needle.AsyncRequest) {

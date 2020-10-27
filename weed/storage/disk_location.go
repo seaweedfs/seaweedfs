@@ -13,6 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type DiskLocation struct {
@@ -60,6 +61,13 @@ func parseCollectionVolumeId(base string) (collection string, vid needle.VolumeI
 func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind NeedleMapType) bool {
 	name := fileInfo.Name()
 	if !fileInfo.IsDir() && strings.HasSuffix(name, ".idx") {
+		noteFile := l.Directory + "/" + name + ".note"
+		if util.FileExists(noteFile) {
+			note, _ := ioutil.ReadFile(noteFile)
+			glog.Warningf("volume %s was not completed: %s", name, string(note))
+			removeVolumeFiles(l.Directory + "/" + name)
+			return false
+		}
 		vid, collection, err := l.volumeIdFromPath(fileInfo)
 		if err != nil {
 			glog.Warningf("get volume id failed, %s, err : %s", name, err)
