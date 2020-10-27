@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	S3TAG_PREFIX = "s3-tag-"
+	S3TAG_PREFIX = "x-amz-tagging-"
 )
 
 func (s3a *S3ApiServer) getTags(parentDirectoryPath string, entryName string) (tags map[string]string, err error) {
