@@ -93,6 +93,19 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 
+	//set tag count
+	if r.Method == "GET" {
+		tagCount := 0
+		for k, _ := range entry.Extended {
+			if strings.HasPrefix(k, "s3-tag-") {
+				tagCount++
+			}
+		}
+		if tagCount > 0 {
+			w.Header().Set("x-amz-tag-count", strconv.Itoa(tagCount))
+		}
+	}
+
 	// set etag
 	etag := filer.ETagEntry(entry)
 	if inm := r.Header.Get("If-None-Match"); inm == "\""+etag+"\"" {
