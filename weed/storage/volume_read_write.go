@@ -17,6 +17,7 @@ import (
 
 var ErrorNotFound = errors.New("not found")
 var ErrorDeleted = errors.New("already deleted")
+var ErrorSizeMismatch = errors.New("size mismatch")
 
 // isFileUnchanged checks whether this needle to write is same as last one.
 // It requires serialized access in the same volume.
@@ -274,6 +275,9 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption) (int, erro
 		return 0, nil
 	}
 	err := n.ReadData(v.DataBackend, nv.Offset.ToAcutalOffset(), readSize, v.Version())
+	if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
+		err = n.ReadData(v.DataBackend, nv.Offset.ToAcutalOffset()+int64(MaxPossibleVolumeSize), readSize, v.Version())
+	}
 	if err != nil {
 		return 0, err
 	}
