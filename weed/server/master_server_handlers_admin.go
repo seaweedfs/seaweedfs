@@ -110,7 +110,7 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 		} else {
 			url = util.NormalizeUrl(loc.PublicUrl) + r.URL.Path
 		}
-		http.Redirect(w, r, url, http.StatusMovedPermanently)
+		http.Redirect(w, r, url, http.StatusPermanentRedirect)
 	} else {
 		writeJsonError(w, r, http.StatusNotFound, fmt.Errorf("volume id %s not found: %s", vid, location.Error))
 	}

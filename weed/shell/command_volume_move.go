@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -27,7 +28,7 @@ func (c *commandVolumeMove) Name() string {
 func (c *commandVolumeMove) Help() string {
 	return `move a live volume from one volume server to another volume server
 
-	volume.move <source volume server host:port> <target volume server host:port> <volume id>
+	volume.move -source <source volume server host:port> -target <target volume server host:port> -volumeId <volume id>
 
 	This command move a live volume from one volume server to another volume server. Here are the steps:
 
@@ -48,16 +49,17 @@ func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.
 		return
 	}
 
-	if len(args) != 3 {
-		fmt.Fprintf(writer, "received args: %+v\n", args)
-		return fmt.Errorf("need 3 args of <source volume server host:port> <target volume server host:port> <volume id>")
+	volMoveCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	volumeIdInt := volMoveCommand.Int("volumeId", 0, "the volume id")
+	sourceNodeStr := volMoveCommand.String("source", "", "the source volume server <host>:<port>")
+	targetNodeStr := volMoveCommand.String("target", "", "the target volume server <host>:<port>")
+	if err = volMoveCommand.Parse(args); err != nil {
+		return nil
 	}
-	sourceVolumeServer, targetVolumeServer, volumeIdString := args[0], args[1], args[2]
 
-	volumeId, err := needle.NewVolumeId(volumeIdString)
-	if err != nil {
-		return fmt.Errorf("wrong volume id format %s: %v", volumeId, err)
-	}
+	sourceVolumeServer, targetVolumeServer := *sourceNodeStr, *targetNodeStr
+
+	volumeId := needle.VolumeId(*volumeIdInt)
 
 	if sourceVolumeServer == targetVolumeServer {
 		return fmt.Errorf("source and target volume servers are the same!")
@@ -90,6 +92,43 @@ func LiveMoveVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, so
 }
 
 func copyVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer, targetVolumeServer string) (lastAppendAtNs uint64, err error) {
+
+	// check to see if the volume is already read-only and if its not then we need
+	// to mark it as read-only and then before we return we need to undo what we
+	// did
+	var shouldMarkWritable bool
+	defer func() {
+		if !shouldMarkWritable {
+			return
+		}
+
+		clientErr := operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+			_, writableErr := volumeServerClient.VolumeMarkWritable(context.Background(), &volume_server_pb.VolumeMarkWritableRequest{
+				VolumeId: uint32(volumeId),
+			})
+			return writableErr
+		})
+		if clientErr != nil {
+			log.Printf("failed to mark volume %d as writable after copy from %s: %v", volumeId, sourceVolumeServer, clientErr)
+		}
+	}()
+
+	err = operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		resp, statusErr := volumeServerClient.VolumeStatus(context.Background(), &volume_server_pb.VolumeStatusRequest{
+			VolumeId: uint32(volumeId),
+		})
+		if statusErr == nil && !resp.IsReadOnly {
+			shouldMarkWritable = true
+			_, readonlyErr := volumeServerClient.VolumeMarkReadonly(context.Background(), &volume_server_pb.VolumeMarkReadonlyRequest{
+				VolumeId: uint32(volumeId),
+			})
+			return readonlyErr
+		}
+		return statusErr
+	})
+	if err != nil {
+		return
+	}
 
 	err = operation.WithVolumeServerClient(targetVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		resp, replicateErr := volumeServerClient.VolumeCopy(context.Background(), &volume_server_pb.VolumeCopyRequest{

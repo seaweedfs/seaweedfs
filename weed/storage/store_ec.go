@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -59,6 +60,8 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 				EcIndexBits: uint32(shardBits.AddShardId(shardId)),
 			}
 			return nil
+		} else if err == os.ErrNotExist {
+			continue
 		} else {
 			return fmt.Errorf("%s load ec shard %d.%d: %v", location.Directory, vid, shardId, err)
 		}
@@ -124,8 +127,8 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle) (int, e
 			if err != nil {
 				return 0, fmt.Errorf("locate in local ec volume: %v", err)
 			}
-			if size == types.TombstoneFileSize {
-				return 0, fmt.Errorf("entry %s is deleted", n.Id)
+			if size.IsDeleted() {
+				return 0, ErrorDeleted
 			}
 
 			glog.V(3).Infof("read ec volume %d offset %d size %d intervals:%+v", vid, offset.ToAcutalOffset(), size, intervals)
@@ -138,7 +141,7 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle) (int, e
 				return 0, fmt.Errorf("ReadEcShardIntervals: %v", err)
 			}
 			if isDeleted {
-				return 0, fmt.Errorf("ec entry %s is deleted", n.Id)
+				return 0, ErrorDeleted
 			}
 
 			err = n.ReadBytes(bytes, offset.ToAcutalOffset(), size, localEcVolume.Version)
@@ -180,7 +183,7 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 	data = make([]byte, interval.Size)
 	if shard, found := ecVolume.FindEcVolumeShard(shardId); found {
 		if _, err = shard.ReadAt(data, actualOffset); err != nil {
-			glog.V(0).Infof("read local ec shard %d.%d: %v", ecVolume.VolumeId, shardId, err)
+			glog.V(0).Infof("read local ec shard %d.%d offset %d: %v", ecVolume.VolumeId, shardId, actualOffset, err)
 			return
 		}
 	} else {

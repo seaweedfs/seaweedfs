@@ -113,11 +113,11 @@ func TestCompaction(t *testing.T) {
 		}
 
 		n := newEmptyNeedle(uint64(i))
-		size, err := v.readNeedle(n)
+		size, err := v.readNeedle(n, nil)
 		if err != nil {
 			t.Fatalf("read file %d: %v", i, err)
 		}
-		if infos[i-1].size != uint32(size) {
+		if infos[i-1].size != types.Size(size) {
 			t.Fatalf("read file %d size mismatch expected %d found %d", i, infos[i-1].size, size)
 		}
 		if infos[i-1].crc != n.Checksum {
@@ -151,7 +151,7 @@ func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 }
 
 type needleInfo struct {
-	size uint32
+	size types.Size
 	crc  needle.CRC
 }
 

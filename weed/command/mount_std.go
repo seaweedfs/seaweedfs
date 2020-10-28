@@ -5,6 +5,8 @@ package command
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"os"
 	"os/user"
 	"path"
@@ -13,6 +15,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/fuse"
+	"github.com/seaweedfs/fuse/fs"
+
 	"github.com/chrislusf/seaweedfs/weed/filesys"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -20,13 +25,15 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
-	"github.com/seaweedfs/fuse"
-	"github.com/seaweedfs/fuse/fs"
 )
 
 func runMount(cmd *Command, args []string) bool {
 
 	grace.SetupProfiling(*mountCpuProfile, *mountMemProfile)
+	if *mountReadRetryTime < time.Second {
+		*mountReadRetryTime = time.Second
+	}
+	filer.ReadWaitTime = *mountReadRetryTime
 
 	umask, umaskErr := strconv.ParseUint(*mountOptions.umaskString, 8, 64)
 	if umaskErr != nil {
@@ -68,7 +75,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	filerMountRootPath := *option.filerMountRootPath
-	dir := *option.dir
+	dir := util.ResolvePath(*option.dir)
 	chunkSizeLimitMB := *mountOptions.chunkSizeLimitMB
 
 	util.LoadConfiguration("security", false)
@@ -85,15 +92,21 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	fuse.Unmount(dir)
 
-	uid, gid := uint32(0), uint32(0)
-
 	// detect mount folder mode
-	mountMode := os.ModeDir | 0755
+	if *option.dirAutoCreate {
+		os.MkdirAll(dir, os.FileMode(0777)&^umask)
+	}
 	fileInfo, err := os.Stat(dir)
+
+	uid, gid := uint32(0), uint32(0)
+	mountMode := os.ModeDir | 0777
 	if err == nil {
 		mountMode = os.ModeDir | fileInfo.Mode()
 		uid, gid = util.GetFileUidGid(fileInfo)
 		fmt.Printf("mount point owner uid=%d gid=%d mode=%s\n", uid, gid, fileInfo.Mode())
+	} else {
+		fmt.Printf("can not stat %s\n", dir)
+		return false
 	}
 
 	if uid == 0 {
@@ -106,6 +119,13 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 			}
 			fmt.Printf("current uid=%d gid=%d\n", uid, gid)
 		}
+	}
+
+	// mapping uid, gid
+	uidGidMapper, err := meta_cache.NewUidGidMapper(*option.uidMap, *option.gidMap)
+	if err != nil {
+		fmt.Printf("failed to parse %s %s: %v\n", *option.uidMap, *option.gidMap, err)
+		return false
 	}
 
 	// Ensure target mount point availability
@@ -158,7 +178,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		CacheDir:                    *option.cacheDir,
 		CacheSizeMB:                 *option.cacheSizeMB,
 		DataCenter:                  *option.dataCenter,
-		DirListCacheLimit:           *option.dirListCacheLimit,
 		EntryCacheTtl:               3 * time.Second,
 		MountUid:                    uid,
 		MountGid:                    gid,
@@ -167,8 +186,8 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		MountMtime:                  time.Now(),
 		Umask:                       umask,
 		OutsideContainerClusterMode: *mountOptions.outsideContainerClusterMode,
-		AsyncMetaDataCaching:        *mountOptions.asyncMetaDataCaching,
 		Cipher:                      cipher,
+		UidGidMapper:                uidGidMapper,
 	})
 
 	// mount

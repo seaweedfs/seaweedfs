@@ -9,7 +9,7 @@ import (
 func TestFileIdSize(t *testing.T) {
 	fileIdStr := "11745,0293434534cbb9892b"
 
-	fid, _ := toFileIdObject(fileIdStr)
+	fid, _ := ToFileIdObject(fileIdStr)
 	bytes, _ := proto.Marshal(fid)
 
 	println(len(fileIdStr))

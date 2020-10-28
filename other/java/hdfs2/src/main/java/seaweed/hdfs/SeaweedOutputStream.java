@@ -7,6 +7,7 @@ import org.apache.hadoop.fs.FSExceptionMessages;
 import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import seaweedfs.client.ByteBufferPool;
 import seaweedfs.client.FilerGrpcClient;
 import seaweedfs.client.FilerProto;
 import seaweedfs.client.SeaweedWrite;
@@ -14,6 +15,7 @@ import seaweedfs.client.SeaweedWrite;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
 import java.util.concurrent.*;
 
 import static seaweed.hdfs.SeaweedFileSystemStore.getParentDirectory;
@@ -28,16 +30,16 @@ public class SeaweedOutputStream extends OutputStream {
     private final int maxConcurrentRequestCount;
     private final ThreadPoolExecutor threadExecutor;
     private final ExecutorCompletionService<Void> completionService;
-    private FilerProto.Entry.Builder entry;
+    private final FilerProto.Entry.Builder entry;
+    private final boolean supportFlush = false; // true;
+    private final ConcurrentLinkedDeque<WriteOperation> writeOperations;
     private long position;
     private boolean closed;
-    private boolean supportFlush = true;
     private volatile IOException lastError;
     private long lastFlushOffset;
     private long lastTotalAppendOffset = 0;
-    private byte[] buffer;
-    private int bufferIndex;
-    private ConcurrentLinkedDeque<WriteOperation> writeOperations;
+    private ByteBuffer buffer;
+    private long outputIndex;
     private String replication = "000";
 
     public SeaweedOutputStream(FilerGrpcClient filerGrpcClient, final Path path, FilerProto.Entry.Builder entry,
@@ -50,18 +52,18 @@ public class SeaweedOutputStream extends OutputStream {
         this.lastError = null;
         this.lastFlushOffset = 0;
         this.bufferSize = bufferSize;
-        this.buffer = new byte[bufferSize];
-        this.bufferIndex = 0;
+        this.buffer = ByteBufferPool.request(bufferSize);
+        this.outputIndex = 0;
         this.writeOperations = new ConcurrentLinkedDeque<>();
 
-        this.maxConcurrentRequestCount = 4 * Runtime.getRuntime().availableProcessors();
+        this.maxConcurrentRequestCount = Runtime.getRuntime().availableProcessors();
 
         this.threadExecutor
-            = new ThreadPoolExecutor(maxConcurrentRequestCount,
-            maxConcurrentRequestCount,
-            10L,
-            TimeUnit.SECONDS,
-            new LinkedBlockingQueue<Runnable>());
+                = new ThreadPoolExecutor(maxConcurrentRequestCount,
+                maxConcurrentRequestCount,
+                120L,
+                TimeUnit.SECONDS,
+                new LinkedBlockingQueue<Runnable>());
         this.completionService = new ExecutorCompletionService<>(this.threadExecutor);
 
         this.entry = entry;
@@ -69,9 +71,6 @@ public class SeaweedOutputStream extends OutputStream {
     }
 
     private synchronized void flushWrittenBytesToServiceInternal(final long offset) throws IOException {
-
-        LOG.debug("SeaweedWrite.writeMeta path: {} entry:{}", path, entry);
-
         try {
             SeaweedWrite.writeMeta(filerGrpcClient, getParentDirectory(path), entry);
         } catch (Exception ex) {
@@ -87,7 +86,7 @@ public class SeaweedOutputStream extends OutputStream {
 
     @Override
     public synchronized void write(final byte[] data, final int off, final int length)
-        throws IOException {
+            throws IOException {
         maybeThrowLastError();
 
         Preconditions.checkArgument(data != null, "null data");
@@ -96,25 +95,29 @@ public class SeaweedOutputStream extends OutputStream {
             throw new IndexOutOfBoundsException();
         }
 
+        // System.out.println(path + " write [" + (outputIndex + off) + "," + ((outputIndex + off) + length) + ")");
+
         int currentOffset = off;
-        int writableBytes = bufferSize - bufferIndex;
+        int writableBytes = bufferSize - buffer.position();
         int numberOfBytesToWrite = length;
 
         while (numberOfBytesToWrite > 0) {
-            if (writableBytes <= numberOfBytesToWrite) {
-                System.arraycopy(data, currentOffset, buffer, bufferIndex, writableBytes);
-                bufferIndex += writableBytes;
-                writeCurrentBufferToService();
-                currentOffset += writableBytes;
-                numberOfBytesToWrite = numberOfBytesToWrite - writableBytes;
-            } else {
-                System.arraycopy(data, currentOffset, buffer, bufferIndex, numberOfBytesToWrite);
-                bufferIndex += numberOfBytesToWrite;
-                numberOfBytesToWrite = 0;
+
+            if (numberOfBytesToWrite < writableBytes) {
+                buffer.put(data, currentOffset, numberOfBytesToWrite);
+                outputIndex += numberOfBytesToWrite;
+                break;
             }
 
-            writableBytes = bufferSize - bufferIndex;
+            // System.out.println(path + "     [" + (outputIndex + currentOffset) + "," + ((outputIndex + currentOffset) + writableBytes) + ") " + buffer.capacity());
+            buffer.put(data, currentOffset, writableBytes);
+            outputIndex += writableBytes;
+            currentOffset += writableBytes;
+            writeCurrentBufferToService();
+            numberOfBytesToWrite = numberOfBytesToWrite - writableBytes;
+            writableBytes = bufferSize - buffer.position();
         }
+
     }
 
     /**
@@ -150,8 +153,9 @@ public class SeaweedOutputStream extends OutputStream {
             threadExecutor.shutdown();
         } finally {
             lastError = new IOException(FSExceptionMessages.STREAM_IS_CLOSED);
+            ByteBufferPool.release(buffer);
             buffer = null;
-            bufferIndex = 0;
+            outputIndex = 0;
             closed = true;
             writeOperations.clear();
             if (!threadExecutor.isShutdown()) {
@@ -161,35 +165,39 @@ public class SeaweedOutputStream extends OutputStream {
     }
 
     private synchronized void writeCurrentBufferToService() throws IOException {
-        if (bufferIndex == 0) {
+        if (buffer.position() == 0) {
             return;
         }
 
-        final byte[] bytes = buffer;
-        final int bytesLength = bufferIndex;
+        position += submitWriteBufferToService(buffer, position);
 
-        buffer = new byte[bufferSize];
-        bufferIndex = 0;
-        final long offset = position;
-        position += bytesLength;
+        buffer = ByteBufferPool.request(bufferSize);
 
-        if (threadExecutor.getQueue().size() >= maxConcurrentRequestCount * 2) {
+    }
+
+    private synchronized int submitWriteBufferToService(final ByteBuffer bufferToWrite, final long writePosition) throws IOException {
+
+        bufferToWrite.flip();
+        int bytesLength = bufferToWrite.limit() - bufferToWrite.position();
+
+        if (threadExecutor.getQueue().size() >= maxConcurrentRequestCount) {
             waitForTaskToComplete();
         }
-
-        final Future<Void> job = completionService.submit(new Callable<Void>() {
-            @Override
-            public Void call() throws Exception {
-                // originally: client.append(path, offset, bytes, 0, bytesLength);
-                SeaweedWrite.writeData(entry, replication, filerGrpcClient, offset, bytes, 0, bytesLength);
-                return null;
-            }
+        final Future<Void> job = completionService.submit(() -> {
+            // System.out.println(path + " is going to save [" + (writePosition) + "," + ((writePosition) + bytesLength) + ")");
+            SeaweedWrite.writeData(entry, replication, filerGrpcClient, writePosition, bufferToWrite.array(), bufferToWrite.position(), bufferToWrite.limit(), path.toUri().getPath());
+            // System.out.println(path + " saved [" + (writePosition) + "," + ((writePosition) + bytesLength) + ")");
+            ByteBufferPool.release(bufferToWrite);
+            return null;
         });
 
-        writeOperations.add(new WriteOperation(job, offset, bytesLength));
+        writeOperations.add(new WriteOperation(job, writePosition, bytesLength));
 
         // Try to shrink the queue
         shrinkWriteOperationQueue();
+
+        return bytesLength;
+
     }
 
     private void waitForTaskToComplete() throws IOException {

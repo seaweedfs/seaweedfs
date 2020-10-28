@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -20,7 +21,7 @@ var (
 
 type FilerClient interface {
 	WithFilerClient(fn func(SeaweedFilerClient) error) error
-	AdjustedUrl(hostAndPort string) string
+	AdjustedUrl(location *Location) string
 }
 
 func GetEntry(filerClient FilerClient, fullFilePath util.FullPath) (entry *Entry, err error) {
@@ -82,13 +83,13 @@ func doList(filerClient FilerClient, fullDirPath util.FullPath, prefix string, f
 			InclusiveStartFrom: inclusive,
 		}
 
-		glog.V(3).Infof("read directory: %v", request)
+		glog.V(4).Infof("read directory: %v", request)
 		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		stream, err := client.ListEntries(ctx, request)
 		if err != nil {
 			return fmt.Errorf("list %s: %v", fullDirPath, err)
 		}
-		defer cancel()
 
 		var prevEntry *Entry
 		for {
@@ -213,19 +214,28 @@ func MkFile(filerClient FilerClient, parentDirectoryPath string, fileName string
 	})
 }
 
-func Remove(filerClient FilerClient, parentDirectoryPath string, name string, isDeleteData, isRecursive, ignoreRecursiveErr bool) error {
+func Remove(filerClient FilerClient, parentDirectoryPath, name string, isDeleteData, isRecursive, ignoreRecursiveErr, isFromOtherCluster bool, signatures []int32) error {
 	return filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
 
-		if resp, err := client.DeleteEntry(context.Background(), &DeleteEntryRequest{
+		deleteEntryRequest := &DeleteEntryRequest{
 			Directory:            parentDirectoryPath,
 			Name:                 name,
 			IsDeleteData:         isDeleteData,
 			IsRecursive:          isRecursive,
 			IgnoreRecursiveError: ignoreRecursiveErr,
-		}); err != nil {
+			IsFromOtherCluster:   isFromOtherCluster,
+			Signatures:           signatures,
+		}
+		if resp, err := client.DeleteEntry(context.Background(), deleteEntryRequest); err != nil {
+			if strings.Contains(err.Error(), ErrNotFound.Error()) {
+				return nil
+			}
 			return err
 		} else {
 			if resp.Error != "" {
+				if strings.Contains(resp.Error, ErrNotFound.Error()) {
+					return nil
+				}
 				return errors.New(resp.Error)
 			}
 		}

@@ -9,6 +9,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.SSLException;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
 
 public class FilerGrpcClient {
@@ -24,6 +26,7 @@ public class FilerGrpcClient {
         }
     }
 
+    public final Map<String, FilerProto.Locations> vidLocations = new HashMap<>();
     private final ManagedChannel channel;
     private final SeaweedFilerGrpc.SeaweedFilerBlockingStub blockingStub;
     private final SeaweedFilerGrpc.SeaweedFilerStub asyncStub;
@@ -39,8 +42,10 @@ public class FilerGrpcClient {
     public FilerGrpcClient(String host, int grpcPort, SslContext sslContext) {
 
         this(sslContext == null ?
-                ManagedChannelBuilder.forAddress(host, grpcPort).usePlaintext() :
+                ManagedChannelBuilder.forAddress(host, grpcPort).usePlaintext()
+                        .maxInboundMessageSize(1024 * 1024 * 1024) :
                 NettyChannelBuilder.forAddress(host, grpcPort)
+                        .maxInboundMessageSize(1024 * 1024 * 1024)
                         .negotiationType(NegotiationType.TLS)
                         .sslContext(sslContext));
 

@@ -1,35 +1,54 @@
 package seaweedfs.client;
 
 import com.google.protobuf.ByteString;
-import org.apache.http.HttpResponse;
-import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.mime.HttpMultipartMode;
 import org.apache.http.entity.mime.MultipartEntityBuilder;
-import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.util.EntityUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayInputStream;
-import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.SecureRandom;
+import java.util.List;
 
 public class SeaweedWrite {
 
-    private static SecureRandom random = new SecureRandom();
+    private static final Logger LOG = LoggerFactory.getLogger(SeaweedWrite.class);
+
+    private static final SecureRandom random = new SecureRandom();
 
     public static void writeData(FilerProto.Entry.Builder entry,
                                  final String replication,
                                  final FilerGrpcClient filerGrpcClient,
                                  final long offset,
                                  final byte[] bytes,
-                                 final long bytesOffset, final long bytesLength) throws IOException {
+                                 final long bytesOffset, final long bytesLength,
+                                 final String path) throws IOException {
+        FilerProto.FileChunk.Builder chunkBuilder = writeChunk(
+                replication, filerGrpcClient, offset, bytes, bytesOffset, bytesLength, path);
+        synchronized (entry) {
+            entry.addChunks(chunkBuilder);
+        }
+    }
+
+    public static FilerProto.FileChunk.Builder writeChunk(final String replication,
+                                                          final FilerGrpcClient filerGrpcClient,
+                                                          final long offset,
+                                                          final byte[] bytes,
+                                                          final long bytesOffset,
+                                                          final long bytesLength,
+                                                          final String path) throws IOException {
         FilerProto.AssignVolumeResponse response = filerGrpcClient.getBlockingStub().assignVolume(
                 FilerProto.AssignVolumeRequest.newBuilder()
                         .setCollection(filerGrpcClient.getCollection())
                         .setReplication(replication == null ? filerGrpcClient.getReplication() : replication)
                         .setDataCenter("")
                         .setTtlSec(0)
+                        .setPath(path)
                         .build());
         String fileId = response.getFileId();
         String url = response.getUrl();
@@ -45,28 +64,32 @@ public class SeaweedWrite {
 
         String etag = multipartUpload(targetUrl, auth, bytes, bytesOffset, bytesLength, cipherKey);
 
-        // cache fileId ~ bytes
-        SeaweedRead.chunkCache.setChunk(fileId, bytes);
+        LOG.debug("write file chunk {} size {}", targetUrl, bytesLength);
 
-        entry.addChunks(FilerProto.FileChunk.newBuilder()
+        return FilerProto.FileChunk.newBuilder()
                 .setFileId(fileId)
                 .setOffset(offset)
                 .setSize(bytesLength)
                 .setMtime(System.currentTimeMillis() / 10000L)
                 .setETag(etag)
-                .setCipherKey(cipherKeyString)
-        );
-
+                .setCipherKey(cipherKeyString);
     }
 
     public static void writeMeta(final FilerGrpcClient filerGrpcClient,
-                                 final String parentDirectory, final FilerProto.Entry.Builder entry) {
-        filerGrpcClient.getBlockingStub().createEntry(
-                FilerProto.CreateEntryRequest.newBuilder()
-                        .setDirectory(parentDirectory)
-                        .setEntry(entry)
-                        .build()
-        );
+                                 final String parentDirectory,
+                                 final FilerProto.Entry.Builder entry) throws IOException {
+
+        synchronized (entry) {
+            List<FilerProto.FileChunk> chunks = FileChunkManifest.maybeManifestize(filerGrpcClient, entry.getChunksList(), parentDirectory);
+            entry.clearChunks();
+            entry.addAllChunks(chunks);
+            filerGrpcClient.getBlockingStub().createEntry(
+                    FilerProto.CreateEntryRequest.newBuilder()
+                            .setDirectory(parentDirectory)
+                            .setEntry(entry)
+                            .build()
+            );
+        }
     }
 
     private static String multipartUpload(String targetUrl,
@@ -74,8 +97,6 @@ public class SeaweedWrite {
                                           final byte[] bytes,
                                           final long bytesOffset, final long bytesLength,
                                           byte[] cipherKey) throws IOException {
-
-        HttpClient client = new DefaultHttpClient();
 
         InputStream inputStream = null;
         if (cipherKey == null || cipherKey.length == 0) {
@@ -99,8 +120,9 @@ public class SeaweedWrite {
                 .addBinaryBody("upload", inputStream)
                 .build());
 
+        CloseableHttpResponse response = SeaweedUtil.getClosableHttpClient().execute(post);
+
         try {
-            HttpResponse response = client.execute(post);
 
             String etag = response.getLastHeader("ETag").getValue();
 
@@ -108,12 +130,12 @@ public class SeaweedWrite {
                 etag = etag.substring(1, etag.length() - 1);
             }
 
+            EntityUtils.consume(response.getEntity());
+
             return etag;
         } finally {
-            if (client instanceof Closeable) {
-                Closeable t = (Closeable) client;
-                t.close();
-            }
+            response.close();
+            post.releaseConnection();
         }
 
     }

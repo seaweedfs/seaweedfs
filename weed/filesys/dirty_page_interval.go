@@ -3,7 +3,8 @@ package filesys
 import (
 	"bytes"
 	"io"
-	"math"
+
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type IntervalNode struct {
@@ -90,6 +91,15 @@ func subList(list *IntervalLinkedList, start, stop int64) *IntervalLinkedList {
 func (c *ContinuousIntervals) AddInterval(data []byte, offset int64) {
 
 	interval := &IntervalNode{Data: data, Offset: offset, Size: int64(len(data))}
+
+	// append to the tail and return
+	if len(c.lists) == 1 {
+		lastSpan := c.lists[0]
+		if lastSpan.Tail.Offset+lastSpan.Tail.Size == offset {
+			lastSpan.addNodeToTail(interval)
+			return
+		}
+	}
 
 	var newLists []*IntervalLinkedList
 	for _, list := range c.lists {
@@ -186,35 +196,28 @@ func (c *ContinuousIntervals) removeList(target *IntervalLinkedList) {
 
 }
 
-func (c *ContinuousIntervals) ReadData(data []byte, startOffset int64) (offset int64, size int) {
-	var minOffset int64 = math.MaxInt64
-	var maxStop int64
+func (c *ContinuousIntervals) ReadDataAt(data []byte, startOffset int64) (maxStop int64) {
 	for _, list := range c.lists {
 		start := max(startOffset, list.Offset())
 		stop := min(startOffset+int64(len(data)), list.Offset()+list.Size())
-		if start <= stop {
+		if start < stop {
 			list.ReadData(data[start-startOffset:], start, stop)
-			minOffset = min(minOffset, start)
 			maxStop = max(maxStop, stop)
 		}
 	}
-
-	if minOffset == math.MaxInt64 {
-		return 0, 0
-	}
-
-	offset = minOffset
-	size = int(maxStop - offset)
 	return
 }
 
 func (l *IntervalLinkedList) ToReader() io.Reader {
 	var readers []io.Reader
 	t := l.Head
-	readers = append(readers, bytes.NewReader(t.Data))
+	readers = append(readers, util.NewBytesReader(t.Data))
 	for t.Next != nil {
 		t = t.Next
 		readers = append(readers, bytes.NewReader(t.Data))
+	}
+	if len(readers) == 1 {
+		return readers[0]
 	}
 	return io.MultiReader(readers...)
 }

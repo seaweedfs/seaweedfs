@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package master_pb;
 
+option go_package = "github.com/chrislusf/seaweedfs/weed/pb/master_pb";
+
 //////////////////////////////////////////////////
 
 service Seaweed {
@@ -271,6 +273,9 @@ message GetMasterConfigurationRequest {
 message GetMasterConfigurationResponse {
     string metrics_address = 1;
     uint32 metrics_interval_seconds = 2;
+    repeated StorageBackend storage_backends = 3;
+    string default_replication = 4;
+    string leader = 5;
 }
 
 message ListMasterClientsRequest {

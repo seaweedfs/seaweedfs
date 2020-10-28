@@ -19,10 +19,11 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 const (
-	defaultFnFormat = `{{.Mime}}/{{.Id}}:{{.Name}}`
+	defaultFnFormat = `{{.Id}}_{{.Name}}{{.Ext}}`
 	timeFormat      = "2006-01-02T15:04:05"
 )
 
@@ -55,7 +56,7 @@ func init() {
 
 var (
 	output      = cmdExport.Flag.String("o", "", "output tar file name, must ends with .tar, or just a \"-\" for stdout")
-	format      = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename formatted with {{.Mime}} {{.Id}} {{.Name}} {{.Ext}}")
+	format      = cmdExport.Flag.String("fileNameFormat", defaultFnFormat, "filename formatted with {{.Id}} {{.Name}} {{.Ext}}")
 	newer       = cmdExport.Flag.String("newer", "", "export only files newer than this time, default is all files. Must be specified in RFC3339 without timezone, e.g. 2006-01-02T15:04:05")
 	showDeleted = cmdExport.Flag.Bool("deleted", false, "export deleted files. only applies if -o is not specified")
 	limit       = cmdExport.Flag.Int("limit", 0, "only show first n entries if specified")
@@ -69,21 +70,23 @@ var (
 	localLocation, _             = time.LoadLocation("Local")
 )
 
-func printNeedle(vid needle.VolumeId, n *needle.Needle, version needle.Version, deleted bool) {
+func printNeedle(vid needle.VolumeId, n *needle.Needle, version needle.Version, deleted bool, offset int64, onDiskSize int64) {
 	key := needle.NewFileIdFromNeedle(vid, n).String()
-	size := n.DataSize
+	size := int32(n.DataSize)
 	if version == needle.Version1 {
-		size = n.Size
+		size = int32(n.Size)
 	}
-	fmt.Printf("%s\t%s\t%d\t%t\t%s\t%s\t%s\t%t\n",
+	fmt.Printf("%s\t%s\t%d\t%t\t%s\t%s\t%s\t%t\t%d\t%d\n",
 		key,
 		n.Name,
 		size,
-		n.IsGzipped(),
+		n.IsCompressed(),
 		n.Mime,
 		n.LastModifiedString(),
 		n.Ttl.String(),
 		deleted,
+		offset,
+		offset+onDiskSize,
 	)
 }
 
@@ -108,9 +111,9 @@ func (scanner *VolumeFileScanner4Export) VisitNeedle(n *needle.Needle, offset in
 	vid := scanner.vid
 
 	nv, ok := needleMap.Get(n.Id)
-	glog.V(3).Infof("key %d offset %d size %d disk_size %d gzip %v ok %v nv %+v",
-		n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsGzipped(), ok, nv)
-	if ok && nv.Size > 0 && nv.Size != types.TombstoneFileSize && nv.Offset.ToAcutalOffset() == offset {
+	glog.V(3).Infof("key %d offset %d size %d disk_size %d compressed %v ok %v nv %+v",
+		n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsCompressed(), ok, nv)
+	if *showDeleted && n.Size > 0 || ok && nv.Size.IsValid() && nv.Offset.ToAcutalOffset() == offset {
 		if newerThanUnix >= 0 && n.HasLastModifiedDate() && n.LastModified < uint64(newerThanUnix) {
 			glog.V(3).Infof("Skipping this file, as it's old enough: LastModified %d vs %d",
 				n.LastModified, newerThanUnix)
@@ -123,17 +126,17 @@ func (scanner *VolumeFileScanner4Export) VisitNeedle(n *needle.Needle, offset in
 		if tarOutputFile != nil {
 			return writeFile(vid, n)
 		} else {
-			printNeedle(vid, n, scanner.version, false)
+			printNeedle(vid, n, scanner.version, false, offset, n.DiskSize(scanner.version))
 			return nil
 		}
 	}
 	if !ok {
 		if *showDeleted && tarOutputFile == nil {
 			if n.DataSize > 0 {
-				printNeedle(vid, n, scanner.version, true)
+				printNeedle(vid, n, scanner.version, true, offset, n.DiskSize(scanner.version))
 			} else {
 				n.Name = []byte("*tombstone")
-				printNeedle(vid, n, scanner.version, true)
+				printNeedle(vid, n, scanner.version, true, offset, n.DiskSize(scanner.version))
 			}
 		}
 		glog.V(2).Infof("This seems deleted %d size %d", n.Id, n.Size)
@@ -197,7 +200,7 @@ func runExport(cmd *Command, args []string) bool {
 	needleMap := needle_map.NewMemDb()
 	defer needleMap.Close()
 
-	if err := needleMap.LoadFromIdx(path.Join(*export.dir, fileName+".idx")); err != nil {
+	if err := needleMap.LoadFromIdx(path.Join(util.ResolvePath(*export.dir), fileName+".idx")); err != nil {
 		glog.Fatalf("cannot load needle map from %s.idx: %s", fileName, err)
 	}
 
@@ -207,10 +210,10 @@ func runExport(cmd *Command, args []string) bool {
 	}
 
 	if tarOutputFile == nil {
-		fmt.Printf("key\tname\tsize\tgzip\tmime\tmodified\tttl\tdeleted\n")
+		fmt.Printf("key\tname\tsize\tgzip\tmime\tmodified\tttl\tdeleted\tstart\tstop\n")
 	}
 
-	err = storage.ScanVolumeFile(*export.dir, *export.collection, vid, storage.NeedleMapInMemory, volumeFileScanner)
+	err = storage.ScanVolumeFile(util.ResolvePath(*export.dir), *export.collection, vid, storage.NeedleMapInMemory, volumeFileScanner)
 	if err != nil && err != io.EOF {
 		glog.Fatalf("Export Volume File [ERROR] %s\n", err)
 	}
@@ -242,8 +245,11 @@ func writeFile(vid needle.VolumeId, n *needle.Needle) (err error) {
 
 	fileName := fileNameTemplateBuffer.String()
 
-	if n.IsGzipped() && path.Ext(fileName) != ".gz" {
-		fileName = fileName + ".gz"
+	if n.IsCompressed() {
+		if util.IsGzippedContent(n.Data) && path.Ext(fileName) != ".gz" {
+			fileName = fileName + ".gz"
+		}
+		// TODO other compression method
 	}
 
 	tarHeader.Name, tarHeader.Size = fileName, int64(len(n.Data))

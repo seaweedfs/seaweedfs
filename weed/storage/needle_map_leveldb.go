@@ -15,7 +15,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type LevelDbNeedleMap struct {
@@ -28,9 +27,9 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 	m = &LevelDbNeedleMap{dbFileName: dbFileName}
 	m.indexFile = indexFile
 	if !isLevelDbFresh(dbFileName, indexFile) {
-		glog.V(0).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
+		glog.V(1).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
 		generateLevelDbFile(dbFileName, indexFile)
-		glog.V(0).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
+		glog.V(1).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
 	}
 	glog.V(1).Infof("Opening %s...", dbFileName)
 
@@ -74,8 +73,8 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 		return err
 	}
 	defer db.Close()
-	return idx.WalkIndexFile(indexFile, func(key NeedleId, offset Offset, size uint32) error {
-		if !offset.IsZero() && size != TombstoneFileSize {
+	return idx.WalkIndexFile(indexFile, func(key NeedleId, offset Offset, size Size) error {
+		if !offset.IsZero() && size.IsValid() {
 			levelDbWrite(db, key, offset, size)
 		} else {
 			levelDbDelete(db, key)
@@ -92,12 +91,12 @@ func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, o
 		return nil, false
 	}
 	offset := BytesToOffset(data[0:OffsetSize])
-	size := util.BytesToUint32(data[OffsetSize : OffsetSize+SizeSize])
+	size := BytesToSize(data[OffsetSize : OffsetSize+SizeSize])
 	return &needle_map.NeedleValue{Key: key, Offset: offset, Size: size}, true
 }
 
-func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size uint32) error {
-	var oldSize uint32
+func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
+	var oldSize Size
 	if oldNeedle, ok := m.Get(key); ok {
 		oldSize = oldNeedle.Size
 	}
@@ -109,7 +108,7 @@ func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size uint32) error {
 	return levelDbWrite(m.db, key, offset, size)
 }
 
-func levelDbWrite(db *leveldb.DB, key NeedleId, offset Offset, size uint32) error {
+func levelDbWrite(db *leveldb.DB, key NeedleId, offset Offset, size Size) error {
 
 	bytes := needle_map.ToBytes(key, offset, size)
 
@@ -125,14 +124,18 @@ func levelDbDelete(db *leveldb.DB, key NeedleId) error {
 }
 
 func (m *LevelDbNeedleMap) Delete(key NeedleId, offset Offset) error {
-	if oldNeedle, ok := m.Get(key); ok {
-		m.logDelete(oldNeedle.Size)
+	oldNeedle, found := m.Get(key)
+	if !found || oldNeedle.Size.IsDeleted() {
+		return nil
 	}
+	m.logDelete(oldNeedle.Size)
+
 	// write to index file first
 	if err := m.appendToIndexFile(key, offset, TombstoneFileSize); err != nil {
 		return err
 	}
-	return levelDbDelete(m.db, key)
+
+	return levelDbWrite(m.db, key, oldNeedle.Offset, -oldNeedle.Size)
 }
 
 func (m *LevelDbNeedleMap) Close() {

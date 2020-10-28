@@ -112,3 +112,17 @@ Inject extra environment vars in the format key:value, if populated
 {{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
 {{- end -}}
 {{- end -}}
+
+{{/* Return the proper cronjob image */}}
+{{- define "cronjob.image" -}}
+{{- if .Values.cronjob.imageOverride -}}
+{{- $imageOverride := .Values.cronjob.imageOverride -}}
+{{- printf "%s" $imageOverride -}}
+{{- else -}}
+{{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
+{{- $repositoryName := .Values.image.repository | toString -}}
+{{- $name := .Values.global.imageName | toString -}}
+{{- $tag := .Values.global.imageTag | toString -}}
+{{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
+{{- end -}}
+{{- end -}}

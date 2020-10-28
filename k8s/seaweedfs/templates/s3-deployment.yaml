@@ -71,6 +71,9 @@ spec:
               {{- end }}
               s3 \
               -port={{ .Values.s3.port }} \
+              {{- if .Values.s3.metricsPort }}
+              -metricsPort {{ .Values.s3.metricsPort }} \
+              {{- end }}}
               {{- if .Values.global.enableSecurity }}
               -cert.file=/usr/local/share/ca-certificates/client/tls.crt \
               -key.file=/usr/local/share/ca-certificates/client/tls.key \
@@ -116,6 +119,7 @@ spec:
             periodSeconds: 15
             successThreshold: 1
             failureThreshold: 100
+            timeoutSeconds: 3
           livenessProbe:
             httpGet:
               path: /
@@ -125,6 +129,7 @@ spec:
             periodSeconds: 60
             successThreshold: 1
             failureThreshold: 20
+            timeoutSeconds: 3
           {{- if .Values.s3.resources }}
           resources:
             {{ tpl .Values.s3.resources . | nindent 12 | trim }}

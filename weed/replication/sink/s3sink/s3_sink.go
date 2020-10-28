@@ -12,7 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
@@ -83,7 +83,7 @@ func (s3sink *S3Sink) initialize(awsAccessKeyId, awsSecretAccessKey, region, buc
 	return nil
 }
 
-func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) error {
+func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 
 	key = cleanKey(key)
 
@@ -95,7 +95,7 @@ func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks b
 
 }
 
-func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
+func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
 	key = cleanKey(key)
 
 	if entry.IsDirectory {
@@ -107,8 +107,8 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
 		return err
 	}
 
-	totalSize := filer2.TotalSize(entry.Chunks)
-	chunkViews := filer2.ViewFromChunks(entry.Chunks, 0, int64(totalSize))
+	totalSize := filer.FileSize(entry)
+	chunkViews := filer.ViewFromChunks(s3sink.filerSource.LookupFileId, entry.Chunks, 0, int64(totalSize))
 
 	parts := make([]*s3.CompletedPart, len(chunkViews))
 
@@ -116,7 +116,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
 	for chunkIndex, chunk := range chunkViews {
 		partId := chunkIndex + 1
 		wg.Add(1)
-		go func(chunk *filer2.ChunkView, index int) {
+		go func(chunk *filer.ChunkView, index int) {
 			defer wg.Done()
 			if part, uploadErr := s3sink.uploadPart(key, uploadId, partId, chunk); uploadErr != nil {
 				err = uploadErr
@@ -136,7 +136,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
 }
 
-func (s3sink *S3Sink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (s3sink *S3Sink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
 	key = cleanKey(key)
 	// TODO improve efficiency
 	return false, nil

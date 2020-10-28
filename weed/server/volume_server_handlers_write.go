@@ -13,6 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/topology"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +43,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reqNeedle, originalSize, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation, vs.fileSizeLimitBytes)
+	reqNeedle, originalSize, contentMd5, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation, vs.fileSizeLimitBytes)
 	if ne != nil {
 		writeJsonError(w, r, http.StatusBadRequest, ne)
 		return
@@ -67,9 +68,10 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		ret.Name = string(reqNeedle.Name)
 	}
 	ret.Size = uint32(originalSize)
-	ret.ETag = reqNeedle.Etag()
+	ret.ETag = fmt.Sprintf("%x", util.Base64Md5ToBytes(contentMd5))
 	ret.Mime = string(reqNeedle.Mime)
 	setEtag(w, ret.ETag)
+	w.Header().Set("Content-MD5", contentMd5)
 	writeJsonQuiet(w, r, httpStatus, ret)
 }
 
@@ -103,7 +105,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, ok := vs.store.ReadVolumeNeedle(volumeId, n)
+	_, ok := vs.store.ReadVolumeNeedle(volumeId, n, nil)
 	if ok != nil {
 		m := make(map[string]uint32)
 		m["size"] = 0
@@ -120,7 +122,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	count := int64(n.Size)
 
 	if n.IsChunkedManifest() {
-		chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsGzipped())
+		chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsCompressed())
 		if e != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Load chunks manifest error: %v", e))
 			return

@@ -36,11 +36,14 @@ deps:
 build: deps
 	go build $(GO_FLAGS) -ldflags "$(LDFLAGS)" -o $(BINARY) $(SOURCE_DIR)
 
+install: deps
+	go install $(GO_FLAGS) -ldflags "$(LDFLAGS)" $(SOURCE_DIR)
+
 linux: deps
 	mkdir -p linux
 	GOOS=linux GOARCH=amd64 go build $(GO_FLAGS) -ldflags "$(LDFLAGS)" -o linux/$(BINARY) $(SOURCE_DIR)
 
-release: deps windows_build darwin_build linux_build bsd_build 5_byte_linux_build 5_byte_darwin_build 5_byte_windows_build
+release: deps windows_build darwin_build linux_build bsd_build 5_byte_linux_build 5_byte_arm64_build 5_byte_darwin_build 5_byte_windows_build
 
 ##### LINUX BUILDS #####
 5_byte_linux_build:
@@ -54,6 +57,14 @@ release: deps windows_build darwin_build linux_build bsd_build 5_byte_linux_buil
 5_byte_windows_build:
 	$(call build_large,windows,amd64,.exe)
 	$(call zip_large,windows,amd64,.exe)
+
+5_byte_arm_build: $(sources)
+	$(call build_large,linux,arm,)
+	$(call tar_large,linux,arm)
+
+5_byte_arm64_build: $(sources)
+	$(call build_large,linux,arm64,)
+	$(call tar_large,linux,arm64)
 
 linux_build: build/linux_arm.tar.gz build/linux_arm64.tar.gz build/linux_386.tar.gz build/linux_amd64.tar.gz
 

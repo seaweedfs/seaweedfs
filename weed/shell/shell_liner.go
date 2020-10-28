@@ -66,7 +66,7 @@ func processEachCmd(reg *regexp.Regexp, cmd string, commandEnv *CommandEnv) bool
 			args[i] = strings.Trim(string(cmds[1+i]), "\"'")
 		}
 
-		cmd := strings.ToLower(cmds[0])
+		cmd := cmds[0]
 		if cmd == "help" || cmd == "?" {
 			printHelp(cmds)
 		} else if cmd == "exit" || cmd == "quit" {

@@ -11,6 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func init() {
@@ -46,8 +47,8 @@ func (scanner *VolumeFileScanner4Fix) ReadNeedleBody() bool {
 }
 
 func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
-	glog.V(2).Infof("key %d offset %d size %d disk_size %d gzip %v", n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsGzipped())
-	if n.Size > 0 && n.Size != types.TombstoneFileSize {
+	glog.V(2).Infof("key %d offset %d size %d disk_size %d compressed %v", n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsCompressed())
+	if n.Size.IsValid() {
 		pe := scanner.nm.Set(n.Id, types.ToOffset(offset), n.Size)
 		glog.V(2).Infof("saved %d with error %v", n.Size, pe)
 	} else {
@@ -67,7 +68,7 @@ func runFix(cmd *Command, args []string) bool {
 	if *fixVolumeCollection != "" {
 		baseFileName = *fixVolumeCollection + "_" + baseFileName
 	}
-	indexFileName := path.Join(*fixVolumePath, baseFileName+".idx")
+	indexFileName := path.Join(util.ResolvePath(*fixVolumePath), baseFileName+".idx")
 
 	nm := needle_map.NewMemDb()
 	defer nm.Close()
@@ -77,7 +78,7 @@ func runFix(cmd *Command, args []string) bool {
 		nm: nm,
 	}
 
-	if err := storage.ScanVolumeFile(*fixVolumePath, *fixVolumeCollection, vid, storage.NeedleMapInMemory, scanner); err != nil {
+	if err := storage.ScanVolumeFile(util.ResolvePath(*fixVolumePath), *fixVolumeCollection, vid, storage.NeedleMapInMemory, scanner); err != nil {
 		glog.Fatalf("scan .dat File: %v", err)
 		os.Remove(indexFileName)
 	}

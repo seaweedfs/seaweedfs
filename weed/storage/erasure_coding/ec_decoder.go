@@ -11,6 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 // write .idx file from .ecx and .ecj files
@@ -51,9 +52,9 @@ func FindDatFileSize(baseFileName string) (datSize int64, err error) {
 		return 0, fmt.Errorf("read ec volume %s version: %v", baseFileName, err)
 	}
 
-	err = iterateEcxFile(baseFileName, func(key types.NeedleId, offset types.Offset, size uint32) error {
+	err = iterateEcxFile(baseFileName, func(key types.NeedleId, offset types.Offset, size types.Size) error {
 
-		if size == types.TombstoneFileSize {
+		if size.IsDeleted() {
 			return nil
 		}
 
@@ -87,7 +88,7 @@ func readEcVolumeVersion(baseFileName string) (version needle.Version, err error
 
 }
 
-func iterateEcxFile(baseFileName string, processNeedleFn func(key types.NeedleId, offset types.Offset, size uint32) error) error {
+func iterateEcxFile(baseFileName string, processNeedleFn func(key types.NeedleId, offset types.Offset, size types.Size) error) error {
 	ecxFile, openErr := os.OpenFile(baseFileName+".ecx", os.O_RDONLY, 0644)
 	if openErr != nil {
 		return fmt.Errorf("cannot open ec index %s.ecx: %v", baseFileName, openErr)
@@ -118,9 +119,12 @@ func iterateEcxFile(baseFileName string, processNeedleFn func(key types.NeedleId
 }
 
 func iterateEcjFile(baseFileName string, processNeedleFn func(key types.NeedleId) error) error {
+	if !util.FileExists(baseFileName + ".ecj") {
+		return nil
+	}
 	ecjFile, openErr := os.OpenFile(baseFileName+".ecj", os.O_RDONLY, 0644)
 	if openErr != nil {
-		return fmt.Errorf("cannot open ec index %s.ecx: %v", baseFileName, openErr)
+		return fmt.Errorf("cannot open ec index %s.ecj: %v", baseFileName, openErr)
 	}
 	defer ecjFile.Close()
 

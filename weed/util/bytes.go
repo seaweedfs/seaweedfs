@@ -1,7 +1,10 @@
 package util
 
 import (
+	"bytes"
 	"crypto/md5"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
 )
@@ -109,8 +112,52 @@ func HashToInt32(data []byte) (v int32) {
 	return
 }
 
-func Md5(data []byte) string {
+func Base64Encode(data []byte) string {
+	return base64.StdEncoding.EncodeToString(data)
+}
+
+func Base64Md5(data []byte) string {
+	return Base64Encode(Md5(data))
+}
+
+func Md5(data []byte) []byte {
 	hash := md5.New()
 	hash.Write(data)
-	return fmt.Sprintf("%x", hash.Sum(nil))
+	return hash.Sum(nil)
+}
+
+func Md5String(data []byte) string {
+	return fmt.Sprintf("%x", Md5(data))
+}
+
+func Base64Md5ToBytes(contentMd5 string) []byte {
+	data, err := base64.StdEncoding.DecodeString(contentMd5)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+func RandomInt32() int32 {
+	buf := make([]byte, 4)
+	rand.Read(buf)
+	return int32(BytesToUint32(buf))
+}
+
+func RandomBytes(byteCount int) []byte {
+	buf := make([]byte, byteCount)
+	rand.Read(buf)
+	return buf
+}
+
+type BytesReader struct {
+	Bytes []byte
+	*bytes.Reader
+}
+
+func NewBytesReader(b []byte) *BytesReader {
+	return &BytesReader{
+		Bytes:  b,
+		Reader: bytes.NewReader(b),
+	}
 }

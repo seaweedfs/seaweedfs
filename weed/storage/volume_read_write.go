@@ -16,6 +16,8 @@ import (
 )
 
 var ErrorNotFound = errors.New("not found")
+var ErrorDeleted = errors.New("already deleted")
+var ErrorSizeMismatch = errors.New("size mismatch")
 
 // isFileUnchanged checks whether this needle to write is same as last one.
 // It requires serialized access in the same volume.
@@ -25,7 +27,7 @@ func (v *Volume) isFileUnchanged(n *needle.Needle) bool {
 	}
 
 	nv, ok := v.nm.Get(n.Id)
-	if ok && !nv.Offset.IsZero() && nv.Size != TombstoneFileSize {
+	if ok && !nv.Offset.IsZero() && nv.Size.IsValid() {
 		oldNeedle := new(needle.Needle)
 		err := oldNeedle.ReadData(v.DataBackend, nv.Offset.ToAcutalOffset(), nv.Size, v.Version())
 		if err != nil {
@@ -54,23 +56,28 @@ func (v *Volume) Destroy() (err error) {
 		}
 	}
 	v.Close()
-	os.Remove(v.FileName() + ".dat")
-	os.Remove(v.FileName() + ".idx")
-	os.Remove(v.FileName() + ".vif")
-	os.Remove(v.FileName() + ".sdx")
-	os.Remove(v.FileName() + ".cpd")
-	os.Remove(v.FileName() + ".cpx")
-	os.RemoveAll(v.FileName() + ".ldb")
+	removeVolumeFiles(v.FileName())
 	return
+}
+
+func removeVolumeFiles(filename string) {
+	os.Remove(filename+ ".dat")
+	os.Remove(filename + ".idx")
+	os.Remove(filename + ".vif")
+	os.Remove(filename + ".sdx")
+	os.Remove(filename + ".cpd")
+	os.Remove(filename + ".cpx")
+	os.RemoveAll(filename + ".ldb")
+	os.Remove(filename + ".note")
 }
 
 func (v *Volume) asyncRequestAppend(request *needle.AsyncRequest) {
 	v.asyncRequestsChan <- request
 }
 
-func (v *Volume) syncWrite(n *needle.Needle) (offset uint64, size uint32, isUnchanged bool, err error) {
+func (v *Volume) syncWrite(n *needle.Needle) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
-	actualSize := needle.GetActualSize(uint32(len(n.Data)), v.Version())
+	actualSize := needle.GetActualSize(Size(len(n.Data)), v.Version())
 
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
@@ -80,7 +87,7 @@ func (v *Volume) syncWrite(n *needle.Needle) (offset uint64, size uint32, isUnch
 		return
 	}
 	if v.isFileUnchanged(n) {
-		size = n.DataSize
+		size = Size(n.DataSize)
 		isUnchanged = true
 		return
 	}
@@ -120,7 +127,7 @@ func (v *Volume) syncWrite(n *needle.Needle) (offset uint64, size uint32, isUnch
 	return
 }
 
-func (v *Volume) writeNeedle2(n *needle.Needle, fsync bool) (offset uint64, size uint32, isUnchanged bool, err error) {
+func (v *Volume) writeNeedle2(n *needle.Needle, fsync bool) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	if n.Ttl == needle.EMPTY_TTL && v.Ttl != needle.EMPTY_TTL {
 		n.SetHasTtl()
@@ -132,7 +139,7 @@ func (v *Volume) writeNeedle2(n *needle.Needle, fsync bool) (offset uint64, size
 	} else {
 		asyncRequest := needle.NewAsyncRequest(n, true)
 		// using len(n.Data) here instead of n.Size before n.Size is populated in n.Append()
-		asyncRequest.ActualSize = needle.GetActualSize(uint32(len(n.Data)), v.Version())
+		asyncRequest.ActualSize = needle.GetActualSize(Size(len(n.Data)), v.Version())
 
 		v.asyncRequestAppend(asyncRequest)
 		offset, _, isUnchanged, err = asyncRequest.WaitComplete()
@@ -141,10 +148,10 @@ func (v *Volume) writeNeedle2(n *needle.Needle, fsync bool) (offset uint64, size
 	}
 }
 
-func (v *Volume) doWriteRequest(n *needle.Needle) (offset uint64, size uint32, isUnchanged bool, err error) {
+func (v *Volume) doWriteRequest(n *needle.Needle) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	if v.isFileUnchanged(n) {
-		size = n.DataSize
+		size = Size(n.DataSize)
 		isUnchanged = true
 		return
 	}
@@ -183,8 +190,8 @@ func (v *Volume) doWriteRequest(n *needle.Needle) (offset uint64, size uint32, i
 	return
 }
 
-func (v *Volume) syncDelete(n *needle.Needle) (uint32, error) {
-	glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
+func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
+	// glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	actualSize := needle.GetActualSize(0, v.Version())
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
@@ -195,8 +202,8 @@ func (v *Volume) syncDelete(n *needle.Needle) (uint32, error) {
 	}
 
 	nv, ok := v.nm.Get(n.Id)
-	//fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
-	if ok && nv.Size != TombstoneFileSize {
+	// fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
+	if ok && nv.Size.IsValid() {
 		size := nv.Size
 		n.Data = nil
 		n.AppendAtNs = uint64(time.Now().UnixNano())
@@ -213,7 +220,7 @@ func (v *Volume) syncDelete(n *needle.Needle) (uint32, error) {
 	return 0, nil
 }
 
-func (v *Volume) deleteNeedle2(n *needle.Needle) (uint32, error) {
+func (v *Volume) deleteNeedle2(n *needle.Needle) (Size, error) {
 	// todo: delete info is always appended no fsync, it may need fsync in future
 	fsync := false
 
@@ -226,15 +233,15 @@ func (v *Volume) deleteNeedle2(n *needle.Needle) (uint32, error) {
 		v.asyncRequestAppend(asyncRequest)
 		_, size, _, err := asyncRequest.WaitComplete()
 
-		return uint32(size), err
+		return Size(size), err
 	}
 }
 
-func (v *Volume) doDeleteRequest(n *needle.Needle) (uint32, error) {
+func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
 	glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	nv, ok := v.nm.Get(n.Id)
-	//fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
-	if ok && nv.Size != TombstoneFileSize {
+	// fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
+	if ok && nv.Size.IsValid() {
 		size := nv.Size
 		n.Data = nil
 		n.AppendAtNs = uint64(time.Now().UnixNano())
@@ -252,7 +259,7 @@ func (v *Volume) doDeleteRequest(n *needle.Needle) (uint32, error) {
 }
 
 // read fills in Needle content by looking up n.Id from NeedleMapper
-func (v *Volume) readNeedle(n *needle.Needle) (int, error) {
+func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption) (int, error) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
 
@@ -260,13 +267,22 @@ func (v *Volume) readNeedle(n *needle.Needle) (int, error) {
 	if !ok || nv.Offset.IsZero() {
 		return -1, ErrorNotFound
 	}
-	if nv.Size == TombstoneFileSize {
-		return -1, errors.New("already deleted")
+	readSize := nv.Size
+	if readSize.IsDeleted() {
+		if readOption != nil && readOption.ReadDeleted && readSize != TombstoneFileSize {
+			glog.V(3).Infof("reading deleted %s", n.String())
+			readSize = -readSize
+		} else {
+			return -1, ErrorDeleted
+		}
 	}
-	if nv.Size == 0 {
+	if readSize == 0 {
 		return 0, nil
 	}
-	err := n.ReadData(v.DataBackend, nv.Offset.ToAcutalOffset(), nv.Size, v.Version())
+	err := n.ReadData(v.DataBackend, nv.Offset.ToAcutalOffset(), readSize, v.Version())
+	if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
+		err = n.ReadData(v.DataBackend, nv.Offset.ToAcutalOffset()+int64(MaxPossibleVolumeSize), readSize, v.Version())
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -299,7 +315,7 @@ func (v *Volume) startWorker() {
 			currentBytesToWrite := int64(0)
 			for {
 				request, ok := <-v.asyncRequestsChan
-				//volume may be closed
+				// volume may be closed
 				if !ok {
 					chanClosed = true
 					break
@@ -375,10 +391,8 @@ func ScanVolumeFile(dirname string, collection string, id needle.VolumeId,
 	if v, err = loadVolumeWithoutIndex(dirname, collection, id, needleMapKind); err != nil {
 		return fmt.Errorf("failed to load volume %d: %v", id, err)
 	}
-	if v.volumeInfo.Version == 0 {
-		if err = volumeFileScanner.VisitSuperBlock(v.SuperBlock); err != nil {
-			return fmt.Errorf("failed to process volume %d super block: %v", id, err)
-		}
+	if err = volumeFileScanner.VisitSuperBlock(v.SuperBlock); err != nil {
+		return fmt.Errorf("failed to process volume %d super block: %v", id, err)
 	}
 	defer v.Close()
 
@@ -400,10 +414,11 @@ func ScanVolumeFileFrom(version needle.Version, datBackend backend.BackendStorag
 	for n != nil {
 		var needleBody []byte
 		if volumeFileScanner.ReadNeedleBody() {
+			// println("needle", n.Id.String(), "offset", offset, "size", n.Size, "rest", rest)
 			if needleBody, err = n.ReadNeedleBody(datBackend, version, offset+NeedleHeaderSize, rest); err != nil {
-				glog.V(0).Infof("cannot read needle body: %v", err)
-				//err = fmt.Errorf("cannot read needle body: %v", err)
-				//return
+				glog.V(0).Infof("cannot read needle head [%d, %d) body [%d, %d) body length %d: %v", offset, offset+NeedleHeaderSize, offset+NeedleHeaderSize, offset+NeedleHeaderSize+rest, rest, err)
+				// err = fmt.Errorf("cannot read needle body: %v", err)
+				// return
 			}
 		}
 		err := volumeFileScanner.VisitNeedle(n, offset, nh, needleBody)

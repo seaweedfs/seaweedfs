@@ -98,7 +98,7 @@ func iterateEntries(datBackend backend.BackendStorageFile, idxFile *os.File, vis
 		// parse index file entry
 		key := util.BytesToUint64(bytes[0:8])
 		offsetFromIndex := util.BytesToUint32(bytes[8:12])
-		sizeFromIndex := util.BytesToUint32(bytes[12:16])
+		sizeFromIndex := types.BytesToSize(bytes[12:16])
 		count, _ = idxFile.ReadAt(bytes, readerOffset)
 		readerOffset += int64(count)
 
@@ -123,7 +123,7 @@ func iterateEntries(datBackend backend.BackendStorageFile, idxFile *os.File, vis
 			}
 		}()
 
-		if n.Size <= n.DataSize {
+		if n.Size <= types.Size(n.DataSize) {
 			continue
 		}
 		visitNeedle(n, offset)

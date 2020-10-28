@@ -48,8 +48,8 @@ func main() {
 		if *showTextFile {
 
 			data := n.Data
-			if n.IsGzipped() {
-				if data, err = util2.UnGzipData(data); err != nil {
+			if n.IsCompressed() {
+				if data, err = util2.DecompressData(data); err != nil {
 					return err
 				}
 			}
@@ -57,7 +57,7 @@ func main() {
 				println(string(data))
 			}
 
-			println("-", n.String(), "compressed", n.IsGzipped(), "original size", len(data))
+			println("-", n.String(), "compressed", n.IsCompressed(), "original size", len(data))
 		}
 		return nil
 	})

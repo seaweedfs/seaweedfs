@@ -110,7 +110,7 @@ func (wo *WebDavOption) startWebDav() bool {
 		Uid:              uid,
 		Gid:              gid,
 		Cipher:           cipher,
-		CacheDir:         *wo.cacheDir,
+		CacheDir:         util.ResolvePath(*wo.cacheDir),
 		CacheSizeMB:      *wo.cacheSizeMB,
 	})
 	if webdavServer_err != nil {

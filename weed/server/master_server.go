@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,11 +31,11 @@ const (
 )
 
 type MasterOption struct {
-	Host                    string
-	Port                    int
-	MetaFolder              string
-	VolumeSizeLimitMB       uint
-	VolumePreallocate       bool
+	Host              string
+	Port              int
+	MetaFolder        string
+	VolumeSizeLimitMB uint
+	VolumePreallocate bool
 	// PulseSeconds            int
 	DefaultReplicaPlacement string
 	GarbageThreshold        float64
@@ -66,7 +65,7 @@ type MasterServer struct {
 
 	MasterClient *wdclient.MasterClient
 
-	adminLocks          *AdminLocks
+	adminLocks *AdminLocks
 }
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *MasterServer {
@@ -139,13 +138,10 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	ms.Topo.RaftServer = raftServer.raftServer
 	ms.Topo.RaftServer.AddEventListener(raft.LeaderChangeEventType, func(e raft.Event) {
-		glog.V(0).Infof("event: %+v", e)
+		glog.V(0).Infof("leader change event: %+v => %+v", e.PrevValue(), e.Value())
 		if ms.Topo.RaftServer.Leader() != "" {
 			glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "becomes leader.")
 		}
-	})
-	ms.Topo.RaftServer.AddEventListener(raft.StateChangeEventType, func(e raft.Event) {
-		glog.V(0).Infof("state change: %+v", e)
 	})
 	if ms.Topo.IsLeader() {
 		glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", "I am the leader!")
@@ -210,7 +206,7 @@ func (ms *MasterServer) startAdminScripts() {
 		scriptLines = append(scriptLines, "unlock")
 	}
 
-	masterAddress := "localhost:" + strconv.Itoa(ms.option.Port)
+	masterAddress := fmt.Sprintf("%s:%d", ms.option.Host, ms.option.Port)
 
 	var shellOptions shell.ShellOptions
 	shellOptions.GrpcDialOption = security.LoadClientTLS(v, "grpc.master")

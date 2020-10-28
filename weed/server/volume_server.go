@@ -28,14 +28,16 @@ type VolumeServer struct {
 	FixJpgOrientation       bool
 	ReadRedirect            bool
 	compactionBytePerSecond int64
-	MetricsAddress          string
-	MetricsIntervalSec      int
+	metricsAddress          string
+	metricsIntervalSec      int
 	fileSizeLimitBytes      int64
+	isHeartbeating          bool
+	stopChan                chan bool
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	port int, publicUrl string,
-	folders []string, maxCounts []int, minFreeSpacePercent []float32,
+	folders []string, maxCounts []int, minFreeSpacePercents []float32,
 	needleMapKind storage.NeedleMapType,
 	masterNodes []string, pulseSeconds int,
 	dataCenter string, rack string,
@@ -66,16 +68,21 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		grpcDialOption:          security.LoadClientTLS(util.GetViper(), "grpc.volume"),
 		compactionBytePerSecond: int64(compactionMBPerSecond) * 1024 * 1024,
 		fileSizeLimitBytes:      int64(fileSizeLimitMB) * 1024 * 1024,
+		isHeartbeating:          true,
+		stopChan:                make(chan bool),
 	}
 	vs.SeedMasterNodes = masterNodes
-	vs.store = storage.NewStore(vs.grpcDialOption, port, ip, publicUrl, folders, maxCounts, minFreeSpacePercent, vs.needleMapKind)
+
+	vs.checkWithMaster()
+
+	vs.store = storage.NewStore(vs.grpcDialOption, port, ip, publicUrl, folders, maxCounts, minFreeSpacePercents, vs.needleMapKind)
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources(adminMux)
+	adminMux.HandleFunc("/status", vs.statusHandler)
 	if signingKey == "" || enableUiAccess {
 		// only expose the volume server details for safe environments
 		adminMux.HandleFunc("/ui/index.html", vs.uiStatusHandler)
-		adminMux.HandleFunc("/status", vs.guard.WhiteList(vs.statusHandler))
 		/*
 			adminMux.HandleFunc("/stats/counter", vs.guard.WhiteList(statsCounterHandler))
 			adminMux.HandleFunc("/stats/memory", vs.guard.WhiteList(statsMemoryHandler))
@@ -90,11 +97,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	}
 
 	go vs.heartbeat()
-	hostAddress := fmt.Sprintf("%s:%d", ip, port)
-	go stats.LoopPushingMetric("volumeServer", hostAddress, stats.VolumeServerGather,
-		func() (addr string, intervalSeconds int) {
-			return vs.MetricsAddress, vs.MetricsIntervalSec
-		})
+	go stats.LoopPushingMetric("volumeServer", fmt.Sprintf("%s:%d", ip, port), vs.metricsAddress, vs.metricsIntervalSec)
 
 	return vs
 }

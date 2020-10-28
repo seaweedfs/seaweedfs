@@ -32,7 +32,7 @@ func main() {
 	go func() {
 		for {
 			println("vacuum threshold", *garbageThreshold)
-			_, err := util.Get(fmt.Sprintf("http://%s/vol/vacuum?garbageThreshold=%f", *master, *garbageThreshold))
+			_, _, err := util.Get(fmt.Sprintf("http://%s/vol/vacuum?garbageThreshold=%f", *master, *garbageThreshold))
 			if err != nil {
 				log.Fatalf("vacuum: %v", err)
 			}

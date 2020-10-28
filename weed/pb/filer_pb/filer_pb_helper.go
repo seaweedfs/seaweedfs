@@ -10,7 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
-func toFileIdObject(fileIdStr string) (*FileId, error) {
+func ToFileIdObject(fileIdStr string) (*FileId, error) {
 	t, err := needle.ParseFileIdFromString(fileIdStr)
 	if err != nil {
 		return nil, err
@@ -43,19 +43,28 @@ func BeforeEntrySerialization(chunks []*FileChunk) {
 	for _, chunk := range chunks {
 
 		if chunk.FileId != "" {
-			if fid, err := toFileIdObject(chunk.FileId); err == nil {
+			if fid, err := ToFileIdObject(chunk.FileId); err == nil {
 				chunk.Fid = fid
 				chunk.FileId = ""
 			}
 		}
 
 		if chunk.SourceFileId != "" {
-			if fid, err := toFileIdObject(chunk.SourceFileId); err == nil {
+			if fid, err := ToFileIdObject(chunk.SourceFileId); err == nil {
 				chunk.SourceFid = fid
 				chunk.SourceFileId = ""
 			}
 		}
 
+	}
+}
+
+func EnsureFid(chunk *FileChunk) {
+	if chunk.Fid != nil {
+		return
+	}
+	if fid, err := ToFileIdObject(chunk.FileId); err == nil {
+		chunk.Fid = fid
 	}
 }
 
@@ -81,8 +90,17 @@ func CreateEntry(client SeaweedFilerClient, request *CreateEntryRequest) error {
 		return fmt.Errorf("CreateEntry: %v", err)
 	}
 	if resp.Error != "" {
-		glog.V(1).Infof("create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, err)
+		glog.V(1).Infof("create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, resp.Error)
 		return fmt.Errorf("CreateEntry : %v", resp.Error)
+	}
+	return nil
+}
+
+func UpdateEntry(client SeaweedFilerClient, request *UpdateEntryRequest) error {
+	_, err := client.UpdateEntry(context.Background(), request)
+	if err != nil {
+		glog.V(1).Infof("update entry %s/%s :%v", request.Directory, request.Entry.Name, err)
+		return fmt.Errorf("UpdateEntry: %v", err)
 	}
 	return nil
 }

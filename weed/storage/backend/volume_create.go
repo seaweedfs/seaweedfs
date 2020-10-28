@@ -14,7 +14,7 @@ func CreateVolumeFile(fileName string, preallocate int64, memoryMapSizeMB uint32
 		return nil, e
 	}
 	if preallocate > 0 {
-		glog.V(0).Infof("Preallocated disk space for %s is not supported", fileName)
+		glog.V(2).Infof("Preallocated disk space for %s is not supported", fileName)
 	}
 	return NewDiskFile(file), nil
 }

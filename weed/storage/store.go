@@ -16,11 +16,16 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 const (
 	MAX_TTL_VOLUME_REMOVAL_DELAY = 10 // 10 minutes
 )
+
+type ReadOption struct {
+	ReadDeleted bool
+}
 
 /*
  * A VolumeServer contains one Store
@@ -28,13 +33,13 @@ const (
 type Store struct {
 	MasterAddress       string
 	grpcDialOption      grpc.DialOption
-	volumeSizeLimit     uint64 //read from the master
+	volumeSizeLimit     uint64 // read from the master
 	Ip                  string
 	Port                int
 	PublicUrl           string
 	Locations           []*DiskLocation
-	dataCenter          string //optional informaton, overwriting master setting if exists
-	rack                string //optional information, overwriting master setting if exists
+	dataCenter          string // optional informaton, overwriting master setting if exists
+	rack                string // optional information, overwriting master setting if exists
 	connected           bool
 	NeedleMapType       NeedleMapType
 	NewVolumesChan      chan master_pb.VolumeShortInformationMessage
@@ -48,11 +53,11 @@ func (s *Store) String() (str string) {
 	return
 }
 
-func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int, freeDiskSpaceWatermark []float32, needleMapKind NeedleMapType) (s *Store) {
+func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int, minFreeSpacePercents []float32, needleMapKind NeedleMapType) (s *Store) {
 	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, PublicUrl: publicUrl, NeedleMapType: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirnames); i++ {
-		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i], freeDiskSpaceWatermark[i])
+		location := NewDiskLocation(util.ResolvePath(dirnames[i]), maxVolumeCounts[i], minFreeSpacePercents[i])
 		location.loadExistingVolumes(needleMapKind)
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
@@ -195,16 +200,18 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	maxVolumeCount := 0
 	var maxFileKey NeedleId
 	collectionVolumeSize := make(map[string]uint64)
+	collectionVolumeReadOnlyCount := make(map[string]uint8)
 	for _, location := range s.Locations {
 		var deleteVids []needle.VolumeId
 		maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
 		location.volumesLock.RLock()
 		for _, v := range location.volumes {
-			if maxFileKey < v.MaxFileKey() {
-				maxFileKey = v.MaxFileKey()
+			curMaxFileKey, volumeMessage := v.ToVolumeInformationMessage()
+			if maxFileKey < curMaxFileKey {
+				maxFileKey = curMaxFileKey
 			}
-			if !v.expired(s.GetVolumeSizeLimit()) {
-				volumeMessages = append(volumeMessages, v.ToVolumeInformationMessage())
+			if !v.expired(volumeMessage.Size, s.GetVolumeSizeLimit()) {
+				volumeMessages = append(volumeMessages, volumeMessage)
 			} else {
 				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
 					deleteVids = append(deleteVids, v.Id)
@@ -212,8 +219,14 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 					glog.V(0).Infoln("volume", v.Id, "is expired.")
 				}
 			}
-			fileSize, _, _ := v.FileStat()
-			collectionVolumeSize[v.Collection] += fileSize
+			collectionVolumeSize[v.Collection] += volumeMessage.Size
+			if v.IsReadOnly() {
+				collectionVolumeReadOnlyCount[v.Collection] += 1
+			} else {
+				if _, exist := collectionVolumeReadOnlyCount[v.Collection]; !exist {
+					collectionVolumeReadOnlyCount[v.Collection] = 0
+				}
+			}
 		}
 		location.volumesLock.RUnlock()
 
@@ -236,6 +249,10 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 
 	for col, size := range collectionVolumeSize {
 		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "normal").Set(float64(size))
+	}
+
+	for col, count := range collectionVolumeReadOnlyCount {
+		stats.VolumeServerReadOnlyVolumeGauge.WithLabelValues(col, "normal").Set(float64(count))
 	}
 
 	return &master_pb.Heartbeat{
@@ -272,7 +289,7 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, fsync boo
 	return
 }
 
-func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (uint32, error) {
+func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (Size, error) {
 	if v := s.findVolume(i); v != nil {
 		if v.noWriteOrDelete {
 			return 0, fmt.Errorf("volume %d is read only", i)
@@ -282,9 +299,9 @@ func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (uint32,
 	return 0, fmt.Errorf("volume %d not found on %s:%d", i, s.Ip, s.Port)
 }
 
-func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle) (int, error) {
+func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle, readOption *ReadOption) (int, error) {
 	if v := s.findVolume(i); v != nil {
-		return v.readNeedle(n)
+		return v.readNeedle(n, readOption)
 	}
 	return 0, fmt.Errorf("volume %d not found", i)
 }
@@ -302,7 +319,20 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId) error {
 	if v == nil {
 		return fmt.Errorf("volume %d not found", i)
 	}
+	v.noWriteLock.Lock()
 	v.noWriteOrDelete = true
+	v.noWriteLock.Unlock()
+	return nil
+}
+
+func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
+	v := s.findVolume(i)
+	if v == nil {
+		return fmt.Errorf("volume %d not found", i)
+	}
+	v.noWriteLock.Lock()
+	v.noWriteOrDelete = false
+	v.noWriteLock.Unlock()
 	return nil
 }
 
@@ -362,10 +392,12 @@ func (s *Store) DeleteVolume(i needle.VolumeId) error {
 		Ttl:              v.Ttl.ToUint32(),
 	}
 	for _, location := range s.Locations {
-		if found, error := location.deleteVolumeById(i); found && error == nil {
+		if err := location.DeleteVolume(i); err == nil {
 			glog.V(0).Infof("DeleteVolume %d", i)
 			s.DeletedVolumesChan <- message
 			return nil
+		} else {
+			glog.Errorf("DeleteVolume %d: %v", i, err)
 		}
 	}
 

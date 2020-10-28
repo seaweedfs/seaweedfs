@@ -102,8 +102,8 @@ func (ce *CommandEnv) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error
 
 }
 
-func (ce *CommandEnv) AdjustedUrl(hostAndPort string) string {
-	return hostAndPort
+func (ce *CommandEnv) AdjustedUrl(location *filer_pb.Location) string {
+	return location.Url
 }
 
 func parseFilerUrl(entryPath string) (filerServer string, filerPort int64, path string, err error) {

@@ -28,7 +28,7 @@ func (c *commandEcBalance) Help() string {
 
 	Algorithm:
 
-	For each type of volume server (different max volume count limit){
+	func EcBalance() {
 		for each collection:
 			balanceEcVolumes(collectionName)
 		for each rack:
@@ -174,7 +174,7 @@ func balanceEcVolumes(commandEnv *CommandEnv, collection string, allEcNodes []*E
 	}
 
 	if err := balanceEcShardsWithinRacks(commandEnv, allEcNodes, racks, collection, applyBalancing); err != nil {
-		return fmt.Errorf("balance across racks collection %s ec shards: %v", collection, err)
+		return fmt.Errorf("balance within racks collection %s ec shards: %v", collection, err)
 	}
 
 	return nil

@@ -6,41 +6,58 @@ import (
 	"io"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func SubscribeMetaEvents(mc *MetaCache, client filer_pb.FilerClient, dir string, lastTsNs int64) error {
+func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.FilerClient, dir string, lastTsNs int64) error {
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
+
+		for _, sig := range message.Signatures {
+			if sig == selfSignature && selfSignature != 0 {
+				return nil
+			}
+		}
+
+		dir := resp.Directory
 		var oldPath util.FullPath
-		var newEntry *filer2.Entry
+		var newEntry *filer.Entry
 		if message.OldEntry != nil {
-			oldPath = util.NewFullPath(resp.Directory, message.OldEntry.Name)
+			oldPath = util.NewFullPath(dir, message.OldEntry.Name)
 			glog.V(4).Infof("deleting %v", oldPath)
 		}
 
 		if message.NewEntry != nil {
-			dir := resp.Directory
 			if message.NewParentPath != "" {
 				dir = message.NewParentPath
 			}
 			key := util.NewFullPath(dir, message.NewEntry.Name)
 			glog.V(4).Infof("creating %v", key)
-			newEntry = filer2.FromPbEntry(dir, message.NewEntry)
+			newEntry = filer.FromPbEntry(dir, message.NewEntry)
 		}
-		return mc.AtomicUpdateEntry(context.Background(), oldPath, newEntry)
+		err := mc.AtomicUpdateEntryFromFiler(context.Background(), oldPath, newEntry)
+		if err == nil && message.OldEntry != nil && message.NewEntry != nil {
+			key := util.NewFullPath(dir, message.NewEntry.Name)
+			mc.invalidateFunc(key)
+		}
+
+		return err
+
 	}
 
 	for {
 		err := client.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-			stream, err := client.SubscribeMetadata(context.Background(), &filer_pb.SubscribeMetadataRequest{
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
 				ClientName: "mount",
 				PathPrefix: dir,
 				SinceNs:    lastTsNs,
+				Signature:  selfSignature,
 			})
 			if err != nil {
 				return fmt.Errorf("subscribe: %v", err)
@@ -56,14 +73,14 @@ func SubscribeMetaEvents(mc *MetaCache, client filer_pb.FilerClient, dir string,
 				}
 
 				if err := processEventFn(resp); err != nil {
-					return fmt.Errorf("process %v: %v", resp, err)
+					glog.Fatalf("process %v: %v", resp, err)
 				}
 				lastTsNs = resp.TsNs
 			}
 		})
 		if err != nil {
-			glog.V(0).Infof("subscribing filer meta change: %v", err)
-			time.Sleep(time.Second)
+			glog.Errorf("subscribing filer meta change: %v", err)
 		}
+		time.Sleep(time.Second)
 	}
 }

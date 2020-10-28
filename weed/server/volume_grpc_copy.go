@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math"
 	"os"
 	"time"
@@ -27,17 +28,12 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 
 		glog.V(0).Infof("volume %d already exists. deleted before copying...", req.VolumeId)
 
-		err := vs.store.UnmountVolume(needle.VolumeId(req.VolumeId))
-		if err != nil {
-			return nil, fmt.Errorf("failed to mount existing volume %d: %v", req.VolumeId, err)
-		}
-
-		err = vs.store.DeleteVolume(needle.VolumeId(req.VolumeId))
+		err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId))
 		if err != nil {
 			return nil, fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, err)
 		}
 
-		glog.V(0).Infof("deleted exisitng volume %d before copying.", req.VolumeId)
+		glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
 	}
 
 	location := vs.store.FindFreeLocation()
@@ -65,19 +61,22 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 
 		volumeFileName = storage.VolumeFileName(location.Directory, volFileInfoResp.Collection, int(req.VolumeId))
 
+		ioutil.WriteFile(volumeFileName+".note", []byte(fmt.Sprintf("copying from %s", req.SourceDataNode)), 0755)
+
 		// println("source:", volFileInfoResp.String())
-		// copy ecx file
-		if err := vs.doCopyFile(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.IdxFileSize, volumeFileName, ".idx", false, false); err != nil {
+		if err := vs.doCopyFile(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, volumeFileName, ".dat", false, true); err != nil {
 			return err
 		}
 
-		if err := vs.doCopyFile(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, volumeFileName, ".dat", false, true); err != nil {
+		if err := vs.doCopyFile(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.IdxFileSize, volumeFileName, ".idx", false, false); err != nil {
 			return err
 		}
 
 		if err := vs.doCopyFile(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, volumeFileName, ".vif", false, true); err != nil {
 			return err
 		}
+
+		os.Remove(volumeFileName+".note")
 
 		return nil
 	})

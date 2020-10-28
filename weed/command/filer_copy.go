@@ -72,7 +72,7 @@ var cmdCopy = &Command{
 
   If "maxMB" is set to a positive number, files larger than it would be split into chunks.
 
-  `,
+`,
 }
 
 func runCopy(cmd *Command, args []string) bool {
@@ -111,10 +111,22 @@ func runCopy(cmd *Command, args []string) bool {
 	filerGrpcAddress := fmt.Sprintf("%s:%d", filerUrl.Hostname(), filerGrpcPort)
 	copy.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
-	masters, collection, replication, maxMB, cipher, err := readFilerConfiguration(copy.grpcDialOption, filerGrpcAddress)
+	masters, collection, replication, dirBuckets, maxMB, cipher, err := readFilerConfiguration(copy.grpcDialOption, filerGrpcAddress)
 	if err != nil {
 		fmt.Printf("read from filer %s: %v\n", filerGrpcAddress, err)
 		return false
+	}
+	if strings.HasPrefix(urlPath, dirBuckets+"/") {
+		restPath := urlPath[len(dirBuckets)+1:]
+		if strings.Index(restPath, "/") > 0 {
+			expectedBucket := restPath[:strings.Index(restPath, "/")]
+			if *copy.collection == "" {
+				*copy.collection = expectedBucket
+			} else {
+				fmt.Printf("destination %s uses collection \"%s\": unexpected collection \"%v\"\n", urlPath, expectedBucket, *copy.collection)
+				return true
+			}
+		}
 	}
 	if *copy.collection == "" {
 		*copy.collection = collection
@@ -170,13 +182,14 @@ func runCopy(cmd *Command, args []string) bool {
 	return true
 }
 
-func readFilerConfiguration(grpcDialOption grpc.DialOption, filerGrpcAddress string) (masters []string, collection, replication string, maxMB uint32, cipher bool, err error) {
+func readFilerConfiguration(grpcDialOption grpc.DialOption, filerGrpcAddress string) (masters []string, collection, replication string, dirBuckets string, maxMB uint32, cipher bool, err error) {
 	err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
 		}
 		masters, collection, replication, maxMB = resp.Masters, resp.Collection, resp.Replication, resp.MaxMb
+		dirBuckets = resp.DirBuckets
 		cipher = resp.Cipher
 		return nil
 	})
@@ -206,7 +219,7 @@ func genFileCopyTask(fileOrDir string, destPath string, fileCopyTaskChan chan Fi
 
 	fileCopyTaskChan <- FileCopyTask{
 		sourceLocation:     fileOrDir,
-		destinationUrlPath: destPath,
+		destinationUrlPath: destPath+fi.Name(),
 		fileSize:           fi.Size(),
 		fileMode:           fi.Mode(),
 		uid:                uid,
@@ -298,7 +311,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 				Replication: *worker.options.replication,
 				Collection:  *worker.options.collection,
 				TtlSec:      worker.options.ttlSec,
-				ParentPath:  task.destinationUrlPath,
+				Path:        task.destinationUrlPath,
 			}
 
 			assignResult, assignError = client.AssignVolume(context.Background(), request)
@@ -392,7 +405,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 					Replication: *worker.options.replication,
 					Collection:  *worker.options.collection,
 					TtlSec:      worker.options.ttlSec,
-					ParentPath:  task.destinationUrlPath,
+					Path:        task.destinationUrlPath+fileName,
 				}
 
 				assignResult, assignError = client.AssignVolume(context.Background(), request)

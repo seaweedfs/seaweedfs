@@ -2,13 +2,14 @@ package broker
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/util/log_buffer"
 	"io"
 	"strings"
 	"time"
 
 	"github.com/golang/protobuf/proto"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
@@ -100,7 +101,7 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 		return nil
 	}
 
-	if err := broker.readPersistedLogBuffer(&tp, lastReadTime, eachLogEntryFn); err != nil {
+	if err = broker.readPersistedLogBuffer(&tp, lastReadTime, eachLogEntryFn); err != nil {
 		if err != io.EOF {
 			// println("stopping from persisted logs", err.Error())
 			return err
@@ -113,18 +114,28 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 
 	// fmt.Printf("subscriber %s read %d on disk log %v\n", subscriberId, messageCount, lastReadTime)
 
-	err = lock.logBuffer.LoopProcessLogData(lastReadTime, func() bool {
-		lock.Mutex.Lock()
-		lock.cond.Wait()
-		lock.Mutex.Unlock()
-		return isConnected
-	}, eachLogEntryFn)
+	for {
+		lastReadTime, err = lock.logBuffer.LoopProcessLogData(lastReadTime, func() bool {
+			lock.Mutex.Lock()
+			lock.cond.Wait()
+			lock.Mutex.Unlock()
+			return isConnected
+		}, eachLogEntryFn)
+		if err != nil {
+			glog.Errorf("processed to %v: %v", lastReadTime, err)
+			time.Sleep(3127 * time.Millisecond)
+			if err != log_buffer.ResumeError {
+				break
+			}
+		}
+	}
 
 	return err
 
 }
 
 func (broker *MessageBroker) readPersistedLogBuffer(tp *TopicPartition, startTime time.Time, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) (err error) {
+	startTime = startTime.UTC()
 	startDate := fmt.Sprintf("%04d-%02d-%02d", startTime.Year(), startTime.Month(), startTime.Day())
 	startHourMinute := fmt.Sprintf("%02d-%02d.segment", startTime.Hour(), startTime.Minute())
 
@@ -146,9 +157,9 @@ func (broker *MessageBroker) readPersistedLogBuffer(tp *TopicPartition, startTim
 				return nil
 			}
 			// println("partition", tp.Partition, "processing", dayDir, "/", hourMinuteEntry.Name)
-			chunkedFileReader := filer2.NewChunkStreamReader(broker, hourMinuteEntry.Chunks)
+			chunkedFileReader := filer.NewChunkStreamReader(broker, hourMinuteEntry.Chunks)
 			defer chunkedFileReader.Close()
-			if err := filer2.ReadEachLogEntry(chunkedFileReader, sizeBuf, startTsNs, eachLogEntryFn); err != nil {
+			if _, err := filer.ReadEachLogEntry(chunkedFileReader, sizeBuf, startTsNs, eachLogEntryFn); err != nil {
 				chunkedFileReader.Close()
 				if err == io.EOF {
 					return err

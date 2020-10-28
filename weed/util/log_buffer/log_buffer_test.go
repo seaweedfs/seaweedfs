@@ -23,7 +23,7 @@ func TestNewLogBufferFirstBuffer(t *testing.T) {
 	var buf = make([]byte, messageSize)
 	for i := 0; i < messageCount; i++ {
 		rand.Read(buf)
-		lb.AddToBuffer(nil, buf)
+		lb.AddToBuffer(nil, buf, 0)
 	}
 
 	receivedmessageCount := 0

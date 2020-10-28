@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -73,12 +74,12 @@ func TestIsReqAuthenticated(t *testing.T) {
 	// List of test cases for validating http request authentication.
 	testCases := []struct {
 		req     *http.Request
-		s3Error ErrorCode
+		s3Error s3err.ErrorCode
 	}{
 		// When request is unsigned, access denied is returned.
-		{mustNewRequest("GET", "http://127.0.0.1:9000", 0, nil, t), ErrAccessDenied},
+		{mustNewRequest("GET", "http://127.0.0.1:9000", 0, nil, t), s3err.ErrAccessDenied},
 		// When request is properly signed, error is none.
-		{mustNewSignedRequest("GET", "http://127.0.0.1:9000", 0, nil, t), ErrNone},
+		{mustNewSignedRequest("GET", "http://127.0.0.1:9000", 0, nil, t), s3err.ErrNone},
 	}
 
 	// Validates all testcases.
@@ -107,11 +108,11 @@ func TestCheckAdminRequestAuthType(t *testing.T) {
 
 	testCases := []struct {
 		Request *http.Request
-		ErrCode ErrorCode
+		ErrCode s3err.ErrorCode
 	}{
-		{Request: mustNewRequest("GET", "http://127.0.0.1:9000", 0, nil, t), ErrCode: ErrAccessDenied},
-		{Request: mustNewSignedRequest("GET", "http://127.0.0.1:9000", 0, nil, t), ErrCode: ErrNone},
-		{Request: mustNewPresignedRequest("GET", "http://127.0.0.1:9000", 0, nil, t), ErrCode: ErrNone},
+		{Request: mustNewRequest("GET", "http://127.0.0.1:9000", 0, nil, t), ErrCode: s3err.ErrAccessDenied},
+		{Request: mustNewSignedRequest("GET", "http://127.0.0.1:9000", 0, nil, t), ErrCode: s3err.ErrNone},
+		{Request: mustNewPresignedRequest("GET", "http://127.0.0.1:9000", 0, nil, t), ErrCode: s3err.ErrNone},
 	}
 	for i, testCase := range testCases {
 		if _, s3Error := iam.reqSignatureV4Verify(testCase.Request); s3Error != testCase.ErrCode {

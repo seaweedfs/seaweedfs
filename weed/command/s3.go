@@ -14,6 +14,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/s3api"
+	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -22,22 +23,24 @@ var (
 )
 
 type S3Options struct {
-	filer          *string
-	port           *int
-	config         *string
-	domainName     *string
-	tlsPrivateKey  *string
-	tlsCertificate *string
+	filer           *string
+	port            *int
+	config          *string
+	domainName      *string
+	tlsPrivateKey   *string
+	tlsCertificate  *string
+	metricsHttpPort *int
 }
 
 func init() {
 	cmdS3.Run = runS3 // break init cycle
 	s3StandaloneOptions.filer = cmdS3.Flag.String("filer", "localhost:8888", "filer server address")
 	s3StandaloneOptions.port = cmdS3.Flag.Int("port", 8333, "s3 server http listen port")
-	s3StandaloneOptions.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name, {bucket}.{domainName}")
+	s3StandaloneOptions.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
 	s3StandaloneOptions.config = cmdS3.Flag.String("config", "", "path to the config file")
 	s3StandaloneOptions.tlsPrivateKey = cmdS3.Flag.String("key.file", "", "path to the TLS private key file")
 	s3StandaloneOptions.tlsCertificate = cmdS3.Flag.String("cert.file", "", "path to the TLS certificate file")
+	s3StandaloneOptions.metricsHttpPort = cmdS3.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 }
 
 var cmdS3 = &Command{
@@ -51,7 +54,13 @@ var cmdS3 = &Command{
 {
   "identities": [
     {
-      "name": "some_name",
+      "name": "anonymous",
+      "actions": [
+        "Read"
+      ]
+    },
+    {
+      "name": "some_admin_user",
       "credentials": [
         {
           "accessKey": "some_access_key1",
@@ -61,6 +70,8 @@ var cmdS3 = &Command{
       "actions": [
         "Admin",
         "Read",
+        "List",
+        "Tagging",
         "Write"
       ]
     },
@@ -86,6 +97,8 @@ var cmdS3 = &Command{
       ],
       "actions": [
         "Read",
+        "List",
+        "Tagging",
         "Write"
       ]
     },
@@ -99,6 +112,8 @@ var cmdS3 = &Command{
       ],
       "actions": [
         "Read:bucket1",
+        "List:bucket1",
+        "Tagging:bucket1",
         "Write:bucket1"
       ]
     }
@@ -111,6 +126,8 @@ var cmdS3 = &Command{
 func runS3(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
+
+	go stats_collect.StartMetricsServer(*s3StandaloneOptions.metricsHttpPort)
 
 	return s3StandaloneOptions.startS3Server()
 
@@ -128,6 +145,10 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
+	// metrics read from the filer
+	var metricsAddress string
+	var metricsIntervalSec int
+
 	for {
 		err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
@@ -135,6 +156,7 @@ func (s3opt *S3Options) startS3Server() bool {
 				return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
 			}
 			filerBucketsPath = resp.DirBuckets
+			metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSec)
 			glog.V(0).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
 			return nil
 		})
@@ -147,10 +169,13 @@ func (s3opt *S3Options) startS3Server() bool {
 		}
 	}
 
+	go stats_collect.LoopPushingMetric("s3", stats_collect.SourceName(uint32(*s3opt.port)), metricsAddress, metricsIntervalSec)
+
 	router := mux.NewRouter().SkipClean(true)
 
 	_, s3ApiServer_err := s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
 		Filer:            *s3opt.filer,
+		Port:             *s3opt.port,
 		FilerGrpcAddress: filerGrpcAddress,
 		Config:           *s3opt.config,
 		DomainName:       *s3opt.domainName,

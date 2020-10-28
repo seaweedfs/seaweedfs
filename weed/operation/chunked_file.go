@@ -53,11 +53,11 @@ func (s ChunkList) Len() int           { return len(s) }
 func (s ChunkList) Less(i, j int) bool { return s[i].Offset < s[j].Offset }
 func (s ChunkList) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
-func LoadChunkManifest(buffer []byte, isGzipped bool) (*ChunkManifest, error) {
-	if isGzipped {
+func LoadChunkManifest(buffer []byte, isCompressed bool) (*ChunkManifest, error) {
+	if isCompressed {
 		var err error
-		if buffer, err = util.UnGzipData(buffer); err != nil {
-			return nil, err
+		if buffer, err = util.DecompressData(buffer); err != nil {
+			glog.V(0).Infof("fail to decompress chunk manifest: %v", err)
 		}
 	}
 	cm := ChunkManifest{}

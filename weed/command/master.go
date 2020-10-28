@@ -1,16 +1,18 @@
 package command
 
 import (
+	"github.com/chrislusf/raft/protobuf"
+	"github.com/gorilla/mux"
+	"google.golang.org/grpc/reflection"
 	"net/http"
 	"os"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/chrislusf/raft/protobuf"
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
-	"github.com/gorilla/mux"
-	"google.golang.org/grpc/reflection"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -26,13 +28,13 @@ var (
 )
 
 type MasterOptions struct {
-	port               *int
-	ip                 *string
-	ipBind             *string
-	metaFolder         *string
-	peers              *string
-	volumeSizeLimitMB  *uint
-	volumePreallocate  *bool
+	port              *int
+	ip                *string
+	ipBind            *string
+	metaFolder        *string
+	peers             *string
+	volumeSizeLimitMB *uint
+	volumePreallocate *bool
 	// pulseSeconds       *int
 	defaultReplication *string
 	garbageThreshold   *float64
@@ -40,6 +42,7 @@ type MasterOptions struct {
 	disableHttp        *bool
 	metricsAddress     *string
 	metricsIntervalSec *int
+	raftResumeState    *bool
 }
 
 func init() {
@@ -56,8 +59,9 @@ func init() {
 	m.garbageThreshold = cmdMaster.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
 	m.whiteList = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 	m.disableHttp = cmdMaster.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
-	m.metricsAddress = cmdMaster.Flag.String("metrics.address", "", "Prometheus gateway address")
+	m.metricsAddress = cmdMaster.Flag.String("metrics.address", "", "Prometheus gateway address <host>:<port>")
 	m.metricsIntervalSec = cmdMaster.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
+	m.raftResumeState = cmdMaster.Flag.Bool("resumeState", false, "resume previous state on start master server")
 }
 
 var cmdMaster = &Command{
@@ -85,7 +89,11 @@ func runMaster(cmd *Command, args []string) bool {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	grace.SetupProfiling(*masterCpuProfile, *masterMemProfile)
 
-	if err := util.TestFolderWritable(*m.metaFolder); err != nil {
+	parent, _ := util.FullPath(*m.metaFolder).DirAndName()
+	if util.FileExists(string(parent)) && !util.FileExists(*m.metaFolder) {
+		os.MkdirAll(*m.metaFolder, 0755)
+	}
+	if err := util.TestFolderWritable(util.ResolvePath(*m.metaFolder)); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *m.metaFolder, err)
 	}
 
@@ -117,10 +125,10 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		glog.Fatalf("Master startup error: %v", e)
 	}
 	// start raftServer
-	raftServer := weed_server.NewRaftServer(security.LoadClientTLS(util.GetViper(), "grpc.master"),
-		peers, myMasterAddress, *masterOption.metaFolder, ms.Topo, 5)
+	raftServer, err := weed_server.NewRaftServer(security.LoadClientTLS(util.GetViper(), "grpc.master"),
+		peers, myMasterAddress, util.ResolvePath(*masterOption.metaFolder), ms.Topo, *masterOption.raftResumeState)
 	if raftServer == nil {
-		glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717", *masterOption.metaFolder)
+		glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
 	}
 	ms.SetRaftServer(raftServer)
 	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
@@ -137,6 +145,15 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	reflection.Register(grpcS)
 	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOption.ipBind, grpcPort)
 	go grpcS.Serve(grpcL)
+
+	go func() {
+		time.Sleep(1500 * time.Millisecond)
+		if ms.Topo.RaftServer.Leader() == "" && ms.Topo.RaftServer.IsLogEmpty() && isTheFirstOne(myMasterAddress, peers) {
+			if ms.MasterClient.FindLeaderFromOtherPeers(myMasterAddress) == "" {
+				raftServer.DoJoinCommand()
+			}
+		}
+	}()
 
 	go ms.MasterClient.KeepConnectedToMaster()
 
@@ -171,13 +188,21 @@ func checkPeers(masterIp string, masterPort int, peers string) (masterAddress st
 	return
 }
 
+func isTheFirstOne(self string, peers []string) bool {
+	sort.Strings(peers)
+	if len(peers) <= 0 {
+		return true
+	}
+	return self == peers[0]
+}
+
 func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {
 	return &weed_server.MasterOption{
-		Host:                    *m.ip,
-		Port:                    *m.port,
-		MetaFolder:              *m.metaFolder,
-		VolumeSizeLimitMB:       *m.volumeSizeLimitMB,
-		VolumePreallocate:       *m.volumePreallocate,
+		Host:              *m.ip,
+		Port:              *m.port,
+		MetaFolder:        *m.metaFolder,
+		VolumeSizeLimitMB: *m.volumeSizeLimitMB,
+		VolumePreallocate: *m.volumePreallocate,
 		// PulseSeconds:            *m.pulseSeconds,
 		DefaultReplicaPlacement: *m.defaultReplication,
 		GarbageThreshold:        *m.garbageThreshold,

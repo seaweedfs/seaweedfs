@@ -14,17 +14,17 @@ type OnDiskCacheLayer struct {
 	diskCaches []*ChunkCacheVolume
 }
 
-func NewOnDiskCacheLayer(dir, namePrefix string, diskSizeMB int64, segmentCount int) *OnDiskCacheLayer {
+func NewOnDiskCacheLayer(dir, namePrefix string, diskSize int64, segmentCount int) *OnDiskCacheLayer {
 
-	volumeCount, volumeSize := int(diskSizeMB/30000), int64(30000)
+	volumeCount, volumeSize := int(diskSize/(30000*1024*1024)), int64(30000*1024*1024)
 	if volumeCount < segmentCount {
-		volumeCount, volumeSize = segmentCount, diskSizeMB/int64(segmentCount)
+		volumeCount, volumeSize = segmentCount, diskSize/int64(segmentCount)
 	}
 
 	c := &OnDiskCacheLayer{}
 	for i := 0; i < volumeCount; i++ {
 		fileName := path.Join(dir, fmt.Sprintf("%s_%d", namePrefix, i))
-		diskCache, err := LoadOrCreateChunkCacheVolume(fileName, volumeSize*1024*1024)
+		diskCache, err := LoadOrCreateChunkCacheVolume(fileName, volumeSize)
 		if err != nil {
 			glog.Errorf("failed to add cache %s : %v", fileName, err)
 		} else {
@@ -54,7 +54,9 @@ func (c *OnDiskCacheLayer) setChunk(needleId types.NeedleId, data []byte) {
 		c.diskCaches[0] = t
 	}
 
-	c.diskCaches[0].WriteNeedle(needleId, data)
+	if err := c.diskCaches[0].WriteNeedle(needleId, data); err != nil {
+		glog.V(0).Infof("cache write %v size %d: %v", needleId, len(data), err)
+	}
 
 }
 

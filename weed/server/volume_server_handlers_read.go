@@ -18,6 +18,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -25,6 +26,8 @@ import (
 var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
+
+	// println(r.Method + " " + r.URL.Path)
 
 	stats.VolumeServerRequestCounter.WithLabelValues("get").Inc()
 	start := time.Now()
@@ -79,15 +82,24 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	cookie := n.Cookie
+
+	readOption := &storage.ReadOption{
+		ReadDeleted: r.FormValue("readDeleted") == "true",
+	}
+
 	var count int
 	if hasVolume {
-		count, err = vs.store.ReadVolumeNeedle(volumeId, n)
+		count, err = vs.store.ReadVolumeNeedle(volumeId, n, readOption)
 	} else if hasEcVolume {
 		count, err = vs.store.ReadEcShardNeedle(volumeId, n)
 	}
+	if err != nil && err != storage.ErrorDeleted && r.FormValue("type") != "replicate" && hasVolume {
+		glog.V(4).Infof("read needle: %v", err)
+		// start to fix it from other replicas, if not deleted and hasVolume and is not a replicated request
+	}
 	// glog.V(4).Infoln("read bytes", count, "error", err)
 	if err != nil || count < 0 {
-		glog.V(0).Infof("read %s isNormalVolume %v error: %v", r.URL.Path, hasVolume, err)
+		glog.V(3).Infof("read %s isNormalVolume %v error: %v", r.URL.Path, hasVolume, err)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -142,20 +154,18 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	if ext != ".gz" {
-		if n.IsGzipped() {
-			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-				if _, _, _, shouldResize := shouldResizeImages(ext, r); shouldResize {
-					if n.Data, err = util.UnGzipData(n.Data); err != nil {
-						glog.V(0).Infoln("ungzip error:", err, r.URL.Path)
-					}
-				} else {
-					w.Header().Set("Content-Encoding", "gzip")
-				}
-			} else {
-				if n.Data, err = util.UnGzipData(n.Data); err != nil {
-					glog.V(0).Infoln("ungzip error:", err, r.URL.Path)
-				}
+	if n.IsCompressed() {
+		if _, _, _, shouldResize := shouldResizeImages(ext, r); shouldResize {
+			if n.Data, err = util.DecompressData(n.Data); err != nil {
+				glog.V(0).Infoln("ungzip error:", err, r.URL.Path)
+			}
+		} else if strings.Contains(r.Header.Get("Accept-Encoding"), "zstd") && util.IsZstdContent(n.Data) {
+			w.Header().Set("Content-Encoding", "zstd")
+		} else if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") && util.IsGzippedContent(n.Data) {
+			w.Header().Set("Content-Encoding", "gzip")
+		} else {
+			if n.Data, err = util.DecompressData(n.Data); err != nil {
+				glog.V(0).Infoln("uncompress error:", err, r.URL.Path)
 			}
 		}
 	}
@@ -172,7 +182,7 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, 
 		return false
 	}
 
-	chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsGzipped())
+	chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsCompressed())
 	if e != nil {
 		glog.V(0).Infof("load chunked manifest (%s) error: %v", r.URL.Path, e)
 		return false
@@ -208,7 +218,9 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, 
 
 func conditionallyResizeImages(originalDataReaderSeeker io.ReadSeeker, ext string, r *http.Request) io.ReadSeeker {
 	rs := originalDataReaderSeeker
-
+	if len(ext) > 0 {
+		ext = strings.ToLower(ext)
+	}
 	width, height, mode, shouldResize := shouldResizeImages(ext, r)
 	if shouldResize {
 		rs, _, _ = images.Resized(ext, originalDataReaderSeeker, width, height, mode)
@@ -217,9 +229,6 @@ func conditionallyResizeImages(originalDataReaderSeeker io.ReadSeeker, ext strin
 }
 
 func shouldResizeImages(ext string, r *http.Request) (width, height int, mode string, shouldResize bool) {
-	if len(ext) > 0 {
-		ext = strings.ToLower(ext)
-	}
 	if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" {
 		if r.FormValue("width") != "" {
 			width, _ = strconv.Atoi(r.FormValue("width"))
@@ -245,12 +254,12 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 	}
 	w.Header().Set("Accept-Ranges", "bytes")
 
+	adjustHeaderContentDisposition(w, r, filename)
+
 	if r.Method == "HEAD" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		return nil
 	}
-
-	adjustHeadersAfterHEAD(w, r, filename)
 
 	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
 		if _, e = rs.Seek(offset, 0); e != nil {

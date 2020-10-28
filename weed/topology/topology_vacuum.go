@@ -42,13 +42,17 @@ func batchVacuumVolumeCheck(grpcDialOption grpc.DialOption, vl *VolumeLayout, vi
 		}(index, dn.Url(), vid)
 	}
 	vacuumLocationList := NewVolumeLocationList()
+
+	waitTimeout := time.NewTimer(30 * time.Minute)
+	defer waitTimeout.Stop()
+
 	for range locationlist.list {
 		select {
 		case index := <-ch:
 			if index != -1 {
 				vacuumLocationList.list = append(vacuumLocationList.list, locationlist.list[index])
 			}
-		case <-time.After(30 * time.Minute):
+		case <-waitTimeout.C:
 			return vacuumLocationList, false
 		}
 	}
@@ -81,11 +85,15 @@ func batchVacuumVolumeCompact(grpcDialOption grpc.DialOption, vl *VolumeLayout, 
 		}(index, dn.Url(), vid)
 	}
 	isVacuumSuccess := true
+
+	waitTimeout := time.NewTimer(30 * time.Minute)
+	defer waitTimeout.Stop()
+
 	for range locationlist.list {
 		select {
 		case canCommit := <-ch:
 			isVacuumSuccess = isVacuumSuccess && canCommit
-		case <-time.After(30 * time.Minute):
+		case <-waitTimeout.C:
 			return false
 		}
 	}
@@ -165,17 +173,17 @@ func vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeLayout *VolumeL
 	volumeLayout.accessLock.RLock()
 	tmpMap := make(map[needle.VolumeId]*VolumeLocationList)
 	for vid, locationList := range volumeLayout.vid2location {
-		tmpMap[vid] = locationList
+		tmpMap[vid] = locationList.Copy()
 	}
 	volumeLayout.accessLock.RUnlock()
 
 	for vid, locationList := range tmpMap {
 
 		volumeLayout.accessLock.RLock()
-		isReadOnly, hasValue := volumeLayout.readonlyVolumes[vid]
+		isReadOnly := volumeLayout.readonlyVolumes.IsTrue(vid)
 		volumeLayout.accessLock.RUnlock()
 
-		if hasValue && isReadOnly {
+		if isReadOnly {
 			continue
 		}
 

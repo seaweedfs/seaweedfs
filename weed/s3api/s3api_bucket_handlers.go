@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"math"
 	"net/http"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/gorilla/mux"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -26,10 +26,10 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 	var response ListAllMyBucketsResult
 
-	entries, err := s3a.list(s3a.option.BucketsPath, "", "", false, math.MaxInt32)
+	entries, _, err := s3a.list(s3a.option.BucketsPath, "", "", false, math.MaxInt32)
 
 	if err != nil {
-		writeErrorResponse(w, ErrInternalError, r.URL)
+		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
 
@@ -56,12 +56,39 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
 
-	vars := mux.Vars(r)
-	bucket := vars["bucket"]
+	bucket, _ := getBucketAndObject(r)
+
+	// avoid duplicated buckets
+	errCode := s3err.ErrNone
+	if err := s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		if resp, err := client.CollectionList(context.Background(), &filer_pb.CollectionListRequest{
+			IncludeEcVolumes:     true,
+			IncludeNormalVolumes: true,
+		}); err != nil {
+			glog.Errorf("list collection: %v", err)
+			return fmt.Errorf("list collections: %v", err)
+		} else {
+			for _, c := range resp.Collections {
+				if bucket == c.Name {
+					errCode = s3err.ErrBucketAlreadyExists
+					break
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
+		return
+	}
+	if errCode != s3err.ErrNone {
+		writeErrorResponse(w, errCode, r.URL)
+		return
+	}
 
 	// create the folder for bucket, but lazily create actual collection
 	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, nil); err != nil {
-		writeErrorResponse(w, ErrInternalError, r.URL)
+		glog.Errorf("PutBucketHandler mkdir: %v", err)
+		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
 
@@ -70,8 +97,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 
 func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Request) {
 
-	vars := mux.Vars(r)
-	bucket := vars["bucket"]
+	bucket, _ := getBucketAndObject(r)
 
 	err := s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
@@ -91,7 +117,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	err = s3a.rm(s3a.option.BucketsPath, bucket, false, true)
 
 	if err != nil {
-		writeErrorResponse(w, ErrInternalError, r.URL)
+		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
 
@@ -100,8 +126,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request) {
 
-	vars := mux.Vars(r)
-	bucket := vars["bucket"]
+	bucket, _ := getBucketAndObject(r)
 
 	err := s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
@@ -122,7 +147,7 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 	})
 
 	if err != nil {
-		writeErrorResponse(w, ErrNoSuchBucket, r.URL)
+		writeErrorResponse(w, s3err.ErrNoSuchBucket, r.URL)
 		return
 	}
 

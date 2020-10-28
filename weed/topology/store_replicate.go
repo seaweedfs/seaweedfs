@@ -14,6 +14,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -80,7 +81,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId needle.Volume
 			}
 
 			// volume server do not know about encryption
-			_, err := operation.UploadData(u.String(), string(n.Name), false, n.Data, n.IsGzipped(), string(n.Mime), pairMap, jwt)
+			_, err := operation.UploadData(u.String(), string(n.Name), false, n.Data, n.IsCompressed(), string(n.Mime), pairMap, jwt)
 			return err
 		}); err != nil {
 			err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
@@ -92,7 +93,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId needle.Volume
 
 func ReplicatedDelete(masterNode string, store *storage.Store,
 	volumeId needle.VolumeId, n *needle.Needle,
-	r *http.Request) (size uint32, err error) {
+	r *http.Request) (size types.Size, err error) {
 
 	//check JWT
 	jwt := security.GetJwt(r)

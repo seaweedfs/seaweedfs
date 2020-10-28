@@ -2,7 +2,7 @@ package shell
 
 import (
 	"context"
-	"fmt"
+	"flag"
 	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -25,7 +25,7 @@ func (c *commandVolumeUnmount) Name() string {
 func (c *commandVolumeUnmount) Help() string {
 	return `unmount a volume from one volume server
 
-	volume.unmount <volume server host:port> <volume id>
+	volume.unmount -node <volume server host:port> -volumeId <volume id>
 
 	This command unmounts a volume from one volume server.
 
@@ -38,16 +38,16 @@ func (c *commandVolumeUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 		return
 	}
 
-	if len(args) != 2 {
-		fmt.Fprintf(writer, "received args: %+v\n", args)
-		return fmt.Errorf("need 2 args of <volume server host:port> <volume id>")
+	volUnmountCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	volumeIdInt := volUnmountCommand.Int("volumeId", 0, "the volume id")
+	nodeStr := volUnmountCommand.String("node", "", "the volume server <host>:<port>")
+	if err = volUnmountCommand.Parse(args); err != nil {
+		return nil
 	}
-	sourceVolumeServer, volumeIdString := args[0], args[1]
 
-	volumeId, err := needle.NewVolumeId(volumeIdString)
-	if err != nil {
-		return fmt.Errorf("wrong volume id format %s: %v", volumeId, err)
-	}
+	sourceVolumeServer := *nodeStr
+
+	volumeId := needle.VolumeId(*volumeIdInt)
 
 	return unmountVolume(commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer)
 

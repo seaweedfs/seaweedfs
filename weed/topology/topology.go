@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"sync"
+	"time"
 
 	"github.com/chrislusf/raft"
 
@@ -65,31 +66,29 @@ func (t *Topology) IsLeader() bool {
 		if t.RaftServer.State() == raft.Leader {
 			return true
 		}
-		if t.RaftServer.Leader() == "" {
-			return true
-		}
 	}
 	return false
 }
 
 func (t *Topology) Leader() (string, error) {
 	l := ""
-	if t.RaftServer != nil {
-		l = t.RaftServer.Leader()
-	} else {
-		return "", errors.New("Raft Server not ready yet!")
+	for count := 0; count < 3; count++ {
+		if t.RaftServer != nil {
+			l = t.RaftServer.Leader()
+		} else {
+			return "", errors.New("Raft Server not ready yet!")
+		}
+		if l != "" {
+			break
+		} else {
+			time.Sleep(time.Duration(5+count) * time.Second)
+		}
 	}
-
-	if l == "" {
-		// We are a single node cluster, we are the leader
-		return t.RaftServer.Name(), nil
-	}
-
 	return l, nil
 }
 
 func (t *Topology) Lookup(collection string, vid needle.VolumeId) (dataNodes []*DataNode) {
-	//maybe an issue if lots of collections?
+	// maybe an issue if lots of collections?
 	if collection == "" {
 		for _, c := range t.collectionMap.Items() {
 			if list := c.(*Collection).Lookup(vid); list != nil {
@@ -222,7 +221,7 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 	}
 	for _, v := range changedVolumes {
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl)
-		vl.ensureCorrectWritables(&v)
+		vl.EnsureCorrectWritables(&v)
 	}
 	return
 }

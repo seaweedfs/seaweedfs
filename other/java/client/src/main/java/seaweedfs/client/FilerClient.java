@@ -1,5 +1,6 @@
 package seaweedfs.client;
 
+import com.google.common.base.Strings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -22,6 +23,67 @@ public class FilerClient {
 
     public FilerClient(FilerGrpcClient filerGrpcClient) {
         this.filerGrpcClient = filerGrpcClient;
+    }
+
+    public static String toFileId(FilerProto.FileId fid) {
+        if (fid == null) {
+            return null;
+        }
+        return String.format("%d,%x%08x", fid.getVolumeId(), fid.getFileKey(), fid.getCookie());
+    }
+
+    public static FilerProto.FileId toFileIdObject(String fileIdStr) {
+        if (fileIdStr == null || fileIdStr.length() == 0) {
+            return null;
+        }
+        int commaIndex = fileIdStr.lastIndexOf(',');
+        String volumeIdStr = fileIdStr.substring(0, commaIndex);
+        String fileKeyStr = fileIdStr.substring(commaIndex + 1, fileIdStr.length() - 8);
+        String cookieStr = fileIdStr.substring(fileIdStr.length() - 8);
+
+        return FilerProto.FileId.newBuilder()
+                .setVolumeId(Integer.parseInt(volumeIdStr))
+                .setFileKey(Long.parseLong(fileKeyStr, 16))
+                .setCookie((int) Long.parseLong(cookieStr, 16))
+                .build();
+    }
+
+    public static List<FilerProto.FileChunk> beforeEntrySerialization(List<FilerProto.FileChunk> chunks) {
+        List<FilerProto.FileChunk> cleanedChunks = new ArrayList<>();
+        for (FilerProto.FileChunk chunk : chunks) {
+            FilerProto.FileChunk.Builder chunkBuilder = chunk.toBuilder();
+            chunkBuilder.clearFileId();
+            chunkBuilder.clearSourceFileId();
+            chunkBuilder.setFid(toFileIdObject(chunk.getFileId()));
+            FilerProto.FileId sourceFid = toFileIdObject(chunk.getSourceFileId());
+            if (sourceFid != null) {
+                chunkBuilder.setSourceFid(sourceFid);
+            }
+            cleanedChunks.add(chunkBuilder.build());
+        }
+        return cleanedChunks;
+    }
+
+    public static FilerProto.Entry afterEntryDeserialization(FilerProto.Entry entry) {
+        if (entry.getChunksList().size() <= 0) {
+            return entry;
+        }
+        String fileId = entry.getChunks(0).getFileId();
+        if (fileId != null && fileId.length() != 0) {
+            return entry;
+        }
+        FilerProto.Entry.Builder entryBuilder = entry.toBuilder();
+        entryBuilder.clearChunks();
+        for (FilerProto.FileChunk chunk : entry.getChunksList()) {
+            FilerProto.FileChunk.Builder chunkBuilder = chunk.toBuilder();
+            chunkBuilder.setFileId(toFileId(chunk.getFid()));
+            String sourceFileId = toFileId(chunk.getSourceFid());
+            if (sourceFileId != null) {
+                chunkBuilder.setSourceFileId(sourceFileId);
+            }
+            entryBuilder.addChunks(chunkBuilder);
+        }
+        return entryBuilder.build();
     }
 
     public boolean mkdirs(String path, int mode) {
@@ -156,7 +218,7 @@ public class FilerClient {
         List<FilerProto.Entry> results = new ArrayList<FilerProto.Entry>();
         String lastFileName = "";
         for (int limit = Integer.MAX_VALUE; limit > 0; ) {
-            List<FilerProto.Entry> t = listEntries(path, "", lastFileName, 1024);
+            List<FilerProto.Entry> t = listEntries(path, "", lastFileName, 1024, false);
             if (t == null) {
                 break;
             }
@@ -173,17 +235,18 @@ public class FilerClient {
         return results;
     }
 
-    public List<FilerProto.Entry> listEntries(String path, String entryPrefix, String lastEntryName, int limit) {
+    public List<FilerProto.Entry> listEntries(String path, String entryPrefix, String lastEntryName, int limit, boolean includeLastEntry) {
         Iterator<FilerProto.ListEntriesResponse> iter = filerGrpcClient.getBlockingStub().listEntries(FilerProto.ListEntriesRequest.newBuilder()
                 .setDirectory(path)
                 .setPrefix(entryPrefix)
                 .setStartFromFileName(lastEntryName)
+                .setInclusiveStartFrom(includeLastEntry)
                 .setLimit(limit)
                 .build());
         List<FilerProto.Entry> entries = new ArrayList<>();
         while (iter.hasNext()) {
             FilerProto.ListEntriesResponse resp = iter.next();
-            entries.add(fixEntryAfterReading(resp.getEntry()));
+            entries.add(afterEntryDeserialization(resp.getEntry()));
         }
         return entries;
     }
@@ -198,7 +261,7 @@ public class FilerClient {
             if (entry == null) {
                 return null;
             }
-            return fixEntryAfterReading(entry);
+            return afterEntryDeserialization(entry);
         } catch (Exception e) {
             if (e.getMessage().indexOf("filer: no entry is found in filer store") > 0) {
                 return null;
@@ -208,18 +271,22 @@ public class FilerClient {
         }
     }
 
-
     public boolean createEntry(String parent, FilerProto.Entry entry) {
         try {
-            filerGrpcClient.getBlockingStub().createEntry(FilerProto.CreateEntryRequest.newBuilder()
+            FilerProto.CreateEntryResponse createEntryResponse =
+                    filerGrpcClient.getBlockingStub().createEntry(FilerProto.CreateEntryRequest.newBuilder()
                     .setDirectory(parent)
                     .setEntry(entry)
                     .build());
+            if (Strings.isNullOrEmpty(createEntryResponse.getError())) {
+                return true;
+            }
+            LOG.warn("createEntry {}/{} error: {}", parent, entry.getName(), createEntryResponse.getError());
+            return false;
         } catch (Exception e) {
             LOG.warn("createEntry {}/{}: {}", parent, entry.getName(), e);
             return false;
         }
-        return true;
     }
 
     public boolean updateEntry(String parent, FilerProto.Entry entry) {
@@ -229,7 +296,7 @@ public class FilerClient {
                     .setEntry(entry)
                     .build());
         } catch (Exception e) {
-            LOG.warn("createEntry {}/{}: {}", parent, entry.getName(), e);
+            LOG.warn("updateEntry {}/{}: {}", parent, entry.getName(), e);
             return false;
         }
         return true;
@@ -264,26 +331,6 @@ public class FilerClient {
             return false;
         }
         return true;
-    }
-
-    private FilerProto.Entry fixEntryAfterReading(FilerProto.Entry entry) {
-        if (entry.getChunksList().size() <= 0) {
-            return entry;
-        }
-        String fileId = entry.getChunks(0).getFileId();
-        if (fileId != null && fileId.length() != 0) {
-            return entry;
-        }
-        FilerProto.Entry.Builder entryBuilder = entry.toBuilder();
-        entryBuilder.clearChunks();
-        for (FilerProto.FileChunk chunk : entry.getChunksList()) {
-            FilerProto.FileChunk.Builder chunkBuilder = chunk.toBuilder();
-            FilerProto.FileId fid = chunk.getFid();
-            fileId = String.format("%d,%d%x", fid.getVolumeId(), fid.getFileKey(), fid.getCookie());
-            chunkBuilder.setFileId(fileId);
-            entryBuilder.addChunks(chunkBuilder);
-        }
-        return entryBuilder.build();
     }
 
 }

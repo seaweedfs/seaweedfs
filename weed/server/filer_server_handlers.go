@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"net/http"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 )
 
 func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Server", "SeaweedFS Filer "+util.VERSION)
 	start := time.Now()
 	switch r.Method {
 	case "GET":
@@ -34,6 +36,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Server", "SeaweedFS Filer "+util.VERSION)
 	start := time.Now()
 	switch r.Method {
 	case "GET":

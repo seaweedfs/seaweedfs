@@ -3,12 +3,13 @@ package gcssink
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/replication/repl_util"
 	"os"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/option"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
@@ -69,7 +70,7 @@ func (g *GcsSink) initialize(google_application_credentials, bucketName, dir str
 	return nil
 }
 
-func (g *GcsSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool) error {
+func (g *GcsSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 
 	if isDirectory {
 		key = key + "/"
@@ -83,35 +84,24 @@ func (g *GcsSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool)
 
 }
 
-func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry) error {
+func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
 
 	if entry.IsDirectory {
 		return nil
 	}
 
-	totalSize := filer2.TotalSize(entry.Chunks)
-	chunkViews := filer2.ViewFromChunks(entry.Chunks, 0, int64(totalSize))
+	totalSize := filer.FileSize(entry)
+	chunkViews := filer.ViewFromChunks(g.filerSource.LookupFileId, entry.Chunks, 0, int64(totalSize))
 
 	wc := g.client.Bucket(g.bucket).Object(key).NewWriter(context.Background())
+	defer wc.Close()
 
-	for _, chunk := range chunkViews {
-
-		fileUrl, err := g.filerSource.LookupFileId(chunk.FileId)
-		if err != nil {
-			return err
-		}
-
-		err = util.ReadUrlAsStream(fileUrl, nil, false, chunk.IsFullChunk(), chunk.Offset, int(chunk.Size), func(data []byte) {
-			wc.Write(data)
-		})
-
-		if err != nil {
-			return err
-		}
-
+	writeFunc := func(data []byte) error {
+		_, writeErr := wc.Write(data)
+		return writeErr
 	}
 
-	if err := wc.Close(); err != nil {
+	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc); err != nil {
 		return err
 	}
 
@@ -119,7 +109,7 @@ func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry) error {
 
 }
 
-func (g *GcsSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (g *GcsSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
 	// TODO improve efficiency
 	return false, nil
 }

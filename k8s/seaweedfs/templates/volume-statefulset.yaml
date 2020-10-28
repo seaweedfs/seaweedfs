@@ -12,6 +12,7 @@ metadata:
 spec:
   serviceName: {{ template "seaweedfs.name" . }}-volume
   replicas: {{ .Values.volume.replicas }}
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
       app: {{ template "seaweedfs.name" . }}
@@ -33,7 +34,7 @@ spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.volume.restartPolicy }}
       {{- if .Values.volume.tolerations }}
       tolerations:
-        {{ tpl .Values.volume.tolerations . | nindent 8 | trim }}
+      {{ tpl .Values.volume.tolerations . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
@@ -62,7 +63,7 @@ spec:
                 fieldRef:
                   fieldPath: status.hostIP
             - name: SEAWEEDFS_FULLNAME
-              value: "{{ template "seaweedfs.name" . }}"                  
+              value: "{{ template "seaweedfs.name" . }}"
           command:
             - "/bin/sh"
             - "-ec"
@@ -75,6 +76,9 @@ spec:
                 {{- end }}
                 volume \
                 -port={{ .Values.volume.port }} \
+                {{- if .Values.volume.metricsPort }}
+                -metricsPort {{ .Values.volume.metricsPort }} \
+                {{- end }}}
                 -dir={{ .Values.volume.dir }} \
                 -max={{ .Values.volume.maxVolumes }} \
                 {{- if .Values.volume.rack }}
@@ -91,6 +95,16 @@ spec:
                 {{- if .Values.volume.imagesFixOrientation }}
                 -images.fix.orientation \
                 {{- end }}
+                {{- if .Values.volume.pulseSeconds }}
+                -pulseSeconds={{ .Values.volume.pulseSeconds }} \
+                {{- end }}
+                {{- if .Values.volume.index }}
+                -index={{ .Values.volume.index }} \
+                {{- end }}
+                {{- if .Values.volume.fileSizeLimitMB }}
+                -fileSizeLimitMB={{ .Values.volume.fileSizeLimitMB }} \
+                {{- end }}
+                -minFreeSpacePercent={{ .Values.volume.minFreeSpacePercent }} \
                 -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-volume \
                 -compactionMBps={{ .Values.volume.compactionMBps }} \
                 -mserver={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
@@ -131,19 +145,21 @@ spec:
               path: /status
               port: {{ .Values.volume.port }}
               scheme: HTTP
-            initialDelaySeconds: 5
-            periodSeconds: 15
+            initialDelaySeconds: 15
+            periodSeconds: 90
             successThreshold: 1
             failureThreshold: 100
+            timeoutSeconds: 5
           livenessProbe:
             httpGet:
               path: /status
               port: {{ .Values.volume.port }}
               scheme: HTTP
             initialDelaySeconds: 20
-            periodSeconds: 30
+            periodSeconds: 90
             successThreshold: 1
-            failureThreshold: 10
+            failureThreshold: 4
+            timeoutSeconds: 5
           {{- if .Values.volume.resources }}
           resources:
             {{ tpl .Values.volume.resources . | nindent 12 | trim }}

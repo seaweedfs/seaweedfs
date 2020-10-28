@@ -49,6 +49,6 @@ func (c *commandBucketDelete) Do(args []string, commandEnv *CommandEnv, writer i
 		return fmt.Errorf("read buckets: %v", err)
 	}
 
-	return filer_pb.Remove(commandEnv, filerBucketsPath, *bucketName, false, true, true)
+	return filer_pb.Remove(commandEnv, filerBucketsPath, *bucketName, false, true, true, false, nil)
 
 }

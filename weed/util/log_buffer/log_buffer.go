@@ -53,7 +53,7 @@ func NewLogBuffer(flushInterval time.Duration, flushFn func(startTime, stopTime 
 	return lb
 }
 
-func (m *LogBuffer) AddToBuffer(partitionKey, data []byte) {
+func (m *LogBuffer) AddToBuffer(partitionKey, data []byte, eventTsNs int64) {
 
 	m.Lock()
 	defer func() {
@@ -64,16 +64,21 @@ func (m *LogBuffer) AddToBuffer(partitionKey, data []byte) {
 	}()
 
 	// need to put the timestamp inside the lock
-	ts := time.Now()
-	tsNs := ts.UnixNano()
-	if m.lastTsNs >= tsNs {
-		// this is unlikely to happen, but just in case
-		tsNs = m.lastTsNs + 1
-		ts = time.Unix(0, tsNs)
+	var ts time.Time
+	if eventTsNs == 0 {
+		ts = time.Now()
+		eventTsNs = ts.UnixNano()
+	} else {
+		ts = time.Unix(0, eventTsNs)
 	}
-	m.lastTsNs = tsNs
+	if m.lastTsNs >= eventTsNs {
+		// this is unlikely to happen, but just in case
+		eventTsNs = m.lastTsNs + 1
+		ts = time.Unix(0, eventTsNs)
+	}
+	m.lastTsNs = eventTsNs
 	logEntry := &filer_pb.LogEntry{
-		TsNs:             tsNs,
+		TsNs:             eventTsNs,
 		PartitionKeyHash: util.HashToInt32(partitionKey),
 		Data:             data,
 	}
@@ -145,12 +150,15 @@ func (m *LogBuffer) loopInterval() {
 
 func (m *LogBuffer) copyToFlush() *dataToFlush {
 
-	if m.flushFn != nil && m.pos > 0 {
+	if m.pos > 0 {
 		// fmt.Printf("flush buffer %d pos %d empty space %d\n", len(m.buf), m.pos, len(m.buf)-m.pos)
-		d := &dataToFlush{
-			startTime: m.startTime,
-			stopTime:  m.stopTime,
-			data:      copiedBytes(m.buf[:m.pos]),
+		var d *dataToFlush
+		if m.flushFn != nil {
+			d = &dataToFlush{
+				startTime: m.startTime,
+				stopTime:  m.stopTime,
+				data:      copiedBytes(m.buf[:m.pos]),
+			}
 		}
 		// fmt.Printf("flusing [0,%d) with %d entries\n", m.pos, len(m.idx))
 		m.buf = m.prevBuffers.SealBuffer(m.startTime, m.stopTime, m.buf, m.pos)
@@ -246,7 +254,7 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Bu
 	return nil
 
 }
-func (m *LogBuffer) ReleaseMeory(b *bytes.Buffer) {
+func (m *LogBuffer) ReleaseMemory(b *bytes.Buffer) {
 	bufferPool.Put(b)
 }
 

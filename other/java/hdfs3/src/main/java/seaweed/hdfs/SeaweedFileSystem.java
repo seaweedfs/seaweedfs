@@ -5,31 +5,29 @@ import org.apache.hadoop.fs.*;
 import org.apache.hadoop.fs.permission.AclEntry;
 import org.apache.hadoop.fs.permission.AclStatus;
 import org.apache.hadoop.fs.permission.FsPermission;
-import org.apache.hadoop.security.AccessControlException;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.Progressable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import seaweedfs.client.FilerProto;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 
-import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.IO_FILE_BUFFER_SIZE_KEY;
-
 public class SeaweedFileSystem extends FileSystem {
 
-    public static final int FS_SEAWEED_DEFAULT_PORT = 8888;
     public static final String FS_SEAWEED_FILER_HOST = "fs.seaweed.filer.host";
     public static final String FS_SEAWEED_FILER_PORT = "fs.seaweed.filer.port";
+    public static final int FS_SEAWEED_DEFAULT_PORT = 8888;
+    public static final String FS_SEAWEED_BUFFER_SIZE = "fs.seaweed.buffer.size";
+    public static final int FS_SEAWEED_DEFAULT_BUFFER_SIZE = 4 * 1024 * 1024;
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedFileSystem.class);
-    private static int BUFFER_SIZE = 16 * 1024 * 1024;
 
     private URI uri;
     private Path workingDirectory = new Path("/");
@@ -60,12 +58,10 @@ public class SeaweedFileSystem extends FileSystem {
         port = (port == -1) ? FS_SEAWEED_DEFAULT_PORT : port;
         conf.setInt(FS_SEAWEED_FILER_PORT, port);
 
-        conf.setInt(IO_FILE_BUFFER_SIZE_KEY, BUFFER_SIZE);
-
         setConf(conf);
         this.uri = uri;
 
-        seaweedFileSystemStore = new SeaweedFileSystemStore(host, port);
+        seaweedFileSystemStore = new SeaweedFileSystemStore(host, port, conf);
 
     }
 
@@ -77,8 +73,9 @@ public class SeaweedFileSystem extends FileSystem {
         path = qualify(path);
 
         try {
-            InputStream inputStream = seaweedFileSystemStore.openFileForRead(path, statistics, bufferSize);
-            return new FSDataInputStream(inputStream);
+            int seaweedBufferSize = this.getConf().getInt(FS_SEAWEED_BUFFER_SIZE, FS_SEAWEED_DEFAULT_BUFFER_SIZE);
+            FSInputStream inputStream = seaweedFileSystemStore.openFileForRead(path, statistics);
+            return new FSDataInputStream(new BufferedFSInputStream(inputStream, 4 * seaweedBufferSize));
         } catch (Exception ex) {
             LOG.warn("open path: {} bufferSize:{}", path, bufferSize, ex);
             return null;
@@ -95,7 +92,8 @@ public class SeaweedFileSystem extends FileSystem {
 
         try {
             String replicaPlacement = String.format("%03d", replication - 1);
-            OutputStream outputStream = seaweedFileSystemStore.createFile(path, overwrite, permission, bufferSize, replicaPlacement);
+            int seaweedBufferSize = this.getConf().getInt(FS_SEAWEED_BUFFER_SIZE, FS_SEAWEED_DEFAULT_BUFFER_SIZE);
+            OutputStream outputStream = seaweedFileSystemStore.createFile(path, overwrite, permission, seaweedBufferSize, replicaPlacement);
             return new FSDataOutputStream(outputStream, statistics);
         } catch (Exception ex) {
             LOG.warn("create path: {} bufferSize:{} blockSize:{}", path, bufferSize, blockSize, ex);
@@ -105,8 +103,9 @@ public class SeaweedFileSystem extends FileSystem {
 
     /**
      * {@inheritDoc}
+     *
      * @throws FileNotFoundException if the parent directory is not present -or
-     * is not a directory.
+     *                               is not a directory.
      */
     @Override
     public FSDataOutputStream createNonRecursive(Path path,
@@ -123,9 +122,10 @@ public class SeaweedFileSystem extends FileSystem {
                 throw new FileAlreadyExistsException("Not a directory: " + parent);
             }
         }
+        int seaweedBufferSize = this.getConf().getInt(FS_SEAWEED_BUFFER_SIZE, FS_SEAWEED_DEFAULT_BUFFER_SIZE);
         return create(path, permission,
                 flags.contains(CreateFlag.OVERWRITE), bufferSize,
-                replication, blockSize, progress);
+                replication, seaweedBufferSize, progress);
     }
 
     @Override
@@ -135,7 +135,8 @@ public class SeaweedFileSystem extends FileSystem {
 
         path = qualify(path);
         try {
-            OutputStream outputStream = seaweedFileSystemStore.createFile(path, false, null, bufferSize, "");
+            int seaweedBufferSize = this.getConf().getInt(FS_SEAWEED_BUFFER_SIZE, FS_SEAWEED_DEFAULT_BUFFER_SIZE);
+            OutputStream outputStream = seaweedFileSystemStore.createFile(path, false, null, seaweedBufferSize, "");
             return new FSDataOutputStream(outputStream, statistics);
         } catch (Exception ex) {
             LOG.warn("append path: {} bufferSize:{}", path, bufferSize, ex);
@@ -144,7 +145,7 @@ public class SeaweedFileSystem extends FileSystem {
     }
 
     @Override
-    public boolean rename(Path src, Path dst) {
+    public boolean rename(Path src, Path dst) throws IOException {
 
         LOG.debug("rename path: {} => {}", src, dst);
 
@@ -155,12 +156,13 @@ public class SeaweedFileSystem extends FileSystem {
         if (src.equals(dst)) {
             return true;
         }
-        FileStatus dstFileStatus = getFileStatus(dst);
+        FilerProto.Entry entry = seaweedFileSystemStore.lookupEntry(dst);
 
-        String sourceFileName = src.getName();
         Path adjustedDst = dst;
 
-        if (dstFileStatus != null) {
+        if (entry != null) {
+            FileStatus dstFileStatus = getFileStatus(dst);
+            String sourceFileName = src.getName();
             if (!dstFileStatus.isDirectory()) {
                 return false;
             }
@@ -175,17 +177,19 @@ public class SeaweedFileSystem extends FileSystem {
     }
 
     @Override
-    public boolean delete(Path path, boolean recursive) {
+    public boolean delete(Path path, boolean recursive) throws IOException {
 
         LOG.debug("delete path: {} recursive:{}", path, recursive);
 
         path = qualify(path);
 
-        FileStatus fileStatus = getFileStatus(path);
+        FilerProto.Entry entry = seaweedFileSystemStore.lookupEntry(path);
 
-        if (fileStatus == null) {
+        if (entry == null) {
             return true;
         }
+
+        FileStatus fileStatus = getFileStatus(path);
 
         return seaweedFileSystemStore.deleteEntries(path, fileStatus.isDirectory(), recursive);
 
@@ -222,9 +226,9 @@ public class SeaweedFileSystem extends FileSystem {
 
         path = qualify(path);
 
-        FileStatus fileStatus = getFileStatus(path);
+        FilerProto.Entry entry = seaweedFileSystemStore.lookupEntry(path);
 
-        if (fileStatus == null) {
+        if (entry == null) {
 
             UserGroupInformation currentUser = UserGroupInformation.getCurrentUser();
             return seaweedFileSystemStore.createDirectory(path, currentUser,
@@ -232,6 +236,8 @@ public class SeaweedFileSystem extends FileSystem {
                     FsPermission.getUMask(getConf()));
 
         }
+
+        FileStatus fileStatus = getFileStatus(path);
 
         if (fileStatus.isDirectory()) {
             return true;
@@ -241,7 +247,7 @@ public class SeaweedFileSystem extends FileSystem {
     }
 
     @Override
-    public FileStatus getFileStatus(Path path) {
+    public FileStatus getFileStatus(Path path) throws IOException {
 
         LOG.debug("getFileStatus path: {}", path);
 
@@ -335,9 +341,7 @@ public class SeaweedFileSystem extends FileSystem {
 
     @Override
     public void createSymlink(final Path target, final Path link,
-                              final boolean createParent) throws AccessControlException,
-            FileAlreadyExistsException, FileNotFoundException,
-            ParentNotDirectoryException, UnsupportedFileSystemException,
+                              final boolean createParent) throws
             IOException {
         // Supporting filesystems should override this method
         throw new UnsupportedOperationException(
