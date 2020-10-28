@@ -101,7 +101,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 * Automatic compaction to reclaim disk space after deletion or update.
 * [Automatic entry TTL expiration][VolumeServerTTL].
 * Any server with some disk spaces can add to the total storage space.
-* Adding/Removing servers does **not** cause any data re-balancing unless trigged by admin commands.
+* Adding/Removing servers does **not** cause any data re-balancing unless triggered by admin commands.
 * Optional picture resizing.
 * Support ETag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/readonly mode tuning for memory/performance balance.
