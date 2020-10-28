@@ -61,6 +61,7 @@ func parseCollectionVolumeId(base string) (collection string, vid needle.VolumeI
 func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind NeedleMapType) bool {
 	name := fileInfo.Name()
 	if !fileInfo.IsDir() && strings.HasSuffix(name, ".idx") {
+		name := name[:len(name)-len(".idx")]
 		noteFile := l.Directory + "/" + name + ".note"
 		if util.FileExists(noteFile) {
 			note, _ := ioutil.ReadFile(noteFile)
@@ -93,7 +94,7 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 
 		size, _, _ := v.FileStat()
 		glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s",
-			l.Directory+"/"+name, v.ReplicaPlacement, v.Version(), size, v.Ttl.String())
+			l.Directory+"/"+name+".dat", v.ReplicaPlacement, v.Version(), size, v.Ttl.String())
 		return true
 	}
 	return false
