@@ -200,7 +200,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	maxVolumeCount := 0
 	var maxFileKey NeedleId
 	collectionVolumeSize := make(map[string]uint64)
-	collectionVolumeReadOnlyCount := make(map[string]uint8)
+	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
 	for _, location := range s.Locations {
 		var deleteVids []needle.VolumeId
 		maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
@@ -220,11 +220,25 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				}
 			}
 			collectionVolumeSize[v.Collection] += volumeMessage.Size
+			if _, exist := collectionVolumeReadOnlyCount[v.Collection]; !exist {
+				collectionVolumeReadOnlyCount[v.Collection] = map[string]uint8{
+					"IsReadOnly":       0,
+					"noWriteOrDelete":  0,
+					"noWriteCanDelete": 0,
+					"isDiskSpaceLow":   0,
+				}
+			}
 			if v.IsReadOnly() {
-				collectionVolumeReadOnlyCount[v.Collection] += 1
-			} else {
-				if _, exist := collectionVolumeReadOnlyCount[v.Collection]; !exist {
-					collectionVolumeReadOnlyCount[v.Collection] = 0
+				collectionVolumeReadOnlyCount[v.Collection] = make(map[string]uint8)
+				collectionVolumeReadOnlyCount[v.Collection]["IsReadOnly"] += 1
+				if v.noWriteOrDelete {
+					collectionVolumeReadOnlyCount[v.Collection]["noWriteOrDelete"] += 1
+				}
+				if v.noWriteCanDelete {
+					collectionVolumeReadOnlyCount[v.Collection]["noWriteCanDelete"] += 1
+				}
+				if v.location.isDiskSpaceLow {
+					collectionVolumeReadOnlyCount[v.Collection]["isDiskSpaceLow"] += 1
 				}
 			}
 		}
@@ -251,8 +265,10 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "normal").Set(float64(size))
 	}
 
-	for col, count := range collectionVolumeReadOnlyCount {
-		stats.VolumeServerReadOnlyVolumeGauge.WithLabelValues(col, "normal").Set(float64(count))
+	for col, types := range collectionVolumeReadOnlyCount {
+		for t, count := range types {
+			stats.VolumeServerReadOnlyVolumeGauge.WithLabelValues(col, t).Set(float64(count))
+		}
 	}
 
 	return &master_pb.Heartbeat{
