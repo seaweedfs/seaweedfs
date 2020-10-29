@@ -2,12 +2,13 @@ package command
 
 import (
 	"fmt"
-	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"os"
 	"runtime"
 	"runtime/pprof"
 	"strings"
 	"time"
+
+	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -60,9 +61,10 @@ var (
 	serverMetricsHttpPort     = cmdServer.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 
 	// pulseSeconds              = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
-	isStartingFiler     = cmdServer.Flag.Bool("filer", false, "whether to start filer")
-	isStartingS3        = cmdServer.Flag.Bool("s3", false, "whether to start S3 gateway")
-	isStartingMsgBroker = cmdServer.Flag.Bool("msgBroker", false, "whether to start message broker")
+	isStartingVolumeServer = cmdServer.Flag.Bool("volume", true, "whether to start volume server")
+	isStartingFiler        = cmdServer.Flag.Bool("filer", false, "whether to start filer")
+	isStartingS3           = cmdServer.Flag.Bool("s3", false, "whether to start S3 gateway")
+	isStartingMsgBroker    = cmdServer.Flag.Bool("msgBroker", false, "whether to start message broker")
 
 	serverWhiteList []string
 
@@ -214,7 +216,7 @@ func runServer(cmd *Command, args []string) bool {
 	}
 
 	// start volume server
-	{
+	if *isStartingVolumeServer {
 		go serverOptions.v.startVolumeServer(*volumeDataFolders, *volumeMaxDataVolumeCounts, *serverWhiteListOption, *volumeMinFreeSpacePercent)
 
 	}
