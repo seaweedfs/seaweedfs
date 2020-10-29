@@ -253,8 +253,14 @@ func (file *File) Forget() {
 }
 
 func (file *File) maybeLoadEntry(ctx context.Context) error {
-	if (file.entry != nil && len(file.entry.HardLinkId) != 0) || file.isOpen > 0 {
+	if file.isOpen > 0 {
 		return nil
+	}
+	if file.entry != nil {
+		if len(file.entry.HardLinkId) == 0 {
+			// only always reload hard link
+			return nil
+		}
 	}
 	entry, err := file.wfs.maybeLoadEntry(file.dir.FullPath(), file.Name)
 	if err != nil {
@@ -263,6 +269,8 @@ func (file *File) maybeLoadEntry(ctx context.Context) error {
 	}
 	if entry != nil {
 		file.setEntry(entry)
+	} else {
+		glog.Warningf("maybeLoadEntry not found entry %s/%s: %v", file.dir.FullPath(), file.Name, err)
 	}
 	return nil
 }
