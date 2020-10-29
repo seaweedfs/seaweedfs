@@ -18,6 +18,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -312,31 +313,26 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 }
 
 func (fs *FilerServer) saveAmzMetaData(r *http.Request, entry *filer.Entry) {
-	var (
-		storageClass   = "X-Amz-Storage-Class"
-		objectTagging  = "X-Amz-Tagging"
-		userMetaPrefix = "X-Amz-Meta-"
-	)
 
 	if entry.Extended == nil {
 		entry.Extended = make(map[string][]byte)
 	}
 
-	if sc := r.Header.Get(storageClass); sc != "" {
-		entry.Extended[storageClass] = []byte(sc)
+	if sc := r.Header.Get(xhttp.AmzStorageClass); sc != "" {
+		entry.Extended[xhttp.AmzStorageClass] = []byte(sc)
 	}
 
-	if tags := r.Header.Get(objectTagging); tags != "" {
+	if tags := r.Header.Get(xhttp.AmzObjectTagging); tags != "" {
 		for _, v := range strings.Split(tags, "&") {
 			tag := strings.Split(v, "=")
 			if len(tag) == 2 {
-				entry.Extended[objectTagging+"-"+tag[0]] = []byte(tag[1])
+				entry.Extended[xhttp.AmzObjectTagging+"-"+tag[0]] = []byte(tag[1])
 			}
 		}
 	}
 
 	for header, values := range r.Header {
-		if strings.HasPrefix(header, userMetaPrefix) {
+		if strings.HasPrefix(header, xhttp.AmzUserMetaPrefix) {
 			for _, value := range values {
 				entry.Extended[header] = []byte(value)
 			}
