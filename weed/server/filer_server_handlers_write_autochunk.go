@@ -312,31 +312,26 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 }
 
 func (fs *FilerServer) saveAmzMetaData(r *http.Request, entry *filer.Entry) {
-	var (
-		storageClass   = "X-Amz-Storage-Class"
-		objectTagging  = "X-Amz-Tagging"
-		userMetaPrefix = "X-Amz-Meta-"
-	)
 
 	if entry.Extended == nil {
 		entry.Extended = make(map[string][]byte)
 	}
 
-	if sc := r.Header.Get(storageClass); sc != "" {
-		entry.Extended[storageClass] = []byte(sc)
+	if sc := r.Header.Get(util.AmzStorageClass); sc != "" {
+		entry.Extended[util.AmzStorageClass] = []byte(sc)
 	}
 
-	if tags := r.Header.Get(objectTagging); tags != "" {
+	if tags := r.Header.Get(util.AmzObjectTagging); tags != "" {
 		for _, v := range strings.Split(tags, "&") {
 			tag := strings.Split(v, "=")
 			if len(tag) == 2 {
-				entry.Extended[objectTagging+"-"+tag[0]] = []byte(tag[1])
+				entry.Extended[util.AmzObjectTagging+"-"+tag[0]] = []byte(tag[1])
 			}
 		}
 	}
 
 	for header, values := range r.Header {
-		if strings.HasPrefix(header, userMetaPrefix) {
+		if strings.HasPrefix(header, util.AmzUserMetaPrefix) {
 			for _, value := range values {
 				entry.Extended[header] = []byte(value)
 			}

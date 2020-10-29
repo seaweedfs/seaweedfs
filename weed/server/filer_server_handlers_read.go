@@ -97,12 +97,12 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	if r.Method == "GET" {
 		tagCount := 0
 		for k, _ := range entry.Extended {
-			if strings.HasPrefix(k, "X-Amz-Tagging-") {
+			if strings.HasPrefix(k, util.AmzObjectTagging+"-") {
 				tagCount++
 			}
 		}
 		if tagCount > 0 {
-			w.Header().Set("x-amz-tag-count", strconv.Itoa(tagCount))
+			w.Header().Set(util.AmzTagCount, strconv.Itoa(tagCount))
 		}
 	}
 
