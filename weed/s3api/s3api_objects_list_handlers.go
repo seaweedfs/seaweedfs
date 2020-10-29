@@ -12,12 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/util"
-
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
-
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 )
 
 type ListBucketResultV2 struct {
@@ -141,7 +139,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 				}
 			} else {
 				storageClass := "STANDARD"
-				if v, ok := entry.Extended[util.AmzStorageClass]; ok {
+				if v, ok := entry.Extended[xhttp.AmzStorageClass]; ok {
 					storageClass = string(v)
 				}
 				contents = append(contents, ListEntry{
