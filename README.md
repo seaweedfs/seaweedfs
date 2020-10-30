@@ -425,9 +425,10 @@ SeaweedFS Filer uses off-the-shelf stores, such as MySql, Postgres, Mongodb, Red
 
 MinIO follows AWS S3 closely and is ideal for testing for S3 API. It has good UI, policies, versionings, etc. SeaweedFS is trying to catch up here. It is also possible to put MinIO as a gateway in front of SeaweedFS later.
 
-MinIO metadata are in simple files. Each file write will incur meta file writes.
+MinIO metadata are in simple files. Each file write will incur extra writes to corresponding meta file.
 
-MinIO does not have optimization for large number of small files.
+MinIO does not have optimization for lots of small files. The files are simply stored as is to local disks.
+Plus the extra meta file and shards for erasure coding, it only amplifies the LOSF problem.
 
 MinIO has multiple disk IO to read one file. SeaweedFS has O(1) disk reads, even for erasure coded files.
 
@@ -439,16 +440,13 @@ MinIO has specific requirements on storage layout. It is not flexible to adjust 
 
 ## Dev Plan ##
 
-More tools and documentation, on how to maintain and scale the system. For example, how to move volumes, automatically balancing data, how to grow volumes, how to check system status, etc.
-Other key features include: Erasure Encoding, JWT security.
+* More tools and documentation, on how to manage and scale the system. For example, how to move volumes, automatically balancing data, how to grow volumes, how to check system status, etc.
+* Integrate with Kubernetes. build [SeaweedFS Operator](https://github.com/seaweedfs/seaweedfs-operator).
+* Add ftp server.
+* Read and write stream data.
+* Support structured data.
 
 This is a super exciting project! And we need helpers and [support](https://www.patreon.com/seaweedfs)!
-
-BTW, We suggest run the code style check script `util/gostd` before you push your branch to remote, it will make SeaweedFS easy to review, maintain and develop:
-
-```
-$ ./util/gostd
-```
 
 [Back to TOC](#table-of-contents)
 
