@@ -95,7 +95,7 @@ func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, 
 }
 
 func retriedUploadData(uploadUrl string, filename string, cipher bool, data []byte, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error) {
-	for i := 0; i < 1; i++ {
+	for i := 0; i < 3; i++ {
 		uploadResult, err = doUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
 		if err == nil {
 			return
