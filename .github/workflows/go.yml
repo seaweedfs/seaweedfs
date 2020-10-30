@@ -18,6 +18,8 @@ jobs:
       with:
         go-version: ^1.15
       id: go
+    - name: create symlink
+      run: sudo ln -f -s $GOROOT/bin/* /usr/bin/
 
     - name: Check out code into the Go module directory
       uses: actions/checkout@v2
