@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -20,11 +21,23 @@ func CheckAndFixVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAt
 	if indexSize == 0 {
 		return 0, nil
 	}
+	healthyIndexSize := indexSize
 	for i := 1; i <= 10; i++ {
 		// check and fix last 10 entries
 		lastAppendAtNs, err = doCheckAndFixVolumeData(v, indexFile, indexSize-int64(i)*NeedleMapEntrySize)
+		if err == io.EOF {
+			healthyIndexSize = indexSize - int64(i)*NeedleMapEntrySize
+			continue
+		}
 		if err != ErrorSizeMismatch {
 			break
+		}
+	}
+	if healthyIndexSize < indexSize {
+		glog.Warningf("CheckAndFixVolumeDataIntegrity truncate idx file %s from %d to %d", indexFile.Name(), indexSize, healthyIndexSize)
+		err = indexFile.Truncate(healthyIndexSize)
+		if err != nil {
+			glog.Warningf("CheckAndFixVolumeDataIntegrity truncate idx file %s from %d to %d: %v", indexFile.Name(), indexSize, healthyIndexSize, err)
 		}
 	}
 	return
@@ -73,6 +86,9 @@ func readIndexEntryAtOffset(indexFile *os.File, offset int64) (bytes []byte, err
 
 func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version, offset int64, key NeedleId, size Size) (lastAppendAtNs uint64, err error) {
 	n, _, _, err := needle.ReadNeedleHeader(datFile, v, offset)
+	if err == io.EOF {
+		return 0, err
+	}
 	if err != nil {
 		return 0, fmt.Errorf("read %s at %d", datFile.Name(), offset)
 	}
@@ -82,8 +98,11 @@ func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version,
 	if v == needle.Version3 {
 		bytes := make([]byte, TimestampSize)
 		_, err = datFile.ReadAt(bytes, offset+NeedleHeaderSize+int64(size)+needle.NeedleChecksumSize)
+		if err == io.EOF {
+			return 0, err
+		}
 		if err != nil {
-			return 0, fmt.Errorf("check %s entry offset %d size %d: %v", datFile.Name(), offset, size, err)
+			return 0, fmt.Errorf("verifyNeedleIntegrity check %s entry offset %d size %d: %v", datFile.Name(), offset, size, err)
 		}
 		n.AppendAtNs = util.BytesToUint64(bytes)
 		fileTailOffset := offset + needle.GetActualSize(size, v)
