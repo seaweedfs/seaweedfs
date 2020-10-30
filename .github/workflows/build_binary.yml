@@ -43,7 +43,7 @@ jobs:
           # The `Go` compiler version.
           goversion: 1.14 # optional, default is 
           # Additional arguments to pass the go build command.
-          build_flags: 5BytesOffset # optional, default is 
+          build_flags: -tags 5BytesOffset # optional, default is 
           # Values to provide to the -ldflags argument
           ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
