@@ -31,7 +31,7 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 
 	glog.V(4).Infof("Link: %v/%v -> %v/%v", oldFile.dir.FullPath(), oldFile.Name, dir.FullPath(), req.NewName)
 
-	if err := oldFile.maybeLoadEntry(ctx); err != nil {
+	if _, err := oldFile.maybeLoadEntry(ctx); err != nil {
 		return nil, err
 	}
 
@@ -86,7 +86,7 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 	// create new file node
 	newNode := dir.newFile(req.NewName, request.Entry)
 	newFile := newNode.(*File)
-	if err := newFile.maybeLoadEntry(ctx); err != nil {
+	if _, err := newFile.maybeLoadEntry(ctx); err != nil {
 		return nil, err
 	}
 
@@ -138,16 +138,17 @@ func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node,
 
 func (file *File) Readlink(ctx context.Context, req *fuse.ReadlinkRequest) (string, error) {
 
-	if err := file.maybeLoadEntry(ctx); err != nil {
+	entry, err := file.maybeLoadEntry(ctx)
+	if err != nil {
 		return "", err
 	}
 
-	if os.FileMode(file.entry.Attributes.FileMode)&os.ModeSymlink == 0 {
+	if os.FileMode(entry.Attributes.FileMode)&os.ModeSymlink == 0 {
 		return "", fuse.Errno(syscall.EINVAL)
 	}
 
-	glog.V(4).Infof("Readlink: %v/%v => %v", file.dir.FullPath(), file.Name, file.entry.Attributes.SymlinkTarget)
+	glog.V(4).Infof("Readlink: %v/%v => %v", file.dir.FullPath(), file.Name, entry.Attributes.SymlinkTarget)
 
-	return file.entry.Attributes.SymlinkTarget, nil
+	return entry.Attributes.SymlinkTarget, nil
 
 }
