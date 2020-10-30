@@ -96,7 +96,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		fsNode := wfs.fsNodeCache.GetFsNode(filePath)
 		if fsNode != nil {
 			if file, ok := fsNode.(*File); ok {
-				file.setEntry(nil)
+				file.clearEntry()
 			}
 		}
 	})

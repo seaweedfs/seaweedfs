@@ -301,6 +301,12 @@ func (file *File) setEntry(entry *filer_pb.Entry) {
 	file.reader = nil
 }
 
+func (file *File) clearEntry() {
+	file.entry = nil
+	file.entryViewCache = nil
+	file.reader = nil
+}
+
 func (file *File) saveEntry() error {
 	return file.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
