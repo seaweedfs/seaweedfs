@@ -219,7 +219,7 @@ func genFileCopyTask(fileOrDir string, destPath string, fileCopyTaskChan chan Fi
 
 	fileCopyTaskChan <- FileCopyTask{
 		sourceLocation:     fileOrDir,
-		destinationUrlPath: destPath+fi.Name(),
+		destinationUrlPath: destPath,//+fi.Name(),
 		fileSize:           fi.Size(),
 		fileMode:           fi.Mode(),
 		uid:                uid,
