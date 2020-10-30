@@ -42,7 +42,6 @@ jobs:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         goos: linux # default is 
         goarch: amd64 # default is 
-        goversion: 1.14 # optional, default is 
         build_flags: -tags 5BytesOffset # optional, default is 
         ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
         # Where to run `go build .`
