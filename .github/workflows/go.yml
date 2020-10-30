@@ -13,30 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
 
-    - name: Set up Go 1.x
-      uses: actions/setup-go@v2
-      with:
-        go-version: ^1.15
-      id: go
-    - name: create symlink
-      run: sudo ln -f -s $GOROOT/bin/* /usr/bin/
-
     - name: Check out code into the Go module directory
       uses: actions/checkout@v2
-
-    - name: Get dependencies
-      run: |
-        cd weed; go get -v -t -d ./...
-        if [ -f Gopkg.toml ]; then
-            curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
-            dep ensure
-        fi
-
-    - name: Build
-      run: cd weed; go build -v .
-
-    - name: Test
-      run: cd weed; go test -v ./...
 
     - name: Go Release Binaries
       uses: wangyoucao577/go-release-action@v1.8
