@@ -194,6 +194,12 @@ func (s *Store) SetDataCenter(dataCenter string) {
 func (s *Store) SetRack(rack string) {
 	s.rack = rack
 }
+func (s *Store) GetDataCenter() string {
+	return s.dataCenter
+}
+func (s *Store) GetRack() string {
+	return s.rack
+}
 
 func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var volumeMessages []*master_pb.VolumeInformationMessage
@@ -229,7 +235,6 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				}
 			}
 			if v.IsReadOnly() {
-				collectionVolumeReadOnlyCount[v.Collection] = make(map[string]uint8)
 				collectionVolumeReadOnlyCount[v.Collection]["IsReadOnly"] += 1
 				if v.noWriteOrDelete {
 					collectionVolumeReadOnlyCount[v.Collection]["noWriteOrDelete"] += 1
