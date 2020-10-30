@@ -25,7 +25,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="/seaweedfsstatic/bootstrap/3.3.1/css/bootstrap.min.css">
 <style>
-body { padding-bottom: 70px; }
+body { padding-bottom: 128px; }
 #drop-area {
   border: 1px transparent;
 }
