@@ -1,4 +1,4 @@
-name: Go
+name: Release
 
 on:
   push:
