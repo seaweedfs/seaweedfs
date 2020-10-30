@@ -228,7 +228,7 @@ func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDi
 				Volumes:        volumeMessages,
 				HasNoVolumes:   len(volumeMessages) == 0,
 			}
-			glog.V(1).Infof("volume server %s:%d deletes all volumes", vs.store.Ip, vs.store.Port)
+			glog.V(1).Infof("volume server %s:%d stops and deletes all volumes", vs.store.Ip, vs.store.Port)
 			if err = stream.Send(emptyBeat); err != nil {
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterNode, err)
 				return "", err
