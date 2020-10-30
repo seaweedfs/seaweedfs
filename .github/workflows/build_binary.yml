@@ -1,0 +1,55 @@
+# This is a basic workflow to help you get started with Actions
+
+name: CI
+
+# Controls when the action will run. Triggers the workflow on push or pull request
+# events but only for the master branch
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+
+      # Runs a single command using the runners shell
+      - name: Run a one-line script
+        run: echo Hello, world!
+
+      # Runs a set of commands using the runners shell
+      - name: Run a multi-line script
+        run: |
+          echo Add other actions to build,
+          echo test, and deploy your project.
+      - name: Go Release Binaries
+        uses: wangyoucao577/go-release-action@v1.8
+        with:
+          # GITHUB_TOKEN for uploading releases to Github asserts.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # GOOS is the running programs operating system target: one of darwin, freebsd, linux, and so on.
+          goos: linux # default is 
+          # GOARCH is the running programs architecture target: one of 386, amd64, arm, s390x, and so on.
+          goarch: amd64 # default is 
+          # The `Go` compiler version.
+          goversion: 1.14 # optional, default is 
+          # Additional arguments to pass the go build command.
+          build_flags: 5BytesOffset # optional, default is 
+          # Values to provide to the -ldflags argument
+          ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
+          # Where to run `go build .`
+          project_path: weed
+          # Specify another binary name if do not want to use repository basename
+          binary_name: weed_large_disk
+          # Extra command that will be executed before `go build`, may for solving dependency
+
+
