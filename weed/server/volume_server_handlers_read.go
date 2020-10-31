@@ -270,10 +270,3 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 	})
 	return nil
 }
-
-func (vs *VolumeServer) OptionsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Add("Access-Control-Allow-Origin", "*")
-	w.Header().Add("Access-Control-Allow-Methods", "PUT, POST, GET, DELETE, OPTIONS")
-	w.Header().Add("Access-Control-Allow-Headers", "Content-Type")
-	w.Header().Add("Access-Control-Allow-Credentials", "true")
-}

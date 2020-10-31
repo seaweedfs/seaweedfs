@@ -44,7 +44,8 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 		vs.guard.WhiteList(vs.PostHandler)(w, r)
 	case "OPTIONS":
 		stats.ReadRequest()
-		vs.guard.WhiteList(vs.OptionsHandler)(w, r)
+		w.Header().Add("Access-Control-Allow-Methods", "PUT, POST, GET, DELETE, OPTIONS")
+		w.Header().Add("Access-Control-Allow-Headers", "*")
 	}
 }
 
@@ -63,7 +64,8 @@ func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Req
 		vs.GetOrHeadHandler(w, r)
 	case "OPTIONS":
 		stats.ReadRequest()
-		vs.OptionsHandler(w, r)
+		w.Header().Add("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Add("Access-Control-Allow-Headers", "*")
 	}
 }
 
