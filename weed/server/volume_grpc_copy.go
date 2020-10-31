@@ -76,7 +76,7 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 			return err
 		}
 
-		os.Remove(volumeFileName+".note")
+		os.Remove(volumeFileName + ".note")
 
 		return nil
 	})

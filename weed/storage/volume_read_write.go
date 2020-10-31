@@ -61,7 +61,7 @@ func (v *Volume) Destroy() (err error) {
 }
 
 func removeVolumeFiles(filename string) {
-	os.Remove(filename+ ".dat")
+	os.Remove(filename + ".dat")
 	os.Remove(filename + ".idx")
 	os.Remove(filename + ".vif")
 	os.Remove(filename + ".sdx")
