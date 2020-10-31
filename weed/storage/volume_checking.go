@@ -22,7 +22,7 @@ func CheckAndFixVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAt
 		return 0, nil
 	}
 	healthyIndexSize := indexSize
-	for i := 1; i <= 10; i++ {
+	for i := 1; i <= 10 && indexSize >= int64(i)*NeedleMapEntrySize; i++ {
 		// check and fix last 10 entries
 		lastAppendAtNs, err = doCheckAndFixVolumeData(v, indexFile, indexSize-int64(i)*NeedleMapEntrySize)
 		if err == io.EOF {
