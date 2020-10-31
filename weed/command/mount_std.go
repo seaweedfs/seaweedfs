@@ -175,6 +175,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		Replication:                 *option.replication,
 		TtlSec:                      int32(*option.ttlSec),
 		ChunkSizeLimit:              int64(chunkSizeLimitMB) * 1024 * 1024,
+		ConcurrentWriters:           *option.concurrentWriters,
 		CacheDir:                    *option.cacheDir,
 		CacheSizeMB:                 *option.cacheSizeMB,
 		DataCenter:                  *option.dataCenter,
