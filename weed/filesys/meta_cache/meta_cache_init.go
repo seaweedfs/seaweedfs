@@ -16,7 +16,7 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 
 		glog.V(4).Infof("ReadDirAllEntries %s ...", path)
 
-		util.Retry("ReadDirAllEntries", filer.ReadWaitTime, func() error {
+		util.Retry("ReadDirAllEntries", func() error {
 			err = filer_pb.ReadDirAllEntries(client, dirPath, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
 				entry := filer.FromPbEntry(string(dirPath), pbEntry)
 				if err := mc.doInsertEntry(context.Background(), entry); err != nil {

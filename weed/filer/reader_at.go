@@ -3,20 +3,16 @@ package filer
 import (
 	"context"
 	"fmt"
+	"io"
+	"math/rand"
+	"sync"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"github.com/golang/groupcache/singleflight"
-	"io"
-	"math/rand"
-	"sync"
-	"time"
-)
-
-var (
-	ReadWaitTime = 6 * time.Second
 )
 
 type ChunkReadAt struct {
@@ -47,7 +43,7 @@ func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 		vicCacheLock.RUnlock()
 
 		if !found {
-			util.Retry("lookup volume "+vid, ReadWaitTime, func() error {
+			util.Retry("lookup volume "+vid, func() error {
 				err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 					resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
 						VolumeIds: []string{vid},

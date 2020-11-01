@@ -7,10 +7,12 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
-func Retry(name string, waitTimeLimit time.Duration, job func() error) (err error) {
+var RetryWaitTime = 6 * time.Second
+
+func Retry(name string, job func() error) (err error) {
 	waitTime := time.Second
 	hasErr := false
-	for waitTime < waitTimeLimit {
+	for waitTime < RetryWaitTime {
 		err = job()
 		if err == nil {
 			if hasErr {
