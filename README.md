@@ -141,7 +141,11 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 
 [Back to TOC](#table-of-contents)
 
-## Example Usage ##
+## Quick Start ##
+* Download the latest binary from https://github.com/chrislusf/seaweedfs/releases and unzip a single binary file `weed` or `weed.exe`
+* Run `weed server -s3` to start one master, one volume server, one filer, and one S3 gateway.
+
+## Example: Using Seaweed Object Store ##
 
 By default, the master node runs on port 9333, and the volume nodes run on port 8080.
 Let's start one master node, and two volume nodes on port 8080 and 8081. Ideally, they should be started from different machines. We'll use localhost as an example.
