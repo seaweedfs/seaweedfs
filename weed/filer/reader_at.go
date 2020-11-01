@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"github.com/golang/groupcache/singleflight"
@@ -45,34 +46,29 @@ func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 		locations, found := vidCache[vid]
 		vicCacheLock.RUnlock()
 
-		waitTime := time.Second
-		for !found && waitTime < ReadWaitTime {
-			// println("looking up volume", vid)
-			err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-				resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
-					VolumeIds: []string{vid},
+		if !found {
+			util.Retry("lookup volume "+vid, ReadWaitTime, func() error {
+				err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+					resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
+						VolumeIds: []string{vid},
+					})
+					if err != nil {
+						return err
+					}
+
+					locations = resp.LocationsMap[vid]
+					if locations == nil || len(locations.Locations) == 0 {
+						glog.V(0).Infof("failed to locate %s", fileId)
+						return fmt.Errorf("failed to locate %s", fileId)
+					}
+					vicCacheLock.Lock()
+					vidCache[vid] = locations
+					vicCacheLock.Unlock()
+
+					return nil
 				})
-				if err != nil {
-					return err
-				}
-
-				locations = resp.LocationsMap[vid]
-				if locations == nil || len(locations.Locations) == 0 {
-					glog.V(0).Infof("failed to locate %s", fileId)
-					return fmt.Errorf("failed to locate %s", fileId)
-				}
-				vicCacheLock.Lock()
-				vidCache[vid] = locations
-				vicCacheLock.Unlock()
-
-				return nil
+				return err
 			})
-			if err == nil {
-				break
-			}
-			glog.V(1).Infof("wait for volume %s", vid)
-			time.Sleep(waitTime)
-			waitTime += waitTime / 2
 		}
 
 		if err != nil {

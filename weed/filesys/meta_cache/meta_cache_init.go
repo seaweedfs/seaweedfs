@@ -3,8 +3,6 @@ package meta_cache
 import (
 	"context"
 	"fmt"
-	"strings"
-	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -18,7 +16,7 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 
 		glog.V(4).Infof("ReadDirAllEntries %s ...", path)
 
-		for waitTime := time.Second; waitTime < filer.ReadWaitTime; waitTime += waitTime / 2 {
+		util.Retry("ReadDirAllEntries", filer.ReadWaitTime, func() error {
 			err = filer_pb.ReadDirAllEntries(client, dirPath, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
 				entry := filer.FromPbEntry(string(dirPath), pbEntry)
 				if err := mc.doInsertEntry(context.Background(), entry); err != nil {
@@ -30,17 +28,13 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 				}
 				return nil
 			})
-			if err == nil {
-				break
-			}
-			if strings.Contains(err.Error(), "transport: ") {
-				glog.V(0).Infof("ReadDirAllEntries %s: %v. Retry in %v", path, err, waitTime)
-				time.Sleep(waitTime)
-				continue
-			}
+			return err
+		})
+
+		if err != nil {
 			err = fmt.Errorf("list %s: %v", dirPath, err)
-			break
 		}
+
 		return
 	})
 }
