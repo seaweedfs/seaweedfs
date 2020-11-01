@@ -5,7 +5,6 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 
@@ -152,7 +151,7 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 }
 
 func (mc *MasterClient) WithClient(fn func(client master_pb.SeaweedClient) error) error {
-	return util.Retry("master grpc", filer.ReadWaitTime, func() error {
+	return util.Retry("master grpc", 6*time.Second, func() error {
 		for mc.currentMaster == "" {
 			time.Sleep(3 * time.Second)
 		}
