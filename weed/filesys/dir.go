@@ -364,6 +364,12 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 	dir.wfs.metaCache.DeleteEntry(context.Background(), filePath)
 	dir.wfs.fsNodeCache.DeleteFsNode(filePath)
 
+	// remove current file handle if any
+	dir.wfs.handlesLock.Lock()
+	defer dir.wfs.handlesLock.Unlock()
+	inodeId := util.NewFullPath(dir.FullPath(), req.Name).AsInode()
+	delete(dir.wfs.handles, inodeId)
+
 	// delete the chunks last
 	if isDeleteData {
 		dir.wfs.deleteFileChunks(entry.Chunks)
