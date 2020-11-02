@@ -362,6 +362,14 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 
 	// then, delete meta cache and fsNode cache
 	dir.wfs.metaCache.DeleteEntry(context.Background(), filePath)
+
+	// clear entry inside the file
+	fsNode := dir.wfs.fsNodeCache.GetFsNode(filePath)
+	if fsNode != nil {
+		if file, ok := fsNode.(*File); ok {
+			file.clearEntry()
+		}
+	}
 	dir.wfs.fsNodeCache.DeleteFsNode(filePath)
 
 	// remove current file handle if any
