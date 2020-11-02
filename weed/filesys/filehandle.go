@@ -183,17 +183,20 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 	}
 
 	if fh.f.isOpen == 0 {
+
 		if err := fh.doFlush(ctx, req.Header); err != nil {
 			glog.Errorf("Release doFlush %s: %v", fh.f.Name, err)
 		}
+
+		// stop the goroutine
+		if !fh.dirtyPages.chunkSaveErrChanClosed {
+			fh.dirtyPages.chunkSaveErrChanClosed = true
+			close(fh.dirtyPages.chunkSaveErrChan)
+		}
+
 		fh.f.wfs.ReleaseHandle(fh.f.fullpath(), fuse.HandleID(fh.handle))
 	}
 
-	// stop the goroutine
-	if !fh.dirtyPages.chunkSaveErrChanClosed {
-		fh.dirtyPages.chunkSaveErrChanClosed = true
-		close(fh.dirtyPages.chunkSaveErrChan)
-	}
 
 	return nil
 }
