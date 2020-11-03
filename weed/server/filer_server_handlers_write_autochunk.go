@@ -186,7 +186,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 	for k, v := range r.Header {
 		if len(v) > 0 && strings.HasPrefix(k, needle.PairNamePrefix) {
-			entry.Extended[k[len(needle.PairNamePrefix):]] = []byte(v[0])
+			entry.Extended[k] = []byte(v[0])
 		}
 	}
 
