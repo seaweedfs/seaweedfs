@@ -21,6 +21,7 @@ import (
 	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -177,7 +178,17 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		Size: chunkOffset,
 	}
 
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	}
+
 	fs.saveAmzMetaData(r, entry)
+
+	for k, v := range r.Header {
+		if len(v) > 0 && strings.HasPrefix(k, needle.PairNamePrefix) {
+			entry.Extended[k[len(needle.PairNamePrefix):]] = []byte(v[0])
+		}
+	}
 
 	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil); dbErr != nil {
 		fs.filer.DeleteChunks(entry.Chunks)
@@ -313,10 +324,6 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 }
 
 func (fs *FilerServer) saveAmzMetaData(r *http.Request, entry *filer.Entry) {
-
-	if entry.Extended == nil {
-		entry.Extended = make(map[string][]byte)
-	}
 
 	if sc := r.Header.Get(xhttp.AmzStorageClass); sc != "" {
 		entry.Extended[xhttp.AmzStorageClass] = []byte(sc)
