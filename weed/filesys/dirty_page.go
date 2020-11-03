@@ -15,10 +15,10 @@ type ContinuousDirtyPages struct {
 	intervals              *ContinuousIntervals
 	f                      *File
 	writeWaitGroup         sync.WaitGroup
+	chunkAddLock           sync.Mutex
 	chunkSaveErrChan       chan error
 	chunkSaveErrChanClosed bool
 	lastErr                error
-	lock                   sync.Mutex
 	collection             string
 	replication            string
 }
@@ -117,6 +117,8 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 		}
 		chunk.Mtime = mtime
 		pages.collection, pages.replication = collection, replication
+		pages.chunkAddLock.Lock()
+		defer pages.chunkAddLock.Unlock()
 		pages.f.addChunks([]*filer_pb.FileChunk{chunk})
 		glog.V(3).Infof("%s saveToStorage [%d,%d)", pages.f.fullpath(), offset, offset+size)
 	}
