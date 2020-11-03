@@ -282,15 +282,37 @@ func (file *File) maybeLoadEntry(ctx context.Context) (entry *filer_pb.Entry, er
 	return entry, nil
 }
 
+func lessThan(a, b *filer_pb.FileChunk) bool {
+	if a.Mtime == b.Mtime {
+		return a.Fid.FileKey < b.Fid.FileKey
+	}
+	return a.Mtime < b.Mtime
+}
+
 func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 
-	sort.Slice(chunks, func(i, j int) bool {
-		if chunks[i].Mtime == chunks[j].Mtime {
-			return chunks[i].Fid.FileKey < chunks[j].Fid.FileKey
+	// find the earliest incoming chunk
+	newChunks := chunks
+	earliestChunk := newChunks[0]
+	for i:=1;i<len(newChunks);i++{
+		if lessThan(earliestChunk, newChunks[i]) {
+			earliestChunk = newChunks[i]
 		}
-		return chunks[i].Mtime < chunks[j].Mtime
+	}
+
+	// pick out-of-order chunks from existing chunks
+	for _, chunk := range file.entry.Chunks {
+		if lessThan(earliestChunk, chunk) {
+			chunks = append(chunks, chunk)
+		}
+	}
+
+	// sort incoming chunks
+	sort.Slice(chunks, func(i, j int) bool {
+		return lessThan(chunks[i], chunks[j])
 	})
 
+	// add to entry view cache
 	for _, chunk := range chunks {
 		file.entryViewCache = filer.MergeIntoVisibles(file.entryViewCache, chunk)
 	}
@@ -299,7 +321,7 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 
 	glog.V(4).Infof("%s existing %d chunks adds %d more", file.fullpath(), len(file.entry.Chunks), len(chunks))
 
-	file.entry.Chunks = append(file.entry.Chunks, chunks...)
+	file.entry.Chunks = append(file.entry.Chunks, newChunks...)
 }
 
 func (file *File) setEntry(entry *filer_pb.Entry) {
