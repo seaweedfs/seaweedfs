@@ -81,14 +81,11 @@ func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, 
 	if ok {
 		data = bytesReader.Bytes
 	} else {
-		buf := bytebufferpool.Get()
-		_, err = buf.ReadFrom(reader)
-		defer bytebufferpool.Put(buf)
+		data, err = ioutil.ReadAll(reader)
 		if err != nil {
 			err = fmt.Errorf("read input: %v", err)
 			return
 		}
-		data = buf.Bytes()
 	}
 	uploadResult, uploadErr := retriedUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
 	return uploadResult, uploadErr, data
