@@ -143,7 +143,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 
 ## Quick Start ##
 * Download the latest binary from https://github.com/chrislusf/seaweedfs/releases and unzip a single binary file `weed` or `weed.exe`
-* Run `weed server -s3` to start one master, one volume server, one filer, and one S3 gateway.
+* Run `weed server -dir=. -s3` to start one master, one volume server, one filer, and one S3 gateway, with data stored in current directory.
 
 ## Example: Using Seaweed Object Store ##
 
