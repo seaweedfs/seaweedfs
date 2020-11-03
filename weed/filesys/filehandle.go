@@ -264,7 +264,6 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 			glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
 		}
 		fh.f.entry.Chunks = append(chunks, manifestChunks...)
-		fh.f.entryViewCache = nil
 
 		fh.f.wfs.mapPbIdFromLocalToFiler(request.Entry)
 		defer fh.f.wfs.mapPbIdFromFilerToLocal(request.Entry)

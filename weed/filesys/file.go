@@ -144,7 +144,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 				}
 			}
 			file.entry.Chunks = chunks
-			file.entryViewCache = nil
+			file.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(filer.LookupFn(file.wfs), chunks)
 			file.reader = nil
 			file.wfs.deleteFileChunks(truncatedChunks)
 		}
