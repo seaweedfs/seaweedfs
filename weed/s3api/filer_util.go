@@ -3,10 +3,13 @@ package s3api
 import (
 	"context"
 	"fmt"
-	"strings"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
+	proto "github.com/golang/protobuf/proto"
+	"google.golang.org/grpc"
+	"strings"
 )
 
 func (s3a *S3ApiServer) mkdir(parentDirectoryPath string, dirName string, fn func(entry *filer_pb.Entry)) error {
@@ -74,6 +77,104 @@ func (s3a *S3ApiServer) exists(parentDirectoryPath string, entryName string, isD
 	return filer_pb.Exists(s3a, parentDirectoryPath, entryName, isDirectory)
 
 }
+
+func loadS3config(iam *IdentityAccessManagement, option *S3ApiServerOption) error {
+	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
+		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+		resp, err := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: "/.configs",
+			Name:      "s3identities",
+		})
+		if err != nil {
+			return err
+		}
+		for name, ident := range resp.Entry.Extended {
+			t := &Identity{
+				Name:        name,
+				Credentials: nil,
+				Actions:     nil,
+			}
+			identity := &iam_pb.Identity{}
+			if err := proto.Unmarshal(ident, identity); err != nil {
+				return err
+			}
+			for _, action := range identity.Actions {
+				t.Actions = append(t.Actions, Action(action))
+			}
+			for _, cred := range identity.Credentials {
+				t.Credentials = append(t.Credentials, &Credential{
+					AccessKey: cred.AccessKey,
+					SecretKey: cred.SecretKey,
+				})
+				glog.V(0).Infof("AccessKey %s, SecretKey: %s", cred.AccessKey, cred.SecretKey)
+			}
+			iam.identities = append(iam.identities, t)
+		}
+		return nil
+	}, option.FilerGrpcAddress, option.GrpcDialOption)
+}
+
+/* testing save
+func saveS3config(iam *IdentityAccessManagement, option *S3ApiServerOption) (error) {
+	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
+		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+		entry := &filer_pb.Entry{
+			Name:        "s3identities",
+			IsDirectory: false,
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime:		time.Now().Unix(),
+				Crtime:      time.Now().Unix(),
+				FileMode:    uint32(0644),
+				Collection:  "",
+				Replication: "",
+			},
+			Extended: make(map[string][]byte),
+		}
+		for _, identity := range iam.identities {
+			glog.V(0).Infof("get iam identities %s", identity.Name)
+			i := &iam_pb.Identity{
+				Name:        identity.Name,
+				Credentials: []*iam_pb.Credential{},
+				Actions:    []string{},
+			}
+			for _, cred := range identity.Credentials {
+				i.Credentials = append(i.Credentials, &iam_pb.Credential{
+					AccessKey: cred.AccessKey,
+					SecretKey: cred.SecretKey,
+				})
+			}
+			for _, action := range identity.Actions {
+				i.Actions = append(i.Actions, string(action))
+			}
+			ident, err := proto.Marshal(i)
+			if err != nil {
+				return err
+			}
+			entry.Extended[identity.Name] = ident
+		}
+		_, err := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: "/.configs",
+			Name:      "s3identities",
+		})
+		if err == filer_pb.ErrNotFound {
+			err = filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
+				Directory:          "/.configs",
+				Entry:              entry,
+				IsFromOtherCluster: false,
+				Signatures:         nil,
+			})
+		} else {
+			err = filer_pb.UpdateEntry(client, &filer_pb.UpdateEntryRequest{
+				Directory:          "/.configs",
+				Entry:              entry,
+				IsFromOtherCluster: false,
+				Signatures:         nil,
+			})
+		}
+		return err
+	},option.FilerGrpcAddress, option.GrpcDialOption)
+}
+*/
 
 func objectKey(key *string) *string {
 	if strings.HasPrefix(*key, "/") {

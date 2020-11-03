@@ -43,15 +43,17 @@ type Credential struct {
 	SecretKey string
 }
 
-func NewIdentityAccessManagement(fileName string, domain string) *IdentityAccessManagement {
+func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManagement {
 	iam := &IdentityAccessManagement{
-		domain: domain,
+		domain: option.DomainName,
 	}
-	if fileName == "" {
-		return iam
+	if err := loadS3config(iam, option); err != nil {
+		glog.Warningf("fail to load config %v", err)
 	}
-	if err := iam.loadS3ApiConfiguration(fileName); err != nil {
-		glog.Fatalf("fail to load config file %s: %v", fileName, err)
+	if len(iam.identities) == 0 && option.Config != "" {
+		if err := iam.loadS3ApiConfiguration(option.Config); err != nil {
+			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
+		}
 	}
 	return iam
 }
@@ -59,7 +61,6 @@ func NewIdentityAccessManagement(fileName string, domain string) *IdentityAccess
 func (iam *IdentityAccessManagement) loadS3ApiConfiguration(fileName string) error {
 
 	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
-
 	rawData, readErr := ioutil.ReadFile(fileName)
 	if readErr != nil {
 		glog.Warningf("fail to read %s : %v", fileName, readErr)
