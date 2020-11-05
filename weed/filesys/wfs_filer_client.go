@@ -1,6 +1,7 @@
 package filesys
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -11,10 +12,12 @@ var _ = filer_pb.FilerClient(&WFS{})
 
 func (wfs *WFS) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	err := pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
-		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		return fn(client)
-	}, wfs.option.FilerGrpcAddress, wfs.option.GrpcDialOption)
+	err := util.Retry("filer grpc", func() error {
+		return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
+			client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+			return fn(client)
+		}, wfs.option.FilerGrpcAddress, wfs.option.GrpcDialOption)
+	})
 
 	if err == nil {
 		return nil

@@ -203,6 +203,7 @@ func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDi
 			}
 		case <-volumeTickChan:
 			glog.V(4).Infof("volume server %s:%d heartbeat", vs.store.Ip, vs.store.Port)
+			vs.store.MaybeAdjustVolumeMax()
 			if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
 				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
 				return "", err
@@ -216,6 +217,23 @@ func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDi
 		case err = <-doneChan:
 			return
 		case <-vs.stopChan:
+			var volumeMessages []*master_pb.VolumeInformationMessage
+			emptyBeat := &master_pb.Heartbeat{
+				Ip:             vs.store.Ip,
+				Port:           uint32(vs.store.Port),
+				PublicUrl:      vs.store.PublicUrl,
+				MaxVolumeCount: uint32(0),
+				MaxFileKey:     uint64(0),
+				DataCenter:     vs.store.GetDataCenter(),
+				Rack:           vs.store.GetRack(),
+				Volumes:        volumeMessages,
+				HasNoVolumes:   len(volumeMessages) == 0,
+			}
+			glog.V(1).Infof("volume server %s:%d stops and deletes all volumes", vs.store.Ip, vs.store.Port)
+			if err = stream.Send(emptyBeat); err != nil {
+				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterNode, err)
+				return "", err
+			}
 			return
 		}
 	}

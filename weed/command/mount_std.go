@@ -5,8 +5,6 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"os"
 	"os/user"
 	"path"
@@ -14,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
@@ -33,7 +33,7 @@ func runMount(cmd *Command, args []string) bool {
 	if *mountReadRetryTime < time.Second {
 		*mountReadRetryTime = time.Second
 	}
-	filer.ReadWaitTime = *mountReadRetryTime
+	util.RetryWaitTime = *mountReadRetryTime
 
 	umask, umaskErr := strconv.ParseUint(*mountOptions.umaskString, 8, 64)
 	if umaskErr != nil {
@@ -175,6 +175,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		Replication:                 *option.replication,
 		TtlSec:                      int32(*option.ttlSec),
 		ChunkSizeLimit:              int64(chunkSizeLimitMB) * 1024 * 1024,
+		ConcurrentWriters:           *option.concurrentWriters,
 		CacheDir:                    *option.cacheDir,
 		CacheSizeMB:                 *option.cacheSizeMB,
 		DataCenter:                  *option.dataCenter,

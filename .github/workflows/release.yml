@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v2
+
+    - name: Go Release Binaries
+      uses: wangyoucao577/go-release-action@feature/customize-target-release
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        goos: linux # default is 
+        goarch: amd64 # default is 
+        release_tag: dev
+        overwrite: true 
+        build_flags: -tags 5BytesOffset # optional, default is 
+        ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
+        # Where to run `go build .`
+        project_path: weed
+        binary_name: weed-large-disk
+    - name: Go Release Binaries
+      uses: wangyoucao577/go-release-action@feature/customize-target-release
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        goos: linux # default is 
+        goarch: amd64 # default is 
+        release_tag: dev
+        overwrite: true 
+        ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
+        # Where to run `go build .`
+        project_path: weed
+        binary_name: weed

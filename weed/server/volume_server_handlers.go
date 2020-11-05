@@ -1,9 +1,10 @@
 package weed_server
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"net/http"
 	"strings"
+
+	"github.com/chrislusf/seaweedfs/weed/util"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -27,6 +28,10 @@ security settings:
 
 func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
+	if r.Header.Get("Origin") != "" {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+	}
 	switch r.Method {
 	case "GET", "HEAD":
 		stats.ReadRequest()
@@ -37,11 +42,19 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 	case "PUT", "POST":
 		stats.WriteRequest()
 		vs.guard.WhiteList(vs.PostHandler)(w, r)
+	case "OPTIONS":
+		stats.ReadRequest()
+		w.Header().Add("Access-Control-Allow-Methods", "PUT, POST, GET, DELETE, OPTIONS")
+		w.Header().Add("Access-Control-Allow-Headers", "*")
 	}
 }
 
 func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
+	if r.Header.Get("Origin") != "" {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+	}
 	switch r.Method {
 	case "GET":
 		stats.ReadRequest()
@@ -49,6 +62,10 @@ func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Req
 	case "HEAD":
 		stats.ReadRequest()
 		vs.GetOrHeadHandler(w, r)
+	case "OPTIONS":
+		stats.ReadRequest()
+		w.Header().Add("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Add("Access-Control-Allow-Headers", "*")
 	}
 }
 

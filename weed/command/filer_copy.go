@@ -219,7 +219,7 @@ func genFileCopyTask(fileOrDir string, destPath string, fileCopyTaskChan chan Fi
 
 	fileCopyTaskChan <- FileCopyTask{
 		sourceLocation:     fileOrDir,
-		destinationUrlPath: destPath+fi.Name(),
+		destinationUrlPath: destPath,
 		fileSize:           fi.Size(),
 		fileMode:           fi.Mode(),
 		uid:                uid,
@@ -405,7 +405,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 					Replication: *worker.options.replication,
 					Collection:  *worker.options.collection,
 					TtlSec:      worker.options.ttlSec,
-					Path:        task.destinationUrlPath+fileName,
+					Path:        task.destinationUrlPath + fileName,
 				}
 
 				assignResult, assignError = client.AssignVolume(context.Background(), request)

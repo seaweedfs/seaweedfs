@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -150,10 +151,12 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 }
 
 func (mc *MasterClient) WithClient(fn func(client master_pb.SeaweedClient) error) error {
-	for mc.currentMaster == "" {
-		time.Sleep(3 * time.Second)
-	}
-	return pb.WithMasterClient(mc.currentMaster, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
-		return fn(client)
+	return util.Retry("master grpc", func() error {
+		for mc.currentMaster == "" {
+			time.Sleep(3 * time.Second)
+		}
+		return pb.WithMasterClient(mc.currentMaster, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
+			return fn(client)
+		})
 	})
 }

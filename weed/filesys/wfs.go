@@ -31,6 +31,7 @@ type Option struct {
 	Replication        string
 	TtlSec             int32
 	ChunkSizeLimit     int64
+	ConcurrentWriters  int
 	CacheDir           string
 	CacheSizeMB        int64
 	DataCenter         string
@@ -68,6 +69,9 @@ type WFS struct {
 	chunkCache *chunk_cache.TieredChunkCache
 	metaCache  *meta_cache.MetaCache
 	signature  int32
+
+	// throttle writers
+	concurrentWriters *util.LimitedConcurrentExecutor
 }
 type statsCache struct {
 	filer_pb.StatisticsResponse
@@ -96,7 +100,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		fsNode := wfs.fsNodeCache.GetFsNode(filePath)
 		if fsNode != nil {
 			if file, ok := fsNode.(*File); ok {
-				file.entry = nil
+				file.clearEntry()
 			}
 		}
 	})
@@ -109,6 +113,10 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	entry, _ := filer_pb.GetEntry(wfs, util.FullPath(wfs.option.FilerMountRootPath))
 	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs, entry: entry}
 	wfs.fsNodeCache = newFsCache(wfs.root)
+
+	if wfs.option.ConcurrentWriters > 0 {
+		wfs.concurrentWriters = util.NewLimitedConcurrentExecutor(wfs.option.ConcurrentWriters)
+	}
 
 	return wfs
 }

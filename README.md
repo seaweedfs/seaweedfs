@@ -62,7 +62,8 @@ Table of Contents
 * [Features](#features)
     * [Additional Features](#additional-features)
     * [Filer Features](#filer-features)
-* [Example Usage](#example-usage)
+* [Quick Start](#quick-start)
+* [Example: Using Seaweed Object Store](#example-Using-Seaweed-Object-Store)
 * [Architecture](#architecture)
 * [Compared to Other File Systems](#compared-to-other-file-systems)
     * [Compared to HDFS](#compared-to-hdfs)
@@ -101,7 +102,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 * Automatic compaction to reclaim disk space after deletion or update.
 * [Automatic entry TTL expiration][VolumeServerTTL].
 * Any server with some disk spaces can add to the total storage space.
-* Adding/Removing servers does **not** cause any data re-balancing.
+* Adding/Removing servers does **not** cause any data re-balancing unless triggered by admin commands.
 * Optional picture resizing.
 * Support ETag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/readonly mode tuning for memory/performance balance.
@@ -141,7 +142,13 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 
 [Back to TOC](#table-of-contents)
 
-## Example Usage ##
+## Quick Start ##
+* Download the latest binary from https://github.com/chrislusf/seaweedfs/releases and unzip a single binary file `weed` or `weed.exe`
+* Run `weed server -dir=. -s3` to start one master, one volume server, one filer, and one S3 gateway, with data stored in current directory.
+
+You can also start each module individually. See `weed -h`, or `weed <command> -h` for help.
+
+## Example: Using Seaweed Object Store ##
 
 By default, the master node runs on port 9333, and the volume nodes run on port 8080.
 Let's start one master node, and two volume nodes on port 8080 and 8081. Ideally, they should be started from different machines. We'll use localhost as an example.
@@ -425,9 +432,10 @@ SeaweedFS Filer uses off-the-shelf stores, such as MySql, Postgres, Mongodb, Red
 
 MinIO follows AWS S3 closely and is ideal for testing for S3 API. It has good UI, policies, versionings, etc. SeaweedFS is trying to catch up here. It is also possible to put MinIO as a gateway in front of SeaweedFS later.
 
-MinIO metadata are in simple files. Each file write will incur meta file writes.
+MinIO metadata are in simple files. Each file write will incur extra writes to corresponding meta file.
 
-MinIO does not have optimization for large number of small files.
+MinIO does not have optimization for lots of small files. The files are simply stored as is to local disks.
+Plus the extra meta file and shards for erasure coding, it only amplifies the LOSF problem.
 
 MinIO has multiple disk IO to read one file. SeaweedFS has O(1) disk reads, even for erasure coded files.
 
@@ -439,16 +447,13 @@ MinIO has specific requirements on storage layout. It is not flexible to adjust 
 
 ## Dev Plan ##
 
-More tools and documentation, on how to maintain and scale the system. For example, how to move volumes, automatically balancing data, how to grow volumes, how to check system status, etc.
-Other key features include: Erasure Encoding, JWT security.
+* More tools and documentation, on how to manage and scale the system. For example, how to move volumes, automatically balancing data, how to grow volumes, how to check system status, etc.
+* Integrate with Kubernetes. build [SeaweedFS Operator](https://github.com/seaweedfs/seaweedfs-operator).
+* Add ftp server.
+* Read and write stream data.
+* Support structured data.
 
 This is a super exciting project! And we need helpers and [support](https://www.patreon.com/seaweedfs)!
-
-BTW, We suggest run the code style check script `util/gostd` before you push your branch to remote, it will make SeaweedFS easy to review, maintain and develop:
-
-```
-$ ./util/gostd
-```
 
 [Back to TOC](#table-of-contents)
 

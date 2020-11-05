@@ -27,6 +27,7 @@ type Dir struct {
 
 var _ = fs.Node(&Dir{})
 var _ = fs.NodeCreater(&Dir{})
+var _ = fs.NodeMknoder(&Dir{})
 var _ = fs.NodeMkdirer(&Dir{})
 var _ = fs.NodeFsyncer(&Dir{})
 var _ = fs.NodeRequestLookuper(&Dir{})
@@ -177,6 +178,20 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	fh := dir.wfs.AcquireHandle(file, req.Uid, req.Gid)
 	return file, fh, nil
 
+}
+
+func (dir *Dir) Mknod(ctx context.Context, req *fuse.MknodRequest) (fs.Node, error) {
+	if req.Mode&os.ModeNamedPipe != 0 {
+		glog.V(1).Infof("mknod named pipe %s", req.String())
+		return nil, fuse.ENOSYS
+	}
+	if req.Mode&req.Mode&os.ModeSocket != 0 {
+		glog.V(1).Infof("mknod socket %s", req.String())
+		return nil, fuse.ENOSYS
+	}
+	// not going to support mknod for normal files either
+	glog.V(1).Infof("mknod %s", req.String())
+	return nil, fuse.ENOSYS
 }
 
 func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
@@ -347,7 +362,21 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 
 	// then, delete meta cache and fsNode cache
 	dir.wfs.metaCache.DeleteEntry(context.Background(), filePath)
+
+	// clear entry inside the file
+	fsNode := dir.wfs.fsNodeCache.GetFsNode(filePath)
+	if fsNode != nil {
+		if file, ok := fsNode.(*File); ok {
+			file.clearEntry()
+		}
+	}
 	dir.wfs.fsNodeCache.DeleteFsNode(filePath)
+
+	// remove current file handle if any
+	dir.wfs.handlesLock.Lock()
+	defer dir.wfs.handlesLock.Unlock()
+	inodeId := util.NewFullPath(dir.FullPath(), req.Name).AsInode()
+	delete(dir.wfs.handles, inodeId)
 
 	// delete the chunks last
 	if isDeleteData {

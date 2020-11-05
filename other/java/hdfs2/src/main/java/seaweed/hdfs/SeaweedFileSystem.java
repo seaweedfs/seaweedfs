@@ -66,6 +66,12 @@ public class SeaweedFileSystem extends FileSystem {
     }
 
     @Override
+    public void close() throws IOException {
+        this.seaweedFileSystemStore.close();
+        super.close();
+    }
+
+    @Override
     public FSDataInputStream open(Path path, int bufferSize) throws IOException {
 
         LOG.debug("open path: {} bufferSize:{}", path, bufferSize);

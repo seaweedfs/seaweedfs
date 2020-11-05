@@ -15,6 +15,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -90,6 +91,24 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 					return
 				}
 			}
+		}
+	}
+
+	// print out the header from extended properties
+	for k, v := range entry.Extended {
+		w.Header().Set(k, string(v))
+	}
+
+	//set tag count
+	if r.Method == "GET" {
+		tagCount := 0
+		for k := range entry.Extended {
+			if strings.HasPrefix(k, xhttp.AmzObjectTagging+"-") {
+				tagCount++
+			}
+		}
+		if tagCount > 0 {
+			w.Header().Set(xhttp.AmzTagCount, strconv.Itoa(tagCount))
 		}
 	}
 

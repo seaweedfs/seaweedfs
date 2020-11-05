@@ -24,6 +24,8 @@ const (
 	TtlBytesLength          = 2
 )
 
+var ErrorSizeMismatch = errors.New("size mismatch")
+
 func (n *Needle) DiskSize(version Version) int64 {
 	return GetActualSize(n.Size, version)
 }
@@ -168,6 +170,11 @@ func ReadNeedleBlob(r backend.BackendStorageFile, offset int64, size Size, versi
 func (n *Needle) ReadBytes(bytes []byte, offset int64, size Size, version Version) (err error) {
 	n.ParseNeedleHeader(bytes)
 	if n.Size != size {
+		// cookie is not always passed in for this API. Use size to do preliminary checking.
+		if OffsetSize == 4 && offset < int64(MaxPossibleVolumeSize) {
+			glog.Errorf("entry not found1: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
+			return ErrorSizeMismatch
+		}
 		return fmt.Errorf("entry not found: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
 	}
 	switch version {
