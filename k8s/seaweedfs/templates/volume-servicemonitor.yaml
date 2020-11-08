@@ -15,4 +15,4 @@ spec:
   selector:
     app: {{ template "seaweedfs.name" . }}
     component: volume
-{{- end }}}
+{{- end }}

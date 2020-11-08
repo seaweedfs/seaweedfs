@@ -101,7 +101,7 @@ spec:
               -port={{ .Values.filer.port }} \
               {{- if .Values.filer.metricsPort }}
               -metricsPort {{ .Values.filer.metricsPort }} \
-              {{- end }}}
+              {{- end }}
               {{- if .Values.filer.redirectOnRead }}
               -redirectOnRead \
               {{- end }}

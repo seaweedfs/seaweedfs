@@ -78,7 +78,7 @@ spec:
                 -port={{ .Values.volume.port }} \
                 {{- if .Values.volume.metricsPort }}
                 -metricsPort {{ .Values.volume.metricsPort }} \
-                {{- end }}}
+                {{- end }}
                 -dir={{ .Values.volume.dir }} \
                 -max={{ .Values.volume.maxVolumes }} \
                 {{- if .Values.volume.rack }}
