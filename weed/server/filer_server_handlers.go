@@ -26,11 +26,19 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		stats.FilerRequestHistogram.WithLabelValues("head").Observe(time.Since(start).Seconds())
 	case "DELETE":
 		stats.FilerRequestCounter.WithLabelValues("delete").Inc()
-		fs.DeleteHandler(w, r)
+		if _, ok := r.URL.Query()["tagging"]; ok {
+			fs.DeleteTaggingHandler(w,r)
+		} else {
+			fs.DeleteHandler(w, r)
+		}
 		stats.FilerRequestHistogram.WithLabelValues("delete").Observe(time.Since(start).Seconds())
 	case "PUT":
 		stats.FilerRequestCounter.WithLabelValues("put").Inc()
-		fs.PostHandler(w, r)
+		if _, ok := r.URL.Query()["tagging"]; ok {
+			fs.PutTaggingHandler(w,r)
+		} else {
+			fs.PostHandler(w, r)
+		}
 		stats.FilerRequestHistogram.WithLabelValues("put").Observe(time.Since(start).Seconds())
 	case "POST":
 		stats.FilerRequestCounter.WithLabelValues("post").Inc()
