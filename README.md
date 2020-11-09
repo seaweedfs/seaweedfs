@@ -144,7 +144,9 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 
 ## Quick Start ##
 * Download the latest binary from https://github.com/chrislusf/seaweedfs/releases and unzip a single binary file `weed` or `weed.exe`
-* Run `weed server -dir=. -s3` to start one master, one volume server, one filer, and one S3 gateway, with data stored in current directory.
+* Run `weed server -dir=/some/data/dir -s3` to start one master, one volume server, one filer, and one S3 gateway.
+
+Also, to increase capacity, just add more volume servers by `weed volume -dir="/some/data/dir2" -mserver="<master_host>:9333" -port=8081` locally or a different machine. That is it!
 
 You can also start each module individually. See `weed -h`, or `weed <command> -h` for help.
 
