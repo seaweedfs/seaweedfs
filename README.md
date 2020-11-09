@@ -148,8 +148,6 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 
 Also, to increase capacity, just add more volume servers by `weed volume -dir="/some/data/dir2" -mserver="<master_host>:9333" -port=8081` locally or a different machine. That is it!
 
-You can also start each module individually. See `weed -h`, or `weed <command> -h` for help.
-
 ## Example: Using Seaweed Object Store ##
 
 By default, the master node runs on port 9333, and the volume nodes run on port 8080.
