@@ -22,7 +22,7 @@ spec:
     port: {{ .Values.volume.metricsPort }}
     targetPort: {{ .Values.volume.metricsPort }}
     protocol: TCP
-{{- end }}}
+{{- end }}
 selector:
     app: {{ template "seaweedfs.name" . }}
     component: volume
