@@ -169,7 +169,7 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 		uploadResult, err = upload_content(uploadUrl, func(w io.Writer) (err error) {
 			_, err = w.Write(data)
 			return
-		}, filename, contentIsGzipped, 0, mtype, pairMap, jwt)
+		}, filename, contentIsGzipped, len(data), mtype, pairMap, jwt)
 	}
 
 	if uploadResult == nil {
