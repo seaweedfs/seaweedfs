@@ -28,3 +28,8 @@ const (
 	AmzObjectTagging = "X-Amz-Tagging"
 	AmzTagCount      = "x-amz-tagging-count"
 )
+
+// Non-Standard S3 HTTP request constants
+const (
+	AmzIdentityId = "x-amz-identity-id"
+)
