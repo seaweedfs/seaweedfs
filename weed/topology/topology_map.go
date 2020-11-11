@@ -62,9 +62,8 @@ func (t *Topology) ToVolumeLocations() (volumeLocations []*master_pb.VolumeLocat
 			for _, d := range rack.Children() {
 				dn := d.(*DataNode)
 				volumeLocation := &master_pb.VolumeLocation{
-					Url:        dn.Url(),
-					PublicUrl:  dn.PublicUrl,
-					DataCenter: dn.GetDataCenter().String(),
+					Url:       dn.Url(),
+					PublicUrl: dn.PublicUrl,
 				}
 				for _, v := range dn.GetVolumes() {
 					volumeLocation.NewVids = append(volumeLocation.NewVids, uint32(v.Id))

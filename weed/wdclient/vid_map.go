@@ -98,6 +98,7 @@ func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) 
 func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
 	vc.RLock()
 	defer vc.RUnlock()
+
 	locations, found = vc.vid2Locations[vid]
 	return
 }

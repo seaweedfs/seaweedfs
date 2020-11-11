@@ -53,6 +53,7 @@ func NewFiler(masters []string, grpcDialOption grpc.DialOption,
 	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer(LogFlushInterval, f.logFlushFunc, notifyFn)
 	f.metaLogCollection = collection
 	f.metaLogReplication = replication
+
 	go f.loopProcessingDeletion()
 
 	return f
