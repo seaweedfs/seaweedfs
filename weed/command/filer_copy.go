@@ -122,7 +122,7 @@ func runCopy(cmd *Command, args []string) bool {
 			expectedBucket := restPath[:strings.Index(restPath, "/")]
 			if *copy.collection == "" {
 				*copy.collection = expectedBucket
-			} else {
+			} else if *copy.collection != expectedBucket {
 				fmt.Printf("destination %s uses collection \"%s\": unexpected collection \"%v\"\n", urlPath, expectedBucket, *copy.collection)
 				return true
 			}
