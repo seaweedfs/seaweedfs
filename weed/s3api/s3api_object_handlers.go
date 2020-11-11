@@ -323,7 +323,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	resp_body, ra_err := ioutil.ReadAll(resp.Body)
 	if ra_err != nil {
-		glog.Errorf("upload to filer response read: %v", ra_err)
+		glog.Errorf("upload to filer response read %d: %v", resp.StatusCode, ra_err)
 		return etag, s3err.ErrInternalError
 	}
 	var ret weed_server.FilerPostResult
