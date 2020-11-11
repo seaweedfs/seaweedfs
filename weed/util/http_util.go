@@ -370,7 +370,6 @@ func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, e
 	if err != nil {
 		return nil, err
 	}
-	defer CloseResponse(r)
 	if r.StatusCode >= 400 {
 		return nil, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
