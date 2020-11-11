@@ -783,7 +783,8 @@ type VolumeLocation struct {
 	PublicUrl   string   `protobuf:"bytes,2,opt,name=public_url,json=publicUrl,proto3" json:"public_url,omitempty"`
 	NewVids     []uint32 `protobuf:"varint,3,rep,packed,name=new_vids,json=newVids,proto3" json:"new_vids,omitempty"`
 	DeletedVids []uint32 `protobuf:"varint,4,rep,packed,name=deleted_vids,json=deletedVids,proto3" json:"deleted_vids,omitempty"`
-	Leader      string   `protobuf:"bytes,5,opt,name=leader,proto3" json:"leader,omitempty"` // optional when leader is not itself
+	Leader      string   `protobuf:"bytes,5,opt,name=leader,proto3" json:"leader,omitempty"`          // optional when leader is not itself
+	DataCenter  string   `protobuf:"bytes,6,opt,name=data_center,proto3" json:"dataCenter,omitempty"` // optional when DataCenter is in use
 }
 
 func (x *VolumeLocation) Reset() {

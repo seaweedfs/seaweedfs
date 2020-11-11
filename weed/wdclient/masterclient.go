@@ -130,8 +130,9 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 
 			// process new volume location
 			loc := Location{
-				Url:       volumeLocation.Url,
-				PublicUrl: volumeLocation.PublicUrl,
+				Url:        volumeLocation.Url,
+				PublicUrl:  volumeLocation.PublicUrl,
+				DataCenter: volumeLocation.DataCenter,
 			}
 			for _, newVid := range volumeLocation.NewVids {
 				glog.V(1).Infof("%s: %s masterClient adds volume %d", mc.clientType, loc.Url, newVid)

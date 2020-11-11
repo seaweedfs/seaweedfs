@@ -29,8 +29,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			glog.V(0).Infof("unregister disconnected volume server %s:%d", dn.Ip, dn.Port)
 
 			message := &master_pb.VolumeLocation{
-				Url:       dn.Url(),
-				PublicUrl: dn.PublicUrl,
+				Url:        dn.Url(),
+				PublicUrl:  dn.PublicUrl,
+				DataCenter: dn.GetDataCenter().String(),
 			}
 			for _, v := range dn.GetVolumes() {
 				message.DeletedVids = append(message.DeletedVids, uint32(v.Id))
@@ -86,8 +87,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		glog.V(4).Infof("master received heartbeat %s", heartbeat.String())
 		message := &master_pb.VolumeLocation{
-			Url:       dn.Url(),
-			PublicUrl: dn.PublicUrl,
+			Url:        dn.Url(),
+			PublicUrl:  dn.PublicUrl,
+			DataCenter: dn.GetDataCenter().String(),
 		}
 		if len(heartbeat.NewVolumes) > 0 || len(heartbeat.DeletedVolumes) > 0 {
 			// process delta volume ids if exists for fast volume id updates

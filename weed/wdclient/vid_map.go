@@ -16,8 +16,9 @@ const (
 )
 
 type Location struct {
-	Url       string `json:"url,omitempty"`
-	PublicUrl string `json:"publicUrl,omitempty"`
+	Url        string `json:"url,omitempty"`
+	PublicUrl  string `json:"publicUrl,omitempty"`
+	DataCenter string `json:"dataCenter,omitempty"`
 }
 
 type vidMap struct {
