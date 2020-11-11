@@ -190,6 +190,7 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	body_writer := multipart.NewWriter(buf)
 	h := make(textproto.MIMEHeader)
 	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, fileNameEscaper.Replace(filename)))
+	h.Set("Idempotency-Key", uploadUrl)
 	if mtype == "" {
 		mtype = mime.TypeByExtension(strings.ToLower(filepath.Ext(filename)))
 	}
