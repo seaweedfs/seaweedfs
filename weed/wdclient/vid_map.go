@@ -24,13 +24,14 @@ type Location struct {
 type vidMap struct {
 	sync.RWMutex
 	vid2Locations map[uint32][]Location
-
-	cursor int32
+	DataCenter    string
+	cursor        int32
 }
 
-func newVidMap() vidMap {
+func newVidMap(dataCenter string) vidMap {
 	return vidMap{
 		vid2Locations: make(map[uint32][]Location),
+		DataCenter:    dataCenter,
 		cursor:        -1,
 	}
 }
@@ -57,7 +58,11 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err er
 		return nil, fmt.Errorf("volume %d not found", id)
 	}
 	for _, loc := range locations {
-		serverUrls = append(serverUrls, loc.Url)
+		if vc.DataCenter == "" || loc.DataCenter == "" || vc.DataCenter != loc.DataCenter {
+			serverUrls = append(serverUrls, loc.Url)
+		} else {
+			serverUrls = append([]string{loc.Url}, serverUrls...)
+		}
 	}
 	return
 }
@@ -93,7 +98,6 @@ func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) 
 func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
 	vc.RLock()
 	defer vc.RUnlock()
-
 	locations, found = vc.vid2Locations[vid]
 	return
 }

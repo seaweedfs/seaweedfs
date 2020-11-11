@@ -24,14 +24,14 @@ type MasterClient struct {
 	vidMap
 }
 
-func NewMasterClient(grpcDialOption grpc.DialOption, clientType string, clientHost string, clientGrpcPort uint32, masters []string) *MasterClient {
+func NewMasterClient(grpcDialOption grpc.DialOption, clientType string, clientHost string, clientGrpcPort uint32, clientDataCenter string, masters []string) *MasterClient {
 	return &MasterClient{
 		clientType:     clientType,
 		clientHost:     clientHost,
 		grpcPort:       clientGrpcPort,
 		masters:        masters,
 		grpcDialOption: grpcDialOption,
-		vidMap:         newVidMap(),
+		vidMap:         newVidMap(clientDataCenter),
 	}
 }
 
@@ -89,7 +89,7 @@ func (mc *MasterClient) tryAllMasters() {
 		}
 
 		mc.currentMaster = ""
-		mc.vidMap = newVidMap()
+		mc.vidMap = newVidMap("")
 	}
 }
 
