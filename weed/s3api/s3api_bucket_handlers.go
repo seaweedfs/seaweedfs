@@ -120,7 +120,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 	bucket, _ := getBucketAndObject(r)
 
-	entry, err := s3a.get(s3a.option.BucketsPath, bucket)
+	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
 	if entry == nil || err == filer_pb.ErrNotFound {
 		writeErrorResponse(w, s3err.ErrNoSuchBucket, r.URL)
 		return
@@ -164,8 +164,8 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 
 	bucket, _ := getBucketAndObject(r)
 
-	entry, err := s3a.get(s3a.option.BucketsPath, bucket)
 	if entry == nil || err != nil {
+	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
 		writeErrorResponse(w, s3err.ErrNoSuchBucket, r.URL)
 		return
 	}

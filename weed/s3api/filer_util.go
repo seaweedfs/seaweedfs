@@ -76,7 +76,7 @@ func (s3a *S3ApiServer) exists(parentDirectoryPath string, entryName string, isD
 
 }
 
-func (s3a *S3ApiServer) get(parentDirectoryPath, entryName string) (entry *filer_pb.Entry, err error) {
+func (s3a *S3ApiServer) getEntry(parentDirectoryPath, entryName string) (entry *filer_pb.Entry, err error) {
 	fullPath := util.NewFullPath(parentDirectoryPath, entryName)
 	return filer_pb.GetEntry(s3a, fullPath)
 }
