@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"math"
 	"net/http"
 	"time"
+
+	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -33,9 +35,16 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	identityId := r.Header.Get(xhttp.AmzIdentityId)
+
 	var buckets []*s3.Bucket
 	for _, entry := range entries {
 		if entry.IsDirectory {
+			if id, ok := entry.Extended[xhttp.AmzIdentityId]; ok {
+				if identityId != string(id) {
+					continue
+				}
+			}
 			buckets = append(buckets, &s3.Bucket{
 				Name:         aws.String(entry.Name),
 				CreationDate: aws.Time(time.Unix(entry.Attributes.Crtime, 0).UTC()),
@@ -45,8 +54,8 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 	response = ListAllMyBucketsResult{
 		Owner: &s3.Owner{
-			ID:          aws.String(""),
-			DisplayName: aws.String(""),
+			ID:          aws.String(identityId),
+			DisplayName: aws.String(identityId),
 		},
 		Buckets: buckets,
 	}
@@ -80,13 +89,25 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
+	if exist, err := s3a.exists(s3a.option.BucketsPath, bucket, true); err == nil && exist {
+		errCode = s3err.ErrBucketAlreadyExists
+	}
 	if errCode != s3err.ErrNone {
 		writeErrorResponse(w, errCode, r.URL)
 		return
 	}
 
+	fn := func(entry *filer_pb.Entry) {
+		if identityId := r.Header.Get(xhttp.AmzIdentityId); identityId != "" {
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
+			entry.Extended[xhttp.AmzIdentityId] = []byte(identityId)
+		}
+	}
+
 	// create the folder for bucket, but lazily create actual collection
-	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, nil); err != nil {
+	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, fn); err != nil {
 		glog.Errorf("PutBucketHandler mkdir: %v", err)
 		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
