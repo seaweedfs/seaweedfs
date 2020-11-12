@@ -120,6 +120,15 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 	bucket, _ := getBucketAndObject(r)
 
+	if entry, err := s3a.get(s3a.option.BucketsPath, bucket); entry != nil && err == nil {
+		if id, ok := entry.Extended[xhttp.AmzIdentityId]; ok {
+			if string(id) != r.Header.Get(xhttp.AmzIdentityId) {
+				writeErrorResponse(w, s3err.ErrAccessDenied, r.URL)
+				return
+			}
+		}
+	}
+
 	err := s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		// delete collection
@@ -149,27 +158,16 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 
 	bucket, _ := getBucketAndObject(r)
 
-	err := s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-
-		request := &filer_pb.LookupDirectoryEntryRequest{
-			Directory: s3a.option.BucketsPath,
-			Name:      bucket,
-		}
-
-		glog.V(1).Infof("lookup bucket: %v", request)
-		if _, err := filer_pb.LookupEntry(client, request); err != nil {
-			if err == filer_pb.ErrNotFound {
-				return filer_pb.ErrNotFound
-			}
-			return fmt.Errorf("lookup bucket %s/%s: %v", s3a.option.BucketsPath, bucket, err)
-		}
-
-		return nil
-	})
-
-	if err != nil {
+	entry, err := s3a.get(s3a.option.BucketsPath, bucket)
+	if entry == nil || err != nil {
 		writeErrorResponse(w, s3err.ErrNoSuchBucket, r.URL)
 		return
+	}
+	if id, ok := entry.Extended[xhttp.AmzIdentityId]; ok {
+		if string(id) != r.Header.Get(xhttp.AmzIdentityId) {
+			writeErrorResponse(w, s3err.ErrAccessDenied, r.URL)
+			return
+		}
 	}
 
 	writeSuccessResponseEmpty(w)
