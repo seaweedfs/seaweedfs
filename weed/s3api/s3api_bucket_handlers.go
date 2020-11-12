@@ -125,10 +125,13 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		writeErrorResponse(w, s3err.ErrNoSuchBucket, r.URL)
 		return
 	}
-	if id, ok := entry.Extended[xhttp.AmzIdentityId]; ok {
-		if string(id) != r.Header.Get(xhttp.AmzIdentityId) {
-			writeErrorResponse(w, s3err.ErrAccessDenied, r.URL)
-			return
+
+	if entry.Extended != nil {
+		if id, ok := entry.Extended[xhttp.AmzIdentityId]; ok {
+			if string(id) != r.Header.Get(xhttp.AmzIdentityId) {
+				writeErrorResponse(w, s3err.ErrAccessDenied, r.URL)
+				return
+			}
 		}
 	}
 
@@ -166,10 +169,13 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 		writeErrorResponse(w, s3err.ErrNoSuchBucket, r.URL)
 		return
 	}
-	if id, ok := entry.Extended[xhttp.AmzIdentityId]; ok {
-		if string(id) != r.Header.Get(xhttp.AmzIdentityId) {
-			writeErrorResponse(w, s3err.ErrAccessDenied, r.URL)
-			return
+
+	if entry.Extended != nil {
+		if id, ok := entry.Extended[xhttp.AmzIdentityId]; ok {
+			if string(id) != r.Header.Get(xhttp.AmzIdentityId) {
+				writeErrorResponse(w, s3err.ErrAccessDenied, r.URL)
+				return
+			}
 		}
 	}
 
