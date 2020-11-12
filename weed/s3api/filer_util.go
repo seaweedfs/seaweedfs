@@ -7,6 +7,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func (s3a *S3ApiServer) mkdir(parentDirectoryPath string, dirName string, fn func(entry *filer_pb.Entry)) error {
@@ -73,6 +74,11 @@ func (s3a *S3ApiServer) exists(parentDirectoryPath string, entryName string, isD
 
 	return filer_pb.Exists(s3a, parentDirectoryPath, entryName, isDirectory)
 
+}
+
+func (s3a *S3ApiServer) get(parentDirectoryPath, entryName string) (entry *filer_pb.Entry, err error) {
+	fullPath := util.NewFullPath(parentDirectoryPath, entryName)
+	return filer_pb.GetEntry(s3a, fullPath)
 }
 
 func objectKey(key *string) *string {
