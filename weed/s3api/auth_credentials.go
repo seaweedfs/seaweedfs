@@ -132,6 +132,9 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 		if errCode == s3err.ErrNone {
 			if identity != nil && identity.Name != "" {
 				r.Header.Set(xhttp.AmzIdentityId, identity.Name)
+				if identity.isAdmin() {
+					r.Header.Set(xhttp.AmzIsAdmin, "true")
+				}
 			}
 			f(w, r)
 			return
@@ -190,10 +193,8 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 }
 
 func (identity *Identity) canDo(action Action, bucket string) bool {
-	for _, a := range identity.Actions {
-		if a == "Admin" {
-			return true
-		}
+	if identity.isAdmin() {
+		return true
 	}
 	for _, a := range identity.Actions {
 		if a == action {
@@ -206,6 +207,15 @@ func (identity *Identity) canDo(action Action, bucket string) bool {
 	limitedByBucket := string(action) + ":" + bucket
 	for _, a := range identity.Actions {
 		if string(a) == limitedByBucket {
+			return true
+		}
+	}
+	return false
+}
+
+func (identity *Identity) isAdmin() bool {
+	for _, a := range identity.Actions {
+		if a == "Admin" {
 			return true
 		}
 	}

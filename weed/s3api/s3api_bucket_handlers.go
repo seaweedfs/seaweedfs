@@ -40,10 +40,8 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	var buckets []*s3.Bucket
 	for _, entry := range entries {
 		if entry.IsDirectory {
-			if id, ok := entry.Extended[xhttp.AmzIdentityId]; ok {
-				if identityId != string(id) {
-					continue
-				}
+			if !s3a.hasAccess(r, entry) {
+				continue
 			}
 			buckets = append(buckets, &s3.Bucket{
 				Name:         aws.String(entry.Name),
@@ -126,13 +124,9 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if entry.Extended != nil {
-		if id, ok := entry.Extended[xhttp.AmzIdentityId]; ok {
-			if string(id) != r.Header.Get(xhttp.AmzIdentityId) {
-				writeErrorResponse(w, s3err.ErrAccessDenied, r.URL)
-				return
-			}
-		}
+	if !s3a.hasAccess(r, entry) {
+		writeErrorResponse(w, s3err.ErrAccessDenied, r.URL)
+		return
 	}
 
 	err = s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
@@ -170,14 +164,28 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if entry.Extended != nil {
-		if id, ok := entry.Extended[xhttp.AmzIdentityId]; ok {
-			if string(id) != r.Header.Get(xhttp.AmzIdentityId) {
-				writeErrorResponse(w, s3err.ErrAccessDenied, r.URL)
-				return
-			}
-		}
+	if !s3a.hasAccess(r, entry) {
+		writeErrorResponse(w, s3err.ErrAccessDenied, r.URL)
+		return
 	}
 
 	writeSuccessResponseEmpty(w)
+}
+
+func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
+	isAdmin := r.Header.Get(xhttp.AmzIsAdmin) != ""
+	if isAdmin {
+		return true
+	}
+	if entry.Extended == nil {
+		return true
+	}
+
+	identityId := r.Header.Get(xhttp.AmzIdentityId)
+	if id, ok := entry.Extended[xhttp.AmzIdentityId]; ok {
+		if identityId != string(id) {
+			return false
+		}
+	}
+	return true
 }

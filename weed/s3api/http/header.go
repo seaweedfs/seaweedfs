@@ -32,4 +32,5 @@ const (
 // Non-Standard S3 HTTP request constants
 const (
 	AmzIdentityId = "x-amz-identity-id"
+	AmzIsAdmin = "x-amz-is-admin"  // only set to http request header as a context
 )
