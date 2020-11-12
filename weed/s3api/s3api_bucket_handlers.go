@@ -96,6 +96,9 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 
 	fn := func(entry *filer_pb.Entry) {
 		if identityId := r.Header.Get(xhttp.AmzIdentityId); identityId != "" {
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
 			entry.Extended[xhttp.AmzIdentityId] = []byte(identityId)
 		}
 	}
