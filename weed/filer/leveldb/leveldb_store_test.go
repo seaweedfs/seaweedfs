@@ -65,7 +65,7 @@ func TestCreateAndFind(t *testing.T) {
 }
 
 func TestEmptyRoot(t *testing.T) {
-	testFiler := filer.NewFiler(nil, nil, "", 0, "", "", nil)
+	testFiler := filer.NewFiler(nil, nil, "", 0, "", "", "", nil)
 	dir, _ := ioutil.TempDir("", "seaweedfs_filer_test2")
 	defer os.RemoveAll(dir)
 	store := &LevelDBStore{}
