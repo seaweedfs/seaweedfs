@@ -120,16 +120,19 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 	bucket, _ := getBucketAndObject(r)
 
-	if entry, err := s3a.get(s3a.option.BucketsPath, bucket); entry != nil && err == nil {
-		if id, ok := entry.Extended[xhttp.AmzIdentityId]; ok {
-			if string(id) != r.Header.Get(xhttp.AmzIdentityId) {
-				writeErrorResponse(w, s3err.ErrAccessDenied, r.URL)
-				return
-			}
+	entry, err := s3a.get(s3a.option.BucketsPath, bucket)
+	if entry == nil || err == filer_pb.ErrNotFound {
+		writeErrorResponse(w, s3err.ErrNoSuchBucket, r.URL)
+		return
+	}
+	if id, ok := entry.Extended[xhttp.AmzIdentityId]; ok {
+		if string(id) != r.Header.Get(xhttp.AmzIdentityId) {
+			writeErrorResponse(w, s3err.ErrAccessDenied, r.URL)
+			return
 		}
 	}
 
-	err := s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		// delete collection
 		deleteCollectionRequest := &filer_pb.DeleteCollectionRequest{
