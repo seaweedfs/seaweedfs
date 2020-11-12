@@ -89,6 +89,9 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
+	if exist, err := s3a.exists(s3a.option.BucketsPath, bucket, true); err == nil && exist {
+		errCode = s3err.ErrBucketAlreadyExists
+	}
 	if errCode != s3err.ErrNone {
 		writeErrorResponse(w, errCode, r.URL)
 		return
