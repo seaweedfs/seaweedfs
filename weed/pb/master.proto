@@ -188,11 +188,6 @@ message StatisticsResponse {
 //
 // collection related
 //
-
-message StorageType {
-    string replication = 1;
-    string ttl = 2;
-}
 message Collection {
     string name = 1;
 }
