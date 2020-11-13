@@ -11,13 +11,13 @@
         <dependency>
             <groupId>com.github.chrislusf</groupId>
             <artifactId>seaweedfs-client</artifactId>
-            <version>1.5.3</version>
+            <version>1.5.4</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>com.github.chrislusf</groupId>
             <artifactId>seaweedfs-hadoop2-client</artifactId>
-            <version>1.5.3</version>
+            <version>1.5.4</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
