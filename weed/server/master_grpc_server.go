@@ -86,8 +86,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		glog.V(4).Infof("master received heartbeat %s", heartbeat.String())
 		message := &master_pb.VolumeLocation{
-			Url:       dn.Url(),
-			PublicUrl: dn.PublicUrl,
+			Url:        dn.Url(),
+			PublicUrl:  dn.PublicUrl,
+			DataCenter: string(dn.GetDataCenter().Id()),
 		}
 		if len(heartbeat.NewVolumes) > 0 || len(heartbeat.DeletedVolumes) > 0 {
 			// process delta volume ids if exists for fast volume id updates
@@ -148,7 +149,6 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 
 		}
-
 		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 {
 			ms.clientChansLock.RLock()
 			for host, ch := range ms.clientChans {

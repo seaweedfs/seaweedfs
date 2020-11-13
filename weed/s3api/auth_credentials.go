@@ -3,10 +3,11 @@ package s3api
 import (
 	"bytes"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"io/ioutil"
 	"net/http"
 
+	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"github.com/golang/protobuf/jsonpb"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -127,8 +128,14 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		errCode := iam.authRequest(r, action)
+		identity, errCode := iam.authRequest(r, action)
 		if errCode == s3err.ErrNone {
+			if identity != nil && identity.Name != "" {
+				r.Header.Set(xhttp.AmzIdentityId, identity.Name)
+				if identity.isAdmin() {
+					r.Header.Set(xhttp.AmzIsAdmin, "true")
+				}
+			}
 			f(w, r)
 			return
 		}
@@ -137,16 +144,16 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 }
 
 // check whether the request has valid access keys
-func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action) s3err.ErrorCode {
+func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action) (*Identity, s3err.ErrorCode) {
 	var identity *Identity
 	var s3Err s3err.ErrorCode
 	var found bool
 	switch getRequestAuthType(r) {
 	case authTypeStreamingSigned:
-		return s3err.ErrNone
+		return identity, s3err.ErrNone
 	case authTypeUnknown:
 		glog.V(3).Infof("unknown auth type")
-		return s3err.ErrAccessDenied
+		return identity, s3err.ErrAccessDenied
 	case authTypePresignedV2, authTypeSignedV2:
 		glog.V(3).Infof("v2 auth type")
 		identity, s3Err = iam.isReqAuthenticatedV2(r)
@@ -155,22 +162,22 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		identity, s3Err = iam.reqSignatureV4Verify(r)
 	case authTypePostPolicy:
 		glog.V(3).Infof("post policy auth type")
-		return s3err.ErrNone
+		return identity, s3err.ErrNone
 	case authTypeJWT:
 		glog.V(3).Infof("jwt auth type")
-		return s3err.ErrNotImplemented
+		return identity, s3err.ErrNotImplemented
 	case authTypeAnonymous:
 		identity, found = iam.lookupAnonymous()
 		if !found {
-			return s3err.ErrAccessDenied
+			return identity, s3err.ErrAccessDenied
 		}
 	default:
-		return s3err.ErrNotImplemented
+		return identity, s3err.ErrNotImplemented
 	}
 
 	glog.V(3).Infof("auth error: %v", s3Err)
 	if s3Err != s3err.ErrNone {
-		return s3Err
+		return identity, s3Err
 	}
 
 	glog.V(3).Infof("user name: %v actions: %v", identity.Name, identity.Actions)
@@ -178,18 +185,16 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	bucket, _ := getBucketAndObject(r)
 
 	if !identity.canDo(action, bucket) {
-		return s3err.ErrAccessDenied
+		return identity, s3err.ErrAccessDenied
 	}
 
-	return s3err.ErrNone
+	return identity, s3err.ErrNone
 
 }
 
 func (identity *Identity) canDo(action Action, bucket string) bool {
-	for _, a := range identity.Actions {
-		if a == "Admin" {
-			return true
-		}
+	if identity.isAdmin() {
+		return true
 	}
 	for _, a := range identity.Actions {
 		if a == action {
@@ -202,6 +207,15 @@ func (identity *Identity) canDo(action Action, bucket string) bool {
 	limitedByBucket := string(action) + ":" + bucket
 	for _, a := range identity.Actions {
 		if string(a) == limitedByBucket {
+			return true
+		}
+	}
+	return false
+}
+
+func (identity *Identity) isAdmin() bool {
+	for _, a := range identity.Actions {
+		if a == "Admin" {
 			return true
 		}
 	}

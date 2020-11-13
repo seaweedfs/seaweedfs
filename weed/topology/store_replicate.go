@@ -81,6 +81,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId needle.Volume
 			}
 
 			// volume server do not know about encryption
+			// TODO optimize here to compress data only once
 			_, err := operation.UploadData(u.String(), string(n.Name), false, n.Data, n.IsCompressed(), string(n.Mime), pairMap, jwt)
 			return err
 		}); err != nil {

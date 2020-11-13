@@ -19,6 +19,7 @@ public class SeaweedRead {
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedRead.class);
 
     static ChunkCache chunkCache = new ChunkCache(4);
+    static VolumeIdCache volumeIdCache = new VolumeIdCache(4 * 1024);
 
     // returns bytesRead
     public static long read(FilerGrpcClient filerGrpcClient, List<VisibleInterval> visibleIntervals,
@@ -30,13 +31,19 @@ public class SeaweedRead {
         FilerProto.LookupVolumeRequest.Builder lookupRequest = FilerProto.LookupVolumeRequest.newBuilder();
         for (ChunkView chunkView : chunkViews) {
             String vid = parseVolumeId(chunkView.fileId);
-            lookupRequest.addVolumeIds(vid);
+            if (volumeIdCache.getLocations(vid)==null){
+                lookupRequest.addVolumeIds(vid);
+            }
         }
 
-        FilerProto.LookupVolumeResponse lookupResponse = filerGrpcClient
-                .getBlockingStub().lookupVolume(lookupRequest.build());
-
-        Map<String, FilerProto.Locations> vid2Locations = lookupResponse.getLocationsMapMap();
+        if (lookupRequest.getVolumeIdsCount()>0){
+            FilerProto.LookupVolumeResponse lookupResponse = filerGrpcClient
+                    .getBlockingStub().lookupVolume(lookupRequest.build());
+            Map<String, FilerProto.Locations> vid2Locations = lookupResponse.getLocationsMapMap();
+            for (Map.Entry<String,FilerProto.Locations> entry : vid2Locations.entrySet()) {
+                volumeIdCache.setLocations(entry.getKey(), entry.getValue());
+            }
+        }
 
         //TODO parallel this
         long readCount = 0;
@@ -50,7 +57,7 @@ public class SeaweedRead {
                 startOffset += gap;
             }
 
-            FilerProto.Locations locations = vid2Locations.get(parseVolumeId(chunkView.fileId));
+            FilerProto.Locations locations = volumeIdCache.getLocations(parseVolumeId(chunkView.fileId));
             if (locations == null || locations.getLocationsCount() == 0) {
                 LOG.error("failed to locate {}", chunkView.fileId);
                 // log here!

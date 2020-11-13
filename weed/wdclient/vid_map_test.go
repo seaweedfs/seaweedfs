@@ -45,7 +45,7 @@ func TestLocationIndex(t *testing.T) {
 	mustOk(7, maxCursorIndex, 0)
 
 	// test with constructor
-	vm = newVidMap()
+	vm = newVidMap("")
 	length := 7
 	for i := 0; i < 100; i++ {
 		got, err := vm.getLocationIndex(length)
