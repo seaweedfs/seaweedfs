@@ -5,11 +5,11 @@ import com.google.common.cache.CacheBuilder;
 
 import java.util.concurrent.TimeUnit;
 
-public class ChunkCache {
+public class VolumeIdCache {
 
-    private Cache<String, byte[]> cache = null;
+    private Cache<String, FilerProto.Locations> cache = null;
 
-    public ChunkCache(int maxEntries) {
+    public VolumeIdCache(int maxEntries) {
         if (maxEntries == 0) {
             return;
         }
@@ -19,18 +19,18 @@ public class ChunkCache {
                 .build();
     }
 
-    public byte[] getChunk(String fileId) {
+    public FilerProto.Locations getLocations(String volumeId) {
         if (this.cache == null) {
             return null;
         }
-        return this.cache.getIfPresent(fileId);
+        return this.cache.getIfPresent(volumeId);
     }
 
-    public void setChunk(String fileId, byte[] data) {
+    public void setLocations(String volumeId, FilerProto.Locations locations) {
         if (this.cache == null) {
             return;
         }
-        this.cache.put(fileId, data);
+        this.cache.put(volumeId, locations);
     }
 
 }
