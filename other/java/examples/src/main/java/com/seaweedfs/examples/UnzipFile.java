@@ -1,4 +1,4 @@
-package com.example.test;
+package com.seaweedfs.examples;
 
 import seaweed.hdfs.SeaweedInputStream;
 import seaweedfs.client.FilerClient;
@@ -10,22 +10,20 @@ import java.io.InputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-public class Example {
-
-    public static FilerClient filerClient = new FilerClient("localhost", 18888);
-    public static FilerGrpcClient filerGrpcClient = new FilerGrpcClient("localhost", 18888);
+public class UnzipFile {
 
     public static void main(String[] args) throws IOException {
 
+        FilerGrpcClient filerGrpcClient = new FilerGrpcClient("localhost", 18888);
+        FilerClient filerClient = new FilerClient(filerGrpcClient);
+
         long startTime = System.currentTimeMillis();
-        // 本地模式，速度很快
         parseZip("/Users/chris/tmp/test.zip");
 
         long startTime2 = System.currentTimeMillis();
 
         long localProcessTime = startTime2 - startTime;
 
-        // swfs读取，慢
         SeaweedInputStream seaweedInputStream = new SeaweedInputStream(
                 filerGrpcClient,
                 new org.apache.hadoop.fs.FileSystem.Statistics(""),
