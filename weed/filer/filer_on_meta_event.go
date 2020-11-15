@@ -6,10 +6,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-)
-
-const (
-	DirectoryEtc = "/etc"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 // onMetadataChangeEvent is triggered after filer processed change events from local or remote filers
@@ -26,15 +23,15 @@ func (f *Filer) onMetadataChangeEvent(event *filer_pb.SubscribeMetadataResponse)
 	}
 
 	glog.V(0).Infof("procesing %v", event)
-	if entry.Name == "filer.conf" {
+	if entry.Name == FilerConfName {
 		f.reloadFilerConfiguration(entry)
 	}
 
 }
 
-func (f *Filer) readEntry(entry *filer_pb.Entry) ([]byte, error){
+func (f *Filer) readEntry(chunks []*filer_pb.FileChunk) ([]byte, error) {
 	var buf bytes.Buffer
-	err := StreamContent(f.MasterClient, &buf, entry.Chunks, 0, math.MaxInt64)
+	err := StreamContent(f.MasterClient, &buf, chunks, 0, math.MaxInt64)
 	if err != nil {
 		return nil, err
 	}
@@ -42,13 +39,23 @@ func (f *Filer) readEntry(entry *filer_pb.Entry) ([]byte, error){
 }
 
 func (f *Filer) reloadFilerConfiguration(entry *filer_pb.Entry) {
-	data, err := f.readEntry(entry)
+	fc := NewFilerConf()
+	err := fc.loadFromChunks(f, entry.Chunks)
 	if err != nil {
-		glog.Warningf("read entry %s: %v", entry.Name, err)
+		glog.Errorf("read filer conf chunks: %v", err)
 		return
-
 	}
+	f.FilerConf = fc
+}
 
-	println(string(data))
-
+func (f *Filer) LoadFilerConf() {
+	fc := NewFilerConf()
+	err := util.Retry("loadFilerConf", func() error {
+		return fc.loadFromFiler(f)
+	})
+	if err != nil {
+		glog.Errorf("read filer conf: %v", err)
+		return
+	}
+	f.FilerConf = fc
 }

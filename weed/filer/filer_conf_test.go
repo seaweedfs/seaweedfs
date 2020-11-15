@@ -5,14 +5,12 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/stretchr/testify/assert"
-	"github.com/viant/ptrie"
 )
 
 func TestFilerConf(t *testing.T) {
 
-	fc := &FilerConf{
-		rules: ptrie.New(),
-	}
+	fc := NewFilerConf()
+
 	conf := &filer_pb.FilerConf{Locations: []*filer_pb.FilerConf_PathConf{
 		{
 			LocationPrefix: "/buckets/abc",

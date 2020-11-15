@@ -131,6 +131,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	fs.filer.LoadBuckets()
 
+	fs.filer.LoadFilerConf()
+
 	grace.OnInterrupt(func() {
 		fs.filer.Shutdown()
 	})
