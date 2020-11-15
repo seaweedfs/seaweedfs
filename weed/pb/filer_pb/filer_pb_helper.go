@@ -8,6 +8,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/viant/ptrie"
 )
 
 func ToFileIdObject(fileIdStr string) (*FileId, error) {
@@ -137,4 +138,9 @@ func IsRename(event *SubscribeMetadataResponse) bool {
 	return event.EventNotification.NewEntry != nil &&
 		event.EventNotification.OldEntry != nil &&
 		event.Directory != event.EventNotification.NewParentPath
+}
+
+var _ = ptrie.KeyProvider(&FilerConf_PathConf{})
+func (fp *FilerConf_PathConf) Key() interface{} {
+	return fp.LocationPrefix
 }
