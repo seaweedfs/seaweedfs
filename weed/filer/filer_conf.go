@@ -51,7 +51,6 @@ func (fc *FilerConf) loadFromChunks(filer *Filer, chunks []*filer_pb.FileChunk) 
 	return fc.loadFromBytes(data)
 }
 
-
 func (fc *FilerConf) loadFromBytes(data []byte) (err error) {
 	conf := &filer_pb.FilerConf{}
 	err = proto.UnmarshalText(string(data), conf)

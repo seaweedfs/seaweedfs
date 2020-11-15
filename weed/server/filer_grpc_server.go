@@ -257,7 +257,15 @@ func (fs *FilerServer) cleanupChunks(existingEntry *filer.Entry, newEntry *filer
 	garbage = append(garbage, coveredChunks...)
 
 	if newEntry.Attributes != nil {
-		chunks, err = filer.MaybeManifestize(fs.saveAsChunk(newEntry.Attributes.Replication, newEntry.Attributes.Collection, "", "", needle.SecondsToTTL(newEntry.Attributes.TtlSec), false), chunks)
+		so := &filer.StorageOption{
+			Replication: newEntry.Attributes.Replication,
+			Collection:  newEntry.Attributes.Collection,
+			DataCenter:  "",
+			Rack:        "",
+			TtlSeconds:  newEntry.Attributes.TtlSec,
+			Fsync:       false,
+		}
+		chunks, err = filer.MaybeManifestize(fs.saveAsChunk(so), chunks)
 		if err != nil {
 			// not good, but should be ok
 			glog.V(0).Infof("MaybeManifestize: %v", err)
@@ -297,8 +305,15 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	}
 
 	entry.Chunks = append(entry.Chunks, req.Chunks...)
-
-	entry.Chunks, err = filer.MaybeManifestize(fs.saveAsChunk(entry.Replication, entry.Collection, "", "", needle.SecondsToTTL(entry.TtlSec), false), entry.Chunks)
+	so := &filer.StorageOption{
+		Replication: entry.Replication,
+		Collection:  entry.Collection,
+		DataCenter:  "",
+		Rack:        "",
+		TtlSeconds:  entry.TtlSec,
+		Fsync:       false,
+	}
+	entry.Chunks, err = filer.MaybeManifestize(fs.saveAsChunk(so), entry.Chunks)
 	if err != nil {
 		// not good, but should be ok
 		glog.V(0).Infof("MaybeManifestize: %v", err)

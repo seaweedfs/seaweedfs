@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -29,7 +30,7 @@ type FilerPostResult struct {
 	Url   string `json:"url,omitempty"`
 }
 
-func (fs *FilerServer) assignNewFileInfo(replication, collection, dataCenter, rack, ttlString string, fsync bool) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
+func (fs *FilerServer) assignNewFileInfo(so *filer.StorageOption) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
 
 	stats.FilerRequestCounter.WithLabelValues("assign").Inc()
 	start := time.Now()
@@ -37,18 +38,19 @@ func (fs *FilerServer) assignNewFileInfo(replication, collection, dataCenter, ra
 
 	ar := &operation.VolumeAssignRequest{
 		Count:       1,
-		Replication: replication,
-		Collection:  collection,
-		Ttl:         ttlString,
-		DataCenter:  dataCenter,
+		Replication: so.Replication,
+		Collection:  so.Collection,
+		Ttl:         so.TtlString(),
+		DataCenter:  so.DataCenter,
+		Rack:        so.Rack,
 	}
 	var altRequest *operation.VolumeAssignRequest
-	if dataCenter != "" || rack != "" {
+	if so.DataCenter != "" || so.Rack != "" {
 		altRequest = &operation.VolumeAssignRequest{
 			Count:       1,
-			Replication: replication,
-			Collection:  collection,
-			Ttl:         ttlString,
+			Replication: so.Replication,
+			Collection:  so.Collection,
+			Ttl:         so.TtlString(),
 			DataCenter:  "",
 			Rack:        "",
 		}
@@ -62,7 +64,7 @@ func (fs *FilerServer) assignNewFileInfo(replication, collection, dataCenter, ra
 	}
 	fileId = assignResult.Fid
 	urlLocation = "http://" + assignResult.Url + "/" + assignResult.Fid
-	if fsync {
+	if so.Fsync {
 		urlLocation += "?fsync=true"
 	}
 	auth = assignResult.Auth
@@ -92,7 +94,16 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		ttlSeconds = int32(ttl.Minutes()) * 60
 	}
 
-	fs.autoChunk(ctx, w, r, replication, collection, dataCenter, rack, ttlSeconds, ttlString, fsync)
+	so := &filer.StorageOption{
+		Replication: replication,
+		Collection:  collection,
+		DataCenter:  dataCenter,
+		Rack:        rack,
+		TtlSeconds:  ttlSeconds,
+		Fsync:       fsync,
+	}
+
+	fs.autoChunk(ctx, w, r, so)
 
 }
 

@@ -16,12 +16,12 @@ import (
 )
 
 // handling single chunk POST or PUT upload
-func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *http.Request, replication string, collection string, dataCenter string, rack string, ttlSeconds int32, ttlString string, fsync bool) (filerResult *FilerPostResult, err error) {
+func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *http.Request, so *filer.StorageOption) (filerResult *FilerPostResult, err error) {
 
-	fileId, urlLocation, auth, err := fs.assignNewFileInfo(replication, collection, dataCenter, rack, ttlString, fsync)
+	fileId, urlLocation, auth, err := fs.assignNewFileInfo(so)
 
 	if err != nil || fileId == "" || urlLocation == "" {
-		return nil, fmt.Errorf("fail to allocate volume for %s, collection:%s, datacenter:%s", r.URL.Path, collection, dataCenter)
+		return nil, fmt.Errorf("fail to allocate volume for %s, collection:%s, datacenter:%s", r.URL.Path, so.Collection, so.DataCenter)
 	}
 
 	glog.V(4).Infof("write %s to %v", r.URL.Path, urlLocation)
@@ -65,9 +65,9 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 			Mode:        0660,
 			Uid:         OS_UID,
 			Gid:         OS_GID,
-			Replication: replication,
-			Collection:  collection,
-			TtlSec:      ttlSeconds,
+			Replication: so.Replication,
+			Collection:  so.Collection,
+			TtlSec:      so.TtlSeconds,
 			Mime:        pu.MimeType,
 			Md5:         util.Base64Md5ToBytes(pu.ContentMd5),
 		},
