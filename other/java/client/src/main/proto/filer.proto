@@ -362,6 +362,7 @@ message FilerConf {
             SSD = 1;
         }
         DiskType disk_type = 5;
+        bool fsync = 6;
     }
     repeated PathConf locations = 2;
 }

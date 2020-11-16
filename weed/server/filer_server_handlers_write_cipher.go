@@ -16,7 +16,7 @@ import (
 )
 
 // handling single chunk POST or PUT upload
-func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *http.Request, so *filer.StorageOption) (filerResult *FilerPostResult, err error) {
+func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) (filerResult *FilerPostResult, err error) {
 
 	fileId, urlLocation, auth, err := fs.assignNewFileInfo(so)
 
