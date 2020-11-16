@@ -1,12 +1,14 @@
 package filer
 
 import (
+	"bytes"
 	"context"
 	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/golang/protobuf/jsonpb"
 	"github.com/golang/protobuf/proto"
 	"github.com/viant/ptrie"
 )
@@ -53,10 +55,16 @@ func (fc *FilerConf) loadFromChunks(filer *Filer, chunks []*filer_pb.FileChunk) 
 
 func (fc *FilerConf) LoadFromBytes(data []byte) (err error) {
 	conf := &filer_pb.FilerConf{}
-	err = proto.UnmarshalText(string(data), conf)
-	if err != nil {
-		glog.Errorf("unable to parse filer conf: %v", err)
-		// this is not recoverable
+
+	if err := jsonpb.Unmarshal(bytes.NewReader(data), conf); err != nil {
+
+		err = proto.UnmarshalText(string(data), conf)
+		if err != nil {
+			glog.Errorf("unable to parse filer conf: %v", err)
+			// this is not recoverable
+			return nil
+		}
+
 		return nil
 	}
 
@@ -121,5 +129,11 @@ func (fc *FilerConf) ToProto() *filer_pb.FilerConf {
 }
 
 func (fc *FilerConf) ToText(writer io.Writer) error {
-	return proto.MarshalText(writer, fc.ToProto())
+
+	m := jsonpb.Marshaler{
+		EmitDefaults: false,
+		Indent:       "  ",
+	}
+
+	return m.Marshal(writer, fc.ToProto())
 }

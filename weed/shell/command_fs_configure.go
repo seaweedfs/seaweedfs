@@ -99,6 +99,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	fc.ToText(&buf)
 
 	fmt.Fprintf(writer, string(buf.Bytes()))
+	fmt.Fprintln(writer)
 
 	if *apply {
 
