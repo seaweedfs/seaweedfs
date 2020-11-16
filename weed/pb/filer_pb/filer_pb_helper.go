@@ -8,6 +8,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/golang/protobuf/proto"
 	"github.com/viant/ptrie"
 )
 
@@ -143,5 +144,6 @@ func IsRename(event *SubscribeMetadataResponse) bool {
 var _ = ptrie.KeyProvider(&FilerConf_PathConf{})
 
 func (fp *FilerConf_PathConf) Key() interface{} {
-	return fp.LocationPrefix
+	key, _ := proto.Marshal(fp)
+	return string(key)
 }

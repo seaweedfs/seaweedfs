@@ -82,6 +82,18 @@ func (fc *FilerConf) AddLocationConf(locConf *filer_pb.FilerConf_PathConf) (err 
 	return
 }
 
+func (fc *FilerConf) DeleteLocationConf(locationPrefix string) {
+	rules := ptrie.New()
+	fc.rules.Walk(func(key []byte, value interface{}) bool {
+		if string(key) == locationPrefix {
+			return true
+		}
+		rules.Put(key, value)
+		return true
+	})
+	fc.rules = rules
+	return
+}
 
 var (
 	EmptyFilerConfPathConf = &filer_pb.FilerConf_PathConf{}
