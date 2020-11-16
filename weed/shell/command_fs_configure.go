@@ -27,7 +27,18 @@ func (c *commandFsConfigure) Name() string {
 func (c *commandFsConfigure) Help() string {
 	return `configure and apply storage options for each location
 
-	fs.configure -locationPrfix=/my/folder -
+	# see the possible configuration file content
+	fs.configure
+
+	# trying the changes and see the possible configuration file content
+	fs.configure -locationPrfix=/my/folder -collection=abc
+	fs.configure -locationPrfix=/my/folder -collection=abc -ttl=7d
+
+	# apply the changes
+	fs.configure -locationPrfix=/my/folder -collection=abc -apply
+
+	# delete the changes
+	fs.configure -locationPrfix=/my/folder -delete -apply
 
 `
 }
