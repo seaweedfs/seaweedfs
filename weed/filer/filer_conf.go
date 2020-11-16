@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -47,10 +48,10 @@ func (fc *FilerConf) loadFromChunks(filer *Filer, chunks []*filer_pb.FileChunk) 
 		return
 	}
 
-	return fc.loadFromBytes(data)
+	return fc.LoadFromBytes(data)
 }
 
-func (fc *FilerConf) loadFromBytes(data []byte) (err error) {
+func (fc *FilerConf) LoadFromBytes(data []byte) (err error) {
 	conf := &filer_pb.FilerConf{}
 	err = proto.UnmarshalText(string(data), conf)
 	if err != nil {
@@ -64,15 +65,23 @@ func (fc *FilerConf) loadFromBytes(data []byte) (err error) {
 
 func (fc *FilerConf) doLoadConf(conf *filer_pb.FilerConf) (err error) {
 	for _, location := range conf.Locations {
-		err = fc.rules.Put([]byte(location.LocationPrefix), location)
+		err = fc.AddLocationConf(location)
 		if err != nil {
-			glog.Errorf("put location prefix: %v", err)
 			// this is not recoverable
 			return nil
 		}
 	}
 	return nil
 }
+
+func (fc *FilerConf) AddLocationConf(locConf *filer_pb.FilerConf_PathConf) (err error) {
+	err = fc.rules.Put([]byte(locConf.LocationPrefix), locConf)
+	if err != nil {
+		glog.Errorf("put location prefix: %v", err)
+	}
+	return
+}
+
 
 var (
 	EmptyFilerConfPathConf = &filer_pb.FilerConf_PathConf{}
@@ -87,4 +96,18 @@ func (fc *FilerConf) MatchStorageRule(path string) (pathConf *filer_pb.FilerConf
 		return EmptyFilerConfPathConf
 	}
 	return pathConf
+}
+
+func (fc *FilerConf) ToProto() *filer_pb.FilerConf {
+	m := &filer_pb.FilerConf{}
+	fc.rules.Walk(func(key []byte, value interface{}) bool {
+		pathConf := value.(*filer_pb.FilerConf_PathConf)
+		m.Locations = append(m.Locations, pathConf)
+		return true
+	})
+	return m
+}
+
+func (fc *FilerConf) ToText(writer io.Writer) error {
+	return proto.MarshalText(writer, fc.ToProto())
 }
