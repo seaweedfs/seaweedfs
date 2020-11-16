@@ -27,7 +27,7 @@ func (c *commandFsConfigure) Name() string {
 func (c *commandFsConfigure) Help() string {
 	return `configure and apply storage options for each location
 
-	# see the possible configuration file content
+	# see the current configuration file content
 	fs.configure
 
 	# trying the changes and see the possible configuration file content
