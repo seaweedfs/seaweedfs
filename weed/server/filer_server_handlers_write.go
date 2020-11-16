@@ -103,7 +103,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication string, ttlSeconds int32, dataCenter, rack string) (*operation.StorageOption) {
+func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication string, ttlSeconds int32, dataCenter, rack string) *operation.StorageOption {
 	collection := util.Nvl(qCollection, fs.option.Collection)
 	replication := util.Nvl(qReplication, fs.option.DefaultReplication)
 
@@ -131,7 +131,7 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 		if err != nil {
 			glog.Errorf("fail to parse %s ttl setting %s: %v", rule.LocationPrefix, rule.Ttl, err)
 		}
-		ttlSeconds = int32(ttl.Minutes())*60
+		ttlSeconds = int32(ttl.Minutes()) * 60
 	}
 
 	return &operation.StorageOption{
@@ -144,7 +144,7 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 	}
 }
 
-func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplication string, qTtl string, dataCenter, rack string) (*operation.StorageOption) {
+func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplication string, qTtl string, dataCenter, rack string) *operation.StorageOption {
 
 	ttl, err := needle.ReadTTL(qTtl)
 	if err != nil {

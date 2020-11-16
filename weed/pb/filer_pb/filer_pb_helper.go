@@ -141,6 +141,7 @@ func IsRename(event *SubscribeMetadataResponse) bool {
 }
 
 var _ = ptrie.KeyProvider(&FilerConf_PathConf{})
+
 func (fp *FilerConf_PathConf) Key() interface{} {
 	return fp.LocationPrefix
 }

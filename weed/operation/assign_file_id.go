@@ -137,4 +137,3 @@ func (so *StorageOption) ToAssignRequests(count int) (ar *VolumeAssignRequest, a
 	}
 	return
 }
-

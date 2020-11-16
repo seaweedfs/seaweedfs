@@ -10,9 +10,8 @@ import (
 	"github.com/viant/ptrie"
 )
 
-
 const (
-	DirectoryEtc = "/etc"
+	DirectoryEtc  = "/etc"
 	FilerConfName = "filer.conf"
 )
 
@@ -27,7 +26,7 @@ func NewFilerConf() (fc *FilerConf) {
 	return fc
 }
 
-func (fc *FilerConf) loadFromFiler(filer *Filer) (err error){
+func (fc *FilerConf) loadFromFiler(filer *Filer) (err error) {
 	filerConfPath := util.NewFullPath(DirectoryEtc, FilerConfName)
 	entry, err := filer.FindEntry(context.Background(), filerConfPath)
 	if err != nil {
@@ -79,7 +78,7 @@ var (
 	EmptyFilerConfPathConf = &filer_pb.FilerConf_PathConf{}
 )
 
-func (fc *FilerConf) MatchStorageRule(path string) (pathConf *filer_pb.FilerConf_PathConf){
+func (fc *FilerConf) MatchStorageRule(path string) (pathConf *filer_pb.FilerConf_PathConf) {
 	fc.rules.MatchPrefix([]byte(path), func(key []byte, value interface{}) bool {
 		pathConf = value.(*filer_pb.FilerConf_PathConf)
 		return true

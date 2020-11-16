@@ -27,7 +27,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	case "DELETE":
 		stats.FilerRequestCounter.WithLabelValues("delete").Inc()
 		if _, ok := r.URL.Query()["tagging"]; ok {
-			fs.DeleteTaggingHandler(w,r)
+			fs.DeleteTaggingHandler(w, r)
 		} else {
 			fs.DeleteHandler(w, r)
 		}
@@ -35,7 +35,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	case "PUT":
 		stats.FilerRequestCounter.WithLabelValues("put").Inc()
 		if _, ok := r.URL.Query()["tagging"]; ok {
-			fs.PutTaggingHandler(w,r)
+			fs.PutTaggingHandler(w, r)
 		} else {
 			fs.PostHandler(w, r)
 		}
