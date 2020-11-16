@@ -15,7 +15,7 @@ public class VolumeIdCache {
         }
         this.cache = CacheBuilder.newBuilder()
                 .maximumSize(maxEntries)
-                .expireAfterAccess(1, TimeUnit.HOURS)
+                .expireAfterAccess(5, TimeUnit.MINUTES)
                 .build();
     }
 

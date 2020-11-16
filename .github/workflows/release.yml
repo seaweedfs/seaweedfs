@@ -15,7 +15,7 @@ jobs:
       uses: actions/checkout@v2
 
     - name: Go Release Binaries
-      uses: wangyoucao577/go-release-action@feature/customize-target-release
+      uses: wangyoucao577/go-release-action@v1.10
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         goos: linux # default is 
@@ -28,7 +28,7 @@ jobs:
         project_path: weed
         binary_name: weed-large-disk
     - name: Go Release Binaries
-      uses: wangyoucao577/go-release-action@feature/customize-target-release
+      uses: wangyoucao577/go-release-action@v1.10
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         goos: linux # default is 

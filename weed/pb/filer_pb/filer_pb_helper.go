@@ -8,6 +8,8 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/golang/protobuf/proto"
+	"github.com/viant/ptrie"
 )
 
 func ToFileIdObject(fileIdStr string) (*FileId, error) {
@@ -121,3 +123,27 @@ func LookupEntry(client SeaweedFilerClient, request *LookupDirectoryEntryRequest
 }
 
 var ErrNotFound = errors.New("filer: no entry is found in filer store")
+
+func IsCreate(event *SubscribeMetadataResponse) bool {
+	return event.EventNotification.NewEntry != nil && event.EventNotification.OldEntry == nil
+}
+func IsUpdate(event *SubscribeMetadataResponse) bool {
+	return event.EventNotification.NewEntry != nil &&
+		event.EventNotification.OldEntry != nil &&
+		event.Directory == event.EventNotification.NewParentPath
+}
+func IsDelete(event *SubscribeMetadataResponse) bool {
+	return event.EventNotification.NewEntry == nil && event.EventNotification.OldEntry != nil
+}
+func IsRename(event *SubscribeMetadataResponse) bool {
+	return event.EventNotification.NewEntry != nil &&
+		event.EventNotification.OldEntry != nil &&
+		event.Directory != event.EventNotification.NewParentPath
+}
+
+var _ = ptrie.KeyProvider(&FilerConf_PathConf{})
+
+func (fp *FilerConf_PathConf) Key() interface{} {
+	key, _ := proto.Marshal(fp)
+	return string(key)
+}

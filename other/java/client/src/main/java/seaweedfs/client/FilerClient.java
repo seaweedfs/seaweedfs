@@ -275,9 +275,9 @@ public class FilerClient {
         try {
             FilerProto.CreateEntryResponse createEntryResponse =
                     filerGrpcClient.getBlockingStub().createEntry(FilerProto.CreateEntryRequest.newBuilder()
-                    .setDirectory(parent)
-                    .setEntry(entry)
-                    .build());
+                            .setDirectory(parent)
+                            .setEntry(entry)
+                            .build());
             if (Strings.isNullOrEmpty(createEntryResponse.getError())) {
                 return true;
             }
@@ -331,6 +331,15 @@ public class FilerClient {
             return false;
         }
         return true;
+    }
+
+    public Iterator<FilerProto.SubscribeMetadataResponse> watch(String prefix, String clientName, long sinceNs) {
+        return filerGrpcClient.getBlockingStub().subscribeMetadata(FilerProto.SubscribeMetadataRequest.newBuilder()
+                .setPathPrefix(prefix)
+                .setClientName(clientName)
+                .setSinceNs(sinceNs)
+                .build()
+        );
     }
 
 }

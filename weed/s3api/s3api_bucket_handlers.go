@@ -118,18 +118,12 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 	bucket, _ := getBucketAndObject(r)
 
-	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
-	if entry == nil || err == filer_pb.ErrNotFound {
-		writeErrorResponse(w, s3err.ErrNoSuchBucket, r.URL)
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		writeErrorResponse(w, err, r.URL)
 		return
 	}
 
-	if !s3a.hasAccess(r, entry) {
-		writeErrorResponse(w, s3err.ErrAccessDenied, r.URL)
-		return
-	}
-
-	err = s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		// delete collection
 		deleteCollectionRequest := &filer_pb.DeleteCollectionRequest{
@@ -158,18 +152,24 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 
 	bucket, _ := getBucketAndObject(r)
 
-	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
-	if entry == nil || err == filer_pb.ErrNotFound {
-		writeErrorResponse(w, s3err.ErrNoSuchBucket, r.URL)
-		return
-	}
-
-	if !s3a.hasAccess(r, entry) {
-		writeErrorResponse(w, s3err.ErrAccessDenied, r.URL)
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		writeErrorResponse(w, err, r.URL)
 		return
 	}
 
 	writeSuccessResponseEmpty(w)
+}
+
+func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorCode {
+	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	if entry == nil || err == filer_pb.ErrNotFound {
+		return s3err.ErrNoSuchBucket
+	}
+
+	if !s3a.hasAccess(r, entry) {
+		return s3err.ErrAccessDenied
+	}
+	return s3err.ErrNone
 }
 
 func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {

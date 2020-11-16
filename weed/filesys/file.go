@@ -294,7 +294,7 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 	// find the earliest incoming chunk
 	newChunks := chunks
 	earliestChunk := newChunks[0]
-	for i:=1;i<len(newChunks);i++{
+	for i := 1; i < len(newChunks); i++ {
 		if lessThan(earliestChunk, newChunks[i]) {
 			earliestChunk = newChunks[i]
 		}
