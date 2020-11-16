@@ -36,7 +36,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	fsConfigureCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	locationPrefix := fsConfigureCommand.String("locationPrefix", "", "path prefix, required to update the path-specific configuration")
-	collection := fsConfigureCommand.String("collection", "", "assign writes to this colletion")
+	collection := fsConfigureCommand.String("collection", "", "assign writes to this collection")
 	replication := fsConfigureCommand.String("replication", "", "assign writes with this replication")
 	ttl := fsConfigureCommand.String("ttl", "", "assign writes with this ttl")
 	fsync := fsConfigureCommand.Bool("fsync", false, "fsync for the writes")
