@@ -5,7 +5,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/jsonpb"
@@ -36,7 +36,7 @@ func (fc *FilerConf) loadFromFiler(filer *Filer) (err error) {
 		if err == filer_pb.ErrNotFound {
 			return nil
 		}
-		glog.Errorf("read filer conf entry %s: %v", filerConfPath, err)
+		log.Errorf("read filer conf entry %s: %v", filerConfPath, err)
 		return
 	}
 
@@ -46,7 +46,7 @@ func (fc *FilerConf) loadFromFiler(filer *Filer) (err error) {
 func (fc *FilerConf) loadFromChunks(filer *Filer, chunks []*filer_pb.FileChunk) (err error) {
 	data, err := filer.readEntry(chunks)
 	if err != nil {
-		glog.Errorf("read filer conf content: %v", err)
+		log.Errorf("read filer conf content: %v", err)
 		return
 	}
 
@@ -60,7 +60,7 @@ func (fc *FilerConf) LoadFromBytes(data []byte) (err error) {
 
 		err = proto.UnmarshalText(string(data), conf)
 		if err != nil {
-			glog.Errorf("unable to parse filer conf: %v", err)
+			log.Errorf("unable to parse filer conf: %v", err)
 			// this is not recoverable
 			return nil
 		}
@@ -85,7 +85,7 @@ func (fc *FilerConf) doLoadConf(conf *filer_pb.FilerConf) (err error) {
 func (fc *FilerConf) AddLocationConf(locConf *filer_pb.FilerConf_PathConf) (err error) {
 	err = fc.rules.Put([]byte(locConf.LocationPrefix), locConf)
 	if err != nil {
-		glog.Errorf("put location prefix: %v", err)
+		log.Errorf("put location prefix: %v", err)
 	}
 	return
 }

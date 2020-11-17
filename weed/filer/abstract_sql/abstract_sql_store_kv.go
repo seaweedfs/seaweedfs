@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -24,7 +24,7 @@ func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []by
 	}
 
 	// now the insert failed possibly due to duplication constraints
-	glog.V(1).Infof("kv insert falls back to update: %s", err)
+	log.Debugf("kv insert falls back to update: %s", err)
 
 	res, err = store.getTxOrDB(ctx).ExecContext(ctx, store.SqlUpdate, value, dirHash, name, dirStr)
 	if err != nil {

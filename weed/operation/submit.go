@@ -11,7 +11,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/security"
 )
 
@@ -91,14 +91,14 @@ func NewFileParts(fullPathFilenames []string) (ret []FilePart, err error) {
 func newFilePart(fullPathFilename string) (ret FilePart, err error) {
 	fh, openErr := os.Open(fullPathFilename)
 	if openErr != nil {
-		glog.V(0).Info("Failed to open file: ", fullPathFilename)
+		log.Info("Failed to open file: ", fullPathFilename)
 		return ret, openErr
 	}
 	ret.Reader = fh
 
 	fi, fiErr := fh.Stat()
 	if fiErr != nil {
-		glog.V(0).Info("Failed to stat file:", fullPathFilename)
+		log.Info("Failed to stat file:", fullPathFilename)
 		return ret, fiErr
 	}
 	ret.ModTime = fi.ModTime().UTC().Unix()
@@ -210,7 +210,7 @@ func (fi FilePart) Upload(maxMB int, master string, usePublicUrl bool, jwt secur
 func upload_one_chunk(filename string, reader io.Reader, master,
 	fileUrl string, jwt security.EncodedJwt,
 ) (size uint32, e error) {
-	glog.V(4).Info("Uploading part ", filename, " to ", fileUrl, "...")
+	log.Trace("Uploading part ", filename, " to ", fileUrl, "...")
 	uploadResult, uploadError, _ := Upload(fileUrl, filename, false, reader, false, "", nil, jwt)
 	if uploadError != nil {
 		return 0, uploadError
@@ -223,7 +223,7 @@ func upload_chunked_file_manifest(fileUrl string, manifest *ChunkManifest, jwt s
 	if e != nil {
 		return e
 	}
-	glog.V(4).Info("Uploading chunks manifest ", manifest.Name, " to ", fileUrl, "...")
+	log.Trace("Uploading chunks manifest ", manifest.Name, " to ", fileUrl, "...")
 	u, _ := url.Parse(fileUrl)
 	q := u.Query()
 	q.Set("cm", "true")

@@ -9,7 +9,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/log_buffer"
@@ -93,14 +93,14 @@ func (f *Filer) setOrLoadFilerStoreSignature(store FilerStore) {
 		storeIdBytes = make([]byte, 4)
 		util.Uint32toBytes(storeIdBytes, uint32(f.Signature))
 		if err = store.KvPut(context.Background(), []byte(FilerStoreId), storeIdBytes); err != nil {
-			glog.Fatalf("set %s=%d : %v", FilerStoreId, f.Signature, err)
+			log.Fatalf("set %s=%d : %v", FilerStoreId, f.Signature, err)
 		}
-		glog.V(0).Infof("create %s to %d", FilerStoreId, f.Signature)
+		log.Infof("create %s to %d", FilerStoreId, f.Signature)
 	} else if err == nil && len(storeIdBytes) == 4 {
 		f.Signature = int32(util.BytesToUint32(storeIdBytes))
-		glog.V(0).Infof("existing %s = %d", FilerStoreId, f.Signature)
+		log.Infof("existing %s = %d", FilerStoreId, f.Signature)
 	} else {
-		glog.Fatalf("read %v=%v : %v", FilerStoreId, string(storeIdBytes), err)
+		log.Fatalf("read %v=%v : %v", FilerStoreId, string(storeIdBytes), err)
 	}
 }
 
@@ -145,7 +145,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 		// fmt.Printf("%d directory: %+v\n", i, dirPath)
 
 		// check the store directly
-		glog.V(4).Infof("find uncached directory: %s", dirPath)
+		log.Tracef("find uncached directory: %s", dirPath)
 		dirEntry, _ := f.FindEntry(ctx, util.FullPath(dirPath))
 
 		// no such existing directory
@@ -169,11 +169,11 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 				},
 			}
 
-			glog.V(2).Infof("create directory: %s %v", dirPath, dirEntry.Mode)
+			log.Debugf("create directory: %s %v", dirPath, dirEntry.Mode)
 			mkdirErr := f.Store.InsertEntry(ctx, dirEntry)
 			if mkdirErr != nil {
 				if _, err := f.FindEntry(ctx, util.FullPath(dirPath)); err == filer_pb.ErrNotFound {
-					glog.V(3).Infof("mkdir %s: %v", dirPath, mkdirErr)
+					log.Tracef("mkdir %s: %v", dirPath, mkdirErr)
 					return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
 				}
 			} else {
@@ -182,7 +182,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 			}
 
 		} else if !dirEntry.IsDirectory() {
-			glog.Errorf("CreateEntry %s: %s should be a directory", entry.FullPath, dirPath)
+			log.Errorf("CreateEntry %s: %s should be a directory", entry.FullPath, dirPath)
 			return fmt.Errorf("%s is a file", dirPath)
 		}
 
@@ -194,13 +194,13 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 	}
 
 	if lastDirectoryEntry == nil {
-		glog.Errorf("CreateEntry %s: lastDirectoryEntry is nil", entry.FullPath)
+		log.Errorf("CreateEntry %s: lastDirectoryEntry is nil", entry.FullPath)
 		return fmt.Errorf("parent folder not found: %v", entry.FullPath)
 	}
 
 	/*
 		if !hasWritePermission(lastDirectoryEntry, entry) {
-			glog.V(0).Infof("directory %s: %v, entry: uid=%d gid=%d",
+			log.Infof("directory %s: %v, entry: uid=%d gid=%d",
 				lastDirectoryEntry.FullPath, lastDirectoryEntry.Attr, entry.Uid, entry.Gid)
 			return fmt.Errorf("no write permission in folder %v", lastDirectoryEntry.FullPath)
 		}
@@ -209,19 +209,19 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 	oldEntry, _ := f.FindEntry(ctx, entry.FullPath)
 
 	if oldEntry == nil {
-		glog.V(4).Infof("InsertEntry %s: new entry: %v", entry.FullPath, entry.Name())
+		log.Tracef("InsertEntry %s: new entry: %v", entry.FullPath, entry.Name())
 		if err := f.Store.InsertEntry(ctx, entry); err != nil {
-			glog.Errorf("insert entry %s: %v", entry.FullPath, err)
+			log.Errorf("insert entry %s: %v", entry.FullPath, err)
 			return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
 		}
 	} else {
 		if o_excl {
-			glog.V(3).Infof("EEXIST: entry %s already exists", entry.FullPath)
+			log.Tracef("EEXIST: entry %s already exists", entry.FullPath)
 			return fmt.Errorf("EEXIST: entry %s already exists", entry.FullPath)
 		}
-		glog.V(4).Infof("UpdateEntry %s: old entry: %v", entry.FullPath, oldEntry.Name())
+		log.Tracef("UpdateEntry %s: old entry: %v", entry.FullPath, oldEntry.Name())
 		if err := f.UpdateEntry(ctx, oldEntry, entry); err != nil {
-			glog.Errorf("update entry %s: %v", entry.FullPath, err)
+			log.Errorf("update entry %s: %v", entry.FullPath, err)
 			return fmt.Errorf("update entry %s: %v", entry.FullPath, err)
 		}
 	}
@@ -231,7 +231,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 
 	f.deleteChunksIfNotNew(oldEntry, entry)
 
-	glog.V(4).Infof("CreateEntry %s: created", entry.FullPath)
+	log.Tracef("CreateEntry %s: created", entry.FullPath)
 
 	return nil
 }
@@ -239,11 +239,11 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err error) {
 	if oldEntry != nil {
 		if oldEntry.IsDirectory() && !entry.IsDirectory() {
-			glog.Errorf("existing %s is a directory", entry.FullPath)
+			log.Errorf("existing %s is a directory", entry.FullPath)
 			return fmt.Errorf("existing %s is a directory", entry.FullPath)
 		}
 		if !oldEntry.IsDirectory() && entry.IsDirectory() {
-			glog.Errorf("existing %s is a file", entry.FullPath)
+			log.Errorf("existing %s is a file", entry.FullPath)
 			return fmt.Errorf("existing %s is a file", entry.FullPath)
 		}
 	}
@@ -321,7 +321,7 @@ func (f *Filer) Shutdown() {
 func (f *Filer) maybeDeleteHardLinks(hardLinkIds []HardLinkId) {
 	for _, hardLinkId := range hardLinkIds {
 		if err := f.Store.DeleteHardLink(context.Background(), hardLinkId); err != nil {
-			glog.Errorf("delete hard link id %d : %v", hardLinkId, err)
+			log.Errorf("delete hard link id %d : %v", hardLinkId, err)
 		}
 	}
 }

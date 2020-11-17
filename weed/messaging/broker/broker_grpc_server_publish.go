@@ -8,7 +8,7 @@ import (
 	"github.com/golang/protobuf/proto"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
 )
@@ -65,7 +65,7 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 	for {
 		// println("recv")
 		in, err := stream.Recv()
-		// glog.V(0).Infof("recieved %v err: %v", in, err)
+		// log.Infof("recieved %v err: %v", in, err)
 		if err == io.EOF {
 			return nil
 		}
@@ -81,7 +81,7 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 
 		data, err := proto.Marshal(in.Data)
 		if err != nil {
-			glog.Errorf("marshall error: %v\n", err)
+			log.Errorf("marshall error: %v\n", err)
 			continue
 		}
 
@@ -97,7 +97,7 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 	}
 
 	if err := broker.appendToFile(tpDir+"/"+md5File, topicConfig, md5hash.Sum(nil)); err != nil {
-		glog.V(0).Infof("err writing %s: %v", md5File, err)
+		log.Infof("err writing %s: %v", md5File, err)
 	}
 
 	// fmt.Printf("received md5 %X\n", md5hash.Sum(nil))
@@ -105,7 +105,7 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 	// send the close ack
 	// println("server send ack closing")
 	if err := stream.Send(&messaging_pb.PublishResponse{IsClosed: true}); err != nil {
-		glog.V(0).Infof("err sending close response: %v", err)
+		log.Infof("err sending close response: %v", err)
 	}
 	return nil
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -34,7 +34,7 @@ func (broker *MessageBroker) appendToFile(targetFile string, topicConfig *messag
 
 		_, err := client.AppendToEntry(context.Background(), request)
 		if err != nil {
-			glog.V(0).Infof("append to file %v: %v", request, err)
+			log.Infof("append to file %v: %v", request, err)
 			return err
 		}
 
@@ -61,7 +61,7 @@ func (broker *MessageBroker) assignAndUpload(topicConfig *messaging_pb.TopicConf
 
 		resp, err := client.AssignVolume(context.Background(), request)
 		if err != nil {
-			glog.V(0).Infof("assign volume failure %v: %v", request, err)
+			log.Infof("assign volume failure %v: %v", request, err)
 			return err
 		}
 		if resp.Error != "" {
@@ -98,7 +98,7 @@ func (broker *MessageBroker) WithFilerClient(fn func(filer_pb.SeaweedFilerClient
 			if err == io.EOF {
 				return
 			}
-			glog.V(0).Infof("fail to connect to %s: %v", filer, err)
+			log.Infof("fail to connect to %s: %v", filer, err)
 		} else {
 			break
 		}

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
@@ -79,7 +79,7 @@ func (n *NodeImpl) PickNodesByWeight(numberOfNodes int, filterFirstNodeFn func(d
 	}
 	n.RUnlock()
 	if len(candidates) < numberOfNodes {
-		glog.V(0).Infoln(n.Id(), "failed to pick", numberOfNodes, "from ", len(candidates), "node candidates")
+		log.Infoln(n.Id(), "failed to pick", numberOfNodes, "from ", len(candidates), "node candidates")
 		return nil, nil, errors.New("No enough data node found!")
 	}
 
@@ -275,7 +275,7 @@ func (n *NodeImpl) LinkChildNode(node Node) {
 		n.UpAdjustEcShardCountDelta(node.GetEcShardCount())
 		n.UpAdjustActiveVolumeCountDelta(node.GetActiveVolumeCount())
 		node.SetParent(n)
-		glog.V(0).Infoln(n, "adds child", node.Id())
+		log.Infoln(n, "adds child", node.Id())
 	}
 }
 
@@ -291,7 +291,7 @@ func (n *NodeImpl) UnlinkChildNode(nodeId NodeId) {
 		n.UpAdjustEcShardCountDelta(-node.GetEcShardCount())
 		n.UpAdjustActiveVolumeCountDelta(-node.GetActiveVolumeCount())
 		n.UpAdjustMaxVolumeCountDelta(-node.GetMaxVolumeCount())
-		glog.V(0).Infoln(n, "removes", node.Id())
+		log.Infoln(n, "removes", node.Id())
 	}
 }
 

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
@@ -54,10 +54,10 @@ func (f *Filer) loopProcessingDeletion() {
 				_, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
 				if err != nil {
 					if !strings.Contains(err.Error(), "already deleted") {
-						glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
+						log.Infof("deleting fileIds len=%d error: %v", deletionCount, err)
 					}
 				} else {
-					glog.V(1).Infof("deleting fileIds len=%d", deletionCount)
+					log.Debugf("deleting fileIds len=%d", deletionCount)
 				}
 			}
 		})
@@ -76,7 +76,7 @@ func (f *Filer) DeleteChunks(chunks []*filer_pb.FileChunk) {
 		}
 		dataChunks, manifestResolveErr := ResolveOneChunkManifest(f.MasterClient.LookupFileId, chunk)
 		if manifestResolveErr != nil {
-			glog.V(0).Infof("failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
+			log.Infof("failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
 		}
 		for _, dChunk := range dataChunks {
 			f.fileIdDeletionQueue.EnQueue(dChunk.GetFileIdString())

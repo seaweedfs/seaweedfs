@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"cloud.google.com/go/pubsub"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
@@ -26,8 +26,8 @@ func (k *GooglePubSub) GetName() string {
 }
 
 func (k *GooglePubSub) Initialize(configuration util.Configuration, prefix string) (err error) {
-	glog.V(0).Infof("notification.google_pub_sub.project_id: %v", configuration.GetString(prefix+"project_id"))
-	glog.V(0).Infof("notification.google_pub_sub.topic: %v", configuration.GetString(prefix+"topic"))
+	log.Infof("notification.google_pub_sub.project_id: %v", configuration.GetString(prefix+"project_id"))
+	log.Infof("notification.google_pub_sub.topic: %v", configuration.GetString(prefix+"topic"))
 	return k.initialize(
 		configuration.GetString(prefix+"google_application_credentials"),
 		configuration.GetString(prefix+"project_id"),
@@ -43,13 +43,13 @@ func (k *GooglePubSub) initialize(google_application_credentials, projectId, top
 		var found bool
 		google_application_credentials, found = os.LookupEnv("GOOGLE_APPLICATION_CREDENTIALS")
 		if !found {
-			glog.Fatalf("need to specific GOOGLE_APPLICATION_CREDENTIALS env variable or google_application_credentials in filer.toml")
+			log.Fatalf("need to specific GOOGLE_APPLICATION_CREDENTIALS env variable or google_application_credentials in filer.toml")
 		}
 	}
 
 	client, err := pubsub.NewClient(ctx, projectId, option.WithCredentialsFile(google_application_credentials))
 	if err != nil {
-		glog.Fatalf("Failed to create client: %v", err)
+		log.Fatalf("Failed to create client: %v", err)
 	}
 
 	k.topic = client.Topic(topicName)
@@ -57,11 +57,11 @@ func (k *GooglePubSub) initialize(google_application_credentials, projectId, top
 		if !exists {
 			k.topic, err = client.CreateTopic(ctx, topicName)
 			if err != nil {
-				glog.Fatalf("Failed to create topic %s: %v", topicName, err)
+				log.Fatalf("Failed to create topic %s: %v", topicName, err)
 			}
 		}
 	} else {
-		glog.Fatalf("Failed to check topic %s: %v", topicName, err)
+		log.Fatalf("Failed to check topic %s: %v", topicName, err)
 	}
 
 	return nil

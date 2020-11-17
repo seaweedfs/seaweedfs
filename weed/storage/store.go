@@ -8,7 +8,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
@@ -120,11 +120,11 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 		return fmt.Errorf("Volume Id %d already exists!", vid)
 	}
 	if location := s.FindFreeLocation(); location != nil {
-		glog.V(0).Infof("In dir %s adds volume:%v collection:%s replicaPlacement:%v ttl:%v",
+		log.Infof("In dir %s adds volume:%v collection:%s replicaPlacement:%v ttl:%v",
 			location.Directory, vid, collection, replicaPlacement, ttl)
 		if volume, err := NewVolume(location.Directory, collection, vid, needleMapKind, replicaPlacement, ttl, preallocate, memoryMapMaxSizeMb); err == nil {
 			location.SetVolume(vid, volume)
-			glog.V(0).Infof("add volume %d", vid)
+			log.Infof("add volume %d", vid)
 			s.NewVolumesChan <- master_pb.VolumeShortInformationMessage{
 				Id:               uint32(vid),
 				Collection:       collection,
@@ -222,7 +222,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
 					deleteVids = append(deleteVids, v.Id)
 				} else {
-					glog.V(0).Infoln("volume", v.Id, "is expired.")
+					log.Infoln("volume", v.Id, "is expired.")
 				}
 			}
 			collectionVolumeSize[v.Collection] += volumeMessage.Size
@@ -256,9 +256,9 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				found, err := location.deleteVolumeById(vid)
 				if found {
 					if err == nil {
-						glog.V(0).Infof("volume %d is deleted", vid)
+						log.Infof("volume %d is deleted", vid)
 					} else {
-						glog.V(0).Infof("delete volume %d: %v", vid, err)
+						log.Infof("delete volume %d: %v", vid, err)
 					}
 				}
 			}
@@ -305,7 +305,7 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, fsync boo
 		_, _, isUnchanged, err = v.writeNeedle2(n, fsync)
 		return
 	}
-	glog.V(0).Infoln("volume", i, "not found!")
+	log.Infoln("volume", i, "not found!")
 	err = fmt.Errorf("volume %d not found on %s:%d", i, s.Ip, s.Port)
 	return
 }
@@ -360,7 +360,7 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 func (s *Store) MountVolume(i needle.VolumeId) error {
 	for _, location := range s.Locations {
 		if found := location.LoadVolume(i, s.NeedleMapType); found == true {
-			glog.V(0).Infof("mount volume %d", i)
+			log.Infof("mount volume %d", i)
 			v := s.findVolume(i)
 			s.NewVolumesChan <- master_pb.VolumeShortInformationMessage{
 				Id:               uint32(v.Id),
@@ -391,7 +391,7 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 
 	for _, location := range s.Locations {
 		if err := location.UnloadVolume(i); err == nil {
-			glog.V(0).Infof("UnmountVolume %d", i)
+			log.Infof("UnmountVolume %d", i)
 			s.DeletedVolumesChan <- message
 			return nil
 		}
@@ -414,11 +414,11 @@ func (s *Store) DeleteVolume(i needle.VolumeId) error {
 	}
 	for _, location := range s.Locations {
 		if err := location.DeleteVolume(i); err == nil {
-			glog.V(0).Infof("DeleteVolume %d", i)
+			log.Infof("DeleteVolume %d", i)
 			s.DeletedVolumesChan <- message
 			return nil
 		} else {
-			glog.Errorf("DeleteVolume %d: %v", i, err)
+			log.Errorf("DeleteVolume %d: %v", i, err)
 		}
 	}
 
@@ -472,7 +472,7 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 				maxVolumeCount += int(uint64(unclaimedSpaces)/volumeSizeLimit) - 1
 			}
 			diskLocation.MaxVolumeCount = maxVolumeCount
-			glog.V(2).Infof("disk %s max %d unclaimedSpace:%dMB, unused:%dMB volumeSizeLimit:%dMB",
+			log.Debugf("disk %s max %d unclaimedSpace:%dMB, unused:%dMB volumeSizeLimit:%dMB",
 				diskLocation.Directory, maxVolumeCount, unclaimedSpaces/1024/1024, unusedSpace/1024/1024, volumeSizeLimit/1024/1024)
 			hasChanges = hasChanges || currentMaxVolumeCount != diskLocation.MaxVolumeCount
 		}

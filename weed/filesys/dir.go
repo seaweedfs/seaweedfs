@@ -13,7 +13,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -48,12 +48,12 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 
 	if dir.FullPath() == dir.wfs.option.FilerMountRootPath {
 		dir.setRootDirAttributes(attr)
-		glog.V(3).Infof("root dir Attr %s, attr: %+v", dir.FullPath(), attr)
+		log.Tracef("root dir Attr %s, attr: %+v", dir.FullPath(), attr)
 		return nil
 	}
 
 	if err := dir.maybeLoadEntry(); err != nil {
-		glog.V(3).Infof("dir Attr %s,err: %+v", dir.FullPath(), err)
+		log.Tracef("dir Attr %s,err: %+v", dir.FullPath(), err)
 		return err
 	}
 
@@ -64,14 +64,14 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Gid = dir.entry.Attributes.Gid
 	attr.Uid = dir.entry.Attributes.Uid
 
-	glog.V(4).Infof("dir Attr %s, attr: %+v", dir.FullPath(), attr)
+	log.Tracef("dir Attr %s, attr: %+v", dir.FullPath(), attr)
 
 	return nil
 }
 
 func (dir *Dir) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp *fuse.GetxattrResponse) error {
 
-	glog.V(4).Infof("dir Getxattr %s", dir.FullPath())
+	log.Tracef("dir Getxattr %s", dir.FullPath())
 
 	if err := dir.maybeLoadEntry(); err != nil {
 		return err
@@ -96,7 +96,7 @@ func (dir *Dir) setRootDirAttributes(attr *fuse.Attr) {
 func (dir *Dir) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 	// fsync works at OS level
 	// write the file chunks to the filerGrpcAddress
-	glog.V(3).Infof("dir %s fsync %+v", dir.FullPath(), req)
+	log.Tracef("dir %s fsync %+v", dir.FullPath(), req)
 
 	return nil
 }
@@ -146,7 +146,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 		OExcl:      req.Flags&fuse.OpenExclusive != 0,
 		Signatures: []int32{dir.wfs.signature},
 	}
-	glog.V(1).Infof("create %s/%s: %v", dir.FullPath(), req.Name, req.Flags)
+	log.Debugf("create %s/%s: %v", dir.FullPath(), req.Name, req.Flags)
 
 	if err := dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
@@ -157,7 +157,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 			if strings.Contains(err.Error(), "EEXIST") {
 				return fuse.EEXIST
 			}
-			glog.V(0).Infof("create %s/%s: %v", dir.FullPath(), req.Name, err)
+			log.Infof("create %s/%s: %v", dir.FullPath(), req.Name, err)
 			return fuse.EIO
 		}
 
@@ -182,21 +182,21 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 
 func (dir *Dir) Mknod(ctx context.Context, req *fuse.MknodRequest) (fs.Node, error) {
 	if req.Mode&os.ModeNamedPipe != 0 {
-		glog.V(1).Infof("mknod named pipe %s", req.String())
+		log.Debugf("mknod named pipe %s", req.String())
 		return nil, fuse.ENOSYS
 	}
 	if req.Mode&req.Mode&os.ModeSocket != 0 {
-		glog.V(1).Infof("mknod socket %s", req.String())
+		log.Debugf("mknod socket %s", req.String())
 		return nil, fuse.ENOSYS
 	}
 	// not going to support mknod for normal files either
-	glog.V(1).Infof("mknod %s", req.String())
+	log.Debugf("mknod %s", req.String())
 	return nil, fuse.ENOSYS
 }
 
 func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
 
-	glog.V(4).Infof("mkdir %s: %s", dir.FullPath(), req.Name)
+	log.Tracef("mkdir %s: %s", dir.FullPath(), req.Name)
 
 	newEntry := &filer_pb.Entry{
 		Name:        req.Name,
@@ -221,9 +221,9 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 			Signatures: []int32{dir.wfs.signature},
 		}
 
-		glog.V(1).Infof("mkdir: %v", request)
+		log.Debugf("mkdir: %v", request)
 		if err := filer_pb.CreateEntry(client, request); err != nil {
-			glog.V(0).Infof("mkdir %s/%s: %v", dir.FullPath(), req.Name, err)
+			log.Infof("mkdir %s/%s: %v", dir.FullPath(), req.Name, err)
 			return err
 		}
 
@@ -238,20 +238,20 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 		return node, nil
 	}
 
-	glog.V(0).Infof("mkdir %s/%s: %v", dir.FullPath(), req.Name, err)
+	log.Infof("mkdir %s/%s: %v", dir.FullPath(), req.Name, err)
 
 	return nil, fuse.EIO
 }
 
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (node fs.Node, err error) {
 
-	glog.V(4).Infof("dir Lookup %s: %s by %s", dir.FullPath(), req.Name, req.Header.String())
+	log.Tracef("dir Lookup %s: %s by %s", dir.FullPath(), req.Name, req.Header.String())
 
 	fullFilePath := util.NewFullPath(dir.FullPath(), req.Name)
 	dirPath := util.FullPath(dir.FullPath())
 	visitErr := meta_cache.EnsureVisited(dir.wfs.metaCache, dir.wfs, dirPath)
 	if visitErr != nil {
-		glog.Errorf("dir Lookup %s: %v", dirPath, visitErr)
+		log.Errorf("dir Lookup %s: %v", dirPath, visitErr)
 		return nil, fuse.EIO
 	}
 	cachedEntry, cacheErr := dir.wfs.metaCache.FindEntry(context.Background(), fullFilePath)
@@ -261,14 +261,14 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 	entry := cachedEntry.ToProtoEntry()
 
 	if entry == nil {
-		// glog.V(3).Infof("dir Lookup cache miss %s", fullFilePath)
+		// log.Tracef("dir Lookup cache miss %s", fullFilePath)
 		entry, err = filer_pb.GetEntry(dir.wfs, fullFilePath)
 		if err != nil {
-			glog.V(1).Infof("dir GetEntry %s: %v", fullFilePath, err)
+			log.Debugf("dir GetEntry %s: %v", fullFilePath, err)
 			return nil, fuse.ENOENT
 		}
 	} else {
-		glog.V(4).Infof("dir Lookup cache hit %s", fullFilePath)
+		log.Tracef("dir Lookup cache hit %s", fullFilePath)
 	}
 
 	if entry != nil {
@@ -293,13 +293,13 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		return node, nil
 	}
 
-	glog.V(4).Infof("not found dir GetEntry %s: %v", fullFilePath, err)
+	log.Tracef("not found dir GetEntry %s: %v", fullFilePath, err)
 	return nil, fuse.ENOENT
 }
 
 func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
-	glog.V(4).Infof("dir ReadDirAll %s", dir.FullPath())
+	log.Tracef("dir ReadDirAll %s", dir.FullPath())
 
 	processEachEntryFn := func(entry *filer_pb.Entry, isLast bool) error {
 		fullpath := util.NewFullPath(dir.FullPath(), entry.Name)
@@ -316,12 +316,12 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 	dirPath := util.FullPath(dir.FullPath())
 	if err = meta_cache.EnsureVisited(dir.wfs.metaCache, dir.wfs, dirPath); err != nil {
-		glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
+		log.Errorf("dir ReadDirAll %s: %v", dirPath, err)
 		return nil, fuse.EIO
 	}
 	listedEntries, listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), util.FullPath(dir.FullPath()), "", false, int(math.MaxInt32))
 	if listErr != nil {
-		glog.Errorf("list meta cache: %v", listErr)
+		log.Errorf("list meta cache: %v", listErr)
 		return nil, fuse.EIO
 	}
 	for _, cachedEntry := range listedEntries {
@@ -352,11 +352,11 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 	}
 
 	// first, ensure the filer store can correctly delete
-	glog.V(3).Infof("remove file: %v", req)
+	log.Tracef("remove file: %v", req)
 	isDeleteData := entry.HardLinkCounter <= 1
 	err = filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, isDeleteData, false, false, false, []int32{dir.wfs.signature})
 	if err != nil {
-		glog.V(3).Infof("not found remove file %s/%s: %v", dir.FullPath(), req.Name, err)
+		log.Tracef("not found remove file %s/%s: %v", dir.FullPath(), req.Name, err)
 		return fuse.ENOENT
 	}
 
@@ -389,11 +389,11 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 
 func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 
-	glog.V(3).Infof("remove directory entry: %v", req)
+	log.Tracef("remove directory entry: %v", req)
 	ignoreRecursiveErr := true // ignore recursion error since the OS should manage it
 	err := filer_pb.Remove(dir.wfs, dir.FullPath(), req.Name, true, false, ignoreRecursiveErr, false, []int32{dir.wfs.signature})
 	if err != nil {
-		glog.V(0).Infof("remove %s/%s: %v", dir.FullPath(), req.Name, err)
+		log.Infof("remove %s/%s: %v", dir.FullPath(), req.Name, err)
 		if strings.Contains(err.Error(), "non-empty") {
 			return fuse.EEXIST
 		}
@@ -410,7 +410,7 @@ func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 
 func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
-	glog.V(4).Infof("%v dir setattr %+v", dir.FullPath(), req)
+	log.Tracef("%v dir setattr %+v", dir.FullPath(), req)
 
 	if err := dir.maybeLoadEntry(); err != nil {
 		return err
@@ -438,7 +438,7 @@ func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 
 func (dir *Dir) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
 
-	glog.V(4).Infof("dir Setxattr %s: %s", dir.FullPath(), req.Name)
+	log.Tracef("dir Setxattr %s: %s", dir.FullPath(), req.Name)
 
 	if err := dir.maybeLoadEntry(); err != nil {
 		return err
@@ -454,7 +454,7 @@ func (dir *Dir) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
 
 func (dir *Dir) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest) error {
 
-	glog.V(4).Infof("dir Removexattr %s: %s", dir.FullPath(), req.Name)
+	log.Tracef("dir Removexattr %s: %s", dir.FullPath(), req.Name)
 
 	if err := dir.maybeLoadEntry(); err != nil {
 		return err
@@ -470,7 +470,7 @@ func (dir *Dir) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest) e
 
 func (dir *Dir) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, resp *fuse.ListxattrResponse) error {
 
-	glog.V(4).Infof("dir Listxattr %s", dir.FullPath())
+	log.Tracef("dir Listxattr %s", dir.FullPath())
 
 	if err := dir.maybeLoadEntry(); err != nil {
 		return err
@@ -485,7 +485,7 @@ func (dir *Dir) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, resp 
 }
 
 func (dir *Dir) Forget() {
-	glog.V(4).Infof("Forget dir %s", dir.FullPath())
+	log.Tracef("Forget dir %s", dir.FullPath())
 
 	dir.wfs.fsNodeCache.DeleteFsNode(util.FullPath(dir.FullPath()))
 }
@@ -517,10 +517,10 @@ func (dir *Dir) saveEntry() error {
 			Signatures: []int32{dir.wfs.signature},
 		}
 
-		glog.V(1).Infof("save dir entry: %v", request)
+		log.Debugf("save dir entry: %v", request)
 		_, err := client.UpdateEntry(context.Background(), request)
 		if err != nil {
-			glog.Errorf("UpdateEntry dir %s/%s: %v", parentDir, name, err)
+			log.Errorf("UpdateEntry dir %s/%s: %v", parentDir, name, err)
 			return fuse.EIO
 		}
 

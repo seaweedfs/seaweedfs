@@ -12,7 +12,7 @@ import (
 
 	"github.com/syndtr/goleveldb/leveldb"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
@@ -27,11 +27,11 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 	m = &LevelDbNeedleMap{dbFileName: dbFileName}
 	m.indexFile = indexFile
 	if !isLevelDbFresh(dbFileName, indexFile) {
-		glog.V(1).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
+		log.Debugf("Start to Generate %s from %s", dbFileName, indexFile.Name())
 		generateLevelDbFile(dbFileName, indexFile)
-		glog.V(1).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
+		log.Debugf("Finished Generating %s from %s", dbFileName, indexFile.Name())
 	}
-	glog.V(1).Infof("Opening %s...", dbFileName)
+	log.Debugf("Opening %s...", dbFileName)
 
 	if m.db, err = leveldb.OpenFile(dbFileName, opts); err != nil {
 		if errors.IsCorrupted(err) {
@@ -41,7 +41,7 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 			return
 		}
 	}
-	glog.V(1).Infof("Loading %s...", indexFile.Name())
+	log.Debugf("Loading %s...", indexFile.Name())
 	mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile)
 	if indexLoadError != nil {
 		return nil, indexLoadError
@@ -60,7 +60,7 @@ func isLevelDbFresh(dbFileName string, indexFile *os.File) bool {
 	dbStat, dbStatErr := dbLogFile.Stat()
 	indexStat, indexStatErr := indexFile.Stat()
 	if dbStatErr != nil || indexStatErr != nil {
-		glog.V(0).Infof("Can not stat file: %v and %v", dbStatErr, indexStatErr)
+		log.Infof("Can not stat file: %v and %v", dbStatErr, indexStatErr)
 		return false
 	}
 
@@ -141,14 +141,14 @@ func (m *LevelDbNeedleMap) Delete(key NeedleId, offset Offset) error {
 func (m *LevelDbNeedleMap) Close() {
 	indexFileName := m.indexFile.Name()
 	if err := m.indexFile.Sync(); err != nil {
-		glog.Warningf("sync file %s failed: %v", indexFileName, err)
+		log.Warnf("sync file %s failed: %v", indexFileName, err)
 	}
 	if err := m.indexFile.Close(); err != nil {
-		glog.Warningf("close index file %s failed: %v", indexFileName, err)
+		log.Warnf("close index file %s failed: %v", indexFileName, err)
 	}
 
 	if err := m.db.Close(); err != nil {
-		glog.Warningf("close levelDB failed: %v", err)
+		log.Warnf("close levelDB failed: %v", err)
 	}
 }
 

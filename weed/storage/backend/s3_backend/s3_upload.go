@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 )
 
 func uploadToS3(sess s3iface.S3API, filename string, destBucket string, destKey string,
@@ -73,7 +73,7 @@ func uploadToS3(sess s3iface.S3API, filename string, destBucket string, destKey 
 	if err != nil {
 		return 0, fmt.Errorf("failed to upload file %s: %v", filename, err)
 	}
-	glog.V(1).Infof("file %s uploaded to %s\n", filename, result.Location)
+	log.Debugf("file %s uploaded to %s\n", filename, result.Location)
 
 	return
 }

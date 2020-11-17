@@ -13,7 +13,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
@@ -111,11 +111,11 @@ func (scanner *VolumeFileScanner4Export) VisitNeedle(n *needle.Needle, offset in
 	vid := scanner.vid
 
 	nv, ok := needleMap.Get(n.Id)
-	glog.V(3).Infof("key %d offset %d size %d disk_size %d compressed %v ok %v nv %+v",
+	log.Tracef("key %d offset %d size %d disk_size %d compressed %v ok %v nv %+v",
 		n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsCompressed(), ok, nv)
 	if *showDeleted && n.Size > 0 || ok && nv.Size.IsValid() && nv.Offset.ToAcutalOffset() == offset {
 		if newerThanUnix >= 0 && n.HasLastModifiedDate() && n.LastModified < uint64(newerThanUnix) {
-			glog.V(3).Infof("Skipping this file, as it's old enough: LastModified %d vs %d",
+			log.Tracef("Skipping this file, as it's old enough: LastModified %d vs %d",
 				n.LastModified, newerThanUnix)
 			return nil
 		}
@@ -139,9 +139,9 @@ func (scanner *VolumeFileScanner4Export) VisitNeedle(n *needle.Needle, offset in
 				printNeedle(vid, n, scanner.version, true, offset, n.DiskSize(scanner.version))
 			}
 		}
-		glog.V(2).Infof("This seems deleted %d size %d", n.Id, n.Size)
+		log.Debugf("This seems deleted %d size %d", n.Id, n.Size)
 	} else {
-		glog.V(2).Infof("Skipping later-updated Id %d size %d", n.Id, n.Size)
+		log.Debugf("Skipping later-updated Id %d size %d", n.Id, n.Size)
 	}
 	return nil
 }
@@ -178,7 +178,7 @@ func runExport(cmd *Command, args []string) bool {
 			outputFile = os.Stdout
 		} else {
 			if outputFile, err = os.Create(*output); err != nil {
-				glog.Fatalf("cannot open output tar %s: %s", *output, err)
+				log.Fatalf("cannot open output tar %s: %s", *output, err)
 			}
 		}
 		defer outputFile.Close()
@@ -201,7 +201,7 @@ func runExport(cmd *Command, args []string) bool {
 	defer needleMap.Close()
 
 	if err := needleMap.LoadFromIdx(path.Join(util.ResolvePath(*export.dir), fileName+".idx")); err != nil {
-		glog.Fatalf("cannot load needle map from %s.idx: %s", fileName, err)
+		log.Fatalf("cannot load needle map from %s.idx: %s", fileName, err)
 	}
 
 	volumeFileScanner := &VolumeFileScanner4Export{
@@ -215,7 +215,7 @@ func runExport(cmd *Command, args []string) bool {
 
 	err = storage.ScanVolumeFile(util.ResolvePath(*export.dir), *export.collection, vid, storage.NeedleMapInMemory, volumeFileScanner)
 	if err != nil && err != io.EOF {
-		glog.Fatalf("Export Volume File [ERROR] %s\n", err)
+		log.Fatalf("Export Volume File [ERROR] %s\n", err)
 	}
 	return true
 }

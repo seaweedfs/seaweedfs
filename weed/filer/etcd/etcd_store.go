@@ -9,7 +9,7 @@ import (
 	"go.etcd.io/etcd/clientv3"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	weed_util "github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -45,7 +45,7 @@ func (store *EtcdStore) Initialize(configuration weed_util.Configuration, prefix
 }
 
 func (store *EtcdStore) initialize(servers string, timeout string) (err error) {
-	glog.Infof("filer store etcd: %s", servers)
+	log.Infof("filer store etcd: %s", servers)
 
 	to, err := time.ParseDuration(timeout)
 	if err != nil {
@@ -169,7 +169,7 @@ func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, fullpath weed_
 		}
 		if decodeErr := entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(kv.Value)); decodeErr != nil {
 			err = decodeErr
-			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+			log.Infof("list %s : %v", entry.FullPath, err)
 			break
 		}
 		entries = append(entries, entry)

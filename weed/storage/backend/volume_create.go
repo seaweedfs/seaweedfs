@@ -5,7 +5,7 @@ package backend
 import (
 	"os"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 )
 
 func CreateVolumeFile(fileName string, preallocate int64, memoryMapSizeMB uint32) (BackendStorageFile, error) {
@@ -14,7 +14,7 @@ func CreateVolumeFile(fileName string, preallocate int64, memoryMapSizeMB uint32
 		return nil, e
 	}
 	if preallocate > 0 {
-		glog.V(2).Infof("Preallocated disk space for %s is not supported", fileName)
+		log.Debugf("Preallocated disk space for %s is not supported", fileName)
 	}
 	return NewDiskFile(file), nil
 }

@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 )
 
@@ -54,7 +54,7 @@ func (t *Topology) SetVolumeCapacityFull(volumeInfo storage.VolumeInfo) bool {
 }
 func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 	for _, v := range dn.GetVolumes() {
-		glog.V(0).Infoln("Removing Volume", v.Id, "from the dead volume server", dn.Id())
+		log.Infoln("Removing Volume", v.Id, "from the dead volume server", dn.Id())
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl)
 		vl.SetVolumeUnavailable(dn, v.Id)
 	}

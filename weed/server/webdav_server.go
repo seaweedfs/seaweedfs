@@ -20,7 +20,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/security"
 )
 
@@ -136,7 +136,7 @@ func clearName(name string) (string, error) {
 
 func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm os.FileMode) error {
 
-	glog.V(2).Infof("WebDavFileSystem.Mkdir %v", fullDirPath)
+	log.Debugf("WebDavFileSystem.Mkdir %v", fullDirPath)
 
 	if !strings.HasSuffix(fullDirPath, "/") {
 		fullDirPath += "/"
@@ -170,7 +170,7 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 			Signatures: []int32{fs.signature},
 		}
 
-		glog.V(1).Infof("mkdir: %v", request)
+		log.Debugf("mkdir: %v", request)
 		if err := filer_pb.CreateEntry(client, request); err != nil {
 			return fmt.Errorf("mkdir %s/%s: %v", dir, name, err)
 		}
@@ -181,7 +181,7 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 
 func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, flag int, perm os.FileMode) (webdav.File, error) {
 
-	glog.V(2).Infof("WebDavFileSystem.OpenFile %v %x", fullFilePath, flag)
+	log.Debugf("WebDavFileSystem.OpenFile %v %x", fullFilePath, flag)
 
 	var err error
 	if fullFilePath, err = clearName(fullFilePath); err != nil {
@@ -265,14 +265,14 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string) 
 
 func (fs *WebDavFileSystem) RemoveAll(ctx context.Context, name string) error {
 
-	glog.V(2).Infof("WebDavFileSystem.RemoveAll %v", name)
+	log.Debugf("WebDavFileSystem.RemoveAll %v", name)
 
 	return fs.removeAll(ctx, name)
 }
 
 func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string) error {
 
-	glog.V(2).Infof("WebDavFileSystem.Rename %v to %v", oldName, newName)
+	log.Debugf("WebDavFileSystem.Rename %v to %v", oldName, newName)
 
 	var err error
 	if oldName, err = clearName(oldName); err != nil {
@@ -353,14 +353,14 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 
 func (fs *WebDavFileSystem) Stat(ctx context.Context, name string) (os.FileInfo, error) {
 
-	glog.V(2).Infof("WebDavFileSystem.Stat %v", name)
+	log.Debugf("WebDavFileSystem.Stat %v", name)
 
 	return fs.stat(ctx, name)
 }
 
 func (f *WebDavFile) Write(buf []byte) (int, error) {
 
-	glog.V(2).Infof("WebDavFileSystem.Write %v", f.name)
+	log.Debugf("WebDavFileSystem.Write %v", f.name)
 
 	dir, _ := util.FullPath(f.name).DirAndName()
 
@@ -392,7 +392,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 		resp, err := client.AssignVolume(ctx, request)
 		if err != nil {
-			glog.V(0).Infof("assign volume failure %v: %v", request, err)
+			log.Infof("assign volume failure %v: %v", request, err)
 			return err
 		}
 		if resp.Error != "" {
@@ -410,11 +410,11 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
 	uploadResult, err := operation.UploadData(fileUrl, f.name, f.fs.option.Cipher, buf, false, "", nil, auth)
 	if err != nil {
-		glog.V(0).Infof("upload data %v to %s: %v", f.name, fileUrl, err)
+		log.Infof("upload data %v to %s: %v", f.name, fileUrl, err)
 		return 0, fmt.Errorf("upload data: %v", err)
 	}
 	if uploadResult.Error != "" {
-		glog.V(0).Infof("upload failure %v to %s: %v", f.name, fileUrl, err)
+		log.Infof("upload failure %v to %s: %v", f.name, fileUrl, err)
 		return 0, fmt.Errorf("upload result: %v", uploadResult.Error)
 	}
 
@@ -439,7 +439,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 	})
 
 	if err == nil {
-		glog.V(3).Infof("WebDavFileSystem.Write %v: written [%d,%d)", f.name, f.off, f.off+int64(len(buf)))
+		log.Tracef("WebDavFileSystem.Write %v: written [%d,%d)", f.name, f.off, f.off+int64(len(buf)))
 		f.off += int64(len(buf))
 	}
 
@@ -448,7 +448,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 func (f *WebDavFile) Close() error {
 
-	glog.V(2).Infof("WebDavFileSystem.Close %v", f.name)
+	log.Debugf("WebDavFileSystem.Close %v", f.name)
 
 	if f.entry != nil {
 		f.entry = nil
@@ -460,7 +460,7 @@ func (f *WebDavFile) Close() error {
 
 func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 
-	glog.V(2).Infof("WebDavFileSystem.Read %v", f.name)
+	log.Debugf("WebDavFileSystem.Read %v", f.name)
 
 	if f.entry == nil {
 		f.entry, err = filer_pb.GetEntry(f.fs, util.FullPath(f.name))
@@ -486,11 +486,11 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 
 	readSize, err = f.reader.ReadAt(p, f.off)
 
-	glog.V(3).Infof("WebDavFileSystem.Read %v: [%d,%d)", f.name, f.off, f.off+int64(readSize))
+	log.Tracef("WebDavFileSystem.Read %v: [%d,%d)", f.name, f.off, f.off+int64(readSize))
 	f.off += int64(readSize)
 
 	if err != nil && err != io.EOF {
-		glog.Errorf("file read %s: %v", f.name, err)
+		log.Errorf("file read %s: %v", f.name, err)
 	}
 
 	return
@@ -499,7 +499,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 
 func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 
-	glog.V(2).Infof("WebDavFileSystem.Readdir %v count %d", f.name, count)
+	log.Debugf("WebDavFileSystem.Readdir %v count %d", f.name, count)
 
 	dir, _ := util.FullPath(f.name).DirAndName()
 
@@ -515,7 +515,7 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 		if !strings.HasSuffix(fi.name, "/") && fi.IsDir() {
 			fi.name += "/"
 		}
-		glog.V(4).Infof("entry: %v", fi.name)
+		log.Tracef("entry: %v", fi.name)
 		ret = append(ret, &fi)
 		return nil
 	})
@@ -542,7 +542,7 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 
 func (f *WebDavFile) Seek(offset int64, whence int) (int64, error) {
 
-	glog.V(2).Infof("WebDavFile.Seek %v %v %v", f.name, offset, whence)
+	log.Debugf("WebDavFile.Seek %v %v %v", f.name, offset, whence)
 
 	ctx := context.Background()
 
@@ -563,7 +563,7 @@ func (f *WebDavFile) Seek(offset int64, whence int) (int64, error) {
 
 func (f *WebDavFile) Stat() (os.FileInfo, error) {
 
-	glog.V(2).Infof("WebDavFile.Stat %v", f.name)
+	log.Debugf("WebDavFile.Stat %v", f.name)
 
 	ctx := context.Background()
 

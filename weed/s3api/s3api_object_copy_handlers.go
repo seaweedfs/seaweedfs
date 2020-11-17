@@ -2,7 +2,7 @@ package s3api
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"net/http"
 	"net/url"
@@ -48,7 +48,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 	defer util.CloseResponse(resp)
 
-	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
+	log.Debugf("copy from %s to %s", srcUrl, dstUrl)
 	etag, errCode := s3a.putToFiler(r, dstUrl, resp.Body)
 
 	if errCode != s3err.ErrNone {
@@ -129,7 +129,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 	defer dataReader.Close()
 
-	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
+	log.Debugf("copy from %s to %s", srcUrl, dstUrl)
 	etag, errCode := s3a.putToFiler(r, dstUrl, dataReader)
 
 	if errCode != s3err.ErrNone {

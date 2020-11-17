@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/viper"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 )
 
 type Configuration interface {
@@ -24,16 +24,16 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 	viper.AddConfigPath("$HOME/.seaweedfs") // call multiple times to add many search paths
 	viper.AddConfigPath("/etc/seaweedfs/")  // path to look for the config file in
 
-	glog.V(1).Infof("Reading %s.toml from %s", configFileName, viper.ConfigFileUsed())
+	log.Debugf("Reading %s.toml from %s", configFileName, viper.ConfigFileUsed())
 
 	if err := viper.MergeInConfig(); err != nil { // Handle errors reading the config file
-		logLevel := glog.Level(0)
 		if strings.Contains(err.Error(), "Not Found") {
-			logLevel = 1
+			log.Warnf("Reading %s: %v", viper.ConfigFileUsed(), err)
+		} else {
+			log.Infof("Reading %s: %v", viper.ConfigFileUsed(), err)
 		}
-		glog.V(logLevel).Infof("Reading %s: %v", viper.ConfigFileUsed(), err)
 		if required {
-			glog.Fatalf("Failed to load %s.toml file from current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/"+
+			log.Fatalf("Failed to load %s.toml file from current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/"+
 				"\n\nPlease use this command to generate the default %s.toml file\n"+
 				"    weed scaffold -config=%s -output=.\n\n\n",
 				configFileName, configFileName, configFileName)

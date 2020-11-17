@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"cloud.google.com/go/pubsub"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
@@ -28,8 +28,8 @@ func (k *GooglePubSubInput) GetName() string {
 }
 
 func (k *GooglePubSubInput) Initialize(configuration util.Configuration, prefix string) error {
-	glog.V(0).Infof("notification.google_pub_sub.project_id: %v", configuration.GetString(prefix+"project_id"))
-	glog.V(0).Infof("notification.google_pub_sub.topic: %v", configuration.GetString(prefix+"topic"))
+	log.Infof("notification.google_pub_sub.project_id: %v", configuration.GetString(prefix+"project_id"))
+	log.Infof("notification.google_pub_sub.topic: %v", configuration.GetString(prefix+"topic"))
 	return k.initialize(
 		configuration.GetString(prefix+"google_application_credentials"),
 		configuration.GetString(prefix+"project_id"),
@@ -45,13 +45,13 @@ func (k *GooglePubSubInput) initialize(google_application_credentials, projectId
 		var found bool
 		google_application_credentials, found = os.LookupEnv("GOOGLE_APPLICATION_CREDENTIALS")
 		if !found {
-			glog.Fatalf("need to specific GOOGLE_APPLICATION_CREDENTIALS env variable or google_application_credentials in filer.toml")
+			log.Fatalf("need to specific GOOGLE_APPLICATION_CREDENTIALS env variable or google_application_credentials in filer.toml")
 		}
 	}
 
 	client, err := pubsub.NewClient(ctx, projectId, option.WithCredentialsFile(google_application_credentials))
 	if err != nil {
-		glog.Fatalf("Failed to create client: %v", err)
+		log.Fatalf("Failed to create client: %v", err)
 	}
 
 	k.topicName = topicName
@@ -60,11 +60,11 @@ func (k *GooglePubSubInput) initialize(google_application_credentials, projectId
 		if !exists {
 			topic, err = client.CreateTopic(ctx, topicName)
 			if err != nil {
-				glog.Fatalf("Failed to create topic %s: %v", topicName, err)
+				log.Fatalf("Failed to create topic %s: %v", topicName, err)
 			}
 		}
 	} else {
-		glog.Fatalf("Failed to check topic %s: %v", topicName, err)
+		log.Fatalf("Failed to check topic %s: %v", topicName, err)
 	}
 
 	subscriptionName := "seaweedfs_sub"
@@ -74,11 +74,11 @@ func (k *GooglePubSubInput) initialize(google_application_credentials, projectId
 		if !exists {
 			k.sub, err = client.CreateSubscription(ctx, subscriptionName, pubsub.SubscriptionConfig{Topic: topic})
 			if err != nil {
-				glog.Fatalf("Failed to create subscription %s: %v", subscriptionName, err)
+				log.Fatalf("Failed to create subscription %s: %v", subscriptionName, err)
 			}
 		}
 	} else {
-		glog.Fatalf("Failed to check subscription %s: %v", topicName, err)
+		log.Fatalf("Failed to check subscription %s: %v", topicName, err)
 	}
 
 	k.messageChan = make(chan *pubsub.Message, 1)

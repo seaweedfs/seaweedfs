@@ -10,7 +10,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/messaging/broker"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -65,7 +65,7 @@ func (msgBrokerOpt *MessageBrokerOptions) startQueueServer() bool {
 
 	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(*msgBrokerOpt.filer)
 	if err != nil {
-		glog.Fatal(err)
+		log.Fatal(err)
 		return false
 	}
 
@@ -82,10 +82,10 @@ func (msgBrokerOpt *MessageBrokerOptions) startQueueServer() bool {
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *msgBrokerOpt.filer, filerGrpcAddress)
+			log.Infof("wait to connect to filer %s grpc address %s", *msgBrokerOpt.filer, filerGrpcAddress)
 			time.Sleep(time.Second)
 		} else {
-			glog.V(0).Infof("connected to filer %s grpc address %s", *msgBrokerOpt.filer, filerGrpcAddress)
+			log.Infof("connected to filer %s grpc address %s", *msgBrokerOpt.filer, filerGrpcAddress)
 			break
 		}
 	}
@@ -102,7 +102,7 @@ func (msgBrokerOpt *MessageBrokerOptions) startQueueServer() bool {
 	// start grpc listener
 	grpcL, err := util.NewListener(":"+strconv.Itoa(*msgBrokerOpt.port), 0)
 	if err != nil {
-		glog.Fatalf("failed to listen on grpc port %d: %v", *msgBrokerOpt.port, err)
+		log.Fatalf("failed to listen on grpc port %d: %v", *msgBrokerOpt.port, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.msg_broker"))
 	messaging_pb.RegisterSeaweedMessagingServer(grpcS, qs)

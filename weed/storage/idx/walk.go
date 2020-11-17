@@ -3,7 +3,7 @@ package idx
 import (
 	"io"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
@@ -16,7 +16,7 @@ func WalkIndexFile(r io.ReaderAt, fn func(key types.NeedleId, offset types.Offse
 	if count == 0 && e == io.EOF {
 		return nil
 	}
-	glog.V(3).Infof("readerOffset %d count %d err: %v", readerOffset, count, e)
+	log.Tracef("readerOffset %d count %d err: %v", readerOffset, count, e)
 	readerOffset += int64(count)
 	var (
 		key    types.NeedleId
@@ -36,7 +36,7 @@ func WalkIndexFile(r io.ReaderAt, fn func(key types.NeedleId, offset types.Offse
 			return nil
 		}
 		count, e = r.ReadAt(bytes, readerOffset)
-		glog.V(3).Infof("readerOffset %d count %d err: %v", readerOffset, count, e)
+		log.Tracef("readerOffset %d count %d err: %v", readerOffset, count, e)
 		readerOffset += int64(count)
 	}
 	return e

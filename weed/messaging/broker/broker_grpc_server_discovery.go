@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
@@ -78,11 +78,11 @@ func (broker *MessageBroker) checkFilers() {
 				found = true
 				break
 			}
-			glog.V(0).Infof("failed to read masters from %+v: %v", broker.option.Filers, err)
+			log.Infof("failed to read masters from %+v: %v", broker.option.Filers, err)
 			time.Sleep(time.Second)
 		}
 	}
-	glog.V(0).Infof("received master list: %s", masters)
+	log.Infof("received master list: %s", masters)
 
 	// contact each masters for filers
 	var filers []string
@@ -105,11 +105,11 @@ func (broker *MessageBroker) checkFilers() {
 				found = true
 				break
 			}
-			glog.V(0).Infof("failed to list filers: %v", err)
+			log.Infof("failed to list filers: %v", err)
 			time.Sleep(time.Second)
 		}
 	}
-	glog.V(0).Infof("received filer list: %s", filers)
+	log.Infof("received filer list: %s", filers)
 
 	broker.option.Filers = filers
 

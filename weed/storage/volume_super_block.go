@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
@@ -14,7 +14,7 @@ func (v *Volume) maybeWriteSuperBlock() error {
 
 	datSize, _, e := v.DataBackend.GetStat()
 	if e != nil {
-		glog.V(0).Infof("failed to stat datafile %s: %v", v.DataBackend.Name(), e)
+		log.Infof("failed to stat datafile %s: %v", v.DataBackend.Name(), e)
 		return e
 	}
 	if datSize == 0 {

@@ -15,7 +15,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 )
 
 type Volume struct {
@@ -97,7 +97,7 @@ func (v *Volume) FileStat() (datSize uint64, idxSize uint64, modTime time.Time) 
 	if e == nil {
 		return uint64(datFileSize), v.nm.IndexFileSize(), modTime
 	}
-	glog.V(0).Infof("Failed to read file size %s %v", v.DataBackend.Name(), e)
+	log.Infof("Failed to read file size %s %v", v.DataBackend.Name(), e)
 	return // -1 causes integer overflow and the volume to become unwritable.
 }
 
@@ -189,9 +189,9 @@ func (v *Volume) expired(contentSize uint64, volumeSizeLimit uint64) bool {
 	if v.Ttl == nil || v.Ttl.Minutes() == 0 {
 		return false
 	}
-	glog.V(2).Infof("now:%v lastModified:%v", time.Now().Unix(), v.lastModifiedTsSeconds)
+	log.Debugf("now:%v lastModified:%v", time.Now().Unix(), v.lastModifiedTsSeconds)
 	livedMinutes := (time.Now().Unix() - int64(v.lastModifiedTsSeconds)) / 60
-	glog.V(2).Infof("ttl:%v lived:%v", v.Ttl, livedMinutes)
+	log.Debugf("ttl:%v lived:%v", v.Ttl, livedMinutes)
 	if int64(v.Ttl.Minutes()) < livedMinutes {
 		return true
 	}
@@ -217,7 +217,7 @@ func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
 func (v *Volume) CollectStatus() (maxFileKey types.NeedleId, datFileSize int64, modTime time.Time, fileCount, deletedCount, deletedSize uint64) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
-	glog.V(3).Infof("CollectStatus volume %d", v.Id)
+	log.Tracef("CollectStatus volume %d", v.Id)
 
 	maxFileKey = v.nm.MaxFileKey()
 	datFileSize, modTime, _ = v.DataBackend.GetStat()

@@ -11,7 +11,7 @@ import (
 	"github.com/chrislusf/raft"
 	"google.golang.org/grpc/peer"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/topology"
@@ -26,7 +26,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			// if the volume server disconnects and reconnects quickly
 			//  the unregister and register can race with each other
 			ms.Topo.UnRegisterDataNode(dn)
-			glog.V(0).Infof("unregister disconnected volume server %s:%d", dn.Ip, dn.Port)
+			log.Infof("unregister disconnected volume server %s:%d", dn.Ip, dn.Port)
 
 			message := &master_pb.VolumeLocation{
 				Url:       dn.Url(),
@@ -54,9 +54,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		heartbeat, err := stream.Recv()
 		if err != nil {
 			if dn != nil {
-				glog.Warningf("SendHeartbeat.Recv server %s:%d : %v", dn.Ip, dn.Port, err)
+				log.Warnf("SendHeartbeat.Recv server %s:%d : %v", dn.Ip, dn.Port, err)
 			} else {
-				glog.Warningf("SendHeartbeat.Recv: %v", err)
+				log.Warnf("SendHeartbeat.Recv: %v", err)
 			}
 			return err
 		}
@@ -70,11 +70,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			dn = rack.GetOrCreateDataNode(heartbeat.Ip,
 				int(heartbeat.Port), heartbeat.PublicUrl,
 				int64(heartbeat.MaxVolumeCount))
-			glog.V(0).Infof("added volume server %v:%d", heartbeat.GetIp(), heartbeat.GetPort())
+			log.Infof("added volume server %v:%d", heartbeat.GetIp(), heartbeat.GetPort())
 			if err := stream.Send(&master_pb.HeartbeatResponse{
 				VolumeSizeLimit: uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
 			}); err != nil {
-				glog.Warningf("SendHeartbeat.Send volume size to %s:%d %v", dn.Ip, dn.Port, err)
+				log.Warnf("SendHeartbeat.Send volume size to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
 			}
 		}
@@ -84,7 +84,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			dn.UpAdjustMaxVolumeCountDelta(delta)
 		}
 
-		glog.V(4).Infof("master received heartbeat %s", heartbeat.String())
+		log.Tracef("master received heartbeat %s", heartbeat.String())
 		message := &master_pb.VolumeLocation{
 			Url:        dn.Url(),
 			PublicUrl:  dn.PublicUrl,
@@ -107,11 +107,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			newVolumes, deletedVolumes := ms.Topo.SyncDataNodeRegistration(heartbeat.Volumes, dn)
 
 			for _, v := range newVolumes {
-				glog.V(0).Infof("master see new volume %d from %s", uint32(v.Id), dn.Url())
+				log.Infof("master see new volume %d from %s", uint32(v.Id), dn.Url())
 				message.NewVids = append(message.NewVids, uint32(v.Id))
 			}
 			for _, v := range deletedVolumes {
-				glog.V(0).Infof("master see deleted volume %d from %s", uint32(v.Id), dn.Url())
+				log.Infof("master see deleted volume %d from %s", uint32(v.Id), dn.Url())
 				message.DeletedVids = append(message.DeletedVids, uint32(v.Id))
 			}
 		}
@@ -134,7 +134,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 
 		if len(heartbeat.EcShards) > 0 || heartbeat.HasNoEcShards {
-			glog.V(1).Infof("master received ec shards from %s: %+v", dn.Url(), heartbeat.EcShards)
+			log.Debugf("master received ec shards from %s: %+v", dn.Url(), heartbeat.EcShards)
 			newShards, deletedShards := ms.Topo.SyncDataNodeEcShards(heartbeat.EcShards, dn)
 
 			// broadcast the ec vid changes to master clients
@@ -152,7 +152,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 {
 			ms.clientChansLock.RLock()
 			for host, ch := range ms.clientChans {
-				glog.V(0).Infof("master send to %s: %s", host, message.String())
+				log.Infof("master send to %s: %s", host, message.String())
 				ch <- message
 			}
 			ms.clientChansLock.RUnlock()
@@ -161,13 +161,13 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		// tell the volume servers about the leader
 		newLeader, err := ms.Topo.Leader()
 		if err != nil {
-			glog.Warningf("SendHeartbeat find leader: %v", err)
+			log.Warnf("SendHeartbeat find leader: %v", err)
 			return err
 		}
 		if err := stream.Send(&master_pb.HeartbeatResponse{
 			Leader: newLeader,
 		}); err != nil {
-			glog.Warningf("SendHeartbeat.Send response to to %s:%d %v", dn.Ip, dn.Port, err)
+			log.Warnf("SendHeartbeat.Send response to to %s:%d %v", dn.Ip, dn.Port, err)
 			return err
 		}
 	}
@@ -205,7 +205,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		for {
 			_, err := stream.Recv()
 			if err != nil {
-				glog.V(2).Infof("- client %v: %v", clientName, err)
+				log.Debugf("- client %v: %v", clientName, err)
 				stopChan <- true
 				break
 			}
@@ -217,7 +217,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		select {
 		case message := <-messageChan:
 			if err := stream.Send(message); err != nil {
-				glog.V(0).Infof("=> client %v: %+v", clientName, message)
+				log.Infof("=> client %v: %+v", clientName, message)
 				return err
 			}
 		case <-ticker.C:
@@ -234,7 +234,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedServer) error {
 	leader, err := ms.Topo.Leader()
 	if err != nil {
-		glog.Errorf("topo leader: %v", err)
+		log.Errorf("topo leader: %v", err)
 		return raft.NotLeaderError
 	}
 	if err := stream.Send(&master_pb.VolumeLocation{
@@ -247,7 +247,7 @@ func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedSe
 
 func (ms *MasterServer) addClient(clientType string, clientAddress string) (clientName string, messageChan chan *master_pb.VolumeLocation) {
 	clientName = clientType + "@" + clientAddress
-	glog.V(0).Infof("+ client %v", clientName)
+	log.Infof("+ client %v", clientName)
 
 	// we buffer this because otherwise we end up in a potential deadlock where
 	// the KeepConnected loop is no longer listening on this channel but we're
@@ -263,7 +263,7 @@ func (ms *MasterServer) addClient(clientType string, clientAddress string) (clie
 }
 
 func (ms *MasterServer) deleteClient(clientName string) {
-	glog.V(0).Infof("- client %v", clientName)
+	log.Infof("- client %v", clientName)
 	ms.clientChansLock.Lock()
 	delete(ms.clientChans, clientName)
 	ms.clientChansLock.Unlock()
@@ -273,11 +273,11 @@ func findClientAddress(ctx context.Context, grpcPort uint32) string {
 	// fmt.Printf("FromContext %+v\n", ctx)
 	pr, ok := peer.FromContext(ctx)
 	if !ok {
-		glog.Error("failed to get peer from ctx")
+		log.Error("failed to get peer from ctx")
 		return ""
 	}
 	if pr.Addr == net.Addr(nil) {
-		glog.Error("failed to get peer address")
+		log.Error("failed to get peer address")
 		return ""
 	}
 	if grpcPort == 0 {

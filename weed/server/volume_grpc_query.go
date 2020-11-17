@@ -1,7 +1,7 @@
 package weed_server
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/query/json"
@@ -15,7 +15,7 @@ func (vs *VolumeServer) Query(req *volume_server_pb.QueryRequest, stream volume_
 
 		vid, id_cookie, err := operation.ParseFileId(fid)
 		if err != nil {
-			glog.V(0).Infof("volume query failed to parse fid %s: %v", fid, err)
+			log.Infof("volume query failed to parse fid %s: %v", fid, err)
 			return err
 		}
 
@@ -25,12 +25,12 @@ func (vs *VolumeServer) Query(req *volume_server_pb.QueryRequest, stream volume_
 
 		cookie := n.Cookie
 		if _, err := vs.store.ReadVolumeNeedle(volumeId, n, nil); err != nil {
-			glog.V(0).Infof("volume query failed to read fid %s: %v", fid, err)
+			log.Infof("volume query failed to read fid %s: %v", fid, err)
 			return err
 		}
 
 		if n.Cookie != cookie {
-			glog.V(0).Infof("volume query failed to read fid cookie %s: %v", fid, err)
+			log.Infof("volume query failed to read fid cookie %s: %v", fid, err)
 			return err
 		}
 

@@ -1,7 +1,7 @@
 package notification
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
 	"github.com/spf13/viper"
@@ -32,11 +32,11 @@ func LoadConfiguration(config *viper.Viper, prefix string) {
 	for _, queue := range MessageQueues {
 		if config.GetBool(prefix + queue.GetName() + ".enabled") {
 			if err := queue.Initialize(config, prefix+queue.GetName()+"."); err != nil {
-				glog.Fatalf("Failed to initialize notification for %s: %+v",
+				log.Fatalf("Failed to initialize notification for %s: %+v",
 					queue.GetName(), err)
 			}
 			Queue = queue
-			glog.V(0).Infof("Configure notification message queue for %s", queue.GetName())
+			log.Infof("Configure notification message queue for %s", queue.GetName())
 			return
 		}
 	}
@@ -50,7 +50,7 @@ func validateOneEnabledQueue(config *viper.Viper) {
 			if enabledQueue == "" {
 				enabledQueue = queue.GetName()
 			} else {
-				glog.Fatalf("Notification message queue is enabled for both %s and %s", enabledQueue, queue.GetName())
+				log.Fatalf("Notification message queue is enabled for both %s and %s", enabledQueue, queue.GetName())
 			}
 		}
 	}

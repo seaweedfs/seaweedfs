@@ -6,7 +6,7 @@ import (
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -18,12 +18,12 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 	newPath := util.NewFullPath(newDir.FullPath(), req.NewName)
 	oldPath := util.NewFullPath(dir.FullPath(), req.OldName)
 
-	glog.V(4).Infof("dir Rename %s => %s", oldPath, newPath)
+	log.Tracef("dir Rename %s => %s", oldPath, newPath)
 
 	// find local old entry
 	oldEntry, err := dir.wfs.metaCache.FindEntry(context.Background(), oldPath)
 	if err != nil {
-		glog.Errorf("dir Rename can not find source %s : %v", oldPath, err)
+		log.Errorf("dir Rename can not find source %s : %v", oldPath, err)
 		return fuse.ENOENT
 	}
 
@@ -41,7 +41,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 
 		_, err := client.AtomicRenameEntry(ctx, request)
 		if err != nil {
-			glog.Errorf("dir AtomicRenameEntry %s => %s : %v", oldPath, newPath, err)
+			log.Errorf("dir AtomicRenameEntry %s => %s : %v", oldPath, newPath, err)
 			return fuse.EIO
 		}
 
@@ -49,18 +49,18 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 
 	})
 	if err != nil {
-		glog.V(0).Infof("dir Rename %s => %s : %v", oldPath, newPath, err)
+		log.Infof("dir Rename %s => %s : %v", oldPath, newPath, err)
 		return fuse.EIO
 	}
 
 	// TODO: replicate renaming logic on filer
 	if err := dir.wfs.metaCache.DeleteEntry(context.Background(), oldPath); err != nil {
-		glog.V(0).Infof("dir Rename delete local %s => %s : %v", oldPath, newPath, err)
+		log.Infof("dir Rename delete local %s => %s : %v", oldPath, newPath, err)
 		return fuse.EIO
 	}
 	oldEntry.FullPath = newPath
 	if err := dir.wfs.metaCache.InsertEntry(context.Background(), oldEntry); err != nil {
-		glog.V(0).Infof("dir Rename insert local %s => %s : %v", oldPath, newPath, err)
+		log.Infof("dir Rename insert local %s => %s : %v", oldPath, newPath, err)
 		return fuse.EIO
 	}
 

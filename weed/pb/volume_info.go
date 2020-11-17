@@ -10,7 +10,7 @@ import (
 
 	"github.com/golang/protobuf/jsonpb"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 )
 
@@ -19,28 +19,28 @@ func MaybeLoadVolumeInfo(fileName string) (*volume_server_pb.VolumeInfo, bool, e
 
 	volumeInfo := &volume_server_pb.VolumeInfo{}
 
-	glog.V(1).Infof("maybeLoadVolumeInfo checks %s", fileName)
+	log.Debugf("maybeLoadVolumeInfo checks %s", fileName)
 	if exists, canRead, _, _, _ := util.CheckFile(fileName); !exists || !canRead {
 		if !exists {
 			return volumeInfo, false, nil
 		}
 		if !canRead {
-			glog.Warningf("can not read %s", fileName)
+			log.Warnf("can not read %s", fileName)
 			return volumeInfo, false, fmt.Errorf("can not read %s", fileName)
 		}
 		return volumeInfo, false, nil
 	}
 
-	glog.V(1).Infof("maybeLoadVolumeInfo reads %s", fileName)
+	log.Debugf("maybeLoadVolumeInfo reads %s", fileName)
 	tierData, readErr := ioutil.ReadFile(fileName)
 	if readErr != nil {
-		glog.Warningf("fail to read %s : %v", fileName, readErr)
+		log.Warnf("fail to read %s : %v", fileName, readErr)
 		return volumeInfo, false, fmt.Errorf("fail to read %s : %v", fileName, readErr)
 	}
 
-	glog.V(1).Infof("maybeLoadVolumeInfo Unmarshal volume info %v", fileName)
+	log.Debugf("maybeLoadVolumeInfo Unmarshal volume info %v", fileName)
 	if err := jsonpb.Unmarshal(bytes.NewReader(tierData), volumeInfo); err != nil {
-		glog.Warningf("unmarshal error: %v", err)
+		log.Warnf("unmarshal error: %v", err)
 		return volumeInfo, false, fmt.Errorf("unmarshal error: %v", err)
 	}
 

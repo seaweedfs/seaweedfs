@@ -22,7 +22,7 @@ import (
 	"gocloud.dev/pubsub"
 	_ "gocloud.dev/pubsub/awssnssqs"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	// _ "gocloud.dev/pubsub/azuresb"
@@ -46,10 +46,10 @@ func (k *GoCDKPubSub) GetName() string {
 
 func (k *GoCDKPubSub) Initialize(configuration util.Configuration, prefix string) error {
 	k.topicURL = configuration.GetString(prefix + "topic_url")
-	glog.V(0).Infof("notification.gocdk_pub_sub.topic_url: %v", k.topicURL)
+	log.Infof("notification.gocdk_pub_sub.topic_url: %v", k.topicURL)
 	topic, err := pubsub.OpenTopic(context.Background(), k.topicURL)
 	if err != nil {
-		glog.Fatalf("Failed to open topic: %v", err)
+		log.Fatalf("Failed to open topic: %v", err)
 	}
 	k.topic = topic
 	return nil

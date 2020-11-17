@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
@@ -35,11 +35,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		if err == filer_pb.ErrNotFound {
-			glog.V(1).Infof("Not found %s: %v", path, err)
+			log.Debugf("Not found %s: %v", path, err)
 			stats.FilerRequestCounter.WithLabelValues("read.notfound").Inc()
 			w.WriteHeader(http.StatusNotFound)
 		} else {
-			glog.V(0).Infof("Internal %s: %v", path, err)
+			log.Infof("Internal %s: %v", path, err)
 			stats.FilerRequestCounter.WithLabelValues("read.internalerror").Inc()
 			w.WriteHeader(http.StatusInternalServerError)
 		}
@@ -61,7 +61,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	}
 
 	if len(entry.Chunks) == 0 {
-		glog.V(1).Infof("no file chunks for %s, attr=%+v", path, entry.Attr)
+		log.Debugf("no file chunks for %s, attr=%+v", path, entry.Attr)
 		stats.FilerRequestCounter.WithLabelValues("read.nocontent").Inc()
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -136,7 +136,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		if shouldResize {
 			data, err := filer.ReadAll(fs.filer.MasterClient, entry.Chunks)
 			if err != nil {
-				glog.Errorf("failed to read %s: %v", path, err)
+				log.Errorf("failed to read %s: %v", path, err)
 				w.WriteHeader(http.StatusNotModified)
 				return
 			}

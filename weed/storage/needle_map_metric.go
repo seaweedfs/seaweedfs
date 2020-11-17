@@ -145,7 +145,7 @@ func reverseWalkIndexFile(r *os.File, initFn func(entryCount int64), fn func(key
 
 	for remainingCount >= 0 {
 		_, e := r.ReadAt(bytes[:NeedleMapEntrySize*nextBatchSize], NeedleMapEntrySize*remainingCount)
-		// glog.V(0).Infoln("file", r.Name(), "readerOffset", NeedleMapEntrySize*remainingCount, "count", count, "e", e)
+		// log.Infoln("file", r.Name(), "readerOffset", NeedleMapEntrySize*remainingCount, "count", count, "e", e)
 		if e != nil {
 			return e
 		}

@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -34,10 +34,10 @@ func CheckAndFixVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAt
 		}
 	}
 	if healthyIndexSize < indexSize {
-		glog.Warningf("CheckAndFixVolumeDataIntegrity truncate idx file %s from %d to %d", indexFile.Name(), indexSize, healthyIndexSize)
+		log.Warnf("CheckAndFixVolumeDataIntegrity truncate idx file %s from %d to %d", indexFile.Name(), indexSize, healthyIndexSize)
 		err = indexFile.Truncate(healthyIndexSize)
 		if err != nil {
-			glog.Warningf("CheckAndFixVolumeDataIntegrity truncate idx file %s from %d to %d: %v", indexFile.Name(), indexSize, healthyIndexSize, err)
+			log.Warnf("CheckAndFixVolumeDataIntegrity truncate idx file %s from %d to %d: %v", indexFile.Name(), indexSize, healthyIndexSize, err)
 		}
 	}
 	return
@@ -114,14 +114,14 @@ func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version,
 			return n.AppendAtNs, nil
 		}
 		if fileSize > fileTailOffset {
-			glog.Warningf("Truncate %s from %d bytes to %d bytes!", datFile.Name(), fileSize, fileTailOffset)
+			log.Warnf("Truncate %s from %d bytes to %d bytes!", datFile.Name(), fileSize, fileTailOffset)
 			err = datFile.Truncate(fileTailOffset)
 			if err == nil {
 				return n.AppendAtNs, nil
 			}
 			return n.AppendAtNs, fmt.Errorf("truncate file %s: %v", datFile.Name(), err)
 		}
-		glog.Warningf("data file %s has %d bytes, less than expected %d bytes!", datFile.Name(), fileSize, fileTailOffset)
+		log.Warnf("data file %s has %d bytes, less than expected %d bytes!", datFile.Name(), fileSize, fileTailOffset)
 	}
 	if err = n.ReadData(datFile, offset, size, v); err != nil {
 		return n.AppendAtNs, fmt.Errorf("read data [%d,%d) : %v", offset, offset+int64(size), err)

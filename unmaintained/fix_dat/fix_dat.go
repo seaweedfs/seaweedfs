@@ -8,7 +8,7 @@ import (
 	"path"
 	"strconv"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
@@ -42,26 +42,26 @@ func main() {
 	}
 	indexFile, err := os.OpenFile(path.Join(*fixVolumePath, fileName+".idx"), os.O_RDONLY, 0644)
 	if err != nil {
-		glog.Fatalf("Read Volume Index %v", err)
+		log.Fatalf("Read Volume Index %v", err)
 	}
 	defer indexFile.Close()
 	datFileName := path.Join(*fixVolumePath, fileName+".dat")
 	datFile, err := os.OpenFile(datFileName, os.O_RDONLY, 0644)
 	if err != nil {
-		glog.Fatalf("Read Volume Data %v", err)
+		log.Fatalf("Read Volume Data %v", err)
 	}
 	datBackend := backend.NewDiskFile(datFile)
 	defer datBackend.Close()
 
 	newDatFile, err := os.Create(path.Join(*fixVolumePath, fileName+".dat_fixed"))
 	if err != nil {
-		glog.Fatalf("Write New Volume Data %v", err)
+		log.Fatalf("Write New Volume Data %v", err)
 	}
 	defer newDatFile.Close()
 
 	superBlock, err := super_block.ReadSuperBlock(datBackend)
 	if err != nil {
-		glog.Fatalf("Read Volume Data superblock %v", err)
+		log.Fatalf("Read Volume Data superblock %v", err)
 	}
 	newDatFile.Write(superBlock.Bytes())
 

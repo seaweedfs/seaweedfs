@@ -9,7 +9,7 @@ import (
 	"github.com/golang/protobuf/proto"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -23,7 +23,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	defer fs.deleteClient(clientName)
 
 	lastReadTime := time.Unix(0, req.SinceNs)
-	glog.V(0).Infof(" %v starts to subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
+	log.Infof(" %v starts to subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
 	eachEventNotificationFn := fs.eachEventNotificationFn(req, stream, clientName, req.Signature)
 
@@ -46,7 +46,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			return true
 		}, eachLogEntryFn)
 		if err != nil {
-			glog.Errorf("processed to %v: %v", lastReadTime, err)
+			log.Errorf("processed to %v: %v", lastReadTime, err)
 			time.Sleep(3127 * time.Millisecond)
 			if err != log_buffer.ResumeError {
 				break
@@ -67,7 +67,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	defer fs.deleteClient(clientName)
 
 	lastReadTime := time.Unix(0, req.SinceNs)
-	glog.V(0).Infof(" %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
+	log.Infof(" %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
 	eachEventNotificationFn := fs.eachEventNotificationFn(req, stream, clientName, req.Signature)
 
@@ -82,7 +82,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	if processedTsNs != 0 {
 		lastReadTime = time.Unix(0, processedTsNs)
 	}
-	glog.V(0).Infof("after local log reads, %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
+	log.Infof("after local log reads, %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
 	// println("reading from in memory logs ...")
 	for {
@@ -93,7 +93,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			return true
 		}, eachLogEntryFn)
 		if err != nil {
-			glog.Errorf("processed to %v: %v", lastReadTime, err)
+			log.Errorf("processed to %v: %v", lastReadTime, err)
 			time.Sleep(3127 * time.Millisecond)
 			if err != log_buffer.ResumeError {
 				break
@@ -109,7 +109,7 @@ func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotificati
 	return func(logEntry *filer_pb.LogEntry) error {
 		event := &filer_pb.SubscribeMetadataResponse{}
 		if err := proto.Unmarshal(logEntry.Data, event); err != nil {
-			glog.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
+			log.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
 			return fmt.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
 		}
 
@@ -163,7 +163,7 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 		}
 		// println("sending", dirPath, entryName)
 		if err := stream.Send(message); err != nil {
-			glog.V(0).Infof("=> client %v: %+v", clientName, err)
+			log.Infof("=> client %v: %+v", clientName, err)
 			return err
 		}
 		return nil
@@ -172,10 +172,10 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 
 func (fs *FilerServer) addClient(clientType string, clientAddress string) (clientName string) {
 	clientName = clientType + "@" + clientAddress
-	glog.V(0).Infof("+ listener %v", clientName)
+	log.Infof("+ listener %v", clientName)
 	return
 }
 
 func (fs *FilerServer) deleteClient(clientName string) {
-	glog.V(0).Infof("- listener %v", clientName)
+	log.Infof("- listener %v", clientName)
 }

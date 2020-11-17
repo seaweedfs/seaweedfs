@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -28,7 +28,7 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 		var newEntry *filer.Entry
 		if message.OldEntry != nil {
 			oldPath = util.NewFullPath(dir, message.OldEntry.Name)
-			glog.V(4).Infof("deleting %v", oldPath)
+			log.Tracef("deleting %v", oldPath)
 		}
 
 		if message.NewEntry != nil {
@@ -36,7 +36,7 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 				dir = message.NewParentPath
 			}
 			key := util.NewFullPath(dir, message.NewEntry.Name)
-			glog.V(4).Infof("creating %v", key)
+			log.Tracef("creating %v", key)
 			newEntry = filer.FromPbEntry(dir, message.NewEntry)
 		}
 		err := mc.AtomicUpdateEntryFromFiler(context.Background(), oldPath, newEntry)
@@ -73,13 +73,13 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 				}
 
 				if err := processEventFn(resp); err != nil {
-					glog.Fatalf("process %v: %v", resp, err)
+					log.Fatalf("process %v: %v", resp, err)
 				}
 				lastTsNs = resp.TsNs
 			}
 		})
 		if err != nil {
-			glog.Errorf("subscribing filer meta change: %v", err)
+			log.Errorf("subscribing filer meta change: %v", err)
 		}
 		time.Sleep(time.Second)
 	}

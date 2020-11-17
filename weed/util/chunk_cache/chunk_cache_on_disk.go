@@ -7,7 +7,7 @@ import (
 
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
@@ -63,7 +63,7 @@ func LoadOrCreateChunkCacheVolume(fileName string, preallocate int64) (*ChunkCac
 		return nil, fmt.Errorf("cannot write cache index %s.idx: %v", v.fileName, err)
 	}
 
-	glog.V(1).Infoln("loading leveldb", v.fileName+".ldb")
+	log.Debug("loading leveldb", v.fileName+".ldb")
 	opts := &opt.Options{
 		BlockCacheCapacity:            2 * 1024 * 1024, // default value is 8MiB
 		WriteBuffer:                   1 * 1024 * 1024, // default value is 4MiB

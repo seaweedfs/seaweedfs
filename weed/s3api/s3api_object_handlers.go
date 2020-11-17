@@ -14,7 +14,7 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -232,12 +232,12 @@ var passThroughHeaders = []string{
 
 func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, responseFn func(proxyResponse *http.Response, w http.ResponseWriter)) {
 
-	glog.V(2).Infof("s3 proxying %s to %s", r.Method, destUrl)
+	log.Debugf("s3 proxying %s to %s", r.Method, destUrl)
 
 	proxyReq, err := http.NewRequest(r.Method, destUrl, r.Body)
 
 	if err != nil {
-		glog.Errorf("NewRequest %s: %v", destUrl, err)
+		log.Errorf("NewRequest %s: %v", destUrl, err)
 		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
@@ -272,7 +272,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	}
 
 	if postErr != nil {
-		glog.Errorf("post to filer: %v", postErr)
+		log.Errorf("post to filer: %v", postErr)
 		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
@@ -298,7 +298,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	proxyReq, err := http.NewRequest("PUT", uploadUrl, body)
 
 	if err != nil {
-		glog.Errorf("NewRequest %s: %v", uploadUrl, err)
+		log.Errorf("NewRequest %s: %v", uploadUrl, err)
 		return "", s3err.ErrInternalError
 	}
 
@@ -314,7 +314,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	resp, postErr := client.Do(proxyReq)
 
 	if postErr != nil {
-		glog.Errorf("post to filer: %v", postErr)
+		log.Errorf("post to filer: %v", postErr)
 		return "", s3err.ErrInternalError
 	}
 	defer resp.Body.Close()
@@ -323,17 +323,17 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	resp_body, ra_err := ioutil.ReadAll(resp.Body)
 	if ra_err != nil {
-		glog.Errorf("upload to filer response read %d: %v", resp.StatusCode, ra_err)
+		log.Errorf("upload to filer response read %d: %v", resp.StatusCode, ra_err)
 		return etag, s3err.ErrInternalError
 	}
 	var ret weed_server.FilerPostResult
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
-		glog.Errorf("failing to read upload to %s : %v", uploadUrl, string(resp_body))
+		log.Errorf("failing to read upload to %s : %v", uploadUrl, string(resp_body))
 		return "", s3err.ErrInternalError
 	}
 	if ret.Error != "" {
-		glog.Errorf("upload to filer error: %v", ret.Error)
+		log.Errorf("upload to filer error: %v", ret.Error)
 		return "", filerErrorToS3Error(ret.Error)
 	}
 

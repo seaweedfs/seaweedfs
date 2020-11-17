@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.AtomicRenameEntryRequest) (*filer_pb.AtomicRenameEntryResponse, error) {
 
-	glog.V(1).Infof("AtomicRenameEntry %v", req)
+	log.Debugf("AtomicRenameEntry %v", req)
 
 	ctx, err := fs.filer.BeginTransaction(ctx)
 	if err != nil {
@@ -64,7 +64,7 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, oldParent util.
 	currentDirPath := oldParent.Child(entry.Name())
 	newDirPath := newParent.Child(newName)
 
-	glog.V(1).Infof("moving folder %s => %s", currentDirPath, newDirPath)
+	log.Debugf("moving folder %s => %s", currentDirPath, newDirPath)
 
 	lastFileName := ""
 	includeLastFile := false
@@ -97,10 +97,10 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPat
 
 	oldPath, newPath := oldParent.Child(entry.Name()), newParent.Child(newName)
 
-	glog.V(1).Infof("moving entry %s => %s", oldPath, newPath)
+	log.Debugf("moving entry %s => %s", oldPath, newPath)
 
 	if oldPath == newPath {
-		glog.V(1).Infof("skip moving entry %s => %s", oldPath, newPath)
+		log.Debugf("skip moving entry %s => %s", oldPath, newPath)
 		return nil
 	}
 

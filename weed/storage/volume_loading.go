@@ -6,7 +6,7 @@ import (
 
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -31,7 +31,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	if v.HasRemoteFile() {
 		v.noWriteCanDelete = true
 		v.noWriteOrDelete = false
-		glog.V(0).Infof("loading volume %d from remote %v", v.Id, v.volumeInfo.Files)
+		log.Infof("loading volume %d from remote %v", v.Id, v.volumeInfo.Files)
 		v.LoadRemoteFile()
 		alreadyHasSuperBlock = true
 	} else if exists, canRead, canWrite, modifiedTime, fileSize := util.CheckFile(fileName + ".dat"); exists {
@@ -43,7 +43,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		if canWrite {
 			dataFile, err = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
 		} else {
-			glog.V(0).Infoln("opening " + fileName + ".dat in READONLY mode")
+			log.Infoln("opening " + fileName + ".dat in READONLY mode")
 			dataFile, err = os.Open(fileName + ".dat")
 			v.noWriteOrDelete = true
 		}
@@ -79,61 +79,61 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	if err == nil && alsoLoadIndex {
 		var indexFile *os.File
 		if v.noWriteOrDelete {
-			glog.V(0).Infoln("open to read file", fileName+".idx")
+			log.Infoln("open to read file", fileName+".idx")
 			if indexFile, err = os.OpenFile(fileName+".idx", os.O_RDONLY, 0644); err != nil {
 				return fmt.Errorf("cannot read Volume Index %s.idx: %v", fileName, err)
 			}
 		} else {
-			glog.V(1).Infoln("open to write file", fileName+".idx")
+			log.Debug("open to write file", fileName+".idx")
 			if indexFile, err = os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644); err != nil {
 				return fmt.Errorf("cannot write Volume Index %s.idx: %v", fileName, err)
 			}
 		}
 		if v.lastAppendAtNs, err = CheckAndFixVolumeDataIntegrity(v, indexFile); err != nil {
 			v.noWriteOrDelete = true
-			glog.V(0).Infof("volumeDataIntegrityChecking failed %v", err)
+			log.Infof("volumeDataIntegrityChecking failed %v", err)
 		}
 
 		if v.noWriteOrDelete || v.noWriteCanDelete {
 			if v.nm, err = NewSortedFileNeedleMap(fileName, indexFile); err != nil {
-				glog.V(0).Infof("loading sorted db %s error: %v", fileName+".sdx", err)
+				log.Infof("loading sorted db %s error: %v", fileName+".sdx", err)
 			}
 		} else {
 			switch needleMapKind {
 			case NeedleMapInMemory:
-				glog.V(0).Infoln("loading index", fileName+".idx", "to memory")
+				log.Infoln("loading index", fileName+".idx", "to memory")
 				if v.nm, err = LoadCompactNeedleMap(indexFile); err != nil {
-					glog.V(0).Infof("loading index %s to memory error: %v", fileName+".idx", err)
+					log.Infof("loading index %s to memory error: %v", fileName+".idx", err)
 				}
 			case NeedleMapLevelDb:
-				glog.V(0).Infoln("loading leveldb", fileName+".ldb")
+				log.Infoln("loading leveldb", fileName+".ldb")
 				opts := &opt.Options{
 					BlockCacheCapacity:            2 * 1024 * 1024, // default value is 8MiB
 					WriteBuffer:                   1 * 1024 * 1024, // default value is 4MiB
 					CompactionTableSizeMultiplier: 10,              // default value is 1
 				}
 				if v.nm, err = NewLevelDbNeedleMap(fileName+".ldb", indexFile, opts); err != nil {
-					glog.V(0).Infof("loading leveldb %s error: %v", fileName+".ldb", err)
+					log.Infof("loading leveldb %s error: %v", fileName+".ldb", err)
 				}
 			case NeedleMapLevelDbMedium:
-				glog.V(0).Infoln("loading leveldb medium", fileName+".ldb")
+				log.Infoln("loading leveldb medium", fileName+".ldb")
 				opts := &opt.Options{
 					BlockCacheCapacity:            4 * 1024 * 1024, // default value is 8MiB
 					WriteBuffer:                   2 * 1024 * 1024, // default value is 4MiB
 					CompactionTableSizeMultiplier: 10,              // default value is 1
 				}
 				if v.nm, err = NewLevelDbNeedleMap(fileName+".ldb", indexFile, opts); err != nil {
-					glog.V(0).Infof("loading leveldb %s error: %v", fileName+".ldb", err)
+					log.Infof("loading leveldb %s error: %v", fileName+".ldb", err)
 				}
 			case NeedleMapLevelDbLarge:
-				glog.V(0).Infoln("loading leveldb large", fileName+".ldb")
+				log.Infoln("loading leveldb large", fileName+".ldb")
 				opts := &opt.Options{
 					BlockCacheCapacity:            8 * 1024 * 1024, // default value is 8MiB
 					WriteBuffer:                   4 * 1024 * 1024, // default value is 4MiB
 					CompactionTableSizeMultiplier: 10,              // default value is 1
 				}
 				if v.nm, err = NewLevelDbNeedleMap(fileName+".ldb", indexFile, opts); err != nil {
-					glog.V(0).Infof("loading leveldb %s error: %v", fileName+".ldb", err)
+					log.Infof("loading leveldb %s error: %v", fileName+".ldb", err)
 				}
 			}
 		}

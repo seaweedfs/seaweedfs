@@ -12,7 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -49,7 +49,7 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrls []string, err error) 
 
 	err = fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		glog.V(4).Infof("read lookup volume id locations: %v", vid)
+		log.Tracef("read lookup volume id locations: %v", vid)
 		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
 			VolumeIds: []string{vid},
 		})
@@ -63,14 +63,14 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrls []string, err error) 
 	})
 
 	if err != nil {
-		glog.V(1).Infof("LookupFileId volume id %s: %v", vid, err)
+		log.Debugf("LookupFileId volume id %s: %v", vid, err)
 		return nil, fmt.Errorf("LookupFileId volume id %s: %v", vid, err)
 	}
 
 	locations := vid2Locations[vid]
 
 	if locations == nil || len(locations.Locations) == 0 {
-		glog.V(1).Infof("LookupFileId locate volume id %s: %v", vid, err)
+		log.Debugf("LookupFileId locate volume id %s: %v", vid, err)
 		return nil, fmt.Errorf("LookupFileId locate volume id %s: %v", vid, err)
 	}
 
@@ -91,7 +91,7 @@ func (fs *FilerSource) ReadPart(part string) (filename string, header http.Heade
 	for _, fileUrl := range fileUrls {
 		filename, header, resp, err = util.DownloadFile(fileUrl)
 		if err != nil {
-			glog.V(1).Infof("fail to read from %s: %v", fileUrl, err)
+			log.Debugf("fail to read from %s: %v", fileUrl, err)
 		} else {
 			break
 		}

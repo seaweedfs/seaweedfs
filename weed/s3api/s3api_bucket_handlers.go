@@ -14,7 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -72,7 +72,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			IncludeEcVolumes:     true,
 			IncludeNormalVolumes: true,
 		}); err != nil {
-			glog.Errorf("list collection: %v", err)
+			log.Errorf("list collection: %v", err)
 			return fmt.Errorf("list collections: %v", err)
 		} else {
 			for _, c := range resp.Collections {
@@ -106,7 +106,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 
 	// create the folder for bucket, but lazily create actual collection
 	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, fn); err != nil {
-		glog.Errorf("PutBucketHandler mkdir: %v", err)
+		log.Errorf("PutBucketHandler mkdir: %v", err)
 		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
@@ -130,7 +130,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 			Collection: bucket,
 		}
 
-		glog.V(1).Infof("delete collection: %v", deleteCollectionRequest)
+		log.Debugf("delete collection: %v", deleteCollectionRequest)
 		if _, err := client.DeleteCollection(context.Background(), deleteCollectionRequest); err != nil {
 			return fmt.Errorf("delete collection %s: %v", bucket, err)
 		}

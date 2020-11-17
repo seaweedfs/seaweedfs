@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -66,13 +66,13 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 		noteFile := l.Directory + "/" + name + ".note"
 		if util.FileExists(noteFile) {
 			note, _ := ioutil.ReadFile(noteFile)
-			glog.Warningf("volume %s was not completed: %s", name, string(note))
+			log.Warnf("volume %s was not completed: %s", name, string(note))
 			removeVolumeFiles(l.Directory + "/" + name)
 			return false
 		}
 		vid, collection, err := l.volumeIdFromPath(fileInfo)
 		if err != nil {
-			glog.Warningf("get volume id failed, %s, err : %s", name, err)
+			log.Warnf("get volume id failed, %s, err : %s", name, err)
 			return false
 		}
 
@@ -81,20 +81,20 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 		_, found := l.volumes[vid]
 		l.volumesLock.RUnlock()
 		if found {
-			glog.V(1).Infof("loaded volume, %v", vid)
+			log.Debugf("loaded volume, %v", vid)
 			return true
 		}
 
 		v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil, nil, 0, 0)
 		if e != nil {
-			glog.V(0).Infof("new volume %s error %s", name, e)
+			log.Infof("new volume %s error %s", name, e)
 			return false
 		}
 
 		l.SetVolume(vid, v)
 
 		size, _, _ := v.FileStat()
-		glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s",
+		log.Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s",
 			l.Directory+"/"+name+".dat", v.ReplicaPlacement, v.Version(), size, v.Ttl.String())
 		return true
 	}
@@ -130,10 +130,10 @@ func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapType, con
 func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
 
 	l.concurrentLoadingVolumes(needleMapKind, 10)
-	glog.V(0).Infof("Store started on dir: %s with %d volumes max %d", l.Directory, len(l.volumes), l.MaxVolumeCount)
+	log.Infof("Store started on dir: %s with %d volumes max %d", l.Directory, len(l.volumes), l.MaxVolumeCount)
 
 	l.loadAllEcShards()
-	glog.V(0).Infof("Store started on dir: %s with %d ec shards", l.Directory, len(l.ecVolumes))
+	log.Infof("Store started on dir: %s with %d ec shards", l.Directory, len(l.ecVolumes))
 
 }
 
@@ -322,9 +322,9 @@ func (l *DiskLocation) CheckDiskSpace() {
 				l.isDiskSpaceLow = !l.isDiskSpaceLow
 			}
 			if l.isDiskSpaceLow {
-				glog.V(0).Infof("dir %s freePercent %.2f%% < min %.2f%%, isLowDiskSpace: %v", dir, s.PercentFree, l.MinFreeSpacePercent, l.isDiskSpaceLow)
+				log.Infof("dir %s freePercent %.2f%% < min %.2f%%, isLowDiskSpace: %v", dir, s.PercentFree, l.MinFreeSpacePercent, l.isDiskSpaceLow)
 			} else {
-				glog.V(4).Infof("dir %s freePercent %.2f%% < min %.2f%%, isLowDiskSpace: %v", dir, s.PercentFree, l.MinFreeSpacePercent, l.isDiskSpaceLow)
+				log.Tracef("dir %s freePercent %.2f%% < min %.2f%%, isLowDiskSpace: %v", dir, s.PercentFree, l.MinFreeSpacePercent, l.isDiskSpaceLow)
 			}
 		}
 		time.Sleep(time.Minute)

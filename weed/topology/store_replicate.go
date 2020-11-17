@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
@@ -29,7 +29,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId needle.Volume
 		// this is the initial request
 		remoteLocations, err = getWritableRemoteReplications(s, volumeId, masterNode)
 		if err != nil {
-			glog.V(0).Infoln(err)
+			log.Infoln(err)
 			return
 		}
 	}
@@ -44,7 +44,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId needle.Volume
 		isUnchanged, err = s.WriteVolumeNeedle(volumeId, n, fsync)
 		if err != nil {
 			err = fmt.Errorf("failed to write to local disk: %v", err)
-			glog.V(0).Infoln(err)
+			log.Infoln(err)
 			return
 		}
 	}
@@ -73,7 +73,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId needle.Volume
 				tmpMap := make(map[string]string)
 				err := json.Unmarshal(n.Pairs, &tmpMap)
 				if err != nil {
-					glog.V(0).Infoln("Unmarshal pairs error:", err)
+					log.Infoln("Unmarshal pairs error:", err)
 				}
 				for k, v := range tmpMap {
 					pairMap[needle.PairNamePrefix+k] = v
@@ -86,7 +86,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId needle.Volume
 			return err
 		}); err != nil {
 			err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
-			glog.V(0).Infoln(err)
+			log.Infoln(err)
 		}
 	}
 	return
@@ -103,14 +103,14 @@ func ReplicatedDelete(masterNode string, store *storage.Store,
 	if r.FormValue("type") != "replicate" {
 		remoteLocations, err = getWritableRemoteReplications(store, volumeId, masterNode)
 		if err != nil {
-			glog.V(0).Infoln(err)
+			log.Infoln(err)
 			return
 		}
 	}
 
 	size, err = store.DeleteVolumeNeedle(volumeId, n)
 	if err != nil {
-		glog.V(0).Infoln("delete error:", err)
+		log.Infoln("delete error:", err)
 		return
 	}
 

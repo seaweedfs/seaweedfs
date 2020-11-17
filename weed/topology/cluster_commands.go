@@ -2,7 +2,7 @@ package topology
 
 import (
 	"github.com/chrislusf/raft"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
@@ -25,7 +25,7 @@ func (c *MaxVolumeIdCommand) Apply(server raft.Server) (interface{}, error) {
 	before := topo.GetMaxVolumeId()
 	topo.UpAdjustMaxVolumeId(c.MaxVolumeId)
 
-	glog.V(1).Infoln("max volume id", before, "==>", topo.GetMaxVolumeId())
+	log.Debug("max volume id", before, "==>", topo.GetMaxVolumeId())
 
 	return nil, nil
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/golang/protobuf/proto"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
 )
@@ -76,7 +76,7 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 			Data: m,
 		})
 		if err != nil {
-			glog.V(0).Infof("=> subscriber %v: %+v", subscriberId, err)
+			log.Infof("=> subscriber %v: %+v", subscriberId, err)
 		}
 		return err
 	}
@@ -84,12 +84,12 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) error {
 		m := &messaging_pb.Message{}
 		if err = proto.Unmarshal(logEntry.Data, m); err != nil {
-			glog.Errorf("unexpected unmarshal messaging_pb.Message: %v", err)
+			log.Errorf("unexpected unmarshal messaging_pb.Message: %v", err)
 			return err
 		}
 		// fmt.Printf("sending : %d bytes ts %d\n", len(m.Value), logEntry.TsNs)
 		if err = eachMessageFn(m); err != nil {
-			glog.Errorf("sending %d bytes to %s: %s", len(m.Value), subscriberId, err)
+			log.Errorf("sending %d bytes to %s: %s", len(m.Value), subscriberId, err)
 			return err
 		}
 		if m.IsClose {
@@ -122,7 +122,7 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 			return isConnected
 		}, eachLogEntryFn)
 		if err != nil {
-			glog.Errorf("processed to %v: %v", lastReadTime, err)
+			log.Errorf("processed to %v: %v", lastReadTime, err)
 			time.Sleep(3127 * time.Millisecond)
 			if err != log_buffer.ResumeError {
 				break

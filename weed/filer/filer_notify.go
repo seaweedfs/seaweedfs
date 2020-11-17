@@ -9,7 +9,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -54,7 +54,7 @@ func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 	}
 
 	if notification.Queue != nil {
-		glog.V(3).Infof("notifying entry update %v", fullpath)
+		log.Tracef("notifying entry update %v", fullpath)
 		notification.Queue.SendMessage(fullpath, eventNotification)
 	}
 
@@ -73,7 +73,7 @@ func (f *Filer) logMetaEvent(ctx context.Context, fullpath string, eventNotifica
 	}
 	data, err := proto.Marshal(event)
 	if err != nil {
-		glog.Errorf("failed to marshal filer_pb.SubscribeMetadataResponse %+v: %v", event, err)
+		log.Errorf("failed to marshal filer_pb.SubscribeMetadataResponse %+v: %v", event, err)
 		return
 	}
 
@@ -96,7 +96,7 @@ func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
 
 	for {
 		if err := f.appendToFile(targetFile, buf); err != nil {
-			glog.V(1).Infof("log write failed %s: %v", targetFile, err)
+			log.Debugf("log write failed %s: %v", targetFile, err)
 			time.Sleep(737 * time.Millisecond)
 		} else {
 			break

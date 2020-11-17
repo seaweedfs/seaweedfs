@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -120,7 +120,7 @@ func parseMultipart(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error
 	}()
 	form, fe := r.MultipartReader()
 	if fe != nil {
-		glog.V(0).Infoln("MultipartReader [ERROR]", fe)
+		log.Infoln("MultipartReader [ERROR]", fe)
 		e = fe
 		return
 	}
@@ -128,7 +128,7 @@ func parseMultipart(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error
 	// first multi-part item
 	part, fe := form.NextPart()
 	if fe != nil {
-		glog.V(0).Infoln("Reading Multi part [ERROR]", fe)
+		log.Infoln("Reading Multi part [ERROR]", fe)
 		e = fe
 		return
 	}
@@ -140,7 +140,7 @@ func parseMultipart(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error
 
 	pu.Data, e = ioutil.ReadAll(io.LimitReader(part, sizeLimit+1))
 	if e != nil {
-		glog.V(0).Infoln("Reading Content [ERROR]", e)
+		log.Infoln("Reading Content [ERROR]", e)
 		return
 	}
 	if len(pu.Data) == int(sizeLimit)+1 {
@@ -161,7 +161,7 @@ func parseMultipart(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error
 		if fName != "" {
 			data2, fe2 := ioutil.ReadAll(io.LimitReader(part2, sizeLimit+1))
 			if fe2 != nil {
-				glog.V(0).Infoln("Reading Content [ERROR]", fe2)
+				log.Infoln("Reading Content [ERROR]", fe2)
 				e = fe2
 				return
 			}

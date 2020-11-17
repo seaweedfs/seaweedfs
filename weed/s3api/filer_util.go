@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -58,9 +58,9 @@ func doDeleteEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath strin
 		IsRecursive:  isRecursive,
 	}
 
-	glog.V(1).Infof("delete entry %v/%v: %v", parentDirectoryPath, entryName, request)
+	log.Debugf("delete entry %v/%v: %v", parentDirectoryPath, entryName, request)
 	if resp, err := client.DeleteEntry(context.Background(), request); err != nil {
-		glog.V(0).Infof("delete entry %v: %v", request, err)
+		log.Infof("delete entry %v: %v", request, err)
 		return fmt.Errorf("delete entry %s/%s: %v", parentDirectoryPath, entryName, err)
 	} else {
 		if resp.Error != "" {

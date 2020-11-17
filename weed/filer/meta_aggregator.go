@@ -11,7 +11,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util/log_buffer"
@@ -64,7 +64,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, peer string
 
 	peerSignature, err := ma.readFilerStoreSignature(peer)
 	for err != nil {
-		glog.V(0).Infof("connecting to peer filer %s: %v", peer, err)
+		log.Infof("connecting to peer filer %s: %v", peer, err)
 		time.Sleep(1357 * time.Millisecond)
 		peerSignature, err = ma.readFilerStoreSignature(peer)
 	}
@@ -74,27 +74,27 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, peer string
 			lastTsNs = prevTsNs
 		}
 
-		glog.V(0).Infof("follow peer: %v, last %v (%d)", peer, time.Unix(0, lastTsNs), lastTsNs)
+		log.Infof("follow peer: %v, last %v (%d)", peer, time.Unix(0, lastTsNs), lastTsNs)
 		var counter int64
 		var synced bool
 		maybeReplicateMetadataChange = func(event *filer_pb.SubscribeMetadataResponse) {
 			if err := Replay(f.Store, event); err != nil {
-				glog.Errorf("failed to reply metadata change from %v: %v", peer, err)
+				log.Errorf("failed to reply metadata change from %v: %v", peer, err)
 				return
 			}
 			counter++
 			if lastPersistTime.Add(time.Minute).Before(time.Now()) {
 				if err := ma.updateOffset(f, peer, peerSignature, event.TsNs); err == nil {
 					if event.TsNs < time.Now().Add(-2*time.Minute).UnixNano() {
-						glog.V(0).Infof("sync with %s progressed to: %v %0.2f/sec", peer, time.Unix(0, event.TsNs), float64(counter)/60.0)
+						log.Infof("sync with %s progressed to: %v %0.2f/sec", peer, time.Unix(0, event.TsNs), float64(counter)/60.0)
 					} else if !synced {
 						synced = true
-						glog.V(0).Infof("synced with %s", peer)
+						log.Infof("synced with %s", peer)
 					}
 					lastPersistTime = time.Now()
 					counter = 0
 				} else {
-					glog.V(0).Infof("failed to update offset for %v: %v", peer, err)
+					log.Infof("failed to update offset for %v: %v", peer, err)
 				}
 			}
 		}
@@ -103,7 +103,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, peer string
 	processEventFn := func(event *filer_pb.SubscribeMetadataResponse) error {
 		data, err := proto.Marshal(event)
 		if err != nil {
-			glog.Errorf("failed to marshal subscribed filer_pb.SubscribeMetadataResponse %+v: %v", event, err)
+			log.Errorf("failed to marshal subscribed filer_pb.SubscribeMetadataResponse %+v: %v", event, err)
 			return err
 		}
 		dir := event.Directory
@@ -147,7 +147,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, peer string
 			}
 		})
 		if err != nil {
-			glog.V(0).Infof("subscribing remote %s meta change: %v", peer, err)
+			log.Infof("subscribing remote %s meta change: %v", peer, err)
 			time.Sleep(1733 * time.Millisecond)
 		}
 	}
@@ -177,7 +177,7 @@ func (ma *MetaAggregator) readOffset(f *Filer, peer string, peerSignature int32)
 	value, err := f.Store.KvGet(context.Background(), key)
 
 	if err == ErrKvNotFound {
-		glog.Warningf("readOffset %s not found", peer)
+		log.Warnf("readOffset %s not found", peer)
 		return 0, nil
 	}
 
@@ -187,7 +187,7 @@ func (ma *MetaAggregator) readOffset(f *Filer, peer string, peerSignature int32)
 
 	lastTsNs = int64(util.BytesToUint64(value))
 
-	glog.V(0).Infof("readOffset %s : %d", peer, lastTsNs)
+	log.Infof("readOffset %s : %d", peer, lastTsNs)
 
 	return
 }
@@ -206,7 +206,7 @@ func (ma *MetaAggregator) updateOffset(f *Filer, peer string, peerSignature int3
 		return fmt.Errorf("updateOffset %s : %v", peer, err)
 	}
 
-	glog.V(4).Infof("updateOffset %s : %d", peer, lastTsNs)
+	log.Tracef("updateOffset %s : %d", peer, lastTsNs)
 
 	return
 }

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage"
@@ -20,7 +20,7 @@ func (vs *VolumeServer) VolumeTailSender(req *volume_server_pb.VolumeTailSenderR
 		return fmt.Errorf("not found volume id %d", req.VolumeId)
 	}
 
-	defer glog.V(1).Infof("tailing volume %d finished", v.Id)
+	defer log.Debugf("tailing volume %d finished", v.Id)
 
 	lastTimestampNs := req.SinceNs
 	drainingSeconds := req.IdleTimeoutSeconds
@@ -28,7 +28,7 @@ func (vs *VolumeServer) VolumeTailSender(req *volume_server_pb.VolumeTailSenderR
 	for {
 		lastProcessedTimestampNs, err := sendNeedlesSince(stream, v, lastTimestampNs)
 		if err != nil {
-			glog.Infof("sendNeedlesSince: %v", err)
+			log.Infof("sendNeedlesSince: %v", err)
 			return fmt.Errorf("streamFollow: %v", err)
 		}
 		time.Sleep(2 * time.Second)
@@ -42,11 +42,11 @@ func (vs *VolumeServer) VolumeTailSender(req *volume_server_pb.VolumeTailSenderR
 			if drainingSeconds <= 0 {
 				return nil
 			}
-			glog.V(1).Infof("tailing volume %d drains requests with %d seconds remaining", v.Id, drainingSeconds)
+			log.Debugf("tailing volume %d drains requests with %d seconds remaining", v.Id, drainingSeconds)
 		} else {
 			lastTimestampNs = lastProcessedTimestampNs
 			drainingSeconds = req.IdleTimeoutSeconds
-			glog.V(1).Infof("tailing volume %d resets draining wait time to %d seconds", v.Id, drainingSeconds)
+			log.Debugf("tailing volume %d resets draining wait time to %d seconds", v.Id, drainingSeconds)
 		}
 
 	}
@@ -87,7 +87,7 @@ func (vs *VolumeServer) VolumeTailReceiver(ctx context.Context, req *volume_serv
 		return resp, fmt.Errorf("receiver not found volume id %d", req.VolumeId)
 	}
 
-	defer glog.V(1).Infof("receive tailing volume %d finished", v.Id)
+	defer log.Debugf("receive tailing volume %d finished", v.Id)
 
 	return resp, operation.TailVolumeFromSource(req.SourceVolumeServer, vs.grpcDialOption, v.Id, req.SinceNs, int(req.IdleTimeoutSeconds), func(n *needle.Needle) error {
 		_, err := vs.store.WriteVolumeNeedle(v.Id, n, false)

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -25,7 +25,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if e := r.ParseForm(); e != nil {
-		glog.V(0).Infoln("form parse error:", e)
+		log.Infoln("form parse error:", e)
 		writeJsonError(w, r, http.StatusBadRequest, e)
 		return
 	}
@@ -33,7 +33,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	vid, fid, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, ve := needle.NewVolumeId(vid)
 	if ve != nil {
-		glog.V(0).Infoln("NewVolumeId error:", ve)
+		log.Infoln("NewVolumeId error:", ve)
 		writeJsonError(w, r, http.StatusBadRequest, ve)
 		return
 	}
@@ -93,7 +93,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// glog.V(2).Infof("volume %s deleting %s", vid, n)
+	// log.Debugf("volume %s deleting %s", vid, n)
 
 	cookie := n.Cookie
 
@@ -114,7 +114,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if n.Cookie != cookie {
-		glog.V(0).Infoln("delete", r.URL.Path, "with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
+		log.Infoln("delete", r.URL.Path, "with unmaching cookie from ", r.RemoteAddr, "agent", r.UserAgent())
 		writeJsonError(w, r, http.StatusBadRequest, errors.New("File Random Cookie does not match."))
 		return
 	}

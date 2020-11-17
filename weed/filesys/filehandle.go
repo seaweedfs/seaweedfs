@@ -14,7 +14,7 @@ import (
 	"github.com/seaweedfs/fuse/fs"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -57,7 +57,7 @@ var _ = fs.HandleReleaser(&FileHandle{})
 
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 
-	glog.V(4).Infof("%s read fh %d: [%d,%d) size %d resp.Data cap=%d", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size), req.Size, cap(resp.Data))
+	log.Tracef("%s read fh %d: [%d,%d) size %d resp.Data cap=%d", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size), req.Size, cap(resp.Data))
 	fh.RLock()
 	defer fh.RUnlock()
 
@@ -82,12 +82,12 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	}
 
 	if err != nil {
-		glog.Warningf("file handle read %s %d: %v", fh.f.fullpath(), totalRead, err)
+		log.Warnf("file handle read %s %d: %v", fh.f.fullpath(), totalRead, err)
 		return fuse.EIO
 	}
 
 	if totalRead > int64(len(buff)) {
-		glog.Warningf("%s FileHandle Read %d: [%d,%d) size %d totalRead %d", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size), req.Size, totalRead)
+		log.Warnf("%s FileHandle Read %d: [%d,%d) size %d totalRead %d", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size), req.Size, totalRead)
 		totalRead = min(int64(len(buff)), totalRead)
 	}
 	// resp.Data = buff[:totalRead]
@@ -106,7 +106,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 	fileSize := int64(filer.FileSize(fh.f.entry))
 
 	if fileSize == 0 {
-		glog.V(1).Infof("empty fh %v", fh.f.fullpath())
+		log.Debugf("empty fh %v", fh.f.fullpath())
 		return 0, io.EOF
 	}
 
@@ -127,10 +127,10 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 	totalRead, err := fh.f.reader.ReadAt(buff, offset)
 
 	if err != nil && err != io.EOF {
-		glog.Errorf("file handle read %s: %v", fh.f.fullpath(), err)
+		log.Errorf("file handle read %s: %v", fh.f.fullpath(), err)
 	}
 
-	glog.V(4).Infof("file handle read %s [%d,%d] %d : %v", fh.f.fullpath(), offset, offset+int64(totalRead), totalRead, err)
+	log.Tracef("file handle read %s [%d,%d] %d : %v", fh.f.fullpath(), offset, offset+int64(totalRead), totalRead, err)
 
 	return int64(totalRead), err
 }
@@ -150,7 +150,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 	}
 
 	fh.f.entry.Attributes.FileSize = uint64(max(req.Offset+int64(len(data)), int64(fh.f.entry.Attributes.FileSize)))
-	glog.V(4).Infof("%v write [%d,%d) %d", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)), len(req.Data))
+	log.Tracef("%v write [%d,%d) %d", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)), len(req.Data))
 
 	fh.dirtyPages.AddPage(req.Offset, data)
 
@@ -169,7 +169,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 
-	glog.V(4).Infof("Release %v fh %d", fh.f.fullpath(), fh.handle)
+	log.Tracef("Release %v fh %d", fh.f.fullpath(), fh.handle)
 
 	fh.Lock()
 	defer fh.Unlock()
@@ -177,7 +177,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 	fh.f.isOpen--
 
 	if fh.f.isOpen < 0 {
-		glog.V(0).Infof("Release reset %s open count %d => %d", fh.f.Name, fh.f.isOpen, 0)
+		log.Infof("Release reset %s open count %d => %d", fh.f.Name, fh.f.isOpen, 0)
 		fh.f.isOpen = 0
 		return nil
 	}
@@ -185,7 +185,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 	if fh.f.isOpen == 0 {
 
 		if err := fh.doFlush(ctx, req.Header); err != nil {
-			glog.Errorf("Release doFlush %s: %v", fh.f.Name, err)
+			log.Errorf("Release doFlush %s: %v", fh.f.Name, err)
 		}
 
 		// stop the goroutine
@@ -211,7 +211,7 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 	// flush works at fh level
 	// send the data to the OS
-	glog.V(4).Infof("doFlush %s fh %d", fh.f.fullpath(), fh.handle)
+	log.Tracef("doFlush %s fh %d", fh.f.fullpath(), fh.handle)
 
 	fh.dirtyPages.saveExistingPagesToStorage()
 
@@ -250,9 +250,9 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 			Signatures: []int32{fh.f.wfs.signature},
 		}
 
-		glog.V(4).Infof("%s set chunks: %v", fh.f.fullpath(), len(fh.f.entry.Chunks))
+		log.Tracef("%s set chunks: %v", fh.f.fullpath(), len(fh.f.entry.Chunks))
 		for i, chunk := range fh.f.entry.Chunks {
-			glog.V(4).Infof("%s chunks %d: %v [%d,%d)", fh.f.fullpath(), i, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
+			log.Tracef("%s chunks %d: %v [%d,%d)", fh.f.fullpath(), i, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}
 
 		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(fh.f.entry.Chunks)
@@ -261,7 +261,7 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 		chunks, manifestErr := filer.MaybeManifestize(fh.f.wfs.saveDataAsChunk(fh.f.fullpath()), chunks)
 		if manifestErr != nil {
 			// not good, but should be ok
-			glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
+			log.Infof("MaybeManifestize: %v", manifestErr)
 		}
 		fh.f.entry.Chunks = append(chunks, manifestChunks...)
 
@@ -269,7 +269,7 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 		defer fh.f.wfs.mapPbIdFromFilerToLocal(request.Entry)
 
 		if err := filer_pb.CreateEntry(client, request); err != nil {
-			glog.Errorf("fh flush create %s: %v", fh.f.fullpath(), err)
+			log.Errorf("fh flush create %s: %v", fh.f.fullpath(), err)
 			return fmt.Errorf("fh flush create %s: %v", fh.f.fullpath(), err)
 		}
 
@@ -283,7 +283,7 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 	}
 
 	if err != nil {
-		glog.Errorf("%v fh %d flush: %v", fh.f.fullpath(), fh.handle, err)
+		log.Errorf("%v fh %d flush: %v", fh.f.fullpath(), fh.handle, err)
 		return fuse.EIO
 	}
 

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	weed_util "github.com/chrislusf/seaweedfs/weed/util"
 	jsoniter "github.com/json-iterator/go"
@@ -67,7 +67,7 @@ func (store *ElasticStore) Initialize(configuration weed_util.Configuration, pre
 	if store.maxPageSize <= 0 {
 		store.maxPageSize = 10000
 	}
-	glog.Infof("filer store elastic endpoints: %v.", servers)
+	log.Infof("filer store elastic endpoints: %v.", servers)
 	return store.initialize(options)
 }
 
@@ -110,7 +110,7 @@ func (store *ElasticStore) InsertEntry(ctx context.Context, entry *filer.Entry) 
 	}
 	value, err := jsoniter.Marshal(esEntry)
 	if err != nil {
-		glog.Errorf("insert entry(%s) %v.", string(entry.FullPath), err)
+		log.Errorf("insert entry(%s) %v.", string(entry.FullPath), err)
 		return fmt.Errorf("insert entry %v.", err)
 	}
 	_, err = store.client.Index().
@@ -120,7 +120,7 @@ func (store *ElasticStore) InsertEntry(ctx context.Context, entry *filer.Entry) 
 		BodyJson(string(value)).
 		Do(ctx)
 	if err != nil {
-		glog.Errorf("insert entry(%s) %v.", string(entry.FullPath), err)
+		log.Errorf("insert entry(%s) %v.", string(entry.FullPath), err)
 		return fmt.Errorf("insert entry %v.", err)
 	}
 	return nil
@@ -149,7 +149,7 @@ func (store *ElasticStore) FindEntry(ctx context.Context, fullpath weed_util.Ful
 		err := jsoniter.Unmarshal(searchResult.Source, esEntry)
 		return esEntry.Entry, err
 	}
-	glog.Errorf("find entry(%s),%v.", string(fullpath), err)
+	log.Errorf("find entry(%s),%v.", string(fullpath), err)
 	return nil, filer_pb.ErrNotFound
 }
 
@@ -167,7 +167,7 @@ func (store *ElasticStore) deleteIndex(ctx context.Context, index string) (err e
 	if elastic.IsNotFound(err) || (err == nil && deleteResult.Acknowledged) {
 		return nil
 	}
-	glog.Errorf("delete index(%s) %v.", index, err)
+	log.Errorf("delete index(%s) %v.", index, err)
 	return err
 }
 
@@ -182,7 +182,7 @@ func (store *ElasticStore) deleteEntry(ctx context.Context, index, id string) (e
 			return nil
 		}
 	}
-	glog.Errorf("delete entry(index:%s,_id:%s) %v.", index, id, err)
+	log.Errorf("delete entry(index:%s,_id:%s) %v.", index, id, err)
 	return fmt.Errorf("delete entry %v.", err)
 }
 
@@ -207,7 +207,7 @@ func (store *ElasticStore) ListDirectoryEntries(
 func (store *ElasticStore) listRootDirectoryEntries(ctx context.Context, startFileName string, inclusive bool, limit int) (entries []*filer.Entry, err error) {
 	indexResult, err := store.client.CatIndices().Do(ctx)
 	if err != nil {
-		glog.Errorf("list indices %v.", err)
+		log.Errorf("list indices %v.", err)
 		return entries, err
 	}
 	for _, index := range indexResult {
@@ -249,7 +249,7 @@ func (store *ElasticStore) listDirectoryEntries(
 		result := &elastic.SearchResult{}
 		if (startFileName == "" && first) || inclusive {
 			if result, err = store.search(ctx, index, parentId); err != nil {
-				glog.Errorf("search (%s,%s,%t,%d) %v.", string(fullpath), startFileName, inclusive, limit, err)
+				log.Errorf("search (%s,%s,%t,%d) %v.", string(fullpath), startFileName, inclusive, limit, err)
 				return entries, err
 			}
 		} else {
@@ -259,7 +259,7 @@ func (store *ElasticStore) listDirectoryEntries(
 			}
 			after := weed_util.Md5String([]byte(fullPath))
 			if result, err = store.searchAfter(ctx, index, parentId, after); err != nil {
-				glog.Errorf("searchAfter (%s,%s,%t,%d) %v.", string(fullpath), startFileName, inclusive, limit, err)
+				log.Errorf("searchAfter (%s,%s,%t,%d) %v.", string(fullpath), startFileName, inclusive, limit, err)
 				return entries, err
 			}
 		}

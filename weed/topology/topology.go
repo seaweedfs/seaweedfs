@@ -9,7 +9,7 @@ import (
 
 	"github.com/chrislusf/raft"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/sequence"
 	"github.com/chrislusf/seaweedfs/weed/storage"
@@ -180,7 +180,7 @@ func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl).RegisterVolume(&v, dn)
 }
 func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
-	glog.Infof("removing volume info:%+v", v)
+	log.Infof("removing volume info:%+v", v)
 	volumeLayout := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl)
 	volumeLayout.UnRegisterVolume(&v, dn)
 	if volumeLayout.isEmpty() {
@@ -207,7 +207,7 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		if vi, err := storage.NewVolumeInfo(v); err == nil {
 			volumeInfos = append(volumeInfos, vi)
 		} else {
-			glog.V(0).Infof("Fail to convert joined volume information: %v", err)
+			log.Infof("Fail to convert joined volume information: %v", err)
 		}
 	}
 	// find out the delta volumes
@@ -231,7 +231,7 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 	for _, v := range newVolumes {
 		vi, err := storage.NewVolumeInfoFromShort(v)
 		if err != nil {
-			glog.V(0).Infof("NewVolumeInfoFromShort %v: %v", v, err)
+			log.Infof("NewVolumeInfoFromShort %v: %v", v, err)
 			continue
 		}
 		newVis = append(newVis, vi)
@@ -239,7 +239,7 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 	for _, v := range deletedVolumes {
 		vi, err := storage.NewVolumeInfoFromShort(v)
 		if err != nil {
-			glog.V(0).Infof("NewVolumeInfoFromShort %v: %v", v, err)
+			log.Infof("NewVolumeInfoFromShort %v: %v", v, err)
 			continue
 		}
 		oldVis = append(oldVis, vi)

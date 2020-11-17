@@ -3,7 +3,7 @@ package storage
 import (
 	"os"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
@@ -45,7 +45,7 @@ func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
 		}
 		return nil
 	})
-	glog.V(1).Infof("max file key: %d for file: %s", nm.MaxFileKey(), file.Name())
+	log.Debugf("max file key: %d for file: %s", nm.MaxFileKey(), file.Name())
 	return nm, e
 }
 
@@ -66,7 +66,7 @@ func (nm *NeedleMap) Delete(key NeedleId, offset Offset) error {
 func (nm *NeedleMap) Close() {
 	indexFileName := nm.indexFile.Name()
 	if err := nm.indexFile.Sync(); err != nil {
-		glog.Warningf("sync file %s failed, %v", indexFileName, err)
+		log.Warnf("sync file %s failed, %v", indexFileName, err)
 	}
 	_ = nm.indexFile.Close()
 }

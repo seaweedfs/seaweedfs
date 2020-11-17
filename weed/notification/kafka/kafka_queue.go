@@ -2,7 +2,7 @@ package kafka
 
 import (
 	"github.com/Shopify/sarama"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
@@ -22,8 +22,8 @@ func (k *KafkaQueue) GetName() string {
 }
 
 func (k *KafkaQueue) Initialize(configuration util.Configuration, prefix string) (err error) {
-	glog.V(0).Infof("filer.notification.kafka.hosts: %v\n", configuration.GetStringSlice(prefix+"hosts"))
-	glog.V(0).Infof("filer.notification.kafka.topic: %v\n", configuration.GetString(prefix+"topic"))
+	log.Infof("filer.notification.kafka.hosts: %v\n", configuration.GetStringSlice(prefix+"hosts"))
+	log.Infof("filer.notification.kafka.topic: %v\n", configuration.GetString(prefix+"topic"))
 	return k.initialize(
 		configuration.GetStringSlice(prefix+"hosts"),
 		configuration.GetString(prefix+"topic"),
@@ -67,7 +67,7 @@ func (k *KafkaQueue) handleSuccess() {
 	for {
 		pm := <-k.producer.Successes()
 		if pm != nil {
-			glog.V(3).Infof("producer message success, partition:%d offset:%d key:%v", pm.Partition, pm.Offset, pm.Key)
+			log.Tracef("producer message success, partition:%d offset:%d key:%v", pm.Partition, pm.Offset, pm.Key)
 		}
 	}
 }
@@ -76,7 +76,7 @@ func (k *KafkaQueue) handleError() {
 	for {
 		err := <-k.producer.Errors()
 		if err != nil {
-			glog.Errorf("producer message error, partition:%d offset:%d key:%v value:%s error(%v) topic:%s", err.Msg.Partition, err.Msg.Offset, err.Msg.Key, err.Msg.Value, err.Err, k.topic)
+			log.Errorf("producer message error, partition:%d offset:%d key:%v value:%s error(%v) topic:%s", err.Msg.Partition, err.Msg.Offset, err.Msg.Key, err.Msg.Value, err.Err, k.topic)
 		}
 	}
 }

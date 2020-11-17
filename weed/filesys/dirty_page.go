@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -41,7 +41,7 @@ func newDirtyPages(file *File) *ContinuousDirtyPages {
 
 func (pages *ContinuousDirtyPages) AddPage(offset int64, data []byte) {
 
-	glog.V(4).Infof("%s AddPage [%d,%d) of %d bytes", pages.f.fullpath(), offset, offset+int64(len(data)), pages.f.entry.Attributes.FileSize)
+	log.Tracef("%s AddPage [%d,%d) of %d bytes", pages.f.fullpath(), offset, offset+int64(len(data)), pages.f.entry.Attributes.FileSize)
 
 	if len(data) > int(pages.f.wfs.option.ChunkSizeLimit) {
 		// this is more than what buffer can hold.
@@ -111,7 +111,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 		reader = io.LimitReader(reader, size)
 		chunk, collection, replication, err := pages.f.wfs.saveDataAsChunk(pages.f.fullpath())(reader, pages.f.Name, offset)
 		if err != nil {
-			glog.V(0).Infof("%s saveToStorage [%d,%d): %v", pages.f.fullpath(), offset, offset+size, err)
+			log.Infof("%s saveToStorage [%d,%d): %v", pages.f.fullpath(), offset, offset+size, err)
 			pages.chunkSaveErrChan <- err
 			return
 		}
@@ -120,7 +120,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 		pages.chunkAddLock.Lock()
 		defer pages.chunkAddLock.Unlock()
 		pages.f.addChunks([]*filer_pb.FileChunk{chunk})
-		glog.V(3).Infof("%s saveToStorage [%d,%d)", pages.f.fullpath(), offset, offset+size)
+		log.Tracef("%s saveToStorage [%d,%d)", pages.f.fullpath(), offset, offset+size)
 	}
 
 	if pages.f.wfs.concurrentWriters != nil {

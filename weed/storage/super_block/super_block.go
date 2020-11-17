@@ -3,7 +3,7 @@ package super_block
 import (
 	"github.com/golang/protobuf/proto"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -48,12 +48,12 @@ func (s *SuperBlock) Bytes() []byte {
 	if s.Extra != nil {
 		extraData, err := proto.Marshal(s.Extra)
 		if err != nil {
-			glog.Fatalf("cannot marshal super block extra %+v: %v", s.Extra, err)
+			log.Fatalf("cannot marshal super block extra %+v: %v", s.Extra, err)
 		}
 		extraSize := len(extraData)
 		if extraSize > 256*256-2 {
 			// reserve a couple of bits for future extension
-			glog.Fatalf("super block extra size is %d bigger than %d", extraSize, 256*256-2)
+			log.Fatalf("super block extra size is %d bigger than %d", extraSize, 256*256-2)
 		}
 		s.ExtraSize = uint16(extraSize)
 		util.Uint16toBytes(header[6:8], s.ExtraSize)

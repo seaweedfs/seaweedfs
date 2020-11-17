@@ -62,7 +62,7 @@ func TestCompactMap(t *testing.T) {
 
 	//	for i := uint32(0); i < 100; i++ {
 	//		if v := m.Get(Key(i)); v != nil {
-	//			glog.V(4).Infoln(i, "=", v.Key, v.Offset, v.Size)
+	//			log.Trace(i, "=", v.Key, v.Offset, v.Size)
 	//		}
 	//	}
 

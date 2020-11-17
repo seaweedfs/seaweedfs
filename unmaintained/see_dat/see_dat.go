@@ -5,7 +5,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
@@ -32,7 +32,7 @@ func (scanner *VolumeFileScanner4SeeDat) ReadNeedleBody() bool {
 
 func (scanner *VolumeFileScanner4SeeDat) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 	t := time.Unix(int64(n.AppendAtNs)/int64(time.Second), int64(n.AppendAtNs)%int64(time.Second))
-	glog.V(0).Infof("%d,%s%x offset %d size %d(%s) cookie %x appendedAt %v",
+	log.Infof("%d,%s%x offset %d size %d(%s) cookie %x appendedAt %v",
 		*volumeId, n.Id, n.Cookie, offset, n.Size, util.BytesToHumanReadable(uint64(n.Size)), n.Cookie, t)
 	return nil
 }
@@ -45,6 +45,6 @@ func main() {
 	scanner := &VolumeFileScanner4SeeDat{}
 	err := storage.ScanVolumeFile(*volumePath, *volumeCollection, vid, storage.NeedleMapInMemory, scanner)
 	if err != nil {
-		glog.Fatalf("Reading Volume File [ERROR] %s\n", err)
+		log.Fatalf("Reading Volume File [ERROR] %s\n", err)
 	}
 }

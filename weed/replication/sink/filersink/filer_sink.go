@@ -9,7 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/security"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
@@ -68,10 +68,10 @@ func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bo
 
 	dir, name := util.FullPath(key).DirAndName()
 
-	glog.V(4).Infof("delete entry: %v", key)
+	log.Tracef("delete entry: %v", key)
 	err := filer_pb.Remove(fs, dir, name, deleteIncludeChunks, true, true, true, signatures)
 	if err != nil {
-		glog.V(0).Infof("delete entry %s: %v", key, err)
+		log.Infof("delete entry %s: %v", key, err)
 		return fmt.Errorf("delete entry %s: %v", key, err)
 	}
 	return nil
@@ -88,10 +88,10 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 			Directory: dir,
 			Name:      name,
 		}
-		glog.V(1).Infof("lookup: %v", lookupRequest)
+		log.Debugf("lookup: %v", lookupRequest)
 		if resp, err := filer_pb.LookupEntry(client, lookupRequest); err == nil {
 			if filer.ETag(resp.Entry) == filer.ETag(entry) {
-				glog.V(3).Infof("already replicated %s", key)
+				log.Tracef("already replicated %s", key)
 				return nil
 			}
 		}
@@ -100,10 +100,10 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 
 		if err != nil {
 			// only warning here since the source chunk may have been deleted already
-			glog.Warningf("replicate entry chunks %s: %v", key, err)
+			log.Warnf("replicate entry chunks %s: %v", key, err)
 		}
 
-		glog.V(4).Infof("replicated %s %+v ===> %+v", key, entry.Chunks, replicatedChunks)
+		log.Tracef("replicated %s %+v ===> %+v", key, entry.Chunks, replicatedChunks)
 
 		request := &filer_pb.CreateEntryRequest{
 			Directory: dir,
@@ -117,9 +117,9 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 			Signatures:         signatures,
 		}
 
-		glog.V(3).Infof("create: %v", request)
+		log.Tracef("create: %v", request)
 		if err := filer_pb.CreateEntry(client, request); err != nil {
-			glog.V(0).Infof("create entry %s: %v", key, err)
+			log.Infof("create entry %s: %v", key, err)
 			return fmt.Errorf("create entry %s: %v", key, err)
 		}
 
@@ -140,10 +140,10 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 			Name:      name,
 		}
 
-		glog.V(4).Infof("lookup entry: %v", request)
+		log.Tracef("lookup entry: %v", request)
 		resp, err := filer_pb.LookupEntry(client, request)
 		if err != nil {
-			glog.V(0).Infof("lookup %s: %v", key, err)
+			log.Infof("lookup %s: %v", key, err)
 			return err
 		}
 
@@ -156,16 +156,16 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		return false, fmt.Errorf("lookup %s: %v", key, err)
 	}
 
-	glog.V(4).Infof("oldEntry %+v, newEntry %+v, existingEntry: %+v", oldEntry, newEntry, existingEntry)
+	log.Tracef("oldEntry %+v, newEntry %+v, existingEntry: %+v", oldEntry, newEntry, existingEntry)
 
 	if existingEntry.Attributes.Mtime > newEntry.Attributes.Mtime {
 		// skip if already changed
 		// this usually happens when the messages are not ordered
-		glog.V(2).Infof("late updates %s", key)
+		log.Debugf("late updates %s", key)
 	} else if filer.ETag(newEntry) == filer.ETag(existingEntry) {
 		// skip if no change
 		// this usually happens when retrying the replication
-		glog.V(3).Infof("already replicated %s", key)
+		log.Tracef("already replicated %s", key)
 	} else {
 		// find out what changed
 		deletedChunks, newChunks, err := compareChunks(filer.LookupFn(fs), oldEntry, newEntry)

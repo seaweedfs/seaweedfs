@@ -9,7 +9,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -87,7 +87,7 @@ func ResolveOneChunkManifest(lookupFileIdFn LookupFileIdFunctionType, chunk *fil
 func fetchChunk(lookupFileIdFn LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool) ([]byte, error) {
 	urlStrings, err := lookupFileIdFn(fileId)
 	if err != nil {
-		glog.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
+		log.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
 		return nil, err
 	}
 	return retriedFetchChunkData(urlStrings, cipherKey, isGzipped, true, 0, 0)
@@ -108,14 +108,14 @@ func retriedFetchChunkData(urlStrings []string, cipherKey []byte, isGzipped bool
 				break
 			}
 			if err != nil {
-				glog.V(0).Infof("read %s failed, err: %v", urlString, err)
+				log.Infof("read %s failed, err: %v", urlString, err)
 				buffer.Reset()
 			} else {
 				break
 			}
 		}
 		if err != nil && shouldRetry {
-			glog.V(0).Infof("retry reading in %v", waitTime)
+			log.Infof("retry reading in %v", waitTime)
 			time.Sleep(waitTime)
 		} else {
 			break

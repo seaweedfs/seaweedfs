@@ -7,7 +7,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
@@ -24,7 +24,7 @@ func StreamContent(masterClient *wdclient.MasterClient, w io.Writer, chunks []*f
 
 		urlStrings, err := masterClient.LookupFileId(chunkView.FileId)
 		if err != nil {
-			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
+			log.Debugf("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
 			return err
 		}
 		fileId2Url[chunkView.FileId] = urlStrings
@@ -36,12 +36,12 @@ func StreamContent(masterClient *wdclient.MasterClient, w io.Writer, chunks []*f
 
 		data, err := retriedFetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
 		if err != nil {
-			glog.Errorf("read chunk: %v", err)
+			log.Errorf("read chunk: %v", err)
 			return fmt.Errorf("read chunk: %v", err)
 		}
 		_, err = w.Write(data)
 		if err != nil {
-			glog.Errorf("write chunk: %v", err)
+			log.Errorf("write chunk: %v", err)
 			return fmt.Errorf("write chunk: %v", err)
 		}
 	}
@@ -65,7 +65,7 @@ func ReadAll(masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) 
 	for _, chunkView := range chunkViews {
 		urlStrings, err := lookupFileIdFn(chunkView.FileId)
 		if err != nil {
-			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
+			log.Debugf("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
 			return nil, err
 		}
 
@@ -175,7 +175,7 @@ func (c *ChunkStreamReader) Seek(offset int64, whence int) (int64, error) {
 func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 	urlStrings, err := c.lookupFileId(chunkView.FileId)
 	if err != nil {
-		glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
+		log.Debugf("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
 		return err
 	}
 	var buffer bytes.Buffer
@@ -188,7 +188,7 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 			break
 		}
 		if err != nil {
-			glog.V(1).Infof("read %s failed, err: %v", chunkView.FileId, err)
+			log.Debugf("read %s failed, err: %v", chunkView.FileId, err)
 			buffer.Reset()
 		} else {
 			break
@@ -201,7 +201,7 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 	c.bufferPos = 0
 	c.bufferOffset = chunkView.LogicOffset
 
-	// glog.V(0).Infof("read %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
+	// log.Infof("read %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
 
 	return nil
 }

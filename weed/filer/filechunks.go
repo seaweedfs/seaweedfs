@@ -158,9 +158,9 @@ func ViewFromVisibleIntervals(visibles []VisibleInterval, offset int64, size int
 func logPrintf(name string, visibles []VisibleInterval) {
 
 	/*
-		glog.V(0).Infof("%s len %d", name, len(visibles))
+		log.Infof("%s len %d", name, len(visibles))
 		for _, v := range visibles {
-			glog.V(0).Infof("%s:  [%d,%d) %s %d", name, v.start, v.stop, v.fileId, v.chunkOffset)
+			log.Infof("%s:  [%d,%d) %s %d", name, v.start, v.stop, v.fileId, v.chunkOffset)
 		}
 	*/
 }
@@ -185,22 +185,22 @@ func MergeIntoVisibles(visibles []VisibleInterval, chunk *filer_pb.FileChunk) (n
 	}
 
 	logPrintf("  before", visibles)
-	// glog.V(0).Infof("newVisibles %d adding chunk [%d,%d) %s size:%d", len(newVisibles), chunk.Offset, chunk.Offset+int64(chunk.Size), chunk.GetFileIdString(), chunk.Size)
+	// log.Infof("newVisibles %d adding chunk [%d,%d) %s size:%d", len(newVisibles), chunk.Offset, chunk.Offset+int64(chunk.Size), chunk.GetFileIdString(), chunk.Size)
 	chunkStop := chunk.Offset + int64(chunk.Size)
 	for _, v := range visibles {
 		if v.start < chunk.Offset && chunk.Offset < v.stop {
 			t := newVisibleInterval(v.start, chunk.Offset, v.fileId, v.modifiedTime, v.chunkOffset, v.chunkSize, v.cipherKey, v.isGzipped)
 			newVisibles = append(newVisibles, t)
-			// glog.V(0).Infof("visible %d [%d,%d) =1> [%d,%d)", i, v.start, v.stop, t.start, t.stop)
+			// log.Infof("visible %d [%d,%d) =1> [%d,%d)", i, v.start, v.stop, t.start, t.stop)
 		}
 		if v.start < chunkStop && chunkStop < v.stop {
 			t := newVisibleInterval(chunkStop, v.stop, v.fileId, v.modifiedTime, v.chunkOffset+(chunkStop-v.start), v.chunkSize, v.cipherKey, v.isGzipped)
 			newVisibles = append(newVisibles, t)
-			// glog.V(0).Infof("visible %d [%d,%d) =2> [%d,%d)", i, v.start, v.stop, t.start, t.stop)
+			// log.Infof("visible %d [%d,%d) =2> [%d,%d)", i, v.start, v.stop, t.start, t.stop)
 		}
 		if chunkStop <= v.start || v.stop <= chunk.Offset {
 			newVisibles = append(newVisibles, v)
-			// glog.V(0).Infof("visible %d [%d,%d) =3> [%d,%d)", i, v.start, v.stop, v.start, v.stop)
+			// log.Infof("visible %d [%d,%d) =3> [%d,%d)", i, v.start, v.stop, v.start, v.stop)
 		}
 	}
 	newVisibles = append(newVisibles, newV)
@@ -240,7 +240,7 @@ func NonOverlappingVisibleIntervals(lookupFileIdFn LookupFileIdFunctionType, chu
 
 	for _, chunk := range chunks {
 
-		// glog.V(0).Infof("merge [%d,%d)", chunk.Offset, chunk.Offset+int64(chunk.Size))
+		// log.Infof("merge [%d,%d)", chunk.Offset, chunk.Offset+int64(chunk.Size))
 		visibles = MergeIntoVisibles(visibles, chunk)
 
 		logPrintf("add", visibles)

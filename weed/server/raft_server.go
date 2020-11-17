@@ -14,7 +14,7 @@ import (
 
 	"github.com/chrislusf/raft"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 )
 
@@ -36,7 +36,7 @@ func (s StateMachine) Save() ([]byte, error) {
 	state := topology.MaxVolumeIdCommand{
 		MaxVolumeId: s.topo.GetMaxVolumeId(),
 	}
-	glog.V(1).Infof("Save raft state %+v", state)
+	log.Debugf("Save raft state %+v", state)
 	return json.Marshal(state)
 }
 
@@ -46,7 +46,7 @@ func (s StateMachine) Recovery(data []byte) error {
 	if err != nil {
 		return err
 	}
-	glog.V(1).Infof("Recovery raft state %+v", state)
+	log.Debugf("Recovery raft state %+v", state)
 	s.topo.UpAdjustMaxVolumeId(state.MaxVolumeId)
 	return nil
 }
@@ -59,7 +59,7 @@ func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr, d
 		topo:       topo,
 	}
 
-	if glog.V(4) {
+	if log.IsTrace() {
 		raft.SetLogLevel(2)
 	}
 
@@ -67,7 +67,7 @@ func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr, d
 
 	var err error
 	transporter := raft.NewGrpcTransporter(grpcDialOption)
-	glog.V(0).Infof("Starting RaftServer with %v", serverAddr)
+	log.Infof("Starting RaftServer with %v", serverAddr)
 
 	if !raftResumeState {
 		// always clear previous metadata
@@ -82,7 +82,7 @@ func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr, d
 	stateMachine := StateMachine{topo: topo}
 	s.raftServer, err = raft.NewServer(s.serverAddr, s.dataDir, transporter, stateMachine, topo, "")
 	if err != nil {
-		glog.V(0).Infoln(err)
+		log.Infoln(err)
 		return nil, err
 	}
 	s.raftServer.SetHeartbeatInterval(time.Duration(300+rand.Intn(150)) * time.Millisecond)
@@ -111,10 +111,10 @@ func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr, d
 		}
 		if exists {
 			if err := s.raftServer.RemovePeer(existsPeerName); err != nil {
-				glog.V(0).Infoln(err)
+				log.Infoln(err)
 				return nil, err
 			} else {
-				glog.V(0).Infof("removing old peer %s", existingPeer)
+				log.Infof("removing old peer %s", existingPeer)
 			}
 		}
 	}
@@ -126,7 +126,7 @@ func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr, d
 		// s.DoJoinCommand()
 	}
 
-	glog.V(0).Infof("current cluster leader: %v", s.raftServer.Leader())
+	log.Infof("current cluster leader: %v", s.raftServer.Leader())
 
 	return s, nil
 }
@@ -151,13 +151,13 @@ func isTheFirstOne(self string, peers []string) bool {
 
 func (s *RaftServer) DoJoinCommand() {
 
-	glog.V(0).Infoln("Initializing new cluster")
+	log.Infoln("Initializing new cluster")
 
 	if _, err := s.raftServer.Do(&raft.DefaultJoinCommand{
 		Name:             s.raftServer.Name(),
 		ConnectionString: pb.ServerToGrpcAddress(s.serverAddr),
 	}); err != nil {
-		glog.Errorf("fail to send join command: %v", err)
+		log.Errorf("fail to send join command: %v", err)
 	}
 
 }

@@ -14,7 +14,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -50,7 +50,7 @@ func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj inter
 	}
 
 	if httpStatus >= 400 {
-		glog.V(0).Infof("response method:%s URL:%s with httpStatus:%d and JSON:%s",
+		log.Infof("response method:%s URL:%s with httpStatus:%d and JSON:%s",
 			r.Method, r.URL.String(), httpStatus, string(bytes))
 	}
 
@@ -86,8 +86,8 @@ func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj inter
 // wrapper for writeJson - just logs errors
 func writeJsonQuiet(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) {
 	if err := writeJson(w, r, httpStatus, obj); err != nil {
-		glog.V(0).Infof("error writing JSON status %d: %v", httpStatus, err)
-		glog.V(1).Infof("JSON content: %+v", obj)
+		log.Infof("error writing JSON status %d: %v", httpStatus, err)
+		log.Debugf("JSON content: %+v", obj)
 	}
 }
 func writeJsonError(w http.ResponseWriter, r *http.Request, httpStatus int, err error) {
@@ -97,7 +97,7 @@ func writeJsonError(w http.ResponseWriter, r *http.Request, httpStatus int, err 
 }
 
 func debug(params ...interface{}) {
-	glog.V(4).Infoln(params...)
+	log.Trace(params...)
 }
 
 func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl string, grpcDialOption grpc.DialOption) {

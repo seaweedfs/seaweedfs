@@ -5,7 +5,7 @@ import (
 	"math"
 	"sync"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -32,7 +32,7 @@ func (f *Filer) LoadBuckets() {
 	entries, err := f.ListDirectoryEntries(context.Background(), util.FullPath(f.DirBucketsPath), "", false, limit, "")
 
 	if err != nil {
-		glog.V(1).Infof("no buckets found: %v", err)
+		log.Debugf("no buckets found: %v", err)
 		return
 	}
 
@@ -41,7 +41,7 @@ func (f *Filer) LoadBuckets() {
 		shouldFsyncMap[bucket] = true
 	}
 
-	glog.V(1).Infof("buckets found: %d", len(entries))
+	log.Debugf("buckets found: %d", len(entries))
 
 	f.buckets.Lock()
 	for _, entry := range entries {

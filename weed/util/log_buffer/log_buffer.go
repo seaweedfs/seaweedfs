@@ -7,7 +7,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -189,7 +189,7 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Bu
 		return nil
 	}
 	if lastReadTime.After(m.stopTime) {
-		// glog.Fatalf("unexpected last read time %v, older than latest %v", lastReadTime, m.stopTime)
+		// log.Fatalf("unexpected last read time %v, older than latest %v", lastReadTime, m.stopTime)
 		return nil
 	}
 	if lastReadTime.Before(m.startTime) {
@@ -279,7 +279,7 @@ func readTs(buf []byte, pos int) (size int, ts int64) {
 
 	err := proto.Unmarshal(entryData, logEntry)
 	if err != nil {
-		glog.Fatalf("unexpected unmarshal filer_pb.LogEntry: %v", err)
+		log.Fatalf("unexpected unmarshal filer_pb.LogEntry: %v", err)
 	}
 	return size, logEntry.TsNs
 

@@ -3,7 +3,7 @@ package sub
 import (
 	"context"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
@@ -29,7 +29,7 @@ func (k *GoCDKPubSubInput) GetName() string {
 
 func (k *GoCDKPubSubInput) Initialize(configuration util.Configuration, prefix string) error {
 	subURL := configuration.GetString(prefix + "sub_url")
-	glog.V(0).Infof("notification.gocdk_pub_sub.sub_url: %v", subURL)
+	log.Infof("notification.gocdk_pub_sub.sub_url: %v", subURL)
 	sub, err := pubsub.OpenSubscription(context.Background(), subURL)
 	if err != nil {
 		return err

@@ -7,7 +7,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 )
 
 type CipherKey []byte
@@ -15,7 +15,7 @@ type CipherKey []byte
 func GenCipherKey() CipherKey {
 	key := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, key); err != nil {
-		glog.Fatalf("random key gen: %v", err)
+		log.Fatalf("random key gen: %v", err)
 	}
 	return CipherKey(key)
 }

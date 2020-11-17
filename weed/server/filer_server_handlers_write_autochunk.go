@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
@@ -94,7 +94,7 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 
 	fileChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(so), fileChunks)
 	if replyerr != nil {
-		glog.V(0).Infof("manifestize %s: %v", r.RequestURI, replyerr)
+		log.Infof("manifestize %s: %v", r.RequestURI, replyerr)
 		return
 	}
 
@@ -116,7 +116,7 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 
 	fileChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(so), fileChunks)
 	if replyerr != nil {
-		glog.V(0).Infof("manifestize %s: %v", r.RequestURI, replyerr)
+		log.Infof("manifestize %s: %v", r.RequestURI, replyerr)
 		return
 	}
 
@@ -135,7 +135,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	}
 	mode, err := strconv.ParseUint(modeStr, 8, 32)
 	if err != nil {
-		glog.Errorf("Invalid mode format: %s, use 0660 by default", modeStr)
+		log.Errorf("Invalid mode format: %s, use 0660 by default", modeStr)
 		mode = 0660
 	}
 
@@ -154,7 +154,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		crTime = existingEntry.Crtime
 	}
 
-	glog.V(4).Infoln("saving", path)
+	log.Trace("saving", path)
 	entry := &filer.Entry{
 		FullPath: util.FullPath(path),
 		Attr: filer.Attr{
@@ -194,7 +194,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		fs.filer.DeleteChunks(entry.Chunks)
 		replyerr = dbErr
 		filerResult.Error = dbErr.Error()
-		glog.V(0).Infof("failing to write %s to filer server : %v", path, dbErr)
+		log.Infof("failing to write %s to filer server : %v", path, dbErr)
 	}
 	return filerResult, replyerr
 }
@@ -230,7 +230,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 		// Save to chunk manifest structure
 		fileChunks = append(fileChunks, uploadResult.ToPbFileChunk(fileId, chunkOffset))
 
-		glog.V(4).Infof("uploaded %s chunk %d to %s [%d,%d)", fileName, len(fileChunks), fileId, chunkOffset, chunkOffset+int64(uploadResult.Size))
+		log.Tracef("uploaded %s chunk %d to %s [%d,%d)", fileName, len(fileChunks), fileId, chunkOffset, chunkOffset+int64(uploadResult.Size))
 
 		// reset variables for the next chunk
 		chunkOffset = chunkOffset + int64(uploadResult.Size)
@@ -283,7 +283,7 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 	}
 	mode, err := strconv.ParseUint(modeStr, 8, 32)
 	if err != nil {
-		glog.Errorf("Invalid mode format: %s, use 0660 by default", modeStr)
+		log.Errorf("Invalid mode format: %s, use 0660 by default", modeStr)
 		mode = 0660
 	}
 
@@ -299,7 +299,7 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 		return
 	}
 
-	glog.V(4).Infoln("mkdir", path)
+	log.Trace("mkdir", path)
 	entry := &filer.Entry{
 		FullPath: util.FullPath(path),
 		Attr: filer.Attr{
@@ -318,7 +318,7 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil); dbErr != nil {
 		replyerr = dbErr
 		filerResult.Error = dbErr.Error()
-		glog.V(0).Infof("failing to create dir %s on filer server : %v", path, dbErr)
+		log.Infof("failing to create dir %s on filer server : %v", path, dbErr)
 	}
 	return filerResult, replyerr
 }

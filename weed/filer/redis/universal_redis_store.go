@@ -10,7 +10,7 @@ import (
 	"github.com/go-redis/redis"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -170,7 +170,7 @@ func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, full
 		path := util.NewFullPath(string(fullpath), fileName)
 		entry, err := store.FindEntry(ctx, path)
 		if err != nil {
-			glog.V(0).Infof("list %s : %v", path, err)
+			log.Infof("list %s : %v", path, err)
 		} else {
 			if entry.TtlSec > 0 {
 				if entry.Attr.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {

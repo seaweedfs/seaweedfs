@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 )
 
 var (
@@ -122,6 +122,6 @@ func (g *Guard) checkWhiteList(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
-	glog.V(0).Infof("Not in whitelist: %s", r.RemoteAddr)
+	log.Infof("Not in whitelist: %s", r.RemoteAddr)
 	return fmt.Errorf("Not in whitelis: %s", r.RemoteAddr)
 }

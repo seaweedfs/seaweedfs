@@ -13,7 +13,7 @@ import (
 	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	weed_util "github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -37,7 +37,7 @@ func (store *LevelDB2Store) Initialize(configuration weed_util.Configuration, pr
 }
 
 func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
-	glog.Infof("filer store leveldb2 dir: %s", dir)
+	log.Infof("filer store leveldb2 dir: %s", dir)
 	if err := weed_util.TestFolderWritable(dir); err != nil {
 		return fmt.Errorf("Check Level Folder %s Writable: %s", dir, err)
 	}
@@ -56,7 +56,7 @@ func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
 			db, dbErr = leveldb.RecoverFile(dbFolder, opts)
 		}
 		if dbErr != nil {
-			glog.Errorf("filer store open dir %s: %v", dbFolder, dbErr)
+			log.Errorf("filer store open dir %s: %v", dbFolder, dbErr)
 			return dbErr
 		}
 		store.dbs = append(store.dbs, db)
@@ -205,7 +205,7 @@ func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, fullpath w
 		// println("list", entry.FullPath, "chunks", len(entry.Chunks))
 		if decodeErr := entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(iter.Value())); decodeErr != nil {
 			err = decodeErr
-			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+			log.Infof("list %s : %v", entry.FullPath, err)
 			break
 		}
 		entries = append(entries, entry)

@@ -6,13 +6,13 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/backend/memory_map"
 	"golang.org/x/sys/windows"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend/memory_map/os_overloads"
 )
 
 func CreateVolumeFile(fileName string, preallocate int64, memoryMapSizeMB uint32) (BackendStorageFile, error) {
 	if preallocate > 0 {
-		glog.V(0).Infof("Preallocated disk space for %s is not supported", fileName)
+		log.Infof("Preallocated disk space for %s is not supported", fileName)
 	}
 
 	if memoryMapSizeMB > 0 {

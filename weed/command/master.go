@@ -14,7 +14,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -94,7 +94,7 @@ func runMaster(cmd *Command, args []string) bool {
 		os.MkdirAll(*m.metaFolder, 0755)
 	}
 	if err := util.TestFolderWritable(util.ResolvePath(*m.metaFolder)); err != nil {
-		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *m.metaFolder, err)
+		log.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *m.metaFolder, err)
 	}
 
 	var masterWhiteList []string
@@ -102,7 +102,7 @@ func runMaster(cmd *Command, args []string) bool {
 		masterWhiteList = strings.Split(*m.whiteList, ",")
 	}
 	if *m.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
-		glog.Fatalf("volumeSizeLimitMB should be smaller than 30000")
+		log.Fatalf("volumeSizeLimitMB should be smaller than 30000")
 	}
 
 	startMaster(m, masterWhiteList)
@@ -119,16 +119,16 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), peers)
 	listeningAddress := *masterOption.ipBind + ":" + strconv.Itoa(*masterOption.port)
-	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
+	log.Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
 	masterListener, e := util.NewListener(listeningAddress, 0)
 	if e != nil {
-		glog.Fatalf("Master startup error: %v", e)
+		log.Fatalf("Master startup error: %v", e)
 	}
 	// start raftServer
 	raftServer, err := weed_server.NewRaftServer(security.LoadClientTLS(util.GetViper(), "grpc.master"),
 		peers, myMasterAddress, util.ResolvePath(*masterOption.metaFolder), ms.Topo, *masterOption.raftResumeState)
 	if raftServer == nil {
-		glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
+		log.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
 	}
 	ms.SetRaftServer(raftServer)
 	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
@@ -136,14 +136,14 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	grpcPort := *masterOption.port + 10000
 	grpcL, err := util.NewListener(*masterOption.ipBind+":"+strconv.Itoa(grpcPort), 0)
 	if err != nil {
-		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
+		log.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	// Create your protocol servers.
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.master"))
 	master_pb.RegisterSeaweedServer(grpcS, ms)
 	protobuf.RegisterRaftServer(grpcS, raftServer)
 	reflection.Register(grpcS)
-	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOption.ipBind, grpcPort)
+	log.Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOption.ipBind, grpcPort)
 	go grpcS.Serve(grpcL)
 
 	go func() {
@@ -165,7 +165,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 }
 
 func checkPeers(masterIp string, masterPort int, peers string) (masterAddress string, cleanedPeers []string) {
-	glog.V(0).Infof("current: %s:%d peers:%s", masterIp, masterPort, peers)
+	log.Infof("current: %s:%d peers:%s", masterIp, masterPort, peers)
 	masterAddress = masterIp + ":" + strconv.Itoa(masterPort)
 	if peers != "" {
 		cleanedPeers = strings.Split(peers, ",")
@@ -183,7 +183,7 @@ func checkPeers(masterIp string, masterPort int, peers string) (masterAddress st
 		cleanedPeers = append(cleanedPeers, masterAddress)
 	}
 	if len(cleanedPeers)%2 == 0 {
-		glog.Fatalf("Only odd number of masters are supported!")
+		log.Fatalf("Only odd number of masters are supported!")
 	}
 	return
 }

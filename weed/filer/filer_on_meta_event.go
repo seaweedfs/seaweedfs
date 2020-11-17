@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"math"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -22,7 +22,7 @@ func (f *Filer) onMetadataChangeEvent(event *filer_pb.SubscribeMetadataResponse)
 		return
 	}
 
-	glog.V(0).Infof("procesing %v", event)
+	log.Infof("procesing %v", event)
 	if entry.Name == FilerConfName {
 		f.reloadFilerConfiguration(entry)
 	}
@@ -42,7 +42,7 @@ func (f *Filer) reloadFilerConfiguration(entry *filer_pb.Entry) {
 	fc := NewFilerConf()
 	err := fc.loadFromChunks(f, entry.Chunks)
 	if err != nil {
-		glog.Errorf("read filer conf chunks: %v", err)
+		log.Errorf("read filer conf chunks: %v", err)
 		return
 	}
 	f.FilerConf = fc
@@ -54,7 +54,7 @@ func (f *Filer) LoadFilerConf() {
 		return fc.loadFromFiler(f)
 	})
 	if err != nil {
-		glog.Errorf("read filer conf: %v", err)
+		log.Errorf("read filer conf: %v", err)
 		return
 	}
 	f.FilerConf = fc

@@ -10,7 +10,7 @@ import (
 
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
@@ -56,7 +56,7 @@ func (g *AzureSink) initialize(accountName, accountKey, container, dir string) e
 	// Use your Storage account's name and key to create a credential object.
 	credential, err := azblob.NewSharedKeyCredential(accountName, accountKey)
 	if err != nil {
-		glog.Fatalf("failed to create Azure credential with account name:%s key:%s", accountName, accountKey)
+		log.Fatalf("failed to create Azure credential with account name:%s key:%s", accountName, accountKey)
 	}
 
 	// Create a request pipeline that is used to process HTTP(S) requests and responses.

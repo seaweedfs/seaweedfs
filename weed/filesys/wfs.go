@@ -17,7 +17,7 @@ import (
 	"github.com/seaweedfs/fuse/fs"
 
 	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
@@ -128,7 +128,7 @@ func (wfs *WFS) Root() (fs.Node, error) {
 func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHandle) {
 
 	fullpath := file.fullpath()
-	glog.V(4).Infof("AcquireHandle %s uid=%d gid=%d", fullpath, uid, gid)
+	log.Tracef("AcquireHandle %s uid=%d gid=%d", fullpath, uid, gid)
 
 	wfs.handlesLock.Lock()
 	defer wfs.handlesLock.Unlock()
@@ -156,7 +156,7 @@ func (wfs *WFS) ReleaseHandle(fullpath util.FullPath, handleId fuse.HandleID) {
 	wfs.handlesLock.Lock()
 	defer wfs.handlesLock.Unlock()
 
-	glog.V(4).Infof("%s ReleaseHandle id %d current handles length %d", fullpath, handleId, len(wfs.handles))
+	log.Tracef("%s ReleaseHandle id %d current handles length %d", fullpath, handleId, len(wfs.handles))
 
 	delete(wfs.handles, fullpath.AsInode())
 
@@ -166,7 +166,7 @@ func (wfs *WFS) ReleaseHandle(fullpath util.FullPath, handleId fuse.HandleID) {
 // Statfs is called to obtain file system metadata. Implements fuse.FSStatfser
 func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.StatfsResponse) error {
 
-	glog.V(4).Infof("reading fs stats: %+v", req)
+	log.Tracef("reading fs stats: %+v", req)
 
 	if wfs.stats.lastChecked < time.Now().Unix()-20 {
 
@@ -178,13 +178,13 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 				Ttl:         fmt.Sprintf("%ds", wfs.option.TtlSec),
 			}
 
-			glog.V(4).Infof("reading filer stats: %+v", request)
+			log.Tracef("reading filer stats: %+v", request)
 			resp, err := client.Statistics(context.Background(), request)
 			if err != nil {
-				glog.V(0).Infof("reading filer stats %v: %v", request, err)
+				log.Infof("reading filer stats %v: %v", request, err)
 				return err
 			}
-			glog.V(4).Infof("read filer stats: %+v", resp)
+			log.Tracef("read filer stats: %+v", resp)
 
 			wfs.stats.TotalSize = resp.TotalSize
 			wfs.stats.UsedSize = resp.UsedSize
@@ -194,7 +194,7 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("filer Statistics: %v", err)
+			log.Infof("filer Statistics: %v", err)
 			return err
 		}
 	}

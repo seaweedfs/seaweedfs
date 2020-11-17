@@ -6,7 +6,7 @@ import (
 	"io"
 	"math"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -133,7 +133,7 @@ func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset u
 		defer func(w backend.BackendStorageFile, off int64) {
 			if err != nil {
 				if te := w.Truncate(end); te != nil {
-					glog.V(0).Infof("Failed to truncate %s back to %d with error: %v", w.Name(), end, te)
+					log.Infof("Failed to truncate %s back to %d with error: %v", w.Name(), end, te)
 				}
 			}
 		}(w, end)
@@ -172,7 +172,7 @@ func (n *Needle) ReadBytes(bytes []byte, offset int64, size Size, version Versio
 	if n.Size != size {
 		// cookie is not always passed in for this API. Use size to do preliminary checking.
 		if OffsetSize == 4 && offset < int64(MaxPossibleVolumeSize) {
-			glog.Errorf("entry not found1: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
+			log.Errorf("entry not found1: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
 			return ErrorSizeMismatch
 		}
 		return fmt.Errorf("entry not found: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)

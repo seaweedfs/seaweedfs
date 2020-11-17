@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
@@ -42,10 +42,10 @@ func (s3sink *S3Sink) GetSinkToDirectory() string {
 }
 
 func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string) error {
-	glog.V(0).Infof("sink.s3.region: %v", configuration.GetString(prefix+"region"))
-	glog.V(0).Infof("sink.s3.bucket: %v", configuration.GetString(prefix+"bucket"))
-	glog.V(0).Infof("sink.s3.directory: %v", configuration.GetString(prefix+"directory"))
-	glog.V(0).Infof("sink.s3.endpoint: %v", configuration.GetString(prefix+"endpoint"))
+	log.Infof("sink.s3.region: %v", configuration.GetString(prefix+"region"))
+	log.Infof("sink.s3.bucket: %v", configuration.GetString(prefix+"bucket"))
+	log.Infof("sink.s3.directory: %v", configuration.GetString(prefix+"directory"))
+	log.Infof("sink.s3.endpoint: %v", configuration.GetString(prefix+"endpoint"))
 	return s3sink.initialize(
 		configuration.GetString(prefix+"aws_access_key_id"),
 		configuration.GetString(prefix+"aws_secret_access_key"),

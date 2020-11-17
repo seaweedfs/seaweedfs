@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -32,7 +32,7 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 
 			resp, err := client.AssignVolume(context.Background(), request)
 			if err != nil {
-				glog.V(0).Infof("assign volume failure %v: %v", request, err)
+				log.Infof("assign volume failure %v: %v", request, err)
 				return err
 			}
 			if resp.Error != "" {
@@ -55,11 +55,11 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 		fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
 		uploadResult, err, data := operation.Upload(fileUrl, filename, wfs.option.Cipher, reader, false, "", nil, auth)
 		if err != nil {
-			glog.V(0).Infof("upload data %v to %s: %v", filename, fileUrl, err)
+			log.Infof("upload data %v to %s: %v", filename, fileUrl, err)
 			return nil, "", "", fmt.Errorf("upload data: %v", err)
 		}
 		if uploadResult.Error != "" {
-			glog.V(0).Infof("upload failure %v to %s: %v", filename, fileUrl, err)
+			log.Infof("upload failure %v to %s: %v", filename, fileUrl, err)
 			return nil, "", "", fmt.Errorf("upload result: %v", uploadResult.Error)
 		}
 

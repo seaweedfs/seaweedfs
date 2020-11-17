@@ -8,7 +8,7 @@ import (
 	"path"
 	"strconv"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
@@ -32,7 +32,7 @@ func main() {
 	}
 	indexFile, err := os.OpenFile(path.Join(*fixVolumePath, fileName+".idx"), os.O_RDONLY, 0644)
 	if err != nil {
-		glog.Fatalf("Create Volume Index [ERROR] %s\n", err)
+		log.Fatalf("Create Volume Index [ERROR] %s\n", err)
 	}
 	defer indexFile.Close()
 

@@ -3,7 +3,7 @@ package chunk_cache
 import (
 	"sync"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
@@ -60,7 +60,7 @@ func (c *TieredChunkCache) doGetChunk(fileId string, minSize uint64) (data []byt
 
 	fid, err := needle.ParseFileIdFromString(fileId)
 	if err != nil {
-		glog.Errorf("failed to parse file id %s", fileId)
+		log.Errorf("failed to parse file id %s", fileId)
 		return nil
 	}
 
@@ -94,7 +94,7 @@ func (c *TieredChunkCache) SetChunk(fileId string, data []byte) {
 	c.Lock()
 	defer c.Unlock()
 
-	glog.V(4).Infof("SetChunk %s size %d\n", fileId, len(data))
+	log.Tracef("SetChunk %s size %d\n", fileId, len(data))
 
 	c.doSetChunk(fileId, data)
 }
@@ -107,7 +107,7 @@ func (c *TieredChunkCache) doSetChunk(fileId string, data []byte) {
 
 	fid, err := needle.ParseFileIdFromString(fileId)
 	if err != nil {
-		glog.Errorf("failed to parse file id %s", fileId)
+		log.Errorf("failed to parse file id %s", fileId)
 		return
 	}
 

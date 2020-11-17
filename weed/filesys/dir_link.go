@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
@@ -26,10 +26,10 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 
 	oldFile, ok := old.(*File)
 	if !ok {
-		glog.Errorf("old node is not a file: %+v", old)
+		log.Errorf("old node is not a file: %+v", old)
 	}
 
-	glog.V(4).Infof("Link: %v/%v -> %v/%v", oldFile.dir.FullPath(), oldFile.Name, dir.FullPath(), req.NewName)
+	log.Tracef("Link: %v/%v -> %v/%v", oldFile.dir.FullPath(), oldFile.Name, dir.FullPath(), req.NewName)
 
 	if _, err := oldFile.maybeLoadEntry(ctx); err != nil {
 		return nil, err
@@ -69,13 +69,13 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 		defer dir.wfs.mapPbIdFromFilerToLocal(request.Entry)
 
 		if err := filer_pb.UpdateEntry(client, updateOldEntryRequest); err != nil {
-			glog.V(0).Infof("Link %v/%v -> %s/%s: %v", oldFile.dir.FullPath(), oldFile.Name, dir.FullPath(), req.NewName, err)
+			log.Infof("Link %v/%v -> %s/%s: %v", oldFile.dir.FullPath(), oldFile.Name, dir.FullPath(), req.NewName, err)
 			return fuse.EIO
 		}
 		dir.wfs.metaCache.UpdateEntry(context.Background(), filer.FromPbEntry(updateOldEntryRequest.Directory, updateOldEntryRequest.Entry))
 
 		if err := filer_pb.CreateEntry(client, request); err != nil {
-			glog.V(0).Infof("Link %v/%v -> %s/%s: %v", oldFile.dir.FullPath(), oldFile.Name, dir.FullPath(), req.NewName, err)
+			log.Infof("Link %v/%v -> %s/%s: %v", oldFile.dir.FullPath(), oldFile.Name, dir.FullPath(), req.NewName, err)
 			return fuse.EIO
 		}
 		dir.wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
@@ -96,7 +96,7 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 
 func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node, error) {
 
-	glog.V(4).Infof("Symlink: %v/%v to %v", dir.FullPath(), req.NewName, req.Target)
+	log.Tracef("Symlink: %v/%v to %v", dir.FullPath(), req.NewName, req.Target)
 
 	request := &filer_pb.CreateEntryRequest{
 		Directory: dir.FullPath(),
@@ -121,7 +121,7 @@ func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node,
 		defer dir.wfs.mapPbIdFromFilerToLocal(request.Entry)
 
 		if err := filer_pb.CreateEntry(client, request); err != nil {
-			glog.V(0).Infof("symlink %s/%s: %v", dir.FullPath(), req.NewName, err)
+			log.Infof("symlink %s/%s: %v", dir.FullPath(), req.NewName, err)
 			return fuse.EIO
 		}
 
@@ -147,7 +147,7 @@ func (file *File) Readlink(ctx context.Context, req *fuse.ReadlinkRequest) (stri
 		return "", fuse.Errno(syscall.EINVAL)
 	}
 
-	glog.V(4).Infof("Readlink: %v/%v => %v", file.dir.FullPath(), file.Name, entry.Attributes.SymlinkTarget)
+	log.Tracef("Readlink: %v/%v => %v", file.dir.FullPath(), file.Name, entry.Attributes.SymlinkTarget)
 
 	return entry.Attributes.SymlinkTarget, nil
 

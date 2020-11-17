@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -39,7 +39,7 @@ func (fs *FilerServer) assignNewFileInfo(so *operation.StorageOption) (fileId, u
 
 	assignResult, ae := operation.Assign(fs.filer.GetMaster(), fs.grpcDialOption, ar, altRequest)
 	if ae != nil {
-		glog.Errorf("failing to assign a file id: %v", ae)
+		log.Errorf("failing to assign a file id: %v", ae)
 		err = ae
 		return
 	}
@@ -91,7 +91,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	err := fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), isRecursive, ignoreRecursiveError, !skipChunkDeletion, false, nil)
 	if err != nil {
-		glog.V(1).Infoln("deleting", objectPath, ":", err.Error())
+		log.Debug("deleting", objectPath, ":", err.Error())
 		httpStatus := http.StatusInternalServerError
 		if err == filer_pb.ErrNotFound {
 			httpStatus = http.StatusNotFound
@@ -129,7 +129,7 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 	if ttlSeconds == 0 {
 		ttl, err := needle.ReadTTL(rule.GetTtl())
 		if err != nil {
-			glog.Errorf("fail to parse %s ttl setting %s: %v", rule.LocationPrefix, rule.Ttl, err)
+			log.Errorf("fail to parse %s ttl setting %s: %v", rule.LocationPrefix, rule.Ttl, err)
 		}
 		ttlSeconds = int32(ttl.Minutes()) * 60
 	}
@@ -148,7 +148,7 @@ func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplicatio
 
 	ttl, err := needle.ReadTTL(qTtl)
 	if err != nil {
-		glog.Errorf("fail to parse ttl %s: %v", qTtl, err)
+		log.Errorf("fail to parse ttl %s: %v", qTtl, err)
 	}
 
 	return fs.detectStorageOption(requestURI, qCollection, qReplication, int32(ttl.Minutes())*60, dataCenter, rack)

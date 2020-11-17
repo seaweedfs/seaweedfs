@@ -6,7 +6,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -52,7 +52,7 @@ func (broker *MessageBroker) keepConnectedToOneFiler() {
 				defer cancel()
 				stream, err := client.KeepConnected(ctx)
 				if err != nil {
-					glog.V(0).Infof("%s:%d failed to keep connected to %s: %v", broker.option.Ip, broker.option.Port, filer, err)
+					log.Infof("%s:%d failed to keep connected to %s: %v", broker.option.Ip, broker.option.Port, filer, err)
 					return err
 				}
 
@@ -67,24 +67,24 @@ func (broker *MessageBroker) keepConnectedToOneFiler() {
 					Name:     broker.option.Ip,
 					GrpcPort: uint32(broker.option.Port),
 				}); err != nil {
-					glog.V(0).Infof("broker %s:%d failed to init at %s: %v", broker.option.Ip, broker.option.Port, filer, err)
+					log.Infof("broker %s:%d failed to init at %s: %v", broker.option.Ip, broker.option.Port, filer, err)
 					return err
 				}
 
 				// TODO send events of adding/removing topics
 
-				glog.V(0).Infof("conntected with filer: %v", filer)
+				log.Infof("conntected with filer: %v", filer)
 				for {
 					if err := stream.Send(&filer_pb.KeepConnectedRequest{
 						Name:     broker.option.Ip,
 						GrpcPort: uint32(broker.option.Port),
 					}); err != nil {
-						glog.V(0).Infof("%s:%d failed to sendto %s: %v", broker.option.Ip, broker.option.Port, filer, err)
+						log.Infof("%s:%d failed to sendto %s: %v", broker.option.Ip, broker.option.Port, filer, err)
 						return err
 					}
 					// println("send heartbeat")
 					if _, err := stream.Recv(); err != nil {
-						glog.V(0).Infof("%s:%d failed to receive from %s: %v", broker.option.Ip, broker.option.Port, filer, err)
+						log.Infof("%s:%d failed to receive from %s: %v", broker.option.Ip, broker.option.Port, filer, err)
 						return err
 					}
 					// println("received reply")

@@ -5,7 +5,7 @@ import (
 	"path"
 	"strconv"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
@@ -47,12 +47,12 @@ func (scanner *VolumeFileScanner4Fix) ReadNeedleBody() bool {
 }
 
 func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
-	glog.V(2).Infof("key %d offset %d size %d disk_size %d compressed %v", n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsCompressed())
+	log.Debugf("key %d offset %d size %d disk_size %d compressed %v", n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsCompressed())
 	if n.Size.IsValid() {
 		pe := scanner.nm.Set(n.Id, types.ToOffset(offset), n.Size)
-		glog.V(2).Infof("saved %d with error %v", n.Size, pe)
+		log.Debugf("saved %d with error %v", n.Size, pe)
 	} else {
-		glog.V(2).Infof("skipping deleted file ...")
+		log.Debugf("skipping deleted file ...")
 		return scanner.nm.Delete(n.Id)
 	}
 	return nil
@@ -79,12 +79,12 @@ func runFix(cmd *Command, args []string) bool {
 	}
 
 	if err := storage.ScanVolumeFile(util.ResolvePath(*fixVolumePath), *fixVolumeCollection, vid, storage.NeedleMapInMemory, scanner); err != nil {
-		glog.Fatalf("scan .dat File: %v", err)
+		log.Fatalf("scan .dat File: %v", err)
 		os.Remove(indexFileName)
 	}
 
 	if err := nm.SaveToIdx(indexFileName); err != nil {
-		glog.Fatalf("save to .idx File: %v", err)
+		log.Fatalf("save to .idx File: %v", err)
 		os.Remove(indexFileName)
 	}
 

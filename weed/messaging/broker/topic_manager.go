@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
 	"github.com/chrislusf/seaweedfs/weed/util/log_buffer"
 )
@@ -65,7 +65,7 @@ func (tm *TopicManager) buildLogBuffer(tl *TopicControl, tp TopicPartition, topi
 		)
 
 		if err := tm.broker.appendToFile(targetFile, topicConfig, buf); err != nil {
-			glog.V(0).Infof("log write failed %s: %v", targetFile, err)
+			log.Infof("log write failed %s: %v", targetFile, err)
 		}
 	}
 	logBuffer := log_buffer.NewLogBuffer(time.Minute, flushFn, func() {

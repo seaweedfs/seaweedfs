@@ -9,7 +9,7 @@ import (
 
 	"google.golang.org/grpc/reflection"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -152,37 +152,37 @@ func (fo *FilerOptions) startFiler() {
 		Filers:             peers,
 	})
 	if nfs_err != nil {
-		glog.Fatalf("Filer startup error: %v", nfs_err)
+		log.Fatalf("Filer startup error: %v", nfs_err)
 	}
 
 	if *fo.publicPort != 0 {
 		publicListeningAddress := *fo.bindIp + ":" + strconv.Itoa(*fo.publicPort)
-		glog.V(0).Infoln("Start Seaweed filer server", util.Version(), "public at", publicListeningAddress)
+		log.Infoln("Start Seaweed filer server", util.Version(), "public at", publicListeningAddress)
 		publicListener, e := util.NewListener(publicListeningAddress, 0)
 		if e != nil {
-			glog.Fatalf("Filer server public listener error on port %d:%v", *fo.publicPort, e)
+			log.Fatalf("Filer server public listener error on port %d:%v", *fo.publicPort, e)
 		}
 		go func() {
 			if e := http.Serve(publicListener, publicVolumeMux); e != nil {
-				glog.Fatalf("Volume server fail to serve public: %v", e)
+				log.Fatalf("Volume server fail to serve public: %v", e)
 			}
 		}()
 	}
 
-	glog.V(0).Infof("Start Seaweed Filer %s at %s:%d", util.Version(), *fo.ip, *fo.port)
+	log.Infof("Start Seaweed Filer %s at %s:%d", util.Version(), *fo.ip, *fo.port)
 	filerListener, e := util.NewListener(
 		*fo.bindIp+":"+strconv.Itoa(*fo.port),
 		time.Duration(10)*time.Second,
 	)
 	if e != nil {
-		glog.Fatalf("Filer listener error: %v", e)
+		log.Fatalf("Filer listener error: %v", e)
 	}
 
 	// starting grpc server
 	grpcPort := *fo.port + 10000
 	grpcL, err := util.NewListener(*fo.bindIp+":"+strconv.Itoa(grpcPort), 0)
 	if err != nil {
-		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
+		log.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
@@ -191,7 +191,7 @@ func (fo *FilerOptions) startFiler() {
 
 	httpS := &http.Server{Handler: defaultMux}
 	if err := httpS.Serve(filerListener); err != nil {
-		glog.Fatalf("Filer Fail to serve: %v", e)
+		log.Fatalf("Filer Fail to serve: %v", e)
 	}
 
 }

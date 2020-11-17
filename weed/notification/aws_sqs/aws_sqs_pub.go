@@ -8,7 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
@@ -28,8 +28,8 @@ func (k *AwsSqsPub) GetName() string {
 }
 
 func (k *AwsSqsPub) Initialize(configuration util.Configuration, prefix string) (err error) {
-	glog.V(0).Infof("filer.notification.aws_sqs.region: %v", configuration.GetString(prefix+"region"))
-	glog.V(0).Infof("filer.notification.aws_sqs.sqs_queue_name: %v", configuration.GetString(prefix+"sqs_queue_name"))
+	log.Infof("filer.notification.aws_sqs.region: %v", configuration.GetString(prefix+"region"))
+	log.Infof("filer.notification.aws_sqs.sqs_queue_name: %v", configuration.GetString(prefix+"sqs_queue_name"))
 	return k.initialize(
 		configuration.GetString(prefix+"aws_access_key_id"),
 		configuration.GetString(prefix+"aws_secret_access_key"),

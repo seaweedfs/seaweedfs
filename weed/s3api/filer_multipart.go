@@ -14,7 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -25,7 +25,7 @@ type InitiateMultipartUploadResult struct {
 
 func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInput) (output *InitiateMultipartUploadResult, code s3err.ErrorCode) {
 
-	glog.V(2).Infof("createMultipartUpload input %v", input)
+	log.Debugf("createMultipartUpload input %v", input)
 
 	uploadId, _ := uuid.NewRandom()
 	uploadIdString := uploadId.String()
@@ -36,7 +36,7 @@ func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInp
 		}
 		entry.Extended["key"] = []byte(*input.Key)
 	}); err != nil {
-		glog.Errorf("NewMultipartUpload error: %v", err)
+		log.Errorf("NewMultipartUpload error: %v", err)
 		return nil, s3err.ErrInternalError
 	}
 
@@ -58,13 +58,13 @@ type CompleteMultipartUploadResult struct {
 
 func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploadInput) (output *CompleteMultipartUploadResult, code s3err.ErrorCode) {
 
-	glog.V(2).Infof("completeMultipartUpload input %v", input)
+	log.Debugf("completeMultipartUpload input %v", input)
 
 	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
 
 	entries, _, err := s3a.list(uploadDirectory, "", "", false, 0)
 	if err != nil || len(entries) == 0 {
-		glog.Errorf("completeMultipartUpload %s %s error: %v, entries:%d", *input.Bucket, *input.UploadId, err, len(entries))
+		log.Errorf("completeMultipartUpload %s %s error: %v, entries:%d", *input.Bucket, *input.UploadId, err, len(entries))
 		return nil, s3err.ErrNoSuchUpload
 	}
 
@@ -106,7 +106,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	err = s3a.mkFile(dirName, entryName, finalParts)
 
 	if err != nil {
-		glog.Errorf("completeMultipartUpload %s/%s error: %v", dirName, entryName, err)
+		log.Errorf("completeMultipartUpload %s/%s error: %v", dirName, entryName, err)
 		return nil, s3err.ErrInternalError
 	}
 
@@ -120,7 +120,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	}
 
 	if err = s3a.rm(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, false, true); err != nil {
-		glog.V(1).Infof("completeMultipartUpload cleanup %s upload %s: %v", *input.Bucket, *input.UploadId, err)
+		log.Debugf("completeMultipartUpload cleanup %s upload %s: %v", *input.Bucket, *input.UploadId, err)
 	}
 
 	return
@@ -128,18 +128,18 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 
 func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput) (output *s3.AbortMultipartUploadOutput, code s3err.ErrorCode) {
 
-	glog.V(2).Infof("abortMultipartUpload input %v", input)
+	log.Debugf("abortMultipartUpload input %v", input)
 
 	exists, err := s3a.exists(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true)
 	if err != nil {
-		glog.V(1).Infof("bucket %s abort upload %s: %v", *input.Bucket, *input.UploadId, err)
+		log.Debugf("bucket %s abort upload %s: %v", *input.Bucket, *input.UploadId, err)
 		return nil, s3err.ErrNoSuchUpload
 	}
 	if exists {
 		err = s3a.rm(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true, true)
 	}
 	if err != nil {
-		glog.V(1).Infof("bucket %s remove upload %s: %v", *input.Bucket, *input.UploadId, err)
+		log.Debugf("bucket %s remove upload %s: %v", *input.Bucket, *input.UploadId, err)
 		return nil, s3err.ErrInternalError
 	}
 
@@ -166,7 +166,7 @@ type ListMultipartUploadsResult struct {
 func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput) (output *ListMultipartUploadsResult, code s3err.ErrorCode) {
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListMultipartUploads.html
 
-	glog.V(2).Infof("listMultipartUploads input %v", input)
+	log.Debugf("listMultipartUploads input %v", input)
 
 	output = &ListMultipartUploadsResult{
 		Bucket:       input.Bucket,
@@ -179,7 +179,7 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 
 	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), "", *input.UploadIdMarker, false, uint32(*input.MaxUploads))
 	if err != nil {
-		glog.Errorf("listMultipartUploads %s error: %v", *input.Bucket, err)
+		log.Errorf("listMultipartUploads %s error: %v", *input.Bucket, err)
 		return
 	}
 	output.IsTruncated = aws.Bool(!isLast)
@@ -224,7 +224,7 @@ type ListPartsResult struct {
 func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListPartsResult, code s3err.ErrorCode) {
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html
 
-	glog.V(2).Infof("listObjectParts input %v", input)
+	log.Debugf("listObjectParts input %v", input)
 
 	output = &ListPartsResult{
 		Bucket:           input.Bucket,
@@ -237,7 +237,7 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 
 	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d.part", *input.PartNumberMarker), false, uint32(*input.MaxParts))
 	if err != nil {
-		glog.Errorf("listObjectParts %s %s error: %v", *input.Bucket, *input.UploadId, err)
+		log.Errorf("listObjectParts %s %s error: %v", *input.Bucket, *input.UploadId, err)
 		return nil, s3err.ErrNoSuchUpload
 	}
 
@@ -248,7 +248,7 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 			partNumberString := entry.Name[:len(entry.Name)-len(".part")]
 			partNumber, err := strconv.Atoi(partNumberString)
 			if err != nil {
-				glog.Errorf("listObjectParts %s %s parse %s: %v", *input.Bucket, *input.UploadId, entry.Name, err)
+				log.Errorf("listObjectParts %s %s parse %s: %v", *input.Bucket, *input.UploadId, entry.Name, err)
 				continue
 			}
 			output.Part = append(output.Part, &s3.Part{

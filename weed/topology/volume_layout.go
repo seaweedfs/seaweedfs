@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
@@ -146,11 +146,11 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 		vl.vid2location[v.Id] = NewVolumeLocationList()
 	}
 	vl.vid2location[v.Id].Set(dn)
-	// glog.V(4).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
+	// log.Tracef("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
 	for _, dn := range vl.vid2location[v.Id].list {
 		if vInfo, err := dn.GetVolumesById(v.Id); err == nil {
 			if vInfo.ReadOnly {
-				glog.V(1).Infof("vid %d removed from writable", v.Id)
+				log.Debugf("vid %d removed from writable", v.Id)
 				vl.removeFromWritable(v.Id)
 				vl.readonlyVolumes.Add(v.Id, dn)
 				return
@@ -158,7 +158,7 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 				vl.readonlyVolumes.Remove(v.Id, dn)
 			}
 		} else {
-			glog.V(1).Infof("vid %d removed from writable", v.Id)
+			log.Debugf("vid %d removed from writable", v.Id)
 			vl.removeFromWritable(v.Id)
 			vl.readonlyVolumes.Remove(v.Id, dn)
 			return
@@ -269,7 +269,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (*n
 
 	lenWriters := len(vl.writables)
 	if lenWriters <= 0 {
-		glog.V(0).Infoln("No more writable volumes!")
+		log.Infoln("No more writable volumes!")
 		return nil, 0, nil, errors.New("No more writable volumes!")
 	}
 	if option.DataCenter == "" {
@@ -336,7 +336,7 @@ func (vl *VolumeLayout) removeFromWritable(vid needle.VolumeId) bool {
 		}
 	}
 	if toDeleteIndex >= 0 {
-		glog.V(0).Infoln("Volume", vid, "becomes unwritable")
+		log.Infoln("Volume", vid, "becomes unwritable")
 		vl.writables = append(vl.writables[0:toDeleteIndex], vl.writables[toDeleteIndex+1:]...)
 		return true
 	}
@@ -348,7 +348,7 @@ func (vl *VolumeLayout) setVolumeWritable(vid needle.VolumeId) bool {
 			return false
 		}
 	}
-	glog.V(0).Infoln("Volume", vid, "becomes writable")
+	log.Infoln("Volume", vid, "becomes writable")
 	vl.writables = append(vl.writables, vid)
 	return true
 }
@@ -362,7 +362,7 @@ func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) 
 			vl.readonlyVolumes.Remove(vid, dn)
 			vl.oversizedVolumes.Remove(vid, dn)
 			if location.Length() < vl.rp.GetCopyCount() {
-				glog.V(0).Infoln("Volume", vid, "has", location.Length(), "replica, less than required", vl.rp.GetCopyCount())
+				log.Infoln("Volume", vid, "has", location.Length(), "replica, less than required", vl.rp.GetCopyCount())
 				return vl.removeFromWritable(vid)
 			}
 		}
@@ -400,7 +400,7 @@ func (vl *VolumeLayout) SetVolumeCapacityFull(vid needle.VolumeId) bool {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
-	// glog.V(0).Infoln("Volume", vid, "reaches full capacity.")
+	// log.Infoln("Volume", vid, "reaches full capacity.")
 	return vl.removeFromWritable(vid)
 }
 

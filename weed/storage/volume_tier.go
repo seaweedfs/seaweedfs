@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
@@ -17,7 +17,7 @@ func (v *Volume) maybeLoadVolumeInfo() (found bool) {
 	v.volumeInfo, v.hasRemoteFile, _ = pb.MaybeLoadVolumeInfo(v.FileName() + ".vif")
 
 	if v.hasRemoteFile {
-		glog.V(0).Infof("volume %d is tiered to %s as %s and read only", v.Id,
+		log.Infof("volume %d is tiered to %s as %s and read only", v.Id,
 			v.volumeInfo.Files[0].BackendName(), v.volumeInfo.Files[0].Key)
 	}
 

@@ -30,7 +30,7 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer/postgres"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis2"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/aws_sqs"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/gocdk_pub_sub"
@@ -86,7 +86,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.listenersCond = sync.NewCond(&fs.listenersLock)
 
 	if len(option.Masters) == 0 {
-		glog.Fatal("master list is required!")
+		log.Fatal("master list is required!")
 	}
 
 	fs.filer = filer.NewFiler(option.Masters, fs.grpcDialOption, option.Host, option.Port, option.Collection, option.DefaultReplication, option.DataCenter, func() {
@@ -107,7 +107,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		if os.IsNotExist(err) {
 			os.MkdirAll(option.DefaultLevelDbDir, 0755)
 		}
-		glog.V(0).Infof("default to create filer store dir in %s", option.DefaultLevelDbDir)
+		log.Infof("default to create filer store dir in %s", option.DefaultLevelDbDir)
 	}
 	util.LoadConfiguration("notification", false)
 
@@ -147,7 +147,7 @@ func (fs *FilerServer) checkWithMaster() {
 	for _, master := range fs.option.Masters {
 		_, err := pb.ParseFilerGrpcAddress(master)
 		if err != nil {
-			glog.Fatalf("invalid master address %s: %v", master, err)
+			log.Fatalf("invalid master address %s: %v", master, err)
 		}
 	}
 

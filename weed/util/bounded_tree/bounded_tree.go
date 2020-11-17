@@ -3,7 +3,7 @@ package bounded_tree
 import (
 	"sync"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -77,7 +77,7 @@ func (t *BoundedTree) ensureVisited(n *Node, currentPath util.FullPath, componen
 
 		children, err := visitFn(filerPath)
 		if err != nil {
-			glog.V(0).Infof("failed to visit %s: %v", currentPath, err)
+			log.Infof("failed to visit %s: %v", currentPath, err)
 			return false, err
 		}
 

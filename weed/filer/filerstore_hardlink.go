@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -54,12 +54,12 @@ func (fsw *FilerStoreWrapper) maybeReadHardLink(ctx context.Context, entry *Entr
 
 	value, err := fsw.KvGet(ctx, key)
 	if err != nil {
-		glog.Errorf("read %s hardlink %d: %v", entry.FullPath, entry.HardLinkId, err)
+		log.Errorf("read %s hardlink %d: %v", entry.FullPath, entry.HardLinkId, err)
 		return err
 	}
 
 	if err = entry.DecodeAttributesAndChunks(value); err != nil {
-		glog.Errorf("decode %s hardlink %d: %v", entry.FullPath, entry.HardLinkId, err)
+		log.Errorf("decode %s hardlink %d: %v", entry.FullPath, entry.HardLinkId, err)
 		return err
 	}
 

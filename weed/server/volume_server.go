@@ -9,7 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 )
@@ -103,7 +103,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 }
 
 func (vs *VolumeServer) Shutdown() {
-	glog.V(0).Infoln("Shutting down volume server...")
+	log.Infoln("Shutting down volume server...")
 	vs.store.Close()
-	glog.V(0).Infoln("Shut down successfully!")
+	log.Infoln("Shut down successfully!")
 }

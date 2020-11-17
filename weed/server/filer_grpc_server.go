@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -19,14 +19,14 @@ import (
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 
-	glog.V(4).Infof("LookupDirectoryEntry %s", filepath.Join(req.Directory, req.Name))
+	log.Tracef("LookupDirectoryEntry %s", filepath.Join(req.Directory, req.Name))
 
 	entry, err := fs.filer.FindEntry(ctx, util.JoinPath(req.Directory, req.Name))
 	if err == filer_pb.ErrNotFound {
 		return &filer_pb.LookupDirectoryEntryResponse{}, err
 	}
 	if err != nil {
-		glog.V(3).Infof("LookupDirectoryEntry %s: %+v, ", filepath.Join(req.Directory, req.Name), err)
+		log.Tracef("LookupDirectoryEntry %s: %+v, ", filepath.Join(req.Directory, req.Name), err)
 		return nil, err
 	}
 
@@ -45,7 +45,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 
 func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {
 
-	glog.V(4).Infof("ListEntries %v", req)
+	log.Tracef("ListEntries %v", req)
 
 	limit := int(req.Limit)
 	if limit == 0 {
@@ -113,7 +113,7 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 	for _, vidString := range req.VolumeIds {
 		vid, err := strconv.Atoi(vidString)
 		if err != nil {
-			glog.V(1).Infof("Unknown volume id %d", vid)
+			log.Debugf("Unknown volume id %d", vid)
 			return nil, err
 		}
 		var locs []*filer_pb.Location
@@ -152,7 +152,7 @@ func (fs *FilerServer) lookupFileId(fileId string) (targetUrls []string, err err
 
 func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (resp *filer_pb.CreateEntryResponse, err error) {
 
-	glog.V(4).Infof("CreateEntry %v/%v", req.Directory, req.Entry.Name)
+	log.Tracef("CreateEntry %v/%v", req.Directory, req.Entry.Name)
 
 	resp = &filer_pb.CreateEntryResponse{}
 
@@ -173,7 +173,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	if createErr == nil {
 		fs.filer.DeleteChunks(garbage)
 	} else {
-		glog.V(3).Infof("CreateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), createErr)
+		log.Tracef("CreateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), createErr)
 		resp.Error = createErr.Error()
 	}
 
@@ -182,7 +182,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 
 func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 
-	glog.V(4).Infof("UpdateEntry %v", req)
+	log.Tracef("UpdateEntry %v", req)
 
 	fullpath := util.Join(req.Directory, req.Entry.Name)
 	entry, err := fs.filer.FindEntry(ctx, util.FullPath(fullpath))
@@ -204,7 +204,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		HardLinkCounter: req.Entry.HardLinkCounter,
 	}
 
-	glog.V(3).Infof("updating %s: %+v, chunks %d: %v => %+v, chunks %d: %v, extended: %v => %v",
+	log.Tracef("updating %s: %+v, chunks %d: %v => %+v, chunks %d: %v, extended: %v => %v",
 		fullpath, entry.Attr, len(entry.Chunks), entry.Chunks,
 		req.Entry.Attributes, len(req.Entry.Chunks), req.Entry.Chunks,
 		entry.Extended, req.Entry.Extended)
@@ -234,7 +234,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, req.IsFromOtherCluster, req.Signatures)
 
 	} else {
-		glog.V(3).Infof("UpdateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), err)
+		log.Tracef("UpdateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), err)
 	}
 
 	return &filer_pb.UpdateEntryResponse{}, err
@@ -267,7 +267,7 @@ func (fs *FilerServer) cleanupChunks(fullpath string, existingEntry *filer.Entry
 		chunks, err = filer.MaybeManifestize(fs.saveAsChunk(so), chunks)
 		if err != nil {
 			// not good, but should be ok
-			glog.V(0).Infof("MaybeManifestize: %v", err)
+			log.Infof("MaybeManifestize: %v", err)
 		}
 	}
 
@@ -278,7 +278,7 @@ func (fs *FilerServer) cleanupChunks(fullpath string, existingEntry *filer.Entry
 
 func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendToEntryRequest) (*filer_pb.AppendToEntryResponse, error) {
 
-	glog.V(4).Infof("AppendToEntry %v", req)
+	log.Tracef("AppendToEntry %v", req)
 
 	fullpath := util.NewFullPath(req.Directory, req.EntryName)
 	var offset int64 = 0
@@ -308,7 +308,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	entry.Chunks, err = filer.MaybeManifestize(fs.saveAsChunk(so), entry.Chunks)
 	if err != nil {
 		// not good, but should be ok
-		glog.V(0).Infof("MaybeManifestize: %v", err)
+		log.Infof("MaybeManifestize: %v", err)
 	}
 
 	err = fs.filer.CreateEntry(context.Background(), entry, false, false, nil)
@@ -318,7 +318,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {
 
-	glog.V(4).Infof("DeleteEntry %v", req)
+	log.Tracef("DeleteEntry %v", req)
 
 	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures)
 	resp = &filer_pb.DeleteEntryResponse{}
@@ -336,11 +336,11 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 
 	assignResult, err := operation.Assign(fs.filer.GetMaster(), fs.grpcDialOption, assignRequest, altRequest)
 	if err != nil {
-		glog.V(3).Infof("AssignVolume: %v", err)
+		log.Tracef("AssignVolume: %v", err)
 		return &filer_pb.AssignVolumeResponse{Error: fmt.Sprintf("assign volume: %v", err)}, nil
 	}
 	if assignResult.Error != "" {
-		glog.V(3).Infof("AssignVolume error: %v", assignResult.Error)
+		log.Tracef("AssignVolume error: %v", assignResult.Error)
 		return &filer_pb.AssignVolumeResponse{Error: fmt.Sprintf("assign volume result: %v", assignResult.Error)}, nil
 	}
 
@@ -357,7 +357,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 
 func (fs *FilerServer) CollectionList(ctx context.Context, req *filer_pb.CollectionListRequest) (resp *filer_pb.CollectionListResponse, err error) {
 
-	glog.V(4).Infof("CollectionList %v", req)
+	log.Tracef("CollectionList %v", req)
 	resp = &filer_pb.CollectionListResponse{}
 
 	err = fs.filer.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
@@ -379,7 +379,7 @@ func (fs *FilerServer) CollectionList(ctx context.Context, req *filer_pb.Collect
 
 func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.DeleteCollectionRequest) (resp *filer_pb.DeleteCollectionResponse, err error) {
 
-	glog.V(4).Infof("DeleteCollection %v", req)
+	log.Tracef("DeleteCollection %v", req)
 
 	err = fs.filer.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
 		_, err := client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
@@ -434,7 +434,7 @@ func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.
 		MetricsIntervalSec: int32(fs.metricsIntervalSec),
 	}
 
-	glog.V(4).Infof("GetFilerConfiguration: %v", t)
+	log.Tracef("GetFilerConfiguration: %v", t)
 
 	return t, nil
 }
@@ -453,25 +453,25 @@ func (fs *FilerServer) KeepConnected(stream filer_pb.SeaweedFiler_KeepConnectedS
 	}
 	fs.brokersLock.Lock()
 	fs.brokers[clientName] = m
-	glog.V(0).Infof("+ broker %v", clientName)
+	log.Infof("+ broker %v", clientName)
 	fs.brokersLock.Unlock()
 
 	defer func() {
 		fs.brokersLock.Lock()
 		delete(fs.brokers, clientName)
-		glog.V(0).Infof("- broker %v: %v", clientName, err)
+		log.Infof("- broker %v: %v", clientName, err)
 		fs.brokersLock.Unlock()
 	}()
 
 	for {
 		if err := stream.Send(&filer_pb.KeepConnectedResponse{}); err != nil {
-			glog.V(0).Infof("send broker %v: %+v", clientName, err)
+			log.Infof("send broker %v: %+v", clientName, err)
 			return err
 		}
 		// println("replied")
 
 		if _, err := stream.Recv(); err != nil {
-			glog.V(0).Infof("recv broker %v: %v", clientName, err)
+			log.Infof("recv broker %v: %v", clientName, err)
 			return err
 		}
 		// println("received")

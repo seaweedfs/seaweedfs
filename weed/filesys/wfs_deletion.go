@@ -6,7 +6,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
@@ -24,7 +24,7 @@ func (wfs *WFS) deleteFileChunks(chunks []*filer_pb.FileChunk) {
 		}
 		dataChunks, manifestResolveErr := filer.ResolveOneChunkManifest(filer.LookupFn(wfs), chunk)
 		if manifestResolveErr != nil {
-			glog.V(0).Infof("failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
+			log.Infof("failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
 		}
 		for _, dChunk := range dataChunks {
 			fileIds = append(fileIds, dChunk.GetFileIdString())
@@ -49,7 +49,7 @@ func (wfs *WFS) deleteFileIds(grpcDialOption grpc.DialOption, client filer_pb.Se
 
 		m := make(map[string]operation.LookupResult)
 
-		glog.V(4).Infof("deleteFileIds lookup volume id locations: %v", vids)
+		log.Tracef("deleteFileIds lookup volume id locations: %v", vids)
 		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
 			VolumeIds: vids,
 		})

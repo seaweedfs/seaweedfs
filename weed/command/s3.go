@@ -12,7 +12,7 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/s3api"
 	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -137,7 +137,7 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(*s3opt.filer)
 	if err != nil {
-		glog.Fatal(err)
+		log.Fatal(err)
 		return false
 	}
 
@@ -157,14 +157,14 @@ func (s3opt *S3Options) startS3Server() bool {
 			}
 			filerBucketsPath = resp.DirBuckets
 			metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSec)
-			glog.V(0).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
+			log.Infof("S3 read filer buckets dir: %s", filerBucketsPath)
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *s3opt.filer, filerGrpcAddress)
+			log.Infof("wait to connect to filer %s grpc address %s", *s3opt.filer, filerGrpcAddress)
 			time.Sleep(time.Second)
 		} else {
-			glog.V(0).Infof("connected to filer %s grpc address %s", *s3opt.filer, filerGrpcAddress)
+			log.Infof("connected to filer %s grpc address %s", *s3opt.filer, filerGrpcAddress)
 			break
 		}
 	}
@@ -183,7 +183,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		GrpcDialOption:   grpcDialOption,
 	})
 	if s3ApiServer_err != nil {
-		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
+		log.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
 	}
 
 	httpS := &http.Server{Handler: router}
@@ -191,18 +191,18 @@ func (s3opt *S3Options) startS3Server() bool {
 	listenAddress := fmt.Sprintf(":%d", *s3opt.port)
 	s3ApiListener, err := util.NewListener(listenAddress, time.Duration(10)*time.Second)
 	if err != nil {
-		glog.Fatalf("S3 API Server listener on %s error: %v", listenAddress, err)
+		log.Fatalf("S3 API Server listener on %s error: %v", listenAddress, err)
 	}
 
 	if *s3opt.tlsPrivateKey != "" {
-		glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.port)
+		log.Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.port)
 		if err = httpS.ServeTLS(s3ApiListener, *s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
-			glog.Fatalf("S3 API Server Fail to serve: %v", err)
+			log.Fatalf("S3 API Server Fail to serve: %v", err)
 		}
 	} else {
-		glog.V(0).Infof("Start Seaweed S3 API Server %s at http port %d", util.Version(), *s3opt.port)
+		log.Infof("Start Seaweed S3 API Server %s at http port %d", util.Version(), *s3opt.port)
 		if err = httpS.Serve(s3ApiListener); err != nil {
-			glog.Fatalf("S3 API Server Fail to serve: %v", err)
+			log.Fatalf("S3 API Server Fail to serve: %v", err)
 		}
 	}
 

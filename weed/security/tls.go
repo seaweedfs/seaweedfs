@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 )
 
 func LoadServerTLS(config *viper.Viper, component string) grpc.ServerOption {
@@ -21,12 +21,12 @@ func LoadServerTLS(config *viper.Viper, component string) grpc.ServerOption {
 	// load cert/key, ca cert
 	cert, err := tls.LoadX509KeyPair(config.GetString(component+".cert"), config.GetString(component+".key"))
 	if err != nil {
-		glog.V(1).Infof("load cert/key error: %v", err)
+		log.Debugf("load cert/key error: %v", err)
 		return nil
 	}
 	caCert, err := ioutil.ReadFile(config.GetString(component + ".ca"))
 	if err != nil {
-		glog.V(1).Infof("read ca cert file error: %v", err)
+		log.Debugf("read ca cert file error: %v", err)
 		return nil
 	}
 	caCertPool := x509.NewCertPool()
@@ -53,12 +53,12 @@ func LoadClientTLS(config *viper.Viper, component string) grpc.DialOption {
 	// load cert/key, cacert
 	cert, err := tls.LoadX509KeyPair(certFileName, keyFileName)
 	if err != nil {
-		glog.V(1).Infof("load cert/key error: %v", err)
+		log.Debugf("load cert/key error: %v", err)
 		return grpc.WithInsecure()
 	}
 	caCert, err := ioutil.ReadFile(caFileName)
 	if err != nil {
-		glog.V(1).Infof("read ca cert file error: %v", err)
+		log.Debugf("read ca cert file error: %v", err)
 		return grpc.WithInsecure()
 	}
 	caCertPool := x509.NewCertPool()

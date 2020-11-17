@@ -15,7 +15,7 @@ import (
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/sequence"
@@ -100,11 +100,11 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 
 	seq := ms.createSequencer(option)
 	if nil == seq {
-		glog.Fatalf("create sequencer failed.")
+		log.Fatalf("create sequencer failed.")
 	}
 	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, 5, replicationAsMin)
 	ms.vg = topology.NewDefaultVolumeGrowth()
-	glog.V(0).Infoln("Volume Size Limit is", ms.option.VolumeSizeLimitMB, "MB")
+	log.Infoln("Volume Size Limit is", ms.option.VolumeSizeLimitMB, "MB")
 
 	ms.guard = security.NewGuard(ms.option.WhiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
@@ -138,16 +138,16 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	ms.Topo.RaftServer = raftServer.raftServer
 	ms.Topo.RaftServer.AddEventListener(raft.LeaderChangeEventType, func(e raft.Event) {
-		glog.V(0).Infof("leader change event: %+v => %+v", e.PrevValue(), e.Value())
+		log.Infof("leader change event: %+v => %+v", e.PrevValue(), e.Value())
 		if ms.Topo.RaftServer.Leader() != "" {
-			glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "becomes leader.")
+			log.Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "becomes leader.")
 		}
 	})
 	if ms.Topo.IsLeader() {
-		glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", "I am the leader!")
+		log.Infoln("[", ms.Topo.RaftServer.Name(), "]", "I am the leader!")
 	} else {
 		if ms.Topo.RaftServer.Leader() != "" {
-			glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "is the leader.")
+			log.Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "is the leader.")
 		}
 	}
 }
@@ -165,7 +165,7 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 					fmt.Errorf("Leader URL http://%s Parse Error: %v", ms.Topo.RaftServer.Leader(), err))
 				return
 			}
-			glog.V(4).Infoln("proxying to leader", ms.Topo.RaftServer.Leader())
+			log.Trace("proxying to leader", ms.Topo.RaftServer.Leader())
 			proxy := httputil.NewSingleHostReverseProxy(targetUrl)
 			director := proxy.Director
 			proxy.Director = func(req *http.Request) {
@@ -189,7 +189,7 @@ func (ms *MasterServer) startAdminScripts() {
 
 	v := util.GetViper()
 	adminScripts := v.GetString("master.maintenance.scripts")
-	glog.V(0).Infof("adminScripts:\n%v", adminScripts)
+	log.Infof("adminScripts:\n%v", adminScripts)
 	if adminScripts == "" {
 		return
 	}
@@ -215,7 +215,7 @@ func (ms *MasterServer) startAdminScripts() {
 	shellOptions.FilerHost, shellOptions.FilerPort, err = util.ParseHostPort(filerHostPort)
 	shellOptions.Directory = "/"
 	if err != nil {
-		glog.V(0).Infof("failed to parse master.filer.default = %s : %v\n", filerHostPort, err)
+		log.Infof("failed to parse master.filer.default = %s : %v\n", filerHostPort, err)
 		return
 	}
 
@@ -254,9 +254,9 @@ func processEachCmd(reg *regexp.Regexp, line string, commandEnv *shell.CommandEn
 
 	for _, c := range shell.Commands {
 		if c.Name() == cmd {
-			glog.V(0).Infof("executing: %s %v", cmd, args)
+			log.Infof("executing: %s %v", cmd, args)
 			if err := c.Do(args, commandEnv, os.Stdout); err != nil {
-				glog.V(0).Infof("error: %v", err)
+				log.Infof("error: %v", err)
 			}
 		}
 	}
@@ -266,15 +266,15 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 	var seq sequence.Sequencer
 	v := util.GetViper()
 	seqType := strings.ToLower(v.GetString(SequencerType))
-	glog.V(1).Infof("[%s] : [%s]", SequencerType, seqType)
+	log.Debugf("[%s] : [%s]", SequencerType, seqType)
 	switch strings.ToLower(seqType) {
 	case "etcd":
 		var err error
 		urls := v.GetString(SequencerEtcdUrls)
-		glog.V(0).Infof("[%s] : [%s]", SequencerEtcdUrls, urls)
+		log.Infof("[%s] : [%s]", SequencerEtcdUrls, urls)
 		seq, err = sequence.NewEtcdSequencer(urls, option.MetaFolder)
 		if err != nil {
-			glog.Error(err)
+			log.Error(err)
 			seq = nil
 		}
 	default:

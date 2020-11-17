@@ -8,7 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 )
 
 const (
@@ -49,7 +49,7 @@ func (vc *vidMap) getLocationIndex(length int) (int, error) {
 func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err error) {
 	id, err := strconv.Atoi(vid)
 	if err != nil {
-		glog.V(1).Infof("Unknown volume id %s", vid)
+		log.Debugf("Unknown volume id %s", vid)
 		return nil, err
 	}
 
@@ -85,7 +85,7 @@ func (vc *vidMap) LookupFileId(fileId string) (fullUrls []string, err error) {
 func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) {
 	id, err := strconv.Atoi(vid)
 	if err != nil {
-		glog.V(1).Infof("Unknown volume id %s", vid)
+		log.Debugf("Unknown volume id %s", vid)
 		return nil, fmt.Errorf("Unknown volume id %s", vid)
 	}
 	foundLocations, found := vc.GetLocations(uint32(id))

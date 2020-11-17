@@ -11,7 +11,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 )
 
 var (
@@ -251,7 +251,7 @@ func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullC
 	// drains the response body to avoid memory leak
 	data, _ := ioutil.ReadAll(reader)
 	if len(data) != 0 {
-		glog.V(1).Infof("%s reader has remaining %d bytes", contentEncoding, len(data))
+		log.Debugf("%s reader has remaining %d bytes", contentEncoding, len(data))
 	}
 	return n, err
 }
@@ -323,7 +323,7 @@ func readEncryptedUrl(fileUrl string, cipherKey []byte, isContentCompressed bool
 	if isContentCompressed {
 		decryptedData, err = DecompressData(decryptedData)
 		if err != nil {
-			glog.V(0).Infof("unzip decrypt %s: %v", fileUrl, err)
+			log.Infof("unzip decrypt %s: %v", fileUrl, err)
 		}
 	}
 	if len(decryptedData) < int(offset)+size {

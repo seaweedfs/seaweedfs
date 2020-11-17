@@ -25,7 +25,7 @@ func (wt *WriteThrottler) MaybeSlowdown(delta int64) {
 			if overLimitBytes > 0 {
 				overRatio := float64(overLimitBytes) / float64(wt.compactionBytePerSecond)
 				sleepTime := time.Duration(overRatio*1000) * time.Millisecond
-				// glog.V(0).Infof("currently %d bytes, limit to %d bytes, over by %d bytes, sleeping %v over %.4f", wt.lastSizeCounter, wt.compactionBytePerSecond/10, overLimitBytes, sleepTime, overRatio)
+				// log.Infof("currently %d bytes, limit to %d bytes, over by %d bytes, sleeping %v over %.4f", wt.lastSizeCounter, wt.compactionBytePerSecond/10, overLimitBytes, sleepTime, overRatio)
 				time.Sleep(sleepTime)
 			}
 			wt.lastSizeCounter, wt.lastSizeCheckTime = 0, time.Now()

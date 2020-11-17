@@ -4,7 +4,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -41,6 +41,6 @@ func printChunks(name string, chunks []*filer_pb.FileChunk) {
 		return chunks[i].Offset < chunks[j].Offset
 	})
 	for _, chunk := range chunks {
-		glog.V(0).Infof("%s chunk %s [%10d,%10d)", name, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
+		log.Infof("%s chunk %s [%10d,%10d)", name, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
 	}
 }

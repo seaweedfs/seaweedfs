@@ -16,7 +16,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -119,7 +119,7 @@ func runBenchmark(cmd *Command, args []string) bool {
 	if *b.cpuprofile != "" {
 		f, err := os.Create(*b.cpuprofile)
 		if err != nil {
-			glog.Fatal(err)
+			log.Fatal(err)
 		}
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
@@ -310,7 +310,7 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 func writeFileIds(fileName string, fileIdLineChan chan string, finishChan chan bool) {
 	file, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
-		glog.Fatalf("File to create file %s: %s\n", fileName, err)
+		log.Fatalf("File to create file %s: %s\n", fileName, err)
 	}
 	defer file.Close()
 
@@ -329,7 +329,7 @@ func writeFileIds(fileName string, fileIdLineChan chan string, finishChan chan b
 func readFileIds(fileName string, fileIdLineChan chan string) {
 	file, err := os.Open(fileName) // For read access.
 	if err != nil {
-		glog.Fatalf("File to read file %s: %s\n", fileName, err)
+		log.Fatalf("File to read file %s: %s\n", fileName, err)
 	}
 	defer file.Close()
 

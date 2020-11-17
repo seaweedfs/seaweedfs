@@ -2,7 +2,6 @@ package stats
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -12,7 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/client_golang/prometheus/push"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 )
 
 var (
@@ -152,14 +151,14 @@ func LoopPushingMetric(name, instance, addr string, intervalSeconds int) {
 		return
 	}
 
-	glog.V(0).Infof("%s server sends metrics to %s every %d seconds", name, addr, intervalSeconds)
+	log.Infof("%s server sends metrics to %s every %d seconds", name, addr, intervalSeconds)
 
 	pusher := push.New(addr, name).Gatherer(Gather).Grouping("instance", instance)
 
 	for {
 		err := pusher.Push()
 		if err != nil && !strings.HasPrefix(err.Error(), "unexpected status code 200") {
-			glog.V(0).Infof("could not push metrics to prometheus push gateway %s: %v", addr, err)
+			log.Infof("could not push metrics to prometheus push gateway %s: %v", addr, err)
 		}
 		if intervalSeconds <= 0 {
 			intervalSeconds = 15

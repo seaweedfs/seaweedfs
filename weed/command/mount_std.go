@@ -19,7 +19,7 @@ import (
 	"github.com/seaweedfs/fuse/fs"
 
 	"github.com/chrislusf/seaweedfs/weed/filesys"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -54,7 +54,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	// parse filer grpc address
 	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(filer)
 	if err != nil {
-		glog.V(0).Infof("ParseFilerGrpcAddress: %v", err)
+		log.Infof("ParseFilerGrpcAddress: %v", err)
 		return true
 	}
 
@@ -70,7 +70,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		return nil
 	})
 	if err != nil {
-		glog.Infof("failed to talk to filer %s: %v", filerGrpcAddress, err)
+		log.Infof("failed to talk to filer %s: %v", filerGrpcAddress, err)
 		return true
 	}
 
@@ -130,7 +130,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	// Ensure target mount point availability
 	if isValid := checkMountPointAvailable(dir); !isValid {
-		glog.Fatalf("Expected mount to still be active, target mount point: %s, please check!", dir)
+		log.Fatalf("Expected mount to still be active, target mount point: %s, please check!", dir)
 		return true
 	}
 
@@ -194,7 +194,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	// mount
 	c, err := fuse.Mount(dir, options...)
 	if err != nil {
-		glog.V(0).Infof("mount: %v", err)
+		log.Infof("mount: %v", err)
 		return true
 	}
 	defer fuse.Unmount(dir)
@@ -204,13 +204,13 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		c.Close()
 	})
 
-	glog.V(0).Infof("mounted %s%s to %s", filer, mountRoot, dir)
+	log.Infof("mounted %s%s to %s", filer, mountRoot, dir)
 	err = fs.Serve(c, seaweedFileSystem)
 
 	// check if the mount process has an error to report
 	<-c.Ready
 	if err := c.MountError; err != nil {
-		glog.V(0).Infof("mount process: %v", err)
+		log.Infof("mount process: %v", err)
 		return true
 	}
 

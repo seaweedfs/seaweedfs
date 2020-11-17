@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -35,18 +35,18 @@ func GetEntry(filerClient FilerClient, fullFilePath util.FullPath) (entry *Entry
 			Name:      name,
 		}
 
-		// glog.V(3).Infof("read %s request: %v", fullFilePath, request)
+		// log.Tracef("read %s request: %v", fullFilePath, request)
 		resp, err := LookupEntry(client, request)
 		if err != nil {
 			if err == ErrNotFound {
 				return nil
 			}
-			glog.V(3).Infof("read %s %v: %v", fullFilePath, resp, err)
+			log.Tracef("read %s %v: %v", fullFilePath, resp, err)
 			return err
 		}
 
 		if resp.Entry == nil {
-			// glog.V(3).Infof("read %s entry: %v", fullFilePath, entry)
+			// log.Tracef("read %s entry: %v", fullFilePath, entry)
 			return nil
 		}
 
@@ -83,7 +83,7 @@ func doList(filerClient FilerClient, fullDirPath util.FullPath, prefix string, f
 			InclusiveStartFrom: inclusive,
 		}
 
-		glog.V(4).Infof("read directory: %v", request)
+		log.Tracef("read directory: %v", request)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		stream, err := client.ListEntries(ctx, request)
@@ -130,14 +130,14 @@ func Exists(filerClient FilerClient, parentDirectoryPath string, entryName strin
 			Name:      entryName,
 		}
 
-		glog.V(4).Infof("exists entry %v/%v: %v", parentDirectoryPath, entryName, request)
+		log.Tracef("exists entry %v/%v: %v", parentDirectoryPath, entryName, request)
 		resp, err := LookupEntry(client, request)
 		if err != nil {
 			if err == ErrNotFound {
 				exists = false
 				return nil
 			}
-			glog.V(0).Infof("exists entry %v: %v", request, err)
+			log.Infof("exists entry %v: %v", request, err)
 			return fmt.Errorf("exists entry %s/%s: %v", parentDirectoryPath, entryName, err)
 		}
 
@@ -173,9 +173,9 @@ func Mkdir(filerClient FilerClient, parentDirectoryPath string, dirName string, 
 			Entry:     entry,
 		}
 
-		glog.V(1).Infof("mkdir: %v", request)
+		log.Debugf("mkdir: %v", request)
 		if err := CreateEntry(client, request); err != nil {
-			glog.V(0).Infof("mkdir %v: %v", request, err)
+			log.Infof("mkdir %v: %v", request, err)
 			return fmt.Errorf("mkdir %s/%s: %v", parentDirectoryPath, dirName, err)
 		}
 
@@ -204,9 +204,9 @@ func MkFile(filerClient FilerClient, parentDirectoryPath string, fileName string
 			Entry:     entry,
 		}
 
-		glog.V(1).Infof("create file: %s/%s", parentDirectoryPath, fileName)
+		log.Debugf("create file: %s/%s", parentDirectoryPath, fileName)
 		if err := CreateEntry(client, request); err != nil {
-			glog.V(0).Infof("create file %v:%v", request, err)
+			log.Infof("create file %v:%v", request, err)
 			return fmt.Errorf("create file %s/%s: %v", parentDirectoryPath, fileName, err)
 		}
 

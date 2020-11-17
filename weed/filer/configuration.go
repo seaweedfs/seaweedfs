@@ -3,7 +3,7 @@ package filer
 import (
 	"os"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/spf13/viper"
 )
 
@@ -18,11 +18,11 @@ func (f *Filer) LoadConfiguration(config *viper.Viper) {
 	for _, store := range Stores {
 		if config.GetBool(store.GetName() + ".enabled") {
 			if err := store.Initialize(config, store.GetName()+"."); err != nil {
-				glog.Fatalf("Failed to initialize store for %s: %+v",
+				log.Fatalf("Failed to initialize store for %s: %+v",
 					store.GetName(), err)
 			}
 			f.SetStore(store)
-			glog.V(0).Infof("Configure filer for %s", store.GetName())
+			log.Infof("Configure filer for %s", store.GetName())
 			return
 		}
 	}
@@ -43,7 +43,7 @@ func validateOneEnabledStore(config *viper.Viper) {
 			if enabledStore == "" {
 				enabledStore = store.GetName()
 			} else {
-				glog.Fatalf("Filer store is enabled for both %s and %s", enabledStore, store.GetName())
+				log.Fatalf("Filer store is enabled for both %s and %s", enabledStore, store.GetName())
 			}
 		}
 	}

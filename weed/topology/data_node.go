@@ -10,7 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 )
 
@@ -86,7 +86,7 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 
 	for vid, v := range dn.volumes {
 		if _, ok := actualVolumeMap[vid]; !ok {
-			glog.V(0).Infoln("Deleting volume id:", vid)
+			log.Infoln("Deleting volume id:", vid)
 			delete(dn.volumes, vid)
 			deletedVolumes = append(deletedVolumes, v)
 			dn.UpAdjustVolumeCountDelta(-1)

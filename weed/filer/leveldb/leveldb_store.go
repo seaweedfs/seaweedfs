@@ -10,7 +10,7 @@ import (
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	weed_util "github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -37,7 +37,7 @@ func (store *LevelDBStore) Initialize(configuration weed_util.Configuration, pre
 }
 
 func (store *LevelDBStore) initialize(dir string) (err error) {
-	glog.Infof("filer store dir: %s", dir)
+	log.Infof("filer store dir: %s", dir)
 	if err := weed_util.TestFolderWritable(dir); err != nil {
 		return fmt.Errorf("Check Level Folder %s Writable: %s", dir, err)
 	}
@@ -53,7 +53,7 @@ func (store *LevelDBStore) initialize(dir string) (err error) {
 			store.db, err = leveldb.RecoverFile(dir, opts)
 		}
 		if err != nil {
-			glog.Infof("filer store open dir %s: %v", dir, err)
+			log.Infof("filer store open dir %s: %v", dir, err)
 			return
 		}
 	}
@@ -193,7 +193,7 @@ func (store *LevelDBStore) ListDirectoryEntries(ctx context.Context, fullpath we
 		}
 		if decodeErr := entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(iter.Value())); decodeErr != nil {
 			err = decodeErr
-			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+			log.Infof("list %s : %v", entry.FullPath, err)
 			break
 		}
 		entries = append(entries, entry)

@@ -17,7 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/chrislusf/seaweedfs/weed/command"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 )
 
 var IsDebug *bool
@@ -36,7 +36,7 @@ func setExitStatus(n int) {
 }
 
 func main() {
-	glog.MaxSize = 1024 * 1024 * 32
+
 	rand.Seed(time.Now().UnixNano())
 	flag.Usage = usage
 	flag.Parse()
@@ -123,7 +123,7 @@ func printUsage(w io.Writer) {
 
 func usage() {
 	printUsage(os.Stderr)
-	fmt.Fprintf(os.Stderr, "For Logging, use \"weed [logging_options] [command]\". The logging options are:\n")
+	fmt.Fprintf(os.Stderr, "For Logging, use \"LOG=[trace|debug|info|warn|error|fatal] weed [command]\".\n")
 	flag.PrintDefaults()
 	os.Exit(2)
 }
@@ -168,5 +168,5 @@ func exit() {
 }
 
 func debug(params ...interface{}) {
-	glog.V(4).Infoln(params...)
+	log.Trace(params...)
 }

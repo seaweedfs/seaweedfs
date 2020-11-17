@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	jwt "github.com/dgrijalva/jwt-go"
 )
 
@@ -33,7 +33,7 @@ func GenJwt(signingKey SigningKey, expiresAfterSec int, fileId string) EncodedJw
 	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	encoded, e := t.SignedString([]byte(signingKey))
 	if e != nil {
-		glog.V(0).Infof("Failed to sign claims %+v: %v", t.Claims, e)
+		log.Infof("Failed to sign claims %+v: %v", t.Claims, e)
 		return ""
 	}
 	return EncodedJwt(encoded)

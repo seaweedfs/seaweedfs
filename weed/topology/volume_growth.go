@@ -11,7 +11,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 )
 
@@ -85,7 +85,7 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 		if c, e := vg.findAndGrow(grpcDialOption, topo, option); e == nil {
 			counter += c
 		} else {
-			glog.V(0).Infof("create %d volume, created %d: %v", targetCount, counter, e)
+			log.Infof("create %d volume, created %d: %v", targetCount, counter, e)
 			return counter, e
 		}
 	}
@@ -221,9 +221,9 @@ func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid
 			}
 			server.AddOrUpdateVolume(vi)
 			topo.RegisterVolumeLayout(vi, server)
-			glog.V(0).Infoln("Created Volume", vid, "on", server.NodeImpl.String())
+			log.Infoln("Created Volume", vid, "on", server.NodeImpl.String())
 		} else {
-			glog.V(0).Infoln("Failed to assign volume", vid, "to", servers, "error", err)
+			log.Infoln("Failed to assign volume", vid, "to", servers, "error", err)
 			return fmt.Errorf("Failed to assign %d: %v", vid, err)
 		}
 	}

@@ -7,7 +7,7 @@ import (
 
 	"github.com/klauspost/reedsolomon"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
@@ -78,7 +78,7 @@ func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, 
 		return fmt.Errorf("failed to stat dat file: %v", err)
 	}
 
-	glog.V(0).Infof("encodeDatFile %s.dat size:%d", baseFileName, fi.Size())
+	log.Infof("encodeDatFile %s.dat size:%d", baseFileName, fi.Size())
 	err = encodeDatFile(fi.Size(), err, baseFileName, bufferSize, largeBlockSize, file, smallBlockSize)
 	if err != nil {
 		return fmt.Errorf("encodeDatFile: %v", err)
@@ -122,7 +122,7 @@ func encodeData(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize i
 	bufferSize := int64(len(buffers[0]))
 	batchCount := blockSize / bufferSize
 	if blockSize%bufferSize != 0 {
-		glog.Fatalf("unexpected block size %d buffer size %d", blockSize, bufferSize)
+		log.Fatalf("unexpected block size %d buffer size %d", blockSize, bufferSize)
 	}
 
 	for b := int64(0); b < batchCount; b++ {

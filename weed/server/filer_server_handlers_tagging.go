@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -44,7 +44,7 @@ func (fs *FilerServer) PutTaggingHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	if dbErr := fs.filer.CreateEntry(ctx, existingEntry, false, false, nil); dbErr != nil {
-		glog.V(0).Infof("failing to update %s tagging : %v", path, dbErr)
+		log.Infof("failing to update %s tagging : %v", path, dbErr)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
@@ -92,7 +92,7 @@ func (fs *FilerServer) DeleteTaggingHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if dbErr := fs.filer.CreateEntry(ctx, existingEntry, false, false, nil); dbErr != nil {
-		glog.V(0).Infof("failing to delete %s tagging : %v", path, dbErr)
+		log.Infof("failing to delete %s tagging : %v", path, dbErr)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}

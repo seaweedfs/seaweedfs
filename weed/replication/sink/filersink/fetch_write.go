@@ -8,7 +8,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -82,7 +82,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 
 		resp, err := client.AssignVolume(context.Background(), request)
 		if err != nil {
-			glog.V(0).Infof("assign volume failure %v: %v", request, err)
+			log.Infof("assign volume failure %v: %v", request, err)
 			return err
 		}
 		if resp.Error != "" {
@@ -98,16 +98,16 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 
 	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
 
-	glog.V(4).Infof("replicating %s to %s header:%+v", filename, fileUrl, header)
+	log.Tracef("replicating %s to %s header:%+v", filename, fileUrl, header)
 
 	// fetch data as is, regardless whether it is encrypted or not
 	uploadResult, err, _ := operation.Upload(fileUrl, filename, false, resp.Body, "gzip" == header.Get("Content-Encoding"), header.Get("Content-Type"), nil, auth)
 	if err != nil {
-		glog.V(0).Infof("upload source data %v to %s: %v", sourceChunk.GetFileIdString(), fileUrl, err)
+		log.Infof("upload source data %v to %s: %v", sourceChunk.GetFileIdString(), fileUrl, err)
 		return "", fmt.Errorf("upload data: %v", err)
 	}
 	if uploadResult.Error != "" {
-		glog.V(0).Infof("upload failure %v to %s: %v", filename, fileUrl, err)
+		log.Infof("upload failure %v to %s: %v", filename, fileUrl, err)
 		return "", fmt.Errorf("upload result: %v", uploadResult.Error)
 	}
 

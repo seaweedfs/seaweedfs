@@ -111,7 +111,7 @@ func listxattr(entry *filer_pb.Entry, req *fuse.ListxattrRequest, resp *fuse.Lis
 func (wfs *WFS) maybeLoadEntry(dir, name string) (entry *filer_pb.Entry, err error) {
 
 	fullpath := util.NewFullPath(dir, name)
-	// glog.V(3).Infof("read entry cache miss %s", fullpath)
+	// log.Tracef("read entry cache miss %s", fullpath)
 
 	// read from async meta cache
 	meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath(dir))

@@ -18,7 +18,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"go.etcd.io/etcd/client"
 )
 
@@ -63,7 +63,7 @@ func NewEtcdSequencer(etcdUrls string, metaFolder string) (*EtcdSequencer, error
 	if err != nil {
 		return nil, fmt.Errorf("read sequence from file failed, %v", err)
 	}
-	glog.V(4).Infof("read sequence from file : %d", maxValue)
+	log.Tracef("read sequence from file : %d", maxValue)
 
 	newSeq, err := setMaxSequenceToEtcd(keysApi, maxValue)
 	if err != nil {
@@ -88,16 +88,16 @@ func (es *EtcdSequencer) NextFileId(count uint64) uint64 {
 			reqSteps += count
 		}
 		maxId, err := batchGetSequenceFromEtcd(es.keysAPI, reqSteps)
-		glog.V(4).Infof("get max sequence id from etcd, %d", maxId)
+		log.Tracef("get max sequence id from etcd, %d", maxId)
 		if err != nil {
-			glog.Error(err)
+			log.Error(err)
 			return 0
 		}
 		es.currentSeqId, es.maxSeqId = maxId-reqSteps, maxId
-		glog.V(4).Infof("current id : %d, max id : %d", es.currentSeqId, es.maxSeqId)
+		log.Tracef("current id : %d, max id : %d", es.currentSeqId, es.maxSeqId)
 
 		if err := writeSequenceFile(es.seqFile, es.maxSeqId, es.currentSeqId); err != nil {
-			glog.Errorf("flush sequence to file failed, %v", err)
+			log.Errorf("flush sequence to file failed, %v", err)
 		}
 	}
 
@@ -116,13 +116,13 @@ func (es *EtcdSequencer) SetMax(seenValue uint64) {
 	if seenValue > es.maxSeqId {
 		maxId, err := setMaxSequenceToEtcd(es.keysAPI, seenValue)
 		if err != nil {
-			glog.Errorf("set Etcd Max sequence failed : %v", err)
+			log.Errorf("set Etcd Max sequence failed : %v", err)
 			return
 		}
 		es.currentSeqId, es.maxSeqId = maxId, maxId
 
 		if err := writeSequenceFile(es.seqFile, maxId, maxId); err != nil {
-			glog.Errorf("flush sequence to file failed, %v", err)
+			log.Errorf("flush sequence to file failed, %v", err)
 		}
 	}
 }
@@ -164,7 +164,7 @@ func batchGetSequenceFromEtcd(kvApi client.KeysAPI, step uint64) (uint64, error)
 		if err == nil {
 			break
 		}
-		glog.Error(err)
+		log.Error(err)
 	}
 
 	return endSeqValue, nil

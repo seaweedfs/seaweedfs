@@ -10,7 +10,7 @@ import (
 
 	"github.com/disintegration/imaging"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 )
 
 func Resized(ext string, read io.ReadSeeker, width, height int, mode string) (resized io.ReadSeeker, w int, h int) {
@@ -50,7 +50,7 @@ func Resized(ext string, read io.ReadSeeker, width, height int, mode string) (re
 		}
 		return bytes.NewReader(buf.Bytes()), dstImage.Bounds().Dx(), dstImage.Bounds().Dy()
 	} else {
-		glog.Error(err)
+		log.Error(err)
 	}
 	return read, 0, 0
 }

@@ -6,7 +6,7 @@ import (
 	"github.com/gocql/gocql"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -42,7 +42,7 @@ func (store *CassandraStore) initialize(keyspace string, hosts []string, usernam
 	store.cluster.Consistency = gocql.LocalQuorum
 	store.session, err = store.cluster.CreateSession()
 	if err != nil {
-		glog.V(0).Infof("Failed to open cassandra store, hosts %v, keyspace %s", hosts, keyspace)
+		log.Infof("Failed to open cassandra store, hosts %v, keyspace %s", hosts, keyspace)
 	}
 	return
 }
@@ -155,13 +155,13 @@ func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, fullpath 
 		}
 		if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); decodeErr != nil {
 			err = decodeErr
-			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+			log.Infof("list %s : %v", entry.FullPath, err)
 			break
 		}
 		entries = append(entries, entry)
 	}
 	if err := iter.Close(); err != nil {
-		glog.V(0).Infof("list iterator close: %v", err)
+		log.Infof("list iterator close: %v", err)
 	}
 
 	return entries, err

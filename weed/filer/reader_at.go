@@ -7,7 +7,7 @@ import (
 	"math/rand"
 	"sync"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
@@ -54,7 +54,7 @@ func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 
 					locations = resp.LocationsMap[vid]
 					if locations == nil || len(locations.Locations) == 0 {
-						glog.V(0).Infof("failed to locate %s", fileId)
+						log.Infof("failed to locate %s", fileId)
 						return fmt.Errorf("failed to locate %s", fileId)
 					}
 					vicCacheLock.Lock()
@@ -101,7 +101,7 @@ func (c *ChunkReadAt) ReadAt(p []byte, offset int64) (n int, err error) {
 	c.readerLock.Lock()
 	defer c.readerLock.Unlock()
 
-	glog.V(4).Infof("ReadAt [%d,%d) of total file size %d bytes %d chunk views", offset, offset+int64(len(p)), c.fileSize, len(c.chunkViews))
+	log.Tracef("ReadAt [%d,%d) of total file size %d bytes %d chunk views", offset, offset+int64(len(p)), c.fileSize, len(c.chunkViews))
 	return c.doReadAt(p[n:], offset+int64(n))
 }
 
@@ -121,7 +121,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 		}
 		if startOffset < chunk.LogicOffset {
 			gap := int(chunk.LogicOffset - startOffset)
-			glog.V(4).Infof("zero [%d,%d)", startOffset, startOffset+int64(gap))
+			log.Tracef("zero [%d,%d)", startOffset, startOffset+int64(gap))
 			n += int(min(int64(gap), remaining))
 			startOffset, remaining = chunk.LogicOffset, remaining-int64(gap)
 			if remaining <= 0 {
@@ -133,10 +133,10 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 		if chunkStart >= chunkStop {
 			continue
 		}
-		glog.V(4).Infof("read [%d,%d), %d/%d chunk %s [%d,%d)", chunkStart, chunkStop, i, len(c.chunkViews), chunk.FileId, chunk.LogicOffset-chunk.Offset, chunk.LogicOffset-chunk.Offset+int64(chunk.Size))
+		log.Tracef("read [%d,%d), %d/%d chunk %s [%d,%d)", chunkStart, chunkStop, i, len(c.chunkViews), chunk.FileId, chunk.LogicOffset-chunk.Offset, chunk.LogicOffset-chunk.Offset+int64(chunk.Size))
 		buffer, err = c.readFromWholeChunkData(chunk, nextChunk)
 		if err != nil {
-			glog.Errorf("fetching chunk %+v: %v\n", chunk, err)
+			log.Errorf("fetching chunk %+v: %v\n", chunk, err)
 			return
 		}
 		bufferOffset := chunkStart - chunk.LogicOffset + chunk.Offset
@@ -145,11 +145,11 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 		startOffset, remaining = startOffset+int64(copied), remaining-int64(copied)
 	}
 
-	glog.V(4).Infof("doReadAt [%d,%d), n:%v, err:%v", offset, offset+int64(len(p)), n, err)
+	log.Tracef("doReadAt [%d,%d), n:%v, err:%v", offset, offset+int64(len(p)), n, err)
 
 	if err == nil && remaining > 0 && c.fileSize > startOffset {
 		delta := int(min(remaining, c.fileSize-startOffset))
-		glog.V(4).Infof("zero2 [%d,%d) of file size %d bytes", startOffset, startOffset+int64(delta), c.fileSize)
+		log.Tracef("zero2 [%d,%d) of file size %d bytes", startOffset, startOffset+int64(delta), c.fileSize)
 		n += delta
 	}
 
@@ -194,11 +194,11 @@ func (c *ChunkReadAt) readOneWholeChunk(chunkView *ChunkView) (interface{}, erro
 
 	return c.fetchGroup.Do(chunkView.FileId, func() (interface{}, error) {
 
-		glog.V(4).Infof("readFromWholeChunkData %s offset %d [%d,%d) size at least %d", chunkView.FileId, chunkView.Offset, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size), chunkView.ChunkSize)
+		log.Tracef("readFromWholeChunkData %s offset %d [%d,%d) size at least %d", chunkView.FileId, chunkView.Offset, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size), chunkView.ChunkSize)
 
 		data := c.chunkCache.GetChunk(chunkView.FileId, chunkView.ChunkSize)
 		if data != nil {
-			glog.V(4).Infof("cache hit %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset-chunkView.Offset, chunkView.LogicOffset-chunkView.Offset+int64(len(data)))
+			log.Tracef("cache hit %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset-chunkView.Offset, chunkView.LogicOffset-chunkView.Offset+int64(len(data)))
 		} else {
 			var err error
 			data, err = c.doFetchFullChunkData(chunkView)
@@ -213,11 +213,11 @@ func (c *ChunkReadAt) readOneWholeChunk(chunkView *ChunkView) (interface{}, erro
 
 func (c *ChunkReadAt) doFetchFullChunkData(chunkView *ChunkView) ([]byte, error) {
 
-	glog.V(4).Infof("+ doFetchFullChunkData %s", chunkView.FileId)
+	log.Tracef("+ doFetchFullChunkData %s", chunkView.FileId)
 
 	data, err := fetchChunk(c.lookupFileId, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped)
 
-	glog.V(4).Infof("- doFetchFullChunkData %s", chunkView.FileId)
+	log.Tracef("- doFetchFullChunkData %s", chunkView.FileId)
 
 	return data, err
 

@@ -7,7 +7,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -32,7 +32,7 @@ func toVolumeServerGrpcAddress(volumeServer string) (grpcAddress string, err err
 	sepIndex := strings.LastIndex(volumeServer, ":")
 	port, err := strconv.Atoi(volumeServer[sepIndex+1:])
 	if err != nil {
-		glog.Errorf("failed to parse volume server address: %v", volumeServer)
+		log.Errorf("failed to parse volume server address: %v", volumeServer)
 		return "", err
 	}
 	return fmt.Sprintf("%s:%d", volumeServer[0:sepIndex], port+10000), nil

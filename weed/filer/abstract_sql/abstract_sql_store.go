@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"strings"
@@ -81,7 +81,7 @@ func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer.Ent
 	}
 
 	// now the insert failed possibly due to duplication constraints
-	glog.V(1).Infof("insert %s falls back to update: %v", entry.FullPath, err)
+	log.Debugf("insert %s falls back to update: %v", entry.FullPath, err)
 
 	res, err = store.getTxOrDB(ctx).ExecContext(ctx, store.SqlUpdate, meta, util.HashStringToLong(dir), name, dir)
 	if err != nil {
@@ -187,7 +187,7 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 		var name string
 		var data []byte
 		if err = rows.Scan(&name, &data); err != nil {
-			glog.V(0).Infof("scan %s : %v", fullpath, err)
+			log.Infof("scan %s : %v", fullpath, err)
 			return nil, fmt.Errorf("scan %s: %v", fullpath, err)
 		}
 
@@ -195,7 +195,7 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 			FullPath: util.NewFullPath(string(fullpath), name),
 		}
 		if err = entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
-			glog.V(0).Infof("scan decode %s : %v", entry.FullPath, err)
+			log.Infof("scan decode %s : %v", entry.FullPath, err)
 			return nil, fmt.Errorf("scan decode %s : %v", entry.FullPath, err)
 		}
 

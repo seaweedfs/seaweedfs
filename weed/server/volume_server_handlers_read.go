@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/stats"
@@ -43,28 +43,28 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 
 	volumeId, err := needle.NewVolumeId(vid)
 	if err != nil {
-		glog.V(2).Infof("parsing vid %s: %v", r.URL.Path, err)
+		log.Debugf("parsing vid %s: %v", r.URL.Path, err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	err = n.ParsePath(fid)
 	if err != nil {
-		glog.V(2).Infof("parsing fid %s: %v", r.URL.Path, err)
+		log.Debugf("parsing fid %s: %v", r.URL.Path, err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	// glog.V(4).Infoln("volume", volumeId, "reading", n)
+	// log.Trace("volume", volumeId, "reading", n)
 	hasVolume := vs.store.HasVolume(volumeId)
 	_, hasEcVolume := vs.store.FindEcVolume(volumeId)
 	if !hasVolume && !hasEcVolume {
 		if !vs.ReadRedirect {
-			glog.V(2).Infoln("volume is not local:", err, r.URL.Path)
+			log.Debug("volume is not local:", err, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		lookupResult, err := operation.Lookup(vs.GetMaster(), volumeId.String())
-		glog.V(2).Infoln("volume", volumeId, "found on", lookupResult, "error", err)
+		log.Debug("volume", volumeId, "found on", lookupResult, "error", err)
 		if err == nil && len(lookupResult.Locations) > 0 {
 			u, _ := url.Parse(util.NormalizeUrl(lookupResult.Locations[0].PublicUrl))
 			u.Path = fmt.Sprintf("%s/%s,%s", u.Path, vid, fid)
@@ -76,7 +76,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
 
 		} else {
-			glog.V(2).Infoln("lookup error:", err, r.URL.Path)
+			log.Debug("lookup error:", err, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 		}
 		return
@@ -94,17 +94,17 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		count, err = vs.store.ReadEcShardNeedle(volumeId, n)
 	}
 	if err != nil && err != storage.ErrorDeleted && r.FormValue("type") != "replicate" && hasVolume {
-		glog.V(4).Infof("read needle: %v", err)
+		log.Tracef("read needle: %v", err)
 		// start to fix it from other replicas, if not deleted and hasVolume and is not a replicated request
 	}
-	// glog.V(4).Infoln("read bytes", count, "error", err)
+	// log.Trace("read bytes", count, "error", err)
 	if err != nil || count < 0 {
-		glog.V(3).Infof("read %s isNormalVolume %v error: %v", r.URL.Path, hasVolume, err)
+		log.Tracef("read %s isNormalVolume %v error: %v", r.URL.Path, hasVolume, err)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	if n.Cookie != cookie {
-		glog.V(0).Infof("request %s with cookie:%x expected:%x from %s agent %s", r.URL.Path, cookie, n.Cookie, r.RemoteAddr, r.UserAgent())
+		log.Infof("request %s with cookie:%x expected:%x from %s agent %s", r.URL.Path, cookie, n.Cookie, r.RemoteAddr, r.UserAgent())
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -129,7 +129,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		pairMap := make(map[string]string)
 		err = json.Unmarshal(n.Pairs, &pairMap)
 		if err != nil {
-			glog.V(0).Infoln("Unmarshal pairs error:", err)
+			log.Infoln("Unmarshal pairs error:", err)
 		}
 		for k, v := range pairMap {
 			w.Header().Set(k, v)
@@ -157,7 +157,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	if n.IsCompressed() {
 		if _, _, _, shouldResize := shouldResizeImages(ext, r); shouldResize {
 			if n.Data, err = util.DecompressData(n.Data); err != nil {
-				glog.V(0).Infoln("ungzip error:", err, r.URL.Path)
+				log.Infoln("ungzip error:", err, r.URL.Path)
 			}
 		} else if strings.Contains(r.Header.Get("Accept-Encoding"), "zstd") && util.IsZstdContent(n.Data) {
 			w.Header().Set("Content-Encoding", "zstd")
@@ -165,7 +165,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			w.Header().Set("Content-Encoding", "gzip")
 		} else {
 			if n.Data, err = util.DecompressData(n.Data); err != nil {
-				glog.V(0).Infoln("uncompress error:", err, r.URL.Path)
+				log.Infoln("uncompress error:", err, r.URL.Path)
 			}
 		}
 	}
@@ -173,7 +173,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	rs := conditionallyResizeImages(bytes.NewReader(n.Data), ext, r)
 
 	if e := writeResponseContent(filename, mtype, rs, w, r); e != nil {
-		glog.V(2).Infoln("response write error:", e)
+		log.Debug("response write error:", e)
 	}
 }
 
@@ -184,7 +184,7 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, 
 
 	chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsCompressed())
 	if e != nil {
-		glog.V(0).Infof("load chunked manifest (%s) error: %v", r.URL.Path, e)
+		log.Infof("load chunked manifest (%s) error: %v", r.URL.Path, e)
 		return false
 	}
 	if fileName == "" && chunkManifest.Name != "" {
@@ -211,7 +211,7 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, 
 	rs := conditionallyResizeImages(chunkedFileReader, ext, r)
 
 	if e := writeResponseContent(fileName, mType, rs, w, r); e != nil {
-		glog.V(2).Infoln("response write error:", e)
+		log.Debug("response write error:", e)
 	}
 	return true
 }

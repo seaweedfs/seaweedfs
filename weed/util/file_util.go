@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 )
 
 func TestFolderWritable(folder string) (err error) {
@@ -20,7 +20,7 @@ func TestFolderWritable(folder string) (err error) {
 		return errors.New("Not a valid folder!")
 	}
 	perm := fileInfo.Mode().Perm()
-	glog.V(0).Infoln("Folder", folder, "Permission:", perm)
+	log.Infoln("Folder", folder, "Permission:", perm)
 	if 0200&perm != 0 {
 		return nil
 	}
@@ -53,7 +53,7 @@ func CheckFile(filename string) (exists, canRead, canWrite bool, modTime time.Ti
 		return
 	}
 	if err != nil {
-		glog.Errorf("check %s: %v", filename, err)
+		log.Errorf("check %s: %v", filename, err)
 		return
 	}
 	if fi.Mode()&0400 != 0 {

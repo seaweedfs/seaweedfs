@@ -8,7 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 )
@@ -46,7 +46,7 @@ func (mc *MasterClient) WaitUntilConnected() {
 }
 
 func (mc *MasterClient) KeepConnectedToMaster() {
-	glog.V(1).Infof("%s masterClient bootstraps with masters %v", mc.clientType, mc.masters)
+	log.Debugf("%s masterClient bootstraps with masters %v", mc.clientType, mc.masters)
 	for {
 		mc.tryAllMasters()
 		time.Sleep(time.Second)
@@ -68,14 +68,14 @@ func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress string) (leader
 			leader = resp.Leader
 			return nil
 		}); grpcErr != nil {
-			glog.V(0).Infof("connect to %s: %v", master, grpcErr)
+			log.Infof("connect to %s: %v", master, grpcErr)
 		}
 		if leader != "" {
-			glog.V(0).Infof("existing leader is %s", leader)
+			log.Infof("existing leader is %s", leader)
 			return
 		}
 	}
-	glog.V(0).Infof("No existing leader found!")
+	log.Infof("No existing leader found!")
 	return
 }
 
@@ -94,7 +94,7 @@ func (mc *MasterClient) tryAllMasters() {
 }
 
 func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader string) {
-	glog.V(1).Infof("%s masterClient Connecting to master %v", mc.clientType, master)
+	log.Debugf("%s masterClient Connecting to master %v", mc.clientType, master)
 	gprcErr := pb.WithMasterClient(master, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -102,28 +102,28 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 
 		stream, err := client.KeepConnected(ctx)
 		if err != nil {
-			glog.V(1).Infof("%s masterClient failed to keep connected to %s: %v", mc.clientType, master, err)
+			log.Debugf("%s masterClient failed to keep connected to %s: %v", mc.clientType, master, err)
 			return err
 		}
 
 		if err = stream.Send(&master_pb.KeepConnectedRequest{Name: mc.clientType, GrpcPort: mc.grpcPort}); err != nil {
-			glog.V(0).Infof("%s masterClient failed to send to %s: %v", mc.clientType, master, err)
+			log.Infof("%s masterClient failed to send to %s: %v", mc.clientType, master, err)
 			return err
 		}
 
-		glog.V(1).Infof("%s masterClient Connected to %v", mc.clientType, master)
+		log.Debugf("%s masterClient Connected to %v", mc.clientType, master)
 		mc.currentMaster = master
 
 		for {
 			volumeLocation, err := stream.Recv()
 			if err != nil {
-				glog.V(0).Infof("%s masterClient failed to receive from %s: %v", mc.clientType, master, err)
+				log.Infof("%s masterClient failed to receive from %s: %v", mc.clientType, master, err)
 				return err
 			}
 
 			// maybe the leader is changed
 			if volumeLocation.Leader != "" {
-				glog.V(0).Infof("redirected to leader %v", volumeLocation.Leader)
+				log.Infof("redirected to leader %v", volumeLocation.Leader)
 				nextHintedLeader = volumeLocation.Leader
 				return nil
 			}
@@ -135,18 +135,18 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 				DataCenter: volumeLocation.DataCenter,
 			}
 			for _, newVid := range volumeLocation.NewVids {
-				glog.V(1).Infof("%s: %s masterClient adds volume %d", mc.clientType, loc.Url, newVid)
+				log.Debugf("%s: %s masterClient adds volume %d", mc.clientType, loc.Url, newVid)
 				mc.addLocation(newVid, loc)
 			}
 			for _, deletedVid := range volumeLocation.DeletedVids {
-				glog.V(1).Infof("%s: %s masterClient removes volume %d", mc.clientType, loc.Url, deletedVid)
+				log.Debugf("%s: %s masterClient removes volume %d", mc.clientType, loc.Url, deletedVid)
 				mc.deleteLocation(deletedVid, loc)
 			}
 		}
 
 	})
 	if gprcErr != nil {
-		glog.V(1).Infof("%s masterClient failed to connect with master %v: %v", mc.clientType, master, gprcErr)
+		log.Debugf("%s masterClient failed to connect with master %v: %v", mc.clientType, master, gprcErr)
 	}
 	return
 }

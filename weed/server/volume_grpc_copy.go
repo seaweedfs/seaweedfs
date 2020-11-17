@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage"
@@ -26,14 +26,14 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v != nil {
 
-		glog.V(0).Infof("volume %d already exists. deleted before copying...", req.VolumeId)
+		log.Infof("volume %d already exists. deleted before copying...", req.VolumeId)
 
 		err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId))
 		if err != nil {
 			return nil, fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, err)
 		}
 
-		glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
+		log.Infof("deleted existing volume %d before copying.", req.VolumeId)
 	}
 
 	location := vs.store.FindFreeLocation()
@@ -164,7 +164,7 @@ func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse
 }
 
 func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName string, wt *util.WriteThrottler, isAppend bool) error {
-	glog.V(4).Infof("writing to %s", fileName)
+	log.Tracef("writing to %s", fileName)
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 	if isAppend {
 		flags = os.O_WRONLY | os.O_CREATE

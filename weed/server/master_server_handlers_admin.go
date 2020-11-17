@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend/memory_map"
@@ -56,7 +56,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 		var err error
 		gcThreshold, err = strconv.ParseFloat(gcString, 32)
 		if err != nil {
-			glog.V(0).Infof("garbageThreshold %s is not a valid float number: %v", gcString, err)
+			log.Infof("garbageThreshold %s is not a valid float number: %v", gcString, err)
 			writeJsonError(w, r, http.StatusNotAcceptable, fmt.Errorf("garbageThreshold %s is not a valid float number", gcString))
 			return
 		}

@@ -13,7 +13,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
@@ -56,7 +56,7 @@ func (s3a *S3ApiServer) AdjustedUrl(location *filer_pb.Location) string {
 
 // If none of the http routes match respond with MethodNotAllowed
 func notFoundHandler(w http.ResponseWriter, r *http.Request) {
-	glog.V(0).Infof("unsupported %s %s", r.Method, r.RequestURI)
+	log.Infof("unsupported %s %s", r.Method, r.RequestURI)
 	writeErrorResponse(w, s3err.ErrMethodNotAllowed, r.URL)
 }
 
@@ -86,10 +86,10 @@ func writeResponse(w http.ResponseWriter, statusCode int, response []byte, mType
 	}
 	w.WriteHeader(statusCode)
 	if response != nil {
-		glog.V(4).Infof("status %d %s: %s", statusCode, mType, string(response))
+		log.Tracef("status %d %s: %s", statusCode, mType, string(response))
 		_, err := w.Write(response)
 		if err != nil {
-			glog.V(0).Infof("write err: %v", err)
+			log.Infof("write err: %v", err)
 		}
 		w.(http.Flusher).Flush()
 	}

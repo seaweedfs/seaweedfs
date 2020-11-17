@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"go.mongodb.org/mongo-driver/bson"
@@ -134,7 +134,7 @@ func (store *MongodbStore) FindEntry(ctx context.Context, fullpath util.FullPath
 	var where = bson.M{"directory": dir, "name": name}
 	err = store.connect.Database(store.database).Collection(store.collectionName).FindOne(ctx, where).Decode(&data)
 	if err != mongo.ErrNoDocuments && err != nil {
-		glog.Errorf("find %s: %v", fullpath, err)
+		log.Errorf("find %s: %v", fullpath, err)
 		return nil, filer_pb.ErrNotFound
 	}
 
@@ -205,7 +205,7 @@ func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, fullpath ut
 		}
 		if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data.Meta)); decodeErr != nil {
 			err = decodeErr
-			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+			log.Infof("list %s : %v", entry.FullPath, err)
 			break
 		}
 
@@ -213,7 +213,7 @@ func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, fullpath ut
 	}
 
 	if err := cur.Close(ctx); err != nil {
-		glog.V(0).Infof("list iterator close: %v", err)
+		log.Infof("list iterator close: %v", err)
 	}
 
 	return entries, err

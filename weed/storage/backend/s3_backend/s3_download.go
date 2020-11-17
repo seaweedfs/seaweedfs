@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 )
 
 func downloadFromS3(sess s3iface.S3API, destFileName string, sourceBucket string, sourceKey string,
@@ -50,7 +50,7 @@ func downloadFromS3(sess s3iface.S3API, destFileName string, sourceBucket string
 		return fileSize, fmt.Errorf("failed to download file %s: %v", destFileName, err)
 	}
 
-	glog.V(1).Infof("downloaded file %s\n", destFileName)
+	log.Debugf("downloaded file %s\n", destFileName)
 
 	return
 }

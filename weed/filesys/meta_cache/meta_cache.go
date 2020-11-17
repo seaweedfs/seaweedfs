@@ -8,7 +8,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/filer/leveldb"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/bounded_tree"
 )
@@ -44,7 +44,7 @@ func openMetaStore(dbFolder string) filer.VirtualFilerStore {
 	}
 
 	if err := store.Initialize(config, ""); err != nil {
-		glog.Fatalf("Failed to initialize metadata cache store for %s: %+v", store.GetName(), err)
+		log.Fatalf("Failed to initialize metadata cache store for %s: %+v", store.GetName(), err)
 	}
 
 	return filer.NewFilerStoreWrapper(store)
@@ -72,7 +72,7 @@ func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath uti
 				// skip the unnecessary deletion
 				// leave the update to the following InsertEntry operation
 			} else {
-				glog.V(3).Infof("DeleteEntry %s/%s", oldPath, oldPath.Name())
+				log.Tracef("DeleteEntry %s/%s", oldPath, oldPath.Name())
 				if err := mc.localStore.DeleteEntry(ctx, oldPath); err != nil {
 					return err
 				}
@@ -85,7 +85,7 @@ func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath uti
 	if newEntry != nil {
 		newDir, _ := newEntry.DirAndName()
 		if mc.visitedBoundary.HasVisited(util.FullPath(newDir)) {
-			glog.V(3).Infof("InsertEntry %s/%s", newDir, newEntry.Name())
+			log.Tracef("InsertEntry %s/%s", newDir, newEntry.Name())
 			if err := mc.localStore.InsertEntry(ctx, newEntry); err != nil {
 				return err
 			}

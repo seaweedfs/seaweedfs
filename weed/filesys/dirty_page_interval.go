@@ -30,12 +30,12 @@ func (list *IntervalLinkedList) Size() int64 {
 	return list.Tail.Offset + list.Tail.Size - list.Head.Offset
 }
 func (list *IntervalLinkedList) addNodeToTail(node *IntervalNode) {
-	// glog.V(4).Infof("add to tail [%d,%d) + [%d,%d) => [%d,%d)", list.Head.Offset, list.Tail.Offset+list.Tail.Size, node.Offset, node.Offset+node.Size, list.Head.Offset, node.Offset+node.Size)
+	// log.Tracef("add to tail [%d,%d) + [%d,%d) => [%d,%d)", list.Head.Offset, list.Tail.Offset+list.Tail.Size, node.Offset, node.Offset+node.Size, list.Head.Offset, node.Offset+node.Size)
 	list.Tail.Next = node
 	list.Tail = node
 }
 func (list *IntervalLinkedList) addNodeToHead(node *IntervalNode) {
-	// glog.V(4).Infof("add to head [%d,%d) + [%d,%d) => [%d,%d)", node.Offset, node.Offset+node.Size, list.Head.Offset, list.Tail.Offset+list.Tail.Size, node.Offset, list.Tail.Offset+list.Tail.Size)
+	// log.Tracef("add to head [%d,%d) + [%d,%d) => [%d,%d)", node.Offset, node.Offset+node.Size, list.Head.Offset, list.Tail.Offset+list.Tail.Size, node.Offset, list.Tail.Offset+list.Tail.Size)
 	node.Next = list.Head
 	list.Head = node
 }
@@ -46,7 +46,7 @@ func (list *IntervalLinkedList) ReadData(buf []byte, start, stop int64) {
 
 		nodeStart, nodeStop := max(start, t.Offset), min(stop, t.Offset+t.Size)
 		if nodeStart < nodeStop {
-			// glog.V(0).Infof("copying start=%d stop=%d t=[%d,%d) t.data=%d => bufSize=%d nodeStart=%d, nodeStop=%d", start, stop, t.Offset, t.Offset+t.Size, len(t.Data), len(buf), nodeStart, nodeStop)
+			// log.Infof("copying start=%d stop=%d t=[%d,%d) t.data=%d => bufSize=%d nodeStart=%d, nodeStop=%d", start, stop, t.Offset, t.Offset+t.Size, len(t.Data), len(buf), nodeStart, nodeStop)
 			copy(buf[nodeStart-start:], t.Data[nodeStart-t.Offset:nodeStop-t.Offset])
 		}
 
@@ -144,7 +144,7 @@ func (c *ContinuousIntervals) AddInterval(data []byte, offset int64) {
 	}
 
 	if prevList != nil && nextList != nil {
-		// glog.V(4).Infof("connecting [%d,%d) + [%d,%d) => [%d,%d)", prevList.Head.Offset, prevList.Tail.Offset+prevList.Tail.Size, nextList.Head.Offset, nextList.Tail.Offset+nextList.Tail.Size, prevList.Head.Offset, nextList.Tail.Offset+nextList.Tail.Size)
+		// log.Tracef("connecting [%d,%d) + [%d,%d) => [%d,%d)", prevList.Head.Offset, prevList.Tail.Offset+prevList.Tail.Size, nextList.Head.Offset, nextList.Tail.Offset+nextList.Tail.Size, prevList.Head.Offset, nextList.Tail.Offset+nextList.Tail.Size)
 		prevList.Tail.Next = nextList.Head
 		prevList.Tail = nextList.Tail
 		c.removeList(nextList)

@@ -10,7 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"github.com/golang/protobuf/jsonpb"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
 )
 
@@ -52,7 +52,7 @@ func NewIdentityAccessManagement(fileName string, domain string) *IdentityAccess
 		return iam
 	}
 	if err := iam.loadS3ApiConfiguration(fileName); err != nil {
-		glog.Fatalf("fail to load config file %s: %v", fileName, err)
+		log.Fatalf("fail to load config file %s: %v", fileName, err)
 	}
 	return iam
 }
@@ -63,13 +63,13 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(fileName string) err
 
 	rawData, readErr := ioutil.ReadFile(fileName)
 	if readErr != nil {
-		glog.Warningf("fail to read %s : %v", fileName, readErr)
+		log.Warnf("fail to read %s : %v", fileName, readErr)
 		return fmt.Errorf("fail to read %s : %v", fileName, readErr)
 	}
 
-	glog.V(1).Infof("load s3 config: %v", fileName)
+	log.Debugf("load s3 config: %v", fileName)
 	if err := jsonpb.Unmarshal(bytes.NewReader(rawData), s3ApiConfiguration); err != nil {
-		glog.Warningf("unmarshal error: %v", err)
+		log.Warnf("unmarshal error: %v", err)
 		return fmt.Errorf("unmarshal %s error: %v", fileName, err)
 	}
 
@@ -152,19 +152,19 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	case authTypeStreamingSigned:
 		return identity, s3err.ErrNone
 	case authTypeUnknown:
-		glog.V(3).Infof("unknown auth type")
+		log.Tracef("unknown auth type")
 		return identity, s3err.ErrAccessDenied
 	case authTypePresignedV2, authTypeSignedV2:
-		glog.V(3).Infof("v2 auth type")
+		log.Tracef("v2 auth type")
 		identity, s3Err = iam.isReqAuthenticatedV2(r)
 	case authTypeSigned, authTypePresigned:
-		glog.V(3).Infof("v4 auth type")
+		log.Tracef("v4 auth type")
 		identity, s3Err = iam.reqSignatureV4Verify(r)
 	case authTypePostPolicy:
-		glog.V(3).Infof("post policy auth type")
+		log.Tracef("post policy auth type")
 		return identity, s3err.ErrNone
 	case authTypeJWT:
-		glog.V(3).Infof("jwt auth type")
+		log.Tracef("jwt auth type")
 		return identity, s3err.ErrNotImplemented
 	case authTypeAnonymous:
 		identity, found = iam.lookupAnonymous()
@@ -175,12 +175,12 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		return identity, s3err.ErrNotImplemented
 	}
 
-	glog.V(3).Infof("auth error: %v", s3Err)
+	log.Tracef("auth error: %v", s3Err)
 	if s3Err != s3err.ErrNone {
 		return identity, s3Err
 	}
 
-	glog.V(3).Infof("user name: %v actions: %v", identity.Name, identity.Actions)
+	log.Tracef("user name: %v actions: %v", identity.Name, identity.Actions)
 
 	bucket, _ := getBucketAndObject(r)
 

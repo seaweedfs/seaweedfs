@@ -11,7 +11,7 @@ import (
 	"github.com/seaweedfs/fuse/fs"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -45,7 +45,7 @@ func (file *File) fullpath() util.FullPath {
 
 func (file *File) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 
-	glog.V(4).Infof("file Attr %s, open:%v, existing attr: %+v", file.fullpath(), file.isOpen, attr)
+	log.Tracef("file Attr %s, open:%v, existing attr: %+v", file.fullpath(), file.isOpen, attr)
 
 	entry := file.entry
 	if file.isOpen <= 0 || entry == nil {
@@ -60,7 +60,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 	attr.Size = filer.FileSize(entry)
 	if file.isOpen > 0 {
 		attr.Size = entry.Attributes.FileSize
-		glog.V(4).Infof("file Attr %s, open:%v, size: %d", file.fullpath(), file.isOpen, attr.Size)
+		log.Tracef("file Attr %s, open:%v, size: %d", file.fullpath(), file.isOpen, attr.Size)
 	}
 	attr.Crtime = time.Unix(entry.Attributes.Crtime, 0)
 	attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
@@ -78,7 +78,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 
 func (file *File) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp *fuse.GetxattrResponse) error {
 
-	glog.V(4).Infof("file Getxattr %s", file.fullpath())
+	log.Tracef("file Getxattr %s", file.fullpath())
 
 	entry, err := file.maybeLoadEntry(ctx)
 	if err != nil {
@@ -90,13 +90,13 @@ func (file *File) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp 
 
 func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 
-	glog.V(4).Infof("file %v open %+v", file.fullpath(), req)
+	log.Tracef("file %v open %+v", file.fullpath(), req)
 
 	handle := file.wfs.AcquireHandle(file, req.Uid, req.Gid)
 
 	resp.Handle = fuse.HandleID(handle.handle)
 
-	glog.V(4).Infof("%v file open handle id = %d", file.fullpath(), handle.handle)
+	log.Tracef("%v file open handle id = %d", file.fullpath(), handle.handle)
 
 	return handle, nil
 
@@ -104,7 +104,7 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
-	glog.V(4).Infof("%v file setattr %+v", file.fullpath(), req)
+	log.Tracef("%v file setattr %+v", file.fullpath(), req)
 
 	_, err := file.maybeLoadEntry(ctx)
 	if err != nil {
@@ -123,7 +123,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 
 	if req.Valid.Size() {
 
-		glog.V(4).Infof("%v file setattr set size=%v chunks=%d", file.fullpath(), req.Size, len(file.entry.Chunks))
+		log.Tracef("%v file setattr set size=%v chunks=%d", file.fullpath(), req.Size, len(file.entry.Chunks))
 		if req.Size < filer.FileSize(file.entry) {
 			// fmt.Printf("truncate %v \n", fullPath)
 			var chunks []*filer_pb.FileChunk
@@ -135,10 +135,10 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 					int64Size = int64(req.Size) - chunk.Offset
 					if int64Size > 0 {
 						chunks = append(chunks, chunk)
-						glog.V(4).Infof("truncated chunk %+v from %d to %d\n", chunk.GetFileIdString(), chunk.Size, int64Size)
+						log.Tracef("truncated chunk %+v from %d to %d\n", chunk.GetFileIdString(), chunk.Size, int64Size)
 						chunk.Size = uint64(int64Size)
 					} else {
-						glog.V(4).Infof("truncated whole chunk %+v\n", chunk.GetFileIdString())
+						log.Tracef("truncated whole chunk %+v\n", chunk.GetFileIdString())
 						truncatedChunks = append(truncatedChunks, chunk)
 					}
 				}
@@ -195,7 +195,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 
 func (file *File) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
 
-	glog.V(4).Infof("file Setxattr %s: %s", file.fullpath(), req.Name)
+	log.Tracef("file Setxattr %s: %s", file.fullpath(), req.Name)
 
 	entry, err := file.maybeLoadEntry(ctx)
 	if err != nil {
@@ -212,7 +212,7 @@ func (file *File) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error
 
 func (file *File) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest) error {
 
-	glog.V(4).Infof("file Removexattr %s: %s", file.fullpath(), req.Name)
+	log.Tracef("file Removexattr %s: %s", file.fullpath(), req.Name)
 
 	entry, err := file.maybeLoadEntry(ctx)
 	if err != nil {
@@ -229,7 +229,7 @@ func (file *File) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest)
 
 func (file *File) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, resp *fuse.ListxattrResponse) error {
 
-	glog.V(4).Infof("file Listxattr %s", file.fullpath())
+	log.Tracef("file Listxattr %s", file.fullpath())
 
 	entry, err := file.maybeLoadEntry(ctx)
 	if err != nil {
@@ -247,14 +247,14 @@ func (file *File) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, res
 func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 	// fsync works at OS level
 	// write the file chunks to the filerGrpcAddress
-	glog.V(4).Infof("%s/%s fsync file %+v", file.dir.FullPath(), file.Name, req)
+	log.Tracef("%s/%s fsync file %+v", file.dir.FullPath(), file.Name, req)
 
 	return nil
 }
 
 func (file *File) Forget() {
 	t := util.NewFullPath(file.dir.FullPath(), file.Name)
-	glog.V(4).Infof("Forget file %s", t)
+	log.Tracef("Forget file %s", t)
 	file.wfs.fsNodeCache.DeleteFsNode(t)
 }
 
@@ -271,13 +271,13 @@ func (file *File) maybeLoadEntry(ctx context.Context) (entry *filer_pb.Entry, er
 	}
 	entry, err = file.wfs.maybeLoadEntry(file.dir.FullPath(), file.Name)
 	if err != nil {
-		glog.V(3).Infof("maybeLoadEntry file %s/%s: %v", file.dir.FullPath(), file.Name, err)
+		log.Tracef("maybeLoadEntry file %s/%s: %v", file.dir.FullPath(), file.Name, err)
 		return entry, err
 	}
 	if entry != nil {
 		file.setEntry(entry)
 	} else {
-		glog.Warningf("maybeLoadEntry not found entry %s/%s: %v", file.dir.FullPath(), file.Name, err)
+		log.Warnf("maybeLoadEntry not found entry %s/%s: %v", file.dir.FullPath(), file.Name, err)
 	}
 	return entry, nil
 }
@@ -319,7 +319,7 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 
 	file.reader = nil
 
-	glog.V(4).Infof("%s existing %d chunks adds %d more", file.fullpath(), len(file.entry.Chunks), len(chunks))
+	log.Tracef("%s existing %d chunks adds %d more", file.fullpath(), len(file.entry.Chunks), len(chunks))
 
 	file.entry.Chunks = append(file.entry.Chunks, newChunks...)
 }
@@ -348,10 +348,10 @@ func (file *File) saveEntry(entry *filer_pb.Entry) error {
 			Signatures: []int32{file.wfs.signature},
 		}
 
-		glog.V(4).Infof("save file entry: %v", request)
+		log.Tracef("save file entry: %v", request)
 		_, err := client.UpdateEntry(context.Background(), request)
 		if err != nil {
-			glog.Errorf("UpdateEntry file %s/%s: %v", file.dir.FullPath(), file.Name, err)
+			log.Errorf("UpdateEntry file %s/%s: %v", file.dir.FullPath(), file.Name, err)
 			return fuse.EIO
 		}
 

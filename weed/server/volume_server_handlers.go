@@ -6,7 +6,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/util"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 )
@@ -89,17 +89,17 @@ func (vs *VolumeServer) maybeCheckJwtAuthorization(r *http.Request, vid, fid str
 
 	tokenStr := security.GetJwt(r)
 	if tokenStr == "" {
-		glog.V(1).Infof("missing jwt from %s", r.RemoteAddr)
+		log.Debugf("missing jwt from %s", r.RemoteAddr)
 		return false
 	}
 
 	token, err := security.DecodeJwt(signingKey, tokenStr)
 	if err != nil {
-		glog.V(1).Infof("jwt verification error from %s: %v", r.RemoteAddr, err)
+		log.Debugf("jwt verification error from %s: %v", r.RemoteAddr, err)
 		return false
 	}
 	if !token.Valid {
-		glog.V(1).Infof("jwt invalid from %s: %v", r.RemoteAddr, tokenStr)
+		log.Debugf("jwt invalid from %s: %v", r.RemoteAddr, tokenStr)
 		return false
 	}
 
@@ -109,6 +109,6 @@ func (vs *VolumeServer) maybeCheckJwtAuthorization(r *http.Request, vid, fid str
 		}
 		return sc.Fid == vid+","+fid
 	}
-	glog.V(1).Infof("unexpected jwt from %s: %v", r.RemoteAddr, tokenStr)
+	log.Debugf("unexpected jwt from %s: %v", r.RemoteAddr, tokenStr)
 	return false
 }

@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
@@ -31,7 +31,7 @@ func (v *Volume) isFileUnchanged(n *needle.Needle) bool {
 		oldNeedle := new(needle.Needle)
 		err := oldNeedle.ReadData(v.DataBackend, nv.Offset.ToAcutalOffset(), nv.Size, v.Version())
 		if err != nil {
-			glog.V(0).Infof("Failed to check updated file at offset %d size %d: %v", nv.Offset.ToAcutalOffset(), nv.Size, err)
+			log.Infof("Failed to check updated file at offset %d size %d: %v", nv.Offset.ToAcutalOffset(), nv.Size, err)
 			return false
 		}
 		if oldNeedle.Cookie == n.Cookie && oldNeedle.Checksum == n.Checksum && bytes.Equal(oldNeedle.Data, n.Data) {
@@ -76,7 +76,7 @@ func (v *Volume) asyncRequestAppend(request *needle.AsyncRequest) {
 }
 
 func (v *Volume) syncWrite(n *needle.Needle) (offset uint64, size Size, isUnchanged bool, err error) {
-	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
+	// log.Tracef("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	actualSize := needle.GetActualSize(Size(len(n.Data)), v.Version())
 
 	v.dataFileAccessLock.Lock()
@@ -101,7 +101,7 @@ func (v *Volume) syncWrite(n *needle.Needle) (offset uint64, size Size, isUnchan
 			return
 		}
 		if existingNeedle.Cookie != n.Cookie {
-			glog.V(0).Infof("write cookie mismatch: existing %x, new %x", existingNeedle.Cookie, n.Cookie)
+			log.Infof("write cookie mismatch: existing %x, new %x", existingNeedle.Cookie, n.Cookie)
 			err = fmt.Errorf("mismatching cookie %x", n.Cookie)
 			return
 		}
@@ -118,7 +118,7 @@ func (v *Volume) syncWrite(n *needle.Needle) (offset uint64, size Size, isUnchan
 	// add to needle map
 	if !ok || uint64(nv.Offset.ToAcutalOffset()) < offset {
 		if err = v.nm.Put(n.Id, ToOffset(int64(offset)), n.Size); err != nil {
-			glog.V(4).Infof("failed to save in needle map %d: %v", n.Id, err)
+			log.Tracef("failed to save in needle map %d: %v", n.Id, err)
 		}
 	}
 	if v.lastModifiedTsSeconds < n.LastModified {
@@ -128,7 +128,7 @@ func (v *Volume) syncWrite(n *needle.Needle) (offset uint64, size Size, isUnchan
 }
 
 func (v *Volume) writeNeedle2(n *needle.Needle, fsync bool) (offset uint64, size Size, isUnchanged bool, err error) {
-	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
+	// log.Tracef("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	if n.Ttl == needle.EMPTY_TTL && v.Ttl != needle.EMPTY_TTL {
 		n.SetHasTtl()
 		n.Ttl = v.Ttl
@@ -149,7 +149,7 @@ func (v *Volume) writeNeedle2(n *needle.Needle, fsync bool) (offset uint64, size
 }
 
 func (v *Volume) doWriteRequest(n *needle.Needle) (offset uint64, size Size, isUnchanged bool, err error) {
-	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
+	// log.Tracef("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	if v.isFileUnchanged(n) {
 		size = Size(n.DataSize)
 		isUnchanged = true
@@ -165,7 +165,7 @@ func (v *Volume) doWriteRequest(n *needle.Needle) (offset uint64, size Size, isU
 			return
 		}
 		if existingNeedle.Cookie != n.Cookie {
-			glog.V(0).Infof("write cookie mismatch: existing %x, new %x", existingNeedle.Cookie, n.Cookie)
+			log.Infof("write cookie mismatch: existing %x, new %x", existingNeedle.Cookie, n.Cookie)
 			err = fmt.Errorf("mismatching cookie %x", n.Cookie)
 			return
 		}
@@ -181,7 +181,7 @@ func (v *Volume) doWriteRequest(n *needle.Needle) (offset uint64, size Size, isU
 	// add to needle map
 	if !ok || uint64(nv.Offset.ToAcutalOffset()) < offset {
 		if err = v.nm.Put(n.Id, ToOffset(int64(offset)), n.Size); err != nil {
-			glog.V(4).Infof("failed to save in needle map %d: %v", n.Id, err)
+			log.Tracef("failed to save in needle map %d: %v", n.Id, err)
 		}
 	}
 	if v.lastModifiedTsSeconds < n.LastModified {
@@ -191,7 +191,7 @@ func (v *Volume) doWriteRequest(n *needle.Needle) (offset uint64, size Size, isU
 }
 
 func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
-	// glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
+	// log.Tracef("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	actualSize := needle.GetActualSize(0, v.Version())
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
@@ -238,7 +238,7 @@ func (v *Volume) deleteNeedle2(n *needle.Needle) (Size, error) {
 }
 
 func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
-	glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
+	log.Tracef("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	nv, ok := v.nm.Get(n.Id)
 	// fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
 	if ok && nv.Size.IsValid() {
@@ -270,7 +270,7 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption) (int, erro
 	readSize := nv.Size
 	if readSize.IsDeleted() {
 		if readOption != nil && readOption.ReadDeleted && readSize != TombstoneFileSize {
-			glog.V(3).Infof("reading deleted %s", n.String())
+			log.Tracef("reading deleted %s", n.String())
 			readSize = -readSize
 		} else {
 			return -1, ErrorDeleted
@@ -361,7 +361,7 @@ func (v *Volume) startWorker() {
 			if err := v.DataBackend.Sync(); err != nil {
 				// todo: this may generate dirty data or cause data inconsistent, may be weed need to panic?
 				if te := v.DataBackend.Truncate(end); te != nil {
-					glog.V(0).Infof("Failed to truncate %s back to %d with error: %v", v.DataBackend.Name(), end, te)
+					log.Infof("Failed to truncate %s back to %d with error: %v", v.DataBackend.Name(), end, te)
 				}
 				for i := 0; i < len(currentRequests); i++ {
 					if currentRequests[i].IsSucceed() {
@@ -416,7 +416,7 @@ func ScanVolumeFileFrom(version needle.Version, datBackend backend.BackendStorag
 		if volumeFileScanner.ReadNeedleBody() {
 			// println("needle", n.Id.String(), "offset", offset, "size", n.Size, "rest", rest)
 			if needleBody, err = n.ReadNeedleBody(datBackend, version, offset+NeedleHeaderSize, rest); err != nil {
-				glog.V(0).Infof("cannot read needle head [%d, %d) body [%d, %d) body length %d: %v", offset, offset+NeedleHeaderSize, offset+NeedleHeaderSize, offset+NeedleHeaderSize+rest, rest, err)
+				log.Infof("cannot read needle head [%d, %d) body [%d, %d) body length %d: %v", offset, offset+NeedleHeaderSize, offset+NeedleHeaderSize, offset+NeedleHeaderSize+rest, rest, err)
 				// err = fmt.Errorf("cannot read needle body: %v", err)
 				// return
 			}
@@ -426,18 +426,18 @@ func ScanVolumeFileFrom(version needle.Version, datBackend backend.BackendStorag
 			return nil
 		}
 		if err != nil {
-			glog.V(0).Infof("visit needle error: %v", err)
+			log.Infof("visit needle error: %v", err)
 			return fmt.Errorf("visit needle error: %v", err)
 		}
 		offset += NeedleHeaderSize + rest
-		glog.V(4).Infof("==> new entry offset %d", offset)
+		log.Tracef("==> new entry offset %d", offset)
 		if n, nh, rest, err = needle.ReadNeedleHeader(datBackend, version, offset); err != nil {
 			if err == io.EOF {
 				return nil
 			}
 			return fmt.Errorf("cannot read needle header at offset %d: %v", offset, err)
 		}
-		glog.V(4).Infof("new entry needle size:%d rest:%d", n.Size, rest)
+		log.Tracef("new entry needle size:%d rest:%d", n.Size, rest)
 	}
 	return nil
 }

@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/log"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -97,7 +97,7 @@ func retriedUploadData(uploadUrl string, filename string, cipher bool, data []by
 		if err == nil {
 			return
 		} else {
-			glog.Warningf("uploading to %s: %v", uploadUrl, err)
+			log.Warnf("uploading to %s: %v", uploadUrl, err)
 		}
 	}
 	return
@@ -203,22 +203,22 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 
 	file_writer, cp_err := body_writer.CreatePart(h)
 	if cp_err != nil {
-		glog.V(0).Infoln("error creating form file", cp_err.Error())
+		log.Infoln("error creating form file", cp_err.Error())
 		return nil, cp_err
 	}
 	if err := fillBufferFunction(file_writer); err != nil {
-		glog.V(0).Infoln("error copying data", err)
+		log.Infoln("error copying data", err)
 		return nil, err
 	}
 	content_type := body_writer.FormDataContentType()
 	if err := body_writer.Close(); err != nil {
-		glog.V(0).Infoln("error closing body", err)
+		log.Infoln("error closing body", err)
 		return nil, err
 	}
 
 	req, postErr := http.NewRequest("POST", uploadUrl, bytes.NewReader(buf.Bytes()))
 	if postErr != nil {
-		glog.V(1).Infof("create upload request %s: %v", uploadUrl, postErr)
+		log.Debugf("create upload request %s: %v", uploadUrl, postErr)
 		return nil, fmt.Errorf("create upload request %s: %v", uploadUrl, postErr)
 	}
 	req.Header.Set("Content-Type", content_type)
@@ -231,7 +231,7 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	// print("+")
 	resp, post_err := HttpClient.Do(req)
 	if post_err != nil {
-		glog.Errorf("upload %s %d bytes to %v: %v", filename, originalDataSize, uploadUrl, post_err)
+		log.Errorf("upload %s %d bytes to %v: %v", filename, originalDataSize, uploadUrl, post_err)
 		debug.PrintStack()
 		return nil, fmt.Errorf("upload %s %d bytes to %v: %v", filename, originalDataSize, uploadUrl, post_err)
 	}
@@ -252,7 +252,7 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
-		glog.Errorf("unmarshal %s: %v", uploadUrl, string(resp_body))
+		log.Errorf("unmarshal %s: %v", uploadUrl, string(resp_body))
 		return nil, fmt.Errorf("unmarshal %v: %v", uploadUrl, unmarshal_err)
 	}
 	if ret.Error != "" {
