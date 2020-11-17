@@ -20,10 +20,15 @@ func TestFilerConf(t *testing.T) {
 			LocationPrefix: "/buckets/abcd",
 			Collection:     "abcd",
 		},
+		{
+			LocationPrefix: "/buckets/",
+			Replication: "001",
+		},
 	}}
 	fc.doLoadConf(conf)
 
 	assert.Equal(t, "abc", fc.MatchStorageRule("/buckets/abc/jasdf").Collection)
 	assert.Equal(t, "abcd", fc.MatchStorageRule("/buckets/abcd/jasdf").Collection)
+	assert.Equal(t, "001", fc.MatchStorageRule("/buckets/abc/jasdf").Replication)
 
 }

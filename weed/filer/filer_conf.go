@@ -103,19 +103,25 @@ func (fc *FilerConf) DeleteLocationConf(locationPrefix string) {
 	return
 }
 
-var (
-	EmptyFilerConfPathConf = &filer_pb.FilerConf_PathConf{}
-)
-
 func (fc *FilerConf) MatchStorageRule(path string) (pathConf *filer_pb.FilerConf_PathConf) {
+	pathConf = &filer_pb.FilerConf_PathConf{}
 	fc.rules.MatchPrefix([]byte(path), func(key []byte, value interface{}) bool {
-		pathConf = value.(*filer_pb.FilerConf_PathConf)
+		t := value.(*filer_pb.FilerConf_PathConf)
+		mergePathConf(pathConf, t)
 		return true
 	})
-	if pathConf == nil {
-		return EmptyFilerConfPathConf
-	}
 	return pathConf
+}
+
+// merge if values in b is not empty, merge them into a
+func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
+	a.Collection = util.Nvl(b.Collection, a.Collection)
+	a.Replication = util.Nvl(b.Replication, a.Replication)
+	a.Ttl = util.Nvl(b.Ttl, a.Ttl)
+	if b.DiskType != filer_pb.FilerConf_PathConf_NONE {
+		a.DiskType = b.DiskType
+	}
+	a.Fsync = b.Fsync || a.Fsync
 }
 
 func (fc *FilerConf) ToProto() *filer_pb.FilerConf {
