@@ -266,17 +266,17 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 
 	resp, postErr := client.Do(proxyReq)
 
-	if (resp.ContentLength == -1 || resp.StatusCode == 404) && !strings.HasSuffix(destUrl, "/") {
-		writeErrorResponse(w, s3err.ErrNoSuchKey, r.URL)
-		return
-	}
-
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)
 		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
 	defer util.CloseResponse(resp)
+
+	if (resp.ContentLength == -1 || resp.StatusCode == 404) && !strings.HasSuffix(destUrl, "/") {
+		writeErrorResponse(w, s3err.ErrNoSuchKey, r.URL)
+		return
+	}
 
 	responseFn(resp, w)
 
